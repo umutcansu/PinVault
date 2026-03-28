@@ -1,11 +1,9 @@
 plugins {
     id("com.android.library")
-    id("org.jetbrains.kotlin.android")
-    id("com.vanniktech.maven.publish")
+    kotlin("android")
+    id("maven-publish")
+    signing
 }
-
-group = "io.github.umutcansu"
-version = "1.0.0"
 
 android {
     namespace = "io.github.umutcansu.pinvault"
@@ -35,33 +33,69 @@ android {
     kotlinOptions {
         jvmTarget = "17"
     }
+
+    publishing {
+        singleVariant("release") {
+            withSourcesJar()
+            withJavadocJar()
+        }
+    }
 }
 
-mavenPublishing {
-    publishToMavenCentral()
-    signAllPublications()
+afterEvaluate {
+    publishing {
+        publications {
+            create<MavenPublication>("release") {
+                from(components["release"])
+                groupId = "io.github.umutcansu"
+                artifactId = "pinvault"
+                version = project.findProperty("VERSION_NAME") as? String ?: "1.0.0"
 
-    pom {
-        name = "PinVault"
-        description = "Android library for dynamic SSL certificate pinning with remote config updates, ECDSA signature verification, and encrypted pin storage."
-        url = "https://github.com/umutcansu/PinVault"
-        licenses {
-            license {
-                name.set("The MIT License")
-                url.set("http://www.opensource.org/licenses/mit-license.php")
+                pom {
+                    name.set("PinVault")
+                    description.set("Android library for dynamic SSL certificate pinning with remote config updates, ECDSA signature verification, and encrypted pin storage.")
+                    url.set("https://github.com/umutcansu/PinVault")
+
+                    licenses {
+                        license {
+                            name.set("The MIT License")
+                            url.set("http://www.opensource.org/licenses/mit-license.php")
+                        }
+                    }
+
+                    developers {
+                        developer {
+                            id.set("umutcansu")
+                            name.set("Umut Cansu")
+                            email.set("umutcansu@gmail.com")
+                        }
+                    }
+
+                    scm {
+                        connection.set("scm:git:git://github.com/umutcansu/PinVault.git")
+                        developerConnection.set("scm:git:ssh://github.com:umutcansu/PinVault.git")
+                        url.set("https://github.com/umutcansu/PinVault")
+                    }
+                }
             }
         }
-        developers {
-            developer {
-                id = "umutcansu"
-                name = "Umut Cansu"
-                email = "umutcansu@gmail.com"
+
+        repositories {
+            maven {
+                name = "OSSRH"
+                val releasesUrl = uri("https://s01.oss.sonatype.org/service/local/staging/deploy/maven2/")
+                val snapshotsUrl = uri("https://s01.oss.sonatype.org/content/repositories/snapshots/")
+                url = if ((version as String).endsWith("SNAPSHOT")) snapshotsUrl else releasesUrl
+                credentials {
+                    username = project.findProperty("mavenCentralUsername") as? String ?: System.getenv("OSSRH_USERNAME")
+                    password = project.findProperty("mavenCentralPassword") as? String ?: System.getenv("OSSRH_PASSWORD")
+                }
             }
         }
-        scm {
-            url = "https://github.com/umutcansu/PinVault"
-            connection = "scm:git:git://github.com/umutcansu/PinVault.git"
-        }
+    }
+
+    signing {
+        sign(publishing.publications["release"])
     }
 }
 
