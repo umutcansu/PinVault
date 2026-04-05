@@ -11,3 +11,17 @@
 *.aar
 *.ap_
 *.dex
+
+# Demo server
+demo-server/build/
+demo-server/pinvault.db
+demo-server/certs/
+demo-server/signing-key.pem
+demo-server/.gradle/
+
+# Demo app
+demo-app/build/
+demo-app/.gradle/
+
+# Claude
+.claude/
