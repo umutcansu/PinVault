@@ -31,16 +31,17 @@ internal class CertificateConfigStore(context: Context) {
 
     fun save(config: CertificateConfig) {
         prefs.edit().apply {
-            putInt(KEY_VERSION, config.version)
+            putInt(KEY_VERSION, config.computedVersion())
 
+            // Format: hostname|version|hash1,hash2
             val pinsData = config.pins.joinToString(ENTRY_SEPARATOR) { pin ->
-                "${pin.hostname}$FIELD_SEPARATOR${pin.sha256.joinToString(HASH_SEPARATOR)}"
+                "${pin.hostname}$FIELD_SEPARATOR${pin.version}$FIELD_SEPARATOR${pin.sha256.joinToString(HASH_SEPARATOR)}"
             }
             putString(KEY_PINS, pinsData)
 
             apply()
         }
-        Timber.d("Certificate config saved — version: %d", config.version)
+        Timber.d("Certificate config saved — version: %d", config.computedVersion())
     }
 
     fun load(): CertificateConfig? {
@@ -69,13 +70,23 @@ internal class CertificateConfigStore(context: Context) {
     private fun parsePins(data: String): List<HostPin> {
         return try {
             data.split(ENTRY_SEPARATOR).mapNotNull { entry ->
-                val parts = entry.split(FIELD_SEPARATOR, limit = 2)
-                if (parts.size == 2) {
-                    val hostname = parts[0]
-                    val hashes = parts[1].split(HASH_SEPARATOR).filter { it.isNotBlank() }
-                    if (hashes.size >= 2) HostPin(hostname, hashes) else null
-                } else {
-                    null
+                val parts = entry.split(FIELD_SEPARATOR)
+                when {
+                    // New format: hostname|version|hash1,hash2
+                    parts.size >= 3 -> {
+                        val hostname = parts[0]
+                        val version = parts[1].toIntOrNull() ?: 0
+                        val hashes = parts.drop(2).joinToString(FIELD_SEPARATOR)
+                            .split(HASH_SEPARATOR).filter { it.isNotBlank() }
+                        if (hashes.size >= 2) HostPin(hostname, hashes, version) else null
+                    }
+                    // Old format migration: hostname|hash1,hash2
+                    parts.size == 2 -> {
+                        val hostname = parts[0]
+                        val hashes = parts[1].split(HASH_SEPARATOR).filter { it.isNotBlank() }
+                        if (hashes.size >= 2) HostPin(hostname, hashes, version = 0) else null
+                    }
+                    else -> null
                 }
             }
         } catch (e: Exception) {

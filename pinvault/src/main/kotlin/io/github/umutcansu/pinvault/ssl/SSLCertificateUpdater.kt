@@ -5,6 +5,7 @@ import androidx.work.Constraints
 import androidx.work.ExistingPeriodicWorkPolicy
 import androidx.work.NetworkType
 import androidx.work.PeriodicWorkRequestBuilder
+import androidx.work.WorkInfo
 import androidx.work.WorkManager
 import io.github.umutcansu.pinvault.api.CertificateConfigApi
 import io.github.umutcansu.pinvault.model.BackendUnreachableException
@@ -166,11 +167,17 @@ internal class SSLCertificateUpdater(
 
             val remoteConfig = configApi.fetchConfig(currentVersion)
 
-            // Strict equality: if versions match exactly, no update needed.
-            // Accepts "downgrades" (e.g. after a backend reset) so the client
-            // always converges to whatever the server currently provides.
-            if (remoteConfig.version == currentVersion && !remoteConfig.forceUpdate) {
-                Timber.d("Config is already current (version: %d)", currentVersion)
+            // Per-host version comparison: check if any host changed
+            val storedConfig = configStore.load()
+            val storedVersions = storedConfig?.pins?.associate { it.hostname to it.version } ?: emptyMap()
+
+            val hasChanges = remoteConfig.forceUpdate || remoteConfig.pins.any { remotePin ->
+                val storedVersion = storedVersions[remotePin.hostname]
+                storedVersion == null || remotePin.version != storedVersion || remotePin.forceUpdate
+            } || storedVersions.keys != remoteConfig.pins.map { it.hostname }.toSet()
+
+            if (!hasChanges) {
+                Timber.d("Config is already current — no host version changes")
                 return UpdateResult.AlreadyCurrent
             }
 
@@ -178,12 +185,13 @@ internal class SSLCertificateUpdater(
             configStore.save(remoteConfig)
             httpClientProvider.swap(remoteConfig)
 
+            val newVersion = remoteConfig.computedVersion()
             Timber.d(
                 "Config updated: %d → %d (%d hosts pinned)",
-                currentVersion, remoteConfig.version, remoteConfig.pins.size
+                currentVersion, newVersion, remoteConfig.pins.size
             )
 
-            UpdateResult.Updated(remoteConfig.version)
+            UpdateResult.Updated(newVersion)
         } catch (e: Exception) {
             Timber.e(e, "Config update failed")
             UpdateResult.Failed(
@@ -193,30 +201,70 @@ internal class SSLCertificateUpdater(
         }
     }
 
-    fun schedulePeriodicUpdates(intervalHours: Long = DEFAULT_INTERVAL_HOURS) {
+    fun schedulePeriodicUpdates(intervalHours: Long = DEFAULT_INTERVAL_HOURS, onScheduled: ((Boolean) -> Unit)? = null) {
+        schedulePeriodicUpdatesMinutes(intervalHours * 60, onScheduled)
+    }
+
+    fun schedulePeriodicUpdatesMinutes(intervalMinutes: Long, onScheduled: ((Boolean) -> Unit)? = null) {
         val constraints = Constraints.Builder()
             .setRequiredNetworkType(NetworkType.CONNECTED)
             .build()
 
         val request = PeriodicWorkRequestBuilder<CertificateUpdateWorker>(
-            intervalHours, TimeUnit.HOURS
+            intervalMinutes, TimeUnit.MINUTES
         )
             .setConstraints(constraints)
             .addTag(WORK_TAG)
             .build()
 
-        WorkManager.getInstance(context).enqueueUniquePeriodicWork(
+        val operation = WorkManager.getInstance(context).enqueueUniquePeriodicWork(
             WORK_NAME,
-            ExistingPeriodicWorkPolicy.KEEP,
+            ExistingPeriodicWorkPolicy.REPLACE,
             request
         )
 
-        Timber.d("Periodic certificate updates scheduled — every %d hours", intervalHours)
+        operation.result.addListener({
+            try {
+                operation.result.get()
+                Timber.d("Periodic certificate updates scheduled — every %d minutes", intervalMinutes)
+                onScheduled?.invoke(true)
+            } catch (e: Exception) {
+                Timber.e(e, "Failed to schedule periodic updates")
+                onScheduled?.invoke(false)
+            }
+        }, { it.run() })
     }
 
     fun cancelPeriodicUpdates() {
         WorkManager.getInstance(context).cancelUniqueWork(WORK_NAME)
         Timber.d("Periodic certificate updates cancelled")
+    }
+
+    fun getScheduledWorkInfo(callback: (List<io.github.umutcansu.pinvault.model.ScheduledTaskInfo>) -> Unit) {
+        val future = WorkManager.getInstance(context).getWorkInfosByTag(WORK_TAG)
+        future.addListener({
+            try {
+                val infos = future.get().map { wi ->
+                    io.github.umutcansu.pinvault.model.ScheduledTaskInfo(
+                        id = wi.id.toString(),
+                        state = when (wi.state) {
+                            WorkInfo.State.ENQUEUED -> io.github.umutcansu.pinvault.model.ScheduledTaskInfo.State.ENQUEUED
+                            WorkInfo.State.RUNNING -> io.github.umutcansu.pinvault.model.ScheduledTaskInfo.State.RUNNING
+                            WorkInfo.State.SUCCEEDED -> io.github.umutcansu.pinvault.model.ScheduledTaskInfo.State.SUCCEEDED
+                            WorkInfo.State.FAILED -> io.github.umutcansu.pinvault.model.ScheduledTaskInfo.State.FAILED
+                            WorkInfo.State.CANCELLED -> io.github.umutcansu.pinvault.model.ScheduledTaskInfo.State.CANCELLED
+                            WorkInfo.State.BLOCKED -> io.github.umutcansu.pinvault.model.ScheduledTaskInfo.State.BLOCKED
+                            else -> io.github.umutcansu.pinvault.model.ScheduledTaskInfo.State.UNKNOWN
+                        },
+                        runAttemptCount = wi.runAttemptCount
+                    )
+                }
+                callback(infos)
+            } catch (e: Exception) {
+                Timber.e(e, "Failed to get work info")
+                callback(emptyList())
+            }
+        }, { it.run() })
     }
 
     private fun validateConfig(config: CertificateConfig) {

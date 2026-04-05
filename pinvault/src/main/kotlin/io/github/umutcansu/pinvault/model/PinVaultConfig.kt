@@ -41,15 +41,31 @@ data class PinVaultConfig(
     val healthEndpoint: String = DEFAULT_HEALTH_ENDPOINT,
     /** Max retry attempts when backend is unreachable during init. */
     val maxRetryCount: Int = DEFAULT_MAX_RETRY,
-    /** Interval for background periodic pin updates (hours). */
+    /** Interval for background periodic pin updates (hours). Ignored if [updateIntervalMinutes] is set. */
     val updateIntervalHours: Long = DEFAULT_UPDATE_INTERVAL_HOURS,
+    /** Interval for background periodic pin updates (minutes). Takes precedence over [updateIntervalHours]. */
+    val updateIntervalMinutes: Long? = null,
     /**
      * ECDSA P-256 public key (Base64, X.509 encoded) for config signature verification.
      * If set, every config response must include a valid signature — unsigned or
      * tampered configs are rejected and the library keeps the previous safe config.
      * If null, signature verification is skipped (backward compatible).
      */
-    val signaturePublicKey: String? = null
+    val signaturePublicKey: String? = null,
+    /** PKCS12 client keystore bytes for mTLS. If set, client cert is sent during TLS handshake. */
+    val clientKeystoreBytes: ByteArray? = null,
+    /** Password for the client keystore. */
+    val clientKeyPassword: String = "changeit",
+    /** One-time enrollment token for automatic P12 download. */
+    val enrollmentToken: String? = null,
+    /** Enrollment endpoint path. */
+    val enrollmentEndpoint: String = DEFAULT_ENROLLMENT_ENDPOINT,
+    /**
+     * Label for the client certificate in encrypted storage.
+     * Different labels allow multiple client certificates on the same device.
+     * Example: "config" for config API cert, "host" for host cert.
+     */
+    val clientCertLabel: String = DEFAULT_CERT_LABEL
 ) {
 
     class Builder(private val configUrl: String) {
@@ -58,14 +74,26 @@ data class PinVaultConfig(
         private var healthEndpoint: String = DEFAULT_HEALTH_ENDPOINT
         private var maxRetryCount: Int = DEFAULT_MAX_RETRY
         private var updateIntervalHours: Long = DEFAULT_UPDATE_INTERVAL_HOURS
+        private var updateIntervalMinutes: Long? = null
         private var signaturePublicKey: String? = null
+        private var clientKeystoreBytes: ByteArray? = null
+        private var clientKeyPassword: String = "changeit"
+        private var enrollmentToken: String? = null
+        private var clientCertLabel: String = DEFAULT_CERT_LABEL
 
         fun bootstrapPins(pins: List<HostPin>) = apply { this.bootstrapPins = pins }
         fun configEndpoint(endpoint: String) = apply { this.configEndpoint = endpoint }
         fun healthEndpoint(endpoint: String) = apply { this.healthEndpoint = endpoint }
         fun maxRetryCount(count: Int) = apply { this.maxRetryCount = count }
         fun updateIntervalHours(hours: Long) = apply { this.updateIntervalHours = hours }
+        fun updateIntervalMinutes(minutes: Long) = apply { this.updateIntervalMinutes = minutes }
         fun signaturePublicKey(key: String) = apply { this.signaturePublicKey = key }
+        fun clientKeystore(bytes: ByteArray, password: String = "changeit") = apply {
+            this.clientKeystoreBytes = bytes
+            this.clientKeyPassword = password
+        }
+        fun enrollmentToken(token: String) = apply { this.enrollmentToken = token }
+        fun clientCertLabel(label: String) = apply { this.clientCertLabel = label }
 
         fun build(): PinVaultConfig {
             require(configUrl.isNotBlank()) { "configUrl must not be blank" }
@@ -79,7 +107,12 @@ data class PinVaultConfig(
                 healthEndpoint = healthEndpoint.trimStart('/'),
                 maxRetryCount = maxRetryCount,
                 updateIntervalHours = updateIntervalHours,
-                signaturePublicKey = signaturePublicKey
+                updateIntervalMinutes = updateIntervalMinutes,
+                signaturePublicKey = signaturePublicKey,
+                clientKeystoreBytes = clientKeystoreBytes,
+                clientKeyPassword = clientKeyPassword,
+                enrollmentToken = enrollmentToken,
+                clientCertLabel = clientCertLabel
             )
         }
     }
@@ -89,5 +122,7 @@ data class PinVaultConfig(
         const val DEFAULT_HEALTH_ENDPOINT = "health"
         const val DEFAULT_MAX_RETRY = 3
         const val DEFAULT_UPDATE_INTERVAL_HOURS = 12L
+        const val DEFAULT_ENROLLMENT_ENDPOINT = "api/v1/client-certs/enroll"
+        const val DEFAULT_CERT_LABEL = "default"
     }
 }

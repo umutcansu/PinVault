@@ -7,11 +7,14 @@ import okhttp3.ConnectionPool
 import okhttp3.OkHttpClient
 import timber.log.Timber
 import java.net.Socket
+import java.security.KeyStore
 import java.security.MessageDigest
 import java.security.cert.CertificateException
 import java.security.cert.X509Certificate
 import android.util.Base64
 import java.util.concurrent.TimeUnit
+import javax.net.ssl.KeyManager
+import javax.net.ssl.KeyManagerFactory
 import javax.net.ssl.SSLContext
 import javax.net.ssl.SSLEngine
 import javax.net.ssl.X509ExtendedTrustManager
@@ -32,19 +35,43 @@ import javax.net.ssl.X509TrustManager
  */
 internal class DynamicSSLManager {
 
+    /** Client keystore for mTLS (optional) */
+    @Volatile
+    private var clientKeyManagers: Array<KeyManager>? = null
+
+    /**
+     * Loads a PKCS12 client keystore for mTLS.
+     * Once set, all new OkHttpClients will present this client cert during TLS handshake.
+     */
+    fun loadClientKeystore(p12Bytes: ByteArray, password: String) {
+        val ks = KeyStore.getInstance("PKCS12")
+        ks.load(p12Bytes.inputStream(), password.toCharArray())
+        val kmf = KeyManagerFactory.getInstance(KeyManagerFactory.getDefaultAlgorithm())
+        kmf.init(ks, password.toCharArray())
+        clientKeyManagers = kmf.keyManagers
+
+        // Log cert details
+        val alias = ks.aliases().toList().firstOrNull()
+        val cert = alias?.let { ks.getCertificate(it) as? java.security.cert.X509Certificate }
+        val cn = cert?.subjectX500Principal?.name?.substringAfter("CN=")?.substringBefore(",") ?: "?"
+        val fingerprint = cert?.let { sha256Base64(it.publicKey.encoded).take(16) } ?: "?"
+        Timber.d("Client keystore loaded for mTLS — CN=%s, pin=%s..., %d key managers", cn, fingerprint, kmf.keyManagers.size)
+    }
+
     /**
      * Applies certificate pinning to an existing [OkHttpClient.Builder].
      * Installs a custom [X509ExtendedTrustManager] that enforces public-key pinning.
+     * If client keystore is loaded, also presents client cert for mTLS.
      */
     fun applyTo(builder: OkHttpClient.Builder, config: CertificateConfig) {
         val tm = pinnedTrustManager(config.pins)
         val sslCtx = SSLContext.getInstance("TLS")
-        sslCtx.init(null, arrayOf(tm), null)
+        sslCtx.init(clientKeyManagers, arrayOf(tm), null)
         builder.sslSocketFactory(sslCtx.socketFactory, tm)
 
         Timber.d(
-            "Applied pinning via TrustManager — version: %d, %d hosts",
-            config.version, config.pins.size
+            "Applied pinning via TrustManager — version: %d, %d hosts, mTLS: %s",
+            config.version, config.pins.size, clientKeyManagers != null
         )
     }
 
@@ -54,7 +81,8 @@ internal class DynamicSSLManager {
      */
     fun buildClient(
         config: CertificateConfig?,
-        connectionSettings: HttpConnectionSettings = HttpConnectionSettings()
+        connectionSettings: HttpConnectionSettings = HttpConnectionSettings(),
+        recoveryInterceptor: PinRecoveryInterceptor? = null
     ): OkHttpClient {
         val builder = OkHttpClient.Builder()
             .cache(null)
@@ -74,6 +102,7 @@ internal class DynamicSSLManager {
         }
 
         applyTo(builder, config)
+        recoveryInterceptor?.let { builder.addInterceptor(it) }
         return builder.build()
     }
 
@@ -188,7 +217,9 @@ internal class DynamicSSLManager {
                     )
                 }
 
-                Timber.d("Pin verified ✓ — sha256/%s", certHash.take(16))
+                val cn = leaf.subjectX500Principal.name.substringAfter("CN=").substringBefore(",")
+                val hasClientCert = clientKeyManagers != null
+                Timber.d("Pin verified ✓ — CN=%s, sha256/%s, clientCert=%s", cn, certHash.take(20), hasClientCert)
             }
         }
     }

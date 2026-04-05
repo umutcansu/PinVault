@@ -19,13 +19,16 @@ package io.github.umutcansu.pinvault.model
  * ```
  */
 data class CertificateConfig(
-    /** Config version — incremented on every backend update. */
-    val version: Int,
+    /** Global config version — computed as max of per-host versions. */
+    val version: Int = 0,
     /** Pin configurations per hostname. */
     val pins: List<HostPin>,
     /** If true, client must update immediately regardless of schedule. */
     val forceUpdate: Boolean = false
-)
+) {
+    /** Computed version from per-host versions (backward compat). */
+    fun computedVersion(): Int = pins.maxOfOrNull { it.version } ?: version
+}
 
 /**
  * SHA-256 pin hashes for a specific hostname.
@@ -35,7 +38,11 @@ data class HostPin(
     /** Hostname pattern (e.g. "api.example.com" or "*.example.com"). */
     val hostname: String,
     /** SHA-256 hashes of the SubjectPublicKeyInfo (Base64-encoded). */
-    val sha256: List<String>
+    val sha256: List<String>,
+    /** Per-host version — incremented when this host's pins change. */
+    val version: Int = 0,
+    /** Per-host force update flag. */
+    val forceUpdate: Boolean = false
 ) {
     init {
         require(sha256.size >= 2) {

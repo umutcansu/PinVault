@@ -19,9 +19,12 @@ class CertificateUpdateWorker(
     override suspend fun doWork(): Result {
         Timber.d("CertificateUpdateWorker started (attempt: %d)", runAttemptCount)
 
-        return when (val result = PinVault.updateNow()) {
+        val updateResult = PinVault.updateNow()
+        PinVault.notifyUpdateResult(updateResult)
+
+        return when (updateResult) {
             is UpdateResult.Updated -> {
-                Timber.d("Worker: config updated to version %d", result.newVersion)
+                Timber.d("Worker: config updated to version %d", updateResult.newVersion)
                 Result.success()
             }
 
@@ -31,7 +34,7 @@ class CertificateUpdateWorker(
             }
 
             is UpdateResult.Failed -> {
-                Timber.e("Worker: update failed — %s", result.reason)
+                Timber.e("Worker: update failed — %s", updateResult.reason)
                 if (runAttemptCount < MAX_RETRIES) {
                     Result.retry()
                 } else {

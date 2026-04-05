@@ -12,10 +12,13 @@ import io.github.umutcansu.pinvault.ssl.DynamicSSLManager
 import io.github.umutcansu.pinvault.ssl.HttpClientProvider
 import io.github.umutcansu.pinvault.ssl.SSLCertificateUpdater
 import io.github.umutcansu.pinvault.store.CertificateConfigStore
+import io.github.umutcansu.pinvault.store.ClientCertSecureStore
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
+import okhttp3.RequestBody.Companion.toRequestBody
 import timber.log.Timber
 
 /**
@@ -67,6 +70,27 @@ object PinVault {
 
     @Volatile
     private var pinManagerConfig: PinVaultConfig? = null
+
+    // ── Update listener ─────────────────────────────────────────────────────
+
+    /**
+     * Listener for background pin update events.
+     * Called on the main thread when WorkManager completes a periodic update.
+     */
+    fun interface OnUpdateListener {
+        fun onUpdate(result: UpdateResult)
+    }
+
+    @Volatile
+    private var updateListener: OnUpdateListener? = null
+
+    fun setOnUpdateListener(listener: OnUpdateListener?) {
+        updateListener = listener
+    }
+
+    internal fun notifyUpdateResult(result: UpdateResult) {
+        updateListener?.onUpdate(result)
+    }
 
     // ── Init (PinVaultConfig — recommended) ─────────────────────────────
 
@@ -176,6 +200,16 @@ object PinVault {
             val appContext = context.applicationContext
 
             sslManager = DynamicSSLManager()
+            val certStore = ClientCertSecureStore(appContext)
+
+            // mTLS: client keystore yükle (öncelik sırası: direct bytes > stored by label > enrollment)
+            val p12Bytes = config.clientKeystoreBytes
+                ?: certStore.load(config.clientCertLabel)
+
+            if (p12Bytes != null) {
+                sslManager.loadClientKeystore(p12Bytes, config.clientKeyPassword)
+            }
+
             clientProvider = HttpClientProvider(sslManager)
             configStore = CertificateConfigStore(appContext)
 
@@ -195,6 +229,13 @@ object PinVault {
                 httpClientProvider = clientProvider,
                 maxRetryCount = config.maxRetryCount
             )
+
+            // Wire up pin recovery: on pin mismatch → auto update + retry + notify UI
+            clientProvider.recoveryUpdater = suspend {
+                val result = updater.updateNow()
+                notifyUpdateResult(result)
+                result is UpdateResult.Updated
+            }
 
             initialized = true
             return Unit
@@ -253,14 +294,20 @@ object PinVault {
 
     /**
      * Schedules periodic config updates via WorkManager.
-     * Default interval comes from [PinVaultConfig.updateIntervalHours].
+     * If [PinVaultConfig.updateIntervalMinutes] is set, it takes precedence over hours.
      */
     fun schedulePeriodicUpdates(
         intervalHours: Long = pinManagerConfig?.updateIntervalHours
-            ?: PinVaultConfig.DEFAULT_UPDATE_INTERVAL_HOURS
+            ?: PinVaultConfig.DEFAULT_UPDATE_INTERVAL_HOURS,
+        onScheduled: ((Boolean) -> Unit)? = null
     ) {
         checkInitialized()
-        updater.schedulePeriodicUpdates(intervalHours)
+        val minutes = pinManagerConfig?.updateIntervalMinutes
+        if (minutes != null) {
+            updater.schedulePeriodicUpdatesMinutes(minutes, onScheduled)
+        } else {
+            updater.schedulePeriodicUpdates(intervalHours, onScheduled)
+        }
     }
 
     /**
@@ -269,6 +316,133 @@ object PinVault {
     fun cancelPeriodicUpdates() {
         checkInitialized()
         updater.cancelPeriodicUpdates()
+    }
+
+    /**
+     * Returns info about scheduled pin update tasks.
+     */
+    fun getScheduledWorkInfo(callback: (List<io.github.umutcansu.pinvault.model.ScheduledTaskInfo>) -> Unit) {
+        checkInitialized()
+        updater.getScheduledWorkInfo(callback)
+    }
+
+    /**
+     * Enrolls this device using a one-time token.
+     * Downloads P12 client cert from server, stores it encrypted, and loads it for mTLS.
+     *
+     * @return true if enrollment succeeded
+     */
+    /**
+     * Enrolls this device using a one-time token.
+     * Downloads P12 client cert from server, stores it encrypted with the configured label.
+     *
+     * @param label Optional label override. If null, uses [PinVaultConfig.clientCertLabel].
+     * @return true if enrollment succeeded
+     */
+    suspend fun enroll(context: Context, token: String, label: String? = null): Boolean {
+        val config = pinManagerConfig ?: return false
+        val certStore = ClientCertSecureStore(context.applicationContext)
+        val certLabel = label ?: config.clientCertLabel
+
+        if (certStore.exists(certLabel)) {
+            Timber.d("Client cert already exists [%s] — skipping enrollment", certLabel)
+            return true
+        }
+
+        return try {
+            val bootstrapClient = sslManager.buildBootstrapClient(config.bootstrapPins)
+            val url = config.configUrl + config.enrollmentEndpoint
+            val requestBody = """{"token":"$token"}""".toRequestBody("application/json".toMediaType())
+            val request = okhttp3.Request.Builder().url(url).post(requestBody).build()
+            val response = bootstrapClient.newCall(request).execute()
+
+            if (!response.isSuccessful) {
+                Timber.e("Enrollment failed — HTTP %d", response.code)
+                return false
+            }
+
+            val p12Bytes = response.body?.bytes() ?: return false
+            certStore.save(certLabel, p12Bytes)
+            sslManager.loadClientKeystore(p12Bytes, config.clientKeyPassword)
+
+            // Rebuild client with mTLS
+            clientProvider.currentConfig?.let { clientProvider.swap(it) }
+
+            Timber.d("Enrollment successful — client cert stored [%s]", certLabel)
+            true
+        } catch (e: Exception) {
+            Timber.e(e, "Enrollment failed")
+            false
+        }
+    }
+
+    /**
+     * Automatically enrolls this device using its device ID (no token needed).
+     * Config API generates a client cert for this device and returns P12.
+     * Call this during init when mTLS hosts are expected.
+     *
+     * @return true if enrollment succeeded or cert already exists
+     */
+    suspend fun autoEnroll(context: Context): Boolean {
+        val config = pinManagerConfig ?: return false
+        val certStore = ClientCertSecureStore(context.applicationContext)
+        val certLabel = config.clientCertLabel
+
+        if (certStore.exists(certLabel)) {
+            Timber.d("Client cert already exists — skipping auto-enrollment")
+            return true
+        }
+
+        return try {
+            val deviceId = android.provider.Settings.Secure.getString(
+                context.contentResolver, android.provider.Settings.Secure.ANDROID_ID
+            ) ?: "unknown-device"
+
+            val url = config.configUrl + config.enrollmentEndpoint
+            Timber.d("Auto-enrollment: deviceId=%s, url=%s", deviceId, url)
+
+            val bootstrapClient = sslManager.buildBootstrapClient(config.bootstrapPins)
+            val requestBody = """{"deviceId":"$deviceId"}""".toRequestBody("application/json".toMediaType())
+            val request = okhttp3.Request.Builder().url(url).post(requestBody).build()
+            val response = bootstrapClient.newCall(request).execute()
+
+            if (!response.isSuccessful) {
+                Timber.e("Auto-enrollment failed — HTTP %d from %s", response.code, url)
+                return false
+            }
+
+            val p12Bytes = response.body?.bytes() ?: return false
+            Timber.d("Auto-enrollment: received P12 (%d bytes)", p12Bytes.size)
+
+            certStore.save(certLabel, p12Bytes)
+            sslManager.loadClientKeystore(p12Bytes, config.clientKeyPassword)
+            clientProvider.currentConfig?.let { clientProvider.swap(it) }
+
+            Timber.d("Auto-enrollment successful — cert stored [%s], %d bytes, from %s", certLabel, p12Bytes.size, url)
+            true
+        } catch (e: Exception) {
+            Timber.e(e, "Auto-enrollment failed")
+            false
+        }
+    }
+
+    /**
+     * Checks if a client certificate is enrolled on this device.
+     * @param label Optional label. If null, checks the default label.
+     */
+    fun isEnrolled(context: Context, label: String? = null): Boolean {
+        val store = ClientCertSecureStore(context.applicationContext)
+        return store.exists(label ?: ClientCertSecureStore.DEFAULT_LABEL)
+    }
+
+    /**
+     * Removes the enrolled client certificate from this device.
+     * @param label Optional label. If null, removes the default label.
+     */
+    fun unenroll(context: Context, label: String? = null) {
+        val store = ClientCertSecureStore(context.applicationContext)
+        store.clear(label ?: ClientCertSecureStore.DEFAULT_LABEL)
+        Timber.i("Client certificate removed [%s]", label ?: "default")
     }
 
     /**
