@@ -227,6 +227,9 @@ object PinVault {
                 configApi = api,
                 configStore = configStore,
                 httpClientProvider = clientProvider,
+                sslManager = sslManager,
+                certStore = certStore,
+                clientKeyPassword = config.clientKeyPassword,
                 maxRetryCount = config.maxRetryCount
             )
 

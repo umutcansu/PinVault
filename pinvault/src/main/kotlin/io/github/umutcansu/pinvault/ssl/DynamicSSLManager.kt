@@ -35,13 +35,16 @@ import javax.net.ssl.X509TrustManager
  */
 internal class DynamicSSLManager {
 
-    /** Client keystore for mTLS (optional) */
+    /** Default client keystore for mTLS (optional — used when no host-specific cert exists) */
     @Volatile
     private var clientKeyManagers: Array<KeyManager>? = null
 
+    /** Host-specific client certs for mTLS — hostname → KeyManager */
+    @Volatile
+    private var hostKeyManagers: Map<String, javax.net.ssl.X509ExtendedKeyManager> = emptyMap()
+
     /**
-     * Loads a PKCS12 client keystore for mTLS.
-     * Once set, all new OkHttpClients will present this client cert during TLS handshake.
+     * Loads a PKCS12 client keystore for mTLS (default — used for all hosts without specific cert).
      */
     fun loadClientKeystore(p12Bytes: ByteArray, password: String) {
         val ks = KeyStore.getInstance("PKCS12")
@@ -50,12 +53,95 @@ internal class DynamicSSLManager {
         kmf.init(ks, password.toCharArray())
         clientKeyManagers = kmf.keyManagers
 
-        // Log cert details
         val alias = ks.aliases().toList().firstOrNull()
         val cert = alias?.let { ks.getCertificate(it) as? java.security.cert.X509Certificate }
         val cn = cert?.subjectX500Principal?.name?.substringAfter("CN=")?.substringBefore(",") ?: "?"
         val fingerprint = cert?.let { sha256Base64(it.publicKey.encoded).take(16) } ?: "?"
-        Timber.d("Client keystore loaded for mTLS — CN=%s, pin=%s..., %d key managers", cn, fingerprint, kmf.keyManagers.size)
+        Timber.d("Default client keystore loaded — CN=%s, pin=%s...", cn, fingerprint)
+    }
+
+    /**
+     * Loads host-specific client certs for mTLS.
+     * Each host gets its own KeyManager — during TLS handshake the correct cert is selected.
+     *
+     * @param hostCerts hostname → P12 bytes
+     */
+    fun loadHostClientCerts(hostCerts: Map<String, ByteArray>, password: String) {
+        val managers = mutableMapOf<String, javax.net.ssl.X509ExtendedKeyManager>()
+
+        for ((hostname, p12) in hostCerts) {
+            try {
+                val ks = KeyStore.getInstance("PKCS12")
+                ks.load(p12.inputStream(), password.toCharArray())
+                val kmf = KeyManagerFactory.getInstance(KeyManagerFactory.getDefaultAlgorithm())
+                kmf.init(ks, password.toCharArray())
+                val km = kmf.keyManagers.firstOrNull { it is javax.net.ssl.X509ExtendedKeyManager } as? javax.net.ssl.X509ExtendedKeyManager
+                if (km != null) {
+                    managers[hostname] = km
+                    val alias = ks.aliases().toList().firstOrNull()
+                    val cert = alias?.let { ks.getCertificate(it) as? java.security.cert.X509Certificate }
+                    val cn = cert?.subjectX500Principal?.name?.substringAfter("CN=")?.substringBefore(",") ?: "?"
+                    Timber.d("Host client cert loaded: %s → CN=%s", hostname, cn)
+                }
+            } catch (e: Exception) {
+                Timber.e(e, "Failed to load client cert for host: %s", hostname)
+            }
+        }
+
+        hostKeyManagers = managers
+        Timber.d("Loaded %d host-specific client certs", managers.size)
+    }
+
+    /**
+     * Creates a composite KeyManager that selects the right cert per hostname.
+     * Falls back to default client cert if no host-specific cert exists.
+     */
+    private fun buildCompositeKeyManagers(): Array<KeyManager>? {
+        if (hostKeyManagers.isEmpty()) return clientKeyManagers
+
+        val defaultKm = clientKeyManagers?.firstOrNull { it is javax.net.ssl.X509ExtendedKeyManager } as? javax.net.ssl.X509ExtendedKeyManager
+        val hostKms = hostKeyManagers
+
+        val composite = object : javax.net.ssl.X509ExtendedKeyManager() {
+            private fun resolveForHost(hostname: String?): javax.net.ssl.X509ExtendedKeyManager? {
+                if (hostname == null) return defaultKm
+                return hostKms[hostname] ?: defaultKm
+            }
+
+            override fun chooseClientAlias(keyTypes: Array<String>, issuers: Array<java.security.Principal>?, socket: Socket): String? {
+                val host = (socket as? javax.net.ssl.SSLSocket)?.handshakeSession?.peerHost
+                    ?: socket.inetAddress?.hostName
+                return resolveForHost(host)?.chooseClientAlias(keyTypes, issuers, socket)
+            }
+
+            override fun chooseEngineClientAlias(keyTypes: Array<String>, issuers: Array<java.security.Principal>?, engine: SSLEngine): String? {
+                return resolveForHost(engine.peerHost)?.chooseEngineClientAlias(keyTypes, issuers, engine)
+            }
+
+            override fun getClientAliases(keyType: String, issuers: Array<java.security.Principal>?): Array<String>? {
+                val all = mutableListOf<String>()
+                defaultKm?.getClientAliases(keyType, issuers)?.let { all.addAll(it) }
+                hostKms.values.forEach { km -> km.getClientAliases(keyType, issuers)?.let { all.addAll(it) } }
+                return if (all.isEmpty()) null else all.toTypedArray()
+            }
+
+            override fun getCertificateChain(alias: String): Array<java.security.cert.X509Certificate>? {
+                for (km in hostKms.values) { km.getCertificateChain(alias)?.let { return it } }
+                return defaultKm?.getCertificateChain(alias)
+            }
+
+            override fun getPrivateKey(alias: String): java.security.PrivateKey? {
+                for (km in hostKms.values) { km.getPrivateKey(alias)?.let { return it } }
+                return defaultKm?.getPrivateKey(alias)
+            }
+
+            // Server-side (unused in client)
+            override fun chooseServerAlias(keyType: String, issuers: Array<java.security.Principal>?, socket: Socket?) = null
+            override fun chooseEngineServerAlias(keyType: String, issuers: Array<java.security.Principal>?, engine: SSLEngine?) = null
+            override fun getServerAliases(keyType: String, issuers: Array<java.security.Principal>?) = null
+        }
+
+        return arrayOf(composite)
     }
 
     /**
@@ -66,12 +152,14 @@ internal class DynamicSSLManager {
     fun applyTo(builder: OkHttpClient.Builder, config: CertificateConfig) {
         val tm = pinnedTrustManager(config.pins)
         val sslCtx = SSLContext.getInstance("TLS")
-        sslCtx.init(clientKeyManagers, arrayOf(tm), null)
+        val keyManagers = buildCompositeKeyManagers()
+        sslCtx.init(keyManagers, arrayOf(tm), null)
         builder.sslSocketFactory(sslCtx.socketFactory, tm)
 
+        val mtlsHosts = config.pins.count { it.mtls }
         Timber.d(
-            "Applied pinning via TrustManager — version: %d, %d hosts, mTLS: %s",
-            config.version, config.pins.size, clientKeyManagers != null
+            "Applied pinning — version: %d, %d hosts (%d mTLS), defaultCert: %s, hostCerts: %d",
+            config.version, config.pins.size, mtlsHosts, clientKeyManagers != null, hostKeyManagers.size
         )
     }
 

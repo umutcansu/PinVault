@@ -34,4 +34,14 @@ interface CertificateConfigApi {
      * @throws Exception on network or server errors.
      */
     suspend fun fetchConfig(currentVersion: Int): CertificateConfig
+
+    /**
+     * Downloads a host-specific PKCS12 client certificate for mTLS.
+     * Called when [HostPin.mtls] is true and [HostPin.clientCertVersion] has changed.
+     *
+     * @param hostname The host whose client cert to download.
+     * @return PKCS12 bytes for the host's client certificate.
+     * @throws Exception on network or server errors.
+     */
+    suspend fun downloadHostClientCert(hostname: String): ByteArray
 }

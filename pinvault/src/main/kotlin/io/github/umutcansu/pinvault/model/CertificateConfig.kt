@@ -33,6 +33,9 @@ data class CertificateConfig(
 /**
  * SHA-256 pin hashes for a specific hostname.
  * Must contain at least 2 pins (primary + backup) for safe rotation.
+ *
+ * For mTLS hosts, [mtls] is true and [clientCertVersion] tracks the client cert version.
+ * The client downloads the host-specific P12 from the Config API when [clientCertVersion] changes.
  */
 data class HostPin(
     /** Hostname pattern (e.g. "api.example.com" or "*.example.com"). */
@@ -42,7 +45,11 @@ data class HostPin(
     /** Per-host version — incremented when this host's pins change. */
     val version: Int = 0,
     /** Per-host force update flag. */
-    val forceUpdate: Boolean = false
+    val forceUpdate: Boolean = false,
+    /** Whether this host requires mutual TLS (client certificate). */
+    val mtls: Boolean = false,
+    /** Client cert version for this host. Null means no client cert available. */
+    val clientCertVersion: Int? = null
 ) {
     init {
         require(sha256.size >= 2) {

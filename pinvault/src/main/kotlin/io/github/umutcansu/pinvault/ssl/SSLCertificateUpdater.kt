@@ -17,6 +17,7 @@ import io.github.umutcansu.pinvault.model.NoConfigAvailableException
 import io.github.umutcansu.pinvault.model.PinMismatchException
 import io.github.umutcansu.pinvault.model.UpdateResult
 import io.github.umutcansu.pinvault.store.CertificateConfigStore
+import io.github.umutcansu.pinvault.store.ClientCertSecureStore
 import io.github.umutcansu.pinvault.worker.CertificateUpdateWorker
 import kotlinx.coroutines.delay
 import timber.log.Timber
@@ -34,6 +35,9 @@ internal class SSLCertificateUpdater(
     private val configApi: CertificateConfigApi,
     private val configStore: CertificateConfigStore,
     private val httpClientProvider: HttpClientProvider,
+    private val sslManager: DynamicSSLManager? = null,
+    private val certStore: ClientCertSecureStore? = null,
+    private val clientKeyPassword: String = "",
     private val maxRetryCount: Int = DEFAULT_MAX_RETRY
 ) {
 
@@ -185,6 +189,9 @@ internal class SSLCertificateUpdater(
             configStore.save(remoteConfig)
             httpClientProvider.swap(remoteConfig)
 
+            // Sync host-specific client certs for mTLS hosts
+            syncHostClientCerts(remoteConfig, storedConfig)
+
             val newVersion = remoteConfig.computedVersion()
             Timber.d(
                 "Config updated: %d → %d (%d hosts pinned)",
@@ -303,6 +310,59 @@ internal class SSLCertificateUpdater(
             throw InvalidPinFormatException(
                 "Hash at index $index for $hostname is not valid Base64: $hash", e
             )
+        }
+    }
+
+    /**
+     * Downloads and stores host-specific client certs for mTLS hosts.
+     * Only downloads when clientCertVersion changed or cert is new.
+     */
+    private suspend fun syncHostClientCerts(
+        remoteConfig: CertificateConfig,
+        storedConfig: CertificateConfig?
+    ) {
+        if (sslManager == null || certStore == null) return
+
+        val mtlsHosts = remoteConfig.pins.filter { it.mtls && it.clientCertVersion != null }
+        if (mtlsHosts.isEmpty()) return
+
+        val storedCertVersions = storedConfig?.pins
+            ?.filter { it.mtls && it.clientCertVersion != null }
+            ?.associate { it.hostname to it.clientCertVersion }
+            ?: emptyMap()
+
+        val hostCerts = mutableMapOf<String, ByteArray>()
+
+        for (pin in mtlsHosts) {
+            val label = "host_${pin.hostname}"
+            val storedVersion = storedCertVersions[pin.hostname]
+            val needsDownload = storedVersion != pin.clientCertVersion || !certStore.exists(label)
+
+            if (needsDownload) {
+                try {
+                    val p12 = configApi.downloadHostClientCert(pin.hostname)
+                    certStore.save(label, p12)
+                    hostCerts[pin.hostname] = p12
+                    Timber.d(
+                        "Host client cert downloaded: %s (v%d → v%d)",
+                        pin.hostname, storedVersion, pin.clientCertVersion
+                    )
+                } catch (e: Exception) {
+                    Timber.e(e, "Failed to download client cert for %s", pin.hostname)
+                    // Try loading from store as fallback
+                    certStore.load(label)?.let { hostCerts[pin.hostname] = it }
+                }
+            } else {
+                // Already up-to-date — load from store
+                certStore.load(label)?.let { hostCerts[pin.hostname] = it }
+            }
+        }
+
+        if (hostCerts.isNotEmpty()) {
+            sslManager.loadHostClientCerts(hostCerts, clientKeyPassword)
+            // Re-swap to pick up new KeyManagers
+            httpClientProvider.currentConfig?.let { httpClientProvider.swap(it) }
+            Timber.d("Host client certs synced: %d hosts", hostCerts.size)
         }
     }
 

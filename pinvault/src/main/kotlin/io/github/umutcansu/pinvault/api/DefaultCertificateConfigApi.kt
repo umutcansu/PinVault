@@ -6,10 +6,12 @@ import io.github.umutcansu.pinvault.model.HostPin
 import io.github.umutcansu.pinvault.model.SignedConfigResponse
 import io.github.umutcansu.pinvault.ssl.DynamicSSLManager
 import com.google.gson.Gson
+import okhttp3.ResponseBody
 import retrofit2.Retrofit
 import retrofit2.converter.gson.GsonConverterFactory
 import retrofit2.http.GET
 import retrofit2.http.Query
+import retrofit2.http.Url
 import timber.log.Timber
 
 /**
@@ -23,6 +25,7 @@ internal class DefaultCertificateConfigApi(
     configUrl: String,
     private val configEndpoint: String = "api/v1/certificate-config",
     private val healthEndpoint: String = "health",
+    private val clientCertEndpoint: String = "api/v1/client-certs",
     private val signaturePublicKey: String? = null,
     bootstrapPins: List<HostPin>,
     sslManager: DynamicSSLManager
@@ -77,6 +80,13 @@ internal class DefaultCertificateConfigApi(
 
         return gson.fromJson(signed.payload, CertificateConfig::class.java)
     }
+
+    override suspend fun downloadHostClientCert(hostname: String): ByteArray {
+        val url = "$clientCertEndpoint/$hostname/download"
+        Timber.d("Downloading host client cert: %s", url)
+        val body = service.downloadBinary(url)
+        return body.bytes()
+    }
 }
 
 /** Uses @Url so endpoint paths are determined at runtime, not compile time. */
@@ -97,4 +107,8 @@ internal interface DynamicConfigService {
         @retrofit2.http.Url url: String,
         @Query("currentVersion") currentVersion: Int
     ): SignedConfigResponse
+
+    /** Binary download (P12 client cert etc.) */
+    @GET
+    suspend fun downloadBinary(@Url url: String): ResponseBody
 }
