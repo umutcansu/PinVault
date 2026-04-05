@@ -124,6 +124,28 @@ class DatabaseManager(dbPath: String = "pinvault.db") {
                         used INTEGER NOT NULL DEFAULT 0
                     )
                 """)
+
+                // Host client certs — per-host P12 for mTLS distribution
+                stmt.executeUpdate("""
+                    CREATE TABLE IF NOT EXISTS host_client_certs (
+                        hostname TEXT NOT NULL,
+                        config_api_id TEXT NOT NULL DEFAULT 'default-tls',
+                        p12_bytes BLOB NOT NULL,
+                        version INTEGER NOT NULL DEFAULT 1,
+                        common_name TEXT,
+                        fingerprint TEXT,
+                        created_at TEXT NOT NULL,
+                        PRIMARY KEY (hostname, config_api_id)
+                    )
+                """)
+
+                // Migration: add mtls columns to pin_hashes if missing
+                try {
+                    stmt.executeUpdate("ALTER TABLE pin_hashes ADD COLUMN mtls INTEGER NOT NULL DEFAULT 0")
+                } catch (_: Exception) { /* column already exists */ }
+                try {
+                    stmt.executeUpdate("ALTER TABLE pin_hashes ADD COLUMN client_cert_version INTEGER")
+                } catch (_: Exception) { /* column already exists */ }
             }
         }
     }

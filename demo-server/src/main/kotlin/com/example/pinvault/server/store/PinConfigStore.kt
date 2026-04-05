@@ -27,10 +27,10 @@ class PinConfigStore(private val db: DatabaseManager) {
                 if (rs.next()) rs.getInt("force_update") == 1 else false
             }
 
-            data class HostData(val version: Int, val forceUpdate: Boolean, val hashes: MutableList<String> = mutableListOf())
+            data class HostData(val version: Int, val forceUpdate: Boolean, val mtls: Boolean, val clientCertVersion: Int?, val hashes: MutableList<String> = mutableListOf())
             val hosts = mutableMapOf<String, HostData>()
             conn.prepareStatement(
-                "SELECT hostname, sha256, version, force_update FROM pin_hashes WHERE config_api_id = ? ORDER BY id"
+                "SELECT hostname, sha256, version, force_update, mtls, client_cert_version FROM pin_hashes WHERE config_api_id = ? ORDER BY id"
             ).use { stmt ->
                 stmt.setString(1, configApiId)
                 val rs = stmt.executeQuery()
@@ -38,12 +38,14 @@ class PinConfigStore(private val db: DatabaseManager) {
                     val hostname = rs.getString("hostname")
                     val version = rs.getInt("version")
                     val fu = rs.getInt("force_update") == 1
-                    val data = hosts.getOrPut(hostname) { HostData(version, fu) }
+                    val mtls = rs.getInt("mtls") == 1
+                    val ccv = rs.getObject("client_cert_version") as? Int
+                    val data = hosts.getOrPut(hostname) { HostData(version, fu, mtls, ccv) }
                     data.hashes.add(rs.getString("sha256"))
                 }
             }
 
-            val pins = hosts.map { (hostname, data) -> HostPin(hostname, data.hashes, data.version, data.forceUpdate) }
+            val pins = hosts.map { (hostname, data) -> HostPin(hostname, data.hashes, data.version, data.forceUpdate, data.mtls, data.clientCertVersion) }
             return PinConfig(
                 version = pins.maxOfOrNull { it.version } ?: 1,
                 pins = pins,
@@ -72,7 +74,7 @@ class PinConfigStore(private val db: DatabaseManager) {
                 }
 
                 conn.prepareStatement(
-                    "INSERT INTO pin_hashes (config_api_id, hostname, sha256, version, force_update) VALUES (?, ?, ?, ?, ?)"
+                    "INSERT INTO pin_hashes (config_api_id, hostname, sha256, version, force_update, mtls, client_cert_version) VALUES (?, ?, ?, ?, ?, ?, ?)"
                 ).use { stmt ->
                     config.pins.forEach { pin ->
                         pin.sha256.forEach { hash ->
@@ -81,6 +83,8 @@ class PinConfigStore(private val db: DatabaseManager) {
                             stmt.setString(3, hash)
                             stmt.setInt(4, pin.version)
                             stmt.setInt(5, if (pin.forceUpdate) 1 else 0)
+                            stmt.setInt(6, if (pin.mtls) 1 else 0)
+                            stmt.setObject(7, pin.clientCertVersion)
                             stmt.addBatch()
                         }
                     }
@@ -482,6 +486,74 @@ data class EnrollmentToken(
     val createdAt: String,
     val used: Boolean = false
 )
+
+@kotlinx.serialization.Serializable
+data class HostClientCertRecord(
+    val hostname: String,
+    val version: Int,
+    val commonName: String?,
+    val fingerprint: String?,
+    val createdAt: String
+)
+
+class HostClientCertStore(private val db: DatabaseManager) {
+
+    fun save(hostname: String, configApiId: String, p12Bytes: ByteArray, version: Int, commonName: String?, fingerprint: String?) {
+        db.connection().use { conn ->
+            conn.prepareStatement("""
+                INSERT OR REPLACE INTO host_client_certs (hostname, config_api_id, p12_bytes, version, common_name, fingerprint, created_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+            """).use { stmt ->
+                stmt.setString(1, hostname)
+                stmt.setString(2, configApiId)
+                stmt.setBytes(3, p12Bytes)
+                stmt.setInt(4, version)
+                stmt.setString(5, commonName)
+                stmt.setString(6, fingerprint)
+                stmt.setString(7, java.time.Instant.now().toString())
+                stmt.executeUpdate()
+            }
+        }
+    }
+
+    fun getP12(hostname: String, configApiId: String): ByteArray? {
+        db.connection().use { conn ->
+            conn.prepareStatement("SELECT p12_bytes FROM host_client_certs WHERE hostname = ? AND config_api_id = ?").use { stmt ->
+                stmt.setString(1, hostname)
+                stmt.setString(2, configApiId)
+                val rs = stmt.executeQuery()
+                return if (rs.next()) rs.getBytes("p12_bytes") else null
+            }
+        }
+    }
+
+    fun get(hostname: String, configApiId: String): HostClientCertRecord? {
+        db.connection().use { conn ->
+            conn.prepareStatement("SELECT hostname, version, common_name, fingerprint, created_at FROM host_client_certs WHERE hostname = ? AND config_api_id = ?").use { stmt ->
+                stmt.setString(1, hostname)
+                stmt.setString(2, configApiId)
+                val rs = stmt.executeQuery()
+                return if (rs.next()) HostClientCertRecord(
+                    hostname = rs.getString("hostname"),
+                    version = rs.getInt("version"),
+                    commonName = rs.getString("common_name"),
+                    fingerprint = rs.getString("fingerprint"),
+                    createdAt = rs.getString("created_at")
+                ) else null
+            }
+        }
+    }
+
+    fun delete(hostname: String, configApiId: String) {
+        db.connection().use { conn ->
+            conn.prepareStatement("DELETE FROM host_client_certs WHERE hostname = ? AND config_api_id = ?").use { stmt ->
+                stmt.setString(1, hostname)
+                stmt.setString(2, configApiId)
+                stmt.executeUpdate()
+            }
+        }
+    }
+}
 
 class EnrollmentTokenStore(private val db: DatabaseManager) {
 

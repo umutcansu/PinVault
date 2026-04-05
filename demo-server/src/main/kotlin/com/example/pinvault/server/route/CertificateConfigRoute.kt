@@ -6,6 +6,7 @@ import com.example.pinvault.server.model.SignedConfig
 import com.example.pinvault.server.service.ConfigSigningService
 import com.example.pinvault.server.store.ClientDeviceStore
 import com.example.pinvault.server.store.ConnectionHistoryStore
+import com.example.pinvault.server.store.HostClientCertStore
 import com.example.pinvault.server.store.PinConfigHistoryStore
 import com.example.pinvault.server.store.PinConfigStore
 import io.ktor.http.*
@@ -35,7 +36,8 @@ fun Route.certificateConfigRoutes(
     certService: com.example.pinvault.server.service.CertificateService? = null,
     enrollmentTokenStore: com.example.pinvault.server.store.EnrollmentTokenStore? = null,
     clientCertStore: com.example.pinvault.server.store.ClientCertStore? = null,
-    mockServerManager: com.example.pinvault.server.service.MockServerManager? = null
+    mockServerManager: com.example.pinvault.server.service.MockServerManager? = null,
+    hostClientCertStore: HostClientCertStore? = null
 ) {
 
     // Enrollment endpoint — Config API üzerinden client cert dağıtımı
@@ -64,6 +66,16 @@ fun Route.certificateConfigRoutes(
             mockServerManager?.restartMtlsServers(certService)
 
             call.respondBytes(result.p12Bytes, ContentType.Application.OctetStream)
+        }
+    }
+
+    // Host client cert download — Android calls this
+    if (hostClientCertStore != null) {
+        get("/api/v1/client-certs/{hostname}/download") {
+            val hostname = call.parameters["hostname"] ?: ""
+            val p12 = hostClientCertStore.getP12(hostname, configApiId)
+                ?: return@get call.respondText("""{"error":"Client cert bulunamadi"}""", ContentType.Application.Json, HttpStatusCode.NotFound)
+            call.respondBytes(p12, ContentType.Application.OctetStream)
         }
     }
 

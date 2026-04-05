@@ -573,6 +573,9 @@ async function renderHostDetail(host) {
       host_removed: { icon: '&#x274C;', text: t('evHostRemoved'), color: '#ef4444' },
       pins_updated: { icon: '&#x270F;', text: t('evPinsUpdated'), color: '#60a5fa' },
       force_update: { icon: '&#x26A1;', text: t('evForce'),       color: '#f59e0b' },
+      mtls_enabled: { icon: '&#x1F512;', text: 'mTLS Enabled',    color: '#f59e0b' },
+      mtls_disabled:{ icon: '&#x1F513;', text: 'mTLS Disabled',   color: '#94a3b8' },
+      client_cert_uploaded: { icon: '&#x1F4E4;', text: 'Client Cert Uploaded', color: '#a78bfa' },
     }[e] || { icon: '&#x2022;', text: e, color: '#94a3b8' });
 
     if (entries.length === 0) {
@@ -640,6 +643,11 @@ async function renderHostDetail(host) {
       <div id="pins-edit" style="display:none"></div>
     </div>
 
+    <div class="card" id="host-client-cert-card">
+      <div class="card-title">Client Cert (mTLS)</div>
+      <div class="loading">${t('loading')}</div>
+    </div>
+
     <div class="card">
       <div class="card-title">${t('history')}</div>
       ${historyHtml}
@@ -659,6 +667,7 @@ async function renderHostDetail(host) {
   // Cert info, mock server durumu, bağlantı geçmişi ve cihazları ayrı yükle
   loadCertInfo(host.hostname);
   loadMockStatus(host.hostname);
+  loadHostClientCert(host.hostname);
   loadHostConnectionHistory(host.hostname);
   loadClientDevices(host.hostname);
 }
@@ -746,6 +755,87 @@ async function loadClientDevices(hostname) {
   } catch (e) {
     card.innerHTML = `<div class="card-title">${t('connectedClients')}</div><div class="empty-msg">${t('error')}</div>`;
   }
+}
+
+// ── Host Client Cert (mTLS) ──────────────────────────
+
+async function loadHostClientCert(hostname) {
+  const card = document.getElementById('host-client-cert-card');
+  if (!card) return;
+
+  const pin = currentConfig?.pins?.find(p => p.hostname === hostname);
+  const isMtls = pin?.mtls || false;
+  const certVer = pin?.clientCertVersion;
+
+  let certInfo = null;
+  try {
+    const res = await fetch(`/api/v1/hosts/${encodeURIComponent(hostname)}/client-cert/info`);
+    if (res.ok) certInfo = await res.json();
+  } catch (_) {}
+
+  const mtlsToggle = `
+    <div style="display:flex;align-items:center;gap:10px;margin-bottom:12px">
+      <span style="color:#94a3b8;font-size:12px">mTLS:</span>
+      <div style="cursor:pointer;width:40px;height:22px;border-radius:11px;background:${isMtls ? '#22c55e' : '#334155'};position:relative;transition:background 0.2s" onclick="toggleHostMtls('${hostname}',${!isMtls})">
+        <div style="width:18px;height:18px;border-radius:50%;background:white;position:absolute;top:2px;${isMtls ? 'right:2px' : 'left:2px'};transition:all 0.2s"></div>
+      </div>
+      <span style="color:${isMtls ? '#22c55e' : '#64748b'};font-weight:600;font-size:12px">${isMtls ? 'Aktif' : 'Pasif'}</span>
+      ${certVer ? `<span class="ver-badge" style="margin-left:auto">cert v${certVer}</span>` : ''}
+    </div>`;
+
+  const certSection = certInfo ? `
+    <div style="background:#0f172a;border-radius:8px;padding:10px;margin-bottom:12px;font-size:12px">
+      <div style="color:#94a3b8">CN: <span style="color:#7dd3fc">${certInfo.commonName || '—'}</span></div>
+      <div style="color:#94a3b8">Fingerprint: <span style="color:#7dd3fc;font-family:monospace;font-size:10px">${certInfo.fingerprint ? certInfo.fingerprint.substring(0,20) + '...' : '—'}</span></div>
+      <div style="color:#94a3b8">Version: <span style="color:#22c55e">${certInfo.version}</span></div>
+    </div>` : '';
+
+  const uploadBtn = `
+    <div style="display:flex;gap:8px;align-items:center">
+      <button class="btn btn-secondary" style="padding:4px 12px;font-size:11px" onclick="document.getElementById('host-cc-file').click()">
+        ${certInfo ? 'Client Cert Guncelle' : 'Client Cert Yukle'}
+      </button>
+      <input type="file" id="host-cc-file" accept=".p12,.pfx" style="display:none" onchange="uploadHostClientCert('${hostname}')"/>
+      <span style="color:#64748b;font-size:10px">PKCS12 (.p12/.pfx)</span>
+    </div>`;
+
+  card.innerHTML = `
+    <div class="card-title">Client Cert (mTLS)</div>
+    ${mtlsToggle}
+    ${certSection}
+    ${uploadBtn}
+  `;
+}
+
+async function toggleHostMtls(hostname, enable) {
+  try {
+    await fetch(`/api/v1/hosts/${encodeURIComponent(hostname)}/toggle-mtls`, {
+      method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({ mtls: enable })
+    });
+    await loadConfig();
+    loadHostClientCert(hostname);
+  } catch (e) { showToast(t('error'), 'error'); }
+}
+
+async function uploadHostClientCert(hostname) {
+  const file = document.getElementById('host-cc-file').files[0];
+  if (!file) return;
+  const password = prompt('P12 password:', 'changeit');
+  if (password === null) return;
+
+  const formData = new FormData();
+  formData.append('file', file);
+  formData.append('password', password);
+
+  try {
+    const res = await fetch(`/api/v1/hosts/${encodeURIComponent(hostname)}/upload-client-cert`, { method: 'POST', body: formData });
+    if (!res.ok) { const err = await res.json(); showToast(err.error || t('error'), 'error'); return; }
+    const data = await res.json();
+    showToast(`Client cert uploaded — v${data.clientCertVersion}`, 'success');
+    await loadConfig();
+    loadHostClientCert(hostname);
+  } catch (e) { showToast(t('error'), 'error'); }
 }
 
 // ── Add Host (4 tab) ─────────────────────────────────

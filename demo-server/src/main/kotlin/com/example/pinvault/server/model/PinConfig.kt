@@ -18,7 +18,9 @@ data class HostPin(
     val hostname: String,
     val sha256: List<String>,
     val version: Int = 1,
-    val forceUpdate: Boolean = false
+    val forceUpdate: Boolean = false,
+    val mtls: Boolean = false,
+    val clientCertVersion: Int? = null
 )
 
 @Serializable

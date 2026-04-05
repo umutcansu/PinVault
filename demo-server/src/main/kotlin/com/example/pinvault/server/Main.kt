@@ -82,6 +82,7 @@ fun main() {
     // Config API manager (dinamik TLS/mTLS sunucuları)
     val configApiManager = ConfigApiManager()
     val clientCertStore = ClientCertStore(db)
+    val hostClientCertStore = com.example.pinvault.server.store.HostClientCertStore(db)
     val enrollmentTokenStore = EnrollmentTokenStore(db)
 
     // Shutdown hook
@@ -93,8 +94,8 @@ fun main() {
     // Config API routing modülü — her API kendi configApiId'siyle scoped
     fun configApiModuleFor(configApiId: String): Application.() -> Unit = {
         routing {
-            certificateConfigRoutes(configApiId, pinConfigStore, historyStore, connectionStore, signingService, clientDeviceStore, certService, enrollmentTokenStore, clientCertStore, mockServerManager)
-            hostRoutes(configApiId, pinConfigStore, hostStore, historyStore, certService, mockServerManager)
+            certificateConfigRoutes(configApiId, pinConfigStore, historyStore, connectionStore, signingService, clientDeviceStore, certService, enrollmentTokenStore, clientCertStore, mockServerManager, hostClientCertStore)
+            hostRoutes(configApiId, pinConfigStore, hostStore, historyStore, certService, mockServerManager, hostClientCertStore)
             get("/health") {
                 call.respond(mapOf("status" to "ok"))
             }
@@ -133,8 +134,8 @@ fun main() {
         routing {
             // Management server: tüm config API'lerin verilerine erişim
             // configApiId query param ile scoped: ?configApiId=default-tls
-            certificateConfigRoutes("default-tls", pinConfigStore, historyStore, connectionStore, signingService, clientDeviceStore)
-            hostRoutes("default-tls", pinConfigStore, hostStore, historyStore, certService, mockServerManager)
+            certificateConfigRoutes("default-tls", pinConfigStore, historyStore, connectionStore, signingService, clientDeviceStore, hostClientCertStore = hostClientCertStore)
+            hostRoutes("default-tls", pinConfigStore, hostStore, historyStore, certService, mockServerManager, hostClientCertStore)
 
             // Tüm API'lerin config'lerini döner (Web UI sidebar için)
             get("/api/v1/all-configs") {

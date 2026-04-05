@@ -3,6 +3,7 @@ package com.example.pinvault.server.route
 import com.example.pinvault.server.model.*
 import com.example.pinvault.server.service.CertificateService
 import com.example.pinvault.server.service.MockServerManager
+import com.example.pinvault.server.store.HostClientCertStore
 import com.example.pinvault.server.store.HostRecord
 import com.example.pinvault.server.store.HostStore
 import com.example.pinvault.server.store.PinConfigHistoryStore
@@ -20,7 +21,8 @@ fun Route.hostRoutes(
     hostStore: HostStore,
     historyStore: PinConfigHistoryStore,
     certService: CertificateService,
-    mockServerManager: MockServerManager
+    mockServerManager: MockServerManager,
+    hostClientCertStore: HostClientCertStore? = null
 ) {
 
     route("/api/v1/hosts") {
@@ -252,6 +254,118 @@ fun Route.hostRoutes(
                 historyStore.add(configApiId, PinConfigHistoryEntry(hostname, newVersion, Instant.now().toString(), "cert_fetched", fetchResult.sha256Pins.firstOrNull()?.take(12) ?: ""))
 
                 call.respond(HostActionResponse(hostname, fetchResult.sha256Pins, fetchResult.certInfo.validUntil, newVersion))
+            }
+
+            // mTLS toggle — host'u mTLS olarak işaretle/kaldır
+            post("toggle-mtls") {
+                val hostname = call.parameters["hostname"] ?: ""
+                val body = call.receive<kotlinx.serialization.json.JsonObject>()
+                val mtls = body["mtls"]?.let { kotlinx.serialization.json.Json.decodeFromJsonElement(kotlinx.serialization.serializer<Boolean>(), it) } ?: false
+
+                val config = pinConfigStore.load(configApiId)
+                val pin = config.pins.find { it.hostname == hostname }
+                    ?: return@post call.respondText("""{"error":"Host bulunamadi"}""", ContentType.Application.Json, HttpStatusCode.NotFound)
+
+                val updated = config.copy(
+                    pins = config.pins.map {
+                        if (it.hostname == hostname) it.copy(mtls = mtls)
+                        else it
+                    }
+                )
+                pinConfigStore.save(configApiId, updated)
+
+                historyStore.add(configApiId, PinConfigHistoryEntry(hostname, pin.version, Instant.now().toString(), if (mtls) "mtls_enabled" else "mtls_disabled"))
+
+                call.respond(mapOf("hostname" to hostname, "mtls" to mtls))
+            }
+
+            // Upload host-specific client cert (P12)
+            post("upload-client-cert") {
+                if (hostClientCertStore == null) {
+                    return@post call.respondText("""{"error":"Host client cert store not available"}""", ContentType.Application.Json, HttpStatusCode.InternalServerError)
+                }
+
+                val hostname = call.parameters["hostname"] ?: ""
+                hostStore.get(hostname, configApiId)
+                    ?: return@post call.respondText("""{"error":"Host bulunamadi"}""", ContentType.Application.Json, HttpStatusCode.NotFound)
+
+                val multipart = call.receiveMultipart()
+                var fileBytes: ByteArray? = null
+                var password = "changeit"
+
+                multipart.forEachPart { part ->
+                    when (part) {
+                        is PartData.FileItem -> fileBytes = part.streamProvider().readBytes()
+                        is PartData.FormItem -> when (part.name) {
+                            "password" -> password = part.value
+                        }
+                        else -> {}
+                    }
+                    part.dispose()
+                }
+
+                val bytes = fileBytes ?: return@post call.respondText("""{"error":"Dosya gerekli"}""", ContentType.Application.Json, HttpStatusCode.BadRequest)
+
+                // P12 olarak yükle/doğrula
+                val ks = try {
+                    java.security.KeyStore.getInstance("PKCS12").also { it.load(bytes.inputStream(), password.toCharArray()) }
+                } catch (e: Exception) {
+                    return@post call.respondText("""{"error":"Gecersiz P12: ${e.message}"}""", ContentType.Application.Json, HttpStatusCode.BadRequest)
+                }
+
+                val alias = ks.aliases().toList().firstOrNull()
+                val cert = alias?.let { ks.getCertificate(it) as? java.security.cert.X509Certificate }
+                val cn = cert?.subjectX500Principal?.name?.substringAfter("CN=")?.substringBefore(",")
+                val fingerprint = cert?.let {
+                    val digest = java.security.MessageDigest.getInstance("SHA-256").digest(it.publicKey.encoded)
+                    java.util.Base64.getEncoder().encodeToString(digest)
+                }
+
+                // Version bump
+                val config = pinConfigStore.load(configApiId)
+                val pin = config.pins.find { it.hostname == hostname }
+                val newCertVersion = (pin?.clientCertVersion ?: 0) + 1
+
+                hostClientCertStore.save(hostname, configApiId, bytes, newCertVersion, cn, fingerprint)
+
+                // Pin config'e clientCertVersion ve mtls ekle
+                val updated = config.copy(
+                    pins = config.pins.map {
+                        if (it.hostname == hostname) it.copy(mtls = true, clientCertVersion = newCertVersion)
+                        else it
+                    }
+                )
+                pinConfigStore.save(configApiId, updated)
+
+                historyStore.add(configApiId, PinConfigHistoryEntry(hostname, pin?.version ?: 1, Instant.now().toString(), "client_cert_uploaded", fingerprint?.take(12) ?: ""))
+
+                call.respond(mapOf("hostname" to hostname, "clientCertVersion" to newCertVersion, "commonName" to cn, "fingerprint" to fingerprint))
+            }
+
+            // Download host-specific client cert (P12) — Android calls this
+            get("client-cert/download") {
+                if (hostClientCertStore == null) {
+                    return@get call.respondText("""{"error":"Host client cert store not available"}""", ContentType.Application.Json, HttpStatusCode.InternalServerError)
+                }
+
+                val hostname = call.parameters["hostname"] ?: ""
+                val p12 = hostClientCertStore.getP12(hostname, configApiId)
+                    ?: return@get call.respondText("""{"error":"Client cert bulunamadi"}""", ContentType.Application.Json, HttpStatusCode.NotFound)
+
+                call.respondBytes(p12, ContentType.Application.OctetStream)
+            }
+
+            // Get host client cert info
+            get("client-cert/info") {
+                if (hostClientCertStore == null) {
+                    return@get call.respondText("""{"error":"Host client cert store not available"}""", ContentType.Application.Json, HttpStatusCode.InternalServerError)
+                }
+
+                val hostname = call.parameters["hostname"] ?: ""
+                val record = hostClientCertStore.get(hostname, configApiId)
+                    ?: return@get call.respondText("""{"error":"Client cert bulunamadi"}""", ContentType.Application.Json, HttpStatusCode.NotFound)
+
+                call.respond(record)
             }
 
             post("start-mock") {
