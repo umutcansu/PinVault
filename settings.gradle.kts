@@ -16,3 +16,4 @@ dependencyResolutionManagement {
 
 rootProject.name = "PinVault"
 include(":pinvault")
+include(":demo-app")
