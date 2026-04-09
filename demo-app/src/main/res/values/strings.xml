@@ -15,6 +15,8 @@
     <string name="scenario_mtls_tls_desc">Fetches pin config from mTLS Config API (:8092) using client cert, then connects to a TLS host (:8443).</string>
     <string name="scenario_mtls_mtls_title">mTLS Config API → mTLS Host</string>
     <string name="scenario_mtls_mtls_desc">Fetches pin config from mTLS Config API (:8092) using client cert, then connects to an mTLS host (:8444). Client certificate required for both.</string>
+    <string name="scenario_vault_files_title">Vault Files</string>
+    <string name="scenario_vault_files_desc">Remote versioned file management. Fetch, cache, and sync arbitrary files (JSON, binary) via PinVault\'s encrypted storage.</string>
 
     <!-- Common -->
     <string name="status">STATUS</string>

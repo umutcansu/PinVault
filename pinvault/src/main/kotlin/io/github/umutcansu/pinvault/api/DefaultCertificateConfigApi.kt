@@ -87,6 +87,12 @@ internal class DefaultCertificateConfigApi(
         val body = service.downloadBinary(url)
         return body.bytes()
     }
+
+    override suspend fun downloadVaultFile(endpoint: String): ByteArray {
+        Timber.d("Downloading vault file: %s", endpoint)
+        val body = service.downloadBinary(endpoint)
+        return body.bytes()
+    }
 }
 
 /** Uses @Url so endpoint paths are determined at runtime, not compile time. */

@@ -44,4 +44,13 @@ interface CertificateConfigApi {
      * @throws Exception on network or server errors.
      */
     suspend fun downloadHostClientCert(hostname: String): ByteArray
+
+    /**
+     * Downloads a vault file from the given endpoint path.
+     *
+     * @param endpoint Relative path to the file endpoint (e.g. "api/v1/vault/ml-model").
+     * @return Raw file bytes.
+     * @throws Exception on network or server errors.
+     */
+    suspend fun downloadVaultFile(endpoint: String): ByteArray
 }

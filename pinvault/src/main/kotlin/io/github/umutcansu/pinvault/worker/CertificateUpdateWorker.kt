@@ -22,6 +22,13 @@ class CertificateUpdateWorker(
         val updateResult = PinVault.updateNow()
         PinVault.notifyUpdateResult(updateResult)
 
+        // Sync vault files with updateWithPins=true
+        try {
+            PinVault.syncAllFiles()
+        } catch (e: Exception) {
+            Timber.e(e, "Vault file sync failed during periodic update")
+        }
+
         return when (updateResult) {
             is UpdateResult.Updated -> {
                 Timber.d("Worker: config updated to version %d", updateResult.newVersion)

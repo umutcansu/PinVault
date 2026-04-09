@@ -139,6 +139,21 @@ class DatabaseManager(dbPath: String = "pinvault.db") {
                     )
                 """)
 
+                // Vault file distribution tracking
+                stmt.executeUpdate("""
+                    CREATE TABLE IF NOT EXISTS vault_distributions (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        vault_key TEXT NOT NULL,
+                        version INTEGER NOT NULL,
+                        device_id TEXT NOT NULL,
+                        device_manufacturer TEXT,
+                        device_model TEXT,
+                        enrollment_label TEXT,
+                        status TEXT NOT NULL,
+                        timestamp TEXT NOT NULL
+                    )
+                """)
+
                 // Migration: add mtls columns to pin_hashes if missing
                 try {
                     stmt.executeUpdate("ALTER TABLE pin_hashes ADD COLUMN mtls INTEGER NOT NULL DEFAULT 0")

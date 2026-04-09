@@ -24,5 +24,8 @@ class MainActivity : AppCompatActivity() {
         binding.cardMtlsMtls.setOnClickListener {
             startActivity(Intent(this, MtlsToMtlsActivity::class.java))
         }
+        binding.cardVaultFiles.setOnClickListener {
+            startActivity(Intent(this, VaultFileDemoActivity::class.java))
+        }
     }
 }

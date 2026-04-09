@@ -25,3 +25,9 @@ demo-app/.gradle/
 
 # Claude
 .claude/
+
+# Generated artifacts
+allure-report/
+allure-results/
+qa-evidence/
+.DS_Store

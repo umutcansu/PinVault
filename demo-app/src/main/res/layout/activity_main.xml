@@ -127,6 +127,7 @@
             android:background="@drawable/bg_card"
             android:orientation="vertical"
             android:padding="16dp"
+            android:layout_marginBottom="12dp"
             android:clickable="true"
             android:focusable="true">
 
@@ -143,6 +144,35 @@
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
                 android:text="@string/scenario_mtls_mtls_desc"
+                android:textColor="@color/text_secondary"
+                android:textSize="12sp" />
+
+        </LinearLayout>
+
+        <!-- 5. Vault Files -->
+        <LinearLayout
+            android:id="@+id/cardVaultFiles"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:background="@drawable/bg_card"
+            android:orientation="vertical"
+            android:padding="16dp"
+            android:clickable="true"
+            android:focusable="true">
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="@string/scenario_vault_files_title"
+                android:textColor="@color/accent_cyan"
+                android:textSize="16sp"
+                android:textStyle="bold"
+                android:layout_marginBottom="4dp" />
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="@string/scenario_vault_files_desc"
                 android:textColor="@color/text_secondary"
                 android:textSize="12sp" />
 

@@ -58,7 +58,14 @@ data class FetchResult(
 
 class CertificateService(private val certsDir: File) {
 
-    init { certsDir.mkdirs() }
+    init {
+        certsDir.mkdirs()
+        // BouncyCastle provider'ı JVM'e register et — JDK 17+ varsayılan olarak
+        // PBES2/AES kullanır, BC olmadan P12 Android 11 uyumsuz olur
+        if (java.security.Security.getProvider("BC") == null) {
+            java.security.Security.addProvider(org.bouncycastle.jce.provider.BouncyCastleProvider())
+        }
+    }
 
     /**
      * Self-signed sertifika üretir.
@@ -284,6 +291,17 @@ class CertificateService(private val certsDir: File) {
             names.add(GeneralName(GeneralName.iPAddress, host))
         }
 
+        // Fiziksel cihaz desteği: makinanın tüm LAN IP'lerini ekle
+        try {
+            java.net.NetworkInterface.getNetworkInterfaces()?.toList()
+                ?.flatMap { it.inetAddresses.toList() }
+                ?.filter { it is java.net.Inet4Address && !it.isLoopbackAddress }
+                ?.map { it.hostAddress }
+                ?.forEach { ip ->
+                    names.add(GeneralName(GeneralName.iPAddress, ip))
+                }
+        } catch (_: Exception) {}
+
         return GeneralNames(names.toTypedArray())
     }
 
@@ -313,14 +331,8 @@ class CertificateService(private val certsDir: File) {
         val signer = JcaContentSignerBuilder("SHA256withRSA").build(keyPair.private)
         val cert = JcaX509CertificateConverter().getCertificate(certBuilder.build(signer))
 
-        // PKCS12 keystore (Android uyumlu)
-        val p12 = KeyStore.getInstance("PKCS12")
-        p12.load(null, null)
-        p12.setKeyEntry(clientId, keyPair.private, KEYSTORE_PASSWORD.toCharArray(), arrayOf(cert))
-        val p12Bytes = java.io.ByteArrayOutputStream().use { out ->
-            p12.store(out, KEYSTORE_PASSWORD.toCharArray())
-            out.toByteArray()
-        }
+        // PKCS12 keystore — Android uyumlu format (legacy algorithm for Android 11 compat)
+        val p12Bytes = buildAndroidCompatP12(clientId, keyPair.private, cert, KEYSTORE_PASSWORD)
 
         // Client cert'i truststore'a ekle
         addToTrustStore(clientId, cert)
@@ -372,6 +384,29 @@ class CertificateService(private val certsDir: File) {
         }
         ts.setCertificateEntry(alias, cert)
         trustStoreFile.outputStream().use { ts.store(it, KEYSTORE_PASSWORD.toCharArray()) }
+    }
+
+    /**
+     * Android 11+ uyumlu PKCS12 üretir.
+     * JDK 17+ varsayılan olarak PBES2/AES kullanır — Android 11 bunu desteklemez.
+     * BouncyCastle PKCS12 KeyStore legacy algoritma kullanır:
+     *   Key: pbeWithSHAAnd3_KeyTripleDES_CBC
+     *   Cert: pbeWithSHAAnd40BitRC2_CBC
+     *   MAC: SHA-1
+     */
+    private fun buildAndroidCompatP12(
+        alias: String,
+        privateKey: java.security.PrivateKey,
+        cert: X509Certificate,
+        password: String
+    ): ByteArray {
+        val ks = KeyStore.getInstance("PKCS12", "BC")
+        ks.load(null, null)
+        ks.setKeyEntry(alias, privateKey, password.toCharArray(), arrayOf(cert))
+
+        val baos = java.io.ByteArrayOutputStream()
+        ks.store(baos, password.toCharArray())
+        return baos.toByteArray()
     }
 
     companion object {

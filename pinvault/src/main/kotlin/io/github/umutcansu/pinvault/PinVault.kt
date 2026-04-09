@@ -8,11 +8,16 @@ import io.github.umutcansu.pinvault.model.HttpConnectionSettings
 import io.github.umutcansu.pinvault.model.InitResult
 import io.github.umutcansu.pinvault.model.PinVaultConfig
 import io.github.umutcansu.pinvault.model.UpdateResult
+import io.github.umutcansu.pinvault.model.VaultFileConfig
+import io.github.umutcansu.pinvault.model.VaultFileResult
 import io.github.umutcansu.pinvault.ssl.DynamicSSLManager
 import io.github.umutcansu.pinvault.ssl.HttpClientProvider
 import io.github.umutcansu.pinvault.ssl.SSLCertificateUpdater
 import io.github.umutcansu.pinvault.store.CertificateConfigStore
 import io.github.umutcansu.pinvault.store.ClientCertSecureStore
+import io.github.umutcansu.pinvault.store.EncryptedFileStorageProvider
+import io.github.umutcansu.pinvault.store.VaultFileStore
+import io.github.umutcansu.pinvault.store.VaultStorageProvider
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -62,6 +67,9 @@ object PinVault {
     private lateinit var clientProvider: HttpClientProvider
     private lateinit var updater: SSLCertificateUpdater
     private lateinit var configStore: CertificateConfigStore
+    private lateinit var defaultVaultFileStore: VaultFileStore
+    private var vaultStorageProviders: Map<String, VaultStorageProvider> = emptyMap()
+    private lateinit var configApi: io.github.umutcansu.pinvault.api.CertificateConfigApi
 
     @Volatile
     private var initialized = false
@@ -90,6 +98,19 @@ object PinVault {
 
     internal fun notifyUpdateResult(result: UpdateResult) {
         updateListener?.onUpdate(result)
+    }
+
+    // ── Vault File listener ─────────────────────────────────────────────
+
+    fun interface OnFileUpdateListener {
+        fun onFileUpdate(key: String, result: VaultFileResult)
+    }
+
+    @Volatile
+    private var fileUpdateListener: OnFileUpdateListener? = null
+
+    fun setOnFileUpdateListener(listener: OnFileUpdateListener?) {
+        fileUpdateListener = listener
     }
 
     // ── Init (PinVaultConfig — recommended) ─────────────────────────────
@@ -213,7 +234,17 @@ object PinVault {
             clientProvider = HttpClientProvider(sslManager)
             configStore = CertificateConfigStore(appContext)
 
-            val api = configApi ?: DefaultCertificateConfigApi(
+            // ── Vault file storage ─────────────────────────────────────────
+            defaultVaultFileStore = VaultFileStore(appContext)
+            val encryptedFileProvider by lazy { EncryptedFileStorageProvider(appContext) }
+            vaultStorageProviders = config.vaultFiles.mapValues { (_, fileConfig) ->
+                fileConfig.storageProvider ?: when (fileConfig.storageStrategy) {
+                    io.github.umutcansu.pinvault.model.StorageStrategy.ENCRYPTED_FILE -> encryptedFileProvider
+                    io.github.umutcansu.pinvault.model.StorageStrategy.ENCRYPTED_PREFS -> defaultVaultFileStore
+                }
+            }
+
+            val resolvedApi = configApi ?: DefaultCertificateConfigApi(
                 configUrl = config.configUrl,
                 configEndpoint = config.configEndpoint,
                 healthEndpoint = config.healthEndpoint,
@@ -221,10 +252,11 @@ object PinVault {
                 bootstrapPins = config.bootstrapPins,
                 sslManager = sslManager
             )
+            this.configApi = resolvedApi
 
             updater = SSLCertificateUpdater(
                 context = appContext,
-                configApi = api,
+                configApi = resolvedApi,
                 configStore = configStore,
                 httpClientProvider = clientProvider,
                 sslManager = sslManager,
@@ -446,6 +478,154 @@ object PinVault {
         val store = ClientCertSecureStore(context.applicationContext)
         store.clear(label ?: ClientCertSecureStore.DEFAULT_LABEL)
         Timber.i("Client certificate removed [%s]", label ?: "default")
+    }
+
+    // ── Vault File API ─────────────────────────────────────────────────
+
+    /**
+     * Fetches a vault file from the backend and stores it encrypted.
+     *
+     * @param key The vault file key registered in [PinVaultConfig].
+     * @return [VaultFileResult.Updated], [VaultFileResult.AlreadyCurrent], or [VaultFileResult.Failed].
+     */
+    suspend fun fetchFile(key: String): VaultFileResult {
+        checkInitialized()
+        val fileConfig = pinManagerConfig?.vaultFiles?.get(key)
+            ?: return VaultFileResult.Failed(key, "Vault file '$key' not registered in config")
+        return fetchFileInternal(key, fileConfig)
+    }
+
+    /**
+     * Loads a cached vault file from encrypted storage.
+     * Returns null if the file hasn't been fetched yet.
+     */
+    fun loadFile(key: String): ByteArray? {
+        checkInitialized()
+        return getStorageFor(key).load(key)
+    }
+
+    /**
+     * Loads a cached vault file as a UTF-8 string.
+     * Returns null if the file hasn't been fetched yet.
+     */
+    fun loadFileAsString(key: String): String? {
+        return loadFile(key)?.toString(Charsets.UTF_8)
+    }
+
+    /**
+     * Returns true if a vault file exists in cached storage.
+     */
+    fun hasFile(key: String): Boolean {
+        checkInitialized()
+        return getStorageFor(key).exists(key)
+    }
+
+    /**
+     * Returns the current version of a cached vault file, or 0 if not cached.
+     */
+    fun fileVersion(key: String): Int {
+        checkInitialized()
+        return getStorageFor(key).getVersion(key)
+    }
+
+    /**
+     * Removes a cached vault file from encrypted storage.
+     */
+    fun clearFile(key: String) {
+        checkInitialized()
+        getStorageFor(key).clear(key)
+        Timber.d("Vault file cleared: %s", key)
+    }
+
+    /**
+     * Syncs all registered vault files that have [VaultFileConfig.updateWithPins] set to true.
+     * Called automatically during periodic updates.
+     *
+     * @return Map of file key to result.
+     */
+    suspend fun syncAllFiles(): Map<String, VaultFileResult> {
+        checkInitialized()
+        val config = pinManagerConfig ?: return emptyMap()
+        val results = mutableMapOf<String, VaultFileResult>()
+        for ((key, fileConfig) in config.vaultFiles) {
+            if (fileConfig.updateWithPins) {
+                val result = fetchFileInternal(key, fileConfig)
+                results[key] = result
+                fileUpdateListener?.onFileUpdate(key, result)
+            }
+        }
+        return results
+    }
+
+    private suspend fun fetchFileInternal(key: String, config: VaultFileConfig): VaultFileResult {
+        val result = try {
+            val storage = getStorageFor(key)
+            val currentVersion = storage.getVersion(key)
+            val bytes = configApi.downloadVaultFile(config.endpoint)
+
+            // Compare with stored content to determine if updated
+            val storedBytes = storage.load(key)
+            if (storedBytes != null && bytes.contentEquals(storedBytes)) {
+                VaultFileResult.AlreadyCurrent(key, currentVersion)
+            } else {
+                val newVersion = currentVersion + 1
+                storage.save(key, bytes, newVersion)
+                Timber.d("Vault file updated: %s (v%d → v%d, %d bytes)", key, currentVersion, newVersion, bytes.size)
+                VaultFileResult.Updated(key, newVersion, bytes)
+            }
+        } catch (e: Exception) {
+            Timber.e(e, "Vault file fetch failed: %s", key)
+            VaultFileResult.Failed(key, e.message ?: "Unknown error", e)
+        }
+
+        // Fire-and-forget report to server
+        reportFileDownload(key, result)
+        return result
+    }
+
+    private suspend fun reportFileDownload(key: String, result: VaultFileResult) {
+        val configUrl = pinManagerConfig?.configUrl ?: return
+        val version = when (result) {
+            is VaultFileResult.Updated -> result.version
+            is VaultFileResult.AlreadyCurrent -> result.version
+            is VaultFileResult.Failed -> 0
+        }
+        val status = when (result) {
+            is VaultFileResult.Updated -> "downloaded"
+            is VaultFileResult.AlreadyCurrent -> "cached"
+            is VaultFileResult.Failed -> "failed"
+        }
+        val label = pinManagerConfig?.clientCertLabel ?: "default"
+
+        kotlinx.coroutines.withContext(Dispatchers.IO) {
+            try {
+                val json = """{"key":"$key","version":$version,"status":"$status","deviceManufacturer":"${android.os.Build.MANUFACTURER}","deviceModel":"${android.os.Build.MODEL}","enrollmentLabel":"$label","deviceId":"${android.os.Build.MANUFACTURER}_${android.os.Build.MODEL}"}"""
+                val url = "${configUrl}api/v1/vault/report"
+                val body = json.toRequestBody("application/json".toMediaType())
+                val request = okhttp3.Request.Builder().url(url).post(body).build()
+                // Use trust-all client for report — self-signed certs, report is non-critical telemetry
+                val trustAll = object : javax.net.ssl.X509TrustManager {
+                    override fun checkClientTrusted(chain: Array<java.security.cert.X509Certificate>, authType: String) {}
+                    override fun checkServerTrusted(chain: Array<java.security.cert.X509Certificate>, authType: String) {}
+                    override fun getAcceptedIssuers(): Array<java.security.cert.X509Certificate> = emptyArray()
+                }
+                val sslCtx = javax.net.ssl.SSLContext.getInstance("TLS")
+                sslCtx.init(null, arrayOf(trustAll), java.security.SecureRandom())
+                val reportClient = okhttp3.OkHttpClient.Builder()
+                    .sslSocketFactory(sslCtx.socketFactory, trustAll)
+                    .hostnameVerifier { _, _ -> true }
+                    .connectTimeout(5, java.util.concurrent.TimeUnit.SECONDS)
+                    .build()
+                reportClient.newCall(request).execute().close()
+                Timber.d("Vault file report sent: %s → %s", key, status)
+            } catch (e: Exception) {
+                Timber.e(e, "Failed to report vault file download: %s", key)
+            }
+        }
+    }
+
+    private fun getStorageFor(key: String): VaultStorageProvider {
+        return vaultStorageProviders[key] ?: defaultVaultFileStore
     }
 
     /**

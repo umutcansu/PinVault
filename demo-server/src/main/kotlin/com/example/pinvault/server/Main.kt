@@ -5,6 +5,7 @@ import com.example.pinvault.server.model.HostPin
 import com.example.pinvault.server.model.PinConfigHistoryEntry
 import com.example.pinvault.server.route.certificateConfigRoutes
 import com.example.pinvault.server.route.hostRoutes
+import com.example.pinvault.server.route.vaultRoutes
 import com.example.pinvault.server.store.HostRecord
 import com.example.pinvault.server.service.CertificateService
 import com.example.pinvault.server.service.ConfigApiManager
@@ -53,6 +54,7 @@ fun main() {
     val mockServerManager = MockServerManager()
     val httpPort = System.getenv("PORT")?.toIntOrNull() ?: 8080
     val httpsPort = System.getenv("HTTPS_PORT")?.toIntOrNull() ?: (httpPort + 1)
+    val enrollmentMode = System.getenv("ENROLLMENT_MODE")?.lowercase() ?: "token"
 
     // Demo server sertifikası üret (yoksa)
     val serverCertId = "demo-server"
@@ -84,6 +86,8 @@ fun main() {
     val clientCertStore = ClientCertStore(db)
     val hostClientCertStore = com.example.pinvault.server.store.HostClientCertStore(db)
     val enrollmentTokenStore = EnrollmentTokenStore(db)
+    val vaultFileStore = com.example.pinvault.server.store.VaultFileStore(db)
+    val vaultDistStore = com.example.pinvault.server.store.VaultDistributionStore(db)
 
     // Shutdown hook
     Runtime.getRuntime().addShutdownHook(Thread {
@@ -91,11 +95,18 @@ fun main() {
         configApiManager.stopAll()
     })
 
-    // Config API routing modülü — her API kendi configApiId'siyle scoped
-    fun configApiModuleFor(configApiId: String): Application.() -> Unit = {
+    // Config API routing modülü — her API kendi configApiId ve mode'uyla scoped
+    fun configApiModuleFor(configApiId: String, mode: String = "tls"): Application.() -> Unit = {
         routing {
-            certificateConfigRoutes(configApiId, pinConfigStore, historyStore, connectionStore, signingService, clientDeviceStore, certService, enrollmentTokenStore, clientCertStore, mockServerManager, hostClientCertStore)
+            certificateConfigRoutes(configApiId, pinConfigStore, historyStore, connectionStore, signingService, clientDeviceStore, certService, enrollmentTokenStore, clientCertStore, mockServerManager, hostClientCertStore, onClientCertEnrolled = {
+                // Enrollment sonrası mTLS Config API'leri restart et (yeni truststore ile)
+                configApiManager.getAll().filter { it.mode == "mtls" }.forEach { api ->
+                    println("Restarting mTLS Config API: ${api.id} (new truststore)")
+                    configApiManager.start(api.id, api.port, api.mode, api.keystorePath, certService.getTrustStoreFile()?.absolutePath, configApiModuleFor(api.id, api.mode))
+                }
+            }, enrollmentMode = enrollmentMode, configApiMode = mode)
             hostRoutes(configApiId, pinConfigStore, hostStore, historyStore, certService, mockServerManager, hostClientCertStore)
+            vaultRoutes(vaultFileStore, vaultDistStore)
             get("/health") {
                 call.respond(mapOf("status" to "ok"))
             }
@@ -109,8 +120,50 @@ fun main() {
         port = httpsPort,
         mode = "tls",
         keystorePath = serverKeystorePath.absolutePath,
-        configModule = configApiModuleFor("default-tls")
+        configModule = configApiModuleFor("default-tls", "tls")
     )
+
+    // DB'deki config API'leri ve mock server'ları auto-start et
+    data class ApiToStart(val id: String, val port: Int, val mode: String)
+    data class MockToStart(val hostname: String, val keystorePath: String, val port: Int)
+
+    val apisToStart = mutableListOf<ApiToStart>()
+    val mocksToStart = mutableListOf<MockToStart>()
+
+    db.connection().use { conn ->
+        conn.prepareStatement("SELECT id, port, mode FROM config_apis WHERE auto_start = 1").use { stmt ->
+            val rs = stmt.executeQuery()
+            while (rs.next()) apisToStart.add(ApiToStart(rs.getString("id"), rs.getInt("port"), rs.getString("mode")))
+        }
+        conn.prepareStatement("SELECT hostname, keystore_path, mock_server_port FROM hosts WHERE mock_server_port IS NOT NULL AND keystore_path IS NOT NULL").use { stmt ->
+            val rs = stmt.executeQuery()
+            while (rs.next()) mocksToStart.add(MockToStart(rs.getString("hostname"), rs.getString("keystore_path"), rs.getInt("mock_server_port")))
+        }
+    }
+
+    for (api in apisToStart) {
+        if (api.id != "default-tls" && !configApiManager.isRunning(api.id)) {
+            try {
+                val trustPath = if (api.mode == "mtls") certService.getTrustStoreFile()?.absolutePath?.takeIf { File(it).exists() } else null
+                pinConfigStore.ensureConfigExists(api.id)
+                configApiManager.start(api.id, api.port, api.mode, serverKeystorePath.absolutePath, trustPath, configApiModuleFor(api.id, api.mode))
+                println("Auto-started config API: ${api.id} on port ${api.port} (${api.mode})")
+            } catch (e: Exception) {
+                println("Failed to auto-start config API ${api.id}: ${e.message}")
+            }
+        }
+    }
+
+    for (mock in mocksToStart) {
+        if (!mockServerManager.isRunning(mock.hostname)) {
+            try {
+                mockServerManager.start(mock.hostname, mock.port, mock.keystorePath)
+                println("Auto-started mock server: ${mock.hostname} on port ${mock.port}")
+            } catch (e: Exception) {
+                println("Failed to auto-start mock ${mock.hostname}: ${e.message}")
+            }
+        }
+    }
 
     // HTTP management server
     embeddedServer(Netty, port = httpPort) {
@@ -134,8 +187,9 @@ fun main() {
         routing {
             // Management server: tüm config API'lerin verilerine erişim
             // configApiId query param ile scoped: ?configApiId=default-tls
-            certificateConfigRoutes("default-tls", pinConfigStore, historyStore, connectionStore, signingService, clientDeviceStore, hostClientCertStore = hostClientCertStore)
+            certificateConfigRoutes("default-tls", pinConfigStore, historyStore, connectionStore, signingService, clientDeviceStore, hostClientCertStore = hostClientCertStore, enrollmentMode = enrollmentMode)
             hostRoutes("default-tls", pinConfigStore, hostStore, historyStore, certService, mockServerManager, hostClientCertStore)
+            vaultRoutes(vaultFileStore, vaultDistStore)
 
             // Tüm API'lerin config'lerini döner (Web UI sidebar için)
             get("/api/v1/all-configs") {
@@ -200,6 +254,13 @@ fun main() {
 
             get("/health") {
                 call.respond(mapOf("status" to "ok"))
+            }
+
+            get("/api/v1/enrollment-mode") {
+                call.respondText(
+                    """{"mode":"$enrollmentMode","tokenRequired":${enrollmentMode != "open"}}""",
+                    ContentType.Application.Json
+                )
             }
 
             get("/api/v1/server-tls-pins") {
@@ -319,7 +380,13 @@ fun main() {
 
                 try {
                     pinConfigStore.ensureConfigExists(id)
-                    val instance = configApiManager.start(id, port, mode, serverKeystorePath.absolutePath, trustPath, configApiModuleFor(id))
+                    val instance = configApiManager.start(id, port, mode, serverKeystorePath.absolutePath, trustPath, configApiModuleFor(id, mode))
+                    // DB'ye kaydet (auto_start)
+                    db.connection().use { conn ->
+                        conn.prepareStatement("INSERT OR REPLACE INTO config_apis (id, port, mode, auto_start, created_at) VALUES (?, ?, ?, 1, datetime('now'))").use { s ->
+                            s.setString(1, id); s.setInt(2, port); s.setString(3, mode); s.executeUpdate()
+                        }
+                    }
                     call.respondText(
                         """{"id":"${instance.id}","port":${instance.port},"mode":"${instance.mode}","running":true}""",
                         ContentType.Application.Json
@@ -484,6 +551,11 @@ fun main() {
         println("Config API:   https://localhost:$httpsPort (TLS)")
         println("Web UI:       http://localhost:$httpPort")
         println("Database:     $dbPath")
+        if (enrollmentMode == "open") {
+            println("Enrollment:   OPEN (WARNING — deviceId enrollment aktif, üretimde kullanmayın!)")
+        } else {
+            println("Enrollment:   TOKEN (güvenli — sadece enrollment token ile kayıt)")
+        }
         println("=".repeat(60))
         println("Pin Config Endpoints:")
         println("  GET  /api/v1/certificate-config")

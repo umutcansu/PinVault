@@ -37,10 +37,20 @@ fun Route.certificateConfigRoutes(
     enrollmentTokenStore: com.example.pinvault.server.store.EnrollmentTokenStore? = null,
     clientCertStore: com.example.pinvault.server.store.ClientCertStore? = null,
     mockServerManager: com.example.pinvault.server.service.MockServerManager? = null,
-    hostClientCertStore: HostClientCertStore? = null
+    hostClientCertStore: HostClientCertStore? = null,
+    onClientCertEnrolled: (() -> Unit)? = null,
+    enrollmentMode: String = "token",
+    configApiMode: String = "tls"
 ) {
 
     // Enrollment endpoint — Config API üzerinden client cert dağıtımı
+    //
+    // Güvenlik modları (ENROLLMENT_MODE):
+    //   "token"  → Sadece enrollment token ile kayıt (varsayılan, üretim için önerilir)
+    //   "open"   → Token veya deviceId ile kayıt (sadece demo/test için)
+    //
+    // Üretimde her zaman token modu kullanılmalıdır. Token'lar management API'den
+    // oluşturulur ve tek kullanımlıktır.
     if (certService != null) {
         post("/api/v1/client-certs/enroll") {
             val body = call.receiveText()
@@ -53,10 +63,17 @@ fun Route.certificateConfigRoutes(
                 clientId = enrollmentTokenStore.validate(token)
                     ?: return@post call.respondText("""{"error":"Gecersiz token"}""", ContentType.Application.Json, HttpStatusCode.Unauthorized)
                 enrollmentTokenStore.markUsed(token)
-            } else if (deviceId != null) {
+            } else if (deviceId != null && enrollmentMode == "open") {
+                // deviceId-only enrollment — sadece ENROLLMENT_MODE=open iken aktif
+                // Üretimde kullanılmamalıdır: deviceId tahmin edilebilir, kimlik doğrulama yok
                 clientId = deviceId
+            } else if (deviceId != null) {
+                return@post call.respondText(
+                    """{"error":"Token required for enrollment. Generate a token via management API (POST /api/v1/enrollment-tokens/generate). To allow deviceId-only enrollment (not recommended for production), set ENROLLMENT_MODE=open"}""",
+                    ContentType.Application.Json, HttpStatusCode.Forbidden
+                )
             } else {
-                return@post call.respondText("""{"error":"token veya deviceId gerekli"}""", ContentType.Application.Json, HttpStatusCode.BadRequest)
+                return@post call.respondText("""{"error":"token gerekli — management API'den token oluşturun"}""", ContentType.Application.Json, HttpStatusCode.BadRequest)
             }
 
             val result = certService.generateClientCertificate(clientId)
@@ -64,14 +81,24 @@ fun Route.certificateConfigRoutes(
 
             // mTLS mock server'ları ve Config API'leri yeniden başlat (yeni truststore ile)
             mockServerManager?.restartMtlsServers(certService)
+            onClientCertEnrolled?.invoke()
 
             call.respondBytes(result.p12Bytes, ContentType.Application.OctetStream)
         }
     }
 
-    // Host client cert download — Android calls this
+    // Host client cert download — Android PinVault syncHostClientCerts() bunu çağırır
+    //
+    // Güvenlik: Host-specific client cert'ler sadece mTLS Config API üzerinden sunulmalıdır.
+    // TLS Config API'den erişim reddedilir — önce default enrollment yapıp mTLS API kullanın.
     if (hostClientCertStore != null) {
         get("/api/v1/client-certs/{hostname}/download") {
+            if (configApiMode == "tls") {
+                return@get call.respondText(
+                    """{"error":"Host client certs are only available via mTLS Config API. Enroll first to get a default client cert, then use the mTLS endpoint to download host-specific certs."}""",
+                    ContentType.Application.Json, HttpStatusCode.Forbidden
+                )
+            }
             val hostname = call.parameters["hostname"] ?: ""
             val p12 = hostClientCertStore.getP12(hostname, configApiId)
                 ?: return@get call.respondText("""{"error":"Client cert bulunamadi"}""", ContentType.Application.Json, HttpStatusCode.NotFound)

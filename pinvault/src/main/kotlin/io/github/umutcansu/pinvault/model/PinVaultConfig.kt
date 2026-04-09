@@ -65,7 +65,12 @@ data class PinVaultConfig(
      * Different labels allow multiple client certificates on the same device.
      * Example: "config" for config API cert, "host" for host cert.
      */
-    val clientCertLabel: String = DEFAULT_CERT_LABEL
+    val clientCertLabel: String = DEFAULT_CERT_LABEL,
+    /**
+     * Registered vault files for remote versioned file management.
+     * Configure via DSL: `.vaultFile("key") { endpoint("...") }`
+     */
+    val vaultFiles: Map<String, VaultFileConfig> = emptyMap()
 ) {
 
     class Builder(private val configUrl: String) {
@@ -80,6 +85,7 @@ data class PinVaultConfig(
         private var clientKeyPassword: String = "changeit"
         private var enrollmentToken: String? = null
         private var clientCertLabel: String = DEFAULT_CERT_LABEL
+        private val vaultFiles = mutableMapOf<String, VaultFileConfig>()
 
         fun bootstrapPins(pins: List<HostPin>) = apply { this.bootstrapPins = pins }
         fun configEndpoint(endpoint: String) = apply { this.configEndpoint = endpoint }
@@ -94,6 +100,20 @@ data class PinVaultConfig(
         }
         fun enrollmentToken(token: String) = apply { this.enrollmentToken = token }
         fun clientCertLabel(label: String) = apply { this.clientCertLabel = label }
+
+        /**
+         * Register a vault file for remote versioned management.
+         *
+         * ```kotlin
+         * .vaultFile("ml-model") {
+         *     endpoint("api/v1/vault/ml-model")
+         *     storage(StorageStrategy.ENCRYPTED_FILE)
+         * }
+         * ```
+         */
+        fun vaultFile(key: String, init: VaultFileConfig.Builder.() -> Unit) = apply {
+            vaultFiles[key] = VaultFileConfig.Builder(key).apply(init).build()
+        }
 
         fun build(): PinVaultConfig {
             require(configUrl.isNotBlank()) { "configUrl must not be blank" }
@@ -112,7 +132,8 @@ data class PinVaultConfig(
                 clientKeystoreBytes = clientKeystoreBytes,
                 clientKeyPassword = clientKeyPassword,
                 enrollmentToken = enrollmentToken,
-                clientCertLabel = clientCertLabel
+                clientCertLabel = clientCertLabel,
+                vaultFiles = vaultFiles.toMap()
             )
         }
     }

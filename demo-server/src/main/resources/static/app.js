@@ -99,6 +99,14 @@ const i18n = {
     mtlsEnvHint: 'Aktifleştirmek için: MTLS_ENABLED=true ile sunucuyu başlatın',
     generateClientCert: 'Client Cert Üret', uploadClientCert: 'Client Cert Yükle',
     clientCerts: 'Kayıtlı Client Sertifikaları', noClientCerts: 'Henüz client sertifikası yok',
+    hostCertGuide: 'Bu host için client cert yükleyerek mTLS\'i aktifleştirebilirsiniz. Client cert yüklendikten sonra, enroll olan cihazlar bu cert\'i mTLS Config API üzerinden otomatik indirir.',
+    hostCertNone: 'Client cert yüklenmemiş',
+    hostCertUploadHint: 'PKCS12 (.p12/.pfx) formatında client cert yükleyin',
+    testConnection: 'Bağlantıyı Test Et',
+    testingConnection: 'Test ediliyor...',
+    connTestOk: 'Bağlantı başarılı',
+    connTestFail: 'Bağlantı başarısız',
+    mockNotRunning: 'Mock server çalışmıyor — önce başlatın',
     thFingerprint: 'Fingerprint', thCreated: 'Oluşturma', thRevoked: 'Durum',
     revoke: 'İptal Et', active: 'Aktif', revoked: 'İptal Edildi',
     certGenerated: 'Client sertifika üretildi — indiriliyor',
@@ -112,6 +120,16 @@ const i18n = {
     renewUploadBtn: 'Yükle', renewFetchLabel: 'URL', renewFetchPlaceholder: 'https://api.example.com',
     renewFetchBtn: 'Çek', certRenewed: 'Sertifika yenilendi', certUploadRenewed: 'Sertifika yüklendi ve güncellendi',
     certFetchRenewed: 'Sertifika URL\'den çekildi ve güncellendi',
+    vaultTitle: 'Vault Dosyaları', vaultSub: 'Uzaktan dağıtılan dosyalar ve dağıtım geçmişi',
+    vaultUpload: 'Dosya Yükle', vaultDelete: 'Sil', vaultKey: 'Anahtar',
+    vaultVersion: 'Versiyon', vaultSize: 'Boyut', vaultDistCount: 'Dağıtım',
+    vaultNoFiles: 'Henüz vault dosyası yok', vaultUploadBtn: 'Yükle',
+    vaultKeyPlaceholder: 'feature-flags', vaultFilePlaceholder: 'Dosya seçin',
+    vaultDistTitle: 'Dağıtım Geçmişi', vaultNoDistHistory: 'Dağıtım kaydı yok',
+    vaultStats: 'İstatistikler', vaultTotalDist: 'Toplam Dağıtım',
+    vaultUniqueDevices: 'Cihaz', vaultUniqueKeys: 'Dosya', vaultDownloaded: 'İndirilen',
+    vaultFailed: 'Başarısız', vaultDevice: 'Cihaz', vaultStatus: 'Durum',
+    vaultTimestamp: 'Tarih', vaultLabel: 'Etiket',
   },
   en: {
     hosts: 'Hosts', addHost: '+ New Host', selectHost: 'Select a host',
@@ -202,6 +220,14 @@ const i18n = {
     mtlsEnvHint: 'To enable: start the server with MTLS_ENABLED=true',
     generateClientCert: 'Generate Client Cert', uploadClientCert: 'Upload Client Cert',
     clientCerts: 'Registered Client Certificates', noClientCerts: 'No client certificates yet',
+    hostCertGuide: 'Upload a client cert for this host to enable mTLS. Once uploaded, enrolled devices will auto-download it via the mTLS Config API.',
+    hostCertNone: 'No client cert uploaded',
+    hostCertUploadHint: 'Upload a client cert in PKCS12 (.p12/.pfx) format',
+    testConnection: 'Test Connection',
+    testingConnection: 'Testing...',
+    connTestOk: 'Connection successful',
+    connTestFail: 'Connection failed',
+    mockNotRunning: 'Mock server not running — start it first',
     thFingerprint: 'Fingerprint', thCreated: 'Created', thRevoked: 'Status',
     revoke: 'Revoke', active: 'Active', revoked: 'Revoked',
     certGenerated: 'Client certificate generated — downloading',
@@ -218,6 +244,16 @@ const i18n = {
     renewUploadBtn: 'Upload', renewFetchLabel: 'URL', renewFetchPlaceholder: 'https://api.example.com',
     renewFetchBtn: 'Fetch', certRenewed: 'Certificate renewed', certUploadRenewed: 'Certificate uploaded and updated',
     certFetchRenewed: 'Certificate fetched from URL and updated',
+    vaultTitle: 'Vault Files', vaultSub: 'Remotely distributed files and distribution history',
+    vaultUpload: 'Upload File', vaultDelete: 'Delete', vaultKey: 'Key',
+    vaultVersion: 'Version', vaultSize: 'Size', vaultDistCount: 'Distributions',
+    vaultNoFiles: 'No vault files yet', vaultUploadBtn: 'Upload',
+    vaultKeyPlaceholder: 'feature-flags', vaultFilePlaceholder: 'Choose file',
+    vaultDistTitle: 'Distribution History', vaultNoDistHistory: 'No distribution records',
+    vaultStats: 'Statistics', vaultTotalDist: 'Total Distributions',
+    vaultUniqueDevices: 'Devices', vaultUniqueKeys: 'Files', vaultDownloaded: 'Downloaded',
+    vaultFailed: 'Failed', vaultDevice: 'Device', vaultStatus: 'Status',
+    vaultTimestamp: 'Date', vaultLabel: 'Label',
   }
 };
 
@@ -654,7 +690,13 @@ async function renderHostDetail(host) {
     </div>
 
     <div class="card" id="conn-history-card">
-      <div style="display:flex;justify-content:space-between;align-items:center"><div class="card-title">${t('connHistory')}</div><span style="cursor:pointer;color:#60a5fa;font-size:14px" onclick="loadHostConnectionHistory('${host.hostname}')" title="Yenile">&#x21bb;</span></div>
+      <div style="display:flex;justify-content:space-between;align-items:center">
+        <div class="card-title">${t('connHistory')}</div>
+        <div style="display:flex;gap:8px;align-items:center">
+          <button class="btn btn-primary" style="padding:4px 12px;font-size:11px" onclick="testHostConnection('${host.hostname}')">${t('testConnection')}</button>
+          <span style="cursor:pointer;color:#60a5fa;font-size:14px" onclick="loadHostConnectionHistory('${host.hostname}')" title="Yenile">&#x21bb;</span>
+        </div>
+      </div>
       <div class="loading">${t('loading')}</div>
     </div>
 
@@ -672,6 +714,49 @@ async function renderHostDetail(host) {
   loadClientDevices(host.hostname);
 }
 
+async function testHostConnection(hostname) {
+  try {
+    // Mock server durumunu kontrol et
+    const statusRes = await fetch(`/api/v1/hosts/${encodeURIComponent(hostname)}/status`);
+    if (!statusRes.ok) { toast(t('error'), 'error'); return; }
+    const status = await statusRes.json();
+    if (!status.mockServerRunning) {
+      toast(t('mockNotRunning'), 'error');
+      return;
+    }
+
+    const port = status.mockTlsPort || status.mockMtlsPort || status.mockServerPort || 8443;
+    const mode = status.mockServerMode || 'tls';
+    const testUrl = `https://${hostname}:${port}/health`;
+
+    // Management API üzerinden proxy test — sunucu kendi mock server'ına bağlanır
+    const start = Date.now();
+    const res = await fetch(`/api/v1/hosts/${encodeURIComponent(hostname)}/test-connection`, { method: 'POST' });
+    const elapsed = Date.now() - start;
+    const data = await res.json();
+
+    // Sonucu connection history'ye kaydet
+    await fetch('/api/v1/connection-history/web', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        hostname: hostname,
+        status: data.success ? 'healthy' : 'error',
+        responseTimeMs: data.responseTimeMs || elapsed,
+        errorMessage: data.error || undefined
+      })
+    });
+
+    if (data.success) {
+      toast(`${t('connTestOk')} — ${data.responseTimeMs || elapsed}ms`, 'success');
+    } else {
+      toast(`${t('connTestFail')}: ${data.error || ''}`, 'error');
+    }
+    loadHostConnectionHistory(hostname);
+  } catch (e) {
+    toast(t('connTestFail') + ': ' + e.message, 'error');
+  }
+}
+
 async function loadHostConnectionHistory(hostname) {
   const card = document.getElementById('conn-history-card');
   if (!card) return;
@@ -681,7 +766,7 @@ async function loadHostConnectionHistory(hostname) {
     const locale = lang === 'tr' ? 'tr-TR' : 'en-US';
 
     if (entries.length === 0) {
-      card.innerHTML = `<div style="display:flex;justify-content:space-between;align-items:center"><div class="card-title">${t('connHistory')}</div><span style="cursor:pointer;color:#60a5fa;font-size:14px" onclick="loadHostConnectionHistory('${hostname}')" title="Yenile">&#x21bb;</span></div><div class="empty-msg">${t('noConnHistory')}</div>`;
+      card.innerHTML = `<div style="display:flex;justify-content:space-between;align-items:center"><div class="card-title">${t('connHistory')}</div><div style="display:flex;gap:8px;align-items:center"><button class="btn btn-primary" style="padding:4px 12px;font-size:11px" onclick="testHostConnection('${hostname}')">${t('testConnection')}</button><span style="cursor:pointer;color:#60a5fa;font-size:14px" onclick="loadHostConnectionHistory('${hostname}')" title="Yenile">&#x21bb;</span></div></div><div class="empty-msg">${t('noConnHistory')}</div>`;
       return;
     }
 
@@ -701,12 +786,12 @@ async function loadHostConnectionHistory(hostname) {
         <td>${pinInfo}</td>
         <td>${pinVer}</td>
         <td style="color:#64748b;font-size:11px">${new Date(e.timestamp).toLocaleString(locale)}</td>
-        <td style="color:#64748b;font-size:10px;max-width:200px;overflow:hidden;text-overflow:ellipsis">${e.errorMessage || ''}</td>
+        <td style="color:#64748b;font-size:10px;max-width:200px;overflow:hidden;text-overflow:ellipsis">${e.errorMessage && e.errorMessage !== 'null' ? e.errorMessage : ''}</td>
       </tr>`;
     }).join('');
 
     card.innerHTML = `
-      <div style="display:flex;justify-content:space-between;align-items:center"><div class="card-title">${t('connHistory')}</div><span style="cursor:pointer;color:#60a5fa;font-size:14px" onclick="loadHostConnectionHistory('${hostname}')" title="Yenile">&#x21bb;</span></div>
+      <div style="display:flex;justify-content:space-between;align-items:center"><div class="card-title">${t('connHistory')}</div><div style="display:flex;gap:8px;align-items:center"><button class="btn btn-primary" style="padding:4px 12px;font-size:11px" onclick="testHostConnection('${hostname}')">${t('testConnection')}</button><span style="cursor:pointer;color:#60a5fa;font-size:14px" onclick="loadHostConnectionHistory('${hostname}')" title="Yenile">&#x21bb;</span></div></div>
       <table class="data-table">
         <thead><tr>
           <th>${t('thClient')}</th><th>${t('thStatus')}</th><th>${t('thDuration')}</th>
@@ -715,7 +800,7 @@ async function loadHostConnectionHistory(hostname) {
         <tbody>${rows}</tbody>
       </table>`;
   } catch (e) {
-    card.innerHTML = `<div style="display:flex;justify-content:space-between;align-items:center"><div class="card-title">${t('connHistory')}</div><span style="cursor:pointer;color:#60a5fa;font-size:14px" onclick="loadHostConnectionHistory('${hostname}')" title="Yenile">&#x21bb;</span></div><div class="empty-msg">${t('error')}</div>`;
+    card.innerHTML = `<div style="display:flex;justify-content:space-between;align-items:center"><div class="card-title">${t('connHistory')}</div><div style="display:flex;gap:8px;align-items:center"><button class="btn btn-primary" style="padding:4px 12px;font-size:11px" onclick="testHostConnection('${hostname}')">${t('testConnection')}</button><span style="cursor:pointer;color:#60a5fa;font-size:14px" onclick="loadHostConnectionHistory('${hostname}')" title="Yenile">&#x21bb;</span></div></div><div class="empty-msg">${t('error')}</div>`;
   }
 }
 
@@ -788,7 +873,11 @@ async function loadHostClientCert(hostname) {
       <div style="color:#94a3b8">CN: <span style="color:#7dd3fc">${certInfo.commonName || '—'}</span></div>
       <div style="color:#94a3b8">Fingerprint: <span style="color:#7dd3fc;font-family:monospace;font-size:10px">${certInfo.fingerprint ? certInfo.fingerprint.substring(0,20) + '...' : '—'}</span></div>
       <div style="color:#94a3b8">Version: <span style="color:#22c55e">${certInfo.version}</span></div>
-    </div>` : '';
+    </div>` : `
+    <div style="background:#0f172a;border-radius:8px;padding:10px;margin-bottom:12px;font-size:12px">
+      <div style="color:#64748b;margin-bottom:6px">${t('hostCertNone')}</div>
+      <div style="color:#475569;font-size:11px;line-height:1.5">${t('hostCertGuide')}</div>
+    </div>`;
 
   const uploadBtn = `
     <div style="display:flex;gap:8px;align-items:center">
@@ -815,7 +904,7 @@ async function toggleHostMtls(hostname, enable) {
     });
     await loadConfig();
     loadHostClientCert(hostname);
-  } catch (e) { showToast(t('error'), 'error'); }
+  } catch (e) { toast(t('error'), 'error'); }
 }
 
 async function uploadHostClientCert(hostname) {
@@ -830,12 +919,12 @@ async function uploadHostClientCert(hostname) {
 
   try {
     const res = await fetch(`/api/v1/hosts/${encodeURIComponent(hostname)}/upload-client-cert`, { method: 'POST', body: formData });
-    if (!res.ok) { const err = await res.json(); showToast(err.error || t('error'), 'error'); return; }
+    if (!res.ok) { const err = await res.json(); toast(err.error || t('error'), 'error'); return; }
     const data = await res.json();
-    showToast(`Client cert uploaded — v${data.clientCertVersion}`, 'success');
+    toast(`Client cert uploaded — v${data.clientCertVersion}`, 'success');
     await loadConfig();
     loadHostClientCert(hostname);
-  } catch (e) { showToast(t('error'), 'error'); }
+  } catch (e) { toast(t('error'), 'error'); }
 }
 
 // ── Add Host (4 tab) ─────────────────────────────────
@@ -1472,12 +1561,14 @@ async function regenerateSigningKey() {
 async function renderMtlsSection() {
   document.getElementById('content').innerHTML = `<div class="loading">${t('loading')}</div>`;
   try {
-    const [statusRes, certsRes] = await Promise.all([
+    const [statusRes, certsRes, modeRes] = await Promise.all([
       fetch('/api/v1/mtls-status'),
-      fetch('/api/v1/client-certs')
+      fetch('/api/v1/client-certs'),
+      fetch('/api/v1/enrollment-mode')
     ]);
     const status = await statusRes.json();
     const certs = await certsRes.json();
+    const enrollMode = await modeRes.json();
     const locale = lang === 'tr' ? 'tr-TR' : 'en-US';
 
     const certRows = certs.length === 0
@@ -1536,7 +1627,16 @@ val config = PinVaultConfig.Builder("https://10.0.2.2:8091/")
     .build()</div>
       </div>
       <div class="card">
-        <div class="card-title">Enrollment Token</div>
+        <div style="display:flex;align-items:center;gap:10px;margin-bottom:8px">
+          <div class="card-title" style="margin:0">Enrollment Token</div>
+          ${enrollMode.tokenRequired
+            ? '<span style="background:#166534;color:#bbf7d0;padding:2px 8px;border-radius:4px;font-size:11px;font-weight:600">&#x1F512; Token zorunlu</span>'
+            : '<span style="background:#92400e;color:#fef08a;padding:2px 8px;border-radius:4px;font-size:11px;font-weight:600">&#x26A0; Açık mod — deviceId ile kayıt aktif (demo)</span>'}
+        </div>
+        <div style="color:#94a3b8;font-size:12px;margin-bottom:12px;line-height:1.5">
+          <strong>Güvenli akış:</strong> Admin token üretir &#x2192; Uygulama token ile kayıt olur &#x2192; Client cert alır &#x2192; mTLS Config API'ye erişir &#x2192; Host cert'leri otomatik indirilir
+          ${!enrollMode.tokenRequired ? '<br><span style="color:#fbbf24">ENROLLMENT_MODE=token ile sunucuyu başlatarak deviceId enrollment\'ı kapatabilirsiniz.</span>' : ''}
+        </div>
         <form onsubmit="generateEnrollmentToken(event)" style="display:flex;gap:8px;align-items:end">
           <div class="form-group" style="flex:1;margin:0">
             <label class="form-label">${t('clientIdLabel')}</label>
@@ -1925,6 +2025,193 @@ function toast(msg, type = 'success') {
   el.textContent = msg;
   document.body.appendChild(el);
   setTimeout(() => el.remove(), 3000);
+}
+
+// ── Vault Files Section ─────────────────────────────
+
+function showVaultSection() {
+  selectedHost = null;
+  selectedApiId = null;
+  currentSection = 'vault';
+  document.querySelectorAll('.host-item').forEach(el => el.classList.remove('selected'));
+  document.getElementById('nav-vault')?.classList.add('selected');
+  renderVaultSection();
+}
+
+async function renderVaultSection() {
+  const content = document.getElementById('content');
+  content.innerHTML = `<div class="loading">${t('loading')}</div>`;
+  const locale = lang === 'tr' ? 'tr-TR' : 'en-US';
+
+  try {
+    const [filesRes, statsRes, distRes] = await Promise.all([
+      fetch('/api/v1/vault'),
+      fetch('/api/v1/vault/stats'),
+      fetch('/api/v1/vault/distributions')
+    ]);
+    const files = await filesRes.json();
+    const stats = await statsRes.json();
+    const dists = await distRes.json();
+
+    const fileRows = files.length === 0
+      ? `<tr><td colspan="4" class="empty-msg">${t('vaultNoFiles')}</td></tr>`
+      : files.map((f, i) => `<tr class="${i === 0 ? 'row-latest' : ''}" style="cursor:pointer" onclick="showVaultFileDetail('${f.key}')">
+          <td style="font-weight:700;color:#7dd3fc">${f.key}</td>
+          <td>v${f.version}</td>
+          <td>${formatBytes(f.size || 0)}</td>
+          <td><span style="cursor:pointer;color:#ef4444;font-size:11px" onclick="event.stopPropagation();deleteVaultFile('${f.key}')">&#x2715;</span></td>
+        </tr>`).join('');
+
+    const distRows = dists.length === 0
+      ? `<tr><td colspan="6" class="empty-msg">${t('vaultNoDistHistory')}</td></tr>`
+      : dists.slice(0, 50).map((d, i) => {
+          const ok = d.status === 'downloaded' || d.status === 'cached';
+          const statusIcon = ok ? '✓' : '✗';
+          const statusColor = ok ? '#22c55e' : '#ef4444';
+          const device = d.deviceManufacturer ? `📱 ${d.deviceManufacturer} ${d.deviceModel || ''}` : d.deviceId;
+          return `<tr class="${i === 0 ? 'row-latest' : ''}">
+            <td style="font-weight:600;color:#7dd3fc">${d.vaultKey}</td>
+            <td>v${d.version}</td>
+            <td><span class="source-badge android-src">${device}</span></td>
+            <td style="color:${statusColor};font-weight:600">${statusIcon} ${d.status}</td>
+            <td style="color:#64748b;font-size:11px">${d.enrollmentLabel || '—'}</td>
+            <td style="color:#64748b;font-size:11px">${new Date(d.timestamp).toLocaleString(locale)}</td>
+          </tr>`;
+        }).join('');
+
+    content.innerHTML = `
+      <div class="section-header">
+        <div>
+          <div class="section-title-main">${t('vaultTitle')}</div>
+          <div class="section-sub">${t('vaultSub')}</div>
+        </div>
+        <span style="cursor:pointer;color:#60a5fa;font-size:18px" onclick="renderVaultSection()">&#x21bb;</span>
+      </div>
+
+      <div class="stats">
+        <div class="card"><div class="stat-value" style="color:#60a5fa">${files.length}</div><div class="stat-label">${t('vaultUniqueKeys')}</div></div>
+        <div class="card"><div class="stat-value" style="color:#22c55e">${stats.totalDistributions || 0}</div><div class="stat-label">${t('vaultTotalDist')}</div></div>
+        <div class="card"><div class="stat-value" style="color:#f59e0b">${stats.uniqueDevices || 0}</div><div class="stat-label">${t('vaultUniqueDevices')}</div></div>
+        <div class="card"><div class="stat-value" style="color:#ef4444">${stats.failed || 0}</div><div class="stat-label">${t('vaultFailed')}</div></div>
+      </div>
+
+      <div class="card">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">
+          <div class="card-title" style="margin:0">${t('vaultUpload')}</div>
+        </div>
+        <form onsubmit="uploadVaultFile(event)" style="display:flex;gap:8px;align-items:end;flex-wrap:wrap">
+          <div class="form-group" style="margin:0">
+            <label class="form-label">${t('vaultKey')}</label>
+            <input type="text" id="vault-upload-key" placeholder="${t('vaultKeyPlaceholder')}" required class="form-input" style="width:180px"/>
+          </div>
+          <div class="form-group" style="margin:0">
+            <label class="form-label">File</label>
+            <input type="file" id="vault-upload-file" required style="color:#94a3b8;font-size:12px"/>
+          </div>
+          <button type="submit" class="btn btn-primary">${t('vaultUploadBtn')}</button>
+        </form>
+      </div>
+
+      <div class="card">
+        <div class="card-title">${t('vaultUniqueKeys')} (${files.length})</div>
+        <table class="data-table">
+          <thead><tr><th>${t('vaultKey')}</th><th>${t('vaultVersion')}</th><th>${t('vaultSize')}</th><th></th></tr></thead>
+          <tbody>${fileRows}</tbody>
+        </table>
+      </div>
+
+      <div class="card">
+        <div class="card-title">${t('vaultDistTitle')} (${dists.length})</div>
+        <table class="data-table">
+          <thead><tr><th>${t('vaultKey')}</th><th>${t('vaultVersion')}</th><th>${t('vaultDevice')}</th><th>${t('vaultStatus')}</th><th>${t('vaultLabel')}</th><th>${t('vaultTimestamp')}</th></tr></thead>
+          <tbody>${distRows}</tbody>
+        </table>
+      </div>`;
+  } catch (e) {
+    content.innerHTML = `<div class="card"><div class="empty-msg">${t('error')}: ${e.message}</div></div>`;
+  }
+}
+
+async function uploadVaultFile(e) {
+  e.preventDefault();
+  const key = document.getElementById('vault-upload-key').value.trim();
+  const file = document.getElementById('vault-upload-file').files[0];
+  if (!key || !file) return;
+
+  try {
+    const bytes = await file.arrayBuffer();
+    const res = await fetch(`/api/v1/vault/${encodeURIComponent(key)}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/octet-stream' },
+      body: bytes
+    });
+    if (!res.ok) { toast(t('error'), 'error'); return; }
+    const data = await res.json();
+    toast(`${key} v${data.version} uploaded`, 'success');
+    renderVaultSection();
+  } catch (err) { toast(t('error'), 'error'); }
+}
+
+async function deleteVaultFile(key) {
+  if (!confirm(`Delete "${key}"?`)) return;
+  try {
+    await fetch(`/api/v1/vault/${encodeURIComponent(key)}`, { method: 'DELETE' });
+    toast(`${key} deleted`, 'success');
+    renderVaultSection();
+  } catch (err) { toast(t('error'), 'error'); }
+}
+
+async function showVaultFileDetail(key) {
+  const content = document.getElementById('content');
+  const locale = lang === 'tr' ? 'tr-TR' : 'en-US';
+  content.innerHTML = `<div class="loading">${t('loading')}</div>`;
+
+  try {
+    const res = await fetch(`/api/v1/vault/distributions/${encodeURIComponent(key)}`);
+    const dists = await res.json();
+
+    const rows = dists.length === 0
+      ? `<tr><td colspan="5" class="empty-msg">${t('vaultNoDistHistory')}</td></tr>`
+      : dists.map((d, i) => {
+          const ok = d.status === 'downloaded' || d.status === 'cached';
+          const device = d.deviceManufacturer ? `📱 ${d.deviceManufacturer} ${d.deviceModel || ''}` : d.deviceId;
+          return `<tr class="${i === 0 ? 'row-latest' : ''}">
+            <td><span class="source-badge android-src">${device}</span></td>
+            <td>v${d.version}</td>
+            <td style="color:${ok ? '#22c55e' : '#ef4444'};font-weight:600">${ok ? '✓' : '✗'} ${d.status}</td>
+            <td style="color:#64748b;font-size:11px">${d.enrollmentLabel || '—'}</td>
+            <td style="color:#64748b;font-size:11px">${new Date(d.timestamp).toLocaleString(locale)}</td>
+          </tr>`;
+        }).join('');
+
+    content.innerHTML = `
+      <div class="section-header">
+        <div>
+          <div class="section-title-main" style="color:#7dd3fc">${key}</div>
+          <div class="section-sub">${t('vaultDistTitle')} — ${dists.length} kayıt</div>
+        </div>
+        <div style="display:flex;gap:8px">
+          <button class="btn btn-secondary" onclick="renderVaultSection()">← ${t('cancel')}</button>
+          <span style="cursor:pointer;color:#60a5fa;font-size:16px" onclick="showVaultFileDetail('${key}')">&#x21bb;</span>
+        </div>
+      </div>
+      <div class="card">
+        <table class="data-table">
+          <thead><tr><th>${t('vaultDevice')}</th><th>${t('vaultVersion')}</th><th>${t('vaultStatus')}</th><th>${t('vaultLabel')}</th><th>${t('vaultTimestamp')}</th></tr></thead>
+          <tbody>${rows}</tbody>
+        </table>
+      </div>`;
+  } catch (e) {
+    content.innerHTML = `<div class="card"><div class="empty-msg">${t('error')}</div></div>`;
+  }
+}
+
+function formatBytes(bytes) {
+  if (bytes === 0) return '0 B';
+  const k = 1024;
+  const sizes = ['B', 'KB', 'MB', 'GB'];
+  const i = Math.floor(Math.log(bytes) / Math.log(k));
+  return parseFloat((bytes / Math.pow(k, i)).toFixed(1)) + ' ' + sizes[i];
 }
 
 // ── Start ────────────────────────────────────────────

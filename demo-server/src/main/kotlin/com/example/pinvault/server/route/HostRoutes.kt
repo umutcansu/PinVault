@@ -276,7 +276,7 @@ fun Route.hostRoutes(
 
                 historyStore.add(configApiId, PinConfigHistoryEntry(hostname, pin.version, Instant.now().toString(), if (mtls) "mtls_enabled" else "mtls_disabled"))
 
-                call.respond(mapOf("hostname" to hostname, "mtls" to mtls))
+                call.respondText("""{"hostname":"$hostname","mtls":$mtls}""", ContentType.Application.Json)
             }
 
             // Upload host-specific client cert (P12)
@@ -339,7 +339,7 @@ fun Route.hostRoutes(
 
                 historyStore.add(configApiId, PinConfigHistoryEntry(hostname, pin?.version ?: 1, Instant.now().toString(), "client_cert_uploaded", fingerprint?.take(12) ?: ""))
 
-                call.respond(mapOf("hostname" to hostname, "clientCertVersion" to newCertVersion, "commonName" to cn, "fingerprint" to fingerprint))
+                call.respondText("""{"hostname":"$hostname","clientCertVersion":$newCertVersion,"commonName":"${cn ?: ""}","fingerprint":"${fingerprint ?: ""}"}""", ContentType.Application.Json)
             }
 
             // Download host-specific client cert (P12) — Android calls this
@@ -420,6 +420,52 @@ fun Route.hostRoutes(
                     mockMtlsPort = mtlsPort,
                     createdAt = hostRecord.createdAt
                 ))
+            }
+
+            // Web UI'dan mock server'a bağlantı testi
+            post("test-connection") {
+                val hostname = call.parameters["hostname"] ?: ""
+                if (!mockServerManager.isRunning(hostname)) {
+                    return@post call.respondText("""{"success":false,"error":"Mock server calismiyorr"}""", ContentType.Application.Json)
+                }
+
+                val port = mockServerManager.getTlsPort(hostname) ?: mockServerManager.getMtlsPort(hostname) ?: 8443
+                val url = "https://localhost:$port/health"
+
+                try {
+                    // Trust-all client ile mock server'a bağlan
+                    val trustManager = object : javax.net.ssl.X509TrustManager {
+                        override fun checkClientTrusted(chain: Array<java.security.cert.X509Certificate>?, authType: String?) {}
+                        override fun checkServerTrusted(chain: Array<java.security.cert.X509Certificate>?, authType: String?) {}
+                        override fun getAcceptedIssuers(): Array<java.security.cert.X509Certificate> = arrayOf()
+                    }
+                    val sslContext = javax.net.ssl.SSLContext.getInstance("TLS")
+                    sslContext.init(null, arrayOf(trustManager), java.security.SecureRandom())
+
+                    val client = okhttp3.OkHttpClient.Builder()
+                        .sslSocketFactory(sslContext.socketFactory, trustManager)
+                        .hostnameVerifier { _, _ -> true }
+                        .connectTimeout(5, java.util.concurrent.TimeUnit.SECONDS)
+                        .readTimeout(5, java.util.concurrent.TimeUnit.SECONDS)
+                        .build()
+
+                    val start = System.currentTimeMillis()
+                    val response = client.newCall(okhttp3.Request.Builder().url(url).build()).execute()
+                    val elapsed = System.currentTimeMillis() - start
+
+                    val body = response.body?.string() ?: ""
+                    response.close()
+
+                    call.respondText(
+                        """{"success":true,"httpCode":${response.code},"responseTimeMs":$elapsed,"body":${body.take(500)}}""",
+                        ContentType.Application.Json
+                    )
+                } catch (e: Exception) {
+                    call.respondText(
+                        """{"success":false,"error":"${e.message?.replace("\"", "'")}","responseTimeMs":0}""",
+                        ContentType.Application.Json
+                    )
+                }
             }
         }
     }

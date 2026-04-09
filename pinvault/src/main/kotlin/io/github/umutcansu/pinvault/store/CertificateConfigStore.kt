@@ -2,6 +2,7 @@ package io.github.umutcansu.pinvault.store
 
 import android.content.Context
 import android.content.SharedPreferences
+import androidx.annotation.VisibleForTesting
 import androidx.security.crypto.EncryptedSharedPreferences
 import androidx.security.crypto.MasterKeys
 import io.github.umutcansu.pinvault.model.CertificateConfig
@@ -14,18 +15,17 @@ import timber.log.Timber
  * Uses EncryptedSharedPreferences to store config at rest.
  * Pin hashes aren't readable even on rooted devices.
  */
-internal class CertificateConfigStore(context: Context) {
+internal class CertificateConfigStore private constructor(private val prefs: SharedPreferences) {
 
-    private val prefs: SharedPreferences by lazy {
-        val masterKey = MasterKeys.getOrCreate(MasterKeys.AES256_GCM_SPEC)
+    constructor(context: Context) : this(
         EncryptedSharedPreferences.create(
             PREFS_NAME,
-            masterKey,
+            MasterKeys.getOrCreate(MasterKeys.AES256_GCM_SPEC),
             context,
             EncryptedSharedPreferences.PrefKeyEncryptionScheme.AES256_SIV,
             EncryptedSharedPreferences.PrefValueEncryptionScheme.AES256_GCM
         )
-    }
+    )
 
     fun getCurrentVersion(): Int = prefs.getInt(KEY_VERSION, 0)
 
@@ -97,10 +97,13 @@ internal class CertificateConfigStore(context: Context) {
 
     companion object {
         private const val PREFS_NAME = "ssl_cert_config"
-        private const val KEY_VERSION = "config_version"
-        private const val KEY_PINS = "config_pins"
+        internal const val KEY_VERSION = "config_version"
+        internal const val KEY_PINS = "config_pins"
         private const val ENTRY_SEPARATOR = "\n"
         private const val FIELD_SEPARATOR = "|"
         private const val HASH_SEPARATOR = ","
+
+        @VisibleForTesting
+        internal fun createForTest(prefs: SharedPreferences) = CertificateConfigStore(prefs)
     }
 }
