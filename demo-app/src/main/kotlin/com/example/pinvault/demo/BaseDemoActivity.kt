@@ -28,7 +28,26 @@ import java.util.*
 abstract class BaseDemoActivity : AppCompatActivity() {
 
     companion object {
-        private const val MANAGEMENT_URL = "http://10.0.2.2:8090/"
+        val IS_EMULATOR: Boolean by lazy {
+            android.os.Build.FINGERPRINT.contains("generic") ||
+                android.os.Build.FINGERPRINT.contains("emulator") ||
+                android.os.Build.MODEL.contains("Emulator") ||
+                android.os.Build.MODEL.contains("Android SDK") ||
+                android.os.Build.MANUFACTURER.contains("Genymotion") ||
+                android.os.Build.PRODUCT.contains("sdk") ||
+                android.os.Build.PRODUCT.contains("emulator")
+        }
+        val HOST_IP: String by lazy { if (IS_EMULATOR) "10.0.2.2" else "192.168.1.80" }
+        val TLS_HOST_PORT: Int by lazy { if (IS_EMULATOR) 8443 else 8444 }
+        private val MANAGEMENT_URL get() = "http://$HOST_IP:8090/"
+
+        /** Bootstrap pins — demo-server TLS cert */
+        val DEFAULT_BOOTSTRAP_PINS: List<HostPin> by lazy {
+            listOf(HostPin(HOST_IP, listOf(
+                "ziA0hyMDbayVXZ0g8AkkJz+wmKPZYjMAwb+GdNg5HYM=",
+                "vXC1UZ8OFlga9Ltwsa2Hyg2lqZkLUE+DbdBPvT3ah3o="
+            )))
+        }
     }
 
     // ── Abstract properties — subclasses override ────────
@@ -228,10 +247,12 @@ abstract class BaseDemoActivity : AppCompatActivity() {
 
         try { PinVault.reset() } catch (_: Exception) {}
 
+        val deviceName = "${android.os.Build.MANUFACTURER} ${android.os.Build.MODEL}"
         val config = PinVaultConfig.Builder(configServerUrl)
             .bootstrapPins(bootstrapPins)
             .configEndpoint("api/v1/certificate-config?signed=false")
             .updateIntervalMinutes(15)
+            .deviceAlias(deviceName)
             .build()
 
         PinVault.init(applicationContext, config) { result ->

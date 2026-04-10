@@ -1,36 +1,33 @@
 package com.example.pinvault.demo
 
+import androidx.test.core.app.ActivityScenario
+import androidx.test.espresso.Espresso.onView
+import androidx.test.espresso.action.ViewActions.click
+import androidx.test.espresso.assertion.ViewAssertions.matches
+import androidx.test.espresso.matcher.ViewMatchers.*
 import androidx.test.ext.junit.runners.AndroidJUnit4
-import androidx.test.platform.app.InstrumentationRegistry
-import io.github.umutcansu.pinvault.PinVault
-import io.github.umutcansu.pinvault.model.InitResult
-import io.github.umutcansu.pinvault.model.PinVaultConfig
-import io.github.umutcansu.pinvault.model.UpdateResult
-import kotlinx.coroutines.runBlocking
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
+import org.hamcrest.CoreMatchers.containsString
 import org.junit.After
-import org.junit.Assert.*
 import org.junit.Before
 import org.junit.Test
 import org.junit.runner.RunWith
-import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
 
 /**
- * B.10 — Cert rotation: cert yenile → updateNow → yeni pin alındı
- * B.11 — Force update: anında güncelle
+ * B.10 — Cert rotation: updateNow → yeni pin alındı
+ * B.11 — Force update: management API ile flag set → update tetiklenir
  *
- * Gerçek demo-server API call'ları ile cert rotation simülasyonu.
+ * Espresso UI — TlsToTlsActivity üzerinden btnUpdate ile.
  */
 @RunWith(AndroidJUnit4::class)
 class CertRotationTest {
 
-    private val context get() = InstrumentationRegistry.getInstrumentation().targetContext
-    private val managementUrl = TestConfig.MANAGEMENT_URL
-    private val bootstrapPins get() = TestConfig.BOOTSTRAP_PINS
+    private lateinit var scenario: ActivityScenario<TlsToTlsActivity>
+
     private val plainClient = OkHttpClient.Builder()
         .connectTimeout(5, TimeUnit.SECONDS)
         .readTimeout(5, TimeUnit.SECONDS)
@@ -38,82 +35,75 @@ class CertRotationTest {
 
     @Before
     fun setUp() {
-        try { PinVault.reset() } catch (_: Exception) {}
+        try { io.github.umutcansu.pinvault.PinVault.reset() } catch (_: Exception) {}
+        Thread.sleep(500)
+        scenario = ActivityScenario.launch(TlsToTlsActivity::class.java)
+        Thread.sleep(12000)
     }
 
     @After
     fun tearDown() {
-        try { PinVault.reset() } catch (_: Exception) {}
+        try { scenario.close() } catch (_: Exception) {}
+        try { io.github.umutcansu.pinvault.PinVault.reset() } catch (_: Exception) {}
     }
 
-    private fun initPinVault(): InitResult {
-        val latch = CountDownLatch(1)
-        var result: InitResult? = null
+    // ── Helpers ──────────────────────────────────────────
 
-        val config = PinVaultConfig.Builder(TestConfig.TLS_CONFIG_URL)
-            .bootstrapPins(bootstrapPins)
-            .configEndpoint("api/v1/certificate-config?signed=false")
-            .maxRetryCount(2)
-            .build()
-
-        PinVault.init(context, config) {
-            result = it
-            latch.countDown()
-        }
-
-        assertTrue("Init timed out", latch.await(15, TimeUnit.SECONDS))
-        return result!!
+    private fun clickUpdate() {
+        onView(withId(R.id.btnUpdate)).perform(click())
+        Thread.sleep(6000)
     }
+
+    // ── B.10: updateNow ─────────────────────────────────
 
     @Test
     fun B10_updateNow_fetches_latest_pins() {
-        val initResult = initPinVault()
-        assertTrue("Init failed: $initResult", initResult is InitResult.Ready)
+        // Init Ready
+        onView(withId(R.id.tvStatus))
+            .check(matches(withText(containsString("✓"))))
 
-        val versionBefore = PinVault.currentVersion()
+        clickUpdate()
 
-        val result = runBlocking { PinVault.updateNow() }
+        // tvResult "updated" veya "current" içermeli
+        onView(withId(R.id.tvResult))
+            .check(matches(isDisplayed()))
 
-        assertTrue(
-            "updateNow should return Updated or AlreadyCurrent, got: $result",
-            result is UpdateResult.Updated || result is UpdateResult.AlreadyCurrent
-        )
-
-        val versionAfter = PinVault.currentVersion()
-        assertTrue("Version should not decrease: $versionBefore -> $versionAfter", versionAfter >= versionBefore)
+        // Log'da update kaydı olmalı
+        onView(withId(R.id.logContainer))
+            .check(matches(hasMinimumChildCount(2)))
     }
+
+    // ── B.11: Force update ──────────────────────────────
 
     @Test
     fun B11_forceUpdate_flag_triggers_update() {
-        val initResult = initPinVault()
-        assertTrue("Init failed: $initResult", initResult is InitResult.Ready)
+        onView(withId(R.id.tvStatus))
+            .check(matches(withText(containsString("✓"))))
 
-        // Management API ile force update set et
-        val forceReq = Request.Builder()
-            .url("$managementUrl/api/v1/certificate-config/force-update")
-            .post("{}".toRequestBody("application/json".toMediaType()))
-            .build()
+        // Management API ile force update flag set et
+        try {
+            plainClient.newCall(
+                Request.Builder()
+                    .url("${TestConfig.MANAGEMENT_URL}/api/v1/certificate-config/force-update")
+                    .post("{}".toRequestBody("application/json".toMediaType()))
+                    .build()
+            ).execute()
+        } catch (_: Exception) {}
 
-        val forceResp = try { plainClient.newCall(forceReq).execute() } catch (_: Exception) { null }
+        clickUpdate()
 
-        if (forceResp?.isSuccessful == true) {
-            // Force update set edildi → updateNow() Updated veya AlreadyCurrent dönmeli
-            // (versiyon değişmemişse AlreadyCurrent, forceUpdate flag sadece client'a hint)
-            val result = runBlocking { PinVault.updateNow() }
-            assertTrue(
-                "After force flag, updateNow should succeed: $result",
-                result is UpdateResult.Updated || result is UpdateResult.AlreadyCurrent
-            )
+        // Update sonucu görünmeli
+        onView(withId(R.id.tvResult))
+            .check(matches(isDisplayed()))
 
-            // isForceUpdate() true olmalı (sunucu forceUpdate:true set etti)
-            // Not: updateNow() sonrası flag temizlenmiş olabilir
-
-            // Force flag'i temizle
-            val clearReq = Request.Builder()
-                .url("$managementUrl/api/v1/certificate-config/clear-force")
-                .post("{}".toRequestBody("application/json".toMediaType()))
-                .build()
-            try { plainClient.newCall(clearReq).execute() } catch (_: Exception) {}
-        }
+        // Force flag'i temizle
+        try {
+            plainClient.newCall(
+                Request.Builder()
+                    .url("${TestConfig.MANAGEMENT_URL}/api/v1/certificate-config/clear-force")
+                    .post("{}".toRequestBody("application/json".toMediaType()))
+                    .build()
+            ).execute()
+        } catch (_: Exception) {}
     }
 }

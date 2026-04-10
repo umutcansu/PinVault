@@ -27,8 +27,10 @@ dependencies {
     // Kotlinx serialization
     implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.7.3")
 
-    // SQLite
+    // SQLite + Flyway migration
     implementation("org.xerial:sqlite-jdbc:3.45.1.0")
+    implementation("org.flywaydb:flyway-core:12.3.0")
+    implementation("org.flywaydb:flyway-database-nc-sqlite:12.3.0")
 
     // Bouncy Castle (sertifika üretme)
     implementation("org.bouncycastle:bcprov-jdk18on:1.78.1")
@@ -36,6 +38,12 @@ dependencies {
 
     // OkHttp (health check + URL'den sertifika çekme)
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
+
+    // Test
+    testImplementation("org.jetbrains.kotlin:kotlin-test:2.1.0")
+    testImplementation("io.ktor:ktor-server-test-host:3.0.3")
+    testImplementation("io.ktor:ktor-client-content-negotiation:3.0.3")
+    testImplementation("org.jetbrains.kotlinx:kotlinx-coroutines-test:1.9.0")
 }
 
 kotlin {

@@ -1,0 +1,268 @@
+openapi: 3.0.3
+info:
+  title: PinVault API
+  description: SSL Certificate Pinning Management Server
+  version: 1.0.0
+servers:
+  - url: http://localhost:8080
+    description: Management API (HTTP)
+  - url: https://localhost:8081
+    description: Config API (TLS)
+
+security:
+  - ApiKeyAuth: []
+
+components:
+  securitySchemes:
+    ApiKeyAuth:
+      type: apiKey
+      in: header
+      name: X-API-Key
+      description: Required for management endpoints. Set via API_KEY env var.
+
+  schemas:
+    HostPin:
+      type: object
+      properties:
+        hostname: { type: string, example: "api.example.com" }
+        sha256: { type: array, items: { type: string }, example: ["hash1...", "hash2..."] }
+        version: { type: integer, example: 1 }
+        forceUpdate: { type: boolean, default: false }
+        mtls: { type: boolean, default: false }
+        clientCertVersion: { type: integer, nullable: true }
+
+    CertificateConfig:
+      type: object
+      properties:
+        version: { type: integer }
+        pins: { type: array, items: { $ref: '#/components/schemas/HostPin' } }
+        forceUpdate: { type: boolean }
+
+    VaultDistribution:
+      type: object
+      properties:
+        vaultKey: { type: string }
+        version: { type: integer }
+        deviceId: { type: string }
+        deviceAlias: { type: string, nullable: true }
+        deviceModel: { type: string, nullable: true }
+        status: { type: string, enum: [downloaded, cached, failed] }
+        timestamp: { type: string, format: date-time }
+
+    ClientCertRecord:
+      type: object
+      properties:
+        id: { type: string }
+        commonName: { type: string }
+        fingerprint: { type: string }
+        createdAt: { type: string, format: date-time }
+        revoked: { type: boolean }
+        deviceAlias: { type: string, nullable: true }
+        deviceUid: { type: string, nullable: true }
+
+paths:
+  /health:
+    get:
+      tags: [System]
+      summary: Health check (Docker probe)
+      security: []
+      responses:
+        '200': { description: OK }
+
+  /api/v1/certificate-config:
+    get:
+      tags: [Certificate Config]
+      summary: Fetch pin configuration (client endpoint)
+      security: []
+      parameters:
+        - name: currentVersion
+          in: query
+          schema: { type: integer }
+      responses:
+        '200':
+          description: Signed or unsigned config
+    put:
+      tags: [Certificate Config]
+      summary: Update pin configuration
+      requestBody:
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CertificateConfig' }
+      responses:
+        '200': { description: Config updated }
+
+  /api/v1/signing-key:
+    get:
+      tags: [Certificate Config]
+      summary: Get ECDSA public key for config signature verification
+      security: []
+      responses:
+        '200': { description: Base64 public key }
+
+  /api/v1/hosts/generate-cert:
+    post:
+      tags: [Host Management]
+      summary: Generate self-signed TLS certificate for a host
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                hostname: { type: string }
+      responses:
+        '200': { description: Certificate generated }
+
+  /api/v1/hosts/{hostname}/status:
+    get:
+      tags: [Host Management]
+      summary: Get host status including certificate info
+      parameters:
+        - name: hostname
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        '200': { description: Host status }
+
+  /api/v1/client-certs/enroll:
+    post:
+      tags: [Enrollment]
+      summary: Enroll device with token or deviceId
+      security: []
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                token: { type: string }
+                deviceId: { type: string }
+                deviceAlias: { type: string }
+                deviceUid: { type: string }
+      responses:
+        '200': { description: P12 client certificate bytes }
+
+  /api/v1/client-certs:
+    get:
+      tags: [Enrollment]
+      summary: List all client certificates
+      responses:
+        '200':
+          description: Client cert list
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/ClientCertRecord' }
+
+  /api/v1/enrollment-tokens/generate:
+    post:
+      tags: [Enrollment]
+      summary: Generate one-time enrollment token
+      responses:
+        '200': { description: Token generated }
+
+  /api/v1/vault/{key}:
+    get:
+      tags: [Vault Files]
+      summary: Download vault file
+      security: []
+      parameters:
+        - name: key
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        '200': { description: File bytes }
+        '304': { description: Not Modified }
+        '404': { description: File not found }
+    put:
+      tags: [Vault Files]
+      summary: Upload or update vault file
+      parameters:
+        - name: key
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        '200': { description: File uploaded }
+    delete:
+      tags: [Vault Files]
+      summary: Delete vault file
+      parameters:
+        - name: key
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        '200': { description: File deleted }
+
+  /api/v1/vault/report:
+    post:
+      tags: [Vault Files]
+      summary: Report vault file download (client endpoint)
+      security: []
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                key: { type: string }
+                version: { type: integer }
+                status: { type: string }
+                deviceId: { type: string }
+                deviceAlias: { type: string }
+                deviceModel: { type: string }
+      responses:
+        '200': { description: Report recorded }
+
+  /api/v1/vault/distributions:
+    get:
+      tags: [Vault Files]
+      summary: Get all vault file distribution history
+      responses:
+        '200':
+          description: Distribution list
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/VaultDistribution' }
+
+  /api/v1/vault/stats:
+    get:
+      tags: [Vault Files]
+      summary: Vault file distribution statistics
+      responses:
+        '200': { description: Stats object }
+
+  /api/v1/config-apis:
+    get:
+      tags: [Config API Management]
+      summary: List running Config APIs
+      responses:
+        '200': { description: Config API list }
+
+  /api/v1/config-apis/start:
+    post:
+      tags: [Config API Management]
+      summary: Start a new Config API (TLS or mTLS)
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                port: { type: integer }
+                mode: { type: string, enum: [tls, mtls] }
+      responses:
+        '200': { description: Config API started }
+
+  /api/v1/cert-expiry:
+    get:
+      tags: [Monitoring]
+      summary: Certificate expiry status for all managed hosts
+      responses:
+        '200': { description: Cert expiry list }

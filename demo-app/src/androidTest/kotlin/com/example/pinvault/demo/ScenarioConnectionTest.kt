@@ -1,139 +1,94 @@
 package com.example.pinvault.demo
 
+import androidx.test.core.app.ActivityScenario
+import androidx.test.espresso.Espresso.onView
+import androidx.test.espresso.action.ViewActions.click
+import androidx.test.espresso.assertion.ViewAssertions.matches
+import androidx.test.espresso.matcher.ViewMatchers.*
 import androidx.test.ext.junit.runners.AndroidJUnit4
-import androidx.test.platform.app.InstrumentationRegistry
-import io.github.umutcansu.pinvault.PinVault
-import io.github.umutcansu.pinvault.model.InitResult
-import io.github.umutcansu.pinvault.model.PinVaultConfig
-import kotlinx.coroutines.runBlocking
-import okhttp3.Request
+import org.hamcrest.CoreMatchers.containsString
 import org.junit.After
-import org.junit.Assert.*
 import org.junit.Before
 import org.junit.Test
 import org.junit.runner.RunWith
-import java.util.concurrent.CountDownLatch
-import java.util.concurrent.TimeUnit
 
 /**
- * B.7 — 4 senaryo bağlantı testi
+ * B.7 — 4 senaryo bağlantı testi — Espresso UI.
  *
- * Programmatik PinVault API — Espresso'ya bağımlı değil.
- * Gerçek TLS handshake + pin verification + HTTP response assertion.
+ * TlsToTlsActivity ve MtlsToTlsActivity üzerinden gerçek TLS handshake + UI doğrulama.
  *
  * Önkoşul: demo-server çalışıyor (PORT=8090, HTTPS_PORT=8091)
  *          mock TLS server çalışıyor (port 8443)
+ *
+ * TODO: Thread.sleep → IdlingResource dönüşümü (PinVaultIdlingResource.kt altyapısı hazır,
+ *       PinVault library'ye IdlingResource entegrasyonu gerekli).
  */
 @RunWith(AndroidJUnit4::class)
 class ScenarioConnectionTest {
 
-    private val context get() = InstrumentationRegistry.getInstrumentation().targetContext
-    private val configUrl = TestConfig.TLS_CONFIG_URL
-    private val mockTlsUrl = TestConfig.TLS_HOST_URL
-
-    // Bootstrap pins — demo-server'ın TLS cert'i
-    private val bootstrapPins get() = TestConfig.BOOTSTRAP_PINS
+    private lateinit var scenario: ActivityScenario<*>
 
     @Before
     fun setUp() {
-        try { PinVault.reset() } catch (_: Exception) {}
+        try { io.github.umutcansu.pinvault.PinVault.reset() } catch (_: Exception) {}
+        Thread.sleep(500)
     }
 
     @After
     fun tearDown() {
-        try { PinVault.reset() } catch (_: Exception) {}
+        try { scenario.close() } catch (_: Exception) {}
+        try { io.github.umutcansu.pinvault.PinVault.reset() } catch (_: Exception) {}
     }
 
-    private fun initPinVault(): InitResult {
-        val latch = CountDownLatch(1)
-        var result: InitResult? = null
+    // ── Helpers ──────────────────────────────────────────
 
-        val config = PinVaultConfig.Builder(configUrl)
-            .bootstrapPins(bootstrapPins)
-            .configEndpoint("api/v1/certificate-config?signed=false")
-            .maxRetryCount(2)
-            .build()
-
-        PinVault.init(context, config) {
-            result = it
-            latch.countDown()
-        }
-
-        assertTrue("Init timed out", latch.await(15, TimeUnit.SECONDS))
-        return result!!
+    private fun clickTest() {
+        onView(withId(R.id.btnTest)).perform(click())
+        Thread.sleep(8000)
     }
 
     // ── B.7a: TLS Config API → TLS Host ─────────────────
 
     @Test
     fun B7a_TlsToTls_init_fetches_config_and_pins_applied() {
-        val result = initPinVault()
+        scenario = ActivityScenario.launch(TlsToTlsActivity::class.java)
+        Thread.sleep(12000)
 
-        assertTrue("Init should succeed, got: $result", result is InitResult.Ready)
-        val version = (result as InitResult.Ready).version
-        assertTrue("Version should be > 0, got: $version", version > 0)
+        onView(withId(R.id.tvStatus))
+            .check(matches(withText(containsString("✓"))))
+        onView(withId(R.id.tvVersion))
+            .check(matches(isDisplayed()))
     }
 
     @Test
     fun B7a_TlsToTls_pinned_client_connects_to_mock_server() {
-        val initResult = initPinVault()
-        assertTrue("Init failed: $initResult", initResult is InitResult.Ready)
+        scenario = ActivityScenario.launch(TlsToTlsActivity::class.java)
+        Thread.sleep(12000)
 
-        // Gerçek pinned OkHttpClient ile TLS bağlantı
-        val client = PinVault.getClient()
-        val request = Request.Builder().url(mockTlsUrl).build()
+        clickTest()
 
-        val response = runBlocking {
-            try {
-                client.newCall(request).execute()
-            } catch (e: Exception) {
-                // Mock server çalışmıyorsa bağlantı hatası — bu beklenen
-                null
-            }
-        }
-
-        if (response != null) {
-            assertEquals("Expected 200 from mock TLS server", 200, response.code)
-            val body = response.body?.string() ?: ""
-            assertTrue("Response should contain hostname or health info", body.isNotEmpty())
-        }
-        // response == null ise mock server çalışmıyor — test skip (fail değil)
+        onView(withId(R.id.tvResult))
+            .check(matches(withText(containsString("200"))))
     }
 
     @Test
     fun B7a_TlsToTls_version_matches_server_config() {
-        val initResult = initPinVault()
-        assertTrue("Init failed", initResult is InitResult.Ready)
+        scenario = ActivityScenario.launch(TlsToTlsActivity::class.java)
+        Thread.sleep(12000)
 
-        val version = PinVault.currentVersion()
-        assertTrue("Version should be positive: $version", version > 0)
+        onView(withId(R.id.tvVersion))
+            .check(matches(isDisplayed()))
     }
 
-    // ── B.7c: mTLS Config API → TLS Host ────────────────
+    // ── B.7c: mTLS Config API → enrollment card gösterilmeli ──
 
     @Test
-    fun B7c_MtlsConfig_without_enrollment_init_fails() {
-        // mTLS config API (port 8092) — enrollment olmadan config çekilemez
-        try { PinVault.reset() } catch (_: Exception) {}
+    fun B7c_MtlsConfig_without_enrollment_shows_enrollment_card() {
+        scenario = ActivityScenario.launch(MtlsToTlsActivity::class.java)
+        Thread.sleep(12000)
 
-        val latch = CountDownLatch(1)
-        var result: InitResult? = null
-
-        val config = PinVaultConfig.Builder(TestConfig.MTLS_CONFIG_URL)
-            .bootstrapPins(bootstrapPins)
-            .configEndpoint("api/v1/certificate-config?signed=false")
-            .maxRetryCount(1)
-            .build()
-
-        PinVault.init(context, config) {
-            result = it
-            latch.countDown()
-        }
-
-        latch.await(10, TimeUnit.SECONDS)
-
-        // mTLS config API client cert olmadan reddeder → init Failed
-        // VEYA sunucu mTLS modunda değilse Ready dönebilir
-        assertNotNull("Init callback should fire", result)
+        // MtlsToTlsActivity requiresEnrollment=true → enrollment kartı görünür olmalı
+        onView(withId(R.id.enrollmentCard))
+            .check(matches(isDisplayed()))
     }
 }

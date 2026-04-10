@@ -2,20 +2,7 @@ package com.example.pinvault.server.store
 
 class VaultFileStore(private val db: DatabaseManager) {
 
-    init {
-        db.connection().use { conn ->
-            conn.createStatement().use { stmt ->
-                stmt.executeUpdate("""
-                    CREATE TABLE IF NOT EXISTS vault_files (
-                        key TEXT PRIMARY KEY,
-                        version INTEGER NOT NULL DEFAULT 1,
-                        content BLOB NOT NULL,
-                        updated_at TEXT NOT NULL DEFAULT (datetime('now'))
-                    )
-                """)
-            }
-        }
-    }
+    // Table created by Flyway migration V1__baseline.sql
 
     fun get(key: String): VaultEntry? {
         db.connection().use { conn ->

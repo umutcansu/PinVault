@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Android 11 ve alti (API 30-) icin yedekleme kurallari.
+  PinVault client sertifikalari yedeklemeden haric tutulur.
+  EncryptedSharedPreferences Android Keystore'a bagli oldugu icin
+  baska cihazda cozulemez — yedekleme anlamsiz ve guvenlik riski olusturur.
+-->
+<full-backup-content>
+    <exclude domain="sharedpref" path="pinvault_client_cert.xml" />
+</full-backup-content>

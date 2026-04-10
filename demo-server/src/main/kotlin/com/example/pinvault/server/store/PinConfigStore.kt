@@ -352,6 +352,24 @@ class HostStore(private val db: DatabaseManager) {
         }
     }
 
+    fun getAll(): List<HostRecord> {
+        db.connection().use { conn ->
+            conn.createStatement().use { stmt ->
+                val rs = stmt.executeQuery("SELECT * FROM hosts ORDER BY hostname")
+                return buildList {
+                    while (rs.next()) add(HostRecord(
+                        hostname = rs.getString("hostname"),
+                        configApiId = rs.getString("config_api_id"),
+                        keystorePath = rs.getString("keystore_path"),
+                        certValidUntil = rs.getString("cert_valid_until"),
+                        mockServerPort = rs.getObject("mock_server_port") as? Int,
+                        createdAt = rs.getString("created_at")
+                    ))
+                }
+            }
+        }
+    }
+
     fun updateMockPort(hostname: String, configApiId: String, port: Int?) {
         db.connection().use { conn ->
             conn.prepareStatement("UPDATE hosts SET mock_server_port = ? WHERE hostname = ? AND config_api_id = ?").use { stmt ->
@@ -431,20 +449,25 @@ data class ClientCertRecord(
     val commonName: String,
     val fingerprint: String,
     val createdAt: String,
-    val revoked: Boolean = false
+    val revoked: Boolean = false,
+    val deviceAlias: String? = null,
+    val deviceUid: String? = null
 )
 
 class ClientCertStore(private val db: DatabaseManager) {
 
-    fun add(id: String, commonName: String, fingerprint: String, createdAt: String) {
+    fun add(id: String, commonName: String, fingerprint: String, createdAt: String,
+            deviceAlias: String? = null, deviceUid: String? = null) {
         db.connection().use { conn ->
             conn.prepareStatement(
-                "INSERT OR REPLACE INTO client_certs (id, common_name, fingerprint, created_at, revoked) VALUES (?, ?, ?, ?, 0)"
+                "INSERT OR REPLACE INTO client_certs (id, common_name, fingerprint, created_at, revoked, device_alias, device_uid) VALUES (?, ?, ?, ?, 0, ?, ?)"
             ).use { stmt ->
                 stmt.setString(1, id)
                 stmt.setString(2, commonName)
                 stmt.setString(3, fingerprint)
                 stmt.setString(4, createdAt)
+                stmt.setString(5, deviceAlias)
+                stmt.setString(6, deviceUid)
                 stmt.executeUpdate()
             }
         }
@@ -462,7 +485,7 @@ class ClientCertStore(private val db: DatabaseManager) {
     fun getAll(): List<ClientCertRecord> {
         db.connection().use { conn ->
             conn.createStatement().use { stmt ->
-                val rs = stmt.executeQuery("SELECT id, common_name, fingerprint, created_at, revoked FROM client_certs ORDER BY created_at DESC")
+                val rs = stmt.executeQuery("SELECT id, common_name, fingerprint, created_at, revoked, device_alias, device_uid FROM client_certs ORDER BY created_at DESC")
                 val entries = mutableListOf<ClientCertRecord>()
                 while (rs.next()) {
                     entries.add(ClientCertRecord(
@@ -470,7 +493,9 @@ class ClientCertStore(private val db: DatabaseManager) {
                         commonName = rs.getString("common_name"),
                         fingerprint = rs.getString("fingerprint"),
                         createdAt = rs.getString("created_at"),
-                        revoked = rs.getInt("revoked") == 1
+                        revoked = rs.getInt("revoked") == 1,
+                        deviceAlias = rs.getString("device_alias"),
+                        deviceUid = rs.getString("device_uid")
                     ))
                 }
                 return entries

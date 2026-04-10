@@ -14,6 +14,7 @@ android {
         versionCode = 1
         versionName = "1.0"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+        testInstrumentationRunnerArguments["clearPackageData"] = "true"
     }
 
     buildTypes {
@@ -36,6 +37,7 @@ android {
     }
 
     testOptions {
+        execution = "ANDROIDX_TEST_ORCHESTRATOR"
         installation {
             installOptions("-g") // grant permissions
         }
@@ -65,4 +67,7 @@ dependencies {
     androidTestImplementation("io.qameta.allure:allure-kotlin-android:2.4.0")
     androidTestImplementation("io.qameta.allure:allure-kotlin-commons:2.4.0")
     androidTestImplementation("io.qameta.allure:allure-kotlin-junit4:2.4.0")
+
+    // Test Orchestrator — prevents UiAutomation crashes from killing remaining tests
+    androidTestUtil("androidx.test:orchestrator:1.5.1")
 }

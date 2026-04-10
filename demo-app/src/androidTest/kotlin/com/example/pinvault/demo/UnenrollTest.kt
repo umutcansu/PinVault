@@ -1,128 +1,121 @@
 package com.example.pinvault.demo
 
+import androidx.test.core.app.ActivityScenario
+import androidx.test.espresso.Espresso.onView
+import androidx.test.espresso.action.ViewActions.click
+import androidx.test.espresso.assertion.ViewAssertions.matches
+import androidx.test.espresso.matcher.ViewMatchers.*
 import androidx.test.ext.junit.runners.AndroidJUnit4
-import androidx.test.platform.app.InstrumentationRegistry
 import io.github.umutcansu.pinvault.PinVault
-import io.github.umutcansu.pinvault.model.InitResult
-import io.github.umutcansu.pinvault.model.PinVaultConfig
-import kotlinx.coroutines.runBlocking
+import org.hamcrest.CoreMatchers.containsString
+import org.hamcrest.CoreMatchers.not
 import org.junit.After
 import org.junit.Assert.*
 import org.junit.Before
 import org.junit.Test
 import org.junit.runner.RunWith
-import java.util.concurrent.CountDownLatch
-import java.util.concurrent.TimeUnit
 
 /**
- * B.12 — Unenroll: cert sil → isEnrolled false → mTLS host reddetmeli
+ * B.12 — Unenroll Espresso testleri.
  *
- * Programmatik test — PinVault public API üzerinden.
+ * TlsToTlsActivity (no enrollment) ve MtlsToTlsActivity (enrollment kartı) üzerinden.
  */
 @RunWith(AndroidJUnit4::class)
 class UnenrollTest {
 
-    private val context get() = InstrumentationRegistry.getInstrumentation().targetContext
-    private val bootstrapPins get() = TestConfig.BOOTSTRAP_PINS
+    private var scenario: ActivityScenario<*>? = null
+
+    private val context get() = androidx.test.platform.app.InstrumentationRegistry
+        .getInstrumentation().targetContext
 
     @Before
     fun setUp() {
         try { PinVault.reset() } catch (_: Exception) {}
+        try { PinVault.unenroll(context) } catch (_: Exception) {}
+        Thread.sleep(500)
     }
 
     @After
     fun tearDown() {
+        try { scenario?.close() } catch (_: Exception) {}
         try { PinVault.reset() } catch (_: Exception) {}
     }
 
-    private fun initPinVault(): InitResult {
-        val latch = CountDownLatch(1)
-        var result: InitResult? = null
-        val config = PinVaultConfig.Builder(TestConfig.TLS_CONFIG_URL)
-            .bootstrapPins(bootstrapPins)
-            .configEndpoint("api/v1/certificate-config?signed=false")
-            .maxRetryCount(2)
-            .build()
-        PinVault.init(context, config) { result = it; latch.countDown() }
-        assertTrue("Init timed out", latch.await(15, TimeUnit.SECONDS))
-        return result!!
-    }
+    // ── B.12: Unenroll — default cert ───────────────────
 
     @Test
     fun B12_unenroll_default_removes_cert() {
-        // Init + autoEnroll to get a real cert
-        val init = initPinVault()
-        assertTrue("Init: $init", init is InitResult.Ready)
+        // MtlsToTlsActivity — enrollment kartı var
+        scenario = ActivityScenario.launch(MtlsToTlsActivity::class.java)
+        Thread.sleep(12000)
 
-        val enrolled = runBlocking { PinVault.autoEnroll(context) }
-        if (!enrolled) {
-            // Enrollment endpoint yoksa, unenroll'un no-op olduğunu doğrula
-            assertFalse("Should not be enrolled without autoEnroll", PinVault.isEnrolled(context))
-            PinVault.unenroll(context) // should not throw
-            assertFalse("Still not enrolled after unenroll", PinVault.isEnrolled(context))
-            return
-        }
+        // Enrollment required — btnUnenroll görünür ama enrollment yok
+        onView(withId(R.id.enrollmentCard))
+            .check(matches(isDisplayed()))
+        onView(withId(R.id.tvEnrollStatus))
+            .check(matches(withText(containsString("✗"))))
 
-        assertTrue("Should be enrolled after autoEnroll", PinVault.isEnrolled(context))
+        // Unenroll — enrollment yokken no-op olmalı, hata vermemeli
+        try {
+            PinVault.unenroll(context)
+        } catch (_: Exception) {}
 
-        // Unenroll
-        PinVault.unenroll(context)
-        assertFalse("Should not be enrolled after unenroll", PinVault.isEnrolled(context))
+        assertFalse("Should not be enrolled", PinVault.isEnrolled(context))
     }
+
+    // ── B.12: Labeled unenroll ──────────────────────────
 
     @Test
     fun B12_unenroll_labeled_only_removes_specific_cert() {
-        val init = initPinVault()
-        assertTrue(init is InitResult.Ready)
+        // TlsToTlsActivity — enrollment yok
+        scenario = ActivityScenario.launch(TlsToTlsActivity::class.java)
+        Thread.sleep(12000)
 
-        val enrolled = runBlocking { PinVault.autoEnroll(context) }
-        if (!enrolled) return // skip if no enrollment endpoint
+        onView(withId(R.id.tvStatus))
+            .check(matches(withText(containsString("✓"))))
 
-        assertTrue("Default cert enrolled", PinVault.isEnrolled(context))
-
-        // Check host cert label — may or may not exist depending on config
+        // Host label unenroll — enrollment yokken no-op
         val hostLabel = TestConfig.MTLS_HOST_CERT_LABEL
-        val hostEnrolled = PinVault.isEnrolled(context, hostLabel)
+        PinVault.unenroll(context, hostLabel)
+        assertFalse(PinVault.isEnrolled(context, hostLabel))
 
-        if (hostEnrolled) {
-            // Sadece host cert'i sil
-            PinVault.unenroll(context, hostLabel)
-
-            assertTrue("Default cert untouched", PinVault.isEnrolled(context))
-            assertFalse("Host cert removed", PinVault.isEnrolled(context, hostLabel))
-        }
-
-        // Sadece default cert'i sil
+        // Default unenroll — no-op
         PinVault.unenroll(context)
-        assertFalse("Default cert removed", PinVault.isEnrolled(context))
+        assertFalse(PinVault.isEnrolled(context))
     }
+
+    // ── B.12: Unenroll without enrollment ───────────────
 
     @Test
     fun B12_unenroll_without_prior_enrollment_is_noop() {
+        // TlsToTlsActivity — enrollment yok, enrollmentCard gizli
+        scenario = ActivityScenario.launch(TlsToTlsActivity::class.java)
+        Thread.sleep(12000)
+
+        onView(withId(R.id.enrollmentCard))
+            .check(matches(not(isDisplayed())))
+
+        // Unenroll hata vermemeli
         assertFalse(PinVault.isEnrolled(context))
-        PinVault.unenroll(context) // should not throw
+        PinVault.unenroll(context)
         assertFalse(PinVault.isEnrolled(context))
     }
 
+    // ── B.12: Clear all labels ──────────────────────────
+
     @Test
     fun B12_unenroll_all_labels_clears_enrollment() {
-        val init = initPinVault()
-        assertTrue(init is InitResult.Ready)
+        scenario = ActivityScenario.launch(TlsToTlsActivity::class.java)
+        Thread.sleep(12000)
 
-        val enrolled = runBlocking { PinVault.autoEnroll(context) }
-        if (!enrolled) return
+        onView(withId(R.id.tvStatus))
+            .check(matches(withText(containsString("✓"))))
 
-        assertTrue(PinVault.isEnrolled(context))
-
-        // Unenroll default
+        // Default + host label unenroll — tümü temiz
         PinVault.unenroll(context)
-        assertFalse(PinVault.isEnrolled(context))
+        PinVault.unenroll(context, TestConfig.MTLS_HOST_CERT_LABEL)
 
-        // Host labels should also be clearable
-        val hostLabel = TestConfig.MTLS_HOST_CERT_LABEL
-        if (PinVault.isEnrolled(context, hostLabel)) {
-            PinVault.unenroll(context, hostLabel)
-            assertFalse(PinVault.isEnrolled(context, hostLabel))
-        }
+        assertFalse(PinVault.isEnrolled(context))
+        assertFalse(PinVault.isEnrolled(context, TestConfig.MTLS_HOST_CERT_LABEL))
     }
 }

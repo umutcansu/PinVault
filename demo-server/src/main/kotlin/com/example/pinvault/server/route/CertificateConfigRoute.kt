@@ -58,6 +58,9 @@ fun Route.certificateConfigRoutes(
             val token = json?.get("token")?.jsonPrimitive?.content
             val deviceId = json?.get("deviceId")?.jsonPrimitive?.content
 
+            val deviceAlias = json?.get("deviceAlias")?.jsonPrimitive?.content
+            val deviceUid = json?.get("deviceUid")?.jsonPrimitive?.content
+
             val clientId: String
             if (token != null && enrollmentTokenStore != null) {
                 clientId = enrollmentTokenStore.validate(token)
@@ -77,12 +80,17 @@ fun Route.certificateConfigRoutes(
             }
 
             val result = certService.generateClientCertificate(clientId)
-            clientCertStore?.add(clientId, result.commonName, result.fingerprint, java.time.Instant.now().toString())
+            clientCertStore?.add(clientId, result.commonName, result.fingerprint, java.time.Instant.now().toString(),
+                deviceAlias = deviceAlias, deviceUid = deviceUid)
 
             // mTLS mock server'ları ve Config API'leri yeniden başlat (yeni truststore ile)
             mockServerManager?.restartMtlsServers(certService)
             onClientCertEnrolled?.invoke()
 
+            val p12Hash = java.security.MessageDigest.getInstance("SHA-256")
+                .digest(result.p12Bytes)
+                .let { java.util.Base64.getEncoder().encodeToString(it) }
+            call.response.header("X-P12-SHA256", p12Hash)
             call.respondBytes(result.p12Bytes, ContentType.Application.OctetStream)
         }
     }

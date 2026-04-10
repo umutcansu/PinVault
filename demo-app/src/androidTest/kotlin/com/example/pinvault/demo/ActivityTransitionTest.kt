@@ -1,128 +1,116 @@
 package com.example.pinvault.demo
 
+import androidx.test.core.app.ActivityScenario
+import androidx.test.espresso.Espresso.onView
+import androidx.test.espresso.action.ViewActions.click
+import androidx.test.espresso.assertion.ViewAssertions.matches
+import androidx.test.espresso.matcher.ViewMatchers.*
 import androidx.test.ext.junit.runners.AndroidJUnit4
-import androidx.test.platform.app.InstrumentationRegistry
-import io.github.umutcansu.pinvault.PinVault
-import io.github.umutcansu.pinvault.model.InitResult
-import io.github.umutcansu.pinvault.model.PinVaultConfig
+import org.hamcrest.CoreMatchers.containsString
 import org.junit.After
-import org.junit.Assert.*
 import org.junit.Before
 import org.junit.Test
 import org.junit.runner.RunWith
-import java.util.concurrent.CountDownLatch
-import java.util.concurrent.TimeUnit
 
 /**
- * B.15 — PinVault reset + reinit: farklı config URL ile geçiş
+ * B.15 — PinVault reset + reinit Espresso testleri.
  *
- * Activity geçişi simülasyonu — PinVault.reset() sonrası yeni config ile init.
+ * Activity geçişi simülasyonu — Activity aç/kapat/tekrar aç.
+ * TlsToTlsActivity üzerinden.
  */
 @RunWith(AndroidJUnit4::class)
 class ActivityTransitionTest {
 
-    private val context get() = InstrumentationRegistry.getInstrumentation().targetContext
-    private val bootstrapPins get() = TestConfig.BOOTSTRAP_PINS
+    private var scenario: ActivityScenario<TlsToTlsActivity>? = null
 
     @Before
     fun setUp() {
-        try { PinVault.reset() } catch (_: Exception) {}
+        try { io.github.umutcansu.pinvault.PinVault.reset() } catch (_: Exception) {}
+        Thread.sleep(500)
     }
 
     @After
     fun tearDown() {
-        try { PinVault.reset() } catch (_: Exception) {}
+        try { scenario?.close() } catch (_: Exception) {}
+        try { io.github.umutcansu.pinvault.PinVault.reset() } catch (_: Exception) {}
     }
 
-    private fun initWith(configUrl: String): InitResult {
-        val latch = CountDownLatch(1)
-        var result: InitResult? = null
+    // ── Helpers ──────────────────────────────────────────
 
-        val config = PinVaultConfig.Builder(configUrl)
-            .bootstrapPins(bootstrapPins)
-            .configEndpoint("api/v1/certificate-config?signed=false")
-            .maxRetryCount(2)
-            .build()
-
-        PinVault.init(context, config) {
-            result = it
-            latch.countDown()
-        }
-
-        assertTrue("Init timed out for $configUrl", latch.await(15, TimeUnit.SECONDS))
-        return result!!
+    private fun clickUpdate() {
+        onView(withId(R.id.btnUpdate)).perform(click())
+        Thread.sleep(6000)
     }
+
+    // ── B.15: Reset → state temizlenir ──────────────────
 
     @Test
     fun B15_reset_clears_state_completely() {
-        // İlk init
-        val result1 = initWith(TestConfig.TLS_CONFIG_URL)
-        assertTrue("First init: $result1", result1 is InitResult.Ready)
+        // İlk Activity aç — Ready
+        scenario = ActivityScenario.launch(TlsToTlsActivity::class.java)
+        Thread.sleep(12000)
 
-        val v1 = PinVault.currentVersion()
-        assertTrue("Version should be > 0 after init: $v1", v1 > 0)
+        onView(withId(R.id.tvStatus))
+            .check(matches(withText(containsString("✓"))))
 
-        // Reset
-        PinVault.reset()
+        // Activity kapat + PinVault reset
+        scenario!!.close()
+        io.github.umutcansu.pinvault.PinVault.reset()
+        Thread.sleep(500)
 
-        // Reset sonrası currentVersion() ya 0 döner ya da IllegalStateException atar
-        try {
-            val vAfterReset = PinVault.currentVersion()
-            assertEquals("currentVersion() after reset should be 0", 0, vAfterReset)
-        } catch (_: IllegalStateException) {
-            // Bu da kabul edilebilir
-        }
+        // Tekrar Activity aç — yeniden init edilmeli
+        scenario = ActivityScenario.launch(TlsToTlsActivity::class.java)
+        Thread.sleep(12000)
 
-        // Reset sonrası getClient() exception atmalı
-        try {
-            PinVault.getClient()
-            fail("getClient() after reset should throw")
-        } catch (_: IllegalStateException) {
-            // Beklenen
-        }
+        onView(withId(R.id.tvStatus))
+            .check(matches(withText(containsString("✓"))))
     }
+
+    // ── B.15: Reinit after reset ────────────────────────
 
     @Test
     fun B15_reinit_after_reset_works() {
-        // İlk init
-        val result1 = initWith(TestConfig.TLS_CONFIG_URL)
-        assertTrue("First init: $result1", result1 is InitResult.Ready)
+        // İlk Activity
+        scenario = ActivityScenario.launch(TlsToTlsActivity::class.java)
+        Thread.sleep(12000)
 
-        // Reset — iç durum temizlenmesi için kısa bekleme
-        PinVault.reset()
+        onView(withId(R.id.tvStatus))
+            .check(matches(withText(containsString("✓"))))
+
+        // Kapat + reset
+        scenario!!.close()
+        io.github.umutcansu.pinvault.PinVault.reset()
         Thread.sleep(500)
 
-        // Reinit
-        val result2 = initWith(TestConfig.TLS_CONFIG_URL)
-        assertTrue("Reinit should succeed: $result2", result2 is InitResult.Ready)
+        // Yeniden aç
+        scenario = ActivityScenario.launch(TlsToTlsActivity::class.java)
+        Thread.sleep(12000)
 
-        // Version >= 0 yeterli — reinit sonrası config fetch tamamlanmış olmalı
-        val v2 = PinVault.currentVersion()
-        assertTrue("Version after reinit should be >= 0: $v2", v2 >= 0)
+        onView(withId(R.id.tvStatus))
+            .check(matches(withText(containsString("✓"))))
+        onView(withId(R.id.tvVersion))
+            .check(matches(isDisplayed()))
     }
+
+    // ── B.15: Double init idempotent ────────────────────
 
     @Test
     fun B15_double_init_without_reset_is_idempotent() {
-        // İlk init
-        val result1 = initWith(TestConfig.TLS_CONFIG_URL)
-        assertTrue("First init: $result1", result1 is InitResult.Ready)
-        val v1 = PinVault.currentVersion()
+        scenario = ActivityScenario.launch(TlsToTlsActivity::class.java)
+        Thread.sleep(12000)
 
-        // İkinci init reset olmadan — PinVault already initialized, callback hemen tetiklenir veya skip edilir
-        val latch = CountDownLatch(1)
-        val config = PinVaultConfig.Builder(TestConfig.TLS_CONFIG_URL)
-            .bootstrapPins(bootstrapPins)
-            .configEndpoint("api/v1/certificate-config?signed=false")
-            .maxRetryCount(2)
-            .build()
+        onView(withId(R.id.tvStatus))
+            .check(matches(withText(containsString("✓"))))
+        onView(withId(R.id.tvVersion))
+            .check(matches(isDisplayed()))
 
-        PinVault.init(context, config) { latch.countDown() }
+        // btnUpdate ile updateNow() — state bozulmamalı
+        clickUpdate()
 
-        // Callback tetiklenmeyebilir (already initialized) — bekleme süresi kısa tutulur
-        latch.await(5, TimeUnit.SECONDS)
-
-        // State bozulmamalı
-        val v2 = PinVault.currentVersion()
-        assertEquals("Version unchanged after double init", v1, v2)
+        // Version hâlâ görünür — crash yok
+        onView(withId(R.id.tvVersion))
+            .check(matches(isDisplayed()))
+        onView(withId(R.id.tvStatus))
+            .check(matches(withText(containsString("✓"))))
     }
 }

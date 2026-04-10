@@ -4,6 +4,28 @@ let selectedHost = null;
 let selectedApiId = null;
 let currentSection = null;
 
+// ── API Key Authentication ──────────────────────────
+function getApiKey() { return localStorage.getItem('pinvault_api_key') || ''; }
+function setApiKey(key) { localStorage.setItem('pinvault_api_key', key); }
+
+// Authenticated fetch wrapper — adds X-API-Key header
+async function apiFetch(url, options = {}) {
+    const key = getApiKey();
+    if (key) {
+        options.headers = { ...options.headers, 'X-API-Key': key };
+    }
+    const resp = await fetch(url, options);
+    if (resp.status === 401 || resp.status === 403) {
+        const newKey = prompt('API Key gerekli (X-API-Key):');
+        if (newKey) {
+            setApiKey(newKey);
+            options.headers = { ...options.headers, 'X-API-Key': newKey };
+            return fetch(url, options);
+        }
+    }
+    return resp;
+}
+
 // ── i18n ─────────────────────────────────────────────
 
 const i18n = {
@@ -291,11 +313,11 @@ async function init() {
 async function loadConfig() {
   try {
     // Tüm API'lerin özetini al
-    const apisRes = await fetch('/api/v1/all-configs');
+    const apisRes = await apiFetch('/api/v1/all-configs');
     allApiConfigs = await apisRes.json();
 
     // Varsayılan API'nin config'ini yükle (management server üzerinden)
-    const res = await fetch('/api/v1/certificate-config?signed=false');
+    const res = await apiFetch('/api/v1/certificate-config?signed=false');
     currentConfig = await res.json();
     console.log('Config loaded:', currentConfig, 'APIs:', allApiConfigs);
   } catch (e) {
@@ -328,7 +350,7 @@ async function loadAllHostStatuses() {
     if (!api.pins) continue;
     for (const p of api.pins) {
       try {
-        const res = await fetch(`/api/v1/hosts/${encodeURIComponent(p.hostname)}/status`);
+        const res = await apiFetch(`/api/v1/hosts/${encodeURIComponent(p.hostname)}/status`);
         if (res.ok) hostStatuses[p.hostname] = await res.json();
       } catch (_) {}
     }
@@ -543,7 +565,7 @@ function renderApiGeneralTab(apiId) {
 async function deleteConfigApi(apiId) {
   if (!confirm(apiId + ' silinecek. Tüm host\'ları ve pin config\'i de silinecek. Devam?')) return;
   try {
-    await fetch('/api/v1/config-apis/delete', {
+    await apiFetch('/api/v1/config-apis/delete', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ id: apiId })
@@ -568,7 +590,7 @@ function selectHostInApi(hostname, apiId) {
 
 async function loadHostDetail(hostname, apiId) {
   try {
-    const res = await fetch(`/api/v1/config/${encodeURIComponent(apiId)}`);
+    const res = await apiFetch(`/api/v1/config/${encodeURIComponent(apiId)}`);
     if (res.ok) {
       currentConfig = await res.json();
       const host = getHosts().find(h => h.hostname === hostname);
@@ -600,7 +622,7 @@ async function renderHostDetail(host) {
   // Host geçmişini çek
   let historyHtml = `<div class="loading">${t('loading')}</div>`;
   try {
-    const res = await fetch('/api/v1/certificate-config/history/' + encodeURIComponent(host.hostname));
+    const res = await apiFetch('/api/v1/certificate-config/history/' + encodeURIComponent(host.hostname));
     const entries = await res.json();
     const locale = lang === 'tr' ? 'tr-TR' : 'en-US';
 
@@ -717,7 +739,7 @@ async function renderHostDetail(host) {
 async function testHostConnection(hostname) {
   try {
     // Mock server durumunu kontrol et
-    const statusRes = await fetch(`/api/v1/hosts/${encodeURIComponent(hostname)}/status`);
+    const statusRes = await apiFetch(`/api/v1/hosts/${encodeURIComponent(hostname)}/status`);
     if (!statusRes.ok) { toast(t('error'), 'error'); return; }
     const status = await statusRes.json();
     if (!status.mockServerRunning) {
@@ -731,12 +753,12 @@ async function testHostConnection(hostname) {
 
     // Management API üzerinden proxy test — sunucu kendi mock server'ına bağlanır
     const start = Date.now();
-    const res = await fetch(`/api/v1/hosts/${encodeURIComponent(hostname)}/test-connection`, { method: 'POST' });
+    const res = await apiFetch(`/api/v1/hosts/${encodeURIComponent(hostname)}/test-connection`, { method: 'POST' });
     const elapsed = Date.now() - start;
     const data = await res.json();
 
     // Sonucu connection history'ye kaydet
-    await fetch('/api/v1/connection-history/web', {
+    await apiFetch('/api/v1/connection-history/web', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         hostname: hostname,
@@ -761,7 +783,7 @@ async function loadHostConnectionHistory(hostname) {
   const card = document.getElementById('conn-history-card');
   if (!card) return;
   try {
-    const res = await fetch('/api/v1/connection-history/' + encodeURIComponent(hostname));
+    const res = await apiFetch('/api/v1/connection-history/' + encodeURIComponent(hostname));
     const entries = await res.json();
     const locale = lang === 'tr' ? 'tr-TR' : 'en-US';
 
@@ -808,7 +830,7 @@ async function loadClientDevices(hostname) {
   const card = document.getElementById('client-devices-card');
   if (!card) return;
   try {
-    const res = await fetch(`/api/v1/hosts/${encodeURIComponent(hostname)}/clients`);
+    const res = await apiFetch(`/api/v1/hosts/${encodeURIComponent(hostname)}/clients`);
     const devices = await res.json();
     const locale = lang === 'tr' ? 'tr-TR' : 'en-US';
 
@@ -854,7 +876,7 @@ async function loadHostClientCert(hostname) {
 
   let certInfo = null;
   try {
-    const res = await fetch(`/api/v1/hosts/${encodeURIComponent(hostname)}/client-cert/info`);
+    const res = await apiFetch(`/api/v1/hosts/${encodeURIComponent(hostname)}/client-cert/info`);
     if (res.ok) certInfo = await res.json();
   } catch (_) {}
 
@@ -898,7 +920,7 @@ async function loadHostClientCert(hostname) {
 
 async function toggleHostMtls(hostname, enable) {
   try {
-    await fetch(`/api/v1/hosts/${encodeURIComponent(hostname)}/toggle-mtls`, {
+    await apiFetch(`/api/v1/hosts/${encodeURIComponent(hostname)}/toggle-mtls`, {
       method: 'POST', headers: {'Content-Type': 'application/json'},
       body: JSON.stringify({ mtls: enable })
     });
@@ -918,7 +940,7 @@ async function uploadHostClientCert(hostname) {
   formData.append('password', password);
 
   try {
-    const res = await fetch(`/api/v1/hosts/${encodeURIComponent(hostname)}/upload-client-cert`, { method: 'POST', body: formData });
+    const res = await apiFetch(`/api/v1/hosts/${encodeURIComponent(hostname)}/upload-client-cert`, { method: 'POST', body: formData });
     if (!res.ok) { const err = await res.json(); toast(err.error || t('error'), 'error'); return; }
     const data = await res.json();
     toast(`Client cert uploaded — v${data.clientCertVersion}`, 'success');
@@ -985,7 +1007,7 @@ async function createConfigApi(e) {
   const mode = document.getElementById('new-api-mode').value;
   if (!id || !port) return;
   try {
-    const res = await fetch('/api/v1/config-apis/start', {
+    const res = await apiFetch('/api/v1/config-apis/start', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ id, port, mode })
@@ -1104,7 +1126,7 @@ async function createHostGenerate() {
 
   try {
     const apiId = selectedApiId || 'default-tls';
-    const res = await fetch(`/api/v1/management/hosts/${encodeURIComponent(apiId)}/generate-cert`, {
+    const res = await apiFetch(`/api/v1/management/hosts/${encodeURIComponent(apiId)}/generate-cert`, {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ hostname })
     });
@@ -1127,7 +1149,7 @@ async function createHostFetch() {
   btn.disabled = true; btn.textContent = t('fetching');
 
   try {
-    const res = await fetch('/api/v1/hosts/fetch-from-url', {
+    const res = await apiFetch('/api/v1/hosts/fetch-from-url', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ url })
     });
@@ -1165,7 +1187,7 @@ async function createHostUpload() {
   formData.append('format', format);
 
   try {
-    const res = await fetch('/api/v1/hosts/upload-cert', { method: 'POST', body: formData });
+    const res = await apiFetch('/api/v1/hosts/upload-cert', { method: 'POST', body: formData });
     if (!res.ok) { const err = await res.json(); toast(err.error || t('error'), 'error'); btn.disabled = false; btn.textContent = t('create'); return; }
 
     toast(t('certUploaded') + ' — ' + hostname, 'success');
@@ -1283,7 +1305,7 @@ async function deleteHost(hostname) {
 
 async function saveFullConfig(pins) {
   try {
-    const res = await fetch('/api/v1/certificate-config', {
+    const res = await apiFetch('/api/v1/certificate-config', {
       method: 'PUT', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ version: 0, pins, forceUpdate: false })
     });
@@ -1303,7 +1325,7 @@ async function toggleForce(hostname) {
   if (!isActive && !confirm(t('forceConfirm'))) return;
   try {
     const endpoint = isActive ? 'clear-force' : 'force-update';
-    await fetch(`/api/v1/certificate-config/${endpoint}/${encodeURIComponent(hostname)}`, { method: 'POST' });
+    await apiFetch(`/api/v1/certificate-config/${endpoint}/${encodeURIComponent(hostname)}`, { method: 'POST' });
     await loadConfig(); renderHostList();
     if (selectedHost) selectHost(selectedHost);
     toast(isActive ? t('forceDisabled') : t('forceEnabled'), 'success');
@@ -1313,7 +1335,7 @@ async function toggleForce(hostname) {
 async function forceUpdate(hostname) {
   if (!confirm(t('forceConfirm'))) return;
   try {
-    await fetch(`/api/v1/certificate-config/force-update/${encodeURIComponent(hostname)}`, { method: 'POST' });
+    await apiFetch(`/api/v1/certificate-config/force-update/${encodeURIComponent(hostname)}`, { method: 'POST' });
     await loadConfig(); renderHostList();
     if (selectedHost) selectHost(selectedHost);
     toast(t('forceEnabled'), 'success');
@@ -1322,7 +1344,7 @@ async function forceUpdate(hostname) {
 
 async function clearForce(hostname) {
   try {
-    await fetch(`/api/v1/certificate-config/clear-force/${encodeURIComponent(hostname)}`, { method: 'POST' });
+    await apiFetch(`/api/v1/certificate-config/clear-force/${encodeURIComponent(hostname)}`, { method: 'POST' });
     await loadConfig(); renderHostList();
     if (selectedHost) selectHost(selectedHost);
     toast(t('forceDisabled'), 'success');
@@ -1406,10 +1428,10 @@ async function renderHealthSection() {
 async function runHealthCheck() {
   try {
     const start = Date.now();
-    const res = await fetch('/health');
+    const res = await apiFetch('/health');
     const elapsed = Date.now() - start;
     const data = await res.json();
-    await fetch('/api/v1/connection-history/web', {
+    await apiFetch('/api/v1/connection-history/web', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ status: data.status === 'ok' ? 'healthy' : 'error', responseTimeMs: elapsed })
     });
@@ -1423,7 +1445,7 @@ async function runHealthCheck() {
 async function renderBootstrapSection() {
   document.getElementById('content').innerHTML = `<div class="loading">${t('loading')}</div>`;
   try {
-    const res = await fetch('/api/v1/server-tls-pins');
+    const res = await apiFetch('/api/v1/server-tls-pins');
     const data = await res.json();
     const hasPins = data.primaryPin && data.primaryPin.length > 0;
 
@@ -1504,7 +1526,7 @@ function toggleBootstrapUpload() {
 async function regenerateBootstrapCert() {
   if (!confirm(t('regenerateBootstrapConfirm'))) return;
   try {
-    await fetch('/api/v1/server-tls-pins/regenerate', { method: 'POST' });
+    await apiFetch('/api/v1/server-tls-pins/regenerate', { method: 'POST' });
     toast(t('bootstrapRegenerated'), 'success');
     renderBootstrapSection();
   } catch (e) { toast(t('error'), 'error'); }
@@ -1523,7 +1545,7 @@ async function uploadBootstrapCert(e) {
   formData.append('format', format);
 
   try {
-    const res = await fetch('/api/v1/server-tls-pins/upload', { method: 'POST', body: formData });
+    const res = await apiFetch('/api/v1/server-tls-pins/upload', { method: 'POST', body: formData });
     const data = await res.json();
     if (data.error) { toast(data.error, 'error'); return; }
     toast(t('bootstrapUploaded'), 'success');
@@ -1535,7 +1557,7 @@ async function fetchBootstrapFromUrl(e) {
   e.preventDefault();
   const url = document.getElementById('bootstrap-url').value;
   try {
-    const res = await fetch('/api/v1/server-tls-pins/fetch-from-url', {
+    const res = await apiFetch('/api/v1/server-tls-pins/fetch-from-url', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ url })
@@ -1550,7 +1572,7 @@ async function fetchBootstrapFromUrl(e) {
 async function regenerateSigningKey() {
   if (!confirm(t('regenerateSigningConfirm'))) return;
   try {
-    await fetch('/api/v1/signing-key/regenerate', { method: 'POST' });
+    await apiFetch('/api/v1/signing-key/regenerate', { method: 'POST' });
     toast(t('signingRegenerated'), 'success');
     renderSigningSection();
   } catch (e) { toast(t('error'), 'error'); }
@@ -1657,7 +1679,7 @@ async function generateClientCert(e) {
   const clientId = document.getElementById('mtls-client-id').value.trim();
   if (!clientId) return;
   try {
-    const res = await fetch('/api/v1/client-certs/generate', {
+    const res = await apiFetch('/api/v1/client-certs/generate', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ clientId })
@@ -1680,7 +1702,7 @@ async function uploadClientCert() {
   formData.append('file', file);
   formData.append('clientId', clientId);
   try {
-    const res = await fetch('/api/v1/client-certs/upload', { method: 'POST', body: formData });
+    const res = await apiFetch('/api/v1/client-certs/upload', { method: 'POST', body: formData });
     const data = await res.json();
     if (data.error) { toast(data.error, 'error'); return; }
     toast(t('certUploaded'), 'success');
@@ -1695,7 +1717,7 @@ async function startConfigApi(e) {
   const mode = document.getElementById('capi-mode').value;
   if (!id || !port) return;
   try {
-    const res = await fetch('/api/v1/config-apis/start', {
+    const res = await apiFetch('/api/v1/config-apis/start', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ id, port, mode })
@@ -1709,7 +1731,7 @@ async function startConfigApi(e) {
 
 async function stopConfigApi(id) {
   try {
-    await fetch('/api/v1/config-apis/stop', {
+    await apiFetch('/api/v1/config-apis/stop', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ id })
@@ -1726,7 +1748,7 @@ async function toggleConfigApi(apiId) {
   const isRunning = api.running !== false;
   try {
     if (isRunning) {
-      await fetch('/api/v1/config-apis/stop', {
+      await apiFetch('/api/v1/config-apis/stop', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ id: apiId })
@@ -1737,7 +1759,7 @@ async function toggleConfigApi(apiId) {
       const modeEl = document.getElementById(`capi-mode-${apiId}`);
       const port = parseInt(portEl?.value) || api.port;
       const mode = modeEl?.value || api.mode;
-      await fetch('/api/v1/config-apis/start', {
+      await apiFetch('/api/v1/config-apis/start', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ id: apiId, port, mode })
@@ -1755,7 +1777,7 @@ async function generateEnrollmentToken(e) {
   const clientId = document.getElementById('enrollment-client-id').value.trim();
   if (!clientId) return;
   try {
-    const res = await fetch('/api/v1/enrollment-tokens/generate', {
+    const res = await apiFetch('/api/v1/enrollment-tokens/generate', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ clientId })
@@ -1770,7 +1792,7 @@ async function loadEnrollmentTokens() {
   const container = document.getElementById('enrollment-token-list');
   if (!container) return;
   try {
-    const res = await fetch('/api/v1/enrollment-tokens');
+    const res = await apiFetch('/api/v1/enrollment-tokens');
     const tokens = await res.json();
     const locale = lang === 'tr' ? 'tr-TR' : 'en-US';
     if (tokens.length === 0) { container.innerHTML = ''; return; }
@@ -1789,7 +1811,7 @@ async function loadEnrollmentTokens() {
 async function revokeClientCert(id) {
   if (!confirm(`${id} iptal edilecek. Devam?`)) return;
   try {
-    await fetch(`/api/v1/client-certs/${encodeURIComponent(id)}`, { method: 'DELETE' });
+    await apiFetch(`/api/v1/client-certs/${encodeURIComponent(id)}`, { method: 'DELETE' });
     toast(t('certRevoked'), 'success');
     renderMtlsSection();
   } catch (err) { toast(t('error'), 'error'); }
@@ -1800,7 +1822,7 @@ async function revokeClientCert(id) {
 async function renderSigningSection() {
   document.getElementById('content').innerHTML = `<div class="loading">${t('loading')}</div>`;
   try {
-    const res = await fetch('/api/v1/signing-key');
+    const res = await apiFetch('/api/v1/signing-key');
     const data = await res.json();
     document.getElementById('content').innerHTML = `
       <div class="section-header">
@@ -1831,7 +1853,7 @@ async function loadCertInfo(hostname) {
   if (!card) return;
 
   try {
-    const res = await fetch(`/api/v1/hosts/${encodeURIComponent(hostname)}/cert-info`);
+    const res = await apiFetch(`/api/v1/hosts/${encodeURIComponent(hostname)}/cert-info`);
     if (!res.ok) {
       card.innerHTML = `<div class="card-title">${t('certInfo')}</div><div class="empty-msg">${t('noCert')}</div>
         ${renderCertRenewSection(hostname)}`;
@@ -1896,7 +1918,7 @@ async function renewCertUpload(e, hostname) {
   formData.append('format', format);
 
   try {
-    const res = await fetch(`/api/v1/hosts/${encodeURIComponent(hostname)}/upload-cert`, { method: 'POST', body: formData });
+    const res = await apiFetch(`/api/v1/hosts/${encodeURIComponent(hostname)}/upload-cert`, { method: 'POST', body: formData });
     if (!res.ok) { const err = await res.json(); toast(err.error || t('error'), 'error'); return; }
     toast(t('certUploadRenewed'), 'success');
     await loadConfig();
@@ -1908,7 +1930,7 @@ async function renewCertUpload(e, hostname) {
 async function renewCertAuto(hostname) {
   if (!confirm(t('renewCert') + '?')) return;
   try {
-    const res = await fetch(`/api/v1/hosts/${encodeURIComponent(hostname)}/regenerate-cert`, { method: 'POST' });
+    const res = await apiFetch(`/api/v1/hosts/${encodeURIComponent(hostname)}/regenerate-cert`, { method: 'POST' });
     if (!res.ok) { const err = await res.json(); toast(err.error || t('error'), 'error'); return; }
     toast(t('certRenewed'), 'success');
     await loadConfig();
@@ -1923,7 +1945,7 @@ async function loadMockStatus(hostname) {
   if (!card) return;
 
   try {
-    const res = await fetch(`/api/v1/hosts/${encodeURIComponent(hostname)}/status`);
+    const res = await apiFetch(`/api/v1/hosts/${encodeURIComponent(hostname)}/status`);
     if (!res.ok) { card.innerHTML = `<div class="card-title">Mock Server</div><div class="empty-msg">${t('noCert')}</div>`; return; }
     const data = await res.json();
     const running = data.mockServerRunning;
@@ -1967,7 +1989,7 @@ async function loadMockStatus(hostname) {
 }
 
 async function toggleMock(hostname) {
-  const res = await fetch(`/api/v1/hosts/${encodeURIComponent(hostname)}/status`);
+  const res = await apiFetch(`/api/v1/hosts/${encodeURIComponent(hostname)}/status`);
   if (!res.ok) return;
   const data = await res.json();
   if (data.mockServerRunning) {
@@ -1983,7 +2005,7 @@ async function startMock(hostname) {
   const port = parseInt(portInput?.value) || 8443;
   const mtls = mtlsInput?.checked || false;
   try {
-    const res = await fetch(`/api/v1/hosts/${encodeURIComponent(hostname)}/start-mock`, {
+    const res = await apiFetch(`/api/v1/hosts/${encodeURIComponent(hostname)}/start-mock`, {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ port, mtls })
     });
@@ -1996,7 +2018,7 @@ async function startMock(hostname) {
 
 async function stopMock(hostname) {
   try {
-    await fetch(`/api/v1/hosts/${encodeURIComponent(hostname)}/stop-mock`, { method: 'POST' });
+    await apiFetch(`/api/v1/hosts/${encodeURIComponent(hostname)}/stop-mock`, { method: 'POST' });
     toast(t('mockStoppedMsg'), 'success');
     loadMockStatus(hostname);
     renderHostList();
@@ -2006,7 +2028,7 @@ async function stopMock(hostname) {
 async function regenerateCert(hostname) {
   if (!confirm(t('regenerateCert') + '?')) return;
   try {
-    const res = await fetch(`/api/v1/hosts/${encodeURIComponent(hostname)}/regenerate-cert`, { method: 'POST' });
+    const res = await apiFetch(`/api/v1/hosts/${encodeURIComponent(hostname)}/regenerate-cert`, { method: 'POST' });
     if (!res.ok) { const err = await res.json(); toast(err.error || t('error'), 'error'); return; }
     toast(t('certRegenerated'), 'success');
     await loadConfig();
@@ -2140,7 +2162,7 @@ async function uploadVaultFile(e) {
 
   try {
     const bytes = await file.arrayBuffer();
-    const res = await fetch(`/api/v1/vault/${encodeURIComponent(key)}`, {
+    const res = await apiFetch(`/api/v1/vault/${encodeURIComponent(key)}`, {
       method: 'PUT',
       headers: { 'Content-Type': 'application/octet-stream' },
       body: bytes
@@ -2155,7 +2177,7 @@ async function uploadVaultFile(e) {
 async function deleteVaultFile(key) {
   if (!confirm(`Delete "${key}"?`)) return;
   try {
-    await fetch(`/api/v1/vault/${encodeURIComponent(key)}`, { method: 'DELETE' });
+    await apiFetch(`/api/v1/vault/${encodeURIComponent(key)}`, { method: 'DELETE' });
     toast(`${key} deleted`, 'success');
     renderVaultSection();
   } catch (err) { toast(t('error'), 'error'); }
@@ -2167,7 +2189,7 @@ async function showVaultFileDetail(key) {
   content.innerHTML = `<div class="loading">${t('loading')}</div>`;
 
   try {
-    const res = await fetch(`/api/v1/vault/distributions/${encodeURIComponent(key)}`);
+    const res = await apiFetch(`/api/v1/vault/distributions/${encodeURIComponent(key)}`);
     const dists = await res.json();
 
     const rows = dists.length === 0

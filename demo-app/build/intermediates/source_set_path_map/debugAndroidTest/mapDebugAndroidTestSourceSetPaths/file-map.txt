@@ -1,4 +1,0 @@
-com.example.pinvault.demo.test.demo-app-androidTest-0 /Users/thell/Programming/PinVault/demo-app/build/generated/res/resValues/androidTest/debug
-com.example.pinvault.demo.test.demo-app-mergeDebugAndroidTestResources-1 /Users/thell/Programming/PinVault/demo-app/build/intermediates/incremental/debugAndroidTest/mergeDebugAndroidTestResources/merged.dir
-com.example.pinvault.demo.test.demo-app-mergeDebugAndroidTestResources-2 /Users/thell/Programming/PinVault/demo-app/build/intermediates/incremental/debugAndroidTest/mergeDebugAndroidTestResources/stripped.dir
-com.example.pinvault.demo.test.demo-app-debugAndroidTest-3 /Users/thell/Programming/PinVault/demo-app/build/intermediates/merged_res/debugAndroidTest/mergeDebugAndroidTestResources

@@ -32,7 +32,18 @@ class VaultFileDemoActivity : AppCompatActivity() {
         }
         private val CONFIG_SERVER_URL get() = "https://$HOST_IP:8091/"
         private val MANAGEMENT_URL get() = "http://$HOST_IP:8090/"
+
+        /** Device-unique suffix to prevent race conditions in multi-device test runs */
+        private val DEVICE_SUFFIX: String by lazy {
+            android.os.Build.MODEL.replace(" ", "-").lowercase()
+        }
     }
+
+    // Device-unique vault file keys
+    private val keyFlags = "feature-flags-$DEVICE_SUFFIX"
+    private val keyModel = "ml-model-$DEVICE_SUFFIX"
+    private val keyConfig = "remote-config-$DEVICE_SUFFIX"
+    private val vaultKeys get() = listOf(keyFlags, keyModel, keyConfig)
 
     private lateinit var binding: ActivityDemoBaseBinding
     private val scope = CoroutineScope(Dispatchers.Main + SupervisorJob())
@@ -91,19 +102,21 @@ class VaultFileDemoActivity : AppCompatActivity() {
 
         try { PinVault.reset() } catch (_: Exception) {}
 
+        val deviceName = "${android.os.Build.MANUFACTURER} ${android.os.Build.MODEL}"
         val config = PinVaultConfig.Builder(CONFIG_SERVER_URL)
             .bootstrapPins(bootstrapPins)
             .configEndpoint("api/v1/certificate-config?signed=false")
-            .vaultFile("feature-flags") {
-                endpoint("api/v1/vault/feature-flags")
+            .deviceAlias(deviceName)
+            .vaultFile(keyFlags) {
+                endpoint("api/v1/vault/$keyFlags")
                 updateWithPins(true)
             }
-            .vaultFile("ml-model") {
-                endpoint("api/v1/vault/ml-model")
+            .vaultFile(keyModel) {
+                endpoint("api/v1/vault/$keyModel")
                 storage(StorageStrategy.ENCRYPTED_FILE)
             }
-            .vaultFile("remote-config") {
-                endpoint("api/v1/vault/remote-config")
+            .vaultFile(keyConfig) {
+                endpoint("api/v1/vault/$keyConfig")
                 updateWithPins(true)
             }
             .build()
@@ -152,10 +165,9 @@ class VaultFileDemoActivity : AppCompatActivity() {
         showResult("Fetching vault files...", R.color.text_secondary)
 
         scope.launch {
-            val files = listOf("feature-flags", "ml-model", "remote-config")
             val results = mutableListOf<String>()
 
-            for (key in files) {
+            for (key in vaultKeys) {
                 try {
                     val result = PinVault.fetchFile(key)
                     when (result) {
@@ -219,8 +231,7 @@ class VaultFileDemoActivity : AppCompatActivity() {
             val sb = StringBuilder()
             sb.appendLine("── Vault Files ──")
 
-            val files = listOf("feature-flags", "ml-model", "remote-config")
-            for (key in files) {
+            for (key in vaultKeys) {
                 val exists = PinVault.hasFile(key)
                 val version = PinVault.fileVersion(key)
                 val size = PinVault.loadFile(key)?.size ?: 0

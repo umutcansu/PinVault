@@ -73,10 +73,11 @@ fun Route.vaultRoutes(vaultFileStore: VaultFileStore, distStore: VaultDistributi
             val manufacturer = body["deviceManufacturer"]?.jsonPrimitive?.contentOrNull
             val model = body["deviceModel"]?.jsonPrimitive?.contentOrNull
             val label = body["enrollmentLabel"]?.jsonPrimitive?.contentOrNull
+            val deviceAlias = body["deviceAlias"]?.jsonPrimitive?.contentOrNull
             val status = body["status"]?.jsonPrimitive?.content ?: "downloaded"
             val timestamp = java.time.Instant.now().toString()
 
-            distStore.add(key, version, deviceId, manufacturer, model, label, status, timestamp)
+            distStore.add(key, version, deviceId, manufacturer, model, label, status, timestamp, deviceAlias)
             call.respond(HttpStatusCode.OK, mapOf("recorded" to "true"))
         }
 

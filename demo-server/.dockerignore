@@ -1,0 +1,8 @@
+build/
+.gradle/
+pinvault.db
+certs/
+signing-key.pem
+data/
+*.iml
+.idea/

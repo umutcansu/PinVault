@@ -1,4 +1,9 @@
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
     <uses-permission android:name="android.permission.INTERNET" />
+
+    <application
+        android:fullBackupContent="@xml/pinvault_backup_rules"
+        android:dataExtractionRules="@xml/pinvault_data_extraction_rules">
+    </application>
 </manifest>

@@ -12,12 +12,13 @@ class VaultDistributionStore(private val db: DatabaseManager) {
         model: String?,
         enrollmentLabel: String?,
         status: String,
-        timestamp: String
+        timestamp: String,
+        deviceAlias: String? = null
     ) {
         db.connection().use { conn ->
             conn.prepareStatement("""
-                INSERT INTO vault_distributions (vault_key, version, device_id, device_manufacturer, device_model, enrollment_label, status, timestamp)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                INSERT INTO vault_distributions (vault_key, version, device_id, device_manufacturer, device_model, enrollment_label, status, timestamp, device_alias)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
             """).use { stmt ->
                 stmt.setString(1, key)
                 stmt.setInt(2, version)
@@ -27,6 +28,7 @@ class VaultDistributionStore(private val db: DatabaseManager) {
                 stmt.setString(6, enrollmentLabel)
                 stmt.setString(7, status)
                 stmt.setString(8, timestamp)
+                stmt.setString(9, deviceAlias)
                 stmt.executeUpdate()
             }
             trimEntries(conn)
@@ -93,7 +95,8 @@ class VaultDistributionStore(private val db: DatabaseManager) {
         deviceModel = getString("device_model"),
         enrollmentLabel = getString("enrollment_label"),
         status = getString("status"),
-        timestamp = getString("timestamp")
+        timestamp = getString("timestamp"),
+        deviceAlias = try { getString("device_alias") } catch (_: Exception) { null }
     )
 }
 
@@ -106,7 +109,8 @@ data class VaultDistribution(
     val deviceModel: String? = null,
     val enrollmentLabel: String? = null,
     val status: String,
-    val timestamp: String
+    val timestamp: String,
+    val deviceAlias: String? = null
 )
 
 @Serializable

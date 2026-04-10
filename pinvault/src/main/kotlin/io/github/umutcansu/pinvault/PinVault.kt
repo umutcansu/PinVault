@@ -63,6 +63,7 @@ import timber.log.Timber
  */
 object PinVault {
 
+    private lateinit var appContext: Context
     private lateinit var sslManager: DynamicSSLManager
     private lateinit var clientProvider: HttpClientProvider
     private lateinit var updater: SSLCertificateUpdater
@@ -218,7 +219,7 @@ object PinVault {
                 return null
             }
 
-            val appContext = context.applicationContext
+            appContext = context.applicationContext
 
             sslManager = DynamicSSLManager()
             val certStore = ClientCertSecureStore(appContext)
@@ -248,6 +249,9 @@ object PinVault {
                 configUrl = config.configUrl,
                 configEndpoint = config.configEndpoint,
                 healthEndpoint = config.healthEndpoint,
+                clientCertEndpoint = config.clientCertEndpoint,
+                enrollmentEndpoint = config.enrollmentEndpoint,
+                vaultReportEndpoint = config.vaultReportEndpoint,
                 signaturePublicKey = config.signaturePublicKey,
                 bootstrapPins = config.bootstrapPins,
                 sslManager = sslManager
@@ -278,6 +282,16 @@ object PinVault {
     }
 
     private suspend fun executeInit(): InitResult {
+        // Static pin mode — no server contact needed
+        val staticConfig = pinManagerConfig?.staticPins
+        if (staticConfig != null) {
+            Timber.d("Static pin mode — using embedded config (v%d, %d hosts)",
+                staticConfig.computedVersion(), staticConfig.pins.size)
+            clientProvider.swap(staticConfig)
+            configStore.save(staticConfig)
+            return InitResult.Ready(staticConfig.computedVersion())
+        }
+
         val result = updater.initializeAndUpdate()
 
         if (result is InitResult.Failed) {
@@ -385,20 +399,17 @@ object PinVault {
         }
 
         return try {
-            val bootstrapClient = sslManager.buildBootstrapClient(config.bootstrapPins)
-            val url = config.configUrl + config.enrollmentEndpoint
-            val requestBody = """{"token":"$token"}""".toRequestBody("application/json".toMediaType())
-            val request = okhttp3.Request.Builder().url(url).post(requestBody).build()
-            val response = bootstrapClient.newCall(request).execute()
+            val identity = resolveDeviceIdentity(config)
+            val result = configApi.enroll(
+                token = token,
+                deviceId = null,
+                deviceAlias = identity?.first,
+                deviceUid = identity?.second
+            )
 
-            if (!response.isSuccessful) {
-                Timber.e("Enrollment failed — HTTP %d", response.code)
-                return false
-            }
-
-            val p12Bytes = response.body?.bytes() ?: return false
-            certStore.save(certLabel, p12Bytes)
-            sslManager.loadClientKeystore(p12Bytes, config.clientKeyPassword)
+            validateP12(result.p12Bytes, result.p12Hash, config.clientKeyPassword)
+            certStore.save(certLabel, result.p12Bytes)
+            sslManager.loadClientKeystore(result.p12Bytes, config.clientKeyPassword)
 
             // Rebuild client with mTLS
             clientProvider.currentConfig?.let { clientProvider.swap(it) }
@@ -433,27 +444,24 @@ object PinVault {
                 context.contentResolver, android.provider.Settings.Secure.ANDROID_ID
             ) ?: "unknown-device"
 
-            val url = config.configUrl + config.enrollmentEndpoint
-            Timber.d("Auto-enrollment: deviceId=%s, url=%s", deviceId, url)
+            val identity = resolveDeviceIdentity(config)
+            Timber.d("Auto-enrollment: deviceId=%s", deviceId)
 
-            val bootstrapClient = sslManager.buildBootstrapClient(config.bootstrapPins)
-            val requestBody = """{"deviceId":"$deviceId"}""".toRequestBody("application/json".toMediaType())
-            val request = okhttp3.Request.Builder().url(url).post(requestBody).build()
-            val response = bootstrapClient.newCall(request).execute()
+            val result = configApi.enroll(
+                token = null,
+                deviceId = deviceId,
+                deviceAlias = identity?.first,
+                deviceUid = identity?.second
+            )
 
-            if (!response.isSuccessful) {
-                Timber.e("Auto-enrollment failed — HTTP %d from %s", response.code, url)
-                return false
-            }
+            Timber.d("Auto-enrollment: received P12 (%d bytes)", result.p12Bytes.size)
+            validateP12(result.p12Bytes, result.p12Hash, config.clientKeyPassword)
 
-            val p12Bytes = response.body?.bytes() ?: return false
-            Timber.d("Auto-enrollment: received P12 (%d bytes)", p12Bytes.size)
-
-            certStore.save(certLabel, p12Bytes)
-            sslManager.loadClientKeystore(p12Bytes, config.clientKeyPassword)
+            certStore.save(certLabel, result.p12Bytes)
+            sslManager.loadClientKeystore(result.p12Bytes, config.clientKeyPassword)
             clientProvider.currentConfig?.let { clientProvider.swap(it) }
 
-            Timber.d("Auto-enrollment successful — cert stored [%s], %d bytes, from %s", certLabel, p12Bytes.size, url)
+            Timber.d("Auto-enrollment successful — cert stored [%s], %d bytes", certLabel, result.p12Bytes.size)
             true
         } catch (e: Exception) {
             Timber.e(e, "Auto-enrollment failed")
@@ -578,46 +586,39 @@ object PinVault {
             VaultFileResult.Failed(key, e.message ?: "Unknown error", e)
         }
 
-        // Fire-and-forget report to server
-        reportFileDownload(key, result)
+        // Report with timeout — must complete before returning to survive process termination
+        try {
+            kotlinx.coroutines.withTimeout(5000) { reportFileDownload(key, result) }
+        } catch (_: Exception) {
+            Timber.w("Vault file report timed out for: %s", key)
+        }
         return result
     }
 
     private suspend fun reportFileDownload(key: String, result: VaultFileResult) {
-        val configUrl = pinManagerConfig?.configUrl ?: return
-        val version = when (result) {
-            is VaultFileResult.Updated -> result.version
-            is VaultFileResult.AlreadyCurrent -> result.version
-            is VaultFileResult.Failed -> 0
-        }
-        val status = when (result) {
-            is VaultFileResult.Updated -> "downloaded"
-            is VaultFileResult.AlreadyCurrent -> "cached"
-            is VaultFileResult.Failed -> "failed"
-        }
-        val label = pinManagerConfig?.clientCertLabel ?: "default"
+        val identity = resolveDeviceIdentity(pinManagerConfig)
+        val report = io.github.umutcansu.pinvault.model.VaultDownloadReport(
+            key = key,
+            version = when (result) {
+                is VaultFileResult.Updated -> result.version
+                is VaultFileResult.AlreadyCurrent -> result.version
+                is VaultFileResult.Failed -> 0
+            },
+            status = when (result) {
+                is VaultFileResult.Updated -> "downloaded"
+                is VaultFileResult.AlreadyCurrent -> "cached"
+                is VaultFileResult.Failed -> "failed"
+            },
+            deviceManufacturer = android.os.Build.MANUFACTURER,
+            deviceModel = android.os.Build.MODEL,
+            enrollmentLabel = pinManagerConfig?.clientCertLabel ?: "default",
+            deviceId = identity?.second ?: "unknown",
+            deviceAlias = identity?.first ?: android.os.Build.MODEL
+        )
 
         kotlinx.coroutines.withContext(Dispatchers.IO) {
             try {
-                val json = """{"key":"$key","version":$version,"status":"$status","deviceManufacturer":"${android.os.Build.MANUFACTURER}","deviceModel":"${android.os.Build.MODEL}","enrollmentLabel":"$label","deviceId":"${android.os.Build.MANUFACTURER}_${android.os.Build.MODEL}"}"""
-                val url = "${configUrl}api/v1/vault/report"
-                val body = json.toRequestBody("application/json".toMediaType())
-                val request = okhttp3.Request.Builder().url(url).post(body).build()
-                // Use trust-all client for report — self-signed certs, report is non-critical telemetry
-                val trustAll = object : javax.net.ssl.X509TrustManager {
-                    override fun checkClientTrusted(chain: Array<java.security.cert.X509Certificate>, authType: String) {}
-                    override fun checkServerTrusted(chain: Array<java.security.cert.X509Certificate>, authType: String) {}
-                    override fun getAcceptedIssuers(): Array<java.security.cert.X509Certificate> = emptyArray()
-                }
-                val sslCtx = javax.net.ssl.SSLContext.getInstance("TLS")
-                sslCtx.init(null, arrayOf(trustAll), java.security.SecureRandom())
-                val reportClient = okhttp3.OkHttpClient.Builder()
-                    .sslSocketFactory(sslCtx.socketFactory, trustAll)
-                    .hostnameVerifier { _, _ -> true }
-                    .connectTimeout(5, java.util.concurrent.TimeUnit.SECONDS)
-                    .build()
-                reportClient.newCall(request).execute().close()
-                Timber.d("Vault file report sent: %s → %s", key, status)
+                configApi.reportVaultDownload(report)
             } catch (e: Exception) {
                 Timber.e(e, "Failed to report vault file download: %s", key)
             }
@@ -643,6 +644,49 @@ object PinVault {
     fun isForceUpdate(): Boolean {
         checkInitialized()
         return clientProvider.currentConfig?.forceUpdate ?: false
+    }
+
+    /**
+     * Returns (deviceAlias, deviceUid) pair.
+     * deviceAlias = user-defined name from config, or Build.MODEL as fallback.
+     * deviceUid   = ANDROID_ID (unique per app+device).
+     */
+    private fun resolveDeviceIdentity(config: PinVaultConfig?): Pair<String, String>? {
+        val uid = try {
+            android.provider.Settings.Secure.getString(
+                appContext.contentResolver, android.provider.Settings.Secure.ANDROID_ID
+            ) ?: return null
+        } catch (_: Exception) { return null }
+
+        val alias = config?.deviceAlias ?: "${android.os.Build.MANUFACTURER} ${android.os.Build.MODEL}"
+        return alias to uid
+    }
+
+    /**
+     * Validates P12 bytes: checks SHA-256 hash (if server provides it) and PKCS12 format.
+     */
+    private fun validateP12(p12Bytes: ByteArray, serverHash: String?, password: String) {
+        // 1. Hash verification (if server provides X-P12-SHA256 header)
+        if (serverHash != null) {
+            val localHash = java.security.MessageDigest.getInstance("SHA-256")
+                .digest(p12Bytes)
+                .let { android.util.Base64.encodeToString(it, android.util.Base64.NO_WRAP) }
+            if (localHash != serverHash) {
+                throw SecurityException("P12 integrity check failed — SHA-256 mismatch (transport corruption or tampering)")
+            }
+            Timber.d("P12 SHA-256 hash verified")
+        } else {
+            Timber.w("Server did not provide X-P12-SHA256 header — hash verification skipped")
+        }
+
+        // 2. PKCS12 format validation
+        val ks = java.security.KeyStore.getInstance("PKCS12")
+        ks.load(p12Bytes.inputStream(), password.toCharArray())
+        val aliases = ks.aliases().toList()
+        if (aliases.isEmpty()) {
+            throw SecurityException("P12 keystore contains no entries — invalid certificate")
+        }
+        Timber.d("P12 format validated — %d entries", aliases.size)
     }
 
     /**

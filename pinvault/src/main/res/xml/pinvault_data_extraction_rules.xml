@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Android 12+ (API 31+) icin veri cikarma kurallari.
+  PinVault client sertifikalari hem bulut yedeklemeden hem de
+  cihazdan cihaza transferden haric tutulur.
+-->
+<data-extraction-rules>
+    <cloud-backup>
+        <exclude domain="sharedpref" path="pinvault_client_cert.xml" />
+    </cloud-backup>
+    <device-transfer>
+        <exclude domain="sharedpref" path="pinvault_client_cert.xml" />
+    </device-transfer>
+</data-extraction-rules>

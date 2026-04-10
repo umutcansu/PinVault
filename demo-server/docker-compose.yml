@@ -1,0 +1,19 @@
+services:
+  pinvault-server:
+    build: .
+    ports:
+      - "${PORT:-8080}:8080"       # Management API (HTTP)
+      - "${HTTPS_PORT:-8081}:8081" # Config API (TLS)
+    volumes:
+      - ./data/db:/data/db
+      - ./data/certs:/data/certs
+      - ./data/signing-key.pem:/data/signing-key.pem
+    environment:
+      - PORT=8080
+      - HTTPS_PORT=8081
+      - DB_PATH=/data/db/pinvault.db
+      - CERTS_DIR=/data/certs
+      - SIGNING_KEY_PATH=/data/signing-key.pem
+      - ENROLLMENT_MODE=${ENROLLMENT_MODE:-token}
+      - API_KEY=${API_KEY:-}
+    restart: unless-stopped

@@ -48,17 +48,19 @@ fun main() {
     val connectionStore = ConnectionHistoryStore(db)
     val clientDeviceStore = ClientDeviceStore(db)
     val hostStore = HostStore(db)
-    val signingKeyFile = File("signing-key.pem")
+    val certsDir = File(System.getenv("CERTS_DIR") ?: "certs")
+    val signingKeyFile = File(System.getenv("SIGNING_KEY_PATH") ?: "signing-key.pem")
     var signingService = ConfigSigningService(signingKeyFile)
-    val certService = CertificateService(File("certs"))
+    val certService = CertificateService(certsDir)
     val mockServerManager = MockServerManager()
+    val certExpiryMonitor = com.example.pinvault.server.service.CertExpiryMonitor(hostStore)
     val httpPort = System.getenv("PORT")?.toIntOrNull() ?: 8080
     val httpsPort = System.getenv("HTTPS_PORT")?.toIntOrNull() ?: (httpPort + 1)
     val enrollmentMode = System.getenv("ENROLLMENT_MODE")?.lowercase() ?: "token"
 
     // Demo server sertifikası üret (yoksa)
     val serverCertId = "demo-server"
-    val serverKeystorePath = File("certs/$serverCertId.jks")
+    val serverKeystorePath = File(certsDir, "$serverCertId.jks")
     val serverCertResult = if (!serverKeystorePath.exists()) {
         println("Generating demo server TLS certificate...")
         certService.generateCertificate(serverCertId, "localhost")
@@ -94,6 +96,16 @@ fun main() {
         mockServerManager.stopAll()
         configApiManager.stopAll()
     })
+
+    // Background cert expiry check (every 6 hours)
+    Thread {
+        while (true) {
+            try { Thread.sleep(6 * 60 * 60 * 1000L) } catch (_: InterruptedException) { break }
+            certExpiryMonitor.logWarnings()
+        }
+    }.apply { isDaemon = true; name = "cert-expiry-checker" }.start()
+    // Initial check on startup
+    certExpiryMonitor.logWarnings()
 
     // Config API routing modülü — her API kendi configApiId ve mode'uyla scoped
     fun configApiModuleFor(configApiId: String, mode: String = "tls"): Application.() -> Unit = {
@@ -175,6 +187,7 @@ fun main() {
             })
         }
         install(CallLogging)
+        install(com.example.pinvault.server.plugin.ApiKeyAuth)
         install(StatusPages) {
             exception<Throwable> { call, cause ->
                 call.respond(
@@ -531,6 +544,30 @@ fun main() {
 
                 call.response.header("Content-Disposition", "attachment; filename=\"$clientId.p12\"")
                 call.respondBytes(result.p12Bytes, io.ktor.http.ContentType.Application.OctetStream)
+            }
+
+            // API documentation
+            get("/docs") { call.respondRedirect("/static/docs.html") }
+
+            // Certificate expiry monitoring
+            get("/api/v1/cert-expiry") {
+                call.respond(certExpiryMonitor.checkAll())
+            }
+            get("/api/v1/health") {
+                val certStatus = certExpiryMonitor.getOverallStatus()
+                call.respond(mapOf(
+                    "status" to certStatus,
+                    "database" to "connected",
+                    "configApis" to mapOf(
+                        "running" to configApiManager.getAll().size,
+                        "stopped" to configApiManager.getAllStopped().size
+                    ),
+                    "certs" to mapOf(
+                        "status" to certStatus,
+                        "nearExpiry" to certExpiryMonitor.checkAll().filter { it.level != "ok" }.size,
+                        "total" to certExpiryMonitor.checkAll().size
+                    )
+                ))
             }
 
             // Web UI
