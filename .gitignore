@@ -23,6 +23,12 @@ demo-server/.gradle/
 demo-app/build/
 demo-app/.gradle/
 
+# Sample mTLS host
+sample-mtls-host/build/
+sample-mtls-host/.gradle/
+sample-mtls-host/.kotlin/
+sample-mtls-host/certs/
+
 # Claude
 .claude/
 
