@@ -18,3 +18,7 @@ dependencies {
     implementation("org.bouncycastle:bcpkix-jdk18on:1.78.1")
     implementation("ch.qos.logback:logback-classic:1.4.14")
 }
+
+kotlin {
+    jvmToolchain(17)
+}
