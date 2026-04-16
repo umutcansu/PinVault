@@ -467,6 +467,112 @@ fun Route.hostRoutes(
                     )
                 }
             }
+
+            // Remote reachability check — harici host'un gerçekten ayakta olup olmadığını
+            // ve cert'inin pin config ile eşleşip eşleşmediğini kontrol eder.
+            //
+            // TCP kontrolü `nc` ile, SPKI pin çıkarma `openssl s_client` + `openssl x509`
+            // ile yapılır. JVM raw socket bazı ortamlarda (Little Snitch, VPN vb.)
+            // NoRouteToHost throw edebildiği için subprocess yaklaşımı tercih edildi —
+            // terminal araçlarının gördüğü ağ durumu API ile aynı olmalı.
+            //
+            // Query: ?port=9443  (opsiyonel — verilmezse yaygın TLS portları sırayla denenir)
+            // Response: { reachable, port, pinMatch, actualPin, expectedPins[], error?, elapsedMs }
+            get("ping-remote") {
+                val hostname = call.parameters["hostname"] ?: ""
+                val explicit = call.request.queryParameters["port"]?.toIntOrNull()
+                val mockPort = mockServerManager.getTlsPort(hostname)
+                    ?: mockServerManager.getMtlsPort(hostname)
+                val portsToTry = listOfNotNull(explicit, mockPort, 443, 9443, 8443, 9444, 8444)
+                    .distinct()
+
+                val expectedPins = pinConfigStore.load(configApiId).pins
+                    .find { it.hostname == hostname }?.sha256 ?: emptyList()
+                val start = System.currentTimeMillis()
+
+                /**
+                 * Runs an external command with a hard timeout. Stream is read asynchronously
+                 * so `destroyForcibly()` actually returns even if the child is stuck in a
+                 * blocking syscall (e.g. `nc` on a silently dropped SYN — `-w/-G` flags are
+                 * unreliable in some macOS environments).
+                 */
+                fun runCmd(vararg cmd: String, timeoutSec: Long = 5): Pair<Int, String> {
+                    val pb = ProcessBuilder(*cmd).redirectErrorStream(true)
+                    val proc = pb.start()
+                    proc.outputStream.close()
+                    val outBuf = StringBuilder()
+                    val readerThread = Thread {
+                        try {
+                            proc.inputStream.bufferedReader().use { r ->
+                                r.lineSequence().forEach { outBuf.appendLine(it) }
+                            }
+                        } catch (_: Exception) {}
+                    }.apply { isDaemon = true; start() }
+
+                    val finished = proc.waitFor(timeoutSec, java.util.concurrent.TimeUnit.SECONDS)
+                    if (!finished) {
+                        proc.destroyForcibly()
+                        proc.waitFor(1, java.util.concurrent.TimeUnit.SECONDS)
+                        readerThread.join(500)
+                        return -1 to "timeout"
+                    }
+                    readerThread.join(500)
+                    return proc.exitValue() to outBuf.toString()
+                }
+
+                var lastError: String? = null
+                for (port in portsToTry) {
+                    try {
+                        // 1. TCP reachable? `nc -z -G 2 -w 2 host port` — -G = connect timeout (BSD nc).
+                        //    Hard-timeout the whole call at 3s via runCmd so unreachable hosts
+                        //    don't block for minutes if the kernel/firewall silently drops SYN.
+                        val (ncExit, ncOut) = runCmd(
+                            "nc", "-z", "-G", "2", "-w", "2", hostname, port.toString(),
+                            timeoutSec = 3
+                        )
+                        if (ncExit != 0) {
+                            lastError = "TCP unreachable on :$port (${ncOut.trim().take(80)})"
+                            continue
+                        }
+
+                        // 2. TLS handshake + cert çıkar: `openssl s_client -connect host:port -servername host`
+                        val (sslExit, sslOut) = runCmd(
+                            "sh", "-c",
+                            "echo Q | openssl s_client -connect $hostname:$port -servername $hostname 2>/dev/null " +
+                            "| openssl x509 -noout -pubkey 2>/dev/null " +
+                            "| openssl pkey -pubin -outform DER 2>/dev/null " +
+                            "| openssl dgst -sha256 -binary " +
+                            "| openssl base64 -A",
+                            timeoutSec = 6
+                        )
+                        val actualPin = sslOut.trim()
+                        if (sslExit != 0 || actualPin.isEmpty() || actualPin.length < 40) {
+                            lastError = "TLS handshake failed on port $port"
+                            continue
+                        }
+
+                        val pinMatch = expectedPins.contains(actualPin)
+                        val elapsed = System.currentTimeMillis() - start
+                        val expectedJson = expectedPins.joinToString(",") { "\"$it\"" }
+                        call.respondText(
+                            """{"reachable":true,"port":$port,"pinMatch":$pinMatch,"actualPin":"$actualPin","expectedPins":[$expectedJson],"elapsedMs":$elapsed}""",
+                            ContentType.Application.Json
+                        )
+                        return@get
+                    } catch (e: Exception) {
+                        lastError = "${e.javaClass.simpleName}: ${e.message ?: ""}".take(160)
+                    }
+                }
+
+                val elapsed = System.currentTimeMillis() - start
+                val expectedJson = expectedPins.joinToString(",") { "\"$it\"" }
+                val portsJson = portsToTry.joinToString(",")
+                val errMsg = (lastError ?: "Hiçbir port erişilebilir değil").replace("\"", "'")
+                call.respondText(
+                    """{"reachable":false,"pinMatch":false,"triedPorts":[$portsJson],"expectedPins":[$expectedJson],"error":"$errMsg","elapsedMs":$elapsed}""",
+                    ContentType.Application.Json
+                )
+            }
         }
     }
 }

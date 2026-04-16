@@ -39,3 +39,4 @@ qa-evidence/
 diagrams/
 .DS_Store
 qa-evidence-allsuite/
+demo-server/.kotlin/

@@ -346,15 +346,28 @@ function getHosts() {
 }
 
 async function loadAllHostStatuses() {
+  // Her host için status + ping-remote paralel yüklenir
+  const tasks = [];
   for (const api of allApiConfigs) {
     if (!api.pins) continue;
     for (const p of api.pins) {
-      try {
-        const res = await apiFetch(`/api/v1/hosts/${encodeURIComponent(p.hostname)}/status`);
-        if (res.ok) hostStatuses[p.hostname] = await res.json();
-      } catch (_) {}
+      tasks.push((async () => {
+        try {
+          const res = await apiFetch(`/api/v1/hosts/${encodeURIComponent(p.hostname)}/status`);
+          if (res.ok) hostStatuses[p.hostname] = await res.json();
+        } catch (_) {}
+        // Remote reachability — mock çalışsa bile kontrol et
+        try {
+          const res = await apiFetch(`/api/v1/hosts/${encodeURIComponent(p.hostname)}/ping-remote`);
+          if (res.ok) {
+            const ping = await res.json();
+            hostStatuses[p.hostname] = { ...(hostStatuses[p.hostname] || {}), remote: ping };
+          }
+        } catch (_) {}
+      })());
     }
   }
+  await Promise.all(tasks);
 }
 
 async function renderHostList() {
@@ -399,10 +412,25 @@ async function renderHostList() {
           const isSelected = selectedHost === p.hostname && selectedApiId === api.id;
           const forceBadge = p.forceUpdate ? '<span style="color:#22c55e;font-size:9px;font-weight:700;margin-left:4px">FORCE</span>' : '';
           const hs = hostStatuses[p.hostname];
-          const dotClass = hs?.mockServerRunning ? 'host-dot-running' : (hs?.keystorePath ? 'host-dot-cert' : 'host-dot');
+          // Priority: local mock running > remote pin OK > remote reachable w/ pin mismatch >
+          // remote unreachable > has cert (mock down) > bilinmiyor
+          const dotClass =
+              hs?.mockServerRunning                     ? 'host-dot-running'  :
+              (hs?.remote?.reachable && hs?.remote?.pinMatch) ? 'host-dot-remote' :
+              (hs?.remote?.reachable && !hs?.remote?.pinMatch) ? 'host-dot-warn' :
+              (hs?.remote && hs?.remote?.reachable === false) ? 'host-dot-offline' :
+              hs?.keystorePath                          ? 'host-dot-cert'     :
+                                                          'host-dot';
+          const dotTitle =
+              hs?.mockServerRunning                     ? 'Local mock ayakta' :
+              (hs?.remote?.reachable && hs?.remote?.pinMatch) ? `Remote OK (:${hs.remote.port}) · pin match` :
+              (hs?.remote?.reachable && !hs?.remote?.pinMatch) ? `⚠ Pin mismatch (:${hs.remote.port}) — cert rotate?` :
+              (hs?.remote && hs?.remote?.reachable === false) ? `Offline — ${hs.remote.error || 'unreachable'}` :
+              hs?.keystorePath                          ? 'Cert var, mock kapalı' :
+                                                          'Durum bilinmiyor';
           html += `
             <div class="host-item ${isSelected ? 'selected' : ''}" style="margin-left:20px" onclick="selectHostInApi('${p.hostname}', '${api.id}')">
-              <div class="${dotClass}"></div>
+              <div class="${dotClass}" title="${dotTitle}"></div>
               <div class="host-info">
                 <div class="host-name" style="font-size:13px">${p.hostname}${forceBadge}</div>
                 <div class="host-pins">${p.sha256?.length || 0} ${t('pins')} · v${p.version || 0}</div>
