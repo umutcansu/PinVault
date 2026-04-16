@@ -185,6 +185,89 @@ PinVault.fetchFile("key")   ───→     GET /vault/{key}
 - Kotlin coroutines or callback API
 - OkHttp 4.x
 
+## Production Security Checklist
+
+PinVault is built around OWASP MASVS guidelines (NETWORK, CRYPTO, STORAGE).
+Before shipping to production, verify the following:
+
+### 1. Never ship the default keystore password
+The `"changeit"` default in `PinVaultConfig.clientKeyPassword` and the
+`clientKeystore(bytes, password)` builder is a development placeholder. In
+production, generate a unique high-entropy password per device and negotiate
+it with your backend during enrollment — never hard-code it in the APK.
+
+```kotlin
+// ❌ Don't
+PinVaultConfig.Builder(url).clientKeystore(p12Bytes).build()
+
+// ✅ Do
+val devicePassword = backend.fetchKeystorePassword(deviceId) // ≥ 16 random chars
+PinVaultConfig.Builder(url).clientKeystore(p12Bytes, devicePassword).build()
+```
+
+### 2. Strip Timber logs in release builds
+The library logs every pin verification, enrollment, and vault file operation
+through [Timber](https://github.com/JakeWharton/timber). Timber is silent
+unless your application calls `Timber.plant()` — so in release builds, only
+plant a `Timber.DebugTree()` when `BuildConfig.DEBUG` is true:
+
+```kotlin
+class App : Application() {
+    override fun onCreate() {
+        super.onCreate()
+        if (BuildConfig.DEBUG) Timber.plant(Timber.DebugTree())
+    }
+}
+```
+
+### 3. Always use bootstrap pins for the first connection
+Without bootstrap pins, the first config fetch is unpinned (vulnerable to MITM
+on first install). Hardcode at least 2 SHA-256 SPKI hashes in the APK:
+
+```kotlin
+PinVaultConfig.Builder("https://api.example.com/")
+    .bootstrapPins(listOf(
+        HostPin("api.example.com", listOf("primary...", "backup..."))
+    ))
+    .build()
+```
+
+### 4. Enable ECDSA signature verification on configs
+Without `signaturePublicKey()`, a compromised backend can serve any pins it
+wants. Sign your configs server-side with ECDSA P-256 and ship the public key
+in the APK:
+
+```kotlin
+PinVaultConfig.Builder(url)
+    .signaturePublicKey("MFkwEwYHKoZI...") // X.509 public key, Base64
+    .build()
+```
+
+See `SERVER_IMPLEMENTATION_GUIDE.md` for the signing protocol.
+
+### 5. Backup exclusion is automatic
+Client certificates are excluded from cloud backup and device-to-device transfer
+via `pinvault_backup_rules.xml` and `pinvault_data_extraction_rules.xml`. The
+manifest merger handles this automatically — no configuration needed.
+
+### 6. Verify TLS configuration on your backend
+- TLS 1.2 or higher (1.3 preferred)
+- Server certificate matches at least one pinned SHA-256(SPKI) hash
+- mTLS endpoints reject unknown client certs
+- HTTP-only endpoints are off (the library refuses cleartext HTTPS hosts)
+
+### 7. Rotate pins ahead of expiry
+Configure at least 2 pins per host (primary + backup). Add the new pin to the
+config 30+ days before the old certificate expires. Set `forceUpdate: true`
+on the host entry to force clients to refresh immediately.
+
+### What PinVault does NOT do
+- **Root/jailbreak detection** — combine with libraries like RootBeer if needed
+- **Code obfuscation** — enable R8/ProGuard in your app (`isMinifyEnabled = true`)
+- **Network anomaly detection** — pair with your APM/SIEM
+- **Frida/Xposed hooking detection** — out of scope; consider a dedicated
+  RASP solution for high-value targets
+
 ## License
 
 Apache 2.0

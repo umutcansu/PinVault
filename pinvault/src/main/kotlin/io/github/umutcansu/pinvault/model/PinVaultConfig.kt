@@ -54,7 +54,19 @@ data class PinVaultConfig(
     val signaturePublicKey: String? = null,
     /** PKCS12 client keystore bytes for mTLS. If set, client cert is sent during TLS handshake. */
     val clientKeystoreBytes: ByteArray? = null,
-    /** Password for the client keystore. */
+    /**
+     * Password for the client keystore.
+     *
+     * **SECURITY**: The default `"changeit"` is a placeholder for development only.
+     * In production:
+     * - Generate a unique high-entropy password per device (≥ 16 chars, cryptographically random).
+     * - Negotiate the password with the backend during enrollment, never hard-code it in the APK.
+     * - Avoid logging the password (Timber logs are tag-filtered but be cautious in DEBUG builds).
+     *
+     * The P12 itself is stored in [androidx.security.crypto.EncryptedSharedPreferences]
+     * (AES-256-GCM, Android Keystore-backed) so the password protects the key only at
+     * KeyStore-load time, but a weak password still weakens the overall mTLS chain.
+     */
     val clientKeyPassword: String = "changeit",
     /** One-time enrollment token for automatic P12 download. */
     val enrollmentToken: String? = null,
@@ -115,6 +127,13 @@ data class PinVaultConfig(
         fun updateIntervalHours(hours: Long) = apply { this.updateIntervalHours = hours }
         fun updateIntervalMinutes(minutes: Long) = apply { this.updateIntervalMinutes = minutes }
         fun signaturePublicKey(key: String) = apply { this.signaturePublicKey = key }
+        /**
+         * Sets the client PKCS12 keystore for mTLS.
+         *
+         * **SECURITY**: Do not ship the default password `"changeit"` to production.
+         * Use a per-device unique high-entropy password negotiated with your backend.
+         * See [PinVaultConfig.clientKeyPassword] for guidance.
+         */
         fun clientKeystore(bytes: ByteArray, password: String = "changeit") = apply {
             this.clientKeystoreBytes = bytes
             this.clientKeyPassword = password
