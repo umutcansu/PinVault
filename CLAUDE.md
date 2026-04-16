@@ -21,7 +21,7 @@ Android SSL certificate pinning library. Remote pin config, mTLS, VaultFile (gen
 - TLS Config API: :8091 (server cert pin: ziA0hyMDbayVXZ0g8AkkJz+wmKPZYjMAwb+GdNg5HYM=)
 - mTLS Config API: :8092
 - TLS Mock Host: :8444
-- mTLS Host (192.168.1.217): :9443 (server pin: 0q4X9Qjv0eAzdAmRHsAF9G2Zj5fYSTPBGPt4522yYJw=)
+- mTLS Host (192.168.1.217): :9443 (server pin: wJGpE3i95h7E0ylT93TyLwC1BqXuK4IfoqhmtSrq5gQ=)
 
 ## Library Features
 ### SSL Pinning
