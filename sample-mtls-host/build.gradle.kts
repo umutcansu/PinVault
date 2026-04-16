@@ -19,6 +19,15 @@ dependencies {
     implementation("ch.qos.logback:logback-classic:1.4.14")
 }
 
+// No jvmToolchain() — use whichever JDK Gradle was started with (Java 11+).
+// Bytecode target stays low so the same JAR runs on Java 11, 17, 21, 25...
+java {
+    sourceCompatibility = JavaVersion.VERSION_11
+    targetCompatibility = JavaVersion.VERSION_11
+}
+
 kotlin {
-    jvmToolchain(17)
+    compilerOptions {
+        jvmTarget.set(org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_11)
+    }
 }
