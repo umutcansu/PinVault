@@ -36,4 +36,5 @@ sample-mtls-host/certs/
 allure-report/
 allure-results/
 qa-evidence/
+diagrams/
 .DS_Store
