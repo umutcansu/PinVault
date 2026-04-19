@@ -348,7 +348,14 @@ internal class SSLCertificateUpdater(
                         pin.hostname, storedVersion, pin.clientCertVersion
                     )
                 } catch (e: Exception) {
-                    Timber.e(e, "Failed to download client cert for %s", pin.hostname)
+                    // 403 = cihaz enroll olmamış → beklenen senaryo, W seviyesinde.
+                    // Diğer hatalar E seviyesinde (gerçek sorun).
+                    val is403 = (e as? retrofit2.HttpException)?.code() == 403
+                    if (is403) {
+                        Timber.d("Host client cert unavailable for %s (not enrolled / HTTP 403)", pin.hostname)
+                    } else {
+                        Timber.w(e, "Failed to download client cert for %s", pin.hostname)
+                    }
                     // Try loading from store as fallback
                     certStore.load(label)?.let { hostCerts[pin.hostname] = it }
                 }

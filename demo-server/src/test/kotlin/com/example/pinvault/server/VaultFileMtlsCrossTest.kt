@@ -1,9 +1,13 @@
 package com.example.pinvault.server
 
 import com.example.pinvault.server.route.vaultRoutes
+import com.example.pinvault.server.service.VaultAccessTokenService
+import com.example.pinvault.server.service.VaultEncryptionService
 import com.example.pinvault.server.store.DatabaseManager
+import com.example.pinvault.server.store.DevicePublicKeyStore
 import com.example.pinvault.server.store.VaultDistributionStore
 import com.example.pinvault.server.store.VaultFileStore
+import com.example.pinvault.server.store.VaultFileTokenStore
 import io.ktor.client.request.*
 import io.ktor.client.statement.*
 import io.ktor.http.*
@@ -37,9 +41,15 @@ import kotlin.test.*
  */
 class VaultFileMtlsCrossTest {
 
+    private val testApi = "mtls-cross-test"
+
     private lateinit var db: DatabaseManager
     private lateinit var vaultFileStore: VaultFileStore
     private lateinit var distStore: VaultDistributionStore
+    private lateinit var tokenStore: VaultFileTokenStore
+    private lateinit var publicKeyStore: DevicePublicKeyStore
+    private lateinit var tokenService: VaultAccessTokenService
+    private lateinit var encryptionService: VaultEncryptionService
     private lateinit var dbFile: File
 
     @BeforeTest
@@ -49,6 +59,10 @@ class VaultFileMtlsCrossTest {
         db = DatabaseManager(dbFile.absolutePath)
         vaultFileStore = VaultFileStore(db)
         distStore = VaultDistributionStore(db)
+        tokenStore = VaultFileTokenStore(db)
+        publicKeyStore = DevicePublicKeyStore(db)
+        tokenService = VaultAccessTokenService(tokenStore)
+        encryptionService = VaultEncryptionService()
     }
 
     @AfterTest
@@ -59,7 +73,8 @@ class VaultFileMtlsCrossTest {
     private fun ApplicationTestBuilder.configureApp() {
         install(ContentNegotiation) { json(Json { ignoreUnknownKeys = true }) }
         routing {
-            vaultRoutes(vaultFileStore, distStore)
+            vaultRoutes(testApi, vaultFileStore, distStore, tokenStore,
+                publicKeyStore, tokenService, encryptionService)
         }
     }
 
@@ -71,7 +86,7 @@ class VaultFileMtlsCrossTest {
         val secretConfig = """{"api_key":"encrypted-value","tier":"premium"}"""
 
         // Web admin uploads sensitive config
-        client.put("/api/v1/vault/premium-config") {
+        client.put("/api/v1/vault/premium-config?policy=public") {
             setBody(secretConfig.toByteArray())
             contentType(ContentType.Application.OctetStream)
         }
@@ -90,7 +105,7 @@ class VaultFileMtlsCrossTest {
         }
 
         // Web admin checks — enrollment label present in distribution
-        val dists = distStore.getByKey("premium-config")
+        val dists = distStore.getByKey(testApi, "premium-config")
         assertEquals(1, dists.size)
         assertEquals("mtls-prod-cert", dists[0].enrollmentLabel)
         assertEquals("Motorola", dists[0].deviceManufacturer)
@@ -100,11 +115,11 @@ class VaultFileMtlsCrossTest {
     fun `multiple mtls clients with different labels download same file`() = testApplication {
         configureApp()
 
-        client.put("/api/v1/vault/shared-secret") {
+        client.put("/api/v1/vault/shared-secret?policy=public") {
             setBody("shared-data".toByteArray())
             contentType(ContentType.Application.OctetStream)
         }
-        val version = vaultFileStore.get("shared-secret")!!.version
+        val version = vaultFileStore.get(testApi, "shared-secret")!!.version
 
         // Device 1 — prod cert
         client.post("/api/v1/vault/report") {
@@ -124,7 +139,7 @@ class VaultFileMtlsCrossTest {
             setBody("""{"key":"shared-secret","version":$version,"deviceId":"xiaomi_14","deviceManufacturer":"Xiaomi","deviceModel":"14 Pro","enrollmentLabel":"default","status":"downloaded"}""")
         }
 
-        val dists = distStore.getByKey("shared-secret")
+        val dists = distStore.getByKey(testApi, "shared-secret")
         assertEquals(3, dists.size)
 
         val labels = dists.map { it.enrollmentLabel }.toSet()
@@ -142,22 +157,22 @@ class VaultFileMtlsCrossTest {
         configureApp()
 
         // v1
-        client.put("/api/v1/vault/rotating-key") {
+        client.put("/api/v1/vault/rotating-key?policy=public") {
             setBody("key-v1".toByteArray())
             contentType(ContentType.Application.OctetStream)
         }
-        val v1 = vaultFileStore.get("rotating-key")!!.version
+        val v1 = vaultFileStore.get(testApi, "rotating-key")!!.version
 
         // Client A fetches v1
         val r1 = client.get("/api/v1/vault/rotating-key?version=0")
         assertEquals("key-v1", r1.bodyAsText())
 
         // Web rotates to v2
-        client.put("/api/v1/vault/rotating-key") {
+        client.put("/api/v1/vault/rotating-key?policy=public") {
             setBody("key-v2".toByteArray())
             contentType(ContentType.Application.OctetStream)
         }
-        val v2 = vaultFileStore.get("rotating-key")!!.version
+        val v2 = vaultFileStore.get(testApi, "rotating-key")!!.version
         assertTrue(v2 > v1)
 
         // Client A (still on v1) re-fetches → gets v2
@@ -174,11 +189,11 @@ class VaultFileMtlsCrossTest {
     fun `failed mtls download tracked separately from successful`() = testApplication {
         configureApp()
 
-        client.put("/api/v1/vault/mtls-only-config") {
+        client.put("/api/v1/vault/mtls-only-config?policy=public") {
             setBody("restricted".toByteArray())
             contentType(ContentType.Application.OctetStream)
         }
-        val version = vaultFileStore.get("mtls-only-config")!!.version
+        val version = vaultFileStore.get(testApi, "mtls-only-config")!!.version
 
         // Device without cert fails
         client.post("/api/v1/vault/report") {
@@ -198,7 +213,7 @@ class VaultFileMtlsCrossTest {
         assertEquals(2, stats.totalDistributions)
 
         // Filter by key shows both
-        val dists = distStore.getByKey("mtls-only-config")
+        val dists = distStore.getByKey(testApi, "mtls-only-config")
         val failed = dists.filter { it.status == "failed" }
         val success = dists.filter { it.status == "downloaded" }
         assertEquals(1, failed.size)

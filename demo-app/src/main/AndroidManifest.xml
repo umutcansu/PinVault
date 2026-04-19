@@ -23,6 +23,7 @@
         <activity android:name=".MtlsToTlsActivity" />
         <activity android:name=".MtlsToMtlsActivity" />
         <activity android:name=".VaultFileDemoActivity" />
+        <activity android:name=".VaultSecurityDemoActivity" />
 
     </application>
 </manifest>

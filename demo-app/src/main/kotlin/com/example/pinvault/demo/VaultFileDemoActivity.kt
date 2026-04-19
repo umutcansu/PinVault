@@ -103,19 +103,24 @@ class VaultFileDemoActivity : AppCompatActivity() {
         try { PinVault.reset() } catch (_: Exception) {}
 
         val deviceName = "${android.os.Build.MANUFACTURER} ${android.os.Build.MODEL}"
-        val config = PinVaultConfig.Builder(CONFIG_SERVER_URL)
-            .bootstrapPins(bootstrapPins)
-            .configEndpoint("api/v1/certificate-config?signed=false")
+        val config = PinVaultConfig.Builder()
+            .configApi("default", CONFIG_SERVER_URL) {
+                bootstrapPins(bootstrapPins)
+                configEndpoint("api/v1/certificate-config?signed=false")
+            }
             .deviceAlias(deviceName)
             .vaultFile(keyFlags) {
+                configApi("default")
                 endpoint("api/v1/vault/$keyFlags")
                 updateWithPins(true)
             }
             .vaultFile(keyModel) {
+                configApi("default")
                 endpoint("api/v1/vault/$keyModel")
                 storage(StorageStrategy.ENCRYPTED_FILE)
             }
             .vaultFile(keyConfig) {
+                configApi("default")
                 endpoint("api/v1/vault/$keyConfig")
                 updateWithPins(true)
             }
@@ -173,11 +178,12 @@ class VaultFileDemoActivity : AppCompatActivity() {
                     when (result) {
                         is VaultFileResult.Updated -> {
                             addLog(true, "'$key' → v${result.version} (${result.bytes.size} bytes)")
-                            results.add("$key: Updated v${result.version}")
+                            results.add("$key: Updated v${result.version} (${result.bytes.size} bytes)")
                         }
                         is VaultFileResult.AlreadyCurrent -> {
                             addLog(true, "'$key' → already current v${result.version}")
-                            results.add("$key: Current v${result.version}")
+                            val cachedSize = runCatching { PinVault.loadFile(key)?.size ?: 0 }.getOrDefault(0)
+                            results.add("$key: Current v${result.version} ($cachedSize bytes)")
                         }
                         is VaultFileResult.Failed -> {
                             addLog(false, "'$key' → ${result.reason}")

@@ -61,15 +61,17 @@ class MtlsVaultFileTest {
     // ── Helpers ──────────────────────────────────────────
 
     private fun uploadVault(key: String, content: ByteArray) {
-        TestConfig.plainClient.newCall(
-            Request.Builder().url("$vaultApi/$key")
+        // Server default policy is "token" (V2 security). Test device doesn't
+        // carry a vault token — force policy=public so GET succeeds.
+        TestConfig.adminClient.newCall(
+            Request.Builder().url("$vaultApi/$key?policy=public")
                 .put(content.toRequestBody("application/octet-stream".toMediaType())).build()
         ).execute().close()
     }
 
     private fun deleteVault(key: String) {
         try {
-            TestConfig.plainClient.newCall(
+            TestConfig.adminClient.newCall(
                 Request.Builder().url("$vaultApi/$key").delete().build()
             ).execute().close()
         } catch (_: Exception) {}
@@ -77,7 +79,7 @@ class MtlsVaultFileTest {
 
     private fun getServerStats(): String {
         return try {
-            TestConfig.plainClient.newCall(
+            TestConfig.adminClient.newCall(
                 Request.Builder().url("$vaultApi/stats").build()
             ).execute().body?.string() ?: "{}"
         } catch (_: Exception) { "{}" }

@@ -17,10 +17,21 @@ import timber.log.Timber
  */
 internal class CertificateConfigStore private constructor(private val prefs: SharedPreferences) {
 
-    constructor(context: Context) : this(
+    /** Default constructor — single shared namespace (legacy / single Config API). */
+    constructor(context: Context) : this(context, DEFAULT_PREFS_NAME)
+
+    /**
+     * V2: per-Config-API namespaced constructor. Each Config API block gets
+     * its own EncryptedSharedPreferences file so pins from different APIs
+     * never collide even if they share a hostname.
+     *
+     * The raw [prefsName] is sanitized — non-alphanumeric chars replaced with
+     * underscores to keep filesystem-safe file names.
+     */
+    constructor(context: Context, prefsName: String) : this(
         EncryptedSharedPreferences.create(
             context,
-            PREFS_NAME,
+            prefsName.replace(Regex("[^A-Za-z0-9_-]"), "_"),
             MasterKey.Builder(context)
                 .setKeyScheme(MasterKey.KeyScheme.AES256_GCM)
                 .build(),
@@ -98,7 +109,13 @@ internal class CertificateConfigStore private constructor(private val prefs: Sha
     }
 
     companion object {
-        private const val PREFS_NAME = "ssl_cert_config"
+        private const val DEFAULT_PREFS_NAME = "ssl_cert_config"
+
+        /** Build the per-Config-API prefs file name. */
+        fun prefsNameFor(configApiId: String): String =
+            if (configApiId.isBlank()) DEFAULT_PREFS_NAME
+            else "ssl_cert_config_$configApiId"
+
         internal const val KEY_VERSION = "config_version"
         internal const val KEY_PINS = "config_pins"
         private const val ENTRY_SEPARATOR = "\n"

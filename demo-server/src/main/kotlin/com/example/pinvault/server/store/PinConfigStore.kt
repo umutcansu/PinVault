@@ -342,6 +342,28 @@ class HostStore(private val db: DatabaseManager) {
         }
     }
 
+    // Mock server + keystore hostname başına global (fiziksel kaynak), scope'lara
+    // göre bölünmemiş. Status/test-connection gibi okumalar için scope eşleşmediğinde
+    // başka bir scope'taki kayıt da yeterlidir — böylece bir scope'ta pin'lenmiş ama
+    // o scope'ta hostStore kaydı olmayan host da UI'da görünür.
+    fun getAnyByHostname(hostname: String): HostRecord? {
+        db.connection().use { conn ->
+            conn.prepareStatement("SELECT * FROM hosts WHERE hostname = ? LIMIT 1").use { stmt ->
+                stmt.setString(1, hostname)
+                val rs = stmt.executeQuery()
+                if (!rs.next()) return null
+                return HostRecord(
+                    hostname = rs.getString("hostname"),
+                    configApiId = rs.getString("config_api_id"),
+                    keystorePath = rs.getString("keystore_path"),
+                    certValidUntil = rs.getString("cert_valid_until"),
+                    mockServerPort = rs.getObject("mock_server_port") as? Int,
+                    createdAt = rs.getString("created_at")
+                )
+            }
+        }
+    }
+
     fun delete(hostname: String, configApiId: String) {
         db.connection().use { conn ->
             conn.prepareStatement("DELETE FROM hosts WHERE hostname = ? AND config_api_id = ?").use { stmt ->

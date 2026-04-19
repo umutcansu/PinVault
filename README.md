@@ -2,13 +2,22 @@
 
 Dynamic SSL certificate pinning library for Android. Manage pins remotely, support mTLS, distribute versioned files — all with encrypted storage.
 
+> **v2.0** — Multi-Config-API support, per-file access tokens, end-to-end
+> encryption, server-side pin scoping. See [MIGRATION.md](MIGRATION.md) for
+> a DSL reference and [CHANGELOG.md](CHANGELOG.md) for the full list of
+> changes.
+
 ## Features
 
 - **Dynamic pin management** — fetch pins from your server, per-host versioning, force update
 - **Bootstrap pinning** — hardcoded pins for initial connection security
 - **mTLS support** — mutual TLS with token-based or automatic device enrollment
 - **Pin mismatch recovery** — automatic config refresh and retry on pin failure
+- **Multi-Config-API** *(v2)* — register N Config APIs, bind each vault file to a specific one
+- **Server-side pin scoping** *(v2)* — `wantPinsFor(...)` + per-device ACL, least-privilege
 - **VaultFile** — remote versioned file distribution (ML models, configs, feature flags)
+- **Per-file access policies** *(v2)* — `public` / `api_key` / `token` / `token_mtls`
+- **End-to-end encryption** *(v2)* — RSA-OAEP-SHA256 + AES-256-GCM, Android Keystore-backed
 - **Encrypted storage** — AES-256-GCM with Android Keystore (hardware-backed)
 - **Server-agnostic** — works with any backend, or offline with static pins
 - **ECDSA signed configs** — verify config integrity with SHA256withECDSA

@@ -40,3 +40,15 @@ diagrams/
 .DS_Store
 qa-evidence-allsuite/
 demo-server/.kotlin/
+
+# Root-level runtime artifacts (created when demo-server run from project root)
+/certs/
+/signing-key.pem
+/pinvault.db
+/.kotlin/
+
+# QA evidence pipeline outputs + deps
+/qa-evidence-bundle/
+/scripts/qa-evidence/node_modules/
+*.bak
+

@@ -48,18 +48,20 @@ class SslPinningExampleActivity : AppCompatActivity() {
 
     private suspend fun initializePinning() {
         // ── 1. Configure ────────────────────────────────────────────────────
-        val config = PinVaultConfig.Builder("https://api.example.com/")
-            .bootstrapPins(
-                listOf(
-                    HostPin(
-                        hostname = "api.example.com",
-                        sha256 = listOf(
-                            "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=", // primary
-                            "BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB="  // backup
+        val config = PinVaultConfig.Builder()
+            .configApi("api", "https://api.example.com/") {
+                bootstrapPins(
+                    listOf(
+                        HostPin(
+                            hostname = "api.example.com",
+                            sha256 = listOf(
+                                "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=", // primary
+                                "BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB="  // backup
+                            )
                         )
                     )
                 )
-            )
+            }
             .updateIntervalHours(6)
             .maxRetryCount(3)
             .build()
@@ -128,17 +130,19 @@ class MtlsExampleActivity : AppCompatActivity() {
 
         CoroutineScope(Dispatchers.IO).launch {
             // mTLS config: client cert P12 dogrudan yukleme
-            val config = PinVaultConfig.Builder("https://secure.example.com/")
-                .bootstrapPins(
-                    listOf(
-                        HostPin(
-                            hostname = "secure.example.com",
-                            sha256 = listOf("hash1...", "hash2..."),
-                            mtls = true
+            val config = PinVaultConfig.Builder()
+                .configApi("secure", "https://secure.example.com/") {
+                    bootstrapPins(
+                        listOf(
+                            HostPin(
+                                hostname = "secure.example.com",
+                                sha256 = listOf("hash1...", "hash2..."),
+                                mtls = true
+                            )
                         )
                     )
-                )
-                .clientKeystore(loadP12FromAssets(), "keystorePassword")
+                    clientKeystore(loadP12FromAssets(), "keystorePassword")
+                }
                 .build()
 
             val result = PinVault.init(applicationContext, config)
@@ -164,12 +168,14 @@ class EnrollmentExampleActivity : AppCompatActivity() {
         super.onCreate(savedInstanceState)
 
         CoroutineScope(Dispatchers.IO).launch {
-            val config = PinVaultConfig.Builder("https://api.example.com/")
-                .bootstrapPins(
-                    listOf(
-                        HostPin("api.example.com", listOf("hash1...", "hash2..."))
+            val config = PinVaultConfig.Builder()
+                .configApi("api", "https://api.example.com/") {
+                    bootstrapPins(
+                        listOf(
+                            HostPin("api.example.com", listOf("hash1...", "hash2..."))
+                        )
                     )
-                )
+                }
                 .build()
 
             val result = PinVault.init(applicationContext, config)

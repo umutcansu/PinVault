@@ -3,8 +3,10 @@ package com.example.pinvault.server
 import com.example.pinvault.server.model.HostActionResponse
 import com.example.pinvault.server.model.HostPin
 import com.example.pinvault.server.model.PinConfigHistoryEntry
+import com.example.pinvault.server.route.adminVaultRoutes
 import com.example.pinvault.server.route.certificateConfigRoutes
 import com.example.pinvault.server.route.hostRoutes
+import com.example.pinvault.server.route.scopedVaultAdminRoutes
 import com.example.pinvault.server.route.vaultRoutes
 import com.example.pinvault.server.store.HostRecord
 import com.example.pinvault.server.service.CertificateService
@@ -90,6 +92,11 @@ fun main() {
     val enrollmentTokenStore = EnrollmentTokenStore(db)
     val vaultFileStore = com.example.pinvault.server.store.VaultFileStore(db)
     val vaultDistStore = com.example.pinvault.server.store.VaultDistributionStore(db)
+    val vaultTokenStore = com.example.pinvault.server.store.VaultFileTokenStore(db)
+    val devicePublicKeyStore = com.example.pinvault.server.store.DevicePublicKeyStore(db)
+    val deviceHostAclStore = com.example.pinvault.server.store.DeviceHostAclStore(db)
+    val vaultTokenService = com.example.pinvault.server.service.VaultAccessTokenService(vaultTokenStore)
+    val vaultEncryptionService = com.example.pinvault.server.service.VaultEncryptionService()
 
     // Shutdown hook
     Runtime.getRuntime().addShutdownHook(Thread {
@@ -116,9 +123,11 @@ fun main() {
                     println("Restarting mTLS Config API: ${api.id} (new truststore)")
                     configApiManager.start(api.id, api.port, api.mode, api.keystorePath, certService.getTrustStoreFile()?.absolutePath, configApiModuleFor(api.id, api.mode))
                 }
-            }, enrollmentMode = enrollmentMode, configApiMode = mode)
+            }, enrollmentMode = enrollmentMode, configApiMode = mode,
+                deviceHostAclStore = deviceHostAclStore)
             hostRoutes(configApiId, pinConfigStore, hostStore, historyStore, certService, mockServerManager, hostClientCertStore)
-            vaultRoutes(vaultFileStore, vaultDistStore)
+            vaultRoutes(configApiId, vaultFileStore, vaultDistStore, vaultTokenStore,
+                devicePublicKeyStore, vaultTokenService, vaultEncryptionService)
             get("/health") {
                 call.respond(mapOf("status" to "ok"))
             }
@@ -200,9 +209,13 @@ fun main() {
         routing {
             // Management server: tüm config API'lerin verilerine erişim
             // configApiId query param ile scoped: ?configApiId=default-tls
-            certificateConfigRoutes("default-tls", pinConfigStore, historyStore, connectionStore, signingService, clientDeviceStore, hostClientCertStore = hostClientCertStore, enrollmentMode = enrollmentMode)
+            certificateConfigRoutes("default-tls", pinConfigStore, historyStore, connectionStore, signingService, clientDeviceStore, hostClientCertStore = hostClientCertStore, enrollmentMode = enrollmentMode, deviceHostAclStore = deviceHostAclStore)
             hostRoutes("default-tls", pinConfigStore, hostStore, historyStore, certService, mockServerManager, hostClientCertStore)
-            vaultRoutes(vaultFileStore, vaultDistStore)
+            // V2: per-Config-API scoped vault admin endpoints under
+            // /api/v1/config-apis/{configApiId}/vault/...  — no more global
+            // "default-tls"-fixed vault mount on the management server.
+            scopedVaultAdminRoutes(vaultFileStore, vaultDistStore, vaultTokenStore, vaultTokenService)
+            adminVaultRoutes(db, deviceHostAclStore)
 
             // Tüm API'lerin config'lerini döner (Web UI sidebar için)
             get("/api/v1/all-configs") {

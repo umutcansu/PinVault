@@ -2,9 +2,18 @@ package com.example.pinvault.server.store
 
 import kotlinx.serialization.Serializable
 
+/**
+ * Distribution history: per-fetch record of which device downloaded which
+ * vault file at which version, and the outcome (downloaded / cached / failed).
+ *
+ * V2: all rows are scoped to a Config API. Queries may optionally filter by
+ * configApiId; stats are computed per Config API to avoid cross-tenant
+ * leakage in the web UI.
+ */
 class VaultDistributionStore(private val db: DatabaseManager) {
 
     fun add(
+        configApiId: String,
         key: String,
         version: Int,
         deviceId: String,
@@ -13,67 +22,99 @@ class VaultDistributionStore(private val db: DatabaseManager) {
         enrollmentLabel: String?,
         status: String,
         timestamp: String,
-        deviceAlias: String? = null
+        deviceAlias: String? = null,
+        failureReason: String? = null,
+        authMethod: String? = null
     ) {
         db.connection().use { conn ->
             conn.prepareStatement("""
-                INSERT INTO vault_distributions (vault_key, version, device_id, device_manufacturer, device_model, enrollment_label, status, timestamp, device_alias)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                INSERT INTO vault_distributions
+                    (config_api_id, vault_key, version, device_id, device_manufacturer,
+                     device_model, enrollment_label, status, timestamp, device_alias, failure_reason, auth_method)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """).use { stmt ->
-                stmt.setString(1, key)
-                stmt.setInt(2, version)
-                stmt.setString(3, deviceId)
-                stmt.setString(4, manufacturer)
-                stmt.setString(5, model)
-                stmt.setString(6, enrollmentLabel)
-                stmt.setString(7, status)
-                stmt.setString(8, timestamp)
-                stmt.setString(9, deviceAlias)
+                stmt.setString(1, configApiId)
+                stmt.setString(2, key)
+                stmt.setInt(3, version)
+                stmt.setString(4, deviceId)
+                stmt.setString(5, manufacturer)
+                stmt.setString(6, model)
+                stmt.setString(7, enrollmentLabel)
+                stmt.setString(8, status)
+                stmt.setString(9, timestamp)
+                stmt.setString(10, deviceAlias)
+                stmt.setString(11, failureReason)
+                stmt.setString(12, authMethod)
                 stmt.executeUpdate()
             }
             trimEntries(conn)
         }
     }
 
-    fun getAll(): List<VaultDistribution> {
+    fun getAll(configApiId: String? = null): List<VaultDistribution> {
         db.connection().use { conn ->
-            conn.createStatement().use { stmt ->
-                val rs = stmt.executeQuery("SELECT * FROM vault_distributions ORDER BY id DESC LIMIT 200")
-                return buildList { while (rs.next()) add(rs.toDistribution()) }
+            val sql = if (configApiId != null) {
+                "SELECT * FROM vault_distributions WHERE config_api_id = ? ORDER BY id DESC LIMIT 200"
+            } else {
+                "SELECT * FROM vault_distributions ORDER BY id DESC LIMIT 200"
             }
-        }
-    }
-
-    fun getByKey(key: String): List<VaultDistribution> {
-        db.connection().use { conn ->
-            conn.prepareStatement("SELECT * FROM vault_distributions WHERE vault_key = ? ORDER BY id DESC LIMIT 100").use { stmt ->
-                stmt.setString(1, key)
+            conn.prepareStatement(sql).use { stmt ->
+                if (configApiId != null) stmt.setString(1, configApiId)
                 val rs = stmt.executeQuery()
                 return buildList { while (rs.next()) add(rs.toDistribution()) }
             }
         }
     }
 
-    fun getByDevice(deviceId: String): List<VaultDistribution> {
+    fun getByKey(configApiId: String, key: String): List<VaultDistribution> {
         db.connection().use { conn ->
-            conn.prepareStatement("SELECT * FROM vault_distributions WHERE device_id = ? ORDER BY id DESC LIMIT 100").use { stmt ->
-                stmt.setString(1, deviceId)
+            conn.prepareStatement("""
+                SELECT * FROM vault_distributions
+                WHERE config_api_id = ? AND vault_key = ?
+                ORDER BY id DESC LIMIT 100
+            """).use { stmt ->
+                stmt.setString(1, configApiId)
+                stmt.setString(2, key)
                 val rs = stmt.executeQuery()
                 return buildList { while (rs.next()) add(rs.toDistribution()) }
             }
         }
     }
 
-    fun getStats(): VaultDistStats {
+    fun getByDevice(configApiId: String, deviceId: String): List<VaultDistribution> {
         db.connection().use { conn ->
-            conn.createStatement().use { stmt ->
-                val total = stmt.executeQuery("SELECT COUNT(*) FROM vault_distributions").let { it.next(); it.getInt(1) }
-                val uniqueDevices = stmt.executeQuery("SELECT COUNT(DISTINCT device_id) FROM vault_distributions").let { it.next(); it.getInt(1) }
-                val uniqueKeys = stmt.executeQuery("SELECT COUNT(DISTINCT vault_key) FROM vault_distributions").let { it.next(); it.getInt(1) }
-                val downloaded = stmt.executeQuery("SELECT COUNT(*) FROM vault_distributions WHERE status = 'downloaded'").let { it.next(); it.getInt(1) }
-                val failed = stmt.executeQuery("SELECT COUNT(*) FROM vault_distributions WHERE status = 'failed'").let { it.next(); it.getInt(1) }
-                return VaultDistStats(total, uniqueDevices, uniqueKeys, downloaded, failed)
+            conn.prepareStatement("""
+                SELECT * FROM vault_distributions
+                WHERE config_api_id = ? AND device_id = ?
+                ORDER BY id DESC LIMIT 100
+            """).use { stmt ->
+                stmt.setString(1, configApiId)
+                stmt.setString(2, deviceId)
+                val rs = stmt.executeQuery()
+                return buildList { while (rs.next()) add(rs.toDistribution()) }
             }
+        }
+    }
+
+    fun getStats(configApiId: String? = null): VaultDistStats {
+        db.connection().use { conn ->
+            val where = if (configApiId != null) "WHERE config_api_id = ?" else ""
+
+            fun count(sql: String): Int {
+                conn.prepareStatement(sql).use { stmt ->
+                    if (configApiId != null) stmt.setString(1, configApiId)
+                    val rs = stmt.executeQuery()
+                    rs.next(); return rs.getInt(1)
+                }
+            }
+
+            val total         = count("SELECT COUNT(*) FROM vault_distributions $where")
+            val uniqueDevices = count("SELECT COUNT(DISTINCT device_id) FROM vault_distributions $where")
+            val uniqueKeys    = count("SELECT COUNT(DISTINCT vault_key) FROM vault_distributions $where")
+            val downloaded    = count("SELECT COUNT(*) FROM vault_distributions $where${if (where.isEmpty()) "WHERE" else " AND"} status = 'downloaded'")
+            val failed        = count("SELECT COUNT(*) FROM vault_distributions $where${if (where.isEmpty()) "WHERE" else " AND"} status = 'failed'")
+
+            return VaultDistStats(total, uniqueDevices, uniqueKeys, downloaded, failed)
         }
     }
 
@@ -88,6 +129,7 @@ class VaultDistributionStore(private val db: DatabaseManager) {
     }
 
     private fun java.sql.ResultSet.toDistribution() = VaultDistribution(
+        configApiId = try { getString("config_api_id") } catch (_: Exception) { "" },
         vaultKey = getString("vault_key"),
         version = getInt("version"),
         deviceId = getString("device_id"),
@@ -96,12 +138,15 @@ class VaultDistributionStore(private val db: DatabaseManager) {
         enrollmentLabel = getString("enrollment_label"),
         status = getString("status"),
         timestamp = getString("timestamp"),
-        deviceAlias = try { getString("device_alias") } catch (_: Exception) { null }
+        deviceAlias = try { getString("device_alias") } catch (_: Exception) { null },
+        failureReason = try { getString("failure_reason") } catch (_: Exception) { null },
+        authMethod = try { getString("auth_method") } catch (_: Exception) { null }
     )
 }
 
 @Serializable
 data class VaultDistribution(
+    val configApiId: String = "",
     val vaultKey: String,
     val version: Int,
     val deviceId: String,
@@ -110,7 +155,9 @@ data class VaultDistribution(
     val enrollmentLabel: String? = null,
     val status: String,
     val timestamp: String,
-    val deviceAlias: String? = null
+    val deviceAlias: String? = null,
+    val failureReason: String? = null,
+    val authMethod: String? = null
 )
 
 @Serializable

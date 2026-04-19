@@ -3,104 +3,112 @@ package io.github.umutcansu.pinvault.model
 import org.junit.Assert.*
 import org.junit.Test
 
-/** PinVaultConfig builder validation tests */
+/** PinVaultConfig builder validation tests (V2 DSL). */
 class PinVaultConfigTest {
 
     private val validPins = listOf(
-        HostPin("api.example.com", listOf("pin1aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa=", "pin2bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb="))
+        HostPin("api.example.com", listOf(
+            "pin1aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa=",
+            "pin2bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb="
+        ))
     )
+
+    private fun api(url: String, init: ConfigApiBlock.Builder.() -> Unit = {}) =
+        PinVaultConfig.Builder().configApi("api", url) {
+            bootstrapPins(validPins)
+            init()
+        }
 
     @Test
     fun `Builder — minimal config`() {
-        val config = PinVaultConfig.Builder("https://api.example.com")
-            .bootstrapPins(validPins)
-            .build()
+        val config = api("https://api.example.com").build()
 
-        assertEquals("https://api.example.com/", config.configUrl)
-        assertEquals("api/v1/certificate-config", config.configEndpoint)
-        assertEquals("health", config.healthEndpoint)
+        val block = config.defaultConfigApi!!
+        assertEquals("https://api.example.com/", block.configUrl)
+        assertEquals("api/v1/certificate-config", block.configEndpoint)
+        assertEquals("health", block.healthEndpoint)
         assertEquals(3, config.maxRetryCount)
         assertEquals(12L, config.updateIntervalHours)
-        assertNull(config.signaturePublicKey)
-        assertNull(config.clientKeystoreBytes)
-        assertEquals("changeit", config.clientKeyPassword)
+        assertNull(block.signaturePublicKey)
+        assertNull(block.clientKeystoreBytes)
+        assertEquals("changeit", block.clientKeyPassword)
     }
 
     @Test
     fun `Builder — URL without trailing slash gets normalized`() {
-        val config = PinVaultConfig.Builder("https://api.example.com")
-            .bootstrapPins(validPins)
-            .build()
-        assertEquals("https://api.example.com/", config.configUrl)
+        val block = api("https://api.example.com").build().defaultConfigApi!!
+        assertEquals("https://api.example.com/", block.configUrl)
     }
 
     @Test
     fun `Builder — URL with trailing slash stays unchanged`() {
-        val config = PinVaultConfig.Builder("https://api.example.com/")
-            .bootstrapPins(validPins)
-            .build()
-        assertEquals("https://api.example.com/", config.configUrl)
+        val block = api("https://api.example.com/").build().defaultConfigApi!!
+        assertEquals("https://api.example.com/", block.configUrl)
     }
 
     @Test
     fun `Builder — custom endpoints trimmed`() {
-        val config = PinVaultConfig.Builder("https://api.example.com/")
-            .bootstrapPins(validPins)
-            .configEndpoint("/custom/config")
-            .healthEndpoint("/custom/health")
-            .build()
-        assertEquals("custom/config", config.configEndpoint)
-        assertEquals("custom/health", config.healthEndpoint)
+        val block = api("https://api.example.com/") {
+            configEndpoint("/custom/config")
+            healthEndpoint("/custom/health")
+        }.build().defaultConfigApi!!
+        assertEquals("custom/config", block.configEndpoint)
+        assertEquals("custom/health", block.healthEndpoint)
     }
 
     @Test(expected = IllegalArgumentException::class)
     fun `Builder — blank URL throws`() {
-        PinVaultConfig.Builder("").bootstrapPins(validPins).build()
+        PinVaultConfig.Builder().configApi("api", "") { bootstrapPins(validPins) }.build()
     }
 
     @Test(expected = IllegalArgumentException::class)
     fun `Builder — empty bootstrap pins throws`() {
-        PinVaultConfig.Builder("https://api.example.com/")
-            .bootstrapPins(emptyList())
-            .build()
+        PinVaultConfig.Builder().configApi("api", "https://api.example.com/") {
+            bootstrapPins(emptyList())
+        }.build()
     }
 
     @Test
     fun `Builder — all fields set`() {
-        val config = PinVaultConfig.Builder("https://api.example.com/")
-            .bootstrapPins(validPins)
-            .configEndpoint("my/config")
-            .healthEndpoint("my/health")
+        val config = PinVaultConfig.Builder()
+            .configApi("api", "https://api.example.com/") {
+                bootstrapPins(validPins)
+                configEndpoint("my/config")
+                healthEndpoint("my/health")
+                signaturePublicKey("ABCDEF123")
+                clientKeystore(byteArrayOf(1, 2, 3), "mypass")
+                enrollmentToken("tok123")
+                clientCertLabel("myLabel")
+            }
             .maxRetryCount(5)
             .updateIntervalHours(6)
             .updateIntervalMinutes(30)
-            .signaturePublicKey("ABCDEF123")
-            .clientKeystore(byteArrayOf(1, 2, 3), "mypass")
-            .enrollmentToken("tok123")
-            .clientCertLabel("myLabel")
             .build()
 
-        assertEquals("my/config", config.configEndpoint)
-        assertEquals("my/health", config.healthEndpoint)
+        val block = config.defaultConfigApi!!
+        assertEquals("my/config", block.configEndpoint)
+        assertEquals("my/health", block.healthEndpoint)
         assertEquals(5, config.maxRetryCount)
         assertEquals(6L, config.updateIntervalHours)
         assertEquals(30L, config.updateIntervalMinutes)
-        assertEquals("ABCDEF123", config.signaturePublicKey)
-        assertArrayEquals(byteArrayOf(1, 2, 3), config.clientKeystoreBytes)
-        assertEquals("mypass", config.clientKeyPassword)
-        assertEquals("tok123", config.enrollmentToken)
-        assertEquals("myLabel", config.clientCertLabel)
+        assertEquals("ABCDEF123", block.signaturePublicKey)
+        assertArrayEquals(byteArrayOf(1, 2, 3), block.clientKeystoreBytes)
+        assertEquals("mypass", block.clientKeyPassword)
+        assertEquals("tok123", block.enrollmentToken)
+        assertEquals("myLabel", block.clientCertLabel)
     }
 
     @Test
     fun `config with vaultFiles DSL`() {
-        val config = PinVaultConfig.Builder("https://api.example.com/")
-            .bootstrapPins(validPins)
+        val config = PinVaultConfig.Builder()
+            .configApi("api", "https://api.example.com/") { bootstrapPins(validPins) }
             .vaultFile("ml-model") {
+                configApi("api")
                 endpoint("api/v1/vault/ml-model")
                 storage(StorageStrategy.ENCRYPTED_FILE)
             }
             .vaultFile("flags") {
+                configApi("api")
                 endpoint("api/v1/vault/flags")
                 updateWithPins(true)
             }
@@ -115,10 +123,7 @@ class PinVaultConfigTest {
 
     @Test
     fun `config without vaultFiles has empty map`() {
-        val config = PinVaultConfig.Builder("https://api.example.com/")
-            .bootstrapPins(validPins)
-            .build()
-
+        val config = api("https://api.example.com/").build()
         assertTrue(config.vaultFiles.isEmpty())
     }
 }

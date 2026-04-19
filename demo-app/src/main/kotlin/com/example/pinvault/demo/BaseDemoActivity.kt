@@ -130,6 +130,13 @@ abstract class BaseDemoActivity : AppCompatActivity() {
         if (enrolled) {
             binding.tvEnrollStatus.text = getString(R.string.enrolled)
             binding.tvEnrollStatus.setTextColor(color(R.color.status_success))
+            val cn = PinVault.enrolledClientCN(this)
+            if (cn != null) {
+                binding.tvClientId.text = "Client ID: $cn"
+                binding.tvClientId.visibility = View.VISIBLE
+            } else {
+                binding.tvClientId.visibility = View.GONE
+            }
             binding.btnEnroll.isEnabled = false
             binding.btnUnenroll.isEnabled = true
             addLog(true, getString(R.string.log_cert_exists))
@@ -137,6 +144,7 @@ abstract class BaseDemoActivity : AppCompatActivity() {
         } else {
             binding.tvEnrollStatus.text = getString(R.string.not_enrolled)
             binding.tvEnrollStatus.setTextColor(color(R.color.status_error))
+            binding.tvClientId.visibility = View.GONE
             binding.btnEnroll.isEnabled = true
             binding.btnUnenroll.isEnabled = false
             binding.btnTest.isEnabled = false
@@ -153,11 +161,19 @@ abstract class BaseDemoActivity : AppCompatActivity() {
         if (enrolled) {
             binding.tvEnrollStatus.text = getString(R.string.enrolled)
             binding.tvEnrollStatus.setTextColor(color(R.color.status_success))
+            val cn = PinVault.enrolledClientCN(this)
+            if (cn != null) {
+                binding.tvClientId.text = "Client ID: $cn"
+                binding.tvClientId.visibility = View.VISIBLE
+            } else {
+                binding.tvClientId.visibility = View.GONE
+            }
             binding.btnEnroll.isEnabled = false
             binding.btnUnenroll.isEnabled = true
         } else {
             binding.tvEnrollStatus.text = getString(R.string.not_enrolled)
             binding.tvEnrollStatus.setTextColor(color(R.color.status_error))
+            binding.tvClientId.visibility = View.GONE
             binding.btnEnroll.isEnabled = true
             binding.btnUnenroll.isEnabled = false
         }
@@ -191,9 +207,11 @@ abstract class BaseDemoActivity : AppCompatActivity() {
 
         try { PinVault.reset() } catch (_: Exception) {}
 
-        val config = PinVaultConfig.Builder(configServerUrl)
-            .bootstrapPins(bootstrapPins)
-            .configEndpoint("api/v1/certificate-config?signed=false")
+        val config = PinVaultConfig.Builder()
+            .configApi("default", configServerUrl) {
+                bootstrapPins(bootstrapPins)
+                configEndpoint("api/v1/certificate-config?signed=false")
+            }
             .build()
 
         PinVault.init(applicationContext, config) { initResult ->
@@ -248,9 +266,11 @@ abstract class BaseDemoActivity : AppCompatActivity() {
         try { PinVault.reset() } catch (_: Exception) {}
 
         val deviceName = "${android.os.Build.MANUFACTURER} ${android.os.Build.MODEL}"
-        val config = PinVaultConfig.Builder(configServerUrl)
-            .bootstrapPins(bootstrapPins)
-            .configEndpoint("api/v1/certificate-config?signed=false")
+        val config = PinVaultConfig.Builder()
+            .configApi("default", configServerUrl) {
+                bootstrapPins(bootstrapPins)
+                configEndpoint("api/v1/certificate-config?signed=false")
+            }
             .updateIntervalMinutes(15)
             .deviceAlias(deviceName)
             .build()
@@ -263,10 +283,16 @@ abstract class BaseDemoActivity : AppCompatActivity() {
         }
     }
 
+    private fun renderHostVersions() {
+        val hosts = try { PinVault.hostPinVersions() } catch (_: Exception) { emptyMap() }
+        binding.tvVersion.text = if (hosts.isEmpty()) "" else hosts.entries
+            .joinToString("\n") { getString(R.string.host_pin_version, it.key, it.value) }
+    }
+
     private fun onInitReady(version: Int) {
-        binding.tvStatus.text = getString(R.string.ready, version)
+        binding.tvStatus.text = getString(R.string.ready)
         binding.tvStatus.setTextColor(color(R.color.status_success))
-        binding.tvVersion.text = getString(R.string.pin_version, version)
+        renderHostVersions()
         binding.btnTest.isEnabled = true
         binding.btnUpdate.isEnabled = true
         addLog(true, "Init OK v$version — ${if (PinVault.isEnrolled(this)) "cert ✓" else "no cert"}")
@@ -291,8 +317,8 @@ abstract class BaseDemoActivity : AppCompatActivity() {
             runOnUiThread {
                 when (result) {
                     is UpdateResult.Updated -> {
-                        binding.tvStatus.text = getString(R.string.ready, result.newVersion)
-                        binding.tvVersion.text = getString(R.string.pin_version, result.newVersion)
+                        binding.tvStatus.text = getString(R.string.ready)
+                        renderHostVersions()
                         addLog(true, getString(R.string.log_bg_update, result.newVersion))
                     }
                     is UpdateResult.AlreadyCurrent -> addLog(true, getString(R.string.log_bg_check))
@@ -379,8 +405,8 @@ abstract class BaseDemoActivity : AppCompatActivity() {
             try {
                 when (val result = PinVault.updateNow()) {
                     is UpdateResult.Updated -> {
-                        binding.tvStatus.text = getString(R.string.ready, result.newVersion)
-                        binding.tvVersion.text = getString(R.string.pin_version, result.newVersion)
+                        binding.tvStatus.text = getString(R.string.ready)
+                        renderHostVersions()
                         showResult(getString(R.string.pins_updated, result.newVersion), R.color.status_success)
                         addLog(true, getString(R.string.pins_updated, result.newVersion))
                     }

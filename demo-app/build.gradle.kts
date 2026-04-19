@@ -60,6 +60,7 @@ dependencies {
     androidTestImplementation("androidx.test:runner:1.6.2")
     androidTestImplementation("androidx.work:work-runtime-ktx:2.10.0")
     androidTestImplementation("androidx.test:rules:1.6.1")
+    androidTestImplementation("androidx.security:security-crypto:1.1.0-alpha06")
     androidTestImplementation("com.squareup.okhttp3:mockwebserver:4.12.0")
     androidTestImplementation("org.jetbrains.kotlinx:kotlinx-coroutines-test:1.9.0")
 

@@ -12,5 +12,16 @@ data class VaultDownloadReport(
     val deviceModel: String,
     val enrollmentLabel: String,
     val deviceId: String,
-    val deviceAlias: String
+    val deviceAlias: String,
+    /**
+     * status == "failed" ise başarısızlık nedeni (HTTP 401 / 404 / decrypt fail
+     * / network error mesajı). Başarılı fetch'lerde null.
+     */
+    val failureReason: String? = null,
+    /**
+     * Fetch için kullanılan yetkilendirme: "public" (header'sız), "token",
+     * "token_mtls", "api_key". Audit / debug için web UI + mobile log'larda
+     * gösterilir. Başarısız fetch'te bile denenen method yazılır.
+     */
+    val authMethod: String? = null
 )

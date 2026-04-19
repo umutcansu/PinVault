@@ -38,6 +38,9 @@ import java.util.concurrent.TimeUnit
 @RunWith(AndroidJUnit4::class)
 class MtlsConfigApiTest {
 
+    @get:org.junit.Rule
+    val qaScreenshots = QaScreenshotRule()
+
     private var scenario: ActivityScenario<MtlsToTlsActivity>? = null
 
     private val context get() = androidx.test.platform.app.InstrumentationRegistry
@@ -53,6 +56,8 @@ class MtlsConfigApiTest {
 
     @After
     fun tearDown() {
+        // Activity kapanmadan ÖNCE son durum screenshot'ı — sonra close.
+        qaScreenshots.capture("final")
         try { scenario?.close() } catch (_: Exception) {}
         try { PinVault.reset() } catch (_: Exception) {}
     }
@@ -69,7 +74,7 @@ class MtlsConfigApiTest {
      */
     private fun generateEnrollmentToken(): String {
         val clientId = "test-${System.currentTimeMillis()}"
-        val resp = TestConfig.plainClient.newCall(
+        val resp = TestConfig.adminClient.newCall(
             Request.Builder()
                 .url("${TestConfig.MANAGEMENT_URL}/api/v1/enrollment-tokens/generate")
                 .post("""{"clientId":"$clientId"}""".toRequestBody("application/json".toMediaType()))
@@ -88,9 +93,11 @@ class MtlsConfigApiTest {
     private fun enrollProgrammatically() {
         // TLS init for enrollment
         val latch = CountDownLatch(1)
-        val config = PinVaultConfig.Builder(TestConfig.TLS_CONFIG_URL)
-            .bootstrapPins(bootstrapPins)
-            .configEndpoint("api/v1/certificate-config?signed=false")
+        val config = PinVaultConfig.Builder()
+            .configApi("default", TestConfig.TLS_CONFIG_URL) {
+                bootstrapPins(bootstrapPins)
+                configEndpoint("api/v1/certificate-config?signed=false")
+            }
             .maxRetryCount(1)
             .build()
         PinVault.init(context, config) { latch.countDown() }
@@ -126,12 +133,21 @@ class MtlsConfigApiTest {
 
     @Test
     fun mtlsConfig_after_enrollment_init_succeeds() {
+        // 1) ÖNCE: enrollment yokken activity açılır → "✗ Not Enrolled" + "Enrollment required"
+        scenario = ActivityScenario.launch(MtlsToTlsActivity::class.java)
+        Thread.sleep(8000)
+        qaScreenshots.capture("before-enroll")
+        scenario?.close()
+        scenario = null
+
+        // 2) Enrollment: Management API'den token alınıp PinVault.enroll ile P12 yüklenir
+        //    (UI ENROLL butonu dialog açtığından dialog Espresso'da token type etmek karmaşık;
+        //     aynı code path programmatik olarak tetiklenir — mimari kanıt değişmez).
         enrollProgrammatically()
 
+        // 3) SONRA: Activity tekrar açılır → Client ID görünür + STATUS Ready (v2)
         scenario = ActivityScenario.launch(MtlsToTlsActivity::class.java)
         Thread.sleep(15000)
-
-        // Enrollment var → Activity init eder → Ready
         onView(withId(R.id.tvStatus))
             .check(matches(withText(containsString("✓"))))
     }
@@ -187,20 +203,23 @@ class MtlsConfigApiTest {
     @Test
     fun mtlsConfig_unenroll_then_init_fails() {
         enrollProgrammatically()
-
-        // Enrolled durumu doğrula
         assertTrue(PinVault.isEnrolled(context))
 
-        // Unenroll
-        PinVault.unenroll(context)
-        assertFalse(PinVault.isEnrolled(context))
-
-        // Activity aç — enrollment yok → "Enrollment required"
+        // 1) Activity aç → "Enrolled + Ready" — "ÖNCE" görseli
         scenario = ActivityScenario.launch(MtlsToTlsActivity::class.java)
         Thread.sleep(12000)
+        qaScreenshots.capture("before-unenroll")
 
-        onView(withId(R.id.tvStatus))
-            .check(matches(not(withText(containsString("✓")))))
+        // 2) UNENROLL butonuna Espresso ile gerçek tıklama — kullanıcı akışını simüle eder.
+        //    Buton tıklanmadan hemen önceki kareyi ayrı bir kanıt olarak yakala.
+        qaScreenshots.capture("button-click")
+        onView(withId(R.id.btnUnenroll)).perform(click())
+        Thread.sleep(2000) // UI refresh
+
+        // 3) Artık "Not Enrolled" olmalı — local cert silindi
+        assertFalse(PinVault.isEnrolled(context))
+        onView(withId(R.id.tvEnrollStatus))
+            .check(matches(withText(containsString("✗"))))
     }
 
     // ─── Re-enrollment çalışır ──────────────────────────

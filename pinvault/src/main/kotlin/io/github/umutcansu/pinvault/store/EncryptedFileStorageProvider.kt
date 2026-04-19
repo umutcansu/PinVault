@@ -37,9 +37,18 @@ class EncryptedFileStorageProvider internal constructor(
         val file = fileFor(key)
         try {
             val secretKey = getOrCreateKey(key)
-            val iv = ByteArray(GCM_IV_LENGTH).also { SecureRandom().nextBytes(it) }
             val cipher = Cipher.getInstance(AES_GCM_TRANSFORMATION)
-            cipher.init(Cipher.ENCRYPT_MODE, secretKey, GCMParameterSpec(GCM_TAG_LENGTH, iv))
+            // Android Keystore RSA/AES key'leri caller-provided IV'yi reddediyor.
+            // Cipher.init'i sadece key ile çağırıp Keystore'un kendi IV'sini
+            // üretmesine izin ver, sonra ciphertext'i IV+data formatında yaz.
+            // Legacy non-Keystore anahtarlarla geriye uyumluluk için fallback var.
+            try {
+                cipher.init(Cipher.ENCRYPT_MODE, secretKey)
+            } catch (_: Exception) {
+                val iv = ByteArray(GCM_IV_LENGTH).also { SecureRandom().nextBytes(it) }
+                cipher.init(Cipher.ENCRYPT_MODE, secretKey, GCMParameterSpec(GCM_TAG_LENGTH, iv))
+            }
+            val iv = cipher.iv ?: ByteArray(GCM_IV_LENGTH).also { SecureRandom().nextBytes(it) }
             val encrypted = cipher.doFinal(bytes)
 
             // Write: [iv_length(1)][iv][encrypted_data]

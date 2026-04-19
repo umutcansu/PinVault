@@ -27,5 +27,8 @@ class MainActivity : AppCompatActivity() {
         binding.cardVaultFiles.setOnClickListener {
             startActivity(Intent(this, VaultFileDemoActivity::class.java))
         }
+        binding.cardVaultSecurity.setOnClickListener {
+            startActivity(Intent(this, VaultSecurityDemoActivity::class.java))
+        }
     }
 }

@@ -45,8 +45,12 @@ object TestConfig {
     /** Host cert label (config'teki hostname ile eşleşmeli) */
     val MTLS_HOST_CERT_LABEL = "host_$MTLS_HOST_IP"
 
-    /** Vault file test endpoint (management API üzerinden yükleme/indirme) */
-    val VAULT_API_URL = "$MANAGEMENT_URL/api/v1/vault"
+    /**
+     * V2: vault admin endpoints are scoped per Config API. All existing
+     * tests operate on default-tls; multi-API tests can build their own
+     * URLs against other Config API ids.
+     */
+    val VAULT_API_URL = "$MANAGEMENT_URL/api/v1/config-apis/default-tls/vault"
 
     /** Bootstrap pins — demo-server TLS cert */
     val BOOTSTRAP_PINS = listOf(
@@ -56,11 +60,31 @@ object TestConfig {
         ))
     )
 
+    /** Admin API key — demo-server başlatılırken `API_KEY=admin-key-123` verilmiş. */
+    const val ADMIN_API_KEY = "admin-key-123"
+
     /** Pin doğrulamasız plain HTTP client — sadece test altyapısı için */
     val plainClient: OkHttpClient by lazy {
         OkHttpClient.Builder()
             .connectTimeout(3, TimeUnit.SECONDS)
             .readTimeout(3, TimeUnit.SECONDS)
+            .build()
+    }
+
+    /**
+     * Admin HTTP client — plainClient + her requeste otomatik X-API-Key header.
+     * Management endpoint'leri (vault admin, enrollment-tokens, device ACL, vs)
+     * API key zorunlu kıldığı için bu client'ı kullan.
+     */
+    val adminClient: OkHttpClient by lazy {
+        OkHttpClient.Builder()
+            .connectTimeout(3, TimeUnit.SECONDS)
+            .readTimeout(3, TimeUnit.SECONDS)
+            .addInterceptor { chain ->
+                chain.proceed(chain.request().newBuilder()
+                    .header("X-API-Key", ADMIN_API_KEY)
+                    .build())
+            }
             .build()
     }
 

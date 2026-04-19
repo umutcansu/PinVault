@@ -6,6 +6,7 @@ import com.example.pinvault.server.model.SignedConfig
 import com.example.pinvault.server.service.ConfigSigningService
 import com.example.pinvault.server.store.ClientDeviceStore
 import com.example.pinvault.server.store.ConnectionHistoryStore
+import com.example.pinvault.server.store.DeviceHostAclStore
 import com.example.pinvault.server.store.HostClientCertStore
 import com.example.pinvault.server.store.PinConfigHistoryStore
 import com.example.pinvault.server.store.PinConfigStore
@@ -21,10 +22,12 @@ import kotlinx.serialization.json.intOrNull
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.longOrNull
+import org.slf4j.LoggerFactory
 import java.time.Instant
 import java.util.Base64
 
 private val configJson = Json { encodeDefaults = true }
+private val aclLog = LoggerFactory.getLogger("CertificateConfigACL")
 
 fun Route.certificateConfigRoutes(
     configApiId: String,
@@ -40,7 +43,17 @@ fun Route.certificateConfigRoutes(
     hostClientCertStore: HostClientCertStore? = null,
     onClientCertEnrolled: (() -> Unit)? = null,
     enrollmentMode: String = "token",
-    configApiMode: String = "tls"
+    configApiMode: String = "tls",
+    /**
+     * V2: per-device pin scoping. When a device sends `?hosts=a,b,c` (or
+     * identifies itself via `X-Device-Id`), the returned PinConfig is filtered
+     * to the intersection of requested hosts and the device's ACL.
+     *
+     * If [deviceHostAclStore] is null, the legacy "return everything" behavior
+     * is preserved. This keeps existing tests and demo flows working until
+     * the library starts sending `?hosts=…`.
+     */
+    deviceHostAclStore: DeviceHostAclStore? = null
 ) {
 
     // Enrollment endpoint — Config API üzerinden client cert dağıtımı
@@ -118,13 +131,41 @@ fun Route.certificateConfigRoutes(
 
         get {
             val config = store.load(configApiId)
+
+            // ── Pin scoping (V2): filter config.pins to the intersection of
+            // requested hosts and the device's ACL.
+            //
+            // Legacy behavior preserved when both `hosts` and `X-Device-Id`
+            // are absent OR when no ACL store is wired — returns full config.
+            val requested = call.request.queryParameters["hosts"]
+                ?.split(",")?.map { it.trim() }?.filter { it.isNotEmpty() }
+            val deviceId = call.request.header("X-Device-Id")
+                ?: extractCertCn(call)
+
+            val filtered = if (deviceHostAclStore != null && (requested != null || deviceId != null)) {
+                val decision = deviceHostAclStore.resolve(configApiId, deviceId ?: "anonymous", requested)
+                if (decision.hasUnauthorized) {
+                    aclLog.warn("Unauthorized host request: configApi={} deviceId={} denied={}",
+                        configApiId, deviceId ?: "anonymous", decision.denied)
+                }
+                if (requested != null) {
+                    // Explicit ?hosts= filter — keep only pins in `granted`.
+                    config.copy(pins = config.pins.filter { it.hostname in decision.granted })
+                } else {
+                    // No explicit request, but deviceId known — filter to ACL.
+                    config.copy(pins = config.pins.filter { it.hostname in decision.granted })
+                }
+            } else {
+                config
+            }
+
             val signed = call.request.queryParameters["signed"] != "false"
             if (signed) {
-                val payload = configJson.encodeToString(config)
+                val payload = configJson.encodeToString(filtered)
                 val signature = signingService.sign(payload)
                 call.respond(SignedConfig(payload = payload, signature = signature))
             } else {
-                call.respond(config)
+                call.respond(filtered)
             }
         }
 
@@ -355,4 +396,16 @@ private fun validatePinConfig(config: PinConfig): List<String> {
     }
 
     return errors
+}
+
+/**
+ * Extract CN from the mTLS client cert's SubjectDN, if one is present on the
+ * call. Used for deriving deviceId when X-Device-Id header is not sent.
+ */
+private fun extractCertCn(call: io.ktor.server.application.ApplicationCall): String? {
+    val principal = try {
+        val attrKey = io.ktor.util.AttributeKey<javax.security.auth.x500.X500Principal>("TLSPeerPrincipal")
+        call.attributes.getOrNull(attrKey)
+    } catch (_: Exception) { null } ?: return null
+    return Regex("CN=([^,]+)").find(principal.name)?.groupValues?.getOrNull(1)?.trim()
 }

@@ -3,7 +3,10 @@ package io.github.umutcansu.pinvault
 import android.content.Context
 import io.github.umutcansu.pinvault.api.CertificateConfigApi
 import io.github.umutcansu.pinvault.api.DefaultCertificateConfigApi
-import io.github.umutcansu.pinvault.model.HostPin
+import io.github.umutcansu.pinvault.internal.ConfigApiClient
+import io.github.umutcansu.pinvault.internal.VaultFileRouter
+import io.github.umutcansu.pinvault.keystore.DeviceKeyProvider
+import io.github.umutcansu.pinvault.model.ConfigApiBlock
 import io.github.umutcansu.pinvault.model.HttpConnectionSettings
 import io.github.umutcansu.pinvault.model.InitResult
 import io.github.umutcansu.pinvault.model.PinVaultConfig
@@ -29,41 +32,35 @@ import timber.log.Timber
 /**
  * Main entry point for the dynamic SSL certificate pinning library.
  *
- * ## Suspend (Kotlin coroutine projeleri)
- *
  * ```kotlin
- * val result = PinVault.init(
- *     context = applicationContext,
- *     configUrl = "https://api.example.com/",
- *     bootstrapPins = listOf(
- *         HostPin("api.example.com", listOf("hash1...", "hash2..."))
- *     )
- * )
- * when (result) {
- *     is InitResult.Ready -> PinVault.applyTo(builder)
- *     is InitResult.Failed -> // hata
- * }
- * ```
- *
- * ## Callback (Java / coroutine olmayan projeler)
- *
- * ```kotlin
- * PinVault.init(
- *     context = applicationContext,
- *     configUrl = "https://api.example.com/",
- *     bootstrapPins = listOf(...),
- *     onResult = { result ->
- *         when (result) {
- *             is InitResult.Ready -> PinVault.applyTo(builder)
- *             is InitResult.Failed -> // hata
- *         }
+ * val config = PinVaultConfig.Builder()
+ *     .configApi("api", "https://api.example.com/") {
+ *         bootstrapPins(listOf(HostPin("api.example.com", listOf("hash1", "hash2"))))
  *     }
- * )
+ *     .build()
+ *
+ * // Suspend — Kotlin coroutines:
+ * val result = PinVault.init(applicationContext, config)
+ *
+ * // Callback — Java / non-coroutine callers:
+ * PinVault.init(applicationContext, config) { result ->
+ *     when (result) {
+ *         is InitResult.Ready -> PinVault.applyTo(builder)
+ *         is InitResult.Failed -> // hata
+ *     }
+ * }
  * ```
  */
 object PinVault {
 
     private lateinit var appContext: Context
+
+    // Per-Config-API clients, keyed by ConfigApiBlock.id. The first block is
+    // the "primary" and exposes its SSL/client/updater as top-level properties.
+    private var configApiClients: Map<String, ConfigApiClient> = emptyMap()
+
+    // Primary mirrors — populated from the first ConfigApiClient (enroll /
+    // applyTo / getClient use these).
     private lateinit var sslManager: DynamicSSLManager
     private lateinit var clientProvider: HttpClientProvider
     private lateinit var updater: SSLCertificateUpdater
@@ -71,6 +68,12 @@ object PinVault {
     private lateinit var defaultVaultFileStore: VaultFileStore
     private var vaultStorageProviders: Map<String, VaultStorageProvider> = emptyMap()
     private lateinit var configApi: io.github.umutcansu.pinvault.api.CertificateConfigApi
+
+    // V2: E2E decryption key material.
+    private var deviceKeyProvider: DeviceKeyProvider? = null
+
+    // V2: routes fetchFile() to the correct per-block client.
+    private lateinit var vaultRouter: VaultFileRouter
 
     @Volatile
     private var initialized = false
@@ -116,16 +119,7 @@ object PinVault {
 
     // ── Init (PinVaultConfig — recommended) ─────────────────────────────
 
-    /**
-     * Initializes the library with a [PinVaultConfig] (suspend version).
-     *
-     * ```kotlin
-     * val config = PinVaultConfig.Builder("https://api.example.com/")
-     *     .bootstrapPins(listOf(HostPin("api.example.com", listOf("hash1", "hash2"))))
-     *     .build()
-     * val result = PinVault.init(context, config)
-     * ```
-     */
+    /** Initializes the library with a [PinVaultConfig] (suspend version). */
     suspend fun init(context: Context, config: PinVaultConfig): InitResult {
         pinManagerConfig = config
         setup(context, config, null)
@@ -151,57 +145,6 @@ object PinVault {
 
     // ── Init (legacy — backward compatible) ───────────────────────────────
 
-    /**
-     * Initializes the library (suspend version — legacy overload).
-     * Prefer [init(Context, PinVaultConfig)] for new integrations.
-     */
-    suspend fun init(
-        context: Context,
-        configUrl: String,
-        bootstrapPins: List<HostPin>,
-        maxRetryCount: Int = 3,
-        configApi: CertificateConfigApi? = null
-    ): InitResult {
-        val config = PinVaultConfig(
-            configUrl = if (configUrl.endsWith("/")) configUrl else "$configUrl/",
-            bootstrapPins = bootstrapPins,
-            maxRetryCount = maxRetryCount
-        )
-        pinManagerConfig = config
-        setup(context, config, configApi)
-            ?: return InitResult.Ready(clientProvider.getVersion())
-        return executeInit()
-    }
-
-    /**
-     * Initializes the library (callback version — legacy overload).
-     * Prefer [init(Context, PinVaultConfig, (InitResult) -> Unit)] for new integrations.
-     */
-    fun init(
-        context: Context,
-        configUrl: String,
-        bootstrapPins: List<HostPin>,
-        maxRetryCount: Int = 3,
-        configApi: CertificateConfigApi? = null,
-        onResult: (InitResult) -> Unit
-    ) {
-        val config = PinVaultConfig(
-            configUrl = if (configUrl.endsWith("/")) configUrl else "$configUrl/",
-            bootstrapPins = bootstrapPins,
-            maxRetryCount = maxRetryCount
-        )
-        pinManagerConfig = config
-        val alreadyReady = setup(context, config, configApi)
-        if (alreadyReady == null) {
-            onResult(InitResult.Ready(clientProvider.getVersion()))
-            return
-        }
-        CoroutineScope(Dispatchers.IO).launch {
-            val result = executeInit()
-            kotlinx.coroutines.withContext(Dispatchers.Main) { onResult(result) }
-        }
-    }
-
     // ── Internal setup ────────────────────────────────────────────────────
 
     /**
@@ -221,21 +164,8 @@ object PinVault {
 
             appContext = context.applicationContext
 
-            sslManager = DynamicSSLManager()
-            val certStore = ClientCertSecureStore(appContext)
-
-            // mTLS: client keystore yükle (öncelik sırası: direct bytes > stored by label > enrollment)
-            val p12Bytes = config.clientKeystoreBytes
-                ?: certStore.load(config.clientCertLabel)
-
-            if (p12Bytes != null) {
-                sslManager.loadClientKeystore(p12Bytes, config.clientKeyPassword)
-            }
-
-            clientProvider = HttpClientProvider(sslManager)
-            configStore = CertificateConfigStore(appContext)
-
-            // ── Vault file storage ─────────────────────────────────────────
+            // ── Vault file storage (shared across all Config APIs; storage is
+            // not scoped per-API because file keys are globally unique).
             defaultVaultFileStore = VaultFileStore(appContext)
             val encryptedFileProvider by lazy { EncryptedFileStorageProvider(appContext) }
             vaultStorageProviders = config.vaultFiles.mapValues { (_, fileConfig) ->
@@ -245,36 +175,78 @@ object PinVault {
                 }
             }
 
-            val resolvedApi = configApi ?: DefaultCertificateConfigApi(
-                configUrl = config.configUrl,
-                configEndpoint = config.configEndpoint,
-                healthEndpoint = config.healthEndpoint,
-                clientCertEndpoint = config.clientCertEndpoint,
-                enrollmentEndpoint = config.enrollmentEndpoint,
-                vaultReportEndpoint = config.vaultReportEndpoint,
-                signaturePublicKey = config.signaturePublicKey,
-                bootstrapPins = config.bootstrapPins,
-                sslManager = sslManager
-            )
-            this.configApi = resolvedApi
-
-            updater = SSLCertificateUpdater(
-                context = appContext,
-                configApi = resolvedApi,
-                configStore = configStore,
-                httpClientProvider = clientProvider,
-                sslManager = sslManager,
-                certStore = certStore,
-                clientKeyPassword = config.clientKeyPassword,
-                maxRetryCount = config.maxRetryCount
-            )
-
-            // Wire up pin recovery: on pin mismatch → auto update + retry + notify UI
-            clientProvider.recoveryUpdater = suspend {
-                val result = updater.updateNow()
-                notifyUpdateResult(result)
-                result is UpdateResult.Updated
+            // ── Per-Config-API clients. Static-pin mode has zero blocks and
+            // skips this entirely (handled in executeInit).
+            val clients = mutableMapOf<String, ConfigApiClient>()
+            for ((id, block) in config.configApis) {
+                // The legacy configApi override is only applied to the default
+                // block — custom backends with multi-API are expected to impl
+                // CertificateConfigApi themselves per-block.
+                val apiOverride = if (id == config.defaultConfigApi?.id) configApi else null
+                clients[id] = ConfigApiClient(
+                    block = block,
+                    context = appContext,
+                    customApi = apiOverride,
+                    recoveryListener = { result -> notifyUpdateResult(result) }
+                )
             }
+            configApiClients = clients
+
+            // ── Legacy primary mirrors (default / first block). These keep
+            // the pre-V2 public API (applyTo, getClient, enroll, etc.) working.
+            val defaultBlock = config.defaultConfigApi
+            if (defaultBlock != null) {
+                val defaultClient = clients[defaultBlock.id]!!
+                sslManager = defaultClient.sslManager
+                clientProvider = defaultClient.clientProvider
+                updater = defaultClient.updater
+                configStore = defaultClient.configStore
+                this.configApi = defaultClient.api
+            } else {
+                // Static pin-only mode: create minimal placeholders. executeInit
+                // will swap in the static config directly.
+                sslManager = DynamicSSLManager()
+                clientProvider = HttpClientProvider(sslManager)
+                configStore = CertificateConfigStore(appContext)
+                this.configApi = object : CertificateConfigApi {
+                    override suspend fun healthCheck() = true
+                    override suspend fun fetchConfig(currentVersion: Int) =
+                        config.staticPins ?: io.github.umutcansu.pinvault.model.CertificateConfig(pins = emptyList())
+                    override suspend fun downloadHostClientCert(hostname: String) = ByteArray(0)
+                    override suspend fun downloadVaultFile(endpoint: String) = ByteArray(0)
+                    override suspend fun enroll(
+                        token: String?, deviceId: String?, deviceAlias: String?, deviceUid: String?
+                    ) = io.github.umutcansu.pinvault.model.EnrollmentResult(ByteArray(0), null)
+                }
+                updater = SSLCertificateUpdater(
+                    context = appContext,
+                    configApi = this.configApi,
+                    configStore = configStore,
+                    httpClientProvider = clientProvider,
+                    sslManager = sslManager,
+                    certStore = ClientCertSecureStore(appContext),
+                    clientKeyPassword = "changeit",
+                    maxRetryCount = config.maxRetryCount
+                )
+            }
+
+            // ── V2 vault router wiring. deviceKeyProvider is created only
+            // when at least one vault file declares encryption=END_TO_END.
+            val needsE2E = config.vaultFiles.values.any {
+                it.encryption == io.github.umutcansu.pinvault.model.VaultFileEncryption.END_TO_END
+            }
+            deviceKeyProvider = if (needsE2E) {
+                DeviceKeyProvider.androidKeystore(appContext).also { it.ensureKeyPair() }
+            } else null
+
+            vaultRouter = VaultFileRouter(
+                clients = clients,
+                storageFor = { key -> getStorageFor(key) },
+                deviceKeyProvider = deviceKeyProvider,
+                deviceIdProvider = {
+                    resolveDeviceIdentity(pinManagerConfig)?.second ?: ""
+                }
+            )
 
             initialized = true
             return Unit
@@ -292,15 +264,39 @@ object PinVault {
             return InitResult.Ready(staticConfig.computedVersion())
         }
 
-        val result = updater.initializeAndUpdate()
-
-        if (result is InitResult.Failed) {
-            synchronized(this) {
-                initialized = false
+        // V2: initialize ALL Config APIs. The default block's result is
+        // returned to the caller (preserves pre-V2 semantics); other blocks'
+        // failures are logged but don't fail the init unless the default does.
+        val defaultId = pinManagerConfig?.defaultConfigApi?.id
+        val results = mutableMapOf<String, InitResult>()
+        for ((id, client) in configApiClients) {
+            try {
+                results[id] = client.initializeAndUpdate()
+            } catch (e: Exception) {
+                Timber.e(e, "ConfigApi[%s] init failed", id)
+                results[id] = InitResult.Failed(e.message ?: "init failed", e)
             }
         }
 
-        return result
+        // V2: register device public key on every Config API for E2E files.
+        val kp = deviceKeyProvider
+        if (kp != null) {
+            val deviceId = resolveDeviceIdentity(pinManagerConfig)?.second ?: "unknown"
+            try {
+                vaultRouter.registerDevicePublicKey(deviceId, kp.getPublicKeyPem())
+            } catch (e: Exception) {
+                Timber.w(e, "Device public key registration partially failed")
+            }
+        }
+
+        val defaultResult = results[defaultId] ?: results.values.firstOrNull()
+            ?: return InitResult.Failed("No Config APIs configured", null)
+
+        if (defaultResult is InitResult.Failed) {
+            synchronized(this) { initialized = false }
+        }
+
+        return defaultResult
     }
 
     /**
@@ -385,13 +381,14 @@ object PinVault {
      * Enrolls this device using a one-time token.
      * Downloads P12 client cert from server, stores it encrypted with the configured label.
      *
-     * @param label Optional label override. If null, uses [PinVaultConfig.clientCertLabel].
+     * @param label Optional label override. If null, uses the default Config API's clientCertLabel.
      * @return true if enrollment succeeded
      */
     suspend fun enroll(context: Context, token: String, label: String? = null): Boolean {
         val config = pinManagerConfig ?: return false
+        val defaultBlock = config.defaultConfigApi ?: return false
         val certStore = ClientCertSecureStore(context.applicationContext)
-        val certLabel = label ?: config.clientCertLabel
+        val certLabel = label ?: defaultBlock.clientCertLabel
 
         if (certStore.exists(certLabel)) {
             Timber.d("Client cert already exists [%s] — skipping enrollment", certLabel)
@@ -407,9 +404,9 @@ object PinVault {
                 deviceUid = identity?.second
             )
 
-            validateP12(result.p12Bytes, result.p12Hash, config.clientKeyPassword)
+            validateP12(result.p12Bytes, result.p12Hash, defaultBlock.clientKeyPassword)
             certStore.save(certLabel, result.p12Bytes)
-            sslManager.loadClientKeystore(result.p12Bytes, config.clientKeyPassword)
+            sslManager.loadClientKeystore(result.p12Bytes, defaultBlock.clientKeyPassword)
 
             // Rebuild client with mTLS
             clientProvider.currentConfig?.let { clientProvider.swap(it) }
@@ -431,8 +428,9 @@ object PinVault {
      */
     suspend fun autoEnroll(context: Context): Boolean {
         val config = pinManagerConfig ?: return false
+        val defaultBlock = config.defaultConfigApi ?: return false
         val certStore = ClientCertSecureStore(context.applicationContext)
-        val certLabel = config.clientCertLabel
+        val certLabel = defaultBlock.clientCertLabel
 
         if (certStore.exists(certLabel)) {
             Timber.d("Client cert already exists — skipping auto-enrollment")
@@ -455,10 +453,10 @@ object PinVault {
             )
 
             Timber.d("Auto-enrollment: received P12 (%d bytes)", result.p12Bytes.size)
-            validateP12(result.p12Bytes, result.p12Hash, config.clientKeyPassword)
+            validateP12(result.p12Bytes, result.p12Hash, defaultBlock.clientKeyPassword)
 
             certStore.save(certLabel, result.p12Bytes)
-            sslManager.loadClientKeystore(result.p12Bytes, config.clientKeyPassword)
+            sslManager.loadClientKeystore(result.p12Bytes, defaultBlock.clientKeyPassword)
             clientProvider.currentConfig?.let { clientProvider.swap(it) }
 
             Timber.d("Auto-enrollment successful — cert stored [%s], %d bytes", certLabel, result.p12Bytes.size)
@@ -486,6 +484,30 @@ object PinVault {
         val store = ClientCertSecureStore(context.applicationContext)
         store.clear(label ?: ClientCertSecureStore.DEFAULT_LABEL)
         Timber.i("Client certificate removed [%s]", label ?: "default")
+    }
+
+    /**
+     * Enrolled client sertifikasının CN (Common Name) alanını döndürür —
+     * QA kanıt akışında mobil ekran görüntüsünü sunucudaki kayıtla
+     * bire bir eşleştirmek için kullanılır.
+     */
+    fun enrolledClientCN(context: Context, label: String? = null): String? {
+        val store = ClientCertSecureStore(context.applicationContext)
+        val p12 = store.load(label ?: ClientCertSecureStore.DEFAULT_LABEL) ?: return null
+        val password = pinManagerConfig?.configApis?.values?.firstOrNull()?.clientKeyPassword ?: return null
+        return try {
+            val ks = java.security.KeyStore.getInstance("PKCS12")
+            ks.load(p12.inputStream(), password.toCharArray())
+            val alias = ks.aliases().toList().firstOrNull() ?: return null
+            val cert = ks.getCertificate(alias) as? java.security.cert.X509Certificate ?: return null
+            cert.subjectX500Principal.name
+                .substringAfter("CN=", "")
+                .substringBefore(",")
+                .ifBlank { null }
+        } catch (e: Exception) {
+            Timber.w(e, "enrolledClientCN: could not parse P12")
+            null
+        }
     }
 
     // ── Vault File API ─────────────────────────────────────────────────
@@ -565,38 +587,31 @@ object PinVault {
         return results
     }
 
-    private suspend fun fetchFileInternal(key: String, config: VaultFileConfig): VaultFileResult {
-        val result = try {
-            val storage = getStorageFor(key)
-            val currentVersion = storage.getVersion(key)
-            val bytes = configApi.downloadVaultFile(config.endpoint)
+    private suspend fun fetchFileInternal(key: String, fileConfig: VaultFileConfig): VaultFileResult {
+        // V2: delegate the actual fetch + decrypt to VaultFileRouter, then
+        // send the distribution report ourselves (has to include deviceAlias
+        // / manufacturer / model which live on PinVaultConfig).
+        val result = vaultRouter.fetchFile(fileConfig)
 
-            // Compare with stored content to determine if updated
-            val storedBytes = storage.load(key)
-            if (storedBytes != null && bytes.contentEquals(storedBytes)) {
-                VaultFileResult.AlreadyCurrent(key, currentVersion)
-            } else {
-                val newVersion = currentVersion + 1
-                storage.save(key, bytes, newVersion)
-                Timber.d("Vault file updated: %s (v%d → v%d, %d bytes)", key, currentVersion, newVersion, bytes.size)
-                VaultFileResult.Updated(key, newVersion, bytes)
-            }
-        } catch (e: Exception) {
-            Timber.e(e, "Vault file fetch failed: %s", key)
-            VaultFileResult.Failed(key, e.message ?: "Unknown error", e)
-        }
-
-        // Report with timeout — must complete before returning to survive process termination
         try {
-            kotlinx.coroutines.withTimeout(5000) { reportFileDownload(key, result) }
+            kotlinx.coroutines.withTimeout(5000) { reportFileDownload(key, fileConfig, result) }
         } catch (_: Exception) {
             Timber.w("Vault file report timed out for: %s", key)
         }
         return result
     }
 
-    private suspend fun reportFileDownload(key: String, result: VaultFileResult) {
+    private suspend fun reportFileDownload(
+        key: String,
+        fileConfig: VaultFileConfig,
+        result: VaultFileResult
+    ) {
         val identity = resolveDeviceIdentity(pinManagerConfig)
+        val cfg = pinManagerConfig
+        val enrollmentLabel = cfg?.configApis?.get(fileConfig.configApiId)?.clientCertLabel
+            ?: cfg?.defaultConfigApi?.clientCertLabel
+            ?: "default"
+
         val report = io.github.umutcansu.pinvault.model.VaultDownloadReport(
             key = key,
             version = when (result) {
@@ -611,14 +626,24 @@ object PinVault {
             },
             deviceManufacturer = android.os.Build.MANUFACTURER,
             deviceModel = android.os.Build.MODEL,
-            enrollmentLabel = pinManagerConfig?.clientCertLabel ?: "default",
+            enrollmentLabel = enrollmentLabel,
             deviceId = identity?.second ?: "unknown",
-            deviceAlias = identity?.first ?: android.os.Build.MODEL
+            deviceAlias = identity?.first ?: android.os.Build.MODEL,
+            // Başarısız fetch'te UI/debug için sebep gönder. Başarılıda null.
+            failureReason = (result as? VaultFileResult.Failed)?.reason,
+            // Hangi yetkilendirmeyle fetch denendi — audit için web UI + mobile
+            // log'larda görünür. Policy enum'undan türetilir, runtime override yok.
+            authMethod = when (fileConfig.accessPolicy) {
+                io.github.umutcansu.pinvault.model.VaultFileAccessPolicy.PUBLIC -> "public"
+                io.github.umutcansu.pinvault.model.VaultFileAccessPolicy.API_KEY -> "api_key"
+                io.github.umutcansu.pinvault.model.VaultFileAccessPolicy.TOKEN -> "token"
+                io.github.umutcansu.pinvault.model.VaultFileAccessPolicy.TOKEN_MTLS -> "token_mtls"
+            }
         )
 
         kotlinx.coroutines.withContext(Dispatchers.IO) {
             try {
-                configApi.reportVaultDownload(report)
+                vaultRouter.report(fileConfig, report)
             } catch (e: Exception) {
                 Timber.e(e, "Failed to report vault file download: %s", key)
             }
@@ -635,6 +660,17 @@ object PinVault {
     fun currentVersion(): Int {
         checkInitialized()
         return clientProvider.getVersion()
+    }
+
+    /**
+     * Per-host pin versions from the current config, keyed by hostname.
+     * Returns an empty map if no config is loaded.
+     */
+    fun hostPinVersions(): Map<String, Int> {
+        checkInitialized()
+        return clientProvider.currentConfig?.pins
+            ?.associate { it.hostname to it.version }
+            ?: emptyMap()
     }
 
     /**

@@ -1,9 +1,13 @@
 package com.example.pinvault.server
 
 import com.example.pinvault.server.route.vaultRoutes
+import com.example.pinvault.server.service.VaultAccessTokenService
+import com.example.pinvault.server.service.VaultEncryptionService
 import com.example.pinvault.server.store.DatabaseManager
+import com.example.pinvault.server.store.DevicePublicKeyStore
 import com.example.pinvault.server.store.VaultDistributionStore
 import com.example.pinvault.server.store.VaultFileStore
+import com.example.pinvault.server.store.VaultFileTokenStore
 import io.ktor.client.request.*
 import io.ktor.client.statement.*
 import io.ktor.http.*
@@ -22,12 +26,22 @@ import kotlin.test.*
  * "Android" = GET file download + POST report (mobile client)
  *
  * These tests verify that actions on one side are visible on the other.
+ *
+ * V2 note: all fixtures run under a single configApiId = "cross-test". Web
+ * uploads explicitly set policy=public via `?policy=public` so Android
+ * fetches don't require tokens.
  */
 class VaultFileCrossTest {
+
+    private val testApi = "cross-test"
 
     private lateinit var db: DatabaseManager
     private lateinit var vaultFileStore: VaultFileStore
     private lateinit var distStore: VaultDistributionStore
+    private lateinit var tokenStore: VaultFileTokenStore
+    private lateinit var publicKeyStore: DevicePublicKeyStore
+    private lateinit var tokenService: VaultAccessTokenService
+    private lateinit var encryptionService: VaultEncryptionService
     private lateinit var dbFile: File
 
     @BeforeTest
@@ -37,6 +51,10 @@ class VaultFileCrossTest {
         db = DatabaseManager(dbFile.absolutePath)
         vaultFileStore = VaultFileStore(db)
         distStore = VaultDistributionStore(db)
+        tokenStore = VaultFileTokenStore(db)
+        publicKeyStore = DevicePublicKeyStore(db)
+        tokenService = VaultAccessTokenService(tokenStore)
+        encryptionService = VaultEncryptionService()
     }
 
     @AfterTest
@@ -47,15 +65,16 @@ class VaultFileCrossTest {
     private fun ApplicationTestBuilder.configureApp() {
         install(ContentNegotiation) { json(Json { ignoreUnknownKeys = true }) }
         routing {
-            vaultRoutes(vaultFileStore, distStore)
+            vaultRoutes(testApi, vaultFileStore, distStore, tokenStore,
+                publicKeyStore, tokenService, encryptionService)
         }
     }
 
     // ── Helpers ──────────────────────────────────────────
 
-    /** Web admin uploads a file */
+    /** Web admin uploads a file with access_policy=public (default for these tests). */
     private suspend fun io.ktor.client.HttpClient.webUpload(key: String, content: ByteArray) {
-        put("/api/v1/vault/$key") {
+        put("/api/v1/vault/$key?policy=public") {
             setBody(content)
             contentType(ContentType.Application.OctetStream)
         }
@@ -106,7 +125,7 @@ class VaultFileCrossTest {
 
         // Web uploads file
         client.webUpload("ml-model", "model-binary-data".toByteArray())
-        val entry = vaultFileStore.get("ml-model")!!
+        val entry = vaultFileStore.get(testApi, "ml-model")!!
 
         // Android fetches and reports
         client.androidFetch("ml-model")
@@ -133,7 +152,7 @@ class VaultFileCrossTest {
 
         // Web uploads v1
         client.webUpload("config", "v1-data".toByteArray())
-        val v1 = vaultFileStore.get("config")!!.version
+        val v1 = vaultFileStore.get(testApi, "config")!!.version
 
         // Android fetches v1
         val r1 = client.androidFetch("config")
@@ -142,7 +161,7 @@ class VaultFileCrossTest {
 
         // Web updates to v2
         client.webUpload("config", "v2-data".toByteArray())
-        val v2 = vaultFileStore.get("config")!!.version
+        val v2 = vaultFileStore.get(testApi, "config")!!.version
         assertTrue(v2 > v1)
 
         // Android re-fetches with old version → gets new content
@@ -163,7 +182,7 @@ class VaultFileCrossTest {
         configureApp()
 
         client.webUpload("flags", "data".toByteArray())
-        val version = vaultFileStore.get("flags")!!.version
+        val version = vaultFileStore.get(testApi, "flags")!!.version
 
         // Android fetches with current version → 304
         val response = client.androidFetch("flags", currentVersion = version)
@@ -194,7 +213,7 @@ class VaultFileCrossTest {
         configureApp()
 
         client.webUpload("shared-config", "shared-data".toByteArray())
-        val version = vaultFileStore.get("shared-config")!!.version
+        val version = vaultFileStore.get(testApi, "shared-config")!!.version
 
         // Device 1 reports
         client.androidReport("shared-config", version, deviceId = "pixel_8", manufacturer = "Google", model = "Pixel 8")
@@ -243,7 +262,7 @@ class VaultFileCrossTest {
         val response = client.androidFetch("file-b")
         assertEquals("bbb", response.bodyAsText())
 
-        val vB = vaultFileStore.get("file-b")!!.version
+        val vB = vaultFileStore.get(testApi, "file-b")!!.version
         client.androidReport("file-b", vB)
 
         // Stats: 1 distribution, 1 device, 1 key (not 3)
@@ -266,8 +285,8 @@ class VaultFileCrossTest {
         client.webUpload("flags", "f".toByteArray())
         client.webUpload("model", "m".toByteArray())
 
-        val vFlags = vaultFileStore.get("flags")!!.version
-        val vModel = vaultFileStore.get("model")!!.version
+        val vFlags = vaultFileStore.get(testApi, "flags")!!.version
+        val vModel = vaultFileStore.get(testApi, "model")!!.version
 
         // Same device downloads both
         client.androidReport("flags", vFlags, deviceId = "my-phone")
@@ -292,12 +311,12 @@ class VaultFileCrossTest {
         configureApp()
 
         client.webUpload("secure-config", "secret".toByteArray())
-        val version = vaultFileStore.get("secure-config")!!.version
+        val version = vaultFileStore.get(testApi, "secure-config")!!.version
 
         // Device with custom enrollment label
         client.androidReport("secure-config", version, label = "prod-api-cert")
 
-        val dists = distStore.getByKey("secure-config")
+        val dists = distStore.getByKey(testApi, "secure-config")
         assertEquals(1, dists.size)
         assertEquals("prod-api-cert", dists[0].enrollmentLabel)
     }
@@ -308,7 +327,7 @@ class VaultFileCrossTest {
 
         // 1. Web uploads initial version
         client.webUpload("lifecycle", """{"v":1}""".toByteArray())
-        val v1 = vaultFileStore.get("lifecycle")!!.version
+        val v1 = vaultFileStore.get(testApi, "lifecycle")!!.version
 
         // 2. Android fetches
         val r1 = client.androidFetch("lifecycle")
@@ -317,7 +336,7 @@ class VaultFileCrossTest {
 
         // 3. Web updates
         client.webUpload("lifecycle", """{"v":2}""".toByteArray())
-        val v2 = vaultFileStore.get("lifecycle")!!.version
+        val v2 = vaultFileStore.get(testApi, "lifecycle")!!.version
 
         // 4. Same device re-fetches
         val r2 = client.androidFetch("lifecycle", currentVersion = v1)
@@ -336,13 +355,13 @@ class VaultFileCrossTest {
         assertEquals(0, stats["failed"]?.jsonPrimitive?.int)
 
         // 7. Distribution history for this key has 3 entries
-        val dists = distStore.getByKey("lifecycle")
+        val dists = distStore.getByKey(testApi, "lifecycle")
         assertEquals(3, dists.size)
 
         // 8. phone-1 has 2 entries (v1 + v2), phone-2 has 1
-        val phone1 = distStore.getByDevice("phone-1")
+        val phone1 = distStore.getByDevice(testApi, "phone-1")
         assertEquals(2, phone1.size)
-        val phone2 = distStore.getByDevice("phone-2")
+        val phone2 = distStore.getByDevice(testApi, "phone-2")
         assertEquals(1, phone2.size)
     }
 }

@@ -15,8 +15,12 @@ import java.io.FileOutputStream
 object AllureHelper {
 
     private val qaDir: File by lazy {
-        // /data/local/tmp survives app uninstall and is accessible via adb
-        File("/data/local/tmp/pinvault-qa-evidence").also { it.mkdirs() }
+        // Test instrumentation app UID olarak çalışıyor — /data/local/tmp'ye yazamaz.
+        // externalFilesDir (`/sdcard/Android/data/<pkg>/files/pinvault-qa-evidence`)
+        // app UID'ye açık ve `adb pull` ile çekilebilir.
+        val ctx = InstrumentationRegistry.getInstrumentation().targetContext
+        val ext = ctx.getExternalFilesDir(null) ?: ctx.filesDir
+        File(ext, "pinvault-qa-evidence").also { it.mkdirs() }
     }
 
     private var stepCounter = 0
@@ -27,10 +31,31 @@ object AllureHelper {
             val automation = InstrumentationRegistry.getInstrumentation().uiAutomation
             val bitmap = automation.takeScreenshot()
             if (bitmap != null) {
-                val file = File(qaDir, "${String.format("%03d", stepCounter)}_${sanitize(name)}.png")
+                val fileName = "${String.format("%03d", stepCounter)}_${sanitize(name)}.png"
+                val file = File(qaDir, fileName)
                 FileOutputStream(file).use { bitmap.compress(Bitmap.CompressFormat.PNG, 80, it) }
                 bitmap.recycle()
+                // Orchestrator app'i uninstall ettiğinde externalFilesDir siliniyor.
+                // UiAutomation shell ile /data/local/tmp'ye kopyala — shell UID
+                // olarak erişim var, adb pull ile sonradan alınır.
+                copyToShellTmp(file, fileName)
             }
+        } catch (_: Exception) {}
+    }
+
+    /**
+     * UiAutomation.executeShellCommand ile `cp` çalıştırıyoruz — shell uid'ye
+     * düşer ve /data/local/tmp altındaki world-readable dizini kullanır.
+     */
+    private fun copyToShellTmp(src: File, fileName: String) {
+        try {
+            val automation = InstrumentationRegistry.getInstrumentation().uiAutomation
+            // Ensure target dir exists + world-readable
+            automation.executeShellCommand("mkdir -p /data/local/tmp/pinvault-qa-evidence").close()
+            automation.executeShellCommand("chmod 777 /data/local/tmp/pinvault-qa-evidence").close()
+            val cmd = "cp ${src.absolutePath} /data/local/tmp/pinvault-qa-evidence/${fileName}"
+            automation.executeShellCommand(cmd).close()
+            automation.executeShellCommand("chmod 644 /data/local/tmp/pinvault-qa-evidence/${fileName}").close()
         } catch (_: Exception) {}
     }
 
