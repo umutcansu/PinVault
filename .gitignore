@@ -31,6 +31,10 @@ sample-mtls-host/certs/
 
 # Claude
 .claude/
+CLAUDE.md
+
+# Internal planning / design notes
+plans/
 
 # Generated artifacts
 allure-report/
