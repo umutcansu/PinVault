@@ -308,6 +308,54 @@ class BackendTest {
         assertNotEquals(v1Pins, v2Pins)
     }
 
+    // Regression: mock host cert is physically shared across scopes. When one
+    // scope triggers regenerate-cert, ALL scopes serving the same hostname must
+    // receive the new pins — otherwise the un-updated scope's clients will hit
+    // pin mismatch on the next request. Bug seen in mtlsConfig_to_tlsHost_returns_200.
+    @Test
+    fun `C24 — regenerate cert propagates new pins to every scope hosting the same hostname`() = testApplication {
+        configureApp()
+        // Create host in default scope (default-tls).
+        client.post("/api/v1/hosts/generate-cert") {
+            contentType(ContentType.Application.Json)
+            setBody("""{"hostname":"shared.test"}""")
+        }
+        val defaultV1 = pinConfigStore.load(configApiId).pins.find { it.hostname == "shared.test" }!!.sha256.toSet()
+
+        // Seed the same hostname into a second scope as if another Config API
+        // had registered it. Also seed a stale pin in that scope's pin_config
+        // so we can prove it gets overwritten on rotation.
+        val secondScope = "mtls-8092-test"
+        pinConfigStore.ensureConfigExists(secondScope)
+        hostStore.save(HostRecord(
+            hostname = "shared.test",
+            configApiId = secondScope,
+            keystorePath = null,
+            certValidUntil = "2099-01-01",
+            mockServerPort = null,
+            createdAt = "2026-01-01"
+        ))
+        val stalePins = listOf("AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=", "BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB=")
+        pinConfigStore.save(secondScope, pinConfigStore.load(secondScope).let {
+            it.copy(pins = it.pins + HostPin("shared.test", stalePins, version = 1))
+        })
+
+        // Trigger rotation via the default scope.
+        val regenResp = client.post("/api/v1/hosts/shared.test/regenerate-cert") {
+            contentType(ContentType.Application.Json)
+        }
+        assertEquals(HttpStatusCode.OK, regenResp.status)
+
+        // Both scopes must now hold the SAME freshly-generated pins, and the
+        // second scope's stale pins must be gone.
+        val defaultV2 = pinConfigStore.load(configApiId).pins.find { it.hostname == "shared.test" }!!.sha256.toSet()
+        val secondV2 = pinConfigStore.load(secondScope).pins.find { it.hostname == "shared.test" }!!.sha256.toSet()
+
+        assertEquals(defaultV2, secondV2, "Both scopes must carry identical pins after rotation")
+        assertNotEquals(defaultV1, defaultV2, "Pins must have changed on rotation")
+        assertTrue(stalePins.none { it in secondV2 }, "Second scope must NOT still hold the stale pins")
+    }
+
     // ── Force update ────────────────────────────────────
 
     @Test

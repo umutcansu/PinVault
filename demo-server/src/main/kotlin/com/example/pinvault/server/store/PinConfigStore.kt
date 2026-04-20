@@ -374,6 +374,20 @@ class HostStore(private val db: DatabaseManager) {
         }
     }
 
+    // Mock host cert'i (fiziksel) global — aynı hostname birden fazla config
+    // API scope'unda kayıtlı olabilir. Cert rotation sonrasi TÜM scope'lardaki
+    // pin_hashes güncellenmeli; aksi halde güncellenmeyen scope'un client'ları
+    // pin mismatch alır. Bu metod o scope listesini döner.
+    fun listConfigApisFor(hostname: String): List<String> {
+        db.connection().use { conn ->
+            conn.prepareStatement("SELECT DISTINCT config_api_id FROM hosts WHERE hostname = ?").use { stmt ->
+                stmt.setString(1, hostname)
+                val rs = stmt.executeQuery()
+                return buildList { while (rs.next()) add(rs.getString(1)) }
+            }
+        }
+    }
+
     fun getAll(): List<HostRecord> {
         db.connection().use { conn ->
             conn.createStatement().use { stmt ->

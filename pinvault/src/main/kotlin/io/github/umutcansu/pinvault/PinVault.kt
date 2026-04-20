@@ -143,6 +143,33 @@ object PinVault {
         }
     }
 
+    /**
+     * Initializes with a custom [CertificateConfigApi] implementation (suspend).
+     * The override is applied to the default (first-registered) Config API block.
+     * For multi-API setups, implement one [CertificateConfigApi] per block and
+     * branch inside the impl based on the caller's block id.
+     */
+    suspend fun init(context: Context, config: PinVaultConfig, configApi: CertificateConfigApi): InitResult {
+        pinManagerConfig = config
+        setup(context, config, configApi)
+            ?: return InitResult.Ready(clientProvider.getVersion())
+        return executeInit()
+    }
+
+    /** Callback variant of [init] with a custom [CertificateConfigApi]. */
+    fun init(context: Context, config: PinVaultConfig, configApi: CertificateConfigApi, onResult: (InitResult) -> Unit) {
+        pinManagerConfig = config
+        val alreadyReady = setup(context, config, configApi)
+        if (alreadyReady == null) {
+            onResult(InitResult.Ready(clientProvider.getVersion()))
+            return
+        }
+        CoroutineScope(Dispatchers.IO).launch {
+            val result = executeInit()
+            kotlinx.coroutines.withContext(Dispatchers.Main) { onResult(result) }
+        }
+    }
+
     // ── Init (legacy — backward compatible) ───────────────────────────────
 
     // ── Internal setup ────────────────────────────────────────────────────

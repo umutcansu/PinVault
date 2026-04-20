@@ -27,21 +27,26 @@ Dynamic SSL certificate pinning library for Android. Manage pins remotely, suppo
 ### 1. Add dependency
 
 ```gradle
-implementation("io.github.umutcansu:pinvault:1.0.0")
+implementation("io.github.umutcansu:pinvault:2.0.0")
 ```
 
-### 2. Initialize
+### 2. Initialize (v2 DSL)
 
 ```kotlin
-val config = PinVaultConfig.Builder("https://api.example.com/")
-    .bootstrapPins(listOf(
-        HostPin("api.example.com", listOf("primaryPin...", "backupPin..."))
-    ))
+val config = PinVaultConfig.Builder()
+    .configApi("api", "https://api.example.com/") {
+        bootstrapPins(listOf(
+            HostPin("api.example.com", listOf("primaryPin...", "backupPin..."))
+        ))
+    }
     .build()
 
+// Suspend
 val result = PinVault.init(context, config)
-if (result is InitResult.Ready) {
-    val client = PinVault.getClient() // pinned OkHttpClient
+
+// Or callback
+PinVault.init(context, config) { result ->
+    if (result is InitResult.Ready) { /* ready */ }
 }
 ```
 
@@ -55,16 +60,53 @@ val response = PinVault.getClient()
 
 ## Usage Modes
 
-### Remote pins (standard)
+### Single Config API
 
 ```kotlin
-PinVaultConfig.Builder("https://api.example.com/")
-    .bootstrapPins(listOf(HostPin("api.example.com", listOf("pin1", "pin2"))))
-    .signaturePublicKey("MFkwEwYH...") // optional: ECDSA config verification
+PinVaultConfig.Builder()
+    .configApi("api", "https://api.example.com/") {
+        bootstrapPins(listOf(HostPin("api.example.com", listOf("pin1...", "pin2..."))))
+        signaturePublicKey("MFkwEwYH...")              // optional: ECDSA verification
+        wantPinsFor("cdn.example.com", "api.example.com") // optional: scope request
+    }
     .build()
 ```
 
-### Static pins (offline, no server needed)
+### Multi-Config-API
+
+One app can talk to multiple Config APIs — each with its own TLS pipeline,
+bootstrap pins, and (optional) mTLS keystore. Each vault file then binds to a
+specific API via `configApi("<id>")`.
+
+```kotlin
+val config = PinVaultConfig.Builder()
+    .configApi("prod-tls", "https://host:8091/") {
+        bootstrapPins(prodTlsPins)
+        wantPinsFor("cdn.example.com", "api.example.com")
+    }
+    .configApi("secure-mtls", "https://host:8092/") {
+        bootstrapPins(secureMtlsPins)
+        clientKeystore(p12Bytes, devicePassword)     // mTLS client cert
+        wantPinsFor("internal.acme.com")
+    }
+    .vaultFile("feature-flags") {
+        configApi("prod-tls")                         // bind to TLS API
+        endpoint("api/v1/vault/feature-flags")
+    }
+    .vaultFile("ml-model") {
+        configApi("secure-mtls")                      // bind to mTLS API
+        storage(StorageStrategy.ENCRYPTED_FILE)
+        accessPolicy(VaultFileAccessPolicy.TOKEN)
+        accessToken { tokenStore["ml-model"] ?: "" }
+        encryption(VaultFileEncryption.END_TO_END)
+    }
+    .build()
+```
+
+At runtime the library routes each vault fetch to the correct block's
+pin-verified OkHttpClient. No cross-contamination between scopes.
+
+### Static pins (offline, no server)
 
 ```kotlin
 val config = PinVaultConfig.static(
@@ -76,16 +118,25 @@ PinVault.init(context, config)
 ### Custom endpoints
 
 ```kotlin
-PinVaultConfig.Builder("https://myserver.com/")
-    .configEndpoint("ssl/pins")
-    .healthEndpoint("ping")
-    .enrollmentEndpoint("auth/register")
-    .clientCertEndpoint("certs/client")
-    .vaultReportEndpoint("analytics/vault")
+PinVaultConfig.Builder()
+    .configApi("api", "https://myserver.com/") {
+        bootstrapPins(listOf(...))
+        configEndpoint("ssl/pins")          // default: api/v1/certificate-config
+        healthEndpoint("ping")              // default: health
+        enrollmentEndpoint("auth/register") // default: api/v1/client-certs/enroll
+        clientCertEndpoint("certs/client")
+        vaultReportEndpoint("analytics/vault")
+    }
     .build()
 ```
 
-### Custom backend (any language)
+### Custom `CertificateConfigApi` (bring your own backend)
+
+If your backend doesn't match the default HTTP contract, implement
+`CertificateConfigApi` and pass it to `PinVault.init`. The override is applied
+to the **default (first-registered)** Config API block; for multi-API setups,
+implement one `CertificateConfigApi` per block and switch inside your impl
+based on the caller's block id.
 
 ```kotlin
 class MyApi : CertificateConfigApi {
@@ -93,14 +144,26 @@ class MyApi : CertificateConfigApi {
         return myBackend.getPins(currentVersion)
     }
     override suspend fun healthCheck() = true
-    override suspend fun enroll(token: String?, deviceId: String?,
-        deviceAlias: String?, deviceUid: String?) = myBackend.enroll(token)
+    override suspend fun enroll(
+        token: String?, deviceId: String?,
+        deviceAlias: String?, deviceUid: String?
+    ) = myBackend.enroll(token)
     override suspend fun downloadHostClientCert(hostname: String) = myBackend.getCert(hostname)
     override suspend fun downloadVaultFile(endpoint: String) = myBackend.getFile(endpoint)
 }
 
-PinVault.init(context, config, MyApi())
+val config = PinVaultConfig.Builder()
+    .configApi("api", "https://myserver.com/") {
+        bootstrapPins(listOf(...))
+    }
+    .build()
+
+PinVault.init(context, config, MyApi()) { result -> /* ... */ }
 ```
+
+The default implementation (`DefaultCertificateConfigApi`) speaks the HTTP
+contract described in [SERVER_IMPLEMENTATION_GUIDE.md](SERVER_IMPLEMENTATION_GUIDE.md)
+and is sufficient for the reference server.
 
 ## mTLS Enrollment
 
@@ -115,17 +178,21 @@ PinVault.autoEnroll(context)
 ## VaultFile (Remote File Distribution)
 
 ```kotlin
-val config = PinVaultConfig.Builder("https://api.example.com/")
-    .bootstrapPins(listOf(...))
+val config = PinVaultConfig.Builder()
+    .configApi("api", "https://api.example.com/") {
+        bootstrapPins(listOf(...))
+    }
     .vaultFile("ml-model") {
+        configApi("api")                             // which Config API to use
         endpoint("api/v1/vault/ml-model")
         storage(StorageStrategy.ENCRYPTED_FILE)
     }
     .vaultFile("feature-flags") {
+        configApi("api")
         endpoint("api/v1/vault/feature-flags")
-        updateWithPins(true) // auto-sync on pin update
+        updateWithPins(true)                         // auto-sync on pin update
     }
-    .deviceAlias("Warehouse Tablet #3") // human-readable device name
+    .deviceAlias("Warehouse Tablet #3")
     .build()
 
 // Fetch
@@ -136,11 +203,37 @@ val bytes = PinVault.loadFile("ml-model")
 val json = PinVault.loadFileAsString("feature-flags")
 ```
 
+### Per-file access policies (v2)
+
+```kotlin
+.vaultFile("private-doc") {
+    configApi("api")
+    endpoint("api/v1/vault/private-doc")
+    accessPolicy(VaultFileAccessPolicy.TOKEN)         // public | api_key | token | token_mtls
+    accessToken { secureTokenStore["private-doc"] }   // lazy token provider
+}
+```
+
+### End-to-end encryption (v2)
+
+```kotlin
+.vaultFile("ml-model") {
+    configApi("secure-mtls")
+    endpoint("api/v1/vault/ml-model")
+    encryption(VaultFileEncryption.END_TO_END)        // RSA-OAEP + AES-256-GCM
+}
+```
+
+Device public key is registered with the server automatically on first fetch;
+the server encrypts each response with that key. Private key never leaves the
+device's Android Keystore.
+
 ## Device Tracking
 
 ```kotlin
-PinVaultConfig.Builder("https://api.example.com/")
-    .deviceAlias("Warehouse Tablet #3") // shown in server dashboard
+PinVaultConfig.Builder()
+    .configApi("api", "https://api.example.com/") { bootstrapPins(listOf(...)) }
+    .deviceAlias("Warehouse Tablet #3")              // shown in server dashboard
     .build()
 ```
 
@@ -156,7 +249,7 @@ API_KEY=your-secret docker compose up
 ```
 
 Dashboard: `http://localhost:8080`
-API docs: `http://localhost:8080/docs`
+API docs (Swagger): `http://localhost:8080/docs`
 
 ### Build your own server
 
@@ -200,18 +293,18 @@ PinVault is built around OWASP MASVS guidelines (NETWORK, CRYPTO, STORAGE).
 Before shipping to production, verify the following:
 
 ### 1. Never ship the default keystore password
-The `"changeit"` default in `PinVaultConfig.clientKeyPassword` and the
+The `"changeit"` default in `ConfigApiBlock.clientKeyPassword` and the
 `clientKeystore(bytes, password)` builder is a development placeholder. In
 production, generate a unique high-entropy password per device and negotiate
 it with your backend during enrollment — never hard-code it in the APK.
 
 ```kotlin
 // ❌ Don't
-PinVaultConfig.Builder(url).clientKeystore(p12Bytes).build()
+.configApi("api", url) { clientKeystore(p12Bytes) }
 
 // ✅ Do
 val devicePassword = backend.fetchKeystorePassword(deviceId) // ≥ 16 random chars
-PinVaultConfig.Builder(url).clientKeystore(p12Bytes, devicePassword).build()
+.configApi("api", url) { clientKeystore(p12Bytes, devicePassword) }
 ```
 
 ### 2. Strip Timber logs in release builds
@@ -234,11 +327,11 @@ Without bootstrap pins, the first config fetch is unpinned (vulnerable to MITM
 on first install). Hardcode at least 2 SHA-256 SPKI hashes in the APK:
 
 ```kotlin
-PinVaultConfig.Builder("https://api.example.com/")
-    .bootstrapPins(listOf(
+.configApi("api", "https://api.example.com/") {
+    bootstrapPins(listOf(
         HostPin("api.example.com", listOf("primary...", "backup..."))
     ))
-    .build()
+}
 ```
 
 ### 4. Enable ECDSA signature verification on configs
@@ -247,9 +340,10 @@ wants. Sign your configs server-side with ECDSA P-256 and ship the public key
 in the APK:
 
 ```kotlin
-PinVaultConfig.Builder(url)
-    .signaturePublicKey("MFkwEwYHKoZI...") // X.509 public key, Base64
-    .build()
+.configApi("api", url) {
+    bootstrapPins(...)
+    signaturePublicKey("MFkwEwYHKoZI...") // X.509 public key, Base64
+}
 ```
 
 See `SERVER_IMPLEMENTATION_GUIDE.md` for the signing protocol.

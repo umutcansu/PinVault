@@ -159,30 +159,40 @@ fun Route.hostRoutes(
 
             post("regenerate-cert") {
                 val hostname = call.parameters["hostname"] ?: ""
-                val hostRecord = hostStore.get(hostname, call.scopedApiId())
+                val primaryScope = call.scopedApiId()
+                hostStore.get(hostname, primaryScope)
                     ?: return@post call.respondText("{\"error\":\"Host bulunamadi\"}", ContentType.Application.Json, HttpStatusCode.NotFound)
 
                 val id = hostname.replace(".", "_")
                 val result = certService.generateCertificate(id, hostname)
 
-                hostStore.save(hostRecord.copy(keystorePath = result.keystorePath, certValidUntil = result.validUntil))
+                // Mock host cert'i global — bu hostu barındıran TÜM Config API
+                // scope'larının pin_hashes'ı güncellenmeli. Aksi halde güncellenmeyen
+                // scope'un client'ları pin mismatch alır.
+                val affectedScopes = hostStore.listConfigApisFor(hostname)
+                var primaryNewVersion = 0
+                for (scope in affectedScopes) {
+                    val record = hostStore.get(hostname, scope) ?: continue
+                    hostStore.save(record.copy(keystorePath = result.keystorePath, certValidUntil = result.validUntil))
 
-                val config = pinConfigStore.load(call.scopedApiId())
-                val oldPin = config.pins.find { it.hostname == hostname }
-                val newVersion = (oldPin?.version ?: 0) + 1
-                val updated = config.copy(
-                    pins = config.pins.map { if (it.hostname == hostname) HostPin(hostname, result.sha256Pins, newVersion) else it }
-                )
-                pinConfigStore.save(call.scopedApiId(), updated)
+                    val config = pinConfigStore.load(scope)
+                    val oldPin = config.pins.find { it.hostname == hostname }
+                    val newVersion = (oldPin?.version ?: 0) + 1
+                    val updated = config.copy(
+                        pins = config.pins.map { if (it.hostname == hostname) HostPin(hostname, result.sha256Pins, newVersion) else it }
+                    )
+                    pinConfigStore.save(scope, updated)
+                    historyStore.add(scope, PinConfigHistoryEntry(hostname, newVersion, Instant.now().toString(), "cert_regenerated", result.sha256Pins.firstOrNull()?.take(12) ?: ""))
 
-                historyStore.add(call.scopedApiId(), PinConfigHistoryEntry(hostname, newVersion, Instant.now().toString(), "cert_regenerated", result.sha256Pins.firstOrNull()?.take(12) ?: ""))
+                    if (scope == primaryScope) primaryNewVersion = newVersion
+                }
 
                 if (mockServerManager.isRunning(hostname)) {
                     val port = mockServerManager.getPort(hostname) ?: 8443
                     mockServerManager.start(hostname, port, result.keystorePath)
                 }
 
-                call.respond(HostActionResponse(hostname, result.sha256Pins, result.validUntil, newVersion))
+                call.respond(HostActionResponse(hostname, result.sha256Pins, result.validUntil, primaryNewVersion))
             }
 
             post("upload-cert") {
@@ -216,24 +226,33 @@ fun Route.hostRoutes(
                     return@post call.respondText("{\"error\":\"Import hatasi: ${e.message}\"}", ContentType.Application.Json, HttpStatusCode.BadRequest)
                 }
 
-                hostStore.save(hostRecord.copy(keystorePath = result.keystorePath, certValidUntil = result.validUntil))
+                // Mock host cert global — tüm scope'ların pin_hashes'ını güncelle
+                // (aksi halde güncellenmeyen scope'un client'ları pin mismatch alir).
+                val primaryScope = call.scopedApiId()
+                val affectedScopes = hostStore.listConfigApisFor(hostname)
+                var primaryNewVersion = 0
+                for (scope in affectedScopes) {
+                    val record = hostStore.get(hostname, scope) ?: continue
+                    hostStore.save(record.copy(keystorePath = result.keystorePath, certValidUntil = result.validUntil))
 
-                val config = pinConfigStore.load(call.scopedApiId())
-                val oldPin = config.pins.find { it.hostname == hostname }
-                val newVersion = (oldPin?.version ?: 0) + 1
-                val updated = config.copy(
-                    pins = config.pins.map { if (it.hostname == hostname) HostPin(hostname, result.sha256Pins, newVersion) else it }
-                )
-                pinConfigStore.save(call.scopedApiId(), updated)
+                    val config = pinConfigStore.load(scope)
+                    val oldPin = config.pins.find { it.hostname == hostname }
+                    val newVersion = (oldPin?.version ?: 0) + 1
+                    val updated = config.copy(
+                        pins = config.pins.map { if (it.hostname == hostname) HostPin(hostname, result.sha256Pins, newVersion) else it }
+                    )
+                    pinConfigStore.save(scope, updated)
+                    historyStore.add(scope, PinConfigHistoryEntry(hostname, newVersion, Instant.now().toString(), "cert_uploaded", result.sha256Pins.firstOrNull()?.take(12) ?: ""))
 
-                historyStore.add(call.scopedApiId(), PinConfigHistoryEntry(hostname, newVersion, Instant.now().toString(), "cert_uploaded", result.sha256Pins.firstOrNull()?.take(12) ?: ""))
+                    if (scope == primaryScope) primaryNewVersion = newVersion
+                }
 
                 if (mockServerManager.isRunning(hostname)) {
                     val port = mockServerManager.getPort(hostname) ?: 8443
                     mockServerManager.start(hostname, port, result.keystorePath)
                 }
 
-                call.respond(HostActionResponse(hostname, result.sha256Pins, result.validUntil, newVersion))
+                call.respond(HostActionResponse(hostname, result.sha256Pins, result.validUntil, primaryNewVersion))
             }
 
             post("fetch-cert-url") {
@@ -251,19 +270,27 @@ fun Route.hostRoutes(
                     return@post call.respondText("{\"error\":\"Baglanti hatasi: ${e.message}\"}", ContentType.Application.Json, HttpStatusCode.BadRequest)
                 }
 
-                hostStore.save(hostRecord.copy(certValidUntil = fetchResult.certInfo.validUntil))
+                // Remote host cert global (tek public cert) — tum scope'lari guncelle.
+                val primaryScope = call.scopedApiId()
+                val affectedScopes = hostStore.listConfigApisFor(hostname)
+                var primaryNewVersion = 0
+                for (scope in affectedScopes) {
+                    val record = hostStore.get(hostname, scope) ?: continue
+                    hostStore.save(record.copy(certValidUntil = fetchResult.certInfo.validUntil))
 
-                val config = pinConfigStore.load(call.scopedApiId())
-                val oldPin = config.pins.find { it.hostname == hostname }
-                val newVersion = (oldPin?.version ?: 0) + 1
-                val updated = config.copy(
-                    pins = config.pins.map { if (it.hostname == hostname) HostPin(hostname, fetchResult.sha256Pins, newVersion) else it }
-                )
-                pinConfigStore.save(call.scopedApiId(), updated)
+                    val config = pinConfigStore.load(scope)
+                    val oldPin = config.pins.find { it.hostname == hostname }
+                    val newVersion = (oldPin?.version ?: 0) + 1
+                    val updated = config.copy(
+                        pins = config.pins.map { if (it.hostname == hostname) HostPin(hostname, fetchResult.sha256Pins, newVersion) else it }
+                    )
+                    pinConfigStore.save(scope, updated)
+                    historyStore.add(scope, PinConfigHistoryEntry(hostname, newVersion, Instant.now().toString(), "cert_fetched", fetchResult.sha256Pins.firstOrNull()?.take(12) ?: ""))
 
-                historyStore.add(call.scopedApiId(), PinConfigHistoryEntry(hostname, newVersion, Instant.now().toString(), "cert_fetched", fetchResult.sha256Pins.firstOrNull()?.take(12) ?: ""))
+                    if (scope == primaryScope) primaryNewVersion = newVersion
+                }
 
-                call.respond(HostActionResponse(hostname, fetchResult.sha256Pins, fetchResult.certInfo.validUntil, newVersion))
+                call.respond(HostActionResponse(hostname, fetchResult.sha256Pins, fetchResult.certInfo.validUntil, primaryNewVersion))
             }
 
             // mTLS toggle — host'u mTLS olarak işaretle/kaldır
