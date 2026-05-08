@@ -117,6 +117,28 @@ val response = PinVault.getClient()
     .execute()
 ```
 
+If you maintain your own `OkHttpClient` (custom timeouts, interceptors,
+dispatcher), call `PinVault.applyTo(builder)` on your builder instead.
+Both `getClient()` and `applyTo(builder)` install the **pin-recovery
+interceptor**, so a pin mismatch is automatically retried after a
+config refresh.
+
+### 4. (Optional) Enable debug logging
+
+PinVault logs through Timber. If your app does not already plant a
+Timber tree, **all of PinVault's diagnostic output (pin verification,
+config updates, recovery attempts) is silently dropped** — which makes
+"is recovery even running?" debugging much harder.
+
+```kotlin
+if (BuildConfig.DEBUG) PinVault.enableDebugLogging()
+```
+
+`enableDebugLogging()` plants a `Timber.DebugTree` **only if no tree is
+currently planted**, so it never overrides your production logging
+policy (Crashlytics tree, custom release tree, etc.). It is opt-in by
+design — PinVault never plants on its own.
+
 ## Usage Modes
 
 ### Single Config API

@@ -327,17 +327,50 @@ object PinVault {
     }
 
     /**
-     * Applies SSL certificate pinning to an existing [OkHttpClient.Builder].
-     * Replaces the old BKS trust store setup.
+     * Convenience: plants a [Timber.DebugTree] **only if no Timber tree
+     * is currently planted**. PinVault uses Timber internally for all of
+     * its diagnostic logs (pin verification, config updates, recovery
+     * attempts, etc.). Without at least one tree planted, those logs are
+     * silently dropped — which is a common cause of "is the recovery
+     * interceptor even running?" confusion.
+     *
+     * This is **opt-in**. PinVault never plants a tree on its own,
+     * because the consuming app's logging policy (Crashlytics, custom
+     * release tree, structured logger) must stay in control. Most
+     * production apps already have their own Timber setup and should
+     * skip this entirely.
+     *
+     * Typical usage in `Application.onCreate`:
+     * ```
+     * if (BuildConfig.DEBUG) PinVault.enableDebugLogging()
+     * ```
+     */
+    fun enableDebugLogging() {
+        if (Timber.treeCount == 0) {
+            Timber.plant(Timber.DebugTree())
+        }
+    }
+
+    /**
+     * Applies SSL certificate pinning **and the pin-recovery interceptor**
+     * to an existing [OkHttpClient.Builder]. Use this when you maintain
+     * your own [OkHttpClient] (custom timeouts, interceptors, dispatchers,
+     * etc.) but still want PinVault's automatic recovery on pin mismatch.
+     *
+     * Equivalent in capability to [getClient]: both wire pinning + recovery.
+     * The trust manager is dynamic, so subsequent config swaps apply to
+     * requests issued through the builder you pass in without re-calling
+     * this function.
      */
     fun applyTo(builder: OkHttpClient.Builder) {
         checkInitialized()
         val config = clientProvider.currentConfig
-        if (config != null) {
-            sslManager.applyTo(builder, config)
-        } else {
+        if (config == null) {
             Timber.w("No certificate config available — builder unchanged (system defaults)")
+            return
         }
+        sslManager.applyTo(builder, config)
+        builder.addInterceptor(clientProvider.recoveryInterceptor)
     }
 
     /**

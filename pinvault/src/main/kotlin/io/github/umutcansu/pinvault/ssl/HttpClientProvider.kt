@@ -29,7 +29,14 @@ internal class HttpClientProvider(
     @Volatile
     internal var recoveryUpdater: (suspend () -> Boolean)? = null
 
-    private val recoveryInterceptor: PinRecoveryInterceptor by lazy {
+    /**
+     * The interceptor that retries a failed request after refreshing pins.
+     * Visible to [io.github.umutcansu.pinvault.PinVault] so the public
+     * `applyTo(OkHttpClient.Builder)` entry point can install it on
+     * builders the caller maintains themselves — same recovery semantics
+     * as [get].
+     */
+    internal val recoveryInterceptor: PinRecoveryInterceptor by lazy {
         PinRecoveryInterceptor(
             updater = {
                 val fn = recoveryUpdater ?: return@PinRecoveryInterceptor false
