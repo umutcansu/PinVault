@@ -36,11 +36,28 @@ implementation("io.github.umutcansu:pinvault:2.0.3")
 
 ### 2. Initialize (v2 DSL — Kotlin)
 
+> **Pin format**: pass the **raw Base64 SHA-256 hash** of the
+> SubjectPublicKeyInfo. **Do NOT include the `sha256/` prefix** —
+> PinVault adds it internally. Producing a pin from a server cert:
+> ```bash
+> openssl s_client -servername HOST -connect HOST:PORT -showcerts < /dev/null 2>/dev/null \
+>   | openssl x509 -pubkey -noout \
+>   | openssl pkey -pubin -outform der \
+>   | openssl dgst -sha256 -binary \
+>   | openssl base64
+> ```
+
 ```kotlin
 val config = PinVaultConfig.Builder()
     .configApi("api", "https://api.example.com/") {
         bootstrapPins(listOf(
-            HostPin("api.example.com", listOf("primaryPin...", "backupPin..."))
+            HostPin(
+                "api.example.com",
+                listOf(
+                    "AAAAprimaryBase64Hash...=",   // raw base64, no "sha256/" prefix
+                    "BBBBbackupBase64Hash...="
+                )
+            )
         ))
     }
     .build()
@@ -71,10 +88,16 @@ import java.util.Arrays;
 PinVaultConfig config = new PinVaultConfig.Builder()
     .configApi("api", "https://api.example.com/", block -> {
         block.bootstrapPins(Arrays.asList(
-            // hostname, sha256 pins, version, forceUpdate, mtls, clientCertVersion
-            new HostPin("api.example.com",
-                Arrays.asList("primaryPin...", "backupPin..."),
-                0, false, false, null)
+            // hostname, sha256 pins (raw base64, NO "sha256/" prefix),
+            // version, forceUpdate, mtls, clientCertVersion
+            new HostPin(
+                "api.example.com",
+                Arrays.asList(
+                    "AAAAprimaryBase64Hash...=",
+                    "BBBBbackupBase64Hash...="
+                ),
+                0, false, false, null
+            )
         ));
         return Unit.INSTANCE;
     })
