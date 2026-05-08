@@ -27,10 +27,14 @@ Dynamic SSL certificate pinning library for Android. Manage pins remotely, suppo
 ### 1. Add dependency
 
 ```gradle
-implementation("io.github.umutcansu:pinvault:2.0.0")
+implementation("io.github.umutcansu:pinvault:2.0.3")
 ```
 
-### 2. Initialize (v2 DSL)
+> Kotlin 1.9.x consumer projects: use `2.0.3` or later — older 2.0.x
+> versions emit Kotlin 2.1 metadata in their POM and trigger
+> `Unable to read Kotlin metadata due to unsupported metadata version`.
+
+### 2. Initialize (v2 DSL — Kotlin)
 
 ```kotlin
 val config = PinVaultConfig.Builder()
@@ -48,6 +52,38 @@ val result = PinVault.init(context, config)
 PinVault.init(context, config) { result ->
     if (result is InitResult.Ready) { /* ready */ }
 }
+```
+
+### 2b. Initialize (v2 DSL — Java consumers)
+
+The DSL is Kotlin-first. From Java the lambda needs to return
+`kotlin.Unit.INSTANCE`, and `HostPin`'s default parameter values are
+not visible to Java callers — you must supply all six positionally.
+
+```java
+import kotlin.Unit;
+import io.github.umutcansu.pinvault.PinVault;
+import io.github.umutcansu.pinvault.PinVaultConfig;
+import io.github.umutcansu.pinvault.model.HostPin;
+import io.github.umutcansu.pinvault.model.InitResult;
+import java.util.Arrays;
+
+PinVaultConfig config = new PinVaultConfig.Builder()
+    .configApi("api", "https://api.example.com/", block -> {
+        block.bootstrapPins(Arrays.asList(
+            // hostname, sha256 pins, version, forceUpdate, mtls, clientCertVersion
+            new HostPin("api.example.com",
+                Arrays.asList("primaryPin...", "backupPin..."),
+                0, false, false, null)
+        ));
+        return Unit.INSTANCE;
+    })
+    .build();
+
+PinVault.init(context, config, result -> {
+    if (result instanceof InitResult.Ready) { /* ready */ }
+    return Unit.INSTANCE;
+});
 ```
 
 ### 3. Use the pinned client
@@ -319,6 +355,29 @@ metadata it's trying to read. Try in this order:
 4. **Last resort**: add `kotlin.suppressKotlinVersionCompatibilityCheck=true`
    to your `gradle.properties`. This silences the warning, but the
    underlying issue may still surface elsewhere.
+
+### Troubleshooting: compile errors after upgrading from 1.x to 2.x
+
+If you upgraded from PinVault `1.x` to `2.x` and now see compile errors
+like:
+
+```
+error: constructor Builder in class Builder cannot be applied to given types;
+       new PinVaultConfig.Builder("https://...")
+       required: no arguments
+
+error: constructor HostPin in class HostPin cannot be applied to given types;
+       new HostPin("host", Arrays.asList(...))
+       required: String,List<String>,int,boolean,boolean,Integer
+```
+
+these are **API breaking changes** introduced in `2.0`, not metadata
+errors. v2 replaced the single-URL constructor with a multi-Config-API
+DSL, and `HostPin` gained four optional fields. Update your Java code
+following the patterns in section **2b** above, or read
+[MIGRATION.md](MIGRATION.md) for the full DSL reference. If migrating
+to v2 isn't an option right now, pin the dependency to the latest
+`1.x` release.
 
 ## Production Security Checklist
 
