@@ -75,7 +75,27 @@ mavenPublishing {
     }
 }
 
+// PinVault emits Kotlin 1.9 metadata (see kotlinOptions above), so every
+// kotlin-stdlib variant on the resolved graph must also be 1.9.x — otherwise
+// consumer Kotlin 1.9.x compilers fail with
+// "Unable to read Kotlin metadata due to unsupported metadata version".
+configurations.all {
+    resolutionStrategy.eachDependency {
+        if (requested.group == "org.jetbrains.kotlin" &&
+            requested.name.startsWith("kotlin-stdlib")
+        ) {
+            useVersion("1.9.25")
+            because("Match languageVersion=1.9 metadata for consumer compatibility")
+        }
+    }
+}
+
 dependencies {
+    // Pin kotlin-stdlib to a 1.9.x release so its bytecode metadata matches
+    // PinVault's emitted 1.9 metadata. Auto-injection is disabled via
+    // `kotlin.stdlib.default.dependency=false` in root gradle.properties.
+    implementation("org.jetbrains.kotlin:kotlin-stdlib:1.9.25")
+
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
     implementation("com.squareup.okhttp3:logging-interceptor:4.12.0")
     implementation("com.squareup.retrofit2:retrofit:2.11.0")
