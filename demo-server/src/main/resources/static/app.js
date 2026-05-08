@@ -1963,14 +1963,16 @@ async function renderBootstrapSection() {
       <div class="card">
         <div class="card-title">${t('androidIntegration')}</div>
         <div class="key-box">private val BOOTSTRAP_PINS = listOf(
-    HostPin("10.0.2.2", listOf(
+    HostPin("${location.hostname}:${data.httpsPort}", listOf(
         "${data.primaryPin}",
         "${data.backupPin || 'BACKUP_PIN'}"
-    ))
+    ), 0, false, false, null)
 )
 
-val config = PinVaultConfig.Builder("https://10.0.2.2:${data.httpsPort}/")
-    .bootstrapPins(BOOTSTRAP_PINS)
+val config = PinVaultConfig.Builder()
+    .configApi("default", "https://${location.hostname}:${data.httpsPort}/") {
+        bootstrapPins(BOOTSTRAP_PINS)
+    }
     .build()</div>
       </div>` : ''}
 
@@ -2127,9 +2129,11 @@ async function renderMtlsSection() {
 
 // Veya manuel P12:
 val p12 = context.assets.open("client.p12").readBytes()
-val config = PinVaultConfig.Builder("https://10.0.2.2:8091/")
-    .bootstrapPins(BOOTSTRAP_PINS)
-    .clientKeystore(p12, "changeit")
+val config = PinVaultConfig.Builder()
+    .configApi("mtls", "https://${location.hostname}:${data.httpsPort}/") {
+        bootstrapPins(BOOTSTRAP_PINS)
+        clientKeystore(p12, "changeit")
+    }
     .build()</div>
       </div>
       <div class="card">
@@ -2322,8 +2326,10 @@ async function renderSigningSection() {
       </div>
       <div class="card"><div class="card-title">${t('publicKey')}</div><div class="key-box">${data.publicKey}</div></div>
       <div class="card"><div class="card-title">${t('androidIntegration')}</div>
-        <div class="key-box">val config = PinVaultConfig.Builder("https://api.example.com/")
-    .signaturePublicKey("${data.publicKey}")
+        <div class="key-box">val config = PinVaultConfig.Builder()
+    .configApi("default", "https://api.example.com/") {
+        signaturePublicKey("${data.publicKey}")
+    }
     .build()</div></div>`;
   } catch (e) {
     document.getElementById('content').innerHTML = `<div class="card"><div class="empty-msg">${t('signingError')}</div></div>`;
