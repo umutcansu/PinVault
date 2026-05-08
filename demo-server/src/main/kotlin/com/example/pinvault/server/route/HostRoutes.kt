@@ -564,11 +564,14 @@ fun Route.hostRoutes(
                 var lastError: String? = null
                 for (port in portsToTry) {
                     try {
-                        // 1. TCP reachable? `nc -z -G 2 -w 2 host port` — -G = connect timeout (BSD nc).
+                        // 1. TCP reachable? `nc -z -w 2 host port` — -w is the read/operation
+                        //    timeout, supported by both BSD nc (macOS) and OpenBSD netcat
+                        //    (Linux). The previously-used -G connect-timeout flag is BSD-only
+                        //    and breaks inside Linux containers shipping netcat-openbsd.
                         //    Hard-timeout the whole call at 3s via runCmd so unreachable hosts
                         //    don't block for minutes if the kernel/firewall silently drops SYN.
                         val (ncExit, ncOut) = runCmd(
-                            "nc", "-z", "-G", "2", "-w", "2", hostname, port.toString(),
+                            "nc", "-z", "-w", "2", hostname, port.toString(),
                             timeoutSec = 3
                         )
                         if (ncExit != 0) {
