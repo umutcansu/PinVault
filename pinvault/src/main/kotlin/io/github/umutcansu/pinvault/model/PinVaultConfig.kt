@@ -1,5 +1,7 @@
 package io.github.umutcansu.pinvault.model
 
+import io.github.umutcansu.pinvault.api.PinVaultConnectionListener
+
 /**
  * Configuration for [io.github.umutcansu.pinvault.PinVault].
  *
@@ -66,7 +68,15 @@ data class PinVaultConfig(
     /** Registered vault files keyed by their [VaultFileConfig.key]. */
     val vaultFiles: Map<String, VaultFileConfig> = emptyMap(),
     /** Pre-loaded static pins for offline mode. When set, no Config API is contacted. */
-    val staticPins: CertificateConfig? = null
+    val staticPins: CertificateConfig? = null,
+    /**
+     * Optional listener for [io.github.umutcansu.pinvault.api.PinVaultConnectionEvent]s.
+     * When `null` (default), the library does not invoke any callback —
+     * keeping PinVault server-agnostic out of the box. Wire one via
+     * [Builder.onConnectionEvent] or use the canned helper
+     * [Builder.reportToPinVaultBackend] for the demo-server JSON format.
+     */
+    val connectionListener: PinVaultConnectionListener? = null
 ) {
 
     /** First registered block — convenience for internal single-API code paths. */
@@ -80,6 +90,7 @@ data class PinVaultConfig(
         private var deviceAlias: String? = null
         private var staticPins: CertificateConfig? = null
         private val vaultFiles = mutableMapOf<String, VaultFileConfig>()
+        private var connectionListener: PinVaultConnectionListener? = null
 
         /**
          * Register a Config API. Calling twice with the same id replaces the
@@ -97,6 +108,23 @@ data class PinVaultConfig(
 
         fun vaultFile(key: String, init: VaultFileConfig.Builder.() -> Unit) = apply {
             vaultFiles[key] = VaultFileConfig.Builder(key).apply(init).build()
+        }
+
+        /**
+         * Register a callback that receives every
+         * [io.github.umutcansu.pinvault.api.PinVaultConnectionEvent] PinVault
+         * emits — currently fired on every TLS handshake whose certificate
+         * was checked against the configured pins.
+         *
+         * The library never reaches out to a remote endpoint by itself; this
+         * listener is the only way to observe connection telemetry. Use it
+         * to push to your own analytics, logger, or backend.
+         *
+         * For PinVault demo-server's expected JSON format see
+         * [reportToPinVaultBackend].
+         */
+        fun onConnectionEvent(listener: PinVaultConnectionListener) = apply {
+            this.connectionListener = listener
         }
 
         fun build(): PinVaultConfig {
@@ -124,7 +152,8 @@ data class PinVaultConfig(
                 updateIntervalMinutes = updateIntervalMinutes,
                 deviceAlias = deviceAlias,
                 vaultFiles = vaultFiles.toMap(),
-                staticPins = staticPins
+                staticPins = staticPins,
+                connectionListener = connectionListener
             )
         }
     }

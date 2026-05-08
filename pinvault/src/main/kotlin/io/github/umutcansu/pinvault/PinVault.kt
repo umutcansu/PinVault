@@ -219,6 +219,15 @@ object PinVault {
             }
             configApiClients = clients
 
+            // Wire the user-supplied PinVaultConnectionListener into every
+            // per-Config-API SSL manager so that pin-verify success / mismatch
+            // events surface to the consumer regardless of which block the
+            // request was routed through. Listener is opt-in — null is the
+            // default and keeps the library completely silent.
+            config.connectionListener?.let { listener ->
+                clients.values.forEach { it.sslManager.setConnectionListener(listener) }
+            }
+
             // ── Legacy primary mirrors (default / first block). These keep
             // the pre-V2 public API (applyTo, getClient, enroll, etc.) working.
             val defaultBlock = config.defaultConfigApi
@@ -233,6 +242,7 @@ object PinVault {
                 // Static pin-only mode: create minimal placeholders. executeInit
                 // will swap in the static config directly.
                 sslManager = DynamicSSLManager()
+                config.connectionListener?.let { sslManager.setConnectionListener(it) }
                 clientProvider = HttpClientProvider(sslManager)
                 configStore = CertificateConfigStore(appContext)
                 this.configApi = object : CertificateConfigApi {

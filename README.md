@@ -123,7 +123,63 @@ Both `getClient()` and `applyTo(builder)` install the **pin-recovery
 interceptor**, so a pin mismatch is automatically retried after a
 config refresh.
 
-### 4. (Optional) Enable debug logging
+### 4. (Optional) Subscribe to connection events
+
+PinVault emits a `PinVaultConnectionEvent.Connection` to a registered
+listener for every TLS handshake whose certificate was verified against
+the configured pins — both on success and on pin mismatch. The library
+itself never POSTs anywhere; what you do with the event is entirely up
+to you (analytics, custom backend, log, ignore).
+
+```kotlin
+PinVaultConfig.Builder()
+    .configApi("api", "https://api.example.com/") {
+        bootstrapPins(...)
+    }
+    .onConnectionEvent { event ->
+        when (event) {
+            is PinVaultConnectionEvent.Connection -> {
+                // event.hostname, event.success, event.pinVersion,
+                // event.deviceManufacturer, event.deviceModel,
+                // event.actualPin, event.expectedPins
+                MyAnalytics.report(event)
+            }
+        }
+    }
+    .build()
+```
+
+If your backend is the bundled PinVault demo-server (or a fork keeping
+the `/api/v1/connection-history/client-report` schema), there is a
+one-line opt-in helper:
+
+```kotlin
+import io.github.umutcansu.pinvault.reporter.reportToPinVaultBackend
+
+PinVaultConfig.Builder()
+    .reportToPinVaultBackend("http://192.168.1.80:6650/")
+    .configApi("api", "https://api.example.com/") { ... }
+    .build()
+```
+
+For Java consumers the event subtype check looks like:
+
+```java
+.onConnectionEvent(event -> {
+    if (event instanceof PinVaultConnectionEvent.Connection) {
+        PinVaultConnectionEvent.Connection c = (PinVaultConnectionEvent.Connection) event;
+        myAnalytics.report(c.getHostname(), c.getSuccess(),
+                           c.getPinVersion(), c.getDeviceManufacturer(),
+                           c.getDeviceModel());
+    }
+})
+```
+
+Listener invocations are dispatched off the TLS handshake thread, and
+any exception thrown by the listener is logged and swallowed — a
+misbehaving callback can never break the underlying connection.
+
+### 5. (Optional) Enable debug logging
 
 PinVault logs through Timber. If your app does not already plant a
 Timber tree, **all of PinVault's diagnostic output (pin verification,

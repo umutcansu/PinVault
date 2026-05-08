@@ -33,7 +33,32 @@ import javax.net.ssl.X509TrustManager
  * Instead, `checkServerTrusted()` is invoked by Conscrypt during the TLS handshake
  * with the actual certificate chain, making the pin hash check 100 % reliable.
  */
-internal class DynamicSSLManager {
+internal class DynamicSSLManager(
+    /**
+     * Optional listener fired on every pin verification (success or mismatch).
+     * `null` keeps the library completely silent — the default. Wired up
+     * from `PinVaultConfig.Builder.onConnectionEvent(...)` via PinVault.
+     */
+    @Volatile
+    private var connectionListener: io.github.umutcansu.pinvault.api.PinVaultConnectionListener? = null
+) {
+
+    /**
+     * Background executor used to dispatch [connectionListener] callbacks
+     * off the TLS handshake thread. Lazy single-threaded so listener
+     * implementations can rely on serial in-order delivery; daemon thread
+     * so it never blocks JVM shutdown.
+     */
+    private val listenerDispatcher: java.util.concurrent.ExecutorService by lazy {
+        java.util.concurrent.Executors.newSingleThreadExecutor { r ->
+            Thread(r, "PinVault-Listener").apply { isDaemon = true }
+        }
+    }
+
+    /** Updates the listener at runtime (used after init when config arrives). */
+    fun setConnectionListener(listener: io.github.umutcansu.pinvault.api.PinVaultConnectionListener?) {
+        this.connectionListener = listener
+    }
 
     /** Default client keystore for mTLS (optional — used when no host-specific cert exists) */
     @Volatile
@@ -150,7 +175,7 @@ internal class DynamicSSLManager {
      * If client keystore is loaded, also presents client cert for mTLS.
      */
     fun applyTo(builder: OkHttpClient.Builder, config: CertificateConfig) {
-        val tm = pinnedTrustManager(config.pins)
+        val tm = pinnedTrustManager(config.pins, config.version)
         val sslCtx = SSLContext.getInstance("TLS")
         val keyManagers = buildCompositeKeyManagers()
         sslCtx.init(keyManagers, arrayOf(tm), null)
@@ -240,7 +265,7 @@ internal class DynamicSSLManager {
      * Security comes entirely from public-key pinning — this is equivalent to, and more
      * reliable than, OkHttp's [okhttp3.CertificatePinner] on Android.
      */
-    private fun pinnedTrustManager(pins: List<HostPin>): X509TrustManager {
+    private fun pinnedTrustManager(pins: List<HostPin>, pinVersion: Int): X509TrustManager {
         val acceptedHashes = buildAcceptedPins(pins)
 
         return object : X509ExtendedTrustManager() {
@@ -251,18 +276,18 @@ internal class DynamicSSLManager {
                 chain: Array<X509Certificate>,
                 authType: String,
                 socket: Socket
-            ) = verifyPin(chain)
+            ) = verifyPin(chain, hostnameFromSocket(socket))
 
             override fun checkServerTrusted(
                 chain: Array<X509Certificate>,
                 authType: String,
                 engine: SSLEngine
-            ) = verifyPin(chain)
+            ) = verifyPin(chain, engine.peerHost.orEmpty())
 
             override fun checkServerTrusted(
                 chain: Array<X509Certificate>,
                 authType: String
-            ) = verifyPin(chain)
+            ) = verifyPin(chain, "")
 
             // ── Client auth ───────────────────────────────────────────────────────
 
@@ -274,7 +299,7 @@ internal class DynamicSSLManager {
 
             // ── Pin verification ──────────────────────────────────────────────────
 
-            private fun verifyPin(chain: Array<X509Certificate>) {
+            private fun verifyPin(chain: Array<X509Certificate>, hostname: String) {
                 if (chain.isEmpty()) throw CertificateException("No server certificate provided")
 
                 val leaf = chain[0]
@@ -297,6 +322,7 @@ internal class DynamicSSLManager {
                 // Pin doğrulama
                 val certHash = sha256Base64(leaf.publicKey.encoded)
                 if (certHash !in acceptedHashes) {
+                    emitConnectionEvent(hostname, success = false, actualPin = certHash, expectedPins = acceptedHashes, pinVersion = pinVersion)
                     Timber.e("Pin mismatch! cert=$certHash, accepted=$acceptedHashes")
                     throw CertificateException(
                         "Certificate pinning failure!\n" +
@@ -308,7 +334,56 @@ internal class DynamicSSLManager {
                 val cn = leaf.subjectX500Principal.name.substringAfter("CN=").substringBefore(",")
                 val hasClientCert = clientKeyManagers != null
                 Timber.d("Pin verified ✓ — CN=%s, sha256/%s, clientCert=%s", cn, certHash.take(20), hasClientCert)
+                emitConnectionEvent(hostname, success = true, actualPin = certHash, expectedPins = acceptedHashes, pinVersion = pinVersion)
             }
+        }
+    }
+
+    /**
+     * SNI hostname extraction for the `Socket` overload of `checkServerTrusted`.
+     * The cast to `SSLSocket` is best-effort; on the rare TLS impl that hands
+     * back a plain `Socket`, we fall back to its remote address.
+     */
+    private fun hostnameFromSocket(socket: Socket?): String {
+        val ssl = socket as? javax.net.ssl.SSLSocket
+        return ssl?.handshakeSession?.peerHost
+            ?: socket?.inetAddress?.hostName
+            ?: socket?.inetAddress?.hostAddress
+            ?: ""
+    }
+
+    /**
+     * Builds and dispatches a [PinVaultConnectionEvent.Connection] off the
+     * TLS handshake thread. Listener exceptions are logged and swallowed —
+     * a misbehaving callback can never break the underlying connection.
+     */
+    private fun emitConnectionEvent(
+        hostname: String,
+        success: Boolean,
+        actualPin: String,
+        expectedPins: Collection<String>,
+        pinVersion: Int
+    ) {
+        val listener = connectionListener ?: return
+        val event = io.github.umutcansu.pinvault.api.PinVaultConnectionEvent.Connection(
+            hostname = hostname,
+            success = success,
+            pinVersion = pinVersion,
+            deviceManufacturer = android.os.Build.MANUFACTURER ?: "",
+            deviceModel = android.os.Build.MODEL ?: "",
+            actualPin = actualPin,
+            expectedPins = expectedPins.toList()
+        )
+        try {
+            listenerDispatcher.execute {
+                try {
+                    listener.onEvent(event)
+                } catch (t: Throwable) {
+                    Timber.w(t, "PinVault connection listener threw — swallowing")
+                }
+            }
+        } catch (e: java.util.concurrent.RejectedExecutionException) {
+            Timber.w(e, "PinVault listener dispatcher rejected event")
         }
     }
 
