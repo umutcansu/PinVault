@@ -31,6 +31,9 @@ android {
 
     kotlinOptions {
         jvmTarget = "17"
+        apiVersion = "1.9"
+        languageVersion = "1.9"
+        freeCompilerArgs += listOf("-Xsuppress-version-warnings")
     }
 
     testOptions {
@@ -83,12 +86,12 @@ dependencies {
     // See: https://issuetracker.google.com/issues/164901843
     implementation("androidx.security:security-crypto:1.1.0-alpha06")
     implementation("com.jakewharton.timber:timber:5.0.1")
-    implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.9.0")
+    implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.8.1")
     implementation("androidx.core:core-ktx:1.15.0")
 
     testImplementation("junit:junit:4.13.2")
     testImplementation("io.mockk:mockk:1.13.13")
-    testImplementation("org.jetbrains.kotlinx:kotlinx-coroutines-test:1.9.0")
+    testImplementation("org.jetbrains.kotlinx:kotlinx-coroutines-test:1.8.1")
     testImplementation("com.squareup.okhttp3:mockwebserver:4.12.0")
     testImplementation("org.bouncycastle:bcprov-jdk18on:1.78.1")
     testImplementation("org.bouncycastle:bcpkix-jdk18on:1.78.1")

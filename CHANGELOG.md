@@ -84,6 +84,21 @@
   equals `X-Device-Id`. Token leak alone does not grant access.
 - Device RSA private key stays in Android Keystore; server never sees it.
 
+### Compatibility
+
+- **Kotlin 1.9 consumer support**. Library is still compiled with Kotlin
+  2.1, but `apiVersion` and `languageVersion` are now pinned to `1.9` so
+  the emitted metadata is readable by Kotlin 1.9.x compilers.
+- **Coroutines downgraded** `kotlinx-coroutines-android` `1.9.0` → `1.8.1`
+  (and `kotlinx-coroutines-test` to match). The `1.9.0` artifact ships
+  Kotlin 2.0 metadata, which Kotlin 1.9.x consumers cannot read; since
+  PinVault's public API exposes `suspend` functions (`init`, `updateNow`,
+  `enroll`, `fetchFile`, `syncAllFiles`, …), the coroutines metadata is
+  reachable transitively and must also be 1.9-compatible.
+- Fixes `Unable to read Kotlin metadata due to unsupported metadata
+  version` (and `unsupported metadata kind: null`) on consumer projects
+  using Kotlin 1.9.x.
+
 ### Tests
 
 - **+38 server tests**: `VaultRoutesAccessPolicyTest` (11),

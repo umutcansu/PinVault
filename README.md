@@ -283,9 +283,42 @@ PinVault.fetchFile("key")   ───→     GET /vault/{key}
 
 ## Requirements
 
-- Android minSdk 24 (Android 7.0+)
-- Kotlin coroutines or callback API
-- OkHttp 4.x
+| Tool                  | Minimum |
+| --------------------- | ------- |
+| Android `minSdk`      | 24 (Android 7.0+) |
+| Kotlin (consumer)     | 1.9.0   |
+| Android Gradle Plugin | 8.2     |
+| Gradle                | 8.2     |
+| JDK                   | 17      |
+| OkHttp                | 4.x     |
+
+PinVault `2.0.0+` is compiled with Kotlin 2.1 but emits Kotlin 1.9
+metadata, so projects on Kotlin 1.9.x through 2.x can depend on it without
+metadata-version errors.
+
+### Troubleshooting: "Unable to read Kotlin metadata"
+
+If you see one of these errors when adding PinVault to your project:
+
+```
+warning: Unable to read Kotlin metadata due to unsupported metadata version.
+error: Unable to read Kotlin metadata due to unsupported metadata kind: null.
+```
+
+it means a Kotlin compiler in your build pipeline is older than the
+metadata it's trying to read. Try in this order:
+
+1. **Use PinVault `2.0.0` or later** — earlier versions only support
+   Kotlin 2.1+ consumers.
+2. **Upgrade your project to Kotlin `1.9.25+`** — Kotlin 1.8 and below
+   cannot read 1.9 metadata.
+3. **If you use Hilt / Dagger / kapt**: upgrade Hilt to `2.51+` or Dagger
+   to `2.51+`. Older versions bundle a pre-K2 `kotlin-metadata-jvm` that
+   stumbles on transitive dependencies. Migrating from `kapt` to `KSP` is
+   the long-term fix.
+4. **Last resort**: add `kotlin.suppressKotlinVersionCompatibilityCheck=true`
+   to your `gradle.properties`. This silences the warning, but the
+   underlying issue may still surface elsewhere.
 
 ## Production Security Checklist
 
