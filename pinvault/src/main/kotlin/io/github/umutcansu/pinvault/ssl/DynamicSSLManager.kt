@@ -250,12 +250,13 @@ internal class DynamicSSLManager(
         if (settings.callTimeout > 0)    builder.callTimeout(settings.callTimeout, TimeUnit.SECONDS)
     }
 
-    /**
-     * Builds a set of accepted SHA-256 pin hashes from [pins].
-     * Includes emulator alias: localhost/127.0.0.1 hashes are also valid for 10.0.2.2.
-     */
-    private fun buildAcceptedPins(pins: List<HostPin>): Set<String> =
-        pins.flatMap { it.sha256 }.toSet()
+    private fun buildAcceptedPins(pins: List<HostPin>): Map<String, Set<String>> =
+        PinHostMatcher.build(pins.map { it.hostname to it.sha256.toSet() })
+
+    private fun matchPinsFor(
+        pinMap: Map<String, Set<String>>,
+        hostname: String
+    ): Set<String>? = PinHostMatcher.match(pinMap, hostname)
 
     /**
      * Returns a [X509ExtendedTrustManager] that:
@@ -266,7 +267,7 @@ internal class DynamicSSLManager(
      * reliable than, OkHttp's [okhttp3.CertificatePinner] on Android.
      */
     private fun pinnedTrustManager(pins: List<HostPin>, pinVersion: Int): X509TrustManager {
-        val acceptedHashes = buildAcceptedPins(pins)
+        val pinMap = buildAcceptedPins(pins)
 
         return object : X509ExtendedTrustManager() {
 
@@ -304,13 +305,23 @@ internal class DynamicSSLManager(
 
                 val leaf = chain[0]
 
-                // Pin listesi boşsa bağlantıyı reddet — boş pin = güvenlik yok
-                if (acceptedHashes.isEmpty()) {
+                // No pins at all → nothing to enforce, fail closed.
+                if (pinMap.isEmpty()) {
                     throw CertificateException(
                         "No pins configured — refusing connection. " +
                         "Call PinVault.init() before making HTTPS requests."
                     )
                 }
+
+                // Per-host pin lookup. A hostname with no entry (and no
+                // matching wildcard) must be refused — the alternative is
+                // accepting any cert for unknown hosts, which is exactly the
+                // cross-host pin-reuse attack H-01 closes.
+                val acceptedForHost = matchPinsFor(pinMap, hostname)
+                    ?: throw CertificateException(
+                        "No pin entry for hostname '$hostname'. " +
+                        "Configured hosts: ${pinMap.keys.joinToString()}"
+                    )
 
                 // Sertifika süre kontrolü
                 try {
@@ -321,20 +332,22 @@ internal class DynamicSSLManager(
 
                 // Pin doğrulama
                 val certHash = sha256Base64(leaf.publicKey.encoded)
-                if (certHash !in acceptedHashes) {
-                    emitConnectionEvent(hostname, success = false, actualPin = certHash, expectedPins = acceptedHashes, pinVersion = pinVersion)
-                    Timber.e("Pin mismatch! cert=$certHash, accepted=$acceptedHashes")
+                if (certHash !in acceptedForHost) {
+                    emitConnectionEvent(hostname, success = false, actualPin = certHash, expectedPins = acceptedForHost, pinVersion = pinVersion)
+                    Timber.e("Pin mismatch for %s — cert=%s..., expected %d pins",
+                        hostname, certHash.take(12), acceptedForHost.size)
                     throw CertificateException(
-                        "Certificate pinning failure!\n" +
-                        "  Cert hash:    sha256/$certHash\n" +
-                        "  Accepted pins: ${acceptedHashes.joinToString { "sha256/$it" }}"
+                        "Certificate pinning failure for $hostname!\n" +
+                        "  Cert hash: sha256/$certHash\n" +
+                        "  Accepted pins for this host: ${acceptedForHost.size}"
                     )
                 }
 
                 val cn = leaf.subjectX500Principal.name.substringAfter("CN=").substringBefore(",")
                 val hasClientCert = clientKeyManagers != null
-                Timber.d("Pin verified ✓ — CN=%s, sha256/%s, clientCert=%s", cn, certHash.take(20), hasClientCert)
-                emitConnectionEvent(hostname, success = true, actualPin = certHash, expectedPins = acceptedHashes, pinVersion = pinVersion)
+                Timber.d("Pin verified ✓ — host=%s, CN=%s, sha256/%s..., clientCert=%s",
+                    hostname, cn, certHash.take(12), hasClientCert)
+                emitConnectionEvent(hostname, success = true, actualPin = certHash, expectedPins = acceptedForHost, pinVersion = pinVersion)
             }
         }
     }
