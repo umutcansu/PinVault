@@ -29,6 +29,7 @@ import io.ktor.server.engine.*
 import io.ktor.server.netty.*
 import io.ktor.server.plugins.calllogging.*
 import io.ktor.server.plugins.contentnegotiation.*
+import io.ktor.server.plugins.defaultheaders.*
 import io.ktor.server.plugins.statuspages.*
 import io.ktor.server.request.*
 import io.ktor.server.response.*
@@ -194,6 +195,20 @@ fun main() {
                 encodeDefaults = true
                 ignoreUnknownKeys = true
             })
+        }
+        // Security headers (M-05). CSP is intentionally permissive on
+        // 'style-src' because the admin UI inlines a few utility styles;
+        // 'script-src self' still kills the H-02 stored-XSS payload class.
+        install(DefaultHeaders) {
+            header("X-Content-Type-Options", "nosniff")
+            header("X-Frame-Options", "DENY")
+            header("Referrer-Policy", "no-referrer")
+            header(
+                "Content-Security-Policy",
+                "default-src 'self'; script-src 'self'; " +
+                "style-src 'self' 'unsafe-inline'; img-src 'self' data:; " +
+                "connect-src 'self'; frame-ancestors 'none'"
+            )
         }
         install(CallLogging)
         install(com.example.pinvault.server.plugin.ApiKeyAuth)

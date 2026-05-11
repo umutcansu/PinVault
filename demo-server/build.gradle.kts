@@ -20,6 +20,7 @@ dependencies {
     implementation("io.ktor:ktor-serialization-kotlinx-json:3.0.3")
     implementation("io.ktor:ktor-server-status-pages:3.0.3")
     implementation("io.ktor:ktor-server-call-logging:3.0.3")
+    implementation("io.ktor:ktor-server-default-headers:3.0.3")
 
     // Logging
     implementation("ch.qos.logback:logback-classic:1.5.12")
@@ -33,8 +34,8 @@ dependencies {
     implementation("org.flywaydb:flyway-database-nc-sqlite:12.3.0")
 
     // Bouncy Castle (sertifika üretme)
-    implementation("org.bouncycastle:bcprov-jdk18on:1.78.1")
-    implementation("org.bouncycastle:bcpkix-jdk18on:1.78.1")
+    implementation("org.bouncycastle:bcprov-jdk18on:1.79")
+    implementation("org.bouncycastle:bcpkix-jdk18on:1.79")
 
     // OkHttp (health check + URL'den sertifika çekme)
     implementation("com.squareup.okhttp3:okhttp:4.12.0")

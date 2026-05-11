@@ -15,9 +15,26 @@ import java.security.MessageDigest
  */
 val ApiKeyAuth = createApplicationPlugin(name = "ApiKeyAuth") {
     val apiKey = System.getenv("API_KEY")?.takeIf { it.isNotBlank() }
+    val allowAnonymous = System.getenv("ALLOW_ANONYMOUS_ADMIN") == "true"
 
     if (apiKey == null) {
-        application.log.warn("API_KEY not set — management API authentication DISABLED")
+        if (!allowAnonymous) {
+            // Fail-fast: a server that copy-pastes the demo-compose file
+            // without setting API_KEY would otherwise come up with admin
+            // endpoints wide open. Force operators to either set API_KEY or
+            // make the anonymous-admin choice explicit via env var. (C-01)
+            error(
+                "API_KEY env var is not set. Refusing to start with anonymous " +
+                "admin access. Set API_KEY=<secret> or, to deliberately run " +
+                "without authentication (e.g. local dev), set " +
+                "ALLOW_ANONYMOUS_ADMIN=true."
+            )
+        }
+        application.log.warn(
+            "API_KEY not set and ALLOW_ANONYMOUS_ADMIN=true — management API " +
+            "authentication DISABLED. Do not run this configuration on a " +
+            "network you don't control."
+        )
         return@createApplicationPlugin
     }
 

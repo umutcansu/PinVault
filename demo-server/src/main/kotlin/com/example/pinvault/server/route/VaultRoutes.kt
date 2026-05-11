@@ -60,6 +60,15 @@ fun Route.vaultRoutes(
         get("/{key}") {
             val key = call.parameters["key"]
                 ?: return@get call.respond(HttpStatusCode.BadRequest, mapOf("error" to "Missing key"))
+            // Defense-in-depth (L-02): vault keys are flat identifiers
+            // (alphanumeric, `.`, `_`, `-`). The current storage backend is
+            // SQLite with prepared statements so path traversal has no
+            // direct effect, but if a future variant writes to disk this
+            // check stops `..` segments before they reach the filesystem.
+            if (!VAULT_KEY_REGEX.matches(key)) {
+                return@get call.respond(HttpStatusCode.BadRequest,
+                    mapOf("error" to "Invalid vault key format"))
+            }
 
             val currentVersion = call.request.queryParameters["version"]?.toIntOrNull() ?: 0
             val entry = vaultFileStore.get(configApiId, key)
@@ -311,6 +320,9 @@ fun Route.vaultRoutes(
 
 private val VALID_POLICIES = setOf("public", "api_key", "token", "token_mtls")
 private val VALID_ENCRYPTIONS = setOf("plain", "at_rest", "end_to_end")
+
+/** Allowed vault-key shape — alphanumeric plus `.`, `_`, `-`, 1-64 chars. */
+private val VAULT_KEY_REGEX = Regex("^[A-Za-z0-9._-]{1,64}$")
 
 /**
  * Extract the CN of the client cert, if any. Ktor stores the peer principal
