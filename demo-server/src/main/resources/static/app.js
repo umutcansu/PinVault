@@ -4,6 +4,19 @@ let selectedHost = null;
 let selectedApiId = null;
 let currentSection = null;
 
+// ── HTML escaping (H-02) ─────────────────────────────
+// All values that originate from server responses must pass through this
+// before being interpolated into innerHTML strings. The connection-history
+// and vault-report endpoints accept unauthenticated POSTs, so without
+// escaping a client can post a hostname like `<script>...</script>` and
+// trigger script execution when the admin loads the dashboard.
+function esc(s) {
+    if (s === null || s === undefined) return '';
+    return String(s).replace(/[&<>"']/g, c => ({
+        '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
+    }[c]));
+}
+
 // ── API Key Authentication ──────────────────────────
 function getApiKey() { return localStorage.getItem('pinvault_api_key') || ''; }
 function setApiKey(key) { localStorage.setItem('pinvault_api_key', key); }
@@ -1177,9 +1190,9 @@ async function loadPinHistory(hostname) {
       const ev = eventLabel(e.event);
       const latest = pagInfo.page === 0 && i === 0;
       return `<tr class="${latest ? 'row-latest' : ''}">
-        <td><span class="ver-badge" style="${latest ? 'background:#1d4ed8;color:#93c5fd' : ''}">v${e.version}</span></td>
-        <td style="color:${ev.color}">${ev.icon} ${ev.text}</td>
-        <td style="font-family:monospace;font-size:10px;color:#7dd3fc">${e.pinPrefix ? e.pinPrefix + '...' : '&#x2014;'}</td>
+        <td><span class="ver-badge" style="${latest ? 'background:#1d4ed8;color:#93c5fd' : ''}">v${esc(e.version)}</span></td>
+        <td style="color:${ev.color}">${ev.icon} ${esc(ev.text)}</td>
+        <td style="font-family:monospace;font-size:10px;color:#7dd3fc">${e.pinPrefix ? esc(e.pinPrefix) + '...' : '&#x2014;'}</td>
         <td style="color:#64748b;font-size:11px">${new Date(e.timestamp).toLocaleString(locale)}</td>
       </tr>`;
     }).join('');
@@ -1269,21 +1282,21 @@ async function loadHostConnectionHistory(hostname) {
     const pagInfo = pagSlice(entries, pagKey);
     const rows = pagInfo.slice.map((e, i) => {
       const src = e.source === 'android'
-        ? `<span style="color:#60a5fa">📱 ${e.deviceManufacturer || ''} ${e.deviceModel || ''}</span>`
+        ? `<span style="color:#60a5fa">📱 ${esc(e.deviceManufacturer || '')} ${esc(e.deviceModel || '')}</span>`
         : '<span style="color:#94a3b8">💻 Web</span>';
       const statusColor = e.status === 'healthy' || e.status === 'ok' ? '#22c55e' : '#ef4444';
       const pinInfo = e.pinMatched === true ? `<span style="color:#22c55e">✓ ${t('matched')}</span>`
         : e.pinMatched === false ? `<span style="color:#ef4444">✗ ${t('mismatch')}</span>`
         : '—';
-      const pinVer = e.pinVersion != null ? `v${e.pinVersion}` : '—';
+      const pinVer = e.pinVersion != null ? `v${esc(e.pinVersion)}` : '—';
       return `<tr class="${pagInfo.page === 0 && i === 0 ? 'row-latest' : ''}">
         <td>${src}</td>
-        <td style="color:${statusColor}">${e.status}</td>
-        <td>${e.responseTimeMs}ms</td>
+        <td style="color:${statusColor}">${esc(e.status)}</td>
+        <td>${esc(e.responseTimeMs)}ms</td>
         <td>${pinInfo}</td>
         <td>${pinVer}</td>
         <td style="color:#64748b;font-size:11px">${new Date(e.timestamp).toLocaleString(locale)}</td>
-        <td style="color:#64748b;font-size:10px;max-width:200px;overflow:hidden;text-overflow:ellipsis">${e.errorMessage && e.errorMessage !== 'null' ? e.errorMessage : ''}</td>
+        <td style="color:#64748b;font-size:10px;max-width:200px;overflow:hidden;text-overflow:ellipsis">${e.errorMessage && e.errorMessage !== 'null' ? esc(e.errorMessage) : ''}</td>
       </tr>`;
     }).join('');
     // Pagination callback host-özel; window'a geçici bir reload fonksiyonu yaz.
@@ -1321,9 +1334,9 @@ async function loadClientDevices(hostname) {
       const statusColor = d.lastStatus === 'healthy' ? '#22c55e' : '#ef4444';
       const timeAgo = new Date(d.lastSeen).toLocaleString(locale);
       return `<tr class="${i === 0 ? 'row-latest' : ''}">
-        <td><span style="color:#60a5fa">📱 ${d.deviceManufacturer || ''} ${d.deviceModel || ''}</span></td>
-        <td><span class="ver-badge">v${d.pinVersion}</span></td>
-        <td style="color:${statusColor}">${d.lastStatus}</td>
+        <td><span style="color:#60a5fa">📱 ${esc(d.deviceManufacturer || '')} ${esc(d.deviceModel || '')}</span></td>
+        <td><span class="ver-badge">v${esc(d.pinVersion)}</span></td>
+        <td style="color:${statusColor}">${esc(d.lastStatus)}</td>
         <td style="color:#64748b;font-size:11px">${timeAgo}</td>
       </tr>`;
     }).join('');
@@ -1858,7 +1871,7 @@ async function renderHealthSection() {
     const locale = lang === 'tr' ? 'tr-TR' : 'en-US';
 
     const sourceBadge = (s, e) => s === 'android'
-      ? `<span class="source-badge android-src">&#x1F4F1; ${e.deviceManufacturer ? e.deviceManufacturer + ' ' + (e.deviceModel||'') : 'Android'}</span>`
+      ? `<span class="source-badge android-src">&#x1F4F1; ${e.deviceManufacturer ? esc(e.deviceManufacturer) + ' ' + esc(e.deviceModel||'') : 'Android'}</span>`
       : '<span class="source-badge web-src">&#x1F5A5; Web</span>';
 
     const pinInfo = e => e.source !== 'android' || e.pinMatched == null ? '&#x2014;'
@@ -1872,9 +1885,9 @@ async function renderHealthSection() {
       return `<tr class="${pagInfo.page === 0 && i === 0 ? 'row-latest' : ''}">
         <td>${sourceBadge(e.source, e)}</td>
         <td class="${ok ? 'status-healthy' : 'status-error'}">${ok ? `&#x2713; ${t('success')}` : `&#x2717; ${t('failed')}`}</td>
-        <td>${e.responseTimeMs}ms</td>
+        <td>${esc(e.responseTimeMs)}ms</td>
         <td>${pinInfo(e)}</td>
-        <td style="color:#ef4444;font-size:11px;max-width:200px;overflow:hidden;text-overflow:ellipsis">${e.errorMessage || '&#x2014;'}</td>
+        <td style="color:#ef4444;font-size:11px;max-width:200px;overflow:hidden;text-overflow:ellipsis">${e.errorMessage ? esc(e.errorMessage) : '&#x2014;'}</td>
         <td style="color:#64748b;font-size:11px">${new Date(e.timestamp).toLocaleString(locale)}</td>
       </tr>`;
     }).join('');
