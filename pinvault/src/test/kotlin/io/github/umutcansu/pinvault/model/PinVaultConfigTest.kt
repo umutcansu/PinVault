@@ -16,6 +16,7 @@ class PinVaultConfigTest {
     private fun api(url: String, init: ConfigApiBlock.Builder.() -> Unit = {}) =
         PinVaultConfig.Builder().configApi("api", url) {
             bootstrapPins(validPins)
+            allowUnsigned()
             init()
         }
 
@@ -58,13 +59,15 @@ class PinVaultConfigTest {
 
     @Test(expected = IllegalArgumentException::class)
     fun `Builder — blank URL throws`() {
-        PinVaultConfig.Builder().configApi("api", "") { bootstrapPins(validPins) }.build()
+        PinVaultConfig.Builder().configApi("api", "") {
+            bootstrapPins(validPins); allowUnsigned()
+        }.build()
     }
 
     @Test(expected = IllegalArgumentException::class)
     fun `Builder — empty bootstrap pins throws`() {
         PinVaultConfig.Builder().configApi("api", "https://api.example.com/") {
-            bootstrapPins(emptyList())
+            bootstrapPins(emptyList()); allowUnsigned()
         }.build()
     }
 
@@ -101,7 +104,9 @@ class PinVaultConfigTest {
     @Test
     fun `config with vaultFiles DSL`() {
         val config = PinVaultConfig.Builder()
-            .configApi("api", "https://api.example.com/") { bootstrapPins(validPins) }
+            .configApi("api", "https://api.example.com/") {
+                bootstrapPins(validPins); allowUnsigned()
+            }
             .vaultFile("ml-model") {
                 configApi("api")
                 endpoint("api/v1/vault/ml-model")
@@ -125,5 +130,28 @@ class PinVaultConfigTest {
     fun `config without vaultFiles has empty map`() {
         val config = api("https://api.example.com/").build()
         assertTrue(config.vaultFiles.isEmpty())
+    }
+
+    @Test
+    fun `Builder — missing signaturePublicKey throws without allowUnsigned`() {
+        try {
+            PinVaultConfig.Builder().configApi("api", "https://api.example.com/") {
+                bootstrapPins(validPins)
+                // no signaturePublicKey(...) and no allowUnsigned()
+            }.build()
+            fail("expected IllegalArgumentException")
+        } catch (e: IllegalArgumentException) {
+            assertTrue("Error must mention signaturePublicKey: ${e.message}",
+                e.message!!.contains("signaturePublicKey"))
+        }
+    }
+
+    @Test
+    fun `Builder — signaturePublicKey set satisfies requirement`() {
+        // No exception — explicit key provided, allowUnsigned() not needed.
+        PinVaultConfig.Builder().configApi("api", "https://api.example.com/") {
+            bootstrapPins(validPins)
+            signaturePublicKey("ABCDEF123")
+        }.build()
     }
 }

@@ -6,7 +6,19 @@ import kotlinx.serialization.Serializable
 data class PinConfig(
     val version: Int = 0,
     val pins: List<HostPin>,
-    val forceUpdate: Boolean = false
+    val forceUpdate: Boolean = false,
+    /**
+     * Unix epoch ms when this config was signed. Set by the server right
+     * before signing — clients reject replays where [issuedAt] is not
+     * strictly greater than the previously applied config's [issuedAt].
+     */
+    val issuedAt: Long = 0L,
+    /**
+     * Unix epoch ms after which the signed config must not be applied.
+     * Defines the freshness window. Clients reject configs once the wall
+     * clock crosses this value.
+     */
+    val expiresAt: Long = 0L
 ) {
     fun computedVersion(): Int = pins.maxOfOrNull { it.version } ?: version
     /** Global forceUpdate = any host has forceUpdate */

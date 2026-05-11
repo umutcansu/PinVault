@@ -88,7 +88,9 @@ internal class DefaultCertificateConfigApi(
             )
         }
 
-        return gson.fromJson(signed.payload, CertificateConfig::class.java)
+        val config = gson.fromJson(signed.payload, CertificateConfig::class.java)
+        enforceFreshness(config)
+        return config
     }
 
     override suspend fun downloadHostClientCert(hostname: String): ByteArray {
@@ -193,7 +195,40 @@ internal class DefaultCertificateConfigApi(
         if (!valid) {
             throw SecurityException("Config signature verification failed (scoped fetch).")
         }
-        return gson.fromJson(signed.payload, CertificateConfig::class.java)
+        val config = gson.fromJson(signed.payload, CertificateConfig::class.java)
+        enforceFreshness(config)
+        return config
+    }
+
+    /**
+     * Rejects signed configs that fall outside the server-controlled freshness
+     * window. Guards against replay of older signed payloads even when the
+     * signature is still cryptographically valid: a captured config becomes
+     * unusable once the wall clock crosses [CertificateConfig.expiresAt].
+     *
+     * Missing [CertificateConfig.expiresAt] (= 0L) is treated as an error
+     * rather than silently accepted — a server that returns signed configs
+     * MUST populate the freshness fields, otherwise an attacker can strip
+     * them and bypass this defense.
+     *
+     * Replay against the same `issuedAt` is caught by the updater layer
+     * (which compares against the previously persisted `issuedAt`) — this
+     * method only enforces the absolute expiry window.
+     */
+    private fun enforceFreshness(config: CertificateConfig) {
+        val now = System.currentTimeMillis()
+        if (config.expiresAt <= 0L) {
+            throw SecurityException(
+                "Signed config missing expiresAt — refusing to apply. " +
+                "Server must populate expiresAt (Unix epoch ms) to enable replay protection."
+            )
+        }
+        if (config.expiresAt <= now) {
+            throw SecurityException(
+                "Signed config expired: expiresAt=${config.expiresAt}, now=$now " +
+                "(stale by ${now - config.expiresAt}ms). Possible replay attack."
+            )
+        }
     }
 
     /** Register RSA public key for E2E vault file encryption. */

@@ -171,9 +171,44 @@ internal class SSLCertificateUpdater(
 
             val remoteConfig = configApi.fetchConfig(currentVersion)
 
-            // Per-host version comparison: check if any host changed
+            // ── Replay & downgrade guards (M-08) ────────────────────────────
+            //
+            // Two complementary checks, both must pass before we persist the
+            // fetched config. Both are no-ops on first install (no stored
+            // baseline yet) so initial enrollment continues to work.
+            //
+            //   1. issuedAt monotonicity — server stamps every signed config
+            //      with a wall-clock timestamp. An attacker capable of MITM
+            //      can replay an older signed payload; without this check the
+            //      signature alone wouldn't catch it. DefaultCertificateConfigApi
+            //      already enforces the absolute expiresAt window; this layer
+            //      adds "must be strictly newer than what we last applied".
+            //
+            //   2. Per-host version monotonicity — the existing change-detect
+            //      logic below only checked `version != stored`, which silently
+            //      accepted a downgrade if the server (or an attacker) returned
+            //      an OLDER per-host version. Reject any remote pin whose
+            //      version is below the persisted one.
+            val storedIssuedAt = configStore.getCurrentIssuedAt()
+            if (storedIssuedAt > 0L && remoteConfig.issuedAt <= storedIssuedAt) {
+                throw SecurityException(
+                    "Config replay rejected: received issuedAt=${remoteConfig.issuedAt} " +
+                    "<= stored issuedAt=$storedIssuedAt. Possible MITM or stale-payload replay."
+                )
+            }
+
             val storedConfig = configStore.load()
             val storedVersions = storedConfig?.pins?.associate { it.hostname to it.version } ?: emptyMap()
+
+            remoteConfig.pins.forEach { remotePin ->
+                val storedVersion = storedVersions[remotePin.hostname] ?: return@forEach
+                if (remotePin.version < storedVersion) {
+                    throw SecurityException(
+                        "Per-host version downgrade rejected for ${remotePin.hostname}: " +
+                        "remote v${remotePin.version} < stored v$storedVersion."
+                    )
+                }
+            }
 
             val hasChanges = remoteConfig.forceUpdate || remoteConfig.pins.any { remotePin ->
                 val storedVersion = storedVersions[remotePin.hostname]

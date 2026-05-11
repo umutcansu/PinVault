@@ -68,6 +68,7 @@ data class ConfigApiBlock(
         private var configEndpoint: String = PinVaultConfig.DEFAULT_CONFIG_ENDPOINT
         private var healthEndpoint: String = PinVaultConfig.DEFAULT_HEALTH_ENDPOINT
         private var signaturePublicKey: String? = null
+        private var allowUnsigned: Boolean = false
         private var clientKeystoreBytes: ByteArray? = null
         private var clientKeyPassword: String = "changeit"
         private var enrollmentToken: String? = null
@@ -81,6 +82,18 @@ data class ConfigApiBlock(
         fun configEndpoint(endpoint: String) = apply { this.configEndpoint = endpoint }
         fun healthEndpoint(endpoint: String) = apply { this.healthEndpoint = endpoint }
         fun signaturePublicKey(key: String) = apply { this.signaturePublicKey = key }
+
+        /**
+         * Explicit opt-out from signed-config enforcement. Without this call,
+         * [build] requires [signaturePublicKey] to be set — protects against
+         * the common footgun of forgetting it in production, which would
+         * disable signature *and* replay/freshness protection.
+         *
+         * Only use this in tests, throwaway demos, or transitional setups
+         * where the backend has not yet been provisioned with an ECDSA
+         * signing key. Document the risk wherever it is called.
+         */
+        fun allowUnsigned() = apply { this.allowUnsigned = true }
 
         /** mTLS client keystore. Default password "changeit" is placeholder only. */
         fun clientKeystore(bytes: ByteArray, password: String = "changeit") = apply {
@@ -104,6 +117,13 @@ data class ConfigApiBlock(
         internal fun build(): ConfigApiBlock {
             require(id.isNotBlank()) { "ConfigApi id must not be blank" }
             require(configUrl.isNotBlank()) { "ConfigApi configUrl must not be blank" }
+            require(signaturePublicKey != null || allowUnsigned) {
+                "ConfigApi '$id': signaturePublicKey is required. Pass the ECDSA P-256 " +
+                "public key (X.509-encoded, Base64) via signaturePublicKey(...) — this " +
+                "is what guards against config tampering and replay attacks. If you are " +
+                "intentionally running without signed configs (tests, demos, transitional " +
+                "setup), call allowUnsigned() to opt out explicitly."
+            }
             val normalizedUrl = if (configUrl.endsWith("/")) configUrl else "$configUrl/"
             return ConfigApiBlock(
                 id = id,

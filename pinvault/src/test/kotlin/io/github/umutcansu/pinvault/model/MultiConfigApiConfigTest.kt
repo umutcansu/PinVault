@@ -15,9 +15,11 @@ class MultiConfigApiConfigTest {
         val config = PinVaultConfig.Builder()
             .configApi("prod-tls", "https://host:8091") {
                 bootstrapPins(listOf(pin("host:8091")))
+                allowUnsigned()
             }
             .configApi("secure-mtls", "https://host:8092") {
                 bootstrapPins(listOf(pin("host:8092")))
+                allowUnsigned()
             }
             .build()
 
@@ -39,7 +41,7 @@ class MultiConfigApiConfigTest {
     fun `vaultFile bound to unknown configApi id is rejected at build`() {
         try {
             PinVaultConfig.Builder()
-                .configApi("prod-tls", "https://host:8091") { bootstrapPins(listOf(pin("host:8091"))) }
+                .configApi("prod-tls", "https://host:8091") { bootstrapPins(listOf(pin("host:8091"))); allowUnsigned() }
                 .vaultFile("feature-flags") {
                     configApi("nonexistent")
                     endpoint("api/v1/vault/feature-flags")
@@ -54,7 +56,7 @@ class MultiConfigApiConfigTest {
     @Test
     fun `vaultFile bound to known configApi builds cleanly`() {
         val config = PinVaultConfig.Builder()
-            .configApi("prod", "https://host/") { bootstrapPins(listOf(pin("host"))) }
+            .configApi("prod", "https://host/") { bootstrapPins(listOf(pin("host"))); allowUnsigned() }
             .vaultFile("flags") {
                 configApi("prod")
                 endpoint("api/v1/vault/flags")
@@ -69,7 +71,7 @@ class MultiConfigApiConfigTest {
     fun `token policy without accessToken is rejected`() {
         try {
             PinVaultConfig.Builder()
-                .configApi("prod", "https://host/") { bootstrapPins(listOf(pin("host"))) }
+                .configApi("prod", "https://host/") { bootstrapPins(listOf(pin("host"))); allowUnsigned() }
                 .vaultFile("secret") {
                     configApi("prod")
                     endpoint("api/v1/vault/secret")
@@ -87,7 +89,7 @@ class MultiConfigApiConfigTest {
     fun `token_mtls policy also requires accessToken`() {
         try {
             PinVaultConfig.Builder()
-                .configApi("prod", "https://host/") { bootstrapPins(listOf(pin("host"))) }
+                .configApi("prod", "https://host/") { bootstrapPins(listOf(pin("host"))); allowUnsigned() }
                 .vaultFile("secret") {
                     configApi("prod")
                     endpoint("api/v1/vault/secret")
@@ -101,7 +103,7 @@ class MultiConfigApiConfigTest {
     @Test
     fun `public policy needs no accessToken`() {
         PinVaultConfig.Builder()
-            .configApi("prod", "https://host/") { bootstrapPins(listOf(pin("host"))) }
+            .configApi("prod", "https://host/") { bootstrapPins(listOf(pin("host"))); allowUnsigned() }
             .vaultFile("open") {
                 configApi("prod")
                 endpoint("api/v1/vault/open")
@@ -115,6 +117,7 @@ class MultiConfigApiConfigTest {
         val config = PinVaultConfig.Builder()
             .configApi("prod", "https://host/") {
                 bootstrapPins(listOf(pin("host")))
+                allowUnsigned()
                 wantPinsFor("cdn.example.com", "api.example.com")
             }
             .build()
@@ -132,8 +135,8 @@ class MultiConfigApiConfigTest {
     @Test
     fun `defaultConfigApi returns the first registered block`() {
         val config = PinVaultConfig.Builder()
-            .configApi("first", "https://first.com/") { bootstrapPins(listOf(pin("first.com"))) }
-            .configApi("second", "https://second.com/") { bootstrapPins(listOf(pin("second.com"))) }
+            .configApi("first", "https://first.com/") { bootstrapPins(listOf(pin("first.com"))); allowUnsigned() }
+            .configApi("second", "https://second.com/") { bootstrapPins(listOf(pin("second.com"))); allowUnsigned() }
             .build()
         assertEquals("first", config.defaultConfigApi?.id)
     }
@@ -141,8 +144,8 @@ class MultiConfigApiConfigTest {
     @Test
     fun `duplicate configApi id replaces the prior block`() {
         val config = PinVaultConfig.Builder()
-            .configApi("api", "https://first.com/") { bootstrapPins(listOf(pin("first.com"))) }
-            .configApi("api", "https://second.com/") { bootstrapPins(listOf(pin("second.com"))) }
+            .configApi("api", "https://first.com/") { bootstrapPins(listOf(pin("first.com"))); allowUnsigned() }
+            .configApi("api", "https://second.com/") { bootstrapPins(listOf(pin("second.com"))); allowUnsigned() }
             .build()
         assertEquals(1, config.configApis.size)
         assertEquals("https://second.com/", config.configApis["api"]!!.configUrl)

@@ -211,6 +211,9 @@ abstract class BaseDemoActivity : AppCompatActivity() {
             .configApi("default", configServerUrl) {
                 bootstrapPins(bootstrapPins)
                 configEndpoint("api/v1/certificate-config?signed=false")
+                // Demo runs against unsigned config endpoint; production
+                // apps must call signaturePublicKey(...) instead.
+                allowUnsigned()
             }
             .build()
 
@@ -270,6 +273,9 @@ abstract class BaseDemoActivity : AppCompatActivity() {
             .configApi("default", configServerUrl) {
                 bootstrapPins(bootstrapPins)
                 configEndpoint("api/v1/certificate-config?signed=false")
+                // Demo runs against unsigned config endpoint; production
+                // apps must call signaturePublicKey(...) instead.
+                allowUnsigned()
             }
             .updateIntervalMinutes(15)
             .deviceAlias(deviceName)

@@ -29,6 +29,28 @@ import java.util.Base64
 private val configJson = Json { encodeDefaults = true }
 private val aclLog = LoggerFactory.getLogger("CertificateConfigACL")
 
+/**
+ * Lifetime of a signed config response in milliseconds. After this window
+ * elapses, clients reject the payload regardless of signature validity —
+ * caps the replay opportunity for any captured signed bytes.
+ *
+ * Configurable via `CONFIG_TTL_SECONDS` env var; default 24h. The PinVault
+ * client refreshes pins every 12h by default, so 24h leaves a safety margin
+ * for transient offline periods.
+ */
+private val CONFIG_TTL_MS: Long =
+    System.getenv("CONFIG_TTL_SECONDS")?.toLongOrNull()?.times(1000L)
+        ?: (24L * 60 * 60 * 1000)
+
+/**
+ * Allowed shape for client-report identifier fields (hostname, model,
+ * manufacturer). Permissive enough to accept real Android device strings
+ * ("Google Pixel 7a", "Mi 9T", "api.example.com:8443") but rejects HTML
+ * metacharacters that would otherwise reach the admin web UI's innerHTML
+ * interpolations.
+ */
+private val CLIENT_REPORT_IDENT_REGEX = Regex("^[A-Za-z0-9._:\\- ]{1,128}$")
+
 fun Route.certificateConfigRoutes(
     configApiId: String,
     store: PinConfigStore,
@@ -161,7 +183,17 @@ fun Route.certificateConfigRoutes(
 
             val signed = call.request.queryParameters["signed"] != "false"
             if (signed) {
-                val payload = configJson.encodeToString(filtered)
+                // Stamp issuedAt/expiresAt right before signing so the
+                // freshness window is anchored to the server's wall clock at
+                // response time. The client rejects payloads where
+                // expiresAt <= now, so this TTL bounds how long a captured
+                // signed config remains replayable.
+                val now = System.currentTimeMillis()
+                val stamped = filtered.copy(
+                    issuedAt = now,
+                    expiresAt = now + CONFIG_TTL_MS
+                )
+                val payload = configJson.encodeToString(stamped)
                 val signature = signingService.sign(payload)
                 call.respond(SignedConfig(payload = payload, signature = signature))
             } else {
@@ -328,6 +360,24 @@ fun Route.certificateConfigRoutes(
         val model = body["deviceModel"]?.jsonPrimitive?.content
         val pinVersion = body["pinVersion"]?.jsonPrimitive?.intOrNull ?: 0
         val timestamp = body["timestamp"]?.jsonPrimitive?.content ?: Instant.now().toString()
+
+        // M-04: this endpoint is public, so an attacker can post arbitrary
+        // values that the admin web UI later renders. Hostname / model /
+        // manufacturer must look like hostnames / identifiers, not HTML.
+        // We reject the report rather than silently sanitizing so logs flag
+        // the abuse instead of swallowing it.
+        if (hostname.isNotBlank() && !CLIENT_REPORT_IDENT_REGEX.matches(hostname)) {
+            return@post call.respond(HttpStatusCode.BadRequest,
+                mapOf("error" to "Invalid hostname format"))
+        }
+        if (manufacturer != null && !CLIENT_REPORT_IDENT_REGEX.matches(manufacturer)) {
+            return@post call.respond(HttpStatusCode.BadRequest,
+                mapOf("error" to "Invalid deviceManufacturer format"))
+        }
+        if (model != null && !CLIENT_REPORT_IDENT_REGEX.matches(model)) {
+            return@post call.respond(HttpStatusCode.BadRequest,
+                mapOf("error" to "Invalid deviceModel format"))
+        }
 
         connectionStore.addClientReport(
             hostname = hostname,

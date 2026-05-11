@@ -73,6 +73,7 @@ class PinMismatchRecoveryTest {
             .configApi("default", TestConfig.TLS_CONFIG_URL) {
                 bootstrapPins(listOf(HostPin(TestConfig.HOST_IP, listOf(wrongPin, wrongPin))))
                 configEndpoint("api/v1/certificate-config?signed=false")
+                allowUnsigned()
             }
             .maxRetryCount(1)
             .build()

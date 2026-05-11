@@ -24,7 +24,25 @@ data class CertificateConfig(
     /** Pin configurations per hostname. */
     val pins: List<HostPin>,
     /** If true, client must update immediately regardless of schedule. */
-    val forceUpdate: Boolean = false
+    val forceUpdate: Boolean = false,
+    /**
+     * Unix epoch ms when the server signed this config. The client rejects
+     * configs whose [issuedAt] is not strictly greater than the previously
+     * applied config's [issuedAt] — guards against replay of older signed
+     * payloads even when the version bumps somehow line up.
+     *
+     * 0L means the server didn't populate the field (legacy / unsigned path);
+     * the freshness check rejects in that case.
+     */
+    val issuedAt: Long = 0L,
+    /**
+     * Unix epoch ms after which this signed config must not be applied. The
+     * client rejects configs received after this instant. Acts as the
+     * server-controlled freshness window — a captured signed config stops
+     * working once the wall clock crosses [expiresAt] regardless of how the
+     * attacker delivers it.
+     */
+    val expiresAt: Long = 0L
 ) {
     /** Computed version from per-host versions (backward compat). */
     fun computedVersion(): Int = pins.maxOfOrNull { it.version } ?: version

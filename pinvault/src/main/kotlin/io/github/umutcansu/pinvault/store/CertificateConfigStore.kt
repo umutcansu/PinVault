@@ -42,9 +42,20 @@ internal class CertificateConfigStore private constructor(private val prefs: Sha
 
     fun getCurrentVersion(): Int = prefs.getInt(KEY_VERSION, 0)
 
+    /**
+     * Returns the [CertificateConfig.issuedAt] of the most recently applied
+     * config, or 0 if no config has ever been saved (or if the stored config
+     * predates the freshness-tracking change).
+     *
+     * Used by the updater to reject replays: a freshly fetched config must
+     * have `issuedAt > getCurrentIssuedAt()` before being persisted.
+     */
+    fun getCurrentIssuedAt(): Long = prefs.getLong(KEY_ISSUED_AT, 0L)
+
     fun save(config: CertificateConfig) {
         prefs.edit().apply {
             putInt(KEY_VERSION, config.computedVersion())
+            putLong(KEY_ISSUED_AT, config.issuedAt)
 
             // Format: hostname|version|hash1,hash2
             val pinsData = config.pins.joinToString(ENTRY_SEPARATOR) { pin ->
@@ -54,7 +65,7 @@ internal class CertificateConfigStore private constructor(private val prefs: Sha
 
             apply()
         }
-        Timber.d("Certificate config saved — version: %d", config.computedVersion())
+        Timber.d("Certificate config saved — version: %d, issuedAt: %d", config.computedVersion(), config.issuedAt)
     }
 
     fun load(): CertificateConfig? {
@@ -66,12 +77,14 @@ internal class CertificateConfigStore private constructor(private val prefs: Sha
         val pins = parsePins(pinsData)
         if (pins.isEmpty()) return null
 
+        val issuedAt = prefs.getLong(KEY_ISSUED_AT, 0L)
         return CertificateConfig(
             version = version,
             pins = pins,
-            forceUpdate = false
+            forceUpdate = false,
+            issuedAt = issuedAt
         ).also {
-            Timber.d("Certificate config loaded — version: %d, %d pins", it.version, it.pins.size)
+            Timber.d("Certificate config loaded — version: %d, issuedAt: %d, %d pins", it.version, it.issuedAt, it.pins.size)
         }
     }
 
@@ -103,7 +116,12 @@ internal class CertificateConfigStore private constructor(private val prefs: Sha
                 }
             }
         } catch (e: Exception) {
-            Timber.e(e, "Failed to parse stored pins")
+            // Wipe the corrupt blob so subsequent loads don't loop on it (L-01).
+            // The next fetch will repopulate from the backend; in the meantime
+            // an empty pin list is fail-safe (DynamicSSLManager refuses
+            // connections when no pins are configured).
+            Timber.e(e, "Failed to parse stored pins — clearing corrupt store")
+            prefs.edit().clear().apply()
             emptyList()
         }
     }
@@ -118,6 +136,7 @@ internal class CertificateConfigStore private constructor(private val prefs: Sha
 
         internal const val KEY_VERSION = "config_version"
         internal const val KEY_PINS = "config_pins"
+        internal const val KEY_ISSUED_AT = "config_issued_at"
         private const val ENTRY_SEPARATOR = "\n"
         private const val FIELD_SEPARATOR = "|"
         private const val HASH_SEPARATOR = ","

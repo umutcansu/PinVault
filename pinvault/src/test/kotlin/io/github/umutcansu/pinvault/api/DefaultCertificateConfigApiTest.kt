@@ -98,11 +98,14 @@ class DefaultCertificateConfigApiTest {
         val ecKeyPair = TestCertUtil.generateEcKeyPair()
         val publicKeyBase64 = Base64.getEncoder().encodeToString(ecKeyPair.public.encoded)
 
+        val now = System.currentTimeMillis()
         val config = CertificateConfig(
             version = 5,
             pins = listOf(
                 HostPin("secure.example.com", listOf("pin1", "pin2"), version = 5)
-            )
+            ),
+            issuedAt = now,
+            expiresAt = now + 3600_000L
         )
         val payload = gson.toJson(config)
         val signature = TestCertUtil.signPayload(payload, ecKeyPair.private)
@@ -115,6 +118,61 @@ class DefaultCertificateConfigApiTest {
 
         assertEquals(5, result.version)
         assertEquals("secure.example.com", result.pins[0].hostname)
+    }
+
+    @Test
+    fun `fetchConfig rejects signed config missing expiresAt`() = runTest {
+        val ecKeyPair = TestCertUtil.generateEcKeyPair()
+        val publicKeyBase64 = Base64.getEncoder().encodeToString(ecKeyPair.public.encoded)
+
+        // Payload omits issuedAt/expiresAt — simulates a legacy server (or an
+        // attacker stripping the freshness fields before re-signing with a
+        // leaked key). The client must reject regardless of signature validity.
+        val config = CertificateConfig(
+            version = 5,
+            pins = listOf(HostPin("a.com", listOf("p1", "p2"), version = 5))
+        )
+        val payload = gson.toJson(config)
+        val signature = TestCertUtil.signPayload(payload, ecKeyPair.private)
+        val signedResponse = SignedConfigResponse(payload = payload, signature = signature)
+        server.enqueue(MockResponse().setBody(gson.toJson(signedResponse)))
+
+        val api = createApi(signaturePublicKey = publicKeyBase64)
+        try {
+            api.fetchConfig(1)
+            fail("Expected SecurityException for missing expiresAt")
+        } catch (e: SecurityException) {
+            assertTrue(e.message!!.contains("expiresAt"))
+        }
+    }
+
+    @Test
+    fun `fetchConfig rejects signed config with expired window`() = runTest {
+        val ecKeyPair = TestCertUtil.generateEcKeyPair()
+        val publicKeyBase64 = Base64.getEncoder().encodeToString(ecKeyPair.public.encoded)
+
+        // expiresAt in the past — captured-and-replayed signed payload after
+        // its freshness window has elapsed. Even though signature is valid,
+        // client must refuse to apply.
+        val now = System.currentTimeMillis()
+        val config = CertificateConfig(
+            version = 5,
+            pins = listOf(HostPin("a.com", listOf("p1", "p2"), version = 5)),
+            issuedAt = now - 86_400_000L,
+            expiresAt = now - 60_000L
+        )
+        val payload = gson.toJson(config)
+        val signature = TestCertUtil.signPayload(payload, ecKeyPair.private)
+        val signedResponse = SignedConfigResponse(payload = payload, signature = signature)
+        server.enqueue(MockResponse().setBody(gson.toJson(signedResponse)))
+
+        val api = createApi(signaturePublicKey = publicKeyBase64)
+        try {
+            api.fetchConfig(1)
+            fail("Expected SecurityException for expired config")
+        } catch (e: SecurityException) {
+            assertTrue(e.message!!.contains("expired") || e.message!!.contains("replay"))
+        }
     }
 
     @Test

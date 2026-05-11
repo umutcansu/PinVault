@@ -275,4 +275,91 @@ class SSLCertificateUpdaterTest {
         // Should fail validation (require pins.isNotEmpty())
         assertTrue("Expected Failed but got $result", result is UpdateResult.Failed)
     }
+
+    // ── Replay & downgrade guards (M-08) ────────────────────────────────────
+
+    @Test
+    fun `updateNow — issuedAt eşit ya da geçmiş ise replay reddedilir`() = runTest {
+        val storedIssuedAt = 1_000_000_000_000L
+        val stored = CertificateConfig(
+            version = 5,
+            pins = listOf(HostPin("api.test", listOf(pin1, pin2), version = 5)),
+            issuedAt = storedIssuedAt
+        )
+        // Remote claims a different host changed (would normally pass change
+        // detection) but uses the SAME issuedAt — classic replay shape.
+        val remote = CertificateConfig(
+            version = 5,
+            pins = listOf(HostPin("api.test", listOf(pin1, pin2), version = 5)),
+            issuedAt = storedIssuedAt
+        )
+
+        every { configStore.getCurrentVersion() } returns 5
+        every { configStore.getCurrentIssuedAt() } returns storedIssuedAt
+        every { configStore.load() } returns stored
+        coEvery { configApi.fetchConfig(5) } returns remote
+
+        val updater = createUpdater()
+        val result = updater.updateNow()
+
+        assertTrue("Expected Failed for replay, got $result", result is UpdateResult.Failed)
+        val failure = result as UpdateResult.Failed
+        assertTrue(
+            "Failure must mention replay: ${failure.reason}",
+            failure.reason.contains("replay", ignoreCase = true) || failure.reason.contains("issuedAt")
+        )
+    }
+
+    @Test
+    fun `updateNow — per-host version downgrade reddedilir`() = runTest {
+        val stored = CertificateConfig(
+            version = 5,
+            pins = listOf(HostPin("api.test", listOf(pin1, pin2), version = 5)),
+            issuedAt = 1_000L
+        )
+        // Remote serves a fresh issuedAt but the per-host version went BACKWARDS
+        // — an attacker rotated their captured config but kept the older pins.
+        val remote = CertificateConfig(
+            version = 3,
+            pins = listOf(HostPin("api.test", listOf(pin1, pin2), version = 3)),
+            issuedAt = 2_000L
+        )
+
+        every { configStore.getCurrentVersion() } returns 5
+        every { configStore.getCurrentIssuedAt() } returns 1_000L
+        every { configStore.load() } returns stored
+        coEvery { configApi.fetchConfig(5) } returns remote
+
+        val updater = createUpdater()
+        val result = updater.updateNow()
+
+        assertTrue("Expected Failed for downgrade, got $result", result is UpdateResult.Failed)
+        val failure = result as UpdateResult.Failed
+        assertTrue(
+            "Failure must mention downgrade: ${failure.reason}",
+            failure.reason.contains("downgrade", ignoreCase = true)
+        )
+    }
+
+    @Test
+    fun `updateNow — ilk fetch (storedIssuedAt 0) yeni config'i kabul eder`() = runTest {
+        // No prior config persisted → storedIssuedAt == 0L → replay check is
+        // a no-op so the very first remote config can install cleanly.
+        val remote = CertificateConfig(
+            version = 1,
+            pins = listOf(HostPin("api.test", listOf(pin1, pin2), version = 1)),
+            issuedAt = 1_000L
+        )
+
+        every { configStore.getCurrentVersion() } returns 0
+        every { configStore.getCurrentIssuedAt() } returns 0L
+        every { configStore.load() } returns null
+        coEvery { configApi.fetchConfig(0) } returns remote
+
+        val updater = createUpdater()
+        val result = updater.updateNow()
+
+        assertTrue("Expected Updated, got $result", result is UpdateResult.Updated)
+        verify { configStore.save(remote) }
+    }
 }

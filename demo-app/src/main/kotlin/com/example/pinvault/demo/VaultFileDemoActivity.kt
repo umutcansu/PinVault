@@ -107,6 +107,7 @@ class VaultFileDemoActivity : AppCompatActivity() {
             .configApi("default", CONFIG_SERVER_URL) {
                 bootstrapPins(bootstrapPins)
                 configEndpoint("api/v1/certificate-config?signed=false")
+                allowUnsigned()
             }
             .deviceAlias(deviceName)
             .vaultFile(keyFlags) {

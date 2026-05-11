@@ -132,6 +132,7 @@ class VaultSecurityDemoActivity : AppCompatActivity() {
                 bootstrapPins(bootstrapPinsTls)
                 configEndpoint("api/v1/certificate-config?signed=false")
                 wantPinsFor(HOST_IP)
+                allowUnsigned()
             }
             // Public file — no token, no encryption
             .vaultFile(keyPublic) {
