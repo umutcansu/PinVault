@@ -7,4 +7,19 @@
 -->
 <full-backup-content>
     <exclude domain="sharedpref" path="pinvault_client_cert.xml" />
+    <!--
+      Pin config'ler de yedeklemeden haric tutulur (M-07): aksi halde
+      saldirgan eski cihaz yedegini geri yukleyerek pin downgrade tetikleyebilir
+      (sertifika rotasyonu oncesi pin set'i geri gelir).
+    -->
+    <exclude domain="sharedpref" path="ssl_cert_config.xml" />
+    <!--
+      V2'de her Config API kendi ssl_cert_config_<id>.xml dosyasinda tutulur.
+      Wildcard desteklenmediginden bilinen ID'leri ayrica eklemek gerekebilir;
+      default-tls ve secure-mtls ornek olarak burada.
+    -->
+    <exclude domain="sharedpref" path="ssl_cert_config_default-tls.xml" />
+    <exclude domain="sharedpref" path="ssl_cert_config_secure-mtls.xml" />
+    <!-- Vault file store (Android Keystore'a bagli, transfer edilemez) -->
+    <exclude domain="sharedpref" path="pinvault_vault_files.xml" />
 </full-backup-content>

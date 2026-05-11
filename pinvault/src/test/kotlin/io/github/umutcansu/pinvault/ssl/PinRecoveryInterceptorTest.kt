@@ -160,18 +160,17 @@ class PinRecoveryInterceptorTest {
     }
 
     @Test
-    fun `SSLHandshakeException with pinning message triggers recovery`() {
+    fun `SSLHandshakeException without CertificateException cause does NOT trigger recovery`() {
+        // Pre-V2 the interceptor matched on the string "Certificate pinning" in
+        // the exception message. That was fragile — OkHttp/Conscrypt wording
+        // shifts could silently break recovery. Now only the typed cause path
+        // is honoured, so a handshake error lacking a CertificateException
+        // cause must pass through untouched even if the message hints at pinning.
         var updaterCalled = false
-        val newClient = mockk<OkHttpClient>()
-        val newCall = mockk<okhttp3.Call>()
-        val retryResponse = mockk<Response>(relaxed = true)
-        every { retryResponse.code } returns 200
-        every { newClient.newCall(any()) } returns newCall
-        every { newCall.execute() } returns retryResponse
 
         val interceptor = PinRecoveryInterceptor(
             updater = { updaterCalled = true; true },
-            newClientProvider = { newClient }
+            newClientProvider = { OkHttpClient() }
         )
 
         val chain = mockk<Interceptor.Chain>()
@@ -179,9 +178,12 @@ class PinRecoveryInterceptorTest {
         every { chain.request() } returns request
         every { chain.proceed(any()) } throws javax.net.ssl.SSLHandshakeException("Certificate pinning failure for host")
 
-        val response = interceptor.intercept(chain)
-        assertTrue(updaterCalled)
-        assertEquals(200, response.code)
+        try {
+            interceptor.intercept(chain)
+            fail("Expected SSLHandshakeException to pass through")
+        } catch (e: javax.net.ssl.SSLHandshakeException) {
+            assertFalse("Updater must NOT be called for message-only matches", updaterCalled)
+        }
     }
 
     @Test

@@ -255,6 +255,10 @@ object PinVault {
                         token: String?, deviceId: String?, deviceAlias: String?, deviceUid: String?
                     ) = io.github.umutcansu.pinvault.model.EnrollmentResult(ByteArray(0), null)
                 }
+                // Static-pin mode never fetches mTLS host certs, so the
+                // clientKeyPassword is unused in this branch. Pass an empty
+                // string rather than the legacy "changeit" placeholder —
+                // a hardcoded password value should never appear in source.
                 updater = SSLCertificateUpdater(
                     context = appContext,
                     configApi = this.configApi,
@@ -262,7 +266,7 @@ object PinVault {
                     httpClientProvider = clientProvider,
                     sslManager = sslManager,
                     certStore = ClientCertSecureStore(appContext),
-                    clientKeyPassword = "changeit",
+                    clientKeyPassword = "",
                     maxRetryCount = config.maxRetryCount
                 )
             }
@@ -508,6 +512,12 @@ object PinVault {
         }
 
         return try {
+            // SECURITY NOTE (M-02): ANDROID_ID is a soft identifier. On rooted
+            // devices it can be spoofed; on multi-user devices it is per-user.
+            // Treat the resulting enrollment as a convenience credential, not
+            // a hardware-attested identity. For high-assurance use cases, gate
+            // enrollment behind Play Integrity / SafetyNet attestation before
+            // calling this method.
             val deviceId = android.provider.Settings.Secure.getString(
                 context.contentResolver, android.provider.Settings.Secure.ANDROID_ID
             ) ?: "unknown-device"
@@ -769,21 +779,26 @@ object PinVault {
     }
 
     /**
-     * Validates P12 bytes: checks SHA-256 hash (if server provides it) and PKCS12 format.
+     * Validates P12 bytes: requires server-supplied SHA-256 hash and PKCS12
+     * format. The hash header is mandatory — a MITM that drops the header
+     * could otherwise inject a P12 with an attacker-controlled cert (H-05).
      */
     private fun validateP12(p12Bytes: ByteArray, serverHash: String?, password: String) {
-        // 1. Hash verification (if server provides X-P12-SHA256 header)
-        if (serverHash != null) {
-            val localHash = java.security.MessageDigest.getInstance("SHA-256")
-                .digest(p12Bytes)
-                .let { android.util.Base64.encodeToString(it, android.util.Base64.NO_WRAP) }
-            if (localHash != serverHash) {
-                throw SecurityException("P12 integrity check failed — SHA-256 mismatch (transport corruption or tampering)")
-            }
-            Timber.d("P12 SHA-256 hash verified")
-        } else {
-            Timber.w("Server did not provide X-P12-SHA256 header — hash verification skipped")
+        // 1. Hash verification — server MUST provide X-P12-SHA256 header.
+        if (serverHash.isNullOrBlank()) {
+            throw SecurityException(
+                "Server did not provide X-P12-SHA256 header — refusing to install P12. " +
+                "The enrollment endpoint must return the SHA-256 of the P12 bytes so the " +
+                "client can detect transport-level tampering or header stripping."
+            )
         }
+        val localHash = java.security.MessageDigest.getInstance("SHA-256")
+            .digest(p12Bytes)
+            .let { android.util.Base64.encodeToString(it, android.util.Base64.NO_WRAP) }
+        if (localHash != serverHash) {
+            throw SecurityException("P12 integrity check failed — SHA-256 mismatch (transport corruption or tampering)")
+        }
+        Timber.d("P12 SHA-256 hash verified")
 
         // 2. PKCS12 format validation
         val ks = java.security.KeyStore.getInstance("PKCS12")
