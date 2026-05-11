@@ -105,13 +105,13 @@ pin := base64.StdEncoding.EncodeToString(hash[:])
 
 ---
 
-### 3. Signed Config (OPTIONAL)
+### 3. Signed Config (REQUIRED — unless the client calls `allowUnsigned()`)
 
-If you want config integrity verification, wrap the config in a signed envelope:
+Wrap the config in a signed envelope:
 
 ```json
 {
-  "payload": "{\"version\":1,\"pins\":[...]}",
+  "payload": "{\"version\":1,\"pins\":[...],\"issuedAt\":1715423456789,\"expiresAt\":1715509856789}",
   "signature": "MEUCIQD...base64..."
 }
 ```
@@ -119,16 +119,29 @@ If you want config integrity verification, wrap the config in a signed envelope:
 - `payload` — the config JSON as a **string** (not object)
 - `signature` — ECDSA-SHA256 signature of the payload string, Base64-encoded
 
+The payload JSON itself **MUST** include freshness fields (alongside the usual `version`, `pins`, `forceUpdate`):
+
+| Field | Type | Required | Purpose |
+|---|---|---|---|
+| `issuedAt` | Long (Unix epoch **ms**) | Yes | Wall-clock moment the response was signed. Clients reject any new response whose `issuedAt` is not strictly greater than the previously applied config's `issuedAt` — guards against replay even when the signature is still cryptographically valid. |
+| `expiresAt` | Long (Unix epoch **ms**) | Yes | Freshness window. Clients reject the response once the local clock crosses `expiresAt`, regardless of signature. Typical TTL: 24h (reference server's `CONFIG_TTL_SECONDS`). |
+
+Missing or zero values for either field cause the client to refuse the response.
+
 **Signing spec:**
 - Algorithm: `SHA256withECDSA`
 - Key: ECDSA P-256 (secp256r1)
-- Input: UTF-8 bytes of `payload` string
+- Input: UTF-8 bytes of `payload` string (which includes `issuedAt` / `expiresAt`)
 
 **Python:**
 ```python
 from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.asymmetric import ec
-import json, base64
+import json, base64, time
+
+now_ms = int(time.time() * 1000)
+config_dict["issuedAt"] = now_ms
+config_dict["expiresAt"] = now_ms + 24 * 60 * 60 * 1000  # 24h window
 
 payload = json.dumps(config_dict)
 signature = private_key.sign(payload.encode(), ec.ECDSA(hashes.SHA256()))
@@ -137,10 +150,15 @@ response = {"payload": payload, "signature": base64.b64encode(signature).decode(
 
 The Android library needs the **public key** (Base64 X.509 encoded) configured at build time:
 ```kotlin
-PinVaultConfig.Builder("https://api.example.com/")
-    .signaturePublicKey("MFkwEwYHKoZIzj0CAQYIKoZI...")
+PinVaultConfig.Builder()
+    .configApi("api", "https://api.example.com/") {
+        bootstrapPins(...)
+        signaturePublicKey("MFkwEwYHKoZIzj0CAQYIKoZI...")  // REQUIRED
+    }
     .build()
 ```
+
+For dev/test setups against an unsigned endpoint, callers can opt out with `allowUnsigned()` inside the `configApi { }` block. Don't ship that to production — it disables signature, freshness, and replay protection together.
 
 ---
 
@@ -171,12 +189,12 @@ Content-Type: application/json
 
 **Response:** Raw PKCS12 bytes (`Content-Type: application/octet-stream`)
 
-**Optional response header:**
+**Required response header:**
 ```
 X-P12-SHA256: base64-encoded-sha256-of-response-body
 ```
 
-If this header is present, the library verifies the P12 integrity.
+The library refuses to install the P12 if this header is missing or its value doesn't match the computed SHA-256 of the body. Guards against a header-stripping MITM that drops the integrity check to inject an attacker-controlled P12. Compute it as `base64(sha256(p12Bytes))` with no padding stripping.
 
 **PKCS12 requirements:**
 - Must contain at least 1 private key + certificate entry

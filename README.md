@@ -203,10 +203,19 @@ design — PinVault never plants on its own.
 PinVaultConfig.Builder()
     .configApi("api", "https://api.example.com/") {
         bootstrapPins(listOf(HostPin("api.example.com", listOf("pin1...", "pin2..."))))
-        signaturePublicKey("MFkwEwYH...")              // optional: ECDSA verification
+        signaturePublicKey("MFkwEwYH...")              // REQUIRED unless allowUnsigned() is called
         wantPinsFor("cdn.example.com", "api.example.com") // optional: scope request
     }
     .build()
+```
+
+`signaturePublicKey` is required — it guards against config tampering and replay attacks. The matching ECDSA P-256 private key lives on the server; the public half goes into your APK at build time. For tests or transitional setups against an unsigned endpoint, call `allowUnsigned()` instead:
+
+```kotlin
+.configApi("api", "https://api.example.com/") {
+    bootstrapPins(...)
+    allowUnsigned()    // opt out — disables signature, freshness, and replay checks
+}
 ```
 
 ### Multi-Config-API
@@ -382,19 +391,34 @@ Server dashboard shows which device has which certificate and vault file version
 
 ```bash
 cd demo-server
-API_KEY=your-secret docker compose up
+API_KEY=your-secret SIGNING_KEY_PASSWORD=your-other-secret docker compose up
 ```
 
 Dashboard: `http://localhost:8080`
 API docs (Swagger): `http://localhost:8080/docs`
+
+#### Required env vars
+
+| Variable | Required? | Purpose |
+|---|---|---|
+| `API_KEY` | Required | X-API-Key header value for management endpoints. Server refuses to start when unset — pass `ALLOW_ANONYMOUS_ADMIN=true` to opt out (dev only). |
+
+#### Optional env vars
+
+| Variable | Default | Purpose |
+|---|---|---|
+| `SIGNING_KEY_PASSWORD` | unset | AES-256-GCM encrypts the ECDSA signing key on disk (PBKDF2-SHA256). When unset, the key is written plaintext + chmod 600 + warning logged. Existing plaintext keys are auto-migrated on startup. |
+| `CONFIG_TTL_SECONDS` | `86400` (24h) | How long a signed config response stays valid before clients reject it as replayed. Lower = tighter replay window; too low risks rejecting cached configs from offline devices. |
+| `ENROLLMENT_MODE` | `token` | `token` (production) requires an enrollment token; `open` allows deviceId-only enrollment (demo only). |
+| `ALLOW_ANONYMOUS_ADMIN` | unset | Set to `true` to allow startup with no `API_KEY` (anonymous admin). Logs a warning. Do not use on any network you don't control. |
 
 ### Build your own server
 
 See [SERVER_IMPLEMENTATION_GUIDE.md](SERVER_IMPLEMENTATION_GUIDE.md) for the API contract. Your server needs 3 endpoints:
 
 1. `GET /health` — return `{"status":"ok"}`
-2. `GET /api/v1/certificate-config` — return pin config JSON
-3. `POST /api/v1/client-certs/enroll` — return PKCS12 bytes (if using mTLS)
+2. `GET /api/v1/certificate-config` — return a signed envelope `{payload, signature}` whose payload includes `issuedAt`/`expiresAt` (ECDSA-SHA256 with a P-256 key). The library refuses unsigned/missing-freshness responses unless the caller explicitly opts in via `allowUnsigned()`.
+3. `POST /api/v1/client-certs/enroll` — return PKCS12 bytes (if using mTLS) **plus** an `X-P12-SHA256` response header so the library can verify integrity.
 
 Works with any language: Python, Node.js, Go, .NET, etc.
 

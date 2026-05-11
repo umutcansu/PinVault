@@ -1,5 +1,39 @@
 # Changelog
 
+## Unreleased — Security hardening
+
+**Breaking** — this stream of changes flips several "optional" defenses into "required" defaults. See `MIGRATION.md` for the upgrade path.
+
+### Library (breaking)
+
+- **`signaturePublicKey` is now required.** `ConfigApiBlock.Builder.build()` throws unless `signaturePublicKey(...)` is set, or `allowUnsigned()` is called as an explicit opt-out. Closes the silent-disable footgun (H-03).
+- **Signed configs must carry `issuedAt` + `expiresAt`** (Unix epoch ms). The library rejects responses where `expiresAt <= now`, `issuedAt <= storedIssuedAt`, or either field is missing. Closes the replay window even when the signature is still cryptographically valid (M-08).
+- **Per-host pin enforcement.** Pin lookup is now keyed by hostname (with single-label wildcard support `*.example.com`). A pin entry for host A no longer validates a cert on host B; unknown hostnames fail closed. Pre-V3 the library flattened every host's hashes into one set (H-01).
+- **Per-host version monotonicity.** Updater rejects fetched configs whose per-host `version` is lower than the stored value — closes a downgrade attack the prior change-detect logic permitted (M-08).
+- **Enrollment requires `X-P12-SHA256` response header.** Enrollment refuses to install a P12 if the header is missing; previously the check was skipped with a warning (H-05).
+- **`PinRecoveryInterceptor` no longer matches exception messages.** Recovery is driven by typed `CertificateException` causes only. Adds a per-host circuit breaker (3 failures in 5 min → 10 min cooldown) so a poisoned backend can't thrash the client (M-03).
+
+### Library (non-breaking)
+
+- Pin-mismatch logs no longer dump the full accepted-hashes list — only a short cert-hash prefix (M-01).
+- `ANDROID_ID` auto-enrollment annotated as a soft identifier; production callers should layer Play Integrity / SafetyNet on top (M-02).
+- Backup rules exclude `ssl_cert_config_*.xml` and the vault file store so an attacker can't pin-downgrade by restoring a pre-rotation device backup (M-07).
+- `CertificateConfigStore` wipes the prefs on parse failure so a corrupt blob can't loop on every load (L-01).
+- Dropped the leftover `"changeit"` placeholder from the static-pin init path (M-06).
+
+### Demo server (breaking)
+
+- **`API_KEY` env var is now required to start.** Set `ALLOW_ANONYMOUS_ADMIN=true` to opt out explicitly (dev). Previous behavior silently disabled auth on missing env var — `docker compose up` from the demo file would have shipped an open admin API (C-01).
+- **Every signed `/api/v1/certificate-config` response carries `issuedAt` + `expiresAt`.** TTL via `CONFIG_TTL_SECONDS` env var (default 24h). Required by the new library freshness check.
+
+### Demo server (non-breaking)
+
+- `SIGNING_KEY_PASSWORD` env var enables AES-256-GCM at-rest encryption (PBKDF2-SHA256, 200k iterations) of the ECDSA signing key. Existing plaintext key files are auto-migrated on first startup with the env var set (H-04).
+- `DefaultHeaders` plugin installs CSP, X-Content-Type-Options, X-Frame-Options, Referrer-Policy on the management server. Tightens the admin UI's XSS surface (M-05).
+- Connection-report endpoint regex-validates `hostname`, `deviceManufacturer`, `deviceModel`. Vault `{key}` parameter regex-validated as defense-in-depth (M-04, L-02).
+- Admin web UI escapes server-supplied strings via `esc()` helper before innerHTML interpolation in connection-history, client-device, pin-history, and global-health views (H-02).
+- BouncyCastle `bcprov-jdk18on` / `bcpkix-jdk18on` 1.78.1 → 1.79 (L-03).
+
 ## 2.0.0 — 2026-04-17
 
 **PinVault 2.0 — Multi-Config-API + Vault Scoping + Per-File Security.**

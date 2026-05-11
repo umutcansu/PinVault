@@ -3,6 +3,111 @@
 PinVault 2.0 uses a unified multi-Config-API DSL. This document is a quick
 reference for how to configure it in common scenarios.
 
+## Upgrading from 2.0.x to the security-hardened stream
+
+The hardening changes (per-host pinning, required signatures, replay/freshness,
+required P12 hash) flip several defenses from "optional" to "required". The
+upgrade path depends on what your backend already does.
+
+### 1. `signaturePublicKey` is now required on every `ConfigApiBlock`
+
+```kotlin
+// Before — accepted silently, signatures off.
+.configApi("api", "https://api.example.com/") {
+    bootstrapPins(...)
+}
+
+// After — `build()` throws IllegalArgumentException unless one of these is set.
+.configApi("api", "https://api.example.com/") {
+    bootstrapPins(...)
+    signaturePublicKey("MFkwEwYHKoZIzj0CAQYIKoZI...")   // production
+}
+
+// OR, for tests / unsigned-endpoint demos:
+.configApi("api", "https://api.example.com/") {
+    bootstrapPins(...)
+    allowUnsigned()    // disables signature, freshness, replay checks together
+}
+```
+
+The exception message points at the same fix: set `signaturePublicKey(...)` or
+call `allowUnsigned()` to opt out explicitly.
+
+### 2. Signed configs must include `issuedAt` and `expiresAt`
+
+If you run the demo server, you already get this — it stamps the fields and
+honors `CONFIG_TTL_SECONDS` (default 24h).
+
+If you run your own server, the signed payload must now look like:
+
+```json
+{
+  "version": 3,
+  "pins": [...],
+  "issuedAt": 1715423456789,
+  "expiresAt": 1715509856789
+}
+```
+
+Both fields are Unix epoch **milliseconds**. Set `issuedAt = now()` and
+`expiresAt = now() + ttl` right before signing. The library rejects responses
+where either field is missing/zero, where `expiresAt <= now`, or where
+`issuedAt <= storedIssuedAt`. See `SERVER_IMPLEMENTATION_GUIDE.md` for sample
+signing code.
+
+### 3. Enrollment must return `X-P12-SHA256` header
+
+```
+HTTP/1.1 200 OK
+Content-Type: application/octet-stream
+X-P12-SHA256: <base64(sha256(p12Bytes))>
+
+<p12 bytes>
+```
+
+The library refuses to install a P12 if the header is absent. Compute the
+SHA-256 over the response body and Base64-encode it (no padding stripping).
+
+### 4. Pin scoping is per-host
+
+Pin entries no longer cross-validate hosts. If your config registers pins for
+both `bank.com` and `analytics.com`, the bank cert will only validate on
+`bank.com` — analytics's pins cannot be used to MITM the bank channel even
+when their private key leaks.
+
+Wildcard support is RFC-6125-style single-label: `*.example.com` matches
+`api.example.com` and `cdn.example.com`, but **not** `example.com` (apex) or
+`a.b.example.com` (multi-label).
+
+### 5. Per-host version downgrade is rejected
+
+`updateNow()` now refuses a fetched config whose `HostPin.version` is lower
+than the stored value for the same hostname. If you intentionally rolled back
+a host's pin set (e.g., to revoke a bad rotation), bump the per-host
+`version` past the previous value rather than resetting it.
+
+### 6. Demo server: `API_KEY` is now required to start
+
+```bash
+# Before — silently disabled auth.
+docker compose up
+
+# After — refuses to start.
+API_KEY=your-secret docker compose up
+
+# Or opt out explicitly (dev only):
+ALLOW_ANONYMOUS_ADMIN=true docker compose up
+```
+
+### Suggested rollout order
+
+1. Update server first so signed responses carry `issuedAt`/`expiresAt` and
+   enrollment returns `X-P12-SHA256`.
+2. Update client APK; the new library accepts both old (legacy-pinned) and new
+   pin entries — only the signature/freshness checks are stricter.
+3. Once all devices are on the new APK, you can tighten per-host version
+   sequences and turn off `allowUnsigned()` in any remaining test fixtures.
+
 ## Single Config API
 
 Simplest setup — one backend, one or more vault files.
