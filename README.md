@@ -123,6 +123,41 @@ Both `getClient()` and `applyTo(builder)` install the **pin-recovery
 interceptor**, so a pin mismatch is automatically retried after a
 config refresh.
 
+#### Reading the current pins (multi-module setups)
+
+If your HTTP client lives in a separate Gradle module that doesn't depend
+on PinVault — e.g. a lean `:network` module behind an interface — pass the
+raw pin set across the module boundary:
+
+```kotlin
+// In :app — orchestrate PinVault, hand pins to network module
+PinVault.init(this, config) {
+    NetworkModule.applyPins(PinVault.currentPins)
+}
+PinVault.setOnUpdateListener {
+    if (it is UpdateResult.Updated) NetworkModule.applyPins(PinVault.currentPins)
+}
+```
+
+```kotlin
+// In :network — no PinVault dependency, accepts a plain Map
+fun applyPins(pins: Map<String, List<String>>) {
+    val pinner = CertificatePinner.Builder().apply {
+        pins.forEach { (host, hashes) -> hashes.forEach { add(host, "sha256/$it") } }
+    }.build()
+    // rebuild your OkHttpClient with this pinner
+}
+```
+
+Accessors:
+
+| Accessor | Returns |
+|---|---|
+| `PinVault.currentPins` (property) | `Map<hostname, List<sha256-base64>>` snapshot of every host in the active config |
+| `PinVault.pinsForHost(hostname)` | `List<sha256-base64>?` for a single host, or `null` if the host has no entry |
+
+Pin values are raw Base64 (no `sha256/` prefix) — prepend `"sha256/"` when feeding OkHttp's `CertificatePinner.Builder.add(...)`.
+
 ### 4. (Optional) Subscribe to connection events
 
 PinVault emits a `PinVaultConnectionEvent.Connection` to a registered
