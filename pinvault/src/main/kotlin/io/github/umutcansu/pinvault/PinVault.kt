@@ -754,6 +754,48 @@ object PinVault {
     }
 
     /**
+     * Returns the currently applied SHA-256 SPKI pin hashes for [hostname],
+     * or `null` if the host has no entry in the active config. Hashes are
+     * Base64-encoded (no `sha256/` prefix) — prepend `"sha256/"` yourself
+     * when handing them to OkHttp's [okhttp3.CertificatePinner.Builder.add].
+     *
+     * Intended for setups where a separate networking module owns its own
+     * HTTP client and PinVault is not a direct dependency there. The
+     * caller should re-extract after every [OnUpdateListener] callback so
+     * the local pinner stays in sync with the dynamic config — the snapshot
+     * returned here goes stale the moment a new config is applied.
+     *
+     * Hostname matching is case-insensitive on the exact entry; wildcard
+     * patterns like `*.example.com` are returned as-is and not expanded.
+     */
+    fun pinsForHost(hostname: String): List<String>? {
+        checkInitialized()
+        val needle = hostname.lowercase()
+        return clientProvider.currentConfig?.pins
+            ?.firstOrNull { it.hostname.lowercase() == needle }
+            ?.sha256
+    }
+
+    /**
+     * Snapshot of every hostname → pin-list pair in the active config.
+     * Empty when no config has been applied yet.
+     *
+     * Wildcard entries (e.g. `*.example.com`) are preserved verbatim — it is
+     * the caller's job to decide how to expand them for their HTTP client.
+     *
+     * Exposed as a property (not a function) — callers can write
+     * `PinVault.currentPins` directly, no parentheses. Keeps the read-only
+     * feel for a parameterless snapshot.
+     */
+    val currentPins: Map<String, List<String>>
+        get() {
+            checkInitialized()
+            return clientProvider.currentConfig?.pins
+                ?.associate { it.hostname to it.sha256 }
+                ?: emptyMap()
+        }
+
+    /**
      * Returns true if the backend has set forceUpdate=true in the current config,
      * meaning the client must update pins immediately without prompting the user.
      */
