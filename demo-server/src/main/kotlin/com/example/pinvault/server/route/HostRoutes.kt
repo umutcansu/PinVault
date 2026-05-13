@@ -443,23 +443,25 @@ fun Route.hostRoutes(
                 val hostname = call.parameters["hostname"] ?: ""
                 // Mock server + keystore hostname başına global; scope'ta kayıt yoksa
                 // diğer scope'lardaki kayda fallback et (UI'da "host bulunamadı" toast'ı
-                // yerine gerçek mock durumunu göstermek için).
+                // yerine gerçek mock durumunu göstermek için). Pin listesinde olup
+                // hostStore'da hiç kaydı olmayan host'lar (URL'den çekilmiş, elle pin
+                // girilmiş) için 404 yerine minimal status döndürüyoruz — UI sidebar
+                // her host için /status çağırıyor, 404 sadece konsol gürültüsü.
                 val hostRecord = hostStore.get(hostname, call.scopedApiId())
                     ?: hostStore.getAnyByHostname(hostname)
-                    ?: return@get call.respondText("{\"error\":\"Host bulunamadi\"}", ContentType.Application.Json, HttpStatusCode.NotFound)
 
                 val tlsPort = mockServerManager.getTlsPort(hostname)
                 val mtlsPort = mockServerManager.getMtlsPort(hostname)
                 call.respond(HostStatusResponse(
                     hostname = hostname,
-                    keystorePath = hostRecord.keystorePath,
-                    certValidUntil = hostRecord.certValidUntil,
+                    keystorePath = hostRecord?.keystorePath,
+                    certValidUntil = hostRecord?.certValidUntil,
                     mockServerRunning = mockServerManager.isRunning(hostname),
                     mockServerPort = tlsPort ?: mtlsPort,
                     mockServerMode = mockServerManager.getMode(hostname) ?: "tls",
                     mockTlsPort = tlsPort,
                     mockMtlsPort = mtlsPort,
-                    createdAt = hostRecord.createdAt
+                    createdAt = hostRecord?.createdAt
                 ))
             }
 

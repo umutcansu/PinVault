@@ -471,15 +471,16 @@ function pagControls(key, info, onChangeGlobalFn) {
   // prev/next butonları sadece birden fazla sayfa varsa aktif.
   const prev = info.page > 0;
   const next = info.page < info.pageCount - 1;
+  const cb = onChangeGlobalFn ? esc(onChangeGlobalFn) : '';
   const btn = (label, enabled, newPage) => enabled
-    ? `<button class="btn" style="padding:2px 8px;font-size:11px" onclick="pagGo('${key}',${newPage},${onChangeGlobalFn ? `'${onChangeGlobalFn}'` : 'null'})">${label}</button>`
+    ? `<button class="btn" style="padding:2px 8px;font-size:11px" data-action="pagGo" data-arg0="${esc(key)}" data-arg1="${newPage}" data-arg2="${cb}">${label}</button>`
     : `<button class="btn" style="padding:2px 8px;font-size:11px;opacity:.35;cursor:not-allowed" disabled>${label}</button>`;
   const sizeOpts = [10, 25, 50, 100].map(s => `<option value="${s}" ${s === info.size ? 'selected' : ''}>${s}</option>`).join('');
   const shownStart = info.total === 0 ? 0 : info.page * info.size + 1;
   const shownEnd = Math.min(info.total, (info.page + 1) * info.size);
   return `<div style="display:flex;gap:8px;align-items:center;padding:6px 0;font-size:11px;color:#94a3b8;justify-content:flex-end">
     <span>${shownStart}-${shownEnd} / ${info.total}</span>
-    <select onchange="pagSize('${key}',this.value,${onChangeGlobalFn ? `'${onChangeGlobalFn}'` : 'null'})" style="background:#0f172a;color:#e2e8f0;border:1px solid #334155;border-radius:4px;padding:2px 4px;font-size:11px">${sizeOpts}</select>
+    <select data-action-change="pagSizeChange" data-arg0="${esc(key)}" data-arg1="${cb}" data-event="1" style="background:#0f172a;color:#e2e8f0;border:1px solid #334155;border-radius:4px;padding:2px 4px;font-size:11px">${sizeOpts}</select>
     ${btn('«', prev, 0)}
     ${btn('‹', prev, info.page - 1)}
     <span>${info.page + 1} / ${info.pageCount}</span>
@@ -490,7 +491,7 @@ function pagControls(key, info, onChangeGlobalFn) {
 
 function pagGo(key, page, onChangeGlobalFn) {
   const st = _pagState[key] || (_pagState[key] = { page: 0, size: PAG_DEFAULT_SIZE });
-  st.page = page;
+  st.page = parseInt(page, 10) || 0;
   if (onChangeGlobalFn && typeof window[onChangeGlobalFn] === 'function') window[onChangeGlobalFn]();
 }
 function pagSize(key, size, onChangeGlobalFn) {
@@ -586,13 +587,13 @@ function renderHostListSync() {
     const stoppedBadge = !isRunning ? '<span style="color:#ef4444;font-size:8px;font-weight:700;margin-left:4px">●</span>' : '';
 
     html += `<div class="api-group" style="margin-bottom:4px">
-      <div class="api-header" style="padding:6px 10px;font-size:11px;font-weight:700;color:${modeColor};cursor:pointer;${apiBg};display:flex;justify-content:space-between;align-items:center;user-select:none;${!isRunning ? 'opacity:0.6;' : ''}" onclick="toggleApiTree('${api.id}')">
+      <div class="api-header" style="padding:6px 10px;font-size:11px;font-weight:700;color:${modeColor};cursor:pointer;${apiBg};display:flex;justify-content:space-between;align-items:center;user-select:none;${!isRunning ? 'opacity:0.6;' : ''}" data-action="toggleApiTree" data-arg0="${esc(api.id)}">
         <span style="display:flex;align-items:center;gap:6px">
           <span style="font-size:9px;color:#64748b">${arrow}</span>
           <span>${modeLabel} :${api.port}${stoppedBadge}</span>
           <span style="color:#475569;font-weight:400;font-size:10px">(${hostCount})</span>
         </span>
-        ${isRunning ? `<span style="font-size:16px;color:#60a5fa;cursor:pointer;line-height:1" onclick="event.stopPropagation();selectedApiId='${api.id}';showAddHost()" title="Host ekle">+</span>` : ''}
+        ${isRunning ? `<span style="font-size:16px;color:#60a5fa;cursor:pointer;line-height:1" data-action="showAddHostScoped" data-arg0="${esc(api.id)}" data-stop="1" title="Host ekle">+</span>` : ''}
       </div>`;
 
     if (isExpanded) {
@@ -622,7 +623,7 @@ function renderHostListSync() {
               hs?.keystorePath                          ? 'Cert var, mock kapalı' :
                                                           'Durum bilinmiyor';
           html += `
-            <div class="host-item ${isSelected ? 'selected' : ''}" style="margin-left:20px" onclick="selectHostInApi('${p.hostname}', '${api.id}')">
+            <div class="host-item ${isSelected ? 'selected' : ''}" style="margin-left:20px" data-action="selectHostInApi" data-arg0="${esc(p.hostname)}" data-arg1="${esc(api.id)}">
               <div class="${dotClass}" title="${dotTitle}"></div>
               <div class="host-info">
                 <div class="host-name" style="font-size:13px">${p.hostname}${forceBadge}</div>
@@ -705,13 +706,13 @@ async function renderConfigApiDetail(apiId) {
   if (!tabs.find(t => t.id === configApiTab)) configApiTab = 'general';
 
   const tabBar = tabs.map(tab =>
-    `<button class="tab-btn ${configApiTab === tab.id ? 'active' : ''}" onclick="configApiTab='${tab.id}';renderConfigApiDetail('${apiId}')">${tab.label}</button>`
+    `<button class="tab-btn ${configApiTab === tab.id ? 'active' : ''}" data-action="setConfigApiTab" data-arg0="${esc(tab.id)}" data-arg1="${esc(apiId)}">${tab.label}</button>`
   ).join('');
 
   const isRunning = api.running !== false;
   const toggleHtml = `
     <div style="display:flex;align-items:center;gap:10px">
-      <div style="cursor:pointer;display:flex;align-items:center;gap:10px" onclick="toggleConfigApi('${apiId}')">
+      <div style="cursor:pointer;display:flex;align-items:center;gap:10px" data-action="toggleConfigApi" data-arg0="${esc(apiId)}">
         <div style="width:40px;height:22px;border-radius:11px;background:${isRunning ? '#22c55e' : '#334155'};position:relative;transition:background 0.2s">
           <div style="width:18px;height:18px;border-radius:50%;background:white;position:absolute;top:2px;${isRunning ? 'right:2px' : 'left:2px'};transition:all 0.2s"></div>
         </div>
@@ -736,7 +737,7 @@ async function renderConfigApiDetail(apiId) {
         </div>
       </div>
       <div class="action-bar">
-        <button class="btn btn-danger" onclick="deleteConfigApi('${apiId}')">API Sil</button>
+        <button class="btn btn-danger" data-action="deleteConfigApi" data-arg0="${esc(apiId)}">API Sil</button>
       </div>
     </div>
     <div class="tab-bar" style="margin-bottom:16px">${tabBar}</div>
@@ -770,7 +771,7 @@ async function renderConfigApiDetail(apiId) {
           <div style="margin-top:4px">${toggleHtml}</div>
         </div>
         <div class="action-bar">
-          <button class="btn btn-danger" onclick="deleteConfigApi('${apiId}')">API Sil</button>
+          <button class="btn btn-danger" data-action="deleteConfigApi" data-arg0="${esc(apiId)}">API Sil</button>
         </div>
       </div>
       <div class="tab-bar" style="margin-bottom:16px">${tabBar}</div>
@@ -825,11 +826,11 @@ async function renderApiGeneralTab(apiId) {
       <div style="display:flex;align-items:center;gap:14px;flex-wrap:wrap">
         <label style="display:flex;align-items:center;gap:8px;cursor:pointer;color:#e2e8f0">
           <input type="checkbox" id="vault-enabled-${apiId}" ${vaultEnabled ? 'checked' : ''}
-                 onchange="setVaultEnabled('${apiId}', this.checked)"/>
+                 data-action-change="setVaultEnabledChange" data-arg0="${esc(apiId)}" data-event="1"/>
           <span>${t('vaultEnabledLabel')}</span>
         </label>
         <button class="btn btn-secondary" style="padding:4px 10px;font-size:12px"
-                onclick="showDeviceAclManager('${apiId}')">${t('manageDeviceAcl')}</button>
+                data-action="showDeviceAclManager" data-arg0="${esc(apiId)}">${t('manageDeviceAcl')}</button>
         <span style="color:#64748b;font-size:11px">${t('vaultDisabledHint')}</span>
       </div>
     </div>
@@ -881,7 +882,7 @@ async function showDeviceAclManager(configApiId) {
             <td style="font-weight:600;color:#7dd3fc">${d.device_id || d.deviceId}</td>
             <td>${label.trim() || '—'}</td>
             <td><button class="btn btn-secondary" style="padding:3px 8px;font-size:11px"
-                onclick="editDeviceAcl('${configApiId}','${d.device_id || d.deviceId}')">${t('aclEditBtn')}</button></td>
+                data-action="editDeviceAcl" data-arg0="${esc(configApiId)}" data-arg1="${esc(d.device_id || d.deviceId)}">${t('aclEditBtn')}</button></td>
           </tr>`;
         }).join('');
 
@@ -891,7 +892,7 @@ async function showDeviceAclManager(configApiId) {
           <div class="section-title-main" style="color:#7dd3fc">${t('aclManagerTitle')} — ${configApiId}</div>
           <div class="section-sub">${t('aclManagerSub')}</div>
         </div>
-        <button class="btn btn-secondary" onclick="renderConfigApiDetail('${configApiId}')">${t('aclBack')}</button>
+        <button class="btn btn-secondary" data-action="renderConfigApiDetail" data-arg0="${esc(configApiId)}">${t('aclBack')}</button>
       </div>
 
       <div class="card">
@@ -901,7 +902,7 @@ async function showDeviceAclManager(configApiId) {
           <input type="text" id="default-acl-input" class="form-input" style="flex:1"
                  placeholder="${t('defaultAclPlaceholder')}"
                  value="${defaultStr.replace(/"/g, '&quot;')}"/>
-          <button class="btn btn-primary" onclick="saveDefaultAcl('${configApiId}')">${t('aclSave')}</button>
+          <button class="btn btn-primary" data-action="saveDefaultAcl" data-arg0="${esc(configApiId)}">${t('aclSave')}</button>
         </div>
       </div>
 
@@ -1072,7 +1073,7 @@ async function renderHostDetail(host) {
     <div class="hash-label">${i === 0 ? t('primaryPin') : t('backupPin') + (i > 1 ? ' #' + i : '')}</div>
     <div class="hash-box">
       <span>sha256/${hash}</span>
-      <button class="copy-btn" onclick="copyText('${hash}')">${t('copy')}</button>
+      <button class="copy-btn" data-action="copyText" data-arg0="${esc(hash)}">${t('copy')}</button>
     </div>
   `).join('');
 
@@ -1086,7 +1087,7 @@ async function renderHostDetail(host) {
         <div class="section-sub">${host.pinCount} ${t('pins')}</div>
       </div>
       <div class="action-bar">
-        <button class="btn btn-danger" onclick="deleteHost('${host.hostname}')">${t('deleteHost')}</button>
+        <button class="btn btn-danger" data-action="deleteHost" data-arg0="${esc(host.hostname)}">${t('deleteHost')}</button>
       </div>
     </div>
 
@@ -1099,7 +1100,7 @@ async function renderHostDetail(host) {
         <div class="card-title">${t('pinCount')}</div>
         <div class="stat-value" style="color:#22c55e">${host.pinCount}</div>
       </div>
-      <div class="card" style="cursor:pointer" onclick="toggleForce('${host.hostname}')">
+      <div class="card" style="cursor:pointer" data-action="toggleForce" data-arg0="${esc(host.hostname)}">
         <div class="card-title">${t('forceStatus')}</div>
         <div style="display:flex;align-items:center;gap:10px">
           <div style="width:40px;height:22px;border-radius:11px;background:${(currentConfig.pins.find(p => p.hostname === host.hostname)?.forceUpdate) ? '#22c55e' : '#334155'};position:relative;transition:background 0.2s">
@@ -1121,7 +1122,7 @@ async function renderHostDetail(host) {
     <div class="card" id="pins-card">
       <div style="display:flex;justify-content:space-between;align-items:center">
         <div class="card-title">${t('pins')}</div>
-        <button class="btn btn-primary" style="padding:4px 12px;font-size:11px" onclick="toggleEditPins('${host.hostname}')">${t('editPins')}</button>
+        <button class="btn btn-primary" style="padding:4px 12px;font-size:11px" data-action="toggleEditPins" data-arg0="${esc(host.hostname)}">${t('editPins')}</button>
       </div>
       <div id="pins-view">${pinsHtml}</div>
       <div id="pins-edit" style="display:none"></div>
@@ -1141,15 +1142,15 @@ async function renderHostDetail(host) {
       <div style="display:flex;justify-content:space-between;align-items:center">
         <div class="card-title">${t('connHistory')}</div>
         <div style="display:flex;gap:8px;align-items:center">
-          <button class="btn btn-primary" style="padding:4px 12px;font-size:11px" onclick="testHostConnection('${host.hostname}')">${t('testConnection')}</button>
-          <span style="cursor:pointer;color:#60a5fa;font-size:14px" onclick="loadHostConnectionHistory('${host.hostname}')" title="Yenile">&#x21bb;</span>
+          <button class="btn btn-primary" style="padding:4px 12px;font-size:11px" data-action="testHostConnection" data-arg0="${esc(host.hostname)}">${t('testConnection')}</button>
+          <span style="cursor:pointer;color:#60a5fa;font-size:14px" data-action="loadHostConnectionHistory" data-arg0="${esc(host.hostname)}" title="Yenile">&#x21bb;</span>
         </div>
       </div>
       <div class="loading">${t('loading')}</div>
     </div>
 
     <div class="card" id="client-devices-card">
-      <div style="display:flex;justify-content:space-between;align-items:center"><div class="card-title">${t('connectedClients')}</div><span style="cursor:pointer;color:#60a5fa;font-size:14px" onclick="loadClientDevices('${host.hostname}')" title="Yenile">&#x21bb;</span></div>
+      <div style="display:flex;justify-content:space-between;align-items:center"><div class="card-title">${t('connectedClients')}</div><span style="cursor:pointer;color:#60a5fa;font-size:14px" data-action="loadClientDevices" data-arg0="${esc(host.hostname)}" title="Yenile">&#x21bb;</span></div>
       <div class="loading">${t('loading')}</div>
     </div>
   `;
@@ -1274,7 +1275,7 @@ async function loadHostConnectionHistory(hostname) {
     const locale = lang === 'tr' ? 'tr-TR' : 'en-US';
 
     if (entries.length === 0) {
-      card.innerHTML = `<div style="display:flex;justify-content:space-between;align-items:center"><div class="card-title">${t('connHistory')}</div><div style="display:flex;gap:8px;align-items:center"><button class="btn btn-primary" style="padding:4px 12px;font-size:11px" onclick="testHostConnection('${hostname}')">${t('testConnection')}</button><span style="cursor:pointer;color:#60a5fa;font-size:14px" onclick="loadHostConnectionHistory('${hostname}')" title="Yenile">&#x21bb;</span></div></div><div class="empty-msg">${t('noConnHistory')}</div>`;
+      card.innerHTML = `<div style="display:flex;justify-content:space-between;align-items:center"><div class="card-title">${t('connHistory')}</div><div style="display:flex;gap:8px;align-items:center"><button class="btn btn-primary" style="padding:4px 12px;font-size:11px" data-action="testHostConnection" data-arg0="${esc(hostname)}">${t('testConnection')}</button><span style="cursor:pointer;color:#60a5fa;font-size:14px" data-action="loadHostConnectionHistory" data-arg0="${esc(hostname)}" title="Yenile">&#x21bb;</span></div></div><div class="empty-msg">${t('noConnHistory')}</div>`;
       return;
     }
 
@@ -1304,7 +1305,7 @@ async function loadHostConnectionHistory(hostname) {
     const pagNav = pagControls(pagKey, pagInfo, '_reloadHostConn_' + hostname.replace(/[^a-zA-Z0-9]/g,'_'));
 
     card.innerHTML = `
-      <div style="display:flex;justify-content:space-between;align-items:center"><div class="card-title">${t('connHistory')}</div><div style="display:flex;gap:8px;align-items:center"><button class="btn btn-primary" style="padding:4px 12px;font-size:11px" onclick="testHostConnection('${hostname}')">${t('testConnection')}</button><span style="cursor:pointer;color:#60a5fa;font-size:14px" onclick="loadHostConnectionHistory('${hostname}')" title="Yenile">&#x21bb;</span></div></div>
+      <div style="display:flex;justify-content:space-between;align-items:center"><div class="card-title">${t('connHistory')}</div><div style="display:flex;gap:8px;align-items:center"><button class="btn btn-primary" style="padding:4px 12px;font-size:11px" data-action="testHostConnection" data-arg0="${esc(hostname)}">${t('testConnection')}</button><span style="cursor:pointer;color:#60a5fa;font-size:14px" data-action="loadHostConnectionHistory" data-arg0="${esc(hostname)}" title="Yenile">&#x21bb;</span></div></div>
       <table class="data-table">
         <thead><tr>
           <th>${t('thClient')}</th><th>${t('thStatus')}</th><th>${t('thDuration')}</th>
@@ -1313,7 +1314,7 @@ async function loadHostConnectionHistory(hostname) {
         <tbody>${rows}</tbody>
       </table>${pagNav}`;
   } catch (e) {
-    card.innerHTML = `<div style="display:flex;justify-content:space-between;align-items:center"><div class="card-title">${t('connHistory')}</div><div style="display:flex;gap:8px;align-items:center"><button class="btn btn-primary" style="padding:4px 12px;font-size:11px" onclick="testHostConnection('${hostname}')">${t('testConnection')}</button><span style="cursor:pointer;color:#60a5fa;font-size:14px" onclick="loadHostConnectionHistory('${hostname}')" title="Yenile">&#x21bb;</span></div></div><div class="empty-msg">${t('error')}</div>`;
+    card.innerHTML = `<div style="display:flex;justify-content:space-between;align-items:center"><div class="card-title">${t('connHistory')}</div><div style="display:flex;gap:8px;align-items:center"><button class="btn btn-primary" style="padding:4px 12px;font-size:11px" data-action="testHostConnection" data-arg0="${esc(hostname)}">${t('testConnection')}</button><span style="cursor:pointer;color:#60a5fa;font-size:14px" data-action="loadHostConnectionHistory" data-arg0="${esc(hostname)}" title="Yenile">&#x21bb;</span></div></div><div class="empty-msg">${t('error')}</div>`;
   }
 }
 
@@ -1326,7 +1327,7 @@ async function loadClientDevices(hostname) {
     const locale = lang === 'tr' ? 'tr-TR' : 'en-US';
 
     if (devices.length === 0) {
-      card.innerHTML = `<div style="display:flex;justify-content:space-between;align-items:center"><div class="card-title">${t('connectedClients')}</div><span style="cursor:pointer;color:#60a5fa;font-size:14px" onclick="loadClientDevices('${hostname}')" title="Yenile">&#x21bb;</span></div><div class="empty-msg">${t('noClients')}</div>`;
+      card.innerHTML = `<div style="display:flex;justify-content:space-between;align-items:center"><div class="card-title">${t('connectedClients')}</div><span style="cursor:pointer;color:#60a5fa;font-size:14px" data-action="loadClientDevices" data-arg0="${esc(hostname)}" title="Yenile">&#x21bb;</span></div><div class="empty-msg">${t('noClients')}</div>`;
       return;
     }
 
@@ -1342,7 +1343,7 @@ async function loadClientDevices(hostname) {
     }).join('');
 
     card.innerHTML = `
-      <div style="display:flex;justify-content:space-between;align-items:center"><div class="card-title">${t('connectedClients')}</div><span style="cursor:pointer;color:#60a5fa;font-size:14px" onclick="loadClientDevices('${hostname}')" title="Yenile">&#x21bb;</span></div>
+      <div style="display:flex;justify-content:space-between;align-items:center"><div class="card-title">${t('connectedClients')}</div><span style="cursor:pointer;color:#60a5fa;font-size:14px" data-action="loadClientDevices" data-arg0="${esc(hostname)}" title="Yenile">&#x21bb;</span></div>
       <table class="data-table">
         <thead><tr>
           <th>${t('thDevice')}</th><th>${t('thPinVer')}</th>
@@ -1374,7 +1375,7 @@ async function loadHostClientCert(hostname) {
   const mtlsToggle = `
     <div style="display:flex;align-items:center;gap:10px;margin-bottom:12px">
       <span style="color:#94a3b8;font-size:12px">mTLS:</span>
-      <div style="cursor:pointer;width:40px;height:22px;border-radius:11px;background:${isMtls ? '#22c55e' : '#334155'};position:relative;transition:background 0.2s" onclick="toggleHostMtls('${hostname}',${!isMtls})">
+      <div style="cursor:pointer;width:40px;height:22px;border-radius:11px;background:${isMtls ? '#22c55e' : '#334155'};position:relative;transition:background 0.2s" data-action="toggleHostMtls" data-arg0="${esc(hostname)}" data-arg1="${!isMtls}">
         <div style="width:18px;height:18px;border-radius:50%;background:white;position:absolute;top:2px;${isMtls ? 'right:2px' : 'left:2px'};transition:all 0.2s"></div>
       </div>
       <span style="color:${isMtls ? '#22c55e' : '#64748b'};font-weight:600;font-size:12px">${isMtls ? 'Aktif' : 'Pasif'}</span>
@@ -1394,10 +1395,10 @@ async function loadHostClientCert(hostname) {
 
   const uploadBtn = `
     <div style="display:flex;gap:8px;align-items:center">
-      <button class="btn btn-secondary" style="padding:4px 12px;font-size:11px" onclick="document.getElementById('host-cc-file').click()">
+      <button class="btn btn-secondary" style="padding:4px 12px;font-size:11px" data-action="clickFileInput" data-arg0="host-cc-file">
         ${certInfo ? 'Client Cert Guncelle' : 'Client Cert Yukle'}
       </button>
-      <input type="file" id="host-cc-file" accept=".p12,.pfx" style="display:none" onchange="uploadHostClientCert('${hostname}')"/>
+      <input type="file" id="host-cc-file" accept=".p12,.pfx" style="display:none" data-action-change="uploadHostClientCert" data-arg0="${esc(hostname)}"/>
       <span style="color:#64748b;font-size:10px">PKCS12 (.p12/.pfx)</span>
     </div>`;
 
@@ -1410,10 +1411,11 @@ async function loadHostClientCert(hostname) {
 }
 
 async function toggleHostMtls(hostname, enable) {
+  const mtls = enable === true || enable === 'true';
   try {
     await apiFetch(`/api/v1/hosts/${encodeURIComponent(hostname)}/toggle-mtls`, {
       method: 'POST', headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({ mtls: enable })
+      body: JSON.stringify({ mtls })
     });
     await loadConfig();
     loadHostClientCert(hostname);
@@ -1470,7 +1472,7 @@ function showAddConfigApi() {
       <div><div class="section-title-main">Yeni Config API</div><div class="section-sub">TLS veya mTLS config API başlatın</div></div>
     </div>
     <div class="card">
-      <form onsubmit="createConfigApi(event)">
+      <form data-action-submit="createConfigApi">
         <div class="form-group">
           <label class="form-label">API ID</label>
           <input type="text" id="new-api-id" placeholder="tls-8093 veya mtls-8092" required class="form-input"/>
@@ -1526,7 +1528,7 @@ function renderAddHostForm() {
   ];
 
   const tabsHtml = tabs.map(tb => `
-    <button class="tab-btn ${addHostTab === tb.id ? 'tab-active' : ''}" onclick="switchAddTab('${tb.id}')">${tb.label}</button>
+    <button class="tab-btn ${addHostTab === tb.id ? 'tab-active' : ''}" data-action="switchAddTab" data-arg0="${esc(tb.id)}">${tb.label}</button>
   `).join('');
 
   let formHtml = '';
@@ -1547,8 +1549,8 @@ function renderAddHostForm() {
         <div class="form-hint">${t('hashHint')}</div>
       </div>
       <div class="form-actions">
-        <button class="btn btn-primary" onclick="createHostManual()">${t('create')}</button>
-        <button class="btn btn-secondary" onclick="renderEmpty(); renderHostList();">${t('cancel')}</button>
+        <button class="btn btn-primary" data-action="createHostManual">${t('create')}</button>
+        <button class="btn btn-secondary" data-action="renderEmptyAndHostList">${t('cancel')}</button>
       </div>`;
   } else if (addHostTab === 'generate') {
     formHtml = `
@@ -1558,8 +1560,8 @@ function renderAddHostForm() {
         <div class="form-hint">${t('hostnameHint')}</div>
       </div>
       <div class="form-actions">
-        <button class="btn btn-success" id="gen-btn" onclick="createHostGenerate()">${t('create')}</button>
-        <button class="btn btn-secondary" onclick="renderEmpty(); renderHostList();">${t('cancel')}</button>
+        <button class="btn btn-success" id="gen-btn" data-action="createHostGenerate">${t('create')}</button>
+        <button class="btn btn-secondary" data-action="renderEmptyAndHostList">${t('cancel')}</button>
       </div>`;
   } else if (addHostTab === 'upload') {
     formHtml = `
@@ -1577,8 +1579,8 @@ function renderAddHostForm() {
         <input id="upload-password" class="form-input" value="changeit" type="password">
       </div>
       <div class="form-actions">
-        <button class="btn btn-success" id="upload-btn" onclick="createHostUpload()">${t('create')}</button>
-        <button class="btn btn-secondary" onclick="renderEmpty(); renderHostList();">${t('cancel')}</button>
+        <button class="btn btn-success" id="upload-btn" data-action="createHostUpload">${t('create')}</button>
+        <button class="btn btn-secondary" data-action="renderEmptyAndHostList">${t('cancel')}</button>
       </div>`;
   }
 
@@ -1710,15 +1712,15 @@ function renderEditPins(hostname) {
     <div class="card">
       ${editHashes.map((hash, i) => `
         <div class="pin-row">
-          <input class="form-input" value="${hash}" onchange="editHashes[${i}]=this.value"
+          <input class="form-input" value="${esc(hash)}" data-action-change="updateEditHash" data-arg0="${i}" data-event="1"
                  placeholder="${i === 0 ? t('primaryPlaceholder') : t('backupPlaceholder')}">
-          ${editHashes.length > 2 ? `<button class="btn-icon btn-remove" onclick="editHashes.splice(${i},1); renderEditPins('${hostname}')">x</button>` : ''}
+          ${editHashes.length > 2 ? `<button class="btn-icon btn-remove" data-action="removeEditHashEdit" data-arg0="${i}" data-arg1="${esc(hostname)}">x</button>` : ''}
         </div>
       `).join('')}
-      <button class="btn btn-secondary" style="margin-top:4px;font-size:11px" onclick="editHashes.push(''); renderEditPins('${hostname}')">${t('addHash')}</button>
+      <button class="btn btn-secondary" style="margin-top:4px;font-size:11px" data-action="addEditHashEdit" data-arg0="${esc(hostname)}">${t('addHash')}</button>
       <div class="form-actions">
-        <button class="btn btn-primary" onclick="savePins('${hostname}')">${t('save')}</button>
-        <button class="btn btn-secondary" onclick="selectHost('${hostname}')">${t('cancel')}</button>
+        <button class="btn btn-primary" data-action="savePins" data-arg0="${esc(hostname)}">${t('save')}</button>
+        <button class="btn btn-secondary" data-action="selectHost" data-arg0="${esc(hostname)}">${t('cancel')}</button>
       </div>
     </div>
   `;
@@ -1750,15 +1752,15 @@ function renderInlineEditPins(hostname) {
   editEl.innerHTML = `
     ${editHashes.map((hash, i) => `
       <div class="pin-row" style="margin-bottom:6px">
-        <input class="form-input" value="${hash}" onchange="editHashes[${i}]=this.value"
+        <input class="form-input" value="${esc(hash)}" data-action-change="updateEditHash" data-arg0="${i}" data-event="1"
                placeholder="${i === 0 ? t('primaryPlaceholder') : t('backupPlaceholder')}">
-        ${editHashes.length > 2 ? `<button class="btn-icon btn-remove" onclick="editHashes.splice(${i},1); renderInlineEditPins('${hostname}')">x</button>` : ''}
+        ${editHashes.length > 2 ? `<button class="btn-icon btn-remove" data-action="removeEditHashInline" data-arg0="${i}" data-arg1="${esc(hostname)}">x</button>` : ''}
       </div>
     `).join('')}
-    <button class="btn btn-secondary" style="margin-top:4px;font-size:11px" onclick="editHashes.push(''); renderInlineEditPins('${hostname}')">${t('addHash')}</button>
+    <button class="btn btn-secondary" style="margin-top:4px;font-size:11px" data-action="addEditHashInline" data-arg0="${esc(hostname)}">${t('addHash')}</button>
     <div class="form-actions" style="margin-top:8px">
-      <button class="btn btn-primary" onclick="saveInlinePins('${hostname}')">${t('save')}</button>
-      <button class="btn btn-secondary" onclick="toggleEditPins('${hostname}')">${t('cancel')}</button>
+      <button class="btn btn-primary" data-action="saveInlinePins" data-arg0="${esc(hostname)}">${t('save')}</button>
+      <button class="btn btn-secondary" data-action="toggleEditPins" data-arg0="${esc(hostname)}">${t('cancel')}</button>
     </div>`;
 }
 
@@ -1896,7 +1898,7 @@ async function renderHealthSection() {
     document.getElementById('content').innerHTML = `
       <div class="section-header">
         <div><div class="section-title-main">${t('healthTitle')}</div><div class="section-sub">${t('healthSub')}</div></div>
-        <button class="btn btn-primary" onclick="runHealthCheck()">${t('runHealthCheck')}</button>
+        <button class="btn btn-primary" data-action="runHealthCheck">${t('runHealthCheck')}</button>
       </div>
       <div class="stats">
         <div class="card"><div class="card-title">${t('serverStatus')}</div>
@@ -1959,17 +1961,17 @@ async function renderBootstrapSection() {
         <div class="hash-label">Primary Pin</div>
         <div class="hash-box">
           <span>sha256/${data.primaryPin}</span>
-          <button class="copy-btn" onclick="copyText('${data.primaryPin}')">${t('copy')}</button>
+          <button class="copy-btn" data-action="copyText" data-arg0="${esc(data.primaryPin)}">${t('copy')}</button>
         </div>
         ${data.backupPin ? `
         <div class="hash-label">Backup Pin</div>
         <div class="hash-box">
           <span>sha256/${data.backupPin}</span>
-          <button class="copy-btn" onclick="copyText('${data.backupPin}')">${t('copy')}</button>
+          <button class="copy-btn" data-action="copyText" data-arg0="${esc(data.backupPin)}">${t('copy')}</button>
         </div>` : ''}
         <div style="margin-top:16px;padding-top:16px;border-top:1px solid #334155;display:flex;gap:8px;flex-wrap:wrap">
-          <button class="btn btn-warning" onclick="regenerateBootstrapCert()">${t('regenerateBootstrap')}</button>
-          <button class="btn btn-secondary" onclick="toggleBootstrapUpload()">${t('tabUploadJks')}</button>
+          <button class="btn btn-warning" data-action="regenerateBootstrapCert">${t('regenerateBootstrap')}</button>
+          <button class="btn btn-secondary" data-action="toggleBootstrapUpload">${t('tabUploadJks')}</button>
         </div>
         <div id="bootstrap-upload-form" style="display:none"></div>
       </div>
@@ -1991,8 +1993,8 @@ val config = PinVaultConfig.Builder()
 
       ${!hasPins ? `<div class="card">
         <div style="display:flex;gap:8px;flex-wrap:wrap">
-          <button class="btn btn-warning" onclick="regenerateBootstrapCert()">${t('regenerateBootstrap')}</button>
-          <button class="btn btn-secondary" onclick="toggleBootstrapUpload()">${t('tabUploadJks')}</button>
+          <button class="btn btn-warning" data-action="regenerateBootstrapCert">${t('regenerateBootstrap')}</button>
+          <button class="btn btn-secondary" data-action="toggleBootstrapUpload">${t('tabUploadJks')}</button>
         </div>
         <div id="bootstrap-upload-form" style="display:none"></div>
       </div>` : ''}`;
@@ -2006,7 +2008,7 @@ function toggleBootstrapUpload() {
   if (!form) return;
   if (form.style.display !== 'none') { form.style.display = 'none'; return; }
   form.style.display = 'block';
-  form.innerHTML = `<form onsubmit="uploadBootstrapCert(event)">
+  form.innerHTML = `<form data-action-submit="uploadBootstrapCert">
     <div class="form-group">
       <label class="form-label">${t('uploadJksLabel')}</label>
       <input type="file" id="bootstrap-file" accept=".jks,.p12,.pfx" required style="color:#94a3b8"/>
@@ -2103,7 +2105,7 @@ async function renderMtlsSection() {
             <td>${c.revoked
               ? `<span style="color:#ef4444">${t('revoked')}</span>`
               : `<span style="color:#22c55e">${t('active')}</span>`}</td>
-            <td>${!c.revoked ? `<button class="btn btn-danger" style="padding:2px 8px;font-size:11px" onclick="revokeClientCert('${c.id}')">${t('revoke')}</button>` : ''}</td>
+            <td>${!c.revoked ? `<button class="btn btn-danger" style="padding:2px 8px;font-size:11px" data-action="revokeClientCert" data-arg0="${esc(c.id)}">${t('revoke')}</button>` : ''}</td>
           </tr>`).join('')}</tbody>
         </table>${certsPagNav}`;
 
@@ -2116,14 +2118,14 @@ async function renderMtlsSection() {
       </div>
       <div class="card">
         <div class="card-title">${t('generateClientCert')}</div>
-        <form onsubmit="generateClientCert(event)" style="display:flex;gap:8px;align-items:end">
+        <form data-action-submit="generateClientCert" style="display:flex;gap:8px;align-items:end">
           <div class="form-group" style="flex:1;margin:0">
             <label class="form-label">${t('clientIdLabel')}</label>
             <input type="text" id="mtls-client-id" placeholder="${t('clientIdPlaceholder')}" required class="form-input"/>
           </div>
           <button type="submit" class="btn btn-primary">${t('generateClientCert')}</button>
-          <button type="button" class="btn btn-secondary" onclick="document.getElementById('mtls-upload-file').click()">${t('uploadClientCert')}</button>
-          <input type="file" id="mtls-upload-file" accept=".pem,.der,.crt,.cer" style="display:none" onchange="uploadClientCert()"/>
+          <button type="button" class="btn btn-secondary" data-action="clickFileInput" data-arg0="mtls-upload-file">${t('uploadClientCert')}</button>
+          <input type="file" id="mtls-upload-file" accept=".pem,.der,.crt,.cer" style="display:none" data-action-change="uploadClientCert"/>
         </form>
       </div>
       <div class="card">
@@ -2160,7 +2162,7 @@ val config = PinVaultConfig.Builder()
           <strong>Güvenli akış:</strong> Admin token üretir &#x2192; Uygulama token ile kayıt olur &#x2192; Client cert alır &#x2192; mTLS Config API'ye erişir &#x2192; Host cert'leri otomatik indirilir
           ${!enrollMode.tokenRequired ? '<br><span style="color:#fbbf24">ENROLLMENT_MODE=token ile sunucuyu başlatarak deviceId enrollment\'ı kapatabilirsiniz.</span>' : ''}
         </div>
-        <form onsubmit="generateEnrollmentToken(event)" style="display:flex;gap:8px;align-items:end">
+        <form data-action-submit="generateEnrollmentToken" style="display:flex;gap:8px;align-items:end">
           <div class="form-group" style="flex:1;margin:0">
             <label class="form-label">${t('clientIdLabel')}</label>
             <input type="text" id="enrollment-client-id" placeholder="${t('clientIdPlaceholder')}" required class="form-input"/>
@@ -2300,7 +2302,7 @@ async function loadEnrollmentTokens() {
     container.innerHTML = `<table class="data-table">
       <thead><tr><th>Token</th><th>Client ID</th><th>Durum</th><th>Tarih</th></tr></thead>
       <tbody>${tokens.map((t, i) => `<tr class="${i === 0 ? 'row-latest' : ''}">
-        <td style="font-family:monospace;font-weight:700;color:#7dd3fc;cursor:pointer" onclick="copyText('${t.token}')">${t.token}</td>
+        <td style="font-family:monospace;font-weight:700;color:#7dd3fc;cursor:pointer" data-action="copyText" data-arg0="${esc(t.token)}">${t.token}</td>
         <td>${t.clientId}</td>
         <td>${t.used ? '<span style="color:#64748b">Kullanıldı</span>' : '<span style="color:#22c55e">Bekliyor</span>'}</td>
         <td style="color:#64748b;font-size:11px">${new Date(t.createdAt).toLocaleString(locale)}</td>
@@ -2329,8 +2331,8 @@ async function renderSigningSection() {
       <div class="section-header">
         <div><div class="section-title-main">${t('signingTitle')}</div><div class="section-sub">${t('signingSub')}</div></div>
         <div class="action-bar">
-          <button class="btn btn-primary" onclick="copyText('${data.publicKey}')">${t('copy')}</button>
-          <button class="btn btn-warning" onclick="regenerateSigningKey()">${t('regenerateSigningKey')}</button>
+          <button class="btn btn-primary" data-action="copyText" data-arg0="${esc(data.publicKey)}">${t('copy')}</button>
+          <button class="btn btn-warning" data-action="regenerateSigningKey">${t('regenerateSigningKey')}</button>
         </div>
       </div>
       <div class="card">
@@ -2384,8 +2386,8 @@ async function loadCertInfo(hostname) {
 function renderCertRenewSection(hostname) {
   return `
     <div style="margin-top:16px;padding-top:16px;border-top:1px solid #334155;display:flex;gap:8px;flex-wrap:wrap">
-      <button class="btn btn-warning" onclick="renewCertAuto('${hostname}')">${t('regenerateCert')}</button>
-      <button class="btn btn-secondary" onclick="showCertUploadForm('${hostname}')">${t('renewUpload')}</button>
+      <button class="btn btn-warning" data-action="renewCertAuto" data-arg0="${esc(hostname)}">${t('regenerateCert')}</button>
+      <button class="btn btn-secondary" data-action="showCertUploadForm" data-arg0="${esc(hostname)}">${t('renewUpload')}</button>
     </div>
     <div id="cert-upload-form" style="display:none;margin-top:12px"></div>`;
 }
@@ -2395,7 +2397,7 @@ function showCertUploadForm(hostname) {
   if (!form) return;
   if (form.style.display !== 'none') { form.style.display = 'none'; return; }
   form.style.display = 'block';
-  form.innerHTML = `<form onsubmit="renewCertUpload(event, '${hostname}')">
+  form.innerHTML = `<form data-action-submit="renewCertUpload" data-arg0="${esc(hostname)}">
     <div class="form-group">
       <label class="form-label">${t('renewUploadLabel')}</label>
       <input type="file" id="renew-cert-file" accept=".jks,.p12,.pfx" required style="color:#94a3b8"/>
@@ -2476,7 +2478,7 @@ async function loadMockStatus(hostname) {
           <label style="display:flex;align-items:center;gap:6px;color:#94a3b8;font-size:12px;cursor:pointer">
             <input type="checkbox" id="mock-mtls" style="accent-color:#f59e0b"> mTLS
           </label>
-          <button class="btn btn-primary" style="padding:4px 10px;font-size:11px" onclick="toggleMock('${hostname}')">${t('mockStart') || 'Başlat'}</button>
+          <button class="btn btn-primary" style="padding:4px 10px;font-size:11px" data-action="toggleMock" data-arg0="${esc(hostname)}">${t('mockStart') || 'Başlat'}</button>
         </div>`;
       return;
     }
@@ -2492,7 +2494,7 @@ async function loadMockStatus(hostname) {
 
     card.innerHTML = `
       <div class="card-title">MOCK SERVER</div>
-      <div style="display:flex;align-items:center;gap:10px;cursor:pointer" onclick="toggleMock('${hostname}')">
+      <div style="display:flex;align-items:center;gap:10px;cursor:pointer" data-action="toggleMock" data-arg0="${esc(hostname)}">
         <div style="width:40px;height:22px;border-radius:11px;background:${running ? '#22c55e' : '#334155'};position:relative;transition:background 0.2s">
           <div style="width:18px;height:18px;border-radius:50%;background:white;position:absolute;top:2px;${running ? 'right:2px' : 'left:2px'};transition:all 0.2s"></div>
         </div>
@@ -2624,13 +2626,13 @@ async function renderApiVaultTab(apiId) {
           const encIcon =
               f.encryption === 'end_to_end' ? '🔒' :
               f.encryption === 'at_rest'    ? '🔐' : '·';
-          return `<tr class="${filesPagInfo.page === 0 && i === 0 ? 'row-latest' : ''}" style="cursor:pointer" onclick="showVaultFileDetail('${apiId}', '${f.key}')">
+          return `<tr class="${filesPagInfo.page === 0 && i === 0 ? 'row-latest' : ''}" style="cursor:pointer" data-action="showVaultFileDetail" data-arg0="${esc(apiId)}" data-arg1="${esc(f.key)}">
             <td style="font-weight:700;color:#7dd3fc">${f.key}</td>
             <td>v${f.version}</td>
             <td>${formatBytes(f.size || 0)}</td>
             <td><span style="background:${policyColor};color:#fff;padding:2px 8px;border-radius:10px;font-size:10px">${f.access_policy || 'token'}</span></td>
             <td style="font-size:12px">${encIcon} ${f.encryption || 'plain'}</td>
-            <td><span style="cursor:pointer;color:#ef4444;font-size:11px" onclick="event.stopPropagation();deleteVaultFile('${apiId}', '${f.key}')">&#x2715;</span></td>
+            <td><span style="cursor:pointer;color:#ef4444;font-size:11px" data-action="deleteVaultFile" data-arg0="${esc(apiId)}" data-arg1="${esc(f.key)}" data-stop="1">&#x2715;</span></td>
           </tr>`;
         }).join('');
     const filesPagNav = filesPagInfo ? pagControls(filesPagKey, filesPagInfo, '_reloadVaultTab_' + apiId.replace(/[^a-zA-Z0-9]/g,'_')) : '';
@@ -2664,9 +2666,9 @@ async function renderApiVaultTab(apiId) {
               ? `<span style="background:${authColor};color:#fff;padding:2px 8px;border-radius:10px;font-size:10px;font-weight:600" title="${d.authMethod}">${authIcon} ${d.authMethod}</span>`
               : '<span style="color:#475569">—</span>';
           return `<tr class="${distPagInfo.page === 0 && i === 0 ? 'row-latest' : ''}">
-            <td style="font-weight:600;color:#7dd3fc;cursor:pointer" onclick="showVaultFileDetail('${apiId}', '${d.vaultKey}')">${d.vaultKey}</td>
+            <td style="font-weight:600;color:#7dd3fc;cursor:pointer" data-action="showVaultFileDetail" data-arg0="${esc(apiId)}" data-arg1="${esc(d.vaultKey)}">${d.vaultKey}</td>
             <td>v${d.version}</td>
-            <td><span class="source-badge android-src" style="cursor:pointer" onclick="showDeviceDetail('${apiId}', '${d.deviceId}')">${device}</span></td>
+            <td><span class="source-badge android-src" style="cursor:pointer" data-action="showDeviceDetail" data-arg0="${esc(apiId)}" data-arg1="${esc(d.deviceId)}">${device}</span></td>
             <td style="color:${statusColor};font-weight:600">${statusIcon} ${d.status}</td>
             <td>${authCell}</td>
             <td>${reasonCell}</td>
@@ -2685,17 +2687,17 @@ async function renderApiVaultTab(apiId) {
           <div class="section-title-main">${t('vaultTitle')}</div>
           <div class="section-sub">${t('vaultSub')}</div>
         </div>
-        <span style="cursor:pointer;color:#60a5fa;font-size:18px" onclick="renderApiVaultTab('${apiId}')">&#x21bb;</span>
+        <span style="cursor:pointer;color:#60a5fa;font-size:18px" data-action="renderApiVaultTab" data-arg0="${esc(apiId)}">&#x21bb;</span>
       </div>
 
       <div class="stats">
         <div class="card"><div class="stat-value" style="color:#60a5fa">${files.length}</div><div class="stat-label">${t('vaultUniqueKeys')}</div></div>
-        <div class="card" style="cursor:pointer;${activeFilter === 'downloaded' ? 'outline:2px solid #22c55e;' : ''}" onclick="setVaultStatusFilter('${apiId}', 'downloaded')" title="${t('vaultDownloaded')}">
+        <div class="card" style="cursor:pointer;${activeFilter === 'downloaded' ? 'outline:2px solid #22c55e;' : ''}" data-action="setVaultStatusFilter" data-arg0="${esc(apiId)}" data-arg1="downloaded" title="${t('vaultDownloaded')}">
           <div class="stat-value" style="color:#22c55e">${stats.totalDistributions || 0}</div>
           <div class="stat-label">${t('vaultTotalDist')}</div>
         </div>
         <div class="card"><div class="stat-value" style="color:#f59e0b">${stats.uniqueDevices || 0}</div><div class="stat-label">${t('vaultUniqueDevices')}</div></div>
-        <div class="card" style="cursor:pointer;${activeFilter === 'failed' ? 'outline:2px solid #ef4444;' : ''}" onclick="setVaultStatusFilter('${apiId}', 'failed')" title="${t('vaultFailed')}">
+        <div class="card" style="cursor:pointer;${activeFilter === 'failed' ? 'outline:2px solid #ef4444;' : ''}" data-action="setVaultStatusFilter" data-arg0="${esc(apiId)}" data-arg1="failed" title="${t('vaultFailed')}">
           <div class="stat-value" style="color:#ef4444">${stats.failed || 0}</div>
           <div class="stat-label">${t('vaultFailed')}</div>
         </div>
@@ -2705,7 +2707,7 @@ async function renderApiVaultTab(apiId) {
         <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">
           <div class="card-title" style="margin:0">${t('vaultUpload')}</div>
         </div>
-        <form onsubmit="uploadVaultFile(event, '${apiId}')" style="display:flex;gap:8px;align-items:end;flex-wrap:wrap">
+        <form data-action-submit="uploadVaultFile" data-arg0="${esc(apiId)}" style="display:flex;gap:8px;align-items:end;flex-wrap:wrap">
           <div class="form-group" style="margin:0">
             <label class="form-label">${t('vaultKey')}</label>
             <input type="text" id="vault-upload-key" placeholder="${t('vaultKeyPlaceholder')}" required class="form-input" style="width:180px"/>
@@ -2746,7 +2748,7 @@ async function renderApiVaultTab(apiId) {
       <div class="card">
         <div class="card-title" style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
           <span>${t('vaultDistTitle')} (${filteredDists.length}${activeFilter ? ` / ${dists.length}` : ''})</span>
-          ${activeFilter ? `<span style="background:${activeFilter === 'failed' ? '#ef4444' : '#22c55e'};color:#fff;padding:2px 10px;border-radius:12px;font-size:11px;cursor:pointer" onclick="setVaultStatusFilter('${apiId}', '${activeFilter}')" title="${t('filterRemove')}">${activeFilter === 'failed' ? '✗ ' + t('vaultFailed') : '✓ ' + t('vaultDownloaded')} ✕</span>` : ''}
+          ${activeFilter ? `<span style="background:${activeFilter === 'failed' ? '#ef4444' : '#22c55e'};color:#fff;padding:2px 10px;border-radius:12px;font-size:11px;cursor:pointer" data-action="setVaultStatusFilter" data-arg0="${esc(apiId)}" data-arg1="${esc(activeFilter)}" title="${t('filterRemove')}">${activeFilter === 'failed' ? '✗ ' + t('vaultFailed') : '✓ ' + t('vaultDownloaded')} ✕</span>` : ''}
         </div>
         <table class="data-table">
           <thead><tr><th>${t('vaultKey')}</th><th>${t('vaultVersion')}</th><th>${t('vaultDevice')}</th><th>${t('vaultStatus')}</th><th>Auth</th><th>${t('vaultReason') || 'Neden'}</th><th>${t('vaultLabel')}</th><th>${t('vaultTimestamp')}</th></tr></thead>
@@ -2880,7 +2882,7 @@ async function showVaultFileDetail(apiId, key) {
 
     const devRows = devices.length === 0
       ? `<tr><td colspan="5" class="empty-msg">${t('vaultNoDistHistory')}</td></tr>`
-      : devices.map((d, i) => `<tr class="${i === 0 ? 'row-latest' : ''}" style="cursor:pointer" onclick="showDeviceDetail('${apiId}', '${d.deviceId}')">
+      : devices.map((d, i) => `<tr class="${i === 0 ? 'row-latest' : ''}" style="cursor:pointer" data-action="showDeviceDetail" data-arg0="${esc(apiId)}" data-arg1="${esc(d.deviceId)}">
           <td><span class="source-badge android-src">📱 ${d.deviceLabel}</span></td>
           <td>${d.count}</td>
           <td style="color:#22c55e">✓ ${d.ok}</td>
@@ -2894,7 +2896,7 @@ async function showVaultFileDetail(apiId, key) {
           const ok = d.status === 'downloaded' || d.status === 'cached';
           const device = d.deviceManufacturer ? `📱 ${d.deviceManufacturer} ${d.deviceModel || ''}` : d.deviceId;
           return `<tr class="${i === 0 ? 'row-latest' : ''}">
-            <td><span class="source-badge android-src" style="cursor:pointer" onclick="showDeviceDetail('${apiId}', '${d.deviceId}')">${device}</span></td>
+            <td><span class="source-badge android-src" style="cursor:pointer" data-action="showDeviceDetail" data-arg0="${esc(apiId)}" data-arg1="${esc(d.deviceId)}">${device}</span></td>
             <td>v${d.version}</td>
             <td style="color:${ok ? '#22c55e' : '#ef4444'};font-weight:600">${ok ? '✓' : '✗'} ${d.status}</td>
             <td style="color:#64748b;font-size:11px">${d.enrollmentLabel || '—'}</td>
@@ -2911,7 +2913,7 @@ async function showVaultFileDetail(apiId, key) {
           const revokedLabel = tk.revoked ? t('tokenStatusRevoked') : t('tokenStatusActive');
           const btn = tk.revoked
             ? `<span style="color:#64748b;font-size:11px">${t('tokenBtnDash')}</span>`
-            : `<span style="cursor:pointer;color:#ef4444;font-size:11px" onclick="revokeVaultToken('${apiId}', ${tk.id}, '${key}')">${t('tokenBtnRevoke')}</span>`;
+            : `<span style="cursor:pointer;color:#ef4444;font-size:11px" data-action="revokeVaultToken" data-arg0="${esc(apiId)}" data-arg1="${tk.id}" data-arg2="${esc(key)}">${t('tokenBtnRevoke')}</span>`;
           return `<tr class="${i === 0 ? 'row-latest' : ''}">
             <td style="font-family:monospace;color:#7dd3fc">${tk.deviceId}</td>
             <td style="color:${revokedColor};font-weight:600">${revokedLabel}</td>
@@ -2927,8 +2929,8 @@ async function showVaultFileDetail(apiId, key) {
           <div class="section-sub">${t('vaultDistTitle')} — ${dists.length} · ${versions.length} versiyon · ${devices.length} cihaz</div>
         </div>
         <div style="display:flex;gap:8px">
-          <button class="btn btn-secondary" onclick="renderApiVaultTab('${apiId}')">← ${t('cancel')}</button>
-          <span style="cursor:pointer;color:#60a5fa;font-size:16px" onclick="showVaultFileDetail('${apiId}', '${key}')">&#x21bb;</span>
+          <button class="btn btn-secondary" data-action="renderApiVaultTab" data-arg0="${esc(apiId)}">← ${t('cancel')}</button>
+          <span style="cursor:pointer;color:#60a5fa;font-size:16px" data-action="showVaultFileDetail" data-arg0="${esc(apiId)}" data-arg1="${esc(key)}">&#x21bb;</span>
         </div>
       </div>
 
@@ -2954,7 +2956,7 @@ async function showVaultFileDetail(apiId, key) {
           <span>${t('tokenMgmtTitle')} (${tokens.length})</span>
           <div style="display:flex;gap:6px;align-items:center">
             <input type="text" id="tk-device-${key}" placeholder="${t('tokenDevicePlaceholder')}" class="form-input" style="width:180px;font-size:12px"/>
-            <button class="btn btn-primary" style="padding:4px 10px;font-size:12px" onclick="generateVaultToken('${apiId}', '${key}')">${t('tokenNewBtn')}</button>
+            <button class="btn btn-primary" style="padding:4px 10px;font-size:12px" data-action="generateVaultToken" data-arg0="${esc(apiId)}" data-arg1="${esc(key)}">${t('tokenNewBtn')}</button>
           </div>
         </div>
         <div style="color:#94a3b8;font-size:11px;margin-bottom:8px">${t('tokenMgmtHint')}</div>
@@ -3011,7 +3013,7 @@ async function showDeviceDetail(apiId, deviceId) {
     const devFilesPagInfo = pagSlice(files, devFilesPagKey);
     const fileRows = files.length === 0
       ? `<tr><td colspan="5" class="empty-msg">${t('vaultNoDistHistory')}</td></tr>`
-      : devFilesPagInfo.slice.map((f, i) => `<tr class="${devFilesPagInfo.page === 0 && i === 0 ? 'row-latest' : ''}" style="cursor:pointer" onclick="showVaultFileDetail('${apiId}', '${f.vaultKey}')">
+      : devFilesPagInfo.slice.map((f, i) => `<tr class="${devFilesPagInfo.page === 0 && i === 0 ? 'row-latest' : ''}" style="cursor:pointer" data-action="showVaultFileDetail" data-arg0="${esc(apiId)}" data-arg1="${esc(f.vaultKey)}">
           <td style="font-weight:600;color:#7dd3fc">${f.vaultKey}</td>
           <td>${f.count}</td>
           <td style="color:#22c55e">✓ ${f.ok}</td>
@@ -3025,7 +3027,7 @@ async function showDeviceDetail(apiId, deviceId) {
       : devFullPagInfo.slice.map((d, i) => {
           const ok = d.status === 'downloaded' || d.status === 'cached';
           return `<tr class="${devFullPagInfo.page === 0 && i === 0 ? 'row-latest' : ''}">
-            <td style="font-weight:600;color:#7dd3fc;cursor:pointer" onclick="showVaultFileDetail('${apiId}', '${d.vaultKey}')">${d.vaultKey}</td>
+            <td style="font-weight:600;color:#7dd3fc;cursor:pointer" data-action="showVaultFileDetail" data-arg0="${esc(apiId)}" data-arg1="${esc(d.vaultKey)}">${d.vaultKey}</td>
             <td>v${d.version}</td>
             <td style="color:${ok ? '#22c55e' : '#ef4444'};font-weight:600">${ok ? '✓' : '✗'} ${d.status}</td>
             <td style="color:#64748b;font-size:11px">${new Date(d.timestamp).toLocaleString(locale)}</td>
@@ -3043,8 +3045,8 @@ async function showDeviceDetail(apiId, deviceId) {
           <div class="section-sub">${deviceId} · ${enrollmentLabel} · ${dists.length} ${t('vaultFetchCount').toLowerCase()} · ${files.length} ${t('vaultUniqueKeys').toLowerCase()}</div>
         </div>
         <div style="display:flex;gap:8px">
-          <button class="btn btn-secondary" onclick="renderApiVaultTab('${apiId}')">← ${t('cancel')}</button>
-          <span style="cursor:pointer;color:#60a5fa;font-size:16px" onclick="showDeviceDetail('${apiId}', '${deviceId}')">&#x21bb;</span>
+          <button class="btn btn-secondary" data-action="renderApiVaultTab" data-arg0="${esc(apiId)}">← ${t('cancel')}</button>
+          <span style="cursor:pointer;color:#60a5fa;font-size:16px" data-action="showDeviceDetail" data-arg0="${esc(apiId)}" data-arg1="${esc(deviceId)}">&#x21bb;</span>
         </div>
       </div>
 
@@ -3075,6 +3077,95 @@ function formatBytes(bytes) {
   const i = Math.floor(Math.log(bytes) / Math.log(k));
   return parseFloat((bytes / Math.pow(k, i)).toFixed(1)) + ' ' + sizes[i];
 }
+
+// ── CSP-safe event delegation ────────────────────────
+// Inline handlers (onclick=/onchange=/onsubmit=) violate `script-src 'self'`
+// from the M-05 hardening pass. Buttons/inputs/forms use `data-action="<fn>"`
+// + `data-arg0..argN` attributes instead. Optional flags on the element:
+//   data-stop="1"   → event.stopPropagation() before dispatch
+//   data-event="1"  → append the event object as the last argument
+// Dispatch is via an explicit `_actionHandlers` table (not bare window lookup)
+// so injected HTML can only invoke whitelisted functions.
+
+// Wrappers for inline expressions that combined multiple statements.
+function showAddHostScoped(apiId) { selectedApiId = apiId; showAddHost(); }
+function setConfigApiTab(tabId, apiId) { configApiTab = tabId; renderConfigApiDetail(apiId); }
+function renderEmptyAndHostList() { renderEmpty(); renderHostList(); }
+function clickFileInput(id) { document.getElementById(id).click(); }
+function updateEditHash(idx, ev) { editHashes[parseInt(idx, 10)] = ev.target.value; }
+function removeEditHashEdit(idx, hostname) { editHashes.splice(parseInt(idx, 10), 1); renderEditPins(hostname); }
+function removeEditHashInline(idx, hostname) { editHashes.splice(parseInt(idx, 10), 1); renderInlineEditPins(hostname); }
+function addEditHashEdit(hostname) { editHashes.push(''); renderEditPins(hostname); }
+function addEditHashInline(hostname) { editHashes.push(''); renderInlineEditPins(hostname); }
+function setVaultEnabledChange(apiId, ev) { setVaultEnabled(apiId, ev.target.checked); }
+function pagSizeChange(key, onChangeGlobalFn, ev) { pagSize(key, ev.target.value, onChangeGlobalFn); }
+
+const _actionHandlers = {
+  copyText, createConfigApi, createHostGenerate, createHostManual, createHostUpload,
+  deleteConfigApi, deleteHost, deleteVaultFile, editDeviceAcl, generateClientCert,
+  generateEnrollmentToken, generateVaultToken, loadClientDevices, loadHostConnectionHistory,
+  pagGo, pagSize, regenerateBootstrapCert, regenerateSigningKey, renderApiVaultTab,
+  renderConfigApiDetail, renderEditPins, renderEmpty, renderHostList, renderInlineEditPins,
+  renewCertAuto, renewCertUpload, revokeClientCert, revokeVaultToken, runHealthCheck,
+  saveDefaultAcl, saveInlinePins, savePins, selectHost, selectHostInApi, setLang,
+  setVaultEnabled, setVaultStatusFilter, showAddConfigApi, showAddHost, showCertUploadForm,
+  showDeviceAclManager, showDeviceDetail, showVaultFileDetail, switchAddTab,
+  testHostConnection, toggleApiTree, toggleBootstrapUpload, toggleConfigApi,
+  toggleEditPins, toggleForce, toggleHostMtls, toggleMock, uploadBootstrapCert,
+  uploadClientCert, uploadHostClientCert, uploadVaultFile,
+  showAddHostScoped, setConfigApiTab, renderEmptyAndHostList, clickFileInput,
+  updateEditHash, removeEditHashEdit, removeEditHashInline, addEditHashEdit,
+  addEditHashInline, setVaultEnabledChange, pagSizeChange
+};
+
+function _collectArgs(el) {
+  const args = [];
+  let i = 0;
+  while (el.dataset['arg' + i] !== undefined) {
+    args.push(el.dataset['arg' + i]);
+    i++;
+  }
+  return args;
+}
+
+function _resolveHandler(name) {
+  const fn = _actionHandlers[name];
+  if (typeof fn !== 'function') { console.warn('Unknown action:', name); return null; }
+  return fn;
+}
+
+// click: optional event as LAST arg when data-event="1"
+document.body.addEventListener('click', (e) => {
+  const el = e.target.closest('[data-action]');
+  if (!el) return;
+  if (el.dataset.stop === '1') e.stopPropagation();
+  const fn = _resolveHandler(el.dataset.action);
+  if (!fn) return;
+  const args = _collectArgs(el);
+  if (el.dataset.event === '1') args.push(e);
+  fn.apply(null, args);
+});
+
+// change: event as LAST arg when data-event="1" (input handlers commonly need this.value/checked)
+document.body.addEventListener('change', (e) => {
+  const el = e.target.closest('[data-action-change]');
+  if (!el) return;
+  const fn = _resolveHandler(el.dataset.actionChange);
+  if (!fn) return;
+  const args = _collectArgs(el);
+  if (el.dataset.event === '1') args.push(e);
+  fn.apply(null, args);
+});
+
+// submit: form handlers always receive event as the FIRST arg
+// (they call e.preventDefault() internally and read inputs from the DOM)
+document.body.addEventListener('submit', (e) => {
+  const el = e.target.closest('[data-action-submit]');
+  if (!el) return;
+  const fn = _resolveHandler(el.dataset.actionSubmit);
+  if (!fn) return;
+  fn.apply(null, [e].concat(_collectArgs(el)));
+});
 
 // ── Start ────────────────────────────────────────────
 init();

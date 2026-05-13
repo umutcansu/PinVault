@@ -68,7 +68,7 @@ data class HostStatusResponse(
     val mockServerMode: String = "tls",
     val mockTlsPort: Int? = null,
     val mockMtlsPort: Int? = null,
-    val createdAt: String = ""
+    val createdAt: String? = null
 )
 
 @Serializable
