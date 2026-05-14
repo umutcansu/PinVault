@@ -410,6 +410,8 @@ function updateLangUI() {
   document.getElementById('sidebar-hosts-label').textContent = 'Config API';
   const btnAddApi = document.getElementById('btn-add-api');
   if (btnAddApi) btnAddApi.textContent = '+ Config API';
+  const navHealth = document.getElementById('nav-health');
+  if (navHealth) navHealth.textContent = t('healthTitle');
 }
 
 // ── Init ─────────────────────────────────────────────
@@ -3110,6 +3112,7 @@ const _actionHandlers = {
   saveDefaultAcl, saveInlinePins, savePins, selectHost, selectHostInApi, setLang,
   setVaultEnabled, setVaultStatusFilter, showAddConfigApi, showAddHost, showCertUploadForm,
   showDeviceAclManager, showDeviceDetail, showVaultFileDetail, switchAddTab,
+  showSection,
   testHostConnection, toggleApiTree, toggleBootstrapUpload, toggleConfigApi,
   toggleEditPins, toggleForce, toggleHostMtls, toggleMock, uploadBootstrapCert,
   uploadClientCert, uploadHostClientCert, uploadVaultFile,
