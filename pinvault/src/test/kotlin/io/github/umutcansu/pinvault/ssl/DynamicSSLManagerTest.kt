@@ -92,7 +92,7 @@ class DynamicSSLManagerTest {
         )
         val builder = okhttp3.OkHttpClient.Builder()
         // Should not throw
-        manager.applyTo(builder, config)
+        manager.applyTo(builder) { config }
         val client = builder.build()
         assertNotNull(client)
     }

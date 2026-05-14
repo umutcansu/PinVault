@@ -372,18 +372,18 @@ object PinVault {
      * etc.) but still want PinVault's automatic recovery on pin mismatch.
      *
      * Equivalent in capability to [getClient]: both wire pinning + recovery.
-     * The trust manager is dynamic, so subsequent config swaps apply to
-     * requests issued through the builder you pass in without re-calling
-     * this function.
+     * The trust manager is dynamic — the active config is re-read on every
+     * TLS handshake, so pins published by [updateNow] or WorkManager swaps
+     * apply to the next request the builder issues without re-calling this
+     * function and without waiting for the recovery interceptor.
      */
     fun applyTo(builder: OkHttpClient.Builder) {
         checkInitialized()
-        val config = clientProvider.currentConfig
-        if (config == null) {
+        if (clientProvider.currentConfig == null) {
             Timber.w("No certificate config available — builder unchanged (system defaults)")
             return
         }
-        sslManager.applyTo(builder, config)
+        sslManager.applyTo(builder) { clientProvider.currentConfig }
         builder.addInterceptor(clientProvider.recoveryInterceptor)
     }
 

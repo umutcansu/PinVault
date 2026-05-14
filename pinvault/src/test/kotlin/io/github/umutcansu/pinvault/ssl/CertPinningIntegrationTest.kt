@@ -65,7 +65,7 @@ class CertPinningIntegrationTest {
         // Build pinned client with hostname verifier disabled (self-signed cert has no SAN)
         val builder = okhttp3.OkHttpClient.Builder()
             .hostnameVerifier { _, _ -> true }
-        manager.applyTo(builder, config)
+        manager.applyTo(builder) { config }
         val client = builder.build()
 
         try {

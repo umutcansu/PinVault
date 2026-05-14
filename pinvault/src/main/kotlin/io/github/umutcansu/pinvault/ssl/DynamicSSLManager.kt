@@ -173,18 +173,25 @@ internal class DynamicSSLManager(
      * Applies certificate pinning to an existing [OkHttpClient.Builder].
      * Installs a custom [X509ExtendedTrustManager] that enforces public-key pinning.
      * If client keystore is loaded, also presents client cert for mTLS.
+     *
+     * [configProvider] is invoked fresh on every TLS handshake. Pass a lambda
+     * that re-reads the live config (e.g. `{ httpClientProvider.currentConfig }`)
+     * for dynamic pin updates that follow [HttpClientProvider.swap] without
+     * rebuilding the client; pass a constant lambda for a frozen snapshot.
      */
-    fun applyTo(builder: OkHttpClient.Builder, config: CertificateConfig) {
-        val tm = pinnedTrustManager(config.pins, config.version)
+    fun applyTo(builder: OkHttpClient.Builder, configProvider: () -> CertificateConfig?) {
+        val tm = pinnedTrustManager(configProvider)
         val sslCtx = SSLContext.getInstance("TLS")
         val keyManagers = buildCompositeKeyManagers()
         sslCtx.init(keyManagers, arrayOf(tm), null)
         builder.sslSocketFactory(sslCtx.socketFactory, tm)
 
-        val mtlsHosts = config.pins.count { it.mtls }
+        val initial = configProvider()
+        val mtlsHosts = initial?.pins?.count { it.mtls } ?: 0
         Timber.d(
-            "Applied pinning — version: %d, %d hosts (%d mTLS), defaultCert: %s, hostCerts: %d",
-            config.version, config.pins.size, mtlsHosts, clientKeyManagers != null, hostKeyManagers.size
+            "Applied dynamic pinning — initial v=%d, %d hosts (%d mTLS), defaultCert=%s, hostCerts=%d",
+            initial?.version ?: -1, initial?.pins?.size ?: 0,
+            mtlsHosts, clientKeyManagers != null, hostKeyManagers.size
         )
     }
 
@@ -214,7 +221,7 @@ internal class DynamicSSLManager(
             return builder.build()
         }
 
-        applyTo(builder, config)
+        applyTo(builder) { config }
         recoveryInterceptor?.let { builder.addInterceptor(it) }
         return builder.build()
     }
@@ -234,7 +241,7 @@ internal class DynamicSSLManager(
 
         if (bootstrapPins.isNotEmpty()) {
             val config = CertificateConfig(version = 0, pins = bootstrapPins)
-            applyTo(builder, config)
+            applyTo(builder) { config }
             Timber.d("Bootstrap client pinned — %d hosts", bootstrapPins.size)
         } else {
             Timber.d("Bootstrap client — no pins, using system defaults")
@@ -261,14 +268,19 @@ internal class DynamicSSLManager(
     /**
      * Returns a [X509ExtendedTrustManager] that:
      * - Accepts self-signed certificates (no CA-chain validation).
-     * - Verifies that the leaf certificate's public-key SHA-256 matches one of [pins].
+     * - Verifies that the leaf certificate's public-key SHA-256 matches one of
+     *   the pins returned by [configProvider] **at the time of the handshake**.
+     *
+     * Pin lookup is dynamic: every TLS handshake re-invokes [configProvider]
+     * and rebuilds the host → pin-set map. Callers that want snapshot semantics
+     * pass a constant lambda; callers that want config swaps to take effect
+     * without rebuilding the client pass a lambda over a live reference (e.g.
+     * `HttpClientProvider.currentConfig`).
      *
      * Security comes entirely from public-key pinning — this is equivalent to, and more
      * reliable than, OkHttp's [okhttp3.CertificatePinner] on Android.
      */
-    private fun pinnedTrustManager(pins: List<HostPin>, pinVersion: Int): X509TrustManager {
-        val pinMap = buildAcceptedPins(pins)
-
+    private fun pinnedTrustManager(configProvider: () -> CertificateConfig?): X509TrustManager {
         return object : X509ExtendedTrustManager() {
 
             // ── Server auth (called by Conscrypt during handshake) ─────────────────
@@ -305,13 +317,15 @@ internal class DynamicSSLManager(
 
                 val leaf = chain[0]
 
-                // No pins at all → nothing to enforce, fail closed.
-                if (pinMap.isEmpty()) {
+                val config = configProvider()
+                if (config == null || config.pins.isEmpty()) {
                     throw CertificateException(
                         "No pins configured — refusing connection. " +
                         "Call PinVault.init() before making HTTPS requests."
                     )
                 }
+                val pinMap = buildAcceptedPins(config.pins)
+                val pinVersion = config.version
 
                 // Per-host pin lookup. A hostname with no entry (and no
                 // matching wildcard) must be refused — the alternative is
