@@ -86,7 +86,26 @@ than the stored value for the same hostname. If you intentionally rolled back
 a host's pin set (e.g., to revoke a bad rotation), bump the per-host
 `version` past the previous value rather than resetting it.
 
-### 6. Demo server: `API_KEY` is now required to start
+### 6. `PinVaultConnectionEvent` is no longer one-of
+
+The sealed class gains a `ConfigUpdate` variant alongside `Connection`.
+Exhaustive `when` expressions over it need an extra branch — the compiler
+will tell you exactly where. If you only care about handshake outcomes:
+
+```kotlin
+.onConnectionEvent { event ->
+    when (event) {
+        is PinVaultConnectionEvent.Connection   -> handle(event)
+        is PinVaultConnectionEvent.ConfigUpdate -> Unit  // ignore
+    }
+}
+```
+
+Listeners that already use `PinVaultBackendReporter` need no code change —
+the reporter handles both variants internally and POSTs to separate
+endpoints.
+
+### 7. Demo server: `API_KEY` is now required to start
 
 ```bash
 # Before — silently disabled auth.
