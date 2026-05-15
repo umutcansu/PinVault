@@ -54,4 +54,50 @@ sealed class PinVaultConnectionEvent {
         /** SPKI hashes the host's [HostPin] config currently accepts. Always populated. */
         val expectedPins: List<String>
     ) : PinVaultConnectionEvent()
+
+    /**
+     * Result of a config update attempt — either a periodic WorkManager
+     * refresh or a `PinVault.updateNow()` call, plus the on-the-fly retry
+     * the recovery interceptor performs after a pin mismatch.
+     *
+     * Fired alongside the legacy `PinVault.OnUpdateListener` so that
+     * consumers who subscribe via [PinVaultConfig.Builder.onConnectionEvent]
+     * receive both handshake outcomes and config-rotation outcomes on a
+     * single pipe — convenient for telemetry that needs to correlate the
+     * two streams.
+     */
+    data class ConfigUpdate(
+        /** Whether the update changed the active config, was a no-op, or failed. */
+        val status: ConfigUpdateStatus,
+
+        /**
+         * Config version after the update. For [ConfigUpdateStatus.UPDATED]
+         * this is the freshly fetched version; for [ConfigUpdateStatus.UNCHANGED]
+         * the previously persisted version that the server confirmed; for
+         * [ConfigUpdateStatus.FAILED] the version still in use (may be 0 if
+         * no config has ever been loaded).
+         */
+        val newVersion: Int,
+
+        /** Static device label, mirrors `android.os.Build.MANUFACTURER`. */
+        val deviceManufacturer: String,
+
+        /** Static device label, mirrors `android.os.Build.MODEL`. */
+        val deviceModel: String,
+
+        /** Failure detail. Null for non-failure statuses. */
+        val failureReason: String? = null
+    ) : PinVaultConnectionEvent()
+}
+
+/** Outcome categories for [PinVaultConnectionEvent.ConfigUpdate]. */
+enum class ConfigUpdateStatus {
+    /** Backend returned a new config and the client swapped to it. */
+    UPDATED,
+
+    /** Backend confirmed the client's current version — no swap. */
+    UNCHANGED,
+
+    /** Update attempt failed (network, signature, freshness, etc.). */
+    FAILED
 }

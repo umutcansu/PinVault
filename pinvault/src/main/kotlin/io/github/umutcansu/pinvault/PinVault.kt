@@ -102,6 +102,39 @@ object PinVault {
 
     internal fun notifyUpdateResult(result: UpdateResult) {
         updateListener?.onUpdate(result)
+        emitConfigUpdateEvent(result)
+    }
+
+    /**
+     * Bridges the [UpdateResult] (config-rotation channel) onto the
+     * [io.github.umutcansu.pinvault.api.PinVaultConnectionListener] pipe so
+     * that consumers subscribing via `onConnectionEvent(...)` see both
+     * handshake events and config-rotation events from a single listener.
+     * Safe to call before [pinManagerConfig] / [sslManager] are fully
+     * wired — the dispatcher short-circuits when no listener is attached.
+     */
+    private fun emitConfigUpdateEvent(result: UpdateResult) {
+        if (!::sslManager.isInitialized) return
+        val status = when (result) {
+            is UpdateResult.Updated -> io.github.umutcansu.pinvault.api.ConfigUpdateStatus.UPDATED
+            UpdateResult.AlreadyCurrent -> io.github.umutcansu.pinvault.api.ConfigUpdateStatus.UNCHANGED
+            is UpdateResult.Failed -> io.github.umutcansu.pinvault.api.ConfigUpdateStatus.FAILED
+        }
+        val newVersion = when (result) {
+            is UpdateResult.Updated -> result.newVersion
+            UpdateResult.AlreadyCurrent,
+            is UpdateResult.Failed -> clientProvider.getVersion()
+        }
+        val failureReason = (result as? UpdateResult.Failed)?.reason
+        sslManager.dispatchEvent(
+            io.github.umutcansu.pinvault.api.PinVaultConnectionEvent.ConfigUpdate(
+                status = status,
+                newVersion = newVersion,
+                deviceManufacturer = android.os.Build.MANUFACTURER ?: "",
+                deviceModel = android.os.Build.MODEL ?: "",
+                failureReason = failureReason
+            )
+        )
     }
 
     // ── Vault File listener ─────────────────────────────────────────────

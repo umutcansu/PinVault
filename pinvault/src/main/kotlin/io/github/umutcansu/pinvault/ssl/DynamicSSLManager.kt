@@ -392,8 +392,7 @@ internal class DynamicSSLManager(
 
     /**
      * Builds and dispatches a [PinVaultConnectionEvent.Connection] off the
-     * TLS handshake thread. Listener exceptions are logged and swallowed —
-     * a misbehaving callback can never break the underlying connection.
+     * TLS handshake thread.
      */
     private fun emitConnectionEvent(
         hostname: String,
@@ -402,16 +401,31 @@ internal class DynamicSSLManager(
         expectedPins: Collection<String>,
         pinVersion: Int
     ) {
-        val listener = connectionListener ?: return
-        val event = io.github.umutcansu.pinvault.api.PinVaultConnectionEvent.Connection(
-            hostname = hostname,
-            success = success,
-            pinVersion = pinVersion,
-            deviceManufacturer = android.os.Build.MANUFACTURER ?: "",
-            deviceModel = android.os.Build.MODEL ?: "",
-            actualPin = actualPin,
-            expectedPins = expectedPins.toList()
+        if (connectionListener == null) return
+        dispatchEvent(
+            io.github.umutcansu.pinvault.api.PinVaultConnectionEvent.Connection(
+                hostname = hostname,
+                success = success,
+                pinVersion = pinVersion,
+                deviceManufacturer = android.os.Build.MANUFACTURER ?: "",
+                deviceModel = android.os.Build.MODEL ?: "",
+                actualPin = actualPin,
+                expectedPins = expectedPins.toList()
+            )
         )
+    }
+
+    /**
+     * Internal hook used by [io.github.umutcansu.pinvault.PinVault] to push
+     * non-handshake events (e.g. config-update results) onto the same
+     * listener pipe. The TLS handshake path uses [emitConnectionEvent]
+     * directly; everything else can call this.
+     *
+     * Listener exceptions are logged and swallowed — a misbehaving callback
+     * can never break the underlying connection.
+     */
+    internal fun dispatchEvent(event: io.github.umutcansu.pinvault.api.PinVaultConnectionEvent) {
+        val listener = connectionListener ?: return
         try {
             listenerDispatcher.execute {
                 try {
