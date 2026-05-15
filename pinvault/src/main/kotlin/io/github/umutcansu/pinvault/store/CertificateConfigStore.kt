@@ -56,6 +56,7 @@ internal class CertificateConfigStore private constructor(private val prefs: Sha
         prefs.edit().apply {
             putInt(KEY_VERSION, config.computedVersion())
             putLong(KEY_ISSUED_AT, config.issuedAt)
+            putBoolean(KEY_FORCE_UPDATE, config.forceUpdate)
 
             // Format: hostname|version|hash1,hash2
             val pinsData = config.pins.joinToString(ENTRY_SEPARATOR) { pin ->
@@ -65,7 +66,8 @@ internal class CertificateConfigStore private constructor(private val prefs: Sha
 
             apply()
         }
-        Timber.d("Certificate config saved — version: %d, issuedAt: %d", config.computedVersion(), config.issuedAt)
+        Timber.d("Certificate config saved — version: %d, issuedAt: %d, forceUpdate: %s",
+            config.computedVersion(), config.issuedAt, config.forceUpdate)
     }
 
     fun load(): CertificateConfig? {
@@ -78,13 +80,15 @@ internal class CertificateConfigStore private constructor(private val prefs: Sha
         if (pins.isEmpty()) return null
 
         val issuedAt = prefs.getLong(KEY_ISSUED_AT, 0L)
+        val forceUpdate = prefs.getBoolean(KEY_FORCE_UPDATE, false)
         return CertificateConfig(
             version = version,
             pins = pins,
-            forceUpdate = false,
+            forceUpdate = forceUpdate,
             issuedAt = issuedAt
         ).also {
-            Timber.d("Certificate config loaded — version: %d, issuedAt: %d, %d pins", it.version, it.issuedAt, it.pins.size)
+            Timber.d("Certificate config loaded — version: %d, issuedAt: %d, forceUpdate: %s, %d pins",
+                it.version, it.issuedAt, it.forceUpdate, it.pins.size)
         }
     }
 
@@ -137,6 +141,7 @@ internal class CertificateConfigStore private constructor(private val prefs: Sha
         internal const val KEY_VERSION = "config_version"
         internal const val KEY_PINS = "config_pins"
         internal const val KEY_ISSUED_AT = "config_issued_at"
+        internal const val KEY_FORCE_UPDATE = "config_force_update"
         private const val ENTRY_SEPARATOR = "\n"
         private const val FIELD_SEPARATOR = "|"
         private const val HASH_SEPARATOR = ","
