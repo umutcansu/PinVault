@@ -62,6 +62,10 @@
 
 - Reporter POSTs `PinVaultConnectionEvent.ConfigUpdate` events to a new endpoint, `POST /api/v1/connection-history/config-update-report`, with status (`config_updated` / `config_unchanged` / `config_update_failed`), pinVersion, device fields, and optional `failureReason`.
 
+### Library — Runtime listener registration
+
+- **`PinVault.setConnectionListener(listener: PinVaultConnectionListener?)`** added. Lets callers attach (or detach) a listener after `init` has returned — needed for production reporter setups where the reporter's own `OkHttpClient` must be pinned via `PinVault.applyTo(...)`, which itself requires the active config to already be loaded. Builder-time `onConnectionEvent(...)` is unchanged; this new method is purely additive. README documents both "same-host as Config API" and "separate management host" pinning patterns.
+
 ### Demo server — Config-update reports
 
 - New route `POST /api/v1/connection-history/config-update-report` accepts reporter payloads, reuses the existing `connection_history` table with `source='config_update'`, and applies the same M-04 identifier validation as `/client-report`. Whitelisted in `ApiKeyAuth` so unauthenticated clients can report (matches `/client-report`).

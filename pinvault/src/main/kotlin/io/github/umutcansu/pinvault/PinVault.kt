@@ -100,6 +100,35 @@ object PinVault {
         updateListener = listener
     }
 
+    /**
+     * Runtime-attach (or detach) a [io.github.umutcansu.pinvault.api.PinVaultConnectionListener].
+     * The builder-time alternative is [PinVaultConfig.Builder.onConnectionEvent].
+     *
+     * Use this when the listener cannot be constructed before [init] returns
+     * — e.g. a [io.github.umutcansu.pinvault.reporter.PinVaultBackendReporter]
+     * whose [OkHttpClient] needs [applyTo] for pinning, which in turn requires
+     * the active config to already be loaded.
+     *
+     * Each Config API block's `DynamicSSLManager` receives the listener so
+     * handshake events from every per-block client funnel through the same
+     * callback. Passing `null` detaches.
+     *
+     * Connection events that fire *before* this method is called (e.g. the
+     * bootstrap config fetch handshake) are not delivered — register the
+     * listener at builder time via `onConnectionEvent(...)` if you need
+     * those too.
+     */
+    fun setConnectionListener(
+        listener: io.github.umutcansu.pinvault.api.PinVaultConnectionListener?
+    ) {
+        checkInitialized()
+        if (configApiClients.isNotEmpty()) {
+            configApiClients.values.forEach { it.sslManager.setConnectionListener(listener) }
+        } else {
+            sslManager.setConnectionListener(listener)
+        }
+    }
+
     internal fun notifyUpdateResult(result: UpdateResult) {
         updateListener?.onUpdate(result)
         emitConfigUpdateEvent(result)
