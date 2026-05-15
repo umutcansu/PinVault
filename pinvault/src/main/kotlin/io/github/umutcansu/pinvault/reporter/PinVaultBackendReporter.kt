@@ -43,28 +43,41 @@ import java.util.concurrent.TimeUnit
  * Network errors are logged at WARN level and otherwise swallowed; a
  * misbehaving backend can never break the underlying TLS connection.
  *
- * ### Throttling
+ * ### Throttling and filtering
  *
- * One POST per TLS handshake is fine for a handful of devices but scales
- * poorly to a production fleet of thousands. Pass [dedupWindowMs] > 0 to
- * suppress duplicate "healthy" reports for the same
- * `(hostname, pinVersion, serverCertPin)` tuple within the window. Pin
- * mismatch events (success=false) always bypass the filter — they are
- * the signal you cannot afford to drop.
+ * Two independent knobs, both optional:
+ *
+ * - [reportSuccessEvents] decides *what* gets reported. When `false`,
+ *   only pin-mismatch events are POSTed; the noisy healthy-handshake
+ *   stream is suppressed entirely. Useful for fleets that only care
+ *   about anomalies.
+ * - [dedupWindowMs] decides *how often* a healthy event repeats. When
+ *   `> 0`, duplicate "healthy" reports for the same
+ *   `(hostname, pinVersion, serverCertPin)` tuple inside the window are
+ *   dropped. Useful when you do want a heartbeat per device but not one
+ *   per handshake.
+ *
+ * Pin mismatch events (success=false) bypass both filters — that signal
+ * must never be silenced.
  *
  * @param managementUrl Demo-server management base URL, e.g.
  *   `"http://192.168.1.80:6650/"`. The reporter appends
  *   `api/v1/connection-history/client-report` automatically.
  * @param httpClient Optional preconfigured OkHttpClient. Defaults to a
  *   short-timeout client that is fine for fire-and-forget telemetry.
+ * @param reportSuccessEvents When `false`, the reporter only POSTs pin
+ *   mismatch events. Defaults to `true` (legacy: every handshake is a
+ *   POST). Pin mismatches are always reported regardless of this flag.
  * @param dedupWindowMs Minimum interval, in milliseconds, between
  *   duplicate "healthy" reports for the same host/version/cert. Defaults
- *   to 0 (no deduplication — every handshake produces a POST). A
- *   production fleet should set this to 60_000 or higher.
+ *   to 0 (no deduplication). Ignored when [reportSuccessEvents] is
+ *   `false`. A production fleet that does want heartbeats should set
+ *   this to 60_000 or higher.
  */
 class PinVaultBackendReporter @JvmOverloads constructor(
     managementUrl: String,
     private val httpClient: OkHttpClient = defaultClient(),
+    private val reportSuccessEvents: Boolean = true,
     private val dedupWindowMs: Long = 0L
 ) : PinVaultConnectionListener {
 
@@ -76,7 +89,10 @@ class PinVaultBackendReporter @JvmOverloads constructor(
     override fun onEvent(event: PinVaultConnectionEvent) {
         if (event !is PinVaultConnectionEvent.Connection) return
 
-        if (event.success && isDuplicateWithinWindow(event)) return
+        if (event.success) {
+            if (!reportSuccessEvents) return
+            if (isDuplicateWithinWindow(event)) return
+        }
 
         val status = if (event.success) "healthy" else "pin_mismatch"
         val firstExpected = event.expectedPins.firstOrNull().orEmpty()
