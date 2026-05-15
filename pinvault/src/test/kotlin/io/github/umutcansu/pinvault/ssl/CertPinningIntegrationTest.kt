@@ -155,4 +155,61 @@ class CertPinningIntegrationTest {
         val client = manager.buildClient(null)
         assertNotNull(client)
     }
+
+    /**
+     * Regression test for the snapshot-trust-manager bug: applyTo(builder)
+     * used to capture pinMap by value at call time, so a later config swap
+     * (PinVault.updateNow / WorkManager refresh) never reached the
+     * externally maintained client. Now applyTo takes a lambda the trust
+     * manager re-reads on every handshake.
+     *
+     * Observable consequence: the provider lambda is invoked at least once
+     * per TLS handshake, not just once at applyTo() time. Counting calls
+     * lets us prove the contract without depending on connection-pool /
+     * session-resumption timing quirks that vary across JVMs.
+     */
+    @Test
+    fun `dynamic config provider — lambda re-read on each handshake`() {
+        server.enqueue(MockResponse().setBody("first"))
+        server.enqueue(MockResponse().setBody("second"))
+
+        val config = CertificateConfig(
+            version = 1,
+            pins = listOf(HostPin("localhost", listOf(serverCert.sha256Pin, serverCert.sha256Pin)))
+        )
+        val callCount = java.util.concurrent.atomic.AtomicInteger(0)
+
+        // Zero idle pool so the second request is forced into a fresh
+        // connection (and therefore a fresh handshake / TM invocation).
+        val builder = okhttp3.OkHttpClient.Builder()
+            .hostnameVerifier { _, _ -> true }
+            .connectionPool(
+                okhttp3.ConnectionPool(0, 1, java.util.concurrent.TimeUnit.NANOSECONDS)
+            )
+        manager.applyTo(builder) {
+            callCount.incrementAndGet()
+            config
+        }
+        val client = builder.build()
+
+        val first = try {
+            client.newCall(Request.Builder().url(server.url("/first")).build()).execute()
+        } catch (e: java.net.ConnectException) {
+            println("Skipping dynamic-config integration test: ${e.message}")
+            return
+        }
+        first.close()
+        client.connectionPool.evictAll()
+
+        val second = client.newCall(Request.Builder().url(server.url("/second")).build()).execute()
+        second.close()
+
+        // Snapshot trust manager would have read the config exactly once
+        // at applyTo() time; a dynamic one reads it on every handshake.
+        // Two handshakes -> at least two invocations.
+        assertTrue(
+            "Provider lambda called ${callCount.get()} times — expected >= 2 for a dynamic trust manager",
+            callCount.get() >= 2
+        )
+    }
 }

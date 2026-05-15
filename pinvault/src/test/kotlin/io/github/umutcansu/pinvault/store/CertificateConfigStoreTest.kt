@@ -167,6 +167,41 @@ class CertificateConfigStoreTest {
     }
 
     @Test
+    fun `forceUpdate flag survives save and load`() {
+        // Regression: save() used to drop forceUpdate, load() hardcoded it to
+        // false. A restart then defeated the backend's revocation guarantee.
+        val config = CertificateConfig(
+            version = 1,
+            pins = listOf(HostPin("api.example.com", listOf("h1", "h2"), version = 1)),
+            forceUpdate = true
+        )
+
+        store.save(config)
+        val loaded = store.load()
+
+        assertNotNull(loaded)
+        assertTrue(
+            "forceUpdate=true lost on round-trip — restart bypass regression",
+            loaded!!.forceUpdate
+        )
+    }
+
+    @Test
+    fun `forceUpdate defaults to false when absent from prefs`() {
+        // Old encrypted stores written before the flag was persisted should
+        // still load — silent migration via getBoolean default.
+        prefs.edit()
+            .putInt(CertificateConfigStore.KEY_VERSION, 1)
+            .putString(CertificateConfigStore.KEY_PINS, "api.example.com|1|h1,h2")
+            .apply()
+
+        val loaded = store.load()
+
+        assertNotNull(loaded)
+        assertFalse("legacy entries without KEY_FORCE_UPDATE should load with false", loaded!!.forceUpdate)
+    }
+
+    @Test
     fun `computedVersion uses max of host versions`() {
         val config = CertificateConfig(
             version = 0,

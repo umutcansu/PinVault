@@ -231,6 +231,96 @@ class PinRecoveryInterceptorTest {
         }
     }
 
+    @Test
+    fun `successful recovery does NOT zero per-host failure counter`() {
+        // Regression: recordSuccess used to wipe the per-host RecoveryState
+        // entry, letting a partial MITM keep the circuit breaker permanently
+        // disarmed by interleaving forged handshakes with legitimate ones.
+        // The counter must now only age out via ATTEMPT_WINDOW_MS, not reset
+        // on a single success.
+
+        val newClient = mockk<OkHttpClient>()
+        val newCall = mockk<okhttp3.Call>()
+        val retryResponse = mockk<Response>(relaxed = true)
+        every { retryResponse.code } returns 200
+        every { newClient.newCall(any()) } returns newCall
+        every { newCall.execute() } returns retryResponse
+
+        // updater() returns true so the interceptor proceeds to the retry
+        // branch and invokes recordSuccess after a successful new-client call.
+        val interceptor = PinRecoveryInterceptor(
+            updater = { true },
+            newClientProvider = { newClient }
+        )
+
+        // First, drive one failure so the per-host state map gets a non-zero
+        // attemptCount. Use a failing updater for this run via a second
+        // interceptor sharing the recoveryState map is fragile — instead we
+        // simulate by inspecting state after a successful recovery: with the
+        // old behavior the host's entry would be REMOVED; with the new
+        // no-op behavior it must remain (cleared internally to attemptCount=0
+        // is also acceptable, but the entry itself must not vanish — that's
+        // the bypass vector).
+        val chain = mockk<Interceptor.Chain>()
+        val request = Request.Builder().url("https://example.com/test").build()
+        every { chain.request() } returns request
+        every { chain.proceed(any()) } throws javax.net.ssl.SSLPeerUnverifiedException("pin mismatch")
+
+        // First call: triggers failure path -> updater() -> success -> recordSuccess.
+        // (recordFailure also runs once on the original mismatch path inside the
+        // try/catch around retry; with our setup the retry succeeds, so the
+        // sequence is `proceed throws -> updater() -> retry succeeds ->
+        // recordSuccess`.)
+        val response = interceptor.intercept(chain)
+        assertEquals(200, response.code)
+
+        // Inspect private recoveryState via reflection — the contract under
+        // test is: after recordSuccess the host key MUST still be present
+        // (or its attemptCount must remain non-zero), proving recordSuccess
+        // is not silently zeroing the breaker.
+        val stateField = PinRecoveryInterceptor::class.java.getDeclaredField("recoveryState")
+        stateField.isAccessible = true
+        @Suppress("UNCHECKED_CAST")
+        val recoveryState = stateField.get(interceptor) as java.util.concurrent.ConcurrentHashMap<String, *>
+
+        // The old behavior cleared the map outright on success — that's the
+        // regression we're guarding against. Today the map can be either
+        // empty (if no failure recorded before retry succeeded) OR contain
+        // the host with no zeroing. What MUST NOT happen: a prior failure
+        // counter being zeroed by the success. So we drive an explicit
+        // failure first and re-assert.
+
+        // Force an explicit failure to seed the state, then a success, and
+        // verify the failure entry is preserved.
+        val failingInterceptor = PinRecoveryInterceptor(
+            updater = { false }, // first call: failed recovery -> recordFailure
+            newClientProvider = { newClient }
+        )
+        try {
+            failingInterceptor.intercept(chain)
+        } catch (_: Exception) { /* expected */ }
+        val failingState = stateField.get(failingInterceptor)
+                as java.util.concurrent.ConcurrentHashMap<String, *>
+        assertTrue(
+            "Failure must seed the per-host state map",
+            failingState.containsKey("example.com")
+        )
+
+        // Swap in a passing updater for the same interceptor instance via
+        // reflection and run a successful recovery — the host entry must
+        // remain in the map (recordSuccess is a no-op).
+        val updaterField = PinRecoveryInterceptor::class.java.getDeclaredField("updater")
+        updaterField.isAccessible = true
+        updaterField.set(failingInterceptor, { -> true })
+
+        failingInterceptor.intercept(chain)
+        assertTrue(
+            "Per-host state must survive a successful recovery — " +
+            "recordSuccess clearing it lets a partial MITM keep the breaker disarmed",
+            failingState.containsKey("example.com")
+        )
+    }
+
     private fun createTrustingClient(): OkHttpClient {
         val ks = KeyStore.getInstance("PKCS12")
         ks.load(cert.p12Bytes.inputStream(), "changeit".toCharArray())

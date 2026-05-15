@@ -93,4 +93,28 @@ class PinHostMatcherTest {
         val empty = PinHostMatcher.build(emptyList())
         assertNull(PinHostMatcher.match(empty, "anything.com"))
     }
+
+    @Test
+    fun `TLD-level wildcard is refused — single-label suffix`() {
+        // *.com would otherwise authorize every .com host via a single
+        // misconfigured pin entry, re-opening H-01 across the entire TLD.
+        val tldMap = PinHostMatcher.build(
+            listOf("*.com" to setOf("PIN_FOR_STAR_COM"))
+        )
+        assertNull(
+            "*.com must not match any host — defense against TLD-wide pin reuse",
+            PinHostMatcher.match(tldMap, "example.com")
+        )
+        assertNull(PinHostMatcher.match(tldMap, "anything.com"))
+    }
+
+    @Test
+    fun `narrow wildcard still works — two-label suffix`() {
+        // Sanity: the TLD guard must not break legitimate `*.example.com`
+        // patterns.
+        val narrowMap = PinHostMatcher.build(
+            listOf("*.example.com" to setOf("PIN_NARROW"))
+        )
+        assertEquals(setOf("PIN_NARROW"), PinHostMatcher.match(narrowMap, "api.example.com"))
+    }
 }
