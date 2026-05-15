@@ -739,6 +739,18 @@ Configure at least 2 pins per host (primary + backup). Add the new pin to the
 config 30+ days before the old certificate expires. Set `forceUpdate: true`
 on the host entry to force clients to refresh immediately.
 
+**`forceUpdate=true` availability trade-off.** A client that holds a
+`forceUpdate=true` config refuses to initialize when the backend is
+unreachable — the previously cached config is treated as untrusted
+because the server already declared it superseded. This is intentional:
+the flag exists to revoke compromised pin sets and must not silently
+fall back to the very config it is trying to revoke. The cost is
+availability: an attacker who can sustainably DoS the Config API can
+prevent affected devices from coming up. Mitigate by keeping the
+Config API behind diverse routes (multiple regions / CDN cache) and
+reserving `forceUpdate=true` for genuine revocation events rather than
+routine rotations.
+
 ### What PinVault does NOT do
 - **Root/jailbreak detection** — combine with libraries like RootBeer if needed
 - **Code obfuscation** — enable R8/ProGuard in your app (`isMinifyEnabled = true`)
