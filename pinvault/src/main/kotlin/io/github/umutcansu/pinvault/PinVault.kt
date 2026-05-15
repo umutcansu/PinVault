@@ -380,8 +380,14 @@ object PinVault {
     fun applyTo(builder: OkHttpClient.Builder) {
         checkInitialized()
         if (clientProvider.currentConfig == null) {
-            Timber.w("No certificate config available — builder unchanged (system defaults)")
-            return
+            // checkInitialized passed but no config has reached the provider yet —
+            // happens in the brief window between setup() and executeInit() on the
+            // callback init path. The dynamic trust manager will refuse the first
+            // handshake (fail-closed) until updateNow / init populates the config.
+            Timber.w(
+                "PinVault.applyTo called before initial config arrived — " +
+                "TLS handshakes will refuse to connect until init completes."
+            )
         }
         sslManager.applyTo(builder) { clientProvider.currentConfig }
         builder.addInterceptor(clientProvider.recoveryInterceptor)
