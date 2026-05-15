@@ -63,10 +63,20 @@ Returns the pin configuration. This is the core endpoint.
 ```
 
 **Rules:**
-- Each host must have **at least 2 pins** (primary + backup for rotation)
+- Each host must have **at least 2 pins** (primary + backup for rotation). Client rejects entries with fewer pins; one malformed row no longer poisons the rest of the config (per-entry parsing).
 - Each pin is Base64-encoded SHA-256 of the certificate's SubjectPublicKeyInfo (SPKI) — exactly 44 characters
 - `mtls: true` means the host requires a client certificate
 - `clientCertVersion` triggers client cert download when it changes
+
+**Hostname patterns:**
+- Exact match is case-insensitive: `api.example.com`
+- Wildcards match a single sub-label only: `*.example.com` matches `api.example.com` but not `a.b.example.com` or the bare apex `example.com`
+- **TLD-level wildcards are rejected by the client.** A pattern whose suffix has no dot (e.g. `*.com`, `*.tr`, `*.uk`) silently fails to match anything — the matcher treats it as a misconfiguration to avoid authorizing every domain under a TLD. Server admins should never publish such patterns; if you need them, the client won't honor them anyway.
+
+**`forceUpdate` semantics:**
+- The top-level `forceUpdate` flag is for **revocation events**, not routine rotation. When set, the client refuses to initialize against the previously cached config if your backend is unreachable — it treats the stored config as superseded.
+- The flag now persists across client restarts (fixed in 2.0.8+). A backend admin pushing `forceUpdate=true` after a pin compromise can be confident the guarantee survives reboots; a restart no longer falls back to the revoked config silently.
+- Availability trade-off: an attacker who can sustainably DoS your Config API can prevent affected devices from coming up. Keep the Config API behind diverse routes / CDN cache if you ever set this flag.
 
 **How to generate a pin (any language):**
 ```
@@ -257,6 +267,80 @@ Content-Type: application/json
 Status values: `"downloaded"`, `"cached"`, `"failed"`
 
 Return `200 OK` — the library ignores the response body.
+
+---
+
+### 8. Connection Telemetry (OPTIONAL — only if you use `PinVaultBackendReporter`)
+
+These two endpoints are **not part of the core library contract**. The
+library never POSTs to them on its own — it only fires structured
+events to the consumer's registered `PinVaultConnectionListener`. The
+bundled `PinVaultBackendReporter` convenience class wires those events
+to the schemas below; consumers who write their own listener can use
+any schema they like.
+
+If your backend is the bundled demo-server (or a fork keeping its
+schema), implement these two routes. Otherwise, skip the section and
+implement whatever wire format your custom listener emits.
+
+**8a. Handshake Reports**
+```
+POST {managementUrl}/api/v1/connection-history/client-report
+Content-Type: application/json
+```
+
+```json
+{
+  "hostname":           "api.example.com",
+  "status":             "healthy",          // or "pin_mismatch"
+  "responseTimeMs":     0,
+  "pinMatched":         true,
+  "pinVersion":         13,
+  "deviceManufacturer": "Samsung",
+  "deviceModel":        "Galaxy S24",
+  "serverCertPin":      "AAAA…=",
+  "storedPin":          "AAAA…="
+}
+```
+
+Fired once per TLS handshake when `PinVaultBackendReporter` is
+registered. Production fleets normally enable the reporter's
+`dedupWindowMs` (heartbeat throttle) or `reportSuccessEvents = false`
+(anomaly-only mode) to cut server load — handshake volume scales with
+fleet size, not request volume.
+
+**8b. Config-Rotation Reports**
+```
+POST {managementUrl}/api/v1/connection-history/config-update-report
+Content-Type: application/json
+```
+
+```json
+{
+  "status":             "config_updated",   // or "config_unchanged" / "config_update_failed"
+  "pinVersion":         22,
+  "deviceManufacturer": "Xiaomi",
+  "deviceModel":        "Mi9T",
+  "failureReason":      "Backend unreachable"  // present only on config_update_failed
+}
+```
+
+Fired by `PinVaultBackendReporter` whenever a config-update attempt
+completes — periodic WorkManager refresh, explicit `updateNow()`, or
+recovery-driven swap. The `reportSuccessEvents` flag suppresses
+`config_updated` / `config_unchanged` reports but always lets
+`config_update_failed` through.
+
+Both endpoints should return `200 OK` on success; the reporter logs
+any non-2xx at WARN and otherwise swallows the response. A missing
+route (404) is logged once per failed POST and does not break the
+listener pipeline — older demo-server forks without `8b` keep working.
+
+**Authentication:** these endpoints are typically unauthenticated on
+the demo-server (clients have no admin credential to present). M-04
+input validation belongs on the server side: regex-validate
+`hostname`, `deviceManufacturer`, `deviceModel` before any HTML render
+of the admin UI.
 
 ---
 
