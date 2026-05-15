@@ -45,14 +45,25 @@ internal class DynamicSSLManager(
 
     /**
      * Background executor used to dispatch [connectionListener] callbacks
-     * off the TLS handshake thread. Lazy single-threaded so listener
+     * off the TLS handshake thread. Single-threaded so listener
      * implementations can rely on serial in-order delivery; daemon thread
      * so it never blocks JVM shutdown.
+     *
+     * The work queue is bounded ([LISTENER_QUEUE_CAPACITY]) and overflowing
+     * tasks are silently discarded — a misbehaving listener that blocks for
+     * minutes (e.g. a synchronous HTTP POST against an unreachable telemetry
+     * endpoint) must never accumulate handshake events into an OOM. Losing
+     * a few telemetry events under that pathological condition is acceptable;
+     * crashing the host app is not.
      */
     private val listenerDispatcher: java.util.concurrent.ExecutorService by lazy {
-        java.util.concurrent.Executors.newSingleThreadExecutor { r ->
-            Thread(r, "PinVault-Listener").apply { isDaemon = true }
-        }
+        java.util.concurrent.ThreadPoolExecutor(
+            1, 1,
+            0L, java.util.concurrent.TimeUnit.MILLISECONDS,
+            java.util.concurrent.LinkedBlockingQueue(LISTENER_QUEUE_CAPACITY),
+            { r -> Thread(r, "PinVault-Listener").apply { isDaemon = true } },
+            java.util.concurrent.ThreadPoolExecutor.DiscardPolicy()
+        )
     }
 
     /** Updates the listener at runtime (used after init when config arrives). */
@@ -421,5 +432,6 @@ internal class DynamicSSLManager(
 
     companion object {
         private const val DEFAULT_TIMEOUT = 30L
+        private const val LISTENER_QUEUE_CAPACITY = 256
     }
 }
