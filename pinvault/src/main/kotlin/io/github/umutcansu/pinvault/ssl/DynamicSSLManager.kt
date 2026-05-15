@@ -192,7 +192,13 @@ internal class DynamicSSLManager(
      */
     fun applyTo(builder: OkHttpClient.Builder, configProvider: () -> CertificateConfig?) {
         val tm = pinnedTrustManager(configProvider)
-        val sslCtx = SSLContext.getInstance("TLS")
+        // Explicit TLSv1.2: Android API 24+ negotiates 1.2 or 1.3 with this
+        // factory, but the JCA-default `"TLS"` algorithm string has, on rare
+        // OEM ROMs, been observed to fall back to 1.0/1.1 — protocols the
+        // pinning model still allows because pin verification happens after
+        // handshake. Pin a minimum here; OkHttp's ConnectionSpec layer still
+        // gets the final say on enabled cipher suites.
+        val sslCtx = SSLContext.getInstance("TLSv1.2")
         val keyManagers = buildCompositeKeyManagers()
         sslCtx.init(keyManagers, arrayOf(tm), null)
         builder.sslSocketFactory(sslCtx.socketFactory, tm)
