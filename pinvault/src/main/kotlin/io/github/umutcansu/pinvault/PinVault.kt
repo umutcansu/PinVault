@@ -111,7 +111,10 @@ object PinVault {
      *
      * Each Config API block's `DynamicSSLManager` receives the listener so
      * handshake events from every per-block client funnel through the same
-     * callback. Passing `null` detaches.
+     * callback. **Replaces any listener previously attached** — whether via
+     * `onConnectionEvent(...)` at build time or a prior call to this method.
+     * Passing `null` detaches the listener entirely; subsequent events are
+     * dropped at the dispatcher.
      *
      * Connection events that fire *before* this method is called (e.g. the
      * bootstrap config fetch handshake) are not delivered — register the
