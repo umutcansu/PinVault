@@ -174,10 +174,18 @@ PinVaultConfig.Builder()
     .onConnectionEvent { event ->
         when (event) {
             is PinVaultConnectionEvent.Connection -> {
+                // TLS handshake outcome — fires on every handshake.
                 // event.hostname, event.success, event.pinVersion,
                 // event.deviceManufacturer, event.deviceModel,
                 // event.actualPin, event.expectedPins
                 MyAnalytics.report(event)
+            }
+            is PinVaultConnectionEvent.ConfigUpdate -> {
+                // Config rotation outcome — fires once per updateNow /
+                // WorkManager refresh / recovery-driven swap.
+                // event.status (UPDATED / UNCHANGED / FAILED),
+                // event.newVersion, event.failureReason
+                MyAnalytics.reportRotation(event)
             }
         }
     }
@@ -185,8 +193,8 @@ PinVaultConfig.Builder()
 ```
 
 If your backend is the bundled PinVault demo-server (or a fork keeping
-the `/api/v1/connection-history/client-report` schema), there is a
-one-line opt-in helper:
+the `/api/v1/connection-history/{client-report,config-update-report}`
+schemas), there is a one-line opt-in helper:
 
 ```kotlin
 import io.github.umutcansu.pinvault.reporter.reportToPinVaultBackend
@@ -195,6 +203,25 @@ PinVaultConfig.Builder()
     .reportToPinVaultBackend("http://192.168.1.80:6650/")
     .configApi("api", "https://api.example.com/") { ... }
     .build()
+```
+
+The reporter POSTs **one event per TLS handshake** by default, which
+scales poorly to a production fleet. Two opt-in knobs cut that down:
+
+```kotlin
+// Heartbeat throttle — at most one healthy report per (host, version,
+// cert) tuple per minute; pin mismatches always go through.
+.reportToPinVaultBackend(
+    managementUrl = "http://192.168.1.80:6650/",
+    dedupWindowMs = 60_000L
+)
+
+// Anomalies only — drop the healthy stream entirely; only pin
+// mismatches and config-update failures reach the backend.
+.reportToPinVaultBackend(
+    managementUrl = "http://192.168.1.80:6650/",
+    reportSuccessEvents = false
+)
 ```
 
 For Java consumers the event subtype check looks like:
@@ -206,6 +233,10 @@ For Java consumers the event subtype check looks like:
         myAnalytics.report(c.getHostname(), c.getSuccess(),
                            c.getPinVersion(), c.getDeviceManufacturer(),
                            c.getDeviceModel());
+    } else if (event instanceof PinVaultConnectionEvent.ConfigUpdate) {
+        PinVaultConnectionEvent.ConfigUpdate u = (PinVaultConnectionEvent.ConfigUpdate) event;
+        myAnalytics.reportRotation(u.getStatus(), u.getNewVersion(),
+                                   u.getFailureReason());
     }
 })
 ```
