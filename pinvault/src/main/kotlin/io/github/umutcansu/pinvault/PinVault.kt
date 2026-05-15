@@ -834,10 +834,19 @@ object PinVault {
                 "client can detect transport-level tampering or header stripping."
             )
         }
-        val localHash = java.security.MessageDigest.getInstance("SHA-256")
-            .digest(p12Bytes)
-            .let { android.util.Base64.encodeToString(it, android.util.Base64.NO_WRAP) }
-        if (localHash != serverHash) {
+        val localHashBytes = java.security.MessageDigest.getInstance("SHA-256").digest(p12Bytes)
+        val serverHashBytes = try {
+            android.util.Base64.decode(serverHash, android.util.Base64.NO_WRAP)
+        } catch (e: IllegalArgumentException) {
+            throw SecurityException(
+                "Invalid X-P12-SHA256 header — not valid Base64. Refusing to install P12.",
+                e
+            )
+        }
+        // Constant-time comparison: String.equals short-circuits on first mismatch,
+        // which leaks a timing oracle against an attacker who controls the header.
+        // MessageDigest.isEqual loops the full length regardless of mismatch position.
+        if (!java.security.MessageDigest.isEqual(localHashBytes, serverHashBytes)) {
             throw SecurityException("P12 integrity check failed — SHA-256 mismatch (transport corruption or tampering)")
         }
         Timber.d("P12 SHA-256 hash verified")
