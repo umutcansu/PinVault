@@ -31,6 +31,12 @@ internal object PinHostMatcher {
      *      `*.example.com` matches `api.example.com` but NOT `example.com`
      *      (zero labels left) or `a.b.example.com` (two labels left).
      *
+     * Wildcard suffixes must contain at least one dot — `*.com` or `*.tr`
+     * would otherwise let a single misconfigured pin entry authorize every
+     * domain under a TLD, turning a config-level mistake into a cross-host
+     * pin-reuse vulnerability. Such patterns are silently skipped here;
+     * config validation at intake should reject them outright.
+     *
      * Returns `null` when nothing matches — callers must treat null as a
      * hard reject (fail-safe).
      */
@@ -41,6 +47,7 @@ internal object PinHostMatcher {
         for ((pattern, hashes) in pinMap) {
             if (!pattern.startsWith("*.")) continue
             val suffix = pattern.substring(2)
+            if ('.' !in suffix) continue
             if (!host.endsWith(".$suffix")) continue
             val left = host.substring(0, host.length - suffix.length - 1)
             if (left.isNotEmpty() && '.' !in left) return hashes
