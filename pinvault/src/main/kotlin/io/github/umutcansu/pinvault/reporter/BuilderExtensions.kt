@@ -9,7 +9,7 @@ import io.github.umutcansu.pinvault.model.PinVaultConfig
  *
  * Equivalent to:
  * ```
- * onConnectionEvent(PinVaultBackendReporter(managementUrl))
+ * onConnectionEvent(PinVaultBackendReporter(managementUrl, dedupWindowMs = dedupWindowMs))
  * ```
  *
  * Use this when your backend is the bundled demo-server (or a fork of it
@@ -22,7 +22,15 @@ import io.github.umutcansu.pinvault.model.PinVaultConfig
  *
  * @param managementUrl e.g. `"http://192.168.1.80:6650/"`. The reporter
  *   appends the endpoint path itself.
+ * @param dedupWindowMs Minimum interval between duplicate "healthy" POSTs
+ *   for the same host/version/cert (mismatch events always go through).
+ *   Default 0 = every handshake produces a report; production deployments
+ *   should pass at least 60_000.
  */
+@JvmOverloads
 fun PinVaultConfig.Builder.reportToPinVaultBackend(
-    managementUrl: String
-): PinVaultConfig.Builder = onConnectionEvent(PinVaultBackendReporter(managementUrl))
+    managementUrl: String,
+    dedupWindowMs: Long = 0L
+): PinVaultConfig.Builder = onConnectionEvent(
+    PinVaultBackendReporter(managementUrl, dedupWindowMs = dedupWindowMs)
+)

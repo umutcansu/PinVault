@@ -7,6 +7,7 @@ import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
 import timber.log.Timber
+import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.TimeUnit
 
 /**
@@ -42,21 +43,40 @@ import java.util.concurrent.TimeUnit
  * Network errors are logged at WARN level and otherwise swallowed; a
  * misbehaving backend can never break the underlying TLS connection.
  *
+ * ### Throttling
+ *
+ * One POST per TLS handshake is fine for a handful of devices but scales
+ * poorly to a production fleet of thousands. Pass [dedupWindowMs] > 0 to
+ * suppress duplicate "healthy" reports for the same
+ * `(hostname, pinVersion, serverCertPin)` tuple within the window. Pin
+ * mismatch events (success=false) always bypass the filter — they are
+ * the signal you cannot afford to drop.
+ *
  * @param managementUrl Demo-server management base URL, e.g.
  *   `"http://192.168.1.80:6650/"`. The reporter appends
  *   `api/v1/connection-history/client-report` automatically.
  * @param httpClient Optional preconfigured OkHttpClient. Defaults to a
  *   short-timeout client that is fine for fire-and-forget telemetry.
+ * @param dedupWindowMs Minimum interval, in milliseconds, between
+ *   duplicate "healthy" reports for the same host/version/cert. Defaults
+ *   to 0 (no deduplication — every handshake produces a POST). A
+ *   production fleet should set this to 60_000 or higher.
  */
 class PinVaultBackendReporter @JvmOverloads constructor(
     managementUrl: String,
-    private val httpClient: OkHttpClient = defaultClient()
+    private val httpClient: OkHttpClient = defaultClient(),
+    private val dedupWindowMs: Long = 0L
 ) : PinVaultConnectionListener {
 
     private val endpoint: String = buildEndpoint(managementUrl)
 
+    /** Last-sent timestamp per `host|pinVersion|cert` tuple. */
+    private val lastReportedMs = ConcurrentHashMap<String, Long>()
+
     override fun onEvent(event: PinVaultConnectionEvent) {
         if (event !is PinVaultConnectionEvent.Connection) return
+
+        if (event.success && isDuplicateWithinWindow(event)) return
 
         val status = if (event.success) "healthy" else "pin_mismatch"
         val firstExpected = event.expectedPins.firstOrNull().orEmpty()
@@ -97,6 +117,19 @@ class PinVaultBackendReporter @JvmOverloads constructor(
             // the reporter to take down the listener pipeline.
             Timber.w(e, "PinVaultBackendReporter: failed to POST to %s", endpoint)
         }
+    }
+
+    private fun isDuplicateWithinWindow(event: PinVaultConnectionEvent.Connection): Boolean {
+        if (dedupWindowMs <= 0L) return false
+        val key = "${event.hostname}|${event.pinVersion}|${event.actualPin}"
+        val now = System.currentTimeMillis()
+        // putIfAbsent + replace pattern: first writer wins inside the window,
+        // subsequent callers see the recorded timestamp and drop. Once the
+        // window expires the next caller writes a fresh timestamp.
+        val previous = lastReportedMs[key]
+        if (previous != null && now - previous < dedupWindowMs) return true
+        lastReportedMs[key] = now
+        return false
     }
 
     private fun StringBuilder.appendField(key: String, value: String) {
