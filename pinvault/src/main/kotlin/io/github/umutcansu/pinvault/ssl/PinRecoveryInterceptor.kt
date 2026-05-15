@@ -124,9 +124,18 @@ internal class PinRecoveryInterceptor(
         }
     }
 
+    @Suppress("UNUSED_PARAMETER")
     private fun recordSuccess(host: String) {
-        // Clear state on success — host is healthy, next failure starts fresh.
-        recoveryState.remove(host)
+        // Intentionally no-op. Previously the entire per-host state was cleared
+        // on a successful recovery, but that let a partial MITM keep the
+        // breaker open indefinitely by interleaving forged handshakes with
+        // legitimate ones: every success zeroed the failure counter, so the
+        // 3-in-5-minutes threshold was never reached and the backend kept
+        // getting hit with refetch requests at attacker-controlled cadence.
+        //
+        // Now the failure counter only ages out via ATTEMPT_WINDOW_MS in
+        // recordFailure, so sustained pin-mismatch noise still trips the
+        // breaker even when interleaved with valid handshakes.
     }
 
     companion object {
