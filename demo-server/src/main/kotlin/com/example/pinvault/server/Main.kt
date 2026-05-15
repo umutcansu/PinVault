@@ -643,6 +643,7 @@ fun main() {
         println("  GET  /api/v1/connection-history")
         println("  POST /api/v1/connection-history/web")
         println("  POST /api/v1/connection-history/client-report")
+        println("  POST /api/v1/connection-history/config-update-report")
         println("=".repeat(60))
         println("ECDSA Public Key: ${signingService.publicKeyBase64}")
         if (serverCertResult != null) {

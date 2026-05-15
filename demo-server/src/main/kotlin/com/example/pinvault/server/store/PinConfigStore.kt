@@ -235,6 +235,37 @@ class ConnectionHistoryStore(private val db: DatabaseManager) {
         }
     }
 
+    /**
+     * Config-rotation report from a PinVault client (UPDATED / UNCHANGED /
+     * FAILED outcome). Reuses [connection_history] with `source='config_update'`
+     * and an empty hostname — the event is per-device, not per-host.
+     */
+    fun addConfigUpdateReport(
+        timestamp: String,
+        status: String,
+        pinVersion: Int?,
+        deviceManufacturer: String?,
+        deviceModel: String?,
+        failureReason: String? = null
+    ) {
+        db.connection().use { conn ->
+            conn.prepareStatement("""
+                INSERT INTO connection_history
+                (source, hostname, timestamp, status, response_time_ms, pin_version, device_manufacturer, device_model, error_message)
+                VALUES ('config_update', '', ?, ?, 0, ?, ?, ?, ?)
+            """).use { stmt ->
+                stmt.setString(1, timestamp)
+                stmt.setString(2, status)
+                stmt.setObject(3, pinVersion)
+                stmt.setString(4, deviceManufacturer)
+                stmt.setString(5, deviceModel)
+                stmt.setString(6, failureReason)
+                stmt.executeUpdate()
+            }
+            trimEntries(conn)
+        }
+    }
+
     private fun readEntries(rs: java.sql.ResultSet): List<ConnectionEntry> {
         val entries = mutableListOf<ConnectionEntry>()
         while (rs.next()) {

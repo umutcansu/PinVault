@@ -402,6 +402,38 @@ fun Route.certificateConfigRoutes(
         call.respond(mapOf("saved" to true))
     }
 
+    post("/api/v1/connection-history/config-update-report") {
+        val body = call.receive<JsonObject>()
+        val status = body["status"]?.jsonPrimitive?.content ?: "unknown"
+        val manufacturer = body["deviceManufacturer"]?.jsonPrimitive?.content
+        val model = body["deviceModel"]?.jsonPrimitive?.content
+        val pinVersion = body["pinVersion"]?.jsonPrimitive?.intOrNull
+        val failureReason = body["failureReason"]?.jsonPrimitive?.content
+        val timestamp = body["timestamp"]?.jsonPrimitive?.content ?: Instant.now().toString()
+
+        // Same M-04 hardening as /client-report: device identifiers must look
+        // like identifiers, not HTML — the admin UI renders them later.
+        if (manufacturer != null && !CLIENT_REPORT_IDENT_REGEX.matches(manufacturer)) {
+            return@post call.respond(HttpStatusCode.BadRequest,
+                mapOf("error" to "Invalid deviceManufacturer format"))
+        }
+        if (model != null && !CLIENT_REPORT_IDENT_REGEX.matches(model)) {
+            return@post call.respond(HttpStatusCode.BadRequest,
+                mapOf("error" to "Invalid deviceModel format"))
+        }
+
+        connectionStore.addConfigUpdateReport(
+            timestamp = timestamp,
+            status = status,
+            pinVersion = pinVersion,
+            deviceManufacturer = manufacturer,
+            deviceModel = model,
+            failureReason = failureReason
+        )
+
+        call.respond(mapOf("saved" to true))
+    }
+
     get("/api/v1/connection-history/{hostname}") {
         val hostname = call.parameters["hostname"] ?: ""
         call.respond(connectionStore.getByHostname(hostname))

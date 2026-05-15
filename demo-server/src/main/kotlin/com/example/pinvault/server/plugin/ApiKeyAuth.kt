@@ -85,6 +85,7 @@ private fun isPublicEndpoint(path: String, method: HttpMethod): Boolean {
 
     // Client connection report
     if (path == "/api/v1/connection-history/client-report" && method == HttpMethod.Post) return true
+    if (path == "/api/v1/connection-history/config-update-report" && method == HttpMethod.Post) return true
 
     // Enrollment mode check (needed by client before enrollment)
     if (path == "/api/v1/enrollment-mode" && method == HttpMethod.Get) return true
