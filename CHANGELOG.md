@@ -34,6 +34,38 @@
 - Admin web UI escapes server-supplied strings via `esc()` helper before innerHTML interpolation in connection-history, client-device, pin-history, and global-health views (H-02).
 - BouncyCastle `bcprov-jdk18on` / `bcpkix-jdk18on` 1.78.1 → 1.79 (L-03).
 
+### Library — Trust manager dynamism
+
+- **`PinVault.applyTo(builder)` trust manager is now actually dynamic.** Previously the trust manager snapshotted `pinMap` at the time of the call, so config swaps from `updateNow()` / WorkManager never reached requests issued through an externally maintained `OkHttpClient`. The KDoc claimed dynamic behavior but the implementation was static, and the recovery interceptor couldn't compensate when a rotation kept old pins valid for the still-unrotated cert. The dynamic trust manager re-reads `clientProvider.currentConfig` on every TLS handshake; the old snapshot overload has been removed and internal callers (`buildClient`, `buildBootstrapClient`) pass constant lambdas.
+- **`applyTo(builder)` is now fail-closed when no config has loaded yet.** The previous early-return left the consumer's builder untouched and warned "system defaults" — silent unpinned traffic during the brief window between `setup()` and `executeInit()` on the callback init path. The dynamic trust manager is now installed unconditionally; its first handshake refuses to connect until init completes.
+
+### Library — Additional security hardening
+
+- **`forceUpdate` flag now persists across restarts.** `CertificateConfigStore.save()` did not write the flag and `load()` hardcoded `false`, so a backend that pushed `forceUpdate=true` lost the guard after every process restart — an attacker blocking the backend at that moment could keep a revoked config in service.
+- **Constant-time P12 hash comparison in enrollment.** `validateP12` compared the server's `X-P12-SHA256` header against the locally computed hash via `String.equals`, which short-circuits on first byte mismatch. Switched to `MessageDigest.isEqual` on decoded bytes.
+- **Persisted single-pin entries no longer dropped on load.** `parsePins` required ≥ 2 hashes per host while `save()` wrote whatever it was given — a single-pin entry survived disk write but disappeared on the next load, mutating a signed ECDSA payload on its round-trip.
+- **TLD-level wildcard patterns refused.** `PinHostMatcher.match` now skips `*.com`, `*.tr`, etc. (suffixes without a dot). Keeps a misconfigured single entry from authorizing every domain under a TLD and silently re-opening the H-01 cross-host reuse path.
+- **Recovery circuit-breaker no longer reset by a single success.** `PinRecoveryInterceptor.recordSuccess` used to wipe the per-host failure counter, letting a partial MITM keep the 3-in-5-minutes breaker permanently disarmed by interleaving forged handshakes with legitimate ones. Now a no-op; the counter only ages out through the existing window.
+- **Connection-listener dispatch queue is bounded** (256 entries, `DiscardPolicy`). A consumer-supplied listener that blocks (e.g. a synchronous POST to an unreachable telemetry endpoint) used to let handshake events accumulate without limit.
+
+### Library — Connection events
+
+- **`PinVaultConnectionEvent.ConfigUpdate` added.** Sealed class now carries config-rotation outcomes (`UPDATED` / `UNCHANGED` / `FAILED`) on the same listener pipe as handshake events. `notifyUpdateResult` emits both on the legacy `OnUpdateListener` and on `PinVaultConnectionListener.onEvent`. `when` expressions over `PinVaultConnectionEvent` need a new branch — the sealed-class doc already advertised this kind of extension.
+
+### Reporter — Throttling and filtering
+
+- **`reportSuccessEvents: Boolean`** (default `true`, legacy behavior). Set to `false` to POST only anomaly events — pin mismatches and config-update failures. Healthy handshakes and successful config rotations are suppressed entirely.
+- **`dedupWindowMs: Long`** (default `0`, legacy behavior). When > 0, duplicate "healthy" Connection reports for the same `(hostname, pinVersion, serverCertPin)` tuple inside the window are dropped. ConfigUpdate events are not deduped — they are already periodic.
+- **`reportToPinVaultBackend(...)` DSL helper** exposes the same two parameters.
+
+### Reporter — Config-update endpoint
+
+- Reporter POSTs `PinVaultConnectionEvent.ConfigUpdate` events to a new endpoint, `POST /api/v1/connection-history/config-update-report`, with status (`config_updated` / `config_unchanged` / `config_update_failed`), pinVersion, device fields, and optional `failureReason`.
+
+### Demo server — Config-update reports
+
+- New route `POST /api/v1/connection-history/config-update-report` accepts reporter payloads, reuses the existing `connection_history` table with `source='config_update'`, and applies the same M-04 identifier validation as `/client-report`. Whitelisted in `ApiKeyAuth` so unauthenticated clients can report (matches `/client-report`).
+
 ## 2.0.0 — 2026-04-17
 
 **PinVault 2.0 — Multi-Config-API + Vault Scoping + Per-File Security.**
