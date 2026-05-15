@@ -107,6 +107,7 @@ const i18n = {
     allConnections: 'Tüm Bağlantılar', noConnections: 'Henüz bağlantı kaydı yok',
     thSource: 'Kaynak', thStatus: 'Durum', thDuration: 'Süre', thPin: 'Pin', thError: 'Hata',
     success: 'Başarılı', failed: 'Hata', matched: 'Eşleşti', mismatch: 'Uyuşmadı',
+    configUpdated: 'Config Güncellendi', configUnchanged: 'Config Değişmedi', configUpdateFailed: 'Config Güncelleme Hatası',
     healthOk: 'Health check', healthFailed: 'Health check başarısız',
     signingTitle: 'ECDSA İmzalama Anahtarı',
     signingSub: 'Bu açık anahtarı APK\'ya gömün (PinVaultConfig.Builder.signaturePublicKey)',
@@ -271,6 +272,7 @@ const i18n = {
     allConnections: 'All Connections', noConnections: 'No connection records yet',
     thSource: 'Source', thStatus: 'Status', thDuration: 'Duration', thPin: 'Pin', thError: 'Error',
     success: 'Success', failed: 'Error', matched: 'Matched', mismatch: 'Mismatch',
+    configUpdated: 'Config Updated', configUnchanged: 'Config Unchanged', configUpdateFailed: 'Config Update Failed',
     healthOk: 'Health check', healthFailed: 'Health check failed',
     signingTitle: 'ECDSA Signing Key',
     signingSub: 'Embed this public key in your APK (PinVaultConfig.Builder.signaturePublicKey)',
@@ -1872,24 +1874,50 @@ async function renderHealthSection() {
     const serverHealth = await healthRes.json();
     const webEntries = entries.filter(e => e.source === 'web');
     const androidEntries = entries.filter(e => e.source === 'android');
+    const configUpdateEntries = entries.filter(e => e.source === 'config_update');
     const locale = lang === 'tr' ? 'tr-TR' : 'en-US';
 
-    const sourceBadge = (s, e) => s === 'android'
-      ? `<span class="source-badge android-src">&#x1F4F1; ${e.deviceManufacturer ? esc(e.deviceManufacturer) + ' ' + esc(e.deviceModel||'') : 'Android'}</span>`
-      : '<span class="source-badge web-src">&#x1F5A5; Web</span>';
+    const sourceBadge = (s, e) => {
+      if (s === 'android') {
+        return `<span class="source-badge android-src">&#x1F4F1; ${e.deviceManufacturer ? esc(e.deviceManufacturer) + ' ' + esc(e.deviceModel||'') : 'Android'}</span>`;
+      }
+      if (s === 'config_update') {
+        const device = e.deviceManufacturer ? esc(e.deviceManufacturer) + ' ' + esc(e.deviceModel||'') : 'Config';
+        return `<span class="source-badge" style="background:#7c3aed;color:#fff;padding:2px 6px;border-radius:3px;font-size:11px">&#x1F501; ${device}</span>`;
+      }
+      return '<span class="source-badge web-src">&#x1F5A5; Web</span>';
+    };
 
-    const pinInfo = e => e.source !== 'android' || e.pinMatched == null ? '&#x2014;'
-      : e.pinMatched ? `<span class="status-healthy">&#x2713; ${t('matched')}</span>`
-      : `<span class="status-error">&#x2717; ${t('mismatch')}</span>`;
+    const pinInfo = e => {
+      if (e.source === 'config_update') {
+        return e.pinVersion != null ? `<span style="color:#a78bfa">v${esc(e.pinVersion)}</span>` : '&#x2014;';
+      }
+      if (e.source !== 'android' || e.pinMatched == null) return '&#x2014;';
+      return e.pinMatched
+        ? `<span class="status-healthy">&#x2713; ${t('matched')}</span>`
+        : `<span class="status-error">&#x2717; ${t('mismatch')}</span>`;
+    };
+
+    // config_updated / config_unchanged are healthy outcomes; config_update_failed isn't.
+    const isOkStatus = s => s === 'ok' || s === 'healthy' || s === 'config_updated' || s === 'config_unchanged';
+    const statusLabel = (e, ok) => {
+      if (e.source === 'config_update') {
+        if (e.status === 'config_updated') return `&#x2713; ${t('configUpdated') || 'Config Updated'}`;
+        if (e.status === 'config_unchanged') return `&#x2713; ${t('configUnchanged') || 'Config Unchanged'}`;
+        if (e.status === 'config_update_failed') return `&#x2717; ${t('configUpdateFailed') || 'Update Failed'}`;
+      }
+      return ok ? `&#x2713; ${t('success')}` : `&#x2717; ${t('failed')}`;
+    };
 
     const pagKey = 'health-global';
     const pagInfo = pagSlice(entries, pagKey);
     const rows = pagInfo.slice.map((e, i) => {
-      const ok = e.status === 'ok' || e.status === 'healthy';
+      const ok = isOkStatus(e.status);
+      const durationCell = e.source === 'config_update' ? '&#x2014;' : `${esc(e.responseTimeMs)}ms`;
       return `<tr class="${pagInfo.page === 0 && i === 0 ? 'row-latest' : ''}">
         <td>${sourceBadge(e.source, e)}</td>
-        <td class="${ok ? 'status-healthy' : 'status-error'}">${ok ? `&#x2713; ${t('success')}` : `&#x2717; ${t('failed')}`}</td>
-        <td>${esc(e.responseTimeMs)}ms</td>
+        <td class="${ok ? 'status-healthy' : 'status-error'}">${statusLabel(e, ok)}</td>
+        <td>${durationCell}</td>
         <td>${pinInfo(e)}</td>
         <td style="color:#ef4444;font-size:11px;max-width:200px;overflow:hidden;text-overflow:ellipsis">${e.errorMessage ? esc(e.errorMessage) : '&#x2014;'}</td>
         <td style="color:#64748b;font-size:11px">${new Date(e.timestamp).toLocaleString(locale)}</td>
