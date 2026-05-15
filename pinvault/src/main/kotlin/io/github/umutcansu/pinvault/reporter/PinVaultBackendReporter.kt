@@ -195,13 +195,19 @@ class PinVaultBackendReporter @JvmOverloads constructor(
         if (dedupWindowMs <= 0L) return false
         val key = "${event.hostname}|${event.pinVersion}|${event.actualPin}"
         val now = System.currentTimeMillis()
-        // putIfAbsent + replace pattern: first writer wins inside the window,
-        // subsequent callers see the recorded timestamp and drop. Once the
-        // window expires the next caller writes a fresh timestamp.
-        val previous = lastReportedMs[key]
-        if (previous != null && now - previous < dedupWindowMs) return true
-        lastReportedMs[key] = now
-        return false
+        // Atomic check-and-write so two concurrent callers can't both decide
+        // they are "first" and slip a duplicate POST past the window.
+        // compute() runs the remapping function under the bucket lock.
+        var suppress = false
+        lastReportedMs.compute(key) { _, previous ->
+            if (previous != null && now - previous < dedupWindowMs) {
+                suppress = true
+                previous          // keep the existing timestamp
+            } else {
+                now               // refresh the window
+            }
+        }
+        return suppress
     }
 
     private fun StringBuilder.appendField(key: String, value: String) {
