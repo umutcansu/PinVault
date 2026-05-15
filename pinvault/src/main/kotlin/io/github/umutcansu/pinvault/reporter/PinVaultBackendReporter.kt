@@ -1,5 +1,6 @@
 package io.github.umutcansu.pinvault.reporter
 
+import io.github.umutcansu.pinvault.api.ConfigUpdateStatus
 import io.github.umutcansu.pinvault.api.PinVaultConnectionEvent
 import io.github.umutcansu.pinvault.api.PinVaultConnectionListener
 import okhttp3.MediaType.Companion.toMediaType
@@ -11,15 +12,20 @@ import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.TimeUnit
 
 /**
- * Opt-in [PinVaultConnectionListener] that forwards every
- * [PinVaultConnectionEvent.Connection] to the **PinVault demo-server**
- * `POST /api/v1/connection-history/client-report` endpoint.
+ * Opt-in [PinVaultConnectionListener] that forwards
+ * [PinVaultConnectionEvent.Connection] (TLS handshake outcomes) and
+ * [PinVaultConnectionEvent.ConfigUpdate] (config rotation outcomes) to
+ * the **PinVault demo-server**:
+ *
+ * - `POST /api/v1/connection-history/client-report` — handshake reports
+ * - `POST /api/v1/connection-history/config-update-report` — config swaps
  *
  * This is a thin convenience for projects that already run the bundled
  * demo-server (or a fork of it). It hard-codes the JSON shape that the
  * server's [com.example.pinvault.server.route.CertificateConfigRoute]
  * expects:
  *
+ * Connection (`client-report`):
  * ```json
  * {
  *   "hostname":            "...",
@@ -30,9 +36,23 @@ import java.util.concurrent.TimeUnit
  *   "deviceManufacturer":  "...",
  *   "deviceModel":         "...",
  *   "serverCertPin":       "...",
- *   "storedPin":           "..."   // first expected pin
+ *   "storedPin":           "..."
  * }
  * ```
+ *
+ * ConfigUpdate (`config-update-report`):
+ * ```json
+ * {
+ *   "status":              "config_updated" | "config_unchanged" | "config_update_failed",
+ *   "pinVersion":          int,
+ *   "deviceManufacturer":  "...",
+ *   "deviceModel":         "...",
+ *   "failureReason":       "..."   // only on config_update_failed
+ * }
+ * ```
+ *
+ * The config-update endpoint may not exist on every demo-server fork —
+ * a 404 is logged at WARN and swallowed, the next event proceeds normally.
  *
  * If your backend speaks a different language, **do not use this class.**
  * Implement [PinVaultConnectionListener] directly and emit your own format
@@ -45,20 +65,20 @@ import java.util.concurrent.TimeUnit
  *
  * ### Throttling and filtering
  *
- * Two independent knobs, both optional:
+ * Two independent knobs, both optional. They apply to the "healthy"
+ * stream — Connection successes and ConfigUpdate UPDATED/UNCHANGED
+ * outcomes. The anomaly stream — Connection pin-mismatch and ConfigUpdate
+ * FAILED — bypasses both filters; those signals must never be silenced.
  *
  * - [reportSuccessEvents] decides *what* gets reported. When `false`,
- *   only pin-mismatch events are POSTed; the noisy healthy-handshake
- *   stream is suppressed entirely. Useful for fleets that only care
- *   about anomalies.
- * - [dedupWindowMs] decides *how often* a healthy event repeats. When
- *   `> 0`, duplicate "healthy" reports for the same
+ *   only anomalies are POSTed; the healthy stream is suppressed entirely.
+ *   Useful for fleets that only care about pin mismatches and update
+ *   failures.
+ * - [dedupWindowMs] decides *how often* a healthy Connection event
+ *   repeats. When `> 0`, duplicate Connection reports for the same
  *   `(hostname, pinVersion, serverCertPin)` tuple inside the window are
- *   dropped. Useful when you do want a heartbeat per device but not one
- *   per handshake.
- *
- * Pin mismatch events (success=false) bypass both filters — that signal
- * must never be silenced.
+ *   dropped. ConfigUpdate events are not deduped — they are already
+ *   periodic (default 24h WorkManager refresh).
  *
  * @param managementUrl Demo-server management base URL, e.g.
  *   `"http://192.168.1.80:6650/"`. The reporter appends
@@ -81,14 +101,20 @@ class PinVaultBackendReporter @JvmOverloads constructor(
     private val dedupWindowMs: Long = 0L
 ) : PinVaultConnectionListener {
 
-    private val endpoint: String = buildEndpoint(managementUrl)
+    private val connectionEndpoint: String = buildEndpoint(managementUrl, CONNECTION_PATH)
+    private val configUpdateEndpoint: String = buildEndpoint(managementUrl, CONFIG_UPDATE_PATH)
 
     /** Last-sent timestamp per `host|pinVersion|cert` tuple. */
     private val lastReportedMs = ConcurrentHashMap<String, Long>()
 
     override fun onEvent(event: PinVaultConnectionEvent) {
-        if (event !is PinVaultConnectionEvent.Connection) return
+        when (event) {
+            is PinVaultConnectionEvent.Connection -> handleConnection(event)
+            is PinVaultConnectionEvent.ConfigUpdate -> handleConfigUpdate(event)
+        }
+    }
 
+    private fun handleConnection(event: PinVaultConnectionEvent.Connection) {
         if (event.success) {
             if (!reportSuccessEvents) return
             if (isDuplicateWithinWindow(event)) return
@@ -114,6 +140,36 @@ class PinVaultBackendReporter @JvmOverloads constructor(
             append('}')
         }
 
+        post(connectionEndpoint, json)
+    }
+
+    private fun handleConfigUpdate(event: PinVaultConnectionEvent.ConfigUpdate) {
+        val isFailure = event.status == ConfigUpdateStatus.FAILED
+        if (!isFailure && !reportSuccessEvents) return
+
+        val statusString = when (event.status) {
+            ConfigUpdateStatus.UPDATED -> "config_updated"
+            ConfigUpdateStatus.UNCHANGED -> "config_unchanged"
+            ConfigUpdateStatus.FAILED -> "config_update_failed"
+        }
+
+        val json = buildString {
+            append('{')
+            appendField("status", statusString); append(',')
+            append("\"pinVersion\":${event.newVersion},")
+            appendField("deviceManufacturer", event.deviceManufacturer); append(',')
+            appendField("deviceModel", event.deviceModel)
+            event.failureReason?.let {
+                append(',')
+                appendField("failureReason", it)
+            }
+            append('}')
+        }
+
+        post(configUpdateEndpoint, json)
+    }
+
+    private fun post(endpoint: String, json: String) {
         val request = Request.Builder()
             .url(endpoint)
             .post(json.toRequestBody(JSON_MEDIA_TYPE))
@@ -165,11 +221,12 @@ class PinVaultBackendReporter @JvmOverloads constructor(
 
     private companion object {
         val JSON_MEDIA_TYPE = "application/json; charset=utf-8".toMediaType()
-        const val REPORT_PATH = "api/v1/connection-history/client-report"
+        const val CONNECTION_PATH = "api/v1/connection-history/client-report"
+        const val CONFIG_UPDATE_PATH = "api/v1/connection-history/config-update-report"
 
-        fun buildEndpoint(managementUrl: String): String {
+        fun buildEndpoint(managementUrl: String, path: String): String {
             val base = managementUrl.trimEnd('/')
-            return "$base/$REPORT_PATH"
+            return "$base/$path"
         }
 
         fun defaultClient(): OkHttpClient = OkHttpClient.Builder()
