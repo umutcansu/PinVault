@@ -27,7 +27,7 @@ Dynamic SSL certificate pinning library for Android. Manage pins remotely, suppo
 ### 1. Add dependency
 
 ```gradle
-implementation("io.github.umutcansu:pinvault:2.0.8")
+implementation("io.github.umutcansu:pinvault:2.0.9")
 ```
 
 > Kotlin 1.9.x consumer projects: use `2.0.3` or later — older 2.0.x
