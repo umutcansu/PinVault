@@ -98,25 +98,36 @@ internal class CertificateConfigStore private constructor(private val prefs: Sha
     }
 
     private fun parsePins(data: String): List<HostPin> {
+        // Per-entry try/catch so one malformed row (e.g. a host the server
+        // shipped with a single pin, violating HostPin's invariant) only
+        // drops that row rather than poisoning the whole cache. The outer
+        // try/catch below stays as a last-resort blob-corruption guard
+        // (L-01) — it fires only if the entire prefs string is unreadable,
+        // not if a single row fails validation.
         return try {
             data.split(ENTRY_SEPARATOR).mapNotNull { entry ->
-                val parts = entry.split(FIELD_SEPARATOR)
-                when {
-                    // New format: hostname|version|hash1,hash2
-                    parts.size >= 3 -> {
-                        val hostname = parts[0]
-                        val version = parts[1].toIntOrNull() ?: 0
-                        val hashes = parts.drop(2).joinToString(FIELD_SEPARATOR)
-                            .split(HASH_SEPARATOR).filter { it.isNotBlank() }
-                        if (hashes.size >= 2) HostPin(hostname, hashes, version) else null
+                try {
+                    val parts = entry.split(FIELD_SEPARATOR)
+                    when {
+                        // New format: hostname|version|hash1,hash2
+                        parts.size >= 3 -> {
+                            val hostname = parts[0]
+                            val version = parts[1].toIntOrNull() ?: 0
+                            val hashes = parts.drop(2).joinToString(FIELD_SEPARATOR)
+                                .split(HASH_SEPARATOR).filter { it.isNotBlank() }
+                            if (hashes.size >= 2) HostPin(hostname, hashes, version) else null
+                        }
+                        // Old format migration: hostname|hash1,hash2
+                        parts.size == 2 -> {
+                            val hostname = parts[0]
+                            val hashes = parts[1].split(HASH_SEPARATOR).filter { it.isNotBlank() }
+                            if (hashes.size >= 2) HostPin(hostname, hashes, version = 0) else null
+                        }
+                        else -> null
                     }
-                    // Old format migration: hostname|hash1,hash2
-                    parts.size == 2 -> {
-                        val hostname = parts[0]
-                        val hashes = parts[1].split(HASH_SEPARATOR).filter { it.isNotBlank() }
-                        if (hashes.size >= 2) HostPin(hostname, hashes, version = 0) else null
-                    }
-                    else -> null
+                } catch (e: Exception) {
+                    Timber.w(e, "Skipping malformed pin entry — other hosts preserved")
+                    null
                 }
             }
         } catch (e: Exception) {

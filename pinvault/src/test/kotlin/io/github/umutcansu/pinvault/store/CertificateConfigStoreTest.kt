@@ -202,6 +202,32 @@ class CertificateConfigStoreTest {
     }
 
     @Test
+    fun `single malformed entry does not poison the rest of the cache`() {
+        // Regression: the outer try/catch around parsePins used to wipe the
+        // whole prefs blob if *any* entry threw — most often a host shipped
+        // with a single pin (HostPin's init requires >= 2). One sysadmin
+        // misconfiguration could empty every cached host's pins and force a
+        // full bootstrap refetch on every load.
+        prefs.edit()
+            .putInt(CertificateConfigStore.KEY_VERSION, 5)
+            .putString(
+                CertificateConfigStore.KEY_PINS,
+                "good.example.com|2|goodPinA,goodPinB\n" +
+                "bad.example.com|3|loneHash\n" +                  // single pin -> HostPin throws
+                "another.example.com|4|anotherA,anotherB"
+            )
+            .apply()
+
+        val loaded = store.load()
+
+        assertNotNull("good rows must still load even if one entry is malformed", loaded)
+        val hostnames = loaded!!.pins.map { it.hostname }
+        assertTrue("good.example.com lost: $hostnames", "good.example.com" in hostnames)
+        assertTrue("another.example.com lost: $hostnames", "another.example.com" in hostnames)
+        assertFalse("malformed bad.example.com must be dropped: $hostnames", "bad.example.com" in hostnames)
+    }
+
+    @Test
     fun `computedVersion uses max of host versions`() {
         val config = CertificateConfig(
             version = 0,
