@@ -102,23 +102,19 @@ internal class CertificateConfigStore private constructor(private val prefs: Sha
             data.split(ENTRY_SEPARATOR).mapNotNull { entry ->
                 val parts = entry.split(FIELD_SEPARATOR)
                 when {
-                    // New format: hostname|version|hash1[,hash2…]
+                    // New format: hostname|version|hash1,hash2
                     parts.size >= 3 -> {
                         val hostname = parts[0]
                         val version = parts[1].toIntOrNull() ?: 0
                         val hashes = parts.drop(2).joinToString(FIELD_SEPARATOR)
                             .split(HASH_SEPARATOR).filter { it.isNotBlank() }
-                        // save() persists single-pin entries; parsing must accept
-                        // them too. The backup-pin best practice is enforced
-                        // server-side (signed config), not by the on-disk reader,
-                        // so a round-trip never silently drops a hostname.
-                        if (hashes.isNotEmpty()) HostPin(hostname, hashes, version) else null
+                        if (hashes.size >= 2) HostPin(hostname, hashes, version) else null
                     }
-                    // Old format migration: hostname|hash1[,hash2…]
+                    // Old format migration: hostname|hash1,hash2
                     parts.size == 2 -> {
                         val hostname = parts[0]
                         val hashes = parts[1].split(HASH_SEPARATOR).filter { it.isNotBlank() }
-                        if (hashes.isNotEmpty()) HostPin(hostname, hashes, version = 0) else null
+                        if (hashes.size >= 2) HostPin(hostname, hashes, version = 0) else null
                     }
                     else -> null
                 }
