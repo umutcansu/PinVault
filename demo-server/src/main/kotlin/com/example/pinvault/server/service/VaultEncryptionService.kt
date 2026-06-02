@@ -22,7 +22,8 @@ import javax.crypto.spec.SecretKeySpec
  *   1. Generate a fresh AES-256 session key + 12-byte GCM IV.
  *   2. Encrypt content with AES-256-GCM → ciphertext + 16-byte tag.
  *   3. Wrap the AES session key with the device's RSA public key using
- *      RSA-OAEP-SHA256 (MGF1-SHA256).
+ *      RSA-OAEP with a SHA-256 hash and MGF1-SHA1 (the Android-JCA-compatible
+ *      "OAEPWithSHA-256AndMGF1Padding" variant — see the SHA-1 note below).
  *   4. Emit a framed envelope the device can parse:
  *
  *      [4 bytes: wrappedKey length BE]
@@ -39,8 +40,13 @@ import javax.crypto.spec.SecretKeySpec
  *   - A fresh session key is generated on EVERY call — no key reuse across
  *     files or fetches. Even two fetches of the same file produce different
  *     ciphertext (random IV, random session key).
- *   - RSA-OAEP with MGF1-SHA256 is the recommended padding scheme (vs
- *     PKCS#1 v1.5 which is vulnerable to Bleichenbacher oracles).
+ *   - RSA-OAEP (SHA-256 hash, MGF1-SHA1) is used instead of PKCS#1 v1.5
+ *     (which is vulnerable to Bleichenbacher oracles). The MGF1 hash is SHA-1
+ *     ON PURPOSE: it matches the JCA provider's actual default for
+ *     "OAEPWithSHA-256AndMGF1Padding" on Android 11, and the device-side
+ *     decryptor (VaultFileDecryptor) plus the test helper below mirror it
+ *     exactly. Do NOT "upgrade" this to MGF1-SHA256 — it would break client
+ *     decryption. (audit I-1)
  *   - AES-GCM authenticates the ciphertext (16-byte tag); any tampering
  *     makes the device decrypt fail rather than return garbage.
  */

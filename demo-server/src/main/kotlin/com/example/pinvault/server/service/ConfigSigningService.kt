@@ -85,17 +85,51 @@ class ConfigSigningService(private val keyFile: File) {
                 Base64.getEncoder().encodeToString(kp.public.encoded)
 
         val password = System.getenv("SIGNING_KEY_PASSWORD")
-        if (password == null) {
+        val content = if (password == null) {
             println("ConfigSigningService: WARNING — SIGNING_KEY_PASSWORD not set, " +
                 "writing signing key in plaintext. Set the env var for at-rest encryption.")
-            keyFile.writeText(plaintext)
+            plaintext
         } else {
             val encrypted = encrypt(plaintext.toByteArray(Charsets.UTF_8), password)
-            keyFile.writeText(ENCRYPTED_PREFIX + Base64.getEncoder().encodeToString(encrypted))
+            ENCRYPTED_PREFIX + Base64.getEncoder().encodeToString(encrypted)
         }
-        // Restrict permissions so other local users can't read the key.
-        try { keyFile.setReadable(false, false); keyFile.setReadable(true, true) }
-        catch (_: Exception) { /* best-effort, depends on filesystem */ }
+        writeOwnerOnly(content)
+    }
+
+    /**
+     * Write [content] to [keyFile] with owner-only (0600) permissions applied
+     * BEFORE any bytes hit disk, then atomically swap it into place. Closes the
+     * audit-L-3 race where the key briefly existed world-readable because the
+     * chmod previously ran only AFTER writeText(). Falls back to best-effort
+     * chmod on non-POSIX filesystems.
+     */
+    private fun writeOwnerOnly(content: String) {
+        val target = keyFile.toPath()
+        val tmp = File(keyFile.parentFile, keyFile.name + ".tmp").toPath()
+        try {
+            val ownerOnly = java.nio.file.attribute.PosixFilePermissions.fromString("rw-------")
+            java.nio.file.Files.deleteIfExists(tmp)
+            java.nio.file.Files.createFile(
+                tmp, java.nio.file.attribute.PosixFilePermissions.asFileAttribute(ownerOnly)
+            )
+            java.nio.file.Files.write(tmp, content.toByteArray(Charsets.UTF_8))
+            try {
+                java.nio.file.Files.move(
+                    tmp, target,
+                    java.nio.file.StandardCopyOption.REPLACE_EXISTING,
+                    java.nio.file.StandardCopyOption.ATOMIC_MOVE
+                )
+            } catch (_: java.nio.file.AtomicMoveNotSupportedException) {
+                java.nio.file.Files.move(tmp, target, java.nio.file.StandardCopyOption.REPLACE_EXISTING)
+            }
+        } catch (_: UnsupportedOperationException) {
+            // Non-POSIX filesystem (e.g. Windows): best-effort fallback.
+            keyFile.writeText(content)
+            try { keyFile.setReadable(false, false); keyFile.setReadable(true, true) }
+            catch (_: Exception) { /* depends on filesystem */ }
+        } finally {
+            try { java.nio.file.Files.deleteIfExists(tmp) } catch (_: Exception) {}
+        }
     }
 
     private fun loadFromFile(): KeyPair {

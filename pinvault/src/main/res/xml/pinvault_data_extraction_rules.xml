@@ -11,13 +11,22 @@
         <exclude domain="sharedpref" path="ssl_cert_config.xml" />
         <exclude domain="sharedpref" path="ssl_cert_config_default-tls.xml" />
         <exclude domain="sharedpref" path="ssl_cert_config_secure-mtls.xml" />
+        <!-- audit L-10: also exclude the encrypted vault-file blobs and their
+             version map. NOTE: ssl_cert_config_<id>.xml is enumerated per
+             config-api id; apps that register custom ids must add their own
+             excludes here, or prefer disableAllContent in the manifest. -->
         <exclude domain="sharedpref" path="pinvault_vault_files.xml" />
+        <exclude domain="sharedpref" path="pinvault_vault_file_versions.xml" />
+        <exclude domain="file" path="vault_files" />
     </cloud-backup>
     <device-transfer>
         <exclude domain="sharedpref" path="pinvault_client_cert.xml" />
         <exclude domain="sharedpref" path="ssl_cert_config.xml" />
         <exclude domain="sharedpref" path="ssl_cert_config_default-tls.xml" />
         <exclude domain="sharedpref" path="ssl_cert_config_secure-mtls.xml" />
+        <!-- audit L-10: see cloud-backup note above. -->
         <exclude domain="sharedpref" path="pinvault_vault_files.xml" />
+        <exclude domain="sharedpref" path="pinvault_vault_file_versions.xml" />
+        <exclude domain="file" path="vault_files" />
     </device-transfer>
 </data-extraction-rules>

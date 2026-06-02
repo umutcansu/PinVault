@@ -80,11 +80,21 @@ import java.util.concurrent.TimeUnit
  *   dropped. ConfigUpdate events are not deduped — they are already
  *   periodic (default 24h WorkManager refresh).
  *
+ * SECURITY (audit L-9): this is a fire-and-forget TELEMETRY channel, not part
+ * of pinning — the [defaultClient] OkHttpClient is NOT pinned. Point
+ * [managementUrl] at an `https://` host and pass a pinned [httpClient] in
+ * production. Over cleartext `http://` an on-path attacker can read the
+ * (low-sensitivity) device/pin metadata AND, worse, forge the stream — drop
+ * `pin_mismatch` reports or inject fake "healthy" ones, blinding a dashboard.
+ * It can never weaken pinning itself; the TLS trust check is independent.
+ *
  * @param managementUrl Demo-server management base URL, e.g.
- *   `"http://192.168.1.80:6650/"`. The reporter appends
- *   `api/v1/connection-history/client-report` automatically.
- * @param httpClient Optional preconfigured OkHttpClient. Defaults to a
- *   short-timeout client that is fine for fire-and-forget telemetry.
+ *   `"https://192.168.1.80:6650/"`. The reporter appends
+ *   `api/v1/connection-history/client-report` automatically. A non-https URL
+ *   logs a warning at construction.
+ * @param httpClient Optional preconfigured OkHttpClient. Defaults to an
+ *   UNPINNED short-timeout client ([defaultClient]) fine for fire-and-forget
+ *   telemetry to a trusted host; supply a pinned client otherwise.
  * @param reportSuccessEvents When `false`, the reporter only POSTs pin
  *   mismatch events. Defaults to `true` (legacy: every handshake is a
  *   POST). Pin mismatches are always reported regardless of this flag.
@@ -106,6 +116,19 @@ class PinVaultBackendReporter @JvmOverloads constructor(
 
     /** Last-sent timestamp per `host|pinVersion|cert` tuple. */
     private val lastReportedMs = ConcurrentHashMap<String, Long>()
+
+    init {
+        // audit L-9: warn loudly when telemetry would travel over cleartext.
+        if (!managementUrl.trim().startsWith("https://", ignoreCase = true)) {
+            Timber.w(
+                "PinVaultBackendReporter: managementUrl '%s' is not https — connection/" +
+                "config telemetry (device model, hostname, pin version + hashes) is sent " +
+                "over cleartext and can be read OR forged by an on-path attacker. Use https " +
+                "and a pinned OkHttpClient in production. Pinning itself is unaffected.",
+                managementUrl
+            )
+        }
+    }
 
     override fun onEvent(event: PinVaultConnectionEvent) {
         when (event) {
@@ -235,6 +258,10 @@ class PinVaultBackendReporter @JvmOverloads constructor(
             return "$base/$path"
         }
 
+        /**
+         * UNPINNED fire-and-forget client (audit L-9). Fine for telemetry to a
+         * trusted host; pass your own pinned OkHttpClient for production.
+         */
         fun defaultClient(): OkHttpClient = OkHttpClient.Builder()
             .connectTimeout(5, TimeUnit.SECONDS)
             .readTimeout(5, TimeUnit.SECONDS)

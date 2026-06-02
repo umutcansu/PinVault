@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  audit L-11: deny cleartext by default. The library's pinned HTTPS Config API
+  endpoints are unaffected. The demo's management/report endpoint (port 8090)
+  is the only plaintext path, so cleartext is permitted ONLY for the lab hosts
+  (the LAN server IP and the emulator loopback alias). Adjust these to match
+  your own lab, or remove them entirely once the management endpoint is HTTPS.
+-->
+<network-security-config>
+    <base-config cleartextTrafficPermitted="false" />
+    <domain-config cleartextTrafficPermitted="true">
+        <domain includeSubdomains="false">192.168.1.80</domain>
+        <domain includeSubdomains="false">10.0.2.2</domain>
+    </domain-config>
+</network-security-config>

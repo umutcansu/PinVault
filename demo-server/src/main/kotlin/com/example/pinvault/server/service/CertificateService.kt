@@ -156,9 +156,21 @@ class CertificateService(private val certsDir: File) {
 
     /**
      * Uzak sunucuya TLS bağlantısı kurup sertifikayı çeker, hash hesaplar.
+     *
+     * SECURITY (audit L-4): this is an ADMIN-ONLY diagnostic — reachable only
+     * behind the API key (see ApiKeyAuth / H-1). It intentionally trusts ANY
+     * server certificate, because its whole job is to inspect arbitrary (often
+     * self-signed / internal lab) hosts and compute their pins. We require an
+     * https URL, but deliberately do NOT block private/LAN targets: the demo's
+     * purpose includes pinning internal mock hosts (e.g. 192.168.x.x). A
+     * production deployment exposing this MUST add SSRF egress controls
+     * (allowlist, reject RFC1918 / loopback / link-local, re-check after DNS).
      */
     fun fetchFromUrl(url: String): FetchResult {
         val parsedUrl = java.net.URL(url)
+        require(parsedUrl.protocol.equals("https", ignoreCase = true)) {
+            "fetch-from-url requires an https:// URL (got '${parsedUrl.protocol}')"
+        }
         val hostname = parsedUrl.host
         val port = if (parsedUrl.port > 0) parsedUrl.port else 443
 
@@ -410,6 +422,17 @@ class CertificateService(private val certsDir: File) {
     }
 
     companion object {
-        const val KEYSTORE_PASSWORD = "changeit"
+        /**
+         * Password protecting the server keystore (`*.jks`), the client
+         * truststore, and the per-device P12 bundles. Sourced from the
+         * `KEYSTORE_PASSWORD` env var.
+         *
+         * DEMO ONLY: falls back to "changeit" when the env var is unset so the
+         * sample runs out-of-the-box. A production deployment MUST set
+         * `KEYSTORE_PASSWORD` (and ideally hand each device P12 a unique random
+         * passphrase delivered out-of-band). (audit L-2 / L-6)
+         */
+        val KEYSTORE_PASSWORD: String =
+            System.getenv("KEYSTORE_PASSWORD")?.takeIf { it.isNotBlank() } ?: "changeit"
     }
 }

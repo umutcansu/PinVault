@@ -83,6 +83,14 @@ private fun isPublicEndpoint(path: String, method: HttpMethod): Boolean {
     if (path.matches(Regex("/api/v1/vault/[^/]+")) && method == HttpMethod.Get) return true
     if (path == "/api/v1/vault/report" && method == HttpMethod.Post) return true
 
+    // Client endpoint — device E2E public-key registration. Called by the
+    // device (DefaultCertificateConfigApi) so the server can wrap end_to_end
+    // files with the device's RSA key, so it must stay unauthenticated here.
+    // NOTE: this route still lacks identity binding (a device can overwrite
+    // another device's key) — tracked as audit finding M-2 and fixed
+    // separately; the admin API key is the wrong control for it.
+    if (path.matches(Regex("/api/v1/vault/devices/[^/]+/public-key")) && method == HttpMethod.Post) return true
+
     // Client connection report
     if (path == "/api/v1/connection-history/client-report" && method == HttpMethod.Post) return true
     if (path == "/api/v1/connection-history/config-update-report" && method == HttpMethod.Post) return true

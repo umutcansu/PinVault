@@ -69,16 +69,26 @@ class VaultSecurityDemoActivity : AppCompatActivity() {
     private val keyE2E    = "demo-e2e-v2-$DEVICE_SUFFIX"
 
     /**
-     * Tokens must be issued by the admin (POST /api/v1/vault/.../tokens) and
-     * delivered out-of-band (QR code, enrollment response, etc.). For the
-     * demo, they're read from BuildConfig — set `VAULT_TOKEN_MI_9T` in local
-     * gradle.properties. Returns "" when not configured → fetch returns 401.
+     * Vault access tokens are issued by the admin (POST /api/v1/vault/{key}/tokens)
+     * and delivered out-of-band (QR code, enrollment response, etc.). In this
+     * demo you paste them via "Save Tokens"; they are persisted with
+     * [androidx.security.crypto.EncryptedSharedPreferences] (audit L-12 — they
+     * used to sit in plaintext MODE_PRIVATE prefs). Returns "" when not set →
+     * fetch returns 401.
      */
-    private fun tokenForKey(key: String): String {
-        // Minimal demo implementation: same token for both (set via adb / shared prefs).
-        return getSharedPreferences("vault_security_demo", MODE_PRIVATE)
-            .getString("token_$key", "") ?: ""
-    }
+    private fun tokenForKey(key: String): String =
+        securePrefs().getString("token_$key", "") ?: ""
+
+    /** AES-256, Android-Keystore-backed encrypted prefs for the demo's tokens. */
+    private fun securePrefs() = androidx.security.crypto.EncryptedSharedPreferences.create(
+        this,
+        "vault_security_demo_secure",
+        androidx.security.crypto.MasterKey.Builder(this)
+            .setKeyScheme(androidx.security.crypto.MasterKey.KeyScheme.AES256_GCM)
+            .build(),
+        androidx.security.crypto.EncryptedSharedPreferences.PrefKeyEncryptionScheme.AES256_SIV,
+        androidx.security.crypto.EncryptedSharedPreferences.PrefValueEncryptionScheme.AES256_GCM
+    )
 
     private lateinit var binding: ActivityDemoBaseBinding
     private val scope = CoroutineScope(Dispatchers.Main + SupervisorJob())
@@ -214,7 +224,7 @@ class VaultSecurityDemoActivity : AppCompatActivity() {
     private fun openTokenEditor() {
         // Minimal: show an AlertDialog with three EditTexts for the tokens.
         // In a real app these would come from enrollment response / QR.
-        val prefs = getSharedPreferences("vault_security_demo", MODE_PRIVATE)
+        val prefs = securePrefs()
         val editTextToken = android.widget.EditText(this).apply {
             hint = "token (for demo-token + demo-e2e)"
             setText(prefs.getString("token_$keyToken", ""))

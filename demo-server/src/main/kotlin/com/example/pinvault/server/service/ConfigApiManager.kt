@@ -1,5 +1,6 @@
 package com.example.pinvault.server.service
 
+import com.example.pinvault.server.plugin.ApiKeyAuth
 import io.ktor.http.*
 import io.ktor.serialization.kotlinx.json.*
 import io.ktor.server.application.*
@@ -85,6 +86,14 @@ class ConfigApiManager {
                     ignoreUnknownKeys = true
                 })
             }
+            // Security (audit H-1): the Config API ports are the ones devices
+            // actually connect to. Without this, every mutating admin endpoint
+            // (PUT certificate-config, host mutations, vault PUT/DELETE, token
+            // minting, fetch-from-url) was reachable unauthenticated here while
+            // only the management server enforced the API key. ApiKeyAuth reuses
+            // the same isPublicEndpoint allowlist, so client-facing GET/enroll/
+            // report routes stay open and everything else requires X-API-Key.
+            install(ApiKeyAuth)
             configModule()
         }
 

@@ -89,9 +89,14 @@ data class ConfigApiBlock(
          * the common footgun of forgetting it in production, which would
          * disable signature *and* replay/freshness protection.
          *
-         * Only use this in tests, throwaway demos, or transitional setups
-         * where the backend has not yet been provisioned with an ECDSA
-         * signing key. Document the risk wherever it is called.
+         * SECURITY (audit L-8): unsigned mode does more than skip the
+         * signature. It also disables ALL of the freshness machinery —
+         * `issuedAt` / `expiresAt` stay `0`, so there is NO replay protection,
+         * NO config-expiry window, and NO `issuedAt`-based downgrade rejection.
+         * A MITM in front of an unsigned config endpoint can therefore serve
+         * arbitrary or rolled-back pins. Use ONLY in tests, throwaway demos, or
+         * transitional setups where the backend has no ECDSA signing key yet,
+         * and document the risk wherever it is called.
          */
         fun allowUnsigned() = apply { this.allowUnsigned = true }
 

@@ -649,15 +649,33 @@ class HostClientCertStore(private val db: DatabaseManager) {
 
 class EnrollmentTokenStore(private val db: DatabaseManager) {
 
+    private val rng = java.security.SecureRandom()
+
+    /**
+     * Create a single-use enrollment token.
+     *
+     * audit M-1: the token is now 256 bits from a CSPRNG (was a 48-bit
+     * truncated UUID, brute-forceable / collision-prone) and carries an expiry
+     * (was valid forever). TTL is ENROLLMENT_TOKEN_TTL_SECONDS (default 24h).
+     *
+     * DEMO ONLY: still stored in plaintext so the admin UI can display it for
+     * out-of-band delivery. Production should store only a SHA-256 hash and
+     * reveal the plaintext exactly once, at creation.
+     */
     fun create(clientId: String): String {
-        val token = java.util.UUID.randomUUID().toString().replace("-", "").take(12)
+        val token = java.util.Base64.getUrlEncoder().withoutPadding()
+            .encodeToString(ByteArray(32).also(rng::nextBytes))
+        val now = java.time.Instant.now()
+        val ttlSeconds = System.getenv("ENROLLMENT_TOKEN_TTL_SECONDS")?.toLongOrNull() ?: 86_400L
+        val expiresAt = now.plusSeconds(ttlSeconds)
         db.connection().use { conn ->
             conn.prepareStatement(
-                "INSERT INTO enrollment_tokens (token, client_id, created_at) VALUES (?, ?, ?)"
+                "INSERT INTO enrollment_tokens (token, client_id, created_at, expires_at) VALUES (?, ?, ?, ?)"
             ).use { stmt ->
                 stmt.setString(1, token)
                 stmt.setString(2, clientId)
-                stmt.setString(3, java.time.Instant.now().toString())
+                stmt.setString(3, now.toString())
+                stmt.setString(4, expiresAt.toString())
                 stmt.executeUpdate()
             }
         }
@@ -666,12 +684,20 @@ class EnrollmentTokenStore(private val db: DatabaseManager) {
 
     fun validate(token: String): String? {
         db.connection().use { conn ->
+            // used=0 AND not expired. Legacy rows have NULL expires_at and stay
+            // valid (created before the M-1 migration).
             conn.prepareStatement(
-                "SELECT client_id FROM enrollment_tokens WHERE token = ? AND used = 0"
+                "SELECT client_id, expires_at FROM enrollment_tokens WHERE token = ? AND used = 0"
             ).use { stmt ->
                 stmt.setString(1, token)
                 val rs = stmt.executeQuery()
-                return if (rs.next()) rs.getString("client_id") else null
+                if (!rs.next()) return null
+                val expiresAt = rs.getString("expires_at")
+                if (expiresAt != null &&
+                    java.time.Instant.parse(expiresAt).isBefore(java.time.Instant.now())) {
+                    return null
+                }
+                return rs.getString("client_id")
             }
         }
     }

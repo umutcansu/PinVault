@@ -3,10 +3,13 @@
 
     <uses-permission android:name="android.permission.INTERNET" />
 
+    <!-- audit L-11: cleartext is no longer permitted app-wide. The only
+         plaintext path is the demo management/report endpoint (port 8090);
+         network_security_config scopes cleartext to the lab hosts only. -->
     <application
         android:allowBackup="false"
         android:label="PinVault Demo"
-        android:usesCleartextTraffic="true"
+        android:networkSecurityConfig="@xml/network_security_config"
         android:theme="@style/Theme.PinVaultDemo">
 
         <activity

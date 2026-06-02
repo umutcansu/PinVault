@@ -161,7 +161,26 @@ fun Route.vaultRoutes(
             call.respondBytes(payload, ContentType.Application.OctetStream)
         }
 
-        /** Register / update a device's public key for E2E encryption. */
+        /**
+         * Register / update a device's public key for E2E encryption.
+         *
+         * SECURITY — audit M-2 (DEMO LIMITATION): this endpoint must stay
+         * client-reachable (the device calls it during setup, see
+         * DefaultCertificateConfigApi), and it intentionally allows key
+         * rotation (re-register a new key for the same deviceId). Over plain
+         * TLS there is NO device identity, so the server cannot tell a genuine
+         * rotation from an attacker overwriting another device's key. The
+         * residual risk is integrity/DoS and key-substitution on
+         * public+end_to_end files (confidentiality on token / token_mtls files
+         * is still gated by the access policy below).
+         *
+         * Production fix (NOT done here, needs a client+server protocol change):
+         * bind registration to a verified identity — an mTLS client-cert CN, or
+         * a one-time enrollment-token proof carried in the request — and only
+         * permit authenticated self-rotation. Do not rely on the admin API key
+         * (clients don't have it) and do not hard-block rotation (breaks
+         * legitimate re-enrollment).
+         */
         post("/devices/{deviceId}/public-key") {
             val deviceId = call.parameters["deviceId"]
                 ?: return@post call.respond(HttpStatusCode.BadRequest, mapOf("error" to "Missing deviceId"))
@@ -325,9 +344,19 @@ private val VALID_ENCRYPTIONS = setOf("plain", "at_rest", "end_to_end")
 private val VAULT_KEY_REGEX = Regex("^[A-Za-z0-9._-]{1,64}$")
 
 /**
- * Extract the CN of the client cert, if any. Ktor stores the peer principal
- * when mTLS is configured; the CN is inside the X500Principal Distinguished
- * Name string ("CN=foo, O=bar").
+ * Extract the CN of the client cert, if any.
+ *
+ * SECURITY — audit L-1 (KNOWN DEMO LIMITATION): the "TLSPeerPrincipal" call
+ * attribute this reads is NOT populated anywhere in the sample — wiring the
+ * verified Netty SSL peer principal into the Ktor call needs custom engine
+ * plumbing we don't implement. So this always returns null, which makes
+ * `token_mtls` files effectively FAIL-CLOSED (they always 401) and the mTLS
+ * deviceId fallback inert. That is safe (no bypass, no data exposure) — it is
+ * just an advertised-but-unwired feature.
+ *
+ * To actually enable it: extract the verified peer X500Principal from the
+ * Netty SSLSession and store it in call.attributes under this key before the
+ * route runs. Until then, treat `token_mtls` as unavailable in the demo.
  */
 private fun extractClientCertCn(call: ApplicationCall): String? {
     // Ktor's tls peer principal lives in attributes as X500Principal. We parse

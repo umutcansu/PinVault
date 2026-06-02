@@ -2657,7 +2657,7 @@ async function renderApiVaultTab(apiId) {
               f.encryption === 'end_to_end' ? '🔒' :
               f.encryption === 'at_rest'    ? '🔐' : '·';
           return `<tr class="${filesPagInfo.page === 0 && i === 0 ? 'row-latest' : ''}" style="cursor:pointer" data-action="showVaultFileDetail" data-arg0="${esc(apiId)}" data-arg1="${esc(f.key)}">
-            <td style="font-weight:700;color:#7dd3fc">${f.key}</td>
+            <td style="font-weight:700;color:#7dd3fc">${esc(f.key)}</td>
             <td>v${f.version}</td>
             <td>${formatBytes(f.size || 0)}</td>
             <td><span style="background:${policyColor};color:#fff;padding:2px 8px;border-radius:10px;font-size:10px">${f.access_policy || 'token'}</span></td>
@@ -2683,26 +2683,26 @@ async function renderApiVaultTab(apiId) {
           const ok = d.status === 'downloaded' || d.status === 'cached';
           const statusIcon = ok ? '✓' : '✗';
           const statusColor = ok ? '#22c55e' : '#ef4444';
-          const device = d.deviceManufacturer ? `📱 ${d.deviceManufacturer} ${d.deviceModel || ''}` : d.deviceId;
+          const device = d.deviceManufacturer ? `📱 ${esc(d.deviceManufacturer)} ${esc(d.deviceModel || '')}` : esc(d.deviceId);
           // Başarısızlık nedeni — HTTP kodu, decrypt fail, network, vs. Uzun
           // string'lere title attribute'le tooltip olarak tam hali verilir.
           const reasonCell = d.failureReason
-              ? `<span style="color:#f87171;font-family:monospace;font-size:11px" title="${(d.failureReason+'').replace(/"/g,'&quot;')}">${(d.failureReason+'').slice(0,80)}${(d.failureReason+'').length > 80 ? '…' : ''}</span>`
+              ? `<span style="color:#f87171;font-family:monospace;font-size:11px" title="${esc((d.failureReason+'').slice(0,300))}">${esc((d.failureReason+'').slice(0,80))}${(d.failureReason+'').length > 80 ? '…' : ''}</span>`
               : (ok ? '<span style="color:#475569">—</span>' : '<span style="color:#64748b;font-style:italic">reason yok</span>');
           // Auth method rozeti: cihazın hangi yetkilendirmeyle fetch ettiği.
           const authIcon = d.authMethod === 'public' ? '⚡' : d.authMethod === 'token' ? '🔒' : d.authMethod === 'token_mtls' ? '🔐' : d.authMethod === 'api_key' ? '🔑' : '—';
           const authColor = d.authMethod === 'public' ? '#f59e0b' : d.authMethod === 'token' ? '#22c55e' : d.authMethod === 'token_mtls' ? '#06b6d4' : d.authMethod === 'api_key' ? '#8b5cf6' : '#475569';
           const authCell = d.authMethod
-              ? `<span style="background:${authColor};color:#fff;padding:2px 8px;border-radius:10px;font-size:10px;font-weight:600" title="${d.authMethod}">${authIcon} ${d.authMethod}</span>`
+              ? `<span style="background:${authColor};color:#fff;padding:2px 8px;border-radius:10px;font-size:10px;font-weight:600" title="${esc(d.authMethod)}">${authIcon} ${esc(d.authMethod)}</span>`
               : '<span style="color:#475569">—</span>';
           return `<tr class="${distPagInfo.page === 0 && i === 0 ? 'row-latest' : ''}">
-            <td style="font-weight:600;color:#7dd3fc;cursor:pointer" data-action="showVaultFileDetail" data-arg0="${esc(apiId)}" data-arg1="${esc(d.vaultKey)}">${d.vaultKey}</td>
+            <td style="font-weight:600;color:#7dd3fc;cursor:pointer" data-action="showVaultFileDetail" data-arg0="${esc(apiId)}" data-arg1="${esc(d.vaultKey)}">${esc(d.vaultKey)}</td>
             <td>v${d.version}</td>
             <td><span class="source-badge android-src" style="cursor:pointer" data-action="showDeviceDetail" data-arg0="${esc(apiId)}" data-arg1="${esc(d.deviceId)}">${device}</span></td>
-            <td style="color:${statusColor};font-weight:600">${statusIcon} ${d.status}</td>
+            <td style="color:${statusColor};font-weight:600">${statusIcon} ${esc(d.status)}</td>
             <td>${authCell}</td>
             <td>${reasonCell}</td>
-            <td style="color:#64748b;font-size:11px">${d.enrollmentLabel || '—'}</td>
+            <td style="color:#64748b;font-size:11px">${esc(d.enrollmentLabel) || '—'}</td>
             <td style="color:#64748b;font-size:11px">${new Date(d.timestamp).toLocaleString(locale)}</td>
           </tr>`;
         }).join('');
@@ -2913,7 +2913,7 @@ async function showVaultFileDetail(apiId, key) {
     const devRows = devices.length === 0
       ? `<tr><td colspan="5" class="empty-msg">${t('vaultNoDistHistory')}</td></tr>`
       : devices.map((d, i) => `<tr class="${i === 0 ? 'row-latest' : ''}" style="cursor:pointer" data-action="showDeviceDetail" data-arg0="${esc(apiId)}" data-arg1="${esc(d.deviceId)}">
-          <td><span class="source-badge android-src">📱 ${d.deviceLabel}</span></td>
+          <td><span class="source-badge android-src">📱 ${esc(d.deviceLabel)}</span></td>
           <td>${d.count}</td>
           <td style="color:#22c55e">✓ ${d.ok}</td>
           <td style="color:${d.failed > 0 ? '#ef4444' : '#64748b'}">✗ ${d.failed}</td>
@@ -2924,12 +2924,12 @@ async function showVaultFileDetail(apiId, key) {
       ? `<tr><td colspan="5" class="empty-msg">${t('vaultNoDistHistory')}</td></tr>`
       : dists.map((d, i) => {
           const ok = d.status === 'downloaded' || d.status === 'cached';
-          const device = d.deviceManufacturer ? `📱 ${d.deviceManufacturer} ${d.deviceModel || ''}` : d.deviceId;
+          const device = d.deviceManufacturer ? `📱 ${esc(d.deviceManufacturer)} ${esc(d.deviceModel || '')}` : esc(d.deviceId);
           return `<tr class="${i === 0 ? 'row-latest' : ''}">
             <td><span class="source-badge android-src" style="cursor:pointer" data-action="showDeviceDetail" data-arg0="${esc(apiId)}" data-arg1="${esc(d.deviceId)}">${device}</span></td>
             <td>v${d.version}</td>
-            <td style="color:${ok ? '#22c55e' : '#ef4444'};font-weight:600">${ok ? '✓' : '✗'} ${d.status}</td>
-            <td style="color:#64748b;font-size:11px">${d.enrollmentLabel || '—'}</td>
+            <td style="color:${ok ? '#22c55e' : '#ef4444'};font-weight:600">${ok ? '✓' : '✗'} ${esc(d.status)}</td>
+            <td style="color:#64748b;font-size:11px">${esc(d.enrollmentLabel) || '—'}</td>
             <td style="color:#64748b;font-size:11px">${new Date(d.timestamp).toLocaleString(locale)}</td>
           </tr>`;
         }).join('');
@@ -2945,7 +2945,7 @@ async function showVaultFileDetail(apiId, key) {
             ? `<span style="color:#64748b;font-size:11px">${t('tokenBtnDash')}</span>`
             : `<span style="cursor:pointer;color:#ef4444;font-size:11px" data-action="revokeVaultToken" data-arg0="${esc(apiId)}" data-arg1="${tk.id}" data-arg2="${esc(key)}">${t('tokenBtnRevoke')}</span>`;
           return `<tr class="${i === 0 ? 'row-latest' : ''}">
-            <td style="font-family:monospace;color:#7dd3fc">${tk.deviceId}</td>
+            <td style="font-family:monospace;color:#7dd3fc">${esc(tk.deviceId)}</td>
             <td style="color:${revokedColor};font-weight:600">${revokedLabel}</td>
             <td style="color:#64748b;font-size:11px">${new Date(tk.createdAt).toLocaleString(locale)}</td>
             <td>${btn}</td>
@@ -2955,7 +2955,7 @@ async function showVaultFileDetail(apiId, key) {
     content.innerHTML = `
       <div class="section-header">
         <div>
-          <div class="section-title-main" style="color:#7dd3fc">${key}</div>
+          <div class="section-title-main" style="color:#7dd3fc">${esc(key)}</div>
           <div class="section-sub">${t('vaultDistTitle')} — ${dists.length} · ${versions.length} versiyon · ${devices.length} cihaz</div>
         </div>
         <div style="display:flex;gap:8px">
@@ -3021,10 +3021,10 @@ async function showDeviceDetail(apiId, deviceId) {
       return;
     }
 
-    const deviceLabel = dists.length > 0 && dists[0].deviceManufacturer
+    const deviceLabel = esc(dists.length > 0 && dists[0].deviceManufacturer
       ? `${dists[0].deviceManufacturer} ${dists[0].deviceModel || ''}`.trim()
-      : deviceId;
-    const enrollmentLabel = dists.length > 0 ? (dists[0].enrollmentLabel || '—') : '—';
+      : deviceId);
+    const enrollmentLabel = esc(dists.length > 0 ? (dists[0].enrollmentLabel || '—') : '—');
 
     // Per-file summary
     const byKey = {};
@@ -3044,7 +3044,7 @@ async function showDeviceDetail(apiId, deviceId) {
     const fileRows = files.length === 0
       ? `<tr><td colspan="5" class="empty-msg">${t('vaultNoDistHistory')}</td></tr>`
       : devFilesPagInfo.slice.map((f, i) => `<tr class="${devFilesPagInfo.page === 0 && i === 0 ? 'row-latest' : ''}" style="cursor:pointer" data-action="showVaultFileDetail" data-arg0="${esc(apiId)}" data-arg1="${esc(f.vaultKey)}">
-          <td style="font-weight:600;color:#7dd3fc">${f.vaultKey}</td>
+          <td style="font-weight:600;color:#7dd3fc">${esc(f.vaultKey)}</td>
           <td>${f.count}</td>
           <td style="color:#22c55e">✓ ${f.ok}</td>
           <td style="color:${f.failed > 0 ? '#ef4444' : '#64748b'}">✗ ${f.failed}</td>
@@ -3057,9 +3057,9 @@ async function showDeviceDetail(apiId, deviceId) {
       : devFullPagInfo.slice.map((d, i) => {
           const ok = d.status === 'downloaded' || d.status === 'cached';
           return `<tr class="${devFullPagInfo.page === 0 && i === 0 ? 'row-latest' : ''}">
-            <td style="font-weight:600;color:#7dd3fc;cursor:pointer" data-action="showVaultFileDetail" data-arg0="${esc(apiId)}" data-arg1="${esc(d.vaultKey)}">${d.vaultKey}</td>
+            <td style="font-weight:600;color:#7dd3fc;cursor:pointer" data-action="showVaultFileDetail" data-arg0="${esc(apiId)}" data-arg1="${esc(d.vaultKey)}">${esc(d.vaultKey)}</td>
             <td>v${d.version}</td>
-            <td style="color:${ok ? '#22c55e' : '#ef4444'};font-weight:600">${ok ? '✓' : '✗'} ${d.status}</td>
+            <td style="color:${ok ? '#22c55e' : '#ef4444'};font-weight:600">${ok ? '✓' : '✗'} ${esc(d.status)}</td>
             <td style="color:#64748b;font-size:11px">${new Date(d.timestamp).toLocaleString(locale)}</td>
           </tr>`;
         }).join('');
@@ -3072,7 +3072,7 @@ async function showDeviceDetail(apiId, deviceId) {
       <div class="section-header">
         <div>
           <div class="section-title-main" style="color:#7dd3fc">📱 ${deviceLabel}</div>
-          <div class="section-sub">${deviceId} · ${enrollmentLabel} · ${dists.length} ${t('vaultFetchCount').toLowerCase()} · ${files.length} ${t('vaultUniqueKeys').toLowerCase()}</div>
+          <div class="section-sub">${esc(deviceId)} · ${enrollmentLabel} · ${dists.length} ${t('vaultFetchCount').toLowerCase()} · ${files.length} ${t('vaultUniqueKeys').toLowerCase()}</div>
         </div>
         <div style="display:flex;gap:8px">
           <button class="btn btn-secondary" data-action="renderApiVaultTab" data-arg0="${esc(apiId)}">← ${t('cancel')}</button>
