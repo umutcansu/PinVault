@@ -169,6 +169,10 @@ const i18n = {
     vaultUpload: 'Dosya Yükle', vaultDelete: 'Sil', vaultKey: 'Anahtar',
     vaultVersion: 'Versiyon', vaultSize: 'Boyut', vaultDistCount: 'Dağıtım',
     vaultNoFiles: 'Henüz vault dosyası yok', vaultUploadBtn: 'Yükle',
+    vaultUploadFileLabel: 'Dosya', vaultUploadTextLabel: 'Metin',
+    vaultUploadTextPlaceholder: 'Düz metin yapıştır (txt yerine)…',
+    vaultUploadHint: 'Dosya seç ya da metni buraya yaz — biri yeterli.',
+    vaultUploadNeedContent: 'Bir dosya seç veya metin gir',
     vaultKeyPlaceholder: 'feature-flags', vaultFilePlaceholder: 'Dosya seçin',
     vaultDistTitle: 'Dağıtım Geçmişi', vaultNoDistHistory: 'Dağıtım kaydı yok', vaultReason: 'Neden',
     vaultStats: 'İstatistikler', vaultTotalDist: 'Toplam Dağıtım',
@@ -334,6 +338,10 @@ const i18n = {
     vaultUpload: 'Upload File', vaultDelete: 'Delete', vaultKey: 'Key',
     vaultVersion: 'Version', vaultSize: 'Size', vaultDistCount: 'Distributions',
     vaultNoFiles: 'No vault files yet', vaultUploadBtn: 'Upload',
+    vaultUploadFileLabel: 'File', vaultUploadTextLabel: 'Text',
+    vaultUploadTextPlaceholder: 'Paste plain text (instead of a .txt)…',
+    vaultUploadHint: 'Pick a file or type text here — either one.',
+    vaultUploadNeedContent: 'Pick a file or enter text',
     vaultKeyPlaceholder: 'feature-flags', vaultFilePlaceholder: 'Choose file',
     vaultDistTitle: 'Distribution History', vaultNoDistHistory: 'No distribution records', vaultReason: 'Reason',
     vaultStats: 'Statistics', vaultTotalDist: 'Total Distributions',
@@ -2743,8 +2751,12 @@ async function renderApiVaultTab(apiId) {
             <input type="text" id="vault-upload-key" placeholder="${t('vaultKeyPlaceholder')}" required class="form-input" style="width:180px"/>
           </div>
           <div class="form-group" style="margin:0">
-            <label class="form-label">File</label>
-            <input type="file" id="vault-upload-file" required style="color:#94a3b8;font-size:12px"/>
+            <label class="form-label">${t('vaultUploadFileLabel')}</label>
+            <input type="file" id="vault-upload-file" style="color:#94a3b8;font-size:12px"/>
+          </div>
+          <div class="form-group" style="margin:0;flex:1 1 220px">
+            <label class="form-label">${t('vaultUploadTextLabel')}</label>
+            <textarea id="vault-upload-text" rows="2" placeholder="${t('vaultUploadTextPlaceholder')}" class="form-input" style="width:100%;min-width:220px;resize:vertical;font-family:inherit"></textarea>
           </div>
           <div class="form-group" style="margin:0">
             <label class="form-label">${t('policyLabel')}</label>
@@ -2765,6 +2777,7 @@ async function renderApiVaultTab(apiId) {
           </div>
           <button type="submit" class="btn btn-primary">${t('vaultUploadBtn')}</button>
         </form>
+        <div style="color:#64748b;font-size:11px;margin-top:8px">${t('vaultUploadHint')}</div>
       </div>
 
       <div class="card">
@@ -2799,12 +2812,24 @@ async function uploadVaultFile(e, apiId) {
   e.preventDefault();
   const key = document.getElementById('vault-upload-key').value.trim();
   const file = document.getElementById('vault-upload-file').files[0];
+  const text = document.getElementById('vault-upload-text')?.value || '';
   const policy = document.getElementById('vault-upload-policy')?.value || 'token';
   const encryption = document.getElementById('vault-upload-encryption')?.value || 'plain';
-  if (!key || !file) return;
+  if (!key) return;
+
+  // Content comes from EITHER an uploaded file OR the typed text (file wins).
+  // Text is sent as UTF-8 octet-stream so the server stores identical bytes.
+  let body;
+  if (file) {
+    body = await file.arrayBuffer();
+  } else if (text.trim() !== '') {
+    body = new TextEncoder().encode(text);
+  } else {
+    toast(t('vaultUploadNeedContent'), 'error');
+    return;
+  }
 
   try {
-    const bytes = await file.arrayBuffer();
     const qs = `?policy=${encodeURIComponent(policy)}&encryption=${encodeURIComponent(encryption)}`;
     const res = await apiFetch(`${vaultBase(apiId)}/${encodeURIComponent(key)}${qs}`, {
       method: 'PUT',
