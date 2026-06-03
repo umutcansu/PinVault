@@ -181,7 +181,7 @@ const i18n = {
     vaultDistTitle: 'Dağıtım Geçmişi', vaultNoDistHistory: 'Dağıtım kaydı yok', vaultReason: 'Neden',
     vaultStats: 'İstatistikler', vaultTotalDist: 'Toplam Dağıtım',
     vaultUniqueDevices: 'Cihaz', vaultUniqueKeys: 'Dosya', vaultDownloaded: 'İndirilen',
-    vaultFailed: 'Başarısız', vaultDevice: 'Cihaz', vaultStatus: 'Durum',
+    vaultFailed: 'Başarısız', vaultSucceeded: 'Başarılı', back: 'Geri', vaultDevice: 'Cihaz', vaultStatus: 'Durum',
     vaultTimestamp: 'Tarih', vaultLabel: 'Etiket',
     vaultVersionTimeline: 'Versiyon Zaman Çizelgesi', vaultDeviceSummary: 'Cihaz Özeti',
     vaultFullHistory: 'Tüm Geçmiş', vaultFetchCount: 'Çekim', vaultLastFetch: 'Son Çekim',
@@ -378,7 +378,7 @@ const i18n = {
     vaultDistTitle: 'Distribution History', vaultNoDistHistory: 'No distribution records', vaultReason: 'Reason',
     vaultStats: 'Statistics', vaultTotalDist: 'Total Distributions',
     vaultUniqueDevices: 'Devices', vaultUniqueKeys: 'Files', vaultDownloaded: 'Downloaded',
-    vaultFailed: 'Failed', vaultDevice: 'Device', vaultStatus: 'Status',
+    vaultFailed: 'Failed', vaultSucceeded: 'Successful', back: 'Back', vaultDevice: 'Device', vaultStatus: 'Status',
     vaultTimestamp: 'Date', vaultLabel: 'Label',
     vaultVersionTimeline: 'Version Timeline', vaultDeviceSummary: 'Device Summary',
     vaultFullHistory: 'Full History', vaultFetchCount: 'Fetches', vaultLastFetch: 'Last Fetch',
@@ -2678,7 +2678,7 @@ function toast(msg, type = 'success') {
 window.__vaultStatusFilter = window.__vaultStatusFilter || null;
 function setVaultStatusFilter(apiId, f) {
   window.__vaultStatusFilter = (window.__vaultStatusFilter === f) ? null : f;
-  renderApiVaultTab(apiId);
+  setConfigApiTab('vault', apiId);
 }
 
 /** Render the "Vault" tab inside a Config API detail page. */
@@ -2774,7 +2774,7 @@ async function renderApiVaultTab(apiId) {
         }).join('');
     // Sayfa değişince tüm tab'ı yeniden render etmek yerine bu konumu yeniden
     // çağır — aktif filter + apiId state zaten scope dışında tutuluyor.
-    window['_reloadVaultTab_' + apiId.replace(/[^a-zA-Z0-9]/g,'_')] = () => renderApiVaultTab(apiId);
+    window['_reloadVaultTab_' + apiId.replace(/[^a-zA-Z0-9]/g,'_')] = () => setConfigApiTab('vault', apiId);
     const distPagNav = distPagInfo ? pagControls(distPagKey, distPagInfo, '_reloadVaultTab_' + apiId.replace(/[^a-zA-Z0-9]/g,'_')) : '';
 
     content.innerHTML = `
@@ -2783,16 +2783,16 @@ async function renderApiVaultTab(apiId) {
           <div class="section-title-main">${t('vaultTitle')}</div>
           <div class="section-sub">${t('vaultSub')}</div>
         </div>
-        <span style="cursor:pointer;color:#60a5fa;font-size:18px" data-action="renderApiVaultTab" data-arg0="${esc(apiId)}">&#x21bb;</span>
+        <span style="cursor:pointer;color:#60a5fa;font-size:18px" data-action="setConfigApiTab" data-arg0="vault" data-arg1="${esc(apiId)}">&#x21bb;</span>
       </div>
 
       <div class="stats">
         <div class="card"><div class="stat-value" style="color:#60a5fa">${files.length}</div><div class="stat-label">${t('vaultUniqueKeys')}</div></div>
-        <div class="card" style="cursor:pointer;${activeFilter === 'downloaded' ? 'outline:2px solid #22c55e;' : ''}" data-action="setVaultStatusFilter" data-arg0="${esc(apiId)}" data-arg1="downloaded" title="${t('vaultDownloaded')}">
-          <div class="stat-value" style="color:#22c55e">${stats.totalDistributions || 0}</div>
-          <div class="stat-label">${t('vaultTotalDist')}</div>
-        </div>
         <div class="card"><div class="stat-value" style="color:#f59e0b">${stats.uniqueDevices || 0}</div><div class="stat-label">${t('vaultUniqueDevices')}</div></div>
+        <div class="card" style="cursor:pointer;${activeFilter === 'downloaded' ? 'outline:2px solid #22c55e;' : ''}" data-action="setVaultStatusFilter" data-arg0="${esc(apiId)}" data-arg1="downloaded" title="${t('vaultSucceeded')}">
+          <div class="stat-value" style="color:#22c55e">${(stats.totalDistributions || 0) - (stats.failed || 0)}</div>
+          <div class="stat-label">${t('vaultSucceeded')}</div>
+        </div>
         <div class="card" style="cursor:pointer;${activeFilter === 'failed' ? 'outline:2px solid #ef4444;' : ''}" data-action="setVaultStatusFilter" data-arg0="${esc(apiId)}" data-arg1="failed" title="${t('vaultFailed')}">
           <div class="stat-value" style="color:#ef4444">${stats.failed || 0}</div>
           <div class="stat-label">${t('vaultFailed')}</div>
@@ -2852,7 +2852,7 @@ async function renderApiVaultTab(apiId) {
       <div class="card">
         <div class="card-title" style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
           <span>${t('vaultDistTitle')} (${filteredDists.length}${activeFilter ? ` / ${dists.length}` : ''})</span>
-          ${activeFilter ? `<span style="background:${activeFilter === 'failed' ? '#ef4444' : '#22c55e'};color:#fff;padding:2px 10px;border-radius:12px;font-size:11px;cursor:pointer" data-action="setVaultStatusFilter" data-arg0="${esc(apiId)}" data-arg1="${esc(activeFilter)}" title="${t('filterRemove')}">${activeFilter === 'failed' ? '✗ ' + t('vaultFailed') : '✓ ' + t('vaultDownloaded')} ✕</span>` : ''}
+          ${activeFilter ? `<span style="background:${activeFilter === 'failed' ? '#ef4444' : '#22c55e'};color:#fff;padding:2px 10px;border-radius:12px;font-size:11px;cursor:pointer" data-action="setVaultStatusFilter" data-arg0="${esc(apiId)}" data-arg1="${esc(activeFilter)}" title="${t('filterRemove')}">${activeFilter === 'failed' ? '✗ ' + t('vaultFailed') : '✓ ' + t('vaultSucceeded')} ✕</span>` : ''}
         </div>
         <table class="data-table">
           <thead><tr><th>${t('vaultKey')}</th><th>${t('vaultVersion')}</th><th>${t('vaultDevice')}</th><th>${t('vaultStatus')}</th><th>${t('thAuth')}</th><th>${t('vaultReason')}</th><th>${t('vaultLabel')}</th><th>${t('vaultTimestamp')}</th></tr></thead>
@@ -2900,7 +2900,7 @@ async function uploadVaultFile(e, apiId) {
     if (!res.ok) { toast(t('error'), 'error'); return; }
     const data = await res.json();
     toast(t('vaultUploadSuccess', key, data.version, data.access_policy, data.encryption), 'success');
-    renderApiVaultTab(apiId);
+    setConfigApiTab('vault', apiId);
   } catch (err) { toast(t('error'), 'error'); }
 }
 
@@ -2942,7 +2942,7 @@ async function deleteVaultFile(apiId, key) {
   try {
     await apiFetch(`${vaultBase(apiId)}/${encodeURIComponent(key)}`, { method: 'DELETE' });
     toast(t('fileDeleted', key), 'success');
-    renderApiVaultTab(apiId);
+    setConfigApiTab('vault', apiId);
   } catch (err) { toast(t('error'), 'error'); }
 }
 
@@ -3045,7 +3045,7 @@ async function showVaultFileDetail(apiId, key) {
           <div class="section-sub">${t('vaultDistTitle')} — ${dists.length} · ${versions.length} versiyon · ${devices.length} cihaz</div>
         </div>
         <div style="display:flex;gap:8px">
-          <button class="btn btn-secondary" data-action="renderApiVaultTab" data-arg0="${esc(apiId)}">← ${t('cancel')}</button>
+          <button class="btn btn-secondary" data-action="setConfigApiTab" data-arg0="vault" data-arg1="${esc(apiId)}">← ${t('back')}</button>
           <span style="cursor:pointer;color:#60a5fa;font-size:16px" data-action="showVaultFileDetail" data-arg0="${esc(apiId)}" data-arg1="${esc(key)}">&#x21bb;</span>
         </div>
       </div>
@@ -3161,7 +3161,7 @@ async function showDeviceDetail(apiId, deviceId) {
           <div class="section-sub">${esc(deviceId)} · ${enrollmentLabel} · ${dists.length} ${t('vaultFetchCount').toLowerCase()} · ${files.length} ${t('vaultUniqueKeys').toLowerCase()}</div>
         </div>
         <div style="display:flex;gap:8px">
-          <button class="btn btn-secondary" data-action="renderApiVaultTab" data-arg0="${esc(apiId)}">← ${t('cancel')}</button>
+          <button class="btn btn-secondary" data-action="setConfigApiTab" data-arg0="vault" data-arg1="${esc(apiId)}">← ${t('back')}</button>
           <span style="cursor:pointer;color:#60a5fa;font-size:16px" data-action="showDeviceDetail" data-arg0="${esc(apiId)}" data-arg1="${esc(deviceId)}">&#x21bb;</span>
         </div>
       </div>
