@@ -174,6 +174,9 @@ const i18n = {
     vaultUploadTextPlaceholder: 'Düz metin yapıştır (txt yerine)…',
     vaultUploadHint: 'Dosya seç ya da metni buraya yaz — biri yeterli.',
     vaultUploadNeedContent: 'Bir dosya seç veya metin gir',
+    encDescPlain: 'Şifreleme yok — dosya sunucuda düz saklanır, düz servis edilir (bağlantı yine pinli TLS).',
+    encDescAtRest: 'Sunucuda diskte AES-256-GCM ile şifreli durur; servis ederken çözülür, cihaza düz iner.',
+    encDescE2E: 'Uçtan uca: dosya cihazın açık anahtarıyla sarılır — sadece o cihaz açar, sunucu bile göremez (cihazın public key kaydı gerekir).',
     vaultKeyPlaceholder: 'feature-flags', vaultFilePlaceholder: 'Dosya seçin',
     vaultDistTitle: 'Dağıtım Geçmişi', vaultNoDistHistory: 'Dağıtım kaydı yok', vaultReason: 'Neden',
     vaultStats: 'İstatistikler', vaultTotalDist: 'Toplam Dağıtım',
@@ -220,6 +223,30 @@ const i18n = {
     filterRemove: 'Filtreyi kaldır',
     // Upload toast
     vaultUploadSuccess: '{0} v{1} [{2}/{3}] uploaded',
+    // ── i18n sweep additions ──
+    serverInfo: 'Sunucu Bilgisi', mode: 'Mod', hostCountLabel: 'Host sayısı',
+    clientCertMtls: 'Client Cert (mTLS)', refresh: 'Yenile', addHostTooltip: 'Host ekle',
+    pkcs12Hint: 'PKCS12 (.p12/.pfx)', apiIdLabel: 'API ID',
+    newConfigApiTitle: 'Yeni Config API', newConfigApiSub: 'TLS veya mTLS config API başlatın',
+    modeTlsOption: 'TLS (tek yönlü)', modeMtlsOption: 'mTLS (çift yönlü — client cert gerekir)',
+    startConfigApi: 'Config API Başlat', deleteApi: 'API Sil',
+    enrollmentToken: 'Enrollment Token', tokenRequiredBadge: 'Token zorunlu',
+    openModeBadge: 'Açık mod — deviceId ile kayıt aktif (demo)',
+    secureFlowLabel: 'Güvenli akış:',
+    secureFlowSteps: 'Admin token üretir → Uygulama token ile kayıt olur → Client cert alır → mTLS Config API\'ye erişir → Host cert\'leri otomatik indirilir',
+    enrollmentModeHint: 'ENROLLMENT_MODE=token ile sunucuyu başlatarak deviceId enrollment\'ı kapatabilirsiniz.',
+    generateToken: 'Token Üret', tokenUsed: 'Kullanıldı', tokenPending: 'Bekliyor',
+    thForce: 'Force', thToken: 'Token',
+    revokeCertConfirm: '{0} iptal edilecek. Devam?',
+    deleteFileConfirm: '"{0}" silinsin mi?', fileDeleted: '{0} silindi',
+    mockServer: 'MOCK SERVER', algorithmLabel: 'Algorithm', validUntilLabel: 'Geçerlilik Sonu',
+    updateClientCert: 'Client Cert Güncelle',
+    apiIdPlaceholder: 'tls-8093 veya mtls-8092',
+    mockStart: 'Başlat', thAuth: 'Auth',
+    mockRemoteOnlyHint: 'Bu host için yerel mock kurulmamış — sertifika sadece pin doğrulama için üretildi.',
+    mockServerTitle: 'Mock Server', mockCertNeeded: 'mock server için sertifika gerekli',
+    vaultAuthError: 'Yetki hatası ({0}). Sağ üstten API key gir veya localStorage.setItem(\'pinvault_api_key\', \'testkey\') sonra sayfayı yenile.',
+    vaultUnexpectedResponse: 'Beklenmeyen yanıt formatı. Console\'a bak: {0}',
   },
   en: {
     hosts: 'Hosts', addHost: '+ New Host', selectHost: 'Select a host',
@@ -344,6 +371,9 @@ const i18n = {
     vaultUploadTextPlaceholder: 'Paste plain text (instead of a .txt)…',
     vaultUploadHint: 'Pick a file or type text here — either one.',
     vaultUploadNeedContent: 'Pick a file or enter text',
+    encDescPlain: 'No encryption — stored and served as-is (the connection is still pinned TLS).',
+    encDescAtRest: 'Encrypted at rest on the server (AES-256-GCM); decrypted when served, reaches the device as plaintext.',
+    encDescE2E: 'End-to-end: wrapped with the device\'s public key — only that device can decrypt, not even the server (needs the registered device public key).',
     vaultKeyPlaceholder: 'feature-flags', vaultFilePlaceholder: 'Choose file',
     vaultDistTitle: 'Distribution History', vaultNoDistHistory: 'No distribution records', vaultReason: 'Reason',
     vaultStats: 'Statistics', vaultTotalDist: 'Total Distributions',
@@ -390,6 +420,30 @@ const i18n = {
     filterRemove: 'Remove filter',
     // Upload toast
     vaultUploadSuccess: '{0} v{1} [{2}/{3}] uploaded',
+    // ── i18n sweep additions ──
+    serverInfo: 'Server Info', mode: 'Mode', hostCountLabel: 'Host count',
+    clientCertMtls: 'Client Cert (mTLS)', refresh: 'Refresh', addHostTooltip: 'Add host',
+    pkcs12Hint: 'PKCS12 (.p12/.pfx)', apiIdLabel: 'API ID',
+    newConfigApiTitle: 'New Config API', newConfigApiSub: 'Start a TLS or mTLS config API',
+    modeTlsOption: 'TLS (one-way)', modeMtlsOption: 'mTLS (two-way — client cert required)',
+    startConfigApi: 'Start Config API', deleteApi: 'Delete API',
+    enrollmentToken: 'Enrollment Token', tokenRequiredBadge: 'Token required',
+    openModeBadge: 'Open mode — deviceId enrollment active (demo)',
+    secureFlowLabel: 'Secure flow:',
+    secureFlowSteps: 'Admin generates token → App enrolls with token → Receives client cert → Accesses mTLS Config API → Host certs are downloaded automatically',
+    enrollmentModeHint: 'Start the server with ENROLLMENT_MODE=token to disable deviceId enrollment.',
+    generateToken: 'Generate Token', tokenUsed: 'Used', tokenPending: 'Pending',
+    thForce: 'Force', thToken: 'Token',
+    revokeCertConfirm: '{0} will be revoked. Continue?',
+    deleteFileConfirm: 'Delete "{0}"?', fileDeleted: '{0} deleted',
+    mockServer: 'MOCK SERVER', algorithmLabel: 'Algorithm', validUntilLabel: 'Valid Until',
+    updateClientCert: 'Update Client Cert',
+    apiIdPlaceholder: 'tls-8093 or mtls-8092',
+    mockStart: 'Start', thAuth: 'Auth',
+    mockRemoteOnlyHint: 'No local mock for this host — the certificate was generated for pin validation only.',
+    mockServerTitle: 'Mock Server', mockCertNeeded: 'a certificate is required for the mock server',
+    vaultAuthError: 'Authorization error ({0}). Enter an API key from the top-right or run localStorage.setItem(\'pinvault_api_key\', \'testkey\') then refresh the page.',
+    vaultUnexpectedResponse: 'Unexpected response format. Check the console: {0}',
   }
 };
 
@@ -607,7 +661,7 @@ function renderHostListSync() {
           <span>${modeLabel} :${api.port}${stoppedBadge}</span>
           <span style="color:#475569;font-weight:400;font-size:10px">(${hostCount})</span>
         </span>
-        ${isRunning ? `<span style="font-size:16px;color:#60a5fa;cursor:pointer;line-height:1" data-action="showAddHostScoped" data-arg0="${esc(api.id)}" data-stop="1" title="Host ekle">+</span>` : ''}
+        ${isRunning ? `<span style="font-size:16px;color:#60a5fa;cursor:pointer;line-height:1" data-action="showAddHostScoped" data-arg0="${esc(api.id)}" data-stop="1" title="${t('addHostTooltip')}">+</span>` : ''}
       </div>`;
 
     if (isExpanded) {
@@ -720,7 +774,7 @@ async function renderConfigApiDetail(apiId) {
   if (!tabs.find(t => t.id === configApiTab)) configApiTab = 'general';
 
   const tabBar = tabs.map(tab =>
-    `<button class="tab-btn ${configApiTab === tab.id ? 'active' : ''}" data-action="setConfigApiTab" data-arg0="${esc(tab.id)}" data-arg1="${esc(apiId)}">${tab.label}</button>`
+    `<button class="tab-btn ${configApiTab === tab.id ? 'tab-active' : ''}" data-action="setConfigApiTab" data-arg0="${esc(tab.id)}" data-arg1="${esc(apiId)}">${tab.label}</button>`
   ).join('');
 
   const isRunning = api.running !== false;
@@ -730,10 +784,10 @@ async function renderConfigApiDetail(apiId) {
         <div style="width:40px;height:22px;border-radius:11px;background:${isRunning ? '#22c55e' : '#334155'};position:relative;transition:background 0.2s">
           <div style="width:18px;height:18px;border-radius:50%;background:white;position:absolute;top:2px;${isRunning ? 'right:2px' : 'left:2px'};transition:all 0.2s"></div>
         </div>
-        <span style="color:${isRunning ? '#22c55e' : '#64748b'};font-weight:700;font-size:13px">${isRunning ? 'Çalışıyor' : 'Durduruldu'}</span>
+        <span style="color:${isRunning ? '#22c55e' : '#64748b'};font-weight:700;font-size:13px">${isRunning ? t('mockRunning') : t('mockStopped')}</span>
       </div>
       ${!isRunning ? `
-        <input id="capi-port-${apiId}" class="form-input" style="width:80px;padding:4px 8px;font-size:12px" value="${api.port}" placeholder="Port">
+        <input id="capi-port-${apiId}" class="form-input" style="width:80px;padding:4px 8px;font-size:12px" value="${api.port}" placeholder="${t('mockPort')}">
       ` : ''}
     </div>`;
 
@@ -751,7 +805,7 @@ async function renderConfigApiDetail(apiId) {
         </div>
       </div>
       <div class="action-bar">
-        <button class="btn btn-danger" data-action="deleteConfigApi" data-arg0="${esc(apiId)}">API Sil</button>
+        <button class="btn btn-danger" data-action="deleteConfigApi" data-arg0="${esc(apiId)}">${t('deleteApi')}</button>
       </div>
     </div>
     <div class="tab-bar" style="margin-bottom:16px">${tabBar}</div>
@@ -785,7 +839,7 @@ async function renderConfigApiDetail(apiId) {
           <div style="margin-top:4px">${toggleHtml}</div>
         </div>
         <div class="action-bar">
-          <button class="btn btn-danger" data-action="deleteConfigApi" data-arg0="${esc(apiId)}">API Sil</button>
+          <button class="btn btn-danger" data-action="deleteConfigApi" data-arg0="${esc(apiId)}">${t('deleteApi')}</button>
         </div>
       </div>
       <div class="tab-bar" style="margin-bottom:16px">${tabBar}</div>
@@ -826,12 +880,12 @@ async function renderApiGeneralTab(apiId) {
 
   container.innerHTML = `
     <div class="card">
-      <div class="card-title">Sunucu Bilgisi</div>
+      <div class="card-title">${t('serverInfo')}</div>
       <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;color:#94a3b8;font-size:13px">
-        <div>Port: <span style="color:#7dd3fc;font-weight:600">:${api.port}</span></div>
-        <div>Mod: <span style="color:${api.mode === 'mtls' ? '#f59e0b' : '#22c55e'};font-weight:600">${api.mode.toUpperCase()}</span></div>
-        <div>Host sayısı: <span style="color:#7dd3fc;font-weight:600">${api.pins?.length || 0}</span></div>
-        <div>Versiyon: <span style="color:#7dd3fc;font-weight:600">v${api.version}</span></div>
+        <div>${t('mockPort')}: <span style="color:#7dd3fc;font-weight:600">:${api.port}</span></div>
+        <div>${t('mode')}: <span style="color:${api.mode === 'mtls' ? '#f59e0b' : '#22c55e'};font-weight:600">${api.mode.toUpperCase()}</span></div>
+        <div>${t('hostCountLabel')}: <span style="color:#7dd3fc;font-weight:600">${api.pins?.length || 0}</span></div>
+        <div>${t('version')}: <span style="color:#7dd3fc;font-weight:600">v${api.version}</span></div>
       </div>
     </div>
     <!-- V2 Vault toggle + Device ACL shortcut -->
@@ -851,7 +905,7 @@ async function renderApiGeneralTab(apiId) {
     <div class="card">
       <div class="card-title">${t('hosts')}</div>
       <table class="data-table">
-        <thead><tr><th>Hostname</th><th>Versiyon</th><th>Pin</th><th>Force</th></tr></thead>
+        <thead><tr><th>${t('hostname')}</th><th>${t('version')}</th><th>${t('thPin')}</th><th>${t('thForce')}</th></tr></thead>
         <tbody>${hostRows}</tbody>
       </table>${hostsPagNav}
     </div>`;
@@ -1143,7 +1197,7 @@ async function renderHostDetail(host) {
     </div>
 
     <div class="card" id="host-client-cert-card">
-      <div class="card-title">Client Cert (mTLS)</div>
+      <div class="card-title">${t('clientCertMtls')}</div>
       <div class="loading">${t('loading')}</div>
     </div>
 
@@ -1157,14 +1211,14 @@ async function renderHostDetail(host) {
         <div class="card-title">${t('connHistory')}</div>
         <div style="display:flex;gap:8px;align-items:center">
           <button class="btn btn-primary" style="padding:4px 12px;font-size:11px" data-action="testHostConnection" data-arg0="${esc(host.hostname)}">${t('testConnection')}</button>
-          <span style="cursor:pointer;color:#60a5fa;font-size:14px" data-action="loadHostConnectionHistory" data-arg0="${esc(host.hostname)}" title="Yenile">&#x21bb;</span>
+          <span style="cursor:pointer;color:#60a5fa;font-size:14px" data-action="loadHostConnectionHistory" data-arg0="${esc(host.hostname)}" title="${t('refresh')}">&#x21bb;</span>
         </div>
       </div>
       <div class="loading">${t('loading')}</div>
     </div>
 
     <div class="card" id="client-devices-card">
-      <div style="display:flex;justify-content:space-between;align-items:center"><div class="card-title">${t('connectedClients')}</div><span style="cursor:pointer;color:#60a5fa;font-size:14px" data-action="loadClientDevices" data-arg0="${esc(host.hostname)}" title="Yenile">&#x21bb;</span></div>
+      <div style="display:flex;justify-content:space-between;align-items:center"><div class="card-title">${t('connectedClients')}</div><span style="cursor:pointer;color:#60a5fa;font-size:14px" data-action="loadClientDevices" data-arg0="${esc(host.hostname)}" title="${t('refresh')}">&#x21bb;</span></div>
       <div class="loading">${t('loading')}</div>
     </div>
   `;
@@ -1289,7 +1343,7 @@ async function loadHostConnectionHistory(hostname) {
     const locale = lang === 'tr' ? 'tr-TR' : 'en-US';
 
     if (entries.length === 0) {
-      card.innerHTML = `<div style="display:flex;justify-content:space-between;align-items:center"><div class="card-title">${t('connHistory')}</div><div style="display:flex;gap:8px;align-items:center"><button class="btn btn-primary" style="padding:4px 12px;font-size:11px" data-action="testHostConnection" data-arg0="${esc(hostname)}">${t('testConnection')}</button><span style="cursor:pointer;color:#60a5fa;font-size:14px" data-action="loadHostConnectionHistory" data-arg0="${esc(hostname)}" title="Yenile">&#x21bb;</span></div></div><div class="empty-msg">${t('noConnHistory')}</div>`;
+      card.innerHTML = `<div style="display:flex;justify-content:space-between;align-items:center"><div class="card-title">${t('connHistory')}</div><div style="display:flex;gap:8px;align-items:center"><button class="btn btn-primary" style="padding:4px 12px;font-size:11px" data-action="testHostConnection" data-arg0="${esc(hostname)}">${t('testConnection')}</button><span style="cursor:pointer;color:#60a5fa;font-size:14px" data-action="loadHostConnectionHistory" data-arg0="${esc(hostname)}" title="${t('refresh')}">&#x21bb;</span></div></div><div class="empty-msg">${t('noConnHistory')}</div>`;
       return;
     }
 
@@ -1319,7 +1373,7 @@ async function loadHostConnectionHistory(hostname) {
     const pagNav = pagControls(pagKey, pagInfo, '_reloadHostConn_' + hostname.replace(/[^a-zA-Z0-9]/g,'_'));
 
     card.innerHTML = `
-      <div style="display:flex;justify-content:space-between;align-items:center"><div class="card-title">${t('connHistory')}</div><div style="display:flex;gap:8px;align-items:center"><button class="btn btn-primary" style="padding:4px 12px;font-size:11px" data-action="testHostConnection" data-arg0="${esc(hostname)}">${t('testConnection')}</button><span style="cursor:pointer;color:#60a5fa;font-size:14px" data-action="loadHostConnectionHistory" data-arg0="${esc(hostname)}" title="Yenile">&#x21bb;</span></div></div>
+      <div style="display:flex;justify-content:space-between;align-items:center"><div class="card-title">${t('connHistory')}</div><div style="display:flex;gap:8px;align-items:center"><button class="btn btn-primary" style="padding:4px 12px;font-size:11px" data-action="testHostConnection" data-arg0="${esc(hostname)}">${t('testConnection')}</button><span style="cursor:pointer;color:#60a5fa;font-size:14px" data-action="loadHostConnectionHistory" data-arg0="${esc(hostname)}" title="${t('refresh')}">&#x21bb;</span></div></div>
       <table class="data-table">
         <thead><tr>
           <th>${t('thClient')}</th><th>${t('thStatus')}</th><th>${t('thDuration')}</th>
@@ -1328,7 +1382,7 @@ async function loadHostConnectionHistory(hostname) {
         <tbody>${rows}</tbody>
       </table>${pagNav}`;
   } catch (e) {
-    card.innerHTML = `<div style="display:flex;justify-content:space-between;align-items:center"><div class="card-title">${t('connHistory')}</div><div style="display:flex;gap:8px;align-items:center"><button class="btn btn-primary" style="padding:4px 12px;font-size:11px" data-action="testHostConnection" data-arg0="${esc(hostname)}">${t('testConnection')}</button><span style="cursor:pointer;color:#60a5fa;font-size:14px" data-action="loadHostConnectionHistory" data-arg0="${esc(hostname)}" title="Yenile">&#x21bb;</span></div></div><div class="empty-msg">${t('error')}</div>`;
+    card.innerHTML = `<div style="display:flex;justify-content:space-between;align-items:center"><div class="card-title">${t('connHistory')}</div><div style="display:flex;gap:8px;align-items:center"><button class="btn btn-primary" style="padding:4px 12px;font-size:11px" data-action="testHostConnection" data-arg0="${esc(hostname)}">${t('testConnection')}</button><span style="cursor:pointer;color:#60a5fa;font-size:14px" data-action="loadHostConnectionHistory" data-arg0="${esc(hostname)}" title="${t('refresh')}">&#x21bb;</span></div></div><div class="empty-msg">${t('error')}</div>`;
   }
 }
 
@@ -1341,7 +1395,7 @@ async function loadClientDevices(hostname) {
     const locale = lang === 'tr' ? 'tr-TR' : 'en-US';
 
     if (devices.length === 0) {
-      card.innerHTML = `<div style="display:flex;justify-content:space-between;align-items:center"><div class="card-title">${t('connectedClients')}</div><span style="cursor:pointer;color:#60a5fa;font-size:14px" data-action="loadClientDevices" data-arg0="${esc(hostname)}" title="Yenile">&#x21bb;</span></div><div class="empty-msg">${t('noClients')}</div>`;
+      card.innerHTML = `<div style="display:flex;justify-content:space-between;align-items:center"><div class="card-title">${t('connectedClients')}</div><span style="cursor:pointer;color:#60a5fa;font-size:14px" data-action="loadClientDevices" data-arg0="${esc(hostname)}" title="${t('refresh')}">&#x21bb;</span></div><div class="empty-msg">${t('noClients')}</div>`;
       return;
     }
 
@@ -1357,7 +1411,7 @@ async function loadClientDevices(hostname) {
     }).join('');
 
     card.innerHTML = `
-      <div style="display:flex;justify-content:space-between;align-items:center"><div class="card-title">${t('connectedClients')}</div><span style="cursor:pointer;color:#60a5fa;font-size:14px" data-action="loadClientDevices" data-arg0="${esc(hostname)}" title="Yenile">&#x21bb;</span></div>
+      <div style="display:flex;justify-content:space-between;align-items:center"><div class="card-title">${t('connectedClients')}</div><span style="cursor:pointer;color:#60a5fa;font-size:14px" data-action="loadClientDevices" data-arg0="${esc(hostname)}" title="${t('refresh')}">&#x21bb;</span></div>
       <table class="data-table">
         <thead><tr>
           <th>${t('thDevice')}</th><th>${t('thPinVer')}</th>
@@ -1392,15 +1446,15 @@ async function loadHostClientCert(hostname) {
       <div style="cursor:pointer;width:40px;height:22px;border-radius:11px;background:${isMtls ? '#22c55e' : '#334155'};position:relative;transition:background 0.2s" data-action="toggleHostMtls" data-arg0="${esc(hostname)}" data-arg1="${!isMtls}">
         <div style="width:18px;height:18px;border-radius:50%;background:white;position:absolute;top:2px;${isMtls ? 'right:2px' : 'left:2px'};transition:all 0.2s"></div>
       </div>
-      <span style="color:${isMtls ? '#22c55e' : '#64748b'};font-weight:600;font-size:12px">${isMtls ? 'Aktif' : 'Pasif'}</span>
+      <span style="color:${isMtls ? '#22c55e' : '#64748b'};font-weight:600;font-size:12px">${isMtls ? t('mtlsEnabled') : t('mtlsDisabled')}</span>
       ${certVer ? `<span class="ver-badge" style="margin-left:auto">cert v${certVer}</span>` : ''}
     </div>`;
 
   const certSection = certInfo ? `
     <div style="background:#0f172a;border-radius:8px;padding:10px;margin-bottom:12px;font-size:12px">
       <div style="color:#94a3b8">CN: <span style="color:#7dd3fc">${certInfo.commonName || '—'}</span></div>
-      <div style="color:#94a3b8">Fingerprint: <span style="color:#7dd3fc;font-family:monospace;font-size:10px">${certInfo.fingerprint ? certInfo.fingerprint.substring(0,20) + '...' : '—'}</span></div>
-      <div style="color:#94a3b8">Version: <span style="color:#22c55e">${certInfo.version}</span></div>
+      <div style="color:#94a3b8">${t('thFingerprint')}: <span style="color:#7dd3fc;font-family:monospace;font-size:10px">${certInfo.fingerprint ? certInfo.fingerprint.substring(0,20) + '...' : '—'}</span></div>
+      <div style="color:#94a3b8">${t('version')}: <span style="color:#22c55e">${certInfo.version}</span></div>
     </div>` : `
     <div style="background:#0f172a;border-radius:8px;padding:10px;margin-bottom:12px;font-size:12px">
       <div style="color:#64748b;margin-bottom:6px">${t('hostCertNone')}</div>
@@ -1410,14 +1464,14 @@ async function loadHostClientCert(hostname) {
   const uploadBtn = `
     <div style="display:flex;gap:8px;align-items:center">
       <button class="btn btn-secondary" style="padding:4px 12px;font-size:11px" data-action="clickFileInput" data-arg0="host-cc-file">
-        ${certInfo ? 'Client Cert Guncelle' : 'Client Cert Yukle'}
+        ${certInfo ? t('updateClientCert') : t('uploadClientCert')}
       </button>
       <input type="file" id="host-cc-file" accept=".p12,.pfx" style="display:none" data-action-change="uploadHostClientCert" data-arg0="${esc(hostname)}"/>
-      <span style="color:#64748b;font-size:10px">PKCS12 (.p12/.pfx)</span>
+      <span style="color:#64748b;font-size:10px">${t('pkcs12Hint')}</span>
     </div>`;
 
   card.innerHTML = `
-    <div class="card-title">Client Cert (mTLS)</div>
+    <div class="card-title">${t('clientCertMtls')}</div>
     ${mtlsToggle}
     ${certSection}
     ${uploadBtn}
@@ -1483,26 +1537,26 @@ function showAddConfigApi() {
   renderHostList();
   document.getElementById('content').innerHTML = `
     <div class="section-header">
-      <div><div class="section-title-main">Yeni Config API</div><div class="section-sub">TLS veya mTLS config API başlatın</div></div>
+      <div><div class="section-title-main">${t('newConfigApiTitle')}</div><div class="section-sub">${t('newConfigApiSub')}</div></div>
     </div>
     <div class="card">
       <form data-action-submit="createConfigApi">
         <div class="form-group">
-          <label class="form-label">API ID</label>
-          <input type="text" id="new-api-id" placeholder="tls-8093 veya mtls-8092" required class="form-input"/>
+          <label class="form-label">${t('apiIdLabel')}</label>
+          <input type="text" id="new-api-id" placeholder="${t('apiIdPlaceholder')}" required class="form-input"/>
         </div>
         <div class="form-group">
-          <label class="form-label">Port</label>
+          <label class="form-label">${t('mockPort')}</label>
           <input type="number" id="new-api-port" placeholder="8093" required class="form-input"/>
         </div>
         <div class="form-group">
-          <label class="form-label">Mod</label>
+          <label class="form-label">${t('mode')}</label>
           <select id="new-api-mode" class="form-input">
-            <option value="tls">TLS (tek yönlü)</option>
-            <option value="mtls">mTLS (çift yönlü — client cert gerekir)</option>
+            <option value="tls">${t('modeTlsOption')}</option>
+            <option value="mtls">${t('modeMtlsOption')}</option>
           </select>
         </div>
-        <button type="submit" class="btn btn-primary">Config API Başlat</button>
+        <button type="submit" class="btn btn-primary">${t('startConfigApi')}</button>
       </form>
     </div>`;
 }
@@ -1998,13 +2052,13 @@ async function renderBootstrapSection() {
       <div class="card">
         <div class="card-title">${t('serverTlsPin')}</div>
         <div style="color:#64748b;font-size:11px;margin-bottom:8px">HTTPS: ${data.hostname}:${data.httpsPort}</div>
-        <div class="hash-label">Primary Pin</div>
+        <div class="hash-label">${t('primaryPin')}</div>
         <div class="hash-box">
           <span>sha256/${data.primaryPin}</span>
           <button class="copy-btn" data-action="copyText" data-arg0="${esc(data.primaryPin)}">${t('copy')}</button>
         </div>
         ${data.backupPin ? `
-        <div class="hash-label">Backup Pin</div>
+        <div class="hash-label">${t('backupPin')}</div>
         <div class="hash-box">
           <span>sha256/${data.backupPin}</span>
           <button class="copy-btn" data-action="copyText" data-arg0="${esc(data.backupPin)}">${t('copy')}</button>
@@ -2193,21 +2247,21 @@ val config = PinVaultConfig.Builder()
       </div>
       <div class="card">
         <div style="display:flex;align-items:center;gap:10px;margin-bottom:8px">
-          <div class="card-title" style="margin:0">Enrollment Token</div>
+          <div class="card-title" style="margin:0">${t('enrollmentToken')}</div>
           ${enrollMode.tokenRequired
-            ? '<span style="background:#166534;color:#bbf7d0;padding:2px 8px;border-radius:4px;font-size:11px;font-weight:600">&#x1F512; Token zorunlu</span>'
-            : '<span style="background:#92400e;color:#fef08a;padding:2px 8px;border-radius:4px;font-size:11px;font-weight:600">&#x26A0; Açık mod — deviceId ile kayıt aktif (demo)</span>'}
+            ? '<span style="background:#166534;color:#bbf7d0;padding:2px 8px;border-radius:4px;font-size:11px;font-weight:600">&#x1F512; ' + t('tokenRequiredBadge') + '</span>'
+            : '<span style="background:#92400e;color:#fef08a;padding:2px 8px;border-radius:4px;font-size:11px;font-weight:600">&#x26A0; ' + t('openModeBadge') + '</span>'}
         </div>
         <div style="color:#94a3b8;font-size:12px;margin-bottom:12px;line-height:1.5">
-          <strong>Güvenli akış:</strong> Admin token üretir &#x2192; Uygulama token ile kayıt olur &#x2192; Client cert alır &#x2192; mTLS Config API'ye erişir &#x2192; Host cert'leri otomatik indirilir
-          ${!enrollMode.tokenRequired ? '<br><span style="color:#fbbf24">ENROLLMENT_MODE=token ile sunucuyu başlatarak deviceId enrollment\'ı kapatabilirsiniz.</span>' : ''}
+          <strong>${t('secureFlowLabel')}</strong> ${t('secureFlowSteps')}
+          ${!enrollMode.tokenRequired ? '<br><span style="color:#fbbf24">' + t('enrollmentModeHint') + '</span>' : ''}
         </div>
         <form data-action-submit="generateEnrollmentToken" style="display:flex;gap:8px;align-items:end">
           <div class="form-group" style="flex:1;margin:0">
             <label class="form-label">${t('clientIdLabel')}</label>
             <input type="text" id="enrollment-client-id" placeholder="${t('clientIdPlaceholder')}" required class="form-input"/>
           </div>
-          <button type="submit" class="btn btn-primary">Token Üret</button>
+          <button type="submit" class="btn btn-primary">${t('generateToken')}</button>
         </form>
         <div id="enrollment-token-list" style="margin-top:12px"></div>
       </div>`;
@@ -2338,13 +2392,14 @@ async function loadEnrollmentTokens() {
     const res = await apiFetch('/api/v1/enrollment-tokens');
     const tokens = await res.json();
     const locale = lang === 'tr' ? 'tr-TR' : 'en-US';
+    const usedTxt = t('tokenUsed'), pendingTxt = t('tokenPending');
     if (tokens.length === 0) { container.innerHTML = ''; return; }
     container.innerHTML = `<table class="data-table">
-      <thead><tr><th>Token</th><th>Client ID</th><th>Durum</th><th>Tarih</th></tr></thead>
+      <thead><tr><th>${t('thToken')}</th><th>${t('clientIdLabel')}</th><th>${t('thStatus')}</th><th>${t('thDate')}</th></tr></thead>
       <tbody>${tokens.map((t, i) => `<tr class="${i === 0 ? 'row-latest' : ''}">
         <td style="font-family:monospace;font-weight:700;color:#7dd3fc;cursor:pointer" data-action="copyText" data-arg0="${esc(t.token)}">${t.token}</td>
         <td>${t.clientId}</td>
-        <td>${t.used ? '<span style="color:#64748b">Kullanıldı</span>' : '<span style="color:#22c55e">Bekliyor</span>'}</td>
+        <td>${t.used ? '<span style="color:#64748b">' + usedTxt + '</span>' : '<span style="color:#22c55e">' + pendingTxt + '</span>'}</td>
         <td style="color:#64748b;font-size:11px">${new Date(t.createdAt).toLocaleString(locale)}</td>
       </tr>`).join('')}</tbody>
     </table>`;
@@ -2352,7 +2407,7 @@ async function loadEnrollmentTokens() {
 }
 
 async function revokeClientCert(id) {
-  if (!confirm(`${id} iptal edilecek. Devam?`)) return;
+  if (!confirm(t('revokeCertConfirm', id))) return;
   try {
     await apiFetch(`/api/v1/client-certs/${encodeURIComponent(id)}`, { method: 'DELETE' });
     toast(t('certRevoked'), 'success');
@@ -2411,10 +2466,10 @@ async function loadCertInfo(hostname) {
       <div class="card-title">${t('certInfo')}</div>
       <div style="font-size:12px">
         <div class="info-row"><span class="info-key">CN</span><span class="info-val">${cn}</span></div>
-        <div class="info-row"><span class="info-key">Algorithm</span><span class="info-val">${c.publicKeyAlgorithm} ${c.publicKeyBits}-bit</span></div>
-        <div class="info-row"><span class="info-key">Valid Until</span><span class="info-val" style="color:#f59e0b">${new Date(c.validUntil).toLocaleString(lang === 'tr' ? 'tr-TR' : 'en-US')}</span></div>
+        <div class="info-row"><span class="info-key">${t('algorithmLabel')}</span><span class="info-val">${c.publicKeyAlgorithm} ${c.publicKeyBits}-bit</span></div>
+        <div class="info-row"><span class="info-key">${t('validUntilLabel')}</span><span class="info-val" style="color:#f59e0b">${new Date(c.validUntil).toLocaleString(lang === 'tr' ? 'tr-TR' : 'en-US')}</span></div>
         <div class="info-row"><span class="info-key">SAN</span><span class="info-val">${c.subjectAltNames.join(', ')}</span></div>
-        <div class="info-row" style="border:none"><span class="info-key">Fingerprint</span><span class="info-val" style="font-size:9px;font-family:monospace;color:#94a3b8">${c.sha256Fingerprint}</span></div>
+        <div class="info-row" style="border:none"><span class="info-key">${t('thFingerprint')}</span><span class="info-val" style="font-size:9px;font-family:monospace;color:#94a3b8">${c.sha256Fingerprint}</span></div>
       </div>
       ${renderCertRenewSection(hostname)}`;
   } catch (e) {
@@ -2491,13 +2546,13 @@ async function loadMockStatus(hostname) {
 
   try {
     const res = await apiFetch(`/api/v1/hosts/${encodeURIComponent(hostname)}/status`);
-    if (!res.ok) { card.innerHTML = `<div class="card-title">Mock Server</div><div class="empty-msg">${t('noCert')}</div>`; return; }
+    if (!res.ok) { card.innerHTML = `<div class="card-title">${t('mockServerTitle')}</div><div class="empty-msg">${t('noCert')}</div>`; return; }
     const data = await res.json();
     const running = data.mockServerRunning;
     const port = data.mockServerPort || 8443;
 
     if (!data.keystorePath) {
-      card.innerHTML = `<div class="card-title">Mock Server</div><div class="empty-msg">${t('noCert')} — mock server için sertifika gerekli</div>`;
+      card.innerHTML = `<div class="card-title">${t('mockServerTitle')}</div><div class="empty-msg">${t('noCert')} — ${t('mockCertNeeded')}</div>`;
       return;
     }
 
@@ -2509,16 +2564,16 @@ async function loadMockStatus(hostname) {
     // remote pinleme için cert üretildi. Kompakt "başlat" sunan küçük kart göster.
     if (!running && tlsPort == null && mtlsPort == null && data.mockServerPort == null) {
       card.innerHTML = `<div class="card-title" style="display:flex;justify-content:space-between;align-items:center">
-          <span>MOCK SERVER</span>
+          <span>${t('mockServer')}</span>
           <span style="color:#64748b;font-size:11px;font-weight:normal">remote-only</span>
         </div>
-        <div style="font-size:12px;color:#94a3b8;margin-bottom:6px">Bu host için yerel mock kurulmamış — sertifika sadece pin doğrulama için üretildi.</div>
+        <div style="font-size:12px;color:#94a3b8;margin-bottom:6px">${t('mockRemoteOnlyHint')}</div>
         <div style="display:flex;gap:8px;align-items:center">
           <input id="mock-port" class="form-input" style="width:80px;padding:4px 8px;font-size:12px" value="8443" placeholder="${t('mockPort')}">
           <label style="display:flex;align-items:center;gap:6px;color:#94a3b8;font-size:12px;cursor:pointer">
             <input type="checkbox" id="mock-mtls" style="accent-color:#f59e0b"> mTLS
           </label>
-          <button class="btn btn-primary" style="padding:4px 10px;font-size:11px" data-action="toggleMock" data-arg0="${esc(hostname)}">${t('mockStart') || 'Başlat'}</button>
+          <button class="btn btn-primary" style="padding:4px 10px;font-size:11px" data-action="toggleMock" data-arg0="${esc(hostname)}">${t('mockStart')}</button>
         </div>`;
       return;
     }
@@ -2533,7 +2588,7 @@ async function loadMockStatus(hostname) {
     }
 
     card.innerHTML = `
-      <div class="card-title">MOCK SERVER</div>
+      <div class="card-title">${t('mockServer')}</div>
       <div style="display:flex;align-items:center;gap:10px;cursor:pointer" data-action="toggleMock" data-arg0="${esc(hostname)}">
         <div style="width:40px;height:22px;border-radius:11px;background:${running ? '#22c55e' : '#334155'};position:relative;transition:background 0.2s">
           <div style="width:18px;height:18px;border-radius:50%;background:white;position:absolute;top:2px;${running ? 'right:2px' : 'left:2px'};transition:all 0.2s"></div>
@@ -2547,7 +2602,7 @@ async function loadMockStatus(hostname) {
         </label>
       </div>` : ''}`;
   } catch (e) {
-    card.innerHTML = `<div class="card-title">Mock Server</div><div class="empty-msg">${t('error')}</div>`;
+    card.innerHTML = `<div class="card-title">${t('mockServerTitle')}</div><div class="empty-msg">${t('error')}</div>`;
   }
 }
 
@@ -2643,14 +2698,14 @@ async function renderApiVaultTab(apiId) {
     ]);
     // Defansif: 401/403 dönerse response bir error object olur; array beklendiği için .map() patlar.
     if (!filesRes.ok || !distRes.ok) {
-      content.innerHTML = `<div class="card"><div class="empty-msg">Yetki hatası (${filesRes.status}). Sağ üstten API key gir veya localStorage.setItem('pinvault_api_key', 'testkey') sonra sayfayı yenile.</div></div>`;
+      content.innerHTML = `<div class="card"><div class="empty-msg">${t('vaultAuthError', filesRes.status)}</div></div>`;
       return;
     }
     const files = await filesRes.json();
     const stats = await statsRes.json();
     const dists = await distRes.json();
     if (!Array.isArray(files) || !Array.isArray(dists)) {
-      content.innerHTML = `<div class="card"><div class="empty-msg">Beklenmeyen yanıt formatı. Console'a bak: ${JSON.stringify(files).slice(0, 120)}</div></div>`;
+      content.innerHTML = `<div class="card"><div class="empty-msg">${t('vaultUnexpectedResponse', JSON.stringify(files).slice(0, 120))}</div></div>`;
       return;
     }
 
@@ -2774,7 +2829,7 @@ async function renderApiVaultTab(apiId) {
             </div>
             <div class="form-group" style="margin:0">
               <label class="form-label">${t('encryptionLabel')}</label>
-              <select id="vault-upload-encryption" class="form-input" style="width:130px">
+              <select id="vault-upload-encryption" class="form-input" style="width:130px" data-action-change="updateEncDesc" data-event="1">
                 <option value="plain" selected>plain</option>
                 <option value="at_rest">at_rest</option>
                 <option value="end_to_end">end_to_end</option>
@@ -2782,6 +2837,7 @@ async function renderApiVaultTab(apiId) {
             </div>
             <button type="submit" class="btn btn-primary">${t('vaultUploadBtn')}</button>
           </div>
+          <div id="vault-enc-desc" style="margin-top:10px;color:#94a3b8;font-size:12px;line-height:1.4">${t('encDescPlain')}</div>
         </form>
       </div>
 
@@ -2799,7 +2855,7 @@ async function renderApiVaultTab(apiId) {
           ${activeFilter ? `<span style="background:${activeFilter === 'failed' ? '#ef4444' : '#22c55e'};color:#fff;padding:2px 10px;border-radius:12px;font-size:11px;cursor:pointer" data-action="setVaultStatusFilter" data-arg0="${esc(apiId)}" data-arg1="${esc(activeFilter)}" title="${t('filterRemove')}">${activeFilter === 'failed' ? '✗ ' + t('vaultFailed') : '✓ ' + t('vaultDownloaded')} ✕</span>` : ''}
         </div>
         <table class="data-table">
-          <thead><tr><th>${t('vaultKey')}</th><th>${t('vaultVersion')}</th><th>${t('vaultDevice')}</th><th>${t('vaultStatus')}</th><th>Auth</th><th>${t('vaultReason') || 'Neden'}</th><th>${t('vaultLabel')}</th><th>${t('vaultTimestamp')}</th></tr></thead>
+          <thead><tr><th>${t('vaultKey')}</th><th>${t('vaultVersion')}</th><th>${t('vaultDevice')}</th><th>${t('vaultStatus')}</th><th>${t('thAuth')}</th><th>${t('vaultReason')}</th><th>${t('vaultLabel')}</th><th>${t('vaultTimestamp')}</th></tr></thead>
           <tbody>${distRows}</tbody>
         </table>${distPagNav}
       </div>`;
@@ -2882,10 +2938,10 @@ async function revokeVaultToken(apiId, tokenId, keyForRefresh) {
 }
 
 async function deleteVaultFile(apiId, key) {
-  if (!confirm(`Delete "${key}"?`)) return;
+  if (!confirm(t('deleteFileConfirm', key))) return;
   try {
     await apiFetch(`${vaultBase(apiId)}/${encodeURIComponent(key)}`, { method: 'DELETE' });
-    toast(`${key} deleted`, 'success');
+    toast(t('fileDeleted', key), 'success');
     renderApiVaultTab(apiId);
   } catch (err) { toast(t('error'), 'error'); }
 }
@@ -3183,6 +3239,16 @@ function setVaultUploadMode(mode) {
   if (textBtn) textBtn.className = 'btn ' + (isText ? 'btn-primary' : 'btn-secondary');
   if (isText && textInput) textInput.focus();
 }
+// Localized one-line description for the selected vault encryption mode.
+function vaultEncDesc(v) {
+  return v === 'at_rest' ? t('encDescAtRest')
+    : v === 'end_to_end' ? t('encDescE2E')
+    : t('encDescPlain');
+}
+function updateEncDesc(ev) {
+  const el = document.getElementById('vault-enc-desc');
+  if (el) el.textContent = vaultEncDesc(ev.target.value);
+}
 
 const _actionHandlers = {
   copyText, createConfigApi, createHostGenerate, createHostManual, createHostUpload,
@@ -3200,7 +3266,7 @@ const _actionHandlers = {
   uploadClientCert, uploadHostClientCert, uploadVaultFile,
   showAddHostScoped, setConfigApiTab, renderEmptyAndHostList, clickFileInput,
   updateEditHash, removeEditHashEdit, removeEditHashInline, addEditHashEdit,
-  addEditHashInline, setVaultEnabledChange, pagSizeChange, setVaultUploadMode
+  addEditHashInline, setVaultEnabledChange, pagSizeChange, setVaultUploadMode, updateEncDesc
 };
 
 function _collectArgs(el) {
