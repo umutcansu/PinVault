@@ -1,5 +1,7 @@
 package com.example.pinvault.server.store
 
+import com.example.pinvault.server.service.VaultAtRestCipher
+
 /**
  * Persistent store for vault file content. Every entry is scoped to a Config
  * API — two Config APIs may hold files with the same key without collision.
@@ -45,6 +47,10 @@ class VaultFileStore(private val db: DatabaseManager) {
             val newVersion = (existing?.version ?: 0) + 1
             val finalPolicy = accessPolicy ?: existing?.accessPolicy ?: "token"
             val finalEncryption = encryption ?: existing?.encryption ?: "plain"
+            // at_rest: store the content AES-256-GCM encrypted; reads decrypt it
+            // transparently (see toEntry). Wire format stays identical to plain.
+            val storedContent =
+                if (finalEncryption == "at_rest") VaultAtRestCipher.encrypt(content) else content
 
             conn.prepareStatement("""
                 INSERT OR REPLACE INTO vault_files
@@ -53,7 +59,7 @@ class VaultFileStore(private val db: DatabaseManager) {
             """).use { stmt ->
                 stmt.setString(1, configApiId)
                 stmt.setString(2, key)
-                stmt.setBytes(3, content)
+                stmt.setBytes(3, storedContent)
                 stmt.setInt(4, newVersion)
                 stmt.setString(5, finalPolicy)
                 stmt.setString(6, finalEncryption)
@@ -62,18 +68,28 @@ class VaultFileStore(private val db: DatabaseManager) {
         }
     }
 
-    /** Update policy/encryption for an existing row without changing content/version. */
+    /**
+     * Update policy/encryption for an existing row (version unchanged). When the
+     * encryption mode flips to/from `at_rest`, the stored content is rewritten in
+     * the target format — get() returns plaintext, so we just re-encrypt it (or
+     * keep it plain). Without this, an at_rest read would fail or a plain file
+     * would be served as ciphertext after a mode switch.
+     */
     fun updatePolicy(configApiId: String, key: String, accessPolicy: String, encryption: String): Boolean {
+        val current = get(configApiId, key) ?: return false   // content already decrypted
+        val storedContent =
+            if (encryption == "at_rest") VaultAtRestCipher.encrypt(current.content) else current.content
         db.connection().use { conn ->
             conn.prepareStatement("""
                 UPDATE vault_files
-                SET access_policy = ?, encryption = ?, updated_at = datetime('now')
+                SET access_policy = ?, encryption = ?, content = ?, updated_at = datetime('now')
                 WHERE config_api_id = ? AND key = ?
             """).use { stmt ->
                 stmt.setString(1, accessPolicy)
                 stmt.setString(2, encryption)
-                stmt.setString(3, configApiId)
-                stmt.setString(4, key)
+                stmt.setBytes(3, storedContent)
+                stmt.setString(4, configApiId)
+                stmt.setString(5, key)
                 return stmt.executeUpdate() > 0
             }
         }
@@ -125,7 +141,7 @@ class VaultFileStore(private val db: DatabaseManager) {
         configApiId  = getString("config_api_id"),
         key          = getString("key"),
         version      = getInt("version"),
-        content      = getBytes("content"),
+        content      = VaultAtRestCipher.decryptIfPresent(getBytes("content")),
         accessPolicy = getString("access_policy"),
         encryption   = getString("encryption"),
         updatedAt    = getString("updated_at")
