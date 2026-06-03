@@ -169,6 +169,7 @@ const i18n = {
     vaultUpload: 'Dosya Yükle', vaultDelete: 'Sil', vaultKey: 'Anahtar',
     vaultVersion: 'Versiyon', vaultSize: 'Boyut', vaultDistCount: 'Dağıtım',
     vaultNoFiles: 'Henüz vault dosyası yok', vaultUploadBtn: 'Yükle',
+    vaultUploadTitle: 'Vault\'a Yükle',
     vaultUploadFileLabel: 'Dosya', vaultUploadTextLabel: 'Metin',
     vaultUploadTextPlaceholder: 'Düz metin yapıştır (txt yerine)…',
     vaultUploadHint: 'Dosya seç ya da metni buraya yaz — biri yeterli.',
@@ -338,6 +339,7 @@ const i18n = {
     vaultUpload: 'Upload File', vaultDelete: 'Delete', vaultKey: 'Key',
     vaultVersion: 'Version', vaultSize: 'Size', vaultDistCount: 'Distributions',
     vaultNoFiles: 'No vault files yet', vaultUploadBtn: 'Upload',
+    vaultUploadTitle: 'Upload to Vault',
     vaultUploadFileLabel: 'File', vaultUploadTextLabel: 'Text',
     vaultUploadTextPlaceholder: 'Paste plain text (instead of a .txt)…',
     vaultUploadHint: 'Pick a file or type text here — either one.',
@@ -2689,8 +2691,9 @@ async function renderApiVaultTab(apiId) {
       ? `<tr><td colspan="8" class="empty-msg">${t('vaultNoDistHistory')}</td></tr>`
       : distPagInfo.slice.map((d, i) => {
           const ok = d.status === 'downloaded' || d.status === 'cached';
-          const statusIcon = ok ? '✓' : '✗';
-          const statusColor = ok ? '#22c55e' : '#ef4444';
+          const _ss = vaultStatusStyle(d.status);
+          const statusIcon = _ss.icon;
+          const statusColor = _ss.color;
           const device = d.deviceManufacturer ? `📱 ${esc(d.deviceManufacturer)} ${esc(d.deviceModel || '')}` : esc(d.deviceId);
           // Başarısızlık nedeni — HTTP kodu, decrypt fail, network, vs. Uzun
           // string'lere title attribute'le tooltip olarak tam hali verilir.
@@ -2742,44 +2745,43 @@ async function renderApiVaultTab(apiId) {
       </div>
 
       <div class="card">
-        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">
-          <div class="card-title" style="margin:0">${t('vaultUpload')}</div>
-          <div style="display:flex;gap:4px">
-            <button type="button" class="tab-btn active" id="vault-tab-file" data-action="setVaultUploadMode" data-arg0="file">${t('vaultUploadFileLabel')}</button>
-            <button type="button" class="tab-btn" id="vault-tab-text" data-action="setVaultUploadMode" data-arg0="text">${t('vaultUploadTextLabel')}</button>
-          </div>
+        <div class="card-title" style="margin:0 0 12px 0">${t('vaultUploadTitle')}</div>
+        <div style="display:flex;gap:6px;margin-bottom:14px">
+          <button type="button" class="btn btn-primary" id="vault-tab-file" style="padding:5px 16px;font-size:12px" data-action="setVaultUploadMode" data-arg0="file">${t('vaultUploadFileLabel')}</button>
+          <button type="button" class="btn btn-secondary" id="vault-tab-text" style="padding:5px 16px;font-size:12px" data-action="setVaultUploadMode" data-arg0="text">${t('vaultUploadTextLabel')}</button>
         </div>
-        <form data-action-submit="uploadVaultFile" data-arg0="${esc(apiId)}" style="display:flex;gap:8px;align-items:end;flex-wrap:wrap">
-          <div class="form-group" style="margin:0">
-            <label class="form-label">${t('vaultKey')}</label>
-            <input type="text" id="vault-upload-key" placeholder="${t('vaultKeyPlaceholder')}" required class="form-input" style="width:180px"/>
-          </div>
-          <div class="form-group" id="vault-file-group" style="margin:0">
-            <label class="form-label">${t('vaultUploadFileLabel')}</label>
-            <input type="file" id="vault-upload-file" style="color:#94a3b8;font-size:12px"/>
-          </div>
-          <div class="form-group" id="vault-text-group" style="margin:0;flex:1 1 280px;display:none">
+        <form data-action-submit="uploadVaultFile" data-arg0="${esc(apiId)}">
+          <div class="form-group" id="vault-text-group" style="margin:0 0 12px 0;display:none">
             <label class="form-label">${t('vaultUploadTextLabel')}</label>
-            <textarea id="vault-upload-text" rows="2" placeholder="${t('vaultUploadTextPlaceholder')}" class="form-input" style="width:100%;min-width:240px;resize:vertical;font-family:inherit"></textarea>
+            <textarea id="vault-upload-text" rows="3" placeholder="${t('vaultUploadTextPlaceholder')}" class="form-input" style="width:100%;resize:vertical;font-family:inherit"></textarea>
           </div>
-          <div class="form-group" style="margin:0">
-            <label class="form-label">${t('policyLabel')}</label>
-            <select id="vault-upload-policy" class="form-input" style="width:140px">
-              <option value="token" selected>${t('policyTokenOpt')}</option>
-              <option value="public">${t('policyPublicOpt')}</option>
-              <option value="api_key">${t('policyApiKeyOpt')}</option>
-              <option value="token_mtls">${t('policyTokenMtlsOpt')}</option>
-            </select>
+          <div style="display:flex;gap:8px;align-items:end;flex-wrap:wrap">
+            <div class="form-group" style="margin:0">
+              <label class="form-label">${t('vaultKey')}</label>
+              <input type="text" id="vault-upload-key" placeholder="${t('vaultKeyPlaceholder')}" required class="form-input" style="width:180px"/>
+            </div>
+            <div class="form-group" id="vault-file-group" style="margin:0">
+              <label class="form-label">${t('vaultUploadFileLabel')}</label>
+              <input type="file" id="vault-upload-file" style="color:#94a3b8;font-size:12px"/>
+            </div>
+            <div class="form-group" style="margin:0">
+              <label class="form-label">${t('policyLabel')}</label>
+              <select id="vault-upload-policy" class="form-input" style="width:150px">
+                <option value="token" selected>${t('policyTokenOpt')}</option>
+                <option value="public">${t('policyPublicOpt')}</option>
+                <option value="api_key">${t('policyApiKeyOpt')}</option>
+              </select>
+            </div>
+            <div class="form-group" style="margin:0">
+              <label class="form-label">${t('encryptionLabel')}</label>
+              <select id="vault-upload-encryption" class="form-input" style="width:130px">
+                <option value="plain" selected>plain</option>
+                <option value="at_rest">at_rest</option>
+                <option value="end_to_end">end_to_end</option>
+              </select>
+            </div>
+            <button type="submit" class="btn btn-primary">${t('vaultUploadBtn')}</button>
           </div>
-          <div class="form-group" style="margin:0">
-            <label class="form-label">${t('encryptionLabel')}</label>
-            <select id="vault-upload-encryption" class="form-input" style="width:130px">
-              <option value="plain" selected>plain</option>
-              <option value="at_rest">at_rest</option>
-              <option value="end_to_end">end_to_end</option>
-            </select>
-          </div>
-          <button type="submit" class="btn btn-primary">${t('vaultUploadBtn')}</button>
         </form>
       </div>
 
@@ -2956,7 +2958,7 @@ async function showVaultFileDetail(apiId, key) {
           return `<tr class="${i === 0 ? 'row-latest' : ''}">
             <td><span class="source-badge android-src" style="cursor:pointer" data-action="showDeviceDetail" data-arg0="${esc(apiId)}" data-arg1="${esc(d.deviceId)}">${device}</span></td>
             <td>v${d.version}</td>
-            <td style="color:${ok ? '#22c55e' : '#ef4444'};font-weight:600">${ok ? '✓' : '✗'} ${esc(d.status)}</td>
+            <td style="color:${vaultStatusStyle(d.status).color};font-weight:600">${vaultStatusStyle(d.status).icon} ${esc(d.status)}</td>
             <td style="color:#64748b;font-size:11px">${esc(d.enrollmentLabel) || '—'}</td>
             <td style="color:#64748b;font-size:11px">${new Date(d.timestamp).toLocaleString(locale)}</td>
           </tr>`;
@@ -3087,7 +3089,7 @@ async function showDeviceDetail(apiId, deviceId) {
           return `<tr class="${devFullPagInfo.page === 0 && i === 0 ? 'row-latest' : ''}">
             <td style="font-weight:600;color:#7dd3fc;cursor:pointer" data-action="showVaultFileDetail" data-arg0="${esc(apiId)}" data-arg1="${esc(d.vaultKey)}">${esc(d.vaultKey)}</td>
             <td>v${d.version}</td>
-            <td style="color:${ok ? '#22c55e' : '#ef4444'};font-weight:600">${ok ? '✓' : '✗'} ${esc(d.status)}</td>
+            <td style="color:${vaultStatusStyle(d.status).color};font-weight:600">${vaultStatusStyle(d.status).icon} ${esc(d.status)}</td>
             <td style="color:#64748b;font-size:11px">${new Date(d.timestamp).toLocaleString(locale)}</td>
           </tr>`;
         }).join('');
@@ -3126,6 +3128,13 @@ async function showDeviceDetail(apiId, deviceId) {
   } catch (e) {
     content.innerHTML = `<div class="card"><div class="empty-msg">${t('error')}: ${e.message}</div></div>`;
   }
+}
+
+// Distribution status badge: distinguish a fresh download from a 304 cache-hit.
+function vaultStatusStyle(status) {
+  if (status === 'cached')     return { icon: '💾', color: '#94a3b8' }; // served from local cache (304)
+  if (status === 'downloaded') return { icon: '✓',  color: '#22c55e' }; // fresh download
+  return { icon: '✗', color: '#ef4444' };                              // failed / unknown
 }
 
 function formatBytes(bytes) {
@@ -3168,8 +3177,10 @@ function setVaultUploadMode(mode) {
   // Clear the inactive input so a stale value can't be submitted by accident.
   if (isText && fileInput) fileInput.value = '';
   if (!isText && textInput) textInput.value = '';
-  document.getElementById('vault-tab-file')?.classList.toggle('active', !isText);
-  document.getElementById('vault-tab-text')?.classList.toggle('active', isText);
+  const fileBtn = document.getElementById('vault-tab-file');
+  const textBtn = document.getElementById('vault-tab-text');
+  if (fileBtn) fileBtn.className = 'btn ' + (isText ? 'btn-secondary' : 'btn-primary');
+  if (textBtn) textBtn.className = 'btn ' + (isText ? 'btn-primary' : 'btn-secondary');
   if (isText && textInput) textInput.focus();
 }
 
