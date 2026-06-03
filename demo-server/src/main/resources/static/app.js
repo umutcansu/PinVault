@@ -2744,19 +2744,23 @@ async function renderApiVaultTab(apiId) {
       <div class="card">
         <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">
           <div class="card-title" style="margin:0">${t('vaultUpload')}</div>
+          <div style="display:flex;gap:4px">
+            <button type="button" class="tab-btn active" id="vault-tab-file" data-action="setVaultUploadMode" data-arg0="file">${t('vaultUploadFileLabel')}</button>
+            <button type="button" class="tab-btn" id="vault-tab-text" data-action="setVaultUploadMode" data-arg0="text">${t('vaultUploadTextLabel')}</button>
+          </div>
         </div>
         <form data-action-submit="uploadVaultFile" data-arg0="${esc(apiId)}" style="display:flex;gap:8px;align-items:end;flex-wrap:wrap">
           <div class="form-group" style="margin:0">
             <label class="form-label">${t('vaultKey')}</label>
             <input type="text" id="vault-upload-key" placeholder="${t('vaultKeyPlaceholder')}" required class="form-input" style="width:180px"/>
           </div>
-          <div class="form-group" style="margin:0">
+          <div class="form-group" id="vault-file-group" style="margin:0">
             <label class="form-label">${t('vaultUploadFileLabel')}</label>
             <input type="file" id="vault-upload-file" style="color:#94a3b8;font-size:12px"/>
           </div>
-          <div class="form-group" style="margin:0;flex:1 1 220px">
+          <div class="form-group" id="vault-text-group" style="margin:0;flex:1 1 280px;display:none">
             <label class="form-label">${t('vaultUploadTextLabel')}</label>
-            <textarea id="vault-upload-text" rows="2" placeholder="${t('vaultUploadTextPlaceholder')}" class="form-input" style="width:100%;min-width:220px;resize:vertical;font-family:inherit"></textarea>
+            <textarea id="vault-upload-text" rows="2" placeholder="${t('vaultUploadTextPlaceholder')}" class="form-input" style="width:100%;min-width:240px;resize:vertical;font-family:inherit"></textarea>
           </div>
           <div class="form-group" style="margin:0">
             <label class="form-label">${t('policyLabel')}</label>
@@ -2777,7 +2781,6 @@ async function renderApiVaultTab(apiId) {
           </div>
           <button type="submit" class="btn btn-primary">${t('vaultUploadBtn')}</button>
         </form>
-        <div style="color:#64748b;font-size:11px;margin-top:8px">${t('vaultUploadHint')}</div>
       </div>
 
       <div class="card">
@@ -3154,6 +3157,21 @@ function addEditHashEdit(hostname) { editHashes.push(''); renderEditPins(hostnam
 function addEditHashInline(hostname) { editHashes.push(''); renderInlineEditPins(hostname); }
 function setVaultEnabledChange(apiId, ev) { setVaultEnabled(apiId, ev.target.checked); }
 function pagSizeChange(key, onChangeGlobalFn, ev) { pagSize(key, ev.target.value, onChangeGlobalFn); }
+function setVaultUploadMode(mode) {
+  const isText = mode === 'text';
+  const fileGroup = document.getElementById('vault-file-group');
+  const textGroup = document.getElementById('vault-text-group');
+  const fileInput = document.getElementById('vault-upload-file');
+  const textInput = document.getElementById('vault-upload-text');
+  if (fileGroup) fileGroup.style.display = isText ? 'none' : '';
+  if (textGroup) textGroup.style.display = isText ? '' : 'none';
+  // Clear the inactive input so a stale value can't be submitted by accident.
+  if (isText && fileInput) fileInput.value = '';
+  if (!isText && textInput) textInput.value = '';
+  document.getElementById('vault-tab-file')?.classList.toggle('active', !isText);
+  document.getElementById('vault-tab-text')?.classList.toggle('active', isText);
+  if (isText && textInput) textInput.focus();
+}
 
 const _actionHandlers = {
   copyText, createConfigApi, createHostGenerate, createHostManual, createHostUpload,
@@ -3171,7 +3189,7 @@ const _actionHandlers = {
   uploadClientCert, uploadHostClientCert, uploadVaultFile,
   showAddHostScoped, setConfigApiTab, renderEmptyAndHostList, clickFileInput,
   updateEditHash, removeEditHashEdit, removeEditHashInline, addEditHashEdit,
-  addEditHashInline, setVaultEnabledChange, pagSizeChange
+  addEditHashInline, setVaultEnabledChange, pagSizeChange, setVaultUploadMode
 };
 
 function _collectArgs(el) {
