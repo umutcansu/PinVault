@@ -137,6 +137,7 @@ internal class DefaultCertificateConfigApi(
         response.use { resp ->
             val version = resp.header("X-Vault-Version")?.toIntOrNull() ?: currentVersion
             val encryption = resp.header("X-Vault-Encryption") ?: "plain"
+            val signature = resp.header("X-Vault-Signature")
 
             if (resp.code == 304) {
                 return@withContext VaultFetchResponse(
@@ -156,7 +157,8 @@ internal class DefaultCertificateConfigApi(
                 content = bytes,
                 version = version,
                 encryption = encryption,
-                notModified = false
+                notModified = false,
+                signature = signature
             )
         }
     }

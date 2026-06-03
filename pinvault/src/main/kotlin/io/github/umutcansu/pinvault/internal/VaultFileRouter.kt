@@ -1,5 +1,6 @@
 package io.github.umutcansu.pinvault.internal
 
+import io.github.umutcansu.pinvault.crypto.ConfigSignatureVerifier
 import io.github.umutcansu.pinvault.crypto.VaultFileDecryptor
 import io.github.umutcansu.pinvault.keystore.DeviceKeyProvider
 import io.github.umutcansu.pinvault.model.VaultDownloadReport
@@ -90,6 +91,52 @@ internal class VaultFileRouter(
                     }
                 }
                 else -> response.content
+            }
+
+            // Integrity (default-on, fail-closed): vault files are signed by the
+            // Config API's ECDSA key — the same key the device already trusts for
+            // config. Verify the PLAINTEXT (post-E2E-decrypt) BEFORE persisting.
+            // verifyingKey is null only for allowUnsigned()/test setups → skip+warn.
+            val verifyingKey = file.signaturePublicKey ?: client.block.signaturePublicKey
+            if (verifyingKey != null) {
+                val signature = response.signature
+                if (signature.isNullOrBlank()) {
+                    return VaultFileResult.Failed(
+                        file.key,
+                        "Vault file '${file.key}' carries no X-Vault-Signature but a " +
+                            "verifying key is configured — refusing (fail-closed)."
+                    )
+                }
+                val verified = ConfigSignatureVerifier.verifyVaultFile(
+                    key = file.key,
+                    version = response.version,
+                    plaintext = plain,
+                    signature = signature,
+                    publicKeyBase64 = verifyingKey
+                )
+                if (!verified) {
+                    return VaultFileResult.Failed(
+                        file.key,
+                        "Vault file '${file.key}' signature verification FAILED — " +
+                            "possible tampering. Not saved."
+                    )
+                }
+                // Downgrade guard: a validly-signed but OLDER version must not
+                // overwrite a newer stored copy (replay of a stale signed file).
+                if (response.version in 1 until currentVersion) {
+                    return VaultFileResult.Failed(
+                        file.key,
+                        "Vault file '${file.key}' downgrade rejected: served " +
+                            "v${response.version} < stored v$currentVersion."
+                    )
+                }
+                Timber.d("Vault file signature verified ✓ [%s] v%d", file.key, response.version)
+            } else {
+                Timber.w(
+                    "Vault file '%s' fetched WITHOUT signature verification " +
+                        "(no signaturePublicKey / allowUnsigned). Set signaturePublicKey for integrity.",
+                    file.key
+                )
             }
 
             // Persist. Dedupe against stored to emit AlreadyCurrent when server

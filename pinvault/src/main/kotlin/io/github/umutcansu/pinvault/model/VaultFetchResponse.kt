@@ -14,12 +14,18 @@ package io.github.umutcansu.pinvault.model
  * @property encryption Server-reported X-Vault-Encryption header:
  *                     "plain" | "at_rest" | "end_to_end".
  * @property notModified True when server returned 304. [content] is empty.
+ * @property signature Server-reported X-Vault-Signature header (Base64
+ *                     ECDSA-SHA256 over the canonical key+version+hash). Null
+ *                     when the server did not sign (legacy / allowUnsigned).
+ *                     The router verifies this against the Config API's
+ *                     signaturePublicKey before persisting (fail-closed).
  */
 data class VaultFetchResponse(
     val content: ByteArray,
     val version: Int,
     val encryption: String = "plain",
-    val notModified: Boolean = false
+    val notModified: Boolean = false,
+    val signature: String? = null
 ) {
     override fun equals(other: Any?): Boolean {
         if (this === other) return true
@@ -27,6 +33,7 @@ data class VaultFetchResponse(
         return version == other.version &&
                 encryption == other.encryption &&
                 notModified == other.notModified &&
+                signature == other.signature &&
                 content.contentEquals(other.content)
     }
 
@@ -34,6 +41,7 @@ data class VaultFetchResponse(
         var result = version
         result = 31 * result + encryption.hashCode()
         result = 31 * result + notModified.hashCode()
+        result = 31 * result + (signature?.hashCode() ?: 0)
         result = 31 * result + content.contentHashCode()
         return result
     }

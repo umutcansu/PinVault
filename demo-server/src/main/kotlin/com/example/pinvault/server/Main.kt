@@ -128,7 +128,7 @@ fun main() {
                 deviceHostAclStore = deviceHostAclStore)
             hostRoutes(configApiId, pinConfigStore, hostStore, historyStore, certService, mockServerManager, hostClientCertStore)
             vaultRoutes(configApiId, vaultFileStore, vaultDistStore, vaultTokenStore,
-                devicePublicKeyStore, vaultTokenService, vaultEncryptionService)
+                devicePublicKeyStore, vaultTokenService, vaultEncryptionService, signingService)
             get("/health") {
                 call.respond(mapOf("status" to "ok"))
             }

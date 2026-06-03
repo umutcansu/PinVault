@@ -1,5 +1,6 @@
 package com.example.pinvault.server.route
 
+import com.example.pinvault.server.service.ConfigSigningService
 import com.example.pinvault.server.service.VaultAccessTokenService
 import com.example.pinvault.server.service.VaultEncryptionService
 import com.example.pinvault.server.store.DevicePublicKeyStore
@@ -37,6 +38,7 @@ fun Route.vaultRoutes(
     publicKeyStore: DevicePublicKeyStore,
     tokenService: VaultAccessTokenService,
     encryptionService: VaultEncryptionService,
+    signingService: ConfigSigningService? = null,
     adminApiKeyRequired: Boolean = true
 ) {
     route("/api/v1/vault") {
@@ -158,6 +160,16 @@ fun Route.vaultRoutes(
 
             call.response.header("X-Vault-Version", entry.version.toString())
             call.response.header("X-Vault-Encryption", entry.encryption)
+            // Integrity (default-on): sign the PLAINTEXT (entry.content), not the
+            // possibly per-device-encrypted wire `payload`, so a single signature
+            // covers plain/at_rest/end_to_end and the device verifies whatever
+            // plaintext it ends up with. Canonical binds key+version+hash.
+            signingService?.let {
+                call.response.header(
+                    "X-Vault-Signature",
+                    it.signVaultFile(key, entry.version, entry.content)
+                )
+            }
             call.respondBytes(payload, ContentType.Application.OctetStream)
         }
 

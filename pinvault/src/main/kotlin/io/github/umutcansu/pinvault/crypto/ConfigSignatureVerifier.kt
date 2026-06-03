@@ -45,4 +45,31 @@ internal object ConfigSignatureVerifier {
             false
         }
     }
+
+    /**
+     * Verifies a vault file's CONTENT signature (integrity). The signed canonical
+     * binds key + version + SHA-256(plaintext), mirroring the server's
+     * [com.example.pinvault.server.service.ConfigSigningService] `signVaultFile`.
+     * The device verifies the PLAINTEXT it ends up with (after any E2E decrypt),
+     * so one signature covers every encryption mode.
+     *
+     * @param version the server-reported (and signature-bound) vault version;
+     *                tampering with it makes the canonical — and therefore the
+     *                signature — mismatch, so it is implicitly authenticated.
+     * @return true if the signature is valid for (key, version, plaintext)
+     */
+    fun verifyVaultFile(
+        key: String,
+        version: Int,
+        plaintext: ByteArray,
+        signature: String,
+        publicKeyBase64: String
+    ): Boolean {
+        val canonical = "pinvault-vault-file:v1:$key:$version:${sha256HexLower(plaintext)}"
+        return verify(canonical, signature, publicKeyBase64)
+    }
+
+    private fun sha256HexLower(bytes: ByteArray): String =
+        java.security.MessageDigest.getInstance("SHA-256").digest(bytes)
+            .joinToString("") { "%02x".format(it.toInt() and 0xFF) }
 }

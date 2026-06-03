@@ -54,6 +54,33 @@ class ConfigSigningService(private val keyFile: File) {
         return sig.verify(Base64.getDecoder().decode(signature))
     }
 
+    /**
+     * Signs vault file CONTENT so a device can verify integrity before trusting
+     * it. The signature is over a canonical string binding key + version +
+     * SHA-256(plaintext), NOT the wire bytes — so one signature works for
+     * plain / at_rest / end_to_end (the device verifies the PLAINTEXT it ends up
+     * with, after any per-device E2E decrypt) and is stable per version. Reuses
+     * the same ECDSA P-256 key whose public half the client already trusts for
+     * config signing, so no new key needs to be distributed.
+     *
+     * Canonical: `pinvault-vault-file:v1:<key>:<version>:<sha256HexLower(plaintext)>`
+     * (must match ConfigSignatureVerifier.verifyVaultFile on the client).
+     *
+     * DEMO-ONLY: the signing key lives on this server, so a full server
+     * compromise can forge vault signatures. Production should sign through a
+     * KMS/HSM (or off-server) so the private key is never stealable — the
+     * client only ever needs the public half, so the signer can move freely.
+     */
+    fun signVaultFile(key: String, version: Int, plaintext: ByteArray): String =
+        sign(vaultCanonical(key, version, plaintext))
+
+    private fun vaultCanonical(key: String, version: Int, plaintext: ByteArray): String =
+        "pinvault-vault-file:v1:$key:$version:${sha256HexLower(plaintext)}"
+
+    private fun sha256HexLower(bytes: ByteArray): String =
+        MessageDigest.getInstance("SHA-256").digest(bytes)
+            .joinToString("") { "%02x".format(it.toInt() and 0xFF) }
+
     private fun loadOrGenerate(): KeyPair {
         if (keyFile.exists()) {
             val kp = loadFromFile()
