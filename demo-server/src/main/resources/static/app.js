@@ -2895,7 +2895,7 @@ async function uploadVaultFile(e, apiId) {
     const res = await apiFetch(`${vaultBase(apiId)}/${encodeURIComponent(key)}${qs}`, {
       method: 'PUT',
       headers: { 'Content-Type': 'application/octet-stream' },
-      body: bytes
+      body
     });
     if (!res.ok) { toast(t('error'), 'error'); return; }
     const data = await res.json();
