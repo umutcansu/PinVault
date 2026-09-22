@@ -151,9 +151,54 @@ class CertPinningIntegrationTest {
     }
 
     @Test
-    fun `boş config — system defaults kullanılır`() {
+    fun `boş config — bağlantı reddedilir, system trust'a düşmez`() {
+        server.enqueue(MockResponse().setBody("must not be reachable"))
+
         val client = manager.buildClient(null)
-        assertNotNull(client)
+        try {
+            client.newCall(Request.Builder().url(server.url("/test")).build()).execute()
+            fail("A client without config must refuse the TLS handshake")
+        } catch (e: SSLHandshakeException) {
+            // Expected — "No pins configured" from the pinning trust manager
+        } catch (e: javax.net.ssl.SSLException) {
+            // General SSL failure — also fail-closed
+        } catch (e: java.net.ConnectException) {
+            // Sandbox without loopback TLS — cannot prove either way
+        }
+    }
+
+    /**
+     * The "no config yet" client must start working the moment a config is
+     * published — this is what makes fail-closed safe for callers that grab
+     * PinVault.getClient() during the init window and keep the instance.
+     */
+    @Test
+    fun `dinamik provider — config gelince aynı client bağlanmaya başlar`() {
+        server.enqueue(MockResponse().setBody("first"))
+
+        var live: CertificateConfig? = null
+        // Self-signed test cert has no SAN → disable hostname verification only
+        val client = manager.buildDynamicClient({ live })
+            .newBuilder().hostnameVerifier { _, _ -> true }.build()
+        val request = Request.Builder().url(server.url("/test")).build()
+
+        try {
+            client.newCall(request).execute()
+            fail("Must be refused while the provider returns null")
+        } catch (e: javax.net.ssl.SSLException) {
+            // Expected — fail-closed
+        } catch (e: java.net.ConnectException) {
+            println("Skipping TLS integration test: ${e.message}")
+            return
+        }
+
+        live = CertificateConfig(
+            version = 1,
+            pins = listOf(HostPin("localhost", listOf(serverCert.sha256Pin, serverCert.sha256Pin)))
+        )
+        val response = client.newCall(request).execute()
+        assertEquals(200, response.code)
+        assertEquals("first", response.body!!.string())
     }
 
     /**

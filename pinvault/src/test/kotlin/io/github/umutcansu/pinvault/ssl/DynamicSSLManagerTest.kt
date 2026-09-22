@@ -60,9 +60,19 @@ class DynamicSSLManagerTest {
     }
 
     @Test
-    fun `buildClient — null config returns system-default client`() {
+    fun `buildClient — null config is fail-closed, not system trust`() {
         val client = manager.buildClient(null)
-        assertNotNull(client)
+        // Pinning must be installed even without a config: the trust manager
+        // refuses the handshake instead of deferring to the platform CAs.
+        val cert = TestCertUtil.generateSelfSigned(cn = "server.test").certificate
+        val engine = SSLContext.getDefault().createSSLEngine("server.test", 443)
+        try {
+            (client.x509TrustManager as javax.net.ssl.X509ExtendedTrustManager)
+                .checkServerTrusted(arrayOf(cert), "RSA", engine)
+            fail("Expected the handshake to be refused with no config")
+        } catch (e: java.security.cert.CertificateException) {
+            assertTrue(e.message!!.contains("No pins configured"))
+        }
     }
 
     @Test
@@ -150,5 +160,69 @@ class DynamicSSLManagerTest {
             mapOf("alpha.host" to certA.p12Bytes, "beta.host" to certB.p12Bytes),
             password
         )
+    }
+
+    // ── L-4: clearClientKeystore — unenroll must drop live key material ──────
+
+    @Test
+    fun `clearClientKeystore — default cert bellekten dusuruluyor`() {
+        val cert = TestCertUtil.generateSelfSigned(cn = "default-client", password = password)
+        manager.loadClientKeystore(cert.p12Bytes, password)
+
+        assertTrue(manager.hasClientKeystore())
+        assertNotNull(manager.buildCompositeKeyManagers())
+
+        manager.clearClientKeystore()
+
+        // This is the bug L-4 fixes: deleting the P12 from the encrypted store
+        // left this KeyManager alive, so mTLS kept working until the process
+        // restarted. After clearing, SSLContext.init gets null key managers and
+        // the handshake presents no client certificate.
+        assertFalse(manager.hasClientKeystore())
+        assertNull(manager.buildCompositeKeyManagers())
+    }
+
+    @Test
+    fun `clearClientKeystore — host bazli certler de temizlenir`() {
+        val defaultCert = TestCertUtil.generateSelfSigned(cn = "default-client", password = password)
+        val hostCert = TestCertUtil.generateSelfSigned(cn = "specific.host", password = password)
+        manager.loadClientKeystore(defaultCert.p12Bytes, password)
+        manager.loadHostClientCerts(mapOf("specific.host" to hostCert.p12Bytes), password)
+
+        assertTrue(manager.hasClientKeystore())
+
+        manager.clearClientKeystore()
+
+        assertFalse(manager.hasClientKeystore())
+        assertNull(manager.buildCompositeKeyManagers())
+    }
+
+    @Test
+    fun `clearClientKeystore — includeHostCerts false ise host certler kalir`() {
+        val defaultCert = TestCertUtil.generateSelfSigned(cn = "default-client", password = password)
+        val hostCert = TestCertUtil.generateSelfSigned(cn = "specific.host", password = password)
+        manager.loadClientKeystore(defaultCert.p12Bytes, password)
+        manager.loadHostClientCerts(mapOf("specific.host" to hostCert.p12Bytes), password)
+
+        manager.clearClientKeystore(includeHostCerts = false)
+
+        assertTrue(manager.hasClientKeystore())
+        // Composite falls back to the surviving host KeyManagers.
+        assertNotNull(manager.buildCompositeKeyManagers())
+    }
+
+    @Test
+    fun `clearClientKeystore — sonrasinda pinned client hala kurulabilir`() {
+        val cert = TestCertUtil.generateSelfSigned(cn = "default-client", password = password)
+        manager.loadClientKeystore(cert.p12Bytes, password)
+        manager.clearClientKeystore()
+
+        val serverCert = TestCertUtil.generateSelfSigned(cn = "server.test")
+        val config = CertificateConfig(
+            version = 1,
+            pins = listOf(HostPin("server.test", listOf(serverCert.sha256Pin, serverCert.sha256Pin)))
+        )
+        // Pinning must survive an unenroll — only the client cert goes away.
+        assertNotNull(manager.buildClient(config))
     }
 }

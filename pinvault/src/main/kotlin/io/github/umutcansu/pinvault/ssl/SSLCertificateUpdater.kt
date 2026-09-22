@@ -38,7 +38,23 @@ internal class SSLCertificateUpdater(
     private val sslManager: DynamicSSLManager? = null,
     private val certStore: ClientCertSecureStore? = null,
     private val clientKeyPassword: String = "",
-    private val maxRetryCount: Int = DEFAULT_MAX_RETRY
+    private val maxRetryCount: Int = DEFAULT_MAX_RETRY,
+    /**
+     * Hostnames this Config API block declared via
+     * `ConfigApiBlock.Builder.wantPinsFor(...)`. When non-empty every fetch
+     * goes through [CertificateConfigApi.fetchScopedConfig] so the server
+     * receives `?hosts=a,b` and can intersect it with the device ACL.
+     * Empty = legacy unscoped [CertificateConfigApi.fetchConfig].
+     */
+    private val wantPinsFor: List<String> = emptyList(),
+    /**
+     * Supplies the `X-Device-Id` value for scoped fetches. Same source as
+     * `PinVault`'s enrollment `deviceUid` ([io.github.umutcansu.pinvault.internal.DeviceIdentity]),
+     * so the identifier the server ACL is keyed on matches the one recorded
+     * at enrollment time. Returns null when unavailable — the server then
+     * falls back to its default ACL.
+     */
+    private val deviceIdProvider: () -> String? = { null }
 ) {
 
     /**
@@ -56,8 +72,9 @@ internal class SSLCertificateUpdater(
 
         return when (updateResult) {
             is UpdateResult.Updated -> {
-                // 3. Hash'ler güncellendi — pinlenmiş bağlantıyla doğrula
-                val verifyResult = verifyPinnedConnection()
+                // 3. A new config was just applied — prove the backend is
+                //    still reachable through it, and roll back if it isn't.
+                val verifyResult = verifyPinnedConnection(previousConfig = storedConfig)
                 if (verifyResult is InitResult.Failed) return verifyResult
 
                 Timber.d("Init ready — updated to version: %d", updateResult.newVersion)
@@ -95,38 +112,107 @@ internal class SSLCertificateUpdater(
     }
 
     /**
-     * Hash'ler uygulandıktan sonra pinlenmiş client ile health check yapar.
-     * Hash yanlışsa SSLPeerUnverifiedException fırlar → InitResult.Failed döner.
+     * Post-update health gate, with rollback.
+     *
+     * Runs **only** right after [updateNow] actually applied a freshly fetched
+     * config ([UpdateResult.Updated]). It asks the Config API for its health
+     * endpoint once: "now that this config is in force, can the device still
+     * talk to the backend?"
+     *
+     * Three things are worth being precise about, because the previous
+     * implementation documented more than it did:
+     *
+     *  1. **What is verified.** The health request goes out over the Config
+     *     API's *bootstrap* client (see
+     *     [io.github.umutcansu.pinvault.api.DefaultCertificateConfigApi]), so
+     *     this is a reachability/liveness check of the backend that just
+     *     served the config — not a re-verification of the freshly installed
+     *     target-host pins. A custom [CertificateConfigApi] may of course
+     *     route it through its own pinned client.
+     *  2. **Unhealthy and threw are the same outcome.** The default API impl
+     *     swallows every exception and returns `false`, so a branch that only
+     *     reacted to exceptions was dead code. Both are treated as "the gate
+     *     did not open".
+     *  3. **Failing the gate rolls the config back.** A config that leaves the
+     *     device unable to reach its backend must not survive on disk: init
+     *     would report failure now and then silently come up "Ready" on the
+     *     next cold start (the second round returns [UpdateResult.AlreadyCurrent],
+     *     which never reaches this gate). [previousConfig] — the config that
+     *     was in force before this round — is restored to the store and to the
+     *     HTTP client. When there is none (first install), the store is cleared
+     *     and the client reset to its fail-closed state.
+     *
+     * The gate is deliberately *not* on the "backend unreachable" path: when
+     * the fetch itself fails, [initializeAndUpdate] keeps running on the stored
+     * config (offline start-up) and this method is never called.
+     *
+     * Note: host client certificates downloaded during this round are left in
+     * place. They are keyed per host+version and are inert without a matching
+     * pin entry, so rolling them back would only cost an extra download on the
+     * next successful update.
+     *
+     * @param previousConfig config in force before this round, or null on a
+     *   first install.
      */
-    private suspend fun verifyPinnedConnection(): InitResult {
-        return try {
-            val healthy = configApi.healthCheck()
-            if (healthy) {
-                Timber.d("Pinned connection verified — health check OK")
-                InitResult.Ready(configStore.getCurrentVersion())
-            } else {
-                Timber.e("Pinned connection verified but health check returned unhealthy")
-                InitResult.Failed(
-                    reason = "Backend returned unhealthy status after pin update",
-                    exception = BackendUnreachableException("Health check returned unhealthy after pin update")
-                )
-            }
+    private suspend fun verifyPinnedConnection(previousConfig: CertificateConfig?): InitResult {
+        val healthy = try {
+            configApi.healthCheck()
         } catch (e: javax.net.ssl.SSLPeerUnverifiedException) {
+            // Only reachable with a custom CertificateConfigApi that lets the
+            // handshake failure escape; the default impl maps it to false.
             Timber.e(e, "Pin mismatch — hashes do not match server certificate")
-            configStore.clear()
-            httpClientProvider.reset()
-            InitResult.Failed(
+            rollBackAfterFailedHealthCheck(previousConfig)
+            return InitResult.Failed(
                 reason = "Pin hashes do not match server certificate",
                 exception = PinMismatchException(cause = e)
             )
         } catch (e: Exception) {
             Timber.e(e, "Pinned connection verification failed")
-            configStore.clear()
-            httpClientProvider.reset()
-            InitResult.Failed(
+            rollBackAfterFailedHealthCheck(previousConfig)
+            return InitResult.Failed(
                 reason = "Pin verification failed: ${e.message}",
                 exception = BackendUnreachableException(cause = e)
             )
+        }
+
+        if (healthy) {
+            Timber.d("Pinned connection verified — health check OK")
+            return InitResult.Ready(configStore.getCurrentVersion())
+        }
+
+        Timber.e("Health check unhealthy after config update — rolling the new config back")
+        rollBackAfterFailedHealthCheck(previousConfig)
+        return InitResult.Failed(
+            reason = "Backend returned unhealthy status after pin update",
+            exception = BackendUnreachableException("Health check returned unhealthy after pin update")
+        )
+    }
+
+    /**
+     * Undoes the config [updateNow] just applied.
+     *
+     * With a [previousConfig] the device returns to its last config that was
+     * known to reach the backend — both on disk and on the live HTTP client.
+     * Re-saving it also rewinds the persisted `issuedAt` watermark, so the
+     * replay guard in [updateNow] will accept the same server config again on
+     * the next attempt instead of rejecting it as a replay.
+     *
+     * Without one (first install) there is nothing to fall back to: the store
+     * is cleared and the client is reset to fail-closed, which is the same
+     * state the device had before this init.
+     */
+    private fun rollBackAfterFailedHealthCheck(previousConfig: CertificateConfig?) {
+        if (previousConfig != null) {
+            configStore.save(previousConfig)
+            httpClientProvider.swap(previousConfig)
+            Timber.w(
+                "Rolled back to previous config v%d after the post-update health check failed",
+                previousConfig.computedVersion()
+            )
+        } else {
+            configStore.clear()
+            httpClientProvider.reset()
+            Timber.w("No previous config to roll back to — config store cleared, TLS refused until re-init")
         }
     }
 
@@ -136,7 +222,7 @@ internal class SSLCertificateUpdater(
             httpClientProvider.swap(stored)
             Timber.d("Loaded stored config — version: %d", stored.version)
         } else {
-            Timber.d("No stored config — client using system defaults")
+            Timber.d("No stored config — pinned client refuses TLS until the first config is applied")
         }
         return stored
     }
@@ -169,7 +255,21 @@ internal class SSLCertificateUpdater(
             val currentVersion = configStore.getCurrentVersion()
             Timber.d("Fetching config update — current version: %d", currentVersion)
 
-            val remoteConfig = configApi.fetchConfig(currentVersion)
+            // Pin scoping (V2). A block that declared wantPinsFor(...) asks
+            // the server for exactly those hosts and identifies itself, so the
+            // response is the intersection of the request and the device's
+            // server-side ACL — least privilege instead of "hand me every pin
+            // you have". Blocks that declared nothing keep the legacy call.
+            val remoteConfig = if (wantPinsFor.isEmpty()) {
+                configApi.fetchConfig(currentVersion)
+            } else {
+                val deviceId = deviceIdProvider()
+                Timber.d(
+                    "Scoped config fetch — %d host(s) requested, deviceId present: %b",
+                    wantPinsFor.size, deviceId != null
+                )
+                configApi.fetchScopedConfig(currentVersion, wantPinsFor, deviceId)
+            }
 
             // ── Replay & downgrade guards (M-08) ────────────────────────────
             //
@@ -210,13 +310,57 @@ internal class SSLCertificateUpdater(
                 }
             }
 
-            val hasChanges = remoteConfig.forceUpdate || remoteConfig.pins.any { remotePin ->
-                val storedVersion = storedVersions[remotePin.hostname]
-                storedVersion == null || remotePin.version != storedVersion || remotePin.forceUpdate
-            } || storedVersions.keys != remoteConfig.pins.map { it.hostname }.toSet()
+            // An empty pin set is always a change, never a no-op.
+            //
+            // Without the first clause all three change-detect tests are false
+            // when the remote AND the stored pin sets are both empty
+            // (`any {}` on an empty list is false, and `emptySet() !=
+            // emptySet()` is false). `updateNow` then returned AlreadyCurrent
+            // and short-circuited past `validateConfig`, so the "at least one
+            // pin" rule below never ran: init reported Ready(v0) and the app
+            // showed itself as configured while nothing at all was pinned.
+            // Treating it as a change routes the empty config into validation,
+            // which rejects it — Failed / InvalidPinFormatException — and
+            // leaves any stored config untouched.
+            val hasPinChanges = remoteConfig.pins.isEmpty() ||
+                remoteConfig.pins.any { remotePin ->
+                    val storedVersion = storedVersions[remotePin.hostname]
+                    storedVersion == null || remotePin.version != storedVersion
+                } || storedVersions.keys != remoteConfig.pins.map { it.hostname }.toSet()
+
+            // A raised force flag (global or on any single host) means
+            // "re-apply now, even at the same version".
+            val remoteForcesUpdate = remoteConfig.forceUpdate || remoteConfig.pins.any { it.forceUpdate }
+
+            val hasChanges = hasPinChanges || remoteForcesUpdate
 
             if (!hasChanges) {
-                Timber.d("Config is already current — no host version changes")
+                // Nothing about the pins changed and nothing is being forced,
+                // so this is not an update. But the force flag may have gone
+                // the OTHER way — true on disk, false on the wire — and that
+                // transition still has to reach the device: initializeAndUpdate
+                // reads the STORED flag on every cold start and refuses to come
+                // up offline while it is set (ForceUpdateFailedException).
+                // Without this branch an operator could switch force off and
+                // the device would stay unable to start without a reachable
+                // backend until some unrelated pin version happened to bump.
+                //
+                // Only the flags are written back, carried on the already
+                // validated stored config — a remote payload that never went
+                // through validateConfig must not reach the disk. The live
+                // HTTP client needs no rebuild because the pins are unchanged,
+                // but its in-memory config must follow the disk, or
+                // isForceUpdate() keeps answering "true" until the next start.
+                val clearedConfig = clearedForceFlags(storedConfig, remoteConfig)
+                if (clearedConfig != null) {
+                    configStore.save(clearedConfig)
+                    httpClientProvider.replaceConfigInPlace(clearedConfig)
+                    Timber.d(
+                        "Config is already current — force-update flag cleared on disk (was set, server no longer asks for it)"
+                    )
+                } else {
+                    Timber.d("Config is already current — no host version changes")
+                }
                 return UpdateResult.AlreadyCurrent
             }
 
@@ -241,6 +385,36 @@ internal class SSLCertificateUpdater(
                 exception = e
             )
         }
+    }
+
+    /**
+     * Returns [storedConfig] with its force-update flags brought in line with
+     * [remoteConfig], or `null` when they already agree (or nothing is
+     * stored).
+     *
+     * Only consulted on the "no pin change and nothing being forced" path, so
+     * the only transition it can observe is set → cleared. Pins, versions and
+     * `issuedAt` are carried over from the stored config untouched: this is a
+     * flag write-back, not an update.
+     */
+    private fun clearedForceFlags(
+        storedConfig: CertificateConfig?,
+        remoteConfig: CertificateConfig
+    ): CertificateConfig? {
+        if (storedConfig == null) return null
+        val remoteForceByHost = remoteConfig.pins.associate { it.hostname to it.forceUpdate }
+        val globalDiffers = storedConfig.forceUpdate != remoteConfig.forceUpdate
+        val perHostDiffers = storedConfig.pins.any { stored ->
+            stored.forceUpdate != (remoteForceByHost[stored.hostname] ?: false)
+        }
+        if (!globalDiffers && !perHostDiffers) return null
+
+        return storedConfig.copy(
+            forceUpdate = remoteConfig.forceUpdate,
+            pins = storedConfig.pins.map { stored ->
+                stored.copy(forceUpdate = remoteForceByHost[stored.hostname] ?: false)
+            }
+        )
     }
 
     fun schedulePeriodicUpdates(intervalHours: Long = DEFAULT_INTERVAL_HOURS, onScheduled: ((Boolean) -> Unit)? = null) {
@@ -310,7 +484,14 @@ internal class SSLCertificateUpdater(
     }
 
     private fun validateConfig(config: CertificateConfig) {
-        require(config.pins.isNotEmpty()) { "Config must contain at least one pin entry" }
+        // InvalidPinFormatException rather than the `require(...)` this used to
+        // be: an empty config is now a reachable rejection (see the change
+        // detection in updateNow), so it should carry the library's own type
+        // for callers inspecting `UpdateResult.Failed.exception`. The message
+        // is unchanged; it is what the updater reports as `Failed.reason`.
+        if (config.pins.isEmpty()) {
+            throw InvalidPinFormatException("Config must contain at least one pin entry")
+        }
         config.pins.forEach { pin ->
             require(pin.sha256.size >= 2) {
                 "Host ${pin.hostname} must have at least 2 pins (primary + backup)"

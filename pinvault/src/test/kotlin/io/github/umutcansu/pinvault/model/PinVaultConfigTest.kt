@@ -80,7 +80,7 @@ class PinVaultConfigTest {
                 healthEndpoint("my/health")
                 signaturePublicKey("ABCDEF123")
                 clientKeystore(byteArrayOf(1, 2, 3), "mypass")
-                enrollmentToken("tok123")
+                wantPinsFor("scoped.example.com")
                 clientCertLabel("myLabel")
             }
             .maxRetryCount(5)
@@ -97,7 +97,7 @@ class PinVaultConfigTest {
         assertEquals("ABCDEF123", block.signaturePublicKey)
         assertArrayEquals(byteArrayOf(1, 2, 3), block.clientKeystoreBytes)
         assertEquals("mypass", block.clientKeyPassword)
-        assertEquals("tok123", block.enrollmentToken)
+        assertEquals(listOf("scoped.example.com"), block.wantPinsFor)
         assertEquals("myLabel", block.clientCertLabel)
     }
 

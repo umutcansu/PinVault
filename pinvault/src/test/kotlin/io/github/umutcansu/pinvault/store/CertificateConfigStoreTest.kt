@@ -202,6 +202,56 @@ class CertificateConfigStoreTest {
     }
 
     @Test
+    fun `per-host forceUpdate flag survives save and load`() {
+        // Needed by the updater's change detection: "the operator switched
+        // force off" can only be spotted if the stored copy remembers that it
+        // was on (D04). Before this field was persisted, load() always
+        // reported false and the comparison was a no-op.
+        val config = CertificateConfig(
+            version = 2,
+            pins = listOf(
+                HostPin("forced.example.com", listOf("h1", "h2"), version = 2, forceUpdate = true),
+                HostPin("normal.example.com", listOf("h3", "h4"), version = 1, forceUpdate = false)
+            )
+        )
+
+        store.save(config)
+        val loaded = store.load()
+
+        assertNotNull(loaded)
+        val byHost = loaded!!.pins.associateBy { it.hostname }
+        assertTrue("per-host forceUpdate=true lost on round-trip", byHost.getValue("forced.example.com").forceUpdate)
+        assertFalse("per-host forceUpdate=false must stay false", byHost.getValue("normal.example.com").forceUpdate)
+        // The other fields must be unaffected by the new trailing field.
+        assertEquals(listOf("h1", "h2"), byHost.getValue("forced.example.com").sha256)
+        assertEquals(2, byHost.getValue("forced.example.com").version)
+    }
+
+    @Test
+    fun `entries written before the forceUpdate field still load`() {
+        // Upgrading the library must not invalidate an existing store: rows
+        // written in the 3-field format load with forceUpdate=false, which is
+        // also the fail-safe value (a stale true would block offline start-up).
+        prefs.edit()
+            .putInt(CertificateConfigStore.KEY_VERSION, 2)
+            .putString(
+                CertificateConfigStore.KEY_PINS,
+                "legacy.example.com|2|oldA,oldB\n" +
+                "fresh.example.com|1|newA,newB|true"
+            )
+            .apply()
+
+        val loaded = store.load()
+
+        assertNotNull(loaded)
+        val byHost = loaded!!.pins.associateBy { it.hostname }
+        assertEquals(2, byHost.size)
+        assertEquals(listOf("oldA", "oldB"), byHost.getValue("legacy.example.com").sha256)
+        assertFalse("3-field legacy row must default to false", byHost.getValue("legacy.example.com").forceUpdate)
+        assertTrue("4-field row must keep its flag", byHost.getValue("fresh.example.com").forceUpdate)
+    }
+
+    @Test
     fun `single malformed entry does not poison the rest of the cache`() {
         // Regression: the outer try/catch around parsePins used to wipe the
         // whole prefs blob if *any* entry threw — most often a host shipped

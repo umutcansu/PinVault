@@ -1,6 +1,7 @@
 package io.github.umutcansu.pinvault.ssl
 
 import io.github.umutcansu.pinvault.model.CertificateConfig
+import io.github.umutcansu.pinvault.model.CertificateValidityException
 import io.github.umutcansu.pinvault.model.HostPin
 import io.github.umutcansu.pinvault.model.HttpConnectionSettings
 import okhttp3.ConnectionPool
@@ -97,6 +98,35 @@ internal class DynamicSSLManager(
     }
 
     /**
+     * Inverse of [loadClientKeystore]: drops the in-memory default client
+     * KeyManager so subsequent handshakes present no client certificate.
+     *
+     * Needed by `PinVault.unenroll` — deleting the P12 from the encrypted
+     * store is not enough on its own, because the KeyManager built at
+     * enrollment time keeps the private key alive in this process. Without
+     * this call mTLS kept working until the app was restarted, so an
+     * "unenrolled" device still authenticated to mTLS hosts.
+     *
+     * Clients already handed out are unaffected until they are rebuilt —
+     * the caller must re-publish the config afterwards (`clientProvider.swap`)
+     * so a fresh SSLContext without key managers is installed.
+     *
+     * @param includeHostCerts also drop the per-host KeyManagers loaded by
+     *        [loadHostClientCerts]. Those are re-downloaded on the next config
+     *        sync, so dropping them keeps "unenrolled" consistent across every
+     *        mTLS host rather than only the default cert.
+     */
+    fun clearClientKeystore(includeHostCerts: Boolean = true) {
+        clientKeyManagers = null
+        if (includeHostCerts) hostKeyManagers = emptyMap()
+        Timber.d("Client keystore cleared — no client cert will be presented (hostCerts=%b)", includeHostCerts)
+    }
+
+    /** True while a default or host-specific client KeyManager is loaded. */
+    internal fun hasClientKeystore(): Boolean =
+        clientKeyManagers != null || hostKeyManagers.isNotEmpty()
+
+    /**
      * Loads host-specific client certs for mTLS.
      * Each host gets its own KeyManager — during TLS handshake the correct cert is selected.
      *
@@ -132,7 +162,7 @@ internal class DynamicSSLManager(
      * Creates a composite KeyManager that selects the right cert per hostname.
      * Falls back to default client cert if no host-specific cert exists.
      */
-    private fun buildCompositeKeyManagers(): Array<KeyManager>? {
+    internal fun buildCompositeKeyManagers(): Array<KeyManager>? {
         if (hostKeyManagers.isEmpty()) return clientKeyManagers
 
         val defaultKm = clientKeyManagers?.firstOrNull { it is javax.net.ssl.X509ExtendedKeyManager } as? javax.net.ssl.X509ExtendedKeyManager
@@ -213,11 +243,32 @@ internal class DynamicSSLManager(
     }
 
     /**
-     * Creates an OkHttpClient pinned according to the given [config].
-     * If [config] is null, returns a client with system-default trust (no pinning).
+     * Creates an OkHttpClient pinned according to the given [config] — a
+     * frozen snapshot; later config swaps do not reach it (see
+     * [buildDynamicClient] for the live variant).
+     *
+     * A `null` [config] does NOT fall back to system trust. Pinning is always
+     * installed, and the trust manager refuses every TLS handshake while no
+     * config is available (fail-closed). The previous behaviour returned an
+     * unpinned client here, which let `PinVault.getClient()` callers skip
+     * pinning entirely in the window between `init()` starting and the first
+     * config arriving, and after `reset()`.
      */
     fun buildClient(
         config: CertificateConfig?,
+        connectionSettings: HttpConnectionSettings = HttpConnectionSettings(),
+        recoveryInterceptor: PinRecoveryInterceptor? = null
+    ): OkHttpClient = buildDynamicClient({ config }, connectionSettings, recoveryInterceptor)
+
+    /**
+     * Creates an OkHttpClient whose pin set is re-read from [configProvider]
+     * on every TLS handshake. While the provider returns `null` the client
+     * refuses to connect; once a config is published it starts working
+     * without being rebuilt. Used for [HttpClientProvider]'s "no config yet"
+     * state and for `PinVault.getClient(settings)`.
+     */
+    fun buildDynamicClient(
+        configProvider: () -> CertificateConfig?,
         connectionSettings: HttpConnectionSettings = HttpConnectionSettings(),
         recoveryInterceptor: PinRecoveryInterceptor? = null
     ): OkHttpClient {
@@ -233,12 +284,10 @@ internal class DynamicSSLManager(
 
         applyTimeouts(builder, connectionSettings)
 
-        if (config == null) {
-            Timber.d("No config — building client with system defaults")
-            return builder.build()
+        if (configProvider() == null) {
+            Timber.d("No config yet — building fail-closed client (TLS refused until a config is applied)")
         }
-
-        applyTo(builder) { config }
+        applyTo(builder, configProvider)
         recoveryInterceptor?.let { builder.addInterceptor(it) }
         return builder.build()
     }
@@ -354,11 +403,19 @@ internal class DynamicSSLManager(
                         "Configured hosts: ${pinMap.keys.joinToString()}"
                     )
 
-                // Sertifika süre kontrolü
+                // Sertifika süre kontrolü.
+                //
+                // Distinct exception type (not a bare CertificateException):
+                // refetching the pin config cannot repair a certificate that is
+                // outside its validity window, so PinRecoveryInterceptor must
+                // not treat this as a pin mismatch. See
+                // [CertificateValidityException].
                 try {
                     leaf.checkValidity()
                 } catch (e: Exception) {
-                    throw CertificateException("Server certificate is expired or not yet valid: ${e.message}")
+                    throw CertificateValidityException(
+                        "Server certificate is expired or not yet valid: ${e.message}", e
+                    )
                 }
 
                 // Pin doğrulama

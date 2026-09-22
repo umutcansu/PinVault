@@ -52,3 +52,26 @@ class NoConfigAvailableException(
     message: String = "No stored config and backend is unreachable",
     cause: Throwable? = null
 ) : SSLPinningException(message, cause)
+
+/**
+ * The server's leaf certificate is outside its validity window — expired, or
+ * not valid yet. Thrown by the pinning trust manager, so the caller sees it as
+ * the `cause` of an [javax.net.ssl.SSLHandshakeException].
+ *
+ * It extends [java.security.cert.CertificateException] (that is what a trust
+ * manager is allowed to throw) but is a **distinct type on purpose**:
+ * [io.github.umutcansu.pinvault.ssl.PinRecoveryInterceptor] treats a
+ * certificate failure as a pin mismatch and reacts by refetching the pin
+ * config and retrying. That is the right move when the device's pins are
+ * stale. It is the wrong move here — a certificate outside its validity
+ * window is refused no matter how fresh the pins are, so the refetch cannot
+ * repair anything. Recovering anyway costs a round-trip to the backend on
+ * every request, replaces the real reason with whatever the retry failed
+ * with, and feeds the per-host recovery circuit breaker with failures that
+ * have nothing to do with pinning. The interceptor therefore lets this type
+ * pass straight through to the caller.
+ */
+class CertificateValidityException(
+    message: String,
+    cause: Throwable? = null
+) : java.security.cert.CertificateException(message, cause)

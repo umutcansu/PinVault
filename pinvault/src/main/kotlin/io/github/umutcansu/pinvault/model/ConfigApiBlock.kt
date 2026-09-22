@@ -25,6 +25,21 @@ package io.github.umutcansu.pinvault.model
  *     .vaultFile("ml-model") { configApi("secure-mtls"); storage(ENCRYPTED_FILE) }
  *     .build()
  * ```
+ *
+ * ## Removed in V2: `enrollmentToken(token)`
+ * The builder used to accept a one-time enrollment token and store it on the
+ * block. Nothing ever read it — neither
+ * [io.github.umutcansu.pinvault.PinVault.enroll] nor
+ * [io.github.umutcansu.pinvault.PinVault.autoEnroll] consulted the block — so
+ * a token set here silently did nothing while looking like enrollment was
+ * configured. Holding a single-use secret in a long-lived config object was
+ * the wrong lifetime for it too.
+ *
+ * Pass the token at the call site instead:
+ * ```kotlin
+ * PinVault.enroll(context, token)   // token-based enrollment
+ * PinVault.autoEnroll(context)      // deviceId-based enrollment
+ * ```
  */
 data class ConfigApiBlock(
     /** Block identifier used by [VaultFileConfig.configApiId]. */
@@ -43,8 +58,6 @@ data class ConfigApiBlock(
     val clientKeystoreBytes: ByteArray? = null,
     /** Keystore password. Default "changeit" is placeholder only. */
     val clientKeyPassword: String = "changeit",
-    /** One-time enrollment token for auto P12 download. */
-    val enrollmentToken: String? = null,
     /** Enrollment endpoint path. */
     val enrollmentEndpoint: String = PinVaultConfig.DEFAULT_ENROLLMENT_ENDPOINT,
     /** Client cert download base path. */
@@ -71,7 +84,6 @@ data class ConfigApiBlock(
         private var allowUnsigned: Boolean = false
         private var clientKeystoreBytes: ByteArray? = null
         private var clientKeyPassword: String = "changeit"
-        private var enrollmentToken: String? = null
         private var enrollmentEndpoint: String = PinVaultConfig.DEFAULT_ENROLLMENT_ENDPOINT
         private var clientCertEndpoint: String = PinVaultConfig.DEFAULT_CLIENT_CERT_ENDPOINT
         private var vaultReportEndpoint: String = PinVaultConfig.DEFAULT_VAULT_REPORT_ENDPOINT
@@ -105,7 +117,6 @@ data class ConfigApiBlock(
             this.clientKeystoreBytes = bytes
             this.clientKeyPassword = password
         }
-        fun enrollmentToken(token: String) = apply { this.enrollmentToken = token }
         fun enrollmentEndpoint(endpoint: String) = apply { this.enrollmentEndpoint = endpoint }
         fun clientCertEndpoint(endpoint: String) = apply { this.clientCertEndpoint = endpoint }
         fun vaultReportEndpoint(endpoint: String) = apply { this.vaultReportEndpoint = endpoint }
@@ -139,7 +150,6 @@ data class ConfigApiBlock(
                 signaturePublicKey = signaturePublicKey,
                 clientKeystoreBytes = clientKeystoreBytes,
                 clientKeyPassword = clientKeyPassword,
-                enrollmentToken = enrollmentToken,
                 enrollmentEndpoint = enrollmentEndpoint,
                 clientCertEndpoint = clientCertEndpoint.trimStart('/'),
                 vaultReportEndpoint = vaultReportEndpoint.trimStart('/'),
@@ -159,7 +169,6 @@ data class ConfigApiBlock(
                 signaturePublicKey == other.signaturePublicKey &&
                 (clientKeystoreBytes?.contentEquals(other.clientKeystoreBytes) ?: (other.clientKeystoreBytes == null)) &&
                 clientKeyPassword == other.clientKeyPassword &&
-                enrollmentToken == other.enrollmentToken &&
                 enrollmentEndpoint == other.enrollmentEndpoint &&
                 clientCertEndpoint == other.clientCertEndpoint &&
                 vaultReportEndpoint == other.vaultReportEndpoint &&
@@ -176,7 +185,6 @@ data class ConfigApiBlock(
         r = 31 * r + (signaturePublicKey?.hashCode() ?: 0)
         r = 31 * r + (clientKeystoreBytes?.contentHashCode() ?: 0)
         r = 31 * r + clientKeyPassword.hashCode()
-        r = 31 * r + (enrollmentToken?.hashCode() ?: 0)
         r = 31 * r + enrollmentEndpoint.hashCode()
         r = 31 * r + clientCertEndpoint.hashCode()
         r = 31 * r + vaultReportEndpoint.hashCode()

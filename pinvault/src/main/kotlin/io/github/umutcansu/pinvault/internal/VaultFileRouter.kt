@@ -51,9 +51,16 @@ internal class VaultFileRouter(
             val currentVersion = storage.getVersion(file.key)
 
             val deviceId = deviceIdProvider()
+            // A blank provider result means "the host app has no token yet",
+            // not "the token is the empty string". Sending `X-Vault-Token: `
+            // makes the server answer "invalid or revoked token" for what is
+            // really a missing header, which sends operators hunting for a
+            // revoked token that was never issued. Drop the header instead and
+            // let the server report the accurate error.
             val token = when (file.accessPolicy) {
                 VaultFileAccessPolicy.TOKEN,
-                VaultFileAccessPolicy.TOKEN_MTLS -> file.accessTokenProvider?.invoke()
+                VaultFileAccessPolicy.TOKEN_MTLS ->
+                    file.accessTokenProvider?.invoke()?.takeIf { it.isNotBlank() }
                 else -> null
             }
             Timber.d("Vault fetch [%s] via %s (token=%s)", file.key,

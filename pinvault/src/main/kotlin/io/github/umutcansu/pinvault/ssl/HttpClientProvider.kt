@@ -16,14 +16,22 @@ internal class HttpClientProvider(
 ) {
 
     @Volatile
-    private var currentClient: OkHttpClient = sslManager.buildClient(null)
+    var currentConfig: CertificateConfig? = null
+        private set
+
+    /**
+     * Starts as a fail-closed client: pinning is installed over the live
+     * [currentConfig], so every TLS handshake is refused until [swap]
+     * publishes the first config — and starts succeeding right after, even
+     * for callers still holding this instance. Handing out a system-trust
+     * client here (the pre-fix behaviour) let `PinVault.getClient()` callers
+     * skip pinning entirely during the init window and after [reset].
+     */
+    @Volatile
+    private var currentClient: OkHttpClient = sslManager.buildDynamicClient({ currentConfig })
 
     @Volatile
     private var currentVersion: Int = 0
-
-    @Volatile
-    var currentConfig: CertificateConfig? = null
-        private set
 
     /** Set by PinVault after updater is created */
     @Volatile
@@ -67,14 +75,37 @@ internal class HttpClientProvider(
         }
     }
 
+    /**
+     * Replaces the live config WITHOUT rebuilding the client.
+     *
+     * For changes that leave every pin untouched — today only a cleared
+     * `forceUpdate` flag — rebuilding the client and evicting its connection
+     * pool would be pure cost. But the in-memory copy must still follow the
+     * disk, otherwise `PinVault.isForceUpdate()` (and anything else reading
+     * [currentConfig]) keeps reporting the stale flag until the next process
+     * start. The dynamic trust manager reads [currentConfig] on every
+     * handshake, so it sees the new object immediately; the pins are equal,
+     * so nothing about verification changes.
+     */
+    fun replaceConfigInPlace(newConfig: CertificateConfig) {
+        synchronized(this) {
+            currentConfig = newConfig
+            currentVersion = newConfig.computedVersion()
+        }
+    }
+
+    /**
+     * Drops the active config. The replacement client is fail-closed (see
+     * [currentClient]) — pinning is never downgraded to system trust.
+     */
     fun reset() {
         synchronized(this) {
             val oldClient = currentClient
             currentConfig = null
-            currentClient = sslManager.buildClient(null)
+            currentClient = sslManager.buildDynamicClient({ currentConfig })
             currentVersion = 0
             Thread { oldClient.connectionPool.evictAll() }.start()
-            Timber.w("HttpClient reset to system defaults")
+            Timber.w("HttpClient reset — no config; TLS refused until the next init/swap")
         }
     }
 }

@@ -129,7 +129,23 @@ enum class StorageStrategy {
 enum class VaultFileAccessPolicy {
     /** No auth. Demo/test only; production should not use this. */
     PUBLIC,
-    /** Requires X-API-Key (admin tooling, not device-facing). */
+
+    /**
+     * Requires the server's admin `X-API-Key`.
+     *
+     * **NOT USABLE FROM A DEVICE — server-side tooling only.** PinVault never
+     * sends the admin key from a device and never will: an admin key shipped
+     * inside an APK is extractable by anyone who downloads the app, so it
+     * would be an admin key for everyone. A vault file declared with this
+     * policy therefore fails with **HTTP 401 on every fetch**, with the only
+     * visible trace being a `failed` row in the server's distribution history.
+     * [io.github.umutcansu.pinvault.model.PinVaultConfig.Builder.build] logs a
+     * warning when it sees one.
+     *
+     * Use it to mark files that only server-to-server tooling (a build
+     * pipeline, an ops script) may read. For device-facing files use [TOKEN]
+     * or [TOKEN_MTLS]; for genuinely public ones use [PUBLIC].
+     */
     API_KEY,
     /**
      * Per-device, per-file token. Library sends X-Device-Id + X-Vault-Token.

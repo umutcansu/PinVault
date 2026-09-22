@@ -3,12 +3,29 @@
   Android 12+ (API 31+) icin veri cikarma kurallari.
   PinVault client sertifikalari hem bulut yedeklemeden hem de
   cihazdan cihaza transferden haric tutulur.
+
+  ================== UYARI: KENDI configApiId'NIZ ==================
+  Saklı pin config'i her Config API icin ayri bir dosyada tutulur
+  (shared_prefs/ssl_cert_config_<configApiId>.xml) ve Android <exclude>
+  joker (wildcard) DESTEKLEMEZ. Asagida yalnizca kutuphanenin kendi
+  varsayilan kimlikleri (default, default-tls, secure-mtls) sayiliyor.
+
+  Kendi configApiId'nizi kullaniyorsaniz o dosya BU LISTEDE YOKTUR: bulut
+  yedegine ve cihaz transferine girer, eski bir yedegi geri yuklemek pin
+  downgrade'i geri getirir (M-07). Ya manifest'te android:allowBackup="false"
+  deyin ya da kendi kural dosyanizda hem <cloud-backup> hem <device-transfer>
+  icine kendi <exclude ... path="ssl_cert_config_<id>.xml" /> satirinizi ekleyin.
+
+  PinVaultConfig.Builder.build() bilinmeyen bir kimlik gorurse ayni uyariyi bir
+  kez logcat'e basar.
+  =================================================================
 -->
 <data-extraction-rules>
     <cloud-backup>
         <exclude domain="sharedpref" path="pinvault_client_cert.xml" />
         <!-- M-07: pin config downgrade'ini engelle -->
         <exclude domain="sharedpref" path="ssl_cert_config.xml" />
+        <exclude domain="sharedpref" path="ssl_cert_config_default.xml" />
         <exclude domain="sharedpref" path="ssl_cert_config_default-tls.xml" />
         <exclude domain="sharedpref" path="ssl_cert_config_secure-mtls.xml" />
         <!-- audit L-10: also exclude the encrypted vault-file blobs and their
@@ -22,6 +39,7 @@
     <device-transfer>
         <exclude domain="sharedpref" path="pinvault_client_cert.xml" />
         <exclude domain="sharedpref" path="ssl_cert_config.xml" />
+        <exclude domain="sharedpref" path="ssl_cert_config_default.xml" />
         <exclude domain="sharedpref" path="ssl_cert_config_default-tls.xml" />
         <exclude domain="sharedpref" path="ssl_cert_config_secure-mtls.xml" />
         <!-- audit L-10: see cloud-backup note above. -->

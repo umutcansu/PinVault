@@ -14,10 +14,26 @@
     -->
     <exclude domain="sharedpref" path="ssl_cert_config.xml" />
     <!--
-      V2'de her Config API kendi ssl_cert_config_<id>.xml dosyasinda tutulur.
-      Wildcard desteklenmediginden bilinen ID'leri ayrica eklemek gerekebilir;
-      default-tls ve secure-mtls ornek olarak burada.
+      ================== UYARI: KENDI configApiId'NIZ ==================
+      V2'de her Config API kendi ssl_cert_config_<id>.xml dosyasinda tutulur ve
+      Android <exclude> joker (wildcard) DESTEKLEMEZ. Asagida yalnizca
+      kutuphanenin kendi varsayilan kimlikleri sayiliyor.
+
+      Uygulamanız kendi configApiId'sini kullaniyorsa (ornegin
+      .configApi("my-api", ...)) o kimligin dosyasi BU LISTEDE YOKTUR ve
+      yedege girer; eski bir yedegi geri yuklemek pin downgrade'i geri getirir.
+
+      Iki secenekten birini yapin:
+        1. Uygulama manifest'inde android:allowBackup="false"; ya da
+        2. Kendi fullBackupContent/dataExtractionRules dosyanizda
+           <exclude domain="sharedpref" path="ssl_cert_config_my-api.xml" />
+
+      PinVaultConfig.Builder.build() bilinmeyen bir kimlik gorurse ayni uyariyi
+      bir kez logcat'e basar (Timber, "NOT covered by PinVault's bundled backup
+      rules").
+      =================================================================
     -->
+    <exclude domain="sharedpref" path="ssl_cert_config_default.xml" />
     <exclude domain="sharedpref" path="ssl_cert_config_default-tls.xml" />
     <exclude domain="sharedpref" path="ssl_cert_config_secure-mtls.xml" />
     <!-- Vault file store (Android Keystore'a bagli, transfer edilemez) -->

@@ -1,5 +1,6 @@
 package io.github.umutcansu.pinvault.ssl
 
+import io.github.umutcansu.pinvault.model.CertificateValidityException
 import okhttp3.Interceptor
 import okhttp3.Request
 import okhttp3.Response
@@ -29,6 +30,11 @@ import javax.net.ssl.SSLPeerUnverifiedException
  * which broke when OkHttp / Conscrypt changed message formatting. Removing
  * the string match makes recovery resilient to upstream wording shifts.
  *
+ * One certificate failure is deliberately excluded:
+ * [io.github.umutcansu.pinvault.model.CertificateValidityException] (server
+ * certificate expired or not yet valid). A config refresh cannot repair it,
+ * so it is rethrown untouched instead of triggering recovery.
+ *
  * ## Circuit breaker
  *
  * Recovery is gated per-host so a backend that's actually serving bad pins
@@ -40,7 +46,11 @@ import javax.net.ssl.SSLPeerUnverifiedException
  */
 internal class PinRecoveryInterceptor(
     private val updater: () -> Boolean,
-    private val newClientProvider: () -> okhttp3.OkHttpClient
+    /**
+     * Optional fallback client for the retry, used only when retrying on the
+     * caller's own chain still hits a pin mismatch. See [retry].
+     */
+    private val newClientProvider: (() -> okhttp3.OkHttpClient)? = null
 ) : Interceptor {
 
     private val lock = Any()
@@ -80,9 +90,9 @@ internal class PinRecoveryInterceptor(
                 throw e
             }
 
-            Timber.d("Pins updated — retrying request to %s with new client", host)
+            Timber.d("Pins updated — retrying request to %s", host)
             try {
-                retryWithNewClient(request).also { recordSuccess(host) }
+                retry(chain, request).also { recordSuccess(host) }
             } catch (retryErr: IOException) {
                 recordFailure(host)
                 throw retryErr
@@ -90,12 +100,62 @@ internal class PinRecoveryInterceptor(
         }
     }
 
-    private fun retryWithNewClient(request: Request): Response {
-        val newClient = newClientProvider()
-        return newClient.newCall(request).execute()
+    /**
+     * Retries on the CALLER's chain first. When this interceptor is installed
+     * through [io.github.umutcansu.pinvault.PinVault.applyTo], that client owns
+     * the consumer's `Dns`, interceptors and timeouts, and its trust manager
+     * re-reads the live config on every handshake — so the retry must not be
+     * moved onto a different client (doing so used to drop a custom `Dns` and
+     * fail the retry with `UnknownHostException`).
+     *
+     * The internally managed client is built against a config snapshot, so its
+     * chain would still see the old pins; for that path a second attempt runs
+     * on the freshly swapped client from [newClientProvider].
+     *
+     * If that fallback fails too, the caller gets the exception from **its own
+     * chain**, with the fallback's failure attached as suppressed — see the
+     * comment inside.
+     */
+    private fun retry(chain: Interceptor.Chain, request: Request): Response {
+        return try {
+            chain.proceed(request)
+        } catch (e: IOException) {
+            val newClient = newClientProvider?.invoke()
+            if (newClient == null || !isPinMismatch(e)) throw e
+            Timber.d("Retry on the caller's client still mismatched — retrying on the refreshed client")
+            try {
+                newClient.newCall(request).execute()
+            } catch (fallbackErr: IOException) {
+                // The fallback is the library's own client. It does NOT carry
+                // the caller's Dns, interceptors or timeouts, so when it fails
+                // it usually fails for a reason that has nothing to do with the
+                // request the caller made — most often `UnknownHostException`
+                // from a custom `Dns` the internal client never had. Throwing
+                // that would hand the app a DNS error in place of the real pin
+                // mismatch it hit on its own chain.
+                //
+                // Report the caller-chain failure and attach the fallback's as
+                // suppressed, so the fallback attempt is still visible in a
+                // stack trace / bug report without masking the diagnosis.
+                if (fallbackErr !== e) e.addSuppressed(fallbackErr)
+                Timber.w(
+                    fallbackErr,
+                    "Fallback retry on the refreshed client also failed — rethrowing the original pin error"
+                )
+                throw e
+            }
+        }
     }
 
     private fun isPinMismatch(e: IOException): Boolean {
+        // A certificate outside its validity window is NOT a pin mismatch:
+        // fetching a fresh config cannot make an expired cert valid, so
+        // recovering would only burn a backend round-trip, replace the real
+        // reason with the retry's failure, and trip the circuit breaker on
+        // something pinning can't fix. See
+        // [io.github.umutcansu.pinvault.model.CertificateValidityException].
+        if (e.cause is CertificateValidityException) return false
+
         return e is SSLPeerUnverifiedException ||
             (e is SSLHandshakeException && e.cause is CertificateException)
     }

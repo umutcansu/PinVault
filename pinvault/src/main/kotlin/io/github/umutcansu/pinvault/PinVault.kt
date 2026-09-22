@@ -460,6 +460,12 @@ object PinVault {
 
     /**
      * Returns a ready-to-use OkHttpClient with current pinning applied.
+     *
+     * Fail-closed: while no config has been applied yet (callback-style
+     * [init] still in flight on a first launch) the client refuses TLS
+     * handshakes with a [javax.net.ssl.SSLHandshakeException] instead of
+     * silently falling back to system trust. Wait for [InitResult.Ready]
+     * before issuing pinned requests.
      */
     fun getClient(): OkHttpClient {
         checkInitialized()
@@ -467,11 +473,28 @@ object PinVault {
     }
 
     /**
-     * Returns a ready-to-use OkHttpClient with current pinning and custom settings.
+     * Returns a ready-to-use OkHttpClient with current pinning and custom
+     * settings. The pin set is re-read on every handshake, so config swaps
+     * apply without rebuilding the client; like [getClient] it is fail-closed
+     * while no config is loaded.
+     *
+     * ## Difference from [getClient] and [applyTo] — no pin-mismatch recovery
+     * This overload installs **pinning only**. Unlike the no-argument
+     * [getClient] and [applyTo], it does NOT add the pin-recovery
+     * interceptor, so a pin mismatch surfaces to the caller as an
+     * [javax.net.ssl.SSLPeerUnverifiedException] / `SSLHandshakeException`
+     * and PinVault does **not** automatically re-fetch the config and retry
+     * the request. Rotating the server certificate therefore breaks requests
+     * issued through this client until the next config update lands (periodic
+     * WorkManager run, or an explicit [updateNow]).
+     *
+     * Pick this overload when you want custom timeouts with full control over
+     * retry behaviour; use [applyTo] on your own builder when you want custom
+     * settings *and* automatic recovery.
      */
     fun getClient(connectionSettings: HttpConnectionSettings): OkHttpClient {
         checkInitialized()
-        return sslManager.buildClient(clientProvider.currentConfig, connectionSettings)
+        return sslManager.buildDynamicClient({ clientProvider.currentConfig }, connectionSettings)
     }
 
     /**
@@ -589,9 +612,8 @@ object PinVault {
             // a hardware-attested identity. For high-assurance use cases, gate
             // enrollment behind Play Integrity / SafetyNet attestation before
             // calling this method.
-            val deviceId = android.provider.Settings.Secure.getString(
-                context.contentResolver, android.provider.Settings.Secure.ANDROID_ID
-            ) ?: "unknown-device"
+            val deviceId = io.github.umutcansu.pinvault.internal.DeviceIdentity
+                .androidId(context) ?: "unknown-device"
 
             val identity = resolveDeviceIdentity(config)
             Timber.d("Auto-enrollment: deviceId=%s", deviceId)
@@ -619,22 +641,63 @@ object PinVault {
     }
 
     /**
+     * The storage label [enroll] / [autoEnroll] write to when the caller does
+     * not pass one explicitly: the default Config API block's
+     * `clientCertLabel`, falling back to the store default when the library
+     * has not been configured yet.
+     *
+     * [isEnrolled], [unenroll] and [enrolledClientCN] used to fall back to
+     * [ClientCertSecureStore.DEFAULT_LABEL] directly. With a custom
+     * `clientCertLabel(...)` that meant enrollment wrote to one key while the
+     * status/removal calls read another — `isEnrolled` returned false right
+     * after a successful enroll and `unenroll` deleted nothing. All four paths
+     * now resolve the label the same way.
+     */
+    private fun defaultCertLabel(): String =
+        pinManagerConfig?.defaultConfigApi?.clientCertLabel
+            ?: ClientCertSecureStore.DEFAULT_LABEL
+
+    /**
      * Checks if a client certificate is enrolled on this device.
-     * @param label Optional label. If null, checks the default label.
+     * @param label Optional label. If null, uses the default Config API's
+     *        `clientCertLabel` — the same label [enroll] writes to.
      */
     fun isEnrolled(context: Context, label: String? = null): Boolean {
         val store = ClientCertSecureStore(context.applicationContext)
-        return store.exists(label ?: ClientCertSecureStore.DEFAULT_LABEL)
+        return store.exists(label ?: defaultCertLabel())
     }
 
     /**
      * Removes the enrolled client certificate from this device.
-     * @param label Optional label. If null, removes the default label.
+     *
+     * Clears both the persisted P12 **and** the in-memory KeyManager, then
+     * rebuilds the active client so the very next request stops presenting a
+     * client certificate. (Previously only the store was cleared, so mTLS kept
+     * working from the loaded KeyManager until the process restarted.)
+     *
+     * @param label Optional label. If null, uses the default Config API's
+     *        `clientCertLabel` — the same label [enroll] writes to.
      */
     fun unenroll(context: Context, label: String? = null) {
+        val certLabel = label ?: defaultCertLabel()
         val store = ClientCertSecureStore(context.applicationContext)
-        store.clear(label ?: ClientCertSecureStore.DEFAULT_LABEL)
-        Timber.i("Client certificate removed [%s]", label ?: "default")
+        store.clear(certLabel)
+
+        // Drop the live key material too. Guarded on `initialized` because
+        // unenroll is callable before/after init (QA flows call it on a cold
+        // process), and the primary mirrors are only populated by setup().
+        if (initialized) {
+            configApiClients.values.forEach { client ->
+                client.sslManager.clearClientKeystore()
+                client.clientProvider.currentConfig?.let { client.clientProvider.swap(it) }
+            }
+            if (configApiClients.isEmpty()) {
+                sslManager.clearClientKeystore()
+                clientProvider.currentConfig?.let { clientProvider.swap(it) }
+            }
+        }
+
+        Timber.i("Client certificate removed [%s] — client cert no longer presented", certLabel)
     }
 
     /**
@@ -644,7 +707,7 @@ object PinVault {
      */
     fun enrolledClientCN(context: Context, label: String? = null): String? {
         val store = ClientCertSecureStore(context.applicationContext)
-        val p12 = store.load(label ?: ClientCertSecureStore.DEFAULT_LABEL) ?: return null
+        val p12 = store.load(label ?: defaultCertLabel()) ?: return null
         val password = pinManagerConfig?.configApis?.values?.firstOrNull()?.clientKeyPassword ?: return null
         return try {
             val ks = java.security.KeyStore.getInstance("PKCS12")
@@ -881,11 +944,10 @@ object PinVault {
      * deviceUid   = ANDROID_ID (unique per app+device).
      */
     private fun resolveDeviceIdentity(config: PinVaultConfig?): Pair<String, String>? {
-        val uid = try {
-            android.provider.Settings.Secure.getString(
-                appContext.contentResolver, android.provider.Settings.Secure.ANDROID_ID
-            ) ?: return null
-        } catch (_: Exception) { return null }
+        // Same source as the X-Device-Id sent on scoped config fetches and
+        // vault downloads — see DeviceIdentity for why that must stay in sync.
+        val uid = io.github.umutcansu.pinvault.internal.DeviceIdentity
+            .androidId(appContext) ?: return null
 
         val alias = config?.deviceAlias ?: "${android.os.Build.MANUFACTURER} ${android.os.Build.MODEL}"
         return alias to uid
@@ -933,9 +995,13 @@ object PinVault {
     }
 
     /**
-     * Resets to system defaults (no pinning). Use only as emergency fallback.
-     * Also resets the initialized flag so the next init() call performs a full
+     * Clears the active pinning state and the persisted config, and resets
+     * the initialized flag so the next [init] performs a full
      * re-initialization (re-fetches config from the backend).
+     *
+     * Clients obtained earlier refuse TLS handshakes until that re-init
+     * publishes a config — pinning is never silently downgraded to system
+     * trust.
      */
     fun reset() {
         synchronized(this) {
@@ -944,7 +1010,7 @@ object PinVault {
             configStore.clear()
             initialized = false
         }
-        Timber.w("PinVault reset — pinning disabled, re-init required")
+        Timber.w("PinVault reset — config cleared, TLS refused until re-init")
     }
 
     private fun checkInitialized() {

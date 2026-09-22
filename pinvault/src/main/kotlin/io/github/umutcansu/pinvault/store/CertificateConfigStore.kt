@@ -58,9 +58,14 @@ internal class CertificateConfigStore private constructor(private val prefs: Sha
             putLong(KEY_ISSUED_AT, config.issuedAt)
             putBoolean(KEY_FORCE_UPDATE, config.forceUpdate)
 
-            // Format: hostname|version|hash1,hash2
+            // Format: hostname|version|hash1,hash2|forceUpdate
+            //
+            // The trailing flag is the newest field. Entries written before it
+            // existed have three fields and load with forceUpdate=false (see
+            // parsePins), so upgrading the library never invalidates a store.
             val pinsData = config.pins.joinToString(ENTRY_SEPARATOR) { pin ->
-                "${pin.hostname}$FIELD_SEPARATOR${pin.version}$FIELD_SEPARATOR${pin.sha256.joinToString(HASH_SEPARATOR)}"
+                pin.hostname + FIELD_SEPARATOR + pin.version + FIELD_SEPARATOR +
+                    pin.sha256.joinToString(HASH_SEPARATOR) + FIELD_SEPARATOR + pin.forceUpdate
             }
             putString(KEY_PINS, pinsData)
 
@@ -109,13 +114,18 @@ internal class CertificateConfigStore private constructor(private val prefs: Sha
                 try {
                     val parts = entry.split(FIELD_SEPARATOR)
                     when {
-                        // New format: hostname|version|hash1,hash2
+                        // Current format: hostname|version|hash1,hash2|forceUpdate
+                        // Previous format: hostname|version|hash1,hash2
                         parts.size >= 3 -> {
                             val hostname = parts[0]
                             val version = parts[1].toIntOrNull() ?: 0
-                            val hashes = parts.drop(2).joinToString(FIELD_SEPARATOR)
+                            val hashes = parts[2]
                                 .split(HASH_SEPARATOR).filter { it.isNotBlank() }
-                            if (hashes.size >= 2) HostPin(hostname, hashes, version) else null
+                            // Absent (3-field entry) or unparsable → false, the
+                            // fail-safe value: a stale "true" would block an
+                            // offline start-up forever.
+                            val forceUpdate = parts.getOrNull(3)?.trim()?.toBooleanStrictOrNull() ?: false
+                            if (hashes.size >= 2) HostPin(hostname, hashes, version, forceUpdate) else null
                         }
                         // Old format migration: hostname|hash1,hash2
                         parts.size == 2 -> {

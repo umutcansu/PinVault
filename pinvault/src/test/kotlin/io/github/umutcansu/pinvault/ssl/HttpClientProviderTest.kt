@@ -79,4 +79,63 @@ class HttpClientProviderTest {
     fun `get — returns OkHttpClient`() {
         assertNotNull(provider.get())
     }
+
+    // ── Fail-closed "no config" state ───────────────────────────────────
+    //
+    // The provider used to start with (and reset() return to) a system-trust
+    // client, so PinVault.getClient() during the init window skipped pinning
+    // entirely. Now the trust manager is always installed and refuses the
+    // handshake until a config is published.
+
+    private fun trustManagerOf(client: okhttp3.OkHttpClient) =
+        client.x509TrustManager as javax.net.ssl.X509ExtendedTrustManager
+
+    private fun engineFor(host: String) =
+        javax.net.ssl.SSLContext.getDefault().createSSLEngine(host, 443)
+
+    private val host1Config = CertificateConfig(
+        version = 1,
+        pins = listOf(HostPin("host1", listOf(pin1.sha256Pin, pin2.sha256Pin), version = 1))
+    )
+
+    @Test
+    fun `get — before the first swap the client refuses TLS, no system trust`() {
+        try {
+            trustManagerOf(provider.get())
+                .checkServerTrusted(arrayOf(pin1.certificate), "RSA", engineFor("host1"))
+            fail("Handshake must be refused while no config is loaded")
+        } catch (e: java.security.cert.CertificateException) {
+            assertTrue(e.message!!.contains("No pins configured"))
+        }
+    }
+
+    @Test
+    fun `get — client obtained before swap goes live after swap without rebuild`() {
+        val pending = provider.get()
+        provider.swap(host1Config)
+        // Same instance now accepts the pinned cert for host1 …
+        trustManagerOf(pending)
+            .checkServerTrusted(arrayOf(pin1.certificate), "RSA", engineFor("host1"))
+        // … and still refuses a cert that is not pinned.
+        try {
+            trustManagerOf(pending)
+                .checkServerTrusted(arrayOf(TestCertUtil.generateSelfSigned(cn = "rogue").certificate), "RSA", engineFor("host1"))
+            fail("Unpinned cert must be refused")
+        } catch (e: java.security.cert.CertificateException) {
+            // expected — pin mismatch
+        }
+    }
+
+    @Test
+    fun `reset — client is fail-closed again, not system trust`() {
+        provider.swap(host1Config)
+        provider.reset()
+        try {
+            trustManagerOf(provider.get())
+                .checkServerTrusted(arrayOf(pin1.certificate), "RSA", engineFor("host1"))
+            fail("Handshake must be refused after reset()")
+        } catch (e: java.security.cert.CertificateException) {
+            assertTrue(e.message!!.contains("No pins configured"))
+        }
+    }
 }

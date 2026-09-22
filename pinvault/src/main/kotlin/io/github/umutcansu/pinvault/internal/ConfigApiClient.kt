@@ -66,15 +66,20 @@ internal class ConfigApiClient(
             sslManager = sslManager
         )
 
+        val appContext = context.applicationContext
         updater = SSLCertificateUpdater(
-            context = context.applicationContext,
+            context = appContext,
             configApi = api,
             configStore = configStore,
             httpClientProvider = clientProvider,
             sslManager = sslManager,
             certStore = certStore,
             clientKeyPassword = block.clientKeyPassword,
-            maxRetryCount = 3
+            maxRetryCount = 3,
+            // Pin scoping: forward the block's declared host list (and the
+            // device identity the server ACL is keyed on) to every fetch.
+            wantPinsFor = block.wantPinsFor,
+            deviceIdProvider = { DeviceIdentity.androidId(appContext) }
         )
 
         // Pin mismatch recovery hooks into this block's updater only.

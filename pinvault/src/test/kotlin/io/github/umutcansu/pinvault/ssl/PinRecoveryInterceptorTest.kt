@@ -186,6 +186,115 @@ class PinRecoveryInterceptorTest {
         }
     }
 
+    // ── Yedek deneme orijinal hatayı gizlemesin ───────────────────────────
+
+    @Test
+    fun `fallback client failure rethrows the ORIGINAL pin error`() {
+        // Regression: when the retry on the caller's own chain failed and the
+        // fallback attempt on the library's internal client failed too, the
+        // interceptor threw the FALLBACK's exception. The internal client does
+        // not carry the caller's Dns, so the app was shown an
+        // UnknownHostException instead of the pin mismatch it actually hit.
+        val newClient = mockk<OkHttpClient>()
+        val newCall = mockk<okhttp3.Call>()
+        every { newClient.newCall(any()) } returns newCall
+        every { newCall.execute() } throws java.net.UnknownHostException("api.example.com")
+
+        val interceptor = PinRecoveryInterceptor(
+            updater = { true },
+            newClientProvider = { newClient }
+        )
+
+        val chain = mockk<Interceptor.Chain>()
+        val request = Request.Builder().url("https://example.com/test").build()
+        every { chain.request() } returns request
+        every { chain.proceed(any()) } throws
+            javax.net.ssl.SSLPeerUnverifiedException("Certificate pinning failure for example.com")
+
+        try {
+            interceptor.intercept(chain)
+            fail("Expected the original SSLPeerUnverifiedException")
+        } catch (e: java.io.IOException) {
+            assertTrue(
+                "Caller must see the pin error, not the fallback's DNS failure — got ${e.javaClass.simpleName}",
+                e is javax.net.ssl.SSLPeerUnverifiedException
+            )
+            assertEquals("Certificate pinning failure for example.com", e.message)
+            // The fallback's failure is still reachable for diagnostics.
+            val suppressed = e.suppressed.toList()
+            assertEquals(1, suppressed.size)
+            assertTrue(
+                "Fallback failure must be attached as suppressed",
+                suppressed[0] is java.net.UnknownHostException
+            )
+        }
+    }
+
+    // ── Geçerlilik penceresi hatası pin uyuşmazlığı değildir ──────────────
+
+    @Test
+    fun `expired server certificate does NOT trigger config refresh`() {
+        // Refetching pins cannot make an expired certificate valid, so the
+        // updater must never be consulted and the error must reach the caller
+        // unchanged (see CertificateValidityException).
+        var updaterCalled = false
+
+        val interceptor = PinRecoveryInterceptor(
+            updater = { updaterCalled = true; true },
+            newClientProvider = { OkHttpClient() }
+        )
+
+        val chain = mockk<Interceptor.Chain>()
+        val request = Request.Builder().url("https://example.com/test").build()
+        every { chain.request() } returns request
+        val cause = io.github.umutcansu.pinvault.model.CertificateValidityException(
+            "Server certificate is expired or not yet valid: NotAfter: 2020-01-01"
+        )
+        every { chain.proceed(any()) } throws
+            javax.net.ssl.SSLHandshakeException("handshake failed").apply { initCause(cause) }
+
+        try {
+            interceptor.intercept(chain)
+            fail("Expected SSLHandshakeException to pass through")
+        } catch (e: javax.net.ssl.SSLHandshakeException) {
+            assertFalse("Updater must NOT be called for a validity-window failure", updaterCalled)
+            assertTrue(
+                "Original cause must survive",
+                e.cause is io.github.umutcansu.pinvault.model.CertificateValidityException
+            )
+        }
+    }
+
+    @Test
+    fun `plain CertificateException cause still triggers recovery`() {
+        // Guard against the validity-window carve-out swallowing real pin
+        // mismatches: a bare CertificateException cause must still recover.
+        var updaterCalled = false
+        val newClient = mockk<OkHttpClient>()
+        val newCall = mockk<okhttp3.Call>()
+        val retryResponse = mockk<Response>(relaxed = true)
+        every { retryResponse.code } returns 200
+        every { newClient.newCall(any()) } returns newCall
+        every { newCall.execute() } returns retryResponse
+
+        val interceptor = PinRecoveryInterceptor(
+            updater = { updaterCalled = true; true },
+            newClientProvider = { newClient }
+        )
+
+        val chain = mockk<Interceptor.Chain>()
+        val request = Request.Builder().url("https://example.com/test").build()
+        every { chain.request() } returns request
+        val cause = java.security.cert.CertificateException("Certificate pinning failure for example.com")
+        every { chain.proceed(any()) } throws
+            javax.net.ssl.SSLHandshakeException("handshake failed").apply { initCause(cause) }
+
+        val response = interceptor.intercept(chain)
+
+        assertTrue(updaterCalled)
+        assertEquals(200, response.code)
+    }
+
     @Test
     fun `non-SSL IOException passes through without recovery`() {
         var updaterCalled = false
