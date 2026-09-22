@@ -1,0 +1,59 @@
+# SamplePinVaultHost — PinVault demo-server, Docker'da.
+#
+#   ./scripts/setup.sh              # .env + API anahtarı + LAN IP + signing key
+#   docker compose up -d --build
+#   ./scripts/smoke-test.sh         # sağlık + imza + yetki kontrolleri
+#   ./scripts/client-config.sh      # Android client'a girilecek değerler
+services:
+  pinvault-host:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      additional_contexts:
+        # demo-server kaynağı. Varsayılan: upstream git (PINVAULT_REPO @ PINVAULT_REF).
+        # Yerel checkout (yayınlanmamış değişiklikler dahil) için .env'de:
+        #   PINVAULT_SERVER_SRC=../PinVault/demo-server
+        pinvault-server: "${PINVAULT_SERVER_SRC:-${PINVAULT_REPO:-https://github.com/umutcansu/PinVault.git}#${PINVAULT_REF:-main}:demo-server}"
+    container_name: pinvault-host
+    restart: unless-stopped
+    ports:
+      - "${HOST_HTTP_PORT:-6650}:8080"   # Management API + web dashboard (HTTP)
+      - "${HOST_HTTPS_PORT:-6651}:8081"  # Config API (TLS, self-signed; client'lar pin'ler)
+      - "${HOST_MTLS_PORT:-6652}:8092"   # mTLS Config API (scripts/provision.sh oluşturur)
+      - "${HOST_MOCK_TLS_PORT:-6653}:8443"   # Mock TLS hedef host (mock-tls.sample)
+      - "${HOST_MOCK_MTLS_PORT:-6654}:8444"  # Mock mTLS hedef host (mock-mtls.sample)
+    environment:
+      PORT: "8080"
+      HTTPS_PORT: "8081"
+      DB_PATH: /data/db/pinvault.db
+      CERTS_DIR: /data/certs
+      SIGNING_KEY_PATH: /data/signing-key.pem
+      ENROLLMENT_MODE: ${ENROLLMENT_MODE:-token}
+      # Zorunlu. Yönetim uçları ve dashboard bu anahtarı ister; anonim admin kapalı.
+      API_KEY: ${API_KEY:?API_KEY bos. Once ./scripts/setup.sh calistir.}
+      CONFIG_TTL_SECONDS: ${CONFIG_TTL_SECONDS:-86400}
+      # Telefonların bu makineye bağlandığı LAN IP. Container kendi içinden bu
+      # adresi göremez; sunucu TLS sertifikası (yeniden) üretilirken SAN'a eklenir.
+      EXTRA_CERT_SANS: ${HOST_LAN_IP:-}
+      # İsteğe bağlı sunucu ayarları; boş bırakılınca sunucu varsayılanı geçerli.
+      # Geçici değişiklik için: ./scripts/env-override.sh set KEY=VALUE ...
+      SIGNING_KEY_PASSWORD: ${SIGNING_KEY_PASSWORD:-}
+      ENROLLMENT_TOKEN_TTL_SECONDS: ${ENROLLMENT_TOKEN_TTL_SECONDS:-}
+      VAULT_AT_REST_PASSWORD: ${VAULT_AT_REST_PASSWORD:-}
+      CERT_EXPIRY_WARN_DAYS: ${CERT_EXPIRY_WARN_DAYS:-}
+      KEYSTORE_PASSWORD: ${KEYSTORE_PASSWORD:-}
+      ALLOW_ANONYMOUS_ADMIN: ${ALLOW_ANONYMOUS_ADMIN:-}
+    volumes:
+      # Bütün kalıcı durum tek dizin: veritabanı, sertifikalar ve imzalama
+      # anahtarı. Anahtar dosyası tek tek (ve salt okunur) bağlanınca sunucu
+      # onu yerinde güncelleyemiyordu: SIGNING_KEY_PASSWORD ile açılan at-rest
+      # şifreleme göçü (ConfigSigningService) ve dashboard'daki "Anahtarı
+      # Yenile" atomik rename yapıyor, tek dosyalık bind mount'un üzerine
+      # rename ise "Device or resource busy" veriyor ve sunucu açılmıyordu.
+      - ./data:/data
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 5s
+      start_period: 20s
+      retries: 3

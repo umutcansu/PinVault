@@ -1,0 +1,20 @@
+# Local environment
+.env
+
+# Persistent runtime state — keep folders, ignore contents
+data/db/*
+!data/db/.gitkeep
+data/certs/*
+!data/certs/.gitkeep
+
+# Signing key (development only — regenerated locally)
+data/signing-key.pem
+
+# OS / editor
+.DS_Store
+.idea/
+.vscode/
+*.swp
+
+# scripts/export-server-key.sh çıktısı: sunucunun TLS özel anahtarı (E2E kurcalama vekili)
+data/proxy/
