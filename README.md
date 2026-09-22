@@ -518,6 +518,26 @@ val json = PinVault.loadFileAsString("feature-flags")
 }
 ```
 
+| Policy | What the device sends | Use for |
+|---|---|---|
+| `PUBLIC` | nothing | genuinely public files; demo/test |
+| `API_KEY` | **nothing — not usable from a device** | server-side tooling only (see below) |
+| `TOKEN` | `X-Device-Id` + `X-Vault-Token` | per-device, per-file access (recommended) |
+| `TOKEN_MTLS` | the above, over a client-authenticated TLS connection | highest assurance |
+
+> **⚠️ `API_KEY` cannot be satisfied from a device.** That policy is enforced
+> with the server's admin `X-API-Key`, and PinVault deliberately never sends it
+> from a device: an admin key inside an APK is an admin key for everyone who
+> downloads the app. A file declared with `API_KEY` therefore **fails with
+> HTTP 401 on every fetch**, and the only trace is a `failed` row in the
+> server's distribution history. `build()` logs a warning when it sees one.
+> Use it to mark files only your build pipeline or ops scripts may read; for
+> device-facing files use `TOKEN` / `TOKEN_MTLS`.
+
+`accessToken { … }` is read on every fetch. Returning `""` (no token issued
+yet) is fine — the library omits the header entirely so the server answers
+"X-Vault-Token header required" rather than "invalid or revoked token".
+
 ### End-to-end encryption (v2)
 
 ```kotlin
@@ -568,6 +588,7 @@ API docs (Swagger): `http://localhost:8080/docs`
 | `SIGNING_KEY_PASSWORD` | unset | AES-256-GCM encrypts the ECDSA signing key on disk (PBKDF2-SHA256). When unset, the key is written plaintext + chmod 600 + warning logged. Existing plaintext keys are auto-migrated on startup. |
 | `CONFIG_TTL_SECONDS` | `86400` (24h) | How long a signed config response stays valid before clients reject it as replayed. Lower = tighter replay window; too low risks rejecting cached configs from offline devices. |
 | `ENROLLMENT_MODE` | `token` | `token` (production) requires an enrollment token; `open` allows deviceId-only enrollment (demo only). |
+| `EXTRA_CERT_SANS` | unset | Comma-separated IPv4 addresses / DNS names added to every TLS certificate the server generates. Set it to the Docker host's LAN IP when running in a container — the server only sees the container's own address, and Android clients reject a certificate that does not name the IP they connect to. Applies when a certificate is (re)generated. |
 | `ALLOW_ANONYMOUS_ADMIN` | unset | Set to `true` to allow startup with no `API_KEY` (anonymous admin). Logs a warning. Do not use on any network you don't control. |
 
 ### Build your own server
@@ -723,10 +744,44 @@ in the APK:
 
 See `SERVER_IMPLEMENTATION_GUIDE.md` for the signing protocol.
 
-### 5. Backup exclusion is automatic
-Client certificates are excluded from cloud backup and device-to-device transfer
-via `pinvault_backup_rules.xml` and `pinvault_data_extraction_rules.xml`. The
-manifest merger handles this automatically — no configuration needed.
+### 5. Backup exclusion — automatic, except for custom Config API ids
+
+Client certificates, the vault file store and the stored pin configs are
+excluded from cloud backup and device-to-device transfer via
+`pinvault_backup_rules.xml` and `pinvault_data_extraction_rules.xml`. The
+manifest merger pulls both in automatically.
+
+> **⚠️ Using your own `configApiId`? Read this.**
+>
+> Each Config API block persists its pins in its own file,
+> `shared_prefs/ssl_cert_config_<configApiId>.xml`. Android backup rules do
+> **not** support wildcards, so the bundled rules can only name the ids the
+> library knows: `default`, `default-tls`, `secure-mtls`.
+>
+> If you register any other id — `.configApi("my-api", …)` — **your stored
+> pins are not excluded**. They go into cloud backup and device transfer, and
+> restoring an older backup reinstates an older pin set: the pin-downgrade
+> path the exclusions exist to close (audit M-07).
+>
+> Do one of the following in **your** app:
+>
+> ```xml
+> <!-- Simplest: no backup at all -->
+> <application android:allowBackup="false" …>
+> ```
+>
+> ```xml
+> <!-- Or name the file yourself, in BOTH rule files -->
+> <!-- res/xml/my_backup_rules.xml (API ≤ 30) -->
+> <exclude domain="sharedpref" path="ssl_cert_config_my-api.xml" />
+>
+> <!-- res/xml/my_data_extraction_rules.xml (API 31+) — in cloud-backup AND
+>      device-transfer -->
+> <exclude domain="sharedpref" path="ssl_cert_config_my-api.xml" />
+> ```
+>
+> `PinVaultConfig.Builder.build()` logs a warning (once per id) naming the
+> exact line to add when it sees an id the bundled rules do not cover.
 
 ### 6. Verify TLS configuration on your backend
 - TLS 1.2 or higher (1.3 preferred)

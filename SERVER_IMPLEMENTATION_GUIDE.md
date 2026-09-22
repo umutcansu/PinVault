@@ -211,6 +211,22 @@ The library refuses to install the P12 if this header is missing or its value do
 - Must be loadable with password `"changeit"` (configurable)
 - Certificate must not be expired
 
+**Known limitation of the reference implementation — one-shot tokens.**
+`demo-server` issues the certificate and marks the enrollment token used
+*before* the response reaches the device. If the device then refuses the P12 —
+a stripped `X-P12-SHA256` header, a truncated body, a mid-transfer network
+failure — the token is already spent and the operator has to issue a new one.
+The device is left unenrolled while the server believes it is enrolled, and the
+certificate that was minted for it stays in the truststore.
+
+If you are designing your own enrollment flow, do not copy this shape. Either
+mark the token used only after the device confirms the install (a second round
+trip: `POST …/enroll/confirm` with the P12 hash the device computed) and expire
+certificates that are never confirmed, or make the token valid for a short
+window of repeated attempts rather than exactly one. `demo-server` keeps the
+single-shot behaviour: the fix is a protocol change on both sides and this is a
+reference server, not a production one.
+
 ---
 
 ### 5. Host Client Certificate Download (OPTIONAL)

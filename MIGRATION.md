@@ -118,6 +118,31 @@ API_KEY=your-secret docker compose up
 ALLOW_ANONYMOUS_ADMIN=true docker compose up
 ```
 
+### 8. Custom `configApiId`? Add your own backup exclusion
+
+The library's backup rules can only name the ids it knows (`default`,
+`default-tls`, `secure-mtls`) — Android's `<exclude>` takes no wildcards. If
+you register another id, your stored pins go into cloud backup and device
+transfer, and restoring an old backup reinstates an old pin set:
+
+```xml
+<!-- your fullBackupContent AND both sections of your dataExtractionRules -->
+<exclude domain="sharedpref" path="ssl_cert_config_my-api.xml" />
+```
+
+…or set `android:allowBackup="false"`. `PinVaultConfig.Builder.build()` logs a
+warning naming the exact line when it sees an uncovered id. Nothing breaks if
+you ignore it; the exposure is the M-07 downgrade-by-restore path.
+
+### 9. No action needed: stored pin format gained a field
+
+`CertificateConfigStore` now persists each host's `forceUpdate` flag as a
+trailing field (`hostname|version|hash1,hash2|forceUpdate`). Entries written by
+earlier versions have three fields and load with `false`, so upgrading in place
+needs no migration and no refetch. (Downgrading the library below this version
+is not supported — an older parser would fold the new field into the last pin
+hash.)
+
 ### Suggested rollout order
 
 1. Update server first so signed responses carry `issuedAt`/`expiresAt` and
@@ -156,7 +181,6 @@ Block-level setters (inside `.configApi(id, url) { … }`):
 | `healthEndpoint(path)` | Overrides default `health` |
 | `signaturePublicKey(pem)` | Enables ECDSA signature verification on config responses |
 | `clientKeystore(bytes, password)` | mTLS client P12 |
-| `enrollmentToken(token)` | One-time token for auto P12 download |
 | `enrollmentEndpoint(path)` | Overrides `api/v1/client-certs/enroll` |
 | `clientCertEndpoint(path)` | Overrides `api/v1/client-certs` |
 | `vaultReportEndpoint(path)` | Overrides `api/v1/vault/report` |

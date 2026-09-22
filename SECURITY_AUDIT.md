@@ -1,0 +1,215 @@
+# PinVault Security Audit Report
+
+_OWASP-oriented audit — 2026-05-29. Method: 8 parallel finders across server + library security dimensions, each candidate finding independently re-verified by an adversarial reviewer; 11 of 29 candidates were refuted and dropped._
+
+## Remediation status — 2026-05-29
+
+All findings have since been **addressed** — fixed where a fix doesn't break the demo, or documented as DEMO-ONLY where the proper fix needs production infrastructure or a client+server protocol change. Verified: `demo-server` compiles and the affected test classes pass (JDK 21); the `pinvault` library and `demo-app` build a debug APK.
+
+| Finding | Action |
+|---|---|
+| H-1 / H-2 — broken access control on Config API ports | **Fixed** — `ApiKeyAuth` is now installed in `ConfigApiManager.start()`, reusing the `isPublicEndpoint` allowlist; all mutating admin routes require `X-API-Key`. |
+| M-1 — weak / non-expiring enrollment tokens | **Fixed** — 256-bit CSPRNG token + `expires_at` (migration `V6`); plaintext admin listing kept, flagged DEMO-ONLY. |
+| M-2 — public-key overwrite without identity binding | **Documented** — needs device-identity binding (client+server change); hard-blocking would break the documented key-rotation path. |
+| M-3 / L-7 — dashboard HTML injection | **Fixed** — `esc()` applied to every device-reported field in `app.js`. |
+| L-1 — `token_mtls` / mTLS-CN dead code | **Documented** — fail-closed; the unwired `TLSPeerPrincipal` is now called out in the helper. |
+| L-2 / L-6 — `"changeit"` keystore password | **Fixed** — read from `KEYSTORE_PASSWORD` env; DEMO-ONLY fallback. |
+| L-3 — plaintext signing key on disk | **Fixed** — atomic owner-only (0600) write before bytes hit disk. |
+| L-4 — `fetch-from-url` SSRF | **Partial** — now admin-only (via H-1) + `https` required; LAN-egress filtering intentionally omitted (demo pins internal hosts). |
+| L-5 — container runs as root | **Not applied** — reverted: the demo `docker-compose` bind-mounts `/data`, so a non-root user can't write there; left as root for the sample (documented tradeoff). |
+| L-8 — unsigned mode skips freshness | **Documented** — `allowUnsigned()` KDoc now states it disables replay/expiry/downgrade. |
+| L-9 — telemetry over unpinned cleartext | **Fixed** — warns on non-https `managementUrl`; KDoc marks `defaultClient()` unpinned. |
+| L-10 — backup-exclusion gaps | **Fixed** — `vault_files` file domain + `pinvault_vault_file_versions` prefs excluded. |
+| L-11 — demo cleartext traffic | **Fixed** — `network_security_config` scopes cleartext to lab hosts; blanket flag removed. |
+| L-12 — plaintext vault token | **Fixed** — stored via `EncryptedSharedPreferences`. |
+| I-1 — MGF1 docstring mismatch | **Fixed** — corrected to MGF1-SHA1 with a do-not-change note. |
+
+The detailed findings below are retained as the original audit record.
+
+## Executive Summary
+
+This audit confirmed **18 findings** (1 informational). Two pairs are independent verifications of the same underlying bug (H-1≡H-2; L-2≡L-6), so there are **~16 distinct issues**.
+
+The single most serious is the **complete absence of API-key authentication on the Config API ports** (the ports clients actually connect to): every mutating admin endpoint — including the pin-config `PUT` that the server re-signs with its own ECDSA key — is reachable unauthenticated, yielding a full pinning bypass / MITM enabler against all clients of that server.
+
+The **shipping library (`pinvault/`) has no remotely-reachable break.** Its three findings are all `low`/`info` and confined to explicitly opt-in or documentation-completeness territory (unsigned-config mode, the optional cleartext telemetry reporter, and backup-exclusion coverage). Every High and Medium finding lives in the **demo-server** reference backend, with two `low` items in the **demo-app**. No production app that consumes the library as intended (signed configs, default secure mode) is directly exposed.
+
+---
+
+## Critical
+
+No findings rose to Critical. The most severe issue (unauthenticated admin surface) is a textbook critical-shaped bug but is scoped to the demo-server reference backend rather than the shipping library, so it is rated High per the audit's severity reservation.
+
+---
+
+## High
+
+### H-1. Entire admin/management surface reachable without the API key on the Config API ports
+- **OWASP:** A01:2021 Broken Access Control
+- **Module:** demo-server
+- **Location:** `demo-server/src/main/kotlin/com/example/pinvault/server/service/ConfigApiManager.kt:80-89`
+- **Impact:** `ApiKeyAuth` is installed only on the management server (`Main.kt:214`). The Config API servers (`ConfigApiManager.start()`) install only `ContentNegotiation` + the routing module, which mounts `certificateConfigRoutes`, `hostRoutes`, and `vaultRoutes` — the full admin surface — with no auth. An unauthenticated attacker who reaches the port can `PUT /api/v1/certificate-config` to overwrite the pin set for all hosts; because the `GET` handler re-signs the stored config with the server's ECDSA key (`CertificateConfigRoute.kt:191-198`), attacker-chosen pins are delivered to every client carrying a **valid signature**, defeating pinning entirely. The `adminApiKeyRequired` parameter on `vaultRoutes` is dead code (never read).
+- **Fix:** Install `ApiKeyAuth` inside `ConfigApiManager.start()`'s `embeddedServer` block and have `configApiModuleFor` mount only genuinely client-facing endpoints (GET certificate-config, signing-key, enroll, client-cert download, vault GET/report); register all mutating handlers exclusively on the management server. Do not rely on a per-call allowlist consulted on only one of the listening ports.
+
+### H-2. Config API ports skip ApiKeyAuth — all mutating admin endpoints unauthenticated (corroborating analysis)
+- **OWASP:** A01:2021 Broken Access Control
+- **Module:** demo-server
+- **Location:** `demo-server/src/main/kotlin/com/example/pinvault/server/service/ConfigApiManager.kt:80-89`
+- **Impact:** Same root cause as H-1, independently verified. On the client-facing Config API ports, `API_KEY` enforces nothing: an attacker can rewrite the signed pin config, `POST /api/v1/hosts/{h}/fetch-from-url` (trust-all SSRF), `PUT`/`DELETE /api/v1/vault/{key}` to overwrite/delete distributed files, and `POST /api/v1/vault/{key}/tokens` to mint valid access tokens — all with no credential. The per-host version logic bumps the version on any pin change, so attacker pins arrive with a higher version and pass the client's downgrade/replay defenses.
+- **Fix:** Same as H-1 — gate auth on every server, split routes so Config API ports mount only client-facing GETs, and reuse the `isPublicEndpoint` allowlist as the route boundary.
+
+> H-1 and H-2 are two independent verifications of the same underlying defect (no `ApiKeyAuth` on Config API ports). Remediation is shared; count them as one bug for triage.
+
+---
+
+## Medium
+
+### M-1. Enrollment tokens are weak (48-bit truncated UUID) and never expire
+- **OWASP:** A07:2021 Identification and Authentication Failures
+- **Module:** demo-server
+- **Location:** `demo-server/src/main/kotlin/com/example/pinvault/server/store/PinConfigStore.kt:652-665`
+- **Impact:** `EnrollmentTokenStore.create()` builds the token as `UUID.randomUUID().toString().replace("-","").take(12)` — 48 bits, stored in plaintext. The `enrollment_tokens` table has no `expires_at` column (`V1__baseline.sql:88-93`) and `validate()` checks only `used=0`, so an issued token is valid forever. The enroll endpoint is public (`ApiKeyAuth.kt:79`) and a redeemed token yields a real CA-signed mTLS client P12 added to the truststore. (Online brute force is impractical against per-request ECDSA generation; the real risk is a leaked/at-rest token redeemable indefinitely, plus plaintext re-exposure via the admin token listing.)
+- **Fix:** Generate tokens with a CSPRNG at full length (mirror the 256-bit `VaultAccessTokenService`), store only a SHA-256 hash, add and enforce an `expires_at` column, and add rate limiting on the public enroll endpoint.
+
+### M-2. Device public-key registration overwrites any device's E2E key with no auth on Config API ports
+- **OWASP:** A01:2021 Broken Access Control
+- **Module:** demo-server
+- **Location:** `demo-server/src/main/kotlin/com/example/pinvault/server/route/VaultRoutes.kt:165-176`
+- **Impact:** `POST /api/v1/vault/devices/{deviceId}/public-key` takes an arbitrary `deviceId` and `publicKeyPem` with no identity binding, then `INSERT OR REPLACE`s the key (`DevicePublicKeyStore.kt:30-34`) — a silent overwrite, unauthenticated on the Config API ports (per H-1). An attacker can clobber any device's registered E2E key, breaking that device's E2E file delivery (integrity/DoS). Confidentiality theft is **blocked for token/token_mtls files** by the access-policy gate (valid `X-Vault-Token`, and CN-matched mTLS cert), so disclosure only occurs in the degenerate `public`+`end_to_end` case.
+- **Fix:** Require authentication bound to a verified identity (mTLS CN or one-time enrollment token) for key registration, disallow silent overwrite (explicit authenticated rotation), and fix the underlying no-auth-on-Config-API-ports issue (H-1).
+
+### M-3. Stored HTML injection in admin dashboard via unauthenticated vault-report endpoint
+- **OWASP:** A03:2021 Injection (XSS / HTML Injection)
+- **Module:** demo-server
+- **Location:** `demo-server/src/main/resources/static/app.js:2686`
+- **Impact:** `POST /api/v1/vault/report` is public (`ApiKeyAuth.kt:84`) and reads device fields with no validation (`VaultRoutes.kt:179-196`), persisting them verbatim. The dashboard interpolates `deviceManufacturer`, `deviceModel`, `vaultKey`, `status`, `enrollmentLabel` into `innerHTML` **without** `esc()` (`app.js:2686, 2699-2705`, and in `showVaultFileDetail`/`showDeviceDetail`), while the sibling connection-history path was hardened on both layers. The strict CSP (`script-src 'self'`, no `unsafe-inline`, `Main.kt:206-211`) blocks JS execution, capping impact at HTML/CSS injection — admin-panel defacement, content spoofing, and clickjacking-style overlay of the delete/revoke controls.
+- **Fix:** Wrap every device-field interpolation in `esc()` in `renderApiVaultTab`/`showVaultFileDetail`/`showDeviceDetail`, and validate the report fields server-side against `CLIENT_REPORT_IDENT_REGEX` (and `key` against `VAULT_KEY_REGEX`). Keep the CSP as-is.
+
+---
+
+## Low / Info
+
+### L-1. `token_mtls` policy and mTLS-CN device binding are dead code
+- **OWASP:** A07:2021 Identification and Authentication Failures · demo-server · `route/VaultRoutes.kt:332-342`
+- The `"TLSPeerPrincipal"` attribute these helpers read is never written, so `extractClientCertCn()` always returns null. Effect is **fail-closed**: `token_mtls` files always return 401 (silently inaccessible), and the mTLS `deviceId` fallback is inert. No data exposure — a misleading-security-claim + self-inflicted-DoS defect in sample code.
+- **Fix:** Extract the verified peer principal from the Netty SSL session into the call attribute before enforcing the CN check, or remove the `token_mtls` option and the mTLS fallback so docs don't advertise an absent binding.
+
+### L-2. Hardcoded keystore/P12 password `"changeit"` protects server keys and served client mTLS key
+- **OWASP:** A02:2021 Cryptographic Failures · demo-server · `service/CertificateService.kt:413`
+- `KEYSTORE_PASSWORD = "changeit"` wraps `server.jks`, the client truststore, and the per-device P12 served to clients. The genuine residual risk is the static password on server-local keystores (already gated behind host-filesystem compromise). In-transit P12 confidentiality rests on TLS+pinning and at-rest on hardware-backed `EncryptedSharedPreferences`, not this password — so the "served-P12" escalation does not extend it into a library break.
+- **Fix:** Source the password from env/KMS with no insecure default; use a fresh per-enrollment random P12 passphrase delivered out-of-band.
+
+### L-3. ECDSA config-signing private key written to disk in plaintext by default
+- **OWASP:** A04:2021 Insecure Design · demo-server · `service/ConfigSigningService.kt:87`
+- When `SIGNING_KEY_PASSWORD` is unset (default), the signing private key — the trust anchor for the whole pinning scheme — is written as plain Base64; the `setReadable(false,false)` chmod runs **after** the bytes are on disk and silently swallows failures. Requires pre-existing local read of the key file (host compromise, leaked volume snapshot), so post-compromise key-at-rest exposure, not a network break. The AES-GCM-at-rest path is correct but opt-in.
+- **Fix:** Create the file atomically with `0600` perms before writing (temp file + move), and require `SIGNING_KEY_PASSWORD` (or KMS) in a production profile rather than silently falling back to plaintext.
+
+### L-4. `fetch-from-url` trust-all TLS fetch (SSRF), unauthenticated on Config API ports
+- **OWASP:** A10:2021 SSRF · demo-server · `service/CertificateService.kt:160-176`
+- `fetchFromUrl()` opens a trust-all TLS socket to a fully caller-supplied URL, unauthenticated on the Config API ports (per H-1). Impact is bounded: it only performs a TLS **handshake** and reads peer-cert metadata (no HTTP body), so it enables internal TLS port-scanning (liveness oracle) and leakage of internal services' cert identities/hostnames — **not** HTTP-body exfil or HTTP cloud-metadata (IMDS) theft.
+- **Fix:** Require `https`, resolve and reject RFC1918/loopback/link-local/ULA targets (re-check post-DNS for rebinding), and gate the endpoint behind admin auth on every port.
+
+### L-5. Container runs as root (no `USER` directive)
+- **OWASP:** A05:2021 Security Misconfiguration · demo-server · `demo-server/Dockerfile:30`
+- The runtime stage has no `USER`, so the JVM (which writes the signing key/keystores under `/data`) runs as uid 0. A blast-radius amplifier — only matters after a separate RCE/file-write/escape primitive.
+- **Fix:** `RUN addgroup -S app && adduser -S app -G app && chown -R app:app /data /app` then `USER app` before `ENTRYPOINT`.
+
+### L-6. Server keystore/truststore password hardcoded to `"changeit"` (documented TODO)
+- **OWASP:** A02:2021 Cryptographic Failures · demo-server · `service/CertificateService.kt:413`
+- The already-documented, accepted sample TODO (CLAUDE.md). Reported for completeness; same constant also wraps the per-device P12 bundles. Not remotely injectable.
+- **Fix:** Move to an env var with no insecure default; unique random per-P12 password delivered out-of-band.
+
+### L-7. Vault file metadata (`key`, `deviceId`) rendered to `innerHTML` without escaping
+- **OWASP:** A03:2021 Injection (XSS / HTML Injection) · demo-server · `static/app.js:2660`
+- `f.key`/`${key}`/`tk.deviceId` interpolated unescaped (`app.js:2660, 2948, 2958`). The admin-authenticated `PUT` upload is the primary write path; the unauthenticated overlap is the report path (M-3). CSP blocks JS execution → HTML/CSS injection only.
+- **Fix:** Escape `f.key`/`key`/`tk.deviceId`/`d.vaultKey`/`f.vaultKey` at every interpolation and enforce `VAULT_KEY_REGEX` on the report endpoint's `key` field.
+
+### L-8. Unsigned-config path performs no freshness/expiry/replay-by-`issuedAt` enforcement
+- **OWASP:** M3 Insecure Communication · **pinvault-library** · `api/DefaultCertificateConfigApi.kt:69-94`
+- When an integrator opts out via `allowUnsigned()`, `fetchConfig`/`fetchScopedConfig` never call `enforceFreshness()`; `issuedAt`/`expiresAt` stay `0L`, so the updater's replay guard (`SSLCertificateUpdater.kt:192-198`, gated on `storedIssuedAt > 0L`) is permanently inert and there is no expiry window. A MITM in front of an unsigned endpoint can serve arbitrary/rolled-back pins. Gated behind the explicit, loudly-documented opt-out (builder requires `signaturePublicKey` **or** `allowUnsigned`), so it is the documented insecure-mode tradeoff, not a default.
+- **Fix:** Document in the `allowUnsigned()` KDoc/README that unsigned mode also disables replay/expiry/downgrade-by-`issuedAt` protection (tests/demos only). Optionally still apply `issuedAt`-monotonicity when the server populates it.
+
+### L-9. Bundled telemetry reporter sends device + pin metadata over unpinned cleartext HTTP by default
+- **OWASP:** M3 Insecure Communication · **pinvault-library** · `reporter/PinVaultBackendReporter.kt:172-192,238-242`
+- The opt-in `PinVaultBackendReporter` POSTs telemetry (device manufacturer/model, hostname, pin version, observed + expected pins) via an unpinned `OkHttpClient` to a caller-supplied URL whose documented example is cleartext `http://`. The "leaked" pins are public-key hashes already derivable from the TLS handshake, and device fields are coarse `Build` strings — so the confidentiality leak is minor. The real sub-point is monitoring-channel integrity: over `http://` an active attacker can drop `pin_mismatch` reports or inject fake "healthy" ones (errors swallowed), blinding a dashboard. **Does not weaken pinning** — `checkServerTrusted` still throws regardless.
+- **Fix:** Reject/warn on non-`https` `managementUrl`, document that `defaultClient()` is unpinned, recommend a pinned client, drop the full expected-pin set from telemetry, and update KDoc examples to `https://`.
+
+### L-10. Backup/data-extraction exclusion lists hardcoded to specific Config-API IDs and omit the file-domain vault store
+- **OWASP:** M8 Security Misconfiguration · **pinvault-library** · `res/xml/pinvault_data_extraction_rules.xml:12`
+- The allow-everything-then-exclude rules enumerate only `default-tls`/`secure-mtls`, so any other Config-API id (e.g. the demo's own `default` → `ssl_cert_config_default.xml`) is not excluded; the `vault_files/{key}.enc` file domain and `pinvault_vault_file_versions` prefs are also unexcluded. Practical impact is defense-in-depth only: Keystore-bound stores restore undecryptable cross-device (fail-safe empty pins), and same-device restore is blunted by the `issuedAt`/version anti-replay guard. Contradicts the documented M-07 anti-downgrade intent and the CLAUDE.md exclusion claim.
+- **Fix:** Prefer `disableAllContent` (opt in only what is safe), or add file-domain excludes for `vault_files` and `pinvault_vault_file_versions`; document the per-custom-id requirement and correct CLAUDE.md.
+
+### L-11. Demo app enables cleartext traffic and sends device telemetry over plaintext HTTP
+- **OWASP:** M3 Insecure Communication · **demo-app** · `demo-app/src/main/AndroidManifest.xml:9`
+- `android:usesCleartextTraffic="true"` with no network-security-config; `BaseDemoActivity.sendReport()` POSTs `deviceManufacturer`/`deviceModel` over `http://$HOST_IP:8090/...` via an unpinned client. On-path LAN attacker can read the fingerprint telemetry and tamper with responses. (Note: the finding's claim that `VaultSecurityDemoActivity` uses http endpoints is inaccurate — it uses `https://...:8091/`; the only cleartext path is the port-8090 report.) Exactly the posture the library exists to prevent, in a security demo.
+- **Fix:** Remove `usesCleartextTraffic="true"`; add a `network_security_config.xml` permitting cleartext only for the specific lab host, or run the demo endpoints over HTTPS.
+
+### L-12. Demo stores the vault-file access bearer token in plaintext SharedPreferences
+- **OWASP:** M9 Insecure Data Storage · **demo-app** · `VaultSecurityDemoActivity.kt:227`
+- The vault access token is written to a plain `MODE_PRIVATE` SharedPreferences (`vault_security_demo`), not `EncryptedSharedPreferences`. Recoverable on a rooted device or via a local-file-read primitive (the adb-backup vector is neutralized by `allowBackup="false"`); the value is plaintext and device-portable for replay against the demo-server's vault endpoints. The KDoc (lines 73-76) wrongly claims tokens come from `BuildConfig`.
+- **Fix:** Use `EncryptedSharedPreferences` (the dependency is already present) or keep the token only in memory; fix the stale KDoc.
+
+### I-1. `VaultEncryptionService` docstring claims MGF1-SHA256 but RSA-OAEP uses MGF1-SHA1 (informational)
+- **OWASP:** A02:2021 Cryptographic Failures · demo-server · `service/VaultEncryptionService.kt:25`
+- The doc says MGF1-SHA256; `rsaOaepEncrypt()` (lines 105-115) uses `MGF1ParameterSpec.SHA1`. **Not a weakness** — `OAEPWithSHA-256AndMGF1Padding`(MGF1-SHA1) is a standard variant, deliberately mirrored by the test helper and the library decryptor (`VaultFileDecryptor.kt:71-74`) for Android 11 interop. Documentation accuracy only; the risk is a future maintainer "fixing" the spec to MGF1-SHA256 and breaking decryption.
+- **Fix:** Correct the docstring to "RSA-OAEP with SHA-256 hash and MGF1-SHA1 (Android-JCA-compatible)" and add an inline note that MGF1-SHA1 is deliberate and must not be changed.
+
+---
+
+_Note: 11 candidate findings were refuted during independent verification and are excluded from this report._
+
+## Follow-up — 2026-09-17
+
+Second-pass review (library + server + app, git history inspected directly). Three new server findings were fixed in this pass; the remaining items are being triaged one by one.
+
+| Finding | Action |
+|---|---|
+| **N-1 — Command injection in `GET /api/v1/hosts/{hostname}/ping-remote`** (`route/HostRoutes.kt`): the raw path segment was interpolated into a `sh -c` pipeline — RCE for any API-key holder, and unauthenticated under `ALLOW_ANONYMOUS_ADMIN=true`. | **Fixed** — hostname validated against `PROBE_HOSTNAME_REGEX` (plain hostname / IPv4, no leading `-`), `openssl s_client` invoked as argv, SPKI pin computed in-process (`spkiPinFromSClientOutput`). Tests: `HostRoutesProbeTest`. |
+| **N-2 — `api_key` vault policy never enforced**: `GET /api/v1/vault/{key}` is allowlisted in `ApiKeyAuth`, and the handler's `api_key` branch was a no-op, so files marked admin-only were world-readable on the Config API ports. | **Fixed** — the handler checks `X-API-Key` itself (`ApiKeyPolicy`, constant-time) and fails closed (403) when no `API_KEY` is configured. Tests: `VaultRoutesAccessPolicyTest` scenario 6. |
+| **N-3 — Allowlist over-match**: prefix rules exposed `GET /api/v1/vault/distributions`, `/vault/stats` and `/certificate-config/history/{host}` without a key (device inventory + pin history). | **Fixed** — exact-path rule for `certificate-config`; download rule restricted to well-formed keys outside `RESERVED_VAULT_SEGMENTS`; reserved names rejected as file keys on upload. Tests: `ApiKeyAuthAllowlistTest`. |
+| **N-4 — ECDSA signing private key tracked in git** (`demo-server/signing-key.pem`, swept into commit `59a1fd2`, published on both remotes). No client in the repo embeds its public half, but every clone started from `demo-server/` silently signed with a publicly known key. | **Fixed** — removed from the index and from the working tree; `ConfigSigningService` regenerates a fresh key on next start. History not rewritten (lab key, nothing trusts it); rotate the running server by restarting it. |
+| **N-5 — Client certificate revocation not enforced until restart**: `DELETE /api/v1/client-certs/{id}` removed the cert from the truststore file, but running mTLS listeners keep the truststore loaded at start. A revoked device kept passing the mTLS handshake until the server restarted. Found by the end-to-end suite (SamplePinVaultE2E, scenario 12). | **Fixed** — revocation restarts the mTLS Config APIs and mock mTLS hosts with the updated truststore, as enrollment already did. Verified end to end: the revoked device is rejected on its next handshake. |
+| **N-6 — Dashboard could not revoke client certificates**: the "mTLS client certificates" tab referenced an undefined `data.httpsPort` while rendering, threw on every open and showed only the generic error. An operator could neither generate an enrollment token nor revoke a compromised device's certificate from the UI. Found by the end-to-end suite (scenario 12). | **Fixed** — the tab takes the port from the selected mTLS Config API. Revocation through the UI is exercised end to end by scenario 12. |
+
+## Follow-up — 2026-09-20
+
+Third-pass review (library + server + dashboard). Inventory pass over advertised-but-unwired features: every finding below is a defense that existed in code but never ran.
+
+| Finding | Action |
+|---|---|
+| **N-7 — `token_mtls` vault policy never enforced its mTLS half** (`route/VaultRoutes.kt`): `extractClientCertCn` read a `TLSPeerPrincipal` call attribute that nothing populated, so it always returned `null`. The policy failed closed (401 for everyone), which is safe but meant the strongest per-file control in the product was unusable — files needing token + certificate binding had to fall back to plain `token`, where a leaked token is sufficient on its own. The same dead helper also made `CertificateConfigRoute`'s certificate-based deviceId fallback for ACL scoping inert. | **Fixed** — new `route/ClientCertIdentity.kt` reads the verified peer certificate off the Netty channel's `SslHandler` (`peerCertificates` only returns a chain after a client-authenticated handshake, so an unverified certificate is never parsed). Match rule: strip the `PinVault Client: ` CN prefix and compare to `X-Device-Id`; fall back to `client_certs.device_uid` recorded at enrollment for token-enrolled certificates; reject revoked certificates. Tests: `VaultRoutesAccessPolicyTest` (5 new cases covering accept, wrong-device certificate, enrollment-bound match, revoked, token-still-required). Verified end to end with `curl --cert/--key` against the running mTLS Config API. |
+| **N-8 — Enrollment tokens stored and listed in plaintext** (`store/PinConfigStore.kt`): `enrollment_tokens.token` held the plaintext, and `GET /api/v1/enrollment-tokens` returned it verbatim. Read access to `pinvault.db` — or to that admin endpoint — yielded credentials that mint a client certificate, i.e. full mTLS identity for an attacker-chosen client id. Vault access tokens had used a hash-only model since V2; enrollment tokens, the higher-value secret, had not. | **Fixed** — only `SHA-256(plaintext)` is stored; validation hashes the presented value and looks it up; the plaintext is returned exactly once, by `POST /api/v1/enrollment-tokens/generate`. The listing shows an 8-character masked prefix with `masked: true`. Migration `V8__enrollment_token_hash` adds `token_prefix` and marks pre-migration plaintext rows used (they can no longer match a hash lookup). Dashboard shows the value once in a dialog, mirroring the vault-token flow. Tests: `EnrollmentTokenStoreTest` (8 cases, including "the stored hash cannot be replayed as a token"). |
+| **N-9 — `wantPinsFor(...)` pin scoping never left the device** (`ssl/SSLCertificateUpdater.kt`): the block stored the host list and `fetchScopedConfig` was implemented and server-side filtering was in place, but the updater always called the unscoped `fetchConfig`. No `?hosts=` and no `X-Device-Id` were ever sent, so every device received every pin the Config API held regardless of its ACL — the least-privilege model was documented and inert. | **Fixed** — a block that declares `wantPinsFor` fetches through `fetchScopedConfig(currentVersion, hosts, deviceId)`; the device id comes from the new internal `DeviceIdentity` helper, the same ANDROID_ID sent as `deviceUid` at enrollment, so the server ACL key matches. Tests: `ScopedConfigFetchTest` (3 cases asserting the wire request via MockWebServer). |
+| **N-10 — `unenroll` left the client private key live in the process** (`PinVault.kt`): the P12 was deleted from encrypted storage but the `KeyManager` built at enrollment stayed loaded in `DynamicSSLManager`, so an "unenrolled" device kept authenticating to mTLS hosts until the app process restarted. Revocation workflows that rely on the device removing its own credential were therefore unreliable. | **Fixed** — `DynamicSSLManager.clearClientKeystore()` drops the default and per-host key managers; `unenroll` calls it for every Config API block and re-publishes the config so the next request presents no certificate. Pinning is unaffected. Tests: `DynamicSSLManagerTest` (4 new cases). |
+| **N-11 — Management-port enrollment omitted the `X-P12-SHA256` integrity header** (`Main.kt`): the Config API copy of `POST /api/v1/client-certs/enroll` sent it, the management-port copy did not. Since H-05 the library refuses to install a P12 without the header, so the two copies disagreed: a client pointed at the management port could not enroll at all, and any integrator who "fixed" that by relaxing the client check would have lost transport-tamper detection. | **Fixed** — the header is computed and sent on both copies. |
+| **N-12 — Device-ACL manager called a route that did not exist** (`static/app.js`): the dashboard fetched `GET /api/v1/client-devices?configApiId=`, the request 404'd, the error was swallowed by a `.catch(() => null)`, and the "enrolled devices" table rendered empty. Per-device host ACLs — the enforcement half of N-9 — could not be assigned from the UI at all, leaving every device on the default ACL. | **Fixed** — the endpoint exists (X-API-Key protected) and lists devices keyed by the identifier the ACL uses, merging enrollment records with connection reports scoped to the Config API's hosts. Tests: `ClientDeviceStoreScopingTest` (7 cases, including cross-scope isolation and revoked-certificate exclusion). |
+| **N-13 — Swagger UI blocked by the server's own CSP** (`static/docs.html`): the page loaded swagger-ui from `unpkg.com` and ran an inline `<script>`, both refused by `script-src 'self'` (M-05), so `/docs` was blank. Operators had no rendered API reference, and the spec it would have rendered covered 15 of ~80 endpoints and named a query parameter the server does not read. | **Fixed** — swagger-ui 5.33.0 vendored under `static/vendor/`, init code moved to `static/docs.js`, CSP left strict. `static/openapi.yaml` rewritten against the routing source. |
+
+### Fourth pass — end-to-end run findings
+
+Found by driving the product end to end (SamplePinVaultE2E) rather than by reading code: each item below is behaviour that the suite recorded as a known deviation.
+
+| Finding | Action |
+|---|---|
+| **N-14 — Empty pin config accepted as "no change"** (`ssl/SSLCertificateUpdater.kt`): when both the fetched and the stored pin sets were empty, all three change-detect clauses were false, `updateNow` returned `AlreadyCurrent`, and the "config must contain at least one pin entry" validation never ran. `init` reported `Ready(v0)` and the app displayed itself as configured while no host was pinned at all — a server (or an on-path attacker able to answer for one) could put a fresh install into a permanently unpinned state that looks healthy. | **Fixed** — an empty `pins` list is always treated as a change, so it reaches validation and comes back as `Failed` / `InvalidPinFormatException`; a stored config is left intact. Tests: `SSLCertificateUpdaterTest` (3 cases: no stored config, stored config preserved, `initializeAndUpdate` does not report Ready). |
+| **N-15 — Expired server certificate driven into pin-mismatch recovery** (`ssl/DynamicSSLManager.kt`, `ssl/PinRecoveryInterceptor.kt`): the validity-window failure was raised as a plain `CertificateException`, indistinguishable from a pin mismatch. Every request to a host serving an expired (or not-yet-valid) certificate therefore refetched the pin config, retried, and fed the per-host recovery circuit breaker — a free, attacker-triggerable config-refresh amplifier, and the caller saw the retry's error instead of the real reason. | **Fixed** — new public `CertificateValidityException` (a `CertificateException` subclass) is thrown for the validity window and excluded from `isPinMismatch`, so it reaches the caller unchanged. A bare `CertificateException` cause still recovers. Tests: `PinRecoveryInterceptorTest` (2 cases). |
+| **N-16 — New client certificates not trusted until server restart** (`Main.kt`): `POST /api/v1/client-certs/generate` and `/upload` wrote the truststore file but left the running mTLS listeners on the truststore they started with. The mirror image of N-5 (revocation): an operator-issued certificate was refused with "certificate unknown", and the natural workaround — restarting the server — also re-applies any pending revocation, so the two states were only ever consistent at startup. | **Fixed** — both endpoints call the same `refreshMtlsTrust` helper enrollment and revocation now share; it restarts the mTLS Config APIs and mock mTLS hosts against the current truststore. Verified with `curl --cert/--key` against a freshly generated certificate without restarting the container. |
+| **N-17 — Dashboard host edits always wrote the default Config API scope** (`static/app.js`): `loadConfig()` read and `saveFullConfig()` wrote `/api/v1/certificate-config`, which resolves to `default-tls` on the management server regardless of the Config API the operator had open. Adding a host manually, editing pins or deleting a host from another scope silently rewrote the default scope's pin list — an operator believing they were editing an isolated scope could remove or replace the pins every device on the default Config API depends on. | **Fixed** — both paths use the selected scope (`GET /api/v1/config/{id}`, `PUT /api/v1/certificate-config?configApiId=`), the per-host force toggle follows, and the "+" button reloads the target scope before opening the form. The scope parameter was added to the admin-only `PUT` and per-host force endpoints only — never to the unauthenticated `GET`, where it would let a device on one Config API port read another scope's pins. Tests: `HostMtlsVersionBumpTest` (2 cases: named scope written, mounted scope untouched). |
+| **N-18 — `mtls` / `clientCertVersion` changes invisible to provisioned devices** (`route/HostRoutes.kt`): `toggle-mtls` and `upload-client-cert` changed the config without moving the host's pin version, and the client's change detection is version based. A rotated host client certificate therefore reached only devices with no stored config — the intended revoke-and-replace path for a compromised host credential silently did nothing on every device already in the field. | **Fixed** — both endpoints increment the host's `version`, record it in the pin history and return it. Tests: `HostMtlsVersionBumpTest` (5 cases). |
+| **N-19 — Expired enrollment tokens listed as pending** (`store/PinConfigStore.kt`, `static/app.js`): `GET /api/v1/enrollment-tokens` reported only `used`, so a token past `expires_at` — which `validate` refuses — showed as "Bekliyor". Informational rather than exploitable, but it invites an operator to hand out a credential that cannot work, or to assume an unused-looking token is still a live secret worth revoking. | **Fixed** — the listing carries `expiresAt` and a server-computed `expired` flag (absent/unparseable expiry is never "expired", matching `validate`), and the dashboard renders "Süresi doldu" / "Expired". Tests: `EnrollmentTokenStoreTest` (4 cases). |
+
+### Fifth pass — end-to-end run findings (2026-09-20)
+
+Same method as the fourth pass: each row is behaviour the end-to-end suite
+(SamplePinVaultE2E) recorded as a deviation while driving the product, not
+something read out of the source.
+
+| Finding | Action |
+|---|---|
+| **N-20 — Post-update health gate never rolled anything back** (`ssl/SSLCertificateUpdater.kt`, scenario G08): `verifyPinnedConnection` cleared the config store and reset the client only in its exception branch, and `DefaultCertificateConfigApi.healthCheck()` catches everything and returns `false` — so with the shipped API the documented "on failure clears the config store and resets the client" never ran. Proven on the wire by passing the pin config through untouched and answering `/health` with 500: init reported failure while the new config stayed in the encrypted store, and the **next** cold start reported "Ready" on it, because the second round returns `AlreadyCurrent` and never reaches the gate. A config that leaves a device unable to reach its Config API therefore survived on disk and came into force silently. | **Fixed** — unhealthy and threw are now one outcome. The config that was in force before the update is restored to the store **and** to the live client (rewinding the persisted `issuedAt` so the replay guard accepts the server's config again); with nothing to fall back to the store is cleared and the client returns to fail-closed. The gate still runs only after a config was actually applied, so offline start-up on a stored config is untouched. KDoc now also states what the check proves (Config API liveness over the bootstrap client), instead of implying it re-verifies the new pins. Tests: `SSLCertificateUpdaterTest` (4 cases). |
+| **N-21 — Clearing `forceUpdate` never reached the device** (`ssl/SSLCertificateUpdater.kt`, scenario D04): change detection counted a raised force flag as a change but not a cleared one, so a config differing only by `forceUpdate: true → false` was dropped as `AlreadyCurrent` and the stored copy kept the flag set. `initializeAndUpdate` reads that stored flag on every cold start and fails with `ForceUpdateFailedException` when the backend is unreachable (scenario F01), so a device stayed unable to start offline after the operator had switched force off — until an unrelated pin version happened to bump. An availability failure an operator could not undo, and one an attacker who can block the backend can hold open. | **Fixed** — a cleared flag is written back to disk (on the already validated stored config, never an unvalidated remote payload) while the result stays `AlreadyCurrent`, since nothing about the pins changed. `CertificateConfigStore` now persists the per-host flag too — a trailing field, with three-field entries from earlier versions loading as `false` — so the per-host half of the comparison is real. Tests: `SSLCertificateUpdaterTest` (5 cases), `CertificateConfigStoreTest` (2 cases). |
+| **N-22 — "Vault enabled" was a switch wired to nothing** (`route/VaultRoutes.kt`, `Main.kt`, scenario C09): `config_apis.vault_enabled` was written and read by two admin endpoints and consulted by no serving path, so an operator who spotted a file distributed by mistake had no way to stop distribution short of deleting it. Worse on the scope that matters: `default-tls` is mounted directly by `Main.kt` and never had a `config_apis` row, so the toggle answered 404 there and could not even be stored — while the dashboard left the checkbox in the "off" position it had been clicked into, reporting a closed vault that was still serving. | **Fixed** — the vault download reads the flag per request and answers 403 for every key, present or absent (so a disabled vault does not disclose which keys it holds); admin routes stay reachable so the operator can inspect and delete afterwards. `ConfigApiRegistry.ensureRegistered` gives every served scope a row at boot and preserves an existing `vault_enabled`, and `POST /api/v1/config-apis/start` no longer resets the flag via `INSERT OR REPLACE`. The dashboard checkbox reverts on a failed write and the toast carries the status code. The flag remains an operator kill switch, not an authentication boundary — per-file `access_policy` still guards content. Tests: `VaultEnabledSwitchTest` (9 cases). |
+| **N-23 — Backup rules silently miss custom Config API ids** (`res/xml/pinvault_*_rules.xml`, scenario D05): the M-07 exclusions name each stored pin-config file literally, because Android's `<exclude>` takes no wildcards, and named only `default-tls` and `secure-mtls`. An app using its own `configApiId` had `shared_prefs/ssl_cert_config_<id>.xml` swept into cloud backup and device transfer, so restoring an older backup reinstates an older pin set — exactly the downgrade path the exclusions exist to close. The library's own default id (`default`) was missing as well. | **Documented + warned.** The rules stay per-id (collapsing every scope into one preferences file needs a store migration, and the per-scope namespacing is what keeps two Config APIs' pins from colliding), with `default` added and a prominent warning in both files. `PinVaultConfig.Builder.build()` logs one warning per uncovered id naming the exact `<exclude>` line to add, and `configApi(...)`'s KDoc carries the same instruction: set `allowBackup="false"` or add your own exclude. The sample app is unaffected — it already sets `allowBackup="false"`. |
+| **N-24 — `VaultFileAccessPolicy.API_KEY` unusable from a device, with no signal** (`model/VaultFileConfig.kt`, scenario C02): the library correctly never sends the server's admin key from a device — embedding it in an APK would publish it — but the policy is a freely selectable value in the public API, so a file declared with it silently failed with 401 on every fetch, visible only as `failed` rows in the server's distribution history. | **Documented + warned.** `build()` logs one warning per such file, the enum's KDoc states it is server-side tooling only, and the dashboard's upload form carries the same note beside the `api_key` option. No behaviour change: the admin key still never leaves the server. |
+| **N-25 — Blank vault token sent as an empty header** (`internal/VaultFileRouter.kt`, scenario C08): an `accessToken { … }` provider returning `""` — the normal state before a token is issued — produced `X-Vault-Token: `, and the server answered "Invalid or revoked token". Both cases are 401, but the recorded failure reason sent operators looking for a revoked token that had never been issued. | **Fixed** — blank and whitespace-only tokens omit the header, so the server reports "X-Vault-Token header required". Tests: `VaultFileTokenHeaderTest` (3 cases). |
+| **N-26 — A failed enrollment consumes its token** (`Main.kt`, `route/CertificateConfigRoute.kt`): `POST /api/v1/client-certs/enroll` generates the certificate and marks the token used before the response reaches the device. A device that then rejects the P12 — a missing `X-P12-SHA256` header, a truncated body — has burned the token and needs a new one from the operator. | **Documented.** Fixing it properly needs a second round trip (a device-confirmed install endpoint) plus expiry for never-confirmed certificates, which is a protocol change on both sides. Noted in `SERVER_IMPLEMENTATION_GUIDE.md` so integrators designing their own enrollment flow do not copy the single-shot shape. |
