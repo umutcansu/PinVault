@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Düz HTTP her yerde kapalı. Tek istisna: bağlantı telemetrisinin gittiği sample
+  host yönetim portu (PinVaultBackendReporter → http://<host>:6650). Bu kanal
+  pinlenmez; LAN'daki biri okuyabilir ya da sahte kayıt gönderebilir, pinlemeyi
+  ise etkileyemez. Üretimde telemetriyi https + pinli bir OkHttpClient ile gönder.
+
+  Pinlenmiş config trafiği (https://<host>:6651) bu dosyadan etkilenmez; güveni
+  PinVault'un pin doğrulayan TrustManager'ı verir.
+
+  Host IP değişirse: SamplePinVaultHost/scripts/client-config.sh
+-->
+<network-security-config>
+    <base-config cleartextTrafficPermitted="false" />
+    <domain-config cleartextTrafficPermitted="true">
+        <domain includeSubdomains="false">192.168.1.80</domain>
+    </domain-config>
+</network-security-config>
