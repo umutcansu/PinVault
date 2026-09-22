@@ -161,10 +161,18 @@ fun Route.certificateConfigRoutes(
             // are absent OR when no ACL store is wired — returns full config.
             val requested = call.request.queryParameters["hosts"]
                 ?.split(",")?.map { it.trim() }?.filter { it.isNotEmpty() }
-            val deviceId = call.request.header("X-Device-Id")
-                ?: extractCertCn(call)
+            val headerDeviceId = call.request.header("X-Device-Id")
 
-            val filtered = if (deviceHostAclStore != null && (requested != null || deviceId != null)) {
+            // The mTLS client certificate identifies the device when no header
+            // is sent. It is deliberately NOT part of the gate below: a cert
+            // alone must not switch filtering on for clients that send neither
+            // `?hosts=` nor `X-Device-Id`, or every existing mTLS device would
+            // suddenly be cut down to the (usually empty) default ACL. It only
+            // sharpens the identity once scoping was already requested, where
+            // a per-device ACL can add grants on top of the default.
+            val deviceId = headerDeviceId ?: extractCertCn(call)
+
+            val filtered = if (deviceHostAclStore != null && (requested != null || headerDeviceId != null)) {
                 val decision = deviceHostAclStore.resolve(configApiId, deviceId ?: "anonymous", requested)
                 if (decision.hasUnauthorized) {
                     aclLog.warn("Unauthorized host request: configApi={} deviceId={} denied={}",
@@ -180,6 +188,12 @@ fun Route.certificateConfigRoutes(
             } else {
                 config
             }
+                // The library's "force update or refuse to start" gate reads the
+                // config-level flag, while the dashboard only ever sets per-host
+                // flags. Without this the admin-visible switch never reached that
+                // gate, so a device with a stale forced config kept starting up
+                // happily while the backend was unreachable.
+                .let { it.copy(forceUpdate = it.hasAnyForceUpdate()) }
 
             val signed = call.request.queryParameters["signed"] != "false"
             if (signed) {
@@ -201,9 +215,23 @@ fun Route.certificateConfigRoutes(
             }
         }
 
+        // `?configApiId=` selects the scope to write, exactly as the global
+        // force-update/clear-force endpoints below already allow. The
+        // management server mounts these routes under the fixed "default-tls"
+        // scope, so without it the admin UI could only ever write to
+        // default-tls while appearing to edit whichever Config API the
+        // operator had open.
+        //
+        // Deliberately NOT mirrored on the GET above: that one is in the
+        // unauthenticated client allowlist (`ApiKeyAuth.isPublicEndpoint`), so
+        // a scope parameter there would let any device on one Config API port
+        // read another scope's pins. PUT is admin-only (X-API-Key required on
+        // both the management and the Config API ports), and an admin can
+        // already write any scope via POST /api/v1/config/{id}/update.
         put {
+            val scope = call.request.queryParameters["configApiId"] ?: configApiId
             val incoming = call.receive<PinConfig>()
-            val current = store.load(configApiId)
+            val current = store.load(scope)
 
             // Aynı hostname birden fazla kez eklenemez
             val duplicates = incoming.pins.groupBy { it.hostname }.filter { it.value.size > 1 }.keys
@@ -238,12 +266,14 @@ fun Route.certificateConfigRoutes(
             val removed = oldHostnames - newHostnames
             val kept = newHostnames.intersect(oldHostnames)
 
-            store.save(configApiId, updated)
+            // Re-added hosts continue their version sequence (see PinConfigStore.save);
+            // history and the response must report the stored versions.
+            val saved = store.save(scope, updated)
             val now = Instant.now().toString()
 
             added.forEach { hostname ->
-                val pin = updated.pins.first { it.hostname == hostname }
-                historyStore.add(configApiId, PinConfigHistoryEntry(
+                val pin = saved.pins.first { it.hostname == hostname }
+                historyStore.add(scope, PinConfigHistoryEntry(
                     hostname = hostname, version = pin.version, timestamp = now,
                     event = "host_added", pinPrefix = pin.sha256.firstOrNull()?.take(12) ?: ""
                 ))
@@ -251,7 +281,7 @@ fun Route.certificateConfigRoutes(
 
             removed.forEach { hostname ->
                 val oldPin = currentPinMap[hostname]
-                historyStore.add(configApiId, PinConfigHistoryEntry(
+                historyStore.add(scope, PinConfigHistoryEntry(
                     hostname = hostname, version = oldPin?.version ?: 0, timestamp = now,
                     event = "host_removed", pinPrefix = ""
                 ))
@@ -259,16 +289,16 @@ fun Route.certificateConfigRoutes(
 
             kept.forEach { hostname ->
                 val oldPin = current.pins.first { it.hostname == hostname }
-                val newPin = updated.pins.first { it.hostname == hostname }
+                val newPin = saved.pins.first { it.hostname == hostname }
                 if (oldPin.sha256 != newPin.sha256) {
-                    historyStore.add(configApiId, PinConfigHistoryEntry(
+                    historyStore.add(scope, PinConfigHistoryEntry(
                         hostname = hostname, version = newPin.version, timestamp = now,
                         event = "pins_updated", pinPrefix = newPin.sha256.firstOrNull()?.take(12) ?: ""
                     ))
                 }
             }
 
-            call.respond(HttpStatusCode.OK, updated)
+            call.respond(HttpStatusCode.OK, saved)
         }
 
         // Host bazlı geçmiş
@@ -277,17 +307,20 @@ fun Route.certificateConfigRoutes(
             call.respond(historyStore.getByHostname(hostname))
         }
 
-        // Per-host force update
+        // Per-host force update. `?configApiId=` as on the PUT and the global
+        // variants below — the admin UI drives these from a host detail page
+        // that may belong to any Config API scope.
         post("force-update/{hostname}") {
+            val scope = call.request.queryParameters["configApiId"] ?: configApiId
             val hostname = call.parameters["hostname"] ?: ""
-            val current = store.load(configApiId)
+            val current = store.load(scope)
             val updated = current.copy(
                 pins = current.pins.map { if (it.hostname == hostname) it.copy(forceUpdate = true) else it }
             )
-            store.save(configApiId, updated)
+            store.save(scope, updated)
             val pin = updated.pins.find { it.hostname == hostname }
             if (pin != null) {
-                historyStore.add(configApiId, PinConfigHistoryEntry(
+                historyStore.add(scope, PinConfigHistoryEntry(
                     hostname = hostname, version = pin.version, timestamp = Instant.now().toString(),
                     event = "force_update", pinPrefix = pin.sha256.firstOrNull()?.take(12) ?: ""
                 ))
@@ -296,24 +329,33 @@ fun Route.certificateConfigRoutes(
         }
 
         post("clear-force/{hostname}") {
+            val scope = call.request.queryParameters["configApiId"] ?: configApiId
             val hostname = call.parameters["hostname"] ?: ""
-            val current = store.load(configApiId)
+            val current = store.load(scope)
             val updated = current.copy(
                 pins = current.pins.map { if (it.hostname == hostname) it.copy(forceUpdate = false) else it }
             )
-            store.save(configApiId, updated)
+            store.save(scope, updated)
             call.respond(HttpStatusCode.OK, updated)
         }
 
-        // Global force (backward compat)
+        // Global force — sets/clears the flag on every pin of a scope at once.
+        //
+        // `?configApiId=` lets the management server (which mounts these routes
+        // under the fixed "default-tls" scope) drive any Config API, the same
+        // way /api/v1/config/{configApiId}/update does. Without it the admin UI
+        // could only ever force-update default-tls while appearing to act on
+        // the Config API the operator had open. Admin-only: these paths are not
+        // in the ApiKeyAuth allowlist, so X-API-Key is required.
         post("force-update") {
-            val current = store.load(configApiId)
+            val scope = call.request.queryParameters["configApiId"] ?: configApiId
+            val current = store.load(scope)
             val updated = current.copy(
                 pins = current.pins.map { it.copy(forceUpdate = true) }
             )
-            store.save(configApiId, updated)
+            store.save(scope, updated)
             current.pins.forEach { pin ->
-                historyStore.add(configApiId, PinConfigHistoryEntry(
+                historyStore.add(scope, PinConfigHistoryEntry(
                     hostname = pin.hostname, version = pin.version, timestamp = Instant.now().toString(),
                     event = "force_update", pinPrefix = pin.sha256.firstOrNull()?.take(12) ?: ""
                 ))
@@ -322,12 +364,13 @@ fun Route.certificateConfigRoutes(
         }
 
         post("clear-force") {
-            val current = store.load(configApiId)
+            val scope = call.request.queryParameters["configApiId"] ?: configApiId
+            val current = store.load(scope)
             val updated = current.copy(
                 forceUpdate = false,
                 pins = current.pins.map { it.copy(forceUpdate = false) }
             )
-            store.save(configApiId, updated)
+            store.save(scope, updated)
             call.respond(HttpStatusCode.OK, updated)
         }
     }
@@ -484,10 +527,10 @@ private fun validatePinConfig(config: PinConfig): List<String> {
  * Extract CN from the mTLS client cert's SubjectDN, if one is present on the
  * call. Used for deriving deviceId when X-Device-Id header is not sent.
  */
-private fun extractCertCn(call: io.ktor.server.application.ApplicationCall): String? {
-    val principal = try {
-        val attrKey = io.ktor.util.AttributeKey<javax.security.auth.x500.X500Principal>("TLSPeerPrincipal")
-        call.attributes.getOrNull(attrKey)
-    } catch (_: Exception) { null } ?: return null
-    return Regex("CN=([^,]+)").find(principal.name)?.groupValues?.getOrNull(1)?.trim()
-}
+private fun extractCertCn(call: io.ktor.server.application.ApplicationCall): String? =
+    // Shared with the vault routes — see ClientCertIdentity.kt. Returns the
+    // client id (CN minus the "PinVault Client: " prefix), which under
+    // auto-enrollment IS the device's ANDROID_ID and therefore the key the
+    // per-device host ACL is stored under. Devices that send X-Device-Id
+    // explicitly never reach this fallback.
+    call.clientCertId()

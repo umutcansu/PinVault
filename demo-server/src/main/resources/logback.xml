@@ -4,6 +4,10 @@
             <pattern>%d{HH:mm:ss.SSS} [%thread] %-5level %logger{36} - %msg%n</pattern>
         </encoder>
     </appender>
+    <!-- Diagnosing "mTLS client certificate required" on a token_mtls file:
+         set LOG_LEVEL_CLIENT_CERT=DEBUG to see why the peer certificate could
+         not be read (no Netty call, no SslHandler, unverified session). -->
+    <logger name="ClientCertIdentity" level="${LOG_LEVEL_CLIENT_CERT:-INFO}" />
     <root level="INFO">
         <appender-ref ref="STDOUT" />
     </root>

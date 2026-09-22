@@ -1,5 +1,6 @@
 package com.example.pinvault.server.route
 
+import com.example.pinvault.server.store.ConfigApiRegistry
 import com.example.pinvault.server.store.DatabaseManager
 import com.example.pinvault.server.store.DeviceHostAclStore
 import io.ktor.http.*
@@ -24,7 +25,8 @@ import java.time.Instant
  */
 fun Route.adminVaultRoutes(
     db: DatabaseManager,
-    deviceHostAclStore: DeviceHostAclStore
+    deviceHostAclStore: DeviceHostAclStore,
+    configApiRegistry: ConfigApiRegistry = ConfigApiRegistry(db)
 ) {
 
     // ── Config API: vault_enabled toggle ────────────────────────────
@@ -32,6 +34,15 @@ fun Route.adminVaultRoutes(
     /**
      * Enable or disable the vault subsystem on a given Config API.
      * Body: {"enabled": true | false}
+     *
+     * The flag now actually stops distribution: the scope's vault download
+     * route reads it per request and answers 403 while it is off. Admin
+     * routes (upload / list / delete / tokens) stay reachable so the operator
+     * can clean up after flipping the switch.
+     *
+     * 404 for a Config API with no `config_apis` row. Every scope the server
+     * serves gets one at boot (Main.kt → ConfigApiRegistry.ensureRegistered),
+     * including the default one it mounts directly.
      */
     put("/api/v1/config-apis/{id}/vault-enabled") {
         val id = call.parameters["id"]
@@ -41,16 +52,9 @@ fun Route.adminVaultRoutes(
             ?: return@put call.respond(HttpStatusCode.BadRequest,
                 mapOf("error" to "'enabled' boolean required"))
 
-        db.connection().use { conn ->
-            conn.prepareStatement("UPDATE config_apis SET vault_enabled = ? WHERE id = ?").use { stmt ->
-                stmt.setInt(1, if (enabled) 1 else 0)
-                stmt.setString(2, id)
-                val affected = stmt.executeUpdate()
-                if (affected == 0) {
-                    return@put call.respond(HttpStatusCode.NotFound,
-                        mapOf("error" to "Config API '$id' not found"))
-                }
-            }
+        if (!configApiRegistry.setVaultEnabled(id, enabled)) {
+            return@put call.respond(HttpStatusCode.NotFound,
+                mapOf("error" to "Config API '$id' not found"))
         }
         call.respond(HttpStatusCode.OK, mapOf("id" to id, "vault_enabled" to enabled.toString()))
     }
@@ -58,18 +62,10 @@ fun Route.adminVaultRoutes(
     get("/api/v1/config-apis/{id}/vault-enabled") {
         val id = call.parameters["id"]
             ?: return@get call.respond(HttpStatusCode.BadRequest, mapOf("error" to "Missing id"))
-        db.connection().use { conn ->
-            conn.prepareStatement("SELECT vault_enabled FROM config_apis WHERE id = ?").use { stmt ->
-                stmt.setString(1, id)
-                val rs = stmt.executeQuery()
-                if (!rs.next()) {
-                    return@get call.respond(HttpStatusCode.NotFound,
-                        mapOf("error" to "Config API '$id' not found"))
-                }
-                val enabled = rs.getInt("vault_enabled") == 1
-                call.respond(mapOf("id" to id, "vault_enabled" to enabled.toString()))
-            }
-        }
+        val enabled = configApiRegistry.vaultEnabledOrNull(id)
+            ?: return@get call.respond(HttpStatusCode.NotFound,
+                mapOf("error" to "Config API '$id' not found"))
+        call.respond(mapOf("id" to id, "vault_enabled" to enabled.toString()))
     }
 
     // ── Per-device host ACL ─────────────────────────────────────────

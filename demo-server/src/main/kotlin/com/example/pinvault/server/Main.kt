@@ -97,6 +97,7 @@ fun main() {
     val devicePublicKeyStore = com.example.pinvault.server.store.DevicePublicKeyStore(db)
     val deviceHostAclStore = com.example.pinvault.server.store.DeviceHostAclStore(db)
     val vaultTokenService = com.example.pinvault.server.service.VaultAccessTokenService(vaultTokenStore)
+    val configApiRegistry = com.example.pinvault.server.store.ConfigApiRegistry(db)
     val vaultEncryptionService = com.example.pinvault.server.service.VaultEncryptionService()
 
     // Shutdown hook
@@ -115,28 +116,72 @@ fun main() {
     // Initial check on startup
     certExpiryMonitor.logWarnings()
 
+    // Restarts every running mTLS listener against the current truststore file.
+    //
+    // A listener reads the truststore once, at start: adding a certificate to
+    // the file afterwards does not make the running listener trust it, and
+    // removing one does not make it stop. Enrollment and revocation already did
+    // this; `POST /api/v1/client-certs/generate` and `/upload` wrote the file
+    // and stopped there, so a client connecting with a certificate the operator
+    // had just downloaded was rejected with "certificate unknown" until someone
+    // restarted the server. All four paths now go through here.
+    //
+    // `restartMocks = false` is for callers that already restarted the mock
+    // mTLS hosts themselves (the enrollment route does).
+    //
+    // Declared as a captured `var` and assigned right after `configApiModuleFor`
+    // below: the helper needs that function, and the enrollment callback inside
+    // that function needs the helper. Kotlin local functions cannot
+    // forward-reference, so the two are tied together through this holder.
+    var refreshMtlsTrust: (reason: String, restartMocks: Boolean) -> Unit = { _, _ -> }
+
     // Config API routing modülü — her API kendi configApiId ve mode'uyla scoped
     fun configApiModuleFor(configApiId: String, mode: String = "tls"): Application.() -> Unit = {
         routing {
             certificateConfigRoutes(configApiId, pinConfigStore, historyStore, connectionStore, signingService, clientDeviceStore, certService, enrollmentTokenStore, clientCertStore, mockServerManager, hostClientCertStore, onClientCertEnrolled = {
-                // Enrollment sonrası mTLS Config API'leri restart et (yeni truststore ile)
-                configApiManager.getAll().filter { it.mode == "mtls" }.forEach { api ->
-                    println("Restarting mTLS Config API: ${api.id} (new truststore)")
-                    configApiManager.start(api.id, api.port, api.mode, api.keystorePath, certService.getTrustStoreFile()?.absolutePath, configApiModuleFor(api.id, api.mode))
-                }
+                // Enrollment sonrası mTLS Config API'leri restart et (yeni truststore ile).
+                // Mock mTLS sunucularını enrollment route'u kendisi yeniden
+                // başlattığı için burada tekrar edilmiyor.
+                refreshMtlsTrust("new truststore", false)
             }, enrollmentMode = enrollmentMode, configApiMode = mode,
                 deviceHostAclStore = deviceHostAclStore)
             hostRoutes(configApiId, pinConfigStore, hostStore, historyStore, certService, mockServerManager, hostClientCertStore)
             vaultRoutes(configApiId, vaultFileStore, vaultDistStore, vaultTokenStore,
-                devicePublicKeyStore, vaultTokenService, vaultEncryptionService, signingService)
+                devicePublicKeyStore, vaultTokenService, vaultEncryptionService, signingService,
+                // token_mtls: binds the presented client cert to X-Device-Id.
+                clientCertStore = clientCertStore,
+                // Dashboard's "vault enabled" switch. Read per request so the
+                // toggle takes effect without restarting this listener.
+                vaultEnabledProvider = { configApiRegistry.isVaultEnabled(configApiId) })
             get("/health") {
                 call.respond(mapOf("status" to "ok"))
             }
         }
     }
 
+    // See the declaration above for why this is assigned here rather than
+    // declared as a local function.
+    refreshMtlsTrust = { reason, restartMocks ->
+        configApiManager.getAll().filter { it.mode == "mtls" }.forEach { api ->
+            println("Restarting mTLS Config API: ${api.id} ($reason)")
+            configApiManager.start(
+                api.id, api.port, api.mode, api.keystorePath,
+                certService.getTrustStoreFile()?.absolutePath,
+                configApiModuleFor(api.id, api.mode)
+            )
+        }
+        if (restartMocks) mockServerManager.restartMtlsServers(certService)
+    }
+
     // Varsayılan TLS config API başlat
     pinConfigStore.ensureConfigExists("default-tls")
+    // The default listener is mounted directly here rather than through
+    // POST /api/v1/config-apis/start, so nothing ever created its config_apis
+    // row. Without one, per-scope settings keyed on that table — today the
+    // vault_enabled switch — had nothing to update and answered 404 on the
+    // very scope the sample app uses (E2E C09). Registering it here keeps the
+    // registry complete; an existing row's vault_enabled is preserved.
+    configApiRegistry.ensureRegistered("default-tls", httpsPort, "tls")
     configApiManager.start(
         id = "default-tls",
         port = httpsPort,
@@ -230,7 +275,7 @@ fun main() {
             // /api/v1/config-apis/{configApiId}/vault/...  — no more global
             // "default-tls"-fixed vault mount on the management server.
             scopedVaultAdminRoutes(vaultFileStore, vaultDistStore, vaultTokenStore, vaultTokenService)
-            adminVaultRoutes(db, deviceHostAclStore)
+            adminVaultRoutes(db, deviceHostAclStore, configApiRegistry)
 
             // Tüm API'lerin config'lerini döner (Web UI sidebar için)
             get("/api/v1/all-configs") {
@@ -285,12 +330,12 @@ fun main() {
 
                 val newPin = HostPin(hostname, result.sha256Pins, version = 1)
                 val updated = config.copy(pins = config.pins + newPin)
-                pinConfigStore.save(configApiId, updated)
+                val savedPin = pinConfigStore.save(configApiId, updated).pins.first { it.hostname == newPin.hostname }
                 pinConfigStore.ensureConfigExists(configApiId)
 
-                historyStore.add(configApiId, PinConfigHistoryEntry(hostname, newPin.version, java.time.Instant.now().toString(), "cert_generated", result.sha256Pins.firstOrNull()?.take(12) ?: ""))
+                historyStore.add(configApiId, PinConfigHistoryEntry(hostname, savedPin.version, java.time.Instant.now().toString(), "cert_generated", result.sha256Pins.firstOrNull()?.take(12) ?: ""))
 
-                call.respond(HostActionResponse(hostname, result.sha256Pins, result.validUntil, newPin.version))
+                call.respond(HostActionResponse(hostname, result.sha256Pins, result.validUntil, savedPin.version))
             }
 
             get("/health") {
@@ -314,10 +359,12 @@ fun main() {
             }
 
             post("/api/v1/signing-key/regenerate") {
-                signingKeyFile.delete()
-                signingService = ConfigSigningService(signingKeyFile)
+                // Rotates in place: the routes captured this service instance at
+                // startup, so replacing the variable here would have left every
+                // listener signing with the old key until the next restart.
+                val publicKey = signingService.regenerate()
                 call.respondText(
-                    """{"publicKey":"${signingService.publicKeyBase64}","regenerated":true}""",
+                    """{"publicKey":"$publicKey","regenerated":true,"clientUpdateRequired":true}""",
                     ContentType.Application.Json
                 )
             }
@@ -422,12 +469,12 @@ fun main() {
                 try {
                     pinConfigStore.ensureConfigExists(id)
                     val instance = configApiManager.start(id, port, mode, serverKeystorePath.absolutePath, trustPath, configApiModuleFor(id, mode))
-                    // DB'ye kaydet (auto_start)
-                    db.connection().use { conn ->
-                        conn.prepareStatement("INSERT OR REPLACE INTO config_apis (id, port, mode, auto_start, created_at) VALUES (?, ?, ?, 1, datetime('now'))").use { s ->
-                            s.setString(1, id); s.setInt(2, port); s.setString(3, mode); s.executeUpdate()
-                        }
-                    }
+                    // DB'ye kaydet (auto_start). INSERT OR REPLACE yerine
+                    // ensureRegistered: REPLACE satırı silip yeniden yazdığı
+                    // için vault_enabled sütunu varsayılanına (1) dönüyordu —
+                    // yani operatörün kapattığı vault, API her yeniden
+                    // başlatıldığında sessizce geri açılıyordu.
+                    configApiRegistry.ensureRegistered(id, port, mode)
                     call.respondText(
                         """{"id":"${instance.id}","port":${instance.port},"mode":"${instance.mode}","running":true}""",
                         ContentType.Application.Json
@@ -498,6 +545,12 @@ fun main() {
                 val result = certService.generateClientCertificate(clientId)
                 clientCertStore.add(clientId, result.commonName, result.fingerprint, java.time.Instant.now().toString())
 
+                // The certificate is in the truststore file now, but the running
+                // mTLS listeners still hold the one they started with — without
+                // this the operator downloads a P12 the server will answer
+                // "certificate unknown" to.
+                refreshMtlsTrust("client cert generated: $clientId", true)
+
                 call.response.header("Content-Disposition", "attachment; filename=\"$clientId.p12\"")
                 call.respondBytes(result.p12Bytes, io.ktor.http.ContentType.Application.OctetStream)
             }
@@ -523,6 +576,9 @@ fun main() {
                 try {
                     val fingerprint = certService.importClientCertificate(id, bytes)
                     clientCertStore.add(id, "Uploaded: $id", fingerprint, java.time.Instant.now().toString())
+                    // Same reason as /generate: the truststore file changed, the
+                    // running listeners have not.
+                    refreshMtlsTrust("client cert uploaded: $id", true)
                     call.respondText("""{"id":"$id","fingerprint":"$fingerprint","uploaded":true}""", ContentType.Application.Json)
                 } catch (e: Exception) {
                     call.respondText("""{"error":"Import hatası: ${e.message}"}""", ContentType.Application.Json, HttpStatusCode.BadRequest)
@@ -533,6 +589,11 @@ fun main() {
                 val id = call.parameters["id"] ?: ""
                 clientCertStore.revoke(id)
                 certService.removeFromTrustStore(id)
+                // The running mTLS listeners hold the truststore they were
+                // started with; without a restart a revoked certificate keeps
+                // working until the next server restart. Enrollment already
+                // restarts them for the opposite reason (new cert trusted).
+                refreshMtlsTrust("certificate revoked: $id", true)
                 call.respondText("""{"id":"$id","revoked":true}""", ContentType.Application.Json)
             }
 
@@ -570,8 +631,30 @@ fun main() {
                 clientCertStore.add(clientId, result.commonName, result.fingerprint, java.time.Instant.now().toString())
                 enrollmentTokenStore.markUsed(token)
 
+                // Integrity header (H-05). The library refuses to install a P12
+                // that arrives without X-P12-SHA256, so this management-port
+                // copy of the enrollment endpoint must send it just like the
+                // Config API copy in CertificateConfigRoute does — otherwise a
+                // client pointed at :8090 fails enrollment outright.
+                val p12Hash = java.security.MessageDigest.getInstance("SHA-256")
+                    .digest(result.p12Bytes)
+                    .let { java.util.Base64.getEncoder().encodeToString(it) }
+                call.response.header("X-P12-SHA256", p12Hash)
                 call.response.header("Content-Disposition", "attachment; filename=\"$clientId.p12\"")
                 call.respondBytes(result.p12Bytes, io.ktor.http.ContentType.Application.OctetStream)
+            }
+
+            // Scope-based device list, keyed by the identifier the per-device
+            // host ACL uses (X-Device-Id / ANDROID_ID) rather than by hostname.
+            // The Device-ACL manager in the dashboard called this endpoint
+            // before it existed and silently rendered an empty table; the
+            // per-host list (/api/v1/hosts/{h}/clients) answers a different
+            // question and cannot fill it.
+            //
+            // Admin-only: X-API-Key required (not in the ApiKeyAuth allowlist).
+            get("/api/v1/client-devices") {
+                val configApiId = call.request.queryParameters["configApiId"] ?: "default-tls"
+                call.respond(clientDeviceStore.getByConfigApi(configApiId))
             }
 
             // API documentation
@@ -581,19 +664,28 @@ fun main() {
             get("/api/v1/cert-expiry") {
                 call.respond(certExpiryMonitor.checkAll())
             }
+            // Rich health. The response used to be built from nested
+            // `mapOf(...)` with mixed String / Int / Map values, which
+            // kotlinx.serialization cannot serialize without a declared
+            // serializer — the endpoint answered 500 with
+            // "Serializing collections of different element types is not yet
+            // supported" on every call. It was never exercised (the Docker
+            // probe hits the bare /health, and the dashboard did not use it),
+            // so the failure went unnoticed. Typed response below.
             get("/api/v1/health") {
+                val statuses = certExpiryMonitor.checkAll()
                 val certStatus = certExpiryMonitor.getOverallStatus()
-                call.respond(mapOf(
-                    "status" to certStatus,
-                    "database" to "connected",
-                    "configApis" to mapOf(
-                        "running" to configApiManager.getAll().size,
-                        "stopped" to configApiManager.getAllStopped().size
+                call.respond(ServerHealth(
+                    status = certStatus,
+                    database = "connected",
+                    configApis = ConfigApiHealth(
+                        running = configApiManager.getAll().size,
+                        stopped = configApiManager.getAllStopped().size
                     ),
-                    "certs" to mapOf(
-                        "status" to certStatus,
-                        "nearExpiry" to certExpiryMonitor.checkAll().filter { it.level != "ok" }.size,
-                        "total" to certExpiryMonitor.checkAll().size
+                    certs = CertHealth(
+                        status = certStatus,
+                        nearExpiry = statuses.count { it.level != "ok" },
+                        total = statuses.size
                     )
                 ))
             }
@@ -652,3 +744,29 @@ fun main() {
         println("=".repeat(60))
     }.start(wait = true)
 }
+
+/**
+ * Response of `GET /api/v1/health` — the richer sibling of the bare `/health`
+ * probe. Declared as serializable types rather than nested `mapOf`, which
+ * kotlinx.serialization rejects when the values are of mixed types.
+ */
+@kotlinx.serialization.Serializable
+data class ServerHealth(
+    /** Overall status derived from certificate expiry: ok / degraded / critical. */
+    val status: String,
+    val database: String,
+    val configApis: ConfigApiHealth,
+    val certs: CertHealth
+)
+
+@kotlinx.serialization.Serializable
+data class ConfigApiHealth(val running: Int, val stopped: Int)
+
+@kotlinx.serialization.Serializable
+data class CertHealth(
+    /** Same value as [ServerHealth.status]; kept for clients reading this block alone. */
+    val status: String,
+    /** Certificates in `warning` or `expired` state. */
+    val nearExpiry: Int,
+    val total: Int
+)

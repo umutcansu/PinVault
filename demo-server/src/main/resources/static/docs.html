@@ -1,20 +1,25 @@
 <!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>PinVault API Docs</title>
-    <link rel="stylesheet" href="https://unpkg.com/swagger-ui-dist@5/swagger-ui.css">
+    <!--
+      Swagger UI 5.33.0, vendored under /static/vendor/.
+
+      These files used to be pulled from a public CDN, which the server's own
+      Content-Security-Policy (`script-src 'self'`, set in Main.kt) blocked —
+      /docs rendered as a blank page. Serving them from the same origin keeps
+      the CSP strict instead of widening it for a third-party host.
+
+      To upgrade: re-download swagger-ui.css and swagger-ui-bundle.js from the
+      swagger-ui-dist package at the new version and update the version above.
+    -->
+    <link rel="stylesheet" href="/static/vendor/swagger-ui.css">
 </head>
 <body>
     <div id="swagger-ui"></div>
-    <script src="https://unpkg.com/swagger-ui-dist@5/swagger-ui-bundle.js"></script>
-    <script>
-        SwaggerUIBundle({
-            url: '/static/openapi.yaml',
-            dom_id: '#swagger-ui',
-            deepLinking: true,
-            presets: [SwaggerUIBundle.presets.apis, SwaggerUIBundle.SwaggerUIStandalonePreset],
-            layout: "BaseLayout"
-        });
-    </script>
+    <script src="/static/vendor/swagger-ui-bundle.js"></script>
+    <script src="/static/docs.js"></script>
 </body>
 </html>

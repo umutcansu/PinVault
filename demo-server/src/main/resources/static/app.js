@@ -192,7 +192,7 @@ const i18n = {
     tabMtlsCerts: 'Client Sertifikaları', tabVault: 'Vault', tabHistory: 'Bağlantı Geçmişi',
     vaultV2Section: 'Vault (V2)', vaultEnabledLabel: 'Bu Config API\'de vault aktif',
     manageDeviceAcl: 'Cihaz ACL yönet',
-    vaultDisabledHint: 'Vault aktif değilken dosya endpoint\'leri 404 döner (enforce edilmez ancak admin izleme için).',
+    vaultDisabledHint: 'Vault kapalıyken bu Config API\'nin indirme ucu (GET /api/v1/vault/{key}) her anahtar için 403 döner; yükleme, listeleme ve silme açık kalır.',
     vaultEnabledOn: 'Vault açıldı', vaultEnabledOff: 'Vault kapatıldı', vaultToggleError: 'Değiştirilemedi',
     aclManagerTitle: 'Device ACL', aclManagerSub: 'Her cihaz hangi host\'ların pin\'ini indirebilir kontrolü',
     aclBack: '← Geri', aclSave: 'Kaydet',
@@ -207,6 +207,38 @@ const i18n = {
     policyLabel: 'Policy', encryptionLabel: 'Encryption',
     policyTokenOpt: 'token (önerilen)', policyPublicOpt: 'public (demo)',
     policyApiKeyOpt: 'api_key', policyTokenMtlsOpt: 'token + mTLS',
+    policyApiKeyWarn: 'api_key: cihazdan İNMEZ — kütüphane yönetim anahtarını göndermez (APK\'ya gömülürdü), her indirme 401 alır. Yalnızca sunucu-sunucu araçlar için. Cihaz içinse token / token + mTLS seç.',
+    // Vault dosya politikası düzenleme
+    policyEditTitle: 'Erişim Politikası ve Şifreleme',
+    policyEditHint: 'Dosya içeriğine dokunmadan politikayı değiştirir. token + mTLS, geçerli token\'ın YANINDA istemci sertifikası da ister.',
+    policySaveBtn: 'Politikayı Kaydet', policyCurrent: 'Şu an',
+    policySaved: 'Politika güncellendi: {0}', policySaveError: 'Politika güncellenemedi',
+    // Kayıt token'ı — düz metin yalnızca bir kez gösterilir
+    enrollTokenGeneratedAlert: 'Kayıt token\'ı üretildi ve panoya kopyalandı:\n\n{0}\n\nBu değer bir daha gösterilmeyecek. Cihaza güvenli kanaldan iletin.',
+    tokenMaskedHint: 'Sunucu yalnızca SHA-256 hash saklıyor — bu maskeli öneki kayıt için kullanamazsınız.',
+    // Sertifika süre izleme
+    certExpiryTitle: 'Sertifika Süreleri', certNearExpiry: 'Yakında dolacak',
+    certExpiryHint: 'Her host sertifikasının kalan ömrü. Uyarı eşiği sunucudaki CERT_EXPIRY_WARN_DAYS ile ayarlanır.',
+    certExpiryEmpty: 'Süre bilgisi olan sertifika yok.',
+    certOk: 'geçerli', certWarning: 'yakında doluyor', certExpired: 'süresi doldu',
+    certDaysLeft: '{0} gün', certExpiredAgo: '{0} gün önce doldu',
+    certRemaining: 'Kalan', certValidUntil: 'Geçerlilik sonu',
+    // Toplu force update
+    forceAllTitle: 'Toplu Force Update',
+    forceAllHint: 'Bu Config API\'deki tüm host\'lara force bayrağı basar — cihazlar bir sonraki fetch\'te pin\'leri zorunlu olarak günceller.',
+    forceAllBtn: 'Tümüne Force Ver', clearForceAllBtn: 'Tümünden Force Kaldır',
+    forceAllConfirm: 'Bu Config API\'deki TÜM host\'lara force update verilecek. Devam edilsin mi?',
+    forceAllEnabled: 'Tüm host\'lara force update verildi',
+    forceAllDisabled: 'Force bayrakları temizlendi',
+    forceAllCount: '{0}/{1} host force durumunda',
+    // Host ekleme — URL'den çek
+    tabFetch: 'URL\'den Al',
+    fetchUrlLabel: 'Sunucu adresi',
+    fetchUrlHint: 'TLS el sıkışması yapılıp sertifika pin\'leri otomatik çıkarılır. Örn: https://api.example.com',
+    // Bootstrap — URL'den pin çek
+    bootstrapFetchLabel: 'Pin\'lerin çekileceği adres',
+    bootstrapFetchHint: 'Sunucu bir TLS sonlandırıcı (reverse proxy) arkasındaysa istemcilerin pinlemesi gereken sertifika proxy\'ninkidir. Pin\'ler o adresten alınır.',
+    bootstrapFetchBtn: 'Pin\'leri Çek',
     // Token management
     tokenMgmtTitle: 'Token Yönetimi', tokenNewBtn: '+ Yeni Token',
     tokenDevicePlaceholder: 'deviceId (ör. mi-9t)',
@@ -236,6 +268,7 @@ const i18n = {
     secureFlowSteps: 'Admin token üretir → Uygulama token ile kayıt olur → Client cert alır → mTLS Config API\'ye erişir → Host cert\'leri otomatik indirilir',
     enrollmentModeHint: 'ENROLLMENT_MODE=token ile sunucuyu başlatarak deviceId enrollment\'ı kapatabilirsiniz.',
     generateToken: 'Token Üret', tokenUsed: 'Kullanıldı', tokenPending: 'Bekliyor',
+    tokenExpired: 'Süresi doldu', tokenExpiresAt: 'Geçerlilik bitişi',
     thForce: 'Force', thToken: 'Token',
     revokeCertConfirm: '{0} iptal edilecek. Devam?',
     deleteFileConfirm: '"{0}" silinsin mi?', fileDeleted: '{0} silindi',
@@ -389,7 +422,7 @@ const i18n = {
     tabMtlsCerts: 'Client Certificates', tabVault: 'Vault', tabHistory: 'Connection History',
     vaultV2Section: 'Vault (V2)', vaultEnabledLabel: 'Vault enabled on this Config API',
     manageDeviceAcl: 'Manage Device ACL',
-    vaultDisabledHint: 'When vault is disabled, file endpoints return 404 (not enforced, admin tracking only).',
+    vaultDisabledHint: 'When vault is disabled, this Config API\'s download endpoint (GET /api/v1/vault/{key}) returns 403 for every key; upload, list and delete stay available.',
     vaultEnabledOn: 'Vault enabled', vaultEnabledOff: 'Vault disabled', vaultToggleError: 'Could not change',
     aclManagerTitle: 'Device ACL', aclManagerSub: 'Per-device control of which hostnames\' pins can be fetched',
     aclBack: '← Back', aclSave: 'Save',
@@ -404,6 +437,38 @@ const i18n = {
     policyLabel: 'Policy', encryptionLabel: 'Encryption',
     policyTokenOpt: 'token (recommended)', policyPublicOpt: 'public (demo)',
     policyApiKeyOpt: 'api_key', policyTokenMtlsOpt: 'token + mTLS',
+    policyApiKeyWarn: 'api_key: NOT downloadable from a device — the library never sends the admin key (it would ship inside the APK), so every fetch gets 401. Server-to-server tooling only. For devices pick token / token + mTLS.',
+    // Vault file policy editing
+    policyEditTitle: 'Access Policy & Encryption',
+    policyEditHint: 'Changes the policy without touching the file content. token + mTLS requires a client certificate IN ADDITION to a valid token.',
+    policySaveBtn: 'Save Policy', policyCurrent: 'Current',
+    policySaved: 'Policy updated: {0}', policySaveError: 'Could not update policy',
+    // Enrollment token — plaintext is shown exactly once
+    enrollTokenGeneratedAlert: 'Enrollment token generated and copied to clipboard:\n\n{0}\n\nThis value will not be shown again. Deliver to device via a secure channel.',
+    tokenMaskedHint: 'The server stores only a SHA-256 hash — this masked prefix cannot be used to enroll.',
+    // Certificate expiry monitoring
+    certExpiryTitle: 'Certificate Expiry', certNearExpiry: 'Near expiry',
+    certExpiryHint: 'Remaining lifetime of each host certificate. The warning threshold is set by CERT_EXPIRY_WARN_DAYS on the server.',
+    certExpiryEmpty: 'No certificates with expiry information.',
+    certOk: 'valid', certWarning: 'expiring soon', certExpired: 'expired',
+    certDaysLeft: '{0} days', certExpiredAgo: 'expired {0} days ago',
+    certRemaining: 'Remaining', certValidUntil: 'Valid until',
+    // Bulk force update
+    forceAllTitle: 'Bulk Force Update',
+    forceAllHint: 'Sets the force flag on every host of this Config API — devices are required to update their pins on the next fetch.',
+    forceAllBtn: 'Force All', clearForceAllBtn: 'Clear All Force',
+    forceAllConfirm: 'Force update will be set on ALL hosts of this Config API. Continue?',
+    forceAllEnabled: 'Force update set on all hosts',
+    forceAllDisabled: 'Force flags cleared',
+    forceAllCount: '{0}/{1} hosts forced',
+    // Add host — fetch from URL
+    tabFetch: 'Fetch from URL',
+    fetchUrlLabel: 'Server address',
+    fetchUrlHint: 'Performs a TLS handshake and extracts the certificate pins automatically. e.g. https://api.example.com',
+    // Bootstrap — fetch pins from URL
+    bootstrapFetchLabel: 'Address to fetch pins from',
+    bootstrapFetchHint: 'When the server sits behind a TLS terminator (reverse proxy), clients must pin the proxy\'s certificate. Pins are taken from that address.',
+    bootstrapFetchBtn: 'Fetch Pins',
     // Token management
     tokenMgmtTitle: 'Token Management', tokenNewBtn: '+ New Token',
     tokenDevicePlaceholder: 'deviceId (e.g. mi-9t)',
@@ -433,6 +498,7 @@ const i18n = {
     secureFlowSteps: 'Admin generates token → App enrolls with token → Receives client cert → Accesses mTLS Config API → Host certs are downloaded automatically',
     enrollmentModeHint: 'Start the server with ENROLLMENT_MODE=token to disable deviceId enrollment.',
     generateToken: 'Generate Token', tokenUsed: 'Used', tokenPending: 'Pending',
+    tokenExpired: 'Expired', tokenExpiresAt: 'Expires',
     thForce: 'Force', thToken: 'Token',
     revokeCertConfirm: '{0} will be revoked. Continue?',
     deleteFileConfirm: 'Delete "{0}"?', fileDeleted: '{0} deleted',
@@ -489,16 +555,29 @@ async function init() {
   renderEmpty();
 }
 
+/**
+ * Üzerinde çalışılan Config API kapsamı. Kenar çubuğunda bir Config API ya da
+ * host seçildiğinde `selectedApiId` dolar; hiçbiri seçilmemişken (ilk açılış)
+ * varsayılan kapsama düşülür.
+ */
+function scopeId() { return selectedApiId || 'default-tls'; }
+
 async function loadConfig() {
   try {
     // Tüm API'lerin özetini al
     const apisRes = await apiFetch('/api/v1/all-configs');
     allApiConfigs = await apisRes.json();
 
-    // Varsayılan API'nin config'ini yükle (management server üzerinden)
-    const res = await apiFetch('/api/v1/certificate-config?signed=false');
+    // SEÇİLİ Config API'nin config'i. Eskiden burası her zaman
+    // `/api/v1/certificate-config?signed=false` okuyordu; o uç management
+    // server'da `default-tls` kapsamına sabit. `currentConfig` üzerinden
+    // çalışan "+ → Manuel", "Pinleri Düzenle" ve "Hostu Sil" yolları bu
+    // yüzden başka bir kapsam seçiliyken bile varsayılan kapsamı okuyup
+    // yazıyordu. `/api/v1/config/{id}` kapsamlıdır (ve yalnızca yönetim
+    // API anahtarıyla erişilir) — host detayı zaten bunu kullanıyordu.
+    const res = await apiFetch(`/api/v1/config/${encodeURIComponent(scopeId())}`);
     currentConfig = await res.json();
-    console.log('Config loaded:', currentConfig, 'APIs:', allApiConfigs);
+    console.log('Config loaded:', currentConfig, 'scope:', scopeId(), 'APIs:', allApiConfigs);
   } catch (e) {
     console.error('Config load failed', e);
     currentConfig = { version: 0, pins: [], forceUpdate: false };
@@ -888,6 +967,17 @@ async function renderApiGeneralTab(apiId) {
         <div>${t('version')}: <span style="color:#7dd3fc;font-weight:600">v${api.version}</span></div>
       </div>
     </div>
+    <!-- Global force update — sunucudaki toplu uçlar (host adı almayan
+         force-update / clear-force) arayüzde hiç kullanılmıyordu. -->
+    <div class="card">
+      <div class="card-title">${t('forceAllTitle')}</div>
+      <div style="color:#94a3b8;font-size:12px;margin-bottom:10px">${t('forceAllHint')}</div>
+      <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
+        <button class="btn btn-warning" data-action="forceUpdateAll" data-arg0="${esc(apiId)}">${t('forceAllBtn')}</button>
+        <button class="btn btn-secondary" data-action="clearForceAll" data-arg0="${esc(apiId)}">${t('clearForceAllBtn')}</button>
+        <span style="color:#64748b;font-size:11px">${t('forceAllCount', (api.pins || []).filter(p => p.forceUpdate).length, api.pins?.length || 0)}</span>
+      </div>
+    </div>
     <!-- V2 Vault toggle + Device ACL shortcut -->
     <div class="card">
       <div class="card-title">${t('vaultV2Section')}</div>
@@ -912,15 +1002,28 @@ async function renderApiGeneralTab(apiId) {
 }
 
 async function setVaultEnabled(apiId, enabled) {
+  // Kutuyu sunucunun yanıtına bağla. Önceden yazma başarısız olsa da kutu
+  // kullanıcının bıraktığı konumda kalıyordu: operatör "vault kapalı" sanıp
+  // dosyanın inmeye devam ettiğini fark etmiyordu (bulgu C09). Hata olursa
+  // kutuyu eski konumuna al ve durum kodunu toast'a yaz.
+  const box = document.getElementById(`vault-enabled-${apiId}`);
+  const revert = () => { if (box) box.checked = !enabled; };
   try {
     const res = await apiFetch(`/api/v1/config-apis/${encodeURIComponent(apiId)}/vault-enabled`, {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ enabled })
     });
-    if (!res.ok) { toast(t('vaultToggleError'), 'error'); return; }
+    if (!res.ok) {
+      revert();
+      toast(`${t('vaultToggleError')} — ${apiId} (HTTP ${res.status})`, 'error');
+      return;
+    }
     toast(`${enabled ? t('vaultEnabledOn') : t('vaultEnabledOff')} — ${apiId}`, 'success');
-  } catch (err) { toast(err.message, 'error'); }
+  } catch (err) {
+    revert();
+    toast(err.message, 'error');
+  }
 }
 
 /**
@@ -1593,6 +1696,9 @@ function renderAddHostForm() {
     { id: 'manual', label: t('tabManual') },
     { id: 'generate', label: t('tabGenerate') },
     { id: 'upload', label: t('tabUpload') },
+    // createHostFetch() uzun süre hiçbir yerden çağrılmıyordu; sunucudaki
+    // POST /api/v1/hosts/fetch-from-url ucu arayüzden erişilemez durumdaydı.
+    { id: 'fetch', label: t('tabFetch') },
   ];
 
   const tabsHtml = tabs.map(tb => `
@@ -1650,6 +1756,17 @@ function renderAddHostForm() {
         <button class="btn btn-success" id="upload-btn" data-action="createHostUpload">${t('create')}</button>
         <button class="btn btn-secondary" data-action="renderEmptyAndHostList">${t('cancel')}</button>
       </div>`;
+  } else if (addHostTab === 'fetch') {
+    formHtml = `
+      <div class="form-group">
+        <label class="form-label">${t('fetchUrlLabel')}</label>
+        <input id="fetch-url" class="form-input" placeholder="https://api.example.com" autofocus>
+        <div class="form-hint">${t('fetchUrlHint')}</div>
+      </div>
+      <div class="form-actions">
+        <button class="btn btn-success" id="fetch-btn" data-action="createHostFetch">${t('create')}</button>
+        <button class="btn btn-secondary" data-action="renderEmptyAndHostList">${t('cancel')}</button>
+      </div>`;
   }
 
   document.getElementById('content').innerHTML = `
@@ -1669,7 +1786,7 @@ async function createHostManual() {
   if (currentConfig.pins.some(p => p.hostname === hostname)) { toast(t('duplicateHost'), 'error'); return; }
 
   const newPins = [...currentConfig.pins, { hostname, sha256: [hash0, hash1] }];
-  await saveFullConfig(newPins);
+  if (!(await saveFullConfig(newPins))) return;
   toast(t('hostAdded') + ' — ' + hostname, 'success');
   selectedHost = hostname;
   await loadConfig();
@@ -1764,13 +1881,6 @@ async function createHostUpload() {
 
 let editHashes = [];
 
-function showEditPins(hostname) {
-  const host = getHosts().find(h => h.hostname === hostname);
-  if (!host) return;
-  editHashes = [...host.sha256];
-  renderEditPins(hostname);
-}
-
 function renderEditPins(hostname) {
   document.getElementById('content').innerHTML = `
     <div class="section-header"><div>
@@ -1836,7 +1946,7 @@ async function saveInlinePins(hostname) {
   const filtered = editHashes.filter(h => h.trim());
   if (filtered.length < 2) { toast(t('saveError'), 'error'); return; }
   const newPins = currentConfig.pins.map(p => p.hostname === hostname ? { hostname, sha256: filtered } : p);
-  await saveFullConfig(newPins);
+  if (!(await saveFullConfig(newPins))) return;
   toast(t('pinsUpdated'), 'success');
   selectHost(hostname);
 }
@@ -1845,7 +1955,7 @@ async function savePins(hostname) {
   const filtered = editHashes.filter(h => h.trim());
   if (filtered.length < 2) { toast(t('saveError'), 'error'); return; }
   const newPins = currentConfig.pins.map(p => p.hostname === hostname ? { hostname, sha256: filtered } : p);
-  await saveFullConfig(newPins);
+  if (!(await saveFullConfig(newPins))) return;
   toast(t('pinsUpdated'), 'success');
   selectHost(hostname);
 }
@@ -1855,7 +1965,7 @@ async function savePins(hostname) {
 async function deleteHost(hostname) {
   if (!confirm(`"${hostname}" ${t('deleteConfirm')}`)) return;
   const newPins = currentConfig.pins.filter(p => p.hostname !== hostname);
-  await saveFullConfig(newPins);
+  if (!(await saveFullConfig(newPins))) return;
   toast(t('hostDeleted'), 'success');
   selectedHost = null;
   renderHostList();
@@ -1864,19 +1974,33 @@ async function deleteHost(hostname) {
 
 // ── Save Config ──────────────────────────────────────
 
+/**
+ * Saves the full pin config of the SELECTED Config API scope. Returns true
+ * only when the server accepted it; callers must not report success otherwise
+ * (a rejected save used to be followed by a "pins updated" toast right after
+ * the error toast).
+ *
+ * `?configApiId=` olmadan bu uç management server'da `default-tls`e yazıyordu:
+ * mTLS Config API seçiliyken eklenen/düzenlenen/silinen host varsayılan
+ * kapsamı değiştiriyordu.
+ */
 async function saveFullConfig(pins) {
   try {
-    const res = await apiFetch('/api/v1/certificate-config', {
+    const res = await apiFetch(`/api/v1/certificate-config?configApiId=${encodeURIComponent(scopeId())}`, {
       method: 'PUT', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ version: 0, pins, forceUpdate: false })
     });
     if (!res.ok) {
-      const err = await res.json();
+      const err = await res.json().catch(() => ({}));
       toast((err.errors || [t('saveError')]).join('\n'), 'error');
-      return;
+      return false;
     }
     await loadConfig();
-  } catch (e) { toast(t('serverError'), 'error'); }
+    return true;
+  } catch (e) {
+    toast(t('serverError'), 'error');
+    return false;
+  }
 }
 
 // ── Force Update ─────────────────────────────────────
@@ -1886,29 +2010,45 @@ async function toggleForce(hostname) {
   if (!isActive && !confirm(t('forceConfirm'))) return;
   try {
     const endpoint = isActive ? 'clear-force' : 'force-update';
-    await apiFetch(`/api/v1/certificate-config/${endpoint}/${encodeURIComponent(hostname)}`, { method: 'POST' });
+    // Bayrak `currentConfig`ten (seçili kapsam) okunuyor; yazma da aynı
+    // kapsama gitmeli.
+    await apiFetch(
+      `/api/v1/certificate-config/${endpoint}/${encodeURIComponent(hostname)}?configApiId=${encodeURIComponent(scopeId())}`,
+      { method: 'POST' }
+    );
     await loadConfig(); renderHostList();
     if (selectedHost) selectHost(selectedHost);
     toast(isActive ? t('forceDisabled') : t('forceEnabled'), 'success');
   } catch (e) { toast(t('error'), 'error'); }
 }
 
-async function forceUpdate(hostname) {
-  if (!confirm(t('forceConfirm'))) return;
+// Host bazlı forceUpdate()/clearForce() kaldırıldı: toggleForce() ile birebir
+// aynı uçları çağıran ölü kopyalardı. Global (tüm host'lar) uçları ise hiç
+// bağlanmamıştı — aşağıdaki iki fonksiyon onları Config API genel sekmesine
+// bağlar.
+
+/** Bu Config API'deki TÜM pin'lere forceUpdate=true yazar. */
+async function forceUpdateAll(apiId) {
+  if (!confirm(t('forceAllConfirm'))) return;
   try {
-    await apiFetch(`/api/v1/certificate-config/force-update/${encodeURIComponent(hostname)}`, { method: 'POST' });
-    await loadConfig(); renderHostList();
-    if (selectedHost) selectHost(selectedHost);
-    toast(t('forceEnabled'), 'success');
+    const res = await apiFetch(`/api/v1/certificate-config/force-update?configApiId=${encodeURIComponent(apiId)}`, { method: 'POST' });
+    if (!res.ok) { toast(t('error'), 'error'); return; }
+    await loadConfig();
+    renderHostList();
+    renderConfigApiDetail(apiId);
+    toast(t('forceAllEnabled'), 'success');
   } catch (e) { toast(t('error'), 'error'); }
 }
 
-async function clearForce(hostname) {
+/** Tüm pin'lerdeki forceUpdate bayrağını temizler. */
+async function clearForceAll(apiId) {
   try {
-    await apiFetch(`/api/v1/certificate-config/clear-force/${encodeURIComponent(hostname)}`, { method: 'POST' });
-    await loadConfig(); renderHostList();
-    if (selectedHost) selectHost(selectedHost);
-    toast(t('forceDisabled'), 'success');
+    const res = await apiFetch(`/api/v1/certificate-config/clear-force?configApiId=${encodeURIComponent(apiId)}`, { method: 'POST' });
+    if (!res.ok) { toast(t('error'), 'error'); return; }
+    await loadConfig();
+    renderHostList();
+    renderConfigApiDetail(apiId);
+    toast(t('forceAllDisabled'), 'success');
   } catch (e) { toast(t('error'), 'error'); }
 }
 
@@ -1933,9 +2073,20 @@ function showSection(section) {
 async function renderHealthSection() {
   document.getElementById('content').innerHTML = `<div class="loading">${t('loading')}</div>`;
   try {
-    const [historyRes, healthRes] = await Promise.all([apiFetch('/api/v1/connection-history'), apiFetch('/health')]);
+    // Zengin /api/v1/health ve /api/v1/cert-expiry uçları sunucuda vardı ama
+    // arayüzde hiç kullanılmıyordu — sertifikaların ne zaman dolacağı yalnızca
+    // sunucu loglarından görülebiliyordu.
+    const [historyRes, healthRes, richHealthRes, expiryRes] = await Promise.all([
+      apiFetch('/api/v1/connection-history'),
+      apiFetch('/health'),
+      apiFetch('/api/v1/health').catch(() => null),
+      apiFetch('/api/v1/cert-expiry').catch(() => null)
+    ]);
     const entries = await historyRes.json();
     const serverHealth = await healthRes.json();
+    const richHealth = (richHealthRes && richHealthRes.ok) ? await richHealthRes.json() : null;
+    const expiryRaw = (expiryRes && expiryRes.ok) ? await expiryRes.json() : [];
+    const expiry = Array.isArray(expiryRaw) ? expiryRaw : [];
     const webEntries = entries.filter(e => e.source === 'web');
     const androidEntries = entries.filter(e => e.source === 'android');
     const configUpdateEntries = entries.filter(e => e.source === 'config_update');
@@ -1989,6 +2140,53 @@ async function renderHealthSection() {
     }).join('');
     const healthPagNav = pagControls(pagKey, pagInfo, 'renderHealthSection');
 
+    // ── Sertifika süre izleme kartı ────────────────────────────────────
+    // Her host için kalan gün + seviye (ok / warning / expired) renkli.
+    const expiryColor = lvl => lvl === 'expired' ? '#ef4444' : lvl === 'warning' ? '#f59e0b' : '#22c55e';
+    const expiryIcon  = lvl => lvl === 'expired' ? '✗' : lvl === 'warning' ? '⚠' : '✓';
+    const expiryLabel = lvl => lvl === 'expired' ? t('certExpired')
+                             : lvl === 'warning' ? t('certWarning')
+                             : t('certOk');
+    // En kritik olan en üstte: expired → warning → ok, sonra kalan güne göre.
+    const levelRank = { expired: 0, warning: 1, ok: 2 };
+    const expirySorted = [...expiry].sort((a, b) =>
+      (levelRank[a.level] ?? 3) - (levelRank[b.level] ?? 3) || a.daysRemaining - b.daysRemaining);
+
+    const expiryRows = expirySorted.map(c => {
+      const color = expiryColor(c.level);
+      const days = c.daysRemaining < 0
+        ? t('certExpiredAgo', Math.abs(c.daysRemaining))
+        : t('certDaysLeft', c.daysRemaining);
+      return `<tr>
+        <td style="font-weight:600;color:#7dd3fc">${esc(c.hostname)}</td>
+        <td style="color:#64748b;font-size:11px">${esc(c.configApiId)}</td>
+        <td style="color:${color};font-weight:700">${expiryIcon(c.level)} ${expiryLabel(c.level)}</td>
+        <td style="color:${color};font-weight:600">${days}</td>
+        <td style="color:#64748b;font-size:11px">${new Date(c.validUntil).toLocaleString(locale)}</td>
+      </tr>`;
+    }).join('');
+
+    const certsSummary = richHealth?.certs || {};
+    const overall = richHealth?.status || (expiry.some(c => c.level === 'expired') ? 'critical'
+                                        : expiry.some(c => c.level === 'warning') ? 'degraded' : 'ok');
+    const overallColor = overall === 'critical' ? '#ef4444' : overall === 'degraded' ? '#f59e0b' : '#22c55e';
+
+    const certExpiryCard = `
+      <div class="card">
+        <div class="card-title" style="display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap">
+          <span>${t('certExpiryTitle')} (${expiry.length})</span>
+          <span style="color:${overallColor};font-weight:700;font-size:12px">
+            ${expiryIcon(overall === 'critical' ? 'expired' : overall === 'degraded' ? 'warning' : 'ok')}
+            ${esc(overall)}${certsSummary.nearExpiry != null ? ` · ${t('certNearExpiry')}: ${certsSummary.nearExpiry}` : ''}
+          </span>
+        </div>
+        <div style="color:#94a3b8;font-size:12px;margin-bottom:8px">${t('certExpiryHint')}</div>
+        ${expiry.length > 0 ? `<table class="data-table">
+          <thead><tr><th>${t('hostname')}</th><th>Config API</th><th>${t('thStatus')}</th><th>${t('certRemaining')}</th><th>${t('certValidUntil')}</th></tr></thead>
+          <tbody>${expiryRows}</tbody></table>`
+        : `<div class="empty-msg">${t('certExpiryEmpty')}</div>`}
+      </div>`;
+
     document.getElementById('content').innerHTML = `
       <div class="section-header">
         <div><div class="section-title-main">${t('healthTitle')}</div><div class="section-sub">${t('healthSub')}</div></div>
@@ -2004,7 +2202,11 @@ async function renderHealthSection() {
         <div class="card"><div class="card-title">${t('mobileReports')}</div>
           <div class="stat-value" style="color:#60a5fa">${androidEntries.length}</div>
           <div class="stat-label">${t('mobileFrom')}</div></div>
+        <div class="card"><div class="card-title">${t('certExpiryTitle')}</div>
+          <div class="stat-value" style="color:${overallColor}">${expiry.filter(c => c.level !== 'ok').length}</div>
+          <div class="stat-label">${t('certNearExpiry')}</div></div>
       </div>
+      ${certExpiryCard}
       <div class="card"><div class="card-title">${t('allConnections')}</div>
         ${entries.length > 0 ? `<table class="data-table">
           <thead><tr><th>${t('thSource')}</th><th>${t('thStatus')}</th><th>${t('thDuration')}</th><th>${t('thPin')}</th><th>${t('thError')}</th><th>${t('thDate')}</th></tr></thead>
@@ -2038,6 +2240,13 @@ async function renderBootstrapSection() {
     const res = await apiFetch('/api/v1/server-tls-pins');
     const data = await res.json();
     const hasPins = data.primaryPin && data.primaryPin.length > 0;
+    // Kod parçasındaki adres: sayfanın açıldığı host adı + seçili (ya da ilk
+    // TLS) Config API'nin gerçek portu — mTLS sekmesindeki mtlsPort deseniyle
+    // aynı. Sunucunun döndürdüğü hostname/httpsPort yalnızca varsayılan
+    // dinleyiciyi tarif ediyordu ("localhost:8081").
+    const tlsApi = allApiConfigs.find(a => a.id === selectedApiId && a.mode !== 'mtls')
+      || allApiConfigs.find(a => a.mode !== 'mtls');
+    const tlsPort = tlsApi ? tlsApi.port : data.httpsPort;
 
     document.getElementById('content').innerHTML = `
       <div class="section-header">
@@ -2051,7 +2260,7 @@ async function renderBootstrapSection() {
       ${hasPins ? `
       <div class="card">
         <div class="card-title">${t('serverTlsPin')}</div>
-        <div style="color:#64748b;font-size:11px;margin-bottom:8px">HTTPS: ${data.hostname}:${data.httpsPort}</div>
+        <div style="color:#64748b;font-size:11px;margin-bottom:8px">HTTPS: ${location.hostname}:${tlsPort}</div>
         <div class="hash-label">${t('primaryPin')}</div>
         <div class="hash-box">
           <span>sha256/${data.primaryPin}</span>
@@ -2066,8 +2275,10 @@ async function renderBootstrapSection() {
         <div style="margin-top:16px;padding-top:16px;border-top:1px solid #334155;display:flex;gap:8px;flex-wrap:wrap">
           <button class="btn btn-warning" data-action="regenerateBootstrapCert">${t('regenerateBootstrap')}</button>
           <button class="btn btn-secondary" data-action="toggleBootstrapUpload">${t('tabUploadJks')}</button>
+          <button class="btn btn-secondary" data-action="toggleBootstrapFetch">${t('tabFetch')}</button>
         </div>
         <div id="bootstrap-upload-form" style="display:none"></div>
+        <div id="bootstrap-fetch-form" style="display:none"></div>
       </div>
       <div class="card">
         <div class="card-title">${t('androidIntegration')}</div>
@@ -2089,8 +2300,10 @@ val config = PinVaultConfig.Builder()
         <div style="display:flex;gap:8px;flex-wrap:wrap">
           <button class="btn btn-warning" data-action="regenerateBootstrapCert">${t('regenerateBootstrap')}</button>
           <button class="btn btn-secondary" data-action="toggleBootstrapUpload">${t('tabUploadJks')}</button>
+          <button class="btn btn-secondary" data-action="toggleBootstrapFetch">${t('tabFetch')}</button>
         </div>
         <div id="bootstrap-upload-form" style="display:none"></div>
+        <div id="bootstrap-fetch-form" style="display:none"></div>
       </div>` : ''}`;
   } catch (e) {
     document.getElementById('content').innerHTML = `<div class="card"><div class="empty-msg">${t('bootstrapError')}</div></div>`;
@@ -2112,6 +2325,30 @@ function toggleBootstrapUpload() {
       <input type="password" id="bootstrap-password" value="changeit" class="form-input"/>
     </div>
     <button type="submit" class="btn btn-primary">${t('uploadBtn')}</button>
+  </form>`;
+}
+
+/**
+ * URL'den bootstrap pin çekme formunu açar/kapatır.
+ *
+ * fetchBootstrapFromUrl() sunucudaki POST /api/v1/server-tls-pins/fetch-from-url
+ * ucunu çağırıyordu ama arayüzde hiçbir düğmeye bağlı değildi. Senaryo:
+ * sunucu bir TLS sonlandırıcının (reverse proxy / yük dengeleyici) arkasındaysa
+ * istemcilerin pinlemesi gereken sertifika sunucunun kendi sertifikası değil,
+ * proxy'nin sertifikasıdır — pin'ler o adresten çekilmelidir.
+ */
+function toggleBootstrapFetch() {
+  const form = document.getElementById('bootstrap-fetch-form');
+  if (!form) return;
+  if (form.style.display !== 'none') { form.style.display = 'none'; return; }
+  form.style.display = 'block';
+  form.innerHTML = `<form data-action-submit="fetchBootstrapFromUrl">
+    <div class="form-group">
+      <label class="form-label">${t('bootstrapFetchLabel')}</label>
+      <input type="text" id="bootstrap-url" class="form-input" placeholder="https://proxy.example.com" required/>
+      <div class="form-hint">${t('bootstrapFetchHint')}</div>
+    </div>
+    <button type="submit" class="btn btn-primary">${t('bootstrapFetchBtn')}</button>
   </form>`;
 }
 
@@ -2184,6 +2421,12 @@ async function renderMtlsSection() {
     const certs = await certsRes.json();
     const enrollMode = await modeRes.json();
     const locale = lang === 'tr' ? 'tr-TR' : 'en-US';
+    // Port of the mTLS Config API shown in the integration snippet below. This
+    // section used to reference an undefined `data.httpsPort`, which threw and
+    // left the whole tab on the generic error message.
+    const mtlsApi = allApiConfigs.find(a => a.id === selectedApiId && a.mode === 'mtls')
+      || allApiConfigs.find(a => a.mode === 'mtls');
+    const mtlsPort = mtlsApi ? mtlsApi.port : '<mtls-port>';
 
     const certsPagKey = 'client-certs';
     const certsPagInfo = pagSlice(certs, certsPagKey);
@@ -2239,7 +2482,7 @@ async function renderMtlsSection() {
 // Veya manuel P12:
 val p12 = context.assets.open("client.p12").readBytes()
 val config = PinVaultConfig.Builder()
-    .configApi("mtls", "https://${location.hostname}:${data.httpsPort}/") {
+    .configApi("mtls", "https://${location.hostname}:${mtlsPort}/") {
         bootstrapPins(BOOTSTRAP_PINS)
         clientKeystore(p12, "changeit")
     }
@@ -2265,6 +2508,11 @@ val config = PinVaultConfig.Builder()
         </form>
         <div id="enrollment-token-list" style="margin-top:12px"></div>
       </div>`;
+    // Bilerek `await` edilmiyor: `renderConfigApiDetail` bu fonksiyon döner
+    // dönmez #content'in innerHTML'ini kopyalayıp başlık + sekme çubuğuyla
+    // geri yazıyor, bu arada beklemek forma yazılanı silecek kadar uzun bir
+    // pencere açıyor. Listenin dolması loadEnrollmentTokens'ın konteyneri
+    // fetch'ten SONRA çözmesiyle garanti altında.
     loadEnrollmentTokens();
   } catch (e) {
     document.getElementById('content').innerHTML = `<div class="card"><div class="empty-msg">${t('error')}</div></div>`;
@@ -2307,36 +2555,6 @@ async function uploadClientCert() {
   } catch (err) { toast(t('error'), 'error'); }
 }
 
-async function startConfigApi(e) {
-  e.preventDefault();
-  const id = document.getElementById('capi-id').value.trim();
-  const port = parseInt(document.getElementById('capi-port').value);
-  const mode = document.getElementById('capi-mode').value;
-  if (!id || !port) return;
-  try {
-    const res = await apiFetch('/api/v1/config-apis/start', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ id, port, mode })
-    });
-    const data = await res.json();
-    if (data.error) { toast(data.error, 'error'); return; }
-    toast(`Config API başlatıldı: ${id} :${port} (${mode.toUpperCase()})`, 'success');
-    renderMtlsSection();
-  } catch (err) { toast(t('error'), 'error'); }
-}
-
-async function stopConfigApi(id) {
-  try {
-    await apiFetch('/api/v1/config-apis/stop', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ id })
-    });
-    toast(`Config API durduruldu: ${id}`, 'success');
-    renderMtlsSection();
-  } catch (err) { toast(t('error'), 'error'); }
-}
 
 async function toggleConfigApi(apiId) {
   const api = allApiConfigs.find(a => a.id === apiId);
@@ -2380,26 +2598,50 @@ async function generateEnrollmentToken(e) {
       body: JSON.stringify({ clientId })
     });
     const data = await res.json();
-    toast(`Token: ${data.token}`, 'success');
+    // Sunucu artık yalnızca SHA-256 hash saklıyor — düz metin SADECE burada,
+    // bir kez görünüyor. Vault token akışıyla aynı desen: panoya kopyala +
+    // kapatılana kadar ekranda kalan bir dialog.
+    navigator.clipboard?.writeText(data.token).catch(() => {});
+    alert(t('enrollTokenGeneratedAlert', data.token));
     loadEnrollmentTokens();
   } catch (err) { toast(t('error'), 'error'); }
 }
 
 async function loadEnrollmentTokens() {
-  const container = document.getElementById('enrollment-token-list');
-  if (!container) return;
+  if (!document.getElementById('enrollment-token-list')) return;
   try {
     const res = await apiFetch('/api/v1/enrollment-tokens');
     const tokens = await res.json();
+    // Konteyner fetch'ten SONRA çözülüyor. Eskiden referans fetch'ten önce
+    // alınıyordu; `renderConfigApiDetail` bu arada #content'i başlık + sekme
+    // çubuğuyla yeniden yazdığı için o referans DOM'dan kopuyor ve liste
+    // "Client Sertifikaları" sekmesinde hep boş kalıyordu. Yeniden yazma
+    // aynı id'yi ürettiğinden burada güncel eleman bulunuyor.
+    const container = document.getElementById('enrollment-token-list');
+    if (!container) return;
     const locale = lang === 'tr' ? 'tr-TR' : 'en-US';
-    const usedTxt = t('tokenUsed'), pendingTxt = t('tokenPending');
+    const usedTxt = t('tokenUsed'), pendingTxt = t('tokenPending'), expiredTxt = t('tokenExpired');
+    const expiresAtLabel = t('tokenExpiresAt');
+    // map() içinde `t` parametresi çeviri fonksiyonunu gölgeliyor — metinler
+    // döngüden önce çözülüyor.
+    const tokenMaskedTitle = t('tokenMaskedHint');
     if (tokens.length === 0) { container.innerHTML = ''; return; }
+    // Durum sırası: kullanıldıysa "Kullanıldı", değilse süresi dolmuşsa
+    // "Süresi doldu", yoksa "Bekliyor". Süresi dolmuş bir token'ın
+    // "Bekliyor" görünmesi operatöre kullanılabilir bir kayıt token'ı varmış
+    // gibi gösteriyordu; sunucu (EnrollmentTokenStore.validate) onu zaten
+    // reddediyor.
+    const statusCell = (tok) => {
+      if (tok.used) return `<span style="color:#64748b">${usedTxt}</span>`;
+      if (tok.expired) return `<span style="color:#f59e0b">${expiredTxt}</span>`;
+      return `<span style="color:#22c55e">${pendingTxt}</span>`;
+    };
     container.innerHTML = `<table class="data-table">
       <thead><tr><th>${t('thToken')}</th><th>${t('clientIdLabel')}</th><th>${t('thStatus')}</th><th>${t('thDate')}</th></tr></thead>
       <tbody>${tokens.map((t, i) => `<tr class="${i === 0 ? 'row-latest' : ''}">
-        <td style="font-family:monospace;font-weight:700;color:#7dd3fc;cursor:pointer" data-action="copyText" data-arg0="${esc(t.token)}">${t.token}</td>
-        <td>${t.clientId}</td>
-        <td>${t.used ? '<span style="color:#64748b">' + usedTxt + '</span>' : '<span style="color:#22c55e">' + pendingTxt + '</span>'}</td>
+        <td style="font-family:monospace;font-weight:700;color:#64748b" title="${esc(tokenMaskedTitle)}">${esc(t.token)}</td>
+        <td>${esc(t.clientId)}</td>
+        <td${t.expiresAt ? ` title="${esc(expiresAtLabel)}: ${esc(new Date(t.expiresAt).toLocaleString(locale))}"` : ''}>${statusCell(t)}</td>
         <td style="color:#64748b;font-size:11px">${new Date(t.createdAt).toLocaleString(locale)}</td>
       </tr>`).join('')}</tbody>
     </table>`;
@@ -2643,18 +2885,6 @@ async function stopMock(hostname) {
   } catch (e) { toast(t('error'), 'error'); }
 }
 
-async function regenerateCert(hostname) {
-  if (!confirm(t('regenerateCert') + '?')) return;
-  try {
-    const res = await apiFetch(`/api/v1/hosts/${encodeURIComponent(hostname)}/regenerate-cert`, { method: 'POST' });
-    if (!res.ok) { const err = await res.json(); toast(err.error || t('error'), 'error'); return; }
-    toast(t('certRegenerated'), 'success');
-    await loadConfig();
-    renderHostList();
-    selectHost(hostname);
-  } catch (e) { toast(t('error'), 'error'); }
-}
-
 // ── Utils ────────────────────────────────────────────
 
 function copyText(text) { navigator.clipboard.writeText(text).then(() => toast(t('copied'), 'success')); }
@@ -2823,9 +3053,12 @@ async function renderApiVaultTab(apiId) {
               <label class="form-label">${t('policyLabel')}</label>
               <select id="vault-upload-policy" class="form-input" style="width:150px">
                 <option value="token" selected>${t('policyTokenOpt')}</option>
+                <option value="token_mtls">${t('policyTokenMtlsOpt')}</option>
                 <option value="public">${t('policyPublicOpt')}</option>
                 <option value="api_key">${t('policyApiKeyOpt')}</option>
               </select>
+              <!-- api_key cihazdan kullanılamaz; operatör seçmeden önce görsün. -->
+              <div id="vault-upload-policy-warn" style="color:#f59e0b;font-size:11px;max-width:340px;margin-top:4px">${t('policyApiKeyWarn')}</div>
             </div>
             <div class="form-group" style="margin:0">
               <label class="form-label">${t('encryptionLabel')}</label>
@@ -2927,6 +3160,27 @@ async function generateVaultToken(apiId, key) {
   } catch (err) { toast(err.message, 'error'); }
 }
 
+/**
+ * Dosya içeriğine dokunmadan erişim politikasını ve şifreleme modunu
+ * değiştirir. Kaydedince hem detay hem de vault listesi tazelenir, böylece
+ * listedeki rozet anında güncellenir.
+ */
+async function saveVaultFilePolicy(apiId, key) {
+  const policy = document.getElementById(`policy-edit-${key}`)?.value;
+  const encryption = document.getElementById(`encryption-edit-${key}`)?.value;
+  if (!policy || !encryption) return;
+  try {
+    const res = await apiFetch(`${vaultBase(apiId)}/${encodeURIComponent(key)}/policy`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ access_policy: policy, encryption })
+    });
+    if (!res.ok) { toast(t('policySaveError'), 'error'); return; }
+    toast(t('policySaved', `${policy} / ${encryption}`), 'success');
+    showVaultFileDetail(apiId, key);
+  } catch (err) { toast(err.message, 'error'); }
+}
+
 async function revokeVaultToken(apiId, tokenId, keyForRefresh) {
   if (!confirm(t('tokenRevokeConfirm'))) return;
   try {
@@ -2952,14 +3206,21 @@ async function showVaultFileDetail(apiId, key) {
   content.innerHTML = `<div class="loading">${t('loading')}</div>`;
 
   try {
-    // Parallel fetch: distribution history + token list for this file.
+    // Parallel fetch: distribution history + token list + dosya listesi.
+    // Dosya listesi, bu anahtarın güncel access_policy / encryption değerini
+    // öğrenmek için gerekiyor (ayrı bir "tek dosya" ucu yok).
     const base = vaultBase(apiId);
-    const [distRes, tokensRes] = await Promise.all([
+    const [distRes, tokensRes, filesRes] = await Promise.all([
       apiFetch(`${base}/distributions/${encodeURIComponent(key)}`),
-      apiFetch(`${base}/${encodeURIComponent(key)}/tokens`)
+      apiFetch(`${base}/${encodeURIComponent(key)}/tokens`),
+      apiFetch(base)
     ]);
     const dists = await distRes.json();
     const tokens = tokensRes.ok ? await tokensRes.json() : [];
+    const allFiles = filesRes.ok ? await filesRes.json() : [];
+    const entry = (Array.isArray(allFiles) ? allFiles : []).find(f => f.key === key) || {};
+    const curPolicy = entry.access_policy || 'token';
+    const curEncryption = entry.encryption || 'plain';
 
     // Version timeline: group by version → first seen, last seen, ok/failed counts
     const byVer = {};
@@ -3047,6 +3308,35 @@ async function showVaultFileDetail(apiId, key) {
         <div style="display:flex;gap:8px">
           <button class="btn btn-secondary" data-action="setConfigApiTab" data-arg0="vault" data-arg1="${esc(apiId)}">← ${t('back')}</button>
           <span style="cursor:pointer;color:#60a5fa;font-size:16px" data-action="showVaultFileDetail" data-arg0="${esc(apiId)}" data-arg1="${esc(key)}">&#x21bb;</span>
+        </div>
+      </div>
+
+      <!-- Erişim politikası / şifreleme düzenleme. Sunucuda
+           PUT {base}/{key}/policy ucu vardı ama arayüzden erişilemiyordu:
+           bir dosyanın politikası ancak yeniden yükleyerek değiştirilebiliyordu. -->
+      <div class="card">
+        <div class="card-title">${t('policyEditTitle')}</div>
+        <div style="color:#94a3b8;font-size:12px;margin-bottom:10px">${t('policyEditHint')}</div>
+        <div style="display:flex;gap:8px;align-items:end;flex-wrap:wrap">
+          <div class="form-group" style="margin:0">
+            <label class="form-label">${t('policyLabel')}</label>
+            <select id="policy-edit-${esc(key)}" class="form-input" style="width:160px">
+              <option value="token" ${curPolicy === 'token' ? 'selected' : ''}>${t('policyTokenOpt')}</option>
+              <option value="token_mtls" ${curPolicy === 'token_mtls' ? 'selected' : ''}>${t('policyTokenMtlsOpt')}</option>
+              <option value="public" ${curPolicy === 'public' ? 'selected' : ''}>${t('policyPublicOpt')}</option>
+              <option value="api_key" ${curPolicy === 'api_key' ? 'selected' : ''}>${t('policyApiKeyOpt')}</option>
+            </select>
+          </div>
+          <div class="form-group" style="margin:0">
+            <label class="form-label">${t('encryptionLabel')}</label>
+            <select id="encryption-edit-${esc(key)}" class="form-input" style="width:140px">
+              <option value="plain" ${curEncryption === 'plain' ? 'selected' : ''}>plain</option>
+              <option value="at_rest" ${curEncryption === 'at_rest' ? 'selected' : ''}>at_rest</option>
+              <option value="end_to_end" ${curEncryption === 'end_to_end' ? 'selected' : ''}>end_to_end</option>
+            </select>
+          </div>
+          <button class="btn btn-primary" data-action="saveVaultFilePolicy" data-arg0="${esc(apiId)}" data-arg1="${esc(key)}">${t('policySaveBtn')}</button>
+          <span style="color:#64748b;font-size:11px">${t('policyCurrent')}: <b style="color:#7dd3fc">${esc(curPolicy)}</b> / <b style="color:#7dd3fc">${esc(curEncryption)}</b></span>
         </div>
       </div>
 
@@ -3211,7 +3501,18 @@ function formatBytes(bytes) {
 // so injected HTML can only invoke whitelisted functions.
 
 // Wrappers for inline expressions that combined multiple statements.
-function showAddHostScoped(apiId) { selectedApiId = apiId; showAddHost(); }
+/**
+ * "+" düğmesi: kapsamı seçip "Yeni Host Ekle" formunu açar.
+ *
+ * `loadConfig()` şart. "Manuel" sekmesi yeni host'u `currentConfig.pins`
+ * listesinin üstüne ekleyip TÜM listeyi seçili kapsama yazıyor; kapsam
+ * değişmişken eski kapsamın pin'leri hedef kapsama taşınırdı.
+ */
+async function showAddHostScoped(apiId) {
+  selectedApiId = apiId;
+  await loadConfig();
+  showAddHost();
+}
 function setConfigApiTab(tabId, apiId) { configApiTab = tabId; renderConfigApiDetail(apiId); }
 function renderEmptyAndHostList() { renderEmpty(); renderHostList(); }
 function clickFileInput(id) { document.getElementById(id).click(); }
@@ -3251,17 +3552,21 @@ function updateEncDesc(ev) {
 }
 
 const _actionHandlers = {
-  copyText, createConfigApi, createHostGenerate, createHostManual, createHostUpload,
-  deleteConfigApi, deleteHost, deleteVaultFile, editDeviceAcl, generateClientCert,
+  clearForceAll, copyText, createConfigApi, createHostFetch, createHostGenerate,
+  createHostManual, createHostUpload,
+  deleteConfigApi, deleteHost, deleteVaultFile, editDeviceAcl, fetchBootstrapFromUrl,
+  forceUpdateAll, generateClientCert,
   generateEnrollmentToken, generateVaultToken, loadClientDevices, loadHostConnectionHistory,
   pagGo, pagSize, regenerateBootstrapCert, regenerateSigningKey, renderApiVaultTab,
   renderConfigApiDetail, renderEditPins, renderEmpty, renderHostList, renderInlineEditPins,
   renewCertAuto, renewCertUpload, revokeClientCert, revokeVaultToken, runHealthCheck,
-  saveDefaultAcl, saveInlinePins, savePins, selectHost, selectHostInApi, setLang,
+  saveDefaultAcl, saveInlinePins, savePins, saveVaultFilePolicy, selectHost,
+  selectHostInApi, setLang,
   setVaultEnabled, setVaultStatusFilter, showAddConfigApi, showAddHost, showCertUploadForm,
   showDeviceAclManager, showDeviceDetail, showVaultFileDetail, switchAddTab,
   showSection,
-  testHostConnection, toggleApiTree, toggleBootstrapUpload, toggleConfigApi,
+  testHostConnection, toggleApiTree, toggleBootstrapFetch, toggleBootstrapUpload,
+  toggleConfigApi,
   toggleEditPins, toggleForce, toggleHostMtls, toggleMock, uploadBootstrapCert,
   uploadClientCert, uploadHostClientCert, uploadVaultFile,
   showAddHostScoped, setConfigApiTab, renderEmptyAndHostList, clickFileInput,

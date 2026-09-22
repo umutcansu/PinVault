@@ -32,11 +32,34 @@ import javax.crypto.spec.SecretKeySpec
  */
 class ConfigSigningService(private val keyFile: File) {
 
-    private val keyPair: KeyPair = loadOrGenerate()
+    /**
+     * Held in a volatile field, not a `val`, so [regenerate] swaps the key for
+     * every holder of this service. The routes capture the service instance
+     * once at startup; before this, regenerating replaced only the local
+     * variable in the admin handler, so the server kept signing with the old
+     * key (silently, until the next restart) while the dashboard reported
+     * success.
+     */
+    @Volatile
+    private var keyPair: KeyPair = loadOrGenerate()
 
     /** APK'ya gömülecek public key (Base64, X.509 encoded) */
-    val publicKeyBase64: String =
-        Base64.getEncoder().encodeToString(keyPair.public.encoded)
+    val publicKeyBase64: String
+        get() = Base64.getEncoder().encodeToString(keyPair.public.encoded)
+
+    /**
+     * Deletes the key file and generates a fresh ECDSA P-256 key, effective
+     * immediately for every caller.
+     *
+     * Every client that embedded the previous public key stops accepting
+     * configs from this server until it is rebuilt with [publicKeyBase64].
+     */
+    @Synchronized
+    fun regenerate(): String {
+        keyFile.delete()
+        keyPair = loadOrGenerate()
+        return publicKeyBase64
+    }
 
     /** Payload string'ini ECDSA-SHA256 ile imzalar, Base64 döner. */
     fun sign(payload: String): String {
@@ -86,7 +109,7 @@ class ConfigSigningService(private val keyFile: File) {
             val kp = loadFromFile()
             // Auto-migrate plaintext → encrypted when a password is now set.
             val raw = keyFile.readText().trim()
-            val password = System.getenv("SIGNING_KEY_PASSWORD")
+            val password = System.getenv("SIGNING_KEY_PASSWORD")?.takeIf { it.isNotBlank() }
             if (password != null && !raw.startsWith(ENCRYPTED_PREFIX)) {
                 println("ConfigSigningService: Re-encrypting plaintext signing key (H-04)")
                 saveToFile(kp)
@@ -111,7 +134,7 @@ class ConfigSigningService(private val keyFile: File) {
                 "\n" +
                 Base64.getEncoder().encodeToString(kp.public.encoded)
 
-        val password = System.getenv("SIGNING_KEY_PASSWORD")
+        val password = System.getenv("SIGNING_KEY_PASSWORD")?.takeIf { it.isNotBlank() }
         val content = if (password == null) {
             println("ConfigSigningService: WARNING — SIGNING_KEY_PASSWORD not set, " +
                 "writing signing key in plaintext. Set the env var for at-rest encryption.")
@@ -148,6 +171,17 @@ class ConfigSigningService(private val keyFile: File) {
                 )
             } catch (_: java.nio.file.AtomicMoveNotSupportedException) {
                 java.nio.file.Files.move(tmp, target, java.nio.file.StandardCopyOption.REPLACE_EXISTING)
+            } catch (e: java.nio.file.FileSystemException) {
+                // The key file itself is a mount point (a single-file Docker bind
+                // mount): renaming over it fails with EBUSY, which used to abort
+                // startup whenever SIGNING_KEY_PASSWORD triggered the at-rest
+                // migration, and broke "regenerate signing key" in the dashboard.
+                // Fall back to writing in place; permissions are already 0600 on
+                // the existing file, and we re-apply them after the write.
+                java.nio.file.Files.write(target, content.toByteArray(Charsets.UTF_8))
+                try {
+                    java.nio.file.Files.setPosixFilePermissions(target, ownerOnly)
+                } catch (_: Exception) { /* non-POSIX filesystem */ }
             }
         } catch (_: UnsupportedOperationException) {
             // Non-POSIX filesystem (e.g. Windows): best-effort fallback.
@@ -162,7 +196,7 @@ class ConfigSigningService(private val keyFile: File) {
     private fun loadFromFile(): KeyPair {
         val raw = keyFile.readText().trim()
         val plaintext = if (raw.startsWith(ENCRYPTED_PREFIX)) {
-            val password = System.getenv("SIGNING_KEY_PASSWORD")
+            val password = System.getenv("SIGNING_KEY_PASSWORD")?.takeIf { it.isNotBlank() }
                 ?: error("Signing key file is encrypted but SIGNING_KEY_PASSWORD is not set")
             val ciphertext = Base64.getDecoder().decode(raw.removePrefix(ENCRYPTED_PREFIX))
             String(decrypt(ciphertext, password), Charsets.UTF_8)

@@ -1,268 +1,4066 @@
 openapi: 3.0.3
+
 info:
-  title: PinVault API
-  description: SSL Certificate Pinning Management Server
-  version: 1.0.0
+  title: PinVault Demo Server API
+  version: 2.0.0
+  description: |
+    Reference backend for the PinVault Android SSL-pinning library.
+
+    ## Listeners
+
+    The process starts **two kinds of HTTP listener**, and they do **not** expose
+    the same routes:
+
+    | Listener | Source | Purpose |
+    |---|---|---|
+    | **Management server** | `Main.kt` → `embeddedServer(Netty, port = PORT)` | Web dashboard + admin API |
+    | **Config API listeners** | `Main.kt` → `configApiModuleFor()`, started by `ConfigApiManager` | TLS / mTLS endpoints the Android devices talk to |
+
+    Every operation below carries an **`x-registered-on`** extension and a
+    `Registered on:` line in its description:
+
+    * `management` — only on the management HTTP port.
+    * `config-api` — only on the TLS/mTLS Config API ports.
+    * `management+config-api` — on both.
+
+    Routes shared by both come from `certificateConfigRoutes()` and
+    `hostRoutes()`, which `Main.kt` mounts twice. `vaultRoutes()` (`/api/v1/vault/…`)
+    is mounted **only inside `configApiModuleFor()`** — the management port serves the
+    scope-explicit mirror under `/api/v1/config-apis/{configApiId}/vault/…` instead
+    (`scopedVaultAdminRoutes`). The KDoc in `VaultRoutes.kt` still claims it is
+    registered on the management server as well; that is stale.
+
+    Beyond the documented paths, the management server also serves the dashboard's
+    static assets at `GET /static/{...}` (`staticResources`), which is unauthenticated.
+
+    ## Authentication
+
+    `X-API-Key` is enforced by the `ApiKeyAuth` plugin, installed on **both** the
+    management server and every Config API listener. The plugin consults
+    `isPublicEndpoint(path, method)` in `plugin/ApiKeyAuth.kt`; anything not
+    allowlisted there needs the key. Operations reflect this exactly:
+    `security: []` = public, `security: [{ApiKeyAuth: []}]` = key required.
+
+    * `401` `{"error":"X-API-Key header required"}` when the header is absent.
+    * `403` `{"error":"Invalid API key"}` when it does not match (constant-time compare).
+    * When `API_KEY` is unset the server **refuses to start** unless
+      `ALLOW_ANONYMOUS_ADMIN=true`, in which case the plugin short-circuits and
+      *no* endpoint is authenticated. The `security` blocks below describe the
+      normal (`API_KEY` set) deployment.
+
+    Note the allowlist is path-exact: `GET /health` is public but
+    `GET /api/v1/health` is **not**, and `GET /api/v1/certificate-config` is public
+    while `PUT` on the same path and every `/api/v1/certificate-config/...` sub-path
+    are admin-only.
+
+    ## Client-integrity contracts
+
+    * **`X-P12-SHA256`** — `POST /api/v1/client-certs/enroll` returns the Base64
+      SHA-256 of the P12 body in this header. The library **refuses to install** a
+      P12 that arrives without it. (`POST /api/v1/client-certs/generate` does *not*
+      send the header — it is a dashboard download, not an enrollment path.)
+    * **Signed configs** carry `issuedAt` / `expiresAt` (Unix epoch ms) stamped at
+      response time; TTL comes from `CONFIG_TTL_SECONDS` (default 24 h). Clients
+      reject expired windows, replays (`issuedAt <= stored`) and per-host downgrades.
+    * **Enrollment tokens** are returned in plaintext exactly once, by
+      `POST /api/v1/enrollment-tokens/generate`. The listing endpoint returns a
+      masked prefix (`AbC12dEf…`) with `masked: true`; the plaintext is
+      unrecoverable (only its SHA-256 is stored).
+    * **Vault files** are served with `X-Vault-Signature` (ECDSA over
+      `pinvault-vault-file:v1:<key>:<version>:<sha256HexLower(plaintext)>`), signed
+      over the *plaintext* so one signature covers plain / at_rest / end_to_end.
+
 servers:
-  - url: http://localhost:8080
-    description: Management API (HTTP)
-  - url: https://localhost:8081
-    description: Config API (TLS)
+  - url: http://localhost:6650
+    description: Management HTTP API + web dashboard (project default)
+  - url: https://localhost:6651
+    description: TLS Config API (project default)
+  - url: https://localhost:6652
+    description: mTLS Config API (project default; requires a client certificate)
+  - url: http://localhost:8090
+    description: Management HTTP API — alternate local-development port
+  - url: https://localhost:8091
+    description: TLS Config API — alternate local-development port
+  - url: https://localhost:8092
+    description: mTLS Config API — alternate local-development port
 
 security:
   - ApiKeyAuth: []
 
-components:
-  securitySchemes:
-    ApiKeyAuth:
-      type: apiKey
-      in: header
-      name: X-API-Key
-      description: Required for management endpoints. Set via API_KEY env var.
-
-  schemas:
-    HostPin:
-      type: object
-      properties:
-        hostname: { type: string, example: "api.example.com" }
-        sha256: { type: array, items: { type: string }, example: ["hash1...", "hash2..."] }
-        version: { type: integer, example: 1 }
-        forceUpdate: { type: boolean, default: false }
-        mtls: { type: boolean, default: false }
-        clientCertVersion: { type: integer, nullable: true }
-
-    CertificateConfig:
-      type: object
-      properties:
-        version: { type: integer }
-        pins: { type: array, items: { $ref: '#/components/schemas/HostPin' } }
-        forceUpdate: { type: boolean }
-
-    VaultDistribution:
-      type: object
-      properties:
-        vaultKey: { type: string }
-        version: { type: integer }
-        deviceId: { type: string }
-        deviceAlias: { type: string, nullable: true }
-        deviceModel: { type: string, nullable: true }
-        status: { type: string, enum: [downloaded, cached, failed] }
-        timestamp: { type: string, format: date-time }
-
-    ClientCertRecord:
-      type: object
-      properties:
-        id: { type: string }
-        commonName: { type: string }
-        fingerprint: { type: string }
-        createdAt: { type: string, format: date-time }
-        revoked: { type: boolean }
-        deviceAlias: { type: string, nullable: true }
-        deviceUid: { type: string, nullable: true }
+tags:
+  - name: certificate-config
+    description: Pin config download / edit, per-host history and force-update flags.
+  - name: hosts
+    description: Per-host certificate lifecycle and mock TLS/mTLS servers.
+  - name: config-apis
+    description: Lifecycle of the dynamic TLS/mTLS Config API listeners.
+  - name: client-certs
+    description: mTLS client certificate inventory (generate, import, revoke, download).
+  - name: enrollment
+    description: Enrollment mode, single-use enrollment tokens, device enrollment.
+  - name: vault
+    description: Client-facing VaultFile download and reporting (Config API ports).
+  - name: vault-admin
+    description: Vault file CRUD, access tokens, distribution history and stats.
+  - name: device-acl
+    description: Per-device and default host ACLs used to scope pin config responses.
+  - name: connection-history
+    description: Connection and config-update telemetry from devices and the dashboard.
+  - name: server-tls
+    description: The demo server's own TLS keypair and the pins clients bootstrap with.
+  - name: signing-key
+    description: ECDSA P-256 config/vault signing key.
+  - name: monitoring
+    description: Health probes, certificate expiry monitoring, API docs, dashboard.
 
 paths:
+
+  # ─────────────────────────────────────────────────────────────────────
+  # monitoring
+  # ─────────────────────────────────────────────────────────────────────
+
   /health:
     get:
-      tags: [System]
-      summary: Health check (Docker probe)
+      tags: [monitoring]
+      operationId: health
+      summary: Liveness probe
+      description: |
+        Docker/Compose health probe. Always `{"status":"ok"}` while the process is up.
+
+        Registered on: **management + config-api** (`Main.kt` registers it in the
+        management `routing {}` block and again inside `configApiModuleFor()`).
       security: []
+      x-registered-on: management+config-api
       responses:
-        '200': { description: OK }
+        '200':
+          description: Server is up.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status: { type: string, example: ok }
+
+  /api/v1/health:
+    get:
+      tags: [monitoring]
+      operationId: detailedHealth
+      summary: Detailed health (certs, config APIs, database)
+      description: |
+        Aggregated status. Unlike `/health` this path is **not** in the
+        `isPublicEndpoint` allowlist, so it requires `X-API-Key`.
+
+        Registered on: **management** only.
+      security:
+        - ApiKeyAuth: []
+      x-registered-on: management
+      responses:
+        '200':
+          description: Aggregated status.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/DetailedHealth' }
+        '401': { $ref: '#/components/responses/MissingApiKey' }
+        '403': { $ref: '#/components/responses/InvalidApiKey' }
+
+  /api/v1/cert-expiry:
+    get:
+      tags: [monitoring]
+      operationId: certExpiry
+      summary: Certificate expiry report
+      description: |
+        Runs `CertExpiryMonitor.checkAll()` over every host keystore recorded in the
+        `hosts` table. A background thread logs the same data every 6 hours.
+
+        Registered on: **management** only.
+      security:
+        - ApiKeyAuth: []
+      x-registered-on: management
+      responses:
+        '200':
+          description: One entry per host with a recorded `cert_valid_until`.
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/CertExpiryStatus' }
+        '401': { $ref: '#/components/responses/MissingApiKey' }
+        '403': { $ref: '#/components/responses/InvalidApiKey' }
+
+  /docs:
+    get:
+      tags: [monitoring]
+      operationId: docs
+      summary: Swagger UI
+      description: |
+        `302` redirect to `/static/docs.html`, which loads this document through the
+        bundled Swagger UI.
+
+        Registered on: **management** only.
+      security: []
+      x-registered-on: management
+      responses:
+        '302':
+          description: Redirect to `/static/docs.html`.
+          headers:
+            Location:
+              schema: { type: string, example: /static/docs.html }
+
+  /:
+    get:
+      tags: [monitoring]
+      operationId: dashboard
+      summary: Web dashboard
+      description: |
+        Serves `static/index.html` (TR/EN admin dashboard) as `text/html`.
+
+        Registered on: **management** only.
+      security: []
+      x-registered-on: management
+      responses:
+        '200':
+          description: Dashboard HTML.
+          content:
+            text/html:
+              schema: { type: string }
+
+  # ─────────────────────────────────────────────────────────────────────
+  # certificate-config
+  # ─────────────────────────────────────────────────────────────────────
 
   /api/v1/certificate-config:
     get:
-      tags: [Certificate Config]
-      summary: Fetch pin configuration (client endpoint)
+      tags: [certificate-config]
+      operationId: getCertificateConfig
+      summary: Download the pin configuration (client endpoint)
+      description: |
+        The endpoint the Android library polls. Public — this exact path + method is
+        the only `/api/v1/certificate-config*` entry in the `isPublicEndpoint`
+        allowlist.
+
+        **Scoping.** When `hosts` is supplied and/or the caller is identified (by the
+        `X-Device-Id` header, or on an mTLS listener by the client certificate CN —
+        `PinVault Client: <clientId>`), `DeviceHostAclStore.resolve()` intersects the
+        request with the device ACL and the response contains only the granted pins.
+        Denied hosts are dropped silently (logged server-side as
+        `Unauthorized host request`). With no `hosts`, no `X-Device-Id` and no
+        client certificate, the full config is returned unchanged.
+
+        **Signing.** Unless `signed=false`, the response is a
+        [SignedConfig](#/components/schemas/SignedConfig) envelope whose `payload` is
+        the JSON-encoded config stamped with `issuedAt = now` and
+        `expiresAt = now + CONFIG_TTL_SECONDS` (default 24 h). With `signed=false` the
+        bare config object is returned and `issuedAt` / `expiresAt` stay `0`.
+
+        Registered on: **management + config-api**.
       security: []
+      x-registered-on: management+config-api
       parameters:
+        - name: hosts
+          in: query
+          required: false
+          description: >
+            Comma-separated hostnames the device wants pins for, e.g.
+            `api.example.com,cdn.example.com`. Blank entries are dropped. The result
+            is the intersection with the device's ACL.
+          schema: { type: string }
+          example: api.example.com,cdn.example.com
+        - name: signed
+          in: query
+          required: false
+          description: >
+            Only the literal value `false` has an effect: it returns the plain config
+            instead of the signed envelope. Any other value (including omitting the
+            parameter) yields the signed envelope.
+          schema: { type: string, enum: ['false'] }
         - name: currentVersion
           in: query
-          schema: { type: integer }
+          required: false
+          deprecated: true
+          description: >
+            **Ignored by the server.** The Android library still appends it on every
+            fetch (`DynamicConfigService.getConfig` / `getSignedConfig` /
+            `getScopedConfig` in `DefaultCertificateConfigApi.kt`), but the handler
+            never reads the value — there is no conditional-GET or `304` behaviour on
+            this endpoint, and the response is always the full current config for the
+            granted hosts. Kept here only so the parameter the client sends is
+            accounted for; do not build anything on it.
+          schema: { type: integer, minimum: 0 }
+        - $ref: '#/components/parameters/DeviceIdHeader'
       responses:
         '200':
-          description: Signed or unsigned config
+          description: >
+            Signed envelope by default; the bare config when `signed=false`.
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - $ref: '#/components/schemas/SignedConfig'
+                  - $ref: '#/components/schemas/CertificateConfig'
     put:
-      tags: [Certificate Config]
-      summary: Update pin configuration
+      tags: [certificate-config]
+      operationId: putCertificateConfig
+      summary: Replace the pin configuration
+      description: |
+        Replaces the whole pin set for this scope.
+
+        **Per-host versioning** is applied server-side before validation: a host
+        absent from the current config is stored at `version: 1`, a host whose
+        `sha256` list changed gets `oldVersion + 1`, an unchanged host keeps its
+        version. Client-supplied `version` values are overwritten. Re-added hosts
+        continue their previous sequence (see `PinConfigStore.save`), so versions
+        never move backwards.
+
+        **Validation** (`validatePinConfig`): every host needs a non-blank hostname
+        and **at least 2 pins** (primary + backup); every pin must be 44 characters
+        of Base64 decoding to exactly 32 bytes.
+
+        Writes `host_added` / `host_removed` / `pins_updated` history entries.
+
+        Registered on: **management + config-api**.
+      security:
+        - ApiKeyAuth: []
+      x-registered-on: management+config-api
       requestBody:
+        required: true
         content:
           application/json:
             schema: { $ref: '#/components/schemas/CertificateConfig' }
       responses:
-        '200': { description: Config updated }
+        '200':
+          description: The configuration as stored, with server-assigned versions.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/CertificateConfig' }
+        '400':
+          description: Pin validation failed.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorList' }
+        '409':
+          description: The same hostname appears more than once in the request body.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorList' }
+        '401': { $ref: '#/components/responses/MissingApiKey' }
+        '403': { $ref: '#/components/responses/InvalidApiKey' }
+
+  /api/v1/certificate-config/history/{hostname}:
+    get:
+      tags: [certificate-config]
+      operationId: getCertificateConfigHistory
+      summary: Pin history for one host
+      description: |
+        Events recorded for this hostname: `cert_generated`, `cert_regenerated`,
+        `cert_uploaded`, `cert_fetched`, `fetched_from_url`, `host_added`,
+        `host_removed`, `pins_updated`, `force_update`, `mtls_enabled`,
+        `mtls_disabled`, `client_cert_uploaded`.
+
+        The lookup is by hostname across all scopes (`getByHostname`), not scoped to
+        the listener's Config API.
+
+        Registered on: **management + config-api**. Admin-only on both — the
+        allowlist covers only the exact `/api/v1/certificate-config` path.
+      security:
+        - ApiKeyAuth: []
+      x-registered-on: management+config-api
+      parameters:
+        - $ref: '#/components/parameters/HostnamePath'
+      responses:
+        '200':
+          description: History entries, newest first.
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/PinConfigHistoryEntry' }
+        '401': { $ref: '#/components/responses/MissingApiKey' }
+        '403': { $ref: '#/components/responses/InvalidApiKey' }
+
+  /api/v1/certificate-config/force-update/{hostname}:
+    post:
+      tags: [certificate-config]
+      operationId: forceUpdateHost
+      summary: Set forceUpdate on one host
+      description: |
+        Sets `forceUpdate: true` on the matching pin and records a `force_update`
+        history entry. An unknown hostname is a silent no-op (still `200`).
+
+        Registered on: **management + config-api**.
+      security:
+        - ApiKeyAuth: []
+      x-registered-on: management+config-api
+      parameters:
+        - $ref: '#/components/parameters/HostnamePath'
+      responses:
+        '200':
+          description: The updated configuration.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/CertificateConfig' }
+        '401': { $ref: '#/components/responses/MissingApiKey' }
+        '403': { $ref: '#/components/responses/InvalidApiKey' }
+
+  /api/v1/certificate-config/clear-force/{hostname}:
+    post:
+      tags: [certificate-config]
+      operationId: clearForceUpdateHost
+      summary: Clear forceUpdate on one host
+      description: |
+        Sets `forceUpdate: false` on the matching pin. No history entry is written.
+
+        Registered on: **management + config-api**.
+      security:
+        - ApiKeyAuth: []
+      x-registered-on: management+config-api
+      parameters:
+        - $ref: '#/components/parameters/HostnamePath'
+      responses:
+        '200':
+          description: The updated configuration.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/CertificateConfig' }
+        '401': { $ref: '#/components/responses/MissingApiKey' }
+        '403': { $ref: '#/components/responses/InvalidApiKey' }
+
+  /api/v1/certificate-config/force-update:
+    post:
+      tags: [certificate-config]
+      operationId: forceUpdateAll
+      summary: Set forceUpdate on every host
+      description: |
+        Backward-compatible global switch: sets `forceUpdate: true` on every pin and
+        writes one `force_update` history entry per host. Note the top-level
+        `forceUpdate` flag is left untouched.
+
+        Registered on: **management + config-api**.
+      security:
+        - ApiKeyAuth: []
+      x-registered-on: management+config-api
+      responses:
+        '200':
+          description: The updated configuration.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/CertificateConfig' }
+        '401': { $ref: '#/components/responses/MissingApiKey' }
+        '403': { $ref: '#/components/responses/InvalidApiKey' }
+
+  /api/v1/certificate-config/clear-force:
+    post:
+      tags: [certificate-config]
+      operationId: clearForceUpdateAll
+      summary: Clear forceUpdate everywhere
+      description: |
+        Clears the top-level `forceUpdate` flag **and** the per-host flags.
+
+        Registered on: **management + config-api**.
+      security:
+        - ApiKeyAuth: []
+      x-registered-on: management+config-api
+      responses:
+        '200':
+          description: The updated configuration.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/CertificateConfig' }
+        '401': { $ref: '#/components/responses/MissingApiKey' }
+        '403': { $ref: '#/components/responses/InvalidApiKey' }
+
+  /api/v1/config/{configApiId}:
+    get:
+      tags: [certificate-config]
+      operationId: getConfigForApi
+      summary: Read one Config API's pin configuration (dashboard)
+      description: |
+        Dashboard helper that reads any scope by id, rather than the scope the
+        listener is bound to. Unknown ids return an empty config rather than `404`.
+
+        Registered on: **management** only.
+      security:
+        - ApiKeyAuth: []
+      x-registered-on: management
+      parameters:
+        - $ref: '#/components/parameters/ConfigApiIdPath'
+      responses:
+        '200':
+          description: The stored configuration for this scope.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/CertificateConfig' }
+        '401': { $ref: '#/components/responses/MissingApiKey' }
+        '403': { $ref: '#/components/responses/InvalidApiKey' }
+
+  /api/v1/config/{configApiId}/update:
+    post:
+      tags: [certificate-config]
+      operationId: updateConfigForApi
+      summary: Overwrite one Config API's pin configuration (dashboard)
+      description: |
+        Saves the body verbatim through `PinConfigStore.save()`.
+
+        Two differences from `PUT /api/v1/certificate-config`: there is **no
+        validation** of pin count/format and **no duplicate-hostname check**, and the
+        response echoes the *request body* rather than what was stored — so
+        server-side version bumps are not reflected in the response. Re-read with
+        `GET /api/v1/config/{configApiId}` to see the stored state.
+
+        Registered on: **management** only.
+      security:
+        - ApiKeyAuth: []
+      x-registered-on: management
+      parameters:
+        - $ref: '#/components/parameters/ConfigApiIdPath'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CertificateConfig' }
+      responses:
+        '200':
+          description: Echo of the submitted configuration (not the stored one).
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/CertificateConfig' }
+        '401': { $ref: '#/components/responses/MissingApiKey' }
+        '403': { $ref: '#/components/responses/InvalidApiKey' }
+
+  /api/v1/all-configs:
+    get:
+      tags: [certificate-config]
+      operationId: getAllConfigs
+      summary: All Config APIs with their pins (dashboard sidebar)
+      description: |
+        Running and stopped Config APIs, each with its pin list and computed version.
+        The response is hand-serialised JSON: `HostPin.mtls` and `clientCertVersion`
+        are omitted here even though the stored pins carry them.
+
+        Registered on: **management** only.
+      security:
+        - ApiKeyAuth: []
+      x-registered-on: management
+      responses:
+        '200':
+          description: Running instances first, then stopped ones.
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/ConfigApiWithPins' }
+        '401': { $ref: '#/components/responses/MissingApiKey' }
+        '403': { $ref: '#/components/responses/InvalidApiKey' }
+
+  # ─────────────────────────────────────────────────────────────────────
+  # signing-key
+  # ─────────────────────────────────────────────────────────────────────
 
   /api/v1/signing-key:
     get:
-      tags: [Certificate Config]
-      summary: Get ECDSA public key for config signature verification
+      tags: [signing-key]
+      operationId: getSigningKey
+      summary: ECDSA public key (client endpoint)
+      description: |
+        Base64 X.509 SubjectPublicKeyInfo of the P-256 key used for
+        `SHA256withECDSA` config and vault-file signatures. This is the value that
+        goes into `ConfigApiBlock.Builder.signaturePublicKey(...)` in the APK.
+
+        Public: the allowlist matches this path for **any** method.
+
+        Registered on: **management + config-api**.
       security: []
+      x-registered-on: management+config-api
       responses:
-        '200': { description: Base64 public key }
+        '200':
+          description: The public half of the signing key.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  publicKey: { type: string, description: Base64 X.509 SPKI. }
+
+  /api/v1/signing-key/regenerate:
+    post:
+      tags: [signing-key]
+      operationId: regenerateSigningKey
+      summary: Destroy and regenerate the signing keypair
+      description: |
+        Deletes the key file (`SIGNING_KEY_PATH`, default `signing-key.pem`) and
+        builds a new `ConfigSigningService`. **Every already-shipped client that
+        pinned the old public key will reject configs until it is rebuilt with the
+        new one.** Takes no request body.
+
+        If `SIGNING_KEY_PASSWORD` is set, the new key is written AES-GCM encrypted at
+        rest.
+
+        Registered on: **management** only.
+      security:
+        - ApiKeyAuth: []
+      x-registered-on: management
+      responses:
+        '200':
+          description: The new public key.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  publicKey: { type: string }
+                  regenerated: { type: boolean, example: true }
+        '401': { $ref: '#/components/responses/MissingApiKey' }
+        '403': { $ref: '#/components/responses/InvalidApiKey' }
+
+  # ─────────────────────────────────────────────────────────────────────
+  # server-tls
+  # ─────────────────────────────────────────────────────────────────────
+
+  /api/v1/server-tls-pins:
+    get:
+      tags: [server-tls]
+      operationId: getServerTlsPins
+      summary: The demo server's own TLS pins
+      description: |
+        SPKI SHA-256 pins of the certificate the Config API listeners present, read
+        from `certs/demo-server.pins`. These are the bootstrap pins an APK hardcodes
+        to make its first Config API call. `backupPin` is `""` when only one pin exists.
+
+        Registered on: **management** only.
+      security:
+        - ApiKeyAuth: []
+      x-registered-on: management
+      responses:
+        '200':
+          description: Current server pins and the default HTTPS port.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ServerTlsPins' }
+        '401': { $ref: '#/components/responses/MissingApiKey' }
+        '403': { $ref: '#/components/responses/InvalidApiKey' }
+
+  /api/v1/server-tls-pins/regenerate:
+    post:
+      tags: [server-tls]
+      operationId: regenerateServerTlsPins
+      summary: Regenerate the server TLS certificate
+      description: |
+        Deletes `certs/demo-server.jks` + `.pins` and issues a fresh self-signed
+        certificate for `localhost`. Running listeners keep the old keystore, hence
+        `restartRequired: true`. Takes no request body.
+
+        Registered on: **management** only.
+      security:
+        - ApiKeyAuth: []
+      x-registered-on: management
+      responses:
+        '200':
+          description: New pins; restart the process to serve the new certificate.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ServerTlsPinsMutation' }
+        '401': { $ref: '#/components/responses/MissingApiKey' }
+        '403': { $ref: '#/components/responses/InvalidApiKey' }
+
+  /api/v1/server-tls-pins/upload:
+    post:
+      tags: [server-tls]
+      operationId: uploadServerTlsCert
+      summary: Import a server TLS keystore
+      description: |
+        Multipart upload of a JKS/PKCS12 keystore that replaces the server's own
+        certificate. The first file part found is used, regardless of its field name.
+
+        Registered on: **management** only.
+      security:
+        - ApiKeyAuth: []
+      x-registered-on: management
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              properties:
+                file:
+                  type: string
+                  format: binary
+                  description: The keystore bytes (any file part is accepted).
+                password:
+                  type: string
+                  default: changeit
+                  description: Keystore password.
+                format:
+                  type: string
+                  enum: [jks, pkcs12, p12]
+                  default: jks
+      responses:
+        '200':
+          description: Imported; restart to serve the new certificate.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ServerTlsPinsMutation' }
+        '400':
+          description: No file part, or the keystore could not be imported.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '401': { $ref: '#/components/responses/MissingApiKey' }
+        '403': { $ref: '#/components/responses/InvalidApiKey' }
+
+  /api/v1/server-tls-pins/fetch-from-url:
+    post:
+      tags: [server-tls]
+      operationId: fetchServerTlsPinsFromUrl
+      summary: Adopt pins from a remote TLS endpoint
+      description: |
+        Connects to `url`, extracts the leaf certificate's SPKI pins and stores them
+        as the server's advertised pins. No keystore is created, so the listeners
+        keep presenting their existing certificate — use this when TLS is terminated
+        upstream (reverse proxy / load balancer) and the client must pin that
+        certificate instead.
+
+        Registered on: **management** only.
+      security:
+        - ApiKeyAuth: []
+      x-registered-on: management
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [url]
+              properties:
+                url: { type: string, example: 'https://gateway.example.com' }
+      responses:
+        '200':
+          description: Pins fetched and stored.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  primaryPin: { type: string }
+                  backupPin: { type: string }
+                  hostname: { type: string }
+                  fetched: { type: boolean, example: true }
+        '400':
+          description: '`url` missing/unparseable, or the connection failed.'
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '401': { $ref: '#/components/responses/MissingApiKey' }
+        '403': { $ref: '#/components/responses/InvalidApiKey' }
+
+  # ─────────────────────────────────────────────────────────────────────
+  # config-apis
+  # ─────────────────────────────────────────────────────────────────────
+
+  /api/v1/config-apis:
+    get:
+      tags: [config-apis]
+      operationId: listConfigApis
+      summary: List running Config API listeners
+      description: |
+        Only **running** instances. Stopped ones appear in `GET /api/v1/all-configs`
+        with `running: false`.
+
+        Registered on: **management** only.
+      security:
+        - ApiKeyAuth: []
+      x-registered-on: management
+      responses:
+        '200':
+          description: Running listeners.
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/ConfigApiInstance' }
+        '401': { $ref: '#/components/responses/MissingApiKey' }
+        '403': { $ref: '#/components/responses/InvalidApiKey' }
+
+  /api/v1/config-apis/start:
+    post:
+      tags: [config-apis]
+      operationId: startConfigApi
+      summary: Start (or restart) a Config API listener
+      description: |
+        Binds a new TLS or mTLS listener and persists it with `auto_start = 1`, so it
+        comes back on the next process start. An id that is already running is
+        stopped first; a port already claimed by another instance stops that
+        instance.
+
+        `mode: "mtls"` requires an existing client-cert truststore — generate or
+        enroll at least one client certificate first.
+
+        Registered on: **management** only.
+      security:
+        - ApiKeyAuth: []
+      x-registered-on: management
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [port]
+              properties:
+                id:
+                  type: string
+                  description: 'Defaults to `api-<epochMillis>` when omitted.'
+                  example: mtls-6652
+                port: { type: integer, example: 6652 }
+                mode: { type: string, enum: [tls, mtls], default: tls }
+      responses:
+        '200':
+          description: Listener started.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ConfigApiInstance' }
+        '400':
+          description: '`port` missing, or `mode: mtls` with no truststore available.'
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '500':
+          description: The listener failed to bind (port in use, bad keystore, …).
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '401': { $ref: '#/components/responses/MissingApiKey' }
+        '403': { $ref: '#/components/responses/InvalidApiKey' }
+
+  /api/v1/config-apis/stop:
+    post:
+      tags: [config-apis]
+      operationId: stopConfigApi
+      summary: Stop a Config API listener
+      description: |
+        Stops the listener but keeps its row and its pin data, so it can be restarted
+        later. Stopping an unknown id still returns `200`.
+
+        Registered on: **management** only.
+      security:
+        - ApiKeyAuth: []
+      x-registered-on: management
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [id]
+              properties:
+                id: { type: string, example: mtls-6652 }
+      responses:
+        '200':
+          description: Stopped.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  id: { type: string }
+                  stopped: { type: boolean, example: true }
+        '400':
+          description: '`id` missing from the body.'
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '401': { $ref: '#/components/responses/MissingApiKey' }
+        '403': { $ref: '#/components/responses/InvalidApiKey' }
+
+  /api/v1/config-apis/delete:
+    post:
+      tags: [config-apis]
+      operationId: deleteConfigApi
+      summary: Stop a Config API and delete its data
+      description: |
+        Stops the listener, forgets it, and deletes its rows from `pin_config`,
+        `pin_hashes`, `hosts` and `pin_history` in one transaction.
+
+        Not removed: the `config_apis` row itself, vault files, vault tokens,
+        distribution history and device ACLs for that scope.
+
+        Registered on: **management** only.
+      security:
+        - ApiKeyAuth: []
+      x-registered-on: management
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [id]
+              properties:
+                id: { type: string, example: mtls-6652 }
+      responses:
+        '200':
+          description: Deleted.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  id: { type: string }
+                  deleted: { type: boolean, example: true }
+        '400':
+          description: '`id` missing from the body.'
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '401': { $ref: '#/components/responses/MissingApiKey' }
+        '403': { $ref: '#/components/responses/InvalidApiKey' }
+
+  /api/v1/config-apis/{id}/vault-enabled:
+    get:
+      tags: [config-apis]
+      operationId: getVaultEnabled
+      summary: Read the vault toggle for a Config API
+      description: |
+        Reads `config_apis.vault_enabled`. Note the boolean is returned as a
+        **string** (`"true"` / `"false"`).
+
+        Registered on: **management** only.
+      security:
+        - ApiKeyAuth: []
+      x-registered-on: management
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+          example: default-tls
+      responses:
+        '200':
+          description: Current toggle state.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/VaultEnabledState' }
+        '404':
+          description: No `config_apis` row with this id.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '401': { $ref: '#/components/responses/MissingApiKey' }
+        '403': { $ref: '#/components/responses/InvalidApiKey' }
+    put:
+      tags: [config-apis]
+      operationId: setVaultEnabled
+      summary: Toggle the vault subsystem for a Config API
+      description: |
+        Updates `config_apis.vault_enabled`.
+
+        While the flag is `false`, the Config API listener answers **403** to
+        every `GET /api/v1/vault/{key}` in that scope — including keys that do
+        not exist, so a disabled vault does not reveal which keys it holds.
+        The flag is read per request, so the change takes effect immediately;
+        the routes themselves stay registered.
+
+        Vault **administration** in that scope is deliberately unaffected
+        (upload, list, policy, delete, tokens, distributions): an operator who
+        flips this switch usually needs to inspect and remove a file right
+        after. The flag is an operator kill switch, not an authentication
+        boundary — per-file `access_policy` remains what guards content.
+
+        Every Config API the server serves has a `config_apis` row, including
+        the default one the server mounts at boot, so the switch works on all
+        of them.
+
+        Registered on: **management** only.
+      security:
+        - ApiKeyAuth: []
+      x-registered-on: management
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+          example: default-tls
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [enabled]
+              properties:
+                enabled: { type: boolean }
+      responses:
+        '200':
+          description: Toggle updated.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/VaultEnabledState' }
+        '400':
+          description: '`enabled` missing or not a boolean.'
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '404':
+          description: No `config_apis` row with this id.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '401': { $ref: '#/components/responses/MissingApiKey' }
+        '403': { $ref: '#/components/responses/InvalidApiKey' }
+
+  # ─────────────────────────────────────────────────────────────────────
+  # hosts
+  # ─────────────────────────────────────────────────────────────────────
 
   /api/v1/hosts/generate-cert:
     post:
-      tags: [Host Management]
-      summary: Generate self-signed TLS certificate for a host
+      tags: [hosts]
+      operationId: hostsGenerateCert
+      summary: Create a host with a freshly generated certificate
+      description: |
+        Issues a self-signed certificate for `hostname`, stores the keystore, adds a
+        `hosts` row and appends a pin entry at `version: 1`, then records a
+        `cert_generated` history entry.
+
+        Registered on: **management + config-api**. On the management port the scope
+        comes from `?configApiId=`; on a Config API port that parameter is ignored
+        and the listener's own scope is used.
+      security:
+        - ApiKeyAuth: []
+      x-registered-on: management+config-api
+      parameters:
+        - $ref: '#/components/parameters/ConfigApiIdQuery'
       requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [hostname]
+              properties:
+                hostname: { type: string, example: api.example.com }
+      responses:
+        '200':
+          description: Certificate generated and pinned.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/HostActionResponse' }
+        '400':
+          description: '`hostname` missing.'
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '409':
+          description: This scope already has a pin entry for that hostname.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '401': { $ref: '#/components/responses/MissingApiKey' }
+        '403': { $ref: '#/components/responses/InvalidApiKey' }
+
+  /api/v1/hosts/fetch-from-url:
+    post:
+      tags: [hosts]
+      operationId: hostsFetchFromUrl
+      summary: Add a host by pinning a live TLS endpoint
+      description: |
+        Connects to `url`, derives the hostname and SPKI pins from the leaf
+        certificate, and adds the host at `version: 1` with **no** keystore (the
+        server does not own that certificate). History event: `fetched_from_url`.
+
+        Registered on: **management + config-api**.
+      security:
+        - ApiKeyAuth: []
+      x-registered-on: management+config-api
+      parameters:
+        - $ref: '#/components/parameters/ConfigApiIdQuery'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [url]
+              properties:
+                url: { type: string, example: 'https://api.example.com' }
+      responses:
+        '200':
+          description: Pins fetched and host added.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/HostActionResponse' }
+        '400':
+          description: '`url` missing, or the TLS connection failed.'
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '409':
+          description: This scope already has a pin entry for that hostname.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '401': { $ref: '#/components/responses/MissingApiKey' }
+        '403': { $ref: '#/components/responses/InvalidApiKey' }
+
+  /api/v1/hosts/upload-cert:
+    post:
+      tags: [hosts]
+      operationId: hostsUploadCert
+      summary: Add a host from an uploaded keystore
+      description: |
+        Imports a JKS/PKCS12 keystore and registers the host at `version: 1`.
+        History event: `cert_uploaded`.
+
+        Registered on: **management + config-api**.
+      security:
+        - ApiKeyAuth: []
+      x-registered-on: management+config-api
+      parameters:
+        - $ref: '#/components/parameters/ConfigApiIdQuery'
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [file, hostname]
+              properties:
+                file: { type: string, format: binary }
+                hostname: { type: string, example: api.example.com }
+                password: { type: string, default: changeit }
+                format: { type: string, enum: [jks, pkcs12, p12], default: jks }
+      responses:
+        '200':
+          description: Keystore imported and host added.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/HostActionResponse' }
+        '400':
+          description: File or `hostname` part missing, or the import failed.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '409':
+          description: This scope already has a pin entry for that hostname.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '401': { $ref: '#/components/responses/MissingApiKey' }
+        '403': { $ref: '#/components/responses/InvalidApiKey' }
+
+  /api/v1/hosts/{hostname}/cert-info:
+    get:
+      tags: [hosts]
+      operationId: hostCertInfo
+      summary: Inspect a host's certificate
+      description: |
+        Parses the host's keystore and returns subject/issuer/validity/SAN data plus
+        the pins currently stored for it in this scope.
+
+        Keystores are physical files shared across scopes, so if the host is not
+        registered in the requested scope the lookup falls back to any scope
+        (`getAnyByHostname`).
+
+        Registered on: **management + config-api**.
+      security:
+        - ApiKeyAuth: []
+      x-registered-on: management+config-api
+      parameters:
+        - $ref: '#/components/parameters/HostnamePath'
+        - $ref: '#/components/parameters/ConfigApiIdQuery'
+      responses:
+        '200':
+          description: Certificate details.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/CertInfoResponse' }
+        '400':
+          description: The host has no keystore (e.g. it was added via fetch-from-url).
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '404':
+          description: No `hosts` row for this hostname in any scope.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '401': { $ref: '#/components/responses/MissingApiKey' }
+        '403': { $ref: '#/components/responses/InvalidApiKey' }
+
+  /api/v1/hosts/{hostname}/regenerate-cert:
+    post:
+      tags: [hosts]
+      operationId: hostRegenerateCert
+      summary: Rotate a host's certificate
+      description: |
+        Issues a new certificate for the host and bumps the pin version **in every
+        Config API scope that hosts it** (`listConfigApisFor`) — otherwise devices on
+        an un-updated scope would hit a pin mismatch. A running mock server for this
+        host is restarted on the same port with the new keystore.
+
+        `version` in the response is the new version in the *requested* scope.
+        History event per scope: `cert_regenerated`.
+
+        Registered on: **management + config-api**.
+      security:
+        - ApiKeyAuth: []
+      x-registered-on: management+config-api
+      parameters:
+        - $ref: '#/components/parameters/HostnamePath'
+        - $ref: '#/components/parameters/ConfigApiIdQuery'
+      responses:
+        '200':
+          description: New certificate and pins.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/HostActionResponse' }
+        '404':
+          description: The host is not registered in the requested scope.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '401': { $ref: '#/components/responses/MissingApiKey' }
+        '403': { $ref: '#/components/responses/InvalidApiKey' }
+
+  /api/v1/hosts/{hostname}/upload-cert:
+    post:
+      tags: [hosts]
+      operationId: hostUploadCert
+      summary: Replace an existing host's certificate
+      description: |
+        Like `regenerate-cert`, but the certificate comes from an uploaded keystore.
+        Bumps the pin version in every scope hosting this hostname and restarts a
+        running mock server. History event per scope: `cert_uploaded`.
+
+        Registered on: **management + config-api**.
+      security:
+        - ApiKeyAuth: []
+      x-registered-on: management+config-api
+      parameters:
+        - $ref: '#/components/parameters/HostnamePath'
+        - $ref: '#/components/parameters/ConfigApiIdQuery'
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [file]
+              properties:
+                file: { type: string, format: binary }
+                password: { type: string, default: changeit }
+                format: { type: string, enum: [jks, pkcs12, p12], default: jks }
+      responses:
+        '200':
+          description: Keystore imported, pins bumped.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/HostActionResponse' }
+        '400':
+          description: File part missing, or the import failed.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '404':
+          description: The host is not registered in the requested scope.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '401': { $ref: '#/components/responses/MissingApiKey' }
+        '403': { $ref: '#/components/responses/InvalidApiKey' }
+
+  /api/v1/hosts/{hostname}/fetch-cert-url:
+    post:
+      tags: [hosts]
+      operationId: hostFetchCertUrl
+      summary: Re-pin an existing host from a live endpoint
+      description: |
+        Re-reads the certificate at `url` and bumps the pins in every scope hosting
+        this hostname. No keystore is written — only `cert_valid_until` and the pins
+        change. History event per scope: `cert_fetched`.
+
+        Registered on: **management + config-api**.
+      security:
+        - ApiKeyAuth: []
+      x-registered-on: management+config-api
+      parameters:
+        - $ref: '#/components/parameters/HostnamePath'
+        - $ref: '#/components/parameters/ConfigApiIdQuery'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [url]
+              properties:
+                url: { type: string, example: 'https://api.example.com' }
+      responses:
+        '200':
+          description: Pins refreshed from the live certificate.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/HostActionResponse' }
+        '400':
+          description: '`url` missing, or the TLS connection failed.'
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '404':
+          description: The host is not registered in the requested scope.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '401': { $ref: '#/components/responses/MissingApiKey' }
+        '403': { $ref: '#/components/responses/InvalidApiKey' }
+
+  /api/v1/hosts/{hostname}/toggle-mtls:
+    post:
+      tags: [hosts]
+      operationId: hostToggleMtls
+      summary: Mark a host as requiring mTLS
+      description: |
+        Flips `HostPin.mtls`, which tells the library that this host needs a client
+        certificate. History event: `mtls_enabled` / `mtls_disabled`.
+
+        Registered on: **management + config-api**.
+      security:
+        - ApiKeyAuth: []
+      x-registered-on: management+config-api
+      parameters:
+        - $ref: '#/components/parameters/HostnamePath'
+        - $ref: '#/components/parameters/ConfigApiIdQuery'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                mtls: { type: boolean, default: false }
+      responses:
+        '200':
+          description: Flag updated.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  hostname: { type: string }
+                  mtls: { type: boolean }
+        '404':
+          description: No pin entry for this hostname in the scope.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '401': { $ref: '#/components/responses/MissingApiKey' }
+        '403': { $ref: '#/components/responses/InvalidApiKey' }
+
+  /api/v1/hosts/{hostname}/upload-client-cert:
+    post:
+      tags: [hosts]
+      operationId: hostUploadClientCert
+      summary: Upload a host-specific client certificate (P12)
+      description: |
+        Stores a P12 that devices will present when connecting to this host. The
+        upload is validated by loading it as PKCS12 with `password`; the CN and SPKI
+        fingerprint are extracted for display.
+
+        Side effects on the pin entry: `mtls` is forced to `true` and
+        `clientCertVersion` is incremented, which is what triggers
+        `syncHostClientCerts()` on the device. History event: `client_cert_uploaded`.
+
+        Registered on: **management + config-api**.
+      security:
+        - ApiKeyAuth: []
+      x-registered-on: management+config-api
+      parameters:
+        - $ref: '#/components/parameters/HostnamePath'
+        - $ref: '#/components/parameters/ConfigApiIdQuery'
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [file]
+              properties:
+                file: { type: string, format: binary, description: PKCS12 bundle. }
+                password: { type: string, default: changeit }
+      responses:
+        '200':
+          description: Stored, version bumped.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  hostname: { type: string }
+                  clientCertVersion: { type: integer }
+                  commonName: { type: string }
+                  fingerprint: { type: string }
+        '400':
+          description: File part missing, or the bytes are not a valid P12.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '404':
+          description: The host is not registered in the requested scope.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '500':
+          description: The host-client-cert store is not wired on this listener.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '401': { $ref: '#/components/responses/MissingApiKey' }
+        '403': { $ref: '#/components/responses/InvalidApiKey' }
+
+  /api/v1/hosts/{hostname}/client-cert/download:
+    get:
+      tags: [hosts]
+      operationId: hostClientCertDownload
+      summary: Download a host-specific client certificate (admin)
+      description: |
+        Returns the stored P12 bytes. **This path is not in the public allowlist**, so
+        it needs `X-API-Key` — devices use
+        `GET /api/v1/client-certs/{hostname}/download` instead, which is public but
+        only answers on mTLS listeners.
+
+        Registered on: **management + config-api**.
+      security:
+        - ApiKeyAuth: []
+      x-registered-on: management+config-api
+      parameters:
+        - $ref: '#/components/parameters/HostnamePath'
+        - $ref: '#/components/parameters/ConfigApiIdQuery'
+      responses:
+        '200':
+          description: The P12 bundle.
+          content:
+            application/octet-stream:
+              schema: { type: string, format: binary }
+        '404':
+          description: No client certificate stored for this host in this scope.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '500':
+          description: The host-client-cert store is not wired on this listener.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '401': { $ref: '#/components/responses/MissingApiKey' }
+        '403': { $ref: '#/components/responses/InvalidApiKey' }
+
+  /api/v1/hosts/{hostname}/client-cert/info:
+    get:
+      tags: [hosts]
+      operationId: hostClientCertInfo
+      summary: Metadata for a host-specific client certificate
+      description: |
+        Version, CN, fingerprint and creation time — without the P12 bytes.
+
+        Registered on: **management + config-api**.
+      security:
+        - ApiKeyAuth: []
+      x-registered-on: management+config-api
+      parameters:
+        - $ref: '#/components/parameters/HostnamePath'
+        - $ref: '#/components/parameters/ConfigApiIdQuery'
+      responses:
+        '200':
+          description: Certificate metadata.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/HostClientCertRecord' }
+        '404':
+          description: No client certificate stored for this host in this scope.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '500':
+          description: The host-client-cert store is not wired on this listener.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '401': { $ref: '#/components/responses/MissingApiKey' }
+        '403': { $ref: '#/components/responses/InvalidApiKey' }
+
+  /api/v1/hosts/{hostname}/start-mock:
+    post:
+      tags: [hosts]
+      operationId: hostStartMock
+      summary: Start a mock TLS/mTLS server for a host
+      description: |
+        Boots a throwaway HTTPS listener using the host's keystore so the demo app has
+        something to connect to. With `mtls: true` the client-cert truststore is
+        attached, which requires at least one client certificate to exist.
+
+        The port is persisted on the `hosts` row and the mock is auto-started on the
+        next process start.
+
+        Registered on: **management + config-api**.
+      security:
+        - ApiKeyAuth: []
+      x-registered-on: management+config-api
+      parameters:
+        - $ref: '#/components/parameters/HostnamePath'
+        - $ref: '#/components/parameters/ConfigApiIdQuery'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                port: { type: integer, default: 8443 }
+                mtls: { type: boolean, default: false }
+      responses:
+        '200':
+          description: Mock server started.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/MockServerResponse' }
+        '400':
+          description: The host has no keystore, or mTLS was requested with no truststore.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '404':
+          description: The host is not registered in the requested scope.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '500':
+          description: The mock server failed to start (port in use, bad keystore, …).
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '401': { $ref: '#/components/responses/MissingApiKey' }
+        '403': { $ref: '#/components/responses/InvalidApiKey' }
+
+  /api/v1/hosts/{hostname}/stop-mock:
+    post:
+      tags: [hosts]
+      operationId: hostStopMock
+      summary: Stop a host's mock servers
+      description: |
+        Stops both the TLS and mTLS mock listeners for this host and clears the
+        persisted port. Takes no request body; an unknown host still returns `200`.
+
+        Registered on: **management + config-api**.
+      security:
+        - ApiKeyAuth: []
+      x-registered-on: management+config-api
+      parameters:
+        - $ref: '#/components/parameters/HostnamePath'
+        - $ref: '#/components/parameters/ConfigApiIdQuery'
+      responses:
+        '200':
+          description: 'Stopped (`port: null`, `running: false`).'
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/MockServerResponse' }
+        '401': { $ref: '#/components/responses/MissingApiKey' }
+        '403': { $ref: '#/components/responses/InvalidApiKey' }
+
+  /api/v1/hosts/{hostname}/status:
+    get:
+      tags: [hosts]
+      operationId: hostStatus
+      summary: Keystore and mock-server status for a host
+      description: |
+        Never `404`: the dashboard calls this for every pinned host, including ones
+        that have no `hosts` row (URL-fetched or hand-entered pins), so unknown hosts
+        get a minimal response with null fields. Falls back to any scope's record when
+        the requested scope has none.
+
+        Registered on: **management + config-api**.
+      security:
+        - ApiKeyAuth: []
+      x-registered-on: management+config-api
+      parameters:
+        - $ref: '#/components/parameters/HostnamePath'
+        - $ref: '#/components/parameters/ConfigApiIdQuery'
+      responses:
+        '200':
+          description: Host status.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/HostStatusResponse' }
+        '401': { $ref: '#/components/responses/MissingApiKey' }
+        '403': { $ref: '#/components/responses/InvalidApiKey' }
+
+  /api/v1/hosts/{hostname}/test-connection:
+    post:
+      tags: [hosts]
+      operationId: hostTestConnection
+      summary: Probe this host's local mock server
+      description: |
+        Issues `GET https://localhost:<mockPort>/health` with a trust-all client and
+        no hostname verification — it measures reachability, **not** pin correctness.
+        Use `ping-remote` for a pin comparison.
+
+        Always answers `200`; failures are reported in the body as
+        `{"success": false, "error": "…"}`. Takes no request body.
+
+        Registered on: **management + config-api**.
+      security:
+        - ApiKeyAuth: []
+      x-registered-on: management+config-api
+      parameters:
+        - $ref: '#/components/parameters/HostnamePath'
+        - $ref: '#/components/parameters/ConfigApiIdQuery'
+      responses:
+        '200':
+          description: Probe result (success or failure, both `200`).
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/TestConnectionResult' }
+        '401': { $ref: '#/components/responses/MissingApiKey' }
+        '403': { $ref: '#/components/responses/InvalidApiKey' }
+
+  /api/v1/hosts/{hostname}/ping-remote:
+    get:
+      tags: [hosts]
+      operationId: hostPingRemote
+      summary: Reachability + pin match against a real host
+      description: |
+        Shells out to `nc -z -w 2` for TCP reachability, then `openssl s_client` for
+        the handshake, computes the leaf's SPKI pin and compares it with the pins
+        stored for this host in this scope.
+
+        Without `?port=` it tries, in order: the host's running mock port, then
+        `443, 9443, 8443, 9444, 8444`. Failure is reported in the body with `200`,
+        not an error status.
+
+        `{hostname}` is passed to subprocess argv, so it must match
+        `^[A-Za-z0-9][A-Za-z0-9.-]{0,252}$` — anything else is rejected with `400`
+        before a process is spawned.
+
+        Registered on: **management + config-api**.
+      security:
+        - ApiKeyAuth: []
+      x-registered-on: management+config-api
+      parameters:
+        - $ref: '#/components/parameters/HostnamePath'
+        - $ref: '#/components/parameters/ConfigApiIdQuery'
+        - name: port
+          in: query
+          required: false
+          description: Try this port first instead of the built-in candidate list.
+          schema: { type: integer }
+      responses:
+        '200':
+          description: Probe result — reachable (with pin comparison) or not.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PingRemoteResult' }
+        '400':
+          description: The hostname segment is not a plain hostname / IPv4 literal.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PingRemoteResult' }
+        '401': { $ref: '#/components/responses/MissingApiKey' }
+        '403': { $ref: '#/components/responses/InvalidApiKey' }
+
+  /api/v1/hosts/{hostname}/clients:
+    get:
+      tags: [hosts, connection-history]
+      operationId: hostClients
+      summary: Devices that have reported connecting to this host
+      description: |
+        Rows from `client_devices`, keyed by hostname. The `deviceId` here is derived
+        from the reported manufacturer/model (`"<manufacturer>_<model>"`, lowercased,
+        spaces → `_`) — it is **not** the `X-Device-Id` the ACL uses. For ACL work use
+        `GET /api/v1/client-devices`.
+
+        Registered on: **management + config-api**.
+      security:
+        - ApiKeyAuth: []
+      x-registered-on: management+config-api
+      parameters:
+        - $ref: '#/components/parameters/HostnamePath'
+      responses:
+        '200':
+          description: Devices seen on this host.
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/ClientDevice' }
+        '401': { $ref: '#/components/responses/MissingApiKey' }
+        '403': { $ref: '#/components/responses/InvalidApiKey' }
+
+  /api/v1/management/hosts/{configApiId}/generate-cert:
+    post:
+      tags: [hosts]
+      operationId: managementGenerateHostCert
+      summary: Create a host with a generated certificate (scope in the path)
+      description: |
+        Same behaviour as `POST /api/v1/hosts/generate-cert`, but the scope is a path
+        segment instead of the `?configApiId=` query parameter. Used by the dashboard
+        when operating on a Config API other than the one it is bound to.
+
+        Registered on: **management** only.
+      security:
+        - ApiKeyAuth: []
+      x-registered-on: management
+      parameters:
+        - $ref: '#/components/parameters/ConfigApiIdPath'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [hostname]
+              properties:
+                hostname: { type: string, example: api.example.com }
+      responses:
+        '200':
+          description: Certificate generated and pinned.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/HostActionResponse' }
+        '400':
+          description: '`hostname` missing.'
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '409':
+          description: This scope already has a pin entry for that hostname.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '401': { $ref: '#/components/responses/MissingApiKey' }
+        '403': { $ref: '#/components/responses/InvalidApiKey' }
+
+  # ─────────────────────────────────────────────────────────────────────
+  # enrollment + client-certs
+  # ─────────────────────────────────────────────────────────────────────
+
+  /api/v1/enrollment-mode:
+    get:
+      tags: [enrollment]
+      operationId: getEnrollmentMode
+      summary: Which enrollment mode the server runs in
+      description: |
+        Read by the client before enrolling. `mode` mirrors the `ENROLLMENT_MODE`
+        env var (default `token`); `tokenRequired` is `false` only when
+        `ENROLLMENT_MODE=open`.
+
+        Public — devices need it before they have any credential.
+
+        Registered on: **management** only. A device pointed at a Config API port will
+        get a `404` here.
+      security: []
+      x-registered-on: management
+      responses:
+        '200':
+          description: Current enrollment mode.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  mode: { type: string, enum: [token, open] }
+                  tokenRequired: { type: boolean }
+
+  /api/v1/enrollment-tokens/generate:
+    post:
+      tags: [enrollment]
+      operationId: generateEnrollmentToken
+      summary: Mint a single-use enrollment token
+      description: |
+        256 bits from a CSPRNG, URL-safe Base64. **The plaintext is returned here and
+        nowhere else** — only its SHA-256 is stored, plus an 8-character display
+        prefix. TTL comes from `ENROLLMENT_TOKEN_TTL_SECONDS` (default 24 h).
+
+        Registered on: **management** only.
+      security:
+        - ApiKeyAuth: []
+      x-registered-on: management
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                clientId:
+                  type: string
+                  description: 'Defaults to `device-<epochMillis>` when absent or unparseable.'
+      responses:
+        '200':
+          description: The token plaintext — store it now, it cannot be re-read.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  token: { type: string, description: Plaintext, shown once. }
+                  clientId: { type: string }
+        '401': { $ref: '#/components/responses/MissingApiKey' }
+        '403': { $ref: '#/components/responses/InvalidApiKey' }
+
+  /api/v1/enrollment-tokens:
+    get:
+      tags: [enrollment]
+      operationId: listEnrollmentTokens
+      summary: List enrollment tokens (masked)
+      description: |
+        `token` carries a **masked prefix** (`AbC12dEf…`), not a usable credential,
+        and `masked` is always `true`. Rows created before migration V8 have no
+        prefix and show `sha256:<first 8 hex of the hash>…`; those tokens were
+        invalidated by that migration.
+
+        Registered on: **management** only.
+      security:
+        - ApiKeyAuth: []
+      x-registered-on: management
+      responses:
+        '200':
+          description: Tokens, newest first.
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/EnrollmentToken' }
+        '401': { $ref: '#/components/responses/MissingApiKey' }
+        '403': { $ref: '#/components/responses/InvalidApiKey' }
+
+  /api/v1/client-certs/enroll:
+    post:
+      tags: [enrollment, client-certs]
+      operationId: enrollClientCert
+      summary: Enroll a device and download its client certificate
+      description: |
+        Returns a freshly issued PKCS12 as raw bytes, carrying the integrity header
+        **`X-P12-SHA256`** (Base64 SHA-256 of the body). The PinVault library refuses
+        to install a P12 that arrives without this header.
+
+        Public in the allowlist (devices have no admin key).
+
+        **Two implementations with different request contracts:**
+
+        *Config API ports* (`CertificateConfigRoute.kt`) accept
+        `{token?, deviceId?, deviceAlias?, deviceUid?}`:
+        * `token` present → validated and marked used; the certificate CN is
+          `PinVault Client: <clientId>` for the token's client id.
+        * `deviceId` present and `ENROLLMENT_MODE=open` → the device id becomes the
+          client id (demo/test only — no authentication).
+        * `deviceId` present in `token` mode → `403` with guidance.
+        * neither → `400`.
+        `deviceUid` is stored on the `client_certs` row and is what binds a
+        token-enrolled certificate to a device for the `token_mtls` vault policy.
+        Enrollment restarts the mTLS mock servers and mTLS Config APIs so the new
+        certificate is trusted immediately.
+
+        *Management port* (`Main.kt`) is token-only: `{token}` is required,
+        `deviceId` / `deviceAlias` / `deviceUid` are ignored, and the response adds a
+        `Content-Disposition` attachment header.
+
+        Registered on: **management + config-api** (two separate handlers, as above).
+      security: []
+      x-registered-on: management+config-api
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                token:
+                  type: string
+                  description: Single-use enrollment token plaintext. Required on the management port.
+                deviceId:
+                  type: string
+                  description: 'Config API ports only, and only with `ENROLLMENT_MODE=open`.'
+                deviceAlias:
+                  type: string
+                  description: 'Config API ports only. Human-readable label stored with the certificate.'
+                deviceUid:
+                  type: string
+                  description: >
+                    Config API ports only. The device's stable id (ANDROID_ID). Stored as
+                    `client_certs.device_uid` and used by the `token_mtls` vault policy to
+                    match a certificate to an `X-Device-Id`.
+      responses:
+        '200':
+          description: The PKCS12 bundle.
+          headers:
+            X-P12-SHA256:
+              description: Base64 SHA-256 of the response body. Clients reject the P12 if absent.
+              schema: { type: string }
+            Content-Disposition:
+              description: 'Sent by the management-port handler only: `attachment; filename="<clientId>.p12"`.'
+              schema: { type: string }
+          content:
+            application/octet-stream:
+              schema: { type: string, format: binary }
+        '400':
+          description: No `token` (management port), or neither `token` nor `deviceId` (Config API ports).
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '401':
+          description: The token is invalid, expired or already used.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '403':
+          description: '`deviceId`-only enrollment attempted while `ENROLLMENT_MODE=token` (Config API ports).'
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+
+  /api/v1/client-certs/{hostname}/download:
+    get:
+      tags: [client-certs]
+      operationId: downloadHostClientCert
+      summary: Download a host-specific client certificate (device endpoint)
+      description: |
+        Called by `PinVault.syncHostClientCerts()`. Returns the P12 stored for this
+        host in the listener's scope.
+
+        **Only answers on an mTLS Config API listener.** Any listener running in
+        `tls` mode — which includes the management server, whose
+        `certificateConfigRoutes` mount defaults to `configApiMode = "tls"` —
+        returns `403`. Enroll first to obtain a default client certificate, then
+        fetch host-specific certificates over the mTLS port.
+
+        Public in the allowlist; the mTLS handshake is the access control.
+
+        Registered on: **management + config-api** (functional on mTLS listeners only).
+      security: []
+      x-registered-on: management+config-api
+      parameters:
+        - $ref: '#/components/parameters/HostnamePath'
+      responses:
+        '200':
+          description: The P12 bundle.
+          content:
+            application/octet-stream:
+              schema: { type: string, format: binary }
+        '403':
+          description: The listener is not in mTLS mode.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '404':
+          description: No client certificate stored for this host in this scope.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+
+  /api/v1/client-certs:
+    get:
+      tags: [client-certs]
+      operationId: listClientCerts
+      summary: List issued client certificates
+      description: |
+        Includes revoked rows (`revoked: true`); filter client-side.
+
+        Registered on: **management** only.
+      security:
+        - ApiKeyAuth: []
+      x-registered-on: management
+      responses:
+        '200':
+          description: All certificate records.
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/ClientCertRecord' }
+        '401': { $ref: '#/components/responses/MissingApiKey' }
+        '403': { $ref: '#/components/responses/InvalidApiKey' }
+
+  /api/v1/client-certs/generate:
+    post:
+      tags: [client-certs]
+      operationId: generateClientCert
+      summary: Issue a client certificate from the dashboard
+      description: |
+        Admin equivalent of enrollment: issues a P12 without consuming a token and
+        adds it to the truststore.
+
+        **Does not send `X-P12-SHA256`** — the PinVault library would refuse this
+        bundle. It is a dashboard download for manual provisioning; devices must use
+        `POST /api/v1/client-certs/enroll`. Running mTLS listeners are not restarted
+        here either, so the new certificate is trusted only after the next restart of
+        those listeners.
+
+        Registered on: **management** only.
+      security:
+        - ApiKeyAuth: []
+      x-registered-on: management
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                clientId:
+                  type: string
+                  description: 'Defaults to `client-<epochMillis>` when absent or unparseable.'
+      responses:
+        '200':
+          description: The PKCS12 bundle (no integrity header).
+          headers:
+            Content-Disposition:
+              schema: { type: string, example: 'attachment; filename="my-device.p12"' }
+          content:
+            application/octet-stream:
+              schema: { type: string, format: binary }
+        '401': { $ref: '#/components/responses/MissingApiKey' }
+        '403': { $ref: '#/components/responses/InvalidApiKey' }
+
+  /api/v1/client-certs/upload:
+    post:
+      tags: [client-certs]
+      operationId: uploadClientCert
+      summary: Import an externally issued client certificate
+      description: |
+        Adds a P12 to the truststore so devices holding it can complete an mTLS
+        handshake. The first file part is used regardless of field name.
+
+        Registered on: **management** only.
+      security:
+        - ApiKeyAuth: []
+      x-registered-on: management
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [file]
+              properties:
+                file: { type: string, format: binary }
+                clientId:
+                  type: string
+                  description: 'Defaults to `uploaded-<epochMillis>`.'
+      responses:
+        '200':
+          description: Imported.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  id: { type: string }
+                  fingerprint: { type: string }
+                  uploaded: { type: boolean, example: true }
+        '400':
+          description: File part missing, or the bundle could not be imported.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '401': { $ref: '#/components/responses/MissingApiKey' }
+        '403': { $ref: '#/components/responses/InvalidApiKey' }
+
+  /api/v1/client-certs/{id}:
+    delete:
+      tags: [client-certs]
+      operationId: revokeClientCert
+      summary: Revoke a client certificate
+      description: |
+        Marks the row revoked, removes the certificate from the truststore, then
+        **restarts every running mTLS Config API and every mTLS mock server** —
+        running listeners hold the truststore they started with, so without the
+        restart a revoked certificate would keep working until the process restarts.
+
+        `token_mtls` vault downloads also re-check `revoked` on each request.
+
+        An unknown id still returns `200`.
+
+        Registered on: **management** only.
+      security:
+        - ApiKeyAuth: []
+      x-registered-on: management
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: 'The client id (the certificate CN minus the `PinVault Client: ` prefix).'
+          schema: { type: string }
+      responses:
+        '200':
+          description: Revoked.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  id: { type: string }
+                  revoked: { type: boolean, example: true }
+        '401': { $ref: '#/components/responses/MissingApiKey' }
+        '403': { $ref: '#/components/responses/InvalidApiKey' }
+
+  /api/v1/mtls-status:
+    get:
+      tags: [client-certs]
+      operationId: mtlsStatus
+      summary: mTLS summary counters
+      description: |
+        Dashboard tile: how many listeners run in each mode and how many client
+        certificates exist / are still active.
+
+        Registered on: **management** only.
+      security:
+        - ApiKeyAuth: []
+      x-registered-on: management
+      responses:
+        '200':
+          description: Counters.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/MtlsStatus' }
+        '401': { $ref: '#/components/responses/MissingApiKey' }
+        '403': { $ref: '#/components/responses/InvalidApiKey' }
+
+  /api/v1/client-devices:
+    get:
+      tags: [device-acl]
+      operationId: listClientDevices
+      summary: Devices in a Config API scope, keyed by X-Device-Id
+      description: |
+        Feeds the dashboard's Device-ACL manager. Devices are keyed by the value they
+        send as `X-Device-Id` (ANDROID_ID), which is the same key
+        `DeviceHostAclStore` uses — unlike `GET /api/v1/hosts/{hostname}/clients`,
+        whose ids are derived from manufacturer/model strings.
+
+        The list merges two sources and `source` says which matched:
+        * `enrollment` — from `client_certs` (`device_uid` / `device_alias`).
+        * `connection` — from `client_devices` rows for hosts in this scope.
+        * `enrollment+connection` — both.
+
+        Registered on: **management** only.
+      security:
+        - ApiKeyAuth: []
+      x-registered-on: management
+      parameters:
+        - name: configApiId
+          in: query
+          required: false
+          description: 'Scope to list. Defaults to `default-tls`.'
+          schema: { type: string, default: default-tls }
+      responses:
+        '200':
+          description: Devices known in this scope.
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/ScopedClientDevice' }
+        '401': { $ref: '#/components/responses/MissingApiKey' }
+        '403': { $ref: '#/components/responses/InvalidApiKey' }
+
+  # ─────────────────────────────────────────────────────────────────────
+  # device-acl
+  # ─────────────────────────────────────────────────────────────────────
+
+  /api/v1/config-apis/{configApiId}/devices/{deviceId}/host-acl:
+    get:
+      tags: [device-acl]
+      operationId: getDeviceHostAcl
+      summary: Hosts explicitly granted to one device
+      description: |
+        The device's **own** grants only. It excludes the Config API's default ACL —
+        use `/host-acl/effective` for the union that
+        `GET /api/v1/certificate-config` actually applies.
+
+        Registered on: **management** only.
+      security:
+        - ApiKeyAuth: []
+      x-registered-on: management
+      parameters:
+        - $ref: '#/components/parameters/ConfigApiIdPath'
+        - $ref: '#/components/parameters/DeviceIdPath'
+      responses:
+        '200':
+          description: Granted hostnames.
+          content:
+            application/json:
+              schema: { type: array, items: { type: string } }
+        '401': { $ref: '#/components/responses/MissingApiKey' }
+        '403': { $ref: '#/components/responses/InvalidApiKey' }
+    put:
+      tags: [device-acl]
+      operationId: setDeviceHostAcl
+      summary: Replace a device's host ACL
+      description: |
+        Idempotent set-replace: hostnames in the body but not stored are granted,
+        stored hostnames absent from the body are revoked. The counters in the
+        response are returned as **strings**.
+
+        Registered on: **management** only.
+      security:
+        - ApiKeyAuth: []
+      x-registered-on: management
+      parameters:
+        - $ref: '#/components/parameters/ConfigApiIdPath'
+        - $ref: '#/components/parameters/DeviceIdPath'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [hostnames]
+              properties:
+                hostnames:
+                  type: array
+                  items: { type: string }
+                  example: [api.example.com, cdn.example.com]
+      responses:
+        '200':
+          description: ACL replaced.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/DeviceHostAclUpdate' }
+        '400':
+          description: '`hostnames` missing or not a string array.'
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '401': { $ref: '#/components/responses/MissingApiKey' }
+        '403': { $ref: '#/components/responses/InvalidApiKey' }
+
+  /api/v1/config-apis/{configApiId}/devices/{deviceId}/host-acl/effective:
+    get:
+      tags: [device-acl]
+      operationId: getEffectiveDeviceHostAcl
+      summary: Effective ACL (device grants ∪ default ACL)
+      description: |
+        Read-only diagnostic: exactly the set `GET /api/v1/certificate-config`
+        intersects the request with.
+
+        Registered on: **management** only.
+      security:
+        - ApiKeyAuth: []
+      x-registered-on: management
+      parameters:
+        - $ref: '#/components/parameters/ConfigApiIdPath'
+        - $ref: '#/components/parameters/DeviceIdPath'
+      responses:
+        '200':
+          description: Effective hostname set (unordered, de-duplicated).
+          content:
+            application/json:
+              schema: { type: array, items: { type: string } }
+        '401': { $ref: '#/components/responses/MissingApiKey' }
+        '403': { $ref: '#/components/responses/InvalidApiKey' }
+
+  /api/v1/config-apis/{configApiId}/default-host-acl:
+    get:
+      tags: [device-acl]
+      operationId: getDefaultHostAcl
+      summary: Default host ACL for a Config API
+      description: |
+        Hostnames every device in this scope may see, on top of its own grants.
+
+        Registered on: **management** only.
+      security:
+        - ApiKeyAuth: []
+      x-registered-on: management
+      parameters:
+        - $ref: '#/components/parameters/ConfigApiIdPath'
+      responses:
+        '200':
+          description: Default hostnames.
+          content:
+            application/json:
+              schema: { type: array, items: { type: string } }
+        '401': { $ref: '#/components/responses/MissingApiKey' }
+        '403': { $ref: '#/components/responses/InvalidApiKey' }
+    put:
+      tags: [device-acl]
+      operationId: setDefaultHostAcl
+      summary: Replace the default host ACL
+      description: |
+        Set-replace, like the per-device variant. `hostnames` comes back as a
+        comma-joined **string**, and the counters as strings.
+
+        Registered on: **management** only.
+      security:
+        - ApiKeyAuth: []
+      x-registered-on: management
+      parameters:
+        - $ref: '#/components/parameters/ConfigApiIdPath'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [hostnames]
+              properties:
+                hostnames:
+                  type: array
+                  items: { type: string }
+      responses:
+        '200':
+          description: Default ACL replaced.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/DefaultHostAclUpdate' }
+        '400':
+          description: '`hostnames` missing or not a string array.'
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '401': { $ref: '#/components/responses/MissingApiKey' }
+        '403': { $ref: '#/components/responses/InvalidApiKey' }
+
+  # ─────────────────────────────────────────────────────────────────────
+  # connection-history
+  # ─────────────────────────────────────────────────────────────────────
+
+  /api/v1/connection-history:
+    get:
+      tags: [connection-history]
+      operationId: listConnectionHistory
+      summary: All connection and config-update reports
+      description: |
+        Merged history from three sources, distinguished by `source`: `web` (dashboard
+        probes), `client` (device connection reports) and `config_update` (device
+        config-refresh outcomes). The store trims old rows on insert.
+
+        Registered on: **management + config-api**.
+      security:
+        - ApiKeyAuth: []
+      x-registered-on: management+config-api
+      responses:
+        '200':
+          description: History entries.
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/ConnectionHistoryEntry' }
+        '401': { $ref: '#/components/responses/MissingApiKey' }
+        '403': { $ref: '#/components/responses/InvalidApiKey' }
+
+  /api/v1/connection-history/{hostname}:
+    get:
+      tags: [connection-history]
+      operationId: getConnectionHistoryForHost
+      summary: Connection history for one host
+      description: |
+        Registered on: **management + config-api**.
+      security:
+        - ApiKeyAuth: []
+      x-registered-on: management+config-api
+      parameters:
+        - $ref: '#/components/parameters/HostnamePath'
+      responses:
+        '200':
+          description: History entries for this hostname.
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/ConnectionHistoryEntry' }
+        '401': { $ref: '#/components/responses/MissingApiKey' }
+        '403': { $ref: '#/components/responses/InvalidApiKey' }
+
+  /api/v1/connection-history/web:
+    post:
+      tags: [connection-history]
+      operationId: reportWebCheck
+      summary: Record a dashboard-initiated probe
+      description: |
+        Written with `source: "web"`. Every field is optional; missing values fall
+        back to `""` / `"unknown"` / `0`.
+
+        Admin-only — unlike the two client report endpoints, this path is not in the
+        allowlist.
+
+        Registered on: **management + config-api**.
+      security:
+        - ApiKeyAuth: []
+      x-registered-on: management+config-api
+      requestBody:
+        required: true
         content:
           application/json:
             schema:
               type: object
               properties:
                 hostname: { type: string }
-      responses:
-        '200': { description: Certificate generated }
-
-  /api/v1/hosts/{hostname}/status:
-    get:
-      tags: [Host Management]
-      summary: Get host status including certificate info
-      parameters:
-        - name: hostname
-          in: path
-          required: true
-          schema: { type: string }
-      responses:
-        '200': { description: Host status }
-
-  /api/v1/client-certs/enroll:
-    post:
-      tags: [Enrollment]
-      summary: Enroll device with token or deviceId
-      security: []
-      requestBody:
-        content:
-          application/json:
-            schema:
-              type: object
-              properties:
-                token: { type: string }
-                deviceId: { type: string }
-                deviceAlias: { type: string }
-                deviceUid: { type: string }
-      responses:
-        '200': { description: P12 client certificate bytes }
-
-  /api/v1/client-certs:
-    get:
-      tags: [Enrollment]
-      summary: List all client certificates
+                status: { type: string, example: success }
+                responseTimeMs: { type: integer, format: int64 }
+                errorMessage: { type: string, nullable: true }
       responses:
         '200':
-          description: Client cert list
+          description: Recorded.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Saved' }
+        '401': { $ref: '#/components/responses/MissingApiKey' }
+        '403': { $ref: '#/components/responses/InvalidApiKey' }
+
+  /api/v1/connection-history/client-report:
+    post:
+      tags: [connection-history]
+      operationId: reportClientConnection
+      summary: Device reports a pinned connection attempt
+      description: |
+        Written with `source: "client"`, and also upserts `client_devices` when
+        `hostname`, `deviceManufacturer` and `deviceModel` are all present (device id
+        derived as `"<manufacturer>_<model>"`, lowercased, spaces → `_`).
+
+        **Input hardening (M-04):** because this endpoint is public and the dashboard
+        renders these values, `hostname`, `deviceManufacturer` and `deviceModel` must
+        match `^[A-Za-z0-9._:\- ]{1,128}$`. A violation is rejected with `400` rather
+        than sanitised, so abuse shows up in logs.
+
+        Registered on: **management + config-api**.
+      security: []
+      x-registered-on: management+config-api
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ClientConnectionReport' }
+      responses:
+        '200':
+          description: Recorded.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Saved' }
+        '400':
+          description: '`hostname`, `deviceManufacturer` or `deviceModel` failed the identifier check.'
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+
+  /api/v1/connection-history/config-update-report:
+    post:
+      tags: [connection-history]
+      operationId: reportConfigUpdate
+      summary: Device reports the outcome of a config refresh
+      description: |
+        Written with `source: "config_update"`. Same identifier hardening as
+        `/client-report`, applied to `deviceManufacturer` and `deviceModel`
+        (there is no hostname on this report).
+
+        Registered on: **management + config-api**.
+      security: []
+      x-registered-on: management+config-api
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ConfigUpdateReport' }
+      responses:
+        '200':
+          description: Recorded.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Saved' }
+        '400':
+          description: '`deviceManufacturer` or `deviceModel` failed the identifier check.'
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+
+  # ─────────────────────────────────────────────────────────────────────
+  # vault (client-facing, Config API ports only)
+  # ─────────────────────────────────────────────────────────────────────
+
+  /api/v1/vault/{key}:
+    get:
+      tags: [vault]
+      operationId: downloadVaultFile
+      summary: Download a vault file (client endpoint)
+      description: |
+        Serves the file registered under `key` in this listener's scope.
+
+        **Scope kill switch.** Checked before anything else: while this Config
+        API's `config_apis.vault_enabled` is `false` (see
+        `PUT /api/v1/config-apis/{id}/vault-enabled`) every key answers `403`,
+        present or not. The flag is read per request, so flipping it in the
+        dashboard stops distribution immediately without a restart. Vault
+        administration in that scope stays available.
+
+        **Allowlist nuance.** `isPublicEndpoint` treats `GET /api/v1/vault/{key}` as
+        public only when `{key}` matches `^[A-Za-z0-9._-]{1,64}$` **and** is not one
+        of the reserved admin segments `distributions`, `stats`, `devices`, `report`,
+        `tokens`. Real access control happens inside the handler, per file.
+
+        **Access policies** (`access_policy` on the row):
+        * `public` — no check.
+        * `api_key` — requires `X-API-Key`, verified *in the handler* (the plugin
+          allowlisted the path). Fails closed with `403` when the server has no
+          `API_KEY` configured, so an admin-only file never becomes world-readable in
+          `ALLOW_ANONYMOUS_ADMIN` mode.
+        * `token` — requires `X-Device-Id` + `X-Vault-Token` matching the
+          `(configApiId, key, deviceId)` triple.
+        * `token_mtls` — token **and** a verified client certificate. The certificate
+          binds to the claimed `X-Device-Id` when either the CN's client id equals
+          `X-Device-Id` (auto-enrollment, where the client id *is* the ANDROID_ID) or
+          the `client_certs` row for that client id has `device_uid == X-Device-Id`
+          (token enrollment). A revoked certificate is rejected even when the ids line
+          up.
+
+        **Conditional fetch.** When `entry.version <= version`, the response is `304`
+        with `X-Vault-Version` and `X-Vault-Encryption` and no body. Note the policy
+        check runs first, so an unauthorised caller gets `401`/`403`, not `304`.
+
+        **Encryption.** `plain` and `at_rest` are served as stored (`at_rest` is
+        decrypted on read). `end_to_end` wraps the bytes with the device's registered
+        RSA public key, so `X-Device-Id` is mandatory and the key must already be
+        registered via `POST /api/v1/vault/devices/{deviceId}/public-key` — otherwise
+        `412`.
+
+        **Integrity.** `X-Vault-Signature` is ECDSA over
+        `pinvault-vault-file:v1:<key>:<version>:<sha256HexLower(plaintext)>` — signed
+        over the plaintext, so one signature is valid for all three encryption modes.
+
+        Registered on: **config-api** only. The management port serves the scoped
+        admin mirror under `/api/v1/config-apis/{configApiId}/vault/…` and has no
+        download route at all.
+      security: []
+      x-registered-on: config-api
+      parameters:
+        - $ref: '#/components/parameters/VaultKeyPath'
+        - name: version
+          in: query
+          required: false
+          description: >
+            Version the client already holds. When the stored version is less than or
+            equal to it, the server answers `304`. Omitted / unparseable means `0`.
+          schema: { type: integer, default: 0 }
+        - $ref: '#/components/parameters/DeviceIdHeader'
+        - $ref: '#/components/parameters/VaultTokenHeader'
+        - name: X-API-Key
+          in: header
+          required: false
+          description: 'Required only for files whose `access_policy` is `api_key`.'
+          schema: { type: string }
+      responses:
+        '200':
+          description: File bytes (encrypted per the file's `encryption` mode).
+          headers:
+            X-Vault-Version:
+              schema: { type: integer }
+            X-Vault-Encryption:
+              schema: { type: string, enum: [plain, at_rest, end_to_end] }
+            X-Vault-Signature:
+              description: Base64 ECDSA signature over the plaintext canonical string.
+              schema: { type: string }
+          content:
+            application/octet-stream:
+              schema: { type: string, format: binary }
+        '304':
+          description: The client's `version` is already current. No body.
+          headers:
+            X-Vault-Version:
+              schema: { type: integer }
+            X-Vault-Encryption:
+              schema: { type: string, enum: [plain, at_rest, end_to_end] }
+        '400':
+          description: '`key` does not match `^[A-Za-z0-9._-]{1,64}$`.'
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '401':
+          description: >
+            Missing/invalid `X-API-Key` (`api_key`), missing `X-Device-Id` or
+            `X-Vault-Token`, invalid/revoked token, missing client certificate or a
+            device-identity mismatch (`token_mtls`), or missing `X-Device-Id` on an
+            `end_to_end` file.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '403':
+          description: >
+            The Config API's `vault_enabled` flag is off (every key, present or
+            not), or an `api_key`-policy file on a server with no `API_KEY`
+            configured.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '404':
+          description: No file with this key in this scope.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '412':
+          description: '`end_to_end` file but the device has no registered public key.'
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '500':
+          description: Unknown `access_policy` on the row, or per-device encryption failed.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+    put:
+      tags: [vault-admin]
+      operationId: putVaultFile
+      summary: Upload or replace a vault file
+      description: |
+        Body is the raw file bytes. Each upload increments the stored version.
+        Omitted `policy` / `encryption` keep the existing values, or default to
+        `token` / `plain` on first upload.
+
+        `key` must match `^[A-Za-z0-9._-]{1,64}$` **and** must not be one of the
+        reserved segments (`distributions`, `stats`, `devices`, `report`, `tokens`) —
+        those would be routed to the admin handlers and shadow the download route.
+
+        Registered on: **config-api** only.
+      security:
+        - ApiKeyAuth: []
+      x-registered-on: config-api
+      parameters:
+        - $ref: '#/components/parameters/VaultKeyPath'
+        - $ref: '#/components/parameters/VaultPolicyQuery'
+        - $ref: '#/components/parameters/VaultEncryptionQuery'
+      requestBody:
+        required: true
+        content:
+          application/octet-stream:
+            schema: { type: string, format: binary }
+      responses:
+        '200':
+          description: Stored.
+          headers:
+            X-Vault-Version:
+              schema: { type: integer }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/VaultPutResult' }
+        '400':
+          description: Invalid or reserved key.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '401': { $ref: '#/components/responses/MissingApiKey' }
+        '403': { $ref: '#/components/responses/InvalidApiKey' }
+    delete:
+      tags: [vault-admin]
+      operationId: deleteVaultFile
+      summary: Delete a vault file
+      description: |
+        Deleting a key that does not exist still returns `200`. Tokens issued for the
+        key are not revoked by this call.
+
+        Registered on: **config-api** only.
+      security:
+        - ApiKeyAuth: []
+      x-registered-on: config-api
+      parameters:
+        - $ref: '#/components/parameters/VaultKeyPath'
+      responses:
+        '200':
+          description: Deleted.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/VaultDeleteResult' }
+        '401': { $ref: '#/components/responses/MissingApiKey' }
+        '403': { $ref: '#/components/responses/InvalidApiKey' }
+
+  /api/v1/vault:
+    get:
+      tags: [vault-admin]
+      operationId: listVaultFiles
+      summary: List vault files in this listener's scope
+      description: |
+        Metadata only, no content. Every value except `key` is serialised as a
+        **string**, including `version` and `size`.
+
+        Registered on: **config-api** only. The management-port equivalent is
+        `GET /api/v1/config-apis/{configApiId}/vault`.
+      security:
+        - ApiKeyAuth: []
+      x-registered-on: config-api
+      responses:
+        '200':
+          description: Files in this scope.
           content:
             application/json:
               schema:
                 type: array
-                items: { $ref: '#/components/schemas/ClientCertRecord' }
+                items: { $ref: '#/components/schemas/VaultFileEntry' }
+        '401': { $ref: '#/components/responses/MissingApiKey' }
+        '403': { $ref: '#/components/responses/InvalidApiKey' }
 
-  /api/v1/enrollment-tokens/generate:
-    post:
-      tags: [Enrollment]
-      summary: Generate one-time enrollment token
-      responses:
-        '200': { description: Token generated }
-
-  /api/v1/vault/{key}:
-    get:
-      tags: [Vault Files]
-      summary: Download vault file
-      security: []
-      parameters:
-        - name: key
-          in: path
-          required: true
-          schema: { type: string }
-      responses:
-        '200': { description: File bytes }
-        '304': { description: Not Modified }
-        '404': { description: File not found }
+  /api/v1/vault/{key}/policy:
     put:
-      tags: [Vault Files]
-      summary: Upload or update vault file
-      parameters:
-        - name: key
-          in: path
-          required: true
-          schema: { type: string }
-      responses:
-        '200': { description: File uploaded }
-    delete:
-      tags: [Vault Files]
-      summary: Delete vault file
-      parameters:
-        - name: key
-          in: path
-          required: true
-          schema: { type: string }
-      responses:
-        '200': { description: File deleted }
+      tags: [vault-admin]
+      operationId: putVaultFilePolicy
+      summary: Change a file's access policy / encryption
+      description: |
+        Updates metadata without touching the content or bumping the version. Both
+        fields are mandatory. Flipping `encryption` to or from `at_rest` rewrites the
+        stored bytes in the new form.
 
-  /api/v1/vault/report:
-    post:
-      tags: [Vault Files]
-      summary: Report vault file download (client endpoint)
-      security: []
+        An invalid enum value trips a Kotlin `require(...)`, surfacing as `500` —
+        as a JSON error on the management server (which installs `StatusPages`) and
+        as Ktor's default error page on a Config API listener (which does not).
+
+        Registered on: **config-api** only.
+      security:
+        - ApiKeyAuth: []
+      x-registered-on: config-api
+      parameters:
+        - $ref: '#/components/parameters/VaultKeyPath'
       requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/VaultPolicyUpdate' }
+      responses:
+        '200':
+          description: Updated.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  updated: { type: string, example: 'true' }
+        '400':
+          description: '`access_policy` or `encryption` missing from the body.'
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '404':
+          description: No file with this key in this scope.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '500':
+          description: '`access_policy` or `encryption` is not one of the allowed values.'
+        '401': { $ref: '#/components/responses/MissingApiKey' }
+        '403': { $ref: '#/components/responses/InvalidApiKey' }
+
+  /api/v1/vault/devices/{deviceId}/public-key:
+    post:
+      tags: [vault]
+      operationId: registerDevicePublicKey
+      summary: Register a device's RSA public key for end-to-end encryption
+      description: |
+        Called by the device during setup so the server can wrap `end_to_end` files
+        for it. Re-registering replaces the stored key (rotation is intentional).
+
+        **Known demo limitation (audit M-2).** The endpoint must stay
+        client-reachable, and over plain TLS there is no device identity, so the
+        server cannot distinguish a genuine rotation from one device overwriting
+        another's key. Residual risk is integrity/DoS and key substitution on
+        `public` + `end_to_end` files; confidentiality on `token` / `token_mtls`
+        files is still gated by the access policy. A production fix binds
+        registration to an mTLS CN or an enrollment-token proof — not to the admin
+        API key, which clients do not have.
+
+        Registered on: **config-api** only.
+      security: []
+      x-registered-on: config-api
+      parameters:
+        - $ref: '#/components/parameters/DeviceIdPath'
+      requestBody:
+        required: true
         content:
           application/json:
             schema:
               type: object
+              required: [publicKeyPem]
               properties:
-                key: { type: string }
-                version: { type: integer }
-                status: { type: string }
-                deviceId: { type: string }
-                deviceAlias: { type: string }
-                deviceModel: { type: string }
+                publicKeyPem:
+                  type: string
+                  description: PEM-encoded RSA public key.
+                algorithm:
+                  type: string
+                  default: RSA-OAEP-SHA256
       responses:
-        '200': { description: Report recorded }
+        '200':
+          description: Registered.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  registered: { type: string, example: 'true' }
+                  deviceId: { type: string }
+        '400':
+          description: '`publicKeyPem` missing.'
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+
+  /api/v1/vault/report:
+    post:
+      tags: [vault]
+      operationId: reportVaultDownload
+      summary: Device reports a vault file download
+      description: |
+        Feeds the dashboard's distribution tracking. All fields are optional;
+        `deviceId` defaults to `"unknown"` and `status` to `"downloaded"`.
+
+        Registered on: **config-api** only.
+      security: []
+      x-registered-on: config-api
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/VaultReport' }
+      responses:
+        '200':
+          description: Recorded.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  recorded: { type: string, example: 'true' }
+
+  /api/v1/vault/{key}/tokens:
+    get:
+      tags: [vault-admin]
+      operationId: listVaultTokens
+      summary: List access tokens for a file
+      description: |
+        Hashes only — plaintext is never stored and never returned here.
+
+        Registered on: **config-api** only.
+      security:
+        - ApiKeyAuth: []
+      x-registered-on: config-api
+      parameters:
+        - $ref: '#/components/parameters/VaultKeyPath'
+      responses:
+        '200':
+          description: Tokens for this file in this scope.
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/VaultToken' }
+        '401': { $ref: '#/components/responses/MissingApiKey' }
+        '403': { $ref: '#/components/responses/InvalidApiKey' }
+    post:
+      tags: [vault-admin]
+      operationId: createVaultToken
+      summary: Issue a per-device access token for a file
+      description: |
+        The plaintext is returned **once**; only its hash is persisted. This is the
+        value the device sends as `X-Vault-Token` for `token` / `token_mtls` files.
+
+        Registered on: **config-api** only.
+      security:
+        - ApiKeyAuth: []
+      x-registered-on: config-api
+      parameters:
+        - $ref: '#/components/parameters/VaultKeyPath'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [deviceId]
+              properties:
+                deviceId:
+                  type: string
+                  description: Must equal the `X-Device-Id` the device will send.
+      responses:
+        '200':
+          description: Token issued (plaintext shown once).
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/GeneratedVaultToken' }
+        '400':
+          description: '`deviceId` missing.'
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '401': { $ref: '#/components/responses/MissingApiKey' }
+        '403': { $ref: '#/components/responses/InvalidApiKey' }
+
+  /api/v1/vault/tokens/{tokenId}:
+    delete:
+      tags: [vault-admin]
+      operationId: revokeVaultToken
+      summary: Revoke a vault access token
+      description: |
+        Revocation takes effect on the next download — `VaultAccessTokenService`
+        checks it per request.
+
+        Registered on: **config-api** only.
+      security:
+        - ApiKeyAuth: []
+      x-registered-on: config-api
+      parameters:
+        - $ref: '#/components/parameters/TokenIdPath'
+      responses:
+        '200':
+          description: Revoked.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  revoked: { type: string, example: 'true' }
+        '400':
+          description: '`tokenId` is not a number.'
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '404':
+          description: No token with that id.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '401': { $ref: '#/components/responses/MissingApiKey' }
+        '403': { $ref: '#/components/responses/InvalidApiKey' }
 
   /api/v1/vault/distributions:
     get:
-      tags: [Vault Files]
-      summary: Get all vault file distribution history
+      tags: [vault-admin]
+      operationId: listVaultDistributions
+      summary: Distribution history for this scope
+      description: |
+        Not public: `distributions` is a reserved segment, so the download allowlist
+        never matches it.
+
+        Registered on: **config-api** only.
+      security:
+        - ApiKeyAuth: []
+      x-registered-on: config-api
       responses:
         '200':
-          description: Distribution list
+          description: Distribution records.
           content:
             application/json:
               schema:
                 type: array
                 items: { $ref: '#/components/schemas/VaultDistribution' }
+        '401': { $ref: '#/components/responses/MissingApiKey' }
+        '403': { $ref: '#/components/responses/InvalidApiKey' }
+
+  /api/v1/vault/distributions/{key}:
+    get:
+      tags: [vault-admin]
+      operationId: listVaultDistributionsByKey
+      summary: Distribution history for one file
+      description: 'Registered on: **config-api** only.'
+      security:
+        - ApiKeyAuth: []
+      x-registered-on: config-api
+      parameters:
+        - $ref: '#/components/parameters/VaultKeyPath'
+      responses:
+        '200':
+          description: Distribution records for this key.
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/VaultDistribution' }
+        '401': { $ref: '#/components/responses/MissingApiKey' }
+        '403': { $ref: '#/components/responses/InvalidApiKey' }
+
+  /api/v1/vault/distributions/device/{deviceId}:
+    get:
+      tags: [vault-admin]
+      operationId: listVaultDistributionsByDevice
+      summary: Distribution history for one device
+      description: 'Registered on: **config-api** only.'
+      security:
+        - ApiKeyAuth: []
+      x-registered-on: config-api
+      parameters:
+        - $ref: '#/components/parameters/DeviceIdPath'
+      responses:
+        '200':
+          description: Distribution records for this device.
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/VaultDistribution' }
+        '401': { $ref: '#/components/responses/MissingApiKey' }
+        '403': { $ref: '#/components/responses/InvalidApiKey' }
 
   /api/v1/vault/stats:
     get:
-      tags: [Vault Files]
-      summary: Vault file distribution statistics
-      responses:
-        '200': { description: Stats object }
+      tags: [vault-admin]
+      operationId: vaultStats
+      summary: Distribution counters for this scope
+      description: |
+        `downloaded` and `failed` count rows whose `status` is exactly `downloaded` /
+        `failed`; other statuses count toward `totalDistributions` only.
 
-  /api/v1/config-apis:
+        Registered on: **config-api** only.
+      security:
+        - ApiKeyAuth: []
+      x-registered-on: config-api
+      responses:
+        '200':
+          description: Counters.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/VaultDistStats' }
+        '401': { $ref: '#/components/responses/MissingApiKey' }
+        '403': { $ref: '#/components/responses/InvalidApiKey' }
+
+  # ─────────────────────────────────────────────────────────────────────
+  # vault-admin, scope-explicit mirror (management port only)
+  # ─────────────────────────────────────────────────────────────────────
+
+  /api/v1/config-apis/{configApiId}/vault:
     get:
-      tags: [Config API Management]
-      summary: List running Config APIs
-      responses:
-        '200': { description: Config API list }
+      tags: [vault-admin]
+      operationId: listScopedVaultFiles
+      summary: List vault files in a named scope
+      description: |
+        Management-port mirror of `GET /api/v1/vault`, with the scope in the path so
+        the dashboard can manage any Config API's vault from one place.
 
-  /api/v1/config-apis/start:
-    post:
-      tags: [Config API Management]
-      summary: Start a new Config API (TLS or mTLS)
+        Registered on: **management** only.
+      security:
+        - ApiKeyAuth: []
+      x-registered-on: management
+      parameters:
+        - $ref: '#/components/parameters/ConfigApiIdPath'
+      responses:
+        '200':
+          description: Files in that scope.
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/VaultFileEntry' }
+        '401': { $ref: '#/components/responses/MissingApiKey' }
+        '403': { $ref: '#/components/responses/InvalidApiKey' }
+
+  /api/v1/config-apis/{configApiId}/vault/{key}:
+    put:
+      tags: [vault-admin]
+      operationId: putScopedVaultFile
+      summary: Upload or replace a file in a named scope
+      description: |
+        Mirror of `PUT /api/v1/vault/{key}`. **Difference:** this handler does not
+        apply the `^[A-Za-z0-9._-]{1,64}$` / reserved-segment check, so a key written
+        here can be one the client-facing download route would reject or route
+        elsewhere. Keep to the same key shape.
+
+        Registered on: **management** only.
+      security:
+        - ApiKeyAuth: []
+      x-registered-on: management
+      parameters:
+        - $ref: '#/components/parameters/ConfigApiIdPath'
+        - $ref: '#/components/parameters/VaultKeyPath'
+        - $ref: '#/components/parameters/VaultPolicyQuery'
+        - $ref: '#/components/parameters/VaultEncryptionQuery'
       requestBody:
+        required: true
+        content:
+          application/octet-stream:
+            schema: { type: string, format: binary }
+      responses:
+        '200':
+          description: Stored.
+          headers:
+            X-Vault-Version:
+              schema: { type: integer }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/VaultPutResult' }
+        '401': { $ref: '#/components/responses/MissingApiKey' }
+        '403': { $ref: '#/components/responses/InvalidApiKey' }
+    delete:
+      tags: [vault-admin]
+      operationId: deleteScopedVaultFile
+      summary: Delete a file from a named scope
+      description: 'Registered on: **management** only.'
+      security:
+        - ApiKeyAuth: []
+      x-registered-on: management
+      parameters:
+        - $ref: '#/components/parameters/ConfigApiIdPath'
+        - $ref: '#/components/parameters/VaultKeyPath'
+      responses:
+        '200':
+          description: Deleted.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/VaultDeleteResult' }
+        '401': { $ref: '#/components/responses/MissingApiKey' }
+        '403': { $ref: '#/components/responses/InvalidApiKey' }
+
+  /api/v1/config-apis/{configApiId}/vault/{key}/policy:
+    put:
+      tags: [vault-admin]
+      operationId: putScopedVaultFilePolicy
+      summary: Change a file's policy / encryption in a named scope
+      description: |
+        Mirror of `PUT /api/v1/vault/{key}/policy`. Invalid enum values trip a
+        `require(...)`, which `StatusPages` on the management server turns into a
+        JSON `500`.
+
+        Registered on: **management** only.
+      security:
+        - ApiKeyAuth: []
+      x-registered-on: management
+      parameters:
+        - $ref: '#/components/parameters/ConfigApiIdPath'
+        - $ref: '#/components/parameters/VaultKeyPath'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/VaultPolicyUpdate' }
+      responses:
+        '200':
+          description: Updated.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  updated: { type: string, example: 'true' }
+        '400':
+          description: '`access_policy` or `encryption` missing from the body.'
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '404':
+          description: No file with this key in that scope.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '500':
+          description: '`access_policy` or `encryption` is not one of the allowed values.'
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '401': { $ref: '#/components/responses/MissingApiKey' }
+        '403': { $ref: '#/components/responses/InvalidApiKey' }
+
+  /api/v1/config-apis/{configApiId}/vault/{key}/tokens:
+    get:
+      tags: [vault-admin]
+      operationId: listScopedVaultTokens
+      summary: List a file's access tokens in a named scope
+      description: 'Registered on: **management** only.'
+      security:
+        - ApiKeyAuth: []
+      x-registered-on: management
+      parameters:
+        - $ref: '#/components/parameters/ConfigApiIdPath'
+        - $ref: '#/components/parameters/VaultKeyPath'
+      responses:
+        '200':
+          description: Tokens (hashes only).
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/VaultToken' }
+        '401': { $ref: '#/components/responses/MissingApiKey' }
+        '403': { $ref: '#/components/responses/InvalidApiKey' }
+    post:
+      tags: [vault-admin]
+      operationId: createScopedVaultToken
+      summary: Issue a per-device access token in a named scope
+      description: |
+        Plaintext returned once. Mirror of `POST /api/v1/vault/{key}/tokens`.
+
+        Registered on: **management** only.
+      security:
+        - ApiKeyAuth: []
+      x-registered-on: management
+      parameters:
+        - $ref: '#/components/parameters/ConfigApiIdPath'
+        - $ref: '#/components/parameters/VaultKeyPath'
+      requestBody:
+        required: true
         content:
           application/json:
             schema:
               type: object
+              required: [deviceId]
               properties:
-                port: { type: integer }
-                mode: { type: string, enum: [tls, mtls] }
+                deviceId: { type: string }
       responses:
-        '200': { description: Config API started }
+        '200':
+          description: Token issued (plaintext shown once).
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/GeneratedVaultToken' }
+        '400':
+          description: '`deviceId` missing.'
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '401': { $ref: '#/components/responses/MissingApiKey' }
+        '403': { $ref: '#/components/responses/InvalidApiKey' }
 
-  /api/v1/cert-expiry:
-    get:
-      tags: [Monitoring]
-      summary: Certificate expiry status for all managed hosts
+  /api/v1/config-apis/{configApiId}/vault/tokens/{tokenId}:
+    delete:
+      tags: [vault-admin]
+      operationId: revokeScopedVaultToken
+      summary: Revoke a vault access token
+      description: |
+        Token ids are globally unique, so `{configApiId}` is not used by the lookup.
+
+        Registered on: **management** only.
+      security:
+        - ApiKeyAuth: []
+      x-registered-on: management
+      parameters:
+        - $ref: '#/components/parameters/ConfigApiIdPath'
+        - $ref: '#/components/parameters/TokenIdPath'
       responses:
-        '200': { description: Cert expiry list }
+        '200':
+          description: Revoked.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  revoked: { type: string, example: 'true' }
+        '400':
+          description: '`tokenId` is not a number.'
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '404':
+          description: No token with that id.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '401': { $ref: '#/components/responses/MissingApiKey' }
+        '403': { $ref: '#/components/responses/InvalidApiKey' }
+
+  /api/v1/config-apis/{configApiId}/vault/distributions:
+    get:
+      tags: [vault-admin]
+      operationId: listScopedVaultDistributions
+      summary: Distribution history for a named scope
+      description: 'Registered on: **management** only.'
+      security:
+        - ApiKeyAuth: []
+      x-registered-on: management
+      parameters:
+        - $ref: '#/components/parameters/ConfigApiIdPath'
+      responses:
+        '200':
+          description: Distribution records.
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/VaultDistribution' }
+        '401': { $ref: '#/components/responses/MissingApiKey' }
+        '403': { $ref: '#/components/responses/InvalidApiKey' }
+
+  /api/v1/config-apis/{configApiId}/vault/distributions/{key}:
+    get:
+      tags: [vault-admin]
+      operationId: listScopedVaultDistributionsByKey
+      summary: Distribution history for one file in a named scope
+      description: 'Registered on: **management** only.'
+      security:
+        - ApiKeyAuth: []
+      x-registered-on: management
+      parameters:
+        - $ref: '#/components/parameters/ConfigApiIdPath'
+        - $ref: '#/components/parameters/VaultKeyPath'
+      responses:
+        '200':
+          description: Distribution records for this key.
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/VaultDistribution' }
+        '401': { $ref: '#/components/responses/MissingApiKey' }
+        '403': { $ref: '#/components/responses/InvalidApiKey' }
+
+  /api/v1/config-apis/{configApiId}/vault/distributions/device/{deviceId}:
+    get:
+      tags: [vault-admin]
+      operationId: listScopedVaultDistributionsByDevice
+      summary: Distribution history for one device in a named scope
+      description: 'Registered on: **management** only.'
+      security:
+        - ApiKeyAuth: []
+      x-registered-on: management
+      parameters:
+        - $ref: '#/components/parameters/ConfigApiIdPath'
+        - $ref: '#/components/parameters/DeviceIdPath'
+      responses:
+        '200':
+          description: Distribution records for this device.
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/VaultDistribution' }
+        '401': { $ref: '#/components/responses/MissingApiKey' }
+        '403': { $ref: '#/components/responses/InvalidApiKey' }
+
+  /api/v1/config-apis/{configApiId}/vault/stats:
+    get:
+      tags: [vault-admin]
+      operationId: scopedVaultStats
+      summary: Distribution counters for a named scope
+      description: 'Registered on: **management** only.'
+      security:
+        - ApiKeyAuth: []
+      x-registered-on: management
+      parameters:
+        - $ref: '#/components/parameters/ConfigApiIdPath'
+      responses:
+        '200':
+          description: Counters.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/VaultDistStats' }
+        '401': { $ref: '#/components/responses/MissingApiKey' }
+        '403': { $ref: '#/components/responses/InvalidApiKey' }
+
+components:
+
+  securitySchemes:
+    ApiKeyAuth:
+      type: apiKey
+      in: header
+      name: X-API-Key
+      description: >
+        Set via the `API_KEY` env var and compared in constant time. Enforced on the
+        management server and on every Config API listener by the `ApiKeyAuth`
+        plugin, except for the paths allowlisted in `isPublicEndpoint`. When
+        `API_KEY` is unset the server refuses to start unless
+        `ALLOW_ANONYMOUS_ADMIN=true`, which disables authentication entirely.
+
+  parameters:
+
+    ConfigApiIdPath:
+      name: configApiId
+      in: path
+      required: true
+      description: Config API scope id, e.g. `default-tls`.
+      schema: { type: string }
+      example: default-tls
+
+    ConfigApiIdQuery:
+      name: configApiId
+      in: query
+      required: false
+      description: >
+        Scope selector, honoured on the management server. On a Config API listener
+        the parameter is read but the listener's own id is the fallback, so the
+        effective scope is whatever is passed — omit it there. Defaults to the
+        listener's mount id (`default-tls` on the management server).
+      schema: { type: string }
+
+    HostnamePath:
+      name: hostname
+      in: path
+      required: true
+      schema: { type: string }
+      example: api.example.com
+
+    DeviceIdPath:
+      name: deviceId
+      in: path
+      required: true
+      description: The value the device sends as `X-Device-Id` (its ANDROID_ID).
+      schema: { type: string }
+
+    VaultKeyPath:
+      name: key
+      in: path
+      required: true
+      description: >
+        Vault file key. The client-facing routes require `^[A-Za-z0-9._-]{1,64}$` and
+        forbid the reserved segments `distributions`, `stats`, `devices`, `report`,
+        `tokens`.
+      schema: { type: string, pattern: '^[A-Za-z0-9._-]{1,64}$' }
+      example: ml-model
+
+    TokenIdPath:
+      name: tokenId
+      in: path
+      required: true
+      description: Numeric vault-token id from a token listing or issue response.
+      schema: { type: integer, format: int64 }
+
+    VaultPolicyQuery:
+      name: policy
+      in: query
+      required: false
+      description: >
+        Access policy to store. Omitted keeps the existing value, or defaults to
+        `token` on first upload. Not validated on upload — only
+        `PUT .../policy` enforces the enum.
+      schema: { type: string, enum: [public, api_key, token, token_mtls] }
+
+    VaultEncryptionQuery:
+      name: encryption
+      in: query
+      required: false
+      description: >
+        Encryption mode to store. Omitted keeps the existing value, or defaults to
+        `plain` on first upload.
+      schema: { type: string, enum: [plain, at_rest, end_to_end] }
+
+    DeviceIdHeader:
+      name: X-Device-Id
+      in: header
+      required: false
+      description: >
+        Stable device identifier (ANDROID_ID). Used for host-ACL scoping on config
+        fetches and for `token` / `token_mtls` / `end_to_end` vault access. On an
+        mTLS listener the config endpoint falls back to the client certificate CN
+        (`PinVault Client: <clientId>`) when this header is absent.
+      schema: { type: string }
+
+    VaultTokenHeader:
+      name: X-Vault-Token
+      in: header
+      required: false
+      description: >
+        Per-device, per-file token plaintext from
+        `POST /api/v1/vault/{key}/tokens`. Required for `token` and `token_mtls`
+        files.
+      schema: { type: string }
+
+  responses:
+
+    MissingApiKey:
+      description: '`X-API-Key` header absent (only when `API_KEY` is configured).'
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+          example: { error: 'X-API-Key header required' }
+
+    InvalidApiKey:
+      description: '`X-API-Key` does not match the configured key.'
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+          example: { error: 'Invalid API key' }
+
+  schemas:
+
+    # ── Errors ──────────────────────────────────────────────────────────
+
+    Error:
+      type: object
+      description: >
+        Standard error envelope. Some handlers emit Turkish messages
+        (e.g. `hostname gerekli`, `Host bulunamadi`).
+      properties:
+        error: { type: string }
+
+    ErrorList:
+      type: object
+      description: Multi-error envelope used by pin-config validation.
+      properties:
+        errors:
+          type: array
+          items: { type: string }
+
+    Saved:
+      type: object
+      properties:
+        saved: { type: boolean, example: true }
+
+    # ── Pin configuration ───────────────────────────────────────────────
+
+    HostPin:
+      type: object
+      description: One pinned host. Mirrors `model/PinConfig.kt`.
+      required: [hostname, sha256]
+      properties:
+        hostname:
+          type: string
+          description: 'Exact host, or a wildcard matching one sub-label (`*.example.com`).'
+          example: api.example.com
+        sha256:
+          type: array
+          description: >
+            Base64 SHA-256 SPKI pins. At least two (primary + backup) are required by
+            `PUT /api/v1/certificate-config`; each must be 44 characters decoding to
+            32 bytes.
+          items: { type: string }
+          example: ['ziA0hyMDbayVXZ0g8AkkJz+wmKPZYjMAwb+GdNg5HYM=', 'wJGpE3i95h7E0ylT93TyLwC1BqXuK4IfoqhmtSrq5gQ=']
+        version:
+          type: integer
+          default: 1
+          description: >
+            Per-host version, assigned by the server. Never moves backwards, even
+            across delete + re-add. Clients reject downgrades.
+        forceUpdate:
+          type: boolean
+          default: false
+          description: Tells the client to apply this host's pins immediately.
+        mtls:
+          type: boolean
+          default: false
+          description: This host needs a client certificate.
+        clientCertVersion:
+          type: integer
+          nullable: true
+          description: >
+            Bumped by `POST /api/v1/hosts/{hostname}/upload-client-cert`; a change
+            triggers `syncHostClientCerts()` on the device.
+
+    CertificateConfig:
+      type: object
+      description: The pin configuration (`PinConfig`).
+      required: [pins]
+      properties:
+        version:
+          type: integer
+          default: 0
+          description: 'Legacy global version; the effective value is `max(pins[].version)`.'
+        pins:
+          type: array
+          items: { $ref: '#/components/schemas/HostPin' }
+        forceUpdate:
+          type: boolean
+          default: false
+          description: Global force flag. The client treats any per-host flag as equivalent.
+        issuedAt:
+          type: integer
+          format: int64
+          default: 0
+          description: >
+            Unix epoch ms, stamped at response time when the config is signed. `0` on
+            unsigned responses. Clients reject replays where this is not strictly
+            greater than the stored value.
+        expiresAt:
+          type: integer
+          format: int64
+          default: 0
+          description: >
+            Unix epoch ms; `issuedAt + CONFIG_TTL_SECONDS` (default 24 h). `0` on
+            unsigned responses. Clients reject the payload once the wall clock passes it.
+
+    SignedConfig:
+      type: object
+      description: Signed envelope returned unless `?signed=false`.
+      required: [payload, signature]
+      properties:
+        payload:
+          type: string
+          description: >
+            JSON-encoded `CertificateConfig` with `issuedAt` / `expiresAt` stamped.
+            Verify the signature over these exact bytes before parsing.
+        signature:
+          type: string
+          description: Base64 `SHA256withECDSA` signature over `payload`.
+
+    PinConfigHistoryEntry:
+      type: object
+      properties:
+        hostname: { type: string }
+        version: { type: integer }
+        timestamp: { type: string, format: date-time }
+        event:
+          type: string
+          enum:
+            - cert_generated
+            - cert_regenerated
+            - cert_uploaded
+            - cert_fetched
+            - fetched_from_url
+            - host_added
+            - host_removed
+            - pins_updated
+            - force_update
+            - mtls_enabled
+            - mtls_disabled
+            - client_cert_uploaded
+        pinPrefix:
+          type: string
+          description: First 12 characters of the primary pin, for display.
+
+    # ── Hosts ───────────────────────────────────────────────────────────
+
+    HostActionResponse:
+      type: object
+      description: Result of any host mutation that changes pins.
+      properties:
+        hostname: { type: string }
+        sha256Pins:
+          type: array
+          items: { type: string }
+        certValidUntil: { type: string, nullable: true, format: date-time }
+        version:
+          type: integer
+          description: The host's new version in the requested scope.
+
+    HostStatusResponse:
+      type: object
+      properties:
+        hostname: { type: string }
+        keystorePath: { type: string, nullable: true }
+        certValidUntil: { type: string, nullable: true, format: date-time }
+        mockServerRunning: { type: boolean }
+        mockServerPort:
+          type: integer
+          nullable: true
+          description: 'TLS port if running, else the mTLS port.'
+        mockServerMode: { type: string, enum: [tls, mtls], default: tls }
+        mockTlsPort: { type: integer, nullable: true }
+        mockMtlsPort: { type: integer, nullable: true }
+        createdAt: { type: string, nullable: true, format: date-time }
+
+    MockServerResponse:
+      type: object
+      properties:
+        hostname: { type: string }
+        port: { type: integer, nullable: true }
+        running: { type: boolean }
+
+    CertInfoResponse:
+      type: object
+      description: Parsed X.509 details read from a host's keystore.
+      properties:
+        subject: { type: string }
+        issuer: { type: string }
+        serialNumber: { type: string }
+        validFrom: { type: string, format: date-time }
+        validUntil: { type: string, format: date-time }
+        signatureAlgorithm: { type: string }
+        publicKeyAlgorithm: { type: string }
+        publicKeyBits: { type: integer }
+        subjectAltNames:
+          type: array
+          items: { type: string }
+        sha256Fingerprint: { type: string }
+        primaryPin:
+          type: string
+          description: First pin currently stored for this host in the scope, if any.
+        backupPin:
+          type: string
+          description: Second stored pin, if any.
+
+    HostRecord:
+      type: object
+      description: >
+        A `hosts` row. Not returned directly by any endpoint today — `cert-info` and
+        `status` project subsets of it — but it is the shape the host endpoints
+        persist.
+      properties:
+        hostname: { type: string }
+        configApiId: { type: string, default: default-tls }
+        keystorePath: { type: string, nullable: true }
+        certValidUntil: { type: string, nullable: true, format: date-time }
+        mockServerPort: { type: integer, nullable: true }
+        createdAt: { type: string, format: date-time }
+
+    HostClientCertRecord:
+      type: object
+      properties:
+        hostname: { type: string }
+        version: { type: integer }
+        commonName: { type: string, nullable: true }
+        fingerprint: { type: string, nullable: true }
+        createdAt: { type: string, format: date-time }
+
+    PingRemoteResult:
+      type: object
+      description: >
+        Union shape — `port` and `actualPin` are present only when reachable;
+        `triedPorts` and `error` only when not.
+      properties:
+        reachable: { type: boolean }
+        port: { type: integer }
+        pinMatch:
+          type: boolean
+          description: Whether the live leaf SPKI pin is in the stored pin list.
+        actualPin: { type: string }
+        expectedPins:
+          type: array
+          items: { type: string }
+        triedPorts:
+          type: array
+          items: { type: integer }
+        error: { type: string }
+        elapsedMs: { type: integer, format: int64 }
+
+    TestConnectionResult:
+      type: object
+      description: 'Union shape: `httpCode` / `body` on success, `error` on failure.'
+      properties:
+        success: { type: boolean }
+        httpCode: { type: integer }
+        responseTimeMs: { type: integer, format: int64 }
+        body:
+          type: string
+          description: First 500 characters of the mock server's response.
+        error: { type: string }
+
+    # ── Config APIs ─────────────────────────────────────────────────────
+
+    ConfigApiInstance:
+      type: object
+      properties:
+        id: { type: string, example: default-tls }
+        port: { type: integer, example: 6651 }
+        mode: { type: string, enum: [tls, mtls] }
+        running: { type: boolean }
+
+    ConfigApiWithPins:
+      type: object
+      description: >
+        Dashboard projection: a Config API plus its pins. Hand-serialised, so
+        `HostPin.mtls` and `clientCertVersion` are omitted here.
+      properties:
+        id: { type: string }
+        port: { type: integer }
+        mode: { type: string, enum: [tls, mtls] }
+        pins:
+          type: array
+          items:
+            type: object
+            properties:
+              hostname: { type: string }
+              sha256: { type: array, items: { type: string } }
+              version: { type: integer }
+              forceUpdate: { type: boolean }
+        version:
+          type: integer
+          description: 'Computed as `max(pins[].version)`.'
+        running: { type: boolean }
+
+    VaultEnabledState:
+      type: object
+      description: Note the boolean is serialised as a string.
+      properties:
+        id: { type: string }
+        vault_enabled: { type: string, enum: ['true', 'false'] }
+
+    # ── Server TLS / signing ────────────────────────────────────────────
+
+    ServerTlsPins:
+      type: object
+      properties:
+        primaryPin: { type: string }
+        backupPin: { type: string, description: 'Empty string when only one pin exists.' }
+        httpsPort: { type: integer }
+        hostname: { type: string, example: localhost }
+
+    ServerTlsPinsMutation:
+      type: object
+      properties:
+        primaryPin: { type: string }
+        backupPin: { type: string }
+        regenerated: { type: boolean }
+        uploaded: { type: boolean }
+        restartRequired:
+          type: boolean
+          description: Running listeners keep the previous keystore until the process restarts.
+
+    # ── Client certificates / enrollment ────────────────────────────────
+
+    ClientCertRecord:
+      type: object
+      properties:
+        id:
+          type: string
+          description: 'Client id — the certificate CN minus the `PinVault Client: ` prefix.'
+        commonName: { type: string, example: 'PinVault Client: my-device' }
+        fingerprint: { type: string, description: Base64 SHA-256 of the SPKI. }
+        createdAt: { type: string, format: date-time }
+        revoked: { type: boolean, default: false }
+        deviceAlias: { type: string, nullable: true }
+        deviceUid:
+          type: string
+          nullable: true
+          description: >
+            The device's `X-Device-Id`, captured at enrollment. Lets `token_mtls`
+            bind a token-enrolled certificate (whose client id is admin-chosen) to
+            one device.
+
+    EnrollmentToken:
+      type: object
+      description: Listing shape — never a usable credential.
+      properties:
+        token:
+          type: string
+          description: >
+            Masked prefix (`AbC12dEf…`), or `sha256:<8 hex>…` for pre-V8 rows that the
+            migration invalidated. The plaintext is unrecoverable.
+          example: 'AbC12dEf…'
+        clientId: { type: string }
+        createdAt: { type: string, format: date-time }
+        used: { type: boolean, default: false }
+        masked:
+          type: boolean
+          default: true
+          description: Always `true` — `token` is a display value, not a credential.
+
+    MtlsStatus:
+      type: object
+      properties:
+        mtlsApiCount: { type: integer }
+        tlsApiCount: { type: integer }
+        clientCerts: { type: integer }
+        activeCerts: { type: integer, description: Certificates not marked revoked. }
+
+    # ── Devices / telemetry ─────────────────────────────────────────────
+
+    ScopedClientDevice:
+      type: object
+      description: A device as the Device-ACL manager sees it, keyed by `X-Device-Id`.
+      properties:
+        deviceId: { type: string }
+        deviceAlias: { type: string, nullable: true }
+        deviceManufacturer: { type: string, nullable: true }
+        deviceModel: { type: string, nullable: true }
+        pinVersion: { type: integer, default: 0 }
+        lastStatus: { type: string, default: unknown }
+        lastSeen: { type: string, nullable: true, format: date-time }
+        source:
+          type: string
+          enum: [enrollment, connection, 'enrollment+connection', unknown]
+          description: Which store(s) the row was assembled from.
+
+    ClientDevice:
+      type: object
+      description: >
+        A `client_devices` row keyed by hostname. `deviceId` here is derived from the
+        reported manufacturer/model, not from `X-Device-Id`.
+      properties:
+        deviceId: { type: string, example: xiaomi_mi_9t }
+        deviceManufacturer: { type: string, nullable: true }
+        deviceModel: { type: string, nullable: true }
+        pinVersion: { type: integer }
+        lastStatus: { type: string }
+        lastSeen: { type: string, format: date-time }
+
+    ConnectionHistoryEntry:
+      type: object
+      properties:
+        source:
+          type: string
+          enum: [web, client, config_update]
+        hostname: { type: string, default: '' }
+        timestamp: { type: string, format: date-time }
+        status: { type: string }
+        responseTimeMs: { type: integer, format: int64, default: 0 }
+        errorMessage: { type: string, nullable: true }
+        serverCertPin: { type: string, nullable: true }
+        storedPin: { type: string, nullable: true }
+        pinMatched: { type: boolean, nullable: true }
+        pinVersion: { type: integer, nullable: true }
+        deviceManufacturer: { type: string, nullable: true }
+        deviceModel: { type: string, nullable: true }
+
+    ClientConnectionReport:
+      type: object
+      description: >
+        Device connection report. `hostname`, `deviceManufacturer` and `deviceModel`
+        must match `^[A-Za-z0-9._:\- ]{1,128}$` or the request is rejected with `400`.
+      properties:
+        hostname: { type: string, example: api.example.com }
+        status: { type: string, example: success }
+        responseTimeMs: { type: integer, format: int64 }
+        serverCertPin: { type: string }
+        storedPin: { type: string }
+        pinMatched: { type: boolean }
+        pinVersion: { type: integer }
+        deviceManufacturer: { type: string, example: Xiaomi }
+        deviceModel: { type: string, example: 'Mi 9T' }
+        errorMessage: { type: string }
+        timestamp:
+          type: string
+          format: date-time
+          description: Defaults to the server's clock when omitted.
+
+    ConfigUpdateReport:
+      type: object
+      description: >
+        Outcome of a device-side config refresh. `deviceManufacturer` and
+        `deviceModel` are subject to the same identifier check as
+        `ClientConnectionReport`.
+      properties:
+        status: { type: string, example: success }
+        pinVersion: { type: integer }
+        deviceManufacturer: { type: string }
+        deviceModel: { type: string }
+        failureReason: { type: string }
+        timestamp: { type: string, format: date-time }
+
+    CertExpiryStatus:
+      type: object
+      properties:
+        hostname: { type: string }
+        configApiId: { type: string }
+        validUntil: { type: string, format: date-time }
+        daysRemaining: { type: integer }
+        level: { type: string, enum: [ok, warning, expired] }
+
+    DetailedHealth:
+      type: object
+      properties:
+        status:
+          type: string
+          description: Worst certificate level across all hosts.
+          enum: [ok, warning, expired]
+        database: { type: string, example: connected }
+        configApis:
+          type: object
+          properties:
+            running: { type: integer }
+            stopped: { type: integer }
+        certs:
+          type: object
+          properties:
+            status: { type: string }
+            nearExpiry:
+              type: integer
+              description: Hosts whose level is not `ok`.
+            total: { type: integer }
+
+    # ── Vault ───────────────────────────────────────────────────────────
+
+    VaultFileEntry:
+      type: object
+      description: >
+        Vault file metadata as the listing endpoints emit it — every value except
+        `key` is a string, including `version` and `size`.
+      properties:
+        key: { type: string, example: ml-model }
+        version: { type: string, example: '3' }
+        size: { type: string, description: Stored byte length., example: '10485' }
+        access_policy: { type: string, enum: [public, api_key, token, token_mtls] }
+        encryption: { type: string, enum: [plain, at_rest, end_to_end] }
+
+    VaultPutResult:
+      type: object
+      properties:
+        key: { type: string }
+        version: { type: string, description: New version, as a string. }
+        access_policy: { type: string, enum: [public, api_key, token, token_mtls] }
+        encryption: { type: string, enum: [plain, at_rest, end_to_end] }
+
+    VaultDeleteResult:
+      type: object
+      properties:
+        deleted: { type: string, description: The key that was deleted. }
+        status: { type: string, example: ok }
+
+    VaultPolicyUpdate:
+      type: object
+      required: [access_policy, encryption]
+      properties:
+        access_policy:
+          type: string
+          enum: [public, api_key, token, token_mtls]
+          description: >
+            `public` = no check; `api_key` = `X-API-Key`; `token` = `X-Device-Id` +
+            `X-Vault-Token`; `token_mtls` = token plus a client certificate bound to
+            that device.
+        encryption:
+          type: string
+          enum: [plain, at_rest, end_to_end]
+          description: >
+            Switching to or from `at_rest` rewrites the stored bytes. `end_to_end`
+            wraps per device at download time with the device's registered RSA key.
+
+    VaultToken:
+      type: object
+      description: Token listing row (`VaultFileTokenInfo`) — hash-backed, no plaintext.
+      properties:
+        id: { type: integer, format: int64 }
+        configApiId: { type: string }
+        vaultKey: { type: string }
+        deviceId: { type: string }
+        createdAt: { type: string, format: date-time }
+        revoked: { type: boolean }
+
+    GeneratedVaultToken:
+      type: object
+      description: Token issue response. `token` is shown once and never retrievable again.
+      properties:
+        id: { type: string, description: Token id, serialised as a string. }
+        token: { type: string, description: Plaintext, shown once. }
+        deviceId: { type: string }
+        createdAt: { type: string, format: date-time }
+
+    VaultReport:
+      type: object
+      description: Device-side download report.
+      properties:
+        key: { type: string }
+        version: { type: integer }
+        deviceId: { type: string, default: unknown }
+        deviceManufacturer: { type: string, nullable: true }
+        deviceModel: { type: string, nullable: true }
+        enrollmentLabel: { type: string, nullable: true }
+        deviceAlias: { type: string, nullable: true }
+        status: { type: string, default: downloaded, example: downloaded }
+        failureReason: { type: string, nullable: true }
+        authMethod:
+          type: string
+          nullable: true
+          description: 'How the device authenticated, e.g. `token`, `token_mtls`, `public`.'
+
+    VaultDistribution:
+      type: object
+      description: One recorded delivery of a vault file to a device.
+      properties:
+        configApiId: { type: string, default: '' }
+        vaultKey: { type: string }
+        version: { type: integer }
+        deviceId: { type: string }
+        deviceManufacturer: { type: string, nullable: true }
+        deviceModel: { type: string, nullable: true }
+        enrollmentLabel: { type: string, nullable: true }
+        status:
+          type: string
+          description: >
+            Free-form; the stats endpoint counts only the exact values `downloaded`
+            and `failed`.
+          example: downloaded
+        timestamp: { type: string, format: date-time }
+        deviceAlias: { type: string, nullable: true }
+        failureReason: { type: string, nullable: true }
+        authMethod: { type: string, nullable: true }
+
+    VaultDistStats:
+      type: object
+      properties:
+        totalDistributions: { type: integer }
+        uniqueDevices: { type: integer }
+        uniqueKeys: { type: integer }
+        downloaded: { type: integer, description: 'Rows with `status = "downloaded"`.' }
+        failed: { type: integer, description: 'Rows with `status = "failed"`.' }
+
+    # ── Device ACL ──────────────────────────────────────────────────────
+
+    DeviceHostAclUpdate:
+      type: object
+      description: Counters are serialised as strings.
+      properties:
+        configApiId: { type: string }
+        deviceId: { type: string }
+        granted: { type: string, description: Comma-joined hostnames after the update. }
+        added: { type: string }
+        removed: { type: string }
+
+    DefaultHostAclUpdate:
+      type: object
+      description: Counters are serialised as strings.
+      properties:
+        configApiId: { type: string }
+        hostnames: { type: string, description: Comma-joined hostnames after the update. }
+        added: { type: string }
+        removed: { type: string }

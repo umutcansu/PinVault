@@ -56,7 +56,18 @@ data class FetchResult(
     val certInfo: CertInfo
 )
 
-class CertificateService(private val certsDir: File) {
+class CertificateService(
+    private val certsDir: File,
+    /**
+     * Extra Subject Alternative Names (IPv4 literals or DNS names) added to
+     * every certificate this service generates. The interface scan in
+     * [buildSanNames] only sees the machine the server runs on; inside a
+     * container that is the container's private address, not the LAN IP a
+     * phone connects to, so TLS hostname verification would fail on the
+     * device. Defaults to the comma-separated `EXTRA_CERT_SANS` env var.
+     */
+    private val extraSans: List<String> = parseExtraSans(System.getenv("EXTRA_CERT_SANS"))
+) {
 
     init {
         certsDir.mkdirs()
@@ -314,7 +325,15 @@ class CertificateService(private val certsDir: File) {
                 }
         } catch (_: Exception) {}
 
-        return GeneralNames(names.toTypedArray())
+        // Operator-supplied names, e.g. the Docker host's LAN IP (EXTRA_CERT_SANS).
+        extraSans.forEach { san ->
+            names.add(
+                if (IPV4_LITERAL.matches(san)) GeneralName(GeneralName.iPAddress, san)
+                else GeneralName(GeneralName.dNSName, san)
+            )
+        }
+
+        return GeneralNames(names.distinct().toTypedArray())
     }
 
     // ── mTLS Client Certificate ───────────────────────────
@@ -434,5 +453,29 @@ class CertificateService(private val certsDir: File) {
          */
         val KEYSTORE_PASSWORD: String =
             System.getenv("KEYSTORE_PASSWORD")?.takeIf { it.isNotBlank() } ?: "changeit"
+
+        private val IPV4_LITERAL = Regex("""^\d{1,3}(\.\d{1,3}){3}$""")
+        private val DNS_NAME = Regex("""^(\*\.)?[A-Za-z0-9]([A-Za-z0-9-]*[A-Za-z0-9])?(\.[A-Za-z0-9]([A-Za-z0-9-]*[A-Za-z0-9])?)*$""")
+
+        /**
+         * Parses `EXTRA_CERT_SANS`: a comma-separated list of IPv4 literals
+         * and/or DNS names. Invalid entries are logged and skipped so a typo
+         * cannot put garbage into a certificate or crash startup.
+         */
+        internal fun parseExtraSans(raw: String?): List<String> =
+            raw.orEmpty()
+                .split(',')
+                .map { it.trim() }
+                .filter { it.isNotEmpty() }
+                .filter { entry ->
+                    val valid = if (IPV4_LITERAL.matches(entry)) {
+                        entry.split('.').all { it.toInt() in 0..255 }
+                    } else {
+                        DNS_NAME.matches(entry)
+                    }
+                    if (!valid) println("CertificateService: ignoring invalid EXTRA_CERT_SANS entry '$entry'")
+                    valid
+                }
+                .distinct()
     }
 }

@@ -60,27 +60,50 @@ val ApiKeyAuth = createApplicationPlugin(name = "ApiKeyAuth") {
     }
 }
 
+/** `GET /api/v1/vault/{key}` — the device download path; group 1 is the key. */
+private val VAULT_DOWNLOAD_PATH = Regex("/api/v1/vault/([A-Za-z0-9._-]{1,64})")
+
+/**
+ * Constant segments under `/api/v1/vault` that are admin or client-report
+ * routes rather than file keys. Excluded from the public download rule and
+ * rejected as file keys on upload, so a file can never shadow (or be
+ * shadowed by) one of these routes.
+ */
+internal val RESERVED_VAULT_SEGMENTS = setOf("distributions", "stats", "devices", "report", "tokens")
+
 /**
  * Endpoints that do NOT require authentication.
  * These are called by Android devices or are public health/static resources.
+ *
+ * Kept deliberately narrow: every rule is an exact path or a single-segment
+ * pattern. Prefix rules previously exposed admin reads on the Config API
+ * ports — `/certificate-config/history/{host}`, `/vault/distributions` and
+ * `/vault/stats` all matched a "public" pattern.
  */
-private fun isPublicEndpoint(path: String, method: HttpMethod): Boolean {
+internal fun isPublicEndpoint(path: String, method: HttpMethod): Boolean {
     // Health check (Docker probe)
     if (path == "/health") return true
 
     // Static resources and Web UI
     if (path == "/" || path.startsWith("/static/") || path == "/docs") return true
 
-    // Client endpoints — config download
-    if (path.startsWith("/api/v1/certificate-config") && method == HttpMethod.Get) return true
+    // Client endpoints — config download. Exact path only: sub-paths such as
+    // /api/v1/certificate-config/history/{hostname} are admin reads.
+    if (path.trimEnd('/') == "/api/v1/certificate-config" && method == HttpMethod.Get) return true
     if (path == "/api/v1/signing-key") return true
 
     // Client endpoints — enrollment
     if (path == "/api/v1/client-certs/enroll" && method == HttpMethod.Post) return true
-    if (path.matches(Regex("/api/v1/client-certs/.+/download")) && method == HttpMethod.Get) return true
+    if (path.matches(Regex("/api/v1/client-certs/[^/]+/download")) && method == HttpMethod.Get) return true
 
-    // Client endpoints — vault file download and reporting
-    if (path.matches(Regex("/api/v1/vault/[^/]+")) && method == HttpMethod.Get) return true
+    // Client endpoints — vault file download and reporting. The download path
+    // shares its prefix with constant admin routes (/distributions, /stats, …),
+    // which Ktor routes ahead of `{key}`; only a well-formed key that is not a
+    // reserved segment is public.
+    if (method == HttpMethod.Get) {
+        val key = VAULT_DOWNLOAD_PATH.matchEntire(path)?.groupValues?.get(1)
+        if (key != null && key !in RESERVED_VAULT_SEGMENTS) return true
+    }
     if (path == "/api/v1/vault/report" && method == HttpMethod.Post) return true
 
     // Client endpoint — device E2E public-key registration. Called by the
@@ -106,4 +129,18 @@ private fun constantTimeEquals(a: String, b: String): Boolean {
     val aBytes = a.toByteArray()
     val bBytes = b.toByteArray()
     return MessageDigest.isEqual(aBytes, bBytes)
+}
+
+/**
+ * Shared helpers for route handlers that must re-check the admin key on a
+ * path the plugin deliberately allowlists — e.g. `GET /api/v1/vault/{key}`,
+ * which devices call without a key but which may serve an `api_key` file.
+ */
+object ApiKeyPolicy {
+    /** The configured admin key, or null when `API_KEY` is unset (anonymous-admin dev mode). */
+    fun configuredKey(): String? = System.getenv("API_KEY")?.takeIf { it.isNotBlank() }
+
+    /** Constant-time comparison of a presented key against the expected one. */
+    fun matches(provided: String?, expected: String): Boolean =
+        provided != null && constantTimeEquals(provided, expected)
 }

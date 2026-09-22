@@ -638,16 +638,20 @@ class BackendTest {
         val clientId = tokenStore.validate(token)
         assertEquals("android-device", clientId)
 
-        // Kullanılmamış token listede
+        // Kullanılmamış token listede — audit N-8'den beri liste düz metin
+        // değil maskeli önek taşır, satır clientId ile bulunur.
         val all = tokenStore.getAll()
-        assertTrue(all.any { it.token == token && !it.used })
+        val listed = all.single { it.clientId == "android-device" }
+        assertFalse(listed.used)
+        assertTrue(listed.masked)
+        assertNotEquals(token, listed.token)
 
         // Kullan
         tokenStore.markUsed(token)
         assertNull(tokenStore.validate(token)) // artık geçersiz
 
         val afterUse = tokenStore.getAll()
-        assertTrue(afterUse.find { it.token == token }!!.used)
+        assertTrue(afterUse.single { it.clientId == "android-device" }.used)
     }
 
     // ── Enrollment Security Modes ─────────────────────────

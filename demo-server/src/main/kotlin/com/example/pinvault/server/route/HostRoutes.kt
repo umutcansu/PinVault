@@ -51,11 +51,11 @@ fun Route.hostRoutes(
 
             val newPin = HostPin(hostname, result.sha256Pins, version = 1)
             val updated = config.copy(pins = config.pins + newPin)
-            pinConfigStore.save(call.scopedApiId(), updated)
+            val savedPin = pinConfigStore.save(call.scopedApiId(), updated).pins.first { it.hostname == newPin.hostname }
 
-            historyStore.add(call.scopedApiId(), PinConfigHistoryEntry(hostname, newPin.version, Instant.now().toString(), "cert_generated", result.sha256Pins.firstOrNull()?.take(12) ?: ""))
+            historyStore.add(call.scopedApiId(), PinConfigHistoryEntry(hostname, savedPin.version, Instant.now().toString(), "cert_generated", result.sha256Pins.firstOrNull()?.take(12) ?: ""))
 
-            call.respond(HostActionResponse(hostname, result.sha256Pins, result.validUntil, newPin.version))
+            call.respond(HostActionResponse(hostname, result.sha256Pins, result.validUntil, savedPin.version))
         }
 
         post("fetch-from-url") {
@@ -78,11 +78,11 @@ fun Route.hostRoutes(
 
             val newPin = HostPin(result.hostname, result.sha256Pins, version = 1)
             val updated = config.copy(pins = config.pins + newPin)
-            pinConfigStore.save(call.scopedApiId(), updated)
+            val savedPin = pinConfigStore.save(call.scopedApiId(), updated).pins.first { it.hostname == newPin.hostname }
 
-            historyStore.add(call.scopedApiId(), PinConfigHistoryEntry(result.hostname, newPin.version, Instant.now().toString(), "fetched_from_url", result.sha256Pins.firstOrNull()?.take(12) ?: ""))
+            historyStore.add(call.scopedApiId(), PinConfigHistoryEntry(result.hostname, savedPin.version, Instant.now().toString(), "fetched_from_url", result.sha256Pins.firstOrNull()?.take(12) ?: ""))
 
-            call.respond(HostActionResponse(result.hostname, result.sha256Pins, result.certInfo.validUntil, newPin.version))
+            call.respond(HostActionResponse(result.hostname, result.sha256Pins, result.certInfo.validUntil, savedPin.version))
         }
 
         post("upload-cert") {
@@ -124,11 +124,11 @@ fun Route.hostRoutes(
 
             val newPin = HostPin(host, result.sha256Pins, version = 1)
             val updated = config.copy(pins = config.pins + newPin)
-            pinConfigStore.save(call.scopedApiId(), updated)
+            val savedPin = pinConfigStore.save(call.scopedApiId(), updated).pins.first { it.hostname == newPin.hostname }
 
-            historyStore.add(call.scopedApiId(), PinConfigHistoryEntry(host, newPin.version, Instant.now().toString(), "cert_uploaded", result.sha256Pins.firstOrNull()?.take(12) ?: ""))
+            historyStore.add(call.scopedApiId(), PinConfigHistoryEntry(host, savedPin.version, Instant.now().toString(), "cert_uploaded", result.sha256Pins.firstOrNull()?.take(12) ?: ""))
 
-            call.respond(HostActionResponse(host, result.sha256Pins, result.validUntil, newPin.version))
+            call.respond(HostActionResponse(host, result.sha256Pins, result.validUntil, savedPin.version))
         }
 
         route("{hostname}") {
@@ -294,6 +294,15 @@ fun Route.hostRoutes(
             }
 
             // mTLS toggle — host'u mTLS olarak işaretle/kaldır
+            //
+            // Bumps the host's pin version. `mtls` is part of the config the
+            // device caches, and the client's change detection is version
+            // based: without the bump a device that already holds the config
+            // gets AlreadyCurrent from SSLCertificateUpdater.updateNow and
+            // never learns the host became mTLS — only a device whose data was
+            // wiped would see the flag. PinConfigStore.save keeps its
+            // watermark semantics (version is taken as given for a host that
+            // already exists in the scope), so read the stored value back.
             post("toggle-mtls") {
                 val hostname = call.parameters["hostname"] ?: ""
                 val body = call.receive<kotlinx.serialization.json.JsonObject>()
@@ -305,15 +314,16 @@ fun Route.hostRoutes(
 
                 val updated = config.copy(
                     pins = config.pins.map {
-                        if (it.hostname == hostname) it.copy(mtls = mtls)
+                        if (it.hostname == hostname) it.copy(mtls = mtls, version = it.version + 1)
                         else it
                     }
                 )
-                pinConfigStore.save(call.scopedApiId(), updated)
+                val savedVersion = pinConfigStore.save(call.scopedApiId(), updated)
+                    .pins.first { it.hostname == hostname }.version
 
-                historyStore.add(call.scopedApiId(), PinConfigHistoryEntry(hostname, pin.version, Instant.now().toString(), if (mtls) "mtls_enabled" else "mtls_disabled"))
+                historyStore.add(call.scopedApiId(), PinConfigHistoryEntry(hostname, savedVersion, Instant.now().toString(), if (mtls) "mtls_enabled" else "mtls_disabled"))
 
-                call.respondText("""{"hostname":"$hostname","mtls":$mtls}""", ContentType.Application.Json)
+                call.respondText("""{"hostname":"$hostname","mtls":$mtls,"version":$savedVersion}""", ContentType.Application.Json)
             }
 
             // Upload host-specific client cert (P12)
@@ -365,18 +375,27 @@ fun Route.hostRoutes(
 
                 hostClientCertStore.save(hostname, call.scopedApiId(), bytes, newCertVersion, cn, fingerprint)
 
-                // Pin config'e clientCertVersion ve mtls ekle
+                // Pin config'e clientCertVersion ve mtls ekle.
+                //
+                // The host's pin version is bumped alongside clientCertVersion:
+                // the client only re-reads a host's entry (and therefore only
+                // runs syncHostClientCerts for it) when the config as a whole
+                // reports a change. Leaving the pin version untouched made the
+                // new certificate invisible to every device that already had
+                // the config.
                 val updated = config.copy(
                     pins = config.pins.map {
-                        if (it.hostname == hostname) it.copy(mtls = true, clientCertVersion = newCertVersion)
+                        if (it.hostname == hostname)
+                            it.copy(mtls = true, clientCertVersion = newCertVersion, version = it.version + 1)
                         else it
                     }
                 )
-                pinConfigStore.save(call.scopedApiId(), updated)
+                val savedVersion = pinConfigStore.save(call.scopedApiId(), updated)
+                    .pins.firstOrNull { it.hostname == hostname }?.version ?: ((pin?.version ?: 0) + 1)
 
-                historyStore.add(call.scopedApiId(), PinConfigHistoryEntry(hostname, pin?.version ?: 1, Instant.now().toString(), "client_cert_uploaded", fingerprint?.take(12) ?: ""))
+                historyStore.add(call.scopedApiId(), PinConfigHistoryEntry(hostname, savedVersion, Instant.now().toString(), "client_cert_uploaded", fingerprint?.take(12) ?: ""))
 
-                call.respondText("""{"hostname":"$hostname","clientCertVersion":$newCertVersion,"commonName":"${cn ?: ""}","fingerprint":"${fingerprint ?: ""}"}""", ContentType.Application.Json)
+                call.respondText("""{"hostname":"$hostname","clientCertVersion":$newCertVersion,"version":$savedVersion,"commonName":"${cn ?: ""}","fingerprint":"${fingerprint ?: ""}"}""", ContentType.Application.Json)
             }
 
             // Download host-specific client cert (P12) — Android calls this
@@ -523,6 +542,15 @@ fun Route.hostRoutes(
             // Response: { reachable, port, pinMatch, actualPin, expectedPins[], error?, elapsedMs }
             get("ping-remote") {
                 val hostname = call.parameters["hostname"] ?: ""
+                // The value is handed to external processes (`nc`, `openssl`) as an
+                // argument, so it must be a plain hostname / IPv4 literal: no shell
+                // metacharacters, no path separators, no leading '-' (option injection).
+                if (!PROBE_HOSTNAME_REGEX.matches(hostname)) {
+                    return@get call.respondText(
+                        """{"reachable":false,"pinMatch":false,"error":"Invalid hostname"}""",
+                        ContentType.Application.Json, HttpStatusCode.BadRequest
+                    )
+                }
                 val explicit = call.request.queryParameters["port"]?.toIntOrNull()
                 val mockPort = mockServerManager.getTlsPort(hostname)
                     ?: mockServerManager.getMtlsPort(hostname)
@@ -581,18 +609,21 @@ fun Route.hostRoutes(
                             continue
                         }
 
-                        // 2. TLS handshake + cert çıkar: `openssl s_client -connect host:port -servername host`
-                        val (sslExit, sslOut) = runCmd(
-                            "sh", "-c",
-                            "echo Q | openssl s_client -connect $hostname:$port -servername $hostname 2>/dev/null " +
-                            "| openssl x509 -noout -pubkey 2>/dev/null " +
-                            "| openssl pkey -pubin -outform DER 2>/dev/null " +
-                            "| openssl dgst -sha256 -binary " +
-                            "| openssl base64 -A",
+                        // 2. TLS handshake: `openssl s_client` runs from an argv list (no
+                        //    shell) and the SPKI pin is computed in-process from the PEM
+                        //    leaf it prints. The previous `sh -c "… $hostname …"` pipeline
+                        //    let a crafted {hostname} path segment run arbitrary commands
+                        //    as the server user. runCmd closes stdin, which makes
+                        //    s_client exit right after the handshake (what `echo Q |`
+                        //    used to do). Its exit code is ignored on purpose: it is 0
+                        //    even when chain verification fails, so "no certificate in
+                        //    the output" is the reliable failure signal.
+                        val (_, sslOut) = runCmd(
+                            "openssl", "s_client", "-connect", "$hostname:$port", "-servername", hostname,
                             timeoutSec = 6
                         )
-                        val actualPin = sslOut.trim()
-                        if (sslExit != 0 || actualPin.isEmpty() || actualPin.length < 40) {
+                        val actualPin = spkiPinFromSClientOutput(sslOut)
+                        if (actualPin == null) {
                             lastError = "TLS handshake failed on port $port"
                             continue
                         }
@@ -620,5 +651,31 @@ fun Route.hostRoutes(
                 )
             }
         }
+    }
+}
+
+/**
+ * Shape accepted by `ping-remote` for the `{hostname}` path segment: a plain
+ * hostname or IPv4 literal. Anything else (shell metacharacters, `/`, a
+ * leading `-`) is rejected before the value reaches a subprocess argv.
+ */
+internal val PROBE_HOSTNAME_REGEX = Regex("^[A-Za-z0-9][A-Za-z0-9.-]{0,252}$")
+
+/**
+ * Extracts the first certificate PEM block from `openssl s_client` output
+ * (the server's leaf) and returns its SPKI SHA-256 pin, Base64-encoded — the
+ * same value `HostPin.sha256` carries. Returns null when the output has no
+ * parseable certificate (handshake failed, port not TLS, timeout).
+ */
+internal fun spkiPinFromSClientOutput(output: String): String? {
+    val pem = Regex("-----BEGIN CERTIFICATE-----.*?-----END CERTIFICATE-----", RegexOption.DOT_MATCHES_ALL)
+        .find(output)?.value ?: return null
+    return try {
+        val cert = java.security.cert.CertificateFactory.getInstance("X.509")
+            .generateCertificate(pem.byteInputStream()) as java.security.cert.X509Certificate
+        val digest = java.security.MessageDigest.getInstance("SHA-256").digest(cert.publicKey.encoded)
+        java.util.Base64.getEncoder().encodeToString(digest)
+    } catch (e: Exception) {
+        null
     }
 }

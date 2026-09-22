@@ -12,6 +12,7 @@ import io.ktor.client.request.*
 import io.ktor.client.statement.*
 import io.ktor.http.*
 import io.ktor.serialization.kotlinx.json.*
+import io.ktor.server.application.*
 import io.ktor.server.plugins.contentnegotiation.*
 import io.ktor.server.routing.*
 import io.ktor.server.testing.*
@@ -60,11 +61,15 @@ class VaultRoutesAccessPolicyTest {
     @AfterTest
     fun tearDown() { dbFile.delete() }
 
-    private fun ApplicationTestBuilder.configureApp() {
+    /** Admin key injected into the routes; `null` simulates an unset API_KEY. */
+    private val testAdminKey = "test-admin-key"
+
+    private fun ApplicationTestBuilder.configureApp(apiKey: String? = testAdminKey) {
         install(ContentNegotiation) { json(Json { ignoreUnknownKeys = true }) }
         routing {
             vaultRoutes(testApi, vaultFileStore, distStore, tokenStore,
-                publicKeyStore, tokenService, encryptionService)
+                publicKeyStore, tokenService, encryptionService,
+                apiKeyProvider = { apiKey })
         }
     }
 
@@ -247,37 +252,77 @@ class VaultRoutesAccessPolicyTest {
 
     // ── Scenario 6: api_key policy ─────────────────────────────────────
     //
-    // Note: The ApiKeyAuth plugin enforces X-API-Key at plugin level for
-    // non-public paths. In test harness the plugin isn't installed, so the
-    // VaultRoutes code path for `api_key` is effectively a no-op (comment
-    // in VaultRoutes.kt line 91-96). These tests pin the behavior as-is:
-    // the route itself neither demands nor rejects based on X-API-Key,
-    // relying on the ApiKeyAuth plugin when present.
+    // The ApiKeyAuth plugin allowlists GET /api/v1/vault/{key} for every key
+    // (devices fetch public/token files without an admin key), so the plugin
+    // never sees this request. The route itself must enforce the key for
+    // `api_key` files — and fail closed when no key is configured at all.
 
     @Test
-    fun `api_key policy allows fetch in test harness (no plugin)`() = testApplication {
+    fun `api_key policy rejects fetch without X-API-Key`() = testApplication {
         configureApp()
         client.uploadWithPolicy("apikey-file", "admin-content", "api_key")
 
-        // In real deployment the ApiKeyAuth plugin would have blocked this if
-        // no X-API-Key header was set; in testApplication the plugin isn't
-        // installed so the call passes through.
         val response = client.get("/api/v1/vault/apikey-file")
+        assertEquals(HttpStatusCode.Unauthorized, response.status)
+        assertFalse(response.bodyAsText().contains("admin-content"))
+    }
+
+    @Test
+    fun `api_key policy rejects a wrong key`() = testApplication {
+        configureApp()
+        client.uploadWithPolicy("apikey-file", "admin-content", "api_key")
+
+        val response = client.get("/api/v1/vault/apikey-file") { header("X-API-Key", "nope") }
+        assertEquals(HttpStatusCode.Unauthorized, response.status)
+        assertFalse(response.bodyAsText().contains("admin-content"))
+    }
+
+    @Test
+    fun `api_key policy allows fetch with the configured key`() = testApplication {
+        configureApp()
+        client.uploadWithPolicy("apikey-file", "admin-content", "api_key")
+
+        val response = client.get("/api/v1/vault/apikey-file") { header("X-API-Key", testAdminKey) }
         assertEquals(HttpStatusCode.OK, response.status)
         assertEquals("admin-content", response.bodyAsText())
+    }
+
+    @Test
+    fun `api_key policy fails closed when no API_KEY is configured`() = testApplication {
+        configureApp(apiKey = null)
+        client.uploadWithPolicy("apikey-file", "admin-content", "api_key")
+
+        val response = client.get("/api/v1/vault/apikey-file") { header("X-API-Key", "anything") }
+        assertEquals(HttpStatusCode.Forbidden, response.status)
+        assertFalse(response.bodyAsText().contains("admin-content"))
+    }
+
+    // ── Scenario 6b: reserved names cannot become file keys ────────────
+
+    @Test
+    fun `upload rejects keys that collide with admin route segments`() = testApplication {
+        configureApp()
+        for (reserved in listOf("distributions", "stats", "devices", "report", "tokens")) {
+            val put = client.put("/api/v1/vault/$reserved?policy=public") {
+                setBody("x".toByteArray())
+                contentType(ContentType.Application.OctetStream)
+            }
+            assertEquals(HttpStatusCode.BadRequest, put.status, "key '$reserved' must be rejected")
+        }
     }
 
     // ── Scenario 7: token_mtls policy ──────────────────────────────────
     //
     // token_mtls requires BOTH:
     //   1. A valid per-device token (same check as TOKEN policy)
-    //   2. An mTLS cert whose CN equals the claimed X-Device-Id header
+    //   2. A verified mTLS client cert bound to the claimed X-Device-Id
     //
-    // testApplication doesn't carry the X500Principal attribute, so without
-    // mock mTLS plumbing the extractClientCertCn() returns null → 401
-    // "mTLS client certificate required" regardless of token. This is the
-    // desired behavior: plaintext HTTP requests to a token_mtls file must
-    // fail closed.
+    // On a real Netty connector the peer certificate is read off the channel's
+    // SslHandler (see ClientCertIdentity.kt). testApplication has no TLS, so
+    // these tests drive the same code path through the `TLSPeerPrincipal`
+    // attribute the helper also honours — that isolates the *matching rule*
+    // from the transport. The transport half is covered end-to-end by a curl
+    // against the running mTLS Config API.
 
     @Test
     fun `token_mtls policy rejects plain HTTP even with valid token`() = testApplication {
@@ -313,6 +358,119 @@ class VaultRoutesAccessPolicyTest {
 
         val response = client.get("/api/v1/vault/mtls-file3") {
             // No X-Device-Id, no X-Vault-Token, no cert
+        }
+        assertEquals(HttpStatusCode.Unauthorized, response.status)
+    }
+
+    // ── token_mtls WITH a client certificate (audit N-7) ───────────────
+    //
+    // Before the fix these paths were unreachable: the CN lookup always
+    // returned null, so a token_mtls file 401'd even for a correctly
+    // authenticated device. The policy was advertised but dead.
+
+    /**
+     * Simulates a client-authenticated connection by publishing the peer
+     * principal the Netty extraction would have produced.
+     */
+    private fun ApplicationTestBuilder.configureAppWithClientCert(
+        cn: String?,
+        clientCertStore: com.example.pinvault.server.store.ClientCertStore? = null
+    ) {
+        install(ContentNegotiation) { json(Json { ignoreUnknownKeys = true }) }
+        if (cn != null) {
+            install(createApplicationPlugin("FakePeerCert") {
+                onCall { call ->
+                    call.attributes.put(
+                        io.ktor.util.AttributeKey<javax.security.auth.x500.X500Principal>("TLSPeerPrincipal"),
+                        javax.security.auth.x500.X500Principal("CN=$cn, O=PinVault Client, C=TR")
+                    )
+                }
+            })
+        }
+        routing {
+            vaultRoutes(testApi, vaultFileStore, distStore, tokenStore,
+                publicKeyStore, tokenService, encryptionService,
+                clientCertStore = clientCertStore,
+                apiKeyProvider = { testAdminKey })
+        }
+    }
+
+    @Test
+    fun `token_mtls accepts a cert whose client id equals the device id`() = testApplication {
+        // Auto-enrollment shape: the device enrolls with its own ANDROID_ID,
+        // so the issued CN is "PinVault Client: <ANDROID_ID>".
+        configureAppWithClientCert(cn = "PinVault Client: dev-a")
+        client.uploadWithPolicy("mtls-ok", "top-secret", "token_mtls")
+        val gen = tokenService.generate(testApi, "mtls-ok", "dev-a")
+
+        val response = client.get("/api/v1/vault/mtls-ok") {
+            header("X-Device-Id", "dev-a")
+            header("X-Vault-Token", gen.plaintext)
+        }
+        assertEquals(HttpStatusCode.OK, response.status)
+        assertEquals("top-secret", response.bodyAsText())
+    }
+
+    @Test
+    fun `token_mtls rejects a valid token presented with another devices cert`() = testApplication {
+        // The token is valid for dev-a, but the TLS peer is dev-b: a stolen
+        // token must be useless without the matching private key.
+        configureAppWithClientCert(cn = "PinVault Client: dev-b")
+        client.uploadWithPolicy("mtls-wrong-cert", "top-secret", "token_mtls")
+        val gen = tokenService.generate(testApi, "mtls-wrong-cert", "dev-a")
+
+        val response = client.get("/api/v1/vault/mtls-wrong-cert") {
+            header("X-Device-Id", "dev-a")
+            header("X-Vault-Token", gen.plaintext)
+        }
+        assertEquals(HttpStatusCode.Unauthorized, response.status)
+        assertTrue(response.bodyAsText().contains("mismatch", ignoreCase = true))
+    }
+
+    @Test
+    fun `token_mtls accepts a token-enrolled cert bound to the device at enrollment`() = testApplication {
+        // Token enrollment: the client id is admin-chosen and never equals an
+        // ANDROID_ID, so the binding comes from client_certs.device_uid.
+        val certStore = com.example.pinvault.server.store.ClientCertStore(db)
+        certStore.add("qa-laptop", "PinVault Client: qa-laptop", "fp", "2026-01-01T00:00:00Z",
+            deviceAlias = "QA", deviceUid = "androidid-42")
+
+        configureAppWithClientCert(cn = "PinVault Client: qa-laptop", clientCertStore = certStore)
+        client.uploadWithPolicy("mtls-bound", "top-secret", "token_mtls")
+        val gen = tokenService.generate(testApi, "mtls-bound", "androidid-42")
+
+        val response = client.get("/api/v1/vault/mtls-bound") {
+            header("X-Device-Id", "androidid-42")
+            header("X-Vault-Token", gen.plaintext)
+        }
+        assertEquals(HttpStatusCode.OK, response.status)
+    }
+
+    @Test
+    fun `token_mtls rejects a revoked certificate even when ids match`() = testApplication {
+        val certStore = com.example.pinvault.server.store.ClientCertStore(db)
+        certStore.add("dev-a", "PinVault Client: dev-a", "fp", "2026-01-01T00:00:00Z")
+        certStore.revoke("dev-a")
+
+        configureAppWithClientCert(cn = "PinVault Client: dev-a", clientCertStore = certStore)
+        client.uploadWithPolicy("mtls-revoked", "top-secret", "token_mtls")
+        val gen = tokenService.generate(testApi, "mtls-revoked", "dev-a")
+
+        val response = client.get("/api/v1/vault/mtls-revoked") {
+            header("X-Device-Id", "dev-a")
+            header("X-Vault-Token", gen.plaintext)
+        }
+        assertEquals(HttpStatusCode.Unauthorized, response.status)
+    }
+
+    @Test
+    fun `token_mtls still requires a valid token even with a good cert`() = testApplication {
+        configureAppWithClientCert(cn = "PinVault Client: dev-a")
+        client.uploadWithPolicy("mtls-no-token", "top-secret", "token_mtls")
+
+        val response = client.get("/api/v1/vault/mtls-no-token") {
+            header("X-Device-Id", "dev-a")
+            header("X-Vault-Token", "not-a-real-token")
         }
         assertEquals(HttpStatusCode.Unauthorized, response.status)
     }

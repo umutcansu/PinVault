@@ -1,5 +1,7 @@
 package com.example.pinvault.server.route
 
+import com.example.pinvault.server.plugin.ApiKeyPolicy
+import com.example.pinvault.server.plugin.RESERVED_VAULT_SEGMENTS
 import com.example.pinvault.server.service.ConfigSigningService
 import com.example.pinvault.server.service.VaultAccessTokenService
 import com.example.pinvault.server.service.VaultEncryptionService
@@ -23,12 +25,14 @@ private val log = LoggerFactory.getLogger("VaultRoutes")
  * exist under different Config APIs independently. All client-facing routes
  * enforce the file's [access_policy] before returning content.
  *
- * Registered twice in Main.kt:
- *   - once per Config API module (so port 8091/8092 each have their own scope)
- *   - once on the management server (port 8090) for admin endpoints
+ * Registered once per Config API module in Main.kt, so each listener carries
+ * its own scope. The management server does NOT mount these routes — its vault
+ * administration lives under `/api/v1/config-apis/{configApiId}/vault/...`
+ * ([scopedVaultAdminRoutes]), where the scope is a URL component instead.
  *
- * Because [configApiId] is a parameter (not a URL component), the same route
- * path `/api/v1/vault/{key}` resolves to different scopes on different ports.
+ * Because [configApiId] is a parameter (not a URL component) here, the same
+ * route path `/api/v1/vault/{key}` resolves to different scopes on different
+ * ports.
  */
 fun Route.vaultRoutes(
     configApiId: String,
@@ -39,7 +43,28 @@ fun Route.vaultRoutes(
     tokenService: VaultAccessTokenService,
     encryptionService: VaultEncryptionService,
     signingService: ConfigSigningService? = null,
-    adminApiKeyRequired: Boolean = true
+    /**
+     * Needed only by the `token_mtls` policy: lets a certificate issued under a
+     * token enrollment (where the client id is admin-chosen, not the device's
+     * ANDROID_ID) be matched to the `X-Device-Id` recorded at enrollment time.
+     * Null falls back to the direct clientId == deviceId rule.
+     */
+    clientCertStore: com.example.pinvault.server.store.ClientCertStore? = null,
+    adminApiKeyRequired: Boolean = true,
+    /**
+     * Source of the admin key for `api_key`-policy downloads. Defaults to the
+     * `API_KEY` env var (same as the ApiKeyAuth plugin); tests inject a value.
+     */
+    apiKeyProvider: () -> String? = { ApiKeyPolicy.configuredKey() },
+    /**
+     * The scope's `config_apis.vault_enabled` switch, read per request so a
+     * dashboard toggle takes effect without restarting the listener. Default
+     * `{ true }` keeps listeners that have no registry row (tests, embedded
+     * use) behaving exactly as before.
+     *
+     * Only the client-facing download is gated — see the route below.
+     */
+    vaultEnabledProvider: () -> Boolean = { true }
 ) {
     route("/api/v1/vault") {
 
@@ -48,9 +73,23 @@ fun Route.vaultRoutes(
         /**
          * Download a vault file. Supports version-based 304.
          *
+         * The scope's `vault_enabled` switch is checked FIRST, before the key
+         * even resolves: when an operator turns the vault off on a Config API,
+         * distribution from that scope must stop immediately. It answers 403
+         * for every key, present or not, so a disabled vault does not leak
+         * which keys exist.
+         *
+         * The switch is intentionally *not* applied to the admin routes below
+         * (upload, list, policy, delete, tokens, distributions): the reason an
+         * operator flips it is usually "a file went out that shouldn't have",
+         * and they still need to inspect and delete it afterwards. Nor does it
+         * replace the per-file [access_policy] — that stays the authentication
+         * boundary; this is the "stop the tap" switch.
+         *
          * Access policy enforcement (in order):
          *   - public       → no checks
-         *   - api_key      → requires X-API-Key (checked by ApiKeyAuth plugin)
+         *   - api_key      → requires X-API-Key (checked HERE — the ApiKeyAuth
+         *                    plugin allowlists this path for device downloads)
          *   - token        → requires X-Device-Id + X-Vault-Token matching
          *                    (configApiId, key, deviceId) triple
          *   - token_mtls   → same as token, plus verifies that the mTLS cert
@@ -60,6 +99,12 @@ fun Route.vaultRoutes(
          * the device's RSA public key (see VaultEncryptionService).
          */
         get("/{key}") {
+            if (!vaultEnabledProvider()) {
+                log.warn("Vault download refused — vault disabled on configApi={} (key={})",
+                    configApiId, call.parameters["key"])
+                return@get call.respond(HttpStatusCode.Forbidden,
+                    mapOf("error" to "Vault is disabled for Config API '$configApiId'"))
+            }
             val key = call.parameters["key"]
                 ?: return@get call.respond(HttpStatusCode.BadRequest, mapOf("error" to "Missing key"))
             // Defense-in-depth (L-02): vault keys are flat identifiers
@@ -81,10 +126,25 @@ fun Route.vaultRoutes(
             when (entry.accessPolicy) {
                 "public" -> { /* no-op */ }
                 "api_key" -> {
-                    // ApiKeyAuth plugin has already enforced this globally if
-                    // the path is not in its public exception list. We still
-                    // accept the request here — reaching this code means it
-                    // passed the plugin.
+                    // The ApiKeyAuth plugin allowlists GET /api/v1/vault/{key}
+                    // for every key (devices fetch public/token files without
+                    // an admin key), so the plugin never checked this request.
+                    // Enforce the key here; when no API_KEY is configured
+                    // (ALLOW_ANONYMOUS_ADMIN dev mode) fail closed rather than
+                    // turning an "admin-only" file into a world-readable one.
+                    val expected = apiKeyProvider()
+                    if (expected == null) {
+                        log.warn("api_key file requested but no API_KEY configured: configApi={} key={}",
+                            configApiId, key)
+                        return@get call.respond(HttpStatusCode.Forbidden,
+                            mapOf("error" to "api_key policy requires API_KEY to be configured on the server"))
+                    }
+                    if (!ApiKeyPolicy.matches(call.request.header("X-API-Key"), expected)) {
+                        log.warn("api_key file rejected (missing/invalid X-API-Key): configApi={} key={}",
+                            configApiId, key)
+                        return@get call.respond(HttpStatusCode.Unauthorized,
+                            mapOf("error" to "X-API-Key header required for api_key policy"))
+                    }
                 }
                 "token", "token_mtls" -> {
                     if (deviceId.isNullOrBlank()) {
@@ -103,20 +163,21 @@ fun Route.vaultRoutes(
                     }
 
                     if (entry.accessPolicy == "token_mtls") {
-                        // mTLS cert CN vs deviceId check. In this demo setup
-                        // the cert CN is stored on the client cert's
-                        // SubjectDN. If Ktor exposes it via request attributes
-                        // we check; else we accept (demo limitation, logged).
-                        val certCn = extractClientCertCn(call)
-                        if (certCn == null) {
+                        // The token alone proves "someone holds the secret".
+                        // token_mtls additionally requires the request to
+                        // arrive over a client-authenticated TLS connection
+                        // whose certificate belongs to the same device, so a
+                        // leaked token is useless without the private key.
+                        val certClientId = call.clientCertId()
+                        if (certClientId == null) {
                             log.warn("token_mtls file requested without mTLS cert: configApi={} key={}",
                                 configApiId, key)
                             return@get call.respond(HttpStatusCode.Unauthorized,
                                 mapOf("error" to "mTLS client certificate required"))
                         }
-                        if (certCn != deviceId) {
-                            log.warn("token_mtls deviceId/CN mismatch: cert={} claimed={}",
-                                certCn, deviceId)
+                        if (!certificateBoundTo(certClientId, deviceId, clientCertStore)) {
+                            log.warn("token_mtls deviceId/CN mismatch: certClientId={} claimed={}",
+                                certClientId, deviceId)
                             return@get call.respond(HttpStatusCode.Unauthorized,
                                 mapOf("error" to "Device identity mismatch"))
                         }
@@ -232,6 +293,13 @@ fun Route.vaultRoutes(
         put("/{key}") {
             val key = call.parameters["key"]
                 ?: return@put call.respond(HttpStatusCode.BadRequest, mapOf("error" to "Missing key"))
+            // Same shape rule as GET, plus: a key must not collide with a constant
+            // admin/report segment (`distributions`, `stats`, …) — Ktor would route
+            // its download to that handler and ApiKeyAuth treats those as admin.
+            if (!VAULT_KEY_REGEX.matches(key) || key in RESERVED_VAULT_SEGMENTS) {
+                return@put call.respond(HttpStatusCode.BadRequest,
+                    mapOf("error" to "Invalid vault key format"))
+            }
 
             val policy = call.request.queryParameters["policy"]
             val encryption = call.request.queryParameters["encryption"]
@@ -356,28 +424,36 @@ private val VALID_ENCRYPTIONS = setOf("plain", "at_rest", "end_to_end")
 private val VAULT_KEY_REGEX = Regex("^[A-Za-z0-9._-]{1,64}$")
 
 /**
- * Extract the CN of the client cert, if any.
+ * Decides whether the verified client certificate belongs to the device that
+ * the request claims to be (`X-Device-Id`).
  *
- * SECURITY — audit L-1 (KNOWN DEMO LIMITATION): the "TLSPeerPrincipal" call
- * attribute this reads is NOT populated anywhere in the sample — wiring the
- * verified Netty SSL peer principal into the Ktor call needs custom engine
- * plumbing we don't implement. So this always returns null, which makes
- * `token_mtls` files effectively FAIL-CLOSED (they always 401) and the mTLS
- * deviceId fallback inert. That is safe (no bypass, no data exposure) — it is
- * just an advertised-but-unwired feature.
+ * Two accepted bindings, in order:
  *
- * To actually enable it: extract the verified peer X500Principal from the
- * Netty SSLSession and store it in call.attributes under this key before the
- * route runs. Until then, treat `token_mtls` as unavailable in the demo.
+ *  1. **Direct** — `certClientId == deviceId`. This is the auto-enrollment
+ *     case (`ENROLLMENT_MODE=open`), where the device enrolls with its own
+ *     ANDROID_ID, so the issued CN is literally `PinVault Client: <ANDROID_ID>`.
+ *
+ *  2. **Recorded at enrollment** — the `client_certs` row for `certClientId`
+ *     has `device_uid == deviceId`. Token-based enrollment uses an
+ *     admin-chosen client id that will never equal an ANDROID_ID, but the
+ *     library sends its `deviceUid` in the enrollment body and the server
+ *     stores it, so the certificate is still bound to one device.
+ *
+ * A revoked certificate is rejected even if the ids line up — the mTLS trust
+ * store is only rebuilt on restart, so revocation must also be enforced here.
+ *
+ * Anything else fails closed.
  */
-private fun extractClientCertCn(call: ApplicationCall): String? {
-    // Ktor's tls peer principal lives in attributes as X500Principal. We parse
-    // the CN=... fragment with a simple regex; full DN parsing would require
-    // javax.naming.ldap.LdapName which is heavier.
-    val principal = try {
-        val attrKey = io.ktor.util.AttributeKey<javax.security.auth.x500.X500Principal>("TLSPeerPrincipal")
-        call.attributes.getOrNull(attrKey)
-    } catch (_: Exception) { null } ?: return null
-    val dn = principal.name
-    return Regex("CN=([^,]+)").find(dn)?.groupValues?.getOrNull(1)?.trim()
+private fun certificateBoundTo(
+    certClientId: String,
+    deviceId: String,
+    clientCertStore: com.example.pinvault.server.store.ClientCertStore?
+): Boolean {
+    val record = clientCertStore?.get(certClientId)
+    if (record != null && record.revoked) {
+        log.warn("token_mtls request with revoked certificate: clientId={}", certClientId)
+        return false
+    }
+    if (certClientId == deviceId) return true
+    return record?.deviceUid != null && record.deviceUid == deviceId
 }
