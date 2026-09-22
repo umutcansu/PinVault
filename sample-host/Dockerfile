@@ -1,7 +1,12 @@
-# syntax=docker/dockerfile:1.7
-
 # ─────────────────────────────────────────────────────────────────────────────
 # SamplePinVaultHost — PinVault demo-server'ı tek container'da çalıştırır.
+#
+# Bilerek "# syntax=docker/dockerfile:…" satırı yok: o satır ön ucu her
+# derlemede Docker Hub'dan çözdürür (kimlik yardımcısı dahil), yani yerelde
+# hiçbir şey eksik değilken bile derlemeyi ağa ve Hub'a bağlar. Burada
+# kullanılan tek ileri özellik adlandırılmış build context'inden kopyalama
+# (COPY --from=pinvault-server); Docker 23+ içindeki yerleşik ön uç bunu
+# destekler. Temel imajlar yerel depodaysa derleme Hub'a hiç gitmez.
 #
 # Sunucu kaynağı `pinvault-server` adlı build context'inden gelir
 # (docker-compose.yml → build.additional_contexts). Bu context ya yerel bir

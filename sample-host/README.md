@@ -151,6 +151,15 @@ Signing key ya da sunucu sertifikası yenilenirse client'taki sabitler de deği�
 
 **Upstream değişikliği gelmiyor.** Git context'i cache'lenmiş olabilir: `docker compose build --no-cache && docker compose up -d`.
 
+**Derleme `load metadata for docker.io/library/…` adımında `DeadlineExceeded` ile düşüyor.** Ağ sağlamsa (`curl -I https://registry-1.docker.io/v2/` hızlı dönüyorsa) sorun genellikle Docker Desktop'ın kimlik yardımcısıdır: `echo https://index.docker.io/v1/ | docker-credential-desktop get` yanıt vermiyorsa takılmıştır. Kalıcı çözüm Docker Desktop'ı yeniden başlatmak. Diğer container'ları durdurmadan geçmek için temel imajları kimlik yardımcısı olmadan bir kez çek; sonraki derlemeler onları yerelden çözer:
+
+```bash
+mkdir -p /tmp/docker-anon && echo '{"auths":{},"currentContext":"desktop-linux"}' > /tmp/docker-anon/config.json
+ln -sf ~/.docker/contexts ~/.docker/cli-plugins /tmp/docker-anon/
+DOCKER_CONFIG=/tmp/docker-anon docker pull gradle:8.7-jdk17
+DOCKER_CONFIG=/tmp/docker-anon docker pull eclipse-temurin:17-jre-noble
+```
+
 ## Komut özeti
 
 ```bash
