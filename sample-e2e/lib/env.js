@@ -39,6 +39,8 @@ module.exports = {
   CLIENT_DIR,
   LOCAL_DIR,
   API_KEY: process.env.E2E_API_KEY || hostEnv.API_KEY || '',
+  /** Ana host'un anahtar depolarının parolası (dışa aktarılan JKS'leri geri yüklemek için). Gizli: panellere girmez. */
+  KEYSTORE_PASSWORD: hostEnv.KEYSTORE_PASSWORD || 'changeit',
   WEB_URL: process.env.E2E_WEB_URL || `http://localhost:${hostEnv.HOST_HTTP_PORT || '6650'}`,
   HTTP_PORT: Number(hostEnv.HOST_HTTP_PORT || 6650),
   CONFIG_API_PORT: Number(hostEnv.HOST_HTTPS_PORT || 6651),

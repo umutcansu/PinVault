@@ -66,12 +66,14 @@ function knownSecrets() {
     if (value && value.length >= 12) out.push({ name, value });
   };
   const readLines = (file) => (fs.existsSync(file) ? fs.readFileSync(file, 'utf8').split('\n').map((l) => l.trim()) : []);
-  const dotEnvKey = (file) => {
-    const line = readLines(file).find((l) => l.startsWith('API_KEY='));
-    return line ? line.slice('API_KEY='.length).replace(/^["']|["']$/g, '') : '';
+  const dotEnvKey = (file, key = 'API_KEY') => {
+    const line = readLines(file).find((l) => l.startsWith(`${key}=`));
+    return line ? line.slice(key.length + 1).replace(/^["']|["']$/g, '') : '';
   };
   add('ana host API_KEY', dotEnvKey(path.join(env.HOST_DIR, '.env')));
   add('geçici test sunucusu API_KEY', dotEnvKey(path.join(env.LOCAL_DIR, 'host-fresh/.env')));
+  add('ana host KEYSTORE_PASSWORD', dotEnvKey(path.join(env.HOST_DIR, '.env'), 'KEYSTORE_PASSWORD'));
+  add('geçici test sunucusu KEYSTORE_PASSWORD', dotEnvKey(path.join(env.LOCAL_DIR, 'host-fresh/.env'), 'KEYSTORE_PASSWORD'));
   add('ana host imzalama private key (satır 1)', readLines(env.SIGNING_KEY_FILE)[0]);
   add('geçici test sunucusu imzalama private key (satır 1)', readLines(path.join(env.LOCAL_DIR, 'host-fresh/data/signing-key.pem'))[0]);
   const pemBodies = (file, label) => {

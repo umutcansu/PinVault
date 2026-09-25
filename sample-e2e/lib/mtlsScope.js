@@ -45,7 +45,8 @@ async function ensureHosts(dashboard, hostnames, { apiId = env.MTLS_API } = {}) 
       continue;
     }
     const file = keystoreFor(hostname);
-    lines.push(`${hostname}: ${await dashboard.addHostUpload(apiId, hostname, file)}`);
+    // Dışa aktarılan keystore host'un kendi parolasıyla (KEYSTORE_PASSWORD) şifreli.
+    lines.push(`${hostname}: ${await dashboard.addHostUpload(apiId, hostname, file, env.KEYSTORE_PASSWORD)}`);
   }
   const after = await hostApi.scopedConfig(apiId);
   lines.push('', `${apiId} kapsamı: ${(after.pins || []).map((p) => `${p.hostname} v${p.version}`).join(', ')}`);
