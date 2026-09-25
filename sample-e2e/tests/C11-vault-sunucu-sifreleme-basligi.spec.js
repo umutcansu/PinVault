@@ -121,7 +121,7 @@ test('Vault şifreleme başlığı: sunucu end_to_end derse kütüphane uygulama
           'Eksi: ters yön için bir kontrol yok — sunucu end_to_end bir dosyayı plain',
           'olarak gönderse kütüphane sorgusuz kabul eder. Burada gerçek bir gizlilik',
           'kaybı yok (düz metin zaten sunucuda, bağlantı da TLS ve pin ile korunuyor),',
-          'ama uygulama "bu dosya uçtan uca şifreli gelmeli" diye bir kural koyamıyor.',
+          'ama uygulama "bu dosya cihaza özel şifreli gelmeli" diye bir kural koyamıyor.',
           '',
           'Öneri: VaultFileConfig\'e `requireEncryption(...)` gibi katı bir seçenek',
           'eklensin: açıkken sunucunun başlığı beklenenden zayıfsa sonuç',

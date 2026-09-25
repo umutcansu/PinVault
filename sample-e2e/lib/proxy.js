@@ -285,7 +285,7 @@ const breakVaultSignature = ({ remove = false } = {}) => (answer) => {
  * da bozar, yani istemci "signature verification FAILED" der. Sürüm düşürme
  * kapısını ayrıca görmek için [sign] verilir (bkz. [vaultSigner]); o zaman
  * imza düşük sürüm için geçerlidir ve reddin nedeni sürümün kendisidir.
- * [sign] gövdeyi düz metin kabul eder — uçtan uca şifreli dosyalarda imza
+ * [sign] gövdeyi düz metin kabul eder — cihaza özel şifreli dosyalarda imza
  * zarfın değil düz metnin üstündedir, bu yardımcı o dosyalar için uygun değil.
  */
 const downgradeVaultVersion = (version, sign) => (answer) => {

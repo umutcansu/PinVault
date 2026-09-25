@@ -1,4 +1,4 @@
-// Web → Mobil (uçtan uca şifreleme): dashboard'da end_to_end yüklenen dosya
+// Web → Mobil (cihaza özel şifreleme, end_to_end): dashboard'da end_to_end yüklenen dosya
 // ağ trafiğinde cihazın RSA anahtarıyla şifrelenmiş gider; yalnızca cihaz çözer.
 const { test, expect } = require('../lib/fixtures');
 const hostApi = require('../lib/hostApi');
@@ -6,7 +6,7 @@ const env = require('../lib/env');
 
 const KEY = env.VAULT_KEYS.e2e;
 
-test('Vault uçtan uca şifreleme: dosya ağ trafiğinde şifreli, yalnızca cihaz çözer', async ({ app, dashboard, run }) => {
+test('Vault cihaza özel şifreleme: dosya ağ trafiğinde şifreli, yalnızca cihaz çözer', async ({ app, dashboard, run }) => {
   const plaintext = `uçtan uca gizli: ${Date.now()}`;
   let deviceId;
 

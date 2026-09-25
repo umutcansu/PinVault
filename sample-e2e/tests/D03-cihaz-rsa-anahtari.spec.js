@@ -1,4 +1,4 @@
-// D03 — Cihazın uçtan uca şifreleme anahtarı (Android Keystore RSA).
+// D03 — Cihazın cihaza özel şifreleme anahtarı (Android Keystore RSA).
 //
 // DeviceKeyProvider init sırasında `pinvault_vault_e2e_rsa` alias'ında RSA-2048
 // üretiyor (mümkünse StrongBox), public yarısını her Config API'ye kaydediyor,

@@ -94,7 +94,7 @@ const FEATURES = [
   // ── C (vault) ─────────────────────────────────────────────────────────
   { id: 'C-public', group: 'C', feature: 'Vault: public dosya indirme, içerik imzası, değişmemişse 304/AlreadyCurrent, yeni sürüm, dağıtım geçmişi', scenarios: ['13'] },
   { id: 'C-token', group: 'C', feature: 'Vault token politikası: token yoksa 401, cihazın token\'ıyla iniyor, iptal edilince 401', scenarios: ['14'] },
-  { id: 'C-e2e', group: 'C', feature: 'Vault uçtan uca şifreleme (AES-GCM; dosya anahtarı cihazın RSA anahtarıyla şifreli, RSA-OAEP): ağ trafiğinde şifreli, cihazda çözülüyor', scenarios: ['15'] },
+  { id: 'C-e2e', group: 'C', feature: 'Vault cihaza özel şifreleme (end_to_end; AES-GCM, dosya anahtarı cihazın RSA anahtarıyla şifreli, RSA-OAEP): ağ trafiğinde şifreli, cihazda çözülüyor; şifrelemeyi sunucu yapar, içeriği sunucu görür ama diskinde şifreli saklar', scenarios: ['15'] },
   { id: 'C-at-rest', group: 'C', feature: 'Vault at_rest: SQLite\'taki kayıt AES-256-GCM ile şifreli ("VLT-ENC1" + salt + IV), düz metin DB dosyasında hiç yok; ağ trafiğinde gövde şifresiz + X-Vault-Encryption: at_rest', scenarios: ['C01'] },
   { id: 'C-api-key', group: 'C', feature: 'Vault api_key: kütüphane yönetim anahtarını göndermediği için telefon 401 alıyor, X-API-Key ile istek 200 alıyor; dağıtım geçmişinde failed kaydı, nedeni ve authMethod', scenarios: ['C02'] },
   { id: 'C-token-mtls', group: 'C', feature: 'Vault token_mtls: token ve istemci sertifikası birlikte gerekiyor; sertifikadaki kimlik (CN) X-Device-Id\'ye ya da device_uid\'ye uymalı; sertifikasız bağlantı el sıkışmada düşüyor, TLS portunda geçerli token bile 401 alıyor, başka cihazın sertifikasıyla "Device identity mismatch"', scenarios: ['C03'] },

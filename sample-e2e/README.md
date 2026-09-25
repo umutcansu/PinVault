@@ -27,7 +27,7 @@ Kapsam planı ve senaryo listesi: [PLAN.md](PLAN.md).
 | 12 | Web'de kayıt token'ı üretilir, telefon onunla kayıt olur, sertifika dashboard'da görünür, mTLS bağlantısı geçer. Web'de iptal edilince aynı bağlantı reddedilir. |
 | 13 | Web'de yüklenen dosya telefonda iner, içerik imzası doğrulanır, indirme dağıtım geçmişinde görünür. Güncellenince yeni sürüm gelir. |
 | 14 | Token politikalı dosya token olmadan inmez; web'de bu cihaz için üretilen token'la iner, iptal edilince yine reddedilir. |
-| 15 | Uçtan uca şifreli dosya ağ trafiğinde şifreli gider (anahtarı cihazın RSA anahtarıyla şifrelenmiştir); yalnızca telefon çözer. |
+| 15 | Cihaza özel şifreli dosya (end_to_end) ağ trafiğinde şifreli gider (anahtarı cihazın RSA anahtarıyla şifrelenmiştir); yalnızca telefon çözer. Şifrelemeyi sunucu yapar, yani içeriği sunucu görür. |
 
 Yeni senaryolar PLAN.md'deki gruplara göre eklenir: sıfırdan kurulum (K), pin yönetimi ve imzalı config (A), mTLS (B), vault (C), telefonda şifreli saklama (D), sunucu işletimi (E), sunucuya ulaşılamadığında (F), araya girme saldırıları (G), kendi sunucusuyla ya da sunucusuz kullanım (H), imza anahtarlarının korunması (S, isteğe bağlı), değişiklik denetimi ve onay (Y, isteğe bağlı). Dosya adı grup harfiyle başlar (`K01-…`, `E03-…`); kanıt sayfası grubu buradan okur.
 

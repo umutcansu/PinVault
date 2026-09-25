@@ -1,4 +1,4 @@
-// C10 — Uçtan uca şifrelemede cihaz anahtarı kayıtlı değilse.
+// C10 — Cihaza özel şifrelemede (end_to_end) cihaz anahtarı kayıtlı değilse.
 //
 // `end_to_end` dosyayı sunucu her cihaz için ayrı sarmalıyor: AES-256-GCM
 // oturum anahtarı, cihazın kaydettiği RSA public key'le RSA-OAEP ile
@@ -13,7 +13,7 @@ const env = require('../lib/env');
 
 const KEY = env.VAULT_KEYS.e2e;
 
-test('Vault uçtan uca şifreleme: public key\'i kayıtlı olmayan cihaz 412 alıyor, telefon dosyayı çözüyor', async ({
+test('Vault cihaza özel şifreleme: public key\'i kayıtlı olmayan cihaz 412 alıyor, telefon dosyayı çözüyor', async ({
   app,
   dashboard,
 }, testInfo) => {
