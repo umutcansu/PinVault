@@ -13,6 +13,7 @@ Pick the highest level you can operate reliably. A layer you can't run well, suc
 | Layer | Enable with | Protects against |
 |---|---|---|
 | Signing key encrypted at rest | `SIGNING_KEY_PASSWORD` | A copied data directory yielding the key |
+| Management API off the network | sample host: plain HTTP bound to `127.0.0.1`, `MANAGEMENT_HTTPS_PORT` for devices and remote admins | The admin key crossing the network in the clear; read or forged device reports |
 | Keystores under a real password | `KEYSTORE_PASSWORD` (the sample host's `setup.sh` generates one) | A copied data directory yielding TLS, backup and client keys |
 | Offline backup signing key in the app | client `signaturePublicKeys(primary, backup)` | Lost or stolen primary → switch without an app update |
 | Named admins + audit log | `ADMIN_KEYS=alice:<sha256>,…` (log is always on) | "Who changed this pin?" having no answer |

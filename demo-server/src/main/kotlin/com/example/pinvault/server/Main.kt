@@ -437,8 +437,27 @@ fun main() {
         }
     }
 
-    // HTTP management server
-    embeddedServer(Netty, port = httpPort) {
+    // Management server: dashboard, admin API and the device report endpoints.
+    // With MANAGEMENT_HTTPS_PORT set, the same application also listens over TLS
+    // with the server's own certificate — the one apps already pin — so devices
+    // send their reports, and remote admins reach the dashboard, without
+    // anything crossing the network in the clear. The sample host then
+    // publishes the plain HTTP port on this machine only.
+    val managementHttpsPort = System.getenv("MANAGEMENT_HTTPS_PORT")?.toIntOrNull()?.takeIf { it > 0 }
+    embeddedServer(Netty, applicationEnvironment {}, configure = {
+        connector { port = httpPort }
+        if (managementHttpsPort != null) {
+            val keyStore = KeyStore.getInstance("JKS")
+            FileInputStream(serverKeystorePath).use { keyStore.load(it, CertificateService.KEYSTORE_PASSWORD.toCharArray()) }
+            sslConnector(
+                keyStore = keyStore,
+                keyAlias = "server",
+                keyStorePassword = { CertificateService.KEYSTORE_PASSWORD.toCharArray() },
+                privateKeyPassword = { CertificateService.KEYSTORE_PASSWORD.toCharArray() }
+            ) { port = managementHttpsPort }
+            println("Management API also on https://0.0.0.0:$managementHttpsPort (server certificate)")
+        }
+    }) {
         install(ContentNegotiation) {
             json(Json {
                 prettyPrint = true

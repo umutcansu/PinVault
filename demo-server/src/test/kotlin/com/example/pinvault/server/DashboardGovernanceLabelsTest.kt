@@ -6,7 +6,7 @@ import kotlin.test.assertTrue
 import kotlin.test.fail
 
 /**
- * The dashboard (static/app.js) must know every gated operation and every
+ * The dashboard (the scripts under static/js) must know every gated operation and every
  * audit action the server produces. E2E Y03 found two that it did not: a
  * Config API stop request showed its raw operation code
  * (`config_api_lifecycle`) on the approval card, and refused approvals
@@ -15,9 +15,12 @@ import kotlin.test.fail
  */
 class DashboardGovernanceLabelsTest {
 
+    /** Every dashboard script, in the order index.html loads them. */
     private val appJs: String by lazy {
-        val url = javaClass.classLoader.getResource("static/app.js") ?: fail("static/app.js is not on the classpath")
-        url.readText()
+        val index = javaClass.classLoader.getResource("static/index.html")?.readText() ?: fail("static/index.html is not on the classpath")
+        val scripts = Regex("<script src=\"/(static/js/[^\"]+)\"").findAll(index).map { it.groupValues[1] }.toList()
+        assertTrue(scripts.isNotEmpty(), "index.html loads no dashboard scripts")
+        scripts.joinToString("\n") { path -> javaClass.classLoader.getResource(path)?.readText() ?: fail("$path is not on the classpath") }
     }
 
     /** The `tr: { … }` and `en: { … }` blocks of the dashboard's i18n table. */
@@ -26,7 +29,7 @@ class DashboardGovernanceLabelsTest {
         val tr = appJs.indexOf("\n  tr: {", start)
         val en = appJs.indexOf("\n  en: {", tr)
         val end = appJs.indexOf("\n};", en)
-        assertTrue(start >= 0 && tr > start && en > tr && end > en, "i18n table not found in app.js")
+        assertTrue(start >= 0 && tr > start && en > tr && end > en, "i18n table not found in the dashboard scripts")
         return mapOf("tr" to appJs.substring(tr, en), "en" to appJs.substring(en, end))
     }
 
@@ -53,7 +56,7 @@ class DashboardGovernanceLabelsTest {
     @Test
     fun `every audit action can be filtered and has a label in both languages`() {
         val list = Regex("const AUDIT_ACTIONS = \\[([^\\]]*)]").find(appJs)?.groupValues?.get(1)
-            ?: fail("AUDIT_ACTIONS not found in app.js")
+            ?: fail("AUDIT_ACTIONS not found in the dashboard scripts")
         val filterable = Regex("'([a-z_]+)'").findAll(list).map { it.groupValues[1] }.toSet()
         val notFilterable = serverAuditActions.filter { it !in filterable }
         assertTrue(notFilterable.isEmpty(), "audit action(s) missing from the dashboard filter: $notFilterable")

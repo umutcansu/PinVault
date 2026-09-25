@@ -317,6 +317,24 @@ Option B trades dynamic pin rotation (no longer driven by PinVault
 config swaps) for not needing the management host in the server's pin
 response.
 
+**Option C — the endpoint shares a certificate you already pin.** When the
+report endpoint is served with the Config API's own certificate (the
+reference server's `MANAGEMENT_HTTPS_PORT` does exactly that), pin it with the
+bootstrap pins you already ship. `pinnedClient` works with self-signed
+certificates (`CertificatePinner` needs system trust first), and its
+handshakes raise no connection events, so the reporter never reports its
+own traffic:
+
+```kotlin
+PinVault.setConnectionListener(
+    PinVaultBackendReporter(
+        managementUrl = "https://192.168.1.80:6655/",
+        httpClient = PinVaultBackendReporter.pinnedClient("192.168.1.80", listOf(primaryPin, backupPin)),
+        reportSuccessEvents = false
+    )
+)
+```
+
 For Java consumers the event subtype check looks like:
 
 ```java

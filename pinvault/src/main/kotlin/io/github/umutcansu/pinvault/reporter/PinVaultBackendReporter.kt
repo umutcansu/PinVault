@@ -3,6 +3,8 @@ package io.github.umutcansu.pinvault.reporter
 import io.github.umutcansu.pinvault.api.ConfigUpdateStatus
 import io.github.umutcansu.pinvault.api.PinVaultConnectionEvent
 import io.github.umutcansu.pinvault.api.PinVaultConnectionListener
+import io.github.umutcansu.pinvault.model.HostPin
+import io.github.umutcansu.pinvault.ssl.DynamicSSLManager
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Request
@@ -248,12 +250,12 @@ class PinVaultBackendReporter @JvmOverloads constructor(
         append('"')
     }
 
-    private companion object {
-        val JSON_MEDIA_TYPE = "application/json; charset=utf-8".toMediaType()
-        const val CONNECTION_PATH = "api/v1/connection-history/client-report"
-        const val CONFIG_UPDATE_PATH = "api/v1/connection-history/config-update-report"
+    companion object {
+        private val JSON_MEDIA_TYPE = "application/json; charset=utf-8".toMediaType()
+        private const val CONNECTION_PATH = "api/v1/connection-history/client-report"
+        private const val CONFIG_UPDATE_PATH = "api/v1/connection-history/config-update-report"
 
-        fun buildEndpoint(managementUrl: String, path: String): String {
+        private fun buildEndpoint(managementUrl: String, path: String): String {
             val base = managementUrl.trimEnd('/')
             return "$base/$path"
         }
@@ -262,9 +264,24 @@ class PinVaultBackendReporter @JvmOverloads constructor(
          * UNPINNED fire-and-forget client (audit L-9). Fine for telemetry to a
          * trusted host; pass your own pinned OkHttpClient for production.
          */
-        fun defaultClient(): OkHttpClient = OkHttpClient.Builder()
+        private fun defaultClient(): OkHttpClient = OkHttpClient.Builder()
             .connectTimeout(5, TimeUnit.SECONDS)
             .readTimeout(5, TimeUnit.SECONDS)
             .build()
+
+        /**
+         * A client that accepts only [pins] for [hostname] — for reports to a
+         * backend the app already pins, e.g. a report endpoint served with the
+         * config server's own certificate. Its handshakes raise no connection
+         * events, so the reporter never reports its own traffic. Short timeouts,
+         * like the default client.
+         */
+        @JvmStatic
+        fun pinnedClient(hostname: String, pins: List<String>): OkHttpClient =
+            DynamicSSLManager().buildBootstrapClient(listOf(HostPin(hostname, pins)))
+                .newBuilder()
+                .connectTimeout(5, TimeUnit.SECONDS)
+                .readTimeout(5, TimeUnit.SECONDS)
+                .build()
     }
 }
