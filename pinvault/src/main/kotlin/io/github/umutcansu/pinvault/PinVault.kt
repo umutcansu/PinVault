@@ -189,7 +189,7 @@ object PinVault {
         pinManagerConfig = config
         setup(context, config, null)
             ?: return InitResult.Ready(clientProvider.getVersion())
-        return executeInit()
+        return executeInitSafely()
     }
 
     /**
@@ -203,7 +203,7 @@ object PinVault {
             return
         }
         CoroutineScope(Dispatchers.IO).launch {
-            val result = executeInit()
+            val result = executeInitSafely()
             kotlinx.coroutines.withContext(Dispatchers.Main) { onResult(result) }
         }
     }
@@ -218,7 +218,7 @@ object PinVault {
         pinManagerConfig = config
         setup(context, config, configApi)
             ?: return InitResult.Ready(clientProvider.getVersion())
-        return executeInit()
+        return executeInitSafely()
     }
 
     /** Callback variant of [init] with a custom [CertificateConfigApi]. */
@@ -230,7 +230,7 @@ object PinVault {
             return
         }
         CoroutineScope(Dispatchers.IO).launch {
-            val result = executeInit()
+            val result = executeInitSafely()
             kotlinx.coroutines.withContext(Dispatchers.Main) { onResult(result) }
         }
     }
@@ -359,6 +359,26 @@ object PinVault {
         }
     }
 
+    /**
+     * [executeInit] behind a safety net: an unexpected failure becomes
+     * [InitResult.Failed] (pinning stays fail-closed) instead of an exception
+     * that, in the callback variants, would crash the app from a background
+     * thread. [LinkageError] is included: it means an API this device lacks.
+     */
+    private suspend fun executeInitSafely(): InitResult = try {
+        executeInit()
+    } catch (e: kotlinx.coroutines.CancellationException) {
+        throw e
+    } catch (e: Exception) {
+        Timber.e(e, "PinVault init failed unexpectedly")
+        synchronized(this) { initialized = false }
+        InitResult.Failed(e.message ?: e.javaClass.simpleName, e)
+    } catch (e: LinkageError) {
+        Timber.e(e, "PinVault init failed: this device lacks an API it needs")
+        synchronized(this) { initialized = false }
+        InitResult.Failed(e.toString(), IllegalStateException(e.toString(), e))
+    }
+
     private suspend fun executeInit(): InitResult {
         // Static pin mode — no server contact needed
         val staticConfig = pinManagerConfig?.staticPins
@@ -392,6 +412,10 @@ object PinVault {
                 vaultRouter.registerDevicePublicKey(deviceId, kp.getPublicKeyPem())
             } catch (e: Exception) {
                 Timber.w(e, "Device public key registration partially failed")
+            } catch (e: LinkageError) {
+                // An API this device lacks: per-device vault files stay
+                // unavailable, everything else keeps working.
+                Timber.e(e, "Device public key registration is not supported on this device")
             }
         }
 
