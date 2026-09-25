@@ -71,7 +71,7 @@ Başka bir dosya kullanmak için `./gradlew installDebug -PsampleHostProps=/yol/
    cd ../SamplePinVaultHost && ./scripts/setup.sh && docker compose up -d --build && ./scripts/provision.sh && ./scripts/smoke-test.sh
    ```
    `provision.sh` mTLS Config API'sini (`:6652`), host'un kendi pin kaydını ve mock hedef host'ları (`:6653` TLS, `:6654` mTLS) açar.
-2. Host değerlerini al (yukarıdaki `client-config.sh --properties`) ve `res/xml/network_security_config.xml` içindeki telemetri IP'sini kontrol et.
+2. Host değerlerini al (yukarıdaki `client-config.sh --properties`).
 3. Derle ve kur:
    ```bash
    ./gradlew installDebug
@@ -136,7 +136,7 @@ VaultTokens.java            vault erişim token'ları (yalnızca bellekte)
 ConnectionEventLog.java     PinVaultConnectionListener → uygulama içi liste
 ProductionStyleClient.java  PinVault import etmeyen network katmanı (CertificatePinner)
 PinManagerLite.kt           suspend API'ler için senkron köprü, pin aktarımı
-res/xml/network_security_config.xml   düz HTTP yalnızca telemetri IP'sine
+res/xml/network_security_config.xml   düz HTTP hiçbir yere yok (raporlar da şifreli porttan)
 ```
 
 ## Pin'ler nasıl hesaplanır?
