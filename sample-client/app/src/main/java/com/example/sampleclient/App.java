@@ -163,8 +163,9 @@ public class App extends Application {
         super.onCreate();
 
         // PinVault teşhis log'larını Timber ile yazar. Yalnızca debug build'de
-        // aç: release log'larına host adı ve pin önekleri düşmesin.
-        if (BuildConfig.DEBUG) {
+        // aç: release log'larına host adı ve pin önekleri düşmesin. Testler
+        // release derlemesinde -Psample.diagnosticLogs=true ile açar.
+        if (BuildConfig.DEBUG || BuildConfig.DIAGNOSTIC_LOGS) {
             PinVault.INSTANCE.enableDebugLogging();
         }
 

@@ -44,6 +44,9 @@ android {
         // (anahtar seti = döndürme/iptal) ve config başına gereken imza sayısı.
         field("HOST_SIGNING_PUBLIC_KEYS", "host.signingPublicKeys")
         field("HOST_RECOVERY_PUBLIC_KEYS", "host.recoveryPublicKeys")
+        // -Psample.diagnosticLogs=true: release derlemesinde de PinVault teşhis
+        // log'ları açılır (E2E, küçültülmüş derlemeyi log'lardan izler).
+        buildConfigField("boolean", "DIAGNOSTIC_LOGS", providers.gradleProperty("sample.diagnosticLogs").orNull?.toBoolean()?.toString() ?: "false")
         buildConfigField("int", "HOST_REQUIRED_SIGNATURES", hostValue("host.requiredSignatures").ifEmpty { "1" })
         field("TARGET_HOST", "target.host")
         field("TARGET_PINS", "target.pins")
@@ -63,7 +66,12 @@ android {
 
     buildTypes {
         getByName("release") {
-            isMinifyEnabled = false
+            // Gerçek uygulamalar gibi R8 ile küçültülür: kütüphanenin R8 kuralları
+            // her sürümde bu derlemeyle sınanır. Örnek olduğu için debug anahtarıyla
+            // imzalanır; kendi uygulamanda kendi imza anahtarını kullan.
+            isMinifyEnabled = true
+            isShrinkResources = true
+            signingConfig = signingConfigs.getByName("debug")
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"

@@ -79,6 +79,8 @@ Başka bir dosya kullanmak için `./gradlew installDebug -PsampleHostProps=/yol/
 
 Telefon Mac ile aynı ağda olmalı. Emülatör de host IP'sine erişebiliyor.
 
+Yayın derlemesi (`./gradlew assembleRelease`) gerçek uygulamalar gibi R8 ile küçültülür; kütüphanenin R8 kuralları böylece her sürümde sınanır. Örnek olduğu için debug anahtarıyla imzalanır. Teşhis log'ları release'te kapalıdır, testler `-Psample.diagnosticLogs=true` ile açar.
+
 ## Beklenen akış
 
 | Adım | Ekranda |
