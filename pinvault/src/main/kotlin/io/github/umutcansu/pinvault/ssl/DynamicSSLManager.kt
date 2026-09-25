@@ -335,7 +335,9 @@ internal class DynamicSSLManager(
      * Returns a [X509ExtendedTrustManager] that:
      * - Accepts self-signed certificates (no CA-chain validation).
      * - Verifies that the leaf certificate's public-key SHA-256 matches one of
-     *   the pins returned by [configProvider] **at the time of the handshake**.
+     *   the pins returned by [configProvider] **at the time of the handshake**,
+     *   or that the leaf chains to a served issuer certificate whose pin does
+     *   ([ChainPinMatcher]).
      *
      * Pin lookup is dynamic: every TLS handshake re-invokes [configProvider]
      * and rebuilds the host → pin-set map. Callers that want snapshot semantics
@@ -418,9 +420,11 @@ internal class DynamicSSLManager(
                     )
                 }
 
-                // Pin doğrulama
+                // Pin doğrulama: yaprak sertifika ya da yaprağın gerçekten
+                // bağlandığı bir üst sertifika (bkz. ChainPinMatcher).
                 val certHash = sha256Base64(leaf.publicKey.encoded)
-                if (certHash !in acceptedForHost) {
+                val matchedPin = ChainPinMatcher.match(chain, acceptedForHost) { sha256Base64(it.publicKey.encoded) }
+                if (matchedPin == null) {
                     emitConnectionEvent(hostname, success = false, actualPin = certHash, expectedPins = acceptedForHost, pinVersion = pinVersion)
                     Timber.e("Pin mismatch for %s — cert=%s..., expected %d pins",
                         hostname, certHash.take(12), acceptedForHost.size)
@@ -433,8 +437,9 @@ internal class DynamicSSLManager(
 
                 val cn = leaf.subjectX500Principal.name.substringAfter("CN=").substringBefore(",")
                 val hasClientCert = clientKeyManagers != null
-                Timber.d("Pin verified ✓ — host=%s, CN=%s, sha256/%s..., clientCert=%s",
-                    hostname, cn, certHash.take(12), hasClientCert)
+                val via = if (matchedPin == certHash) "" else " (issuer pin sha256/${matchedPin.take(12)}...)"
+                Timber.d("Pin verified ✓ — host=%s, CN=%s, sha256/%s...%s, clientCert=%s",
+                    hostname, cn, certHash.take(12), via, hasClientCert)
                 emitConnectionEvent(hostname, success = true, actualPin = certHash, expectedPins = acceptedForHost, pinVersion = pinVersion)
             }
         }

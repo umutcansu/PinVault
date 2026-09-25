@@ -5197,8 +5197,9 @@ components:
         matched:
           type: boolean
           description: >
-            `livePins[0]` (the leaf) is in the checked set. An intermediate in the set
-            does not count — the library pins the leaf only.
+            The chain passes the way a device checks it: the leaf's pin is in the
+            set, or the pin of an issuer the leaf validly chains to (signatures,
+            validity, CA constraints up to the pinned certificate).
         error: { type: string, nullable: true, description: Why the host could not be reached. }
 
     LiveCheckResult:

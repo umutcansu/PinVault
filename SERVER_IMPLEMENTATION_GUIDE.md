@@ -63,7 +63,8 @@ Returns the pin configuration. This is the core endpoint.
 ```
 
 **Rules:**
-- Each host must have **at least 2 pins** (primary + backup for rotation). Client rejects entries with fewer pins; one malformed row no longer poisons the rest of the config (per-entry parsing).
+- Each host must have **at least 2 pins** (primary + backup for rotation). Client rejects entries with fewer pins; one malformed row no longer poisons the rest of the config (per-entry parsing). Make them two *different* keys: the same pin written twice is no backup, and the reference server refuses it.
+- A pin may name the leaf's key or the key of an issuer (intermediate or root CA) in the chain the host serves. The client accepts an issuer pin only when the leaf validly chains to that issuer, so pinning your CA lets a host renew its leaf with a new key; pinning the leaf is stricter.
 - Each pin is Base64-encoded SHA-256 of the certificate's SubjectPublicKeyInfo (SPKI) — exactly 44 characters
 - `mtls: true` means the host requires a client certificate
 - `clientCertVersion` triggers client cert download when it changes
@@ -441,7 +442,7 @@ All paths are relative to `configUrl`. Leading `/` is stripped.
 
 - [ ] `GET /health` returns `{"status":"ok"}`
 - [ ] `GET /api/v1/certificate-config` returns valid pin config
-- [ ] Every host has at least 2 SHA-256 pins
+- [ ] Every host has at least 2 different SHA-256 pins
 - [ ] Pins are Base64(SHA256(SPKI)) — 44 characters each
 - [ ] Server certificate matches at least one pinned hash
 - [ ] HTTPS with valid TLS (self-signed OK)

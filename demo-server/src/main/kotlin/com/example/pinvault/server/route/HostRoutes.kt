@@ -3,6 +3,8 @@ package com.example.pinvault.server.route
 import com.example.pinvault.server.model.*
 import com.example.pinvault.server.service.CertificateService
 import com.example.pinvault.server.service.MockServerManager
+import com.example.pinvault.server.service.NoSecondCertificateException
+import io.ktor.server.application.*
 import com.example.pinvault.server.store.HostClientCertStore
 import com.example.pinvault.server.store.HostRecord
 import com.example.pinvault.server.store.HostStore
@@ -95,6 +97,8 @@ fun Route.hostRoutes(
 
             val result = try {
                 certService.fetchFromUrl(url)
+            } catch (e: NoSecondCertificateException) {
+                return@post call.respondNoSecondCertificate(e)
             } catch (e: Exception) {
                 return@post call.respondText("{\"error\":\"Baglanti hatasi: ${e.message}\"}", ContentType.Application.Json, HttpStatusCode.BadRequest)
             }
@@ -145,7 +149,7 @@ fun Route.hostRoutes(
 
             val id = host.replace(".", "_")
             val result = try {
-                certService.importCertificate(id, bytes, password, format)
+                certService.importCertificate(id, bytes, password, format, host)
             } catch (e: Exception) {
                 return@post call.respondText("{\"error\":\"Import hatasi: ${e.message}\"}", ContentType.Application.Json, HttpStatusCode.BadRequest)
             }
@@ -223,8 +227,8 @@ fun Route.hostRoutes(
                 val id = hostname.replace(".", "_")
                 val backupPin = certService.backupPin(id)
                     ?: return@post call.respond(HttpStatusCode.Conflict, mapOf("reason" to "no_backup_key", "error" to
-                        "No stored backup key for $hostname: its certificate was uploaded or fetched, or generated before " +
-                        "backup keys were kept. Regenerate the certificate to get one."))
+                        "No stored backup key for $hostname: its pins were fetched from a URL, or its certificate was " +
+                        "generated before backup keys were kept. Regenerate the certificate to get one."))
                 val published = pinConfigStore.load(primaryScope).pins.find { it.hostname == hostname }?.sha256.orEmpty()
                 if (backupPin !in published) {
                     return@post call.respond(HttpStatusCode.Conflict, mapOf("reason" to "backup_not_published", "error" to
@@ -271,7 +275,7 @@ fun Route.hostRoutes(
 
                 val id = hostname.replace(".", "_")
                 val result = try {
-                    certService.importCertificate(id, bytes, password, format)
+                    certService.importCertificate(id, bytes, password, format, hostname)
                 } catch (e: Exception) {
                     return@post call.respondText("{\"error\":\"Import hatasi: ${e.message}\"}", ContentType.Application.Json, HttpStatusCode.BadRequest)
                 }
@@ -302,6 +306,8 @@ fun Route.hostRoutes(
 
                 val fetchResult = try {
                     certService.fetchFromUrl(url)
+                } catch (e: NoSecondCertificateException) {
+                    return@post call.respondNoSecondCertificate(e)
                 } catch (e: Exception) {
                     return@post call.respondText("{\"error\":\"Baglanti hatasi: ${e.message}\"}", ContentType.Application.Json, HttpStatusCode.BadRequest)
                 }
@@ -701,3 +707,10 @@ internal fun spkiPinFromSClientOutput(output: String): String? {
         null
     }
 }
+
+/**
+ * 422 for a site that served its certificate alone: there is no issuer whose
+ * pin could be the backup (see [NoSecondCertificateException]).
+ */
+internal suspend fun ApplicationCall.respondNoSecondCertificate(e: NoSecondCertificateException) =
+    respond(HttpStatusCode.UnprocessableEntity, mapOf("reason" to "no_second_certificate", "error" to (e.message ?: "")))

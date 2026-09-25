@@ -459,8 +459,10 @@ private fun validatePinConfig(config: PinConfig): List<String> {
             errors.add("Hostname bos olamaz")
         }
 
-        if (pin.sha256.size < 2) {
-            errors.add("${pin.hostname}: en az 2 pin olmali (primary + backup), mevcut: ${pin.sha256.size}")
+        // Distinct pins: [X, X] is one pin written twice, not a backup.
+        val distinctPins = pin.sha256.map { it.trim() }.filter { it.isNotEmpty() }.toSet().size
+        if (distinctPins < 2) {
+            errors.add("${pin.hostname}: en az 2 pin olmali (primary + backup) ve birbirinden farkli, mevcut: $distinctPins farkli pin")
         }
 
         pin.sha256.forEachIndexed { index, hash ->

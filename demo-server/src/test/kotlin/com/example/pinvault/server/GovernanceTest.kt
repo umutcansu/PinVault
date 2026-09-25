@@ -266,13 +266,13 @@ class GovernanceTest {
         })
 
     @Test
-    fun `the live gate passes only when the leaf the host serves is pinned`() {
+    fun `the live gate passes when the served leaf or an issuer it chains to is pinned`() {
         val probed = mutableListOf<String>()
         val g = gate(LiveCertificateGate.Mode.ENFORCE, mapOf("*.example.org" to "www.example.org:8443"), probed)
 
         assertTrue(g.checkPins(listOf(HostPin("api.example.com", listOf(leafPin, pinA)))).passed)
-        val intermediateOnly = g.checkPins(listOf(HostPin("api.example.com", listOf(intermediatePin, pinA))))
-        assertFalse(intermediateOnly.passed, "devices pin the leaf only — an intermediate pin would lock them out")
+        val notTheIssuer = g.checkPins(listOf(HostPin("api.example.com", listOf(intermediatePin, pinA))))
+        assertFalse(notTheIssuer.passed, "the served leaf does not chain to that certificate — devices would refuse it")
 
         val wildcard = g.checkPins(listOf(HostPin("*.example.com", listOf(leafPin, pinA))))
         assertFalse(wildcard.passed)
@@ -287,6 +287,35 @@ class GovernanceTest {
         assertTrue(probed.contains("api.example.com:443 sni=api.example.com"))
         assertTrue(probed.contains("www.example.org:8443 sni=www.example.org"))
         assertTrue(probed.contains("10.0.0.5:9443 sni=null"), "an IP address carries no SNI")
+    }
+
+    private fun issued(subject: String, subjectKey: java.security.PublicKey, issuer: String, signingKey: java.security.PrivateKey, ca: Boolean): X509Certificate {
+        val builder = org.bouncycastle.cert.jcajce.JcaX509v3CertificateBuilder(
+            org.bouncycastle.asn1.x500.X500Name(issuer), BigInteger.valueOf(System.nanoTime()), Date(System.currentTimeMillis() - 60_000),
+            Date(System.currentTimeMillis() + 86_400_000), org.bouncycastle.asn1.x500.X500Name(subject), subjectKey
+        )
+        builder.addExtension(org.bouncycastle.asn1.x509.Extension.basicConstraints, true, org.bouncycastle.asn1.x509.BasicConstraints(ca))
+        if (ca) builder.addExtension(org.bouncycastle.asn1.x509.Extension.keyUsage, true,
+            org.bouncycastle.asn1.x509.KeyUsage(org.bouncycastle.asn1.x509.KeyUsage.keyCertSign))
+        val holder = builder.build(org.bouncycastle.operator.jcajce.JcaContentSignerBuilder("SHA256withECDSA").build(signingKey))
+        return org.bouncycastle.cert.jcajce.JcaX509CertificateConverter().getCertificate(holder)
+    }
+
+    @Test
+    fun `the live gate accepts the pin of the CA that issued the served leaf, not of one appended to a forged leaf`() {
+        val ec = { KeyPairGenerator.getInstance("EC").apply { initialize(256) }.generateKeyPair() }
+        val caKeys = ec()
+        val ca = issued("CN=Gate Test CA", caKeys.public, "CN=Gate Test CA", caKeys.private, ca = true)
+        val leafKeys = ec()
+        val servedLeaf = issued("CN=api.example.com", leafKeys.public, "CN=Gate Test CA", caKeys.private, ca = false)
+        val caPins = listOf(LiveCertificateGate.spkiPin(ca), pinA)
+
+        val genuine = LiveCertificateGate(LiveCertificateGate.Mode.ENFORCE, probe = { _, _, _, _ -> listOf(servedLeaf, ca) })
+        assertTrue(genuine.checkPins(listOf(HostPin("api.example.com", caPins))).passed, "devices accept a leaf that chains to the pinned CA")
+
+        val forgedLeaf = issued("CN=api.example.com", leafKeys.public, "CN=Gate Test CA", ec().private, ca = false)
+        val forged = LiveCertificateGate(LiveCertificateGate.Mode.ENFORCE, probe = { _, _, _, _ -> listOf(forgedLeaf, ca) })
+        assertFalse(forged.checkPins(listOf(HostPin("api.example.com", caPins))).passed, "the CA did not sign that leaf")
     }
 
     private fun ApplicationTestBuilder.pinApp(gate: LiveCertificateGate, audit: AuditLog) {

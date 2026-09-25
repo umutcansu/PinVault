@@ -808,7 +808,9 @@ manifest merger pulls both in automatically.
 - HTTP-only endpoints are off (the library refuses cleartext HTTPS hosts)
 
 ### 7. Rotate pins ahead of expiry
-Configure at least 2 pins per host (primary + backup). Add the new pin to the
+Configure at least 2 different pins per host (primary + backup). A pin may be
+the leaf's key or the key of a CA the leaf chains to (checked on the device), so
+pinning your CA survives leaf renewals. Add the new pin to the
 config 30+ days before the old certificate expires. Set `forceUpdate: true`
 on the host entry to force clients to refresh immediately.
 

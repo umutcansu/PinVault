@@ -109,7 +109,7 @@ Every host carries two pins. For a certificate the server generated, the second 
 
 For the config server's own certificate it is `POST /api/v1/server-tls-pins/rotate-to-backup` and a restart. Apps carry the backup pin as a bootstrap pin, so no app update is needed. Put the new backup pin into the next release.
 
-Certificates generated before backup keys were kept, and certificates that were uploaded or fetched, have no stored backup (the endpoints answer 409). Regenerate once to get one; for the config server's certificate that costs one more app update.
+Certificates generated before backup keys were kept, and hosts whose pins were fetched from a URL, have no stored backup (the endpoints answer 409). An uploaded certificate gets one when it is uploaded. Regenerate once to get one; for the config server's certificate that costs one more app update.
 
 ### A pinned host's TLS key is stolen
 
@@ -117,7 +117,7 @@ Which backup is still safe depends on where the key leaked from.
 
 - **Somewhere other than the server's `certs/` directory** (a load balancer it was exported to, a backup copy, a laptop): switch to the stored backup key as in the planned rotation above. The stolen key's pin leaves the list in the same step.
 - **The server's `certs/` directory was read.** The stored backup was taken with the key, so regenerate the certificate instead. Devices recover through pin-mismatch recovery. For the config server's own certificate, apps need an update with the new bootstrap pins.
-- **An uploaded or fetched certificate:** the second pin must belong to a key you generated in advance and keep offline. Switch the host to it so devices keep connecting, then publish `{backup, new-backup}` to drop the stolen key's pin. With `PIN_LIVE_CHECK=enforce` a set is accepted only if it contains the leaf the host serves at that moment, which this order satisfies.
+- **A host whose pins were fetched from a URL:** its backup pin is its CA's. Have the site reissued by the same CA with a new key; devices accept the new leaf through the CA pin. Then publish the new leaf with the CA pin to drop the stolen key's pin. With `PIN_LIVE_CHECK=enforce` a set is accepted only if devices would accept what the host serves at that moment, which this order satisfies.
 
 ### The config server is down
 
@@ -129,7 +129,7 @@ Devices keep their stored config and pins. Only a config marked `forceUpdate` ma
 - **A fresh install (or cleared app data) trusts the compiled-in keys** until its first successful fetch. Ship an app update after a revocation.
 - **Per-file vault keys (`VaultFileConfig.signaturePublicKey`) are fixed.** Key sets do not rotate them.
 - **Some writes are outside two-person approval:** device ACL edits (which pins a device receives), vault uploads, and token management. They are still audited.
-- **A generated certificate's backup key sits next to its primary** in `certs/`. It covers planned rotation and a key leaked elsewhere, not a server whose disk was read.
+- **A generated or uploaded certificate's backup key sits next to its primary** in `certs/`. It covers planned rotation and a key leaked elsewhere, not a server whose disk was read.
 - **The live check is a safety net against mistakes, not attackers.** It trusts whatever the server's network path returns.
 - **Freezing is bounded, not prevented.** Someone who can stop fresh configs from reaching a device can keep it on the last valid config until that config's `expiresAt`, which is `CONFIG_TTL_SECONDS`.
 - **A database-level attacker can rewrite the whole audit chain.** The webhook copy, pushed as events happen and carrying the entry hash, is the tamper-evident record.

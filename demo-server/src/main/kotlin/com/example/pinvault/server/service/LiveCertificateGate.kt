@@ -18,13 +18,14 @@ import javax.net.ssl.X509ExtendedTrustManager
 /**
  * Refuses to publish a pin set the live host would fail.
  *
- * Before new or changed pins are stored, the host is contacted and the SPKI
- * pin of the certificate it serves RIGHT NOW is computed. A pin set without
- * it would make every device refuse that host the
- * moment it applies the config — a typo, a pin for next year's certificate
- * without the current one, the wrong host's key, an intermediate CA pin (the
- * library pins the leaf certificate only). The check is a safety net
- * against mistakes, not against an attacker on the server's network path.
+ * Before new or changed pins are stored, the host is contacted and the chain
+ * it serves RIGHT NOW is checked the way a device checks it ([PinChain]): the
+ * leaf's pin, or the pin of an issuer the leaf really chains to. A pin set
+ * that fails would make every device refuse that host the moment it applies
+ * the config — a typo, a pin for next year's certificate without the current
+ * one, the wrong host's key, a CA the host's certificate does not come from.
+ * The check is a safety net against mistakes, not against an attacker on the
+ * server's network path.
  *
  * `PIN_LIVE_CHECK`:
  *  - `off` (default) — no check.
@@ -112,10 +113,8 @@ class LiveCertificateGate(
             else -> splitHostPort(pin.hostname).first
         }.takeUnless(::isIpLiteral)
         return try {
-            val live = withDeadline { probe(host, port, sni, timeoutMs) }.map { spkiPin(it) }
-            // The library pins the LEAF only (DynamicSSLManager checks chain[0]),
-            // so an intermediate in the new set does not make it pass.
-            HostCheck(pin.hostname, "$host:$port", true, live, live.firstOrNull() in pin.sha256)
+            val chain = withDeadline { probe(host, port, sni, timeoutMs) }
+            HostCheck(pin.hostname, "$host:$port", true, chain.map { spkiPin(it) }, PinChain.satisfies(chain, pin.sha256))
         } catch (e: Exception) {
             HostCheck(pin.hostname, "$host:$port", false, emptyList(), false, e.message ?: e.javaClass.simpleName)
         }

@@ -8,6 +8,7 @@ import com.example.pinvault.server.route.certificateConfigRoutes
 import com.example.pinvault.server.route.signingAdminRoutes
 import com.example.pinvault.server.route.governanceRoutes
 import com.example.pinvault.server.route.applyPinConfigUpdate
+import com.example.pinvault.server.route.respondNoSecondCertificate
 import com.example.pinvault.server.plugin.adminName
 import com.example.pinvault.server.route.hostRoutes
 import com.example.pinvault.server.route.scopedVaultAdminRoutes
@@ -570,8 +571,8 @@ fun main() {
             post("/api/v1/server-tls-pins/rotate-to-backup") {
                 val backupPin = certService.backupPin(serverCertId)
                     ?: return@post call.respond(HttpStatusCode.Conflict, mapOf("reason" to "no_backup_key", "error" to
-                        "No stored backup key for the config server certificate: it was uploaded or fetched, or generated " +
-                        "before backup keys were kept. Regenerate it to get one (apps then need the new pins)."))
+                        "No stored backup key for the config server certificate: its pins were fetched from a URL, or it was " +
+                        "generated before backup keys were kept. Regenerate it to get one (apps then need the new pins)."))
                 if (backupPin !in serverTlsPins) {
                     return@post call.respond(HttpStatusCode.Conflict, mapOf("reason" to "backup_not_published", "error" to
                         "The stored backup key's pin is not among the current bootstrap pins, so apps would reject it."))
@@ -607,7 +608,7 @@ fun main() {
                     ?: return@post call.respondText("""{"error":"Dosya gerekli"}""", ContentType.Application.Json, HttpStatusCode.BadRequest)
 
                 try {
-                    val result = certService.importCertificate(serverCertId, bytes, password, format)
+                    val result = certService.importCertificate(serverCertId, bytes, password, format, "localhost")
                     serverPinsFile.writeText(result.sha256Pins.joinToString("\n"))
                     serverTlsPins = result.sha256Pins
                     val primary = result.sha256Pins.getOrNull(0) ?: ""
@@ -641,6 +642,8 @@ fun main() {
                         """{"primaryPin":"$primary","backupPin":"$backup","hostname":"${result.hostname}","fetched":true}""",
                         ContentType.Application.Json
                     )
+                } catch (e: com.example.pinvault.server.service.NoSecondCertificateException) {
+                    call.respondNoSecondCertificate(e)
                 } catch (e: Exception) {
                     call.respondText("""{"error":"Bağlantı hatası: ${e.message}"}""", ContentType.Application.Json, HttpStatusCode.BadRequest)
                 }

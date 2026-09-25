@@ -58,6 +58,16 @@ data class FetchResult(
     val certInfo: CertInfo
 )
 
+/**
+ * The site served its certificate alone. A fetched host's backup pin is the
+ * issuer's (devices accept any leaf that chains to it), and the server holds
+ * no key for a site it only looked at — so there is no second pin to offer.
+ */
+class NoSecondCertificateException(val host: String) : IllegalStateException(
+    "$host serves a single certificate, so there is no issuer to pin as the backup. Enter the pins by hand: " +
+        "the site's pin and the pin of a backup key its owner keeps."
+)
+
 class CertificateService(
     private val certsDir: File,
     /**
@@ -195,8 +205,15 @@ class CertificateService(
 
     /**
      * Harici sertifika dosyasını import eder (JKS, PKCS12).
+     *
+     * The backup pin belongs to a key generated here and kept in
+     * `<id>.backup.jks`, as for a generated certificate, so [rotateToBackup]
+     * works for uploaded certificates too. The uploaded chain's issuer is not
+     * used: the server holds the uploaded key anyway, and its own backup key
+     * does not widen trust to everything the issuer signs. [hostname] names
+     * the backup's placeholder certificate.
      */
-    fun importCertificate(id: String, fileBytes: ByteArray, password: String, format: String): CertGenResult {
+    fun importCertificate(id: String, fileBytes: ByteArray, password: String, format: String, hostname: String): CertGenResult {
         val storeType = when (format.lowercase()) {
             "jks" -> "JKS"
             "pkcs12", "p12", "pfx" -> "PKCS12"
@@ -223,16 +240,13 @@ class CertificateService(
 
         val jksFile = File(certsDir, "$id.jks")
         jksFile.outputStream().use { jksKs.store(it, KEYSTORE_PASSWORD.toCharArray()) }
-        // A backup key kept for an earlier generated certificate is not this
-        // certificate's backup; rotating to it would serve an unpublished pin.
-        backupKeyFile(id).delete()
-
-        val primaryHash = extractHash(cert)
-        val backupHash = if (chain.size > 1) extractHash(chain[1]) else primaryHash
+        // Replaces any backup kept for an earlier certificate of this id.
+        val backupKeyPair = newRsaKeyPair()
+        writeBackupKey(id, hostname, backupKeyPair)
 
         return CertGenResult(
             keystorePath = jksFile.absolutePath,
-            sha256Pins = listOf(primaryHash, backupHash),
+            sha256Pins = listOf(extractHash(cert), sha256Base64(backupKeyPair.public.encoded)),
             validUntil = cert.notAfter.toInstant().toString()
         )
     }
@@ -274,9 +288,12 @@ class CertificateService(
             val chain = it.session.peerCertificates
             if (chain.isEmpty()) throw RuntimeException("Sertifika zinciri boş")
 
+            // The backup is the issuer's pin: devices accept a leaf that
+            // chains to it, so the host survives a renewal by the same CA.
+            if (chain.size < 2) throw NoSecondCertificateException(hostname)
             val leaf = chain[0] as X509Certificate
             val primaryHash = extractHash(leaf)
-            val backupHash = if (chain.size > 1) extractHash(chain[1]) else primaryHash
+            val backupHash = extractHash(chain[1])
 
             val pubKey = leaf.publicKey
             val keyBits = if (pubKey is RSAPublicKey) pubKey.modulus.bitLength() else 0

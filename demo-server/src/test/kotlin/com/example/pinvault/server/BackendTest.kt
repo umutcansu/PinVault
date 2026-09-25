@@ -471,15 +471,109 @@ class BackendTest {
         assertEquals(HttpStatusCode.Conflict, unpublished.status)
         assertEquals("backup_not_published", Json.parseToJsonElement(unpublished.bodyAsText()).jsonObject["reason"]?.jsonPrimitive?.content)
 
-        // An uploaded certificate has no stored backup key at all; the one kept
-        // for the earlier generated certificate must not linger.
-        val source = certService.generateCertificate("upload_source_test", "no-backup.test")
-        certService.importCertificate("no-backup_test", File(source.keystorePath).readBytes(), CertificateService.KEYSTORE_PASSWORD, "jks")
+        // A certificate generated before backup keys were kept has none.
+        val keystore = File(hostStore.get("no-backup.test", configApiId)!!.keystorePath!!)
+        assertTrue(File(keystore.parentFile, "no-backup_test.backup.jks").delete())
         assertNull(certService.backupPin("no-backup_test"))
         val missing = client.post("/api/v1/hosts/no-backup.test/rotate-to-backup")
         assertEquals(HttpStatusCode.Conflict, missing.status)
         assertEquals("no_backup_key", Json.parseToJsonElement(missing.bodyAsText()).jsonObject["reason"]?.jsonPrimitive?.content)
         assertEquals(1, pinConfigStore.load(configApiId).pins.single { it.hostname == "no-backup.test" }.version, "nothing published")
+    }
+
+    // An uploaded certificate used to get its chain's issuer or, for a lone
+    // certificate, its own pin a second time as the "backup".
+    @Test
+    fun `C24 — an uploaded certificate gets a stored backup key it can switch to`() {
+        val source = certService.generateCertificate("upload_source_test", "uploaded.test")
+        val uploaded = certService.importCertificate("uploaded_test", File(source.keystorePath).readBytes(), CertificateService.KEYSTORE_PASSWORD, "jks", "uploaded.test")
+        val (primary, backup) = uploaded.sha256Pins
+        assertEquals(source.sha256Pins[0], primary, "the uploaded key is the primary")
+        assertTrue(backup !in source.sha256Pins, "the backup is a new key, not the source's pins")
+        assertEquals(backup, certService.backupPin("uploaded_test"))
+        assertEquals(backup, certService.rotateToBackup("uploaded_test", "uploaded.test").sha256Pins[0])
+    }
+
+    @Test
+    fun `C24 — the same pin written twice is not a backup`() = testApplication {
+        configureApp()
+        val body = { pins: String -> """{"version":0,"forceUpdate":false,"pins":[{"hostname":"dup.test","sha256":$pins}]}""" }
+        val twice = client.put("/api/v1/certificate-config") {
+            contentType(ContentType.Application.Json)
+            setBody(body("""["$testPin1","$testPin1"]"""))
+        }
+        assertEquals(HttpStatusCode.BadRequest, twice.status)
+        assertTrue(twice.bodyAsText().contains("farkli"), twice.bodyAsText())
+        assertEquals(HttpStatusCode.OK, client.put("/api/v1/certificate-config") {
+            contentType(ContentType.Application.Json)
+            setBody(body("""["$testPin1","$testPin2"]"""))
+        }.status)
+    }
+
+    @Test
+    fun `C24 — pins fetched from a site are its leaf and the issuer, never the leaf twice`() = testApplication {
+        configureApp()
+        val ca = Pki.ca("CN=Fetch Test CA")
+        val leafKeys = Pki.keys()
+        val leaf = Pki.issued("CN=localhost", leafKeys.public, ca, san = "127.0.0.1")
+        Pki.tlsServer(leafKeys.private, arrayOf(leaf, ca.cert)).use { chained ->
+            val result = certService.fetchFromUrl("https://127.0.0.1:${chained.localPort}")
+            assertEquals(listOf(Pki.pin(leaf), Pki.pin(ca.cert)), result.sha256Pins)
+        }
+        val lone = Pki.ca("CN=Lone Site")
+        Pki.tlsServer(lone.keys.private, arrayOf(lone.cert)).use { single ->
+            val url = "https://127.0.0.1:${single.localPort}"
+            assertFailsWith<com.example.pinvault.server.service.NoSecondCertificateException> { certService.fetchFromUrl(url) }
+            val refused = client.post("/api/v1/hosts/fetch-from-url") {
+                contentType(ContentType.Application.Json)
+                setBody("""{"url":"$url"}""")
+            }
+            assertEquals(HttpStatusCode.UnprocessableEntity, refused.status)
+            assertEquals("no_second_certificate", Json.parseToJsonElement(refused.bodyAsText()).jsonObject["reason"]?.jsonPrimitive?.content)
+            assertTrue(pinConfigStore.load(configApiId).pins.none { it.hostname == "127.0.0.1" }, "no host was added")
+        }
+    }
+
+    /** Minimal PKI and a TLS listener serving a given chain, for the fetch tests. */
+    private object Pki {
+        class Ca(val keys: java.security.KeyPair, val cert: java.security.cert.X509Certificate)
+
+        fun keys(): java.security.KeyPair = java.security.KeyPairGenerator.getInstance("EC").apply { initialize(256) }.generateKeyPair()
+
+        fun ca(name: String): Ca = keys().let { k -> Ca(k, build(name, k.public, name, k.private, ca = true, san = null)) }
+
+        fun issued(name: String, key: java.security.PublicKey, issuer: Ca, san: String) =
+            build(name, key, issuer.cert.subjectX500Principal.name, issuer.keys.private, ca = false, san = san)
+
+        fun pin(cert: java.security.cert.X509Certificate): String = java.util.Base64.getEncoder()
+            .encodeToString(java.security.MessageDigest.getInstance("SHA-256").digest(cert.publicKey.encoded))
+
+        private fun build(subject: String, key: java.security.PublicKey, issuer: String, signer: java.security.PrivateKey, ca: Boolean, san: String?): java.security.cert.X509Certificate {
+            val builder = org.bouncycastle.cert.jcajce.JcaX509v3CertificateBuilder(
+                org.bouncycastle.asn1.x500.X500Name(issuer), java.math.BigInteger.valueOf(System.nanoTime()),
+                java.util.Date(System.currentTimeMillis() - 60_000), java.util.Date(System.currentTimeMillis() + 86_400_000),
+                org.bouncycastle.asn1.x500.X500Name(subject), key
+            )
+            builder.addExtension(org.bouncycastle.asn1.x509.Extension.basicConstraints, true, org.bouncycastle.asn1.x509.BasicConstraints(ca))
+            if (san != null) builder.addExtension(org.bouncycastle.asn1.x509.Extension.subjectAlternativeName, false,
+                org.bouncycastle.asn1.x509.GeneralNames(org.bouncycastle.asn1.x509.GeneralName(org.bouncycastle.asn1.x509.GeneralName.iPAddress, san)))
+            val holder = builder.build(org.bouncycastle.operator.jcajce.JcaContentSignerBuilder("SHA256withECDSA").build(signer))
+            return org.bouncycastle.cert.jcajce.JcaX509CertificateConverter().getCertificate(holder)
+        }
+
+        /** Accepts TLS handshakes on a loopback port until closed. */
+        fun tlsServer(key: java.security.PrivateKey, chain: Array<java.security.cert.X509Certificate>): java.net.ServerSocket {
+            val ks = java.security.KeyStore.getInstance("PKCS12").apply { load(null, null); setKeyEntry("s", key, "pw".toCharArray(), chain) }
+            val kmf = javax.net.ssl.KeyManagerFactory.getInstance(javax.net.ssl.KeyManagerFactory.getDefaultAlgorithm()).apply { init(ks, "pw".toCharArray()) }
+            val context = javax.net.ssl.SSLContext.getInstance("TLS").apply { init(kmf.keyManagers, null, null) }
+            val server = context.serverSocketFactory.createServerSocket(0, 5, java.net.InetAddress.getByName("127.0.0.1"))
+            Thread {
+                while (!server.isClosed) {
+                    try { (server.accept() as javax.net.ssl.SSLSocket).use { it.startHandshake() } } catch (_: Exception) { }
+                }
+            }.apply { isDaemon = true }.start()
+            return server
+        }
     }
 
     @Test

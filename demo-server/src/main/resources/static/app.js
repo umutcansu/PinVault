@@ -185,7 +185,9 @@ const i18n = {
     rotateBootstrapConfirm: 'Config sunucusunun sertifikası saklı yedek anahtara geçirilecek ve yeni bir yedek hazırlanacak. Uygulamalar yedeğin pinini başlangıç pini olarak taşıdığı için güncelleme gerekmez. Sunucu yeniden başlatılmalı. Devam?',
     rotatedToBackup: 'Yedek anahtara geçildi; yeni yedek hazırlandı',
     bootstrapRotated: 'Yedek anahtara geçildi — sunucu yeniden başlatılmalı. Yeni yedek pini uygulamanın sonraki sürümüne eklenmeli.',
-    noBackupKey: 'Bu sertifika için saklanmış yedek anahtar yok: sertifika dışarıdan yüklenmiş, adresten alınmış ya da bu özellik gelmeden önce üretilmiş. Yedek anahtar, sertifika yeniden üretilince oluşur.',
+    noBackupKey: 'Bu sertifika için saklanmış yedek anahtar yok: pinler adresten alınmış ya da sertifika bu özellik gelmeden önce üretilmiş. Yedek anahtar, sertifika yeniden üretilince oluşur.',
+    noSecondCertificate: 'Site sertifikasını tek başına sunuyor; yedek pin olabilecek bir üst sertifika yok. Pinleri elle girin: sitenin pini ve site sahibinin sakladığı bir yedek anahtarın pini.',
+    pinsMustDiffer: 'En az iki farklı pin gerekir: biri birincil, biri yedek.',
     backupNotPublished: 'Saklı yedek anahtarın pini yayımlanan pinler arasında yok; telefonlar bu anahtarı reddeder. Önce pini listeye ekleyin ya da sertifikayı yeniden üretin.',
     tabAutoGenerate: 'Otomatik Üret', tabUploadJks: 'JKS Yükle', tabFetchUrl: 'URL\'den Çek',
     uploadJksLabel: 'Sertifika Dosyası (JKS/P12/PFX)', uploadPassword: 'Keystore Şifresi',
@@ -357,7 +359,8 @@ const i18n = {
     liveOk: '{0}: sunucunun şu an sunduğu sertifika ({1}…) pin listesinde var',
     liveNotInSet: '{0}: sunucunun şu an sunduğu sertifika ({1}…) pin listesinde yok',
     liveUnreachable: '{0}: ulaşılamadı — {1}',
-    liveIntermediateOnly: 'Listedeki pin bir ara sertifikaya ait; kütüphane yalnızca sunucunun kendi sertifikasını (zincirin ilk halkası) pinler.',
+    liveIssuerNoChain: 'Listedeki pin zincirdeki bir üst sertifikaya ait, ama sunucunun sertifikası ona geçerli biçimde bağlanmıyor (süresi dolmuş, CA yetkisi yok ya da imzası tutmuyor).',
+    liveOkIssuer: '{0}: sunucunun sertifikası listedeki üst sertifikaya (CA, {1}…) bağlanıyor',
     liveProbed: 'denenen', liveCheckTitle: 'Canlı sertifika kontrolü',
     livePassed: 'geçti', liveFailed: 'başarısız',
     liveEnforceWillFail: 'Zorunlu modda canlı kontrol başarısız: istek bir gerekçe (liveCheckOverride) içermediği için onaylansa da uygulanmaz (HTTP 422).',
@@ -517,7 +520,9 @@ const i18n = {
     rotateBootstrapConfirm: 'The config server certificate will switch to the stored backup key and a new backup will be prepared. Apps carry the backup pin as a bootstrap pin, so no app update is needed. Server restart required. Continue?',
     rotatedToBackup: 'Switched to the backup key; a new backup is ready',
     bootstrapRotated: 'Switched to the backup key — restart the server. Add the new backup pin to the next app release.',
-    noBackupKey: 'No backup key is stored for this certificate: it was uploaded, fetched from a URL, or generated before backup keys were kept. A backup key is created when the certificate is regenerated.',
+    noBackupKey: 'No backup key is stored for this certificate: its pins were fetched from a URL, or it was generated before backup keys were kept. A backup key is created when the certificate is regenerated.',
+    noSecondCertificate: 'The site serves its certificate alone, so there is no issuer to pin as the backup. Enter the pins by hand: the site\'s pin and the pin of a backup key its owner keeps.',
+    pinsMustDiffer: 'At least two different pins are needed: a primary and a backup.',
     backupNotPublished: 'The stored backup key\'s pin is not among the published pins, so devices would reject it. Publish it first or regenerate the certificate.',
     tabAutoGenerate: 'Auto Generate', tabUploadJks: 'Upload JKS', tabFetchUrl: 'Fetch from URL',
     uploadJksLabel: 'Certificate File (JKS/P12/PFX)', uploadPassword: 'Keystore Password',
@@ -692,7 +697,8 @@ const i18n = {
     liveOk: '{0}: the served leaf ({1}…) is in the pin set',
     liveNotInSet: '{0}: served leaf {1}… is not in the set',
     liveUnreachable: '{0}: unreachable — {1}',
-    liveIntermediateOnly: 'The set pins an intermediate certificate — the library pins the leaf only.',
+    liveIssuerNoChain: 'The set pins a certificate further up the chain, but the served certificate does not validly chain to it (expired, not a CA, or not signed by it).',
+    liveOkIssuer: '{0}: the served certificate chains to the pinned issuer (CA, {1}…)',
     liveProbed: 'probed', liveCheckTitle: 'Live certificate check',
     livePassed: 'passed', liveFailed: 'failed',
     liveEnforceWillFail: 'The live check fails in enforce mode: the request carries no liveCheckOverride, so approving it will not apply it (HTTP 422).',
@@ -2061,6 +2067,7 @@ async function createHostManual() {
   const hash0 = document.getElementById('add-hash-0').value.trim();
   const hash1 = document.getElementById('add-hash-1').value.trim();
   if (!hostname || !hash0 || !hash1) { toast(t('saveError'), 'error'); return; }
+  if (hash0 === hash1) { toast(t('pinsMustDiffer'), 'error'); return; }
   if (currentConfig.pins.some(p => p.hostname === hostname)) { toast(t('duplicateHost'), 'error'); return; }
 
   const newPins = [...currentConfig.pins, { hostname, sha256: [hash0, hash1] }];
@@ -2113,7 +2120,7 @@ async function createHostFetch() {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ url })
     });
-    if (!res.ok) { const err = await res.json(); toast(err.error || t('error'), 'error'); btn.disabled = false; btn.textContent = t('create'); return; }
+    if (!res.ok) { toast(reasonError(await res.json()), 'error'); btn.disabled = false; btn.textContent = t('create'); return; }
     // 202: waiting for approval (apiFetch said so) — no host to open yet.
     if (res.status === 202) { btn.disabled = false; btn.textContent = t('create'); return; }
 
@@ -2233,8 +2240,8 @@ function renderInlineEditPins(hostname) {
 }
 
 async function saveInlinePins(hostname) {
-  const filtered = editHashes.filter(h => h.trim());
-  if (filtered.length < 2) { toast(t('saveError'), 'error'); return; }
+  const filtered = editHashes.map(h => h.trim()).filter(Boolean);
+  if (new Set(filtered).size < 2) { toast(t('pinsMustDiffer'), 'error'); return; }
   const newPins = currentConfig.pins.map(p => p.hostname === hostname ? { hostname, sha256: filtered } : p);
   if (!(await saveFullConfig(newPins))) return;
   toast(t('pinsUpdated'), 'success');
@@ -2242,8 +2249,8 @@ async function saveInlinePins(hostname) {
 }
 
 async function savePins(hostname) {
-  const filtered = editHashes.filter(h => h.trim());
-  if (filtered.length < 2) { toast(t('saveError'), 'error'); return; }
+  const filtered = editHashes.map(h => h.trim()).filter(Boolean);
+  if (new Set(filtered).size < 2) { toast(t('pinsMustDiffer'), 'error'); return; }
   const newPins = currentConfig.pins.map(p => p.hostname === hostname ? { hostname, sha256: filtered } : p);
   if (!(await saveFullConfig(newPins))) return;
   toast(t('pinsUpdated'), 'success');
@@ -2678,10 +2685,14 @@ function toggleBootstrapFetch() {
 }
 
 // The server's messages are English; its reason codes pick the dashboard's own text.
-function backupRotationError(data) {
-  if (data.reason === 'no_backup_key') return t('noBackupKey');
-  if (data.reason === 'backup_not_published') return t('backupNotPublished');
-  return data.error || t('error');
+const REASON_TEXTS = {
+  no_backup_key: 'noBackupKey',
+  backup_not_published: 'backupNotPublished',
+  no_second_certificate: 'noSecondCertificate',
+};
+function reasonError(data) {
+  const key = data && REASON_TEXTS[data.reason];
+  return key ? t(key) : (data && data.error) || t('error');
 }
 
 async function rotateBootstrapToBackup() {
@@ -2690,7 +2701,7 @@ async function rotateBootstrapToBackup() {
     const res = await apiFetch('/api/v1/server-tls-pins/rotate-to-backup', { method: 'POST' });
     if (res.status === 202) return; // waits for a second admin; apiFetch said so
     const data = await res.json();
-    if (!res.ok) { toast(backupRotationError(data), 'error'); return; }
+    if (!res.ok) { toast(reasonError(data), 'error'); return; }
     toast(t('bootstrapRotated'), 'success');
     renderBootstrapSection();
   } catch (e) { toast(t('error'), 'error'); }
@@ -2736,7 +2747,7 @@ async function fetchBootstrapFromUrl(e) {
       body: JSON.stringify({ url })
     });
     const data = await res.json();
-    if (data.error) { toast(data.error, 'error'); return; }
+    if (data.error) { toast(reasonError(data), 'error'); return; }
     toast(t('bootstrapFetched'), 'success');
     renderBootstrapSection();
   } catch (err) { toast(t('error'), 'error'); }
@@ -3301,7 +3312,7 @@ async function rotateHostToBackup(hostname) {
   try {
     const res = await apiFetch(`/api/v1/hosts/${encodeURIComponent(hostname)}/rotate-to-backup`, { method: 'POST' });
     if (res.status === 202) return; // waits for a second admin; apiFetch said so
-    if (!res.ok) { toast(backupRotationError(await res.json()), 'error'); return; }
+    if (!res.ok) { toast(reasonError(await res.json()), 'error'); return; }
     toast(t('rotatedToBackup'), 'success');
     await loadConfig();
     renderHostList();
@@ -3589,15 +3600,20 @@ function liveCheckFailureLines(result) {
 function liveCheckLine(c, pins) {
   const leaf = String((c.livePins || [])[0] || '');
   const probed = c.probed ? ` <span class="muted">(${t('liveProbed')}: ${esc(c.probed)})</span>` : '';
+  // Devices accept the leaf's pin or the pin of an issuer the leaf really chains to.
+  const issuerPin = (c.livePins || []).slice(1).find(p => (pins || []).includes(p));
   if (c.matched) {
-    return `<div class="live-check-line live-ok">&#x2713; ${esc(t('liveOk', c.hostname, leaf.slice(0, 12)))}${probed}</div>`;
+    const text = (pins || []).includes(leaf) || !issuerPin
+      ? t('liveOk', c.hostname, leaf.slice(0, 12))
+      : t('liveOkIssuer', c.hostname, issuerPin.slice(0, 12));
+    return `<div class="live-check-line live-ok">&#x2713; ${esc(text)}${probed}</div>`;
   }
   if (c.reachable) {
-    const intermediate = (pins || []).length && (c.livePins || []).slice(1).some(p => pins.includes(p));
+    const intermediate = Boolean(issuerPin);
     return `<div class="live-check-line live-bad">&#x2717; ${esc(t('liveNotInSet', c.hostname, leaf.slice(0, 12)))}${probed}
         ${leaf ? `<div class="live-leaf"><span class="mono">sha256/${esc(leaf)}</span>
           <button class="copy-btn" data-action="copyText" data-arg0="${esc(leaf)}">${t('copy')}</button></div>` : ''}
-        ${intermediate ? `<div class="muted">${t('liveIntermediateOnly')}</div>` : ''}
+        ${intermediate ? `<div class="muted">${t('liveIssuerNoChain')}</div>` : ''}
       </div>`;
   }
   return `<div class="live-check-line live-warn">&#x26A0; ${esc(t('liveUnreachable', c.hostname, c.error || '?'))}${probed}</div>`;
