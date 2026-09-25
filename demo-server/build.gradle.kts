@@ -21,9 +21,12 @@ dependencies {
     implementation("io.ktor:ktor-server-status-pages:3.0.3")
     implementation("io.ktor:ktor-server-call-logging:3.0.3")
     implementation("io.ktor:ktor-server-default-headers:3.0.3")
+    // Ktor 3.0.3 brings Netty 4.1.116, which has known advisories (HTTP/2 resets,
+    // request smuggling, SNI handling): the newest 4.1 patch, same line as Ktor's.
+    implementation(platform("io.netty:netty-bom:4.1.138.Final"))
 
     // Logging
-    implementation("ch.qos.logback:logback-classic:1.5.12")
+    implementation("ch.qos.logback:logback-classic:1.5.38")
 
     // Kotlinx serialization
     implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.7.3")
@@ -32,10 +35,12 @@ dependencies {
     implementation("org.xerial:sqlite-jdbc:3.45.1.0")
     implementation("org.flywaydb:flyway-core:12.3.0")
     implementation("org.flywaydb:flyway-database-nc-sqlite:12.3.0")
+    // Flyway 12.3 brings Jackson 3.1.0 (databind/core advisories): the newest 3.1 patch.
+    implementation(platform("tools.jackson:jackson-bom:3.1.7"))
 
     // Bouncy Castle (sertifika üretme)
-    implementation("org.bouncycastle:bcprov-jdk18on:1.79")
-    implementation("org.bouncycastle:bcpkix-jdk18on:1.79")
+    implementation("org.bouncycastle:bcprov-jdk18on:1.86")
+    implementation("org.bouncycastle:bcpkix-jdk18on:1.86")
 
     // OkHttp (health check + URL'den sertifika çekme)
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
