@@ -33,6 +33,7 @@ android {
         fun field(name: String, key: String) = buildConfigField("String", name, "\"${hostValue(key)}\"")
         field("HOST_IP", "host.ip")
         field("HOST_HTTP_PORT", "host.httpPort")
+        field("HOST_MGMT_TLS_PORT", "host.managementTlsPort")
         field("HOST_HTTPS_PORT", "host.httpsPort")
         field("HOST_MTLS_PORT", "host.mtlsPort")
         field("HOST_BOOTSTRAP_PIN_PRIMARY", "host.bootstrapPinPrimary")

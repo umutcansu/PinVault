@@ -75,11 +75,12 @@ public class App extends Application {
             "https://" + SAMPLE_HOST_IP + ":" + BuildConfig.HOST_HTTPS_PORT + "/";
 
     /**
-     * Telemetri (bağlantı olayları) için yönetim API'si. Düz HTTP; izni
-     * res/xml/network_security_config.xml yalnızca bu IP için verir.
+     * Telemetri (bağlantı olayları) için yönetim API'sinin şifreli portu. Host
+     * onu config sunucusuyla aynı sertifikayla sunar; istemci başlangıç pin'leriyle
+     * pinlenir (PinVaultBackendReporter.pinnedClient). Düz HTTP hiçbir yerde açık değil.
      */
     public static final String MANAGEMENT_URL =
-            "http://" + SAMPLE_HOST_IP + ":" + BuildConfig.HOST_HTTP_PORT + "/";
+            "https://" + SAMPLE_HOST_IP + ":" + BuildConfig.HOST_MGMT_TLS_PORT + "/";
 
     /**
      * mTLS Config API: istemci sertifikası olmadan TLS el sıkışmasını kabul
@@ -470,10 +471,9 @@ public class App extends Application {
      * kendi formatını buradan gönder.
      */
     private PinVaultConnectionListener listener() {
-        OkHttpClient telemetryClient = new OkHttpClient.Builder()
-                .connectTimeout(5, TimeUnit.SECONDS)
-                .readTimeout(5, TimeUnit.SECONDS)
-                .build();
+        // Raporlar config sunucusunun sertifikasıyla sunulan porta gider: aynı pin'ler.
+        OkHttpClient telemetryClient = PinVaultBackendReporter.pinnedClient(SAMPLE_HOST_IP,
+                java.util.Arrays.asList(BuildConfig.HOST_BOOTSTRAP_PIN_PRIMARY, BuildConfig.HOST_BOOTSTRAP_PIN_BACKUP));
         PinVaultBackendReporter reporter = new PinVaultBackendReporter(
                 MANAGEMENT_URL, telemetryClient, AppSettings.reportSuccess(this), AppSettings.dedupMs(this));
         return event -> {
