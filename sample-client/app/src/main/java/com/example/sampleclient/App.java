@@ -21,6 +21,7 @@ import java.util.concurrent.TimeUnit;
 import io.github.umutcansu.pinvault.PinVault;
 import io.github.umutcansu.pinvault.api.CertificateConfigApi;
 import io.github.umutcansu.pinvault.api.PinVaultConnectionListener;
+import io.github.umutcansu.pinvault.model.ConfigApiBlock;
 import io.github.umutcansu.pinvault.model.HostPin;
 import io.github.umutcansu.pinvault.model.InitResult;
 import io.github.umutcansu.pinvault.model.PinVaultConfig;
@@ -115,7 +116,7 @@ public class App extends Application {
     public static final String VAULT_SECRET = "sample-secret";
     /** Cihazın RSA anahtarıyla uçtan uca şifreli gelir. */
     public static final String VAULT_E2E = "sample-e2e";
-    /** Sunucuda şifreli saklanır (at_rest); kabloda ve cihazda düz. */
+    /** Sunucuda şifreli saklanır (at_rest); ağda yalnızca TLS, cihazda düz. */
     public static final String VAULT_ATREST = "sample-atrest";
     /** Yalnızca yönetim anahtarıyla inebilir; cihazdan her zaman reddedilir. */
     public static final String VAULT_ADMIN = "sample-admin";
@@ -259,14 +260,16 @@ public class App extends Application {
         // Ayarlardaki "yalnızca hedef host'un pin'leri" anahtarı: açıkken TLS
         // bloğu wantPinsFor ile sunucudan yalnızca hedefin pin'lerini ister.
         boolean scopedPins = AppSettings.scopedPins(this);
+        // Ayarlardaki "iki imza iste" (m-of-n): config başına gereken imza sayısı.
+        int requiredSignatures = AppSettings.requiredSignatures(this);
 
         PinVaultConfig.Builder builder = new PinVaultConfig.Builder();
         if (mtlsFirst) {
-            addMtlsBlock(builder, bootstrap, manualP12);
-            addTlsBlock(builder, bootstrap, scopedPins);
+            addMtlsBlock(builder, bootstrap, manualP12, requiredSignatures);
+            addTlsBlock(builder, bootstrap, scopedPins, requiredSignatures);
         } else {
-            addTlsBlock(builder, bootstrap, scopedPins);
-            if (hasMtlsCredential) addMtlsBlock(builder, bootstrap, manualP12);
+            addTlsBlock(builder, bootstrap, scopedPins, requiredSignatures);
+            if (hasMtlsCredential) addMtlsBlock(builder, bootstrap, manualP12, requiredSignatures);
         }
         addVaultFiles(builder, hasMtlsCredential);
 
@@ -297,7 +300,7 @@ public class App extends Application {
             return;
         }
         PinVaultConfig.Builder builder = new PinVaultConfig.Builder();
-        addTlsBlock(builder, hostBootstrapPin(), false);
+        addTlsBlock(builder, hostBootstrapPin(), false, 1);
         PinVaultConfig config = builder
                 .deviceAlias(deviceAlias())
                 .onConnectionEvent(listener())
@@ -353,12 +356,35 @@ public class App extends Application {
         );
     }
 
-    private static void addTlsBlock(PinVaultConfig.Builder builder, HostPin bootstrap, boolean scopedPins) {
+    /**
+     * İmza doğrulaması. Zorunlu kısım: imzasız ya da süresi geçmiş config
+     * reddedilir; vault dosyalarının içerik imzası da aynı anahtarlarla
+     * doğrulanır. İsteğe bağlı katmanlar sample-host.properties'ten gelir:
+     * birden çok güvenilen anahtar (sunucunun anahtarı + çevrimdışı yedek),
+     * kurtarma anahtarları (sunucunun taşıdığı imzalı anahtar setiyle döndürme
+     * ve iptal) ve config başına gereken imza sayısı (m-of-n, Ayarlar'dan).
+     */
+    private static void applySigning(ConfigApiBlock.Builder block, int requiredSignatures) {
+        String[] keys = splitKeys(BuildConfig.HOST_SIGNING_PUBLIC_KEYS);
+        if (keys.length > 0) block.signaturePublicKeys(keys);
+        else block.signaturePublicKey(BuildConfig.HOST_SIGNING_PUBLIC_KEY);
+        if (requiredSignatures > 1) block.requiredSignatures(requiredSignatures);
+        String[] recovery = splitKeys(BuildConfig.HOST_RECOVERY_PUBLIC_KEYS);
+        if (recovery.length > 0) block.recoveryPublicKeys(recovery);
+    }
+
+    private static String[] splitKeys(String csv) {
+        List<String> keys = new ArrayList<>();
+        for (String k : csv.split(",")) {
+            if (!k.trim().isEmpty()) keys.add(k.trim());
+        }
+        return keys.toArray(new String[0]);
+    }
+
+    private static void addTlsBlock(PinVaultConfig.Builder builder, HostPin bootstrap, boolean scopedPins, int requiredSignatures) {
         builder.configApi(CONFIG_API_ID, CONFIG_BASE_URL, block -> {
             block.bootstrapPins(Collections.singletonList(bootstrap));
-            // Zorunlu: imzasız ya da süresi geçmiş config reddedilir. Vault
-            // dosyalarının içerik imzası da bu anahtarla doğrulanır.
-            block.signaturePublicKey(BuildConfig.HOST_SIGNING_PUBLIC_KEY);
+            applySigning(block, requiredSignatures);
             // Pin kapsamı: yalnızca bu host'un pin'lerini iste. Sunucu isteği
             // cihazın host ACL'iyle kesiştirir; izin yoksa hiç pin dönmez.
             if (scopedPins) block.wantPinsFor(TARGET_HOST);
@@ -366,10 +392,10 @@ public class App extends Application {
         });
     }
 
-    private static void addMtlsBlock(PinVaultConfig.Builder builder, HostPin bootstrap, @Nullable byte[] manualP12) {
+    private static void addMtlsBlock(PinVaultConfig.Builder builder, HostPin bootstrap, @Nullable byte[] manualP12, int requiredSignatures) {
         builder.configApi(MTLS_API_ID, MTLS_BASE_URL, block -> {
             block.bootstrapPins(Collections.singletonList(bootstrap));
-            block.signaturePublicKey(BuildConfig.HOST_SIGNING_PUBLIC_KEY);
+            applySigning(block, requiredSignatures);
             // Kayıtla alınan sertifika kütüphanenin şifreli deposundan gelir;
             // elle yüklenen P12 varsa onun yerine bu kullanılır.
             if (manualP12 != null) block.clientKeystore(manualP12, MANUAL_P12_PASSWORD);
@@ -403,7 +429,7 @@ public class App extends Application {
                 .vaultFile(VAULT_ATREST, file -> {
                     file.configApi(CONFIG_API_ID);
                     file.endpoint(vaultPath(VAULT_ATREST));
-                    // Sunucu diskte şifreli tutar, kabloda düz gönderir; cihaz için plain ile aynı.
+                    // Sunucu diskte şifreli tutar, ek şifreleme olmadan (TLS ile) gönderir; cihaz için plain ile aynı.
                     file.encryption(VaultFileEncryption.AT_REST);
                     return Unit.INSTANCE;
                 })

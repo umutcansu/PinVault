@@ -38,6 +38,12 @@ android {
         field("HOST_BOOTSTRAP_PIN_PRIMARY", "host.bootstrapPinPrimary")
         field("HOST_BOOTSTRAP_PIN_BACKUP", "host.bootstrapPinBackup")
         field("HOST_SIGNING_PUBLIC_KEY", "host.signingPublicKey")
+        // İsteğe bağlı imza katmanları (boşsa yalnızca HOST_SIGNING_PUBLIC_KEY):
+        // güvenilen bütün imza anahtarları (yedek dahil), kurtarma anahtarları
+        // (anahtar seti = döndürme/iptal) ve config başına gereken imza sayısı.
+        field("HOST_SIGNING_PUBLIC_KEYS", "host.signingPublicKeys")
+        field("HOST_RECOVERY_PUBLIC_KEYS", "host.recoveryPublicKeys")
+        buildConfigField("int", "HOST_REQUIRED_SIGNATURES", hostValue("host.requiredSignatures").ifEmpty { "1" })
         field("TARGET_HOST", "target.host")
         field("TARGET_PINS", "target.pins")
         field("MOCK_TLS_HOST", "mock.tlsHost")

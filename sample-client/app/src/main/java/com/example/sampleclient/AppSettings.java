@@ -40,6 +40,7 @@ public final class AppSettings {
     private static final String KEY_DEDUP_MS = "telemetry_dedup_ms";
     private static final String KEY_MANUAL_P12 = "mtls_manual_p12";
     private static final String KEY_SCOPED_PINS = "scoped_pins";
+    private static final String KEY_REQUIRED_SIGNATURES = "required_signatures";
 
     private AppSettings() {}
 
@@ -83,6 +84,18 @@ public final class AppSettings {
      * ACL'ine göre filtreler. ACL boşsa cihaz hiç pin alamaz ve config
      * reddedilir — pin kapsamının uçtan uca gösterimi.
      */
+    /**
+     * Config başına gereken imza sayısı (m-of-n). Varsayılan
+     * sample-host.properties'teki host.requiredSignatures (yoksa 1).
+     */
+    public static int requiredSignatures(Context context) {
+        return prefs(context).getInt(KEY_REQUIRED_SIGNATURES, BuildConfig.HOST_REQUIRED_SIGNATURES);
+    }
+
+    public static void setRequiredSignatures(Context context, int value) {
+        prefs(context).edit().putInt(KEY_REQUIRED_SIGNATURES, value).apply();
+    }
+
     public static boolean scopedPins(Context context) {
         return prefs(context).getBoolean(KEY_SCOPED_PINS, false);
     }

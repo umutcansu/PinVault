@@ -20,7 +20,7 @@ import io.github.umutcansu.pinvault.model.VaultFileResult;
  *       token dashboard'da "Cihaz ID" için üretilir ve burada girilir.</li>
  *   <li>{@link App#VAULT_E2E} cihazın Android Keystore'daki RSA anahtarıyla
  *       şifrelenmiş gelir; yalnızca bu cihaz çözebilir.</li>
- *   <li>{@link App#VAULT_ATREST} sunucuda şifreli saklanır, kabloda düz gelir.</li>
+ *   <li>{@link App#VAULT_ATREST} sunucuda şifreli saklanır, telefona ek şifreleme olmadan (TLS ile) gelir.</li>
  *   <li>{@link App#VAULT_ADMIN} yalnızca yönetim anahtarıyla inebilir; cihazdan
  *       her zaman reddedilir.</li>
  *   <li>{@link App#VAULT_MODEL} şifreli dosya deposunda tutulur ve config ile

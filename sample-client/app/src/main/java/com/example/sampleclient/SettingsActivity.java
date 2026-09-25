@@ -31,6 +31,7 @@ public class SettingsActivity extends ActionActivity {
     private RadioGroup modeGroup;
     private CheckBox reportSuccessCheck;
     private CheckBox scopedPinsCheck;
+    private CheckBox twoSignaturesCheck;
     private EditText dedupMsInput;
     private Button applyButton;
     private Button settingsClientButton;
@@ -52,6 +53,7 @@ public class SettingsActivity extends ActionActivity {
         modeGroup = findViewById(R.id.modeGroup);
         reportSuccessCheck = findViewById(R.id.reportSuccessCheck);
         scopedPinsCheck = findViewById(R.id.scopedPinsCheck);
+        twoSignaturesCheck = findViewById(R.id.twoSignaturesCheck);
         dedupMsInput = findViewById(R.id.dedupMsInput);
         applyButton = findViewById(R.id.applyButton);
         settingsClientButton = findViewById(R.id.settingsClientButton);
@@ -65,6 +67,7 @@ public class SettingsActivity extends ActionActivity {
         ((RadioButton) findViewById(radioFor(AppSettings.mode(this)))).setChecked(true);
         reportSuccessCheck.setChecked(AppSettings.reportSuccess(this));
         scopedPinsCheck.setChecked(AppSettings.scopedPins(this));
+        twoSignaturesCheck.setChecked(AppSettings.requiredSignatures(this) >= 2);
         dedupMsInput.setText(String.valueOf(AppSettings.dedupMs(this)));
         statusView.setText(getString(R.string.settings_intro, App.ACTIVE_MODE.label()));
 
@@ -129,13 +132,16 @@ public class SettingsActivity extends ActionActivity {
         AppSettings.setScopedPins(this, scopedPinsCheck.isChecked());
         final long dedupMs = dedup;
         final boolean scoped = scopedPinsCheck.isChecked();
+        // m-of-n: işaretliyken her config iki ayrı anahtardan imza taşımalı.
+        final int required = twoSignaturesCheck.isChecked() ? 2 : 1;
+        AppSettings.setRequiredSignatures(this, required);
         runAction(getString(R.string.settings_applying, mode.label()), () -> {
             ((App) getApplication()).applyMode(mode);
             InitState.Snapshot s = App.INIT.awaitSettled(INIT_WAIT_MS);
             return getString(R.string.settings_applied, mode.label(),
                     reportSuccessCheck.isChecked() ? "evet" : "hayır", dedupMs,
                     scoped ? "yalnızca " + App.TARGET_HOST : "bütün host'lar",
-                    describeInit(s));
+                    describeInit(s), required);
         });
     }
 

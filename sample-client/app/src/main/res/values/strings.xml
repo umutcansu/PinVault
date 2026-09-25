@@ -7,7 +7,7 @@
     <string name="clear_log">Olay listesini temizle</string>
 
     <string name="status_initializing">PinVault başlatılıyor… (mod: %1$s)\n\nPin kaynağı: %2$s\nBootstrap pin\'leriyle bağlanılıyor, imzalı config doğrulanıyor.</string>
-    <string name="status_ready">✅ Hazır — config %1$s\nMod: %2$s\n\nHedef: %3$s\nPin kaynağı: %4$s\n%5$s</string>
+    <string name="status_ready">✅ Hazır — config %1$s\nMod: %2$s\n\nHedef: %3$s\nPin kaynağı: %4$s\n%5$s\n%6$s</string>
     <string name="status_failed">❌ PinVault başlatılamadı\n%1$s\n\nMod: %2$s\nPin kaynağı: %3$s\nHost ayakta mı? (docker compose ps)</string>
     <string name="status_no_pins">(config\'te pin\'li host yok)</string>
     <string name="init_mtls_requires_cert">mTLS config modu için istemci sertifikası gerekir: önce TLS modunda kayıt ol ya da P12 içe aktar.</string>
@@ -83,7 +83,7 @@
     <string name="vault_current">✅ %1$s güncel (v%2$d)\n\n%3$s</string>
     <string name="vault_failed">❌ %1$s indirilemedi\n%2$s</string>
     <string name="vault_e2e_note">\n(cihaz anahtarıyla çözüldü)</string>
-    <string name="vault_atrest_note">\n(sunucuda şifreli saklanır, kabloda düz)</string>
+    <string name="vault_atrest_note">\n(sunucuda şifreli saklanır; telefona ek şifreleme olmadan, TLS ile gelir)</string>
     <string name="vault_model_note">\n(şifreli dosya deposu: files/vault_files)</string>
     <string name="vault_mtls_note">\n(mTLS bloğu: istemci sertifikası + token)</string>
     <string name="vault_syncing">Tümü eşitleniyor…</string>
@@ -114,7 +114,10 @@
     <string name="settings_scoped_pins">Yalnızca hedef host\'un pin\'lerini iste (wantPinsFor)</string>
     <string name="settings_apply">Uygula ve yeniden başlat</string>
     <string name="settings_applying">Uygulanıyor: %1$s…</string>
-    <string name="settings_applied">✅ Ayarlar uygulandı\nMod: %1$s\nBaşarı raporu: %2$s, tekrar bastırma: %3$d ms\nPin kapsamı: %4$s\nPinVault: %5$s</string>
+    <string name="settings_applied">✅ Ayarlar uygulandı\nMod: %1$s\nBaşarı raporu: %2$s, tekrar bastırma: %3$d ms\nPin kapsamı: %4$s\nGereken imza: %6$d\nPinVault: %5$s</string>
+    <string name="settings_two_signatures">İki imza iste (m-of-n: her config iki ayrı anahtarla imzalı olmalı)</string>
+    <string name="signing_status">🔏 İmza: %1$d imza gerekli · %2$d güvenilen anahtar · anahtar seti v%3$d\nSon config\'i imzalayan: %4$s</string>
+    <string name="signing_status_none">🔏 İmza doğrulaması yok (allowUnsigned ya da statik mod)</string>
     <string name="settings_advanced_title">Gelişmiş</string>
     <string name="settings_client_test">Özel ayarlı istemci</string>
     <string name="settings_reset">Sıfırla (reset)</string>

@@ -77,6 +77,28 @@ public class StorageActivity extends AppCompatActivity {
         });
     }
 
+    /** Tam anahtar kimlikleri: uygulanan anahtar seti ve iptal edilen anahtarlar burada görünür. */
+    private String describeSigningDetail() {
+        io.github.umutcansu.pinvault.model.SigningStatus st;
+        try {
+            st = PinVault.INSTANCE.signingStatus(null);
+        } catch (IllegalStateException e) {
+            return "(PinVault başlatılmadı)";
+        }
+        if (st == null) return "(imza doğrulaması yok)";
+        StringBuilder sb = new StringBuilder();
+        sb.append("gereken imza: ").append(st.getRequiredSignatures())
+                .append(", anahtar seti: v").append(st.getKeySetVersion())
+                .append(st.getKeySetVersion() == 0 ? " (APK'ya gömülü anahtarlar)" : " (sunucudan gelen, kurtarma anahtarıyla imzalı)").append('\n');
+        sb.append("güvenilen anahtarlar:\n");
+        for (String id : st.getTrustedKeyIds()) sb.append("  • ").append(id).append('\n');
+        sb.append("kurtarma anahtarları: ").append(st.getRecoveryKeyIds().isEmpty() ? "yok\n" : "\n");
+        for (String id : st.getRecoveryKeyIds()) sb.append("  • ").append(id).append('\n');
+        sb.append("son config'i imzalayan: ");
+        sb.append(st.getLastConfigSignedBy().isEmpty() ? "—" : String.join(", ", st.getLastConfigSignedBy()));
+        return sb.toString();
+    }
+
     private String describe() throws Exception {
         StringBuilder sb = new StringBuilder();
         sb.append("Mod: ").append(App.ACTIVE_MODE.label()).append('\n');
@@ -126,6 +148,9 @@ public class StorageActivity extends AppCompatActivity {
                         .append(ivLen).append("] ").append(hex(head, 1, Math.min(ivLen, 12))).append(" …\n");
             }
         }
+
+        sb.append("\n== İmza doğrulaması (PinVault.signingStatus) ==\n");
+        sb.append(describeSigningDetail()).append('\n');
 
         sb.append("\n== Android Keystore ==\n");
         KeyStore ks = KeyStore.getInstance("AndroidKeyStore");

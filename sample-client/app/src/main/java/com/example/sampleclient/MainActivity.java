@@ -96,7 +96,8 @@ public class MainActivity extends ActionActivity {
                 break;
             case READY:
                 statusView.setText(getString(R.string.status_ready,
-                        s.detail, mode, App.TARGET_HOST, App.configSourceLabel(), describeHostVersions()));
+                        s.detail, mode, App.TARGET_HOST, App.configSourceLabel(), describeHostVersions(),
+                        describeSigning()));
                 refreshButton.setText(R.string.refresh_config);
                 break;
             case FAILED:
@@ -114,6 +115,34 @@ public class MainActivity extends ActionActivity {
         testButton.setEnabled(ready && !isBusy());
         prodStyleButton.setEnabled(ready && !isBusy());
         refreshButton.setEnabled(phase != InitState.Phase.INITIALIZING && !isBusy());
+    }
+
+    /**
+     * Kütüphanenin şu anki imza doğrulaması: gereken imza sayısı, güvendiği
+     * anahtarlar, uyguladığı anahtar seti ve son config'i imzalayan anahtar
+     * kimlikleri (SHA-256(SPKI) — sunucunun GET /api/v1/signing-key'te
+     * gösterdiği kimliklerle karşılaştırılabilir).
+     */
+    static String describeSigning(android.content.Context context) {
+        io.github.umutcansu.pinvault.model.SigningStatus st;
+        try {
+            st = PinVault.INSTANCE.signingStatus(null);
+        } catch (IllegalStateException e) {
+            st = null;
+        }
+        if (st == null) return context.getString(R.string.signing_status_none);
+        StringBuilder signers = new StringBuilder();
+        for (String id : st.getLastConfigSignedBy()) {
+            if (signers.length() > 0) signers.append(", ");
+            signers.append(id, 0, Math.min(12, id.length())).append("…");
+        }
+        return context.getString(R.string.signing_status, st.getRequiredSignatures(),
+                st.getTrustedKeyIds().size(), st.getKeySetVersion(),
+                signers.length() > 0 ? signers.toString() : "—");
+    }
+
+    private String describeSigning() {
+        return describeSigning(this);
     }
 
     private String describeHostVersions() {
@@ -188,7 +217,7 @@ public class MainActivity extends ActionActivity {
             } else {
                 text = getString(R.string.refresh_current);
             }
-            return text + "\n\n" + describeHostVersions();
+            return text + "\n\n" + describeHostVersions() + "\n" + describeSigning();
         });
     }
 

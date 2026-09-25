@@ -73,6 +73,12 @@
             android:layout_height="wrap_content"
             android:text="@string/settings_scoped_pins" />
 
+        <CheckBox
+            android:id="@+id/twoSignaturesCheck"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="@string/settings_two_signatures" />
+
         <EditText
             android:id="@+id/dedupMsInput"
             android:layout_width="match_parent"
