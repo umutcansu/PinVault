@@ -215,7 +215,7 @@ Sunucu, etkin imzalayıcılarından yeterince anahtar içermeyen bir seti redded
 
 **İki kişi onayı.** `PIN_CHANGE_APPROVALS=2`: pin, force, sertifika ve imza anahtarı değişiklikleri hemen uygulanmaz; başka bir yönetici dashboard'daki "Onaylar" bölümünden onaylayınca uygulanır. Kimse kendi isteğini onaylayamaz, paylaşılan `API_KEY` onay veremez. Bu modda cihazlara açık Config API portları pin yazmalarını reddeder.
 
-**Canlı sertifika kontrolü.** `PIN_LIVE_CHECK=enforce`: yeni ya da değişen bir pin seti, host'un şu an sunduğu sertifikanın (zincirin ilk halkası) pin'ini içermiyorsa (yazım hatası, yanlış host, ara sertifika pin'i) kaydedilmez; `warn` kaydeder ama uyarır. Sunucunun doğrudan çözemediği adlar için `LIVE_CHECK_HOST_MAP="mock-tls.sample=127.0.0.1:8443"`. Acil durumda gerekçe yazılarak yine de kaydedilebilir; gerekçe denetim kaydına düşer.
+**Canlı sertifika kontrolü.** `PIN_LIVE_CHECK=enforce`: yeni ya da değişen bir pin seti, host'un şu an sunduğu sertifikayı telefonun kabul edeceği bir pin içermiyorsa (sertifikanın kendi pin'i ya da sertifikanın gerçekten bağlandığı CA'nın pin'i; yazım hatası, yanlış host) kaydedilmez; `warn` kaydeder ama uyarır. Sunucunun doğrudan çözemediği adlar için `LIVE_CHECK_HOST_MAP="mock-tls.sample=127.0.0.1:8443"`. Acil durumda gerekçe yazılarak yine de kaydedilebilir; gerekçe denetim kaydına düşer.
 
 ---
 
