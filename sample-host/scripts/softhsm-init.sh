@@ -27,7 +27,7 @@ cd "${ROOT_DIR}"
 LIB=/usr/lib/softhsm/libsofthsm2.so
 LABEL=pinvault
 
-exec_in() { docker compose exec -T pinvault-host "$@"; }
+exec_in() { docker compose exec -T -u pinvault pinvault-host "$@"; }
 
 pin_from_env() { sed -n 's/^PKCS11_PIN=//p' .env 2>/dev/null | tail -1; }
 

@@ -61,6 +61,13 @@ RUN set -eux; \
 WORKDIR /data
 RUN mkdir -p /data/db /data/certs
 
+# Sunucu root olarak çalışmaz: entrypoint.sh data/ bağlamasının sahipliğini bu
+# kullanıcıya verip yetkileri bırakır (setpriv).
+RUN groupadd --system --gid 10001 pinvault \
+    && useradd --system --uid 10001 --gid pinvault --home-dir /data --no-create-home --shell /usr/sbin/nologin pinvault
+COPY entrypoint.sh /usr/local/bin/pinvault-entrypoint
+RUN chmod 755 /usr/local/bin/pinvault-entrypoint
+
 ENV PORT=8080 \
     HTTPS_PORT=8081 \
     DB_PATH=/data/db/pinvault.db \
@@ -69,10 +76,11 @@ ENV PORT=8080 \
     ENROLLMENT_MODE=token \
     SOFTHSM2_CONF=/data/softhsm/softhsm2.conf
 
-EXPOSE 8080 8081
+EXPOSE 8080 8081 8082
 
 # Flyway migration ilk açılışta birkaç saniye sürebilir; start-period bunu absorbe eder.
 HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
     CMD curl -fsS "http://localhost:${PORT:-8080}/health" || exit 1
 
-ENTRYPOINT ["/usr/local/bin/pinvault-demo-server"]
+ENTRYPOINT ["/usr/local/bin/pinvault-entrypoint"]
+CMD ["/usr/local/bin/pinvault-demo-server"]

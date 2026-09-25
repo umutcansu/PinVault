@@ -152,6 +152,28 @@ else
     echo "    ATLA  mTLS Config API yok; önce ./scripts/provision.sh"
 fi
 
+echo "[7] Yönetim API'si: düz HTTP yalnızca bu makinede, ağa şifreli port"
+MGMT_TLS_PORT="${HOST_MANAGEMENT_TLS_PORT:-6655}"
+bind="$(docker compose port pinvault-host 8080 2>/dev/null | head -1)"
+case "${bind}" in
+    127.0.0.1:*) ok "düz HTTP yönetim portu yalnızca bu makineye açık (${bind})" ;;
+    "") bad "düz HTTP yönetim portu yayımlanmamış" ;;
+    *) bad "düz HTTP yönetim portu ağa açık (${bind}); API anahtarı şifresiz gider — HOST_HTTP_BIND=127.0.0.1" ;;
+esac
+echo | openssl s_client -connect "localhost:${MGMT_TLS_PORT}" -servername localhost 2>/dev/null \
+    | openssl x509 > "${tmp}/mgmt.pem" 2>/dev/null
+if [ -s "${tmp}/mgmt.pem" ]; then
+    mgmt_pin="$(openssl x509 -in "${tmp}/mgmt.pem" -pubkey -noout \
+        | openssl pkey -pubin -outform der | openssl dgst -sha256 -binary | openssl base64 -A)"
+    if grep -qxF "${mgmt_pin}" data/certs/demo-server.pins 2>/dev/null; then
+        ok "şifreli yönetim portu (:${MGMT_TLS_PORT}) config sunucusunun sertifikasını sunuyor: telefonlar aynı pin'lerle raporlar"
+    else
+        bad "şifreli yönetim portunun pin'i (${mgmt_pin:0:12}…) demo-server.pins içinde yok"
+    fi
+else
+    bad "şifreli yönetim portunda (:${MGMT_TLS_PORT}) TLS el sıkışması yapılamadı"
+fi
+
 echo ""
 echo "== Sonuç: ${pass} PASS, ${fail} FAIL =="
 [ "${fail}" -eq 0 ]

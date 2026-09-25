@@ -45,19 +45,20 @@ Kaynak değiştikten sonra `docker compose up -d --build` yeterli. Yerel dizinde
 
 | Dış port | Container | Protokol | İçerik |
 |---|---|---|---|
-| `6650` | `8080` | HTTP | Yönetim API'si, web dashboard, telemetri uçları |
+| `6650` | `8080` | HTTP, **yalnızca bu makine** | Yönetim API'si ve web dashboard (`HOST_HTTP_BIND=127.0.0.1`) |
+| `6655` | `8082` | HTTPS, sunucu sertifikası | Yönetim API'si ağa şifreli: telefonların raporları (telemetri, pinli) ve başka makineden dashboard |
 | `6651` | `8081` | HTTPS, self-signed | Config API: `/api/v1/certificate-config`, enrollment, vault |
 | `6652` | `8092` | HTTPS + istemci sertifikası | mTLS Config API (`provision.sh` açar) |
 | `6653` | `8443` | HTTPS, sunucu üretimi sertifika | Mock TLS hedef host `mock-tls.sample` (`provision.sh` açar) |
 | `6654` | `8444` | HTTPS + istemci sertifikası | Mock mTLS hedef host `mock-mtls.sample` (`provision.sh` açar) |
 
-`.env` içinde `HOST_HTTP_PORT` / `HOST_HTTPS_PORT` / `HOST_MTLS_PORT` / `HOST_MOCK_TLS_PORT` / `HOST_MOCK_MTLS_PORT` ile değişir. Mock host adları gerçek DNS'te yoktur; örnek uygulama onları `host.ip`'ye çözümler.
+`.env` içinde `HOST_HTTP_PORT` / `HOST_MANAGEMENT_TLS_PORT` / `HOST_HTTPS_PORT` / `HOST_MTLS_PORT` / `HOST_MOCK_TLS_PORT` / `HOST_MOCK_MTLS_PORT` ile değişir. Düz HTTP yönetim portu ağa kapalıdır; API anahtarı ağda şifresiz dolaşmaz. Başka bir makineden yönetmek için `https://<host>:6655` (tarayıcı kendinden imzalı sertifika uyarısı verir) ya da SSH tüneli kullanılır. Mock host adları gerçek DNS'te yoktur; örnek uygulama onları `host.ip`'ye çözümler.
 
 ---
 
 ## Güvenlik modeli
 
-- **API anahtarı zorunlu.** Anonim admin kapalı; `API_KEY` boşsa compose başlamaz. Yönetim uçları iki portta da `X-API-Key` ister. Cihazların çağırdığı uçlar (config indirme, enrollment, vault indirme, telemetri) anahtarsız açıktır.
+- **API anahtarı zorunlu.** Anonim admin kapalı; `API_KEY` boşsa compose başlamaz. Yönetim uçları iki portta da `X-API-Key` ister. Cihazların çağırdığı uçlar (config indirme, enrollment, vault indirme, telemetri) anahtarsız açıktır; hepsi TLS üzerinden ve pinli.
 - **Config imzalı.** Her config cevabı `data/signing-key.pem` ile imzalanır ve `issuedAt/expiresAt` taşır. Client imzasız, süresi geçmiş ya da eski bir config'i uygulamaz.
 - **Signing key host'ta kalır.** `setup.sh` anahtarı `0600` izinle üretir, container'a salt-okunur bağlanır ve git'e girmez. Public yarısı client'a gömülür.
 - **Enrollment token ile.** `ENROLLMENT_MODE=token`: mTLS sertifikası yalnızca admin'in ürettiği tek kullanımlık token'la alınır.
@@ -231,7 +232,7 @@ Bu host bir örnektir. Üretimde:
 - `KEYSTORE_PASSWORD`'ü `setup.sh` üretir ve hiçbir cihaza gitmez; elle kurulan P12 dosyaları için `CLIENT_P12_PASSWORD`'ü de değiştir (varsayılanı `changeit`).
 - `VAULT_AT_REST_PASSWORD`'ü ayarla (aşağıdaki uyarı).
 - SQLite yerine PostgreSQL gibi bir veritabanı düşün.
-- Container'ı root olmayan bir kullanıcıyla çalıştır. Bu örnek, bind mount izinleriyle uğraşmamak için root kalır.
+- Container root olarak çalışmaz: `entrypoint.sh` `data/` bağlamasının sahipliğini `pinvault` kullanıcısına (uid 10001) verip yetkileri bırakır. Linux'ta bu, `data/` dizininin host'ta da uid 10001'e ait olması demektir.
 
 ## Yapı
 

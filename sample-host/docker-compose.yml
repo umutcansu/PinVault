@@ -20,7 +20,11 @@ services:
     # alt süreçleri ve zaman aşımında öldürülenler zombi kalmasın.
     init: true
     ports:
-      - "${HOST_HTTP_PORT:-6650}:8080"   # Management API + web dashboard (HTTP)
+      # Yönetim API + dashboard (düz HTTP): varsayılan olarak yalnızca bu makineden
+      # (HOST_HTTP_BIND=127.0.0.1). Telefonların raporları ve uzaktan yönetim şifreli
+      # porttan (HOST_MANAGEMENT_TLS_PORT) gider.
+      - "${HOST_HTTP_BIND:-127.0.0.1}:${HOST_HTTP_PORT:-6650}:8080"
+      - "${HOST_MANAGEMENT_TLS_PORT:-6655}:8082"  # Yönetim API (TLS, sunucu sertifikası; telefonlar pinler)
       - "${HOST_HTTPS_PORT:-6651}:8081"  # Config API (TLS, self-signed; client'lar pin'ler)
       - "${HOST_MTLS_PORT:-6652}:8092"   # mTLS Config API (scripts/provision.sh oluşturur)
       - "${HOST_MOCK_TLS_PORT:-6653}:8443"   # Mock TLS hedef host (mock-tls.sample)
@@ -28,6 +32,7 @@ services:
     environment:
       PORT: "8080"
       HTTPS_PORT: "8081"
+      MANAGEMENT_HTTPS_PORT: "8082"
       DB_PATH: /data/db/pinvault.db
       CERTS_DIR: /data/certs
       SIGNING_KEY_PATH: /data/signing-key.pem

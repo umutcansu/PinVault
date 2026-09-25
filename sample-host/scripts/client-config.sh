@@ -31,6 +31,7 @@ fi
 IP="${HOST_LAN_IP:?HOST_LAN_IP .env içinde yok — ./scripts/setup.sh}"
 HTTPS_PORT="${HOST_HTTPS_PORT:-6651}"
 HTTP_PORT="${HOST_HTTP_PORT:-6650}"
+MGMT_TLS_PORT="${HOST_MANAGEMENT_TLS_PORT:-6655}"
 MTLS_PORT="${HOST_MTLS_PORT:-6652}"
 MOCK_TLS_PORT="${HOST_MOCK_TLS_PORT:-6653}"
 MOCK_MTLS_PORT="${HOST_MOCK_MTLS_PORT:-6654}"
@@ -80,6 +81,7 @@ if [ "${1:-}" = "--properties" ]; then
 # SamplePinVaultHost değerleri; scripts/client-config.sh --properties tarafından üretildi.
 host.ip=${IP}
 host.httpPort=${HTTP_PORT}
+host.managementTlsPort=${MGMT_TLS_PORT}
 host.httpsPort=${HTTPS_PORT}
 host.mtlsPort=${MTLS_PORT}
 host.bootstrapPinPrimary=${PRIMARY}
@@ -108,14 +110,12 @@ sample-host.properties (üretmek için: ./scripts/client-config.sh --properties 
 
     host.ip=${IP}
     host.httpsPort=${HTTPS_PORT}        # CONFIG_BASE_URL  = https://${IP}:${HTTPS_PORT}/
-    host.httpPort=${HTTP_PORT}          # MANAGEMENT_URL   = http://${IP}:${HTTP_PORT}/  (telemetri)
+    host.managementTlsPort=${MGMT_TLS_PORT}  # REPORT_URL = https://${IP}:${MGMT_TLS_PORT}/  (telemetri, pinli)
     host.mtlsPort=${MTLS_PORT}          # MTLS_BASE_URL    = https://${IP}:${MTLS_PORT}/
     host.bootstrapPinPrimary=${PRIMARY}
     host.bootstrapPinBackup=${BACKUP}
     host.signingPublicKey=${SIGNING}
     mock.tlsPort=${MOCK_TLS_PORT}, mock.mtlsPort=${MOCK_MTLS_PORT}
 
-app/src/main/res/xml/network_security_config.xml (telemetri için düz HTTP izni):
-
-    <domain includeSubdomains="false">${IP}</domain>
+Düz HTTP izni gerekmez: telemetri de şifreli porttan, config sunucusunun pin'leriyle gider.
 EOF
