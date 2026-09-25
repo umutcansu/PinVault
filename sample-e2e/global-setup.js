@@ -122,7 +122,7 @@ module.exports = async () => {
   if (process.env.E2E_SKIP_BUILD !== '1' || propsChanged || !fs.existsSync(env.APK)) {
     console.log('[e2e] SamplePinVaultClient derleniyor…');
     const javaHome = findJavaHome();
-    execFileSync('./gradlew', ['assembleDebug', '-q', `-PsampleHostProps=${env.PROPS_FILE}`], {
+    execFileSync('./gradlew', [...env.GRADLE_BUILD, '-q', `-PsampleHostProps=${env.PROPS_FILE}`], {
       cwd: env.CLIENT_DIR,
       stdio: 'inherit',
       timeout: 15 * 60 * 1000,

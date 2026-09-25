@@ -171,7 +171,7 @@ test('Web+Mobil: imzalama anahtarı yenilenince eski APK config\'i reddediyor, y
     await attachText(
       testInfo,
       'Ana host değerleriyle yeniden derleme ve kurulum',
-      `$ ./gradlew assembleDebug -PsampleHostProps=${env.PROPS_FILE}\n${restore}`,
+      `$ ${env.BUILD_COMMAND} -PsampleHostProps=${env.PROPS_FILE}\n${restore}`,
     );
     app.launchFresh();
     const status = await app.waitReady();

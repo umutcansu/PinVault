@@ -22,10 +22,10 @@ function javaHome() {
     .find((home) => fs.existsSync(home));
 }
 
-/** `./gradlew assembleDebug -PsampleHostProps=<propsFile>`; çıktıyı döndürür. */
+/** `${env.BUILD_COMMAND} -PsampleHostProps=<propsFile>`; çıktıyı döndürür. */
 function build(propsFile) {
   const home = javaHome();
-  return execFileSync('./gradlew', ['assembleDebug', `-PsampleHostProps=${propsFile}`], {
+  return execFileSync('./gradlew', [...env.GRADLE_BUILD, `-PsampleHostProps=${propsFile}`], {
     cwd: env.CLIENT_DIR,
     encoding: 'utf8',
     timeout: 15 * 60 * 1000,
@@ -40,7 +40,7 @@ function install(device) {
 
 function buildAndInstall(device, propsFile) {
   const out = build(propsFile);
-  return `${out}\n$ adb install -r -t app-debug.apk\n${install(device)}`;
+  return `${out}\n$ adb install -r -t ${path.basename(env.APK)}\n${install(device)}`;
 }
 
 module.exports = { javaHome, build, install, buildAndInstall };

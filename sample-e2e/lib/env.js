@@ -9,6 +9,13 @@ const HOST_DIR = path.resolve(process.env.E2E_HOST_DIR || path.join(ROOT, '..', 
 const CLIENT_DIR = path.resolve(process.env.E2E_CLIENT_DIR || path.join(ROOT, '..', 'SamplePinVaultClient'));
 /** Koşuya özel üretilen dosyalar (host değerleri, özel backend anahtarları); git dışı. */
 const LOCAL_DIR = path.join(ROOT, '.local');
+/**
+ * Test edilen derleme. E2E_VARIANT=release: R8 ile küçültülmüş release
+ * derlemesi (gerçek uygulamaların yayınladığı hâl); teşhis log'ları
+ * -Psample.diagnosticLogs=true ile açılır, senaryolar log'lardan izler.
+ */
+const VARIANT = process.env.E2E_VARIANT === 'release' ? 'release' : 'debug';
+const GRADLE_BUILD = VARIANT === 'release' ? ['assembleRelease', '-Psample.diagnosticLogs=true'] : ['assembleDebug'];
 
 function readDotEnv(file) {
   const out = {};
@@ -96,10 +103,21 @@ module.exports = {
   /** Uygulamanın çalışma modları (AppSettings.Mode). */
   MODES: ['TLS', 'MTLS_CONFIG', 'CUSTOM_BACKEND', 'EMBEDDED_API', 'STATIC'],
   APP_ID: 'com.example.sampleclient',
-  APK: path.join(CLIENT_DIR, 'app/build/outputs/apk/debug/app-debug.apk'),
+  VARIANT,
+  /** Uygulamayı derleyen Gradle görevi ve argümanları; kanıtta `BUILD_COMMAND` gösterilir. */
+  GRADLE_BUILD,
+  BUILD_COMMAND: `./gradlew ${GRADLE_BUILD.join(' ')}`,
+  APK: path.join(CLIENT_DIR, `app/build/outputs/apk/${VARIANT}/app-${VARIANT}.apk`),
   /** Derlemeye verilen host değerleri; global setup üretir. */
   PROPS_FILE: path.join(LOCAL_DIR, 'sample-host.properties'),
   ADB: process.env.ADB || (SDK ? path.join(SDK, 'platform-tools/adb') : 'adb'),
   EMULATOR: SDK ? path.join(SDK, 'emulator/emulator') : 'emulator',
+  /** En yeni build-tools'taki aapt2 (APK'nın kaynak tablosunu okumak için). */
+  AAPT2: (() => {
+    const dir = SDK && path.join(SDK, 'build-tools');
+    if (!dir || !fs.existsSync(dir)) return 'aapt2';
+    const versions = fs.readdirSync(dir).filter((v) => fs.existsSync(path.join(dir, v, 'aapt2'))).sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
+    return versions.length ? path.join(dir, versions[versions.length - 1], 'aapt2') : 'aapt2';
+  })(),
   STATE_FILE: path.join(ROOT, '.e2e-state.json'),
 };

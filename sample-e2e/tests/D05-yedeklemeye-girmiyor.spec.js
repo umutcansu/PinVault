@@ -15,10 +15,27 @@ const env = require('../lib/env');
 
 const PINVAULT_DIR = process.env.E2E_PINVAULT_DIR || path.resolve(env.ROOT, '..', 'PinVault');
 const RULES_DIR = path.join(PINVAULT_DIR, 'pinvault/src/main/res/xml');
+const VARIANT_TASK = env.VARIANT.charAt(0).toUpperCase() + env.VARIANT.slice(1);
 const MERGED_MANIFEST = path.join(
   env.CLIENT_DIR,
-  'app/build/intermediates/merged_manifests/debug/processDebugManifest/AndroidManifest.xml',
+  `app/build/intermediates/merged_manifests/${env.VARIANT}/process${VARIANT_TASK}Manifest/AndroidManifest.xml`,
 );
+const RULE_RESOURCES = ['xml/pinvault_backup_rules', 'xml/pinvault_data_extraction_rules'];
+
+/**
+ * Kural dosyalarının APK içindeki yolları, kaynak tablosundan. Release
+ * derlemesinde kaynak küçültme yolları kısaltır (res/xml/pinvault_backup_rules.xml
+ * → res/In.xml gibi); manifest dosyaya kimlikle bağlı olduğu için ad önemsiz.
+ */
+function ruleFilesInApk() {
+  const table = require('child_process').execFileSync(env.AAPT2, ['dump', 'resources', env.APK], { encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 });
+  const listing = require('child_process').execFileSync('unzip', ['-l', env.APK], { encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 });
+  return RULE_RESOURCES.map((name) => {
+    const m = table.match(new RegExp(`resource 0x[0-9a-f]+ ${name}\\s+\\(\\) \\(file\\) (\\S+)`));
+    const file = m ? m[1] : null;
+    return { name, file, inApk: !!file && listing.split('\n').some((l) => l.trim().endsWith(` ${file}`)) };
+  });
+}
 
 /** `bmgr list transports` çıktısındaki seçili (yıldızlı) transport. */
 function selectedTransport(text) {
@@ -99,11 +116,7 @@ test('Depolama: uygulama verisi cihaz yedeğine alınmıyor', async ({ app, devi
       const merged = fs.readFileSync(MERGED_MANIFEST, 'utf8');
       const attrs = (merged.match(/android:(allowBackup|fullBackupContent|dataExtractionRules)="[^"]*"/g) || [])
         .filter((v, i, a) => a.indexOf(v) === i);
-      const apkEntries = require('child_process')
-        .execFileSync('unzip', ['-l', env.APK], { encoding: 'utf8' })
-        .split('\n')
-        .filter((l) => /res\/xml\/pinvault_(backup_rules|data_extraction_rules)\.xml/.test(l))
-        .map((l) => l.trim());
+      const rules = ruleFilesInApk();
       await attachText(
         testInfo,
         'Birleştirilmiş manifest (app + kütüphane)',
@@ -111,8 +124,8 @@ test('Depolama: uygulama verisi cihaz yedeğine alınmıyor', async ({ app, devi
           `dosya: ${MERGED_MANIFEST.replace(env.CLIENT_DIR + '/', '')}`,
           ...attrs.map((a) => `  ${a}`),
           '',
-          'APK içindeki kural dosyaları:',
-          ...apkEntries.map((e) => `  ${e}`),
+          `APK içindeki kural dosyaları (${path.basename(env.APK)}, aapt2 dump resources + unzip -l):`,
+          ...rules.map((r) => `  ${r.name} → ${r.file || '(kaynak yok)'}${r.inApk ? '' : '  APK\'DA YOK'}`),
           '',
           'fullBackupContent ve dataExtractionRules kütüphanenin manifest\'inden',
           'geliyor (manifest birleştirme); allowBackup="false" örnek uygulamanın kendi',
@@ -122,7 +135,7 @@ test('Depolama: uygulama verisi cihaz yedeğine alınmıyor', async ({ app, devi
       expect(attrs.join(' ')).toContain('android:allowBackup="false"');
       expect(attrs.join(' ')).toContain('@xml/pinvault_backup_rules');
       expect(attrs.join(' ')).toContain('@xml/pinvault_data_extraction_rules');
-      expect(apkEntries).toHaveLength(2);
+      expect(rules.filter((r) => r.inApk)).toHaveLength(2);
     });
 
     await test.step('Kaynak: kütüphanenin yedekleme kuralları ve bir bulgu', async () => {

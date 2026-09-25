@@ -398,11 +398,22 @@ class Device {
     }
   }
 
-  // ── Uygulama verisi (run-as; yalnızca debug derlemeleri) ───────────────
+  // ── Uygulama verisi (run-as; release derlemesinde emülatörde su) ────────
 
-  /** Komutu uygulamanın kimliğiyle, uygulamanın veri dizininde çalıştırır. */
+  /**
+   * Komutu uygulamanın kimliğiyle, uygulamanın veri dizininde çalıştırır.
+   * run-as yalnızca debug derlemelerinde çalışır; release derlemesinde
+   * (E2E_VARIANT=release) emülatörün su'suyla uygulamanın kullanıcısına
+   * geçilir, oluşan dosyalar yine uygulamanın olur.
+   */
   runAs(pkg, command) {
-    return this.shell(`run-as ${pkg} sh -c '${command.replace(/'/g, "'\\''")}'`);
+    const quoted = command.replace(/'/g, "'\\''");
+    const info = this.shell(`dumpsys package ${pkg}`);
+    if (/\bflags=\[[^\]]*\bDEBUGGABLE\b/.test(info)) return this.shell(`run-as ${pkg} sh -c '${quoted}'`);
+    if (!this.isEmulator()) throw new Error(`${pkg} debug derlemesi değil: run-as çalışmaz, su yalnızca emülatörde var`);
+    const uid = (info.match(/\buserId=(\d+)/) || [])[1];
+    if (!uid) throw new Error(`${pkg} kurulu değil (userId bulunamadı)`);
+    return this.shell(`su ${uid} sh -c 'cd /data/user/0/${pkg} && ${quoted}'`);
   }
 
   /** Uygulama veri dizinindeki dosya listesi (`ls -la <dir>`). */

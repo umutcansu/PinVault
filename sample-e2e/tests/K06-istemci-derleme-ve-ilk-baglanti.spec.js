@@ -53,8 +53,8 @@ test('Kurulum: uygulama geçici test sunucusunun değerleriyle derlenir, telefon
       const out = clientBuild.buildAndInstall(device, FRESH_PROPS);
       await attachText(
         testInfo,
-        'gradlew assembleDebug -PsampleHostProps=… + adb install',
-        `$ ./gradlew assembleDebug -PsampleHostProps=${FRESH_PROPS}\n${out}`,
+        `${env.BUILD_COMMAND.replace('./', '')} -PsampleHostProps=… + adb install`,
+        `$ ${env.BUILD_COMMAND} -PsampleHostProps=${FRESH_PROPS}\n${out}`,
       );
       expect(out).toContain('host-fresh.properties');
       expect(out).toMatch(/BUILD SUCCESSFUL/);
@@ -86,7 +86,7 @@ test('Kurulum: uygulama geçici test sunucusunun değerleriyle derlenir, telefon
     await attachText(
       testInfo,
       'Ana host değerleriyle yeniden derleme ve kurulum',
-      `$ ./gradlew assembleDebug -PsampleHostProps=${env.PROPS_FILE}\n${restore}`,
+      `$ ${env.BUILD_COMMAND} -PsampleHostProps=${env.PROPS_FILE}\n${restore}`,
     );
     app.launchFresh();
     const status = await app.waitReady();

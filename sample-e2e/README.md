@@ -86,6 +86,7 @@ Her koşu `evidence/index.html` dosyasını yeniden üretir. En üstte kapsam ma
 | `E2E_AVD` | yok | Cihaz yoksa açılacak AVD |
 | `E2E_KEEP_EMULATOR` | yok | `1` ise açılan emülatör test sonunda kapatılmaz |
 | `E2E_SKIP_BUILD` | yok | `1` ise istemci derlenmez (host değerleri değişmediyse) |
+| `E2E_VARIANT` | `debug` | `release`: uygulamanın R8 ile küçültülmüş release derlemesi test edilir (teşhis log'ları `-Psample.diagnosticLogs=true` ile açık; uygulama verisi run-as yerine emülatörün su'suyla okunur, yani yalnızca emülatör) |
 | `E2E_TARGET_HOST` | `www.example.com` | Pin'leri değiştirilen hedef |
 | `E2E_CONTAINER` | `pinvault-host` | Durdurulup başlatılan host container'ı |
 | `E2E_PROXY_PORT` | `6661` | Araya giren proxy'nin dinlediği port |
@@ -106,6 +107,7 @@ Her koşu `evidence/index.html` dosyasını yeniden üretir. En üstte kapsam ma
 - İmza anahtarını değiştiren ya da anahtar seti (telefonun güvendiği imza anahtarlarının listesi) yayımlayan senaryolar (S01–S05) geçici test sunucusunda çalışır. Sunucuda anahtar setleri yalnızca eklenir ve geri alınamaz; ana host'ta yayımlanan bir set, ana APK'nın güvendiği anahtarları eskitirdi. Bu senaryolar geçici test sunucusunun değerleriyle yalnızca bu test için bir uygulama derler ve sonunda ana APK'yı geri kurar.
 - Değişiklik denetimi senaryoları (Y) sunucu ortamını geçici değiştirir (`ADMIN_KEYS`, `PIN_CHANGE_APPROVALS`, `PIN_LIVE_CHECK`, `NOTIFY_WEBHOOK_URL`) ve temel duruma dönmeden önce sıfırlar. Webhook alıcısı Mac'te dinler; container ona `host.docker.internal` ile ulaşır.
 - Yönetici anahtarları (`.local/admins.json`) ve çevrimdışı özel anahtarlar (`.local/offline-keys/`) kanıt sayfasında asla görünmez; `npm run check-evidence` bunları da gizli değer sayar.
+- `E2E_VARIANT=release` ile koşuda uygulama verisi `run-as` yerine emülatörün `su`'suyla, uygulamanın kullanıcısına geçilerek okunur; release derlemesinde `run-as` çalışmaz.
 
 ## Yapı
 

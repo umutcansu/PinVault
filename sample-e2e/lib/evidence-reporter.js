@@ -320,6 +320,7 @@ class EvidenceReporter {
     const allOk = passed === total;
     const when = this.startedAt.toLocaleString('tr-TR');
     const device = this.run ? `${this.run.manufacturer} ${this.run.model} (${this.run.serial})` : 'cihaz bilinmiyor';
+    const build = env.VARIANT === 'release' ? 'uygulama: release derlemesi (R8 ile küçültülmüş)' : 'uygulama: debug derlemesi';
 
     const sorted = this.sortedEntries();
     // Bölümler grup grup: bir grup başlığı yalnızca bir kez, Kurulum en başta.
@@ -340,7 +341,7 @@ class EvidenceReporter {
 <title>PinVault E2E kanıtı</title><style>${CSS}</style></head>
 <body><main>
   <h1>PinVault uçtan uca test kanıtı</h1>
-  <p class="meta">${esc(when)} · ${esc(device)} · web ${esc(env.WEB_URL)} · hedef ${esc(env.TARGET_HOST)}</p>
+  <p class="meta">${esc(when)} · ${esc(device)} · ${esc(build)} · web ${esc(env.WEB_URL)} · hedef ${esc(env.TARGET_HOST)}</p>
   <div class="summary ${allOk ? 'ok' : 'bad'}">${passed} / ${total} senaryo geçti · ${duration(fullResult.duration)}</div>
   ${HOWTO}
   ${this.renderMatrix(sorted)}

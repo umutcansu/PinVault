@@ -443,7 +443,7 @@ async function setup(device, testInfo, { title = 'Bu test için derlenen uygulam
     `  ${KEYS.recovery.padEnd(27)} : ${keys.recovery.keyId}`,
     '',
     apk.built
-      ? `$ ./gradlew assembleDebug -PsampleHostProps=${path.relative(env.CLIENT_DIR, LAB_PROPS)}\n${apk.log.trim().split('\n').slice(-4).join('\n')}`
+      ? `$ ${env.BUILD_COMMAND} -PsampleHostProps=${path.relative(env.CLIENT_DIR, LAB_PROPS)}\n${apk.log.trim().split('\n').slice(-4).join('\n')}`
       : `(uygulama bu derleme değerleriyle daha önce derlenmişti: ${path.relative(env.ROOT, apk.file)})`,
     `$ adb install -r -t ${path.basename(apk.file)}`,
     apk.installOut.trim(),
