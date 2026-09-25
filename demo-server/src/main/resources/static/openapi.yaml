@@ -2185,6 +2185,11 @@ paths:
         **`X-P12-SHA256`** (Base64 SHA-256 of the body). The PinVault library refuses
         to install a P12 that arrives without this header.
 
+        A caller that sends `X-PinVault-Features: p12password` gets the bundle wrapped
+        with a random password used once, returned in **`X-P12-Password`**; anyone else
+        gets `CLIENT_P12_PASSWORD` (default `changeit`). It is never `KEYSTORE_PASSWORD`,
+        which protects the server's own keystores.
+
         Public in the allowlist (devices have no admin key).
 
         **Two implementations with different request contracts:**
@@ -2237,6 +2242,12 @@ paths:
           headers:
             X-P12-SHA256:
               description: Base64 SHA-256 of the response body. Clients reject the P12 if absent.
+              schema: { type: string }
+            X-P12-Password:
+              description: The one-off password the bundle is wrapped with; only when the request announced `p12password`.
+              schema: { type: string }
+            Cache-Control:
+              description: '`no-store`: the response carries a private key.'
               schema: { type: string }
             Content-Disposition:
               description: 'Sent by the management-port handler only: `attachment; filename="<clientId>.p12"`.'
@@ -2331,9 +2342,10 @@ paths:
         Admin equivalent of enrollment: issues a P12 without consuming a token and
         adds it to the truststore.
 
-        **Does not send `X-P12-SHA256`** — the PinVault library would refuse this
-        bundle. It is a dashboard download for manual provisioning; devices must use
-        `POST /api/v1/client-certs/enroll`. Running mTLS listeners are not restarted
+        Sends `X-P12-SHA256`, but it is a dashboard download for manual provisioning:
+        the bundle opens with `CLIENT_P12_PASSWORD` (default `changeit`), or with the
+        one-off `X-P12-Password` when the request announced `p12password`. Devices
+        enroll through `POST /api/v1/client-certs/enroll`. Running mTLS listeners are not restarted
         here either, so the new certificate is trusted only after the next restart of
         those listeners.
 

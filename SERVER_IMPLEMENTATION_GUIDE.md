@@ -249,9 +249,11 @@ X-P12-SHA256: base64-encoded-sha256-of-response-body
 
 The library refuses to install the P12 if this header is missing or its value doesn't match the computed SHA-256 of the body. Guards against a header-stripping MITM that drops the integrity check to inject an attacker-controlled P12. Compute it as `base64(sha256(p12Bytes))` with no padding stripping.
 
+**P12 password (recommended):** the library sends `X-PinVault-Features: p12password`. Wrap the bundle with a random password used for this response only and return it in `X-P12-Password`; the library checks the bundle with it and re-wraps it with its own `clientKeyPassword` before storing it. Without that header the bundle must open with the app's `clientKeyPassword` (default `"changeit"`). Never use the password that protects your own keystores: every app would have to carry it. The same applies to `GET {clientCertEndpoint}/{hostname}/download`.
+
 **PKCS12 requirements:**
 - Must contain at least 1 private key + certificate entry
-- Must be loadable with password `"changeit"` (configurable)
+- Must open with the `X-P12-Password` you sent, or else with the app's `clientKeyPassword`
 - Certificate must not be expired
 
 **Known limitation of the reference implementation — one-shot tokens.**

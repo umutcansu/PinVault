@@ -13,6 +13,7 @@ Pick the highest level you can operate reliably. A layer you can't run well, suc
 | Layer | Enable with | Protects against |
 |---|---|---|
 | Signing key encrypted at rest | `SIGNING_KEY_PASSWORD` | A copied data directory yielding the key |
+| Keystores under a real password | `KEYSTORE_PASSWORD` (the sample host's `setup.sh` generates one) | A copied data directory yielding TLS, backup and client keys |
 | Offline backup signing key in the app | client `signaturePublicKeys(primary, backup)` | Lost or stolen primary → switch without an app update |
 | Named admins + audit log | `ADMIN_KEYS=alice:<sha256>,…` (log is always on) | "Who changed this pin?" having no answer |
 | Webhook notifications | `NOTIFY_WEBHOOK_URL`, `NOTIFY_WEBHOOK_SECRET` | Changes nobody notices; a DB-only rewrite of the audit log going unseen |
@@ -118,6 +119,10 @@ Which backup is still safe depends on where the key leaked from.
 - **Somewhere other than the server's `certs/` directory** (a load balancer it was exported to, a backup copy, a laptop): switch to the stored backup key as in the planned rotation above. The stolen key's pin leaves the list in the same step.
 - **The server's `certs/` directory was read.** The stored backup was taken with the key, so regenerate the certificate instead. Devices recover through pin-mismatch recovery. For the config server's own certificate, apps need an update with the new bootstrap pins.
 - **A host whose pins were fetched from a URL:** its backup pin is its CA's. Have the site reissued by the same CA with a new key; devices accept the new leaf through the CA pin. Then publish the new leaf with the CA pin to drop the stolen key's pin. With `PIN_LIVE_CHECK=enforce` a set is accepted only if devices would accept what the host serves at that moment, which this order satisfies.
+
+### Changing the keystore password
+
+Put the new password in `KEYSTORE_PASSWORD` and the old one in `KEYSTORE_PASSWORD_PREVIOUS`, then restart. The server re-encrypts its keystores, backup keys, truststore and stored host client certificates at startup and logs what it moved. Remove `KEYSTORE_PASSWORD_PREVIOUS` afterwards. Devices are not affected: the password never leaves the server.
 
 ### The config server is down
 

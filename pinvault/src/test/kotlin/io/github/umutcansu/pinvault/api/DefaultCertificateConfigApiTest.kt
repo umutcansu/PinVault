@@ -241,6 +241,49 @@ class DefaultCertificateConfigApiTest {
         assertTrue(request.path!!.contains("api/v1/client-certs/api.example.com/download"))
     }
 
+    // ── P12 passwords: negotiated per response, never carried by the app ──
+
+    private fun opens(p12: ByteArray, password: String) =
+        runCatching { java.security.KeyStore.getInstance("PKCS12").load(p12.inputStream(), password.toCharArray()) }.isSuccess
+
+    @Test
+    fun `a host client certificate sent with a one-off password comes back under the block password`() = runTest {
+        val oneOff = TestCertUtil.generateSelfSigned(cn = "host-client", password = "one-off-7Qx").p12Bytes
+        server.enqueue(
+            MockResponse()
+                .setBody(okio.Buffer().write(oneOff))
+                .setHeader("Content-Type", "application/octet-stream")
+                .setHeader("X-P12-Password", "one-off-7Qx")
+        )
+        val api = DefaultCertificateConfigApi(
+            configUrl = server.url("/").toString(),
+            bootstrapPins = listOf(HostPin("test.com", listOf("h1", "h2"))),
+            sslManager = sslManager,
+            clientKeyPassword = "block-pass"
+        )
+        val bytes = api.downloadHostClientCert("host.com")
+
+        assertEquals("p12password", server.takeRequest().getHeader("X-PinVault-Features"))
+        assertTrue(opens(bytes, "block-pass"))
+        assertFalse(opens(bytes, "one-off-7Qx"))
+    }
+
+    @Test
+    fun `enrollment asks for a one-off password and returns it with the bundle`() = runTest {
+        val bundle = TestCertUtil.generateSelfSigned(cn = "device", password = "one-off-9Kz").p12Bytes
+        server.enqueue(
+            MockResponse()
+                .setBody(okio.Buffer().write(bundle))
+                .setHeader("X-P12-SHA256", "hash")
+                .setHeader("X-P12-Password", "one-off-9Kz")
+        )
+        val result = createApi().enroll(token = "t", deviceId = null, deviceAlias = null, deviceUid = null)
+
+        assertEquals("p12password", server.takeRequest().getHeader("X-PinVault-Features"))
+        assertEquals("one-off-9Kz", result.p12Password)
+        assertFalse("the password stays out of logs", result.toString().contains("one-off-9Kz"))
+    }
+
     // ── Several signers and signing-key sets on the wire ────────────────────
 
     private fun apiWithTrust(trust: io.github.umutcansu.pinvault.crypto.SignatureTrust) = DefaultCertificateConfigApi(

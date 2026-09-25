@@ -751,6 +751,92 @@ class BackendTest {
         assertEquals(2, uploadBody2["clientCertVersion"]?.jsonPrimitive?.int)
     }
 
+    // ── P12 transfer: the server's keystore password never leaves it ──
+    //
+    // Device P12s used to be wrapped with KEYSTORE_PASSWORD (and host client
+    // certificates served as uploaded), so every app had to carry the password
+    // that also protected the server's own TLS keys.
+
+    private fun opens(p12: ByteArray, password: String) =
+        runCatching { java.security.KeyStore.getInstance("PKCS12", "BC").load(p12.inputStream(), password.toCharArray()) }.isSuccess
+
+    private fun sha256b64(bytes: ByteArray) =
+        java.util.Base64.getEncoder().encodeToString(java.security.MessageDigest.getInstance("SHA-256").digest(bytes))
+
+    @Test
+    fun `P12 — a client that negotiates gets a one-off password, older clients the client password`() = testApplication {
+        configureApp(enrollmentMode = "open")
+        val negotiated = client.post("/api/v1/client-certs/enroll") {
+            header("X-PinVault-Features", "redelivery, p12password")
+            contentType(ContentType.Application.Json)
+            setBody("""{"deviceId":"p12-device-1"}""")
+        }
+        assertEquals(HttpStatusCode.OK, negotiated.status)
+        val password = assertNotNull(negotiated.headers["X-P12-Password"])
+        val bytes = negotiated.readRawBytes()
+        assertEquals(sha256b64(bytes), negotiated.headers["X-P12-SHA256"])
+        assertEquals("no-store", negotiated.headers["Cache-Control"])
+        assertTrue(opens(bytes, password))
+        assertFalse(opens(bytes, CertificateService.KEYSTORE_PASSWORD), "never the server's keystore password")
+
+        val legacy = client.post("/api/v1/client-certs/enroll") {
+            contentType(ContentType.Application.Json)
+            setBody("""{"deviceId":"p12-device-2"}""")
+        }
+        assertNull(legacy.headers["X-P12-Password"])
+        assertTrue(opens(legacy.readRawBytes(), com.example.pinvault.server.service.P12Transfer.legacyPassword))
+    }
+
+    @Test
+    fun `P12 — an uploaded host client certificate is kept under the server password and re-wrapped per download`() = testApplication {
+        configureApp(configApiMode = "mtls")
+        client.post("/api/v1/hosts/generate-cert") {
+            contentType(ContentType.Application.Json)
+            setBody("""{"hostname":"hcc.test"}""")
+        }
+        val uploaded = certService.generateClientCertificate("hcc-client", "upload-pass").p12Bytes
+        val boundary = "----TestBoundary${System.nanoTime()}"
+        assertEquals(HttpStatusCode.OK, client.post("/api/v1/hosts/hcc.test/upload-client-cert") {
+            header(HttpHeaders.ContentType, "multipart/form-data; boundary=$boundary")
+            setBody(buildMultipartBody(boundary, uploaded, "upload-pass"))
+        }.status)
+
+        val stored = hostClientCertStore.getP12("hcc.test", configApiId)!!
+        assertTrue(opens(stored, CertificateService.KEYSTORE_PASSWORD))
+        assertFalse(opens(stored, "upload-pass"), "the upload password is not needed after the upload")
+
+        val download = client.get("/api/v1/client-certs/hcc.test/download") { header("X-PinVault-Features", "p12password") }
+        assertEquals(HttpStatusCode.OK, download.status)
+        val password = assertNotNull(download.headers["X-P12-Password"])
+        val bytes = download.readRawBytes()
+        assertTrue(opens(bytes, password))
+        assertEquals(sha256b64(bytes), download.headers["X-P12-SHA256"])
+        val legacy = client.get("/api/v1/hosts/hcc.test/client-cert/download").readRawBytes()
+        assertTrue(opens(legacy, com.example.pinvault.server.service.P12Transfer.legacyPassword))
+    }
+
+    @Test
+    fun `P12 — setting KEYSTORE_PASSWORD re-encrypts keystores written under the old default`() {
+        val generated = certService.generateCertificate("rekey_test", "rekey.test")
+        val keystore = File(generated.keystorePath)
+        val backup = File(keystore.parentFile, "rekey_test.backup.jks")
+        val stranger = File(keystore.parentFile, "stranger.jks").also { file ->
+            java.security.KeyStore.getInstance("JKS").apply { load(null, null) }.store(file.outputStream(), "other".toCharArray())
+        }
+        hostClientCertStore.save("hcc.rekey", configApiId, certService.generateClientCertificate("x", "changeit").p12Bytes, 1, "x", "fp")
+
+        val rekey = com.example.pinvault.server.service.KeystoreRekey(certService, password = "a-real-secret", previous = null)
+        val report = rekey.run(listOf(keystore, backup, stranger), hostClientCertStore)
+        fun jksOpens(file: File, password: String) =
+            runCatching { java.security.KeyStore.getInstance("JKS").load(file.inputStream(), password.toCharArray()) }.isSuccess
+        assertTrue(jksOpens(keystore, "a-real-secret") && !jksOpens(keystore, "changeit"))
+        assertTrue(jksOpens(backup, "a-real-secret"))
+        assertTrue(opens(hostClientCertStore.getP12("hcc.rekey", configApiId)!!, "a-real-secret"))
+        assertEquals(listOf("stranger.jks"), report.unreadable, "a keystore it cannot open is left alone")
+        assertTrue(jksOpens(stranger, "other"))
+        assertTrue(rekey.run(listOf(keystore, backup), hostClientCertStore).rekeyed.isEmpty(), "a second run changes nothing")
+    }
+
     // ── C.21: Mock server ───────────────────────────────
 
     @Test

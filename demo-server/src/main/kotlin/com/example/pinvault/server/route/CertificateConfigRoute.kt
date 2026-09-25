@@ -117,7 +117,8 @@ fun Route.certificateConfigRoutes(
                 return@post call.respondText("""{"error":"token gerekli — management API'den token oluşturun"}""", ContentType.Application.Json, HttpStatusCode.BadRequest)
             }
 
-            val result = certService.generateClientCertificate(clientId)
+            val wrapping = com.example.pinvault.server.service.P12Transfer.wrappingFor(call)
+            val result = certService.generateClientCertificate(clientId, wrapping.password)
             clientCertStore?.add(clientId, result.commonName, result.fingerprint, java.time.Instant.now().toString(),
                 deviceAlias = deviceAlias, deviceUid = deviceUid)
 
@@ -125,11 +126,7 @@ fun Route.certificateConfigRoutes(
             mockServerManager?.restartMtlsServers(certService)
             onClientCertEnrolled?.invoke()
 
-            val p12Hash = java.security.MessageDigest.getInstance("SHA-256")
-                .digest(result.p12Bytes)
-                .let { java.util.Base64.getEncoder().encodeToString(it) }
-            call.response.header("X-P12-SHA256", p12Hash)
-            call.respondBytes(result.p12Bytes, ContentType.Application.OctetStream)
+            com.example.pinvault.server.service.P12Transfer.respond(call, result.p12Bytes, wrapping)
         }
     }
 
@@ -148,7 +145,7 @@ fun Route.certificateConfigRoutes(
             val hostname = call.parameters["hostname"] ?: ""
             val p12 = hostClientCertStore.getP12(hostname, configApiId)
                 ?: return@get call.respondText("""{"error":"Client cert bulunamadi"}""", ContentType.Application.Json, HttpStatusCode.NotFound)
-            call.respondBytes(p12, ContentType.Application.OctetStream)
+            com.example.pinvault.server.service.P12Transfer.respondStored(call, certService, p12)
         }
     }
 

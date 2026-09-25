@@ -1,6 +1,7 @@
 package io.github.umutcansu.pinvault.api
 
 import io.github.umutcansu.pinvault.crypto.SignatureTrust
+import io.github.umutcansu.pinvault.internal.P12Rewrap
 import io.github.umutcansu.pinvault.model.CertificateConfig
 import io.github.umutcansu.pinvault.model.EnrollmentResult
 import io.github.umutcansu.pinvault.model.HostPin
@@ -42,7 +43,9 @@ internal class DefaultCertificateConfigApi(
     signaturePublicKey: String? = null,
     bootstrapPins: List<HostPin>,
     private val sslManager: DynamicSSLManager,
-    signatureTrust: SignatureTrust? = null
+    signatureTrust: SignatureTrust? = null,
+    /** The block's P12 password; host client certificates are re-wrapped to it. */
+    private val clientKeyPassword: String? = null
 ) : CertificateConfigApi {
 
     /** Null = the block runs unsigned (`allowUnsigned()`). */
@@ -123,11 +126,20 @@ internal class DefaultCertificateConfigApi(
         return config
     }
 
+    /**
+     * The host's client certificate, wrapped with this block's
+     * [clientKeyPassword]: a server that sends a one-off password
+     * (`X-P12-Password`) gets its bundle re-wrapped here, so the app never
+     * needs a password chosen on the server.
+     */
     override suspend fun downloadHostClientCert(hostname: String): ByteArray {
         val url = "$clientCertEndpoint/$hostname/download"
         Timber.d("Downloading host client cert: %s", url)
-        val body = service.downloadBinary(url)
-        return body.bytes()
+        val response = service.downloadP12(url)
+        if (!response.isSuccessful) throw retrofit2.HttpException(response)
+        val bytes = response.body()?.bytes() ?: throw Exception("Empty host client certificate response")
+        val oneOff = response.headers()[P12Rewrap.PASSWORD_HEADER]
+        return if (oneOff != null && clientKeyPassword != null) P12Rewrap.rewrap(bytes, oneOff, clientKeyPassword) else bytes
     }
 
     override suspend fun downloadVaultFile(endpoint: String): ByteArray {
@@ -305,19 +317,21 @@ internal class DefaultCertificateConfigApi(
         val requestBody = json.toString().toRequestBody("application/json".toMediaType())
         val request = okhttp3.Request.Builder()
             .url("${configUrl}$enrollmentEndpoint")
+            .header("X-PinVault-Features", P12Rewrap.FEATURE)
             .post(requestBody)
             .build()
 
-        val response = bootstrapClient.newCall(request).execute()
-        if (!response.isSuccessful) {
-            throw Exception("Enrollment failed — HTTP ${response.code}")
+        bootstrapClient.newCall(request).execute().use { response ->
+            if (!response.isSuccessful) {
+                throw Exception("Enrollment failed — HTTP ${response.code}")
+            }
+
+            val p12Bytes = response.body?.bytes() ?: throw Exception("Empty enrollment response")
+            val p12Hash = response.header("X-P12-SHA256")
+
+            Timber.d("Enrollment successful — %d bytes", p12Bytes.size)
+            EnrollmentResult(p12Bytes, p12Hash, response.header(P12Rewrap.PASSWORD_HEADER))
         }
-
-        val p12Bytes = response.body?.bytes() ?: throw Exception("Empty enrollment response")
-        val p12Hash = response.header("X-P12-SHA256")
-
-        Timber.d("Enrollment successful — %d bytes", p12Bytes.size)
-        EnrollmentResult(p12Bytes, p12Hash)
     }
 
     override suspend fun reportVaultDownload(report: VaultDownloadReport) =
@@ -393,6 +407,11 @@ internal interface DynamicConfigService {
 
     @GET
     suspend fun downloadBinary(@Url url: String): ResponseBody
+
+    /** A P12 download that asks for a per-response password and keeps the response headers. */
+    @GET
+    @retrofit2.http.Headers(P12_FEATURES_HEADER)
+    suspend fun downloadP12(@Url url: String): retrofit2.Response<ResponseBody>
 }
 
 /**
@@ -402,3 +421,10 @@ internal interface DynamicConfigService {
  * signing-key sets. A backend must not rely on any of these without it.
  */
 internal const val FEATURES_HEADER = "X-PinVault-Features: redelivery,multisig,keyset"
+
+/**
+ * Sent with P12 requests (enrollment, host client certificates): `p12password`
+ * — wrap the bundle with a one-off password and send it in `X-P12-Password`,
+ * instead of a password the app would have to carry.
+ */
+internal const val P12_FEATURES_HEADER = "X-PinVault-Features: p12password"

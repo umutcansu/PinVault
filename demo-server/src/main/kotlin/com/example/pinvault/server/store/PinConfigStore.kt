@@ -850,6 +850,26 @@ class HostClientCertStore(private val db: DatabaseManager) {
         }
     }
 
+    /** Every stored certificate as (hostname, scope, P12 bytes). */
+    fun allP12(): List<Triple<String, String, ByteArray>> = db.connection().use { conn ->
+        conn.createStatement().use { stmt ->
+            val rs = stmt.executeQuery("SELECT hostname, config_api_id, p12_bytes FROM host_client_certs")
+            buildList { while (rs.next()) add(Triple(rs.getString(1), rs.getString(2), rs.getBytes(3))) }
+        }
+    }
+
+    /** Replaces one certificate's P12 bytes (re-encrypted), keeping its version and metadata. */
+    fun replaceP12(hostname: String, configApiId: String, p12Bytes: ByteArray) {
+        db.connection().use { conn ->
+            conn.prepareStatement("UPDATE host_client_certs SET p12_bytes = ? WHERE hostname = ? AND config_api_id = ?").use { stmt ->
+                stmt.setBytes(1, p12Bytes)
+                stmt.setString(2, hostname)
+                stmt.setString(3, configApiId)
+                stmt.executeUpdate()
+            }
+        }
+    }
+
     fun delete(hostname: String, configApiId: String) {
         db.connection().use { conn ->
             conn.prepareStatement("DELETE FROM host_client_certs WHERE hostname = ? AND config_api_id = ?").use { stmt ->

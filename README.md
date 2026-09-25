@@ -689,11 +689,17 @@ to v2 isn't an option right now, pin the dependency to the latest
 PinVault is built around OWASP MASVS guidelines (NETWORK, CRYPTO, STORAGE).
 Before shipping to production, verify the following:
 
-### 1. Never ship the default keystore password
-The `"changeit"` default in `ConfigApiBlock.clientKeyPassword` and the
-`clientKeystore(bytes, password)` builder is a development placeholder. In
-production, generate a unique high-entropy password per device and negotiate
-it with your backend during enrollment — never hard-code it in the APK.
+### 1. Never ship a server-side keystore password
+Enrollment and host client certificate downloads ask for a one-off P12
+password (`X-PinVault-Features: p12password`). A backend that returns it in
+`X-P12-Password` (the reference server does) never needs the app to know a
+password of its own: the library checks the bundle with it and re-wraps it
+with `clientKeyPassword` before storing it in Keystore-encrypted storage.
+Do not wrap device P12s with the password protecting your server's keystores.
+
+For a P12 you hand over yourself (`clientKeystore(bytes, password)`), the
+`"changeit"` default is a development placeholder: use a unique high-entropy
+password per device, delivered out of band — never hard-code it in the APK.
 
 ```kotlin
 // ❌ Don't

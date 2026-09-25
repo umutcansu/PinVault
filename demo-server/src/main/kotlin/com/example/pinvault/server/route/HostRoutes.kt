@@ -4,6 +4,7 @@ import com.example.pinvault.server.model.*
 import com.example.pinvault.server.service.CertificateService
 import com.example.pinvault.server.service.MockServerManager
 import com.example.pinvault.server.service.NoSecondCertificateException
+import com.example.pinvault.server.service.P12Transfer
 import io.ktor.server.application.*
 import com.example.pinvault.server.store.HostClientCertStore
 import com.example.pinvault.server.store.HostRecord
@@ -401,7 +402,10 @@ fun Route.hostRoutes(
                 val pin = config.pins.find { it.hostname == hostname }
                 val newCertVersion = (pin?.clientCertVersion ?: 0) + 1
 
-                hostClientCertStore.save(hostname, call.scopedApiId(), bytes, newCertVersion, cn, fingerprint)
+                // Kept under the server's own password; each download is re-wrapped
+                // for its recipient (P12Transfer), so no app needs the upload password.
+                val stored = certService.rewrapP12(bytes, password, CertificateService.KEYSTORE_PASSWORD)
+                hostClientCertStore.save(hostname, call.scopedApiId(), stored, newCertVersion, cn, fingerprint)
 
                 // Pin config'e clientCertVersion ve mtls ekle.
                 //
@@ -436,7 +440,7 @@ fun Route.hostRoutes(
                 val p12 = hostClientCertStore.getP12(hostname, call.scopedApiId())
                     ?: return@get call.respondText("""{"error":"Client cert bulunamadi"}""", ContentType.Application.Json, HttpStatusCode.NotFound)
 
-                call.respondBytes(p12, ContentType.Application.OctetStream)
+                P12Transfer.respondStored(call, certService, p12)
             }
 
             // Get host client cert info

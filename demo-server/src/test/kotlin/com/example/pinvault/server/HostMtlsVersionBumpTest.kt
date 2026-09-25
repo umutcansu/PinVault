@@ -144,7 +144,7 @@ class HostMtlsVersionBumpTest {
     fun `uploading a host client cert bumps both the cert version and the pin version`() = testApplication {
         configureApp()
         val before = storedPin().version
-        val p12 = certService.generateClientCertificate("host-cert-1").p12Bytes
+        val p12 = certService.generateClientCertificate("host-cert-1", "changeit").p12Bytes
 
         val res = client.submitFormWithBinaryData(
             url = "/api/v1/hosts/$host/upload-client-cert",
@@ -177,7 +177,7 @@ class HostMtlsVersionBumpTest {
         configureApp()
 
         suspend fun upload(alias: String) {
-            val p12 = certService.generateClientCertificate(alias).p12Bytes
+            val p12 = certService.generateClientCertificate(alias, "changeit").p12Bytes
             val res = client.submitFormWithBinaryData(
                 url = "/api/v1/hosts/$host/upload-client-cert",
                 formData = formData {

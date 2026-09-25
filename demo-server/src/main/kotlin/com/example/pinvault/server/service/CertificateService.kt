@@ -433,7 +433,7 @@ class CertificateService(
      * Client sertifikası üretir (PKCS12 formatında).
      * Public cert'i truststore'a ekler (sunucu tarafı doğrulama için).
      */
-    fun generateClientCertificate(clientId: String): ClientCertResult {
+    fun generateClientCertificate(clientId: String, p12Password: String): ClientCertResult {
         val keyPairGen = KeyPairGenerator.getInstance("RSA")
         keyPairGen.initialize(2048)
         val keyPair = keyPairGen.generateKeyPair()
@@ -451,8 +451,9 @@ class CertificateService(
         val signer = JcaContentSignerBuilder("SHA256withRSA").build(keyPair.private)
         val cert = JcaX509CertificateConverter().getCertificate(certBuilder.build(signer))
 
-        // PKCS12 keystore — Android uyumlu format (legacy algorithm for Android 11 compat)
-        val p12Bytes = buildAndroidCompatP12(clientId, keyPair.private, cert, KEYSTORE_PASSWORD)
+        // PKCS12 keystore — Android uyumlu format (legacy algorithm for Android 11 compat).
+        // Wrapped for its recipient (see P12Transfer), never with KEYSTORE_PASSWORD.
+        val p12Bytes = buildAndroidCompatP12(clientId, keyPair.private, cert, p12Password)
 
         // Client cert'i truststore'a ekle
         addToTrustStore(clientId, cert)
@@ -529,19 +530,42 @@ class CertificateService(
         return baos.toByteArray()
     }
 
+    /** The first of [candidates] that opens [p12], or null. */
+    fun p12Password(p12: ByteArray, candidates: List<String>): String? = candidates.distinct().firstOrNull { candidate ->
+        runCatching { KeyStore.getInstance("PKCS12", "BC").load(p12.inputStream(), candidate.toCharArray()) }.isSuccess
+    }
+
+    /** [p12] re-encrypted from [from] to [to], every entry and chain kept, in the Android-compatible format. */
+    fun rewrapP12(p12: ByteArray, from: String, to: String): ByteArray {
+        val source = KeyStore.getInstance("PKCS12", "BC").apply { load(p12.inputStream(), from.toCharArray()) }
+        val target = KeyStore.getInstance("PKCS12", "BC").apply { load(null, null) }
+        for (alias in source.aliases().toList()) {
+            if (source.isKeyEntry(alias)) {
+                target.setKeyEntry(alias, source.getKey(alias, from.toCharArray()), to.toCharArray(), source.getCertificateChain(alias))
+            } else {
+                target.setCertificateEntry(alias, source.getCertificate(alias))
+            }
+        }
+        return java.io.ByteArrayOutputStream().also { target.store(it, to.toCharArray()) }.toByteArray()
+    }
+
     companion object {
         /**
-         * Password protecting the server keystore (`*.jks`), the client
-         * truststore, and the per-device P12 bundles. Sourced from the
-         * `KEYSTORE_PASSWORD` env var.
+         * Password protecting the server's own keystores (`*.jks`), the client
+         * truststore and the stored host client certificates. Sourced from the
+         * `KEYSTORE_PASSWORD` env var. Never sent to devices: a P12 leaves the
+         * server wrapped for its recipient (see [P12Transfer]).
          *
-         * DEMO ONLY: falls back to "changeit" when the env var is unset so the
-         * sample runs out-of-the-box. A production deployment MUST set
-         * `KEYSTORE_PASSWORD` (and ideally hand each device P12 a unique random
-         * passphrase delivered out-of-band). (audit L-2 / L-6)
+         * Falls back to [LEGACY_KEYSTORE_PASSWORD] when unset so a bare
+         * development run works; the sample host's setup.sh generates one, and
+         * [KeystoreRekey] moves keystores written under an older password to
+         * it at startup. (audit L-2 / L-6)
          */
         val KEYSTORE_PASSWORD: String =
-            System.getenv("KEYSTORE_PASSWORD")?.takeIf { it.isNotBlank() } ?: "changeit"
+            System.getenv("KEYSTORE_PASSWORD")?.takeIf { it.isNotBlank() } ?: LEGACY_KEYSTORE_PASSWORD
+
+        /** What every keystore was written with before `KEYSTORE_PASSWORD` existed. */
+        const val LEGACY_KEYSTORE_PASSWORD = "changeit"
 
         /** Alias of the backup key in `<id>.backup.jks`. */
         private const val BACKUP_ALIAS = "backup"

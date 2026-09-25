@@ -223,6 +223,28 @@ fun main() {
     // Demo server sertifikası üret (yoksa)
     val serverCertId = "demo-server"
     val serverKeystorePath = File(certsDir, "$serverCertId.jks")
+
+    // Keystores written under an older password (the old "changeit" default,
+    // or KEYSTORE_PASSWORD_PREVIOUS) move to KEYSTORE_PASSWORD before anything
+    // opens them.
+    run {
+        val keystores = buildList {
+            add(serverKeystorePath)
+            add(File(certsDir, "$serverCertId.backup.jks"))
+            add(File(certsDir, "client-truststore.jks"))
+            hostStore.getAll().mapNotNull { it.keystorePath }.forEach { path ->
+                add(File(path))
+                add(File(path.removeSuffix(".jks") + ".backup.jks"))
+            }
+        }
+        val report = com.example.pinvault.server.service.KeystoreRekey(certService)
+            .run(keystores, com.example.pinvault.server.store.HostClientCertStore(db))
+        if (report.rekeyed.isNotEmpty()) println("KEYSTORE_PASSWORD: re-encrypted ${report.rekeyed.joinToString()}")
+        if (report.unreadable.isNotEmpty()) {
+            System.err.println("KEYSTORE_PASSWORD: ${report.unreadable.joinToString()} open with neither the current, the previous " +
+                "(KEYSTORE_PASSWORD_PREVIOUS) nor the old default password; left as they are")
+        }
+    }
     val serverCertResult = if (!serverKeystorePath.exists()) {
         println("Generating demo server TLS certificate...")
         certService.generateCertificate(serverCertId, "localhost")
@@ -747,7 +769,8 @@ fun main() {
                 } catch (_: Exception) { null }
                     ?: "client-${System.currentTimeMillis()}"
 
-                val result = certService.generateClientCertificate(clientId)
+                val wrapping = com.example.pinvault.server.service.P12Transfer.wrappingFor(call)
+                val result = certService.generateClientCertificate(clientId, wrapping.password)
                 clientCertStore.add(clientId, result.commonName, result.fingerprint, java.time.Instant.now().toString())
 
                 // The certificate is in the truststore file now, but the running
@@ -757,7 +780,7 @@ fun main() {
                 refreshMtlsTrust("client cert generated: $clientId", true)
 
                 call.response.header("Content-Disposition", "attachment; filename=\"$clientId.p12\"")
-                call.respondBytes(result.p12Bytes, io.ktor.http.ContentType.Application.OctetStream)
+                com.example.pinvault.server.service.P12Transfer.respond(call, result.p12Bytes, wrapping)
             }
 
             post("/api/v1/client-certs/upload") {
@@ -832,7 +855,8 @@ fun main() {
                 val clientId = enrollmentTokenStore.validate(token)
                     ?: return@post call.respondText("""{"error":"Geçersiz veya kullanılmış token"}""", ContentType.Application.Json, HttpStatusCode.Unauthorized)
 
-                val result = certService.generateClientCertificate(clientId)
+                val wrapping = com.example.pinvault.server.service.P12Transfer.wrappingFor(call)
+                val result = certService.generateClientCertificate(clientId, wrapping.password)
                 clientCertStore.add(clientId, result.commonName, result.fingerprint, java.time.Instant.now().toString())
                 enrollmentTokenStore.markUsed(token)
 
@@ -841,12 +865,8 @@ fun main() {
                 // copy of the enrollment endpoint must send it just like the
                 // Config API copy in CertificateConfigRoute does — otherwise a
                 // client pointed at :8090 fails enrollment outright.
-                val p12Hash = java.security.MessageDigest.getInstance("SHA-256")
-                    .digest(result.p12Bytes)
-                    .let { java.util.Base64.getEncoder().encodeToString(it) }
-                call.response.header("X-P12-SHA256", p12Hash)
                 call.response.header("Content-Disposition", "attachment; filename=\"$clientId.p12\"")
-                call.respondBytes(result.p12Bytes, io.ktor.http.ContentType.Application.OctetStream)
+                com.example.pinvault.server.service.P12Transfer.respond(call, result.p12Bytes, wrapping)
             }
 
             // Scope-based device list, keyed by the identifier the per-device

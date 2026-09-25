@@ -80,7 +80,8 @@ internal class ConfigApiClient(
             vaultReportEndpoint = block.vaultReportEndpoint,
             bootstrapPins = block.bootstrapPins,
             sslManager = sslManager,
-            signatureTrust = signatureTrust
+            signatureTrust = signatureTrust,
+            clientKeyPassword = block.clientKeyPassword
         )
 
         val appContext = context.applicationContext

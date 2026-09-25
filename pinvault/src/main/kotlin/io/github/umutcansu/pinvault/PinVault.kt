@@ -572,9 +572,9 @@ object PinVault {
                 deviceUid = identity?.second
             )
 
-            validateP12(result.p12Bytes, result.p12Hash, defaultBlock.clientKeyPassword)
-            certStore.save(certLabel, result.p12Bytes)
-            sslManager.loadClientKeystore(result.p12Bytes, defaultBlock.clientKeyPassword)
+            val p12 = acceptEnrolledP12(result, defaultBlock.clientKeyPassword)
+            certStore.save(certLabel, p12)
+            sslManager.loadClientKeystore(p12, defaultBlock.clientKeyPassword)
 
             // Rebuild client with mTLS
             clientProvider.currentConfig?.let { clientProvider.swap(it) }
@@ -626,10 +626,10 @@ object PinVault {
             )
 
             Timber.d("Auto-enrollment: received P12 (%d bytes)", result.p12Bytes.size)
-            validateP12(result.p12Bytes, result.p12Hash, defaultBlock.clientKeyPassword)
+            val p12 = acceptEnrolledP12(result, defaultBlock.clientKeyPassword)
 
-            certStore.save(certLabel, result.p12Bytes)
-            sslManager.loadClientKeystore(result.p12Bytes, defaultBlock.clientKeyPassword)
+            certStore.save(certLabel, p12)
+            sslManager.loadClientKeystore(p12, defaultBlock.clientKeyPassword)
             clientProvider.currentConfig?.let { clientProvider.swap(it) }
 
             Timber.d("Auto-enrollment successful — cert stored [%s], %d bytes", certLabel, result.p12Bytes.size)
@@ -969,6 +969,19 @@ object PinVault {
 
         val alias = config?.deviceAlias ?: "${android.os.Build.MANUFACTURER} ${android.os.Build.MODEL}"
         return alias to uid
+    }
+
+    /**
+     * Checks an enrolled P12 (integrity hash, format) and returns it wrapped
+     * with [localPassword]. A one-off password the server sent with it
+     * (`X-P12-Password`) is used here once and never stored; without one the
+     * bundle must already open with [localPassword], as before.
+     */
+    private fun acceptEnrolledP12(result: io.github.umutcansu.pinvault.model.EnrollmentResult, localPassword: String): ByteArray {
+        val oneOff = result.p12Password
+        validateP12(result.p12Bytes, result.p12Hash, oneOff ?: localPassword)
+        return if (oneOff != null) io.github.umutcansu.pinvault.internal.P12Rewrap.rewrap(result.p12Bytes, oneOff, localPassword)
+        else result.p12Bytes
     }
 
     /**
