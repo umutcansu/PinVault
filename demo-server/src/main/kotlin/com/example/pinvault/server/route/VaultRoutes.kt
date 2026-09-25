@@ -362,11 +362,11 @@ fun Route.vaultRoutes(
 
         /** List all files for this Config API scope. */
         get {
-            val entries = vaultFileStore.listForConfigApi(configApiId).map {
+            val entries = vaultFileStore.summaries(configApiId).map {
                 mapOf(
                     "key" to it.key,
                     "version" to it.version.toString(),
-                    "size" to it.content.size.toString(),
+                    "size" to it.size.toString(),
                     "access_policy" to it.accessPolicy,
                     "encryption" to it.encryption
                 )

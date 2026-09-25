@@ -1,5 +1,7 @@
 package com.example.pinvault.server
 
+import com.example.pinvault.server.service.VaultAtRestCipher
+import com.example.pinvault.server.service.VaultKeyMismatchException
 import com.example.pinvault.server.store.DatabaseManager
 import com.example.pinvault.server.store.VaultFileStore
 import java.io.File
@@ -7,6 +9,8 @@ import kotlin.test.AfterTest
 import kotlin.test.BeforeTest
 import kotlin.test.Test
 import kotlin.test.assertContentEquals
+import kotlin.test.assertEquals
+import kotlin.test.assertFailsWith
 import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 
@@ -24,8 +28,15 @@ class VaultAtRestEncryptionTest {
     fun setUp() {
         dbFile = File.createTempFile("pinvault-atrest-", ".db").apply { deleteOnExit() }
         db = DatabaseManager(dbFile.absolutePath)
-        store = VaultFileStore(db)
+        store = VaultFileStore(db, VaultAtRestCipher(VaultAtRestCipher.DEMO_PASSWORD))
     }
+
+    /** The same DB opened by a server started with other passwords. */
+    private fun restartedWith(password: String, previous: String? = null) =
+        VaultFileStore(db, VaultAtRestCipher.fromEnv(listOfNotNull(
+            "VAULT_AT_REST_PASSWORD" to password,
+            previous?.let { "VAULT_AT_REST_PASSWORD_PREVIOUS" to it }
+        ).toMap()))
 
     @AfterTest
     fun tearDown() {
@@ -70,10 +81,68 @@ class VaultAtRestEncryptionTest {
         db.connection().use { c -> c.createStatement().use { it.executeUpdate("UPDATE vault_files SET encryption = 'end_to_end' WHERE key = 'old'") } }
         assertContentEquals(plain, rawContent("api", "old"), "the old layout: in the clear")
 
-        kotlin.test.assertEquals(1, store.encryptStoredDeviceFiles())
+        assertEquals(listOf("api/old"), store.secureStoredFiles().encrypted)
         assertFalse(rawContent("api", "old").contentEquals(plain))
         assertContentEquals(plain, store.get("api", "old")!!.content)
-        kotlin.test.assertEquals(0, store.encryptStoredDeviceFiles(), "a second run changes nothing")
+        assertEquals(VaultFileStore.AtRestReport(emptyList(), emptyList(), emptyList()), store.secureStoredFiles(), "a second run changes nothing")
+    }
+
+    // The sample ran on the demo password until setup.sh started generating one:
+    // the first start with a real password moves every file over.
+    @Test
+    fun `files stored under the demo password move to a newly set password at startup`() {
+        val plain = "flags".toByteArray()
+        store.put("api", "a", plain, accessPolicy = "token", encryption = "at_rest")
+        store.put("api", "b", "model".toByteArray(), accessPolicy = "token", encryption = "end_to_end")
+
+        val restarted = restartedWith("a-real-password")
+        assertEquals(listOf("api/a", "api/b"), restarted.secureStoredFiles().rekeyed)
+        assertContentEquals(plain, restarted.get("api", "a")!!.content)
+        assertFailsWith<VaultKeyMismatchException>("the demo password no longer opens it") { store.get("api", "a") }
+        assertTrue(restarted.secureStoredFiles().rekeyed.isEmpty(), "a second start changes nothing")
+    }
+
+    @Test
+    fun `VAULT_AT_REST_PASSWORD_PREVIOUS opens files of the password being replaced`() {
+        val old = restartedWith("old-password")
+        old.put("api", "f", "secret".toByteArray(), accessPolicy = "token", encryption = "at_rest")
+
+        val restarted = restartedWith("new-password", previous = "old-password")
+        assertEquals(listOf("api/f"), restarted.secureStoredFiles().rekeyed)
+        assertContentEquals("secret".toByteArray(), restartedWith("new-password").get("api", "f")!!.content)
+    }
+
+    // Before: a file that did not decrypt was served as its ciphertext, and the
+    // vault signature (over what is served) made devices accept it.
+    @Test
+    fun `a file no password opens is reported and never served as ciphertext`() {
+        restartedWith("lost-password").put("api", "f", "secret".toByteArray(), accessPolicy = "token", encryption = "at_rest")
+
+        val restarted = restartedWith("new-password")
+        assertEquals(listOf("api/f"), restarted.secureStoredFiles().unreadable)
+        val error = assertFailsWith<VaultKeyMismatchException> { restarted.get("api", "f") }
+        assertTrue(error.message!!.contains("VAULT_AT_REST_PASSWORD_PREVIOUS"))
+
+        // Still listed, and an upload replaces it.
+        assertEquals(6, restarted.summaries("api").single().size)
+        restarted.put("api", "f", "replaced".toByteArray())
+        assertContentEquals("replaced".toByteArray(), restarted.get("api", "f")!!.content)
+        assertEquals(2, restarted.get("api", "f")!!.version)
+    }
+
+    @Test
+    fun `a plain file that happens to start with the marker is served as uploaded`() {
+        val content = "VLT-ENC1".toByteArray() + ByteArray(64) { it.toByte() }
+        store.put("api", "p", content, accessPolicy = "public", encryption = "plain")
+        assertContentEquals(content, store.get("api", "p")!!.content)
+        assertTrue(store.secureStoredFiles().unreadable.isEmpty())
+    }
+
+    @Test
+    fun `the listing reports content sizes without decrypting`() {
+        store.put("api", "e", ByteArray(1000), accessPolicy = "token", encryption = "at_rest")
+        store.put("api", "p", ByteArray(10), accessPolicy = "public", encryption = "plain")
+        assertEquals(mapOf("e" to 1000, "p" to 10), restartedWith("any-other-password").summaries("api").associate { it.key to it.size })
     }
 
     @Test

@@ -15,6 +15,7 @@ Pick the highest level you can operate reliably. A layer you can't run well, suc
 | Signing key encrypted at rest | `SIGNING_KEY_PASSWORD` | A copied data directory yielding the key |
 | Management API off the network | sample host: plain HTTP bound to `127.0.0.1`, `MANAGEMENT_HTTPS_PORT` for devices and remote admins | The admin key crossing the network in the clear; read or forged device reports |
 | Keystores under a real password | `KEYSTORE_PASSWORD` (the sample host's `setup.sh` generates one) | A copied data directory yielding TLS, backup and client keys |
+| Vault files under a real password | `VAULT_AT_REST_PASSWORD` (the sample host's `setup.sh` generates one; unset means a password printed in the source code) | A copied database yielding at_rest and per-device vault files |
 | Offline backup signing key in the app | client `signaturePublicKeys(primary, backup)` | Lost or stolen primary → switch without an app update |
 | Named admins + audit log | `ADMIN_KEYS=alice:<sha256>,…` (log is always on) | "Who changed this pin?" having no answer |
 | Webhook notifications | `NOTIFY_WEBHOOK_URL`, `NOTIFY_WEBHOOK_SECRET` | Changes nobody notices; a DB-only rewrite of the audit log going unseen |
@@ -124,6 +125,10 @@ Which backup is still safe depends on where the key leaked from.
 ### Changing the keystore password
 
 Put the new password in `KEYSTORE_PASSWORD` and the old one in `KEYSTORE_PASSWORD_PREVIOUS`, then restart. The server re-encrypts its keystores, backup keys, truststore and stored host client certificates at startup and logs what it moved. Remove `KEYSTORE_PASSWORD_PREVIOUS` afterwards. Devices are not affected: the password never leaves the server.
+
+### Changing the vault password
+
+Same pattern: new password in `VAULT_AT_REST_PASSWORD`, old one in `VAULT_AT_REST_PASSWORD_PREVIOUS`, restart. At startup every at_rest and per-device file that opens only with the previous password is re-encrypted under the new one; files written while the variable was unset (the demo password) move over without `_PREVIOUS`. A file that no password opens is named in the log, and downloads of it fail until the old password is supplied or the file is uploaded again: the server never hands a device the encrypted bytes as the file. Devices are not affected.
 
 ### The config server is down
 

@@ -48,11 +48,11 @@ fun Route.scopedVaultAdminRoutes(
         /** List all files in this Config API's scope. */
         get {
             val cid = call.parameters["configApiId"]!!
-            val entries = vaultFileStore.listForConfigApi(cid).map {
+            val entries = vaultFileStore.summaries(cid).map {
                 mapOf(
                     "key" to it.key,
                     "version" to it.version.toString(),
-                    "size" to it.content.size.toString(),
+                    "size" to it.size.toString(),
                     "access_policy" to it.accessPolicy,
                     "encryption" to it.encryption
                 )

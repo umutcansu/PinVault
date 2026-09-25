@@ -1,6 +1,7 @@
 package com.example.pinvault.server.store
 
 import com.example.pinvault.server.service.VaultAtRestCipher
+import com.example.pinvault.server.service.VaultKeyMismatchException
 
 /**
  * Persistent store for vault file content. Every entry is scoped to a Config
@@ -10,7 +11,10 @@ import com.example.pinvault.server.service.VaultAtRestCipher
  * policy is "token" (least-privilege); admin must explicitly issue a per-device
  * token before the device can fetch the file.
  */
-class VaultFileStore(private val db: DatabaseManager) {
+class VaultFileStore(
+    private val db: DatabaseManager,
+    private val cipher: VaultAtRestCipher = VaultAtRestCipher.fromEnv()
+) {
 
     fun get(configApiId: String, key: String): VaultEntry? {
         db.connection().use { conn ->
@@ -43,7 +47,8 @@ class VaultFileStore(private val db: DatabaseManager) {
         encryption: String? = null
     ) {
         db.connection().use { conn ->
-            val existing = get(configApiId, key)
+            // Metadata only: a file that no longer decrypts can still be replaced.
+            val existing = meta(configApiId, key)
             val newVersion = (existing?.version ?: 0) + 1
             val finalPolicy = accessPolicy ?: existing?.accessPolicy ?: "token"
             val finalEncryption = encryption ?: existing?.encryption ?: "plain"
@@ -95,33 +100,62 @@ class VaultFileStore(private val db: DatabaseManager) {
     }
 
     /**
-     * Encrypts end_to_end files stored before they were kept encrypted on
-     * disk. The server encrypts each download for one device, so it needs the
-     * content — but not in the clear on its disk. Returns how many it rewrote.
+     * Startup pass over every at_rest / end_to_end file so each one opens with
+     * the current `VAULT_AT_REST_PASSWORD`:
+     * - stored before it was kept encrypted (end_to_end files once were): encrypted;
+     * - opens only with a previous password (`VAULT_AT_REST_PASSWORD_PREVIOUS`,
+     *   or the demo password when the variable was unset): re-encrypted;
+     * - opens with none: listed in [AtRestReport.unreadable] and left as it is.
+     *   Reads of it fail until the old password is supplied or it is uploaded again.
+     * One key derivation per file, so a few hundred files take seconds.
      */
-    fun encryptStoredDeviceFiles(): Int = db.connection().use { conn ->
-        val plain = conn.prepareStatement("SELECT config_api_id, key, content FROM vault_files WHERE encryption = 'end_to_end'").use { stmt ->
+    fun secureStoredFiles(): AtRestReport = db.connection().use { conn ->
+        val rows = conn.prepareStatement(
+            "SELECT config_api_id, key, content FROM vault_files WHERE encryption IN ('at_rest', 'end_to_end') ORDER BY config_api_id, key"
+        ).use { stmt ->
             val rs = stmt.executeQuery()
-            buildList {
-                while (rs.next()) {
-                    val content = rs.getBytes(3)
-                    if (!VaultAtRestCipher.isEncrypted(content)) add(Triple(rs.getString(1), rs.getString(2), content))
-                }
-            }
+            buildList { while (rs.next()) add(Triple(rs.getString(1), rs.getString(2), rs.getBytes(3))) }
         }
-        plain.forEach { (scope, key, content) ->
+        val encrypted = mutableListOf<String>()
+        val rekeyed = mutableListOf<String>()
+        val unreadable = mutableListOf<String>()
+        for ((scope, key, stored) in rows) {
+            val name = "$scope/$key"
+            val plaintext = if (!VaultAtRestCipher.isEncrypted(stored)) {
+                encrypted += name
+                stored
+            } else when (val opened = cipher.open(stored)) {
+                VaultAtRestCipher.Opened.Current -> continue
+                is VaultAtRestCipher.Opened.Previous -> { rekeyed += name; opened.plaintext }
+                VaultAtRestCipher.Opened.Unreadable -> { unreadable += name; continue }
+            }
             conn.prepareStatement("UPDATE vault_files SET content = ? WHERE config_api_id = ? AND key = ?").use { stmt ->
-                stmt.setBytes(1, VaultAtRestCipher.encrypt(content))
+                stmt.setBytes(1, cipher.encrypt(plaintext))
                 stmt.setString(2, scope)
                 stmt.setString(3, key)
                 stmt.executeUpdate()
             }
         }
-        plain.size
+        AtRestReport(encrypted, rekeyed, unreadable)
+    }
+
+    data class AtRestReport(val encrypted: List<String>, val rekeyed: List<String>, val unreadable: List<String>)
+
+    private fun meta(configApiId: String, key: String): VaultFileSummary? {
+        db.connection().use { conn ->
+            conn.prepareStatement("""
+                SELECT version, access_policy, encryption FROM vault_files WHERE config_api_id = ? AND key = ?
+            """).use { stmt ->
+                stmt.setString(1, configApiId)
+                stmt.setString(2, key)
+                val rs = stmt.executeQuery()
+                return if (rs.next()) VaultFileSummary(key, rs.getInt(1), 0, rs.getString(2), rs.getString(3)) else null
+            }
+        }
     }
 
     private fun storedForm(encryption: String, content: ByteArray): ByteArray =
-        if (encryption == "at_rest" || encryption == "end_to_end") VaultAtRestCipher.encrypt(content) else content
+        if (encryption in ENCRYPTED_MODES) cipher.encrypt(content) else content
 
     fun delete(configApiId: String, key: String) {
         db.connection().use { conn ->
@@ -135,7 +169,39 @@ class VaultFileStore(private val db: DatabaseManager) {
         }
     }
 
-    /** All files for a specific Config API (used by admin list endpoint). */
+    /**
+     * The admin listing: sizes come from the stored blob, nothing is
+     * decrypted (one key derivation per file per listing would add up, and a
+     * file that no longer opens must still be listed).
+     */
+    fun summaries(configApiId: String): List<VaultFileSummary> {
+        db.connection().use { conn ->
+            conn.prepareStatement("""
+                SELECT key, version, content, access_policy, encryption
+                FROM vault_files
+                WHERE config_api_id = ?
+                ORDER BY key
+            """).use { stmt ->
+                stmt.setString(1, configApiId)
+                val rs = stmt.executeQuery()
+                return buildList {
+                    while (rs.next()) {
+                        val encryption = rs.getString("encryption")
+                        val stored = rs.getBytes("content")
+                        add(VaultFileSummary(
+                            key = rs.getString("key"),
+                            version = rs.getInt("version"),
+                            size = if (encryption in ENCRYPTED_MODES) VaultAtRestCipher.plaintextSize(stored) else stored.size,
+                            accessPolicy = rs.getString("access_policy"),
+                            encryption = encryption
+                        ))
+                    }
+                }
+            }
+        }
+    }
+
+    /** All files for a specific Config API, content decrypted. */
     fun listForConfigApi(configApiId: String): List<VaultEntry> {
         db.connection().use { conn ->
             conn.prepareStatement("""
@@ -169,12 +235,42 @@ class VaultFileStore(private val db: DatabaseManager) {
         configApiId  = getString("config_api_id"),
         key          = getString("key"),
         version      = getInt("version"),
-        content      = VaultAtRestCipher.decryptIfPresent(getBytes("content")),
+        content      = readContent(getString("key"), getString("encryption"), getBytes("content")),
         accessPolicy = getString("access_policy"),
         encryption   = getString("encryption"),
         updatedAt    = getString("updated_at")
     )
+
+    /**
+     * A plain file is served as stored. An encrypted one must open with the
+     * current password: serving the ciphertext instead would hand devices a
+     * garbage file with a valid signature (the signature covers what is served).
+     */
+    private fun readContent(key: String, encryption: String, stored: ByteArray): ByteArray {
+        if (encryption !in ENCRYPTED_MODES || !VaultAtRestCipher.isEncrypted(stored)) return stored
+        return try {
+            cipher.decrypt(stored)
+        } catch (e: VaultKeyMismatchException) {
+            throw VaultKeyMismatchException(
+                "vault file '$key' does not open with VAULT_AT_REST_PASSWORD: set VAULT_AT_REST_PASSWORD_PREVIOUS " +
+                "to the password it was stored with and restart, or upload the file again"
+            )
+        }
+    }
+
+    private companion object {
+        val ENCRYPTED_MODES = setOf("at_rest", "end_to_end")
+    }
 }
+
+/** A vault file without its content (listings). */
+data class VaultFileSummary(
+    val key: String,
+    val version: Int,
+    val size: Int,
+    val accessPolicy: String,
+    val encryption: String
+)
 
 data class VaultEntry(
     val configApiId: String,
