@@ -47,10 +47,10 @@ class VaultFileStore(private val db: DatabaseManager) {
             val newVersion = (existing?.version ?: 0) + 1
             val finalPolicy = accessPolicy ?: existing?.accessPolicy ?: "token"
             val finalEncryption = encryption ?: existing?.encryption ?: "plain"
-            // at_rest: store the content AES-256-GCM encrypted; reads decrypt it
-            // transparently (see toEntry). Wire format stays identical to plain.
-            val storedContent =
-                if (finalEncryption == "at_rest") VaultAtRestCipher.encrypt(content) else content
+            // at_rest and end_to_end: store the content AES-256-GCM encrypted;
+            // reads decrypt it transparently (see toEntry). The wire format is
+            // unchanged: plain for at_rest, per-device envelope for end_to_end.
+            val storedContent = storedForm(finalEncryption, content)
 
             conn.prepareStatement("""
                 INSERT OR REPLACE INTO vault_files
@@ -77,8 +77,7 @@ class VaultFileStore(private val db: DatabaseManager) {
      */
     fun updatePolicy(configApiId: String, key: String, accessPolicy: String, encryption: String): Boolean {
         val current = get(configApiId, key) ?: return false   // content already decrypted
-        val storedContent =
-            if (encryption == "at_rest") VaultAtRestCipher.encrypt(current.content) else current.content
+        val storedContent = storedForm(encryption, current.content)
         db.connection().use { conn ->
             conn.prepareStatement("""
                 UPDATE vault_files
@@ -94,6 +93,35 @@ class VaultFileStore(private val db: DatabaseManager) {
             }
         }
     }
+
+    /**
+     * Encrypts end_to_end files stored before they were kept encrypted on
+     * disk. The server encrypts each download for one device, so it needs the
+     * content — but not in the clear on its disk. Returns how many it rewrote.
+     */
+    fun encryptStoredDeviceFiles(): Int = db.connection().use { conn ->
+        val plain = conn.prepareStatement("SELECT config_api_id, key, content FROM vault_files WHERE encryption = 'end_to_end'").use { stmt ->
+            val rs = stmt.executeQuery()
+            buildList {
+                while (rs.next()) {
+                    val content = rs.getBytes(3)
+                    if (!VaultAtRestCipher.isEncrypted(content)) add(Triple(rs.getString(1), rs.getString(2), content))
+                }
+            }
+        }
+        plain.forEach { (scope, key, content) ->
+            conn.prepareStatement("UPDATE vault_files SET content = ? WHERE config_api_id = ? AND key = ?").use { stmt ->
+                stmt.setBytes(1, VaultAtRestCipher.encrypt(content))
+                stmt.setString(2, scope)
+                stmt.setString(3, key)
+                stmt.executeUpdate()
+            }
+        }
+        plain.size
+    }
+
+    private fun storedForm(encryption: String, content: ByteArray): ByteArray =
+        if (encryption == "at_rest" || encryption == "end_to_end") VaultAtRestCipher.encrypt(content) else content
 
     fun delete(configApiId: String, key: String) {
         db.connection().use { conn ->

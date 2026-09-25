@@ -273,6 +273,8 @@ fun main() {
     val hostClientCertStore = com.example.pinvault.server.store.HostClientCertStore(db)
     val enrollmentTokenStore = EnrollmentTokenStore(db)
     val vaultFileStore = com.example.pinvault.server.store.VaultFileStore(db)
+    // end_to_end files stored before they were kept encrypted on disk.
+    vaultFileStore.encryptStoredDeviceFiles().takeIf { it > 0 }?.let { println("Vault: encrypted $it per-device file(s) on disk") }
     val vaultDistStore = com.example.pinvault.server.store.VaultDistributionStore(db)
     val vaultTokenStore = com.example.pinvault.server.store.VaultFileTokenStore(db)
     val devicePublicKeyStore = com.example.pinvault.server.store.DevicePublicKeyStore(db)

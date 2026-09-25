@@ -1,6 +1,6 @@
 # PinVault Security Audit Report
 
-_OWASP-oriented audit — 2026-05-29. Method: 8 parallel finders across server + library security dimensions, each candidate finding independently re-verified by an adversarial reviewer; 11 of 29 candidates were refuted and dropped._
+_OWASP-oriented audit — 2026-05-29. Method: automated multi-agent review — 8 parallel finder agents across server + library security dimensions, each candidate finding independently re-verified by an adversarial reviewer agent; 11 of 29 candidates were refuted and dropped. Not a third-party (human) audit._
 
 ## Remediation status — 2026-05-29
 
@@ -234,7 +234,7 @@ Review notes from the same change (design issues caught before release, all cove
 - **R8-safe parsing.** Every Gson-parsed type lives under `model.**`, which the consumer rules keep (`GsonModelPackageTest`). A key-set payload class elsewhere would have lost its field names in minified apps and failed every fetch.
 - **Signature cache.** The cache is dropped on every admin write, and `issuedAt` is monotonic. A config that returns to earlier content (force on, then off) must not be served with the older, cached `issuedAt`, because devices would reject it.
 
-Independent review of the same change, before release (all fixed; tests in `GovernanceTest` / `SigningFeaturesTest`):
+Automated multi-agent review of the same change, before release — AI reviewers that had not written the code, not a third-party audit (all fixed; tests in `GovernanceTest` / `SigningFeaturesTest`):
 
 | Finding | Action |
 |---|---|

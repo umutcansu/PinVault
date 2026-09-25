@@ -2,7 +2,7 @@
 
 Dynamic SSL certificate pinning library for Android. Manage pins remotely, support mTLS, distribute versioned files — all with encrypted storage.
 
-> **v2.0** — Multi-Config-API support, per-file access tokens, end-to-end
+> **v2.0** — Multi-Config-API support, per-file access tokens, per-device
 > encryption, server-side pin scoping. See [MIGRATION.md](MIGRATION.md) for
 > a DSL reference and [CHANGELOG.md](CHANGELOG.md) for the full list of
 > changes.
@@ -17,7 +17,7 @@ Dynamic SSL certificate pinning library for Android. Manage pins remotely, suppo
 - **Server-side pin scoping** *(v2)* — `wantPinsFor(...)` + per-device ACL, least-privilege
 - **VaultFile** — remote versioned file distribution (ML models, configs, feature flags)
 - **Per-file access policies** *(v2)* — `public` / `api_key` / `token` / `token_mtls`
-- **End-to-end encryption** *(v2)* — RSA-OAEP-SHA256 + AES-256-GCM, Android Keystore-backed
+- **Per-device encryption** *(v2)* — RSA-OAEP-SHA256 + AES-256-GCM, Android Keystore-backed: only the target device opens a download (the server encrypts it, so it sees the content)
 - **Encrypted storage** — AES-256-GCM with Android Keystore (hardware-backed)
 - **Server-agnostic** — works with any backend, or offline with static pins
 - **ECDSA signed configs** — verify config integrity with SHA256withECDSA
@@ -539,7 +539,7 @@ val json = PinVault.loadFileAsString("feature-flags")
 yet) is fine — the library omits the header entirely so the server answers
 "X-Vault-Token header required" rather than "invalid or revoked token".
 
-### End-to-end encryption (v2)
+### Per-device encryption (v2)
 
 ```kotlin
 .vaultFile("ml-model") {
@@ -552,6 +552,11 @@ yet) is fine — the library omits the header entirely so the server answers
 Device public key is registered with the server automatically on first fetch;
 the server encrypts each response with that key. Private key never leaves the
 device's Android Keystore.
+
+This is not end-to-end in the strict sense, despite the `END_TO_END` name: the
+server performs the encryption, so it sees the content (the reference server
+keeps it encrypted on disk). Relays, caches and other devices cannot read a
+download. To hide a file from the server too, encrypt it before upload.
 
 ## Device Tracking
 

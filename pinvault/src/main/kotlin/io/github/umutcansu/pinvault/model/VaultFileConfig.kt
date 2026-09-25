@@ -164,9 +164,12 @@ enum class VaultFileAccessPolicy {
  *   wraps in [StorageStrategy] encryption if configured).
  * - [AT_REST]: Same wire format as PLAIN; semantic marker only (server
  *   encrypts before storage but decrypts before sending).
- * - [END_TO_END]: Server wraps content with the device's registered RSA
- *   public key. Library decrypts via VaultFileDecryptor using the Android
- *   Keystore private key.
+ * - [END_TO_END]: per-device encryption. The server wraps the content with
+ *   the device's registered RSA public key; the library decrypts it via
+ *   VaultFileDecryptor with the Android Keystore private key. Relays, caches
+ *   and other devices cannot read it. The name is historical: the server
+ *   performs the encryption, so it sees the content (it keeps it encrypted on
+ *   disk). To hide a file from the server too, encrypt it before upload.
  */
 enum class VaultFileEncryption {
     PLAIN,

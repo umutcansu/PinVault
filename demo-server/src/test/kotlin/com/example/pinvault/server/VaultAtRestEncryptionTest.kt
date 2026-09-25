@@ -52,6 +52,30 @@ class VaultAtRestEncryptionTest {
         assertTrue(raw.size > plain.size, "ciphertext carries marker+salt+iv+tag")
     }
 
+    // end_to_end used to sit in the clear on the server disk: the server
+    // encrypts each download for one device, so it needs the content, but
+    // not unencrypted on disk.
+    @Test
+    fun `end_to_end is stored encrypted too`() {
+        val plain = "model weights".toByteArray()
+        store.put("api", "model", plain, accessPolicy = "token", encryption = "end_to_end")
+        assertFalse(rawContent("api", "model").contentEquals(plain), "DB content must be encrypted")
+        assertContentEquals(plain, store.get("api", "model")!!.content)
+    }
+
+    @Test
+    fun `end_to_end files stored before are encrypted at startup`() {
+        val plain = "stored long ago".toByteArray()
+        store.put("api", "old", plain, accessPolicy = "token", encryption = "plain")
+        db.connection().use { c -> c.createStatement().use { it.executeUpdate("UPDATE vault_files SET encryption = 'end_to_end' WHERE key = 'old'") } }
+        assertContentEquals(plain, rawContent("api", "old"), "the old layout: in the clear")
+
+        kotlin.test.assertEquals(1, store.encryptStoredDeviceFiles())
+        assertFalse(rawContent("api", "old").contentEquals(plain))
+        assertContentEquals(plain, store.get("api", "old")!!.content)
+        kotlin.test.assertEquals(0, store.encryptStoredDeviceFiles(), "a second run changes nothing")
+    }
+
     @Test
     fun `plain stores verbatim`() {
         val plain = "not secret".toByteArray()
