@@ -21,6 +21,10 @@ module.exports = defineConfig({
   ],
   use: {
     baseURL: WEB_URL,
+    // Bulunamayan bir öğe senaryonun tamamını (25 dk'ya varan) beklemek yerine
+    // bir dakikada hata versin.
+    actionTimeout: 60_000,
+    navigationTimeout: 60_000,
     headless: true,
     viewport: { width: 1440, height: 900 },
     screenshot: 'only-on-failure',

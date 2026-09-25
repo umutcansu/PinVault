@@ -976,10 +976,18 @@ class Dashboard {
   // ── Config API sekmeleri ─────────────────────────────────────────────
 
   async openConfigApiTab(apiId, tab) {
-    await this.page.locator(`#host-list [data-action="toggleApiTree"][data-arg0="${apiId}"]`).click();
     // Yalnızca sekme çubuğundaki düğme: vault sekmesindeki yenile simgesi ve
     // dosya detayındaki "Geri" düğmesi de aynı data-action'ı taşır.
-    await this.page.locator(`button.tab-btn[data-action="setConfigApiTab"][data-arg0="${tab}"][data-arg1="${apiId}"]`).click();
+    const tabButton = this.page.locator(`button.tab-btn[data-action="setConfigApiTab"][data-arg0="${tab}"][data-arg1="${apiId}"]`);
+    // API başlığı hem API'yi seçer hem ağacını aç/kapa yapar: seçili API'ye ikinci
+    // tıklama ağacı kapatır ve host satırları DOM'dan kalkar (E10'da 25 dakikalık
+    // takılma). Başlığa yalnızca sekmeler ekranda değilse tıklanır, ağaç açık tutulur.
+    if (!(await tabButton.isVisible())) {
+      await this.page.locator(`#host-list [data-action="toggleApiTree"][data-arg0="${apiId}"]`).click();
+    }
+    await this.ensureApiExpanded(apiId);
+    // Sekmeye tıklamak içeriği her seferinde yeniden çizer (setConfigApiTab).
+    await tabButton.click();
   }
 
   // ── Vault ────────────────────────────────────────────────────────────
