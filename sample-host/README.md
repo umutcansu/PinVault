@@ -83,29 +83,30 @@ Kaynak değiştikten sonra `docker compose up -d --build` yeterli. Yerel dizinde
 | `CONFIG_TTL_SECONDS` | `86400` | İmzalı config'in geçerlilik süresi |
 | `SIGNING_KEY_PASSWORD` | boş | Doluysa imzalama anahtarı diskte AES-256-GCM ile şifrelenir |
 | `ENROLLMENT_TOKEN_TTL_SECONDS` | `86400` | Kayıt token'ının geçerlilik süresi |
-| `VAULT_AT_REST_PASSWORD` | demo anahtarı | `at_rest` vault dosyalarının anahtarı; boşsa şifreleme yalnızca etikettir, üretimde mutlaka ayarla |
+| `VAULT_AT_REST_PASSWORD` | `setup.sh` üretir | Sunucu diskindeki vault dosyalarının (at_rest ve cihaza özel) parolası. **Boşsa şifreleme yalnızca etikettir**, aşağıya bak |
+| `VAULT_AT_REST_PASSWORD_PREVIOUS` | boş | Parolayı değiştirirken eskisi: sunucu açılışta dosyaları yeni parolaya geçirir, sonra silinir |
 | `CERT_EXPIRY_WARN_DAYS` | `30` | Sertifika süre uyarısı eşiği |
 | `KEYSTORE_PASSWORD` | `setup.sh` üretir | Sunucunun kendi anahtar depolarının parolası (TLS anahtarları, yedek anahtarlar, istemci güven listesi, host istemci sertifikaları). Hiçbir cihaza gitmez; eski kurulumlarda depolar açılışta bu parolaya geçirilir |
 | `KEYSTORE_PASSWORD_PREVIOUS` | boş | Parolayı değiştirirken eskisi: sunucu açılışta depoları yeni parolaya geçirir, sonra silinir |
 | `CLIENT_P12_PASSWORD` | `changeit` | Cihaza giden mTLS sertifika paketinin parolası; yalnızca eski kütüphane sürümleri ve elle kurulan P12 dosyaları için. Güncel kütüphane her indirmede tek kullanımlık parola alır |
-| `VAULT_AT_REST_PASSWORD` | boş | **Boşken `at_rest` şifrelemesi bir güvenlik sınırı değildir** — aşağıya bak |
 
 > ### ⚠️ `VAULT_AT_REST_PASSWORD` boş bırakılmamalı
 >
-> `at_rest` şifrelemeli vault dosyaları diskte AES-256-GCM ile tutulur; anahtar
-> bu değişkenden PBKDF2-SHA256 ile türetilir. Değişken boşsa sunucu **kaynak
-> kodundaki sabit demo anahtarını** kullanır ve log'a uyarı basar.
+> `at_rest` ve cihaza özel vault dosyaları diskte AES-256-GCM ile tutulur;
+> anahtar bu değişkenden PBKDF2-SHA256 ile türetilir. Değişken boşsa sunucu
+> **kaynak kodundaki sabit demo anahtarını** kullanır ve log'a uyarı basar.
 >
 > Sonuç: dosyalar `pinvault.db` içinde şifreli *görünür*, ama anahtar
 > kütüphanenin kaynağında herkese açık olduğu için veritabanını ele geçiren
-> biri içeriği aynen çözebilir. Yani boşken `at_rest` bir güvenlik sınırı
-> değil, yalnızca bir etikettir — gerçek gizlilik isteyen dosyalar için
-> `end_to_end` (cihazın kendi anahtarı) ya da ayarlanmış bir
-> `VAULT_AT_REST_PASSWORD` gerekir.
+> biri içeriği aynen çözebilir. Yani boşken bu şifreleme bir güvenlik sınırı
+> değil, yalnızca bir etikettir. Cihaza özel mod da diskte aynı parolayı
+> kullanır; telefona giderken ayrıca cihazın anahtarıyla şifrelenir.
 >
-> Bu örnek host'ta bilinçli olarak boş bırakılabilir (laboratuvar verisi).
-> Üretimde mutlaka ayarla ya da bir KMS kullan. Değeri sonradan değiştirirsen
-> eski anahtarla yazılmış dosyalar okunamaz hale gelir; onları yeniden yükle.
+> `setup.sh` bu yüzden rastgele bir parola üretir; demo parolasıyla yazılmış
+> dosyalar sunucu ilk açıldığında yeni parolaya geçirilir. Parolayı
+> değiştirirken eskisini `VAULT_AT_REST_PASSWORD_PREVIOUS`'a yaz, sunucuyu
+> yeniden başlat, sonra sil. Hiçbir parolanın açmadığı bir dosya cihaza
+> gönderilmez (sunucu hata verir ve açılışta log'a yazar); onu yeniden yükle.
 
 ## Kalıcı veri
 
@@ -230,7 +231,7 @@ Bu host bir örnektir. Üretimde:
 - Signing key'i HSM/KMS'te tut (`CONFIG_SIGNERS=pkcs11|command`); en azından `SIGNING_KEY_PASSWORD` ile diskte şifrele. Yedek ve kurtarma anahtarlarını çevrimdışı sakla (yukarıdaki bölüm).
 - `API_KEY`'i bir secret yöneticisinden oku; yönetim portunu dış ağa açma.
 - `KEYSTORE_PASSWORD`'ü `setup.sh` üretir ve hiçbir cihaza gitmez; elle kurulan P12 dosyaları için `CLIENT_P12_PASSWORD`'ü de değiştir (varsayılanı `changeit`).
-- `VAULT_AT_REST_PASSWORD`'ü ayarla (aşağıdaki uyarı).
+- `VAULT_AT_REST_PASSWORD` dolu olsun (`setup.sh` üretir; yukarıdaki uyarı), daha iyisi bir KMS'ten gelsin.
 - SQLite yerine PostgreSQL gibi bir veritabanı düşün.
 - Container root olarak çalışmaz: `entrypoint.sh` `data/` bağlamasının sahipliğini `pinvault` kullanıcısına (uid 10001) verip yetkileri bırakır. Linux'ta bu, `data/` dizininin host'ta da uid 10001'e ait olması demektir.
 

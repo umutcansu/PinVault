@@ -8,6 +8,8 @@
 #   4. Yetki: yönetim uçları anahtarsız 401, anahtarla 200
 #   5. ping-remote komut enjeksiyonu reddediliyor (400)
 #   6. mTLS Config API istemci sertifikası olmadan bağlantıyı reddediyor
+#   7. Yönetim API'si: düz HTTP yalnızca bu makinede, ağa şifreli port
+#   8. Vault dosyalarının parolası dolu ve bütün dosyaları açıyor
 #
 # Gereksinimler: curl, jq, openssl
 # Kullanım: ./scripts/smoke-test.sh
@@ -172,6 +174,21 @@ if [ -s "${tmp}/mgmt.pem" ]; then
     fi
 else
     bad "şifreli yönetim portunda (:${MGMT_TLS_PORT}) TLS el sıkışması yapılamadı"
+fi
+
+echo "[8] Vault dosyalarının parolası"
+if docker compose exec -T pinvault-host sh -c 'test -n "${VAULT_AT_REST_PASSWORD:-}"' 2>/dev/null; then
+    ok "VAULT_AT_REST_PASSWORD dolu: diskteki vault dosyaları demo parolasıyla şifrelenmiyor"
+else
+    bad "VAULT_AT_REST_PASSWORD boş: sunucu kaynak koddaki demo parolasını kullanıyor (./scripts/setup.sh üretir)"
+fi
+started="$(docker inspect -f '{{.State.StartedAt}}' "$(docker compose ps -q pinvault-host)" 2>/dev/null)"
+unreadable="$(docker compose logs --no-log-prefix --since "${started}" pinvault-host 2>/dev/null \
+    | grep 'VAULT_AT_REST_PASSWORD: .* open with neither' | tail -1)"
+if [ -z "${unreadable}" ]; then
+    ok "bütün vault dosyaları geçerli parolayla açılıyor"
+else
+    bad "açılamayan vault dosyaları var: ${unreadable%% open with neither*}"
 fi
 
 echo ""
