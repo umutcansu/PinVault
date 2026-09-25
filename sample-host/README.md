@@ -84,7 +84,9 @@ Kaynak değiştikten sonra `docker compose up -d --build` yeterli. Yerel dizinde
 | `ENROLLMENT_TOKEN_TTL_SECONDS` | `86400` | Kayıt token'ının geçerlilik süresi |
 | `VAULT_AT_REST_PASSWORD` | demo anahtarı | `at_rest` vault dosyalarının anahtarı; boşsa şifreleme yalnızca etikettir, üretimde mutlaka ayarla |
 | `CERT_EXPIRY_WARN_DAYS` | `30` | Sertifika süre uyarısı eşiği |
-| `KEYSTORE_PASSWORD` | `changeit` | JKS/P12 parolası |
+| `KEYSTORE_PASSWORD` | `setup.sh` üretir | Sunucunun kendi anahtar depolarının parolası (TLS anahtarları, yedek anahtarlar, istemci güven listesi, host istemci sertifikaları). Hiçbir cihaza gitmez; eski kurulumlarda depolar açılışta bu parolaya geçirilir |
+| `KEYSTORE_PASSWORD_PREVIOUS` | boş | Parolayı değiştirirken eskisi: sunucu açılışta depoları yeni parolaya geçirir, sonra silinir |
+| `CLIENT_P12_PASSWORD` | `changeit` | Cihaza giden mTLS sertifika paketinin parolası; yalnızca eski kütüphane sürümleri ve elle kurulan P12 dosyaları için. Güncel kütüphane her indirmede tek kullanımlık parola alır |
 | `VAULT_AT_REST_PASSWORD` | boş | **Boşken `at_rest` şifrelemesi bir güvenlik sınırı değildir** — aşağıya bak |
 
 > ### ⚠️ `VAULT_AT_REST_PASSWORD` boş bırakılmamalı
@@ -226,7 +228,7 @@ Bu host bir örnektir. Üretimde:
 - Self-signed sertifika yerine gerçek bir CA kullan, TLS'i bir reverse proxy'de sonlandır.
 - Signing key'i HSM/KMS'te tut (`CONFIG_SIGNERS=pkcs11|command`); en azından `SIGNING_KEY_PASSWORD` ile diskte şifrele. Yedek ve kurtarma anahtarlarını çevrimdışı sakla (yukarıdaki bölüm).
 - `API_KEY`'i bir secret yöneticisinden oku; yönetim portunu dış ağa açma.
-- `KEYSTORE_PASSWORD`'ü ayarla (varsayılanı `changeit`).
+- `KEYSTORE_PASSWORD`'ü `setup.sh` üretir ve hiçbir cihaza gitmez; elle kurulan P12 dosyaları için `CLIENT_P12_PASSWORD`'ü de değiştir (varsayılanı `changeit`).
 - `VAULT_AT_REST_PASSWORD`'ü ayarla (aşağıdaki uyarı).
 - SQLite yerine PostgreSQL gibi bir veritabanı düşün.
 - Container'ı root olmayan bir kullanıcıyla çalıştır. Bu örnek, bind mount izinleriyle uğraşmamak için root kalır.

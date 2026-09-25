@@ -68,6 +68,11 @@ if [ -z "$(get_env API_KEY)" ]; then
     echo ">> API_KEY üretildi (.env içinde)"
 fi
 
+if [ -z "$(get_env KEYSTORE_PASSWORD)" ]; then
+    set_env KEYSTORE_PASSWORD "$(random_key)"
+    echo ">> KEYSTORE_PASSWORD üretildi (.env içinde); var olan anahtar depoları sunucu açılırken bu parolaya geçer"
+fi
+
 if [ -z "$(get_env HOST_LAN_IP)" ]; then
     lan_ip="$(detect_lan_ip)"
     if [ -n "${lan_ip}" ]; then
@@ -85,7 +90,7 @@ fi
 server_src="$(get_env PINVAULT_SERVER_SRC)"
 echo ""
 echo "== Hazır =="
-echo "  .env          : API_KEY dolu, HOST_LAN_IP=$(get_env HOST_LAN_IP)"
+echo "  .env          : API_KEY ve KEYSTORE_PASSWORD dolu, HOST_LAN_IP=$(get_env HOST_LAN_IP)"
 echo "  Sunucu kaynağı: ${server_src:-upstream git @ $(get_env PINVAULT_REF)}"
 echo "  Signing key   : data/signing-key.pem"
 echo ""

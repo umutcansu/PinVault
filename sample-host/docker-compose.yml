@@ -45,6 +45,8 @@ services:
       VAULT_AT_REST_PASSWORD: ${VAULT_AT_REST_PASSWORD:-}
       CERT_EXPIRY_WARN_DAYS: ${CERT_EXPIRY_WARN_DAYS:-}
       KEYSTORE_PASSWORD: ${KEYSTORE_PASSWORD:-}
+      KEYSTORE_PASSWORD_PREVIOUS: ${KEYSTORE_PASSWORD_PREVIOUS:-}
+      CLIENT_P12_PASSWORD: ${CLIENT_P12_PASSWORD:-}
       ALLOW_ANONYMOUS_ADMIN: ${ALLOW_ANONYMOUS_ADMIN:-}
       # İsteğe bağlı güvenlik katmanları (README: "İsteğe bağlı güvenlik
       # katmanları"). Hepsi boşken sunucu önceki gibi davranır.
