@@ -70,7 +70,7 @@
     <string name="vault_token_saved">✅ Token kaydedildi (%1$s)\n(yalnızca bellekte; uygulama kapanınca silinir)</string>
     <string name="vault_fetch_flags">flags (public)</string>
     <string name="vault_fetch_secret">secret (token)</string>
-    <string name="vault_fetch_e2e">e2e (uçtan uca)</string>
+    <string name="vault_fetch_e2e">e2e (cihaza özel)</string>
     <string name="vault_fetch_atrest">atrest (sunucuda şifreli)</string>
     <string name="vault_fetch_admin">admin (api_key)</string>
     <string name="vault_fetch_model">model (dosya deposu)</string>

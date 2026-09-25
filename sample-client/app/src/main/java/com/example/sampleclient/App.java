@@ -114,7 +114,7 @@ public class App extends Application {
     public static final String VAULT_FLAGS = "sample-flags";
     /** Bu cihaza ve dosyaya bağlı token ister. */
     public static final String VAULT_SECRET = "sample-secret";
-    /** Cihazın RSA anahtarıyla uçtan uca şifreli gelir. */
+    /** Cihazın RSA anahtarıyla şifreli gelir (cihaza özel şifreleme; içeriği sunucu görür). */
     public static final String VAULT_E2E = "sample-e2e";
     /** Sunucuda şifreli saklanır (at_rest); ağda yalnızca TLS, cihazda düz. */
     public static final String VAULT_ATREST = "sample-atrest";
@@ -562,7 +562,7 @@ public class App extends Application {
 
     /**
      * PinVault'un bu cihaz için kullandığı kimlik (ANDROID_ID). Vault token'ları
-     * ve uçtan uca şifreleme anahtarı bu kimliğe bağlanır.
+     * ve cihaza özel şifreleme anahtarı bu kimliğe bağlanır.
      */
     public static String deviceId(Context context) {
         String id = Settings.Secure.getString(context.getContentResolver(), Settings.Secure.ANDROID_ID);
