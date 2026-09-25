@@ -1,6 +1,5 @@
 package com.example.pinvault.demo
 
-import android.content.Context
 import androidx.test.core.app.ActivityScenario
 import androidx.test.espresso.Espresso.onView
 import androidx.test.espresso.assertion.ViewAssertions.matches
@@ -26,9 +25,11 @@ import org.junit.runner.RunWith
  * **Preconditions**
  *  - demo-server running on :8090/:8091 with V2 migration applied
  *  - Device has network access to the server (Mi 9T: 192.168.1.80)
+ *  - Each test adds HOST_IP to default-tls's default host ACL for its
+ *    duration (the activity uses `wantPinsFor`; see [grantHostInDefaultAcl])
  *
  * **Device-side state shaping**
- * The activity reads tokens from SharedPreferences("vault_security_demo").
+ * The activity reads tokens from EncryptedSharedPreferences("vault_security_demo_secure").
  * Each test uploads files and seeds prefs via [seedToken] before launching
  * the activity, so init (which triggers `registerDevicePublicKey`) happens
  * with the right server state in place.
@@ -44,6 +45,9 @@ class VaultSecurityEspressoTest {
     private val keyToken  = "demo-token-v2-$deviceSuffix"
     private val keyE2E    = "demo-e2e-v2-$deviceSuffix"
 
+    /** default-tls's default host ACL before the test; put back in [tearDown]. */
+    private var savedDefaultAcl: List<String>? = null
+
     @Before
     fun setUp() {
         try { io.github.umutcansu.pinvault.PinVault.reset() } catch (_: Exception) {}
@@ -53,6 +57,7 @@ class VaultSecurityEspressoTest {
         deleteVault(keyPublic)
         deleteVault(keyToken)
         deleteVault(keyE2E)
+        grantHostInDefaultAcl()
         Thread.sleep(500)
     }
 
@@ -63,12 +68,25 @@ class VaultSecurityEspressoTest {
         deleteVault(keyPublic)
         deleteVault(keyToken)
         deleteVault(keyE2E)
+        savedDefaultAcl?.let { try { putDefaultAcl(it) } catch (_: Exception) {} }
     }
 
     // ── Helpers ──────────────────────────────────────────
 
-    private fun prefs() = InstrumentationRegistry.getInstrumentation().targetContext
-        .getSharedPreferences("vault_security_demo", Context.MODE_PRIVATE)
+    // The activity keeps its tokens in EncryptedSharedPreferences (audit L-12);
+    // seed and clear that very store, or the activity finds no token at all.
+    private fun prefs(): android.content.SharedPreferences {
+        val ctx = InstrumentationRegistry.getInstrumentation().targetContext
+        return androidx.security.crypto.EncryptedSharedPreferences.create(
+            ctx,
+            "vault_security_demo_secure",
+            androidx.security.crypto.MasterKey.Builder(ctx)
+                .setKeyScheme(androidx.security.crypto.MasterKey.KeyScheme.AES256_GCM)
+                .build(),
+            androidx.security.crypto.EncryptedSharedPreferences.PrefKeyEncryptionScheme.AES256_SIV,
+            androidx.security.crypto.EncryptedSharedPreferences.PrefValueEncryptionScheme.AES256_GCM
+        )
+    }
 
     /**
      * Admin API key — demo-server's default when launched with API_KEY=testkey.
@@ -83,6 +101,33 @@ class VaultSecurityEspressoTest {
                 .header("X-API-Key", adminApiKey)
                 .put(content.toRequestBody("application/octet-stream".toMediaType())).build()
         ).execute().use { r -> assertTrue("upload failed: ${r.code}", r.isSuccessful) }
+    }
+
+    private val defaultAclUrl = "${TestConfig.MANAGEMENT_URL}/api/v1/config-apis/default-tls/default-host-acl"
+
+    /**
+     * The activity asks only for HOST_IP's pins (`wantPinsFor`), and the server
+     * hands a device just the requested hosts its ACL allows. With HOST_IP
+     * missing from the default ACL the config comes back empty and init fails,
+     * so the test grants it and [tearDown] puts the previous list back.
+     */
+    private fun grantHostInDefaultAcl() {
+        val current = TestConfig.plainClient.newCall(
+            Request.Builder().url(defaultAclUrl).header("X-API-Key", adminApiKey).get().build()
+        ).execute().use { r ->
+            assertTrue("default ACL read failed: ${r.code}", r.isSuccessful)
+            Regex("\"([^\"]+)\"").findAll(r.body?.string() ?: "[]").map { it.groupValues[1] }.toList()
+        }
+        savedDefaultAcl = current
+        if (TestConfig.HOST_IP !in current) putDefaultAcl(current + TestConfig.HOST_IP)
+    }
+
+    private fun putDefaultAcl(hostnames: List<String>) {
+        val body = hostnames.joinToString(",", prefix = "{\"hostnames\":[", postfix = "]}") { "\"$it\"" }
+        TestConfig.plainClient.newCall(
+            Request.Builder().url(defaultAclUrl).header("X-API-Key", adminApiKey)
+                .put(body.toRequestBody("application/json".toMediaType())).build()
+        ).execute().use { r -> assertTrue("default ACL update failed: ${r.code}", r.isSuccessful) }
     }
 
     private fun deleteVault(key: String) {

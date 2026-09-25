@@ -113,10 +113,12 @@ object TestConfig {
     fun waitForMtlsRestart(timeoutMs: Long = 15000) {
         val deadline = System.currentTimeMillis() + timeoutMs
 
-        // Aşama 1: Management API mTLS running raporlayana kadar bekle
+        // Aşama 1: Management API mTLS running raporlayana kadar bekle.
+        // /config-apis yönetim ucu: anahtarsız istek 401 alır ve döngü bütün
+        // süreyi boşa harcar — adminClient X-API-Key ekler.
         while (System.currentTimeMillis() < deadline) {
             try {
-                val resp = plainClient.newCall(
+                val resp = adminClient.newCall(
                     Request.Builder().url("$MANAGEMENT_URL/api/v1/config-apis").build()
                 ).execute()
                 val body = resp.body?.string() ?: ""
