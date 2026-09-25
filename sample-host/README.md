@@ -134,6 +134,8 @@ docker compose up -d
 
 Signing key ya da sunucu sertifikası yenilenirse client'taki sabitler de değişmelidir; eski APK yeni host'a bağlanamaz.
 
+**Sertifikayı yenilemek yerine yedek anahtara geçmek.** Sunucu sertifikayı üretirken bir de yedek anahtar üretip `data/certs/demo-server.backup.jks` dosyasında saklar; yedeğin pin'i APK'ya ikinci başlangıç pin'i olarak girer. Dashboard → Bootstrap Pin → "Yedek Anahtara Geç" ve ardından `docker compose restart`: sunucu artık yedek anahtarı sunar, eski APK bağlanmaya devam eder. Sunucu yeni bir yedek hazırlar; onu bir sonraki sürüme almak için `./scripts/client-config.sh` yeniden çalıştırılır. Hedef host'larda aynı düğme host detayında; telefonlar config yenilemeden bağlanmaya devam eder. Bu özellikten önce üretilmiş sertifikaların saklı yedeği yoktur: bir kez yeniden üretmek gerekir (sunucu sertifikası için bu bir kez daha APK güncellemesi demek). Yedek, birincil anahtarla aynı dizinde durur: `data/certs` başkasının eline geçtiyse yedeğe geçmek yetmez, sertifika yeniden üretilmelidir.
+
 ---
 
 ## Sorun giderme
@@ -170,9 +172,50 @@ docker compose ps                            # durum
 ./scripts/client-config.sh --properties      # client'ın sample-host.properties dosyası
 ./scripts/env-override.sh set KEY=VALUE ...  # geçici sunucu ayarı (container yeniden oluşturulur)
 ./scripts/env-override.sh reset              # .env değerlerine dön
-./scripts/export-server-key.sh               # TLS anahtarını PEM olarak dışa aktar (E2E kurcalama vekili)
+./scripts/export-server-key.sh               # TLS anahtarını PEM olarak dışa aktar (E2E'deki saldırgan proxy için)
+./scripts/signing-keys.sh …                 # çevrimdışı yedek/kurtarma anahtarları, anahtar seti
+./scripts/add-admin.sh <ad> --apply         # kişisel yönetici anahtarı (ADMIN_KEYS)
+./scripts/softhsm-init.sh [enable|show]      # HSM imzalayıcısı (SoftHSM)
 docker compose down                          # durdur
 ```
+
+---
+
+## İsteğe bağlı güvenlik katmanları
+
+Hiçbiri açık olmadan host eskisi gibi çalışır. Her biri ayrı açılır; ekip ne kadarını taşıyabiliyorsa o kadarını seçer. Değişkenler `.env`'e yazılır (kalıcı) ya da `./scripts/env-override.sh set …` ile geçici denenir.
+
+**Yedek imza anahtarı (uygulama güncellemesi gerektirmeden anahtar değiştirme).** Çevrimdışı bir anahtar üret, public key'ini APK'ya ikinci anahtar olarak göm. Sunucunun anahtarı kaybolur ya da çalınırsa sunucuyu yedek anahtarla başlatmak yeter:
+
+```bash
+./scripts/signing-keys.sh gen backup-1                  # offline-keys/backup-1.{pem,pub}
+./scripts/client-config.sh --properties > …             # host.signingPublicKeys yedeği de içerir
+# acil durumda:
+./scripts/signing-keys.sh install backup-1 && docker compose restart pinvault-host
+```
+
+**İmzalama anahtarı seti (döndürme ve iptal).** Kurtarma anahtarı yalnızca "cihazlar artık şu imza anahtarlarına güvensin" listesini imzalar; çevrimdışı durur, sunucuya hiç gelmez. Uygulama kurtarma public key'ini gömer, sunucu `RECOVERY_PUBLIC_KEYS` ile yüklenen seti cihazın yapacağı gibi doğrular ve her config'le taşır. Çalınan bir anahtar, onu listelemeyen yeni bir setle bütün cihazlarda iptal olur:
+
+```bash
+./scripts/signing-keys.sh gen recovery-1                # APK'ya ve RECOVERY_PUBLIC_KEYS'e girer
+./scripts/signing-keys.sh gen next
+./scripts/signing-keys.sh install next next             # data/signing-key-next.pem
+./scripts/env-override.sh set CONFIG_SIGNERS=local,local:next RECOVERY_PUBLIC_KEYS="$(cat offline-keys/recovery-1.pub)"
+./scripts/signing-keys.sh keyset -v 1 -k next -s recovery-1 -o keyset-v1.json   # eski anahtar artık listede yok
+./scripts/signing-keys.sh upload keyset-v1.json
+```
+
+Sunucu, etkin imzalayıcılarından yeterince anahtar içermeyen bir seti reddeder (aksi hâlde onu uygulayan her cihaz sonraki bütün config'leri reddederdi). Anahtar seti etkinken dashboard'daki "anahtarı yenile" kapanır; döndürme set üzerinden yapılır.
+
+**HSM'de imzalama.** `./scripts/softhsm-init.sh` imajdaki SoftHSM'de bir token hazırlar, `./scripts/softhsm-init.sh enable` sunucuyu `CONFIG_SIGNERS=pkcs11` ile açar: anahtar token'ın içinde üretilir, dışarı çıkarılamaz ve yalnızca imza için kullanılabilir (şifre çözme, anahtar sarma yok; `./scripts/softhsm-init.sh show` öznitelikleri gösterir: "Usage: sign", "never extractable"). Gerçek bir HSM'de yalnızca `PKCS11_LIBRARY` değişir. Bulut KMS ya da ayrı bir imza servisi için `CONFIG_SIGNERS=command` + `SIGNER_COMMAND` (stdin'den gelen baytları imzalayıp stdout'a imza basan komut) + `SIGNER_PUBLIC_KEY`; özet imzalayan KMS'ler için `SIGNER_INPUT=digest`. `CONFIG_SIGNATURE_CACHE=true` aynı içeriği bir kez, yayın anında imzalar; HSM/KMS'e her cihaz isteğinde gidilmez.
+
+**m-of-n imza.** `CONFIG_SIGNERS=local,command` gibi iki imzalayıcı her config'e iki imza koyar; uygulama `requiredSignatures(2)` ile ikisini birden ister. Anahtarlar farklı kişilerde ya da sistemlerde durdukça ne tek bir yönetici ne de bu sunucunun kendisi tek başına pin yayımlayabilir.
+
+**Kişisel yönetici anahtarları, denetim kaydı, bildirim.** `./scripts/add-admin.sh alice --apply` bir anahtar üretir ve `.env`'deki `ADMIN_KEYS`'e yalnızca SHA-256'sını yazar. Denetim kaydı (dashboard → Denetim Kaydı) her yönetim değişikliğini kimin yaptığıyla ve pin farkıyla tutar; kayıtlar silinemez ve hash zinciriyle bağlıdır ("Zinciri doğrula"). `NOTIFY_WEBHOOK_URL` güvenlik olaylarını anında bir webhook'a (Slack uyumlu) gönderir; `NOTIFY_WEBHOOK_SECRET` ile her istek HMAC imzası taşır.
+
+**İki kişi onayı.** `PIN_CHANGE_APPROVALS=2`: pin, force, sertifika ve imza anahtarı değişiklikleri hemen uygulanmaz; başka bir yönetici dashboard'daki "Onaylar" bölümünden onaylayınca uygulanır. Kimse kendi isteğini onaylayamaz, paylaşılan `API_KEY` onay veremez. Bu modda cihazlara açık Config API portları pin yazmalarını reddeder.
+
+**Canlı sertifika kontrolü.** `PIN_LIVE_CHECK=enforce`: yeni ya da değişen bir pin seti, host'un şu an sunduğu sertifikanın (zincirin ilk halkası) pin'ini içermiyorsa (yazım hatası, yanlış host, ara sertifika pin'i) kaydedilmez; `warn` kaydeder ama uyarır. Sunucunun doğrudan çözemediği adlar için `LIVE_CHECK_HOST_MAP="mock-tls.sample=127.0.0.1:8443"`. Acil durumda gerekçe yazılarak yine de kaydedilebilir; gerekçe denetim kaydına düşer.
 
 ---
 
@@ -181,7 +224,7 @@ docker compose down                          # durdur
 Bu host bir örnektir. Üretimde:
 
 - Self-signed sertifika yerine gerçek bir CA kullan, TLS'i bir reverse proxy'de sonlandır.
-- Signing key'i HSM/KMS'te tut; en azından `SIGNING_KEY_PASSWORD` ile diskte şifrele.
+- Signing key'i HSM/KMS'te tut (`CONFIG_SIGNERS=pkcs11|command`); en azından `SIGNING_KEY_PASSWORD` ile diskte şifrele. Yedek ve kurtarma anahtarlarını çevrimdışı sakla (yukarıdaki bölüm).
 - `API_KEY`'i bir secret yöneticisinden oku; yönetim portunu dış ağa açma.
 - `KEYSTORE_PASSWORD`'ü ayarla (varsayılanı `changeit`).
 - `VAULT_AT_REST_PASSWORD`'ü ayarla (aşağıdaki uyarı).

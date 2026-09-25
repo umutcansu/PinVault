@@ -16,6 +16,9 @@ services:
         pinvault-server: "${PINVAULT_SERVER_SRC:-${PINVAULT_REPO:-https://github.com/umutcansu/PinVault.git}#${PINVAULT_REF:-main}:demo-server}"
     container_name: pinvault-host
     restart: unless-stopped
+    # PID 1 olarak küçük bir init (tini): komut imzalayıcının (CONFIG_SIGNERS=command)
+    # alt süreçleri ve zaman aşımında öldürülenler zombi kalmasın.
+    init: true
     ports:
       - "${HOST_HTTP_PORT:-6650}:8080"   # Management API + web dashboard (HTTP)
       - "${HOST_HTTPS_PORT:-6651}:8081"  # Config API (TLS, self-signed; client'lar pin'ler)
@@ -43,6 +46,37 @@ services:
       CERT_EXPIRY_WARN_DAYS: ${CERT_EXPIRY_WARN_DAYS:-}
       KEYSTORE_PASSWORD: ${KEYSTORE_PASSWORD:-}
       ALLOW_ANONYMOUS_ADMIN: ${ALLOW_ANONYMOUS_ADMIN:-}
+      # İsteğe bağlı güvenlik katmanları (README: "İsteğe bağlı güvenlik
+      # katmanları"). Hepsi boşken sunucu önceki gibi davranır.
+      # İmzalayıcılar: local (varsayılan) | pkcs11 | command; virgülle birden çok.
+      CONFIG_SIGNERS: ${CONFIG_SIGNERS:-}
+      CONFIG_SIGNATURE_CACHE: ${CONFIG_SIGNATURE_CACHE:-}
+      PKCS11_LIBRARY: ${PKCS11_LIBRARY:-}
+      PKCS11_SLOT_INDEX: ${PKCS11_SLOT_INDEX:-}
+      PKCS11_PIN: ${PKCS11_PIN:-}
+      PKCS11_KEY_LABEL: ${PKCS11_KEY_LABEL:-}
+      PKCS11_GENERATE_KEY: ${PKCS11_GENERATE_KEY:-}
+      SIGNER_COMMAND: ${SIGNER_COMMAND:-}
+      SIGNER_PUBLIC_KEY: ${SIGNER_PUBLIC_KEY:-}
+      SIGNER_PUBLIC_KEY_FILE: ${SIGNER_PUBLIC_KEY_FILE:-}
+      SIGNER_INPUT: ${SIGNER_INPUT:-}
+      SIGNER_TIMEOUT_MS: ${SIGNER_TIMEOUT_MS:-}
+      # İmzalama anahtarı setleri: uygulamaya gömülü kurtarma anahtar(lar)ı.
+      RECOVERY_PUBLIC_KEYS: ${RECOVERY_PUBLIC_KEYS:-}
+      RECOVERY_REQUIRED_SIGNATURES: ${RECOVERY_REQUIRED_SIGNATURES:-}
+      # Kişisel yönetici anahtarları (ad:sha256), iki kişi onayı, bildirim.
+      ADMIN_KEYS: ${ADMIN_KEYS:-}
+      ADMIN_KEYS_FILE: ${ADMIN_KEYS_FILE:-}
+      PIN_CHANGE_APPROVALS: ${PIN_CHANGE_APPROVALS:-}
+      APPROVAL_TTL_HOURS: ${APPROVAL_TTL_HOURS:-}
+      NOTIFY_WEBHOOK_URL: ${NOTIFY_WEBHOOK_URL:-}
+      NOTIFY_WEBHOOK_SECRET: ${NOTIFY_WEBHOOK_SECRET:-}
+      NOTIFY_EVENTS: ${NOTIFY_EVENTS:-}
+      # Canlı sertifika kontrolü: off | warn | enforce.
+      PIN_LIVE_CHECK: ${PIN_LIVE_CHECK:-}
+      PIN_LIVE_CHECK_ALLOW_OVERRIDE: ${PIN_LIVE_CHECK_ALLOW_OVERRIDE:-}
+      LIVE_CHECK_HOST_MAP: ${LIVE_CHECK_HOST_MAP:-}
+      LIVE_CHECK_TIMEOUT_MS: ${LIVE_CHECK_TIMEOUT_MS:-}
     volumes:
       # Bütün kalıcı durum tek dizin: veritabanı, sertifikalar ve imzalama
       # anahtarı. Anahtar dosyası tek tek (ve salt okunur) bağlanınca sunucu

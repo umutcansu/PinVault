@@ -32,9 +32,18 @@ FROM eclipse-temurin:17-jre-noble
 # - curl: healthcheck
 # - netcat-openbsd + openssl: /api/v1/hosts/{host}/ping-remote bunları
 #   subprocess olarak (argv ile, shell'siz) çağırır.
+# - softhsm2 + opensc: isteğe bağlı HSM imzalayıcısı (CONFIG_SIGNERS=pkcs11).
+#   SoftHSM, gerçek bir HSM'in PKCS#11 arayüzünü taklit eden yazılım token'ıdır;
+#   aynı ayarlar gerçek bir HSM modülüyle de çalışır. pkcs11-tool (opensc) yalnızca
+#   anahtarın özniteliklerini göstermek için (scripts/softhsm-init.sh).
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends curl ca-certificates netcat-openbsd openssl \
+    && apt-get install -y --no-install-recommends curl ca-certificates netcat-openbsd openssl softhsm2 opensc \
     && rm -rf /var/lib/apt/lists/*
+
+# PKCS#11 imzalayıcısı JDK'nın SunPKCS11 sağlayıcısını kullanır; modül ve
+# SoftHSM kütüphanesi yoksa derleme burada dursun, çalışırken değil.
+RUN java --list-modules | grep -q jdk.crypto.cryptoki \
+    && test -e /usr/lib/softhsm/libsofthsm2.so
 
 COPY --from=build /build/demo-server/build/install/ /app/
 
@@ -57,7 +66,8 @@ ENV PORT=8080 \
     DB_PATH=/data/db/pinvault.db \
     CERTS_DIR=/data/certs \
     SIGNING_KEY_PATH=/data/signing-key.pem \
-    ENROLLMENT_MODE=token
+    ENROLLMENT_MODE=token \
+    SOFTHSM2_CONF=/data/softhsm/softhsm2.conf
 
 EXPOSE 8080 8081
 

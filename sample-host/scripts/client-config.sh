@@ -37,13 +37,23 @@ MOCK_MTLS_PORT="${HOST_MOCK_MTLS_PORT:-6654}"
 TARGET_HOST="${TARGET_HOST:-www.example.com}"
 
 [ -f data/certs/demo-server.pins ] || { echo "data/certs/demo-server.pins yok — önce 'docker compose up -d'." >&2; exit 1; }
-[ -f data/signing-key.pem ] || { echo "data/signing-key.pem yok — önce ./scripts/setup.sh." >&2; exit 1; }
-
 PRIMARY="$(sed -n 1p data/certs/demo-server.pins)"
 BACKUP="$(sed -n 2p data/certs/demo-server.pins)"
-SIGNING="$(sed -n 2p data/signing-key.pem)"
 
-# Hedefin canlı zincirinden yaprak + ara sertifika SPKI pin'leri (virgülle).
+# İmza anahtarları sunucudan: imzalayıcı bir HSM ya da KMS olabilir (anahtar
+# dosyası yok), ya da dosya SIGNING_KEY_PASSWORD ile şifreli olabilir.
+KEY_INFO="$(curl -fsS "http://localhost:${HTTP_PORT}/api/v1/signing-key")" \
+    || { echo "GET /api/v1/signing-key cevap vermedi — host ayakta mı? (docker compose up -d)" >&2; exit 1; }
+SIGNING="$(printf '%s' "${KEY_INFO}" | jq -r .publicKey)"
+# Uygulamanın güvendiği anahtarlar: sunucunun imzalayıcıları + offline-keys/
+# altındaki yedek anahtarlar (backup*.pub). Kurtarma anahtarları: recovery*.pub.
+keys_in() { for f in "$@"; do [ -f "${f}" ] && { tr -d ' \n' < "${f}"; echo; }; done; return 0; }
+SIGNING_KEYS="$( { printf '%s\n' "${KEY_INFO}" | jq -r '.signers[].publicKey'; keys_in offline-keys/backup*.pub; } \
+    | grep . | awk '!seen[$0]++' | paste -sd, -)"
+RECOVERY_KEYS="$(keys_in offline-keys/recovery*.pub | grep . | paste -sd, - || true)"
+REQUIRED_SIGNATURES="${CLIENT_REQUIRED_SIGNATURES:-1}"
+
+# Hedefin canlı zincirinden sunucu sertifikası (ilk halka) + ara sertifika SPKI pin'leri (virgülle).
 target_pins() {
     local host="$1" chain pins=""
     chain="$(openssl s_client -connect "${host}:443" -servername "${host}" -showcerts </dev/null 2>/dev/null || true)"
@@ -75,6 +85,9 @@ host.mtlsPort=${MTLS_PORT}
 host.bootstrapPinPrimary=${PRIMARY}
 host.bootstrapPinBackup=${BACKUP}
 host.signingPublicKey=${SIGNING}
+host.signingPublicKeys=${SIGNING_KEYS}
+host.requiredSignatures=${REQUIRED_SIGNATURES}
+host.recoveryPublicKeys=${RECOVERY_KEYS}
 target.host=${TARGET_HOST}
 target.pins=${TARGET_PINS}
 mock.tlsHost=mock-tls.sample

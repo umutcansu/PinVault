@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # SamplePinVaultHost smoke test. Çalışan container'a karşı şunları doğrular:
 #   1. /health
-#   2. İmzalı config: ECDSA imzası data/signing-key.pem'deki public key ile
+#   2. İmzalı config: ECDSA imzası sunucunun GET /api/v1/signing-key ile bildirdiği anahtar(lar)la
 #      doğrulanıyor, issuedAt/expiresAt dolu ve süresi geçmemiş
 #   3. TLS: sunucu sertifikasının pin'i data/certs/demo-server.pins ile aynı,
 #      SAN listesi HOST_LAN_IP'yi içeriyor (telefonun hostname doğrulaması)
@@ -65,16 +65,29 @@ echo "[2] İmzalı config"
 if curl -fsSk --max-time 10 -o "${tmp}/cfg.json" "${HTTPS}/api/v1/certificate-config"; then
     jq -j '.payload' "${tmp}/cfg.json" > "${tmp}/payload"
     jq -r '.signature' "${tmp}/cfg.json" | openssl base64 -d -A > "${tmp}/sig.der"
-    {
-        echo "-----BEGIN PUBLIC KEY-----"
-        sed -n 2p data/signing-key.pem | fold -w 64
-        echo "-----END PUBLIC KEY-----"
-    } > "${tmp}/pub.pem"
+    # Anahtar sunucudan: imzalayıcı bir HSM/KMS olabilir ya da anahtar dosyası
+    # SIGNING_KEY_PASSWORD ile şifreli olabilir — dosyadan okunamaz.
+    curl -fsS --max-time 5 "${HTTP}/api/v1/signing-key" > "${tmp}/keys.json"
+    pem_of() { echo "-----BEGIN PUBLIC KEY-----"; printf '%s' "$1" | fold -w 64; echo; echo "-----END PUBLIC KEY-----"; }
+    pem_of "$(jq -r .publicKey "${tmp}/keys.json")" > "${tmp}/pub.pem"
     if openssl dgst -sha256 -verify "${tmp}/pub.pem" -signature "${tmp}/sig.der" "${tmp}/payload" >/dev/null 2>&1; then
-        ok "ECDSA imzası data/signing-key.pem public key'i ile doğrulandı"
+        ok "ECDSA imzası sunucunun birincil imza anahtarıyla doğrulandı ($(jq -r .keyId "${tmp}/keys.json" | cut -c1-12)…)"
     else
         bad "İmza doğrulanamadı (client'taki SIGNING_PUBLIC_KEY ile sunucu anahtarı farklı olabilir)"
     fi
+    # Birden çok imzalayıcı (m-of-n): her imza kendi anahtarıyla doğrulanır.
+    if jq -e '.signatures | length > 1' "${tmp}/cfg.json" >/dev/null 2>&1; then
+        n=0; good=0
+        while IFS=$'\t' read -r kid sig; do
+            n=$((n + 1))
+            pem_of "$(jq -r --arg k "${kid}" '.signers[] | select(.keyId == $k) | .publicKey' "${tmp}/keys.json")" > "${tmp}/k.pem"
+            printf '%s' "${sig}" | openssl base64 -d -A > "${tmp}/s.der"
+            openssl dgst -sha256 -verify "${tmp}/k.pem" -signature "${tmp}/s.der" "${tmp}/payload" >/dev/null 2>&1 && good=$((good + 1))
+        done < <(jq -r '.signatures[] | [.keyId, .signature] | @tsv' "${tmp}/cfg.json")
+        if [ "${good}" = "${n}" ]; then ok "${n} imzanın hepsi doğrulandı (m-of-n)"; else bad "${n} imzadan ${good} tanesi doğrulandı"; fi
+    fi
+    ks="$(jq -r '.keySetVersion // 0' "${tmp}/keys.json")"
+    if [ "${ks}" != "0" ]; then echo "          imzalama anahtarı seti: v${ks}"; fi
     if jq -e '.issuedAt > 0 and .expiresAt > (now * 1000)' "${tmp}/payload" >/dev/null; then
         ok "issuedAt/expiresAt dolu, süre geçmemiş"
     else
