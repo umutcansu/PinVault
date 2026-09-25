@@ -87,9 +87,11 @@ async function start({
   upstreamHost = '127.0.0.1',
   port = env.PROXY_PORT,
   mutate,
+  /** Kendi anahtar/sertifika zinciri ({ key, cert }; cert birden çok PEM içerebilir). */
+  material: custom,
 } = {}) {
-  const material = identity === 'rogue' ? rogueMaterial() : trustedMaterial();
-  if (identity === 'trusted') assertTrustedPinMatches();
+  const material = custom || (identity === 'rogue' ? rogueMaterial() : trustedMaterial());
+  if (!custom && identity === 'trusted') assertTrustedPinMatches();
   const state = { mutate, requests: [], handshakeErrors: [] };
 
   const server = https.createServer({ key: material.key, cert: material.cert }, (req, res) => {

@@ -160,8 +160,8 @@ test('Sunucu: sunucu sertifikası (bootstrap) yenilenince eski APK bağlanamıyo
           `data/certs/demo-server.pins sonra: ${pinsAfter.join(' | ')}`,
           `docker compose restart + provision.sh → :${fresh.PORTS.https} sunulan sertifikanın pin'i: ${served}`,
           '',
-          'Zincir tek sertifika olduğu için yedek pin birincille aynı yazılıyor',
-          '(CertificateService.importCertificate: backupHash = primaryHash).',
+          'Yedek pin, sunucunun yüklenen sertifika için ürettiği ve sakladığı yedek anahtara',
+          'ait (data/certs/demo-server.backup.jks); "Yedek Anahtara Geç" onunla çalışır.',
           'Telefon tarafı yukarıdaki "Sertifikayı Yenile" akışıyla aynı: yeni pin\'lerle',
           'yeniden derlenmeyen APK bağlanamaz.',
         ].join('\n'),
@@ -170,6 +170,7 @@ test('Sunucu: sunucu sertifikası (bootstrap) yenilenince eski APK bağlanamıyo
       expect(res.json.restartRequired).toBe(true);
       expect(res.json.primaryPin).toBe(uploadedPin);
       expect(pinsAfter[0]).toBe(uploadedPin);
+      expect(pinsAfter[1]).not.toBe(uploadedPin);
       expect(pinsAfter[0]).not.toBe(pinsBefore[0]);
       expect(served).toBe(uploadedPin);
       expect(provision).toContain(env.LAN_IP);

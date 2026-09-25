@@ -12,11 +12,10 @@
 // Düzeltmeden önce yedek anahtar üretilip atılıyordu: yayımlanan yedek pin'i
 // hiçbir sertifika sunamıyordu.
 //
-// Geçici test sunucusunda çalışır (bkz. E03). Tam koşuda E03 bu sunucunun
-// sertifikasını dışarıda üretilmiş bir anahtar çiftine geçirmiş olur; öyle bir
-// sertifikanın saklı yedeği yoktur. Senaryo o durumda önce geçişin reddedildiğini
-// gösterir, sonra sertifikayı bir kez yeniden üretir. Sonunda uygulama ana host
-// değerleriyle yeniden derlenip kurulur.
+// Geçici test sunucusunda çalışır (bkz. E03). Sunucunun sertifikası yedek
+// anahtarlar saklanmadan önce üretilmişse (eski bir veri dizini) senaryo önce
+// geçişin reddedildiğini gösterir, sonra sertifikayı bir kez yeniden üretir.
+// Sonunda uygulama ana host değerleriyle yeniden derlenip kurulur.
 const crypto = require('crypto');
 const fs = require('fs');
 const path = require('path');
@@ -61,7 +60,7 @@ test('Sunucu: sertifika saklı yedek anahtara geçince aynı uygulama bağlanmay
 
   try {
     if (!fs.existsSync(BACKUP_FILE)) {
-      await test.step('Web: sunucu sertifikası dışarıdan yüklenmiş, saklı yedeği yok → "Yedek Anahtara Geç" reddediliyor; sertifika bir kez yeniden üretilir', async () => {
+      await test.step('Web: sunucu sertifikasının saklı yedeği yok → "Yedek Anahtara Geç" reddediliyor; sertifika bir kez yeniden üretilir', async () => {
         const before = await dashboard.bootstrapPins('default-tls');
         const refusal = await dashboard.rotateBootstrapToBackup('default-tls');
         await dashboard.snap('saklı yedek anahtar yok: geçiş reddedildi');
@@ -86,9 +85,8 @@ test('Sunucu: sertifika saklı yedek anahtara geçince aynı uygulama bağlanmay
             `data/certs/demo-server.backup.jks: ${fs.existsSync(BACKUP_FILE) ? 'var' : 'yok'}`,
             'docker compose restart + scripts/provision.sh',
             '',
-            'Sunucu sertifikası bir önceki senaryoda (E03) dışarıda üretilmiş bir anahtar',
-            'çiftine geçirildi. Sunucu o sertifikanın yedek anahtarını üretmediği için',
-            'saklamıyor; yedek ancak sertifika sunucuda yeniden üretilince oluşuyor.',
+            'Bu sertifika, sunucu yedek anahtarları saklamaya başlamadan önce üretilmiş.',
+            'Yedek ancak sertifika sunucuda yeniden üretilince oluşuyor.',
             'Config sunucusunda bu bir kez daha uygulama güncellemesi demek; bu senaryoda',
             'uygulama zaten bir sonraki adımda yeni değerlerle derleniyor.',
           ].join('\n'),

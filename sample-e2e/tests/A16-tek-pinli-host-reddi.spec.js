@@ -9,7 +9,7 @@ const { attachText, describeResponse } = require('../lib/evidence');
 const { SampleApp } = require('../lib/sampleApp');
 const hostApi = require('../lib/hostApi');
 
-test('Web+Sunucu: tek pin\'li host kaydedilemiyor (en az 2 pin kuralı), telefon etkilenmiyor', async ({
+test('Web+Sunucu: tek pin\'li ya da aynı pini iki kez yazan host kaydedilemiyor (en az 2 farklı pin kuralı), telefon etkilenmiyor', async ({
   app,
   dashboard,
   run,
@@ -31,7 +31,7 @@ test('Web+Sunucu: tek pin\'li host kaydedilemiyor (en az 2 pin kuralı), telefon
     // vermiyor, tek yol alanı boş bırakmak.
     await dashboard.setPins(TARGET_HOST, [pins[0], ''], { expectSaved: false });
     // Red toast'ı (sağ altta) ekrandayken sayfa görüntüsü; metni de panele girer.
-    await dashboard.snapWithToast('tek pin denemesi: "Kaydetme hatası" toast\'ı ile reddedildi (sağ altta)');
+    await dashboard.snapWithToast('tek pin denemesi: "En az iki farklı pin gerekir" uyarısıyla reddedildi (sağ altta)');
     const toast = await dashboard.toastText();
     await attachText(
       testInfo,
@@ -40,11 +40,28 @@ test('Web+Sunucu: tek pin\'li host kaydedilemiyor (en az 2 pin kuralı), telefon
         `Gönderilmek istenen: 1 pin (${pins[0].slice(0, 12)}…)`,
         `toast: ${toast || '(toast görünmedi)'}`,
         '',
-        'app.js/saveInlinePins: boş alanlar atılır, kalan pin sayısı 2\'nin',
+        'app.js/saveInlinePins: boş alanlar atılır; kalan farklı pin sayısı 2\'nin',
         'altındaysa istek sunucuya hiç gönderilmez.',
       ].join('\n'),
     );
-    expect(toast).toMatch(/Kaydetme hatası|Save error/i);
+    expect(toast).toMatch(/en az iki farklı pin|at least two different pins/i);
+    await dashboard.cancelEditPins(TARGET_HOST);
+    expect(await dashboard.viewedPins(TARGET_HOST)).toEqual(pins);
+    expect(await dashboard.version()).toBe(version);
+  });
+
+  await test.step('Web: aynı pin iki kez yazılıp kaydedilmek istenir → dashboard reddeder', async () => {
+    // Aynı pinin iki kopyası yedek değildir: sertifika değişince ikisi birden tutmaz.
+    await expect(dashboard.page.locator('.toast')).toHaveCount(0, { timeout: 15_000 });
+    await dashboard.setPins(TARGET_HOST, [pins[0], pins[0]], { expectSaved: false });
+    await dashboard.snapWithToast('aynı pin iki kez: "En az iki farklı pin gerekir" uyarısıyla reddedildi (sağ altta)');
+    const toast = await dashboard.toastText();
+    await attachText(
+      testInfo,
+      'Dashboard\'ın yanıtı (aynı pin iki kez → Kaydet)',
+      [`Gönderilmek istenen: ${pins[0].slice(0, 12)}… iki kez`, `toast: ${toast || '(toast görünmedi)'}`].join('\n'),
+    );
+    expect(toast).toMatch(/en az iki farklı pin|at least two different pins/i);
     await dashboard.cancelEditPins(TARGET_HOST);
     expect(await dashboard.viewedPins(TARGET_HOST)).toEqual(pins);
     expect(await dashboard.version()).toBe(version);
@@ -65,12 +82,30 @@ test('Web+Sunucu: tek pin\'li host kaydedilemiyor (en az 2 pin kuralı), telefon
         '',
         describeResponse({ status: res.status, headers: {}, body: res.text }),
         '',
-        'Kütüphane tarafında aynı kural: SSLCertificateUpdater.validateConfig',
+        'Kütüphane tarafında da en az 2 pin kuralı var: SSLCertificateUpdater.validateConfig',
         '→ require(pin.sha256.size >= 2) { "Host … must have at least 2 pins (primary + backup)" }',
       ].join('\n'),
     );
     expect(res.status).toBe(400);
     expect(res.text).toContain('en az 2 pin olmali');
+
+    // Aynı pin iki kez: sayı 2 ama farklı pin 1.
+    const twice = cfg.pins.map((p) => (p.hostname === TARGET_HOST ? { ...p, sha256: [pins[0], pins[0]] } : p));
+    const dup = await hostApi.api('/api/v1/certificate-config', {
+      method: 'PUT',
+      body: { version: 0, pins: twice, forceUpdate: false },
+    });
+    await attachText(
+      testInfo,
+      'PUT /api/v1/certificate-config (hedef host\'a aynı pin iki kez)',
+      [
+        `gövde: { pins: [ … { "hostname": "${TARGET_HOST}", "sha256": ["${pins[0].slice(0, 12)}…", "${pins[0].slice(0, 12)}…"] } … ] }`,
+        '',
+        describeResponse({ status: dup.status, headers: {}, body: dup.text }),
+      ].join('\n'),
+    );
+    expect(dup.status).toBe(400);
+    expect(dup.text).toContain('farkli');
   });
 
   await test.step('Sunucu: sürüm ve pin\'ler değişmedi', async () => {

@@ -303,6 +303,26 @@ function servedCert(port, servername, host = 'localhost') {
   });
 }
 
+/** [host]:[port]'un sunduğu zincirin SPKI pin'leri, yapraktan başlayarak (en fazla 4). */
+function servedChainPins(port, servername, host = 'localhost') {
+  return new Promise((resolve, reject) => {
+    const socket = tls.connect({ host, port, servername, rejectUnauthorized: false }, () => {
+      const pins = [];
+      let cert = socket.getPeerCertificate(true);
+      while (cert && cert.raw && pins.length < 4) {
+        pins.push(spkiPin(cert.raw));
+        const issuer = cert.issuerCertificate;
+        if (!issuer || issuer.fingerprint256 === cert.fingerprint256) break;
+        cert = issuer;
+      }
+      socket.end();
+      resolve(pins);
+    });
+    socket.setTimeout(10_000, () => socket.destroy(new Error(`${servername}:${port} TLS zaman aşımı`)));
+    socket.on('error', reject);
+  });
+}
+
 /** [servedCert] ile aynı, yalnızca pin döner. */
 async function servedPin(port, servername, host = 'localhost') {
   return (await servedCert(port, servername, host)).pin;
@@ -551,6 +571,7 @@ module.exports = {
   livePins,
   servedCert,
   servedPin,
+  servedChainPins,
   randomPin,
   signedConfig,
   scopedConfig,

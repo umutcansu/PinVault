@@ -98,6 +98,12 @@ test('Kurulum: host dört yolla eklenir (elle, sertifika üreterek, URL\'den, do
       await dashboard.snapHostSummary(`JKS yükleyerek eklenen host: ${UPLOAD_HOST}`);
       const cfg = await fresh.api('/api/v1/certificate-config?signed=false', { withKey: false });
       const entry = cfg.json.pins.find((p) => p.hostname === UPLOAD_HOST);
+      // Sunucunun bu sertifika için ürettiği yedek anahtar (parola panele girmez).
+      const backupPem = fresh.compose([
+        'exec', '-T', 'pinvault-host', 'keytool', '-exportcert', '-rfc', '-alias', 'backup',
+        '-keystore', `/data/certs/${UPLOAD_HOST.replace(/\./g, '_')}.backup.jks`, '-storepass', fresh.KEYSTORE_PASSWORD,
+      ]);
+      const backupPin = hostApi.spkiPin(new crypto.X509Certificate(backupPem).raw);
       await attachText(
         testInfo,
         '"Dosya Yükle" sekmesi → POST /api/v1/hosts/upload-cert',
@@ -107,12 +113,17 @@ test('Kurulum: host dört yolla eklenir (elle, sertifika üreterek, URL\'den, do
           '',
           `sunucu yanıtı: ${result}`,
           `config'teki pin'ler: ${entry ? entry.sha256.join(' | ') : '(yok)'}`,
+          `sunucuda saklanan yedek anahtarın pin'i: ${backupPin}`,
           '',
-          'Zincirde tek sertifika var, bu yüzden yedek pin birinci pin\'le aynı (importCertificate).',
+          'Yedek pin, sunucunun bu sertifika için ürettiği ve sakladığı yedek anahtara ait;',
+          'sertifika değişirken "Yedek Anahtara Geç" onunla çalışır. (Eskiden zincirde tek',
+          'sertifika olunca aynı pin iki kez yazılıyordu; o kopya yedek değildi.)',
         ].join('\n'),
       );
       expect(entry).toBeTruthy();
       expect(entry.sha256[0]).toBe(certPin);
+      expect(entry.sha256[1]).toBe(backupPin);
+      expect(backupPin).not.toBe(certPin);
     });
 
     await test.step('Web: hatalı biçimli pin reddedilir (K6)', async () => {

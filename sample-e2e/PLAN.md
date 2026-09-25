@@ -136,11 +136,12 @@ Durum: **var** = mevcut senaryo kanıtlıyor, **yeni** = yazılacak, **bulgu** =
 Mevcut 15 senaryo korunur. Numaralar dosya adı önekidir.
 
 **A. Pin yönetimi ve imzalı config** — var: 1, 2, 3, 4, 5, 8, 9, 10, 11. Yeni:
-- A16 Tek pin'li host: dashboard 400 ile reddeder; telefon etkilenmez.
+- A16 Tek pin'li ya da aynı pini iki kez yazan host: dashboard ve sunucu (400) reddeder; telefon etkilenmez.
 - A17 Joker alan adı: `*.example.com` ile hedefe bağlanır; `*.com` reddedilir.
 - A18 Config süresi: host TTL 60 s, cihaz saati 2 saat ileri → yeni config "expired", eski config çalışır.
 - A19 İmzalama anahtarının değiştirilmesi (rotasyon; İmzalama sekmesinde "Anahtarı Yenile"): telefon imzayı reddeder; yeni anahtarla derlenen uygulama kabul eder.
 - A20 Gerçek sertifika yenileme (rotasyon): mock host'un sertifikası dashboard'dan yenilenir → sürüm artar → telefon yeni pin'le bağlanır.
+- A21 CA (ara sertifika) pini: test CA'sının imzaladığı sertifika mock host'a yüklenir, pin listesine yalnızca CA pini konur → telefon bağlanır; saldırgan sahte sertifikanın arkasına gerçek CA'yı ekler → telefon reddeder, saldırgana istek ulaşmaz.
 - A25 Özel bağlantı ayarlı istemci: pinleme aynı, kurtarma yok.
 - A26 Sıfırla → istek reddedilir → tekrar başlat → Hazır; ikinci init ağ isteği yapmaz.
 - A27 WorkManager iş yönetimi: planlı iş listesi → iptal (JobScheduler kaydı düşer) → yeniden planlama.
