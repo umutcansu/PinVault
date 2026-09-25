@@ -10,7 +10,7 @@ import java.security.KeyPairGenerator
 import java.security.KeyStore
 import java.security.PrivateKey
 import java.security.PublicKey
-import java.util.Base64
+import okio.ByteString.Companion.toByteString
 
 /**
  * Manages the device's RSA key pair used for end-to-end vault file
@@ -164,8 +164,10 @@ internal class SoftwareDeviceKeyProvider(private val alias: String) : DeviceKeyP
 
 // ── Shared helpers ──────────────────────────────────────────────────────
 
+// Okio's Base64 (via OkHttp): java.util.Base64 only exists from API 26 and minSdk is 24
+// (Android 7 threw NoClassDefFoundError here and the init coroutine crashed the app).
 private fun publicKeyToPem(publicKey: PublicKey): String {
-    val encoded = Base64.getEncoder().encodeToString(publicKey.encoded)
+    val encoded = publicKey.encoded.toByteString().base64()
     val chunked = encoded.chunked(64).joinToString("\n")
     return "-----BEGIN PUBLIC KEY-----\n$chunked\n-----END PUBLIC KEY-----"
 }
