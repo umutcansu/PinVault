@@ -60,6 +60,7 @@ class VaultFileTokenHeaderTest {
             // No verifying key: this test is about the request, not integrity.
             signaturePublicKey = null
         )
+        every { client.signatureTrust } returns null
 
         val router = VaultFileRouter(
             clients = mapOf("default" to client),

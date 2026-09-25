@@ -2,7 +2,9 @@ package io.github.umutcansu.pinvault.internal
 
 import android.util.Base64
 import io.github.umutcansu.pinvault.api.CertificateConfigApi
+import io.github.umutcansu.pinvault.crypto.SignatureTrust
 import io.github.umutcansu.pinvault.model.ConfigApiBlock
+import io.github.umutcansu.pinvault.model.SignatureEntry
 import io.github.umutcansu.pinvault.model.VaultFetchResponse
 import io.github.umutcansu.pinvault.model.VaultFileConfig
 import io.github.umutcansu.pinvault.model.VaultFileResult
@@ -68,17 +70,27 @@ class VaultFileSignatureRouterTest {
         storage: MemStore,
         response: VaultFetchResponse,
         verifyingKey: String?
-    ): VaultFileRouter {
-        val api = mockk<CertificateConfigApi>()
-        coEvery { api.downloadVaultFileWithMeta(any(), any(), any(), any()) } returns response
-        val client = mockk<ConfigApiClient>()
-        every { client.api } returns api
-        every { client.block } returns ConfigApiBlock(
+    ): VaultFileRouter = routerFor(
+        storage, response,
+        ConfigApiBlock(
             id = "default",
             configUrl = "https://example.test/",
             bootstrapPins = emptyList(),
             signaturePublicKey = verifyingKey
         )
+    )
+
+    private fun routerFor(
+        storage: MemStore,
+        response: VaultFetchResponse,
+        block: ConfigApiBlock
+    ): VaultFileRouter {
+        val api = mockk<CertificateConfigApi>()
+        coEvery { api.downloadVaultFileWithMeta(any(), any(), any(), any()) } returns response
+        val client = mockk<ConfigApiClient>()
+        every { client.api } returns api
+        every { client.block } returns block
+        every { client.signatureTrust } returns SignatureTrust.forBlock(block, null)
         return VaultFileRouter(
             clients = mapOf("default" to client),
             storageFor = { storage },
@@ -144,5 +156,64 @@ class VaultFileSignatureRouterTest {
 
         assertTrue("unsigned mode must still store", result is VaultFileResult.Updated)
         assertArrayEquals(content, storage.load("ts"))
+    }
+
+    // ── m-of-n and several trusted keys ─────────────────────────────────────
+
+    private val secondKeyPair = KeyPairGenerator.getInstance("EC")
+        .apply { initialize(ECGenParameterSpec("secp256r1")) }
+        .generateKeyPair()
+    private val secondB64 = Base64.encodeToString(secondKeyPair.public.encoded, Base64.NO_WRAP)
+
+    private fun twoKeyBlock(required: Int) = ConfigApiBlock(
+        id = "default",
+        configUrl = "https://example.test/",
+        bootstrapPins = emptyList(),
+        signaturePublicKey = pubB64,
+        signaturePublicKeys = listOf(pubB64, secondB64),
+        requiredSignatures = required
+    )
+
+    @Test
+    fun `either trusted key may sign when one signature is required`() = runTest {
+        val content = "model-v2".toByteArray()
+        val storage = MemStore()
+        // Signed by the SECOND (backup) key only — the one-key check would fail.
+        val response = VaultFetchResponse(
+            content = content, version = 2, encryption = "plain",
+            signature = sign("m", 2, content, secondKeyPair.private)
+        )
+        val result = routerFor(storage, response, twoKeyBlock(required = 1)).fetchFile(fileFor("m"))
+
+        assertTrue("backup-key signature must be accepted, got $result", result is VaultFileResult.Updated)
+    }
+
+    @Test
+    fun `m-of-n — one of two required signatures is rejected, both are accepted`() = runTest {
+        val content = "model-v2".toByteArray()
+        val one = listOf(SignatureEntry(signature = sign("m", 2, content, keyPair.private)))
+        // The same signature twice still counts as ONE key.
+        val duplicated = one + one
+        val both = one + SignatureEntry(signature = sign("m", 2, content, secondKeyPair.private))
+
+        for (entries in listOf(one, duplicated)) {
+            val storage = MemStore()
+            val result = routerFor(
+                storage, VaultFetchResponse(content = content, version = 2, signatures = entries), twoKeyBlock(2)
+            ).fetchFile(fileFor("m"))
+            assertTrue("one distinct signer must be rejected, got $result", result is VaultFileResult.Failed)
+            assertTrue(
+                "reason must say how many signatures were valid: ${(result as VaultFileResult.Failed).reason}",
+                result.reason.contains("1 of 2 required signatures valid")
+            )
+            assertNull(storage.load("m"))
+        }
+
+        val storage = MemStore()
+        val result = routerFor(
+            storage, VaultFetchResponse(content = content, version = 2, signatures = both), twoKeyBlock(2)
+        ).fetchFile(fileFor("m"))
+        assertTrue("two distinct signers must be accepted, got $result", result is VaultFileResult.Updated)
+        assertArrayEquals(content, storage.load("m"))
     }
 }

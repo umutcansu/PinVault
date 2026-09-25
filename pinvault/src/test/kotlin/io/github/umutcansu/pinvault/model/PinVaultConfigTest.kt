@@ -154,4 +154,70 @@ class PinVaultConfigTest {
             signaturePublicKey("ABCDEF123")
         }.build()
     }
+
+    // ── Several signing keys, m-of-n, recovery keys ─────────────────────────
+
+    private fun blockWith(init: io.github.umutcansu.pinvault.model.ConfigApiBlock.Builder.() -> Unit) =
+        PinVaultConfig.Builder().configApi("api", "https://api.example.com/") {
+            bootstrapPins(validPins)
+            init()
+        }.build().configApis.getValue("api")
+
+    private fun assertBuildFails(expected: String, init: io.github.umutcansu.pinvault.model.ConfigApiBlock.Builder.() -> Unit) {
+        try {
+            blockWith(init)
+            fail("expected IllegalArgumentException mentioning '$expected'")
+        } catch (e: IllegalArgumentException) {
+            assertTrue("Error must mention $expected: ${e.message}", e.message!!.contains(expected))
+        }
+    }
+
+    @Test
+    fun `Builder — signaturePublicKeys keeps the first key in signaturePublicKey`() {
+        val block = blockWith { signaturePublicKeys("K1", "K2", "K1") }
+        assertEquals(listOf("K1", "K2"), block.signaturePublicKeys)
+        assertEquals("K1", block.signaturePublicKey)
+        assertEquals(1, block.requiredSignatures)
+        assertTrue(block.recoveryPublicKeys.isEmpty())
+    }
+
+    @Test
+    fun `Builder — signaturePublicKey alone still works as a one-key list`() {
+        val block = blockWith { signaturePublicKey("K1") }
+        assertEquals(listOf("K1"), block.signaturePublicKeys)
+        assertEquals("K1", block.signaturePublicKey)
+    }
+
+    @Test
+    fun `Builder — requiredSignatures must fit the key count`() {
+        assertBuildFails("requiredSignatures(3)") { signaturePublicKeys("K1", "K2"); requiredSignatures(3) }
+        assertBuildFails("requiredSignatures(0)") { signaturePublicKeys("K1", "K2"); requiredSignatures(0) }
+        assertEquals(2, blockWith { signaturePublicKeys("K1", "K2"); requiredSignatures(2) }.requiredSignatures)
+    }
+
+    @Test
+    fun `Builder — recovery keys need signing keys and a separate role`() {
+        assertBuildFails("recoveryPublicKeys") { allowUnsigned(); recoveryPublicKeys("R1") }
+        assertBuildFails("recovery key must not also be a signing key") {
+            signaturePublicKeys("K1", "R1"); recoveryPublicKeys("R1")
+        }
+        assertBuildFails("requiredRecoverySignatures(2)") {
+            signaturePublicKey("K1"); recoveryPublicKeys("R1"); requiredRecoverySignatures(2)
+        }
+        val block = blockWith {
+            signaturePublicKey("K1"); recoveryPublicKeys("R1", "R2"); requiredRecoverySignatures(2)
+        }
+        assertEquals(listOf("R1", "R2"), block.recoveryPublicKeys)
+        assertEquals(2, block.requiredRecoverySignatures)
+    }
+
+    @Test
+    fun `Builder — PEM armour and stray whitespace do not make a second key`() {
+        val pem = "-----BEGIN PUBLIC KEY-----\nMFkwEwYH\nKoZIzj0C\n-----END PUBLIC KEY-----\n"
+        val block = blockWith { signaturePublicKeys(pem, "MFkwEwYHKoZIzj0C", " MFkwEwYHKoZIzj0C\n") }
+        assertEquals(listOf("MFkwEwYHKoZIzj0C"), block.signaturePublicKeys)
+        assertBuildFails("recovery key must not also be a signing key") {
+            signaturePublicKey("MFkwEwYHKoZIzj0C"); recoveryPublicKeys(pem)
+        }
+    }
 }

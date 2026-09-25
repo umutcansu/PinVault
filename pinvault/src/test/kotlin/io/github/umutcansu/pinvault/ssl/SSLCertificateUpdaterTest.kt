@@ -360,18 +360,19 @@ class SSLCertificateUpdaterTest {
     // ── Replay & downgrade guards (M-08) ────────────────────────────────────
 
     @Test
-    fun `updateNow — issuedAt eşit ya da geçmiş ise replay reddedilir`() = runTest {
+    fun `updateNow — issuedAt eşit ama içerik farklıysa replay reddedilir`() = runTest {
         val storedIssuedAt = 1_000_000_000_000L
         val stored = CertificateConfig(
             version = 5,
             pins = listOf(HostPin("api.test", listOf(pin1, pin2), version = 5)),
             issuedAt = storedIssuedAt
         )
-        // Remote claims a different host changed (would normally pass change
-        // detection) but uses the SAME issuedAt — classic replay shape.
+        // Remote claims the host changed (would normally pass change detection)
+        // but reuses the SAME issuedAt — a legitimate signer never signs two
+        // different configs with one timestamp, so this is a replay shape.
         val remote = CertificateConfig(
-            version = 5,
-            pins = listOf(HostPin("api.test", listOf(pin1, pin2), version = 5)),
+            version = 6,
+            pins = listOf(HostPin("api.test", listOf(pin2, pin1), version = 6)),
             issuedAt = storedIssuedAt
         )
 
@@ -389,6 +390,56 @@ class SSLCertificateUpdaterTest {
             "Failure must mention replay: ${failure.reason}",
             failure.reason.contains("replay", ignoreCase = true) || failure.reason.contains("issuedAt")
         )
+    }
+
+    @Test
+    fun `updateNow — daha eski issuedAt replay olarak reddedilir`() = runTest {
+        val storedIssuedAt = 1_000_000_000_000L
+        val stored = CertificateConfig(
+            version = 5,
+            pins = listOf(HostPin("api.test", listOf(pin1, pin2), version = 5)),
+            issuedAt = storedIssuedAt
+        )
+        val remote = stored.copy(issuedAt = storedIssuedAt - 1)
+
+        every { configStore.getCurrentVersion() } returns 5
+        every { configStore.getCurrentIssuedAt() } returns storedIssuedAt
+        every { configStore.load() } returns stored
+        coEvery { configApi.fetchConfig(5) } returns remote
+
+        val result = createUpdater().updateNow()
+
+        assertTrue("Expected Failed for replay, got $result", result is UpdateResult.Failed)
+        assertTrue((result as UpdateResult.Failed).reason.contains("replay", ignoreCase = true))
+    }
+
+    @Test
+    fun `updateNow — aynı imzalı config yeniden gelirse AlreadyCurrent, replay değil`() = runTest {
+        // A backend that signs once per change (HSM/KMS signer, signature
+        // cache, CDN) serves the byte-identical config until it changes.
+        val storedIssuedAt = 1_000_000_000_000L
+        val stored = CertificateConfig(
+            version = 5,
+            pins = listOf(HostPin("api.test", listOf(pin1, pin2), version = 5)),
+            issuedAt = storedIssuedAt
+        )
+        // Same config as delivered; its force flag was honoured on first
+        // delivery and cleared on disk since — it must not be re-applied.
+        val remote = stored.copy(
+            forceUpdate = true,
+            pins = stored.pins.map { it.copy(forceUpdate = true) },
+            expiresAt = storedIssuedAt + 60_000
+        )
+
+        every { configStore.getCurrentVersion() } returns 5
+        every { configStore.getCurrentIssuedAt() } returns storedIssuedAt
+        every { configStore.load() } returns stored
+        coEvery { configApi.fetchConfig(5) } returns remote
+
+        val result = createUpdater().updateNow()
+
+        assertEquals(UpdateResult.AlreadyCurrent, result)
+        verify(exactly = 0) { configStore.save(any()) }
     }
 
     @Test

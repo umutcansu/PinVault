@@ -3,6 +3,7 @@ package io.github.umutcansu.pinvault.internal
 import android.content.Context
 import io.github.umutcansu.pinvault.api.CertificateConfigApi
 import io.github.umutcansu.pinvault.api.DefaultCertificateConfigApi
+import io.github.umutcansu.pinvault.crypto.SignatureTrust
 import io.github.umutcansu.pinvault.model.ConfigApiBlock
 import io.github.umutcansu.pinvault.model.InitResult
 import io.github.umutcansu.pinvault.model.UpdateResult
@@ -11,6 +12,7 @@ import io.github.umutcansu.pinvault.ssl.HttpClientProvider
 import io.github.umutcansu.pinvault.ssl.SSLCertificateUpdater
 import io.github.umutcansu.pinvault.store.CertificateConfigStore
 import io.github.umutcansu.pinvault.store.ClientCertSecureStore
+import io.github.umutcansu.pinvault.store.SigningKeyStore
 import timber.log.Timber
 
 /**
@@ -42,6 +44,21 @@ internal class ConfigApiClient(
     val configStore: CertificateConfigStore =
         CertificateConfigStore(context.applicationContext, CertificateConfigStore.prefsNameFor(block.id))
     val certStore: ClientCertSecureStore = ClientCertSecureStore(context.applicationContext)
+
+    /**
+     * Which keys this block's configs and vault files must be signed by.
+     * Null when the block runs unsigned. The key-set store is only opened when
+     * the block enabled rotation (recovery keys), so apps that don't use it
+     * never touch the extra EncryptedSharedPreferences file.
+     */
+    val signatureTrust: SignatureTrust? = context.applicationContext.let { appContext ->
+        SignatureTrust.forBlock(block) {
+            if (block.recoveryPublicKeys.isNotEmpty()) SigningKeyStore(appContext) else null
+        }
+    }
+
+    /** True when the app supplied its own [CertificateConfigApi]: it verifies (or not) by itself. */
+    val usesCustomApi: Boolean = customApi != null
     val api: CertificateConfigApi
     val updater: SSLCertificateUpdater
 
@@ -61,9 +78,9 @@ internal class ConfigApiClient(
             clientCertEndpoint = block.clientCertEndpoint,
             enrollmentEndpoint = block.enrollmentEndpoint,
             vaultReportEndpoint = block.vaultReportEndpoint,
-            signaturePublicKey = block.signaturePublicKey,
             bootstrapPins = block.bootstrapPins,
-            sslManager = sslManager
+            sslManager = sslManager,
+            signatureTrust = signatureTrust
         )
 
         val appContext = context.applicationContext

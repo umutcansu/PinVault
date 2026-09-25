@@ -290,14 +290,28 @@ internal class SSLCertificateUpdater(
             //      an OLDER per-host version. Reject any remote pin whose
             //      version is below the persisted one.
             val storedIssuedAt = configStore.getCurrentIssuedAt()
+            val storedConfig = configStore.load()
             if (storedIssuedAt > 0L && remoteConfig.issuedAt <= storedIssuedAt) {
+                // The SAME signed config served again is not a replay of an
+                // older one — it is the config already applied. Backends that
+                // sign once per change and cache the signature (an HSM/KMS
+                // signer, a CDN, a pre-signed file) serve exactly that until
+                // the content changes. Same issuedAt AND same pins → nothing to
+                // do. Its force flag was honoured on first delivery and is not
+                // re-applied. Anything else at or below the watermark is still
+                // a replay.
+                if (remoteConfig.issuedAt == storedIssuedAt && storedConfig != null &&
+                    samePins(storedConfig, remoteConfig)
+                ) {
+                    Timber.d("Config is already current — the same signed config was served again (issuedAt=%d)", storedIssuedAt)
+                    return UpdateResult.AlreadyCurrent
+                }
                 throw SecurityException(
                     "Config replay rejected: received issuedAt=${remoteConfig.issuedAt} " +
                     "<= stored issuedAt=$storedIssuedAt. Possible MITM or stale-payload replay."
                 )
             }
 
-            val storedConfig = configStore.load()
             val storedVersions = storedConfig?.pins?.associate { it.hostname to it.version } ?: emptyMap()
 
             remoteConfig.pins.forEach { remotePin ->
@@ -385,6 +399,18 @@ internal class SSLCertificateUpdater(
                 exception = e
             )
         }
+    }
+
+    /**
+     * True when both configs pin the same hosts with the same per-host
+     * versions and the same hash sets. Force flags are left out on purpose: a
+     * forced config was acted on when it was first applied, and a newer config
+     * may have cleared the flags on disk since, so the same bytes arriving
+     * again must neither count as a new force nor fail to compare equal.
+     */
+    private fun samePins(stored: CertificateConfig, remote: CertificateConfig): Boolean {
+        fun CertificateConfig.shape() = pins.associate { it.hostname to (it.version to it.sha256.toSet()) }
+        return stored.shape() == remote.shape()
     }
 
     /**

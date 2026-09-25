@@ -930,6 +930,24 @@ object PinVault {
         }
 
     /**
+     * How the given Config API block verifies config and vault signatures right
+     * now: trusted key ids, required signature count, applied signing-key set
+     * version, recovery keys, and which keys signed the last accepted config.
+     *
+     * @param configApiId the block id; `null` = the default (first) block.
+     * @return `null` for a block that runs unsigned (`allowUnsigned()`), a block
+     *   served by a custom [CertificateConfigApi] (which does its own checking),
+     *   an unknown id, or static-pin mode.
+     */
+    @JvmOverloads
+    fun signingStatus(configApiId: String? = null): io.github.umutcansu.pinvault.model.SigningStatus? {
+        checkInitialized()
+        val id = configApiId ?: pinManagerConfig?.defaultConfigApi?.id ?: return null
+        val client = configApiClients[id]?.takeUnless { it.usesCustomApi } ?: return null
+        return client.signatureTrust?.status()
+    }
+
+    /**
      * Returns true if the backend has set forceUpdate=true in the current config,
      * meaning the client must update pins immediately without prompting the user.
      */

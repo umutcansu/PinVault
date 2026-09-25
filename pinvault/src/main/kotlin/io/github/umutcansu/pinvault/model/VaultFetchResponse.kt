@@ -18,14 +18,18 @@ package io.github.umutcansu.pinvault.model
  *                     ECDSA-SHA256 over the canonical key+version+hash). Null
  *                     when the server did not sign (legacy / allowUnsigned).
  *                     The router verifies this against the Config API's
- *                     signaturePublicKey before persisting (fail-closed).
+ *                     signing keys before persisting (fail-closed).
+ * @property signatures Server-reported X-Vault-Signatures header: one entry
+ *                     per signing key when the backend signs with several
+ *                     (m-of-n). Used instead of [signature] when present.
  */
-data class VaultFetchResponse(
+data class VaultFetchResponse @JvmOverloads constructor(
     val content: ByteArray,
     val version: Int,
     val encryption: String = "plain",
     val notModified: Boolean = false,
-    val signature: String? = null
+    val signature: String? = null,
+    val signatures: List<SignatureEntry>? = null
 ) {
     override fun equals(other: Any?): Boolean {
         if (this === other) return true
@@ -34,6 +38,7 @@ data class VaultFetchResponse(
                 encryption == other.encryption &&
                 notModified == other.notModified &&
                 signature == other.signature &&
+                signatures == other.signatures &&
                 content.contentEquals(other.content)
     }
 
@@ -42,6 +47,7 @@ data class VaultFetchResponse(
         result = 31 * result + encryption.hashCode()
         result = 31 * result + notModified.hashCode()
         result = 31 * result + (signature?.hashCode() ?: 0)
+        result = 31 * result + (signatures?.hashCode() ?: 0)
         result = 31 * result + content.contentHashCode()
         return result
     }

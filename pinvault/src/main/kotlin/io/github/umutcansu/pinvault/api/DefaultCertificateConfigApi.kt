@@ -1,9 +1,10 @@
 package io.github.umutcansu.pinvault.api
 
-import io.github.umutcansu.pinvault.crypto.ConfigSignatureVerifier
+import io.github.umutcansu.pinvault.crypto.SignatureTrust
 import io.github.umutcansu.pinvault.model.CertificateConfig
 import io.github.umutcansu.pinvault.model.EnrollmentResult
 import io.github.umutcansu.pinvault.model.HostPin
+import io.github.umutcansu.pinvault.model.SignatureEntry
 import io.github.umutcansu.pinvault.model.SignedConfigResponse
 import io.github.umutcansu.pinvault.model.VaultDownloadReport
 import io.github.umutcansu.pinvault.model.VaultFetchResponse
@@ -26,8 +27,9 @@ import timber.log.Timber
 /**
  * Default implementation of [CertificateConfigApi] using Retrofit/OkHttp.
  *
- * All endpoint paths are configurable. If [signaturePublicKey] is provided,
- * config responses must be signed envelopes with ECDSA-SHA256 verification.
+ * All endpoint paths are configurable. With a signing key configured, config
+ * responses must be signed envelopes that pass [SignatureTrust] (one or more
+ * trusted ECDSA-SHA256 signatures, optionally carrying a signing-key set).
  */
 internal class DefaultCertificateConfigApi(
     private val configUrl: String,
@@ -36,10 +38,16 @@ internal class DefaultCertificateConfigApi(
     private val clientCertEndpoint: String = "api/v1/client-certs",
     private val enrollmentEndpoint: String = "api/v1/client-certs/enroll",
     private val vaultReportEndpoint: String = "api/v1/vault/report",
-    private val signaturePublicKey: String? = null,
+    /** Single-key shorthand, used when [signatureTrust] is not given. */
+    signaturePublicKey: String? = null,
     bootstrapPins: List<HostPin>,
-    private val sslManager: DynamicSSLManager
+    private val sslManager: DynamicSSLManager,
+    signatureTrust: SignatureTrust? = null
 ) : CertificateConfigApi {
+
+    /** Null = the block runs unsigned (`allowUnsigned()`). */
+    private val trust: SignatureTrust? =
+        signatureTrust ?: signaturePublicKey?.let { SignatureTrust.single("default", it) }
 
     private val gson = Gson()
 
@@ -67,28 +75,50 @@ internal class DefaultCertificateConfigApi(
     }
 
     override suspend fun fetchConfig(currentVersion: Int): CertificateConfig {
-        if (signaturePublicKey == null) {
+        val trust = trust
+        if (trust == null) {
             Timber.w("Config signature verification DISABLED — config integrity cannot be guaranteed. " +
                 "Set signaturePublicKey in PinVaultConfig for production use.")
             return service.getConfig(configEndpoint, currentVersion)
         }
 
         val signed = service.getSignedConfig(configEndpoint, currentVersion)
-
-        val valid = ConfigSignatureVerifier.verify(
-            payload = signed.payload,
-            signature = signed.signature,
-            publicKeyBase64 = signaturePublicKey
-        )
-
-        if (!valid) {
-            throw SecurityException(
-                "Config signature verification failed — possible tampering detected. " +
-                "Keeping previous safe config."
-            )
+        return verifiedConfig(signed, trust) { detail ->
+            "Config signature verification failed — possible tampering detected. " +
+                "Keeping previous safe config.$detail"
         }
+    }
 
-        val config = gson.fromJson(signed.payload, CertificateConfig::class.java)
+    /**
+     * Checks a signed envelope and returns the config inside it.
+     *
+     * A signing-key set riding along is applied FIRST: the config in the same
+     * response may already be signed by a key that set introduces. A set that
+     * fails its own checks throws and fails the whole response; a valid one
+     * stays applied even if the config then fails, so a revocation sticks.
+     */
+    private fun verifiedConfig(
+        signed: SignedConfigResponse,
+        trust: SignatureTrust,
+        failureMessage: (detail: String) -> String
+    ): CertificateConfig {
+        trust.applyKeySetUpdate(signed.signingKeys)
+
+        // `signatures` (several signers) wins over the single legacy field.
+        // Gson leaves absent fields null whatever their Kotlin type says.
+        @Suppress("USELESS_CAST")
+        val single = (signed.signature as String?)?.let { SignatureEntry(signed.keyId, it) }
+        val entries = signed.signatures?.takeIf { it.isNotEmpty() } ?: listOfNotNull(single)
+
+        @Suppress("USELESS_CAST")
+        val payload = (signed.payload as String?) ?: throw SecurityException(failureMessage(" The envelope has no payload."))
+        val verification = trust.verifyConfig(payload, entries)
+        if (!verification.ok) {
+            throw SecurityException(failureMessage(verification.detail))
+        }
+        Timber.d("Config signature verified ✓ — signed by %s", verification.signedBy)
+
+        val config = gson.fromJson(payload, CertificateConfig::class.java)
         enforceFreshness(config)
         return config
     }
@@ -138,6 +168,7 @@ internal class DefaultCertificateConfigApi(
             val version = resp.header("X-Vault-Version")?.toIntOrNull() ?: currentVersion
             val encryption = resp.header("X-Vault-Encryption") ?: "plain"
             val signature = resp.header("X-Vault-Signature")
+            val signatures = resp.header("X-Vault-Signatures")?.let(::parseSignaturesHeader)
 
             if (resp.code == 304) {
                 return@withContext VaultFetchResponse(
@@ -158,10 +189,23 @@ internal class DefaultCertificateConfigApi(
                 version = version,
                 encryption = encryption,
                 notModified = false,
-                signature = signature
+                signature = signature,
+                signatures = signatures
             )
         }
     }
+
+    /**
+     * `X-Vault-Signatures: <keyId>:<signature>, <keyId>:<signature>` — one
+     * entry per signing key. Base64 never contains `:` or `,`, so the split is
+     * unambiguous; an entry without a key id is just the signature.
+     */
+    private fun parseSignaturesHeader(value: String): List<SignatureEntry> =
+        value.split(',').map { it.trim() }.filter { it.isNotEmpty() }.map { entry ->
+            val parts = entry.split(':', limit = 2)
+            if (parts.size == 2) SignatureEntry(keyId = parts[0], signature = parts[1])
+            else SignatureEntry(signature = entry)
+        }
 
     /**
      * Scoped config fetch. Sends `?hosts=a,b,c` query param and/or X-Device-Id
@@ -174,7 +218,8 @@ internal class DefaultCertificateConfigApi(
     ): CertificateConfig {
         val hostsParam = hosts?.takeIf { it.isNotEmpty() }?.joinToString(",")
 
-        if (signaturePublicKey == null) {
+        val trust = trust
+        if (trust == null) {
             Timber.w("Config signature verification DISABLED (scoped fetch)")
             return if (hostsParam != null || deviceId != null) {
                 service.getScopedConfig(configEndpoint, currentVersion, hostsParam, deviceId)
@@ -189,17 +234,9 @@ internal class DefaultCertificateConfigApi(
             service.getSignedConfig(configEndpoint, currentVersion)
         }
 
-        val valid = ConfigSignatureVerifier.verify(
-            payload = signed.payload,
-            signature = signed.signature,
-            publicKeyBase64 = signaturePublicKey
-        )
-        if (!valid) {
-            throw SecurityException("Config signature verification failed (scoped fetch).")
+        return verifiedConfig(signed, trust) { detail ->
+            "Config signature verification failed (scoped fetch).$detail"
         }
-        val config = gson.fromJson(signed.payload, CertificateConfig::class.java)
-        enforceFreshness(config)
-        return config
     }
 
     /**
@@ -330,6 +367,7 @@ internal interface DynamicConfigService {
     ): CertificateConfig
 
     @GET
+    @retrofit2.http.Headers(FEATURES_HEADER)
     suspend fun getSignedConfig(
         @retrofit2.http.Url url: String,
         @Query("currentVersion") currentVersion: Int
@@ -345,6 +383,7 @@ internal interface DynamicConfigService {
     ): CertificateConfig
 
     @GET
+    @retrofit2.http.Headers(FEATURES_HEADER)
     suspend fun getScopedSignedConfig(
         @retrofit2.http.Url url: String,
         @Query("currentVersion") currentVersion: Int,
@@ -355,3 +394,11 @@ internal interface DynamicConfigService {
     @GET
     suspend fun downloadBinary(@Url url: String): ResponseBody
 }
+
+/**
+ * Sent with every signed-config request so a backend knows what this client
+ * understands: `redelivery` — the same signed config may be served again
+ * (signature caching); `multisig` — the `signatures` field; `keyset` —
+ * signing-key sets. A backend must not rely on any of these without it.
+ */
+internal const val FEATURES_HEADER = "X-PinVault-Features: redelivery,multisig,keyset"

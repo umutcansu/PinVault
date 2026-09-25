@@ -1,8 +1,9 @@
 package io.github.umutcansu.pinvault.internal
 
-import io.github.umutcansu.pinvault.crypto.ConfigSignatureVerifier
+import io.github.umutcansu.pinvault.crypto.SignatureTrust
 import io.github.umutcansu.pinvault.crypto.VaultFileDecryptor
 import io.github.umutcansu.pinvault.keystore.DeviceKeyProvider
+import io.github.umutcansu.pinvault.model.SignatureEntry
 import io.github.umutcansu.pinvault.model.VaultDownloadReport
 import io.github.umutcansu.pinvault.model.VaultFetchResponse
 import io.github.umutcansu.pinvault.model.VaultFileAccessPolicy
@@ -101,31 +102,34 @@ internal class VaultFileRouter(
             }
 
             // Integrity (default-on, fail-closed): vault files are signed by the
-            // Config API's ECDSA key — the same key the device already trusts for
-            // config. Verify the PLAINTEXT (post-E2E-decrypt) BEFORE persisting.
-            // verifyingKey is null only for allowUnsigned()/test setups → skip+warn.
-            val verifyingKey = file.signaturePublicKey ?: client.block.signaturePublicKey
-            if (verifyingKey != null) {
-                val signature = response.signature
-                if (signature.isNullOrBlank()) {
+            // Config API's signing keys — the same ones the device already trusts
+            // for config, including a rotated key set and an m-of-n requirement.
+            // A per-file key overrides them with exactly that one key. Verify the
+            // PLAINTEXT (post-E2E-decrypt) BEFORE persisting. No trust only for
+            // allowUnsigned()/test setups → skip+warn.
+            val trust = file.signaturePublicKey?.let { SignatureTrust.single(file.configApiId, it) }
+                ?: client.signatureTrust
+            if (trust != null && trust.isEnabled) {
+                val entries = response.signatures?.takeIf { it.isNotEmpty() }
+                    ?: listOfNotNull(response.signature?.takeIf { it.isNotBlank() }?.let { SignatureEntry(signature = it) })
+                if (entries.isEmpty()) {
                     return VaultFileResult.Failed(
                         file.key,
                         "Vault file '${file.key}' carries no X-Vault-Signature but a " +
                             "verifying key is configured — refusing (fail-closed)."
                     )
                 }
-                val verified = ConfigSignatureVerifier.verifyVaultFile(
+                val verification = trust.verifyVaultFile(
                     key = file.key,
                     version = response.version,
                     plaintext = plain,
-                    signature = signature,
-                    publicKeyBase64 = verifyingKey
+                    entries = entries
                 )
-                if (!verified) {
+                if (!verification.ok) {
                     return VaultFileResult.Failed(
                         file.key,
                         "Vault file '${file.key}' signature verification FAILED — " +
-                            "possible tampering. Not saved."
+                            "possible tampering. Not saved.${verification.detail}"
                     )
                 }
                 // Downgrade guard: a validly-signed but OLDER version must not
