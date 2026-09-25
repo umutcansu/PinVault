@@ -152,6 +152,22 @@ hash.)
 3. Once all devices are on the new APK, you can tighten per-host version
    sequences and turn off `allowUnsigned()` in any remaining test fixtures.
 
+## Optional: stronger signing (2.1)
+
+Nothing here is required, and nothing changes until you opt in. Your existing `signaturePublicKey(key)` keeps working exactly as before. [`SECURE_OPERATIONS.md`](SECURE_OPERATIONS.md) explains which layer to use and when.
+
+- **Ship a backup key:** `signaturePublicKeys(serverKey, offlineBackupKey)`. If the server key is lost, start signing with the backup and every installed app keeps updating.
+- **Rotate or revoke keys without an app update:** add `recoveryPublicKeys(recoveryKey)` and give the same key to the server (`RECOVERY_PUBLIC_KEYS`). From then on, rotate through signed key sets, not the dashboard's "regenerate", which the server disables while a set is active.
+- **Require two signatures:** `requiredSignatures(2)` with two `signaturePublicKeys`. Enable it only after the server signs with both keys (`CONFIG_SIGNERS=a,b`). An APK that asks for two signatures rejects every config signed by one.
+
+Rollout order:
+
+1. The server first. New fields and headers are ignored by older clients.
+2. Then the app.
+3. Turn on server features that assume new clients last. `CONFIG_SIGNATURE_CACHE` is safe at any time: it only serves cached envelopes to clients that announce `redelivery`.
+
+Behaviour change to know about: a byte-identical signed config served twice is now reported as `AlreadyCurrent`. It used to fail as a replay. An older `issuedAt`, or an equal one with different content, is still rejected.
+
 ## Single Config API
 
 Simplest setup — one backend, one or more vault files.

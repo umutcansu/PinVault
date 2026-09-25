@@ -21,6 +21,7 @@ Dynamic SSL certificate pinning library for Android. Manage pins remotely, suppo
 - **Encrypted storage** — AES-256-GCM with Android Keystore (hardware-backed)
 - **Server-agnostic** — works with any backend, or offline with static pins
 - **ECDSA signed configs** — verify config integrity with SHA256withECDSA
+- **Optional signing layers** — backup keys, m-of-n signatures, signing-key rotation/revocation over the air ([SECURE_OPERATIONS.md](SECURE_OPERATIONS.md))
 
 ## Quick Start
 
@@ -743,6 +744,23 @@ in the APK:
 ```
 
 See `SERVER_IMPLEMENTATION_GUIDE.md` for the signing protocol.
+
+Optional, stronger setups — each off by default, pick what your team can run
+(details and runbooks in [`SECURE_OPERATIONS.md`](SECURE_OPERATIONS.md)):
+
+```kotlin
+.configApi("api", url) {
+    bootstrapPins(...)
+    signaturePublicKeys(SERVER_KEY, OFFLINE_BACKUP_KEY) // switch keys without an app update
+    requiredSignatures(2)                                // m-of-n: no single signer can publish
+    recoveryPublicKeys(RECOVERY_KEY)                     // rotate / revoke signing keys over the air
+}
+```
+
+The reference server adds HSM (PKCS#11) and KMS signers, sign-once-per-publish,
+named admins with a hash-chained audit log, webhook alerts, two-person
+approval for pin changes and a live-certificate gate that refuses pin sets the
+host would fail — all switched on with environment variables.
 
 ### 5. Backup exclusion — automatic, except for custom Config API ids
 

@@ -133,7 +133,7 @@ The payload JSON itself **MUST** include freshness fields (alongside the usual `
 
 | Field | Type | Required | Purpose |
 |---|---|---|---|
-| `issuedAt` | Long (Unix epoch **ms**) | Yes | Wall-clock moment the response was signed. Clients reject any new response whose `issuedAt` is not strictly greater than the previously applied config's `issuedAt` — guards against replay even when the signature is still cryptographically valid. |
+| `issuedAt` | Long (Unix epoch **ms**) | Yes | Wall-clock moment the response was signed. Clients reject any response whose `issuedAt` is lower than the previously applied config's — and an equal `issuedAt` unless the content is identical (the same envelope served again, see below) — guarding against replay even when the signature is still cryptographically valid. |
 | `expiresAt` | Long (Unix epoch **ms**) | Yes | Freshness window. Clients reject the response once the local clock crosses `expiresAt`, regardless of signature. Typical TTL: 24h (reference server's `CONFIG_TTL_SECONDS`). |
 
 Missing or zero values for either field cause the client to refuse the response.
@@ -169,6 +169,48 @@ PinVaultConfig.Builder()
 ```
 
 For dev/test setups against an unsigned endpoint, callers can opt out with `allowUnsigned()` inside the `configApi { }` block. Don't ship that to production — it disables signature, freshness, and replay protection together.
+
+#### Optional envelope fields (library 2.1+)
+
+All of these are optional and ignored by older clients. Clients announce what they understand on every signed-config request with `X-PinVault-Features: redelivery,multisig,keyset`.
+
+```json
+{
+  "payload": "{…}",
+  "signature": "<primary signer's signature — keep sending it for older clients>",
+  "keyId": "<Base64 SHA-256 of the primary signer's SubjectPublicKeyInfo>",
+  "signatures": [
+    {"keyId": "…", "signature": "…"},
+    {"keyId": "…", "signature": "…"}
+  ],
+  "signingKeys": {
+    "payload": "{\"type\":\"pinvault-signing-keys\",\"version\":2,\"keys\":[\"MFkw…\",\"MFkw…\"],\"requiredSignatures\":1}",
+    "signatures": [{"keyId": "<recovery key id>", "signature": "…"}]
+  }
+}
+```
+
+- **`signatures`: several signers (m-of-n).** Every signature is over the same `payload` bytes. A client configured with `requiredSignatures(n)` needs `n` valid signatures from distinct trusted keys. `keyId` is only a hint that tells the client which key to try first, and it is not signed. Keep putting the first signer's signature in `signature`: pre-2.1 clients only read that field.
+- **`signingKeys`: key rotation and revocation.**
+  - The operator signs this document **offline** with a recovery key, and the server relays it unchanged with every config.
+  - A client configured with `recoveryPublicKeys(...)` checks four things: the recovery signatures, `type == "pinvault-signing-keys"`, a version higher than the one it holds, and a key list that contains no recovery key. It then replaces its trusted signing keys with `keys`.
+  - An invalid set fails the whole response.
+  - Before relaying a set, make sure your active signers are in it and cover `requiredSignatures`. A set they cannot satisfy makes every device that applies it reject every later config.
+  - Signing the set: SHA256withECDSA over the UTF-8 payload, as for configs:
+
+  ```bash
+  printf '%s' "$KEYSET_PAYLOAD" | openssl dgst -sha256 -sign recovery.pem | openssl base64 -A
+  ```
+
+- **Vault files:** `X-Vault-Signature` carries the primary signature. With several signers, also send `X-Vault-Signatures: <keyId>:<signature>,<keyId>:<signature>`. Base64 never contains `:` or `,`.
+
+#### Serving the same signed config more than once
+
+A backend may sign each distinct config **once** and serve the identical envelope until its content changes. This covers signing at publish time, an HSM or KMS that should not be called on every poll, and a CDN.
+
+- Clients that send `X-PinVault-Features: redelivery` accept an envelope whose `issuedAt` equals the one they last applied, as long as it carries the same hosts, versions and pins. They treat it as "already current".
+- Older clients reject the repeat as a replay, so give them a freshly signed envelope.
+- `issuedAt` must still only ever grow. When content changes, including a change back to an earlier state (force on, then force off again), sign it anew. Never re-serve an older envelope: devices that applied a newer one reject it.
 
 ---
 
