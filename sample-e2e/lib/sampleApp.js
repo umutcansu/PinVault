@@ -154,6 +154,45 @@ class SampleApp {
   }
 
   /** Durum metnindeki "Mod: …" etiketi. */
+  /**
+   * Durum ya da "config yenile" metnindeki imza satırı:
+   * { required, trusted, keySetVersion, signedBy: ['abc123def456…', …] } ya da null.
+   */
+  static signingOf(text) {
+    const m = /🔏 İmza: (\d+) imza gerekli · (\d+) güvenilen anahtar · anahtar seti v(\d+)\s*\nSon config'i imzalayan: ([^\n]*)/.exec(text || '');
+    if (!m) return null;
+    const signedBy = m[4].trim() === '—' ? [] : m[4].split(',').map((s) => s.trim().replace(/…$/, ''));
+    return { required: Number(m[1]), trusted: Number(m[2]), keySetVersion: Number(m[3]), signedBy };
+  }
+
+  /**
+   * Depolama ekranındaki "== İmza doğrulaması (PinVault.signingStatus) =="
+   * bölümü: { required, keySetVersion, fromServer, trusted: [tam kimlik…],
+   * recovery: [...], lastSignedBy: [...], text } ya da null.
+   */
+  static signingDetailOf(storage) {
+    const start = (storage || '').indexOf('== İmza doğrulaması');
+    if (start < 0) return null;
+    const rest = storage.slice(start);
+    const end = rest.indexOf('\n\n==');
+    const text = (end < 0 ? rest : rest.slice(0, end)).trim();
+    const head = /gereken imza: (\d+), anahtar seti: v(\d+)/.exec(text);
+    const list = (label) => {
+      const m = new RegExp(`${label}:[^\\n]*\\n((?:\\s+• [^\\n]+\\n?)*)`).exec(text);
+      return m ? m[1].split('\n').map((l) => l.replace(/^\s*•\s*/, '').trim()).filter(Boolean) : [];
+    };
+    const signed = /son config'i imzalayan: ([^\n]*)/.exec(text);
+    return {
+      required: head ? Number(head[1]) : null,
+      keySetVersion: head ? Number(head[2]) : null,
+      fromServer: /sunucudan gelen/.test(text),
+      trusted: list('güvenilen anahtarlar'),
+      recovery: list('kurtarma anahtarları'),
+      lastSignedBy: !signed || signed[1].trim() === '—' ? [] : signed[1].split(',').map((s) => s.trim()),
+      text,
+    };
+  }
+
   static modeOf(text) {
     const m = text.match(/Mod: ([^\n]+)/);
     return m ? m[1].trim() : null;
@@ -226,6 +265,24 @@ class SampleApp {
     return this.press('refreshButton', RESULT.refresh, 'config yenileme sonucu');
   }
 
+  /**
+   * Başlatma hatasından sonra ana ekrandaki "Tekrar dene" (aynı düğme): init
+   * baştan çalışır. Durum "Hazır" olana kadar bekler ve metni döndürür; yeni
+   * bir hata gelirse onunla düşer.
+   */
+  async retryInit() {
+    await this.backToMain();
+    const failed = this.status();
+    await this.tapButton('refreshButton');
+    const node = await this.waitFor(
+      'statusView',
+      (n) => /Hazır — config v\d+/.test(n.text) || (n.text.includes('başlatılamadı') && n.text !== failed),
+      { timeout: 90_000, what: '"Tekrar dene" sonrası Hazır' },
+    );
+    if (!/Hazır — config v\d+/.test(node.text)) throw new Error(`Mobil: tekrar denemede de başlatılamadı\n${node.text}`);
+    return node.text;
+  }
+
   // Ekran açma yardımcıları, ekran zaten açıksa hiçbir şey yapmaz: art arda
   // iki adımda aynı ekranı kullanan senaryolar araya backToMain koymak zorunda
   // kalmasın (ana ekrana dönülmediğinde "vaultButton" UI dökümünde olmadığı
@@ -282,10 +339,19 @@ class SampleApp {
     return this.press('applyButton', RESULT.settings, `pin kapsamı ${enabled ? 'açık' : 'kapalı'}`, 90_000);
   }
 
+  /**
+   * "İki imza iste" (m-of-n: requiredSignatures=2) ve "Uygula": PinVault bu
+   * ayarla yeniden kurulur. Sonuç metnini döndürür ("Gereken imza: 2").
+   */
+  async setTwoSignatures(enabled) {
+    await this.setChecked('twoSignaturesCheck', enabled);
+    return this.press('applyButton', RESULT.settings, `gereken imza ${enabled ? 2 : 1}`, 90_000);
+  }
+
   async setTelemetry({ reportSuccess = true, dedupMs = 0 } = {}) {
     await this.setChecked('reportSuccessCheck', reportSuccess);
     await this.enterText('dedupMsInput', String(dedupMs));
-    return this.press('applyButton', RESULT.settings, 'telemetri ayarı uygulandı', 90_000);
+    return this.press('applyButton', RESULT.settings, 'cihaz raporu (telemetri) ayarı uygulandı', 90_000);
   }
 
   settingsClientTest() {

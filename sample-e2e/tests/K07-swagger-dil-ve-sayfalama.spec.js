@@ -1,5 +1,5 @@
 // Kurulum yolculuğu K13: Swagger UI (/docs) ve OpenAPI dosyası, dashboard'un
-// TR/EN dil geçişi ve tablo sayfalaması. Taze host örneği üzerinde.
+// TR/EN dil geçişi ve tablo sayfalaması. Geçici test sunucusunda çalışır.
 const { test, expect } = require('../lib/fixtures');
 const { attachText } = require('../lib/evidence');
 const fresh = require('../lib/freshHost');
@@ -36,7 +36,7 @@ test('Kurulum: Swagger UI açılır, OpenAPI uçları belgelenir, dashboard TR/E
         [
           `GET ${fresh.WEB_URL}/docs → /static/docs.html`,
           `Etiket grubu: ${tagCount} · ilk grupta işlem bloğu: ${opCount}`,
-          'Swagger varlıkları aynı origin\'den (/static/vendor/…) geliyor; CSP script-src \'self\' engellemiyor.',
+          'Swagger\'ın JS/CSS dosyaları dashboard ile aynı adresten (/static/vendor/…) geliyor; tarayıcının güvenlik kuralı (CSP script-src \'self\') bunları engellemiyor.',
           `Sayfa hatası: ${errors.length === 0 ? 'yok' : errors.join('; ')}`,
         ].join('\n'),
       );
@@ -44,7 +44,7 @@ test('Kurulum: Swagger UI açılır, OpenAPI uçları belgelenir, dashboard TR/E
       expect(opCount).toBeGreaterThan(0);
     });
 
-    await test.step('Sunucu: openapi.yaml uçları (K13)', async () => {
+    await test.step('Sunucu: openapi.yaml\'da belgelenen API uçları (K13)', async () => {
       const res = await fetch(`${fresh.WEB_URL}/static/openapi.yaml`);
       const text = await res.text();
       const paths = text.match(/^ {2}\/[^\s:]+:/gm) || [];

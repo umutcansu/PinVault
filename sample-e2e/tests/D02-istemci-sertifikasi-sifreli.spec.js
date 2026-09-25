@@ -30,7 +30,7 @@ test('Depolama: istemci sertifikası şifreli saklanıyor, ham kayıt PKCS12 ola
       await app.backToMain();
     });
 
-    await test.step('Web + Mobil: cihaz kayıt token\'ıyla sertifikasını alıyor', async () => {
+    await test.step('Web+Mobil: cihaz kayıt token\'ıyla sertifikasını alıyor', async () => {
       const token = await dashboard.generateEnrollmentToken(env.MTLS_API, clientId);
       await dashboard.snapTokenList(env.MTLS_API, `kayıt token'ı üretildi: ${clientId} bekliyor`, [{ clientId, status: 'Bekliyor' }]);
       await app.openMtls();
@@ -40,7 +40,7 @@ test('Depolama: istemci sertifikası şifreli saklanıyor, ham kayıt PKCS12 ola
       await app.backToMain();
     });
 
-    await test.step('Cihaz: ham kayıt şifreli, PKCS12 imzası yok', async () => {
+    await test.step('Cihaz: ham kayıt şifreli, PKCS12 dosyası gibi başlamıyor', async () => {
       const xml = device.appFileText(env.APP_ID, PREFS);
       const entries = [...xml.matchAll(/<string name="([^"]+)">([^<]*)<\/string>/g)]
         .filter((m) => !m[1].startsWith('__androidx_security_crypto'));
@@ -60,7 +60,7 @@ test('Depolama: istemci sertifikası şifreli saklanıyor, ham kayıt PKCS12 ola
           '',
           hexdump(raw, 64),
           '',
-          `PKCS12 DER imzası (30 82) ile başlıyor mu: ${looksLikeP12 ? 'EVET ✗' : 'hayır ✓'}`,
+          `PKCS12 dosyalarının ilk baytlarıyla (30 82) başlıyor mu: ${looksLikeP12 ? 'EVET ✗' : 'hayır ✓'}`,
           `sertifika CN'i ("${clientId}") dosyada düz geçiyor mu: ${xml.includes(clientId) ? 'EVET ✗' : 'hayır ✓'}`,
           '',
           'Kayıt adı da şifreli olduğu için dosyaya bakan biri burada bir istemci',
@@ -94,7 +94,7 @@ test('Depolama: istemci sertifikası şifreli saklanıyor, ham kayıt PKCS12 ola
       await app.backToMain();
     });
 
-    await test.step('Mobil: aynı sertifikayla mTLS el sıkışması geçiyor', async () => {
+    await test.step('Mobil: aynı sertifikayla mTLS bağlantısı kuruluyor', async () => {
       await app.openMtls();
       const result = await app.expectMtls(true);
       await app.snap('şifreli depodan okunan sertifikayla mTLS bağlantısı');

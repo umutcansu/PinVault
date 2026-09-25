@@ -3,7 +3,7 @@
 const { test, expect, TARGET_HOST } = require('../lib/fixtures');
 const { SampleApp } = require('../lib/sampleApp');
 
-test('Web\'de force update → mobil config\'i aynı sürümle yeniden uygular; kapatılınca normale döner', async ({
+test('Web\'de force update açılınca mobil config\'i aynı sürümle yeniden uygular; kapatılınca normale döner', async ({
   app,
   dashboard,
 }) => {
@@ -23,7 +23,7 @@ test('Web\'de force update → mobil config\'i aynı sürümle yeniden uygular; 
     await dashboard.snap('force update aktif');
   });
 
-  await test.step('Mobil: yenile → config zorla yeniden uygulanır', async () => {
+  await test.step('Mobil: config yenilenince aynı sürüm zorla yeniden uygulanır', async () => {
     const status = await app.refreshConfig();
     expect(status).toContain('Yeni config uygulandı');
     expect(SampleApp.hostVersion(status, TARGET_HOST)).toBe(version);
@@ -35,7 +35,7 @@ test('Web\'de force update → mobil config\'i aynı sürümle yeniden uygular; 
     await dashboard.snap('force update pasif');
   });
 
-  await test.step('Mobil: yenile → config güncel', async () => {
+  await test.step('Mobil: yenilemede yine "Config güncel" görünür', async () => {
     const status = await app.refreshConfig();
     expect(status).toContain('Config güncel');
     await app.snap('normale döndü');

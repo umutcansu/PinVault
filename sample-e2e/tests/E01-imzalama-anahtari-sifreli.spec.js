@@ -28,7 +28,7 @@ function verifySignedConfig(signed, publicKeyBase64) {
   return crypto.verify('sha256', Buffer.from(signed.payload, 'utf8'), key, Buffer.from(signed.signature, 'base64'));
 }
 
-test('Sunucu: SIGNING_KEY_PASSWORD anahtarı diskte şifreler; imzalı config doğrulanmaya devam eder', async ({
+test('Sunucu: SIGNING_KEY_PASSWORD verilince imzalama anahtarı diskte şifreleniyor; imzalı config doğrulanmaya devam ediyor', async ({
   app,
   dashboard,
 }, testInfo) => {
@@ -40,7 +40,7 @@ test('Sunucu: SIGNING_KEY_PASSWORD anahtarı diskte şifreler; imzalı config do
   let overridden = false;
 
   try {
-    await test.step('Sunucu: parola yokken anahtar düz metin (başlangıç)', async () => {
+    await test.step('Sunucu: başlangıçta parola yok, imzalama anahtarı diskte düz metin', async () => {
       await attachText(
         testInfo,
         'data/signing-key.pem (parola yok)',
@@ -53,7 +53,7 @@ test('Sunucu: SIGNING_KEY_PASSWORD anahtarı diskte şifreler; imzalı config do
       expect(plaintext.startsWith('ENCv1:')).toBe(false);
     });
 
-    await test.step('Sunucu: SIGNING_KEY_PASSWORD ayarlanır → dosya "ENCv1:" olur', async () => {
+    await test.step('Sunucu: SIGNING_KEY_PASSWORD verilir → anahtar dosyası şifreleniyor, "ENCv1:" ile başlıyor', async () => {
       await hostControl.setEnv({ SIGNING_KEY_PASSWORD: PASSWORD });
       overridden = true;
       const encrypted = fs.readFileSync(env.SIGNING_KEY_FILE, 'utf8');
@@ -73,7 +73,7 @@ test('Sunucu: SIGNING_KEY_PASSWORD anahtarı diskte şifreler; imzalı config do
       expect((fs.statSync(env.SIGNING_KEY_FILE).mode & 0o777).toString(8)).toBe('600');
     });
 
-    await test.step('Sunucu: otomatik göç logu ve değişmeyen public key', async () => {
+    await test.step('Sunucu: düz metin anahtarın kendiliğinden şifrelendiği logda görülüyor; public key değişmedi', async () => {
       const logs = hostControl.logs(200);
       const migration = logs.split('\n').filter((l) => /signing|ENCv1|Re-encrypt/i.test(l)).join('\n');
       const served = await hostApi.api('/api/v1/signing-key', { withKey: false });

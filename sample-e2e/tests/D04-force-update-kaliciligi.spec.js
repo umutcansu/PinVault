@@ -63,8 +63,8 @@ test('Depolama: forceUpdate saklı config\'te kalıcı; kapatılınca saklı kop
         [
           line,
           '',
-          'Sunucu servis ettiği config\'i hasAnyForceUpdate() ile damgalıyor; kütüphane',
-          'bayrağı config nesnesiyle birlikte şifreli depoya yazıyor.',
+          'Sunucu gönderdiği config\'i hasAnyForceUpdate() sonucuna göre işaretliyor;',
+          'kütüphane bayrağı config ile birlikte şifreli depoya yazıyor.',
         ].join('\n'),
       );
       expect(line).toContain('açık');
@@ -85,7 +85,7 @@ test('Depolama: forceUpdate saklı config\'te kalıcı; kapatılınca saklı kop
         [
           log || '(ilgili satır yok)',
           '',
-          'Bu satır ağ isteğinden ÖNCE basılıyor: bayrak sunucudan değil diskten geliyor.',
+          'Bu satır ağ isteğinden ÖNCE log\'a yazılıyor: bayrak sunucudan değil diskten geliyor.',
           '',
           `Depolama ekranı: ${line}`,
         ].join('\n'),
@@ -119,16 +119,16 @@ test('Depolama: forceUpdate saklı config\'te kalıcı; kapatılınca saklı kop
           '    config uygulanmadı, sonuç hâlâ UpdateResult.AlreadyCurrent.',
           '  • Depolama "kapalı" — kütüphane bayraklar farklıysa saklı (ve daha önce',
           '    doğrulanmış) config\'i bayrakları güncelleyerek diske geri yazıyor.',
-          '    Uzaktan gelen ham config diske yazılmıyor; canlı istemci de',
-          '    değiştirilmiyor, çünkü pin\'ler aynı.',
+          '    Sunucudan gelen config olduğu gibi diske yazılmıyor; çalışan HTTP',
+          '    istemcisi de değiştirilmiyor, çünkü pin\'ler aynı.',
           '',
           'Bu yalnızca kozmetik bir düzeltme değil: forceUpdate açık bir saklı config,',
           'açılışta başarılı bir güncelleme ZORUNLU kılıyor (F01: sunucuya ulaşılamazsa',
-          'ForceUpdateFailedException ile init düşüyor). Bayrak diske ulaşmasaydı,',
+          'ForceUpdateFailedException ile init başarısız oluyor). Bayrak diske ulaşmasaydı,',
           'operatör force\'u kapatsa bile o cihaz sürüm değişene kadar çevrimdışı',
           'açılışlarda başlatılamaz kalırdı.',
           '',
-          'Önceki davranış: hasChanges bayrağın yalnızca AÇILMASINI değişiklik sayıyor,',
+          'Önceki davranış: hasChanges bayrağın yalnızca AÇILMASINI değişiklik sayıyordu,',
           'gelen config AlreadyCurrent olarak elenip diske hiç yazılmıyordu; Depolama',
           'ekranı bu adımda "açık" diyordu.',
         ].join('\n'),
@@ -151,9 +151,9 @@ test('Depolama: forceUpdate saklı config\'te kalıcı; kapatılınca saklı kop
           '',
           `Depolama ekranı: ${line}`,
           '',
-          'Bu satır ağ isteğinden ÖNCE basılıyor: bayrağın kapalı geldiği yer disk.',
-          'F01\'deki "force açıkken host kapalıysa init düşer" kapısı artık operatör',
-          'bayrağı kapatınca gerçekten kapanıyor.',
+          'Bu satır ağ isteğinden ÖNCE log\'a yazılıyor: bayrağın kapalı değeri diskten geliyor.',
+          'F01\'deki "force açıkken host kapalıysa init başarısız olur" kuralı, operatör',
+          'bayrağı kapatınca artık gerçekten devreden çıkıyor.',
         ].join('\n'),
       );
       expect(log).toMatch(/Certificate config loaded.*forceUpdate: false/);
@@ -197,10 +197,10 @@ test('Depolama: forceUpdate saklı config\'te kalıcı; kapatılınca saklı kop
       expect(result.line).toContain('kapalı');
     });
 
-    await test.step('Web: pin\'ler temel duruma döndürülür', async () => {
+    await test.step('Web: pin\'ler başlangıçtaki hâline döndürülür', async () => {
       await dashboard.openHost(TARGET_HOST);
       await dashboard.setPins(TARGET_HOST, run.goodPins);
-      await dashboard.snap('pin\'ler temel durumda');
+      await dashboard.snap('pin\'ler başlangıçtaki hâlinde');
       expect(await dashboard.viewedPins(TARGET_HOST)).toEqual(run.goodPins);
     });
   } finally {

@@ -1,6 +1,6 @@
 // Not: anonim mod denemeleri ana host'un IMAJINI kullanır ama ayrı bir
 // container'da (kendi portunda, kendi boş veritabanıyla) koşar; ne ana host
-// ne de taze örnek etkilenir.
+// ne de geçici test sunucusu etkilenir.
 // E2: yönetim uçları API anahtarı ister (anahtarsız 401, yanlış anahtar 403),
 // cihaz uçları anahtarsız çalışır, yanıtlar güvenlik başlıklarıyla gelir;
 // API_KEY ayarlı değilken sunucu açılmayı reddeder ve ALLOW_ANONYMOUS_ADMIN
@@ -30,7 +30,7 @@ const DEVICE_ENDPOINTS = [
   ['GET', '/api/v1/enrollment-mode'],
 ];
 
-test('Sunucu: yönetim uçları anahtar ister, cihaz uçları anahtarsız çalışır; anonim mod uyarı verir', async ({
+test('Sunucu: yönetim uçları API anahtarı ister, cihaz uçları anahtarsız çalışır; anahtarsız yönetim modu uyarı loglar', async ({
   browser,
 }, testInfo) => {
   test.setTimeout(15 * 60 * 1000);
@@ -43,7 +43,7 @@ test('Sunucu: yönetim uçları anahtar ister, cihaz uçları anahtarsız çalı
   });
 
   try {
-    await test.step('Sunucu: yönetim uçları anahtarsız 401, yanlış anahtarla 403', async () => {
+    await test.step('Sunucu: yönetim uçları anahtarsız isteğe 401, yanlış anahtara 403 döner', async () => {
       const rows = [];
       for (const [method, pathname] of ADMIN_ENDPOINTS) {
         const none = await hostApi.api(pathname, { method, withKey: false });
@@ -58,7 +58,7 @@ test('Sunucu: yönetim uçları anahtar ister, cihaz uçları anahtarsız çalı
       expect(ok.status).toBe(200);
     });
 
-    await test.step('Web: yanlış anahtarla dashboard veri alamıyor (istem sonrası host ağacı boş)', async () => {
+    await test.step("Web: dashboard'a yanlış API anahtarı girilince hiç veri gelmiyor (host listesi boş)", async () => {
       // Anahtarsız yeni sayfa: dashboard prompt ile anahtar sorar; yanlış
       // anahtar 403 aldığı için host ağacı çizilmez.
       const page = await browser.newPage();
@@ -69,14 +69,14 @@ test('Sunucu: yönetim uçları anahtar ister, cihaz uçları anahtarsız çalı
         await page.goto(`${env.WEB_URL}/`);
         await expect.poll(() => view.dialogs.length, { timeout: 20_000 }).toBeGreaterThan(0);
         await expect(page.locator('#host-list .api-header')).toHaveCount(0);
-        await view.snap('yanlış anahtar: host ağacı boş (istem metni panelde)');
+        await view.snap('yanlış anahtar: host listesi boş (tarayıcının anahtar sorusu panelde)');
         await attachText(
           testInfo,
-          'Tarayıcı istemi (prompt) ve sonucu',
+          'Tarayıcının anahtar sorusu (prompt) ve sonucu',
           [
             ...view.dialogs.map((d, i) => `#${i + 1} ${d}`),
             '',
-            'Girilen: "yanlis-anahtar" → sunucu 403 → dashboard veri çizmiyor, anahtarı yeniden soruyor.',
+            'Girilen: "yanlis-anahtar" → sunucu 403 → dashboard veri göstermiyor, anahtarı yeniden soruyor.',
           ].join('\n'),
         );
       } finally {
@@ -84,7 +84,7 @@ test('Sunucu: yönetim uçları anahtar ister, cihaz uçları anahtarsız çalı
       }
     });
 
-    await test.step('Sunucu: cihaz uçları anahtarsız çalışır', async () => {
+    await test.step('Sunucu: telefonun kullandığı uçlar anahtarsız çalışır', async () => {
       const rows = [];
       for (const [method, pathname] of DEVICE_ENDPOINTS) {
         const res = await hostApi.api(pathname, { method, withKey: false });
@@ -115,18 +115,18 @@ test('Sunucu: yönetim uçları anahtar ister, cihaz uçları anahtarsız çalı
         `X-Vault-Version: ${wire.headers['x-vault-version']} · içerik: ${wire.body.toString('utf8')}`,
       );
       rows.push('', 'Not: /api/v1/vault/{key} yalnızca Config API dinleyicilerinde var; yönetim portu 404 döner.');
-      await attachText(testInfo, 'Cihaz uçları — anahtar istemeyen allowlist', rows.join('\n'));
+      await attachText(testInfo, 'Cihaz uçları — anahtarsız erişilebilen uçlar (izin listesi)', rows.join('\n'));
       expect(wire.status).toBe(200);
     });
 
-    await test.step('Sunucu: güvenlik başlıkları (curl -I)', async () => {
+    await test.step('Sunucu: yanıtlar güvenlik başlıklarıyla geliyor (curl -I)', async () => {
       const out = await attachCommand(testInfo, 'curl -I yönetim portu', 'curl', ['-sS', '-I', `${env.WEB_URL}/`]);
       for (const header of ['content-security-policy', 'x-frame-options', 'x-content-type-options']) {
         expect(out.toLowerCase()).toContain(header);
       }
     });
 
-    await test.step('Sunucu: API_KEY yokken açılmayı reddeder (fail-fast)', async () => {
+    await test.step('Sunucu: API_KEY verilmemişse açılmayı reddediyor', async () => {
       const image = execFileSync('docker', ['inspect', '-f', '{{.Config.Image}}', env.CONTAINER], {
         encoding: 'utf8',
       }).trim();

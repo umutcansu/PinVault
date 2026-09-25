@@ -138,7 +138,7 @@ async function waitHealthy(timeoutMs = 180_000) {
     if (await isHealthy()) return;
     await sleep(1000);
   }
-  throw new Error(`Taze host ${timeoutMs / 1000} saniyede ayağa kalkmadı (${WEB_URL})`);
+  throw new Error(`Geçici test sunucusu ${timeoutMs / 1000} saniyede ayağa kalkmadı (${WEB_URL})`);
 }
 
 function isRunning() {
@@ -152,15 +152,19 @@ function isRunning() {
   }
 }
 
-/** Yönetim API'si (kopyanın kendi anahtarıyla). */
-async function api(pathname, { method = 'GET', body, withKey = true, key } = {}) {
-  const headers = {};
+/**
+ * Yönetim API'si (kopyanın kendi anahtarıyla). [headers] ek başlıklar (ör.
+ * X-PinVault-Features); [rawBody] gövdeyi olduğu gibi gönderir (imzalı anahtar
+ * seti: payload bayt bayt imzalanan metin olarak kalmalı).
+ */
+async function api(pathname, { method = 'GET', body, withKey = true, key, headers: extra = {}, rawBody } = {}) {
+  const headers = { ...extra };
   if (withKey) headers['X-API-Key'] = key || apiKey();
-  if (body !== undefined) headers['Content-Type'] = 'application/json';
+  if (body !== undefined || rawBody !== undefined) headers['Content-Type'] = 'application/json';
   const res = await fetch(WEB_URL + pathname, {
     method,
     headers,
-    body: body === undefined ? undefined : JSON.stringify(body),
+    body: rawBody !== undefined ? rawBody : body === undefined ? undefined : JSON.stringify(body),
   });
   const text = await res.text();
   let json;

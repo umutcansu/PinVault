@@ -1,4 +1,4 @@
-// E8: telemetri ve cihaz listeleri. Telefonun ürettiği kayıtlar dashboard'un
+// E8: cihaz raporları (telemetri) ve cihaz listeleri. Telefonun ürettiği kayıtlar dashboard'un
 // "Bağlantı Geçmişi" ve "Bağlı Cihazlar" kartlarında görünür; tablo sayfalanır;
 // rapor ucu HTML metakarakteri içeren cihaz adlarını 400 ile reddeder;
 // cihaz listesi ucu API anahtarı ister.
@@ -17,16 +17,16 @@ async function clientReport(body) {
   return { status: res.status, text: (await res.text()).trim() };
 }
 
-test('Sunucu: telefonun telemetrisi listelenir, bozuk rapor reddedilir, cihaz listesi anahtar ister', async ({
+test('Sunucu: telefonun gönderdiği raporlar (telemetri) listelenir, bozuk rapor reddedilir, cihaz listesi API anahtarı ister', async ({
   app,
   dashboard,
   run,
 }, testInfo) => {
   test.setTimeout(10 * 60 * 1000);
 
-  await test.step('Mobil: telefon pinli istek yapar (telemetri üretir)', async () => {
+  await test.step('Mobil: telefon pinli istek yapar ve sonucunu sunucuya raporlar (telemetri)', async () => {
     const status = await app.testLibraryClient();
-    await app.snap('pinli istek — telemetri gönderildi');
+    await app.snap('pinli istek — rapor sunucuya gönderildi');
     expect(status).toContain('Pinned bağlantı başarılı');
   });
 
@@ -92,7 +92,7 @@ test('Sunucu: telefonun telemetrisi listelenir, bozuk rapor reddedilir, cihaz li
         `deviceModel="<img src=x onerror=…>" → HTTP ${badModel.status} ${badModel.text}`,
         `hostname="<script>alert(1)</script>"→ HTTP ${badHost.status} ${badHost.text}`,
         '',
-        'Kabul edilen biçim: ^[A-Za-z0-9._:\\- ]{1,128}$ — dashboard innerHTML\'ine HTML sızmaz.',
+        'Kabul edilen biçim: ^[A-Za-z0-9._:\\- ]{1,128}$ — böylece dashboard sayfasına HTML kodu sızamaz.',
       ].join('\n'),
     );
     expect(good.status).toBe(200);
@@ -100,7 +100,7 @@ test('Sunucu: telefonun telemetrisi listelenir, bozuk rapor reddedilir, cihaz li
     expect(badHost.status).toBe(400);
   });
 
-  await test.step('Sunucu: cihaz listesi ucu anahtarsız 401, anahtarla liste döner', async () => {
+  await test.step('Sunucu: cihaz listesi anahtarsız isteğe 401 veriyor, anahtarla liste dönüyor', async () => {
     const none = await hostApi.api('/api/v1/client-devices?configApiId=default-tls', { withKey: false });
     const withKey = await hostApi.api('/api/v1/client-devices?configApiId=default-tls');
     await attachText(

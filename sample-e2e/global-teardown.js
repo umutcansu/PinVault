@@ -14,7 +14,7 @@ module.exports = async () => {
   try {
     await freshHost.destroy();
   } catch (e) {
-    console.warn(`[e2e] Taze host örneği silinemedi: ${e.message}`);
+    console.warn(`[e2e] Geçici test sunucusu silinemedi: ${e.message}`);
   }
 
   const run = state.read();

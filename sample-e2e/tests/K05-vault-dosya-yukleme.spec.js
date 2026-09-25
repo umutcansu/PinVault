@@ -1,6 +1,6 @@
 // Kurulum yolculuğu K9: vault dosyası yükleme — metin ve diskteki dosya,
 // politika × şifreleme seçenekleriyle; dosya listesi ve dosya detayı.
-// Taze host örneği üzerinde (ana host'un vault dosyalarına dokunulmaz).
+// Geçici test sunucusunda çalışır (ana host'un vault dosyalarına dokunulmaz).
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
@@ -29,7 +29,7 @@ test('Kurulum: vault dosyaları metin ve dosya olarak, her politika ve şifrelem
   const localFile = path.join(os.tmpdir(), 'k05-model.bin');
 
   try {
-    await test.step('Web: metinden dosya yükleme — politika × şifreleme (K9)', async () => {
+    await test.step('Web: metin girilerek dosya yüklenir — farklı erişim politikası ve şifreleme seçenekleriyle (K9)', async () => {
       const rows = [];
       for (const item of MATRIX) {
         const version = await dashboard.uploadVaultText(API, item.key, `{"deneme":"${item.key}"}`, item);
@@ -41,7 +41,7 @@ test('Kurulum: vault dosyaları metin ve dosya olarak, her politika ve şifrelem
       await dashboard.snap('vault dosya listesi: politika ve şifreleme sütunları');
     });
 
-    await test.step('Web: diskteki dosyayı yükleme (K9)', async () => {
+    await test.step('Web: diskteki bir dosya yüklenir (K9)', async () => {
       fs.writeFileSync(localFile, Buffer.from([0x50, 0x4b, 0x03, 0x04, ...Buffer.from('k05 ikili içerik')]));
       const version = await dashboard.uploadVaultFileFromDisk(API, FILE_KEY, localFile, {
         policy: 'public',
@@ -67,7 +67,7 @@ test('Kurulum: vault dosyaları metin ve dosya olarak, her politika ve şifrelem
       await dashboard.snap(`vault dosya detayı: ${MATRIX[1].key}`);
     });
 
-    await test.step('Sunucu: at_rest dosya diskte şifreli, plain dosya düz (K9)', async () => {
+    await test.step('Sunucu: at_rest dosya diskte şifreli, plain dosya şifresiz duruyor (K9)', async () => {
       // Sunucunun SQLite dosyası host'ta bind mount altında; ham baytlarda
       // aranır (container'da sqlite3 yok).
       const db = fs.readFileSync(path.join(fresh.DIR, 'data/db/pinvault.db'));
@@ -76,11 +76,11 @@ test('Kurulum: vault dosyaları metin ve dosya olarak, her politika ve şifrelem
       const has = (needle) => db.includes(Buffer.from(needle, 'utf8'));
       const lines = [
         `veritabanı      : data/db/pinvault.db (${db.length} bayt)`,
-        `"VLT-ENC1" öneki: ${has('VLT-ENC1') ? 'VAR (at_rest blob\'u şifreli)' : 'YOK'}`,
+        `"VLT-ENC1" öneki: ${has('VLT-ENC1') ? 'VAR (at_rest dosyası şifreli saklanıyor)' : 'YOK'}`,
         `plain içeriği   : ${has(plainContent) ? 'düz metin olarak bulundu' : 'bulunamadı'}  ← ${plainContent}`,
         `at_rest içeriği : ${has(atRestContent) ? 'düz metin olarak bulundu' : 'bulunamadı (şifreli)'}  ← ${atRestContent}`,
       ];
-      await attachText(testInfo, 'Sunucu diskindeki vault blob\'ları', lines.join('\n'));
+      await attachText(testInfo, 'Sunucu diskindeki vault dosya içerikleri', lines.join('\n'));
       expect(has('VLT-ENC1')).toBe(true);
       expect(has(plainContent)).toBe(true);
       expect(has(atRestContent)).toBe(false);

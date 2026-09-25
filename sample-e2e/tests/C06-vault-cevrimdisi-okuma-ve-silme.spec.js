@@ -16,7 +16,7 @@ const MODEL = env.VAULT_KEYS.model;
 const FLAGS = env.VAULT_KEYS.flags;
 const ENC_FILE = `files/vault_files/${MODEL}.enc`;
 
-test('Vault çevrimdışı: saklı içerik host kapalıyken okunuyor, "Sil" izi bırakmıyor', async ({
+test('Vault çevrimdışı: host kapalıyken saklı içerik okunuyor, "Sil" geride iz bırakmıyor', async ({
   app,
   device,
   dashboard,
@@ -51,7 +51,7 @@ test('Vault çevrimdışı: saklı içerik host kapalıyken okunuyor, "Sil" izi 
         testInfo,
         'docker stop pinvault-host',
         [
-          `sağlık ucu yanıt veriyor mu: ${healthy ? 'EVET ✗' : 'hayır ✓'}`,
+          `sağlık kontrolü yanıt veriyor mu: ${healthy ? 'EVET ✗' : 'hayır ✓'}`,
           '',
           'Bundan sonraki telefon adımlarında sunucuya hiçbir istek gidemez.',
         ].join('\n'),
@@ -68,7 +68,7 @@ test('Vault çevrimdışı: saklı içerik host kapalıyken okunuyor, "Sil" izi 
       expect(modelInfo).toContain('sunucuya gidilmedi');
 
       const flagsInfo = await app.vaultInfo(FLAGS);
-      await app.snap('host kapalı — şifreli tercihten okundu');
+      await app.snap('host kapalı — şifreli SharedPreferences\'tan okundu');
       expect(flagsInfo).toContain(`sürüm: v${flagsVersion}`);
       expect(flagsInfo).toContain(flagsBody);
       await attachText(
@@ -78,14 +78,14 @@ test('Vault çevrimdışı: saklı içerik host kapalıyken okunuyor, "Sil" izi 
       );
     });
 
-    await test.step('Mobil: aynı anda "İndir" ağ hatasıyla düşüyor', async () => {
+    await test.step('Mobil: aynı anda "İndir" ağ hatası yüzünden başarısız oluyor', async () => {
       const status = await app.fetchVault(MODEL);
       await app.snap('host kapalı — indirme başarısız');
       expect(status).toContain(`${MODEL} indirilemedi`);
       await attachText(
         testInfo,
         'Host kapalıyken indirme denemesi',
-        [status, '', 'Okuma yereldir, indirme ağa çıkar: ikisi açıkça ayrı.'].join('\n'),
+        [status, '', 'Okuma cihazın içinde yapılıyor, indirme ağa çıkıyor: ikisi birbirinden ayrı.'].join('\n'),
       );
     });
 
@@ -110,7 +110,7 @@ test('Vault çevrimdışı: saklı içerik host kapalıyken okunuyor, "Sil" izi 
       await attachText(testInfo, 'Silme sonrası "Bilgi"', [info, '', flagsInfo].join('\n'));
     });
 
-    await test.step('Cihaz: .enc dosyası ve şifreli tercih kaydı gerçekten gitti', async () => {
+    await test.step('Cihaz: .enc dosyası ve SharedPreferences kaydı gerçekten silindi', async () => {
       const listing = device.appFiles(env.APP_ID, 'files/vault_files');
       const versions = device.appFileText(env.APP_ID, 'shared_prefs/pinvault_vault_file_versions.xml');
       const prefs = device.appFileText(env.APP_ID, 'shared_prefs/pinvault_vault_files.xml');

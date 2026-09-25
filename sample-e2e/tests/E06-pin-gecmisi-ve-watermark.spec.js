@@ -42,7 +42,7 @@ test('Sunucu: host silinip geri eklenince sürüm kaldığı yerden devam eder; 
         [
           `${HOST} → v${versions.created}`,
           versions.created > 1
-            ? 'Not: bu ad daha önce de kullanılmış; sunucu watermark\'ı sakladığı için sürüm v1\'den başlamadı.'
+            ? 'Not: bu ad daha önce de kullanılmış; sunucu ulaşılan en yüksek sürümü (watermark) sakladığı için sürüm v1\'den başlamadı.'
             : 'İlk kez eklendi: v1.',
         ].join('\n'),
       );
@@ -79,7 +79,7 @@ test('Sunucu: host silinip geri eklenince sürüm kaldığı yerden devam eder; 
       expect(await versionOf(HOST)).toBeNull();
     });
 
-    await test.step('Web: host geri eklenince sürüm sıfırlanmaz (watermark)', async () => {
+    await test.step('Web: host geri eklenince sürüm sıfırlanmıyor, kaldığı yerden devam ediyor', async () => {
       await dashboard.addHostManual(env.VAULT_API, HOST, first);
       await dashboard.openHost(HOST);
       versions.readded = await dashboard.version();

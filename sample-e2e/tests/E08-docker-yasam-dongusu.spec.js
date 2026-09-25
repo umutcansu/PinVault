@@ -1,7 +1,7 @@
 // E11: Docker yaşam döngüsü. `docker compose down` + `up -d` sonrası veriler
 // (pin config, vault dosyaları, sunucu sertifikası, imzalama anahtarı) yerinde
 // kalır; Config API'ler ve mock hedef host'lar auto-start ile geri gelir.
-// Taze host örneği üzerinde (ana host'a dokunulmaz).
+// Geçici test sunucusunda çalışır (ana host'a dokunulmaz).
 const { test, expect } = require('../lib/fixtures');
 const { attachText } = require('../lib/evidence');
 const fresh = require('../lib/freshHost');
@@ -40,12 +40,12 @@ function render(label, s) {
     `durdurulmuş API'ler: ${s.stoppedApis.join(' | ') || '(yok)'}`,
     `vault dosyaları   : ${s.files.join(' | ') || '(yok)'}`,
     `mock host çalışıyor: ${s.mockRunning}`,
-    `bootstrap pin     : ${s.bootstrapPins[0].slice(0, 16)}…`,
+    `sunucu TLS pin'i  : ${s.bootstrapPins[0].slice(0, 16)}…`,
     `imzalama public   : ${s.signingPublicKey.slice(0, 24)}…`,
   ].join('\n');
 }
 
-test('Sunucu: docker compose down/up sonrası veriler kalıcı, Config API ve mock host\'lar geri geliyor', async ({
+test('Sunucu: docker compose down/up sonrası veriler kaybolmuyor; Config API\'ler ve test hedefleri (mock host) kendiliğinden geri geliyor', async ({
   browser,
 }, testInfo) => {
   test.setTimeout(15 * 60 * 1000);

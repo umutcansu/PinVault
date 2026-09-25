@@ -11,7 +11,7 @@ const env = require('../lib/env');
 
 const PREFS = 'shared_prefs/ssl_cert_config_sample-host.xml';
 
-test('Depolama: saklı pin config\'i şifreli, düz metin sızıntısı yok', async ({
+test('Depolama: saklı pin config\'i şifreli; host adı, IP ve pin\'ler düz metin olarak yok', async ({
   app,
   device,
   run,
@@ -36,12 +36,12 @@ test('Depolama: saklı pin config\'i şifreli, düz metin sızıntısı yok', as
     const secrets = {
       'hedef host adı': TARGET_HOST,
       'host IP\'si': env.LAN_IP,
-      'mock host adı': env.MOCK_TLS_HOST,
+      'test sunucusu adı (mock host)': env.MOCK_TLS_HOST,
       'hedefin birinci pin\'i': run.goodPins[0],
       'hedefin ikinci pin\'i': run.goodPins[1],
-      'host bootstrap pin\'i': run.hostPins[0],
-      'config anahtar adı (config_pins)': 'config_pins',
-      'sürüm anahtar adı (config_version)': 'config_version',
+      'gömülü ilk pin (bootstrap)': run.hostPins[0],
+      'config kayıt adı (config_pins)': 'config_pins',
+      'sürüm kayıt adı (config_version)': 'config_version',
     };
     const leaks = Object.entries(secrets).filter(([, value]) => value && xml.includes(value));
     await attachText(
@@ -63,7 +63,7 @@ test('Depolama: saklı pin config\'i şifreli, düz metin sızıntısı yok', as
           `  ${label.padEnd(34)} ${value ? (xml.includes(value) ? 'GEÇİYOR ✗' : 'geçmiyor ✓') : '(değer yok)'}`),
         '',
         `Tink keyset kaydı: ${xml.includes('__androidx_security_crypto_encrypted_prefs_key_keyset__') ? 'var ✓' : 'yok ✗'}`,
-        'Anahtar adları da şifreli (AES256-SIV): dosyaya bakan biri hangi alanların',
+        'Kayıt adları da şifreli (AES256-SIV): dosyaya bakan biri hangi alanların',
         'saklandığını bile göremiyor.',
       ].join('\n'),
     );
@@ -77,7 +77,7 @@ test('Depolama: saklı pin config\'i şifreli, düz metin sızıntısı yok', as
   await test.step('Mobil: Depolama ekranı "düz metin sızıntısı: yok" diyor', async () => {
     await app.openStorage();
     const text = await app.refreshStorage();
-    await app.snap('Depolama ekranı — şifreli tercih dosyaları');
+    await app.snap('Depolama ekranı — şifreli SharedPreferences dosyaları');
     await attachText(testInfo, 'Depolama ekranı dökümü', text);
     expect(text).toContain('ssl_cert_config_sample-host.xml');
     expect(text).toContain('Tink keyset: var');

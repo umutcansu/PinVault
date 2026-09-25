@@ -83,7 +83,7 @@ test('mTLS: dışarıdan yüklenen istemci sertifikası truststore\'a girer ve i
       expect(cert.commonName).toContain(clientId);
     });
 
-    await test.step('Terminal: yükleme sonrası sertifika elle tazeleme olmadan kabul ediliyor', async () => {
+    await test.step('Terminal: yüklenen sertifika, sunucu elle yeniden başlatılmadan kabul ediliyor', async () => {
       // Yükleme dinleyicileri yeniden başlatıyor; kabul döngüsü birkaç yüz ms
       // sonra hazır olabiliyor. Elle hiçbir tazeleme yapılmıyor.
       let after = { ok: false, output: '' };
@@ -95,24 +95,24 @@ test('mTLS: dışarıdan yüklenen istemci sertifikası truststore\'a girer ve i
       }
       await attachText(
         testInfo,
-        'curl --cert (yükleme sonrası, elle tazeleme yok)',
+        'curl --cert (yüklemeden sonra, elle yeniden başlatma yok)',
         [
           after.output,
           '',
-          '/client-certs/upload truststore dosyasını güncelledikten sonra ayakta olan',
-          'mTLS dinleyicilerini de yeniden başlatıyor (Main.kt refreshMtlsTrust,',
-          '/client-certs/generate, /enroll ve iptal ucuyla ortak). Eskiden yalnızca',
-          'dosya yazılıyor, dinleyici açılışta okuduğu truststore ile kaldığı için',
-          'aynı çift reddediliyordu.',
+          '/client-certs/upload truststore dosyasını güncelledikten sonra çalışan',
+          'mTLS sunucularını da yeniden başlatıyor (Main.kt refreshMtlsTrust;',
+          '/client-certs/generate, /enroll ve iptal adresi de aynı yardımcıyı kullanıyor).',
+          'Eskiden yalnızca dosya yazılıyordu; sunucu açılışta okuduğu truststore\'u',
+          'kullanmaya devam ettiği için aynı anahtar/sertifika çifti reddediliyordu.',
         ].join('\n'),
       );
       expect(after.ok).toBe(true);
     });
 
-    await test.step('Web + Terminal: dinleyici elle tazelenince de aynı çift kabul ediliyor', async () => {
+    await test.step('Web+Terminal: mTLS Config API elle yeniden başlatılınca da aynı çift kabul ediliyor', async () => {
       const report = await mtlsScope.refreshTrust(dashboard, { withMock: false });
       await dashboard.snap('mTLS Config API yeniden başlatıldı');
-      const out = await attachCommand(testInfo, 'curl --cert --key (tazelemeden sonra)', 'curl', [
+      const out = await attachCommand(testInfo, 'curl --cert --key (yeniden başlatmadan sonra)', 'curl', [
         '-sS', '-k', '--cert', CERT, '--key', KEY, '-o', '/dev/null',
         '-w', 'HTTP %{http_code}\n', '--max-time', '20', CONFIG_URL,
       ]);
@@ -154,8 +154,8 @@ test('mTLS: dışarıdan yüklenen istemci sertifikası truststore\'a girer ve i
           last.output,
           '',
           'DELETE /api/v1/client-certs/{id} sertifikayı truststore\'dan siliyor ve mTLS',
-          'dinleyicilerini yeni truststore ile yeniden başlatıyor; el sıkışma artık',
-          '"certificate unknown" ile düşüyor.',
+          'sunucularını yeni truststore ile yeniden başlatıyor; el sıkışma artık',
+          '"certificate unknown" hatasıyla başarısız oluyor.',
         ].join('\n'),
       );
       expect(last.ok).toBe(false);

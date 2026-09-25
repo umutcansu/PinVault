@@ -1,4 +1,4 @@
-// A31: telemetri seçenekleri (PinVaultBackendReporter).
+// A31: cihaz raporu (telemetri) seçenekleri (PinVaultBackendReporter).
 //
 //  • reportSuccessEvents=false: sağlıklı el sıkışmalar hiç raporlanmaz,
 //    yalnızca anomaliler (pin uyuşmazlığı, config güncelleme hatası) gider.
@@ -30,7 +30,7 @@ async function configReportsSince(model, since) {
   return rows.filter((e) => Date.parse(e.timestamp) >= since);
 }
 
-test('Mobil+Web: telemetri seçenekleri — başarı raporunu kapatma, tekrar bastırma, config kayıtları', async ({
+test('Mobil+Web: cihaz raporları (telemetri) — başarı raporunu kapatma, tekrarları tek kayda indirme, config kayıtları', async ({
   app,
   dashboard,
   device,
@@ -41,17 +41,17 @@ test('Mobil+Web: telemetri seçenekleri — başarı raporunu kapatma, tekrar ba
   let v0;
   const summary = [];
 
-  await test.step('Mobil: başarılı el sıkışma raporlaması kapatılır (dedup 0)', async () => {
+  await test.step('Mobil: başarılı bağlantıların raporlanması kapatılır (tekrar bastırma: 0 ms)', async () => {
     v0 = SampleApp.hostVersion(app.status(), TARGET_HOST);
     await app.openSettings();
     const applied = await app.setTelemetry({ reportSuccess: false, dedupMs: 0 });
-    await app.snapResult('telemetri: başarı raporu kapalı');
+    await app.snapResult('rapor ayarı: başarı raporu kapalı');
     expect(applied).toContain('Başarı raporu: hayır');
     expect(applied).toContain('tekrar bastırma: 0 ms');
     await app.backToMain();
   });
 
-  await test.step('Mobil+Sunucu: üç başarılı istek → sunucuya hiç "healthy" kaydı düşmüyor', async () => {
+  await test.step('Mobil+Sunucu: üç başarılı istek → sunucuya hiç "healthy" kaydı gelmiyor', async () => {
     const marker = Date.now();
     await sleep(2000);
     for (let i = 0; i < 3; i++) {
@@ -60,48 +60,48 @@ test('Mobil+Web: telemetri seçenekleri — başarı raporunu kapatma, tekrar ba
     await app.snap('üç başarılı istek (raporlama kapalı)');
     await sleep(6000);
     const healthy = await reportsSince(run.model, marker, 'healthy');
-    summary.push(`kapalı + dedup 0     : 3 başarılı istek → ${healthy.length} healthy kaydı`);
+    summary.push(`başarı raporu kapalı, tekrar bastırma 0 ms  : 3 başarılı istek → ${healthy.length} healthy kaydı`);
     await dashboard.openHost(TARGET_HOST);
     await dashboard.snapCard('#conn-history-card', 'raporlama kapalıyken bağlantı geçmişi');
     expect(healthy.length).toBe(0);
   });
 
-  await test.step('Mobil: raporlama açılır, tekrar bastırma penceresi 60 sn', async () => {
+  await test.step('Mobil: raporlama açılır, tekrar bastırma 60 sn (aynı rapor 60 sn içinde bir kez gider)', async () => {
     await app.openSettings();
     const applied = await app.setTelemetry({ reportSuccess: true, dedupMs: DEDUP_MS });
-    await app.snapResult('telemetri: raporlama açık, dedup 60 sn');
+    await app.snapResult('rapor ayarı: raporlama açık, tekrar bastırma 60 sn');
     expect(applied).toContain('Başarı raporu: evet');
     expect(applied).toContain(`tekrar bastırma: ${DEDUP_MS} ms`);
     await app.backToMain();
   });
 
-  await test.step('Mobil+Web: üç aynı el sıkışma → tek kayıt (dedup penceresi)', async () => {
+  await test.step('Mobil+Web: aynı hedefe üç başarılı istek → 60 sn içinde tek kayıt', async () => {
     const marker = Date.now();
     await sleep(2000);
     for (let i = 0; i < 3; i++) {
       expect(await app.testLibraryClient()).toContain('Pinned bağlantı başarılı');
     }
-    await app.snap('üç başarılı istek (dedup açık)');
+    await app.snap('üç başarılı istek (tekrar bastırma açık)');
     await expect
       .poll(async () => (await reportsSince(run.model, marker, 'healthy')).length, { timeout: 30_000 })
       .toBeGreaterThan(0);
     await sleep(5000);
     const healthy = await reportsSince(run.model, marker, 'healthy');
-    summary.push(`açık + dedup ${DEDUP_MS} ms : 3 başarılı istek → ${healthy.length} healthy kaydı`);
+    summary.push(`başarı raporu açık, tekrar bastırma ${DEDUP_MS} ms: 3 başarılı istek → ${healthy.length} healthy kaydı`);
     await dashboard.openHost(TARGET_HOST);
     await dashboard.expectClientRow(run.model, { version: v0, status: 'healthy' });
     await dashboard.expectLatestConnection(run.model, { status: 'healthy' });
-    await dashboard.snapCard('#conn-history-card', 'dedup: üç istek, bağlantı geçmişinde bu pencerede tek healthy kaydı');
+    await dashboard.snapCard('#conn-history-card', 'tekrar bastırma: üç istek, bağlantı geçmişinde bu sürede tek healthy kaydı');
     await attachText(
       testInfo,
-      `GET /api/v1/connection-history/${TARGET_HOST} — dedup penceresi (${DEDUP_MS} ms)`,
+      `GET /api/v1/connection-history/${TARGET_HOST} — tekrar bastırma süresi (${DEDUP_MS} ms)`,
       [
-        `pencere başlangıcı: ${new Date(marker).toISOString()}`,
-        `3 başarılı istek → bu pencerede healthy kayıt: ${healthy.length}`,
+        `ölçüm başlangıcı: ${new Date(marker).toISOString()}`,
+        `3 başarılı istek → bu sürede healthy kayıt: ${healthy.length}`,
         ...healthy.map((x) => `  ${x.timestamp}  ${x.status}  pin v${x.pinVersion ?? '—'}`),
         '',
-        'Aynı (host, pin sürümü, sunucu sertifikası) üçlüsü pencere içinde',
-        'yeniden raporlanmıyor; kartta bu pencereye ait tek satır var.',
+        'Host, pin sürümü ve sunucu sertifikası aynı olan bağlantı bu süre içinde',
+        'yeniden raporlanmıyor; kartta bu süreye ait tek satır var.',
       ].join('\n'),
     );
     expect(healthy.length).toBe(1);
@@ -109,7 +109,7 @@ test('Mobil+Web: telemetri seçenekleri — başarı raporunu kapatma, tekrar ba
 
   let mismatchMarker;
 
-  await test.step('Web: pin\'ler bozulur → Mobil: uyuşmazlık (anomali bastırılmaz)', async () => {
+  await test.step('Web: pin\'ler bozulur → Mobil: pin uyuşmazlığı (hata raporları hiç bastırılmaz)', async () => {
     await dashboard.setPins(TARGET_HOST, [hostApi.randomPin(), hostApi.randomPin()]);
     await expect.poll(() => dashboard.version()).toBe(v0 + 1);
     await dashboard.snapHostSummary(`yanlış pinler, v${v0 + 1}`);
@@ -123,13 +123,13 @@ test('Mobil+Web: telemetri seçenekleri — başarı raporunu kapatma, tekrar ba
     await expect
       .poll(async () => (await reportsSince(run.model, mismatchMarker, 'pin_mismatch')).length, { timeout: 30_000 })
       .toBeGreaterThan(0);
-    summary.push('anomali (pin_mismatch) : dedup/ kapatma bayraklarından etkilenmez → raporlandı');
+    summary.push('hata raporu (pin_mismatch)                  : bu iki ayardan etkilenmiyor → raporlandı');
     await dashboard.expectLatestConnection(run.model, { status: 'pin_mismatch' });
     await dashboard.snapCard('#conn-history-card', 'uyuşmazlık raporlandı');
   });
 
   if (device.isEmulator()) {
-    await test.step('Terminal+Mobil: config API kesilir → config_update_failed raporlanıyor', async () => {
+    await test.step('Terminal+Mobil: config API\'ye erişim kesilir → config_update_failed raporlanıyor', async () => {
       // Kurtarma interceptor'ı config'i tazelemeye çalışır; Config API portu
       // kapalı olduğu için güncelleme başarısız olur. Telemetri yönetim
       // portuna (6650) gittiği için rapor yine de sunucuya ulaşır.
@@ -154,8 +154,8 @@ test('Mobil+Web: telemetri seçenekleri — başarı raporunu kapatma, tekrar ba
           `  pinVersion   : ${failed.pinVersion}`,
           `  failureReason: ${failed.errorMessage || '(yok)'}`,
           '',
-          'Telemetri yönetim portuna (6650) gidiyor; kesilen yalnızca Config API',
-          `portu (${env.CONFIG_API_PORT}). Anomali raporu bu yüzden sunucuya ulaşıyor.`,
+          'Cihaz raporları (telemetri) yönetim portuna (6650) gidiyor; kesilen yalnızca',
+          `Config API portu (${env.CONFIG_API_PORT}). Hata raporu bu yüzden sunucuya ulaşıyor.`,
         ].join('\n'),
       );
       device.clearNetRules();
@@ -175,7 +175,7 @@ test('Mobil+Web: telemetri seçenekleri — başarı raporunu kapatma, tekrar ba
       .poll(async () => (await configReportsSince(run.model, marker)).filter((e) => e.status === 'config_updated').length,
         { timeout: 40_000 })
       .toBeGreaterThan(0);
-    summary.push(`config güncelleme     : config_updated v${v0 + 2} raporlandı`);
+    summary.push(`config güncelleme                           : config_updated v${v0 + 2} raporlandı`);
   });
 
   await test.step('Web: "Bağlantı Geçmişi" bölümünde config güncelleme kayıtları', async () => {
@@ -189,17 +189,17 @@ test('Mobil+Web: telemetri seçenekleri — başarı raporunu kapatma, tekrar ba
     const reports = await hostApi.configUpdateReports(run.model);
     await attachText(
       testInfo,
-      'Telemetri seçeneklerinin etkisi',
+      'Rapor ayarlarının (telemetri) etkisi',
       [
         ...summary,
         '',
         'Son config güncelleme raporları (kaynak: config_update):',
         ...reports.slice(0, 6).map((e) => `  ${e.timestamp}  ${e.status}  v${e.pinVersion ?? '—'}`),
         '',
-        'PinVaultBackendReporter: reportSuccessEvents "ne raporlanır"ı,',
-        'dedupWindowMs "ne sıklıkta raporlanır"ı belirler. İkisi de yalnızca',
-        'sağlıklı akışa uygulanır — pin uyuşmazlığı ve config güncelleme hatası',
-        'her durumda gönderilir.',
+        'PinVaultBackendReporter: reportSuccessEvents neyin raporlanacağını,',
+        'dedupWindowMs ne sıklıkla raporlanacağını belirler. İkisi de yalnızca',
+        'başarılı bağlantılara uygulanır; pin uyuşmazlığı ve config güncelleme',
+        'hatası her durumda gönderilir.',
       ].join('\n'),
     );
     expect(reports.some((e) => e.status === 'config_updated')).toBe(true);

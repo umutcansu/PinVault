@@ -71,14 +71,14 @@ function knownSecrets() {
     return line ? line.slice('API_KEY='.length).replace(/^["']|["']$/g, '') : '';
   };
   add('ana host API_KEY', dotEnvKey(path.join(env.HOST_DIR, '.env')));
-  add('taze host API_KEY', dotEnvKey(path.join(env.LOCAL_DIR, 'host-fresh/.env')));
+  add('geçici test sunucusu API_KEY', dotEnvKey(path.join(env.LOCAL_DIR, 'host-fresh/.env')));
   add('ana host imzalama private key (satır 1)', readLines(env.SIGNING_KEY_FILE)[0]);
-  add('taze host imzalama private key (satır 1)', readLines(path.join(env.LOCAL_DIR, 'host-fresh/data/signing-key.pem'))[0]);
+  add('geçici test sunucusu imzalama private key (satır 1)', readLines(path.join(env.LOCAL_DIR, 'host-fresh/data/signing-key.pem'))[0]);
   const pemBodies = (file, label) => {
     const lines = readLines(file).filter((l) => l && !l.startsWith('-----'));
     lines.forEach((l, i) => add(`${label} gövde satırı ${i + 1}`, l));
   };
-  pemBodies(env.PROXY_KEY_FILE, 'vekil sunucu anahtarı');
+  pemBodies(env.PROXY_KEY_FILE, 'araya giren proxy\'nin sunucu anahtarı');
   const custom = path.join(env.LOCAL_DIR, 'custom-backend');
   if (fs.existsSync(custom)) {
     for (const f of fs.readdirSync(custom)) {
@@ -86,6 +86,23 @@ function knownSecrets() {
         if (f === 'signing-key.pem') readLines(path.join(custom, f)).forEach((l, i) => add(`özel backend signing-key.pem satır ${i + 1}`, l));
         else pemBodies(path.join(custom, f), `özel backend ${f}`);
       }
+    }
+  }
+  // Kişisel yönetici anahtarları (lib/admins.js) ve çevrimdışı imza anahtarları
+  // (lib/offlineKeys.js): özel yarıları hiçbir kanıta girmemeli.
+  const admins = path.join(env.LOCAL_DIR, 'admins.json');
+  if (fs.existsSync(admins)) {
+    for (const [name, value] of Object.entries(JSON.parse(fs.readFileSync(admins, 'utf8')))) add(`yönetici anahtarı (${name})`, value);
+  }
+  const offline = path.join(env.LOCAL_DIR, 'offline-keys');
+  if (fs.existsSync(offline)) {
+    for (const f of fs.readdirSync(offline).filter((n) => n.endsWith('.pem'))) pemBodies(path.join(offline, f), `çevrimdışı anahtar ${f}`);
+  }
+  // Taze host'un ek yerel imzalayıcı anahtarları (CONFIG_SIGNERS=local,local:<ad>).
+  const freshData = path.join(env.LOCAL_DIR, 'host-fresh/data');
+  if (fs.existsSync(freshData)) {
+    for (const f of fs.readdirSync(freshData).filter((n) => /^signing-key-.+\.pem$/.test(n))) {
+      add(`geçici test sunucusu ${f} (satır 1)`, readLines(path.join(freshData, f))[0]);
     }
   }
   return out;

@@ -45,7 +45,7 @@ test('mTLS: kayıt olmadan, elle yüklenen P12 ile bağlanma', async ({ app, dev
   fs.mkdirSync(WORK_DIR, { recursive: true });
 
   try {
-    await test.step('Web: dashboard\'da istemci sertifikası üretilir (P12 iner)', async () => {
+    await test.step('Web: dashboard\'da istemci sertifikası üretilir (P12 dosyası indirilir)', async () => {
       await dashboard.generateClientCert(env.MTLS_API, clientId, { saveTo: P12 });
       execFileSync('openssl', ['pkcs12', '-in', P12, '-passin', 'pass:changeit', '-nokeys', '-out', CERT_PEM]);
       execFileSync('openssl', ['pkcs12', '-in', P12, '-passin', 'pass:changeit', '-nocerts', '-nodes', '-out', KEY_PEM]);
@@ -53,13 +53,13 @@ test('mTLS: kayıt olmadan, elle yüklenen P12 ile bağlanma', async ({ app, dev
       await dashboard.snap(`istemci sertifikası üretildi: ${clientId}`);
       await attachText(
         testInfo,
-        'İnen P12',
+        'İndirilen P12',
         [`${path.basename(P12)} — ${fs.statSync(P12).size} bayt`, subject, 'parola: changeit'].join('\n'),
       );
       expect(subject).toContain(clientId);
     });
 
-    await test.step('Terminal: çalışan mTLS dinleyicisi yeni sertifikayı hemen tanıyor', async () => {
+    await test.step('Terminal: çalışan mTLS Config API yeni sertifikayı hemen tanıyor', async () => {
       // Elle hiçbir şey yapılmıyor; yalnızca dinleyicinin yeniden başlatma
       // sonrası soketi açması bekleniyor (sunucu yanıtı dönmeden restart'ı
       // tetikliyor, kabul döngüsü birkaç yüz ms sonra hazır oluyor).
@@ -73,7 +73,7 @@ test('mTLS: kayıt olmadan, elle yüklenen P12 ile bağlanma', async ({ app, dev
       );
       await attachText(
         testInfo,
-        'Yeni istemci sertifikası çalışan dinleyicilere anında yansıyor',
+        'Yeni istemci sertifikası çalışan mTLS sunucularına anında yansıyor',
         [
           out.trim(),
           '',
@@ -82,16 +82,16 @@ test('mTLS: kayıt olmadan, elle yüklenen P12 ile bağlanma', async ({ app, dev
           'API\'leri ve mock mTLS sunucularını güncel truststore ile yeniden',
           'başlatıyor — /client-certs/enroll ve DELETE /client-certs/{id} ile aynı',
           'ortak yardımcı (Main.kt refreshMtlsTrust). Eskiden yalnızca dosya',
-          'yazılıyordu ve ayakta olan dinleyiciler sertifikayı "certificate unknown"',
+          'yazılıyordu ve çalışan sunucular sertifikayı "certificate unknown"',
           'ile reddediyordu.',
         ].join('\n'),
       );
       expect(out).toContain('HTTP 200');
     });
 
-    await test.step('Web: dinleyiciler elle tazelenince de sertifika kabul ediliyor', async () => {
+    await test.step('Web: mTLS sunucuları elle yeniden başlatılınca da sertifika kabul ediliyor', async () => {
       const report = await mtlsScope.refreshTrust(dashboard);
-      await dashboard.snap('mTLS dinleyicileri yeniden başlatıldı');
+      await dashboard.snap('mTLS sunucuları yeniden başlatıldı');
       const out = await attachCommand(
         testInfo,
         'curl --cert (yeniden başlatmadan sonra)',
@@ -103,10 +103,10 @@ test('mTLS: kayıt olmadan, elle yüklenen P12 ile bağlanma', async ({ app, dev
       expect(out).toContain('HTTP 200');
     });
 
-    await test.step('Web: mTLS Config API kapsamına host\'lar eklenir', async () => {
+    await test.step('Web: mTLS Config API\'ye host\'lar eklenir', async () => {
       const report = await mtlsScope.ensureHosts(dashboard, [env.LAN_IP, env.MOCK_MTLS_HOST]);
-      await dashboard.snap('mTLS kapsamı hazır');
-      await attachText(testInfo, 'mTLS Config API kapsamı', report);
+      await dashboard.snap('mTLS Config API\'nin host\'ları hazır');
+      await attachText(testInfo, 'mTLS Config API\'deki host\'lar', report);
     });
 
     await test.step('Terminal: P12 cihazın uygulama dizinine kopyalanır', async () => {

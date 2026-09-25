@@ -3,7 +3,7 @@
 // `sample-flags` uygulamada şifrelemesiz (VaultFileEncryption.PLAIN) tanımlı.
 // Dosyanın şifrelemesi dashboard'dan `end_to_end` yapılınca kütüphane kendi
 // yapılandırmasına değil sunucunun başlığına bakıyor (VaultFileRouter: önce
-// response.encryption, yoksa file.encryption) ve zarfı cihaz anahtarıyla
+// response.encryption, yoksa file.encryption) ve şifreli içeriği cihaz anahtarıyla
 // çözüyor. İçerik imzası düz metin üzerinden olduğu için doğrulama da geçiyor.
 const { test, expect } = require('../lib/fixtures');
 const { attachText, describeResponse, hexdump } = require('../lib/evidence');
@@ -23,7 +23,7 @@ test('Vault şifreleme başlığı: sunucu end_to_end derse kütüphane uygulama
   let deviceId;
 
   try {
-    await test.step('Web: dosya düz (plain) yüklenir', async () => {
+    await test.step('Web: dosya şifresiz (plain) yüklenir', async () => {
       version = await dashboard.uploadVaultText(env.VAULT_API, KEY, body, { policy: 'public', encryption: 'plain' });
       await dashboard.snapCard('.card:has(#vault-upload-key) ~ .card', 'vault dosyaları — plain');
       await attachText(
@@ -31,12 +31,12 @@ test('Vault şifreleme başlığı: sunucu end_to_end derse kütüphane uygulama
         'Uygulamadaki tanım (App.java)',
         [
           `.vaultFile("${KEY}") { endpoint(…) }  → encryption çağrısı YOK`,
-          'Varsayılan: VaultFileEncryption.PLAIN. Uygulama bu dosyayı düz bekliyor.',
+          'Varsayılan: VaultFileEncryption.PLAIN. Uygulama bu dosyayı şifresiz bekliyor.',
         ].join('\n'),
       );
     });
 
-    await test.step('Mobil: dosya düz iniyor', async () => {
+    await test.step('Mobil: dosya şifresiz iniyor', async () => {
       await app.openVault();
       deviceId = app.deviceId();
       const status = await app.fetchVault(KEY);
@@ -58,7 +58,7 @@ test('Vault şifreleme başlığı: sunucu end_to_end derse kütüphane uygulama
       expect(cells.encryption).toContain('end_to_end');
     });
 
-    await test.step('Kablo: aynı dosya artık sarmalanmış geliyor', async () => {
+    await test.step('Ağ trafiği: aynı dosya artık cihaza özel şifrelenmiş geliyor', async () => {
       const res = await hostApi.rawVaultDownload(KEY, deviceId);
       const wrappedKeyLength = res.body.readUInt32BE(0);
       await attachText(
@@ -69,7 +69,7 @@ test('Vault şifreleme başlığı: sunucu end_to_end derse kütüphane uygulama
           '',
           hexdump(res.body, 64),
           '',
-          `sarılı AES anahtarı: ${wrappedKeyLength} bayt (RSA-2048 OAEP)`,
+          `şifrelenmiş AES anahtarı: ${wrappedKeyLength} bayt (RSA-2048 OAEP)`,
           `düz metin gövdede geçiyor mu: ${res.body.includes(Buffer.from(body, 'utf8')) ? 'EVET ✗' : 'hayır ✓'}`,
         ].join('\n'),
       );
@@ -78,7 +78,7 @@ test('Vault şifreleme başlığı: sunucu end_to_end derse kütüphane uygulama
       expect(res.body.includes(Buffer.from(body, 'utf8'))).toBe(false);
     });
 
-    await test.step('Mobil: kütüphane sunucunun başlığına uyup çözüyor', async () => {
+    await test.step('Mobil: kütüphane sunucunun başlığına göre davranıp dosyayı çözüyor', async () => {
       device.clearLogcat();
       await app.vaultClear(KEY);
       const status = await app.fetchVault(KEY);
@@ -98,7 +98,7 @@ test('Vault şifreleme başlığı: sunucu end_to_end derse kütüphane uygulama
           'VaultFileRouter:',
           '  VaultFileEncryption.entries.find { it.name.equals(response.encryption, …) }',
           '      ?: file.encryption',
-          'Yani sunucunun X-Vault-Encryption başlığı birincil, uygulamadaki ayar yedek.',
+          'Yani önce sunucunun X-Vault-Encryption başlığına bakılıyor; uygulamadaki ayar yalnızca yedek.',
           '',
           'Doğrulama: içerik imzası DÜZ METİN üzerinden atıldığı için, çözme başarısız',
           'olsaydı imza da tutmaz ve dosya kaydedilmezdi. "imza doğrulandı" satırı',
@@ -111,21 +111,21 @@ test('Vault şifreleme başlığı: sunucu end_to_end derse kütüphane uygulama
     await test.step('Sunucu: davranışın değerlendirmesi', async () => {
       await attachText(
         testInfo,
-        'Başlığın yapılandırmayı ezmesi — değerlendirme',
+        'Sunucu başlığının uygulamadaki ayarın önüne geçmesi — değerlendirme',
         [
           'Artı: operatör dosyanın şifrelemesini uygulamayı yeniden derlemeden',
           'değiştirebiliyor; eski sürüm uygulamalar da yeni modu anlıyor. Uygulamadaki',
           '`encryption(...)` çağrısı bir beklenti değil, yalnızca sunucu başlık',
           'vermezse kullanılacak yedek.',
           '',
-          'Eksi: ters yönde bir "düşürme" kapısı yok — sunucu end_to_end bir dosyayı',
-          'plain olarak servis etse kütüphane sorgusuz kabul eder. Burada gerçek bir',
-          'gizlilik kaybı yok (düz metin zaten sunucuda ve bağlantı TLS + pinli), ama',
-          'uygulama "bu dosya uçtan uca şifreli gelmeli" diye bir kural koyamıyor.',
+          'Eksi: ters yön için bir kontrol yok — sunucu end_to_end bir dosyayı plain',
+          'olarak gönderse kütüphane sorgusuz kabul eder. Burada gerçek bir gizlilik',
+          'kaybı yok (düz metin zaten sunucuda, bağlantı da TLS ve pin ile korunuyor),',
+          'ama uygulama "bu dosya uçtan uca şifreli gelmeli" diye bir kural koyamıyor.',
           '',
-          'Öneri: VaultFileConfig\'e `requireEncryption(...)` gibi katı bir seçenek —',
-          'açıkken sunucunun başlığı beklenenden zayıfsa VaultFileResult.Failed.',
-          'Bugünkü davranış varsayılan kalabilir.',
+          'Öneri: VaultFileConfig\'e `requireEncryption(...)` gibi katı bir seçenek',
+          'eklensin: açıkken sunucunun başlığı beklenenden zayıfsa sonuç',
+          'VaultFileResult.Failed olsun. Bugünkü davranış varsayılan kalabilir.',
         ].join('\n'),
       );
     });

@@ -1,5 +1,5 @@
 // E4: sertifika süre izleme. Süresi geçmiş ve yakında dolacak sertifikalar
-// taze host'un dashboard'undan yüklenir; GET /api/v1/cert-expiry "expired" /
+// geçici test sunucusunun dashboard'undan yüklenir; GET /api/v1/cert-expiry "expired" /
 // "warning" döndürür, dashboard'un sertifika süre kartı bunları gösterir ve
 // sunucu açılışta CRITICAL / WARNING loglar.
 //
@@ -168,7 +168,7 @@ test('Sunucu: süresi geçmiş sertifika cert-expiry\'de "expired", dashboard ka
 
     // ── Ana host + telefon: süresi dolmuş sertifikalı hedef ──────────────
 
-    await test.step('Terminal+Web: ana host\'un mock TLS host\'una süresi geçmiş sertifika yüklenir', async () => {
+    await test.step('Terminal+Web: ana host\'ta test için kurulan hedef sunucuya (mock TLS host) süresi geçmiş sertifika yüklenir', async () => {
       const out = makeExpiredMockKeystore();
       await dashboard.openHost(MOCK);
       mockV0 = await dashboard.version();
@@ -197,7 +197,7 @@ test('Sunucu: süresi geçmiş sertifika cert-expiry\'de "expired", dashboard ka
       expect(Date.parse(res.json.certValidUntil)).toBeLessThan(Date.now());
     });
 
-    await test.step('Mobil: telefon süresi dolmuş sertifikayı reddediyor, kurtarma tetiklenmiyor', async () => {
+    await test.step('Mobil: telefon süresi dolmuş sertifikayı reddediyor; otomatik config yenileme (kurtarma) devreye girmiyor', async () => {
       // Mock dinleyici yeni (süresi geçmiş) sertifikayla gerçekten ayağa kalksın.
       const expiredPin = (await hostApi.getConfig()).pins.find((p) => p.hostname === MOCK).sha256[0];
       await expect
@@ -236,7 +236,7 @@ test('Sunucu: süresi geçmiş sertifika cert-expiry\'de "expired", dashboard ka
           '',
           'DynamicSSLManager.verifyPin: leaf.checkValidity() hatası CertificateValidityException',
           'olarak fırlatılıyor; PinRecoveryInterceptor bu türü pin uyuşmazlığı saymıyor',
-          '(config tazelemek geçerlilik penceresini düzeltmez), bu yüzden config yenileme',
+          '(config\'i yenilemek sertifikanın süresini uzatmaz), bu yüzden config yenileme',
           'denemesi yok ve hata çağırana olduğu gibi dönüyor.',
         ].join('\n'),
       );
@@ -275,7 +275,7 @@ test('Sunucu: süresi geçmiş sertifika cert-expiry\'de "expired", dashboard ka
       await app.snap(`yeni sertifika: mock TLS host bağlantısı başarılı (pin v${mockV0 + 2})`);
       await attachText(
         testInfo,
-        'Rotasyon sonrası',
+        'Sertifika yenilendikten sonra',
         [`toast: ${toast}`, `telefondaki ${MOCK} sürümü: v${SampleApp.hostVersion(status, MOCK)}`, '', result].join('\n'),
       );
       expect(SampleApp.hostVersion(status, MOCK)).toBe(mockV0 + 2);

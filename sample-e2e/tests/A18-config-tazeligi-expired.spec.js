@@ -1,7 +1,7 @@
-// A18: imzalı config'in tazelik penceresi. Sunucu her yanıtı imzalarken
-// `issuedAt` / `expiresAt` damgası basar (CONFIG_TTL_SECONDS). İstemci
+// A18: imzalı config'in geçerlilik süresi. Sunucu her yanıtı imzalarken
+// `issuedAt` / `expiresAt` zamanlarını ekler (CONFIG_TTL_SECONDS). İstemci
 // `expiresAt <= now` olan bir payload'ı imzası geçerli olsa bile uygulamaz:
-// yakalanmış bir config sonsuza kadar tekrar oynatılamasın diye.
+// ele geçirilmiş eski bir yanıt sonsuza kadar tekrar gönderilemesin diye.
 //
 // Kanıt için TTL 60 saniyeye düşürülür ve cihazın saati iki saat ileri alınır;
 // telefon yenilemeyi "expired" diyerek reddeder ve ESKİ config'iyle çalışmaya
@@ -39,16 +39,16 @@ test('Sunucu+Mobil: süresi geçmiş imzalı config reddedilir, eski config çal
   let shifted = false;
 
   try {
-    await test.step('Sunucu: CONFIG_TTL_SECONDS 60 saniyeye düşürülür', async () => {
+    await test.step('Sunucu: config\'in geçerlilik süresi (CONFIG_TTL_SECONDS) 60 saniyeye düşürülür', async () => {
       await hostControl.setEnv({ CONFIG_TTL_SECONDS: String(TTL_SECONDS) });
       const stamp = await freshnessStamp();
       await attachText(
         testInfo,
-        'GET /api/v1/certificate-config (imzalı) — tazelik damgaları',
+        'GET /api/v1/certificate-config (imzalı) — düzenlenme ve bitiş zamanı',
         [
           `issuedAt : ${stamp.issuedAt}  (${new Date(stamp.issuedAt).toISOString()})`,
           `expiresAt: ${stamp.expiresAt}  (${new Date(stamp.expiresAt).toISOString()})`,
-          `pencere  : ${stamp.ttlSeconds} s  (CONFIG_TTL_SECONDS=${TTL_SECONDS})`,
+          `süre     : ${stamp.ttlSeconds} s  (CONFIG_TTL_SECONDS=${TTL_SECONDS})`,
           '',
           'scripts/env-override.sh set CONFIG_TTL_SECONDS=60 — .env\'e dokunmadan',
           'container yeni değerle yeniden oluşturuldu.',
@@ -57,13 +57,13 @@ test('Sunucu+Mobil: süresi geçmiş imzalı config reddedilir, eski config çal
       expect(stamp.ttlSeconds).toBe(TTL_SECONDS);
     });
 
-    await test.step('Mobil: saat doğruyken kısa TTL sorun değil — yenileme çalışıyor', async () => {
+    await test.step('Mobil: saat doğruyken kısa süre sorun değil — yenileme çalışıyor', async () => {
       // Uygulama TTL değişmeden önce açıldığı için baştan kurulur.
       app.launchFresh();
       const ready = await app.waitReady();
       version = SampleApp.hostVersion(ready, TARGET_HOST);
       const status = await app.refreshConfig();
-      await app.snap(`kısa TTL ile yenileme çalışıyor (v${version})`);
+      await app.snap(`kısa geçerlilik süresiyle yenileme çalışıyor (v${version})`);
       expect(status).toMatch(/Yeni config uygulandı|Config güncel/);
       expect(SampleApp.hostVersion(status, TARGET_HOST)).toBe(version);
     });
@@ -77,15 +77,15 @@ test('Sunucu+Mobil: süresi geçmiş imzalı config reddedilir, eski config çal
         'Cihaz saati (adb shell date)',
         [
           `cihaz : ${deviceNow}`,
-          `host  : ${new Date().toString()}`,
+          `Mac   : ${new Date().toString()}`,
           '',
-          `Kaydırma: +${CLOCK_SHIFT_S / 3600} saat. Sunucunun damgaladığı pencere ${TTL_SECONDS} s,`,
+          `Kaydırma: +${CLOCK_SHIFT_S / 3600} saat. Sunucunun verdiği geçerlilik süresi ${TTL_SECONDS} s;`,
           'yani cihazın saatine göre her yeni config çoktan süresi geçmiş sayılır.',
         ].join('\n'),
       );
     });
 
-    await test.step('Mobil: yenileme "expired" ile reddediliyor, eski config yerinde kalıyor', async () => {
+    await test.step('Mobil: yenileme "expired" (süresi geçmiş) hatasıyla reddediliyor, eski config yerinde kalıyor', async () => {
       const status = await app.refreshConfig();
       await app.snap('süresi geçmiş config reddedildi');
       await attachText(testInfo, 'Telefondaki durum kutusu', status);
@@ -112,12 +112,12 @@ test('Sunucu+Mobil: süresi geçmiş imzalı config reddedilir, eski config çal
       expect(SampleApp.hostVersion(status, TARGET_HOST)).toBe(version);
     });
 
-    await test.step('Sunucu: TTL varsayılana döner (24 saat)', async () => {
+    await test.step('Sunucu: geçerlilik süresi varsayılana döner (24 saat)', async () => {
       await hostControl.resetEnv();
       const stamp = await freshnessStamp();
       await attachText(
         testInfo,
-        'CONFIG_TTL_SECONDS geri alındıktan sonraki pencere',
+        'CONFIG_TTL_SECONDS geri alındıktan sonraki geçerlilik süresi',
         `${stamp.ttlSeconds} s (${Math.round(stamp.ttlSeconds / 3600)} saat)`,
       );
       expect(stamp.ttlSeconds).toBeGreaterThan(TTL_SECONDS);

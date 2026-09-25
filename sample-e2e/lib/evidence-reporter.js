@@ -1,8 +1,8 @@
 // Her koşudan sonra evidence/index.html üretir: en üstte kısa bir "nasıl
 // okunur" notu ve kapsam matrisi (özellik → senaryo → Geçti/Kaldı), sonra
-// sabit grup sırasıyla (Kurulum, A, B, C, D, E, F, G, H) senaryolar; senaryo
+// sabit grup sırasıyla (K, A, B, C, D, E, F, G, H, S, Y) senaryolar; senaryo
 // başına adımlar ve her adımın web (🌐) ile telefon (📱) ekran görüntüleri,
-// metin panelleri (📄: terminal, kablo, cihaz dosyası), sonuç ve süre. Tek
+// metin panelleri (📄: terminal, ağ trafiği, cihaz dosyası), sonuç ve süre. Tek
 // dosyadır, görüntüler gömülüdür; başka bir şeye ihtiyaç duymadan açılır ve
 // paylaşılabilir. macOS'ta görüntüler sips ile küçültülüp JPEG'e çevrilir.
 const fs = require('fs');
@@ -15,7 +15,7 @@ const { GROUPS, FEATURES } = require('./coverage');
 
 const HAS_SIPS = process.platform === 'darwin' && fs.existsSync('/usr/bin/sips');
 /** Sayfadaki bölüm sırası: Kurulum en başta, sonra PLAN.md'deki grup sırası. */
-const GROUP_ORDER = ['K', 'A', 'B', 'C', 'D', 'E', 'F', 'G', 'H'];
+const GROUP_ORDER = ['K', 'A', 'B', 'C', 'D', 'E', 'F', 'G', 'H', 'S', 'Y'];
 
 const esc = (s) =>
   String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
@@ -200,10 +200,10 @@ document.addEventListener('click', (e) => {
 });`;
 
 const HOWTO = `<details class="howto"><summary>Nasıl okunur</summary><ul>
-  <li><b>Rozetler:</b> <span class="badge ok">Geçti</span> senaryo başarılı; <span class="badge bad">Kaldı</span> başarısız (hata metni ilgili adımın altında, telefonun hata anı görüntüsü senaryonun sonunda); <span class="badge warn">Atlandı</span> koşulmadı (ör. yalnızca emülatörde koşabilen adım). Adım başındaki ✓ / ✗ aynı anlamda.</li>
-  <li><b>📱</b> telefon ekran görüntüsü (adb screencap): sonuç kutusunun altındaki <code>#N · saat</code> damgası, sonucun hangi denemeye ait olduğunu gösterir. <b>🌐</b> dashboard görüntüsü (tam sayfa, kart ya da kart aralığı). <b>📄</b> metin paneli: terminal çıktısı, API yanıtı, kablodaki bayt (hex), cihaz dosyası (run-as), sunucu günlüğü.</li>
-  <li><b>Kapsam matrisi:</b> her satır bir özellik; "Senaryo" sütunundaki bağlantı o özelliği kanıtlayan senaryonun bölümüne gider. Bir özellik birden fazla senaryoyla kanıtlanabilir; hepsi geçtiyse satır "Geçti"dir.</li>
-  <li>Bölümler grup sırasıyla: Kurulum yolculuğu, pin yönetimi ve imzalı config, mTLS, Vault, cihaz üstü şifreleme ve depolama, sunucu operasyonları, dayanıklılık, kablo üstü kurcalama, sunucu bağımsızlığı. Gizli değerler sayfaya girmez: token'lar, anahtarlar ve parolalar kısaltılmış ya da maskelidir.</li>
+  <li><b>Rozetler:</b> <span class="badge ok">Geçti</span> senaryo başarılı; <span class="badge bad">Kaldı</span> başarısız (hata metni ilgili adımın altında, telefonun hata anındaki görüntüsü senaryonun sonunda); <span class="badge warn">Atlandı</span> çalıştırılmadı (ör. yalnızca emülatörde çalışabilen bir adım var). Adım başındaki ✓ / ✗ da aynı anlamdadır.</li>
+  <li><b>📱</b> telefonun ekran görüntüsü (adb screencap): sonuç kutusunun altındaki <code>#N · saat</code> etiketi, sonucun hangi denemeye ait olduğunu gösterir. <b>🌐</b> dashboard görüntüsü (tam sayfa, tek kart ya da birkaç kart). <b>📄</b> metin paneli: terminal çıktısı, API yanıtı, ağ trafiğindeki ham veri (hex), cihazdaki dosya (run-as), sunucu günlüğü.</li>
+  <li><b>Kapsam matrisi:</b> her satır bir özellik; "Senaryo" sütunundaki bağlantı, o özelliği kanıtlayan senaryonun bölümüne gider. Bir özellik birden fazla senaryoyla kanıtlanabilir; hepsi geçtiyse satır "Geçti" olur.</li>
+  <li>Bölümler şu grup sırasıyla gelir: Sıfırdan kurulum; Pin yönetimi ve imzalı config; mTLS (istemci sertifikası); Vault (uzaktan dosya dağıtımı); Telefonda şifreli saklama; Sunucu işletimi; Sunucuya ulaşılamadığında; Araya girme saldırıları; Kendi sunucusuyla ya da sunucusuz kullanım; İmza anahtarlarının korunması (isteğe bağlı); Değişiklik denetimi ve onay (isteğe bağlı). Gizli değerler sayfaya girmez: token'lar, anahtarlar ve parolalar kısaltılmış ya da maskelidir.</li>
 </ul></details>`;
 
 class EvidenceReporter {

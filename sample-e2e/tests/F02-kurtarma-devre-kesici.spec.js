@@ -1,6 +1,7 @@
-// F02: kurtarma devre kesicisi. Pin uyuşmazlığında kütüphane config'i
-// tazeleyip isteği tekrarlar; ama gerçekten bozuk pin yayınlayan bir backend
-// istemciyi sıkı bir yeniden deneme döngüsüne sokmamalı. Bu yüzden kurtarma
+// F02: kurtarmadaki yeniden deneme freni (üst üste hatalardan sonra bir süre
+// denemez). Pin uyuşmazlığında kütüphane config'i tazeleyip isteği
+// tekrarlar; ama gerçekten bozuk pin yayınlayan bir backend istemciyi sıkı
+// bir yeniden deneme döngüsüne sokmamalı. Bu yüzden kurtarma
 // host bazlı sayılır: 5 dakikalık pencerede 3 başarısız kurtarma denemesinden
 // sonra o host 10 dakika soğumaya alınır ve interceptor artık updater'a hiç
 // uğramadan özgün hatayı fırlatır.
@@ -24,7 +25,7 @@ async function configReportsSince(model, since) {
   return (await hostApi.configUpdateReports(model)).filter((e) => Date.parse(e.timestamp) >= since);
 }
 
-test('Mobil+Sunucu: üç başarısız kurtarmadan sonra devre kesici açılıyor, dördüncü istek config yenilemeye gitmiyor', async ({
+test('Mobil+Sunucu: üç başarısız kurtarmadan sonra yeniden deneme freni devreye giriyor, dördüncü istek config yenilemeye gitmiyor', async ({
   app,
   dashboard,
   run,
@@ -43,17 +44,17 @@ test('Mobil+Sunucu: üç başarısız kurtarmadan sonra devre kesici açılıyor
     await dashboard.snapHostSummary(`yanlış pinler, v${v0 + 1}`);
   });
 
-  await test.step('Mobil: yanlış config uygulanır, ölçüm penceresi açılır', async () => {
+  await test.step('Mobil: yanlış config uygulanır, ölçüm başlar (olay listesi temizlenir)', async () => {
     const status = await app.refreshConfig();
     expect(SampleApp.hostVersion(status, TARGET_HOST)).toBe(v0 + 1);
     await app.tapButton('clearLogButton');
     await app.waitFor('eventLogView', (n) => n.text.includes('henüz olay yok'), { what: 'olay listesi boş' });
     marker = Date.now();
     await sleep(2000);
-    await app.snap('ölçüm penceresi: olay listesi temiz');
+    await app.snap('ölçüm başlangıcı: olay listesi temiz');
   });
 
-  await test.step('Mobil: ilk üç istek — her biri config yenilemeye gidiyor ve düşüyor', async () => {
+  await test.step('Mobil: ilk üç istek — her biri config\'i yenilemeyi deniyor ve başarısız oluyor', async () => {
     for (let i = 1; i <= 3; i++) {
       const result = await app.testLibraryClient();
       expect(result, `${i}. istek reddedilmeli`).toContain('Bağlantı başarısız');
@@ -66,7 +67,7 @@ test('Mobil+Sunucu: üç başarısız kurtarmadan sonra devre kesici açılıyor
     await app.snap('üç deneme: her birinde config yenileme var');
   });
 
-  await test.step('Mobil: dördüncü istek — devre kesici açık, config yenilemeye gidilmiyor', async () => {
+  await test.step('Mobil: dördüncü istek — fren devrede, config yenileme denenmiyor', async () => {
     const before = configLines(app.eventLog()).length;
     const startedAt = Date.now();
     const result = await app.testLibraryClient();
@@ -78,21 +79,21 @@ test('Mobil+Sunucu: üç başarısız kurtarmadan sonra devre kesici açılıyor
     attempts.push(`4. istek → reddedildi, config yenileme denemesi: ${after} (değişmedi)`);
     await attachText(
       testInfo,
-      'Devre kesici (PinRecoveryInterceptor)',
+      'Yeniden deneme freni (PinRecoveryInterceptor)',
       [
         ...attempts,
         '',
-        `Dördüncü isteğin toplam süresi (harness ölçümü, UI yoklaması dahil): ${elapsed} ms`,
+        `Dördüncü isteğin toplam süresi (test tarafında ölçüldü, ekranı okuma süresi dahil): ${elapsed} ms`,
         '',
         'Telefonun olay listesi:',
         app.eventLog(),
         '',
         'Kural: MAX_ATTEMPTS_PER_WINDOW=3, ATTEMPT_WINDOW_MS=5 dk, COOLDOWN_MS=10 dk.',
-        'Üçüncü başarısız kurtarmada host soğumaya alınıyor; sonraki isteklerde',
-        'interceptor updater\'a hiç uğramadan özgün SSL hatasını fırlatıyor.',
-        'Başarılı bir kurtarma sayacı SIFIRLAMIYOR (recordSuccess bilerek no-op):',
-        'araya geçerli el sıkışmalar sıkıştıran kısmi bir MITM sayacı sürekli',
-        'sıfırlayıp backend\'i kendi hızında istek yağmuruna tutamasın diye.',
+        'Üçüncü başarısız kurtarmada host 10 dakikalık beklemeye alınıyor; sonraki',
+        'isteklerde interceptor config\'i yenilemeyi hiç denemeden asıl SSL hatasını',
+        'fırlatıyor. Başarılı bir kurtarma sayacı SIFIRLAMIYOR (recordSuccess bilerek',
+        'hiçbir şey yapmıyor): araya giren bir saldırgan arada geçerli bağlantılara izin',
+        'vererek sayacı sürekli sıfırlayıp sunucuyu istediği hızda isteğe boğamasın diye.',
       ].join('\n'),
     );
     expect(result).toContain('Bağlantı başarısız');
@@ -105,7 +106,7 @@ test('Mobil+Sunucu: üç başarısız kurtarmadan sonra devre kesici açılıyor
       testInfo,
       'GET /api/v1/connection-history (source=config_update)',
       [
-        `Ölçüm penceresinde bu cihazdan gelen config güncelleme raporu: ${reports.length}`,
+        `Ölçüm başladığından beri bu cihazdan gelen config güncelleme raporu: ${reports.length}`,
         ...reports.map((e) => `  ${e.timestamp}  ${e.status}  v${e.pinVersion ?? '—'}`),
         '',
         'Dört pinli istek yapıldı, yalnızca üçü config API\'ye gitti.',
@@ -121,22 +122,22 @@ test('Mobil+Sunucu: üç başarısız kurtarmadan sonra devre kesici açılıyor
     await dashboard.snapHostSummary(`doğru pinler geri, v${v0 + 2}`);
   });
 
-  await test.step('Mobil: soğuma sürerken otomatik kurtarma yok — istek hâlâ reddediliyor', async () => {
+  await test.step('Mobil: bekleme süresi dolmadan otomatik kurtarma yok — istek hâlâ reddediliyor', async () => {
     const before = configLines(app.eventLog()).length;
     const result = await app.testLibraryClient();
     await sleep(5000);
     const after = configLines(app.eventLog()).length;
-    await app.snap('soğuma sürüyor: sunucu düzeldi ama istek reddediliyor');
+    await app.snap('bekleme sürüyor: sunucu düzeldi ama istek reddediliyor');
     await attachText(
       testInfo,
-      'Soğuma penceresinde davranış',
+      'Bekleme süresindeki davranış',
       [
         `Sunucudaki pin sürümü : v${v0 + 2} (doğru pin'ler)`,
         `Telefondaki pin sürümü: v${v0 + 1} (yanlış pin'ler)`,
         `Sonuç: ${result.split('\n')[0]}`,
         `Config yenileme denemesi: ${before} → ${after}`,
         '',
-        'Devre kesici yalnızca OTOMATİK kurtarmayı kapatıyor; açık bir',
+        'Fren yalnızca OTOMATİK kurtarmayı durduruyor; elle çağrılan',
         'updateNow() (aşağıdaki "Config\'i şimdi yenile") hâlâ çalışıyor.',
       ].join('\n'),
     );
@@ -144,7 +145,7 @@ test('Mobil+Sunucu: üç başarısız kurtarmadan sonra devre kesici açılıyor
     expect(after).toBe(before);
   });
 
-  await test.step('Mobil: elle yenileme soğumadan etkilenmiyor → bağlantı geri geliyor', async () => {
+  await test.step('Mobil: elle yenileme frenden etkilenmiyor → bağlantı geri geliyor', async () => {
     const status = await app.refreshConfig();
     expect(status).toContain('Yeni config uygulandı');
     expect(SampleApp.hostVersion(status, TARGET_HOST)).toBe(v0 + 2);

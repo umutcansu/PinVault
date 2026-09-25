@@ -5,7 +5,7 @@ const { test, expect } = require('../lib/fixtures');
 const hostApi = require('../lib/hostApi');
 const env = require('../lib/env');
 
-test('mTLS: web\'de token → mobilde kayıt → bağlantı geçer → web\'de iptal → bağlantı reddedilir', async ({
+test('mTLS: web\'de üretilen token\'la telefon kayıt olur ve bağlanır; sertifika web\'de iptal edilince bağlantı reddedilir', async ({
   app,
   dashboard,
 }) => {

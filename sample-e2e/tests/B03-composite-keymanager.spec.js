@@ -21,7 +21,7 @@ const env = require('../lib/env');
 const WORK_DIR = path.join(env.LOCAL_DIR, 'b03');
 const P12 = path.join(WORK_DIR, 'host-client.p12');
 
-test('mTLS: composite KeyManager Config API\'ye kayıt, mock host\'a host sertifikasını sunuyor', async ({
+test('mTLS: composite KeyManager Config API\'ye kayıt sertifikasını, mock host\'a ise ona özel sertifikayı sunuyor', async ({
   app,
   device,
   dashboard,
@@ -56,7 +56,7 @@ test('mTLS: composite KeyManager Config API\'ye kayıt, mock host\'a host sertif
       expect(active).toEqual(expect.arrayContaining([hostCertId, deviceCertId]));
     });
 
-    await test.step('Web: mTLS kapsamı ve host\'a özel sertifika hazırlanır', async () => {
+    await test.step('Web: mTLS Config API\'nin host\'ları ve host\'a özel sertifika hazırlanır', async () => {
       await mtlsScope.ensureHosts(dashboard, [env.LAN_IP, env.MOCK_MTLS_HOST]);
       await dashboard.setHostMtls(env.MTLS_API, env.MOCK_MTLS_HOST, true);
       const response = await dashboard.uploadHostClientCert(env.MTLS_API, env.MOCK_MTLS_HOST, P12);
@@ -64,7 +64,7 @@ test('mTLS: composite KeyManager Config API\'ye kayıt, mock host\'a host sertif
       const scope = await hostApi.scopedConfig(env.MTLS_API);
       await attachText(
         testInfo,
-        `${env.MTLS_API} kapsamı`,
+        `${env.MTLS_API} içindeki host'lar`,
         [
           response,
           '',
@@ -122,7 +122,7 @@ test('mTLS: composite KeyManager Config API\'ye kayıt, mock host\'a host sertif
       const logs = hostControl.logs(40);
       await attachText(
         testInfo,
-        'Sunucu logu — iptal sonrası mTLS dinleyicileri yeniden başlıyor',
+        'Sunucu logu — iptal sonrası mTLS sunucuları yeniden başlıyor',
         logs
           .split('\n')
           .filter((l) => /Restarting|Auto-restarting|Mock server/.test(l))
@@ -140,7 +140,7 @@ test('mTLS: composite KeyManager Config API\'ye kayıt, mock host\'a host sertif
       await app.backToMain();
       await attachText(
         testInfo,
-        'Composite KeyManager kanıtı',
+        'Composite KeyManager kanıtı: sertifika host\'a göre seçiliyor',
         [
           `Config API (${env.LAN_IP}) — kayıt sertifikası iptal edildi:`,
           api,
@@ -148,10 +148,11 @@ test('mTLS: composite KeyManager Config API\'ye kayıt, mock host\'a host sertif
           `${env.MOCK_MTLS_HOST} — host'a özel sertifika hâlâ geçerli:`,
           mock,
           '',
-          'Aynı süreçte, aynı PinVault örneğiyle, aynı pinli istemci üzerinden iki',
-          'sonuç: DynamicSSLManager.buildCompositeKeyManagers el sıkışmadaki peerHost\'a',
-          'bakarak host\'a özel KeyManager\'ı seçiyor, bulamazsa varsayılan (kayıt)',
-          'sertifikasına düşüyor. Tek bir sertifika sunulsaydı iki bağlantı da düşerdi.',
+          'Uygulama yeniden açılmadan, aynı PinVault örneği ve aynı pinli istemciyle iki',
+          'farklı sonuç: DynamicSSLManager.buildCompositeKeyManagers el sıkışmadaki',
+          'peerHost\'a bakarak host\'a özel KeyManager\'ı seçiyor, bulamazsa varsayılan',
+          '(kayıt) sertifikasını kullanıyor. Tek bir sertifika sunulsaydı iki bağlantı',
+          'da reddedilirdi.',
         ].join('\n'),
       );
       expect(api).toContain('reddedildi');

@@ -2,15 +2,15 @@
 //
 // Saldırganın amacı cihazdaki güncel dosyayı ESKİ bir sürümle değiştirmek
 // (geri çekilmiş bir bayrak dosyası, iptal edilmiş bir kural seti, eski bir ML
-// modeli…). İki kapı var ve ikisi de bu senaryoda ayrı ayrı gösteriliyor:
+// modeli…). İki kontrol var ve ikisi de bu senaryoda ayrı ayrı gösteriliyor:
 //
-//   1. Sürüm imzanın kanonik metnine giriyor
+//   1. Sürüm, imzalanan standart metnin içinde
 //      (pinvault-vault-file:v1:<anahtar>:<sürüm>:<sha256>). Yalnızca
 //      X-Vault-Version başlığını değiştirmek imzayı da bozuyor → dosya
 //      reddediliyor. Yani sürüm "örtük olarak imzalı".
-//   2. Saldırgan sunucunun imzalama anahtarına sahip olsa bile (laboratuvar:
-//      vekil düşük sürüm için YENİDEN imzalıyor) kütüphanenin açık sürüm
-//      kapısı devrede: saklı sürümden düşük bir sürüm kaydedilmiyor.
+//   2. Saldırgan sunucunun imzalama anahtarına sahip olsa bile (test gereği
+//      saldırgan proxy eski sürüm için YENİDEN imzalıyor) kütüphanenin ayrı
+//      sürüm kontrolü devrede: saklı sürümden düşük bir sürüm kaydedilmiyor.
 const { test, expect } = require('../lib/fixtures');
 const { attachText, redact } = require('../lib/evidence');
 const proxy = require('../lib/proxy');
@@ -19,7 +19,7 @@ const env = require('../lib/env');
 
 const KEY = env.VAULT_KEYS.flags;
 
-test('Kablo: vault sürümü geri alınınca telefon reddediyor (imza örtük, sürüm kapısı açık)', async ({
+test('Saldırı: vault dosyası eski sürüme döndürülür → telefon önce imza, sonra sürüm kontrolüyle reddediyor', async ({
   app,
   device,
   dashboard,
@@ -35,12 +35,12 @@ test('Kablo: vault sürümü geri alınınca telefon reddediyor (imza örtük, s
   let v3;
 
   try {
-    await test.step('Web: dosyanın iki sürümü yayınlanır', async () => {
+    await test.step('Web: dosyanın ilk sürümü yayınlanır', async () => {
       v1 = await dashboard.uploadVaultText(env.VAULT_API, KEY, contents.v1, { policy: 'public', encryption: 'plain' });
       await dashboard.snapCard('.card:has(#vault-upload-key) ~ .card', `vault dosyası v${v1}`);
     });
 
-    await test.step("Vekil: host'un anahtarıyla saydam araya girilir; telefon iki sürümü de alır", async () => {
+    await test.step('Saldırgan+Web: saldırgan sunucunun kendi anahtarıyla araya girer ama henüz bir şey değiştirmiyor; ikinci sürüm yayınlanır, telefon iki sürümü de alıyor', async () => {
       mitm = await proxy.start({ identity: 'trusted' });
       device.redirectTcp(env.LAN_IP, env.CONFIG_API_PORT, env.PROXY_PORT);
       app.relaunch();
@@ -52,18 +52,18 @@ test('Kablo: vault sürümü geri alınınca telefon reddediyor (imza örtük, s
       expect(v2).toBe(v1 + 1);
       await app.openVault();
       const status = await app.fetchVault(KEY);
-      await app.snap(`saydam vekil: ${KEY} v${v2} indi`);
+      await app.snap(`saldırgan henüz bir şey değiştirmiyor: ${KEY} v${v2} indi`);
       expect(status).toContain(`${KEY} v${v2} indirildi`);
       expect(status).toContain(contents.v2);
     });
 
-    await test.step('Web: üçüncü sürüm yayınlanır (kurcalanacak olan)', async () => {
+    await test.step('Web: üçüncü sürüm yayınlanır (saldırgan bunu eski sürüm gibi gösterecek)', async () => {
       v3 = await dashboard.uploadVaultText(env.VAULT_API, KEY, contents.v3, { policy: 'public', encryption: 'plain' });
       expect(v3).toBe(v2 + 1);
       await dashboard.snapCard('.card:has(#vault-upload-key) ~ .card', `vault dosyası v${v3}`);
     });
 
-    await test.step('Vekil: yalnızca X-Vault-Version geri alınır → imza da bozuluyor', async () => {
+    await test.step('Saldırgan: yalnızca X-Vault-Version başlığını eski sürüme çeker → imza artık tutmuyor, telefon reddediyor', async () => {
       const wire = {};
       const downgrade = proxy.downgradeVaultVersion(v1);
       mitm.setMutate((answer) => {
@@ -84,14 +84,14 @@ test('Kablo: vault sürümü geri alınınca telefon reddediyor (imza örtük, s
 
       await attachText(
         testInfo,
-        `Kablodaki fark — yalnızca sürüm başlığı (GET /api/v1/vault/${KEY})`,
+        `Saldırganın yaptığı değişiklik: yalnızca sürüm başlığı (GET /api/v1/vault/${KEY})`,
         [
           `X-Vault-Version  : ${wire.version} → ${wire.fakeVersion}`,
           `X-Vault-Signature: ${redact(wire.signature, 22)} (dokunulmadı)`,
           'gövde            : sunucunun gönderdiği düz metin (dokunulmadı)',
           '',
-          'Kanonik metin sürümü içerdiği için başlığı değiştirmek imzayı da',
-          `geçersiz kılıyor: telefon "pinvault-vault-file:v1:${KEY}:${wire.fakeVersion}:…"`,
+          'İmzalanan standart metin sürümü içerdiği için başlığı değiştirmek imzayı da',
+          `bozuyor: telefon "pinvault-vault-file:v1:${KEY}:${wire.fakeVersion}:…"`,
           `hesaplıyor, sunucu ise "…:${wire.version}:…" imzalamıştı.`,
           '',
           'TELEFONUN CEVABI',
@@ -101,7 +101,7 @@ test('Kablo: vault sürümü geri alınınca telefon reddediyor (imza örtük, s
       expect(wire.fakeVersion).toBe(String(v1));
     });
 
-    await test.step('Vekil: düşük sürüm YENİDEN İMZALANIR → sürüm kapısı devreye giriyor', async () => {
+    await test.step('Saldırgan: eski sürümü YENİDEN İMZALAR → bu kez imza tutuyor ama sürüm kontrolü reddediyor', async () => {
       const wire = {};
       const downgrade = proxy.downgradeVaultVersion(v1, proxy.vaultSigner());
       mitm.setMutate((answer) => {
@@ -117,26 +117,26 @@ test('Kablo: vault sürümü geri alınınca telefon reddediyor (imza örtük, s
 
       await app.openVault();
       const status = await app.fetchVault(KEY);
-      await app.snap('yeniden imzalanmış düşük sürüm: reddedildi');
+      await app.snap('yeniden imzalanmış eski sürüm: reddedildi');
       expect(status).toContain(`${KEY} indirilemedi`);
       expect(status).toMatch(/downgrade rejected/i);
 
       await attachText(
         testInfo,
-        'Kablodaki fark — sürüm geri alındı ve yeniden imzalandı',
+        'Saldırganın yaptığı değişiklik: sürüm geri alındı ve yeniden imzalandı',
         [
           `X-Vault-Version  : ${wire.version} → ${wire.fakeVersion}`,
           `X-Vault-Signature: ${redact(wire.before, 18)} → ${redact(wire.after, 18)}`,
-          '                   (laboratuvar: host\'un imzalama anahtarıyla düşük sürüm için yeniden imzalandı)',
+          '                   (test gereği sunucunun imzalama anahtarıyla, eski sürüm için yeniden imzalandı)',
           '',
-          `cihazdaki saklı sürüm: v${v2}`,
-          `kabloda söylenen sürüm: v${v1}`,
+          `cihazdaki saklı sürüm      : v${v2}`,
+          `saldırganın söylediği sürüm: v${v1}`,
           '',
           'TELEFONUN CEVABI',
           status.split('\n').slice(0, 2).join('\n'),
           '',
           'İmza artık geçerli; reddin nedeni imza değil, sürümün saklı sürümden',
-          'düşük olması (VaultFileRouter downgrade guard).',
+          'düşük olması (VaultFileRouter\'daki eski sürüm kontrolü).',
         ].join('\n'),
       );
       expect(wire.after).not.toBe(wire.before);
@@ -144,7 +144,7 @@ test('Kablo: vault sürümü geri alınınca telefon reddediyor (imza örtük, s
 
     await test.step('Mobil: saklı sürüm ve içerik korunuyor', async () => {
       const info = await app.vaultInfo(KEY);
-      await app.snap('sürüm düşürme sonrası: v' + v2 + ' yerinde');
+      await app.snap('geri döndürme denemelerinden sonra: v' + v2 + ' yerinde');
       expect(info).toContain(`sürüm: v${v2}`);
       expect(info).toContain(contents.v2);
       expect(info).not.toContain(contents.v1);
@@ -155,16 +155,16 @@ test('Kablo: vault sürümü geri alınınca telefon reddediyor (imza örtük, s
           info.split('\n').slice(0, 5).join('\n'),
           '',
           `sunucudaki güncel sürüm: v${v3}`,
-          `iki kurcalama denemesinden sonra cihazdaki sürüm: v${v2}`,
+          `saldırganın iki denemesinden sonra cihazdaki sürüm: v${v2}`,
         ].join('\n'),
       );
     });
 
-    await test.step('Vekil: kurcalama kalkınca güncel sürüm iniyor', async () => {
+    await test.step('Saldırgan: değiştirmeyi bırakınca güncel sürüm iniyor', async () => {
       mitm.setMutate(null);
       await app.openVault();
       const status = await app.fetchVault(KEY);
-      await app.snap(`kurcalama kalktı: ${KEY} v${v3} indi`);
+      await app.snap(`saldırgan değiştirmeyi bıraktı: ${KEY} v${v3} indi`);
       expect(status).toContain(`${KEY} v${v3} indirildi`);
       expect(status).toContain(contents.v3);
     });
@@ -175,7 +175,7 @@ test('Kablo: vault sürümü geri alınınca telefon reddediyor (imza örtük, s
       mitm = null;
       app.relaunch();
       expect(await app.waitReady()).toContain('Hazır — config v');
-      await app.snap('vekil kapandı: doğrudan sunucuyla Hazır');
+      await app.snap('saldırgan proxy kapandı: doğrudan sunucuyla Hazır');
     });
   } finally {
     device.clearNetRules();

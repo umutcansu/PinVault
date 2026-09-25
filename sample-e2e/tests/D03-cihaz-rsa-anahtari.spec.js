@@ -81,9 +81,9 @@ test('Depolama: cihaz RSA anahtarı Keystore\'da ve sunucudaki public key ile e�
           `${pem.split('\n')[1]}…`,
           `${pem.split('\n').slice(-1)[0]}`,
           '',
-          'Sunucuda yalnızca PUBLIC yarısı var. Private anahtar Android Keystore\'da,',
-          'PURPOSE_DECRYPT ile ve yalnızca OAEP-SHA256 için kullanılabilir; ham materyali',
-          'uygulamaya bile verilmiyor (Cipher üzerinden kullanılıyor).',
+          'Sunucuda yalnızca PUBLIC yarı var. Private anahtar Android Keystore\'da; yalnızca',
+          'şifre çözmek (PURPOSE_DECRYPT) ve OAEP-SHA256 için kullanılabiliyor. Anahtarın',
+          'kendisi uygulamaya bile verilmiyor (yalnızca Cipher üzerinden kullanılıyor).',
         ].join('\n'),
       );
       expect(hex).toBe(onDeviceHash);
@@ -104,14 +104,14 @@ test('Depolama: cihaz RSA anahtarı Keystore\'da ve sunucudaki public key ile e�
       const res = await hostApi.rawVaultDownload(KEY, deviceId);
       await attachText(
         testInfo,
-        'Aynı dosyanın kablodaki hâli',
+        'Aynı dosyanın ağ trafiğindeki hâli',
         [
           `X-Vault-Encryption: ${res.headers['x-vault-encryption']}`,
-          `gövde: ${res.body.length} bayt, sarılı anahtar ${res.body.readUInt32BE(0)} bayt`,
+          `gövde: ${res.body.length} bayt, şifrelenmiş AES anahtarı ${res.body.readUInt32BE(0)} bayt`,
           `düz metin gövdede geçiyor mu: ${res.body.includes(Buffer.from(secret, 'utf8')) ? 'EVET ✗' : 'hayır ✓'}`,
           '',
-          'Zarf yukarıdaki public key ile sarıldı; yalnızca Keystore\'daki private',
-          'yarısı açabilir.',
+          'İçeriğin AES anahtarı yukarıdaki public key ile şifrelendi; onu yalnızca',
+          'Keystore\'daki private yarı açabilir.',
         ].join('\n'),
       );
       expect(res.body.readUInt32BE(0)).toBe(256);
@@ -126,7 +126,7 @@ test('Depolama: cihaz RSA anahtarı Keystore\'da ve sunucudaki public key ile e�
       );
       await attachText(
         testInfo,
-        `adb shell run-as ${env.APP_ID} — anahtar materyali araması`,
+        `adb shell run-as ${env.APP_ID} — dosyalarda private key araması`,
         [
           files.trim(),
           '',
@@ -134,7 +134,7 @@ test('Depolama: cihaz RSA anahtarı Keystore\'da ve sunucudaki public key ile e�
           grep.trim(),
           '',
           'Keystore anahtarları uygulamanın veri dizininde değil; sistem tarafında',
-          '(keystore2 / TEE) tutuluyor ve yalnızca alias ile kullanılabiliyor.',
+          '(keystore2 / TEE) tutuluyor ve yalnızca adıyla (alias) kullanılabiliyor.',
         ].join('\n'),
       );
       expect(grep).toContain('(eşleşme yok)');

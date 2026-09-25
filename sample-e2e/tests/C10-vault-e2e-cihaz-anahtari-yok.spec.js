@@ -13,7 +13,7 @@ const env = require('../lib/env');
 
 const KEY = env.VAULT_KEYS.e2e;
 
-test('Vault uçtan uca: anahtarı kayıtlı olmayan cihaz 412 alıyor, telefon çözüyor', async ({
+test('Vault uçtan uca şifreleme: public key\'i kayıtlı olmayan cihaz 412 alıyor, telefon dosyayı çözüyor', async ({
   app,
   dashboard,
 }, testInfo) => {
@@ -33,7 +33,7 @@ test('Vault uçtan uca: anahtarı kayıtlı olmayan cihaz 412 alıyor, telefon �
       expect(cells.encryption).toContain('end_to_end');
     });
 
-    await test.step('Kablo: anahtarı kayıtlı olmayan cihaz 412 alıyor', async () => {
+    await test.step('Ağ trafiği: public key\'i kayıtlı olmayan cihaz 412 alıyor', async () => {
       const res = await hostApi.rawVaultDownload(KEY, unknownDevice);
       await attachText(
         testInfo,
@@ -41,9 +41,9 @@ test('Vault uçtan uca: anahtarı kayıtlı olmayan cihaz 412 alıyor, telefon �
         [
           describeResponse(res, { maxBody: 300 }),
           '',
-          'Politika public: erişim kapısı yok. Reddin nedeni yetki değil, sarmalama',
-          'anahtarının bulunmaması — 412 Precondition Failed ve yapılması gereken',
-          'çağrı mesajda yazılı.',
+          'Politika public: erişim kontrolü yok. Reddin nedeni yetki değil; sunucunun',
+          'içeriği bu cihaz için şifreleyeceği public key\'in olmaması. Yanıt 412',
+          'Precondition Failed ve yapılması gereken çağrı mesajda yazılı.',
         ].join('\n'),
       );
       expect(res.status).toBe(412);
@@ -53,7 +53,7 @@ test('Vault uçtan uca: anahtarı kayıtlı olmayan cihaz 412 alıyor, telefon �
       expect(res.body.includes(Buffer.from(plaintext, 'utf8'))).toBe(false);
     });
 
-    await test.step('Kablo: cihaz kimliği hiç verilmezse 401', async () => {
+    await test.step('Ağ trafiği: cihaz kimliği hiç gönderilmezse 401', async () => {
       const res = await hostApi.rawVaultDownload(KEY, null);
       await attachText(
         testInfo,
@@ -61,8 +61,8 @@ test('Vault uçtan uca: anahtarı kayıtlı olmayan cihaz 412 alıyor, telefon �
         [
           describeResponse(res, { maxBody: 200 }),
           '',
-          'Kimliksiz istekte hangi anahtarla sarmalanacağı belli değil; sunucu düz',
-          'metne düşmüyor (fail-closed).',
+          'Kimlik yoksa içeriğin hangi cihazın anahtarıyla şifreleneceği belli değil;',
+          'sunucu düz metin göndermiyor, isteği reddediyor (şüphede izin vermez).',
         ].join('\n'),
       );
       expect(res.status).toBe(401);
@@ -79,7 +79,7 @@ test('Vault uçtan uca: anahtarı kayıtlı olmayan cihaz 412 alıyor, telefon �
       expect(status).toContain(plaintext);
     });
 
-    await test.step('Kablo: telefonun kimliğiyle aynı istek sarmalanmış içerik veriyor', async () => {
+    await test.step('Ağ trafiği: telefonun kimliğiyle yapılan istek bu cihaza özel şifrelenmiş içerik alıyor', async () => {
       const res = await hostApi.rawVaultDownload(KEY, deviceId);
       const wrappedKeyLength = res.body.readUInt32BE(0);
       await attachText(
@@ -88,7 +88,7 @@ test('Vault uçtan uca: anahtarı kayıtlı olmayan cihaz 412 alıyor, telefon �
         [
           describeResponse(res, { bodyHex: true, maxBody: 64 }),
           '',
-          `zarf: [4B uzunluk=${wrappedKeyLength}][RSA-OAEP ile sarılı AES anahtarı]` +
+          `gövde düzeni: [4B uzunluk=${wrappedKeyLength}][RSA-OAEP ile şifrelenmiş AES anahtarı]` +
             '[12B IV][AES-256-GCM şifreli metin + etiket]',
           `düz metin gövdede geçiyor mu: ${res.body.includes(Buffer.from(plaintext, 'utf8')) ? 'EVET ✗' : 'hayır ✓'}`,
           '',
@@ -101,7 +101,7 @@ test('Vault uçtan uca: anahtarı kayıtlı olmayan cihaz 412 alıyor, telefon �
       expect(res.body.includes(Buffer.from(plaintext, 'utf8'))).toBe(false);
     });
 
-    await test.step('Sunucu: kayıtlı cihaz anahtarları tablosu', async () => {
+    await test.step('Sunucu: kayıtlı cihaz public key\'leri tablosu', async () => {
       await attachCommand(
         testInfo,
         'sqlite3 — device_public_keys',

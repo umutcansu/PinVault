@@ -44,7 +44,7 @@ function rogueMaterial() {
 function trustedMaterial() {
   if (!fs.existsSync(env.PROXY_KEY_FILE) || !fs.existsSync(env.PROXY_CERT_FILE)) {
     throw new Error(
-      `Vekil için sunucu anahtarı yok: ${env.PROXY_KEY_FILE}\n` +
+      `Araya giren proxy için sunucu anahtarı yok: ${env.PROXY_KEY_FILE}\n` +
       `Üret: cd ${env.HOST_DIR} && ./scripts/export-server-key.sh`,
     );
   }
@@ -63,7 +63,7 @@ function assertTrustedPinMatches() {
     : [];
   if (known.length && !known.includes(pin)) {
     throw new Error(
-      `Vekilin sertifikası host'un pin dosyasıyla eşleşmiyor (${pin}).\n` +
+      `Araya giren proxy'nin sertifikası host'un pin dosyasıyla eşleşmiyor (${pin}).\n` +
       `Yeniden dışa aktar: cd ${env.HOST_DIR} && ./scripts/export-server-key.sh`,
     );
   }
@@ -238,6 +238,23 @@ const downgradeConfig = (delta = 1, sign) => (answer) => {
   };
 };
 
+/**
+ * İmzalı config zarfına [wire] imzalama anahtarı setini ekler (varsa
+ * değiştirir): { payload, signatures: [{ keyId, signature }] }. Config'in kendi
+ * imzasına dokunmaz — set ayrıca kurtarma anahtar(lar)ıyla imzalı olmalıdır;
+ * sahte set denemeleri bunu sınar. [seen] verilirse kablodaki önceki/sonraki
+ * gövdeler kanıt için oraya yazılır.
+ */
+const injectKeySet = (wire, seen) => (answer) => {
+  if (!isConfig(answer) || answer.status !== 200) return answer;
+  const before = answer.body.toString('utf8');
+  const json = JSON.parse(before);
+  json.signingKeys = wire;
+  const after = JSON.stringify(json);
+  if (seen) seen.push({ path: answer.path, before, after });
+  return { ...answer, body: Buffer.from(after) };
+};
+
 /** Kayıt yanıtındaki P12 bütünlük başlığını siler. */
 const stripP12Hash = (answer) => {
   if (!answer.path.includes('/client-certs/enroll')) return answer;
@@ -292,8 +309,8 @@ function signingKey() {
   const raw = fs.readFileSync(env.SIGNING_KEY_FILE, 'utf8');
   if (raw.startsWith('ENCv1:')) {
     throw new Error(
-      'İmzalama anahtarı diskte şifreli (ENCv1:). Vekilin yeniden imzalaması için ' +
-      'SIGNING_KEY_PASSWORD ezmesini kaldır (hostControl.resetEnv).',
+      'İmzalama anahtarı diskte şifreli (ENCv1:). Proxy\'nin yeniden imzalayabilmesi için ' +
+      'geçici SIGNING_KEY_PASSWORD ayarını kaldır (hostControl.resetEnv).',
     );
   }
   const lines = raw.split('\n').map((s) => s.trim()).filter(Boolean);
@@ -351,6 +368,7 @@ module.exports = {
   breakConfigSignature,
   replayConfig,
   downgradeConfig,
+  injectKeySet,
   stripP12Hash,
   breakVaultSignature,
   downgradeVaultVersion,

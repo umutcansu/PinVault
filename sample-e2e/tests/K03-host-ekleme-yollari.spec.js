@@ -1,6 +1,6 @@
 // Kurulum yolculuğu K6: host ekleme üç yolla — elle pin, sunucuda sertifika
-// üretme, URL'den pin çekme — ve hatalı biçimli pin'in reddi. Taze host
-// örneği üzerinde (her ekleme config sürümünü artırır).
+// üretme, URL'den pin çekme — ve hatalı biçimli pin'in reddi. Geçici test
+// sunucusunda çalışır (her ekleme config sürümünü artırır).
 const crypto = require('crypto');
 const fs = require('fs');
 const path = require('path');
@@ -23,7 +23,7 @@ async function hostsOf() {
   return (cfg.json.pins || []).map((p) => p.hostname);
 }
 
-test('Kurulum: host üç yolla eklenir (elle, üret, URL\'den) ve hatalı pin reddedilir', async ({ browser }, testInfo) => {
+test('Kurulum: host dört yolla eklenir (elle, sertifika üreterek, URL\'den, dosya yükleyerek); hatalı pin reddedilir', async ({ browser }, testInfo) => {
   test.setTimeout(10 * 60 * 1000);
   await fresh.ensure();
 
@@ -31,7 +31,7 @@ test('Kurulum: host üç yolla eklenir (elle, üret, URL\'den) ve hatalı pin re
   const page = dashboard.page;
 
   try {
-    await test.step('Web: elle pin ile host ekleme (K6)', async () => {
+    await test.step('Web: pin\'ler elle girilerek host eklenir (K6)', async () => {
       const pins = [hostApi.randomPin(), hostApi.randomPin()];
       await dashboard.addHostManual('default-tls', MANUAL_HOST, pins);
       await dashboard.openHost(MANUAL_HOST);
@@ -44,7 +44,7 @@ test('Kurulum: host üç yolla eklenir (elle, üret, URL\'den) ve hatalı pin re
       );
     });
 
-    await test.step('Web: sunucuda sertifika üreterek host ekleme (K6)', async () => {
+    await test.step('Web: sertifika sunucuda üretilerek host eklenir (K6)', async () => {
       await dashboard.addHostGenerate('default-tls', GENERATED_HOST);
       await dashboard.openHost(GENERATED_HOST);
       await dashboard.snap(`sunucuda üretilen sertifikayla host: ${GENERATED_HOST}`);
@@ -57,7 +57,7 @@ test('Kurulum: host üç yolla eklenir (elle, üret, URL\'den) ve hatalı pin re
       expect(status.json.keystorePath).toBeTruthy();
     });
 
-    await test.step('Web: URL\'den pin çekerek host ekleme (K6)', async () => {
+    await test.step('Web: pin\'ler verilen URL\'deki sunucudan çekilerek host eklenir (K6)', async () => {
       await dashboard.addHostFromUrl('default-tls', `https://${FETCH_HOST}`);
       await expect(dashboard.hostItem(FETCH_HOST)).toBeVisible({ timeout: 30_000 });
       await dashboard.openHost(FETCH_HOST);
@@ -69,13 +69,13 @@ test('Kurulum: host üç yolla eklenir (elle, üret, URL\'den) ve hatalı pin re
       const entry = cfg.json.pins.find((p) => p.hostname === FETCH_HOST);
       await attachText(
         testInfo,
-        'Sunucunun çektiği pin\'ler ↔ hedefin canlı zinciri',
-        [`sunucu : ${entry.sha256.join('\n         ')}`, `canlı  : ${live.join('\n         ')}`].join('\n'),
+        'Sunucunun çektiği pin\'ler ↔ hedefin şu an sunduğu sertifika zinciri',
+        [`sunucu : ${entry.sha256.join('\n         ')}`, `hedef  : ${live.join('\n         ')}`].join('\n'),
       );
       expect(entry.sha256).toEqual(live);
     });
 
-    await test.step('Web: JKS/P12 yükleyerek host ekleme (K6)', async () => {
+    await test.step('Web: JKS/P12 dosyası yüklenerek host eklenir (K6)', async () => {
       // Dışarıda üretilmiş anahtar çifti (container'daki keytool); "Yükle"
       // sekmesi dosyayı sunucuya verir, pin'ler sertifikadan hesaplanır.
       fs.rmSync(path.join(fresh.DIR, 'data/certs', UPLOAD_JKS), { force: true });
@@ -100,15 +100,15 @@ test('Kurulum: host üç yolla eklenir (elle, üret, URL\'den) ve hatalı pin re
       const entry = cfg.json.pins.find((p) => p.hostname === UPLOAD_HOST);
       await attachText(
         testInfo,
-        'Yükle sekmesi → POST /api/v1/hosts/upload-cert',
+        '"Dosya Yükle" sekmesi → POST /api/v1/hosts/upload-cert',
         [
           `yüklenen dosya: ${UPLOAD_JKS} (keytool, RSA 2048, parola changeit)`,
-          `sertifikanın SPKI pin'i (keytool -exportcert → openssl): ${certPin}`,
+          `sertifikadan hesaplanan pin (keytool -exportcert çıktısından): ${certPin}`,
           '',
           `sunucu yanıtı: ${result}`,
           `config'teki pin'ler: ${entry ? entry.sha256.join(' | ') : '(yok)'}`,
           '',
-          'Zincir tek sertifika: yedek pin birincille aynı (importCertificate).',
+          'Zincirde tek sertifika var, bu yüzden yedek pin birinci pin\'le aynı (importCertificate).',
         ].join('\n'),
       );
       expect(entry).toBeTruthy();

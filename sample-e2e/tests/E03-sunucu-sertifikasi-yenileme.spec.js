@@ -1,11 +1,12 @@
-// E3: sunucunun bootstrap (TLS) sertifikası dashboard'dan yenilenir. APK'ya
-// gömülü eski pin'lerle derlenmiş uygulama artık bağlanamaz ("başlatılamadı");
-// client-config.sh yeni değerleri verir, uygulama yeniden derlenip kurulunca
-// bağlantı döner. Sunucunun IP'si/sertifikası değişen kurulumların akışı.
+// E3: sunucunun kendi TLS sertifikası (bootstrap) dashboard'dan yenilenir.
+// APK'ya gömülü eski pin'lerle derlenmiş uygulama artık bağlanamaz
+// ("başlatılamadı"); client-config.sh yeni değerleri verir, uygulama yeniden
+// derlenip kurulunca bağlantı döner. Sunucunun IP'si/sertifikası değişen
+// kurulumların akışı.
 //
-// TAZE host örneği üzerinde: ana host'un sertifikası değişirse telefondaki
-// bütün senaryolar kırılır. Senaryo sonunda uygulama ana host değerleriyle
-// yeniden derlenip kurulur.
+// Geçici test sunucusunda çalışır: ana host'un sertifikası değişirse
+// telefondaki bütün senaryolar kırılır. Senaryo sonunda uygulama ana host
+// değerleriyle yeniden derlenip kurulur.
 const crypto = require('crypto');
 const fs = require('fs');
 const path = require('path');
@@ -27,7 +28,7 @@ function writeFreshProps() {
   return out;
 }
 
-test('Sunucu: bootstrap sertifikası yenilenince eski APK bağlanamaz, yeni değerlerle bağlanır', async ({
+test('Sunucu: sunucu sertifikası (bootstrap) yenilenince eski APK bağlanamıyor, yeni değerlerle derlenen APK bağlanıyor', async ({
   device,
   browser,
 }, testInfo) => {
@@ -39,7 +40,7 @@ test('Sunucu: bootstrap sertifikası yenilenince eski APK bağlanamaz, yeni değ
   let oldPins;
 
   try {
-    await test.step('Terminal: uygulama taze host\'un bugünkü değerleriyle kurulur', async () => {
+    await test.step('Terminal: uygulama geçici test sunucusunun şu anki değerleriyle derlenip kurulur', async () => {
       const props = writeFreshProps();
       oldPins = fresh.hostPins().slice(0, 2);
       clientBuild.buildAndInstall(device, FRESH_PROPS);
@@ -48,13 +49,13 @@ test('Sunucu: bootstrap sertifikası yenilenince eski APK bağlanamaz, yeni değ
       await app.snap('eski sertifikayla bağlı');
       await attachText(
         testInfo,
-        'Derlemeye giren bootstrap pin\'leri',
+        'Uygulamaya gömülen ilk pin\'ler (bootstrap)',
         `${props.split('\n').filter((l) => l.startsWith('host.bootstrapPin')).join('\n')}\n\nTelefon: ${status.split('\n')[0]}`,
       );
       expect(status).toMatch(/Hazır — config v\d+/);
     });
 
-    await test.step('Web: Bootstrap sekmesinden sunucu sertifikası yenilenir', async () => {
+    await test.step('Web: "Bootstrap Pin" sekmesinde "Sertifikayı Yenile" ile sunucu sertifikası yenilenir', async () => {
       const before = await dashboard.bootstrapPins('default-tls');
       await dashboard.snap('yenilemeden önceki pin\'ler');
       const toast = await dashboard.regenerateBootstrapCert('default-tls');
@@ -87,7 +88,7 @@ test('Sunucu: bootstrap sertifikası yenilenince eski APK bağlanamaz, yeni değ
     await test.step('Mobil: eski pin\'lerle derlenmiş uygulama başlatılamıyor', async () => {
       app.launchFresh();
       const status = await app.waitInitFailed();
-      await app.snap('eski bootstrap pin\'i tutmuyor: başlatılamadı');
+      await app.snap('uygulamaya gömülü eski pin tutmuyor: başlatılamadı');
       await attachText(testInfo, 'Telefondaki hata', status);
       expect(status).toContain('başlatılamadı');
     });
@@ -116,7 +117,7 @@ test('Sunucu: bootstrap sertifikası yenilenince eski APK bağlanamaz, yeni değ
       expect(SampleApp.hostVersion(status, env.LAN_IP)).not.toBeNull();
     });
 
-    await test.step('Web: Bootstrap sekmesi → "JKS Yükle" — sunucu sertifikası dışarıdan üretilmiş anahtar çiftine geçer', async () => {
+    await test.step('Web: "Bootstrap Pin" sekmesi → "JKS Yükle": sunucu sertifikası dışarıda üretilmiş bir anahtar çiftine geçer', async () => {
       // Dışarıda (container'daki keytool ile) üretilmiş, SAN'ında LAN IP olan
       // bir anahtar çifti; server-tls-pins/upload ile bootstrap sertifikası
       // yapılır. Sunucu dosyayı kendi KEYSTORE_PASSWORD'üyle yeniden yazar.
@@ -139,7 +140,7 @@ test('Sunucu: bootstrap sertifikası yenilenince eski APK bağlanamaz, yeni değ
 
       const res = await dashboard.uploadBootstrapCert('default-tls', path.join(fresh.DIR, 'data/certs', UPLOAD_JKS), 'changeit');
       const pinsAfter = fresh.hostPins();
-      await dashboard.snap('Bootstrap sekmesi: yüklenen JKS\'nin pin\'leri');
+      await dashboard.snap('"Bootstrap Pin" sekmesi: yüklenen JKS\'nin pin\'leri');
 
       // Dinleyiciler eski sertifikayı bellekte tutuyor (restartRequired).
       fresh.compose(['restart']);
@@ -148,7 +149,7 @@ test('Sunucu: bootstrap sertifikası yenilenince eski APK bağlanamaz, yeni değ
       const served = await hostApi.servedPin(fresh.PORTS.https, 'localhost');
       await attachText(
         testInfo,
-        'POST /api/v1/server-tls-pins/upload (Bootstrap sekmesi → JKS Yükle)',
+        'POST /api/v1/server-tls-pins/upload ("Bootstrap Pin" sekmesi → "JKS Yükle")',
         [
           `yüklenen JKS: ${UPLOAD_JKS} (keytool, RSA 2048, SAN=ip:${env.LAN_IP},dns:localhost, parola changeit)`,
           `yüklenen sertifikanın SPKI pin'i: ${uploadedPin}`,

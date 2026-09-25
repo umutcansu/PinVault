@@ -40,7 +40,7 @@ test('Web\'de host silinir → mobil o host\'a bağlanmaz; geri eklenince sürü
     await dashboard.snap(`host geri eklendi, v${v0 + 1}`);
   });
 
-  await test.step('Mobil: yenile → hedef geri geldi, istek başarılı', async () => {
+  await test.step('Mobil: config yenilenince hedef host geri geliyor, istek başarılı', async () => {
     const status = await app.refreshConfig();
     expect(SampleApp.hostVersion(status, TARGET_HOST)).toBe(v0 + 1);
     expect(await app.testLibraryClient()).toContain('Pinned bağlantı başarılı');

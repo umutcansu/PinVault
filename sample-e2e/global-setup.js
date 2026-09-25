@@ -10,6 +10,7 @@ const hostControl = require('./lib/hostControl');
 const state = require('./lib/state');
 const { Device } = require('./lib/android');
 const customBackend = require('./lib/custom-backend');
+const offlineKeys = require('./lib/offlineKeys');
 
 function findJavaHome() {
   if (process.env.JAVA_HOME) return process.env.JAVA_HOME;
@@ -29,9 +30,7 @@ function findJavaHome() {
  * Host'un kendi dosyalarından ve canlı hedef pin'lerinden üretilir; özel
  * backend değerleri harness'ın ürettiği anahtarlardan gelir.
  */
-function writeProperties({ goodPins, hostPins, custom }) {
-  const signing = fs.readFileSync(env.SIGNING_KEY_FILE, 'utf8').split('\n').map((s) => s.trim()).filter(Boolean)[1];
-  if (!signing) throw new Error(`İmzalama public key'i okunamadı: ${env.SIGNING_KEY_FILE}`);
+function writeProperties({ goodPins, hostPins, custom, signing, backup, recovery }) {
   const lines = [
     '# SamplePinVaultE2E global setup tarafından üretildi; elle düzenleme.',
     `host.ip=${env.LAN_IP}`,
@@ -40,7 +39,13 @@ function writeProperties({ goodPins, hostPins, custom }) {
     `host.mtlsPort=${env.MTLS_API_PORT}`,
     `host.bootstrapPinPrimary=${hostPins[0]}`,
     `host.bootstrapPinBackup=${hostPins[1]}`,
-    `host.signingPublicKey=${signing}`,
+    `host.signingPublicKey=${signing.publicKey}`,
+    // İsteğe bağlı imza katmanları: sunucunun imzalayıcıları + çevrimdışı yedek
+    // anahtar, ve anahtar setlerini (döndürme/iptal) doğrulayan kurtarma anahtarı.
+    // Sunucu bir anahtar seti taşımadıkça davranışı değiştirmezler.
+    `host.signingPublicKeys=${[...signing.signers.map((s) => s.publicKey), backup.pub].join(',')}`,
+    'host.requiredSignatures=1',
+    `host.recoveryPublicKeys=${recovery.pub}`,
     `target.host=${env.TARGET_HOST}`,
     `target.pins=${goodPins.join(',')}`,
     `mock.tlsHost=${env.MOCK_TLS_HOST}`,
@@ -103,7 +108,16 @@ module.exports = async () => {
 
   // 4. Uygulama: host değerleri + özel backend anahtarlarıyla derle ve kur.
   const custom = customBackend.material();
-  const propsChanged = writeProperties({ goodPins, hostPins, custom });
+  // İmza anahtarları dosyadan değil sunucudan: imzalayıcı bir HSM/KMS olabilir,
+  // anahtar dosyası SIGNING_KEY_PASSWORD ile şifreli olabilir.
+  const signingInfo = await hostApi.api('/api/v1/signing-key', { withKey: false });
+  if (signingInfo.status !== 200 || !signingInfo.json || !signingInfo.json.publicKey) {
+    throw new Error(`İmzalama anahtarları okunamadı: GET /api/v1/signing-key → HTTP ${signingInfo.status}`);
+  }
+  const signing = signingInfo.json;
+  const backup = offlineKeys.ensure('backup-1');
+  const recovery = offlineKeys.ensure('recovery-1');
+  const propsChanged = writeProperties({ goodPins, hostPins, custom, signing, backup, recovery });
   if (process.env.E2E_SKIP_BUILD !== '1' || propsChanged || !fs.existsSync(env.APK)) {
     console.log('[e2e] SamplePinVaultClient derleniyor…');
     const javaHome = findJavaHome();
@@ -127,6 +141,8 @@ module.exports = async () => {
     lanIp: env.LAN_IP,
     baseline,
     custom: { baseUrl: custom.baseUrl, pins: custom.pins, signingPublicKey: custom.signingPublicKey },
+    // APK'nın güvendiği imza anahtarlarının kimlikleri (telefon ekranındakilerle karşılaştırılır).
+    signing: { primaryKeyId: signing.keyId, backupKeyId: backup.keyId, recoveryKeyId: recovery.keyId },
     model: device.prop('ro.product.model'),
     manufacturer: device.prop('ro.product.manufacturer'),
   });

@@ -1,11 +1,11 @@
 // G06 — Vault dosyasının içerik imzası bozulur ya da silinirse.
 //
 // Vault dosyaları da Config API'nin ECDSA anahtarıyla imzalanıyor; imza
-// `X-Vault-Signature` başlığında ve kanonik metin (anahtar + sürüm + düz
-// metnin SHA-256'sı) üzerinde. Cihaz imzayı dosyayı SAKLAMADAN ÖNCE
+// `X-Vault-Signature` başlığında ve imzalanan standart metin (anahtar + sürüm +
+// düz metnin SHA-256'sı) üzerinde. Cihaz imzayı dosyayı SAKLAMADAN ÖNCE
 // doğruluyor (VaultFileRouter).
 //
-// İki kurcalama gösteriliyor:
+// İki değiştirme gösteriliyor:
 //   • imzanın son baytı bozulur → "signature verification FAILED",
 //   • imza başlığı tamamen silinir → "no X-Vault-Signature … refusing
 //     (fail-closed)" — başlık yoksa dosya kabul edilmiyor, "imzasız da olur"
@@ -21,7 +21,7 @@ const env = require('../lib/env');
 
 const KEY = env.VAULT_KEYS.flags;
 
-test('Kablo: vault imzası bozulunca/silinince dosya kaydedilmiyor, eski sürüm yerinde kalıyor', async ({
+test('Saldırı: vault dosyasının imzası bozulur ya da silinir → telefon dosyayı kaydetmiyor, eski sürümle devam ediyor', async ({
   app,
   device,
   dashboard,
@@ -43,14 +43,14 @@ test('Kablo: vault imzası bozulunca/silinince dosya kaydedilmiyor, eski sürüm
       await dashboard.snapCard('.card:has(#vault-upload-key) ~ .card', `vault dosyası v${v1}`);
     });
 
-    await test.step("Vekil: host'un anahtarıyla saydam araya girilir; dosya bu yoldan iniyor", async () => {
+    await test.step('Saldırgan: sunucunun kendi anahtarıyla araya girer, henüz bir şey değiştirmiyor; dosya bu yoldan iniyor', async () => {
       mitm = await proxy.start({ identity: 'trusted' });
       device.redirectTcp(env.LAN_IP, env.CONFIG_API_PORT, env.PROXY_PORT);
       app.relaunch();
       await app.waitReady();
       await app.openVault();
       const status = await app.fetchVault(KEY);
-      await app.snap(`saydam vekil: ${KEY} v${v1} indi`);
+      await app.snap(`saldırgan henüz bir şey değiştirmiyor: ${KEY} v${v1} indi`);
       expect(status).toContain(`${KEY} v${v1} indirildi`);
       expect(status).toContain('imza doğrulandı');
       expect(status).toContain(first);
@@ -62,7 +62,7 @@ test('Kablo: vault imzası bozulunca/silinince dosya kaydedilmiyor, eski sürüm
       await dashboard.snapCard('.card:has(#vault-upload-key) ~ .card', `vault dosyası v${v2}`);
     });
 
-    await test.step('Vekil: imzanın son baytı bozulur → telefon dosyayı kaydetmiyor', async () => {
+    await test.step('Saldırgan: imzanın son baytını değiştirir → telefon dosyayı kaydetmiyor', async () => {
       const breaker = proxy.breakVaultSignature({ remove: false });
       mitm.setMutate((answer) => {
         const mutated = breaker(answer);
@@ -83,7 +83,7 @@ test('Kablo: vault imzası bozulunca/silinince dosya kaydedilmiyor, eski sürüm
 
       await attachText(
         testInfo,
-        `Kablodaki fark (GET /api/v1/vault/${KEY})`,
+        `Saldırganın yaptığı değişiklik (GET /api/v1/vault/${KEY})`,
         [
           `X-Vault-Version : ${wire.version}`,
           `gövde           : ${wire.length} bayt (düz metin, dokunulmadı)`,
@@ -93,8 +93,8 @@ test('Kablo: vault imzası bozulunca/silinince dosya kaydedilmiyor, eski sürüm
           `son bayt        : 0x${Buffer.from(wire.before, 'base64').slice(-1).toString('hex')}` +
             ` → 0x${Buffer.from(wire.after, 'base64').slice(-1).toString('hex')}`,
           '',
-          'İmzanın kanonik metni: pinvault-vault-file:v1:<anahtar>:<sürüm>:<sha256(düz metin)>',
-          '— yani hem dosyayı hem sürümü hem de anahtarı birbirine bağlıyor.',
+          'İmzalanan standart metin: pinvault-vault-file:v1:<anahtar>:<sürüm>:<sha256(düz metin)>',
+          '— yani imza dosya adını (anahtar), sürümü ve içeriği birbirine bağlıyor.',
           '',
           'TELEFONUN CEVABI',
           status.split('\n').slice(0, 2).join('\n'),
@@ -132,14 +132,14 @@ test('Kablo: vault imzası bozulunca/silinince dosya kaydedilmiyor, eski sürüm
           'okuyoruz.',
           '',
           'Doğrulama kaydetmeden önce yapılıyor: imza tutmayınca storage.save()',
-          'hiç çağrılmıyor, yani yarım/kurcalanmış içerik diske düşmüyor.',
+          'hiç çağrılmıyor, yani yarım/değiştirilmiş içerik diske yazılmıyor.',
         ].join('\n'),
       );
       expect(storage).toContain('pinvault_vault_files.xml');
       await app.backToMain();
     });
 
-    await test.step('Vekil: imza başlığı tamamen silinir → yine reddediliyor (fail-closed)', async () => {
+    await test.step('Saldırgan: imza başlığını tamamen siler → telefon imzasız dosyayı da reddediyor', async () => {
       const remover = proxy.breakVaultSignature({ remove: true });
       const removed = {};
       mitm.setMutate((answer) => {
@@ -171,7 +171,7 @@ test('Kablo: vault imzası bozulunca/silinince dosya kaydedilmiyor, eski sürüm
           'Cihazdaki dosya:',
           info.split('\n').slice(0, 3).join('\n'),
           '',
-          'Blokta signaturePublicKey tanımlı olduğu için imzasız dosya kabul',
+          'Config API bloğunda signaturePublicKey tanımlı olduğu için imzasız dosya kabul',
           'edilmiyor. İmzasız çalışmak ancak allowUnsigned() ile mümkün ve o da',
           'üretim için değil.',
         ].join('\n'),
@@ -180,11 +180,11 @@ test('Kablo: vault imzası bozulunca/silinince dosya kaydedilmiyor, eski sürüm
       expect(info).toContain(`sürüm: v${v1}`);
     });
 
-    await test.step('Vekil: kurcalama kalkınca yeni sürüm sorunsuz iniyor', async () => {
+    await test.step('Saldırgan: değiştirmeyi bırakınca yeni sürüm sorunsuz iniyor', async () => {
       mitm.setMutate(null);
       await app.openVault();
       const status = await app.fetchVault(KEY);
-      await app.snap(`kurcalama kalktı: ${KEY} v${v2} indi`);
+      await app.snap(`saldırgan değiştirmeyi bıraktı: ${KEY} v${v2} indi`);
       expect(status).toContain(`${KEY} v${v2} indirildi`);
       expect(status).toContain(second);
     });
@@ -195,7 +195,7 @@ test('Kablo: vault imzası bozulunca/silinince dosya kaydedilmiyor, eski sürüm
       mitm = null;
       app.relaunch();
       expect(await app.waitReady()).toContain('Hazır — config v');
-      await app.snap('vekil kapandı: doğrudan sunucuyla Hazır');
+      await app.snap('saldırgan proxy kapandı: doğrudan sunucuyla Hazır');
     });
   } finally {
     device.clearNetRules();

@@ -13,7 +13,7 @@ const { test, expect } = require('../lib/fixtures');
 const { attachText } = require('../lib/evidence');
 const env = require('../lib/env');
 
-test('Mobil: planlı WorkManager işi listeleniyor, iptal edilince JobScheduler\'dan düşüyor, yeniden planlanınca geri geliyor', async ({
+test('Mobil: planlı WorkManager işi listeleniyor, iptal edilince JobScheduler\'dan siliniyor, yeniden planlanınca geri geliyor', async ({
   app,
   device,
 }, testInfo) => {
@@ -43,7 +43,7 @@ test('Mobil: planlı WorkManager işi listeleniyor, iptal edilince JobScheduler\
     expect(jobs.length, 'JobScheduler kaydı').toBeGreaterThan(0);
   });
 
-  await test.step('Mobil: "İşi iptal et" → planlı iş yok, JobScheduler kaydı düşüyor', async () => {
+  await test.step('Mobil: "İşi iptal et" → planlı iş yok, JobScheduler kaydı siliniyor', async () => {
     const result = await app.cancelWork();
     await app.snapResult('iş iptal edildi: etkin planlı iş yok');
     await expect.poll(() => readJobs().length, { timeout: 20_000, intervals: [1000, 2000] }).toBe(0);
@@ -75,7 +75,7 @@ test('Mobil: planlı WorkManager işi listeleniyor, iptal edilince JobScheduler\
     await attachText(
       testInfo,
       'PinVault.schedulePeriodicUpdates + dumpsys jobscheduler',
-      [result, '', ...jobsPanel(jobs), '', 'Yeni periyodik iş (15 dk) enqueue edildi; JobScheduler kaydı geri geldi.'].join('\n'),
+      [result, '', ...jobsPanel(jobs), '', 'Yeni periyodik iş (15 dk) kuyruğa alındı; JobScheduler kaydı geri geldi.'].join('\n'),
     );
     expect(result).toContain('planlandı');
     expect(result).toContain('Planlı işler');

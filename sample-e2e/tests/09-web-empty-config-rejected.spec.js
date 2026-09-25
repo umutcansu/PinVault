@@ -12,7 +12,7 @@ test('Web\'de tüm host\'lar silinir → mobil boş config\'i reddeder, eski con
 }) => {
   let targetVersion;
 
-  await test.step('Web: iki host da silinir, config boş kalır', async () => {
+  await test.step('Web: bütün host\'lar silinir, config boş kalır', async () => {
     await dashboard.openHost(TARGET_HOST);
     targetVersion = await dashboard.version();
     // Host'un kendi kaydı ve mock hedefler de dahil hepsi silinir.
@@ -20,7 +20,7 @@ test('Web\'de tüm host\'lar silinir → mobil boş config\'i reddeder, eski con
     await dashboard.snap('config boş');
   });
 
-  await test.step('Mobil: yenile → boş config reddedilir, eski sürüm kalır', async () => {
+  await test.step('Mobil: yenilemede boş config reddedilir, eski sürüm yerinde kalır', async () => {
     const status = await app.refreshConfig();
     expect(status).toContain('Config yenilenemedi');
     expect(status).toContain('at least one pin');
@@ -42,7 +42,7 @@ test('Web\'de tüm host\'lar silinir → mobil boş config\'i reddeder, eski con
     await dashboard.snapHostSummary(`host'lar geri eklendi, v${targetVersion + 1}`);
   });
 
-  await test.step('Mobil: yenile → sürüm geri gitmez, yeni config uygulanır', async () => {
+  await test.step('Mobil: yenilemede yeni config uygulanır; sürüm geriye gitmez', async () => {
     const status = await app.refreshConfig();
     expect(status).toContain('Yeni config uygulandı');
     expect(SampleApp.hostVersion(status, TARGET_HOST)).toBe(targetVersion + 1);

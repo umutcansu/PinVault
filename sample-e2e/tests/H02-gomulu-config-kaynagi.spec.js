@@ -27,7 +27,7 @@ function logsSince(mark) {
   return idx >= 0 ? all.slice(idx + mark.length) : all;
 }
 
-test('Sunucu bağımsızlığı: gömülü CertificateConfigApi ile kütüphaneden hiç HTTP çıkmıyor', async ({
+test('Uygulama içi config kaynağı: gömülü CertificateConfigApi ile kütüphane config için ağa hiç çıkmıyor', async ({
   app,
   device,
   run,
@@ -50,32 +50,32 @@ test('Sunucu bağımsızlığı: gömülü CertificateConfigApi ile kütüphaned
           '',
           rules.trim(),
           '',
-          `Telemetri portu (${env.HTTP_PORT}) ve hedef host açık kalıyor; kesilen`,
-          'yalnızca kütüphanenin pin config\'ini çektiği port.',
+          `Cihaz raporlarının (telemetri) gittiği port (${env.HTTP_PORT}) ve hedef host açık`,
+          'kalıyor; kesilen yalnızca kütüphanenin pin config\'ini çektiği port.',
         ].join('\n'),
       );
       expect(rules).toContain(`--dport ${env.CONFIG_API_PORT}`);
     });
 
-    await test.step('Mobil: TLS modunda sıfırdan açılış — port kesikken başlatılamıyor (kontrol)', async () => {
+    await test.step('Mobil: karşılaştırma için TLS modunda sıfırdan açılış — port kesikken başlatılamıyor', async () => {
       // Uygulama verisi silinir: saklı config yok, mod varsayılan (TLS).
       app.launchFresh();
       const failed = await app.waitInitFailed();
       await app.snap('port kesik + TLS modu: başlatılamadı');
       await attachText(
         testInfo,
-        'Kontrol ölçümü: aynı koşulda TLS modu',
+        'Karşılaştırma: aynı koşulda TLS modu',
         [
           failed.split('\n').slice(0, 4).join('\n'),
           '',
-          'Kesinti gerçek: varsayılan modda kütüphane config\'i HTTP ile çekmek',
-          'zorunda ve saklı config de olmadığı için fail-closed davranıyor.',
+          'Kesinti gerçek: varsayılan modda kütüphane config\'i HTTP ile çekmek zorunda;',
+          'saklı config de olmadığı için başlamayı reddediyor (şüphede bağlantıya izin vermez).',
         ].join('\n'),
       );
       expect(failed).toContain('başlatılamadı');
     });
 
-    await test.step('Mobil: aynı boş kurulumda gömülü API moduna geçilir — Hazır', async () => {
+    await test.step('Mobil: aynı boş kurulumda gömülü API moduna geçilir, uygulama "Hazır" oluyor', async () => {
       // Saklı config hâlâ yok (TLS denemesi hiçbir şey kaydedemedi); mod
       // Ayarlar'dan değiştiriliyor, yani init sırası deterministik.
       device.clearLogcat();
@@ -108,7 +108,7 @@ test('Sunucu bağımsızlığı: gömülü CertificateConfigApi ile kütüphaned
       const eventLog = app.eventLog();
       await attachText(
         testInfo,
-        'Uygulamanın olay listesi (TLS el sıkışmaları)',
+        'Uygulamanın olay listesi (TLS bağlantıları)',
         [
           eventLog.split('\n').slice(0, 6).join('\n'),
           '',
@@ -129,7 +129,7 @@ test('Sunucu bağımsızlığı: gömülü CertificateConfigApi ile kütüphaned
         [
           logcat || '(ilgili satır yok)',
           '',
-          'Kütüphane normal akışı işletiyor: config alındı → doğrulandı →',
+          'Kütüphane normal akışı izliyor: config alındı → doğrulandı →',
           'şifreli depoya yazıldı → pinlenmiş istemci kuruldu → sağlık kontrolü.',
           'Farkı, bu adımların hiçbirinin ağa çıkmaması: fetchConfig ve',
           'healthCheck uygulamanın kendi sınıfından geliyor.',
@@ -149,18 +149,18 @@ test('Sunucu bağımsızlığı: gömülü CertificateConfigApi ile kütüphaned
         testInfo,
         'Ana host (demo-server) günlüğü — gömülü API modundayken',
         [
-          `pencerede ${requestLines.length} istek satırı:`,
+          `bu sürede ${requestLines.length} istek satırı var:`,
           ...requestLines.slice(-15).map((l) => `  ${l}`),
           '',
           `config isteği: ${configLines.length} (${configLines.join(' | ') || 'yok ✓'})`,
           '',
-          'Kalanlar docker healthcheck ve uygulamanın telemetri POST\'ları.',
+          'Kalanlar docker\'ın sağlık kontrolü ve uygulamanın cihaz raporu (telemetri) POST\'ları.',
         ].join('\n'),
       );
       expect(configLines, 'gömülü modda sunucuya config isteği gitmemeli').toHaveLength(0);
     });
 
-    await test.step('Terminal: kural kaldırılır → TLS modunda yeniden Hazır', async () => {
+    await test.step('Terminal: iptables kuralı kaldırılır, uygulama TLS modunda yeniden "Hazır"', async () => {
       device.clearNetRules();
       await app.openSettings();
       const applied = await app.applyMode('TLS');

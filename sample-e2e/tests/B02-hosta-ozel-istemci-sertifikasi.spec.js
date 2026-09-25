@@ -7,8 +7,8 @@
 // Bilinen kısıt burada kanıtlanıyor: `GET /api/v1/client-certs/{host}/download`
 // yalnızca mTLS modundaki dinleyicide servis ediliyor; TLS Config API 403
 // döndürüyor. Yani TLS modundaki bir cihaz host'a özel sertifikayı hiç
-// alamıyor, mTLS config modundaki cihaz alıyor. İki davranış da telefondan ve
-// kablodan gösteriliyor.
+// alamıyor, mTLS config modundaki cihaz alıyor. İki davranış da hem telefonda
+// hem ağ üzerinden (curl) gösteriliyor.
 const path = require('path');
 const fs = require('fs');
 const { execFileSync } = require('child_process');
@@ -31,7 +31,7 @@ function splitP12(p12, password = 'changeit') {
   return execFileSync('openssl', ['x509', '-in', CERT_PEM, '-noout', '-subject'], { encoding: 'utf8' }).trim();
 }
 
-test('mTLS: host\'a özel istemci sertifikası yalnızca mTLS dinleyiciden iniyor', async ({
+test('mTLS: host\'a özel istemci sertifikası yalnızca mTLS Config API\'den indirilebiliyor', async ({
   app,
   device,
   dashboard,
@@ -83,11 +83,11 @@ test('mTLS: host\'a özel istemci sertifikası yalnızca mTLS dinleyiciden iniyo
           `pin kaydı: mtls=${after.mtls}, clientCertVersion=${after.clientCertVersion}, version=${after.version}`,
           `sunucudaki kayıt: CN=${info.commonName}, v${info.version}`,
           '',
-          `Host pin sürümü her iki işlemde de artıyor: v${pinVersionBefore} → v${afterToggle} (mTLS bayrağı)`,
-          `→ v${after.version} (host istemci sertifikası). Kütüphanenin değişiklik algılaması host`,
-          'pin sürümüne bakıyor; sürüm artmasaydı config\'i daha önce almış bir cihaz',
-          'SSLCertificateUpdater.updateNow\'da "AlreadyCurrent" alır ve syncHostClientCerts hiç',
-          'çalışmazdı — sertifika yalnızca verisi silinmiş cihaza ulaşırdı.',
+          `Host pin sürümü iki işlemde de artıyor: v${pinVersionBefore} → v${afterToggle} (mTLS bayrağı)`,
+          `→ v${after.version} (host istemci sertifikası). Kütüphane değişikliği host'un pin`,
+          'sürümünden anlıyor; sürüm artmasaydı config\'i daha önce almış bir cihaz',
+          'SSLCertificateUpdater.updateNow\'da "AlreadyCurrent" alır, syncHostClientCerts hiç',
+          'çalışmazdı ve sertifika yalnızca verisi silinmiş cihaza ulaşırdı.',
         ].join('\n'),
       );
       expect(after.mtls).toBe(true);
@@ -134,18 +134,18 @@ test('mTLS: host\'a özel istemci sertifikası yalnızca mTLS dinleyiciden iniyo
           mock,
           '',
           'Bağlantı yine de geçiyor: composite KeyManager host\'a özel sertifika yokken',
-          'varsayılan (kayıt) sertifikasına düşüyor ve mock host\'un truststore\'u bütün',
+          'varsayılan (kayıt) sertifikasını kullanıyor ve mock host\'un truststore\'u bütün',
           'istemci sertifikalarını tanıyor. Yani TLS modunda host\'a özel sertifika hiç',
           'devreye girmiyor.',
         ].join('\n'),
       );
     });
 
-    await test.step('Web: aynı sertifika mTLS Config API kapsamına da yüklenir', async () => {
+    await test.step('Web: aynı sertifika mTLS Config API\'ye de yüklenir', async () => {
       await mtlsScope.ensureHosts(dashboard, [env.LAN_IP, env.MOCK_MTLS_HOST]);
       await dashboard.setHostMtls(env.MTLS_API, env.MOCK_MTLS_HOST, true);
       const response = await dashboard.uploadHostClientCert(env.MTLS_API, env.MOCK_MTLS_HOST, P12);
-      await dashboard.snapCard('#host-client-cert-card', `${env.MTLS_API} kapsamında host istemci sertifikası`);
+      await dashboard.snapCard('#host-client-cert-card', `${env.MTLS_API} altında host istemci sertifikası`);
       const scope = await hostApi.scopedConfig(env.MTLS_API);
       const pin = scope.pins.find((p) => p.hostname === env.MOCK_MTLS_HOST);
       await attachText(
@@ -154,10 +154,10 @@ test('mTLS: host\'a özel istemci sertifikası yalnızca mTLS dinleyiciden iniyo
         [
           response,
           '',
-          `${env.MTLS_API} kapsamı: mtls=${pin.mtls}, clientCertVersion=${pin.clientCertVersion}`,
+          `${env.MTLS_API} içindeki kayıt: mtls=${pin.mtls}, clientCertVersion=${pin.clientCertVersion}`,
           '',
-          'Host\'a özel sertifika deposu (host_client_certs) hostname + configApiId ile',
-          'anahtarlanıyor: aynı P12 her kapsama ayrı yükleniyor.',
+          'Host\'a özel sertifika deposu (host_client_certs) kayıtları host adı +',
+          'configApiId ile ayırıyor: aynı P12 her Config API için ayrı yükleniyor.',
         ].join('\n'),
       );
       expect(pin.clientCertVersion).toBeGreaterThan(0);
@@ -201,23 +201,23 @@ test('mTLS: host\'a özel istemci sertifikası yalnızca mTLS dinleyiciden iniyo
     await test.step('Sunucu: 403 ürün kararı mı, hata mı — değerlendirme', async () => {
       await attachText(
         testInfo,
-        'Host\'a özel sertifika yalnızca mTLS dinleyicide — değerlendirme',
+        'Host\'a özel sertifika yalnızca mTLS Config API\'de — değerlendirme',
         [
           'Sunucu kodu bunu bilerek yapıyor (CertificateConfigRoute):',
           '  if (configApiMode == "tls") → 403 "Host client certs are only available via',
           '  mTLS Config API. Enroll first ... then use the mTLS endpoint".',
           '',
-          'Karar doğru: TLS dinleyicide çağıranın kimliği yok. Uç yalnızca API anahtarı',
-          'istemeyen cihaz uçları arasında; TLS üzerinden servis edilse herkes herhangi bir',
-          'host\'un özel anahtarını indirebilirdi. mTLS dinleyicide çağıran doğrulanmış bir',
-          'istemci sertifikası sunuyor.',
+          'Karar doğru: TLS Config API\'de isteği yapanın kimliği bilinmiyor. Bu adres,',
+          'API anahtarı istemeyen cihaz adresleri arasında; TLS üzerinden verilse herkes',
+          'herhangi bir host\'un özel anahtarını indirebilirdi. mTLS Config API\'de ise',
+          'isteği yapan, doğrulanmış bir istemci sertifikası sunuyor.',
           '',
           'Eksik olan: kütüphane tarafında bu kısıt yok. TLS bloğundaki bir host mtls=true',
           'işaretlenirse SSLCertificateUpdater her config güncellemesinde 403 alan bir istek',
           'atıyor ve sessizce vazgeçiyor; uygulamaya "bu host için özel sertifika alınamadı"',
           'diye bir sinyal gitmiyor. Öneri: (a) dashboard mTLS bayrağını yalnızca mTLS',
-          'kapsamındaki host\'larda açtırsın ya da uyarı göstersin, (b) kütüphane 403 durumunu',
-          'InitResult/UpdateResult\'a yansıtsın.',
+          'Config API\'deki host\'larda açtırsın ya da uyarı göstersin, (b) kütüphane 403',
+          'durumunu InitResult/UpdateResult\'a yansıtsın.',
           '',
           'Daha önce burada raporlanan ikinci bulgu düzeltildi: `toggle-mtls` ve',
           '`upload-client-cert` artık host pin sürümünü de artırıyor (yukarıdaki panel),',

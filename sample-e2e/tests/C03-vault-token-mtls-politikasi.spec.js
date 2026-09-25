@@ -6,7 +6,7 @@
 // kimlik yönetici tarafından seçildiği için `client_certs.device_uid` üzerinden
 // de bağlanabiliyor. Sızmış bir token, özel anahtar olmadan işe yaramıyor.
 //
-// Kanıt: telefonda token'sız red → token'la indirme; kabloda dört durum
+// Kanıt: telefonda token'sız red → token'la indirme; ağ trafiğinde dört durum
 // (sertifikasız el sıkışma, TLS dinleyicide geçerli token'la bile red, yanlış
 // cihazın sertifikasıyla red, kendi kimliğiyle kabul).
 const path = require('path');
@@ -87,7 +87,7 @@ test('Vault token_mtls: token + istemci sertifikası birlikte gerekiyor', async 
         testInfo,
         'Karşılaştırma için ikinci istemci sertifikası',
         [`subject: ${subject}`, `${fs.statSync(P12).size} bayt P12`,
-          'Bu sertifika GEÇERLİ ve truststore\'da; ama başka bir kimliğe ait.'].join('\n'),
+          'Bu sertifika GEÇERLİ ve sunucunun güvendiği listede (truststore); ama başka bir kimliğe ait.'].join('\n'),
       );
       expect(subject).toContain(otherCertId);
     });
@@ -108,25 +108,26 @@ test('Vault token_mtls: token + istemci sertifikası birlikte gerekiyor', async 
           `deviceUid=${mine.deviceUid || '(yok)'}`,
           `revoked=${mine.revoked}`,
           '',
-          'token_mtls eşleşmesinin ikinci yolu bu: CN\'deki kimlik yöneticinin seçtiği',
-          `"${deviceCertId}", cihazın ANDROID_ID\'si ise "${deviceId}". Kütüphane kayıt`,
-          'gövdesinde deviceUid gönderdiği için sunucu ikisini bağlayabiliyor.',
+          'token_mtls\'te cihazı eşleştirmenin ikinci yolu bu: sertifikadaki ad (CN)',
+          `yöneticinin seçtiği "${deviceCertId}", cihazın ANDROID_ID\'si ise "${deviceId}".`,
+          'Kütüphane kayıt isteğinde deviceUid gönderdiği için sunucu ikisini',
+          'birbirine bağlayabiliyor.',
         ].join('\n'),
       );
       expect(mine.deviceUid).toBe(deviceId);
     });
 
-    await test.step('Web: mTLS kapsamı hazırlanır ve dosya token_mtls ile yüklenir', async () => {
+    await test.step('Web: mTLS Config API\'nin host listesi hazırlanır, dosya token_mtls ile yüklenir', async () => {
       const report = await mtlsScope.ensureHosts(dashboard, [env.LAN_IP]);
       const version = await dashboard.uploadVaultText(env.MTLS_API, KEY, secret, { policy: 'token_mtls' });
       const cells = await dashboard.vaultRowCells(KEY);
       await dashboard.snapCard('.card:has(#vault-upload-key) ~ .card', `${env.MTLS_API} vault dosyaları`);
-      await attachText(testInfo, `${env.MTLS_API} kapsamı`, report);
+      await attachText(testInfo, `${env.MTLS_API} host listesi`, report);
       expect(cells.policy).toContain('token_mtls');
       expect(version).toBeGreaterThan(0);
     });
 
-    await test.step('Mobil: mTLS config moduna geçiliyor, token yokken 401', async () => {
+    await test.step('Mobil: mTLS config moduna geçilir, token yokken indirme 401', async () => {
       await app.openSettings();
       expect(await app.applyMode('MTLS_CONFIG')).toContain('Hazır — config v');
       await app.backToMain();
@@ -161,7 +162,7 @@ test('Vault token_mtls: token + istemci sertifikası birlikte gerekiyor', async 
           `X-Vault-Token: ${redact(deviceToken)}`,
           `istemci sertifikası CN: PinVault Client: ${deviceCertId}`,
           '',
-          'Üçü birden gerekiyor; sunucu sertifikanın CN\'inden çıkardığı kimliği',
+          'Üçü birden gerekiyor; sunucu sertifikadaki addan (CN) çıkardığı kimliği',
           'client_certs.device_uid üzerinden X-Device-Id ile eşleştiriyor.',
         ].join('\n'),
       );
@@ -173,7 +174,7 @@ test('Vault token_mtls: token + istemci sertifikası birlikte gerekiyor', async 
       await dashboard.snap('dağıtım geçmişi — token_mtls indirmesi');
     });
 
-    await test.step('Kablo: mTLS dinleyicisine sertifikasız istek el sıkışmada düşüyor', async () => {
+    await test.step('Ağ trafiği: sertifikasız istek mTLS portunda daha bağlantı kurulurken kesiliyor', async () => {
       const out = await attachFailingCommand(
         testInfo,
         `curl -k ${MTLS_URL} (istemci sertifikası yok)`,
@@ -183,7 +184,7 @@ test('Vault token_mtls: token + istemci sertifikası birlikte gerekiyor', async 
       expect(out).toMatch(/alert|handshake|SSL|TLS|reset/i);
     });
 
-    await test.step('Kablo: TLS dinleyicide geçerli token bile yetmiyor (401)', async () => {
+    await test.step('Ağ trafiği: TLS portunda geçerli token bile yetmiyor (401)', async () => {
       // Aynı anahtar, TLS kapsamına da token_mtls olarak yükleniyor: böylece
       // politika kapısı el sıkışma katmanından ayrı olarak görülebiliyor.
       await dashboard.uploadVaultText(env.VAULT_API, KEY, secret, { policy: 'token_mtls' });
@@ -195,15 +196,15 @@ test('Vault token_mtls: token + istemci sertifikası birlikte gerekiyor', async 
         [
           describeResponse(res, { maxBody: 256 }),
           '',
-          'Token doğrulandı (yanlış token mesajı gelmedi), istek yine de reddedildi:',
-          'token_mtls politikası istemci sertifikası olmayan bir bağlantıda kapalı.',
+          'Token kabul edildi ("yanlış token" hatası gelmedi), istek yine de reddedildi:',
+          'token_mtls politikalı dosya, istemci sertifikası olmayan bağlantıya verilmiyor.',
         ].join('\n'),
       );
       expect(res.status).toBe(401);
       expect(res.body.toString('utf8')).toContain('mTLS client certificate required');
     });
 
-    await test.step('Kablo: başka cihazın sertifikasıyla bu cihazın token\'ı reddediliyor', async () => {
+    await test.step('Ağ trafiği: başka cihazın sertifikasıyla bu cihazın token\'ı reddediliyor', async () => {
       const res = await mtlsDownload({ deviceId, token: deviceToken });
       await attachText(
         testInfo,
@@ -211,17 +212,17 @@ test('Vault token_mtls: token + istemci sertifikası birlikte gerekiyor', async 
         [
           describeResponse(res, { maxBody: 256 }),
           '',
-          'Sertifika geçerli ve truststore\'da; token da geçerli. Eşleşmeyen tek şey',
-          'kimlik: CN\'den çıkan istemci kimliği ne X-Device-Id\'ye eşit ne de o',
-          'sertifikanın device_uid\'si. Çalınmış bir token başka bir cihazın',
-          'anahtarıyla kullanılamıyor.',
+          'Sertifika geçerli ve sunucu ona güveniyor; token da geçerli. Uymayan tek şey',
+          'kimlik: sertifikadaki addan (CN) çıkan kimlik ne X-Device-Id\'ye eşit ne de',
+          'o sertifikanın device_uid\'sine. Çalınan bir token, başka bir cihazın',
+          'sertifikası ve anahtarıyla kullanılamıyor.',
         ].join('\n'),
       );
       expect(res.status).toBe(401);
       expect(res.body.toString('utf8')).toContain('Device identity mismatch');
     });
 
-    await test.step('Kablo: aynı sertifika kendi kimliğiyle 200 alıyor', async () => {
+    await test.step('Ağ trafiği: aynı sertifika kendi kimliğiyle 200 alıyor', async () => {
       otherToken = await dashboard.generateVaultToken(env.MTLS_API, KEY, otherCertId);
       const res = await mtlsDownload({ deviceId: otherCertId, token: otherToken });
       await attachText(
@@ -230,8 +231,8 @@ test('Vault token_mtls: token + istemci sertifikası birlikte gerekiyor', async 
         [
           describeResponse(res, { maxBody: 256 }),
           '',
-          'Doğrudan eşleşme yolu (certClientId == deviceId): otomatik kayıtta',
-          'CN zaten ANDROID_ID olduğu için üretimde bu dal çalışıyor.',
+          'Doğrudan eşleşme (certClientId == deviceId): otomatik kayıtta CN zaten',
+          'ANDROID_ID olduğu için gerçek kullanımda çalışan yol bu.',
         ].join('\n'),
       );
       expect(res.status).toBe(200);

@@ -2,7 +2,7 @@
 // anahtarı), API anahtarı yokken compose'un başlamayı reddetmesi,
 // `docker compose up -d --build`, Flyway migration'ları ve smoke-test.
 //
-// Bütün adımlar host'un İKİNCİ, taze bir örneği üzerinde koşar
+// Bütün adımlar host'un İKİNCİ bir kopyası olan geçici test sunucusunda çalışır
 // (SamplePinVaultE2E/.local/host-fresh, portlar 6750–6754). Ana host'a
 // dokunulmaz: sertifikası ya da imzalama anahtarı değişirse telefondaki APK'nın
 // gömülü pin'leri geçersiz olur ve diğer senaryolar çöker.
@@ -13,7 +13,7 @@ const { attachText, attachCommand, attachFailingCommand, redact } = require('../
 const fresh = require('../lib/freshHost');
 const env = require('../lib/env');
 
-test('Kurulum: gereksinimler, setup.sh, docker compose up ve smoke-test — sıfırdan taze host', async ({
+test('Kurulum: gereksinimler, setup.sh, docker compose up ve smoke-test — geçici test sunucusu sıfırdan kurulur', async ({
   browser,
 }, testInfo) => {
   test.setTimeout(15 * 60 * 1000);
@@ -50,7 +50,7 @@ test('Kurulum: gereksinimler, setup.sh, docker compose up ve smoke-test — sıf
     expect(lines.join('\n')).toContain('Docker version');
   });
 
-  await test.step('Terminal: dört depo ve taze host kopyası (K1)', async () => {
+  await test.step('Terminal: dört depo ve geçici test sunucusu için host kopyası (K1)', async () => {
     const parent = path.resolve(env.ROOT, '..');
     const repos = ['PinVault', 'SamplePinVaultHost', 'SamplePinVaultClient', 'SamplePinVaultE2E'];
     const lines = repos.map((name) => {
@@ -60,14 +60,14 @@ test('Kurulum: gereksinimler, setup.sh, docker compose up ve smoke-test — sıf
         : '(yok)';
       return `${name}/\n    ${entries}`;
     });
-    await attachText(testInfo, 'Kardeş depolar', `${parent}\n\n${lines.join('\n\n')}`);
+    await attachText(testInfo, 'Aynı klasördeki depolar', `${parent}\n\n${lines.join('\n\n')}`);
 
     // Taze örnek: host deposunun data/ ve .env hariç kopyası.
     await fresh.destroy();
     fresh.copyTree();
     await attachCommand(
       testInfo,
-      'Taze host kopyası (data/ ve .env hariç)',
+      'Geçici test sunucusu için kopya (data/ ve .env hariç)',
       'ls',
       ['-la', fresh.DIR],
     );
@@ -114,7 +114,7 @@ test('Kurulum: gereksinimler, setup.sh, docker compose up ve smoke-test — sıf
     const pem = `-----BEGIN PUBLIC KEY-----\n${publicLine.match(/.{1,64}/g).join('\n')}\n-----END PUBLIC KEY-----\n`;
     const pemFile = path.join(fresh.DIR, 'data/signing-public.pem');
     fs.writeFileSync(pemFile, pem);
-    const keyText = await attachCommand(testInfo, 'İmzalama anahtarının public yarısı (openssl)', 'openssl', [
+    const keyText = await attachCommand(testInfo, 'İmzalama anahtarının public key\'i (openssl)', 'openssl', [
       'pkey', '-pubin', '-in', pemFile, '-text', '-noout',
     ]);
     expect(keyText).toMatch(/prime256v1|P-256/);
@@ -144,7 +144,7 @@ test('Kurulum: gereksinimler, setup.sh, docker compose up ve smoke-test — sıf
     expect(migration).toContain('baseline');
   });
 
-  await test.step('Terminal: provision.sh — mTLS Config API ve mock host\'lar (K3)', async () => {
+  await test.step('Terminal: provision.sh mTLS Config API\'yi ve mock host\'ları (test için kurulan hedef sunucular) açar (K3)', async () => {
     const out = await attachCommand(testInfo, 'scripts/provision.sh', './scripts/provision.sh', [], { cwd: fresh.DIR });
     expect(out).toContain('mTLS Config API');
     expect(out).toContain('mock-tls.sample');
@@ -158,15 +158,15 @@ test('Kurulum: gereksinimler, setup.sh, docker compose up ve smoke-test — sıf
     expect(out).toContain(`SAN ${env.LAN_IP} içeriyor`);
   });
 
-  await test.step('Web: taze host dashboard\'unun ilk hâli (K3)', async () => {
+  await test.step('Web: geçici test sunucusunun dashboard\'u, ilk açılıştaki hâliyle (K3)', async () => {
     const dashboard = await fresh.openDashboard(browser, testInfo);
     try {
       const hosts = await dashboard.hostNames();
-      await dashboard.snap('taze host: dashboard ilk açılış (provision.sh sonrası)');
+      await dashboard.snap('geçici test sunucusu: dashboard ilk açılış (provision.sh sonrası)');
       await attachText(
         testInfo,
-        'Ağaçtaki Config API\'ler ve host\'lar',
-        [`host'lar: ${hosts.join(', ')}`, '', 'default-tls (TLS) + sample-mtls (mTLS); host\'un kendi pin kaydı ve iki mock hedef.'].join('\n'),
+        'Soldaki listede Config API\'ler ve host\'lar',
+        [`host'lar: ${hosts.join(', ')}`, '', 'default-tls (TLS) ve sample-mtls (mTLS); sunucunun kendi adresi için pin kaydı ve iki mock host.'].join('\n'),
       );
       expect(hosts).toContain(env.LAN_IP);
       expect(hosts).toContain(env.MOCK_TLS_HOST);

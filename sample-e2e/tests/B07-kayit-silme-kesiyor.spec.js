@@ -13,13 +13,13 @@ const { attachText } = require('../lib/evidence');
 const hostApi = require('../lib/hostApi');
 const env = require('../lib/env');
 
-test('mTLS: kayıt silinince aynı süreçte bağlantı kesiliyor', async ({ app, device, dashboard }, testInfo) => {
+test('mTLS: kayıt silinince bağlantı, uygulama yeniden açılmadan hemen kesiliyor', async ({ app, device, dashboard }, testInfo) => {
   test.setTimeout(12 * 60 * 1000);
   const clientId = `b07-${Date.now()}`;
   const cn = `PinVault Client: ${clientId}`;
 
   try {
-    await test.step('Web + Mobil: cihaz kayıt oluyor ve mTLS bağlantısı geçiyor', async () => {
+    await test.step('Web+Mobil: cihaz kayıt oluyor ve mTLS bağlantısı geçiyor', async () => {
       const token = await dashboard.generateEnrollmentToken(env.MTLS_API, clientId);
       await app.openMtls();
       expect(await app.enroll(token)).toContain(`Kayıt başarılı — CN=${cn}`);
@@ -40,14 +40,14 @@ test('mTLS: kayıt silinince aynı süreçte bağlantı kesiliyor', async ({ app
       await app.backToMain();
     });
 
-    await test.step('Mobil: "Kaydı sil" — aynı süreçte mTLS reddediliyor', async () => {
+    await test.step('Mobil: "Kaydı sil" — uygulama yeniden açılmadan mTLS reddediliyor', async () => {
       device.clearLogcat();
       await app.openMtls();
       expect(await app.unenroll()).toContain('Kayıt silindi');
       expect(app.enrollState()).toContain('Kayıtlı değil');
       await app.snap('kayıt silindi');
       const refused = await app.expectMtls(false);
-      await app.snap('aynı süreçte mTLS reddedildi');
+      await app.snap('uygulama yeniden açılmadan mTLS reddedildi');
       const log = device.logcat({ tags: ['PinVault', 'DynamicSSLManager'] });
       await attachText(
         testInfo,

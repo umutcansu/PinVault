@@ -11,7 +11,7 @@ const env = require('../lib/env');
 
 const KEY = env.VAULT_KEYS.admin;
 
-test('Vault api_key: telefon 401 alıyor, yönetim anahtarıyla 200 iniyor', async ({
+test('Vault api_key: telefon dosyayı indiremiyor (401), yönetim anahtarıyla iniyor (200)', async ({
   app,
   dashboard,
   run,
@@ -37,7 +37,7 @@ test('Vault api_key: telefon 401 alıyor, yönetim anahtarıyla 200 iniyor', asy
       expect(status).toContain('401');
     });
 
-    await test.step('Kablo: anahtarsız istek 401, yönetim anahtarıyla 200', async () => {
+    await test.step('Ağ trafiği: X-API-Key olmadan 401, yönetim anahtarıyla 200', async () => {
       const without = await hostApi.rawVaultDownload(KEY, deviceId);
       await attachText(
         testInfo,
@@ -65,7 +65,7 @@ test('Vault api_key: telefon 401 alıyor, yönetim anahtarıyla 200 iniyor', asy
       expect(viaLibrary.body.toString('utf8')).toBe(secret);
     });
 
-    await test.step('Web: dağıtım geçmişinde failed kaydı ve nedeni', async () => {
+    await test.step('Web: dağıtım geçmişinde başarısız (failed) kayıt ve nedeni', async () => {
       await dashboard.expectDistribution(env.VAULT_API, {
         key: KEY,
         deviceModel: run.model,
@@ -93,25 +93,25 @@ test('Vault api_key: telefon 401 alıyor, yönetim anahtarıyla 200 iniyor', asy
       expect(mine.version).toBe(0);
     });
 
-    await test.step('Sunucu: api_key politikasının cihaz tarafındaki anlamı — değerlendirme', async () => {
+    await test.step('Sunucu: api_key politikası cihaz için ne anlama geliyor — değerlendirme', async () => {
       await attachText(
         testInfo,
-        'api_key politikası cihazdan kullanılamaz (tasarım)',
+        'api_key politikalı dosya cihazdan indirilemez (bilinçli tasarım)',
         [
-          'VaultRoutes: "api_key" dalında X-API-Key başlığı ApiKeyPolicy.matches ile',
-          'kontrol ediliyor; başlık yoksa 401, sunucuda API_KEY hiç ayarlı değilse 403',
-          '(fail-closed — "yönetim dosyası" sessizce herkese açık hale gelmiyor).',
+          'VaultRoutes: "api_key" politikasında X-API-Key başlığı ApiKeyPolicy.matches',
+          'ile kontrol ediliyor; başlık yoksa 401, sunucuda API_KEY hiç ayarlı değilse',
+          '403 (şüphede erişime izin vermiyor: "yönetim dosyası" sessizce herkese açılmıyor).',
           '',
-          'Kütüphane tarafında bu başlığı gönderecek bir yol YOK: VaultFileConfig',
-          'yalnızca accessToken sağlayıcısı taşıyor. Doğru karar — yönetim anahtarının',
-          'APK\'ya gömülmesi anahtarı herkese açardı.',
+          'Kütüphanede bu başlığı gönderecek bir yol YOK: VaultFileConfig yalnızca',
+          'accessToken sağlayıcısı alıyor. Bu doğru bir karar: yönetim anahtarı APK\'ya',
+          'gömülseydi herkes ona ulaşabilirdi.',
           '',
-          'Eksik: VaultFileAccessPolicy.API_KEY kütüphanenin genel API\'sinde seçilebilir',
-          'bir değer ve hiçbir uyarı vermiyor; bu politikayla tanımlanan her dosya',
-          'sessizce her seferinde 401 alıyor (yalnızca dağıtım geçmişinden görülüyor).',
-          'Öneri: (a) kütüphane init sırasında API_KEY politikalı dosya için uyarı',
-          'loglasın, (b) dashboard yükleme formunda "cihazdan inmez, yalnızca',
-          'sunucu-sunucu" açıklaması dursun.',
+          'Eksik: VaultFileAccessPolicy.API_KEY kütüphanenin genel API\'sinde seçilebiliyor',
+          've seçilince hiçbir uyarı çıkmıyor; bu politikayla tanımlanan her dosya her',
+          'seferinde sessizce 401 alıyor (bunu yalnızca dağıtım geçmişi gösteriyor).',
+          'Öneri: (a) kütüphane init sırasında API_KEY politikalı dosya görürse log\'a',
+          'uyarı yazsın, (b) dashboard yükleme formunda "cihazdan inmez, yalnızca',
+          'sunucudan sunucuya" açıklaması dursun.',
         ].join('\n'),
       );
     });

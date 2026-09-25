@@ -2,7 +2,7 @@
 //
 //  • reset() aktif pinlemeyi ve saklı config'i siler. Sonrasında pinli istemci
 //    kurulamaz bile — kütüphane "başlatılmadı" der ve TLS'e hiç çıkılmaz
-//    (fail-closed; sistem güvenine düşülmez).
+//    (şüphede bağlantıya izin verilmez; sistem sertifikalarına geri dönülmez).
 //  • "Sıfırla ve başlat" kütüphaneyi baştan kurar: config sunucudan yeniden
 //    çekilir, uygulama Hazır olur.
 //  • init() ikinci kez çağrıldığında kütüphane hiçbir iş yapmadan hemen
@@ -20,7 +20,7 @@ async function handshakesSince(model, since) {
   return rows.filter((e) => e.deviceModel === model && Date.parse(e.timestamp) >= since);
 }
 
-test('Mobil: reset sonrası fail-closed, "Sıfırla ve başlat" ile geri gelir, ikinci init ağa çıkmaz', async ({
+test('Mobil: reset sonrası pinli istek reddediliyor, "Sıfırla ve başlat" ile düzeliyor, ikinci init ağa çıkmıyor', async ({
   app,
   run,
 }, testInfo) => {
@@ -34,7 +34,7 @@ test('Mobil: reset sonrası fail-closed, "Sıfırla ve başlat" ile geri gelir, 
     await app.snap(`başlangıç: Hazır, pin v${version}`);
   });
 
-  await test.step('Mobil: Ayarlar → "Sıfırla" → pinli istek reddediliyor (fail-closed)', async () => {
+  await test.step('Mobil: Ayarlar → "Sıfırla" → pinli istek reddediliyor (şüphede bağlantıya izin yok)', async () => {
     await app.openSettings();
     const result = await app.resetAndProbe();
     await app.snapResult('reset sonrası pinli istek reddedildi');
@@ -44,14 +44,15 @@ test('Mobil: reset sonrası fail-closed, "Sıfırla ve başlat" ile geri gelir, 
       [
         result,
         '',
-        'PinVault.reset(): aktif config düşürülür, şifreli config deposu silinir ve',
-        '"initialized" bayrağı sıfırlanır. Sonrasında applyTo()/getClient() çağrısı',
-        'checkInitialized() kapısına takılıyor — yani istemci KURULAMIYOR bile,',
-        'sunucuya hiç TLS el sıkışması denenmiyor.',
+        'PinVault.reset(): aktif config bellekten atılır, şifreli config deposu silinir',
+        've "initialized" bayrağı sıfırlanır. Sonrasında applyTo()/getClient() çağrısı',
+        'checkInitialized() kontrolünde duruyor; yani istemci KURULAMIYOR bile,',
+        'sunucuyla hiç TLS el sıkışması denenmiyor.',
         '',
-        'PLAN.md bu adım için "No pins configured" bekliyordu; o mesaj bir sonraki',
-        'kapıdan (config yokken el sıkışmayı reddeden dinamik trust manager) gelir',
-        've E09\'da (ACL boşken sıfır pin) görülüyor. İki yol da fail-closed.',
+        'PLAN.md bu adımda "No pins configured" bekliyordu; o mesaj bir sonraki',
+        'kontrolden (config yokken el sıkışmayı reddeden dinamik trust manager) gelir',
+        've E09\'da (izin listesi boşken sıfır pin) görülüyor. İki yolda da şüphede',
+        'bağlantıya izin verilmiyor.',
       ].join('\n'),
     );
     expect(result).toContain('PinVault sıfırlandı');
@@ -96,7 +97,7 @@ test('Mobil: reset sonrası fail-closed, "Sıfırla ve başlat" ile geri gelir, 
 
   let scheduleEvent;
 
-  await test.step('Mobil: "İşi planla" tek başına bir config güncellemesi koşturuyor (ayrım için)', async () => {
+  await test.step('Mobil: "İşi planla" tek başına da bir config güncellemesi çalıştırıyor (karşılaştırma için)', async () => {
     // İkinci init'ten sonra olay listesinde çıkacak [config] satırının kaynağı
     // burada belirleniyor: uygulamanın onResult'ta çağırdığı
     // schedulePeriodicUpdates(REPLACE) WorkManager'da yeni periyodik işi hemen
@@ -108,7 +109,7 @@ test('Mobil: reset sonrası fail-closed, "Sıfırla ve başlat" ile geri gelir, 
     const result = await app.scheduleWork();
     await app.backToMain();
     scheduleEvent = await app.waitForEvent('[config] ', 60_000);
-    await app.snap('WorkManager yeniden planlandı → bir güncelleme koştu');
+    await app.snap('WorkManager yeniden planlandı → bir güncelleme çalıştı');
     await attachText(
       testInfo,
       'Yalnızca "İşi planla" (init yok) → olay listesinde config satırı',
@@ -156,7 +157,7 @@ test('Mobil: reset sonrası fail-closed, "Sıfırla ve başlat" ile geri gelir, 
         '([✓] <host>) satırı yok. O satırın kaynağı bir önceki adımda ayrıca',
         'gösterildi: örnek uygulama init callback\'inde schedulePeriodicUpdates()',
         'çağırıyor ve WorkManager REPLACE edilen periyodik işi hemen bir kez',
-        'koşturuyor — kütüphanenin init yolu değil, uygulamanın kendi tercihi.',
+        'çalıştırıyor; bu kütüphanenin init akışı değil, uygulamanın kendi tercihi.',
       ].join('\n'),
     );
     expect(result).toContain('zaten başlatılmış, ağ isteği yok');

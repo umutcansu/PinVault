@@ -2,21 +2,21 @@
 //
 // Yeni pin'ler uygulandıktan hemen sonra kütüphane bir sağlık isteği atıyor
 // (SSLCertificateUpdater.verifyPinnedConnection): "bu config yürürlükteyken
-// Config API'ye hâlâ ulaşabiliyor muyum?" Vekil bu senaryoda config'i olduğu
-// gibi geçirip yalnızca /health yanıtını 500'e çeviriyor.
+// Config API'ye hâlâ ulaşabiliyor muyum?" Saldırgan proxy bu senaryoda config'i
+// olduğu gibi geçirip yalnızca /health yanıtını 500'e çeviriyor.
 //
 // Beklenen davranış (bulgu düzeltildikten sonra):
-//   • init "başlatılamadı" diyor (kapı çalışıyor),
+//   • init "başlatılamadı" diyor (kontrol çalışıyor),
 //   • uygulanan config GERİ ALINIYOR: önceki config varsa geri yazılıyor,
 //     yoksa depo temizleniyor,
 //   • bu yüzden sağlık hâlâ bozukken yapılan ikinci açılış da başlatılamıyor —
-//     kapıyı atlatan "saklı config'le sessizce Hazır" yolu kapandı.
+//     kontrolü atlatan "saklı config'le sessizce Hazır" yolu kapandı.
 //
 // Bulgu neydi: verifyPinnedConnection temizleme/sıfırlama işini yalnızca
 // istisna dalında yapıyordu, DefaultCertificateConfigApi.healthCheck() ise
 // bütün istisnaları yutup false döndürdüğü için o dal hiç çalışmıyordu. Sonuç:
 // init başarısız derken config diskte kalıyor, ikinci açılış AlreadyCurrent
-// yolundan geçtiği için sağlık kapısı hiç işlemiyor ve uygulama "Hazır" diyordu.
+// yolundan geçtiği için sağlık kontrolü hiç işlemiyor ve uygulama "Hazır" diyordu.
 const { test, expect } = require('../lib/fixtures');
 const { attachText } = require('../lib/evidence');
 const proxy = require('../lib/proxy');
@@ -25,7 +25,7 @@ const env = require('../lib/env');
 const prefsOf = (listing) =>
   listing.split('\n').map((l) => l.trim()).filter((l) => l.endsWith('.xml')).map((l) => l.split(/\s+/).pop());
 
-test('Kablo: güncelleme sonrası /health düşerse init başarısız oluyor — saklı config ne oluyor', async ({
+test("Saldırı: config indikten sonra /health 500 döner → telefon başlatılamıyor ve uyguladığı config'i geri alıyor", async ({
   app,
   device,
 }, testInfo) => {
@@ -35,17 +35,17 @@ test('Kablo: güncelleme sonrası /health düşerse init başarısız oluyor —
   let mitm;
 
   try {
-    await test.step('Vekil: config değişmeden geçiyor, yalnızca /health 500 dönüyor', async () => {
+    await test.step("Saldırgan: config'e dokunmaz, yalnızca /health yanıtını 500 hatasına çevirir", async () => {
       mitm = await proxy.start({ identity: 'trusted', mutate: proxy.failHealth });
       device.redirectTcp(env.LAN_IP, env.CONFIG_API_PORT, env.PROXY_PORT);
       await attachText(
         testInfo,
-        'Kurcalama: yalnızca sağlık ucu',
+        'Saldırganın değiştirdiği tek şey: sağlık kontrolü ucu (/health)',
         [
-          `vekil ${env.LAN_IP}:${env.PROXY_PORT} üzerinde host'un kendi TLS anahtarıyla dinliyor (pin tutuyor)`,
-          `iptables DNAT: ${env.LAN_IP}:${env.CONFIG_API_PORT} → vekil`,
+          `saldırgan proxy ${env.LAN_IP}:${env.PROXY_PORT} üzerinde sunucunun kendi TLS anahtarıyla dinliyor (pin tutuyor)`,
+          `iptables DNAT: ${env.LAN_IP}:${env.CONFIG_API_PORT} → saldırgan proxy`,
           '',
-          'GET /health  → HTTP 500 {"status":"down"}   (vekil üretiyor)',
+          'GET /health  → HTTP 500 {"status":"down"}   (saldırgan üretiyor)',
           'diğer uçlar  → sunucudan geldiği gibi, bayt bayt aynı',
           '',
           'Yani pin config\'i kusursuz iniyor; yalnızca "yeni pin\'lerle sunucuya',
@@ -54,7 +54,7 @@ test('Kablo: güncelleme sonrası /health düşerse init başarısız oluyor —
       );
     });
 
-    await test.step('Mobil: sıfırdan açılış → config uygulanıyor ama init başarısız', async () => {
+    await test.step('Mobil: sıfırdan açılış → config uygulanıyor ama sağlık kontrolü düşünce PinVault başlatılamıyor', async () => {
       device.clearLogcat();
       app.launchFresh();
       const failed = await app.waitInitFailed();
@@ -67,9 +67,9 @@ test('Kablo: güncelleme sonrası /health düşerse init başarısız oluyor —
         .join('\n');
       await attachText(
         testInfo,
-        'İlk açılış: kabloda ve telefonda',
+        'İlk açılış: ağ trafiğinde ve telefonda',
         [
-          'VEKİLİN GÖRDÜĞÜ İSTEKLER (sırayla)',
+          'SALDIRGANIN GÖRDÜĞÜ İSTEKLER (sırayla)',
           seen || '(yok)',
           '',
           'TELEFONUN EKRANI',
@@ -109,9 +109,9 @@ test('Kablo: güncelleme sonrası /health düşerse init başarısız oluyor —
           `kayıt sayısı : ${entryCount}`,
           '',
           'Bu açılış "pm clear" sonrası yapıldı: geri dönülecek ÖNCEKİ config yok.',
-          'Sağlık kapısı açılmayınca kütüphane uygulanan config\'i geri alıyor —',
+          'Sağlık kontrolü geçmeyince kütüphane uygulanan config\'i geri alıyor —',
           'önceki kopya olmadığı için depoyu temizliyor (configStore.clear) ve',
-          'istemciyi fail-closed durumuna döndürüyor (httpClientProvider.reset).',
+          'istemciyi, şüphede bağlantıya izin vermeyen duruma döndürüyor (httpClientProvider.reset).',
           'Dosya diskte kalsa bile içinde uygulamaya ait tek bir kayıt yok (yalnızca',
           'EncryptedSharedPreferences\'in kendi keyset kayıtları duruyor).',
           '',
@@ -133,21 +133,21 @@ test('Kablo: güncelleme sonrası /health düşerse init başarısız oluyor —
       const ready = /Hazır — config v\d+/.test(status.text);
       await attachText(
         testInfo,
-        'İkinci açılış (aynı kurcalama açıkken)',
+        "İkinci açılış (saldırgan /health'i hâlâ bozarken)",
         [
           status.text.split('\n').slice(0, 3).join('\n'),
           '',
           `library client düğmesi: ${app.node('testButton').enabled ? 'açık' : 'kilitli'}`,
           '',
-          'Geri alma sayesinde ikinci açılış da aynı kapıya takılıyor: saklı config',
+          'Geri alma sayesinde ikinci açılış da aynı kontrole takılıyor: saklı config',
           'olmadığı için config yeniden iniyor, uygulanıyor, sağlık düşüyor ve yine',
           'geri alınıyor. "Sunucuya ulaşılamaz hale getiren config diskte kalıp',
           'sonraki açılışta sessizce Hazır oluyor" yolu kapandı.',
           '',
           'Önceki davranış bu adımda "Hazır — config vN" diyordu: saklı config',
           'yükleniyor, sunucu aynı sürümü döndürdüğü için sonuç AlreadyCurrent',
-          'oluyor ve sağlık kapısı hiç çalışmıyordu (kapı yalnızca Updated turunda',
-          'işliyor).',
+          'oluyor ve sağlık kontrolü hiç çalışmıyordu (kontrol yalnızca config',
+          'güncellendiğinde, yani Updated sonucunda işliyor).',
         ].join('\n'),
       );
       expect(ready, 'geri alınan config ikinci açılışta yürürlüğe girmemeli').toBe(false);
@@ -155,7 +155,7 @@ test('Kablo: güncelleme sonrası /health düşerse init başarısız oluyor —
       expect(app.node('testButton').enabled, 'library client düğmesi').toBe(false);
     });
 
-    await test.step('Vekil: sağlık ucu düzelince uygulama normale dönüyor', async () => {
+    await test.step('Saldırgan: /health yanıtını bozmayı bırakınca uygulama normale dönüyor', async () => {
       mitm.setMutate(null);
       app.launchFresh();
       const ready = await app.waitReady();
@@ -176,7 +176,7 @@ test('Kablo: güncelleme sonrası /health düşerse init başarısız oluyor —
       mitm = null;
       app.relaunch();
       expect(await app.waitReady()).toContain('Hazır — config v');
-      await app.snap('vekil kapandı: doğrudan sunucuyla Hazır');
+      await app.snap('saldırgan proxy kapandı: doğrudan sunucuyla Hazır');
       expect(device.rootShell('iptables -t nat -S OUTPUT')).not.toContain(`--dport ${env.CONFIG_API_PORT}`);
     });
   } finally {

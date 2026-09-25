@@ -1,12 +1,12 @@
 // Web → Mobil (uçtan uca şifreleme): dashboard'da end_to_end yüklenen dosya
-// kabloda cihazın RSA anahtarıyla sarılmış gider; yalnızca cihaz çözer.
+// ağ trafiğinde cihazın RSA anahtarıyla şifrelenmiş gider; yalnızca cihaz çözer.
 const { test, expect } = require('../lib/fixtures');
 const hostApi = require('../lib/hostApi');
 const env = require('../lib/env');
 
 const KEY = env.VAULT_KEYS.e2e;
 
-test('Vault uçtan uca şifreleme: dosya kabloda şifreli, yalnızca cihaz çözer', async ({ app, dashboard, run }) => {
+test('Vault uçtan uca şifreleme: dosya ağ trafiğinde şifreli, yalnızca cihaz çözer', async ({ app, dashboard, run }) => {
   const plaintext = `uçtan uca gizli: ${Date.now()}`;
   let deviceId;
 
@@ -26,7 +26,7 @@ test('Vault uçtan uca şifreleme: dosya kabloda şifreli, yalnızca cihaz çöz
       await app.snap('uçtan uca çözüldü');
     });
 
-    await test.step('Kablo: aynı dosya ağda şifreli gider', async () => {
+    await test.step('Ağ trafiği: aynı dosya şifreli gidiyor, içinde açık metin yok', async () => {
       const res = await hostApi.rawVaultDownload(KEY, deviceId);
       expect(res.status).toBe(200);
       expect(res.headers['x-vault-encryption']).toBe('end_to_end');
@@ -34,7 +34,7 @@ test('Vault uçtan uca şifreleme: dosya kabloda şifreli, yalnızca cihaz çöz
       // [4 bayt uzunluk][RSA ile sarılmış AES anahtarı][12 bayt IV][AES-GCM şifreli metin]
       const wrappedKeyLength = res.body.readUInt32BE(0);
       expect(wrappedKeyLength).toBeGreaterThanOrEqual(256);
-      await test.info().attach('kablodaki içerik (ilk 64 bayt, hex)', {
+      await test.info().attach('ağ trafiğindeki ham veri (ilk 64 bayt, hex)', {
         body: res.body.subarray(0, 64).toString('hex').replace(/(.{32})/g, '$1\n'),
         contentType: 'text/plain',
       });

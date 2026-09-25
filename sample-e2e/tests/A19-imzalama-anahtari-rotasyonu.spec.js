@@ -5,8 +5,8 @@
 // kalır ve verisi silinmiş bir kurulum hiç açılamaz. Uygulama yeni public key
 // ile yeniden derlenince akış normale döner.
 //
-// TAZE host örneği üzerinde koşar: ana host'un imzalama anahtarı değişirse
-// telefondaki APK'nın gömülü public key'i bayatlar ve diğer bütün senaryolar
+// Geçici test sunucusunda çalışır: ana host'un imzalama anahtarı değişirse
+// telefondaki APK'ya gömülü public key eskir ve diğer bütün senaryolar
 // çöker. Senaryo sonunda uygulama MUTLAKA ana host değerleriyle yeniden
 // derlenip kurulur (finally).
 const fs = require('fs');
@@ -31,7 +31,7 @@ function propLine(props, key) {
   return (props.split('\n').find((l) => l.startsWith(`${key}=`)) || '').slice(key.length + 1).trim();
 }
 
-test('Web+Mobil: imzalama anahtarı yenilenince eski APK config\'i reddeder, yeni anahtarla kabul eder', async ({
+test('Web+Mobil: imzalama anahtarı yenilenince eski APK config\'i reddediyor, yeni anahtarla derlenen APK kabul ediyor', async ({
   device,
   browser,
 }, testInfo) => {
@@ -44,13 +44,13 @@ test('Web+Mobil: imzalama anahtarı yenilenince eski APK config\'i reddeder, yen
   let newKey;
 
   try {
-    await test.step('Terminal: uygulama taze host\'un bugünkü imzalama anahtarıyla kurulur', async () => {
+    await test.step('Terminal: uygulama geçici test sunucusunun şu anki imzalama anahtarıyla derlenip kurulur', async () => {
       const props = writeFreshProps();
       oldKey = propLine(props, 'host.signingPublicKey');
       clientBuild.buildAndInstall(device, FRESH_PROPS);
       app.launchFresh();
       const status = await app.waitReady();
-      await app.snap('taze host: imzalı config kabul edildi');
+      await app.snap('geçici test sunucusu: imzalı config kabul edildi');
       await attachText(
         testInfo,
         'Derlemeye gömülen imzalama public key\'i',
@@ -64,9 +64,9 @@ test('Web+Mobil: imzalama anahtarı yenilenince eski APK config\'i reddeder, yen
       expect(status).toMatch(/Hazır — config v\d+/);
     });
 
-    await test.step('Web: İmzalama sekmesindeki public key (rotasyon öncesi)', async () => {
+    await test.step('Web: İmzalama sekmesindeki public key (anahtar değişmeden önce)', async () => {
       const shown = await dashboard.signingPublicKey('default-tls');
-      await dashboard.snap('İmzalama sekmesi (rotasyon öncesi)');
+      await dashboard.snap('İmzalama sekmesi (anahtar değişmeden önce)');
       expect(shown.replace(/\s/g, '')).toContain(oldKey.slice(0, 40));
     });
 
@@ -78,7 +78,7 @@ test('Web+Mobil: imzalama anahtarı yenilenince eski APK config\'i reddeder, yen
       const shownAfterClick = (await dashboard.signingPublicKey('default-tls')).replace(/\s/g, '');
       await attachText(
         testInfo,
-        'Anahtar rotasyonu — dosya, sunucu ve dashboard aynı anahtarda',
+        'Anahtar değişti (rotasyon) — dosya, sunucu ve dashboard aynı anahtarı gösteriyor',
         [
           `onay  : ${dashboard.lastDialog()}`,
           `toast : ${toast}`,
@@ -86,15 +86,15 @@ test('Web+Mobil: imzalama anahtarı yenilenince eski APK config\'i reddeder, yen
           `data/signing-key.pem (public yarısı): ${redact(newKey, 24)}`,
           `GET /api/v1/signing-key              : ${redact(servedAfterClick, 24)}`,
           `Dashboard'da görünen                 : ${redact(shownAfterClick, 24)}`,
-          `Rotasyon öncesi anahtar              : ${redact(oldKey, 24)}`,
+          `Değişmeden önceki anahtar            : ${redact(oldKey, 24)}`,
           '',
-          'Rotasyon çalışan sunucuya yeniden başlatmadan yansıyor: imza servisi',
-          'anahtar çiftini yerinde değiştiriyor (ConfigSigningService.regenerate),',
-          'rotalar da aynı örneği tuttuğu için bir sonraki imza yeni anahtarla',
-          'atılıyor. Daha önce rotalar servisi DEĞER olarak tuttuğu için dashboard',
-          '"yenilendi" derken sunucu eski anahtarla imzalamaya devam ediyordu ve',
-          'rotasyon ancak ilk yeniden başlatmada, sahadaki bütün APK\'ları aynı anda',
-          'geçersizleştirerek devreye giriyordu.',
+          'Yeni anahtar sunucu yeniden başlatılmadan devreye giriyor: imza servisi',
+          'anahtar çiftini yerinde değiştiriyor (ConfigSigningService.regenerate) ve',
+          'API uçları aynı servis nesnesini kullandığı için sonraki imza yeni',
+          'anahtarla atılıyor. Eskiden uçlar servisin açılıştaki halini tutuyordu:',
+          'dashboard "yenilendi" derken sunucu eski anahtarla imzalamaya devam',
+          'ediyordu. Yeni anahtar ancak ilk yeniden başlatmada devreye giriyordu ve',
+          'o anda sahadaki bütün APK\'lar birden config kabul edemez oluyordu.',
         ].join('\n'),
       );
       expect(newKey, 'diskteki anahtar yenilenmeli').not.toBe(oldKey);
@@ -102,7 +102,7 @@ test('Web+Mobil: imzalama anahtarı yenilenince eski APK config\'i reddeder, yen
       expect(shownAfterClick).toContain(newKey.slice(0, 40));
     });
 
-    await test.step('Mobil: yenileme imza doğrulamasında düşüyor, eski config yerinde kalıyor', async () => {
+    await test.step('Mobil: imza doğrulanamadığı için yenileme başarısız, eski config yerinde kalıyor', async () => {
       const status = await app.refreshConfig();
       await app.snap('imza doğrulanamadı: config reddedildi');
       await attachText(testInfo, 'Telefondaki durum kutusu', status);
@@ -111,14 +111,14 @@ test('Web+Mobil: imzalama anahtarı yenilenince eski APK config\'i reddeder, yen
       expect(SampleApp.hostVersion(status, env.LAN_IP)).not.toBeNull();
     });
 
-    await test.step('Mobil: saklı config ile açılış sürüyor (imzası daha önce doğrulanmıştı)', async () => {
+    await test.step('Mobil: uygulama saklı config ile yine açılıyor (imzası daha önce doğrulanmıştı)', async () => {
       app.relaunch();
       const status = await app.waitReady();
       await app.snap('saklı config ile hazır');
       expect(status).toMatch(/Hazır — config v\d+/);
     });
 
-    await test.step('Mobil: verisi silinmiş kurulum hiç açılamıyor (doğrulanabilir config yok)', async () => {
+    await test.step('Mobil: verisi silinmiş uygulama hiç başlatılamıyor (imzası doğrulanan config yok)', async () => {
       app.launchFresh();
       const status = await app.waitInitFailed();
       await app.snap('eski public key ile: başlatılamadı');
@@ -130,7 +130,7 @@ test('Web+Mobil: imzalama anahtarı yenilenince eski APK config\'i reddeder, yen
           '',
           'Saklı config yok + sunucudan gelen imzalı config doğrulanamıyor →',
           'InitResult.Failed. Kütüphane imzasız/şüpheli config\'i ASLA uygulamıyor,',
-          'sistem güvenine de düşmüyor.',
+          'telefonun sistem sertifikalarına güvenmeye de geri dönmüyor.',
         ].join('\n'),
       );
       expect(status).toContain('PinVault başlatılamadı');
@@ -142,7 +142,7 @@ test('Web+Mobil: imzalama anahtarı yenilenince eski APK config\'i reddeder, yen
       const rebuiltKey = propLine(props, 'host.signingPublicKey');
       await attachText(
         testInfo,
-        'scripts/client-config.sh --properties (rotasyondan sonra)',
+        'scripts/client-config.sh --properties (anahtar değiştikten sonra)',
         [
           `host.signingPublicKey=${redact(rebuiltKey, 24)}`,
           `dashboard\'daki yeni anahtarla aynı mı: ${rebuiltKey === newKey}`,

@@ -1,18 +1,19 @@
-// G04 — Sürüm düşürme: imza geçerli, sürüm eski.
+// G04 — Eski sürüme geri döndürme: imza geçerli, sürüm eski.
 //
-// G03'teki replay'in daha inceltilmiş hali. Bu kez saldırgan payload'ı
-// GERÇEKTEN değiştiriyor (per-host sürümleri bir geri alıyor) ve — laboratuvar
-// koşulu olarak — sunucunun imzalama anahtarıyla YENİDEN İMZALIYOR. Yani:
+// G03'teki "eski yanıtı tekrar gönderme"nin daha inceltilmiş hali. Bu kez
+// saldırgan payload'ı GERÇEKTEN değiştiriyor (per-host sürümleri bir geri
+// alıyor) ve — test gereği — sunucunun imzalama anahtarıyla YENİDEN İMZALIYOR.
+// Yani:
 //
 //   • TLS pin'i tutuyor (host'un kendi anahtarıyla dinleniyor),
 //   • ECDSA imzası geçerli (harness imzayı yerel olarak da doğruluyor),
-//   • issuedAt taze (yanıt sunucudan yeni geldi, replay değil),
+//   • issuedAt taze (yanıt sunucudan yeni geldi, eski yanıtın tekrarı değil),
 //   • tek anormallik: per-host sürümler cihazdakinden düşük.
 //
-// Kütüphanenin üçüncü kapısı tam da bunu kapatıyor: SSLCertificateUpdater
-// gelen her pin girdisinin sürümünü saklı sürümle karşılaştırıyor ve gerileme
-// varsa config'i hiç uygulamıyor. Gerçek hayattaki karşılığı: geri çekilmiş
-// (ör. sızmış anahtara ait) pin'lerin cihaza yeniden yutturulması.
+// Kütüphanenin üçüncü kontrolü tam da bunu yakalıyor: SSLCertificateUpdater
+// gelen her pin girdisinin sürümünü saklı sürümle karşılaştırıyor ve sürüm
+// geriye gidiyorsa config'i hiç uygulamıyor. Gerçek hayattaki karşılığı: geri
+// çekilmiş (ör. sızmış anahtara ait) pin'lerin cihaza yeniden yutturulması.
 const { test, expect, TARGET_HOST } = require('../lib/fixtures');
 const { attachText } = require('../lib/evidence');
 const { SampleApp } = require('../lib/sampleApp');
@@ -31,7 +32,7 @@ function verifyWithHostKey(payload, signature) {
 
 const versionsOf = (payload) => payload.pins.map((p) => `${p.hostname}=v${p.version}`).join(', ');
 
-test('Kablo: imzası geçerli ama sürümü düşük config → telefon sürüm gerilemesini reddediyor', async ({
+test("Saldırı: config'in sürümü geri alınıp yeniden imzalanır → imza geçerli olsa da telefon eski sürüme dönmeyi reddediyor", async ({
   app,
   device,
   dashboard,
@@ -50,16 +51,16 @@ test('Kablo: imzası geçerli ama sürümü düşük config → telefon sürüm 
       await dashboard.snapHostSummary(`sunucudaki sürüm: v${v0}`);
     });
 
-    await test.step("Vekil: host'un anahtarıyla saydam araya girilir → telefon normal çalışıyor", async () => {
+    await test.step('Saldırgan: sunucunun kendi anahtarıyla araya girer, henüz bir şey değiştirmiyor → telefon normal çalışıyor', async () => {
       mitm = await proxy.start({ identity: 'trusted' });
       device.redirectTcp(env.LAN_IP, env.CONFIG_API_PORT, env.PROXY_PORT);
       app.relaunch();
       const ready = await app.waitReady();
-      await app.snap('saydam vekil: telefon Hazır');
+      await app.snap('saldırgan henüz bir şey değiştirmiyor: telefon Hazır');
       expect(SampleApp.hostVersion(ready, TARGET_HOST)).toBe(v0);
     });
 
-    await test.step('Vekil: sürümler bir geri alınıp YENİDEN İMZALANIR → telefon reddediyor', async () => {
+    await test.step("Saldırgan: sürüm numaralarını bir geri alır ve config'i YENİDEN İMZALAR → telefon reddediyor", async () => {
       const downgrade = proxy.downgradeConfig(1, proxy.hostSigner());
       mitm.setMutate((answer) => {
         const mutated = downgrade(answer);
@@ -71,7 +72,7 @@ test('Kablo: imzası geçerli ama sürümü düşük config → telefon sürüm 
       });
 
       const status = await app.refreshConfig();
-      await app.snap('sürüm düşürme: config yenilenemedi');
+      await app.snap('eski sürüme geri döndürme: config yenilenemedi');
       expect(status).toContain('Config yenilenemedi');
       expect(status).toMatch(/downgrade rejected/i);
 
@@ -81,7 +82,7 @@ test('Kablo: imzası geçerli ama sürümü düşük config → telefon sürüm 
       const afterPayload = JSON.parse(after.payload);
       await attachText(
         testInfo,
-        'Kablodaki fark (GET /api/v1/certificate-config)',
+        'Saldırganın yaptığı değişiklik (GET /api/v1/certificate-config)',
         [
           'SUNUCUNUN GÖNDERDİĞİ',
           `  version   : ${beforePayload.version}`,
@@ -89,17 +90,17 @@ test('Kablo: imzası geçerli ama sürümü düşük config → telefon sürüm 
           `  issuedAt  : ${beforePayload.issuedAt}`,
           `  imza geçerli mi: ${verifyWithHostKey(before.payload, before.signature) ? 'evet' : 'hayır'}`,
           '',
-          'TELEFONUN ALDIĞI (vekil değiştirdi ve yeniden imzaladı)',
+          'TELEFONUN ALDIĞI (saldırgan değiştirdi ve yeniden imzaladı)',
           `  version   : ${afterPayload.version}`,
           `  per-host  : ${versionsOf(afterPayload)}`,
-          `  issuedAt  : ${afterPayload.issuedAt} (değişmedi — replay değil, taze yanıt)`,
-          `  imza geçerli mi: ${verifyWithHostKey(after.payload, after.signature) ? 'evet ✓ (laboratuvar: host anahtarıyla yeniden imzalandı)' : 'hayır'}`,
+          `  issuedAt  : ${afterPayload.issuedAt} (değişmedi — eski yanıtın tekrarı değil, taze yanıt)`,
+          `  imza geçerli mi: ${verifyWithHostKey(after.payload, after.signature) ? 'evet ✓ (test gereği sunucunun imzalama anahtarıyla yeniden imzalandı)' : 'hayır'}`,
           '',
           'TELEFONUN CEVABI',
           status.split('\n').slice(0, 3).join('\n'),
           '',
-          'Pin listesi aynı kaldı; değişen tek şey sürüm numaraları. İmza ve',
-          'tazelik kapılarını geçen bu yanıtı sürüm tekdüzeliği durduruyor.',
+          'Pin listesi aynı kaldı; değişen tek şey sürüm numaraları. İmza ve tarih',
+          'kontrollerini geçen bu yanıtı sürüm kontrolü durduruyor (sürüm geriye gidemez).',
         ].join('\n'),
       );
       expect(verifyWithHostKey(after.payload, after.signature)).toBe(true);
@@ -111,7 +112,7 @@ test('Kablo: imzası geçerli ama sürümü düşük config → telefon sürüm 
       const status = app.status();
       expect(SampleApp.hostVersion(status, TARGET_HOST)).toBe(v0);
       expect(await app.testLibraryClient()).toContain('Pinned bağlantı başarılı');
-      await app.snap('sürüm düşürme sonrası: config v' + v0 + ' yerinde');
+      await app.snap('geri döndürme denemesinden sonra: config v' + v0 + ' yerinde');
       await attachText(
         testInfo,
         'Sunucu ile telefon aynı sürümde',
@@ -124,10 +125,10 @@ test('Kablo: imzası geçerli ama sürümü düşük config → telefon sürüm 
       );
     });
 
-    await test.step('Vekil: kurcalama kalkınca yenileme yine çalışıyor', async () => {
+    await test.step('Saldırgan: değiştirmeyi bırakınca config yenileme yine çalışıyor', async () => {
       mitm.setMutate(null);
       const status = await app.refreshConfig();
-      await app.snap('kurcalama kalktı: config güncel');
+      await app.snap('saldırgan değiştirmeyi bıraktı: config güncel');
       expect(status).toMatch(/Config güncel|Yeni config uygulandı/);
     });
 
@@ -137,7 +138,7 @@ test('Kablo: imzası geçerli ama sürümü düşük config → telefon sürüm 
       mitm = null;
       app.relaunch();
       expect(await app.waitReady()).toContain('Hazır — config v');
-      await app.snap('vekil kapandı: doğrudan sunucuyla Hazır');
+      await app.snap('saldırgan proxy kapandı: doğrudan sunucuyla Hazır');
     });
   } finally {
     device.clearNetRules();

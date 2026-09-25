@@ -1,16 +1,18 @@
-// G01 — Gerçek araya girme: kablodaki sunucu başkası.
+// G01 — Gerçek araya girme: telefonun konuştuğu sunucu başkası.
 //
-// Vekil KENDİ ürettiği anahtarla (identity: 'rogue') dinler ve telefonun
-// Config API trafiği emülatördeki iptables DNAT ile ona yönlendirilir.
+// Saldırgan proxy KENDİ ürettiği anahtarla (identity: 'rogue') dinler ve
+// telefonun Config API trafiği emülatördeki iptables DNAT ile ona yönlendirilir.
 // Sertifika geçerli bir X.509'dur, SAN'ında host'un IP'si vardır, tek eksiği
 // pin'lerin tutmamasıdır. Pinleme çalışıyorsa:
 //
-//   • TLS el sıkışması kabloda kesilir — vekile tek bir HTTP isteği bile
-//     ulaşmaz (vekilin istek sayacı 0'da kalır, karşılığında fatal alert gelir),
+//   • TLS el sıkışması yarıda kesilir — saldırgana tek bir HTTP isteği bile
+//     ulaşmaz (proxy'nin istek sayacı 0'da kalır, karşılığında fatal alert
+//     gelir),
 //   • saklı config'i olan uygulama config'i yenileyemez ama eski pin'lerle
 //     çalışmaya devam eder (fail-safe),
-//   • saklı config'i olmayan uygulama hiç başlayamaz (fail-closed),
-//   • uyuşmazlık dashboard'a pin_mismatch olarak raporlanır ve kabloda görülen
+//   • saklı config'i olmayan uygulama hiç başlayamaz (şüphede bağlantıya izin
+//     vermez),
+//   • uyuşmazlık dashboard'a pin_mismatch olarak raporlanır; telefonun gördüğü
 //     pin ile beklenen pin kayda birlikte düşer.
 const { test, expect, TARGET_HOST } = require('../lib/fixtures');
 const { attachText } = require('../lib/evidence');
@@ -19,7 +21,7 @@ const proxy = require('../lib/proxy');
 const hostApi = require('../lib/hostApi');
 const env = require('../lib/env');
 
-test('Kablo: sahte sunucu araya girer → hiçbir istek geçmez, telefon pin uyuşmazlığı raporlar', async ({
+test('Saldırı: araya sahte sertifikalı bir sunucu girer → telefon ona hiç istek göndermiyor, pin uyuşmazlığını raporluyor', async ({
   app,
   device,
   dashboard,
@@ -32,39 +34,39 @@ test('Kablo: sahte sunucu araya girer → hiçbir istek geçmez, telefon pin uyu
   let mitm;
 
   try {
-    await test.step('Vekil: sahte anahtarla dinlemeye başlanır (kablodaki pin ≠ beklenen pin)', async () => {
+    await test.step('Saldırgan: kendi anahtarıyla dinlemeye başlar (sunduğu pin ≠ telefonun beklediği pin)', async () => {
       mitm = await proxy.start({ identity: 'rogue' });
       const rogue = proxy.certSummary('rogue');
       const expected = hostApi.hostPins();
       await attachText(
         testInfo,
-        `Kablodaki sertifika vs. beklenen pin'ler (${env.LAN_IP}:${env.CONFIG_API_PORT})`,
+        `Saldırganın sunduğu sertifika ve telefonun beklediği pin'ler (${env.LAN_IP}:${env.CONFIG_API_PORT})`,
         [
-          'KABLODA (vekilin sunduğu sertifika)',
+          'SALDIRGANIN SUNDUĞU SERTİFİKA',
           `  konu      : ${rogue.subject}`,
           `  veren     : ${rogue.issuer}`,
           `  geçerlilik: ${rogue.validFrom} → ${rogue.validTo}`,
           `  SPKI pin  : ${rogue.pin}`,
           '',
-          "BEKLENEN (APK'ya gömülü bootstrap pin'leri, host'un demo-server.pins dosyası)",
+          "TELEFONUN BEKLEDİĞİ: uygulamaya gömülü ilk pin'ler (bootstrap), host'un demo-server.pins dosyasından",
           ...expected.map((p, i) => `  pin ${i + 1}     : ${p}`),
           '',
           `eşleşme: ${expected.includes(rogue.pin) ? 'VAR ✗' : 'yok ✓ (pinleme bu sertifikayı kabul etmemeli)'}`,
           '',
           'Sertifika teknik olarak kusursuz: SAN\'ında host\'un IP\'si var, süresi',
-          'geçmemiş, kendinden imzalı. Pinleme yalnızca SPKI\'ya baktığı için',
-          'geçerli bir sertifika üretebilmek saldırganı kurtarmıyor.',
+          'geçmemiş, kendinden imzalı. Pinleme yalnızca sertifikanın public key\'ine',
+          '(SPKI) baktığı için geçerli bir sertifika üretebilmek saldırganı kurtarmıyor.',
         ].join('\n'),
       );
       expect(expected).not.toContain(rogue.pin);
     });
 
-    await test.step(`Terminal: ${env.CONFIG_API_PORT} portuna giden trafik vekile yönlendirilir (iptables DNAT)`, async () => {
+    await test.step(`Terminal: telefonun ${env.CONFIG_API_PORT} portuna giden trafiği saldırgana yönlendirilir (iptables DNAT)`, async () => {
       device.redirectTcp(env.LAN_IP, env.CONFIG_API_PORT, env.PROXY_PORT);
       const rules = device.rootShell('iptables -t nat -S OUTPUT');
       await attachText(
         testInfo,
-        `iptables DNAT: ${env.LAN_IP}:${env.CONFIG_API_PORT} → ${env.LAN_IP}:${env.PROXY_PORT}`,
+        `Yönlendirme kuralı (iptables DNAT): ${env.LAN_IP}:${env.CONFIG_API_PORT} → ${env.LAN_IP}:${env.PROXY_PORT}`,
         [
           `$ iptables -t nat -A OUTPUT -p tcp -d ${env.LAN_IP} --dport ${env.CONFIG_API_PORT} ` +
             `-j DNAT --to-destination ${env.LAN_IP}:${env.PROXY_PORT}`,
@@ -72,8 +74,8 @@ test('Kablo: sahte sunucu araya girer → hiçbir istek geçmez, telefon pin uyu
           rules.trim(),
           '',
           'Telefon hâlâ https://' + env.LAN_IP + ':' + env.CONFIG_API_PORT + '/ adresine',
-          'bağlandığını sanıyor; paketler vekile gidiyor. Hedef host\'a (' + TARGET_HOST + ')',
-          've telemetri portuna (' + env.HTTP_PORT + ') dokunulmadı.',
+          'bağlandığını sanıyor; paketler saldırgana gidiyor. Hedef host\'a (' + TARGET_HOST + ')',
+          've cihaz raporlarının (telemetri) gittiği porta (' + env.HTTP_PORT + ') dokunulmadı.',
         ].join('\n'),
       );
       expect(rules).toContain(`--dport ${env.CONFIG_API_PORT}`);
@@ -100,19 +102,19 @@ test('Kablo: sahte sunucu araya girer → hiçbir istek geçmez, telefon pin uyu
         testInfo,
         'Telefonun ekranı (özet)',
         [
-          'Yeniden açılış (saklı config var, ağ vekile yönlendirilmiş):',
+          'Yeniden açılış (saklı config var, trafik saldırgana yönlendirilmiş):',
           ready.split('\n').slice(0, 3).join('\n'),
           '',
           'Config yenileme denemesi:',
           refresh.split('\n').slice(0, 3).join('\n'),
           '',
-          'Hedefe pinli istek (hedef trafiği yönlendirilmedi):',
+          "Hedef host'a pinli istek (bu trafik saldırgana yönlendirilmedi):",
           request.split('\n').slice(0, 3).join('\n'),
         ].join('\n'),
       );
     });
 
-    await test.step('Mobil: uygulama sıfırdan açılınca hiç başlayamıyor (fail-closed)', async () => {
+    await test.step('Mobil: uygulama sıfırdan açılınca hiç başlayamıyor (şüphede bağlantıya izin vermez)', async () => {
       app.launchFresh();
       const failed = await app.waitInitFailed();
       await app.snap('araya girme: PinVault başlatılamadı');
@@ -122,14 +124,15 @@ test('Kablo: sahte sunucu araya girer → hiçbir istek geçmez, telefon pin uyu
         [
           failed,
           '',
-          'Kütüphane sistem güven deposuna DÜŞMÜYOR: pin tutmayınca config hiç',
-          'alınamıyor, config olmayınca da pinli istemci TLS yapmayı reddediyor.',
+          'Kütüphane yedek yol olarak Android\'in sistem sertifika deposuna BAŞVURMUYOR:',
+          'pin tutmayınca config hiç alınamıyor, config olmayınca da pinli istemci',
+          'TLS bağlantısı kurmayı reddediyor.',
         ].join('\n'),
       );
       expect(failed).toContain('başlatılamadı');
     });
 
-    await test.step('Vekil: kabloda tek bir HTTP isteği bile geçmedi', async () => {
+    await test.step('Saldırgan: eline tek bir HTTP isteği bile geçmedi (telefon bağlantıyı TLS aşamasında kesti)', async () => {
       // El sıkışma sertifika doğrulamasında kesildiği için vekil istek
       // göremiyor; gördüğü tek şey telefonun gönderdiği fatal TLS alert'i.
       const logcat = device.logcat({ match: /Pin mismatch|pinning failure|PinVault/ , lines: 3000 })
@@ -139,7 +142,7 @@ test('Kablo: sahte sunucu araya girer → hiçbir istek geçmez, telefon pin uyu
         .join('\n');
       await attachText(
         testInfo,
-        'Vekilin gördüğü (istek sayacı ve TLS el sıkışma hataları)',
+        'Saldırganın gördüğü (ulaşan istek sayısı ve TLS el sıkışma hataları)',
         [
           `geçen HTTP isteği : ${mitm.requests.length} (${mitm.requests.join(', ') || 'yok ✓'})`,
           `el sıkışma hatası : ${mitm.handshakeErrors.length}`,
@@ -154,7 +157,7 @@ test('Kablo: sahte sunucu araya girer → hiçbir istek geçmez, telefon pin uyu
       expect(logcat).toMatch(/Pin mismatch|pinning failure/);
     });
 
-    await test.step('Web: dashboard\'da pin_mismatch telemetrisi (kablodaki pin ile beklenen pin yan yana)', async () => {
+    await test.step("Web: telefonun gönderdiği pin_mismatch raporu dashboard'da (telefonun gördüğü pin ile beklenen pin yan yana)", async () => {
       // Bağlantı Geçmişi kartı host detayında: uyuşmazlık Config API host'una
       // (LAN IP) ait, hedef host'a değil.
       await dashboard.openHost(env.LAN_IP);
@@ -171,14 +174,14 @@ test('Kablo: sahte sunucu araya girer → hiçbir istek geçmez, telefon pin uyu
           '',
           ...rows.slice(0, 3).flatMap((e) => [
             `${e.timestamp}  ${e.status}  (${e.deviceManufacturer} ${e.deviceModel})`,
-            `  kabloda görülen pin : ${e.serverCertPin}`,
-            `  beklenen pin        : ${e.storedPin}`,
-            `  eşleşti mi          : ${e.pinMatched}`,
+            `  telefonun gördüğü pin : ${e.serverCertPin}`,
+            `  beklenen pin          : ${e.storedPin}`,
+            `  eşleşti mi            : ${e.pinMatched}`,
             '',
           ]),
-          `vekilin sahte sertifikasının pin'i: ${proxy.certPin('rogue')}`,
+          `saldırganın sertifikasının pin'i: ${proxy.certPin('rogue')}`,
           '',
-          'Telemetri yönetim portundan (' + env.HTTP_PORT + ') gidiyor; o port',
+          'Cihaz raporları (telemetri) yönetim portundan (' + env.HTTP_PORT + ') gidiyor; o port',
           'yönlendirilmediği için uyuşmazlık haberi sunucuya ulaşabiliyor.',
         ].join('\n'),
       );

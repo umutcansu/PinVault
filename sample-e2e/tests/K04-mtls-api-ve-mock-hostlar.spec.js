@@ -1,7 +1,7 @@
 // Kurulum yolculuğu K7–K8: mTLS Config API oluşturma (istemci sertifikası
 // yokken truststore olmadığı için 400, sertifika üretilince başarı) ve mock
 // hedef host'ların başlatılıp "Bağlantıyı test et" ile doğrulanması.
-// Taze host örneği üzerinde.
+// Geçici test sunucusunda çalışır.
 const fs = require('fs');
 const path = require('path');
 const { test, expect } = require('../lib/fixtures');
@@ -14,7 +14,7 @@ const MOCK_HOST = 'k04-mock.sample';
 const MOCK_PORT = 8446;
 const CLIENT_ID = 'k04-client';
 
-test('Kurulum: mTLS Config API truststore olmadan reddedilir, sertifikayla açılır; mock host test edilir', async ({
+test('Kurulum: mTLS Config API istemci sertifikası yokken açılmaz, sertifika üretilince açılır; mock host test edilir', async ({
   browser,
 }, testInfo) => {
   test.setTimeout(10 * 60 * 1000);
@@ -26,7 +26,7 @@ test('Kurulum: mTLS Config API truststore olmadan reddedilir, sertifikayla açı
   const page = dashboard.page;
 
   try {
-    await test.step('Sunucu: truststore yok (kurulumun ilk anı) (K7)', async () => {
+    await test.step('Sunucu: henüz truststore (istemci sertifikalarını doğrulamak için gereken dosya) yok; kurulumun ilk anı (K7)', async () => {
       if (fs.existsSync(trustStore)) fs.renameSync(trustStore, stash);
       await attachText(
         testInfo,
@@ -36,7 +36,7 @@ test('Kurulum: mTLS Config API truststore olmadan reddedilir, sertifikayla açı
       expect(fs.existsSync(trustStore)).toBe(false);
     });
 
-    await test.step('Web: istemci sertifikası yokken mTLS Config API reddedilir (K7)', async () => {
+    await test.step('Web: istemci sertifikası yokken mTLS Config API açma isteği reddedilir (K7)', async () => {
       const toast = await dashboard.createConfigApi(MTLS_API, MTLS_API_PORT, 'mtls');
       await dashboard.snap('mTLS Config API reddedildi (truststore yok)');
       const direct = await fresh.api('/api/v1/config-apis/start', {
@@ -67,11 +67,11 @@ test('Kurulum: mTLS Config API truststore olmadan reddedilir, sertifikayla açı
       const toast = await dashboard.createConfigApi(MTLS_API, MTLS_API_PORT, 'mtls');
       await expect(page.locator(`#host-list .api-header[data-arg0="${MTLS_API}"]`)).toBeVisible({ timeout: 20_000 });
       await dashboard.snap(`mTLS Config API çalışıyor: ${MTLS_API}`);
-      await attachText(testInfo, 'Dashboard → sunucu yanıtı', toast);
+      await attachText(testInfo, 'Sunucu yanıtı (dashboard\'da çıkan mesaj)', toast);
       expect(await dashboard.apiRunning(MTLS_API)).toBe(true);
     });
 
-    await test.step('Web: mock hedef host eklenir ve başlatılır (K8)', async () => {
+    await test.step('Web: mock host (test için kurulan hedef sunucu) eklenir ve başlatılır (K8)', async () => {
       await dashboard.addHostGenerate('default-tls', MOCK_HOST);
       const toast = await dashboard.startMock(MOCK_HOST, { port: MOCK_PORT });
       await dashboard.snap(`mock host başlatıldı: ${MOCK_HOST}`);
@@ -80,10 +80,10 @@ test('Kurulum: mTLS Config API truststore olmadan reddedilir, sertifikayla açı
       expect(status.json.mockServerRunning).toBe(true);
     });
 
-    await test.step('Web: "Bağlantıyı test et" mock host\'a pinli bağlanır (K8)', async () => {
+    await test.step('Web: "Bağlantıyı Test Et" ile mock host\'a pinli bağlanılır (K8)', async () => {
       const toast = await dashboard.testConnection(MOCK_HOST);
       await dashboard.snap('bağlantı testi sonucu');
-      await attachText(testInfo, 'Bağlantı testi toast\'ı', toast);
+      await attachText(testInfo, 'Bağlantı testi mesajı (toast)', toast);
       expect(toast.toLowerCase()).not.toContain('hata');
 
       const test1 = await fresh.api(`/api/v1/hosts/${MOCK_HOST}/test-connection?configApiId=default-tls`, { method: 'POST' });
@@ -91,12 +91,12 @@ test('Kurulum: mTLS Config API truststore olmadan reddedilir, sertifikayla açı
       expect(test1.json.success).toBe(true);
     });
 
-    await test.step('Web: provision.sh\'ın açtığı mock host\'lar ağaçta çalışıyor (K8)', async () => {
+    await test.step('Web: provision.sh\'ın başlattığı mock host\'lar soldaki listede çalışıyor görünür (K8)', async () => {
       await page.reload();
       await expect(page.locator('#host-list .api-header').first()).toBeVisible();
       // Durum noktaları arka planda yenileniyor; "local mock ayakta" beklenir.
       await expect(page.locator('#host-list .host-dot-running').first()).toBeVisible({ timeout: 30_000 });
-      await dashboard.snapCard('#host-list', 'host ağacı: mock host durumları');
+      await dashboard.snapCard('#host-list', 'host listesi: mock host durumları');
     });
   } finally {
     try {

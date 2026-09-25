@@ -8,7 +8,7 @@ const { attachText } = require('../lib/evidence');
 test('Web\'de hatalı biçimli pin reddedilir; mobil etkilenmez', async ({ app, dashboard, run }, testInfo) => {
   let v0;
 
-  await test.step('Web: geçersiz pin kaydedilmeye çalışılır → yalnızca hata mesajı', async () => {
+  await test.step('Web: geçersiz pin kaydedilmeye çalışılır; yalnızca hata mesajı çıkar', async () => {
     await dashboard.openHost(TARGET_HOST);
     v0 = await dashboard.version();
     await dashboard.setPins(TARGET_HOST, ['bu-bir-pin-degil', run.goodPins[1]], { expectSaved: false });
@@ -25,14 +25,14 @@ test('Web\'de hatalı biçimli pin reddedilir; mobil etkilenmez', async ({ app, 
       [
         `${TARGET_HOST} → v${pin.version} (dashboard'daki sürüm: v${v0})`,
         `pin'ler: ${pin.sha256.join(', ')}`,
-        `beklenen (canlı pin'ler): ${run.goodPins.join(', ')}`,
+        `beklenen (hedefin şu anki sertifikasının pin'leri): ${run.goodPins.join(', ')}`,
       ].join('\n'),
     );
     expect(pin.version).toBe(v0);
     expect(pin.sha256).toEqual(run.goodPins);
   });
 
-  await test.step('Mobil: yenile → config güncel, sürüm aynı', async () => {
+  await test.step('Mobil: yenilemede "Config güncel" görünür, sürüm aynı kalır', async () => {
     const status = await app.refreshConfig();
     expect(status).toContain('Config güncel');
     expect(SampleApp.hostVersion(status, TARGET_HOST)).toBe(v0);

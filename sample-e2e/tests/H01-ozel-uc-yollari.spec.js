@@ -11,10 +11,10 @@
 //   POST /analytics/vault     → vault indirme raporu
 //   POST /auth/register       → kayıt (bu örnek desteklemiyor: 501)
 //
-// Uygulamanın CUSTOM_BACKEND modu bu backend'e bağlanıyor; bootstrap pin'leri
-// ve imzalama public key'i derleme sırasında APK'ya gömüldü. Kanıt: backend'in
-// gördüğü istek yolları, telefonun ekranı ve ana host'un günlüğünde bu süre
-// boyunca tek bir config/vault isteği olmaması.
+// Uygulamanın CUSTOM_BACKEND modu bu backend'e bağlanıyor; uygulamaya gömülü ilk
+// pin'ler (bootstrap) ve imzalama public key'i derleme sırasında APK'ya kondu.
+// Kanıt: backend'in gördüğü istek yolları, telefonun ekranı ve ana host'un
+// günlüğünde bu süre boyunca tek bir config/vault isteği olmaması.
 const { test, expect, TARGET_HOST } = require('../lib/fixtures');
 const { attachText, redact } = require('../lib/evidence');
 const { SampleApp } = require('../lib/sampleApp');
@@ -36,7 +36,7 @@ function logsSince(mark) {
   return idx >= 0 ? all.slice(idx + mark.length) : all;
 }
 
-test('Sunucu bağımsızlığı: uygulama kendi backend\'ine özel uç yollarıyla bağlanıyor', async ({
+test('Kendi backend\'iyle kullanım: uygulama demo-server yerine kendi backend\'ine, özel uç yollarıyla bağlanıyor', async ({
   app,
   run,
 }, testInfo) => {
@@ -47,13 +47,13 @@ test('Sunucu bağımsızlığı: uygulama kendi backend\'ine özel uç yollarıy
   let mark;
 
   try {
-    await test.step('Terminal: harness kendi backend\'ini açar (kendi TLS ve imzalama anahtarıyla)', async () => {
+    await test.step('Terminal: test, Mac\'te kendi küçük backend\'ini açar (kendi TLS ve imzalama anahtarıyla)', async () => {
       mark = logMark();
       backend = await customBackend.start({ pins: run.goodPins, vaultFiles: { [KEY]: flags } });
       const material = customBackend.material();
       await attachText(
         testInfo,
-        'Harness backend\'i (demo-server değil)',
+        'Testin kendi backend\'i (demo-server değil)',
         [
           `adres          : ${backend.url}`,
           `TLS pin'leri   : ${material.pins.join(', ')}`,
@@ -111,16 +111,16 @@ test('Sunucu bağımsızlığı: uygulama kendi backend\'ine özel uç yollarıy
       await app.backToMain();
     });
 
-    await test.step('Terminal: backend\'in gördüğü istek yolları', async () => {
+    await test.step('Terminal: backend\'e gelen isteklerin yolları', async () => {
       await attachText(
         testInfo,
-        `Harness backend'ine gelen istekler (${backend.requests.length} adet)`,
+        `Test backend'ine gelen istekler (${backend.requests.length} adet)`,
         [
           ...backend.requests.map((r, i) => `${String(i + 1).padStart(2)}. ${r}`),
           '',
           'Kütüphanenin varsayılan yolları (api/v1/certificate-config, health,',
-          'api/v1/vault/…) hiç kullanılmadı; yalnızca blokta tanımlı özel yollar',
-          'çağrıldı. Vault indirme raporu da özel yola (analytics/vault) gitti.',
+          'api/v1/vault/…) hiç kullanılmadı; yalnızca ConfigApiBlock\'ta tanımlı özel',
+          'yollar çağrıldı. Vault indirme raporu da özel yola (analytics/vault) gitti.',
         ].join('\n'),
       );
       const paths = backend.requests.join('\n');
@@ -142,21 +142,21 @@ test('Sunucu bağımsızlığı: uygulama kendi backend\'ine özel uç yollarıy
         testInfo,
         'Ana host (demo-server) günlüğü — özel backend modundayken',
         [
-          `pencerede ${requestLines.length} istek satırı var:`,
+          `bu sürede ${requestLines.length} istek satırı var:`,
           ...requestLines.slice(-20).map((l) => `  ${l}`),
           '',
           `config / vault isteği: ${configOrVault.length} (${configOrVault.join(' | ') || 'yok ✓'})`,
           '',
-          'Görünen istekler docker healthcheck\'in GET /health\'i ve uygulamanın',
-          'telemetri POST\'ları (client-report). Telemetri uygulamanın kendi',
-          'tercihi — PinVaultBackendReporter hâlâ ana host\'a rapor gönderiyor —',
-          'ama pin config\'i ve vault dosyası artık oradan gelmiyor.',
+          'Görünen istekler docker sağlık kontrolünün GET /health\'i ve uygulamanın',
+          'cihaz raporu (telemetri) POST\'ları (client-report). Raporların nereye',
+          'gideceği uygulamanın kendi tercihi (PinVaultBackendReporter hâlâ ana',
+          'host\'a gönderiyor); ama pin config\'i ve vault dosyası artık oradan gelmiyor.',
         ].join('\n'),
       );
       expect(configOrVault, 'ana host\'a config/vault isteği gitmemeli').toHaveLength(0);
     });
 
-    await test.step('Mobil: TLS moduna dönülür, ana host yeniden config kaynağı', async () => {
+    await test.step('Mobil: TLS moduna dönülür, config yine ana host\'tan geliyor', async () => {
       await app.openSettings();
       const applied = await app.applyMode('TLS');
       await app.backToMain();

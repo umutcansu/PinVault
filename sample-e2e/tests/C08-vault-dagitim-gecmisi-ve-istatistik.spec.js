@@ -13,7 +13,7 @@ const FLAGS = env.VAULT_KEYS.flags;
 const ADMIN = env.VAULT_KEYS.admin;
 const SECRET = env.VAULT_KEYS.secret;
 
-test('Vault dağıtım geçmişi: durum, sürüm, cihaz; süzgeç, istatistik ve cihaz detayı', async ({
+test('Vault dağıtım geçmişi: durum, sürüm ve cihaz kaydı; filtre, istatistik ve cihaz detayı', async ({
   app,
   dashboard,
   run,
@@ -31,7 +31,7 @@ test('Vault dağıtım geçmişi: durum, sürüm, cihaz; süzgeç, istatistik ve
       await dashboard.snapCard('.card:has(#vault-upload-key) ~ .card', 'üç vault dosyası');
     });
 
-    await test.step('Mobil: bir başarı, bir 304 ve iki başarısızlık üretilir', async () => {
+    await test.step('Mobil: bir başarılı indirme, bir "değişmedi" (304) ve iki başarısız deneme yapılır', async () => {
       await app.openVault();
       deviceId = app.deviceId();
       expect(await app.fetchVault(FLAGS)).toContain(`${FLAGS} v${flagsVersion} indirildi`);
@@ -42,7 +42,7 @@ test('Vault dağıtım geçmişi: durum, sürüm, cihaz; süzgeç, istatistik ve
       await app.snap('api_key ve token dosyaları reddedildi');
     });
 
-    await test.step('Sunucu: dağıtım kayıtları durum, sürüm ve cihazla birlikte duruyor', async () => {
+    await test.step('Sunucu: dağıtım kayıtlarında durum, sürüm ve cihaz bilgisi var', async () => {
       const dists = (await hostApi.vaultDistributions(env.VAULT_API)).filter((d) => d.deviceId === deviceId);
       const byStatus = (s) => dists.filter((d) => d.status === s);
       await attachText(
@@ -98,13 +98,13 @@ test('Vault dağıtım geçmişi: durum, sürüm, cihaz; süzgeç, istatistik ve
       expect(stats.failed).toBeGreaterThanOrEqual(2);
     });
 
-    await test.step('Web: "Başarısız" süzgeci yalnızca hata satırlarını bırakıyor', async () => {
+    await test.step('Web: "Başarısız" filtresi yalnızca hatalı satırları gösteriyor', async () => {
       await dashboard.setVaultStatusFilter(env.VAULT_API, 'failed');
       const rows = await dashboard.vaultDistributionRows();
-      await dashboard.snap('dağıtım geçmişi — başarısız süzgeci');
+      await dashboard.snap('dağıtım geçmişi — "Başarısız" filtresi');
       await attachText(
         testInfo,
-        'Süzgeç: başarısız',
+        'Filtre: başarısız',
         rows.slice(0, 8).map((r) => `${r.key} ${r.version} ${r.status} ${r.auth} ${r.reason.slice(0, 50)}`).join('\n'),
       );
       expect(rows.length).toBeGreaterThan(0);
@@ -112,13 +112,13 @@ test('Vault dağıtım geçmişi: durum, sürüm, cihaz; süzgeç, istatistik ve
       expect(rows.some((r) => r.key === ADMIN && r.auth.includes('api_key'))).toBe(true);
     });
 
-    await test.step('Web: "Başarılı" süzgeci indirilen ve önbellekten gelenleri gösteriyor', async () => {
+    await test.step('Web: "Başarılı" filtresi indirilenleri ve önbellekten (cached) gelenleri gösteriyor', async () => {
       await dashboard.setVaultStatusFilter(env.VAULT_API, 'downloaded');
       const rows = await dashboard.vaultDistributionRows();
-      await dashboard.snap('dağıtım geçmişi — başarılı süzgeci');
+      await dashboard.snap('dağıtım geçmişi — "Başarılı" filtresi');
       await attachText(
         testInfo,
-        'Süzgeç: başarılı',
+        'Filtre: başarılı',
         rows.slice(0, 8).map((r) => `${r.key} ${r.version} ${r.status} ${r.auth}`).join('\n'),
       );
       expect(rows.length).toBeGreaterThan(0);
@@ -130,7 +130,7 @@ test('Vault dağıtım geçmişi: durum, sürüm, cihaz; süzgeç, istatistik ve
       expect(all.some((r) => r.status.includes('failed'))).toBe(true);
     });
 
-    await test.step('Web: cihaz detayı dosya bazlı özeti ve tam geçmişi veriyor', async () => {
+    await test.step('Web: cihaz detayı dosya bazında özeti ve tüm geçmişi gösteriyor', async () => {
       const subtitle = await dashboard.openVaultDeviceDetail(env.VAULT_API, deviceId);
       await dashboard.snap('cihaz detayı');
       const byDevice = await hostApi.vaultDistributionsByDevice(env.VAULT_API, deviceId);
@@ -138,7 +138,7 @@ test('Vault dağıtım geçmişi: durum, sürüm, cihaz; süzgeç, istatistik ve
         testInfo,
         `GET …/vault/distributions/device/${deviceId}`,
         [
-          `başlık altı: ${subtitle}`,
+          `alt başlık: ${subtitle}`,
           '',
           `${byDevice.length} kayıt, ${new Set(byDevice.map((d) => d.vaultKey)).size} farklı dosya`,
           ...byDevice.slice(0, 6).map((d) => `  ${d.vaultKey} v${d.version} ${d.status}`),
@@ -149,14 +149,14 @@ test('Vault dağıtım geçmişi: durum, sürüm, cihaz; süzgeç, istatistik ve
       await expect(dashboard.page.locator('table.data-table', { hasText: ADMIN }).first()).toBeVisible();
     });
 
-    await test.step('Web: dosya detayında sürüm zaman çizgisi ve cihaz özeti', async () => {
+    await test.step('Web: dosya detayında sürüm zaman çizelgesi ve cihaz özeti', async () => {
       await dashboard.openVaultFileDetail(env.VAULT_API, FLAGS);
       await dashboard.snap(`${FLAGS} dosya detayı`);
       const sub = (await dashboard.page.locator('.section-sub').first().innerText()).trim();
       await attachText(
         testInfo,
         `${FLAGS} dosya detayı başlığı`,
-        [sub, '', 'Sürüm zaman çizgisi, cihaz özeti, token yönetimi ve tam geçmiş aynı sayfada.'].join('\n'),
+        [sub, '', 'Sürüm zaman çizelgesi, cihaz özeti, token yönetimi ve tüm geçmiş aynı sayfada.'].join('\n'),
       );
       expect(sub).toMatch(/versiyon/);
       expect(sub).toMatch(/cihaz/);

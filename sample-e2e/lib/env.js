@@ -50,12 +50,20 @@ module.exports = {
   MOCK_MTLS_HOST: 'mock-mtls.sample',
   /** Harness'ın Mac'te açtığı servisler: kurcalama vekili ve özel backend. */
   PROXY_PORT: Number(process.env.E2E_PROXY_PORT || 6661),
+  /** Güvenlik bildirimlerini yakalayan webhook alıcısı (lib/webhookSink.js). */
+  WEBHOOK_PORT: Number(process.env.E2E_WEBHOOK_PORT || 6662),
   CUSTOM_BACKEND_PORT: Number(process.env.E2E_CUSTOM_BACKEND_PORT || 6660),
   /** Telefonların host'a ulaştığı IP; host'un kendi pin kaydı bu adla tutulur. */
   LAN_IP: hostEnv.HOST_LAN_IP || '',
   /** Host TLS sertifikasının pin'leri (birincil + yedek). */
   HOST_PINS_FILE: path.join(HOST_DIR, 'data/certs/demo-server.pins'),
   SIGNING_KEY_FILE: path.join(HOST_DIR, 'data/signing-key.pem'),
+  /**
+   * Harness'ın çevrimdışı anahtarları (yedek, kurtarma, ek imzalayıcılar);
+   * lib/offlineKeys.js. Host'un signing-keys.sh betiği OFFLINE_KEYS_DIR ile
+   * buraya yönlendirilir.
+   */
+  OFFLINE_KEYS_DIR: path.join(LOCAL_DIR, 'offline-keys'),
   /**
    * Sunucunun SQLite veritabanı. Container'ın /data dizini Mac'e bind-mount
    * edildiği için dosya doğrudan okunabilir (container'da sqlite3 yok).

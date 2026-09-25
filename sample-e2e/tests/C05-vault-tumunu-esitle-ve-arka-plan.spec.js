@@ -16,7 +16,7 @@ const MODEL = env.VAULT_KEYS.model;
 const FLAGS = env.VAULT_KEYS.flags;
 const PERIOD_PLUS_MARGIN_S = 16 * 60;
 
-test('Vault eşitleme: "Tümünü eşitle" ve arka plan görevi updateWithPins dosyasını çeker', async ({
+test('Vault eşitleme: "Tümünü eşitle" ve arka plan görevi updateWithPins(true) dosyasını indiriyor', async ({
   app,
   device,
   dashboard,
@@ -43,7 +43,7 @@ test('Vault eşitleme: "Tümünü eşitle" ve arka plan görevi updateWithPins d
       );
     });
 
-    await test.step('Mobil: "Tümünü eşitle" yalnızca updateWithPins dosyasını çeker', async () => {
+    await test.step('Mobil: "Tümünü eşitle" yalnızca updateWithPins(true) dosyasını indiriyor', async () => {
       await app.openVault();
       deviceId = app.deviceId();
       const status = await app.syncAll();
@@ -69,7 +69,7 @@ test('Vault eşitleme: "Tümünü eşitle" ve arka plan görevi updateWithPins d
       await attachText(
         testInfo,
         'İkinci eşitleme (değişiklik yok)',
-        [again, '', 'Sürüm aynıysa sunucu 304 dönüyor, kütüphane AlreadyCurrent veriyor.'].join('\n'),
+        [again, '', 'Sürüm aynıysa sunucu 304 ("değişmedi") dönüyor, kütüphane AlreadyCurrent (zaten güncel) sonucunu veriyor.'].join('\n'),
       );
     });
 
@@ -100,7 +100,7 @@ test('Vault eşitleme: "Tümünü eşitle" ve arka plan görevi updateWithPins d
           testInfo,
           'logcat — periyodik görev ve vault eşitlemesi',
           [
-            `zorlanan JobScheduler işleri: ${jobs.join(', ')}`,
+            `hemen çalıştırılan JobScheduler işleri: ${jobs.join(', ')}`,
             '',
             log || '(ilgili satır yok)',
             '',
@@ -125,7 +125,7 @@ test('Vault eşitleme: "Tümünü eşitle" ve arka plan görevi updateWithPins d
       await dashboard.snap(`dağıtım geçmişi — arka planda v${v1 + 2}`);
     });
 
-    await test.step('Mobil: saklı içerik yeni sürüm ("Bilgi", sunucuya gidilmeden)', async () => {
+    await test.step('Mobil: "Bilgi" sunucuya gitmeden saklı içeriği gösteriyor, yeni sürüm gelmiş', async () => {
       const info = await app.vaultInfo(MODEL);
       await app.snap(`arka plan sonrası saklı içerik v${v1 + 2}`);
       expect(info).toContain(`sürüm: v${v1 + 2}`);

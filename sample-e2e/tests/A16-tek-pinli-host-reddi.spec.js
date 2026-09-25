@@ -9,7 +9,7 @@ const { attachText, describeResponse } = require('../lib/evidence');
 const { SampleApp } = require('../lib/sampleApp');
 const hostApi = require('../lib/hostApi');
 
-test('Web+Sunucu: tek pin\'li host reddedilir (≥2 pin kuralı), telefon etkilenmez', async ({
+test('Web+Sunucu: tek pin\'li host kaydedilemiyor (en az 2 pin kuralı), telefon etkilenmiyor', async ({
   app,
   dashboard,
   run,
@@ -40,7 +40,7 @@ test('Web+Sunucu: tek pin\'li host reddedilir (≥2 pin kuralı), telefon etkile
         `Gönderilmek istenen: 1 pin (${pins[0].slice(0, 12)}…)`,
         `toast: ${toast || '(toast görünmedi)'}`,
         '',
-        'app.js/saveInlinePins: boş alanlar süzülür, kalan pin sayısı 2\'nin',
+        'app.js/saveInlinePins: boş alanlar atılır, kalan pin sayısı 2\'nin',
         'altındaysa istek sunucuya hiç gönderilmez.',
       ].join('\n'),
     );
@@ -50,7 +50,7 @@ test('Web+Sunucu: tek pin\'li host reddedilir (≥2 pin kuralı), telefon etkile
     expect(await dashboard.version()).toBe(version);
   });
 
-  await test.step('Sunucu: aynı istek doğrudan yönetim API\'sine → HTTP 400', async () => {
+  await test.step('Sunucu: aynı istek doğrudan yönetim API\'sine gönderilir → HTTP 400', async () => {
     const cfg = await hostApi.getConfig();
     const single = cfg.pins.map((p) => (p.hostname === TARGET_HOST ? { ...p, sha256: [pins[0]] } : p));
     const res = await hostApi.api('/api/v1/certificate-config', {

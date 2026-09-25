@@ -5,8 +5,8 @@
 // kütüphanenin kurtarma interceptor'ı config'i tazeleyip isteği tekrarlar ve
 // bağlantı elle yenileme olmadan yeni pin'lerle kurulur.
 //
-// Ana host'un KENDİ sertifikasına dokunulmaz (o E03'ün işi ve APK'nın gömülü
-// bootstrap pin'lerini bayatlatır); rotasyon mock hedef host üzerinde yapılır.
+// Ana host'un KENDİ sertifikasına dokunulmaz (o E03'ün işi ve uygulamaya gömülü
+// ilk pin'leri (bootstrap) eskitir); rotasyon mock hedef host üzerinde yapılır.
 const { test, expect } = require('../lib/fixtures');
 const { attachText } = require('../lib/evidence');
 const { SampleApp } = require('../lib/sampleApp');
@@ -16,7 +16,7 @@ const env = require('../lib/env');
 
 const MOCK = env.MOCK_TLS_HOST;
 
-test('Web+Mobil: mock host sertifikası yenilenince telefon kurtarma ile yeni pinlere geçiyor', async ({
+test('Web+Mobil: mock host sertifikası yenilenince telefon otomatik kurtarmayla yeni pin\'lere geçiyor', async ({
   app,
   device,
   dashboard,
@@ -28,11 +28,11 @@ test('Web+Mobil: mock host sertifikası yenilenince telefon kurtarma ile yeni pi
   let oldPins;
   let newPins;
 
-  await test.step('Web: mock host\'un sertifikası ve pin\'leri (rotasyon öncesi)', async () => {
+  await test.step('Web: mock host\'un (test için kurulan hedef sunucu) sertifikası ve pin\'leri, yenilemeden önce', async () => {
     await dashboard.openHost(MOCK);
     v0 = await dashboard.version();
     oldPins = await dashboard.viewedPins(MOCK);
-    await dashboard.snapCard('#cert-info-card', `${MOCK} sertifikası (rotasyon öncesi)`);
+    await dashboard.snapCard('#cert-info-card', `${MOCK} sertifikası (yenilemeden önce)`);
     await dashboard.snapHostSummary(`${MOCK} pinleri, v${v0}`);
     expect(oldPins).toEqual(run.baseline[MOCK]);
   });
@@ -50,13 +50,13 @@ test('Web+Mobil: mock host sertifikası yenilenince telefon kurtarma ile yeni pi
     const toast = await dashboard.renewHostCert(MOCK);
     await expect.poll(() => dashboard.version(), { timeout: 30_000 }).toBe(v0 + 1);
     newPins = await dashboard.viewedPins(MOCK);
-    await dashboard.snapCard('#cert-info-card', `${MOCK} sertifikası (rotasyon sonrası)`);
+    await dashboard.snapCard('#cert-info-card', `${MOCK} sertifikası (yenilemeden sonra)`);
     await dashboard.snapHostSummary(`${MOCK} yeni pinleri, v${v0 + 1}`);
     await expect(dashboard.page.locator('#pin-history-card tbody tr').first()).toContainText('cert_regenerated');
     await dashboard.snapCard('#pin-history-card', 'pin geçmişi: cert_regenerated');
     await attachText(
       testInfo,
-      `${MOCK} sertifika rotasyonu`,
+      `${MOCK} sertifikası yenilendi`,
       [
         `onay : ${dashboard.lastDialog()}`,
         `toast: ${toast}`,
@@ -65,8 +65,8 @@ test('Web+Mobil: mock host sertifikası yenilenince telefon kurtarma ile yeni pi
         `yeni pin'ler (v${v0 + 1}) : ${newPins.join('\n                      ')}`,
         '',
         'POST /api/v1/hosts/<host>/regenerate-cert: yeni anahtar çifti üretilir,',
-        'host\'u barındıran bütün Config API kapsamlarının pin kayıtları güncellenir',
-        've çalışan mock dinleyici yeni keystore ile yeniden başlatılır.',
+        'bu host\'un bulunduğu bütün Config API\'lerdeki pin kayıtları güncellenir',
+        've çalışan mock sunucu yeni keystore ile yeniden başlatılır.',
       ].join('\n'),
     );
     expect(newPins).not.toEqual(oldPins);
@@ -102,22 +102,22 @@ test('Web+Mobil: mock host sertifikası yenilenince telefon kurtarma ile yeni pi
       .toBeGreaterThan(validFromMs + 1000);
     await app.openMtls();
     const result = await app.mockTls();
-    await app.snap('yeni sertifika: kurtarma ile bağlantı başarılı');
+    await app.snap('yeni sertifika: otomatik kurtarmayla bağlantı başarılı');
     await attachText(
       testInfo,
       'Telefondaki sonuç (elle yenileme yapılmadan)',
       [
         result,
         '',
-        `Telefonun elindeki pin sürümü rotasyondan önce v${v0} idi; sunucudaki`,
-        `sertifika artık v${v0 + 1}. İstek önce pin uyuşmazlığına düştü, kütüphanenin`,
-        'kurtarma interceptor\'ı config\'i tazeledi ve isteği TEKRARLADI; kullanıcıya',
-        'yalnızca başarılı sonuç göründü.',
+        `Telefondaki pin sürümü sertifika yenilenmeden önce v${v0} idi; sunucudaki`,
+        `sertifika artık v${v0 + 1}. İstek önce pin uyuşmazlığıyla başarısız oldu;`,
+        'kütüphanenin kurtarma interceptor\'ı config\'i yeniledi ve isteği TEKRARLADI.',
+        'Kullanıcı yalnızca başarılı sonucu gördü.',
         '',
-        'Tekrar, çağıranın kendi istemci zincirinde yapılıyor; bu yüzden uygulamanın',
-        'mock host adlarını host IP\'sine çözen özel Dns ayarı korunuyor. (Daha önce',
-        'tekrar PinVault\'un iç istemcisiyle yapıldığı için bu ayar kayboluyor ve',
-        'kurtarma UnknownHostException ile düşüyordu.)',
+        'Tekrar, uygulamanın kendi istemcisi üzerinden yapılıyor; bu yüzden mock host',
+        'adlarını sunucunun IP\'sine çeviren özel DNS ayarı korunuyor. (Eskiden tekrar',
+        'PinVault\'un iç istemcisiyle yapıldığı için bu ayar kayboluyor ve kurtarma',
+        'UnknownHostException ile başarısız oluyordu.)',
       ].join('\n'),
     );
     expect(result).toContain('host bağlantısı başarılı');
@@ -149,7 +149,7 @@ test('Web+Mobil: mock host sertifikası yenilenince telefon kurtarma ile yeni pi
     await app.backToMain();
   });
 
-  await test.step('Sunucu: rotasyon kalıcı — config\'teki pin\'ler yeni sertifikanın pin\'leri', async () => {
+  await test.step('Sunucu: değişiklik kalıcı — config\'teki pin\'ler yeni sertifikanın pin\'leri', async () => {
     const cfg = await hostApi.getConfig();
     const stored = cfg.pins.find((p) => p.hostname === MOCK);
     await attachText(

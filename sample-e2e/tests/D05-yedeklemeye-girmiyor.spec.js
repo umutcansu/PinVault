@@ -39,14 +39,14 @@ test('Depolama: uygulama verisi cihaz yedeğine alınmıyor', async ({ app, devi
       await app.snap('Depolama ekranı — yedeklenmemesi gereken dosyalar');
       await attachText(
         testInfo,
-        'Yedek dışı tutulması gereken veri',
+        'Yedeğe girmemesi gereken veriler',
         [text, '', 'Hepsi Android Keystore\'a bağlı: başka bir cihazda zaten çözülemezler.'].join('\n'),
       );
       expect(text).toContain('ssl_cert_config_sample-host.xml');
       await app.backToMain();
     });
 
-    await test.step('Cihaz: yerel yedekleme transport\'u seçilir', async () => {
+    await test.step('Cihaz: yerel yedekleme (LocalTransport) seçilir', async () => {
       const before = device.shell('bmgr list transports');
       originalTransport = selectedTransport(before);
       backupWasEnabled = device.shell('bmgr enabled').includes('currently enabled');
@@ -63,8 +63,8 @@ test('Depolama: uygulama verisi cihaz yedeğine alınmıyor', async ({ app, devi
           `$ bmgr enable true → ${enable.trim()}`,
           `$ bmgr transport com.android.localtransport/.LocalTransport → ${select.trim()}`,
           '',
-          'Yerel transport yedeği cihazda /data/backup altına yazar; bulut hesabı',
-          'gerekmez, yani gerçek bir yedek denemesi yapılabiliyor.',
+          'LocalTransport yedeği cihazda /data/backup altına yazar; bulut hesabı',
+          'gerekmez, yani gerçek bir yedekleme denenebiliyor.',
         ].join('\n'),
       );
       expect(select).toContain('LocalTransport');
@@ -83,10 +83,10 @@ test('Depolama: uygulama verisi cihaz yedeğine alınmıyor', async ({ app, devi
           `$ bmgr fullbackup ${env.APP_ID}`,
           full.trim(),
           '',
-          'Sistem paketi yedeğe hiç almıyor: uygulamanın manifest\'inde',
+          'Android bu uygulamayı hiç yedeklemiyor: uygulamanın manifest\'inde',
           'android:allowBackup="false" var. Yedek alınmadığı için PinVault\'un',
-          'şifreli tercihleri, istemci sertifikası ve vault blob\'ları da hiçbir',
-          'yedeğe düşmüyor.',
+          'şifreli SharedPreferences dosyaları, istemci sertifikası ve vault dosyaları',
+          'da hiçbir yedeğe girmiyor.',
         ].join('\n'),
       );
       expect(now).toContain('Backup is not allowed');
@@ -95,7 +95,7 @@ test('Depolama: uygulama verisi cihaz yedeğine alınmıyor', async ({ app, devi
       await app.snap('yedek denemesi reddedildi — uygulama çalışmaya devam ediyor');
     });
 
-    await test.step('Cihaz: birleştirilmiş manifest ve APK\'daki kural dosyaları', async () => {
+    await test.step('Cihaz: birleştirilmiş manifest ve APK içindeki yedekleme kuralı dosyaları', async () => {
       const merged = fs.readFileSync(MERGED_MANIFEST, 'utf8');
       const attrs = (merged.match(/android:(allowBackup|fullBackupContent|dataExtractionRules)="[^"]*"/g) || [])
         .filter((v, i, a) => a.indexOf(v) === i);
@@ -115,7 +115,7 @@ test('Depolama: uygulama verisi cihaz yedeğine alınmıyor', async ({ app, devi
           ...apkEntries.map((e) => `  ${e}`),
           '',
           'fullBackupContent ve dataExtractionRules kütüphanenin manifest\'inden',
-          'geliyor (manifest merger); allowBackup="false" örnek uygulamanın kendi',
+          'geliyor (manifest birleştirme); allowBackup="false" örnek uygulamanın kendi',
           'kararı.',
         ].join('\n'),
       );
@@ -143,27 +143,28 @@ test('Depolama: uygulama verisi cihaz yedeğine alınmıyor', async ({ app, devi
       );
       await attachText(
         testInfo,
-        'Bulgu: kurallar Config API kimliklerini elle sayıyor',
+        'Bulgu: kurallar Config API kimliklerini tek tek elle listeliyor',
         [
-          `kuralların dışladığı yollar: ${[...new Set(excluded)].join(', ')}`,
+          `kuralların yedek dışı bıraktığı yollar: ${[...new Set(excluded)].join(', ')}`,
           '',
           `Bu uygulamanın Config API kimlikleri: ${appApis.join(', ')}`,
           `kurallarda karşılığı olan: ${covered.length === 0 ? '(hiçbiri)' : covered.join(', ')}`,
           '',
           'Saklı pin config\'i her Config API için ayrı dosyada tutuluyor',
-          '(ssl_cert_config_<id>.xml) ve Android yedekleme kurallarında joker',
-          'desteklenmiyor. Kütüphane yalnızca `default-tls` ve `secure-mtls`',
-          'kimliklerini sayıyor; kendi kimliğini kullanan bir uygulamanın pin',
-          'config\'i — M-07\'de tam da engellenmek istenen pin downgrade senaryosu —',
-          'yedeğe girerdi. Kural dosyasındaki yorum bunu kabul ediyor ("apps that',
-          'register custom ids must add their own excludes here").',
+          '(ssl_cert_config_<id>.xml) ve Android yedekleme kuralları joker karakter',
+          '(*) desteklemiyor. Kütüphane yalnızca `default-tls` ve `secure-mtls`',
+          'kimliklerini listeliyor; kendi kimliğini kullanan bir uygulamanın pin',
+          'config\'i yedeğe girerdi. Bu da M-07\'de tam olarak engellenmek istenen',
+          '"pin\'leri eski sürüme geri döndürme" senaryosu. Kural dosyasındaki yorum',
+          'bunu kabul ediyor ("apps that register custom ids must add their own',
+          'excludes here").',
           '',
           'Bu örnek uygulamada risk yok: allowBackup="false" bütün yedeği kapatıyor.',
           '',
-          'Öneri: kütüphane belgelerinde "kendi configApiId\'ni kullanıyorsan ya',
-          'allowBackup=false ya da dataExtractionRules\'a kendi dosyanı ekle" uyarısı;',
-          'ya da saklı config tek bir dosyada (ör. pinvault_configs.xml) toplanıp',
-          'kurallarda tek bir yol dışlansın.',
+          'Öneri: kütüphane belgelerine "kendi configApiId\'ni kullanıyorsan ya',
+          'allowBackup=false yap ya da dataExtractionRules\'a kendi dosyanı ekle"',
+          'uyarısı eklensin; ya da saklı config tek dosyada (ör. pinvault_configs.xml)',
+          'toplanıp kurallarda yalnızca o yol yedek dışı bırakılsın.',
         ].join('\n'),
       );
       expect(backupRules).toContain('pinvault_client_cert.xml');
@@ -172,10 +173,10 @@ test('Depolama: uygulama verisi cihaz yedeğine alınmıyor', async ({ app, devi
       expect(covered).toHaveLength(0);
     });
 
-    await test.step('Neden daha ileri gidilemiyor — sınır notu', async () => {
+    await test.step('Not: bu test neden daha ileri gidemiyor', async () => {
       await attachText(
         testInfo,
-        'Kara kutu sınırı',
+        'Dışarıdan test etmenin sınırı',
         [
           'Kuralların ayrı ayrı etkisi (hangi dosyanın yedeğe girip girmediği) bu',
           'uygulamayla gösterilemiyor: allowBackup="false" olduğu için sistem hiç',
@@ -183,9 +184,9 @@ test('Depolama: uygulama verisi cihaz yedeğine alınmıyor', async ({ app, devi
           '',
           'Göstermek için allowBackup="true" ile derlenmiş ikinci bir APK gerekir;',
           'o zaman `bmgr backupnow` sonrası /data/backup altındaki tar dökümünde',
-          'hangi shared_prefs dosyalarının bulunduğu sayılabilirdi. Bu, örnek',
-          'uygulamanın güvenlik duruşunu testin lehine zayıflatmak olurdu; bu yüzden',
-          'yapılmadı ve sınır burada belgelendi.',
+          'hangi shared_prefs dosyalarının bulunduğu sayılabilirdi. Bu, test uğruna',
+          'örnek uygulamanın güvenlik ayarını zayıflatmak olurdu; bu yüzden',
+          'yapılmadı ve sınır burada not edildi.',
         ].join('\n'),
       );
     });

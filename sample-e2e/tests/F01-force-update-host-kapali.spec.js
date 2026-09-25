@@ -6,10 +6,11 @@
 // Senaryo iki yolu da gösteriyor:
 //   1. Config genelindeki bayrak yazıldığında (yönetim API'si) init gerçekten
 //      başarısız oluyor; host dönünce "Tekrar dene" toparlıyor.
-//   2. Dashboard'daki host bazlı "Force Update" anahtarı da aynı kapıyı
-//      açıyor: sunucu servis ettiği config'i PinConfig.hasAnyForceUpdate() ile
-//      damgalıyor. (Bu senaryo ilk yazıldığında damga yoktu ve arayüzden bu
-//      kapı hiç açılamıyordu — bulgu düzeltildikten sonra beklenti güncellendi.)
+//   2. Dashboard'daki host bazlı "Force Update" anahtarı da aynı kontrolü
+//      tetikliyor: sunucu gönderdiği config'in genel alanını
+//      PinConfig.hasAnyForceUpdate() ile dolduruyor. (Bu senaryo ilk
+//      yazıldığında bu alan doldurulmuyordu ve arayüzden bu kontrol hiç
+//      tetiklenemiyordu — bulgu düzeltildikten sonra beklenti güncellendi.)
 const { test, expect, TARGET_HOST } = require('../lib/fixtures');
 const { attachText } = require('../lib/evidence');
 const { SampleApp } = require('../lib/sampleApp');
@@ -41,7 +42,7 @@ test('Web+Sunucu+Mobil: zorunlu güncelleme işaretliyken sunucuya ulaşılamazs
       await app.snap(`başlangıç: Hazır, pin v${version}`);
     });
 
-    await test.step('Sunucu: config geneline zorunlu güncelleme yazılır', async () => {
+    await test.step('Sunucu: config\'in genel "zorunlu güncelleme" (forceUpdate) bayrağı açılır', async () => {
       const res = await setGlobalForce(true);
       const cfg = await hostApi.getConfig();
       await attachText(
@@ -52,10 +53,10 @@ test('Web+Sunucu+Mobil: zorunlu güncelleme işaretliyken sunucuya ulaşılamazs
           `Config geneli forceUpdate : ${cfg.forceUpdate}`,
           `Host bazlı forceUpdate    : ${cfg.pins.map((p) => `${p.hostname}=${p.forceUpdate}`).join(', ')}`,
           '',
-          'Kütüphanenin init kapısı (SSLCertificateUpdater.initializeAndUpdate →',
+          'Kütüphanenin açılıştaki kontrolü (SSLCertificateUpdater.initializeAndUpdate →',
           'storedConfig.forceUpdate) config GENELİNDEKİ alana bakıyor. Bu alan',
           'yönetim API\'sinden doğrudan yazılabiliyor; dashboard ise host satırındaki',
-          'bayrağı yazıyor ve sunucu servis ederken ikisini PinConfig.hasAnyForceUpdate()',
+          'bayrağı yazıyor ve sunucu config\'i gönderirken ikisini PinConfig.hasAnyForceUpdate()',
           'ile birleştiriyor (aşağıdaki ikinci senaryo bunu gösteriyor).',
         ].join('\n'),
       );
@@ -115,7 +116,7 @@ test('Web+Sunucu+Mobil: zorunlu güncelleme işaretliyken sunucuya ulaşılamazs
   }
 });
 
-test('Web+Mobil: dashboard\'ın host bazlı "Force Update" anahtarı init kapısını açıyor', async ({
+test('Web+Mobil: dashboard\'ın host bazlı "Force Update" anahtarı da zorunlu güncelleme kontrolünü tetikliyor', async ({
   app,
   dashboard,
 }, testInfo) => {
@@ -138,10 +139,10 @@ test('Web+Mobil: dashboard\'ın host bazlı "Force Update" anahtarı init kapıs
         `${TARGET_HOST} forceUpdate: ${cfg.pins.find((p) => p.hostname === TARGET_HOST).forceUpdate}`,
         '',
         'Dashboard yalnızca host satırındaki bayrağı yazıyor (POST .../force-update/{host}),',
-        'ama servis edilen config CertificateConfigRoute içinde',
-        'forceUpdate = hasAnyForceUpdate() ile damgalanıyor: kütüphanenin baktığı config',
-        'geneli alanı da true oluyor. Bu senaryo ilk yazıldığında damga yoktu ve arayüzden',
-        'init kapısı hiç açılamıyordu (o bulgu düzeltildi).',
+        'ama sunucu gönderdiği config\'te (CertificateConfigRoute) genel alanı',
+        'forceUpdate = hasAnyForceUpdate() ile dolduruyor: kütüphanenin baktığı config',
+        'geneli alan da true oluyor. Bu senaryo ilk yazıldığında bu alan doldurulmuyordu',
+        've açılıştaki kontrol arayüzden hiç tetiklenemiyordu (o bulgu düzeltildi).',
       ].join('\n'),
     );
     expect(cfg.pins.find((p) => p.hostname === TARGET_HOST).forceUpdate).toBe(true);
@@ -162,7 +163,7 @@ test('Web+Mobil: dashboard\'ın host bazlı "Force Update" anahtarı init kapıs
     await app.snap('host bazlı force + host kapalı: başlatılamadı');
     await attachText(
       testInfo,
-      'Host bazlı force bayrağı init kapısını açıyor',
+      'Host bazlı force bayrağı açılıştaki kontrolü tetikliyor',
       [
         status,
         '',
@@ -173,7 +174,7 @@ test('Web+Mobil: dashboard\'ın host bazlı "Force Update" anahtarı init kapıs
         '',
         'Bu adım senaryo ilk yazıldığında "Hazır" veriyordu: dashboard yalnızca host',
         'satırındaki bayrağı yazıyor, kütüphane ise config genelindeki alana bakıyordu.',
-        'Sunucu artık servis ettiği config\'i hasAnyForceUpdate() ile damgalıyor.',
+        'Sunucu artık gönderdiği config\'teki genel alanı hasAnyForceUpdate() ile dolduruyor.',
       ].join('\n'),
     );
     expect(status).toContain('PinVault başlatılamadı');
@@ -199,7 +200,7 @@ test('Web+Mobil: dashboard\'ın host bazlı "Force Update" anahtarı init kapıs
     const cfg = await hostApi.getConfig();
     await attachText(
       testInfo,
-      'Force kapatıldıktan sonra servis edilen config',
+      'Force kapatıldıktan sonra sunucunun gönderdiği config',
       `Config geneli forceUpdate: ${cfg.forceUpdate}\n${TARGET_HOST} forceUpdate: ${
         cfg.pins.find((p) => p.hostname === TARGET_HOST).forceUpdate
       }`,

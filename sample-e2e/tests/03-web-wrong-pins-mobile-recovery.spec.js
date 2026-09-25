@@ -5,7 +5,7 @@ const { test, expect, TARGET_HOST } = require('../lib/fixtures');
 const hostApi = require('../lib/hostApi');
 const { SampleApp } = require('../lib/sampleApp');
 
-test('Web\'de yanlış pin → mobilde uyuşmazlık ve web\'de rapor; düzeltilince otomatik kurtarma', async ({
+test('Web\'de yanlış pin → mobil bağlanmaz ve web\'e uyuşmazlık bildirir; düzeltilince kendiliğinden toparlanır', async ({
   app,
   dashboard,
   run,
@@ -34,9 +34,9 @@ test('Web\'de yanlış pin → mobilde uyuşmazlık ve web\'de rapor; düzeltili
     await app.snap('pin uyuşmazlığı');
   });
 
-  await test.step('Web: cihazın uyuşmazlık raporu görünür', async () => {
+  await test.step('Web: cihazın gönderdiği pin uyuşmazlığı raporu görünür', async () => {
     await dashboard.expectLatestConnection(run.model, { status: 'pin_mismatch' });
-    await dashboard.snapCard('#conn-history-card', 'uyuşmazlık raporu');
+    await dashboard.snapCard('#conn-history-card', 'pin uyuşmazlığı raporu');
     const entries = await hostApi.connectionHistory(TARGET_HOST);
     const fresh = entries.filter(
       (e) => e.deviceModel === run.model && e.status === 'pin_mismatch' && Date.parse(e.timestamp) >= startedAt,
@@ -49,7 +49,7 @@ test('Web\'de yanlış pin → mobilde uyuşmazlık ve web\'de rapor; düzeltili
     await expect.poll(() => dashboard.version()).toBe(v0 + 2);
   });
 
-  await test.step('Mobil: elle yenilemeden istek → otomatik kurtarma', async () => {
+  await test.step('Mobil: elle yenilemeden istek yapılır; uygulama yeni config\'i kendisi çekip isteği tekrarlar', async () => {
     const status = await app.testLibraryClient();
     expect(status).toContain('Pinned bağlantı başarılı');
     // Kurtarma interceptor'ı yeni config'i çekip isteği tekrarladı.

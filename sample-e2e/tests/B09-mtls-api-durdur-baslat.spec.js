@@ -23,17 +23,17 @@ async function startMtlsApi() {
   });
 }
 
-test('mTLS: Config API durdurulup başlatılınca cihaz davranışı', async ({ app, dashboard }, testInfo) => {
+test('mTLS: mTLS Config API durdurulup yeniden başlatılınca cihazın davranışı', async ({ app, dashboard }, testInfo) => {
   test.setTimeout(14 * 60 * 1000);
   const clientId = `b09-${Date.now()}`;
 
   try {
-    await test.step('Web + Mobil: cihaz kayıt oluyor, mTLS bağlantısı geçiyor', async () => {
+    await test.step('Web+Mobil: cihaz kayıt oluyor, mTLS bağlantısı geçiyor', async () => {
       const token = await dashboard.generateEnrollmentToken(env.MTLS_API, clientId);
       await app.openMtls();
       expect(await app.enroll(token)).toContain(`Kayıt başarılı — CN=PinVault Client: ${clientId}`);
       expect(await app.expectMtls(true)).toContain('HTTP 200');
-      await app.snap('mTLS API ayakta: bağlantı geçiyor');
+      await app.snap('mTLS API çalışıyor: bağlantı geçiyor');
       await app.backToMain();
     });
 
@@ -85,7 +85,7 @@ test('mTLS: Config API durdurulup başlatılınca cihaz davranışı', async ({ 
       await app.backToMain();
     });
 
-    await test.step('Web: mTLS kapsamı hazırlanıp cihaz mTLS config moduna geçiyor', async () => {
+    await test.step('Web: mTLS Config API\'ye host\'lar eklenip cihaz mTLS config moduna geçiyor', async () => {
       await mtlsScope.ensureHosts(dashboard, [env.LAN_IP, env.MOCK_MTLS_HOST]);
       await app.openSettings();
       expect(await app.applyMode('MTLS_CONFIG')).toContain('Hazır — config v');
@@ -95,12 +95,12 @@ test('mTLS: Config API durdurulup başlatılınca cihaz davranışı', async ({ 
       expect(status).toContain('Mod: mTLS config');
     });
 
-    await test.step('Web: API tekrar durduruluyor — mTLS config modundaki cihaz', async () => {
+    await test.step('Web: API tekrar durduruluyor — cihaz bu kez mTLS config modunda', async () => {
       await dashboard.setConfigApiRunning(env.MTLS_API, false);
       await dashboard.snap('mTLS Config API yeniden durduruldu');
       const refresh = await app.refreshConfig();
       await app.snap('mTLS config modu: config yenilenemedi');
-      await attachText(testInfo, 'Config yenileme (birincil blok kapalı API)', refresh);
+      await attachText(testInfo, 'Config yenileme (birincil blok durdurulmuş API\'ye bağlı)', refresh);
       expect(refresh).toContain('Config yenilenemedi');
     });
 
@@ -114,18 +114,18 @@ test('mTLS: Config API durdurulup başlatılınca cihaz davranışı', async ({ 
         [
           status,
           '',
-          'Gerçek davranış: init düşmüyor. SSLCertificateUpdater.initializeAndUpdate',
+          'Gerçek davranış: init başarısız olmuyor. SSLCertificateUpdater.initializeAndUpdate',
           'güncelleme başarısız olduğunda saklı (şifreli) config\'i kullanıyor ve',
-          'InitResult.Ready(storedConfig.version) dönüyor — forceUpdate açık olsaydı',
-          'ForceUpdateFailedException ile düşerdi (bkz. F01). Pin\'ler yürürlükte kalıyor,',
-          'yalnızca yeni config alınamıyor.',
+          'InitResult.Ready(storedConfig.version) dönüyor; forceUpdate açık olsaydı',
+          'ForceUpdateFailedException ile başarısız olurdu (bkz. F01). Pin\'ler geçerli',
+          'kalıyor, yalnızca yeni config alınamıyor.',
         ].join('\n'),
       );
       expect(status).toContain('Hazır — config v');
       expect(status).toContain('Mod: mTLS config');
     });
 
-    await test.step('Web + Mobil: API geri açılıyor, cihaz TLS moduna dönüyor', async () => {
+    await test.step('Web+Mobil: API geri açılıyor, cihaz TLS moduna dönüyor', async () => {
       await dashboard.setConfigApiRunning(env.MTLS_API, true);
       await dashboard.snap('mTLS Config API tekrar çalışıyor');
       const refresh = await app.refreshConfig();

@@ -27,7 +27,7 @@ test('Web\'deki değişiklik, düğmeye basmadan arka plan göreviyle mobile ula
     await expect.poll(() => dashboard.version()).toBe(v0 + 1);
   });
 
-  await test.step('Mobil: bir periyot sonra arka plan görevi config\'i uygular', async () => {
+  await test.step('Mobil: saat 16 dk ileri alınınca arka plan görevi yeni config\'i uygular', async () => {
     device.shiftClock(PERIOD_PLUS_MARGIN_S);
     try {
       const jobs = device.runScheduledJobs(env.APP_ID);

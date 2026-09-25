@@ -7,7 +7,7 @@ const env = require('../lib/env');
 
 const KEY = env.VAULT_KEYS.secret;
 
-test('Vault token: token yokken reddedilir, cihaz için üretilen token\'la iner, iptalde reddedilir', async ({
+test('Vault token: dosya token olmadan inmez; bu cihaz için üretilen token\'la iner, token iptal edilince yine inmez', async ({
   app,
   dashboard,
   run,
@@ -17,7 +17,7 @@ test('Vault token: token yokken reddedilir, cihaz için üretilen token\'la iner
   let token;
 
   try {
-    await test.step('Web: dosya token politikasıyla yüklenir', async () => {
+    await test.step('Web: dosya "token" politikasıyla (yalnızca token\'la indirilebilir) yüklenir', async () => {
       await dashboard.uploadVaultText(env.VAULT_API, KEY, secret, { policy: 'token' });
       await dashboard.snapCard('.card:has(#vault-upload-key) ~ .card', `${KEY} token politikasıyla yüklendi`);
     });

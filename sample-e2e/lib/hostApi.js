@@ -9,14 +9,19 @@ const tls = require('tls');
 const { execFileSync } = require('child_process');
 const env = require('./env');
 
-async function api(pathname, { method = 'GET', body, withKey = true } = {}) {
-  const headers = {};
-  if (withKey) headers['X-API-Key'] = env.API_KEY;
-  if (body !== undefined) headers['Content-Type'] = 'application/json';
+/**
+ * Yönetim API'sine istek. [key] verilirse o yönetici anahtarıyla (ADMIN_KEYS),
+ * yoksa .env'deki paylaşılan API_KEY ile gider. [headers] ek başlıklar;
+ * dönen nesnede yanıt başlıkları da vardır (ör. X-PinVault-Live-Check).
+ */
+async function api(pathname, { method = 'GET', body, withKey = true, key, headers: extra = {}, rawBody } = {}) {
+  const headers = { ...extra };
+  if (withKey) headers['X-API-Key'] = key || env.API_KEY;
+  if (body !== undefined || rawBody !== undefined) headers['Content-Type'] = 'application/json';
   const res = await fetch(env.WEB_URL + pathname, {
     method,
     headers,
-    body: body === undefined ? undefined : JSON.stringify(body),
+    body: rawBody !== undefined ? rawBody : body === undefined ? undefined : JSON.stringify(body),
   });
   const text = await res.text();
   let json;
@@ -25,7 +30,7 @@ async function api(pathname, { method = 'GET', body, withKey = true } = {}) {
   } catch {
     json = undefined;
   }
-  return { status: res.status, json, text };
+  return { status: res.status, json, text, headers: Object.fromEntries(res.headers.entries()) };
 }
 
 async function isHealthy() {
@@ -449,6 +454,74 @@ async function regenerateHostCert(hostname, apiId = env.VAULT_API) {
   return r.json.sha256Pins;
 }
 
+// ── İmza anahtarları, anahtar setleri, yönetişim ─────────────────────────
+
+/** GET /api/v1/signing-key (herkese açık): birincil anahtar, imzalayıcılar, anahtar seti sürümü. */
+async function signingKeyInfo() {
+  const r = await api('/api/v1/signing-key', { withKey: false });
+  if (r.status !== 200) throw new Error(`GET /api/v1/signing-key → HTTP ${r.status}`);
+  return r.json;
+}
+
+/** GET /api/v1/signing/status (yönetici): imzalayıcı türleri, önbellek sayaçları, anahtar seti durumu. */
+async function signingStatus(key) {
+  const r = await api('/api/v1/signing/status', { key });
+  if (r.status !== 200) throw new Error(`GET /api/v1/signing/status → HTTP ${r.status} ${r.text}`);
+  return r.json;
+}
+
+/** PUT /api/v1/signing-keyset — {status, json, text}; reddi senaryo kendisi değerlendirir. */
+function uploadKeySet(wire, key) {
+  return api('/api/v1/signing-keyset', { method: 'PUT', body: wire, key });
+}
+
+/** Cihazın aldığı imzalı zarf, istenen X-PinVault-Features başlığıyla (önbellek kanıtı için). */
+async function rawSignedConfig({ features } = {}) {
+  const r = await api('/api/v1/certificate-config', {
+    withKey: false,
+    headers: features ? { 'X-PinVault-Features': features } : {},
+  });
+  if (r.status !== 200) throw new Error(`imzalı config okunamadı: HTTP ${r.status}`);
+  return r.json;
+}
+
+async function adminMe(key) {
+  return (await api('/api/v1/admin/me', { key })).json;
+}
+
+async function auditLog({ limit = 20, action, key } = {}) {
+  const q = new URLSearchParams({ limit: String(limit) });
+  if (action) q.set('action', action);
+  const r = await api(`/api/v1/audit-log?${q}`, { key });
+  if (r.status !== 200) throw new Error(`denetim kaydı okunamadı: HTTP ${r.status}`);
+  return r.json;
+}
+
+async function verifyAudit(key) {
+  return (await api('/api/v1/audit-log/verify', { key })).json;
+}
+
+async function changeRequests(status = 'pending', key) {
+  return (await api(`/api/v1/change-requests?status=${encodeURIComponent(status)}`, { key })).json || [];
+}
+
+function approveChange(id, key) {
+  return api(`/api/v1/change-requests/${id}/approve`, { method: 'POST', key });
+}
+
+function rejectChange(id, reason, key) {
+  return api(`/api/v1/change-requests/${id}/reject`, { method: 'POST', body: { reason }, key });
+}
+
+/** POST /api/v1/pins/live-check — kuru çalıştırma: host'un şu an sunduğu yaprak yeni sette mi. */
+async function liveCheck(pins, key) {
+  return (await api('/api/v1/pins/live-check', { method: 'POST', body: { pins }, key })).json;
+}
+
+async function notifications(key) {
+  return (await api('/api/v1/notifications', { key })).json;
+}
+
 module.exports = {
   api,
   isHealthy,
@@ -488,4 +561,16 @@ module.exports = {
   enrollmentTokens,
   hostClientCertInfo,
   exportKeystore,
+  signingKeyInfo,
+  signingStatus,
+  uploadKeySet,
+  rawSignedConfig,
+  adminMe,
+  auditLog,
+  verifyAudit,
+  changeRequests,
+  approveChange,
+  rejectChange,
+  liveCheck,
+  notifications,
 };

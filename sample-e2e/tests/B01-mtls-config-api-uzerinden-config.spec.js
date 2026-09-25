@@ -6,7 +6,7 @@
 // sunuyor. Aynı adrese sertifikasız yapılan istek TLS el sıkışmasında
 // reddediliyor — kanıt olarak curl paneli.
 //
-// Yol boyunca iki fail-closed davranış da belgeleniyor:
+// Yol boyunca şüphede bağlantıya izin vermeyen iki davranış da belgeleniyor:
 //   • mTLS config modu istemci sertifikası yokken hiç başlamıyor.
 //   • mTLS Config API'nin kendi pin kapsamı boşken kütüphane config'i
 //     reddediyor ("at least one pin entry") ve başlatma düşüyor.
@@ -53,13 +53,13 @@ test('mTLS: cihaz config\'i mTLS Config API\'den istemci sertifikasıyla çeker'
           `istemci kimliği: ${clientId}`,
           `token (kısaltılmış): ${redact(token)}`,
           `sertifika CN: ${cn}`,
-          'P12 X-P12-SHA256 ile doğrulanıp şifreli depoya yazıldı.',
+          'P12, X-P12-SHA256 başlığındaki hash ile doğrulanıp şifreli depoya yazıldı.',
         ].join('\n'),
       );
       await app.backToMain();
     });
 
-    await test.step('Mobil: mTLS kapsamı boşken başlatma düşüyor (fail-closed)', async () => {
+    await test.step('Mobil: mTLS Config API\'de hiç pin yokken başlatma başarısız (şüphede bağlantıya izin yok)', async () => {
       // Temel durumda mTLS Config API'nin kendi kapsamı boş (provision.sh onu
       // yalnızca dinleyici olarak açar); yarıda kalmış bir koşu bırakmışsa sil.
       await mtlsScope.reset();
@@ -71,16 +71,16 @@ test('mTLS: cihaz config\'i mTLS Config API\'den istemci sertifikasıyla çeker'
       expect(result).toContain('at least one pin');
       await app.backToMain();
       const status = await app.waitInitFailed();
-      await app.snap('boş mTLS kapsamı: başlatma reddedildi');
+      await app.snap('mTLS Config API\'de pin yok: başlatma reddedildi');
       // Başlatma düştüğü için uygulama pinli istek düğmelerini hiç açmıyor:
       // fail-closed'ın uçtaki görünümü bu.
       await app.openMtls();
       await app.waitFor('mtlsTestButton', (n) => !n.enabled, { what: 'mTLS testi kapalı' });
-      await app.snap('boş kapsam: pinli istek denenemiyor');
+      await app.snap('pin yok: pinli istek denenemiyor');
       await app.backToMain();
       await attachText(
         testInfo,
-        `mTLS Config API kapsamı boşken (GET /api/v1/config/${env.MTLS_API} → pins: [])`,
+        `mTLS Config API'de hiç pin yokken (GET /api/v1/config/${env.MTLS_API} → pins: [])`,
         [
           'Ayarlar sonucu:',
           result,
@@ -90,28 +90,29 @@ test('mTLS: cihaz config\'i mTLS Config API\'den istemci sertifikasıyla çeker'
           '',
           'mTLS ekranı: "mTLS ile test" düğmesi kapalı (init READY değil).',
           '',
-          'Boş config bir "değişiklik yok" değil, bir hata: SSLCertificateUpdater.updateNow',
-          'boş pin listesini her zaman değişiklik sayıp doğrulamaya sokuyor ve',
+          'Boş config "değişiklik yok" sayılmıyor, hata sayılıyor: SSLCertificateUpdater.updateNow',
+          'boş pin listesini her zaman değişiklik kabul edip doğruluyor ve',
           '"Config must contain at least one pin entry" ile reddediyor. Birincil blok',
-          '(mTLS) düştüğü için init de düşüyor; eskiden bu durumda AlreadyCurrent dönüp',
-          'InitResult.Ready(v0) veriliyor, durum kutusu tek pin yokken "Hazır" diyordu.',
+          '(mTLS) başarısız olunca init de başarısız oluyor. Eskiden bu durumda',
+          'AlreadyCurrent dönüyor, InitResult.Ready(v0) veriliyordu; durum kutusu',
+          'hiç pin yokken "Hazır" diyordu.',
           '',
-          'Not: mesajın "No stored config and backend unreachable" ön eki sunucuya',
+          'Not: mesajın başındaki "No stored config and backend unreachable" sunucuya',
           'ulaşılamadığını değil, bu blok için kullanılabilir hiçbir config olmadığını',
-          'anlatıyor — sunucu yanıt verdi, yanıtı reddedildi.',
+          'anlatıyor: sunucu yanıt verdi, yanıtı reddedildi.',
         ].join('\n'),
       );
     });
 
-    await test.step('Web: mTLS Config API kapsamına host\'lar eklenir', async () => {
+    await test.step('Web: mTLS Config API\'ye host\'lar eklenir', async () => {
       const report = await mtlsScope.ensureHosts(dashboard, [env.LAN_IP, env.MOCK_MTLS_HOST]);
-      await dashboard.snap('mTLS Config API kapsamındaki host\'lar');
+      await dashboard.snap('mTLS Config API\'deki host\'lar');
       await attachText(
         testInfo,
         'POST /api/v1/hosts/upload-cert?configApiId=sample-mtls ("+ → Yükle")',
         [
           'Host keystore\'ları container\'dan alınıp dashboard\'ın "Yükle" sekmesinden',
-          'mTLS Config API kapsamına eklendi; pin\'leri sunucu sertifikadan hesapladı.',
+          'mTLS Config API\'ye eklendi; pin\'leri sunucu sertifikadan hesapladı.',
           '',
           report,
         ].join('\n'),

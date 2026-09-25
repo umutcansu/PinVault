@@ -18,7 +18,7 @@ const FLAGS = env.VAULT_KEYS.flags;
 const ENC_FILE = `files/vault_files/${MODEL}.enc`;
 const PREFS_FILE = 'shared_prefs/pinvault_vault_files.xml';
 
-test('Vault depolama: ENCRYPTED_FILE .enc dosyası, ENCRYPTED_PREFS şifreli tercih', async ({
+test('Vault depolama: ENCRYPTED_FILE şifreli .enc dosyası, ENCRYPTED_PREFS şifreli SharedPreferences', async ({
   app,
   device,
   dashboard,
@@ -29,7 +29,7 @@ test('Vault depolama: ENCRYPTED_FILE .enc dosyası, ENCRYPTED_PREFS şifreli ter
   let flagsVersion;
 
   try {
-    await test.step('Web: iki dosya farklı depolama stratejileriyle yüklenir', async () => {
+    await test.step('Web: uygulamada farklı saklama yöntemiyle tanımlı iki dosya yüklenir', async () => {
       modelVersion = await dashboard.uploadVaultText(env.VAULT_API, MODEL, modelBody, { policy: 'public' });
       flagsVersion = await dashboard.uploadVaultText(env.VAULT_API, FLAGS, flagsBody, { policy: 'public' });
       await dashboard.snapCard('.card:has(#vault-upload-key) ~ .card', 'vault dosyaları');
@@ -42,10 +42,10 @@ test('Vault depolama: ENCRYPTED_FILE .enc dosyası, ENCRYPTED_PREFS şifreli ter
       expect(await app.fetchVault(MODEL)).toContain('şifreli dosya deposu: files/vault_files');
       await app.snap(`${MODEL} v${modelVersion} indirildi (dosya deposu)`);
       expect(await app.fetchVault(FLAGS)).toContain(`${FLAGS} v${flagsVersion} indirildi`);
-      await app.snap(`${FLAGS} v${flagsVersion} indirildi (şifreli tercih)`);
+      await app.snap(`${FLAGS} v${flagsVersion} indirildi (şifreli SharedPreferences)`);
     });
 
-    await test.step('Cihaz: ENCRYPTED_FILE deposu — .enc dosyası ve [iv_len][iv] başlığı', async () => {
+    await test.step('Cihaz: ENCRYPTED_FILE — .enc dosyası şifreli, başında [iv_len][iv] var', async () => {
       const listing = device.appFiles(env.APP_ID, 'files/vault_files');
       const blob = device.appFileBytes(env.APP_ID, ENC_FILE);
       const ivLen = blob[0];
@@ -67,8 +67,8 @@ test('Vault depolama: ENCRYPTED_FILE .enc dosyası, ENCRYPTED_PREFS şifreli ter
           `Düz metin ("${modelBody.slice(0, 24)}…") dosyada geçiyor mu: ` +
             `${blob.includes(Buffer.from(modelBody, 'utf8')) ? 'EVET ✗' : 'hayır ✓'}`,
           '',
-          'Anahtar dosyada değil: Android Keystore\'da pinvault_vault_' + MODEL + ' alias\'ında',
-          '(Depolama ekranı bunu listeliyor). Dosya başka bir cihaza kopyalansa açılamaz.',
+          'Şifreleme anahtarı dosyada değil, Android Keystore\'da (alias: pinvault_vault_' + MODEL + ';',
+          'Depolama ekranında listeleniyor). Dosya başka bir cihaza kopyalansa açılamaz.',
         ].join('\n'),
       );
       expect(ivLen).toBe(12);
@@ -83,7 +83,8 @@ test('Vault depolama: ENCRYPTED_FILE .enc dosyası, ENCRYPTED_PREFS şifreli ter
         [
           versions.trim(),
           '',
-          'Sürüm numarası düz: gizli değil, 304 kısayolu için gerekli. İçerik burada yok.',
+          'Sürüm numarası şifresiz: gizli bir bilgi değil ve sunucunun "değişmedi" (304)',
+          'yanıtı için gerekli. İçerik burada yok.',
         ].join('\n'),
       );
       expect(versions).toContain(`vault_file_ver_${MODEL}`);
@@ -91,7 +92,7 @@ test('Vault depolama: ENCRYPTED_FILE .enc dosyası, ENCRYPTED_PREFS şifreli ter
       expect(versions).not.toContain(modelBody.slice(0, 24));
     });
 
-    await test.step('Cihaz: ENCRYPTED_PREFS deposu — şifreli tercih dosyası', async () => {
+    await test.step('Cihaz: ENCRYPTED_PREFS — SharedPreferences dosyasında ad da değer de şifreli', async () => {
       const xml = device.appFileText(env.APP_ID, PREFS_FILE);
       const entryNames = [...xml.matchAll(/<string name="([^"]+)"/g)].map((m) => m[1]);
       await attachText(
@@ -105,8 +106,8 @@ test('Vault depolama: ENCRYPTED_FILE .enc dosyası, ENCRYPTED_PREFS şifreli ter
           `dosya içeriği düz geçiyor mu: ${xml.includes(flagsBody) ? 'EVET ✗' : 'hayır ✓'}`,
           `Tink keyset kaydı: ${xml.includes('__androidx_security_crypto_encrypted_prefs_key_keyset__') ? 'var ✓' : 'yok ✗'}`,
           '',
-          'EncryptedSharedPreferences hem anahtarı hem değeri şifreliyor; keyset\'in',
-          'kendisi Android Keystore\'daki master key ile sarılı.',
+          'EncryptedSharedPreferences hem kayıt adını hem değerini şifreliyor; bu şifrelemenin',
+          'anahtarları (Tink keyset) da Android Keystore\'daki ana anahtarla (master key) şifreli.',
         ].join('\n'),
       );
       expect(xml).toContain('__androidx_security_crypto_encrypted_prefs_key_keyset__');

@@ -13,7 +13,7 @@ const { attachText } = require('../lib/evidence');
 const { SampleApp } = require('../lib/sampleApp');
 const hostApi = require('../lib/hostApi');
 
-test('Mobil: özel bağlantı ayarlı istemci pinler ama kendiliğinden toparlanmaz', async ({
+test('Mobil: özel bağlantı ayarlı istemci pin\'leri uyguluyor ama kendiliğinden toparlanmıyor', async ({
   app,
   dashboard,
   run,
@@ -75,14 +75,14 @@ test('Mobil: özel bağlantı ayarlı istemci pinler ama kendiliğinden toparlan
     const result = await app.testLibraryClient();
     await app.snap('applyTo() istemcisi otomatik kurtardı');
     await app.waitForEvent(`[config] UPDATED v${v0 + 2}`);
-    log.push(`5) applyTo() istemcisi     → ${result.split('\n')[0]} (kurtarma interceptor'ı config'i v${v0 + 2}'ye çekti)`);
+    log.push(`5) applyTo() istemcisi     → ${result.split('\n')[0]} (kurtarma interceptor'ı config'i v${v0 + 2}'ye güncelledi)`);
     expect(result).toContain('Pinned bağlantı başarılı');
   });
 
-  await test.step('Mobil: config tazelenince özel ayarlı istemci de geçiyor', async () => {
+  await test.step('Mobil: config yenilenince özel ayarlı istemci de geçiyor', async () => {
     await app.openSettings();
     const result = await app.settingsClientTest();
-    await app.snapResult('config tazelendi: özel ayarlı istemci başarılı');
+    await app.snapResult('config yenilendi: özel ayarlı istemci başarılı');
     log.push(`6) ortak config v${v0 + 2} → ${result.split('\n')[0]}`);
     await attachText(
       testInfo,
@@ -90,10 +90,10 @@ test('Mobil: özel bağlantı ayarlı istemci pinler ama kendiliğinden toparlan
       [
         ...log,
         '',
-        'Aynı pin kaynağı (aktif config her el sıkışmada yeniden okunuyor),',
-        'farklı davranış: bu aşırı yükleme PinRecoveryInterceptor eklemiyor, bu',
-        'yüzden uyuşmazlık çağırana SSLPeerUnverifiedException olarak dönüyor.',
-        'Özel zaman aşımı + otomatik kurtarma isteyen çağıran kendi builder\'ına',
+        'Pin kaynağı aynı (aktif config her el sıkışmada yeniden okunuyor), davranış',
+        'farklı: getClient\'ın bu çeşidi PinRecoveryInterceptor eklemiyor; bu yüzden',
+        'uyuşmazlık uygulamaya SSLPeerUnverifiedException olarak dönüyor. Hem özel',
+        'zaman aşımı hem otomatik kurtarma isteyen uygulama kendi builder\'ına',
         'applyTo(builder) uygulamalı.',
       ].join('\n'),
     );

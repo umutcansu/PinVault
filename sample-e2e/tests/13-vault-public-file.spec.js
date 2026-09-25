@@ -48,7 +48,7 @@ test('Vault: web\'de yüklenen dosya mobilde iner, imzası doğrulanır; güncel
       await app.snap(`v${v1 + 1} indirildi`);
     });
 
-    await test.step('Mobil: tekrar indirme → güncel', async () => {
+    await test.step('Mobil: tekrar indirme denenir; dosya zaten güncel', async () => {
       expect(await app.fetchVault(KEY)).toContain(`${KEY} güncel (v${v1 + 1})`);
       await app.snap(`tekrar indirme: güncel (v${v1 + 1})`);
     });

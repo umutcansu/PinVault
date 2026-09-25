@@ -11,7 +11,7 @@ const env = require('../lib/env');
 
 const KEY = env.VAULT_KEYS.secret;
 
-test('Vault politika değişimi: public → token → public, telefon her adımda uyuyor', async ({
+test('Vault politika değişimi: public → token → public, telefon her adımda yeni kurala göre davranıyor', async ({
   app,
   dashboard,
   run,
@@ -53,7 +53,7 @@ test('Vault politika değişimi: public → token → public, telefon her adımd
           `dosya listesi: v${cells.version}, ${cells.size}, politika=${cells.policy}, şifreleme=${cells.encryption}`,
           '',
           `Sürüm hâlâ v${version}: politika değişikliği içeriğe dokunmuyor, yani`,
-          'telefondaki kopya "eski sürüm" olmuyor — yalnızca erişim kapısı kapanıyor.',
+          'telefondaki kopya "eski sürüm" sayılmıyor; yalnızca erişim kısıtlanıyor.',
         ].join('\n'),
       );
       expect(Number(cells.version.replace(/\D/g, ''))).toBe(version);
@@ -108,7 +108,7 @@ test('Vault politika değişimi: public → token → public, telefon her adımd
       expect(status).toContain(body);
     });
 
-    await test.step('Kablo: aynı dosya başlıksız istekle de 200 veriyor', async () => {
+    await test.step('Ağ trafiği: token\'sız, tanınmayan bir cihazdan gelen istek de 200 alıyor', async () => {
       const res = await hostApi.rawVaultDownload(KEY, 'c07-yabanci-cihaz');
       await attachText(
         testInfo,
@@ -116,21 +116,21 @@ test('Vault politika değişimi: public → token → public, telefon her adımd
         [
           describeResponse(res, { maxBody: 200 }),
           '',
-          'public politikada erişim kapısı yok: dosyanın gizliliği yalnızca TLS +',
-          'pinleme ile korunuyor. token politikası cihaz başına kapıyı geri koyuyor.',
+          'public politikada erişim kontrolü yok: dosyanın gizliliğini yalnızca TLS ve',
+          'pinleme koruyor. token politikası cihaz başına kontrolü geri getiriyor.',
         ].join('\n'),
       );
       expect(res.status).toBe(200);
       expect(res.body.toString('utf8')).toBe(body);
     });
 
-    await test.step('Web: dağıtım geçmişi üç davranışı da tutuyor', async () => {
+    await test.step('Web: dağıtım geçmişi üç davranışı da kaydediyor', async () => {
       await dashboard.expectDistribution(env.VAULT_API, {
         key: KEY,
         deviceModel: run.model,
         status: 'downloaded',
       });
-      await dashboard.snap('dağıtım geçmişi — politika dolaşımı');
+      await dashboard.snap('dağıtım geçmişi — politika değişiklikleri');
       const dists = await hostApi.vaultDistributions(env.VAULT_API, KEY);
       await attachText(
         testInfo,

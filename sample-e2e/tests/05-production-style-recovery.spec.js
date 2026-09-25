@@ -5,14 +5,14 @@ const { test, expect, TARGET_HOST } = require('../lib/fixtures');
 const hostApi = require('../lib/hostApi');
 const { SampleApp } = require('../lib/sampleApp');
 
-test('Production-style client: web\'de yanlış pin → reddeder; düzeltilince kendi interceptor\'ıyla toparlanır', async ({
+test('Production-style client: web\'de pin yanlışsa bağlanmaz; düzeltilince kendi interceptor\'ıyla toparlanır', async ({
   app,
   dashboard,
   run,
 }) => {
   let v0;
 
-  await test.step('Mobil: production-style client başlangıçta bağlanır', async () => {
+  await test.step('Mobil: production-style client (PinVault\'u import etmeyen OkHttp client\'ı) başlangıçta bağlanır', async () => {
     expect(await app.testProductionStyle()).toContain('Production-style bağlantı başarılı');
     await app.snap('production-style client bağlandı');
   });
@@ -30,10 +30,10 @@ test('Production-style client: web\'de yanlış pin → reddeder; düzeltilince 
     await app.snap(`yanlış pin'li config v${v0 + 1} uygulandı`);
   });
 
-  await test.step('Mobil: production-style istek reddedilir', async () => {
+  await test.step('Mobil: production-style client\'ın isteği reddedilir', async () => {
     const status = await app.testProductionStyle();
     expect(status).toContain('Production-style bağlantı başarısız');
-    await app.snap('production-style reddetti');
+    await app.snap('production-style bağlantı başarısız');
   });
 
   await test.step('Web: doğru pin\'ler geri yüklenir', async () => {
@@ -41,7 +41,7 @@ test('Production-style client: web\'de yanlış pin → reddeder; düzeltilince 
     await expect.poll(() => dashboard.version()).toBe(v0 + 2);
   });
 
-  await test.step('Mobil: elle yenilemeden istek → interceptor config\'i çeker ve tekrarlar', async () => {
+  await test.step('Mobil: elle yenilemeden istek yapılır; interceptor yeni config\'i çekip isteği tekrarlar', async () => {
     const status = await app.testProductionStyle();
     expect(status).toContain('Production-style bağlantı başarılı');
     await app.snap('production-style toparlandı');

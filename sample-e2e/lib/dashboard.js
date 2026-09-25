@@ -55,6 +55,12 @@ class Dashboard {
     await expect(this.page.locator('#host-list .api-header').first()).toBeVisible();
   }
 
+  /** Sayfayı yeniden yükler (container yeniden oluşturulduktan sonra: durum sunucudan yeniden okunur). */
+  async reload() {
+    await this.page.reload();
+    await expect(this.page.locator('#host-list .api-header').first()).toBeVisible({ timeout: 30_000 });
+  }
+
   /** Son toast mesajı (işlem sonucu); görünmezse boş. */
   async toastText(timeout = 5000) {
     const toast = this.page.locator('.toast').last();
@@ -477,6 +483,21 @@ class Dashboard {
     return this.toastText(20_000);
   }
 
+  /**
+   * Host detayındaki "Yedek Anahtara Geç": sertifika saklı yedek anahtarla
+   * yeniden üretilir, yeni bir yedek hazırlanır. Onay kutusu fixture'da kabul
+   * edilir; sonuç toast'ını döndürür. [apiId] verilirse host o kapsamın
+   * ağacından açılır (ağaç kapalı olsa da).
+   */
+  async rotateHostToBackup(host, apiId) {
+    if (apiId) await this.openHostIn(apiId, host);
+    else await this.openHost(host);
+    const button = this.page.locator(`[data-action="rotateHostToBackup"][data-arg0="${host}"]`).first();
+    await expect(button).toBeVisible({ timeout: 20_000 });
+    await button.click();
+    return this.toastText(20_000);
+  }
+
   /** Host detayındaki "Bağlantıyı test et"; sonuç toast'ını döndürür. */
   async testConnection(host) {
     await this.openHost(host);
@@ -552,6 +573,13 @@ class Dashboard {
     return this.toastText(20_000);
   }
 
+  /** Bootstrap sekmesi → "Yedek Anahtara Geç" (onay fixture'da kabul edilir). */
+  async rotateBootstrapToBackup(apiId) {
+    await this.openConfigApiTab(apiId, 'bootstrap');
+    await this.page.locator('[data-action="rotateBootstrapToBackup"]').first().click();
+    return this.toastText(20_000);
+  }
+
   /** İmzalama sekmesindeki public key. */
   async signingPublicKey(apiId) {
     await this.openConfigApiTab(apiId, 'signing');
@@ -574,6 +602,363 @@ class Dashboard {
     await this.openConfigApiTab(apiId, 'signing');
     await this.page.locator('[data-action="regenerateSigningKey"]').first().click();
     return this.toastText(20_000);
+  }
+
+  // ── İmzalama sekmesi: imzalayıcılar, anahtar seti, imza önbelleği ─────
+
+  /** İmzalama sekmesini açar; imzalayıcılar kartı çizilene kadar bekler. */
+  async openSigning(apiId) {
+    await this.openConfigApiTab(apiId, 'signing');
+    await expect(this.page.locator('#signers-card')).toBeVisible({ timeout: 20_000 });
+  }
+
+  /**
+   * İmzalayıcılar kartının satırları: { name, primary, type, keyId (tam,
+   * hücrenin title özniteliğinden), inSet (true/false; set yoksa null),
+   * description }.
+   */
+  async signerRows() {
+    return this.page.locator('#signers-card tbody tr').evaluateAll((rows) =>
+      rows.map((tr) => {
+        const td = tr.querySelectorAll('td');
+        const id = td[2] && td[2].querySelector('.mono');
+        return {
+          name: ((td[0] && td[0].querySelector('b')) || { textContent: '' }).textContent.trim(),
+          primary: !!(td[0] && td[0].querySelector('.gov-badge-primary')),
+          type: td[1] ? td[1].textContent.trim() : '',
+          keyId: id ? id.getAttribute('title') : '',
+          inSet: td[2] && td[2].querySelector('.status-healthy') ? true : td[2] && td[2].querySelector('.status-error') ? false : null,
+          description: td[3] ? td[3].textContent.trim() : '',
+        };
+      }),
+    );
+  }
+
+  /** Anahtar seti kartının metni (sürüm, listelenen anahtarlar, uyarılar). */
+  async keySetCardText() {
+    return (await this.page.locator('#keyset-card').innerText()).trim();
+  }
+
+  /**
+   * Anahtar seti kartına imzalı seti (JSON metni, olduğu gibi) yapıştırıp
+   * "Seti Yükle". Sunucunun yanıtını ve kartın sonuç kutusunu döndürür:
+   * { status, body, result }. Başarıda sekme yeniden çizilir; sonuç kutusu
+   * yeni çizimde de görünür.
+   */
+  async uploadKeySet(apiId, wireText) {
+    await this.openSigning(apiId);
+    await this.page.fill('#keyset-json', wireText);
+    const response = this.page.waitForResponse(
+      (r) => r.url().includes('/api/v1/signing-keyset') && r.request().method() === 'PUT',
+      { timeout: 30_000 },
+    );
+    await this.page.locator('[data-action="uploadKeyset"]').click();
+    const res = await response;
+    const body = (await res.text()).trim();
+    const box = this.page.locator('#keyset-upload-result .notice');
+    await expect(box).toContainText(res.ok() ? /yüklendi|uploaded/ : /reddedildi|rejected/i, { timeout: 20_000 });
+    if (res.ok()) await expect(this.page.locator('#keyset-card .ver-badge')).toBeVisible({ timeout: 20_000 });
+    return { status: res.status(), body, result: (await box.innerText()).trim() };
+  }
+
+  /** İmza önbelleği kartındaki değerler: { enabled, ttl, produced, hits, cached }. */
+  async sigCacheStats() {
+    const card = this.page.locator('#sig-cache-card');
+    await expect(card).toBeVisible({ timeout: 20_000 });
+    const values = await card.locator('.mini-stat-value').allInnerTexts();
+    const badge = (await card.locator('.gov-badge').first().innerText()).trim();
+    return {
+      enabled: !/kapal|off/i.test(badge),
+      badge,
+      ttl: values[0],
+      produced: Number(values[1]),
+      hits: Number(values[2]),
+      cached: Number(values[3]),
+    };
+  }
+
+  /** "Anahtarı Yenile" düğmesi: devre dışı mı, neden (title) ve başlığın altındaki uyarı. */
+  async regenerateState() {
+    const button = this.page.locator('[data-action="regenerateSigningKey"]').first();
+    await expect(button).toBeVisible({ timeout: 20_000 });
+    const notice = this.page.locator('#content > .notice-warn').first();
+    return {
+      disabled: await button.isDisabled(),
+      title: (await button.getAttribute('title')) || '',
+      notice: (await notice.count()) ? (await notice.innerText()).trim() : '',
+    };
+  }
+
+  // ── Yönetişim: kimlik, onaylar, denetim kaydı, canlı kontrol ─────────
+
+  /**
+   * [action]'ı çalıştırır ve [viewId] görünümü (Onaylar / Denetim Kaydı)
+   * sunucudan YENİDEN çizilene kadar bekler. Bu bölümler veriyi çekince
+   * içeriği baştan yazar; görünüm zaten ekrandayken "görünür mü" beklemesi eski
+   * DOM'la hemen geçiyor ve ardından okunan satır bir önceki çizime ait
+   * olabiliyordu. Eski görünüm işaretlenir, işaretsiz yenisi beklenir.
+   */
+  async rerender(viewId, action) {
+    await this.page.evaluate((id) => {
+      const view = document.getElementById(id);
+      if (view) view.dataset.e2eStale = '1';
+    }, viewId);
+    await action();
+    await expect(this.page.locator(`#${viewId}:not([data-e2e-stale])`)).toBeVisible({ timeout: 20_000 });
+  }
+
+  /**
+   * Dashboard'u ayrı bir tarayıcı bağlamında, verilen yönetici anahtarıyla
+   * açar (ADMIN_KEYS: alice, bob). İki yönetici aynı anda iki bağlamda
+   * çalışabilsin diye her çağrı yeni bir bağlam açar; anahtar yalnızca
+   * sayfanın localStorage'ına yazılır, kanıta girmez. Kapatmak için
+   * `dashboard.context.close()`.
+   */
+  static async openAs(browser, testInfo, key, { baseUrl } = {}) {
+    const { WEB_URL } = require('./env');
+    const origin = baseUrl || `${WEB_URL}/`;
+    const context = await browser.newContext({ baseURL: origin, viewport: { width: 1440, height: 900 } });
+    const page = await context.newPage();
+    const dashboard = new Dashboard(page, testInfo, { baseUrl: origin });
+    dashboard.context = context;
+    Dashboard.attachDialogs(page, dashboard);
+    await page.addInitScript((value) => localStorage.setItem('pinvault_api_key', value), key);
+    await dashboard.open();
+    return dashboard;
+  }
+
+  /** Kenar çubuğundaki kimlik rozetinin adı (GET /api/v1/admin/me → name). */
+  async adminName() {
+    const name = this.page.locator('#admin-name');
+    await expect(name).not.toHaveText(/Kimlik yok|Not signed in/, { timeout: 20_000 });
+    return (await name.innerText()).trim();
+  }
+
+  /** Kimlik rozetinin altındaki özellik rozetleri ("2 kişi onayı", "Canlı kontrol: zorunlu" …). */
+  async adminBadges() {
+    return (await this.page.locator('#admin-chip .gov-badge').allInnerTexts()).map((s) => s.trim());
+  }
+
+  /**
+   * Kenar çubuğu → "Onaylar", ardından [tab] sekmesi. Bölüm zaten açıkken
+   * menüye tıklamak seçili sekmeyi korur ("Geçmiş"te kalınabilir); bu yüzden
+   * sekme her seferinde açıkça seçilir.
+   */
+  async openApprovals(tab = 'pending') {
+    await this.rerender('approvals-view', () => this.page.locator('#nav-approvals').click());
+    await this.setApprovalsTab(tab);
+  }
+
+  /** Onaylar bölümünde "Bekleyen" / "Geçmiş" sekmesi. */
+  async setApprovalsTab(tab) {
+    const button = () => this.page.locator(`#approvals-view [data-action="setApprovalsTab"][data-arg0="${tab}"]`);
+    await this.rerender('approvals-view', () => button().click());
+    await expect(button()).toHaveClass(/tab-active/);
+  }
+
+  /** Bekleyen değişiklik isteğinin kartı. */
+  changeCard(id) {
+    return this.page.locator(`#cr-card-${id}`);
+  }
+
+  /** Kartın "Onayla" düğmesi: { disabled, title }. */
+  async approveButtonState(id) {
+    const button = this.changeCard(id).locator(`[data-action="approveChange"][data-arg0="${id}"]`);
+    await expect(button).toBeVisible({ timeout: 20_000 });
+    return { disabled: await button.isDisabled(), title: (await button.getAttribute('title')) || '' };
+  }
+
+  /** Değişikliğin ayrıntısını (pin farkı) açar. */
+  async expandChange(id) {
+    const detail = this.page.locator(`#cr-detail-${id}`);
+    if (!(await detail.isVisible())) {
+      await this.page.locator(`[data-action="toggleChangeDetail"][data-arg0="${id}"]`).first().click();
+    }
+    await expect(detail).toBeVisible();
+  }
+
+  /**
+   * "Onayla": sunucunun yanıtını ({ status, body }) döndürür. Toast'ı çağıran
+   * görüntüler (başarı ya da 409 hata metni).
+   */
+  async approveChange(id) {
+    const response = this.page.waitForResponse(
+      (r) => r.url().includes(`/api/v1/change-requests/${id}/approve`) && r.request().method() === 'POST',
+      { timeout: 60_000 },
+    );
+    await this.changeCard(id).locator(`[data-action="approveChange"][data-arg0="${id}"]`).click();
+    const res = await response;
+    return { status: res.status(), body: (await res.text()).trim() };
+  }
+
+  /** "Reddet" / "Geri çek": gerekçe prompt'la sorulur. Sunucunun yanıtını döndürür. */
+  async rejectChange(id, reason) {
+    this.answerPrompt(reason);
+    const response = this.page.waitForResponse(
+      (r) => r.url().includes(`/api/v1/change-requests/${id}/reject`) && r.request().method() === 'POST',
+      { timeout: 30_000 },
+    );
+    await this.changeCard(id).locator(`[data-action="rejectChange"][data-arg0="${id}"]`).click();
+    const res = await response;
+    return { status: res.status(), body: (await res.text()).trim() };
+  }
+
+  /** "Geçmiş" sekmesindeki satır (karara bağlanmış istek). */
+  decidedRow(id) {
+    return this.page.locator(`#approvals-view tr[data-action="toggleChangeDetail"][data-arg0="${id}"]`);
+  }
+
+  /**
+   * Onaylar görünümünün görüntüsü; [ids] verilirse başka isteklerin kartları /
+   * satırları (önceki koşulardan kalan geçmiş) görüntü süresince gizlenir.
+   */
+  async snapApprovals(title, { ids } = {}) {
+    await expect(this.page.locator('#approvals-view')).toBeVisible({ timeout: 20_000 });
+    if (ids) {
+      await this.page.evaluate((keep) => {
+        const hide = (el) => {
+          el.dataset.e2eHidden = el.style.display || '';
+          el.style.display = 'none';
+        };
+        document.querySelectorAll('#approvals-view .cr-card').forEach((card) => {
+          if (!keep.includes(card.id.replace('cr-card-', ''))) hide(card);
+        });
+        document.querySelectorAll('#approvals-view tr.row-toggle').forEach((tr) => {
+          const id = tr.getAttribute('data-arg0');
+          if (keep.includes(id)) return;
+          hide(tr);
+          const detail = document.getElementById(`cr-detail-${id}`);
+          if (detail) hide(detail);
+        });
+      }, ids.map(String));
+    }
+    try {
+      await this.snapCard('#approvals-view', title);
+    } finally {
+      await this.page.evaluate(() => {
+        document.querySelectorAll('[data-e2e-hidden]').forEach((el) => {
+          el.style.display = el.dataset.e2eHidden;
+          delete el.dataset.e2eHidden;
+        });
+      });
+    }
+  }
+
+  /** Kenar çubuğu → "Denetim Kaydı". */
+  async openAudit() {
+    await this.rerender('audit-view', () => this.page.locator('#nav-audit').click());
+  }
+
+  /** Denetim kaydını yeniden çizer (↻). */
+  async refreshAudit() {
+    await this.rerender('audit-view', () => this.page.locator('#audit-view [data-action="refreshAudit"]').click());
+  }
+
+  /** İşlem süzgeci (boş = tümü); tablo yeniden çizilene kadar bekler. */
+  async setAuditFilter(action) {
+    const select = this.page.locator('#audit-action-filter');
+    if ((await select.inputValue()) === (action || '')) return;
+    await this.rerender('audit-view', () => select.selectOption(action || ''));
+    await expect(this.page.locator('#audit-action-filter')).toHaveValue(action || '', { timeout: 20_000 });
+  }
+
+  auditRow(id) {
+    return this.page.locator(`#audit-view tr[data-action="toggleAuditDetail"][data-arg0="${id}"]`);
+  }
+
+  /** Denetim satırının hücreleri: { id, time, actor, action, configApiId, target, summary }. */
+  async auditRowCells(id) {
+    const row = this.auditRow(id);
+    await expect(row).toBeVisible({ timeout: 20_000 });
+    const cells = (await row.locator('td').allInnerTexts()).map((s) => s.trim());
+    return { id: cells[0], time: cells[1], actor: cells[2], action: cells[3], configApiId: cells[4], target: cells[5], summary: cells[6] };
+  }
+
+  /** Satırın ayrıntısını (kaynak IP, hash, JSON fark) açar; ayrıntı metnini döndürür. */
+  async expandAuditEntry(id) {
+    const detail = this.page.locator(`#audit-detail-${id}`);
+    if (!(await detail.isVisible())) await this.auditRow(id).click();
+    await expect(detail).toBeVisible();
+    return (await detail.innerText()).trim();
+  }
+
+  /** "Zinciri Doğrula": sonuç metni ("✓ Zincir sağlam — N kayıt" / "✗ Zincir #id kaydında bozuk"). */
+  async verifyAuditChain() {
+    const response = this.page.waitForResponse((r) => r.url().includes('/api/v1/audit-log/verify'), { timeout: 30_000 });
+    await this.page.locator('#audit-view [data-action="verifyAuditChain"]').click();
+    const res = await response;
+    const box = this.page.locator('#audit-verify-result .verify-result');
+    await expect(box).toBeVisible({ timeout: 20_000 });
+    return { status: res.status(), json: JSON.parse(await res.text()), text: (await box.innerText()).trim() };
+  }
+
+  /**
+   * Denetim görünümünün (başlık + doğrulama sonucu + kayıt tablosu) görüntüsü;
+   * [ids] verilirse tablodaki diğer satırlar görüntü süresince gizlenir (sayfa
+   * 25 satır gösteriyor, kanıt yalnızca ilgili kayıtlar). [notifications]
+   * false ise webhook kartı da gizlenir.
+   */
+  async snapAudit(title, { ids, notifications = false } = {}) {
+    await expect(this.page.locator('#audit-view')).toBeVisible({ timeout: 20_000 });
+    for (const id of ids || []) await expect(this.auditRow(id)).toBeVisible({ timeout: 20_000 });
+    await this.page.evaluate(
+      ([keep, showNotif]) => {
+        const hide = (el) => {
+          el.dataset.e2eHidden = el.style.display || '';
+          el.style.display = 'none';
+        };
+        if (keep) {
+          document.querySelectorAll('#audit-view tr.row-toggle').forEach((tr) => {
+            const id = tr.getAttribute('data-arg0');
+            if (keep.includes(id)) return;
+            hide(tr);
+            const detail = document.getElementById(`audit-detail-${id}`);
+            if (detail) hide(detail);
+          });
+        }
+        const notif = document.getElementById('notif-card');
+        if (notif && !showNotif) hide(notif);
+      },
+      [ids ? ids.map(String) : null, notifications],
+    );
+    try {
+      await this.snapCard('#audit-view', title);
+    } finally {
+      await this.page.evaluate(() => {
+        document.querySelectorAll('[data-e2e-hidden]').forEach((el) => {
+          el.style.display = el.dataset.e2eHidden;
+          delete el.dataset.e2eHidden;
+        });
+      });
+    }
+  }
+
+  /**
+   * Host detayındaki pin düzenleyicisinde "Canlı Kontrol" (kaydetmez): alanlara
+   * [pins] yazılır, düğmeye basılır; sonuç kutusunun metni döndürülür.
+   * Düzenleyici açık kalır (ardından "Kaydet" ya da [cancelEditPins]).
+   */
+  async liveCheckInEditor(host, pins) {
+    const page = this.page;
+    const editor = page.locator('#pins-edit');
+    if (!(await editor.isVisible())) {
+      // Başlıktaki "Pinleri Düzenle" (kapatılmış düzenleyicinin "İptal"i de DOM'da kalıyor).
+      await page.locator(`#pins-card [data-action="toggleEditPins"][data-arg0="${host}"]`).first().click();
+    }
+    const inputs = page.locator('#pins-edit input.form-input');
+    await expect(inputs.first()).toBeVisible();
+    while ((await inputs.count()) < pins.length) await page.locator('#pins-edit [data-action="addEditHashInline"]').click();
+    while ((await inputs.count()) > pins.length) await page.locator('#pins-edit [data-action="removeEditHashInline"]').last().click();
+    for (let i = 0; i < pins.length; i++) {
+      await inputs.nth(i).fill(pins[i]);
+      await inputs.nth(i).dispatchEvent('change');
+    }
+    const response = page.waitForResponse((r) => r.url().includes('/api/v1/pins/live-check'), { timeout: 30_000 });
+    await page.locator(`#pins-edit [data-action="liveCheckPins"][data-arg1="inline"]`).click();
+    const res = await response;
+    const box = page.locator('#live-check-result .live-check-line').first();
+    await expect(box).not.toHaveText(/kontrol ediliyor|Checking/, { timeout: 20_000 });
+    return { status: res.status(), json: JSON.parse(await res.text()), text: (await page.locator('#live-check-result').innerText()).trim() };
   }
 
   /** Bir tablonun sayfa boyutunu değiştirir (ilk sayfalama seçicisi). */
@@ -953,7 +1338,7 @@ class Dashboard {
     await this.page.locator('form[data-action-submit="uploadBootstrapCert"] button[type="submit"]').click();
     const res = await response;
     const body = (await res.text()).trim();
-    if (!res.ok()) throw new Error(`Bootstrap sertifikası yüklenemedi: HTTP ${res.status()} ${body}`);
+    if (!res.ok()) throw new Error(`Sunucu sertifikası (bootstrap) yüklenemedi: HTTP ${res.status()} ${body}`);
     let json;
     try {
       json = JSON.parse(body);

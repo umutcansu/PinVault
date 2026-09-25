@@ -7,15 +7,15 @@
 //
 // Kütüphanenin şartı: sunucu P12 baytlarının SHA-256'sını `X-P12-SHA256`
 // başlığında vermek zorunda (PinVault.validateP12). Başlık yoksa kurulum
-// reddediliyor — "belki yoktur, devam edeyim" yok. Vekil tam da bu başlığı
-// siliyor; gövdeye hiç dokunmuyor.
+// reddediliyor — "belki yoktur, devam edeyim" yok. Saldırgan proxy tam da bu
+// başlığı siliyor; gövdeye hiç dokunmuyor.
 const { test, expect } = require('../lib/fixtures');
 const { attachText, redact } = require('../lib/evidence');
 const proxy = require('../lib/proxy');
 const hostApi = require('../lib/hostApi');
 const env = require('../lib/env');
 
-test('Kablo: X-P12-SHA256 başlığı silinince telefon sertifikayı kurmuyor', async ({
+test('Saldırı: kayıt yanıtındaki bütünlük başlığı (X-P12-SHA256) silinir → telefon istemci sertifikasını kurmuyor', async ({
   app,
   device,
   dashboard,
@@ -50,16 +50,16 @@ test('Kablo: X-P12-SHA256 başlığı silinince telefon sertifikayı kurmuyor', 
       await app.backToMain();
     });
 
-    await test.step("Vekil: host'un anahtarıyla saydam araya girilir", async () => {
+    await test.step('Saldırgan: sunucunun kendi anahtarıyla araya girer, henüz bir şey değiştirmiyor', async () => {
       mitm = await proxy.start({ identity: 'trusted' });
       device.redirectTcp(env.LAN_IP, env.CONFIG_API_PORT, env.PROXY_PORT);
       app.relaunch();
       const ready = await app.waitReady();
-      await app.snap('saydam vekil: telefon Hazır');
+      await app.snap('saldırgan henüz bir şey değiştirmiyor: telefon Hazır');
       expect(ready).toContain('Hazır — config v');
     });
 
-    await test.step('Vekil: kayıt yanıtından X-P12-SHA256 silinir → telefon kurulumu reddediyor', async () => {
+    await test.step('Saldırgan: kayıt yanıtından X-P12-SHA256 başlığını siler → telefon sertifikayı kurmayı reddediyor', async () => {
       mitm.setMutate((answer) => {
         const mutated = proxy.stripP12Hash(answer);
         if (mutated !== answer) {
@@ -86,7 +86,7 @@ test('Kablo: X-P12-SHA256 başlığı silinince telefon sertifikayı kurmuyor', 
         .join('\n');
       await attachText(
         testInfo,
-        `Kablodaki fark (POST ${wire.path})`,
+        `Saldırganın yaptığı değişiklik (POST ${wire.path})`,
         [
           `HTTP ${wire.status}, gövde ${wire.bodyLength} bayt (PKCS#12, başlangıç 0x${wire.bodyHead})`,
           '',
@@ -94,7 +94,7 @@ test('Kablo: X-P12-SHA256 başlığı silinince telefon sertifikayı kurmuyor', 
           `  content-type  : ${wire.before['content-type']}`,
           `  x-p12-sha256  : ${redact(wire.before['x-p12-sha256'], 12)}`,
           '',
-          'TELEFONUN ALDIĞI (vekil sildi)',
+          'TELEFONUN ALDIĞI (saldırgan sildi)',
           `  content-type  : ${wire.after['content-type']}`,
           `  x-p12-sha256  : ${wire.after['x-p12-sha256'] === undefined ? '(yok)' : wire.after['x-p12-sha256']}`,
           '',
@@ -155,11 +155,11 @@ test('Kablo: X-P12-SHA256 başlığı silinince telefon sertifikayı kurmuyor', 
       expect(certs.length).toBeGreaterThan(0);
     });
 
-    await test.step('Vekil: kurcalama kalkınca ikinci token ile kayıt tamamlanıyor', async () => {
+    await test.step('Saldırgan: değiştirmeyi bırakınca ikinci token ile kayıt tamamlanıyor', async () => {
       mitm.setMutate(null);
       await app.openMtls();
       const status = await app.enroll(cleanToken);
-      await app.snap('kurcalama kalktı: kayıt başarılı');
+      await app.snap('saldırgan değiştirmeyi bıraktı: kayıt başarılı');
       expect(status).toContain(`Kayıt başarılı — CN=PinVault Client: ${cleanClient}`);
       expect(app.enrollState()).toContain(cleanClient);
 
@@ -181,7 +181,7 @@ test('Kablo: X-P12-SHA256 başlığı silinince telefon sertifikayı kurmuyor', 
       mitm = null;
       app.relaunch();
       expect(await app.waitReady()).toContain('Hazır — config v');
-      await app.snap('vekil kapandı: doğrudan sunucuyla Hazır');
+      await app.snap('saldırgan proxy kapandı: doğrudan sunucuyla Hazır');
     });
   } finally {
     device.clearNetRules();

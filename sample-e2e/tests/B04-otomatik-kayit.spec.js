@@ -27,7 +27,7 @@ test('mTLS: otomatik kayıt yalnızca ENROLLMENT_MODE=open iken kabul ediliyor',
       expect(deviceId).toMatch(/^[0-9a-f]{8,}$/);
     });
 
-    await test.step('Sunucu: kayıt modu token — otomatik kayıt reddediliyor', async () => {
+    await test.step('Sunucu: kayıt modu "token" iken otomatik kayıt reddediliyor', async () => {
       const mode = await hostApi.api('/api/v1/enrollment-mode');
       await app.openMtls();
       const result = await app.autoEnroll();
@@ -51,7 +51,7 @@ test('mTLS: otomatik kayıt yalnızca ENROLLMENT_MODE=open iken kabul ediliyor',
       await app.backToMain();
     });
 
-    await test.step('Sunucu: ENROLLMENT_MODE=open ile yeniden oluşturuluyor', async () => {
+    await test.step('Sunucu: container ENROLLMENT_MODE=open ile yeniden oluşturuluyor', async () => {
       await hostControl.setEnv({ ENROLLMENT_MODE: 'open' });
       const mode = await hostApi.api('/api/v1/enrollment-mode');
       await attachText(
@@ -105,7 +105,7 @@ test('mTLS: otomatik kayıt yalnızca ENROLLMENT_MODE=open iken kabul ediliyor',
       expect(status).toContain('HTTP 200');
     });
 
-    await test.step('Mobil + Web: kayıt siliniyor, sertifika iptal ediliyor', async () => {
+    await test.step('Mobil+Web: kayıt siliniyor, sertifika iptal ediliyor', async () => {
       expect(await app.unenroll()).toContain('Kayıt silindi');
       expect(app.enrollState()).toContain('Kayıtlı değil');
       await app.snap('kayıt silindi');

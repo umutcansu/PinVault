@@ -1,7 +1,7 @@
 // E5–E6: Config API yaşam döngüsü (oluştur / durdur / başlat / sil — silinince
 // kapsamdaki host'lar da gider), port çakışması ve host doğrulama uçları
 // (ping-remote geçerli host + komut enjeksiyonu reddi, test-connection).
-// Taze host örneği üzerinde.
+// Geçici test sunucusunda çalışır.
 const { test, expect } = require('../lib/fixtures');
 const { attachText } = require('../lib/evidence');
 const fresh = require('../lib/freshHost');
@@ -54,7 +54,7 @@ test('Sunucu: Config API oluşturulur, durdurulur, başlatılır ve silinince ho
       expect(inside).toBe('200');
     });
 
-    await test.step('Web: aynı porta ikinci Config API — önceki dinleyici durdurulur', async () => {
+    await test.step('Web: aynı porta ikinci bir Config API açılınca önceki durduruluyor', async () => {
       // ConfigApiManager aynı portu kullanan örneği önce durduruyor: port
       // çakışmasında hata dönmüyor, "son gelen kazanır" davranışı var.
       const toast = await dashboard.createConfigApi(CONFLICT_ID, API_PORT, 'tls');
@@ -106,7 +106,7 @@ test('Sunucu: Config API oluşturulur, durdurulur, başlatılır ve silinince ho
       expect(inside).toBe('200');
     });
 
-    await test.step('Sunucu: ping-remote geçerli host\'u doğrular, enjeksiyonu reddeder', async () => {
+    await test.step('Sunucu: ping-remote gerçek bir host\'u doğruluyor, komut enjeksiyonu denemesini reddediyor', async () => {
       await dashboard.addHostFromUrl('default-tls', `https://${env.TARGET_HOST}`);
       await expect(dashboard.hostItem(env.TARGET_HOST)).toBeVisible({ timeout: 30_000 });
       const ok = await fresh.api(`/api/v1/hosts/${env.TARGET_HOST}/ping-remote?configApiId=default-tls`);
@@ -131,7 +131,7 @@ test('Sunucu: Config API oluşturulur, durdurulur, başlatılır ve silinince ho
       expect(bad.status).toBe(400);
     });
 
-    await test.step('Sunucu: fetch-cert-url — var olan host\'un pin\'leri canlı sertifikadan yenilenir', async () => {
+    await test.step('Sunucu: fetch-cert-url — kayıtlı host\'un pin\'leri, host\'un şu an sunduğu sertifikadan yenilenir', async () => {
       // Arayüzde düğmesi olmayan uç: host zaten kayıtlıyken pin'leri URL'den
       // yeniden çeker, sürümü artırır, geçmişe "cert_fetched" yazar.
       const readEntry = async () =>
@@ -167,7 +167,7 @@ test('Sunucu: Config API oluşturulur, durdurulur, başlatılır ve silinince ho
       expect(after.sha256).toEqual(live);
     });
 
-    await test.step('Web: mock host\'a "Bağlantıyı test et"', async () => {
+    await test.step('Web: test için kurulan hedef sunucuda (mock host) "Bağlantıyı Test Et"', async () => {
       const toast = await dashboard.testConnection(MOCK_HOST);
       const res = await fresh.api(`/api/v1/hosts/${MOCK_HOST}/test-connection?configApiId=default-tls`, { method: 'POST' });
       await dashboard.snap('mock host bağlantı testi');

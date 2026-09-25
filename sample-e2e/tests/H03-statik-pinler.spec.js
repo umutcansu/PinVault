@@ -17,7 +17,7 @@ const env = require('../lib/env');
 
 const KEY = env.VAULT_KEYS.flags;
 
-test('Sunucu bağımsızlığı: statik pin\'lerle host kapalıyken bile pinli bağlantı', async ({
+test('Sunucusuz kullanım: statik pin\'lerle host kapalıyken bile pinli bağlantı kuruluyor', async ({
   app,
   device,
   run,
@@ -45,7 +45,7 @@ test('Sunucu bağımsızlığı: statik pin\'lerle host kapalıyken bile pinli b
           ...run.goodPins.map((p, i) => `  pin ${i + 1}: ${p}`),
           '',
           'Bu pin\'ler derleme sırasında sample-host.properties\'ten BuildConfig\'e',
-          'gömüldü; kütüphane açısından kaynak APK, sunucu değil.',
+          'gömüldü; kütüphane için pin\'lerin kaynağı APK, sunucu değil.',
         ].join('\n'),
       );
       expect(SampleApp.modeOf(status)).toBe("statik pin'ler");
@@ -63,7 +63,7 @@ test('Sunucu bağımsızlığı: statik pin\'lerle host kapalıyken bile pinli b
         .join('\n');
       await attachText(
         testInfo,
-        'Cihazın günlüğü (statik mod init)',
+        'Cihazın günlüğü (statik modda init)',
         [
           logcat || '(ilgili satır yok)',
           '',
@@ -83,7 +83,7 @@ test('Sunucu bağımsızlığı: statik pin\'lerle host kapalıyken bile pinli b
       expect(await hostApi.isHealthy()).toBe(false);
     });
 
-    await test.step('Mobil: host kapalıyken uygulama sıfırdan açılıyor ve bağlanıyor', async () => {
+    await test.step('Mobil: host kapalıyken uygulama kapatılıp yeniden açılıyor ve bağlanıyor', async () => {
       // Uygulama verisi silinmiyor (mod ayarı korunsun) ama süreç öldürülüyor:
       // init baştan çalışıyor ve yine hiçbir sunucuya gitmiyor.
       app.relaunch();
@@ -117,8 +117,8 @@ test('Sunucu bağımsızlığı: statik pin\'lerle host kapalıyken bile pinli b
         [
           status.split('\n').slice(0, 3).join('\n'),
           '',
-          'PinVaultConfig.static hiçbir vaultFile tanımlamıyor; kütüphane',
-          'kayıtsız anahtarı fetchFile\'da reddediyor. Vault için bir Config API',
+          'PinVaultConfig.static hiçbir vaultFile tanımlamıyor; kütüphane tanımlı',
+          'olmayan dosyayı fetchFile\'da reddediyor. Vault için bir Config API',
           'bloğu (ve onu sunan bir backend) gerekir.',
         ].join('\n'),
       );

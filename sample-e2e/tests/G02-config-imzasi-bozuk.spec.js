@@ -1,13 +1,13 @@
-// G02 — Kablodaki imzalı config'in imzası bozulursa.
+// G02 — Ağ trafiğindeki imzalı config'in imzası bozulursa.
 //
-// Bu kez vekil host'un KENDİ TLS anahtarıyla dinliyor (export-server-key.sh),
+// Bu kez saldırgan proxy host'un KENDİ TLS anahtarıyla dinliyor (export-server-key.sh),
 // yani pin tutuyor ve el sıkışma geçiyor. Pinlemenin ötesindeki katman
 // sınanıyor: config gövdesi ECDSA ile imzalı ve imza APK'ya gömülü public
 // key'le doğrulanıyor. İmzanın tek baytını bozmak yetiyor —
 //
 //   • telefon yeni config'i uygulamıyor ("Config yenilenemedi"),
 //   • saklı config ve onunla kurulan pinli bağlantı bozulmuyor,
-//   • kurcalama kalkınca bekleyen sürüm sorunsuz iniyor.
+//   • saldırgan değiştirmeyi bırakınca bekleyen sürüm sorunsuz iniyor.
 const { test, expect, TARGET_HOST } = require('../lib/fixtures');
 const { attachText, redact } = require('../lib/evidence');
 const { SampleApp } = require('../lib/sampleApp');
@@ -15,7 +15,7 @@ const proxy = require('../lib/proxy');
 const hostApi = require('../lib/hostApi');
 const env = require('../lib/env');
 
-test('Kablo: config imzası bozulunca telefon uygulamıyor, saklı config yerinde kalıyor', async ({
+test("Saldırı: config'in imzası bozulursa telefon onu uygulamıyor, önceki config'le çalışmaya devam ediyor", async ({
   app,
   device,
   dashboard,
@@ -49,19 +49,19 @@ test('Kablo: config imzası bozulunca telefon uygulamıyor, saklı config yerind
       await dashboard.snapHostSummary(`sunucuda bekleyen sürüm v${v0 + 1}`);
     });
 
-    await test.step("Vekil: host'un kendi anahtarıyla araya girilir — pin tutuyor, yanıtlar önce değiştirilmeden geçiyor", async () => {
+    await test.step('Saldırgan: sunucunun kendi anahtarıyla araya girer; pin tutuyor ve yanıtlar şimdilik değiştirilmeden geçiyor', async () => {
       mitm = await proxy.start({ identity: 'trusted' });
       device.redirectTcp(env.LAN_IP, env.CONFIG_API_PORT, env.PROXY_PORT);
       // Yeni bağlantı kurulsun diye uygulama yeniden açılır (saklı config
       // korunur); OkHttp'nin havuzundaki canlı bağlantı DNAT'ı atlardı.
       app.relaunch();
       const ready = await app.waitReady();
-      await app.snap('vekil saydam: pin tutuyor, config indi');
+      await app.snap('saldırgan henüz bir şey değiştirmiyor: pin tutuyor, config indi');
       await attachText(
         testInfo,
-        'Vekilin kimliği (laboratuvar: host\'un gerçek TLS anahtarı)',
+        'Saldırganın kimliği (test gereği sunucunun gerçek TLS anahtarını kullanıyor)',
         [
-          `vekilin sunduğu pin : ${proxy.certPin('trusted')}`,
+          `saldırganın pin'i   : ${proxy.certPin('trusted')}`,
           `host'un pin dosyası : ${hostApi.hostPins().join(', ')}`,
           'eşleşme             : var ✓ — TLS katmanı bu kez itiraz etmiyor',
           '',
@@ -76,13 +76,13 @@ test('Kablo: config imzası bozulunca telefon uygulamıyor, saklı config yerind
       expect(SampleApp.hostVersion(ready, TARGET_HOST)).toBe(v0 + 1);
     });
 
-    await test.step('Web: bir sürüm daha yayınlanır (bu, kurcalanacak olan)', async () => {
+    await test.step('Web: bir sürüm daha yayınlanır (saldırganın bozacağı sürüm bu)', async () => {
       await dashboard.setPins(TARGET_HOST, run.goodPins);
       await expect.poll(() => dashboard.version()).toBe(v0 + 2);
-      await dashboard.snapHostSummary(`kurcalanacak sürüm v${v0 + 2}`);
+      await dashboard.snapHostSummary(`saldırganın bozacağı sürüm v${v0 + 2}`);
     });
 
-    await test.step('Vekil: imzanın son baytı bozulur → telefon config\'i reddediyor', async () => {
+    await test.step('Saldırgan: imzanın son baytını değiştirir → telefon config\'i reddediyor', async () => {
       mitm.setMutate(tamperSignature);
       const status = await app.refreshConfig();
       await app.snap('bozuk imza: config yenilenemedi');
@@ -93,13 +93,13 @@ test('Kablo: config imzası bozulunca telefon uygulamıyor, saklı config yerind
       const after = JSON.parse(wire.after);
       await attachText(
         testInfo,
-        'Kablodaki fark (GET /api/v1/certificate-config)',
+        'Saldırganın yaptığı değişiklik (GET /api/v1/certificate-config)',
         [
           'SUNUCUNUN GÖNDERDİĞİ',
           `  payload  : ${before.payload.length} bayt`,
           `  signature: ${redact(before.signature, 24)}`,
           '',
-          'TELEFONUN ALDIĞI (vekil değiştirdi)',
+          'TELEFONUN ALDIĞI (saldırgan değiştirdi)',
           `  payload  : ${after.payload.length} bayt (aynı: ${before.payload === after.payload ? 'evet' : 'HAYIR'})`,
           `  signature: ${redact(after.signature, 24)}`,
           '',
@@ -140,10 +140,10 @@ test('Kablo: config imzası bozulunca telefon uygulamıyor, saklı config yerind
       await app.backToMain();
     });
 
-    await test.step('Vekil: kurcalama kaldırılır → bekleyen sürüm sorunsuz iniyor', async () => {
+    await test.step('Saldırgan: değiştirmeyi bırakır → bekleyen sürüm sorunsuz iniyor', async () => {
       mitm.setMutate(null);
       const status = await app.refreshConfig();
-      await app.snap(`kurcalama kalktı: config v${v0 + 2}`);
+      await app.snap(`saldırgan değiştirmeyi bıraktı: config v${v0 + 2}`);
       expect(SampleApp.hostVersion(status, TARGET_HOST)).toBe(v0 + 2);
       expect(await app.testLibraryClient()).toContain('Pinned bağlantı başarılı');
     });
@@ -154,7 +154,7 @@ test('Kablo: config imzası bozulunca telefon uygulamıyor, saklı config yerind
       mitm = null;
       app.relaunch();
       const ready = await app.waitReady();
-      await app.snap('vekil kapandı: doğrudan sunucuyla Hazır');
+      await app.snap('saldırgan proxy kapandı: doğrudan sunucuyla Hazır');
       expect(ready).toContain('Hazır — config v');
       expect(device.rootShell('iptables -t nat -S OUTPUT')).not.toContain(`--dport ${env.CONFIG_API_PORT}`);
     });
