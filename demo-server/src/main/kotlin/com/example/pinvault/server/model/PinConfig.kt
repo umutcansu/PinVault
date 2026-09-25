@@ -35,10 +35,37 @@ data class HostPin(
     val clientCertVersion: Int? = null
 )
 
+/**
+ * Signed config envelope. [payload] and [signature] are all a pre-2.1 client
+ * reads; the other fields are optional additions older clients ignore:
+ * [keyId] names the primary signer, [signatures] carries one entry per signer
+ * when there is more than one (m-of-n), and [signingKeys] carries the latest
+ * signing-key set uploaded by the operator (rotation / revocation).
+ */
 @Serializable
 data class SignedConfig(
     val payload: String,
+    val signature: String,
+    val keyId: String? = null,
+    val signatures: List<SignatureEntry>? = null,
+    val signingKeys: SignedKeySetWire? = null
+)
+
+/** One signature: [keyId] = Base64 SHA-256 of the signer's SPKI (an unsigned hint). */
+@Serializable
+data class SignatureEntry(
+    val keyId: String? = null,
     val signature: String
+)
+
+/**
+ * A signing-key set as devices receive it: the JSON [payload] exactly as the
+ * recovery key(s) signed it, and those signatures.
+ */
+@Serializable
+data class SignedKeySetWire(
+    val payload: String,
+    val signatures: List<SignatureEntry>
 )
 
 @Serializable
@@ -93,3 +120,20 @@ data class CertInfoResponse(
     val primaryPin: String,
     val backupPin: String
 )
+
+/**
+ * `GET /api/v1/signing-key`. [publicKey] is the primary signer's key (the
+ * field every tool already reads); [signers] lists each key that signs, in
+ * signing order; [keySetVersion] is the signing-key set devices currently
+ * receive (0 = none).
+ */
+@Serializable
+data class SigningKeyInfo(
+    val publicKey: String,
+    val keyId: String,
+    val signers: List<Signer>,
+    val keySetVersion: Int = 0
+) {
+    @Serializable
+    data class Signer(val keyId: String, val publicKey: String)
+}

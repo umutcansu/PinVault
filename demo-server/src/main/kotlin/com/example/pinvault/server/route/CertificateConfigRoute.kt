@@ -2,8 +2,12 @@ package com.example.pinvault.server.route
 
 import com.example.pinvault.server.model.PinConfig
 import com.example.pinvault.server.model.PinConfigHistoryEntry
-import com.example.pinvault.server.model.SignedConfig
+import com.example.pinvault.server.model.SigningKeyInfo
+import com.example.pinvault.server.service.AuditLog
 import com.example.pinvault.server.service.ConfigSigningService
+import com.example.pinvault.server.service.LiveCertificateGate
+import com.example.pinvault.server.service.SignedConfigService
+import com.example.pinvault.server.service.SigningKeySetService
 import com.example.pinvault.server.store.ClientDeviceStore
 import com.example.pinvault.server.store.ConnectionHistoryStore
 import com.example.pinvault.server.store.DeviceHostAclStore
@@ -11,10 +15,10 @@ import com.example.pinvault.server.store.HostClientCertStore
 import com.example.pinvault.server.store.PinConfigHistoryStore
 import com.example.pinvault.server.store.PinConfigStore
 import io.ktor.http.*
+import io.ktor.server.application.ApplicationCall
 import io.ktor.server.request.*
 import io.ktor.server.response.*
 import io.ktor.server.routing.*
-import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.booleanOrNull
@@ -26,21 +30,7 @@ import org.slf4j.LoggerFactory
 import java.time.Instant
 import java.util.Base64
 
-private val configJson = Json { encodeDefaults = true }
 private val aclLog = LoggerFactory.getLogger("CertificateConfigACL")
-
-/**
- * Lifetime of a signed config response in milliseconds. After this window
- * elapses, clients reject the payload regardless of signature validity —
- * caps the replay opportunity for any captured signed bytes.
- *
- * Configurable via `CONFIG_TTL_SECONDS` env var; default 24h. The PinVault
- * client refreshes pins every 12h by default, so 24h leaves a safety margin
- * for transient offline periods.
- */
-private val CONFIG_TTL_MS: Long =
-    System.getenv("CONFIG_TTL_SECONDS")?.toLongOrNull()?.times(1000L)
-        ?: (24L * 60 * 60 * 1000)
 
 /**
  * Allowed shape for client-report identifier fields (hostname, model,
@@ -75,8 +65,21 @@ fun Route.certificateConfigRoutes(
      * is preserved. This keeps existing tests and demo flows working until
      * the library starts sending `?hosts=…`.
      */
-    deviceHostAclStore: DeviceHostAclStore? = null
+    deviceHostAclStore: DeviceHostAclStore? = null,
+    /**
+     * Builds the signed envelopes (per request, or cached per content with
+     * `CONFIG_SIGNATURE_CACHE`) and attaches the signing-key set. Null = a
+     * per-request signer over [signingService] without key sets.
+     */
+    signedConfigService: SignedConfigService? = null,
+    /** Signing-key set status for `GET /api/v1/signing-key`; null = not configured. */
+    keySetService: SigningKeySetService? = null,
+    /** Checks new pins against the certificates hosts serve now; null = off. */
+    liveGate: LiveCertificateGate? = null,
+    /** Where pin writes, gate decisions and overrides are recorded; null = nowhere. */
+    audit: AuditLog? = null
 ) {
+    val envelopes = signedConfigService ?: SignedConfigService(signingService)
 
     // Enrollment endpoint — Config API üzerinden client cert dağıtımı
     //
@@ -152,66 +155,84 @@ fun Route.certificateConfigRoutes(
     route("/api/v1/certificate-config") {
 
         get {
-            val config = store.load(configApiId)
+            // The view this device may see: loaded fresh on every call (see
+            // the signing loop below for why it may be loaded twice).
+            fun servedView(): PinConfig {
+                val config = store.load(configApiId)
 
-            // ── Pin scoping (V2): filter config.pins to the intersection of
-            // requested hosts and the device's ACL.
-            //
-            // Legacy behavior preserved when both `hosts` and `X-Device-Id`
-            // are absent OR when no ACL store is wired — returns full config.
-            val requested = call.request.queryParameters["hosts"]
-                ?.split(",")?.map { it.trim() }?.filter { it.isNotEmpty() }
-            val headerDeviceId = call.request.header("X-Device-Id")
+                // ── Pin scoping (V2): filter config.pins to the intersection of
+                // requested hosts and the device's ACL.
+                //
+                // Legacy behavior preserved when both `hosts` and `X-Device-Id`
+                // are absent OR when no ACL store is wired — returns full config.
+                val requested = call.request.queryParameters["hosts"]
+                    ?.split(",")?.map { it.trim() }?.filter { it.isNotEmpty() }
+                val headerDeviceId = call.request.header("X-Device-Id")
 
-            // The mTLS client certificate identifies the device when no header
-            // is sent. It is deliberately NOT part of the gate below: a cert
-            // alone must not switch filtering on for clients that send neither
-            // `?hosts=` nor `X-Device-Id`, or every existing mTLS device would
-            // suddenly be cut down to the (usually empty) default ACL. It only
-            // sharpens the identity once scoping was already requested, where
-            // a per-device ACL can add grants on top of the default.
-            val deviceId = headerDeviceId ?: extractCertCn(call)
+                // The mTLS client certificate identifies the device when no header
+                // is sent. It is deliberately NOT part of the gate below: a cert
+                // alone must not switch filtering on for clients that send neither
+                // `?hosts=` nor `X-Device-Id`, or every existing mTLS device would
+                // suddenly be cut down to the (usually empty) default ACL. It only
+                // sharpens the identity once scoping was already requested, where
+                // a per-device ACL can add grants on top of the default.
+                val deviceId = headerDeviceId ?: extractCertCn(call)
 
-            val filtered = if (deviceHostAclStore != null && (requested != null || headerDeviceId != null)) {
-                val decision = deviceHostAclStore.resolve(configApiId, deviceId ?: "anonymous", requested)
-                if (decision.hasUnauthorized) {
-                    aclLog.warn("Unauthorized host request: configApi={} deviceId={} denied={}",
-                        configApiId, deviceId ?: "anonymous", decision.denied)
-                }
-                if (requested != null) {
-                    // Explicit ?hosts= filter — keep only pins in `granted`.
-                    config.copy(pins = config.pins.filter { it.hostname in decision.granted })
+                val filtered = if (deviceHostAclStore != null && (requested != null || headerDeviceId != null)) {
+                    val decision = deviceHostAclStore.resolve(configApiId, deviceId ?: "anonymous", requested)
+                    if (decision.hasUnauthorized) {
+                        aclLog.warn("Unauthorized host request: configApi={} deviceId={} denied={}",
+                            configApiId, deviceId ?: "anonymous", decision.denied)
+                    }
+                    if (requested != null) {
+                        // Explicit ?hosts= filter — keep only pins in `granted`.
+                        config.copy(pins = config.pins.filter { it.hostname in decision.granted })
+                    } else {
+                        // No explicit request, but deviceId known — filter to ACL.
+                        config.copy(pins = config.pins.filter { it.hostname in decision.granted })
+                    }
                 } else {
-                    // No explicit request, but deviceId known — filter to ACL.
-                    config.copy(pins = config.pins.filter { it.hostname in decision.granted })
+                    config
                 }
-            } else {
-                config
+                    // The library's "force update or refuse to start" gate reads the
+                    // config-level flag, while the dashboard only ever sets per-host
+                    // flags. Without this the admin-visible switch never reached that
+                    // gate, so a device with a stale forced config kept starting up
+                    // happily while the backend was unreachable.
+                    .let { it.copy(forceUpdate = it.hasAnyForceUpdate()) }
+                return filtered
             }
-                // The library's "force update or refuse to start" gate reads the
-                // config-level flag, while the dashboard only ever sets per-host
-                // flags. Without this the admin-visible switch never reached that
-                // gate, so a device with a stale forced config kept starting up
-                // happily while the backend was unreachable.
-                .let { it.copy(forceUpdate = it.hasAnyForceUpdate()) }
 
             val signed = call.request.queryParameters["signed"] != "false"
-            if (signed) {
-                // Stamp issuedAt/expiresAt right before signing so the
-                // freshness window is anchored to the server's wall clock at
-                // response time. The client rejects payloads where
-                // expiresAt <= now, so this TTL bounds how long a captured
-                // signed config remains replayable.
-                val now = System.currentTimeMillis()
-                val stamped = filtered.copy(
-                    issuedAt = now,
-                    expiresAt = now + CONFIG_TTL_MS
-                )
-                val payload = configJson.encodeToString(stamped)
-                val signature = signingService.sign(payload)
-                call.respond(SignedConfig(payload = payload, signature = signature))
-            } else {
-                call.respond(filtered)
+            if (!signed) return@get call.respond(servedView())
+
+            // issuedAt/expiresAt are stamped by the envelope service right
+            // before signing (or reused from a cached signature of the very
+            // same content — see SignedConfigService). The generation is taken
+            // BEFORE loading: if a change lands in between, the envelope
+            // service refuses (StaleLoad) and the view is loaded again, so a
+            // device never gets pre-change content with a post-change issuedAt.
+            val features = call.request.header("X-PinVault-Features").orEmpty()
+                .split(',').map { it.trim() }
+            val redelivery = "redelivery" in features
+            try {
+                repeat(3) {
+                    val loadedAt = envelopes.generation()
+                    val view = servedView()
+                    try {
+                        return@get call.respond(envelopes.envelope(configApiId, view, redelivery, loadedAt))
+                    } catch (_: SignedConfigService.StaleLoad) {
+                        // A change landed while serving; load again.
+                    }
+                }
+                // Changes keep landing: sign the latest view uncached, which
+                // always carries the newest issuedAt.
+                call.respond(envelopes.envelope(configApiId, servedView(), redeliveryOk = false))
+            } catch (e: Exception) {
+                // Never hand signer internals (KMS ids, command stderr) to an
+                // unauthenticated caller.
+                System.err.println("Config signing failed for $configApiId: ${e.message}")
+                call.respond(HttpStatusCode.ServiceUnavailable, mapOf("error" to "Config signing is temporarily unavailable"))
             }
         }
 
@@ -230,75 +251,7 @@ fun Route.certificateConfigRoutes(
         // already write any scope via POST /api/v1/config/{id}/update.
         put {
             val scope = call.request.queryParameters["configApiId"] ?: configApiId
-            val incoming = call.receive<PinConfig>()
-            val current = store.load(scope)
-
-            // Aynı hostname birden fazla kez eklenemez
-            val duplicates = incoming.pins.groupBy { it.hostname }.filter { it.value.size > 1 }.keys
-            if (duplicates.isNotEmpty()) {
-                call.respond(HttpStatusCode.Conflict, mapOf("errors" to duplicates.map { "$it: zaten mevcut" }))
-                return@put
-            }
-
-            // Per-host versioning: sadece değişen host'ların versiyonunu artır
-            val currentPinMap = current.pins.associateBy { it.hostname }
-            val updatedPins = incoming.pins.map { newPin ->
-                val oldPin = currentPinMap[newPin.hostname]
-                when {
-                    oldPin == null -> newPin.copy(version = 1) // yeni host
-                    oldPin.sha256 != newPin.sha256 -> newPin.copy(version = oldPin.version + 1) // pin değişti
-                    else -> newPin.copy(version = oldPin.version) // değişmedi
-                }
-            }
-            val updated = incoming.copy(pins = updatedPins)
-
-            val errors = validatePinConfig(updated)
-            if (errors.isNotEmpty()) {
-                call.respond(HttpStatusCode.BadRequest, mapOf("errors" to errors))
-                return@put
-            }
-
-            // Hangi host'lar değişti, eklendi, silindi?
-            val oldHostnames = current.pins.map { it.hostname }.toSet()
-            val newHostnames = updated.pins.map { it.hostname }.toSet()
-
-            val added = newHostnames - oldHostnames
-            val removed = oldHostnames - newHostnames
-            val kept = newHostnames.intersect(oldHostnames)
-
-            // Re-added hosts continue their version sequence (see PinConfigStore.save);
-            // history and the response must report the stored versions.
-            val saved = store.save(scope, updated)
-            val now = Instant.now().toString()
-
-            added.forEach { hostname ->
-                val pin = saved.pins.first { it.hostname == hostname }
-                historyStore.add(scope, PinConfigHistoryEntry(
-                    hostname = hostname, version = pin.version, timestamp = now,
-                    event = "host_added", pinPrefix = pin.sha256.firstOrNull()?.take(12) ?: ""
-                ))
-            }
-
-            removed.forEach { hostname ->
-                val oldPin = currentPinMap[hostname]
-                historyStore.add(scope, PinConfigHistoryEntry(
-                    hostname = hostname, version = oldPin?.version ?: 0, timestamp = now,
-                    event = "host_removed", pinPrefix = ""
-                ))
-            }
-
-            kept.forEach { hostname ->
-                val oldPin = current.pins.first { it.hostname == hostname }
-                val newPin = saved.pins.first { it.hostname == hostname }
-                if (oldPin.sha256 != newPin.sha256) {
-                    historyStore.add(scope, PinConfigHistoryEntry(
-                        hostname = hostname, version = newPin.version, timestamp = now,
-                        event = "pins_updated", pinPrefix = newPin.sha256.firstOrNull()?.take(12) ?: ""
-                    ))
-                }
-            }
-
-            call.respond(HttpStatusCode.OK, saved)
+            call.applyPinConfigUpdate(scope, store, historyStore, liveGate, audit)
         }
 
         // Host bazlı geçmiş
@@ -375,8 +328,18 @@ fun Route.certificateConfigRoutes(
         }
     }
 
+    // Public: devices and build tooling read the keys to embed or compare.
+    // `publicKey` stays the primary key, as before; `signers` lists every key
+    // that signs (m-of-n). Nothing here is secret.
     get("/api/v1/signing-key") {
-        call.respond(mapOf("publicKey" to signingService.publicKeyBase64))
+        call.respond(
+            SigningKeyInfo(
+                publicKey = signingService.publicKeyBase64,
+                keyId = signingService.primary.keyId,
+                signers = signingService.signers.map { SigningKeyInfo.Signer(it.keyId, it.publicKeyBase64) },
+                keySetVersion = keySetService?.status()?.version ?: 0
+            )
+        )
     }
 
     get("/api/v1/connection-history") {
@@ -534,3 +497,127 @@ private fun extractCertCn(call: io.ktor.server.application.ApplicationCall): Str
     // per-device host ACL is stored under. Devices that send X-Device-Id
     // explicitly never reach this fallback.
     call.clientCertId()
+
+/** 422 body when the live certificate gate refuses a pin set. */
+@kotlinx.serialization.Serializable
+data class LiveCheckRejection(
+    val error: String,
+    val liveCheck: LiveCertificateGate.Result,
+    /** True when `?liveCheckOverride=<reason>` would be accepted. */
+    val overridable: Boolean
+)
+
+/**
+ * The pin write behind `PUT /api/v1/certificate-config` and
+ * `POST /api/v1/config/{id}/update`: duplicate and format validation,
+ * per-host versioning, the live certificate gate, the save and the history.
+ * One implementation, so neither route can skip a check the other makes.
+ */
+internal suspend fun ApplicationCall.applyPinConfigUpdate(
+    scope: String,
+    store: PinConfigStore,
+    historyStore: PinConfigHistoryStore,
+    liveGate: LiveCertificateGate?,
+    audit: AuditLog?
+) {
+    val incoming = receive<PinConfig>()
+    val current = store.load(scope)
+
+    // Aynı hostname birden fazla kez eklenemez
+    val duplicates = incoming.pins.groupBy { it.hostname }.filter { it.value.size > 1 }.keys
+    if (duplicates.isNotEmpty()) {
+        respond(HttpStatusCode.Conflict, mapOf("errors" to duplicates.map { "$it: zaten mevcut" }))
+        return
+    }
+
+    // Per-host versioning: sadece değişen host'ların versiyonunu artır
+    val currentPinMap = current.pins.associateBy { it.hostname }
+    val updatedPins = incoming.pins.map { newPin ->
+        val oldPin = currentPinMap[newPin.hostname]
+        when {
+            oldPin == null -> newPin.copy(version = 1) // yeni host
+            oldPin.sha256 != newPin.sha256 -> newPin.copy(version = oldPin.version + 1) // pin değişti
+            else -> newPin.copy(version = oldPin.version) // değişmedi
+        }
+    }
+    val updated = incoming.copy(pins = updatedPins)
+
+    val errors = validatePinConfig(updated)
+    if (errors.isNotEmpty()) {
+        respond(HttpStatusCode.BadRequest, mapOf("errors" to errors))
+        return
+    }
+
+    // Live certificate gate: new or changed pin sets must include the leaf the
+    // host serves right now. See LiveCertificateGate.
+    if (liveGate != null && liveGate.enabled) {
+        // Network I/O: off the event loop.
+        val result = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) { liveGate.check(current, updated) }
+        if (!result.passed) {
+            val detail = Json.encodeToJsonElement(LiveCertificateGate.Result.serializer(), result)
+            val override = request.queryParameters["liveCheckOverride"]?.trim()?.takeIf { it.isNotEmpty() }
+            when {
+                liveGate.mode == LiveCertificateGate.Mode.WARN -> {
+                    response.header("X-PinVault-Live-Check", "warn")
+                    audit?.record("live_check_warning", result.describe(), scope, result.failures().joinToString(",") { it.hostname }, detail)
+                }
+                override != null && liveGate.allowOverride -> {
+                    audit?.record(
+                        "live_check_overridden", "Override \"${override.take(200)}\": ${result.describe()}",
+                        scope, result.failures().joinToString(",") { it.hostname }, detail
+                    )
+                }
+                else -> {
+                    audit?.record("live_check_blocked", result.describe(), scope, result.failures().joinToString(",") { it.hostname }, detail)
+                    respond(
+                        HttpStatusCode.UnprocessableEntity,
+                        LiveCheckRejection("Live certificate check failed: ${result.describe()}", result, liveGate.allowOverride)
+                    )
+                    return
+                }
+            }
+        }
+    }
+
+    // Hangi host'lar değişti, eklendi, silindi?
+    val oldHostnames = current.pins.map { it.hostname }.toSet()
+    val newHostnames = updated.pins.map { it.hostname }.toSet()
+
+    val added = newHostnames - oldHostnames
+    val removed = oldHostnames - newHostnames
+    val kept = newHostnames.intersect(oldHostnames)
+
+    // Re-added hosts continue their version sequence (see PinConfigStore.save);
+    // history and the response must report the stored versions.
+    val saved = store.save(scope, updated)
+    val now = Instant.now().toString()
+
+    added.forEach { hostname ->
+        val pin = saved.pins.first { it.hostname == hostname }
+        historyStore.add(scope, PinConfigHistoryEntry(
+            hostname = hostname, version = pin.version, timestamp = now,
+            event = "host_added", pinPrefix = pin.sha256.firstOrNull()?.take(12) ?: ""
+        ))
+    }
+
+    removed.forEach { hostname ->
+        val oldPin = currentPinMap[hostname]
+        historyStore.add(scope, PinConfigHistoryEntry(
+            hostname = hostname, version = oldPin?.version ?: 0, timestamp = now,
+            event = "host_removed", pinPrefix = ""
+        ))
+    }
+
+    kept.forEach { hostname ->
+        val oldPin = current.pins.first { it.hostname == hostname }
+        val newPin = saved.pins.first { it.hostname == hostname }
+        if (oldPin.sha256 != newPin.sha256) {
+            historyStore.add(scope, PinConfigHistoryEntry(
+                hostname = hostname, version = newPin.version, timestamp = now,
+                event = "pins_updated", pinPrefix = newPin.sha256.firstOrNull()?.take(12) ?: ""
+            ))
+        }
+    }
+
+    respond(HttpStatusCode.OK, saved)
+}

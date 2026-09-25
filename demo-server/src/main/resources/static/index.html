@@ -18,6 +18,9 @@
       </div>
     </div>
 
+    <!-- Admin identity (GET /api/v1/admin/me) + governance badges; filled by app.js -->
+    <div class="admin-chip" id="admin-chip"></div>
+
     <div class="sidebar-section" id="sidebar-hosts-label">Config API'ler</div>
     <div id="host-list" class="host-list">
       <div class="loading">Yükleniyor...</div>
@@ -31,6 +34,11 @@
 
     <div class="nav">
       <div class="nav-item" id="nav-health" data-action="showSection" data-arg0="health"></div>
+      <div class="nav-item nav-item-badged" id="nav-approvals" data-action="showSection" data-arg0="approvals">
+        <span id="nav-approvals-label"></span>
+        <span class="nav-badge" id="approvals-badge" style="display:none"></span>
+      </div>
+      <div class="nav-item" id="nav-audit" data-action="showSection" data-arg0="audit"></div>
     </div>
 
     <div class="sidebar-divider"></div>

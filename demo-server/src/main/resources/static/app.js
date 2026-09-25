@@ -21,11 +21,28 @@ function esc(s) {
 function getApiKey() { return localStorage.getItem('pinvault_api_key') || ''; }
 function setApiKey(key) { localStorage.setItem('pinvault_api_key', key); }
 
-// Authenticated fetch wrapper — adds X-API-Key header
+/**
+ * Authenticated fetch wrapper — adds the X-API-Key header and handles the
+ * answers any admin write may get from the governance features:
+ *
+ *  - 401/403 → asks for a key and retries once. Background refreshes pass
+ *    `{ quiet: true }` and never open a dialog.
+ *  - 202 `{pendingApproval}` → the change was NOT applied; it waits for
+ *    another admin (PIN_CHANGE_APPROVALS). See notePendingApproval().
+ *  - 422 `{liveCheck}` → the live certificate gate refused the pins. The
+ *    failing hosts are shown and, when the server allows an override, a
+ *    reason is asked for and the request resent once with
+ *    `liveCheckOverride=<reason>`. The response is marked `liveCheckHandled`
+ *    so callers do not report the same failure again.
+ *  - `X-PinVault-Live-Check: warn` → stored, but the gate flagged it.
+ *
+ * 409/422 never prompt for a key: they are answers, not auth failures.
+ */
 async function apiFetch(url, options = {}) {
+    const { quiet = false, liveCheckRetry = false, ...init } = options;
     const key = getApiKey();
     if (key) {
-        options.headers = { ...options.headers, 'X-API-Key': key };
+        init.headers = { ...init.headers, 'X-API-Key': key };
     }
     // Host-scoped endpoint'lere (/api/v1/hosts/...) seçili Config API'yi
     // `?configApiId=<id>` olarak ekle — yoksa management server `default-tls`
@@ -36,14 +53,48 @@ async function apiFetch(url, options = {}) {
         const sep = url.includes('?') ? '&' : '?';
         url = url + sep + 'configApiId=' + encodeURIComponent(selectedApiId);
     }
-    const resp = await fetch(url, options);
-    if (resp.status === 401 || resp.status === 403) {
+    let resp = await fetch(url, init);
+    if ((resp.status === 401 || resp.status === 403) && !quiet) {
         const newKey = prompt('API Key gerekli (X-API-Key):');
         if (newKey) {
             setApiKey(newKey);
-            options.headers = { ...options.headers, 'X-API-Key': newKey };
-            return fetch(url, options);
+            init.headers = { ...init.headers, 'X-API-Key': newKey };
+            resp = await fetch(url, init);
+            // Another key may belong to another admin: refresh the chip.
+            loadAdminIdentity();
         }
+    }
+    return handleGovernanceResponse(url, init, resp, { quiet, liveCheckRetry });
+}
+
+async function handleGovernanceResponse(url, init, resp, ctx) {
+    const method = String(init.method || 'GET').toUpperCase();
+    if (method === 'GET' || method === 'HEAD') return resp;
+    if (resp.status === 202) {
+        const body = await resp.clone().json().catch(() => null);
+        if (body && body.pendingApproval) notePendingApproval(body);
+        return resp;
+    }
+    if (resp.status === 422) {
+        const body = await resp.clone().json().catch(() => null);
+        if (body && body.liveCheck) {
+            const failures = liveCheckFailureLines(body.liveCheck);
+            if (body.overridable && !ctx.liveCheckRetry) {
+                const reason = prompt(t('liveCheckOverridePrompt',
+                    t('liveCheckFailedHeader') + '\n• ' + failures.join('\n• ')));
+                if (reason && reason.trim()) {
+                    const sep = url.includes('?') ? '&' : '?';
+                    return apiFetch(`${url}${sep}liveCheckOverride=${encodeURIComponent(reason.trim())}`,
+                        { ...init, quiet: ctx.quiet, liveCheckRetry: true });
+                }
+            }
+            toast(t('liveCheckBlocked', failures.join(' · ')), 'error', 8000);
+            resp.liveCheckHandled = true;
+        }
+        return resp;
+    }
+    if (resp.ok && (resp.headers.get('X-PinVault-Live-Check') || '').toLowerCase() === 'warn') {
+        toast(t('liveCheckWarnSaved'), 'warning', 8000);
     }
     return resp;
 }
@@ -129,6 +180,13 @@ const i18n = {
     regenerateBootstrap: 'Sertifikayı Yenile',
     regenerateBootstrapConfirm: 'Config server TLS sertifikası yenilenecek. Tüm istemcilerin bootstrap pin\'leri güncellenmelidir. Sunucu yeniden başlatılmalıdır. Devam?',
     bootstrapRegenerated: 'Bootstrap sertifika yenilendi — sunucu yeniden başlatılmalı',
+    rotateToBackup: 'Yedek Anahtara Geç',
+    rotateHostConfirm: 'Sertifika saklı yedek anahtarla yeniden üretilecek ve yeni bir yedek hazırlanacak. Telefonlar yedeğin pinini zaten bildiği için bağlantı kesilmez. Devam?',
+    rotateBootstrapConfirm: 'Config sunucusunun sertifikası saklı yedek anahtara geçirilecek ve yeni bir yedek hazırlanacak. Uygulamalar yedeğin pinini başlangıç pini olarak taşıdığı için güncelleme gerekmez. Sunucu yeniden başlatılmalı. Devam?',
+    rotatedToBackup: 'Yedek anahtara geçildi; yeni yedek hazırlandı',
+    bootstrapRotated: 'Yedek anahtara geçildi — sunucu yeniden başlatılmalı. Yeni yedek pini uygulamanın sonraki sürümüne eklenmeli.',
+    noBackupKey: 'Bu sertifika için saklanmış yedek anahtar yok: sertifika dışarıdan yüklenmiş, adresten alınmış ya da bu özellik gelmeden önce üretilmiş. Yedek anahtar, sertifika yeniden üretilince oluşur.',
+    backupNotPublished: 'Saklı yedek anahtarın pini yayımlanan pinler arasında yok; telefonlar bu anahtarı reddeder. Önce pini listeye ekleyin ya da sertifikayı yeniden üretin.',
     tabAutoGenerate: 'Otomatik Üret', tabUploadJks: 'JKS Yükle', tabFetchUrl: 'URL\'den Çek',
     uploadJksLabel: 'Sertifika Dosyası (JKS/P12/PFX)', uploadPassword: 'Keystore Şifresi',
     uploadBtn: 'Yükle', fetchUrlLabel: 'URL', fetchUrlPlaceholder: 'https://api.example.com',
@@ -280,6 +338,104 @@ const i18n = {
     mockServerTitle: 'Mock Server', mockCertNeeded: 'mock server için sertifika gerekli',
     vaultAuthError: 'Yetki hatası ({0}). Sağ üstten API key gir veya localStorage.setItem(\'pinvault_api_key\', \'testkey\') sonra sayfayı yenile.',
     vaultUnexpectedResponse: 'Beklenmeyen yanıt formatı. Console\'a bak: {0}',
+    // ── Yönetişim: kimlik, onaylar, denetim kaydı, canlı kontrol, imzalama ──
+    navApprovals: 'Onaylar', navAudit: 'Denetim Kaydı',
+    adminUnknown: 'Kimlik yok', adminChipTitle: 'Bu panelin kullandığı yönetici anahtarının sahibi',
+    switchAdminKey: 'Anahtar değiştir',
+    switchAdminKeyPrompt: 'Kayıtlı anahtar silindi. Yeni yönetici API anahtarını girin (X-API-Key):',
+    adminKeySwitched: 'Yönetici: {0}',
+    badgeApprovals: '{0} kişi onayı', badgeApprovalsTitle: 'Pin ve anahtar değişiklikleri {0} yöneticinin onayını gerektirir (PIN_CHANGE_APPROVALS)',
+    badgeLiveCheck: 'Canlı kontrol: {0}', badgeLiveCheckTitle: 'Yeni pin setleri hostun şu an sunduğu sertifikayla karşılaştırılır (PIN_LIVE_CHECK)',
+    badgeSigCache: 'İmza önbelleği', badgeSigCacheTitle: 'Aynı içerik bir kez imzalanıp yeniden sunulur (CONFIG_SIGNATURE_CACHE)',
+    liveModeWarn: 'uyarı', liveModeEnforce: 'zorunlu', liveModeOff: 'kapalı',
+    approvalsBadgeTitle: '{0} değişiklik onay bekliyor',
+    pendingChange: 'Değişiklik #{0} onay bekliyor — başka bir yönetici onaylayana kadar uygulanmadı.',
+    liveCheckFailedHeader: 'Canlı sertifika kontrolü başarısız:',
+    liveCheckOverridePrompt: '{0}\n\nYine de kaydetmek için bir gerekçe yazın (denetim kaydına ve bildirimlere geçer). Boş bırakırsanız kaydedilmez.',
+    liveCheckBlocked: 'Kaydedilmedi — canlı sertifika kontrolü: {0}',
+    liveCheckWarnSaved: 'Kaydedildi, ancak canlı sertifika kontrolü başarısız (uyarı modu) — ayrıntılar Denetim Kaydı\'nda.',
+    liveOk: '{0}: sunucunun şu an sunduğu sertifika ({1}…) pin listesinde var',
+    liveNotInSet: '{0}: sunucunun şu an sunduğu sertifika ({1}…) pin listesinde yok',
+    liveUnreachable: '{0}: ulaşılamadı — {1}',
+    liveIntermediateOnly: 'Listedeki pin bir ara sertifikaya ait; kütüphane yalnızca sunucunun kendi sertifikasını (zincirin ilk halkası) pinler.',
+    liveProbed: 'denenen', liveCheckTitle: 'Canlı sertifika kontrolü',
+    livePassed: 'geçti', liveFailed: 'başarısız',
+    liveEnforceWillFail: 'Zorunlu modda canlı kontrol başarısız: istek bir gerekçe (liveCheckOverride) içermediği için onaylansa da uygulanmaz (HTTP 422).',
+    liveOverrideCarried: 'İstek bir liveCheckOverride gerekçesi taşıyor: {0}',
+    liveCheckBtn: 'Canlı Kontrol', liveCheckBtnTitle: 'Bu pinleri hostun şu an sunduğu sertifikayla karşılaştırır (kaydetmez)',
+    liveCheckRunning: 'Host kontrol ediliyor…', liveCheckNeedHost: 'Önce hostname girin', liveCheckNeedPins: 'En az bir pin girin',
+    liveRotationHint: 'Rotasyon: önce {mevcut, yeni} yayınlayın, host sertifikasını değiştirin, sonra {yeni, yedek} yayınlayın.',
+    approvalsTitle: 'Onaylar', approvalsSub: 'Pin ve anahtar değişiklikleri ikinci bir yöneticinin onayını bekler (iki kişi kuralı).',
+    approvalsOff: 'İki kişi onayı kapalı (PIN_CHANGE_APPROVALS=1): değişiklikler hemen uygulanır. Açmak için sunucuyu PIN_CHANGE_APPROVALS=2 ve kişisel ADMIN_KEYS ile başlatın.',
+    approvalsOn: 'Her değişiklik, isteyen dışında {0} yöneticinin onayıyla uygulanır. Siz: {1}.',
+    tabPending: 'Bekleyen ({0})', tabDecided: 'Geçmiş ({0})',
+    noPendingChanges: 'Onay bekleyen değişiklik yok.', noDecidedChanges: 'Henüz karara bağlanmış değişiklik yok.',
+    crRequestedBy: 'İsteyen', crCreated: 'Oluşturma', crExpires: 'Son geçerlilik', crApprovals: 'Onay',
+    crDetails: 'Ayrıntı', crDecidedBy: 'Karar veren', crDecidedAt: 'Karar tarihi', crReason: 'Gerekçe',
+    crResult: 'Sonuç', crResultBody: 'Sunucu yanıtı',
+    approve: 'Onayla', reject: 'Reddet', withdraw: 'Geri çek',
+    cannotApproveOwn: 'Kendi isteğinizi onaylayamazsınız — başka bir yönetici onaylamalı.',
+    cannotApproveShared: 'Paylaşılan anahtar (API_KEY) onaylayamaz: kimin onayladığını söylemez. ADMIN_KEYS\'teki kişisel anahtarınızı kullanın.',
+    alreadyApproved: 'Bu isteği zaten onayladınız.',
+    rejectReasonPrompt: '#{0} reddedilecek. Gerekçe (isteğe bağlı):',
+    withdrawReasonPrompt: '#{0} geri çekilecek. Gerekçe (isteğe bağlı):',
+    changeApplied: 'Değişiklik #{0} onaylandı ve uygulandı',
+    changeApplyFailed: 'Değişiklik #{0} onaylandı ama uygulanamadı (HTTP {1})',
+    changeApprovalRecorded: 'Onayınız kaydedildi (#{0}: {1}/{2})',
+    changeRejected: 'Değişiklik #{0} reddedildi', changeWithdrawn: 'Değişiklik #{0} geri çekildi',
+    crStatus_pending: 'bekliyor', crStatus_applied: 'uygulandı', crStatus_failed: 'başarısız',
+    crStatus_rejected: 'reddedildi', crStatus_expired: 'süresi doldu', crStatus_stale: 'eskidi',
+    op_pins_update: 'Pin güncelleme', op_force_on: 'Force açma', op_force_off: 'Force kapatma',
+    op_host_add: 'Host ekleme', op_host_cert: 'Host sertifikası', op_config_api_delete: 'Config API silme',
+    op_config_api_lifecycle: 'Config API başlat/durdur',
+    op_bootstrap_pins: 'Bootstrap pin', op_signing_key: 'İmzalama anahtarı', op_signing_keyset: 'Anahtar seti',
+    diffGlobalForce: 'Genel force', diffOn: 'açık', diffOff: 'kapalı',
+    diffNoDetail: 'Bu işlem için pin farkı yok; özet ve istek yolu değişikliği tanımlar.',
+    diffNoChange: 'Pinlerde değişiklik yok.', diffDescribeError: 'Fark hesaplanamadı: {0}',
+    auditTitle: 'Denetim Kaydı', auditSub: 'Her yönetici işlemi, hash zinciriyle bağlı, yalnızca eklenebilen bir kayıtta tutulur.',
+    auditVerify: 'Zinciri Doğrula', auditVerifyOk: 'Zincir sağlam — {0} kayıt', auditVerifyBroken: 'Zincir #{0} kaydında bozuk',
+    auditFilterAll: 'Tüm işlemler', auditThTime: 'Zaman', auditThActor: 'Kim', auditThAction: 'İşlem',
+    auditThTarget: 'Hedef', auditThSummary: 'Özet', auditEmpty: 'Kayıt yok',
+    auditSourceIp: 'Kaynak IP', auditNoDetail: 'Ek ayrıntı yok', auditEntries: '{0} kayıt',
+    act_pins_changed: 'Pinler değişti', act_change_requested: 'Değişiklik istendi', act_change_approved: 'Onay verildi',
+    act_change_applied: 'Değişiklik uygulandı', act_change_failed: 'Değişiklik başarısız', act_change_rejected: 'Değişiklik reddedildi',
+    act_change_expired: 'Değişiklik süresi doldu', act_change_stale: 'Değişiklik eskidi',
+    act_change_approval_refused: 'Onay girişimi reddedildi',
+    act_live_check_warning: 'Canlı kontrol uyarısı', act_live_check_blocked: 'Canlı kontrol engelledi', act_live_check_overridden: 'Canlı kontrol gerekçeyle geçildi',
+    act_signing_key_regenerated: 'İmzalama anahtarı yenilendi', act_signing_keyset_uploaded: 'Anahtar seti yüklendi',
+    act_auth_failed: 'Geçersiz API anahtarı', act_cert_expiring: 'Sertifika süresi doluyor',
+    act_notification_test: 'Test bildirimi', act_http: 'Yönetici isteği',
+    notifTitle: 'Webhook Bildirimleri', notifStatus: 'Durum', notifConfigured: 'Yapılandırılmış',
+    notifNotConfigured: 'Yapılandırılmamış — NOTIFY_WEBHOOK_URL ile açılır',
+    notifTarget: 'Hedef', notifSigned: 'HMAC imzası', notifSignedYes: 'Evet (X-PinVault-Signature)',
+    notifSignedNo: 'Hayır — NOTIFY_WEBHOOK_SECRET ayarlanmamış', notifEvents: 'Olaylar',
+    notifRecent: 'Son teslimatlar', notifNoDeliveries: 'Henüz teslimat yok',
+    notifTestBtn: 'Test Bildirimi Gönder', notifTestSent: 'Test bildirimi kuyruğa alındı (denetim #{0})',
+    notifThAttempts: 'Deneme', notifThAudit: 'Denetim',
+    signersTitle: 'İmzalayıcılar',
+    signersHint: 'Her imzalayıcı her config\'i ayrıca imzalar; requiredSignatures(n) ile yapılandırılmış cihazlar n imza ister. İlk imzalayıcı birincildir — eski istemciler onun imzasını okur.',
+    thSignerName: 'Ad', thSignerType: 'Tür', thKeyId: 'Anahtar kimliği', thDescription: 'Açıklama',
+    primarySigner: 'birincil', signerNotInSet: 'Bu anahtar aktif sette yok',
+    sigCacheTitle: 'İmza Önbelleği',
+    sigCacheOn: 'Açık — aynı içerik bir kez imzalanır ve config ömrünün yarısına kadar birebir aynı imzalı yanıt verilir (yalnızca bunu desteklediğini X-PinVault-Features: redelivery ile bildiren uygulamalara).',
+    sigCacheOff: 'Kapalı — her istek taze imzalanır (CONFIG_SIGNATURE_CACHE=true ile açılır).',
+    sigTtl: 'Config ömrü', sigProduced: 'Üretilen imza', sigCacheHits: 'Önbellek isabeti', sigCachedEnvelopes: 'Önbellekteki imzalı yanıt',
+    unitHours: '{0} sa', unitMinutes: '{0} dk', unitSeconds: '{0} sn',
+    keysetTitle: 'İmzalama Anahtarı Seti',
+    keysetHint: 'Anahtar seti, cihazların güvendiği imzalama anahtarlarının listesidir; anahtar değiştirmek (rotasyon) ya da bir anahtarı iptal etmek için kullanılır. Kurtarma anahtar(lar)ıyla ÇEVRİMDIŞI imzalanır; sunucu yalnızca doğrular ve cihazlara iletir.',
+    keysetDisabled: 'Kapalı — RECOVERY_PUBLIC_KEYS ayarlanmadı; set yüklemeleri reddedilir.',
+    keysetNone: 'Henüz set yüklenmedi (sürüm 0).',
+    keysetVersion: 'Set sürümü', keysetKeyIds: 'Listelenen anahtarlar', keysetRequired: 'Gereken imza',
+    keysetRecoveryKeys: 'Kurtarma anahtarları', keysetRecoveryRequired: 'Gereken kurtarma imzası',
+    keysetUploadedBy: 'Yükleyen', keysetUploadedAt: 'Yükleme',
+    keysetMissingWarn: 'Dikkat: şu aktif imzalayıcılar sette YOK — seti uygulayan cihazlar yalnızca bu anahtarlarla imzalanmış config\'leri reddeder: {0}',
+    keysetPasteLabel: 'İmzalı set (JSON: payload + signatures)',
+    keysetUploadBtn: 'Seti Yükle', keysetPasteFirst: 'Önce imzalı seti yapıştırın',
+    keysetInvalidJson: 'Geçersiz JSON: {0}', keysetBadShape: 'Beklenen biçim: {"payload": "…", "signatures": [{"keyId": "…", "signature": "…"}]}',
+    keysetUploaded: 'Anahtar seti v{0} yüklendi', keysetUploadWarnings: 'Uyarılar', keysetRejected: 'Set reddedildi',
+    regenDisabledSigner: 'Birincil imzalayıcı "{0}" türünde: anahtarı bulunduğu yerde (HSM/KMS) döndürün ve sunucuyu yeni anahtarla yeniden başlatın.',
+    regenDisabledKeySet: 'Bir anahtar seti aktif: yeni üretilen anahtar hiçbir sette olmaz ve seti uygulayan cihazlar onu reddeder. Anahtar değişikliğini anahtar seti üzerinden yapın.',
+    signingStatusError: 'İmzalama durumu yüklenemedi',
   },
   en: {
     hosts: 'Hosts', addHost: '+ New Host', selectHost: 'Select a host',
@@ -356,6 +512,13 @@ const i18n = {
     regenerateBootstrap: 'Regenerate Cert',
     regenerateBootstrapConfirm: 'The config server TLS certificate will be regenerated. All clients must update bootstrap pins. Server restart required. Continue?',
     bootstrapRegenerated: 'Bootstrap certificate regenerated — server restart required',
+    rotateToBackup: 'Switch to Backup Key',
+    rotateHostConfirm: 'The certificate will be reissued with the stored backup key and a new backup prepared. Devices already know the backup pin, so connections keep working. Continue?',
+    rotateBootstrapConfirm: 'The config server certificate will switch to the stored backup key and a new backup will be prepared. Apps carry the backup pin as a bootstrap pin, so no app update is needed. Server restart required. Continue?',
+    rotatedToBackup: 'Switched to the backup key; a new backup is ready',
+    bootstrapRotated: 'Switched to the backup key — restart the server. Add the new backup pin to the next app release.',
+    noBackupKey: 'No backup key is stored for this certificate: it was uploaded, fetched from a URL, or generated before backup keys were kept. A backup key is created when the certificate is regenerated.',
+    backupNotPublished: 'The stored backup key\'s pin is not among the published pins, so devices would reject it. Publish it first or regenerate the certificate.',
     tabAutoGenerate: 'Auto Generate', tabUploadJks: 'Upload JKS', tabFetchUrl: 'Fetch from URL',
     uploadJksLabel: 'Certificate File (JKS/P12/PFX)', uploadPassword: 'Keystore Password',
     uploadBtn: 'Upload', fetchUrlLabel: 'URL', fetchUrlPlaceholder: 'https://api.example.com',
@@ -510,6 +673,104 @@ const i18n = {
     mockServerTitle: 'Mock Server', mockCertNeeded: 'a certificate is required for the mock server',
     vaultAuthError: 'Authorization error ({0}). Enter an API key from the top-right or run localStorage.setItem(\'pinvault_api_key\', \'testkey\') then refresh the page.',
     vaultUnexpectedResponse: 'Unexpected response format. Check the console: {0}',
+    // ── Governance: identity, approvals, audit log, live check, signing ──
+    navApprovals: 'Approvals', navAudit: 'Audit Log',
+    adminUnknown: 'Not signed in', adminChipTitle: 'Owner of the admin key this dashboard uses',
+    switchAdminKey: 'Switch key',
+    switchAdminKeyPrompt: 'The stored key was cleared. Enter the new admin API key (X-API-Key):',
+    adminKeySwitched: 'Admin: {0}',
+    badgeApprovals: '{0}-person approval', badgeApprovalsTitle: 'Pin and key changes need {0} admins (PIN_CHANGE_APPROVALS)',
+    badgeLiveCheck: 'Live check: {0}', badgeLiveCheckTitle: 'New pin sets are checked against the certificate each host serves now (PIN_LIVE_CHECK)',
+    badgeSigCache: 'Signature cache', badgeSigCacheTitle: 'The same content is signed once and served again (CONFIG_SIGNATURE_CACHE)',
+    liveModeWarn: 'warn', liveModeEnforce: 'enforce', liveModeOff: 'off',
+    approvalsBadgeTitle: '{0} change(s) awaiting approval',
+    pendingChange: 'Change #{0} is waiting for approval — nothing is applied until another admin approves it.',
+    liveCheckFailedHeader: 'Live certificate check failed:',
+    liveCheckOverridePrompt: '{0}\n\nTo save anyway, enter a reason (recorded in the audit log and notifications). Leave empty to cancel.',
+    liveCheckBlocked: 'Not saved — live certificate check: {0}',
+    liveCheckWarnSaved: 'Saved, but the live certificate check failed (warn mode) — details in the Audit Log.',
+    liveOk: '{0}: the served leaf ({1}…) is in the pin set',
+    liveNotInSet: '{0}: served leaf {1}… is not in the set',
+    liveUnreachable: '{0}: unreachable — {1}',
+    liveIntermediateOnly: 'The set pins an intermediate certificate — the library pins the leaf only.',
+    liveProbed: 'probed', liveCheckTitle: 'Live certificate check',
+    livePassed: 'passed', liveFailed: 'failed',
+    liveEnforceWillFail: 'The live check fails in enforce mode: the request carries no liveCheckOverride, so approving it will not apply it (HTTP 422).',
+    liveOverrideCarried: 'The request carries a liveCheckOverride reason: {0}',
+    liveCheckBtn: 'Live Check', liveCheckBtnTitle: 'Compares these pins with the certificate the host serves now (does not save)',
+    liveCheckRunning: 'Checking the host…', liveCheckNeedHost: 'Enter a hostname first', liveCheckNeedPins: 'Enter at least one pin',
+    liveRotationHint: 'Rotation: publish {current, next} first, switch the host\'s certificate, then publish {next, backup}.',
+    approvalsTitle: 'Approvals', approvalsSub: 'Pin and key changes wait for a second admin (two-person rule).',
+    approvalsOff: 'Two-person approval is off (PIN_CHANGE_APPROVALS=1): changes apply immediately. Start the server with PIN_CHANGE_APPROVALS=2 and personal ADMIN_KEYS to turn it on.',
+    approvalsOn: 'Each change is applied once {0} admin(s) other than the requester approve it. You: {1}.',
+    tabPending: 'Pending ({0})', tabDecided: 'History ({0})',
+    noPendingChanges: 'No changes are waiting for approval.', noDecidedChanges: 'No decided changes yet.',
+    crRequestedBy: 'Requested by', crCreated: 'Created', crExpires: 'Expires', crApprovals: 'Approvals',
+    crDetails: 'Details', crDecidedBy: 'Decided by', crDecidedAt: 'Decided at', crReason: 'Reason',
+    crResult: 'Result', crResultBody: 'Server response',
+    approve: 'Approve', reject: 'Reject', withdraw: 'Withdraw',
+    cannotApproveOwn: 'You cannot approve your own request — another admin must.',
+    cannotApproveShared: 'A shared key (API_KEY) cannot approve: it does not say who approves. Use your personal key from ADMIN_KEYS.',
+    alreadyApproved: 'You already approved this request.',
+    rejectReasonPrompt: 'Reject #{0}. Reason (optional):',
+    withdrawReasonPrompt: 'Withdraw #{0}. Reason (optional):',
+    changeApplied: 'Change #{0} approved and applied',
+    changeApplyFailed: 'Change #{0} was approved but could not be applied (HTTP {1})',
+    changeApprovalRecorded: 'Approval recorded (#{0}: {1}/{2})',
+    changeRejected: 'Change #{0} rejected', changeWithdrawn: 'Change #{0} withdrawn',
+    crStatus_pending: 'pending', crStatus_applied: 'applied', crStatus_failed: 'failed',
+    crStatus_rejected: 'rejected', crStatus_expired: 'expired', crStatus_stale: 'stale',
+    op_pins_update: 'Pin update', op_force_on: 'Force on', op_force_off: 'Force off',
+    op_host_add: 'Add host', op_host_cert: 'Host certificate', op_config_api_delete: 'Delete Config API',
+    op_config_api_lifecycle: 'Start/stop Config API',
+    op_bootstrap_pins: 'Bootstrap pins', op_signing_key: 'Signing key', op_signing_keyset: 'Key set',
+    diffGlobalForce: 'Global force', diffOn: 'on', diffOff: 'off',
+    diffNoDetail: 'No pin diff for this operation; the summary and the request path describe the change.',
+    diffNoChange: 'No pin change.', diffDescribeError: 'Could not compute the diff: {0}',
+    auditTitle: 'Audit Log', auditSub: 'Every admin action, kept in an append-only, hash-chained log.',
+    auditVerify: 'Verify Chain', auditVerifyOk: 'Chain intact — {0} entries', auditVerifyBroken: 'Chain broken at #{0}',
+    auditFilterAll: 'All actions', auditThTime: 'Time', auditThActor: 'Actor', auditThAction: 'Action',
+    auditThTarget: 'Target', auditThSummary: 'Summary', auditEmpty: 'No entries',
+    auditSourceIp: 'Source IP', auditNoDetail: 'No further detail', auditEntries: '{0} entries',
+    act_pins_changed: 'Pins changed', act_change_requested: 'Change requested', act_change_approved: 'Approval given',
+    act_change_applied: 'Change applied', act_change_failed: 'Change failed', act_change_rejected: 'Change rejected',
+    act_change_expired: 'Change expired', act_change_stale: 'Change stale',
+    act_change_approval_refused: 'Approval refused',
+    act_live_check_warning: 'Live check warning', act_live_check_blocked: 'Live check blocked', act_live_check_overridden: 'Live check overridden',
+    act_signing_key_regenerated: 'Signing key regenerated', act_signing_keyset_uploaded: 'Key set uploaded',
+    act_auth_failed: 'Invalid API key', act_cert_expiring: 'Certificate expiring',
+    act_notification_test: 'Test notification', act_http: 'Admin request',
+    notifTitle: 'Webhook Notifications', notifStatus: 'Status', notifConfigured: 'Configured',
+    notifNotConfigured: 'Not configured — set NOTIFY_WEBHOOK_URL to enable',
+    notifTarget: 'Target', notifSigned: 'HMAC signature', notifSignedYes: 'Yes (X-PinVault-Signature)',
+    notifSignedNo: 'No — NOTIFY_WEBHOOK_SECRET is not set', notifEvents: 'Events',
+    notifRecent: 'Recent deliveries', notifNoDeliveries: 'No deliveries yet',
+    notifTestBtn: 'Send Test Notification', notifTestSent: 'Test notification queued (audit #{0})',
+    notifThAttempts: 'Attempts', notifThAudit: 'Audit',
+    signersTitle: 'Signers',
+    signersHint: 'Every signer signs every config; devices configured with requiredSignatures(n) need n of them. The first signer is the primary — older clients read its signature.',
+    thSignerName: 'Name', thSignerType: 'Type', thKeyId: 'Key ID', thDescription: 'Description',
+    primarySigner: 'primary', signerNotInSet: 'This key is not in the active set',
+    sigCacheTitle: 'Signature Cache',
+    sigCacheOn: 'On — the same content is signed once and the same envelope served for half its TTL (only to clients sending X-PinVault-Features: redelivery).',
+    sigCacheOff: 'Off — every request is signed fresh (enable with CONFIG_SIGNATURE_CACHE=true).',
+    sigTtl: 'Config TTL', sigProduced: 'Signatures produced', sigCacheHits: 'Cache hits', sigCachedEnvelopes: 'Cached envelopes',
+    unitHours: '{0} h', unitMinutes: '{0} min', unitSeconds: '{0} s',
+    keysetTitle: 'Signing-Key Set',
+    keysetHint: 'A signing-key set lists the signing keys devices accept (rotation / revocation). It is signed OFFLINE with the recovery key(s); the server only checks it and relays it to devices.',
+    keysetDisabled: 'Off — RECOVERY_PUBLIC_KEYS is not set; set uploads are refused.',
+    keysetNone: 'No set uploaded yet (version 0).',
+    keysetVersion: 'Set version', keysetKeyIds: 'Listed keys', keysetRequired: 'Required signatures',
+    keysetRecoveryKeys: 'Recovery keys', keysetRecoveryRequired: 'Required recovery signatures',
+    keysetUploadedBy: 'Uploaded by', keysetUploadedAt: 'Uploaded at',
+    keysetMissingWarn: 'Warning: these active signers are NOT in the set — devices that applied it reject configs signed only by them: {0}',
+    keysetPasteLabel: 'Signed set (JSON: payload + signatures)',
+    keysetUploadBtn: 'Upload Set', keysetPasteFirst: 'Paste the signed set first',
+    keysetInvalidJson: 'Invalid JSON: {0}', keysetBadShape: 'Expected shape: {"payload": "…", "signatures": [{"keyId": "…", "signature": "…"}]}',
+    keysetUploaded: 'Signing-key set v{0} uploaded', keysetUploadWarnings: 'Warnings', keysetRejected: 'Set rejected',
+    regenDisabledSigner: 'The primary signer is "{0}": rotate its key where it lives (HSM/KMS) and restart the server with the new key.',
+    regenDisabledKeySet: 'A signing-key set is active: a freshly generated key would be in no set and devices that applied one would reject it. Rotate through a set.',
+    signingStatusError: 'Could not load signing status',
   }
 };
 
@@ -544,6 +805,12 @@ function updateLangUI() {
   if (btnAddApi) btnAddApi.textContent = '+ Config API';
   const navHealth = document.getElementById('nav-health');
   if (navHealth) navHealth.textContent = t('healthTitle');
+  const navApprovals = document.getElementById('nav-approvals-label');
+  if (navApprovals) navApprovals.textContent = t('navApprovals');
+  const navAudit = document.getElementById('nav-audit');
+  if (navAudit) navAudit.textContent = t('navAudit');
+  renderAdminChip();
+  setApprovalsBadge(_approvalsPending);
 }
 
 // ── Init ─────────────────────────────────────────────
@@ -553,6 +820,10 @@ async function init() {
   await loadConfig();
   renderHostList();
   renderEmpty();
+  // After loadConfig: its request is the one that asks for a missing key.
+  // These two are quiet and must never open a dialog themselves.
+  await loadAdminIdentity();
+  refreshApprovalsBadge();
 }
 
 /**
@@ -566,6 +837,9 @@ async function loadConfig() {
   try {
     // Tüm API'lerin özetini al
     const apisRes = await apiFetch('/api/v1/all-configs');
+    // A refused request (no/invalid key) answers `{error}`, not a list —
+    // treat it as a failed load instead of iterating an object later.
+    if (!apisRes.ok) throw new Error('all-configs: HTTP ' + apisRes.status);
     allApiConfigs = await apisRes.json();
 
     // SEÇİLİ Config API'nin config'i. Eskiden burası her zaman
@@ -576,6 +850,7 @@ async function loadConfig() {
     // yazıyordu. `/api/v1/config/{id}` kapsamlıdır (ve yalnızca yönetim
     // API anahtarıyla erişilir) — host detayı zaten bunu kullanıyordu.
     const res = await apiFetch(`/api/v1/config/${encodeURIComponent(scopeId())}`);
+    if (!res.ok) throw new Error('config: HTTP ' + res.status);
     currentConfig = await res.json();
     console.log('Config loaded:', currentConfig, 'scope:', scopeId(), 'APIs:', allApiConfigs);
   } catch (e) {
@@ -807,6 +1082,7 @@ function toggleApiTree(apiId) {
   selectedApiId = apiId;
   selectedHost = null;
   currentSection = null;
+  document.querySelectorAll('.nav-item').forEach(el => el.classList.remove('selected'));
   renderHostListSync();
   renderHostList();
   // Önceki host spinner/detay'ını anında temizle — Config API başlığı için
@@ -876,7 +1152,7 @@ async function renderConfigApiDetail(apiId) {
         <div class="section-title-main" style="display:flex;align-items:center;gap:8px">
           <span style="color:${modeColor};font-weight:700">${api.mode.toUpperCase()}</span>
           :${api.port}
-          <span style="color:#64748b;font-size:14px;font-weight:400">${api.id}</span>
+          <span style="color:#64748b;font-size:14px;font-weight:400">${esc(api.id)}</span>
         </div>
         <div class="section-sub" style="display:flex;align-items:center;gap:12px">
           <span>${api.pins?.length || 0} host · v${api.version}</span>
@@ -913,7 +1189,7 @@ async function renderConfigApiDetail(apiId) {
           <div class="section-title-main" style="display:flex;align-items:center;gap:8px">
             <span style="color:${modeColor};font-weight:700">${api.mode.toUpperCase()}</span>
             :${api.port}
-            <span style="color:#64748b;font-size:14px;font-weight:400">${api.id}</span>
+            <span style="color:#64748b;font-size:14px;font-weight:400">${esc(api.id)}</span>
           </div>
           <div style="margin-top:4px">${toggleHtml}</div>
         </div>
@@ -1724,8 +2000,10 @@ function renderAddHostForm() {
       </div>
       <div class="form-actions">
         <button class="btn btn-primary" data-action="createHostManual">${t('create')}</button>
+        <button class="btn btn-secondary" data-action="liveCheckPins" data-arg0="" data-arg1="add" title="${esc(t('liveCheckBtnTitle'))}">${t('liveCheckBtn')}</button>
         <button class="btn btn-secondary" data-action="renderEmptyAndHostList">${t('cancel')}</button>
-      </div>`;
+      </div>
+      <div id="live-check-result" class="live-check-result"></div>`;
   } else if (addHostTab === 'generate') {
     formHtml = `
       <div class="form-group">
@@ -1786,7 +2064,9 @@ async function createHostManual() {
   if (currentConfig.pins.some(p => p.hostname === hostname)) { toast(t('duplicateHost'), 'error'); return; }
 
   const newPins = [...currentConfig.pins, { hostname, sha256: [hash0, hash1] }];
-  if (!(await saveFullConfig(newPins))) return;
+  const saved = await saveFullConfig(newPins);
+  if (!saved) return;
+  if (saved === 'pending') return; // the host exists only once approved
   toast(t('hostAdded') + ' — ' + hostname, 'success');
   selectedHost = hostname;
   await loadConfig();
@@ -1809,6 +2089,8 @@ async function createHostGenerate() {
       body: JSON.stringify({ hostname })
     });
     if (!res.ok) { const err = await res.json(); toast(err.error || t('error'), 'error'); btn.disabled = false; btn.textContent = t('create'); return; }
+    // 202: waiting for approval (apiFetch said so) — no host to open yet.
+    if (res.status === 202) { btn.disabled = false; btn.textContent = t('create'); return; }
 
     toast(t('certGenerated') + ' — ' + hostname, 'success');
     selectedHost = hostname;
@@ -1832,6 +2114,8 @@ async function createHostFetch() {
       body: JSON.stringify({ url })
     });
     if (!res.ok) { const err = await res.json(); toast(err.error || t('error'), 'error'); btn.disabled = false; btn.textContent = t('create'); return; }
+    // 202: waiting for approval (apiFetch said so) — no host to open yet.
+    if (res.status === 202) { btn.disabled = false; btn.textContent = t('create'); return; }
 
     const data = await res.json();
     toast(t('certFetched') + ' — ' + data.hostname, 'success');
@@ -1867,6 +2151,8 @@ async function createHostUpload() {
   try {
     const res = await apiFetch('/api/v1/hosts/upload-cert', { method: 'POST', body: formData });
     if (!res.ok) { const err = await res.json(); toast(err.error || t('error'), 'error'); btn.disabled = false; btn.textContent = t('create'); return; }
+    // 202: waiting for approval (apiFetch said so) — no host to open yet.
+    if (res.status === 202) { btn.disabled = false; btn.textContent = t('create'); return; }
 
     toast(t('certUploaded') + ' — ' + hostname, 'success');
     selectedHost = hostname;
@@ -1884,10 +2170,10 @@ let editHashes = [];
 function renderEditPins(hostname) {
   document.getElementById('content').innerHTML = `
     <div class="section-header"><div>
-      <div class="section-title-main">${hostname}</div>
+      <div class="section-title-main">${esc(hostname)}</div>
       <div class="section-sub">${t('editPins')}</div>
     </div></div>
-    <div class="card">
+    <div class="card" id="pins-page-edit">
       ${editHashes.map((hash, i) => `
         <div class="pin-row">
           <input class="form-input" value="${esc(hash)}" data-action-change="updateEditHash" data-arg0="${i}" data-event="1"
@@ -1898,8 +2184,10 @@ function renderEditPins(hostname) {
       <button class="btn btn-secondary" style="margin-top:4px;font-size:11px" data-action="addEditHashEdit" data-arg0="${esc(hostname)}">${t('addHash')}</button>
       <div class="form-actions">
         <button class="btn btn-primary" data-action="savePins" data-arg0="${esc(hostname)}">${t('save')}</button>
+        <button class="btn btn-secondary" data-action="liveCheckPins" data-arg0="${esc(hostname)}" data-arg1="page" title="${esc(t('liveCheckBtnTitle'))}">${t('liveCheckBtn')}</button>
         <button class="btn btn-secondary" data-action="selectHost" data-arg0="${esc(hostname)}">${t('cancel')}</button>
       </div>
+      <div id="live-check-result" class="live-check-result"></div>
     </div>
   `;
 }
@@ -1938,8 +2226,10 @@ function renderInlineEditPins(hostname) {
     <button class="btn btn-secondary" style="margin-top:4px;font-size:11px" data-action="addEditHashInline" data-arg0="${esc(hostname)}">${t('addHash')}</button>
     <div class="form-actions" style="margin-top:8px">
       <button class="btn btn-primary" data-action="saveInlinePins" data-arg0="${esc(hostname)}">${t('save')}</button>
+      <button class="btn btn-secondary" data-action="liveCheckPins" data-arg0="${esc(hostname)}" data-arg1="inline" title="${esc(t('liveCheckBtnTitle'))}">${t('liveCheckBtn')}</button>
       <button class="btn btn-secondary" data-action="toggleEditPins" data-arg0="${esc(hostname)}">${t('cancel')}</button>
-    </div>`;
+    </div>
+    <div id="live-check-result" class="live-check-result"></div>`;
 }
 
 async function saveInlinePins(hostname) {
@@ -1983,18 +2273,47 @@ async function deleteHost(hostname) {
  * `?configApiId=` olmadan bu uç management server'da `default-tls`e yazıyordu:
  * mTLS Config API seçiliyken eklenen/düzenlenen/silinen host varsayılan
  * kapsamı değiştiriyordu.
+ *
+ * The PUT replaces the whole scope, flags included. Callers pass edited hosts
+ * as `{hostname, sha256}` only, so every flag they do not set is carried over
+ * from `currentConfig` — each host's `mtls`, `clientCertVersion` and
+ * `forceUpdate`, and the scope-level `forceUpdate`. Sending
+ * `{version:0, pins:[{hostname, sha256}], forceUpdate:false}` used to switch
+ * mTLS and force off for EVERY host of the scope whenever one host's pins
+ * were edited. (`version` is informational: the server assigns versions.)
  */
 async function saveFullConfig(pins) {
+  const current = new Map((currentConfig?.pins || []).map(p => [p.hostname, p]));
+  const merged = pins.map(p => {
+    const cur = current.get(p.hostname) || {};
+    const pin = {
+      hostname: p.hostname,
+      sha256: p.sha256,
+      forceUpdate: !!(p.forceUpdate ?? cur.forceUpdate),
+      mtls: !!(p.mtls ?? cur.mtls)
+    };
+    const version = p.version ?? cur.version;
+    if (version != null) pin.version = version;
+    const certVersion = p.clientCertVersion ?? cur.clientCertVersion;
+    if (certVersion != null) pin.clientCertVersion = certVersion;
+    return pin;
+  });
   try {
     const res = await apiFetch(`/api/v1/certificate-config?configApiId=${encodeURIComponent(scopeId())}`, {
       method: 'PUT', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ version: 0, pins, forceUpdate: false })
+      body: JSON.stringify({ version: 0, pins: merged, forceUpdate: !!currentConfig?.forceUpdate })
     });
     if (!res.ok) {
-      const err = await res.json().catch(() => ({}));
-      toast((err.errors || [t('saveError')]).join('\n'), 'error');
+      // apiFetch already listed the hosts the live check failed on.
+      if (!res.liveCheckHandled) {
+        const err = await res.json().catch(() => ({}));
+        toast((err.errors || (err.error ? [err.error] : [t('saveError')])).join('\n'), 'error');
+      }
       return false;
     }
+    // 202: stored as a change request (PIN_CHANGE_APPROVALS); nothing changed
+    // yet. Truthy, so callers carry on as before; apiFetch told the user.
+    if (res.status === 202) return 'pending';
     await loadConfig();
     return true;
   } catch (e) {
@@ -2055,6 +2374,9 @@ async function clearForceAll(apiId) {
 // ── Section Navigation ───────────────────────────────
 
 function showSection(section) {
+  // Entering Approvals from elsewhere opens the pending list (what the badge
+  // counts); re-rendering it in place (language, key switch) keeps the tab.
+  if (section === 'approvals' && currentSection !== 'approvals') approvalsTab = 'pending';
   selectedHost = null;
   currentSection = section;
   document.querySelectorAll('.nav-item').forEach(el => el.classList.remove('selected'));
@@ -2065,6 +2387,8 @@ function showSection(section) {
     case 'bootstrap': renderBootstrapSection(); break;
     case 'signing': renderSigningSection(); break;
     case 'mtls': renderMtlsSection(); break;
+    case 'approvals': renderApprovalsSection(); break;
+    case 'audit': renderAuditSection(); break;
   }
 }
 
@@ -2273,6 +2597,7 @@ async function renderBootstrapSection() {
           <button class="copy-btn" data-action="copyText" data-arg0="${esc(data.backupPin)}">${t('copy')}</button>
         </div>` : ''}
         <div style="margin-top:16px;padding-top:16px;border-top:1px solid #334155;display:flex;gap:8px;flex-wrap:wrap">
+          <button class="btn btn-secondary" data-action="rotateBootstrapToBackup">${t('rotateToBackup')}</button>
           <button class="btn btn-warning" data-action="regenerateBootstrapCert">${t('regenerateBootstrap')}</button>
           <button class="btn btn-secondary" data-action="toggleBootstrapUpload">${t('tabUploadJks')}</button>
           <button class="btn btn-secondary" data-action="toggleBootstrapFetch">${t('tabFetch')}</button>
@@ -2352,6 +2677,25 @@ function toggleBootstrapFetch() {
   </form>`;
 }
 
+// The server's messages are English; its reason codes pick the dashboard's own text.
+function backupRotationError(data) {
+  if (data.reason === 'no_backup_key') return t('noBackupKey');
+  if (data.reason === 'backup_not_published') return t('backupNotPublished');
+  return data.error || t('error');
+}
+
+async function rotateBootstrapToBackup() {
+  if (!confirm(t('rotateBootstrapConfirm'))) return;
+  try {
+    const res = await apiFetch('/api/v1/server-tls-pins/rotate-to-backup', { method: 'POST' });
+    if (res.status === 202) return; // waits for a second admin; apiFetch said so
+    const data = await res.json();
+    if (!res.ok) { toast(backupRotationError(data), 'error'); return; }
+    toast(t('bootstrapRotated'), 'success');
+    renderBootstrapSection();
+  } catch (e) { toast(t('error'), 'error'); }
+}
+
 async function regenerateBootstrapCert() {
   if (!confirm(t('regenerateBootstrapConfirm'))) return;
   try {
@@ -2401,9 +2745,18 @@ async function fetchBootstrapFromUrl(e) {
 async function regenerateSigningKey() {
   if (!confirm(t('regenerateSigningConfirm'))) return;
   try {
-    await apiFetch('/api/v1/signing-key/regenerate', { method: 'POST' });
+    const res = await apiFetch('/api/v1/signing-key/regenerate', { method: 'POST' });
+    // 202: waiting for approval — apiFetch said so; nothing changed yet.
+    if (res.status === 202) return;
+    // 409: not a local key file, or a signing-key set is active. The success
+    // toast used to be shown regardless of the answer.
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      toast(err.error || t('error'), 'error');
+      return;
+    }
     toast(t('signingRegenerated'), 'success');
-    renderSigningSection();
+    refreshSigningView();
   } catch (e) { toast(t('error'), 'error'); }
 }
 
@@ -2659,33 +3012,206 @@ async function revokeClientCert(id) {
 
 // ── Signing Key Section ──────────────────────────────
 
+/**
+ * The signing section is shown inside a Config API's "İmzalama" tab. After a
+ * change, re-render that tab (header + tab bar included) rather than the bare
+ * section, which used to drop the Config API header.
+ */
+function refreshSigningView() {
+  if (currentSection === 'signing' || !selectedApiId) return renderSigningSection();
+  configApiTab = 'signing';
+  return renderConfigApiDetail(selectedApiId);
+}
+
 async function renderSigningSection() {
   document.getElementById('content').innerHTML = `<div class="loading">${t('loading')}</div>`;
   try {
-    const res = await apiFetch('/api/v1/signing-key');
+    // /signing/status is admin-only and newer than /signing-key: without it
+    // the section still shows the key, as before.
+    const [res, statusRes] = await Promise.all([
+      apiFetch('/api/v1/signing-key'),
+      apiFetch('/api/v1/signing/status').catch(() => null)
+    ]);
     const data = await res.json();
+    const status = (statusRes && statusRes.ok) ? await statusRes.json().catch(() => null) : null;
+    const keySetActive = !!(status && status.keySet && status.keySet.version > 0);
+    const regenBlocked = !status ? ''
+      : !status.canRegenerate ? t('regenDisabledSigner', status.signers?.[0]?.type || '?')
+      : keySetActive ? t('regenDisabledKeySet') : '';
+    // The public key box stays the first .key-box of the section: tooling
+    // (and the E2E suite) reads the key from it.
     document.getElementById('content').innerHTML = `
       <div class="section-header">
         <div><div class="section-title-main">${t('signingTitle')}</div><div class="section-sub">${t('signingSub')}</div></div>
         <div class="action-bar">
           <button class="btn btn-primary" data-action="copyText" data-arg0="${esc(data.publicKey)}">${t('copy')}</button>
-          <button class="btn btn-warning" data-action="regenerateSigningKey">${t('regenerateSigningKey')}</button>
+          <span title="${esc(regenBlocked)}"><button class="btn btn-warning" data-action="regenerateSigningKey"${regenBlocked ? ` disabled title="${esc(regenBlocked)}"` : ''}>${t('regenerateSigningKey')}</button></span>
         </div>
       </div>
+      ${regenBlocked ? `<div class="notice notice-warn">${esc(regenBlocked)}</div>` : ''}
       <div class="card">
         <div class="card-title" style="color:#f59e0b">${t('ecdsaWhat')}</div>
         <div style="color:#94a3b8;line-height:1.6;font-size:13px">${t('ecdsaExplain')}</div>
       </div>
-      <div class="card"><div class="card-title">${t('publicKey')}</div><div class="key-box">${data.publicKey}</div></div>
+      <div class="card"><div class="card-title">${t('publicKey')}</div><div class="key-box">${esc(data.publicKey)}</div></div>
       <div class="card"><div class="card-title">${t('androidIntegration')}</div>
         <div class="key-box">val config = PinVaultConfig.Builder()
     .configApi("default", "https://api.example.com/") {
-        signaturePublicKey("${data.publicKey}")
+        signaturePublicKey("${esc(data.publicKey)}")
     }
-    .build()</div></div>`;
+    .build()</div></div>
+      ${status
+        ? renderSignersCard(status) + renderKeySetCard(status) + renderSigCacheCard(status.cache || {})
+        : `<div class="card"><div class="empty-msg">${t('signingStatusError')}</div></div>`}`;
   } catch (e) {
     document.getElementById('content').innerHTML = `<div class="card"><div class="empty-msg">${t('signingError')}</div></div>`;
   }
+}
+
+/** First characters of a key id / pin, full value in the tooltip. */
+function shortId(value, n = 16) {
+  const s = String(value ?? '');
+  return `<span class="mono" title="${esc(s)}">${esc(s.slice(0, n))}${s.length > n ? '…' : ''}</span>`;
+}
+
+function renderSignersCard(status) {
+  const signers = status.signers || [];
+  const setActive = !!(status.keySet && status.keySet.version > 0);
+  const inSet = new Set(status.keySet?.keyIds || []);
+  const rows = signers.map((s, i) => `<tr>
+      <td><b>${esc(s.name)}</b>${i === 0 ? ` <span class="gov-badge gov-badge-primary">${t('primarySigner')}</span>` : ''}</td>
+      <td><span class="type-badge type-${esc(s.type)}">${esc(s.type)}</span></td>
+      <td>${shortId(s.keyId)}${setActive
+        ? (inSet.has(s.keyId) ? ' <span class="status-healthy">&#x2713;</span>'
+                              : ` <span class="status-error" title="${esc(t('signerNotInSet'))}">&#x2717;</span>`)
+        : ''}</td>
+      <td class="muted">${esc(s.description)}</td>
+    </tr>`).join('');
+  return `<div class="card" id="signers-card">
+      <div class="card-title">${t('signersTitle')} (${signers.length})</div>
+      <div class="card-hint">${t('signersHint')}</div>
+      <table class="data-table">
+        <thead><tr><th>${t('thSignerName')}</th><th>${t('thSignerType')}</th><th>${t('thKeyId')}</th><th>${t('thDescription')}</th></tr></thead>
+        <tbody>${rows}</tbody>
+      </table>
+    </div>`;
+}
+
+function fmtDuration(seconds) {
+  const s = Number(seconds) || 0;
+  if (s > 0 && s % 3600 === 0) return t('unitHours', s / 3600);
+  if (s > 0 && s % 60 === 0) return t('unitMinutes', s / 60);
+  return t('unitSeconds', s);
+}
+
+function renderSigCacheCard(c) {
+  const stat = (value, label) =>
+    `<div><div class="mini-stat-value">${esc(value)}</div><div class="mini-stat-label">${label}</div></div>`;
+  return `<div class="card" id="sig-cache-card">
+      <div class="card-head">
+        <div class="card-title">${t('sigCacheTitle')}</div>
+        <span class="gov-badge ${c.cacheEnabled ? 'gov-badge-cache' : ''}">${c.cacheEnabled ? t('diffOn') : t('diffOff')}</span>
+      </div>
+      <div class="card-hint">${c.cacheEnabled ? t('sigCacheOn') : t('sigCacheOff')}</div>
+      <div class="mini-stats">
+        ${stat(fmtDuration(c.ttlSeconds), t('sigTtl'))}
+        ${stat(c.signaturesProduced ?? 0, t('sigProduced'))}
+        ${stat(c.cacheHits ?? 0, t('sigCacheHits'))}
+        ${stat(c.cachedEnvelopes ?? 0, t('sigCachedEnvelopes'))}
+      </div>
+    </div>`;
+}
+
+// Result of the last key-set upload, kept across the re-render that follows
+// it (the warnings are what the operator needs to read). Shown for 10 min.
+let _keysetUploadResult = null;
+
+function renderKeySetCard(status) {
+  const ks = status.keySet || {};
+  const row = (k, v) => `<div class="info-row"><span class="info-key">${k}</span><span class="info-val">${v}</span></div>`;
+  let body;
+  if (!ks.enabled) {
+    body = `<div class="notice">${t('keysetDisabled')}</div>`;
+  } else {
+    body = row(t('keysetRecoveryKeys'),
+        (ks.recoveryKeyIds || []).map(k => shortId(k)).join('<br>') || '&#x2014;')
+      + row(t('keysetRecoveryRequired'), esc(ks.recoveryRequiredSignatures ?? 1));
+    if (ks.version > 0) {
+      body += row(t('keysetVersion'), `v${esc(ks.version)}`)
+        + row(t('keysetKeyIds'), (ks.keyIds || []).map(k => shortId(k)).join('<br>') || '&#x2014;')
+        + row(t('keysetRequired'), esc(ks.requiredSignatures ?? 1))
+        + row(t('keysetUploadedBy'), esc(ks.uploadedBy || '—'))
+        + row(t('keysetUploadedAt'), fmtTime(ks.uploadedAt));
+    } else {
+      body += `<div class="muted" style="font-size:12px;padding:8px 0">${t('keysetNone')}</div>`;
+    }
+    if ((ks.activeSignersMissing || []).length) {
+      body += `<div class="notice notice-danger" style="margin-top:10px">${esc(t('keysetMissingWarn',
+        ks.activeSignersMissing.map(k => String(k).slice(0, 12) + '…').join(', ')))}</div>`;
+    }
+  }
+  return `<div class="card" id="keyset-card">
+      <div class="card-head">
+        <div class="card-title">${t('keysetTitle')}</div>
+        ${ks.enabled && ks.version > 0 ? `<span class="ver-badge">v${esc(ks.version)}</span>` : ''}
+      </div>
+      <div class="card-hint">${t('keysetHint')}</div>
+      ${body}
+      <div class="form-group" style="margin-top:14px">
+        <label class="form-label" for="keyset-json">${esc(t('keysetPasteLabel'))}</label>
+        <textarea id="keyset-json" class="form-input keyset-textarea" rows="6" spellcheck="false"
+          placeholder="${esc('{"payload":"{\\"type\\":\\"pinvault-signing-keys\\",…}","signatures":[{"keyId":"…","signature":"…"}]}')}"
+          ${ks.enabled ? '' : 'disabled'}></textarea>
+      </div>
+      <button class="btn btn-primary" data-action="uploadKeyset"${ks.enabled ? '' : ` disabled title="${esc(t('keysetDisabled'))}"`}>${t('keysetUploadBtn')}</button>
+      <div id="keyset-upload-result">${renderKeysetUploadResult()}</div>
+    </div>`;
+}
+
+function renderKeysetUploadResult() {
+  const r = _keysetUploadResult;
+  if (!r || Date.now() - r.at > 10 * 60 * 1000) return '';
+  if (!r.ok) {
+    return `<div class="notice notice-danger" style="margin-top:10px"><b>${t('keysetRejected')}:</b> ${esc(r.error)}</div>`;
+  }
+  const warnings = (r.warnings || []).map(w => `<li>${esc(w)}</li>`).join('');
+  return `<div class="notice ${warnings ? 'notice-warn' : 'notice-info'}" style="margin-top:10px">
+      <b>${esc(t('keysetUploaded', r.version))}</b>
+      ${warnings ? `<div style="margin-top:6px">${t('keysetUploadWarnings')}:</div><ul class="notice-list">${warnings}</ul>` : ''}
+    </div>`;
+}
+
+/**
+ * PUT /api/v1/signing-keyset with the pasted JSON. The set is signed OFFLINE
+ * by the recovery key(s); the dashboard only relays it. The text is sent as
+ * pasted — `payload` must stay byte-for-byte what was signed.
+ */
+async function uploadKeyset() {
+  const raw = (document.getElementById('keyset-json')?.value || '').trim();
+  if (!raw) { toast(t('keysetPasteFirst'), 'error'); return; }
+  let parsed;
+  try { parsed = JSON.parse(raw); } catch (e) { toast(t('keysetInvalidJson', e.message), 'error'); return; }
+  if (!parsed || typeof parsed.payload !== 'string' || !Array.isArray(parsed.signatures)) {
+    toast(t('keysetBadShape'), 'error');
+    return;
+  }
+  try {
+    const res = await apiFetch('/api/v1/signing-keyset', {
+      method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: raw
+    });
+    if (res.status === 202) return; // waiting for approval — apiFetch said so
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      _keysetUploadResult = { at: Date.now(), ok: false, error: data.error || `HTTP ${res.status}` };
+      const box = document.getElementById('keyset-upload-result');
+      if (box) box.innerHTML = renderKeysetUploadResult();
+      toast(data.error || t('keysetRejected'), 'error');
+      return;
+    }
+    _keysetUploadResult = { at: Date.now(), ok: true, version: data.version, warnings: data.warnings || [] };
+    toast(t('keysetUploaded', data.version), (data.warnings || []).length ? 'warning' : 'success');
+    refreshSigningView();
+  } catch (e) { toast(t('error'), 'error'); }
 }
 
 // ── Cert Info & Mock Server ──────────────────────────
@@ -2723,6 +3249,7 @@ async function loadCertInfo(hostname) {
 function renderCertRenewSection(hostname) {
   return `
     <div style="margin-top:16px;padding-top:16px;border-top:1px solid #334155;display:flex;gap:8px;flex-wrap:wrap">
+      <button class="btn btn-secondary" data-action="rotateHostToBackup" data-arg0="${esc(hostname)}">${t('rotateToBackup')}</button>
       <button class="btn btn-warning" data-action="renewCertAuto" data-arg0="${esc(hostname)}">${t('regenerateCert')}</button>
       <button class="btn btn-secondary" data-action="showCertUploadForm" data-arg0="${esc(hostname)}">${t('renewUpload')}</button>
     </div>
@@ -2763,6 +3290,19 @@ async function renewCertUpload(e, hostname) {
     const res = await apiFetch(`/api/v1/hosts/${encodeURIComponent(hostname)}/upload-cert`, { method: 'POST', body: formData });
     if (!res.ok) { const err = await res.json(); toast(err.error || t('error'), 'error'); return; }
     toast(t('certUploadRenewed'), 'success');
+    await loadConfig();
+    renderHostList();
+    selectHost(hostname);
+  } catch (e) { toast(t('error'), 'error'); }
+}
+
+async function rotateHostToBackup(hostname) {
+  if (!confirm(t('rotateHostConfirm'))) return;
+  try {
+    const res = await apiFetch(`/api/v1/hosts/${encodeURIComponent(hostname)}/rotate-to-backup`, { method: 'POST' });
+    if (res.status === 202) return; // waits for a second admin; apiFetch said so
+    if (!res.ok) { toast(backupRotationError(await res.json()), 'error'); return; }
+    toast(t('rotatedToBackup'), 'success');
     await loadConfig();
     renderHostList();
     selectHost(hostname);
@@ -2885,16 +3425,729 @@ async function stopMock(hostname) {
   } catch (e) { toast(t('error'), 'error'); }
 }
 
+// ── Governance: admin identity ───────────────────────
+//
+// Everything below is driven by optional server features; each view says so
+// when its feature is off instead of hiding. `adminMe` is
+// GET /api/v1/admin/me, or null when that failed (no/invalid key, old server).
+
+let adminMe = null;
+
+async function loadAdminIdentity() {
+  let me = null;
+  try {
+    const res = await apiFetch('/api/v1/admin/me', { quiet: true });
+    if (res.ok) me = await res.json();
+  } catch (_) { /* chip shows "not signed in" */ }
+  adminMe = me;
+  renderAdminChip();
+  scheduleApprovalsPoll();
+  return me;
+}
+
+function liveModeLabel(mode) {
+  return mode === 'enforce' ? t('liveModeEnforce') : mode === 'warn' ? t('liveModeWarn') : t('liveModeOff');
+}
+
+function renderAdminChip() {
+  const el = document.getElementById('admin-chip');
+  if (!el) return;
+  const me = adminMe;
+  const badges = [];
+  if (me && me.approvalsRequired >= 2) {
+    badges.push(`<span class="gov-badge gov-badge-approvals" title="${esc(t('badgeApprovalsTitle', me.approvalsRequired))}">${esc(t('badgeApprovals', me.approvalsRequired))}</span>`);
+  }
+  if (me && me.liveCheck && me.liveCheck !== 'off') {
+    const cls = me.liveCheck === 'enforce' ? 'gov-badge-live-enforce' : 'gov-badge-live-warn';
+    badges.push(`<span class="gov-badge ${cls}" title="${esc(t('badgeLiveCheckTitle'))}">${esc(t('badgeLiveCheck', liveModeLabel(me.liveCheck)))}</span>`);
+  }
+  if (me && me.signatureCache) {
+    badges.push(`<span class="gov-badge gov-badge-cache" title="${esc(t('badgeSigCacheTitle'))}">${esc(t('badgeSigCache'))}</span>`);
+  }
+  el.innerHTML = `
+    <div class="admin-chip-row">
+      <span class="admin-avatar">&#x1F464;</span>
+      <span class="admin-name${me ? '' : ' admin-name-unknown'}" id="admin-name" title="${esc(t('adminChipTitle'))}">${me ? esc(me.name) : esc(t('adminUnknown'))}</span>
+      <button class="admin-switch" data-action="switchAdminKey" title="${esc(t('switchAdminKey'))}" aria-label="${esc(t('switchAdminKey'))}">&#x21C4;</button>
+    </div>
+    ${badges.length ? `<div class="admin-badges">${badges.join('')}</div>` : ''}`;
+}
+
+/** Forget the stored key, ask for another, then reload everything with it. */
+async function switchAdminKey() {
+  localStorage.removeItem('pinvault_api_key');
+  const key = prompt(t('switchAdminKeyPrompt'));
+  if (key && key.trim()) setApiKey(key.trim());
+  adminMe = null;
+  renderAdminChip();
+  await loadConfig();
+  renderHostList();
+  await loadAdminIdentity();
+  refreshApprovalsBadge();
+  rerenderCurrentView();
+  if (adminMe) toast(t('adminKeySwitched', adminMe.name), 'info');
+}
+
+function rerenderCurrentView() {
+  if (currentSection) return showSection(currentSection);
+  if (selectedHost && selectedApiId) return selectHostInApi(selectedHost, selectedApiId);
+  if (selectedApiId) return renderConfigApiDetail(selectedApiId);
+  renderEmpty();
+}
+
+// ── Governance: pending approvals badge ──────────────
+
+let _approvalsPending = null;   // pending count, null = unknown
+let _approvalsPendingIds = '';  // to notice changes between polls
+let _approvalsPoll = null;
+const APPROVALS_POLL_MS = 30000;
+
+function setApprovalsBadge(count) {
+  _approvalsPending = count;
+  const badge = document.getElementById('approvals-badge');
+  if (!badge) return;
+  if (count && count > 0) {
+    badge.textContent = String(count);
+    badge.title = t('approvalsBadgeTitle', count);
+    badge.style.display = '';
+  } else {
+    badge.style.display = 'none';
+  }
+}
+
+/** Quiet: runs in the background (poll, after writes) and never prompts. */
+async function refreshApprovalsBadge() {
+  try {
+    const res = await apiFetch('/api/v1/change-requests?status=pending', { quiet: true });
+    if (!res.ok) return;
+    const list = await res.json();
+    if (!Array.isArray(list)) return;
+    setApprovalsBadge(list.length);
+    const ids = list.map(c => c.id).join(',');
+    const changed = ids !== _approvalsPendingIds;
+    _approvalsPendingIds = ids;
+    if (changed && currentSection === 'approvals') renderApprovalsSection();
+  } catch (_) { /* badge keeps its last value */ }
+}
+
+// Polls only while approvals are on and the page is visible.
+function scheduleApprovalsPoll() {
+  const wanted = !!(adminMe && adminMe.approvalsRequired >= 2);
+  if (wanted && !_approvalsPoll) {
+    _approvalsPoll = setInterval(() => { if (!document.hidden) refreshApprovalsBadge(); }, APPROVALS_POLL_MS);
+  } else if (!wanted && _approvalsPoll) {
+    clearInterval(_approvalsPoll);
+    _approvalsPoll = null;
+  }
+}
+document.addEventListener('visibilitychange', () => {
+  if (!document.hidden && _approvalsPoll) refreshApprovalsBadge();
+});
+
+// A 202 means NOTHING was applied. Callers still run their "saved" path
+// (they check res.ok, and 202 is ok), so their success toast is suppressed
+// after this notice instead of contradicting it — until the user starts
+// another action (see beginUserAction) or at most PENDING_SUPPRESS_MS.
+// Time alone is not enough: an approver clicking right after would lose the
+// genuine "applied" toast.
+let _pendingNoticeUntil = 0;
+const PENDING_SUPPRESS_MS = 3000;
+
+function notePendingApproval(p) {
+  _pendingNoticeUntil = Date.now() + PENDING_SUPPRESS_MS;
+  toast(t('pendingChange', p.changeRequestId), 'info', 7000);
+  refreshApprovalsBadge();
+}
+
+/** Called by the action dispatcher: a new user action ends the suppression. */
+function beginUserAction() { _pendingNoticeUntil = 0; }
+
+// ── Governance: shared rendering helpers ─────────────
+
+function fmtTime(iso) {
+  if (!iso) return '&#x2014;';
+  const d = new Date(iso);
+  if (isNaN(d.getTime())) return esc(iso);
+  return esc(d.toLocaleString(lang === 'tr' ? 'tr-TR' : 'en-US'));
+}
+
+function parseJsonText(text) {
+  if (!text) return null;
+  try { return JSON.parse(text); } catch (_) { return null; }
+}
+
+function onOff(v) { return v ? t('diffOn') : t('diffOff'); }
+
+/** One line per failed host of a live-check result (plain text). */
+function liveCheckFailureLines(result) {
+  return (result?.checks || []).filter(c => !c.matched).map(c => c.reachable
+    ? t('liveNotInSet', c.hostname, String((c.livePins || [])[0] || '').slice(0, 12))
+    : t('liveUnreachable', c.hostname, c.error || '?'));
+}
+
+/** One live-check host result as HTML; [pins] = the set that was checked. */
+function liveCheckLine(c, pins) {
+  const leaf = String((c.livePins || [])[0] || '');
+  const probed = c.probed ? ` <span class="muted">(${t('liveProbed')}: ${esc(c.probed)})</span>` : '';
+  if (c.matched) {
+    return `<div class="live-check-line live-ok">&#x2713; ${esc(t('liveOk', c.hostname, leaf.slice(0, 12)))}${probed}</div>`;
+  }
+  if (c.reachable) {
+    const intermediate = (pins || []).length && (c.livePins || []).slice(1).some(p => pins.includes(p));
+    return `<div class="live-check-line live-bad">&#x2717; ${esc(t('liveNotInSet', c.hostname, leaf.slice(0, 12)))}${probed}
+        ${leaf ? `<div class="live-leaf"><span class="mono">sha256/${esc(leaf)}</span>
+          <button class="copy-btn" data-action="copyText" data-arg0="${esc(leaf)}">${t('copy')}</button></div>` : ''}
+        ${intermediate ? `<div class="muted">${t('liveIntermediateOnly')}</div>` : ''}
+      </div>`;
+  }
+  return `<div class="live-check-line live-warn">&#x26A0; ${esc(t('liveUnreachable', c.hostname, c.error || '?'))}${probed}</div>`;
+}
+
+// ── Pin editors: live certificate dry run ────────────
+
+/**
+ * POST /api/v1/pins/live-check with the pins currently in the editor. Works
+ * whatever PIN_LIVE_CHECK is set to; saves nothing. [source]: `inline` (host
+ * detail), `page` (full-page editor) or `add` (new host, manual tab).
+ */
+async function liveCheckPins(hostname, source) {
+  let host = hostname;
+  let pins;
+  if (source === 'add') {
+    host = (document.getElementById('add-hostname')?.value || '').trim();
+    pins = ['add-hash-0', 'add-hash-1'].map(id => (document.getElementById(id)?.value || '').trim());
+  } else {
+    const editor = document.getElementById(source === 'page' ? 'pins-page-edit' : 'pins-edit');
+    const inputs = editor ? [...editor.querySelectorAll('input.form-input')] : [];
+    pins = inputs.length ? inputs.map(i => i.value.trim()) : editHashes.map(h => String(h || '').trim());
+  }
+  pins = pins.filter(Boolean);
+  if (!host) { toast(t('liveCheckNeedHost'), 'error'); return; }
+  if (!pins.length) { toast(t('liveCheckNeedPins'), 'error'); return; }
+  const box = document.getElementById('live-check-result');
+  if (box) box.innerHTML = `<div class="live-check-line">${t('liveCheckRunning')}</div>`;
+  try {
+    const res = await apiFetch('/api/v1/pins/live-check', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ pins: [{ hostname: host, sha256: pins }] })
+    });
+    const data = await res.json().catch(() => null);
+    const target = document.getElementById('live-check-result');
+    if (!res.ok || !data || !Array.isArray(data.checks)) {
+      const msg = (data && data.error) || `HTTP ${res.status}`;
+      if (target) target.innerHTML = `<div class="live-check-line live-bad">${esc(msg)}</div>`;
+      else toast(msg, 'error');
+      return;
+    }
+    if (!target) return;
+    target.innerHTML = data.checks.map(c => liveCheckLine(c, pins)).join('')
+      + (data.passed ? '' : `<div class="muted live-hint">${esc(t('liveRotationHint'))}</div>`);
+  } catch (e) {
+    const target = document.getElementById('live-check-result');
+    if (target) target.innerHTML = `<div class="live-check-line live-bad">${esc(e.message)}</div>`;
+  }
+}
+
+// ── Governance: Approvals section ────────────────────
+
+let approvalsTab = 'pending';
+const _crExpanded = new Set();   // change request ids whose detail is open
+const _crById = new Map();       // last rendered requests, for the actions
+
+function crStatusBadge(status) {
+  const key = 'crStatus_' + status;
+  const label = (i18n[lang]?.[key] || i18n.tr[key]) ? t(key) : status;
+  return `<span class="cr-status cr-status-${esc(status)}">${esc(label)}</span>`;
+}
+
+function opBadge(op) {
+  if (!op) return '';
+  const key = 'op_' + op;
+  const label = (i18n[lang]?.[key] || i18n.tr[key]) ? t(key) : op;
+  return `<span class="op-badge" title="${esc(op)}">${esc(label)}</span>`;
+}
+
+function pinChip(hash, kind) {
+  const s = String(hash || '');
+  const cls = kind === 'add' ? ' pin-add' : kind === 'del' ? ' pin-del' : '';
+  const mark = kind === 'add' ? '+' : kind === 'del' ? '−' : '';
+  return `<span class="pin-chip${cls}" title="${esc(s)}">${mark}${esc(s.slice(0, 12))}…</span>`;
+}
+
+function pinFlags(p) {
+  const flags = [];
+  if (p.forceUpdate) flags.push('force');
+  if (p.mtls) flags.push('mTLS');
+  if (p.clientCertVersion != null) flags.push('client cert v' + p.clientCertVersion);
+  return flags.length ? ` <span class="diff-note">${esc(flags.join(' · '))}</span>` : '';
+}
+
+/** The diff (and live-check dry run) a change request was stored with. */
+function renderChangeDetail(cr, d) {
+  if (!d) return `<div class="muted small">${t('diffNoDetail')}</div>`;
+  const out = [];
+  if (d.describeError) out.push(`<div class="notice notice-warn">${esc(t('diffDescribeError', d.describeError))}</div>`);
+  const hasDiff = Array.isArray(d.added) || Array.isArray(d.removed) || Array.isArray(d.changed) || d.forceUpdate;
+  (d.added || []).forEach(p => out.push(`<div class="diff-row diff-add"><span class="diff-mark">+</span><b>${esc(p.hostname)}</b>
+      <span class="ver-badge">v${esc(p.version)}</span>${pinFlags(p)}
+      <div class="diff-pins">${(p.sha256 || []).map(h => pinChip(h, 'add')).join('')}</div></div>`));
+  (d.removed || []).forEach(p => out.push(`<div class="diff-row diff-del"><span class="diff-mark">−</span><b>${esc(p.hostname)}</b>
+      <span class="ver-badge">v${esc(p.version)}</span>${pinFlags(p)}
+      <div class="diff-pins">${(p.sha256 || []).map(h => pinChip(h, 'del')).join('')}</div></div>`));
+  (d.changed || []).forEach(c => {
+    const from = c.from || {}, to = c.to || {};
+    const before = new Set(from.sha256 || []), after = new Set(to.sha256 || []);
+    const chips = (to.sha256 || []).map(h => pinChip(h, before.has(h) ? 'keep' : 'add'))
+      .concat((from.sha256 || []).filter(h => !after.has(h)).map(h => pinChip(h, 'del')));
+    const notes = [];
+    if (from.version !== to.version) notes.push(`v${from.version} → v${to.version}`);
+    if (!!from.forceUpdate !== !!to.forceUpdate) notes.push(`force ${onOff(from.forceUpdate)} → ${onOff(to.forceUpdate)}`);
+    if (!!from.mtls !== !!to.mtls) notes.push(`mTLS ${onOff(from.mtls)} → ${onOff(to.mtls)}`);
+    if ((from.clientCertVersion ?? null) !== (to.clientCertVersion ?? null)) {
+      notes.push(`client cert v${from.clientCertVersion ?? '–'} → v${to.clientCertVersion ?? '–'}`);
+    }
+    out.push(`<div class="diff-row diff-mod"><span class="diff-mark">~</span><b>${esc(c.hostname)}</b>
+        <span class="diff-note">${esc(notes.join(' · '))}</span>
+        <div class="diff-pins">${chips.join('')}</div></div>`);
+  });
+  if (d.forceUpdate) {
+    out.push(`<div class="diff-row diff-mod"><span class="diff-mark">~</span>${t('diffGlobalForce')}:
+        ${onOff(d.forceUpdate.from)} → ${onOff(d.forceUpdate.to)}</div>`);
+  }
+  if (!hasDiff) out.push(`<div class="muted small">${t('diffNoDetail')}</div>`);
+  else if (!(d.added || []).length && !(d.removed || []).length && !(d.changed || []).length && !d.forceUpdate) {
+    out.push(`<div class="muted small">${t('diffNoChange')}</div>`);
+  }
+  if (d.liveCheck) out.push(renderStoredLiveCheck(d.liveCheck, cr));
+  if (cr.resultBody) {
+    const parsed = parseJsonText(cr.resultBody);
+    out.push(`<div class="diff-section-title">${t('crResultBody')} (HTTP ${esc(cr.resultStatus ?? '?')})</div>
+      <pre class="json-box">${esc(parsed ? JSON.stringify(parsed, null, 2) : cr.resultBody)}</pre>`);
+  }
+  return out.join('');
+}
+
+function renderStoredLiveCheck(lc, cr) {
+  const override = new URLSearchParams(cr.query || '').get('liveCheckOverride');
+  const verdict = lc.passed
+    ? `<span class="status-healthy">&#x2713; ${t('livePassed')}</span>`
+    : `<span class="status-error">&#x2717; ${t('liveFailed')}</span>`;
+  let note = '';
+  if (!lc.passed && override) note = `<div class="notice notice-info">${esc(t('liveOverrideCarried', override))}</div>`;
+  else if (!lc.passed && lc.mode === 'enforce' && cr.status === 'pending') {
+    note = `<div class="notice notice-danger">${esc(t('liveEnforceWillFail'))}</div>`;
+  }
+  return `<div class="diff-section-title">${t('liveCheckTitle')} (${esc(liveModeLabel(lc.mode))}): ${verdict}</div>
+    ${(lc.checks || []).map(c => liveCheckLine(c, null)).join('')}${note}`;
+}
+
+function approveBlockReason(cr) {
+  const me = adminMe?.name;
+  if (!me) return '';
+  if (cr.requestedBy === me) return t('cannotApproveOwn');
+  // The shared API_KEY holder is named "admin" and can never approve.
+  if (me === 'admin' || me === 'anonymous') return t('cannotApproveShared');
+  if ((cr.approvedBy || []).includes(me)) return t('alreadyApproved');
+  return '';
+}
+
+function renderPendingChange(cr) {
+  const id = String(cr.id);
+  const d = parseJsonText(cr.detail);
+  const own = adminMe && cr.requestedBy === adminMe.name;
+  const block = approveBlockReason(cr);
+  const need = Math.max(1, (adminMe?.approvalsRequired || 2) - 1);
+  const open = _crExpanded.has(id);
+  const live = d?.liveCheck
+    ? `<span class="${d.liveCheck.passed ? 'status-healthy' : 'status-error'}">${t('liveCheckTitle')}: ${d.liveCheck.passed ? '&#x2713; ' + t('livePassed') : '&#x2717; ' + t('liveFailed')}</span>`
+    : '';
+  return `<div class="card cr-card" id="cr-card-${esc(id)}">
+      <div class="cr-head">
+        <div class="cr-title">
+          <span class="cr-id">#${esc(id)}</span>${opBadge(d?.operation)}
+          <span class="cr-summary">${esc(cr.summary)}</span>
+        </div>
+        <div class="cr-actions">
+          <button class="btn btn-secondary btn-sm" data-action="toggleChangeDetail" data-arg0="${esc(id)}">${t('crDetails')} <span class="cr-caret">${open ? '&#x25B4;' : '&#x25BE;'}</span></button>
+          <span title="${esc(block)}"><button class="btn btn-success btn-sm" data-action="approveChange" data-arg0="${esc(id)}"${block ? ` disabled title="${esc(block)}"` : ''}>${t('approve')}</button></span>
+          <button class="btn btn-danger btn-sm" data-action="rejectChange" data-arg0="${esc(id)}">${own ? t('withdraw') : t('reject')}</button>
+        </div>
+      </div>
+      <div class="cr-meta">
+        <span>${t('crRequestedBy')}: <b>${esc(cr.requestedBy)}</b></span>
+        <span>${t('crCreated')}: ${fmtTime(cr.createdAt)}</span>
+        <span>${t('crExpires')}: ${fmtTime(cr.expiresAt)}</span>
+        ${cr.configApiId ? `<span>Config API: <b>${esc(cr.configApiId)}</b></span>` : ''}
+        <span>${t('crApprovals')}: <b>${(cr.approvedBy || []).length}/${need}</b>${(cr.approvedBy || []).length ? ' (' + esc(cr.approvedBy.join(', ')) + ')' : ''}</span>
+        ${live}
+      </div>
+      <div class="cr-meta"><span class="mono">${esc(cr.method)} ${esc(cr.path)}${cr.query ? '?' + esc(cr.query) : ''}</span></div>
+      <div class="cr-detail" id="cr-detail-${esc(id)}" style="${open ? '' : 'display:none'}">${renderChangeDetail(cr, d)}</div>
+    </div>`;
+}
+
+function renderDecidedTable(decided) {
+  if (!decided.length) return `<div class="card"><div class="empty-msg">${t('noDecidedChanges')}</div></div>`;
+  const pagKey = 'cr-history';
+  const info = pagSlice(decided, pagKey);
+  const rows = info.slice.map(cr => {
+    const id = String(cr.id);
+    const d = parseJsonText(cr.detail);
+    const open = _crExpanded.has(id);
+    return `<tr class="row-toggle" data-action="toggleChangeDetail" data-arg0="${esc(id)}">
+        <td class="cr-id">#${esc(id)} <span class="cr-caret">${open ? '&#x25B4;' : '&#x25BE;'}</span></td>
+        <td>${crStatusBadge(cr.status)}</td>
+        <td>${opBadge(d?.operation)} ${esc(cr.summary)}</td>
+        <td>${esc(cr.requestedBy)}</td>
+        <td>${esc(cr.decidedBy || '—')}${(cr.approvedBy || []).some(a => a !== cr.decidedBy) ? `<div class="muted small">${esc(t('crApprovals'))}: ${esc(cr.approvedBy.join(', '))}</div>` : ''}</td>
+        <td class="muted nowrap">${fmtTime(cr.decidedAt)}</td>
+        <td class="muted">${esc(cr.reason || '—')}</td>
+        <td>${cr.resultStatus != null ? `<span class="${cr.resultStatus >= 200 && cr.resultStatus < 300 ? 'status-healthy' : 'status-error'}">HTTP ${esc(cr.resultStatus)}</span>` : '&#x2014;'}</td>
+      </tr>
+      <tr class="detail-row" id="cr-detail-${esc(id)}" style="${open ? '' : 'display:none'}"><td colspan="8">${renderChangeDetail(cr, d)}</td></tr>`;
+  }).join('');
+  return `<div class="card">
+      <table class="data-table">
+        <thead><tr><th>#</th><th>${t('thStatus')}</th><th>${t('auditThSummary')}</th><th>${t('crRequestedBy')}</th>
+          <th>${t('crDecidedBy')}</th><th>${t('crDecidedAt')}</th><th>${t('crReason')}</th><th>${t('crResult')}</th></tr></thead>
+        <tbody>${rows}</tbody>
+      </table>${pagControls(pagKey, info, 'renderApprovalsSection')}
+    </div>`;
+}
+
+async function renderApprovalsSection() {
+  const content = document.getElementById('content');
+  if (!document.getElementById('approvals-view')) content.innerHTML = `<div class="loading">${t('loading')}</div>`;
+  try {
+    if (!adminMe) await loadAdminIdentity();
+    // Pending separately: the full list is capped (newest 100).
+    const [pendingRes, allRes] = await Promise.all([
+      apiFetch('/api/v1/change-requests?status=pending'),
+      apiFetch('/api/v1/change-requests?status=all')
+    ]);
+    if (currentSection !== 'approvals') return; // navigated away meanwhile
+    if (!pendingRes.ok || !allRes.ok) {
+      content.innerHTML = `<div class="card"><div class="empty-msg">${t('error')} (HTTP ${pendingRes.ok ? allRes.status : pendingRes.status})</div></div>`;
+      return;
+    }
+    const pending = await pendingRes.json();
+    const decided = (await allRes.json()).filter(c => c.status !== 'pending');
+    _crById.clear();
+    [...pending, ...decided].forEach(c => _crById.set(String(c.id), c));
+    setApprovalsBadge(pending.length);
+    _approvalsPendingIds = pending.map(c => c.id).join(',');
+
+    const required = adminMe?.approvalsRequired || 1;
+    const mode = required >= 2
+      ? `<div class="notice notice-info">${esc(t('approvalsOn', required - 1, adminMe?.name || '?'))}</div>`
+      : `<div class="notice">${t('approvalsOff')}</div>`;
+    const list = approvalsTab === 'history'
+      ? renderDecidedTable(decided)
+      : (pending.length ? pending.map(renderPendingChange).join('')
+                        : `<div class="card"><div class="empty-msg">${t('noPendingChanges')}</div></div>`);
+    content.innerHTML = `
+      <div id="approvals-view">
+        <div class="section-header">
+          <div><div class="section-title-main">${t('approvalsTitle')}</div><div class="section-sub">${t('approvalsSub')}</div></div>
+          <span class="refresh-icon" data-action="refreshApprovals" title="${t('refresh')}">&#x21bb;</span>
+        </div>
+        ${mode}
+        <div class="tab-bar">
+          <button class="tab-btn ${approvalsTab === 'pending' ? 'tab-active' : ''}" data-action="setApprovalsTab" data-arg0="pending">${esc(t('tabPending', pending.length))}</button>
+          <button class="tab-btn ${approvalsTab === 'history' ? 'tab-active' : ''}" data-action="setApprovalsTab" data-arg0="history">${esc(t('tabDecided', decided.length))}</button>
+        </div>
+        ${list}
+      </div>`;
+  } catch (e) {
+    content.innerHTML = `<div class="card"><div class="empty-msg">${t('error')}: ${esc(e.message)}</div></div>`;
+  }
+}
+
+function setApprovalsTab(tab) { approvalsTab = tab === 'history' ? 'history' : 'pending'; renderApprovalsSection(); }
+function refreshApprovals() { renderApprovalsSection(); }
+
+function toggleChangeDetail(id) {
+  const key = String(id);
+  const show = !_crExpanded.has(key);
+  if (show) _crExpanded.add(key); else _crExpanded.delete(key);
+  const el = document.getElementById('cr-detail-' + key);
+  if (el) el.style.display = show ? '' : 'none';
+  document.querySelectorAll(`[data-action="toggleChangeDetail"][data-arg0="${CSS.escape(key)}"] .cr-caret`)
+    .forEach(c => { c.innerHTML = show ? '&#x25B4;' : '&#x25BE;'; });
+}
+
+/** After a decision: pins may have changed — reload them, then the list. */
+async function afterChangeDecision() {
+  await loadConfig();
+  renderHostList();
+  refreshApprovalsBadge();
+  if (currentSection === 'approvals') renderApprovalsSection();
+}
+
+async function approveChange(id) {
+  try {
+    const res = await apiFetch(`/api/v1/change-requests/${encodeURIComponent(id)}/approve`, { method: 'POST' });
+    const body = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      // 409: own request, shared key, already decided, pins changed since (stale).
+      toast(body.error || `${t('error')} (HTTP ${res.status})`, 'error', 6000);
+    } else if (body.status === 'applied') {
+      toast(t('changeApplied', id), 'success');
+    } else if (body.status === 'failed') {
+      toast(t('changeApplyFailed', id, body.resultStatus ?? '?'), 'error', 6000);
+    } else {
+      const need = Math.max(1, (adminMe?.approvalsRequired || 2) - 1);
+      toast(t('changeApprovalRecorded', id, (body.approvedBy || []).length, need), 'info');
+    }
+  } catch (e) {
+    toast(t('error'), 'error');
+  }
+  await afterChangeDecision();
+}
+
+async function rejectChange(id) {
+  const cr = _crById.get(String(id));
+  const own = !!(cr && adminMe && cr.requestedBy === adminMe.name);
+  const reason = prompt(t(own ? 'withdrawReasonPrompt' : 'rejectReasonPrompt', id), '');
+  if (reason === null) return;
+  try {
+    const res = await apiFetch(`/api/v1/change-requests/${encodeURIComponent(id)}/reject`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(reason.trim() ? { reason: reason.trim() } : {})
+    });
+    const body = await res.json().catch(() => ({}));
+    if (!res.ok) toast(body.error || `${t('error')} (HTTP ${res.status})`, 'error', 6000);
+    else toast(t(own ? 'changeWithdrawn' : 'changeRejected', id), 'success');
+  } catch (e) {
+    toast(t('error'), 'error');
+  }
+  await afterChangeDecision();
+}
+
+// ── Governance: Audit log section ────────────────────
+
+const AUDIT_ACTIONS = [
+  'pins_changed', 'change_requested', 'change_approved', 'change_applied', 'change_failed',
+  'change_rejected', 'change_expired', 'change_stale', 'change_approval_refused', 'live_check_warning', 'live_check_blocked',
+  'live_check_overridden', 'signing_key_regenerated', 'signing_keyset_uploaded', 'auth_failed',
+  'cert_expiring', 'notification_test', 'http'
+];
+const AUDIT_PAG_KEY = 'audit-log';
+let auditActionFilter = '';
+let _auditVerify = null;          // last /audit-log/verify answer
+const _auditExpanded = new Set(); // entry ids whose detail is open
+
+function auditActionLabel(action) {
+  const key = 'act_' + action;
+  return (i18n[lang]?.[key] || i18n.tr[key]) ? t(key) : action;
+}
+
+function auditActionBadge(action) {
+  const cls =
+    action === 'pins_changed' ? 'act-pins' :
+    action === 'change_applied' || action === 'change_approved' ? 'act-ok' :
+    action === 'change_requested' ? 'act-pins' :
+    action === 'live_check_blocked' || action === 'auth_failed' || action === 'change_failed' ? 'act-bad' :
+    action === 'live_check_warning' || action === 'live_check_overridden' || action === 'cert_expiring' ||
+      action === 'change_rejected' || action === 'change_expired' || action === 'change_stale' ||
+      action === 'change_approval_refused' ? 'act-warn' :
+    action === 'signing_key_regenerated' || action === 'signing_keyset_uploaded' ? 'act-key' :
+    'act-muted';
+  return `<span class="act-badge ${cls}" title="${esc(auditActionLabel(action))}">${esc(action)}</span>`;
+}
+
+function renderAuditDetail(e) {
+  let pretty = '';
+  if (e.detail) {
+    const parsed = parseJsonText(e.detail);
+    pretty = parsed ? JSON.stringify(parsed, null, 2) : e.detail;
+  }
+  return `<div class="audit-detail-meta">
+      <span>${t('auditSourceIp')}: <span class="mono">${esc(e.sourceIp || '—')}</span></span>
+      <span>hash: ${shortId(e.hash)}</span>
+      <span>prev: ${shortId(e.prevHash)}</span>
+    </div>
+    ${pretty ? `<pre class="json-box">${esc(pretty)}</pre>` : `<div class="muted small">${t('auditNoDetail')}</div>`}`;
+}
+
+function renderAuditVerify(v) {
+  if (!v) return '';
+  return v.ok
+    ? `<span class="verify-result status-healthy">&#x2713; ${esc(t('auditVerifyOk', v.entries))}</span>`
+    : `<span class="verify-result status-error">&#x2717; ${esc(t('auditVerifyBroken', v.firstBrokenId ?? '?'))}</span>`;
+}
+
+function renderNotificationsCard(n) {
+  const row = (k, v) => `<div class="info-row"><span class="info-key">${k}</span><span class="info-val">${v}</span></div>`;
+  if (!n) {
+    return `<div class="card" id="notif-card"><div class="card-title">${t('notifTitle')}</div><div class="empty-msg">${t('error')}</div></div>`;
+  }
+  const recent = n.recent || [];
+  const rows = recent.map(d => {
+    const ok = d.status != null && d.status >= 200 && d.status < 300;
+    return `<tr>
+        <td class="mono">${esc(d.event)}</td>
+        <td class="muted nowrap">${fmtTime(d.at)}</td>
+        <td>${d.auditId != null ? '#' + esc(d.auditId) : '&#x2014;'}</td>
+        <td class="${ok ? 'status-healthy' : 'status-error'}">${d.status != null ? esc(d.status) : '&#x2014;'}</td>
+        <td>${esc(d.attempts)}</td>
+        <td class="status-error small">${esc(d.error || '')}</td>
+      </tr>`;
+  }).join('');
+  return `<div class="card" id="notif-card">
+      <div class="card-head">
+        <div class="card-title">${t('notifTitle')}</div>
+        <button class="btn btn-secondary btn-sm" data-action="sendTestNotification"${n.configured ? '' : ` disabled title="${esc(t('notifNotConfigured'))}"`}>${t('notifTestBtn')}</button>
+      </div>
+      ${row(t('notifStatus'), n.configured
+        ? `<span class="status-healthy">&#x2713; ${t('notifConfigured')}</span>`
+        : `<span class="muted">${t('notifNotConfigured')}</span>`)}
+      ${n.configured ? row(t('notifTarget'), esc(n.target || '—'))
+        + row(t('notifSigned'), n.signed ? `<span class="status-healthy">${t('notifSignedYes')}</span>` : `<span class="muted">${t('notifSignedNo')}</span>`)
+        + row(t('notifEvents'), esc((n.events || []).join(', ') || '*')) : ''}
+      ${n.configured ? `<div class="diff-section-title">${t('notifRecent')} (${recent.length})</div>
+        ${recent.length ? `<table class="data-table">
+          <thead><tr><th>${t('thEvent')}</th><th>${t('thDate')}</th><th>${t('notifThAudit')}</th><th>${t('thStatus')}</th><th>${t('notifThAttempts')}</th><th>${t('thError')}</th></tr></thead>
+          <tbody>${rows}</tbody></table>` : `<div class="empty-msg">${t('notifNoDeliveries')}</div>`}` : ''}
+    </div>`;
+}
+
+async function renderAuditSection() {
+  const content = document.getElementById('content');
+  if (!document.getElementById('audit-view')) content.innerHTML = `<div class="loading">${t('loading')}</div>`;
+  const st = _pagState[AUDIT_PAG_KEY] || (_pagState[AUDIT_PAG_KEY] = { page: 0, size: 25 });
+  const size = st.size > 0 ? st.size : 25;
+  const params = new URLSearchParams({ limit: String(size), offset: String(st.page * size) });
+  if (auditActionFilter) params.set('action', auditActionFilter);
+  try {
+    const [logRes, notifRes] = await Promise.all([
+      apiFetch('/api/v1/audit-log?' + params.toString()),
+      apiFetch('/api/v1/notifications').catch(() => null)
+    ]);
+    if (currentSection !== 'audit') return; // navigated away meanwhile
+    if (!logRes.ok) {
+      content.innerHTML = `<div class="card"><div class="empty-msg">${t('error')} (HTTP ${logRes.status})</div></div>`;
+      return;
+    }
+    const log = await logRes.json();
+    const notif = (notifRes && notifRes.ok) ? await notifRes.json().catch(() => null) : null;
+    const total = log.total || 0;
+    const pageCount = Math.max(1, Math.ceil(total / size));
+    if (st.page > 0 && st.page >= pageCount) { st.page = pageCount - 1; return renderAuditSection(); }
+    const entries = log.entries || [];
+    const rows = entries.map(e => {
+      const id = String(e.id);
+      const open = _auditExpanded.has(id);
+      return `<tr class="row-toggle" data-action="toggleAuditDetail" data-arg0="${esc(id)}">
+          <td class="mono muted">#${esc(id)}</td>
+          <td class="muted nowrap">${fmtTime(e.at)}</td>
+          <td><b>${esc(e.actor)}</b></td>
+          <td>${auditActionBadge(e.action)}</td>
+          <td class="muted">${esc(e.configApiId || '—')}</td>
+          <td class="mono small">${esc(e.target || '—')}</td>
+          <td>${esc(e.summary)}</td>
+        </tr>
+        <tr class="detail-row" id="audit-detail-${esc(id)}" style="${open ? '' : 'display:none'}"><td colspan="7">${renderAuditDetail(e)}</td></tr>`;
+    }).join('');
+    const options = [''].concat(AUDIT_ACTIONS.includes(auditActionFilter) || !auditActionFilter
+        ? AUDIT_ACTIONS : AUDIT_ACTIONS.concat(auditActionFilter))
+      .map(a => `<option value="${esc(a)}"${a === auditActionFilter ? ' selected' : ''}>${a ? esc(auditActionLabel(a) + ' — ' + a) : esc(t('auditFilterAll'))}</option>`)
+      .join('');
+    const pag = pagControls(AUDIT_PAG_KEY, { page: st.page, pageCount, size, total }, 'renderAuditSection');
+    content.innerHTML = `
+      <div id="audit-view">
+        <div class="section-header">
+          <div><div class="section-title-main">${t('auditTitle')}</div><div class="section-sub">${t('auditSub')}</div></div>
+          <div class="toolbar">
+            <span id="audit-verify-result">${renderAuditVerify(_auditVerify)}</span>
+            <button class="btn btn-primary" data-action="verifyAuditChain">${t('auditVerify')}</button>
+            <span class="refresh-icon" data-action="refreshAudit" title="${t('refresh')}">&#x21bb;</span>
+          </div>
+        </div>
+        <div class="card">
+          <div class="card-head">
+            <div class="card-title">${t('auditTitle')} (${esc(t('auditEntries', total))})</div>
+            <select id="audit-action-filter" class="form-input select-sm" data-action-change="setAuditActionFilter" data-event="1">${options}</select>
+          </div>
+          ${entries.length ? `<table class="data-table">
+            <thead><tr><th>#</th><th>${t('auditThTime')}</th><th>${t('auditThActor')}</th><th>${t('auditThAction')}</th>
+              <th>Config API</th><th>${t('auditThTarget')}</th><th>${t('auditThSummary')}</th></tr></thead>
+            <tbody>${rows}</tbody></table>` : `<div class="empty-msg">${t('auditEmpty')}</div>`}
+          ${pag}
+        </div>
+        ${renderNotificationsCard(notif)}
+      </div>`;
+  } catch (e) {
+    content.innerHTML = `<div class="card"><div class="empty-msg">${t('error')}: ${esc(e.message)}</div></div>`;
+  }
+}
+
+function refreshAudit() { renderAuditSection(); }
+
+function setAuditActionFilter(ev) {
+  auditActionFilter = ev.target.value || '';
+  const st = _pagState[AUDIT_PAG_KEY] || (_pagState[AUDIT_PAG_KEY] = { page: 0, size: 25 });
+  st.page = 0;
+  renderAuditSection();
+}
+
+function toggleAuditDetail(id) {
+  const key = String(id);
+  const show = !_auditExpanded.has(key);
+  if (show) _auditExpanded.add(key); else _auditExpanded.delete(key);
+  const el = document.getElementById('audit-detail-' + key);
+  if (el) el.style.display = show ? '' : 'none';
+}
+
+async function verifyAuditChain() {
+  try {
+    const res = await apiFetch('/api/v1/audit-log/verify');
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) { toast(data.error || `${t('error')} (HTTP ${res.status})`, 'error'); return; }
+    _auditVerify = data;
+    const el = document.getElementById('audit-verify-result');
+    if (el) el.innerHTML = renderAuditVerify(data);
+    toast(data.ok ? t('auditVerifyOk', data.entries) : t('auditVerifyBroken', data.firstBrokenId ?? '?'),
+      data.ok ? 'success' : 'error');
+  } catch (e) { toast(t('error'), 'error'); }
+}
+
+async function sendTestNotification() {
+  try {
+    const res = await apiFetch('/api/v1/notifications/test', { method: 'POST' });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) { toast(data.error || `${t('error')} (HTTP ${res.status})`, 'error'); return; }
+    toast(t('notifTestSent', data.auditId), 'success');
+    // Delivery is asynchronous: give it a moment before showing the result.
+    setTimeout(() => { if (currentSection === 'audit') renderAuditSection(); }, 1500);
+  } catch (e) { toast(t('error'), 'error'); }
+}
+
 // ── Utils ────────────────────────────────────────────
 
 function copyText(text) { navigator.clipboard.writeText(text).then(() => toast(t('copied'), 'success')); }
 
-function toast(msg, type = 'success') {
+/**
+ * Toasts stack bottom-right (newest last). `type`: success | error | info |
+ * warning. Success toasts are dropped right after a "waiting for approval"
+ * notice — see notePendingApproval().
+ */
+function toast(msg, type = 'success', ms = 3000) {
+  if (type === 'success' && Date.now() < _pendingNoticeUntil) return;
+  let stack = document.getElementById('toast-stack');
+  if (!stack) {
+    stack = document.createElement('div');
+    stack.id = 'toast-stack';
+    stack.className = 'toast-stack';
+    document.body.appendChild(stack);
+  }
   const el = document.createElement('div');
   el.className = 'toast ' + type;
   el.textContent = msg;
-  document.body.appendChild(el);
-  setTimeout(() => el.remove(), 3000);
+  stack.appendChild(el);
+  // Never let a burst of notices bury the page: keep the newest five.
+  while (stack.children.length > 5) stack.firstElementChild.remove();
+  setTimeout(() => el.remove(), ms);
 }
 
 // ── Vault Files — scoped to a Config API ────────────
@@ -3560,6 +4813,7 @@ const _actionHandlers = {
   pagGo, pagSize, regenerateBootstrapCert, regenerateSigningKey, renderApiVaultTab,
   renderConfigApiDetail, renderEditPins, renderEmpty, renderHostList, renderInlineEditPins,
   renewCertAuto, renewCertUpload, revokeClientCert, revokeVaultToken, runHealthCheck,
+  rotateBootstrapToBackup, rotateHostToBackup,
   saveDefaultAcl, saveInlinePins, savePins, saveVaultFilePolicy, selectHost,
   selectHostInApi, setLang,
   setVaultEnabled, setVaultStatusFilter, showAddConfigApi, showAddHost, showCertUploadForm,
@@ -3571,7 +4825,11 @@ const _actionHandlers = {
   uploadClientCert, uploadHostClientCert, uploadVaultFile,
   showAddHostScoped, setConfigApiTab, renderEmptyAndHostList, clickFileInput,
   updateEditHash, removeEditHashEdit, removeEditHashInline, addEditHashEdit,
-  addEditHashInline, setVaultEnabledChange, pagSizeChange, setVaultUploadMode, updateEncDesc
+  addEditHashInline, setVaultEnabledChange, pagSizeChange, setVaultUploadMode, updateEncDesc,
+  // Governance (identity, approvals, audit log, live check, signing keys)
+  switchAdminKey, setApprovalsTab, refreshApprovals, toggleChangeDetail, approveChange, rejectChange,
+  setAuditActionFilter, toggleAuditDetail, verifyAuditChain, sendTestNotification, refreshAudit,
+  uploadKeyset, liveCheckPins
 };
 
 function _collectArgs(el) {
@@ -3597,6 +4855,7 @@ document.body.addEventListener('click', (e) => {
   if (el.dataset.stop === '1') e.stopPropagation();
   const fn = _resolveHandler(el.dataset.action);
   if (!fn) return;
+  beginUserAction();
   const args = _collectArgs(el);
   if (el.dataset.event === '1') args.push(e);
   fn.apply(null, args);
@@ -3608,6 +4867,7 @@ document.body.addEventListener('change', (e) => {
   if (!el) return;
   const fn = _resolveHandler(el.dataset.actionChange);
   if (!fn) return;
+  beginUserAction();
   const args = _collectArgs(el);
   if (el.dataset.event === '1') args.push(e);
   fn.apply(null, args);
@@ -3620,6 +4880,7 @@ document.body.addEventListener('submit', (e) => {
   if (!el) return;
   const fn = _resolveHandler(el.dataset.actionSubmit);
   if (!fn) return;
+  beginUserAction();
   fn.apply(null, [e].concat(_collectArgs(el)));
 });
 

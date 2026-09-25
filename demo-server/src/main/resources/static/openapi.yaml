@@ -43,6 +43,10 @@ info:
 
     * `401` `{"error":"X-API-Key header required"}` when the header is absent.
     * `403` `{"error":"Invalid API key"}` when it does not match (constant-time compare).
+    * The key is either the shared `API_KEY` (its holder is named `admin`) or a
+      personal key from `ADMIN_KEYS` / `ADMIN_KEYS_FILE` (`name:sha256hex` — only
+      the key's SHA-256 is configured). Named keys are what make the audit log say
+      *who* did something, and what two-person approval needs.
     * When `API_KEY` is unset the server **refuses to start** unless
       `ALLOW_ANONYMOUS_ADMIN=true`, in which case the plugin short-circuits and
       *no* endpoint is authenticated. The `security` blocks below describe the
@@ -62,6 +66,9 @@ info:
     * **Signed configs** carry `issuedAt` / `expiresAt` (Unix epoch ms) stamped at
       response time; TTL comes from `CONFIG_TTL_SECONDS` (default 24 h). Clients
       reject expired windows, replays (`issuedAt <= stored`) and per-host downgrades.
+      The envelope may also carry `keyId`, one `signatures[]` entry per signer
+      (`CONFIG_SIGNERS`, m-of-n) and the latest signing-key set (`signingKeys`);
+      older clients ignore all three.
     * **Enrollment tokens** are returned in plaintext exactly once, by
       `POST /api/v1/enrollment-tokens/generate`. The listing endpoint returns a
       masked prefix (`AbC12dEf…`) with `masked: true`; the plaintext is
@@ -69,6 +76,43 @@ info:
     * **Vault files** are served with `X-Vault-Signature` (ECDSA over
       `pinvault-vault-file:v1:<key>:<version>:<sha256HexLower(plaintext)>`), signed
       over the *plaintext* so one signature covers plain / at_rest / end_to_end.
+      With several signers every signature is also sent in `X-Vault-Signatures`.
+
+    ## Governance (optional — each part is off or inert until configured)
+
+    * **Audit log** — always on. Every successful admin write, attributed to the
+      admin who made it, in an append-only, hash-chained log
+      (`GET /api/v1/audit-log`, `GET /api/v1/audit-log/verify`).
+    * **Two-person approval** — `PIN_CHANGE_APPROVALS=2` (or more; needs personal
+      `ADMIN_KEYS`). Every pin- or key-affecting write listed below then answers
+      `202 {"pendingApproval":true,"changeRequestId":…}` **without executing**; the
+      server replays the stored request, as the requester, once enough *other*
+      admins approve it (`/api/v1/change-requests`). The shared `API_KEY` cannot
+      approve, nobody approves their own request, and requests expire after
+      `APPROVAL_TTL_HOURS` (default 24). On Config API listeners these writes answer
+      `409` — they are accepted only through the management API. Affected routes:
+      `PUT /api/v1/certificate-config`, the four `force-update` / `clear-force`
+      routes, `POST /api/v1/config/{configApiId}/update`, host creation
+      (`/api/v1/hosts/generate-cert|fetch-from-url|upload-cert`,
+      `/api/v1/management/hosts/{configApiId}/generate-cert`), host certificate
+      changes (`/api/v1/hosts/{hostname}/regenerate-cert|upload-cert|fetch-cert-url|toggle-mtls|upload-client-cert`),
+      `POST /api/v1/config-apis/delete`,
+      `/api/v1/server-tls-pins/regenerate|upload|fetch-from-url`,
+      `POST /api/v1/signing-key/regenerate` and `PUT /api/v1/signing-keyset`.
+    * **Live certificate check** — `PIN_LIVE_CHECK=warn|enforce` compares every new
+      or changed pin set with the leaf certificate the host serves right now.
+      `warn` stores it and answers with `X-PinVault-Live-Check: warn`; `enforce`
+      refuses it with `422` unless the request carries `liveCheckOverride=<reason>`
+      (allowed unless `PIN_LIVE_CHECK_ALLOW_OVERRIDE=false`). `LIVE_CHECK_HOST_MAP`
+      says where to probe names this server cannot reach directly;
+      `POST /api/v1/pins/live-check` is a dry run in every mode.
+    * **Webhook notifications** — `NOTIFY_WEBHOOK_URL` pushes audit events
+      (Slack-compatible `text` field); `NOTIFY_WEBHOOK_SECRET` adds
+      `X-PinVault-Signature: sha256=<HMAC of the body>`, `NOTIFY_EVENTS` filters.
+    * **Signing** — `CONFIG_SIGNERS` (local key file, PKCS#11 HSM, external
+      command; several = one signature each), `CONFIG_SIGNATURE_CACHE=true` (sign
+      each content once), and signing-key sets checked against
+      `RECOVERY_PUBLIC_KEYS`. See `GET /api/v1/signing/status`.
 
 servers:
   - url: http://localhost:6650
@@ -109,7 +153,13 @@ tags:
   - name: server-tls
     description: The demo server's own TLS keypair and the pins clients bootstrap with.
   - name: signing-key
-    description: ECDSA P-256 config/vault signing key.
+    description: >
+      ECDSA P-256 config/vault signing keys — signers, signature cache and the
+      signing-key set devices accept.
+  - name: governance
+    description: >
+      Admin identity, the hash-chained audit log, two-person approval of pin and
+      key changes, webhook notifications and the live certificate check.
   - name: monitoring
     description: Health probes, certificate expiry monitoring, API docs, dashboard.
 
@@ -252,6 +302,13 @@ paths:
         `expiresAt = now + CONFIG_TTL_SECONDS` (default 24 h). With `signed=false` the
         bare config object is returned and `issuedAt` / `expiresAt` stay `0`.
 
+        **Signature cache.** With `CONFIG_SIGNATURE_CACHE=true` the same content is
+        signed once and the identical envelope served until half its lifetime has
+        passed — but only to clients that send `X-PinVault-Features: redelivery`
+        (library 2.1+). Every other client still gets a fresh signature per request,
+        since it would reject a repeated `issuedAt` as a replay. The latest
+        signing-key set, if any, rides along in `signingKeys`.
+
         Registered on: **management + config-api**.
       security: []
       x-registered-on: management+config-api
@@ -287,6 +344,7 @@ paths:
             accounted for; do not build anything on it.
           schema: { type: integer, minimum: 0 }
         - $ref: '#/components/parameters/DeviceIdHeader'
+        - $ref: '#/components/parameters/PinVaultFeaturesHeader'
       responses:
         '200':
           description: >
@@ -317,10 +375,21 @@ paths:
 
         Writes `host_added` / `host_removed` / `pins_updated` history entries.
 
+        The body replaces the scope **including every flag**: a client that edits one
+        host must send the other hosts' `forceUpdate` / `mtls` /
+        `clientCertVersion` (and the top-level `forceUpdate`) back unchanged.
+
+        **Live certificate check** (`PIN_LIVE_CHECK`): new or changed hosts must pin
+        the leaf certificate they serve now — see `422`, `liveCheckOverride` and
+        `X-PinVault-Live-Check`. **Approval** (`PIN_CHANGE_APPROVALS>=2`): see `202`.
+
         Registered on: **management + config-api**.
       security:
         - ApiKeyAuth: []
       x-registered-on: management+config-api
+      parameters:
+        - $ref: '#/components/parameters/ConfigApiIdQuery'
+        - $ref: '#/components/parameters/LiveCheckOverrideQuery'
       requestBody:
         required: true
         content:
@@ -329,6 +398,8 @@ paths:
       responses:
         '200':
           description: The configuration as stored, with server-assigned versions.
+          headers:
+            X-PinVault-Live-Check: { $ref: '#/components/headers/LiveCheckWarning' }
           content:
             application/json:
               schema: { $ref: '#/components/schemas/CertificateConfig' }
@@ -337,11 +408,20 @@ paths:
           content:
             application/json:
               schema: { $ref: '#/components/schemas/ErrorList' }
+        '202': { $ref: '#/components/responses/PendingApproval' }
         '409':
-          description: The same hostname appears more than once in the request body.
+          description: >
+            The same hostname appears more than once in the request body
+            (`ErrorList`) — or, on a Config API listener while
+            `PIN_CHANGE_APPROVALS>=2`, pin changes are accepted only through the
+            management API (`Error`).
           content:
             application/json:
-              schema: { $ref: '#/components/schemas/ErrorList' }
+              schema:
+                oneOf:
+                  - $ref: '#/components/schemas/ErrorList'
+                  - $ref: '#/components/schemas/Error'
+        '422': { $ref: '#/components/responses/LiveCheckRejected' }
         '401': { $ref: '#/components/responses/MissingApiKey' }
         '403': { $ref: '#/components/responses/InvalidApiKey' }
 
@@ -398,6 +478,8 @@ paths:
           content:
             application/json:
               schema: { $ref: '#/components/schemas/CertificateConfig' }
+        '202': { $ref: '#/components/responses/PendingApproval' }
+        '409': { $ref: '#/components/responses/ApprovalViaManagementOnly' }
         '401': { $ref: '#/components/responses/MissingApiKey' }
         '403': { $ref: '#/components/responses/InvalidApiKey' }
 
@@ -421,6 +503,8 @@ paths:
           content:
             application/json:
               schema: { $ref: '#/components/schemas/CertificateConfig' }
+        '202': { $ref: '#/components/responses/PendingApproval' }
+        '409': { $ref: '#/components/responses/ApprovalViaManagementOnly' }
         '401': { $ref: '#/components/responses/MissingApiKey' }
         '403': { $ref: '#/components/responses/InvalidApiKey' }
 
@@ -444,6 +528,8 @@ paths:
           content:
             application/json:
               schema: { $ref: '#/components/schemas/CertificateConfig' }
+        '202': { $ref: '#/components/responses/PendingApproval' }
+        '409': { $ref: '#/components/responses/ApprovalViaManagementOnly' }
         '401': { $ref: '#/components/responses/MissingApiKey' }
         '403': { $ref: '#/components/responses/InvalidApiKey' }
 
@@ -465,6 +551,8 @@ paths:
           content:
             application/json:
               schema: { $ref: '#/components/schemas/CertificateConfig' }
+        '202': { $ref: '#/components/responses/PendingApproval' }
+        '409': { $ref: '#/components/responses/ApprovalViaManagementOnly' }
         '401': { $ref: '#/components/responses/MissingApiKey' }
         '403': { $ref: '#/components/responses/InvalidApiKey' }
 
@@ -498,13 +586,12 @@ paths:
       operationId: updateConfigForApi
       summary: Overwrite one Config API's pin configuration (dashboard)
       description: |
-        Saves the body verbatim through `PinConfigStore.save()`.
+        The same write as `PUT /api/v1/certificate-config?configApiId=…`, with the
+        scope taken from the path: duplicate and format validation, per-host
+        versioning, the live certificate check and the history entries. (It used to
+        store the body verbatim, without any of those checks.)
 
-        Two differences from `PUT /api/v1/certificate-config`: there is **no
-        validation** of pin count/format and **no duplicate-hostname check**, and the
-        response echoes the *request body* rather than what was stored — so
-        server-side version bumps are not reflected in the response. Re-read with
-        `GET /api/v1/config/{configApiId}` to see the stored state.
+        Returns the configuration as stored, with server-assigned versions.
 
         Registered on: **management** only.
       security:
@@ -512,6 +599,7 @@ paths:
       x-registered-on: management
       parameters:
         - $ref: '#/components/parameters/ConfigApiIdPath'
+        - $ref: '#/components/parameters/LiveCheckOverrideQuery'
       requestBody:
         required: true
         content:
@@ -519,10 +607,24 @@ paths:
             schema: { $ref: '#/components/schemas/CertificateConfig' }
       responses:
         '200':
-          description: Echo of the submitted configuration (not the stored one).
+          description: The configuration as stored, with server-assigned versions.
+          headers:
+            X-PinVault-Live-Check: { $ref: '#/components/headers/LiveCheckWarning' }
           content:
             application/json:
               schema: { $ref: '#/components/schemas/CertificateConfig' }
+        '202': { $ref: '#/components/responses/PendingApproval' }
+        '400':
+          description: Pin validation failed.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorList' }
+        '409':
+          description: The same hostname appears more than once in the request body.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorList' }
+        '422': { $ref: '#/components/responses/LiveCheckRejected' }
         '401': { $ref: '#/components/responses/MissingApiKey' }
         '403': { $ref: '#/components/responses/InvalidApiKey' }
 
@@ -565,6 +667,10 @@ paths:
         `SHA256withECDSA` config and vault-file signatures. This is the value that
         goes into `ConfigApiBlock.Builder.signaturePublicKey(...)` in the APK.
 
+        With several signers (`CONFIG_SIGNERS`) `publicKey` stays the primary
+        signer's key and `signers` lists every key, in signing order.
+        `keySetVersion` is the signing-key set devices currently receive (0 = none).
+
         Public: the allowlist matches this path for **any** method.
 
         Registered on: **management + config-api**.
@@ -575,10 +681,7 @@ paths:
           description: The public half of the signing key.
           content:
             application/json:
-              schema:
-                type: object
-                properties:
-                  publicKey: { type: string, description: Base64 X.509 SPKI. }
+              schema: { $ref: '#/components/schemas/SigningKeyInfo' }
 
   /api/v1/signing-key/regenerate:
     post:
@@ -586,10 +689,15 @@ paths:
       operationId: regenerateSigningKey
       summary: Destroy and regenerate the signing keypair
       description: |
-        Deletes the key file (`SIGNING_KEY_PATH`, default `signing-key.pem`) and
-        builds a new `ConfigSigningService`. **Every already-shipped client that
-        pinned the old public key will reject configs until it is rebuilt with the
-        new one.** Takes no request body.
+        Replaces the primary key file (`SIGNING_KEY_PATH`, default
+        `signing-key.pem`) with a fresh key, effective immediately on every
+        listener. **Every already-shipped client that pinned the old public key will
+        reject configs until it is rebuilt with the new one.** Takes no request body.
+
+        Refused (`409`) when the primary signer is not a local key file (rotate an
+        HSM/KMS key where it lives) and while a signing-key set is active (a fresh
+        key would be in no set — rotate through a set instead). Audited as
+        `signing_key_regenerated`.
 
         If `SIGNING_KEY_PASSWORD` is set, the new key is written AES-GCM encrypted at
         rest.
@@ -606,8 +714,135 @@ paths:
               schema:
                 type: object
                 properties:
-                  publicKey: { type: string }
+                  publicKey: { type: string, description: Base64 X.509 SPKI of the new key. }
+                  keyId: { type: string, description: Base64 SHA-256 of that SPKI. }
                   regenerated: { type: boolean, example: true }
+                  clientUpdateRequired: { type: boolean, example: true }
+        '202': { $ref: '#/components/responses/PendingApproval' }
+        '409':
+          description: >
+            The primary signer is not a local key file, or a signing-key set is
+            active.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '401': { $ref: '#/components/responses/MissingApiKey' }
+        '403': { $ref: '#/components/responses/InvalidApiKey' }
+
+  /api/v1/signing/status:
+    get:
+      tags: [signing-key]
+      operationId: getSigningStatus
+      summary: Signers, signature cache and signing-key set
+      description: |
+        Everything the dashboard shows about signing:
+
+        * `signers` — every key configured with `CONFIG_SIGNERS`, primary first
+          (`local` key file, `pkcs11` HSM key, or an external `command`). Several
+          signers give every config and vault file one signature each.
+        * `canRegenerate` — true only when the primary signer is a local key file.
+        * `cache` — `CONFIG_SIGNATURE_CACHE` state and counters.
+        * `keySet` — the signing-key set feature: off without `RECOVERY_PUBLIC_KEYS`;
+          otherwise the current set (version 0 = none uploaded) and
+          `activeSignersMissing`, the active signers the set does NOT list (devices
+          that applied the set reject configs signed only by them).
+
+        Registered on: **management** only.
+      security:
+        - ApiKeyAuth: []
+      x-registered-on: management
+      responses:
+        '200':
+          description: Current signing configuration.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/SigningStatus' }
+        '401': { $ref: '#/components/responses/MissingApiKey' }
+        '403': { $ref: '#/components/responses/InvalidApiKey' }
+
+  /api/v1/signing-keyset:
+    get:
+      tags: [signing-key]
+      operationId: getSigningKeySet
+      summary: The latest signing-key set, as devices receive it
+      description: |
+        The payload exactly as the recovery key(s) signed it, with those signatures —
+        the same object every signed config carries as `signingKeys`.
+
+        Registered on: **management** only.
+      security:
+        - ApiKeyAuth: []
+      x-registered-on: management
+      responses:
+        '200':
+          description: The latest set.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/SignedKeySet' }
+        '404':
+          description: No set has been uploaded, or key sets are off (no `RECOVERY_PUBLIC_KEYS`).
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '401': { $ref: '#/components/responses/MissingApiKey' }
+        '403': { $ref: '#/components/responses/InvalidApiKey' }
+    put:
+      tags: [signing-key]
+      operationId: putSigningKeySet
+      summary: Publish a signing-key set (signed offline by the recovery key)
+      description: |
+        A signing-key set lists the signing keys devices accept from now on — how
+        signing keys are rotated or revoked without shipping a new APK. The server
+        holds no recovery key: the set is signed **offline**, and the server only
+        checks it the way a device will before relaying it with every config:
+
+        * at least `RECOVERY_REQUIRED_SIGNATURES` valid signatures from
+          `RECOVERY_PUBLIC_KEYS` over the exact `payload` string;
+        * `payload` is `{"type":"pinvault-signing-keys","version":N,"keys":[…],"requiredSignatures":n}`
+          with `version` above the current set's, parseable EC keys, no recovery key
+          doubling as a signing key, and `requiredSignatures` ≤ number of keys;
+        * enough of this server's active signers are listed to satisfy
+          `requiredSignatures` — otherwise every device that applied the set would
+          refuse every config (`409`).
+
+        Accepted with warnings when an active signer is not listed. Audited as
+        `signing_keyset_uploaded`; cached signatures are dropped.
+
+        Registered on: **management** only.
+      security:
+        - ApiKeyAuth: []
+      x-registered-on: management
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/SignedKeySet' }
+      responses:
+        '200':
+          description: Stored; devices receive it with their next config.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/KeySetUploadResult' }
+        '202': { $ref: '#/components/responses/PendingApproval' }
+        '400':
+          description: The body is not `{"payload":"…","signatures":[…]}`.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '409':
+          description: >
+            Key sets are off (no `RECOVERY_PUBLIC_KEYS`), or the set is valid but
+            unsafe for this server: too few of its active signers are listed.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '422':
+          description: >
+            The set fails a check a device would make (recovery signatures, type,
+            version, keys, `requiredSignatures`).
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
         '401': { $ref: '#/components/responses/MissingApiKey' }
         '403': { $ref: '#/components/responses/InvalidApiKey' }
 
@@ -658,6 +893,39 @@ paths:
           content:
             application/json:
               schema: { $ref: '#/components/schemas/ServerTlsPinsMutation' }
+        '202': { $ref: '#/components/responses/PendingApproval' }
+        '401': { $ref: '#/components/responses/MissingApiKey' }
+        '403': { $ref: '#/components/responses/InvalidApiKey' }
+
+  /api/v1/server-tls-pins/rotate-to-backup:
+    post:
+      tags: [server-tls]
+      operationId: rotateServerTlsToBackup
+      summary: Switch the server TLS certificate to its stored backup key
+      description: |
+        Apps carry both pins of the config server's certificate as bootstrap pins.
+        This reissues the certificate with the stored backup key
+        (`certs/demo-server.backup.jks`) and prepares a new backup, so installed
+        apps keep connecting with no update. Put the new backup pin into the next
+        app release. Running listeners keep the old keystore until the process
+        restarts (`restartRequired: true`).
+
+        Registered on: **management** only.
+      security:
+        - ApiKeyAuth: []
+      x-registered-on: management
+      responses:
+        '200':
+          description: New pins (the old backup is now the primary); restart the process to serve it.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ServerTlsPinsMutation' }
+        '202': { $ref: '#/components/responses/PendingApproval' }
+        '409':
+          description: No stored backup key, or its pin is not among the current bootstrap pins.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/BackupRotationError' }
         '401': { $ref: '#/components/responses/MissingApiKey' }
         '403': { $ref: '#/components/responses/InvalidApiKey' }
 
@@ -704,6 +972,7 @@ paths:
           content:
             application/json:
               schema: { $ref: '#/components/schemas/Error' }
+        '202': { $ref: '#/components/responses/PendingApproval' }
         '401': { $ref: '#/components/responses/MissingApiKey' }
         '403': { $ref: '#/components/responses/InvalidApiKey' }
 
@@ -749,6 +1018,7 @@ paths:
           content:
             application/json:
               schema: { $ref: '#/components/schemas/Error' }
+        '202': { $ref: '#/components/responses/PendingApproval' }
         '401': { $ref: '#/components/responses/MissingApiKey' }
         '403': { $ref: '#/components/responses/InvalidApiKey' }
 
@@ -818,6 +1088,7 @@ paths:
           content:
             application/json:
               schema: { $ref: '#/components/schemas/ConfigApiInstance' }
+        '202': { $ref: '#/components/responses/PendingApproval' }
         '400':
           description: '`port` missing, or `mode: mtls` with no truststore available.'
           content:
@@ -863,6 +1134,7 @@ paths:
                 properties:
                   id: { type: string }
                   stopped: { type: boolean, example: true }
+        '202': { $ref: '#/components/responses/PendingApproval' }
         '400':
           description: '`id` missing from the body.'
           content:
@@ -911,6 +1183,7 @@ paths:
           content:
             application/json:
               schema: { $ref: '#/components/schemas/Error' }
+        '202': { $ref: '#/components/responses/PendingApproval' }
         '401': { $ref: '#/components/responses/MissingApiKey' }
         '403': { $ref: '#/components/responses/InvalidApiKey' }
 
@@ -1050,10 +1323,14 @@ paths:
             application/json:
               schema: { $ref: '#/components/schemas/Error' }
         '409':
-          description: This scope already has a pin entry for that hostname.
+          description: >
+            This scope already has a pin entry for that hostname — or, on a Config API
+            listener while `PIN_CHANGE_APPROVALS>=2`, pin changes are accepted only
+            through the management API (see `ApprovalViaManagementOnly`).
           content:
             application/json:
               schema: { $ref: '#/components/schemas/Error' }
+        '202': { $ref: '#/components/responses/PendingApproval' }
         '401': { $ref: '#/components/responses/MissingApiKey' }
         '403': { $ref: '#/components/responses/InvalidApiKey' }
 
@@ -1094,10 +1371,14 @@ paths:
             application/json:
               schema: { $ref: '#/components/schemas/Error' }
         '409':
-          description: This scope already has a pin entry for that hostname.
+          description: >
+            This scope already has a pin entry for that hostname — or, on a Config API
+            listener while `PIN_CHANGE_APPROVALS>=2`, pin changes are accepted only
+            through the management API (see `ApprovalViaManagementOnly`).
           content:
             application/json:
               schema: { $ref: '#/components/schemas/Error' }
+        '202': { $ref: '#/components/responses/PendingApproval' }
         '401': { $ref: '#/components/responses/MissingApiKey' }
         '403': { $ref: '#/components/responses/InvalidApiKey' }
 
@@ -1140,10 +1421,14 @@ paths:
             application/json:
               schema: { $ref: '#/components/schemas/Error' }
         '409':
-          description: This scope already has a pin entry for that hostname.
+          description: >
+            This scope already has a pin entry for that hostname — or, on a Config API
+            listener while `PIN_CHANGE_APPROVALS>=2`, pin changes are accepted only
+            through the management API (see `ApprovalViaManagementOnly`).
           content:
             application/json:
               schema: { $ref: '#/components/schemas/Error' }
+        '202': { $ref: '#/components/responses/PendingApproval' }
         '401': { $ref: '#/components/responses/MissingApiKey' }
         '403': { $ref: '#/components/responses/InvalidApiKey' }
 
@@ -1218,6 +1503,56 @@ paths:
           content:
             application/json:
               schema: { $ref: '#/components/schemas/Error' }
+        '202': { $ref: '#/components/responses/PendingApproval' }
+        '409': { $ref: '#/components/responses/ApprovalViaManagementOnly' }
+        '401': { $ref: '#/components/responses/MissingApiKey' }
+        '403': { $ref: '#/components/responses/InvalidApiKey' }
+
+  /api/v1/hosts/{hostname}/rotate-to-backup:
+    post:
+      tags: [hosts]
+      operationId: hostRotateToBackup
+      summary: Switch a host's certificate to its stored backup key
+      description: |
+        A certificate the server generates comes with a backup key: its pin is
+        published next to the primary, and the key itself is kept in
+        `certs/<id>.backup.jks`. This reissues the certificate with that key and
+        prepares a new backup. Devices already hold the backup pin, so they keep
+        connecting with no app update and no config refresh. The new pins —
+        the old backup (now serving) and the new backup — are published in every
+        Config API scope that pins the host; the old primary drops out.
+
+        History event per scope: `cert_rotated_to_backup`. A running mock server
+        for this host is restarted with the new keystore.
+
+        Registered on: **management + config-api**.
+      security:
+        - ApiKeyAuth: []
+      x-registered-on: management+config-api
+      parameters:
+        - $ref: '#/components/parameters/HostnamePath'
+        - $ref: '#/components/parameters/ConfigApiIdQuery'
+      responses:
+        '200':
+          description: The certificate now serves the former backup key; new pins.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/HostActionResponse' }
+        '202': { $ref: '#/components/responses/PendingApproval' }
+        '404':
+          description: The host is not registered in the requested scope.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '409':
+          description: |
+            No stored backup key (the certificate was uploaded or fetched, or
+            generated before backup keys were kept), the backup pin is no longer
+            in the host's pin list, or approvals are on and this is not the
+            management API (that last refusal carries no `reason`).
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/BackupRotationError' }
         '401': { $ref: '#/components/responses/MissingApiKey' }
         '403': { $ref: '#/components/responses/InvalidApiKey' }
 
@@ -1265,6 +1600,8 @@ paths:
           content:
             application/json:
               schema: { $ref: '#/components/schemas/Error' }
+        '202': { $ref: '#/components/responses/PendingApproval' }
+        '409': { $ref: '#/components/responses/ApprovalViaManagementOnly' }
         '401': { $ref: '#/components/responses/MissingApiKey' }
         '403': { $ref: '#/components/responses/InvalidApiKey' }
 
@@ -1310,6 +1647,8 @@ paths:
           content:
             application/json:
               schema: { $ref: '#/components/schemas/Error' }
+        '202': { $ref: '#/components/responses/PendingApproval' }
+        '409': { $ref: '#/components/responses/ApprovalViaManagementOnly' }
         '401': { $ref: '#/components/responses/MissingApiKey' }
         '403': { $ref: '#/components/responses/InvalidApiKey' }
 
@@ -1352,6 +1691,8 @@ paths:
           content:
             application/json:
               schema: { $ref: '#/components/schemas/Error' }
+        '202': { $ref: '#/components/responses/PendingApproval' }
+        '409': { $ref: '#/components/responses/ApprovalViaManagementOnly' }
         '401': { $ref: '#/components/responses/MissingApiKey' }
         '403': { $ref: '#/components/responses/InvalidApiKey' }
 
@@ -1413,6 +1754,8 @@ paths:
           content:
             application/json:
               schema: { $ref: '#/components/schemas/Error' }
+        '202': { $ref: '#/components/responses/PendingApproval' }
+        '409': { $ref: '#/components/responses/ApprovalViaManagementOnly' }
         '401': { $ref: '#/components/responses/MissingApiKey' }
         '403': { $ref: '#/components/responses/InvalidApiKey' }
 
@@ -1734,6 +2077,7 @@ paths:
           content:
             application/json:
               schema: { $ref: '#/components/schemas/Error' }
+        '202': { $ref: '#/components/responses/PendingApproval' }
         '401': { $ref: '#/components/responses/MissingApiKey' }
         '403': { $ref: '#/components/responses/InvalidApiKey' }
 
@@ -2522,6 +2866,9 @@ paths:
         **Integrity.** `X-Vault-Signature` is ECDSA over
         `pinvault-vault-file:v1:<key>:<version>:<sha256HexLower(plaintext)>` — signed
         over the plaintext, so one signature is valid for all three encryption modes.
+        With more than one signer (`CONFIG_SIGNERS`) `X-Vault-Signatures` carries
+        every signature as `keyId:signature` pairs, comma-separated;
+        `X-Vault-Signature` keeps the primary one for older clients.
 
         Registered on: **config-api** only. The management port serves the scoped
         admin mirror under `/api/v1/config-apis/{configApiId}/vault/…` and has no
@@ -2555,6 +2902,13 @@ paths:
             X-Vault-Signature:
               description: Base64 ECDSA signature over the plaintext canonical string.
               schema: { type: string }
+            X-Vault-Signatures:
+              description: >
+                Only with more than one signer: every signature, primary first, as
+                `<keyId>:<Base64 signature>` pairs separated by commas (`keyId` =
+                Base64 SHA-256 of the signer's SPKI).
+              schema: { type: string }
+              example: 'iI1vEtvPjpEvTVFNUbqYUCvQeFVItZTLmFIVnpMQm7c=:MEUCIQ…,Xy9…=:MEQCIF…'
           content:
             application/octet-stream:
               schema: { type: string, format: binary }
@@ -3330,6 +3684,378 @@ paths:
         '401': { $ref: '#/components/responses/MissingApiKey' }
         '403': { $ref: '#/components/responses/InvalidApiKey' }
 
+  # ─────────────────────────────────────────────────────────────────────
+  # governance
+  # ─────────────────────────────────────────────────────────────────────
+
+  /api/v1/admin/me:
+    get:
+      tags: [governance]
+      operationId: getAdminMe
+      summary: Who the presented key belongs to, and which governance features are on
+      description: |
+        `name` is the admin behind `X-API-Key`: `admin` for the shared `API_KEY`, the
+        name of an `ADMIN_KEYS` entry, or `anonymous` with
+        `ALLOW_ANONYMOUS_ADMIN=true`. The other fields are the server's governance
+        settings, for the dashboard's identity chip.
+
+        Registered on: **management** only.
+      security:
+        - ApiKeyAuth: []
+      x-registered-on: management
+      responses:
+        '200':
+          description: The caller and the governance settings.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AdminMe' }
+        '401': { $ref: '#/components/responses/MissingApiKey' }
+        '403': { $ref: '#/components/responses/InvalidApiKey' }
+
+  /api/v1/audit-log:
+    get:
+      tags: [governance]
+      operationId: listAuditLog
+      summary: Page through the hash-chained audit log
+      description: |
+        Newest first. Every successful admin write is recorded and attributed to the
+        admin who made it: pin diffs (`pins_changed`, whichever route wrote them),
+        the approval workflow, live-check decisions, signing-key changes, invalid
+        API keys (`auth_failed`, at most one per source address per minute),
+        certificate expiry warnings (`cert_expiring`, once a day per host) and, for
+        writes without a more specific entry, a generic `http` entry whose `target`
+        is `METHOD /path?query`.
+
+        The log is append-only (database triggers refuse UPDATE and DELETE) and
+        chained: `hash` = SHA-256 over `prevHash` and every field, so an edit made
+        behind the triggers' back breaks `GET /api/v1/audit-log/verify`.
+
+        Registered on: **management** only.
+      security:
+        - ApiKeyAuth: []
+      x-registered-on: management
+      parameters:
+        - name: limit
+          in: query
+          required: false
+          description: Page size, clamped to 1–500.
+          schema: { type: integer, default: 50, minimum: 1, maximum: 500 }
+        - name: offset
+          in: query
+          required: false
+          schema: { type: integer, default: 0, minimum: 0 }
+        - name: action
+          in: query
+          required: false
+          description: Only entries with this action. Any other value matches nothing.
+          schema:
+            type: string
+            enum: [pins_changed, change_requested, change_approved, change_applied, change_failed,
+                   change_rejected, change_expired, change_stale, live_check_warning,
+                   live_check_blocked, live_check_overridden, signing_key_regenerated,
+                   signing_keyset_uploaded, auth_failed, cert_expiring, notification_test, http]
+        - name: configApiId
+          in: query
+          required: false
+          description: Only entries recorded for this Config API scope.
+          schema: { type: string }
+      responses:
+        '200':
+          description: One page and the number of entries matching the filter.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AuditPage' }
+        '401': { $ref: '#/components/responses/MissingApiKey' }
+        '403': { $ref: '#/components/responses/InvalidApiKey' }
+
+  /api/v1/audit-log/verify:
+    get:
+      tags: [governance]
+      operationId: verifyAuditLog
+      summary: Recompute the audit chain
+      description: |
+        Walks the whole log from the first entry and recomputes every link and hash.
+        `ok: false` names the first entry whose `prevHash` or `hash` does not hold —
+        that entry (or the one before it) was altered or removed.
+
+        Registered on: **management** only.
+      security:
+        - ApiKeyAuth: []
+      x-registered-on: management
+      responses:
+        '200':
+          description: The result of the check.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AuditChainCheck' }
+        '401': { $ref: '#/components/responses/MissingApiKey' }
+        '403': { $ref: '#/components/responses/InvalidApiKey' }
+
+  /api/v1/change-requests:
+    get:
+      tags: [governance]
+      operationId: listChangeRequests
+      summary: Pin and key changes waiting for (or decided by) a second admin
+      description: |
+        Newest first, at most 100. Requests past their expiry are marked `expired`
+        (and audited) before the list is read. Only produced while
+        `PIN_CHANGE_APPROVALS>=2`; see the `202` answer of the pin-affecting routes.
+
+        Registered on: **management** only.
+      security:
+        - ApiKeyAuth: []
+      x-registered-on: management
+      parameters:
+        - name: status
+          in: query
+          required: false
+          description: Filter by status; `all` or omitted = every request.
+          schema:
+            type: string
+            enum: [pending, applied, failed, rejected, expired, stale, all]
+      responses:
+        '200':
+          description: Matching change requests.
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/ChangeRequest' }
+        '401': { $ref: '#/components/responses/MissingApiKey' }
+        '403': { $ref: '#/components/responses/InvalidApiKey' }
+
+  /api/v1/change-requests/{id}:
+    get:
+      tags: [governance]
+      operationId: getChangeRequest
+      summary: One change request
+      description: |
+        Registered on: **management** only.
+      security:
+        - ApiKeyAuth: []
+      x-registered-on: management
+      parameters:
+        - $ref: '#/components/parameters/ChangeRequestIdPath'
+      responses:
+        '200':
+          description: The change request.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ChangeRequest' }
+        '400':
+          description: '`id` is not a number.'
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '404':
+          description: No such change request.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '401': { $ref: '#/components/responses/MissingApiKey' }
+        '403': { $ref: '#/components/responses/InvalidApiKey' }
+
+  /api/v1/change-requests/{id}/approve:
+    post:
+      tags: [governance]
+      operationId: approveChangeRequest
+      summary: Approve a pending change (and apply it once enough admins did)
+      description: |
+        Records the caller's approval. Once `PIN_CHANGE_APPROVALS - 1` distinct admins
+        other than the requester approved, the server replays the stored request —
+        method, path, query and body — through its own management port, as the
+        requester, and stores the outcome: `applied` (2xx) or `failed` (with
+        `resultStatus` / `resultBody`, e.g. `422` from an enforced live check). The
+        answer is the updated request in every case.
+
+        Refused with `409` (never `403`, so a dashboard does not mistake it for a bad
+        key): the requester approving their own change, the shared `API_KEY`
+        (it does not say who approves), an admin approving twice, a request that is
+        no longer pending, and a full-config write whose scope changed after it was
+        requested — that request is marked `stale` instead of undoing the newer
+        change.
+
+        Registered on: **management** only.
+      security:
+        - ApiKeyAuth: []
+      x-registered-on: management
+      parameters:
+        - $ref: '#/components/parameters/ChangeRequestIdPath'
+      responses:
+        '200':
+          description: >
+            The updated request: `pending` (more approvals needed), `applied` or
+            `failed`.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ChangeRequest' }
+        '400':
+          description: '`id` is not a number.'
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '404':
+          description: No such change request.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '409':
+          description: Self-approval, shared key, already approved, not pending, or stale.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+              example: { error: 'The admin who requested a change cannot approve it — another admin must.' }
+        '401': { $ref: '#/components/responses/MissingApiKey' }
+        '403': { $ref: '#/components/responses/InvalidApiKey' }
+
+  /api/v1/change-requests/{id}/reject:
+    post:
+      tags: [governance]
+      operationId: rejectChangeRequest
+      summary: Reject a pending change (or withdraw your own)
+      description: |
+        Any admin may reject a pending request; its requester withdraws it the same
+        way. The optional `reason` (first 500 characters) is stored and audited.
+
+        Registered on: **management** only.
+      security:
+        - ApiKeyAuth: []
+      x-registered-on: management
+      parameters:
+        - $ref: '#/components/parameters/ChangeRequestIdPath'
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                reason: { type: string, example: wrong host }
+      responses:
+        '200':
+          description: The request, now `rejected`.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ChangeRequest' }
+        '400':
+          description: '`id` is not a number.'
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '404':
+          description: No such change request.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '409':
+          description: The request is no longer pending.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '401': { $ref: '#/components/responses/MissingApiKey' }
+        '403': { $ref: '#/components/responses/InvalidApiKey' }
+
+  /api/v1/notifications:
+    get:
+      tags: [governance]
+      operationId: getNotificationStatus
+      summary: Webhook configuration and the latest deliveries
+      description: |
+        `target` is the webhook's scheme, host and port only — the path of a
+        Slack/Teams webhook URL is itself a secret. `recent` holds the last 50
+        deliveries, newest first, after their final attempt (up to 3, with backoff).
+
+        Registered on: **management** only.
+      security:
+        - ApiKeyAuth: []
+      x-registered-on: management
+      responses:
+        '200':
+          description: 'Notification status (`configured: false` without `NOTIFY_WEBHOOK_URL`).'
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/NotificationStatus' }
+        '401': { $ref: '#/components/responses/MissingApiKey' }
+        '403': { $ref: '#/components/responses/InvalidApiKey' }
+
+  /api/v1/notifications/test:
+    post:
+      tags: [governance]
+      operationId: sendTestNotification
+      summary: Record and send a test notification
+      description: |
+        Writes a `notification_test` audit entry and queues its webhook delivery
+        (asynchronous — check `GET /api/v1/notifications` for the outcome).
+
+        Registered on: **management** only.
+      security:
+        - ApiKeyAuth: []
+      x-registered-on: management
+      responses:
+        '200':
+          description: Queued.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/NotificationTestResult' }
+        '409':
+          description: No webhook is configured (`NOTIFY_WEBHOOK_URL` unset).
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '401': { $ref: '#/components/responses/MissingApiKey' }
+        '403': { $ref: '#/components/responses/InvalidApiKey' }
+
+  /api/v1/pins/live-check:
+    post:
+      tags: [governance]
+      operationId: checkPinsLive
+      summary: Dry-run the live certificate check
+      description: |
+        Contacts each host (or its `LIVE_CHECK_HOST_MAP` target, on its `:port` or
+        443) and reports whether the **leaf** certificate it serves right now is in
+        the given set. Saves nothing, and works whatever `PIN_LIVE_CHECK` is set to
+        (`mode` reports the setting). The pin editor calls this before saving.
+
+        A self-signed host, or an mTLS host that then demands a client certificate,
+        still yields its chain. Unmapped wildcard entries cannot be probed.
+
+        Registered on: **management** only.
+      security:
+        - ApiKeyAuth: []
+      x-registered-on: management
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [pins]
+              properties:
+                pins:
+                  type: array
+                  maxItems: 50
+                  items:
+                    type: object
+                    required: [hostname, sha256]
+                    properties:
+                      hostname: { type: string, example: api.example.com }
+                      sha256:
+                        type: array
+                        items: { type: string }
+      responses:
+        '200':
+          description: One check per host.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/LiveCheckResult' }
+        '400':
+          description: Malformed body, or more than 50 hosts.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '401': { $ref: '#/components/responses/MissingApiKey' }
+        '403': { $ref: '#/components/responses/InvalidApiKey' }
+
 components:
 
   securitySchemes:
@@ -3338,7 +4064,8 @@ components:
       in: header
       name: X-API-Key
       description: >
-        Set via the `API_KEY` env var and compared in constant time. Enforced on the
+        The shared `API_KEY` or a personal `ADMIN_KEYS` key (configured as its
+        SHA-256), compared in constant time. Enforced on the
         management server and on every Config API listener by the `ApiKeyAuth`
         plugin, except for the paths allowlisted in `isPublicEndpoint`. When
         `API_KEY` is unset the server refuses to start unless
@@ -3437,6 +4164,48 @@ components:
         files.
       schema: { type: string }
 
+    LiveCheckOverrideQuery:
+      name: liveCheckOverride
+      in: query
+      required: false
+      description: >
+        Reason for storing a pin set that `PIN_LIVE_CHECK=enforce` refused (`422`).
+        Accepted unless `PIN_LIVE_CHECK_ALLOW_OVERRIDE=false`; the override and its
+        reason are audited (`live_check_overridden`) and notified. Keep the other
+        query parameters (e.g. `configApiId`) when resending. Has no effect when the
+        check passes, is off, or only warns.
+      schema: { type: string }
+      example: host switches to the new certificate at 18:00
+
+    ChangeRequestIdPath:
+      name: id
+      in: path
+      required: true
+      description: Change request id — `changeRequestId` of the `202` answer.
+      schema: { type: integer, format: int64 }
+      example: 12
+
+    PinVaultFeaturesHeader:
+      name: X-PinVault-Features
+      in: header
+      required: false
+      description: >
+        Comma-separated client capabilities. `redelivery` (PinVault library 2.1+)
+        means the client accepts the same signed envelope twice, so it may be served
+        a cached one when `CONFIG_SIGNATURE_CACHE=true`. Without it every request is
+        signed fresh, as before.
+      schema: { type: string }
+      example: redelivery
+
+  headers:
+
+    LiveCheckWarning:
+      description: >
+        `warn` when `PIN_LIVE_CHECK=warn` stored a pin set that failed the live
+        certificate check (audited as `live_check_warning`, details there). Absent
+        otherwise.
+      schema: { type: string, enum: [warn] }
+
   responses:
 
     MissingApiKey:
@@ -3453,6 +4222,36 @@ components:
           schema: { $ref: '#/components/schemas/Error' }
           example: { error: 'Invalid API key' }
 
+    PendingApproval:
+      description: >
+        `PIN_CHANGE_APPROVALS>=2`: the request was **not executed**. It is stored as
+        a change request and replayed, as the requester, once enough other admins
+        approve it (`POST /api/v1/change-requests/{id}/approve`). Management
+        listener only.
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/PendingApproval' }
+
+    LiveCheckRejected:
+      description: >
+        `PIN_LIVE_CHECK=enforce` refused the pin set: for at least one new or changed
+        host, the leaf certificate it serves now is not in the new pins, or the host
+        could not be reached. Nothing was stored. When `overridable` is true, resend
+        the same request with `liveCheckOverride=<reason>` added to the query string.
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/LiveCheckRejection' }
+
+    ApprovalViaManagementOnly:
+      description: >
+        Config API listener while `PIN_CHANGE_APPROVALS>=2`: pin- and key-affecting
+        writes are accepted only through the management API, where they can wait
+        for a second admin.
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+          example: { error: 'Pin changes need approval (PIN_CHANGE_APPROVALS) and are accepted only through the management API.' }
+
   schemas:
 
     # ── Errors ──────────────────────────────────────────────────────────
@@ -3463,6 +4262,17 @@ components:
         Standard error envelope. Some handlers emit Turkish messages
         (e.g. `hostname gerekli`, `Host bulunamadi`).
       properties:
+        error: { type: string }
+
+    BackupRotationError:
+      type: object
+      description: >
+        Why switching to the backup key was refused. Branch on `reason`;
+        `error` is an English explanation.
+      properties:
+        reason:
+          type: string
+          enum: [no_backup_key, backup_not_published]
         error: { type: string }
 
     ErrorList:
@@ -3562,7 +4372,26 @@ components:
             Verify the signature over these exact bytes before parsing.
         signature:
           type: string
-          description: Base64 `SHA256withECDSA` signature over `payload`.
+          description: >
+            Base64 `SHA256withECDSA` signature over `payload` by the primary signer.
+        keyId:
+          type: string
+          description: >
+            Key id (Base64 SHA-256 of the SPKI) of the primary signer — an unsigned
+            hint for picking the key. Optional; older clients ignore it.
+        signatures:
+          type: array
+          description: >
+            Present only with more than one signer (`CONFIG_SIGNERS`): one signature
+            per signer over `payload`, primary first. Devices configured with
+            `requiredSignatures(n)` need n valid ones from keys they trust.
+          items: { $ref: '#/components/schemas/SignatureEntry' }
+        signingKeys:
+          description: >
+            The latest signing-key set the operator uploaded (rotation /
+            revocation), attached to every envelope once one exists. Absent before.
+          allOf:
+            - $ref: '#/components/schemas/SignedKeySet'
 
     PinConfigHistoryEntry:
       type: object
@@ -3762,6 +4591,7 @@ components:
         primaryPin: { type: string }
         backupPin: { type: string }
         regenerated: { type: boolean }
+        rotated: { type: boolean }
         uploaded: { type: boolean }
         restartRequired:
           type: boolean
@@ -4064,3 +4894,360 @@ components:
         hostnames: { type: string, description: Comma-joined hostnames after the update. }
         added: { type: string }
         removed: { type: string }
+
+    # ── Signing keys ────────────────────────────────────────────────────
+
+    SigningKeyInfo:
+      type: object
+      description: '`GET /api/v1/signing-key`.'
+      required: [publicKey, keyId, signers, keySetVersion]
+      properties:
+        publicKey:
+          type: string
+          description: Base64 X.509 SPKI of the primary signer — the value apps embed.
+        keyId:
+          type: string
+          description: Base64 SHA-256 of that SPKI.
+        signers:
+          type: array
+          description: Every signing key, in signing order (primary first).
+          items:
+            type: object
+            properties:
+              keyId: { type: string }
+              publicKey: { type: string }
+        keySetVersion:
+          type: integer
+          description: Version of the signing-key set devices currently receive; 0 = none.
+
+    SignatureEntry:
+      type: object
+      required: [signature]
+      properties:
+        keyId:
+          type: string
+          nullable: true
+          description: Base64 SHA-256 of the signer's SPKI — an unsigned hint.
+        signature:
+          type: string
+          description: Base64 DER `SHA256withECDSA` signature.
+
+    SignedKeySet:
+      type: object
+      description: >
+        A signing-key set as devices receive it: `payload` exactly as the recovery
+        key(s) signed it (see `SigningKeySetPayload`) and those signatures.
+      required: [payload, signatures]
+      properties:
+        payload:
+          type: string
+          description: JSON text of a `SigningKeySetPayload`; verify the signatures over these exact bytes.
+        signatures:
+          type: array
+          items: { $ref: '#/components/schemas/SignatureEntry' }
+
+    SigningKeySetPayload:
+      type: object
+      description: What `SignedKeySet.payload` decodes to.
+      required: [type, version, keys]
+      properties:
+        type: { type: string, enum: [pinvault-signing-keys] }
+        version:
+          type: integer
+          minimum: 1
+          description: Must be above the current set's version.
+        keys:
+          type: array
+          description: Base64 X.509 SPKI (or PEM) of every signing key devices accept.
+          items: { type: string }
+        requiredSignatures:
+          type: integer
+          default: 1
+          description: Valid signatures, from listed keys, a device requires on each config.
+
+    KeySetUploadResult:
+      type: object
+      properties:
+        version: { type: integer }
+        keyIds: { type: array, items: { type: string } }
+        requiredSignatures: { type: integer }
+        warnings:
+          type: array
+          description: E.g. an active signer the set does not list.
+          items: { type: string }
+
+    SignerStatus:
+      type: object
+      properties:
+        name: { type: string, description: 'The `CONFIG_SIGNERS` entry, e.g. `local` or `command:kms`.', example: local }
+        type: { type: string, enum: [local, pkcs11, command] }
+        keyId: { type: string }
+        publicKey: { type: string }
+        description: { type: string, description: One line, never secret., example: 'Key file signing-key.pem (plaintext on disk)' }
+
+    SignatureCacheStats:
+      type: object
+      properties:
+        cacheEnabled: { type: boolean, description: '`CONFIG_SIGNATURE_CACHE=true`.' }
+        ttlSeconds: { type: integer, format: int64, description: '`CONFIG_TTL_SECONDS` (default 86400).' }
+        signaturesProduced: { type: integer, format: int64, description: Since start, across all signers. }
+        cacheHits: { type: integer, format: int64 }
+        cachedEnvelopes: { type: integer }
+
+    SigningKeySetStatus:
+      type: object
+      properties:
+        enabled: { type: boolean, description: '`RECOVERY_PUBLIC_KEYS` is set.' }
+        recoveryKeyIds: { type: array, items: { type: string } }
+        recoveryRequiredSignatures: { type: integer, description: '`RECOVERY_REQUIRED_SIGNATURES` (default 1).' }
+        version: { type: integer, description: 0 = no set uploaded. }
+        keyIds: { type: array, items: { type: string } }
+        requiredSignatures: { type: integer }
+        activeSignersMissing:
+          type: array
+          description: >
+            Key ids of active signers the current set does not list — devices that
+            applied the set reject configs signed only by them.
+          items: { type: string }
+        uploadedBy: { type: string, nullable: true }
+        uploadedAt: { type: string, format: date-time, nullable: true }
+
+    SigningStatus:
+      type: object
+      properties:
+        signers:
+          type: array
+          items: { $ref: '#/components/schemas/SignerStatus' }
+        canRegenerate:
+          type: boolean
+          description: The primary signer is a local key file.
+        cache: { $ref: '#/components/schemas/SignatureCacheStats' }
+        keySet: { $ref: '#/components/schemas/SigningKeySetStatus' }
+
+    # ── Governance ──────────────────────────────────────────────────────
+
+    AdminMe:
+      type: object
+      properties:
+        name: { type: string, example: alice }
+        admins:
+          type: array
+          description: Every admin name (`admin` = the shared `API_KEY`).
+          items: { type: string }
+          example: [admin, alice, bob]
+        approvalsRequired:
+          type: integer
+          description: '`PIN_CHANGE_APPROVALS` (1 = off).'
+          example: 2
+        liveCheck: { type: string, enum: ['off', warn, enforce] }
+        liveCheckOverridable:
+          type: boolean
+          description: '`liveCheckOverride` is accepted (`PIN_LIVE_CHECK_ALLOW_OVERRIDE` is not `false`).'
+        notificationsConfigured: { type: boolean, description: '`NOTIFY_WEBHOOK_URL` is set.' }
+        signatureCache: { type: boolean, description: '`CONFIG_SIGNATURE_CACHE=true`.' }
+
+    AuditEntry:
+      type: object
+      properties:
+        id: { type: integer, format: int64 }
+        at: { type: string, format: date-time }
+        actor:
+          type: string
+          description: >
+            Admin name; `system` for server-side events; approved changes read
+            `requester (approved by approver)`.
+          example: alice (approved by bob)
+        action: { type: string, example: pins_changed }
+        configApiId: { type: string, description: Empty when not scope-specific. }
+        target:
+          type: string
+          description: Hostnames, or `METHOD /path?query` for `http` entries.
+        summary: { type: string, example: 'api.example.com: pins v3→v4' }
+        detail:
+          type: string
+          description: JSON text (e.g. the pin diff or a live-check result), or "".
+        sourceIp: { type: string }
+        prevHash: { type: string, description: Hex SHA-256 of the previous entry (64 zeros for the first). }
+        hash: { type: string, description: Hex SHA-256 over prevHash and every field. }
+
+    AuditPage:
+      type: object
+      properties:
+        total: { type: integer, description: Entries matching the filter. }
+        entries:
+          type: array
+          items: { $ref: '#/components/schemas/AuditEntry' }
+
+    AuditChainCheck:
+      type: object
+      properties:
+        ok: { type: boolean }
+        entries: { type: integer, description: Entries checked (up to the first broken one). }
+        firstBrokenId: { type: integer, format: int64, nullable: true }
+
+    PendingApproval:
+      type: object
+      required: [pendingApproval, changeRequestId, summary, approvalsRequired, message]
+      properties:
+        pendingApproval: { type: boolean, example: true }
+        changeRequestId: { type: integer, format: int64, example: 12 }
+        summary: { type: string, example: 'default-tls: api.example.com: pins v3→v4' }
+        approvalsRequired:
+          type: integer
+          description: '`PIN_CHANGE_APPROVALS` — the requester counts as one.'
+          example: 2
+        message: { type: string, example: 'Change #12 is waiting for approval by 1 other admin(s).' }
+
+    DiffPin:
+      type: object
+      description: A host's pin entry inside a diff.
+      properties:
+        hostname: { type: string }
+        version: { type: integer }
+        sha256: { type: array, items: { type: string } }
+        forceUpdate: { type: boolean }
+        mtls: { type: boolean }
+        clientCertVersion: { type: integer, description: Absent when none. }
+
+    ChangeRequestDetail:
+      type: object
+      description: >
+        What `ChangeRequest.detail` decodes to: the operation and, for pin updates,
+        the diff against the pins at request time plus the live-check dry run.
+      properties:
+        operation:
+          type: string
+          enum: [pins_update, force_on, force_off, host_add, host_cert, config_api_delete,
+                 bootstrap_pins, signing_key, signing_keyset]
+        added:
+          type: array
+          items: { $ref: '#/components/schemas/DiffPin' }
+        removed:
+          type: array
+          items: { $ref: '#/components/schemas/DiffPin' }
+        changed:
+          type: array
+          items:
+            type: object
+            properties:
+              hostname: { type: string }
+              from: { $ref: '#/components/schemas/DiffPin' }
+              to: { $ref: '#/components/schemas/DiffPin' }
+        forceUpdate:
+          type: object
+          description: Scope-level force flag change.
+          properties:
+            from: { type: boolean }
+            to: { type: boolean }
+        liveCheck:
+          description: Present when `PIN_LIVE_CHECK` is on.
+          allOf:
+            - $ref: '#/components/schemas/LiveCheckResult'
+        baseHash:
+          type: string
+          description: >
+            Fingerprint of the scope's pins at request time. Approval re-checks it:
+            a changed scope marks the request `stale` instead of overwriting.
+        describeError: { type: string, description: Set when the diff could not be computed. }
+
+    ChangeRequest:
+      type: object
+      properties:
+        id: { type: integer, format: int64 }
+        createdAt: { type: string, format: date-time }
+        expiresAt: { type: string, format: date-time, description: '`createdAt` + `APPROVAL_TTL_HOURS` (default 24).' }
+        requestedBy: { type: string }
+        method: { type: string, example: PUT }
+        path: { type: string, example: /api/v1/certificate-config }
+        query: { type: string, example: configApiId=default-tls }
+        contentType: { type: string }
+        configApiId: { type: string }
+        summary: { type: string }
+        detail:
+          type: string
+          description: JSON text of a `ChangeRequestDetail`.
+        status: { type: string, enum: [pending, applied, failed, rejected, expired, stale] }
+        approvedBy: { type: array, items: { type: string } }
+        decidedBy: { type: string, nullable: true }
+        decidedAt: { type: string, format: date-time, nullable: true }
+        reason: { type: string, nullable: true }
+        resultStatus:
+          type: integer
+          nullable: true
+          description: HTTP status of the replay (applied / failed).
+        resultBody:
+          type: string
+          nullable: true
+          description: The replay's response body (first 2000 characters).
+
+    LiveCheckHostCheck:
+      type: object
+      properties:
+        hostname: { type: string, description: The pinned name. }
+        probed:
+          type: string
+          nullable: true
+          description: '`host:port` contacted; null when the name could not be probed at all (an unmapped wildcard).'
+          example: api.example.com:443
+        reachable: { type: boolean }
+        livePins:
+          type: array
+          description: SPKI pins (Base64 SHA-256) of the chain the host served, **leaf first**.
+          items: { type: string }
+        matched:
+          type: boolean
+          description: >
+            `livePins[0]` (the leaf) is in the checked set. An intermediate in the set
+            does not count — the library pins the leaf only.
+        error: { type: string, nullable: true, description: Why the host could not be reached. }
+
+    LiveCheckResult:
+      type: object
+      properties:
+        mode: { type: string, enum: ['off', warn, enforce], description: '`PIN_LIVE_CHECK`.' }
+        passed: { type: boolean }
+        checks:
+          type: array
+          items: { $ref: '#/components/schemas/LiveCheckHostCheck' }
+
+    LiveCheckRejection:
+      type: object
+      properties:
+        error: { type: string }
+        liveCheck: { $ref: '#/components/schemas/LiveCheckResult' }
+        overridable:
+          type: boolean
+          description: '`liveCheckOverride=<reason>` would be accepted.'
+
+    NotificationDelivery:
+      type: object
+      properties:
+        event: { type: string, example: pins_changed }
+        at: { type: string, format: date-time }
+        auditId: { type: integer, format: int64, nullable: true }
+        status: { type: integer, nullable: true, description: HTTP status of the last attempt; null when it never connected. }
+        attempts: { type: integer }
+        error: { type: string, nullable: true }
+
+    NotificationStatus:
+      type: object
+      properties:
+        configured: { type: boolean }
+        target:
+          type: string
+          nullable: true
+          description: Scheme, host and port of the webhook — never its path.
+        signed: { type: boolean, description: '`NOTIFY_WEBHOOK_SECRET` is set (`X-PinVault-Signature`).' }
+        events:
+          type: array
+          description: '`NOTIFY_EVENTS`; `*` = every audit action except `http`.'
+          items: { type: string }
+        recent:
+          type: array
+          items: { $ref: '#/components/schemas/NotificationDelivery' }
+
+    NotificationTestResult:
+      type: object
+      properties:
+        sent: { type: boolean, example: true }
+        auditId: { type: integer, format: int64 }

@@ -65,6 +65,32 @@ class PinConfigStore(private val db: DatabaseManager) {
      * newly added host must read it from the returned config.
      */
     fun save(configApiId: String, config: PinConfig): PinConfig {
+        val listener = onSaved
+        val before = if (listener != null) load(configApiId) else null
+        val saved = saveInTransaction(configApiId, config)
+        // After the commit, outside the transaction: listeners read the store
+        // back (e.g. to pre-sign the new config) and must see the new state.
+        if (listener != null) {
+            try {
+                listener(configApiId, before, saved)
+            } catch (e: Exception) {
+                // The change is committed; a failing listener means a missing
+                // audit entry or pre-signature — say so loudly.
+                System.err.println("PinConfigStore: onSaved listener FAILED for $configApiId (audit entry may be missing): ${e.message}")
+            }
+        }
+        return saved
+    }
+
+    /**
+     * Called after every successful [save] with the scope, what it held before
+     * and what was stored. Every pin-writing route funnels through [save], so
+     * this sees them all (the audit log records its diff from here).
+     */
+    @Volatile
+    var onSaved: ((configApiId: String, before: PinConfig?, after: PinConfig) -> Unit)? = null
+
+    private fun saveInTransaction(configApiId: String, config: PinConfig): PinConfig {
         db.connection().use { conn ->
             conn.autoCommit = false
             try {
@@ -458,13 +484,18 @@ class HostStore(private val db: DatabaseManager) {
     }
 
     // Mock host cert'i (fiziksel) global — aynı hostname birden fazla config
-    // API scope'unda kayıtlı olabilir. Cert rotation sonrasi TÜM scope'lardaki
-    // pin_hashes güncellenmeli; aksi halde güncellenmeyen scope'un client'ları
-    // pin mismatch alır. Bu metod o scope listesini döner.
+    // API scope'unda kayıtlı olabilir, ya da bir scope onu host kaydı olmadan
+    // pinleyebilir (pin'ler doğrudan o scope'a yazıldıysa). Cert rotation
+    // sonrasi bu scope'ların HEPSİNDE pin_hashes güncellenmeli; aksi halde
+    // güncellenmeyen scope'un client'ları pin mismatch alır. Bu metod o scope
+    // listesini döner.
     fun listConfigApisFor(hostname: String): List<String> {
         db.connection().use { conn ->
-            conn.prepareStatement("SELECT DISTINCT config_api_id FROM hosts WHERE hostname = ?").use { stmt ->
+            conn.prepareStatement(
+                "SELECT config_api_id FROM hosts WHERE hostname = ? UNION SELECT config_api_id FROM pin_hashes WHERE hostname = ?"
+            ).use { stmt ->
                 stmt.setString(1, hostname)
+                stmt.setString(2, hostname)
                 val rs = stmt.executeQuery()
                 return buildList { while (rs.next()) add(rs.getString(1)) }
             }

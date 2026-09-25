@@ -5,6 +5,10 @@ import com.example.pinvault.server.model.HostPin
 import com.example.pinvault.server.model.PinConfigHistoryEntry
 import com.example.pinvault.server.route.adminVaultRoutes
 import com.example.pinvault.server.route.certificateConfigRoutes
+import com.example.pinvault.server.route.signingAdminRoutes
+import com.example.pinvault.server.route.governanceRoutes
+import com.example.pinvault.server.route.applyPinConfigUpdate
+import com.example.pinvault.server.plugin.adminName
 import com.example.pinvault.server.route.hostRoutes
 import com.example.pinvault.server.route.scopedVaultAdminRoutes
 import com.example.pinvault.server.route.vaultRoutes
@@ -53,7 +57,161 @@ fun main() {
     val hostStore = HostStore(db)
     val certsDir = File(System.getenv("CERTS_DIR") ?: "certs")
     val signingKeyFile = File(System.getenv("SIGNING_KEY_PATH") ?: "signing-key.pem")
-    var signingService = ConfigSigningService(signingKeyFile)
+    // Signers come from CONFIG_SIGNERS (default: the local key file above).
+    val signingService = ConfigSigningService.fromEnv(signingKeyFile)
+    val signingKeySetService = com.example.pinvault.server.service.SigningKeySetService.fromEnv(
+        com.example.pinvault.server.store.SigningKeySetStore(db), signingService
+    )
+    val signedConfigService = com.example.pinvault.server.service.SignedConfigService(signingService, signingKeySetService)
+    // ── Governance: who, what, when — and who else has to agree ─────────
+    // Admin identities (API_KEY / ADMIN_KEYS), the hash-chained audit log,
+    // webhook notifications, the live certificate gate and two-person
+    // approval. Each one is off or inert until its env vars are set.
+    val adminRegistry = com.example.pinvault.server.plugin.AdminRegistry.fromEnv()
+    val auditStore = com.example.pinvault.server.store.AuditLogStore(db)
+    val auditLog = com.example.pinvault.server.service.AuditLog(
+        auditStore, com.example.pinvault.server.service.WebhookNotifier.fromEnv()
+    )
+    val liveGate = com.example.pinvault.server.service.LiveCertificateGate.fromEnv()
+    val approvalsRequired = com.example.pinvault.server.service.ApprovalService.requiredFromEnv()
+    if (approvalsRequired > 1) {
+        val personal = adminRegistry.names.count { it != com.example.pinvault.server.plugin.AdminRegistry.LEGACY_NAME }
+        check(!adminRegistry.isEmpty) {
+            "PIN_CHANGE_APPROVALS=$approvalsRequired cannot work without admin keys (anonymous admin mode)."
+        }
+        check(personal >= approvalsRequired - 1) {
+            "PIN_CHANGE_APPROVALS=$approvalsRequired needs at least ${approvalsRequired - 1} personal admin key(s) in " +
+                "ADMIN_KEYS to approve changes (found $personal). A shared API_KEY cannot approve."
+        }
+    }
+
+    // Pin writes: pre-sign the new config (signature cache) and record the
+    // diff. Every pin-writing route funnels through PinConfigStore.save.
+    pinConfigStore.onSaved = { scope, before, after ->
+        // After the commit: drop every cached signature FIRST, then pre-sign.
+        // A device request that loaded the old pins can then no longer cache
+        // an envelope under the same generation as the new ones.
+        signedConfigService.invalidate()
+        signedConfigService.prewarm(scope) { pinConfigStore.load(scope).let { it.copy(forceUpdate = it.hasAnyForceUpdate()) } }
+        auditLog.recordPinChange(scope, before, after)
+    }
+
+    // Invalid API keys: the first one is recorded (and notified) at once, the
+    // rest of that minute are summed into one entry — visible, but no way to
+    // flood the append-only log or the webhook from the device-facing ports.
+    val authFailures = com.example.pinvault.server.service.AuthFailureRecorder(auditLog)
+    com.example.pinvault.server.plugin.AuthFailures.listener = { remoteAddress, method, path ->
+        authFailures.report(remoteAddress, method, path)
+    }
+
+    fun stateHash(scope: String): String {
+        val config = pinConfigStore.load(scope)
+        val canonical = config.pins.sortedBy { it.hostname }.joinToString("\n") { pin ->
+            "${pin.hostname}|${pin.version}|${pin.sha256.sorted().joinToString(",")}|${pin.forceUpdate}|${pin.mtls}|${pin.clientCertVersion}"
+        } + "\nforce=${config.forceUpdate}"
+        return java.security.MessageDigest.getInstance("SHA-256").digest(canonical.toByteArray())
+            .joinToString("") { "%02x".format(it.toInt() and 0xFF) }
+    }
+
+    // What a pending change does, in words an approver can judge.
+    fun describeChange(op: String, path: String, query: String, body: ByteArray): com.example.pinvault.server.service.ApprovalService.Description {
+        val params = io.ktor.http.parseQueryString(query)
+        val scope = params["configApiId"]
+            ?: Regex("^/api/v1/config/([^/]+)/update$").find(path)?.groupValues?.get(1)
+            ?: Regex("^/api/v1/management/hosts/([^/]+)/generate-cert$").find(path)?.groupValues?.get(1)
+            ?: "default-tls"
+        val lenient = Json { ignoreUnknownKeys = true }
+        fun bodyField(name: String): String? = runCatching {
+            Json.parseToJsonElement(body.decodeToString()).jsonObject[name]?.jsonPrimitive?.content
+        }.getOrNull()
+        val detail = kotlinx.serialization.json.buildJsonObject { put("operation", kotlinx.serialization.json.JsonPrimitive(op)) }
+        return when (op) {
+            "pins_update" -> {
+                val incoming = lenient.decodeFromString(com.example.pinvault.server.model.PinConfig.serializer(), body.decodeToString())
+                val current = pinConfigStore.load(scope)
+                val byHost = current.pins.associateBy { it.hostname }
+                // The same versioning the write applies, so the diff shows real changes only.
+                val versioned = incoming.copy(pins = incoming.pins.map { pin ->
+                    val old = byHost[pin.hostname]
+                    when {
+                        old == null -> pin.copy(version = 1)
+                        old.sha256 != pin.sha256 -> pin.copy(version = old.version + 1)
+                        else -> pin.copy(version = old.version)
+                    }
+                })
+                val diff = com.example.pinvault.server.service.PinDiff.of(current, versioned)
+                val live = if (liveGate.enabled) liveGate.check(current, versioned) else null
+                com.example.pinvault.server.service.ApprovalService.Description(
+                    configApiId = scope,
+                    summary = "$scope: " + diff.summary().ifEmpty { "no pin change" },
+                    detail = kotlinx.serialization.json.JsonObject(
+                        detail + diff.toJson() + (live?.let {
+                            mapOf("liveCheck" to Json.encodeToJsonElement(com.example.pinvault.server.service.LiveCertificateGate.Result.serializer(), it))
+                        } ?: emptyMap())
+                    ),
+                    baseHash = stateHash(scope)
+                )
+            }
+            "force_on", "force_off" -> {
+                val host = Regex("^/api/v1/certificate-config/(?:force-update|clear-force)/([^/]+)$").find(path)?.groupValues?.get(1)
+                val what = if (op == "force_on") "Force update ON" else "Force update OFF"
+                com.example.pinvault.server.service.ApprovalService.Description(scope, "$scope: $what for ${host ?: "every host"}", detail)
+            }
+            "host_add" -> com.example.pinvault.server.service.ApprovalService.Description(
+                scope, "$scope: add host ${bodyField("hostname") ?: bodyField("url") ?: "(uploaded certificate)"} (${path.substringAfterLast('/')})", detail
+            )
+            "host_cert" -> {
+                val host = Regex("^/api/v1/hosts/([^/]+)/").find(path)?.groupValues?.get(1) ?: "?"
+                com.example.pinvault.server.service.ApprovalService.Description(
+                    scope, "$host: ${path.substringAfterLast('/')} (every Config API that pins it)", detail
+                )
+            }
+            "config_api_delete" -> com.example.pinvault.server.service.ApprovalService.Description(
+                bodyField("id") ?: "", "Delete Config API ${bodyField("id")} and all of its pins", detail
+            )
+            "bootstrap_pins" -> com.example.pinvault.server.service.ApprovalService.Description(
+                "", "Change the Config API TLS certificate (${path.substringAfterLast('/')}) — apps hold its pins as bootstrap pins", detail
+            )
+            "config_api_lifecycle" -> com.example.pinvault.server.service.ApprovalService.Description(
+                bodyField("id") ?: "",
+                "${if (path.endsWith("/start")) "Start" else "Stop"} Config API ${bodyField("id") ?: "?"}" +
+                    (bodyField("port")?.let { " on port $it" } ?: "") + " — decides which scope's pins that port serves",
+                detail
+            )
+            "signing_key" -> com.example.pinvault.server.service.ApprovalService.Description(
+                "", "Replace the primary config-signing key", detail
+            )
+            "signing_keyset" -> {
+                val payload = bodyField("payload")
+                val version = payload?.let { runCatching { Json.parseToJsonElement(it).jsonObject["version"]?.jsonPrimitive?.content }.getOrNull() }
+                com.example.pinvault.server.service.ApprovalService.Description("", "Publish signing-key set v${version ?: "?"}", detail)
+            }
+            else -> com.example.pinvault.server.service.ApprovalService.Description(scope, "$op $path", detail)
+        }
+    }
+
+    val approvalService = com.example.pinvault.server.service.ApprovalService(
+        store = com.example.pinvault.server.store.ChangeRequestStore(db),
+        audit = auditLog,
+        required = approvalsRequired,
+        ttlHours = System.getenv("APPROVAL_TTL_HOURS")?.toLongOrNull()?.coerceAtLeast(1) ?: 24,
+        managementPort = System.getenv("PORT")?.toIntOrNull() ?: 8080,
+        describe = ::describeChange,
+        stateHash = ::stateHash
+    )
+
+    // Governance plugins for every listener: the audit context (and cache
+    // invalidation on admin writes) and, with approvals on, the approval gate.
+    fun Application.installGovernance(management: Boolean) {
+        install(com.example.pinvault.server.plugin.AdminAudit) {
+            audit = auditLog
+            onAdminWrite = { signedConfigService.invalidate() }
+        }
+        install(com.example.pinvault.server.plugin.ApprovalGate) {
+            approvals = approvalService
+            managementListener = management
+        }
+    }
     val certService = CertificateService(certsDir)
     val mockServerManager = MockServerManager()
     val certExpiryMonitor = com.example.pinvault.server.service.CertExpiryMonitor(hostStore)
@@ -106,15 +264,33 @@ fun main() {
         configApiManager.stopAll()
     })
 
-    // Background cert expiry check (every 6 hours)
+    // Background cert expiry check (every 6 hours). Expiring and expired
+    // certificates are also audited — and pushed to the webhook — once a day
+    // per host, so nobody has to be looking at the dashboard to hear about it.
+    val lastExpiryNotice = java.util.concurrent.ConcurrentHashMap<String, java.time.LocalDate>()
+    fun checkCertExpiry() {
+        certExpiryMonitor.logWarnings()
+        val today = java.time.LocalDate.now()
+        certExpiryMonitor.checkAll().filter { it.level != "ok" }.forEach { cert ->
+            val key = "${cert.configApiId}|${cert.hostname}"
+            if (lastExpiryNotice.put(key, today) != today) {
+                auditLog.record(
+                    "cert_expiring",
+                    if (cert.level == "expired") "${cert.hostname}: certificate EXPIRED (${cert.validUntil})"
+                    else "${cert.hostname}: certificate expires in ${cert.daysRemaining} day(s) (${cert.validUntil})",
+                    configApiId = cert.configApiId, target = cert.hostname, actor = "system"
+                )
+            }
+        }
+    }
     Thread {
         while (true) {
             try { Thread.sleep(6 * 60 * 60 * 1000L) } catch (_: InterruptedException) { break }
-            certExpiryMonitor.logWarnings()
+            try { checkCertExpiry() } catch (e: Exception) { println("Cert expiry check failed: ${e.message}") }
         }
     }.apply { isDaemon = true; name = "cert-expiry-checker" }.start()
     // Initial check on startup
-    certExpiryMonitor.logWarnings()
+    try { checkCertExpiry() } catch (e: Exception) { println("Cert expiry check failed: ${e.message}") }
 
     // Restarts every running mTLS listener against the current truststore file.
     //
@@ -137,6 +313,7 @@ fun main() {
 
     // Config API routing modülü — her API kendi configApiId ve mode'uyla scoped
     fun configApiModuleFor(configApiId: String, mode: String = "tls"): Application.() -> Unit = {
+        installGovernance(management = false)
         routing {
             certificateConfigRoutes(configApiId, pinConfigStore, historyStore, connectionStore, signingService, clientDeviceStore, certService, enrollmentTokenStore, clientCertStore, mockServerManager, hostClientCertStore, onClientCertEnrolled = {
                 // Enrollment sonrası mTLS Config API'leri restart et (yeni truststore ile).
@@ -144,7 +321,9 @@ fun main() {
                 // başlattığı için burada tekrar edilmiyor.
                 refreshMtlsTrust("new truststore", false)
             }, enrollmentMode = enrollmentMode, configApiMode = mode,
-                deviceHostAclStore = deviceHostAclStore)
+                deviceHostAclStore = deviceHostAclStore,
+                signedConfigService = signedConfigService, keySetService = signingKeySetService,
+                liveGate = liveGate, audit = auditLog)
             hostRoutes(configApiId, pinConfigStore, hostStore, historyStore, certService, mockServerManager, hostClientCertStore)
             vaultRoutes(configApiId, vaultFileStore, vaultDistStore, vaultTokenStore,
                 devicePublicKeyStore, vaultTokenService, vaultEncryptionService, signingService,
@@ -152,7 +331,8 @@ fun main() {
                 clientCertStore = clientCertStore,
                 // Dashboard's "vault enabled" switch. Read per request so the
                 // toggle takes effect without restarting this listener.
-                vaultEnabledProvider = { configApiRegistry.isVaultEnabled(configApiId) })
+                vaultEnabledProvider = { configApiRegistry.isVaultEnabled(configApiId) },
+                signedConfigService = signedConfigService)
             get("/health") {
                 call.respond(mapOf("status" to "ok"))
             }
@@ -257,6 +437,7 @@ fun main() {
         }
         install(CallLogging)
         install(com.example.pinvault.server.plugin.ApiKeyAuth)
+        installGovernance(management = true)
         install(StatusPages) {
             exception<Throwable> { call, cause ->
                 call.respond(
@@ -269,7 +450,15 @@ fun main() {
         routing {
             // Management server: tüm config API'lerin verilerine erişim
             // configApiId query param ile scoped: ?configApiId=default-tls
-            certificateConfigRoutes("default-tls", pinConfigStore, historyStore, connectionStore, signingService, clientDeviceStore, hostClientCertStore = hostClientCertStore, enrollmentMode = enrollmentMode, deviceHostAclStore = deviceHostAclStore)
+            certificateConfigRoutes("default-tls", pinConfigStore, historyStore, connectionStore, signingService, clientDeviceStore, hostClientCertStore = hostClientCertStore, enrollmentMode = enrollmentMode, deviceHostAclStore = deviceHostAclStore,
+                signedConfigService = signedConfigService, keySetService = signingKeySetService,
+                liveGate = liveGate, audit = auditLog)
+            signingAdminRoutes(
+                signingService, signedConfigService, signingKeySetService,
+                actorOf = { it.adminName() },
+                onKeysChanged = { event, summary, actor -> auditLog.record(event, summary, actor = actor) }
+            )
+            governanceRoutes(adminRegistry, auditLog, auditStore, approvalService, liveGate, signedConfigService)
             hostRoutes("default-tls", pinConfigStore, hostStore, historyStore, certService, mockServerManager, hostClientCertStore)
             // V2: per-Config-API scoped vault admin endpoints under
             // /api/v1/config-apis/{configApiId}/vault/...  — no more global
@@ -305,11 +494,12 @@ fun main() {
             }
 
             // configApiId bazlı config güncelleme (Web UI'dan)
+            // Same write as PUT /api/v1/certificate-config?configApiId=… — validation,
+            // per-host versioning, live gate, history. It used to store the body
+            // as sent, versions included, with none of those checks.
             post("/api/v1/config/{configApiId}/update") {
                 val configApiId = call.parameters["configApiId"] ?: "default-tls"
-                val incoming = call.receive<com.example.pinvault.server.model.PinConfig>()
-                pinConfigStore.save(configApiId, incoming)
-                call.respond(incoming)
+                call.applyPinConfigUpdate(configApiId, pinConfigStore, historyStore, liveGate, auditLog)
             }
 
             // configApiId bazlı host yönetimi (Web UI'dan)
@@ -358,16 +548,6 @@ fun main() {
                 )
             }
 
-            post("/api/v1/signing-key/regenerate") {
-                // Rotates in place: the routes captured this service instance at
-                // startup, so replacing the variable here would have left every
-                // listener signing with the old key until the next restart.
-                val publicKey = signingService.regenerate()
-                call.respondText(
-                    """{"publicKey":"$publicKey","regenerated":true,"clientUpdateRequired":true}""",
-                    ContentType.Application.Json
-                )
-            }
 
             post("/api/v1/server-tls-pins/regenerate") {
                 serverKeystorePath.delete()
@@ -379,6 +559,28 @@ fun main() {
                 val backup = newCert.sha256Pins.getOrNull(1) ?: ""
                 call.respondText(
                     """{"primaryPin":"$primary","backupPin":"$backup","regenerated":true,"restartRequired":true}""",
+                    ContentType.Application.Json
+                )
+            }
+
+            // Yedek anahtara geçiş (config sunucusunun kendi sertifikası):
+            // uygulamalar bu sertifikanın iki pin'ini başlangıç pini olarak
+            // taşır, yedeğe geçmek uygulama güncellemesi istemez. Yeni asıl
+            // pin eski yedek olur; yeni yedeğin pin'i sonraki sürüme gömülür.
+            post("/api/v1/server-tls-pins/rotate-to-backup") {
+                val backupPin = certService.backupPin(serverCertId)
+                    ?: return@post call.respond(HttpStatusCode.Conflict, mapOf("reason" to "no_backup_key", "error" to
+                        "No stored backup key for the config server certificate: it was uploaded or fetched, or generated " +
+                        "before backup keys were kept. Regenerate it to get one (apps then need the new pins)."))
+                if (backupPin !in serverTlsPins) {
+                    return@post call.respond(HttpStatusCode.Conflict, mapOf("reason" to "backup_not_published", "error" to
+                        "The stored backup key's pin is not among the current bootstrap pins, so apps would reject it."))
+                }
+                val rotated = certService.rotateToBackup(serverCertId, "localhost")
+                serverPinsFile.writeText(rotated.sha256Pins.joinToString("\n"))
+                serverTlsPins = rotated.sha256Pins
+                call.respondText(
+                    """{"primaryPin":"${rotated.sha256Pins[0]}","backupPin":"${rotated.sha256Pins[1]}","rotated":true,"restartRequired":true}""",
                     ContentType.Application.Json
                 )
             }
@@ -738,6 +940,7 @@ fun main() {
         println("  POST /api/v1/connection-history/config-update-report")
         println("=".repeat(60))
         println("ECDSA Public Key: ${signingService.publicKeyBase64}")
+        signingService.signers.forEach { println("  signer ${it.name}: ${it.description} — keyId ${it.keyId}") }
         if (serverCertResult != null) {
             println("Server TLS Pins: ${serverCertResult.sha256Pins}")
         }

@@ -1,80 +1,80 @@
 package com.example.pinvault.server.service
 
+import com.example.pinvault.server.model.SignatureEntry
+import com.example.pinvault.server.service.signing.CommandSigner
+import com.example.pinvault.server.service.signing.ConfigSigner
+import com.example.pinvault.server.service.signing.LocalFileSigner
+import com.example.pinvault.server.service.signing.Pkcs11Signer
+import com.example.pinvault.server.service.signing.SigningKeys
 import java.io.File
-import java.security.*
-import java.security.spec.ECGenParameterSpec
-import java.security.spec.PKCS8EncodedKeySpec
-import java.security.spec.X509EncodedKeySpec
+import java.security.MessageDigest
 import java.util.Base64
-import javax.crypto.Cipher
-import javax.crypto.SecretKeyFactory
-import javax.crypto.spec.GCMParameterSpec
-import javax.crypto.spec.PBEKeySpec
-import javax.crypto.spec.SecretKeySpec
+import java.util.concurrent.atomic.AtomicLong
 
 /**
- * ECDSA P-256 ile pin config response'larını imzalar.
+ * Signs everything a device verifies — config payloads and vault files —
+ * with one or more [ConfigSigner]s.
  *
- * Startup'ta [keyFile]'dan keypair yükler; dosya yoksa yeni üretir.
- * Private key backend'de kalır, [publicKeyBase64] APK'ya gömülür.
+ * One signer (the default: a local key file) behaves exactly as this service
+ * always has. Several signers produce one signature each; devices that set
+ * `requiredSignatures(n)` accept a document only with n of them. The FIRST
+ * signer is the primary: its signature goes into the legacy single-signature
+ * fields, so older clients keep working.
  *
- * ## At-rest protection (H-04)
- *
- * When the `SIGNING_KEY_PASSWORD` env var is set, the private key is
- * stored as AES-256-GCM ciphertext on disk (PBKDF2-SHA256 derives the
- * encryption key from the password). When unset, the key is written
- * unencrypted — a warning is logged and the file should at least be
- * `chmod 600`. For production use a KMS / sealed secret instead of the
- * env var; this is a sample-grade default.
- *
- * Migration: an existing plaintext key file is automatically re-encrypted
- * on first startup with `SIGNING_KEY_PASSWORD` set.
+ * Signers are chosen with `CONFIG_SIGNERS` (see [fromEnv]).
  */
-class ConfigSigningService(private val keyFile: File) {
+class ConfigSigningService(signers: List<ConfigSigner>) {
+
+    /** Single local key file — the historical constructor. */
+    constructor(keyFile: File) : this(listOf(LocalFileSigner(keyFile)))
+
+    val signers: List<ConfigSigner> = signers.also { require(it.isNotEmpty()) { "at least one signer is required" } }
+
+    val primary: ConfigSigner get() = signers.first()
+
+    /** Public key of the primary signer (Base64, X.509) — what the app embeds. */
+    val publicKeyBase64: String get() = primary.publicKeyBase64
+
+    /** How many signatures this process has produced, across all signers. */
+    val signaturesProduced = AtomicLong()
+
+    /** True when the primary key can be replaced from the dashboard (local key file only). */
+    val canRegenerate: Boolean get() = primary is LocalFileSigner
 
     /**
-     * Held in a volatile field, not a `val`, so [regenerate] swaps the key for
-     * every holder of this service. The routes capture the service instance
-     * once at startup; before this, regenerating replaced only the local
-     * variable in the admin handler, so the server kept signing with the old
-     * key (silently, until the next restart) while the dashboard reported
-     * success.
+     * Replaces the primary key file with a fresh key, effective immediately.
+     * Only for the local signer: an HSM or KMS key is rotated where it lives.
      */
-    @Volatile
-    private var keyPair: KeyPair = loadOrGenerate()
-
-    /** APK'ya gömülecek public key (Base64, X.509 encoded) */
-    val publicKeyBase64: String
-        get() = Base64.getEncoder().encodeToString(keyPair.public.encoded)
-
-    /**
-     * Deletes the key file and generates a fresh ECDSA P-256 key, effective
-     * immediately for every caller.
-     *
-     * Every client that embedded the previous public key stops accepting
-     * configs from this server until it is rebuilt with [publicKeyBase64].
-     */
-    @Synchronized
     fun regenerate(): String {
-        keyFile.delete()
-        keyPair = loadOrGenerate()
-        return publicKeyBase64
+        val local = primary as? LocalFileSigner
+            ?: throw UnsupportedOperationException(
+                "The primary signer (${primary.type}) is not a key file — rotate the key in the HSM/KMS " +
+                    "and restart with the new key configured."
+            )
+        return local.regenerate()
     }
 
-    /** Payload string'ini ECDSA-SHA256 ile imzalar, Base64 döner. */
-    fun sign(payload: String): String {
-        val sig = Signature.getInstance("SHA256withECDSA")
-        sig.initSign(keyPair.private)
-        sig.update(payload.toByteArray(Charsets.UTF_8))
-        return Base64.getEncoder().encodeToString(sig.sign())
+    /** Payload string'ini primary imzalayıcıyla ECDSA-SHA256 ile imzalar, Base64 döner. */
+    fun sign(payload: String): String = signAll(payload, onlyPrimary = true).first().signature
+
+    /** One signature per signer, primary first. */
+    fun signAll(payload: String): List<SignatureEntry> = signAll(payload, onlyPrimary = false)
+
+    private fun signAll(payload: String, onlyPrimary: Boolean): List<SignatureEntry> {
+        val bytes = payload.toByteArray(Charsets.UTF_8)
+        val chosen = if (onlyPrimary) listOf(primary) else signers
+        return chosen.map { signer ->
+            val signature = Base64.getEncoder().encodeToString(signer.sign(bytes))
+            signaturesProduced.incrementAndGet()
+            SignatureEntry(keyId = signer.keyId, signature = signature)
+        }
     }
 
-    /** İmzayı doğrular (test/debug için). */
+    /** True when [signature] verifies with ANY configured signer's key (test/debug). */
     fun verify(payload: String, signature: String): Boolean {
-        val sig = Signature.getInstance("SHA256withECDSA")
-        sig.initVerify(keyPair.public)
-        sig.update(payload.toByteArray(Charsets.UTF_8))
-        return sig.verify(Base64.getDecoder().decode(signature))
+        val der = try { Base64.getDecoder().decode(signature) } catch (_: IllegalArgumentException) { return false }
+        val bytes = payload.toByteArray(Charsets.UTF_8)
+        return signers.any { SigningKeys.verify(SigningKeys.decodePublicKey(it.publicKeyBase64), bytes, der) }
     }
 
     /**
@@ -83,19 +83,18 @@ class ConfigSigningService(private val keyFile: File) {
      * SHA-256(plaintext), NOT the wire bytes — so one signature works for
      * plain / at_rest / end_to_end (the device verifies the PLAINTEXT it ends up
      * with, after any per-device E2E decrypt) and is stable per version. Reuses
-     * the same ECDSA P-256 key whose public half the client already trusts for
-     * config signing, so no new key needs to be distributed.
+     * the same signing keys the client already trusts for config signing, so
+     * no new key needs to be distributed.
      *
      * Canonical: `pinvault-vault-file:v1:<key>:<version>:<sha256HexLower(plaintext)>`
-     * (must match ConfigSignatureVerifier.verifyVaultFile on the client).
-     *
-     * DEMO-ONLY: the signing key lives on this server, so a full server
-     * compromise can forge vault signatures. Production should sign through a
-     * KMS/HSM (or off-server) so the private key is never stealable — the
-     * client only ever needs the public half, so the signer can move freely.
+     * (must match ConfigSignatureVerifier.vaultCanonical on the client).
      */
     fun signVaultFile(key: String, version: Int, plaintext: ByteArray): String =
         sign(vaultCanonical(key, version, plaintext))
+
+    /** [signVaultFile] with every signer, primary first. */
+    fun signVaultFileAll(key: String, version: Int, plaintext: ByteArray): List<SignatureEntry> =
+        signAll(vaultCanonical(key, version, plaintext))
 
     private fun vaultCanonical(key: String, version: Int, plaintext: ByteArray): String =
         "pinvault-vault-file:v1:$key:$version:${sha256HexLower(plaintext)}"
@@ -104,145 +103,74 @@ class ConfigSigningService(private val keyFile: File) {
         MessageDigest.getInstance("SHA-256").digest(bytes)
             .joinToString("") { "%02x".format(it.toInt() and 0xFF) }
 
-    private fun loadOrGenerate(): KeyPair {
-        if (keyFile.exists()) {
-            val kp = loadFromFile()
-            // Auto-migrate plaintext → encrypted when a password is now set.
-            val raw = keyFile.readText().trim()
-            val password = System.getenv("SIGNING_KEY_PASSWORD")?.takeIf { it.isNotBlank() }
-            if (password != null && !raw.startsWith(ENCRYPTED_PREFIX)) {
-                println("ConfigSigningService: Re-encrypting plaintext signing key (H-04)")
-                saveToFile(kp)
-            }
-            return kp
-        }
-        val kp = generateKeyPair()
-        saveToFile(kp)
-        println("ConfigSigningService: New ECDSA P-256 keypair generated")
-        return kp
-    }
-
-    private fun generateKeyPair(): KeyPair {
-        val gen = KeyPairGenerator.getInstance("EC")
-        gen.initialize(ECGenParameterSpec("secp256r1"))
-        return gen.generateKeyPair()
-    }
-
-    private fun saveToFile(kp: KeyPair) {
-        keyFile.parentFile?.mkdirs()
-        val plaintext = Base64.getEncoder().encodeToString(kp.private.encoded) +
-                "\n" +
-                Base64.getEncoder().encodeToString(kp.public.encoded)
-
-        val password = System.getenv("SIGNING_KEY_PASSWORD")?.takeIf { it.isNotBlank() }
-        val content = if (password == null) {
-            println("ConfigSigningService: WARNING — SIGNING_KEY_PASSWORD not set, " +
-                "writing signing key in plaintext. Set the env var for at-rest encryption.")
-            plaintext
-        } else {
-            val encrypted = encrypt(plaintext.toByteArray(Charsets.UTF_8), password)
-            ENCRYPTED_PREFIX + Base64.getEncoder().encodeToString(encrypted)
-        }
-        writeOwnerOnly(content)
-    }
-
-    /**
-     * Write [content] to [keyFile] with owner-only (0600) permissions applied
-     * BEFORE any bytes hit disk, then atomically swap it into place. Closes the
-     * audit-L-3 race where the key briefly existed world-readable because the
-     * chmod previously ran only AFTER writeText(). Falls back to best-effort
-     * chmod on non-POSIX filesystems.
-     */
-    private fun writeOwnerOnly(content: String) {
-        val target = keyFile.toPath()
-        val tmp = File(keyFile.parentFile, keyFile.name + ".tmp").toPath()
-        try {
-            val ownerOnly = java.nio.file.attribute.PosixFilePermissions.fromString("rw-------")
-            java.nio.file.Files.deleteIfExists(tmp)
-            java.nio.file.Files.createFile(
-                tmp, java.nio.file.attribute.PosixFilePermissions.asFileAttribute(ownerOnly)
-            )
-            java.nio.file.Files.write(tmp, content.toByteArray(Charsets.UTF_8))
-            try {
-                java.nio.file.Files.move(
-                    tmp, target,
-                    java.nio.file.StandardCopyOption.REPLACE_EXISTING,
-                    java.nio.file.StandardCopyOption.ATOMIC_MOVE
-                )
-            } catch (_: java.nio.file.AtomicMoveNotSupportedException) {
-                java.nio.file.Files.move(tmp, target, java.nio.file.StandardCopyOption.REPLACE_EXISTING)
-            } catch (e: java.nio.file.FileSystemException) {
-                // The key file itself is a mount point (a single-file Docker bind
-                // mount): renaming over it fails with EBUSY, which used to abort
-                // startup whenever SIGNING_KEY_PASSWORD triggered the at-rest
-                // migration, and broke "regenerate signing key" in the dashboard.
-                // Fall back to writing in place; permissions are already 0600 on
-                // the existing file, and we re-apply them after the write.
-                java.nio.file.Files.write(target, content.toByteArray(Charsets.UTF_8))
-                try {
-                    java.nio.file.Files.setPosixFilePermissions(target, ownerOnly)
-                } catch (_: Exception) { /* non-POSIX filesystem */ }
-            }
-        } catch (_: UnsupportedOperationException) {
-            // Non-POSIX filesystem (e.g. Windows): best-effort fallback.
-            keyFile.writeText(content)
-            try { keyFile.setReadable(false, false); keyFile.setReadable(true, true) }
-            catch (_: Exception) { /* depends on filesystem */ }
-        } finally {
-            try { java.nio.file.Files.deleteIfExists(tmp) } catch (_: Exception) {}
-        }
-    }
-
-    private fun loadFromFile(): KeyPair {
-        val raw = keyFile.readText().trim()
-        val plaintext = if (raw.startsWith(ENCRYPTED_PREFIX)) {
-            val password = System.getenv("SIGNING_KEY_PASSWORD")?.takeIf { it.isNotBlank() }
-                ?: error("Signing key file is encrypted but SIGNING_KEY_PASSWORD is not set")
-            val ciphertext = Base64.getDecoder().decode(raw.removePrefix(ENCRYPTED_PREFIX))
-            String(decrypt(ciphertext, password), Charsets.UTF_8)
-        } else {
-            raw
-        }
-
-        val lines = plaintext.split("\n")
-        require(lines.size == 2) { "Invalid signing key file format" }
-
-        val kf = KeyFactory.getInstance("EC")
-        val privateKey = kf.generatePrivate(PKCS8EncodedKeySpec(Base64.getDecoder().decode(lines[0])))
-        val publicKey = kf.generatePublic(X509EncodedKeySpec(Base64.getDecoder().decode(lines[1])))
-
-        return KeyPair(publicKey, privateKey)
-    }
-
-    /** AES-256-GCM with a PBKDF2-derived key. Layout: [16-byte salt][12-byte IV][ciphertext+tag]. */
-    private fun encrypt(plaintext: ByteArray, password: String): ByteArray {
-        val salt = ByteArray(16).also { SecureRandom().nextBytes(it) }
-        val iv = ByteArray(12).also { SecureRandom().nextBytes(it) }
-        val cipher = Cipher.getInstance("AES/GCM/NoPadding")
-        cipher.init(Cipher.ENCRYPT_MODE, deriveKey(password, salt), GCMParameterSpec(128, iv))
-        val ct = cipher.doFinal(plaintext)
-        return salt + iv + ct
-    }
-
-    private fun decrypt(blob: ByteArray, password: String): ByteArray {
-        require(blob.size > 28) { "Encrypted signing key blob is truncated" }
-        val salt = blob.copyOfRange(0, 16)
-        val iv = blob.copyOfRange(16, 28)
-        val ct = blob.copyOfRange(28, blob.size)
-        val cipher = Cipher.getInstance("AES/GCM/NoPadding")
-        cipher.init(Cipher.DECRYPT_MODE, deriveKey(password, salt), GCMParameterSpec(128, iv))
-        return cipher.doFinal(ct)
-    }
-
-    private fun deriveKey(password: String, salt: ByteArray): SecretKeySpec {
-        val spec = PBEKeySpec(password.toCharArray(), salt, PBKDF2_ITERATIONS, 256)
-        val keyBytes = SecretKeyFactory.getInstance("PBKDF2WithHmacSHA256")
-            .generateSecret(spec).encoded
-        return SecretKeySpec(keyBytes, "AES")
-    }
-
     companion object {
-        private const val ENCRYPTED_PREFIX = "ENCv1:"
-        private const val PBKDF2_ITERATIONS = 200_000
+
+        /**
+         * Builds the signers named in `CONFIG_SIGNERS` (comma-separated,
+         * default `local`). Each entry is `type` or `type:name`; a name gives
+         * that signer its own env vars with the suffix `_<NAME>`:
+         *
+         *  - `local` — `SIGNING_KEY_PATH[_NAME]` (default [defaultKeyFile], or
+         *    `signing-key-<name>.pem` next to it), `SIGNING_KEY_PASSWORD[_NAME]`.
+         *  - `pkcs11` — `PKCS11_LIBRARY`, `PKCS11_PIN`, `PKCS11_SLOT_INDEX` (0),
+         *    `PKCS11_KEY_LABEL` (pinvault-config-signing), `PKCS11_GENERATE_KEY` (false).
+         *  - `command` — `SIGNER_COMMAND`, `SIGNER_PUBLIC_KEY` or
+         *    `SIGNER_PUBLIC_KEY_FILE`, `SIGNER_TIMEOUT_MS` (10000),
+         *    `SIGNER_INPUT` (`payload` or `digest`).
+         *
+         * Example, 2-of-2 with one key on this server and one in a KMS:
+         * `CONFIG_SIGNERS=local,command:kms` + `SIGNER_COMMAND_KMS=…` +
+         * `SIGNER_PUBLIC_KEY_KMS=…`.
+         */
+        fun fromEnv(defaultKeyFile: File, env: Map<String, String> = System.getenv()): ConfigSigningService {
+            val specs = (env["CONFIG_SIGNERS"]?.takeIf { it.isNotBlank() } ?: "local")
+                .split(',').map { it.trim() }.filter { it.isNotEmpty() }
+            val signers = specs.map { spec -> buildSigner(spec, defaultKeyFile, env) }
+            require(signers.map { it.keyId }.distinct().size == signers.size) {
+                "CONFIG_SIGNERS lists the same key twice — every signer must hold a different key"
+            }
+            return ConfigSigningService(signers)
+        }
+
+        private fun buildSigner(spec: String, defaultKeyFile: File, env: Map<String, String>): ConfigSigner {
+            val type = spec.substringBefore(':').lowercase()
+            val name = spec.substringAfter(':', "").takeIf { it.isNotBlank() }
+            val suffix = name?.let { "_" + it.uppercase().replace(Regex("[^A-Z0-9]"), "_") } ?: ""
+            fun value(key: String): String? = env["$key$suffix"]?.takeIf { it.isNotBlank() }
+            fun required(key: String): String = value(key)
+                ?: error("CONFIG_SIGNERS entry '$spec' needs $key$suffix")
+
+            return when (type) {
+                "local" -> LocalFileSigner(
+                    keyFile = value("SIGNING_KEY_PATH")?.let(::File)
+                        ?: if (name == null) defaultKeyFile
+                        else File(defaultKeyFile.absoluteFile.parentFile, "signing-key-$name.pem"),
+                    password = value("SIGNING_KEY_PASSWORD") ?: env["SIGNING_KEY_PASSWORD"]?.takeIf { it.isNotBlank() },
+                    name = spec
+                )
+                "pkcs11" -> Pkcs11Signer(
+                    name = spec,
+                    library = required("PKCS11_LIBRARY"),
+                    slotListIndex = value("PKCS11_SLOT_INDEX")?.toIntOrNull() ?: 0,
+                    pin = required("PKCS11_PIN"),
+                    keyLabel = value("PKCS11_KEY_LABEL") ?: "pinvault-config-signing",
+                    generateIfMissing = value("PKCS11_GENERATE_KEY") == "true"
+                )
+                "command" -> CommandSigner(
+                    name = spec,
+                    command = required("SIGNER_COMMAND"),
+                    publicKey = SigningKeys.decodePublicKey(
+                        value("SIGNER_PUBLIC_KEY")
+                            ?: value("SIGNER_PUBLIC_KEY_FILE")?.let { File(it).readText() }
+                            ?: error("CONFIG_SIGNERS entry '$spec' needs SIGNER_PUBLIC_KEY$suffix or SIGNER_PUBLIC_KEY_FILE$suffix")
+                    ),
+                    timeoutMs = value("SIGNER_TIMEOUT_MS")?.toLongOrNull() ?: 10_000,
+                    input = (value("SIGNER_INPUT") ?: "payload").lowercase().also {
+                        require(it == "payload" || it == "digest") { "SIGNER_INPUT$suffix must be payload or digest" }
+                    }
+                )
+                else -> error("Unknown signer type '$type' in CONFIG_SIGNERS (use local, pkcs11 or command)")
+            }
+        }
     }
 }

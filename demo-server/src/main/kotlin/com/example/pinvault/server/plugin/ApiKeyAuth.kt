@@ -2,22 +2,114 @@ package com.example.pinvault.server.plugin
 
 import io.ktor.http.*
 import io.ktor.server.application.*
+import io.ktor.server.plugins.*
 import io.ktor.server.request.*
 import io.ktor.server.response.*
+import io.ktor.util.*
+import java.io.File
 import java.security.MessageDigest
+import java.security.SecureRandom
+import java.util.Base64
+import java.util.concurrent.ConcurrentHashMap
+
+/** Who made an admin call; stored on the call by [ApiKeyAuth]. */
+data class AdminPrincipal(val name: String)
+
+val AdminPrincipalKey = AttributeKey<AdminPrincipal>("PinVaultAdminPrincipal")
+
+/** Set on a call that is the server replaying a change another admin approved. */
+val ApprovedReplayKey = AttributeKey<Long>("PinVaultApprovedReplay")
+
+/**
+ * Address of the admin whose approval triggered a replay. The replay itself
+ * arrives over loopback; [AdminAudit] records this address instead.
+ */
+val ApprovedReplayIpKey = AttributeKey<String>("PinVaultApprovedReplayIp")
+
+/** The authenticated admin's name, or `anonymous` / `system` when there is none. */
+fun ApplicationCall.adminName(): String = attributes.getOrNull(AdminPrincipalKey)?.name ?: "anonymous"
+
+/**
+ * Administrators allowed to use the management API, each with their own key.
+ *
+ *  - `API_KEY` — the single shared key, as before. Its holder is named `admin`.
+ *  - `ADMIN_KEYS` — `name:sha256hex` pairs, comma-separated; `ADMIN_KEYS_FILE`
+ *    — the same pairs, one per line. Only the SHA-256 of each key is
+ *    configured, so the server's environment never holds a usable key.
+ *    `scripts/add-admin.sh` in the sample host prints a new key and its line.
+ *
+ * Named keys are what make the audit log say WHO did something, and what lets
+ * `PIN_CHANGE_APPROVALS=2` tell the requester from the approver.
+ */
+class AdminRegistry(
+    private val legacyKey: String?,
+    private val named: Map<String, ByteArray>
+) {
+    val isEmpty: Boolean get() = legacyKey == null && named.isEmpty()
+
+    val names: List<String> get() = listOfNotNull(legacyKey?.let { LEGACY_NAME }) + named.keys
+
+    /** The admin [provided] belongs to, or null. Every entry is compared, in constant time. */
+    fun identify(provided: String): String? {
+        var match: String? = null
+        if (legacyKey != null && constantTimeEquals(provided, legacyKey)) match = LEGACY_NAME
+        val digest = MessageDigest.getInstance("SHA-256").digest(provided.toByteArray(Charsets.UTF_8))
+        for ((name, hash) in named) {
+            if (MessageDigest.isEqual(digest, hash) && match == null) match = name
+        }
+        return match
+    }
+
+    companion object {
+        const val LEGACY_NAME = "admin"
+
+        /** Names the audit log uses for non-admins; an admin may not be called that. */
+        val RESERVED_NAMES = setOf("system", "unknown", "anonymous")
+        private val NAME = Regex("^[A-Za-z0-9._-]{1,32}$")
+        private val HEX64 = Regex("^[0-9a-fA-F]{64}$")
+
+        fun fromEnv(env: Map<String, String> = System.getenv()): AdminRegistry {
+            val legacy = env["API_KEY"]?.takeIf { it.isNotBlank() }
+            val lines = env["ADMIN_KEYS"]?.split(',').orEmpty() +
+                env["ADMIN_KEYS_FILE"]?.takeIf { it.isNotBlank() }?.let { File(it).readLines() }.orEmpty()
+            val named = linkedMapOf<String, ByteArray>()
+            for (raw in lines.map { it.trim() }.filter { it.isNotEmpty() && !it.startsWith("#") }) {
+                val name = raw.substringBefore(':').trim()
+                val hash = raw.substringAfter(':', "").trim()
+                require(NAME.matches(name)) { "ADMIN_KEYS: invalid admin name '$name' (letters, digits, . _ - up to 32)" }
+                require(HEX64.matches(hash)) { "ADMIN_KEYS: '$name' needs the SHA-256 of its key as 64 hex characters" }
+                require(name !in named) { "ADMIN_KEYS: '$name' is listed twice" }
+                require(name != LEGACY_NAME && name !in RESERVED_NAMES) {
+                    "ADMIN_KEYS: '$name' is reserved (${(RESERVED_NAMES + LEGACY_NAME).joinToString()}) — pick another name"
+                }
+                named[name] = hash.chunked(2).map { it.toInt(16).toByte() }.toByteArray()
+            }
+            return AdminRegistry(legacy, named)
+        }
+    }
+}
 
 /**
  * API Key authentication plugin for management endpoints.
  *
- * When API_KEY env var is set, management endpoints require X-API-Key header.
- * Client endpoints (config download, enrollment, vault) remain unauthenticated.
- * When API_KEY is empty/null, auth is disabled (development mode).
+ * Every non-public endpoint requires `X-API-Key` belonging to one of the
+ * [AdminRegistry] admins; the admin's name is stored on the call
+ * ([AdminPrincipalKey]) for the audit log and the approval workflow. Client
+ * endpoints (config download, enrollment, vault) remain unauthenticated.
  */
-val ApiKeyAuth = createApplicationPlugin(name = "ApiKeyAuth") {
-    val apiKey = System.getenv("API_KEY")?.takeIf { it.isNotBlank() }
-    val allowAnonymous = System.getenv("ALLOW_ANONYMOUS_ADMIN") == "true"
+class ApiKeyAuthConfig {
+    /** Admins; default: read from the environment (API_KEY, ADMIN_KEYS, ADMIN_KEYS_FILE). */
+    var registry: AdminRegistry = AdminRegistry.fromEnv()
 
-    if (apiKey == null) {
+    /** Default: ALLOW_ANONYMOUS_ADMIN=true. */
+    var allowAnonymous: Boolean = System.getenv("ALLOW_ANONYMOUS_ADMIN") == "true"
+}
+
+val ApiKeyAuth = createApplicationPlugin(name = "ApiKeyAuth", ::ApiKeyAuthConfig) {
+    val registry = pluginConfig.registry
+    val allowAnonymous = pluginConfig.allowAnonymous
+
+    if (registry.isEmpty) {
         if (!allowAnonymous) {
             // Fail-fast: a server that copy-pastes the demo-compose file
             // without setting API_KEY would otherwise come up with admin
@@ -25,7 +117,7 @@ val ApiKeyAuth = createApplicationPlugin(name = "ApiKeyAuth") {
             // make the anonymous-admin choice explicit via env var. (C-01)
             error(
                 "API_KEY env var is not set. Refusing to start with anonymous " +
-                "admin access. Set API_KEY=<secret> or, to deliberately run " +
+                "admin access. Set API_KEY=<secret> (or ADMIN_KEYS) or, to deliberately run " +
                 "without authentication (e.g. local dev), set " +
                 "ALLOW_ANONYMOUS_ADMIN=true."
             )
@@ -35,10 +127,15 @@ val ApiKeyAuth = createApplicationPlugin(name = "ApiKeyAuth") {
             "authentication DISABLED. Do not run this configuration on a " +
             "network you don't control."
         )
+        onCall { call ->
+            if (!isPublicEndpoint(call.request.path(), call.request.httpMethod)) {
+                call.attributes.put(AdminPrincipalKey, AdminPrincipal("anonymous"))
+            }
+        }
         return@createApplicationPlugin
     }
 
-    application.log.info("API Key authentication enabled for management endpoints")
+    application.log.info("API Key authentication enabled for management endpoints (admins: ${registry.names})")
 
     onCall { call ->
         val path = call.request.path()
@@ -47,16 +144,102 @@ val ApiKeyAuth = createApplicationPlugin(name = "ApiKeyAuth") {
         // Skip auth for client-facing and public endpoints
         if (isPublicEndpoint(path, method)) return@onCall
 
+        // The server replaying a change that another admin approved. The
+        // token is single-use, bound to this exact method + path + query,
+        // valid for seconds and only accepted over loopback — see ApprovalReplay.
+        call.request.header(ApprovalReplay.HEADER)?.let { token ->
+            // The socket's own peer address (never a forwarded header, never
+            // a reverse-DNS name): only the server itself may replay.
+            val grant = ApprovalReplay.redeem(token, method.value, path, call.request.queryString(), call.request.local.remoteAddress)
+            if (grant == null) {
+                call.respond(HttpStatusCode.Forbidden, mapOf("error" to "Invalid or expired approval replay token"))
+                return@onCall
+            }
+            call.attributes.put(AdminPrincipalKey, AdminPrincipal(grant.actor))
+            call.attributes.put(ApprovedReplayKey, grant.changeRequestId)
+            if (grant.ip.isNotEmpty()) call.attributes.put(ApprovedReplayIpKey, grant.ip)
+            return@onCall
+        }
+
         val providedKey = call.request.header("X-API-Key")
         if (providedKey == null) {
             call.respond(HttpStatusCode.Unauthorized, mapOf("error" to "X-API-Key header required"))
             return@onCall
         }
 
-        if (!constantTimeEquals(providedKey, apiKey)) {
+        val admin = registry.identify(providedKey)
+        if (admin == null) {
+            // remoteAddress, not remoteHost: remoteHost is a blocking reverse-DNS
+            // lookup on the event-loop thread, and a name the caller controls.
+            AuthFailures.report(call.request.origin.remoteAddress, method.value, path)
             call.respond(HttpStatusCode.Forbidden, mapOf("error" to "Invalid API key"))
             return@onCall
         }
+        call.attributes.put(AdminPrincipalKey, AdminPrincipal(admin))
+    }
+}
+
+/**
+ * Invalid-key attempts, forwarded to whoever registers [listener] (the audit
+ * log). A burst of these is someone guessing keys.
+ */
+object AuthFailures {
+    @Volatile
+    var listener: ((remoteHost: String, method: String, path: String) -> Unit)? = null
+
+    fun report(remoteHost: String, method: String, path: String) {
+        try {
+            listener?.invoke(remoteHost, method, path)
+        } catch (_: Exception) { /* auditing must never break auth */ }
+    }
+}
+
+/**
+ * One-time tokens that let the server replay an approved change through its
+ * own management API, as the requester, without holding anyone's key.
+ */
+object ApprovalReplay {
+    const val HEADER = "X-PinVault-Replay"
+    private const val VALIDITY_MS = 30_000L
+
+    /** [ip] is the approver's address, for the audit entries the replay writes. */
+    data class Grant(
+        val changeRequestId: Long,
+        val actor: String,
+        val method: String,
+        val path: String,
+        val query: String,
+        val expiresAt: Long,
+        val ip: String = ""
+    )
+
+    private val grants = ConcurrentHashMap<String, Grant>()
+    private val random = SecureRandom()
+
+    private fun isLoopback(address: String): Boolean =
+        try {
+            // A literal IP from the socket: parsed, not resolved.
+            java.net.InetAddress.getByName(address).isLoopbackAddress
+        } catch (_: Exception) {
+            false
+        }
+
+    fun issue(changeRequestId: Long, actor: String, method: String, path: String, query: String, ip: String = ""): String {
+        val token = ByteArray(32).also(random::nextBytes).let { Base64.getUrlEncoder().withoutPadding().encodeToString(it) }
+        grants[token] = Grant(changeRequestId, actor, method.uppercase(), path, query, System.currentTimeMillis() + VALIDITY_MS, ip)
+        return token
+    }
+
+    /** Consumes [token] if it matches this request; null otherwise. */
+    fun redeem(token: String, method: String, path: String, query: String, remoteAddress: String): Grant? {
+        val grant = grants.remove(token) ?: return null
+        // Expired grants of abandoned replays are dropped here too.
+        val now = System.currentTimeMillis()
+        grants.entries.removeIf { it.value.expiresAt < now }
+        val ok = grant.expiresAt > now &&
+            isLoopback(remoteAddress) &&
+            grant.method == method.uppercase() && grant.path == path && grant.query == query
+        return if (ok) grant else null
     }
 }
 
@@ -143,4 +326,12 @@ object ApiKeyPolicy {
     /** Constant-time comparison of a presented key against the expected one. */
     fun matches(provided: String?, expected: String): Boolean =
         provided != null && constantTimeEquals(provided, expected)
+
+    private val registry by lazy { AdminRegistry.fromEnv() }
+
+    /** True when [provided] is the key of an `ADMIN_KEYS` admin. */
+    fun isNamedAdmin(provided: String): Boolean =
+        registry.identify(provided).let { it != null && it != AdminRegistry.LEGACY_NAME }
+
+    fun hasNamedAdmins(): Boolean = registry.names.any { it != AdminRegistry.LEGACY_NAME }
 }

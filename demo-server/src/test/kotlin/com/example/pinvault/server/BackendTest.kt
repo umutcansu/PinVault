@@ -356,6 +356,141 @@ class BackendTest {
         assertTrue(stalePins.none { it in secondV2 }, "Second scope must NOT still hold the stale pins")
     }
 
+    // Regression (demo-app Espresso, 2026-09-24): a scope can pin a host
+    // without a host record of its own — pins written straight to the scope.
+    // Rotation used to skip it, and its devices failed with a pin mismatch.
+    @Test
+    fun `C24 — regenerate cert reaches a scope that pins the host without a host record`() = testApplication {
+        configureApp()
+        client.post("/api/v1/hosts/generate-cert") {
+            contentType(ContentType.Application.Json)
+            setBody("""{"hostname":"pinned-only.test"}""")
+        }
+        val secondScope = "mtls-pins-only-test"
+        pinConfigStore.ensureConfigExists(secondScope)
+        val stalePins = listOf("AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=", "BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB=")
+        pinConfigStore.save(secondScope, pinConfigStore.load(secondScope).let {
+            it.copy(pins = it.pins + HostPin("pinned-only.test", stalePins, version = 1))
+        })
+        assertNull(hostStore.get("pinned-only.test", secondScope), "the second scope pins the host but has no record")
+
+        val regenResp = client.post("/api/v1/hosts/pinned-only.test/regenerate-cert") {
+            contentType(ContentType.Application.Json)
+        }
+        assertEquals(HttpStatusCode.OK, regenResp.status)
+
+        val primary = pinConfigStore.load(configApiId).pins.single { it.hostname == "pinned-only.test" }
+        val second = pinConfigStore.load(secondScope).pins.single { it.hostname == "pinned-only.test" }
+        assertEquals(primary.sha256.toSet(), second.sha256.toSet(), "the pins-only scope must get the new pins")
+        assertEquals(2, second.version, "and a new version, so its devices apply them")
+        assertNull(hostStore.get("pinned-only.test", secondScope), "no host record is invented for it")
+    }
+
+    @Test
+    fun `C24 — cert rotation keeps the host's mTLS flag, client-cert version and force flag`() = testApplication {
+        configureApp()
+        client.post("/api/v1/hosts/generate-cert") {
+            contentType(ContentType.Application.Json)
+            setBody("""{"hostname":"mtls-rotate.test"}""")
+        }
+        pinConfigStore.save(configApiId, pinConfigStore.load(configApiId).let { config ->
+            config.copy(pins = config.pins.map {
+                if (it.hostname == "mtls-rotate.test") it.copy(mtls = true, clientCertVersion = 3, forceUpdate = true) else it
+            })
+        })
+        val before = pinConfigStore.load(configApiId).pins.single { it.hostname == "mtls-rotate.test" }
+
+        val regenResp = client.post("/api/v1/hosts/mtls-rotate.test/regenerate-cert") {
+            contentType(ContentType.Application.Json)
+        }
+        assertEquals(HttpStatusCode.OK, regenResp.status)
+
+        val after = pinConfigStore.load(configApiId).pins.single { it.hostname == "mtls-rotate.test" }
+        assertNotEquals(before.sha256, after.sha256, "pins rotate")
+        assertEquals(before.version + 1, after.version)
+        // Rotation used to rebuild the entry from scratch: an mTLS host lost
+        // its flag, and devices stopped presenting their client certificate.
+        assertTrue(after.mtls, "mTLS flag kept")
+        assertEquals(3, after.clientCertVersion, "client-cert version kept")
+        assertTrue(after.forceUpdate, "force flag kept")
+    }
+
+    // Regression (2026-09-24): a generated certificate published a backup pin
+    // but threw the backup key away, so that pin could never be served and
+    // the "switch to the backup key" runbook step was impossible.
+    @Test
+    fun `C24 — a generated certificate keeps its backup key`() {
+        val result = certService.generateCertificate("keep_backup_test", "keep-backup.test")
+        assertNotEquals(result.sha256Pins[0], result.sha256Pins[1])
+        assertEquals(result.sha256Pins[1], certService.backupPin("keep_backup_test"), "the published backup pin belongs to a stored key")
+    }
+
+    @Test
+    fun `C24 — rotate-to-backup serves the published backup key and prepares a new one`() = testApplication {
+        configureApp()
+        val created = Json.parseToJsonElement(client.post("/api/v1/hosts/generate-cert") {
+            contentType(ContentType.Application.Json)
+            setBody("""{"hostname":"rotate-backup.test"}""")
+        }.bodyAsText()).jsonObject
+        val (primary, backup) = created["sha256Pins"]!!.jsonArray.map { it.jsonPrimitive.content }
+        pinConfigStore.save(configApiId, pinConfigStore.load(configApiId).let { config ->
+            config.copy(pins = config.pins.map { if (it.hostname == "rotate-backup.test") it.copy(mtls = true, clientCertVersion = 2) else it })
+        })
+
+        val response = client.post("/api/v1/hosts/rotate-backup.test/rotate-to-backup")
+        assertEquals(HttpStatusCode.OK, response.status, response.bodyAsText())
+        val pins = Json.parseToJsonElement(response.bodyAsText()).jsonObject["sha256Pins"]!!.jsonArray.map { it.jsonPrimitive.content }
+
+        assertEquals(backup, pins[0], "the certificate now serves the backup key devices already trust")
+        assertTrue(pins[1] !in listOf(primary, backup), "a fresh backup is prepared")
+        val keystore = hostStore.get("rotate-backup.test", configApiId)!!.keystorePath!!
+        assertEquals(backup, certService.extractHashFromKeystore(keystore), "the keystore on disk serves the old backup key")
+        assertEquals(pins[1], certService.backupPin("rotate-backup_test"), "the new backup key is stored")
+
+        val stored = pinConfigStore.load(configApiId).pins.single { it.hostname == "rotate-backup.test" }
+        assertEquals(pins, stored.sha256, "the old primary drops out of the published pins")
+        assertEquals(2, stored.version)
+        assertTrue(stored.mtls, "mTLS flag kept")
+        assertEquals(2, stored.clientCertVersion)
+    }
+
+    @Test
+    fun `C24 — rotate-to-backup is refused when the backup key is missing or unpublished`() = testApplication {
+        configureApp()
+        client.post("/api/v1/hosts/generate-cert") {
+            contentType(ContentType.Application.Json)
+            setBody("""{"hostname":"no-backup.test"}""")
+        }
+        // The backup pin was taken out of the list: devices would reject its key.
+        pinConfigStore.save(configApiId, pinConfigStore.load(configApiId).let { config ->
+            config.copy(pins = config.pins.map {
+                if (it.hostname == "no-backup.test") it.copy(sha256 = listOf(it.sha256[0], "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=")) else it
+            })
+        })
+        val unpublished = client.post("/api/v1/hosts/no-backup.test/rotate-to-backup")
+        assertEquals(HttpStatusCode.Conflict, unpublished.status)
+        assertEquals("backup_not_published", Json.parseToJsonElement(unpublished.bodyAsText()).jsonObject["reason"]?.jsonPrimitive?.content)
+
+        // An uploaded certificate has no stored backup key at all; the one kept
+        // for the earlier generated certificate must not linger.
+        val source = certService.generateCertificate("upload_source_test", "no-backup.test")
+        certService.importCertificate("no-backup_test", File(source.keystorePath).readBytes(), CertificateService.KEYSTORE_PASSWORD, "jks")
+        assertNull(certService.backupPin("no-backup_test"))
+        val missing = client.post("/api/v1/hosts/no-backup.test/rotate-to-backup")
+        assertEquals(HttpStatusCode.Conflict, missing.status)
+        assertEquals("no_backup_key", Json.parseToJsonElement(missing.bodyAsText()).jsonObject["reason"]?.jsonPrimitive?.content)
+        assertEquals(1, pinConfigStore.load(configApiId).pins.single { it.hostname == "no-backup.test" }.version, "nothing published")
+    }
+
+    @Test
+    fun `C24 — the config server certificate can switch to its backup key`() {
+        val first = certService.generateCertificate("demo-server", "localhost")
+        val rotated = certService.rotateToBackup("demo-server", "localhost")
+        assertEquals(first.sha256Pins[1], rotated.sha256Pins[0], "apps holding the old bootstrap pins accept the new certificate")
+        assertEquals(first.sha256Pins[1], certService.extractHashFromKeystore(rotated.keystorePath))
+        assertEquals(rotated.sha256Pins[1], certService.backupPin("demo-server"))
+    }
+
     // ── Force update ────────────────────────────────────
 
     @Test

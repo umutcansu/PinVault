@@ -10,9 +10,11 @@ import org.bouncycastle.operator.jcajce.JcaContentSignerBuilder
 import java.io.File
 import java.io.FileInputStream
 import java.math.BigInteger
+import java.security.KeyPair
 import java.security.KeyPairGenerator
 import java.security.KeyStore
 import java.security.MessageDigest
+import java.security.PrivateKey
 import java.security.cert.Certificate
 import java.security.cert.X509Certificate
 import java.security.interfaces.RSAPublicKey
@@ -80,22 +82,82 @@ class CertificateService(
 
     /**
      * Self-signed sertifika üretir.
-     * Primary key TLS için kullanılır, backup key pin rotasyonu için ayrılır.
+     *
+     * Primary key TLS için kullanılır. Backup key'in pin'i listeye girer ve
+     * anahtarın kendisi `<id>.backup.jks` dosyasında saklanır: [rotateToBackup]
+     * sertifikayı ona geçirdiğinde cihazlar pin'ini zaten tuttuğu için bağlantı
+     * kesilmez. (Eskiden backup key üretilip atılıyordu; pin'i hiçbir zaman
+     * kullanılamıyordu.)
      */
     fun generateCertificate(id: String, hostname: String): CertGenResult {
-        val keyPairGen = KeyPairGenerator.getInstance("RSA")
-        keyPairGen.initialize(2048)
+        val primaryKeyPair = newRsaKeyPair()
+        val backupKeyPair = newRsaKeyPair()
 
-        val primaryKeyPair = keyPairGen.generateKeyPair()
-        val backupKeyPair = keyPairGen.generateKeyPair()
+        val (jksFile, cert) = writeServerKeystore(id, hostname, primaryKeyPair)
+        writeBackupKey(id, hostname, backupKeyPair)
 
+        return CertGenResult(
+            keystorePath = jksFile.absolutePath,
+            sha256Pins = listOf(extractHash(cert), sha256Base64(backupKeyPair.public.encoded)),
+            validUntil = cert.notAfter.toInstant().toString()
+        )
+    }
+
+    /**
+     * Pin of the backup key stored for [id], or null when there is none —
+     * the certificate was uploaded or fetched, or generated before backup
+     * keys were kept.
+     */
+    fun backupPin(id: String): String? {
+        val file = backupKeyFile(id)
+        if (!file.exists()) return null
+        val ks = KeyStore.getInstance("JKS")
+        FileInputStream(file).use { ks.load(it, KEYSTORE_PASSWORD.toCharArray()) }
+        return ks.getCertificate(BACKUP_ALIAS)?.let { extractHash(it) }
+    }
+
+    /**
+     * Serves [hostname] from its stored backup key and prepares a new backup.
+     *
+     * Devices already hold the backup key's pin — it was published next to
+     * the primary — so they keep connecting: no app update, no config
+     * refresh. The returned pins (the old backup, now serving, and the new
+     * backup) are what to publish next; the old primary drops out.
+     */
+    fun rotateToBackup(id: String, hostname: String): CertGenResult {
+        val file = backupKeyFile(id)
+        check(file.exists()) { "No stored backup key for $id" }
+        val ks = KeyStore.getInstance("JKS")
+        FileInputStream(file).use { ks.load(it, KEYSTORE_PASSWORD.toCharArray()) }
+        val promoted = KeyPair(
+            ks.getCertificate(BACKUP_ALIAS).publicKey,
+            ks.getKey(BACKUP_ALIAS, KEYSTORE_PASSWORD.toCharArray()) as PrivateKey
+        )
+        val nextBackup = newRsaKeyPair()
+
+        val (jksFile, cert) = writeServerKeystore(id, hostname, promoted)
+        writeBackupKey(id, hostname, nextBackup)
+
+        return CertGenResult(
+            keystorePath = jksFile.absolutePath,
+            sha256Pins = listOf(extractHash(cert), sha256Base64(nextBackup.public.encoded)),
+            validUntil = cert.notAfter.toInstant().toString()
+        )
+    }
+
+    private fun newRsaKeyPair(): KeyPair =
+        KeyPairGenerator.getInstance("RSA").apply { initialize(2048) }.generateKeyPair()
+
+    private fun backupKeyFile(id: String) = File(certsDir, "$id.backup.jks")
+
+    private fun selfSignedCertificate(hostname: String, keyPair: KeyPair): X509Certificate {
         val subject = X500Name("CN=$hostname, O=PinVault Demo, C=TR")
         val notBefore = Date()
         val notAfter = Date(System.currentTimeMillis() + 365L * 24 * 60 * 60 * 1000)
         val serial = BigInteger.valueOf(System.currentTimeMillis())
 
         val certBuilder = JcaX509v3CertificateBuilder(
-            subject, serial, notBefore, notAfter, subject, primaryKeyPair.public
+            subject, serial, notBefore, notAfter, subject, keyPair.public
         )
 
         // Subject Alternative Names
@@ -103,25 +165,32 @@ class CertificateService(
             Extension.subjectAlternativeName, false, buildSanNames(hostname)
         )
 
-        val signer = JcaContentSignerBuilder("SHA256withRSA").build(primaryKeyPair.private)
-        val cert = JcaX509CertificateConverter().getCertificate(certBuilder.build(signer))
+        val signer = JcaContentSignerBuilder("SHA256withRSA").build(keyPair.private)
+        return JcaX509CertificateConverter().getCertificate(certBuilder.build(signer))
+    }
 
-        // JKS keystore
+    /** The TLS keystore (`<id>.jks`, alias "server") serving [hostname] from [keyPair]. */
+    private fun writeServerKeystore(id: String, hostname: String, keyPair: KeyPair): Pair<File, X509Certificate> {
+        val cert = selfSignedCertificate(hostname, keyPair)
         val keyStore = KeyStore.getInstance("JKS")
         keyStore.load(null, null)
-        keyStore.setKeyEntry("server", primaryKeyPair.private, KEYSTORE_PASSWORD.toCharArray(), arrayOf(cert))
+        keyStore.setKeyEntry("server", keyPair.private, KEYSTORE_PASSWORD.toCharArray(), arrayOf(cert))
 
         val jksFile = File(certsDir, "$id.jks")
         jksFile.outputStream().use { keyStore.store(it, KEYSTORE_PASSWORD.toCharArray()) }
+        return jksFile to cert
+    }
 
-        val primaryHash = extractHash(cert)
-        val backupHash = sha256Base64(backupKeyPair.public.encoded)
-
-        return CertGenResult(
-            keystorePath = jksFile.absolutePath,
-            sha256Pins = listOf(primaryHash, backupHash),
-            validUntil = notAfter.toInstant().toString()
-        )
+    // A separate file, not a second entry in `<id>.jks`: the TLS listeners
+    // load that keystore and must only ever see the serving key. JKS keeps a
+    // private key only with a certificate, so the backup carries a
+    // self-signed placeholder that is never served.
+    private fun writeBackupKey(id: String, hostname: String, keyPair: KeyPair) {
+        val cert = selfSignedCertificate(hostname, keyPair)
+        val keyStore = KeyStore.getInstance("JKS")
+        keyStore.load(null, null)
+        keyStore.setKeyEntry(BACKUP_ALIAS, keyPair.private, KEYSTORE_PASSWORD.toCharArray(), arrayOf(cert))
+        backupKeyFile(id).outputStream().use { keyStore.store(it, KEYSTORE_PASSWORD.toCharArray()) }
     }
 
     /**
@@ -154,6 +223,9 @@ class CertificateService(
 
         val jksFile = File(certsDir, "$id.jks")
         jksFile.outputStream().use { jksKs.store(it, KEYSTORE_PASSWORD.toCharArray()) }
+        // A backup key kept for an earlier generated certificate is not this
+        // certificate's backup; rotating to it would serve an unpublished pin.
+        backupKeyFile(id).delete()
 
         val primaryHash = extractHash(cert)
         val backupHash = if (chain.size > 1) extractHash(chain[1]) else primaryHash
@@ -453,6 +525,9 @@ class CertificateService(
          */
         val KEYSTORE_PASSWORD: String =
             System.getenv("KEYSTORE_PASSWORD")?.takeIf { it.isNotBlank() } ?: "changeit"
+
+        /** Alias of the backup key in `<id>.backup.jks`. */
+        private const val BACKUP_ALIAS = "backup"
 
         private val IPV4_LITERAL = Regex("""^\d{1,3}(\.\d{1,3}){3}$""")
         private val DNS_NAME = Regex("""^(\*\.)?[A-Za-z0-9]([A-Za-z0-9-]*[A-Za-z0-9])?(\.[A-Za-z0-9]([A-Za-z0-9-]*[A-Za-z0-9])?)*$""")

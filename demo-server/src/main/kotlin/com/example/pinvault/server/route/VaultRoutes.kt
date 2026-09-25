@@ -64,8 +64,14 @@ fun Route.vaultRoutes(
      *
      * Only the client-facing download is gated — see the route below.
      */
-    vaultEnabledProvider: () -> Boolean = { true }
+    vaultEnabledProvider: () -> Boolean = { true },
+    /**
+     * Produces (and, with `CONFIG_SIGNATURE_CACHE`, caches) the vault file
+     * signatures. Null = sign per request with [signingService].
+     */
+    signedConfigService: com.example.pinvault.server.service.SignedConfigService? = null
 ) {
+    val vaultSigner = signedConfigService ?: signingService?.let { com.example.pinvault.server.service.SignedConfigService(it) }
     route("/api/v1/vault") {
 
         // ── Client-facing: download + report ────────────────────────
@@ -133,13 +139,16 @@ fun Route.vaultRoutes(
                     // (ALLOW_ANONYMOUS_ADMIN dev mode) fail closed rather than
                     // turning an "admin-only" file into a world-readable one.
                     val expected = apiKeyProvider()
-                    if (expected == null) {
+                    val provided = call.request.header("X-API-Key")
+                    // A named admin (ADMIN_KEYS) may fetch it too, with or without API_KEY.
+                    val namedAdmin = provided != null && ApiKeyPolicy.isNamedAdmin(provided)
+                    if (expected == null && !namedAdmin && !ApiKeyPolicy.hasNamedAdmins()) {
                         log.warn("api_key file requested but no API_KEY configured: configApi={} key={}",
                             configApiId, key)
                         return@get call.respond(HttpStatusCode.Forbidden,
                             mapOf("error" to "api_key policy requires API_KEY to be configured on the server"))
                     }
-                    if (!ApiKeyPolicy.matches(call.request.header("X-API-Key"), expected)) {
+                    if (!namedAdmin && (expected == null || !ApiKeyPolicy.matches(provided, expected))) {
                         log.warn("api_key file rejected (missing/invalid X-API-Key): configApi={} key={}",
                             configApiId, key)
                         return@get call.respond(HttpStatusCode.Unauthorized,
@@ -225,11 +234,18 @@ fun Route.vaultRoutes(
             // possibly per-device-encrypted wire `payload`, so a single signature
             // covers plain/at_rest/end_to_end and the device verifies whatever
             // plaintext it ends up with. Canonical binds key+version+hash.
-            signingService?.let {
-                call.response.header(
-                    "X-Vault-Signature",
-                    it.signVaultFile(key, entry.version, entry.content)
-                )
+            // With several signers (m-of-n) every signature goes into
+            // X-Vault-Signatures as `keyId:signature`, comma-separated;
+            // X-Vault-Signature keeps the primary one for older clients.
+            vaultSigner?.let {
+                val signatures = it.vaultSignatures(key, entry.version, entry.content)
+                call.response.header("X-Vault-Signature", signatures.first().signature)
+                if (signatures.size > 1) {
+                    call.response.header(
+                        "X-Vault-Signatures",
+                        signatures.joinToString(",") { s -> "${s.keyId}:${s.signature}" }
+                    )
+                }
             }
             call.respondBytes(payload, ContentType.Application.OctetStream)
         }
