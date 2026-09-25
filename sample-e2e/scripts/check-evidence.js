@@ -74,6 +74,8 @@ function knownSecrets() {
   add('geçici test sunucusu API_KEY', dotEnvKey(path.join(env.LOCAL_DIR, 'host-fresh/.env')));
   add('ana host KEYSTORE_PASSWORD', dotEnvKey(path.join(env.HOST_DIR, '.env'), 'KEYSTORE_PASSWORD'));
   add('geçici test sunucusu KEYSTORE_PASSWORD', dotEnvKey(path.join(env.LOCAL_DIR, 'host-fresh/.env'), 'KEYSTORE_PASSWORD'));
+  add('ana host VAULT_AT_REST_PASSWORD', dotEnvKey(path.join(env.HOST_DIR, '.env'), 'VAULT_AT_REST_PASSWORD'));
+  add('geçici test sunucusu VAULT_AT_REST_PASSWORD', dotEnvKey(path.join(env.LOCAL_DIR, 'host-fresh/.env'), 'VAULT_AT_REST_PASSWORD'));
   add('ana host imzalama private key (satır 1)', readLines(env.SIGNING_KEY_FILE)[0]);
   add('geçici test sunucusu imzalama private key (satır 1)', readLines(path.join(env.LOCAL_DIR, 'host-fresh/data/signing-key.pem'))[0]);
   const pemBodies = (file, label) => {

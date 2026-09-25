@@ -114,12 +114,13 @@ test('Vault at_rest: sunucu diskinde şifreli, ağ trafiğinde şifresiz, telefo
       expect(status).toContain(secret);
     });
 
-    await test.step('Sunucu: VAULT_AT_REST_PASSWORD ayarı ve sabit demo parolası uyarısı', async () => {
+    await test.step('Sunucu: VAULT_AT_REST_PASSWORD dolu, demo parolası kullanılmıyor', async () => {
+      // Değerler kanıta girmez: yalnızca dolu mu boş mu.
       const envDump = await attachCommand(
         testInfo,
-        'docker exec pinvault-host env (VAULT_*)',
+        'docker exec pinvault-host env (VAULT_*, değerler gizli)',
         'docker',
-        ['exec', env.CONTAINER, 'sh', '-c', 'env | grep -i vault || echo "(VAULT_* yok)"'],
+        ['exec', env.CONTAINER, 'sh', '-c', 'env | grep "^VAULT_" | sed -E "s/=(.+)/=<dolu, değer gizli>/; s/=$/=<boş>/" || echo "(VAULT_* yok)"'],
       );
       const warn = hostControl
         .logs(2000)
@@ -128,21 +129,21 @@ test('Vault at_rest: sunucu diskinde şifreli, ağ trafiğinde şifresiz, telefo
         .join('\n');
       await attachText(
         testInfo,
-        'at_rest şifreleme anahtarı nereden geliyor — bulgu',
+        'at_rest şifreleme anahtarı nereden geliyor',
         [
           envDump.trim(),
           '',
-          'Sunucu logu:',
-          warn || '(ilgili satır yok)',
+          'Sunucu logu (VaultAtRestCipher / at-rest satırları):',
+          warn || '(ilgili satır yok: demo parolası uyarısı basılmadı)',
           '',
-          'Bu kurulumda VAULT_AT_REST_PASSWORD BOŞ. VaultAtRestCipher boş değeri',
-          '"ayarlanmamış" sayıyor, kaynak koddaki sabit demo parolasını kullanıyor ve',
-          'log\'a uyarı yazıyor. Yani şifreleme göstermelik kalıyor (parola kaynak kodda).',
-          'Yukarıdaki blob yine de gerçekten AES-256-GCM: biçim ve akış doğru, eksik olan',
-          'anahtarın güvenli yönetimi. Üretimde VAULT_AT_REST_PASSWORD (ya da KMS) zorunlu.',
+          'Parolayı setup.sh üretiyor ve .env\'de duruyor. Boş olsaydı sunucu kaynak',
+          'koddaki sabit demo parolasını kullanır, log\'a uyarı yazardı: şifreleme',
+          'göstermelik kalırdı. Demo parolasıyla yazılmış eski dosyalar sunucu',
+          'açılırken yeni parolaya geçirildi.',
         ].join('\n'),
       );
-      expect(envDump).toContain('VAULT_AT_REST_PASSWORD');
+      expect(envDump).toMatch(/^VAULT_AT_REST_PASSWORD=<dolu, değer gizli>$/m);
+      expect(warn).not.toMatch(/VAULT_AT_REST_PASSWORD not set/);
     });
 
     await test.step('Web: dağıtım geçmişinde indirme görünüyor', async () => {
