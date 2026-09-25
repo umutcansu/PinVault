@@ -10,7 +10,7 @@
 // saklama, E sunucu işletimi, F sunucuya ulaşılamadığında, G araya girme
 // saldırıları, H kendi sunucusuyla ya da sunucusuz kullanım, S imza
 // anahtarlarının korunması (isteğe bağlı), Y değişiklik denetimi ve onay
-// (isteğe bağlı). Grup ajanları kendi satırlarını ekler; PLAN.md bölüm 3 ile
+// (isteğe bağlı), U sürüm yükseltme. Grup ajanları kendi satırlarını ekler; PLAN.md bölüm 3 ile
 // aynı adlandırma.
 
 const GROUPS = {
@@ -25,6 +25,7 @@ const GROUPS = {
   H: 'Kendi sunucusuyla ya da sunucusuz kullanım',
   S: 'İmza anahtarlarının korunması (isteğe bağlı)',
   Y: 'Değişiklik denetimi ve onay (isteğe bağlı)',
+  U: 'Sürüm yükseltme',
 };
 
 const FEATURES = [
@@ -153,6 +154,7 @@ const FEATURES = [
   { id: 'Y-onay-reddi', group: 'Y', feature: 'Ret, Config API durdurmanın da onaya bağlı olması ve eskimiş istek: bob\'un gerekçeyle reddettiği istek uygulanmıyor; varsayılan Config API\'yi durdurmak da onay istiyor (202, onay kartında "Config API başlat/durdur"), bob reddedince Config API çalışmaya, telefon config almaya devam ediyor; karara bağlanan isteklerin saklanan içeriği siliniyor; aynı pin\'ler için açılan iki istekten biri onaylanınca diğeri 409 "changed after … was requested" alıyor (eskimiş istek: pin\'ler bu arada değişti)', scenarios: ['Y03'] },
   { id: 'Y-canli-kapi-enforce', group: 'Y', feature: 'Canlı sertifika kontrolü, engelleme modu (PIN_LIVE_CHECK=enforce, LIVE_CHECK_HOST_MAP): host\'un şu an sunduğu sertifikanın pin\'ini içermeyen pin listesi 422 ile reddediliyor, dashboard o sertifikayı gösterip gerekçe istiyor; gerekçe boşsa kaydedilmiyor ve telefon mock host\'a bağlanmaya devam ediyor; "Canlı Kontrol" düğmesi kaydetmeden aynı sonucu veriyor (✗ / ✓); o sertifikayı içeren liste kontrolden geçiyor', scenarios: ['Y04'] },
   { id: 'Y-canli-kapi-override', group: 'Y', feature: 'Gerekçe yazıp yine de kaydetme: gerekçe sorusu yanıtlanınca liste ?liveCheckOverride ile kaydediliyor, live_check_overridden gerekçesiyle denetim kaydına ve webhook\'a (HMAC imzası doğru) düşüyor; bu yanlış listeyi alan telefon mock host\'a pin uyuşmazlığı yüzünden bağlanamıyor (kontrolün önlediği tam da bu); uyarı modunda (warn) liste kaydediliyor ama uyarı veriliyor (X-PinVault-Live-Check: warn, live_check_warning)', scenarios: ['Y04'] },
+  { id: 'U-yukseltme', group: 'U', feature: 'Sürüm yükseltme: önceki sürüm (örnek uygulamanın main dalı, Maven Central\'daki PinVault 2.0.9) güncel sunucuya karşı hazır oluyor, token\'la kayıt oluyor, vault dosyası indiriyor; güncel APK üstüne kurulunca (ilk kurulum zamanı aynı) saklı config okunuyor ("Loaded stored config"), eski sürümün sertifikasıyla mTLS geçiyor, eski sürümün indirdiği dosya güncel sayılıyor, eski sürümün planladığı arka plan işi (CertificateUpdateWorker) yeni kodla çalışıyor', scenarios: ['U01'] },
 ];
 
 module.exports = { GROUPS, FEATURES };

@@ -15,7 +15,7 @@ const { GROUPS, FEATURES } = require('./coverage');
 
 const HAS_SIPS = process.platform === 'darwin' && fs.existsSync('/usr/bin/sips');
 /** Sayfadaki bölüm sırası: Kurulum en başta, sonra PLAN.md'deki grup sırası. */
-const GROUP_ORDER = ['K', 'A', 'B', 'C', 'D', 'E', 'F', 'G', 'H', 'S', 'Y'];
+const GROUP_ORDER = ['K', 'A', 'B', 'C', 'D', 'E', 'F', 'G', 'H', 'S', 'Y', 'U'];
 
 const esc = (s) =>
   String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
