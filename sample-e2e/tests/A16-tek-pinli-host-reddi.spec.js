@@ -40,7 +40,7 @@ test('Web+Sunucu: tek pin\'li ya da aynı pini iki kez yazan host kaydedilemiyor
         `Gönderilmek istenen: 1 pin (${pins[0].slice(0, 12)}…)`,
         `toast: ${toast || '(toast görünmedi)'}`,
         '',
-        'app.js/saveInlinePins: boş alanlar atılır; kalan farklı pin sayısı 2\'nin',
+        'app-hosts.js/saveInlinePins: boş alanlar atılır; kalan farklı pin sayısı 2\'nin',
         'altındaysa istek sunucuya hiç gönderilmez.',
       ].join('\n'),
     );

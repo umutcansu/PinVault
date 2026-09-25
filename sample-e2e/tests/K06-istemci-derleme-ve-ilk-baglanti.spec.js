@@ -34,11 +34,19 @@ test('Kurulum: uygulama geçici test sunucusunun değerleriyle derlenir, telefon
       expect(out).toContain(`host.signingPublicKey=${fresh.signingKeyRaw().split('\n')[1].trim()}`);
     });
 
-    await test.step('Terminal: network_security_config.xml, cihaz raporlarının (telemetri) şifresiz HTTP ile gitmesine izin verir (K10)', async () => {
+    await test.step('Terminal: network_security_config.xml hiçbir yere şifresiz HTTP\'ye izin vermez; cihaz raporları da şifreli porttan gider (K10)', async () => {
       const file = path.join(env.CLIENT_DIR, 'app/src/main/res/xml/network_security_config.xml');
       const xml = fs.readFileSync(file, 'utf8');
-      await attachText(testInfo, 'app/src/main/res/xml/network_security_config.xml', xml);
-      expect(xml).toContain(env.LAN_IP);
+      const props = fs.readFileSync(FRESH_PROPS, 'utf8');
+      const reportPort = (/^host\.managementTlsPort=(\d+)$/m.exec(props) || [])[1];
+      await attachText(
+        testInfo,
+        'app/src/main/res/xml/network_security_config.xml',
+        [xml, `Cihaz raporları: https://${env.LAN_IP}:${reportPort}/ (yönetim API'sinin şifreli portu, config sunucusunun pin'leriyle)`].join('\n'),
+      );
+      expect(xml).toContain('cleartextTrafficPermitted="false"');
+      expect(xml).not.toContain('<domain-config');
+      expect(reportPort).toBeTruthy();
     });
 
     await test.step('Terminal: derleme ve kurulum (K11)', async () => {

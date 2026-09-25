@@ -40,7 +40,7 @@ test('Kurulum: dashboard ilk açılışta API anahtarı ister; Config API sekmel
           `anahtarsız      → HTTP ${none.status} ${none.text.trim()}`,
           `yanlış anahtar  → HTTP ${wrong.status} ${wrong.text.trim()}`,
           '',
-          'Dashboard her iki durumda da anahtarı yeniden sorar (app.js: apiFetch).',
+          'Dashboard her iki durumda da anahtarı yeniden sorar (app-core.js: apiFetch).',
         ].join('\n'),
       );
       expect(none.status).toBe(401);

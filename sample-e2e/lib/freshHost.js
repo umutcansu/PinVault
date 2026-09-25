@@ -10,7 +10,7 @@
 //
 // Kopya `.local/host-fresh` altına açılır (`data/` ve `.env` hariç — yani boş
 // bir veritabanı, yeni bir sunucu sertifikası ve yeni bir imzalama anahtarı),
-// kendi portlarını (6750–6754), kendi compose projesini (`pinvault-fresh`) ve
+// kendi portlarını (6750–6755), kendi compose projesini (`pinvault-fresh`) ve
 // kendi container adını (`pinvault-host-fresh`) kullanır. Koşu sonunda
 // `docker compose down -v` ile tamamen silinir (global-teardown).
 const fs = require('fs');
@@ -22,8 +22,8 @@ const env = require('./env');
 const DIR = path.join(env.LOCAL_DIR, 'host-fresh');
 const PROJECT = 'pinvault-fresh';
 const CONTAINER = 'pinvault-host-fresh';
-/** Ana host 6650–6654 kullanıyor; kopya çakışmasın diye 6750–6754. */
-const PORTS = { http: 6750, https: 6751, mtls: 6752, mockTls: 6753, mockMtls: 6754 };
+/** Ana host 6650–6655 kullanıyor; kopya çakışmasın diye 6750–6755. */
+const PORTS = { http: 6750, https: 6751, mtls: 6752, mockTls: 6753, mockMtls: 6754, managementTls: 6755 };
 const WEB_URL = `http://localhost:${PORTS.http}`;
 /**
  * Taze örneğin keystore parolası (.env → KEYSTORE_PASSWORD). Varsayılan
@@ -106,6 +106,7 @@ function configureEnv() {
     HOST_MTLS_PORT: String(PORTS.mtls),
     HOST_MOCK_TLS_PORT: String(PORTS.mockTls),
     HOST_MOCK_MTLS_PORT: String(PORTS.mockMtls),
+    HOST_MANAGEMENT_TLS_PORT: String(PORTS.managementTls),
     COMPOSE_PROJECT_NAME: PROJECT,
     PINVAULT_SERVER_SRC: serverSrc,
     // Sertifikalar ilk açılışta bu parolayla üretilsin (sonradan değiştirmek

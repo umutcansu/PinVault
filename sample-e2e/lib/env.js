@@ -43,6 +43,8 @@ module.exports = {
   KEYSTORE_PASSWORD: hostEnv.KEYSTORE_PASSWORD || 'changeit',
   WEB_URL: process.env.E2E_WEB_URL || `http://localhost:${hostEnv.HOST_HTTP_PORT || '6650'}`,
   HTTP_PORT: Number(hostEnv.HOST_HTTP_PORT || 6650),
+  /** Yönetim API'sinin şifreli portu: telefonların raporları buraya gider. */
+  MANAGEMENT_TLS_PORT: Number(hostEnv.HOST_MANAGEMENT_TLS_PORT || 6655),
   CONFIG_API_PORT: Number(hostEnv.HOST_HTTPS_PORT || 6651),
   MTLS_API_PORT: Number(hostEnv.HOST_MTLS_PORT || 6652),
   MOCK_TLS_PORT: Number(hostEnv.HOST_MOCK_TLS_PORT || 6653),

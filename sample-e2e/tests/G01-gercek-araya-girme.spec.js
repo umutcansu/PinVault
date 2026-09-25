@@ -75,7 +75,7 @@ test('Saldırı: araya sahte sertifikalı bir sunucu girer → telefon ona hiç 
           '',
           'Telefon hâlâ https://' + env.LAN_IP + ':' + env.CONFIG_API_PORT + '/ adresine',
           'bağlandığını sanıyor; paketler saldırgana gidiyor. Hedef host\'a (' + TARGET_HOST + ')',
-          've cihaz raporlarının (telemetri) gittiği porta (' + env.HTTP_PORT + ') dokunulmadı.',
+          've cihaz raporlarının (telemetri) gittiği porta (' + env.MANAGEMENT_TLS_PORT + ') dokunulmadı.',
         ].join('\n'),
       );
       expect(rules).toContain(`--dport ${env.CONFIG_API_PORT}`);
@@ -181,7 +181,7 @@ test('Saldırı: araya sahte sertifikalı bir sunucu girer → telefon ona hiç 
           ]),
           `saldırganın sertifikasının pin'i: ${proxy.certPin('rogue')}`,
           '',
-          'Cihaz raporları (telemetri) yönetim portundan (' + env.HTTP_PORT + ') gidiyor; o port',
+          'Cihaz raporları (telemetri) şifreli yönetim portundan (' + env.MANAGEMENT_TLS_PORT + ') gidiyor; o port',
           'yönlendirilmediği için uyuşmazlık haberi sunucuya ulaşabiliyor.',
         ].join('\n'),
       );

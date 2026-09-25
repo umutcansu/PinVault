@@ -4,7 +4,7 @@
 // sınırlı; taşan iş sessizce atılıyor. Böylece yanıt vermeyen bir rapor
 // sunucusu istekleri geciktiremiyor.
 //
-// Emülatörde yönetim portuna (telemetri) giden TCP iptables ile DROP edilir:
+// Emülatörde raporların gittiği şifreli yönetim portuna giden TCP iptables ile DROP edilir:
 // paketler sessizce düşer, yani her rapor 5 saniyelik bağlantı zaman aşımına
 // takılır. Pinli istekler bu sırada da normal hızında tamamlanmalı.
 const { test, expect, TARGET_HOST } = require('../lib/fixtures');
@@ -69,14 +69,14 @@ test('Mobil+Sunucu: cihaz raporları (telemetri) gönderilemezken pinli istekler
       );
     });
 
-    await test.step(`Terminal: yönetim portu (${env.HTTP_PORT}) kapatılır (iptables DROP: paketler sessizce atılır)`, async () => {
-      device.blockTcp(env.LAN_IP, env.HTTP_PORT, 'drop');
+    await test.step(`Terminal: raporların gittiği şifreli yönetim portu (${env.MANAGEMENT_TLS_PORT}) kapatılır (iptables DROP: paketler sessizce atılır)`, async () => {
+      device.blockTcp(env.LAN_IP, env.MANAGEMENT_TLS_PORT, 'drop');
       const rules = device.rootShell('iptables -S OUTPUT');
       await attachText(
         testInfo,
-        `iptables: ${env.LAN_IP}:${env.HTTP_PORT} DROP`,
+        `iptables: ${env.LAN_IP}:${env.MANAGEMENT_TLS_PORT} DROP`,
         [
-          '$ iptables -A OUTPUT -p tcp -d ' + env.LAN_IP + ' --dport ' + env.HTTP_PORT + ' -j DROP',
+          '$ iptables -A OUTPUT -p tcp -d ' + env.LAN_IP + ' --dport ' + env.MANAGEMENT_TLS_PORT + ' -j DROP',
           '',
           rules.trim(),
           '',
@@ -85,7 +85,7 @@ test('Mobil+Sunucu: cihaz raporları (telemetri) gönderilemezken pinli istekler
           `Config API portu (${env.CONFIG_API_PORT}) ve hedef host açık kalır.`,
         ].join('\n'),
       );
-      expect(rules).toContain(`--dport ${env.HTTP_PORT}`);
+      expect(rules).toContain(`--dport ${env.MANAGEMENT_TLS_PORT}`);
     });
 
     await test.step('Mobil: rapor adresi yanıt vermezken istekler yine hızlı tamamlanıyor', async () => {
@@ -148,7 +148,7 @@ test('Mobil+Sunucu: cihaz raporları (telemetri) gönderilemezken pinli istekler
         testInfo,
         'Kural kaldırıldıktan sonra',
         [
-          `$ iptables -D OUTPUT -p tcp -d ${env.LAN_IP} --dport ${env.HTTP_PORT} -j DROP`,
+          `$ iptables -D OUTPUT -p tcp -d ${env.LAN_IP} --dport ${env.MANAGEMENT_TLS_PORT} -j DROP`,
           '',
           `Sunucuya gelen yeni kayıt: ${reports.length} (${reports.map((e) => e.status).join(', ')})`,
         ].join('\n'),

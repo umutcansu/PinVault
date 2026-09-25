@@ -39,7 +39,7 @@ const FEATURES = [
   { id: 'K-mtls-api', group: 'K', feature: 'mTLS Config API: istemci sertifikası yokken (truststore yok) 400, sertifika üretilince açılıyor', scenarios: ['K04'] },
   { id: 'K-mock-host', group: 'K', feature: 'Test için kurulan hedef sunucular (mock host): başlatma, durum rozeti, "Bağlantıyı Test Et"', scenarios: ['K04'] },
   { id: 'K-vault-yukleme', group: 'K', feature: 'Vault yükleme: metin ve dosya, politika × şifreleme, dosya listesi ve detayı; at_rest dosyası sunucu diskinde şifreli', scenarios: ['K05'] },
-  { id: 'K-istemci-degerleri', group: 'K', feature: 'client-config.sh --properties çıktısı BuildConfig\'e giriyor; network_security_config; gradle ile derleme ve adb install', scenarios: ['K06'] },
+  { id: 'K-istemci-degerleri', group: 'K', feature: 'client-config.sh --properties çıktısı BuildConfig\'e giriyor; network_security_config şifresiz HTTP\'ye hiç izin vermiyor (cihaz raporları şifreli yönetim portundan); gradle ile derleme ve adb install', scenarios: ['K06'] },
   { id: 'K-ilk-baglanti', group: 'K', feature: 'İlk açılışta "Hazır — config vN"; cihaz dashboard\'da Bağlı Cihazlar ve Bağlantı Geçmişi\'nde görünüyor', scenarios: ['K06'] },
   { id: 'K-docs', group: 'K', feature: 'Swagger UI (/docs) ve openapi.yaml; dashboard TR/EN; tablo sayfalaması', scenarios: ['K07'] },
   // ── E (sunucu işletimi) ───────────────────────────────────────────────

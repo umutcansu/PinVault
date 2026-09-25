@@ -77,7 +77,7 @@ test('mTLS: kayıt token\'ı tek kullanımlık ve süreli', async ({ app, dashbo
           `Ekrandaki satır sayısı: ${count}`,
           `GET /api/v1/enrollment-tokens → ${fromApi} kayıt`,
           '',
-          'Eskiden bu liste boş çiziliyordu: app.js renderConfigApiDetail, sekme fonksiyonu',
+          'Eskiden bu liste boş çiziliyordu: app-hosts.js renderConfigApiDetail, sekme fonksiyonu',
           '(renderMtlsSection) dönünce #content\'i başlık + sekme çubuğuyla birlikte yeniden',
           'yazıyor; asenkron loadEnrollmentTokens ise liste elemanını fetch\'ten ÖNCE',
           'alıyordu. O eleman yeniden yazmayla DOM\'dan kopuyor ve doldurulan liste hiçbir',

@@ -35,6 +35,7 @@ function writeProperties({ goodPins, hostPins, custom, signing, backup, recovery
     '# SamplePinVaultE2E global setup tarafından üretildi; elle düzenleme.',
     `host.ip=${env.LAN_IP}`,
     `host.httpPort=${env.HTTP_PORT}`,
+    `host.managementTlsPort=${env.MANAGEMENT_TLS_PORT}`,
     `host.httpsPort=${env.CONFIG_API_PORT}`,
     `host.mtlsPort=${env.MTLS_API_PORT}`,
     `host.bootstrapPinPrimary=${hostPins[0]}`,

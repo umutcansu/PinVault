@@ -50,7 +50,7 @@ test('Uygulama içi config kaynağı: gömülü CertificateConfigApi ile kütüp
           '',
           rules.trim(),
           '',
-          `Cihaz raporlarının (telemetri) gittiği port (${env.HTTP_PORT}) ve hedef host açık`,
+          `Cihaz raporlarının (telemetri) gittiği port (${env.MANAGEMENT_TLS_PORT}) ve hedef host açık`,
           'kalıyor; kesilen yalnızca kütüphanenin pin config\'ini çektiği port.',
         ].join('\n'),
       );
