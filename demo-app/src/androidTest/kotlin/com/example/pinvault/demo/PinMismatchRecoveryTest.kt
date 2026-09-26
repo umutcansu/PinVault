@@ -155,30 +155,4 @@ class PinMismatchRecoveryTest {
             assertTrue("regenerate-cert 2xx olmalı: ${resp.code} ${resp.body?.string()}", resp.isSuccessful)
         }
     }
-
-    /**
-     * Local pin cache'i doğrudan EncryptedSharedPreferences üzerinden bozar —
-     * [hostname] için mevcut pin hash'lerini yanlış değerle değiştirir.
-     * (Rotation tabanlı testte artık kullanılmıyor; ileride gerekebilir diye korunur.)
-     */
-    @Suppress("unused")
-    private fun poisonCachedPin(hostname: String) {
-        val masterKey = androidx.security.crypto.MasterKey.Builder(context)
-            .setKeyScheme(androidx.security.crypto.MasterKey.KeyScheme.AES256_GCM)
-            .build()
-        val prefs = androidx.security.crypto.EncryptedSharedPreferences.create(
-            context, "ssl_cert_config_default", masterKey,
-            androidx.security.crypto.EncryptedSharedPreferences.PrefKeyEncryptionScheme.AES256_SIV,
-            androidx.security.crypto.EncryptedSharedPreferences.PrefValueEncryptionScheme.AES256_GCM,
-        )
-        val existing = prefs.getString("config_pins", "") ?: ""
-        val wrong = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="
-        val poisoned = existing.split("\n").joinToString("\n") { line ->
-            val parts = line.split("|")
-            if (parts.size >= 3 && parts[0] == hostname) {
-                "${parts[0]}|${parts[1]}|$wrong,$wrong"
-            } else line
-        }
-        prefs.edit().putString("config_pins", poisoned).apply()
-    }
 }
