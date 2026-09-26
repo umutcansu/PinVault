@@ -49,7 +49,7 @@ internal class ConfigApiClient(
      * Which keys this block's configs and vault files must be signed by.
      * Null when the block runs unsigned. The key-set store is only opened when
      * the block enabled rotation (recovery keys), so apps that don't use it
-     * never touch the extra EncryptedSharedPreferences file.
+     * never touch the extra encrypted key-set store.
      */
     val signatureTrust: SignatureTrust? = context.applicationContext.let { appContext ->
         SignatureTrust.forBlock(block) {

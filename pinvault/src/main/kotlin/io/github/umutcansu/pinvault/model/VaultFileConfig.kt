@@ -109,13 +109,13 @@ data class VaultFileConfig(
 /**
  * Built-in storage strategies for vault files.
  *
- * - [ENCRYPTED_PREFS]: Default. Uses EncryptedSharedPreferences. Best for small/medium files (<1MB).
+ * - [ENCRYPTED_PREFS]: Default. Encrypted preferences (AES-256-GCM, keys in the Android Keystore). Best for small/medium files (<1MB).
  * - [ENCRYPTED_FILE]: Uses AES-256-GCM encrypted files on disk. Best for large files (ML models, etc.).
  *
  * Both strategies use Android Keystore for hardware-backed key management.
  */
 enum class StorageStrategy {
-    /** EncryptedSharedPreferences (default). Small/medium files. */
+    /** Encrypted preferences, keys in the Android Keystore (default). Small/medium files. */
     ENCRYPTED_PREFS,
     /** AES-256-GCM encrypted file on disk. Large files. */
     ENCRYPTED_FILE

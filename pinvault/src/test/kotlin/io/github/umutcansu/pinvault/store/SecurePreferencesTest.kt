@@ -247,6 +247,22 @@ class SecurePreferencesTest {
         assertEquals(9, CertificateConfigStore.createForTest(prefs("ssl_cert_config_block-b")).load()!!.version)
     }
 
+    // The backup rules must name every file the stores write (audit M-07).
+    @Test
+    fun `backup rules exclude every store file`() {
+        val files = listOf(
+            CertificateConfigStore.FILE_NAME, ClientCertSecureStore.FILE_NAME,
+            SigningKeyStore.FILE_NAME, VaultFileStore.FILE_NAME
+        )
+        for (rules in listOf("pinvault_backup_rules.xml", "pinvault_data_extraction_rules.xml")) {
+            val xml = File("src/main/res/xml/$rules").readText()
+            for (file in files) {
+                val count = Regex("<exclude domain=\"sharedpref\" path=\"$file\\.xml\" />").findAll(xml).count()
+                assertEquals("$file.xml in $rules", if (rules.startsWith("pinvault_data")) 2 else 1, count)
+            }
+        }
+    }
+
     private companion object {
         const val FILE = "test_secure_prefs"
         const val LEGACY = "ssl_cert_config_legacy-block"

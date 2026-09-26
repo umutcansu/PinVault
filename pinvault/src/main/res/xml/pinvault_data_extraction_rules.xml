@@ -1,54 +1,49 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!--
   Android 12+ (API 31+) icin veri cikarma kurallari.
-  PinVault client sertifikalari hem bulut yedeklemeden hem de
-  cihazdan cihaza transferden haric tutulur.
+  PinVault'un telefonda sakladiklari yedege ve cihaz transferine girmez:
+  sifreleme anahtarlari Android Keystore'da durur, baska cihazda cozulemez;
+  eski bir yedegi geri yuklemek de eski bir pin config'ini ya da iptal
+  edilmis bir imza anahtarini geri getirirdi (M-07).
 
-  ================== UYARI: KENDI configApiId'NIZ ==================
-  Saklı pin config'i her Config API icin ayri bir dosyada tutulur
-  (shared_prefs/ssl_cert_config_<configApiId>.xml) ve Android <exclude>
-  joker (wildcard) DESTEKLEMEZ. Asagida yalnizca kutuphanenin kendi
-  varsayilan kimlikleri (default, default-tls, secure-mtls) sayiliyor.
-
-  Kendi configApiId'nizi kullaniyorsaniz o dosya BU LISTEDE YOKTUR: bulut
-  yedegine ve cihaz transferine girer, eski bir yedegi geri yuklemek pin
-  downgrade'i geri getirir (M-07). Ya manifest'te android:allowBackup="false"
-  deyin ya da kendi kural dosyanizda hem <cloud-backup> hem <device-transfer>
-  icine kendi <exclude ... path="ssl_cert_config_<id>.xml" /> satirinizi ekleyin.
-
-  PinVaultConfig.Builder.build() bilinmeyen bir kimlik gorurse ayni uyariyi bir
-  kez logcat'e basar.
-  =================================================================
+  Her depo turu tek bir dosyada (pinvault_secure_*.xml): butun Config API
+  bloklari, kimlikleri ne olursa olsun, bu kurallarin kapsamindadir.
 -->
 <data-extraction-rules>
     <cloud-backup>
+        <exclude domain="sharedpref" path="pinvault_secure_config.xml" />
+        <exclude domain="sharedpref" path="pinvault_secure_client_cert.xml" />
+        <exclude domain="sharedpref" path="pinvault_secure_signing_keys.xml" />
+        <exclude domain="sharedpref" path="pinvault_secure_vault_files.xml" />
+        <exclude domain="sharedpref" path="pinvault_vault_file_versions.xml" />
+        <exclude domain="file" path="vault_files" />
+        <!--
+          PinVault 2.0.x dosyalari (EncryptedSharedPreferences). Guncellemeden
+          sonraki ilk acilista yeni dosyalara tasinip silinirler; o ana kadar
+          yedege girmesinler. Kendi kimliginizle acilmis eski bir blok dosyasi
+          (ssl_cert_config_<id>.xml) burada yoktur ama o da ilk acilista tasinir.
+        -->
         <exclude domain="sharedpref" path="pinvault_client_cert.xml" />
-        <!-- M-07: pin config downgrade'ini engelle -->
         <exclude domain="sharedpref" path="ssl_cert_config.xml" />
         <exclude domain="sharedpref" path="ssl_cert_config_default.xml" />
         <exclude domain="sharedpref" path="ssl_cert_config_default-tls.xml" />
         <exclude domain="sharedpref" path="ssl_cert_config_secure-mtls.xml" />
-        <!-- Signing-key set: restoring an older one would un-revoke a key. -->
         <exclude domain="sharedpref" path="pinvault_signing_keys.xml" />
-        <!-- audit L-10: also exclude the encrypted vault-file blobs and their
-             version map. NOTE: ssl_cert_config_<id>.xml is enumerated per
-             config-api id; apps that register custom ids must add their own
-             excludes here, or prefer disableAllContent in the manifest. -->
         <exclude domain="sharedpref" path="pinvault_vault_files.xml" />
-        <exclude domain="sharedpref" path="pinvault_vault_file_versions.xml" />
-        <exclude domain="file" path="vault_files" />
     </cloud-backup>
     <device-transfer>
+        <exclude domain="sharedpref" path="pinvault_secure_config.xml" />
+        <exclude domain="sharedpref" path="pinvault_secure_client_cert.xml" />
+        <exclude domain="sharedpref" path="pinvault_secure_signing_keys.xml" />
+        <exclude domain="sharedpref" path="pinvault_secure_vault_files.xml" />
+        <exclude domain="sharedpref" path="pinvault_vault_file_versions.xml" />
+        <exclude domain="file" path="vault_files" />
         <exclude domain="sharedpref" path="pinvault_client_cert.xml" />
         <exclude domain="sharedpref" path="ssl_cert_config.xml" />
         <exclude domain="sharedpref" path="ssl_cert_config_default.xml" />
         <exclude domain="sharedpref" path="ssl_cert_config_default-tls.xml" />
         <exclude domain="sharedpref" path="ssl_cert_config_secure-mtls.xml" />
-        <!-- Signing-key set: restoring an older one would un-revoke a key. -->
         <exclude domain="sharedpref" path="pinvault_signing_keys.xml" />
-        <!-- audit L-10: see cloud-backup note above. -->
         <exclude domain="sharedpref" path="pinvault_vault_files.xml" />
-        <exclude domain="sharedpref" path="pinvault_vault_file_versions.xml" />
-        <exclude domain="file" path="vault_files" />
     </device-transfer>
 </data-extraction-rules>

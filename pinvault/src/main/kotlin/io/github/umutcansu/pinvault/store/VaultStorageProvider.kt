@@ -6,7 +6,7 @@ package io.github.umutcansu.pinvault.store
  * Implement this interface to provide a custom storage mechanism
  * (e.g., hardware-backed Keystore, custom file encryption).
  *
- * Default implementation: [VaultFileStore] using EncryptedSharedPreferences.
+ * Default implementation: [VaultFileStore], encrypted preferences with keys in the Android Keystore.
  */
 interface VaultStorageProvider {
     fun save(key: String, bytes: ByteArray, version: Int)

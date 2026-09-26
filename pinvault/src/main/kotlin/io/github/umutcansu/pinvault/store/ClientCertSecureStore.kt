@@ -3,8 +3,6 @@ package io.github.umutcansu.pinvault.store
 import android.content.Context
 import android.content.SharedPreferences
 import android.util.Base64
-import androidx.security.crypto.EncryptedSharedPreferences
-import androidx.security.crypto.MasterKey
 import timber.log.Timber
 
 /**
@@ -16,21 +14,13 @@ import timber.log.Timber
  * - `client_p12_config` — for config API mTLS
  * - `client_p12_host` — for host mTLS
  *
- * P12 bytes are Base64-encoded and stored in EncryptedSharedPreferences.
+ * P12 bytes are Base64-encoded and stored in [SecurePreferences] (keys in the
+ * Android Keystore), `pinvault_secure_client_cert.xml`.
  */
 internal class ClientCertSecureStore(context: Context) {
 
     private val prefs: SharedPreferences by lazy {
-        val masterKey = MasterKey.Builder(context)
-            .setKeyScheme(MasterKey.KeyScheme.AES256_GCM)
-            .build()
-        EncryptedSharedPreferences.create(
-            context,
-            PREFS_NAME,
-            masterKey,
-            EncryptedSharedPreferences.PrefKeyEncryptionScheme.AES256_SIV,
-            EncryptedSharedPreferences.PrefValueEncryptionScheme.AES256_GCM
-        )
+        SecurePreferences.open(context, FILE_NAME, namespace = PREFS_NAME, legacyName = PREFS_NAME)
     }
 
     fun save(p12Bytes: ByteArray) = save(DEFAULT_LABEL, p12Bytes)
@@ -75,6 +65,9 @@ internal class ClientCertSecureStore(context: Context) {
     private fun keyFor(label: String): String = "$KEY_PREFIX$label"
 
     companion object {
+        /** Keep in sync with res/xml/pinvault_backup_rules.xml and pinvault_data_extraction_rules.xml. */
+        internal const val FILE_NAME = "pinvault_secure_client_cert"
+        /** Namespace, and the file PinVault 2.0.x used (migrated on first open). */
         private const val PREFS_NAME = "pinvault_client_cert"
         private const val KEY_PREFIX = "client_p12_"
         internal const val DEFAULT_LABEL = "default"

@@ -3,8 +3,6 @@ package io.github.umutcansu.pinvault.store
 import android.content.Context
 import android.content.SharedPreferences
 import androidx.annotation.VisibleForTesting
-import androidx.security.crypto.EncryptedSharedPreferences
-import androidx.security.crypto.MasterKey
 import com.google.gson.Gson
 import io.github.umutcansu.pinvault.model.SignedKeySet
 import timber.log.Timber
@@ -20,8 +18,9 @@ import timber.log.Timber
  * survives all of those. It is excluded from cloud backup and device transfer
  * for the same reason (a restored older set would un-revoke keys).
  *
- * One file for every block (`pinvault_signing_keys.xml`), because Android's
- * backup rules cannot exclude files by wildcard.
+ * One file for every block (`pinvault_secure_signing_keys.xml`, keys in the
+ * Android Keystore via [SecurePreferences]), because Android's backup rules
+ * cannot exclude files by wildcard.
  *
  * The signed set is stored as received — payload plus signatures — and is
  * re-verified against the app's recovery keys every time it is read, so a
@@ -32,15 +31,7 @@ import timber.log.Timber
 internal class SigningKeyStore private constructor(private val prefs: SharedPreferences) {
 
     constructor(context: Context) : this(
-        EncryptedSharedPreferences.create(
-            context,
-            PREFS_NAME,
-            MasterKey.Builder(context)
-                .setKeyScheme(MasterKey.KeyScheme.AES256_GCM)
-                .build(),
-            EncryptedSharedPreferences.PrefKeyEncryptionScheme.AES256_SIV,
-            EncryptedSharedPreferences.PrefValueEncryptionScheme.AES256_GCM
-        )
+        SecurePreferences.open(context, FILE_NAME, namespace = PREFS_NAME, legacyName = PREFS_NAME)
     )
 
     private val gson = Gson()
@@ -69,6 +60,8 @@ internal class SigningKeyStore private constructor(private val prefs: SharedPref
 
     companion object {
         /** Keep in sync with res/xml/pinvault_backup_rules.xml and pinvault_data_extraction_rules.xml. */
+        internal const val FILE_NAME = "pinvault_secure_signing_keys"
+        /** Namespace, and the file PinVault 2.0.x used (migrated on first open). */
         internal const val PREFS_NAME = "pinvault_signing_keys"
 
         @VisibleForTesting

@@ -1,46 +1,32 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!--
   Android 11 ve alti (API 30-) icin yedekleme kurallari.
-  PinVault client sertifikalari yedeklemeden haric tutulur.
-  EncryptedSharedPreferences Android Keystore'a bagli oldugu icin
-  baska cihazda cozulemez — yedekleme anlamsiz ve guvenlik riski olusturur.
+  PinVault'un telefonda sakladiklari yedege ve cihaz transferine girmez:
+  sifreleme anahtarlari Android Keystore'da durur, baska cihazda cozulemez;
+  eski bir yedegi geri yuklemek de eski bir pin config'ini ya da iptal
+  edilmis bir imza anahtarini geri getirirdi (M-07).
+
+  Her depo turu tek bir dosyada (pinvault_secure_*.xml): butun Config API
+  bloklari, kimlikleri ne olursa olsun, bu kurallarin kapsamindadir.
 -->
 <full-backup-content>
+    <exclude domain="sharedpref" path="pinvault_secure_config.xml" />
+    <exclude domain="sharedpref" path="pinvault_secure_client_cert.xml" />
+    <exclude domain="sharedpref" path="pinvault_secure_signing_keys.xml" />
+    <exclude domain="sharedpref" path="pinvault_secure_vault_files.xml" />
+    <exclude domain="sharedpref" path="pinvault_vault_file_versions.xml" />
+    <exclude domain="file" path="vault_files" />
+    <!--
+      PinVault 2.0.x dosyalari (EncryptedSharedPreferences). Guncellemeden
+      sonraki ilk acilista yeni dosyalara tasinip silinirler; o ana kadar
+      yedege girmesinler. Kendi kimliginizle acilmis eski bir blok dosyasi
+      (ssl_cert_config_<id>.xml) burada yoktur ama o da ilk acilista tasinir.
+    -->
     <exclude domain="sharedpref" path="pinvault_client_cert.xml" />
-    <!--
-      Pin config'ler de yedeklemeden haric tutulur (M-07): aksi halde
-      saldirgan eski cihaz yedegini geri yukleyerek pin downgrade tetikleyebilir
-      (sertifika rotasyonu oncesi pin set'i geri gelir).
-    -->
     <exclude domain="sharedpref" path="ssl_cert_config.xml" />
-    <!--
-      ================== UYARI: KENDI configApiId'NIZ ==================
-      V2'de her Config API kendi ssl_cert_config_<id>.xml dosyasinda tutulur ve
-      Android <exclude> joker (wildcard) DESTEKLEMEZ. Asagida yalnizca
-      kutuphanenin kendi varsayilan kimlikleri sayiliyor.
-
-      Uygulamanız kendi configApiId'sini kullaniyorsa (ornegin
-      .configApi("my-api", ...)) o kimligin dosyasi BU LISTEDE YOKTUR ve
-      yedege girer; eski bir yedegi geri yuklemek pin downgrade'i geri getirir.
-
-      Iki secenekten birini yapin:
-        1. Uygulama manifest'inde android:allowBackup="false"; ya da
-        2. Kendi fullBackupContent/dataExtractionRules dosyanizda
-           <exclude domain="sharedpref" path="ssl_cert_config_my-api.xml" />
-
-      PinVaultConfig.Builder.build() bilinmeyen bir kimlik gorurse ayni uyariyi
-      bir kez logcat'e basar (Timber, "NOT covered by PinVault's bundled backup
-      rules").
-      =================================================================
-    -->
     <exclude domain="sharedpref" path="ssl_cert_config_default.xml" />
     <exclude domain="sharedpref" path="ssl_cert_config_default-tls.xml" />
     <exclude domain="sharedpref" path="ssl_cert_config_secure-mtls.xml" />
-    <!--
-      Imza anahtari seti (anahtar dondurme/iptal). Eski bir yedek geri
-      yuklenirse iptal edilmis bir imza anahtari yeniden guvenilir olur.
-    -->
     <exclude domain="sharedpref" path="pinvault_signing_keys.xml" />
-    <!-- Vault file store (Android Keystore'a bagli, transfer edilemez) -->
     <exclude domain="sharedpref" path="pinvault_vault_files.xml" />
 </full-backup-content>

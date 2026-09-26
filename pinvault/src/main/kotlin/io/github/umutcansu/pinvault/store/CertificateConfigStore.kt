@@ -3,8 +3,6 @@ package io.github.umutcansu.pinvault.store
 import android.content.Context
 import android.content.SharedPreferences
 import androidx.annotation.VisibleForTesting
-import androidx.security.crypto.EncryptedSharedPreferences
-import androidx.security.crypto.MasterKey
 import io.github.umutcansu.pinvault.model.CertificateConfig
 import io.github.umutcansu.pinvault.model.HostPin
 import timber.log.Timber
@@ -12,8 +10,10 @@ import timber.log.Timber
 /**
  * Encrypted local persistence for [CertificateConfig].
  *
- * Uses EncryptedSharedPreferences to store config at rest.
- * Pin hashes aren't readable even on rooted devices.
+ * Stored in [SecurePreferences] (keys in the Android Keystore): pin hashes
+ * aren't readable even on rooted devices. Every Config API block keeps its
+ * config in `pinvault_secure_config.xml`, in its own namespace, so the
+ * library's backup rules cover every block whatever its id.
  */
 internal class CertificateConfigStore private constructor(private val prefs: SharedPreferences) {
 
@@ -22,22 +22,17 @@ internal class CertificateConfigStore private constructor(private val prefs: Sha
 
     /**
      * V2: per-Config-API namespaced constructor. Each Config API block gets
-     * its own EncryptedSharedPreferences file so pins from different APIs
-     * never collide even if they share a hostname.
+     * its own namespace ([prefsName]) so pins from different APIs never
+     * collide even if they share a hostname.
      *
      * The raw [prefsName] is sanitized — non-alphanumeric chars replaced with
-     * underscores to keep filesystem-safe file names.
+     * underscores — because it is also the name of the file PinVault 2.0.x
+     * kept this block's config in; that file is migrated on first open.
      */
     constructor(context: Context, prefsName: String) : this(
-        EncryptedSharedPreferences.create(
-            context,
-            prefsName.replace(Regex("[^A-Za-z0-9_-]"), "_"),
-            MasterKey.Builder(context)
-                .setKeyScheme(MasterKey.KeyScheme.AES256_GCM)
-                .build(),
-            EncryptedSharedPreferences.PrefKeyEncryptionScheme.AES256_SIV,
-            EncryptedSharedPreferences.PrefValueEncryptionScheme.AES256_GCM
-        )
+        prefsName.replace(Regex("[^A-Za-z0-9_-]"), "_").let { name ->
+            SecurePreferences.open(context, FILE_NAME, namespace = name, legacyName = name)
+        }
     )
 
     fun getCurrentVersion(): Int = prefs.getInt(KEY_VERSION, 0)
@@ -152,9 +147,11 @@ internal class CertificateConfigStore private constructor(private val prefs: Sha
     }
 
     companion object {
+        /** Keep in sync with res/xml/pinvault_backup_rules.xml and pinvault_data_extraction_rules.xml. */
+        internal const val FILE_NAME = "pinvault_secure_config"
         private const val DEFAULT_PREFS_NAME = "ssl_cert_config"
 
-        /** Build the per-Config-API prefs file name. */
+        /** The per-Config-API namespace (and the file name PinVault 2.0.x used). */
         fun prefsNameFor(configApiId: String): String =
             if (configApiId.isBlank()) DEFAULT_PREFS_NAME
             else "ssl_cert_config_$configApiId"

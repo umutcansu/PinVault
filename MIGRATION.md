@@ -168,6 +168,15 @@ Rollout order:
 
 Behaviour change to know about: a byte-identical signed config served twice is now reported as `AlreadyCurrent`. It used to fail as a replay. An older `issuedAt`, or an equal one with different content, is still rejected.
 
+## Encrypted storage moves to the Android Keystore (2.1)
+
+No action needed. PinVault no longer stores with androidx.security's EncryptedSharedPreferences, which Google deprecated in April 2025. Four fixed files replace it: `pinvault_secure_config.xml` (every Config API block, each in its own namespace), `pinvault_secure_client_cert.xml`, `pinvault_secure_signing_keys.xml` and `pinvault_secure_vault_files.xml`. Values are sealed with AES-256-GCM and names hidden with HMAC-SHA256; both keys are generated in the Android Keystore and never leave it.
+
+- **First start after the update:** each store reads its 2.0.x file once with the old library, writes the entries in the new format and deletes the old file. Stored configs, enrolled client certificates, signing-key sets and cached vault files carry over: nothing is downloaded again and no device enrolls again. A 2.0.x file that no longer opens (its Keystore key is gone) is deleted, and the device fetches its config as on a fresh install.
+- **Downgrading** to 2.0.x after that start is not supported: the old version finds none of its files and starts like a fresh install. It fetches the config again with its bootstrap pins, and mTLS devices enroll again.
+- **Backups:** the bundled rules name the four files, so every Config API id is excluded. The per-id exclusion from step 8 is no longer needed (keeping it is harmless), and the build-time warning about uncovered ids is gone.
+- **Dependency:** androidx.security:security-crypto stays on the classpath only to read 2.0.x files on that first start. A later major version drops it.
+
 ## Single Config API
 
 Simplest setup — one backend, one or more vault files.

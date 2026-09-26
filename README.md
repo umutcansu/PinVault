@@ -18,7 +18,7 @@ Dynamic SSL certificate pinning library for Android. Manage pins remotely, suppo
 - **VaultFile** — remote versioned file distribution (ML models, configs, feature flags)
 - **Per-file access policies** *(v2)* — `public` / `api_key` / `token` / `token_mtls`
 - **Per-device encryption** *(v2)* — RSA-OAEP-SHA256 + AES-256-GCM, Android Keystore-backed: only the target device opens a download (the server encrypts it, so it sees the content)
-- **Encrypted storage** — AES-256-GCM with Android Keystore (hardware-backed)
+- **Encrypted storage** — values AES-256-GCM, names HMAC-SHA256, both keys generated in the Android Keystore (hardware-backed) and never leaving it
 - **Server-agnostic** — works with any backend, or offline with static pins
 - **ECDSA signed configs** — verify config integrity with SHA256withECDSA
 - **Optional signing layers** — backup keys, m-of-n signatures, signing-key rotation/revocation over the air ([SECURE_OPERATIONS.md](SECURE_OPERATIONS.md))

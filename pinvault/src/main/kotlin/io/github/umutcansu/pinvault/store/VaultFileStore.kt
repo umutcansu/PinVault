@@ -4,12 +4,11 @@ import android.content.Context
 import android.content.SharedPreferences
 import android.util.Base64
 import androidx.annotation.VisibleForTesting
-import androidx.security.crypto.EncryptedSharedPreferences
-import androidx.security.crypto.MasterKey
 import timber.log.Timber
 
 /**
- * Default encrypted storage for vault files using EncryptedSharedPreferences.
+ * Default encrypted storage for vault files: [SecurePreferences] (keys in the
+ * Android Keystore), `pinvault_secure_vault_files.xml`.
  *
  * Best for small/medium files (<1MB). For larger files, use [EncryptedFileStorageProvider].
  * Both use Android Keystore for hardware-backed key management.
@@ -19,15 +18,7 @@ internal class VaultFileStore private constructor(
 ) : VaultStorageProvider {
 
     constructor(context: Context) : this(
-        EncryptedSharedPreferences.create(
-            context,
-            PREFS_NAME,
-            MasterKey.Builder(context)
-                .setKeyScheme(MasterKey.KeyScheme.AES256_GCM)
-                .build(),
-            EncryptedSharedPreferences.PrefKeyEncryptionScheme.AES256_SIV,
-            EncryptedSharedPreferences.PrefValueEncryptionScheme.AES256_GCM
-        )
+        SecurePreferences.open(context, FILE_NAME, namespace = PREFS_NAME, legacyName = PREFS_NAME)
     )
 
     override fun save(key: String, bytes: ByteArray, version: Int) {
@@ -66,6 +57,9 @@ internal class VaultFileStore private constructor(
     private fun versionKey(key: String) = "${VERSION_PREFIX}$key"
 
     companion object {
+        /** Keep in sync with res/xml/pinvault_backup_rules.xml and pinvault_data_extraction_rules.xml. */
+        internal const val FILE_NAME = "pinvault_secure_vault_files"
+        /** Namespace, and the file PinVault 2.0.x used (migrated on first open). */
         private const val PREFS_NAME = "pinvault_vault_files"
         private const val DATA_PREFIX = "vault_data_"
         private const val VERSION_PREFIX = "vault_ver_"
