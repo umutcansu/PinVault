@@ -37,9 +37,11 @@ import io.github.umutcansu.pinvault.PinVault;
  * gösterir. Uygulama yalnızca kendi dosyalarını okur; hiçbir şeyi çözmez.
  *
  * <ul>
- *   <li>Şifreli tercih dosyaları (EncryptedSharedPreferences): anahtar ve
- *       değerlerin şifreli olduğu, host adı / pin gibi düz metinlerin dosyada
- *       geçmediği gösterilir.</li>
+ *   <li>Şifreli tercih dosyaları (pinvault_secure_*.xml; değerler AES-256-GCM,
+ *       kayıt adları HMAC, ikisinin anahtarı da Android Keystore'da): kayıt
+ *       adlarının ve değerlerin okunamadığı, host adı / pin gibi düz metinlerin
+ *       dosyada geçmediği gösterilir. PinVault 2.0.x'ten kalmış bir dosya
+ *       (ilk açılışta taşınır) ayrıca işaretlenir.</li>
  *   <li>Vault dosya deposu (files/vault_files/*.enc): boyut ve başlık.</li>
  *   <li>Android Keystore anahtarları: algoritma, boyut, güvenli donanım.</li>
  *   <li>İstemci sertifikası kaydı: ham değerin PKCS12 olarak açılamadığı.</li>
@@ -48,7 +50,11 @@ import io.github.umutcansu.pinvault.PinVault;
 public class StorageActivity extends AppCompatActivity {
 
     private static final Pattern ENTRY = Pattern.compile("<string name=\"([^\"]*)\">([^<]*)</string>");
-    private static final String KEYSET_ENTRY = "__androidx_security_crypto_encrypted_prefs_key_keyset__";
+    /** PinVault 2.0.x'in EncryptedSharedPreferences dosyaları: kütüphane ilk açılışta taşıyıp siler. */
+    private static final List<String> LEGACY_FILES = java.util.Arrays.asList(
+            "pinvault_client_cert.xml", "pinvault_signing_keys.xml", "pinvault_vault_files.xml");
+    /** Kütüphanenin kayıt adları; şifreli dosyada hiçbiri okunur olmamalı. */
+    private static final String[] PLAIN_KEY_NAMES = {"config_", "client_p12_", "vault_data_", "vault_ver_", "keyset_"};
 
     private final ExecutorService io = Executors.newSingleThreadExecutor();
     private TextView storageView;
@@ -104,7 +110,7 @@ public class StorageActivity extends AppCompatActivity {
         sb.append("Mod: ").append(App.ACTIVE_MODE.label()).append('\n');
         sb.append("forceUpdate (kalıcı): ").append(forceUpdateState()).append("\n\n");
 
-        sb.append("== Şifreli tercih dosyaları (EncryptedSharedPreferences, AES-256-GCM) ==\n");
+        sb.append("== Şifreli tercih dosyaları (AES-256-GCM, anahtarlar Android Keystore'da) ==\n");
         File prefsDir = new File(getApplicationInfo().dataDir, "shared_prefs");
         File[] prefs = prefsDir.listFiles((d, name) -> name.endsWith(".xml"));
         List<File> sorted = new ArrayList<>();
@@ -123,9 +129,13 @@ public class StorageActivity extends AppCompatActivity {
                 continue;
             }
             List<String[]> entries = entries(xml);
-            boolean keyset = xml.contains(KEYSET_ENTRY);
+            boolean legacy = name.startsWith("ssl_cert_config") || LEGACY_FILES.contains(name);
             sb.append("• ").append(name).append(" — ").append(f.length()).append(" B, ")
-                    .append(entries.size()).append(" kayıt, Tink keyset: ").append(keyset ? "var" : "yok").append('\n');
+                    .append(entries.size()).append(" kayıt")
+                    .append(legacy ? " (PinVault 2.0.x dosyası, ilk açılışta taşınır)" : "").append('\n');
+            if (!legacy) {
+                sb.append("   kayıt adları okunabilir mi: ").append(plainKeyNames(entries) ? "EVET ✗" : "hayır ✓ (HMAC)").append('\n');
+            }
             if (!entries.isEmpty()) {
                 String[] first = entries.get(0);
                 sb.append("   örnek: ").append(shorten(first[0])).append(" → ").append(shorten(first[1])).append('\n');
@@ -164,14 +174,14 @@ public class StorageActivity extends AppCompatActivity {
         }
         if (aliases == 0) sb.append("(PinVault anahtarı yok)\n");
 
-        sb.append("\n== İstemci sertifikası (pinvault_client_cert) ==\n");
+        sb.append("\n== İstemci sertifikası (pinvault_secure_client_cert) ==\n");
         boolean enrolled = PinVault.INSTANCE.isEnrolled(this, null);
         if (!enrolled) {
             sb.append("kayıtlı değil\n");
         } else {
             String cn = safeCn();
             sb.append("kayıtlı — CN=").append(cn == null ? "?" : cn).append('\n');
-            File certPrefs = new File(prefsDir, "pinvault_client_cert.xml");
+            File certPrefs = new File(prefsDir, "pinvault_secure_client_cert.xml");
             if (certPrefs.isFile()) {
                 String xml = new String(Files.readAllBytes(certPrefs.toPath()), StandardCharsets.UTF_8);
                 sb.append("ham kayıt PKCS12 olarak açılıyor mu: ").append(rawRecordOpensAsP12(xml)
@@ -204,10 +214,20 @@ public class StorageActivity extends AppCompatActivity {
         List<String[]> out = new ArrayList<>();
         Matcher m = ENTRY.matcher(xml);
         while (m.find()) {
-            if (KEYSET_ENTRY.equals(m.group(1))) continue;
+            // 2.0.x dosyalarındaki Tink keyset kayıtları veri değildir.
+            if (m.group(1).startsWith("__androidx_security_crypto_")) continue;
             out.add(new String[]{m.group(1), m.group(2)});
         }
         return out;
+    }
+
+    private static boolean plainKeyNames(List<String[]> entries) {
+        for (String[] entry : entries) {
+            for (String plain : PLAIN_KEY_NAMES) {
+                if (entry[0].contains(plain)) return true;
+            }
+        }
+        return false;
     }
 
     private static String plainEntries(String xml) {
