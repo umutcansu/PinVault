@@ -322,7 +322,7 @@ test('Sunucu+Web+Mobil: anahtar seti (telefonun güvendiği imza anahtarları) �
       expect((await lab.signingKeyInfo()).keyId).toBe(setup.primary.keyId);
     });
 
-    await test.step('Mobil: uygulama verisi silinmeden yeniden açılır → set vN+1 hâlâ geçerli; şifreli SharedPreferences dosyasında saklanıyor', async () => {
+    await test.step('Mobil: uygulama verisi silinmeden yeniden açılır → set vN+1 hâlâ geçerli; şifreli tercih dosyasında saklanıyor', async () => {
       app.relaunch();
       const ready = await app.waitReady();
       await app.openStorage();
@@ -341,13 +341,13 @@ test('Sunucu+Web+Mobil: anahtar seti (telefonun güvendiği imza anahtarları) �
           `$ adb shell run-as ${env.APP_ID} ls -la shared_prefs`,
           prefs.trim(),
           '',
-          'Set pinvault_signing_keys.xml\'de (EncryptedSharedPreferences) saklanıyor; config deposundan',
+          'Set pinvault_secure_signing_keys.xml\'de (anahtarı Keystore\'da) saklanıyor; config deposundan',
           'ayrı tutulduğu için reset/rollback onu silmiyor, yedeklemeye de girmiyor.',
         ].join('\n'),
       );
       expect(detail.keySetVersion).toBe(N + 1);
       expect(detail.trusted).toEqual([next.keyId]);
-      expect(prefs).toContain('pinvault_signing_keys.xml');
+      expect(prefs).toContain('pinvault_secure_signing_keys.xml');
     });
   } finally {
     await test.step('Sunucu+Terminal: geçici test sunucusunun ortamı sıfırlanır, data/signing-key-next.pem silinir; telefona ana host için derlenen APK geri kurulur', async () => {

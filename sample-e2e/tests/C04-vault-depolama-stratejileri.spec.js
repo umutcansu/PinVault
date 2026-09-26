@@ -4,8 +4,8 @@
 // files/vault_files/<anahtar>.enc dosyasına AES-256-GCM ile yazılıyor, anahtar
 // Android Keystore'da (alias pinvault_vault_<anahtar>). Diğer dosyalar
 // varsayılan ENCRYPTED_PREFS yolunu kullanıyor: içerik
-// shared_prefs/pinvault_vault_files.xml içinde EncryptedSharedPreferences
-// (anahtar AES256-SIV, değer AES256-GCM) olarak duruyor.
+// shared_prefs/pinvault_secure_vault_files.xml içinde duruyor (değer
+// AES-256-GCM, kayıt adı HMAC; ikisinin anahtarı da Android Keystore'da).
 //
 // Kanıt: run-as dosya dökümü + Depolama ekranının telefon görüntüsü.
 const { test, expect } = require('../lib/fixtures');
@@ -16,9 +16,9 @@ const env = require('../lib/env');
 const MODEL = env.VAULT_KEYS.model;
 const FLAGS = env.VAULT_KEYS.flags;
 const ENC_FILE = `files/vault_files/${MODEL}.enc`;
-const PREFS_FILE = 'shared_prefs/pinvault_vault_files.xml';
+const PREFS_FILE = 'shared_prefs/pinvault_secure_vault_files.xml';
 
-test('Vault depolama: ENCRYPTED_FILE şifreli .enc dosyası, ENCRYPTED_PREFS şifreli SharedPreferences', async ({
+test('Vault depolama: ENCRYPTED_FILE şifreli .enc dosyası, ENCRYPTED_PREFS şifreli tercih dosyası', async ({
   app,
   device,
   dashboard,
@@ -101,17 +101,17 @@ test('Vault depolama: ENCRYPTED_FILE şifreli .enc dosyası, ENCRYPTED_PREFS şi
         [
           xml.length > 1200 ? `${xml.slice(0, 1200)}\n… (${xml.length - 1200} karakter daha)` : xml,
           '',
-          `kayıt adları (şifreli, AES256-SIV): ${entryNames.map((n) => n.slice(0, 28) + '…').join(', ')}`,
+          `kayıt adları (HMAC): ${entryNames.join(', ')}`,
           `"vault_data_${FLAGS}" adı dosyada düz geçiyor mu: ${xml.includes(`vault_data_${FLAGS}`) ? 'EVET ✗' : 'hayır ✓'}`,
           `dosya içeriği düz geçiyor mu: ${xml.includes(flagsBody) ? 'EVET ✗' : 'hayır ✓'}`,
-          `Tink keyset kaydı: ${xml.includes('__androidx_security_crypto_encrypted_prefs_key_keyset__') ? 'var ✓' : 'yok ✗'}`,
           '',
-          'EncryptedSharedPreferences hem kayıt adını hem değerini şifreliyor; bu şifrelemenin',
-          'anahtarları (Tink keyset) da Android Keystore\'daki ana anahtarla (master key) şifreli.',
+          'Kayıt adı HMAC\'le gizli, değer AES-256-GCM ile şifreli; iki anahtar da Android',
+          'Keystore\'da üretiliyor ve oradan hiç çıkmıyor.',
         ].join('\n'),
       );
-      expect(xml).toContain('__androidx_security_crypto_encrypted_prefs_key_keyset__');
+      expect(entryNames.length).toBeGreaterThan(0);
       expect(xml).not.toContain(`vault_data_${FLAGS}`);
+      expect(xml).not.toContain(FLAGS);
       expect(xml).not.toContain(flagsBody);
       expect(xml).not.toContain('bayrak');
     });
@@ -124,8 +124,8 @@ test('Vault depolama: ENCRYPTED_FILE şifreli .enc dosyası, ENCRYPTED_PREFS şi
       await attachText(testInfo, 'Depolama ekranı dökümü', text);
       expect(text).toContain(`${MODEL}.enc`);
       expect(text).toContain('[iv_len=12]');
-      expect(text).toContain('pinvault_vault_files.xml');
-      expect(text).toContain('Tink keyset: var');
+      expect(text).toContain('pinvault_secure_vault_files.xml');
+      expect(text).toContain('kayıt adları okunabilir mi: hayır ✓');
       expect(text).toContain('düz metin sızıntısı (host adı, IP, pin): yok');
       expect(text).toContain(`pinvault_vault_${MODEL}`);
       await app.backToMain();

@@ -21,6 +21,8 @@ const MERGED_MANIFEST = path.join(
   `app/build/intermediates/merged_manifests/${env.VARIANT}/process${VARIANT_TASK}Manifest/AndroidManifest.xml`,
 );
 const RULE_RESOURCES = ['xml/pinvault_backup_rules', 'xml/pinvault_data_extraction_rules'];
+/** Kütüphanenin şifreli depo dosyaları (SecurePreferences). */
+const STORE_FILES = ['pinvault_secure_config.xml', 'pinvault_secure_client_cert.xml', 'pinvault_secure_signing_keys.xml', 'pinvault_secure_vault_files.xml'];
 
 /**
  * Kural dosyalarının APK içindeki yolları, kaynak tablosundan. Release
@@ -59,7 +61,7 @@ test('Depolama: uygulama verisi cihaz yedeğine alınmıyor', async ({ app, devi
         'Yedeğe girmemesi gereken veriler',
         [text, '', 'Hepsi Android Keystore\'a bağlı: başka bir cihazda zaten çözülemezler.'].join('\n'),
       );
-      expect(text).toContain('ssl_cert_config_sample-host.xml');
+      expect(text).toContain('pinvault_secure_config.xml');
       await app.backToMain();
     });
 
@@ -138,52 +140,38 @@ test('Depolama: uygulama verisi cihaz yedeğine alınmıyor', async ({ app, devi
       expect(rules.filter((r) => r.inApk)).toHaveLength(2);
     });
 
-    await test.step('Kaynak: kütüphanenin yedekleme kuralları ve bir bulgu', async () => {
+    await test.step('Kaynak: kütüphanenin yedekleme kuralları bütün Config API bloklarını kapsıyor', async () => {
       const backupRules = fs.readFileSync(path.join(RULES_DIR, 'pinvault_backup_rules.xml'), 'utf8');
       const extractionRules = fs.readFileSync(path.join(RULES_DIR, 'pinvault_data_extraction_rules.xml'), 'utf8');
-      const excluded = [...extractionRules.matchAll(/path="([^"]+)"/g)].map((m) => m[1]);
-      const appApis = ['sample-host', 'sample-mtls'];
-      const covered = appApis.filter((id) => extractionRules.includes(`ssl_cert_config_${id}.xml`));
+      const count = (xml, file) => xml.split(`<exclude domain="sharedpref" path="${file}" />`).length - 1;
+      const rows = STORE_FILES.map((file) => ({ file, backup: count(backupRules, file), extraction: count(extractionRules, file) }));
+      const prefs = device.appFiles(env.APP_ID, 'shared_prefs');
+      const legacy = (prefs.match(/ssl_cert_config\S*\.xml/g) || []);
+      await attachText(testInfo, 'pinvault_backup_rules.xml (API ≤ 30)', backupRules.trim());
+      await attachText(testInfo, 'pinvault_data_extraction_rules.xml (API 31+)', extractionRules.trim());
       await attachText(
         testInfo,
-        'pinvault_backup_rules.xml (API ≤ 30)',
-        backupRules.trim(),
-      );
-      await attachText(
-        testInfo,
-        'pinvault_data_extraction_rules.xml (API 31+)',
-        extractionRules.trim(),
-      );
-      await attachText(
-        testInfo,
-        'Bulgu: kurallar Config API kimliklerini tek tek elle listeliyor',
+        'Her depo dosyası kurallarda adıyla yer alıyor',
         [
-          `kuralların yedek dışı bıraktığı yollar: ${[...new Set(excluded)].join(', ')}`,
+          'dosya                                  API ≤ 30   API 31+ (bulut + cihaz transferi)',
+          ...rows.map((r) => `${r.file.padEnd(38)} ${String(r.backup).padEnd(10)} ${r.extraction}`),
           '',
-          `Bu uygulamanın Config API kimlikleri: ${appApis.join(', ')}`,
-          `kurallarda karşılığı olan: ${covered.length === 0 ? '(hiçbiri)' : covered.join(', ')}`,
+          `$ run-as ${env.APP_ID} ls shared_prefs | grep ssl_cert_config → ${legacy.length ? legacy.join(', ') : '(yok)'}`,
           '',
-          'Saklı pin config\'i her Config API için ayrı dosyada tutuluyor',
-          '(ssl_cert_config_<id>.xml) ve Android yedekleme kuralları joker karakter',
-          '(*) desteklemiyor. Kütüphane yalnızca `default-tls` ve `secure-mtls`',
-          'kimliklerini listeliyor; kendi kimliğini kullanan bir uygulamanın pin',
-          'config\'i yedeğe girerdi. Bu da M-07\'de tam olarak engellenmek istenen',
-          '"pin\'leri eski sürüme geri döndürme" senaryosu. Kural dosyasındaki yorum',
-          'bunu kabul ediyor ("apps that register custom ids must add their own',
-          'excludes here").',
-          '',
-          'Bu örnek uygulamada risk yok: allowBackup="false" bütün yedeği kapatıyor.',
-          '',
-          'Öneri: kütüphane belgelerine "kendi configApiId\'ni kullanıyorsan ya',
-          'allowBackup=false yap ya da dataExtractionRules\'a kendi dosyanı ekle"',
-          'uyarısı eklensin; ya da saklı config tek dosyada (ör. pinvault_configs.xml)',
-          'toplanıp kurallarda yalnızca o yol yedek dışı bırakılsın.',
+          'Önceki bulgu giderildi: saklı pin config\'i her Config API için ayrı bir dosyada',
+          '(ssl_cert_config_<id>.xml) tutuluyordu ve Android yedekleme kuralları joker',
+          'karakter desteklemediği için kütüphane yalnızca kendi kimliklerini listeleyebiliyordu;',
+          'kendi kimliğini kullanan bir uygulamanın pin config\'i yedeğe girerdi (M-07).',
+          'Şimdi bütün bloklar tek dosyada (pinvault_secure_config.xml), her biri kendi ad',
+          'alanında; kurallar bu dosyayı adıyla dışarıda bırakıyor. Bu uygulamanın blokları',
+          '(sample-host, sample-mtls) da kapsamda.',
         ].join('\n'),
       );
-      expect(backupRules).toContain('pinvault_client_cert.xml');
-      expect(extractionRules).toContain('<cloud-backup>');
-      expect(extractionRules).toContain('<device-transfer>');
-      expect(covered).toHaveLength(0);
+      for (const r of rows) {
+        expect(r.backup, `${r.file} API ≤ 30 kuralında`).toBe(1);
+        expect(r.extraction, `${r.file} bulut + cihaz transferi kurallarında`).toBe(2);
+      }
+      expect(legacy).toHaveLength(0);
     });
 
     await test.step('Not: bu test neden daha ileri gidemiyor', async () => {

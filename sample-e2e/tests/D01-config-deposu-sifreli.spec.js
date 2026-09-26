@@ -1,15 +1,20 @@
 // D01 — Saklı pin config'i cihazda şifreli.
 //
-// CertificateConfigStore config'i EncryptedSharedPreferences ile
-// `shared_prefs/ssl_cert_config_<configApiId>.xml` dosyasına yazıyor: anahtar
-// adları AES256-SIV, değerler AES256-GCM, keyset Android Keystore'daki master
-// key'le sarılı. Uygulama pin'leri ekranda gösterebiliyor ama dosyada ne host
-// adı, ne IP, ne de tek bir pin düz metin olarak geçiyor.
+// CertificateConfigStore config'i `shared_prefs/pinvault_secure_config.xml`
+// dosyasına yazıyor (her Config API kendi ad alanında): değerler AES-256-GCM,
+// kayıt adları HMAC-SHA256; ikisinin anahtarı da Android Keystore'da üretiliyor
+// ve oradan hiç çıkmıyor. Uygulama pin'leri ekranda gösterebiliyor ama dosyada
+// ne host adı, ne IP, ne de tek bir pin düz metin olarak geçiyor.
 const { test, expect, TARGET_HOST } = require('../lib/fixtures');
 const { attachText } = require('../lib/evidence');
 const env = require('../lib/env');
 
-const PREFS = 'shared_prefs/ssl_cert_config_sample-host.xml';
+/** SecurePreferences kayıt adı: <ad alanı HMAC'i 12>.<anahtar HMAC'i 32>, base64url. */
+const HMAC_NAME = /^[A-Za-z0-9_-]{12}\.[A-Za-z0-9_-]{32}$/;
+
+const PREFS = 'shared_prefs/pinvault_secure_config.xml';
+/** PinVault 2.0.x'in bu blok için kullandığı dosya; ilk açılışta taşınıp silinir. */
+const LEGACY = 'ssl_cert_config_sample-host.xml';
 
 test('Depolama: saklı pin config\'i şifreli; host adı, IP ve pin\'ler düz metin olarak yok', async ({
   app,
@@ -62,29 +67,31 @@ test('Depolama: saklı pin config\'i şifreli; host adı, IP ve pin\'ler düz me
         ...Object.entries(secrets).map(([label, value]) =>
           `  ${label.padEnd(34)} ${value ? (xml.includes(value) ? 'GEÇİYOR ✗' : 'geçmiyor ✓') : '(değer yok)'}`),
         '',
-        `Tink keyset kaydı: ${xml.includes('__androidx_security_crypto_encrypted_prefs_key_keyset__') ? 'var ✓' : 'yok ✗'}`,
-        'Kayıt adları da şifreli (AES256-SIV): dosyaya bakan biri hangi alanların',
-        'saklandığını bile göremiyor.',
+        `kayıt adları HMAC biçiminde (ad alanı.anahtar): ${names.every((n) => HMAC_NAME.test(n)) ? 'evet ✓' : 'HAYIR ✗'}`,
+        `PinVault 2.0.x dosyası (${LEGACY}): ${listing.includes(LEGACY) ? 'VAR ✗' : 'yok ✓'}`,
+        'Kayıt adları da gizli (Keystore anahtarıyla HMAC): dosyaya bakan biri hangi',
+        'alanların saklandığını bile göremiyor.',
       ].join('\n'),
     );
     expect(leaks).toHaveLength(0);
-    expect(xml).toContain('__androidx_security_crypto_encrypted_prefs_key_keyset__');
-    expect(xml).toContain('__androidx_security_crypto_encrypted_prefs_value_keyset__');
-    // Keyset'ler dışında en az bir şifreli config kaydı olmalı.
-    expect(names.filter((n) => !n.startsWith('__androidx_security_crypto')).length).toBeGreaterThan(0);
+    expect(names.length).toBeGreaterThan(0);
+    expect(names.every((n) => HMAC_NAME.test(n))).toBe(true);
+    expect(listing).not.toContain(LEGACY);
   });
 
   await test.step('Mobil: Depolama ekranı "düz metin sızıntısı: yok" diyor', async () => {
     await app.openStorage();
     const text = await app.refreshStorage();
-    await app.snap('Depolama ekranı — şifreli SharedPreferences dosyaları');
+    await app.snap('Depolama ekranı — şifreli tercih dosyaları');
     await attachText(testInfo, 'Depolama ekranı dökümü', text);
-    expect(text).toContain('ssl_cert_config_sample-host.xml');
-    expect(text).toContain('Tink keyset: var');
+    expect(text).toContain('pinvault_secure_config.xml');
+    expect(text).toContain('kayıt adları okunabilir mi: hayır ✓');
     expect(text).toContain('düz metin sızıntısı (host adı, IP, pin): yok');
     expect(text).not.toContain('VAR ✗');
-    // Ekran master key'i de listeliyor: keyset bu anahtarla sarılı.
-    expect(text).toMatch(/_androidx_security_master_key_: AES \d+ bit/);
+    expect(text).not.toContain('EVET ✗');
+    // Ekran şifrelemenin iki Keystore anahtarını da listeliyor.
+    expect(text).toMatch(/pinvault_prefs_aes: AES 256 bit/);
+    expect(text).toMatch(/pinvault_prefs_mac: HmacSHA256 \d+ bit/);
     await app.backToMain();
   });
 });

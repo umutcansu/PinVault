@@ -192,7 +192,7 @@ test('Saldırı: çalınmış imzalama anahtarıyla imzalı sahte anahtar seti e
   } finally {
     device.clearNetRules();
     if (mitm) await mitm.stop();
-    // Uygulanan set cihazda kalıcı (pinvault_signing_keys.xml); verisi
+    // Uygulanan set cihazda kalıcı (pinvault_secure_signing_keys.xml); verisi
     // silinmiş açılış onu da siler, telefon temel durumda kalır. Asıl hatayı
     // gölgelemesin diye burada düşülmez.
     try {

@@ -127,7 +127,7 @@ test("Saldırı: config'in imzası bozulursa telefon onu uygulamıyor, önceki c
         testInfo,
         'Cihazdaki config deposu (Depolama ekranı)',
         [
-          storage.split('\n').filter((line) => /ssl_cert_config|düz metin|Mod:/.test(line)).join('\n'),
+          storage.split('\n').filter((line) => /pinvault_secure_config|düz metin|Mod:/.test(line)).join('\n'),
           '',
           `telefondaki hedef sürümü: v${SampleApp.hostVersion(status, TARGET_HOST)}`,
           `sunucudaki sürüm        : v${v0 + 2}`,
@@ -136,7 +136,7 @@ test("Saldırı: config'in imzası bozulursa telefon onu uygulamıyor, önceki c
           'yakalayıp UpdateResult.Failed dönüyor, configStore.save() hiç çağrılmıyor.',
         ].join('\n'),
       );
-      expect(storage).toContain('ssl_cert_config');
+      expect(storage).toContain('pinvault_secure_config.xml');
       await app.backToMain();
     });
 

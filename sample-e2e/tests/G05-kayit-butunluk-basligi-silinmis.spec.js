@@ -122,7 +122,7 @@ test('Saldırı: kayıt yanıtındaki bütünlük başlığı (X-P12-SHA256) sil
         testInfo,
         'Cihazdaki istemci sertifikası kaydı',
         [
-          storage.split('\n').filter((line) => /İstemci sertifikası|kayıtlı|pinvault_client_cert|elle yüklenen/i.test(line)).join('\n'),
+          storage.split('\n').filter((line) => /İstemci sertifikası|kayıtlı|pinvault_secure_client_cert|elle yüklenen/i.test(line)).join('\n'),
           '',
           'Doğrulama P12 diske YAZILMADAN önce yapılıyor: validateP12 önce hash,',
           'sonra PKCS12 biçim kontrolü; ikisi de geçmeden certStore.save çağrılmıyor.',

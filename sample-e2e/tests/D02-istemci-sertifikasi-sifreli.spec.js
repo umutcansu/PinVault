@@ -1,16 +1,16 @@
 // D02 — İstemci sertifikası (P12) cihazda şifreli.
 //
-// ClientCertSecureStore P12 baytlarını Base64'leyip
-// `shared_prefs/pinvault_client_cert.xml` içinde EncryptedSharedPreferences ile
-// saklıyor. Ham kayıt PKCS12 olarak açılmıyor (özel anahtarı dosyayı kopyalayan
-// biri çıkaramaz), ama kütüphane aynı kaydı çözüp sertifikanın CN'ini
+// ClientCertSecureStore P12 baytlarını `shared_prefs/pinvault_secure_client_cert.xml`
+// içinde saklıyor: değer AES-256-GCM, kayıt adı HMAC, ikisinin anahtarı Android
+// Keystore'da. Ham kayıt PKCS12 olarak açılmıyor (özel anahtarı dosyayı
+// kopyalayan biri çıkaramaz), ama kütüphane aynı kaydı çözüp sertifikanın CN'ini
 // gösterebiliyor ve mTLS el sıkışmasında kullanabiliyor.
 const { test, expect } = require('../lib/fixtures');
 const { attachText, hexdump } = require('../lib/evidence');
 const hostApi = require('../lib/hostApi');
 const env = require('../lib/env');
 
-const PREFS = 'shared_prefs/pinvault_client_cert.xml';
+const PREFS = 'shared_prefs/pinvault_secure_client_cert.xml';
 
 test('Depolama: istemci sertifikası şifreli saklanıyor, ham kayıt PKCS12 olarak açılmıyor', async ({
   app,
@@ -42,8 +42,7 @@ test('Depolama: istemci sertifikası şifreli saklanıyor, ham kayıt PKCS12 ola
 
     await test.step('Cihaz: ham kayıt şifreli, PKCS12 dosyası gibi başlamıyor', async () => {
       const xml = device.appFileText(env.APP_ID, PREFS);
-      const entries = [...xml.matchAll(/<string name="([^"]+)">([^<]*)<\/string>/g)]
-        .filter((m) => !m[1].startsWith('__androidx_security_crypto'));
+      const entries = [...xml.matchAll(/<string name="([^"]+)">([^<]*)<\/string>/g)];
       expect(entries.length).toBeGreaterThan(0);
       const raw = Buffer.from(entries[0][2], 'base64');
       // PKCS12 dosyaları DER SEQUENCE ile başlar: 0x30 0x82 …
@@ -54,8 +53,8 @@ test('Depolama: istemci sertifikası şifreli saklanıyor, ham kayıt PKCS12 ola
         [
           xml.length > 1200 ? `${xml.slice(0, 1200)}\n… (${xml.length - 1200} karakter daha)` : xml,
           '',
-          `veri kaydı sayısı: ${entries.length} (+2 Tink keyset)`,
-          `kayıt adı (şifreli): ${entries[0][0].slice(0, 44)}…`,
+          `veri kaydı sayısı: ${entries.length}`,
+          `kayıt adı (HMAC): ${entries[0][0]}`,
           `çözülmemiş değer: ${raw.length} bayt`,
           '',
           hexdump(raw, 64),
@@ -89,7 +88,7 @@ test('Depolama: istemci sertifikası şifreli saklanıyor, ham kayıt PKCS12 ola
       );
       expect(text).toContain(`kayıtlı — CN=${cn}`);
       expect(text).toContain('ham kayıt PKCS12 olarak açılıyor mu: hayır ✓ (şifreli)');
-      expect(text).toContain('pinvault_client_cert.xml');
+      expect(text).toContain('pinvault_secure_client_cert.xml');
       expect(text).toContain('düz metin sızıntısı (host adı, IP, pin): yok');
       await app.backToMain();
     });

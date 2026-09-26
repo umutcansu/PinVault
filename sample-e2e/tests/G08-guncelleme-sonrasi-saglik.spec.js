@@ -91,13 +91,11 @@ test("Saldırı: config indikten sonra /health 500 döner → telefon başlatıl
     await test.step('Mobil: uygulanan config geri alındı — şifreli depo boş', async () => {
       const listing = device.appFiles(env.APP_ID, 'shared_prefs');
       const files = prefsOf(listing);
-      const configFile = files.find((f) => f.startsWith('ssl_cert_config'));
+      const configFile = files.find((f) => f === 'pinvault_secure_config.xml');
       const contents = configFile ? device.appFileText(env.APP_ID, `shared_prefs/${configFile}`) : '';
-      // EncryptedSharedPreferences dosyada kendi iki anahtar kaydını (key/value
-      // keyset) tutar; bunlar veri değildir ve clear() sonrasında da kalır.
-      // Sayıma yalnızca uygulamanın (şifreli) kayıtları girer.
-      const entryCount = (contents.match(/<string name="([^"]*)"/g) || [])
-        .filter((m) => !m.includes('__androidx_security_crypto_')).length;
+      // Uygulama bu açılışta tek blokla (sample-host) çalışıyor: dosyadaki
+      // her kayıt onun.
+      const entryCount = (contents.match(/<string name="([^"]*)"/g) || []).length;
       await attachText(
         testInfo,
         `Cihazdaki tercih dosyaları (adb shell run-as ${env.APP_ID})`,
@@ -112,8 +110,7 @@ test("Saldırı: config indikten sonra /health 500 döner → telefon başlatıl
           'Sağlık kontrolü geçmeyince kütüphane uygulanan config\'i geri alıyor —',
           'önceki kopya olmadığı için depoyu temizliyor (configStore.clear) ve',
           'istemciyi, şüphede bağlantıya izin vermeyen duruma döndürüyor (httpClientProvider.reset).',
-          'Dosya diskte kalsa bile içinde uygulamaya ait tek bir kayıt yok (yalnızca',
-          'EncryptedSharedPreferences\'in kendi keyset kayıtları duruyor).',
+          'Dosya diskte kalsa bile içinde tek bir kayıt yok.',
           '',
           'Önceki davranış: config olduğu gibi depoda kalıyordu; healthCheck()',
           'istisnaları yuttuğu için "temizle ve sıfırla" dalı hiç çalışmıyordu.',

@@ -73,14 +73,16 @@ test('mTLS: kayıt silinince bağlantı, uygulama yeniden açılmadan hemen kesi
       await app.openStorage();
       const text = await app.storageText();
       await app.snap('Depolama: istemci sertifikası yok');
-      const prefs = device.runAs(env.APP_ID, 'cat shared_prefs/pinvault_client_cert.xml 2>/dev/null || echo "(dosya yok)"');
+      const prefs = device.runAs(env.APP_ID, 'cat shared_prefs/pinvault_secure_client_cert.xml 2>/dev/null || echo "(dosya yok)"');
+      const entries = [...prefs.matchAll(/<string name="/g)].length;
       await attachText(
         testInfo,
-        `run-as ${env.APP_ID} — shared_prefs/pinvault_client_cert.xml`,
+        `run-as ${env.APP_ID} — shared_prefs/pinvault_secure_client_cert.xml`,
         [
           prefs.trim().slice(0, 1200),
           '',
-          'Kayıt silindikten sonra dosyada P12 kaydı yok (yalnızca Tink keyset\'i kalabilir).',
+          `sertifika kaydı: ${entries === 0 ? 'yok ✓' : `${entries} kayıt ✗`}`,
+          'Kayıt silindikten sonra dosyada hiçbir sertifika kaydı kalmıyor.',
         ].join('\n'),
       );
       await attachText(
@@ -89,7 +91,7 @@ test('mTLS: kayıt silinince bağlantı, uygulama yeniden açılmadan hemen kesi
         text.split('\n').filter((l) => /İstemci sertifikası|kayıtlı|elle yüklenen/i.test(l)).join('\n'),
       );
       expect(text).toContain('kayıtlı değil');
-      expect(prefs).not.toContain('pinvault_client_cert_default');
+      expect(entries).toBe(0);
       await app.backToMain();
     });
 

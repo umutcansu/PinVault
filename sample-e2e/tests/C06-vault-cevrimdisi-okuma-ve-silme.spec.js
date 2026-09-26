@@ -113,11 +113,9 @@ test('Vault çevrimdışı: host kapalıyken saklı içerik okunuyor, "Sil" geri
     await test.step('Cihaz: .enc dosyası ve SharedPreferences kaydı gerçekten silindi', async () => {
       const listing = device.appFiles(env.APP_ID, 'files/vault_files');
       const versions = device.appFileText(env.APP_ID, 'shared_prefs/pinvault_vault_file_versions.xml');
-      const prefs = device.appFileText(env.APP_ID, 'shared_prefs/pinvault_vault_files.xml');
-      // Geriye yalnızca iki Tink keyset'i kalmalı (ad ve değer şifrelemesi);
-      // hiçbir vault_data_/vault_ver_ kaydı kalmamalı.
-      const prefNames = [...prefs.matchAll(/<string name="([^"]+)"/g)].map((m) => m[1]);
-      const dataNames = prefNames.filter((n) => !n.startsWith('__androidx_security_crypto'));
+      const prefs = device.appFileText(env.APP_ID, 'shared_prefs/pinvault_secure_vault_files.xml');
+      // Hiçbir vault kaydı (içerik ya da sürüm) kalmamalı.
+      const dataNames = [...prefs.matchAll(/<string name="([^"]+)"/g)].map((m) => m[1]);
       await attachText(
         testInfo,
         `adb shell run-as ${env.APP_ID} — silme sonrası depo`,
@@ -130,9 +128,9 @@ test('Vault çevrimdışı: host kapalıyken saklı içerik okunuyor, "Sil" geri
           '',
           `${MODEL}.enc dosyası duruyor mu: ${listing.includes(`${MODEL}.enc`) ? 'EVET ✗' : 'hayır ✓'}`,
           `sürüm kaydı duruyor mu: ${versions.includes(`vault_file_ver_${MODEL}`) ? 'EVET ✗' : 'hayır ✓'}`,
-          '$ cat shared_prefs/pinvault_vault_files.xml (kayıt adları)',
-          prefNames.map((n) => `  ${n.slice(0, 60)}${n.length > 60 ? '…' : ''}`).join('\n'),
-          `veri kaydı kaldı mı: ${dataNames.length === 0 ? 'hayır ✓ (yalnızca iki Tink keyset\'i)' : `EVET ✗ (${dataNames.length})`}`,
+          '$ cat shared_prefs/pinvault_secure_vault_files.xml (kayıt adları)',
+          dataNames.length ? dataNames.map((n) => `  ${n}`).join('\n') : '  (kayıt yok)',
+          `veri kaydı kaldı mı: ${dataNames.length === 0 ? 'hayır ✓' : `EVET ✗ (${dataNames.length})`}`,
           '',
           'clearFile ayrıca Android Keystore\'daki pinvault_vault_' + MODEL + ' anahtarını',
           'da siliyor — dosya bir yerden geri gelse bile çözülemez.',
