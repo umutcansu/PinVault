@@ -16,6 +16,9 @@ const { SampleApp } = require('../lib/sampleApp');
 const { attachText } = require('../lib/evidence');
 
 const KEY = env.VAULT_KEYS.flags;
+/** 2.0.x'in EncryptedSharedPreferences dosyaları; yeni sürüm ilk açılışta taşıyıp siler. */
+const LEGACY_FILES = ['ssl_cert_config_sample-host.xml', 'pinvault_client_cert.xml', 'pinvault_vault_files.xml'];
+const SECURE_FILES = ['pinvault_secure_config.xml', 'pinvault_secure_client_cert.xml', 'pinvault_secure_vault_files.xml'];
 
 /** Kurulu paketin sürüm ve kurulum zamanları (güncelleme mi, yeni kurulum mu). */
 function packageInfo(device) {
@@ -126,6 +129,9 @@ test('Sürüm yükseltme: önceki sürümle (PinVault 2.0.9) kurulan uygulama g�
       await app.openStorage();
       before = await app.storageText();
       await attachText(testInfo, 'Depolama ekranı (önceki sürüm)', before);
+      const files = device.appFiles(env.APP_ID, 'shared_prefs');
+      await attachText(testInfo, `run-as ${env.APP_ID} ls -la shared_prefs (önceki sürüm: EncryptedSharedPreferences dosyaları)`, files);
+      for (const file of LEGACY_FILES) expect(files).toContain(file);
       await app.snap('önceki sürümün depolama ekranı');
       await app.backToMain();
     });
@@ -153,7 +159,7 @@ test('Sürüm yükseltme: önceki sürümle (PinVault 2.0.9) kurulan uygulama g�
       const status = await app.waitReady();
       const newVersion = Number(status.match(/config v(\d+)/)[1]);
       expect(newVersion).toBeGreaterThanOrEqual(oldConfigVersion);
-      const lines = device.logcat({ match: /Loaded stored config|No stored config|Init ready|Config updated|Config signature verified/ });
+      const lines = device.logcat({ match: /SecurePreferences: moved|Loaded stored config|No stored config|Init ready|Config updated|Config signature verified/ });
       await attachText(
         testInfo,
         'Yeni sürümün açılış log\'u (logcat)',
@@ -168,6 +174,8 @@ test('Sürüm yükseltme: önceki sürümle (PinVault 2.0.9) kurulan uygulama g�
       // Bloklar sırayla kurulur: ilk yükleme satırı TLS bloğunun.
       const loads = lines.split('\n').filter((l) => /Loaded stored config|No stored config/.test(l));
       expect(loads[0]).toContain(`Loaded stored config — version: ${oldConfigVersion}`);
+      // Eski config dosyası açılışta yeni depoya taşındı.
+      expect(lines).toMatch(/SecurePreferences: moved \d+ entries from ssl_cert_config_sample-host\.xml to pinvault_secure_config\.xml/);
       await app.snap(`yeni sürüm hazır: config v${newVersion}`);
     });
 
@@ -187,6 +195,26 @@ test('Sürüm yükseltme: önceki sürümle (PinVault 2.0.9) kurulan uygulama g�
       expect(await app.fetchVault(KEY)).toContain(`${KEY} güncel (v${vaultVersion})`);
       await app.snap(`yeni sürüm: ${KEY} güncel (v${vaultVersion}), yeniden indirilmedi`);
       await app.backToMain();
+    });
+
+    await test.step('Cihaz: 2.0.x\'in şifreli dosyaları Keystore depolarına taşınıp silindi', async () => {
+      const files = device.appFiles(env.APP_ID, 'shared_prefs');
+      await attachText(
+        testInfo,
+        `run-as ${env.APP_ID} ls -la shared_prefs (yeni sürüm)`,
+        [
+          files.trim(),
+          '',
+          ...LEGACY_FILES.map((file) => `${file.padEnd(34)} ${files.includes(file) ? 'DURUYOR ✗' : 'taşındı, silindi ✓'}`),
+          ...SECURE_FILES.map((file) => `${file.padEnd(34)} ${files.includes(file) ? 'var ✓' : 'YOK ✗'}`),
+          '',
+          'Yeni sürüm her depoyu ilk açışında eski dosyayı eski kütüphaneyle bir kez okuyup',
+          'yeni biçimde (değer AES-256-GCM, kayıt adı HMAC, anahtarlar Android Keystore\'da)',
+          'yazıyor ve eski dosyayı siliyor.',
+        ].join('\n'),
+      );
+      for (const file of LEGACY_FILES) expect(files).not.toContain(file);
+      for (const file of SECURE_FILES) expect(files).toContain(file);
     });
 
     await test.step('Mobil: arka plan güncelleme işi yeni sürümün koduyla çalışır', async () => {
