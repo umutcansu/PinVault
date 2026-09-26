@@ -1,7 +1,6 @@
 package io.github.umutcansu.pinvault.model
 
 import io.github.umutcansu.pinvault.api.PinVaultConnectionListener
-import io.github.umutcansu.pinvault.store.CertificateConfigStore
 import timber.log.Timber
 import java.util.concurrent.ConcurrentHashMap
 
@@ -99,25 +98,14 @@ data class PinVaultConfig(
          * Register a Config API. Calling twice with the same id replaces the
          * prior block (useful for overrides in tests).
          *
-         * ### Custom ids and device backups
+         * ### Device backups
          *
-         * Each block persists its pins in its own encrypted preferences file,
-         * `shared_prefs/ssl_cert_config_<id>.xml`. PinVault ships backup rules
-         * that exclude those files from cloud backup and device transfer
-         * (audit M-07: restoring an old backup would otherwise reinstate an
-         * old pin set), **but Android's `<exclude>` takes no wildcards**, so
-         * the bundled rules can only name the ids the library knows:
-         * `default`, `default-tls` and `secure-mtls`.
-         *
-         * If you pass any other [id], PinVault's rules do not cover your
-         * stored pins. Close it in your own app by either:
-         *  - setting `android:allowBackup="false"` on `<application>`, or
-         *  - adding `<exclude domain="sharedpref" path="ssl_cert_config_<id>.xml" />`
-         *    to your own `fullBackupContent` **and** to both the
-         *    `<cloud-backup>` and `<device-transfer>` sections of your
-         *    `dataExtractionRules`.
-         *
-         * [build] logs a warning once per uncovered id.
+         * Every block keeps its pins in its own namespace of one encrypted file,
+         * `shared_prefs/pinvault_secure_config.xml`, which PinVault's bundled
+         * backup rules exclude from cloud backup and device transfer (audit M-07:
+         * restoring an old backup would otherwise reinstate an old pin set). Any
+         * [id] is covered; PinVault 2.0.x used one file per id, which the rules
+         * could only name for the library's own ids.
          */
         fun configApi(id: String, url: String, init: ConfigApiBlock.Builder.() -> Unit) = apply {
             configApiBlocks[id] = ConfigApiBlock.Builder(id, url).apply(init).build()
@@ -166,7 +154,6 @@ data class PinVaultConfig(
                                 "Registered: ${configApiBlocks.keys}"
                     }
                 }
-                configApiBlocks.keys.forEach { warnIfBackupRulesMissCoverage(it) }
             }
 
             vaultFiles.values.forEach { warnIfPolicyUnusableFromDevice(it) }
@@ -188,51 +175,11 @@ data class PinVaultConfig(
 
         // ── Build-time diagnostics ──────────────────────────────────────────
         //
-        // Both warnings below describe a configuration that compiles, runs and
-        // silently does the wrong thing. They are logged once per distinct
-        // value so a Builder used per screen (or in a test loop) does not
-        // spam the log.
+        // The warning below describes a configuration that compiles, runs and
+        // silently does the wrong thing. It is logged once per distinct value
+        // so a Builder used per screen (or in a test loop) does not spam the log.
 
-        private val warnedBackupIds = ConcurrentHashMap.newKeySet<String>()
         private val warnedApiKeyFiles = ConcurrentHashMap.newKeySet<String>()
-
-        /**
-         * Config API ids whose stored pin config the library's bundled backup
-         * rules already exclude. Android's `<exclude>` takes no wildcards, so
-         * the rule files have to name every `shared_prefs` file literally —
-         * which means only these ids are covered out of the box.
-         *
-         * Keep in sync with `res/xml/pinvault_backup_rules.xml` and
-         * `res/xml/pinvault_data_extraction_rules.xml`.
-         */
-        private val BACKUP_RULE_COVERED_IDS =
-            setOf("", ConfigApiBlock.DEFAULT_ID, "default-tls", "secure-mtls")
-
-        /**
-         * Warns when a Config API id is not named in
-         * `res/xml/pinvault_backup_rules.xml` /
-         * `pinvault_data_extraction_rules.xml`.
-         *
-         * The stored config lives in `shared_prefs/ssl_cert_config_<id>.xml`
-         * (see [CertificateConfigStore.prefsNameFor]). An id the rules do not
-         * name ends up in cloud backup and device-transfer payloads, and
-         * restoring an older backup reinstates an older pin set — the
-         * pin-downgrade path the exclusions exist to close (audit M-07).
-         */
-        private fun warnIfBackupRulesMissCoverage(configApiId: String) {
-            if (configApiId in BACKUP_RULE_COVERED_IDS) return
-            if (!warnedBackupIds.add(configApiId)) return
-            val prefsFile = CertificateConfigStore.prefsNameFor(configApiId) + ".xml"
-            Timber.w(
-                "Config API id '%s' is NOT covered by PinVault's bundled backup rules. " +
-                    "Its stored pin config (shared_prefs/%s) will be included in cloud backup " +
-                    "and device transfer, which lets a restored backup downgrade pins (M-07). " +
-                    "Android backup rules do not support wildcards, so fix it in YOUR app: set " +
-                    "android:allowBackup=\"false\", or add <exclude domain=\"sharedpref\" path=\"%s\" /> " +
-                    "to your own fullBackupContent and dataExtractionRules (cloud-backup AND device-transfer).",
-                configApiId, prefsFile, prefsFile
-            )
-        }
 
         /**
          * Warns when a vault file is declared with

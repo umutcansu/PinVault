@@ -118,7 +118,9 @@ API_KEY=your-secret docker compose up
 ALLOW_ANONYMOUS_ADMIN=true docker compose up
 ```
 
-### 8. Custom `configApiId`? Add your own backup exclusion
+### 8. Custom `configApiId`? Add your own backup exclusion (2.0.x only)
+
+From 2.1 every block is covered by the bundled rules; see [Encrypted storage moves to the Android Keystore](#encrypted-storage-moves-to-the-android-keystore-21).
 
 The library's backup rules can only name the ids it knows (`default`,
 `default-tls`, `secure-mtls`) — Android's `<exclude>` takes no wildcards. If

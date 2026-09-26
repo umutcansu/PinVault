@@ -791,44 +791,20 @@ named admins with a hash-chained audit log, webhook alerts, two-person
 approval for pin changes and a live-certificate gate that refuses pin sets the
 host would fail — all switched on with environment variables.
 
-### 5. Backup exclusion — automatic, except for custom Config API ids
+### 5. Backup exclusion — automatic
 
-Client certificates, the vault file store and the stored pin configs are
-excluded from cloud backup and device-to-device transfer via
+Client certificates, the vault file store, signing-key sets and the stored pin
+configs are excluded from cloud backup and device-to-device transfer via
 `pinvault_backup_rules.xml` and `pinvault_data_extraction_rules.xml`. The
 manifest merger pulls both in automatically.
 
-> **⚠️ Using your own `configApiId`? Read this.**
->
-> Each Config API block persists its pins in its own file,
-> `shared_prefs/ssl_cert_config_<configApiId>.xml`. Android backup rules do
-> **not** support wildcards, so the bundled rules can only name the ids the
-> library knows: `default`, `default-tls`, `secure-mtls`.
->
-> If you register any other id — `.configApi("my-api", …)` — **your stored
-> pins are not excluded**. They go into cloud backup and device transfer, and
-> restoring an older backup reinstates an older pin set: the pin-downgrade
-> path the exclusions exist to close (audit M-07).
->
-> Do one of the following in **your** app:
->
-> ```xml
-> <!-- Simplest: no backup at all -->
-> <application android:allowBackup="false" …>
-> ```
->
-> ```xml
-> <!-- Or name the file yourself, in BOTH rule files -->
-> <!-- res/xml/my_backup_rules.xml (API ≤ 30) -->
-> <exclude domain="sharedpref" path="ssl_cert_config_my-api.xml" />
->
-> <!-- res/xml/my_data_extraction_rules.xml (API 31+) — in cloud-backup AND
->      device-transfer -->
-> <exclude domain="sharedpref" path="ssl_cert_config_my-api.xml" />
-> ```
->
-> `PinVaultConfig.Builder.build()` logs a warning (once per id) naming the
-> exact line to add when it sees an id the bundled rules do not cover.
+Every store lives in one of four fixed files (`pinvault_secure_config.xml`,
+`pinvault_secure_client_cert.xml`, `pinvault_secure_signing_keys.xml`,
+`pinvault_secure_vault_files.xml`), so the rules cover any Config API id.
+PinVault 2.0.x kept each block's config in its own
+`ssl_cert_config_<configApiId>.xml`, which the rules could only name for the
+library's own ids; those files are moved and deleted on the first start of the
+new version.
 
 ### 6. Verify TLS configuration on your backend
 - TLS 1.2 or higher (1.3 preferred)
