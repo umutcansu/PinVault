@@ -2,10 +2,11 @@
 
 Dynamic SSL certificate pinning library for Android. Manage pins remotely, support mTLS, distribute versioned files — all with encrypted storage.
 
-> **v2.0** — Multi-Config-API support, per-file access tokens, per-device
-> encryption, server-side pin scoping. See [MIGRATION.md](MIGRATION.md) for
-> a DSL reference and [CHANGELOG.md](CHANGELOG.md) for the full list of
-> changes.
+> **Latest release: 2.0.9.** This README follows the `main` branch, which is
+> heading for **2.1**. Anything marked *(2.1)* is not in 2.0.9 yet — using it
+> against the 2.0.9 artifact fails to compile. See [CHANGELOG.md](CHANGELOG.md)
+> ("Unreleased") for the full list and [MIGRATION.md](MIGRATION.md) for the
+> DSL reference.
 
 ## Features
 
@@ -18,10 +19,12 @@ Dynamic SSL certificate pinning library for Android. Manage pins remotely, suppo
 - **VaultFile** — remote versioned file distribution (ML models, configs, feature flags)
 - **Per-file access policies** *(v2)* — `public` / `api_key` / `token` / `token_mtls`
 - **Per-device encryption** *(v2)* — RSA-OAEP-SHA256 + AES-256-GCM, Android Keystore-backed: only the target device opens a download (the server encrypts it, so it sees the content)
-- **Encrypted storage** — values AES-256-GCM, names HMAC-SHA256, both keys generated in the Android Keystore (hardware-backed) and never leaving it
+- **Encrypted storage** — values AES-256-GCM, names HMAC-SHA256, both keys generated in the Android Keystore (hardware-backed) and never leaving it *(2.1; 2.0.x uses EncryptedSharedPreferences)*
 - **Server-agnostic** — works with any backend, or offline with static pins
 - **ECDSA signed configs** — verify config integrity with SHA256withECDSA
-- **Optional signing layers** — backup keys, m-of-n signatures, signing-key rotation/revocation over the air ([SECURE_OPERATIONS.md](SECURE_OPERATIONS.md))
+- **Signed vault files** *(2.1)* — every downloaded file is checked against the Config API's signing keys before it is saved
+- **Issuer pins** *(2.1)* — pin your CA's key and survive leaf renewals
+- **Optional signing layers** *(2.1)* — backup keys, m-of-n signatures, signing-key rotation/revocation over the air ([SECURE_OPERATIONS.md](SECURE_OPERATIONS.md))
 
 ## Quick Start
 
@@ -317,7 +320,7 @@ Option B trades dynamic pin rotation (no longer driven by PinVault
 config swaps) for not needing the management host in the server's pin
 response.
 
-**Option C — the endpoint shares a certificate you already pin.** When the
+**Option C *(2.1)* — the endpoint shares a certificate you already pin.** When the
 report endpoint is served with the Config API's own certificate (the
 reference server's `MANAGEMENT_HTTPS_PORT` does exactly that), pin it with the
 bootstrap pins you already ship. `pinnedClient` works with self-signed
@@ -484,6 +487,13 @@ val config = PinVaultConfig.Builder()
 PinVault.init(context, config, MyApi()) { result -> /* ... */ }
 ```
 
+If you serve vault files through a custom API, override
+`downloadVaultFileWithMeta(...)` rather than only `downloadVaultFile(...)`:
+the default wrapper returns version `0` and no signature, and *(2.1)* a block
+with a signing key refuses an unsigned vault file (see
+[Signed vault files](#signed-vault-files-21)). Return the signature in
+`VaultFetchResponse(content, version, encryption, signature = …)`.
+
 The default implementation (`DefaultCertificateConfigApi`) speaks the HTTP
 contract described in [SERVER_IMPLEMENTATION_GUIDE.md](SERVER_IMPLEMENTATION_GUIDE.md)
 and is sufficient for the reference server.
@@ -496,7 +506,32 @@ PinVault.enroll(context, "one-time-token")
 
 // Automatic (device ID)
 PinVault.autoEnroll(context)
+
+PinVault.isEnrolled(context)   // is a client certificate stored?
+PinVault.unenroll(context)     // remove it; the next request presents no cert
 ```
+
+Certificates are stored under the Config API block's `clientCertLabel(...)`;
+every call above takes an optional `label` to address another one.
+
+## Keeping pins fresh
+
+`init` fetches the config once. To keep checking in the background, schedule a
+WorkManager job after init; to refresh on demand, call `updateNow()`:
+
+```kotlin
+PinVaultConfig.Builder()
+    .configApi("api", url) { /* ... */ }
+    .updateIntervalHours(12)            // or updateIntervalMinutes(...) (WorkManager minimum: 15)
+    .build()
+
+PinVault.schedulePeriodicUpdates()     // uses the interval above
+val result = PinVault.updateNow()      // UpdateResult.Updated / AlreadyCurrent / Failed
+```
+
+`PinVault.reset()` drops the active and stored config; the next `init` starts
+from the bootstrap pins again (clients built earlier refuse handshakes until
+then — pinning never falls back to system trust).
 
 ## VaultFile (Remote File Distribution)
 
@@ -524,7 +559,32 @@ val result = PinVault.fetchFile("ml-model")
 // Load cached
 val bytes = PinVault.loadFile("ml-model")
 val json = PinVault.loadFileAsString("feature-flags")
+
+// Housekeeping
+PinVault.syncAllFiles()               // fetch every registered file
+PinVault.hasFile("ml-model")          // cached copy present?
+PinVault.fileVersion("ml-model")      // cached version (0 = none)
+PinVault.clearFile("ml-model")        // drop the cached copy
 ```
+
+`storage(...)` also accepts your own `VaultStorageProvider` instead of a
+`StorageStrategy`.
+
+### Signed vault files *(2.1)*
+
+A vault file is saved only after its signature checks out. The server signs
+`pinvault-vault-file:v1:<key>:<version>:<sha256-hex of the content>` with the
+Config API's signing key and sends it in `X-Vault-Signature` (several signers:
+`X-Vault-Signatures`). The device verifies it with the same keys it trusts for
+configs — including a rotated key set and `requiredSignatures(n)` — after any
+per-device decryption, and refuses a validly signed but older version.
+
+- A file with no signature, or a bad one, ends as `VaultFileResult.Failed` and
+  nothing is written. The reference server signs every file; **a backend of
+  your own must send the header** once the block has a signing key.
+- `signaturePublicKey(...)` inside `.vaultFile { }` checks that one file
+  against exactly that key instead.
+- Blocks with `allowUnsigned()` skip the check (and log a warning).
 
 ### Per-file access policies (v2)
 
@@ -593,11 +653,20 @@ Server dashboard shows which device has which certificate and vault file version
 
 ```bash
 cd demo-server
-API_KEY=your-secret SIGNING_KEY_PASSWORD=your-other-secret docker compose up
+API_KEY=your-secret SIGNING_KEY_PASSWORD=second-secret KEYSTORE_PASSWORD=third-secret \
+  VAULT_AT_REST_PASSWORD=fourth-secret docker compose up
 ```
 
 Dashboard: `http://localhost:8080`
 API docs (Swagger): `http://localhost:8080/docs`
+Config API (TLS): `https://localhost:8081`
+
+Data lives under `demo-server/data/` (`db/`, `certs/`, `keys/signing-key.pem`).
+The compose file passes through the variables in the two tables below; add any
+other one to its `environment:` list. Upgrading from a checkout that mounted
+`./data/signing-key.pem`: move that file to `./data/keys/signing-key.pem`
+before starting, or the server generates a new key and every device rejects
+its configs.
 
 #### Required env vars
 
@@ -610,18 +679,38 @@ API docs (Swagger): `http://localhost:8080/docs`
 | Variable | Default | Purpose |
 |---|---|---|
 | `SIGNING_KEY_PASSWORD` | unset | AES-256-GCM encrypts the ECDSA signing key on disk (PBKDF2-SHA256). When unset, the key is written plaintext + chmod 600 + warning logged. Existing plaintext keys are auto-migrated on startup. |
+| `KEYSTORE_PASSWORD` | `changeit` | Protects the server's own keystores (TLS key, backup keys, truststore, stored host client certs). Never leaves the server. **Set it in production** — the default is public. |
+| `KEYSTORE_PASSWORD_PREVIOUS` | unset | Old password when changing `KEYSTORE_PASSWORD`: keystores are re-encrypted at startup. Remove afterwards. |
+| `VAULT_AT_REST_PASSWORD` | demo key | Encrypts uploaded vault files on disk. Unset uses a key that is in the source code, so the encryption is cosmetic. `VAULT_AT_REST_PASSWORD_PREVIOUS` re-encrypts after a change. |
+| `CLIENT_P12_PASSWORD` | `changeit` | Password on device P12s for clients that don't negotiate a one-off one (`X-PinVault-Features: p12password`, library 2.1+). |
 | `CONFIG_TTL_SECONDS` | `86400` (24h) | How long a signed config response stays valid before clients reject it as replayed. Lower = tighter replay window; too low risks rejecting cached configs from offline devices. |
 | `ENROLLMENT_MODE` | `token` | `token` (production) requires an enrollment token; `open` allows deviceId-only enrollment (demo only). |
+| `ENROLLMENT_TOKEN_TTL_SECONDS` | `86400` | Lifetime of a one-time enrollment token. |
 | `EXTRA_CERT_SANS` | unset | Comma-separated IPv4 addresses / DNS names added to every TLS certificate the server generates. Set it to the Docker host's LAN IP when running in a container — the server only sees the container's own address, and Android clients reject a certificate that does not name the IP they connect to. Applies when a certificate is (re)generated. |
+| `CERT_EXPIRY_WARN_DAYS` | `30` | When `/api/v1/cert-expiry` and the dashboard start warning. |
+| `MANAGEMENT_HTTPS_PORT` | unset | Also serve the management API over TLS with the Config API's certificate (the one apps already pin), so device reports and remote admins don't cross the network in the clear. Not in the compose file — add it and a port mapping. |
+| `PORT` / `HTTPS_PORT` | `8080` / `PORT+1` | Management HTTP / Config API TLS ports. In Docker, change the host side instead (`PORT=9000 docker compose up`). |
 | `ALLOW_ANONYMOUS_ADMIN` | unset | Set to `true` to allow startup with no `API_KEY` (anonymous admin). Logs a warning. Do not use on any network you don't control. |
+
+The optional signing and governance layers — named admins (`ADMIN_KEYS`),
+two-person approval (`PIN_CHANGE_APPROVALS`), live-certificate check
+(`PIN_LIVE_CHECK`), webhooks (`NOTIFY_WEBHOOK_URL`), HSM/KMS signers
+(`CONFIG_SIGNERS`, `PKCS11_*`, `SIGNER_*`), signature cache and signing-key
+sets (`RECOVERY_PUBLIC_KEYS`) — are all off by default and documented with
+their variables in [SECURE_OPERATIONS.md](SECURE_OPERATIONS.md).
 
 ### Build your own server
 
-See [SERVER_IMPLEMENTATION_GUIDE.md](SERVER_IMPLEMENTATION_GUIDE.md) for the API contract. Your server needs 3 endpoints:
+See [SERVER_IMPLEMENTATION_GUIDE.md](SERVER_IMPLEMENTATION_GUIDE.md) for the API contract. Pinning alone needs 2 endpoints:
 
 1. `GET /health` — return `{"status":"ok"}`
 2. `GET /api/v1/certificate-config` — return a signed envelope `{payload, signature}` whose payload includes `issuedAt`/`expiresAt` (ECDSA-SHA256 with a P-256 key). The library refuses unsigned/missing-freshness responses unless the caller explicitly opts in via `allowUnsigned()`.
-3. `POST /api/v1/client-certs/enroll` — return PKCS12 bytes (if using mTLS) **plus** an `X-P12-SHA256` response header so the library can verify integrity.
+
+Add these for the features you use:
+
+3. mTLS — `POST /api/v1/client-certs/enroll`: PKCS12 bytes **plus** an `X-P12-SHA256` response header so the library can verify integrity (optionally `X-P12-Password`, see checklist item 1).
+4. VaultFile — `GET /<your vault endpoint>`: the file bytes with `X-Vault-Version` and, for signed blocks, `X-Vault-Signature` *(2.1, see [Signed vault files](#signed-vault-files-21))*.
+5. Per-device encryption — `POST /api/v1/vault/devices/{deviceId}/public-key` to register the device key, then encrypt responses with it.
 
 Works with any language: Python, Node.js, Go, .NET, etc.
 
@@ -639,7 +728,7 @@ PinVault.getClient()         ───→     Your API endpoints
 
 PinVault.enroll()            ───→     POST /client-certs/enroll
   P12 certificate            ←───     PKCS12 bytes
-  Stored in Keystore
+  Stored encrypted (Keystore key)
 
 PinVault.fetchFile("key")   ───→     GET /vault/{key}
   File cached encrypted      ←───     Binary bytes
@@ -707,13 +796,24 @@ following the patterns in section **2b** above, or read
 to v2 isn't an option right now, pin the dependency to the latest
 `1.x` release.
 
+### Upgrading from 2.0.x to 2.1
+
+No app code changes are needed from 2.0.9. A backend of your own that serves
+vault files to a signed block must start sending `X-Vault-Signature`
+([Signed vault files](#signed-vault-files-21)); the reference server does.
+On the first start 2.1 moves the 2.0.x
+EncryptedSharedPreferences files (configs, client certificates, cached vault
+files) into its Keystore-backed store and deletes them. Going back to 2.0.x
+afterwards starts from scratch: bootstrap pins, re-enrollment, re-download.
+Details in [MIGRATION.md](MIGRATION.md).
+
 ## Production Security Checklist
 
 PinVault is built around OWASP MASVS guidelines (NETWORK, CRYPTO, STORAGE).
 Before shipping to production, verify the following:
 
 ### 1. Never ship a server-side keystore password
-Enrollment and host client certificate downloads ask for a one-off P12
+*(2.1)* Enrollment and host client certificate downloads ask for a one-off P12
 password (`X-PinVault-Features: p12password`). A backend that returns it in
 `X-P12-Password` (the reference server does) never needs the app to know a
 password of its own: the library checks the bundle with it and re-wraps it
@@ -733,20 +833,11 @@ val devicePassword = backend.fetchKeystorePassword(deviceId) // ≥ 16 random ch
 .configApi("api", url) { clientKeystore(p12Bytes, devicePassword) }
 ```
 
-### 2. Strip Timber logs in release builds
-The library logs every pin verification, enrollment, and vault file operation
-through [Timber](https://github.com/JakeWharton/timber). Timber is silent
-unless your application calls `Timber.plant()` — so in release builds, only
-plant a `Timber.DebugTree()` when `BuildConfig.DEBUG` is true:
-
-```kotlin
-class App : Application() {
-    override fun onCreate() {
-        super.onCreate()
-        if (BuildConfig.DEBUG) Timber.plant(Timber.DebugTree())
-    }
-}
-```
+### 2. Keep debug logging out of release builds
+The library logs every pin verification, enrollment and vault file operation
+through [Timber](https://github.com/JakeWharton/timber), which stays silent
+until a tree is planted. Plant one (or call `PinVault.enableDebugLogging()`,
+see Quick Start step 5) only when `BuildConfig.DEBUG` is true.
 
 ### 3. Always use bootstrap pins for the first connection
 Without bootstrap pins, the first config fetch is unpinned (vulnerable to MITM
@@ -774,7 +865,7 @@ in the APK:
 
 See `SERVER_IMPLEMENTATION_GUIDE.md` for the signing protocol.
 
-Optional, stronger setups — each off by default, pick what your team can run
+Optional, stronger setups *(2.1)* — each off by default, pick what your team can run
 (details and runbooks in [`SECURE_OPERATIONS.md`](SECURE_OPERATIONS.md)):
 
 ```kotlin
@@ -785,6 +876,9 @@ Optional, stronger setups — each off by default, pick what your team can run
     recoveryPublicKeys(RECOVERY_KEY)                     // rotate / revoke signing keys over the air
 }
 ```
+
+`PinVault.signingStatus()` reports what a device currently trusts (key ids,
+required count, applied key-set version, who signed the last config).
 
 The reference server adds HSM (PKCS#11) and KMS signers, sign-once-per-publish,
 named admins with a hash-chained audit log, webhook alerts, two-person
@@ -798,7 +892,7 @@ configs are excluded from cloud backup and device-to-device transfer via
 `pinvault_backup_rules.xml` and `pinvault_data_extraction_rules.xml`. The
 manifest merger pulls both in automatically.
 
-Every store lives in one of four fixed files (`pinvault_secure_config.xml`,
+From 2.1 every store lives in one of four fixed files (`pinvault_secure_config.xml`,
 `pinvault_secure_client_cert.xml`, `pinvault_secure_signing_keys.xml`,
 `pinvault_secure_vault_files.xml`), so the rules cover any Config API id.
 PinVault 2.0.x kept each block's config in its own
@@ -813,8 +907,8 @@ new version.
 - HTTP-only endpoints are off (the library refuses cleartext HTTPS hosts)
 
 ### 7. Rotate pins ahead of expiry
-Configure at least 2 different pins per host (primary + backup). A pin may be
-the leaf's key or the key of a CA the leaf chains to (checked on the device), so
+Configure at least 2 different pins per host (primary + backup). From 2.1 a pin
+may be the leaf's key or the key of a CA the leaf chains to (checked on the device), so
 pinning your CA survives leaf renewals. Add the new pin to the
 config 30+ days before the old certificate expires. Set `forceUpdate: true`
 on the host entry to force clients to refresh immediately.

@@ -7,13 +7,33 @@ services:
     volumes:
       - ./data/db:/data/db
       - ./data/certs:/data/certs
-      - ./data/signing-key.pem:/data/signing-key.pem
+      # A directory, not the key file: Docker turns a missing file mount into
+      # an empty directory, and the server then cannot create the key.
+      - ./data/keys:/data/keys
     environment:
       - PORT=8080
       - HTTPS_PORT=8081
       - DB_PATH=/data/db/pinvault.db
       - CERTS_DIR=/data/certs
-      - SIGNING_KEY_PATH=/data/signing-key.pem
+      - SIGNING_KEY_PATH=/data/keys/signing-key.pem
       - ENROLLMENT_MODE=${ENROLLMENT_MODE:-token}
       - API_KEY=${API_KEY:-}
+      - ALLOW_ANONYMOUS_ADMIN=${ALLOW_ANONYMOUS_ADMIN:-}
+      # Secrets — empty means "unset" (see README → Server → env vars).
+      - SIGNING_KEY_PASSWORD=${SIGNING_KEY_PASSWORD:-}
+      - KEYSTORE_PASSWORD=${KEYSTORE_PASSWORD:-}
+      - KEYSTORE_PASSWORD_PREVIOUS=${KEYSTORE_PASSWORD_PREVIOUS:-}
+      - CLIENT_P12_PASSWORD=${CLIENT_P12_PASSWORD:-}
+      - VAULT_AT_REST_PASSWORD=${VAULT_AT_REST_PASSWORD:-}
+      - VAULT_AT_REST_PASSWORD_PREVIOUS=${VAULT_AT_REST_PASSWORD_PREVIOUS:-}
+      # Tuning
+      - EXTRA_CERT_SANS=${EXTRA_CERT_SANS:-}
+      - CONFIG_TTL_SECONDS=${CONFIG_TTL_SECONDS:-}
+      - CERT_EXPIRY_WARN_DAYS=${CERT_EXPIRY_WARN_DAYS:-}
+      - ENROLLMENT_TOKEN_TTL_SECONDS=${ENROLLMENT_TOKEN_TTL_SECONDS:-}
+      # Optional signing / governance layers (SECURE_OPERATIONS.md) are not
+      # passed through by default; add the ones you enable here, e.g.
+      #   - ADMIN_KEYS=${ADMIN_KEYS}
+      #   - PIN_CHANGE_APPROVALS=${PIN_CHANGE_APPROVALS}
+      #   - CONFIG_SIGNERS=${CONFIG_SIGNERS}
     restart: unless-stopped

@@ -6,8 +6,10 @@ COPY src/ src/
 RUN gradle installDist --no-daemon
 
 # ── Runtime stage ────────────────────────────────────────
-FROM eclipse-temurin:17-jre-alpine
-RUN apk add --no-cache curl
+# jammy, not alpine: the alpine JRE tag has no arm64 image (Apple Silicon hosts)
+FROM eclipse-temurin:17-jre-jammy
+RUN apt-get update && apt-get install -y --no-install-recommends curl \
+    && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /data
 COPY --from=build /build/build/install/pinvault-demo-server/ /app/

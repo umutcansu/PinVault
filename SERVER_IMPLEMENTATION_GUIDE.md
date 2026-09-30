@@ -298,10 +298,16 @@ Returns raw bytes (any format). The endpoint path is user-defined:
 }
 ```
 
-**Optional response header:**
+**Response headers:**
 ```
 X-Vault-Version: 5
+X-Vault-Signature: <base64 ECDSA signature>
 ```
+
+`X-Vault-Signature` is **required** (library 2.1+) when the client block has a
+signing key: the device refuses an unsigned file. It signs
+`pinvault-vault-file:v1:<key>:<version>:<lowercase sha256 hex of the plaintext>`
+with the config signing key; see section 3 for `X-Vault-Signatures` (m-of-n).
 
 ---
 
