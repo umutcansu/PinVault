@@ -75,6 +75,78 @@ class ConfigApiRegistry(private val db: DatabaseManager) {
         }
     }
 
+    /** What [purge] removed, for the caller's follow-up (mock servers, audit). */
+    data class Purged(val hostnames: List<String>, val cancelledChangeRequests: List<Long>)
+
+    /**
+     * Removes everything scoped to Config API [id], in one transaction.
+     *
+     * Deleting used to clear only the pin tables. The `config_apis` row stayed
+     * (auto_start = 1, so the API came back on the next boot), and vault files,
+     * vault tokens, device keys, host ACLs and host client certs stayed too —
+     * a new API created under the same id inherited all of them.
+     *
+     * Kept on purpose:
+     *  - `host_version_watermark`: a recreated API continues each host's version
+     *    from the old maximum. Starting again at 1 would look like a downgrade
+     *    to every device that still holds the old config, and they would
+     *    refuse it.
+     *  - `audit_log`: hash-chained, never rewritten.
+     *  - `change_requests` history. Pending requests for [id] are closed as
+     *    rejected so they cannot later apply to a new API with the same id —
+     *    except [keepChangeRequest], the approved request performing this
+     *    delete, which its replay closes as applied.
+     */
+    fun purge(id: String, keepChangeRequest: Long? = null): Purged {
+        db.connection().use { conn ->
+            conn.autoCommit = false
+            try {
+                val hostnames = conn.prepareStatement(
+                    "SELECT hostname FROM hosts WHERE config_api_id = ? " +
+                        "UNION SELECT hostname FROM pin_hashes WHERE config_api_id = ?"
+                ).use { stmt ->
+                    stmt.setString(1, id)
+                    stmt.setString(2, id)
+                    val rs = stmt.executeQuery()
+                    buildList { while (rs.next()) add(rs.getString(1)) }
+                }
+                val cancelled = conn.prepareStatement(
+                    "SELECT id FROM change_requests WHERE config_api_id = ? AND status = 'pending' AND id <> ?"
+                ).use { stmt ->
+                    stmt.setString(1, id)
+                    stmt.setLong(2, keepChangeRequest ?: -1)
+                    val rs = stmt.executeQuery()
+                    buildList { while (rs.next()) add(rs.getLong(1)) }
+                }
+                for (cr in cancelled) {
+                    conn.prepareStatement(
+                        "UPDATE change_requests SET status = 'rejected', decided_by = 'system', decided_at = ?, " +
+                            "reason = 'Config API deleted', body = NULL WHERE id = ? AND status = 'pending'"
+                    ).use { stmt ->
+                        stmt.setString(1, java.time.Instant.now().toString())
+                        stmt.setLong(2, cr)
+                        stmt.executeUpdate()
+                    }
+                }
+                conn.prepareStatement("DELETE FROM config_apis WHERE id = ?").use { stmt ->
+                    stmt.setString(1, id)
+                    stmt.executeUpdate()
+                }
+                for (table in SCOPED_TABLES) {
+                    conn.prepareStatement("DELETE FROM $table WHERE config_api_id = ?").use { stmt ->
+                        stmt.setString(1, id)
+                        stmt.executeUpdate()
+                    }
+                }
+                conn.commit()
+                return Purged(hostnames, cancelled)
+            } catch (e: Exception) {
+                conn.rollback()
+                throw e
+            }
+        }
+    }
+
     /** Reads the flag. Null when [id] has no row (caller → 404). */
     fun vaultEnabledOrNull(id: String): Boolean? {
         db.connection().use { conn ->
@@ -84,5 +156,14 @@ class ConfigApiRegistry(private val db: DatabaseManager) {
                 return if (rs.next()) rs.getInt("vault_enabled") == 1 else null
             }
         }
+    }
+
+    companion object {
+        /** Tables whose rows belong to one Config API (column `config_api_id`). */
+        val SCOPED_TABLES = listOf(
+            "pin_config", "pin_hashes", "pin_history", "hosts", "host_client_certs",
+            "vault_files", "vault_file_tokens", "vault_distributions", "device_public_keys",
+            "device_host_acl", "default_host_acl", "connection_history"
+        )
     }
 }

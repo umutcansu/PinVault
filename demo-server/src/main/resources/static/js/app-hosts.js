@@ -195,13 +195,24 @@ function renderHostListSync() {
     const apiBg = isSelectedApi ? 'background:rgba(59,130,246,0.15);border-radius:4px;' : '';
     const hostCount = api.pins?.length || 0;
     const stoppedBadge = !isRunning ? '<span style="color:#ef4444;font-size:8px;font-weight:700;margin-left:4px">●</span>' : '';
+    // Başlıkta API'nin adı da görünsün: yalnızca "TLS :8091" yazınca sunucunun
+    // kendi başlattığı default-tls, kimsenin eklemediği bir kayıt gibi duruyordu.
+    const defaultBadge = api.id === 'default-tls'
+      ? `<span style="color:#94a3b8;border:1px solid #475569;border-radius:3px;padding:0 4px;font-size:9px;font-weight:600" title="${esc(t('defaultApiTooltip'))}">${t('defaultApiBadge')}</span>`
+      : '';
 
     html += `<div class="api-group" style="margin-bottom:4px">
       <div class="api-header" style="padding:6px 10px;font-size:11px;font-weight:700;color:${modeColor};cursor:pointer;${apiBg};display:flex;justify-content:space-between;align-items:center;user-select:none;${!isRunning ? 'opacity:0.6;' : ''}" data-action="toggleApiTree" data-arg0="${esc(api.id)}">
-        <span style="display:flex;align-items:center;gap:6px">
-          <span style="font-size:9px;color:#64748b">${arrow}</span>
-          <span>${modeLabel} :${api.port}${stoppedBadge}</span>
-          <span style="color:#475569;font-weight:400;font-size:10px">(${hostCount})</span>
+        <span style="display:flex;align-items:flex-start;gap:6px;min-width:0">
+          <span style="font-size:9px;color:#64748b;line-height:15px">${arrow}</span>
+          <span style="display:flex;flex-direction:column;min-width:0">
+            <span style="display:flex;align-items:center;gap:6px;white-space:nowrap">
+              <span style="overflow:hidden;text-overflow:ellipsis" title="${esc(api.id)}">${esc(api.id)}${stoppedBadge}</span>
+              ${defaultBadge}
+              <span style="color:#475569;font-weight:400;font-size:10px">(${hostCount})</span>
+            </span>
+            <span style="color:#64748b;font-weight:400;font-size:10px">${modeLabel} :${api.port}</span>
+          </span>
         </span>
         ${isRunning ? `<span style="font-size:16px;color:#60a5fa;cursor:pointer;line-height:1" data-action="showAddHostScoped" data-arg0="${esc(api.id)}" data-stop="1" title="${t('addHostTooltip')}">+</span>` : ''}
       </div>`;
@@ -588,7 +599,7 @@ async function editDeviceAcl(configApiId, deviceId) {
 }
 
 async function deleteConfigApi(apiId) {
-  if (!confirm(apiId + ' silinecek. Tüm host\'ları ve pin config\'i de silinecek. Devam?')) return;
+  if (!confirm(t('deleteConfigApiConfirm', apiId))) return;
   try {
     await apiFetch('/api/v1/config-apis/delete', {
       method: 'POST',

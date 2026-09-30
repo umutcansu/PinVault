@@ -756,19 +756,20 @@ fun main() {
                 configApiManager.stop(id)
                 configApiManager.removeStopped(id)
 
-                // DB'den temizle: pin_config, pin_hashes, hosts, pin_history
-                db.connection().use { conn ->
-                    conn.autoCommit = false
-                    try {
-                        conn.prepareStatement("DELETE FROM pin_config WHERE config_api_id = ?").use { it.setString(1, id); it.executeUpdate() }
-                        conn.prepareStatement("DELETE FROM pin_hashes WHERE config_api_id = ?").use { it.setString(1, id); it.executeUpdate() }
-                        conn.prepareStatement("DELETE FROM hosts WHERE config_api_id = ?").use { it.setString(1, id); it.executeUpdate() }
-                        conn.prepareStatement("DELETE FROM pin_history WHERE config_api_id = ?").use { it.setString(1, id); it.executeUpdate() }
-                        conn.commit()
-                    } catch (e: Exception) {
-                        conn.rollback()
-                        throw e
-                    }
+                // DB'den temizle: API'ye ait her şey (bkz. ConfigApiRegistry.purge).
+                // Yalnızca pin tabloları siliniyordu; config_apis satırı kaldığı
+                // için API sonraki açılışta geri geliyor, vault dosyaları, tokenlar
+                // ve ACL'ler aynı adla açılan yeni API'ye kalıyordu.
+                val purged = configApiRegistry.purge(
+                    id,
+                    keepChangeRequest = call.attributes.getOrNull(com.example.pinvault.server.plugin.ApprovedReplayKey)
+                )
+                // Mock sunucular hostname başına global: yalnızca başka bir
+                // API'de kaydı kalmayan hostların sunucusunu durdur.
+                purged.hostnames.filter { hostStore.getAnyByHostname(it) == null }
+                    .forEach { mockServerManager.stopAll(it) }
+                for (cr in purged.cancelledChangeRequests) {
+                    auditLog.record("change_rejected", "#$cr rejected: Config API $id deleted", id, actor = "system")
                 }
 
                 call.respondText("""{"id":"$id","deleted":true}""", ContentType.Application.Json)
