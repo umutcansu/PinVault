@@ -64,6 +64,22 @@ class MtlsConfigApiTest {
 
     // ── Helpers ──────────────────────────────────────────
 
+    /**
+     * Activity "Ready ✓" olana kadar bekler (en çok [timeoutMs]). Sabit
+     * uyku yerine: mTLS init, host client cert P12'sini cihazda yeniden
+     * şifrelediği için Android 7 emülatöründe ~16 sn sürüyor, Pixel'de ~3 sn.
+     * Süre dolarsa sessizce döner; ardından gelen assertion hatayı raporlar.
+     */
+    private fun awaitReady(timeoutMs: Long = 45000) {
+        val deadline = System.currentTimeMillis() + timeoutMs
+        while (System.currentTimeMillis() < deadline) {
+            var text = ""
+            scenario?.onActivity { text = it.findViewById<android.widget.TextView>(R.id.tvStatus).text.toString() }
+            if (text.contains("✓") || text.contains("✗")) return
+            Thread.sleep(1000)
+        }
+    }
+
     private fun clickTest() {
         onView(withId(R.id.btnTest)).perform(click())
         Thread.sleep(8000)
@@ -72,8 +88,12 @@ class MtlsConfigApiTest {
     /**
      * Management API'den enrollment token üretir.
      */
-    private fun generateEnrollmentToken(): String {
-        val clientId = "test-${System.currentTimeMillis()}"
+    private fun generateEnrollmentToken(): String = generateEnrollmentTokenFor(newClientId())
+
+    private fun newClientId() = "test-${System.currentTimeMillis()}"
+
+    private fun generateEnrollmentTokenFor(clientId: String): String {
+        releaseThisDevice()
         val resp = TestConfig.adminClient.newCall(
             Request.Builder()
                 .url("${TestConfig.MANAGEMENT_URL}/api/v1/enrollment-tokens/generate")
@@ -87,10 +107,65 @@ class MtlsConfigApiTest {
     }
 
     /**
+     * Sunucu bir cihazı aynı anda tek bir etkin kimlikle kaydeder: her test
+     * yeni bir client id'yle kayıt olduğu için, önceki testlerin bu cihazdan
+     * (ANDROID_ID) açtığı ve hâlâ etkin olan kimlikleri iptal eder — yöneticinin
+     * yeniden kayıttan önce yaptığı gibi.
+     */
+    private fun releaseThisDevice() {
+        @Suppress("HardwareIds")
+        val deviceUid = android.provider.Settings.Secure.getString(
+            context.contentResolver, android.provider.Settings.Secure.ANDROID_ID
+        ) ?: return
+        val resp = TestConfig.adminClient.newCall(
+            Request.Builder().url("${TestConfig.MANAGEMENT_URL}/api/v1/client-certs").build()
+        ).execute()
+        val arr = org.json.JSONArray(resp.body?.string() ?: "[]")
+        for (i in 0 until arr.length()) {
+            val o = arr.getJSONObject(i)
+            if (o.optString("deviceUid") == deviceUid && !o.optBoolean("revoked")) revokeOnServer(o.getString("id"))
+        }
+    }
+
+    /**
+     * Test kancası (ALLOW_TEST_HOOKS=true): bu client id'ye verilecek bir
+     * sonraki sertifika [ttlSeconds] saniye yaşar.
+     */
+    private fun setTestTtl(clientId: String, ttlSeconds: Int) {
+        val resp = TestConfig.adminClient.newCall(
+            Request.Builder()
+                .url("${TestConfig.MANAGEMENT_URL}/api/v1/test-hooks/client-cert-ttl")
+                .post("""{"clientId":"$clientId","ttlSeconds":$ttlSeconds}""".toRequestBody("application/json".toMediaType()))
+                .build()
+        ).execute()
+        assertTrue("Test kancası açık olmalı (ALLOW_TEST_HOOKS=true): ${resp.code}", resp.isSuccessful)
+        resp.close()
+    }
+
+    /** Sunucudaki kayıt: {notAfter, renewCount, keyType, revoked}. */
+    private fun serverRecord(clientId: String): org.json.JSONObject? {
+        val resp = TestConfig.adminClient.newCall(
+            Request.Builder().url("${TestConfig.MANAGEMENT_URL}/api/v1/client-certs").build()
+        ).execute()
+        val arr = org.json.JSONArray(resp.body?.string() ?: "[]")
+        for (i in 0 until arr.length()) {
+            val o = arr.getJSONObject(i)
+            if (o.optString("id") == clientId) return o
+        }
+        return null
+    }
+
+    private fun revokeOnServer(clientId: String) {
+        TestConfig.adminClient.newCall(
+            Request.Builder().url("${TestConfig.MANAGEMENT_URL}/api/v1/client-certs/$clientId").delete().build()
+        ).execute().close()
+    }
+
+    /**
      * TLS Config API üzerinden enrollment yapar (programmatik).
      * MtlsToTlsActivity UI'ı kullanmadan — hızlı enrollment helper.
      */
-    private fun enrollProgrammatically() {
+    private fun enrollProgrammatically(clientId: String = newClientId()) {
         // TLS init for enrollment
         val latch = CountDownLatch(1)
         val config = PinVaultConfig.Builder()
@@ -104,7 +179,7 @@ class MtlsConfigApiTest {
         PinVault.init(context, config) { latch.countDown() }
         assertTrue("Init timed out", latch.await(15, TimeUnit.SECONDS))
 
-        val token = generateEnrollmentToken()
+        val token = generateEnrollmentTokenFor(clientId)
         val enrolled = runBlocking { PinVault.enroll(context, token) }
         assertTrue("Enrollment başarılı olmalı", enrolled)
         assertTrue("Enrolled olmalı", PinVault.isEnrolled(context))
@@ -112,6 +187,155 @@ class MtlsConfigApiTest {
         TestConfig.waitForMtlsRestart()
         PinVault.reset()
         Thread.sleep(500)
+    }
+
+    // ─── SDK: mTLS config API ile ilk açılış ────────────
+
+    /**
+     * Ekran yok, yalnızca SDK. Tek bir mTLS config API (8092):
+     *  - sertifikasız init ağa çıkmadan, hemen "kayıt gerekli" döner;
+     *  - enroll(context, config, token) init'ten önce çalışır (8091'e);
+     *  - ardından tek init 8092'ye mTLS ile bağlanır ve Ready olur.
+     */
+    @Test
+    fun sdk_mtlsConfig_enroll_before_init_then_single_init() {
+        val config = PinVaultConfig.Builder()
+            .configApi("main", TestConfig.MTLS_CONFIG_URL) {
+                bootstrapPins(bootstrapPins)
+                configEndpoint("api/v1/certificate-config?signed=false")
+                allowUnsigned()
+                enrollmentUrl(TestConfig.TLS_CONFIG_URL)
+                renewalUrl(TestConfig.RECOVERY_URL)
+            }
+            .build()
+
+        assertFalse(PinVault.isEnrolled(context, config))
+
+        val started = System.currentTimeMillis()
+        val first = runBlocking { PinVault.init(context, config) }
+        val elapsed = System.currentTimeMillis() - started
+        assertTrue("Sertifikasız init başarısız olmalı: $first", first is InitResult.Failed)
+        assertTrue("Hata 'kayıt gerekli' olmalı: $first",
+            (first as InitResult.Failed).exception is io.github.umutcansu.pinvault.model.ClientCertificateRequiredException)
+        assertTrue("Ağa çıkmadan hemen dönmeli, ${elapsed}ms sürdü", elapsed < 3000)
+
+        val clientId = newClientId()
+        assertTrue("init'ten önce kayıt", runBlocking { PinVault.enroll(context, config, generateEnrollmentTokenFor(clientId)) })
+        assertTrue(PinVault.isEnrolled(context, config))
+        assertEquals("csr", serverRecord(clientId)?.optString("keyType"))
+
+        val second = runBlocking { PinVault.init(context, config) }
+        assertTrue("Kayıttan sonra tek init mTLS ile hazır olmalı: $second", second is InitResult.Ready)
+        assertTrue(PinVault.hostPinVersions().isNotEmpty())
+    }
+
+    // ─── İlk kayıt: arayüzdeki "Kayıt Ol" düğmesi ───────
+
+    /**
+     * Kullanıcının yaptığı gibi: sertifikasız cihaz mTLS ekranını açar,
+     * "Kayıt Ol" diyaloğuna token'ı yazar. Kayıt enrollmentUrl'e (8091, düz
+     * TLS) gider — 8092 sertifikasız cihazı el sıkışmada reddettiği için.
+     */
+    @Test
+    fun mtlsConfig_enroll_button_enrolls_over_tls() {
+        val clientId = newClientId()
+        val token = generateEnrollmentTokenFor(clientId)
+
+        scenario = ActivityScenario.launch(MtlsToTlsActivity::class.java)
+        Thread.sleep(3000)
+        onView(withId(R.id.tvEnrollStatus)).check(matches(withText(containsString("✗"))))
+
+        onView(withId(R.id.btnEnroll)).perform(click())
+        onView(isAssignableFrom(android.widget.EditText::class.java))
+            .inRoot(androidx.test.espresso.matcher.RootMatchers.isDialog())
+            .perform(androidx.test.espresso.action.ViewActions.replaceText(token),
+                androidx.test.espresso.action.ViewActions.closeSoftKeyboard())
+        onView(withId(android.R.id.button1)).perform(click())
+        qaScreenshots.capture("enroll-submitted")
+
+        val deadline = System.currentTimeMillis() + 40000
+        while (!PinVault.isEnrolled(context) && System.currentTimeMillis() < deadline) Thread.sleep(1000)
+        assertTrue("Arayüzden kayıt tamamlanmalı", PinVault.isEnrolled(context))
+        assertEquals("csr", serverRecord(clientId)?.optString("keyType"))
+
+        awaitReady()
+        qaScreenshots.capture("after-ui-enroll")
+        onView(withId(R.id.tvStatus)).check(matches(withText(containsString("✓"))))
+        onView(withId(R.id.tvEnrollStatus)).check(matches(withText(containsString("✓"))))
+    }
+
+    // ─── CSR: sertifika yenileme ───────────────────────
+
+    /**
+     * Kısa ömürlü sertifika: kalan ömür eşiğin altında olduğu için init
+     * sırasında, hâlâ geçerliyken, mTLS üzerinden kendiliğinden yenilenir.
+     * (Ömür = 300 s + 1 saat geriye alınmış notBefore; 300/3900 < 1/3.)
+     */
+    @Test
+    fun mtlsConfig_renews_when_cert_near_expiry() {
+        val clientId = newClientId()
+        setTestTtl(clientId, 300)
+        enrollProgrammatically(clientId)
+        val before = PinVault.enrolledClientNotAfter(context)!!
+        assertEquals("csr", serverRecord(clientId)?.optString("keyType"))
+
+        scenario = ActivityScenario.launch(MtlsToTlsActivity::class.java)
+        awaitReady()
+        qaScreenshots.capture("after-auto-renew")
+
+        onView(withId(R.id.tvStatus)).check(matches(withText(containsString("✓"))))
+        onView(withId(R.id.tvCertExpiry)).check(matches(isDisplayed()))
+        val after = PinVault.enrolledClientNotAfter(context)!!
+        assertTrue("Sertifika yenilenmiş olmalı: $before → $after", after > before)
+        assertEquals(1, serverRecord(clientId)?.optInt("renewCount"))
+    }
+
+    /**
+     * Süresi dolmuş sertifika: mTLS kapısı kapalı, kütüphane CSR'ı 8091'deki
+     * kurtarma adresine götürür ve cihaz yeniden mTLS kullanabilir.
+     */
+    @Test
+    fun mtlsConfig_recovers_after_cert_expired() {
+        val clientId = newClientId()
+        setTestTtl(clientId, 30)
+        enrollProgrammatically(clientId)
+        val before = PinVault.enrolledClientNotAfter(context)!!
+        Thread.sleep(35000)
+        assertTrue("Sertifika dolmuş olmalı", before < System.currentTimeMillis())
+
+        scenario = ActivityScenario.launch(MtlsToTlsActivity::class.java)
+        awaitReady()
+        qaScreenshots.capture("after-recovery")
+
+        val after = PinVault.enrolledClientNotAfter(context)!!
+        assertTrue("Kurtarma adresi yeni sertifika vermeli: $before → $after", after > System.currentTimeMillis())
+        assertEquals(1, serverRecord(clientId)?.optInt("renewCount"))
+        onView(withId(R.id.tvStatus)).check(matches(withText(containsString("✓"))))
+    }
+
+    /** İptal edilmiş kimlik yenilenemez; "Yenile" düğmesi yeniden kayıt gerektiğini söyler. */
+    @Test
+    fun mtlsConfig_revoked_cert_reports_reenroll_required() {
+        val clientId = newClientId()
+        enrollProgrammatically(clientId)
+
+        scenario = ActivityScenario.launch(MtlsToTlsActivity::class.java)
+        awaitReady()
+        onView(withId(R.id.tvStatus)).check(matches(withText(containsString("✓"))))
+
+        revokeOnServer(clientId)
+        TestConfig.waitForMtlsRestart()
+        val result = runBlocking { PinVault.renewClientCertIfNeeded(force = true) }
+        assertTrue("İptal sonrası yeniden kayıt istenmeli: $result",
+            result is io.github.umutcansu.pinvault.model.ClientCertRenewalResult.ReenrollRequired)
+        assertEquals(0, serverRecord(clientId)?.optInt("renewCount"))
+
+        onView(withId(R.id.btnRenew)).perform(click())
+        Thread.sleep(8000)
+        qaScreenshots.capture("renew-refused")
+        // Cihaz diline bağımsız: kaynak metnin sabit kısmı ("… (%1$s)" öncesi).
+        val expected = context.getString(R.string.log_renew_reenroll, "").substringBefore(" (")
+        onView(withId(R.id.tvResult)).check(matches(withText(containsString(expected))))
     }
 
     // ─── mTLS — enrollment olmadan → reddedilir ─────────
@@ -148,7 +372,7 @@ class MtlsConfigApiTest {
 
         // 3) SONRA: Activity tekrar açılır → Client ID görünür + STATUS Ready (v2)
         scenario = ActivityScenario.launch(MtlsToTlsActivity::class.java)
-        Thread.sleep(15000)
+        awaitReady()
         onView(withId(R.id.tvStatus))
             .check(matches(withText(containsString("✓"))))
     }
@@ -160,7 +384,7 @@ class MtlsConfigApiTest {
         enrollProgrammatically()
 
         scenario = ActivityScenario.launch(MtlsToTlsActivity::class.java)
-        Thread.sleep(15000)
+        awaitReady()
 
         onView(withId(R.id.tvStatus))
             .check(matches(withText(containsString("✓"))))
@@ -179,7 +403,7 @@ class MtlsConfigApiTest {
 
         // İlk launch
         scenario = ActivityScenario.launch(MtlsToTlsActivity::class.java)
-        Thread.sleep(15000)
+        awaitReady()
 
         onView(withId(R.id.tvStatus))
             .check(matches(withText(containsString("✓"))))
@@ -191,7 +415,7 @@ class MtlsConfigApiTest {
 
         // Tekrar launch — enrollment persist etmiş olmalı
         scenario = ActivityScenario.launch(MtlsToTlsActivity::class.java)
-        Thread.sleep(15000)
+        awaitReady()
 
         onView(withId(R.id.tvStatus))
             .check(matches(withText(containsString("✓"))))
@@ -231,7 +455,7 @@ class MtlsConfigApiTest {
         enrollProgrammatically()
 
         scenario = ActivityScenario.launch(MtlsToTlsActivity::class.java)
-        Thread.sleep(15000)
+        awaitReady()
         onView(withId(R.id.tvStatus))
             .check(matches(withText(containsString("✓"))))
 
@@ -248,7 +472,7 @@ class MtlsConfigApiTest {
         Thread.sleep(2000) // allow re-enrollment to settle on physical devices
 
         scenario = ActivityScenario.launch(MtlsToTlsActivity::class.java)
-        Thread.sleep(18000) // physical device needs more time for mTLS init
+        awaitReady()
 
         onView(withId(R.id.tvStatus))
             .check(matches(withText(containsString("✓"))))

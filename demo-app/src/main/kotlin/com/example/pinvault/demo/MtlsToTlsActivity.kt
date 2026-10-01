@@ -11,4 +11,8 @@ class MtlsToTlsActivity : BaseDemoActivity() {
     override val activityTitle get() = getString(R.string.scenario_mtls_tls_title)
     override val titleColorRes = R.color.status_warning
     override val requiresEnrollment = true
+    /** Süresi dolmuş sertifika 8092'ye giremez; yenileme sunucunun kurtarma kapısından yapılır. */
+    override val renewalUrl get() = "https://${HOST_IP}:${RECOVERY_PORT}/"
+    /** Sertifikası olmayan cihaz 8092'ye giremez; ilk kayıt TLS portundan (8091) yapılır. */
+    override val enrollmentUrl get() = "https://${HOST_IP}:8091/"
 }

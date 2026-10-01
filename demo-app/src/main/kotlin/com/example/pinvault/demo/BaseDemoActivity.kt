@@ -41,12 +41,25 @@ abstract class BaseDemoActivity : AppCompatActivity() {
         val TLS_HOST_PORT: Int by lazy { if (IS_EMULATOR) 8443 else 8444 }
         private val MANAGEMENT_URL get() = "http://$HOST_IP:8090/"
 
-        /** Bootstrap pins — demo-server TLS cert */
+        /** Kurtarma kapısı: süresi dolmuş client sertifikası burada yenilenir (TLS, client cert istemez). */
+        const val RECOVERY_PORT = 8093
+
+        /**
+         * Bootstrap pins — demo-server TLS cert (8091/8092), plus the recovery
+         * door, pinned to the server CA for that one port only: its own
+         * certificate is reissued by the server, the CA stays.
+         */
         val DEFAULT_BOOTSTRAP_PINS: List<HostPin> by lazy {
-            listOf(HostPin(HOST_IP, listOf(
-                "ziA0hyMDbayVXZ0g8AkkJz+wmKPZYjMAwb+GdNg5HYM=",
-                "vXC1UZ8OFlga9Ltwsa2Hyg2lqZkLUE+DbdBPvT3ah3o="
-            )))
+            listOf(
+                HostPin(HOST_IP, listOf(
+                    "ziA0hyMDbayVXZ0g8AkkJz+wmKPZYjMAwb+GdNg5HYM=",
+                    "vXC1UZ8OFlga9Ltwsa2Hyg2lqZkLUE+DbdBPvT3ah3o="
+                )),
+                HostPin("$HOST_IP:$RECOVERY_PORT", listOf(
+                    "WnVy/WigjwYatqBdJv6lM32kkpxMxYXwzgdlyrvVrTU=",
+                    "TOZS0AAIaxwCKUEIKWb3X/4h0S27clD6Aijou32QiQo="
+                ))
+            )
         }
     }
 
@@ -60,6 +73,18 @@ abstract class BaseDemoActivity : AppCompatActivity() {
     abstract val requiresEnrollment: Boolean
     /** true = init sonrası otomatik enrollment yap (mTLS host için) */
     open val autoEnrollForHost: Boolean get() = false
+    /**
+     * Süresi dolmuş client sertifikasının yenileneceği düz TLS adres. mTLS
+     * Config API'ye sertifikasız girilemediği için mTLS senaryoları TLS
+     * portunu verir; null = Config API'nin kendi adresi.
+     */
+    open val renewalUrl: String? get() = null
+    /**
+     * İlk kaydın gideceği düz TLS adres. Sertifikası olmayan cihaz mTLS
+     * Config API'ye giremediği için mTLS senaryoları TLS portunu verir;
+     * null = Config API'nin kendi adresi.
+     */
+    open val enrollmentUrl: String? get() = null
     /** true = enrollment kartını göster (mTLS config) */
     open val showsEnrollmentCard: Boolean get() = requiresEnrollment
 
@@ -91,6 +116,7 @@ abstract class BaseDemoActivity : AppCompatActivity() {
         if (showsEnrollmentCard) {
             binding.enrollmentCard.visibility = View.VISIBLE
             binding.btnEnroll.setOnClickListener { showEnrollDialog() }
+            binding.btnRenew.setOnClickListener { renewCert() }
             binding.btnUnenroll.setOnClickListener { unenroll() }
         } else {
             binding.enrollmentCard.visibility = View.GONE
@@ -125,28 +151,12 @@ abstract class BaseDemoActivity : AppCompatActivity() {
     // ── Enrollment ───────────────────────────────────────
 
     private fun updateEnrollmentUI() {
-        val enrolled = PinVault.isEnrolled(this)
+        val enrolled = renderClientCredential()
 
         if (enrolled) {
-            binding.tvEnrollStatus.text = getString(R.string.enrolled)
-            binding.tvEnrollStatus.setTextColor(color(R.color.status_success))
-            val cn = PinVault.enrolledClientCN(this)
-            if (cn != null) {
-                binding.tvClientId.text = "Client ID: $cn"
-                binding.tvClientId.visibility = View.VISIBLE
-            } else {
-                binding.tvClientId.visibility = View.GONE
-            }
-            binding.btnEnroll.isEnabled = false
-            binding.btnUnenroll.isEnabled = true
             addLog(true, getString(R.string.log_cert_exists))
             initPinVault()
         } else {
-            binding.tvEnrollStatus.text = getString(R.string.not_enrolled)
-            binding.tvEnrollStatus.setTextColor(color(R.color.status_error))
-            binding.tvClientId.visibility = View.GONE
-            binding.btnEnroll.isEnabled = true
-            binding.btnUnenroll.isEnabled = false
             binding.btnTest.isEnabled = false
             binding.btnUpdate.isEnabled = false
             binding.tvStatus.text = getString(R.string.enrollment_required)
@@ -157,6 +167,14 @@ abstract class BaseDemoActivity : AppCompatActivity() {
 
     /** Enrollment kartı durumunu günceller ama PinVault init'i engellemez */
     private fun updateEnrollmentStatus() {
+        renderClientCredential()
+    }
+
+    /**
+     * Kartı depodaki client sertifikasına göre çizer: durum, client id, son
+     * geçerlilik tarihi ve düğmeler. Sertifika varsa true döner.
+     */
+    private fun renderClientCredential(): Boolean {
         val enrolled = PinVault.isEnrolled(this)
         if (enrolled) {
             binding.tvEnrollStatus.text = getString(R.string.enrolled)
@@ -168,14 +186,65 @@ abstract class BaseDemoActivity : AppCompatActivity() {
             } else {
                 binding.tvClientId.visibility = View.GONE
             }
+            val notAfter = PinVault.enrolledClientNotAfter(this)
+            if (notAfter != null) {
+                binding.tvCertExpiry.text = getString(R.string.cert_expires, formatInstant(notAfter))
+                binding.tvCertExpiry.setTextColor(color(
+                    if (notAfter < System.currentTimeMillis()) R.color.status_error else R.color.text_muted
+                ))
+                binding.tvCertExpiry.visibility = View.VISIBLE
+            } else {
+                binding.tvCertExpiry.visibility = View.GONE
+            }
             binding.btnEnroll.isEnabled = false
+            binding.btnRenew.isEnabled = true
             binding.btnUnenroll.isEnabled = true
         } else {
             binding.tvEnrollStatus.text = getString(R.string.not_enrolled)
             binding.tvEnrollStatus.setTextColor(color(R.color.status_error))
             binding.tvClientId.visibility = View.GONE
+            binding.tvCertExpiry.visibility = View.GONE
             binding.btnEnroll.isEnabled = true
+            binding.btnRenew.isEnabled = false
             binding.btnUnenroll.isEnabled = false
+        }
+        return enrolled
+    }
+
+    private fun formatInstant(epochMs: Long): String =
+        SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.getDefault()).format(Date(epochMs))
+
+    /** "Yenile" düğmesi: eşiğe bakmadan sertifikayı yeniler ve sonucu log'a yazar. */
+    private fun renewCert() {
+        binding.btnRenew.isEnabled = false
+        showResult(getString(R.string.renewing), R.color.status_warning)
+        scope.launch {
+            val result = withContext(Dispatchers.IO) {
+                try {
+                    PinVault.renewClientCertIfNeeded(force = true)
+                } catch (e: Exception) {
+                    io.github.umutcansu.pinvault.model.ClientCertRenewalResult.Failed(e.message ?: e.javaClass.simpleName, e)
+                }
+            }
+            when (result) {
+                is io.github.umutcansu.pinvault.model.ClientCertRenewalResult.Renewed -> {
+                    addLog(true, getString(R.string.log_renew_ok, result.via.name, formatInstant(result.notAfterEpochMs)))
+                    showResult(getString(R.string.log_renew_ok, result.via.name, formatInstant(result.notAfterEpochMs)), R.color.status_success)
+                }
+                is io.github.umutcansu.pinvault.model.ClientCertRenewalResult.NotNeeded ->
+                    addLog(true, getString(R.string.log_renew_not_needed, formatInstant(result.notAfterEpochMs)))
+                is io.github.umutcansu.pinvault.model.ClientCertRenewalResult.ReenrollRequired -> {
+                    addLog(false, getString(R.string.log_renew_reenroll, result.reason))
+                    showResult(getString(R.string.log_renew_reenroll, result.reason), R.color.status_error)
+                }
+                is io.github.umutcansu.pinvault.model.ClientCertRenewalResult.Failed -> {
+                    addLog(false, getString(R.string.log_renew_failed, result.reason))
+                    showResult(getString(R.string.log_renew_failed, result.reason), R.color.status_error)
+                }
+                io.github.umutcansu.pinvault.model.ClientCertRenewalResult.NotApplicable ->
+                    addLog(false, getString(R.string.log_renew_not_applicable))
+            }
+            renderClientCredential()
         }
     }
 
@@ -207,43 +276,22 @@ abstract class BaseDemoActivity : AppCompatActivity() {
 
         try { PinVault.reset() } catch (_: Exception) {}
 
-        val config = PinVaultConfig.Builder()
-            .configApi("default", configServerUrl) {
-                bootstrapPins(bootstrapPins)
-                configEndpoint("api/v1/certificate-config?signed=false")
-                // Demo runs against unsigned config endpoint; production
-                // apps must call signaturePublicKey(...) instead.
-                allowUnsigned()
+        scope.launch {
+            // Kayıt init'ten önce: sertifikası olmayan cihaz mTLS config API'ye
+            // giremez; kayıt enrollmentUrl'e (düz TLS) gider. Ardından tek init.
+            val success = withContext(Dispatchers.IO) {
+                PinVault.enroll(applicationContext, buildConfig(), token)
             }
-            .build()
-
-        PinVault.init(applicationContext, config) { initResult ->
-            if (initResult is InitResult.Failed) {
-                addLog(false, getString(R.string.log_init_failed, initResult.reason))
-                runOnUiThread {
-                    binding.tvEnrollStatus.text = getString(R.string.enrollment_failed)
-                    binding.tvEnrollStatus.setTextColor(color(R.color.status_error))
-                    binding.btnEnroll.isEnabled = true
-                }
-                return@init
-            }
-
-            scope.launch {
-                val success = PinVault.enroll(applicationContext, token)
-                if (success) {
-                    addLog(true, getString(R.string.log_enroll_success))
-                    showResult(getString(R.string.enrollment_success), R.color.status_success)
-                    try { PinVault.reset() } catch (_: Exception) {}
-                    updateEnrollmentUI()
-                } else {
-                    addLog(false, getString(R.string.log_enroll_failed))
-                    showResult(getString(R.string.enrollment_invalid_token), R.color.status_error)
-                    runOnUiThread {
-                        binding.tvEnrollStatus.text = getString(R.string.enrollment_failed)
-                        binding.tvEnrollStatus.setTextColor(color(R.color.status_error))
-                        binding.btnEnroll.isEnabled = true
-                    }
-                }
+            if (success) {
+                addLog(true, getString(R.string.log_enroll_success))
+                showResult(getString(R.string.enrollment_success), R.color.status_success)
+                updateEnrollmentUI()
+            } else {
+                addLog(false, getString(R.string.log_enroll_failed))
+                showResult(getString(R.string.enrollment_invalid_token), R.color.status_error)
+                binding.tvEnrollStatus.text = getString(R.string.enrollment_failed)
+                binding.tvEnrollStatus.setTextColor(color(R.color.status_error))
+                binding.btnEnroll.isEnabled = true
             }
         }
     }
@@ -258,6 +306,24 @@ abstract class BaseDemoActivity : AppCompatActivity() {
 
     // ── PinVault Init ────────────────────────────────────
 
+    /** Bu ekranın PinVault config'i — init ve kayıt aynı config'i kullanır. */
+    private fun buildConfig(): PinVaultConfig {
+        val deviceName = "${android.os.Build.MANUFACTURER} ${android.os.Build.MODEL}"
+        return PinVaultConfig.Builder()
+            .configApi("default", configServerUrl) {
+                bootstrapPins(bootstrapPins)
+                configEndpoint("api/v1/certificate-config?signed=false")
+                // Demo runs against unsigned config endpoint; production
+                // apps must call signaturePublicKey(...) instead.
+                allowUnsigned()
+                this@BaseDemoActivity.renewalUrl?.let { renewalUrl(it) }
+                this@BaseDemoActivity.enrollmentUrl?.let { enrollmentUrl(it) }
+            }
+            .updateIntervalMinutes(15)
+            .deviceAlias(deviceName)
+            .build()
+    }
+
     private fun initPinVault() {
         binding.tvStatus.text = getString(R.string.initializing)
         binding.tvStatus.setTextColor(color(R.color.status_warning))
@@ -268,20 +334,7 @@ abstract class BaseDemoActivity : AppCompatActivity() {
 
         try { PinVault.reset() } catch (_: Exception) {}
 
-        val deviceName = "${android.os.Build.MANUFACTURER} ${android.os.Build.MODEL}"
-        val config = PinVaultConfig.Builder()
-            .configApi("default", configServerUrl) {
-                bootstrapPins(bootstrapPins)
-                configEndpoint("api/v1/certificate-config?signed=false")
-                // Demo runs against unsigned config endpoint; production
-                // apps must call signaturePublicKey(...) instead.
-                allowUnsigned()
-            }
-            .updateIntervalMinutes(15)
-            .deviceAlias(deviceName)
-            .build()
-
-        PinVault.init(applicationContext, config) { result ->
+        PinVault.init(applicationContext, buildConfig()) { result ->
             when (result) {
                 is InitResult.Ready -> onInitReady(result.version)
                 is InitResult.Failed -> onInitFailed(result.reason)

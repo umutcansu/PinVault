@@ -86,5 +86,13 @@
     <string name="log_enroll_success">Enrollment successful — client cert loaded</string>
     <string name="log_enroll_failed">Enrollment failed — invalid token?</string>
     <string name="log_unenrolled">Client cert removed — unenrolled</string>
+    <string name="renew">Renew</string>
+    <string name="cert_expires">Expires: %1$s</string>
+    <string name="renewing">Renewing client certificate…</string>
+    <string name="log_renew_ok">Client cert renewed (%1$s) — valid until %2$s</string>
+    <string name="log_renew_not_needed">Client cert still valid until %1$s — no renewal needed</string>
+    <string name="log_renew_reenroll">Certificate rejected — re-enroll required (%1$s)</string>
+    <string name="log_renew_failed">Renewal failed: %1$s</string>
+    <string name="log_renew_not_applicable">Nothing to renew — no device-key certificate</string>
     <string name="log_mtls_init">mTLS PinVault initialized — v%d</string>
 </resources>

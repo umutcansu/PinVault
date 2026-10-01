@@ -53,12 +53,10 @@ object TestConfig {
     val VAULT_API_URL = "$MANAGEMENT_URL/api/v1/config-apis/default-tls/vault"
 
     /** Bootstrap pins — demo-server TLS cert */
-    val BOOTSTRAP_PINS = listOf(
-        io.github.umutcansu.pinvault.model.HostPin(HOST_IP, listOf(
-            "ziA0hyMDbayVXZ0g8AkkJz+wmKPZYjMAwb+GdNg5HYM=",
-            "vXC1UZ8OFlga9Ltwsa2Hyg2lqZkLUE+DbdBPvT3ah3o="
-        ))
-    )
+    val BOOTSTRAP_PINS = BaseDemoActivity.DEFAULT_BOOTSTRAP_PINS
+
+    /** Kurtarma kapısı (CA pinli, yalnızca yenileme). */
+    val RECOVERY_URL = "https://$HOST_IP:${BaseDemoActivity.RECOVERY_PORT}/"
 
     /** Admin API key — demo-server başlatılırken `API_KEY=admin-key-123` verilmiş. */
     const val ADMIN_API_KEY = "admin-key-123"

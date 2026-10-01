@@ -67,6 +67,16 @@
                 android:textSize="12sp"
                 android:textColor="@color/text_muted"
                 android:fontFamily="monospace"
+                android:layout_marginBottom="4dp"
+                android:visibility="gone" />
+
+            <TextView
+                android:id="@+id/tvCertExpiry"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:textSize="12sp"
+                android:textColor="@color/text_muted"
+                android:fontFamily="monospace"
                 android:layout_marginBottom="12dp"
                 android:visibility="gone" />
 
@@ -80,16 +90,27 @@
                     android:layout_width="0dp"
                     android:layout_height="wrap_content"
                     android:layout_weight="1"
-                    android:layout_marginEnd="6dp"
+                    android:layout_marginEnd="4dp"
                     android:text="@string/enroll"
                     app:backgroundTint="@color/status_warning" />
+
+                <com.google.android.material.button.MaterialButton
+                    android:id="@+id/btnRenew"
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:layout_marginStart="4dp"
+                    android:layout_marginEnd="4dp"
+                    android:text="@string/renew"
+                    android:enabled="false"
+                    style="@style/Widget.MaterialComponents.Button.OutlinedButton" />
 
                 <com.google.android.material.button.MaterialButton
                     android:id="@+id/btnUnenroll"
                     android:layout_width="0dp"
                     android:layout_height="wrap_content"
                     android:layout_weight="1"
-                    android:layout_marginStart="6dp"
+                    android:layout_marginStart="4dp"
                     android:text="@string/unenroll"
                     android:enabled="false"
                     style="@style/Widget.MaterialComponents.Button.OutlinedButton" />

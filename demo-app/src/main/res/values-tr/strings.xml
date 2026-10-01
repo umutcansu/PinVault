@@ -83,5 +83,13 @@
     <string name="log_enroll_success">Kayıt başarılı — client cert yüklendi</string>
     <string name="log_enroll_failed">Kayıt başarısız — geçersiz token?</string>
     <string name="log_unenrolled">Client cert silindi — kayıt kaldırıldı</string>
+    <string name="renew">Yenile</string>
+    <string name="cert_expires">Son geçerlilik: %1$s</string>
+    <string name="renewing">Sertifika yenileniyor…</string>
+    <string name="log_renew_ok">Sertifika yenilendi (%1$s) — %2$s tarihine kadar geçerli</string>
+    <string name="log_renew_not_needed">Sertifika %1$s tarihine kadar geçerli — yenileme gerekmedi</string>
+    <string name="log_renew_reenroll">Sertifika reddedildi — yeniden kayıt gerekli (%1$s)</string>
+    <string name="log_renew_failed">Yenileme başarısız: %1$s</string>
+    <string name="log_renew_not_applicable">Yenilenecek bir şey yok — cihaz anahtarlı sertifika değil</string>
     <string name="log_mtls_init">mTLS PinVault başlatıldı — v%d</string>
 </resources>

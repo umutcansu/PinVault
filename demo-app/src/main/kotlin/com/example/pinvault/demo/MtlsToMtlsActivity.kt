@@ -11,4 +11,6 @@ class MtlsToMtlsActivity : BaseDemoActivity() {
     override val activityTitle get() = getString(R.string.scenario_mtls_mtls_title)
     override val titleColorRes = R.color.status_error
     override val requiresEnrollment = true
+    override val renewalUrl get() = "https://${HOST_IP}:${RECOVERY_PORT}/"
+    override val enrollmentUrl get() = "https://${HOST_IP}:8091/"
 }
