@@ -2251,7 +2251,7 @@ paths:
         P12 enrollment restarts the mTLS mock servers and mTLS Config APIs so the
         new certificate is trusted immediately.
 
-        **CSR enrollment (library 2.2+, the default):** with
+        **CSR enrollment (library 2.1+, the default):** with
         `X-PinVault-Features: csr` and a `csr` field (Base64 DER PKCS#10 over the
         device's own key), the server verifies the request's self-signature,
         ignores its subject, and issues `CN=PinVault Client: <clientId>` signed by

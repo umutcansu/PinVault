@@ -13,6 +13,7 @@ Dynamic SSL certificate pinning library for Android. Manage pins remotely, suppo
 - **Dynamic pin management** — fetch pins from your server, per-host versioning, force update
 - **Bootstrap pinning** — hardcoded pins for initial connection security
 - **mTLS support** — mutual TLS with token-based or automatic device enrollment
+- **Device-held client keys** *(2.1)* — the mTLS key is generated in the Android Keystore and never leaves it; certificates come from a CSR and renew themselves, through a recovery door once expired
 - **Pin mismatch recovery** — automatic config refresh and retry on pin failure
 - **Multi-Config-API** *(v2)* — register N Config APIs, bind each vault file to a specific one
 - **Server-side pin scoping** *(v2)* — `wantPinsFor(...)` + per-device ACL, least-privilege
@@ -508,7 +509,7 @@ PinVault.enroll(context, "one-time-token")
 PinVault.autoEnroll(context)
 
 PinVault.isEnrolled(context)           // is a client certificate stored?
-PinVault.enrolledClientNotAfter(context)   // when it expires (epoch ms), read locally
+PinVault.enrolledClientNotAfter(context)   // (2.1) when it expires (epoch ms), read locally
 PinVault.unenroll(context)             // remove it; the next request presents no cert
 ```
 
@@ -537,7 +538,7 @@ code:
   - for a handful of devices, send it by message or QR code and let the user
     paste it once (the demo app's *Enroll* dialog).
 - **It is spent once.** From then on the device's identity is its Keystore key
-  and certificate, and renewals need no token. A device needs a new token only
+  and certificate, and renewals *(2.1)* need no token. A device needs a new token only
   after a reinstall, cleared app data, or a revocation.
 
 A made-up token never matches: the server looks up the hash of what it
@@ -549,7 +550,7 @@ minted for one file and one device (the file's *Token Management* card, or
 `{"deviceId": "<ANDROID_ID>"}`), delivered at runtime, kept by the app in its
 own encrypted storage and handed to the library through `accessToken { … }`.
 
-### The device keeps its key
+### The device keeps its key *(2.1)*
 
 Enrollment generates an EC P-256 signing key in the Android Keystore and
 sends the server a certificate signing request over it (`X-PinVault-Features:
@@ -581,7 +582,7 @@ its backend in `init`: it answers at once with `InitResult.Failed` carrying a
 `ClientCertificateRequiredException` (or `Ready` from a stored config), instead
 of retrying a handshake the server will refuse.
 
-### Renewal
+### Renewal *(2.1)*
 
 A CSR-enrolled certificate is short-lived (the reference server issues 90
 days) and renews itself. The library reads the stored certificate's expiry
@@ -749,7 +750,7 @@ Who may set that key: over **mTLS** only a client certificate that belongs to
 the device. Over **TLS** the first key a device registers is kept; a new one
 (the app's data was cleared, so the Keystore key is new) replaces it only when
 the request carries the device's token for one of that API's `end_to_end`
-files — the library adds it on its own when the app has one. Otherwise the
+files — the library *(2.1)* adds it on its own when the app has one. Otherwise the
 server answers `409` and keeps the old key, and an administrator can free the
 slot: `DELETE /api/v1/config-apis/{configApiId}/vault/devices/{deviceId}/public-key`.
 Since TLS asks for no credential, the server only stores RSA keys of
@@ -813,7 +814,7 @@ its configs.
 | `CONFIG_TTL_SECONDS` | `86400` (24h) | How long a signed config response stays valid before clients reject it as replayed. Lower = tighter replay window; too low risks rejecting cached configs from offline devices. |
 | `ENROLLMENT_MODE` | `token` | `token` (production) requires an enrollment token; `open` allows deviceId-only enrollment (demo only). |
 | `ENROLLMENT_TOKEN_TTL_SECONDS` | `86400` | Lifetime of a one-time enrollment token. |
-| `CLIENT_CERT_TTL_DAYS` | `90` | Lifetime of certificates issued over device-held keys (CSR enrollment, library 2.2+). They renew themselves at a third of the lifetime; `KEYSTORE_PASSWORD` also protects the client CA (`client-ca.jks`). |
+| `CLIENT_CERT_TTL_DAYS` | `90` | Lifetime of certificates issued over device-held keys (CSR enrollment, library 2.1+). They renew themselves at a third of the lifetime; `KEYSTORE_PASSWORD` also protects the client CA (`client-ca.jks`). |
 | `RECOVERY_PORT` | `PORT+3` | Certificate-renewal door for devices whose client certificate expired: TLS without client auth, serves only `POST /api/v1/client-certs/renew` and `/health`. Its certificate is signed by the server CA (`server-ca.jks` + `server-ca.backup.jks`) and reissued 30 days before expiry. `0` turns it off. In Docker it is 8083. |
 | `ALLOW_TEST_HOOKS` | unset | `true` enables `POST /api/v1/test-hooks/client-cert-ttl` (API key), which arms a short lifetime for a client id's next certificate so tests can watch it expire. Never in production. |
 | `DEVICE_KEY_RATE_LIMIT` | `30` | E2E keys a source address may write per 10 minutes over a TLS Config API, where key registration asks for no credential (`429` beyond it; a device repeating its own key is not counted). The address is the TCP peer: behind a reverse proxy, or Docker Desktop's port forwarding, every device shares one quota. Raise it for a first rollout behind one NAT or proxy; `0` turns it off. |
