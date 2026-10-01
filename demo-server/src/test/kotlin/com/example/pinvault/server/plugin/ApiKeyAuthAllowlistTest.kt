@@ -21,6 +21,8 @@ class ApiKeyAuthAllowlistTest {
         assertTrue(public("/api/v1/certificate-config"))
         assertTrue(public("/api/v1/signing-key"))
         assertTrue(public("/api/v1/client-certs/enroll", HttpMethod.Post))
+        assertTrue(public("/api/v1/client-certs/renew", HttpMethod.Post))
+        assertFalse(public("/api/v1/client-certs/renew"))
         assertTrue(public("/api/v1/client-certs/192.168.1.217/download"))
         assertTrue(public("/api/v1/vault/ml-model"))
         assertTrue(public("/api/v1/vault/feature.flags_v2"))
@@ -52,6 +54,9 @@ class ApiKeyAuthAllowlistTest {
         assertFalse(public("/api/v1/vault/ml-model", HttpMethod.Put))
         assertFalse(public("/api/v1/vault/ml-model", HttpMethod.Delete))
         assertFalse(public("/api/v1/vault/ml-model/policy", HttpMethod.Put))
+        // Resetting a device's E2E key is an administrator's call.
+        assertFalse(public("/api/v1/vault/devices/abc/public-key", HttpMethod.Delete))
+        assertFalse(public("/api/v1/config-apis/x/vault/devices/abc/public-key", HttpMethod.Delete))
     }
 
     @Test

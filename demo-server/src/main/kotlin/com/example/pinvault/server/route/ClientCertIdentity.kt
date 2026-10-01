@@ -33,6 +33,9 @@ import javax.security.auth.x500.X500Principal
 /** Attribute a custom engine (or a test) can use to inject the peer principal. */
 private val TLS_PEER_PRINCIPAL = AttributeKey<X500Principal>("TLSPeerPrincipal")
 
+/** Attribute a test can use to inject the whole peer certificate (renewal needs its key and dates). */
+val TLS_PEER_CERTIFICATE = AttributeKey<java.security.cert.X509Certificate>("TLSPeerCertificate")
+
 /** Prefix [com.example.pinvault.server.service.CertificateService] puts on every client CN. */
 const val CLIENT_CN_PREFIX = "PinVault Client: "
 
@@ -42,9 +45,19 @@ const val CLIENT_CN_PREFIX = "PinVault Client: "
  * peer presented no certificate, or when the handshake was not client-authenticated.
  */
 fun ApplicationCall.clientCertCn(): String? {
-    val principal = attributes.getOrNull(TLS_PEER_PRINCIPAL) ?: nettyPeerPrincipal() ?: return null
-    return cnOf(principal.name)
+    val dn = attributes.getOrNull(TLS_PEER_PRINCIPAL)?.name
+        ?: clientCertificate()?.subjectX500Principal?.name
+        ?: return null
+    return cnOf(dn)
 }
+
+/**
+ * The verified client certificate itself, for callers that need more than its
+ * name — the renewal endpoint compares its key with the CSR's. Null under the
+ * same conditions as [clientCertCn].
+ */
+fun ApplicationCall.clientCertificate(): java.security.cert.X509Certificate? =
+    attributes.getOrNull(TLS_PEER_CERTIFICATE) ?: nettyPeerCertificate()
 
 /**
  * The client id embedded in the certificate CN — the CN with the
@@ -63,7 +76,7 @@ fun ApplicationCall.clientCertId(): String? =
  * channel, or an unauthenticated handshake all yield null rather than an error,
  * so callers fail closed.
  */
-private fun ApplicationCall.nettyPeerPrincipal(): X500Principal? {
+private fun ApplicationCall.nettyPeerCertificate(): java.security.cert.X509Certificate? {
     val engineCall = unwrapEngineCall()
     val nettyCall = engineCall as? io.ktor.server.netty.NettyApplicationCall
     if (nettyCall == null) {
@@ -77,8 +90,7 @@ private fun ApplicationCall.nettyPeerPrincipal(): X500Principal? {
                 nettyCall.context.pipeline().names())
             return null
         }
-        val peer = sslHandler.engine().session.peerCertificates.firstOrNull()
-        (peer as? java.security.cert.X509Certificate)?.subjectX500Principal
+        sslHandler.engine().session.peerCertificates.firstOrNull() as? java.security.cert.X509Certificate
     } catch (_: SSLPeerUnverifiedException) {
         // Normal on a TLS-only connector, or when the client sent no cert.
         identityLog.debug("TLS session has no verified peer certificate")
@@ -152,3 +164,47 @@ private const val MAX_CALL_UNWRAP_DEPTH = 8
  */
 private fun cnOf(dn: String): String? =
     Regex("CN=([^,]+)").find(dn)?.groupValues?.getOrNull(1)?.trim()?.takeIf { it.isNotEmpty() }
+
+/**
+ * Whether the verified client certificate of [certClientId] belongs to the
+ * device [deviceId] (a `X-Device-Id` header, or the device in a URL).
+ *
+ * Two accepted bindings, in order:
+ *
+ *  1. **Direct** — `certClientId == deviceId`. This is the auto-enrollment
+ *     case (`ENROLLMENT_MODE=open`), where the device enrolls with its own
+ *     ANDROID_ID, so the issued CN is literally `PinVault Client: <ANDROID_ID>`.
+ *
+ *  2. **Recorded at enrollment** — the `client_certs` row for `certClientId`
+ *     has `device_uid == deviceId`. Token-based enrollment uses an
+ *     admin-chosen client id that will never equal an ANDROID_ID, but the
+ *     library sends its `deviceUid` in the enrollment body and the server
+ *     stores it, so the certificate is still bound to one device (and a
+ *     device id belongs to one active identity at a time).
+ *
+ * A revoked certificate is rejected even if the ids line up. Anything else
+ * fails closed. Used by the `token_mtls` vault policy, E2E key registration
+ * and [com.example.pinvault.server.plugin.DeviceIdBinding].
+ */
+fun certificateBoundTo(
+    certClientId: String,
+    deviceId: String,
+    clientCertStore: com.example.pinvault.server.store.ClientCertStore?
+): Boolean {
+    val record = clientCertStore?.get(certClientId)
+    if (record != null && record.revoked) {
+        identityLog.warn("request with a revoked certificate: clientId={}", certClientId)
+        return false
+    }
+    if (certClientId == deviceId) return true
+    return record?.deviceUid != null && record.deviceUid == deviceId
+}
+
+/**
+ * What a client id or a device id may look like. Both are printed in the
+ * dashboard and a client id becomes part of a certificate subject, so nothing
+ * that could open markup or a new name part (`<`, `"`, `,`, `=`, `+`, spaces).
+ */
+private val IDENTIFIER = Regex("^[A-Za-z0-9._:-]{1,64}$")
+
+fun isValidIdentifier(value: String): Boolean = IDENTIFIER.matches(value)

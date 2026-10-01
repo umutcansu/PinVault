@@ -16,6 +16,7 @@ import com.example.pinvault.server.store.PinConfigHistoryStore
 import com.example.pinvault.server.store.PinConfigStore
 import io.ktor.http.*
 import io.ktor.server.application.ApplicationCall
+import io.ktor.server.plugins.origin
 import io.ktor.server.request.*
 import io.ktor.server.response.*
 import io.ktor.server.routing.*
@@ -77,9 +78,21 @@ fun Route.certificateConfigRoutes(
     /** Checks new pins against the certificates hosts serve now; null = off. */
     liveGate: LiveCertificateGate? = null,
     /** Where pin writes, gate decisions and overrides are recorded; null = nowhere. */
-    audit: AuditLog? = null
+    audit: AuditLog? = null,
+    /** CSR enrollment and renewal registry; null = P12 enrollment only. */
+    clientIdentityStore: com.example.pinvault.server.store.ClientIdentityStore? = null,
+    /** Lifetime of CSR-issued certificates (`CLIENT_CERT_TTL_DAYS`). */
+    clientCertTtl: () -> java.time.Duration = { java.time.Duration.ofDays(90) },
+    /** Test hook: a one-shot lifetime for the next certificate of a client id (`ALLOW_TEST_HOOKS`). */
+    testTtlOverride: ((clientId: String) -> java.time.Duration?)? = null,
+    /** Throttles renewal attempts per source and client id; null = unlimited. */
+    renewLimiter: com.example.pinvault.server.service.RateLimiter? = null,
+    /** Records refused renewals without letting them flood the audit log. */
+    renewFailures: com.example.pinvault.server.service.AuthFailureRecorder? = null
 ) {
     val envelopes = signedConfigService ?: SignedConfigService(signingService)
+
+    fun ttlFor(clientId: String): java.time.Duration = testTtlOverride?.invoke(clientId) ?: clientCertTtl()
 
     // Enrollment endpoint — Config API üzerinden client cert dağıtımı
     //
@@ -103,7 +116,6 @@ fun Route.certificateConfigRoutes(
             if (token != null && enrollmentTokenStore != null) {
                 clientId = enrollmentTokenStore.validate(token)
                     ?: return@post call.respondText("""{"error":"Gecersiz token"}""", ContentType.Application.Json, HttpStatusCode.Unauthorized)
-                enrollmentTokenStore.markUsed(token)
             } else if (deviceId != null && enrollmentMode == "open") {
                 // deviceId-only enrollment — sadece ENROLLMENT_MODE=open iken aktif
                 // Üretimde kullanılmamalıdır: deviceId tahmin edilebilir, kimlik doğrulama yok
@@ -117,6 +129,95 @@ fun Route.certificateConfigRoutes(
                 return@post call.respondText("""{"error":"token gerekli — management API'den token oluşturun"}""", ContentType.Application.Json, HttpStatusCode.BadRequest)
             }
 
+            // The client id is printed in the dashboard and goes into the
+            // certificate subject; the device id is stored and matched against
+            // X-Device-Id. Neither may carry markup or extra name parts.
+            if (!isValidIdentifier(clientId)) {
+                return@post call.respondText("""{"error":"invalid_client_id","message":"Letters, digits, '.', '_', ':' and '-' only, at most 64."}""",
+                    ContentType.Application.Json, HttpStatusCode.BadRequest)
+            }
+            if (deviceUid != null && !isValidIdentifier(deviceUid)) {
+                return@post call.respondText("""{"error":"invalid_device_uid","message":"Letters, digits, '.', '_', ':' and '-' only, at most 64."}""",
+                    ContentType.Application.Json, HttpStatusCode.BadRequest)
+            }
+
+            val remote = call.request.origin.remoteAddress
+
+            // A revoked client id stays revoked: re-enrolling it would otherwise
+            // put the identity straight back into trust (INSERT OR REPLACE in
+            // client_certs used to do exactly that). Checked before the token
+            // is spent so an operator's token is not wasted on a refusal.
+            if (clientCertStore?.get(clientId)?.revoked == true || clientIdentityStore?.get(clientId)?.revoked == true) {
+                audit?.record("client_cert_enroll_refused", "Enrollment of revoked client id $clientId refused",
+                    configApiId, clientId, actor = clientId, ip = remote)
+                return@post call.respondText(
+                    """{"error":"revoked","message":"This client id was revoked. Ask an administrator for a new one."}""",
+                    ContentType.Application.Json, HttpStatusCode.Forbidden
+                )
+            }
+
+            // One active identity per device. The device id is whatever the
+            // enrolling party sends, and token_mtls and E2E key registration
+            // trust it to tie a certificate to a device: a second identity
+            // claiming a device id that is already enrolled could act for that
+            // device. Re-enrolling under the same client id replaces it; a new
+            // client id needs the old one revoked first. Before the token is
+            // spent, so the device can retry with it once that is done.
+            if (deviceUid != null) {
+                val holder = clientCertStore?.activeHolderOf(deviceUid, exceptId = clientId)
+                if (holder != null) {
+                    audit?.record("client_cert_enroll_refused",
+                        "Enrollment of $clientId refused: device $deviceUid is enrolled as $holder",
+                        configApiId, clientId, actor = clientId, ip = remote)
+                    return@post call.respondText(
+                        """{"error":"device_already_enrolled","message":"This device is enrolled under another client id. Ask an administrator to revoke it, then retry with the same token."}""",
+                        ContentType.Application.Json, HttpStatusCode.Conflict
+                    )
+                }
+            }
+            // CSR enrollment: the device keeps its key, we only sign a
+            // certificate over it. Asked for with the `csr` feature and a
+            // `csr` field; anything else is the P12 flow below. Parsed before
+            // the token is spent, so a malformed CSR does not burn it.
+            val features = call.request.header("X-PinVault-Features").orEmpty().split(',').map { it.trim() }
+            val csrB64 = json?.get("csr")?.jsonPrimitive?.content
+            val csr = if ("csr" in features && csrB64 != null && clientIdentityStore != null) {
+                try {
+                    certService.parseCsr(Base64.getDecoder().decode(csrB64))
+                } catch (e: IllegalArgumentException) {
+                    return@post call.respondText("""{"error":"invalid_csr","message":"${e.message}"}""", ContentType.Application.Json, HttpStatusCode.BadRequest)
+                }
+            } else null
+
+            // Spend the token in one statement: of two requests racing with
+            // the same token, the second loses here instead of also getting a
+            // certificate (validate() above is only a read).
+            if (token != null && enrollmentTokenStore?.consume(token) == false) {
+                return@post call.respondText("""{"error":"Gecersiz token"}""", ContentType.Application.Json, HttpStatusCode.Unauthorized)
+            }
+
+            if (csr != null && clientIdentityStore != null) {
+                val issued = certService.issueClientCertificate(clientId, csr, ttlFor(clientId))
+                val now = java.time.Instant.now().toString()
+                val registered = clientIdentityStore.register(
+                    clientId, configApiId, issued.spkiSha256, issued.serialHex,
+                    issued.notBefore.toString(), issued.notAfter.toString(), deviceAlias, deviceUid, now
+                )
+                if (!registered) {
+                    return@post call.respondText("""{"error":"revoked"}""", ContentType.Application.Json, HttpStatusCode.Forbidden)
+                }
+                clientCertStore?.add(clientId, issued.commonName, issued.fingerprint, now, deviceAlias = deviceAlias, deviceUid = deviceUid)
+                audit?.record("client_cert_issued", "Certificate issued to $clientId over its own key (valid until ${issued.notAfter})",
+                    configApiId, clientId, actor = clientId, ip = remote,
+                    detail = kotlinx.serialization.json.buildJsonObject {
+                        put("serial", kotlinx.serialization.json.JsonPrimitive(issued.serialHex))
+                        put("notAfter", kotlinx.serialization.json.JsonPrimitive(issued.notAfter.toString()))
+                        put("spkiSha256", kotlinx.serialization.json.JsonPrimitive(issued.spkiSha256))
+                    })
+                // The client CA is already trusted: no truststore change, no listener restart.
+                return@post respondIssuedClientCert(call, clientId, issued)
+            }
+
             val wrapping = com.example.pinvault.server.service.P12Transfer.wrappingFor(call)
             val result = certService.generateClientCertificate(clientId, wrapping.password)
             clientCertStore?.add(clientId, result.commonName, result.fingerprint, java.time.Instant.now().toString(),
@@ -127,6 +228,11 @@ fun Route.certificateConfigRoutes(
             onClientCertEnrolled?.invoke()
 
             com.example.pinvault.server.service.P12Transfer.respond(call, result.p12Bytes, wrapping)
+        }
+
+        // Renewal of a CSR-enrolled certificate (see ClientCertRenewalRoute).
+        if (clientIdentityStore != null) {
+            clientCertRenewalRoute(configApiId, certService, clientIdentityStore, ::ttlFor, renewLimiter, renewFailures, audit)
         }
     }
 
@@ -164,6 +270,11 @@ fun Route.certificateConfigRoutes(
                 // are absent OR when no ACL store is wired — returns full config.
                 val requested = call.request.queryParameters["hosts"]
                     ?.split(",")?.map { it.trim() }?.filter { it.isNotEmpty() }
+                // On an mTLS listener DeviceIdBinding has already refused a header
+                // naming another device than the certificate's. On a TLS listener
+                // the header is the device's own claim: there the ACL shapes what
+                // an honest device gets, it keeps nothing from anyone (pins are
+                // public keys).
                 val headerDeviceId = call.request.header("X-Device-Id")
 
                 // The mTLS client certificate identifies the device when no header

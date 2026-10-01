@@ -94,6 +94,30 @@ class EnrollmentTokenStoreTest {
     }
 
     @Test
+    fun `consume spends a token once and says so`() {
+        val token = store.create("dev-c1")
+        assertTrue(store.consume(token))
+        assertFalse(store.consume(token))
+        assertFalse(store.consume("never-issued"))
+        assertNull(store.validate(token))
+    }
+
+    @Test
+    fun `of many threads consuming one token exactly one wins`() {
+        val token = store.create("dev-c2")
+        val start = java.util.concurrent.CountDownLatch(1)
+        val pool = java.util.concurrent.Executors.newFixedThreadPool(16)
+        try {
+            val results = (1..16).map { pool.submit<Boolean> { start.await(); store.consume(token) } }
+                .also { start.countDown() }
+                .map { it.get(30, java.util.concurrent.TimeUnit.SECONDS) }
+            assertEquals(1, results.count { it }, results.toString())
+        } finally {
+            pool.shutdownNow()
+        }
+    }
+
+    @Test
     fun `a wrong token never validates`() {
         store.create("dev-7")
         assertNull(store.validate("definitely-not-the-token"))

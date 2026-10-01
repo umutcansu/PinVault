@@ -198,6 +198,18 @@ class GovernanceTest {
         }
     }
 
+    @Test
+    fun `the webhook wildcard leaves out routine device events unless they are named`() {
+        val all = WebhookNotifier("http://127.0.0.1:1/hook", null, setOf("*"))
+        assertTrue(all.wants("pins_changed"))
+        assertTrue(all.wants("device_key_replaced"))
+        // Any device's first init, and anyone who can reach a device port, records one.
+        assertFalse(all.wants("device_key_registered"))
+
+        assertTrue(WebhookNotifier("http://127.0.0.1:1/hook", null, setOf("*", "device_key_registered")).wants("device_key_registered"))
+        assertTrue(WebhookNotifier("http://127.0.0.1:1/hook", null, setOf("device_key_registered")).wants("device_key_registered"))
+    }
+
     private fun ApplicationTestBuilder.governanceApp(audit: AuditLog) {
         val signing = ConfigSigningService(File(dir, "k.pem"))
         val approvals = ApprovalService(

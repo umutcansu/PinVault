@@ -7,9 +7,8 @@ import kotlinx.serialization.Serializable
  * to wrap AES-256-GCM session keys for files with encryption = "end_to_end".
  *
  * Keys are idempotent per (deviceId, configApiId): calling register() again
- * for the same pair overwrites the PEM. This supports re-enrollment and key
- * rotation on the device side — the device generates a new Android-Keystore
- * RSA key and re-registers it.
+ * for the same pair overwrites the PEM. Who may do that is decided by the
+ * registration route (VaultRoutes), not here.
  */
 class DevicePublicKeyStore(private val db: DatabaseManager) {
 
@@ -39,6 +38,23 @@ class DevicePublicKeyStore(private val db: DatabaseManager) {
                 stmt.setString(5, timestamp)
                 stmt.executeUpdate()
             }
+        }
+    }
+
+    /** Removes the key of [deviceId] in [configApiId]; true when there was one. */
+    fun delete(deviceId: String, configApiId: String): Boolean = db.connection().use { conn ->
+        conn.prepareStatement("DELETE FROM device_public_keys WHERE device_id = ? AND config_api_id = ?").use { stmt ->
+            stmt.setString(1, deviceId)
+            stmt.setString(2, configApiId)
+            stmt.executeUpdate() > 0
+        }
+    }
+
+    /** How many device keys [configApiId] holds; the registration route caps it. */
+    fun count(configApiId: String): Int = db.connection().use { conn ->
+        conn.prepareStatement("SELECT COUNT(*) FROM device_public_keys WHERE config_api_id = ?").use { stmt ->
+            stmt.setString(1, configApiId)
+            stmt.executeQuery().use { rs -> if (rs.next()) rs.getInt(1) else 0 }
         }
     }
 

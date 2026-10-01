@@ -4,7 +4,7 @@ import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
 
 /**
- * Audits invalid admin keys without letting anyone flood the log.
+ * Audits failed authentication attempts without letting anyone flood the log.
  *
  * The first failure of a minute is recorded (and pushed to the webhook) at
  * once. Further failures in that minute are only counted, with up to
@@ -12,8 +12,20 @@ import java.util.concurrent.TimeUnit
  * minute is over. Memory stays bounded however many addresses an attacker
  * rotates through, and the device-facing ports cannot be used to spam the
  * append-only audit log or a Slack channel.
+ *
+ * One instance per kind of failure: invalid admin keys (`auth_failed`), and
+ * refused client-certificate renewals (`client_cert_auth_failed`).
  */
-class AuthFailureRecorder(private val audit: AuditLog, private val windowMs: Long = 60_000) {
+class AuthFailureRecorder(
+    private val audit: AuditLog,
+    private val windowMs: Long = 60_000,
+    /** The audit action recorded. */
+    private val action: String = "auth_failed",
+    /** What failed, as the summary starts: "<what> from <address>". */
+    private val what: String = "Invalid X-API-Key",
+    /** The same thing in the summary of a minute: "<n> more <attemptsLabel> attempt(s) …". */
+    private val attemptsLabel: String = "invalid X-API-Key"
+) {
 
     private var windowStart = 0L
     private var suppressed = 0
@@ -26,14 +38,14 @@ class AuthFailureRecorder(private val audit: AuditLog, private val windowMs: Lon
     }
 
     @Synchronized
-    fun report(remoteAddress: String, method: String, path: String) {
+    fun report(remoteAddress: String, method: String, path: String, actor: String = "unknown", reason: String? = null) {
         val now = System.currentTimeMillis()
         if (now - windowStart >= windowMs) {
             flushLocked()
             windowStart = now
             audit.record(
-                "auth_failed", "Invalid X-API-Key from $remoteAddress",
-                target = "$method $path", actor = "unknown", ip = remoteAddress
+                action, "$what from $remoteAddress${reason?.let { " ($it)" } ?: ""}",
+                target = "$method $path", actor = actor, ip = remoteAddress
             )
         } else {
             suppressed++
@@ -47,8 +59,8 @@ class AuthFailureRecorder(private val audit: AuditLog, private val windowMs: Lon
     private fun flushLocked() {
         if (suppressed == 0) return
         audit.record(
-            "auth_failed",
-            "$suppressed more invalid X-API-Key attempt(s) in the same minute from " +
+            action,
+            "$suppressed more $attemptsLabel attempt(s) in the same minute from " +
                 "${sources.size}${if (moreSources) "+" else ""} address(es): ${sources.joinToString()}",
             actor = "unknown"
         )

@@ -433,13 +433,25 @@ class CertificateService(
      * Client sertifikası üretir (PKCS12 formatında).
      * Public cert'i truststore'a ekler (sunucu tarafı doğrulama için).
      */
+    /**
+     * `CN=<cn>, O=PinVault Client, C=TR`, built name part by name part: a
+     * client id containing `,` or `=` cannot add parts of its own (string
+     * parsing would have read `x, O=Evil` as two).
+     */
+    private fun clientSubject(cn: String): X500Name =
+        org.bouncycastle.asn1.x500.X500NameBuilder(org.bouncycastle.asn1.x500.style.BCStyle.INSTANCE)
+            .addRDN(org.bouncycastle.asn1.x500.style.BCStyle.CN, cn)
+            .addRDN(org.bouncycastle.asn1.x500.style.BCStyle.O, "PinVault Client")
+            .addRDN(org.bouncycastle.asn1.x500.style.BCStyle.C, "TR")
+            .build()
+
     fun generateClientCertificate(clientId: String, p12Password: String): ClientCertResult {
         val keyPairGen = KeyPairGenerator.getInstance("RSA")
         keyPairGen.initialize(2048)
         val keyPair = keyPairGen.generateKeyPair()
 
         val cn = "PinVault Client: $clientId"
-        val subject = X500Name("CN=$cn, O=PinVault Client, C=TR")
+        val subject = clientSubject(cn)
         val notBefore = Date()
         val notAfter = Date(System.currentTimeMillis() + 365L * 24 * 60 * 60 * 1000)
         val serial = BigInteger.valueOf(System.currentTimeMillis())
@@ -507,6 +519,263 @@ class CertificateService(
         trustStoreFile.outputStream().use { ts.store(it, KEYSTORE_PASSWORD.toCharArray()) }
     }
 
+    // ── Client CA: certificates over device-held keys (CSR enrollment) ──
+
+    private val clientCaFile = File(certsDir, "client-ca.jks")
+
+    fun clientCaFile(): File = clientCaFile
+
+    /**
+     * The client CA that signs every CSR-enrolled device certificate. Created
+     * on first use (EC P-256, ten years) in `client-ca.jks` under
+     * [KEYSTORE_PASSWORD], and its certificate is kept in the client
+     * truststore under [CLIENT_CA_ALIAS] so the mTLS listeners accept what
+     * it signs. Idempotent — safe to call at every start.
+     */
+    fun ensureClientCa(): X509Certificate {
+        loadClientCa()?.let { (_, cert) ->
+            if (getTrustStore()?.getCertificate(CLIENT_CA_ALIAS) == null) addToTrustStore(CLIENT_CA_ALIAS, cert)
+            return cert
+        }
+        val keyPair = KeyPairGenerator.getInstance("EC").apply { initialize(java.security.spec.ECGenParameterSpec("secp256r1")) }.generateKeyPair()
+        val name = X500Name("CN=PinVault Client CA, O=PinVault, C=TR")
+        val now = System.currentTimeMillis()
+        val builder = JcaX509v3CertificateBuilder(
+            name, randomSerial(), Date(now - CLOCK_SKEW_MS), Date(now + 3650L * DAY_MS), name, keyPair.public
+        )
+        val ext = org.bouncycastle.cert.jcajce.JcaX509ExtensionUtils()
+        builder.addExtension(Extension.basicConstraints, true, org.bouncycastle.asn1.x509.BasicConstraints(true))
+        builder.addExtension(Extension.keyUsage, true,
+            org.bouncycastle.asn1.x509.KeyUsage(org.bouncycastle.asn1.x509.KeyUsage.keyCertSign or org.bouncycastle.asn1.x509.KeyUsage.cRLSign))
+        builder.addExtension(Extension.subjectKeyIdentifier, false, ext.createSubjectKeyIdentifier(keyPair.public))
+        val cert = JcaX509CertificateConverter().getCertificate(
+            builder.build(JcaContentSignerBuilder("SHA256withECDSA").build(keyPair.private))
+        )
+
+        val ks = KeyStore.getInstance("JKS").apply { load(null, null) }
+        ks.setKeyEntry(CLIENT_CA_ALIAS, keyPair.private, KEYSTORE_PASSWORD.toCharArray(), arrayOf(cert))
+        clientCaFile.outputStream().use { ks.store(it, KEYSTORE_PASSWORD.toCharArray()) }
+        addToTrustStore(CLIENT_CA_ALIAS, cert)
+        return cert
+    }
+
+    fun clientCaCertificate(): X509Certificate = loadClientCa()?.second ?: ensureClientCa()
+
+    private fun loadClientCa(): Pair<PrivateKey, X509Certificate>? {
+        if (!clientCaFile.exists()) return null
+        val ks = KeyStore.getInstance("JKS")
+        FileInputStream(clientCaFile).use { ks.load(it, KEYSTORE_PASSWORD.toCharArray()) }
+        val key = ks.getKey(CLIENT_CA_ALIAS, KEYSTORE_PASSWORD.toCharArray()) as? PrivateKey ?: return null
+        val cert = ks.getCertificate(CLIENT_CA_ALIAS) as? X509Certificate ?: return null
+        return key to cert
+    }
+
+    /** A device's CSR after its proof of possession was checked. Only the key is taken from it. */
+    class ParsedCsr(val publicKey: java.security.PublicKey, val spkiSha256: String)
+
+    /**
+     * Parses a DER PKCS#10 request and verifies its self-signature (proof
+     * that the sender holds the private key). The subject is deliberately not
+     * read: the certificate is named after the enrolled client id, never
+     * after what the request asks for.
+     *
+     * @throws IllegalArgumentException when the request is malformed, its
+     *         signature does not verify, or its key is too weak.
+     */
+    fun parseCsr(csrDer: ByteArray): ParsedCsr {
+        val csr = try {
+            org.bouncycastle.pkcs.PKCS10CertificationRequest(csrDer)
+        } catch (e: Exception) {
+            throw IllegalArgumentException("CSR is not a valid PKCS#10 request", e)
+        }
+        val verifier = org.bouncycastle.operator.jcajce.JcaContentVerifierProviderBuilder()
+            .setProvider("BC").build(csr.subjectPublicKeyInfo)
+        if (!csr.isSignatureValid(verifier)) throw IllegalArgumentException("CSR signature is invalid")
+
+        val publicKey = org.bouncycastle.openssl.jcajce.JcaPEMKeyConverter().setProvider("BC").getPublicKey(csr.subjectPublicKeyInfo)
+        when (publicKey) {
+            is java.security.interfaces.ECPublicKey ->
+                require(publicKey.params.order.bitLength() >= 256) { "EC key too small" }
+            is RSAPublicKey ->
+                require(publicKey.modulus.bitLength() >= 2048) { "RSA key too small" }
+            else -> throw IllegalArgumentException("Unsupported key algorithm ${publicKey.algorithm}")
+        }
+        return ParsedCsr(publicKey, sha256Base64(publicKey.encoded))
+    }
+
+    data class IssuedClientCert(
+        val leaf: X509Certificate,
+        val issuer: X509Certificate,
+        /** PEM, leaf first then the client CA. */
+        val chainPem: List<String>,
+        val commonName: String,
+        val spkiSha256: String,
+        val serialHex: String,
+        val notBefore: java.time.Instant,
+        val notAfter: java.time.Instant
+    ) {
+        /** SHA-256 of the leaf's DER, Base64 — the `client_certs.fingerprint` form. */
+        val fingerprint: String get() = Base64.getEncoder().encodeToString(MessageDigest.getInstance("SHA-256").digest(leaf.encoded))
+    }
+
+    /**
+     * Signs a client certificate over [csr]'s key with the client CA.
+     * `CN=PinVault Client: <clientId>`, a random serial, `notBefore` an hour
+     * back for device clock skew, [ttl] of lifetime; client-auth only, no CA
+     * bit. Touches neither the truststore nor the database.
+     */
+    fun issueClientCertificate(clientId: String, csr: ParsedCsr, ttl: java.time.Duration): IssuedClientCert {
+        val (caKey, caCert) = loadClientCa() ?: (ensureClientCa().let { loadClientCa()!! })
+        val cn = "PinVault Client: $clientId"
+        val subject = clientSubject(cn)
+        val now = System.currentTimeMillis()
+        val notBefore = Date(now - CLOCK_SKEW_MS)
+        val notAfter = Date(now + ttl.toMillis())
+        val serial = randomSerial()
+
+        val builder = JcaX509v3CertificateBuilder(caCert, serial, notBefore, notAfter, subject, csr.publicKey)
+        val ext = org.bouncycastle.cert.jcajce.JcaX509ExtensionUtils()
+        builder.addExtension(Extension.basicConstraints, true, org.bouncycastle.asn1.x509.BasicConstraints(false))
+        builder.addExtension(Extension.keyUsage, true, org.bouncycastle.asn1.x509.KeyUsage(org.bouncycastle.asn1.x509.KeyUsage.digitalSignature))
+        builder.addExtension(Extension.extendedKeyUsage, false,
+            org.bouncycastle.asn1.x509.ExtendedKeyUsage(org.bouncycastle.asn1.x509.KeyPurposeId.id_kp_clientAuth))
+        builder.addExtension(Extension.subjectKeyIdentifier, false, ext.createSubjectKeyIdentifier(csr.publicKey))
+        builder.addExtension(Extension.authorityKeyIdentifier, false, ext.createAuthorityKeyIdentifier(caCert))
+
+        val leaf = JcaX509CertificateConverter().getCertificate(
+            builder.build(JcaContentSignerBuilder("SHA256withECDSA").build(caKey))
+        )
+        return IssuedClientCert(
+            leaf = leaf,
+            issuer = caCert,
+            chainPem = listOf(toPem(leaf), toPem(caCert)),
+            commonName = cn,
+            spkiSha256 = csr.spkiSha256,
+            serialHex = serial.toString(16),
+            notBefore = notBefore.toInstant(),
+            notAfter = notAfter.toInstant()
+        )
+    }
+
+    /** SHA-256 of a key's SubjectPublicKeyInfo, Base64 — the pin form. */
+    fun spkiSha256(publicKey: java.security.PublicKey): String = sha256Base64(publicKey.encoded)
+
+    // ── Server CA: the recovery listener's trust anchor ──────────────────
+
+    private val serverCaFile = File(certsDir, "server-ca.jks")
+    private val serverCaBackupFile = File(certsDir, "server-ca.backup.jks")
+    private val recoveryKeystoreFile = File(certsDir, "recovery.jks")
+
+    fun serverCaFile(): File = serverCaFile
+    fun serverCaBackupFile(): File = serverCaBackupFile
+    fun recoveryKeystoreFile(): File = recoveryKeystoreFile
+
+    /**
+     * The CA that signs the certificate-renewal (recovery) listener's TLS
+     * certificate — and nothing else. Apps pin this CA's key for that one
+     * `host:port`, so the listener stays reachable however often its own
+     * certificate is replaced; the Config API ports keep their leaf pins.
+     *
+     * Two keys, like every pinned identity here: the active CA
+     * (`server-ca.jks`) and a backup (`server-ca.backup.jks`) whose pin apps
+     * also carry, to switch to if the active CA key is lost. Both under
+     * [KEYSTORE_PASSWORD]. EC P-256, ten years. Idempotent.
+     *
+     * @return the active CA certificate and both pins (active, backup).
+     */
+    fun ensureServerCa(): ServerCa {
+        val active = loadCa(serverCaFile, SERVER_CA_ALIAS) ?: writeCa(serverCaFile, SERVER_CA_ALIAS, "PinVault Server CA")
+        val backup = loadCa(serverCaBackupFile, SERVER_CA_ALIAS) ?: writeCa(serverCaBackupFile, SERVER_CA_ALIAS, "PinVault Server CA (backup)")
+        return ServerCa(active.second, listOf(spkiSha256(active.second.publicKey), spkiSha256(backup.second.publicKey)))
+    }
+
+    data class ServerCa(val certificate: X509Certificate, val pins: List<String>)
+
+    data class RecoveryCertificate(val keystore: File, val leaf: X509Certificate, val issuer: X509Certificate, val regenerated: Boolean)
+
+    /**
+     * The recovery listener's TLS keystore (`recovery.jks`, alias `server`):
+     * a fresh EC key and a certificate signed by the server CA, stored with
+     * the chain `[leaf, CA]` so the CA travels in the handshake — devices
+     * pin the CA and need it in the served chain to check the leaf against.
+     *
+     * Reissued (new key) when missing, unreadable, not from the current CA,
+     * or within [renewBeforeDays] of expiry; otherwise left as it is. Leaf
+     * lifetime [leafDays]; SANs as for every server certificate here.
+     */
+    fun ensureRecoveryCertificate(hostname: String = "localhost", leafDays: Long = 397, renewBeforeDays: Long = 30): RecoveryCertificate {
+        val (caKey, caCert) = loadCa(serverCaFile, SERVER_CA_ALIAS) ?: ensureServerCa().let { loadCa(serverCaFile, SERVER_CA_ALIAS)!! }
+
+        runCatching {
+            val ks = KeyStore.getInstance("JKS")
+            FileInputStream(recoveryKeystoreFile).use { ks.load(it, KEYSTORE_PASSWORD.toCharArray()) }
+            val chain = ks.getCertificateChain("server")?.map { it as X509Certificate }
+            val leaf = chain?.firstOrNull()
+            val fresh = leaf != null &&
+                leaf.notAfter.time - System.currentTimeMillis() > renewBeforeDays * DAY_MS &&
+                runCatching { leaf.verify(caCert.publicKey) }.isSuccess
+            if (fresh) return RecoveryCertificate(recoveryKeystoreFile, leaf!!, caCert, regenerated = false)
+        }
+
+        val keyPair = KeyPairGenerator.getInstance("EC").apply { initialize(java.security.spec.ECGenParameterSpec("secp256r1")) }.generateKeyPair()
+        val now = System.currentTimeMillis()
+        val builder = JcaX509v3CertificateBuilder(
+            caCert, randomSerial(), Date(now - CLOCK_SKEW_MS), Date(now + leafDays * DAY_MS),
+            X500Name("CN=$hostname, O=PinVault Recovery, C=TR"), keyPair.public
+        )
+        val ext = org.bouncycastle.cert.jcajce.JcaX509ExtensionUtils()
+        builder.addExtension(Extension.subjectAlternativeName, false, buildSanNames(hostname))
+        builder.addExtension(Extension.basicConstraints, true, org.bouncycastle.asn1.x509.BasicConstraints(false))
+        builder.addExtension(Extension.keyUsage, true, org.bouncycastle.asn1.x509.KeyUsage(org.bouncycastle.asn1.x509.KeyUsage.digitalSignature))
+        builder.addExtension(Extension.extendedKeyUsage, false,
+            org.bouncycastle.asn1.x509.ExtendedKeyUsage(org.bouncycastle.asn1.x509.KeyPurposeId.id_kp_serverAuth))
+        builder.addExtension(Extension.authorityKeyIdentifier, false, ext.createAuthorityKeyIdentifier(caCert))
+        val leaf = JcaX509CertificateConverter().getCertificate(
+            builder.build(JcaContentSignerBuilder("SHA256withECDSA").build(caKey))
+        )
+        val ks = KeyStore.getInstance("JKS").apply { load(null, null) }
+        ks.setKeyEntry("server", keyPair.private, KEYSTORE_PASSWORD.toCharArray(), arrayOf(leaf, caCert))
+        recoveryKeystoreFile.outputStream().use { ks.store(it, KEYSTORE_PASSWORD.toCharArray()) }
+        return RecoveryCertificate(recoveryKeystoreFile, leaf, caCert, regenerated = true)
+    }
+
+    private fun loadCa(file: File, alias: String): Pair<PrivateKey, X509Certificate>? {
+        if (!file.exists()) return null
+        val ks = KeyStore.getInstance("JKS")
+        FileInputStream(file).use { ks.load(it, KEYSTORE_PASSWORD.toCharArray()) }
+        val key = ks.getKey(alias, KEYSTORE_PASSWORD.toCharArray()) as? PrivateKey ?: return null
+        val cert = ks.getCertificate(alias) as? X509Certificate ?: return null
+        return key to cert
+    }
+
+    private fun writeCa(file: File, alias: String, commonName: String): Pair<PrivateKey, X509Certificate> {
+        val keyPair = KeyPairGenerator.getInstance("EC").apply { initialize(java.security.spec.ECGenParameterSpec("secp256r1")) }.generateKeyPair()
+        val name = X500Name("CN=$commonName, O=PinVault, C=TR")
+        val now = System.currentTimeMillis()
+        val builder = JcaX509v3CertificateBuilder(
+            name, randomSerial(), Date(now - CLOCK_SKEW_MS), Date(now + 3650L * DAY_MS), name, keyPair.public
+        )
+        val ext = org.bouncycastle.cert.jcajce.JcaX509ExtensionUtils()
+        builder.addExtension(Extension.basicConstraints, true, org.bouncycastle.asn1.x509.BasicConstraints(0))
+        builder.addExtension(Extension.keyUsage, true,
+            org.bouncycastle.asn1.x509.KeyUsage(org.bouncycastle.asn1.x509.KeyUsage.keyCertSign or org.bouncycastle.asn1.x509.KeyUsage.cRLSign))
+        builder.addExtension(Extension.subjectKeyIdentifier, false, ext.createSubjectKeyIdentifier(keyPair.public))
+        val cert = JcaX509CertificateConverter().getCertificate(
+            builder.build(JcaContentSignerBuilder("SHA256withECDSA").build(keyPair.private))
+        )
+        val ks = KeyStore.getInstance("JKS").apply { load(null, null) }
+        ks.setKeyEntry(alias, keyPair.private, KEYSTORE_PASSWORD.toCharArray(), arrayOf(cert))
+        file.outputStream().use { ks.store(it, KEYSTORE_PASSWORD.toCharArray()) }
+        return keyPair.private to cert
+    }
+
+    private fun randomSerial(): BigInteger = BigInteger(63, java.security.SecureRandom())
+
+    private fun toPem(cert: X509Certificate): String =
+        "-----BEGIN CERTIFICATE-----\n" +
+            Base64.getMimeEncoder(64, "\n".toByteArray()).encodeToString(cert.encoded) +
+            "\n-----END CERTIFICATE-----"
+
     /**
      * Android 11+ uyumlu PKCS12 üretir.
      * JDK 17+ varsayılan olarak PBES2/AES kullanır — Android 11 bunu desteklemez.
@@ -569,6 +838,16 @@ class CertificateService(
 
         /** Alias of the backup key in `<id>.backup.jks`. */
         private const val BACKUP_ALIAS = "backup"
+
+        /** Alias of the client CA in `client-ca.jks` and in the client truststore. */
+        const val CLIENT_CA_ALIAS = "client-ca"
+
+        /** Alias of the server CA in `server-ca.jks` / `server-ca.backup.jks`. */
+        const val SERVER_CA_ALIAS = "server-ca"
+
+        /** How far back `notBefore` is set so a device with a slow clock accepts a fresh certificate. */
+        const val CLOCK_SKEW_MS = 60 * 60_000L
+        private const val DAY_MS = 24 * 60 * 60_000L
 
         private val IPV4_LITERAL = Regex("""^\d{1,3}(\.\d{1,3}){3}$""")
         private val DNS_NAME = Regex("""^(\*\.)?[A-Za-z0-9]([A-Za-z0-9-]*[A-Za-z0-9])?(\.[A-Za-z0-9]([A-Za-z0-9-]*[A-Za-z0-9])?)*$""")

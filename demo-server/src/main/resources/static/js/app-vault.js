@@ -465,7 +465,7 @@ async function showVaultFileDetail(apiId, key) {
         <div class="card-title" style="display:flex;justify-content:space-between;align-items:center;gap:8px">
           <span>${t('tokenMgmtTitle')} (${tokens.length})</span>
           <div style="display:flex;gap:6px;align-items:center">
-            <input type="text" id="tk-device-${key}" placeholder="${t('tokenDevicePlaceholder')}" class="form-input" style="width:180px;font-size:12px"/>
+            <input type="text" id="tk-device-${key}" placeholder="${t('tokenDevicePlaceholder')}" class="form-input" style="width:290px;font-size:12px"/>
             <button class="btn btn-primary" style="padding:4px 10px;font-size:12px" data-action="generateVaultToken" data-arg0="${esc(apiId)}" data-arg1="${esc(key)}">${t('tokenNewBtn')}</button>
           </div>
         </div>

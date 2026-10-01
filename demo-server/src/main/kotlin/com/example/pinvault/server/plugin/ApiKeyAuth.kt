@@ -277,6 +277,9 @@ internal fun isPublicEndpoint(path: String, method: HttpMethod): Boolean {
 
     // Client endpoints — enrollment
     if (path == "/api/v1/client-certs/enroll" && method == HttpMethod.Post) return true
+    // Renewal authenticates itself: the presented client cert, or the CSR
+    // signature against the key registered at enrollment.
+    if (path == "/api/v1/client-certs/renew" && method == HttpMethod.Post) return true
     if (path.matches(Regex("/api/v1/client-certs/[^/]+/download")) && method == HttpMethod.Get) return true
 
     // Client endpoints — vault file download and reporting. The download path
@@ -291,10 +294,10 @@ internal fun isPublicEndpoint(path: String, method: HttpMethod): Boolean {
 
     // Client endpoint — device E2E public-key registration. Called by the
     // device (DefaultCertificateConfigApi) so the server can wrap end_to_end
-    // files with the device's RSA key, so it must stay unauthenticated here.
-    // NOTE: this route still lacks identity binding (a device can overwrite
-    // another device's key) — tracked as audit finding M-2 and fixed
-    // separately; the admin API key is the wrong control for it.
+    // files with the device's RSA key, so it must stay open to devices here;
+    // the route authenticates itself (audit M-2): a bound client certificate,
+    // or on TLS the first key / an end_to_end file token for a replacement.
+    // DELETE (resetting a device's key) is not listed: admin only.
     if (path.matches(Regex("/api/v1/vault/devices/[^/]+/public-key")) && method == HttpMethod.Post) return true
 
     // Client connection report

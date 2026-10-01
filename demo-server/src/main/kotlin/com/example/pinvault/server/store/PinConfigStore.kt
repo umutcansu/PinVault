@@ -692,10 +692,36 @@ data class ClientCertRecord(
     val createdAt: String,
     val revoked: Boolean = false,
     val deviceAlias: String? = null,
-    val deviceUid: String? = null
+    val deviceUid: String? = null,
+    /** CSR-enrolled identities: when the current certificate expires (ISO-8601). Null for P12 certs. */
+    val notAfter: String? = null,
+    /** CSR-enrolled identities: how many times the certificate was renewed. */
+    val renewCount: Int = 0,
+    /** `csr` — the key lives on the device; `p12` — the server generated it. */
+    val keyType: String = "p12"
 )
 
 class ClientCertStore(private val db: DatabaseManager) {
+
+    private companion object {
+        /** `client_certs` joined with the CSR identity of the same client id, if any. */
+        const val SELECT = "SELECT c.id, c.common_name, c.fingerprint, c.created_at, c.revoked, c.device_alias, c.device_uid, " +
+            "i.not_after, i.renew_count, i.client_id AS identity_id " +
+            "FROM client_certs c LEFT JOIN client_identities i ON i.client_id = c.id"
+    }
+
+    private fun java.sql.ResultSet.toRecord() = ClientCertRecord(
+        id = getString("id"),
+        commonName = getString("common_name"),
+        fingerprint = getString("fingerprint"),
+        createdAt = getString("created_at"),
+        revoked = getInt("revoked") == 1,
+        deviceAlias = getString("device_alias"),
+        deviceUid = getString("device_uid"),
+        notAfter = getString("not_after"),
+        renewCount = getInt("renew_count"),
+        keyType = if (getString("identity_id") != null) "csr" else "p12"
+    )
 
     fun add(id: String, commonName: String, fingerprint: String, createdAt: String,
             deviceAlias: String? = null, deviceUid: String? = null) {
@@ -714,6 +740,21 @@ class ClientCertStore(private val db: DatabaseManager) {
         }
     }
 
+    /**
+     * Another active (not revoked) client id that enrolled from [deviceUid],
+     * or null. A device id belongs to one active identity at a time: token_mtls
+     * and E2E key registration trust this column to tie a certificate to a
+     * device, and the device id is whatever the enrolling party sent.
+     */
+    fun activeHolderOf(deviceUid: String, exceptId: String): String? = db.connection().use { conn ->
+        conn.prepareStatement("SELECT id FROM client_certs WHERE device_uid = ? AND revoked = 0 AND id != ? LIMIT 1").use { stmt ->
+            stmt.setString(1, deviceUid)
+            stmt.setString(2, exceptId)
+            val rs = stmt.executeQuery()
+            if (rs.next()) rs.getString("id") else null
+        }
+    }
+
     fun revoke(id: String) {
         db.connection().use { conn ->
             conn.prepareStatement("UPDATE client_certs SET revoked = 1 WHERE id = ?").use { stmt ->
@@ -729,21 +770,11 @@ class ClientCertStore(private val db: DatabaseManager) {
      */
     fun get(id: String): ClientCertRecord? {
         db.connection().use { conn ->
-            conn.prepareStatement(
-                "SELECT id, common_name, fingerprint, created_at, revoked, device_alias, device_uid FROM client_certs WHERE id = ?"
-            ).use { stmt ->
+            conn.prepareStatement("$SELECT WHERE c.id = ?").use { stmt ->
                 stmt.setString(1, id)
                 val rs = stmt.executeQuery()
                 if (!rs.next()) return null
-                return ClientCertRecord(
-                    id = rs.getString("id"),
-                    commonName = rs.getString("common_name"),
-                    fingerprint = rs.getString("fingerprint"),
-                    createdAt = rs.getString("created_at"),
-                    revoked = rs.getInt("revoked") == 1,
-                    deviceAlias = rs.getString("device_alias"),
-                    deviceUid = rs.getString("device_uid")
-                )
+                return rs.toRecord()
             }
         }
     }
@@ -751,19 +782,9 @@ class ClientCertStore(private val db: DatabaseManager) {
     fun getAll(): List<ClientCertRecord> {
         db.connection().use { conn ->
             conn.createStatement().use { stmt ->
-                val rs = stmt.executeQuery("SELECT id, common_name, fingerprint, created_at, revoked, device_alias, device_uid FROM client_certs ORDER BY created_at DESC")
+                val rs = stmt.executeQuery("$SELECT ORDER BY c.created_at DESC")
                 val entries = mutableListOf<ClientCertRecord>()
-                while (rs.next()) {
-                    entries.add(ClientCertRecord(
-                        id = rs.getString("id"),
-                        commonName = rs.getString("common_name"),
-                        fingerprint = rs.getString("fingerprint"),
-                        createdAt = rs.getString("created_at"),
-                        revoked = rs.getInt("revoked") == 1,
-                        deviceAlias = rs.getString("device_alias"),
-                        deviceUid = rs.getString("device_uid")
-                    ))
-                }
+                while (rs.next()) entries.add(rs.toRecord())
                 return entries
             }
         }
@@ -933,6 +954,10 @@ class EnrollmentTokenStore(private val db: DatabaseManager) {
     /**
      * Looks the token up by hash. Returns the client id when the token is
      * active (unused and unexpired), null otherwise.
+     *
+     * A read only: it does not spend the token. Whoever goes on to issue a
+     * credential must win [consume] first — two requests can both pass this
+     * check with the same token.
      */
     fun validate(token: String): String? {
         db.connection().use { conn ->
@@ -952,13 +977,25 @@ class EnrollmentTokenStore(private val db: DatabaseManager) {
         }
     }
 
-    fun markUsed(token: String) {
-        db.connection().use { conn ->
-            conn.prepareStatement("UPDATE enrollment_tokens SET used = 1 WHERE token = ?").use { stmt ->
-                stmt.setString(1, hash(token))
-                stmt.executeUpdate()
-            }
+    /**
+     * Spends [token]: one conditional UPDATE marks it used only if it is
+     * still unused, so of two requests racing with the same token exactly one
+     * gets `true`. Checking with [validate] and marking afterwards in a second
+     * statement let both through, and both got a certificate.
+     *
+     * @return true when this call spent the token; false when it was already
+     *   spent (or never existed).
+     */
+    fun consume(token: String): Boolean = db.connection().use { conn ->
+        conn.prepareStatement("UPDATE enrollment_tokens SET used = 1 WHERE token = ? AND used = 0").use { stmt ->
+            stmt.setString(1, hash(token))
+            stmt.executeUpdate() == 1
         }
+    }
+
+    /** Marks [token] used; see [consume], which also says whether this call was the one that spent it. */
+    fun markUsed(token: String) {
+        consume(token)
     }
 
     /**

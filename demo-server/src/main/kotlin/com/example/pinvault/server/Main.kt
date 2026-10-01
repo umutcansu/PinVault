@@ -5,6 +5,7 @@ import com.example.pinvault.server.model.HostPin
 import com.example.pinvault.server.model.PinConfigHistoryEntry
 import com.example.pinvault.server.route.adminVaultRoutes
 import com.example.pinvault.server.route.certificateConfigRoutes
+import com.example.pinvault.server.route.clientCertRenewalRoute
 import com.example.pinvault.server.route.signingAdminRoutes
 import com.example.pinvault.server.route.governanceRoutes
 import com.example.pinvault.server.route.applyPinConfigUpdate
@@ -35,6 +36,7 @@ import io.ktor.server.netty.*
 import io.ktor.server.plugins.calllogging.*
 import io.ktor.server.plugins.contentnegotiation.*
 import io.ktor.server.plugins.defaultheaders.*
+import io.ktor.server.plugins.origin
 import io.ktor.server.plugins.statuspages.*
 import io.ktor.server.request.*
 import io.ktor.server.response.*
@@ -218,7 +220,18 @@ fun main() {
     val certExpiryMonitor = com.example.pinvault.server.service.CertExpiryMonitor(hostStore)
     val httpPort = System.getenv("PORT")?.toIntOrNull() ?: 8080
     val httpsPort = System.getenv("HTTPS_PORT")?.toIntOrNull() ?: (httpPort + 1)
+    // Certificate-renewal door for expired devices (TLS, no client cert, CA-pinned). 0 = off.
+    val recoveryPort = System.getenv("RECOVERY_PORT")?.toIntOrNull() ?: (httpPort + 3)
     val enrollmentMode = System.getenv("ENROLLMENT_MODE")?.lowercase() ?: "token"
+    // Lifetime of certificates issued over device-held keys (CSR enrollment).
+    val clientCertTtlDays = (System.getenv("CLIENT_CERT_TTL_DAYS")?.toLongOrNull() ?: 90L).coerceIn(1, 3650)
+    // E2E keys a source address may write over TLS per 10 minutes (0 = no limit), and
+    // the most a Config API stores. Key registration asks for no credential there.
+    val deviceKeyRateLimit = (System.getenv("DEVICE_KEY_RATE_LIMIT")?.toIntOrNull() ?: 30).coerceAtLeast(0)
+    val deviceKeyLimit = (System.getenv("DEVICE_KEY_LIMIT")?.toIntOrNull() ?: 100_000).coerceAtLeast(1)
+    // Test-only endpoints (short certificate lifetimes for the Espresso suite). Never in production.
+    val allowTestHooks = System.getenv("ALLOW_TEST_HOOKS") == "true"
+    if (allowTestHooks) System.err.println("WARNING: ALLOW_TEST_HOOKS=true — test-only endpoints are enabled")
 
     // Demo server sertifikası üret (yoksa)
     val serverCertId = "demo-server"
@@ -232,6 +245,10 @@ fun main() {
             add(serverKeystorePath)
             add(File(certsDir, "$serverCertId.backup.jks"))
             add(File(certsDir, "client-truststore.jks"))
+            add(certService.clientCaFile())
+            add(certService.serverCaFile())
+            add(certService.serverCaBackupFile())
+            add(certService.recoveryKeystoreFile())
             hostStore.getAll().mapNotNull { it.keystorePath }.forEach { path ->
                 add(File(path))
                 add(File(path.removeSuffix(".jks") + ".backup.jks"))
@@ -245,6 +262,17 @@ fun main() {
                 "(KEYSTORE_PASSWORD_PREVIOUS) nor the old default password; left as they are")
         }
     }
+    // The client CA that signs CSR-enrolled device certificates; every mTLS
+    // listener trusts it through the client truststore.
+    run {
+        val fresh = !certService.clientCaFile().exists()
+        val ca = certService.ensureClientCa()
+        println("${if (fresh) "Generated" else "Loaded"} client CA — SPKI ${certService.spkiSha256(ca.publicKey)}, valid until ${ca.notAfter.toInstant()}")
+    }
+    // The server CA behind the recovery listener; apps pin these two keys for <host>:RECOVERY_PORT.
+    val serverCa = if (recoveryPort > 0) certService.ensureServerCa().also {
+        println("Server CA (recovery door) pins: ${it.pins.joinToString()} — valid until ${it.certificate.notAfter.toInstant()}")
+    } else null
     val serverCertResult = if (!serverKeystorePath.exists()) {
         println("Generating demo server TLS certificate...")
         certService.generateCertificate(serverCertId, "localhost")
@@ -272,6 +300,31 @@ fun main() {
     val clientCertStore = ClientCertStore(db)
     val hostClientCertStore = com.example.pinvault.server.store.HostClientCertStore(db)
     val enrollmentTokenStore = EnrollmentTokenStore(db)
+    val clientIdentityStore = com.example.pinvault.server.store.ClientIdentityStore(db)
+    val renewLimiter = com.example.pinvault.server.service.RateLimiter()
+    val renewFailures = com.example.pinvault.server.service.AuthFailureRecorder(
+        auditLog, action = "client_cert_auth_failed", what = "Client certificate renewal refused",
+        attemptsLabel = "refused client certificate renewal"
+    )
+    val keyRefusals = com.example.pinvault.server.service.AuthFailureRecorder(
+        auditLog, action = "device_key_refused", what = "E2E key registration refused",
+        attemptsLabel = "refused E2E key registration"
+    )
+    val revokedRefusals = com.example.pinvault.server.service.AuthFailureRecorder(
+        auditLog, action = "client_cert_revoked_refused", what = "Request with a revoked client certificate refused",
+        attemptsLabel = "revoked client certificate"
+    )
+    val deviceIdRefusals = com.example.pinvault.server.service.AuthFailureRecorder(
+        auditLog, action = "device_id_refused", what = "Request naming another device refused",
+        attemptsLabel = "foreign X-Device-Id"
+    )
+    val keyLimiter = if (deviceKeyRateLimit > 0) {
+        com.example.pinvault.server.service.RateLimiter(maxAttempts = deviceKeyRateLimit, windowMs = 10 * 60_000)
+    } else null
+    // One-shot certificate lifetimes armed by the test hook, consumed by the next issuance.
+    val testTtlOverrides = java.util.concurrent.ConcurrentHashMap<String, java.time.Duration>()
+    val testTtlOverride: ((String) -> java.time.Duration?)? =
+        if (allowTestHooks) { clientId -> testTtlOverrides.remove(clientId) } else null
     val vaultFileStore = com.example.pinvault.server.store.VaultFileStore(db)
     // Every at_rest / end_to_end file ends up under the current VAULT_AT_REST_PASSWORD.
     vaultFileStore.secureStoredFiles().let { report ->
@@ -345,6 +398,18 @@ fun main() {
 
     // Config API routing modülü — her API kendi configApiId ve mode'uyla scoped
     fun configApiModuleFor(configApiId: String, mode: String = "tls"): Application.() -> Unit = {
+        // Device-facing bodies are a few hundred bytes; refuse big ones unread.
+        install(com.example.pinvault.server.plugin.ClientBodyLimit)
+        // The handshake trusts the client CA, revocation is checked here, per request.
+        if (mode == "mtls") install(com.example.pinvault.server.plugin.RevocationGate) {
+            isRevoked = { id -> clientCertStore.get(id)?.revoked == true || clientIdentityStore.get(id)?.revoked == true }
+            refusals = revokedRefusals
+        }
+        // ...and X-Device-Id may only name the device the certificate belongs to.
+        if (mode == "mtls") install(com.example.pinvault.server.plugin.DeviceIdBinding) {
+            isBound = { certClientId, deviceId -> com.example.pinvault.server.route.certificateBoundTo(certClientId, deviceId, clientCertStore) }
+            refusals = deviceIdRefusals
+        }
         installGovernance(management = false)
         routing {
             certificateConfigRoutes(configApiId, pinConfigStore, historyStore, connectionStore, signingService, clientDeviceStore, certService, enrollmentTokenStore, clientCertStore, mockServerManager, hostClientCertStore, onClientCertEnrolled = {
@@ -355,7 +420,11 @@ fun main() {
             }, enrollmentMode = enrollmentMode, configApiMode = mode,
                 deviceHostAclStore = deviceHostAclStore,
                 signedConfigService = signedConfigService, keySetService = signingKeySetService,
-                liveGate = liveGate, audit = auditLog)
+                liveGate = liveGate, audit = auditLog,
+                clientIdentityStore = clientIdentityStore,
+                clientCertTtl = { java.time.Duration.ofDays(clientCertTtlDays) },
+                testTtlOverride = testTtlOverride,
+                renewLimiter = renewLimiter, renewFailures = renewFailures)
             hostRoutes(configApiId, pinConfigStore, hostStore, historyStore, certService, mockServerManager, hostClientCertStore)
             vaultRoutes(configApiId, vaultFileStore, vaultDistStore, vaultTokenStore,
                 devicePublicKeyStore, vaultTokenService, vaultEncryptionService, signingService,
@@ -364,7 +433,10 @@ fun main() {
                 // Dashboard's "vault enabled" switch. Read per request so the
                 // toggle takes effect without restarting this listener.
                 vaultEnabledProvider = { configApiRegistry.isVaultEnabled(configApiId) },
-                signedConfigService = signedConfigService)
+                signedConfigService = signedConfigService,
+                // E2E key registration: who set or replaced which device's key.
+                audit = auditLog, keyRefusals = keyRefusals,
+                keyLimiter = keyLimiter, maxDeviceKeys = deviceKeyLimit)
             get("/health") {
                 call.respond(mapOf("status" to "ok"))
             }
@@ -401,6 +473,23 @@ fun main() {
         keystorePath = serverKeystorePath.absolutePath,
         configModule = configApiModuleFor("default-tls", "tls")
     )
+
+    // Recovery listener: renewal only, its own CA-signed certificate. Checked
+    // twice a day; a certificate within 30 days of expiry is reissued and the
+    // listener restarted — apps pin the CA, so nothing changes for them.
+    val recoveryListener = if (recoveryPort > 0) {
+        com.example.pinvault.server.service.RecoveryListener(certService, recoveryPort) {
+            clientCertRenewalRoute(
+                "recovery", certService, clientIdentityStore,
+                { clientId: String -> testTtlOverride?.invoke(clientId) ?: java.time.Duration.ofDays(clientCertTtlDays) },
+                renewLimiter, renewFailures, auditLog
+            )
+        }.also { listener ->
+            listener.start()
+            java.util.concurrent.Executors.newSingleThreadScheduledExecutor { r -> Thread(r, "recovery-cert-refresh").apply { isDaemon = true } }
+                .scheduleAtFixedRate({ runCatching { listener.refresh() }.onFailure { it.printStackTrace() } }, 12, 12, java.util.concurrent.TimeUnit.HOURS)
+        }
+    } else null
 
     // DB'deki config API'leri ve mock server'ları auto-start et
     data class ApiToStart(val id: String, val port: Int, val mode: String)
@@ -487,6 +576,7 @@ fun main() {
             )
         }
         install(CallLogging)
+        install(com.example.pinvault.server.plugin.ClientBodyLimit)
         install(com.example.pinvault.server.plugin.ApiKeyAuth)
         installGovernance(management = true)
         install(StatusPages) {
@@ -514,7 +604,8 @@ fun main() {
             // V2: per-Config-API scoped vault admin endpoints under
             // /api/v1/config-apis/{configApiId}/vault/...  — no more global
             // "default-tls"-fixed vault mount on the management server.
-            scopedVaultAdminRoutes(vaultFileStore, vaultDistStore, vaultTokenStore, vaultTokenService)
+            scopedVaultAdminRoutes(vaultFileStore, vaultDistStore, vaultTokenStore, vaultTokenService,
+                publicKeyStore = devicePublicKeyStore, audit = auditLog)
             adminVaultRoutes(db, deviceHostAclStore, configApiRegistry)
 
             // Tüm API'lerin config'lerini döner (Web UI sidebar için)
@@ -791,6 +882,22 @@ fun main() {
                 call.respond(clientCertStore.getAll())
             }
 
+            // What an app needs to reach the recovery door: port, the CA pins
+            // to put under `<host>:<port>`, and how long its certificate lives.
+            get("/api/v1/recovery-door") {
+                val leaf = recoveryListener?.leaf
+                val body = kotlinx.serialization.json.buildJsonObject {
+                    put("enabled", kotlinx.serialization.json.JsonPrimitive(recoveryListener != null))
+                    put("running", kotlinx.serialization.json.JsonPrimitive(recoveryListener?.isRunning == true))
+                    put("port", kotlinx.serialization.json.JsonPrimitive(recoveryPort))
+                    put("caPins", kotlinx.serialization.json.JsonArray(serverCa?.pins.orEmpty().map { kotlinx.serialization.json.JsonPrimitive(it) }))
+                    put("caNotAfter", kotlinx.serialization.json.JsonPrimitive(serverCa?.certificate?.notAfter?.toInstant()?.toString()))
+                    put("certificateNotAfter", kotlinx.serialization.json.JsonPrimitive(leaf?.notAfter?.toInstant()?.toString()))
+                    put("clientCertTtlDays", kotlinx.serialization.json.JsonPrimitive(clientCertTtlDays))
+                }
+                call.respondText(body.toString(), ContentType.Application.Json)
+            }
+
             post("/api/v1/client-certs/generate") {
                 val body = call.receiveText()
                 val clientId = try {
@@ -845,12 +952,19 @@ fun main() {
             delete("/api/v1/client-certs/{id}") {
                 val id = call.parameters["id"] ?: ""
                 clientCertStore.revoke(id)
-                certService.removeFromTrustStore(id)
+                // CSR identities are refused at renewal from now on; their
+                // current certificate runs out on its own (short-lived).
+                clientIdentityStore.revoke(id)
+                // Only a legacy (P12) certificate has its own truststore entry.
                 // The running mTLS listeners hold the truststore they were
                 // started with; without a restart a revoked certificate keeps
-                // working until the next server restart. Enrollment already
-                // restarts them for the opposite reason (new cert trusted).
-                refreshMtlsTrust("certificate revoked: $id", true)
+                // working until the next server restart. A CSR identity has no
+                // entry — it is refused at renewal — so nothing is restarted
+                // (restarting every listener took long enough to time clients out).
+                if (certService.getTrustStore()?.containsAlias(id) == true) {
+                    certService.removeFromTrustStore(id)
+                    refreshMtlsTrust("certificate revoked: $id", true)
+                }
                 call.respondText("""{"id":"$id","revoked":true}""", ContentType.Application.Json)
             }
 
@@ -862,6 +976,13 @@ fun main() {
                     Json.parseToJsonElement(body).jsonObject["clientId"]?.jsonPrimitive?.content
                 } catch (_: Exception) { null }
                     ?: "device-${System.currentTimeMillis()}"
+                // It becomes the certificate's CN and is printed in the dashboard.
+                if (!com.example.pinvault.server.route.isValidIdentifier(clientId)) {
+                    return@post call.respondText(
+                        """{"error":"invalid_client_id","message":"Letters, digits, '.', '_', ':' and '-' only, at most 64."}""",
+                        ContentType.Application.Json, HttpStatusCode.BadRequest
+                    )
+                }
 
                 val token = enrollmentTokenStore.create(clientId)
                 call.respondText(
@@ -874,20 +995,71 @@ fun main() {
                 call.respond(enrollmentTokenStore.getAll())
             }
 
+            // Test hook (ALLOW_TEST_HOOKS=true): the next certificate issued to
+            // a client id gets this lifetime, so the Espresso suite can watch a
+            // certificate run out in seconds instead of months.
+            if (allowTestHooks) post("/api/v1/test-hooks/client-cert-ttl") {
+                val json = try { Json.parseToJsonElement(call.receiveText()).jsonObject } catch (_: Exception) { null }
+                val clientId = json?.get("clientId")?.jsonPrimitive?.content?.takeIf { it.isNotBlank() }
+                val ttlSeconds = json?.get("ttlSeconds")?.jsonPrimitive?.content?.toLongOrNull()
+                if (clientId == null || !com.example.pinvault.server.route.isValidIdentifier(clientId) ||
+                    ttlSeconds == null || ttlSeconds !in 30L..86_400L) {
+                    return@post call.respondText("""{"error":"clientId and ttlSeconds (30..86400) are required"}""", ContentType.Application.Json, HttpStatusCode.BadRequest)
+                }
+                testTtlOverrides[clientId] = java.time.Duration.ofSeconds(ttlSeconds)
+                auditLog.record("test_hook_used", "Next certificate for $clientId will live $ttlSeconds s", target = clientId)
+                call.respondText("""{"clientId":"$clientId","ttlSeconds":$ttlSeconds,"armed":true}""", ContentType.Application.Json)
+            }
+
             post("/api/v1/client-certs/enroll") {
                 val body = call.receiveText()
-                val token = try {
-                    Json.parseToJsonElement(body).jsonObject["token"]?.jsonPrimitive?.content
-                } catch (_: Exception) { null }
+                val json = try { Json.parseToJsonElement(body).jsonObject } catch (_: Exception) { null }
                     ?: return@post call.respondText("""{"error":"token gerekli"}""", ContentType.Application.Json, HttpStatusCode.BadRequest)
+                val token = json["token"]?.jsonPrimitive?.content
+                    ?: return@post call.respondText("""{"error":"token gerekli"}""", ContentType.Application.Json, HttpStatusCode.BadRequest)
+                val deviceAlias = json["deviceAlias"]?.jsonPrimitive?.content
+                val deviceUid = json["deviceUid"]?.jsonPrimitive?.content
 
                 val clientId = enrollmentTokenStore.validate(token)
                     ?: return@post call.respondText("""{"error":"Geçersiz veya kullanılmış token"}""", ContentType.Application.Json, HttpStatusCode.Unauthorized)
 
+                // Same rules as the Config API copy, all before the token is
+                // spent: the device id is stored and matched against
+                // X-Device-Id; a revoked id stays revoked (client_certs.add
+                // would otherwise un-revoke it); one active identity per device.
+                // Without the device id, an mTLS listener would refuse the
+                // device's own X-Device-Id (DeviceIdBinding).
+                if (deviceUid != null && !com.example.pinvault.server.route.isValidIdentifier(deviceUid)) {
+                    return@post call.respondText("""{"error":"invalid_device_uid","message":"Letters, digits, '.', '_', ':' and '-' only, at most 64."}""",
+                        ContentType.Application.Json, HttpStatusCode.BadRequest)
+                }
+                if (clientCertStore.get(clientId)?.revoked == true || clientIdentityStore.get(clientId)?.revoked == true) {
+                    auditLog.record("client_cert_enroll_refused", "Enrollment of revoked client id $clientId refused",
+                        target = clientId, actor = clientId, ip = call.request.origin.remoteAddress)
+                    return@post call.respondText(
+                        """{"error":"revoked","message":"This client id was revoked. Ask an administrator for a new one."}""",
+                        ContentType.Application.Json, HttpStatusCode.Forbidden
+                    )
+                }
+                val holder = deviceUid?.let { clientCertStore.activeHolderOf(it, exceptId = clientId) }
+                if (holder != null) {
+                    auditLog.record("client_cert_enroll_refused", "Enrollment of $clientId refused: device $deviceUid is enrolled as $holder",
+                        target = clientId, actor = clientId, ip = call.request.origin.remoteAddress)
+                    return@post call.respondText(
+                        """{"error":"device_already_enrolled","message":"This device is enrolled under another client id. Ask an administrator to revoke it, then retry with the same token."}""",
+                        ContentType.Application.Json, HttpStatusCode.Conflict
+                    )
+                }
+                // Spent before anything is issued, in one statement: a second
+                // request racing with the same token gets 401, not a second P12.
+                if (!enrollmentTokenStore.consume(token)) {
+                    return@post call.respondText("""{"error":"Geçersiz veya kullanılmış token"}""", ContentType.Application.Json, HttpStatusCode.Unauthorized)
+                }
+
                 val wrapping = com.example.pinvault.server.service.P12Transfer.wrappingFor(call)
                 val result = certService.generateClientCertificate(clientId, wrapping.password)
-                clientCertStore.add(clientId, result.commonName, result.fingerprint, java.time.Instant.now().toString())
-                enrollmentTokenStore.markUsed(token)
+                clientCertStore.add(clientId, result.commonName, result.fingerprint, java.time.Instant.now().toString(),
+                    deviceAlias = deviceAlias, deviceUid = deviceUid)
 
                 // Integrity header (H-05). The library refuses to install a P12
                 // that arrives without X-P12-SHA256, so this management-port
@@ -967,6 +1139,8 @@ fun main() {
         } else {
             println("Enrollment:   TOKEN (güvenli — sadece enrollment token ile kayıt)")
         }
+        println("Client certs: CSR over device keys, $clientCertTtlDays-day lifetime, renewal at POST /api/v1/client-certs/renew")
+        if (recoveryPort > 0) println("Recovery:     https://localhost:$recoveryPort (TLS, renewal only — pin the server CA for <host>:$recoveryPort)")
         println("=".repeat(60))
         println("Pin Config Endpoints:")
         println("  GET  /api/v1/certificate-config")

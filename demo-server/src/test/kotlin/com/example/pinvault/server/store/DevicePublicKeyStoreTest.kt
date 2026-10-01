@@ -87,6 +87,16 @@ class DevicePublicKeyStoreTest {
     }
 
     @Test
+    fun `count is per Config API`() {
+        store.register("dev-a", "api-1", pem, timestamp = now)
+        store.register("dev-b", "api-1", pem, timestamp = now)
+        store.register("dev-a", "api-2", pem, timestamp = now)
+        assertEquals(2, store.count("api-1"))
+        assertEquals(1, store.count("api-2"))
+        assertEquals(0, store.count("api-3"))
+    }
+
+    @Test
     fun `custom algorithm string is persisted`() {
         store.register("dev-a", "api-1", pem, algorithm = "RSA-OAEP-SHA384", timestamp = now)
         assertEquals("RSA-OAEP-SHA384", store.get("dev-a", "api-1")!!.algorithm)

@@ -11,6 +11,7 @@ import com.example.pinvault.server.store.VaultFileStore
 import com.example.pinvault.server.store.VaultFileTokenStore
 import io.ktor.http.*
 import io.ktor.server.application.*
+import io.ktor.server.plugins.origin
 import io.ktor.server.request.*
 import io.ktor.server.response.*
 import io.ktor.server.routing.*
@@ -69,7 +70,19 @@ fun Route.vaultRoutes(
      * Produces (and, with `CONFIG_SIGNATURE_CACHE`, caches) the vault file
      * signatures. Null = sign per request with [signingService].
      */
-    signedConfigService: com.example.pinvault.server.service.SignedConfigService? = null
+    signedConfigService: com.example.pinvault.server.service.SignedConfigService? = null,
+    /** Where E2E key registrations, replacements and resets are recorded; null = nowhere. */
+    audit: com.example.pinvault.server.service.AuditLog? = null,
+    /** Records refused E2E key registrations without flooding the audit log; null = not recorded. */
+    keyRefusals: com.example.pinvault.server.service.AuthFailureRecorder? = null,
+    /**
+     * Counts the E2E keys a source address writes without a client
+     * certificate (`DEVICE_KEY_RATE_LIMIT`); null = unlimited. With a
+     * certificate a device can only write its own slot, so it is not counted.
+     */
+    keyLimiter: com.example.pinvault.server.service.RateLimiter? = null,
+    /** Most device keys this scope stores (`DEVICE_KEY_LIMIT`); a new device beyond it gets 503. */
+    maxDeviceKeys: Int = Int.MAX_VALUE
 ) {
     val vaultSigner = signedConfigService ?: signingService?.let { com.example.pinvault.server.service.SignedConfigService(it) }
     route("/api/v1/vault") {
@@ -253,34 +266,128 @@ fun Route.vaultRoutes(
         /**
          * Register / update a device's public key for E2E encryption.
          *
-         * SECURITY — audit M-2 (DEMO LIMITATION): this endpoint must stay
-         * client-reachable (the device calls it during setup, see
-         * DefaultCertificateConfigApi), and it intentionally allows key
-         * rotation (re-register a new key for the same deviceId). Over plain
-         * TLS there is NO device identity, so the server cannot tell a genuine
-         * rotation from an attacker overwriting another device's key. The
-         * residual risk is integrity/DoS and key-substitution on
-         * public+end_to_end files (confidentiality on token / token_mtls files
-         * is still gated by the access policy below).
+         * Who may set the key of `{deviceId}` (audit M-2 — it used to be
+         * anyone who could reach the port, so a stranger could swap in a key
+         * and read what the server then encrypted "for" the device):
+         *  - a client certificate was presented (mTLS listener): only one
+         *    bound to that device ([certificateBoundTo]); it may replace the
+         *    key freely, the certificate is the proof;
+         *  - no certificate (TLS listener): the first key is accepted and the
+         *    same key again is a no-op. Replacing a registered key needs proof
+         *    that the operator handed this device out — a valid vault token,
+         *    bound to `{deviceId}`, for an end_to_end file of this scope
+         *    (`X-Vault-Key` + `X-Vault-Token`; the library sends it). Without
+         *    one: 409, and the registered key stays.
          *
-         * Production fix (NOT done here, needs a client+server protocol change):
-         * bind registration to a verified identity — an mTLS client-cert CN, or
-         * a one-time enrollment-token proof carried in the request — and only
-         * permit authenticated self-rotation. Do not rely on the admin API key
-         * (clients don't have it) and do not hard-block rotation (breaks
-         * legitimate re-enrollment).
+         * Residual on TLS: whoever registers first for a device id that never
+         * registered holds the slot until the device shows proof or an
+         * administrator removes the key (DELETE below). Files that matter
+         * belong on an mTLS Config API.
+         *
+         * Nothing here asks for a credential on TLS, so a key is only stored
+         * when the server could encrypt for it (RSA 2048–4096, re-encoded),
+         * a source address writes at most [keyLimiter]'s quota of keys, and a
+         * scope holds at most [maxDeviceKeys] of them.
          */
         post("/devices/{deviceId}/public-key") {
             val deviceId = call.parameters["deviceId"]
                 ?: return@post call.respond(HttpStatusCode.BadRequest, mapOf("error" to "Missing deviceId"))
+            // Printed in the dashboard and the audit log, matched against X-Device-Id.
+            if (!isValidIdentifier(deviceId)) {
+                return@post call.respond(HttpStatusCode.BadRequest, mapOf(
+                    "error" to "invalid_device_id",
+                    "message" to "Letters, digits, '.', '_', ':' and '-' only, at most 64."))
+            }
             val body = call.receive<JsonObject>()
             val pem = body["publicKeyPem"]?.jsonPrimitive?.contentOrNull
                 ?: return@post call.respond(HttpStatusCode.BadRequest,
                     mapOf("error" to "publicKeyPem field required"))
             val algorithm = body["algorithm"]?.jsonPrimitive?.contentOrNull ?: "RSA-OAEP-SHA256"
+            if (algorithm != "RSA-OAEP-SHA256") {
+                return@post call.respond(HttpStatusCode.BadRequest, mapOf(
+                    "error" to "unsupported_algorithm",
+                    "message" to "Only RSA-OAEP-SHA256 is supported."))
+            }
+            val key = canonicalDevicePublicKey(pem)
+                ?: return@post call.respond(HttpStatusCode.BadRequest, mapOf(
+                    "error" to "invalid_public_key",
+                    "message" to "publicKeyPem must be an RSA public key of 2048 to 4096 bits (X.509 SubjectPublicKeyInfo)."))
+            val remote = call.request.origin.remoteAddress
 
-            publicKeyStore.register(deviceId, configApiId, pem, algorithm, Instant.now().toString())
+            val certClientId = call.clientCertId()
+            val existing = publicKeyStore.get(deviceId, configApiId)
+            val changed = existing == null || !samePublicKey(existing.publicKeyPem, key)
+            if (certClientId != null) {
+                if (!certificateBoundTo(certClientId, deviceId, clientCertStore)) {
+                    keyRefusals?.report(remote, "POST", call.request.path(), actor = certClientId,
+                        reason = "certificate not bound to device $deviceId")
+                    return@post call.respond(HttpStatusCode.Forbidden, mapOf(
+                        "error" to "device_identity_mismatch",
+                        "message" to "The client certificate does not belong to device $deviceId."))
+                }
+            } else if (existing != null && changed) {
+                val proofKey = call.request.header("X-Vault-Key")?.trim()
+                val proofToken = call.request.header("X-Vault-Token")?.trim()
+                val proven = !proofKey.isNullOrEmpty() && !proofToken.isNullOrEmpty() &&
+                    vaultFileStore.get(configApiId, proofKey)?.encryption == "end_to_end" &&
+                    tokenService.validate(configApiId, proofKey, deviceId, proofToken)
+                if (!proven) {
+                    keyRefusals?.report(remote, "POST", call.request.path(), actor = deviceId,
+                        reason = "key change without proof")
+                    return@post call.respond(HttpStatusCode.Conflict, mapOf(
+                        "error" to "key_change_requires_proof",
+                        "message" to "A different key is already registered for this device. Replacing it over TLS " +
+                            "needs the device's token for an end_to_end file (X-Vault-Key + X-Vault-Token), a client " +
+                            "certificate bound to the device, or an administrator removing the old key."))
+                }
+            }
+
+            if (changed) {
+                // A device writes its key once, and again only after its data
+                // was cleared; a source writing many is making them up.
+                if (certClientId == null && keyLimiter?.allow(remote) == false) {
+                    keyRefusals?.report(remote, "POST", call.request.path(), actor = deviceId, reason = "rate limited")
+                    return@post call.respond(HttpStatusCode.TooManyRequests, mapOf(
+                        "error" to "rate_limited",
+                        "message" to "Too many key registrations from this address. Try again later."))
+                }
+                if (existing == null && publicKeyStore.count(configApiId) >= maxDeviceKeys) {
+                    log.error("E2E key of device {} refused: configApi={} already holds {} device keys (DEVICE_KEY_LIMIT)",
+                        deviceId, configApiId, maxDeviceKeys)
+                    keyRefusals?.report(remote, "POST", call.request.path(), actor = deviceId, reason = "device key limit reached")
+                    return@post call.respond(HttpStatusCode.ServiceUnavailable, mapOf(
+                        "error" to "device_key_limit_reached",
+                        "message" to "This server stores no more device keys. Ask an administrator."))
+                }
+            }
+
+            publicKeyStore.register(deviceId, configApiId, key, algorithm, Instant.now().toString())
+            if (changed) {
+                val replaced = existing != null
+                audit?.record(
+                    if (replaced) "device_key_replaced" else "device_key_registered",
+                    "E2E key of device $deviceId ${if (replaced) "replaced" else "registered"}" +
+                        (certClientId?.let { " over the certificate of $it" } ?: ""),
+                    configApiId, deviceId, actor = certClientId ?: deviceId, ip = remote
+                )
+            }
             call.respond(HttpStatusCode.OK, mapOf("registered" to "true", "deviceId" to deviceId))
+        }
+
+        /**
+         * Admin: forget a device's E2E key, so its next registration counts as
+         * the first. For a device that lost its key and has no token to prove
+         * itself with (a reinstall), or a slot someone else took first.
+         */
+        delete("/devices/{deviceId}/public-key") {
+            val deviceId = call.parameters["deviceId"]
+                ?: return@delete call.respond(HttpStatusCode.BadRequest, mapOf("error" to "Missing deviceId"))
+            val removed = publicKeyStore.delete(deviceId, configApiId)
+            if (removed) {
+                audit?.record("device_key_reset", "E2E key of device $deviceId removed by an administrator", configApiId, deviceId)
+            }
+            call.respond(if (removed) HttpStatusCode.OK else HttpStatusCode.NotFound,
+                mapOf("removed" to removed.toString(), "deviceId" to deviceId))
         }
 
         /** Client reports a vault file download. */
@@ -436,40 +543,32 @@ fun Route.vaultRoutes(
 private val VALID_POLICIES = setOf("public", "api_key", "token", "token_mtls")
 private val VALID_ENCRYPTIONS = setOf("plain", "at_rest", "end_to_end")
 
-/** Allowed vault-key shape — alphanumeric plus `.`, `_`, `-`, 1-64 chars. */
-private val VAULT_KEY_REGEX = Regex("^[A-Za-z0-9._-]{1,64}$")
+/**
+ * Whether two PEMs carry the same key: compared on the Base64 body, so line
+ * breaks and header spelling do not turn a device's own key into a "change".
+ */
+private fun samePublicKey(a: String, b: String): Boolean = pemBody(a) == pemBody(b)
+
+private fun pemBody(pem: String) = pem.lineSequence().filterNot { it.trim().startsWith("-----") }
+    .joinToString("").filterNot { it.isWhitespace() }
 
 /**
- * Decides whether the verified client certificate belongs to the device that
- * the request claims to be (`X-Device-Id`).
- *
- * Two accepted bindings, in order:
- *
- *  1. **Direct** — `certClientId == deviceId`. This is the auto-enrollment
- *     case (`ENROLLMENT_MODE=open`), where the device enrolls with its own
- *     ANDROID_ID, so the issued CN is literally `PinVault Client: <ANDROID_ID>`.
- *
- *  2. **Recorded at enrollment** — the `client_certs` row for `certClientId`
- *     has `device_uid == deviceId`. Token-based enrollment uses an
- *     admin-chosen client id that will never equal an ANDROID_ID, but the
- *     library sends its `deviceUid` in the enrollment body and the server
- *     stores it, so the certificate is still bound to one device.
- *
- * A revoked certificate is rejected even if the ids line up — the mTLS trust
- * store is only rebuilt on restart, so revocation must also be enforced here.
- *
- * Anything else fails closed.
+ * [pem] re-encoded the way the library writes it, when it holds a key
+ * end_to_end files can be encrypted for: RSA of 2048 to 4096 bits as X.509
+ * SubjectPublicKeyInfo. Null for anything else.
  */
-private fun certificateBoundTo(
-    certClientId: String,
-    deviceId: String,
-    clientCertStore: com.example.pinvault.server.store.ClientCertStore?
-): Boolean {
-    val record = clientCertStore?.get(certClientId)
-    if (record != null && record.revoked) {
-        log.warn("token_mtls request with revoked certificate: clientId={}", certClientId)
-        return false
-    }
-    if (certClientId == deviceId) return true
-    return record?.deviceUid != null && record.deviceUid == deviceId
+private fun canonicalDevicePublicKey(pem: String): String? {
+    val key = try {
+        java.security.KeyFactory.getInstance("RSA")
+            .generatePublic(java.security.spec.X509EncodedKeySpec(java.util.Base64.getDecoder().decode(pemBody(pem))))
+            as? java.security.interfaces.RSAPublicKey
+    } catch (_: Exception) {
+        null
+    } ?: return null
+    if (key.modulus.bitLength() !in 2048..4096) return null
+    val body = java.util.Base64.getEncoder().encodeToString(key.encoded).chunked(64).joinToString("\n")
+    return "-----BEGIN PUBLIC KEY-----\n$body\n-----END PUBLIC KEY-----"
 }
+
+/** Allowed vault-key shape — alphanumeric plus `.`, `_`, `-`, 1-64 chars. */
+private val VAULT_KEY_REGEX = Regex("^[A-Za-z0-9._-]{1,64}$")

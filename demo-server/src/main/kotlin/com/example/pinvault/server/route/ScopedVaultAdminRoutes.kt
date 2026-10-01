@@ -34,12 +34,16 @@ import java.time.Instant
  *   GET    /api/v1/config-apis/{id}/vault/distributions/{key}  — by key
  *   GET    /api/v1/config-apis/{id}/vault/distributions/device/{deviceId} — by device
  *   GET    /api/v1/config-apis/{id}/vault/stats                — stats
+ *   DELETE /api/v1/config-apis/{id}/vault/devices/{deviceId}/public-key — reset a device's E2E key
  */
 fun Route.scopedVaultAdminRoutes(
     vaultFileStore: VaultFileStore,
     distStore: VaultDistributionStore,
     tokenStore: VaultFileTokenStore,
-    tokenService: VaultAccessTokenService
+    tokenService: VaultAccessTokenService,
+    /** Device E2E keys, for the reset endpoint; null = no reset endpoint. */
+    publicKeyStore: com.example.pinvault.server.store.DevicePublicKeyStore? = null,
+    audit: com.example.pinvault.server.service.AuditLog? = null
 ) {
     route("/api/v1/config-apis/{configApiId}/vault") {
 
@@ -168,6 +172,25 @@ fun Route.scopedVaultAdminRoutes(
         get("/stats") {
             val cid = call.parameters["configApiId"]!!
             call.respond(distStore.getStats(cid))
+        }
+
+        // ── E2E device keys ─────────────────────────────────────────
+
+        /**
+         * Forget a device's E2E key in this scope, so its next registration
+         * counts as the first: a device that lost its key and has no token to
+         * prove itself with, or a slot someone else took first.
+         */
+        if (publicKeyStore != null) delete("/devices/{deviceId}/public-key") {
+            val cid = call.parameters["configApiId"]!!
+            val deviceId = call.parameters["deviceId"]
+                ?: return@delete call.respond(HttpStatusCode.BadRequest, mapOf("error" to "Missing deviceId"))
+            val removed = publicKeyStore.delete(deviceId, cid)
+            if (removed) {
+                audit?.record("device_key_reset", "E2E key of device $deviceId removed by an administrator", cid, deviceId)
+            }
+            call.respond(if (removed) HttpStatusCode.OK else HttpStatusCode.NotFound,
+                mapOf("removed" to removed.toString(), "deviceId" to deviceId))
         }
     }
 }

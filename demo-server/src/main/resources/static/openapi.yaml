@@ -57,6 +57,28 @@ info:
     while `PUT` on the same path and every `/api/v1/certificate-config/...` sub-path
     are admin-only.
 
+    ## Device-facing guards
+
+    * **Body cap.** `POST`/`PUT` bodies on the public endpoints (and everything on
+      the recovery door) are capped at 64 KB: a larger declared length gets `413
+      body_too_large` before the body is read, a body without a declared length
+      `411 length_required`.
+    * **Revocation.** Every request on an **mTLS** Config API listener whose client
+      certificate belongs to a revoked identity is answered `403
+      {"error":"reenroll_required"}` — the handshake trusts the client CA, the
+      revocation check happens per request.
+    * **Device id.** On an **mTLS** listener `X-Device-Id` may only name the device
+      the client certificate belongs to (its client id, or the `deviceUid` recorded
+      when it enrolled); any other value is answered `403
+      {"error":"device_identity_mismatch"}` on every endpoint. On a TLS listener the
+      header is the device's own claim.
+    * **E2E key registration** stores only RSA keys of 2048–4096 bits (re-encoded),
+      for device ids of the identifier shape. Without a client certificate a source
+      address writes at most `DEVICE_KEY_RATE_LIMIT` keys per 10 minutes (default
+      30, `0` = off; `429 rate_limited`), and a Config API holds at most
+      `DEVICE_KEY_LIMIT` keys (default 100 000; a new device beyond it gets `503
+      device_key_limit_reached`).
+
     ## Client-integrity contracts
 
     * **`X-P12-SHA256`** — `POST /api/v1/client-certs/enroll` returns the Base64
@@ -108,7 +130,9 @@ info:
       `POST /api/v1/pins/live-check` is a dry run in every mode.
     * **Webhook notifications** — `NOTIFY_WEBHOOK_URL` pushes audit events
       (Slack-compatible `text` field); `NOTIFY_WEBHOOK_SECRET` adds
-      `X-PinVault-Signature: sha256=<HMAC of the body>`, `NOTIFY_EVENTS` filters.
+      `X-PinVault-Signature: sha256=<HMAC of the body>`, `NOTIFY_EVENTS` filters
+      (`*` leaves out `device_key_registered`, which any device's first start
+      records; name it to receive it).
     * **Signing** — `CONFIG_SIGNERS` (local key file, PKCS#11 HSM, external
       command; several = one signature each), `CONFIG_SIGNATURE_CACHE=true` (sign
       each content once), and signing-key sets checked against
@@ -295,6 +319,10 @@ paths:
         Denied hosts are dropped silently (logged server-side as
         `Unauthorized host request`). With no `hosts`, no `X-Device-Id` and no
         client certificate, the full config is returned unchanged.
+        On an mTLS listener `X-Device-Id` must belong to the client certificate
+        (`403 device_identity_mismatch` otherwise), so a device cannot read the pins
+        another device's ACL grants. On a TLS listener the header is self-reported:
+        there the ACL shapes what an honest device receives, nothing more.
 
         **Signing.** Unless `signed=false`, the response is a
         [SignedConfig](#/components/schemas/SignedConfig) envelope whose `payload` is
@@ -355,6 +383,14 @@ paths:
                 oneOf:
                   - $ref: '#/components/schemas/SignedConfig'
                   - $ref: '#/components/schemas/CertificateConfig'
+        '403':
+          description: >
+            mTLS listener only: `reenroll_required` (the certificate's identity was
+            revoked) or `device_identity_mismatch` (`X-Device-Id` names a device the
+            certificate does not belong to).
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
     put:
       tags: [certificate-config]
       operationId: putCertificateConfig
@@ -2135,7 +2171,10 @@ paths:
               properties:
                 clientId:
                   type: string
-                  description: 'Defaults to `device-<epochMillis>` when absent or unparseable.'
+                  description: >
+                    Defaults to `device-<epochMillis>` when absent or unparseable. Letters,
+                    digits, `.`, `_`, `:` and `-` only, at most 64 — it becomes the
+                    certificate's CN and is shown in the dashboard.
       responses:
         '200':
           description: The token plaintext — store it now, it cannot be re-read.
@@ -2146,6 +2185,11 @@ paths:
                 properties:
                   token: { type: string, description: Plaintext, shown once. }
                   clientId: { type: string }
+        '400':
+          description: '`invalid_client_id` — characters outside `[A-Za-z0-9._:-]`, or longer than 64.'
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
         '401': { $ref: '#/components/responses/MissingApiKey' }
         '403': { $ref: '#/components/responses/InvalidApiKey' }
 
@@ -2204,12 +2248,31 @@ paths:
         * neither → `400`.
         `deviceUid` is stored on the `client_certs` row and is what binds a
         token-enrolled certificate to a device for the `token_mtls` vault policy.
-        Enrollment restarts the mTLS mock servers and mTLS Config APIs so the new
-        certificate is trusted immediately.
+        P12 enrollment restarts the mTLS mock servers and mTLS Config APIs so the
+        new certificate is trusted immediately.
 
-        *Management port* (`Main.kt`) is token-only: `{token}` is required,
-        `deviceId` / `deviceAlias` / `deviceUid` are ignored, and the response adds a
-        `Content-Disposition` attachment header.
+        **CSR enrollment (library 2.2+, the default):** with
+        `X-PinVault-Features: csr` and a `csr` field (Base64 DER PKCS#10 over the
+        device's own key), the server verifies the request's self-signature,
+        ignores its subject, and issues `CN=PinVault Client: <clientId>` signed by
+        the client CA (`CLIENT_CERT_TTL_DAYS`, `notBefore` an hour back). The
+        answer is JSON with header **`X-PinVault-Cert-Format: pem-chain`** — see
+        the `200` variant below. The identity (key hash, serial, expiry) is
+        recorded in `client_identities`; no truststore change, no listener restart.
+        A revoked client id is refused with `403 revoked` before the token is spent,
+        and so is a malformed CSR (`400`), so the device can retry with the same token.
+
+        **A token yields one certificate.** It is spent in a single conditional
+        update right before anything is issued; of several requests racing with the
+        same token, one succeeds and the others get `401`.
+
+        *Management port* (`Main.kt`) is token-only and issues P12s: `{token}` is
+        required, `deviceId` and `csr` are ignored, and the response adds a
+        `Content-Disposition` attachment header. It records `deviceAlias` /
+        `deviceUid` and applies the same rules before spending the token (`400
+        invalid_device_uid`, `403 revoked`, `409 device_already_enrolled`):
+        without the recorded `deviceUid` an mTLS listener would refuse the device's
+        own `X-Device-Id`.
 
         Registered on: **management + config-api** (two separate handlers, as above).
       security: []
@@ -2236,10 +2299,20 @@ paths:
                     Config API ports only. The device's stable id (ANDROID_ID). Stored as
                     `client_certs.device_uid` and used by the `token_mtls` vault policy to
                     match a certificate to an `X-Device-Id`.
+                csr:
+                  type: string
+                  description: >
+                    Config API ports only, with `X-PinVault-Features: csr`. Base64 DER PKCS#10
+                    request over the device's Keystore key. Its subject is ignored.
       responses:
         '200':
-          description: The PKCS12 bundle.
+          description: >
+            The PKCS12 bundle — or, for a CSR enrollment, the issued certificate chain
+            as JSON (`X-PinVault-Cert-Format: pem-chain`).
           headers:
+            X-PinVault-Cert-Format:
+              description: '`pem-chain` when the body is the JSON chain of a CSR enrollment.'
+              schema: { type: string }
             X-P12-SHA256:
               description: Base64 SHA-256 of the response body. Clients reject the P12 if absent.
               schema: { type: string }
@@ -2255,21 +2328,155 @@ paths:
           content:
             application/octet-stream:
               schema: { type: string, format: binary }
+            application/json:
+              schema: { $ref: '#/components/schemas/IssuedClientCert' }
         '400':
-          description: No `token` (management port), or neither `token` nor `deviceId` (Config API ports).
+          description: >
+            No `token` (management port), neither `token` nor `deviceId` (Config API ports),
+            an unparseable / unverifiable `csr` (`invalid_csr`), or a client id / `deviceUid`
+            outside `[A-Za-z0-9._:-]{1,64}` (`invalid_client_id`, `invalid_device_uid`).
+            The token is not spent.
           content:
             application/json:
               schema: { $ref: '#/components/schemas/Error' }
         '401':
-          description: The token is invalid, expired or already used.
+          description: The token is invalid, expired or already used — including by a request that raced this one with the same token.
           content:
             application/json:
               schema: { $ref: '#/components/schemas/Error' }
         '403':
-          description: '`deviceId`-only enrollment attempted while `ENROLLMENT_MODE=token` (Config API ports).'
+          description: '`deviceId`-only enrollment attempted while `ENROLLMENT_MODE=token` (Config API ports), or the client id was revoked (`revoked`).'
           content:
             application/json:
               schema: { $ref: '#/components/schemas/Error' }
+        '409':
+          description: >
+            `device_already_enrolled` — another active client id was enrolled from this
+            `deviceUid`. One active identity per device; revoke the other id (or re-enroll
+            under it) and retry: the token is not spent.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '411':
+          description: '`length_required` — device endpoints need a declared Content-Length.'
+        '413':
+          description: '`body_too_large` — device endpoints accept at most 64 KB.'
+
+  /api/v1/client-certs/renew:
+    post:
+      tags: [enrollment, client-certs]
+      operationId: renewClientCert
+      summary: Renew a CSR-enrolled device certificate
+      description: |
+        The device sends a fresh PKCS#10 request over the **same** Keystore key it
+        enrolled with. Two doors, one check:
+
+        * **mTLS listener** — the presented client certificate must be valid (an
+          expired one never gets this far: the handshake refuses it) and must carry
+          the CSR's key; the client id comes from its CN.
+        * **TLS listener** (recovery, no client certificate) — `clientId` in the body
+          names the identity; the CSR's self-signature must verify and its key must
+          equal the key registered at enrollment.
+
+        Either way the identity must exist and not be revoked. Every refusal is the
+        same `403 reenroll_required`, so the endpoint cannot be used to probe which
+        client ids exist. Attempts are rate-limited per source address and client id;
+        refusals are audited as `client_cert_auth_failed`, issuances as
+        `client_cert_renewed` (`via: mtls | recovery`).
+
+        Registered on: **config-api** (every Config API listener) and the **recovery door** (`RECOVERY_PORT`, TLS without client auth, nothing else served there).
+      security: []
+      x-registered-on: config-api
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [csr]
+              properties:
+                csr:
+                  type: string
+                  description: Base64 DER PKCS#10 request over the enrolled key.
+                clientId:
+                  type: string
+                  description: Required when no client certificate is presented (recovery).
+      responses:
+        '200':
+          description: The new certificate chain.
+          headers:
+            X-PinVault-Cert-Format:
+              schema: { type: string, example: pem-chain }
+            Cache-Control:
+              schema: { type: string, example: no-store }
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/IssuedClientCert'
+                  - type: object
+                    properties:
+                      renewCount: { type: integer, example: 3 }
+                      via: { type: string, enum: [mtls, recovery] }
+        '400':
+          description: '`invalid_csr`, or `clientId` missing on the recovery path.'
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '403':
+          description: '`reenroll_required` — revoked, unknown, or the key does not match. The device must enroll again.'
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '429':
+          description: '`rate_limited`.'
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+
+  /api/v1/test-hooks/client-cert-ttl:
+    post:
+      tags: [client-certs]
+      operationId: armTestClientCertTtl
+      summary: Test hook — short lifetime for a client id's next certificate
+      description: |
+        Only when the server runs with `ALLOW_TEST_HOOKS=true` (the Espresso suite);
+        absent otherwise. The next certificate issued or renewed for `clientId` lives
+        `ttlSeconds` (30..86400) instead of `CLIENT_CERT_TTL_DAYS`. One-shot.
+        Audited as `test_hook_used`. Never enable in production.
+
+        Registered on: **management** only.
+      security:
+        - ApiKeyAuth: []
+      x-registered-on: management
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [clientId, ttlSeconds]
+              properties:
+                clientId: { type: string }
+                ttlSeconds: { type: integer, minimum: 30, maximum: 86400 }
+      responses:
+        '200':
+          description: Armed.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  clientId: { type: string }
+                  ttlSeconds: { type: integer }
+                  armed: { type: boolean, example: true }
+        '400':
+          description: Missing or out-of-range fields.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '401': { $ref: '#/components/responses/MissingApiKey' }
+        '403': { $ref: '#/components/responses/InvalidApiKey' }
 
   /api/v1/client-certs/{hostname}/download:
     get:
@@ -2309,6 +2516,43 @@ paths:
           content:
             application/json:
               schema: { $ref: '#/components/schemas/Error' }
+
+  /api/v1/recovery-door:
+    get:
+      tags: [client-certs]
+      operationId: getRecoveryDoor
+      summary: Recovery door status and the CA pins apps need for it
+      description: |
+        The certificate-renewal door for devices whose client certificate has
+        expired: its port, whether it runs, the two server-CA pins to put under
+        `HostPin("<host>:<port>", …)` in the app, the expiry of the door's own
+        certificate (reissued automatically) and of the CA, and the lifetime of
+        device certificates.
+
+        Registered on: **management** only.
+      security:
+        - ApiKeyAuth: []
+      x-registered-on: management
+      responses:
+        '200':
+          description: Recovery door details.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  enabled: { type: boolean, description: 'False when `RECOVERY_PORT=0`.' }
+                  running: { type: boolean }
+                  port: { type: integer, example: 8093 }
+                  caPins:
+                    type: array
+                    items: { type: string }
+                    description: Active and backup server-CA pins (Base64 SHA-256 of the SPKI).
+                  caNotAfter: { type: string, format: date-time, nullable: true }
+                  certificateNotAfter: { type: string, format: date-time, nullable: true }
+                  clientCertTtlDays: { type: integer, example: 90 }
+        '401': { $ref: '#/components/responses/MissingApiKey' }
+        '403': { $ref: '#/components/responses/InvalidApiKey' }
 
   /api/v1/client-certs:
     get:
@@ -2431,6 +2675,10 @@ paths:
         restart a revoked certificate would keep working until the process restarts.
 
         `token_mtls` vault downloads also re-check `revoked` on each request.
+        A CSR-enrolled identity is revoked in `client_identities` as well: its
+        next renewal is refused (`reenroll_required`) and its current, short-lived
+        certificate runs out on its own. The client id stays revoked — a new
+        enrollment under it is refused.
 
         An unknown id still returns `200`.
 
@@ -2857,7 +3105,10 @@ paths:
           `API_KEY` configured, so an admin-only file never becomes world-readable in
           `ALLOW_ANONYMOUS_ADMIN` mode.
         * `token` — requires `X-Device-Id` + `X-Vault-Token` matching the
-          `(configApiId, key, deviceId)` triple.
+          `(configApiId, key, deviceId)` triple. On an mTLS listener the
+          `X-Device-Id` must also belong to the client certificate (see *Device id*
+          above), so a token taken from one device does not work from another
+          enrolled device there.
         * `token_mtls` — token **and** a verified client certificate. The certificate
           binds to the claimed `X-Device-Id` when either the CN's client id equals
           `X-Device-Id` (auto-enrollment, where the client id *is* the ANDROID_ID) or
@@ -2949,7 +3200,8 @@ paths:
           description: >
             The Config API's `vault_enabled` flag is off (every key, present or
             not), or an `api_key`-policy file on a server with no `API_KEY`
-            configured.
+            configured, or (mTLS listener) `device_identity_mismatch`: `X-Device-Id`
+            names a device the client certificate does not belong to.
           content:
             application/json:
               schema: { $ref: '#/components/schemas/Error' }
@@ -3114,22 +3366,51 @@ paths:
       summary: Register a device's RSA public key for end-to-end encryption
       description: |
         Called by the device during setup so the server can wrap `end_to_end` files
-        for it. Re-registering replaces the stored key (rotation is intentional).
+        for it.
 
-        **Known demo limitation (audit M-2).** The endpoint must stay
-        client-reachable, and over plain TLS there is no device identity, so the
-        server cannot distinguish a genuine rotation from one device overwriting
-        another's key. Residual risk is integrity/DoS and key substitution on
-        `public` + `end_to_end` files; confidentiality on `token` / `token_mtls`
-        files is still gated by the access policy. A production fix binds
-        registration to an mTLS CN or an enrollment-token proof — not to the admin
-        API key, which clients do not have.
+        **Who may set the key (audit M-2).**
+        - **mTLS listener** (a client certificate was presented): only a certificate
+          bound to `{deviceId}` — its client id is the device id, or the id was
+          enrolled with `deviceUid` = `{deviceId}` — and not revoked. Such a
+          certificate may replace the key at any time. Otherwise `403
+          device_identity_mismatch`.
+        - **TLS listener** (no certificate): the first key for a device is accepted;
+          the same key again is a no-op. A *different* key replaces it only when the
+          request carries the device's access token for an `end_to_end` file of this
+          scope (`X-Vault-Key` + `X-Vault-Token`; the library adds them when it has
+          one). Otherwise `409 key_change_requires_proof` and the registered key
+          stays. An administrator can free the slot with `DELETE` on this path or
+          on `/api/v1/config-apis/{configApiId}/vault/devices/{deviceId}/public-key`.
+
+        **What may be stored.** TLS asks for no credential, so the key must be RSA of
+        2048–4096 bits (stored re-encoded, a few hundred bytes), `{deviceId}` must be
+        letters, digits, `.`, `_`, `:` or `-` (at most 64), and `algorithm`
+        `RSA-OAEP-SHA256`. Without a client certificate, a source address writes at
+        most `DEVICE_KEY_RATE_LIMIT` new or changed keys per 10 minutes (default 30;
+        the same key again is not counted); a Config API holds at most
+        `DEVICE_KEY_LIMIT` keys (default 100 000), after which only devices it
+        already knows are served.
+
+        Registrations and replacements are audited (`device_key_registered`,
+        `device_key_replaced`); refusals as `device_key_refused`, summarised per
+        minute. `device_key_registered` is not pushed to the webhook under
+        `NOTIFY_EVENTS=*`.
 
         Registered on: **config-api** only.
       security: []
       x-registered-on: config-api
       parameters:
         - $ref: '#/components/parameters/DeviceIdPath'
+        - name: X-Vault-Key
+          in: header
+          required: false
+          description: Server-side key of an `end_to_end` file; with `X-Vault-Token`, proof for replacing a registered key over TLS.
+          schema: { type: string }
+        - name: X-Vault-Token
+          in: header
+          required: false
+          description: The device's access token for the `X-Vault-Key` file.
+          schema: { type: string }
       requestBody:
         required: true
         content:
@@ -3155,10 +3436,59 @@ paths:
                   registered: { type: string, example: 'true' }
                   deviceId: { type: string }
         '400':
-          description: '`publicKeyPem` missing.'
+          description: '`publicKeyPem` missing; `invalid_device_id`, `invalid_public_key` (not RSA 2048–4096) or `unsupported_algorithm`.'
           content:
             application/json:
               schema: { $ref: '#/components/schemas/Error' }
+        '403':
+          description: '`device_identity_mismatch` — the presented client certificate does not belong to this device, or was revoked.'
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '409':
+          description: '`key_change_requires_proof` — over TLS, a different key is already registered and the request carries no valid proof.'
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '429':
+          description: '`rate_limited` — this address wrote `DEVICE_KEY_RATE_LIMIT` keys in the last 10 minutes.'
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '503':
+          description: '`device_key_limit_reached` — the Config API holds `DEVICE_KEY_LIMIT` keys; a new device is not stored.'
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+    delete:
+      tags: [vault]
+      operationId: resetDevicePublicKey
+      summary: Remove a device's E2E key so its next registration counts as the first
+      description: |
+        For a device that lost its key without a token to prove itself with, or a
+        slot someone else registered first. Audited as `device_key_reset`.
+
+        Registered on: **config-api** only (the management port has the scoped
+        `/api/v1/config-apis/{configApiId}/vault/devices/{deviceId}/public-key`).
+      security:
+        - ApiKeyAuth: []
+      x-registered-on: config-api
+      parameters:
+        - $ref: '#/components/parameters/DeviceIdPath'
+      responses:
+        '200':
+          description: Removed.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  removed: { type: string, example: 'true' }
+                  deviceId: { type: string }
+        '404':
+          description: No key registered for this device in this scope.
+        '401': { $ref: '#/components/responses/MissingApiKey' }
+        '403': { $ref: '#/components/responses/InvalidApiKey' }
 
   /api/v1/vault/report:
     post:
@@ -3693,6 +4023,31 @@ paths:
           content:
             application/json:
               schema: { $ref: '#/components/schemas/VaultDistStats' }
+        '401': { $ref: '#/components/responses/MissingApiKey' }
+        '403': { $ref: '#/components/responses/InvalidApiKey' }
+
+  /api/v1/config-apis/{configApiId}/vault/devices/{deviceId}/public-key:
+    delete:
+      tags: [vault-admin]
+      operationId: scopedResetDevicePublicKey
+      summary: Remove a device's E2E key in a named scope
+      description: |
+        Frees the slot so the device's next registration counts as the first — for a
+        device that lost its key without a token to prove itself with, or a slot
+        someone else registered first. Audited as `device_key_reset`.
+
+        Registered on: **management** only.
+      security:
+        - ApiKeyAuth: []
+      x-registered-on: management
+      parameters:
+        - $ref: '#/components/parameters/ConfigApiIdPath'
+        - $ref: '#/components/parameters/DeviceIdPath'
+      responses:
+        '200':
+          description: Removed.
+        '404':
+          description: No key registered for this device in this scope.
         '401': { $ref: '#/components/responses/MissingApiKey' }
         '403': { $ref: '#/components/responses/InvalidApiKey' }
 
@@ -4629,6 +4984,34 @@ components:
             The device's `X-Device-Id`, captured at enrollment. Lets `token_mtls`
             bind a token-enrolled certificate (whose client id is admin-chosen) to
             one device.
+        notAfter:
+          type: string
+          format: date-time
+          nullable: true
+          description: CSR-enrolled identities — when the current certificate expires. Null for P12 certificates.
+        renewCount:
+          type: integer
+          default: 0
+          description: CSR-enrolled identities — how many times the certificate was renewed.
+        keyType:
+          type: string
+          enum: [csr, p12]
+          description: '`csr`: the key lives on the device; `p12`: the server generated it.'
+
+    IssuedClientCert:
+      type: object
+      description: A certificate chain issued over a device-held key (CSR enrollment or renewal).
+      properties:
+        clientId: { type: string }
+        commonName: { type: string, example: 'PinVault Client: my-device' }
+        chain:
+          type: array
+          description: PEM certificates, the device's leaf first, then the client CA.
+          items: { type: string }
+        serial: { type: string, description: Hex serial of the leaf. }
+        notBefore: { type: string, format: date-time }
+        notAfter: { type: string, format: date-time }
+        spkiSha256: { type: string, description: Base64 SHA-256 of the device key's SubjectPublicKeyInfo. }
 
     EnrollmentToken:
       type: object
@@ -5253,7 +5636,7 @@ components:
         signed: { type: boolean, description: '`NOTIFY_WEBHOOK_SECRET` is set (`X-PinVault-Signature`).' }
         events:
           type: array
-          description: '`NOTIFY_EVENTS`; `*` = every audit action except `http`.'
+          description: '`NOTIFY_EVENTS`; `*` = every audit action except `http` and `device_key_registered` (named, it is sent).'
           items: { type: string }
         recent:
           type: array

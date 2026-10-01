@@ -386,6 +386,9 @@ async function renderMtlsSection() {
     const status = await statusRes.json();
     const certs = await certsRes.json();
     const enrollMode = await modeRes.json();
+    // Recovery door is optional (RECOVERY_PORT=0 turns it off); never let it break the tab.
+    let recovery = null;
+    try { recovery = await (await apiFetch('/api/v1/recovery-door')).json(); } catch (_) { recovery = null; }
     const locale = lang === 'tr' ? 'tr-TR' : 'en-US';
     // Port of the mTLS Config API shown in the integration snippet below. This
     // section used to reference an undefined `data.httpsPort`, which threw and
@@ -393,6 +396,9 @@ async function renderMtlsSection() {
     const mtlsApi = allApiConfigs.find(a => a.id === selectedApiId && a.mode === 'mtls')
       || allApiConfigs.find(a => a.mode === 'mtls');
     const mtlsPort = mtlsApi ? mtlsApi.port : '<mtls-port>';
+    // First enrollment cannot use the mTLS port (no certificate yet): the TLS Config API takes it.
+    const tlsApi = allApiConfigs.find(a => a.mode === 'tls');
+    const tlsPort = tlsApi ? tlsApi.port : '<tls-port>';
 
     const certsPagKey = 'client-certs';
     const certsPagInfo = pagSlice(certs, certsPagKey);
@@ -400,11 +406,13 @@ async function renderMtlsSection() {
     const certRows = certs.length === 0
       ? `<div class="empty-msg">${t('noClientCerts')}</div>`
       : `<table class="data-table">
-          <thead><tr><th>ID</th><th>${t('thFingerprint')}</th><th>${t('thCreated')}</th><th>${t('thRevoked')}</th><th></th></tr></thead>
+          <thead><tr><th>ID</th><th>${t('thFingerprint')}</th><th>${t('thCreated')}</th><th>${t('thExpires')}</th><th>${t('thRenewals')}</th><th>${t('thRevoked')}</th><th></th></tr></thead>
           <tbody>${certsPagInfo.slice.map((c, i) => `<tr class="${certsPagInfo.page === 0 && i === 0 ? 'row-latest' : ''}">
-            <td style="font-weight:600">${c.id}</td>
+            <td style="font-weight:600">${esc(c.id)}${c.keyType === 'csr' ? ` <span title="${t('keyOnDevice')}" style="font-size:10px;color:#22c55e">●</span>` : ''}</td>
             <td style="font-family:monospace;font-size:10px;color:#7dd3fc">${c.fingerprint.substring(0, 20)}...</td>
             <td style="color:#64748b;font-size:11px">${new Date(c.createdAt).toLocaleString(locale)}</td>
+            <td style="font-size:11px;color:${c.notAfter && new Date(c.notAfter) < new Date() ? '#ef4444' : '#64748b'}">${c.notAfter ? new Date(c.notAfter).toLocaleString(locale) : '—'}</td>
+            <td style="text-align:center">${c.keyType === 'csr' ? c.renewCount : '—'}</td>
             <td>${c.revoked
               ? `<span style="color:#ef4444">${t('revoked')}</span>`
               : `<span style="color:#22c55e">${t('active')}</span>`}</td>
@@ -437,23 +445,42 @@ async function renderMtlsSection() {
       </div>
       <div class="card">
         <div class="card-title">${t('androidIntegration')}</div>
-        <div class="key-box">// Otomatik enrollment (token ile):
-// 1. Web UI'dan token üretin
-// 2. App ilk açılışta token sorar
-// 3. Token ile P12 indirilir ve şifreli kaydedilir
-
-// PinVault.isEnrolled(context) ile kontrol edin
-// PinVault.enroll(context, token) ile kayıt olun
-
-// Veya manuel P12:
-val p12 = context.assets.open("client.p12").readBytes()
+        <div class="key-box">${t('integrationComment1')}
+${t('integrationComment2')}
 val config = PinVaultConfig.Builder()
     .configApi("mtls", "https://${location.hostname}:${mtlsPort}/") {
         bootstrapPins(BOOTSTRAP_PINS)
-        clientKeystore(p12, "changeit")
+        enrollmentUrl("https://${location.hostname}:${tlsPort}/")   ${t('integrationEnrollComment')}${recovery && recovery.enabled ? `
+        renewalUrl("https://${location.hostname}:${recovery.port}/")   ${t('integrationRenewComment')}` : ''}
     }
-    .build()</div>
+    .build()
+
+PinVault.enroll(context, token)   ${t('integrationComment3')}</div>
       </div>
+      ${recovery && recovery.enabled ? `<div class="card">
+        <div style="display:flex;align-items:center;gap:10px;margin-bottom:8px">
+          <div class="card-title" style="margin:0">${t('recoveryDoor')}</div>
+          ${recovery.running
+            ? `<span style="background:#166534;color:#bbf7d0;padding:2px 8px;border-radius:4px;font-size:11px;font-weight:600">${t('active')}</span>`
+            : `<span style="background:#7f1d1d;color:#fecaca;padding:2px 8px;border-radius:4px;font-size:11px;font-weight:600">${t('recoveryStopped')}</span>`}
+        </div>
+        <div style="color:#94a3b8;font-size:12px;margin-bottom:12px;line-height:1.5">${t('recoveryDoorHint')}</div>
+        <table class="data-table" style="margin-bottom:12px">
+          <tbody>
+            <tr><td style="color:#64748b">${t('recoveryPort')}</td><td style="font-family:monospace">${recovery.port}</td></tr>
+            <tr><td style="color:#64748b">${t('recoveryCertUntil')}</td><td style="font-size:11px">${recovery.certificateNotAfter ? new Date(recovery.certificateNotAfter).toLocaleString(locale) : '—'} <span style="color:#64748b">(${t('recoveryAutoRenew')})</span></td></tr>
+            <tr><td style="color:#64748b">${t('recoveryCaUntil')}</td><td style="font-size:11px">${recovery.caNotAfter ? new Date(recovery.caNotAfter).toLocaleString(locale) : '—'}</td></tr>
+            <tr><td style="color:#64748b">${t('clientCertLifetime')}</td><td>${recovery.clientCertTtlDays} ${t('days')}</td></tr>
+            ${recovery.caPins.map((p, i) => `<tr><td style="color:#64748b">${i === 0 ? t('recoveryCaPin') : t('recoveryCaBackupPin')}</td>
+              <td style="font-family:monospace;font-size:10px;color:#7dd3fc">${esc(p)} <button class="copy-btn" data-action="copyText" data-arg0="${esc(p)}">${t('copy')}</button></td></tr>`).join('')}
+          </tbody>
+        </table>
+        <div class="key-box">${t('recoverySnippetComment')}
+HostPin("${location.hostname}:${recovery.port}", listOf(
+    "${esc(recovery.caPins[0] || '')}",
+    "${esc(recovery.caPins[1] || '')}"
+))</div>
+      </div>` : ''}
       <div class="card">
         <div style="display:flex;align-items:center;gap:10px;margin-bottom:8px">
           <div class="card-title" style="margin:0">${t('enrollmentToken')}</div>
@@ -564,6 +591,7 @@ async function generateEnrollmentToken(e) {
       body: JSON.stringify({ clientId })
     });
     const data = await res.json();
+    if (!res.ok) { toast(data.message || data.error || t('error'), 'error'); return; }
     // Sunucu artık yalnızca SHA-256 hash saklıyor — düz metin SADECE burada,
     // bir kez görünüyor. Vault token akışıyla aynı desen: panoya kopyala +
     // kapatılana kadar ekranda kalan bir dialog.
@@ -847,7 +875,7 @@ async function loadCertInfo(hostname) {
       <div class="card-title">${t('certInfo')}</div>
       <div style="font-size:12px">
         <div class="info-row"><span class="info-key">CN</span><span class="info-val">${cn}</span></div>
-        <div class="info-row"><span class="info-key">${t('algorithmLabel')}</span><span class="info-val">${c.publicKeyAlgorithm} ${c.publicKeyBits}-bit</span></div>
+        <div class="info-row"><span class="info-key">${t('algorithmLabel')}</span><span class="info-val">${esc(c.publicKeyAlgorithm)} ${esc(c.publicKeyBits)}-bit</span></div>
         <div class="info-row"><span class="info-key">${t('validUntilLabel')}</span><span class="info-val" style="color:#f59e0b">${new Date(c.validUntil).toLocaleString(lang === 'tr' ? 'tr-TR' : 'en-US')}</span></div>
         <div class="info-row"><span class="info-key">SAN</span><span class="info-val">${c.subjectAltNames.join(', ')}</span></div>
         <div class="info-row" style="border:none"><span class="info-key">${t('thFingerprint')}</span><span class="info-val" style="font-size:9px;font-family:monospace;color:#94a3b8">${c.sha256Fingerprint}</span></div>

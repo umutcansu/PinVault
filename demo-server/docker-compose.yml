@@ -4,6 +4,7 @@ services:
     ports:
       - "${PORT:-8080}:8080"       # Management API (HTTP)
       - "${HTTPS_PORT:-8081}:8081" # Config API (TLS)
+      - "${RECOVERY_PORT:-8083}:8083" # Certificate-renewal door (TLS, no client cert)
     volumes:
       - ./data/db:/data/db
       - ./data/certs:/data/certs
@@ -13,6 +14,8 @@ services:
     environment:
       - PORT=8080
       - HTTPS_PORT=8081
+      - RECOVERY_PORT=8083
+      - CLIENT_CERT_TTL_DAYS=${CLIENT_CERT_TTL_DAYS:-}
       - DB_PATH=/data/db/pinvault.db
       - CERTS_DIR=/data/certs
       - SIGNING_KEY_PATH=/data/keys/signing-key.pem
@@ -31,6 +34,8 @@ services:
       - CONFIG_TTL_SECONDS=${CONFIG_TTL_SECONDS:-}
       - CERT_EXPIRY_WARN_DAYS=${CERT_EXPIRY_WARN_DAYS:-}
       - ENROLLMENT_TOKEN_TTL_SECONDS=${ENROLLMENT_TOKEN_TTL_SECONDS:-}
+      - DEVICE_KEY_RATE_LIMIT=${DEVICE_KEY_RATE_LIMIT:-}
+      - DEVICE_KEY_LIMIT=${DEVICE_KEY_LIMIT:-}
       # Optional signing / governance layers (SECURE_OPERATIONS.md) are not
       # passed through by default; add the ones you enable here, e.g.
       #   - ADMIN_KEYS=${ADMIN_KEYS}

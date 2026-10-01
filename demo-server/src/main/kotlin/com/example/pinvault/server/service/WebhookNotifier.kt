@@ -24,7 +24,10 @@ import javax.crypto.spec.SecretKeySpec
  * structured fields. With `NOTIFY_WEBHOOK_SECRET` set, every request carries
  * `X-PinVault-Signature: sha256=<hex HMAC of the body>` so the receiver can
  * tell it came from this server. `NOTIFY_EVENTS` (comma-separated, default
- * `*`) limits which audit actions are sent.
+ * `*`) limits which audit actions are sent. `*` leaves out [ROUTINE_EVENTS]:
+ * things every device does once, which anyone who can reach a device port
+ * can also cause at will, so they would bury the events worth a message. Name
+ * one in `NOTIFY_EVENTS` to receive it anyway.
  *
  * Delivery is asynchronous with retries and never blocks or fails the admin
  * request that caused it. The last deliveries are kept for the dashboard.
@@ -61,7 +64,7 @@ class WebhookNotifier(
         recent = recent.toList()
     )
 
-    fun wants(event: String): Boolean = "*" in events || event in events
+    fun wants(event: String): Boolean = event in events || ("*" in events && event !in ROUTINE_EVENTS)
 
     /** Deliveries queued or waiting for a retry; bounded so a burst cannot grow memory without limit. */
     private val pending = java.util.concurrent.atomic.AtomicInteger()
@@ -139,6 +142,9 @@ class WebhookNotifier(
         private val BACKOFF_SECONDS = longArrayOf(1, 5)
         private const val KEEP = 50
         private const val MAX_PENDING = 500
+
+        /** Recorded in the audit log, but sent only when named in `NOTIFY_EVENTS`. */
+        val ROUTINE_EVENTS = setOf("device_key_registered")
 
         fun fromEnv(env: Map<String, String> = System.getenv()): WebhookNotifier? {
             val url = env["NOTIFY_WEBHOOK_URL"]?.takeIf { it.isNotBlank() } ?: return null
