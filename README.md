@@ -515,6 +515,40 @@ PinVault.unenroll(context)             // remove it; the next request presents n
 Certificates are stored under the Config API block's `clientCertLabel(...)`;
 every call above takes an optional `label` to address another one.
 
+### Where the token comes from
+
+The APK is the same for every device and contains no token. Each device gets
+its own one-time token at runtime, the way an app receives a verification
+code:
+
+- **The server mints it.** In the dashboard: the mTLS Config API → *Client
+  Certificates* → *Enrollment Token*, enter a client id (the name the device
+  will carry, e.g. `tablet-07`), *Generate Token*. Or with the API key:
+  `POST /api/v1/enrollment-tokens/generate` `{"clientId": "tablet-07"}` →
+  `{"token": "…", "clientId": "tablet-07"}`. The token is shown once; the
+  server keeps only its SHA-256 hash. It is valid for one enrollment within 24
+  hours (`ENROLLMENT_TOKEN_TTL_SECONDS`).
+- **The app receives it at runtime, never inside the APK.** A token baked into
+  the APK would enroll only the first device (it is single-use), and anyone
+  who unpacks the APK could read it. Either:
+  - your backend mints it when the user signs in and returns it in the
+    sign-in response; the app passes it to `enroll`. The API key stays on your
+    server and the user never sees the token; or
+  - for a handful of devices, send it by message or QR code and let the user
+    paste it once (the demo app's *Enroll* dialog).
+- **It is spent once.** From then on the device's identity is its Keystore key
+  and certificate, and renewals need no token. A device needs a new token only
+  after a reinstall, cleared app data, or a revocation.
+
+A made-up token never matches: the server looks up the hash of what it
+receives and answers anything unknown, expired or used with `401`.
+
+Per-file vault tokens (`TOKEN` / `TOKEN_MTLS` policies) travel the same way:
+minted for one file and one device (the file's *Token Management* card, or
+`POST /api/v1/config-apis/{configApiId}/vault/{key}/tokens`
+`{"deviceId": "<ANDROID_ID>"}`), delivered at runtime, kept by the app in its
+own encrypted storage and handed to the library through `accessToken { … }`.
+
 ### The device keeps its key
 
 Enrollment generates an EC P-256 signing key in the Android Keystore and
@@ -695,6 +729,7 @@ per-device decryption, and refuses a validly signed but older version.
 `accessToken { … }` is read on every fetch. Returning `""` (no token issued
 yet) is fine — the library omits the header entirely so the server answers
 "X-Vault-Token header required" rather than "invalid or revoked token".
+How a device gets its token: [Where the token comes from](#where-the-token-comes-from).
 
 ### Per-device encryption (v2)
 
