@@ -39,9 +39,22 @@ internal object PinHostMatcher {
      *
      * Returns `null` when nothing matches — callers must treat null as a
      * hard reject (fail-safe).
+     *
+     * With [port], an exact `host:port` entry is tried first (see below).
      */
-    fun match(pinMap: Map<String, Set<String>>, hostname: String): Set<String>? {
+    fun match(pinMap: Map<String, Set<String>>, hostname: String, port: Int? = null): Set<String>? {
         val host = hostname.lowercase()
+
+        // A `host:port` entry pins that one listener and nothing else: when it
+        // exists it is the ONLY set considered for that port, and it never
+        // applies to the host's other ports. That lets one listener (e.g. a
+        // certificate-renewal door pinned to the backend's own CA) carry a
+        // different trust anchor than the rest of the host, without widening
+        // what the other ports accept.
+        if (port != null && port > 0) {
+            pinMap["$host:$port"]?.let { return it }
+        }
+
         pinMap[host]?.let { return it }
 
         for ((pattern, hashes) in pinMap) {

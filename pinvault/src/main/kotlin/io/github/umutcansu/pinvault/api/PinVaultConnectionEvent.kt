@@ -88,6 +88,49 @@ sealed class PinVaultConnectionEvent {
         /** Failure detail. Null for non-failure statuses. */
         val failureReason: String? = null
     ) : PinVaultConnectionEvent()
+
+    /**
+     * Result of a client-certificate renewal check — run at init, on every
+     * periodic update, and by `PinVault.renewClientCertIfNeeded`. Only
+     * emitted for CSR-enrolled identities (a device key in the Keystore);
+     * P12 enrollments have nothing to renew with and stay silent.
+     */
+    data class ClientCertRenewal(
+        val status: ClientCertRenewalStatus,
+
+        /** Expiry of the certificate in use after the check, epoch ms. `0` when unknown. */
+        val notAfterEpochMs: Long,
+
+        /** Which door the renewal went through. Null unless a renewal was attempted. */
+        val via: io.github.umutcansu.pinvault.model.ClientCertRenewalVia?,
+
+        /** The Config API block whose identity was checked. */
+        val configApiId: String,
+
+        /** Static device label, mirrors `android.os.Build.MANUFACTURER`. */
+        val deviceManufacturer: String,
+
+        /** Static device label, mirrors `android.os.Build.MODEL`. */
+        val deviceModel: String,
+
+        /** Failure detail, or the server's reason for [ClientCertRenewalStatus.REENROLL_REQUIRED]. */
+        val failureReason: String? = null
+    ) : PinVaultConnectionEvent()
+}
+
+/** Outcome categories for [PinVaultConnectionEvent.ClientCertRenewal]. */
+enum class ClientCertRenewalStatus {
+    /** A new certificate was issued and is presented from now on. */
+    RENEWED,
+
+    /** Enough lifetime left — nothing was sent. */
+    NOT_NEEDED,
+
+    /** The server refuses this identity; the host app must enroll again. */
+    REENROLL_REQUIRED,
+
+    /** Renewal was attempted and failed; it is retried on the next check. */
+    FAILED
 }
 
 /** Outcome categories for [PinVaultConnectionEvent.ConfigUpdate]. */

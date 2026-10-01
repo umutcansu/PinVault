@@ -225,4 +225,58 @@ class DynamicSSLManagerTest {
         // Pinning must survive an unenroll — only the client cert goes away.
         assertNotNull(manager.buildClient(config))
     }
+
+    // ── CSR flow: a key that stays in the Keystore ─────────────────────
+
+    @Test
+    fun `loadClientKey — key plus chain becomes the default identity`() {
+        val cert = TestCertUtil.generateSelfSigned(cn = "PinVault Client: dev-1", password = password)
+        manager.loadClientKey(cert.keyPair.private, arrayOf(cert.certificate))
+
+        assertTrue(manager.hasClientKeystore())
+        val kms = manager.buildCompositeKeyManagers()!!
+        assertEquals(1, kms.size)
+        val km = kms[0] as javax.net.ssl.X509ExtendedKeyManager
+        val alias = km.chooseClientAlias(arrayOf("RSA"), null, null)
+        assertEquals("pinvault-client", alias)
+        assertSame(cert.keyPair.private, km.getPrivateKey(alias))
+        assertEquals(cert.certificate, km.getCertificateChain(alias)!![0])
+        assertEquals(cert.certificate, manager.defaultClientCertificate())
+    }
+
+    @Test
+    fun `loadClientKey — replaces a P12 identity and is dropped by clearClientKeystore`() {
+        val p12 = TestCertUtil.generateSelfSigned(cn = "old-p12", password = password)
+        manager.loadClientKeystore(p12.p12Bytes, password)
+        val chain = TestCertUtil.generateSelfSigned(cn = "new-chain", password = password)
+        manager.loadClientKey(chain.keyPair.private, arrayOf(chain.certificate))
+
+        assertEquals(chain.certificate, manager.defaultClientCertificate())
+
+        manager.clearClientKeystore()
+        assertNull(manager.defaultClientCertificate())
+        assertFalse(manager.hasClientKeystore())
+    }
+
+    @Test
+    fun `loadClientKey — host-specific certs still win over the default identity`() {
+        val default = TestCertUtil.generateSelfSigned(cn = "default-identity", password = password)
+        val host = TestCertUtil.generateSelfSigned(cn = "specific.host", password = password)
+        manager.loadClientKey(default.keyPair.private, arrayOf(default.certificate))
+        manager.loadHostClientCerts(mapOf("specific.host" to host.p12Bytes), password)
+
+        val km = manager.buildCompositeKeyManagers()!![0] as javax.net.ssl.X509ExtendedKeyManager
+        // Aliases from both managers are visible through the composite.
+        val aliases = km.getClientAliases("RSA", null)!!.toList()
+        assertTrue(aliases.contains("pinvault-client"))
+        assertTrue(aliases.size >= 2)
+        assertSame(default.keyPair.private, km.getPrivateKey("pinvault-client"))
+    }
+
+    @Test
+    fun `defaultClientCertificate — reads the P12 identity too`() {
+        val cert = TestCertUtil.generateSelfSigned(cn = "p12-identity", password = password)
+        manager.loadClientKeystore(cert.p12Bytes, password)
+        assertEquals(cert.certificate, manager.defaultClientCertificate())
+    }
 }

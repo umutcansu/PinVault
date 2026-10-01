@@ -142,6 +142,45 @@ interface CertificateConfigApi {
     ): EnrollmentResult
 
     /**
+     * Enrolls with a certificate signing request over the device's own key
+     * (the key never leaves the Android Keystore). Same authentication as
+     * [enroll] — token or device id — plus the DER-encoded PKCS#10 [csrDer].
+     *
+     * Return the issued chain in [EnrollmentResult.certificateChainPem]. A
+     * backend that only knows P12 may answer this call with a P12 result
+     * instead, exactly as [enroll] would. Return `null` to say the backend
+     * cannot take a CSR at all; the library then calls [enroll].
+     *
+     * Default: `null`.
+     */
+    suspend fun enrollWithCsr(
+        token: String?,
+        deviceId: String?,
+        deviceAlias: String? = null,
+        deviceUid: String? = null,
+        csrDer: ByteArray
+    ): EnrollmentResult? = null
+
+    /**
+     * Renews the client certificate of a CSR-enrolled device.
+     *
+     * With [recoveryUrl] null the request goes over the block's own
+     * connection, which presents the current (still valid) client
+     * certificate. With [recoveryUrl] set the certificate has expired or was
+     * refused: the request goes to that URL, presents no client certificate,
+     * and the backend authenticates the CSR signature against the key it
+     * registered for [clientId] at enrollment.
+     *
+     * Default: [io.github.umutcansu.pinvault.model.ClientCertRenewalResponse.Unsupported].
+     */
+    suspend fun renewClientCert(
+        clientId: String,
+        csrDer: ByteArray,
+        recoveryUrl: String? = null
+    ): io.github.umutcansu.pinvault.model.ClientCertRenewalResponse =
+        io.github.umutcansu.pinvault.model.ClientCertRenewalResponse.Unsupported
+
+    /**
      * Reports a vault file download to the server for analytics/tracking.
      * Fire-and-forget — failures are logged but don't affect vault file operations.
      *

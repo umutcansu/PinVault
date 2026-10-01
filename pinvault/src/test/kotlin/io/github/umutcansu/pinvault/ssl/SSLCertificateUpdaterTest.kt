@@ -64,6 +64,41 @@ class SSLCertificateUpdaterTest {
     }
 
     @Test
+    fun `init without a client certificate does not contact the backend and asks for enrollment`() = runTest {
+        every { configStore.load() } returns null
+        val updater = createUpdater(maxRetry = 3)
+
+        val result = updater.initializeAndUpdate(needsClientCertificate = true)
+
+        assertTrue(result is InitResult.Failed)
+        assertTrue((result as InitResult.Failed).exception is io.github.umutcansu.pinvault.model.ClientCertificateRequiredException)
+        coVerify(exactly = 0) { configApi.fetchConfig(any()) }
+        coVerify(exactly = 0) { configApi.fetchScopedConfig(any(), any(), any()) }
+    }
+
+    @Test
+    fun `init without a client certificate still applies a stored config`() = runTest {
+        val stored = CertificateConfig(version = 7, pins = listOf(HostPin("api.test", listOf(pin1, pin2), version = 7)))
+        every { configStore.load() } returns stored
+        val updater = createUpdater(maxRetry = 3)
+
+        val result = updater.initializeAndUpdate(needsClientCertificate = true)
+
+        assertEquals(InitResult.Ready(7), result)
+        assertEquals(7, httpClientProvider.getVersion())
+        coVerify(exactly = 0) { configApi.fetchConfig(any()) }
+        coVerify(exactly = 0) { configApi.fetchScopedConfig(any(), any(), any()) }
+    }
+
+    @Test
+    fun `init without a client certificate refuses a stored force-update config`() = runTest {
+        val stored = CertificateConfig(version = 7, pins = listOf(HostPin("api.test", listOf(pin1, pin2), version = 7, forceUpdate = true)), forceUpdate = true)
+        every { configStore.load() } returns stored
+        val result = createUpdater().initializeAndUpdate(needsClientCertificate = true)
+        assertTrue((result as InitResult.Failed).exception is io.github.umutcansu.pinvault.model.ClientCertificateRequiredException)
+    }
+
+    @Test
     fun `updateNow — yeni config algılanır ve kaydedilir`() = runTest {
         val remoteConfig = CertificateConfig(
             version = 1,

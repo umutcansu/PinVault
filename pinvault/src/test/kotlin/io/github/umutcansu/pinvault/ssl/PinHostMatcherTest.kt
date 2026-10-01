@@ -36,6 +36,27 @@ class PinHostMatcherTest {
     }
 
     @Test
+    fun `a host-port entry pins only that port and wins there`() {
+        val renewalPins = setOf("CA_PIN_1", "CA_PIN_2")
+        val map = PinHostMatcher.build(listOf(
+            "config.example.com" to bankPins,
+            "config.example.com:8093" to renewalPins
+        ))
+        assertEquals(renewalPins, PinHostMatcher.match(map, "config.example.com", 8093))
+        // Other ports — and callers that know no port — keep the host's own pins.
+        assertEquals(bankPins, PinHostMatcher.match(map, "config.example.com", 8092))
+        assertEquals(bankPins, PinHostMatcher.match(map, "config.example.com"))
+        assertEquals(renewalPins, PinHostMatcher.match(map, "CONFIG.example.com", 8093))
+    }
+
+    @Test
+    fun `a host-port entry alone does not pin the host's other ports`() {
+        val map = PinHostMatcher.build(listOf("config.example.com:8093" to setOf("CA_PIN_1", "CA_PIN_2")))
+        assertNull(PinHostMatcher.match(map, "config.example.com", 8092))
+        assertNull(PinHostMatcher.match(map, "config.example.com"))
+    }
+
+    @Test
     fun `unknown hostname returns null (fail-safe)`() {
         assertNull(PinHostMatcher.match(pinMap, "unknown.example.com"))
         assertNull(PinHostMatcher.match(pinMap, "evil.com"))

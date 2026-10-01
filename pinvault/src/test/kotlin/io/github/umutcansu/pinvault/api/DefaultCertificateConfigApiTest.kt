@@ -418,4 +418,182 @@ class DefaultCertificateConfigApiTest {
         val features = server.takeRequest().getHeader("X-PinVault-Features").orEmpty().split(',').map { it.trim() }
         assertTrue(features.toString(), features.containsAll(listOf("redelivery", "multisig", "keyset")))
     }
+
+    // ── CSR enrollment and renewal ──────────────────────────────────────────
+
+    private val csr = byteArrayOf(0x30, 0x03, 0x02, 0x01, 0x00)
+    private val chainJson = """{"clientId":"dev-1","chain":["-----BEGIN CERTIFICATE-----\nAAAA\n-----END CERTIFICATE-----","-----BEGIN CERTIFICATE-----\nBBBB\n-----END CERTIFICATE-----"]}"""
+
+    @Test
+    fun `enrollWithCsr sends the CSR and the csr feature and reads a PEM chain`() = runTest {
+        server.enqueue(
+            MockResponse().setBody(chainJson)
+                .setHeader("Content-Type", "application/json")
+                .setHeader("X-PinVault-Cert-Format", "pem-chain")
+        )
+        val result = createApi().enrollWithCsr("tok", null, "alias", "uid", csr)
+
+        val request = server.takeRequest()
+        assertEquals("/api/v1/client-certs/enroll", request.path)
+        val features = request.getHeader("X-PinVault-Features").orEmpty().split(',').map { it.trim() }
+        assertTrue(features.toString(), features.containsAll(listOf("p12password", "csr")))
+        val body = org.json.JSONObject(request.body.readUtf8())
+        assertEquals("tok", body.getString("token"))
+        assertEquals("alias", body.getString("deviceAlias"))
+        assertEquals(Base64.getEncoder().encodeToString(csr), body.getString("csr"))
+
+        assertTrue(result.isCertificateChain)
+        assertEquals(2, result.certificateChainPem!!.size)
+        assertEquals(0, result.p12Bytes.size)
+    }
+
+    @Test
+    fun `enrollment goes to the enrollment URL when one is set`() = runTest {
+        val tls = MockWebServer().also { it.start() }
+        try {
+            tls.enqueue(MockResponse().setBody(chainJson).setHeader("X-PinVault-Cert-Format", "pem-chain"))
+            val api = DefaultCertificateConfigApi(
+                configUrl = server.url("/").toString(),
+                bootstrapPins = listOf(HostPin("test.com", listOf("h1", "h2"))),
+                sslManager = sslManager,
+                enrollmentUrl = tls.url("/").toString()
+            )
+            assertTrue(api.enrollWithCsr("tok", null, null, null, csr).isCertificateChain)
+            assertEquals("/api/v1/client-certs/enroll", tls.takeRequest().path)
+            assertEquals(0, server.requestCount)
+        } finally {
+            tls.shutdown()
+        }
+    }
+
+    @Test
+    fun `enrollWithCsr falls back to a P12 when the server ignores the CSR`() = runTest {
+        val bundle = TestCertUtil.generateSelfSigned(cn = "device", password = "changeit").p12Bytes
+        server.enqueue(MockResponse().setBody(okio.Buffer().write(bundle)).setHeader("X-P12-SHA256", "hash"))
+
+        val result = createApi().enrollWithCsr("tok", null, null, null, csr)
+
+        assertFalse(result.isCertificateChain)
+        assertArrayEquals(bundle, result.p12Bytes)
+        assertEquals("hash", result.p12Hash)
+        assertEquals(1, server.requestCount)
+    }
+
+    @Test
+    fun `enrollWithCsr rejects a chain answer without a chain`() = runTest {
+        server.enqueue(MockResponse().setBody("""{"clientId":"x"}""").setHeader("X-PinVault-Cert-Format", "pem-chain"))
+        try {
+            createApi().enrollWithCsr("tok", null, null, null, csr)
+            fail("expected an exception")
+        } catch (e: Exception) {
+            assertTrue(e.message!!.contains("chain"))
+        }
+    }
+
+    @Test
+    fun `renewClientCert over the block returns the issued chain`() = runTest {
+        server.enqueue(MockResponse().setBody(chainJson))
+        val response = createApi().renewClientCert("dev-1", csr, null)
+
+        val request = server.takeRequest()
+        assertEquals("/api/v1/client-certs/renew", request.path)
+        assertEquals("csr", request.getHeader("X-PinVault-Features"))
+        val body = org.json.JSONObject(request.body.readUtf8())
+        assertEquals("dev-1", body.getString("clientId"))
+        assertEquals(Base64.getEncoder().encodeToString(csr), body.getString("csr"))
+
+        val issued = response as io.github.umutcansu.pinvault.model.ClientCertRenewalResponse.Issued
+        assertEquals(2, issued.certificateChainPem.size)
+    }
+
+    @Test
+    fun `renewClientCert uses the recovery URL verbatim when given`() = runTest {
+        val recovery = MockWebServer().also { it.start() }
+        try {
+            recovery.enqueue(MockResponse().setBody(chainJson))
+            val response = createApi().renewClientCert("dev-1", csr, recovery.url("/recover/").toString())
+
+            assertEquals(0, server.requestCount)
+            assertEquals("/recover/api/v1/client-certs/renew", recovery.takeRequest().path)
+            assertTrue(response is io.github.umutcansu.pinvault.model.ClientCertRenewalResponse.Issued)
+        } finally {
+            recovery.shutdown()
+        }
+    }
+
+    @Test
+    fun `renewClientCert maps 403 reenroll_required, 404 unsupported and other codes to failures`() = runTest {
+        val api = createApi()
+
+        server.enqueue(MockResponse().setResponseCode(403).setBody("""{"error":"reenroll_required","message":"revoked"}"""))
+        val refused = api.renewClientCert("dev-1", csr) as io.github.umutcansu.pinvault.model.ClientCertRenewalResponse.ReenrollRequired
+        assertEquals("revoked", refused.reason)
+
+        server.enqueue(MockResponse().setResponseCode(404))
+        assertEquals(io.github.umutcansu.pinvault.model.ClientCertRenewalResponse.Unsupported, api.renewClientCert("dev-1", csr))
+
+        server.enqueue(MockResponse().setResponseCode(429).setBody("""{"error":"rate_limited"}"""))
+        try {
+            api.renewClientCert("dev-1", csr)
+            fail("expected an exception")
+        } catch (e: Exception) {
+            assertTrue(e.message!!.contains("429"))
+        }
+
+        server.enqueue(MockResponse().setResponseCode(403).setBody("""{"error":"something_else"}"""))
+        try {
+            api.renewClientCert("dev-1", csr)
+            fail("expected an exception")
+        } catch (e: Exception) {
+            assertTrue(e.message!!.contains("403"))
+        }
+    }
+
+    @Test
+    fun `rebuildBootstrapClient asks the SSL manager for a fresh client and requests use it`() = runTest {
+        val api = createApi()
+        io.mockk.verify(exactly = 1) { sslManager.buildBootstrapClient(any()) }
+
+        api.rebuildBootstrapClient()
+        io.mockk.verify(exactly = 2) { sslManager.buildBootstrapClient(any()) }
+
+        // Retrofit calls resolve the client per request, so they keep working after a rebuild.
+        server.enqueue(MockResponse().setBody("""{"status":"ok"}"""))
+        assertTrue(api.healthCheck())
+    }
+
+    @Test
+    fun `registerDevicePublicKey sends the key proof headers only when it has a proof`() = runTest {
+        server.enqueue(MockResponse().setBody("""{"registered":"true"}"""))
+        server.enqueue(MockResponse().setBody("""{"registered":"true"}"""))
+        val api = createApi()
+
+        api.registerDevicePublicKey("android-07", "PEM")
+        val plain = server.takeRequest()
+        assertEquals("/api/v1/vault/devices/android-07/public-key", plain.path)
+        assertNull(plain.getHeader("X-Vault-Key"))
+        assertNull(plain.getHeader("X-Vault-Token"))
+
+        api.registerDevicePublicKey("android-07", "PEM", DeviceKeyProof("secret-model", "tok-123"))
+        val proven = server.takeRequest()
+        assertEquals("secret-model", proven.getHeader("X-Vault-Key"))
+        assertEquals("tok-123", proven.getHeader("X-Vault-Token"))
+    }
+
+    @Test
+    fun `registerDevicePublicKey reports a refused key change and a foreign certificate`() = runTest {
+        server.enqueue(MockResponse().setResponseCode(409).setBody("""{"error":"key_change_requires_proof"}"""))
+        server.enqueue(MockResponse().setResponseCode(403).setBody("""{"error":"device_identity_mismatch"}"""))
+        val api = createApi()
+
+        val conflict = runCatching { api.registerDevicePublicKey("android-07", "PEM") }.exceptionOrNull()
+        assertTrue(conflict?.message.orEmpty(), conflict?.message.orEmpty().contains("409"))
+        val foreign = runCatching { api.registerDevicePublicKey("android-07", "PEM") }.exceptionOrNull()
+        assertTrue(foreign?.message.orEmpty(), foreign?.message.orEmpty().contains("403"))
+    }
+
+    @Test
+    fun `a key proof never prints its token`() {
+        assertFalse(DeviceKeyProof("secret-model", "tok-123").toString().contains("tok-123"))
+    }
 }

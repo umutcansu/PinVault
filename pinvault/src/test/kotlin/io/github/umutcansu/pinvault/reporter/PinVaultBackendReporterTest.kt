@@ -42,6 +42,19 @@ class PinVaultBackendReporterTest {
     }
 
     @Test
+    fun `client cert renewal events are accepted and not reported`() {
+        reporter.onEvent(PinVaultConnectionEvent.ClientCertRenewal(
+            status = io.github.umutcansu.pinvault.api.ClientCertRenewalStatus.RENEWED,
+            notAfterEpochMs = 1L,
+            via = io.github.umutcansu.pinvault.model.ClientCertRenewalVia.MTLS,
+            configApiId = "default",
+            deviceManufacturer = "Samsung",
+            deviceModel = "SM-G975F"
+        ))
+        assertEquals(0, server.requestCount)
+    }
+
+    @Test
     fun `success event posts healthy status with all fields`() {
         server.enqueue(MockResponse().setResponseCode(200).setBody("""{"saved":true}"""))
 

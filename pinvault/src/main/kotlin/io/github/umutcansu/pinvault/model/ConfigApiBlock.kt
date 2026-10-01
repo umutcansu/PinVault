@@ -90,7 +90,22 @@ data class ConfigApiBlock @JvmOverloads constructor(
      */
     val recoveryPublicKeys: List<String> = emptyList(),
     /** Distinct recovery keys that must sign a key set. See [Builder.requiredRecoverySignatures]. */
-    val requiredRecoverySignatures: Int = 1
+    val requiredRecoverySignatures: Int = 1,
+    /**
+     * Where an expired (or refused) client certificate is renewed: a TLS
+     * listener that asks for no client certificate. Null = [configUrl].
+     * See [Builder.renewalUrl].
+     */
+    val renewalUrl: String? = null,
+    /**
+     * Where first enrollment goes: a TLS listener that asks for no client
+     * certificate. Null = [configUrl]. See [Builder.enrollmentUrl].
+     */
+    val enrollmentUrl: String? = null,
+    /** Renew when the remaining lifetime falls below this fraction. See [Builder.clientCertRenewalThreshold]. */
+    val clientCertRenewalThreshold: Double = DEFAULT_RENEWAL_THRESHOLD,
+    /** False = the library never renews on its own. See [Builder.disableClientCertRenewal]. */
+    val clientCertRenewalEnabled: Boolean = true
 ) {
 
     /**
@@ -117,6 +132,10 @@ data class ConfigApiBlock @JvmOverloads constructor(
         private var vaultReportEndpoint: String = PinVaultConfig.DEFAULT_VAULT_REPORT_ENDPOINT
         private var clientCertLabel: String = PinVaultConfig.DEFAULT_CERT_LABEL
         private var wantPinsFor: List<String> = emptyList()
+        private var renewalUrl: String? = null
+        private var enrollmentUrl: String? = null
+        private var clientCertRenewalThreshold: Double = DEFAULT_RENEWAL_THRESHOLD
+        private var clientCertRenewalEnabled: Boolean = true
 
         fun bootstrapPins(pins: List<HostPin>) = apply { this.bootstrapPins = pins }
         fun configEndpoint(endpoint: String) = apply { this.configEndpoint = endpoint }
@@ -210,6 +229,53 @@ data class ConfigApiBlock @JvmOverloads constructor(
          */
         fun wantPinsFor(vararg hosts: String) = apply { this.wantPinsFor = hosts.toList() }
 
+        /**
+         * Where the device renews a client certificate that has already
+         * expired (or that the server refused). An mTLS Config API cannot be
+         * reached without a valid certificate, so this must be a plain-TLS
+         * listener of the same backend — the device proves its identity there
+         * by signing the CSR with its Keystore key, not with a certificate.
+         *
+         * Default: the block's own URL, which is right for a TLS Config API.
+         * The host must be covered by [bootstrapPins]; pinning its issuer
+         * (the backend's own CA) rather than its leaf keeps this door open
+         * across the backend's own certificate renewals.
+         */
+        fun renewalUrl(url: String) = apply {
+            require(url.isNotBlank()) { "renewalUrl must not be blank" }
+            this.renewalUrl = if (url.endsWith("/")) url else "$url/"
+        }
+
+        /**
+         * Where `PinVault.enroll` / `autoEnroll` send the first enrollment. A
+         * device has no client certificate before it enrolls, so an mTLS
+         * Config API refuses it at the handshake; point this at the backend's
+         * plain-TLS listener instead. The host must be covered by
+         * [bootstrapPins]. Default: the block's own URL, right for a TLS
+         * Config API.
+         */
+        fun enrollmentUrl(url: String) = apply {
+            require(url.isNotBlank()) { "enrollmentUrl must not be blank" }
+            this.enrollmentUrl = if (url.endsWith("/")) url else "$url/"
+        }
+
+        /**
+         * Renew the client certificate once its remaining lifetime drops
+         * below this fraction of the whole lifetime. Default 1/3: a 90-day
+         * certificate is renewed with 30 days to spare, while it is still
+         * valid and can be renewed over the normal mTLS connection.
+         */
+        fun clientCertRenewalThreshold(fraction: Double) = apply {
+            require(fraction > 0.0 && fraction < 1.0) { "clientCertRenewalThreshold must be between 0 and 1 (exclusive)" }
+            this.clientCertRenewalThreshold = fraction
+        }
+
+        /**
+         * Turns automatic renewal off for this block. `PinVault.renewClientCertIfNeeded(force = true)`
+         * still works, so the host app can drive renewal on its own schedule.
+         */
+        fun disableClientCertRenewal() = apply { this.clientCertRenewalEnabled = false }
+
         internal fun build(): ConfigApiBlock {
             require(id.isNotBlank()) { "ConfigApi id must not be blank" }
             require(configUrl.isNotBlank()) { "ConfigApi configUrl must not be blank" }
@@ -260,7 +326,11 @@ data class ConfigApiBlock @JvmOverloads constructor(
                 signaturePublicKeys = signaturePublicKeys,
                 requiredSignatures = requiredSignatures,
                 recoveryPublicKeys = recoveryPublicKeys,
-                requiredRecoverySignatures = requiredRecoverySignatures
+                requiredRecoverySignatures = requiredRecoverySignatures,
+                renewalUrl = renewalUrl,
+                enrollmentUrl = enrollmentUrl,
+                clientCertRenewalThreshold = clientCertRenewalThreshold,
+                clientCertRenewalEnabled = clientCertRenewalEnabled
             )
         }
     }
@@ -283,7 +353,11 @@ data class ConfigApiBlock @JvmOverloads constructor(
                 signaturePublicKeys == other.signaturePublicKeys &&
                 requiredSignatures == other.requiredSignatures &&
                 recoveryPublicKeys == other.recoveryPublicKeys &&
-                requiredRecoverySignatures == other.requiredRecoverySignatures
+                requiredRecoverySignatures == other.requiredRecoverySignatures &&
+                renewalUrl == other.renewalUrl &&
+                enrollmentUrl == other.enrollmentUrl &&
+                clientCertRenewalThreshold == other.clientCertRenewalThreshold &&
+                clientCertRenewalEnabled == other.clientCertRenewalEnabled
     }
 
     override fun hashCode(): Int {
@@ -304,11 +378,18 @@ data class ConfigApiBlock @JvmOverloads constructor(
         r = 31 * r + requiredSignatures
         r = 31 * r + recoveryPublicKeys.hashCode()
         r = 31 * r + requiredRecoverySignatures
+        r = 31 * r + (renewalUrl?.hashCode() ?: 0)
+        r = 31 * r + (enrollmentUrl?.hashCode() ?: 0)
+        r = 31 * r + clientCertRenewalThreshold.hashCode()
+        r = 31 * r + clientCertRenewalEnabled.hashCode()
         return r
     }
 
     companion object {
         const val DEFAULT_ID = "default"
+
+        /** Renew with a third of the lifetime left. */
+        const val DEFAULT_RENEWAL_THRESHOLD: Double = 1.0 / 3
 
         /**
          * Strips PEM armour and whitespace so a key pasted as a PEM block, or

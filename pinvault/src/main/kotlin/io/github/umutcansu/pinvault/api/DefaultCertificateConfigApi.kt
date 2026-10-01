@@ -3,6 +3,7 @@ package io.github.umutcansu.pinvault.api
 import io.github.umutcansu.pinvault.crypto.SignatureTrust
 import io.github.umutcansu.pinvault.internal.P12Rewrap
 import io.github.umutcansu.pinvault.model.CertificateConfig
+import io.github.umutcansu.pinvault.model.ClientCertRenewalResponse
 import io.github.umutcansu.pinvault.model.EnrollmentResult
 import io.github.umutcansu.pinvault.model.HostPin
 import io.github.umutcansu.pinvault.model.SignatureEntry
@@ -45,7 +46,9 @@ internal class DefaultCertificateConfigApi(
     private val sslManager: DynamicSSLManager,
     signatureTrust: SignatureTrust? = null,
     /** The block's P12 password; host client certificates are re-wrapped to it. */
-    private val clientKeyPassword: String? = null
+    private val clientKeyPassword: String? = null,
+    /** Base URL for first enrollment (a TLS listener); null = [configUrl]. */
+    private val enrollmentUrl: String? = null
 ) : CertificateConfigApi {
 
     /** Null = the block runs unsigned (`allowUnsigned()`). */
@@ -54,12 +57,30 @@ internal class DefaultCertificateConfigApi(
 
     private val gson = Gson()
 
-    private val bootstrapClient by lazy { sslManager.buildBootstrapClient(bootstrapPins) }
+    private val bootstrapPins: List<HostPin> = bootstrapPins
+
+    /**
+     * The pinned client every call here goes through. It captures the SSL
+     * manager's key managers when built, so a client-certificate change
+     * (enroll, renew, unenroll) must go through [rebuildBootstrapClient] —
+     * otherwise the Config API keeps seeing the old identity until restart.
+     */
+    @Volatile
+    private var bootstrapClient: okhttp3.OkHttpClient = sslManager.buildBootstrapClient(bootstrapPins)
+
+    /** Rebuilds the pinned client so it presents the SSL manager's current client identity. */
+    internal fun rebuildBootstrapClient() {
+        val old = bootstrapClient
+        bootstrapClient = sslManager.buildBootstrapClient(bootstrapPins)
+        Thread({ old.connectionPool.evictAll() }, "PinVault-EvictBootstrap").apply { isDaemon = true }.start()
+        Timber.d("Bootstrap client rebuilt")
+    }
 
     private val service: DynamicConfigService by lazy {
         Retrofit.Builder()
             .baseUrl(configUrl)
-            .client(bootstrapClient)
+            // Resolved per call, so a rebuilt bootstrap client is picked up.
+            .callFactory(okhttp3.Call.Factory { request -> bootstrapClient.newCall(request) })
             .addConverterFactory(GsonConverterFactory.create())
             .build()
             .create(DynamicConfigService::class.java)
@@ -284,6 +305,16 @@ internal class DefaultCertificateConfigApi(
 
     /** Register RSA public key for E2E vault file encryption. */
     override suspend fun registerDevicePublicKey(deviceId: String, publicKeyPem: String) =
+        registerDevicePublicKey(deviceId, publicKeyPem, proof = null)
+
+    /**
+     * Registers the device's RSA public key, with [proof] when the router has
+     * one: over a TLS listener the server keeps the first key it was given
+     * and replaces it only for a request that carries the device's token for
+     * an end_to_end file (`X-Vault-Key` + `X-Vault-Token`). Over mTLS the
+     * client certificate is the proof and the headers are ignored.
+     */
+    internal suspend fun registerDevicePublicKey(deviceId: String, publicKeyPem: String, proof: DeviceKeyProof?) =
         kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
             val json = org.json.JSONObject()
                 .put("publicKeyPem", publicKeyPem)
@@ -292,13 +323,26 @@ internal class DefaultCertificateConfigApi(
             val requestBody = json.toRequestBody("application/json".toMediaType())
             val request = okhttp3.Request.Builder()
                 .url("${configUrl}api/v1/vault/devices/$deviceId/public-key")
+                .apply {
+                    proof?.let {
+                        header("X-Vault-Key", it.vaultKey)
+                        header("X-Vault-Token", it.token)
+                    }
+                }
                 .post(requestBody)
                 .build()
             bootstrapClient.newCall(request).execute().use { resp ->
-                if (!resp.isSuccessful) {
-                    throw Exception("Device public key registration failed: HTTP ${resp.code}")
+                when {
+                    resp.isSuccessful -> Timber.d("Registered device public key: %s", deviceId)
+                    resp.code == 409 -> throw Exception(
+                        "Device public key registration refused (HTTP 409): another key is registered for this device; " +
+                            "replacing it needs the device's token for an end_to_end file, or an administrator reset"
+                    )
+                    resp.code == 403 -> throw Exception(
+                        "Device public key registration refused (HTTP 403): the client certificate does not belong to this device"
+                    )
+                    else -> throw Exception("Device public key registration failed: HTTP ${resp.code}")
                 }
-                Timber.d("Registered device public key: %s", deviceId)
             }
         }
 
@@ -307,17 +351,41 @@ internal class DefaultCertificateConfigApi(
         deviceId: String?,
         deviceAlias: String?,
         deviceUid: String?
+    ): EnrollmentResult = enrollRequest(token, deviceId, deviceAlias, deviceUid, csrDer = null)
+
+    /**
+     * Sends the CSR along with the usual enrollment fields and the `csr`
+     * feature. A server that understands it answers with a PEM chain
+     * (`X-PinVault-Cert-Format: pem-chain`); an older server ignores both and
+     * answers with a P12 exactly as for [enroll] — one request either way, so
+     * a one-time token is never spent twice.
+     */
+    override suspend fun enrollWithCsr(
+        token: String?,
+        deviceId: String?,
+        deviceAlias: String?,
+        deviceUid: String?,
+        csrDer: ByteArray
+    ): EnrollmentResult = enrollRequest(token, deviceId, deviceAlias, deviceUid, csrDer)
+
+    private suspend fun enrollRequest(
+        token: String?,
+        deviceId: String?,
+        deviceAlias: String?,
+        deviceUid: String?,
+        csrDer: ByteArray?
     ): EnrollmentResult = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
         val json = org.json.JSONObject()
         token?.let { json.put("token", it) }
         deviceId?.let { json.put("deviceId", it) }
         deviceAlias?.let { json.put("deviceAlias", it) }
         deviceUid?.let { json.put("deviceUid", it) }
+        csrDer?.let { json.put("csr", android.util.Base64.encodeToString(it, android.util.Base64.NO_WRAP)) }
 
         val requestBody = json.toString().toRequestBody("application/json".toMediaType())
         val request = okhttp3.Request.Builder()
-            .url("${configUrl}$enrollmentEndpoint")
-            .header("X-PinVault-Features", P12Rewrap.FEATURE)
+            .url("${enrollmentUrl ?: configUrl}$enrollmentEndpoint")
+            .header("X-PinVault-Features", if (csrDer != null) "${P12Rewrap.FEATURE},$CSR_FEATURE" else P12Rewrap.FEATURE)
             .post(requestBody)
             .build()
 
@@ -325,13 +393,64 @@ internal class DefaultCertificateConfigApi(
             if (!response.isSuccessful) {
                 throw Exception("Enrollment failed — HTTP ${response.code}")
             }
+            val body = response.body?.bytes() ?: throw Exception("Empty enrollment response")
 
-            val p12Bytes = response.body?.bytes() ?: throw Exception("Empty enrollment response")
-            val p12Hash = response.header("X-P12-SHA256")
-
-            Timber.d("Enrollment successful — %d bytes", p12Bytes.size)
-            EnrollmentResult(p12Bytes, p12Hash, response.header(P12Rewrap.PASSWORD_HEADER))
+            if (response.header(CERT_FORMAT_HEADER) == CERT_FORMAT_PEM_CHAIN) {
+                val chain = parseChainResponse(String(body, Charsets.UTF_8))
+                Timber.d("Enrollment successful — certificate chain of %d", chain.size)
+                EnrollmentResult(ByteArray(0), null, null, chain)
+            } else {
+                Timber.d("Enrollment successful — %d bytes", body.size)
+                EnrollmentResult(body, response.header("X-P12-SHA256"), response.header(P12Rewrap.PASSWORD_HEADER))
+            }
         }
+    }
+
+    /**
+     * `POST <base><clientCertEndpoint>/renew` with the CSR. Over the block's
+     * own client the presented certificate identifies the device; over
+     * [recoveryUrl] (no client certificate) the body's `clientId` does, and
+     * the server checks the CSR signature against the key it registered.
+     */
+    override suspend fun renewClientCert(
+        clientId: String,
+        csrDer: ByteArray,
+        recoveryUrl: String?
+    ): ClientCertRenewalResponse = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+        val json = org.json.JSONObject()
+            .put("clientId", clientId)
+            .put("csr", android.util.Base64.encodeToString(csrDer, android.util.Base64.NO_WRAP))
+        val request = okhttp3.Request.Builder()
+            .url("${recoveryUrl ?: configUrl}$clientCertEndpoint/renew")
+            .header("X-PinVault-Features", CSR_FEATURE)
+            .post(json.toString().toRequestBody("application/json".toMediaType()))
+            .build()
+
+        bootstrapClient.newCall(request).execute().use { response ->
+            val body = response.body?.string().orEmpty()
+            when (response.code) {
+                200 -> ClientCertRenewalResponse.Issued(parseChainResponse(body))
+                403 -> {
+                    val error = runCatching { org.json.JSONObject(body).optString("error") }.getOrNull()
+                    if (error == REENROLL_REQUIRED) {
+                        val reason = runCatching { org.json.JSONObject(body).optString("message") }.getOrNull()
+                        ClientCertRenewalResponse.ReenrollRequired(reason?.ifBlank { null } ?: REENROLL_REQUIRED)
+                    } else {
+                        throw Exception("Certificate renewal refused — HTTP 403 ${error.orEmpty()}")
+                    }
+                }
+                404, 405 -> ClientCertRenewalResponse.Unsupported
+                else -> throw Exception("Certificate renewal failed — HTTP ${response.code}")
+            }
+        }
+    }
+
+    private fun parseChainResponse(body: String): List<String> {
+        val array = org.json.JSONObject(body).optJSONArray("chain")
+            ?: throw Exception("Certificate response has no chain")
+        val chain = (0 until array.length()).map { array.getString(it) }
+        if (chain.isEmpty()) throw Exception("Certificate response has an empty chain")
+        return chain
     }
 
     override suspend fun reportVaultDownload(report: VaultDownloadReport) =
@@ -367,6 +486,16 @@ internal class DefaultCertificateConfigApi(
                 Timber.e(e, "Failed to report vault download: %s", report.key)
             }
         }
+}
+
+/**
+ * Proof that lets a device replace its registered E2E key over a TLS
+ * listener: its access token for an end_to_end vault file ([vaultKey] is the
+ * server-side key, the last segment of the file's endpoint).
+ */
+internal data class DeviceKeyProof(val vaultKey: String, val token: String) {
+    /** Never prints the token. */
+    override fun toString() = "DeviceKeyProof(vaultKey=$vaultKey, token=***)"
 }
 
 /** Uses @Url so endpoint paths are determined at runtime, not compile time. */
@@ -428,3 +557,17 @@ internal const val FEATURES_HEADER = "X-PinVault-Features: redelivery,multisig,k
  * instead of a password the app would have to carry.
  */
 internal const val P12_FEATURES_HEADER = "X-PinVault-Features: p12password"
+
+/**
+ * Feature sent with enrollment and renewal: `csr` — the body carries a
+ * PKCS#10 request over the device's own key, answer with a PEM chain
+ * ([CERT_FORMAT_HEADER]) instead of a P12.
+ */
+internal const val CSR_FEATURE = "csr"
+
+/** Response header that marks a certificate-chain answer to a CSR request. */
+internal const val CERT_FORMAT_HEADER = "X-PinVault-Cert-Format"
+internal const val CERT_FORMAT_PEM_CHAIN = "pem-chain"
+
+/** The `error` value a server sends when an identity must enroll again. */
+internal const val REENROLL_REQUIRED = "reenroll_required"

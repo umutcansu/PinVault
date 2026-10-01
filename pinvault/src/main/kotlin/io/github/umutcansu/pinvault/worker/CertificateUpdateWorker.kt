@@ -29,6 +29,14 @@ class CertificateUpdateWorker(
             Timber.e(e, "Vault file sync failed during periodic update")
         }
 
+        // Keep CSR-enrolled client certificates alive. Never affects the
+        // worker result: a failed renewal is retried on the next run.
+        try {
+            PinVault.renewClientCertsIfNeeded()
+        } catch (e: Exception) {
+            Timber.e(e, "Client cert renewal failed during periodic update")
+        }
+
         return when (updateResult) {
             is UpdateResult.Updated -> {
                 Timber.d("Worker: config updated to version %d", updateResult.newVersion)

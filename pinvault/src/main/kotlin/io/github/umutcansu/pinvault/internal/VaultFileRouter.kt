@@ -192,14 +192,45 @@ internal class VaultFileRouter(
         }
     }
 
-    /** Register this device's RSA public key with EVERY Config API (E2E support). */
-    suspend fun registerDevicePublicKey(deviceId: String, publicKeyPem: String) {
+    /**
+     * Register this device's RSA public key with EVERY Config API (E2E support).
+     *
+     * A TLS listener keeps the first key it was given; replacing it (a new key
+     * after the app's data was cleared) needs the device's token for one of
+     * that API's end_to_end files, so one goes along when [files] has it.
+     */
+    suspend fun registerDevicePublicKey(deviceId: String, publicKeyPem: String, files: Collection<VaultFileConfig> = emptyList()) {
         for ((id, client) in clients) {
             try {
-                client.api.registerDevicePublicKey(deviceId, publicKeyPem)
+                val api = client.api
+                if (api is io.github.umutcansu.pinvault.api.DefaultCertificateConfigApi) {
+                    api.registerDevicePublicKey(deviceId, publicKeyPem, keyProof(id, files))
+                } else {
+                    api.registerDevicePublicKey(deviceId, publicKeyPem)
+                }
             } catch (e: Exception) {
                 Timber.w(e, "Public-key registration failed on [%s]", id)
             }
         }
     }
+
+    /**
+     * The device's token for an end_to_end file of Config API [configApiId],
+     * or null when the app has none (yet). The server-side key is the last
+     * segment of the file's endpoint.
+     */
+    internal fun keyProof(configApiId: String, files: Collection<VaultFileConfig>): io.github.umutcansu.pinvault.api.DeviceKeyProof? =
+        files.asSequence()
+            .filter {
+                it.configApiId == configApiId &&
+                    it.encryption == VaultFileEncryption.END_TO_END &&
+                    (it.accessPolicy == VaultFileAccessPolicy.TOKEN || it.accessPolicy == VaultFileAccessPolicy.TOKEN_MTLS)
+            }
+            .mapNotNull { file ->
+                val token = try { file.accessTokenProvider?.invoke() } catch (e: Exception) { null }
+                val key = file.endpoint.substringBefore('?').trimEnd('/').substringAfterLast('/')
+                if (token.isNullOrBlank() || key.isEmpty()) null
+                else io.github.umutcansu.pinvault.api.DeviceKeyProof(key, token)
+            }
+            .firstOrNull()
 }

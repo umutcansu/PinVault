@@ -54,6 +54,18 @@ class NoConfigAvailableException(
 ) : SSLPinningException(message, cause)
 
 /**
+ * The Config API asks for a client certificate (its block has an
+ * `enrollmentUrl`) and this device has none yet, so `init` did not try the
+ * network — an mTLS listener would refuse the handshake anyway. Enroll first
+ * with `PinVault.enroll(context, config, token)` (or `autoEnroll(context, config)`),
+ * then call `init` again.
+ */
+class ClientCertificateRequiredException(
+    message: String = "Client certificate required — enroll before init (PinVault.enroll(context, config, token))",
+    cause: Throwable? = null
+) : SSLPinningException(message, cause)
+
+/**
  * The server's leaf certificate is outside its validity window — expired, or
  * not valid yet. Thrown by the pinning trust manager, so the caller sees it as
  * the `cause` of an [javax.net.ssl.SSLHandshakeException].

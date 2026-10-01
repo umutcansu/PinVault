@@ -136,6 +136,9 @@ class PinVaultBackendReporter @JvmOverloads constructor(
         when (event) {
             is PinVaultConnectionEvent.Connection -> handleConnection(event)
             is PinVaultConnectionEvent.ConfigUpdate -> handleConfigUpdate(event)
+            // The server records renewals itself (audit log); nothing to report.
+            is PinVaultConnectionEvent.ClientCertRenewal ->
+                Timber.d("Client cert renewal [%s]: %s", event.configApiId, event.status)
         }
     }
 

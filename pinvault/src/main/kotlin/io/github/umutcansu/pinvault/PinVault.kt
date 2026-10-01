@@ -72,6 +72,14 @@ object PinVault {
     // V2: E2E decryption key material.
     private var deviceKeyProvider: DeviceKeyProvider? = null
 
+    /**
+     * The device identity key behind a CSR-enrolled client certificate, per
+     * label. Android Keystore in production; Robolectric tests swap in
+     * [io.github.umutcansu.pinvault.keystore.ClientIdentityKeyProvider.software].
+     */
+    internal var identityKeyFactory: (label: String) -> io.github.umutcansu.pinvault.keystore.ClientIdentityKeyProvider =
+        { io.github.umutcansu.pinvault.keystore.ClientIdentityKeyProvider.androidKeystore(it) }
+
     // V2: routes fetchFile() to the correct per-block client.
     private lateinit var vaultRouter: VaultFileRouter
 
@@ -279,7 +287,8 @@ object PinVault {
                     block = block,
                     context = appContext,
                     customApi = apiOverride,
-                    recoveryListener = { result -> notifyUpdateResult(result) }
+                    recoveryListener = { result -> notifyUpdateResult(result) },
+                    identityKeyFactory = identityKeyFactory
                 )
             }
             configApiClients = clients
@@ -394,6 +403,20 @@ object PinVault {
         // returned to the caller (preserves pre-V2 semantics); other blocks'
         // failures are logged but don't fail the init unless the default does.
         val defaultId = pinManagerConfig?.defaultConfigApi?.id
+
+        // Keep CSR-enrolled client certificates alive BEFORE the first config
+        // fetch: an expired certificate would make that fetch fail on an mTLS
+        // Config API, and renewal needs only the bootstrap pins, not a config.
+        // The outcome never changes the init result — a failed renewal is
+        // retried on the next periodic update.
+        for ((id, client) in configApiClients) {
+            try {
+                emitRenewalEvent(id, client.renewer.renewIfNeeded())
+            } catch (e: Exception) {
+                Timber.e(e, "ConfigApi[%s] client cert renewal check failed", id)
+            }
+        }
+
         val results = mutableMapOf<String, InitResult>()
         for ((id, client) in configApiClients) {
             try {
@@ -409,7 +432,8 @@ object PinVault {
         if (kp != null) {
             val deviceId = resolveDeviceIdentity(pinManagerConfig)?.second ?: "unknown"
             try {
-                vaultRouter.registerDevicePublicKey(deviceId, kp.getPublicKeyPem())
+                vaultRouter.registerDevicePublicKey(deviceId, kp.getPublicKeyPem(),
+                    pinManagerConfig?.vaultFiles?.values.orEmpty())
             } catch (e: Exception) {
                 Timber.w(e, "Device public key registration partially failed")
             } catch (e: LinkageError) {
@@ -565,45 +589,84 @@ object PinVault {
 
     /**
      * Enrolls this device using a one-time token.
-     * Downloads P12 client cert from server, stores it encrypted, and loads it for mTLS.
      *
-     * @return true if enrollment succeeded
-     */
-    /**
-     * Enrolls this device using a one-time token.
-     * Downloads P12 client cert from server, stores it encrypted with the configured label.
+     * The device generates a signing key in the Android Keystore, sends a
+     * certificate signing request over it, and stores the chain the server
+     * issues; the private key never leaves the device and the certificate is
+     * renewed automatically from then on (see [renewClientCertIfNeeded]). A
+     * server without CSR support answers with a P12 instead, which is stored
+     * as before.
      *
      * @param label Optional label override. If null, uses the default Config API's clientCertLabel.
-     * @return true if enrollment succeeded
+     * @return true if enrollment succeeded (or a credential already exists)
      */
-    suspend fun enroll(context: Context, token: String, label: String? = null): Boolean {
-        val config = pinManagerConfig ?: return false
-        val defaultBlock = config.defaultConfigApi ?: return false
-        val certStore = ClientCertSecureStore(context.applicationContext)
-        val certLabel = label ?: defaultBlock.clientCertLabel
+    suspend fun enroll(context: Context, token: String, label: String? = null): Boolean =
+        enrollInternal(context, token = token, deviceId = null, label = label)
 
-        if (certStore.exists(certLabel)) {
+    /**
+     * Automatically enrolls this device using its device ID (no token needed).
+     * Call this during init when mTLS hosts are expected. Same credential
+     * flow as [enroll].
+     *
+     * @return true if enrollment succeeded or cert already exists
+     */
+    suspend fun autoEnroll(context: Context): Boolean {
+        // SECURITY NOTE (M-02): ANDROID_ID is a soft identifier. On rooted
+        // devices it can be spoofed; on multi-user devices it is per-user.
+        // Treat the resulting enrollment as a convenience credential, not
+        // a hardware-attested identity. For high-assurance use cases, gate
+        // enrollment behind Play Integrity / SafetyNet attestation before
+        // calling this method.
+        val deviceId = io.github.umutcansu.pinvault.internal.DeviceIdentity
+            .androidId(context) ?: "unknown-device"
+        Timber.d("Auto-enrollment: deviceId=%s", deviceId)
+        return enrollInternal(context, token = null, deviceId = deviceId, label = null)
+    }
+
+    /**
+     * Enrolls before [init] — the first start of an app whose Config API is
+     * an mTLS listener. The device has no client certificate yet, so `init`
+     * cannot reach that API; enroll first, then init once:
+     *
+     * ```kotlin
+     * if (!PinVault.isEnrolled(context, config)) PinVault.enroll(context, config, token)
+     * PinVault.init(context, config)
+     * ```
+     *
+     * Goes to the default block's `enrollmentUrl` (a TLS listener). The
+     * credential is stored; the next [init] loads it. When PinVault is
+     * already initialized this is the same as [enroll] without a config.
+     *
+     * @return true if enrollment succeeded (or a credential already exists)
+     */
+    suspend fun enroll(context: Context, config: PinVaultConfig, token: String): Boolean =
+        enrollBeforeInit(context, config, token = token, deviceId = null)
+
+    /** [autoEnroll] before [init]; see [enroll] with a config. */
+    suspend fun autoEnroll(context: Context, config: PinVaultConfig): Boolean {
+        val deviceId = io.github.umutcansu.pinvault.internal.DeviceIdentity
+            .androidId(context) ?: "unknown-device"
+        return enrollBeforeInit(context, config, token = null, deviceId = deviceId)
+    }
+
+    /** Whether the default block of [config] has an enrolled client certificate. Usable before [init]. */
+    fun isEnrolled(context: Context, config: PinVaultConfig): Boolean =
+        ClientCertSecureStore(context.applicationContext)
+            .exists(config.defaultConfigApi?.clientCertLabel ?: ClientCertSecureStore.DEFAULT_LABEL)
+
+    private suspend fun enrollBeforeInit(context: Context, config: PinVaultConfig, token: String?, deviceId: String?): Boolean {
+        if (initialized) return enrollInternal(context, token, deviceId, label = null)
+        val block = config.defaultConfigApi ?: return false
+        val certLabel = block.clientCertLabel
+        if (ClientCertSecureStore(context.applicationContext).exists(certLabel)) {
             Timber.d("Client cert already exists [%s] — skipping enrollment", certLabel)
             return true
         }
-
         return try {
-            val identity = resolveDeviceIdentity(config)
-            val result = configApi.enroll(
-                token = token,
-                deviceId = null,
-                deviceAlias = identity?.first,
-                deviceUid = identity?.second
-            )
-
-            val p12 = acceptEnrolledP12(result, defaultBlock.clientKeyPassword)
-            certStore.save(certLabel, p12)
-            sslManager.loadClientKeystore(p12, defaultBlock.clientKeyPassword)
-
-            // Rebuild client with mTLS
-            clientProvider.currentConfig?.let { clientProvider.swap(it) }
-
-            Timber.d("Enrollment successful — client cert stored [%s]", certLabel)
+            // A client for the block alone — the library's state is untouched;
+            // the next init picks the stored credential up.
+            val api = ConfigApiClient(block, context.applicationContext, identityKeyFactory = identityKeyFactory).api
+            enrollAndStore(context, config, block, api, token, deviceId, certLabel)
             true
         } catch (e: Exception) {
             Timber.e(e, "Enrollment failed")
@@ -611,57 +674,160 @@ object PinVault {
         }
     }
 
-    /**
-     * Automatically enrolls this device using its device ID (no token needed).
-     * Config API generates a client cert for this device and returns P12.
-     * Call this during init when mTLS hosts are expected.
-     *
-     * @return true if enrollment succeeded or cert already exists
-     */
-    suspend fun autoEnroll(context: Context): Boolean {
+    private suspend fun enrollInternal(context: Context, token: String?, deviceId: String?, label: String?): Boolean {
         val config = pinManagerConfig ?: return false
         val defaultBlock = config.defaultConfigApi ?: return false
-        val certStore = ClientCertSecureStore(context.applicationContext)
-        val certLabel = defaultBlock.clientCertLabel
+        val certLabel = label ?: defaultBlock.clientCertLabel
 
-        if (certStore.exists(certLabel)) {
-            Timber.d("Client cert already exists — skipping auto-enrollment")
+        if (ClientCertSecureStore(context.applicationContext).exists(certLabel)) {
+            Timber.d("Client cert already exists [%s] — skipping enrollment", certLabel)
             return true
         }
 
         return try {
-            // SECURITY NOTE (M-02): ANDROID_ID is a soft identifier. On rooted
-            // devices it can be spoofed; on multi-user devices it is per-user.
-            // Treat the resulting enrollment as a convenience credential, not
-            // a hardware-attested identity. For high-assurance use cases, gate
-            // enrollment behind Play Integrity / SafetyNet attestation before
-            // calling this method.
-            val deviceId = io.github.umutcansu.pinvault.internal.DeviceIdentity
-                .androidId(context) ?: "unknown-device"
-
-            val identity = resolveDeviceIdentity(config)
-            Timber.d("Auto-enrollment: deviceId=%s", deviceId)
-
-            val result = configApi.enroll(
-                token = null,
-                deviceId = deviceId,
-                deviceAlias = identity?.first,
-                deviceUid = identity?.second
-            )
-
-            Timber.d("Auto-enrollment: received P12 (%d bytes)", result.p12Bytes.size)
-            val p12 = acceptEnrolledP12(result, defaultBlock.clientKeyPassword)
-
-            certStore.save(certLabel, p12)
-            sslManager.loadClientKeystore(p12, defaultBlock.clientKeyPassword)
+            when (val enrolled = enrollAndStore(context, config, defaultBlock, configApi, token, deviceId, certLabel)) {
+                is Enrolled.Chain -> sslManager.loadClientKey(enrolled.key.privateKey(), enrolled.certs.toTypedArray())
+                is Enrolled.P12 -> sslManager.loadClientKeystore(enrolled.bytes, defaultBlock.clientKeyPassword)
+            }
+            // Present the new identity on every client, the Config API's included.
+            (configApi as? DefaultCertificateConfigApi)?.rebuildBootstrapClient()
             clientProvider.currentConfig?.let { clientProvider.swap(it) }
-
-            Timber.d("Auto-enrollment successful — cert stored [%s], %d bytes", certLabel, result.p12Bytes.size)
             true
         } catch (e: Exception) {
-            Timber.e(e, "Auto-enrollment failed")
+            Timber.e(e, "Enrollment failed")
             false
         }
+    }
+
+    private sealed class Enrolled {
+        class Chain(val key: io.github.umutcansu.pinvault.keystore.ClientIdentityKeyProvider, val certs: List<java.security.cert.X509Certificate>) : Enrolled()
+        class P12(val bytes: ByteArray) : Enrolled()
+    }
+
+    /**
+     * Enrollment through [api] for [block], stored under [certLabel]: a CSR
+     * over a fresh Keystore key, answered with a chain — or, from a server
+     * that does not take CSRs, a P12. Throws on failure; stores nothing then.
+     */
+    private suspend fun enrollAndStore(
+        context: Context,
+        config: PinVaultConfig,
+        block: ConfigApiBlock,
+        api: CertificateConfigApi,
+        token: String?,
+        deviceId: String?,
+        certLabel: String
+    ): Enrolled {
+        val certStore = ClientCertSecureStore(context.applicationContext)
+        val identity = resolveDeviceIdentity(config, context)
+
+        // If the Keystore refuses (some ROMs do), enroll the old way and let
+        // the server make the key.
+        val key = identityKeyFactory(certLabel)
+        val csr = try {
+            key.ensureKeyPair()
+            io.github.umutcansu.pinvault.crypto.Pkcs10Csr.encode(
+                deviceId ?: identity?.second ?: "device", key.publicKey(), key::sign
+            )
+        } catch (e: Exception) {
+            Timber.w(e, "Could not build a CSR — falling back to P12 enrollment")
+            null
+        }
+
+        val result = csr?.let { api.enrollWithCsr(token, deviceId, identity?.first, identity?.second, it) }
+            ?: api.enroll(token, deviceId, identity?.first, identity?.second)
+
+        val chain = result.certificateChainPem
+        return if (chain != null) {
+            val certs = io.github.umutcansu.pinvault.internal.ClientCertRenewer.acceptIssuedChain(chain, key)
+            certStore.saveChain(certLabel, chain)
+            Timber.d("Enrollment successful — certificate chain stored [%s], valid until %s", certLabel, certs[0].notAfter)
+            Enrolled.Chain(key, certs)
+        } else {
+            val p12 = acceptEnrolledP12(result, block.clientKeyPassword)
+            certStore.save(certLabel, p12)
+            // No orphan identity key next to a server-made P12.
+            runCatching { key.clear() }
+            Timber.d("Enrollment successful — P12 stored [%s], %d bytes", certLabel, p12.size)
+            Enrolled.P12(p12)
+        }
+    }
+
+    // ── Client certificate renewal ──────────────────────────────────────
+
+    /**
+     * Renews the client certificate of a Config API block when its remaining
+     * lifetime is below the block's threshold, or always with [force].
+     * Runs on its own at init and on every periodic update; call it to
+     * renew on demand (a "Renew" button, a re-try after a failure).
+     *
+     * @param configApiId the block; null = the default block.
+     */
+    suspend fun renewClientCertIfNeeded(
+        configApiId: String? = null,
+        force: Boolean = false
+    ): io.github.umutcansu.pinvault.model.ClientCertRenewalResult {
+        if (!initialized) {
+            return io.github.umutcansu.pinvault.model.ClientCertRenewalResult.Failed("PinVault not initialized")
+        }
+        val id = configApiId ?: pinManagerConfig?.defaultConfigApi?.id
+        val client = id?.let { configApiClients[it] }
+            ?: return io.github.umutcansu.pinvault.model.ClientCertRenewalResult.NotApplicable
+        return client.renewer.renewIfNeeded(force).also { emitRenewalEvent(client.block.id, it) }
+    }
+
+    /** Callback variant of [renewClientCertIfNeeded]; [onResult] runs on the main thread. */
+    fun renewClientCertIfNeeded(
+        configApiId: String? = null,
+        force: Boolean = false,
+        onResult: (io.github.umutcansu.pinvault.model.ClientCertRenewalResult) -> Unit
+    ) {
+        CoroutineScope(Dispatchers.IO).launch {
+            val result = renewClientCertIfNeeded(configApiId, force)
+            kotlinx.coroutines.withContext(Dispatchers.Main) { onResult(result) }
+        }
+    }
+
+    /** Every block's renewal check, for the periodic worker. Never throws. */
+    internal suspend fun renewClientCertsIfNeeded() {
+        if (!initialized) return
+        for ((id, client) in configApiClients) {
+            try {
+                emitRenewalEvent(id, client.renewer.renewIfNeeded())
+            } catch (e: Exception) {
+                Timber.e(e, "ConfigApi[%s] client cert renewal failed", id)
+            }
+        }
+    }
+
+    private fun emitRenewalEvent(configApiId: String, result: io.github.umutcansu.pinvault.model.ClientCertRenewalResult) {
+        if (!::sslManager.isInitialized) return
+        val status = when (result) {
+            is io.github.umutcansu.pinvault.model.ClientCertRenewalResult.Renewed -> io.github.umutcansu.pinvault.api.ClientCertRenewalStatus.RENEWED
+            is io.github.umutcansu.pinvault.model.ClientCertRenewalResult.NotNeeded -> io.github.umutcansu.pinvault.api.ClientCertRenewalStatus.NOT_NEEDED
+            is io.github.umutcansu.pinvault.model.ClientCertRenewalResult.ReenrollRequired -> io.github.umutcansu.pinvault.api.ClientCertRenewalStatus.REENROLL_REQUIRED
+            is io.github.umutcansu.pinvault.model.ClientCertRenewalResult.Failed -> io.github.umutcansu.pinvault.api.ClientCertRenewalStatus.FAILED
+            io.github.umutcansu.pinvault.model.ClientCertRenewalResult.NotApplicable -> return
+        }
+        sslManager.dispatchEvent(
+            io.github.umutcansu.pinvault.api.PinVaultConnectionEvent.ClientCertRenewal(
+                status = status,
+                notAfterEpochMs = when (result) {
+                    is io.github.umutcansu.pinvault.model.ClientCertRenewalResult.Renewed -> result.notAfterEpochMs
+                    is io.github.umutcansu.pinvault.model.ClientCertRenewalResult.NotNeeded -> result.notAfterEpochMs
+                    else -> 0L
+                },
+                via = (result as? io.github.umutcansu.pinvault.model.ClientCertRenewalResult.Renewed)?.via,
+                configApiId = configApiId,
+                deviceManufacturer = android.os.Build.MANUFACTURER ?: "",
+                deviceModel = android.os.Build.MODEL ?: "",
+                failureReason = when (result) {
+                    is io.github.umutcansu.pinvault.model.ClientCertRenewalResult.Failed -> result.reason
+                    is io.github.umutcansu.pinvault.model.ClientCertRenewalResult.ReenrollRequired -> result.reason
+                    else -> null
+                }
+            )
+        )
     }
 
     /**
@@ -706,6 +872,10 @@ object PinVault {
         val certLabel = label ?: defaultCertLabel()
         val store = ClientCertSecureStore(context.applicationContext)
         store.clear(certLabel)
+        // The identity key behind a CSR-enrolled certificate goes with it: a
+        // re-enrollment is a new identity, not the old key with a new cert.
+        runCatching { identityKeyFactory(certLabel).clear() }
+            .onFailure { Timber.w(it, "Could not delete the client identity key [%s]", certLabel) }
 
         // Drop the live key material too. Guarded on `initialized` because
         // unenroll is callable before/after init (QA flows call it on a cold
@@ -713,6 +883,7 @@ object PinVault {
         if (initialized) {
             configApiClients.values.forEach { client ->
                 client.sslManager.clearClientKeystore()
+                (client.api as? DefaultCertificateConfigApi)?.rebuildBootstrapClient()
                 client.clientProvider.currentConfig?.let { client.clientProvider.swap(it) }
             }
             if (configApiClients.isEmpty()) {
@@ -729,21 +900,39 @@ object PinVault {
      * QA kanıt akışında mobil ekran görüntüsünü sunucudaki kayıtla
      * bire bir eşleştirmek için kullanılır.
      */
-    fun enrolledClientCN(context: Context, label: String? = null): String? {
+    fun enrolledClientCN(context: Context, label: String? = null): String? =
+        enrolledLeaf(context, label)?.subjectX500Principal?.name
+            ?.substringAfter("CN=", "")
+            ?.substringBefore(",")
+            ?.ifBlank { null }
+
+    /**
+     * When the enrolled client certificate expires, epoch ms — or null when
+     * nothing is enrolled. Read from the stored certificate, no network.
+     */
+    fun enrolledClientNotAfter(context: Context, label: String? = null): Long? =
+        enrolledLeaf(context, label)?.notAfter?.time
+
+    /** The enrolled leaf certificate, whichever form it is stored in. */
+    private fun enrolledLeaf(context: Context, label: String?): java.security.cert.X509Certificate? {
         val store = ClientCertSecureStore(context.applicationContext)
-        val p12 = store.load(label ?: defaultCertLabel()) ?: return null
-        val password = pinManagerConfig?.configApis?.values?.firstOrNull()?.clientKeyPassword ?: return null
+        val certLabel = label ?: defaultCertLabel()
         return try {
-            val ks = java.security.KeyStore.getInstance("PKCS12")
-            ks.load(p12.inputStream(), password.toCharArray())
-            val alias = ks.aliases().toList().firstOrNull() ?: return null
-            val cert = ks.getCertificate(alias) as? java.security.cert.X509Certificate ?: return null
-            cert.subjectX500Principal.name
-                .substringAfter("CN=", "")
-                .substringBefore(",")
-                .ifBlank { null }
+            when (store.mode(certLabel)) {
+                ClientCertSecureStore.Mode.CHAIN ->
+                    io.github.umutcansu.pinvault.crypto.Pkcs10Csr.parsePemChain(store.loadChain(certLabel)!!).first()
+                ClientCertSecureStore.Mode.P12 -> {
+                    val p12 = store.load(certLabel) ?: return null
+                    val password = pinManagerConfig?.configApis?.values?.firstOrNull()?.clientKeyPassword ?: return null
+                    val ks = java.security.KeyStore.getInstance("PKCS12")
+                    ks.load(p12.inputStream(), password.toCharArray())
+                    val alias = ks.aliases().toList().firstOrNull() ?: return null
+                    ks.getCertificate(alias) as? java.security.cert.X509Certificate
+                }
+                ClientCertSecureStore.Mode.NONE -> null
+            }
         } catch (e: Exception) {
-            Timber.w(e, "enrolledClientCN: could not parse P12")
+            Timber.w(e, "enrolledLeaf: could not read the stored client certificate")
             null
         }
     }
@@ -985,11 +1174,12 @@ object PinVault {
      * deviceAlias = user-defined name from config, or Build.MODEL as fallback.
      * deviceUid   = ANDROID_ID (unique per app+device).
      */
-    private fun resolveDeviceIdentity(config: PinVaultConfig?): Pair<String, String>? {
+    private fun resolveDeviceIdentity(config: PinVaultConfig?, context: Context = appContext): Pair<String, String>? {
         // Same source as the X-Device-Id sent on scoped config fetches and
         // vault downloads — see DeviceIdentity for why that must stay in sync.
+        // [context] is passed explicitly before init, when appContext is not set.
         val uid = io.github.umutcansu.pinvault.internal.DeviceIdentity
-            .androidId(appContext) ?: return null
+            .androidId(context.applicationContext) ?: return null
 
         val alias = config?.deviceAlias ?: "${android.os.Build.MANUFACTURER} ${android.os.Build.MODEL}"
         return alias to uid

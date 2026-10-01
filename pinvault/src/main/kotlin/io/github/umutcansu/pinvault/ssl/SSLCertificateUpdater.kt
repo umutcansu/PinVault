@@ -63,9 +63,28 @@ internal class SSLCertificateUpdater(
      * 2. Try to fetch latest from backend with retry
      * 3. Decide if we can proceed based on forceUpdate flag
      */
-    suspend fun initializeAndUpdate(): InitResult {
+    /**
+     * @param needsClientCertificate the Config API asks for a client
+     *        certificate this device does not have yet. The backend is then
+     *        not contacted at all — the handshake would be refused, and
+     *        retrying it only delays the caller. A stored config (from before
+     *        the certificate went away) is still applied; without one the
+     *        result is [ClientCertificateRequiredException].
+     */
+    suspend fun initializeAndUpdate(needsClientCertificate: Boolean = false): InitResult {
         // 1. Load stored config (if any)
         val storedConfig = loadFromStore()
+
+        if (needsClientCertificate) {
+            return if (storedConfig != null && !storedConfig.forceUpdate) {
+                Timber.w("No client certificate yet — using stored config v%d, backend not contacted", storedConfig.version)
+                InitResult.Ready(storedConfig.version)
+            } else {
+                Timber.w("No client certificate yet — enroll before init; backend not contacted")
+                val error = io.github.umutcansu.pinvault.model.ClientCertificateRequiredException()
+                InitResult.Failed(reason = error.message ?: "Client certificate required", exception = error)
+            }
+        }
 
         // 2. Try to fetch latest from backend with retry
         val updateResult = updateWithRetry()

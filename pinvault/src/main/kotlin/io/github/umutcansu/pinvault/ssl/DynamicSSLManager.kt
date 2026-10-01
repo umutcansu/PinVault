@@ -98,6 +98,32 @@ internal class DynamicSSLManager(
     }
 
     /**
+     * Loads a default client identity whose private key stays where it is —
+     * an Android Keystore key with the certificate chain the server issued
+     * over it. The CSR-enrolled counterpart of [loadClientKeystore]; the two
+     * replace each other.
+     */
+    fun loadClientKey(privateKey: java.security.PrivateKey, chain: Array<X509Certificate>, alias: String = "pinvault-client") {
+        val km = FixedClientKeyManager(alias, privateKey, chain)
+        clientKeyManagers = arrayOf(km)
+        val leaf = km.certificate
+        val cn = leaf.subjectX500Principal.name.substringAfter("CN=").substringBefore(",")
+        Timber.d(
+            "Default client key loaded — CN=%s, pin=%s..., notAfter=%s",
+            cn, sha256Base64(leaf.publicKey.encoded).take(16), leaf.notAfter
+        )
+    }
+
+    /** The leaf certificate the default client KeyManager presents, if one is loaded. */
+    internal fun defaultClientCertificate(): X509Certificate? {
+        val km = clientKeyManagers?.firstOrNull { it is javax.net.ssl.X509ExtendedKeyManager }
+            as? javax.net.ssl.X509ExtendedKeyManager ?: return null
+        val alias = listOf("EC", "RSA").firstNotNullOfOrNull { km.getClientAliases(it, null)?.firstOrNull() }
+            ?: return null
+        return km.getCertificateChain(alias)?.firstOrNull()
+    }
+
+    /**
      * Inverse of [loadClientKeystore]: drops the in-memory default client
      * KeyManager so subsequent handshakes present no client certificate.
      *
@@ -328,8 +354,9 @@ internal class DynamicSSLManager(
 
     private fun matchPinsFor(
         pinMap: Map<String, Set<String>>,
-        hostname: String
-    ): Set<String>? = PinHostMatcher.match(pinMap, hostname)
+        hostname: String,
+        port: Int? = null
+    ): Set<String>? = PinHostMatcher.match(pinMap, hostname, port)
 
     /**
      * Returns a [X509ExtendedTrustManager] that:
@@ -357,13 +384,13 @@ internal class DynamicSSLManager(
                 chain: Array<X509Certificate>,
                 authType: String,
                 socket: Socket
-            ) = verifyPin(chain, hostnameFromSocket(socket))
+            ) = verifyPin(chain, hostnameFromSocket(socket), socket.port)
 
             override fun checkServerTrusted(
                 chain: Array<X509Certificate>,
                 authType: String,
                 engine: SSLEngine
-            ) = verifyPin(chain, engine.peerHost.orEmpty())
+            ) = verifyPin(chain, engine.peerHost.orEmpty(), engine.peerPort)
 
             override fun checkServerTrusted(
                 chain: Array<X509Certificate>,
@@ -380,7 +407,7 @@ internal class DynamicSSLManager(
 
             // ── Pin verification ──────────────────────────────────────────────────
 
-            private fun verifyPin(chain: Array<X509Certificate>, hostname: String) {
+            private fun verifyPin(chain: Array<X509Certificate>, hostname: String, port: Int? = null) {
                 if (chain.isEmpty()) throw CertificateException("No server certificate provided")
 
                 val leaf = chain[0]
@@ -399,7 +426,7 @@ internal class DynamicSSLManager(
                 // matching wildcard) must be refused — the alternative is
                 // accepting any cert for unknown hosts, which is exactly the
                 // cross-host pin-reuse attack H-01 closes.
-                val acceptedForHost = matchPinsFor(pinMap, hostname)
+                val acceptedForHost = matchPinsFor(pinMap, hostname, port)
                     ?: throw CertificateException(
                         "No pin entry for hostname '$hostname'. " +
                         "Configured hosts: ${pinMap.keys.joinToString()}"

@@ -31,6 +31,7 @@ class CertificateUpdateWorkerTest {
         mockkObject(PinVault)
         // relaxed mock for notifyUpdateResult since it's a side-effect call
         io.mockk.every { PinVault.notifyUpdateResult(any()) } returns Unit
+        io.mockk.coEvery { PinVault.renewClientCertsIfNeeded() } returns Unit
     }
 
     @After
