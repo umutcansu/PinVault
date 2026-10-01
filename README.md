@@ -507,12 +507,91 @@ PinVault.enroll(context, "one-time-token")
 // Automatic (device ID)
 PinVault.autoEnroll(context)
 
-PinVault.isEnrolled(context)   // is a client certificate stored?
-PinVault.unenroll(context)     // remove it; the next request presents no cert
+PinVault.isEnrolled(context)           // is a client certificate stored?
+PinVault.enrolledClientNotAfter(context)   // when it expires (epoch ms), read locally
+PinVault.unenroll(context)             // remove it; the next request presents no cert
 ```
 
 Certificates are stored under the Config API block's `clientCertLabel(...)`;
 every call above takes an optional `label` to address another one.
+
+### The device keeps its key
+
+Enrollment generates an EC P-256 signing key in the Android Keystore and
+sends the server a certificate signing request over it (`X-PinVault-Features:
+csr`). The server answers with a certificate chain; the private key never
+leaves the device. A server that does not understand CSRs answers the same
+request with a P12, which is stored as before — one request either way, so a
+one-time token is never spent twice. Custom `CertificateConfigApi`
+implementations take part by overriding `enrollWithCsr` and
+`renewClientCert` (both have defaults; Java implementers delegate the rest to
+`CertificateConfigApi.DefaultImpls`).
+
+A device enrolls before it has a client certificate, so an mTLS Config API
+would refuse the enrollment at the handshake. Give an mTLS block
+`enrollmentUrl(...)` — the backend's plain-TLS listener — and enrollment goes
+there; config and vault traffic stays on the mTLS URL.
+
+On first start, enroll **before** `init` — the config overloads work without
+an initialized PinVault:
+
+```kotlin
+if (!PinVault.isEnrolled(context, config)) {
+    PinVault.enroll(context, config, token)   // or autoEnroll(context, config)
+}
+PinVault.init(context, config)                // one init, over mTLS
+```
+
+A block with an `enrollmentUrl` and no client certificate does not contact
+its backend in `init`: it answers at once with `InitResult.Failed` carrying a
+`ClientCertificateRequiredException` (or `Ready` from a stored config), instead
+of retrying a handshake the server will refuse.
+
+### Renewal
+
+A CSR-enrolled certificate is short-lived (the reference server issues 90
+days) and renews itself. The library reads the stored certificate's expiry
+without touching the network, at init and on every periodic update:
+
+- with less than a third of the lifetime left, it sends a new CSR over the
+  block's own connection — the current certificate is still valid and
+  authenticates the request over mTLS;
+- once expired, or if the server refuses the handshake, the same CSR goes to
+  the block's **recovery URL** (`renewalUrl(...)`, default: the block URL): a
+  plain-TLS listener that asks for no client certificate and checks the CSR
+  signature against the key it registered at enrollment.
+
+An expired certificate is never presented and never accepted. An mTLS
+Config API cannot be its own recovery URL. The reference server runs a
+dedicated **recovery door** (`RECOVERY_PORT`, default `PORT + 3`): renewal
+only, its own certificate signed by a server CA and reissued before it
+expires. Pin that CA for the door's `host:port` — a `host:port` entry applies
+to that port alone, so the Config API ports keep their stricter leaf pins
+while the door survives any number of certificate changes. The dashboard's
+mTLS tab shows the door's port and the two CA pins to paste.
+
+```kotlin
+.configApi("secure", "https://config.example.com:8092/") {
+    bootstrapPins(listOf(
+        HostPin("config.example.com", listOf(leafPin, backupPin)),                 // Config API ports
+        HostPin("config.example.com:8093", listOf(serverCaPin, serverCaBackupPin)) // recovery door only
+    ))
+    enrollmentUrl("https://config.example.com:8091/") // first enrollment: TLS, the device has no cert yet
+    renewalUrl("https://config.example.com:8093/")
+    clientCertRenewalThreshold(0.25)                 // default 1/3
+    // disableClientCertRenewal()                    // drive it yourself
+}
+
+PinVault.renewClientCertIfNeeded(force = true)       // ClientCertRenewalResult
+```
+
+The outcome is also delivered as a `PinVaultConnectionEvent.ClientCertRenewal`
+to `onConnectionEvent`. `ReenrollRequired` means the server refuses the
+identity (revoked, unknown, key changed): the stored certificate is left in
+place and the app should enroll again with a fresh token. A renewed
+certificate must come from the CA that issued the current one; a chain from
+any other CA is refused even if it arrives with its own CA attached. Removing the app
+deletes the Keystore key, so a reinstall is a new enrollment, never a renewal.
 
 ## Keeping pins fresh
 
@@ -627,9 +706,22 @@ yet) is fine — the library omits the header entirely so the server answers
 }
 ```
 
-Device public key is registered with the server automatically on first fetch;
+The device's RSA public key is registered with every Config API at `init`;
 the server encrypts each response with that key. Private key never leaves the
 device's Android Keystore.
+
+Who may set that key: over **mTLS** only a client certificate that belongs to
+the device. Over **TLS** the first key a device registers is kept; a new one
+(the app's data was cleared, so the Keystore key is new) replaces it only when
+the request carries the device's token for one of that API's `end_to_end`
+files — the library adds it on its own when the app has one. Otherwise the
+server answers `409` and keeps the old key, and an administrator can free the
+slot: `DELETE /api/v1/config-apis/{configApiId}/vault/devices/{deviceId}/public-key`.
+Since TLS asks for no credential, the server only stores RSA keys of
+2048–4096 bits and limits how many a source address writes
+(`DEVICE_KEY_RATE_LIMIT`) and a Config API holds (`DEVICE_KEY_LIMIT`). Files
+that matter belong on an mTLS Config API, where `X-Device-Id` must also belong
+to the device's certificate.
 
 This is not end-to-end in the strict sense, despite the `END_TO_END` name: the
 server performs the encryption, so it sees the content (the reference server
@@ -686,6 +778,11 @@ its configs.
 | `CONFIG_TTL_SECONDS` | `86400` (24h) | How long a signed config response stays valid before clients reject it as replayed. Lower = tighter replay window; too low risks rejecting cached configs from offline devices. |
 | `ENROLLMENT_MODE` | `token` | `token` (production) requires an enrollment token; `open` allows deviceId-only enrollment (demo only). |
 | `ENROLLMENT_TOKEN_TTL_SECONDS` | `86400` | Lifetime of a one-time enrollment token. |
+| `CLIENT_CERT_TTL_DAYS` | `90` | Lifetime of certificates issued over device-held keys (CSR enrollment, library 2.2+). They renew themselves at a third of the lifetime; `KEYSTORE_PASSWORD` also protects the client CA (`client-ca.jks`). |
+| `RECOVERY_PORT` | `PORT+3` | Certificate-renewal door for devices whose client certificate expired: TLS without client auth, serves only `POST /api/v1/client-certs/renew` and `/health`. Its certificate is signed by the server CA (`server-ca.jks` + `server-ca.backup.jks`) and reissued 30 days before expiry. `0` turns it off. In Docker it is 8083. |
+| `ALLOW_TEST_HOOKS` | unset | `true` enables `POST /api/v1/test-hooks/client-cert-ttl` (API key), which arms a short lifetime for a client id's next certificate so tests can watch it expire. Never in production. |
+| `DEVICE_KEY_RATE_LIMIT` | `30` | E2E keys a source address may write per 10 minutes over a TLS Config API, where key registration asks for no credential (`429` beyond it; a device repeating its own key is not counted). The address is the TCP peer: behind a reverse proxy, or Docker Desktop's port forwarding, every device shares one quota. Raise it for a first rollout behind one NAT or proxy; `0` turns it off. |
+| `DEVICE_KEY_LIMIT` | `100000` | Most E2E keys one Config API stores; a new device beyond it gets `503`, known devices keep working. |
 | `EXTRA_CERT_SANS` | unset | Comma-separated IPv4 addresses / DNS names added to every TLS certificate the server generates. Set it to the Docker host's LAN IP when running in a container — the server only sees the container's own address, and Android clients reject a certificate that does not name the IP they connect to. Applies when a certificate is (re)generated. |
 | `CERT_EXPIRY_WARN_DAYS` | `30` | When `/api/v1/cert-expiry` and the dashboard start warning. |
 | `MANAGEMENT_HTTPS_PORT` | unset | Also serve the management API over TLS with the Config API's certificate (the one apps already pin), so device reports and remote admins don't cross the network in the clear. Not in the compose file — add it and a port mapping. |
@@ -710,7 +807,9 @@ Add these for the features you use:
 
 3. mTLS — `POST /api/v1/client-certs/enroll`: PKCS12 bytes **plus** an `X-P12-SHA256` response header so the library can verify integrity (optionally `X-P12-Password`, see checklist item 1).
 4. VaultFile — `GET /<your vault endpoint>`: the file bytes with `X-Vault-Version` and, for signed blocks, `X-Vault-Signature` *(2.1, see [Signed vault files](#signed-vault-files-21))*.
-5. Per-device encryption — `POST /api/v1/vault/devices/{deviceId}/public-key` to register the device key, then encrypt responses with it.
+5. Per-device encryption — `POST /api/v1/vault/devices/{deviceId}/public-key` to register the device key, then encrypt responses with it. Decide who may replace a registered key: the reference server takes a client certificate bound to the device, or over TLS the first key plus `X-Vault-Key` / `X-Vault-Token` (the device's token for an `end_to_end` file) for a replacement. Without a credential, bound what a caller can store: the reference server takes only RSA 2048–4096 keys, a quota per source address and a cap per Config API.
+
+On a client-authenticated listener, treat `X-Device-Id` as a claim to check against the certificate (the device it enrolled as), not as the identity: it selects per-device pins and token checks.
 
 Works with any language: Python, Node.js, Go, .NET, etc.
 

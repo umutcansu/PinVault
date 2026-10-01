@@ -1,3 +1,8 @@
+// NOTE: this host trusts exactly one self-signed client certificate
+// (certs/client.p12 → certs/truststore.jks). Devices enrolled through the demo
+// server's CSR flow present certificates signed by its client CA, so to accept
+// them import the demo server's `client-ca` certificate into truststore.jks
+// (`keytool -importcert -alias client-ca`) instead of the individual client.
 package com.example.mtlshost
 
 import io.ktor.http.*
