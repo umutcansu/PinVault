@@ -1,0 +1,31 @@
+# Local environment
+.env
+
+# Persistent runtime state — keep folders, ignore contents
+data/db/*
+!data/db/.gitkeep
+data/certs/*
+!data/certs/.gitkeep
+
+# Signing key (development only — regenerated locally)
+data/signing-key.pem
+
+# OS / editor
+.DS_Store
+.idea/
+.vscode/
+*.swp
+
+# scripts/export-server-key.sh çıktısı: sunucunun TLS özel anahtarı (E2E kurcalama vekili)
+data/proxy/
+
+# İsteğe bağlı güvenlik katmanları
+# - ek yerel imzalayıcı anahtarları (CONFIG_SIGNERS=local,local:<ad>)
+data/signing-key-*.pem
+# - SoftHSM token'ı (scripts/softhsm-init.sh)
+data/softhsm/
+# - çevrimdışı yedek ve kurtarma anahtarları (scripts/signing-keys.sh). Üretimde
+#   bu dizin sunucuya hiç gelmez; internete kapalı bir makinede durur.
+offline-keys/
+# - imzalanmış anahtar seti dosyaları
+keyset-*.json

@@ -1,0 +1,116 @@
+# SamplePinVaultHost — PinVault demo-server, Docker'da.
+#
+#   ./scripts/setup.sh              # .env + API anahtarı + LAN IP + signing key
+#   docker compose up -d --build
+#   ./scripts/smoke-test.sh         # sağlık + imza + yetki kontrolleri
+#   ./scripts/client-config.sh      # Android client'a girilecek değerler
+services:
+  pinvault-host:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      additional_contexts:
+        # demo-server kaynağı. Varsayılan: upstream git (PINVAULT_REPO @ PINVAULT_REF).
+        # Yerel checkout (yayınlanmamış değişiklikler dahil) için .env'de:
+        #   PINVAULT_SERVER_SRC=../PinVault/demo-server
+        pinvault-server: "${PINVAULT_SERVER_SRC:-${PINVAULT_REPO:-https://github.com/umutcansu/PinVault.git}#${PINVAULT_REF:-main}:demo-server}"
+    container_name: pinvault-host
+    restart: unless-stopped
+    # PID 1 olarak küçük bir init (tini): komut imzalayıcının (CONFIG_SIGNERS=command)
+    # alt süreçleri ve zaman aşımında öldürülenler zombi kalmasın.
+    init: true
+    ports:
+      # Yönetim API + dashboard (düz HTTP): varsayılan olarak yalnızca bu makineden
+      # (HOST_HTTP_BIND=127.0.0.1). Telefonların raporları ve uzaktan yönetim şifreli
+      # porttan (HOST_MANAGEMENT_TLS_PORT) gider.
+      - "${HOST_HTTP_BIND:-127.0.0.1}:${HOST_HTTP_PORT:-6650}:8080"
+      - "${HOST_MANAGEMENT_TLS_PORT:-6655}:8082"  # Yönetim API (TLS, sunucu sertifikası; telefonlar pinler)
+      - "${HOST_HTTPS_PORT:-6651}:8081"  # Config API (TLS, self-signed; client'lar pin'ler)
+      - "${HOST_MTLS_PORT:-6652}:8092"   # mTLS Config API (scripts/provision.sh oluşturur)
+      - "${HOST_MOCK_TLS_PORT:-6653}:8443"   # Mock TLS hedef host (mock-tls.sample)
+      - "${HOST_MOCK_MTLS_PORT:-6654}:8444"  # Mock mTLS hedef host (mock-mtls.sample)
+      # Kurtarma kapısı: istemci sertifikası istemeyen TLS dinleyici, yalnızca
+      # sertifika yenileme. Süresi dolmuş sertifikalı telefon buradan yeniler;
+      # sertifikası sunucu CA'sının imzasını taşır, uygulama CA'ya pinler.
+      - "${HOST_RECOVERY_PORT:-6656}:8083"
+    environment:
+      PORT: "8080"
+      HTTPS_PORT: "8081"
+      MANAGEMENT_HTTPS_PORT: "8082"
+      RECOVERY_PORT: "8083"
+      DB_PATH: /data/db/pinvault.db
+      CERTS_DIR: /data/certs
+      SIGNING_KEY_PATH: /data/signing-key.pem
+      ENROLLMENT_MODE: ${ENROLLMENT_MODE:-token}
+      # Zorunlu. Yönetim uçları ve dashboard bu anahtarı ister; anonim admin kapalı.
+      API_KEY: ${API_KEY:?API_KEY bos. Once ./scripts/setup.sh calistir.}
+      CONFIG_TTL_SECONDS: ${CONFIG_TTL_SECONDS:-86400}
+      # Telefonların bu makineye bağlandığı LAN IP. Container kendi içinden bu
+      # adresi göremez; sunucu TLS sertifikası (yeniden) üretilirken SAN'a eklenir.
+      EXTRA_CERT_SANS: ${HOST_LAN_IP:-}
+      # İsteğe bağlı sunucu ayarları; boş bırakılınca sunucu varsayılanı geçerli.
+      # Geçici değişiklik için: ./scripts/env-override.sh set KEY=VALUE ...
+      SIGNING_KEY_PASSWORD: ${SIGNING_KEY_PASSWORD:-}
+      ENROLLMENT_TOKEN_TTL_SECONDS: ${ENROLLMENT_TOKEN_TTL_SECONDS:-}
+      # Onay bekleyen başvurular: cevapsız başvurunun ömrü (saat, varsayılan 24);
+      # kodsuz başvurularda bir IP'den 10 dakikada en fazla yeni başvuru (20)
+      # ve aynı anda bekleyebilecek en fazla başvuru (50).
+      ENROLLMENT_REQUEST_TTL_HOURS: ${ENROLLMENT_REQUEST_TTL_HOURS:-}
+      OPEN_ENROLLMENT_RATE_LIMIT: ${OPEN_ENROLLMENT_RATE_LIMIT:-}
+      OPEN_ENROLLMENT_MAX_PENDING: ${OPEN_ENROLLMENT_MAX_PENDING:-}
+      # Cihaz sertifikalarının ömrü (gün, varsayılan 90).
+      CLIENT_CERT_TTL_DAYS: ${CLIENT_CERT_TTL_DAYS:-}
+      # Yalnızca testler: kısa ömürlü sertifika kancası (/api/v1/test-hooks/client-cert-ttl).
+      ALLOW_TEST_HOOKS: ${ALLOW_TEST_HOOKS:-}
+      VAULT_AT_REST_PASSWORD: ${VAULT_AT_REST_PASSWORD:-}
+      VAULT_AT_REST_PASSWORD_PREVIOUS: ${VAULT_AT_REST_PASSWORD_PREVIOUS:-}
+      CERT_EXPIRY_WARN_DAYS: ${CERT_EXPIRY_WARN_DAYS:-}
+      KEYSTORE_PASSWORD: ${KEYSTORE_PASSWORD:-}
+      KEYSTORE_PASSWORD_PREVIOUS: ${KEYSTORE_PASSWORD_PREVIOUS:-}
+      CLIENT_P12_PASSWORD: ${CLIENT_P12_PASSWORD:-}
+      ALLOW_ANONYMOUS_ADMIN: ${ALLOW_ANONYMOUS_ADMIN:-}
+      # İsteğe bağlı güvenlik katmanları (README: "İsteğe bağlı güvenlik
+      # katmanları"). Hepsi boşken sunucu önceki gibi davranır.
+      # İmzalayıcılar: local (varsayılan) | pkcs11 | command; virgülle birden çok.
+      CONFIG_SIGNERS: ${CONFIG_SIGNERS:-}
+      CONFIG_SIGNATURE_CACHE: ${CONFIG_SIGNATURE_CACHE:-}
+      PKCS11_LIBRARY: ${PKCS11_LIBRARY:-}
+      PKCS11_SLOT_INDEX: ${PKCS11_SLOT_INDEX:-}
+      PKCS11_PIN: ${PKCS11_PIN:-}
+      PKCS11_KEY_LABEL: ${PKCS11_KEY_LABEL:-}
+      PKCS11_GENERATE_KEY: ${PKCS11_GENERATE_KEY:-}
+      SIGNER_COMMAND: ${SIGNER_COMMAND:-}
+      SIGNER_PUBLIC_KEY: ${SIGNER_PUBLIC_KEY:-}
+      SIGNER_PUBLIC_KEY_FILE: ${SIGNER_PUBLIC_KEY_FILE:-}
+      SIGNER_INPUT: ${SIGNER_INPUT:-}
+      SIGNER_TIMEOUT_MS: ${SIGNER_TIMEOUT_MS:-}
+      # İmzalama anahtarı setleri: uygulamaya gömülü kurtarma anahtar(lar)ı.
+      RECOVERY_PUBLIC_KEYS: ${RECOVERY_PUBLIC_KEYS:-}
+      RECOVERY_REQUIRED_SIGNATURES: ${RECOVERY_REQUIRED_SIGNATURES:-}
+      # Kişisel yönetici anahtarları (ad:sha256), iki kişi onayı, bildirim.
+      ADMIN_KEYS: ${ADMIN_KEYS:-}
+      ADMIN_KEYS_FILE: ${ADMIN_KEYS_FILE:-}
+      PIN_CHANGE_APPROVALS: ${PIN_CHANGE_APPROVALS:-}
+      APPROVAL_TTL_HOURS: ${APPROVAL_TTL_HOURS:-}
+      NOTIFY_WEBHOOK_URL: ${NOTIFY_WEBHOOK_URL:-}
+      NOTIFY_WEBHOOK_SECRET: ${NOTIFY_WEBHOOK_SECRET:-}
+      NOTIFY_EVENTS: ${NOTIFY_EVENTS:-}
+      # Canlı sertifika kontrolü: off | warn | enforce.
+      PIN_LIVE_CHECK: ${PIN_LIVE_CHECK:-}
+      PIN_LIVE_CHECK_ALLOW_OVERRIDE: ${PIN_LIVE_CHECK_ALLOW_OVERRIDE:-}
+      LIVE_CHECK_HOST_MAP: ${LIVE_CHECK_HOST_MAP:-}
+      LIVE_CHECK_TIMEOUT_MS: ${LIVE_CHECK_TIMEOUT_MS:-}
+    volumes:
+      # Bütün kalıcı durum tek dizin: veritabanı, sertifikalar ve imzalama
+      # anahtarı. Anahtar dosyası tek tek (ve salt okunur) bağlanınca sunucu
+      # onu yerinde güncelleyemiyordu: SIGNING_KEY_PASSWORD ile açılan at-rest
+      # şifreleme göçü (ConfigSigningService) ve dashboard'daki "Anahtarı
+      # Yenile" atomik rename yapıyor, tek dosyalık bind mount'un üzerine
+      # rename ise "Device or resource busy" veriyor ve sunucu açılmıyordu.
+      - ./data:/data
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 5s
+      start_period: 20s
+      retries: 3

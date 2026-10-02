@@ -1,0 +1,9 @@
+# Bizim Dockerfile build context'inden bağımsız — git clone build stage içinde yapılıyor.
+# Yine de gereksiz dosyaları context'e dahil etmeyelim.
+.git/
+.gitignore
+.env
+.env.example
+data/
+scripts/
+README.md
