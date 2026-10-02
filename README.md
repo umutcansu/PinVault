@@ -14,6 +14,7 @@ Dynamic SSL certificate pinning library for Android. Manage pins remotely, suppo
 - **Bootstrap pinning** — hardcoded pins for initial connection security
 - **mTLS support** — mutual TLS with token-based or automatic device enrollment
 - **Device-held client keys** *(2.1)* — the mTLS key is generated in the Android Keystore and never leaves it; certificates come from a CSR and renew themselves, through a recovery door once expired
+- **Fleet enrollment** *(2.1)* — one enrollment code for many devices, optional administrator approval with a verification code shown on both sides, applications without a code (like a router's MAC filter), and forgetting a revoked identity so its client id can enroll again
 - **Pin mismatch recovery** — automatic config refresh and retry on pin failure
 - **Multi-Config-API** *(v2)* — register N Config APIs, bind each vault file to a specific one
 - **Server-side pin scoping** *(v2)* — `wantPinsFor(...)` + per-device ACL, least-privilege
@@ -995,7 +996,7 @@ See [SERVER_IMPLEMENTATION_GUIDE.md](SERVER_IMPLEMENTATION_GUIDE.md) for the API
 
 Add these for the features you use:
 
-3. mTLS — `POST /api/v1/client-certs/enroll`: PKCS12 bytes **plus** an `X-P12-SHA256` response header so the library can verify integrity (optionally `X-P12-Password`, see checklist item 1).
+3. mTLS — `POST /api/v1/client-certs/enroll`. With `X-PinVault-Features: csr` and a `csr` field *(2.1, the default)*: sign the device's own key and answer with the certificate chain as JSON (`X-PinVault-Cert-Format: pem-chain`); renew at `POST /api/v1/client-certs/renew`. Otherwise PKCS12 bytes **plus** an `X-P12-SHA256` response header so the library can verify integrity (optionally `X-P12-Password`, see checklist item 1). To make a device wait for an administrator, answer `202` with a `requestId` *(2.1)*. Details in [SERVER_IMPLEMENTATION_GUIDE.md](SERVER_IMPLEMENTATION_GUIDE.md).
 4. VaultFile — `GET /<your vault endpoint>`: the file bytes with `X-Vault-Version` and, for signed blocks, `X-Vault-Signature` *(2.1, see [Signed vault files](#signed-vault-files-21))*.
 5. Per-device encryption — `POST /api/v1/vault/devices/{deviceId}/public-key` to register the device key, then encrypt responses with it. Decide who may replace a registered key: the reference server takes a client certificate bound to the device, or over TLS the first key plus `X-Vault-Key` / `X-Vault-Token` (the device's token for an `end_to_end` file) for a replacement. Without a credential, bound what a caller can store: the reference server takes only RSA 2048–4096 keys, a quota per source address and a cap per Config API.
 
@@ -1016,8 +1017,10 @@ PinVault.getClient()         ───→     Your API endpoints
   Every request pinned                (TLS certificate verified)
 
 PinVault.enroll()            ───→     POST /client-certs/enroll
-  P12 certificate            ←───     PKCS12 bytes
-  Stored encrypted (Keystore key)
+  CSR (key stays in Keystore)         token, enrollment code or nothing
+  Certificate chain          ←───     signed by the client CA
+                                      (or 202: wait for approval)
+  Stored encrypted
 
 PinVault.fetchFile("key")   ───→     GET /vault/{key}
   File cached encrypted      ←───     Binary bytes
