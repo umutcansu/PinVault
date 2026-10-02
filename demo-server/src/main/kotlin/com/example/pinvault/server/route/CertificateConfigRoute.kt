@@ -88,7 +88,9 @@ fun Route.certificateConfigRoutes(
     /** Throttles renewal attempts per source and client id; null = unlimited. */
     renewLimiter: com.example.pinvault.server.service.RateLimiter? = null,
     /** Records refused renewals without letting them flood the audit log. */
-    renewFailures: com.example.pinvault.server.service.AuthFailureRecorder? = null
+    renewFailures: com.example.pinvault.server.service.AuthFailureRecorder? = null,
+    /** Enrollment codes many devices share, with optional approval; null = one-time tokens only. */
+    policyEnrollment: PolicyEnrollment? = null
 ) {
     val envelopes = signedConfigService ?: SignedConfigService(signingService)
 
@@ -112,10 +114,27 @@ fun Route.certificateConfigRoutes(
             val deviceAlias = json?.get("deviceAlias")?.jsonPrimitive?.content
             val deviceUid = json?.get("deviceUid")?.jsonPrimitive?.content
 
+            // A device that enrolled with a policy code and was told to wait
+            // asks again by its request id (see PolicyEnrollment).
+            val requestId = json?.get("requestId")?.jsonPrimitive?.content
+            if (requestId != null && policyEnrollment != null) {
+                return@post policyEnrollment.pickup(call, requestId, json)
+            }
+
             val clientId: String
-            if (token != null && enrollmentTokenStore != null) {
-                clientId = enrollmentTokenStore.validate(token)
-                    ?: return@post call.respondText("""{"error":"Gecersiz token"}""", ContentType.Application.Json, HttpStatusCode.Unauthorized)
+            if (token != null && (enrollmentTokenStore != null || policyEnrollment != null)) {
+                clientId = enrollmentTokenStore?.validate(token) ?: run {
+                    // Not a one-time token: maybe a code many devices share.
+                    policyEnrollment?.let { policies ->
+                        policies.policyFor(token)?.let { return@post policies.submit(call, it, json) }
+                    }
+                    return@post call.respondText("""{"error":"Gecersiz token"}""", ContentType.Application.Json, HttpStatusCode.Unauthorized)
+                }
+            } else if (deviceId != null && policyEnrollment?.acceptsApplications() == true) {
+                // Code-less applications are on (the dashboard's switch): the device asks
+                // without a token and waits until an administrator lets it in. Ahead of
+                // ENROLLMENT_MODE=open: an administrator who wants to approve devices does.
+                return@post policyEnrollment!!.submitWithoutCode(call, json)
             } else if (deviceId != null && enrollmentMode == "open") {
                 // deviceId-only enrollment — sadece ENROLLMENT_MODE=open iken aktif
                 // Üretimde kullanılmamalıdır: deviceId tahmin edilebilir, kimlik doğrulama yok
@@ -188,6 +207,16 @@ fun Route.certificateConfigRoutes(
                     return@post call.respondText("""{"error":"invalid_csr","message":"${e.message}"}""", ContentType.Application.Json, HttpStatusCode.BadRequest)
                 }
             } else null
+            // A key retired with a forgotten identity never gets a certificate
+            // again, under any client id. Before the token is spent.
+            if (csr != null && clientIdentityStore?.isRetired(csr.spkiSha256) == true) {
+                audit?.record("client_cert_enroll_refused", "Enrollment of $clientId refused: its key was retired with a forgotten identity",
+                    configApiId, clientId, actor = clientId, ip = remote)
+                return@post call.respondText(
+                    """{"error":"revoked","message":"This key was revoked. Enroll again with a new key."}""",
+                    ContentType.Application.Json, HttpStatusCode.Forbidden
+                )
+            }
 
             // Spend the token in one statement: of two requests racing with
             // the same token, the second loses here instead of also getting a

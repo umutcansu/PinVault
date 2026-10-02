@@ -122,6 +122,20 @@ class ClientEdgePluginsTest {
     }
 
     @Test
+    fun `a certificate over a retired key is refused though its client id is free`() = testApplication {
+        val presented = clientCert("tablet-09")
+        install(createApplicationPlugin("FakePeerCert") {
+            onCall { call -> call.attributes.put(TLS_PEER_CERTIFICATE, presented) }
+        })
+        install(RevocationGate) { isRetiredKey = { it == presented } }
+        echoRoutes()
+
+        val config = client.get("/api/v1/certificate-config")
+        assertEquals(HttpStatusCode.Forbidden, config.status)
+        assertTrue(config.bodyAsText().contains("reenroll_required"))
+    }
+
+    @Test
     fun `a request without a client certificate is not the gate's business`() = testApplication {
         gated(null)
         assertEquals("config", client.get("/api/v1/certificate-config").bodyAsText())

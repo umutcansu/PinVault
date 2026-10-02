@@ -64,7 +64,7 @@ function updateEncDesc(ev) {
 const _actionHandlers = {
   clearForceAll, copyText, createConfigApi, createHostFetch, createHostGenerate,
   createHostManual, createHostUpload,
-  deleteConfigApi, deleteHost, deleteVaultFile, editDeviceAcl, fetchBootstrapFromUrl,
+  deleteConfigApi, deleteHost, deleteVaultFile, editDeviceAcl, fetchBootstrapFromUrl, forgetClientIdentity,
   forceUpdateAll, generateClientCert,
   generateEnrollmentToken, generateVaultToken, loadClientDevices, loadHostConnectionHistory,
   pagGo, pagSize, regenerateBootstrapCert, regenerateSigningKey, renderApiVaultTab,
@@ -86,7 +86,10 @@ const _actionHandlers = {
   // Governance (identity, approvals, audit log, live check, signing keys)
   switchAdminKey, setApprovalsTab, refreshApprovals, toggleChangeDetail, approveChange, rejectChange,
   setAuditActionFilter, toggleAuditDetail, verifyAuditChain, sendTestNotification, refreshAudit,
-  uploadKeyset, liveCheckPins
+  uploadKeyset, liveCheckPins,
+  // Enrollment policies (one code, many devices) and device approvals
+  createEnrollmentPolicy, stopEnrollmentPolicy, closePolicyCode, approveEnrollmentRequest, rejectEnrollmentRequest,
+  toggleOpenApplications
 };
 
 function _collectArgs(el) {

@@ -7,6 +7,7 @@ import com.example.pinvault.server.route.adminVaultRoutes
 import com.example.pinvault.server.route.certificateConfigRoutes
 import com.example.pinvault.server.route.clientCertRenewalRoute
 import com.example.pinvault.server.route.signingAdminRoutes
+import com.example.pinvault.server.route.enrollmentPolicyRoutes
 import com.example.pinvault.server.route.governanceRoutes
 import com.example.pinvault.server.route.applyPinConfigUpdate
 import com.example.pinvault.server.route.respondNoSecondCertificate
@@ -300,6 +301,20 @@ fun main() {
     val clientCertStore = ClientCertStore(db)
     val hostClientCertStore = com.example.pinvault.server.store.HostClientCertStore(db)
     val enrollmentTokenStore = EnrollmentTokenStore(db)
+    // Codes many devices enroll with (a device limit, an end date, optional approval).
+    val enrollmentPolicyStore = com.example.pinvault.server.store.EnrollmentPolicyStore(db)
+    // Requests nobody decides on lapse after this; code-less applications (the
+    // dashboard's switch) may have this many waiting, and a source address may
+    // make this many new ones per 10 minutes (0 = no limit).
+    val enrollmentRequestTtl = java.time.Duration.ofHours((System.getenv("ENROLLMENT_REQUEST_TTL_HOURS")?.toLongOrNull() ?: 24L).coerceIn(1, 720))
+    val openMaxPending = (System.getenv("OPEN_ENROLLMENT_MAX_PENDING")?.toIntOrNull() ?: 50).coerceIn(1, 10_000)
+    val openRateLimit = (System.getenv("OPEN_ENROLLMENT_RATE_LIMIT")?.toIntOrNull() ?: 20).coerceAtLeast(0)
+    val openLimiter = if (openRateLimit > 0) com.example.pinvault.server.service.RateLimiter(maxAttempts = openRateLimit, windowMs = 10 * 60_000) else null
+    // Anyone holding a shared code can cause these; one entry a minute at most.
+    val policyRefusals = com.example.pinvault.server.service.AuthFailureRecorder(
+        auditLog, action = "client_cert_enroll_refused", what = "Enrollment with an enrollment code refused",
+        attemptsLabel = "refused enrollment-code"
+    )
     val clientIdentityStore = com.example.pinvault.server.store.ClientIdentityStore(db)
     val renewLimiter = com.example.pinvault.server.service.RateLimiter()
     val renewFailures = com.example.pinvault.server.service.AuthFailureRecorder(
@@ -403,6 +418,7 @@ fun main() {
         // The handshake trusts the client CA, revocation is checked here, per request.
         if (mode == "mtls") install(com.example.pinvault.server.plugin.RevocationGate) {
             isRevoked = { id -> clientCertStore.get(id)?.revoked == true || clientIdentityStore.get(id)?.revoked == true }
+            isRetiredKey = { cert -> clientIdentityStore.isRetired(certService.spkiSha256(cert.publicKey)) }
             refusals = revokedRefusals
         }
         // ...and X-Device-Id may only name the device the certificate belongs to.
@@ -424,7 +440,13 @@ fun main() {
                 clientIdentityStore = clientIdentityStore,
                 clientCertTtl = { java.time.Duration.ofDays(clientCertTtlDays) },
                 testTtlOverride = testTtlOverride,
-                renewLimiter = renewLimiter, renewFailures = renewFailures)
+                renewLimiter = renewLimiter, renewFailures = renewFailures,
+                policyEnrollment = com.example.pinvault.server.route.PolicyEnrollment(
+                    configApiId, enrollmentPolicyStore, certService, clientIdentityStore, clientCertStore,
+                    auditLog, policyRefusals,
+                    ttlFor = { id -> testTtlOverride?.invoke(id) ?: java.time.Duration.ofDays(clientCertTtlDays) },
+                    pendingTtl = enrollmentRequestTtl, openMaxPending = openMaxPending, openLimiter = openLimiter
+                ))
             hostRoutes(configApiId, pinConfigStore, hostStore, historyStore, certService, mockServerManager, hostClientCertStore)
             vaultRoutes(configApiId, vaultFileStore, vaultDistStore, vaultTokenStore,
                 devicePublicKeyStore, vaultTokenService, vaultEncryptionService, signingService,
@@ -676,7 +698,7 @@ fun main() {
 
             get("/api/v1/enrollment-mode") {
                 call.respondText(
-                    """{"mode":"$enrollmentMode","tokenRequired":${enrollmentMode != "open"}}""",
+                    """{"mode":"$enrollmentMode","tokenRequired":${enrollmentMode != "open"},"openApplications":${enrollmentPolicyStore.openPolicy()?.acceptsNewDevices() == true}}""",
                     ContentType.Application.Json
                 )
             }
@@ -968,6 +990,49 @@ fun main() {
                 call.respondText("""{"id":"$id","revoked":true}""", ContentType.Application.Json)
             }
 
+            // A revoked client id stays revoked, which leaves a device enrolled
+            // in open mode (client id = its own device id) unable to enroll
+            // again. Forgetting the identity frees the client id; every key it
+            // used is retired, so its old certificates stay refused and the
+            // next enrollment is over a new key.
+            post("/api/v1/client-certs/{id}/forget") {
+                val id = call.parameters["id"].orEmpty()
+                when (clientIdentityStore.forget(id, java.time.Instant.now().toString())) {
+                    com.example.pinvault.server.store.ClientIdentityStore.Forget.NOT_FOUND -> call.respondText(
+                        """{"error":"client_cert_not_found","message":"No client certificate or identity with this id."}""",
+                        ContentType.Application.Json, HttpStatusCode.NotFound
+                    )
+                    com.example.pinvault.server.store.ClientIdentityStore.Forget.NOT_REVOKED -> call.respondText(
+                        """{"error":"not_revoked","message":"Only a revoked identity can be forgotten. Revoke it first."}""",
+                        ContentType.Application.Json, HttpStatusCode.Conflict
+                    )
+                    com.example.pinvault.server.store.ClientIdentityStore.Forget.FORGOTTEN -> {
+                        // A legacy (P12) certificate's truststore entry went at revocation; should it not have.
+                        if (certService.getTrustStore()?.containsAlias(id) == true) {
+                            certService.removeFromTrustStore(id)
+                            refreshMtlsTrust("identity forgotten: $id", true)
+                        }
+                        val retired = clientIdentityStore.retiredKeys(id)
+                        auditLog.record(
+                            "client_identity_forgotten",
+                            "Revoked client id $id forgotten: it may enroll again; the $retired key(s) it used stay refused",
+                            target = id,
+                            detail = kotlinx.serialization.json.buildJsonObject {
+                                put("retiredKeys", kotlinx.serialization.json.JsonPrimitive(retired))
+                            }
+                        )
+                        call.respondText(
+                            kotlinx.serialization.json.buildJsonObject {
+                                put("id", kotlinx.serialization.json.JsonPrimitive(id))
+                                put("forgotten", kotlinx.serialization.json.JsonPrimitive(true))
+                                put("retiredKeys", kotlinx.serialization.json.JsonPrimitive(retired))
+                            }.toString(),
+                            ContentType.Application.Json
+                        )
+                    }
+                }
+            }
+
             // ── Enrollment Token Management ─────────────────
 
             post("/api/v1/enrollment-tokens/generate") {
@@ -994,6 +1059,9 @@ fun main() {
             get("/api/v1/enrollment-tokens") {
                 call.respond(enrollmentTokenStore.getAll())
             }
+
+            // Enrollment codes many devices share, and the devices waiting for approval.
+            enrollmentPolicyRoutes(enrollmentPolicyStore, clientCertStore, auditLog, enrollmentRequestTtl, openMaxPending, openRateLimit)
 
             // Test hook (ALLOW_TEST_HOOKS=true): the next certificate issued to
             // a client id gets this lifetime, so the Espresso suite can watch a

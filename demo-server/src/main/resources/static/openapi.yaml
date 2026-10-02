@@ -2129,7 +2129,8 @@ paths:
       description: |
         Read by the client before enrolling. `mode` mirrors the `ENROLLMENT_MODE`
         env var (default `token`); `tokenRequired` is `false` only when
-        `ENROLLMENT_MODE=open`.
+        `ENROLLMENT_MODE=open`. `openApplications` is `true` while devices may
+        apply without a code and wait for approval (`/api/v1/enrollment-open`).
 
         Public — devices need it before they have any credential.
 
@@ -2147,6 +2148,7 @@ paths:
                 properties:
                   mode: { type: string, enum: [token, open] }
                   tokenRequired: { type: boolean }
+                  openApplications: { type: boolean }
 
   /api/v1/enrollment-tokens/generate:
     post:
@@ -2219,6 +2221,298 @@ paths:
         '401': { $ref: '#/components/responses/MissingApiKey' }
         '403': { $ref: '#/components/responses/InvalidApiKey' }
 
+  /api/v1/enrollment-policies:
+    get:
+      tags: [enrollment]
+      operationId: listEnrollmentPolicies
+      summary: List enrollment policies (codes many devices share)
+      description: |
+        Newest first, with how many devices each one has taken (`usedCount`:
+        issued plus approved but not yet picked up) and how many wait for
+        approval. The code itself is never listed — only its first group.
+
+        Registered on: **management** only.
+      security:
+        - ApiKeyAuth: []
+      x-registered-on: management
+      responses:
+        '200':
+          description: Policies, newest first.
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/EnrollmentPolicy' }
+        '401': { $ref: '#/components/responses/MissingApiKey' }
+        '403': { $ref: '#/components/responses/InvalidApiKey' }
+    post:
+      tags: [enrollment]
+      operationId: createEnrollmentPolicy
+      summary: Create an enrollment policy and its code
+      description: |
+        One code that up to `maxDevices` devices enroll with for `validDays`
+        days, each through `POST /api/v1/client-certs/enroll` with the code as
+        `token`. Every device gets its own client id `<name>-<6 chars>` and a
+        certificate over its own key (CSR enrollment only). With
+        `requireApproval` a device waits (`202`) until an administrator
+        approves it under `/api/v1/enrollment-requests`.
+
+        The code — 25 characters of Crockford base32 in five groups, 125 bits —
+        is in this answer and nowhere else (`Cache-Control: no-store`); only its
+        SHA-256 is stored. Case, dashes and spaces do not matter when a device
+        sends it, and `O`/`I`/`L` read as `0`/`1`. Audited as
+        `enrollment_policy_created`.
+
+        Registered on: **management** only.
+      security:
+        - ApiKeyAuth: []
+      x-registered-on: management
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name, maxDevices, validDays]
+              properties:
+                name:
+                  type: string
+                  description: Prefix of the client ids; letters, digits, `.`, `_`, `:` and `-`, at most 40.
+                  example: field-tablets
+                maxDevices: { type: integer, minimum: 1, maximum: 10000 }
+                validDays: { type: integer, minimum: 1, maximum: 365 }
+                requireApproval:
+                  type: boolean
+                  default: true
+                  description: Each device waits for an administrator. On unless set to `false`.
+      responses:
+        '200':
+          description: The policy and its code — store or hand out the code now, it cannot be re-read.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/CreatedEnrollmentPolicy' }
+        '400':
+          description: '`invalid_body`, `invalid_name`, `invalid_max_devices` or `invalid_valid_days`.'
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '401': { $ref: '#/components/responses/MissingApiKey' }
+        '403': { $ref: '#/components/responses/InvalidApiKey' }
+
+  /api/v1/enrollment-policies/{id}/stop:
+    post:
+      tags: [enrollment]
+      operationId: stopEnrollmentPolicy
+      summary: Stop an enrollment code
+      description: |
+        No device can start an enrollment with the code any more (it is answered
+        like a used token, `401`), and requests still waiting are rejected.
+        Devices approved before still pick their certificates up. Audited as
+        `enrollment_policy_stopped`.
+
+        Registered on: **management** only.
+      security:
+        - ApiKeyAuth: []
+      x-registered-on: management
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+      responses:
+        '200':
+          description: The stopped policy.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/EnrollmentPolicy' }
+        '404':
+          description: '`policy_not_found`.'
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '409':
+          description: '`policy_stopped` — already stopped.'
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '401': { $ref: '#/components/responses/MissingApiKey' }
+        '403': { $ref: '#/components/responses/InvalidApiKey' }
+
+  /api/v1/enrollment-open:
+    get:
+      tags: [enrollment]
+      operationId: getOpenApplications
+      summary: Applications without a code — the switch and its limits
+      description: |
+        While `enabled`, a device that enrolls with only its `deviceId` (no
+        token, no code) gets `202` and waits for an administrator under
+        `/api/v1/enrollment-requests`, marked `openApplication`. Off by default.
+
+        Registered on: **management** only.
+      security:
+        - ApiKeyAuth: []
+      x-registered-on: management
+      responses:
+        '200':
+          description: The switch and the limits the server runs with.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/OpenApplicationsStatus' }
+        '401': { $ref: '#/components/responses/MissingApiKey' }
+        '403': { $ref: '#/components/responses/InvalidApiKey' }
+    put:
+      tags: [enrollment]
+      operationId: setOpenApplications
+      summary: Turn applications without a code on or off
+      description: |
+        On: every device that reaches a Config API listener may ask to enroll
+        without a code; none gets a certificate without an approval. It takes
+        precedence over `ENROLLMENT_MODE=open`. Off: such devices get
+        `403 Token required`, and the requests already waiting can still be
+        approved or rejected. The first time it is turned on, a policy named
+        `device` is created to collect the requests (client ids
+        `device-<6 chars>`). Audited as `enrollment_open_changed`.
+
+        Bounds: `OPEN_ENROLLMENT_RATE_LIMIT` new applications per source
+        address per 10 minutes (default 20, `0` = none), at most
+        `OPEN_ENROLLMENT_MAX_PENDING` waiting (default 50), and every waiting
+        request lapses after `ENROLLMENT_REQUEST_TTL_HOURS` (default 24).
+
+        Registered on: **management** only.
+      security:
+        - ApiKeyAuth: []
+      x-registered-on: management
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [enabled]
+              properties:
+                enabled: { type: boolean }
+      responses:
+        '200':
+          description: The switch after the change.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/OpenApplicationsStatus' }
+        '400':
+          description: '`invalid_body` or `invalid_enabled`.'
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '401': { $ref: '#/components/responses/MissingApiKey' }
+        '403': { $ref: '#/components/responses/InvalidApiKey' }
+
+  /api/v1/enrollment-requests:
+    get:
+      tags: [enrollment]
+      operationId: listEnrollmentRequests
+      summary: Devices that asked to enroll, with a code or without one
+      description: |
+        Newest first (at most 200). A `pending` request waits for an
+        administrator, an `approved` one for its device to pick the certificate
+        up; a `pending` one older than `ENROLLMENT_REQUEST_TTL_HOURS` (24) is
+        marked `expired` (decided by `timeout`) and its device told `410`.
+        `verificationCode` matches the code the device shows. `heldBy` names
+        another active identity already enrolled from the same `deviceUid` (a
+        reinstall, or someone claiming the device): such a request can be
+        approved only after that identity is revoked. `sameDevicePending`
+        counts the other requests waiting from the same `deviceUid`.
+
+        Registered on: **management** only.
+      security:
+        - ApiKeyAuth: []
+      x-registered-on: management
+      parameters:
+        - name: status
+          in: query
+          required: false
+          schema: { type: string, enum: [pending, approved, rejected, issued, expired] }
+      responses:
+        '200':
+          description: Requests, newest first.
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/EnrollmentRequest' }
+        '401': { $ref: '#/components/responses/MissingApiKey' }
+        '403': { $ref: '#/components/responses/InvalidApiKey' }
+
+  /api/v1/enrollment-requests/{id}/approve:
+    post:
+      tags: [enrollment]
+      operationId: approveEnrollmentRequest
+      summary: Let a waiting device in
+      description: |
+        The request becomes `approved` and takes one of the policy's device
+        slots, both or neither. The device gets its certificate the next time it
+        asks (`POST /api/v1/client-certs/enroll` with its `requestId` and a CSR
+        from the same key). Audited as `enrollment_request_approved`.
+
+        Registered on: **management** only.
+      security:
+        - ApiKeyAuth: []
+      x-registered-on: management
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+      responses:
+        '200':
+          description: Approved.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/EnrollmentDecision' }
+        '404':
+          description: '`request_not_found`.'
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '409':
+          description: >
+            `device_already_enrolled` (with `heldBy`: revoke that identity first),
+            `not_pending` (already decided), `policy_stopped`, or
+            `enrollment_limit_reached` (no device slot left).
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '401': { $ref: '#/components/responses/MissingApiKey' }
+        '403': { $ref: '#/components/responses/InvalidApiKey' }
+
+  /api/v1/enrollment-requests/{id}/reject:
+    post:
+      tags: [enrollment]
+      operationId: rejectEnrollmentRequest
+      summary: Turn a device away
+      description: |
+        A waiting request — or an approved one not picked up yet, which gives
+        its slot back — becomes `rejected`; the device is told
+        `403 enrollment_rejected` and forgets the request and its key. Audited
+        as `enrollment_request_rejected`.
+
+        Registered on: **management** only.
+      security:
+        - ApiKeyAuth: []
+      x-registered-on: management
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+      responses:
+        '200':
+          description: Rejected.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/EnrollmentDecision' }
+        '404':
+          description: '`request_not_found`.'
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '409':
+          description: '`not_pending` — issued or rejected already.'
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '401': { $ref: '#/components/responses/MissingApiKey' }
+        '403': { $ref: '#/components/responses/InvalidApiKey' }
+
   /api/v1/client-certs/enroll:
     post:
       tags: [enrollment, client-certs]
@@ -2242,6 +2536,9 @@ paths:
         `{token?, deviceId?, deviceAlias?, deviceUid?}`:
         * `token` present → validated and marked used; the certificate CN is
           `PinVault Client: <clientId>` for the token's client id.
+        * `deviceId` present while applications without a code are on
+          (`/api/v1/enrollment-open`, 2.1) → `202`: the device waits for an
+          administrator like a device with a code. This comes before open mode.
         * `deviceId` present and `ENROLLMENT_MODE=open` → the device id becomes the
           client id (demo/test only — no authentication).
         * `deviceId` present in `token` mode → `403` with guidance.
@@ -2266,6 +2563,23 @@ paths:
         update right before anything is issued; of several requests racing with the
         same token, one succeeds and the others get `401`.
 
+        **Enrollment codes (policies, 2.1):** when `token` is not a one-time token
+        but the code of an enrollment policy (`/api/v1/enrollment-policies`), the
+        device gets its own client id `<policy name>-<6 chars>`. A code needs CSR
+        enrollment (`400 csr_required` otherwise). Without approval the certificate
+        is issued at once, while the policy has a device slot left (`403
+        enrollment_limit_reached`). With approval the answer is `202` with a
+        `requestId` and `Retry-After`; the device asks again with `{requestId, csr}`
+        — the CSR signed by the key it asked with — and gets `202` while it waits,
+        the chain once approved, `403 enrollment_rejected`, or `410
+        enrollment_request_expired` when nobody decided within
+        `ENROLLMENT_REQUEST_TTL_HOURS`. The `202` carries a `verificationCode`
+        made from the CSR's key (first 40 bits of the SHA-256 of its
+        SubjectPublicKeyInfo, Crockford base32, `XXXX-XXXX`); the device shows
+        the same code and the administrator compares the two. The same key
+        sending the code again gets its request's answer, never a second slot.
+        A stopped or expired code is answered like a used token (`401`).
+
         *Management port* (`Main.kt`) is token-only and issues P12s: `{token}` is
         required, `deviceId` and `csr` are ignored, and the response adds a
         `Content-Disposition` attachment header. It records `deviceAlias` /
@@ -2289,7 +2603,9 @@ paths:
                   description: Single-use enrollment token plaintext. Required on the management port.
                 deviceId:
                   type: string
-                  description: 'Config API ports only, and only with `ENROLLMENT_MODE=open`.'
+                  description: >
+                    Config API ports only: an application without a code while those are
+                    on, otherwise only with `ENROLLMENT_MODE=open`.
                 deviceAlias:
                   type: string
                   description: 'Config API ports only. Human-readable label stored with the certificate.'
@@ -2304,6 +2620,11 @@ paths:
                   description: >
                     Config API ports only, with `X-PinVault-Features: csr`. Base64 DER PKCS#10
                     request over the device's Keystore key. Its subject is ignored.
+                requestId:
+                  type: string
+                  description: >
+                    Config API ports only. A device that was told to wait (`202`) asks again
+                    by this id, with a `csr` signed by the same key; no `token` is needed.
       responses:
         '200':
           description: >
@@ -2330,12 +2651,24 @@ paths:
               schema: { type: string, format: binary }
             application/json:
               schema: { $ref: '#/components/schemas/IssuedClientCert' }
+        '202':
+          description: >
+            An enrollment code whose policy asks for approval, or an application without
+            a code: the device waits. No certificate yet; ask again with the `requestId`
+            (and a CSR from the same key) after `Retry-After` seconds.
+          headers:
+            Retry-After:
+              description: Seconds to wait before asking again (15).
+              schema: { type: integer }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/EnrollmentPending' }
         '400':
           description: >
             No `token` (management port), neither `token` nor `deviceId` (Config API ports),
             an unparseable / unverifiable `csr` (`invalid_csr`), or a client id / `deviceUid`
-            outside `[A-Za-z0-9._:-]{1,64}` (`invalid_client_id`, `invalid_device_uid`).
-            The token is not spent.
+            outside `[A-Za-z0-9._:-]{1,64}` (`invalid_client_id`, `invalid_device_uid`), or an
+            enrollment code / `requestId` without a CSR (`csr_required`). The token is not spent.
           content:
             application/json:
               schema: { $ref: '#/components/schemas/Error' }
@@ -2345,7 +2678,13 @@ paths:
             application/json:
               schema: { $ref: '#/components/schemas/Error' }
         '403':
-          description: '`deviceId`-only enrollment attempted while `ENROLLMENT_MODE=token` (Config API ports), or the client id was revoked (`revoked`).'
+          description: >
+            `deviceId`-only enrollment attempted while `ENROLLMENT_MODE=token` and
+            applications without a code are off (Config API ports), the client id was
+            revoked or the CSR's key retired with a forgotten identity (`revoked`), an enrollment code has no device
+            slot left (`enrollment_limit_reached`), an administrator turned the device away
+            (`enrollment_rejected`), or a `requestId` was sent with a CSR over another key
+            (`enrollment_request_mismatch`).
           content:
             application/json:
               schema: { $ref: '#/components/schemas/Error' }
@@ -2354,6 +2693,28 @@ paths:
             `device_already_enrolled` — another active client id was enrolled from this
             `deviceUid`. One active identity per device; revoke the other id (or re-enroll
             under it) and retry: the token is not spent.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '404':
+          description: '`enrollment_request_not_found` — no such `requestId`; enroll again with the code, or apply again.'
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '410':
+          description: >
+            `enrollment_request_expired` — nobody decided on the request within
+            `ENROLLMENT_REQUEST_TTL_HOURS`. The device forgets it and its key; asking
+            again is a new request.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '429':
+          description: >
+            `too_many_pending_requests` — as many devices wait for approval with this code
+            as it has slots (applications without a code: `OPEN_ENROLLMENT_MAX_PENDING`), or
+            `too_many_applications` — this source address made `OPEN_ENROLLMENT_RATE_LIMIT`
+            applications without a code in the last 10 minutes.
           content:
             application/json:
               schema: { $ref: '#/components/schemas/Error' }
@@ -2675,10 +3036,11 @@ paths:
         restart a revoked certificate would keep working until the process restarts.
 
         `token_mtls` vault downloads also re-check `revoked` on each request.
-        A CSR-enrolled identity is revoked in `client_identities` as well: its
-        next renewal is refused (`reenroll_required`) and its current, short-lived
-        certificate runs out on its own. The client id stays revoked — a new
-        enrollment under it is refused.
+        A CSR-enrolled identity is revoked in `client_identities` as well: the
+        mTLS listeners refuse its certificate on every request and its renewal
+        (`403 reenroll_required`). The client id stays revoked — a new
+        enrollment under it is refused — until it is forgotten
+        (`POST /api/v1/client-certs/{id}/forget`).
 
         An unknown id still returns `200`.
 
@@ -2702,6 +3064,56 @@ paths:
                 properties:
                   id: { type: string }
                   revoked: { type: boolean, example: true }
+        '401': { $ref: '#/components/responses/MissingApiKey' }
+        '403': { $ref: '#/components/responses/InvalidApiKey' }
+
+  /api/v1/client-certs/{id}/forget:
+    post:
+      tags: [client-certs]
+      operationId: forgetClientIdentity
+      summary: Forget a revoked identity so its client id can enroll again
+      description: |
+        A revoked client id stays revoked, which leaves a device enrolled in open
+        mode — whose client id is its own device id — unable to enroll again.
+        Forgetting frees the client id: every key it enrolled with is retired
+        (`client_keys`), then its `client_identities` and `client_certs` rows are
+        deleted, in one transaction. A certificate over a retired key is refused
+        on every mTLS request (`403 reenroll_required`), and a retired key never
+        gets a certificate again (`403 revoked` at enrollment, under any client
+        id), so the next enrollment is over a new key: the device unenrolls (or
+        loses its data) first. Audited as `client_identity_forgotten`.
+
+        Registered on: **management** only.
+      security:
+        - ApiKeyAuth: []
+      x-registered-on: management
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: 'The client id (the certificate CN minus the `PinVault Client: ` prefix).'
+          schema: { type: string }
+      responses:
+        '200':
+          description: Forgotten.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  id: { type: string }
+                  forgotten: { type: boolean, example: true }
+                  retiredKeys: { type: integer, description: Keys the client id enrolled with that are now refused for good. }
+        '404':
+          description: '`client_cert_not_found` — no client certificate or identity with this id.'
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '409':
+          description: '`not_revoked` — revoke it first; only a revoked identity is forgotten.'
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
         '401': { $ref: '#/components/responses/MissingApiKey' }
         '403': { $ref: '#/components/responses/InvalidApiKey' }
 
@@ -5012,6 +5424,88 @@ components:
         notBefore: { type: string, format: date-time }
         notAfter: { type: string, format: date-time }
         spkiSha256: { type: string, description: Base64 SHA-256 of the device key's SubjectPublicKeyInfo. }
+
+    EnrollmentPolicy:
+      type: object
+      description: An enrollment code many devices share. The code itself is never part of it.
+      properties:
+        id: { type: string }
+        name: { type: string, description: 'Prefix of the client ids it hands out (`<name>-<6 chars>`).' }
+        codePrefix: { type: string, description: First group of the code, for telling policies apart. }
+        maxDevices: { type: integer }
+        usedCount: { type: integer, description: Devices issued a certificate plus approved ones not yet picked up. }
+        pendingCount: { type: integer, description: Devices waiting for approval. }
+        requireApproval: { type: boolean }
+        createdAt: { type: string, format: date-time }
+        createdBy: { type: string, description: The administrator who created it. }
+        expiresAt: { type: string, format: date-time }
+        stoppedAt: { type: string, format: date-time, nullable: true }
+        status: { type: string, enum: [active, stopped, expired, full] }
+        openApplications: { type: boolean, description: 'The policy collecting applications without a code (named `device`); not listed with the codes.' }
+        accepting: { type: boolean, description: 'New devices may ask. False while applications without a code are switched off.' }
+
+    OpenApplicationsStatus:
+      type: object
+      properties:
+        enabled: { type: boolean }
+        policy:
+          allOf: [{ $ref: '#/components/schemas/EnrollmentPolicy' }]
+          nullable: true
+          description: The policy collecting the requests; null until the switch was turned on once.
+        maxPending: { type: integer, description: '`OPEN_ENROLLMENT_MAX_PENDING`.' }
+        requestTtlHours: { type: integer, description: '`ENROLLMENT_REQUEST_TTL_HOURS`.' }
+        rateLimitPer10Minutes: { type: integer, description: '`OPEN_ENROLLMENT_RATE_LIMIT`; 0 = no limit.' }
+
+    CreatedEnrollmentPolicy:
+      type: object
+      properties:
+        policy: { $ref: '#/components/schemas/EnrollmentPolicy' }
+        code:
+          type: string
+          description: The code, shown this once.
+          example: K7QM2-XRT9V-4NWDP-J6E8B-HC3MA
+
+    EnrollmentRequest:
+      type: object
+      description: A device that asked to enroll with a code or without one, recognised by its key.
+      properties:
+        id: { type: string }
+        policyId: { type: string }
+        policyName: { type: string }
+        clientId: { type: string, description: The identity the device gets. }
+        spkiSha256: { type: string, description: 'SHA-256 of the device key (SubjectPublicKeyInfo), Base64.' }
+        verificationCode: { type: string, description: 'The code the device shows: first 40 bits of that SHA-256, Crockford base32, `XXXX-XXXX`.', example: 4F7K-2QXM }
+        openApplication: { type: boolean, description: Asked without a code. }
+        status: { type: string, enum: [pending, approved, rejected, issued, expired] }
+        configApiId: { type: string, description: The Config API listener the device asked through. }
+        deviceAlias: { type: string, nullable: true }
+        deviceUid: { type: string, nullable: true }
+        sourceIp: { type: string }
+        createdAt: { type: string, format: date-time }
+        decidedAt: { type: string, format: date-time, nullable: true }
+        decidedBy: { type: string, nullable: true, description: 'The administrator, `policy` for a policy without approval, or `timeout` for a request that lapsed.' }
+        issuedAt: { type: string, format: date-time, nullable: true }
+        heldBy: { type: string, nullable: true, description: 'Listing only: another active identity enrolled from the same `deviceUid`.' }
+        sameDevicePending: { type: integer, description: 'Listing only: other requests waiting from the same `deviceUid` (a reinstall).' }
+
+    EnrollmentDecision:
+      type: object
+      properties:
+        id: { type: string }
+        status: { type: string, enum: [approved, rejected] }
+        clientId: { type: string }
+
+    EnrollmentPending:
+      type: object
+      description: 'The device waits for approval (HTTP 202, with `Retry-After`).'
+      properties:
+        status: { type: string, enum: [pending] }
+        requestId: { type: string, description: 'Send it back with a CSR from the same key to ask again.' }
+        clientId: { type: string }
+        policy: { type: string }
+        verificationCode: { type: string, description: 'From the CSR''s key; the device shows the same code.', example: 4F7K-2QXM }
+        openApplication: { type: boolean, description: Asked without a code. }
+        message: { type: string }
 
     EnrollmentToken:
       type: object

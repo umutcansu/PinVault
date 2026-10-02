@@ -389,6 +389,19 @@ async function renderMtlsSection() {
     // Recovery door is optional (RECOVERY_PORT=0 turns it off); never let it break the tab.
     let recovery = null;
     try { recovery = await (await apiFetch('/api/v1/recovery-door')).json(); } catch (_) { recovery = null; }
+    // Enrollment codes and the devices waiting for approval: never let them break the tab either.
+    let policies = [], requests = [], openStatus = null;
+    try {
+      const [policiesRes, requestsRes, openRes] = await Promise.all([
+        apiFetch('/api/v1/enrollment-policies', { quiet: true }),
+        apiFetch('/api/v1/enrollment-requests', { quiet: true }),
+        apiFetch('/api/v1/enrollment-open', { quiet: true })
+      ]);
+      // The code-less applications policy is the switch, not a row of the policy table.
+      if (policiesRes.ok) policies = (await policiesRes.json()).filter(p => !p.openApplications);
+      if (requestsRes.ok) requests = await requestsRes.json();
+      if (openRes.ok) openStatus = await openRes.json();
+    } catch (_) { /* tab still renders */ }
     const locale = lang === 'tr' ? 'tr-TR' : 'en-US';
     // Port of the mTLS Config API shown in the integration snippet below. This
     // section used to reference an undefined `data.httpsPort`, which threw and
@@ -416,7 +429,9 @@ async function renderMtlsSection() {
             <td>${c.revoked
               ? `<span style="color:#ef4444">${t('revoked')}</span>`
               : `<span style="color:#22c55e">${t('active')}</span>`}</td>
-            <td>${!c.revoked ? `<button class="btn btn-danger" style="padding:2px 8px;font-size:11px" data-action="revokeClientCert" data-arg0="${esc(c.id)}">${t('revoke')}</button>` : ''}</td>
+            <td>${!c.revoked
+              ? `<button class="btn btn-danger" style="padding:2px 8px;font-size:11px" data-action="revokeClientCert" data-arg0="${esc(c.id)}">${t('revoke')}</button>`
+              : `<button class="btn btn-secondary" style="padding:2px 8px;font-size:11px" title="${esc(t('forgetIdentityHint'))}" data-action="forgetClientIdentity" data-arg0="${esc(c.id)}">${t('forgetIdentity')}</button>`}</td>
           </tr>`).join('')}</tbody>
         </table>${certsPagNav}`;
 
@@ -427,6 +442,7 @@ async function renderMtlsSection() {
           <div class="stat-value" style="color:#7dd3fc">${status.activeCerts}</div>
         </div>
       </div>
+      ${renderEnrollmentRequestsCard(requests, openStatus, locale)}
       <div class="card">
         <div class="card-title">${t('generateClientCert')}</div>
         <form data-action-submit="generateClientCert" style="display:flex;gap:8px;align-items:end">
@@ -481,6 +497,7 @@ HostPin("${location.hostname}:${recovery.port}", listOf(
     "${esc(recovery.caPins[1] || '')}"
 ))</div>
       </div>` : ''}
+      ${renderEnrollmentPoliciesCard(policies, locale)}
       <div class="card">
         <div style="display:flex;align-items:center;gap:10px;margin-bottom:8px">
           <div class="card-title" style="margin:0">${t('enrollmentToken')}</div>
@@ -501,6 +518,8 @@ HostPin("${location.hostname}:${recovery.port}", listOf(
         </form>
         <div id="enrollment-token-list" style="margin-top:12px"></div>
       </div>`;
+    _openRequestIds = openRequestIds(requests);
+    scheduleEnrollmentRequestPoll();
     // Bilerek `await` edilmiyor: `renderConfigApiDetail` bu fonksiyon döner
     // dönmez #content'in innerHTML'ini kopyalayıp başlık + sekme çubuğuyla
     // geri yazıyor, bu arada beklemek forma yazılanı silecek kadar uzun bir
@@ -528,7 +547,7 @@ async function generateClientCert(e) {
     a.href = url; a.download = clientId + '.p12'; a.click();
     URL.revokeObjectURL(url);
     toast(t('certGenerated'), 'success');
-    renderMtlsSection();
+    refreshMtlsView();
   } catch (err) { toast(t('error'), 'error'); }
 }
 
@@ -544,7 +563,7 @@ async function uploadClientCert() {
     const data = await res.json();
     if (data.error) { toast(data.error, 'error'); return; }
     toast(t('certUploaded'), 'success');
-    renderMtlsSection();
+    refreshMtlsView();
   } catch (err) { toast(t('error'), 'error'); }
 }
 
@@ -642,12 +661,265 @@ async function loadEnrollmentTokens() {
   } catch (_) {}
 }
 
+// ── Enrollment policies: one code, many devices, optional approval ───
+
+// The code of the policy just created. The server shows it only in that
+// answer, so it stays on screen (re-renders included) until it is closed.
+let lastPolicyCode = null;      // { name, code }
+let _openRequestIds = '';       // open requests last rendered, to notice new ones
+let _enrollmentPoll = null;
+const ENROLLMENT_POLL_MS = 10000;
+
+/** Re-renders the client certificate view where it is shown (Config API tab or section). */
+function refreshMtlsView() {
+  if (currentSection === 'mtls' || !selectedApiId) return renderMtlsSection();
+  configApiTab = 'mtls';
+  return renderConfigApiDetail(selectedApiId);
+}
+
+/** Waiting and approved-but-not-picked-up requests, as one comparable string. */
+function openRequestIds(requests) {
+  return requests.filter(r => r.status === 'pending' || r.status === 'approved')
+    .map(r => r.id + ':' + r.status).join(',');
+}
+
+// While the view is open, a device that asks shows up without a reload.
+function scheduleEnrollmentRequestPoll() {
+  if (_enrollmentPoll) return;
+  _enrollmentPoll = setInterval(async () => {
+    if (!document.getElementById('enrollment-policies-card')) {
+      clearInterval(_enrollmentPoll);
+      _enrollmentPoll = null;
+      return;
+    }
+    if (document.hidden) return;
+    try {
+      const res = await apiFetch('/api/v1/enrollment-requests', { quiet: true });
+      if (!res.ok) return;
+      const ids = openRequestIds(await res.json());
+      if (ids === _openRequestIds) return;
+      // Someone typing into a form here: try again on the next tick.
+      const active = document.activeElement;
+      if (active && active.closest && active.closest('#content form')) return;
+      refreshMtlsView();
+    } catch (_) { /* next tick */ }
+  }, ENROLLMENT_POLL_MS);
+}
+
+function renderEnrollmentRequestsCard(requests, openStatus, locale) {
+  const open = requests.filter(r => r.status === 'pending' || r.status === 'approved');
+  const waiting = open.filter(r => r.status === 'pending').length;
+  const accepting = !!(openStatus && openStatus.enabled);
+  const rows = open.map(r => {
+    const device = `<div style="font-weight:600">${esc(r.deviceAlias || '—')}</div>` +
+      (r.deviceUid ? `<div style="font-size:10px;color:#64748b;font-family:monospace">${esc(r.deviceUid)}</div>` : '') +
+      (r.heldBy ? `<div style="color:#f59e0b;font-size:11px;margin-top:4px;max-width:340px">&#x26A0; ${esc(t('requestHeldBy', r.heldBy))}</div>` : '') +
+      (r.sameDevicePending > 0 ? `<div style="color:#f59e0b;font-size:11px;margin-top:4px;max-width:340px">&#x26A0; ${esc(t('requestSameDevice', r.sameDevicePending))}</div>` : '');
+    const reject = `<button class="btn btn-danger" style="padding:2px 10px;font-size:11px" data-action="rejectEnrollmentRequest" data-arg0="${esc(r.id)}" data-arg1="${esc(r.clientId)}">${t('requestRejectBtn')}</button>`;
+    const actions = r.status === 'pending'
+      ? `<button class="btn btn-primary" style="padding:2px 10px;font-size:11px" data-action="approveEnrollmentRequest" data-arg0="${esc(r.id)}"${r.heldBy ? ' disabled' : ''}>${t('requestApproveBtn')}</button> ${reject}`
+      : `<div style="color:#22c55e;font-size:11px;margin-bottom:4px;max-width:220px">${t('requestApprovedNote')}</div>${reject}`;
+    return `<tr data-request-id="${esc(r.id)}">
+      <td>${device}</td>
+      <td style="font-family:monospace;font-weight:700;color:#7dd3fc;white-space:nowrap" title="${esc(t('requestCodeHint'))}">${esc(r.verificationCode || '—')}</td>
+      <td style="font-family:monospace;font-weight:600">${esc(r.clientId)}</td>
+      <td>${r.openApplication ? `<span style="color:#94a3b8">${t('requestViaOpen')}</span>` : esc(r.policyName)}</td>
+      <td style="font-family:monospace;font-size:11px">${esc(r.sourceIp)}</td>
+      <td style="font-size:11px;color:#64748b">${new Date(r.createdAt).toLocaleString(locale)}</td>
+      <td style="white-space:nowrap">${actions}</td>
+    </tr>`;
+  }).join('');
+  const table = open.length === 0
+    ? `<div class="empty-msg">${t('pendingNone')}</div>`
+    : `<table class="data-table">
+        <thead><tr><th>${t('thRequestDevice')}</th><th>${t('thRequestCode')}</th><th>${t('thRequestIdentity')}</th><th>${t('thRequestPolicy')}</th><th>${t('thRequestIp')}</th><th>${t('thRequestAsked')}</th><th></th></tr></thead>
+        <tbody>${rows}</tbody>
+      </table>`;
+  const limits = openStatus
+    ? t('openLimits', openStatus.maxPending, openStatus.rateLimitPer10Minutes || '∞', openStatus.requestTtlHours)
+    : '';
+  return `<div class="card" id="enrollment-requests-card" style="border:1px solid ${waiting ? '#f59e0b' : '#334155'}">
+      <div style="display:flex;align-items:center;gap:10px;margin-bottom:8px;flex-wrap:wrap">
+        <div class="card-title" style="margin:0">${t('pendingTitle')}</div>
+        ${waiting ? `<span style="background:#92400e;color:#fef08a;padding:2px 8px;border-radius:4px;font-size:11px;font-weight:700">${waiting}</span>` : ''}
+        <label style="margin-left:auto;display:flex;align-items:center;gap:8px;font-size:13px;cursor:pointer" title="${esc(t('openSwitchHint'))}">
+          <input type="checkbox" id="open-applications-switch" ${accepting ? 'checked' : ''} data-action-change="toggleOpenApplications" data-event="1" style="accent-color:#f59e0b">
+          <span>${t('openSwitchLabel')}</span>
+          <span style="font-weight:700;color:${accepting ? '#22c55e' : '#64748b'}">${accepting ? t('openSwitchOn') : t('openSwitchOff')}</span>
+        </label>
+      </div>
+      <div style="color:#94a3b8;font-size:12px;margin-bottom:12px;line-height:1.5">${t('pendingHint')} ${accepting ? t('openOnHint') : t('openOffHint')}${limits ? `<br><span style="color:#64748b">${limits}</span>` : ''}</div>
+      ${table}
+    </div>`;
+}
+
+function renderEnrollmentPoliciesCard(policies, locale) {
+  const statusColor = { active: '#22c55e', stopped: '#64748b', expired: '#f59e0b', full: '#f59e0b' };
+  const codeBox = lastPolicyCode ? `
+      <div id="policy-code-box" style="border:1px solid #22c55e;border-radius:8px;padding:12px;margin-bottom:12px;display:flex;gap:16px;align-items:center;flex-wrap:wrap">
+        <div style="background:#ffffff;padding:6px;border-radius:6px;line-height:0">${qrSvg(lastPolicyCode.code, 168)}</div>
+        <div style="flex:1;min-width:240px">
+          <div style="font-weight:600;margin-bottom:6px">${esc(t('policyCodeTitle', lastPolicyCode.name))}</div>
+          <div id="policy-code-value" style="font-family:monospace;font-size:20px;letter-spacing:1px;color:#7dd3fc;margin-bottom:8px;user-select:all;word-break:break-all">${esc(lastPolicyCode.code)}</div>
+          <div style="color:#94a3b8;font-size:12px;line-height:1.5;margin-bottom:10px">${t('policyCodeOnce')}</div>
+          <button class="copy-btn" data-action="copyText" data-arg0="${esc(lastPolicyCode.code)}">${t('copy')}</button>
+          <button class="btn btn-secondary" style="padding:2px 10px;font-size:11px" data-action="closePolicyCode">${t('policyCodeClose')}</button>
+        </div>
+      </div>` : '';
+  const table = policies.length === 0
+    ? `<div class="empty-msg">${t('policyNone')}</div>`
+    : `<table class="data-table">
+        <thead><tr><th>${t('thPolicyName')}</th><th>${t('thPolicyCode')}</th><th>${t('thPolicyUsage')}</th><th>${t('thPolicyPending')}</th><th>${t('thPolicyApproval')}</th><th>${t('thPolicyExpires')}</th><th>${t('thStatus')}</th><th></th></tr></thead>
+        <tbody>${policies.map(p => `<tr data-policy-id="${esc(p.id)}">
+          <td style="font-weight:600">${esc(p.name)}</td>
+          <td style="font-family:monospace;color:#64748b" title="${esc(t('tokenMaskedHint'))}">${esc(p.codePrefix)}-…</td>
+          <td>${p.usedCount} / ${p.maxDevices}</td>
+          <td>${p.pendingCount}</td>
+          <td>${p.requireApproval ? t('policyApprovalYes') : t('policyApprovalNo')}</td>
+          <td style="font-size:11px;color:#64748b">${new Date(p.expiresAt).toLocaleString(locale)}</td>
+          <td style="color:${statusColor[p.status] || '#64748b'}">${t('policyStatus_' + p.status)}</td>
+          <td>${p.status !== 'stopped' ? `<button class="btn btn-danger" style="padding:2px 8px;font-size:11px" data-action="stopEnrollmentPolicy" data-arg0="${esc(p.id)}" data-arg1="${esc(p.name)}">${t('policyStopBtn')}</button>` : ''}</td>
+        </tr>`).join('')}</tbody>
+      </table>`;
+  return `<div class="card" id="enrollment-policies-card">
+      <div class="card-title">${t('policiesTitle')}</div>
+      <div style="color:#94a3b8;font-size:12px;margin-bottom:12px;line-height:1.5">${t('policiesHint')}</div>
+      ${codeBox}
+      <form data-action-submit="createEnrollmentPolicy" style="display:flex;gap:8px;align-items:end;flex-wrap:wrap;margin-bottom:12px">
+        <div class="form-group" style="flex:2;min-width:180px;margin:0">
+          <label class="form-label">${t('policyNameLabel')}</label>
+          <input type="text" id="policy-name" placeholder="${t('policyNamePlaceholder')}" required maxlength="40" class="form-input"/>
+        </div>
+        <div class="form-group" style="width:120px;margin:0">
+          <label class="form-label">${t('policyMaxLabel')}</label>
+          <input type="number" id="policy-max" value="10" min="1" max="10000" required class="form-input"/>
+        </div>
+        <div class="form-group" style="width:120px;margin:0">
+          <label class="form-label">${t('policyDaysLabel')}</label>
+          <input type="number" id="policy-days" value="7" min="1" max="365" required class="form-input"/>
+        </div>
+        <label style="display:flex;align-items:center;gap:6px;font-size:13px;padding-bottom:8px;cursor:pointer">
+          <input type="checkbox" id="policy-approval" checked style="accent-color:#f59e0b"> ${t('policyApprovalLabel')}
+        </label>
+        <button type="submit" class="btn btn-primary">${t('policyCreateBtn')}</button>
+      </form>
+      ${table}
+    </div>`;
+}
+
+/** The "Code-less applications" switch: devices may ask without a token, each waits for approval. */
+async function toggleOpenApplications(ev) {
+  const enabled = !!ev.target.checked;
+  try {
+    const res = await apiFetch('/api/v1/enrollment-open', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ enabled })
+    });
+    if (!res.ok) {
+      const data = await res.json().catch(() => ({}));
+      toast(data.message || t('error'), 'error');
+    } else {
+      toast(enabled ? t('openTurnedOn') : t('openTurnedOff'), 'success');
+    }
+    refreshMtlsView();
+  } catch (err) { toast(t('error'), 'error'); }
+}
+
+async function createEnrollmentPolicy(e) {
+  e.preventDefault();
+  const body = {
+    name: document.getElementById('policy-name').value.trim(),
+    maxDevices: parseInt(document.getElementById('policy-max').value, 10),
+    validDays: parseInt(document.getElementById('policy-days').value, 10),
+    requireApproval: document.getElementById('policy-approval').checked
+  };
+  try {
+    const res = await apiFetch('/api/v1/enrollment-policies', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body)
+    });
+    const data = await res.json();
+    if (!res.ok) { toast(data.message || data.error || t('policyCreateError'), 'error'); return; }
+    // Plain text only here, once: on screen until closed, and on the clipboard.
+    lastPolicyCode = { name: data.policy.name, code: data.code };
+    navigator.clipboard?.writeText(data.code).catch(() => {});
+    toast(t('policyCreated'), 'success');
+    refreshMtlsView();
+  } catch (err) { toast(t('policyCreateError'), 'error'); }
+}
+
+function closePolicyCode() {
+  lastPolicyCode = null;
+  document.getElementById('policy-code-box')?.remove();
+}
+
+async function stopEnrollmentPolicy(id, name) {
+  if (!confirm(t('policyStopConfirm', name))) return;
+  try {
+    const res = await apiFetch(`/api/v1/enrollment-policies/${encodeURIComponent(id)}/stop`, { method: 'POST' });
+    if (!res.ok) {
+      const data = await res.json().catch(() => ({}));
+      toast(data.message || t('error'), 'error');
+    } else {
+      toast(t('policyStopped'), 'success');
+    }
+    refreshMtlsView();
+  } catch (err) { toast(t('error'), 'error'); }
+}
+
+async function approveEnrollmentRequest(id) {
+  try {
+    const res = await apiFetch(`/api/v1/enrollment-requests/${encodeURIComponent(id)}/approve`, { method: 'POST' });
+    const data = await res.json().catch(() => ({}));
+    if (res.ok) {
+      toast(t('requestApproved'), 'success');
+    } else if (data.error === 'device_already_enrolled') {
+      toast(t('requestHeldBy', data.heldBy || '?'), 'error', 6000);
+    } else {
+      toast(i18n[lang]?.['requestErr_' + data.error] ? t('requestErr_' + data.error) : (data.message || t('error')), 'error');
+    }
+    refreshMtlsView();
+  } catch (err) { toast(t('error'), 'error'); }
+}
+
+async function rejectEnrollmentRequest(id, clientId) {
+  if (!confirm(t('requestRejectConfirm', clientId))) return;
+  try {
+    const res = await apiFetch(`/api/v1/enrollment-requests/${encodeURIComponent(id)}/reject`, { method: 'POST' });
+    if (res.ok) {
+      toast(t('requestRejected'), 'success');
+    } else {
+      const data = await res.json().catch(() => ({}));
+      toast(i18n[lang]?.['requestErr_' + data.error] ? t('requestErr_' + data.error) : (data.message || t('error')), 'error');
+    }
+    refreshMtlsView();
+  } catch (err) { toast(t('error'), 'error'); }
+}
+
 async function revokeClientCert(id) {
   if (!confirm(t('revokeCertConfirm', id))) return;
   try {
     await apiFetch(`/api/v1/client-certs/${encodeURIComponent(id)}`, { method: 'DELETE' });
     toast(t('certRevoked'), 'success');
-    renderMtlsSection();
+    refreshMtlsView();
+  } catch (err) { toast(t('error'), 'error'); }
+}
+
+// A revoked id stays revoked; forgetting it lets it enroll again (over a new
+// key — the old certificate and key stay refused).
+async function forgetClientIdentity(id) {
+  if (!confirm(t('forgetIdentityConfirm', id))) return;
+  try {
+    const res = await apiFetch(`/api/v1/client-certs/${encodeURIComponent(id)}/forget`, { method: 'POST' });
+    if (res.ok) {
+      toast(t('identityForgotten', id), 'success', 6000);
+    } else {
+      const data = await res.json().catch(() => ({}));
+      toast(data.error === 'not_revoked' ? t('forgetNotRevoked') : (data.message || t('error')), 'error');
+    }
+    refreshMtlsView();
   } catch (err) { toast(t('error'), 'error'); }
 }
 

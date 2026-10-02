@@ -40,7 +40,13 @@ class DashboardGovernanceLabelsTest {
         "change_expired", "change_stale", "change_approval_refused",
         "live_check_warning", "live_check_blocked", "live_check_overridden",
         "signing_key_regenerated", "signing_keyset_uploaded",
-        "auth_failed", "cert_expiring", "notification_test", "http"
+        "auth_failed", "cert_expiring", "notification_test", "http",
+        // Device enrollment, renewal and E2E keys (routes, AuthFailureRecorder instances in Main)
+        "enrollment_policy_created", "enrollment_policy_stopped", "enrollment_request_pending",
+        "enrollment_request_approved", "enrollment_request_rejected", "enrollment_open_changed",
+        "client_cert_issued", "client_cert_renewed", "client_cert_enroll_refused", "client_cert_auth_failed",
+        "client_cert_revoked_refused", "client_identity_forgotten", "device_id_refused", "device_key_registered", "device_key_replaced",
+        "device_key_reset", "device_key_refused", "test_hook_used"
     )
 
     @Test

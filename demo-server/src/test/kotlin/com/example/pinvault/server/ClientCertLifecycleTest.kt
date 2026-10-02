@@ -277,6 +277,68 @@ class ClientCertLifecycleTest {
         assertTrue(tokenStore.getAll().any { it.clientId == "dev-rev" && !it.used })
     }
 
+    // ── forgetting a revoked identity ────────────────────────────────────
+
+    private fun forget(clientId: String) = identityStore.forget(clientId, Instant.now().toString())
+
+    @Test
+    fun `a forgotten identity's client id enrolls again over a new key, its old key never`() = testApplication {
+        configureApp()
+        val old = deviceKey()
+        assertEquals(HttpStatusCode.OK, enroll(old, "dev-forget").status)
+        assertEquals(ClientIdentityStore.Forget.NOT_REVOKED, forget("dev-forget"), "only a revoked identity is forgotten")
+        assertNotNull(identityStore.get("dev-forget"))
+        identityStore.revoke("dev-forget")
+        clientCertStore.revoke("dev-forget")
+
+        assertEquals(ClientIdentityStore.Forget.FORGOTTEN, forget("dev-forget"))
+        assertNull(identityStore.get("dev-forget"))
+        assertNull(clientCertStore.get("dev-forget"))
+        assertTrue(identityStore.isRetired(certService.spkiSha256(old.public)))
+
+        // The old key is refused under any client id, before the token is spent.
+        val again = enroll(old, "dev-forget")
+        assertEquals(HttpStatusCode.Forbidden, again.status)
+        assertTrue(again.bodyAsText().contains("revoked"))
+        assertTrue(tokenStore.getAll().any { it.clientId == "dev-forget" && !it.used })
+        assertEquals(HttpStatusCode.Forbidden, enroll(old, "dev-elsewhere").status)
+
+        // A new key enrolls the same client id.
+        val fresh = deviceKey()
+        assertEquals(HttpStatusCode.OK, enroll(fresh, "dev-forget").status)
+        assertEquals(certService.spkiSha256(fresh.public), assertNotNull(identityStore.get("dev-forget")).spkiSha256)
+        assertFalse(assertNotNull(clientCertStore.get("dev-forget")).revoked)
+        assertFalse(identityStore.isRetired(certService.spkiSha256(fresh.public)))
+    }
+
+    @Test
+    fun `forgetting retires every key the client id enrolled with`() = testApplication {
+        configureApp()
+        val first = deviceKey()
+        val second = deviceKey()
+        assertEquals(HttpStatusCode.OK, enroll(first, "dev-two").status)
+        assertEquals(HttpStatusCode.OK, enroll(second, "dev-two").status, "re-enrolled under the same id")
+        identityStore.revoke("dev-two")
+        clientCertStore.revoke("dev-two")
+
+        assertEquals(ClientIdentityStore.Forget.FORGOTTEN, forget("dev-two"))
+        assertEquals(2, identityStore.retiredKeys("dev-two"))
+        assertTrue(identityStore.isRetired(certService.spkiSha256(first.public)), "the key the second enrollment replaced")
+        assertTrue(identityStore.isRetired(certService.spkiSha256(second.public)))
+    }
+
+    @Test
+    fun `a revoked P12 identity is forgotten too, and an unknown one is not found`() = testApplication {
+        configureApp()
+        assertEquals(HttpStatusCode.OK, enroll(deviceKey(), "dev-legacy", withFeature = false).status)
+        clientCertStore.revoke("dev-legacy")
+        assertEquals(ClientIdentityStore.Forget.FORGOTTEN, forget("dev-legacy"))
+        assertNull(clientCertStore.get("dev-legacy"))
+        assertEquals(0, identityStore.retiredKeys("dev-legacy"))
+
+        assertEquals(ClientIdentityStore.Forget.NOT_FOUND, forget("nobody"))
+    }
+
     private suspend fun ApplicationTestBuilder.enrollAs(
         clientId: String,
         deviceUid: String?,
