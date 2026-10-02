@@ -1,0 +1,15 @@
+{
+  "name": "sample-pinvault-e2e",
+  "private": true,
+  "description": "Uçtan uca testler: SamplePinVaultHost web dashboard'unda işlem, SamplePinVaultClient'ta (Android) gözlem ve tersi.",
+  "scripts": {
+    "test": "playwright test",
+    "test:emulator": "E2E_AVD=${E2E_AVD:-Pixel_6_Pro-ParlaForTest} playwright test",
+    "report": "playwright show-report",
+    "evidence": "open evidence/index.html",
+    "check-evidence": "node scripts/check-evidence.js"
+  },
+  "devDependencies": {
+    "@playwright/test": "1.59.1"
+  }
+}
