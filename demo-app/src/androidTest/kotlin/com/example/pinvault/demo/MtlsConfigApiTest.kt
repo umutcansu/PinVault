@@ -94,6 +94,11 @@ class MtlsConfigApiTest {
 
     private fun generateEnrollmentTokenFor(clientId: String): String {
         releaseThisDevice()
+        return mintToken(clientId)
+    }
+
+    /** A token for [clientId], leaving this device's other identities as they are. */
+    private fun mintToken(clientId: String): String {
         val resp = TestConfig.adminClient.newCall(
             Request.Builder()
                 .url("${TestConfig.MANAGEMENT_URL}/api/v1/enrollment-tokens/generate")
@@ -153,6 +158,27 @@ class MtlsConfigApiTest {
             if (o.optString("id") == clientId) return o
         }
         return null
+    }
+
+    /** "Kayıt Ol" → the dialog's token field → "Kayıt Ol". */
+    private fun submitEnrollToken(token: String) {
+        onView(withId(R.id.btnEnroll)).perform(click())
+        onView(isAssignableFrom(android.widget.EditText::class.java))
+            .inRoot(androidx.test.espresso.matcher.RootMatchers.isDialog())
+            .perform(androidx.test.espresso.action.ViewActions.replaceText(token),
+                androidx.test.espresso.action.ViewActions.closeSoftKeyboard())
+        onView(withId(android.R.id.button1)).perform(click())
+    }
+
+    /** Waits until a line (the result line by default) shows [expected] (at most [timeoutMs]); the assertion after it reports a miss. */
+    private fun awaitResult(expected: String, timeoutMs: Long = 30000, viewId: Int = R.id.tvResult) {
+        val deadline = System.currentTimeMillis() + timeoutMs
+        while (System.currentTimeMillis() < deadline) {
+            var text = ""
+            scenario?.onActivity { text = it.findViewById<android.widget.TextView>(viewId).text.toString() }
+            if (text.contains(expected)) return
+            Thread.sleep(500)
+        }
     }
 
     private fun revokeOnServer(clientId: String) {
@@ -245,12 +271,7 @@ class MtlsConfigApiTest {
         Thread.sleep(3000)
         onView(withId(R.id.tvEnrollStatus)).check(matches(withText(containsString("✗"))))
 
-        onView(withId(R.id.btnEnroll)).perform(click())
-        onView(isAssignableFrom(android.widget.EditText::class.java))
-            .inRoot(androidx.test.espresso.matcher.RootMatchers.isDialog())
-            .perform(androidx.test.espresso.action.ViewActions.replaceText(token),
-                androidx.test.espresso.action.ViewActions.closeSoftKeyboard())
-        onView(withId(android.R.id.button1)).perform(click())
+        submitEnrollToken(token)
         qaScreenshots.capture("enroll-submitted")
 
         val deadline = System.currentTimeMillis() + 40000
@@ -262,6 +283,206 @@ class MtlsConfigApiTest {
         qaScreenshots.capture("after-ui-enroll")
         onView(withId(R.id.tvStatus)).check(matches(withText(containsString("✓"))))
         onView(withId(R.id.tvEnrollStatus)).check(matches(withText(containsString("✓"))))
+    }
+
+    /**
+     * Sunucu bu cihazı hâlâ başka bir kimlikle etkin biliyorsa (telefondaki
+     * kayıt silinmiş olsa da) yeni kimliğin token'ı reddedilir. Ekran nedenini
+     * söyler ("token geçersiz" değil) ve token harcanmaz: eski kimlik iptal
+     * edilince aynı token'la kayıt olur.
+     */
+    @Test
+    fun mtlsConfig_enroll_refusal_says_why() {
+        val first = newClientId()
+        enrollProgrammatically(first)
+        PinVault.unenroll(context) // yalnızca telefondaki kayıt; sunucuda `first` etkin
+        val second = "test-second-${System.currentTimeMillis()}"
+        val token = mintToken(second)
+
+        scenario = ActivityScenario.launch(MtlsToTlsActivity::class.java)
+        Thread.sleep(3000)
+        submitEnrollToken(token)
+        val why = context.getString(R.string.enrollment_device_already_enrolled)
+        awaitResult(why)
+        qaScreenshots.capture("refused-device-already-enrolled")
+        onView(withId(R.id.tvResult)).check(matches(withText(containsString(why))))
+        assertFalse(PinVault.isEnrolled(context))
+
+        revokeOnServer(first)
+        submitEnrollToken(token)
+        val deadline = System.currentTimeMillis() + 40000
+        while (!PinVault.isEnrolled(context) && System.currentTimeMillis() < deadline) Thread.sleep(1000)
+        qaScreenshots.capture("enrolled-after-revoke")
+        assertTrue("Eski kimlik iptal edilince aynı token'la kayıt olmalı", PinVault.isEnrolled(context))
+        assertEquals("csr", serverRecord(second)?.optString("keyType"))
+    }
+
+    // ─── Kayıt kodu: tek kod, çok cihaz; her cihaz onaylanır ───
+
+    /** Yönetim API'sinden bir kayıt politikası: (politika id, kod). */
+    private fun createPolicy(name: String, maxDevices: Int, approval: Boolean): Pair<String, String> {
+        val resp = TestConfig.adminClient.newCall(
+            Request.Builder()
+                .url("${TestConfig.MANAGEMENT_URL}/api/v1/enrollment-policies")
+                .post("""{"name":"$name","maxDevices":$maxDevices,"validDays":1,"requireApproval":$approval}"""
+                    .toRequestBody("application/json".toMediaType()))
+                .build()
+        ).execute()
+        val body = resp.body?.string() ?: ""
+        assertTrue("Politika oluşturulmalı: ${resp.code} $body", resp.isSuccessful)
+        val json = org.json.JSONObject(body)
+        return json.getJSONObject("policy").getString("id") to json.getString("code")
+    }
+
+    /** [policyName] ile onay bekleyen isteğe panelin düğmesi gibi karar verir; verilecek client id'yi döner. */
+    private fun decidePendingOf(policyName: String, decision: String): String {
+        val list = TestConfig.adminClient.newCall(
+            Request.Builder().url("${TestConfig.MANAGEMENT_URL}/api/v1/enrollment-requests?status=pending").build()
+        ).execute().use { org.json.JSONArray(it.body?.string() ?: "[]") }
+        val request = (0 until list.length()).map { list.getJSONObject(it) }
+            .firstOrNull { it.optString("policyName") == policyName }
+            ?: throw AssertionError("$policyName için onay bekleyen istek yok: $list")
+        TestConfig.adminClient.newCall(
+            Request.Builder()
+                .url("${TestConfig.MANAGEMENT_URL}/api/v1/enrollment-requests/${request.getString("id")}/$decision")
+                .post(ByteArray(0).toRequestBody(null))
+                .build()
+        ).execute().use { assertTrue("$decision başarılı olmalı: ${it.code} ${it.body?.string()}", it.isSuccessful) }
+        return request.getString("clientId")
+    }
+
+    private fun stopPolicy(policyId: String) {
+        TestConfig.adminClient.newCall(
+            Request.Builder()
+                .url("${TestConfig.MANAGEMENT_URL}/api/v1/enrollment-policies/$policyId/stop")
+                .post(ByteArray(0).toRequestBody(null))
+                .build()
+        ).execute().close()
+    }
+
+    /**
+     * Onaylı politika: cihaz kodu girer, "onay bekleniyor" der; yönetici
+     * onaylayınca uygulama kendiliğinden kaydı tamamlar ve mTLS config API ile
+     * hazır olur. Kod telefonda küçük harfle yazılsa da olur.
+     */
+    @Test
+    fun mtlsConfig_enrollment_code_waits_for_approval_then_completes() {
+        releaseThisDevice()
+        val name = "espresso-${System.currentTimeMillis()}"
+        val (policyId, code) = createPolicy(name, maxDevices = 2, approval = true)
+        try {
+            scenario = ActivityScenario.launch(MtlsToTlsActivity::class.java)
+            Thread.sleep(3000)
+            submitEnrollToken(code.lowercase())
+
+            val waiting = context.getString(R.string.enrollment_pending_status, "")
+            awaitResult(waiting, viewId = R.id.tvEnrollStatus)
+            qaScreenshots.capture("waiting-for-approval")
+            onView(withId(R.id.tvEnrollStatus)).check(matches(withText(containsString(waiting))))
+            assertFalse(PinVault.isEnrolled(context))
+            assertTrue(PinVault.isEnrollmentPending(context))
+
+            val clientId = decidePendingOf(name, "approve")
+            val deadline = System.currentTimeMillis() + 40000
+            while (!PinVault.isEnrolled(context) && System.currentTimeMillis() < deadline) Thread.sleep(1000)
+            assertTrue("Onaydan sonra kayıt kendiliğinden tamamlanmalı", PinVault.isEnrolled(context))
+            assertTrue(clientId, clientId.startsWith("$name-"))
+            assertEquals("csr", serverRecord(clientId)?.optString("keyType"))
+
+            awaitReady()
+            qaScreenshots.capture("approved-and-ready")
+            onView(withId(R.id.tvStatus)).check(matches(withText(containsString("✓"))))
+            onView(withId(R.id.tvEnrollStatus)).check(matches(withText(containsString("✓"))))
+            assertFalse(PinVault.isEnrollmentPending(context))
+        } finally {
+            stopPolicy(policyId)
+        }
+    }
+
+    /** Yönetici reddederse ekran bunu söyler; cihaz beklemeyi bırakır, kodla yeniden başvurabilir. */
+    @Test
+    fun mtlsConfig_enrollment_code_rejected_says_so() {
+        releaseThisDevice()
+        val name = "espresso-rej-${System.currentTimeMillis()}"
+        val (policyId, code) = createPolicy(name, maxDevices = 2, approval = true)
+        try {
+            scenario = ActivityScenario.launch(MtlsToTlsActivity::class.java)
+            Thread.sleep(3000)
+            submitEnrollToken(code)
+            awaitResult(context.getString(R.string.enrollment_pending_status, ""), viewId = R.id.tvEnrollStatus)
+
+            decidePendingOf(name, "reject")
+            val rejected = context.getString(R.string.enrollment_rejected)
+            awaitResult(rejected)
+            qaScreenshots.capture("rejected")
+            onView(withId(R.id.tvResult)).check(matches(withText(containsString(rejected))))
+            assertFalse(PinVault.isEnrolled(context))
+            assertFalse("Reddedilen istek unutulur", PinVault.isEnrollmentPending(context))
+            onView(withId(R.id.btnEnroll)).check(matches(isEnabled()))
+        } finally {
+            stopPolicy(policyId)
+        }
+    }
+
+    // ─── Kodsuz başvuru: token ya da kod yok, yalnızca onay ───
+
+    private fun setOpenApplications(enabled: Boolean) {
+        TestConfig.adminClient.newCall(
+            Request.Builder()
+                .url("${TestConfig.MANAGEMENT_URL}/api/v1/enrollment-open")
+                .put("""{"enabled":$enabled}""".toRequestBody("application/json".toMediaType()))
+                .build()
+        ).execute().use { assertTrue("Kodsuz başvuru anahtarı: ${it.code}", it.isSuccessful) }
+    }
+
+    /**
+     * Kodsuz başvuru (MAC filtresi gibi): cihaz hiçbir şey girmeden başvurur ve
+     * ekranında bir doğrulama kodu gösterir; panelde aynı kod isteğin yanında
+     * görünür. Yönetici onaylayınca uygulama kendiliğinden kayıt olur.
+     */
+    @Test
+    fun mtlsConfig_codeless_application_waits_for_approval() {
+        releaseThisDevice()
+        setOpenApplications(true)
+        try {
+            scenario = ActivityScenario.launch(MtlsToTlsActivity::class.java)
+            Thread.sleep(3000)
+            onView(withId(R.id.btnEnroll)).perform(click())
+            onView(withId(android.R.id.button3)).perform(click())   // "Kodsuz başvur"
+
+            awaitResult(context.getString(R.string.enrollment_pending_status, ""), viewId = R.id.tvEnrollStatus)
+            val code = PinVault.enrollmentVerificationCode(context)
+            assertNotNull("Cihazın doğrulama kodu olmalı", code)
+            onView(withId(R.id.tvEnrollStatus)).check(matches(withText(context.getString(R.string.enrollment_pending_status, code))))
+            qaScreenshots.capture("codeless-waiting")
+
+            // Panelde aynı kod: yönetici doğru cihazı onaylar.
+            val list = TestConfig.adminClient.newCall(
+                Request.Builder().url("${TestConfig.MANAGEMENT_URL}/api/v1/enrollment-requests?status=pending").build()
+            ).execute().use { org.json.JSONArray(it.body?.string() ?: "[]") }
+            val request = (0 until list.length()).map { list.getJSONObject(it) }
+                .firstOrNull { it.optString("verificationCode") == code }
+                ?: throw AssertionError("Panelde $code kodlu istek yok: $list")
+            assertTrue(request.optBoolean("openApplication"))
+            TestConfig.adminClient.newCall(
+                Request.Builder()
+                    .url("${TestConfig.MANAGEMENT_URL}/api/v1/enrollment-requests/${request.getString("id")}/approve")
+                    .post(ByteArray(0).toRequestBody(null))
+                    .build()
+            ).execute().use { assertTrue("Onay: ${it.code}", it.isSuccessful) }
+
+            val clientId = request.getString("clientId")
+            val deadline = System.currentTimeMillis() + 40000
+            while (!PinVault.isEnrolled(context) && System.currentTimeMillis() < deadline) Thread.sleep(1000)
+            assertTrue("Onaydan sonra kayıt kendiliğinden tamamlanmalı", PinVault.isEnrolled(context))
+            assertTrue(clientId, clientId.startsWith("device-"))
+            assertEquals("csr", serverRecord(clientId)?.optString("keyType"))
+            awaitReady()
+            qaScreenshots.capture("codeless-approved")
+            onView(withId(R.id.tvStatus)).check(matches(withText(containsString("✓"))))
+        } finally {
+            setOpenApplications(false)
+        }
     }
 
     // ─── CSR: sertifika yenileme ───────────────────────

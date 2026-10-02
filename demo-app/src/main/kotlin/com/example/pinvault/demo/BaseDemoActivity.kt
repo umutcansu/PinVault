@@ -9,6 +9,8 @@ import androidx.appcompat.app.AppCompatActivity
 import androidx.core.content.ContextCompat
 import com.example.pinvault.demo.databinding.ActivityDemoBaseBinding
 import io.github.umutcansu.pinvault.PinVault
+import io.github.umutcansu.pinvault.model.ClientCertEnrollmentResult
+import io.github.umutcansu.pinvault.model.EnrollmentRefusal
 import io.github.umutcansu.pinvault.model.HostPin
 import io.github.umutcansu.pinvault.model.InitResult
 import io.github.umutcansu.pinvault.model.PinVaultConfig
@@ -43,6 +45,8 @@ abstract class BaseDemoActivity : AppCompatActivity() {
 
         /** Kurtarma kapısı: süresi dolmuş client sertifikası burada yenilenir (TLS, client cert istemez). */
         const val RECOVERY_PORT = 8093
+        /** Onay bekleyen kaydın ekranda en geç kaç saniyede bir sorulacağı. */
+        const val APPROVAL_POLL_SECONDS = 3
 
         /**
          * Bootstrap pins — demo-server TLS cert (8091/8092), plus the recovery
@@ -92,6 +96,8 @@ abstract class BaseDemoActivity : AppCompatActivity() {
     private val scope = CoroutineScope(Dispatchers.Main + SupervisorJob())
     private val logEntries = mutableListOf<LogEntry>()
     private var autoEnrollAttempted = false
+    /** Onay bekleyen kaydı soran döngü (bkz. awaitApproval). */
+    private var approvalJob: Job? = null
 
     private data class LogEntry(
         val time: String,
@@ -162,6 +168,7 @@ abstract class BaseDemoActivity : AppCompatActivity() {
             binding.tvStatus.text = getString(R.string.enrollment_required)
             binding.tvStatus.setTextColor(color(R.color.status_warning))
             binding.tvVersion.text = getString(R.string.enrollment_hint)
+            if (PinVault.isEnrollmentPending(this)) awaitApproval()
         }
     }
 
@@ -200,13 +207,17 @@ abstract class BaseDemoActivity : AppCompatActivity() {
             binding.btnRenew.isEnabled = true
             binding.btnUnenroll.isEnabled = true
         } else {
-            binding.tvEnrollStatus.text = getString(R.string.not_enrolled)
-            binding.tvEnrollStatus.setTextColor(color(R.color.status_error))
+            // Kayıt kodu onay bekliyorsa: tekrar kayıt yok, "Kaydı Sil" beklemeyi bırakır.
+            val pending = PinVault.isEnrollmentPending(this)
+            binding.tvEnrollStatus.text = if (pending) {
+                getString(R.string.enrollment_pending_status, PinVault.enrollmentVerificationCode(this) ?: "?")
+            } else getString(R.string.not_enrolled)
+            binding.tvEnrollStatus.setTextColor(color(if (pending) R.color.status_warning else R.color.status_error))
             binding.tvClientId.visibility = View.GONE
             binding.tvCertExpiry.visibility = View.GONE
-            binding.btnEnroll.isEnabled = true
+            binding.btnEnroll.isEnabled = !pending
             binding.btnRenew.isEnabled = false
-            binding.btnUnenroll.isEnabled = false
+            binding.btnUnenroll.isEnabled = pending
         }
         return enrolled
     }
@@ -264,11 +275,15 @@ abstract class BaseDemoActivity : AppCompatActivity() {
                 val token = input.text.toString().trim()
                 if (token.isNotEmpty()) performEnrollment(token)
             }
+            // Token ya da kod olmadan başvur: sunucu kodsuz başvuruları açtıysa
+            // cihaz listeye düşer, yönetici onaylayınca kayıt tamamlanır.
+            .setNeutralButton(getString(R.string.enrollment_apply)) { _, _ -> performEnrollment(null) }
             .setNegativeButton(getString(R.string.cancel), null)
             .show()
     }
 
-    private fun performEnrollment(token: String) {
+    /** [token] null: kodsuz başvuru (autoEnroll). */
+    private fun performEnrollment(token: String?) {
         binding.tvEnrollStatus.text = getString(R.string.enrolling)
         binding.tvEnrollStatus.setTextColor(color(R.color.status_warning))
         binding.btnEnroll.isEnabled = false
@@ -279,16 +294,25 @@ abstract class BaseDemoActivity : AppCompatActivity() {
         scope.launch {
             // Kayıt init'ten önce: sertifikası olmayan cihaz mTLS config API'ye
             // giremez; kayıt enrollmentUrl'e (düz TLS) gider. Ardından tek init.
-            val success = withContext(Dispatchers.IO) {
-                PinVault.enroll(applicationContext, buildConfig(), token)
+            val result = withContext(Dispatchers.IO) {
+                if (token != null) PinVault.enrollForResult(applicationContext, buildConfig(), token)
+                else PinVault.autoEnrollForResult(applicationContext, buildConfig())
             }
-            if (success) {
+            if (result is ClientCertEnrollmentResult.Enrolled) {
                 addLog(true, getString(R.string.log_enroll_success))
                 showResult(getString(R.string.enrollment_success), R.color.status_success)
                 updateEnrollmentUI()
+            } else if (result is ClientCertEnrollmentResult.Pending) {
+                // Onay gerekiyor (kayıt kodunun politikası ya da kodsuz başvuru): yönetici
+                // panelde aynı doğrulama kodunu görüp onaylayana dek beklenir.
+                addLog(true, getString(R.string.log_enroll_pending, result.requestId, result.clientId ?: "?"))
+                showResult(getString(R.string.enrollment_pending, result.clientId ?: "?", result.verificationCode ?: "?"), R.color.status_warning)
+                renderClientCredential()
+                awaitApproval(result.retryAfterSeconds)
             } else {
-                addLog(false, getString(R.string.log_enroll_failed))
-                showResult(getString(R.string.enrollment_invalid_token), R.color.status_error)
+                val why = enrollmentFailureText(result)
+                addLog(false, getString(R.string.log_enroll_failed, why))
+                showResult(why, R.color.status_error)
                 binding.tvEnrollStatus.text = getString(R.string.enrollment_failed)
                 binding.tvEnrollStatus.setTextColor(color(R.color.status_error))
                 binding.btnEnroll.isEnabled = true
@@ -296,7 +320,63 @@ abstract class BaseDemoActivity : AppCompatActivity() {
         }
     }
 
+    /** What the user can do about a failed enrollment, from the server's reason. */
+    private fun enrollmentFailureText(result: ClientCertEnrollmentResult): String = when (result) {
+        is ClientCertEnrollmentResult.Refused -> when (result.reason) {
+            EnrollmentRefusal.INVALID_TOKEN -> getString(R.string.enrollment_invalid_token)
+            EnrollmentRefusal.DEVICE_ALREADY_ENROLLED -> getString(R.string.enrollment_device_already_enrolled)
+            EnrollmentRefusal.REVOKED -> getString(R.string.enrollment_revoked)
+            EnrollmentRefusal.TOKEN_REQUIRED -> getString(R.string.enrollment_token_required)
+            EnrollmentRefusal.REJECTED -> getString(R.string.enrollment_rejected)
+            EnrollmentRefusal.LIMIT_REACHED -> getString(R.string.enrollment_limit_reached)
+            EnrollmentRefusal.EXPIRED -> getString(R.string.enrollment_expired)
+            EnrollmentRefusal.OTHER -> getString(R.string.enrollment_refused, result.httpStatus, result.serverError?.let { " $it" } ?: "")
+        }
+        is ClientCertEnrollmentResult.Pending -> getString(R.string.enrollment_pending, result.clientId ?: "?", result.verificationCode ?: "?")
+        is ClientCertEnrollmentResult.Failed -> getString(R.string.enrollment_unreachable, result.message)
+        is ClientCertEnrollmentResult.Enrolled -> getString(R.string.enrollment_success)
+    }
+
+    /**
+     * Onay bekleyen kaydı birkaç saniyede bir sorar. Yönetici panelde
+     * onaylayınca sertifika gelir ve ekran kendiliğinden ilerler; reddederse
+     * nedeni gösterilir. Sunucu 15 sn aralık önerir (Retry-After); ekranda
+     * bekleyen demo daha sık sorar.
+     */
+    private fun awaitApproval(retryAfterSeconds: Int? = null) {
+        if (approvalJob?.isActive == true) return
+        val intervalMs = (retryAfterSeconds ?: APPROVAL_POLL_SECONDS).coerceIn(1, APPROVAL_POLL_SECONDS) * 1000L
+        approvalJob = scope.launch {
+            while (isActive) {
+                delay(intervalMs)
+                val result = withContext(Dispatchers.IO) {
+                    PinVault.checkPendingEnrollment(applicationContext, buildConfig())
+                }
+                when (result) {
+                    is ClientCertEnrollmentResult.Pending -> Unit
+                    is ClientCertEnrollmentResult.Enrolled -> {
+                        addLog(true, getString(R.string.log_enroll_approved))
+                        showResult(getString(R.string.enrollment_success), R.color.status_success)
+                        updateEnrollmentUI()
+                        return@launch
+                    }
+                    is ClientCertEnrollmentResult.Refused -> {
+                        val why = enrollmentFailureText(result)
+                        addLog(false, getString(R.string.log_enroll_failed, why))
+                        showResult(why, R.color.status_error)
+                        renderClientCredential()
+                        return@launch
+                    }
+                    // Bekleyen kayıt kalmadı (Kaydı Sil) ya da sunucuya ulaşılamadı: ikincisinde sormaya devam.
+                    is ClientCertEnrollmentResult.Failed ->
+                        if (!PinVault.isEnrollmentPending(this@BaseDemoActivity)) return@launch
+                }
+            }
+        }
+    }
+
     private fun unenroll() {
+        approvalJob?.cancel()
         try { PinVault.reset() } catch (_: Exception) {}
         PinVault.unenroll(applicationContext)
         addLog(true, getString(R.string.log_unenrolled))
@@ -356,18 +436,24 @@ abstract class BaseDemoActivity : AppCompatActivity() {
         binding.btnUpdate.isEnabled = true
         addLog(true, "Init OK v$version — ${if (PinVault.isEnrolled(this)) "cert ✓" else "no cert"}")
 
+        // Init bekleyen kaydı kendisi de sorar; onaylandıysa kart güncellenir, değilse sormaya devam.
+        if (showsEnrollmentCard) {
+            renderClientCredential()
+            if (PinVault.isEnrollmentPending(this)) awaitApproval()
+        }
+
         // mTLS host için otomatik enrollment (sadece ilk seferde)
         if (autoEnrollForHost && !PinVault.isEnrolled(this) && !autoEnrollAttempted) {
             autoEnrollAttempted = true
             addLog(true, "Auto-enrolling from ${configServerUrl}api/v1/client-certs/enroll")
             scope.launch {
-                val success = withContext(Dispatchers.IO) { PinVault.autoEnroll(applicationContext) }
-                if (success) {
+                val result = withContext(Dispatchers.IO) { PinVault.autoEnrollForResult(applicationContext) }
+                if (result is ClientCertEnrollmentResult.Enrolled) {
                     addLog(true, "Auto-enroll OK — cert stored, reinit...")
                     try { PinVault.reset() } catch (_: Exception) {}
                     runOnUiThread { initPinVault() }
                 } else {
-                    addLog(false, "Auto-enroll FAILED")
+                    addLog(false, "Auto-enroll FAILED — ${enrollmentFailureText(result)}")
                 }
             }
         }
