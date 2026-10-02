@@ -401,6 +401,15 @@ abstract class BaseDemoActivity : AppCompatActivity() {
             }
             .updateIntervalMinutes(15)
             .deviceAlias(deviceName)
+            // A revoked identity is refused on every request; PinVault says
+            // so once, whichever request heard it first.
+            .onConnectionEvent { event ->
+                if (event is io.github.umutcansu.pinvault.api.PinVaultConnectionEvent.ClientCertRenewal &&
+                    event.status == io.github.umutcansu.pinvault.api.ClientCertRenewalStatus.REENROLL_REQUIRED
+                ) {
+                    addLog(false, getString(R.string.log_renew_reenroll, event.failureReason.orEmpty()))
+                }
+            }
             .build()
     }
 

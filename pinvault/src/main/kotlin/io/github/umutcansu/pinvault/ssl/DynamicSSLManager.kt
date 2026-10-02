@@ -80,6 +80,9 @@ internal class DynamicSSLManager(
     @Volatile
     private var hostKeyManagers: Map<String, javax.net.ssl.X509ExtendedKeyManager> = emptyMap()
 
+    /** Bumped on every change of the client identity, so [LiveSocketFactory] notices it. */
+    private val keyGeneration = java.util.concurrent.atomic.AtomicLong()
+
     /**
      * Loads a PKCS12 client keystore for mTLS (default — used for all hosts without specific cert).
      */
@@ -89,6 +92,7 @@ internal class DynamicSSLManager(
         val kmf = KeyManagerFactory.getInstance(KeyManagerFactory.getDefaultAlgorithm())
         kmf.init(ks, password.toCharArray())
         clientKeyManagers = kmf.keyManagers
+        keyGeneration.incrementAndGet()
 
         val alias = ks.aliases().toList().firstOrNull()
         val cert = alias?.let { ks.getCertificate(it) as? java.security.cert.X509Certificate }
@@ -106,6 +110,7 @@ internal class DynamicSSLManager(
     fun loadClientKey(privateKey: java.security.PrivateKey, chain: Array<X509Certificate>, alias: String = "pinvault-client") {
         val km = FixedClientKeyManager(alias, privateKey, chain)
         clientKeyManagers = arrayOf(km)
+        keyGeneration.incrementAndGet()
         val leaf = km.certificate
         val cn = leaf.subjectX500Principal.name.substringAfter("CN=").substringBefore(",")
         Timber.d(
@@ -133,9 +138,10 @@ internal class DynamicSSLManager(
      * this call mTLS kept working until the app was restarted, so an
      * "unenrolled" device still authenticated to mTLS hosts.
      *
-     * Clients already handed out are unaffected until they are rebuilt —
-     * the caller must re-publish the config afterwards (`clientProvider.swap`)
-     * so a fresh SSLContext without key managers is installed.
+     * Clients built by [applyTo] stop presenting it on their next connection
+     * ([LiveSocketFactory]); connections they already opened keep the identity
+     * they were made with until they close, so the caller still evicts
+     * connection pools it owns (`clientProvider.swap` does for the library's).
      *
      * @param includeHostCerts also drop the per-host KeyManagers loaded by
      *        [loadHostClientCerts]. Those are re-downloaded on the next config
@@ -145,6 +151,7 @@ internal class DynamicSSLManager(
     fun clearClientKeystore(includeHostCerts: Boolean = true) {
         clientKeyManagers = null
         if (includeHostCerts) hostKeyManagers = emptyMap()
+        keyGeneration.incrementAndGet()
         Timber.d("Client keystore cleared — no client cert will be presented (hostCerts=%b)", includeHostCerts)
     }
 
@@ -181,6 +188,7 @@ internal class DynamicSSLManager(
         }
 
         hostKeyManagers = managers
+        keyGeneration.incrementAndGet()
         Timber.d("Loaded %d host-specific client certs", managers.size)
     }
 
@@ -237,9 +245,61 @@ internal class DynamicSSLManager(
     }
 
     /**
+     * The socket factory every client built by [applyTo] holds. Its sockets
+     * come from an SSLContext made for the client identity loaded now, and a
+     * new one is made whenever that identity changes (renewal, recovery,
+     * re-enrollment, unenroll, host certificates).
+     *
+     * A context built once kept presenting the identity of the moment the
+     * client was built. Swapping only the key manager would not be enough
+     * either: a new connection resumes the context's cached TLS session and
+     * the server sees the client certificate of that old session again. A
+     * fresh context has no such session.
+     *
+     * The factory object itself stays the same, so OkHttp keeps pooling
+     * connections as before.
+     */
+    private inner class LiveSocketFactory(private val trustManager: X509TrustManager) : javax.net.ssl.SSLSocketFactory() {
+
+        private inner class Built(val generation: Long, val factory: javax.net.ssl.SSLSocketFactory)
+
+        @Volatile
+        private var built: Built? = null
+
+        private fun current(): javax.net.ssl.SSLSocketFactory {
+            val generation = keyGeneration.get()
+            built?.takeIf { it.generation == generation }?.let { return it.factory }
+            // Explicit TLSv1.2: Android API 24+ negotiates 1.2 or 1.3 with this
+            // factory, but the JCA-default `"TLS"` algorithm string has, on rare
+            // OEM ROMs, been observed to fall back to 1.0/1.1 — protocols the
+            // pinning model still allows because pin verification happens after
+            // handshake. Pin a minimum here; OkHttp's ConnectionSpec layer still
+            // gets the final say on enabled cipher suites.
+            val sslCtx = SSLContext.getInstance("TLSv1.2")
+            sslCtx.init(buildCompositeKeyManagers(), arrayOf(trustManager), null)
+            return sslCtx.socketFactory.also { built = Built(generation, it) }
+        }
+
+        override fun getDefaultCipherSuites(): Array<String> = current().defaultCipherSuites
+        override fun getSupportedCipherSuites(): Array<String> = current().supportedCipherSuites
+        override fun createSocket(): Socket = current().createSocket()
+        override fun createSocket(socket: Socket, host: String, port: Int, autoClose: Boolean): Socket =
+            current().createSocket(socket, host, port, autoClose)
+        override fun createSocket(host: String, port: Int): Socket = current().createSocket(host, port)
+        override fun createSocket(host: String, port: Int, localHost: java.net.InetAddress, localPort: Int): Socket =
+            current().createSocket(host, port, localHost, localPort)
+        override fun createSocket(host: java.net.InetAddress, port: Int): Socket = current().createSocket(host, port)
+        override fun createSocket(address: java.net.InetAddress, port: Int, localAddress: java.net.InetAddress, localPort: Int): Socket =
+            current().createSocket(address, port, localAddress, localPort)
+    }
+
+    /**
      * Applies certificate pinning to an existing [OkHttpClient.Builder].
-     * Installs a custom [X509ExtendedTrustManager] that enforces public-key pinning.
-     * If client keystore is loaded, also presents client cert for mTLS.
+     * Installs a custom [X509ExtendedTrustManager] that enforces public-key pinning,
+     * and presents the client identity loaded when each connection is made
+     * ([LiveSocketFactory]): the client follows renewal and re-enrollment
+     * without being rebuilt. Connections it already opened keep the
+     * certificate they were made with until they close.
      *
      * [configProvider] is invoked fresh on every TLS handshake. Pass a lambda
      * that re-reads the live config (e.g. `{ httpClientProvider.currentConfig }`)
@@ -248,16 +308,7 @@ internal class DynamicSSLManager(
      */
     fun applyTo(builder: OkHttpClient.Builder, configProvider: () -> CertificateConfig?) {
         val tm = pinnedTrustManager(configProvider)
-        // Explicit TLSv1.2: Android API 24+ negotiates 1.2 or 1.3 with this
-        // factory, but the JCA-default `"TLS"` algorithm string has, on rare
-        // OEM ROMs, been observed to fall back to 1.0/1.1 — protocols the
-        // pinning model still allows because pin verification happens after
-        // handshake. Pin a minimum here; OkHttp's ConnectionSpec layer still
-        // gets the final say on enabled cipher suites.
-        val sslCtx = SSLContext.getInstance("TLSv1.2")
-        val keyManagers = buildCompositeKeyManagers()
-        sslCtx.init(keyManagers, arrayOf(tm), null)
-        builder.sslSocketFactory(sslCtx.socketFactory, tm)
+        builder.sslSocketFactory(LiveSocketFactory(tm), tm)
 
         val initial = configProvider()
         val mtlsHosts = initial?.pins?.count { it.mtls } ?: 0
@@ -326,10 +377,11 @@ internal class DynamicSSLManager(
      * If the config endpoint is plain HTTP, pinning is skipped automatically
      * (TrustManager is only invoked for TLS connections).
      */
-    fun buildBootstrapClient(bootstrapPins: List<HostPin>): OkHttpClient {
+    fun buildBootstrapClient(bootstrapPins: List<HostPin>, interceptor: okhttp3.Interceptor? = null): OkHttpClient {
         val builder = OkHttpClient.Builder()
             .connectTimeout(DEFAULT_TIMEOUT, TimeUnit.SECONDS)
             .readTimeout(DEFAULT_TIMEOUT, TimeUnit.SECONDS)
+        interceptor?.let { builder.addInterceptor(it) }
 
         if (bootstrapPins.isNotEmpty()) {
             val config = CertificateConfig(version = 0, pins = bootstrapPins)

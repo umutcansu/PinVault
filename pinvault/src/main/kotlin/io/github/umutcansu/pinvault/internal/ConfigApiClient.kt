@@ -42,7 +42,12 @@ internal class ConfigApiClient(
      */
     recoveryListener: (UpdateResult) -> Unit = { },
     /** The device identity key behind a CSR-enrolled certificate, per label. Tests pass a software key. */
-    private val identityKeyFactory: (label: String) -> ClientIdentityKeyProvider = { ClientIdentityKeyProvider.androidKeystore(it) }
+    private val identityKeyFactory: (label: String) -> ClientIdentityKeyProvider = { ClientIdentityKeyProvider.androidKeystore(it) },
+    /**
+     * Told the server's reason when a request of this block is refused as
+     * `reenroll_required` — once per client identity ([claimReenrollNotice]).
+     */
+    private val reenrollListener: (reason: String) -> Unit = { }
 ) {
     val sslManager: DynamicSSLManager = DynamicSSLManager()
     val clientProvider: HttpClientProvider
@@ -68,6 +73,8 @@ internal class ConfigApiClient(
     val updater: SSLCertificateUpdater
     val renewer: ClientCertRenewer
 
+    private val reenrollNotice = ReenrollNotice()
+
     init {
         loadClientIdentity()
 
@@ -84,7 +91,8 @@ internal class ConfigApiClient(
             sslManager = sslManager,
             signatureTrust = signatureTrust,
             clientKeyPassword = block.clientKeyPassword,
-            enrollmentUrl = block.enrollmentUrl
+            enrollmentUrl = block.enrollmentUrl,
+            onReenrollRequired = { reason -> if (claimReenrollNotice()) reenrollListener(reason) }
         )
 
         val appContext = context.applicationContext
@@ -123,6 +131,16 @@ internal class ConfigApiClient(
 
     /** The identity key behind this block's client certificate. */
     fun identityKey(): ClientIdentityKeyProvider = identityKeyFactory(block.clientCertLabel)
+
+    /**
+     * True the first time the app is to be told that the identity loaded now
+     * must re-enroll. A revoked identity is refused on every request and by
+     * the renewal endpoint; all of those share this one notice.
+     */
+    fun claimReenrollNotice(): Boolean {
+        val leaf = sslManager.defaultClientCertificate()
+        return reenrollNotice.claim(leaf?.let { "${it.issuerX500Principal.name}#${it.serialNumber}" } ?: "none")
+    }
 
     /**
      * Installs the block's client credentials into the SSL manager: the

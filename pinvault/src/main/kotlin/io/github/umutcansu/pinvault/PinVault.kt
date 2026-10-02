@@ -290,7 +290,12 @@ object PinVault {
                     context = appContext,
                     customApi = apiOverride,
                     recoveryListener = { result -> notifyUpdateResult(result) },
-                    identityKeyFactory = identityKeyFactory
+                    identityKeyFactory = identityKeyFactory,
+                    // A revoked identity is refused on every request; tell the
+                    // app at once, the same way a refused renewal does.
+                    reenrollListener = { reason ->
+                        dispatchRenewalEvent(id, io.github.umutcansu.pinvault.model.ClientCertRenewalResult.ReenrollRequired(reason))
+                    }
                 )
             }
             configApiClients = clients
@@ -952,6 +957,15 @@ object PinVault {
     }
 
     private fun emitRenewalEvent(configApiId: String, result: io.github.umutcansu.pinvault.model.ClientCertRenewalResult) {
+        // The refusal that made renewal fail may already have been reported
+        // from the request itself; the app hears it once per identity.
+        if (result is io.github.umutcansu.pinvault.model.ClientCertRenewalResult.ReenrollRequired &&
+            configApiClients[configApiId]?.claimReenrollNotice() == false
+        ) return
+        dispatchRenewalEvent(configApiId, result)
+    }
+
+    private fun dispatchRenewalEvent(configApiId: String, result: io.github.umutcansu.pinvault.model.ClientCertRenewalResult) {
         if (!::sslManager.isInitialized) return
         val status = when (result) {
             is io.github.umutcansu.pinvault.model.ClientCertRenewalResult.Renewed -> io.github.umutcansu.pinvault.api.ClientCertRenewalStatus.RENEWED

@@ -1,5 +1,16 @@
 # Changelog
 
+## 2.1.1 — 2026-10-02 — Revocation and renewal reach every client
+
+### Library
+
+- **A revoked device hears it at its next request.** The server answers a revoked identity `403 reenroll_required` on every mTLS request, but only the renewal endpoint read that answer: a revoked device kept running on its stored config and files until its renewal came due (day 60 of 90). Every request of a Config API — config, scoped config, vault files, device key registration, reports, renewal — now emits `ClientCertRenewal(status = REENROLL_REQUIRED)`, once per certificate. `InitResult` is unchanged.
+- **Clients built with `applyTo` follow renewal and re-enrollment.** `applyTo` captured the client certificate loaded when the client was built, so an app-built mTLS client (for example the one passed to `PinVaultBackendReporter`) kept presenting the superseded certificate after a renewal, and a revoked one after a re-enrollment, until the process restarted. Its socket factory now opens each connection from an SSLContext made for the identity loaded at that moment, replaced on every identity change; a fresh context also keeps a new connection from resuming a TLS session made with the old certificate. Open connections keep their certificate until they close: evict the pool after a re-enrollment.
+
+### Demo app
+
+- Logs the re-enroll event. Espresso `mtlsConfig_revoked_device_hears_it_at_next_start` revokes an enrolled device and checks that the next start reports it without a renewal request.
+
 ## 2.1.0 — 2026-10-02 — Device-held keys and certificate renewal
 
 A device's mTLS certificate used to be a 365-day self-signed P12 the server generated; nothing renewed it, so an expired certificate locked the device out of the mTLS Config API for good. Enrollment now keeps the private key on the device and the certificate renews itself.

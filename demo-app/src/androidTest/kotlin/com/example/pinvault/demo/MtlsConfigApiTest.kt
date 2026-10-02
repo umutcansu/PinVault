@@ -559,6 +559,34 @@ class MtlsConfigApiTest {
         onView(withId(R.id.tvResult)).check(matches(withText(containsString(expected))))
     }
 
+    /**
+     * İptal edilen cihaz bunu yenileme vaktini (90 günün 60.'sı) beklemeden,
+     * bir sonraki açılışında öğrenir: config isteği 403 reenroll_required alır
+     * ve PinVault yeniden kayıt olayını bir kez yayınlar.
+     */
+    @Test
+    fun mtlsConfig_revoked_device_hears_it_at_next_start() {
+        val clientId = newClientId()
+        enrollProgrammatically(clientId)
+
+        scenario = ActivityScenario.launch(MtlsToTlsActivity::class.java)
+        awaitReady()
+        onView(withId(R.id.tvStatus)).check(matches(withText(containsString("✓"))))
+
+        revokeOnServer(clientId)
+        TestConfig.waitForMtlsRestart()
+        scenario?.close()
+        scenario = ActivityScenario.launch(MtlsToTlsActivity::class.java)
+        awaitReady()
+        Thread.sleep(3000)
+        qaScreenshots.capture("revoked-at-start")
+
+        val expected = context.getString(R.string.log_renew_reenroll, "").substringBefore(" (")
+        onView(withId(R.id.logContainer)).check(matches(hasDescendant(withText(containsString(expected)))))
+        // Yenileme isteği gönderilmedi: haber config isteğinden geldi.
+        assertEquals(0, serverRecord(clientId)?.optInt("renewCount"))
+    }
+
     // ─── mTLS — enrollment olmadan → reddedilir ─────────
 
     @Test

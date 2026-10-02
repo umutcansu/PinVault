@@ -48,7 +48,12 @@ internal class DefaultCertificateConfigApi(
     /** The block's P12 password; host client certificates are re-wrapped to it. */
     private val clientKeyPassword: String? = null,
     /** Base URL for first enrollment (a TLS listener); null = [configUrl]. */
-    private val enrollmentUrl: String? = null
+    private val enrollmentUrl: String? = null,
+    /**
+     * Told the server's reason whenever any request here is refused with
+     * `403 reenroll_required` (a revoked identity), see [ReenrollRequiredInterceptor].
+     */
+    private val onReenrollRequired: ((reason: String) -> Unit)? = null
 ) : CertificateConfigApi {
 
     /** Null = the block runs unsigned (`allowUnsigned()`). */
@@ -60,18 +65,21 @@ internal class DefaultCertificateConfigApi(
     private val bootstrapPins: List<HostPin> = bootstrapPins
 
     /**
-     * The pinned client every call here goes through. It captures the SSL
-     * manager's key managers when built, so a client-certificate change
-     * (enroll, renew, unenroll) must go through [rebuildBootstrapClient] —
-     * otherwise the Config API keeps seeing the old identity until restart.
+     * The pinned client every call here goes through. Its handshakes present
+     * the SSL manager's current client identity; after a change (enroll,
+     * renew, unenroll) [rebuildBootstrapClient] still drops the connections
+     * opened with the old one.
      */
     @Volatile
-    private var bootstrapClient: okhttp3.OkHttpClient = sslManager.buildBootstrapClient(bootstrapPins)
+    private var bootstrapClient: okhttp3.OkHttpClient = newBootstrapClient()
 
-    /** Rebuilds the pinned client so it presents the SSL manager's current client identity. */
+    private fun newBootstrapClient(): okhttp3.OkHttpClient =
+        sslManager.buildBootstrapClient(bootstrapPins, onReenrollRequired?.let { ReenrollRequiredInterceptor(it) })
+
+    /** Swaps in a fresh pinned client, so no request rides a connection made with the previous identity. */
     internal fun rebuildBootstrapClient() {
         val old = bootstrapClient
-        bootstrapClient = sslManager.buildBootstrapClient(bootstrapPins)
+        bootstrapClient = newBootstrapClient()
         Thread({ old.connectionPool.evictAll() }, "PinVault-EvictBootstrap").apply { isDaemon = true }.start()
         Timber.d("Bootstrap client rebuilt")
     }

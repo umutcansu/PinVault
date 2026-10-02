@@ -131,6 +131,13 @@ Both `getClient()` and `applyTo(builder)` install the **pin-recovery
 interceptor**, so a pin mismatch is automatically retried after a
 config refresh.
 
+A client built with `applyTo` also follows the device's client
+certificate: after a renewal or a re-enrollment its next connection
+presents the new one, without rebuilding the client. Connections it
+already has open keep the certificate they were made with until they
+close, so after a re-enrollment call `client.connectionPool.evictAll()`
+to make sure none of them keeps using the revoked identity.
+
 #### Reading the current pins (multi-module setups)
 
 If your HTTP client lives in a separate Gradle module that doesn't depend
@@ -257,7 +264,7 @@ PinVault.init(context, config) { result ->
     val pinnedClient = OkHttpClient.Builder()
         .connectTimeout(5, TimeUnit.SECONDS)
         .readTimeout(5, TimeUnit.SECONDS)
-        .also { PinVault.applyTo(it) }   // dynamic TM + recovery interceptor
+        .also { PinVault.applyTo(it) }   // live pins + client cert, recovery interceptor
         .build()
 
     PinVault.setConnectionListener(
@@ -777,7 +784,16 @@ PinVault.renewClientCertIfNeeded(force = true)       // ClientCertRenewalResult
 The outcome is also delivered as a `PinVaultConnectionEvent.ClientCertRenewal`
 to `onConnectionEvent`. `ReenrollRequired` means the server refuses the
 identity (revoked, unknown, key changed): the stored certificate is left in
-place and the app should enroll again with a fresh token. A renewed
+place and the app should enroll again. A revoked client id stays revoked, so
+the new enrollment uses a new id, or the same one after the administrator
+presses *Forget identity*.
+
+A revoked device does not wait for renewal to hear it. The server answers a
+revoked identity `403 reenroll_required` on every request, and the first time
+any request of a block gets that answer (config, vault file, device key
+registration, report or renewal) the same `ClientCertRenewal` event arrives
+with status `REENROLL_REQUIRED`. It is sent once per certificate; `init`
+still returns `Ready` with the stored config. A renewed
 certificate must come from the CA that issued the current one; a chain from
 any other CA is refused even if it arrives with its own CA attached. Removing the app
 deletes the Keystore key, so a reinstall is a new enrollment, never a renewal.
