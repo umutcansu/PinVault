@@ -9,7 +9,7 @@ Uygulama şunları gösterir:
 3. Gelen pin'lerle gerçek bir hedefe iki farklı yoldan pinli istek atmak: kütüphaneyi kullanan client (`PinVault.applyTo`) ve PinVault'u import etmeyen **production-style** client (kendi `CertificatePinner`'ı).
 4. Config'i elle ya da 15 dakikada bir arka planda yenilemek.
 5. Her TLS el sıkışmasını ve config güncellemesini uygulama içinde listelemek ve host dashboard'una telemetri olarak göndermek.
-6. **mTLS:** token ya da cihaz kimliğiyle kayıt, elle P12 içe aktarma, mTLS Config API'ye ve host'taki mock mTLS hedefine bağlanma, kaydı silme.
+6. **mTLS:** token, kayıt kodu ya da cihaz kimliğiyle kayıt; yönetici onayı gerekiyorsa doğrulama koduyla bekleme (panelde aynı kod görünür, onaylanınca kayıt kendiliğinden tamamlanır); reddedilen kaydın nedeni; elle P12 içe aktarma; mTLS Config API'ye ve host'taki mock mTLS hedefine bağlanma; süresi dolan sertifikanın kurtarma kapısından yenilenmesi; kaydı silme.
 7. **Vault:** yedi farklı dosya (herkese açık, token, uçtan uca şifreli, sunucuda şifreli, yalnızca yönetim anahtarıyla, şifreli dosya deposu, mTLS + token) indirme, eşitleme, okuma ve silme.
 8. **Depolama:** cihazda ne saklandığı ve nasıl saklandığı; şifreli tercihler, vault blob'ları, Android Keystore anahtarları.
 9. **Ayarlar:** PinVault'un çalışma modu, telemetri seçenekleri ve kütüphanenin nadir yolları (özel bağlantı ayarlı istemci, sıfırlama, planlı iş).
@@ -21,7 +21,7 @@ Uygulama şunları gösterir:
 | Ekran | Ne var |
 |---|---|
 | Ana | Durum (mod, config sürümü, host başına pin sürümü), iki client ile pinli istek, config yenileme, bağlantı olayları |
-| mTLS | Kayıt (token / otomatik), P12 içe aktarma, mTLS Config API ve mock host testleri, kaydı silme |
+| mTLS | Kayıt (token / kayıt kodu / otomatik), onay bekleme ve doğrulama kodu, ret nedeni, P12 içe aktarma, mTLS Config API ve mock host testleri, kaydı silme |
 | Vault | Yedi dosya, "Tümünü eşitle", dosya bilgisi (sunucuya gitmeden), silme, cihaz kimliği, erişim token'ı |
 | Depolama | Şifreli tercih dosyaları ve düz metin sızıntısı kontrolü, `files/vault_files/*.enc`, Keystore anahtarları (algoritma, bit, donanım), istemci sertifikası kaydı |
 | Ayarlar | Mod seçimi, telemetri (başarıları raporla, tekrar bastırma), özel ayarlı istemci, reset / init tekrar / yeniden başlat, WorkManager işleri |
@@ -92,6 +92,8 @@ Yayın derlemesi (`./gradlew assembleRelease`) gerçek uygulamalar gibi R8 ile k
 | Config'i şimdi yenile | "✅ Config güncel" ya da "✅ Yeni config uygulandı: vN" |
 | Host kapalıyken açılış | "❌ PinVault başlatılamadı" ve "Tekrar dene" |
 | mTLS → token gir → Kayıt ol | "✅ Kayıt başarılı — CN=PinVault Client: …" |
+| mTLS → onaylı kayıt kodu gir → Kayıt ol | "⏳ Onay bekleniyor — kimlik: … doğrulama kodu: XXXX-XXXX"; panelde onaylanınca "✅ Kayıt başarılı" |
+| mTLS → Otomatik kayıt (kodsuz başvurular açıkken) | Aynı bekleme ekranı; panelde satırda "kodsuz başvuru" ve aynı doğrulama kodu |
 | mTLS → Mock mTLS host | Kayıtlıysa "✅ Mock mTLS host bağlantısı başarılı, HTTP 200" |
 | Vault → flags | "✅ sample-flags v1 indirildi (imza doğrulandı)" ve içerik |
 | Vault → admin | "❌ sample-admin indirilemedi … 401" (kütüphane yönetim anahtarı göndermez) |
