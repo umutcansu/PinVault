@@ -6,7 +6,9 @@ import io.github.umutcansu.pinvault.api.DefaultCertificateConfigApi
 import io.github.umutcansu.pinvault.internal.ConfigApiClient
 import io.github.umutcansu.pinvault.internal.VaultFileRouter
 import io.github.umutcansu.pinvault.keystore.DeviceKeyProvider
+import io.github.umutcansu.pinvault.model.ClientCertEnrollmentResult
 import io.github.umutcansu.pinvault.model.ConfigApiBlock
+import io.github.umutcansu.pinvault.model.EnrollmentRefusedException
 import io.github.umutcansu.pinvault.model.HttpConnectionSettings
 import io.github.umutcansu.pinvault.model.InitResult
 import io.github.umutcansu.pinvault.model.PinVaultConfig
@@ -404,6 +406,10 @@ object PinVault {
         // failures are logged but don't fail the init unless the default does.
         val defaultId = pinManagerConfig?.defaultConfigApi?.id
 
+        // A device whose enrollment waited for approval asks again first: once
+        // let in, its certificate is what reaches an mTLS Config API below.
+        pickUpPendingEnrollments()
+
         // Keep CSR-enrolled client certificates alive BEFORE the first config
         // fetch: an expired certificate would make that fetch fail on an mTLS
         // Config API, and renewal needs only the bootstrap pins, not a config.
@@ -588,7 +594,10 @@ object PinVault {
     }
 
     /**
-     * Enrolls this device using a one-time token.
+     * Enrolls this device with a one-time token, or with an enrollment code
+     * many devices share. A code whose policy asks for an administrator's
+     * approval answers [ClientCertEnrollmentResult.Pending] first (this
+     * returns false then); see [checkPendingEnrollment].
      *
      * The device generates a signing key in the Android Keystore, sends a
      * certificate signing request over it, and stores the chain the server
@@ -598,9 +607,19 @@ object PinVault {
      * as before.
      *
      * @param label Optional label override. If null, uses the default Config API's clientCertLabel.
-     * @return true if enrollment succeeded (or a credential already exists)
+     * @return true if enrollment succeeded (or a credential already exists);
+     *         [enrollForResult] says why it did not
      */
     suspend fun enroll(context: Context, token: String, label: String? = null): Boolean =
+        enrollForResult(context, token, label) is ClientCertEnrollmentResult.Enrolled
+
+    /**
+     * [enroll], with the reason when it does not work: a refusal the user can
+     * act on (a used token, a device enrolled under another id, a revoked id),
+     * a wait for an administrator's approval ([ClientCertEnrollmentResult.Pending])
+     * or a failure to reach the server. See [ClientCertEnrollmentResult].
+     */
+    suspend fun enrollForResult(context: Context, token: String, label: String? = null): ClientCertEnrollmentResult =
         enrollInternal(context, token = token, deviceId = null, label = label)
 
     /**
@@ -608,9 +627,19 @@ object PinVault {
      * Call this during init when mTLS hosts are expected. Same credential
      * flow as [enroll].
      *
-     * @return true if enrollment succeeded or cert already exists
+     * A server that takes applications without a token only after an
+     * administrator's approval (the reference server's "code-less applications")
+     * answers [ClientCertEnrollmentResult.Pending]: show the device's
+     * [enrollmentVerificationCode] and wait — see [checkPendingEnrollment].
+     *
+     * @return true if enrollment succeeded or cert already exists;
+     *         [autoEnrollForResult] says why it did not
      */
-    suspend fun autoEnroll(context: Context): Boolean {
+    suspend fun autoEnroll(context: Context): Boolean =
+        autoEnrollForResult(context) is ClientCertEnrollmentResult.Enrolled
+
+    /** [autoEnroll], with the reason when it does not work. See [enrollForResult]. */
+    suspend fun autoEnrollForResult(context: Context): ClientCertEnrollmentResult {
         // SECURITY NOTE (M-02): ANDROID_ID is a soft identifier. On rooted
         // devices it can be spoofed; on multi-user devices it is per-user.
         // Treat the resulting enrollment as a convenience credential, not
@@ -637,51 +666,156 @@ object PinVault {
      * credential is stored; the next [init] loads it. When PinVault is
      * already initialized this is the same as [enroll] without a config.
      *
-     * @return true if enrollment succeeded (or a credential already exists)
+     * @return true if enrollment succeeded (or a credential already exists);
+     *         [enrollForResult] says why it did not
      */
     suspend fun enroll(context: Context, config: PinVaultConfig, token: String): Boolean =
+        enrollForResult(context, config, token) is ClientCertEnrollmentResult.Enrolled
+
+    /** [enroll] before [init], with the reason when it does not work. See [ClientCertEnrollmentResult]. */
+    suspend fun enrollForResult(context: Context, config: PinVaultConfig, token: String): ClientCertEnrollmentResult =
         enrollBeforeInit(context, config, token = token, deviceId = null)
 
     /** [autoEnroll] before [init]; see [enroll] with a config. */
-    suspend fun autoEnroll(context: Context, config: PinVaultConfig): Boolean {
+    suspend fun autoEnroll(context: Context, config: PinVaultConfig): Boolean =
+        autoEnrollForResult(context, config) is ClientCertEnrollmentResult.Enrolled
+
+    /** [autoEnroll] before [init], with the reason when it does not work. */
+    suspend fun autoEnrollForResult(context: Context, config: PinVaultConfig): ClientCertEnrollmentResult {
         val deviceId = io.github.umutcansu.pinvault.internal.DeviceIdentity
             .androidId(context) ?: "unknown-device"
         return enrollBeforeInit(context, config, token = null, deviceId = deviceId)
     }
 
-    /** Whether the default block of [config] has an enrolled client certificate. Usable before [init]. */
+    /**
+     * Whether the default block of [config] has an enrolled client certificate. Usable before [init].
+     *
+     * From Java this is `isEnrolledWithConfig`: a second `isEnrolled(Context, …)` would make
+     * every existing `isEnrolled(context, null)` call ambiguous.
+     */
+    @JvmName("isEnrolledWithConfig")
     fun isEnrolled(context: Context, config: PinVaultConfig): Boolean =
         ClientCertSecureStore(context.applicationContext)
             .exists(config.defaultConfigApi?.clientCertLabel ?: ClientCertSecureStore.DEFAULT_LABEL)
 
-    private suspend fun enrollBeforeInit(context: Context, config: PinVaultConfig, token: String?, deviceId: String?): Boolean {
+    /**
+     * The verification code of this device's enrollment key, `4F7K-2QXM`: the
+     * administrator sees the same code next to the device's request while it
+     * waits for approval, so it is what the app shows on its "waiting" screen.
+     * Null when there is no enrollment key (never applied, or unenrolled).
+     *
+     * @param label Optional label. If null, uses the default Config API's `clientCertLabel`.
+     */
+    fun enrollmentVerificationCode(context: Context, label: String? = null): String? {
+        val key = identityKeyFactory(label ?: defaultCertLabel())
+        return try {
+            if (key.exists()) io.github.umutcansu.pinvault.internal.VerificationCode.of(key.publicKey()) else null
+        } catch (e: Exception) {
+            Timber.w(e, "Could not read the enrollment key for its verification code")
+            null
+        }
+    }
+
+    /**
+     * Whether this device enrolled with a code that waits for an
+     * administrator's approval ([ClientCertEnrollmentResult.Pending]) and has
+     * no certificate yet. [checkPendingEnrollment] asks again; [init] and the
+     * periodic update ask on their own. [unenroll] gives the request up.
+     *
+     * @param label Optional label. If null, uses the default Config API's `clientCertLabel`.
+     */
+    fun isEnrollmentPending(context: Context, label: String? = null): Boolean {
+        val store = ClientCertSecureStore(context.applicationContext)
+        val certLabel = label ?: defaultCertLabel()
+        return !store.exists(certLabel) && store.loadPendingRequest(certLabel) != null
+    }
+
+    /**
+     * [isEnrollmentPending] for the default block of [config]; usable before [init].
+     * From Java this is `isEnrollmentPendingWithConfig` (see [isEnrolled]).
+     */
+    @JvmName("isEnrollmentPendingWithConfig")
+    fun isEnrollmentPending(context: Context, config: PinVaultConfig): Boolean =
+        isEnrollmentPending(context, config.defaultConfigApi?.clientCertLabel ?: ClientCertSecureStore.DEFAULT_LABEL)
+
+    /**
+     * Asks whether a device that was told to wait
+     * ([ClientCertEnrollmentResult.Pending]) has been approved:
+     * [ClientCertEnrollmentResult.Enrolled] once it has — the certificate is
+     * stored and presented from then on — `Pending` while it still waits, and
+     * `Refused` with [io.github.umutcansu.pinvault.model.EnrollmentRefusal.REJECTED]
+     * when an administrator turned it away. Call it while a "waiting for
+     * approval" screen is up; [init] and the periodic update ask on their own.
+     */
+    suspend fun checkPendingEnrollment(context: Context): ClientCertEnrollmentResult {
+        pendingCheckShortcut(context, defaultCertLabel())?.let { return it }
+        return enrollInternal(context, token = null, deviceId = null, label = null)
+    }
+
+    /** [checkPendingEnrollment] for the default block of [config]; usable before [init]. */
+    suspend fun checkPendingEnrollment(context: Context, config: PinVaultConfig): ClientCertEnrollmentResult {
+        if (initialized) return checkPendingEnrollment(context)
+        val block = config.defaultConfigApi ?: return NO_CONFIG_API_BLOCK
+        pendingCheckShortcut(context, block.clientCertLabel)?.let { return it }
+        return enrollBeforeInit(context, config, token = null, deviceId = null)
+    }
+
+    /** Enrolled already, or nothing waiting: answered without asking the server. */
+    private fun pendingCheckShortcut(context: Context, certLabel: String): ClientCertEnrollmentResult? {
+        val store = ClientCertSecureStore(context.applicationContext)
+        return when {
+            store.exists(certLabel) -> ClientCertEnrollmentResult.Enrolled(alreadyEnrolled = true)
+            store.loadPendingRequest(certLabel) == null -> ClientCertEnrollmentResult.Failed("No enrollment is waiting for approval")
+            else -> null
+        }
+    }
+
+    /**
+     * A device told to wait asks again on its own: at [init] (before the
+     * first config fetch, so an mTLS Config API is reachable once approved)
+     * and on every periodic update. Never throws.
+     */
+    internal suspend fun pickUpPendingEnrollments() {
+        if (!initialized) return
+        val certLabel = defaultCertLabel()
+        val store = ClientCertSecureStore(appContext)
+        if (store.exists(certLabel) || store.loadPendingRequest(certLabel) == null) return
+        when (val result = enrollInternal(appContext, token = null, deviceId = null, label = null)) {
+            is ClientCertEnrollmentResult.Enrolled -> Timber.i("Enrollment approved — client certificate stored [%s]", certLabel)
+            is ClientCertEnrollmentResult.Pending -> Timber.d("Enrollment still waits for approval [%s]", certLabel)
+            else -> Timber.w("Enrollment waiting for approval ended: %s", result)
+        }
+    }
+
+    private suspend fun enrollBeforeInit(context: Context, config: PinVaultConfig, token: String?, deviceId: String?): ClientCertEnrollmentResult {
         if (initialized) return enrollInternal(context, token, deviceId, label = null)
-        val block = config.defaultConfigApi ?: return false
+        val block = config.defaultConfigApi ?: return NO_CONFIG_API_BLOCK
         val certLabel = block.clientCertLabel
         if (ClientCertSecureStore(context.applicationContext).exists(certLabel)) {
             Timber.d("Client cert already exists [%s] — skipping enrollment", certLabel)
-            return true
+            return ClientCertEnrollmentResult.Enrolled(alreadyEnrolled = true)
         }
         return try {
             // A client for the block alone — the library's state is untouched;
             // the next init picks the stored credential up.
             val api = ConfigApiClient(block, context.applicationContext, identityKeyFactory = identityKeyFactory).api
             enrollAndStore(context, config, block, api, token, deviceId, certLabel)
-            true
+            ClientCertEnrollmentResult.Enrolled()
         } catch (e: Exception) {
-            Timber.e(e, "Enrollment failed")
-            false
+            enrollmentFailure(e)
         }
     }
 
-    private suspend fun enrollInternal(context: Context, token: String?, deviceId: String?, label: String?): Boolean {
-        val config = pinManagerConfig ?: return false
-        val defaultBlock = config.defaultConfigApi ?: return false
+    private suspend fun enrollInternal(context: Context, token: String?, deviceId: String?, label: String?): ClientCertEnrollmentResult {
+        val config = pinManagerConfig ?: return ClientCertEnrollmentResult.Failed(
+            "PinVault is not initialized: call init first, or enroll with the config before init"
+        )
+        val defaultBlock = config.defaultConfigApi ?: return NO_CONFIG_API_BLOCK
         val certLabel = label ?: defaultBlock.clientCertLabel
 
         if (ClientCertSecureStore(context.applicationContext).exists(certLabel)) {
             Timber.d("Client cert already exists [%s] — skipping enrollment", certLabel)
-            return true
+            return ClientCertEnrollmentResult.Enrolled(alreadyEnrolled = true)
         }
 
         return try {
@@ -692,16 +826,31 @@ object PinVault {
             // Present the new identity on every client, the Config API's included.
             (configApi as? DefaultCertificateConfigApi)?.rebuildBootstrapClient()
             clientProvider.currentConfig?.let { clientProvider.swap(it) }
-            true
+            ClientCertEnrollmentResult.Enrolled()
         } catch (e: Exception) {
-            Timber.e(e, "Enrollment failed")
-            false
+            enrollmentFailure(e)
         }
     }
 
     private sealed class Enrolled {
         class Chain(val key: io.github.umutcansu.pinvault.keystore.ClientIdentityKeyProvider, val certs: List<java.security.cert.X509Certificate>) : Enrolled()
         class P12(val bytes: ByteArray) : Enrolled()
+    }
+
+    private val NO_CONFIG_API_BLOCK = ClientCertEnrollmentResult.Failed("The config has no Config API block")
+
+    /** A refusal the app can act on (with the server's reason), or a failure to get an answer. */
+    private fun enrollmentFailure(e: Exception): ClientCertEnrollmentResult {
+        if (e is io.github.umutcansu.pinvault.model.EnrollmentPendingException) {
+            Timber.i("Enrollment waits for an administrator's approval — request %s", e.requestId)
+            return ClientCertEnrollmentResult.Pending(e.requestId, e.clientId, e.serverMessage, e.retryAfterSeconds, e.verificationCode)
+        }
+        Timber.e(e, "Enrollment failed")
+        return if (e is EnrollmentRefusedException) {
+            ClientCertEnrollmentResult.Refused(e.refusal, e.httpStatus, e.serverError, e.serverMessage)
+        } else {
+            ClientCertEnrollmentResult.Failed(e.message ?: e.javaClass.simpleName, e)
+        }
     }
 
     /**
@@ -720,22 +869,24 @@ object PinVault {
     ): Enrolled {
         val certStore = ClientCertSecureStore(context.applicationContext)
         val identity = resolveDeviceIdentity(config, context)
-
-        // If the Keystore refuses (some ROMs do), enroll the old way and let
-        // the server make the key.
         val key = identityKeyFactory(certLabel)
-        val csr = try {
-            key.ensureKeyPair()
-            io.github.umutcansu.pinvault.crypto.Pkcs10Csr.encode(
-                deviceId ?: identity?.second ?: "device", key.publicKey(), key::sign
-            )
-        } catch (e: Exception) {
-            Timber.w(e, "Could not build a CSR — falling back to P12 enrollment")
-            null
-        }
 
-        val result = csr?.let { api.enrollWithCsr(token, deviceId, identity?.first, identity?.second, it) }
-            ?: api.enroll(token, deviceId, identity?.first, identity?.second)
+        // A device told to wait for approval asks again by its request id (see EnrollmentRequests).
+        val result = io.github.umutcansu.pinvault.internal.EnrollmentRequests.send(
+            api, certStore, key, certLabel, token, deviceId, identity?.first, identity?.second
+        ) {
+            // If the Keystore refuses (some ROMs do), enroll the old way and let
+            // the server make the key.
+            try {
+                key.ensureKeyPair()
+                io.github.umutcansu.pinvault.crypto.Pkcs10Csr.encode(
+                    deviceId ?: identity?.second ?: "device", key.publicKey(), key::sign
+                )
+            } catch (e: Exception) {
+                Timber.w(e, "Could not build a CSR — falling back to P12 enrollment")
+                null
+            }
+        }
 
         val chain = result.certificateChainPem
         return if (chain != null) {
@@ -859,6 +1010,8 @@ object PinVault {
 
     /**
      * Removes the enrolled client certificate from this device.
+     *
+     * Also gives up an enrollment that waits for approval (and its key).
      *
      * Clears both the persisted P12 **and** the in-memory KeyManager, then
      * rebuilds the active client so the very next request stops presenting a

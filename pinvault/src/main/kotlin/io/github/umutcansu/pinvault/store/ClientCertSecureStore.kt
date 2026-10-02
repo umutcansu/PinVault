@@ -39,6 +39,7 @@ internal class ClientCertSecureStore private constructor(private val prefs: Shar
         prefs.edit()
             .putString(p12Key(label), Base64.encodeToString(p12Bytes, Base64.NO_WRAP))
             .remove(chainKey(label))
+            .remove(pendingKey(label))
             .apply()
         Timber.d("Client P12 saved [%s]", label)
     }
@@ -72,6 +73,7 @@ internal class ClientCertSecureStore private constructor(private val prefs: Shar
         prefs.edit()
             .putString(chainKey(label), pemChain.joinToString(CHAIN_SEPARATOR))
             .remove(p12Key(label))
+            .remove(pendingKey(label))
             .commit()
         Timber.d("Client certificate chain saved [%s] (%d certs)", label, pemChain.size)
     }
@@ -82,6 +84,33 @@ internal class ClientCertSecureStore private constructor(private val prefs: Shar
     }
 
     fun hasChain(label: String): Boolean = prefs.contains(chainKey(label))
+
+    // ── Enrollment waiting for approval ───────────────────────────────────
+
+    /** An enrollment request an administrator has not decided on yet; see [savePendingRequest]. */
+    data class PendingRequest(val requestId: String, val clientId: String?)
+
+    /**
+     * Remembers the request an enrollment code was answered with (HTTP 202)
+     * while an administrator decides. The device asks again by this id with a
+     * CSR from the same key; storing a credential for [label] forgets it.
+     */
+    fun savePendingRequest(label: String, requestId: String, clientId: String?) {
+        prefs.edit()
+            .putString(pendingKey(label), requestId + PENDING_SEPARATOR + clientId.orEmpty())
+            .commit()
+        Timber.d("Enrollment waits for approval [%s] — request %s", label, requestId)
+    }
+
+    fun loadPendingRequest(label: String): PendingRequest? {
+        val stored = prefs.getString(pendingKey(label), null) ?: return null
+        val requestId = stored.substringBefore(PENDING_SEPARATOR).ifBlank { return null }
+        return PendingRequest(requestId, stored.substringAfter(PENDING_SEPARATOR, "").ifBlank { null })
+    }
+
+    fun clearPendingRequest(label: String) {
+        prefs.edit().remove(pendingKey(label)).apply()
+    }
 
     // ── Either form ──────────────────────────────────────────────────────
 
@@ -98,7 +127,7 @@ internal class ClientCertSecureStore private constructor(private val prefs: Shar
     fun clear() = clear(DEFAULT_LABEL)
 
     fun clear(label: String) {
-        prefs.edit().remove(p12Key(label)).remove(chainKey(label)).apply()
+        prefs.edit().remove(p12Key(label)).remove(chainKey(label)).remove(pendingKey(label)).apply()
         Timber.d("Client credentials cleared [%s]", label)
     }
 
@@ -109,6 +138,7 @@ internal class ClientCertSecureStore private constructor(private val prefs: Shar
 
     private fun p12Key(label: String): String = "$P12_PREFIX$label"
     private fun chainKey(label: String): String = "$CHAIN_PREFIX$label"
+    private fun pendingKey(label: String): String = "$PENDING_PREFIX$label"
 
     companion object {
         /** Keep in sync with res/xml/pinvault_backup_rules.xml and pinvault_data_extraction_rules.xml. */
@@ -117,6 +147,8 @@ internal class ClientCertSecureStore private constructor(private val prefs: Shar
         private const val PREFS_NAME = "pinvault_client_cert"
         private const val P12_PREFIX = "client_p12_"
         private const val CHAIN_PREFIX = "client_chain_"
+        private const val PENDING_PREFIX = "client_pending_"
+        private const val PENDING_SEPARATOR = "\n"
         /** PEM never contains this, so joining the chain with it is unambiguous. */
         private const val CHAIN_SEPARATOR = "\n\n"
         internal const val DEFAULT_LABEL = "default"

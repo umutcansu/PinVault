@@ -2,6 +2,8 @@ package io.github.umutcansu.pinvault.api
 
 import com.google.gson.Gson
 import io.github.umutcansu.pinvault.model.CertificateConfig
+import io.github.umutcansu.pinvault.model.EnrollmentRefusal
+import io.github.umutcansu.pinvault.model.EnrollmentRefusedException
 import io.github.umutcansu.pinvault.model.HostPin
 import io.github.umutcansu.pinvault.model.SignedConfigResponse
 import io.github.umutcansu.pinvault.ssl.DynamicSSLManager
@@ -477,6 +479,107 @@ class DefaultCertificateConfigApiTest {
         assertArrayEquals(bundle, result.p12Bytes)
         assertEquals("hash", result.p12Hash)
         assertEquals(1, server.requestCount)
+    }
+
+    @Test
+    fun `a refused enrollment carries the server's reason`() = runTest {
+        server.enqueue(
+            MockResponse().setResponseCode(409).setHeader("Content-Type", "application/json")
+                .setBody("""{"error":"device_already_enrolled","message":"This device is enrolled under another client id."}""")
+        )
+        try {
+            createApi().enrollWithCsr("tok", null, null, "uid", csr)
+            fail("expected a refusal")
+        } catch (e: EnrollmentRefusedException) {
+            assertEquals(409, e.httpStatus)
+            assertEquals("device_already_enrolled", e.serverError)
+            assertEquals("This device is enrolled under another client id.", e.serverMessage)
+            assertEquals(EnrollmentRefusal.DEVICE_ALREADY_ENROLLED, e.refusal)
+        }
+    }
+
+    @Test
+    fun `a refusal without a JSON body still says it was refused`() = runTest {
+        server.enqueue(MockResponse().setResponseCode(413).setBody("<html>too large</html>"))
+        try {
+            createApi().enroll("tok", null, null, null)
+            fail("expected a refusal")
+        } catch (e: EnrollmentRefusedException) {
+            assertEquals(413, e.httpStatus)
+            assertNull(e.serverError)
+            assertEquals(EnrollmentRefusal.OTHER, e.refusal)
+        }
+    }
+
+    @Test
+    fun `a server error is a failure, not a refusal`() = runTest {
+        server.enqueue(MockResponse().setResponseCode(503).setBody("""{"error":"busy"}"""))
+        try {
+            createApi().enrollWithCsr("tok", null, null, null, csr)
+            fail("expected an exception")
+        } catch (e: EnrollmentRefusedException) {
+            fail("a 5xx is no refusal: ${e.message}")
+        } catch (e: Exception) {
+            assertTrue(e.message!!.contains("503"))
+        }
+    }
+
+    @Test
+    fun `refusals map to what the app can do about them`() {
+        assertEquals(EnrollmentRefusal.INVALID_TOKEN, EnrollmentRefusedException(401, "Gecersiz token").refusal)
+        assertEquals(EnrollmentRefusal.REVOKED, EnrollmentRefusedException(403, "revoked").refusal)
+        assertEquals(
+            EnrollmentRefusal.TOKEN_REQUIRED,
+            EnrollmentRefusedException(403, "Token required for enrollment. Generate a token via management API").refusal
+        )
+        assertEquals(EnrollmentRefusal.DEVICE_ALREADY_ENROLLED, EnrollmentRefusedException(409, "device_already_enrolled").refusal)
+        assertEquals(EnrollmentRefusal.REJECTED, EnrollmentRefusedException(403, "enrollment_rejected").refusal)
+        assertEquals(EnrollmentRefusal.LIMIT_REACHED, EnrollmentRefusedException(403, "enrollment_limit_reached").refusal)
+        assertEquals(EnrollmentRefusal.EXPIRED, EnrollmentRefusedException(410, "enrollment_request_expired").refusal)
+        assertEquals(EnrollmentRefusal.OTHER, EnrollmentRefusedException(429, "too_many_pending_requests").refusal)
+        assertEquals(EnrollmentRefusal.OTHER, EnrollmentRefusedException(400, "invalid_csr").refusal)
+    }
+
+    @Test
+    fun `a 202 means the device waits for approval, with the request id`() = runTest {
+        server.enqueue(
+            MockResponse().setResponseCode(202).setHeader("Content-Type", "application/json").setHeader("Retry-After", "15")
+                .setBody("""{"status":"pending","requestId":"r-123","clientId":"field-7k2m9x","message":"Waiting for an administrator."}""")
+        )
+        try {
+            createApi().enrollWithCsr("K7QM2-XRT9V-4NWDP-J6E8B-HC3MA", null, "Pixel", "uid", csr)
+            fail("expected to wait")
+        } catch (e: io.github.umutcansu.pinvault.model.EnrollmentPendingException) {
+            assertEquals("r-123", e.requestId)
+            assertEquals("field-7k2m9x", e.clientId)
+            assertEquals("Waiting for an administrator.", e.serverMessage)
+            assertEquals(15, e.retryAfterSeconds)
+        }
+    }
+
+    @Test
+    fun `a 202 without a request id is a failure`() = runTest {
+        server.enqueue(MockResponse().setResponseCode(202).setBody("""{"status":"pending"}"""))
+        try {
+            createApi().enrollWithCsr("code", null, null, null, csr)
+            fail("expected an exception")
+        } catch (e: io.github.umutcansu.pinvault.model.EnrollmentPendingException) {
+            fail("no request id to ask again with: ${e.message}")
+        } catch (e: Exception) {
+            assertTrue(e.message!!.contains("requestId"))
+        }
+    }
+
+    @Test
+    fun `asking again sends the request id with the CSR and no token`() = runTest {
+        server.enqueue(MockResponse().setBody(chainJson).setHeader("X-PinVault-Cert-Format", "pem-chain"))
+        val result = createApi().enrollWithCsr(null, null, "Pixel", "uid", csr, requestId = "r-123")
+
+        val body = org.json.JSONObject(server.takeRequest().body.readUtf8())
+        assertEquals("r-123", body.getString("requestId"))
+        assertFalse(body.has("token"))
+        assertEquals(Base64.getEncoder().encodeToString(csr), body.getString("csr"))
+        assertTrue(result.isCertificateChain)
     }
 
     @Test

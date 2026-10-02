@@ -29,6 +29,14 @@ class CertificateUpdateWorker(
             Timber.e(e, "Vault file sync failed during periodic update")
         }
 
+        // A device whose enrollment waits for approval asks again; once let in,
+        // its certificate is stored and presented. Never affects the result.
+        try {
+            PinVault.pickUpPendingEnrollments()
+        } catch (e: Exception) {
+            Timber.e(e, "Pending enrollment check failed during periodic update")
+        }
+
         // Keep CSR-enrolled client certificates alive. Never affects the
         // worker result: a failed renewal is retried on the next run.
         try {

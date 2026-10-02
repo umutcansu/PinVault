@@ -132,7 +132,9 @@ interface CertificateConfigApi {
      * @param deviceAlias Human-readable device name (optional).
      * @param deviceUid Unique device identifier (optional).
      * @return [EnrollmentResult] containing P12 bytes and optional hash.
-     * @throws Exception on enrollment failure.
+     * @throws io.github.umutcansu.pinvault.model.EnrollmentRefusedException when the
+     *         server refuses (the app learns why from `PinVault.enrollForResult`);
+     *         any other Exception on other failures.
      */
     suspend fun enroll(
         token: String?,
@@ -151,6 +153,13 @@ interface CertificateConfigApi {
      * instead, exactly as [enroll] would. Return `null` to say the backend
      * cannot take a CSR at all; the library then calls [enroll].
      *
+     * A backend where an administrator approves devices first throws
+     * [io.github.umutcansu.pinvault.model.EnrollmentPendingException] with a
+     * request id. The library calls again later with that [requestId] (and
+     * no token), with a CSR signed by the same key: issue the certificate if
+     * the device was approved, throw the pending exception again if it still
+     * waits, or refuse ([io.github.umutcansu.pinvault.model.EnrollmentRefusedException]).
+     *
      * Default: `null`.
      */
     suspend fun enrollWithCsr(
@@ -158,7 +167,8 @@ interface CertificateConfigApi {
         deviceId: String?,
         deviceAlias: String? = null,
         deviceUid: String? = null,
-        csrDer: ByteArray
+        csrDer: ByteArray,
+        requestId: String? = null
     ): EnrollmentResult? = null
 
     /**

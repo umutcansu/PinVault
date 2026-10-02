@@ -94,4 +94,31 @@ class ClientCertSecureStoreTest {
         } catch (_: IllegalArgumentException) { }
         assertFalse(store.exists("default"))
     }
+
+    @Test
+    fun `a pending enrollment request round-trips and is forgotten when a credential arrives`() {
+        assertNull(store.loadPendingRequest("default"))
+        store.savePendingRequest("default", "r-1", "field-7k2m9x")
+        assertEquals(ClientCertSecureStore.PendingRequest("r-1", "field-7k2m9x"), store.loadPendingRequest("default"))
+        assertFalse("waiting is not enrolled", store.exists("default"))
+        assertNull("per label", store.loadPendingRequest("other"))
+
+        store.saveChain("default", listOf(pemA))
+        assertNull(store.loadPendingRequest("default"))
+
+        store.savePendingRequest("other", "r-2", null)
+        assertEquals(ClientCertSecureStore.PendingRequest("r-2", null), store.loadPendingRequest("other"))
+        store.save("other", byteArrayOf(1))
+        assertNull(store.loadPendingRequest("other"))
+    }
+
+    @Test
+    fun `clearing a label gives up its pending request`() {
+        store.savePendingRequest("default", "r-1", null)
+        store.clear("default")
+        assertNull(store.loadPendingRequest("default"))
+        store.savePendingRequest("default", "r-2", null)
+        store.clearPendingRequest("default")
+        assertNull(store.loadPendingRequest("default"))
+    }
 }

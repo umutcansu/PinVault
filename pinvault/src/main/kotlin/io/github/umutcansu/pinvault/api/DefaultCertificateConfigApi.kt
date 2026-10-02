@@ -351,7 +351,7 @@ internal class DefaultCertificateConfigApi(
         deviceId: String?,
         deviceAlias: String?,
         deviceUid: String?
-    ): EnrollmentResult = enrollRequest(token, deviceId, deviceAlias, deviceUid, csrDer = null)
+    ): EnrollmentResult = enrollRequest(token, deviceId, deviceAlias, deviceUid, csrDer = null, requestId = null)
 
     /**
      * Sends the CSR along with the usual enrollment fields and the `csr`
@@ -359,21 +359,26 @@ internal class DefaultCertificateConfigApi(
      * (`X-PinVault-Cert-Format: pem-chain`); an older server ignores both and
      * answers with a P12 exactly as for [enroll] — one request either way, so
      * a one-time token is never spent twice.
+     *
+     * With [requestId] the device asks again whether the enrollment it was
+     * told to wait for (HTTP 202) has been approved.
      */
     override suspend fun enrollWithCsr(
         token: String?,
         deviceId: String?,
         deviceAlias: String?,
         deviceUid: String?,
-        csrDer: ByteArray
-    ): EnrollmentResult = enrollRequest(token, deviceId, deviceAlias, deviceUid, csrDer)
+        csrDer: ByteArray,
+        requestId: String?
+    ): EnrollmentResult = enrollRequest(token, deviceId, deviceAlias, deviceUid, csrDer, requestId)
 
     private suspend fun enrollRequest(
         token: String?,
         deviceId: String?,
         deviceAlias: String?,
         deviceUid: String?,
-        csrDer: ByteArray?
+        csrDer: ByteArray?,
+        requestId: String?
     ): EnrollmentResult = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
         val json = org.json.JSONObject()
         token?.let { json.put("token", it) }
@@ -381,6 +386,7 @@ internal class DefaultCertificateConfigApi(
         deviceAlias?.let { json.put("deviceAlias", it) }
         deviceUid?.let { json.put("deviceUid", it) }
         csrDer?.let { json.put("csr", android.util.Base64.encodeToString(it, android.util.Base64.NO_WRAP)) }
+        requestId?.let { json.put("requestId", it) }
 
         val requestBody = json.toString().toRequestBody("application/json".toMediaType())
         val request = okhttp3.Request.Builder()
@@ -390,7 +396,30 @@ internal class DefaultCertificateConfigApi(
             .build()
 
         bootstrapClient.newCall(request).execute().use { response ->
+            // Taken, but an administrator approves the device first (an enrollment
+            // code whose policy asks for it): no certificate yet, a request id.
+            if (response.code == 202) {
+                val answer = runCatching { org.json.JSONObject(response.body?.string().orEmpty()) }.getOrNull()
+                val id = answer?.optString("requestId")?.ifBlank { null }
+                    ?: throw Exception("Enrollment answered 202 without a requestId")
+                throw io.github.umutcansu.pinvault.model.EnrollmentPendingException(
+                    id,
+                    answer?.optString("clientId")?.ifBlank { null },
+                    answer?.optString("message")?.ifBlank { null },
+                    response.header("Retry-After")?.trim()?.toIntOrNull()
+                )
+            }
             if (!response.isSuccessful) {
+                // A refusal carries its reason in the body (`device_already_enrolled`,
+                // `revoked`, …); keep it, the app shows it to the user.
+                if (response.code in 400..499) {
+                    val answer = runCatching { org.json.JSONObject(response.body?.string().orEmpty()) }.getOrNull()
+                    throw io.github.umutcansu.pinvault.model.EnrollmentRefusedException(
+                        response.code,
+                        answer?.optString("error")?.ifBlank { null },
+                        answer?.optString("message")?.ifBlank { null }
+                    )
+                }
                 throw Exception("Enrollment failed — HTTP ${response.code}")
             }
             val body = response.body?.bytes() ?: throw Exception("Empty enrollment response")
