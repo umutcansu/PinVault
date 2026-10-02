@@ -256,6 +256,53 @@ The library refuses to install the P12 if this header is missing or its value do
 - Must open with the `X-P12-Password` you sent, or else with the app's `clientKeyPassword`
 - Certificate must not be expired
 
+**CSR enrollment (library 2.1).** The library sends `X-PinVault-Features: p12password,csr`
+and a `csr` field: a Base64 DER PKCS#10 request over a key it keeps in the Android
+Keystore. A server that understands it verifies the request's self-signature, issues a
+certificate over that key (name it after your own client id, not the CSR's subject) and
+answers JSON with `X-PinVault-Cert-Format: pem-chain`:
+
+```json
+{ "clientId": "tablet-07", "chain": ["-----BEGIN CERTIFICATE-----…(leaf)", "-----BEGIN CERTIFICATE-----…(issuing CA)"] }
+```
+
+A server that ignores the feature answers with a P12 as above, in the same request.
+
+**Refusals (library 2.1).** Answer a refusal with a 4xx and a JSON body
+`{"error": "<code>", "message": "<text>"}`; the app learns the reason from
+`PinVault.enrollForResult`. The library maps `401` to *invalid token*, and the `error`
+codes `device_already_enrolled`, `revoked`, `enrollment_rejected`,
+`enrollment_limit_reached` and `enrollment_request_expired` to their own reasons; anything
+else is shown with its status and code. A 5xx is a failure to answer, not a refusal.
+
+**Waiting for approval (library 2.1).** A server where an administrator approves devices
+first answers the enrollment with `202`:
+
+```json
+{ "status": "pending", "requestId": "1d6b06d6…", "clientId": "field-tablets-9h5e3a", "message": "…" }
+```
+
+with an optional `Retry-After` (seconds). The library keeps its key and the request id
+and asks again later — on the app's call, at `init` and on its periodic update — with the
+same endpoint and `{"requestId": "…", "csr": "…"}` (no token): issue the certificate if the
+device was approved, answer `202` again while it waits, or refuse. Check that the CSR is
+signed by the key the request was made with; the request id is no secret. On
+`404 enrollment_request_not_found`, `403 enrollment_request_mismatch`,
+`403 enrollment_rejected` or `410 enrollment_request_expired` (nobody decided in time) the
+library forgets the request and its key, so the device's next attempt is a new request.
+(The reference server does this for enrollment policies — one code many devices share —
+and for applications without a code: a token-less `{"deviceId": …, "csr": …}` while the
+administrator lets devices apply; see the README.)
+
+The device shows a verification code made from its own key, so put the same code next to
+the request in your approval screen: the first 40 bits of the SHA-256 of the CSR's
+SubjectPublicKeyInfo (DER), as eight Crockford base32 characters
+(`0123456789ABCDEFGHJKMNPQRSTVWXYZ`, five bits each, most significant first) split
+`XXXX-XXXX`. Check vectors: a digest starting with 40 zero bits → `0000-0000`, with 40 one
+bits → `ZZZZ-ZZZZ`; the digest SHA-256(`"pinvault"`) → `0XMH-GCGP`. Return it as
+`verificationCode` in the `202` if you like — the library shows the one it computes
+itself.
+
 **Known limitation of the reference implementation — one-shot tokens.**
 `demo-server` issues the certificate and marks the enrollment token used
 *before* the response reaches the device. If the device then refuses the P12 —

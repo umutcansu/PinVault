@@ -505,7 +505,11 @@ and is sufficient for the reference server.
 // Token-based
 PinVault.enroll(context, "one-time-token")
 
-// Automatic (device ID)
+// (2.1) An enrollment code many devices share (may wait for approval)
+PinVault.enroll(context, "K7QM2-XRT9V-4NWDP-J6E8B-HC3MA")
+
+// Automatic (device ID): ENROLLMENT_MODE=open, or (2.1) an application
+// an administrator approves (applications without a code)
 PinVault.autoEnroll(context)
 
 PinVault.isEnrolled(context)           // is a client certificate stored?
@@ -539,7 +543,10 @@ code:
     paste it once (the demo app's *Enroll* dialog).
 - **It is spent once.** From then on the device's identity is its Keystore key
   and certificate, and renewals *(2.1)* need no token. A device needs a new token only
-  after a reinstall, cleared app data, or a revocation.
+  after a reinstall, cleared app data, or a revocation. A revoked client id
+  stays revoked; *Forget identity* on its row in the dashboard (`POST
+  /api/v1/client-certs/{id}/forget`) frees it for a new enrollment over a new
+  key, while its old certificates and keys stay refused.
 
 A made-up token never matches: the server looks up the hash of what it
 receives and answers anything unknown, expired or used with `401`.
@@ -549,6 +556,148 @@ minted for one file and one device (the file's *Token Management* card, or
 `POST /api/v1/config-apis/{configApiId}/vault/{key}/tokens`
 `{"deviceId": "<ANDROID_ID>"}`), delivered at runtime, kept by the app in its
 own encrypted storage and handed to the library through `accessToken { … }`.
+
+### Enrollment codes: one code, many devices *(2.1)*
+
+A one-time token per device is a chore for a fleet. An **enrollment policy**
+gives one code to many devices, within limits:
+
+1. In the dashboard: the mTLS Config API → *Client Certificates* →
+   *Enrollment policies*. Enter a name (it prefixes the devices' ids, e.g.
+   `field-tablets`), the most devices it may enroll, how many days it stays
+   valid, and whether each device needs an administrator's approval (on by
+   default). *Create policy* shows the code once, with a QR code, and copies
+   it: `K7QM2-XRT9V-4NWDP-J6E8B-HC3MA` (25 characters, 125 bits; case, dashes
+   and spaces do not matter, `O`/`I`/`L` read as `0`/`1`).
+2. Every device enrolls with the same code, through the same call as a
+   token: `PinVault.enroll(context, code)` (or the config overload before
+   `init`). Each device gets its **own** identity, `field-tablets-7k2m9x`, and
+   its own certificate over its own Keystore key — nothing about one device
+   lets another one in.
+3. With approval on, the device first gets
+   `ClientCertEnrollmentResult.Pending(requestId, clientId, …,
+   verificationCode)` and waits. It shows the verification code, a short
+   code made from its own key (`4F7K-2QXM`; also
+   `PinVault.enrollmentVerificationCode(context)`). The dashboard lists the
+   request under *Devices awaiting approval* with the device's model, IP
+   address, time and the same code (and the webhook sends
+   `enrollment_request_pending`): compare the two, then *Approve* or
+   *Reject*. The device asks again by its request id with a CSR signed by
+   the same key — a request id alone picks up nothing — and `init` and the
+   periodic update ask on their own:
+
+```kotlin
+when (val result = PinVault.enrollForResult(context, config, code)) {
+    is ClientCertEnrollmentResult.Pending -> showWaiting(result.verificationCode)
+    else -> { /* Enrolled, Refused, Failed as below */ }
+}
+
+// While the "waiting for approval" screen is up:
+while (PinVault.isEnrollmentPending(context, config)) {
+    delay(15_000)                                        // the server's Retry-After
+    when (val r = PinVault.checkPendingEnrollment(context, config)) {
+        is ClientCertEnrollmentResult.Enrolled -> { PinVault.init(context, config); break }
+        is ClientCertEnrollmentResult.Refused -> { showRefusal(r.reason); break }  // REJECTED: turned away
+        else -> Unit                                     // still waiting, or offline
+    }
+}
+```
+
+A rejected device forgets the request and its key: entering the code again
+is a new request. `unenroll` gives a waiting request up.
+
+**What the code costs.** It is a shared secret: whoever holds it can enroll
+until the device limit or the end date — or, with approval on, only ask.
+That is why it has both limits, why approval is the default, and why every
+policy has *Stop*: no new devices, and the ones still waiting are turned
+away (devices approved before still pick their certificates up). The rule of
+one active identity per device holds: a device that is already enrolled
+(a reinstall) shows the clash on its request, and the old identity has to be
+revoked before it can be approved. For a sensitive device, the one-time
+token above stays the tighter choice.
+
+Codes need a CSR — the device is recognised by its key — so they work on the
+Config API listeners with the 2.1 library; a P12-only client gets
+`400 csr_required`. Management API: `POST /api/v1/enrollment-policies`
+`{"name", "maxDevices", "validDays", "requireApproval"}` (approval defaults to on) → `{policy, code}`,
+`GET /api/v1/enrollment-policies`, `POST /api/v1/enrollment-policies/{id}/stop`,
+`GET /api/v1/enrollment-requests?status=pending`,
+`POST /api/v1/enrollment-requests/{id}/approve` and `…/reject`.
+
+### Applications without a code *(2.1)*
+
+Some devices cannot be handed a code: no camera, no keyboard, a kiosk. For
+them the dashboard has a switch that works like a router's MAC filter:
+devices ask, and you let in the ones you recognise.
+
+1. The mTLS Config API → *Client Certificates* → *Devices awaiting
+   approval* → turn *Applications without a code* on.
+2. The app calls `PinVault.autoEnroll(context)` (`autoEnrollForResult` for
+   the details) — the demo app's *Apply without a code* button. Nothing is
+   typed. The device gets `Pending` and shows its verification code.
+3. The request appears in the list marked *without a code*, with the
+   device's model, IP address, time and the same verification code. On a
+   device without a screen, go by the model, address and time. *Approve*,
+   and the device picks its certificate up on its own, like a device that
+   came with a code.
+
+**What it costs.** Anyone who can reach the Config API listener can ask, so
+the list can fill up; nobody gets a certificate without your approval. The
+server keeps the list in bounds:
+
+- one source address may make 20 new applications per 10 minutes
+  (`OPEN_ENROLLMENT_RATE_LIMIT`, `0` turns it off; beyond it
+  `429 too_many_applications`);
+- at most 50 wait at once (`OPEN_ENROLLMENT_MAX_PENDING`;
+  `429 too_many_pending_requests`);
+- a request nobody answers lapses after 24 hours
+  (`ENROLLMENT_REQUEST_TTL_HOURS`; requests made with a code too): the
+  device is told `410 enrollment_request_expired`
+  (`EnrollmentRefusal.EXPIRED`) and forgets the request and its key, so
+  applying again is a new request.
+
+A device that asks again (a reinstall) has every one of its rows marked as
+having another request waiting; approve the newest and reject the rest. A
+device that is already enrolled cannot be approved until its old identity is
+revoked. Turning the switch off turns new applications away (`403 Token
+required`) and leaves the waiting ones to be decided. The switch takes
+precedence over `ENROLLMENT_MODE=open`: while it is on, a device without a
+token waits for approval instead of being enrolled outright.
+
+Management API: `GET /api/v1/enrollment-open` →
+`{enabled, maxPending, requestTtlHours, rateLimitPer10Minutes}`,
+`PUT /api/v1/enrollment-open` `{"enabled": true}`. The requests are listed
+and decided with the others under `/api/v1/enrollment-requests`, marked
+`"openApplication": true`.
+
+### When enrollment fails *(2.1)*
+
+`enroll` and `autoEnroll` return `false` whatever went wrong. Their
+`…ForResult` twins return a `ClientCertEnrollmentResult`, so the app can tell
+its user what to do instead of "enrollment failed":
+
+```kotlin
+val message = when (val result = PinVault.enrollForResult(context, config, token)) {
+    is ClientCertEnrollmentResult.Enrolled -> null
+    is ClientCertEnrollmentResult.Refused -> when (result.reason) {
+        EnrollmentRefusal.INVALID_TOKEN -> "The token is invalid, used or expired."
+        EnrollmentRefusal.DEVICE_ALREADY_ENROLLED ->
+            "This device is enrolled under another id. Retry with the same token once it is revoked."
+        EnrollmentRefusal.REVOKED -> "This id was revoked. Ask for a new token."
+        EnrollmentRefusal.TOKEN_REQUIRED -> "The server enrolls only with a token."
+        EnrollmentRefusal.REJECTED -> "An administrator turned this device away."
+        EnrollmentRefusal.LIMIT_REACHED -> "This code has no device left. Ask for a new one."
+        EnrollmentRefusal.EXPIRED -> "Nobody approved the request in time. Apply again."
+        EnrollmentRefusal.OTHER -> "Refused: HTTP ${result.httpStatus} ${result.serverError.orEmpty()}"
+    }
+    is ClientCertEnrollmentResult.Pending -> "Waiting for an administrator to approve this device."   // see above
+    is ClientCertEnrollmentResult.Failed -> "Could not enroll: ${result.message}" // network, pins, key store
+}
+```
+
+A refused enrollment does not spend the token. A custom `CertificateConfigApi`
+reports a refusal by throwing `EnrollmentRefusedException(httpStatus,
+serverError, serverMessage)`; anything else it throws becomes `Failed`.
 
 ### The device keeps its key *(2.1)*
 
@@ -576,6 +725,8 @@ if (!PinVault.isEnrolled(context, config)) {
 }
 PinVault.init(context, config)                // one init, over mTLS
 ```
+
+From Java, the config overload of `isEnrolled` is `PinVault.INSTANCE.isEnrolledWithConfig(context, config)`.
 
 A block with an `enrollmentUrl` and no client certificate does not contact
 its backend in `init`: it answers at once with `InitResult.Failed` carrying a
@@ -814,6 +965,9 @@ its configs.
 | `CONFIG_TTL_SECONDS` | `86400` (24h) | How long a signed config response stays valid before clients reject it as replayed. Lower = tighter replay window; too low risks rejecting cached configs from offline devices. |
 | `ENROLLMENT_MODE` | `token` | `token` (production) requires an enrollment token; `open` allows deviceId-only enrollment (demo only). |
 | `ENROLLMENT_TOKEN_TTL_SECONDS` | `86400` | Lifetime of a one-time enrollment token. |
+| `ENROLLMENT_REQUEST_TTL_HOURS` | `24` | How long a device's request may wait for approval (enrollment codes and applications without a code); unanswered, it lapses and the device is told `410`. 1–720. |
+| `OPEN_ENROLLMENT_RATE_LIMIT` | `20` | New applications without a code one source address may make per 10 minutes (`429` beyond it). Behind one NAT or proxy every device shares it; `0` turns it off. |
+| `OPEN_ENROLLMENT_MAX_PENDING` | `50` | Most applications without a code waiting at once (`429` beyond it). |
 | `CLIENT_CERT_TTL_DAYS` | `90` | Lifetime of certificates issued over device-held keys (CSR enrollment, library 2.1+). They renew themselves at a third of the lifetime; `KEYSTORE_PASSWORD` also protects the client CA (`client-ca.jks`). |
 | `RECOVERY_PORT` | `PORT+3` | Certificate-renewal door for devices whose client certificate expired: TLS without client auth, serves only `POST /api/v1/client-certs/renew` and `/health`. Its certificate is signed by the server CA (`server-ca.jks` + `server-ca.backup.jks`) and reissued 30 days before expiry. `0` turns it off. In Docker it is 8083. |
 | `ALLOW_TEST_HOOKS` | unset | `true` enables `POST /api/v1/test-hooks/client-cert-ttl` (API key), which arms a short lifetime for a client id's next certificate so tests can watch it expire. Never in production. |
