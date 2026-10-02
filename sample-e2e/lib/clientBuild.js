@@ -1,4 +1,4 @@
-// SamplePinVaultClient'ı verilen host değerleriyle derler ve cihaza kurar.
+// sample-client'ı verilen host değerleriyle derler ve cihaza kurar.
 // Kurulum yolculuğu (K06) ve sunucu sertifikası yenileme (E03) uygulamayı
 // başka bir host'un değerleriyle yeniden derliyor; global setup da aynı yolu
 // kullanır.

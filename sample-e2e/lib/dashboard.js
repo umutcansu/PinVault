@@ -1,4 +1,4 @@
-// SamplePinVaultHost web dashboard'u için sayfa nesnesi. Seçiciler arayüz
+// sample-host web dashboard'u için sayfa nesnesi. Seçiciler arayüz
 // dilinden bağımsız `data-action` özniteliklerine ve form alanı kimliklerine
 // dayanır.
 const { expect } = require('@playwright/test');

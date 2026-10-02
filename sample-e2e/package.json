@@ -1,7 +1,7 @@
 {
   "name": "sample-pinvault-e2e",
   "private": true,
-  "description": "Uçtan uca testler: SamplePinVaultHost web dashboard'unda işlem, SamplePinVaultClient'ta (Android) gözlem ve tersi.",
+  "description": "Uçtan uca testler: sample-host web dashboard'unda işlem, sample-client'ta (Android) gözlem ve tersi.",
   "scripts": {
     "test": "playwright test",
     "test:emulator": "E2E_AVD=${E2E_AVD:-Pixel_6_Pro-ParlaForTest} playwright test",

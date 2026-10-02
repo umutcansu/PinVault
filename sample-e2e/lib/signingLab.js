@@ -375,7 +375,7 @@ async function writeLabProps(keys) {
   text = setProp(text, 'host.signingPublicKeys', trusted.join(','));
   text = setProp(text, 'host.requiredSignatures', '1');
   text = setProp(text, 'host.recoveryPublicKeys', keys.recovery.pub);
-  text = `# SamplePinVaultE2E lib/signingLab.js: taze host değerleri + laboratuvar imza anahtarları.\n${text}`;
+  text = `# sample-e2e lib/signingLab.js: taze host değerleri + laboratuvar imza anahtarları.\n${text}`;
   fs.mkdirSync(LAB_DIR, { recursive: true, mode: 0o700 });
   if (!fs.existsSync(LAB_PROPS) || fs.readFileSync(LAB_PROPS, 'utf8') !== text) fs.writeFileSync(LAB_PROPS, text);
   return { text, primary: { publicKey: info.publicKey, keyId: info.keyId } };

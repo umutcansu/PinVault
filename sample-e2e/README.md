@@ -1,6 +1,6 @@
-# SamplePinVaultE2E
+# sample-e2e
 
-[SamplePinVaultHost](../SamplePinVaultHost) ile [SamplePinVaultClient](../SamplePinVaultClient) arasında uçtan uca testler. Her senaryo web dashboard'unda gerçek bir tarayıcıyla işlem yapar ve sonucunu Android uygulamasının ekranında doğrular, ya da tersini yapar.
+[sample-host](../sample-host) ile [sample-client](../sample-client) arasında uçtan uca testler. Her senaryo web dashboard'unda gerçek bir tarayıcıyla işlem yapar ve sonucunu Android uygulamasının ekranında doğrular, ya da tersini yapar.
 
 - **Web tarafı:** Playwright, dashboard'u (`http://localhost:6650`) ekransız (headless) Chromium'da kullanır. Sayfadaki öğeler, arayüz dilinden bağımsız `data-action` öznitelikleriyle bulunur.
 - **Mobil tarafı:** adb, uygulamaya bir kullanıcı gibi dokunur, yazı yazar ve ekrandaki metni UI Automator dökümünden okur. Uygulamaya test kodu gömülmez.
@@ -41,15 +41,15 @@ Yeni senaryolar PLAN.md'deki gruplara göre eklenir: sıfırdan kurulum (K), pin
 | U01 | Sürüm yükseltme: önceki sürüm (örnek uygulamanın main dalı, Maven Central'daki PinVault) temiz kurulur, güncel sunucuya karşı hazır olur, kayıt olur ve bir vault dosyası indirir. Güncel APK üstüne kurulunca (`adb install -r`) yeni sürüm saklı config'i okur, eski sürümün sertifikasıyla mTLS bağlantısı geçer, eski sürümün indirdiği dosya güncel sayılır, eski sürümün planladığı arka plan işi yeni kodla çalışır. |
 | Y01–Y04 | Değişiklik denetimi ve onay (kim, neyi, kimin onayıyla değiştirdi): kişiye özel yönetici anahtarları, denetim kaydı ve webhook bildirimi (paylaşılan gizli anahtarla imzalı, HMAC), sonradan değiştirilirse fark edilen denetim kaydı (kayıtları birbirine bağlayan hash zinciri), iki kişi onayı (bekleyen istek, kendi isteğini onaylayamama, onay, ret, eskimiş istek), canlı sertifika kontrolü (engelleme modu `enforce`, uyarı modu `warn`, gerekçe yazıp yine de kaydetme). |
 
-**Geçici test sunucusu (ikinci host örneği):** K ve E'nin yıkıcı adımları (sıfırdan kurulum, sertifika yenileme, Config API silme, down/up) ana host'u bozmasın diye `lib/freshHost.js` SamplePinVaultHost'un bir kopyasını `.local/host-fresh` altında, 6650–6656 yerine **6750–6756** portlarında ve `pinvault-host-fresh` container'ıyla kurar. Koşu sonunda `docker compose down -v` ile tamamen silinir. Telefon bu sunucuya yalnızca K06, E03, E10, A19 ve S01–S05'te bağlanır: bu senaryolar uygulamayı geçici sunucunun değerleriyle derleyip kurar, sonunda ana host'un değerleriyle derlenmiş uygulamayı geri kurar. Y02 bu sunucuyu yalnızca web tarafında kullanır.
+**Geçici test sunucusu (ikinci host örneği):** K ve E'nin yıkıcı adımları (sıfırdan kurulum, sertifika yenileme, Config API silme, down/up) ana host'u bozmasın diye `lib/freshHost.js` sample-host'un bir kopyasını `.local/host-fresh` altında, 6650–6656 yerine **6750–6756** portlarında ve `pinvault-host-fresh` container'ıyla kurar. Koşu sonunda `docker compose down -v` ile tamamen silinir. Telefon bu sunucuya yalnızca K06, E03, E10, A19 ve S01–S05'te bağlanır: bu senaryolar uygulamayı geçici sunucunun değerleriyle derleyip kurar, sonunda ana host'un değerleriyle derlenmiş uygulamayı geri kurar. Y02 bu sunucuyu yalnızca web tarafında kullanır.
 
 ## Gereksinimler
 
-- Host ayakta ve hazırlanmış: `cd ../SamplePinVaultHost && docker compose up -d && ./scripts/provision.sh`. Kurulum aşaması provision'ı zaten çağırır.
+- Host ayakta ve hazırlanmış: `cd ../sample-host && docker compose up -d && ./scripts/provision.sh`. Kurulum aşaması provision'ı zaten çağırır.
 - Bir Android cihaz: USB ile bağlı telefon ya da bir emülatör AVD'si. Saat, iptables ve root gerektiren senaryolar yalnızca emülatörde çalışır.
 - Node 18+ ve Docker CLI (bazı senaryolar host container'ını durdurup başlatır ya da ortam değişkenlerini geçici değiştirir).
 - İstemciyi derlemek için JDK 17 (JAVA_HOME yoksa Android Studio'nun ya da `~/Library/Java` altındaki JDK aranır).
-- Araya giren proxy için host'un anahtarı: `cd ../SamplePinVaultHost && ./scripts/export-server-key.sh`.
+- Araya giren proxy için host'un anahtarı: `cd ../sample-host && ./scripts/export-server-key.sh`.
 
 ## Çalıştırma
 
@@ -109,7 +109,7 @@ Her koşu `evidence/index.html` dosyasını yeniden üretir. En üstte kapsam ma
 - İmza anahtarını değiştiren ya da anahtar seti (telefonun güvendiği imza anahtarlarının listesi) yayımlayan senaryolar (S01–S05) geçici test sunucusunda çalışır. Sunucuda anahtar setleri yalnızca eklenir ve geri alınamaz; ana host'ta yayımlanan bir set, ana APK'nın güvendiği anahtarları eskitirdi. Bu senaryolar geçici test sunucusunun değerleriyle yalnızca bu test için bir uygulama derler ve sonunda ana APK'yı geri kurar.
 - Değişiklik denetimi senaryoları (Y) sunucu ortamını geçici değiştirir (`ADMIN_KEYS`, `PIN_CHANGE_APPROVALS`, `PIN_LIVE_CHECK`, `NOTIFY_WEBHOOK_URL`) ve temel duruma dönmeden önce sıfırlar. Webhook alıcısı Mac'te dinler; container ona `host.docker.internal` ile ulaşır.
 - Yönetici anahtarları (`.local/admins.json`) ve çevrimdışı özel anahtarlar (`.local/offline-keys/`) kanıt sayfasında asla görünmez; `npm run check-evidence` bunları da gizli değer sayar.
-- U01 önceki sürümü SamplePinVaultClient'ın bir git worktree'sinde derler (`.local/upgrade/sample-client-old`, APK aynı klasörde saklanır); istemci deposunun `git worktree list` çıktısında görünür. Silmek için `git -C ../SamplePinVaultClient worktree remove --force .local/...` yeterli, bir sonraki koşu yeniden kurar. Senaryo sonunda güncel APK temiz kurulur.
+- U01 önceki sürümü (`sample-client-2.0.9` etiketi) deponun bir git worktree'sinde derler (`.local/upgrade/sample-client-old`, APK aynı klasörde saklanır); `git worktree list` çıktısında görünür. Silmek için `git worktree remove --force sample-e2e/.local/upgrade/sample-client-old` yeterli, bir sonraki koşu yeniden kurar. Senaryo sonunda güncel APK temiz kurulur.
 - `E2E_VARIANT=release` ile koşuda uygulama verisi `run-as` yerine emülatörün `su`'suyla, uygulamanın kullanıcısına geçilerek okunur; release derlemesinde `run-as` çalışmaz.
 
 ## Yapı

@@ -25,7 +25,7 @@ import okhttp3.Response;
  *
  * <p>Her sonucun altına "#&lt;sıra&gt; · saat" eklenir. Aynı sonuç art arda
  * geldiğinde de ekranın güncellendiği görülür; uçtan uca testler
- * (SamplePinVaultE2E) yeni sonucu eskisinden bununla ayırır.
+ * (sample-e2e) yeni sonucu eskisinden bununla ayırır.
  */
 public abstract class ActionActivity extends AppCompatActivity {
 

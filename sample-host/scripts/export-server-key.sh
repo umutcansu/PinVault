@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Sunucunun TLS anahtar ve sertifikasını PEM olarak dışa aktarır
 # (data/proxy/server-key.pem, server-cert.pem). Yalnızca laboratuvar için:
-# uçtan uca testlerdeki saldırgan proxy (SamplePinVaultE2E/lib/proxy.js)
+# uçtan uca testlerdeki saldırgan proxy (sample-e2e/lib/proxy.js)
 # telefonun pinlediği anahtarla dinleyip yanıtları değiştirir; böylece
 # kütüphanenin imza, replay ve sürüm kontrolleri gerçek bir araya girme
 # altında gösterilir.

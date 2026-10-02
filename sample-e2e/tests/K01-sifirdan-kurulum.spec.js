@@ -3,7 +3,7 @@
 // `docker compose up -d --build`, Flyway migration'ları ve smoke-test.
 //
 // Bütün adımlar host'un İKİNCİ bir kopyası olan geçici test sunucusunda çalışır
-// (SamplePinVaultE2E/.local/host-fresh, portlar 6750–6754). Ana host'a
+// (sample-e2e/.local/host-fresh, portlar 6750–6754). Ana host'a
 // dokunulmaz: sertifikası ya da imzalama anahtarı değişirse telefondaki APK'nın
 // gömülü pin'leri geçersiz olur ve diğer senaryolar çöker.
 const fs = require('fs');
@@ -50,17 +50,18 @@ test('Kurulum: gereksinimler, setup.sh, docker compose up ve smoke-test — geç
     expect(lines.join('\n')).toContain('Docker version');
   });
 
-  await test.step('Terminal: dört depo ve geçici test sunucusu için host kopyası (K1)', async () => {
-    const parent = path.resolve(env.ROOT, '..');
-    const repos = ['PinVault', 'SamplePinVaultHost', 'SamplePinVaultClient', 'SamplePinVaultE2E'];
-    const lines = repos.map((name) => {
-      const dir = path.join(parent, name);
+  await test.step('Terminal: depo ve geçici test sunucusu için host kopyası (K1)', async () => {
+    // Tek depo: kütüphane, sunucu ve örnekler PinVault'un ana dizininde.
+    const repo = path.resolve(env.ROOT, '..');
+    const projects = ['pinvault', 'demo-server', 'sample-host', 'sample-client', 'sample-e2e'];
+    const lines = projects.map((name) => {
+      const dir = path.join(repo, name);
       const entries = fs.existsSync(dir)
         ? fs.readdirSync(dir).filter((e) => !e.startsWith('.')).slice(0, 12).join('  ')
         : '(yok)';
       return `${name}/\n    ${entries}`;
     });
-    await attachText(testInfo, 'Aynı klasördeki depolar', `${parent}\n\n${lines.join('\n\n')}`);
+    await attachText(testInfo, 'Depodaki projeler', `${repo}\n\n${lines.join('\n\n')}`);
 
     // Taze örnek: host deposunun data/ ve .env hariç kopyası.
     await fresh.destroy();

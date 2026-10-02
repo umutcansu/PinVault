@@ -1,12 +1,12 @@
-// Ortak yollar ve ayarlar. Host değerleri SamplePinVaultHost/.env'den okunur;
+// Ortak yollar ve ayarlar. Host değerleri sample-host/.env'den okunur;
 // E2E_* ortam değişkenleri ile ezilebilir.
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
 
 const ROOT = path.resolve(__dirname, '..');
-const HOST_DIR = path.resolve(process.env.E2E_HOST_DIR || path.join(ROOT, '..', 'SamplePinVaultHost'));
-const CLIENT_DIR = path.resolve(process.env.E2E_CLIENT_DIR || path.join(ROOT, '..', 'SamplePinVaultClient'));
+const HOST_DIR = path.resolve(process.env.E2E_HOST_DIR || path.join(ROOT, '..', 'sample-host'));
+const CLIENT_DIR = path.resolve(process.env.E2E_CLIENT_DIR || path.join(ROOT, '..', 'sample-client'));
 /** Koşuya özel üretilen dosyalar (host değerleri, özel backend anahtarları); git dışı. */
 const LOCAL_DIR = path.join(ROOT, '.local');
 /**

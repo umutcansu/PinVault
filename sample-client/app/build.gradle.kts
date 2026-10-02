@@ -7,7 +7,7 @@ plugins {
 
 // Host değerleri (IP, pin'ler, imza anahtarı) derlemede BuildConfig'e gömülür.
 // Varsayılan dosya proje kökündeki sample-host.properties; -PsampleHostProps=<yol>
-// ile başka bir dosya verilebilir (SamplePinVaultE2E kendi dosyasını verir).
+// ile başka bir dosya verilebilir (sample-e2e kendi dosyasını verir).
 val sampleHostFile: File = providers.gradleProperty("sampleHostProps").orNull
     ?.let { rootProject.file(it) }
     ?: rootProject.file("sample-host.properties")

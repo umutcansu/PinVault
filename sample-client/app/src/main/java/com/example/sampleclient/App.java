@@ -58,14 +58,14 @@ import okhttp3.OkHttpClient;
  * uygulama içi bir {@code CertificateConfigApi} ve sunucusuz statik pin'ler.
  *
  * <p>Host değerleri (IP, pin'ler, public key) {@code sample-host.properties}
- * dosyasından {@link BuildConfig}'e gömülür; SamplePinVaultHost'taki
+ * dosyasından {@link BuildConfig}'e gömülür; sample-host'taki
  * {@code scripts/client-config.sh --properties} bu dosyayı üretir.
  */
 public class App extends Application {
 
     public static final String TAG = "PinVault";
 
-    // ── Sample host (SamplePinVaultHost, Docker) ─────────────────────────────
+    // ── Sample host (sample-host, Docker) ─────────────────────────────
 
     /** Host'un LAN IP'si. Telefon aynı ağda olmalı. */
     public static final String SAMPLE_HOST_IP = BuildConfig.HOST_IP;
@@ -319,7 +319,7 @@ public class App extends Application {
         launch(generation, config, new EmbeddedConfigApi(TARGET_HOST, pins));
     }
 
-    /** Özel uç yollarıyla başka bir backend (SamplePinVaultE2E/lib/custom-backend.js). */
+    /** Özel uç yollarıyla başka bir backend (sample-e2e/lib/custom-backend.js). */
     private void startCustomBackend(int generation) {
         String baseUrl = BuildConfig.CUSTOM_BASE_URL;
         List<String> pins = splitPins(BuildConfig.CUSTOM_BOOTSTRAP_PINS);

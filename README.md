@@ -1004,6 +1004,16 @@ On a client-authenticated listener, treat `X-Device-Id` as a claim to check agai
 
 Works with any language: Python, Node.js, Go, .NET, etc.
 
+## Samples
+
+Three projects next to the library show PinVault end to end (their READMEs are in Turkish):
+
+| Directory | What it is |
+|---|---|
+| [`sample-host/`](sample-host) | The demo server in Docker, set up for phones on the LAN: `./scripts/setup.sh`, then `docker compose up -d --build`. With `PINVAULT_SERVER_SRC=../demo-server` it builds the server from this checkout. |
+| [`sample-client/`](sample-client) | An Android app (Java) that uses every PinVault feature against the sample host. It builds the library from this checkout (`pinvault.localPath=..`). |
+| [`sample-e2e/`](sample-e2e) | Playwright end-to-end tests: an action in the host's dashboard is checked on the phone, or the other way round, with a one-file evidence page of screenshots. Setting everything up from scratch: [`sample-e2e/SETUP.md`](sample-e2e/SETUP.md). |
+
 ## Architecture
 
 ```

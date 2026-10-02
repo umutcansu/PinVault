@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Android client'ın (SamplePinVaultClient) bu host'a bağlanmak için ihtiyaç
+# Android client'ın (sample-client) bu host'a bağlanmak için ihtiyaç
 # duyduğu değerleri yazdırır. Sertifika ya da signing key yeniden üretildiğinde
 # çalıştır ve çıktıyı client'a aktar.
 #
@@ -9,7 +9,7 @@
 # Kullanım:
 #   ./scripts/client-config.sh                 # okunabilir özet
 #   ./scripts/client-config.sh --properties    # sample-host.properties içeriği
-#       > ../SamplePinVaultClient/sample-host.properties
+#       > ../sample-client/sample-host.properties
 #
 # --properties çıktısı hedef sitenin (target.host) canlı sertifika zincirinden
 # statik mod için iki pin de hesaplar (openssl s_client). İnternet gerekir;
@@ -82,7 +82,7 @@ target_pins() {
 if [ "${1:-}" = "--properties" ]; then
     TARGET_PINS="$(target_pins "${TARGET_HOST}")"
     cat <<EOF
-# SamplePinVaultHost değerleri; scripts/client-config.sh --properties tarafından üretildi.
+# sample-host değerleri; scripts/client-config.sh --properties tarafından üretildi.
 host.ip=${IP}
 host.httpPort=${HTTP_PORT}
 host.managementTlsPort=${MGMT_TLS_PORT}
@@ -110,9 +110,9 @@ EOF
 fi
 
 cat <<EOF
-== SamplePinVaultClient ayarları ==
+== sample-client ayarları ==
 
-sample-host.properties (üretmek için: ./scripts/client-config.sh --properties > ../SamplePinVaultClient/sample-host.properties):
+sample-host.properties (üretmek için: ./scripts/client-config.sh --properties > ../sample-client/sample-host.properties):
 
     host.ip=${IP}
     host.httpsPort=${HTTPS_PORT}        # CONFIG_BASE_URL  = https://${IP}:${HTTPS_PORT}/

@@ -1,4 +1,4 @@
-# SamplePinVaultHost — PinVault demo-server, Docker'da.
+# sample-host — PinVault demo-server, Docker'da.
 #
 #   ./scripts/setup.sh              # .env + API anahtarı + LAN IP + signing key
 #   docker compose up -d --build
@@ -12,7 +12,7 @@ services:
       additional_contexts:
         # demo-server kaynağı. Varsayılan: upstream git (PINVAULT_REPO @ PINVAULT_REF).
         # Yerel checkout (yayınlanmamış değişiklikler dahil) için .env'de:
-        #   PINVAULT_SERVER_SRC=../PinVault/demo-server
+        #   PINVAULT_SERVER_SRC=../demo-server
         pinvault-server: "${PINVAULT_SERVER_SRC:-${PINVAULT_REPO:-https://github.com/umutcansu/PinVault.git}#${PINVAULT_REF:-main}:demo-server}"
     container_name: pinvault-host
     restart: unless-stopped

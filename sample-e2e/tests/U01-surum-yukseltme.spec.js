@@ -1,5 +1,5 @@
-// U01 — Sürüm yükseltme. Uygulamanın önceki sürümü (örnek uygulamanın main
-// dalı, Maven Central'daki PinVault 2.0.9) temiz kurulur, güncel sunucuya
+// U01 — Sürüm yükseltme. Uygulamanın önceki sürümü (örnek uygulamanın
+// sample-client-2.0.9 etiketi, Maven Central'daki PinVault 2.0.9) temiz kurulur, güncel sunucuya
 // karşı hazır olur, mTLS için kayıt olur ve bir vault dosyası indirir. Sonra
 // güncel APK üstüne kurulur (adb install -r: veri silinmez). Yeni sürüm
 // yeniden kayıt ya da indirme istemeden açılmalı: saklı config okunur, eski
@@ -52,11 +52,11 @@ test('Sürüm yükseltme: önceki sürümle (PinVault 2.0.9) kurulan uygulama g�
   await hostApi.restoreBaseline(run.baseline);
 
   try {
-    await test.step('Terminal: önceki sürüm derlenir (örnek uygulamanın main dalı, Maven Central\'daki PinVault)', async () => {
+    await test.step('Terminal: önceki sürüm derlenir (örnek uygulamanın 2.0.9 etiketi, Maven Central\'daki PinVault)', async () => {
       old = oldRelease.buildApk(env.PROPS_FILE);
       await attachText(
         testInfo,
-        `Önceki sürüm: SamplePinVaultClient ${old.ref} (${old.commit}) + PinVault ${old.version}`,
+        `Önceki sürüm: sample-client ${old.ref} (${old.commit}) + PinVault ${old.version}`,
         [
           `$ git worktree add --detach .local/upgrade/sample-client-old ${old.commit}`,
           `$ ./gradlew assembleDebug -Ppinvault.localPath= -PsampleHostProps=${env.PROPS_FILE}`,

@@ -1,5 +1,5 @@
 # ─────────────────────────────────────────────────────────────────────────────
-# SamplePinVaultHost — PinVault demo-server'ı tek container'da çalıştırır.
+# sample-host — PinVault demo-server'ı tek container'da çalıştırır.
 #
 # Bilerek "# syntax=docker/dockerfile:…" satırı yok: o satır ön ucu her
 # derlemede Docker Hub'dan çözdürür (kimlik yardımcısı dahil), yani yerelde
@@ -14,7 +14,7 @@
 # gösterir; image her zaman demo etmek istediğin sunucu sürümüyle birebir aynı
 # olur. Compose kullanmadan:
 #
-#   docker buildx build --build-context pinvault-server=../PinVault/demo-server .
+#   docker buildx build --build-context pinvault-server=../demo-server .
 # ─────────────────────────────────────────────────────────────────────────────
 
 # ---- Stage 1: build ----

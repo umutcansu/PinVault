@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# SamplePinVaultHost smoke test. Çalışan container'a karşı şunları doğrular:
+# sample-host smoke test. Çalışan container'a karşı şunları doğrular:
 #   1. /health
 #   2. İmzalı config: ECDSA imzası sunucunun GET /api/v1/signing-key ile bildirdiği anahtar(lar)la
 #      doğrulanıyor, issuedAt/expiresAt dolu ve süresi geçmemiş
@@ -55,7 +55,7 @@ expect_status() {
     if [ "${got}" = "${want}" ]; then ok "${label} → ${got}"; else bad "${label} → ${got} (beklenen ${want})"; fi
 }
 
-echo "== SamplePinVaultHost smoke test =="
+echo "== sample-host smoke test =="
 echo "Management : ${HTTP}"
 echo "Config API : ${HTTPS}"
 echo ""

@@ -1,6 +1,6 @@
-# SamplePinVaultClient
+# sample-client
 
-PinVault'u bir Android uygulamasına uçtan uca bağlayan örnek (Java). Pin config'ini Docker'da çalışan [SamplePinVaultHost](../SamplePinVaultHost)'tan alır ve kütüphanenin bütün özelliklerini ekranlarda gösterir.
+PinVault'u bir Android uygulamasına uçtan uca bağlayan örnek (Java). Pin config'ini Docker'da çalışan [sample-host](../sample-host)'tan alır ve kütüphanenin bütün özelliklerini ekranlarda gösterir.
 
 Uygulama şunları gösterir:
 
@@ -48,7 +48,7 @@ Son iki mod `sample-host.properties` içindeki `target.pins`, özel backend modu
 
 ```properties
 pinvault.version=2.0.9          # Maven Central sürümü
-pinvault.localPath=../PinVault  # doluysa kütüphane bu checkout'tan derlenir
+pinvault.localPath=..  # doluysa kütüphane bu checkout'tan derlenir
 ```
 
 `pinvault.localPath` bir PinVault checkout'unu gösterdiği sürece `settings.gradle.kts` bir composite build kurar ve kütüphaneyi kaynaktan derler; henüz yayınlanmamış değişiklikler dahil olur. Maven Central sürümüyle derlemek için yolu boşalt ya da tek seferlik `./gradlew assembleDebug -Ppinvault.localPath=`.
@@ -58,8 +58,8 @@ pinvault.localPath=../PinVault  # doluysa kütüphane bu checkout'tan derlenir
 IP, portlar, bootstrap pin'leri ve imzalama public key'i `sample-host.properties` dosyasından `BuildConfig`'e gömülür:
 
 ```bash
-cd ../SamplePinVaultHost
-./scripts/client-config.sh --properties > ../SamplePinVaultClient/sample-host.properties
+cd ../sample-host
+./scripts/client-config.sh --properties > ../sample-client/sample-host.properties
 ```
 
 Başka bir dosya kullanmak için `./gradlew installDebug -PsampleHostProps=/yol/dosya.properties` (uçtan uca testler kendi dosyasını böyle verir). Sunucu sertifikası ya da imzalama anahtarı değişirse bu dosyayı yenile ve yeniden derle.
@@ -68,7 +68,7 @@ Başka bir dosya kullanmak için `./gradlew installDebug -PsampleHostProps=/yol/
 
 1. Host'u ayağa kaldır ve hazırla:
    ```bash
-   cd ../SamplePinVaultHost && ./scripts/setup.sh && docker compose up -d --build && ./scripts/provision.sh && ./scripts/smoke-test.sh
+   cd ../sample-host && ./scripts/setup.sh && docker compose up -d --build && ./scripts/provision.sh && ./scripts/smoke-test.sh
    ```
    `provision.sh` mTLS Config API'sini (`:6652`), host'un kendi pin kaydını ve mock hedef host'ları (`:6653` TLS, `:6654` mTLS) açar.
 2. Host değerlerini al (yukarıdaki `client-config.sh --properties`).
@@ -111,10 +111,10 @@ adb logcat -s PinVault DynamicSSLManager SSLCertificateUpdater ConfigSignatureVe
 
 ## Uçtan uca testler
 
-Dashboard'da işlem yapıp sonucunu bu uygulamada doğrulayan senaryolar [SamplePinVaultE2E](../SamplePinVaultE2E)'de:
+Dashboard'da işlem yapıp sonucunu bu uygulamada doğrulayan senaryolar [sample-e2e](../sample-e2e)'de:
 
 ```bash
-cd ../SamplePinVaultE2E && npm install && npm run test:emulator
+cd ../sample-e2e && npm install && npm run test:emulator
 ```
 
 Uygulama her işlem sonucunun altına `#<sıra> · <saat>` yazar; testler yeni sonucu eskisinden bununla ayırır.

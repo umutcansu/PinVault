@@ -18,7 +18,7 @@ Kanıt sayfasında ayrı "Sıfırdan kurulum" bölümü. `tests/00-setup-*.spec.
 | # | Adım | Kanıt |
 |---|---|---|
 | K0 | Gereksinimler: Docker Desktop, JDK 17, Android SDK + AVD, Node 18+, openssl/curl/jq | sürüm çıktıları (metin paneli) |
-| K1 | Dört depoyu alma: PinVault, SamplePinVaultHost, SamplePinVaultClient, SamplePinVaultE2E | dizin ağacı |
+| K1 | Depoyu alma: PinVault (kütüphane, demo-server, sample-host, sample-client, sample-e2e) | dizin ağacı |
 | K2 | `scripts/setup.sh`: `.env` (API anahtarı, LAN IP), `data/signing-key.pem` (0600); API anahtarı boşken compose'un başlamayı reddetmesi | terminal, `.env` (anahtar maskeli), `ls -l`, hata mesajı |
 | K3 | `docker compose up -d --build`; healthy; Flyway migration logları; `smoke-test.sh` bütün kontroller PASS | `docker compose ps`, log, smoke çıktısı |
 | K4 | Dashboard ilk açılış: API anahtarını sorması; yanlış anahtar 403 (anahtarsız 401) ve yeniden sorması; doğru anahtarla giriş | web + soru metinleri paneli |
@@ -220,7 +220,7 @@ Sunucu / dashboard: Swagger UI CSP yüzünden yüklenmiyor; OpenAPI ~70 ucun 15'
 
 ## 5. Gerekli altyapı değişiklikleri
 
-SamplePinVaultClient
+sample-client
 - Host sabitleri `sample-host.properties` → `BuildConfig` (IP, portlar, APK'ya gömülen bootstrap pin'leri, imza public key). Kurulum adımı K10 bu dosyayı yazar; A19/E3 testte yeni değerlerle yeniden derleyebilir.
 - Mod seçici: TLS config (varsayılan), mTLS config (B1/B3), özel backend (H1), statik (H3). Her mod `reset()` + yeniden `init`.
 - İkinci Config API bloğu `sample-mtls`; ana ekranda blok bazlı sürümler.
@@ -230,14 +230,14 @@ SamplePinVaultClient
 - mTLS ekranı: otomatik kayıt, P12 dosyadan yükleme.
 - Ana ekran: özel ayarlı istemci (A25), sıfırla (A26), telemetri seçenekleri (A31), planlı iş bilgisi (A11).
 
-SamplePinVaultHost
+sample-host
 - Mock TLS ve mTLS host portları compose'da dışarı açılır.
 - `scripts/env-override.sh`: `SIGNING_KEY_PASSWORD`, `CONFIG_TTL_SECONDS`, `ENROLLMENT_MODE`, `ENROLLMENT_TOKEN_TTL_SECONDS`, `VAULT_AT_REST_PASSWORD`, `CERT_EXPIRY_WARN_DAYS` için geçici değişiklik ve geri alma.
 - `scripts/export-server-key.sh`: araya giren proxy için sunucu anahtar/sertifikası PEM (`data/` altı, git dışı).
 
 PinVault demo-server / dashboard (bulgu düzeltmeleri, karar 4): Swagger CSP; `token_mtls` CN çıkarımı ve UI seçeneği; ACL cihaz listesi ucu; vault politika değiştirme UI'ı; `cert-expiry` kartı; ölü işlemlerin temizliği; OpenAPI tamamlama; enroll kopyasında `X-P12-SHA256`; kayıt token'larının hash'lenmesi.
 
-SamplePinVaultE2E
+sample-e2e
 - `00-setup-*` senaryoları, terminal panelleri, `SETUP.md` üretimi.
 - Araya giren saldırgan proxy (`lib/proxy.js`), özel backend (`lib/custom-backend.js`), DNAT/DROP yardımcıları.
 - Kanıt sayfası: matris, bölümler, metin panelleri.

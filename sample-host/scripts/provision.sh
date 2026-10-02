@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# SamplePinVaultHost'u örnek uygulamanın bütün ekranları için hazırlar.
+# sample-host'u örnek uygulamanın bütün ekranları için hazırlar.
 # Container çalışırken çalıştırılır; tekrar çalıştırmak güvenlidir, yalnızca
 # eksik olanı ekler:
 #

@@ -6,8 +6,8 @@ karşılığı kanıt sayfasındadır (`evidence/index.html` → **Sıfırdan ku
 bölümü); parantez içindeki senaryo ve adım başlığı orada aranabilir.
 
 Kanıtları üreten senaryolar **geçici bir test sunucusunda** çalışır (host'un
-ikinci bir örneği: `.local/host-fresh`, portlar 6750–6754). Aşağıdaki komutlar gerçek kurulum
-içindir: `SamplePinVaultHost` dizininde, 6650–6654 portlarıyla.
+ikinci bir örneği: `.local/host-fresh`, portlar 6750–6756). Aşağıdaki komutlar gerçek kurulum
+içindir: `sample-host` dizininde, 6650–6656 portlarıyla.
 
 ## 0. Gereksinimler
 
@@ -27,24 +27,23 @@ adb --version && openssl version && jq --version
 
 *(Kanıt: **K01 → Terminal: gereksinim sürümleri (K0)**)*
 
-## 1. Depolar
+## 1. Depo
 
-Dördü kardeş dizin olmalı; betikler birbirini göreli yoldan bulur.
+Her şey tek depoda: kütüphane, sunucu ve örnekler PinVault'un ana dizininde.
+Betikler birbirini bu dizinlerin göreli yolundan bulur.
 
 ```bash
 cd ~/Programming
-git clone <PinVault>              # kütüphane + demo-server kaynağı
-git clone <SamplePinVaultHost>    # Docker'da çalışan host paketi
-git clone <SamplePinVaultClient>  # örnek Android uygulaması
-git clone <SamplePinVaultE2E>     # uçtan uca testler (isteğe bağlı)
+git clone <PinVault>   # pinvault/, demo-server/, sample-host/, sample-client/, sample-e2e/
+cd PinVault
 ```
 
-*(Kanıt: **K01 → Terminal: dört depo ve geçici test sunucusu için host kopyası (K1)**)*
+*(Kanıt: **K01 → Terminal: depo ve geçici test sunucusu için host kopyası (K1)**)*
 
 ## 2. Host ayarları: `.env`, API anahtarı, imzalama anahtarı
 
 ```bash
-cd SamplePinVaultHost
+cd sample-host
 ./scripts/setup.sh
 ```
 
@@ -60,7 +59,7 @@ Yaptıkları:
 Yerel PinVault kaynağından derlemek için `.env`'e ekle:
 
 ```
-PINVAULT_SERVER_SRC=../PinVault/demo-server
+PINVAULT_SERVER_SRC=../demo-server
 ```
 
 `API_KEY` boşken compose başlamayı reddeder — sunucu anahtarsız (anonim)
@@ -133,8 +132,8 @@ Hatalı biçimli pin kaydedilmez.
 ## 6. İstemci değerleri ve derleme
 
 ```bash
-./scripts/client-config.sh --properties > ../SamplePinVaultClient/sample-host.properties
-cd ../SamplePinVaultClient
+./scripts/client-config.sh --properties > ../sample-client/sample-host.properties
+cd ../sample-client
 ./gradlew installDebug           # ya da assembleDebug + adb install -r -t
 ```
 

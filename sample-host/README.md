@@ -1,6 +1,6 @@
-# SamplePinVaultHost
+# sample-host
 
-[PinVault](https://github.com/umutcansu/PinVault) `demo-server`'ını tek komutla Docker'da çalıştıran referans host. Android tarafı için [SamplePinVaultClient](../SamplePinVaultClient) bu host'a bağlanır.
+Bu deponun `demo-server`'ını ([../demo-server](../demo-server)) tek komutla Docker'da çalıştıran referans host. Android tarafı için [sample-client](../sample-client) bu host'a bağlanır.
 
 Host iki şey sunar: pinlenmiş ve ECDSA ile imzalanmış bir pin config API'si (TLS) ve yönetim API'si ile web dashboard (HTTP).
 
@@ -26,7 +26,7 @@ docker compose up -d --build    # ilk build 3-5 dk
 
 Dashboard: `http://localhost:6650/`. İlk istekte API anahtarını sorar; anahtar `.env` içindeki `API_KEY`.
 
-Dashboard'da işlem yapıp sonucunu telefonda doğrulayan uçtan uca testler [SamplePinVaultE2E](../SamplePinVaultE2E)'de.
+Dashboard'da işlem yapıp sonucunu telefonda doğrulayan uçtan uca testler [sample-e2e](../sample-e2e)'de.
 
 ---
 
@@ -37,7 +37,7 @@ Image, `demo-server` kaynağını `pinvault-server` adlı build context'inden al
 | Ayar | Kaynak |
 |---|---|
 | `PINVAULT_SERVER_SRC` boş (varsayılan) | Upstream git: `PINVAULT_REPO` @ `PINVAULT_REF` |
-| `PINVAULT_SERVER_SRC=../PinVault/demo-server` | Yerel PinVault checkout'u, yayınlanmamış değişiklikler dahil |
+| `PINVAULT_SERVER_SRC=../demo-server` | Bu depodaki `demo-server/`, yayınlanmamış değişiklikler dahil |
 
 Kaynak değiştikten sonra `docker compose up -d --build` yeterli. Yerel dizindeki çalışma verisi (`pinvault.db`, `certs/`, `signing-key.pem`, `build/`) image'a girmez; yalnızca `settings.gradle.kts`, `build.gradle.kts` ve `src/` kopyalanır.
 
@@ -79,7 +79,7 @@ Kaynak değiştikten sonra `docker compose up -d --build` yeterli. Yerel dizinde
 | `HOST_LAN_IP` | `setup.sh` bulur | Telefonların bu makineye ulaştığı IP; sertifika SAN'ına girer |
 | `API_KEY` | `setup.sh` üretir | Yönetim API'si ve dashboard anahtarı |
 | `PINVAULT_REPO` / `PINVAULT_REF` | upstream / `main` | Upstream kaynak ve sürüm |
-| `PINVAULT_SERVER_SRC` | boş | Yerel `demo-server` dizini; doluysa upstream yerine kullanılır |
+| `PINVAULT_SERVER_SRC` | boş | Yerel `demo-server` dizini (bu depoda `../demo-server`); doluysa upstream yerine kullanılır |
 | `ENROLLMENT_MODE` | `token` | `token` önerilir; `open` deviceId ile kayda izin verir (yalnızca demo) |
 | `CLIENT_CERT_TTL_DAYS` | `90` | CSR ile kayıt olan cihazların sertifika ömrü (gün); ömrünün son üçte birinde kendiliğinden yenilenir |
 | `ALLOW_TEST_HOOKS` | boş | `true`: kısa ömürlü sertifika kancası açılır (`POST /api/v1/test-hooks/client-cert-ttl`). Yalnızca testler; uçtan uca testler `env-override.sh` ile geçici açar |

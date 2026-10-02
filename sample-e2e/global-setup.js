@@ -32,7 +32,7 @@ function findJavaHome() {
  */
 function writeProperties({ goodPins, hostPins, custom, signing, backup, recovery, door }) {
   const lines = [
-    '# SamplePinVaultE2E global setup tarafından üretildi; elle düzenleme.',
+    '# sample-e2e global setup tarafından üretildi; elle düzenleme.',
     `host.ip=${env.LAN_IP}`,
     `host.httpPort=${env.HTTP_PORT}`,
     `host.managementTlsPort=${env.MANAGEMENT_TLS_PORT}`,
@@ -127,7 +127,7 @@ module.exports = async () => {
   const door = doorInfo.status === 200 && doorInfo.json && doorInfo.json.enabled ? doorInfo.json : { caPins: [] };
   const propsChanged = writeProperties({ goodPins, hostPins, custom, signing, backup, recovery, door });
   if (process.env.E2E_SKIP_BUILD !== '1' || propsChanged || !fs.existsSync(env.APK)) {
-    console.log('[e2e] SamplePinVaultClient derleniyor…');
+    console.log('[e2e] sample-client derleniyor…');
     const javaHome = findJavaHome();
     execFileSync('./gradlew', [...env.GRADLE_BUILD, '-q', `-PsampleHostProps=${env.PROPS_FILE}`], {
       cwd: env.CLIENT_DIR,

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# SamplePinVaultHost ilk kurulum. Tekrar çalıştırmak güvenlidir; yalnızca eksik
+# sample-host ilk kurulum. Tekrar çalıştırmak güvenlidir; yalnızca eksik
 # olanı tamamlar:
 #   - .env yoksa .env.example'dan oluşturur (izinler 600)
 #   - API_KEY boşsa rastgele üretir

@@ -1,4 +1,4 @@
-// SamplePinVaultClient'ın ekranları için sayfa nesnesi. Düğmelere basar, durum
+// sample-client'ın ekranları için sayfa nesnesi. Düğmelere basar, durum
 // kutularını ve olay listesini okur, her adımın ekran görüntüsünü rapora ekler.
 //
 // Ekranlar: ana ekran, mTLS, Vault, Depolama, Ayarlar. Uygulama modu

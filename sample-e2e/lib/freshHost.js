@@ -1,5 +1,5 @@
 // Ana host'a dokunmadan "sıfırdan kurulum" ve yıkıcı sunucu senaryolarını
-// koşturmak için SamplePinVaultHost'un ikinci, bağımsız bir örneği.
+// koşturmak için sample-host'un ikinci, bağımsız bir örneği.
 //
 // Neden: kurulum yolculuğu (K) ve sunucu operasyonlarının bir kısmı (E03 sunucu
 // sertifikası yenileme, E05 Config API silme, E08 down/up) sunucunun kimliğini
@@ -99,7 +99,7 @@ function apiKey() {
  * kaynağından derlensin (kopya farklı bir dizinde olduğu için mutlak yol).
  */
 function configureEnv() {
-  const serverSrc = path.resolve(env.HOST_DIR, '../PinVault/demo-server');
+  const serverSrc = path.resolve(env.HOST_DIR, '../demo-server');
   const values = {
     HOST_HTTP_PORT: String(PORTS.http),
     HOST_HTTPS_PORT: String(PORTS.https),

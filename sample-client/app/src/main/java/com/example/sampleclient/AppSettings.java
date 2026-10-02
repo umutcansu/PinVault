@@ -16,7 +16,7 @@ public final class AppSettings {
         TLS,
         /** Config mTLS Config API üzerinden, kayıtlı istemci sertifikasıyla çekilir. */
         MTLS_CONFIG,
-        /** Özel uç yollarıyla başka bir backend (SamplePinVaultE2E/lib/custom-backend.js). */
+        /** Özel uç yollarıyla başka bir backend (sample-e2e/lib/custom-backend.js). */
         CUSTOM_BACKEND,
         /** Kütüphaneden HTTP çıkmaz: config uygulama içindeki {@code CertificateConfigApi}'den. */
         EMBEDDED_API,
