@@ -569,7 +569,8 @@ function renderNotificationsCard(n) {
     return `<div class="card" id="notif-card"><div class="card-title">${t('notifTitle')}</div><div class="empty-msg">${t('error')}</div></div>`;
   }
   const recent = n.recent || [];
-  const rows = recent.map(d => {
+  const pag = pagSlice(recent, 'notifications-recent');
+  const rows = pag.slice.map(d => {
     const ok = d.status != null && d.status >= 200 && d.status < 300;
     return `<tr>
         <td class="mono">${esc(d.event)}</td>
@@ -594,7 +595,7 @@ function renderNotificationsCard(n) {
       ${n.configured ? `<div class="diff-section-title">${t('notifRecent')} (${recent.length})</div>
         ${recent.length ? `<table class="data-table">
           <thead><tr><th>${t('thEvent')}</th><th>${t('thDate')}</th><th>${t('notifThAudit')}</th><th>${t('thStatus')}</th><th>${t('notifThAttempts')}</th><th>${t('thError')}</th></tr></thead>
-          <tbody>${rows}</tbody></table>` : `<div class="empty-msg">${t('notifNoDeliveries')}</div>`}` : ''}
+          <tbody>${rows}</tbody></table>${pagControls('notifications-recent', pag, 'renderAuditSection')}` : `<div class="empty-msg">${t('notifNoDeliveries')}</div>`}` : ''}
     </div>`;
 }
 

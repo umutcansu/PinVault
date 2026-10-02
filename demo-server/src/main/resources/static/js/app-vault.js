@@ -351,9 +351,19 @@ async function showVaultFileDetail(apiId, key) {
     }
     const devices = Object.values(byDev).sort((a, b) => b.count - a.count);
 
+    // Paged like the other history tables; each list keeps its own page.
+    const fileKey = apiId + ':' + key;
+    const reloadKey = '_reloadVaultFile_' + fileKey.replace(/[^a-zA-Z0-9]/g, '_');
+    window[reloadKey] = () => showVaultFileDetail(apiId, key);
+    const verPag = pagSlice(versions, 'vault-file-versions:' + fileKey);
+    const devPag = pagSlice(devices, 'vault-file-devices:' + fileKey);
+    const fullPag = pagSlice(dists, 'vault-file-history:' + fileKey);
+    const tokenPag = pagSlice(tokens, 'vault-file-tokens:' + fileKey);
+    const nav = (pag, k) => pag.total ? pagControls(k, pag, reloadKey) : '';
+
     const verRows = versions.length === 0
       ? `<tr><td colspan="5" class="empty-msg">${t('vaultNoDistHistory')}</td></tr>`
-      : versions.map((v, i) => `<tr class="${i === 0 ? 'row-latest' : ''}">
+      : verPag.slice.map((v, i) => `<tr class="${verPag.page === 0 && i === 0 ? 'row-latest' : ''}">
           <td style="font-weight:700;color:#a78bfa">v${v.version}</td>
           <td>${v.devices.size}</td>
           <td style="color:#22c55e;font-weight:600">✓ ${v.ok}</td>
@@ -363,7 +373,7 @@ async function showVaultFileDetail(apiId, key) {
 
     const devRows = devices.length === 0
       ? `<tr><td colspan="5" class="empty-msg">${t('vaultNoDistHistory')}</td></tr>`
-      : devices.map((d, i) => `<tr class="${i === 0 ? 'row-latest' : ''}" style="cursor:pointer" data-action="showDeviceDetail" data-arg0="${esc(apiId)}" data-arg1="${esc(d.deviceId)}">
+      : devPag.slice.map((d, i) => `<tr class="${devPag.page === 0 && i === 0 ? 'row-latest' : ''}" style="cursor:pointer" data-action="showDeviceDetail" data-arg0="${esc(apiId)}" data-arg1="${esc(d.deviceId)}">
           <td><span class="source-badge android-src">📱 ${esc(d.deviceLabel)}</span></td>
           <td>${d.count}</td>
           <td style="color:#22c55e">✓ ${d.ok}</td>
@@ -373,10 +383,10 @@ async function showVaultFileDetail(apiId, key) {
 
     const fullRows = dists.length === 0
       ? `<tr><td colspan="5" class="empty-msg">${t('vaultNoDistHistory')}</td></tr>`
-      : dists.map((d, i) => {
+      : fullPag.slice.map((d, i) => {
           const ok = d.status === 'downloaded' || d.status === 'cached';
           const device = d.deviceManufacturer ? `📱 ${esc(d.deviceManufacturer)} ${esc(d.deviceModel || '')}` : esc(d.deviceId);
-          return `<tr class="${i === 0 ? 'row-latest' : ''}">
+          return `<tr class="${fullPag.page === 0 && i === 0 ? 'row-latest' : ''}">
             <td><span class="source-badge android-src" style="cursor:pointer" data-action="showDeviceDetail" data-arg0="${esc(apiId)}" data-arg1="${esc(d.deviceId)}">${device}</span></td>
             <td>v${d.version}</td>
             <td style="color:${vaultStatusStyle(d.status).color};font-weight:600">${vaultStatusStyle(d.status).icon} ${esc(d.status)}</td>
@@ -389,13 +399,13 @@ async function showVaultFileDetail(apiId, key) {
     // is only returned by POST /tokens (below) at generation time.
     const tokenRows = tokens.length === 0
       ? `<tr><td colspan="4" class="empty-msg">${t('tokenNoRows')}</td></tr>`
-      : tokens.map((tk, i) => {
+      : tokenPag.slice.map((tk, i) => {
           const revokedColor = tk.revoked ? '#64748b' : '#22c55e';
           const revokedLabel = tk.revoked ? t('tokenStatusRevoked') : t('tokenStatusActive');
           const btn = tk.revoked
             ? `<span style="color:#64748b;font-size:11px">${t('tokenBtnDash')}</span>`
             : `<span style="cursor:pointer;color:#ef4444;font-size:11px" data-action="revokeVaultToken" data-arg0="${esc(apiId)}" data-arg1="${tk.id}" data-arg2="${esc(key)}">${t('tokenBtnRevoke')}</span>`;
-          return `<tr class="${i === 0 ? 'row-latest' : ''}">
+          return `<tr class="${tokenPag.page === 0 && i === 0 ? 'row-latest' : ''}">
             <td style="font-family:monospace;color:#7dd3fc">${esc(tk.deviceId)}</td>
             <td style="color:${revokedColor};font-weight:600">${revokedLabel}</td>
             <td style="color:#64748b;font-size:11px">${new Date(tk.createdAt).toLocaleString(locale)}</td>
@@ -449,7 +459,7 @@ async function showVaultFileDetail(apiId, key) {
         <table class="data-table">
           <thead><tr><th>${t('vaultVersion')}</th><th>${t('vaultDevice')}</th><th>${t('vaultSuccess')}</th><th>${t('vaultFailed')}</th><th>${t('vaultLastFetch')}</th></tr></thead>
           <tbody>${verRows}</tbody>
-        </table>
+        </table>${nav(verPag, 'vault-file-versions:' + fileKey)}
       </div>
 
       <div class="card">
@@ -457,7 +467,7 @@ async function showVaultFileDetail(apiId, key) {
         <table class="data-table">
           <thead><tr><th>${t('vaultDevice')}</th><th>${t('vaultFetchCount')}</th><th>${t('vaultSuccess')}</th><th>${t('vaultFailed')}</th><th>${t('vaultLastVersion')}</th></tr></thead>
           <tbody>${devRows}</tbody>
-        </table>
+        </table>${nav(devPag, 'vault-file-devices:' + fileKey)}
       </div>
 
       <!-- V2: token management -->
@@ -473,7 +483,7 @@ async function showVaultFileDetail(apiId, key) {
         <table class="data-table">
           <thead><tr><th>${t('tokenColDeviceId')}</th><th>${t('tokenColStatus')}</th><th>${t('tokenColCreated')}</th><th></th></tr></thead>
           <tbody>${tokenRows}</tbody>
-        </table>
+        </table>${nav(tokenPag, 'vault-file-tokens:' + fileKey)}
       </div>
 
       <div class="card">
@@ -481,7 +491,7 @@ async function showVaultFileDetail(apiId, key) {
         <table class="data-table">
           <thead><tr><th>${t('vaultDevice')}</th><th>${t('vaultVersion')}</th><th>${t('vaultStatus')}</th><th>${t('vaultLabel')}</th><th>${t('vaultTimestamp')}</th></tr></thead>
           <tbody>${fullRows}</tbody>
-        </table>
+        </table>${nav(fullPag, 'vault-file-history:' + fileKey)}
       </div>`;
   } catch (e) {
     content.innerHTML = `<div class="card"><div class="empty-msg">${t('error')}: ${e.message}</div></div>`;

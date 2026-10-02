@@ -520,13 +520,17 @@ async function showDeviceAclManager(configApiId) {
 
     const defaultStr = Array.isArray(defaultAcl) ? defaultAcl.join(', ') : '';
 
+    const devPagKey = 'acl-devices:' + configApiId;
+    const devPag = pagSlice(devices, devPagKey);
+    const aclReloadKey = '_reloadAclManager_' + configApiId.replace(/[^a-zA-Z0-9]/g, '_');
+    window[aclReloadKey] = () => showDeviceAclManager(configApiId);
     const devRows = devices.length === 0
       ? `<tr><td colspan="3" class="empty-msg">${t('noEnrolledDevices')}</td></tr>`
-      : devices.map(d => {
+      : devPag.slice.map(d => {
           const label = (d.deviceManufacturer || d.manufacturer || '') + ' ' + (d.deviceModel || d.model || '');
           return `<tr>
-            <td style="font-weight:600;color:#7dd3fc">${d.device_id || d.deviceId}</td>
-            <td>${label.trim() || '—'}</td>
+            <td style="font-weight:600;color:#7dd3fc">${esc(d.device_id || d.deviceId)}</td>
+            <td>${esc(label.trim() || '—')}</td>
             <td><button class="btn btn-secondary" style="padding:3px 8px;font-size:11px"
                 data-action="editDeviceAcl" data-arg0="${esc(configApiId)}" data-arg1="${esc(d.device_id || d.deviceId)}">${t('aclEditBtn')}</button></td>
           </tr>`;
@@ -557,7 +561,7 @@ async function showDeviceAclManager(configApiId) {
         <table class="data-table">
           <thead><tr><th>${t('tokenColDeviceId')}</th><th>${t('vaultDevice')}</th><th></th></tr></thead>
           <tbody>${devRows}</tbody>
-        </table>
+        </table>${devices.length ? pagControls(devPagKey, devPag, aclReloadKey) : ''}
       </div>`;
   } catch (e) {
     content.innerHTML = `<div class="card"><div class="empty-msg">${t('error')}: ${e.message}</div></div>`;
@@ -977,10 +981,14 @@ async function loadClientDevices(hostname) {
       return;
     }
 
-    const rows = devices.map((d, i) => {
+    const pagKey = 'host-clients:' + hostname;
+    const pag = pagSlice(devices, pagKey);
+    const reloadKey = '_reloadHostClients_' + hostname.replace(/[^a-zA-Z0-9]/g, '_');
+    window[reloadKey] = () => loadClientDevices(hostname);
+    const rows = pag.slice.map((d, i) => {
       const statusColor = d.lastStatus === 'healthy' ? '#22c55e' : '#ef4444';
       const timeAgo = new Date(d.lastSeen).toLocaleString(locale);
-      return `<tr class="${i === 0 ? 'row-latest' : ''}">
+      return `<tr class="${pag.page === 0 && i === 0 ? 'row-latest' : ''}">
         <td><span style="color:#60a5fa">📱 ${esc(d.deviceManufacturer || '')} ${esc(d.deviceModel || '')}</span></td>
         <td><span class="ver-badge">v${esc(d.pinVersion)}</span></td>
         <td style="color:${statusColor}">${esc(d.lastStatus)}</td>
@@ -996,7 +1004,7 @@ async function loadClientDevices(hostname) {
           <th>${t('thLastStatus')}</th><th>${t('thLastSeen')}</th>
         </tr></thead>
         <tbody>${rows}</tbody>
-      </table>`;
+      </table>${pagControls(pagKey, pag, reloadKey)}`;
   } catch (e) {
     card.innerHTML = `<div class="card-title">${t('connectedClients')}</div><div class="empty-msg">${t('error')}</div>`;
   }

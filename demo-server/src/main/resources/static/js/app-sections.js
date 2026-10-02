@@ -71,7 +71,7 @@ async function renderHealthSection() {
         <td style="color:#64748b;font-size:11px">${new Date(e.timestamp).toLocaleString(locale)}</td>
       </tr>`;
     }).join('');
-    const healthPagNav = pagControls(pagKey, pagInfo, 'renderHealthSection');
+    const healthPagNav = pagControls(pagKey, pagInfo, 'refreshHealthView');
 
     // ── Sertifika süre izleme kartı ────────────────────────────────────
     // Her host için kalan gün + seviye (ok / warning / expired) renkli.
@@ -415,7 +415,7 @@ async function renderMtlsSection() {
 
     const certsPagKey = 'client-certs';
     const certsPagInfo = pagSlice(certs, certsPagKey);
-    const certsPagNav = pagControls(certsPagKey, certsPagInfo, "renderMtlsSection");
+    const certsPagNav = pagControls(certsPagKey, certsPagInfo, "refreshMtlsView");
     const certRows = certs.length === 0
       ? `<div class="empty-msg">${t('noClientCerts')}</div>`
       : `<table class="data-table">
@@ -649,15 +649,16 @@ async function loadEnrollmentTokens() {
       if (tok.expired) return `<span style="color:#f59e0b">${expiredTxt}</span>`;
       return `<span style="color:#22c55e">${pendingTxt}</span>`;
     };
+    const pag = pagSlice(tokens, 'enrollment-tokens');
     container.innerHTML = `<table class="data-table">
       <thead><tr><th>${t('thToken')}</th><th>${t('clientIdLabel')}</th><th>${t('thStatus')}</th><th>${t('thDate')}</th></tr></thead>
-      <tbody>${tokens.map((t, i) => `<tr class="${i === 0 ? 'row-latest' : ''}">
+      <tbody>${pag.slice.map((t, i) => `<tr class="${pag.page === 0 && i === 0 ? 'row-latest' : ''}">
         <td style="font-family:monospace;font-weight:700;color:#64748b" title="${esc(tokenMaskedTitle)}">${esc(t.token)}</td>
         <td>${esc(t.clientId)}</td>
         <td${t.expiresAt ? ` title="${esc(expiresAtLabel)}: ${esc(new Date(t.expiresAt).toLocaleString(locale))}"` : ''}>${statusCell(t)}</td>
         <td style="color:#64748b;font-size:11px">${new Date(t.createdAt).toLocaleString(locale)}</td>
       </tr>`).join('')}</tbody>
-    </table>`;
+    </table>${pagControls('enrollment-tokens', pag, 'loadEnrollmentTokens')}`;
   } catch (_) {}
 }
 
@@ -675,6 +676,16 @@ function refreshMtlsView() {
   if (currentSection === 'mtls' || !selectedApiId) return renderMtlsSection();
   configApiTab = 'mtls';
   return renderConfigApiDetail(selectedApiId);
+}
+
+/**
+ * Re-renders the connection history where it is shown. Paging it inside a
+ * Config API's tab used to call renderHealthSection, which dropped the
+ * Config API header and tab bar.
+ */
+function refreshHealthView() {
+  if (currentSection === 'health' || !selectedApiId) return renderHealthSection();
+  return setConfigApiTab('history', selectedApiId);
 }
 
 /** Waiting and approved-but-not-picked-up requests, as one comparable string. */
@@ -710,7 +721,8 @@ function renderEnrollmentRequestsCard(requests, openStatus, locale) {
   const open = requests.filter(r => r.status === 'pending' || r.status === 'approved');
   const waiting = open.filter(r => r.status === 'pending').length;
   const accepting = !!(openStatus && openStatus.enabled);
-  const rows = open.map(r => {
+  const pag = pagSlice(open, 'enrollment-requests');
+  const rows = pag.slice.map(r => {
     const device = `<div style="font-weight:600">${esc(r.deviceAlias || '—')}</div>` +
       (r.deviceUid ? `<div style="font-size:10px;color:#64748b;font-family:monospace">${esc(r.deviceUid)}</div>` : '') +
       (r.heldBy ? `<div style="color:#f59e0b;font-size:11px;margin-top:4px;max-width:340px">&#x26A0; ${esc(t('requestHeldBy', r.heldBy))}</div>` : '') +
@@ -734,7 +746,7 @@ function renderEnrollmentRequestsCard(requests, openStatus, locale) {
     : `<table class="data-table">
         <thead><tr><th>${t('thRequestDevice')}</th><th>${t('thRequestCode')}</th><th>${t('thRequestIdentity')}</th><th>${t('thRequestPolicy')}</th><th>${t('thRequestIp')}</th><th>${t('thRequestAsked')}</th><th></th></tr></thead>
         <tbody>${rows}</tbody>
-      </table>`;
+      </table>${pagControls('enrollment-requests', pag, 'refreshMtlsView')}`;
   const limits = openStatus
     ? t('openLimits', openStatus.maxPending, openStatus.rateLimitPer10Minutes || '∞', openStatus.requestTtlHours)
     : '';
@@ -766,11 +778,12 @@ function renderEnrollmentPoliciesCard(policies, locale) {
           <button class="btn btn-secondary" style="padding:2px 10px;font-size:11px" data-action="closePolicyCode">${t('policyCodeClose')}</button>
         </div>
       </div>` : '';
+  const pag = pagSlice(policies, 'enrollment-policies');
   const table = policies.length === 0
     ? `<div class="empty-msg">${t('policyNone')}</div>`
     : `<table class="data-table">
         <thead><tr><th>${t('thPolicyName')}</th><th>${t('thPolicyCode')}</th><th>${t('thPolicyUsage')}</th><th>${t('thPolicyPending')}</th><th>${t('thPolicyApproval')}</th><th>${t('thPolicyExpires')}</th><th>${t('thStatus')}</th><th></th></tr></thead>
-        <tbody>${policies.map(p => `<tr data-policy-id="${esc(p.id)}">
+        <tbody>${pag.slice.map(p => `<tr data-policy-id="${esc(p.id)}">
           <td style="font-weight:600">${esc(p.name)}</td>
           <td style="font-family:monospace;color:#64748b" title="${esc(t('tokenMaskedHint'))}">${esc(p.codePrefix)}-…</td>
           <td>${p.usedCount} / ${p.maxDevices}</td>
@@ -780,7 +793,7 @@ function renderEnrollmentPoliciesCard(policies, locale) {
           <td style="color:${statusColor[p.status] || '#64748b'}">${t('policyStatus_' + p.status)}</td>
           <td>${p.status !== 'stopped' ? `<button class="btn btn-danger" style="padding:2px 8px;font-size:11px" data-action="stopEnrollmentPolicy" data-arg0="${esc(p.id)}" data-arg1="${esc(p.name)}">${t('policyStopBtn')}</button>` : ''}</td>
         </tr>`).join('')}</tbody>
-      </table>`;
+      </table>${pagControls('enrollment-policies', pag, 'refreshMtlsView')}`;
   return `<div class="card" id="enrollment-policies-card">
       <div class="card-title">${t('policiesTitle')}</div>
       <div style="color:#94a3b8;font-size:12px;margin-bottom:12px;line-height:1.5">${t('policiesHint')}</div>
