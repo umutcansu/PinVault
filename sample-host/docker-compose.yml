@@ -52,6 +52,12 @@ services:
       # Geçici değişiklik için: ./scripts/env-override.sh set KEY=VALUE ...
       SIGNING_KEY_PASSWORD: ${SIGNING_KEY_PASSWORD:-}
       ENROLLMENT_TOKEN_TTL_SECONDS: ${ENROLLMENT_TOKEN_TTL_SECONDS:-}
+      # Onay bekleyen başvurular: cevapsız başvurunun ömrü (saat, varsayılan 24);
+      # kodsuz başvurularda bir IP'den 10 dakikada en fazla yeni başvuru (20)
+      # ve aynı anda bekleyebilecek en fazla başvuru (50).
+      ENROLLMENT_REQUEST_TTL_HOURS: ${ENROLLMENT_REQUEST_TTL_HOURS:-}
+      OPEN_ENROLLMENT_RATE_LIMIT: ${OPEN_ENROLLMENT_RATE_LIMIT:-}
+      OPEN_ENROLLMENT_MAX_PENDING: ${OPEN_ENROLLMENT_MAX_PENDING:-}
       # Cihaz sertifikalarının ömrü (gün, varsayılan 90).
       CLIENT_CERT_TTL_DAYS: ${CLIENT_CERT_TTL_DAYS:-}
       # Yalnızca testler: kısa ömürlü sertifika kancası (/api/v1/test-hooks/client-cert-ttl).

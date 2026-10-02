@@ -62,7 +62,7 @@ Kaynak değiştikten sonra `docker compose up -d --build` yeterli. Yerel dizinde
 - **API anahtarı zorunlu.** Anonim admin kapalı; `API_KEY` boşsa compose başlamaz. Yönetim uçları iki portta da `X-API-Key` ister. Cihazların çağırdığı uçlar (config indirme, enrollment, vault indirme, telemetri) anahtarsız açıktır; hepsi TLS üzerinden ve pinli.
 - **Config imzalı.** Her config cevabı `data/signing-key.pem` ile imzalanır ve `issuedAt/expiresAt` taşır. Client imzasız, süresi geçmiş ya da eski bir config'i uygulamaz.
 - **Signing key host'ta kalır.** `setup.sh` anahtarı `0600` izinle üretir, container'a salt-okunur bağlanır ve git'e girmez. Public yarısı client'a gömülür.
-- **Enrollment token ile.** `ENROLLMENT_MODE=token`: mTLS sertifikası yalnızca admin'in ürettiği tek kullanımlık token'la alınır. Çok cihaz için panelden bir **kayıt politikası** açılabilir: tek kod, en fazla N cihaz, gün sınırı ve istenirse her cihaz için yönetici onayı (Client Sertifikaları → Kayıt politikaları; onay bekleyenler aynı sekmede).
+- **Enrollment token ile.** `ENROLLMENT_MODE=token`: mTLS sertifikası yalnızca admin'in ürettiği tek kullanımlık token'la alınır. Çok cihaz için panelden bir **kayıt politikası** açılabilir: tek kod, en fazla N cihaz, gün sınırı ve istenirse her cihaz için yönetici onayı (Client Sertifikaları → Kayıt politikaları; onay bekleyenler aynı sekmede). Kod verilemeyen cihazlar için aynı sekmedeki **Kodsuz başvurular** anahtarı açılabilir: cihaz hiçbir şey girmeden başvurur, her başvuru onay bekler; telefon ve panel aynı doğrulama kodunu gösterir. İptal edilen bir kimlik iptal edilmiş kalır; aynı kimlikle yeniden kayıt için listede **Kimliği unut**'a basılır (eski sertifikası ve anahtarı reddedilmeye devam eder).
 - **TLS sertifikası LAN IP'yi içerir.** Container, Mac'in LAN IP'sini göremez; `HOST_LAN_IP` sunucuya `EXTRA_CERT_SANS` olarak geçer ve sertifika üretilirken SAN listesine eklenir. Yoksa telefon hostname doğrulamasında bağlantıyı reddeder.
 - **Telemetri düz HTTP'dir.** Client'ın bağlantı olayları `6650`'ye gider. LAN'daki biri bu kayıtları okuyabilir ya da sahte kayıt ekleyebilir; pinlemeyi etkileyemez. Üretimde telemetriyi HTTPS ve pinli bir client ile gönder.
 
@@ -86,6 +86,9 @@ Kaynak değiştikten sonra `docker compose up -d --build` yeterli. Yerel dizinde
 | `CONFIG_TTL_SECONDS` | `86400` | İmzalı config'in geçerlilik süresi |
 | `SIGNING_KEY_PASSWORD` | boş | Doluysa imzalama anahtarı diskte AES-256-GCM ile şifrelenir |
 | `ENROLLMENT_TOKEN_TTL_SECONDS` | `86400` | Kayıt token'ının geçerlilik süresi |
+| `ENROLLMENT_REQUEST_TTL_HOURS` | `24` | Onay bekleyen başvurunun ömrü (saat); cevaplanmayan başvuru düşer, telefon yeniden başvurur |
+| `OPEN_ENROLLMENT_RATE_LIMIT` | `20` | Kodsuz başvurularda bir IP adresinden 10 dakikada en fazla yeni başvuru; `0` sınırı kaldırır |
+| `OPEN_ENROLLMENT_MAX_PENDING` | `50` | Aynı anda onay bekleyebilecek en fazla kodsuz başvuru |
 | `VAULT_AT_REST_PASSWORD` | `setup.sh` üretir | Sunucu diskindeki vault dosyalarının (at_rest ve cihaza özel) parolası. **Boşsa şifreleme yalnızca etikettir**, aşağıya bak |
 | `VAULT_AT_REST_PASSWORD_PREVIOUS` | boş | Parolayı değiştirirken eskisi: sunucu açılışta dosyaları yeni parolaya geçirir, sonra silinir |
 | `CERT_EXPIRY_WARN_DAYS` | `30` | Sertifika süre uyarısı eşiği |
