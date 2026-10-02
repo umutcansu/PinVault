@@ -77,6 +77,7 @@ Kaynak değiştikten sonra `docker compose up -d --build` yeterli. Yerel dizinde
 | `HOST_HTTP_PORT` | `6650` | Yönetim portunun host tarafı |
 | `HOST_HTTPS_PORT` | `6651` | Config API portunun host tarafı |
 | `HOST_LAN_IP` | `setup.sh` bulur | Telefonların bu makineye ulaştığı IP; sertifika SAN'ına girer |
+| `TARGET_HOST` | `www.example.com` | Örnek uygulamanın pin'lediği ve bağlandığı gerçek HTTPS sitesi; `client-config.sh` ve uçtan uca testler buradan okur. En az üç parçalı bir ad (joker alan adı testi için) |
 | `API_KEY` | `setup.sh` üretir | Yönetim API'si ve dashboard anahtarı |
 | `PINVAULT_REPO` / `PINVAULT_REF` | upstream / `main` | Upstream kaynak ve sürüm |
 | `PINVAULT_SERVER_SRC` | boş | Yerel `demo-server` dizini (bu depoda `../demo-server`); doluysa upstream yerine kullanılır |

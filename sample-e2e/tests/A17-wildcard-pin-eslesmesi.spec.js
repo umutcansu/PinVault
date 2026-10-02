@@ -25,7 +25,7 @@ async function removeWildcards() {
   });
 }
 
-test('Web+Mobil: joker alan adı *.example.com hedefi kapsıyor, *.com (yalnızca uzantı) yok sayılıyor', async ({
+test(`Web+Mobil: joker alan adı ${SUB_WILDCARD} hedefi kapsıyor, *.com (yalnızca uzantı) yok sayılıyor`, async ({
   app,
   dashboard,
   run,
@@ -33,7 +33,7 @@ test('Web+Mobil: joker alan adı *.example.com hedefi kapsıyor, *.com (yalnızc
   test.setTimeout(8 * 60 * 1000);
 
   try {
-    await test.step('Web: tam adlı host silinir, yerine *.example.com eklenir', async () => {
+    await test.step(`Web: tam adlı host silinir, yerine ${SUB_WILDCARD} eklenir`, async () => {
       await dashboard.openHost(TARGET_HOST);
       await dashboard.snap(`tam adlı host soldaki listede ve başlıkta: ${TARGET_HOST}`);
       await dashboard.deleteHost(TARGET_HOST);

@@ -86,7 +86,8 @@ module.exports = {
   PROXY_KEY_FILE: path.join(HOST_DIR, 'data/proxy/server-key.pem'),
   PROXY_CERT_FILE: path.join(HOST_DIR, 'data/proxy/server-cert.pem'),
   CONTAINER: process.env.E2E_CONTAINER || 'pinvault-host',
-  TARGET_HOST: process.env.E2E_TARGET_HOST || 'www.example.com',
+  /** Uygulamanın pin'lediği gerçek site: sample-host/.env'deki TARGET_HOST. */
+  TARGET_HOST: process.env.E2E_TARGET_HOST || hostEnv.TARGET_HOST || 'www.example.com',
   /** Uygulamanın vault dosyalarının ve telemetrisinin bağlı olduğu Config API. */
   VAULT_API: 'default-tls',
   /** scripts/provision.sh'ın açtığı mTLS Config API. */

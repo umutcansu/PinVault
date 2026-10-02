@@ -89,7 +89,7 @@ Her koşu `evidence/index.html` dosyasını yeniden üretir. En üstte kapsam ma
 | `E2E_SKIP_BUILD` | yok | `1` ise istemci derlenmez (host değerleri değişmediyse) |
 | `E2E_VARIANT` | `debug` | `release`: uygulamanın R8 ile küçültülmüş release derlemesi test edilir (teşhis log'ları `-Psample.diagnosticLogs=true` ile açık; uygulama verisi run-as yerine emülatörün su'suyla okunur, yani yalnızca emülatör) |
 | `E2E_OLD_CLIENT_REF` | `main` | U01'de önceki sürüm olarak kurulan örnek uygulama dalı; kütüphane sürümü o daldaki `pinvault.version` |
-| `E2E_TARGET_HOST` | `www.example.com` | Pin'leri değiştirilen hedef |
+| `E2E_TARGET_HOST` | `sample-host/.env`'deki `TARGET_HOST`, yoksa `www.example.com` | Pin'leri değiştirilen hedef |
 | `E2E_CONTAINER` | `pinvault-host` | Durdurulup başlatılan host container'ı |
 | `E2E_PROXY_PORT` | `6661` | Araya giren proxy'nin dinlediği port |
 | `E2E_CUSTOM_BACKEND_PORT` | `6660` | Özel backend'in dinlediği port |
