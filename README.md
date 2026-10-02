@@ -4,7 +4,7 @@ Dynamic SSL certificate pinning library for Android. Manage pins remotely, suppo
 
 [![Maven Central](https://img.shields.io/maven-central/v/io.github.umutcansu/pinvault)](https://central.sonatype.com/artifact/io.github.umutcansu/pinvault)
 
-> **Latest release: 2.1.0.** Anything marked *(2.1)* is new in 2.1.0 — see
+> **Latest release: 2.1.1.** Anything marked *(2.1)* is new in 2.1 — see
 > [CHANGELOG.md](CHANGELOG.md) for the full list,
 > [Upgrading from 2.0.x to 2.1](#upgrading-from-20x-to-21) (no app code
 > changes are needed from 2.0.9) and [MIGRATION.md](MIGRATION.md) for the DSL
@@ -35,7 +35,7 @@ Dynamic SSL certificate pinning library for Android. Manage pins remotely, suppo
 ### 1. Add dependency
 
 ```gradle
-implementation("io.github.umutcansu:pinvault:2.1.0")
+implementation("io.github.umutcansu:pinvault:2.1.1")
 ```
 
 > Kotlin 1.9.x consumer projects: use `2.0.3` or later — older 2.0.x
