@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased — Device-held keys and certificate renewal
+## 2.1.0 — 2026-10-02 — Device-held keys and certificate renewal
 
 A device's mTLS certificate used to be a 365-day self-signed P12 the server generated; nothing renewed it, so an expired certificate locked the device out of the mTLS Config API for good. Enrollment now keeps the private key on the device and the certificate renews itself.
 
@@ -44,7 +44,7 @@ A device's mTLS certificate used to be a 365-day self-signed P12 the server gene
 - **On an mTLS Config API, `X-Device-Id` must belong to the client certificate.** The header picks the per-device host ACL of a config fetch and the device a `token` vault download is checked against, and it was taken at its word: an enrolled device could send another device's id and read the pins that device's ACL grants, or download with a token taken from it. A header naming a device other than the certificate's (its client id, or the `deviceUid` it enrolled with) is now refused with `403 device_identity_mismatch` on every request (audited as `device_id_refused`, summarised per minute). The library always sends the id it enrolled with. The management-port enrollment now records `deviceUid` too, under the one-identity rule, so its certificates pass. On a TLS listener the header stays the device's own claim.
 - **E2E key registration over TLS is bounded.** It asks for no credential, and any device id with any text as a key was stored, audited and pushed to the webhook — a source could fill the table and the notification channel at will. Now only RSA keys of 2048–4096 bits are stored (re-encoded; `400 invalid_public_key`), device ids follow the identifier rule (`400 invalid_device_id`), a source address writes at most `DEVICE_KEY_RATE_LIMIT` keys per 10 minutes without a client certificate (default 30, `0` = off; `429`), a Config API holds at most `DEVICE_KEY_LIMIT` keys (default 100 000; a new device beyond it gets `503`), and `NOTIFY_EVENTS=*` no longer pushes the routine `device_key_registered` (name it to receive it).
 
-## Unreleased — Optional security layers
+## 2.1.0 — 2026-10-02 — Optional security layers
 
 Every item below is **opt-in**. A client and a server that configure none of them behave exactly as before, and each side keeps working with an older version of the other. See [`SECURE_OPERATIONS.md`](SECURE_OPERATIONS.md) for which layers to enable and the operational runbooks.
 
