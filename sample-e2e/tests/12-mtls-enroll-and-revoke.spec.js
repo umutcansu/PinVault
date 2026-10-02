@@ -54,8 +54,11 @@ test('mTLS: web\'de üretilen token\'la telefon kayıt olur ve bağlanır; serti
     });
 
     await test.step('Mobil: iptal edilen sertifikayla mTLS bağlantısı reddedilir', async () => {
-      await app.expectMtls(false);
+      const status = await app.expectMtls(false);
       await app.snap('iptal sonrası reddedildi');
+      // El sıkışma geçer (sertifika istemci CA\'sından ve süresi dolmamış); sunucu
+      // iptali her istekte uygular: 403 reenroll_required. Uygulama bunu ret gösteriyor.
+      expect(status).toContain('kimlik iptal edilmiş');
     });
 
     await test.step('Mobil: kayıt silinir', async () => {

@@ -151,12 +151,15 @@ Mevcut 15 senaryo korunur. Numaralar dosya adı önekidir.
 - B01 mTLS Config API → TLS hedef: uygulama mTLS config moduna geçer (kayıtlı sertifikayla), mTLS API kapsamındaki pin'ler gelir, hedefe bağlanır; sertifikasız bağlantı ağ trafiğinde, daha el sıkışmada reddedilir.
 - B02 TLS Config API → mTLS hedef: config TLS'ten, kayıt token'la, mock mTLS host'a kayıtlı sertifikayla bağlanır; kayıtsızken reddedilir.
 - B03 mTLS Config API → mTLS hedef: host mTLS işaretli + host'a özel istemci sertifikası (`clientCertVersion`) mTLS dinleyiciden indirilir; composite KeyManager host'a göre sertifika seçer.
-- B04 Otomatik kayıt (`open` mod) ve token moduna dönünce red.
+- B04 Otomatik kayıt (`open` mod) ve token moduna dönünce red; kimliği iptal edilen telefon yeniden kayıt olamaz, panelde "Kimliği unut" sonrası yeni anahtarla kayıt olur.
 - B05 Elle P12: dashboard'da üretilen P12 dosyadan yüklenir.
 - B06 Token: ikinci kullanım reddi, süre dolumu (`ENROLLMENT_TOKEN_TTL_SECONDS=10`), listede "kullanıldı".
 - B07 Kayıt silme: aynı süreçte bağlantı hâlâ geçiyorsa bulgu; yeniden açılışta red.
 - B08 Dışarıdan sertifika yükleme (PEM/DER) → truststore → o sertifikayla bağlantı kabul.
 - B09 mTLS API durdur/başlat: telefon yine Hazır; mTLS testi red/geçer.
+- B10 Kurtarma kapısı: süresi dolmuş sertifika mTLS portuna giremez, kapıdan (TLS, sunucu CA'sına pinli) yenilenir; denetim kaydında `via: recovery`.
+- B11 Kayıt kodu ve onay: panelde politika (kod bir kez, QR'ıyla), telefon kodu girip doğrulama koduyla bekler, panelde onaylanınca kayıt kendiliğinden tamamlanır; Durdur sonrası aynı kod 401.
+- B12 Kodsuz başvuru: panelde "Kodsuz başvurular" açılır, telefon hiçbir şey girmeden başvurur, panelde aynı doğrulama koduyla görünür, onaylanınca kayıt olur.
 - (Özel `clientCertLabel` tutarlılığı, eski B9: uçtan uca yazılmadı — bkz. 3.4.)
 
 **C. Vault (uzaktan dosya dağıtımı)** — var: 13, 14, 15. Yeni:

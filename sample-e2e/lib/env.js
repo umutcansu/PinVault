@@ -56,6 +56,7 @@ module.exports = {
   MTLS_API_PORT: Number(hostEnv.HOST_MTLS_PORT || 6652),
   MOCK_TLS_PORT: Number(hostEnv.HOST_MOCK_TLS_PORT || 6653),
   MOCK_MTLS_PORT: Number(hostEnv.HOST_MOCK_MTLS_PORT || 6654),
+  RECOVERY_PORT: Number(hostEnv.HOST_RECOVERY_PORT || 6656),
   /** Host'taki mock hedef host'ların adları; uygulama bunları host IP'sine çözümler. */
   MOCK_TLS_HOST: 'mock-tls.sample',
   MOCK_MTLS_HOST: 'mock-mtls.sample',

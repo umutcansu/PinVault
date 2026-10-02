@@ -1218,6 +1218,83 @@ class Dashboard {
   }
 
   /**
+   * mTLS sekmesi → "Kayıt politikaları": ad, en fazla cihaz, gün ve "Her cihaz
+   * için onay iste" → "Politika oluştur". Kod yalnızca bu anda, QR'ıyla birlikte
+   * gösterilir; kutudan okunup döndürülür.
+   */
+  async createEnrollmentPolicy(apiId, { name, maxDevices = 5, validDays = 1, requireApproval = true }) {
+    await this.openConfigApiTab(apiId, 'mtls');
+    await this.page.locator('#enrollment-policies-card').scrollIntoViewIfNeeded();
+    await this.page.fill('#policy-name', name);
+    await this.page.fill('#policy-max', String(maxDevices));
+    await this.page.fill('#policy-days', String(validDays));
+    const approval = this.page.locator('#policy-approval');
+    if ((await approval.isChecked()) !== requireApproval) await approval.click();
+    await this.page.locator('form[data-action-submit="createEnrollmentPolicy"] button[type="submit"]').click();
+    const codeBox = this.page.locator('#policy-code-value');
+    await expect(codeBox).toBeVisible({ timeout: 20_000 });
+    await expect(this.policyRow(name)).toBeVisible();
+    return (await codeBox.textContent()).trim();
+  }
+
+  policyRow(name) {
+    return this.page.locator('#enrollment-policies-card tbody tr', { hasText: name }).first();
+  }
+
+  /** "Onay bekleyen cihazlar" kartındaki satır. Kart açıkken 10 sn'de bir kendiliğinden tazelenir. */
+  enrollmentRequestRow(text) {
+    return this.page.locator('#enrollment-requests-card tbody tr', { hasText: text }).first();
+  }
+
+  async approveEnrollmentRequest(text) {
+    const row = this.enrollmentRequestRow(text);
+    await expect(row).toBeVisible({ timeout: 30_000 });
+    await row.locator('[data-action="approveEnrollmentRequest"]').click();
+    // Satır "Onaylandı" olur; cihaz sertifikasını aldığında kart tazelenince kalkar.
+    await expect
+      .poll(async () => ((await this.enrollmentRequestRow(text).count()) === 0 ? 'alındı' : await this.enrollmentRequestRow(text).textContent()), { timeout: 20_000 })
+      .toMatch(/Onaylandı|Approved|alındı/);
+  }
+
+  async rejectEnrollmentRequest(text) {
+    const row = this.enrollmentRequestRow(text);
+    await expect(row).toBeVisible({ timeout: 30_000 });
+    await row.locator('[data-action="rejectEnrollmentRequest"]').click();
+    await expect(this.enrollmentRequestRow(text)).toHaveCount(0, { timeout: 20_000 });
+  }
+
+  async stopEnrollmentPolicy(name) {
+    await this.policyRow(name).locator('[data-action="stopEnrollmentPolicy"]').click();
+    await expect(this.policyRow(name)).toContainText(/Durduruldu|Stopped/, { timeout: 20_000 });
+  }
+
+  /**
+   * "Onay bekleyen cihazlar" kartındaki "Kodsuz başvurular" anahtarı: açıkken
+   * cihazlar token ya da kod girmeden başvurabilir, hepsi onay bekler.
+   */
+  async setOpenApplications(apiId, enabled) {
+    await this.openConfigApiTab(apiId, 'mtls');
+    const toggle = this.page.locator('#open-applications-switch');
+    await expect(toggle).toBeVisible({ timeout: 20_000 });
+    if ((await toggle.isChecked()) !== enabled) await toggle.click();
+    // Görünüm sunucunun cevabıyla yeniden çizilir.
+    await expect(this.page.locator('#open-applications-switch')).toBeChecked({ checked: enabled, timeout: 20_000 });
+  }
+
+  /** Sayfadaki tek bir öğenin görüntüsü dosyaya (ör. QR'ı okutmak için). */
+  async elementScreenshot(selector, path) {
+    await this.page.locator(selector).first().screenshot({ path });
+    return path;
+  }
+
+  /** Sayfadaki tek bir öğenin görüntüsü rapora (kart, satır). */
+  async snapElement(title, selector) {
+    const target = this.page.locator(selector).first();
+    await target.scrollIntoViewIfNeeded();
+    await this.testInfo.attach(attachmentName('🌐', title), { body: await target.screenshot(), contentType: 'image/png' });
+  }
+
+  /**
    * mTLS sekmesinde istemci sertifikası üretir (P12 tarayıcıya iner).
    * [saveTo] verilirse inen dosya oraya kaydedilir ve yol döndürülür.
    */
@@ -1301,6 +1378,16 @@ class Dashboard {
     await this.openConfigApiTab(apiId, 'mtls');
     await this.clientCertRow(clientId).locator('[data-action="revokeClientCert"]').click();
     await expect(this.clientCertRow(clientId).locator('[data-action="revokeClientCert"]')).toHaveCount(0);
+  }
+
+  /**
+   * İptal edilmiş satırdaki "Kimliği unut" (onay penceresi kabul edilir):
+   * satır listeden kalkar, aynı kimlikle yeniden kayıt olunabilir.
+   */
+  async forgetClientIdentity(apiId, clientId) {
+    await this.openConfigApiTab(apiId, 'mtls');
+    await this.clientCertRow(clientId).locator('[data-action="forgetClientIdentity"]').click();
+    await expect(this.clientCertRow(clientId)).toHaveCount(0, { timeout: 20_000 });
   }
 
   // ── Host sertifikası ve bootstrap sertifikası yükleme ────────────────

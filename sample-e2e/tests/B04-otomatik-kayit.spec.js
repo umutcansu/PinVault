@@ -4,7 +4,10 @@
 // kimliğiyle yapılan kayıt isteğini 403 ile reddediyor. `ENROLLMENT_MODE=open`
 // ile aynı istek kabul ediliyor ve sertifika CN'i
 // "PinVault Client: <ANDROID_ID>" oluyor — dashboard'da da bu isimle görünüyor.
-// Sonunda token moduna dönülüp aynı akışın yeniden reddedildiği gösteriliyor.
+// Kimlik iptal edilince aynı telefon bir daha kayıt olamıyor (kimliği kendi
+// cihaz kimliği); panelde "Kimliği unut"a basılınca yeni bir anahtarla yeniden
+// kayıt oluyor. Sonunda token moduna dönülüp aynı akışın yeniden reddedildiği
+// gösteriliyor.
 const { test, expect } = require('../lib/fixtures');
 const { attachText } = require('../lib/evidence');
 const hostApi = require('../lib/hostApi');
@@ -65,6 +68,11 @@ test('mTLS: otomatik kayıt yalnızca ENROLLMENT_MODE=open iken kabul ediliyor',
         ].join('\n'),
       );
       expect(mode.json.mode).toBe('open');
+      // Yarıda kalmış bir önceki koşu bu cihazın kimliğini iptal edilmiş
+      // bırakmış olabilir: unutulmazsa telefon bir daha kayıt olamaz.
+      if (await hostApi.forgetClientIdentityIfRevoked(deviceId)) {
+        await attachText(testInfo, 'Hazırlık', `Önceki koşudan iptal edilmiş kalan ${deviceId} kimliği unutuldu.`);
+      }
     });
 
     await test.step('Mobil: cihaz kimliğiyle kayıt oluyor', async () => {
@@ -115,6 +123,61 @@ test('mTLS: otomatik kayıt yalnızca ENROLLMENT_MODE=open iken kabul ediliyor',
       await dashboard.snap('otomatik kayıt sertifikası iptal edildi');
     });
 
+    await test.step('Mobil: kimliği iptal edilen telefon yeniden kayıt olamıyor', async () => {
+      await app.openMtls();
+      const result = await app.autoEnroll();
+      await app.snap('iptal edilen kimlikle otomatik kayıt reddedildi');
+      await attachText(
+        testInfo,
+        'Telefonun yanıtı',
+        [
+          result,
+          '',
+          'Açık modda telefonun kimliği kendi cihaz kimliği (ANDROID_ID): iptal edilen kimlik',
+          'iptal edilmiş kalır, bu telefon başka bir kimlikle de gelemez (403 revoked).',
+        ].join('\n'),
+      );
+      expect(result).toContain('Otomatik kayıt reddedildi');
+      expect(result).toContain('iptal edilmiş');
+      expect(app.enrollState()).toContain('Kayıtlı değil');
+      await app.backToMain();
+    });
+
+    await test.step('Web: iptal edilen satırda "Kimliği unut"', async () => {
+      await dashboard.forgetClientIdentity(env.MTLS_API, deviceId);
+      await dashboard.snap('kimlik unutuldu: satır listeden kalktı');
+      const certs = await hostApi.clientCerts();
+      const entry = ((await hostApi.auditLog({ action: 'client_identity_forgotten', limit: 5 })).entries || [])
+        .find((e) => e.target === deviceId);
+      await attachText(
+        testInfo,
+        'GET /api/v1/client-certs + denetim kaydı',
+        [
+          `${deviceId} listede: ${certs.some((c) => c.id === deviceId) ? 'evet' : 'hayır'}`,
+          `Denetim kaydı: ${entry ? `${entry.action} — ${entry.summary}` : 'yok'}`,
+          '',
+          'Eski sertifikası ve anahtarı reddedilmeye devam eder; telefon yeni bir anahtarla kayıt olur.',
+        ].join('\n'),
+      );
+      expect(certs.some((c) => c.id === deviceId)).toBe(false);
+      expect(entry).toBeTruthy();
+    });
+
+    await test.step('Mobil: aynı telefon yeni bir anahtarla yeniden kayıt oluyor', async () => {
+      await app.openMtls();
+      const result = await app.autoEnroll();
+      await app.snap('kimlik unutulduktan sonra otomatik kayıt başarılı');
+      expect(result).toContain(`Otomatik kayıt başarılı — CN=PinVault Client: ${deviceId}`);
+      const status = await app.expectMtls(true);
+      expect(status).toContain('HTTP 200');
+      expect(await app.unenroll()).toContain('Kayıt silindi');
+      expect(app.enrollState()).toContain('Kayıtlı değil');
+      await app.backToMain();
+      // Temizlik: bir sonraki koşu da baştan kayıt olabilsin.
+      await hostApi.revokeClientCertIfActive(deviceId);
+      await hostApi.forgetClientIdentityIfRevoked(deviceId);
+    });
+
     await test.step('Sunucu: token moduna dönülüyor — otomatik kayıt yine reddediliyor', async () => {
       await hostControl.resetEnv();
       const mode = await hostApi.api('/api/v1/enrollment-mode');
@@ -133,6 +196,9 @@ test('mTLS: otomatik kayıt yalnızca ENROLLMENT_MODE=open iken kabul ediliyor',
     });
   } finally {
     await hostControl.resetEnv().catch(() => {});
-    if (deviceId) await hostApi.revokeClientCertIfActive(deviceId).catch(() => {});
+    if (deviceId) {
+      await hostApi.revokeClientCertIfActive(deviceId).catch(() => {});
+      await hostApi.forgetClientIdentityIfRevoked(deviceId).catch(() => {});
+    }
   }
 });

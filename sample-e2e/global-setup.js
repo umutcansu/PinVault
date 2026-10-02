@@ -30,7 +30,7 @@ function findJavaHome() {
  * Host'un kendi dosyalarından ve canlı hedef pin'lerinden üretilir; özel
  * backend değerleri harness'ın ürettiği anahtarlardan gelir.
  */
-function writeProperties({ goodPins, hostPins, custom, signing, backup, recovery }) {
+function writeProperties({ goodPins, hostPins, custom, signing, backup, recovery, door }) {
   const lines = [
     '# SamplePinVaultE2E global setup tarafından üretildi; elle düzenleme.',
     `host.ip=${env.LAN_IP}`,
@@ -47,6 +47,10 @@ function writeProperties({ goodPins, hostPins, custom, signing, backup, recovery
     `host.signingPublicKeys=${[...signing.signers.map((s) => s.publicKey), backup.pub].join(',')}`,
     'host.requiredSignatures=1',
     `host.recoveryPublicKeys=${recovery.pub}`,
+    // Kurtarma kapısı: süresi dolmuş istemci sertifikası mTLS portuna giremez,
+    // uygulama onu buradan (TLS, sunucu CA'sına pinli) yeniler.
+    `host.recoveryPort=${door.caPins.length ? env.RECOVERY_PORT : ''}`,
+    `host.recoveryPins=${door.caPins.join(',')}`,
     `target.host=${env.TARGET_HOST}`,
     `target.pins=${goodPins.join(',')}`,
     `mock.tlsHost=${env.MOCK_TLS_HOST}`,
@@ -118,7 +122,10 @@ module.exports = async () => {
   const signing = signingInfo.json;
   const backup = offlineKeys.ensure('backup-1');
   const recovery = offlineKeys.ensure('recovery-1');
-  const propsChanged = writeProperties({ goodPins, hostPins, custom, signing, backup, recovery });
+  // Kapı kapalıysa ya da sunucu eskiyse (uç yok) uygulama kapısız derlenir.
+  const doorInfo = await hostApi.api('/api/v1/recovery-door');
+  const door = doorInfo.status === 200 && doorInfo.json && doorInfo.json.enabled ? doorInfo.json : { caPins: [] };
+  const propsChanged = writeProperties({ goodPins, hostPins, custom, signing, backup, recovery, door });
   if (process.env.E2E_SKIP_BUILD !== '1' || propsChanged || !fs.existsSync(env.APK)) {
     console.log('[e2e] SamplePinVaultClient derleniyor…');
     const javaHome = findJavaHome();

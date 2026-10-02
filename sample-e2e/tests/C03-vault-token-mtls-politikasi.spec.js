@@ -214,12 +214,13 @@ test('Vault token_mtls: token + istemci sertifikası birlikte gerekiyor', async 
           '',
           'Sertifika geçerli ve sunucu ona güveniyor; token da geçerli. Uymayan tek şey',
           'kimlik: sertifikadaki addan (CN) çıkan kimlik ne X-Device-Id\'ye eşit ne de',
-          'o sertifikanın device_uid\'sine. Çalınan bir token, başka bir cihazın',
-          'sertifikası ve anahtarıyla kullanılamıyor.',
+          'o sertifikanın device_uid\'sine. mTLS kapısı bunu dosyaya ve token\'a hiç',
+          'bakmadan reddediyor (403 device_identity_mismatch). Çalınan bir token,',
+          'başka bir cihazın sertifikası ve anahtarıyla kullanılamıyor.',
         ].join('\n'),
       );
-      expect(res.status).toBe(401);
-      expect(res.body.toString('utf8')).toContain('Device identity mismatch');
+      expect(res.status).toBe(403);
+      expect(res.body.toString('utf8')).toContain('device_identity_mismatch');
     });
 
     await test.step('Ağ trafiği: aynı sertifika kendi kimliğiyle 200 alıyor', async () => {

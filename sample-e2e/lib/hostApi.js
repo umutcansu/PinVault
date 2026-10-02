@@ -461,6 +461,17 @@ async function revokeClientCertIfActive(id) {
 }
 
 /**
+ * İptal edilmiş bir kimliği unutur (POST /api/v1/client-certs/{id}/forget):
+ * aynı kimlikle yeniden kayıt olunabilir, eski sertifikası ve anahtarı
+ * reddedilmeye devam eder. Kimlik yoksa ya da iptal edilmemişse sunucu bir şey
+ * yapmaz (404 / 409). Unuttuysa true.
+ */
+async function forgetClientIdentityIfRevoked(id) {
+  const r = await api(`/api/v1/client-certs/${encodeURIComponent(id)}/forget`, { method: 'POST' });
+  return r.status === 200;
+}
+
+/**
  * Host'un sertifikasını sunucuda yeniler (POST …/hosts/{host}/regenerate-cert):
  * yeni anahtar çifti, pin sürümü +1, çalışan mock dinleyici yeni keystore ile.
  * Yeni pin'leri döndürür. Temizlik için (senaryolar bunu arayüzden yapar).
@@ -566,6 +577,7 @@ module.exports = {
   devicePublicKeyPem,
   rawVaultDownload,
   revokeClientCertIfActive,
+  forgetClientIdentityIfRevoked,
   regenerateHostCert,
   spkiPin,
   livePins,

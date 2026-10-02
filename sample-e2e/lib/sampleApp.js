@@ -13,7 +13,9 @@ const RESULT = {
   request: /(bağlantı başarılı|Bağlantı başarısız|bağlantı başarısız|istemci bağlandı|istemci başarısız)/,
   refresh: /(Yeni config uygulandı|Config güncel|Config yenilenemedi|zaman aşımına uğradı)/,
   enroll: /(Kayıt başarılı|Kayıt başarısız|Önce kayıt token)/,
-  autoEnroll: /(Otomatik kayıt başarılı|Otomatik kayıt reddedildi)/,
+  // Onay isteyen bir kayıt kodu: sonuç gelmeden önce ekranda kalan ara metin.
+  enrollPending: /Onay bekleniyor/,
+  autoEnroll: /(Otomatik kayıt başarılı|Otomatik kayıt reddedildi|Otomatik kayıt yapılamadı)/,
   mtls: /(mTLS bağlantısı başarılı|mTLS bağlantısı reddedildi)/,
   mock: /(host bağlantısı başarılı|host bağlantısı reddedildi)/,
   unenroll: /(Kayıt silindi|başlatılamadı)/,
@@ -405,6 +407,41 @@ class SampleApp {
   async enroll(token) {
     await this.enterText('tokenInput', token);
     return this.press('enrollButton', RESULT.enroll, 'kayıt sonucu');
+  }
+
+  /**
+   * Onay isteyen bir politikanın kayıt kodu: düğmeye basar ve ekranda "Onay
+   * bekleniyor" görünene kadar bekler (bu ara metnin sıra damgası yok). Sonuç
+   * — yönetici onaylayınca ya da reddedince — [awaitEnrollResult] ile okunur.
+   */
+  async enrollAwaitingApproval(code) {
+    await this.enterText('tokenInput', code);
+    this.pendingSeq = SampleApp.seqOf(this.status());
+    await this.tapButton('enrollButton');
+    const node = await this.waitFor('statusView', (n) => RESULT.enrollPending.test(n.text), { what: 'onay bekleniyor' });
+    return node.text;
+  }
+
+  /**
+   * Kodsuz başvuru: "Otomatik kayıt" — token ya da kod girilmez. Sunucu kodsuz
+   * başvuruları açtıysa ekranda "Onay bekleniyor", kimlik ve doğrulama kodu
+   * görünür; sonuç [awaitEnrollResult] ile okunur.
+   */
+  async autoEnrollAwaitingApproval() {
+    this.pendingSeq = SampleApp.seqOf(this.status());
+    await this.tapButton('autoEnrollButton');
+    const node = await this.waitFor('statusView', (n) => RESULT.enrollPending.test(n.text), { what: 'onay bekleniyor (kodsuz)' });
+    return node.text;
+  }
+
+  /** Onay bekleyen kaydın sonucu: uygulama birkaç saniyede bir sorar ve kendiliğinden yazar. */
+  async awaitEnrollResult(timeout = 60_000) {
+    const before = this.pendingSeq ?? -1;
+    const node = await this.waitFor('statusView', (n) => SampleApp.seqOf(n.text) > before && RESULT.enroll.test(n.text), {
+      timeout,
+      what: 'kayıt sonucu (yönetici kararından sonra)',
+    });
+    return node.text;
   }
 
   autoEnroll() {

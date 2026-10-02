@@ -9,6 +9,10 @@
 // Yol boyunca dashboard'ın iki davranışı da kanıtlanıyor: "Client
 // Sertifikaları" sekmesi yeniden çizildiğinde token listesi dolu geliyor ve
 // süresi dolmuş token "Süresi doldu" olarak işaretleniyor.
+//
+// Son adım "bir cihaz, bir etkin kimlik" kuralını gösteriyor: telefonda kayıt
+// silinse de sunucuda eski kimlik etkinken aynı cihaz yeni bir kimlikle kayıt
+// olamıyor (409, token harcanmıyor); eski kimlik iptal edilince aynı token geçiyor.
 const { test, expect } = require('../lib/fixtures');
 const { attachText, redact } = require('../lib/evidence');
 const { sleep } = require('../lib/android');
@@ -176,16 +180,49 @@ test('mTLS: kayıt token\'ı tek kullanımlık ve süreli', async ({ app, dashbo
       await app.backToMain();
     });
 
-    await test.step('Sunucu: token ömrü varsayılana dönüyor, yeni token çalışıyor', async () => {
+    await test.step('Sunucu: token ömrü varsayılana dönüyor; aynı telefon yeni kimliğe, eskisi iptal edilince geçiyor', async () => {
       await hostControl.resetEnv();
       await dashboard.page.reload();
       await expect(dashboard.page.locator('#host-list .api-header').first()).toBeVisible();
       const freshToken = await dashboard.generateEnrollmentToken(env.MTLS_API, freshId);
       await app.openMtls();
+
+      // Telefondaki "Kaydı Sil" yalnızca telefondaki kaydı siler: sunucuda bu
+      // cihaz (ANDROID_ID) hâlâ firstId olarak etkin. Bir cihaz aynı anda tek
+      // etkin kimliğe sahip olabildiği için yeni kimlikle kayıt reddediliyor.
+      const refused = await app.enroll(freshToken);
+      await app.snap('eski kimlik etkinken yeni kimlikle kayıt reddediliyor');
+      const refusal = ((await hostApi.auditLog({ action: 'client_cert_enroll_refused', limit: 5 })).entries || [])
+        .find((e) => e.target === freshId);
+      const pending = (await hostApi.enrollmentTokens()).find((t) => t.clientId === freshId);
+      expect(refused).toContain('Kayıt başarısız');
+      // Telefon nedeni söylüyor: "token geçersiz" değil, cihaz başka kimlikle kayıtlı.
+      expect(refused).toContain('başka bir kimlikle kayıtlı');
+      expect(refusal && refusal.summary).toContain(`is enrolled as ${firstId}`);
+      expect(pending.used).toBe(false);
+
+      // Yönetici eski kimliği iptal ediyor; aynı token (harcanmamıştı) şimdi geçiyor.
+      expect(await hostApi.revokeClientCertIfActive(firstId)).toBe(true);
       const result = await app.enroll(freshToken);
-      await app.snap('varsayılan token ömrüyle kayıt yeniden çalışıyor');
+      await app.snap('eski kimlik iptal edilince aynı token\'la kayıt çalışıyor');
       expect(result).toContain(`Kayıt başarılı — CN=PinVault Client: ${freshId}`);
-      await attachText(testInfo, 'Varsayılan token ömrüyle (24 saat) kayıt', result);
+      await attachText(
+        testInfo,
+        'Varsayılan token ömrüyle (24 saat) kayıt — bir cihaz, bir etkin kimlik',
+        [
+          'Eski kimlik etkinken, yeni kimliğin token\'ıyla:',
+          refused,
+          `Denetim kaydı: ${refusal.action} — ${refusal.summary}`,
+          `Token listede: used=${pending.used} (reddedilen kayıt token\'ı harcamıyor)`,
+          '',
+          `Yönetici ${firstId} kimliğini iptal etti (DELETE /api/v1/client-certs/${firstId}); aynı token\'la:`,
+          result,
+          '',
+          'Sunucu bir cihaz kimliğini (ANDROID_ID) aynı anda tek bir etkin kimliğe bağlıyor:',
+          'token_mtls, şifreleme anahtarı kaydı ve 8092\'deki X-Device-Id kuralı bu bağa',
+          'güveniyor. İkinci bir kimlik, iptal edilmemiş bir cihazı sahiplenemiyor (409).',
+        ].join('\n'),
+      );
       expect(await app.unenroll()).toContain('Kayıt silindi');
       await app.backToMain();
     });
