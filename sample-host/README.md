@@ -51,8 +51,9 @@ Kaynak değiştikten sonra `docker compose up -d --build` yeterli. Yerel dizinde
 | `6652` | `8092` | HTTPS + istemci sertifikası | mTLS Config API (`provision.sh` açar) |
 | `6653` | `8443` | HTTPS, sunucu üretimi sertifika | Mock TLS hedef host `mock-tls.sample` (`provision.sh` açar) |
 | `6654` | `8444` | HTTPS + istemci sertifikası | Mock mTLS hedef host `mock-mtls.sample` (`provision.sh` açar) |
+| `6656` | `8083` | HTTPS, sunucu CA'sının imzaladığı sertifika | Kurtarma kapısı: istemci sertifikası istemez, yalnızca sertifika yenileme. Süresi dolmuş sertifikalı telefon buradan yeniler; uygulama bu porta sunucu CA'sının pin'iyle bağlanır |
 
-`.env` içinde `HOST_HTTP_PORT` / `HOST_MANAGEMENT_TLS_PORT` / `HOST_HTTPS_PORT` / `HOST_MTLS_PORT` / `HOST_MOCK_TLS_PORT` / `HOST_MOCK_MTLS_PORT` ile değişir. Düz HTTP yönetim portu ağa kapalıdır; API anahtarı ağda şifresiz dolaşmaz. Başka bir makineden yönetmek için `https://<host>:6655` (tarayıcı kendinden imzalı sertifika uyarısı verir) ya da SSH tüneli kullanılır. Mock host adları gerçek DNS'te yoktur; örnek uygulama onları `host.ip`'ye çözümler.
+`.env` içinde `HOST_HTTP_PORT` / `HOST_MANAGEMENT_TLS_PORT` / `HOST_HTTPS_PORT` / `HOST_MTLS_PORT` / `HOST_MOCK_TLS_PORT` / `HOST_MOCK_MTLS_PORT` / `HOST_RECOVERY_PORT` ile değişir. Düz HTTP yönetim portu ağa kapalıdır; API anahtarı ağda şifresiz dolaşmaz. Başka bir makineden yönetmek için `https://<host>:6655` (tarayıcı kendinden imzalı sertifika uyarısı verir) ya da SSH tüneli kullanılır. Mock host adları gerçek DNS'te yoktur; örnek uygulama onları `host.ip`'ye çözümler.
 
 ---
 
@@ -61,7 +62,7 @@ Kaynak değiştikten sonra `docker compose up -d --build` yeterli. Yerel dizinde
 - **API anahtarı zorunlu.** Anonim admin kapalı; `API_KEY` boşsa compose başlamaz. Yönetim uçları iki portta da `X-API-Key` ister. Cihazların çağırdığı uçlar (config indirme, enrollment, vault indirme, telemetri) anahtarsız açıktır; hepsi TLS üzerinden ve pinli.
 - **Config imzalı.** Her config cevabı `data/signing-key.pem` ile imzalanır ve `issuedAt/expiresAt` taşır. Client imzasız, süresi geçmiş ya da eski bir config'i uygulamaz.
 - **Signing key host'ta kalır.** `setup.sh` anahtarı `0600` izinle üretir, container'a salt-okunur bağlanır ve git'e girmez. Public yarısı client'a gömülür.
-- **Enrollment token ile.** `ENROLLMENT_MODE=token`: mTLS sertifikası yalnızca admin'in ürettiği tek kullanımlık token'la alınır.
+- **Enrollment token ile.** `ENROLLMENT_MODE=token`: mTLS sertifikası yalnızca admin'in ürettiği tek kullanımlık token'la alınır. Çok cihaz için panelden bir **kayıt politikası** açılabilir: tek kod, en fazla N cihaz, gün sınırı ve istenirse her cihaz için yönetici onayı (Client Sertifikaları → Kayıt politikaları; onay bekleyenler aynı sekmede).
 - **TLS sertifikası LAN IP'yi içerir.** Container, Mac'in LAN IP'sini göremez; `HOST_LAN_IP` sunucuya `EXTRA_CERT_SANS` olarak geçer ve sertifika üretilirken SAN listesine eklenir. Yoksa telefon hostname doğrulamasında bağlantıyı reddeder.
 - **Telemetri düz HTTP'dir.** Client'ın bağlantı olayları `6650`'ye gider. LAN'daki biri bu kayıtları okuyabilir ya da sahte kayıt ekleyebilir; pinlemeyi etkileyemez. Üretimde telemetriyi HTTPS ve pinli bir client ile gönder.
 
@@ -80,6 +81,8 @@ Kaynak değiştikten sonra `docker compose up -d --build` yeterli. Yerel dizinde
 | `PINVAULT_REPO` / `PINVAULT_REF` | upstream / `main` | Upstream kaynak ve sürüm |
 | `PINVAULT_SERVER_SRC` | boş | Yerel `demo-server` dizini; doluysa upstream yerine kullanılır |
 | `ENROLLMENT_MODE` | `token` | `token` önerilir; `open` deviceId ile kayda izin verir (yalnızca demo) |
+| `CLIENT_CERT_TTL_DAYS` | `90` | CSR ile kayıt olan cihazların sertifika ömrü (gün); ömrünün son üçte birinde kendiliğinden yenilenir |
+| `ALLOW_TEST_HOOKS` | boş | `true`: kısa ömürlü sertifika kancası açılır (`POST /api/v1/test-hooks/client-cert-ttl`). Yalnızca testler; uçtan uca testler `env-override.sh` ile geçici açar |
 | `CONFIG_TTL_SECONDS` | `86400` | İmzalı config'in geçerlilik süresi |
 | `SIGNING_KEY_PASSWORD` | boş | Doluysa imzalama anahtarı diskte AES-256-GCM ile şifrelenir |
 | `ENROLLMENT_TOKEN_TTL_SECONDS` | `86400` | Kayıt token'ının geçerlilik süresi |

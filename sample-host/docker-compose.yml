@@ -29,10 +29,15 @@ services:
       - "${HOST_MTLS_PORT:-6652}:8092"   # mTLS Config API (scripts/provision.sh oluşturur)
       - "${HOST_MOCK_TLS_PORT:-6653}:8443"   # Mock TLS hedef host (mock-tls.sample)
       - "${HOST_MOCK_MTLS_PORT:-6654}:8444"  # Mock mTLS hedef host (mock-mtls.sample)
+      # Kurtarma kapısı: istemci sertifikası istemeyen TLS dinleyici, yalnızca
+      # sertifika yenileme. Süresi dolmuş sertifikalı telefon buradan yeniler;
+      # sertifikası sunucu CA'sının imzasını taşır, uygulama CA'ya pinler.
+      - "${HOST_RECOVERY_PORT:-6656}:8083"
     environment:
       PORT: "8080"
       HTTPS_PORT: "8081"
       MANAGEMENT_HTTPS_PORT: "8082"
+      RECOVERY_PORT: "8083"
       DB_PATH: /data/db/pinvault.db
       CERTS_DIR: /data/certs
       SIGNING_KEY_PATH: /data/signing-key.pem
@@ -47,6 +52,10 @@ services:
       # Geçici değişiklik için: ./scripts/env-override.sh set KEY=VALUE ...
       SIGNING_KEY_PASSWORD: ${SIGNING_KEY_PASSWORD:-}
       ENROLLMENT_TOKEN_TTL_SECONDS: ${ENROLLMENT_TOKEN_TTL_SECONDS:-}
+      # Cihaz sertifikalarının ömrü (gün, varsayılan 90).
+      CLIENT_CERT_TTL_DAYS: ${CLIENT_CERT_TTL_DAYS:-}
+      # Yalnızca testler: kısa ömürlü sertifika kancası (/api/v1/test-hooks/client-cert-ttl).
+      ALLOW_TEST_HOOKS: ${ALLOW_TEST_HOOKS:-}
       VAULT_AT_REST_PASSWORD: ${VAULT_AT_REST_PASSWORD:-}
       VAULT_AT_REST_PASSWORD_PREVIOUS: ${VAULT_AT_REST_PASSWORD_PREVIOUS:-}
       CERT_EXPIRY_WARN_DAYS: ${CERT_EXPIRY_WARN_DAYS:-}

@@ -35,6 +35,7 @@ MGMT_TLS_PORT="${HOST_MANAGEMENT_TLS_PORT:-6655}"
 MTLS_PORT="${HOST_MTLS_PORT:-6652}"
 MOCK_TLS_PORT="${HOST_MOCK_TLS_PORT:-6653}"
 MOCK_MTLS_PORT="${HOST_MOCK_MTLS_PORT:-6654}"
+RECOVERY_PORT="${HOST_RECOVERY_PORT:-6656}"
 TARGET_HOST="${TARGET_HOST:-www.example.com}"
 
 [ -f data/certs/demo-server.pins ] || { echo "data/certs/demo-server.pins yok — önce 'docker compose up -d'." >&2; exit 1; }
@@ -53,6 +54,9 @@ SIGNING_KEYS="$( { printf '%s\n' "${KEY_INFO}" | jq -r '.signers[].publicKey'; k
     | grep . | awk '!seen[$0]++' | paste -sd, -)"
 RECOVERY_KEYS="$(keys_in offline-keys/recovery*.pub | grep . | paste -sd, - || true)"
 REQUIRED_SIGNATURES="${CLIENT_REQUIRED_SIGNATURES:-1}"
+# Kurtarma kapısının CA pin'leri (sunucu CA'sı + yedeği): uygulama kapıya yalnızca
+# bu port için CA'dan pinler, kapının sertifikası yenilense de değişmez.
+RECOVERY_PINS="$(curl -fsS -H "X-API-Key: ${API_KEY:-}" "http://localhost:${HTTP_PORT}/api/v1/recovery-door" | jq -r '.caPins | join(",")' 2>/dev/null || true)"
 
 # Hedefin canlı zincirinden sunucu sertifikası (ilk halka) + ara sertifika SPKI pin'leri (virgülle).
 target_pins() {
@@ -90,6 +94,8 @@ host.signingPublicKey=${SIGNING}
 host.signingPublicKeys=${SIGNING_KEYS}
 host.requiredSignatures=${REQUIRED_SIGNATURES}
 host.recoveryPublicKeys=${RECOVERY_KEYS}
+host.recoveryPort=${RECOVERY_PORT}
+host.recoveryPins=${RECOVERY_PINS}
 target.host=${TARGET_HOST}
 target.pins=${TARGET_PINS}
 mock.tlsHost=mock-tls.sample
@@ -116,6 +122,8 @@ sample-host.properties (üretmek için: ./scripts/client-config.sh --properties 
     host.bootstrapPinBackup=${BACKUP}
     host.signingPublicKey=${SIGNING}
     mock.tlsPort=${MOCK_TLS_PORT}, mock.mtlsPort=${MOCK_MTLS_PORT}
+    host.recoveryPort=${RECOVERY_PORT}      # kurtarma kapısı = https://${IP}:${RECOVERY_PORT}/  (süresi dolmuş sertifikayı yeniler)
+    host.recoveryPins=${RECOVERY_PINS}
 
 Düz HTTP izni gerekmez: telemetri de şifreli porttan, config sunucusunun pin'leriyle gider.
 EOF
