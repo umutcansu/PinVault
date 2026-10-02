@@ -3,6 +3,7 @@ package com.example.sampleclient
 import android.content.Context
 import android.util.Log
 import io.github.umutcansu.pinvault.PinVault
+import io.github.umutcansu.pinvault.model.ClientCertEnrollmentResult
 import io.github.umutcansu.pinvault.model.HostPin
 import io.github.umutcansu.pinvault.model.PinVaultConfig
 import io.github.umutcansu.pinvault.model.ScheduledTaskInfo
@@ -40,21 +41,33 @@ object PinManagerLite {
     }
 
     /**
-     * `PinVault.enroll` için senkron köprü: token ile istemci sertifikası
-     * alır, doğrular, şifreli saklar ve pinli client'a yükler.
+     * `PinVault.enrollForResult` için senkron köprü: token ile istemci
+     * sertifikası alır, doğrular, şifreli saklar ve pinli client'a yükler.
+     * Olmazsa nedenini döndürür (token kullanılmış, cihaz başka kimlikle
+     * kayıtlı, kimlik iptal edilmiş, sunucuya ulaşılamadı…).
      * UI thread'inden çağırma.
      */
     @JvmStatic
-    fun enrollBlocking(context: Context, token: String): Boolean =
-        runBlocking { PinVault.enroll(context, token) }
+    fun enrollBlocking(context: Context, token: String): ClientCertEnrollmentResult =
+        runBlocking { PinVault.enrollForResult(context, token) }
 
     /**
-     * `PinVault.autoEnroll` için senkron köprü: token yerine cihaz kimliğiyle
-     * (ANDROID_ID) kayıt. Sunucu yalnızca `ENROLLMENT_MODE=open` iken kabul eder.
+     * `PinVault.autoEnrollForResult` için senkron köprü: token yerine cihaz
+     * kimliğiyle (ANDROID_ID) kayıt. Sunucu yalnızca `ENROLLMENT_MODE=open`
+     * iken kabul eder; token modundaysa sonuç bunu söyler.
      */
     @JvmStatic
-    fun autoEnrollBlocking(context: Context): Boolean =
-        runBlocking { PinVault.autoEnroll(context) }
+    fun autoEnrollBlocking(context: Context): ClientCertEnrollmentResult =
+        runBlocking { PinVault.autoEnrollForResult(context) }
+
+    /**
+     * `PinVault.checkPendingEnrollment` için senkron köprü: kayıt kodu onay
+     * bekliyorsa yönetici onayladı mı diye bir kez sorar. Onaylandıysa
+     * sertifika saklanır ve pinli client'a yüklenir. UI thread'inden çağırma.
+     */
+    @JvmStatic
+    fun checkPendingBlocking(context: Context): ClientCertEnrollmentResult =
+        runBlocking { PinVault.checkPendingEnrollment(context) }
 
     /**
      * `PinVault.fetchFile` için senkron köprü. PinVault henüz başlatılmadıysa

@@ -90,6 +90,15 @@ public class App extends Application {
     public static final String MTLS_BASE_URL =
             "https://" + SAMPLE_HOST_IP + ":" + BuildConfig.HOST_MTLS_PORT + "/";
 
+    /**
+     * Kurtarma kapısı: istemci sertifikası istemeyen, yalnızca sertifika
+     * yenileyen TLS dinleyici. Süresi dolmuş sertifika mTLS portuna giremediği
+     * için mTLS bloğu yenilemeyi buraya götürür. Sertifikası sunucu CA'sının
+     * imzasını taşır; uygulama bu port için CA'ya pinler (host.recoveryPins).
+     */
+    public static final String RECOVERY_BASE_URL =
+            "https://" + SAMPLE_HOST_IP + ":" + BuildConfig.HOST_RECOVERY_PORT + "/";
+
     /** TLS Config API bloğunun adı. */
     public static final String CONFIG_API_ID = "sample-host";
     /** mTLS Config API bloğunun adı (dashboard'daki mTLS API ile aynı). */
@@ -396,7 +405,19 @@ public class App extends Application {
 
     private static void addMtlsBlock(PinVaultConfig.Builder builder, HostPin bootstrap, @Nullable byte[] manualP12, int requiredSignatures) {
         builder.configApi(MTLS_API_ID, MTLS_BASE_URL, block -> {
-            block.bootstrapPins(Collections.singletonList(bootstrap));
+            List<HostPin> pins = new ArrayList<>();
+            pins.add(bootstrap);
+            // Süresi dolmuş sertifika mTLS portuna giremez: yenileme kurtarma
+            // kapısından gider (TLS, istemci sertifikası istemez). Kapının
+            // sertifikası sunucu CA'sının imzasını taşır; bu pin'ler yalnızca o
+            // port için geçerli, mTLS ve TLS portları yaprak pin'leriyle kalır.
+            String[] doorPins = splitKeys(BuildConfig.HOST_RECOVERY_PINS);
+            if (!BuildConfig.HOST_RECOVERY_PORT.isEmpty() && doorPins.length > 0) {
+                pins.add(new HostPin(SAMPLE_HOST_IP + ":" + BuildConfig.HOST_RECOVERY_PORT,
+                        Arrays.asList(doorPins), 0, false, false, null));
+                block.renewalUrl(RECOVERY_BASE_URL);
+            }
+            block.bootstrapPins(pins);
             applySigning(block, requiredSignatures);
             // Kayıtla alınan sertifika kütüphanenin şifreli deposundan gelir;
             // elle yüklenen P12 varsa onun yerine bu kullanılır.

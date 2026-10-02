@@ -91,13 +91,20 @@ public abstract class ActionActivity extends AppCompatActivity {
 
     /**
      * [url]'ye pinli GET; sonucu "✅ [okLabel] HTTP n" ya da "❌ [failLabel]
-     * &lt;hata&gt;" olarak döndürür. Yanıt gövdesi kullanılmaz; önemli olan TLS el
-     * sıkışmasının ve pin doğrulamasının geçmesidir.
+     * &lt;hata&gt;" olarak döndürür. Önemli olan TLS el sıkışmasının ve pin
+     * doğrulamasının geçmesidir; gövdeye yalnızca mTLS dinleyicisinin iptal
+     * cevabı için bakılır.
      */
     protected static String pinnedGet(OkHttpClient client, String url, String okLabel, String failLabel, String okNote) {
         Request req = new Request.Builder().url(url).build();
         try (Response resp = client.newCall(req).execute()) {
             Log.d(App.TAG, url + " → " + resp.code());
+            // mTLS dinleyicisi iptal edilmiş kimliği el sıkışmada değil, her
+            // istekte reddeder (403 reenroll_required): bağlantı kuruldu ama
+            // sertifika kabul edilmedi. Bunu "başarılı" göstermek yanlış olurdu.
+            if (resp.code() == 403 && resp.body() != null && resp.body().string().contains("reenroll_required")) {
+                return "❌ " + failLabel + "\nHTTP 403\n(sertifika kabul edilmedi: kimlik iptal edilmiş, yeniden kayıt gerekli)";
+            }
             return "✅ " + okLabel + "\nHTTP " + resp.code() + "\n(" + okNote + ")";
         } catch (Exception e) {
             Log.e(App.TAG, url + " failed", e);

@@ -30,11 +30,11 @@
 
     <!-- mTLS -->
     <string name="mtls_title">mTLS — istemci sertifikası</string>
-    <string name="mtls_intro">Kayıt token\'ını dashboard\'dan al: Config API sample-mtls → Client Sertifikaları.\n\nmTLS testi: %1$s</string>
+    <string name="mtls_intro">Kayıt token\'ını ya da ortak kayıt kodunu dashboard\'dan al: Config API sample-mtls → Client Sertifikaları (Enrollment Token ya da Kayıt politikaları).\n\nmTLS testi: %1$s</string>
     <string name="mtls_not_enrolled">Kayıtlı değil</string>
     <string name="mtls_enrolled">✅ Kayıtlı — CN=%1$s</string>
     <string name="mtls_manual_active">Elle yüklenen P12 kullanılıyor</string>
-    <string name="mtls_token_hint">Kayıt token\'ı</string>
+    <string name="mtls_token_hint">Kayıt token\'ı ya da kayıt kodu</string>
     <string name="mtls_enroll">Kayıt ol</string>
     <string name="mtls_auto_enroll">Otomatik kayıt</string>
     <string name="mtls_test">mTLS ile test</string>
@@ -45,11 +45,24 @@
     <string name="mtls_manual_drop">Elle P12\'yi bırak</string>
     <string name="mtls_token_required">❌ Önce kayıt token\'ını gir</string>
     <string name="mtls_enrolling">Kayıt olunuyor…</string>
-    <string name="mtls_enroll_success">✅ Kayıt başarılı — CN=%1$s\n(P12 bütünlüğü doğrulandı, şifreli saklandı)</string>
-    <string name="mtls_enroll_failed">❌ Kayıt başarısız\n(token geçersiz, kullanılmış ya da süresi dolmuş)</string>
+    <string name="mtls_enroll_success">✅ Kayıt başarılı — CN=%1$s\n(sertifika doğrulandı ve şifreli saklandı)</string>
+    <string name="mtls_pending_fmt">⏳ Onay bekleniyor — kimlik: %1$s\ndoğrulama kodu: %2$s\n(yönetici panelde aynı kodu görüp onaylayınca kayıt kendiliğinden tamamlanır)</string>
+    <string name="mtls_pending_state">⏳ Kayıt onay bekliyor · %1$s</string>
+    <string name="mtls_still_pending">⏳ Hâlâ onay bekleniyor\n(uygulama her açılışta ve arka planda yeniden sorar)</string>
+    <string name="mtls_enroll_failed_fmt">❌ Kayıt başarısız\n(%1$s)</string>
     <string name="mtls_auto_enrolling">Cihaz kimliğiyle kayıt olunuyor…</string>
-    <string name="mtls_auto_enroll_success">✅ Otomatik kayıt başarılı — CN=%1$s\n(deviceId ile, token yok; P12 bütünlüğü doğrulandı)</string>
-    <string name="mtls_auto_enroll_failed">❌ Otomatik kayıt reddedildi\n(sunucu token modunda ya da erişilemiyor)</string>
+    <string name="mtls_auto_enroll_success">✅ Otomatik kayıt başarılı — CN=%1$s\n(cihaz kimliğiyle, token yok; sertifika doğrulandı)</string>
+    <string name="mtls_auto_enroll_failed_fmt">❌ Otomatik kayıt reddedildi\n(%1$s)</string>
+    <string name="mtls_auto_enroll_not_completed_fmt">❌ Otomatik kayıt yapılamadı\n(%1$s)</string>
+    <string name="mtls_refusal_invalid_token">token geçersiz, kullanılmış ya da süresi dolmuş</string>
+    <string name="mtls_refusal_device_already_enrolled">bu cihaz başka bir kimlikle kayıtlı: yönetici eski kaydı iptal edince aynı token\'la tekrar dene</string>
+    <string name="mtls_refusal_revoked">bu kimlik iptal edilmiş: yöneticiden yeni bir token iste</string>
+    <string name="mtls_refusal_token_required">sunucu yalnızca token\'la kayıt alıyor</string>
+    <string name="mtls_refusal_rejected">kayıt isteği yönetici tarafından reddedildi: yeniden başvurmak için kodu tekrar gir</string>
+    <string name="mtls_refusal_limit_reached">bu kodla kayıt sınırı doldu: yöneticiden yeni bir kod iste</string>
+    <string name="mtls_refusal_expired">başvuru zamanında onaylanmadı ve düştü: tekrar başvur</string>
+    <string name="mtls_refusal_other">sunucu reddetti: HTTP %1$d%2$s</string>
+    <string name="mtls_enroll_not_completed">kayıt tamamlanamadı: %1$s</string>
     <string name="mtls_test_success">✅ mTLS bağlantısı başarılı\nHTTP %1$d\n(istemci sertifikası kabul edildi)</string>
     <string name="mtls_test_failed">❌ mTLS bağlantısı reddedildi\n%1$s\n%2$s</string>
     <string name="mtls_unenrolling">Kayıt siliniyor…</string>

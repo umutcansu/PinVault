@@ -44,6 +44,10 @@ android {
         // (anahtar seti = döndürme/iptal) ve config başına gereken imza sayısı.
         field("HOST_SIGNING_PUBLIC_KEYS", "host.signingPublicKeys")
         field("HOST_RECOVERY_PUBLIC_KEYS", "host.recoveryPublicKeys")
+        // Kurtarma kapısı: süresi dolmuş istemci sertifikası mTLS portuna giremez,
+        // buradan yenilenir. Pin'ler sunucu CA'sının (yalnızca bu port için).
+        field("HOST_RECOVERY_PORT", "host.recoveryPort")
+        field("HOST_RECOVERY_PINS", "host.recoveryPins")
         // -Psample.diagnosticLogs=true: release derlemesinde de PinVault teşhis
         // log'ları açılır (E2E, küçültülmüş derlemeyi log'lardan izler).
         buildConfigField("boolean", "DIAGNOSTIC_LOGS", providers.gradleProperty("sample.diagnosticLogs").orNull?.toBoolean()?.toString() ?: "false")

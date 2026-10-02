@@ -12,14 +12,16 @@ import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 import io.github.umutcansu.pinvault.PinVault;
+import io.github.umutcansu.pinvault.model.ClientCertEnrollmentResult;
 
 /**
  * mTLS: istemci sertifikası alma ve kullanma.
  *
  * <ul>
  *   <li><b>Kayıt ol:</b> dashboard'da üretilen tek kullanımlık token ile
- *       istemci sertifikası alınır; {@code X-P12-SHA256} ile bütünlüğü
- *       doğrulanır, şifreli saklanır ve pinli client'a yüklenir.</li>
+ *       istemci sertifikası alınır: anahtar telefonun Keystore'unda üretilir,
+ *       sunucu CSR'ı imzalar (CSR bilmeyen sunucuda P12 gelir ve
+ *       {@code X-P12-SHA256} ile doğrulanır). Olmazsa ekranda nedeni yazar.</li>
  *   <li><b>Otomatik kayıt:</b> token yerine cihaz kimliği (ANDROID_ID); sunucu
  *       yalnızca {@code ENROLLMENT_MODE=open} iken kabul eder.</li>
  *   <li><b>P12 içe aktar:</b> {@code files/manual-client.p12} dosyasındaki
@@ -37,6 +39,10 @@ import io.github.umutcansu.pinvault.PinVault;
 public class MtlsActivity extends ActionActivity {
 
     private static final Pattern CN = Pattern.compile("CN=([^,]+)");
+
+    /** Onay bekleyen kayıt kaç saniyede bir, en çok ne kadar sorulur. */
+    private static final long APPROVAL_POLL_MS = 3_000;
+    private static final long APPROVAL_WAIT_MS = 10 * 60_000;
 
     private TextView enrollStateView;
     private EditText tokenInput;
@@ -77,10 +83,23 @@ public class MtlsActivity extends ActionActivity {
 
         App.INIT.addObserver(initObserver);
         updateButtons();
+        // Kayıt kodu onay bekliyorsa ekran açılınca beklemeye devam eder.
+        if (pending()) runAction(pendingState(), () -> awaitApproval(null));
     }
 
     private boolean enrolled() {
         return PinVault.INSTANCE.isEnrolled(getApplicationContext(), null);
+    }
+
+    /** Kayıt kodu gönderildi, yönetici henüz onaylamadı. */
+    private boolean pending() {
+        return PinVault.INSTANCE.isEnrollmentPending(getApplicationContext(), null);
+    }
+
+    /** "Kayıt onay bekliyor · <doğrulama kodu>": panelde isteğin yanında aynı kod yazar. */
+    private String pendingState() {
+        String code = PinVault.INSTANCE.enrollmentVerificationCode(getApplicationContext(), null);
+        return getString(R.string.mtls_pending_state, code == null ? "?" : code);
     }
 
     @Override
@@ -93,7 +112,7 @@ public class MtlsActivity extends ActionActivity {
 
         StringBuilder state = new StringBuilder(enrolled
                 ? getString(R.string.mtls_enrolled, PinVault.INSTANCE.enrolledClientCN(getApplicationContext(), null))
-                : getString(R.string.mtls_not_enrolled));
+                : pending() ? pendingState() : getString(R.string.mtls_not_enrolled));
         if (manual) state.append('\n').append(getString(R.string.mtls_manual_active));
         enrollStateView.setText(state);
 
@@ -116,22 +135,98 @@ public class MtlsActivity extends ActionActivity {
             return;
         }
         runAction(getString(R.string.mtls_enrolling), () -> {
-            if (!PinManagerLite.enrollBlocking(getApplicationContext(), token)) {
-                return getString(R.string.mtls_enroll_failed);
+            ClientCertEnrollmentResult result = PinManagerLite.enrollBlocking(getApplicationContext(), token);
+            if (result instanceof ClientCertEnrollmentResult.Pending) {
+                return awaitApproval((ClientCertEnrollmentResult.Pending) result);
             }
-            String cn = PinVault.INSTANCE.enrolledClientCN(getApplicationContext(), null);
-            return getString(R.string.mtls_enroll_success, cn == null ? "?" : cn);
+            return enrollOutcome(result);
         });
+    }
+
+    /** Kaydın sonucu, durum kutusunda gösterildiği gibi. */
+    private String enrollOutcome(ClientCertEnrollmentResult result) {
+        if (!(result instanceof ClientCertEnrollmentResult.Enrolled)) {
+            return getString(R.string.mtls_enroll_failed_fmt, failureReason(result));
+        }
+        String cn = PinVault.INSTANCE.enrolledClientCN(getApplicationContext(), null);
+        return getString(R.string.mtls_enroll_success, cn == null ? "?" : cn);
+    }
+
+    /**
+     * Kayıt kodunun politikası onay istiyor: yönetici panelde onaylayana ya da
+     * reddedene kadar birkaç saniyede bir sorar (kütüphane aynı anahtarla imzalı
+     * CSR'ı istek numarasıyla yollar). Arka plan thread'inde çalışır; arada
+     * durum kutusunda "onay bekleniyor" yazar. Onaylanınca sertifika yüklenir.
+     */
+    private String awaitApproval(ClientCertEnrollmentResult.Pending first) {
+        String clientId = first != null && first.getClientId() != null ? first.getClientId() : "?";
+        String code = PinVault.INSTANCE.enrollmentVerificationCode(getApplicationContext(), null);
+        String waiting = getString(R.string.mtls_pending_fmt, clientId, code == null ? "?" : code);
+        // Kayıt durumu satırı da "onay bekliyor"a döner (düğmeler iş bitene dek kilitli kalır).
+        ui.post(() -> {
+            statusView.setText(waiting);
+            updateButtons();
+        });
+        long deadline = System.currentTimeMillis() + APPROVAL_WAIT_MS;
+        while (System.currentTimeMillis() < deadline && !io.isShutdown()) {
+            try {
+                Thread.sleep(APPROVAL_POLL_MS);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                break;
+            }
+            ClientCertEnrollmentResult result = PinManagerLite.checkPendingBlocking(getApplicationContext());
+            if (result instanceof ClientCertEnrollmentResult.Pending) continue;
+            // Sunucuya ulaşılamadı ama istek duruyor: sormaya devam.
+            if (result instanceof ClientCertEnrollmentResult.Failed && pending()) continue;
+            return enrollOutcome(result);
+        }
+        return getString(R.string.mtls_still_pending);
     }
 
     private void autoEnroll() {
         runAction(getString(R.string.mtls_auto_enrolling), () -> {
-            if (!PinManagerLite.autoEnrollBlocking(getApplicationContext())) {
-                return getString(R.string.mtls_auto_enroll_failed);
+            ClientCertEnrollmentResult result = PinManagerLite.autoEnrollBlocking(getApplicationContext());
+            // Sunucu kodsuz başvuruları açtıysa: yönetici onaylayana dek beklenir.
+            if (result instanceof ClientCertEnrollmentResult.Pending) {
+                return awaitApproval((ClientCertEnrollmentResult.Pending) result);
+            }
+            if (result instanceof ClientCertEnrollmentResult.Failed) {
+                // Ret değil: sunucudan kullanılabilir bir cevap gelmedi.
+                return getString(R.string.mtls_auto_enroll_not_completed_fmt, ((ClientCertEnrollmentResult.Failed) result).getMessage());
+            }
+            if (!(result instanceof ClientCertEnrollmentResult.Enrolled)) {
+                return getString(R.string.mtls_auto_enroll_failed_fmt, failureReason(result));
             }
             String cn = PinVault.INSTANCE.enrolledClientCN(getApplicationContext(), null);
             return getString(R.string.mtls_auto_enroll_success, cn == null ? "?" : cn);
         });
+    }
+
+    /**
+     * Kayıt neden olmadı: sunucunun reddi (ne yapılacağıyla birlikte) ya da
+     * cevaba hiç ulaşılamaması. Eskiden her durumda "token geçersiz" yazıyordu.
+     */
+    private String failureReason(ClientCertEnrollmentResult result) {
+        if (result instanceof ClientCertEnrollmentResult.Refused) {
+            ClientCertEnrollmentResult.Refused refused = (ClientCertEnrollmentResult.Refused) result;
+            switch (refused.getReason()) {
+                case INVALID_TOKEN: return getString(R.string.mtls_refusal_invalid_token);
+                case DEVICE_ALREADY_ENROLLED: return getString(R.string.mtls_refusal_device_already_enrolled);
+                case REVOKED: return getString(R.string.mtls_refusal_revoked);
+                case TOKEN_REQUIRED: return getString(R.string.mtls_refusal_token_required);
+                case REJECTED: return getString(R.string.mtls_refusal_rejected);
+                case LIMIT_REACHED: return getString(R.string.mtls_refusal_limit_reached);
+                case EXPIRED: return getString(R.string.mtls_refusal_expired);
+                default:
+                    String error = refused.getServerError();
+                    return getString(R.string.mtls_refusal_other, refused.getHttpStatus(), error == null ? "" : " " + error);
+            }
+        }
+        if (result instanceof ClientCertEnrollmentResult.Failed) {
+            return getString(R.string.mtls_enroll_not_completed, ((ClientCertEnrollmentResult.Failed) result).getMessage());
+        }
+        return "";
     }
 
     /** mTLS Config API'nin /health ucuna pinli ve (kayıtlıysa) sertifikalı istek. */
