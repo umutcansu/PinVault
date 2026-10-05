@@ -23,10 +23,52 @@ import java.util.concurrent.atomic.AtomicLong
  *
  * Signers are chosen with `CONFIG_SIGNERS` (see [fromEnv]).
  */
-class ConfigSigningService(signers: List<ConfigSigner>) {
+class ConfigSigningService(
+    signers: List<ConfigSigner>,
+    /** How many documents may be at an external signer at once (`SIGNER_MAX_CONCURRENT`). */
+    maxConcurrent: Int = 2,
+    /** How many more may wait for a turn (`SIGNER_MAX_QUEUE`); beyond that a request is refused at once. */
+    private val maxQueued: Int = 8,
+    /** How long a queued request waits for its turn before it is refused. */
+    private val queueWaitMs: Long = 15_000
+) {
 
     /** Single local key file — the historical constructor. */
     constructor(keyFile: File) : this(listOf(LocalFileSigner(keyFile)))
+
+    /**
+     * True when a signer is not a local key file: a command, an HSM, a KMS.
+     * Signing is then slow, may cost money per call and may be rate-limited
+     * by its provider, so it is never done per request ([SignedConfigService]
+     * caches) and never by more than [maxConcurrent] requests at once.
+     */
+    val external: Boolean = signers.any { it !is LocalFileSigner }
+
+    private val permits = java.util.concurrent.Semaphore(maxConcurrent.coerceAtLeast(1), true)
+    private val queued = java.util.concurrent.atomic.AtomicInteger()
+
+    /** External signers are busy and the short queue is full, or the wait ran out. Answered with 503. */
+    class SignerBusyException : IllegalStateException("The signer is busy")
+
+    private fun <T> throttled(block: () -> T): T {
+        if (!external) return block()
+        if (!permits.tryAcquire()) {
+            if (queued.incrementAndGet() > maxQueued) {
+                queued.decrementAndGet()
+                throw SignerBusyException()
+            }
+            try {
+                if (!permits.tryAcquire(queueWaitMs, java.util.concurrent.TimeUnit.MILLISECONDS)) throw SignerBusyException()
+            } finally {
+                queued.decrementAndGet()
+            }
+        }
+        try {
+            return block()
+        } finally {
+            permits.release()
+        }
+    }
 
     val signers: List<ConfigSigner> = signers.also { require(it.isNotEmpty()) { "at least one signer is required" } }
 
@@ -63,10 +105,12 @@ class ConfigSigningService(signers: List<ConfigSigner>) {
     private fun signAll(payload: String, onlyPrimary: Boolean): List<SignatureEntry> {
         val bytes = payload.toByteArray(Charsets.UTF_8)
         val chosen = if (onlyPrimary) listOf(primary) else signers
-        return chosen.map { signer ->
-            val signature = Base64.getEncoder().encodeToString(signer.sign(bytes))
-            signaturesProduced.incrementAndGet()
-            SignatureEntry(keyId = signer.keyId, signature = signature)
+        return throttled {
+            chosen.map { signer ->
+                val signature = Base64.getEncoder().encodeToString(signer.sign(bytes))
+                signaturesProduced.incrementAndGet()
+                SignatureEntry(keyId = signer.keyId, signature = signature)
+            }
         }
     }
 
@@ -96,8 +140,21 @@ class ConfigSigningService(signers: List<ConfigSigner>) {
     fun signVaultFileAll(key: String, version: Int, plaintext: ByteArray): List<SignatureEntry> =
         signAll(vaultCanonical(key, version, plaintext))
 
+    /**
+     * v2 of [signVaultFileAll]: the canonical names the Config API too —
+     * `pinvault-vault-file:v2:<configApiId>:<key>:<version>:<sha256HexLower(plaintext)>`
+     * (ConfigSignatureVerifier.vaultCanonicalV2 on the client). One signing key
+     * often serves several Config APIs; a block with `serverScope` accepts only
+     * v2 signatures for its own id.
+     */
+    fun signVaultFileV2All(configApiId: String, key: String, version: Int, plaintext: ByteArray): List<SignatureEntry> =
+        signAll(vaultCanonicalV2(configApiId, key, version, plaintext))
+
     private fun vaultCanonical(key: String, version: Int, plaintext: ByteArray): String =
         "pinvault-vault-file:v1:$key:$version:${sha256HexLower(plaintext)}"
+
+    internal fun vaultCanonicalV2(configApiId: String, key: String, version: Int, plaintext: ByteArray): String =
+        "pinvault-vault-file:v2:$configApiId:$key:$version:${sha256HexLower(plaintext)}"
 
     private fun sha256HexLower(bytes: ByteArray): String =
         MessageDigest.getInstance("SHA-256").digest(bytes)
@@ -116,7 +173,12 @@ class ConfigSigningService(signers: List<ConfigSigner>) {
          *    `PKCS11_KEY_LABEL` (pinvault-config-signing), `PKCS11_GENERATE_KEY` (false).
          *  - `command` — `SIGNER_COMMAND`, `SIGNER_PUBLIC_KEY` or
          *    `SIGNER_PUBLIC_KEY_FILE`, `SIGNER_TIMEOUT_MS` (10000),
-         *    `SIGNER_INPUT` (`payload` or `digest`).
+         *    `SIGNER_INPUT` (`payload` or `digest`), `SIGNER_PASS_ENV` (more
+         *    variables the command may see; see [CommandSigner]).
+         *
+         * With any `pkcs11` or `command` signer, at most
+         * `SIGNER_MAX_CONCURRENT` (2) documents are being signed at once and
+         * `SIGNER_MAX_QUEUE` (8) more wait; the rest are refused (503).
          *
          * Example, 2-of-2 with one key on this server and one in a KMS:
          * `CONFIG_SIGNERS=local,command:kms` + `SIGNER_COMMAND_KMS=…` +
@@ -129,7 +191,11 @@ class ConfigSigningService(signers: List<ConfigSigner>) {
             require(signers.map { it.keyId }.distinct().size == signers.size) {
                 "CONFIG_SIGNERS lists the same key twice — every signer must hold a different key"
             }
-            return ConfigSigningService(signers)
+            return ConfigSigningService(
+                signers,
+                maxConcurrent = (env["SIGNER_MAX_CONCURRENT"]?.toIntOrNull() ?: 2).coerceIn(1, 64),
+                maxQueued = (env["SIGNER_MAX_QUEUE"]?.toIntOrNull() ?: 8).coerceIn(0, 1024)
+            )
         }
 
         private fun buildSigner(spec: String, defaultKeyFile: File, env: Map<String, String>): ConfigSigner {
@@ -165,6 +231,7 @@ class ConfigSigningService(signers: List<ConfigSigner>) {
                             ?: error("CONFIG_SIGNERS entry '$spec' needs SIGNER_PUBLIC_KEY$suffix or SIGNER_PUBLIC_KEY_FILE$suffix")
                     ),
                     timeoutMs = value("SIGNER_TIMEOUT_MS")?.toLongOrNull() ?: 10_000,
+                    passEnv = value("SIGNER_PASS_ENV").orEmpty().split(',').map { it.trim() }.filter { it.isNotEmpty() }.toSet(),
                     input = (value("SIGNER_INPUT") ?: "payload").lowercase().also {
                         require(it == "payload" || it == "digest") { "SIGNER_INPUT$suffix must be payload or digest" }
                     }

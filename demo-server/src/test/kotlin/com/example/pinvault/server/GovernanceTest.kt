@@ -161,11 +161,11 @@ class GovernanceTest {
     @Test
     fun `webhook deliveries carry an HMAC signature and are retried`() {
         val calls = AtomicInteger()
-        val bodies = CopyOnWriteArrayList<Pair<String, String?>>()
+        val bodies = CopyOnWriteArrayList<Triple<String, String?, String?>>()
         val receiver = HttpServer.create(InetSocketAddress("127.0.0.1", 0), 0).apply {
             createContext("/hook") { exchange ->
                 val body = exchange.requestBody.readBytes().decodeToString()
-                bodies += body to exchange.requestHeaders.getFirst("X-PinVault-Signature")
+                bodies += Triple(body, exchange.requestHeaders.getFirst("X-PinVault-Signature"), exchange.requestHeaders.getFirst("X-PinVault-Timestamp"))
                 // First attempt fails: the notifier must retry.
                 val status = if (calls.incrementAndGet() == 1) 500 else 204
                 exchange.sendResponseHeaders(status, -1)
@@ -185,14 +185,23 @@ class GovernanceTest {
             assertEquals(2, delivery.attempts)
             assertEquals(entry.id, delivery.auditId)
 
-            val (body, signature) = bodies.last()
+            val (body, signature, timestamp) = bodies.last()
             val json = Json.parseToJsonElement(body).jsonObject
             assertEquals("pins_changed", json["event"]!!.jsonPrimitive.content)
             assertEquals("alice", json["actor"]!!.jsonPrimitive.content)
             assertTrue(json["text"]!!.jsonPrimitive.content.contains("pins_changed by alice"))
             val mac = Mac.getInstance("HmacSHA256").apply { init(SecretKeySpec("s3cret".toByteArray(), "HmacSHA256")) }
-            val expected = "sha256=" + mac.doFinal(body.toByteArray()).joinToString("") { "%02x".format(it.toInt() and 0xFF) }
+            // The HMAC covers "<timestamp>.<body>": a receiver that checks the
+            // timestamp cannot be fed a captured delivery again later.
+            assertNotNull(timestamp, "a signed delivery says when it was signed")
+            assertTrue(kotlin.math.abs(System.currentTimeMillis() / 1000 - timestamp.toLong()) < 60, "timestamp is now, in seconds: $timestamp")
+            val expected = "sha256=" + mac.doFinal("$timestamp.$body".toByteArray()).joinToString("") { "%02x".format(it.toInt() and 0xFF) }
             assertEquals(expected, signature)
+            val bodyOnly = "sha256=" + Mac.getInstance("HmacSHA256").apply { init(SecretKeySpec("s3cret".toByteArray(), "HmacSHA256")) }
+                .doFinal(body.toByteArray()).joinToString("") { "%02x".format(it.toInt() and 0xFF) }
+            assertNotEquals(bodyOnly, signature, "the body alone no longer verifies")
+            // Each attempt is signed with its own timestamp: the retry is not stale.
+            assertEquals(2, bodies.size)
         } finally {
             receiver.stop(0)
         }
@@ -214,7 +223,7 @@ class GovernanceTest {
         val signing = ConfigSigningService(File(dir, "k.pem"))
         val approvals = ApprovalService(
             store = ChangeRequestStore(db), audit = audit, required = 1, managementPort = 1,
-            describe = { _, _, _, _ -> ApprovalService.Description(scope, "x", buildJsonObject { }) }
+            describe = { _ -> ApprovalService.Description(scope, "x", buildJsonObject { }) }
         )
         install(ContentNegotiation) { json(Json { ignoreUnknownKeys = true; encodeDefaults = true }) }
         routing {
@@ -406,7 +415,7 @@ class GovernanceTest {
             audit = audit,
             required = 2,
             managementPort = port,
-            describe = { _, _, _, _ -> ApprovalService.Description(scope, "test change", buildJsonObject { }, baseHash = stateOf(scope)) },
+            describe = { _ -> ApprovalService.Description(scope, "test change", buildJsonObject { }, baseHash = stateOf(scope)) },
             stateHash = { stateOf(it) }
         )
         val signing = ConfigSigningService(File(dir, "k.pem"))
@@ -474,7 +483,7 @@ class GovernanceTest {
         val audit = AuditLog(auditStore, null)
         val approvals = ApprovalService(
             store = ChangeRequestStore(db), audit = audit, required = 2, managementPort = 1,
-            describe = { _, _, _, _ -> ApprovalService.Description(scope, "x", buildJsonObject { }) }
+            describe = { _ -> ApprovalService.Description(scope, "x", buildJsonObject { }) }
         )
         install(ContentNegotiation) { json(Json { ignoreUnknownKeys = true; encodeDefaults = true }) }
         install(ApiKeyAuth) { registry = testRegistry(); allowAnonymous = false }
@@ -506,7 +515,7 @@ class GovernanceTest {
         store.onSaved = { s, before, after -> audit.recordPinChange(s, before, after) }
         val approvals = ApprovalService(
             store = ChangeRequestStore(db), audit = audit, required = 2, managementPort = port,
-            describe = { _, path, _, _ -> ApprovalService.Description(scope, "change at $path", buildJsonObject { }, baseHash = stateOf(scope)) },
+            describe = { input -> ApprovalService.Description(scope, "change at ${input.path}", buildJsonObject { }, baseHash = stateOf(scope)) },
             stateHash = { stateOf(it) }
         )
         val signing = ConfigSigningService(File(dir, "k.pem"))
@@ -608,7 +617,7 @@ class GovernanceTest {
         var replayed = false
         val approvals = ApprovalService(
             store = requests, audit = audit, required = 2, ttlHours = 0, managementPort = 1,
-            describe = { _, _, _, _ -> ApprovalService.Description(scope, "x", buildJsonObject { }) },
+            describe = { _ -> ApprovalService.Description(scope, "x", buildJsonObject { }) },
             replay = { _, _, _ -> replayed = true; 200 to "{}" }
         )
         val pending = approvals.submit("alice", "pins_update", "PUT", "/api/v1/certificate-config", query = "",
@@ -628,7 +637,7 @@ class GovernanceTest {
     fun `a change that cannot be described is refused, never stored blind`() {
         val approvals = ApprovalService(
             store = ChangeRequestStore(db), audit = AuditLog(auditStore, null), required = 2, managementPort = 1,
-            describe = { _, _, _, _ -> error("unreadable body") }
+            describe = { _ -> error("unreadable body") }
         )
         val refused = assertFailsWith<ApprovalService.Refused> {
             approvals.submit("alice", "pins_update", "PUT", "/api/v1/certificate-config", query = "",

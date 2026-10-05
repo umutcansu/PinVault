@@ -25,10 +25,13 @@ info:
 
     Routes shared by both come from `certificateConfigRoutes()` and
     `hostRoutes()`, which `Main.kt` mounts twice. `vaultRoutes()` (`/api/v1/vault/…`)
-    is mounted **only inside `configApiModuleFor()`** — the management port serves the
-    scope-explicit mirror under `/api/v1/config-apis/{configApiId}/vault/…` instead
-    (`scopedVaultAdminRoutes`). The KDoc in `VaultRoutes.kt` still claims it is
-    registered on the management server as well; that is stale.
+    is mounted **only inside `configApiModuleFor()`** and carries the **device**
+    endpoints only: download, download report and device-key registration.
+    **Vault administration is not served on the device-facing ports at all**
+    (upload, delete, policy, tokens, distributions, key resets used to be): it
+    lives on the management port under
+    `/api/v1/config-apis/{configApiId}/vault/…` (`scopedVaultAdminRoutes`), where
+    every write can wait for a second admin.
 
     Beyond the documented paths, the management server also serves the dashboard's
     static assets at `GET /static/{...}` (`staticResources`), which is unauthenticated.
@@ -49,8 +52,39 @@ info:
       *who* did something, and what two-person approval needs.
     * When `API_KEY` is unset the server **refuses to start** unless
       `ALLOW_ANONYMOUS_ADMIN=true`, in which case the plugin short-circuits and
-      *no* endpoint is authenticated. The `security` blocks below describe the
-      normal (`API_KEY` set) deployment.
+      *no* endpoint is authenticated. The management listener then binds
+      `127.0.0.1` only (unless `MANAGEMENT_BIND` says otherwise) and every admin
+      request must be addressed to this machine (see *Browser protections*). The
+      `security` blocks below describe the normal (`API_KEY` set) deployment.
+    * The server also refuses to start while `KEYSTORE_PASSWORD`,
+      `VAULT_AT_REST_PASSWORD` or `SIGNING_KEY_PASSWORD` (with a local signer)
+      is unset, unless `ALLOW_DEMO_SECRETS=true` (local development).
+
+    ## Browser protections (admin API)
+
+    The admin API is reachable from the browser the dashboard runs in. Every
+    **state-changing** admin request (anything but `GET`/`HEAD`/`OPTIONS` on a
+    non-public path) is therefore checked before the key is:
+
+    * `403 cross_origin_request` — `Origin` is present and is not the origin the
+      request was addressed to (its `Host`; add a proxy's origin with
+      `ADMIN_ALLOWED_ORIGINS`).
+    * `403 cross_site_request` — `Sec-Fetch-Site` is `cross-site` or `same-site`.
+    * `415 admin_write_needs_json` — the request is neither `application/json`
+      nor marked with a header a cross-site form cannot add: `X-API-Key` or
+      `X-PinVault-Admin` (the dashboard sends the latter with every request).
+      With an admin key every write passes this by construction; without one
+      (`ALLOW_ANONYMOUS_ADMIN=true`) a script must send JSON or the marker.
+    * `403 host_not_allowed` — only with `ALLOW_ANONYMOUS_ADMIN=true`, and on
+      **every** admin request, reads included: `Host` must be `localhost`,
+      `127.0.0.1` or `[::1]` with the listener's port, or an entry of
+      `MANAGEMENT_ALLOWED_HOSTS` (`host:port`). This is what stops DNS rebinding
+      where no key does.
+
+    Device endpoints are not touched. Refusals are audited (summarised) as
+    `admin_request_refused`. An unhandled error on the management listener is
+    answered `500 {"error":"Internal server error","errorId":"…"}`; the detail is
+    in the server log under that id.
 
     Note the allowlist is path-exact: `GET /health` is public but
     `GET /api/v1/health` is **not**, and `GET /api/v1/certificate-config` is public
@@ -61,8 +95,32 @@ info:
 
     * **Body cap.** `POST`/`PUT` bodies on the public endpoints (and everything on
       the recovery door) are capped at 64 KB: a larger declared length gets `413
-      body_too_large` before the body is read, a body without a declared length
-      `411 length_required`.
+      body_too_large` before the body is read, a chunked body without a declared
+      length `411 length_required`. The cap also holds while reading: a body that
+      declares nothing (HTTP/2 needs neither header) is read up to the cap and
+      answered `413`. Vault uploads (admin) are capped at `VAULT_MAX_FILE_BYTES`
+      (default 50 MB, `413`), every other admin upload or JSON body that is read
+      into memory — keystores, certificates, and any body held for approval — at
+      `ADMIN_UPLOAD_MAX_BYTES` (default 1 MB, `413`).
+    * **Refusal limit.** Every refusal (`400`, `401`, `403`, `404`, `409`, `411`,
+      `413`) on enrollment, E2E key registration, vault downloads and host client
+      certificate downloads is counted per source address (an IPv6 address by its
+      /64). After `DEVICE_REFUSAL_RATE_LIMIT` refusals in 10 minutes (default 300,
+      `0` = off) the address gets `429 rate_limited` on those endpoints, before
+      anything is read or parsed. Requests that are served are not counted.
+      Renewal counts for itself (see the endpoint).
+    * **CSR keys.** A CSR is at most 8 KB and its key RSA 2048–4096 with exponent
+      65537, or EC on the named curve P-256 or P-384 — checked before any
+      signature is verified; anything else is `400 invalid_csr`.
+    * **Reports** (`/api/v1/vault/report`, `/api/v1/connection-history/client-report`,
+      `…/config-update-report`) take no credential on a TLS listener: every field
+      is checked or cut to size, the time is the server's, a source address files
+      at most `REPORT_RATE_LIMIT` reports per 10 minutes (default 600) and a device
+      `REPORT_DEVICE_RATE_LIMIT` (default 120; `0` = off, `429 rate_limited`), and
+      history is trimmed per Config API with failures kept apart.
+    * **TLS only.** On the management server's plain-HTTP port, enrollment (and
+      any other device endpoint that takes a token or returns a key) is answered
+      `403 tls_required` unless the connection comes from the server's own machine.
     * **Revocation.** Every request on an **mTLS** Config API listener whose client
       certificate belongs to a revoked identity is answered `403
       {"error":"reenroll_required"}` — the handshake trusts the client CA, the
@@ -99,6 +157,18 @@ info:
       `pinvault-vault-file:v1:<key>:<version>:<sha256HexLower(plaintext)>`), signed
       over the *plaintext* so one signature covers plain / at_rest / end_to_end.
       With several signers every signature is also sent in `X-Vault-Signatures`.
+      Since 2.2.0 also `X-Vault-Signature-V2` / `X-Vault-Signatures-V2` (same
+      encoding) over `pinvault-vault-file:v2:<configApiId>:<key>:<version>:<sha256HexLower(plaintext)>`:
+      they name the Config API, and a library block with `serverScope` accepts only them.
+    * **Signed config payloads** name the Config API they were signed for
+      (`"configApiId": "<scope id>"`, since 2.2.0); a block with `serverScope(id)`
+      refuses a payload naming another id or none.
+    * **mTLS identities** are read from the client certificate's CN, and believed
+      only for the certificate on record for that id (2.2.0): a certificate over
+      the identity's registered key (CSR enrollments), or exactly the stored
+      certificate (P12s, uploaded certificates). Anything else — a leaf some other
+      trusted key signed with that id in it — gets `403 reenroll_required` on every
+      mTLS listener, like a revoked identity.
 
     ## Governance (optional — each part is off or inert until configured)
 
@@ -106,7 +176,7 @@ info:
       admin who made it, in an append-only, hash-chained log
       (`GET /api/v1/audit-log`, `GET /api/v1/audit-log/verify`).
     * **Two-person approval** — `PIN_CHANGE_APPROVALS=2` (or more; needs personal
-      `ADMIN_KEYS`). Every pin- or key-affecting write listed below then answers
+      `ADMIN_KEYS`). Every gated write listed below then answers
       `202 {"pendingApproval":true,"changeRequestId":…}` **without executing**; the
       server replays the stored request, as the requester, once enough *other*
       admins approve it (`/api/v1/change-requests`). The shared `API_KEY` cannot
@@ -120,7 +190,35 @@ info:
       changes (`/api/v1/hosts/{hostname}/regenerate-cert|upload-cert|fetch-cert-url|toggle-mtls|upload-client-cert`),
       `POST /api/v1/config-apis/delete`,
       `/api/v1/server-tls-pins/regenerate|upload|fetch-from-url`,
-      `POST /api/v1/signing-key/regenerate` and `PUT /api/v1/signing-keyset`.
+      `POST /api/v1/signing-key/regenerate`, `PUT /api/v1/signing-keyset` and the
+      host ACL writes (`PUT /api/v1/config-apis/{configApiId}/default-host-acl`,
+      `PUT /api/v1/config-apis/{configApiId}/devices/{deviceId}/host-acl`).
+      Also gated, each under its own operation name: **trust material and
+      identities** — `POST /api/v1/client-certs/upload` (`client_cert_upload`),
+      `POST /api/v1/client-certs/generate` (`client_cert_generate`),
+      `POST /api/v1/enrollment-policies` (`enrollment_policy_create`),
+      `PUT /api/v1/enrollment-open` (`enrollment_open`),
+      `POST /api/v1/enrollment-tokens/generate` (`enrollment_token`) — and the
+      **vault**, under `/api/v1/config-apis/{configApiId}/…`: `PUT vault/{key}`
+      (`vault_upload`), `DELETE vault/{key}` (`vault_delete`),
+      `PUT vault/{key}/policy` (`vault_policy`), `POST vault/{key}/tokens`
+      (`vault_token_issue`), `DELETE vault/tokens/{tokenId}`
+      (`vault_token_revoke`), `DELETE vault/devices/{deviceId}/public-key`
+      (`device_key_reset`) and `PUT vault-enabled` (`vault_enabled`).
+      **Not gated, on purpose:** revocation and forgetting
+      (`DELETE /api/v1/client-certs/{id}`, `…/forget`), stopping an enrollment
+      code, `DELETE /api/v1/enrollment-open` (closing code-less applications) —
+      emergencies take effect at once — and deciding on a device that asked to
+      enroll (`/api/v1/enrollment-requests/{id}/approve|reject`), which is itself
+      a second person's act.
+      `APPROVAL_EXEMPT_OPERATIONS` (comma-separated operation names, empty by
+      default) takes operations out of the rule; an unknown name is a startup
+      error. **Certificate changes are planned when requested**: the approver is
+      shown the pins, the certificate and the Config APIs that change, and
+      exactly that plan is applied (nothing is fetched or generated at approval
+      time). **Answers that carry a secret** (a P12, an enrollment token or code,
+      a vault token) are not produced by the approval: the request becomes
+      `approved` and its requester sends it again to run it once.
     * **Live certificate check** — `PIN_LIVE_CHECK=warn|enforce` compares every new
       or changed pin set with the leaf certificate the host serves right now.
       `warn` stores it and answers with `X-PinVault-Live-Check: warn`; `enforce`
@@ -130,12 +228,18 @@ info:
       `POST /api/v1/pins/live-check` is a dry run in every mode.
     * **Webhook notifications** — `NOTIFY_WEBHOOK_URL` pushes audit events
       (Slack-compatible `text` field); `NOTIFY_WEBHOOK_SECRET` adds
-      `X-PinVault-Signature: sha256=<HMAC of the body>`, `NOTIFY_EVENTS` filters
+      `X-PinVault-Timestamp: <Unix seconds>` and `X-PinVault-Signature:
+      sha256=<hex HMAC-SHA256 of "<timestamp>.<body>">` — a receiver recomputes
+      it, refuses timestamps more than a few minutes old and an `auditId` it has
+      already seen, and so cannot be replayed to. `NOTIFY_EVENTS` filters
       (`*` leaves out `device_key_registered`, which any device's first start
       records; name it to receive it).
     * **Signing** — `CONFIG_SIGNERS` (local key file, PKCS#11 HSM, external
       command; several = one signature each), `CONFIG_SIGNATURE_CACHE=true` (sign
-      each content once), and signing-key sets checked against
+      each content once — always on with a `command` or `pkcs11` signer, where
+      every client is served the cached envelope and at most
+      `SIGNER_MAX_CONCURRENT` signings run at once, `SIGNER_MAX_QUEUE` more
+      waiting, the rest `503`), and signing-key sets checked against
       `RECOVERY_PUBLIC_KEYS`. See `GET /api/v1/signing/status`.
 
 servers:
@@ -440,15 +544,18 @@ paths:
             application/json:
               schema: { $ref: '#/components/schemas/CertificateConfig' }
         '400':
-          description: Pin validation failed.
+          description: >
+            Pin validation failed — the library's rules: a valid host pattern, at most
+            2000 hosts, 2–32 distinct pins per host, each the Base64 of a SHA-256
+            (43 characters and `=`). A config with no host at all is accepted.
           content:
             application/json:
               schema: { $ref: '#/components/schemas/ErrorList' }
         '202': { $ref: '#/components/responses/PendingApproval' }
         '409':
           description: >
-            The same hostname appears more than once in the request body
-            (`ErrorList`) — or, on a Config API listener while
+            The same hostname appears more than once in the request body, compared
+            ignoring case as the library does (`ErrorList`) — or, on a Config API listener while
             `PIN_CHANGE_APPROVALS>=2`, pin changes are accepted only through the
             management API (`Error`).
           content:
@@ -919,6 +1026,8 @@ paths:
         certificate for `localhost`. Running listeners keep the old keystore, hence
         `restartRequired: true`. Takes no request body.
 
+        Planned, then applied, like a host certificate change: with two-person approval the approver is shown the new bootstrap pins and the certificate (`detail.certificate`), and exactly that plan is installed. Audited as `bootstrap_pins_changed`.
+
         Registered on: **management** only.
       security:
         - ApiKeyAuth: []
@@ -945,6 +1054,8 @@ paths:
         apps keep connecting with no update. Put the new backup pin into the next
         app release. Running listeners keep the old keystore until the process
         restarts (`restartRequired: true`).
+
+        Planned, then applied, like a host certificate change: with two-person approval the approver is shown the new bootstrap pins and the certificate (`detail.certificate`), and exactly that plan is installed. Audited as `bootstrap_pins_changed`.
 
         Registered on: **management** only.
       security:
@@ -974,6 +1085,8 @@ paths:
         Multipart upload of a JKS/PKCS12 keystore that replaces the server's own
         certificate. The first file part found is used, regardless of its field name.
 
+        Planned, then applied, like a host certificate change: with two-person approval the approver is shown the new bootstrap pins and the certificate (`detail.certificate`), and exactly that plan is installed. Audited as `bootstrap_pins_changed`.
+
         Registered on: **management** only.
       security:
         - ApiKeyAuth: []
@@ -998,6 +1111,7 @@ paths:
                   enum: [jks, pkcs12, p12]
                   default: jks
       responses:
+        '413': { $ref: '#/components/responses/AdminBodyTooLarge' }
         '200':
           description: Imported; restart to serve the new certificate.
           content:
@@ -1023,6 +1137,16 @@ paths:
         keep presenting their existing certificate — use this when TLS is terminated
         upstream (reverse proxy / load balancer) and the client must pin that
         certificate instead.
+
+        **Where it may connect.** A TLS handshake only, to the address the name
+        resolves to — resolved once, checked, and connected to as checked. Link-local and
+        cloud-metadata addresses (169.254.0.0/16, fe80::/10, 100.100.100.200,
+        fd00:ec2::254) are always refused; loopback and private networks (10/8,
+        172.16/12, 192.168/16, 100.64/10, fc00::/7) unless
+        `FETCH_ALLOW_PRIVATE_TARGETS=true`. A refused target is
+        `400 {"reason":"target_not_allowed"}`.
+
+        Planned, then applied, like a host certificate change: with two-person approval the approver is shown the new bootstrap pins and the certificate (`detail.certificate`), and exactly that plan is installed. Audited as `bootstrap_pins_changed`.
 
         Registered on: **management** only.
       security:
@@ -1100,6 +1224,11 @@ paths:
         `mode: "mtls"` requires an existing client-cert truststore — generate or
         enroll at least one client certificate first.
 
+        `id` must be letters, digits, `.`, `_`, `:` and `-` (at most 64), `mode`
+        `tls` or `mtls`, `port` 1–65535 (`400` otherwise). Under two-person
+        approval the card names the mode and, when another API holds the port,
+        that the start stops it.
+
         Registered on: **management** only.
       security:
         - ApiKeyAuth: []
@@ -1126,7 +1255,7 @@ paths:
               schema: { $ref: '#/components/schemas/ConfigApiInstance' }
         '202': { $ref: '#/components/responses/PendingApproval' }
         '400':
-          description: '`port` missing, or `mode: mtls` with no truststore available.'
+          description: '`port` missing or out of range, `id` not an identifier, `mode` not `tls`/`mtls`, or `mode: mtls` with no truststore available.'
           content:
             application/json:
               schema: { $ref: '#/components/schemas/Error' }
@@ -1278,6 +1407,9 @@ paths:
         the default one the server mounts at boot, so the switch works on all
         of them.
 
+        **Two-person approval** (`PIN_CHANGE_APPROVALS>=2`): waits for a second admin
+        (`202`, operation `vault_enabled`). Audited as `vault_enabled_changed`.
+
         Registered on: **management** only.
       security:
         - ApiKeyAuth: []
@@ -1298,6 +1430,7 @@ paths:
               properties:
                 enabled: { type: boolean }
       responses:
+        '202': { $ref: '#/components/responses/PendingApproval' }
         '200':
           description: Toggle updated.
           content:
@@ -1330,6 +1463,21 @@ paths:
         `hosts` row and appends a pin entry at `version: 1`, then records a
         `cert_generated` history entry.
 
+        **Planned, then applied.** The change is worked out in full first — the pins
+        (SPKI hashes), the certificate's subject and validity, the Config APIs whose
+        published pins change. With two-person approval that plan is made when the change
+        is **requested**, shown to the approver (`detail.certificate`, `detail.scopes`)
+        and stored; the approval installs **exactly** that plan: nothing is fetched or
+        generated a second time. A request whose pins changed in its scope since it was
+        made is `stale`.
+
+        **Live check.** With `PIN_LIVE_CHECK` the new pins are checked against the
+        certificate the host serves now, as on a pin update: `warn` flags
+        (`X-PinVault-Live-Check: warn`), `enforce` answers `422` unless
+        `liveCheckOverride=<reason>` is in the query (audited). A certificate that this
+        request itself installs is not served yet, so under `enforce` generating,
+        uploading or rotating one needs the override.
+
         Registered on: **management + config-api**. On the management port the scope
         comes from `?configApiId=`; on a Config API port that parameter is ignored
         and the listener's own scope is used.
@@ -1348,6 +1496,7 @@ paths:
               properties:
                 hostname: { type: string, example: api.example.com }
       responses:
+        '422': { $ref: '#/components/responses/LiveCheckRejected' }
         '200':
           description: Certificate generated and pinned.
           content:
@@ -1380,6 +1529,31 @@ paths:
         certificate, and adds the host at `version: 1` with **no** keystore (the
         server does not own that certificate). History event: `fetched_from_url`.
 
+        **Planned, then applied.** The change is worked out in full first — the pins
+        (SPKI hashes), the certificate's subject and validity, the Config APIs whose
+        published pins change. With two-person approval that plan is made when the change
+        is **requested**, shown to the approver (`detail.certificate`, `detail.scopes`)
+        and stored; the approval installs **exactly** that plan: nothing is fetched or
+        generated a second time. A request whose pins changed in its scope since it was
+        made is `stale`.
+
+        **Live check.** With `PIN_LIVE_CHECK` the new pins are checked against the
+        certificate the host serves now, as on a pin update: `warn` flags
+        (`X-PinVault-Live-Check: warn`), `enforce` answers `422` unless
+        `liveCheckOverride=<reason>` is in the query (audited). A certificate that this
+        request itself installs is not served yet, so under `enforce` generating,
+        uploading or rotating one needs the override.
+
+        **Where it may connect.** A TLS handshake only, to the address the name
+        resolves to — resolved once, checked, and connected to as checked. Link-local and
+        cloud-metadata addresses (169.254.0.0/16, fe80::/10, 100.100.100.200,
+        fd00:ec2::254) are always refused; loopback and private networks (10/8,
+        172.16/12, 192.168/16, 100.64/10, fc00::/7) unless
+        `FETCH_ALLOW_PRIVATE_TARGETS=true`. A refused target is
+        `400 {"reason":"target_not_allowed"}`.
+
+        The host is named after the URL's host; a `hostname` field in the body is not read (and is not shown to an approver).
+
         Registered on: **management + config-api**.
       security:
         - ApiKeyAuth: []
@@ -1396,6 +1570,7 @@ paths:
               properties:
                 url: { type: string, example: 'https://api.example.com' }
       responses:
+        '422': { $ref: '#/components/responses/LiveCheckRejected' }
         '200':
           description: Pins fetched and host added.
           content:
@@ -1427,6 +1602,21 @@ paths:
         Imports a JKS/PKCS12 keystore and registers the host at `version: 1`.
         History event: `cert_uploaded`.
 
+        **Planned, then applied.** The change is worked out in full first — the pins
+        (SPKI hashes), the certificate's subject and validity, the Config APIs whose
+        published pins change. With two-person approval that plan is made when the change
+        is **requested**, shown to the approver (`detail.certificate`, `detail.scopes`)
+        and stored; the approval installs **exactly** that plan: nothing is fetched or
+        generated a second time. A request whose pins changed in its scope since it was
+        made is `stale`.
+
+        **Live check.** With `PIN_LIVE_CHECK` the new pins are checked against the
+        certificate the host serves now, as on a pin update: `warn` flags
+        (`X-PinVault-Live-Check: warn`), `enforce` answers `422` unless
+        `liveCheckOverride=<reason>` is in the query (audited). A certificate that this
+        request itself installs is not served yet, so under `enforce` generating,
+        uploading or rotating one needs the override.
+
         Registered on: **management + config-api**.
       security:
         - ApiKeyAuth: []
@@ -1446,6 +1636,8 @@ paths:
                 password: { type: string, default: changeit }
                 format: { type: string, enum: [jks, pkcs12, p12], default: jks }
       responses:
+        '413': { $ref: '#/components/responses/AdminBodyTooLarge' }
+        '422': { $ref: '#/components/responses/LiveCheckRejected' }
         '200':
           description: Keystore imported and host added.
           content:
@@ -1521,6 +1713,21 @@ paths:
         `version` in the response is the new version in the *requested* scope.
         History event per scope: `cert_regenerated`.
 
+        **Planned, then applied.** The change is worked out in full first — the pins
+        (SPKI hashes), the certificate's subject and validity, the Config APIs whose
+        published pins change. With two-person approval that plan is made when the change
+        is **requested**, shown to the approver (`detail.certificate`, `detail.scopes`)
+        and stored; the approval installs **exactly** that plan: nothing is fetched or
+        generated a second time. A request whose pins changed in its scope since it was
+        made is `stale`.
+
+        **Live check.** With `PIN_LIVE_CHECK` the new pins are checked against the
+        certificate the host serves now, as on a pin update: `warn` flags
+        (`X-PinVault-Live-Check: warn`), `enforce` answers `422` unless
+        `liveCheckOverride=<reason>` is in the query (audited). A certificate that this
+        request itself installs is not served yet, so under `enforce` generating,
+        uploading or rotating one needs the override.
+
         Registered on: **management + config-api**.
       security:
         - ApiKeyAuth: []
@@ -1529,6 +1736,7 @@ paths:
         - $ref: '#/components/parameters/HostnamePath'
         - $ref: '#/components/parameters/ConfigApiIdQuery'
       responses:
+        '422': { $ref: '#/components/responses/LiveCheckRejected' }
         '200':
           description: New certificate and pins.
           content:
@@ -1561,6 +1769,21 @@ paths:
         History event per scope: `cert_rotated_to_backup`. A running mock server
         for this host is restarted with the new keystore.
 
+        **Planned, then applied.** The change is worked out in full first — the pins
+        (SPKI hashes), the certificate's subject and validity, the Config APIs whose
+        published pins change. With two-person approval that plan is made when the change
+        is **requested**, shown to the approver (`detail.certificate`, `detail.scopes`)
+        and stored; the approval installs **exactly** that plan: nothing is fetched or
+        generated a second time. A request whose pins changed in its scope since it was
+        made is `stale`.
+
+        **Live check.** With `PIN_LIVE_CHECK` the new pins are checked against the
+        certificate the host serves now, as on a pin update: `warn` flags
+        (`X-PinVault-Live-Check: warn`), `enforce` answers `422` unless
+        `liveCheckOverride=<reason>` is in the query (audited). A certificate that this
+        request itself installs is not served yet, so under `enforce` generating,
+        uploading or rotating one needs the override.
+
         Registered on: **management + config-api**.
       security:
         - ApiKeyAuth: []
@@ -1569,6 +1792,7 @@ paths:
         - $ref: '#/components/parameters/HostnamePath'
         - $ref: '#/components/parameters/ConfigApiIdQuery'
       responses:
+        '422': { $ref: '#/components/responses/LiveCheckRejected' }
         '200':
           description: The certificate now serves the former backup key; new pins.
           content:
@@ -1602,6 +1826,21 @@ paths:
         Bumps the pin version in every scope hosting this hostname and restarts a
         running mock server. History event per scope: `cert_uploaded`.
 
+        **Planned, then applied.** The change is worked out in full first — the pins
+        (SPKI hashes), the certificate's subject and validity, the Config APIs whose
+        published pins change. With two-person approval that plan is made when the change
+        is **requested**, shown to the approver (`detail.certificate`, `detail.scopes`)
+        and stored; the approval installs **exactly** that plan: nothing is fetched or
+        generated a second time. A request whose pins changed in its scope since it was
+        made is `stale`.
+
+        **Live check.** With `PIN_LIVE_CHECK` the new pins are checked against the
+        certificate the host serves now, as on a pin update: `warn` flags
+        (`X-PinVault-Live-Check: warn`), `enforce` answers `422` unless
+        `liveCheckOverride=<reason>` is in the query (audited). A certificate that this
+        request itself installs is not served yet, so under `enforce` generating,
+        uploading or rotating one needs the override.
+
         Registered on: **management + config-api**.
       security:
         - ApiKeyAuth: []
@@ -1621,6 +1860,8 @@ paths:
                 password: { type: string, default: changeit }
                 format: { type: string, enum: [jks, pkcs12, p12], default: jks }
       responses:
+        '413': { $ref: '#/components/responses/AdminBodyTooLarge' }
+        '422': { $ref: '#/components/responses/LiveCheckRejected' }
         '200':
           description: Keystore imported, pins bumped.
           content:
@@ -1651,6 +1892,29 @@ paths:
         this hostname. No keystore is written — only `cert_valid_until` and the pins
         change. History event per scope: `cert_fetched`.
 
+        **Planned, then applied.** The change is worked out in full first — the pins
+        (SPKI hashes), the certificate's subject and validity, the Config APIs whose
+        published pins change. With two-person approval that plan is made when the change
+        is **requested**, shown to the approver (`detail.certificate`, `detail.scopes`)
+        and stored; the approval installs **exactly** that plan: nothing is fetched or
+        generated a second time. A request whose pins changed in its scope since it was
+        made is `stale`.
+
+        **Live check.** With `PIN_LIVE_CHECK` the new pins are checked against the
+        certificate the host serves now, as on a pin update: `warn` flags
+        (`X-PinVault-Live-Check: warn`), `enforce` answers `422` unless
+        `liveCheckOverride=<reason>` is in the query (audited). A certificate that this
+        request itself installs is not served yet, so under `enforce` generating,
+        uploading or rotating one needs the override.
+
+        **Where it may connect.** A TLS handshake only, to the address the name
+        resolves to — resolved once, checked, and connected to as checked. Link-local and
+        cloud-metadata addresses (169.254.0.0/16, fe80::/10, 100.100.100.200,
+        fd00:ec2::254) are always refused; loopback and private networks (10/8,
+        172.16/12, 192.168/16, 100.64/10, fc00::/7) unless
+        `FETCH_ALLOW_PRIVATE_TARGETS=true`. A refused target is
+        `400 {"reason":"target_not_allowed"}`.
+
         Registered on: **management + config-api**.
       security:
         - ApiKeyAuth: []
@@ -1668,6 +1932,7 @@ paths:
               properties:
                 url: { type: string, example: 'https://api.example.com' }
       responses:
+        '422': { $ref: '#/components/responses/LiveCheckRejected' }
         '200':
           description: Pins refreshed from the live certificate.
           content:
@@ -1764,6 +2029,7 @@ paths:
                 file: { type: string, format: binary, description: PKCS12 bundle. }
                 password: { type: string, default: changeit }
       responses:
+        '413': { $ref: '#/components/responses/AdminBodyTooLarge' }
         '200':
           description: Stored, version bumped.
           content:
@@ -1776,7 +2042,7 @@ paths:
                   commonName: { type: string }
                   fingerprint: { type: string }
         '400':
-          description: File part missing, or the bytes are not a valid P12.
+          description: File part missing, the bytes are not a valid P12, or the P12 does not hold exactly one private key (the one entry that is shown, recorded and stored).
           content:
             application/json:
               schema: { $ref: '#/components/schemas/Error' }
@@ -1805,6 +2071,8 @@ paths:
         it needs `X-API-Key` — devices use
         `GET /api/v1/client-certs/{hostname}/download` instead, which is public but
         only answers on mTLS listeners.
+
+        Hands out a private key: audited as `private_key_downloaded` (who, which host) and pushed to the webhook.
 
         Registered on: **management + config-api**.
       security:
@@ -2014,6 +2282,14 @@ paths:
         `443, 9443, 8443, 9444, 8444`. Failure is reported in the body with `200`,
         not an error status.
 
+        Only a host pinned in the scope (also as `host:port`) or registered is
+        probed (`404` otherwise), only on those ports, its mock ports and the ports
+        of its `host:port` pin entries (another `?port=` is `400`). The name is
+        resolved once through the egress filter (`FETCH_ALLOW_PRIVATE_TARGETS`;
+        link-local and metadata addresses never) and `nc`/`openssl` get the
+        checked address. A GET that opens connections: it needs `X-PinVault-Admin`
+        or `X-API-Key`, and `Sec-Fetch-Site: cross-site|same-site` is refused (`403`).
+
         `{hostname}` is passed to subprocess argv, so it must match
         `^[A-Za-z0-9][A-Za-z0-9.-]{0,252}$` — anything else is rejected with `400`
         before a process is spawned.
@@ -2037,12 +2313,20 @@ paths:
             application/json:
               schema: { $ref: '#/components/schemas/PingRemoteResult' }
         '400':
-          description: The hostname segment is not a plain hostname / IPv4 literal.
+          description: The hostname segment is not a plain hostname / IPv4 literal, the port is not one of the host's, or the address is not allowed (`target not allowed`).
           content:
             application/json:
               schema: { $ref: '#/components/schemas/PingRemoteResult' }
+        '404':
+          description: The host is neither pinned in the scope nor registered.
         '401': { $ref: '#/components/responses/MissingApiKey' }
-        '403': { $ref: '#/components/responses/InvalidApiKey' }
+        '403':
+          description: >
+            `admin_header_required` (neither `X-PinVault-Admin` nor `X-API-Key`),
+            `cross_site_request`, or an invalid key (see InvalidApiKey).
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
 
   /api/v1/hosts/{hostname}/clients:
     get:
@@ -2082,6 +2366,21 @@ paths:
         segment instead of the `?configApiId=` query parameter. Used by the dashboard
         when operating on a Config API other than the one it is bound to.
 
+        **Planned, then applied.** The change is worked out in full first — the pins
+        (SPKI hashes), the certificate's subject and validity, the Config APIs whose
+        published pins change. With two-person approval that plan is made when the change
+        is **requested**, shown to the approver (`detail.certificate`, `detail.scopes`)
+        and stored; the approval installs **exactly** that plan: nothing is fetched or
+        generated a second time. A request whose pins changed in its scope since it was
+        made is `stale`.
+
+        **Live check.** With `PIN_LIVE_CHECK` the new pins are checked against the
+        certificate the host serves now, as on a pin update: `warn` flags
+        (`X-PinVault-Live-Check: warn`), `enforce` answers `422` unless
+        `liveCheckOverride=<reason>` is in the query (audited). A certificate that this
+        request itself installs is not served yet, so under `enforce` generating,
+        uploading or rotating one needs the override.
+
         Registered on: **management** only.
       security:
         - ApiKeyAuth: []
@@ -2098,6 +2397,7 @@ paths:
               properties:
                 hostname: { type: string, example: api.example.com }
       responses:
+        '422': { $ref: '#/components/responses/LiveCheckRejected' }
         '200':
           description: Certificate generated and pinned.
           content:
@@ -2160,6 +2460,14 @@ paths:
         nowhere else** — only its SHA-256 is stored, plus an 8-character display
         prefix. TTL comes from `ENROLLMENT_TOKEN_TTL_SECONDS` (default 24 h).
 
+        **Two-person approval** (`PIN_CHANGE_APPROVALS>=2`): answers `202` with
+        `runAfterApproval: true`. The answer carries a secret that is shown once, so the
+        approval does not run the request: once it is approved, the requester sends the
+        **same request again** (same body and query) and it runs once, the answer going to
+        them alone. Nothing of it is stored with the change request.
+
+        The token is audited as `enrollment_token_created` (never the token itself) and answered with `Cache-Control: no-store`.
+
         Registered on: **management** only.
       security:
         - ApiKeyAuth: []
@@ -2177,7 +2485,18 @@ paths:
                     Defaults to `device-<epochMillis>` when absent or unparseable. Letters,
                     digits, `.`, `_`, `:` and `-` only, at most 64 — it becomes the
                     certificate's CN and is shown in the dashboard.
+                    The server's own names (`client-ca`, `server-ca`, `server`,
+                    `backup`, any case) are refused (`400 reserved_client_id`).
+                deviceUid:
+                  type: string
+                  description: >
+                    Optional: the device (ANDROID_ID) the token is for. An
+                    enrollment with it must name this device id (`403
+                    device_uid_mismatch` otherwise, token not spent), and the
+                    identity's device id counts as proven (see SECURE_OPERATIONS
+                    "Proven device ids").
       responses:
+        '202': { $ref: '#/components/responses/PendingApproval' }
         '200':
           description: The token plaintext — store it now, it cannot be re-read.
           content:
@@ -2263,6 +2582,12 @@ paths:
         sends it, and `O`/`I`/`L` read as `0`/`1`. Audited as
         `enrollment_policy_created`.
 
+        **Two-person approval** (`PIN_CHANGE_APPROVALS>=2`): answers `202` with
+        `runAfterApproval: true`. The answer carries a secret that is shown once, so the
+        approval does not run the request: once it is approved, the requester sends the
+        **same request again** (same body and query) and it runs once, the answer going to
+        them alone. Nothing of it is stored with the change request.
+
         Registered on: **management** only.
       security:
         - ApiKeyAuth: []
@@ -2286,6 +2611,7 @@ paths:
                   default: true
                   description: Each device waits for an administrator. On unless set to `false`.
       responses:
+        '202': { $ref: '#/components/responses/PendingApproval' }
         '200':
           description: The policy and its code — store or hand out the code now, it cannot be re-read.
           content:
@@ -2375,6 +2701,9 @@ paths:
         `OPEN_ENROLLMENT_MAX_PENDING` waiting (default 50), and every waiting
         request lapses after `ENROLLMENT_REQUEST_TTL_HOURS` (default 24).
 
+        **Two-person approval** (`PIN_CHANGE_APPROVALS>=2`): waits for a second admin
+        (`202`, operation `enrollment_open`). Turning it **off** without waiting: `DELETE /api/v1/enrollment-open`.
+
         Registered on: **management** only.
       security:
         - ApiKeyAuth: []
@@ -2389,6 +2718,7 @@ paths:
               properties:
                 enabled: { type: boolean }
       responses:
+        '202': { $ref: '#/components/responses/PendingApproval' }
         '200':
           description: The switch after the change.
           content:
@@ -2399,6 +2729,29 @@ paths:
           content:
             application/json:
               schema: { $ref: '#/components/schemas/Error' }
+        '401': { $ref: '#/components/responses/MissingApiKey' }
+        '403': { $ref: '#/components/responses/InvalidApiKey' }
+
+    delete:
+      tags: [enrollment]
+      operationId: closeOpenApplications
+      summary: Turn applications without a code off, at once
+      description: |
+        The same as `PUT` with `{"enabled": false}`, but never held for
+        approval: closing a door is an emergency action, like stopping a code or
+        revoking a device. Devices already waiting can still be decided. Audited
+        as `enrollment_open_changed`.
+
+        Registered on: **management** only.
+      security:
+        - ApiKeyAuth: []
+      x-registered-on: management
+      responses:
+        '200':
+          description: 'The switch after the change (`enabled` is `false`).'
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/OpenApplicationsStatus' }
         '401': { $ref: '#/components/responses/MissingApiKey' }
         '403': { $ref: '#/components/responses/InvalidApiKey' }
 
@@ -2449,6 +2802,12 @@ paths:
         asks (`POST /api/v1/client-certs/enroll` with its `requestId` and a CSR
         from the same key). Audited as `enrollment_request_approved`.
 
+        With `PIN_CHANGE_APPROVALS` 2 or more this is the second person's act:
+        it needs a personal key (`409 named_admin_required` for the shared
+        `API_KEY`) that is not the key of the code's creator (`409
+        own_enrollment_code`); code-less applications take any personal key.
+        The approver is recorded (`approvedBy`).
+
         Registered on: **management** only.
       security:
         - ApiKeyAuth: []
@@ -2470,7 +2829,8 @@ paths:
           description: >
             `device_already_enrolled` (with `heldBy`: revoke that identity first),
             `not_pending` (already decided), `policy_stopped`, or
-            `enrollment_limit_reached` (no device slot left).
+            `enrollment_limit_reached` (no device slot left), and with approvals
+            on `named_admin_required` or `own_enrollment_code`.
           content:
             application/json:
               schema: { $ref: '#/components/schemas/Error' }
@@ -2540,13 +2900,41 @@ paths:
           (`/api/v1/enrollment-open`, 2.1) → `202`: the device waits for an
           administrator like a device with a code. This comes before open mode.
         * `deviceId` present and `ENROLLMENT_MODE=open` → the device id becomes the
-          client id (demo/test only — no authentication).
+          client id and the `deviceUid` (any `deviceUid` in the body is ignored), demo/test
+          only — no authentication. Open mode issues only over a CSR (`403 csr_required`
+          otherwise) and never replaces an enrolled identity: a client id with an active
+          certificate or identity over another key gets `409 identity_already_enrolled`
+          (the same key asking again is served). The way back for a device that lost its
+          key is an administrator revoking and forgetting the old identity.
         * `deviceId` present in `token` mode → `403` with guidance.
         * neither → `400`.
         `deviceUid` is stored on the `client_certs` row and is what binds a
         token-enrolled certificate to a device for the `token_mtls` vault policy.
-        P12 enrollment restarts the mTLS mock servers and mTLS Config APIs so the
-        new certificate is trusted immediately.
+
+        **Server-made keys (P12).** A P12 certificate is issued by the client CA
+        (CA:false, client authentication only, one year) and the bundle carries the
+        leaf and the CA; nothing is added to the truststore and no listener restarts.
+        (Until 2.2.0 P12s were self-signed leaves, each its own trust anchor: those
+        keep working until they expire or the id enrolls again, which removes the
+        anchor and retires its key — the only case that restarts the mTLS listeners.)
+        With `ENROLLMENT_P12=off`, or `ENROLLMENT_ATTESTATION=enforce`, an enrollment
+        without a CSR gets **`403 csr_required`** before anything is spent (the token
+        stays good); the library reports `CSR_REQUIRED`.
+
+        **Key attestation (`ENROLLMENT_ATTESTATION=off|warn|enforce`, default warn).**
+        Every CSR enrollment (token, enrollment code — submit and pickup —, code-less
+        application, open mode) may carry `attestationChain`: the Android Key
+        Attestation chain of the CSR's key, Base64 DER, leaf first. It is checked
+        after the cheap refusals and before a token or a policy slot is spent: the
+        leaf's key is the CSR's key, the challenge is SHA-256 of
+        `pinvault-identity-key:v1:<deviceUid>` (UTF-8; the body's `deviceUid`, or its
+        `deviceId` when it sends none), a SIGN key generated in TEE or StrongBox on a
+        locked, verified device by the app (`ATTESTATION_PACKAGE_NAMES` +
+        `ATTESTATION_SIGNER_SHA256`). `warn` enrolls either way and stores the
+        verdict (`attestation` on the identity, the waiting request and the client
+        certificate list); `enforce` answers `403 attestation_required` without a
+        chain and `403 attestation_invalid` with a `reason` for one that fails, and
+        does not start without the app binding.
 
         **CSR enrollment (library 2.1+, the default):** with
         `X-PinVault-Features: csr` and a `csr` field (Base64 DER PKCS#10 over the
@@ -2558,6 +2946,10 @@ paths:
         recorded in `client_identities`; no truststore change, no listener restart.
         A revoked client id is refused with `403 revoked` before the token is spent,
         and so is a malformed CSR (`400`), so the device can retry with the same token.
+        Re-enrolling an active client id with a new token over another key replaces the
+        identity's key: the replaced key is retired (`client_keys`), so certificates over
+        it are refused on every mTLS request; a P12 re-enrollment of a CSR identity
+        retires its key the same way (audited as `client_cert_key_replaced`).
 
         **A token yields one certificate.** It is spent in a single conditional
         update right before anything is issued; of several requests racing with the
@@ -2574,13 +2966,15 @@ paths:
         the chain once approved, `403 enrollment_rejected`, or `410
         enrollment_request_expired` when nobody decided within
         `ENROLLMENT_REQUEST_TTL_HOURS`. The `202` carries a `verificationCode`
-        made from the CSR's key (first 40 bits of the SHA-256 of its
-        SubjectPublicKeyInfo, Crockford base32, `XXXX-XXXX`); the device shows
-        the same code and the administrator compares the two. The same key
+        made from the CSR's key (first 80 bits — 10 bytes — of the SHA-256 of its
+        SubjectPublicKeyInfo, Crockford base32, `XXXX-XXXX-XXXX-XXXX`; it was 40
+        bits until 2.2.0); the device shows the same code and the administrator
+        compares the two. The same key
         sending the code again gets its request's answer, never a second slot.
         A stopped or expired code is answered like a used token (`401`).
 
-        *Management port* (`Main.kt`) is token-only and issues P12s: `{token}` is
+        *Management port* (`Main.kt`) is token-only and issues P12s (`403
+        csr_required` with `ENROLLMENT_P12=off` or `ENROLLMENT_ATTESTATION=enforce`): `{token}` is
         required, `deviceId` and `csr` are ignored, and the response adds a
         `Content-Disposition` attachment header. It records `deviceAlias` /
         `deviceUid` and applies the same rules before spending the token (`400
@@ -2625,6 +3019,14 @@ paths:
                   description: >
                     Config API ports only. A device that was told to wait (`202`) asks again
                     by this id, with a `csr` signed by the same key; no `token` is needed.
+                attestationChain:
+                  type: array
+                  items: { type: string }
+                  description: >
+                    Config API ports only, with a `csr`. The Android Key Attestation chain of the
+                    CSR's key, Base64 DER, leaf first; the key made with the challenge
+                    SHA-256(UTF-8 `pinvault-identity-key:v1:` + `deviceUid`, or `deviceId` when no
+                    `deviceUid` is sent). Checked per `ENROLLMENT_ATTESTATION`.
       responses:
         '200':
           description: >
@@ -2668,7 +3070,9 @@ paths:
             No `token` (management port), neither `token` nor `deviceId` (Config API ports),
             an unparseable / unverifiable `csr` (`invalid_csr`), or a client id / `deviceUid`
             outside `[A-Za-z0-9._:-]{1,64}` (`invalid_client_id`, `invalid_device_uid`), or an
-            enrollment code / `requestId` without a CSR (`csr_required`). The token is not spent.
+            enrollment code / `requestId` without a CSR (`csr_required`), a reserved client id
+            (`reserved_client_id`), or in open mode a `deviceUid` other than the `deviceId`
+            (`device_uid_mismatch`). The token is not spent.
           content:
             application/json:
               schema: { $ref: '#/components/schemas/Error' }
@@ -2684,7 +3088,16 @@ paths:
             revoked or the CSR's key retired with a forgotten identity (`revoked`), an enrollment code has no device
             slot left (`enrollment_limit_reached`), an administrator turned the device away
             (`enrollment_rejected`), or a `requestId` was sent with a CSR over another key
-            (`enrollment_request_mismatch`).
+            (`enrollment_request_mismatch`). In `ENROLLMENT_MODE=open`, a request without
+            a CSR (`csr_required`): open mode issues no P12 — and on every path with
+            `ENROLLMENT_P12=off` or `ENROLLMENT_ATTESTATION=enforce`. `device_uid_mismatch` —
+            the token was bound to another device (`deviceUid` at minting). Under
+            `ENROLLMENT_ATTESTATION=enforce`: no `attestationChain` (`attestation_required`),
+            or one that fails (`attestation_invalid`, with `reason`: `challenge_mismatch`,
+            `key_mismatch`, `purpose_not_sign`, `software_attestation`, `device_unlocked`,
+            `boot_not_verified`, `package_not_allowed`, `signer_not_allowed`,
+            `certificate_revoked`, `revocation_list_stale`, `patch_level_too_old`, …). Nothing
+            is spent by any of these.
           content:
             application/json:
               schema: { $ref: '#/components/schemas/Error' }
@@ -2692,7 +3105,11 @@ paths:
           description: >
             `device_already_enrolled` — another active client id was enrolled from this
             `deviceUid`. One active identity per device; revoke the other id (or re-enroll
-            under it) and retry: the token is not spent.
+            under it) and retry: the token is not spent. `identity_already_enrolled` —
+            open mode, or an approved enrollment-code request picked up: the client id is
+            already enrolled over another key; an administrator revokes (and forgets) it first.
+            The same key asking again for the identity it has gets the certificate it was
+            given (same serial) while half its lifetime is left.
           content:
             application/json:
               schema: { $ref: '#/components/schemas/Error' }
@@ -2715,6 +3132,8 @@ paths:
             as it has slots (applications without a code: `OPEN_ENROLLMENT_MAX_PENDING`), or
             `too_many_applications` — this source address made `OPEN_ENROLLMENT_RATE_LIMIT`
             applications without a code in the last 10 minutes.
+            `rate_limited` — `ISSUANCE_RATE_LIMIT` certificates for this client id, or
+            `PICKUP_RATE_LIMIT` asks for this `requestId` (with `Retry-After`).
           content:
             application/json:
               schema: { $ref: '#/components/schemas/Error' }
@@ -2741,9 +3160,15 @@ paths:
 
         Either way the identity must exist and not be revoked. Every refusal is the
         same `403 reenroll_required`, so the endpoint cannot be used to probe which
-        client ids exist. Attempts are rate-limited per source address and client id;
-        refusals are audited as `client_cert_auth_failed`, issuances as
-        `client_cert_renewed` (`via: mtls | recovery`).
+        client ids exist (a malformed CSR is `400` for any client id). Refusals are
+        counted per source address — not per client id, which the caller picks —
+        and an address with 10 of them in 10 minutes gets `429` before the body is
+        read; a renewal that authenticated is counted per identity (10 per 10
+        minutes). The identity is looked up, and the CSR's size and key type
+        checked, before any signature is verified: only the registered key of an
+        identity that may renew costs a verification. Refusals are audited as
+        `client_cert_auth_failed`, issuances as `client_cert_renewed`
+        (`via: mtls | recovery`).
 
         Registered on: **config-api** (every Config API listener) and the **recovery door** (`RECOVERY_PORT`, TLS without client auth, nothing else served there).
       security: []
@@ -2785,12 +3210,17 @@ paths:
             application/json:
               schema: { $ref: '#/components/schemas/Error' }
         '403':
-          description: '`reenroll_required` — revoked, unknown, or the key does not match. The device must enroll again.'
+          description: '`reenroll_required` — revoked, unknown, or the key does not match. The device must enroll again. Also the same CSR as the last accepted renewal (a replay).'
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '413':
+          description: '`body_too_large` — more than 64 KB, declared or not.'
           content:
             application/json:
               schema: { $ref: '#/components/schemas/Error' }
         '429':
-          description: '`rate_limited`.'
+          description: '`rate_limited` — too many refused renewals from this address, or this identity renewed too often.'
           content:
             application/json:
               schema: { $ref: '#/components/schemas/Error' }
@@ -2854,7 +3284,13 @@ paths:
         returns `403`. Enroll first to obtain a default client certificate, then
         fetch host-specific certificates over the mTLS port.
 
-        Public in the allowlist; the mTLS handshake is the access control.
+        Public in the allowlist; the mTLS handshake is the access control — and,
+        where the Config API has a device host ACL (a default entry or any
+        per-device grant), the host must be allowed for the certificate's device
+        (its client id, or the `deviceUid` it enrolled with; `X-Device-Id` is not
+        consulted): `403 host_not_allowed` otherwise, for hosts with and without a
+        stored certificate alike. A Config API without any ACL serves every
+        enrolled device, as the config fetch does.
 
         Registered on: **management + config-api** (functional on mTLS listeners only).
       security: []
@@ -2868,7 +3304,7 @@ paths:
             application/octet-stream:
               schema: { type: string, format: binary }
         '403':
-          description: The listener is not in mTLS mode.
+          description: 'The listener is not in mTLS mode; or `host_not_allowed` — the device host ACL does not allow this host for the certificate''s device.'
           content:
             application/json:
               schema: { $ref: '#/components/schemas/Error' }
@@ -2944,15 +3380,29 @@ paths:
       operationId: generateClientCert
       summary: Issue a client certificate from the dashboard
       description: |
-        Admin equivalent of enrollment: issues a P12 without consuming a token and
-        adds it to the truststore.
+        Admin equivalent of enrollment: issues a P12 without consuming a token. Since
+        2.2.0 the certificate comes from the client CA (CA:false, client
+        authentication; the bundle carries the leaf and the CA) and nothing is added
+        to the truststore; an older self-signed P12 of the same id leaves it and its
+        key is retired. `403 csr_required` with `ENROLLMENT_P12=off` or
+        `ENROLLMENT_ATTESTATION=enforce` (no private key is made on the server then).
+        `clientId` must be an identifier
+        (`[A-Za-z0-9._:-]{1,64}`); a revoked id is refused and stays revoked
+        (`409 revoked` — forget it first, or use another id). Audited as
+        `client_cert_generated`.
 
         Sends `X-P12-SHA256`, but it is a dashboard download for manual provisioning:
         the bundle opens with `CLIENT_P12_PASSWORD` (default `changeit`), or with the
         one-off `X-P12-Password` when the request announced `p12password`. Devices
-        enroll through `POST /api/v1/client-certs/enroll`. Running mTLS listeners are not restarted
-        here either, so the new certificate is trusted only after the next restart of
-        those listeners.
+        enroll through `POST /api/v1/client-certs/enroll`. Running mTLS listeners are
+        restarted only when an old anchor left the truststore (several requests in a
+        row are folded into one restart).
+
+        **Two-person approval** (`PIN_CHANGE_APPROVALS>=2`): answers `202` with
+        `runAfterApproval: true`. The answer carries a secret that is shown once, so the
+        approval does not run the request: once it is approved, the requester sends the
+        **same request again** (same body and query) and it runs once, the answer going to
+        them alone. Nothing of it is stored with the change request.
 
         Registered on: **management** only.
       security:
@@ -2969,6 +3419,18 @@ paths:
                   type: string
                   description: 'Defaults to `client-<epochMillis>` when absent or unparseable.'
       responses:
+        '413': { $ref: '#/components/responses/AdminBodyTooLarge' }
+        '400':
+          description: '`invalid_client_id`.'
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '409':
+          description: '`revoked`: the client id was revoked; nothing was generated.'
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '202': { $ref: '#/components/responses/PendingApproval' }
         '200':
           description: The PKCS12 bundle (no integrity header).
           headers:
@@ -2986,8 +3448,27 @@ paths:
       operationId: uploadClientCert
       summary: Import an externally issued client certificate
       description: |
-        Adds a P12 to the truststore so devices holding it can complete an mTLS
-        handshake. The first file part is used regardless of field name.
+        Adds ONE end-entity client certificate (PEM or DER) to the truststore so the
+        device holding its key can complete an mTLS handshake. The file part is used
+        regardless of its field name.
+
+        Refused with `400 invalid_client_certificate`: a CA certificate
+        (basicConstraints CA, or the `keyCertSign` usage) — in the truststore it
+        would vouch for every certificate its key signs —, a v1/v2 certificate (no
+        extensions: nothing says it is not a CA, and JSSE lets such an anchor sign),
+        a certificate without an extended key usage that includes client
+        authentication (since 2.2.0 the extension must be there), one that is
+        expired or not yet valid, and anything that is not exactly one certificate.
+        An accepted certificate is believed only as itself: every mTLS request must
+        present the certificate on record for the client id its CN names (an
+        uploaded one: exactly that certificate), otherwise `403 reenroll_required`.
+        `clientId` must be an identifier (`[A-Za-z0-9._:-]{1,64}`,
+        `400 invalid_client_id`); a revoked id stays revoked (`409 revoked`).
+        Audited as `client_cert_uploaded`; running mTLS listeners are restarted
+        against the new truststore.
+
+        **Two-person approval** (`PIN_CHANGE_APPROVALS>=2`): waits for a second admin
+        (`202`, operation `client_cert_upload`). The approver is shown the certificate's subject, validity and SHA-256 fingerprint.
 
         Registered on: **management** only.
       security:
@@ -3006,6 +3487,7 @@ paths:
                   type: string
                   description: 'Defaults to `uploaded-<epochMillis>`.'
       responses:
+        '202': { $ref: '#/components/responses/PendingApproval' }
         '200':
           description: Imported.
           content:
@@ -3016,8 +3498,21 @@ paths:
                   id: { type: string }
                   fingerprint: { type: string }
                   uploaded: { type: boolean, example: true }
+        '409':
+          description: >
+            `revoked`: the client id was revoked; nothing was trusted.
+            `client_id_in_use`: the id is an active identity, or the truststore
+            already has an entry under it (aliases ignore case).
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '413': { $ref: '#/components/responses/AdminBodyTooLarge' }
         '400':
-          description: File part missing, or the bundle could not be imported.
+          description: >
+            File part missing or not a form (`invalid_multipart`),
+            `invalid_client_id`, `reserved_client_id` (`client-ca`, `server-ca`,
+            `server`, `backup` in any case), or `invalid_client_certificate` (a CA, a
+            certificate signer, no client-authentication usage, expired).
           content:
             application/json:
               schema: { $ref: '#/components/schemas/Error' }
@@ -3030,6 +3525,10 @@ paths:
       operationId: revokeClientCert
       summary: Revoke a client certificate
       description: |
+        The server's own names (`client-ca`, `server-ca`, `server`, `backup`, any
+        case) are no identity: `400 reserved_client_id`, the client CA's
+        truststore entry is never removed (the same for `…/forget`).
+
         Marks the row revoked, removes the certificate from the truststore, then
         **restarts every running mTLS Config API and every mTLS mock server** —
         running listeners hold the truststore they started with, so without the
@@ -3042,7 +3541,26 @@ paths:
         enrollment under it is refused — until it is forgotten
         (`POST /api/v1/client-certs/{id}/forget`).
 
-        An unknown id still returns `200`.
+        **The device is cut off the vault in the same transaction:** every vault
+        token of the device in every Config API is revoked and its E2E and
+        user-auth keys are deleted. Only device ids the identity **proved** are cut
+        off: the client id itself (open enrollment, where it is the device id) and
+        the device ids for which it used one of the device's vault tokens over its
+        own certificate (a download, or with a key registration), or re-registered
+        over it the key the device had on file before the identity was enrolled — a
+        new key, or its own key again, proves nothing. The `deviceUid` it sent at
+        enrollment is only a claim — anyone enrolling can name a victim's device —
+        so those ids come back as `unverifiedDeviceIds` and are left alone unless
+        `?cascadeUnverified=true` (the administrator decides they are this
+        identity's devices; recorded, so they stay blocked as proven ones). A
+        device id another active identity is bound to is left alone either way.
+        Every listener that trusts the client CA (mTLS Config APIs and mock mTLS
+        hosts) refuses the identity from its next request (`403 reenroll_required`),
+        and so does a vault download with a valid token for a device it cut off, on
+        TLS listeners too. Audited as `client_cert_revoked`.
+
+        Not behind the approval gate (`PIN_CHANGE_APPROVALS`): an emergency
+        revocation takes effect at once. An unknown id still returns `200`.
 
         Registered on: **management** only.
       security:
@@ -3054,6 +3572,11 @@ paths:
           required: true
           description: 'The client id (the certificate CN minus the `PinVault Client: ` prefix).'
           schema: { type: string }
+        - name: cascadeUnverified
+          in: query
+          required: false
+          description: '`true`: also cut off the device ids the identity only claimed at enrollment. Repeating the call with it on an already revoked id does just that.'
+          schema: { type: boolean, default: false }
       responses:
         '200':
           description: Revoked.
@@ -3064,6 +3587,54 @@ paths:
                 properties:
                   id: { type: string }
                   revoked: { type: boolean, example: true }
+                  deviceIds: { type: array, items: { type: string }, description: The device ids cut off (the client id and the device ids the identity proved). }
+                  unverifiedDeviceIds: { type: array, items: { type: string }, description: Device ids the identity only claimed; left alone (empty with `cascadeUnverified=true`). }
+                  vaultTokensRevoked: { type: integer }
+                  e2eKeysDeleted: { type: integer }
+                  userAuthKeysDeleted: { type: integer }
+        '401': { $ref: '#/components/responses/MissingApiKey' }
+        '403': { $ref: '#/components/responses/InvalidApiKey' }
+
+  /api/v1/client-certs/{id}/devices:
+    get:
+      tags: [client-certs]
+      operationId: clientCertDevices
+      summary: Which device ids a revoke or forget would cut off, and which it would leave alone
+      description: |
+        Read only. `deviceIds`: the client id and the device ids the identity proved
+        (a device's vault token used, or the key the device had on file before the
+        identity was enrolled re-registered, over its certificate) — what revoke and
+        forget cut off. `unverifiedDeviceIds`: the device ids it only claimed at
+        enrollment — left alone unless `cascadeUnverified=true`. The dashboard asks
+        this before *Forget identity*: after a forget the identity's rows are gone
+        and its claimed ids can no longer be cut off through it.
+
+        Registered on: **management** only.
+      security:
+        - ApiKeyAuth: []
+      x-registered-on: management
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: 'The client id.'
+          schema: { type: string }
+      responses:
+        '200':
+          description: The device ids.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  id: { type: string }
+                  deviceIds: { type: array, items: { type: string } }
+                  unverifiedDeviceIds: { type: array, items: { type: string } }
+        '404':
+          description: '`client_cert_not_found` — no client certificate or identity with this id.'
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
         '401': { $ref: '#/components/responses/MissingApiKey' }
         '403': { $ref: '#/components/responses/InvalidApiKey' }
 
@@ -3082,6 +3653,10 @@ paths:
         gets a certificate again (`403 revoked` at enrollment, under any client
         id), so the next enrollment is over a new key: the device unenrolls (or
         loses its data) first. Audited as `client_identity_forgotten`.
+        The device's vault tokens and keys go as on revocation (in the same
+        transaction, the same proven-only rule and `cascadeUnverified` flag), for an
+        identity revoked before revocation did that. The record of which devices
+        it proved goes with it: a forgotten identity blocks no device.
 
         Registered on: **management** only.
       security:
@@ -3093,6 +3668,11 @@ paths:
           required: true
           description: 'The client id (the certificate CN minus the `PinVault Client: ` prefix).'
           schema: { type: string }
+        - name: cascadeUnverified
+          in: query
+          required: false
+          description: '`true`: also cut off the device ids the identity only claimed.'
+          schema: { type: boolean, default: false }
       responses:
         '200':
           description: Forgotten.
@@ -3104,6 +3684,11 @@ paths:
                   id: { type: string }
                   forgotten: { type: boolean, example: true }
                   retiredKeys: { type: integer, description: Keys the client id enrolled with that are now refused for good. }
+                  deviceIds: { type: array, items: { type: string } }
+                  unverifiedDeviceIds: { type: array, items: { type: string } }
+                  vaultTokensRevoked: { type: integer }
+                  e2eKeysDeleted: { type: integer }
+                  userAuthKeysDeleted: { type: integer }
         '404':
           description: '`client_cert_not_found` — no client certificate or identity with this id.'
           content:
@@ -3214,6 +3799,12 @@ paths:
         stored hostnames absent from the body are revoked. The counters in the
         response are returned as **strings**.
 
+        **Approval** (`PIN_CHANGE_APPROVALS>=2`): which hosts a device's config
+        lists decides which it may reach, so this write waits for a second admin
+        (`202`, operation `host_acl`).
+
+        A change is audited as `host_acl_changed` (hosts added and removed).
+
         Registered on: **management** only.
       security:
         - ApiKeyAuth: []
@@ -3239,6 +3830,7 @@ paths:
           content:
             application/json:
               schema: { $ref: '#/components/schemas/DeviceHostAclUpdate' }
+        '202': { $ref: '#/components/responses/PendingApproval' }
         '400':
           description: '`hostnames` missing or not a string array.'
           content:
@@ -3302,6 +3894,11 @@ paths:
         Set-replace, like the per-device variant. `hostnames` comes back as a
         comma-joined **string**, and the counters as strings.
 
+        **Approval** (`PIN_CHANGE_APPROVALS>=2`): waits for a second admin
+        (`202`, operation `host_acl`), like the per-device variant.
+
+        A change is audited as `host_acl_changed` (hosts added and removed).
+
         Registered on: **management** only.
       security:
         - ApiKeyAuth: []
@@ -3325,6 +3922,7 @@ paths:
           content:
             application/json:
               schema: { $ref: '#/components/schemas/DefaultHostAclUpdate' }
+        '202': { $ref: '#/components/responses/PendingApproval' }
         '400':
           description: '`hostnames` missing or not a string array.'
           content:
@@ -3436,6 +4034,16 @@ paths:
         match `^[A-Za-z0-9._:\- ]{1,128}$`. A violation is rejected with `400` rather
         than sanitised, so abuse shows up in logs.
 
+        **Every field is a claim (O15).** `status` must be `healthy` or
+        `pin_mismatch`; `pinVersion` not negative; `serverCertPin` / `storedPin`
+        Base64 of at most 100 characters; `responseTimeMs` is brought into 0..10
+        minutes; `errorMessage` is cut to one printable line of 300 characters; a
+        `timestamp` in the body is ignored (the server's clock is used). Limited to
+        `REPORT_RATE_LIMIT` reports per source address per 10 minutes (and, on an
+        mTLS listener, `REPORT_DEVICE_RATE_LIMIT` per certificate). The history
+        keeps, per Config API, the newest 200 healthy rows and — apart from them —
+        the newest 500 failures, so healthy reports cannot push a `pin_mismatch` out.
+
         Registered on: **management + config-api**.
       security: []
       x-registered-on: management+config-api
@@ -3451,7 +4059,17 @@ paths:
             application/json:
               schema: { $ref: '#/components/schemas/Saved' }
         '400':
-          description: '`hostname`, `deviceManufacturer` or `deviceModel` failed the identifier check.'
+          description: 'A field failed its check (`field` names it): `hostname`, `deviceManufacturer`, `deviceModel`, `status`, `pinVersion`, `serverCertPin`, `storedPin`; or the body is not a JSON object (`invalid_json`).'
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '413':
+          description: '`body_too_large` — more than 64 KB.'
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '429':
+          description: '`rate_limited` — `REPORT_RATE_LIMIT` / `REPORT_DEVICE_RATE_LIMIT` reached.'
           content:
             application/json:
               schema: { $ref: '#/components/schemas/Error' }
@@ -3464,7 +4082,10 @@ paths:
       description: |
         Written with `source: "config_update"`. Same identifier hardening as
         `/client-report`, applied to `deviceManufacturer` and `deviceModel`
-        (there is no hostname on this report).
+        (there is no hostname on this report). `status` must be `config_updated`,
+        `config_unchanged` or `config_update_failed`; `pinVersion` not negative;
+        `failureReason` is cut to one printable line of 300 characters; the time is
+        the server's. Rate limits and trimming as for `/client-report`.
 
         Registered on: **management + config-api**.
       security: []
@@ -3481,7 +4102,17 @@ paths:
             application/json:
               schema: { $ref: '#/components/schemas/Saved' }
         '400':
-          description: '`deviceManufacturer` or `deviceModel` failed the identifier check.'
+          description: '`deviceManufacturer`, `deviceModel`, `status` or `pinVersion` failed its check (`field` names it), or the body is not a JSON object.'
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '413':
+          description: '`body_too_large` — more than 64 KB.'
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '429':
+          description: '`rate_limited` — `REPORT_RATE_LIMIT` / `REPORT_DEVICE_RATE_LIMIT` reached.'
           content:
             application/json:
               schema: { $ref: '#/components/schemas/Error' }
@@ -3503,7 +4134,8 @@ paths:
         `PUT /api/v1/config-apis/{id}/vault-enabled`) every key answers `403`,
         present or not. The flag is read per request, so flipping it in the
         dashboard stops distribution immediately without a restart. Vault
-        administration in that scope stays available.
+        administration (management listener,
+        `/api/v1/config-apis/{configApiId}/vault/…`) stays available.
 
         **Allowlist nuance.** `isPublicEndpoint` treats `GET /api/v1/vault/{key}` as
         public only when `{key}` matches `^[A-Za-z0-9._-]{1,64}$` **and** is not one
@@ -3537,13 +4169,53 @@ paths:
         RSA public key, so `X-Device-Id` is mandatory and the key must already be
         registered via `POST /api/v1/vault/devices/{deviceId}/public-key` — otherwise
         `412`.
+        `user_auth` wraps them the same way (same envelope) with the device's
+        **user-auth key** — registered with `"purpose":"user_auth"`, a key the phone's
+        hardware uses only after the user unlocked — so the file never leaves in
+        plaintext; without one: `412 user_auth_key_required`. Both are stored
+        encrypted at rest like `at_rest`.
+
+        **Revoked device.** A `token` / `token_mtls` file asked for with a **valid**
+        token and an `X-Device-Id` that belongs to a revoked identity (and to no
+        active one) is refused with `403 reenroll_required` on every listener, so a
+        token cached in a stolen app stops working at once. The check runs after the
+        token check, so a caller without one cannot learn which device ids were
+        revoked. Under a policy that authenticates nobody (`public`, `api_key`)
+        revocation plays no part: an `end_to_end` / `user_auth` file is answered by
+        whether a key is on file for the device id (`412` when not — revocation
+        deleted the device's keys), as for any other id. A device id counts as
+        revoked only when the revoked identity proved it (see
+        `DELETE /api/v1/client-certs/{id}`).
+
+        **Cost.** Existence, the vault switch, the policy, the token, the `304` and
+        the device-key lookup are decided from the file's metadata; the file is
+        opened (and decrypted) only for a request that is answered with it, and the
+        at-rest key is derived once per process, not per download. Refusals count
+        towards `DEVICE_REFUSAL_RATE_LIMIT` (`429 rate_limited`). A file whose
+        policy or encryption an administrator changed while it was being served is
+        answered `503 file_changed` with `Retry-After: 1`.
 
         **Integrity.** `X-Vault-Signature` is ECDSA over
         `pinvault-vault-file:v1:<key>:<version>:<sha256HexLower(plaintext)>` — signed
-        over the plaintext, so one signature is valid for all three encryption modes.
+        over the plaintext, so one signature is valid for all four encryption modes.
         With more than one signer (`CONFIG_SIGNERS`) `X-Vault-Signatures` carries
         every signature as `keyId:signature` pairs, comma-separated;
         `X-Vault-Signature` keeps the primary one for older clients.
+        **v2 (2.2.0):** every `200` also carries `X-Vault-Signature-V2` (primary
+        signer) and `X-Vault-Signatures-V2` (all signers, same `keyId:signature`
+        encoding) over `pinvault-vault-file:v2:<configApiId>:<key>:<version>:<sha256HexLower(plaintext)>`.
+        It names this Config API: a library block with `serverScope(<configApiId>)`
+        accepts only v2 signatures, so a file signed for another Config API with the
+        same key does not pass. With `CONFIG_SIGNATURE_CACHE` the cache holds both
+        schemes per Config API, file, version and content.
+
+        **User-auth keys the server no longer accepts are not sealed for** (`412
+        user_auth_key_required` with a `reason`): `key_not_attested` under
+        `USER_AUTH_ATTESTATION=enforce` for a key registered without a passing
+        attestation (before enforce was switched on); with `USER_AUTH_REQUIRE_PER_USE=true`
+        `time_bound_key` for a key that works for seconds after an unlock, and
+        `key_kind_unknown` for one attested before the key's kind was recorded. The
+        library registers the key again (with its chain) and retries once.
 
         Registered on: **config-api** only. The management port serves the scoped
         admin mirror under `/api/v1/config-apis/{configApiId}/vault/…` and has no
@@ -3567,13 +4239,18 @@ paths:
           description: 'Required only for files whose `access_policy` is `api_key`.'
           schema: { type: string }
       responses:
+        '503':
+          description: The file could not be signed right now (an external signer is busy or failed). Nothing about the signer is disclosed.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
         '200':
           description: File bytes (encrypted per the file's `encryption` mode).
           headers:
             X-Vault-Version:
               schema: { type: integer }
             X-Vault-Encryption:
-              schema: { type: string, enum: [plain, at_rest, end_to_end] }
+              schema: { type: string, enum: [plain, at_rest, end_to_end, user_auth] }
             X-Vault-Signature:
               description: Base64 ECDSA signature over the plaintext canonical string.
               schema: { type: string }
@@ -3584,6 +4261,16 @@ paths:
                 Base64 SHA-256 of the signer's SPKI).
               schema: { type: string }
               example: 'iI1vEtvPjpEvTVFNUbqYUCvQeFVItZTLmFIVnpMQm7c=:MEUCIQ…,Xy9…=:MEQCIF…'
+            X-Vault-Signature-V2:
+              description: >
+                Base64 ECDSA signature of the primary signer over
+                `pinvault-vault-file:v2:<configApiId>:<key>:<version>:<sha256HexLower(plaintext)>`.
+              schema: { type: string }
+            X-Vault-Signatures-V2:
+              description: >
+                Every v2 signature, primary first, as `<keyId>:<Base64 signature>` pairs
+                separated by commas (the `X-Vault-Signatures` encoding). Always sent.
+              schema: { type: string }
           content:
             application/octet-stream:
               schema: { type: string, format: binary }
@@ -3593,7 +4280,7 @@ paths:
             X-Vault-Version:
               schema: { type: integer }
             X-Vault-Encryption:
-              schema: { type: string, enum: [plain, at_rest, end_to_end] }
+              schema: { type: string, enum: [plain, at_rest, end_to_end, user_auth] }
         '400':
           description: '`key` does not match `^[A-Za-z0-9._-]{1,64}$`.'
           content:
@@ -3602,9 +4289,11 @@ paths:
         '401':
           description: >
             Missing/invalid `X-API-Key` (`api_key`), missing `X-Device-Id` or
-            `X-Vault-Token`, invalid/revoked token, missing client certificate or a
+            `X-Vault-Token`, invalid/revoked token — also the answer for a file that
+            does not exist when the caller showed neither an admin key nor a client
+            certificate (see `404`) —, missing client certificate or a
             device-identity mismatch (`token_mtls`), or missing `X-Device-Id` on an
-            `end_to_end` file.
+            `end_to_end` or `user_auth` file.
           content:
             application/json:
               schema: { $ref: '#/components/schemas/Error' }
@@ -3613,17 +4302,27 @@ paths:
             The Config API's `vault_enabled` flag is off (every key, present or
             not), or an `api_key`-policy file on a server with no `API_KEY`
             configured, or (mTLS listener) `device_identity_mismatch`: `X-Device-Id`
-            names a device the client certificate does not belong to.
+            names a device the client certificate does not belong to. `reenroll_required`: the
+            `X-Device-Id` belongs to a revoked identity (device-bound files only).
           content:
             application/json:
               schema: { $ref: '#/components/schemas/Error' }
         '404':
-          description: No file with this key in this scope.
+          description: >
+            No file with this key in this scope — told only to a caller who showed
+            an admin key (`X-API-Key`) or a client certificate. Anyone else is
+            answered `401` exactly as for a `token` file (same status, same body
+            for the same headers), so asking for names does not reveal which files
+            exist.
           content:
             application/json:
               schema: { $ref: '#/components/schemas/Error' }
         '412':
-          description: '`end_to_end` file but the device has no registered public key.'
+          description: >
+            `end_to_end` file but the device has no registered public key, or
+            `user_auth_key_required`: `user_auth` file but the device registered no
+            user-auth key (`"purpose":"user_auth"`) — or one this server does not seal
+            for, named in `reason`: `key_not_attested`, `time_bound_key`, `key_kind_unknown`.
           content:
             application/json:
               schema: { $ref: '#/components/schemas/Error' }
@@ -3632,145 +4331,6 @@ paths:
           content:
             application/json:
               schema: { $ref: '#/components/schemas/Error' }
-    put:
-      tags: [vault-admin]
-      operationId: putVaultFile
-      summary: Upload or replace a vault file
-      description: |
-        Body is the raw file bytes. Each upload increments the stored version.
-        Omitted `policy` / `encryption` keep the existing values, or default to
-        `token` / `plain` on first upload.
-
-        `key` must match `^[A-Za-z0-9._-]{1,64}$` **and** must not be one of the
-        reserved segments (`distributions`, `stats`, `devices`, `report`, `tokens`) —
-        those would be routed to the admin handlers and shadow the download route.
-
-        Registered on: **config-api** only.
-      security:
-        - ApiKeyAuth: []
-      x-registered-on: config-api
-      parameters:
-        - $ref: '#/components/parameters/VaultKeyPath'
-        - $ref: '#/components/parameters/VaultPolicyQuery'
-        - $ref: '#/components/parameters/VaultEncryptionQuery'
-      requestBody:
-        required: true
-        content:
-          application/octet-stream:
-            schema: { type: string, format: binary }
-      responses:
-        '200':
-          description: Stored.
-          headers:
-            X-Vault-Version:
-              schema: { type: integer }
-          content:
-            application/json:
-              schema: { $ref: '#/components/schemas/VaultPutResult' }
-        '400':
-          description: Invalid or reserved key.
-          content:
-            application/json:
-              schema: { $ref: '#/components/schemas/Error' }
-        '401': { $ref: '#/components/responses/MissingApiKey' }
-        '403': { $ref: '#/components/responses/InvalidApiKey' }
-    delete:
-      tags: [vault-admin]
-      operationId: deleteVaultFile
-      summary: Delete a vault file
-      description: |
-        Deleting a key that does not exist still returns `200`. Tokens issued for the
-        key are not revoked by this call.
-
-        Registered on: **config-api** only.
-      security:
-        - ApiKeyAuth: []
-      x-registered-on: config-api
-      parameters:
-        - $ref: '#/components/parameters/VaultKeyPath'
-      responses:
-        '200':
-          description: Deleted.
-          content:
-            application/json:
-              schema: { $ref: '#/components/schemas/VaultDeleteResult' }
-        '401': { $ref: '#/components/responses/MissingApiKey' }
-        '403': { $ref: '#/components/responses/InvalidApiKey' }
-
-  /api/v1/vault:
-    get:
-      tags: [vault-admin]
-      operationId: listVaultFiles
-      summary: List vault files in this listener's scope
-      description: |
-        Metadata only, no content. Every value except `key` is serialised as a
-        **string**, including `version` and `size`.
-
-        Registered on: **config-api** only. The management-port equivalent is
-        `GET /api/v1/config-apis/{configApiId}/vault`.
-      security:
-        - ApiKeyAuth: []
-      x-registered-on: config-api
-      responses:
-        '200':
-          description: Files in this scope.
-          content:
-            application/json:
-              schema:
-                type: array
-                items: { $ref: '#/components/schemas/VaultFileEntry' }
-        '401': { $ref: '#/components/responses/MissingApiKey' }
-        '403': { $ref: '#/components/responses/InvalidApiKey' }
-
-  /api/v1/vault/{key}/policy:
-    put:
-      tags: [vault-admin]
-      operationId: putVaultFilePolicy
-      summary: Change a file's access policy / encryption
-      description: |
-        Updates metadata without touching the content or bumping the version. Both
-        fields are mandatory. Flipping `encryption` to or from `at_rest` rewrites the
-        stored bytes in the new form.
-
-        An invalid enum value trips a Kotlin `require(...)`, surfacing as `500` —
-        as a JSON error on the management server (which installs `StatusPages`) and
-        as Ktor's default error page on a Config API listener (which does not).
-
-        Registered on: **config-api** only.
-      security:
-        - ApiKeyAuth: []
-      x-registered-on: config-api
-      parameters:
-        - $ref: '#/components/parameters/VaultKeyPath'
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema: { $ref: '#/components/schemas/VaultPolicyUpdate' }
-      responses:
-        '200':
-          description: Updated.
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  updated: { type: string, example: 'true' }
-        '400':
-          description: '`access_policy` or `encryption` missing from the body.'
-          content:
-            application/json:
-              schema: { $ref: '#/components/schemas/Error' }
-        '404':
-          description: No file with this key in this scope.
-          content:
-            application/json:
-              schema: { $ref: '#/components/schemas/Error' }
-        '500':
-          description: '`access_policy` or `encryption` is not one of the allowed values.'
-        '401': { $ref: '#/components/responses/MissingApiKey' }
-        '403': { $ref: '#/components/responses/InvalidApiKey' }
-
   /api/v1/vault/devices/{deviceId}/public-key:
     post:
       tags: [vault]
@@ -3780,7 +4340,90 @@ paths:
         Called by the device during setup so the server can wrap `end_to_end` files
         for it.
 
-        **Who may set the key (audit M-2).**
+        **Purpose.** `"purpose"` absent or `"e2e"`: the E2E key (`end_to_end` files).
+        `"user_auth"`: the device's **user-auth key**, an RSA key whose private half
+        the phone's hardware uses only after the user passed the screen lock or
+        biometric; `user_auth` files are wrapped with it. The two are stored apart
+        (`device_user_auth_keys`), neither registration touches the other, and the
+        per-scope limit counts each kind separately. Any other purpose: `400
+        unsupported_purpose`.
+
+        **User-auth keys and Android Key Attestation (`USER_AUTH_ATTESTATION`).**
+        Replacing a registered user-auth key needs, **in every mode, both** the
+        device's credential (a client certificate bound to `{deviceId}`, or the
+        device's token for an `end_to_end` / `user_auth` file of this scope via
+        `X-Vault-Key` + `X-Vault-Token`) **and** a new key whose attestation passes:
+        root code running as the app holds the credential, a stranger with a phone of
+        their own can attest a key for any device id. Otherwise `409
+        user_auth_key_exists` with `reason`: `credential_required` (checked first; the
+        chain is then not verified), `attestation_off`, or the attestation's reason
+        (`chain_missing`, `app_binding_not_configured`, `challenge_mismatch`, …). An
+        administrator's reset (`DELETE` with `?purpose=user_auth`) makes the next
+        registration a first one again. An attestation counts only when both
+        `ATTESTATION_PACKAGE_NAMES` and `ATTESTATION_SIGNER_SHA256` are set
+        (otherwise a passing chain is stored with reason `app_binding_not_configured`;
+        `enforce` does not start without them). The
+        body carries the key's chain as `attestationChain`: Base64 DER certificates,
+        leaf first, as `KeyStore.getCertificateChain` returns them. The key's
+        attestation challenge is SHA-256 over the UTF-8 bytes of
+        `"pinvault-user-auth-key:v1:" + deviceId` (32 bytes); there is no challenge
+        endpoint. The chain passes when it verifies link by link to a Google hardware
+        attestation root (trusted by key; the leaf and intermediates must be within
+        their validity; none of its serials in `ATTESTATION_REVOKED_SERIALS_FILE`),
+        the leaf's key is `publicKeyPem`, and its KeyDescription (versions 3 and up)
+        has that challenge, attestation and KeyMint security level TEE or StrongBox,
+        a hardware-enforced list without `noAuthRequired` and with `userAuthType` (or
+        `userSecureId`), purpose DECRYPT and origin GENERATED, a rootOfTrust with a
+        locked bootloader and Verified boot (`ATTESTATION_REQUIRE_VERIFIED_BOOT`,
+        default on), no `authTimeout` over 10 seconds in either authorization list,
+        and an `attestationApplicationId` naming a package in `ATTESTATION_PACKAGE_NAMES` and
+        a signer in `ATTESTATION_SIGNER_SHA256`. Since 2.2.0 also: `noAuthRequired`
+        and `allowWhileOnBody` are refused in the software-enforced list too
+        (`no_user_auth`, `allow_while_on_body`); a key whose osVersion is Android 11
+        or later (≥ 110000) with any `authTimeout` above 0 is refused as
+        `time_bound_key` — the library makes per-use keys there, and a time-bound key
+        is what root running as the app makes after deleting the real one — and so
+        is any time-bound key with `USER_AUTH_REQUIRE_PER_USE=true`; with
+        `ATTESTATION_MIN_PATCH_LEVEL` (YYYYMM) an older or missing osPatchLevel is
+        `patch_level_too_old`; with `ATTESTATION_STATUS_MAX_AGE_HOURS` a revocation list
+        file older than that lets no chain pass (`revocation_list_stale`). A passing
+        key is stored with its kind (`attestation.keyKind`: `per_use` or `time_bound`
+        with `authTimeoutSeconds`, and `biometricOnly`). Under `enforce` the key on
+        file sent again without a passing chain is refused too (`403
+        attestation_required` / `attestation_invalid`). Cheap checks (chain length, decoding,
+        the leaf's key, the last certificate against the roots by key or issuer
+        name) come before any signature is verified, and a caller without a
+        credential is counted against `DEVICE_KEY_RATE_LIMIT` before its chain is
+        verified.
+        - `off`: not checked; the first key is accepted (no credential needed),
+          replacement is admin-only (`reason: attestation_off` with a credential).
+        - `warn` (default): the first key is accepted with or without a passing chain
+          and without a credential (trust on first use) and the outcome is stored
+          with it (listed under
+          `GET /api/v1/config-apis/{configApiId}/vault/devices/user-auth-keys`).
+        - `enforce`: the first key needs a passing chain too — `403
+          attestation_required` without one, `403 attestation_invalid` with a `reason`
+          (`challenge_mismatch`, `software_attestation`, `no_user_auth`,
+          `auth_timeout_too_long`, `device_unlocked`, `boot_not_verified`,
+          `package_not_allowed`, `signer_not_allowed`, `app_binding_not_configured`,
+          `untrusted_root`, `chain_broken`, `key_mismatch`, `certificate_expired`,
+          `certificate_revoked`, `chain_malformed`, `chain_too_long`, …).
+        The same key sent again is a no-op (a passing chain then marks it attested).
+        Registrations, replacements and refusals are audited with the attestation
+        outcome; `device_key_replaced` goes to the webhook. The E2E key ignores
+        `attestationChain`.
+
+        **Revoked device.** A device whose identity was revoked (and that has no
+        active one): a request that authenticated — a bound client certificate or a
+        valid token proof; an attestation is no credential — gets `403
+        reenroll_required`. Any other is handled exactly as for any device id —
+        the first key is kept, a different one without proof gets `409` — so no
+        answer, and no sequence of answers, tells strangers which device ids were
+        revoked. Revocation deleted the device's keys and tokens and refuses its
+        certificate; a key registered afterwards without a credential opens only
+        files whose policy authenticates nobody (`public`).
+
+        **Who may set the E2E key (audit M-2).**
         - **mTLS listener** (a client certificate was presented): only a certificate
           bound to `{deviceId}` — its client id is the device id, or the id was
           enrolled with `deviceUid` = `{deviceId}` — and not revoked. Such a
@@ -3816,7 +4459,7 @@ paths:
         - name: X-Vault-Key
           in: header
           required: false
-          description: Server-side key of an `end_to_end` file; with `X-Vault-Token`, proof for replacing a registered key over TLS.
+          description: Server-side key of an `end_to_end` (or, for a user-auth key, `user_auth`) file; with `X-Vault-Token`, proof for replacing a registered key over TLS.
           schema: { type: string }
         - name: X-Vault-Token
           in: header
@@ -3837,6 +4480,15 @@ paths:
                 algorithm:
                   type: string
                   default: RSA-OAEP-SHA256
+                purpose:
+                  type: string
+                  enum: [e2e, user_auth]
+                  default: e2e
+                  description: Which key this is; `user_auth` keys wrap `user_auth` files.
+                attestationChain:
+                  type: array
+                  items: { type: string, format: byte }
+                  description: 'User-auth keys: the key''s Android Key Attestation chain, Base64 DER, leaf first (`KeyStore.getCertificateChain`). Challenge: SHA-256("pinvault-user-auth-key:v1:" + deviceId). Absent from older clients.'
       responses:
         '200':
           description: Registered.
@@ -3847,23 +4499,24 @@ paths:
                 properties:
                   registered: { type: string, example: 'true' }
                   deviceId: { type: string }
+                  purpose: { type: string, enum: [e2e, user_auth] }
         '400':
-          description: '`publicKeyPem` missing; `invalid_device_id`, `invalid_public_key` (not RSA 2048–4096) or `unsupported_algorithm`.'
+          description: '`publicKeyPem` missing; `invalid_device_id`, `invalid_public_key` (not RSA 2048–4096), `unsupported_algorithm` or `unsupported_purpose`.'
           content:
             application/json:
               schema: { $ref: '#/components/schemas/Error' }
         '403':
-          description: '`device_identity_mismatch` — the presented client certificate does not belong to this device, or was revoked.'
+          description: '`device_identity_mismatch` — the presented client certificate does not belong to this device, or was revoked; `reenroll_required` — an authenticated request for a device that belongs to a revoked identity; `attestation_required` / `attestation_invalid` (with `reason`) — a first user-auth key under `USER_AUTH_ATTESTATION=enforce`.'
           content:
             application/json:
               schema: { $ref: '#/components/schemas/Error' }
         '409':
-          description: '`key_change_requires_proof` — over TLS, a different key is already registered and the request carries no valid proof.'
+          description: '`key_change_requires_proof` — a different E2E key is already registered and the request carries no valid proof: over TLS, and over mTLS with a certificate whose device id is only claimed (proven: an attested key, a token bound to the device, or the device id as the client id — see SECURE_OPERATIONS "Proven device ids"); the device''s `end_to_end` token (`X-Vault-Key` + `X-Vault-Token`) is proof on both. Re-sending the registered key is a no-op and proves nothing. `user_auth_key_exists` — a user-auth key is registered and the request lacks the device''s credential or a passing attestation (both are needed, in any mode); `reason`: `credential_required`, `attestation_off`, or the attestation''s reason (`chain_missing`, `app_binding_not_configured`, …). An administrator resets the key with `DELETE …/public-key?purpose=user_auth`.'
           content:
             application/json:
               schema: { $ref: '#/components/schemas/Error' }
         '429':
-          description: '`rate_limited` — this address wrote `DEVICE_KEY_RATE_LIMIT` keys in the last 10 minutes.'
+          description: '`rate_limited` — this address wrote `DEVICE_KEY_RATE_LIMIT` keys (or, without a credential, sent that many user-auth attestation chains to verify) in the last 10 minutes. Over a certificate: `KEY_REPLACEMENT_RATE_LIMIT` (10) replacements per identity.'
           content:
             application/json:
               schema: { $ref: '#/components/schemas/Error' }
@@ -3872,44 +4525,30 @@ paths:
           content:
             application/json:
               schema: { $ref: '#/components/schemas/Error' }
-    delete:
-      tags: [vault]
-      operationId: resetDevicePublicKey
-      summary: Remove a device's E2E key so its next registration counts as the first
-      description: |
-        For a device that lost its key without a token to prove itself with, or a
-        slot someone else registered first. Audited as `device_key_reset`.
-
-        Registered on: **config-api** only (the management port has the scoped
-        `/api/v1/config-apis/{configApiId}/vault/devices/{deviceId}/public-key`).
-      security:
-        - ApiKeyAuth: []
-      x-registered-on: config-api
-      parameters:
-        - $ref: '#/components/parameters/DeviceIdPath'
-      responses:
-        '200':
-          description: Removed.
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  removed: { type: string, example: 'true' }
-                  deviceId: { type: string }
-        '404':
-          description: No key registered for this device in this scope.
-        '401': { $ref: '#/components/responses/MissingApiKey' }
-        '403': { $ref: '#/components/responses/InvalidApiKey' }
-
   /api/v1/vault/report:
     post:
       tags: [vault]
       operationId: reportVaultDownload
       summary: Device reports a vault file download
       description: |
-        Feeds the dashboard's distribution tracking. All fields are optional;
-        `deviceId` defaults to `"unknown"` and `status` to `"downloaded"`.
+        Feeds the dashboard's distribution tracking. `key` is required; `status`
+        defaults to `"downloaded"` and, on a TLS listener, `deviceId` to `"unknown"`.
+
+        **Every field is a claim (audit M-3 / O15).** `key` must be a vault key
+        (`[A-Za-z0-9._-]{1,64}`), `deviceId` an identifier (letters, digits, `.`,
+        `_`, `:`, `-`, at most 64), `status` one of `downloaded`, `cached`, `failed`,
+        `authMethod` one of the access policies, `version` not negative — `400`
+        otherwise. `deviceManufacturer`, `deviceModel`, `enrollmentLabel` and
+        `deviceAlias` are reduced to letters, digits and a little punctuation (64
+        characters), `failureReason` to one printable line of 300; the time is the
+        server's. On an **mTLS** listener `deviceId` must be the certificate's own
+        device (its client id or the `deviceUid` it enrolled with) — `403
+        device_identity_mismatch` otherwise; without one the report is filed under
+        the certificate's device. Limited to `REPORT_RATE_LIMIT` reports per source
+        address and `REPORT_DEVICE_RATE_LIMIT` per device per 10 minutes. The
+        history keeps, per Config API, the newest 500 successful rows and — apart
+        from them — the newest 1000 failures: reports sent to one Config API cannot
+        erase another's history, nor its own failures.
 
         Registered on: **config-api** only.
       security: []
@@ -3928,200 +4567,26 @@ paths:
                 type: object
                 properties:
                   recorded: { type: string, example: 'true' }
-
-  /api/v1/vault/{key}/tokens:
-    get:
-      tags: [vault-admin]
-      operationId: listVaultTokens
-      summary: List access tokens for a file
-      description: |
-        Hashes only — plaintext is never stored and never returned here.
-
-        Registered on: **config-api** only.
-      security:
-        - ApiKeyAuth: []
-      x-registered-on: config-api
-      parameters:
-        - $ref: '#/components/parameters/VaultKeyPath'
-      responses:
-        '200':
-          description: Tokens for this file in this scope.
-          content:
-            application/json:
-              schema:
-                type: array
-                items: { $ref: '#/components/schemas/VaultToken' }
-        '401': { $ref: '#/components/responses/MissingApiKey' }
-        '403': { $ref: '#/components/responses/InvalidApiKey' }
-    post:
-      tags: [vault-admin]
-      operationId: createVaultToken
-      summary: Issue a per-device access token for a file
-      description: |
-        The plaintext is returned **once**; only its hash is persisted. This is the
-        value the device sends as `X-Vault-Token` for `token` / `token_mtls` files.
-
-        Registered on: **config-api** only.
-      security:
-        - ApiKeyAuth: []
-      x-registered-on: config-api
-      parameters:
-        - $ref: '#/components/parameters/VaultKeyPath'
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              type: object
-              required: [deviceId]
-              properties:
-                deviceId:
-                  type: string
-                  description: Must equal the `X-Device-Id` the device will send.
-      responses:
-        '200':
-          description: Token issued (plaintext shown once).
-          content:
-            application/json:
-              schema: { $ref: '#/components/schemas/GeneratedVaultToken' }
         '400':
-          description: '`deviceId` missing.'
+          description: 'A field failed its check (`field` names it), or the body is not a JSON object (`invalid_json`).'
           content:
             application/json:
               schema: { $ref: '#/components/schemas/Error' }
-        '401': { $ref: '#/components/responses/MissingApiKey' }
-        '403': { $ref: '#/components/responses/InvalidApiKey' }
-
-  /api/v1/vault/tokens/{tokenId}:
-    delete:
-      tags: [vault-admin]
-      operationId: revokeVaultToken
-      summary: Revoke a vault access token
-      description: |
-        Revocation takes effect on the next download — `VaultAccessTokenService`
-        checks it per request.
-
-        Registered on: **config-api** only.
-      security:
-        - ApiKeyAuth: []
-      x-registered-on: config-api
-      parameters:
-        - $ref: '#/components/parameters/TokenIdPath'
-      responses:
-        '200':
-          description: Revoked.
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  revoked: { type: string, example: 'true' }
-        '400':
-          description: '`tokenId` is not a number.'
+        '403':
+          description: '`device_identity_mismatch` — on an mTLS listener, a report about another device than the certificate''s.'
           content:
             application/json:
               schema: { $ref: '#/components/schemas/Error' }
-        '404':
-          description: No token with that id.
+        '413':
+          description: '`body_too_large` — more than 64 KB.'
           content:
             application/json:
               schema: { $ref: '#/components/schemas/Error' }
-        '401': { $ref: '#/components/responses/MissingApiKey' }
-        '403': { $ref: '#/components/responses/InvalidApiKey' }
-
-  /api/v1/vault/distributions:
-    get:
-      tags: [vault-admin]
-      operationId: listVaultDistributions
-      summary: Distribution history for this scope
-      description: |
-        Not public: `distributions` is a reserved segment, so the download allowlist
-        never matches it.
-
-        Registered on: **config-api** only.
-      security:
-        - ApiKeyAuth: []
-      x-registered-on: config-api
-      responses:
-        '200':
-          description: Distribution records.
+        '429':
+          description: '`rate_limited` — `REPORT_RATE_LIMIT` / `REPORT_DEVICE_RATE_LIMIT` reached.'
           content:
             application/json:
-              schema:
-                type: array
-                items: { $ref: '#/components/schemas/VaultDistribution' }
-        '401': { $ref: '#/components/responses/MissingApiKey' }
-        '403': { $ref: '#/components/responses/InvalidApiKey' }
-
-  /api/v1/vault/distributions/{key}:
-    get:
-      tags: [vault-admin]
-      operationId: listVaultDistributionsByKey
-      summary: Distribution history for one file
-      description: 'Registered on: **config-api** only.'
-      security:
-        - ApiKeyAuth: []
-      x-registered-on: config-api
-      parameters:
-        - $ref: '#/components/parameters/VaultKeyPath'
-      responses:
-        '200':
-          description: Distribution records for this key.
-          content:
-            application/json:
-              schema:
-                type: array
-                items: { $ref: '#/components/schemas/VaultDistribution' }
-        '401': { $ref: '#/components/responses/MissingApiKey' }
-        '403': { $ref: '#/components/responses/InvalidApiKey' }
-
-  /api/v1/vault/distributions/device/{deviceId}:
-    get:
-      tags: [vault-admin]
-      operationId: listVaultDistributionsByDevice
-      summary: Distribution history for one device
-      description: 'Registered on: **config-api** only.'
-      security:
-        - ApiKeyAuth: []
-      x-registered-on: config-api
-      parameters:
-        - $ref: '#/components/parameters/DeviceIdPath'
-      responses:
-        '200':
-          description: Distribution records for this device.
-          content:
-            application/json:
-              schema:
-                type: array
-                items: { $ref: '#/components/schemas/VaultDistribution' }
-        '401': { $ref: '#/components/responses/MissingApiKey' }
-        '403': { $ref: '#/components/responses/InvalidApiKey' }
-
-  /api/v1/vault/stats:
-    get:
-      tags: [vault-admin]
-      operationId: vaultStats
-      summary: Distribution counters for this scope
-      description: |
-        `downloaded` and `failed` count rows whose `status` is exactly `downloaded` /
-        `failed`; other statuses count toward `totalDistributions` only.
-
-        Registered on: **config-api** only.
-      security:
-        - ApiKeyAuth: []
-      x-registered-on: config-api
-      responses:
-        '200':
-          description: Counters.
-          content:
-            application/json:
-              schema: { $ref: '#/components/schemas/VaultDistStats' }
-        '401': { $ref: '#/components/responses/MissingApiKey' }
-        '403': { $ref: '#/components/responses/InvalidApiKey' }
-
-  # ─────────────────────────────────────────────────────────────────────
-  # vault-admin, scope-explicit mirror (management port only)
-  # ─────────────────────────────────────────────────────────────────────
+              schema: { $ref: '#/components/schemas/Error' }
 
   /api/v1/config-apis/{configApiId}/vault:
     get:
@@ -4160,6 +4625,9 @@ paths:
         here can be one the client-facing download route would reject or route
         elsewhere. Keep to the same key shape.
 
+        **Two-person approval** (`PIN_CHANGE_APPROVALS>=2`): waits for a second admin
+        (`202`, operation `vault_upload`). The approver is shown the size and SHA-256 of the content, the version it replaces and the access rule and encryption it will have; the stored bytes are applied as they are.
+
         Registered on: **management** only.
       security:
         - ApiKeyAuth: []
@@ -4175,6 +4643,7 @@ paths:
           application/octet-stream:
             schema: { type: string, format: binary }
       responses:
+        '202': { $ref: '#/components/responses/PendingApproval' }
         '200':
           description: Stored.
           headers:
@@ -4189,7 +4658,11 @@ paths:
       tags: [vault-admin]
       operationId: deleteScopedVaultFile
       summary: Delete a file from a named scope
-      description: 'Registered on: **management** only.'
+      description: |
+        **Two-person approval** (`PIN_CHANGE_APPROVALS>=2`): waits for a second admin
+        (`202`, operation `vault_delete`). Audited as `vault_file_deleted`.
+
+        Registered on: **management** only.
       security:
         - ApiKeyAuth: []
       x-registered-on: management
@@ -4197,6 +4670,7 @@ paths:
         - $ref: '#/components/parameters/ConfigApiIdPath'
         - $ref: '#/components/parameters/VaultKeyPath'
       responses:
+        '202': { $ref: '#/components/responses/PendingApproval' }
         '200':
           description: Deleted.
           content:
@@ -4211,9 +4685,13 @@ paths:
       operationId: putScopedVaultFilePolicy
       summary: Change a file's policy / encryption in a named scope
       description: |
-        Mirror of `PUT /api/v1/vault/{key}/policy`. Invalid enum values trip a
+        Mirror of `PUT /api/v1/vault/{key}/policy` (a changed value bumps the
+        version, so devices fetch the file again). Invalid enum values trip a
         `require(...)`, which `StatusPages` on the management server turns into a
         JSON `500`.
+
+        **Two-person approval** (`PIN_CHANGE_APPROVALS>=2`): waits for a second admin
+        (`202`, operation `vault_policy`). The approver is shown the change (for instance `token_mtls → public`). Audited as `vault_policy_changed`.
 
         Registered on: **management** only.
       security:
@@ -4228,6 +4706,7 @@ paths:
           application/json:
             schema: { $ref: '#/components/schemas/VaultPolicyUpdate' }
       responses:
+        '202': { $ref: '#/components/responses/PendingApproval' }
         '200':
           description: Updated.
           content:
@@ -4283,6 +4762,12 @@ paths:
       description: |
         Plaintext returned once. Mirror of `POST /api/v1/vault/{key}/tokens`.
 
+        **Two-person approval** (`PIN_CHANGE_APPROVALS>=2`): answers `202` with
+        `runAfterApproval: true`. The answer carries a secret that is shown once, so the
+        approval does not run the request: once it is approved, the requester sends the
+        **same request again** (same body and query) and it runs once, the answer going to
+        them alone. Nothing of it is stored with the change request.
+
         Registered on: **management** only.
       security:
         - ApiKeyAuth: []
@@ -4300,6 +4785,7 @@ paths:
               properties:
                 deviceId: { type: string }
       responses:
+        '202': { $ref: '#/components/responses/PendingApproval' }
         '200':
           description: Token issued (plaintext shown once).
           content:
@@ -4321,6 +4807,9 @@ paths:
       description: |
         Token ids are globally unique, so `{configApiId}` is not used by the lookup.
 
+        **Two-person approval** (`PIN_CHANGE_APPROVALS>=2`): waits for a second admin
+        (`202`, operation `vault_token_revoke`). A token of another Config API is `404` here. Audited as `vault_token_revoked`. An operator who wants revocations to take effect at once exempts the operation (`APPROVAL_EXEMPT_OPERATIONS=vault_token_revoke`).
+
         Registered on: **management** only.
       security:
         - ApiKeyAuth: []
@@ -4329,6 +4818,7 @@ paths:
         - $ref: '#/components/parameters/ConfigApiIdPath'
         - $ref: '#/components/parameters/TokenIdPath'
       responses:
+        '202': { $ref: '#/components/responses/PendingApproval' }
         '200':
           description: Revoked.
           content:
@@ -4447,6 +4937,10 @@ paths:
         Frees the slot so the device's next registration counts as the first — for a
         device that lost its key without a token to prove itself with, or a slot
         someone else registered first. Audited as `device_key_reset`.
+        `?purpose=user_auth` removes its user-auth key instead (the E2E key stays).
+
+        **Two-person approval** (`PIN_CHANGE_APPROVALS>=2`): waits for a second admin
+        (`202`, operation `device_key_reset`). Both purposes. This is the only place a device key can be reset: the device-facing listeners have no such route.
 
         Registered on: **management** only.
       security:
@@ -4455,11 +4949,74 @@ paths:
       parameters:
         - $ref: '#/components/parameters/ConfigApiIdPath'
         - $ref: '#/components/parameters/DeviceIdPath'
+        - name: purpose
+          in: query
+          required: false
+          description: '`user_auth` removes the device''s user-auth key instead of its E2E key.'
+          schema: { type: string, enum: [e2e, user_auth], default: e2e }
       responses:
+        '202': { $ref: '#/components/responses/PendingApproval' }
         '200':
           description: Removed.
         '404':
           description: No key registered for this device in this scope.
+        '401': { $ref: '#/components/responses/MissingApiKey' }
+        '403': { $ref: '#/components/responses/InvalidApiKey' }
+
+  /api/v1/config-apis/{configApiId}/vault/devices/user-auth-keys:
+    get:
+      tags: [vault-admin]
+      operationId: listUserAuthKeys
+      summary: The user-auth keys of a scope, with what attestation said about each
+      description: |
+        Every device's user-auth key in this scope and the outcome of its Android
+        Key Attestation check at registration (`USER_AUTH_ATTESTATION`):
+        `attestation` is null when it was not checked (`off`, or a key registered
+        before the check existed), else `attested` (the chain passed), the
+        `securityLevel` (`tee`, `strongbox`, `software`) and the `reason` (`ok` or why
+        it failed, e.g. `chain_missing` for a key accepted on first use under `warn`).
+        A key that is not attested can be reset (`DELETE …/public-key?purpose=user_auth`)
+        so the device registers an attested one.
+
+        Registered on: **management** only.
+      security:
+        - ApiKeyAuth: []
+      x-registered-on: management
+      parameters:
+        - $ref: '#/components/parameters/ConfigApiIdPath'
+      responses:
+        '200':
+          description: The keys, by device id.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: object
+                  properties:
+                    deviceId: { type: string }
+                    configApiId: { type: string }
+                    publicKeyPem: { type: string }
+                    algorithm: { type: string }
+                    registeredAt: { type: string }
+                    attestation:
+                      type: object
+                      nullable: true
+                      properties:
+                        attested: { type: boolean }
+                        securityLevel: { type: string, nullable: true, enum: [tee, strongbox, software] }
+                        reason: { type: string, nullable: true, example: ok }
+                        keyKind:
+                          type: string
+                          nullable: true
+                          enum: [per_use, time_bound]
+                          description: >
+                            How the key asks for the user (read from a passing attestation; null
+                            otherwise, or for a key registered before 2.2.0): on every use, or
+                            for `authTimeoutSeconds` after an unlock (Android 7–10 phones without
+                            a strong fingerprint).
+                        authTimeoutSeconds: { type: integer, nullable: true, example: 10 }
+                        biometricOnly: { type: boolean, nullable: true, description: Only a biometric unlocks it (not the screen-lock PIN / pattern / password). }
         '401': { $ref: '#/components/responses/MissingApiKey' }
         '403': { $ref: '#/components/responses/InvalidApiKey' }
 
@@ -4588,10 +5145,12 @@ paths:
         - name: status
           in: query
           required: false
-          description: Filter by status; `all` or omitted = every request.
+          description: >
+            Filter by status; `all` or omitted = every request. `open` = still to be
+            decided or run (`pending` and `approved`).
           schema:
             type: string
-            enum: [pending, applied, failed, rejected, expired, stale, all]
+            enum: [pending, approved, open, applied, failed, rejected, expired, stale, all]
       responses:
         '200':
           description: Matching change requests.
@@ -4920,7 +5479,7 @@ components:
       description: >
         Encryption mode to store. Omitted keeps the existing value, or defaults to
         `plain` on first upload.
-      schema: { type: string, enum: [plain, at_rest, end_to_end] }
+      schema: { type: string, enum: [plain, at_rest, end_to_end, user_auth] }
 
     DeviceIdHeader:
       name: X-Device-Id
@@ -4995,7 +5554,13 @@ components:
           example: { error: 'X-API-Key header required' }
 
     InvalidApiKey:
-      description: '`X-API-Key` does not match the configured key.'
+      description: >
+        `X-API-Key` does not match the configured key. Without admin keys
+        (`ALLOW_ANONYMOUS_ADMIN=true`): `admin_key_required` on a Config API
+        listener (no admin route is served there), `peer_not_allowed` when the
+        connection is not from loopback or `ANONYMOUS_ADMIN_PEERS`. After
+        `ADMIN_AUTH_FAILURE_LIMIT` (30) invalid keys in 10 minutes the source
+        address gets `429` (`Retry-After: 600`) on every admin route.
       content:
         application/json:
           schema: { $ref: '#/components/schemas/Error' }
@@ -5005,11 +5570,24 @@ components:
       description: >
         `PIN_CHANGE_APPROVALS>=2`: the request was **not executed**. It is stored as
         a change request and replayed, as the requester, once enough other admins
-        approve it (`POST /api/v1/change-requests/{id}/approve`). Management
-        listener only.
+        approve it (`POST /api/v1/change-requests/{id}/approve`) — or, when
+        `runAfterApproval` is true, run by the requester sending the same request
+        again after the approval. Management listener only. A body larger than the
+        admin cap is `413`; a request that cannot be described is `400`, and a
+        certificate change the live check refuses is `422`, both before anything
+        is stored.
       content:
         application/json:
           schema: { $ref: '#/components/schemas/PendingApproval' }
+
+    AdminBodyTooLarge:
+      description: >
+        The body is larger than `ADMIN_UPLOAD_MAX_BYTES` (default 1 MB; keystores,
+        certificates and JSON bodies of admin routes). Refused while it is read.
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+          example: { error: body_too_large, message: 'At most 1048576 bytes.' }
 
     LiveCheckRejected:
       description: >
@@ -5138,6 +5716,14 @@ components:
           description: >
             Unix epoch ms; `issuedAt + CONFIG_TTL_SECONDS` (default 24 h). `0` on
             unsigned responses. Clients reject the payload once the wall clock passes it.
+        configApiId:
+          type: string
+          description: >
+            Signed payloads only (2.2.0): the Config API the config was signed for. A
+            library block with `serverScope(id)` refuses a payload that names another
+            id or none, so an envelope of one Config API cannot be replayed on another
+            that shares the signing key. Absent from unsigned responses.
+          example: default-tls
 
     SignedConfig:
       type: object
@@ -5409,6 +5995,20 @@ components:
           type: string
           enum: [csr, p12]
           description: '`csr`: the key lives on the device; `p12`: the server generated it.'
+        attestation:
+          $ref: '#/components/schemas/EnrollmentKeyAttestation'
+
+    EnrollmentKeyAttestation:
+      type: object
+      nullable: true
+      description: >
+        What Android Key Attestation said about the device key at enrollment
+        (`ENROLLMENT_ATTESTATION`). Null: not checked (`off`, a server-made P12 key,
+        or an enrollment from before 2.2.0).
+      properties:
+        attested: { type: boolean, description: 'The chain verified: a signing key made in TEE / StrongBox by the app on a locked, verified device.' }
+        securityLevel: { type: string, nullable: true, enum: [tee, strongbox, software] }
+        reason: { type: string, nullable: true, example: chain_missing, description: '`ok`, or why it did not pass.' }
 
     IssuedClientCert:
       type: object
@@ -5474,8 +6074,10 @@ components:
         policyName: { type: string }
         clientId: { type: string, description: The identity the device gets. }
         spkiSha256: { type: string, description: 'SHA-256 of the device key (SubjectPublicKeyInfo), Base64.' }
-        verificationCode: { type: string, description: 'The code the device shows: first 40 bits of that SHA-256, Crockford base32, `XXXX-XXXX`.', example: 4F7K-2QXM }
+        verificationCode: { type: string, description: 'The code the device shows: first 80 bits (10 bytes) of that SHA-256, Crockford base32, `XXXX-XXXX-XXXX-XXXX`.', example: 4F7K-2QXM-9D3T-H6WP }
         openApplication: { type: boolean, description: Asked without a code. }
+        attestation:
+          $ref: '#/components/schemas/EnrollmentKeyAttestation'
         status: { type: string, enum: [pending, approved, rejected, issued, expired] }
         configApiId: { type: string, description: The Config API listener the device asked through. }
         deviceAlias: { type: string, nullable: true }
@@ -5486,7 +6088,7 @@ components:
         decidedBy: { type: string, nullable: true, description: 'The administrator, `policy` for a policy without approval, or `timeout` for a request that lapsed.' }
         issuedAt: { type: string, format: date-time, nullable: true }
         heldBy: { type: string, nullable: true, description: 'Listing only: another active identity enrolled from the same `deviceUid`.' }
-        sameDevicePending: { type: integer, description: 'Listing only: other requests waiting from the same `deviceUid` (a reinstall).' }
+        sameDevicePending: { type: integer, description: 'Listing only: other requests waiting from the same `deviceUid`. Approve none: reject them all and ask the device to apply again (one may be an impostor).' }
 
     EnrollmentDecision:
       type: object
@@ -5503,7 +6105,7 @@ components:
         requestId: { type: string, description: 'Send it back with a CSR from the same key to ask again.' }
         clientId: { type: string }
         policy: { type: string }
-        verificationCode: { type: string, description: 'From the CSR''s key; the device shows the same code.', example: 4F7K-2QXM }
+        verificationCode: { type: string, description: 'From the CSR''s key (80 bits); the device shows the same code.', example: 4F7K-2QXM-9D3T-H6WP }
         openApplication: { type: boolean, description: Asked without a code. }
         message: { type: string }
 
@@ -5524,6 +6126,24 @@ components:
           type: boolean
           default: true
           description: Always `true` — `token` is a display value, not a credential.
+        expiresAt:
+          type: string
+          format: date-time
+          nullable: true
+          description: When the token stops being accepted; null for rows predating expiry.
+        expired:
+          type: boolean
+          default: false
+          description: '`expiresAt` is already in the past (the token is refused).'
+        deviceUid:
+          type: string
+          nullable: true
+          description: >
+            The device id (ANDROID_ID) the token was bound to when it was minted
+            (`deviceUid` on generate): only that device can enroll with it
+            (`403 device_uid_mismatch` otherwise), and its device id counts as proven.
+            Absent or null for a token any device may use.
+          example: 9774d56d682e549c
 
     MtlsStatus:
       type: object
@@ -5660,7 +6280,7 @@ components:
         version: { type: string, example: '3' }
         size: { type: string, description: Stored byte length., example: '10485' }
         access_policy: { type: string, enum: [public, api_key, token, token_mtls] }
-        encryption: { type: string, enum: [plain, at_rest, end_to_end] }
+        encryption: { type: string, enum: [plain, at_rest, end_to_end, user_auth] }
 
     VaultPutResult:
       type: object
@@ -5668,7 +6288,7 @@ components:
         key: { type: string }
         version: { type: string, description: New version, as a string. }
         access_policy: { type: string, enum: [public, api_key, token, token_mtls] }
-        encryption: { type: string, enum: [plain, at_rest, end_to_end] }
+        encryption: { type: string, enum: [plain, at_rest, end_to_end, user_auth] }
 
     VaultDeleteResult:
       type: object
@@ -5689,10 +6309,11 @@ components:
             that device.
         encryption:
           type: string
-          enum: [plain, at_rest, end_to_end]
+          enum: [plain, at_rest, end_to_end, user_auth]
           description: >
             Switching to or from `at_rest` rewrites the stored bytes. `end_to_end`
-            wraps per device at download time with the device's registered RSA key.
+            wraps per device at download time with the device's registered RSA key. `user_auth`
+            does the same with the device's user-auth key (`"purpose":"user_auth"`).
 
     VaultToken:
       type: object
@@ -5933,7 +6554,11 @@ components:
           type: boolean
           description: '`liveCheckOverride` is accepted (`PIN_LIVE_CHECK_ALLOW_OVERRIDE` is not `false`).'
         notificationsConfigured: { type: boolean, description: '`NOTIFY_WEBHOOK_URL` is set.' }
-        signatureCache: { type: boolean, description: '`CONFIG_SIGNATURE_CACHE=true`.' }
+        signatureCache: { type: boolean, description: '`CONFIG_SIGNATURE_CACHE=true`, or forced on by an external signer (`CONFIG_SIGNERS=command|pkcs11`).' }
+        approvalExemptOperations:
+          type: array
+          items: { type: string }
+          description: 'Operations taken out of two-person approval (`APPROVAL_EXEMPT_OPERATIONS`); empty by default.'
 
     AuditEntry:
       type: object
@@ -5986,6 +6611,12 @@ components:
           description: '`PIN_CHANGE_APPROVALS` — the requester counts as one.'
           example: 2
         message: { type: string, example: 'Change #12 is waiting for approval by 1 other admin(s).' }
+        runAfterApproval:
+          type: boolean
+          description: >
+            True for an operation whose answer carries a secret shown once: the
+            approval only unlocks it, and the requester sends the same request again
+            to run it and receive the answer.
 
     DiffPin:
       type: object
@@ -6055,7 +6686,15 @@ components:
         detail:
           type: string
           description: JSON text of a `ChangeRequestDetail`.
-        status: { type: string, enum: [pending, applied, failed, rejected, expired, stale] }
+        status:
+          type: string
+          enum: [pending, approved, applied, failed, rejected, expired, stale]
+          description: >
+            `approved`: enough admins agreed and the requester may now run it once by
+            sending the same request again (operations whose answer carries a secret:
+            `client_cert_generate`, `enrollment_policy_create`, `enrollment_token`,
+            `vault_token_issue`). It can still be rejected or withdrawn, and expires
+            like a pending one. For such a request `resultBody` is never stored.
         approvedBy: { type: array, items: { type: string } }
         decidedBy: { type: string, nullable: true }
         decidedAt: { type: string, format: date-time, nullable: true }

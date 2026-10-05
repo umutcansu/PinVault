@@ -8,20 +8,30 @@ import javax.crypto.spec.PBEKeySpec
 import javax.crypto.spec.SecretKeySpec
 
 /**
- * At-rest encryption for vault file content (encryption = "at_rest" and
- * "end_to_end"). [com.example.pinvault.server.store.VaultFileStore] encrypts
+ * At-rest encryption for vault file content (encryption = "at_rest",
+ * "end_to_end" and "user_auth"). [com.example.pinvault.server.store.VaultFileStore] encrypts
  * on write and decrypts on read; the device never sees this layer.
  *
  * Encrypted blob layout: `[MAGIC(8)][salt(16)][iv(12)][AES-256-GCM ct+tag]`.
  * The key is PBKDF2-SHA256 derived from [password] (`VAULT_AT_REST_PASSWORD`).
  *
  * DEMO ONLY: with the env var unset the password is [DEMO_PASSWORD], which is
- * public (a warning is logged). The sample host's setup.sh generates one.
+ * public (a warning is logged). The server starts that way only with
+ * `ALLOW_DEMO_SECRETS=true` ([StartupSecrets]); the sample host's setup.sh
+ * generates a real one.
  *
  * Changing the password: [previous] passwords (`VAULT_AT_REST_PASSWORD_PREVIOUS`,
  * and always the demo password) are tried only by the startup migration, which
  * re-encrypts every file under [password]. Reads use [password] alone and fail
  * loudly ([VaultKeyMismatchException]) instead of handing out ciphertext.
+ *
+ * The key derivation (200 000 PBKDF2 rounds, about 0.2 s of CPU) runs once per
+ * process per salt, not once per read: keys derived from [password] are kept
+ * in a small bounded map, and everything this instance writes shares one salt
+ * (a fresh IV per blob), so a download costs one AES-GCM pass. Downloads used
+ * to derive on every request — before the access check — which let anyone who
+ * knew a file name keep every core busy. The blob format is unchanged; blobs
+ * written earlier (a salt each) are derived once, on their first read.
  */
 class VaultAtRestCipher(
     private val password: String,
@@ -29,14 +39,25 @@ class VaultAtRestCipher(
 ) {
     private val previous: List<String> = previous.filter { it.isNotBlank() && it != password }.distinct()
 
+    /** The salt of every blob this instance writes; the IV is what differs between blobs. */
+    private val writeSalt: ByteArray = ByteArray(SALT_LEN).also(rng::nextBytes)
+
+    /** Keys derived from [password], by salt (hex); the least recently used goes beyond [MAX_CACHED_KEYS]. */
+    private val derivedKeys = object : LinkedHashMap<String, SecretKeySpec>(16, 0.75f, true) {
+        override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, SecretKeySpec>?) = size > MAX_CACHED_KEYS
+    }
+    private val derivationCounter = java.util.concurrent.atomic.AtomicLong()
+
+    /** How many PBKDF2 derivations this instance has run (tests assert that a refused request costs none). */
+    val derivations: Long get() = derivationCounter.get()
+
     val usesDemoPassword: Boolean get() = password == DEMO_PASSWORD
 
     fun encrypt(plaintext: ByteArray): ByteArray {
-        val salt = ByteArray(SALT_LEN).also(rng::nextBytes)
         val iv = ByteArray(IV_LEN).also(rng::nextBytes)
         val cipher = Cipher.getInstance("AES/GCM/NoPadding")
-        cipher.init(Cipher.ENCRYPT_MODE, deriveKey(password, salt), GCMParameterSpec(128, iv))
-        return MAGIC + salt + iv + cipher.doFinal(plaintext)
+        cipher.init(Cipher.ENCRYPT_MODE, currentKey(writeSalt), GCMParameterSpec(128, iv))
+        return MAGIC + writeSalt + iv + cipher.doFinal(plaintext)
     }
 
     /**
@@ -65,14 +86,26 @@ class VaultAtRestCipher(
             val salt = blob.copyOfRange(MAGIC.size, MAGIC.size + SALT_LEN)
             val iv = blob.copyOfRange(MAGIC.size + SALT_LEN, HEADER_LEN)
             val cipher = Cipher.getInstance("AES/GCM/NoPadding")
-            cipher.init(Cipher.DECRYPT_MODE, deriveKey(candidate, salt), GCMParameterSpec(128, iv))
+            // A previous password is tried by the startup pass only: not kept.
+            val key = if (candidate == password) currentKey(salt) else deriveKey(candidate, salt)
+            cipher.init(Cipher.DECRYPT_MODE, key, GCMParameterSpec(128, iv))
             cipher.doFinal(blob, HEADER_LEN, blob.size - HEADER_LEN)
         } catch (_: java.security.GeneralSecurityException) {
             null
         }
     }
 
+    /**
+     * The key for [password] and [salt], derived at most once. Under one lock:
+     * requests arriving together for the same salt wait for the one derivation
+     * instead of each running their own.
+     */
+    private fun currentKey(salt: ByteArray): SecretKeySpec = synchronized(derivedKeys) {
+        derivedKeys.getOrPut(salt.joinToString("") { "%02x".format(it) }) { deriveKey(password, salt) }
+    }
+
     private fun deriveKey(password: String, salt: ByteArray): SecretKeySpec {
+        derivationCounter.incrementAndGet()
         val spec = PBEKeySpec(password.toCharArray(), salt, PBKDF2_ITERATIONS, 256)
         val keyBytes = SecretKeyFactory.getInstance("PBKDF2WithHmacSHA256").generateSecret(spec).encoded
         return SecretKeySpec(keyBytes, "AES")
@@ -85,6 +118,8 @@ class VaultAtRestCipher(
         private const val SALT_LEN = 16
         private const val IV_LEN = 12
         private const val TAG_LEN = 16
+        /** Older blobs carry a salt each; this many derived keys (32 bytes apiece) stay in memory. */
+        private const val MAX_CACHED_KEYS = 1024
         private val HEADER_LEN = MAGIC.size + SALT_LEN + IV_LEN
         private val rng = SecureRandom()
 

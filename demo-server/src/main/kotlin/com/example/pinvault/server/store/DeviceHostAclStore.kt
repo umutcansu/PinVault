@@ -108,6 +108,25 @@ class DeviceHostAclStore(private val db: DatabaseManager) {
     // ── Policy resolution ────────────────────────────────────────────
 
     /**
+     * Whether [configApiId] has any ACL at all — a default entry or a
+     * per-device grant. A scope without one does not scope by device; the
+     * host client certificate download enforces the ACL only where one exists.
+     */
+    fun isConfigured(configApiId: String): Boolean {
+        db.connection().use { conn ->
+            conn.prepareStatement("""
+                SELECT EXISTS (SELECT 1 FROM default_host_acl WHERE config_api_id = ?)
+                    OR EXISTS (SELECT 1 FROM device_host_acl WHERE config_api_id = ?)
+            """).use { stmt ->
+                stmt.setString(1, configApiId)
+                stmt.setString(2, configApiId)
+                val rs = stmt.executeQuery()
+                return rs.next() && rs.getInt(1) == 1
+            }
+        }
+    }
+
+    /**
      * Compute the full allowed-hostname set for a device: union of its
      * per-device ACL and the Config API's default ACL.
      */

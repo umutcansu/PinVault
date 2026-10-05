@@ -1,5 +1,6 @@
 package com.example.pinvault.server
 
+import com.example.pinvault.server.route.scopedVaultAdminRoutes
 import com.example.pinvault.server.route.vaultRoutes
 import com.example.pinvault.server.service.VaultAccessTokenService
 import com.example.pinvault.server.service.VaultEncryptionService
@@ -58,16 +59,18 @@ class VaultScopingCrossTest {
         routing {
             route("/scope-a") { vaultRoutes("api-a", vfs, dist, tokens, pks, tokenSvc, encSvc) }
             route("/scope-b") { vaultRoutes("api-b", vfs, dist, tokens, pks, tokenSvc, encSvc) }
+            // Vault administration is served by the management listener only, the scope in the path.
+            scopedVaultAdminRoutes(vfs, dist, tokens, tokenSvc, publicKeyStore = pks)
         }
     }
 
     @Test
     fun `same key uploaded on both scopes stays independent`() = testApplication {
         configureApp()
-        client.put("/scope-a/api/v1/vault/shared-name?policy=public") {
+        client.put("/api/v1/config-apis/api-a/vault/shared-name?policy=public") {
             setBody("content-A".toByteArray()); contentType(ContentType.Application.OctetStream)
         }
-        client.put("/scope-b/api/v1/vault/shared-name?policy=public") {
+        client.put("/api/v1/config-apis/api-b/vault/shared-name?policy=public") {
             setBody("content-B".toByteArray()); contentType(ContentType.Application.OctetStream)
         }
 
@@ -79,23 +82,24 @@ class VaultScopingCrossTest {
     }
 
     @Test
-    fun `key uploaded on scope A is 404 on scope B`() = testApplication {
+    fun `key uploaded on scope A does not exist on scope B`() = testApplication {
         configureApp()
-        client.put("/scope-a/api/v1/vault/only-in-a?policy=public") {
+        client.put("/api/v1/config-apis/api-a/vault/only-in-a?policy=public") {
             setBody("x".toByteArray()); contentType(ContentType.Application.OctetStream)
         }
 
+        // Not served, and a stranger is answered as for a token file (401), not 404.
         val b = client.get("/scope-b/api/v1/vault/only-in-a")
-        assertEquals(HttpStatusCode.NotFound, b.status)
+        assertEquals(HttpStatusCode.Unauthorized, b.status)
     }
 
     @Test
     fun `token issued on scope A does not authorize scope B`() = testApplication {
         configureApp()
-        client.put("/scope-a/api/v1/vault/guarded?policy=token") {
+        client.put("/api/v1/config-apis/api-a/vault/guarded?policy=token") {
             setBody("a-secret".toByteArray()); contentType(ContentType.Application.OctetStream)
         }
-        client.put("/scope-b/api/v1/vault/guarded?policy=token") {
+        client.put("/api/v1/config-apis/api-b/vault/guarded?policy=token") {
             setBody("b-secret".toByteArray()); contentType(ContentType.Application.OctetStream)
         }
 
@@ -121,15 +125,15 @@ class VaultScopingCrossTest {
     @Test
     fun `file list for scope A does not include scope B files`() = testApplication {
         configureApp()
-        client.put("/scope-a/api/v1/vault/only-a?policy=public") {
+        client.put("/api/v1/config-apis/api-a/vault/only-a?policy=public") {
             setBody("x".toByteArray()); contentType(ContentType.Application.OctetStream)
         }
-        client.put("/scope-b/api/v1/vault/only-b?policy=public") {
+        client.put("/api/v1/config-apis/api-b/vault/only-b?policy=public") {
             setBody("y".toByteArray()); contentType(ContentType.Application.OctetStream)
         }
 
-        val listA = client.get("/scope-a/api/v1/vault").bodyAsText()
-        val listB = client.get("/scope-b/api/v1/vault").bodyAsText()
+        val listA = client.get("/api/v1/config-apis/api-a/vault").bodyAsText()
+        val listB = client.get("/api/v1/config-apis/api-b/vault").bodyAsText()
 
         assertTrue(listA.contains("only-a"))
         assertFalse(listA.contains("only-b"))
@@ -140,7 +144,7 @@ class VaultScopingCrossTest {
     @Test
     fun `distribution report lands in the scope it was reported from`() = testApplication {
         configureApp()
-        client.put("/scope-a/api/v1/vault/tracked?policy=public") {
+        client.put("/api/v1/config-apis/api-a/vault/tracked?policy=public") {
             setBody("v".toByteArray()); contentType(ContentType.Application.OctetStream)
         }
 

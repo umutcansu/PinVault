@@ -39,7 +39,7 @@ async function renderApiVaultTab(apiId) {
     const stats = await statsRes.json();
     const dists = await distRes.json();
     if (!Array.isArray(files) || !Array.isArray(dists)) {
-      content.innerHTML = `<div class="card"><div class="empty-msg">${t('vaultUnexpectedResponse', JSON.stringify(files).slice(0, 120))}</div></div>`;
+      content.innerHTML = `<div class="card"><div class="empty-msg">${t('vaultUnexpectedResponse', esc(JSON.stringify(files).slice(0, 120)))}</div></div>`;
       return;
     }
 
@@ -53,14 +53,15 @@ async function renderApiVaultTab(apiId) {
               f.access_policy === 'api_key'    ? '#8b5cf6' :
               f.access_policy === 'token_mtls' ? '#06b6d4' : '#22c55e';
           const encIcon =
+              f.encryption === 'user_auth'  ? '🔑' :
               f.encryption === 'end_to_end' ? '🔒' :
               f.encryption === 'at_rest'    ? '🔐' : '·';
           return `<tr class="${filesPagInfo.page === 0 && i === 0 ? 'row-latest' : ''}" style="cursor:pointer" data-action="showVaultFileDetail" data-arg0="${esc(apiId)}" data-arg1="${esc(f.key)}">
             <td style="font-weight:700;color:#7dd3fc">${esc(f.key)}</td>
             <td>v${f.version}</td>
             <td>${formatBytes(f.size || 0)}</td>
-            <td><span style="background:${policyColor};color:#fff;padding:2px 8px;border-radius:10px;font-size:10px">${f.access_policy || 'token'}</span></td>
-            <td style="font-size:12px">${encIcon} ${f.encryption || 'plain'}</td>
+            <td><span style="background:${policyColor};color:#fff;padding:2px 8px;border-radius:10px;font-size:10px">${esc(f.access_policy || 'token')}</span></td>
+            <td style="font-size:12px">${encIcon} ${esc(f.encryption || 'plain')}</td>
             <td><span style="cursor:pointer;color:#ef4444;font-size:11px" data-action="deleteVaultFile" data-arg0="${esc(apiId)}" data-arg1="${esc(f.key)}" data-stop="1">&#x2715;</span></td>
           </tr>`;
         }).join('');
@@ -166,10 +167,11 @@ async function renderApiVaultTab(apiId) {
             </div>
             <div class="form-group" style="margin:0">
               <label class="form-label">${t('encryptionLabel')}</label>
-              <select id="vault-upload-encryption" class="form-input" style="width:130px" data-action-change="updateEncDesc" data-event="1">
+              <select id="vault-upload-encryption" class="form-input" style="min-width:130px" data-action-change="updateEncDesc" data-event="1">
                 <option value="plain" selected>plain</option>
                 <option value="at_rest">at_rest</option>
                 <option value="end_to_end">end_to_end</option>
+                <option value="user_auth">${t('encUserAuthOpt')}</option>
               </select>
             </div>
             <button type="submit" class="btn btn-primary">${t('vaultUploadBtn')}</button>
@@ -197,7 +199,7 @@ async function renderApiVaultTab(apiId) {
         </table>${distPagNav}
       </div>`;
   } catch (e) {
-    content.innerHTML = `<div class="card"><div class="empty-msg">${t('error')}: ${e.message}</div></div>`;
+    content.innerHTML = `<div class="card"><div class="empty-msg">${t('error')}: ${esc(e.message)}</div></div>`;
   }
 }
 
@@ -234,6 +236,7 @@ async function uploadVaultFile(e, apiId) {
       headers: { 'Content-Type': 'application/octet-stream' },
       body
     });
+    if (res.status === 202) return; // waits for a second admin; apiFetch said so
     if (!res.ok) { toast(t('error'), 'error'); return; }
     const data = await res.json();
     toast(t('vaultUploadSuccess', key, data.version, data.access_policy, data.encryption), 'success');
@@ -255,6 +258,8 @@ async function generateVaultToken(apiId, key) {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ deviceId })
     });
+    // 202: waits for a second admin; the same click runs it once it is approved.
+    if (res.status === 202) return;
     if (!res.ok) { toast(t('tokenGenError'), 'error'); return; }
     const data = await res.json();
     navigator.clipboard?.writeText(data.token).catch(() => {});
@@ -279,6 +284,7 @@ async function saveVaultFilePolicy(apiId, key) {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ access_policy: policy, encryption })
     });
+    if (res.status === 202) return; // waits for a second admin; apiFetch said so
     if (!res.ok) { toast(t('policySaveError'), 'error'); return; }
     toast(t('policySaved', `${policy} / ${encryption}`), 'success');
     showVaultFileDetail(apiId, key);
@@ -289,6 +295,7 @@ async function revokeVaultToken(apiId, tokenId, keyForRefresh) {
   if (!confirm(t('tokenRevokeConfirm'))) return;
   try {
     const res = await apiFetch(`${vaultBase(apiId)}/tokens/${tokenId}`, { method: 'DELETE' });
+    if (res.status === 202) return; // waits for a second admin; apiFetch said so
     if (!res.ok) { toast(t('tokenRevokeError'), 'error'); return; }
     toast(t('tokenRevoked'), 'success');
     showVaultFileDetail(apiId, keyForRefresh);
@@ -298,7 +305,9 @@ async function revokeVaultToken(apiId, tokenId, keyForRefresh) {
 async function deleteVaultFile(apiId, key) {
   if (!confirm(t('deleteFileConfirm', key))) return;
   try {
-    await apiFetch(`${vaultBase(apiId)}/${encodeURIComponent(key)}`, { method: 'DELETE' });
+    const res = await apiFetch(`${vaultBase(apiId)}/${encodeURIComponent(key)}`, { method: 'DELETE' });
+    if (res.status === 202) return; // waits for a second admin; apiFetch said so
+    if (!res.ok) { toast(t('error'), 'error'); return; }
     toast(t('fileDeleted', key), 'success');
     setConfigApiTab('vault', apiId);
   } catch (err) { toast(t('error'), 'error'); }
@@ -443,10 +452,11 @@ async function showVaultFileDetail(apiId, key) {
           </div>
           <div class="form-group" style="margin:0">
             <label class="form-label">${t('encryptionLabel')}</label>
-            <select id="encryption-edit-${esc(key)}" class="form-input" style="width:140px">
+            <select id="encryption-edit-${esc(key)}" class="form-input" style="min-width:140px">
               <option value="plain" ${curEncryption === 'plain' ? 'selected' : ''}>plain</option>
               <option value="at_rest" ${curEncryption === 'at_rest' ? 'selected' : ''}>at_rest</option>
               <option value="end_to_end" ${curEncryption === 'end_to_end' ? 'selected' : ''}>end_to_end</option>
+              <option value="user_auth" ${curEncryption === 'user_auth' ? 'selected' : ''}>${t('encUserAuthOpt')}</option>
             </select>
           </div>
           <button class="btn btn-primary" data-action="saveVaultFilePolicy" data-arg0="${esc(apiId)}" data-arg1="${esc(key)}">${t('policySaveBtn')}</button>
@@ -475,7 +485,7 @@ async function showVaultFileDetail(apiId, key) {
         <div class="card-title" style="display:flex;justify-content:space-between;align-items:center;gap:8px">
           <span>${t('tokenMgmtTitle')} (${tokens.length})</span>
           <div style="display:flex;gap:6px;align-items:center">
-            <input type="text" id="tk-device-${key}" placeholder="${t('tokenDevicePlaceholder')}" class="form-input" style="width:290px;font-size:12px"/>
+            <input type="text" id="tk-device-${esc(key)}" placeholder="${t('tokenDevicePlaceholder')}" class="form-input" style="width:290px;font-size:12px"/>
             <button class="btn btn-primary" style="padding:4px 10px;font-size:12px" data-action="generateVaultToken" data-arg0="${esc(apiId)}" data-arg1="${esc(key)}">${t('tokenNewBtn')}</button>
           </div>
         </div>
@@ -494,7 +504,7 @@ async function showVaultFileDetail(apiId, key) {
         </table>${nav(fullPag, 'vault-file-history:' + fileKey)}
       </div>`;
   } catch (e) {
-    content.innerHTML = `<div class="card"><div class="empty-msg">${t('error')}: ${e.message}</div></div>`;
+    content.innerHTML = `<div class="card"><div class="empty-msg">${t('error')}: ${esc(e.message)}</div></div>`;
   }
 }
 
@@ -507,7 +517,7 @@ async function showDeviceDetail(apiId, deviceId) {
     const res = await apiFetch(`${vaultBase(apiId)}/distributions/device/${encodeURIComponent(deviceId)}`);
     const dists = await res.json();
     if (!Array.isArray(dists)) {
-      content.innerHTML = `<div class="card"><div class="empty-msg">${t('error')}: ${JSON.stringify(dists).slice(0, 120)}</div></div>`;
+      content.innerHTML = `<div class="card"><div class="empty-msg">${t('error')}: ${esc(JSON.stringify(dists).slice(0, 120))}</div></div>`;
       return;
     }
 
@@ -586,7 +596,7 @@ async function showDeviceDetail(apiId, deviceId) {
         </table>${devFullPagNav}
       </div>`;
   } catch (e) {
-    content.innerHTML = `<div class="card"><div class="empty-msg">${t('error')}: ${e.message}</div></div>`;
+    content.innerHTML = `<div class="card"><div class="empty-msg">${t('error')}: ${esc(e.message)}</div></div>`;
   }
 }
 

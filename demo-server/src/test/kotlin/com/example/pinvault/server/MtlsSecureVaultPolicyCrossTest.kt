@@ -1,5 +1,6 @@
 package com.example.pinvault.server
 
+import com.example.pinvault.server.route.scopedVaultAdminRoutes
 import com.example.pinvault.server.route.vaultRoutes
 import com.example.pinvault.server.service.VaultAccessTokenService
 import com.example.pinvault.server.service.VaultEncryptionService
@@ -70,6 +71,8 @@ class MtlsSecureVaultPolicyCrossTest {
     private fun ApplicationTestBuilder.mountMtlsSecure() {
         install(ContentNegotiation) { json(Json { ignoreUnknownKeys = true }) }
         routing {
+            // Vault administration is served by the management listener only.
+            scopedVaultAdminRoutes(vaultFileStore, distStore, tokenStore, tokenService, publicKeyStore = publicKeyStore)
             vaultRoutes(mtlsSecure, vaultFileStore, distStore, tokenStore,
                 publicKeyStore, tokenService, encryptionService)
         }
@@ -78,7 +81,7 @@ class MtlsSecureVaultPolicyCrossTest {
     private suspend fun io.ktor.client.HttpClient.upload(
         key: String, content: String, policy: String, encryption: String = "plain"
     ) {
-        put("/api/v1/vault/$key?policy=$policy&encryption=$encryption") {
+        put("/api/v1/config-apis/$mtlsSecure/vault/$key?policy=$policy&encryption=$encryption") {
             setBody(content.toByteArray())
             contentType(ContentType.Application.OctetStream)
         }

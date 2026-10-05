@@ -201,6 +201,43 @@ fun certificateBoundTo(
 }
 
 /**
+ * Whether [certificate], whose CN names [clientId], is the certificate on
+ * record for that id — checked on every mTLS request by
+ * [com.example.pinvault.server.plugin.RevocationGate].
+ *
+ *  1. An identity enrolled over a device-held key (`client_identities`): the
+ *     certificate's key must be that key. The handshake proved the peer holds
+ *     its private half, so any certificate over it — the current serial, or
+ *     the one before a renewal on a connection still open — is that device.
+ *  2. Otherwise the `client_certs` row of the id (a server-made P12): the
+ *     certificate must be exactly the stored one (SHA-256 of its DER).
+ *  3. No row under the id: an uploaded certificate, trusted under its row
+ *     id while its subject may say something else — exactly that certificate.
+ *
+ * Anything else is a leaf some other trusted key signed with this id in it.
+ * Per-certificate trust anchors (self-signed P12s from before P12s came from
+ * the client CA, uploaded certificates) can sign such leaves, and JSSE does
+ * not look at an anchor's CA flag — this is what keeps one device from
+ * presenting itself as another.
+ */
+fun presentedLeafOnRecord(
+    clientId: String,
+    certificate: java.security.cert.X509Certificate,
+    clientCertStore: com.example.pinvault.server.store.ClientCertStore?,
+    identityStore: com.example.pinvault.server.store.ClientIdentityStore?
+): Boolean {
+    identityStore?.get(clientId)?.let { identity ->
+        return sha256Base64(certificate.publicKey.encoded) == identity.spkiSha256
+    }
+    val fingerprint = sha256Base64(certificate.encoded)
+    clientCertStore?.get(clientId)?.let { record -> return record.fingerprint == fingerprint }
+    return clientCertStore?.idByFingerprint(fingerprint) != null
+}
+
+private fun sha256Base64(bytes: ByteArray): String =
+    java.util.Base64.getEncoder().encodeToString(java.security.MessageDigest.getInstance("SHA-256").digest(bytes))
+
+/**
  * What a client id or a device id may look like. Both are printed in the
  * dashboard and a client id becomes part of a certificate subject, so nothing
  * that could open markup or a new name part (`<`, `"`, `,`, `=`, `+`, spaces).
@@ -208,3 +245,47 @@ fun certificateBoundTo(
 private val IDENTIFIER = Regex("^[A-Za-z0-9._:-]{1,64}$")
 
 fun isValidIdentifier(value: String): Boolean = IDENTIFIER.matches(value)
+
+/**
+ * Whether [value] is a name the server keeps for itself (the client CA's
+ * truststore alias and its other keystore aliases, ignoring case). Such a
+ * client id would let revoke, forget or upload act on the CA's entry.
+ */
+fun isReservedClientId(value: String): Boolean =
+    com.example.pinvault.server.service.CertificateService.isReservedAlias(value)
+
+/** The answer when a client id is one of [isReservedClientId]. */
+internal const val RESERVED_CLIENT_ID =
+    """{"error":"reserved_client_id","message":"This name is used by the server itself (e.g. client-ca) and cannot be a client id."}"""
+
+/**
+ * [certificateBoundTo], and more: the device id is not just what the
+ * enrolling party said. Required for everything that opens a device's keys
+ * or files — replacing its E2E or user-auth key over a certificate, its
+ * `token_mtls` files, its host client certificates under a host ACL.
+ *
+ * A device id sent at enrollment is a bare claim: a holder of any token or
+ * code who knows a victim's ANDROID_ID could enroll naming it and, through
+ * [certificateBoundTo], act for that device. Proven means one of:
+ *
+ *  1. the client id IS the device id (open mode, or a token an admin minted
+ *     with the device id as its client id);
+ *  2. the `client_certs` row says `device_uid_proven` (V20): a passing
+ *     Android Key Attestation with the app binding (its challenge is the
+ *     device id), or a token an administrator bound to the device id.
+ *
+ * `identity_devices` rows do not count: they are a vault token of the device
+ * used over the certificate (a bearer secret that may be the very thing that
+ * leaked) or the device's public key sent again (public). They decide what
+ * revocation cuts off, not what a certificate may open.
+ */
+fun certificateProvenFor(
+    certClientId: String,
+    deviceId: String,
+    clientCertStore: com.example.pinvault.server.store.ClientCertStore?
+): Boolean {
+    val record = clientCertStore?.get(certClientId)
+    if (record != null && record.revoked) return false
+    if (certClientId == deviceId) return true
+    return record?.deviceUid == deviceId && record.deviceUidProven
+}

@@ -35,6 +35,9 @@ class ConfigApiManager {
     // Durdurulan API'lerin bilgisini sakla (yeniden başlatma için)
     private val stoppedInstances = ConcurrentHashMap<String, ConfigApiInstance>()
 
+    /** Invalid admin keys per source address, shared with the management listener (ADMIN_AUTH_FAILURE_LIMIT). */
+    var adminFailureLimiter: RateLimiter? = null
+
     /**
      * Config API sunucusu başlatır.
      * @param id benzersiz isim (örn: "tls-8091", "mtls-8092")
@@ -79,6 +82,8 @@ class ConfigApiManager {
                 }
             }
         }) {
+            // First: no plugin or route may see a path that hides a '/' in an escape.
+            install(com.example.pinvault.server.plugin.EncodedPathGuard)
             install(ContentNegotiation) {
                 json(Json {
                     prettyPrint = true
@@ -93,7 +98,16 @@ class ConfigApiManager {
             // only the management server enforced the API key. ApiKeyAuth reuses
             // the same isPublicEndpoint allowlist, so client-facing GET/enroll/
             // report routes stay open and everything else requires X-API-Key.
-            install(ApiKeyAuth)
+            // Admin routes are served here too (with the admin key): the same
+            // refusal of cross-site and form-posted writes as on the management
+            // listener. Device endpoints are not touched.
+            install(com.example.pinvault.server.plugin.AdminBrowserGuard)
+            install(ApiKeyAuth) {
+                // Without admin keys this port serves device endpoints only (anonymous
+                // admin is the management listener's, from its own machine).
+                anonymousAdminListener = false
+                failureLimiter = adminFailureLimiter
+            }
             configModule()
         }
 

@@ -22,7 +22,15 @@ import java.time.Instant
  * threads; outside any admin call the actor is `system`.
  */
 object AuditContext {
-    class Scope(val actor: String, val ip: String) {
+    class Scope(actor: String, val ip: String) {
+        /**
+         * Who the entries of this call are attributed to. Changed once, by the
+         * approval gate, when a requester runs a change another admin approved
+         * ("alice (approved by bob)").
+         */
+        @Volatile
+        var actor: String = actor
+
         /** Set once a specific entry (e.g. a pin diff) was written for this call. */
         @Volatile
         var recorded: Boolean = false

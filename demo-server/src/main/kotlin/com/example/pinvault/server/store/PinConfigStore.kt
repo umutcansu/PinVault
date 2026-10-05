@@ -259,6 +259,12 @@ data class ConnectionEntry(
     val deviceModel: String? = null
 )
 
+/**
+ * Connection history: the dashboard's own checks (`web`) and what devices
+ * report (`android`, `config_update`). Every row carries the Config API it
+ * was reported to (`config_api_id`; the dashboard's checks use ''), and the
+ * table is trimmed per Config API — see [trimEntries].
+ */
 class ConnectionHistoryStore(private val db: DatabaseManager) {
 
     fun addWebCheck(hostname: String = "", timestamp: String, status: String, responseTimeMs: Long, errorMessage: String? = null) {
@@ -273,11 +279,12 @@ class ConnectionHistoryStore(private val db: DatabaseManager) {
                 stmt.setString(5, errorMessage)
                 stmt.executeUpdate()
             }
-            trimEntries(conn)
+            trimEntries(conn, "", status)
         }
     }
 
     fun addClientReport(
+        configApiId: String = "",
         hostname: String = "",
         timestamp: String,
         status: String,
@@ -293,8 +300,8 @@ class ConnectionHistoryStore(private val db: DatabaseManager) {
         db.connection().use { conn ->
             conn.prepareStatement("""
                 INSERT INTO connection_history
-                (source, hostname, timestamp, status, response_time_ms, server_cert_pin, stored_pin, pin_matched, pin_version, device_manufacturer, device_model, error_message)
-                VALUES ('android', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                (source, hostname, timestamp, status, response_time_ms, server_cert_pin, stored_pin, pin_matched, pin_version, device_manufacturer, device_model, error_message, config_api_id)
+                VALUES ('android', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """).use { stmt ->
                 stmt.setString(1, hostname)
                 stmt.setString(2, timestamp)
@@ -307,9 +314,10 @@ class ConnectionHistoryStore(private val db: DatabaseManager) {
                 stmt.setString(9, deviceManufacturer)
                 stmt.setString(10, deviceModel)
                 stmt.setString(11, errorMessage)
+                stmt.setString(12, configApiId)
                 stmt.executeUpdate()
             }
-            trimEntries(conn)
+            trimEntries(conn, configApiId, status)
         }
     }
 
@@ -324,13 +332,14 @@ class ConnectionHistoryStore(private val db: DatabaseManager) {
         pinVersion: Int?,
         deviceManufacturer: String?,
         deviceModel: String?,
-        failureReason: String? = null
+        failureReason: String? = null,
+        configApiId: String = ""
     ) {
         db.connection().use { conn ->
             conn.prepareStatement("""
                 INSERT INTO connection_history
-                (source, hostname, timestamp, status, response_time_ms, pin_version, device_manufacturer, device_model, error_message)
-                VALUES ('config_update', '', ?, ?, 0, ?, ?, ?, ?)
+                (source, hostname, timestamp, status, response_time_ms, pin_version, device_manufacturer, device_model, error_message, config_api_id)
+                VALUES ('config_update', '', ?, ?, 0, ?, ?, ?, ?, ?)
             """).use { stmt ->
                 stmt.setString(1, timestamp)
                 stmt.setString(2, status)
@@ -338,9 +347,10 @@ class ConnectionHistoryStore(private val db: DatabaseManager) {
                 stmt.setString(4, deviceManufacturer)
                 stmt.setString(5, deviceModel)
                 stmt.setString(6, failureReason)
+                stmt.setString(7, configApiId)
                 stmt.executeUpdate()
             }
-            trimEntries(conn)
+            trimEntries(conn, configApiId, status)
         }
     }
 
@@ -393,14 +403,45 @@ class ConnectionHistoryStore(private val db: DatabaseManager) {
         }
     }
 
-    private fun trimEntries(conn: java.sql.Connection) {
-        conn.createStatement().use { stmt ->
-            stmt.executeUpdate("""
-                DELETE FROM connection_history WHERE id NOT IN (
-                    SELECT id FROM connection_history ORDER BY id DESC LIMIT 200
-                )
-            """)
+    /**
+     * Keeps the newest rows of the Config API and kind the new row belongs
+     * to: [MAX_OK_ROWS] healthy ones and, apart from them, [MAX_FAILURE_ROWS]
+     * failures (`pin_mismatch`, `config_update_failed`, a failed check —
+     * every status not in [OK_STATUSES]).
+     *
+     * It used to keep the newest 200 rows of the whole table. Device reports
+     * need no credential, so 200 made-up "healthy" reports pushed every real
+     * `pin_mismatch` — the trace of an interception attempt — out of the
+     * dashboard, for every Config API at once. Healthy noise now only
+     * displaces healthy rows of its own scope.
+     */
+    private fun trimEntries(conn: java.sql.Connection, configApiId: String, status: String) {
+        val ok = status in OK_STATUSES
+        val list = OK_STATUSES.joinToString(",") { "'$it'" }
+        val kind = if (ok) "status IN ($list)" else "status NOT IN ($list)"
+        conn.prepareStatement("""
+            DELETE FROM connection_history WHERE config_api_id = ? AND $kind AND id NOT IN (
+                SELECT id FROM connection_history WHERE config_api_id = ? AND $kind ORDER BY id DESC LIMIT ?
+            )
+        """).use { stmt ->
+            stmt.setString(1, configApiId)
+            stmt.setString(2, configApiId)
+            stmt.setInt(3, if (ok) MAX_OK_ROWS else MAX_FAILURE_ROWS)
+            stmt.executeUpdate()
         }
+    }
+
+    companion object {
+        /** What a device may report for a connection, and for a config update. */
+        val CLIENT_REPORT_STATUSES = setOf("healthy", "pin_mismatch")
+        val CONFIG_UPDATE_STATUSES = setOf("config_updated", "config_unchanged", "config_update_failed")
+
+        /** The statuses that are not a failure; a constant list, safe to put into SQL. */
+        val OK_STATUSES = setOf("healthy", "config_updated", "config_unchanged")
+
+        /** Rows kept per Config API: healthy ones, and — apart from them — failures. */
+        const val MAX_OK_ROWS = 200
+        const val MAX_FAILURE_ROWS = 500
     }
 }
 
@@ -542,7 +583,16 @@ data class ClientDevice(
     val lastSeen: String
 )
 
-class ClientDeviceStore(private val db: DatabaseManager) {
+class ClientDeviceStore(
+    private val db: DatabaseManager,
+    /**
+     * Most rows kept (`CLIENT_DEVICES_MAX`, default 20 000): the least recently
+     * seen go first. Reports need no credential on a TLS listener, so every
+     * made-up device id was a row kept forever.
+     */
+    private val maxRows: Int = (System.getenv("CLIENT_DEVICES_MAX")?.toIntOrNull() ?: 20_000).coerceAtLeast(100)
+) {
+    private val writes = java.util.concurrent.atomic.AtomicLong()
 
     fun upsert(hostname: String, deviceId: String, manufacturer: String?, model: String?, pinVersion: Int, status: String, timestamp: String) {
         db.connection().use { conn ->
@@ -565,7 +615,29 @@ class ClientDeviceStore(private val db: DatabaseManager) {
                 stmt.setString(7, timestamp)
                 stmt.executeUpdate()
             }
+            // Trimmed now and then, not per report: one count per TRIM_EVERY writes.
+            if (writes.incrementAndGet() % TRIM_EVERY == 0L) trim(conn)
         }
+    }
+
+    /** Deletes the least recently seen rows beyond [maxRows]. */
+    internal fun trim() = db.connection().use { trim(it) }
+
+    private fun trim(conn: java.sql.Connection) {
+        conn.prepareStatement(
+            "DELETE FROM client_devices WHERE rowid IN (SELECT rowid FROM client_devices ORDER BY last_seen DESC LIMIT -1 OFFSET ?)"
+        ).use { stmt ->
+            stmt.setInt(1, maxRows)
+            stmt.executeUpdate()
+        }
+    }
+
+    fun count(): Int = db.connection().use { conn ->
+        conn.prepareStatement("SELECT COUNT(*) FROM client_devices").use { it.executeQuery().getInt(1) }
+    }
+
+    private companion object {
+        const val TRIM_EVERY = 50L
     }
 
     fun getByHostname(hostname: String): List<ClientDevice> {
@@ -698,15 +770,29 @@ data class ClientCertRecord(
     /** CSR-enrolled identities: how many times the certificate was renewed. */
     val renewCount: Int = 0,
     /** `csr` — the key lives on the device; `p12` — the server generated it. */
-    val keyType: String = "p12"
+    val keyType: String = "p12",
+    /**
+     * CSR-enrolled identities: what Android Key Attestation said about the
+     * device key at enrollment (`ENROLLMENT_ATTESTATION`); null = not
+     * checked, and always null for a server-made P12 key (nothing to attest).
+     */
+    val attestation: KeyAttestation? = null,
+    /**
+     * Whether [deviceUid] is proven (V20): attested with the app binding, bound
+     * to the token by an administrator, or the client id itself. A claim alone
+     * ties the certificate to the device for reports and X-Device-Id, never for
+     * what opens the device's keys and files (see `certificateProvenFor`).
+     */
+    val deviceUidProven: Boolean = false
 )
 
 class ClientCertStore(private val db: DatabaseManager) {
 
     private companion object {
         /** `client_certs` joined with the CSR identity of the same client id, if any. */
-        const val SELECT = "SELECT c.id, c.common_name, c.fingerprint, c.created_at, c.revoked, c.device_alias, c.device_uid, " +
-            "i.not_after, i.renew_count, i.client_id AS identity_id " +
+        const val SELECT = "SELECT c.id, c.common_name, c.fingerprint, c.created_at, c.revoked, c.device_alias, c.device_uid, c.device_uid_proven, " +
+            "i.not_after, i.renew_count, i.client_id AS identity_id, " +
+            "i.attested, i.attestation_security_level, i.attestation_reason " +
             "FROM client_certs c LEFT JOIN client_identities i ON i.client_id = c.id"
     }
 
@@ -720,8 +806,25 @@ class ClientCertStore(private val db: DatabaseManager) {
         deviceUid = getString("device_uid"),
         notAfter = getString("not_after"),
         renewCount = getInt("renew_count"),
-        keyType = if (getString("identity_id") != null) "csr" else "p12"
+        keyType = if (getString("identity_id") != null) "csr" else "p12",
+        attestation = getInt("attested").takeUnless { wasNull() }?.let {
+            KeyAttestation(it == 1, getString("attestation_security_level"), getString("attestation_reason"))
+        },
+        deviceUidProven = getInt("device_uid_proven") == 1
     )
+
+    /**
+     * The id of the `client_certs` row whose certificate is exactly [fingerprint]
+     * (SHA-256 of the DER, Base64), or null. An uploaded certificate is trusted
+     * under its row id while its subject may name something else.
+     */
+    fun idByFingerprint(fingerprint: String): String? = db.connection().use { conn ->
+        conn.prepareStatement("SELECT id FROM client_certs WHERE fingerprint = ? LIMIT 1").use { stmt ->
+            stmt.setString(1, fingerprint)
+            val rs = stmt.executeQuery()
+            if (rs.next()) rs.getString("id") else null
+        }
+    }
 
     fun add(id: String, commonName: String, fingerprint: String, createdAt: String,
             deviceAlias: String? = null, deviceUid: String? = null) {
@@ -741,15 +844,33 @@ class ClientCertStore(private val db: DatabaseManager) {
     }
 
     /**
+     * [add] for an enrollment: never over a revoked row. False when [id] is
+     * revoked — a revocation that landed after the enrollment's checks stays.
+     */
+    fun addUnlessRevoked(id: String, commonName: String, fingerprint: String, createdAt: String,
+                         deviceAlias: String? = null, deviceUid: String? = null, deviceUidProven: Boolean = false): Boolean =
+        db.connection().use { conn ->
+            conn.prepareStatement(CLIENT_CERT_UPSERT_UNLESS_REVOKED).use { stmt ->
+                bindClientCertUpsert(stmt, id, commonName, fingerprint, createdAt, deviceAlias, deviceUid, deviceUidProven)
+                stmt.executeUpdate() > 0
+            }
+        }
+
+    /**
      * Another active (not revoked) client id that enrolled from [deviceUid],
      * or null. A device id belongs to one active identity at a time: token_mtls
      * and E2E key registration trust this column to tie a certificate to a
      * device, and the device id is whatever the enrolling party sent.
      */
     fun activeHolderOf(deviceUid: String, exceptId: String): String? = db.connection().use { conn ->
-        conn.prepareStatement("SELECT id FROM client_certs WHERE device_uid = ? AND revoked = 0 AND id != ? LIMIT 1").use { stmt ->
+        // An open-mode row from before device_uid was always written has NULL
+        // there and the device id as its client id: it holds the device too.
+        conn.prepareStatement(
+            "SELECT id FROM client_certs WHERE (device_uid = ? OR (device_uid IS NULL AND id = ?)) AND revoked = 0 AND id != ? LIMIT 1"
+        ).use { stmt ->
             stmt.setString(1, deviceUid)
-            stmt.setString(2, exceptId)
+            stmt.setString(2, deviceUid)
+            stmt.setString(3, exceptId)
             val rs = stmt.executeQuery()
             if (rs.next()) rs.getString("id") else null
         }
@@ -811,7 +932,13 @@ data class EnrollmentToken(
      * [EnrollmentTokenStore.validate] applies — a token that is neither used
      * nor usable was otherwise listed as "waiting".
      */
-    val expired: Boolean = false
+    val expired: Boolean = false,
+    /**
+     * The device id (ANDROID_ID) the administrator bound the token to (V20):
+     * only that device can enroll with it, and its device id counts as proven.
+     * Null for a token any device may use.
+     */
+    val deviceUid: String? = null
 )
 
 @kotlinx.serialization.Serializable
@@ -930,7 +1057,14 @@ class EnrollmentTokenStore(private val db: DatabaseManager) {
      * audit M-1: 256 bits from a CSPRNG (was a 48-bit truncated UUID) with an
      * expiry (was valid forever). TTL is ENROLLMENT_TOKEN_TTL_SECONDS (24h default).
      */
-    fun create(clientId: String): String {
+    fun create(
+        clientId: String,
+        /**
+         * The device id an administrator binds the token to (V20): the enrollment
+         * must name it, and the identity's device id then counts as proven.
+         */
+        deviceUid: String? = null
+    ): String {
         val token = java.util.Base64.getUrlEncoder().withoutPadding()
             .encodeToString(ByteArray(32).also(rng::nextBytes))
         val now = java.time.Instant.now()
@@ -938,13 +1072,14 @@ class EnrollmentTokenStore(private val db: DatabaseManager) {
         val expiresAt = now.plusSeconds(ttlSeconds)
         db.connection().use { conn ->
             conn.prepareStatement(
-                "INSERT INTO enrollment_tokens (token, client_id, created_at, expires_at, token_prefix) VALUES (?, ?, ?, ?, ?)"
+                "INSERT INTO enrollment_tokens (token, client_id, created_at, expires_at, token_prefix, device_uid) VALUES (?, ?, ?, ?, ?, ?)"
             ).use { stmt ->
                 stmt.setString(1, hash(token))
                 stmt.setString(2, clientId)
                 stmt.setString(3, now.toString())
                 stmt.setString(4, expiresAt.toString())
                 stmt.setString(5, maskedPrefix(token))
+                stmt.setString(6, deviceUid)
                 stmt.executeUpdate()
             }
         }
@@ -977,6 +1112,15 @@ class EnrollmentTokenStore(private val db: DatabaseManager) {
         }
     }
 
+    /** The device id [token] was bound to when it was minted, or null (see [create]). Read only. */
+    fun boundDeviceUid(token: String): String? = db.connection().use { conn ->
+        conn.prepareStatement("SELECT device_uid FROM enrollment_tokens WHERE token = ?").use { stmt ->
+            stmt.setString(1, hash(token))
+            val rs = stmt.executeQuery()
+            if (rs.next()) rs.getString(1) else null
+        }
+    }
+
     /**
      * Spends [token]: one conditional UPDATE marks it used only if it is
      * still unused, so of two requests racing with the same token exactly one
@@ -1006,7 +1150,7 @@ class EnrollmentTokenStore(private val db: DatabaseManager) {
         db.connection().use { conn ->
             conn.createStatement().use { stmt ->
                 val rs = stmt.executeQuery(
-                    "SELECT token, client_id, created_at, used, token_prefix, expires_at FROM enrollment_tokens ORDER BY created_at DESC"
+                    "SELECT token, client_id, created_at, used, token_prefix, expires_at, device_uid FROM enrollment_tokens ORDER BY created_at DESC"
                 )
                 val now = java.time.Instant.now()
                 val entries = mutableListOf<EnrollmentToken>()
@@ -1026,7 +1170,8 @@ class EnrollmentTokenStore(private val db: DatabaseManager) {
                         // Same rule as validate(): an unparseable or absent
                         // expires_at is treated as "no expiry", never as expired.
                         expired = expiresAt != null &&
-                            runCatching { java.time.Instant.parse(expiresAt).isBefore(now) }.getOrDefault(false)
+                            runCatching { java.time.Instant.parse(expiresAt).isBefore(now) }.getOrDefault(false),
+                        deviceUid = rs.getString("device_uid")
                     ))
                 }
                 return entries

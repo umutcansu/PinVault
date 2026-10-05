@@ -83,7 +83,8 @@ class EnrollmentPolicyTest {
     private fun Route.mountRoutes(
         pendingTtl: Duration = Duration.ofHours(24),
         openMaxPending: Int = 50,
-        openLimiter: com.example.pinvault.server.service.RateLimiter? = null
+        openLimiter: com.example.pinvault.server.service.RateLimiter? = null,
+        limits: com.example.pinvault.server.service.EnrollmentLimits = com.example.pinvault.server.service.EnrollmentLimits()
     ) {
         certificateConfigRoutes(
             scope, PinConfigStore(db), PinConfigHistoryStore(db), ConnectionHistoryStore(db),
@@ -93,7 +94,7 @@ class EnrollmentPolicyTest {
                 scope, policyStore, certService, identityStore, clientCertStore, audit,
                 AuthFailureRecorder(audit, action = "client_cert_enroll_refused", what = "Enrollment with an enrollment code refused"),
                 ttlFor = { Duration.ofDays(90) },
-                pendingTtl = pendingTtl, openMaxPending = openMaxPending, openLimiter = openLimiter
+                pendingTtl = pendingTtl, openMaxPending = openMaxPending, openLimiter = openLimiter, limits = limits
             )
         )
         enrollmentPolicyRoutes(policyStore, clientCertStore, audit, pendingTtl, openMaxPending)
@@ -102,10 +103,11 @@ class EnrollmentPolicyTest {
     private fun ApplicationTestBuilder.configureApp(
         pendingTtl: Duration = Duration.ofHours(24),
         openMaxPending: Int = 50,
-        openLimiter: com.example.pinvault.server.service.RateLimiter? = null
+        openLimiter: com.example.pinvault.server.service.RateLimiter? = null,
+        limits: com.example.pinvault.server.service.EnrollmentLimits = com.example.pinvault.server.service.EnrollmentLimits()
     ) {
         install(ContentNegotiation) { json(Json { encodeDefaults = true; ignoreUnknownKeys = true }) }
-        routing { mountRoutes(pendingTtl, openMaxPending, openLimiter) }
+        routing { mountRoutes(pendingTtl, openMaxPending, openLimiter, limits) }
     }
 
     /** Creates a policy over the management API: (policy id, code). */
@@ -534,12 +536,19 @@ class EnrollmentPolicyTest {
         )
 
     @Test
-    fun `the verification code is the first 40 bits of the key hash in base32`() {
+    fun `the verification code is the first 80 bits of the key hash in base32`() {
         val vc = com.example.pinvault.server.service.VerificationCode
         // Same vectors as the library's VerificationCodeTest: both sides must agree.
-        assertEquals("0XMH-GCGP", vc.ofSpkiSha256("B2kYMhZfDfCB5iZLbIoeW2GaszFr1dWvNKg4Kz97ayY="))
-        assertEquals("0000-0000", vc.ofDigest(ByteArray(32)))
-        assertEquals("ZZZZ-ZZZZ", vc.ofDigest(ByteArray(32) { -1 }))
+        val pinvault = java.security.MessageDigest.getInstance("SHA-256").digest("pinvault".toByteArray())
+        assertEquals("0XMH-GCGP-BW6Z-10F6", vc.ofDigest(pinvault))
+        assertEquals("0XMH-GCGP-BW6Z-10F6", vc.ofSpkiSha256("B2kYMhZfDfCB5iZLbIoeW2GaszFr1dWvNKg4Kz97ayY="))
+        assertEquals("B2kYMhZfDfCB5iZLbIoeW2GaszFr1dWvNKg4Kz97ayY=", Base64.getEncoder().encodeToString(pinvault))
+        assertEquals("0000-0000-0000-0000", vc.ofDigest(ByteArray(32)))
+        assertEquals("ZZZZ-ZZZZ-ZZZZ-ZZZZ", vc.ofDigest(ByteArray(32) { -1 }))
+        // Only the first 10 bytes count; the old 40-bit code is its first half.
+        assertEquals(vc.ofDigest(pinvault), vc.ofDigest(pinvault.copyOf(10)))
+        assertTrue(vc.ofDigest(pinvault).startsWith("0XMH-GCGP-"))
+        assertFailsWith<IllegalArgumentException> { vc.ofDigest(ByteArray(9)) }
     }
 
     @Test
@@ -699,6 +708,31 @@ class EnrollmentPolicyTest {
         assertEquals(HttpStatusCode.OK, applyWithoutCode(deviceKey(), "android-open-mode-2").status)
     }
 
+    @Test
+    fun `an approved request never replaces the key of an identity enrolled under its id since`() = testApplication {
+        configureApp()
+        val (_, code) = createPolicy(name = "late", maxDevices = 5, approval = true)
+        val key = deviceKey()
+        val asked = submit(code, key, uid = "uid-late").json()
+        val requestId = asked["requestId"]!!.jsonPrimitive.content
+        val clientId = asked["clientId"]!!.jsonPrimitive.content
+        assertEquals(HttpStatusCode.OK, decide(requestId, "approve").status)
+
+        // Meanwhile an administrator's token enrolled another device under that id.
+        val other = deviceKey()
+        val token = tokenStore.create(clientId)
+        assertEquals(HttpStatusCode.OK, client.post("/api/v1/client-certs/enroll") {
+            header("X-PinVault-Features", "csr")
+            contentType(ContentType.Application.Json)
+            setBody(buildJsonObject { put("token", token); put("csr", csr(other)) }.toString())
+        }.status)
+
+        val picked = pickup(requestId, key)
+        assertEquals(HttpStatusCode.Conflict, picked.status, picked.bodyAsText())
+        assertEquals("identity_already_enrolled", picked.json()["error"]!!.jsonPrimitive.content)
+        assertEquals(certService.spkiSha256(other.public), identityStore.get(clientId)!!.spkiSha256, "the enrolled key stays")
+    }
+
     // ── races ────────────────────────────────────────────────────────────
 
     @Test
@@ -735,5 +769,37 @@ class EnrollmentPolicyTest {
         } finally {
             server.stop(100, 1000)
         }
+    }
+    // ── D-A2 / D-A6: work a device can make the server do, bounded ───────
+
+    @Test
+    fun `the same key asking again with a code gets its certificate back, also after the code was stopped`() = testApplication {
+        configureApp()
+        val (policyId, code) = createPolicy(approval = false)
+        val key = deviceKey()
+        val first = submit(code, key, uid = "android-again")
+        assertEquals(HttpStatusCode.OK, first.status)
+        val serial = first.json()["serial"]!!.jsonPrimitive.content
+        assertEquals(serial, submit(code, key, uid = "android-again").json()["serial"]!!.jsonPrimitive.content, "no new signature")
+        assertEquals(HttpStatusCode.OK, client.post("/api/v1/enrollment-policies/$policyId/stop").status)
+        val afterStop = submit(code, key, uid = "android-again")
+        assertEquals(HttpStatusCode.OK, afterStop.status)
+        assertEquals(serial, afterStop.json()["serial"]!!.jsonPrimitive.content)
+        assertEquals(1, auditStore.page(100, 0).count { it.action == "client_cert_issued" })
+    }
+
+    @Test
+    fun `a waiting device asking in a loop is told to slow down`() = testApplication {
+        val limits = com.example.pinvault.server.service.EnrollmentLimits(
+            issuance = null, keyReplacements = null, pickupsPerSource = null,
+            pickupsPerRequest = com.example.pinvault.server.service.RateLimiter(maxAttempts = 3, windowMs = 60_000))
+        configureApp(limits = limits)
+        val (_, code) = createPolicy(approval = true)
+        val key = deviceKey()
+        val requestId = submit(code, key, uid = "android-loop").json()["requestId"]!!.jsonPrimitive.content
+        repeat(3) { assertEquals(HttpStatusCode.Accepted, pickup(requestId, key).status) }
+        val limited = pickup(requestId, key)
+        assertEquals(HttpStatusCode.TooManyRequests, limited.status)
+        assertEquals("15", limited.headers[HttpHeaders.RetryAfter])
     }
 }

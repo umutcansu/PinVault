@@ -26,7 +26,9 @@ import java.time.Instant
 fun Route.adminVaultRoutes(
     db: DatabaseManager,
     deviceHostAclStore: DeviceHostAclStore,
-    configApiRegistry: ConfigApiRegistry = ConfigApiRegistry(db)
+    configApiRegistry: ConfigApiRegistry = ConfigApiRegistry(db),
+    /** Where the vault switch and host ACL changes are recorded; null = nowhere. */
+    audit: com.example.pinvault.server.service.AuditLog? = null
 ) {
 
     // ── Config API: vault_enabled toggle ────────────────────────────
@@ -45,22 +47,27 @@ fun Route.adminVaultRoutes(
      * including the default one it mounts directly.
      */
     put("/api/v1/config-apis/{id}/vault-enabled") {
-        val id = call.parameters["id"]
+        val id = call.pathParameters["id"]
             ?: return@put call.respond(HttpStatusCode.BadRequest, mapOf("error" to "Missing id"))
         val body = call.receive<JsonObject>()
         val enabled = body["enabled"]?.jsonPrimitive?.booleanOrNull
             ?: return@put call.respond(HttpStatusCode.BadRequest,
                 mapOf("error" to "'enabled' boolean required"))
 
+        val before = configApiRegistry.vaultEnabledOrNull(id)
         if (!configApiRegistry.setVaultEnabled(id, enabled)) {
             return@put call.respond(HttpStatusCode.NotFound,
                 mapOf("error" to "Config API '$id' not found"))
+        }
+        if (before != enabled) {
+            audit?.record("vault_enabled_changed", "Vault downloads turned ${if (enabled) "ON" else "OFF"} for Config API $id",
+                id, detail = buildJsonObject { put("enabled", enabled) })
         }
         call.respond(HttpStatusCode.OK, mapOf("id" to id, "vault_enabled" to enabled.toString()))
     }
 
     get("/api/v1/config-apis/{id}/vault-enabled") {
-        val id = call.parameters["id"]
+        val id = call.pathParameters["id"]
             ?: return@get call.respond(HttpStatusCode.BadRequest, mapOf("error" to "Missing id"))
         val enabled = configApiRegistry.vaultEnabledOrNull(id)
             ?: return@get call.respond(HttpStatusCode.NotFound,
@@ -76,9 +83,9 @@ fun Route.adminVaultRoutes(
      * concept; use /acl/effective to see the union.
      */
     get("/api/v1/config-apis/{configApiId}/devices/{deviceId}/host-acl") {
-        val configApiId = call.parameters["configApiId"] ?: return@get call.respond(
+        val configApiId = call.pathParameters["configApiId"] ?: return@get call.respond(
             HttpStatusCode.BadRequest, mapOf("error" to "Missing configApiId"))
-        val deviceId = call.parameters["deviceId"] ?: return@get call.respond(
+        val deviceId = call.pathParameters["deviceId"] ?: return@get call.respond(
             HttpStatusCode.BadRequest, mapOf("error" to "Missing deviceId"))
         call.respond(deviceHostAclStore.listForDevice(configApiId, deviceId))
     }
@@ -90,9 +97,9 @@ fun Route.adminVaultRoutes(
      * Body: {"hostnames": ["a.com", "b.com"]}
      */
     put("/api/v1/config-apis/{configApiId}/devices/{deviceId}/host-acl") {
-        val configApiId = call.parameters["configApiId"] ?: return@put call.respond(
+        val configApiId = call.pathParameters["configApiId"] ?: return@put call.respond(
             HttpStatusCode.BadRequest, mapOf("error" to "Missing configApiId"))
-        val deviceId = call.parameters["deviceId"] ?: return@put call.respond(
+        val deviceId = call.pathParameters["deviceId"] ?: return@put call.respond(
             HttpStatusCode.BadRequest, mapOf("error" to "Missing deviceId"))
         val body = call.receive<JsonObject>()
         val desired = body["hostnames"]?.jsonArray?.mapNotNull { it.jsonPrimitive.contentOrNull }?.toSet()
@@ -105,6 +112,19 @@ fun Route.adminVaultRoutes(
         val toRemove = current - desired
         toAdd.forEach { deviceHostAclStore.grant(configApiId, deviceId, it, now) }
         toRemove.forEach { deviceHostAclStore.revoke(configApiId, deviceId, it) }
+        if (toAdd.isNotEmpty() || toRemove.isNotEmpty()) {
+            audit?.record(
+                "host_acl_changed",
+                "Hosts device $deviceId may reach: +${toAdd.size} −${toRemove.size}" +
+                    (if (toAdd.isNotEmpty()) " (added ${toAdd.sorted().take(10).joinToString()})" else "") +
+                    (if (toRemove.isNotEmpty()) " (removed ${toRemove.sorted().take(10).joinToString()})" else ""),
+                configApiId, deviceId,
+                detail = buildJsonObject {
+                    putJsonArray("added") { toAdd.sorted().forEach { add(it) } }
+                    putJsonArray("removed") { toRemove.sorted().forEach { add(it) } }
+                }
+            )
+        }
         call.respond(HttpStatusCode.OK, mapOf(
             "configApiId" to configApiId,
             "deviceId" to deviceId,
@@ -116,9 +136,9 @@ fun Route.adminVaultRoutes(
 
     /** Effective ACL: per-device ACL ∪ default ACL. Read-only diagnostic. */
     get("/api/v1/config-apis/{configApiId}/devices/{deviceId}/host-acl/effective") {
-        val configApiId = call.parameters["configApiId"] ?: return@get call.respond(
+        val configApiId = call.pathParameters["configApiId"] ?: return@get call.respond(
             HttpStatusCode.BadRequest, mapOf("error" to "Missing configApiId"))
-        val deviceId = call.parameters["deviceId"] ?: return@get call.respond(
+        val deviceId = call.pathParameters["deviceId"] ?: return@get call.respond(
             HttpStatusCode.BadRequest, mapOf("error" to "Missing deviceId"))
         call.respond(deviceHostAclStore.getAllowed(configApiId, deviceId))
     }
@@ -126,14 +146,14 @@ fun Route.adminVaultRoutes(
     // ── Default host ACL (per Config API) ───────────────────────────
 
     get("/api/v1/config-apis/{configApiId}/default-host-acl") {
-        val configApiId = call.parameters["configApiId"] ?: return@get call.respond(
+        val configApiId = call.pathParameters["configApiId"] ?: return@get call.respond(
             HttpStatusCode.BadRequest, mapOf("error" to "Missing configApiId"))
         call.respond(deviceHostAclStore.listDefault(configApiId))
     }
 
     /** Body: {"hostnames": ["a.com", …]} — replaces the default set. */
     put("/api/v1/config-apis/{configApiId}/default-host-acl") {
-        val configApiId = call.parameters["configApiId"] ?: return@put call.respond(
+        val configApiId = call.pathParameters["configApiId"] ?: return@put call.respond(
             HttpStatusCode.BadRequest, mapOf("error" to "Missing configApiId"))
         val body = call.receive<JsonObject>()
         val desired = body["hostnames"]?.jsonArray?.mapNotNull { it.jsonPrimitive.contentOrNull }?.toSet()
@@ -145,6 +165,19 @@ fun Route.adminVaultRoutes(
         val toRemove = current - desired
         toAdd.forEach { deviceHostAclStore.addDefault(configApiId, it) }
         toRemove.forEach { deviceHostAclStore.removeDefault(configApiId, it) }
+        if (toAdd.isNotEmpty() || toRemove.isNotEmpty()) {
+            audit?.record(
+                "host_acl_changed",
+                "Default hosts every device may reach: +${toAdd.size} −${toRemove.size}" +
+                    (if (toAdd.isNotEmpty()) " (added ${toAdd.sorted().take(10).joinToString()})" else "") +
+                    (if (toRemove.isNotEmpty()) " (removed ${toRemove.sorted().take(10).joinToString()})" else ""),
+                configApiId, "default",
+                detail = buildJsonObject {
+                    putJsonArray("added") { toAdd.sorted().forEach { add(it) } }
+                    putJsonArray("removed") { toRemove.sorted().forEach { add(it) } }
+                }
+            )
+        }
         call.respond(HttpStatusCode.OK, mapOf(
             "configApiId" to configApiId,
             "hostnames" to deviceHostAclStore.listDefault(configApiId).joinToString(","),

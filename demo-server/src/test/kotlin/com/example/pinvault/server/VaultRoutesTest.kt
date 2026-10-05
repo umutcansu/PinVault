@@ -1,5 +1,6 @@
 package com.example.pinvault.server
 
+import com.example.pinvault.server.route.scopedVaultAdminRoutes
 import com.example.pinvault.server.route.vaultRoutes
 import com.example.pinvault.server.service.VaultAccessTokenService
 import com.example.pinvault.server.service.VaultEncryptionService
@@ -62,6 +63,8 @@ class VaultRoutesTest {
     private fun ApplicationTestBuilder.configureApp() {
         install(ContentNegotiation) { json(Json { ignoreUnknownKeys = true }) }
         routing {
+            // Vault administration is served by the management listener only.
+            scopedVaultAdminRoutes(vaultFileStore, distStore, tokenStore, tokenService, publicKeyStore = publicKeyStore)
             vaultRoutes(testApi, vaultFileStore, distStore, tokenStore,
                 publicKeyStore, tokenService, encryptionService)
         }
@@ -69,7 +72,7 @@ class VaultRoutesTest {
 
     /** Uploads a file with access_policy=public so GET needs no token. */
     private suspend fun io.ktor.client.HttpClient.putPublic(key: String, content: ByteArray) {
-        put("/api/v1/vault/$key?policy=public") {
+        put("/api/v1/config-apis/$testApi/vault/$key?policy=public") {
             setBody(content); contentType(ContentType.Application.OctetStream)
         }
     }
@@ -79,7 +82,7 @@ class VaultRoutesTest {
         configureApp()
         val content = "hello vault world".toByteArray()
 
-        val putResponse = client.put("/api/v1/vault/test-file?policy=public") {
+        val putResponse = client.put("/api/v1/config-apis/$testApi/vault/test-file?policy=public") {
             setBody(content)
             contentType(ContentType.Application.OctetStream)
         }
@@ -92,10 +95,11 @@ class VaultRoutesTest {
     }
 
     @Test
-    fun `GET nonexistent file returns 404`() = testApplication {
+    fun `GET nonexistent file answers a stranger like a protected file, never 404`() = testApplication {
         configureApp()
+        // 404 would tell anyone which file names exist; see VaultMissingFileTest for who is told.
         val response = client.get("/api/v1/vault/nonexistent")
-        assertEquals(HttpStatusCode.NotFound, response.status)
+        assertEquals(HttpStatusCode.Unauthorized, response.status)
     }
 
     @Test
@@ -169,7 +173,7 @@ class VaultRoutesTest {
         val v3 = """{"feature":"on","rollout":100}""".toByteArray()
 
         // ── PUT v1
-        val putV1 = client.put("/api/v1/vault/$key?policy=public") {
+        val putV1 = client.put("/api/v1/config-apis/$testApi/vault/$key?policy=public") {
             setBody(v1); contentType(ContentType.Application.OctetStream)
         }
         assertEquals(HttpStatusCode.OK, putV1.status)
@@ -182,7 +186,7 @@ class VaultRoutesTest {
         assertContentEquals(v1, getV1.readRawBytes())
 
         // ── PUT v2 (new content, increments version)
-        val putV2 = client.put("/api/v1/vault/$key?policy=public") {
+        val putV2 = client.put("/api/v1/config-apis/$testApi/vault/$key?policy=public") {
             setBody(v2); contentType(ContentType.Application.OctetStream)
         }
         assertEquals(HttpStatusCode.OK, putV2.status)
@@ -196,7 +200,7 @@ class VaultRoutesTest {
         assertContentEquals(v2, reFetchFromV1.readRawBytes())
 
         // ── PUT v3
-        val putV3 = client.put("/api/v1/vault/$key?policy=public") {
+        val putV3 = client.put("/api/v1/config-apis/$testApi/vault/$key?policy=public") {
             setBody(v3); contentType(ContentType.Application.OctetStream)
         }
         assertEquals(HttpStatusCode.OK, putV3.status)
@@ -215,7 +219,7 @@ class VaultRoutesTest {
         assertContentEquals(v3, skipClient.readRawBytes())
 
         // Uploading identical content still bumps version (no content-dedup by design)
-        val putV3Again = client.put("/api/v1/vault/$key?policy=public") {
+        val putV3Again = client.put("/api/v1/config-apis/$testApi/vault/$key?policy=public") {
             setBody(v3); contentType(ContentType.Application.OctetStream)
         }
         assertEquals(HttpStatusCode.OK, putV3Again.status)
@@ -305,7 +309,7 @@ class VaultRoutesTest {
             setBody("""{"key":"file-b","version":2,"deviceId":"d2","status":"cached"}""")
         }
 
-        val response = client.get("/api/v1/vault/distributions")
+        val response = client.get("/api/v1/config-apis/$testApi/vault/distributions")
         assertEquals(HttpStatusCode.OK, response.status)
         val body = response.bodyAsText()
         assertTrue(body.contains("file-a"))
@@ -325,7 +329,7 @@ class VaultRoutesTest {
             setBody("""{"key":"other","version":1,"deviceId":"d2","status":"downloaded"}""")
         }
 
-        val response = client.get("/api/v1/vault/distributions/target")
+        val response = client.get("/api/v1/config-apis/$testApi/vault/distributions/target")
         assertEquals(HttpStatusCode.OK, response.status)
         val body = response.bodyAsText()
         assertTrue(body.contains("target"))
@@ -345,7 +349,7 @@ class VaultRoutesTest {
             setBody("""{"key":"f2","version":1,"deviceId":"d2","status":"failed"}""")
         }
 
-        val response = client.get("/api/v1/vault/stats")
+        val response = client.get("/api/v1/config-apis/$testApi/vault/stats")
         assertEquals(HttpStatusCode.OK, response.status)
         val body = response.bodyAsText()
         assertTrue(body.contains("\"totalDistributions\":2"))

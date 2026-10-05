@@ -111,7 +111,7 @@ class ConfigApiRegistry(private val db: DatabaseManager) {
                     buildList { while (rs.next()) add(rs.getString(1)) }
                 }
                 val cancelled = conn.prepareStatement(
-                    "SELECT id FROM change_requests WHERE config_api_id = ? AND status = 'pending' AND id <> ?"
+                    "SELECT id FROM change_requests WHERE config_api_id = ? AND status IN ('pending', 'approved') AND id <> ?"
                 ).use { stmt ->
                     stmt.setString(1, id)
                     stmt.setLong(2, keepChangeRequest ?: -1)
@@ -121,7 +121,7 @@ class ConfigApiRegistry(private val db: DatabaseManager) {
                 for (cr in cancelled) {
                     conn.prepareStatement(
                         "UPDATE change_requests SET status = 'rejected', decided_by = 'system', decided_at = ?, " +
-                            "reason = 'Config API deleted', body = NULL WHERE id = ? AND status = 'pending'"
+                            "reason = 'Config API deleted', body = NULL, prepared = NULL WHERE id = ? AND status IN ('pending', 'approved')"
                     ).use { stmt ->
                         stmt.setString(1, java.time.Instant.now().toString())
                         stmt.setLong(2, cr)
@@ -163,7 +163,7 @@ class ConfigApiRegistry(private val db: DatabaseManager) {
         val SCOPED_TABLES = listOf(
             "pin_config", "pin_hashes", "pin_history", "hosts", "host_client_certs",
             "vault_files", "vault_file_tokens", "vault_distributions", "device_public_keys",
-            "device_host_acl", "default_host_acl", "connection_history", "client_identities"
+            "device_user_auth_keys", "device_host_acl", "default_host_acl", "connection_history", "client_identities"
         )
     }
 }

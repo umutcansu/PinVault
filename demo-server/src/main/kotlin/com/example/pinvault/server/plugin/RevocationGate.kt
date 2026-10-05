@@ -23,6 +23,10 @@ import io.ktor.server.response.respondText
  *
  * A forgotten identity has no row left to be revoked in, and its client id may
  * enroll again: its certificates are refused by their key instead.
+ *
+ * And the certificate must be the one on record for the id its CN names
+ * ([RevocationGateConfig.isOnRecord]); anything else — a leaf some other
+ * trusted key signed with this id in it — gets the same answer.
  */
 class RevocationGateConfig {
     /** Whether the identity named by a certificate's client id was revoked. */
@@ -31,6 +35,14 @@ class RevocationGateConfig {
     /** Whether the certificate's key was retired when its identity was forgotten. */
     var isRetiredKey: (certificate: java.security.cert.X509Certificate) -> Boolean = { false }
 
+    /**
+     * Whether the presented certificate is the one on record for the client
+     * id its CN names ([com.example.pinvault.server.route.presentedLeafOnRecord]):
+     * a leaf over the identity's key, or exactly the stored certificate.
+     * Default: every certificate (tests that only look at revocation).
+     */
+    var isOnRecord: (clientId: String, certificate: java.security.cert.X509Certificate) -> Boolean = { _, _ -> true }
+
     /** Records refusals without flooding the audit log; null = not recorded. */
     var refusals: AuthFailureRecorder? = null
 }
@@ -38,13 +50,21 @@ class RevocationGateConfig {
 val RevocationGate = createApplicationPlugin(name = "RevocationGate", ::RevocationGateConfig) {
     val isRevoked = pluginConfig.isRevoked
     val isRetiredKey = pluginConfig.isRetiredKey
+    val isOnRecord = pluginConfig.isOnRecord
     val refusals = pluginConfig.refusals
 
     onCall { call ->
         val clientId = call.clientCertId() ?: return@onCall
+        val certificate = call.clientCertificate()
         val reason = when {
             isRevoked(clientId) -> "revoked"
-            call.clientCertificate()?.let(isRetiredKey) == true -> "key retired (identity forgotten)"
+            certificate?.let(isRetiredKey) == true -> "key retired (identity forgotten or replaced)"
+            // The truststore may still hold per-certificate anchors (self-signed
+            // P12s from before they came from the client CA, uploaded
+            // certificates). JSSE does not check an anchor's CA flag, so the
+            // holder of one can sign a leaf naming ANY client id: the CN is
+            // believed only for the certificate on record for that id.
+            certificate != null && !isOnRecord(clientId, certificate) -> "certificate not on record for $clientId"
             else -> return@onCall
         }
         refusals?.report(call.request.origin.remoteAddress, call.request.httpMethod.value, call.request.path(),

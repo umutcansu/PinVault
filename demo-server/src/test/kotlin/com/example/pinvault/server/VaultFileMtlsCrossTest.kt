@@ -1,5 +1,6 @@
 package com.example.pinvault.server
 
+import com.example.pinvault.server.route.scopedVaultAdminRoutes
 import com.example.pinvault.server.route.vaultRoutes
 import com.example.pinvault.server.service.VaultAccessTokenService
 import com.example.pinvault.server.service.VaultEncryptionService
@@ -73,6 +74,8 @@ class VaultFileMtlsCrossTest {
     private fun ApplicationTestBuilder.configureApp() {
         install(ContentNegotiation) { json(Json { ignoreUnknownKeys = true }) }
         routing {
+            // Vault administration is served by the management listener only.
+            scopedVaultAdminRoutes(vaultFileStore, distStore, tokenStore, tokenService, publicKeyStore = publicKeyStore)
             vaultRoutes(testApi, vaultFileStore, distStore, tokenStore,
                 publicKeyStore, tokenService, encryptionService)
         }
@@ -86,7 +89,7 @@ class VaultFileMtlsCrossTest {
         val secretConfig = """{"api_key":"encrypted-value","tier":"premium"}"""
 
         // Web admin uploads sensitive config
-        client.put("/api/v1/vault/premium-config?policy=public") {
+        client.put("/api/v1/config-apis/$testApi/vault/premium-config?policy=public") {
             setBody(secretConfig.toByteArray())
             contentType(ContentType.Application.OctetStream)
         }
@@ -115,7 +118,7 @@ class VaultFileMtlsCrossTest {
     fun `multiple mtls clients with different labels download same file`() = testApplication {
         configureApp()
 
-        client.put("/api/v1/vault/shared-secret?policy=public") {
+        client.put("/api/v1/config-apis/$testApi/vault/shared-secret?policy=public") {
             setBody("shared-data".toByteArray())
             contentType(ContentType.Application.OctetStream)
         }
@@ -157,7 +160,7 @@ class VaultFileMtlsCrossTest {
         configureApp()
 
         // v1
-        client.put("/api/v1/vault/rotating-key?policy=public") {
+        client.put("/api/v1/config-apis/$testApi/vault/rotating-key?policy=public") {
             setBody("key-v1".toByteArray())
             contentType(ContentType.Application.OctetStream)
         }
@@ -168,7 +171,7 @@ class VaultFileMtlsCrossTest {
         assertEquals("key-v1", r1.bodyAsText())
 
         // Web rotates to v2
-        client.put("/api/v1/vault/rotating-key?policy=public") {
+        client.put("/api/v1/config-apis/$testApi/vault/rotating-key?policy=public") {
             setBody("key-v2".toByteArray())
             contentType(ContentType.Application.OctetStream)
         }
@@ -189,7 +192,7 @@ class VaultFileMtlsCrossTest {
     fun `failed mtls download tracked separately from successful`() = testApplication {
         configureApp()
 
-        client.put("/api/v1/vault/mtls-only-config?policy=public") {
+        client.put("/api/v1/config-apis/$testApi/vault/mtls-only-config?policy=public") {
             setBody("restricted".toByteArray())
             contentType(ContentType.Application.OctetStream)
         }

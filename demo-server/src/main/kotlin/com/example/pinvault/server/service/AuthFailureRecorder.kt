@@ -53,6 +53,21 @@ class AuthFailureRecorder(
         }
     }
 
+    /**
+     * Counts a failure the caller has already written on its own elsewhere
+     * (or chose not to): it only joins the summary of the current minute.
+     */
+    @Synchronized
+    fun count(remoteAddress: String) {
+        val now = System.currentTimeMillis()
+        if (now - windowStart >= windowMs) {
+            flushLocked()
+            windowStart = now
+        }
+        suppressed++
+        if (sources.size < MAX_SOURCES) sources += remoteAddress else if (remoteAddress !in sources) moreSources = true
+    }
+
     @Synchronized
     fun flush() = flushLocked()
 

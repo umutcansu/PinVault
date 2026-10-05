@@ -1,5 +1,6 @@
 package com.example.pinvault.server
 
+import com.example.pinvault.server.route.scopedVaultAdminRoutes
 import com.example.pinvault.server.route.vaultRoutes
 import com.example.pinvault.server.service.VaultAccessTokenService
 import com.example.pinvault.server.service.VaultEncryptionService
@@ -67,6 +68,8 @@ class VaultRoutesAccessPolicyTest {
     private fun ApplicationTestBuilder.configureApp(apiKey: String? = testAdminKey) {
         install(ContentNegotiation) { json(Json { ignoreUnknownKeys = true }) }
         routing {
+            // Vault administration is served by the management listener only.
+            scopedVaultAdminRoutes(vaultFileStore, distStore, tokenStore, tokenService, publicKeyStore = publicKeyStore)
             vaultRoutes(testApi, vaultFileStore, distStore, tokenStore,
                 publicKeyStore, tokenService, encryptionService,
                 apiKeyProvider = { apiKey })
@@ -74,7 +77,7 @@ class VaultRoutesAccessPolicyTest {
     }
 
     private suspend fun io.ktor.client.HttpClient.uploadWithPolicy(key: String, content: String, policy: String) {
-        put("/api/v1/vault/$key?policy=$policy") {
+        put("/api/v1/config-apis/$testApi/vault/$key?policy=$policy") {
             setBody(content.toByteArray())
             contentType(ContentType.Application.OctetStream)
         }
@@ -239,7 +242,7 @@ class VaultRoutesAccessPolicyTest {
         assertEquals(HttpStatusCode.Unauthorized, denied.status)
 
         // Admin relaxes to public
-        val put = client.put("/api/v1/vault/switch-file/policy") {
+        val put = client.put("/api/v1/config-apis/$testApi/vault/switch-file/policy") {
             contentType(ContentType.Application.Json)
             setBody("""{"access_policy":"public","encryption":"plain"}""")
         }
@@ -248,6 +251,36 @@ class VaultRoutesAccessPolicyTest {
         // Now open
         val ok = client.get("/api/v1/vault/switch-file")
         assertEquals(HttpStatusCode.OK, ok.status)
+    }
+
+    @Test
+    fun `changing a file's encryption or policy bumps its version so devices fetch it again`() = testApplication {
+        configureApp()
+        client.uploadWithPolicy("sealed", "seed phrase", "public")
+        val first = client.get("/api/v1/vault/sealed")
+        assertEquals("1", first.headers["X-Vault-Version"])
+        assertEquals("plain", first.headers["X-Vault-Encryption"])
+        // A device holding v1 is up to date.
+        assertEquals(HttpStatusCode.NotModified, client.get("/api/v1/vault/sealed?version=1").status)
+
+        // Sealed to each device's key from now on: the plain copy devices hold
+        // must be replaced, so v1 is no longer current.
+        suspend fun setPolicy(policy: String, encryption: String) = assertEquals(HttpStatusCode.OK, client.put("/api/v1/config-apis/$testApi/vault/sealed/policy") {
+            contentType(ContentType.Application.Json)
+            setBody("""{"access_policy":"$policy","encryption":"$encryption"}""")
+        }.status)
+        setPolicy("public", "end_to_end")
+        val sealed = client.get("/api/v1/vault/sealed?version=1") { header("X-Device-Id", "dev-without-key") }
+        assertEquals(HttpStatusCode.PreconditionFailed, sealed.status, "re-fetched in the new form (this device has no key)")
+        assertEquals(2, vaultFileStore.get(testApi, "sealed")!!.version)
+
+        // The same values again change nothing.
+        setPolicy("public", "end_to_end")
+        assertEquals(2, vaultFileStore.get(testApi, "sealed")!!.version)
+        // A policy change alone bumps it too.
+        setPolicy("token", "end_to_end")
+        assertEquals(3, vaultFileStore.get(testApi, "sealed")!!.version)
+        assertContentEquals("seed phrase".toByteArray(), vaultFileStore.get(testApi, "sealed")!!.content, "content unchanged")
     }
 
     // ── Scenario 6: api_key policy ─────────────────────────────────────
@@ -303,7 +336,7 @@ class VaultRoutesAccessPolicyTest {
     fun `upload rejects keys that collide with admin route segments`() = testApplication {
         configureApp()
         for (reserved in listOf("distributions", "stats", "devices", "report", "tokens")) {
-            val put = client.put("/api/v1/vault/$reserved?policy=public") {
+            val put = client.put("/api/v1/config-apis/$testApi/vault/$reserved?policy=public") {
                 setBody("x".toByteArray())
                 contentType(ContentType.Application.OctetStream)
             }
@@ -388,6 +421,8 @@ class VaultRoutesAccessPolicyTest {
             })
         }
         routing {
+            // Vault administration is served by the management listener only.
+            scopedVaultAdminRoutes(vaultFileStore, distStore, tokenStore, tokenService, publicKeyStore = publicKeyStore)
             vaultRoutes(testApi, vaultFileStore, distStore, tokenStore,
                 publicKeyStore, tokenService, encryptionService,
                 clientCertStore = clientCertStore,
@@ -430,10 +465,11 @@ class VaultRoutesAccessPolicyTest {
     @Test
     fun `token_mtls accepts a token-enrolled cert bound to the device at enrollment`() = testApplication {
         // Token enrollment: the client id is admin-chosen and never equals an
-        // ANDROID_ID, so the binding comes from client_certs.device_uid.
+        // ANDROID_ID, so the binding comes from client_certs.device_uid — proven
+        // (V20: the token was bound to the device, or the key attested).
         val certStore = com.example.pinvault.server.store.ClientCertStore(db)
-        certStore.add("qa-laptop", "PinVault Client: qa-laptop", "fp", "2026-01-01T00:00:00Z",
-            deviceAlias = "QA", deviceUid = "androidid-42")
+        certStore.addUnlessRevoked("qa-laptop", "PinVault Client: qa-laptop", "fp", "2026-01-01T00:00:00Z",
+            deviceAlias = "QA", deviceUid = "androidid-42", deviceUidProven = true)
 
         configureAppWithClientCert(cn = "PinVault Client: qa-laptop", clientCertStore = certStore)
         client.uploadWithPolicy("mtls-bound", "top-secret", "token_mtls")
@@ -444,6 +480,21 @@ class VaultRoutesAccessPolicyTest {
             header("X-Vault-Token", gen.plaintext)
         }
         assertEquals(HttpStatusCode.OK, response.status)
+    }
+
+    @Test
+    fun `token_mtls refuses a certificate that only claims the device, even with the device token`() = testApplication {
+        // A leaked device token plus any certificate whose enrollment named the device.
+        val certStore = com.example.pinvault.server.store.ClientCertStore(db)
+        certStore.add("claimer", "PinVault Client: claimer", "fp", "2026-01-01T00:00:00Z", deviceUid = "androidid-43")
+        configureAppWithClientCert(cn = "PinVault Client: claimer", clientCertStore = certStore)
+        client.uploadWithPolicy("mtls-claimed", "top-secret", "token_mtls")
+        val gen = tokenService.generate(testApi, "mtls-claimed", "androidid-43")
+        val response = client.get("/api/v1/vault/mtls-claimed") {
+            header("X-Device-Id", "androidid-43")
+            header("X-Vault-Token", gen.plaintext)
+        }
+        assertEquals(HttpStatusCode.Unauthorized, response.status)
     }
 
     @Test

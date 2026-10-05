@@ -47,7 +47,7 @@ class VaultDistributionStore(private val db: DatabaseManager) {
                 stmt.setString(12, authMethod)
                 stmt.executeUpdate()
             }
-            trimEntries(conn)
+            trimEntries(conn, configApiId, status)
         }
     }
 
@@ -118,14 +118,39 @@ class VaultDistributionStore(private val db: DatabaseManager) {
         }
     }
 
-    private fun trimEntries(conn: java.sql.Connection) {
-        conn.createStatement().use { stmt ->
-            stmt.executeUpdate("""
-                DELETE FROM vault_distributions WHERE id NOT IN (
-                    SELECT id FROM vault_distributions ORDER BY id DESC LIMIT 500
-                )
-            """)
+    /**
+     * Keeps the newest rows of the scope and kind the new row belongs to:
+     * [MAX_OK_ROWS] successful ones (`downloaded`, `cached`) and
+     * [MAX_FAILED_ROWS] failures per Config API.
+     *
+     * It used to keep the newest 500 rows of the whole table. Reports need no
+     * credential, so 500 made-up "downloaded" reports sent to one scope wiped
+     * the history of every scope — failures included. Now a flood only pushes
+     * out rows of its own scope and its own kind.
+     */
+    private fun trimEntries(conn: java.sql.Connection, configApiId: String, status: String) {
+        val failed = status == STATUS_FAILED
+        val kind = if (failed) "status = '$STATUS_FAILED'" else "status <> '$STATUS_FAILED'"
+        conn.prepareStatement("""
+            DELETE FROM vault_distributions WHERE config_api_id = ? AND $kind AND id NOT IN (
+                SELECT id FROM vault_distributions WHERE config_api_id = ? AND $kind ORDER BY id DESC LIMIT ?
+            )
+        """).use { stmt ->
+            stmt.setString(1, configApiId)
+            stmt.setString(2, configApiId)
+            stmt.setInt(3, if (failed) MAX_FAILED_ROWS else MAX_OK_ROWS)
+            stmt.executeUpdate()
         }
+    }
+
+    companion object {
+        /** The statuses a device may report (`POST /api/v1/vault/report`). */
+        val REPORT_STATUSES = setOf("downloaded", "cached", "failed")
+        const val STATUS_FAILED = "failed"
+
+        /** Rows kept per Config API: successful downloads, and — apart from them — failures. */
+        const val MAX_OK_ROWS = 500
+        const val MAX_FAILED_ROWS = 1000
     }
 
     private fun java.sql.ResultSet.toDistribution() = VaultDistribution(

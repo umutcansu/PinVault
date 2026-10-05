@@ -1,8 +1,23 @@
+# Before the first start:
+#   1. Secrets. The server refuses to start without KEYSTORE_PASSWORD,
+#      VAULT_AT_REST_PASSWORD and SIGNING_KEY_PASSWORD (and API_KEY or
+#      ADMIN_KEYS). Put them in a .env file next to this one, e.g.
+#        API_KEY=$(openssl rand -hex 24)
+#      or, for a throw-away local run only, ALLOW_DEMO_SECRETS=true.
+#   2. Data directories. The server runs as uid 10001, not root, and must be
+#      able to write its volumes:
+#        mkdir -p data/db data/certs data/keys && sudo chown -R 10001:10001 data
+#      (or run it as yourself: PINVAULT_UID=$(id -u) PINVAULT_GID=$(id -g)).
 services:
   pinvault-server:
     build: .
+    # Never root: the image creates this user and gives it /data.
+    user: "${PINVAULT_UID:-10001}:${PINVAULT_GID:-10001}"
     ports:
-      - "${PORT:-8080}:8080"       # Management API (HTTP)
+      # Management API (plain HTTP: dashboard and admin API) — published on
+      # this machine only. Reach it from elsewhere through an SSH tunnel or a
+      # TLS reverse proxy, never by publishing it on every interface.
+      - "${MANAGEMENT_PUBLISH:-127.0.0.1}:${PORT:-8080}:8080"
       - "${HTTPS_PORT:-8081}:8081" # Config API (TLS)
       - "${RECOVERY_PORT:-8083}:8083" # Certificate-renewal door (TLS, no client cert)
     volumes:
@@ -22,7 +37,23 @@ services:
       - ENROLLMENT_MODE=${ENROLLMENT_MODE:-token}
       - API_KEY=${API_KEY:-}
       - ALLOW_ANONYMOUS_ADMIN=${ALLOW_ANONYMOUS_ADMIN:-}
-      # Secrets — empty means "unset" (see README → Server → env vars).
+      # Inside the container the server listens on every interface (the publish
+      # above is what limits it to this machine). Without an admin key it would
+      # otherwise bind 127.0.0.1 inside the container and be unreachable.
+      - MANAGEMENT_BIND=${MANAGEMENT_BIND:-0.0.0.0}
+      # Without an admin key, admin requests must be addressed to one of these
+      # (the published port is not the container's when PORT is changed).
+      - MANAGEMENT_ALLOWED_HOSTS=${MANAGEMENT_ALLOWED_HOSTS:-localhost:${PORT:-8080},127.0.0.1:${PORT:-8080}}
+      # ...and must come from loopback or one of these peers. Through the
+      # port publish the peer is the bridge's gateway, not 127.0.0.1: set it
+      # here for an anonymous container (e.g. 172.16.0.0/12 on Docker Desktop:
+      # `docker network inspect bridge` shows the gateway).
+      - ANONYMOUS_ADMIN_PEERS=${ANONYMOUS_ADMIN_PEERS:-}
+      # Behind a reverse proxy that rewrites Host: the origin admins use.
+      - ADMIN_ALLOWED_ORIGINS=${ADMIN_ALLOWED_ORIGINS:-}
+      # Secrets — all three are REQUIRED; empty means "unset" and the server
+      # refuses to start unless ALLOW_DEMO_SECRETS=true (local runs only).
+      - ALLOW_DEMO_SECRETS=${ALLOW_DEMO_SECRETS:-}
       - SIGNING_KEY_PASSWORD=${SIGNING_KEY_PASSWORD:-}
       - KEYSTORE_PASSWORD=${KEYSTORE_PASSWORD:-}
       - KEYSTORE_PASSWORD_PREVIOUS=${KEYSTORE_PASSWORD_PREVIOUS:-}
@@ -39,9 +70,39 @@ services:
       - OPEN_ENROLLMENT_MAX_PENDING=${OPEN_ENROLLMENT_MAX_PENDING:-}
       - DEVICE_KEY_RATE_LIMIT=${DEVICE_KEY_RATE_LIMIT:-}
       - DEVICE_KEY_LIMIT=${DEVICE_KEY_LIMIT:-}
+      # Device identity and Android Key Attestation (unset = defaults: warn, warn, P12 on,
+      # time-bound user-auth keys allowed below Android 11, no list age limit). Production:
+      # see SECURE_OPERATIONS.md "Production values for device identity and attestation".
+      - ENROLLMENT_ATTESTATION=${ENROLLMENT_ATTESTATION:-}
+      - ENROLLMENT_P12=${ENROLLMENT_P12:-}
+      - USER_AUTH_ATTESTATION=${USER_AUTH_ATTESTATION:-}
+      - USER_AUTH_REQUIRE_PER_USE=${USER_AUTH_REQUIRE_PER_USE:-}
+      - ATTESTATION_PACKAGE_NAMES=${ATTESTATION_PACKAGE_NAMES:-}
+      - ATTESTATION_SIGNER_SHA256=${ATTESTATION_SIGNER_SHA256:-}
+      - ATTESTATION_REQUIRE_VERIFIED_BOOT=${ATTESTATION_REQUIRE_VERIFIED_BOOT:-}
+      - ATTESTATION_REVOKED_SERIALS_FILE=${ATTESTATION_REVOKED_SERIALS_FILE:-}
+      - ATTESTATION_STATUS_MAX_AGE_HOURS=${ATTESTATION_STATUS_MAX_AGE_HOURS:-}
+      - ATTESTATION_MIN_PATCH_LEVEL=${ATTESTATION_MIN_PATCH_LEVEL:-}
+      # Limits on the endpoints devices reach without an admin key (unset = defaults):
+      # refusals per address, reports per address / per device, vault upload size,
+      # and the least time between two restarts of the mTLS listeners.
+      - DEVICE_REFUSAL_RATE_LIMIT=${DEVICE_REFUSAL_RATE_LIMIT:-}
+      - REPORT_RATE_LIMIT=${REPORT_RATE_LIMIT:-}
+      - REPORT_DEVICE_RATE_LIMIT=${REPORT_DEVICE_RATE_LIMIT:-}
+      - VAULT_MAX_FILE_BYTES=${VAULT_MAX_FILE_BYTES:-}
+      # Admin uploads other than vault files (keystores, certificates, JSON).
+      - ADMIN_UPLOAD_MAX_BYTES=${ADMIN_UPLOAD_MAX_BYTES:-}
+      # "Fetch the certificate of this URL" refuses loopback and private-network
+      # targets unless this is true (a lab that pins hosts on its own LAN).
+      - FETCH_ALLOW_PRIVATE_TARGETS=${FETCH_ALLOW_PRIVATE_TARGETS:-}
+      - MTLS_RESTART_MIN_INTERVAL_SECONDS=${MTLS_RESTART_MIN_INTERVAL_SECONDS:-}
       # Optional signing / governance layers (SECURE_OPERATIONS.md) are not
       # passed through by default; add the ones you enable here, e.g.
       #   - ADMIN_KEYS=${ADMIN_KEYS}
       #   - PIN_CHANGE_APPROVALS=${PIN_CHANGE_APPROVALS}
+      #   - APPROVAL_EXEMPT_OPERATIONS=${APPROVAL_EXEMPT_OPERATIONS}
       #   - CONFIG_SIGNERS=${CONFIG_SIGNERS}
+      #   - SIGNER_COMMAND=${SIGNER_COMMAND}          # with CONFIG_SIGNERS=command
+      #   - SIGNER_PUBLIC_KEY=${SIGNER_PUBLIC_KEY}
+      #   - SIGNER_PASS_ENV=${SIGNER_PASS_ENV}        # e.g. AWS_PROFILE,AWS_REGION
     restart: unless-stopped

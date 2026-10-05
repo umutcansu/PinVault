@@ -73,7 +73,13 @@ data class EnrollmentRequest(
     /** Admin listing: how many other requests from the same [deviceUid] are waiting too. */
     val sameDevicePending: Int = 0,
     /** Whether the device asked without a code (code-less applications). */
-    val openApplication: Boolean = false
+    val openApplication: Boolean = false,
+    /**
+     * What Android Key Attestation said about the device key when it asked
+     * (`ENROLLMENT_ATTESTATION`): the approver sees "hardware-attested" or
+     * "not attested" next to the request. Null = not checked.
+     */
+    val attestation: KeyAttestation? = null
 ) {
     companion object {
         const val PENDING = "pending"
@@ -312,7 +318,9 @@ class EnrollmentPolicyStore(private val db: DatabaseManager) {
         deviceAlias: String?,
         deviceUid: String?,
         sourceIp: String,
-        now: Instant = Instant.now()
+        now: Instant = Instant.now(),
+        /** What attestation said about the key (`ENROLLMENT_ATTESTATION`); null = not checked. */
+        attestation: KeyAttestation? = null
     ): Recorded {
         repeat(8) {
             val clientId = newClientId(policy.name)
@@ -322,8 +330,9 @@ class EnrollmentPolicyStore(private val db: DatabaseManager) {
                     """
                     INSERT INTO enrollment_requests
                         (id, policy_id, client_id, spki_sha256, status, config_api_id, device_alias, device_uid,
-                         source_ip, created_at, decided_at, decided_by)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                         source_ip, created_at, decided_at, decided_by,
+                         attested, attestation_security_level, attestation_reason)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     ON CONFLICT DO NOTHING
                     """.trimIndent()
                 ).use { stmt ->
@@ -339,6 +348,9 @@ class EnrollmentPolicyStore(private val db: DatabaseManager) {
                     stmt.setString(10, now.toString())
                     stmt.setString(11, if (status == EnrollmentRequest.APPROVED) now.toString() else null)
                     stmt.setString(12, if (status == EnrollmentRequest.APPROVED) AUTO_APPROVER else null)
+                    if (attestation == null) stmt.setNull(13, java.sql.Types.INTEGER) else stmt.setInt(13, if (attestation.attested) 1 else 0)
+                    stmt.setString(14, attestation?.securityLevel)
+                    stmt.setString(15, attestation?.reason)
                     stmt.executeUpdate() == 1
                 }
             }
@@ -551,7 +563,10 @@ class EnrollmentPolicyStore(private val db: DatabaseManager) {
         decidedBy = getString("decided_by"),
         issuedAt = getString("issued_at"),
         verificationCode = com.example.pinvault.server.service.VerificationCode.ofSpkiSha256(getString("spki_sha256")),
-        openApplication = getInt("policy_open") == 1
+        openApplication = getInt("policy_open") == 1,
+        attestation = getInt("attested").takeUnless { wasNull() }?.let {
+            KeyAttestation(it == 1, getString("attestation_security_level"), getString("attestation_reason"))
+        }
     )
 
     companion object {

@@ -1,6 +1,7 @@
 package com.example.pinvault.server
 
 import com.example.pinvault.server.route.TLS_PEER_CERTIFICATE
+import com.example.pinvault.server.route.scopedVaultAdminRoutes
 import com.example.pinvault.server.route.vaultRoutes
 import com.example.pinvault.server.service.AuditLog
 import com.example.pinvault.server.service.AuthFailureRecorder
@@ -82,6 +83,8 @@ class DeviceKeyRegistrationTest {
             })
         }
         routing {
+            // Vault administration is served by the management listener only.
+            scopedVaultAdminRoutes(files, VaultDistributionStore(db), tokens, tokenService, publicKeyStore = keys, audit = AuditLog(auditStore, null))
             vaultRoutes(scope, files, VaultDistributionStore(db), tokens, keys, tokenService, VaultEncryptionService(),
                 clientCertStore = clientCerts, audit = AuditLog(auditStore, null),
                 keyRefusals = AuthFailureRecorder(AuditLog(auditStore, null), action = "device_key_refused"),
@@ -188,9 +191,9 @@ class DeviceKeyRegistrationTest {
         configureApp()
         register(rsaPem())
 
-        assertEquals(HttpStatusCode.OK, client.delete("/api/v1/vault/devices/$deviceId/public-key").status)
+        assertEquals(HttpStatusCode.OK, client.delete("/api/v1/config-apis/$scope/vault/devices/$deviceId/public-key").status)
         assertNull(registeredPem())
-        assertEquals(HttpStatusCode.NotFound, client.delete("/api/v1/vault/devices/$deviceId/public-key").status)
+        assertEquals(HttpStatusCode.NotFound, client.delete("/api/v1/config-apis/$scope/vault/devices/$deviceId/public-key").status)
 
         val fresh = rsaPem()
         assertEquals(HttpStatusCode.OK, register(fresh).status)
@@ -201,13 +204,35 @@ class DeviceKeyRegistrationTest {
     // ── mTLS: a certificate was presented ────────────────────────────────
 
     @Test
-    fun `a certificate bound to the device may register and replace its key`() = testApplication {
-        clientCerts.add("tablet-07", "PinVault Client: tablet-07", "fp", "2026-10-01T00:00:00Z", deviceUid = deviceId)
+    fun `a certificate whose device id is proven may register and replace its key`() = testApplication {
+        // Proven (V20): an attested key, or a token an administrator bound to the device.
+        clientCerts.addUnlessRevoked("tablet-07", "PinVault Client: tablet-07", "fp", "2026-10-01T00:00:00Z", deviceUid = deviceId, deviceUidProven = true)
         configureApp(presented = clientCert("tablet-07"))
 
         assertEquals(HttpStatusCode.OK, register(rsaPem()).status)
         val replacement = rsaPem()
         assertEquals(HttpStatusCode.OK, register(replacement).status)
+        assertEquals(replacement, registeredPem())
+    }
+
+    @Test
+    fun `a certificate that only claims the device registers a first key but replaces none without proof`() = testApplication {
+        // The device id the enrolling party sent, nothing more: anyone with a token
+        // who knows the victim's ANDROID_ID could have enrolled so.
+        clientCerts.add("tablet-09", "PinVault Client: tablet-09", "fp", "2026-10-01T00:00:00Z", deviceUid = deviceId)
+        configureApp(presented = clientCert("tablet-09"))
+
+        val first = rsaPem()
+        assertEquals(HttpStatusCode.OK, register(first).status, "first key: as on TLS")
+        val refused = register(rsaPem())
+        assertEquals(HttpStatusCode.Conflict, refused.status)
+        assertTrue(refused.bodyAsText().contains("key_change_requires_proof"))
+        assertEquals(first, registeredPem())
+        // The device's token for an end_to_end file is proof, over mTLS as over TLS.
+        files.put(scope, "secret-model", "x".toByteArray(), "token", "end_to_end")
+        val token = tokenService.generate(scope, "secret-model", deviceId)
+        val replacement = rsaPem()
+        assertEquals(HttpStatusCode.OK, register(replacement, proofKey = "secret-model", proofToken = token.plaintext).status)
         assertEquals(replacement, registeredPem())
     }
 

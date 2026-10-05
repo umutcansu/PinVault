@@ -66,6 +66,7 @@ class RecoveryListener(
             FileInputStream(certService.recoveryKeystoreFile()).use { load(it, CertificateService.KEYSTORE_PASSWORD.toCharArray()) }
         }
         val module: Application.() -> Unit = {
+            install(com.example.pinvault.server.plugin.EncodedPathGuard)
             // Everything here is open to anyone; a renewal body is a CSR of a few hundred bytes.
             install(com.example.pinvault.server.plugin.ClientBodyLimit) { appliesTo = { _, _ -> true } }
             routing {

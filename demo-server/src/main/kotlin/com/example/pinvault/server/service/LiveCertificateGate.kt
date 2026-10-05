@@ -49,6 +49,12 @@ class LiveCertificateGate(
     private val hostMap: Map<String, String> = emptyMap(),
     private val timeoutMs: Int = 5_000,
     val allowOverride: Boolean = true,
+    /**
+     * Where a probe may connect (`FETCH_ALLOW_PRIVATE_TARGETS`, as a certificate
+     * fetch): the name is resolved once, checked, and the handshake goes to that
+     * address. Null = unfiltered (tests with a fake [probe]); [fromEnv] always sets it.
+     */
+    private val egress: EgressFilter? = null,
     private val probe: (connectHost: String, port: Int, sni: String?, timeoutMs: Int) -> List<X509Certificate> = ::tlsProbe
 ) {
     enum class Mode { OFF, WARN, ENFORCE }
@@ -107,14 +113,24 @@ class LiveCertificateGate(
             return HostCheck(pin.hostname, null, false, emptyList(), false,
                 "wildcard entry — map it to a real host with LIVE_CHECK_HOST_MAP")
         }
+        // The pinned name must be one a pin entry may hold: the dry run takes any
+        // text an admin sends, and it ends up as a connection target.
+        HostPatternRules.error(pin.hostname)?.let { return HostCheck(pin.hostname, null, false, emptyList(), false, it) }
         val (host, port) = splitHostPort(target)
         val sni = when {
             pin.hostname.startsWith("*.") -> host
             else -> splitHostPort(pin.hostname).first
         }.takeUnless(::isIpLiteral)
         return try {
-            val chain = withDeadline { probe(host, port, sni, timeoutMs) }
+            // Resolved once and checked (no metadata or link-local address, private
+            // ones only in a lab); the handshake goes to exactly that address. The
+            // dry run, the pin-write gate and the approval card all come through
+            // here, and each used to connect wherever the name pointed.
+            val connectTo = egress?.resolveChecked(host)?.hostAddress ?: host
+            val chain = withDeadline { probe(connectTo, port, sni, timeoutMs) }
             HostCheck(pin.hostname, "$host:$port", true, chain.map { spkiPin(it) }, PinChain.satisfies(chain, pin.sha256))
+        } catch (e: EgressRefusedException) {
+            HostCheck(pin.hostname, "$host:$port", false, emptyList(), false, e.message ?: "target not allowed")
         } catch (e: Exception) {
             HostCheck(pin.hostname, "$host:$port", false, emptyList(), false, e.message ?: e.javaClass.simpleName)
         }
@@ -131,7 +147,8 @@ class LiveCertificateGate(
                 .map { it.trim() }.filter { '=' in it }
                 .associate { it.substringBefore('=').trim() to it.substringAfter('=').trim() },
             timeoutMs = env["LIVE_CHECK_TIMEOUT_MS"]?.toIntOrNull() ?: 5_000,
-            allowOverride = env["PIN_LIVE_CHECK_ALLOW_OVERRIDE"] != "false"
+            allowOverride = env["PIN_LIVE_CHECK_ALLOW_OVERRIDE"] != "false",
+            egress = EgressFilter.fromEnv(env)
         )
 
         fun spkiPin(cert: X509Certificate): String =

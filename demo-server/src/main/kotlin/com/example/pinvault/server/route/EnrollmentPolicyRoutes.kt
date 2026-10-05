@@ -1,5 +1,6 @@
 package com.example.pinvault.server.route
 
+import com.example.pinvault.server.plugin.AdminRegistry
 import com.example.pinvault.server.plugin.adminName
 import com.example.pinvault.server.service.AuditLog
 import com.example.pinvault.server.store.ClientCertStore
@@ -57,7 +58,13 @@ fun Route.enrollmentPolicyRoutes(
     pendingTtl: Duration = Duration.ofHours(24),
     /** Shown with the code-less switch: OPEN_ENROLLMENT_MAX_PENDING and _RATE_LIMIT. */
     openMaxPending: Int = 50,
-    openRateLimit: Int = 20
+    openRateLimit: Int = 20,
+    /**
+     * `PIN_CHANGE_APPROVALS`. From 2 on, letting a device in is the second
+     * person's act of the two-person rule: it needs a personal key (ADMIN_KEYS),
+     * and not the key of the admin who made the code.
+     */
+    approvalsRequired: Int = 1
 ) {
     get("/api/v1/enrollment-policies") {
         call.respond(policies.getAll())
@@ -79,10 +86,8 @@ fun Route.enrollmentPolicyRoutes(
         call.respond(openStatus())
     }
 
-    put("/api/v1/enrollment-open") {
-        val json = call.jsonBody() ?: return@put call.policyError(HttpStatusCode.BadRequest, "invalid_body", "A JSON body is required.")
-        val enabled = (json["enabled"] as? JsonPrimitive)?.booleanOrNull
-            ?: return@put call.policyError(HttpStatusCode.BadRequest, "invalid_enabled", "enabled: true or false.")
+    suspend fun ApplicationCall.setOpenApplications(enabled: Boolean) {
+        val call = this
         val before = openStatus().enabled
         policies.openApplications(enabled, call.adminName())
         if (before != enabled) {
@@ -95,6 +100,21 @@ fun Route.enrollmentPolicyRoutes(
             )
         }
         call.respond(openStatus())
+    }
+
+    // With two-person approval this waits for a second admin (operation
+    // `enrollment_open`): turning it on lets strangers ask to enroll.
+    put("/api/v1/enrollment-open") {
+        val json = call.jsonBody() ?: return@put call.policyError(HttpStatusCode.BadRequest, "invalid_body", "A JSON body is required.")
+        val enabled = (json["enabled"] as? JsonPrimitive)?.booleanOrNull
+            ?: return@put call.policyError(HttpStatusCode.BadRequest, "invalid_enabled", "enabled: true or false.")
+        call.setOpenApplications(enabled)
+    }
+
+    // Turning it OFF, at once and never held for approval: closing a door is
+    // an emergency action, like stopping a code or revoking a device.
+    delete("/api/v1/enrollment-open") {
+        call.setOpenApplications(false)
     }
 
     post("/api/v1/enrollment-policies") {
@@ -135,7 +155,7 @@ fun Route.enrollmentPolicyRoutes(
     }
 
     post("/api/v1/enrollment-policies/{id}/stop") {
-        val id = call.parameters["id"].orEmpty()
+        val id = call.pathParameters["id"].orEmpty()
         val policy = policies.get(id)
             ?: return@post call.policyError(HttpStatusCode.NotFound, "policy_not_found", "No such enrollment policy.")
         if (!policies.stop(id, call.adminName())) {
@@ -172,9 +192,27 @@ fun Route.enrollmentPolicyRoutes(
     }
 
     post("/api/v1/enrollment-requests/{id}/approve") {
-        val id = call.parameters["id"].orEmpty()
+        val id = call.pathParameters["id"].orEmpty()
         val request = policies.getRequest(id)
             ?: return@post call.policyError(HttpStatusCode.NotFound, "request_not_found", "No such enrollment request.")
+        val approver = call.adminName()
+        // With the two-person rule on, approving a request is minting an mTLS
+        // identity: one admin creating a code and approving their own device
+        // would do alone what every other trust change needs two people for.
+        // A shared key names nobody, so it cannot be told from the code's
+        // creator. Code-less applications have no creator to compare with
+        // (the switch itself was approved by two): any personal key, recorded.
+        val policy = policies.get(request.policyId)
+        if (approvalsRequired > 1) {
+            if (approver == AdminRegistry.LEGACY_NAME || approver == "anonymous") {
+                return@post call.policyError(HttpStatusCode.Conflict, "named_admin_required",
+                    "With PIN_CHANGE_APPROVALS on, a device is let in with a personal admin key (ADMIN_KEYS), not the shared API_KEY.")
+            }
+            if (policy != null && !policy.openApplications && policy.createdBy == approver) {
+                return@post call.policyError(HttpStatusCode.Conflict, "own_enrollment_code",
+                    "You created enrollment code ${policy.name}: another admin must let its devices in.")
+            }
+        }
         val holder = request.deviceUid?.let { clientCerts.activeHolderOf(it, exceptId = request.clientId) }
         if (request.status == EnrollmentRequest.PENDING && holder != null) {
             return@post call.respondText(
@@ -186,7 +224,7 @@ fun Route.enrollmentPolicyRoutes(
                 ContentType.Application.Json, HttpStatusCode.Conflict
             )
         }
-        when (policies.approve(id, call.adminName())) {
+        when (policies.approve(id, approver)) {
             EnrollmentPolicyStore.Approval.APPROVED -> {
                 audit.record(
                     "enrollment_request_approved",
@@ -197,6 +235,8 @@ fun Route.enrollmentPolicyRoutes(
                         put("policy", request.policyName)
                         request.deviceUid?.let { put("deviceUid", it) }
                         put("sourceIp", request.sourceIp)
+                        put("approvedBy", approver)
+                        policy?.let { put("policyCreatedBy", it.createdBy) }
                     }
                 )
                 call.respond(EnrollmentDecision(id, EnrollmentRequest.APPROVED, request.clientId))
@@ -213,7 +253,7 @@ fun Route.enrollmentPolicyRoutes(
     }
 
     post("/api/v1/enrollment-requests/{id}/reject") {
-        val id = call.parameters["id"].orEmpty()
+        val id = call.pathParameters["id"].orEmpty()
         val request = policies.getRequest(id)
             ?: return@post call.policyError(HttpStatusCode.NotFound, "request_not_found", "No such enrollment request.")
         if (!policies.reject(id, call.adminName())) {

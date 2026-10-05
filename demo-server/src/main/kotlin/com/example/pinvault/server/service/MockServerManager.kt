@@ -27,6 +27,17 @@ class MockServerManager {
     private val modeMap = ConcurrentHashMap<String, String>()
     private val keystoreMap = ConcurrentHashMap<String, String>() // key → keystorePath
 
+    /**
+     * Revocation check for the mTLS mock hosts. They trust the client CA, so the
+     * handshake accepts any certificate it issued until that expires; a revoked
+     * identity (or one over a retired key) is refused per request instead, by
+     * the same [com.example.pinvault.server.plugin.RevocationGate] the mTLS
+     * Config APIs run. Null = not checked (tests, embedded use). Read when a
+     * mock host starts.
+     */
+    @Volatile
+    var revocationGate: (com.example.pinvault.server.plugin.RevocationGateConfig.() -> Unit)? = null
+
     private fun serverKey(hostname: String, mtls: Boolean = false): String =
         if (mtls) "$hostname:mtls" else hostname
 
@@ -66,6 +77,7 @@ class MockServerManager {
                 }
             }
         }) {
+            if (isMtls) revocationGate?.let { install(com.example.pinvault.server.plugin.RevocationGate, it) }
             routing {
                 get("/health") {
                     call.respondText(

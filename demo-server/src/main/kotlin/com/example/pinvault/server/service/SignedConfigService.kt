@@ -12,11 +12,11 @@ import java.util.concurrent.atomic.AtomicLong
 /**
  * Turns the config a device may see into the signed envelope it receives.
  *
- * ## Per request (default)
+ * ## Per request (default, local key file only)
  * `issuedAt` / `expiresAt` are stamped and the payload signed on every
  * request, exactly as before.
  *
- * ## Signature cache (`CONFIG_SIGNATURE_CACHE=true`, opt-in)
+ * ## Signature cache (`CONFIG_SIGNATURE_CACHE=true`; always on with an external signer)
  * The same content is signed ONCE and the identical envelope served until
  * half its lifetime has passed, then re-signed. A pin change produces new
  * content and therefore a new signature — and [prewarm] produces it at
@@ -27,15 +27,32 @@ import java.util.concurrent.atomic.AtomicLong
  * (library 2.1+) get cached envelopes; older clients, which would reject the
  * repeat as a replay, keep getting a fresh signature per request.
  *
+ * ## External signers (`CONFIG_SIGNERS=command|pkcs11`)
+ * The config endpoint asks for no credential, so "one signature per
+ * request" would let anyone who reaches a device port run the signer command
+ * — up to its timeout each — or spend HSM/KMS calls at will. With any signer
+ * that is not a local key file the cache is therefore ON whatever
+ * `CONFIG_SIGNATURE_CACHE` says, and EVERY client is served the cached
+ * envelope: one signing per distinct content, however many requests ask for
+ * it, and at most a few signings at a time ([ConfigSigningService] bounds
+ * them). Apps older than 2.1 then see a repeated envelope as a replay while
+ * nothing changed; they keep the config they have.
+ *
  * Either way the latest signing-key set is attached to every envelope.
  */
 class SignedConfigService(
     private val signing: ConfigSigningService,
     private val keySets: SigningKeySetService? = null,
     val ttlMs: Long = ttlFromEnv(),
-    val cacheEnabled: Boolean = System.getenv("CONFIG_SIGNATURE_CACHE") == "true",
+    cacheEnabled: Boolean = System.getenv("CONFIG_SIGNATURE_CACHE") == "true",
     private val clock: () -> Long = System::currentTimeMillis
 ) {
+    /** Whether signatures are cached per content: asked for, or required by an external signer. */
+    val cacheEnabled: Boolean = cacheEnabled || signing.external
+
+    /** True when the cache was not asked for but an external signer made it necessary. */
+    val cacheForced: Boolean = !cacheEnabled && signing.external
+
     private val json = Json { encodeDefaults = true }
 
     private data class Cached(val issuedAt: Long, val envelope: SignedConfig)
@@ -43,9 +60,17 @@ class SignedConfigService(
     private val cache = object : LinkedHashMap<String, Cached>(64, 0.75f, true) {
         override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, Cached>?) = size > MAX_ENTRIES
     }
-    private val vaultCache = object : LinkedHashMap<String, List<SignatureEntry>>(64, 0.75f, true) {
-        override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, List<SignatureEntry>>?) = size > MAX_ENTRIES
+    private val vaultCache = object : LinkedHashMap<String, VaultSignatures>(64, 0.75f, true) {
+        override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, VaultSignatures>?) = size > MAX_ENTRIES
     }
+
+    /** A vault file's signatures in both schemes, one entry per signer, primary first. */
+    data class VaultSignatures(
+        /** Over `pinvault-vault-file:v1:<key>:<version>:<sha256>` (older clients). */
+        val v1: List<SignatureEntry>,
+        /** Over `pinvault-vault-file:v2:<configApiId>:<key>:<version>:<sha256>`. */
+        val v2: List<SignatureEntry>
+    )
 
     val cacheHits = AtomicLong()
 
@@ -102,9 +127,15 @@ class SignedConfigService(
      * (`X-PinVault-Features: redelivery`). Only such clients get cached
      * envelopes; any other client gets a fresh signature, as before.
      */
-    fun envelope(scope: String, config: PinConfig, redeliveryOk: Boolean = true, loadedAt: Long? = null): SignedConfig {
+    fun envelope(scope: String, view: PinConfig, redeliveryOk: Boolean = true, loadedAt: Long? = null): SignedConfig {
         val keySet = keySets?.latestWire()
-        if (!cacheEnabled || !redeliveryOk) return signFresh(config, clock()).copy(signingKeys = keySet)
+        // Every signed payload names the Config API it was signed for: a block
+        // with `serverScope` accepts only its own (one signing key often serves
+        // several Config APIs). Inside the payload, so it cannot be swapped.
+        val config = view.copy(configApiId = scope)
+        // A fresh signature per request only with a local key: an external
+        // signer signs once per content, whoever asks (see the class comment).
+        if (!cacheEnabled || (!redeliveryOk && !signing.external)) return signFresh(config, clock()).copy(signingKeys = keySet)
 
         val gen = loadedAt ?: generation.get()
         if (gen != generation.get()) throw StaleLoad()
@@ -155,17 +186,33 @@ class SignedConfigService(
     }
 
     /**
-     * Vault file signatures, one per signer. Cached per (key, version,
-     * content) when the cache is on: the canonical string has no timestamp, so
-     * a signature stays valid for as long as that version exists.
+     * Vault file signatures of [scope]'s file, one per signer, v1 and v2.
+     * Cached per (scope, key, version, content) when the cache is on: the
+     * canonical strings have no timestamp, so a signature stays valid for as
+     * long as that version exists. The key names the scope and holds both
+     * schemes, so no entry that was signed for v1 only (or for another Config
+     * API) is ever served.
      */
-    fun vaultSignatures(key: String, version: Int, plaintext: ByteArray): List<SignatureEntry> {
-        if (!cacheEnabled) return signing.signVaultFileAll(key, version, plaintext)
-        val cacheKey = "$key|$version|${sha256Hex(plaintext)}"
+    fun vaultSignatures(scope: String, key: String, version: Int, plaintext: ByteArray): VaultSignatures {
+        fun sign() = VaultSignatures(
+            v1 = signing.signVaultFileAll(key, version, plaintext),
+            v2 = signing.signVaultFileV2All(scope, key, version, plaintext)
+        )
+        // Always cached, whatever CONFIG_SIGNATURE_CACHE says: a vault signature
+        // carries no time, and a file's content is fixed per version (every
+        // upload, encryption or policy change bumps it). Keyed without hashing
+        // the content: a public file used to be hashed in full for every request.
+        val cacheKey = "v2|$scope|$key|$version|${plaintext.size}"
         synchronized(vaultCache) { vaultCache[cacheKey]?.let { cacheHits.incrementAndGet(); return it } }
-        val fresh = signing.signVaultFileAll(key, version, plaintext)
-        synchronized(vaultCache) { vaultCache[cacheKey] = fresh }
-        return fresh
+        // One signing per file version at a time: requests arriving together wait for it.
+        val lock = keyLocks.computeIfAbsent("vault|$cacheKey") { Any() }
+        synchronized(lock) {
+            synchronized(vaultCache) { vaultCache[cacheKey]?.let { cacheHits.incrementAndGet(); return it } }
+            val fresh = sign()
+            synchronized(vaultCache) { vaultCache[cacheKey] = fresh }
+            keyLocks.remove("vault|$cacheKey", lock)
+            return fresh
+        }
     }
 
     /**

@@ -49,6 +49,7 @@ class ConfigApiPurgeTest {
         exec("INSERT INTO host_version_watermark (config_api_id, hostname, max_version) VALUES (?, 'a.example', 3)", api)
         exec("INSERT INTO vault_files (config_api_id, key, content, version, updated_at) VALUES (?, 'f', X'00', 1, 'now')", api)
         exec("INSERT INTO default_host_acl (config_api_id, hostname) VALUES (?, 'a.example')", api)
+        exec("INSERT INTO device_user_auth_keys (device_id, config_api_id, public_key_pem, registered_at) VALUES ('d', ?, 'pem', 'now')", api)
     }
 
     private fun pendingRequest(api: String): Long {

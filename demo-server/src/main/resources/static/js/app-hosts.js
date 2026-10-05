@@ -188,7 +188,7 @@ function renderHostListSync() {
   for (const api of allApiConfigs) {
     const isRunning = api.running !== false;
     const modeColor = isRunning ? (api.mode === 'mtls' ? '#f59e0b' : '#22c55e') : '#475569';
-    const modeLabel = api.mode.toUpperCase();
+    const modeLabel = esc(api.mode.toUpperCase());
     const isSelectedApi = selectedApiId === api.id;
     const isExpanded = window._apiExpanded[api.id] !== false; // varsayılan açık
     const arrow = isExpanded ? '▼' : '▶';
@@ -211,7 +211,7 @@ function renderHostListSync() {
               ${defaultBadge}
               <span style="color:#475569;font-weight:400;font-size:10px">(${hostCount})</span>
             </span>
-            <span style="color:#64748b;font-weight:400;font-size:10px">${modeLabel} :${api.port}</span>
+            <span style="color:#64748b;font-weight:400;font-size:10px">${modeLabel} :${esc(api.port)}</span>
           </span>
         </span>
         ${isRunning ? `<span style="font-size:16px;color:#60a5fa;cursor:pointer;line-height:1" data-action="showAddHostScoped" data-arg0="${esc(api.id)}" data-stop="1" title="${t('addHostTooltip')}">+</span>` : ''}
@@ -245,9 +245,9 @@ function renderHostListSync() {
                                                           'Durum bilinmiyor';
           html += `
             <div class="host-item ${isSelected ? 'selected' : ''}" style="margin-left:20px" data-action="selectHostInApi" data-arg0="${esc(p.hostname)}" data-arg1="${esc(api.id)}">
-              <div class="${dotClass}" title="${dotTitle}"></div>
+              <div class="${dotClass}" title="${esc(dotTitle)}"></div>
               <div class="host-info">
-                <div class="host-name" style="font-size:13px">${p.hostname}${forceBadge}</div>
+                <div class="host-name" style="font-size:13px">${esc(p.hostname)}${forceBadge}</div>
                 <div class="host-pins">${p.sha256?.length || 0} ${t('pins')} · v${p.version || 0}</div>
               </div>
             </div>`;
@@ -296,7 +296,7 @@ function renderConfigApiLoading(apiId) {
   el.innerHTML = `
     <div style="display:flex;flex-direction:column;align-items:center;justify-content:center;min-height:60vh;color:#475569">
       <div style="width:32px;height:32px;border:3px solid #334155;border-top-color:#60a5fa;border-radius:50%;animation:hostDetailSpin 0.8s linear infinite;margin-bottom:16px"></div>
-      <div style="font-size:13px;color:#64748b">${apiId}</div>
+      <div style="font-size:13px;color:#64748b">${esc(apiId)}</div>
     </div>
     <style>@keyframes hostDetailSpin { to { transform: rotate(360deg); } }</style>`;
 }
@@ -311,7 +311,7 @@ async function renderConfigApiDetail(apiId) {
     // allApiConfigs henüz yüklenmediyse veya silinmişse loading state'inde
     // takılı kalmayalım — anlamlı bir boş mesaj göster.
     const el = document.getElementById('content');
-    if (el) el.innerHTML = `<div class="empty-state"><div class="empty-title">${apiId}</div><div class="empty-sub">${t('selectHostSub') || ''}</div></div>`;
+    if (el) el.innerHTML = `<div class="empty-state"><div class="empty-title">${esc(apiId)}</div><div class="empty-sub">${t('selectHostSub') || ''}</div></div>`;
     return;
   }
 
@@ -341,7 +341,7 @@ async function renderConfigApiDetail(apiId) {
         <span style="color:${isRunning ? '#22c55e' : '#64748b'};font-weight:700;font-size:13px">${isRunning ? t('mockRunning') : t('mockStopped')}</span>
       </div>
       ${!isRunning ? `
-        <input id="capi-port-${apiId}" class="form-input" style="width:80px;padding:4px 8px;font-size:12px" value="${api.port}" placeholder="${t('mockPort')}">
+        <input id="capi-port-${esc(apiId)}" class="form-input" style="width:80px;padding:4px 8px;font-size:12px" value="${esc(api.port)}" placeholder="${t('mockPort')}">
       ` : ''}
     </div>`;
 
@@ -349,7 +349,7 @@ async function renderConfigApiDetail(apiId) {
     <div class="section-header">
       <div>
         <div class="section-title-main" style="display:flex;align-items:center;gap:8px">
-          <span style="color:${modeColor};font-weight:700">${api.mode.toUpperCase()}</span>
+          <span style="color:${modeColor};font-weight:700">${esc(api.mode.toUpperCase())}</span>
           :${api.port}
           <span style="color:#64748b;font-size:14px;font-weight:400">${esc(api.id)}</span>
         </div>
@@ -386,7 +386,7 @@ async function renderConfigApiDetail(apiId) {
       <div class="section-header">
         <div>
           <div class="section-title-main" style="display:flex;align-items:center;gap:8px">
-            <span style="color:${modeColor};font-weight:700">${api.mode.toUpperCase()}</span>
+            <span style="color:${modeColor};font-weight:700">${esc(api.mode.toUpperCase())}</span>
             :${api.port}
             <span style="color:#64748b;font-size:14px;font-weight:400">${esc(api.id)}</span>
           </div>
@@ -422,8 +422,8 @@ async function renderApiGeneralTab(apiId) {
   const hostsPagInfo = (api.pins && api.pins.length > 0) ? pagSlice(api.pins, hostsPagKey) : null;
   const hostRows = hostsPagInfo
     ? hostsPagInfo.slice.map(p => `<tr>
-        <td style="font-weight:600">${p.hostname}</td>
-        <td><span class="ver-badge">v${p.version}</span></td>
+        <td style="font-weight:600">${esc(p.hostname)}</td>
+        <td><span class="ver-badge">v${esc(p.version)}</span></td>
         <td>${p.sha256?.length || 0} pin</td>
         <td>${p.forceUpdate ? '<span style="color:#22c55e;font-weight:700">FORCE</span>' : '<span style="color:#64748b">Normal</span>'}</td>
       </tr>`).join('')
@@ -437,7 +437,7 @@ async function renderApiGeneralTab(apiId) {
       <div class="card-title">${t('serverInfo')}</div>
       <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;color:#94a3b8;font-size:13px">
         <div>${t('mockPort')}: <span style="color:#7dd3fc;font-weight:600">:${api.port}</span></div>
-        <div>${t('mode')}: <span style="color:${api.mode === 'mtls' ? '#f59e0b' : '#22c55e'};font-weight:600">${api.mode.toUpperCase()}</span></div>
+        <div>${t('mode')}: <span style="color:${api.mode === 'mtls' ? '#f59e0b' : '#22c55e'};font-weight:600">${esc(api.mode.toUpperCase())}</span></div>
         <div>${t('hostCountLabel')}: <span style="color:#7dd3fc;font-weight:600">${api.pins?.length || 0}</span></div>
         <div>${t('version')}: <span style="color:#7dd3fc;font-weight:600">v${api.version}</span></div>
       </div>
@@ -458,7 +458,7 @@ async function renderApiGeneralTab(apiId) {
       <div class="card-title">${t('vaultV2Section')}</div>
       <div style="display:flex;align-items:center;gap:14px;flex-wrap:wrap">
         <label style="display:flex;align-items:center;gap:8px;cursor:pointer;color:#e2e8f0">
-          <input type="checkbox" id="vault-enabled-${apiId}" ${vaultEnabled ? 'checked' : ''}
+          <input type="checkbox" id="vault-enabled-${esc(apiId)}" ${vaultEnabled ? 'checked' : ''}
                  data-action-change="setVaultEnabledChange" data-arg0="${esc(apiId)}" data-event="1"/>
           <span>${t('vaultEnabledLabel')}</span>
         </label>
@@ -489,6 +489,8 @@ async function setVaultEnabled(apiId, enabled) {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ enabled })
     });
+    // 202: waits for a second admin — nothing changed, so the box goes back.
+    if (res.status === 202) { revert(); return; }
     if (!res.ok) {
       revert();
       toast(`${t('vaultToggleError')} — ${apiId} (HTTP ${res.status})`, 'error');
@@ -539,7 +541,7 @@ async function showDeviceAclManager(configApiId) {
     content.innerHTML = `
       <div class="section-header">
         <div>
-          <div class="section-title-main" style="color:#7dd3fc">${t('aclManagerTitle')} — ${configApiId}</div>
+          <div class="section-title-main" style="color:#7dd3fc">${t('aclManagerTitle')} — ${esc(configApiId)}</div>
           <div class="section-sub">${t('aclManagerSub')}</div>
         </div>
         <button class="btn btn-secondary" data-action="renderConfigApiDetail" data-arg0="${esc(configApiId)}">${t('aclBack')}</button>
@@ -551,7 +553,7 @@ async function showDeviceAclManager(configApiId) {
         <div style="display:flex;gap:8px;align-items:center">
           <input type="text" id="default-acl-input" class="form-input" style="flex:1"
                  placeholder="${t('defaultAclPlaceholder')}"
-                 value="${defaultStr.replace(/"/g, '&quot;')}"/>
+                 value="${esc(defaultStr)}"/>
           <button class="btn btn-primary" data-action="saveDefaultAcl" data-arg0="${esc(configApiId)}">${t('aclSave')}</button>
         </div>
       </div>
@@ -564,7 +566,7 @@ async function showDeviceAclManager(configApiId) {
         </table>${devices.length ? pagControls(devPagKey, devPag, aclReloadKey) : ''}
       </div>`;
   } catch (e) {
-    content.innerHTML = `<div class="card"><div class="empty-msg">${t('error')}: ${e.message}</div></div>`;
+    content.innerHTML = `<div class="card"><div class="empty-msg">${t('error')}: ${esc(e.message)}</div></div>`;
   }
 }
 
@@ -641,7 +643,7 @@ function renderHostDetailLoading(hostname) {
   el.innerHTML = `
     <div style="display:flex;flex-direction:column;align-items:center;justify-content:center;min-height:60vh;color:#475569">
       <div style="width:32px;height:32px;border:3px solid #334155;border-top-color:#60a5fa;border-radius:50%;animation:hostDetailSpin 0.8s linear infinite;margin-bottom:16px"></div>
-      <div style="font-size:13px;color:#64748b">${hostname}</div>
+      <div style="font-size:13px;color:#64748b">${esc(hostname)}</div>
     </div>
     <style>@keyframes hostDetailSpin { to { transform: rotate(360deg); } }</style>`;
 }
@@ -722,7 +724,7 @@ async function renderHostDetail(host) {
   const pinsHtml = host.sha256.map((hash, i) => `
     <div class="hash-label">${i === 0 ? t('primaryPin') : t('backupPin') + (i > 1 ? ' #' + i : '')}</div>
     <div class="hash-box">
-      <span>sha256/${hash}</span>
+      <span>sha256/${esc(hash)}</span>
       <button class="copy-btn" data-action="copyText" data-arg0="${esc(hash)}">${t('copy')}</button>
     </div>
   `).join('');
@@ -733,7 +735,7 @@ async function renderHostDetail(host) {
   document.getElementById('content').innerHTML = `
     <div class="section-header">
       <div>
-        <div class="section-title-main">${host.hostname}</div>
+        <div class="section-title-main">${esc(host.hostname)}</div>
         <div class="section-sub">${host.pinCount} ${t('pins')}</div>
       </div>
       <div class="action-bar">
@@ -1038,9 +1040,9 @@ async function loadHostClientCert(hostname) {
 
   const certSection = certInfo ? `
     <div style="background:#0f172a;border-radius:8px;padding:10px;margin-bottom:12px;font-size:12px">
-      <div style="color:#94a3b8">CN: <span style="color:#7dd3fc">${certInfo.commonName || '—'}</span></div>
-      <div style="color:#94a3b8">${t('thFingerprint')}: <span style="color:#7dd3fc;font-family:monospace;font-size:10px">${certInfo.fingerprint ? certInfo.fingerprint.substring(0,20) + '...' : '—'}</span></div>
-      <div style="color:#94a3b8">${t('version')}: <span style="color:#22c55e">${certInfo.version}</span></div>
+      <div style="color:#94a3b8">CN: <span style="color:#7dd3fc">${esc(certInfo.commonName || '—')}</span></div>
+      <div style="color:#94a3b8">${t('thFingerprint')}: <span style="color:#7dd3fc;font-family:monospace;font-size:10px">${certInfo.fingerprint ? esc(certInfo.fingerprint.substring(0,20)) + '...' : '—'}</span></div>
+      <div style="color:#94a3b8">${t('version')}: <span style="color:#22c55e">${esc(certInfo.version)}</span></div>
     </div>` : `
     <div style="background:#0f172a;border-radius:8px;padding:10px;margin-bottom:12px;font-size:12px">
       <div style="color:#64748b;margin-bottom:6px">${t('hostCertNone')}</div>

@@ -1,6 +1,7 @@
 package com.example.pinvault.server
 
 import com.example.pinvault.server.route.adminVaultRoutes
+import com.example.pinvault.server.route.scopedVaultAdminRoutes
 import com.example.pinvault.server.route.vaultRoutes
 import com.example.pinvault.server.service.VaultAccessTokenService
 import com.example.pinvault.server.service.VaultEncryptionService
@@ -73,6 +74,8 @@ class VaultEnabledSwitchTest {
     private fun ApplicationTestBuilder.configureApp() {
         install(ContentNegotiation) { json(Json { ignoreUnknownKeys = true }) }
         routing {
+            // Vault administration is served by the management listener only.
+            scopedVaultAdminRoutes(vaultFileStore, distStore, tokenStore, tokenService, publicKeyStore = publicKeyStore)
             vaultRoutes(
                 testApi, vaultFileStore, distStore, tokenStore,
                 publicKeyStore, tokenService, encryptionService,
@@ -84,7 +87,7 @@ class VaultEnabledSwitchTest {
     }
 
     private suspend fun io.ktor.client.HttpClient.upload(key: String, content: String) {
-        put("/api/v1/vault/$key?policy=public") {
+        put("/api/v1/config-apis/$testApi/vault/$key?policy=public") {
             setBody(content.toByteArray())
             contentType(ContentType.Application.OctetStream)
         }
@@ -191,9 +194,9 @@ class VaultEnabledSwitchTest {
         // Upload / list / delete must survive: flipping the switch is what an
         // operator does *before* removing a file that went out by mistake.
         client.upload("flags", "duzeltilmis")
-        assertEquals(HttpStatusCode.OK, client.get("/api/v1/vault").status)
-        assertTrue(client.get("/api/v1/vault").bodyAsText().contains("flags"))
-        assertEquals(HttpStatusCode.OK, client.delete("/api/v1/vault/flags").status)
+        assertEquals(HttpStatusCode.OK, client.get("/api/v1/config-apis/$testApi/vault").status)
+        assertTrue(client.get("/api/v1/config-apis/$testApi/vault").bodyAsText().contains("flags"))
+        assertEquals(HttpStatusCode.OK, client.delete("/api/v1/config-apis/$testApi/vault/flags").status)
         assertNull(vaultFileStore.get(testApi, "flags"))
     }
 
@@ -208,7 +211,7 @@ class VaultEnabledSwitchTest {
             setBody("""{"key":"flags","version":0,"deviceId":"dev-1","status":"failed"}""")
         }
         assertEquals(HttpStatusCode.OK, report.status)
-        assertTrue(client.get("/api/v1/vault/distributions").bodyAsText().contains("dev-1"))
+        assertTrue(client.get("/api/v1/config-apis/$testApi/vault/distributions").bodyAsText().contains("dev-1"))
     }
 
     // ── Default: a listener with no provider behaves exactly as before ──
@@ -217,6 +220,8 @@ class VaultEnabledSwitchTest {
     fun `vaultEnabledProvider defaults to enabled`() = testApplication {
         install(ContentNegotiation) { json(Json { ignoreUnknownKeys = true }) }
         routing {
+            // Vault administration is served by the management listener only.
+            scopedVaultAdminRoutes(vaultFileStore, distStore, tokenStore, tokenService, publicKeyStore = publicKeyStore)
             vaultRoutes(
                 testApi, vaultFileStore, distStore, tokenStore,
                 publicKeyStore, tokenService, encryptionService,

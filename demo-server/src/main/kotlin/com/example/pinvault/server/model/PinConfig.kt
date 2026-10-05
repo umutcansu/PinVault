@@ -18,7 +18,17 @@ data class PinConfig(
      * Defines the freshness window. Clients reject configs once the wall
      * clock crosses this value.
      */
-    val expiresAt: Long = 0L
+    val expiresAt: Long = 0L,
+    /**
+     * The Config API this config was signed for, written into every SIGNED
+     * payload (SignedConfigService.envelope). A library block that set
+     * `serverScope(id)` refuses a payload naming another id — or none — so an
+     * envelope signed for one Config API cannot be served for another that
+     * shares the signing key. Left out of unsigned answers (null).
+     */
+    @OptIn(kotlinx.serialization.ExperimentalSerializationApi::class)
+    @kotlinx.serialization.EncodeDefault(kotlinx.serialization.EncodeDefault.Mode.NEVER)
+    val configApiId: String? = null
 ) {
     fun computedVersion(): Int = pins.maxOfOrNull { it.version } ?: version
     /** Global forceUpdate = any host has forceUpdate */

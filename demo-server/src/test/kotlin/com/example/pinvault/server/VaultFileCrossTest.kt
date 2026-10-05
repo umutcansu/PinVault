@@ -1,5 +1,6 @@
 package com.example.pinvault.server
 
+import com.example.pinvault.server.route.scopedVaultAdminRoutes
 import com.example.pinvault.server.route.vaultRoutes
 import com.example.pinvault.server.service.VaultAccessTokenService
 import com.example.pinvault.server.service.VaultEncryptionService
@@ -65,6 +66,8 @@ class VaultFileCrossTest {
     private fun ApplicationTestBuilder.configureApp() {
         install(ContentNegotiation) { json(Json { ignoreUnknownKeys = true }) }
         routing {
+            // Vault administration is served by the management listener only.
+            scopedVaultAdminRoutes(vaultFileStore, distStore, tokenStore, tokenService, publicKeyStore = publicKeyStore)
             vaultRoutes(testApi, vaultFileStore, distStore, tokenStore,
                 publicKeyStore, tokenService, encryptionService)
         }
@@ -74,7 +77,7 @@ class VaultFileCrossTest {
 
     /** Web admin uploads a file with access_policy=public (default for these tests). */
     private suspend fun io.ktor.client.HttpClient.webUpload(key: String, content: ByteArray) {
-        put("/api/v1/vault/$key?policy=public") {
+        put("/api/v1/config-apis/$testApi/vault/$key?policy=public") {
             setBody(content)
             contentType(ContentType.Application.OctetStream)
         }
@@ -132,7 +135,7 @@ class VaultFileCrossTest {
         client.androidReport("ml-model", entry.version)
 
         // Web checks distribution history
-        val distResponse = client.get("/api/v1/vault/distributions")
+        val distResponse = client.get("/api/v1/config-apis/$testApi/vault/distributions")
         val body = distResponse.bodyAsText()
         assertTrue(body.contains("ml-model"))
         assertTrue(body.contains("Samsung"))
@@ -140,7 +143,7 @@ class VaultFileCrossTest {
         assertTrue(body.contains("downloaded"))
 
         // Web checks stats
-        val statsResponse = client.get("/api/v1/vault/stats")
+        val statsResponse = client.get("/api/v1/config-apis/$testApi/vault/stats")
         val stats = statsResponse.bodyAsText()
         assertTrue(stats.contains("\"totalDistributions\":1"))
         assertTrue(stats.contains("\"uniqueDevices\":1"))
@@ -190,7 +193,7 @@ class VaultFileCrossTest {
     }
 
     @Test
-    fun `web delete then android fetch returns 404`() = testApplication {
+    fun `web delete then android fetch no longer gets the file`() = testApplication {
         configureApp()
 
         // Web uploads
@@ -201,11 +204,12 @@ class VaultFileCrossTest {
         assertEquals(HttpStatusCode.OK, r1.status)
 
         // Web deletes
-        client.delete("/api/v1/vault/temp-file")
+        client.delete("/api/v1/config-apis/$testApi/vault/temp-file")
 
-        // Android fetch → 404
+        // Android fetch → refused. Without a credential the answer is the one a
+        // token file gives (401), not 404: file names are not enumerable.
         val r2 = client.androidFetch("temp-file")
-        assertEquals(HttpStatusCode.NotFound, r2.status)
+        assertEquals(HttpStatusCode.Unauthorized, r2.status)
     }
 
     @Test
@@ -223,14 +227,14 @@ class VaultFileCrossTest {
         client.androidReport("shared-config", version, deviceId = "xiaomi_14", manufacturer = "Xiaomi", model = "14 Pro")
 
         // Stats show 3 unique devices
-        val statsResponse = client.get("/api/v1/vault/stats")
+        val statsResponse = client.get("/api/v1/config-apis/$testApi/vault/stats")
         val stats = statsResponse.bodyAsText()
         assertTrue(stats.contains("\"uniqueDevices\":3"))
         assertTrue(stats.contains("\"totalDistributions\":3"))
         assertTrue(stats.contains("\"uniqueKeys\":1"))
 
         // Distribution by key shows all 3
-        val distResponse = client.get("/api/v1/vault/distributions/shared-config")
+        val distResponse = client.get("/api/v1/config-apis/$testApi/vault/distributions/shared-config")
         val body = distResponse.bodyAsText()
         assertTrue(body.contains("Google"))
         assertTrue(body.contains("Samsung"))
@@ -244,7 +248,7 @@ class VaultFileCrossTest {
         // Device reports a failed download
         client.androidReport("missing-file", 0, status = "failed")
 
-        val statsResponse = client.get("/api/v1/vault/stats")
+        val statsResponse = client.get("/api/v1/config-apis/$testApi/vault/stats")
         val stats = statsResponse.bodyAsText()
         assertTrue(stats.contains("\"failed\":1"))
         assertTrue(stats.contains("\"downloaded\":0"))
@@ -266,12 +270,12 @@ class VaultFileCrossTest {
         client.androidReport("file-b", vB)
 
         // Stats: 1 distribution, 1 device, 1 key (not 3)
-        val stats = client.get("/api/v1/vault/stats").bodyAsText()
+        val stats = client.get("/api/v1/config-apis/$testApi/vault/stats").bodyAsText()
         assertTrue(stats.contains("\"totalDistributions\":1"))
         assertTrue(stats.contains("\"uniqueKeys\":1"))
 
         // File list shows all 3
-        val listResponse = client.get("/api/v1/vault")
+        val listResponse = client.get("/api/v1/config-apis/$testApi/vault")
         val list = listResponse.bodyAsText()
         assertTrue(list.contains("file-a"))
         assertTrue(list.contains("file-b"))
@@ -293,14 +297,14 @@ class VaultFileCrossTest {
         client.androidReport("model", vModel, deviceId = "my-phone")
 
         // Query by device
-        val response = client.get("/api/v1/vault/distributions/device/my-phone")
+        val response = client.get("/api/v1/config-apis/$testApi/vault/distributions/device/my-phone")
         val body = response.bodyAsText()
         assertTrue(body.contains("flags"))
         assertTrue(body.contains("model"))
 
         // Different device only downloaded one
         client.androidReport("flags", vFlags, deviceId = "other-phone")
-        val otherResponse = client.get("/api/v1/vault/distributions/device/other-phone")
+        val otherResponse = client.get("/api/v1/config-apis/$testApi/vault/distributions/device/other-phone")
         val otherBody = otherResponse.bodyAsText()
         assertTrue(otherBody.contains("flags"))
         assertFalse(otherBody.contains("model"))
@@ -347,7 +351,7 @@ class VaultFileCrossTest {
         client.androidReport("lifecycle", v2, deviceId = "phone-2")
 
         // 6. Verify full state
-        val stats = Json.parseToJsonElement(client.get("/api/v1/vault/stats").bodyAsText()).jsonObject
+        val stats = Json.parseToJsonElement(client.get("/api/v1/config-apis/$testApi/vault/stats").bodyAsText()).jsonObject
         assertEquals(3, stats["totalDistributions"]?.jsonPrimitive?.int)
         assertEquals(2, stats["uniqueDevices"]?.jsonPrimitive?.int)
         assertEquals(1, stats["uniqueKeys"]?.jsonPrimitive?.int)

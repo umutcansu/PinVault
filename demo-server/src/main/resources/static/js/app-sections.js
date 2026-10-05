@@ -196,13 +196,13 @@ async function renderBootstrapSection() {
         <div style="color:#64748b;font-size:11px;margin-bottom:8px">HTTPS: ${location.hostname}:${tlsPort}</div>
         <div class="hash-label">${t('primaryPin')}</div>
         <div class="hash-box">
-          <span>sha256/${data.primaryPin}</span>
+          <span>sha256/${esc(data.primaryPin)}</span>
           <button class="copy-btn" data-action="copyText" data-arg0="${esc(data.primaryPin)}">${t('copy')}</button>
         </div>
         ${data.backupPin ? `
         <div class="hash-label">${t('backupPin')}</div>
         <div class="hash-box">
-          <span>sha256/${data.backupPin}</span>
+          <span>sha256/${esc(data.backupPin)}</span>
           <button class="copy-btn" data-action="copyText" data-arg0="${esc(data.backupPin)}">${t('copy')}</button>
         </div>` : ''}
         <div style="margin-top:16px;padding-top:16px;border-top:1px solid #334155;display:flex;gap:8px;flex-wrap:wrap">
@@ -218,8 +218,8 @@ async function renderBootstrapSection() {
         <div class="card-title">${t('androidIntegration')}</div>
         <div class="key-box">private val BOOTSTRAP_PINS = listOf(
     HostPin("${location.hostname}:${data.httpsPort}", listOf(
-        "${data.primaryPin}",
-        "${data.backupPin || 'BACKUP_PIN'}"
+        "${esc(data.primaryPin)}",
+        "${esc(data.backupPin || 'BACKUP_PIN')}"
     ), 0, false, false, null)
 )
 
@@ -312,7 +312,9 @@ async function rotateBootstrapToBackup() {
 async function regenerateBootstrapCert() {
   if (!confirm(t('regenerateBootstrapConfirm'))) return;
   try {
-    await apiFetch('/api/v1/server-tls-pins/regenerate', { method: 'POST' });
+    const res = await apiFetch('/api/v1/server-tls-pins/regenerate', { method: 'POST' });
+    if (res.status === 202) return; // waits for a second admin; apiFetch said so
+    if (!res.ok) { toast(reasonError(await res.json().catch(() => null)), 'error'); return; }
     toast(t('bootstrapRegenerated'), 'success');
     renderBootstrapSection();
   } catch (e) { toast(t('error'), 'error'); }
@@ -332,6 +334,7 @@ async function uploadBootstrapCert(e) {
 
   try {
     const res = await apiFetch('/api/v1/server-tls-pins/upload', { method: 'POST', body: formData });
+    if (res.status === 202) return; // waits for a second admin; apiFetch said so
     const data = await res.json();
     if (data.error) { toast(data.error, 'error'); return; }
     toast(t('bootstrapUploaded'), 'success');
@@ -348,6 +351,7 @@ async function fetchBootstrapFromUrl(e) {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ url })
     });
+    if (res.status === 202) return; // waits for a second admin; apiFetch said so
     const data = await res.json();
     if (data.error) { toast(reasonError(data), 'error'); return; }
     toast(t('bootstrapFetched'), 'success');
@@ -419,10 +423,11 @@ async function renderMtlsSection() {
     const certRows = certs.length === 0
       ? `<div class="empty-msg">${t('noClientCerts')}</div>`
       : `<table class="data-table">
-          <thead><tr><th>ID</th><th>${t('thFingerprint')}</th><th>${t('thCreated')}</th><th>${t('thExpires')}</th><th>${t('thRenewals')}</th><th>${t('thRevoked')}</th><th></th></tr></thead>
+          <thead><tr><th>ID</th><th>${t('thRequestKey')}</th><th>${t('thFingerprint')}</th><th>${t('thCreated')}</th><th>${t('thExpires')}</th><th>${t('thRenewals')}</th><th>${t('thRevoked')}</th><th></th></tr></thead>
           <tbody>${certsPagInfo.slice.map((c, i) => `<tr class="${certsPagInfo.page === 0 && i === 0 ? 'row-latest' : ''}">
             <td style="font-weight:600">${esc(c.id)}${c.keyType === 'csr' ? ` <span title="${t('keyOnDevice')}" style="font-size:10px;color:#22c55e">●</span>` : ''}</td>
-            <td style="font-family:monospace;font-size:10px;color:#7dd3fc">${c.fingerprint.substring(0, 20)}...</td>
+            <td>${String(c.commonName || '').startsWith('Uploaded: ') ? '—' : attestationBadge(c.attestation, c.keyType !== 'csr')}</td>
+            <td style="font-family:monospace;font-size:10px;color:#7dd3fc">${esc(c.fingerprint.substring(0, 20))}...</td>
             <td style="color:#64748b;font-size:11px">${new Date(c.createdAt).toLocaleString(locale)}</td>
             <td style="font-size:11px;color:${c.notAfter && new Date(c.notAfter) < new Date() ? '#ef4444' : '#64748b'}">${c.notAfter ? new Date(c.notAfter).toLocaleString(locale) : '—'}</td>
             <td style="text-align:center">${c.keyType === 'csr' ? c.renewCount : '—'}</td>
@@ -509,13 +514,18 @@ HostPin("${location.hostname}:${recovery.port}", listOf(
           <strong>${t('secureFlowLabel')}</strong> ${t('secureFlowSteps')}
           ${!enrollMode.tokenRequired ? '<br><span style="color:#fbbf24">' + t('enrollmentModeHint') + '</span>' : ''}
         </div>
-        <form data-action-submit="generateEnrollmentToken" style="display:flex;gap:8px;align-items:end">
-          <div class="form-group" style="flex:1;margin:0">
+        <form data-action-submit="generateEnrollmentToken" style="display:flex;gap:8px;align-items:end;flex-wrap:wrap">
+          <div class="form-group" style="flex:1;min-width:160px;margin:0">
             <label class="form-label">${t('clientIdLabel')}</label>
             <input type="text" id="enrollment-client-id" placeholder="${t('clientIdPlaceholder')}" required class="form-input"/>
           </div>
+          <div class="form-group" style="flex:1;min-width:160px;margin:0">
+            <label class="form-label" for="enrollment-device-uid">${t('enrollDeviceUidLabel')}</label>
+            <input type="text" id="enrollment-device-uid" placeholder="${esc(t('enrollDeviceUidPlaceholder'))}" maxlength="64" autocomplete="off" spellcheck="false" class="form-input" style="font-family:monospace"/>
+          </div>
           <button type="submit" class="btn btn-primary">${t('generateToken')}</button>
         </form>
+        <div style="color:#94a3b8;font-size:11px;margin-top:6px;line-height:1.5">${esc(t('enrollDeviceUidHint'))}</div>
         <div id="enrollment-token-list" style="margin-top:12px"></div>
       </div>`;
     _openRequestIds = openRequestIds(requests);
@@ -541,6 +551,14 @@ async function generateClientCert(e) {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ clientId })
     });
+    // 202: waits for a second admin. Once approved, the same click runs it
+    // and the file comes to this browser only (apiFetch said so).
+    if (res.status === 202) return;
+    if (!res.ok) {
+      const data = await res.json().catch(() => ({}));
+      toast(data.message || data.error || t('error'), 'error');
+      return;
+    }
     const blob = await res.blob();
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
@@ -560,8 +578,9 @@ async function uploadClientCert() {
   formData.append('clientId', clientId);
   try {
     const res = await apiFetch('/api/v1/client-certs/upload', { method: 'POST', body: formData });
+    if (res.status === 202) return; // waits for a second admin; apiFetch said so
     const data = await res.json();
-    if (data.error) { toast(data.error, 'error'); return; }
+    if (data.error) { toast(data.message || data.error, 'error'); return; }
     toast(t('certUploaded'), 'success');
     refreshMtlsView();
   } catch (err) { toast(t('error'), 'error'); }
@@ -603,12 +622,18 @@ async function generateEnrollmentToken(e) {
   e.preventDefault();
   const clientId = document.getElementById('enrollment-client-id').value.trim();
   if (!clientId) return;
+  // Optional: the phone's ANDROID_ID. Only that phone can use the token, and
+  // its device id counts as proven (token_mtls files, key replacement over mTLS).
+  const deviceUid = (document.getElementById('enrollment-device-uid')?.value || '').trim();
+  const body = deviceUid ? { clientId, deviceUid } : { clientId };
   try {
     const res = await apiFetch('/api/v1/enrollment-tokens/generate', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ clientId })
+      body: JSON.stringify(body)
     });
+    // 202: waits for a second admin; the same click runs it once it is approved.
+    if (res.status === 202) return;
     const data = await res.json();
     if (!res.ok) { toast(data.message || data.error || t('error'), 'error'); return; }
     // Sunucu artık yalnızca SHA-256 hash saklıyor — düz metin SADECE burada,
@@ -638,6 +663,7 @@ async function loadEnrollmentTokens() {
     // map() içinde `t` parametresi çeviri fonksiyonunu gölgeliyor — metinler
     // döngüden önce çözülüyor.
     const tokenMaskedTitle = t('tokenMaskedHint');
+    const anyDeviceTxt = t('tokenAnyDevice');
     if (tokens.length === 0) { container.innerHTML = ''; return; }
     // Durum sırası: kullanıldıysa "Kullanıldı", değilse süresi dolmuşsa
     // "Süresi doldu", yoksa "Bekliyor". Süresi dolmuş bir token'ın
@@ -651,10 +677,13 @@ async function loadEnrollmentTokens() {
     };
     const pag = pagSlice(tokens, 'enrollment-tokens');
     container.innerHTML = `<table class="data-table">
-      <thead><tr><th>${t('thToken')}</th><th>${t('clientIdLabel')}</th><th>${t('thStatus')}</th><th>${t('thDate')}</th></tr></thead>
+      <thead><tr><th>${t('thToken')}</th><th>${t('clientIdLabel')}</th><th>${t('thDeviceUid')}</th><th>${t('thStatus')}</th><th>${t('thDate')}</th></tr></thead>
       <tbody>${pag.slice.map((t, i) => `<tr class="${pag.page === 0 && i === 0 ? 'row-latest' : ''}">
         <td style="font-family:monospace;font-weight:700;color:#64748b" title="${esc(tokenMaskedTitle)}">${esc(t.token)}</td>
         <td>${esc(t.clientId)}</td>
+        <td class="token-device-uid">${t.deviceUid
+          ? `<span style="font-family:monospace">${esc(t.deviceUid)}</span>`
+          : `<span style="color:#64748b">${esc(anyDeviceTxt)}</span>`}</td>
         <td${t.expiresAt ? ` title="${esc(expiresAtLabel)}: ${esc(new Date(t.expiresAt).toLocaleString(locale))}"` : ''}>${statusCell(t)}</td>
         <td style="color:#64748b;font-size:11px">${new Date(t.createdAt).toLocaleString(locale)}</td>
       </tr>`).join('')}</tbody>
@@ -717,6 +746,20 @@ function scheduleEnrollmentRequestPoll() {
   }, ENROLLMENT_POLL_MS);
 }
 
+/**
+ * What Android Key Attestation said about a device key (ENROLLMENT_ATTESTATION):
+ * a small coloured label with the reason in its tooltip. `serverMade`: a P12
+ * key the server generated, which nothing can attest.
+ */
+function attestationBadge(a, serverMade) {
+  const label = (text, color, hint) =>
+    `<span style="font-size:11px;font-weight:600;color:${color};white-space:nowrap" title="${esc(hint)}">${esc(text)}</span>`;
+  if (serverMade) return label(t('keyServerMade'), '#94a3b8', t('keyServerMadeHint'));
+  if (!a) return label(t('keyUnchecked'), '#64748b', t('keyUncheckedHint'));
+  if (a.attested) return label(`✓ ${t('keyAttested')}`, '#22c55e', t('keyAttestedHint', a.securityLevel || 'tee'));
+  return label(`⚠ ${t('keyNotAttested')}`, '#f59e0b', t('keyNotAttestedHint', a.reason || '—'));
+}
+
 function renderEnrollmentRequestsCard(requests, openStatus, locale) {
   const open = requests.filter(r => r.status === 'pending' || r.status === 'approved');
   const waiting = open.filter(r => r.status === 'pending').length;
@@ -734,6 +777,7 @@ function renderEnrollmentRequestsCard(requests, openStatus, locale) {
     return `<tr data-request-id="${esc(r.id)}">
       <td>${device}</td>
       <td style="font-family:monospace;font-weight:700;color:#7dd3fc;white-space:nowrap" title="${esc(t('requestCodeHint'))}">${esc(r.verificationCode || '—')}</td>
+      <td>${attestationBadge(r.attestation, false)}</td>
       <td style="font-family:monospace;font-weight:600">${esc(r.clientId)}</td>
       <td>${r.openApplication ? `<span style="color:#94a3b8">${t('requestViaOpen')}</span>` : esc(r.policyName)}</td>
       <td style="font-family:monospace;font-size:11px">${esc(r.sourceIp)}</td>
@@ -744,7 +788,7 @@ function renderEnrollmentRequestsCard(requests, openStatus, locale) {
   const table = open.length === 0
     ? `<div class="empty-msg">${t('pendingNone')}</div>`
     : `<table class="data-table">
-        <thead><tr><th>${t('thRequestDevice')}</th><th>${t('thRequestCode')}</th><th>${t('thRequestIdentity')}</th><th>${t('thRequestPolicy')}</th><th>${t('thRequestIp')}</th><th>${t('thRequestAsked')}</th><th></th></tr></thead>
+        <thead><tr><th>${t('thRequestDevice')}</th><th>${t('thRequestCode')}</th><th>${t('thRequestKey')}</th><th>${t('thRequestIdentity')}</th><th>${t('thRequestPolicy')}</th><th>${t('thRequestIp')}</th><th>${t('thRequestAsked')}</th><th></th></tr></thead>
         <tbody>${rows}</tbody>
       </table>${pagControls('enrollment-requests', pag, 'refreshMtlsView')}`;
   const limits = openStatus
@@ -824,12 +868,18 @@ function renderEnrollmentPoliciesCard(policies, locale) {
 async function toggleOpenApplications(ev) {
   const enabled = !!ev.target.checked;
   try {
-    const res = await apiFetch('/api/v1/enrollment-open', {
-      method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ enabled })
-    });
-    if (!res.ok) {
+    // Turning it OFF is never held for approval (DELETE): closing a door must
+    // not wait. Turning it ON is (PUT), when approvals are on.
+    const res = enabled
+      ? await apiFetch('/api/v1/enrollment-open', {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ enabled })
+        })
+      : await apiFetch('/api/v1/enrollment-open', { method: 'DELETE' });
+    if (res.status === 202) {
+      // Nothing changed yet: the switch goes back to what the server has.
+    } else if (!res.ok) {
       const data = await res.json().catch(() => ({}));
       toast(data.message || t('error'), 'error');
     } else {
@@ -853,6 +903,8 @@ async function createEnrollmentPolicy(e) {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(body)
     });
+    // 202: waits for a second admin; the same click runs it once it is approved.
+    if (res.status === 202) return;
     const data = await res.json();
     if (!res.ok) { toast(data.message || data.error || t('policyCreateError'), 'error'); return; }
     // Plain text only here, once: on screen until closed, and on the clipboard.
@@ -914,26 +966,104 @@ async function rejectEnrollmentRequest(id, clientId) {
 async function revokeClientCert(id) {
   if (!confirm(t('revokeCertConfirm', id))) return;
   try {
-    await apiFetch(`/api/v1/client-certs/${encodeURIComponent(id)}`, { method: 'DELETE' });
+    const res = await apiFetch(`/api/v1/client-certs/${encodeURIComponent(id)}`, { method: 'DELETE' });
+    const data = res.ok ? await res.json().catch(() => ({})) : {};
     toast(t('certRevoked'), 'success');
-    refreshMtlsView();
+    await refreshMtlsView();
+    // Device ids the identity only named at enrollment were left alone (anyone
+    // can name a victim's phone); the administrator may cut them off on purpose.
+    showUnverifiedDevices('revoke', id, data.unverifiedDeviceIds);
+  } catch (err) { toast(t('error'), 'error'); }
+}
+
+// The same revocation again, also cutting off the device ids the identity only
+// named. Never the default: it would wipe a victim someone enrolled as.
+async function cascadeRevokeClientCert(id) {
+  const ids = unverifiedNoticeIds();
+  if (!confirm(t('cascadeConfirm', id, ids.join(', ')))) return;
+  try {
+    const res = await apiFetch(`/api/v1/client-certs/${encodeURIComponent(id)}?cascadeUnverified=true`, { method: 'DELETE' });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) return toast(data.message || t('error'), 'error');
+    toast(t('cascadeDone', ids.join(', '), data.vaultTokensRevoked ?? 0,
+      (data.e2eKeysDeleted ?? 0) + (data.userAuthKeysDeleted ?? 0)), 'success', 6000);
+    dismissUnverifiedNotice();
   } catch (err) { toast(t('error'), 'error'); }
 }
 
 // A revoked id stays revoked; forgetting it lets it enroll again (over a new
-// key — the old certificate and key stay refused).
+// key — the old certificate and key stay refused). The device ids it only
+// named are asked about BEFORE the forget: afterwards its rows are gone and
+// they can no longer be cut off through it.
 async function forgetClientIdentity(id) {
   if (!confirm(t('forgetIdentityConfirm', id))) return;
+  let unverified = [];
   try {
-    const res = await apiFetch(`/api/v1/client-certs/${encodeURIComponent(id)}/forget`, { method: 'POST' });
+    const res = await apiFetch(`/api/v1/client-certs/${encodeURIComponent(id)}/devices`, { quiet: true });
+    if (res.ok) unverified = (await res.json()).unverifiedDeviceIds || [];
+  } catch (_) { /* forget as before */ }
+  if (unverified.length > 0) return showUnverifiedDevices('forget', id, unverified);
+  return doForgetClientIdentity(id, '0');
+}
+
+async function doForgetClientIdentity(id, cascade) {
+  const cascadeUnverified = cascade === '1';
+  if (cascadeUnverified && !confirm(t('cascadeConfirm', id, unverifiedNoticeIds().join(', ')))) return;
+  try {
+    const query = cascadeUnverified ? '?cascadeUnverified=true' : '';
+    const res = await apiFetch(`/api/v1/client-certs/${encodeURIComponent(id)}/forget${query}`, { method: 'POST' });
+    const data = await res.json().catch(() => ({}));
     if (res.ok) {
       toast(t('identityForgotten', id), 'success', 6000);
+      if (cascadeUnverified) {
+        toast(t('cascadeDone', unverifiedNoticeIds().join(', '), data.vaultTokensRevoked ?? 0,
+          (data.e2eKeysDeleted ?? 0) + (data.userAuthKeysDeleted ?? 0)), 'success', 6000);
+      }
     } else {
-      const data = await res.json().catch(() => ({}));
       toast(data.error === 'not_revoked' ? t('forgetNotRevoked') : (data.message || t('error')), 'error');
     }
+    dismissUnverifiedNotice();
     refreshMtlsView();
   } catch (err) { toast(t('error'), 'error'); }
+}
+
+/**
+ * The device ids a revoke left alone (or a forget would), with a plain
+ * explanation and the deliberate cascade. Every id is escaped: a device id is
+ * whatever the enrolling party sent.
+ */
+function showUnverifiedDevices(kind, id, ids) {
+  if (!Array.isArray(ids) || ids.length === 0) return;
+  const content = document.getElementById('content');
+  if (!content) return;
+  dismissUnverifiedNotice();
+  const box = document.createElement('div');
+  box.id = 'unverified-notice';
+  box.className = 'card';
+  box.style.border = '1px solid #f59e0b';
+  box.dataset.ids = JSON.stringify(ids.map(String));
+  const list = ids.map(d => `<code>${esc(d)}</code>`).join(', ');
+  const buttons = kind === 'revoke'
+    ? `<button class="btn btn-danger" data-action="cascadeRevokeClientCert" data-arg0="${esc(id)}">${t('cascadeRevokeBtn')}</button>`
+    : `<button class="btn btn-secondary" data-action="doForgetClientIdentity" data-arg0="${esc(id)}" data-arg1="0">${t('forgetOnlyBtn')}</button>
+       <button class="btn btn-danger" data-action="doForgetClientIdentity" data-arg0="${esc(id)}" data-arg1="1">${t('forgetCascadeBtn')}</button>`;
+  box.innerHTML = `
+    <div class="card-title">${t('unverifiedTitle')}</div>
+    <p style="margin:6px 0">${t(kind === 'revoke' ? 'unverifiedAfterRevoke' : 'unverifiedBeforeForget', esc(id))}</p>
+    <p style="margin:6px 0;font-family:monospace">${list}</p>
+    <p style="margin:6px 0;color:#94a3b8;font-size:12px">${t('unverifiedExplain')}</p>
+    <div style="display:flex;gap:8px;flex-wrap:wrap">${buttons}
+      <button class="btn btn-secondary" data-action="dismissUnverifiedNotice">${t('unverifiedClose')}</button></div>`;
+  content.prepend(box);
+  box.scrollIntoView({ block: 'nearest' });
+}
+
+function unverifiedNoticeIds() {
+  try { return JSON.parse(document.getElementById('unverified-notice')?.dataset.ids || '[]'); } catch (_) { return []; }
+}
+
+function dismissUnverifiedNotice() {
+  document.getElementById('unverified-notice')?.remove();
 }
 
 // ── Signing Key Section ──────────────────────────────
@@ -1159,11 +1289,11 @@ async function loadCertInfo(hostname) {
     card.innerHTML = `
       <div class="card-title">${t('certInfo')}</div>
       <div style="font-size:12px">
-        <div class="info-row"><span class="info-key">CN</span><span class="info-val">${cn}</span></div>
+        <div class="info-row"><span class="info-key">CN</span><span class="info-val">${esc(cn)}</span></div>
         <div class="info-row"><span class="info-key">${t('algorithmLabel')}</span><span class="info-val">${esc(c.publicKeyAlgorithm)} ${esc(c.publicKeyBits)}-bit</span></div>
         <div class="info-row"><span class="info-key">${t('validUntilLabel')}</span><span class="info-val" style="color:#f59e0b">${new Date(c.validUntil).toLocaleString(lang === 'tr' ? 'tr-TR' : 'en-US')}</span></div>
-        <div class="info-row"><span class="info-key">SAN</span><span class="info-val">${c.subjectAltNames.join(', ')}</span></div>
-        <div class="info-row" style="border:none"><span class="info-key">${t('thFingerprint')}</span><span class="info-val" style="font-size:9px;font-family:monospace;color:#94a3b8">${c.sha256Fingerprint}</span></div>
+        <div class="info-row"><span class="info-key">SAN</span><span class="info-val">${esc(c.subjectAltNames.join(', '))}</span></div>
+        <div class="info-row" style="border:none"><span class="info-key">${t('thFingerprint')}</span><span class="info-val" style="font-size:9px;font-family:monospace;color:#94a3b8">${esc(c.sha256Fingerprint)}</span></div>
       </div>
       ${renderCertRenewSection(hostname)}`;
   } catch (e) {

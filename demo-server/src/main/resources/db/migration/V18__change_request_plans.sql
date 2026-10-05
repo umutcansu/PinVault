@@ -1,0 +1,13 @@
+-- Two-person approval, second round.
+--
+-- `prepared`: what a certificate change will install, worked out when the
+-- change was REQUESTED (the pins, the certificate and — for a certificate the
+-- server serves itself — its keystores). The approver is shown it and the
+-- approval applies exactly it: nothing is fetched or generated a second time.
+-- Dropped with the request body once the request is decided.
+--
+-- A request can now also be `approved` without having run: operations whose
+-- answer carries a secret shown once (an enrollment token, a vault token, an
+-- enrollment code, a client P12) are run by the REQUESTER after approval, so
+-- the secret goes to them and is never stored here.
+ALTER TABLE change_requests ADD COLUMN prepared BLOB;

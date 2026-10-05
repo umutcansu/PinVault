@@ -21,8 +21,29 @@ function esc(s) {
 }
 
 // ── API Key Authentication ──────────────────────────
-function getApiKey() { return localStorage.getItem('pinvault_api_key') || ''; }
-function setApiKey(key) { localStorage.setItem('pinvault_api_key', key); }
+// The admin key lives in sessionStorage: it is gone when the tab is closed,
+// and a page opened later in this browser cannot read it. It used to be kept
+// in localStorage, where it stayed for good; a copy left there by an earlier
+// version of this page is moved over once and deleted.
+const API_KEY_STORE = 'pinvault_api_key';
+function migrateStoredApiKey() {
+    try {
+        const old = localStorage.getItem(API_KEY_STORE);
+        if (old === null) return;
+        if (old && !sessionStorage.getItem(API_KEY_STORE)) sessionStorage.setItem(API_KEY_STORE, old);
+        localStorage.removeItem(API_KEY_STORE);
+    } catch (_) { /* storage blocked: the key is asked for again */ }
+}
+migrateStoredApiKey();
+function getApiKey() {
+    try { return sessionStorage.getItem(API_KEY_STORE) || ''; } catch (_) { return ''; }
+}
+function setApiKey(key) {
+    try { sessionStorage.setItem(API_KEY_STORE, key); } catch (_) { /* asked for again next time */ }
+}
+function clearApiKey() {
+    try { sessionStorage.removeItem(API_KEY_STORE); localStorage.removeItem(API_KEY_STORE); } catch (_) { /* nothing stored */ }
+}
 
 /**
  * Authenticated fetch wrapper — adds the X-API-Key header and handles the
@@ -44,6 +65,9 @@ function setApiKey(key) { localStorage.setItem('pinvault_api_key', key); }
 async function apiFetch(url, options = {}) {
     const { quiet = false, liveCheckRetry = false, ...init } = options;
     const key = getApiKey();
+    // X-PinVault-Admin: a header no cross-site form can add. The server refuses
+    // admin writes that are neither JSON nor marked like this (CSRF).
+    init.headers = { ...init.headers, 'X-PinVault-Admin': '1' };
     if (key) {
         init.headers = { ...init.headers, 'X-API-Key': key };
     }

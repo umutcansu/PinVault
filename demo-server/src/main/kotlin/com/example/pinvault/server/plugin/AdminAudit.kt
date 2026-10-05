@@ -73,10 +73,26 @@ val AdminAudit = createApplicationPlugin("AdminAudit", ::AdminAuditConfig) {
         audit.record(
             action = AuditLog.HTTP_ACTION,
             summary = "HTTP $status",
-            configApiId = call.request.queryParameters["configApiId"] ?: "",
+            // The scope the handler wrote: a `{configApiId}` path segment wins
+            // (handlers read it with pathParameters, a same-named query
+            // parameter beside it changes nothing), then `?configApiId=`.
+            configApiId = scopeInPath(call.request.path()) ?: call.request.queryParameters["configApiId"] ?: "",
             target = "${method.value} ${call.request.path()}$query",
             actor = scope.actor,
             ip = scope.ip
         )
     }
+}
+
+/** Admin routes that name their Config API in the path, `{configApiId}` captured. */
+private val SCOPE_PATHS = listOf(
+    Regex("^/api/v1/config-apis/([^/]+)/.+$"),
+    Regex("^/api/v1/config/([^/]+)(?:/.*)?$"),
+    Regex("^/api/v1/management/hosts/([^/]+)/.+$")
+)
+
+/** The `{configApiId}` path segment of an admin route, as routing hands it to the handler; null when it has none. */
+internal fun scopeInPath(rawPath: String): String? {
+    val path = com.example.pinvault.server.service.PinAffectingRoutes.canonicalPath(rawPath)
+    return SCOPE_PATHS.firstNotNullOfOrNull { it.find(path)?.groupValues?.get(1) }?.replace("%2F", "/")
 }

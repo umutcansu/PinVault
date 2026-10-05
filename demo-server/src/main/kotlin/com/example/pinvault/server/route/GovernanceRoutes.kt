@@ -30,7 +30,9 @@ data class AdminMe(
     val liveCheck: String,
     val liveCheckOverridable: Boolean,
     val notificationsConfigured: Boolean,
-    val signatureCache: Boolean
+    val signatureCache: Boolean,
+    /** Operations taken out of the two-person rule (`APPROVAL_EXEMPT_OPERATIONS`). */
+    val approvalExemptOperations: List<String> = emptyList()
 )
 
 @Serializable
@@ -65,7 +67,8 @@ fun Route.governanceRoutes(
                 liveCheck = liveGate.mode.name.lowercase(),
                 liveCheckOverridable = liveGate.allowOverride,
                 notificationsConfigured = audit.notifier != null,
-                signatureCache = envelopes.cacheEnabled
+                signatureCache = envelopes.cacheEnabled,
+                approvalExemptOperations = approvals.exempt.sorted()
             )
         )
     }
@@ -92,7 +95,7 @@ fun Route.governanceRoutes(
     }
 
     get("/api/v1/change-requests/{id}") {
-        val id = call.parameters["id"]?.toLongOrNull()
+        val id = call.pathParameters["id"]?.toLongOrNull()
             ?: return@get call.respond(HttpStatusCode.BadRequest, mapOf("error" to "id must be a number"))
         val cr = approvals.get(id)
             ?: return@get call.respond(HttpStatusCode.NotFound, mapOf("error" to "Change request #$id not found"))
@@ -100,7 +103,7 @@ fun Route.governanceRoutes(
     }
 
     post("/api/v1/change-requests/{id}/approve") {
-        val id = call.parameters["id"]?.toLongOrNull()
+        val id = call.pathParameters["id"]?.toLongOrNull()
             ?: return@post call.respond(HttpStatusCode.BadRequest, mapOf("error" to "id must be a number"))
         val approver = call.adminName()
         try {
@@ -126,7 +129,7 @@ fun Route.governanceRoutes(
     }
 
     post("/api/v1/change-requests/{id}/reject") {
-        val id = call.parameters["id"]?.toLongOrNull()
+        val id = call.pathParameters["id"]?.toLongOrNull()
             ?: return@post call.respond(HttpStatusCode.BadRequest, mapOf("error" to "id must be a number"))
         val reason = runCatching {
             Json.parseToJsonElement(call.receiveText()).jsonObject["reason"]?.jsonPrimitive?.content

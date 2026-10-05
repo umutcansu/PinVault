@@ -52,9 +52,9 @@ class VaultFileStore(
             val newVersion = (existing?.version ?: 0) + 1
             val finalPolicy = accessPolicy ?: existing?.accessPolicy ?: "token"
             val finalEncryption = encryption ?: existing?.encryption ?: "plain"
-            // at_rest and end_to_end: store the content AES-256-GCM encrypted;
-            // reads decrypt it transparently (see toEntry). The wire format is
-            // unchanged: plain for at_rest, per-device envelope for end_to_end.
+            // at_rest, end_to_end and user_auth: store the content AES-256-GCM
+            // encrypted; reads decrypt it transparently (see toEntry). The wire format
+            // is unchanged: plain for at_rest, per-device envelope for the other two.
             val storedContent = storedForm(finalEncryption, content)
 
             conn.prepareStatement("""
@@ -74,11 +74,17 @@ class VaultFileStore(
     }
 
     /**
-     * Update policy/encryption for an existing row (version unchanged). When the
-     * encryption mode flips to/from `at_rest`, the stored content is rewritten in
-     * the target format — get() returns plaintext, so we just re-encrypt it (or
-     * keep it plain). Without this, an at_rest read would fail or a plain file
-     * would be served as ciphertext after a mode switch.
+     * Update policy/encryption for an existing row. When the encryption mode
+     * flips to/from `at_rest`, the stored content is rewritten in the target
+     * format — get() returns plaintext, so we just re-encrypt it (or keep it
+     * plain). Without this, an at_rest read would fail or a plain file would be
+     * served as ciphertext after a mode switch.
+     *
+     * A change of either value bumps the version: devices holding the file
+     * ask with their version and got 304, keeping the copy in the old form
+     * (a plain copy of a file that is now sealed to the user, say). With a new
+     * version every device fetches it again, in the new form and under the
+     * new policy. Setting the same values again changes nothing.
      */
     fun updatePolicy(configApiId: String, key: String, accessPolicy: String, encryption: String): Boolean {
         val current = get(configApiId, key) ?: return false   // content already decrypted
@@ -86,21 +92,24 @@ class VaultFileStore(
         db.connection().use { conn ->
             conn.prepareStatement("""
                 UPDATE vault_files
-                SET access_policy = ?, encryption = ?, content = ?, updated_at = datetime('now')
+                SET version = version + CASE WHEN access_policy <> ? OR encryption <> ? THEN 1 ELSE 0 END,
+                    access_policy = ?, encryption = ?, content = ?, updated_at = datetime('now')
                 WHERE config_api_id = ? AND key = ?
             """).use { stmt ->
                 stmt.setString(1, accessPolicy)
                 stmt.setString(2, encryption)
-                stmt.setBytes(3, storedContent)
-                stmt.setString(4, configApiId)
-                stmt.setString(5, key)
+                stmt.setString(3, accessPolicy)
+                stmt.setString(4, encryption)
+                stmt.setBytes(5, storedContent)
+                stmt.setString(6, configApiId)
+                stmt.setString(7, key)
                 return stmt.executeUpdate() > 0
             }
         }
     }
 
     /**
-     * Startup pass over every at_rest / end_to_end file so each one opens with
+     * Startup pass over every at_rest / end_to_end / user_auth file so each one opens with
      * the current `VAULT_AT_REST_PASSWORD`:
      * - stored before it was kept encrypted (end_to_end files once were): encrypted;
      * - opens only with a previous password (`VAULT_AT_REST_PASSWORD_PREVIOUS`,
@@ -111,7 +120,7 @@ class VaultFileStore(
      */
     fun secureStoredFiles(): AtRestReport = db.connection().use { conn ->
         val rows = conn.prepareStatement(
-            "SELECT config_api_id, key, content FROM vault_files WHERE encryption IN ('at_rest', 'end_to_end') ORDER BY config_api_id, key"
+            "SELECT config_api_id, key, content FROM vault_files WHERE encryption IN ('at_rest', 'end_to_end', 'user_auth') ORDER BY config_api_id, key"
         ).use { stmt ->
             val rs = stmt.executeQuery()
             buildList { while (rs.next()) add(Triple(rs.getString(1), rs.getString(2), rs.getBytes(3))) }
@@ -141,7 +150,13 @@ class VaultFileStore(
 
     data class AtRestReport(val encrypted: List<String>, val rekeyed: List<String>, val unreadable: List<String>)
 
-    private fun meta(configApiId: String, key: String): VaultFileSummary? {
+    /**
+     * A file's version, access policy and encryption without its content
+     * (`size` is 0): nothing is decrypted. The download route decides
+     * everything from this — existence, policy, token, 304 — and calls [get]
+     * only for a request it is going to answer with the file.
+     */
+    fun meta(configApiId: String, key: String): VaultFileSummary? {
         db.connection().use { conn ->
             conn.prepareStatement("""
                 SELECT version, access_policy, encryption FROM vault_files WHERE config_api_id = ? AND key = ?
@@ -259,7 +274,7 @@ class VaultFileStore(
     }
 
     private companion object {
-        val ENCRYPTED_MODES = setOf("at_rest", "end_to_end")
+        val ENCRYPTED_MODES = setOf("at_rest", "end_to_end", "user_auth")
     }
 }
 

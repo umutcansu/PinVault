@@ -1,5 +1,6 @@
 package com.example.pinvault.server
 
+import com.example.pinvault.server.route.scopedVaultAdminRoutes
 import com.example.pinvault.server.route.vaultRoutes
 import com.example.pinvault.server.service.VaultAccessTokenService
 import com.example.pinvault.server.service.VaultEncryptionRoundtripTestHelper
@@ -68,7 +69,7 @@ class VaultE2EEncryptionCrossTest {
 
     private fun ApplicationTestBuilder.configureApp() {
         install(ContentNegotiation) { json(Json { ignoreUnknownKeys = true }) }
-        routing { vaultRoutes(testApi, vfs, dist, tokens, pks, tokenSvc, encSvc) }
+        routing { scopedVaultAdminRoutes(vfs, dist, tokens, tokenSvc, publicKeyStore = pks); vaultRoutes(testApi, vfs, dist, tokens, pks, tokenSvc, encSvc) }
     }
 
     @Test
@@ -77,7 +78,7 @@ class VaultE2EEncryptionCrossTest {
 
         // 1. Admin uploads with end_to_end encryption + token policy.
         val plaintext = """{"secret":"top-secret-value","nonce":"abc123"}"""
-        client.put("/api/v1/vault/encrypted-config?policy=token&encryption=end_to_end") {
+        client.put("/api/v1/config-apis/$testApi/vault/encrypted-config?policy=token&encryption=end_to_end") {
             setBody(plaintext.toByteArray()); contentType(ContentType.Application.OctetStream)
         }
 
@@ -117,7 +118,7 @@ class VaultE2EEncryptionCrossTest {
     @Test
     fun `fetching E2E file without registered public key returns precondition failed`() = testApplication {
         configureApp()
-        client.put("/api/v1/vault/e2e-orphan?policy=token&encryption=end_to_end") {
+        client.put("/api/v1/config-apis/$testApi/vault/e2e-orphan?policy=token&encryption=end_to_end") {
             setBody("content".toByteArray()); contentType(ContentType.Application.OctetStream)
         }
 
@@ -134,7 +135,7 @@ class VaultE2EEncryptionCrossTest {
     @Test
     fun `wrong device key cannot decrypt another device's envelope`() = testApplication {
         configureApp()
-        client.put("/api/v1/vault/shared-e2e?policy=token&encryption=end_to_end") {
+        client.put("/api/v1/config-apis/$testApi/vault/shared-e2e?policy=token&encryption=end_to_end") {
             setBody("secret-for-alice".toByteArray()); contentType(ContentType.Application.OctetStream)
         }
 
@@ -167,7 +168,7 @@ class VaultE2EEncryptionCrossTest {
     @Test
     fun `two fetches of same E2E file produce different ciphertexts`() = testApplication {
         configureApp()
-        client.put("/api/v1/vault/rerolled?policy=token&encryption=end_to_end") {
+        client.put("/api/v1/config-apis/$testApi/vault/rerolled?policy=token&encryption=end_to_end") {
             setBody("deterministic-plaintext".toByteArray())
             contentType(ContentType.Application.OctetStream)
         }

@@ -1,8 +1,23 @@
 package com.example.pinvault.server.route
 
 import com.example.pinvault.server.model.*
+import com.example.pinvault.server.plugin.DEFAULT_ADMIN_BODY_MAX_BYTES
+import com.example.pinvault.server.plugin.MissingApprovedPlan
+import com.example.pinvault.server.plugin.approvedCertPlan
+import com.example.pinvault.server.plugin.receiveLimitedBytes
+import com.example.pinvault.server.plugin.receiveMultipartForm
+import com.example.pinvault.server.service.AuditLog
+import com.example.pinvault.server.service.CertChangePlanner
+import com.example.pinvault.server.service.CertPlan
 import com.example.pinvault.server.service.CertificateService
+import com.example.pinvault.server.service.EgressFilter
+import com.example.pinvault.server.service.EgressRefusedException
+import com.example.pinvault.server.service.HostPatternRules
+import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.put
+import com.example.pinvault.server.service.LiveCertificateGate
 import com.example.pinvault.server.service.MockServerManager
+import com.example.pinvault.server.service.PlanRefused
 import com.example.pinvault.server.service.NoSecondCertificateException
 import com.example.pinvault.server.service.P12Transfer
 import io.ktor.server.application.*
@@ -25,7 +40,17 @@ fun Route.hostRoutes(
     historyStore: PinConfigHistoryStore,
     certService: CertificateService,
     mockServerManager: MockServerManager,
-    hostClientCertStore: HostClientCertStore? = null
+    hostClientCertStore: HostClientCertStore? = null,
+    /** Checks the pins a certificate change publishes against what the host serves now; null = off. */
+    liveGate: LiveCertificateGate? = null,
+    /** Where gate decisions and downloads of key material are recorded; null = nowhere. */
+    audit: AuditLog? = null,
+    /** Turns a certificate request into the plan that is applied (and, with approvals, shown first). */
+    planner: CertChangePlanner = CertChangePlanner(certService, pinConfigStore, hostStore),
+    /** The largest keystore or JSON body these routes read (`ADMIN_UPLOAD_MAX_BYTES`). */
+    maxUploadBytes: Long = DEFAULT_ADMIN_BODY_MAX_BYTES,
+    /** Where `ping-remote` may connect (`FETCH_ALLOW_PRIVATE_TARGETS`). */
+    egress: EgressFilter = EgressFilter.fromEnv()
 ) {
 
     // Management server'da birden fazla Config API'nin host'larını yönetebilmek
@@ -65,111 +90,65 @@ fun Route.hostRoutes(
         return primaryNewVersion
     }
 
+    /**
+     * Gives the existing host [hostname] the certificate of [plan] in every
+     * Config API that pins it (see [propagateHostPins]). The live gate runs
+     * before anything is written, once: the pins are the same in every scope.
+     */
+    suspend fun ApplicationCall.changeHostCertificate(primaryScope: String, hostname: String, plan: CertPlan, reason: String) {
+        // The planner checked them; a stored plan replayed after an upgrade is
+        // checked again: every scope that pins the host gets exactly these pins,
+        // and an entry the library would refuse takes its whole config down.
+        com.example.pinvault.server.service.PinConfigRules.hostErrors(hostname, plan.pins).takeIf { it.isNotEmpty() }?.let { errors ->
+            return respond(HttpStatusCode.BadRequest, mapOf("errors" to errors))
+        }
+        val gateScope = (listOf(primaryScope) + hostStore.listConfigApisFor(hostname))
+            .firstOrNull { scope -> pinConfigStore.load(scope).pins.any { it.hostname == hostname } }
+        if (gateScope != null) {
+            val config = pinConfigStore.load(gateScope)
+            val updated = config.copy(pins = config.pins.map { if (it.hostname == hostname) it.copy(sha256 = plan.pins) else it })
+            if (!passesLiveGate(gateScope, config, updated, liveGate, audit)) return
+        }
+
+        // A fetched certificate has no keystore: the host keeps serving its own.
+        val installed = plan.keystore?.let { certService.install(planner.keystoreId(hostname), plan) }
+        val primaryNewVersion = propagateHostPins(hostname, primaryScope, plan.pins, reason) {
+            it.copy(keystorePath = installed?.keystorePath ?: it.keystorePath, certValidUntil = plan.notAfter)
+        }
+
+        if (installed != null && mockServerManager.isRunning(hostname)) {
+            val port = mockServerManager.getPort(hostname) ?: 8443
+            mockServerManager.start(hostname, port, installed.keystorePath)
+        }
+
+        respond(HostActionResponse(hostname, plan.pins, plan.notAfter, primaryNewVersion))
+    }
+
     route("/api/v1/hosts") {
 
         post("generate-cert") {
-            val body = call.receive<Map<String, String>>()
-            val hostname = body["hostname"]?.trim()
-                ?: return@post call.respondText("{\"error\":\"hostname gerekli\"}", ContentType.Application.Json, HttpStatusCode.BadRequest)
-
-            val config = pinConfigStore.load(call.scopedApiId())
-            if (config.pins.any { it.hostname == hostname }) {
-                return@post call.respondText("{\"error\":\"Bu hostname zaten mevcut: $hostname\"}", ContentType.Application.Json, HttpStatusCode.Conflict)
-            }
-
-            val id = hostname.replace(".", "_")
-            val result = certService.generateCertificate(id, hostname)
-
-            hostStore.save(HostRecord(hostname, call.scopedApiId(), result.keystorePath, result.validUntil, null, Instant.now().toString()))
-
-            val newPin = HostPin(hostname, result.sha256Pins, version = 1)
-            val updated = config.copy(pins = config.pins + newPin)
-            val savedPin = pinConfigStore.save(call.scopedApiId(), updated).pins.first { it.hostname == newPin.hostname }
-
-            historyStore.add(call.scopedApiId(), PinConfigHistoryEntry(hostname, savedPin.version, Instant.now().toString(), "cert_generated", result.sha256Pins.firstOrNull()?.take(12) ?: ""))
-
-            call.respond(HostActionResponse(hostname, result.sha256Pins, result.validUntil, savedPin.version))
+            val scope = call.scopedApiId()
+            val plan = call.certPlan(planner, CertChangePlanner.Kind.ADD_GENERATED, scope, null, maxUploadBytes) ?: return@post
+            call.addPlannedHost(scope, plan, "cert_generated", pinConfigStore, hostStore, historyStore, certService, planner, liveGate, audit)
         }
 
+        // The host name is the URL's: a `hostname` field in the body is not read.
         post("fetch-from-url") {
-            val body = call.receive<Map<String, String>>()
-            val url = body["url"]?.trim()
-                ?: return@post call.respondText("{\"error\":\"url gerekli\"}", ContentType.Application.Json, HttpStatusCode.BadRequest)
-
-            val result = try {
-                certService.fetchFromUrl(url)
-            } catch (e: NoSecondCertificateException) {
-                return@post call.respondNoSecondCertificate(e)
-            } catch (e: Exception) {
-                return@post call.respondText("{\"error\":\"Baglanti hatasi: ${e.message}\"}", ContentType.Application.Json, HttpStatusCode.BadRequest)
-            }
-
-            val config = pinConfigStore.load(call.scopedApiId())
-            if (config.pins.any { it.hostname == result.hostname }) {
-                return@post call.respondText("{\"error\":\"Bu hostname zaten mevcut: ${result.hostname}\"}", ContentType.Application.Json, HttpStatusCode.Conflict)
-            }
-
-            hostStore.save(HostRecord(result.hostname, call.scopedApiId(), null, result.certInfo.validUntil, null, Instant.now().toString()))
-
-            val newPin = HostPin(result.hostname, result.sha256Pins, version = 1)
-            val updated = config.copy(pins = config.pins + newPin)
-            val savedPin = pinConfigStore.save(call.scopedApiId(), updated).pins.first { it.hostname == newPin.hostname }
-
-            historyStore.add(call.scopedApiId(), PinConfigHistoryEntry(result.hostname, savedPin.version, Instant.now().toString(), "fetched_from_url", result.sha256Pins.firstOrNull()?.take(12) ?: ""))
-
-            call.respond(HostActionResponse(result.hostname, result.sha256Pins, result.certInfo.validUntil, savedPin.version))
+            val scope = call.scopedApiId()
+            val plan = call.certPlan(planner, CertChangePlanner.Kind.ADD_FETCHED, scope, null, maxUploadBytes) ?: return@post
+            call.addPlannedHost(scope, plan, "fetched_from_url", pinConfigStore, hostStore, historyStore, certService, planner, liveGate, audit)
         }
 
         post("upload-cert") {
-            val multipart = call.receiveMultipart()
-            var fileBytes: ByteArray? = null
-            var password = "changeit"
-            var format = "jks"
-            var hostname: String? = null
-
-            multipart.forEachPart { part ->
-                when (part) {
-                    is PartData.FileItem -> fileBytes = part.streamProvider().readBytes()
-                    is PartData.FormItem -> when (part.name) {
-                        "password" -> password = part.value
-                        "format" -> format = part.value
-                        "hostname" -> hostname = part.value.trim()
-                    }
-                    else -> {}
-                }
-                part.dispose()
-            }
-
-            val bytes = fileBytes ?: return@post call.respondText("{\"error\":\"Dosya gerekli\"}", ContentType.Application.Json, HttpStatusCode.BadRequest)
-            val host = hostname ?: return@post call.respondText("{\"error\":\"hostname gerekli\"}", ContentType.Application.Json, HttpStatusCode.BadRequest)
-
-            val config = pinConfigStore.load(call.scopedApiId())
-            if (config.pins.any { it.hostname == host }) {
-                return@post call.respondText("{\"error\":\"Bu hostname zaten mevcut: $host\"}", ContentType.Application.Json, HttpStatusCode.Conflict)
-            }
-
-            val id = host.replace(".", "_")
-            val result = try {
-                certService.importCertificate(id, bytes, password, format, host)
-            } catch (e: Exception) {
-                return@post call.respondText("{\"error\":\"Import hatasi: ${e.message}\"}", ContentType.Application.Json, HttpStatusCode.BadRequest)
-            }
-
-            hostStore.save(HostRecord(host, call.scopedApiId(), result.keystorePath, result.validUntil, null, Instant.now().toString()))
-
-            val newPin = HostPin(host, result.sha256Pins, version = 1)
-            val updated = config.copy(pins = config.pins + newPin)
-            val savedPin = pinConfigStore.save(call.scopedApiId(), updated).pins.first { it.hostname == newPin.hostname }
-
-            historyStore.add(call.scopedApiId(), PinConfigHistoryEntry(host, savedPin.version, Instant.now().toString(), "cert_uploaded", result.sha256Pins.firstOrNull()?.take(12) ?: ""))
-
-            call.respond(HostActionResponse(host, result.sha256Pins, result.validUntil, savedPin.version))
+            val scope = call.scopedApiId()
+            val plan = call.certPlan(planner, CertChangePlanner.Kind.ADD_UPLOADED, scope, null, maxUploadBytes) ?: return@post
+            call.addPlannedHost(scope, plan, "cert_uploaded", pinConfigStore, hostStore, historyStore, certService, planner, liveGate, audit)
         }
 
         route("{hostname}") {
 
             get("cert-info") {
-                val hostname = call.parameters["hostname"] ?: ""
+                val hostname = call.pathParameters["hostname"] ?: ""
                 // Keystore fiziksel dosya; scope'a bağlı değil. Fallback ile başka
                 // scope'tan da okunabilir (salt okunur cert bilgisi).
                 val hostRecord = hostStore.get(hostname, call.scopedApiId())
@@ -192,27 +171,13 @@ fun Route.hostRoutes(
                 ))
             }
 
+            // Mock host cert'i global — bu hostu pinleyen TÜM Config API
+            // scope'ları yeni pin'leri almalı (propagateHostPins).
             post("regenerate-cert") {
-                val hostname = call.parameters["hostname"] ?: ""
-                val primaryScope = call.scopedApiId()
-                hostStore.get(hostname, primaryScope)
-                    ?: return@post call.respondText("{\"error\":\"Host bulunamadi\"}", ContentType.Application.Json, HttpStatusCode.NotFound)
-
-                val id = hostname.replace(".", "_")
-                val result = certService.generateCertificate(id, hostname)
-
-                // Mock host cert'i global — bu hostu pinleyen TÜM Config API
-                // scope'ları yeni pin'leri almalı (propagateHostPins).
-                val primaryNewVersion = propagateHostPins(hostname, primaryScope, result.sha256Pins, "cert_regenerated") {
-                    it.copy(keystorePath = result.keystorePath, certValidUntil = result.validUntil)
-                }
-
-                if (mockServerManager.isRunning(hostname)) {
-                    val port = mockServerManager.getPort(hostname) ?: 8443
-                    mockServerManager.start(hostname, port, result.keystorePath)
-                }
-
-                call.respond(HostActionResponse(hostname, result.sha256Pins, result.validUntil, primaryNewVersion))
+                val hostname = call.pathParameters["hostname"] ?: ""
+                val scope = call.scopedApiId()
+                val plan = call.certPlan(planner, CertChangePlanner.Kind.REGENERATE, scope, hostname, maxUploadBytes) ?: return@post
+                call.changeHostCertificate(scope, hostname, plan, "cert_regenerated")
             }
 
             // Yedek anahtara geçiş: sertifika saklı yedek anahtarla yeniden
@@ -220,106 +185,27 @@ fun Route.hostRoutes(
             // zaten tuttuğu için bağlantı hiç kesilmez; yayımlanan yeni liste
             // {eski yedek, yeni yedek} olur ve eski asıl anahtar listeden düşer.
             post("rotate-to-backup") {
-                val hostname = call.parameters["hostname"] ?: ""
-                val primaryScope = call.scopedApiId()
-                hostStore.get(hostname, primaryScope)
-                    ?: return@post call.respondText("{\"error\":\"Host bulunamadi\"}", ContentType.Application.Json, HttpStatusCode.NotFound)
-
-                val id = hostname.replace(".", "_")
-                val backupPin = certService.backupPin(id)
-                    ?: return@post call.respond(HttpStatusCode.Conflict, mapOf("reason" to "no_backup_key", "error" to
-                        "No stored backup key for $hostname: its pins were fetched from a URL, or its certificate was " +
-                        "generated before backup keys were kept. Regenerate the certificate to get one."))
-                val published = pinConfigStore.load(primaryScope).pins.find { it.hostname == hostname }?.sha256.orEmpty()
-                if (backupPin !in published) {
-                    return@post call.respond(HttpStatusCode.Conflict, mapOf("reason" to "backup_not_published", "error" to
-                        "The stored backup key's pin is not in $hostname's pin list, so devices would reject it. " +
-                        "Publish it first, or regenerate the certificate."))
-                }
-
-                val result = certService.rotateToBackup(id, hostname)
-                val primaryNewVersion = propagateHostPins(hostname, primaryScope, result.sha256Pins, "cert_rotated_to_backup") {
-                    it.copy(keystorePath = result.keystorePath, certValidUntil = result.validUntil)
-                }
-
-                if (mockServerManager.isRunning(hostname)) {
-                    val port = mockServerManager.getPort(hostname) ?: 8443
-                    mockServerManager.start(hostname, port, result.keystorePath)
-                }
-
-                call.respond(HostActionResponse(hostname, result.sha256Pins, result.validUntil, primaryNewVersion))
+                val hostname = call.pathParameters["hostname"] ?: ""
+                val scope = call.scopedApiId()
+                val plan = call.certPlan(planner, CertChangePlanner.Kind.ROTATE, scope, hostname, maxUploadBytes) ?: return@post
+                call.changeHostCertificate(scope, hostname, plan, "cert_rotated_to_backup")
             }
 
+            // Mock host cert global — bu hostu pinleyen tüm scope'lar yeni
+            // pin'leri alır (aksi halde o scope'un client'ları pin mismatch alir).
             post("upload-cert") {
-                val hostname = call.parameters["hostname"] ?: ""
-                val hostRecord = hostStore.get(hostname, call.scopedApiId())
-                    ?: return@post call.respondText("{\"error\":\"Host bulunamadi\"}", ContentType.Application.Json, HttpStatusCode.NotFound)
-
-                val multipart = call.receiveMultipart()
-                var fileBytes: ByteArray? = null
-                var password = "changeit"
-                var format = "jks"
-
-                multipart.forEachPart { part ->
-                    when (part) {
-                        is PartData.FileItem -> fileBytes = part.streamProvider().readBytes()
-                        is PartData.FormItem -> when (part.name) {
-                            "password" -> password = part.value
-                            "format" -> format = part.value
-                        }
-                        else -> {}
-                    }
-                    part.dispose()
-                }
-
-                val bytes = fileBytes ?: return@post call.respondText("{\"error\":\"Dosya gerekli\"}", ContentType.Application.Json, HttpStatusCode.BadRequest)
-
-                val id = hostname.replace(".", "_")
-                val result = try {
-                    certService.importCertificate(id, bytes, password, format, hostname)
-                } catch (e: Exception) {
-                    return@post call.respondText("{\"error\":\"Import hatasi: ${e.message}\"}", ContentType.Application.Json, HttpStatusCode.BadRequest)
-                }
-
-                // Mock host cert global — bu hostu pinleyen tüm scope'lar yeni
-                // pin'leri alır (aksi halde o scope'un client'ları pin mismatch alir).
-                val primaryScope = call.scopedApiId()
-                val primaryNewVersion = propagateHostPins(hostname, primaryScope, result.sha256Pins, "cert_uploaded") {
-                    it.copy(keystorePath = result.keystorePath, certValidUntil = result.validUntil)
-                }
-
-                if (mockServerManager.isRunning(hostname)) {
-                    val port = mockServerManager.getPort(hostname) ?: 8443
-                    mockServerManager.start(hostname, port, result.keystorePath)
-                }
-
-                call.respond(HostActionResponse(hostname, result.sha256Pins, result.validUntil, primaryNewVersion))
+                val hostname = call.pathParameters["hostname"] ?: ""
+                val scope = call.scopedApiId()
+                val plan = call.certPlan(planner, CertChangePlanner.Kind.UPLOAD, scope, hostname, maxUploadBytes) ?: return@post
+                call.changeHostCertificate(scope, hostname, plan, "cert_uploaded")
             }
 
+            // Remote host cert global (tek public cert) — pinleyen tum scope'lari guncelle.
             post("fetch-cert-url") {
-                val hostname = call.parameters["hostname"] ?: ""
-                val hostRecord = hostStore.get(hostname, call.scopedApiId())
-                    ?: return@post call.respondText("{\"error\":\"Host bulunamadi\"}", ContentType.Application.Json, HttpStatusCode.NotFound)
-
-                val body = call.receive<Map<String, String>>()
-                val url = body["url"]?.trim()
-                    ?: return@post call.respondText("{\"error\":\"url gerekli\"}", ContentType.Application.Json, HttpStatusCode.BadRequest)
-
-                val fetchResult = try {
-                    certService.fetchFromUrl(url)
-                } catch (e: NoSecondCertificateException) {
-                    return@post call.respondNoSecondCertificate(e)
-                } catch (e: Exception) {
-                    return@post call.respondText("{\"error\":\"Baglanti hatasi: ${e.message}\"}", ContentType.Application.Json, HttpStatusCode.BadRequest)
-                }
-
-                // Remote host cert global (tek public cert) — pinleyen tum scope'lari guncelle.
-                val primaryScope = call.scopedApiId()
-                val primaryNewVersion = propagateHostPins(hostname, primaryScope, fetchResult.sha256Pins, "cert_fetched") {
-                    it.copy(certValidUntil = fetchResult.certInfo.validUntil)
-                }
-
-                call.respond(HostActionResponse(hostname, fetchResult.sha256Pins, fetchResult.certInfo.validUntil, primaryNewVersion))
+                val hostname = call.pathParameters["hostname"] ?: ""
+                val scope = call.scopedApiId()
+                val plan = call.certPlan(planner, CertChangePlanner.Kind.FETCH, scope, hostname, maxUploadBytes) ?: return@post
+                call.changeHostCertificate(scope, hostname, plan, "cert_fetched")
             }
 
             // mTLS toggle — host'u mTLS olarak işaretle/kaldır
@@ -333,7 +219,7 @@ fun Route.hostRoutes(
             // watermark semantics (version is taken as given for a host that
             // already exists in the scope), so read the stored value back.
             post("toggle-mtls") {
-                val hostname = call.parameters["hostname"] ?: ""
+                val hostname = call.pathParameters["hostname"] ?: ""
                 val body = call.receive<kotlinx.serialization.json.JsonObject>()
                 val mtls = body["mtls"]?.let { kotlinx.serialization.json.Json.decodeFromJsonElement(kotlinx.serialization.serializer<Boolean>(), it) } ?: false
 
@@ -361,38 +247,25 @@ fun Route.hostRoutes(
                     return@post call.respondText("""{"error":"Host client cert store not available"}""", ContentType.Application.Json, HttpStatusCode.InternalServerError)
                 }
 
-                val hostname = call.parameters["hostname"] ?: ""
+                val hostname = call.pathParameters["hostname"] ?: ""
                 hostStore.get(hostname, call.scopedApiId())
                     ?: return@post call.respondText("""{"error":"Host bulunamadi"}""", ContentType.Application.Json, HttpStatusCode.NotFound)
 
-                val multipart = call.receiveMultipart()
-                var fileBytes: ByteArray? = null
-                var password = "changeit"
+                // One bounded read, one parser (the approver's description reads the same bytes).
+                val form = call.receiveMultipartForm(maxUploadBytes) ?: return@post
+                val password = form.fields["password"] ?: "changeit"
 
-                multipart.forEachPart { part ->
-                    when (part) {
-                        is PartData.FileItem -> fileBytes = part.streamProvider().readBytes()
-                        is PartData.FormItem -> when (part.name) {
-                            "password" -> password = part.value
-                        }
-                        else -> {}
-                    }
-                    part.dispose()
+                val bytes = form.file ?: return@post call.respondText("""{"error":"Dosya gerekli"}""", ContentType.Application.Json, HttpStatusCode.BadRequest)
+
+                // P12 olarak yükle/doğrula — exactly one private key: the entry the
+                // approver was shown is the one devices get (see hostClientKeyEntry).
+                val cert = try {
+                    certService.hostClientKeyEntry(bytes, password).second
+                } catch (e: IllegalArgumentException) {
+                    return@post call.respondText(buildJsonObject { put("error", e.message ?: "Gecersiz P12") }.toString(), ContentType.Application.Json, HttpStatusCode.BadRequest)
                 }
-
-                val bytes = fileBytes ?: return@post call.respondText("""{"error":"Dosya gerekli"}""", ContentType.Application.Json, HttpStatusCode.BadRequest)
-
-                // P12 olarak yükle/doğrula
-                val ks = try {
-                    java.security.KeyStore.getInstance("PKCS12").also { it.load(bytes.inputStream(), password.toCharArray()) }
-                } catch (e: Exception) {
-                    return@post call.respondText("""{"error":"Gecersiz P12: ${e.message}"}""", ContentType.Application.Json, HttpStatusCode.BadRequest)
-                }
-
-                val alias = ks.aliases().toList().firstOrNull()
-                val cert = alias?.let { ks.getCertificate(it) as? java.security.cert.X509Certificate }
-                val cn = cert?.subjectX500Principal?.name?.substringAfter("CN=")?.substringBefore(",")
-                val fingerprint = cert?.let {
+                val cn = cert.subjectX500Principal?.name?.substringAfter("CN=")?.substringBefore(",")
+                val fingerprint = cert.let {
                     val digest = java.security.MessageDigest.getInstance("SHA-256").digest(it.publicKey.encoded)
                     java.util.Base64.getEncoder().encodeToString(digest)
                 }
@@ -404,7 +277,8 @@ fun Route.hostRoutes(
 
                 // Kept under the server's own password; each download is re-wrapped
                 // for its recipient (P12Transfer), so no app needs the upload password.
-                val stored = certService.rewrapP12(bytes, password, CertificateService.KEYSTORE_PASSWORD)
+                // Only that entry is kept: nothing else in the file reaches a device.
+                val stored = certService.rewrapP12(bytes, password, CertificateService.KEYSTORE_PASSWORD, keyEntryOnly = true)
                 hostClientCertStore.save(hostname, call.scopedApiId(), stored, newCertVersion, cn, fingerprint)
 
                 // Pin config'e clientCertVersion ve mtls ekle.
@@ -427,7 +301,10 @@ fun Route.hostRoutes(
 
                 historyStore.add(call.scopedApiId(), PinConfigHistoryEntry(hostname, savedVersion, Instant.now().toString(), "client_cert_uploaded", fingerprint?.take(12) ?: ""))
 
-                call.respondText("""{"hostname":"$hostname","clientCertVersion":$newCertVersion,"version":$savedVersion,"commonName":"${cn ?: ""}","fingerprint":"${fingerprint ?: ""}"}""", ContentType.Application.Json)
+                call.respondText(buildJsonObject {
+                    put("hostname", hostname); put("clientCertVersion", newCertVersion); put("version", savedVersion)
+                    put("commonName", cn ?: ""); put("fingerprint", fingerprint)
+                }.toString(), ContentType.Application.Json)
             }
 
             // Download host-specific client cert (P12) — Android calls this
@@ -436,10 +313,13 @@ fun Route.hostRoutes(
                     return@get call.respondText("""{"error":"Host client cert store not available"}""", ContentType.Application.Json, HttpStatusCode.InternalServerError)
                 }
 
-                val hostname = call.parameters["hostname"] ?: ""
+                val hostname = call.pathParameters["hostname"] ?: ""
                 val p12 = hostClientCertStore.getP12(hostname, call.scopedApiId())
                     ?: return@get call.respondText("""{"error":"Client cert bulunamadi"}""", ContentType.Application.Json, HttpStatusCode.NotFound)
 
+                // A private key leaves the server: who took it, and for which host.
+                audit?.record("private_key_downloaded", "Client certificate (with its private key) of host $hostname downloaded by an administrator",
+                    call.scopedApiId(), hostname)
                 P12Transfer.respondStored(call, certService, p12)
             }
 
@@ -449,7 +329,7 @@ fun Route.hostRoutes(
                     return@get call.respondText("""{"error":"Host client cert store not available"}""", ContentType.Application.Json, HttpStatusCode.InternalServerError)
                 }
 
-                val hostname = call.parameters["hostname"] ?: ""
+                val hostname = call.pathParameters["hostname"] ?: ""
                 val record = hostClientCertStore.get(hostname, call.scopedApiId())
                     ?: return@get call.respondText("""{"error":"Client cert bulunamadi"}""", ContentType.Application.Json, HttpStatusCode.NotFound)
 
@@ -457,7 +337,7 @@ fun Route.hostRoutes(
             }
 
             post("start-mock") {
-                val hostname = call.parameters["hostname"] ?: ""
+                val hostname = call.pathParameters["hostname"] ?: ""
                 val body = call.receive<kotlinx.serialization.json.JsonObject>()
                 val port = body["port"]?.let { kotlinx.serialization.json.Json.decodeFromJsonElement(kotlinx.serialization.serializer<Int>(), it) } ?: 8443
                 val mtls = body["mtls"]?.let { kotlinx.serialization.json.Json.decodeFromJsonElement(kotlinx.serialization.serializer<Boolean>(), it) } ?: false
@@ -484,14 +364,14 @@ fun Route.hostRoutes(
             }
 
             post("stop-mock") {
-                val hostname = call.parameters["hostname"] ?: ""
+                val hostname = call.pathParameters["hostname"] ?: ""
                 mockServerManager.stopAll(hostname)
                 hostStore.updateMockPort(hostname, call.scopedApiId(), null)
                 call.respond(MockServerResponse(hostname, null, false))
             }
 
             get("status") {
-                val hostname = call.parameters["hostname"] ?: ""
+                val hostname = call.pathParameters["hostname"] ?: ""
                 // Mock server + keystore hostname başına global; scope'ta kayıt yoksa
                 // diğer scope'lardaki kayda fallback et (UI'da "host bulunamadı" toast'ı
                 // yerine gerçek mock durumunu göstermek için). Pin listesinde olup
@@ -518,7 +398,7 @@ fun Route.hostRoutes(
 
             // Web UI'dan mock server'a bağlantı testi
             post("test-connection") {
-                val hostname = call.parameters["hostname"] ?: ""
+                val hostname = call.pathParameters["hostname"] ?: ""
                 if (!mockServerManager.isRunning(hostname)) {
                     return@post call.respondText("""{"success":false,"error":"Mock server calismiyorr"}""", ContentType.Application.Json)
                 }
@@ -573,23 +453,63 @@ fun Route.hostRoutes(
             // Query: ?port=9443  (opsiyonel — verilmezse yaygın TLS portları sırayla denenir)
             // Response: { reachable, port, pinMatch, actualPin, expectedPins[], error?, elapsedMs }
             get("ping-remote") {
-                val hostname = call.parameters["hostname"] ?: ""
+                val hostname = call.pathParameters["hostname"] ?: ""
                 // The value is handed to external processes (`nc`, `openssl`) as an
                 // argument, so it must be a plain hostname / IPv4 literal: no shell
                 // metacharacters, no path separators, no leading '-' (option injection).
-                if (!PROBE_HOSTNAME_REGEX.matches(hostname)) {
+                if (!PROBE_HOSTNAME_REGEX.matches(hostname) || HostPatternRules.error(hostname) != null) {
                     return@get call.respondText(
                         """{"reachable":false,"pinMatch":false,"error":"Invalid hostname"}""",
                         ContentType.Application.Json, HttpStatusCode.BadRequest
                     )
                 }
-                val explicit = call.request.queryParameters["port"]?.toIntOrNull()
-                val mockPort = mockServerManager.getTlsPort(hostname)
-                    ?: mockServerManager.getMtlsPort(hostname)
-                val portsToTry = listOfNotNull(explicit, mockPort, 443, 9443, 8443, 9444, 8444)
-                    .distinct()
+                // A GET that connects somewhere: a page in the admin's browser could
+                // aim an <img> at it (with no admin key the API answers this
+                // machine's browser). The dashboard marks its requests; a cross-site
+                // request can neither add the header nor hide Sec-Fetch-Site.
+                pingRemoteRefusal(call)?.let { (status, error) ->
+                    return@get call.respondText("""{"reachable":false,"pinMatch":false,"error":"$error"}""", ContentType.Application.Json, status)
+                }
+                val scopePins = pinConfigStore.load(call.scopedApiId()).pins
+                // Only a host this server knows — pinned in the scope (also as
+                // `host:port`) or registered — is probed, on the ports it may serve:
+                // the common TLS ports, its mock listeners, the ports of its pin
+                // entries. The probe used to take any name and any ?port=, a port
+                // scanner aimed from inside the server's network.
+                val pinnedPorts = scopePins.filter { it.hostname.substringBeforeLast(':').equals(hostname, ignoreCase = true) && ':' in it.hostname }
+                    .mapNotNull { it.hostname.substringAfterLast(':').toIntOrNull() }
+                val known = scopePins.any { it.hostname.substringBeforeLast(':').equals(hostname, ignoreCase = true) } ||
+                    hostStore.getAnyByHostname(hostname) != null
+                if (!known) {
+                    return@get call.respondText("""{"reachable":false,"pinMatch":false,"error":"Unknown host: only hosts pinned or registered here are probed"}""",
+                        ContentType.Application.Json, HttpStatusCode.NotFound)
+                }
+                val mockPorts = listOfNotNull(mockServerManager.getTlsPort(hostname), mockServerManager.getMtlsPort(hostname))
+                val allowedPorts = (mockPorts + pinnedPorts + PROBE_DEFAULT_PORTS).distinct()
+                val explicitRaw = call.request.queryParameters["port"]
+                val explicit = explicitRaw?.toIntOrNull()
+                if (explicitRaw != null && (explicit == null || explicit !in allowedPorts)) {
+                    return@get call.respondText(
+                        buildJsonObject { put("reachable", false); put("pinMatch", false); put("error", "Port not allowed: " + allowedPorts.joinToString(",") + " (the host's pinned and mock ports and the common TLS ports)") }.toString(),
+                        ContentType.Application.Json, HttpStatusCode.BadRequest
+                    )
+                }
+                val portsToTry = (listOfNotNull(explicit) + allowedPorts).distinct()
+                // Resolved once and checked like a certificate fetch (no metadata or
+                // link-local address; private ones with FETCH_ALLOW_PRIVATE_TARGETS);
+                // nc and openssl get the checked address, never the name again.
+                val address = try {
+                    egress.resolveChecked(hostname)
+                } catch (e: EgressRefusedException) {
+                    return@get call.respondText(
+                        buildJsonObject { put("reachable", false); put("pinMatch", false); put("error", e.message ?: "target not allowed") }.toString(),
+                        ContentType.Application.Json, HttpStatusCode.BadRequest
+                    )
+                }
+                val connectHost = address.hostAddress.let { if (':' in it) "[$it]" else it }
+                val sniName = hostname.takeIf { name -> name.any { it.isLetter() } }
 
-                val expectedPins = pinConfigStore.load(call.scopedApiId()).pins
+                val expectedPins = scopePins
                     .find { it.hostname == hostname }?.sha256 ?: emptyList()
                 val start = System.currentTimeMillis()
 
@@ -633,7 +553,7 @@ fun Route.hostRoutes(
                         //    Hard-timeout the whole call at 3s via runCmd so unreachable hosts
                         //    don't block for minutes if the kernel/firewall silently drops SYN.
                         val (ncExit, ncOut) = runCmd(
-                            "nc", "-z", "-w", "2", hostname, port.toString(),
+                            "nc", "-z", "-w", "2", address.hostAddress, port.toString(),
                             timeoutSec = 3
                         )
                         if (ncExit != 0) {
@@ -651,7 +571,8 @@ fun Route.hostRoutes(
                         //    even when chain verification fails, so "no certificate in
                         //    the output" is the reliable failure signal.
                         val (_, sslOut) = runCmd(
-                            "openssl", "s_client", "-connect", "$hostname:$port", "-servername", hostname,
+                            *(listOf("openssl", "s_client", "-connect", "$connectHost:$port") +
+                                (sniName?.let { listOf("-servername", it) } ?: emptyList())).toTypedArray(),
                             timeoutSec = 6
                         )
                         val actualPin = spkiPinFromSClientOutput(sslOut)
@@ -687,11 +608,88 @@ fun Route.hostRoutes(
 }
 
 /**
+ * The plan this call applies: the one its approver was shown (a replayed,
+ * approved change — nothing is fetched or generated again), or one made now
+ * from the request. Null after an answer was sent (a refusal).
+ */
+internal suspend fun ApplicationCall.certPlan(
+    planner: CertChangePlanner, kind: CertChangePlanner.Kind, scope: String, hostname: String?,
+    maxUploadBytes: Long = DEFAULT_ADMIN_BODY_MAX_BYTES
+): CertPlan? = try {
+    planner.check(kind, scope, hostname)
+    val approved = approvedCertPlan()
+    if (approved != null) {
+        // The stored plan belongs to this very request (the replay token is bound to its path).
+        if (kind.adds) planner.checkNew(scope, approved.hostname)
+        if (kind.host && !kind.adds && approved.hostname != hostname) throw MissingApprovedPlan(-1)
+        approved
+    } else {
+        receiveLimitedBytes(maxUploadBytes)?.let { body ->
+            // Planning may fetch a certificate or generate keys: off the event loop.
+            kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                planner.plan(kind, scope, hostname, request.header(HttpHeaders.ContentType), body)
+            }
+        }
+    }
+} catch (e: PlanRefused) {
+    respondText(e.body.toString(), ContentType.Application.Json, e.status)
+    null
+} catch (e: MissingApprovedPlan) {
+    respond(HttpStatusCode.Conflict, mapOf("error" to (e.message ?: "no stored plan")))
+    null
+}
+
+/**
+ * Adds the host of [plan] to [scope] with the plan's pins: the live gate
+ * first, then the keystore (if the plan carries one), the host record, the
+ * pins and the history.
+ */
+internal suspend fun ApplicationCall.addPlannedHost(
+    scope: String, plan: CertPlan, event: String,
+    pinConfigStore: PinConfigStore, hostStore: HostStore, historyStore: PinConfigHistoryStore,
+    certService: CertificateService, planner: CertChangePlanner,
+    liveGate: LiveCertificateGate?, audit: AuditLog?
+) {
+    val host = plan.hostname
+    val config = pinConfigStore.load(scope)
+    val updated = config.copy(pins = config.pins + HostPin(host, plan.pins, version = 1))
+    if (!passesLiveGate(scope, config, updated, liveGate, audit)) return
+
+    val keystorePath = plan.keystore?.let { certService.install(planner.keystoreId(host), plan).keystorePath }
+    hostStore.save(HostRecord(host, scope, keystorePath, plan.notAfter, null, Instant.now().toString()))
+    val savedPin = pinConfigStore.save(scope, updated).pins.first { it.hostname == host }
+    pinConfigStore.ensureConfigExists(scope)
+    historyStore.add(scope, PinConfigHistoryEntry(host, savedPin.version, Instant.now().toString(), event, plan.pins.firstOrNull()?.take(12) ?: ""))
+
+    respond(HostActionResponse(host, plan.pins, plan.notAfter, savedPin.version))
+}
+
+/**
  * Shape accepted by `ping-remote` for the `{hostname}` path segment: a plain
  * hostname or IPv4 literal. Anything else (shell metacharacters, `/`, a
  * leading `-`) is rejected before the value reaches a subprocess argv.
  */
 internal val PROBE_HOSTNAME_REGEX = Regex("^[A-Za-z0-9][A-Za-z0-9.-]{0,252}$")
+
+/** Ports `ping-remote` tries for any known host: the common TLS ports (explicit ones must be among these or the host's own). */
+internal val PROBE_DEFAULT_PORTS = listOf(443, 9443, 8443, 9444, 8444)
+
+/**
+ * Why `ping-remote` refuses [call] as a possible cross-site request, or null.
+ * It is a GET that opens connections, so the browser-guard rule for writes
+ * applies: no `Sec-Fetch-Site: cross-site|same-site`, and a header a page on
+ * another site cannot add (`X-PinVault-Admin`, which the dashboard sends, or
+ * `X-API-Key`).
+ */
+internal fun pingRemoteRefusal(call: ApplicationCall): Pair<HttpStatusCode, String>? {
+    when (call.request.header("Sec-Fetch-Site")?.trim()?.lowercase()) {
+        "cross-site", "same-site" -> return HttpStatusCode.Forbidden to "cross_site_request"
+    }
+    if (call.request.header("X-PinVault-Admin") == null && call.request.header("X-API-Key") == null) {
+        return HttpStatusCode.Forbidden to "admin_header_required"
+    }
+    return null
+}
 
 /**
  * Extracts the first certificate PEM block from `openssl s_client` output

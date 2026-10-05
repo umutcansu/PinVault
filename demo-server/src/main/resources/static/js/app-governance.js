@@ -51,7 +51,7 @@ function renderAdminChip() {
 
 /** Forget the stored key, ask for another, then reload everything with it. */
 async function switchAdminKey() {
-  localStorage.removeItem('pinvault_api_key');
+  clearApiKey();
   const key = prompt(t('switchAdminKeyPrompt'));
   if (key && key.trim()) setApiKey(key.trim());
   adminMe = null;
@@ -131,7 +131,9 @@ const PENDING_SUPPRESS_MS = 3000;
 
 function notePendingApproval(p) {
   _pendingNoticeUntil = Date.now() + PENDING_SUPPRESS_MS;
-  toast(t('pendingChange', p.changeRequestId), 'info', 7000);
+  // An answer that carries a secret is not produced by the approval: the
+  // requester repeats the action afterwards and gets it themselves.
+  toast(t(p.runAfterApproval ? 'pendingChangeRun' : 'pendingChange', p.changeRequestId), 'info', p.runAfterApproval ? 12000 : 7000);
   refreshApprovalsBadge();
 }
 
@@ -263,10 +265,73 @@ function pinFlags(p) {
   return flags.length ? ` <span class="diff-note">${esc(flags.join(' · '))}</span>` : '';
 }
 
+/** One "label: value" table of facts about a pending change; every value escaped. */
+function factsTable(title, rows) {
+  const body = rows.filter(r => r && r[1] !== undefined && r[1] !== null && r[1] !== '')
+    .map(([label, value, mono]) => `<tr><td class="muted nowrap">${esc(label)}</td><td${mono ? ' class="mono"' : ''}>${esc(value)}</td></tr>`).join('');
+  return body ? `<div class="diff-section-title">${esc(title)}</div><table class="data-table plan-facts"><tbody>${body}</tbody></table>` : '';
+}
+
+function planSourceLabel(source) {
+  const key = 'planSource_' + source;
+  return (i18n[lang]?.[key] || i18n.tr[key]) ? t(key) : String(source || '');
+}
+
+/**
+ * The facts of a stored plan as [label, value, mono] rows: the certificate a
+ * change installs (pins in full, subject, validity, the Config APIs that
+ * change), a client certificate that will be trusted, a vault file. Used for
+ * the approval card (escaped there) and for the approve confirm() (plain text).
+ */
+function planFacts(d) {
+  const groups = [];
+  const c = d?.certificate;
+  if (c) {
+    const rows = [
+      [t('planHost'), c.hostname],
+      [t('planSource'), planSourceLabel(c.source)],
+      [t('planFetchedFrom'), c.fetchedFrom],
+      ...(c.pins || []).map((p, i) => [`${t('planPins')} ${i + 1}`, 'sha256/' + p, true]),
+      [t('planSubject'), c.subject],
+      [t('planIssuer'), c.issuer],
+      [t('planValidity'), `${c.notBefore || '?'} → ${c.notAfter || '?'}`],
+      [t('planFingerprint'), c.fingerprint, true]
+    ];
+    if (Array.isArray(d.scopes)) rows.push([t('planScopes'), d.scopes.length ? d.scopes.join(', ') : t('planNoScopes')]);
+    groups.push([t('planTitle'), rows]);
+  }
+  const cc = d?.clientCertificate;
+  if (cc) {
+    groups.push([t('planClientCert'), [
+      [t('planClientId'), cc.clientId],
+      [t('planSubject'), cc.subject],
+      [t('planIssuer'), cc.issuer],
+      [t('planValidity'), `${cc.notBefore || '?'} → ${cc.notAfter || '?'}`],
+      [t('planFingerprint'), cc.fingerprint, true]
+    ]]);
+  }
+  const v = d?.vaultFile;
+  if (v) {
+    const change = (now, before) => (before && before !== now) ? `${before} → ${now}` : now;
+    groups.push([t('planVaultFile'), [
+      [t('planFileKey'), v.key],
+      [t('planFileSize'), v.size != null ? t('planBytes', v.size) : ''],
+      [t('planFileHash'), v.sha256, true],
+      [t('planFileAccess'), change(v.accessPolicy, v.previousAccessPolicy)],
+      [t('planFileEncryption'), change(v.encryption, v.previousEncryption)],
+      [t('planFileReplaces'), v.replacesVersion != null ? 'v' + v.replacesVersion : '']
+    ]]);
+  }
+  return groups;
+}
+
 /** The diff (and live-check dry run) a change request was stored with. */
 function renderChangeDetail(cr, d) {
   if (!d) return `<div class="muted small">${t('diffNoDetail')}</div>`;
   const out = [];
+  const facts = planFacts(d);
+  facts.forEach(([title, rows]) => out.push(factsTable(title, rows)));
+  if (d.certificate) out.push(`<div class="notice notice-info">${esc(t('planExact'))}</div>`);
   if (d.describeError) out.push(`<div class="notice notice-warn">${esc(t('diffDescribeError', d.describeError))}</div>`);
   const hasDiff = Array.isArray(d.added) || Array.isArray(d.removed) || Array.isArray(d.changed) || d.forceUpdate;
   (d.added || []).forEach(p => out.push(`<div class="diff-row diff-add"><span class="diff-mark">+</span><b>${esc(p.hostname)}</b>
@@ -295,7 +360,8 @@ function renderChangeDetail(cr, d) {
     out.push(`<div class="diff-row diff-mod"><span class="diff-mark">~</span>${t('diffGlobalForce')}:
         ${onOff(d.forceUpdate.from)} → ${onOff(d.forceUpdate.to)}</div>`);
   }
-  if (!hasDiff) out.push(`<div class="muted small">${t('diffNoDetail')}</div>`);
+  if (!hasDiff && !facts.length) out.push(`<div class="muted small">${t('diffNoDetail')}</div>`);
+  else if (!hasDiff) { /* the facts above say it all */ }
   else if (!(d.added || []).length && !(d.removed || []).length && !(d.changed || []).length && !d.forceUpdate) {
     out.push(`<div class="muted small">${t('diffNoChange')}</div>`);
   }
@@ -338,7 +404,10 @@ function renderPendingChange(cr) {
   const own = adminMe && cr.requestedBy === adminMe.name;
   const block = approveBlockReason(cr);
   const need = Math.max(1, (adminMe?.approvalsRequired || 2) - 1);
-  const open = _crExpanded.has(id);
+  // A certificate plan is what the approver has to read: shown without a click.
+  const open = _crExpanded.has(id) || !!(d && d.certificate);
+  // Approved, not run yet: its requester repeats the action to run it (once).
+  const approved = cr.status === 'approved';
   const live = d?.liveCheck
     ? `<span class="${d.liveCheck.passed ? 'status-healthy' : 'status-error'}">${t('liveCheckTitle')}: ${d.liveCheck.passed ? '&#x2713; ' + t('livePassed') : '&#x2717; ' + t('liveFailed')}</span>`
     : '';
@@ -350,7 +419,7 @@ function renderPendingChange(cr) {
         </div>
         <div class="cr-actions">
           <button class="btn btn-secondary btn-sm" data-action="toggleChangeDetail" data-arg0="${esc(id)}">${t('crDetails')} <span class="cr-caret">${open ? '&#x25B4;' : '&#x25BE;'}</span></button>
-          <span title="${esc(block)}"><button class="btn btn-success btn-sm" data-action="approveChange" data-arg0="${esc(id)}"${block ? ` disabled title="${esc(block)}"` : ''}>${t('approve')}</button></span>
+          ${approved ? crStatusBadge('approved') : `<span title="${esc(block)}"><button class="btn btn-success btn-sm" data-action="approveChange" data-arg0="${esc(id)}"${block ? ` disabled title="${esc(block)}"` : ''}>${t('approve')}</button></span>`}
           <button class="btn btn-danger btn-sm" data-action="rejectChange" data-arg0="${esc(id)}">${own ? t('withdraw') : t('reject')}</button>
         </div>
       </div>
@@ -363,6 +432,7 @@ function renderPendingChange(cr) {
         ${live}
       </div>
       <div class="cr-meta"><span class="mono">${esc(cr.method)} ${esc(cr.path)}${cr.query ? '?' + esc(cr.query) : ''}</span></div>
+      ${approved ? `<div class="notice notice-info">${esc(t('crApprovedWaiting', (cr.approvedBy || []).join(', '), cr.requestedBy))}</div>` : ''}
       <div class="cr-detail" id="cr-detail-${esc(id)}" style="${open ? '' : 'display:none'}">${renderChangeDetail(cr, d)}</div>
     </div>`;
 }
@@ -403,7 +473,7 @@ async function renderApprovalsSection() {
     if (!adminMe) await loadAdminIdentity();
     // Pending separately: the full list is capped (newest 100).
     const [pendingRes, allRes] = await Promise.all([
-      apiFetch('/api/v1/change-requests?status=pending'),
+      apiFetch('/api/v1/change-requests?status=open'),
       apiFetch('/api/v1/change-requests?status=all')
     ]);
     if (currentSection !== 'approvals') return; // navigated away meanwhile
@@ -412,11 +482,13 @@ async function renderApprovalsSection() {
       return;
     }
     const pending = await pendingRes.json();
-    const decided = (await allRes.json()).filter(c => c.status !== 'pending');
+    const decided = (await allRes.json()).filter(c => c.status !== 'pending' && c.status !== 'approved');
     _crById.clear();
     [...pending, ...decided].forEach(c => _crById.set(String(c.id), c));
-    setApprovalsBadge(pending.length);
-    _approvalsPendingIds = pending.map(c => c.id).join(',');
+    // The badge counts what still needs an approver (see refreshApprovalsBadge).
+    const waiting = pending.filter(c => c.status === 'pending');
+    setApprovalsBadge(waiting.length);
+    _approvalsPendingIds = waiting.map(c => c.id).join(',');
 
     const required = adminMe?.approvalsRequired || 1;
     const mode = required >= 2
@@ -465,7 +537,47 @@ async function afterChangeDecision() {
   if (currentSection === 'approvals') renderApprovalsSection();
 }
 
+/**
+ * The change request [id] as the server has it — from the list on screen, or
+ * fetched when the click came from anywhere else. A decision is confirmed
+ * against this, never against what the clicked element says.
+ */
+async function changeRequestFor(id) {
+  const known = _crById.get(String(id));
+  if (known) return known;
+  try {
+    const res = await apiFetch(`/api/v1/change-requests/${encodeURIComponent(id)}`, { quiet: true });
+    return res.ok ? await res.json() : null;
+  } catch (e) {
+    return null;
+  }
+}
+
+/** One line per fact an approver must see: what, who asked, which scope and call. */
+function changeSummaryText(cr) {
+  if (!cr) return ['?', '?', ''];
+  const scope = cr.configApiId ? `Config API: ${cr.configApiId} · ` : '';
+  return [cr.summary || '?', cr.requestedBy || '?', `${scope}${cr.method || ''} ${cr.path || ''}${cr.query ? '?' + cr.query : ''}`];
+}
+
+/** [text] on one line: a confirm() shows text as it is, so no control character may draw a line of its own. */
+function oneLine(text) {
+  return String(text ?? '').replace(/[\u0000-\u001f\u007f\u2028\u2029\u202a-\u202e\u2066-\u2069]+/g, ' ').trim();
+}
+
+/** The stored plan of a change as the lines of a confirm(): what approving applies, in full. */
+function planConfirmText(cr) {
+  const groups = planFacts(parseJsonText(cr?.detail));
+  if (!groups.length) return '';
+  return '\n\n' + groups.map(([title, rows]) => oneLine(title) + ':\n' +
+    rows.filter(r => r && r[1] !== undefined && r[1] !== null && r[1] !== '')
+      .map(([label, value]) => `  ${oneLine(label)}: ${oneLine(value)}`).join('\n')).join('\n\n');
+}
+
 async function approveChange(id) {
+  // Approving replays someone else's change: never on a single click.
+  const cr = await changeRequestFor(id);
+  if (!confirm(t('approveConfirm', id, ...changeSummaryText(cr).map(oneLine)) + planConfirmText(cr))) return;
   try {
     const res = await apiFetch(`/api/v1/change-requests/${encodeURIComponent(id)}/approve`, { method: 'POST' });
     const body = await res.json().catch(() => ({}));
@@ -474,6 +586,8 @@ async function approveChange(id) {
       toast(body.error || `${t('error')} (HTTP ${res.status})`, 'error', 6000);
     } else if (body.status === 'applied') {
       toast(t('changeApplied', id), 'success');
+    } else if (body.status === 'approved') {
+      toast(t('changeApprovedForRequester', id), 'success', 8000);
     } else if (body.status === 'failed') {
       toast(t('changeApplyFailed', id, body.resultStatus ?? '?'), 'error', 6000);
     } else {
@@ -487,9 +601,9 @@ async function approveChange(id) {
 }
 
 async function rejectChange(id) {
-  const cr = _crById.get(String(id));
+  const cr = await changeRequestFor(id);
   const own = !!(cr && adminMe && cr.requestedBy === adminMe.name);
-  const reason = prompt(t(own ? 'withdrawReasonPrompt' : 'rejectReasonPrompt', id), '');
+  const reason = prompt(t(own ? 'withdrawReasonPrompt' : 'rejectReasonPrompt', id, changeSummaryText(cr)[0]), '');
   if (reason === null) return;
   try {
     const res = await apiFetch(`/api/v1/change-requests/${encodeURIComponent(id)}/reject`, {
@@ -516,7 +630,11 @@ const AUDIT_ACTIONS = [
   'enrollment_request_approved', 'enrollment_request_rejected', 'enrollment_open_changed',
   'client_cert_issued', 'client_cert_renewed', 'client_cert_enroll_refused', 'client_cert_auth_failed',
   'client_cert_revoked_refused', 'client_identity_forgotten', 'device_id_refused', 'device_key_registered', 'device_key_replaced',
-  'device_key_reset', 'device_key_refused', 'test_hook_used', 'http'
+  'device_key_reset', 'device_key_refused', 'device_rate_limited', 'test_hook_used',
+  'client_cert_generated', 'client_cert_uploaded', 'enrollment_token_created',
+  'vault_file_uploaded', 'vault_file_deleted', 'vault_policy_changed', 'vault_token_issued', 'vault_token_revoked',
+  'vault_enabled_changed', 'host_acl_changed', 'private_key_downloaded', 'bootstrap_pins_changed',
+  'admin_request_refused', 'http'
 ];
 const AUDIT_PAG_KEY = 'audit-log';
 let auditActionFilter = '';

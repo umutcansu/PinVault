@@ -103,6 +103,83 @@ class ApiKeyAuthConfig {
 
     /** Default: ALLOW_ANONYMOUS_ADMIN=true. */
     var allowAnonymous: Boolean = System.getenv("ALLOW_ANONYMOUS_ADMIN") == "true"
+
+    /**
+     * Whether this listener may serve admin routes without a key when there is
+     * none ([allowAnonymous]). True only on the management listener; the
+     * Config API listeners face devices on every interface, so there an
+     * anonymous caller gets device endpoints and nothing else.
+     */
+    var anonymousAdminListener: Boolean = true
+
+    /**
+     * Anonymous admin: socket peers allowed besides loopback (`ANONYMOUS_ADMIN_PEERS`,
+     * comma-separated IPs or CIDRs — a container's gateway, e.g. `172.17.0.1`).
+     */
+    var anonymousPeers: List<String> = System.getenv("ANONYMOUS_ADMIN_PEERS").orEmpty()
+        .split(',').map { it.trim() }.filter { it.isNotEmpty() }
+
+    /**
+     * Invalid admin keys a source address may send per 10 minutes before every
+     * admin request from it gets 429 (`ADMIN_AUTH_FAILURE_LIMIT`, default 30; 0 = no limit).
+     */
+    var failureLimit: Int = (System.getenv("ADMIN_AUTH_FAILURE_LIMIT")?.toIntOrNull() ?: DEFAULT_ADMIN_AUTH_FAILURE_LIMIT).coerceAtLeast(0)
+
+    /**
+     * The counter behind [failureLimit]; null = one of this listener's own. Main.kt
+     * hands every listener the same one, so an address cut off on a Config API
+     * port is cut off on the management port too.
+     */
+    var failureLimiter: com.example.pinvault.server.service.RateLimiter? = null
+}
+
+/** Invalid admin keys per source address and 10 minutes before 429 (see [ApiKeyAuthConfig.failureLimit]). */
+const val DEFAULT_ADMIN_AUTH_FAILURE_LIMIT = 30
+
+/**
+ * Which socket peers count as "this machine" for anonymous admin: loopback,
+ * and the entries of `ANONYMOUS_ADMIN_PEERS` (IP literals or CIDRs). Only
+ * literals are parsed — a peer address comes from the socket, and nothing is
+ * ever resolved.
+ */
+internal object PeerRules {
+    private val LITERAL = Regex("^[0-9A-Fa-f.:]+$")
+
+    private fun literal(value: String): java.net.InetAddress? {
+        val v = value.trim().removePrefix("[").removeSuffix("]").substringBefore('%')
+        if (!LITERAL.matches(v) || (!v.contains('.') && !v.contains(':'))) return null
+        return try { java.net.InetAddress.getByName(v) } catch (_: Exception) { null }
+    }
+
+    /** True when [peer] (the socket's remote address) is loopback or matches one of [rules]. */
+    fun allowed(peer: String, rules: List<String>): Boolean {
+        // The Ktor test engine names its peer "localhost"; a real socket gives a literal.
+        if (peer == "localhost") return true
+        val address = literal(peer) ?: return false
+        if (address.isLoopbackAddress) return true
+        return rules.any { rule -> matches(address, rule) }
+    }
+
+    /** Whether [rule] (an IP literal or `ip/prefix`) is well-formed. */
+    fun valid(rule: String): Boolean {
+        val base = literal(rule.substringBefore('/')) ?: return false
+        val prefix = rule.substringAfter('/', "").ifEmpty { return true }.toIntOrNull() ?: return false
+        return prefix in 0..base.address.size * 8
+    }
+
+    private fun matches(address: java.net.InetAddress, rule: String): Boolean {
+        val base = literal(rule.substringBefore('/')) ?: return false
+        val a = address.address
+        val b = base.address
+        if (a.size != b.size) return false
+        val prefix = rule.substringAfter('/', "").ifEmpty { (b.size * 8).toString() }.toIntOrNull() ?: return false
+        if (prefix !in 0..b.size * 8) return false
+        for (bit in 0 until prefix) {
+            val mask = 0x80 ushr (bit % 8)
+            if ((a[bit / 8].toInt() and mask) != (b[bit / 8].toInt() and mask)) return false
+        }
+        return true
+    }
 }
 
 val ApiKeyAuth = createApplicationPlugin(name = "ApiKeyAuth", ::ApiKeyAuthConfig) {
@@ -115,27 +192,48 @@ val ApiKeyAuth = createApplicationPlugin(name = "ApiKeyAuth", ::ApiKeyAuthConfig
             // without setting API_KEY would otherwise come up with admin
             // endpoints wide open. Force operators to either set API_KEY or
             // make the anonymous-admin choice explicit via env var. (C-01)
-            error(
-                "API_KEY env var is not set. Refusing to start with anonymous " +
-                "admin access. Set API_KEY=<secret> (or ADMIN_KEYS) or, to deliberately run " +
-                "without authentication (e.g. local dev), set " +
-                "ALLOW_ANONYMOUS_ADMIN=true."
+            error(NO_ADMIN_KEY_MESSAGE)
+        }
+        val adminListener = pluginConfig.anonymousAdminListener
+        val peers = pluginConfig.anonymousPeers
+        peers.filterNot(PeerRules::valid).takeIf { it.isNotEmpty() }?.let { bad ->
+            error("ANONYMOUS_ADMIN_PEERS: ${bad.joinToString()} is not an IP address or CIDR (e.g. 172.17.0.1 or 172.17.0.0/16)")
+        }
+        if (adminListener) {
+            application.log.warn(
+                "API_KEY not set and ALLOW_ANONYMOUS_ADMIN=true — management API " +
+                "authentication DISABLED. Admin requests are answered only from this machine" +
+                (if (peers.isEmpty()) "" else " and ANONYMOUS_ADMIN_PEERS ${peers.joinToString()}") +
+                ". Do not run this configuration on a network you don't control."
             )
         }
-        application.log.warn(
-            "API_KEY not set and ALLOW_ANONYMOUS_ADMIN=true — management API " +
-            "authentication DISABLED. Do not run this configuration on a " +
-            "network you don't control."
-        )
         onCall { call ->
-            if (!isPublicEndpoint(call.request.path(), call.request.httpMethod)) {
-                call.attributes.put(AdminPrincipalKey, AdminPrincipal("anonymous"))
+            if (isPublicEndpoint(call.request.path(), call.request.httpMethod)) return@onCall
+            // A Config API listener binds every interface and is the port devices
+            // reach: without a key it would hand the LAN every admin route
+            // (PUT /certificate-config, host changes). Admin without a key exists
+            // on the management listener only.
+            if (!adminListener) {
+                return@onCall call.refuseAnonymous("admin_key_required",
+                    "This server has no admin keys: admin requests are answered only on the management port, from its own machine.")
             }
+            // The Host header is the client's word (AdminBrowserGuard checks it for
+            // browsers); the socket's peer is not. With MANAGEMENT_BIND=0.0.0.0 any
+            // program on the network could otherwise send `Host: localhost:8090`.
+            if (!PeerRules.allowed(call.request.local.remoteAddress, peers)) {
+                return@onCall call.refuseAnonymous("peer_not_allowed",
+                    "Without an admin key this API answers only connections from this machine. " +
+                        "A container gateway can be added with ANONYMOUS_ADMIN_PEERS.")
+            }
+            call.attributes.put(AdminPrincipalKey, AdminPrincipal("anonymous"))
         }
         return@createApplicationPlugin
     }
 
     application.log.info("API Key authentication enabled for management endpoints (admins: ${registry.names})")
+    val failureLimiter = if (pluginConfig.failureLimit > 0) {
+        pluginConfig.failureLimiter ?: com.example.pinvault.server.service.RateLimiter(maxAttempts = pluginConfig.failureLimit, windowMs = 10 * 60_000)
+    } else null
 
     onCall { call ->
         val path = call.request.path()
@@ -161,6 +259,17 @@ val ApiKeyAuth = createApplicationPlugin(name = "ApiKeyAuth", ::ApiKeyAuthConfig
             return@onCall
         }
 
+        // An address that kept sending wrong keys is cut off before its next
+        // key is compared: guessing keys costs 10 minutes per batch. The socket's
+        // own peer, never a forwarded header. Callers with the right key never
+        // count — only refusals do.
+        val source = com.example.pinvault.server.service.RateLimiter.sourceKey(call.request.local.remoteAddress)
+        if (failureLimiter != null && failureLimiter.exceeded(source)) {
+            call.response.header(HttpHeaders.RetryAfter, "600")
+            call.respond(HttpStatusCode.TooManyRequests, mapOf("error" to "Too many invalid admin keys from this address; try again later"))
+            return@onCall
+        }
+
         val providedKey = call.request.header("X-API-Key")
         if (providedKey == null) {
             call.respond(HttpStatusCode.Unauthorized, mapOf("error" to "X-API-Key header required"))
@@ -172,12 +281,20 @@ val ApiKeyAuth = createApplicationPlugin(name = "ApiKeyAuth", ::ApiKeyAuthConfig
             // remoteAddress, not remoteHost: remoteHost is a blocking reverse-DNS
             // lookup on the event-loop thread, and a name the caller controls.
             AuthFailures.report(call.request.origin.remoteAddress, method.value, path)
+            failureLimiter?.allow(source)
             call.respond(HttpStatusCode.Forbidden, mapOf("error" to "Invalid API key"))
             return@onCall
         }
         call.attributes.put(AdminPrincipalKey, AdminPrincipal(admin))
     }
 }
+
+/** Why a server without admin keys does not start (unless `ALLOW_ANONYMOUS_ADMIN=true`). */
+const val NO_ADMIN_KEY_MESSAGE: String =
+    "API_KEY env var is not set. Refusing to start with anonymous " +
+        "admin access. Set API_KEY=<secret> (or ADMIN_KEYS) or, to deliberately run " +
+        "without authentication (e.g. local dev), set " +
+        "ALLOW_ANONYMOUS_ADMIN=true."
 
 /**
  * Invalid-key attempts, forwarded to whoever registers [listener] (the audit
@@ -337,4 +454,18 @@ object ApiKeyPolicy {
         registry.identify(provided).let { it != null && it != AdminRegistry.LEGACY_NAME }
 
     fun hasNamedAdmins(): Boolean = registry.names.any { it != AdminRegistry.LEGACY_NAME }
+}
+
+/** 403 for an anonymous admin request this listener or peer may not make; audited like a browser-guard refusal. */
+private suspend fun ApplicationCall.refuseAnonymous(error: String, message: String) {
+    try {
+        BrowserGuardRefusals.listener?.invoke(request.local.remoteAddress, request.httpMethod.value, request.path(), error)
+    } catch (_: Exception) { /* auditing must never break the refusal */ }
+    respondText(
+        kotlinx.serialization.json.buildJsonObject {
+            put("error", kotlinx.serialization.json.JsonPrimitive(error))
+            put("message", kotlinx.serialization.json.JsonPrimitive(message))
+        }.toString(),
+        ContentType.Application.Json, HttpStatusCode.Forbidden
+    )
 }

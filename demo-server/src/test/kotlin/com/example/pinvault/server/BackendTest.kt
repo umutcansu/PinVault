@@ -60,7 +60,8 @@ class BackendTest {
 
         val certsDir = File(System.getProperty("java.io.tmpdir"), "pinvault-test-certs-${System.nanoTime()}")
         certsDir.mkdirs()
-        certService = CertificateService(certsDir)
+        // The fetch tests talk to servers on 127.0.0.1: allowed here as FETCH_ALLOW_PRIVATE_TARGETS=true allows it.
+        certService = CertificateService(certsDir, egress = com.example.pinvault.server.service.EgressFilter(allowPrivate = true))
 
         val signingKeyFile = File(System.getProperty("java.io.tmpdir"), "test-signing-key-${System.nanoTime()}.pem")
         signingService = ConfigSigningService(signingKeyFile)
@@ -765,11 +766,11 @@ class BackendTest {
 
     @Test
     fun `P12 — a client that negotiates gets a one-off password, older clients the client password`() = testApplication {
-        configureApp(enrollmentMode = "open")
+        configureApp()
         val negotiated = client.post("/api/v1/client-certs/enroll") {
             header("X-PinVault-Features", "redelivery, p12password")
             contentType(ContentType.Application.Json)
-            setBody("""{"deviceId":"p12-device-1"}""")
+            setBody("""{"token":"${enrollmentTokenStore.create("p12-device-1")}"}""")
         }
         assertEquals(HttpStatusCode.OK, negotiated.status)
         val password = assertNotNull(negotiated.headers["X-P12-Password"])
@@ -781,7 +782,7 @@ class BackendTest {
 
         val legacy = client.post("/api/v1/client-certs/enroll") {
             contentType(ContentType.Application.Json)
-            setBody("""{"deviceId":"p12-device-2"}""")
+            setBody("""{"token":"${enrollmentTokenStore.create("p12-device-2")}"}""")
         }
         assertNull(legacy.headers["X-P12-Password"])
         assertTrue(opens(legacy.readRawBytes(), com.example.pinvault.server.service.P12Transfer.legacyPassword))
@@ -1013,13 +1014,16 @@ class BackendTest {
     }
 
     @Test
-    fun `enrollment — open mode allows deviceId`() = testApplication {
+    fun `enrollment — open mode takes a deviceId but issues no P12`() = testApplication {
+        // Open mode issues only over a CSR (ClientCertLifecycleTest); a P12 would go to whoever asks.
         configureApp(enrollmentMode = "open")
         val response = client.post("/api/v1/client-certs/enroll") {
             contentType(ContentType.Application.Json)
             setBody("""{"deviceId":"open-device-456"}""")
         }
-        assertEquals(HttpStatusCode.OK, response.status)
+        assertEquals(HttpStatusCode.Forbidden, response.status)
+        assertTrue(response.bodyAsText().contains("csr_required"))
+        assertNull(clientCertStore.get("open-device-456"), "nothing issued")
     }
 
     @Test

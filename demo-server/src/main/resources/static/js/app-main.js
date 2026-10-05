@@ -54,6 +54,7 @@ function setVaultUploadMode(mode) {
 function vaultEncDesc(v) {
   return v === 'at_rest' ? t('encDescAtRest')
     : v === 'end_to_end' ? t('encDescE2E')
+    : v === 'user_auth' ? t('encDescUserAuth')
     : t('encDescPlain');
 }
 function updateEncDesc(ev) {
@@ -89,7 +90,9 @@ const _actionHandlers = {
   uploadKeyset, liveCheckPins,
   // Enrollment policies (one code, many devices) and device approvals
   createEnrollmentPolicy, stopEnrollmentPolicy, closePolicyCode, approveEnrollmentRequest, rejectEnrollmentRequest,
-  toggleOpenApplications
+  toggleOpenApplications,
+  // Revoke / forget: device ids the identity only named, cut off only on purpose
+  cascadeRevokeClientCert, doForgetClientIdentity, dismissUnverifiedNotice
 };
 
 function _collectArgs(el) {

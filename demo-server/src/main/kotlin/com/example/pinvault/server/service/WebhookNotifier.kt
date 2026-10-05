@@ -22,8 +22,12 @@ import javax.crypto.spec.SecretKeySpec
  * The body is JSON with a Slack-compatible `text` field, so a Slack or
  * Mattermost incoming-webhook URL works as is; anything else can read the
  * structured fields. With `NOTIFY_WEBHOOK_SECRET` set, every request carries
- * `X-PinVault-Signature: sha256=<hex HMAC of the body>` so the receiver can
- * tell it came from this server. `NOTIFY_EVENTS` (comma-separated, default
+ * `X-PinVault-Timestamp: <Unix seconds>` and
+ * `X-PinVault-Signature: sha256=<hex HMAC-SHA256 of "<timestamp>.<body>">`,
+ * so the receiver can tell it came from this server AND when: a receiver
+ * that refuses timestamps more than a few minutes old (and an `auditId` it
+ * has already seen) cannot be fed a captured delivery again. The timestamp is
+ * taken per attempt, so a retry is not stale. `NOTIFY_EVENTS` (comma-separated, default
  * `*`) limits which audit actions are sent. `*` leaves out [ROUTINE_EVENTS]:
  * things every device does once, which anyone who can reach a device port
  * can also cause at will, so they would bury the events worth a message. Name
@@ -36,7 +40,8 @@ class WebhookNotifier(
     private val url: String,
     private val secret: String?,
     private val events: Set<String>,
-    private val serverName: String = "PinVault"
+    private val serverName: String = "PinVault",
+    private val clock: () -> Long = System::currentTimeMillis
 ) {
     private val client = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(5)).build()
     private val executor = Executors.newSingleThreadScheduledExecutor { r -> Thread(r, "webhook-notifier").apply { isDaemon = true } }
@@ -94,9 +99,14 @@ class WebhookNotifier(
             detail?.let { put("detail", it) }
             put("text", "[$serverName] $event by $actor: $summary")
         }.toString()
-        if (pending.incrementAndGet() > MAX_PENDING) {
+        // The last [RESERVED_FOR_SECURITY] places are kept for what an operator
+        // must hear about: a flood of routine entries (enrollments, reports,
+        // registrations — anyone can cause those) used to fill the queue and
+        // drop a pin change or a revocation that came after.
+        val cap = if (isSecurityEvent(event)) MAX_PENDING else MAX_PENDING - RESERVED_FOR_SECURITY
+        if (pending.incrementAndGet() > cap) {
             pending.decrementAndGet()
-            recent.addFirst(Delivery(event, at, auditId, null, 0, "dropped: $MAX_PENDING deliveries already queued"))
+            recent.addFirst(Delivery(event, at, auditId, null, 0, "dropped: $cap deliveries already queued"))
             while (recent.size > KEEP) recent.pollLast()
             return
         }
@@ -110,7 +120,13 @@ class WebhookNotifier(
                     .timeout(Duration.ofSeconds(5))
                     .header("Content-Type", "application/json")
                     .header("X-PinVault-Event", event)
-                    .apply { secret?.let { header("X-PinVault-Signature", "sha256=" + hmacHex(it, body)) } }
+                    .apply {
+                        secret?.let {
+                            val timestamp = (clock() / 1000).toString()
+                            header(TIMESTAMP_HEADER, timestamp)
+                            header(SIGNATURE_HEADER, "sha256=" + signature(it, timestamp, body))
+                        }
+                    }
                     .POST(HttpRequest.BodyPublishers.ofString(body))
                     .build()
                 val response = client.send(request, HttpResponse.BodyHandlers.discarding())
@@ -131,20 +147,43 @@ class WebhookNotifier(
         }
     }
 
-    private fun hmacHex(secret: String, body: String): String {
-        val mac = Mac.getInstance("HmacSHA256")
-        mac.init(SecretKeySpec(secret.toByteArray(Charsets.UTF_8), "HmacSHA256"))
-        return mac.doFinal(body.toByteArray(Charsets.UTF_8)).joinToString("") { "%02x".format(it.toInt() and 0xFF) }
-    }
-
     companion object {
+        const val TIMESTAMP_HEADER = "X-PinVault-Timestamp"
+        const val SIGNATURE_HEADER = "X-PinVault-Signature"
+
+        /** Hex HMAC-SHA256 of `<timestamp>.<body>` under [secret]: what a receiver recomputes. */
+        fun signature(secret: String, timestamp: String, body: String): String {
+            val mac = Mac.getInstance("HmacSHA256")
+            mac.init(SecretKeySpec(secret.toByteArray(Charsets.UTF_8), "HmacSHA256"))
+            return mac.doFinal("$timestamp.$body".toByteArray(Charsets.UTF_8)).joinToString("") { "%02x".format(it.toInt() and 0xFF) }
+        }
+
         private const val MAX_ATTEMPTS = 3
         private val BACKOFF_SECONDS = longArrayOf(1, 5)
         private const val KEEP = 50
         private const val MAX_PENDING = 500
 
+        /** Queue places only [isSecurityEvent] deliveries may take. */
+        private const val RESERVED_FOR_SECURITY = 100
+
+        /**
+         * Events that keep their place when the queue is nearly full: what
+         * devices trust, who is let in or cut off, approvals, refused admin
+         * keys. Everything else (enrollments, reports, key registrations) is
+         * dropped first.
+         */
+        fun isSecurityEvent(event: String): Boolean =
+            event in SECURITY_EVENTS || SECURITY_PREFIXES.any { event.startsWith(it) }
+
+        private val SECURITY_EVENTS = setOf(
+            "pins_changed", "client_cert_revoked", "client_identity_forgotten", "device_key_replaced", "device_key_reset",
+            "vault_token_revoked", "auth_failed", "admin_request_refused", "enrollment_open_changed", "enrollment_policy_created",
+            "enrollment_request_approved", "client_cert_uploaded", "client_cert_generated", "private_key_downloaded", "cert_expiring"
+        )
+        private val SECURITY_PREFIXES = listOf("change_", "signing_", "live_check_", "keyset_")
+
         /** Recorded in the audit log, but sent only when named in `NOTIFY_EVENTS`. */
-        val ROUTINE_EVENTS = setOf("device_key_registered")
+        val ROUTINE_EVENTS = setOf("device_key_registered", "device_key_attested")
 
         fun fromEnv(env: Map<String, String> = System.getenv()): WebhookNotifier? {
             val url = env["NOTIFY_WEBHOOK_URL"]?.takeIf { it.isNotBlank() } ?: return null

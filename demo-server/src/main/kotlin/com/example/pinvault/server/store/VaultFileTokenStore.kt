@@ -94,6 +94,27 @@ class VaultFileTokenStore(private val db: DatabaseManager) {
         }
     }
 
+    /** The token row [tokenId] (never its hash), or null: what a revocation is about to cut off. */
+    fun info(tokenId: Long): VaultFileTokenInfo? {
+        db.connection().use { conn ->
+            conn.prepareStatement(
+                "SELECT id, config_api_id, vault_key, device_id, created_at, revoked FROM vault_file_tokens WHERE id = ?"
+            ).use { stmt ->
+                stmt.setLong(1, tokenId)
+                val rs = stmt.executeQuery()
+                if (!rs.next()) return null
+                return VaultFileTokenInfo(
+                    id = rs.getLong("id"),
+                    configApiId = rs.getString("config_api_id"),
+                    vaultKey = rs.getString("vault_key"),
+                    deviceId = rs.getString("device_id"),
+                    createdAt = rs.getString("created_at"),
+                    revoked = rs.getInt("revoked") == 1
+                )
+            }
+        }
+    }
+
     fun revokeByTriple(configApiId: String, vaultKey: String, deviceId: String): Boolean {
         db.connection().use { conn ->
             conn.prepareStatement("""

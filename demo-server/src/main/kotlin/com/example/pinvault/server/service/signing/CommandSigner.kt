@@ -17,10 +17,25 @@ import java.util.concurrent.TimeUnit
  * compromised signer can never make this server hand devices a signature
  * they will reject — or one from a different key.
  *
- * The command gets this server's environment minus its own secrets (admin
- * keys, key passwords, the PKCS#11 PIN, the webhook secret): a separate signer
- * is only worth having if it cannot read what the server holds. On timeout the
- * whole process tree is killed.
+ * The command does NOT inherit this server's environment. It is given an
+ * explicit allowlist: `PATH`, `HOME`, `LANG`, `TZ`, every `SIGNER_*`
+ * variable, and whatever `SIGNER_PASS_ENV` names (say
+ * `AWS_PROFILE,AWS_REGION`). Everything else — admin keys, key and keystore
+ * passwords and their `_PREVIOUS` values, the client P12 password, the
+ * webhook URL and secret, the PKCS#11 PIN — never reaches it, including
+ * variables added to the server later. (It used to be a denylist, which
+ * missed several of those.) A server secret is not passed even when
+ * `SIGNER_PASS_ENV` names it.
+ *
+ * This keeps secrets out of the child's environment; it is NOT isolation.
+ * The command runs as the server's own user: it can read every file the
+ * server can (the database, the keystores, the signing-key file) and, on
+ * Linux, the server's environment through `/proc/<pid>/environ`. A signer
+ * that must not be able to read what the server holds has to run as another
+ * user (`sudo -u signer …` in the command), in another container, or behind
+ * a socket or HTTP call to another host — see SECURE_OPERATIONS.md.
+ *
+ * On timeout the whole process tree is killed.
  */
 class CommandSigner(
     override val name: String,
@@ -32,7 +47,9 @@ class CommandSigner(
      * it receives their SHA-256 (32 raw bytes) — for signers that sign a
      * pre-computed digest, such as AWS KMS with `--message-type DIGEST`.
      */
-    private val input: String = "payload"
+    private val input: String = "payload",
+    /** More environment variables the command may see (`SIGNER_PASS_ENV`). */
+    private val passEnv: Set<String> = emptySet()
 ) : ConfigSigner {
 
     override val type: String = "command"
@@ -45,7 +62,7 @@ class CommandSigner(
 
     override fun sign(data: ByteArray): ByteArray {
         val builder = ProcessBuilder("/bin/sh", "-c", command)
-        builder.environment().keys.removeIf { SECRET_ENV.matches(it) }
+        builder.environment().keys.retainAll { passesToSigner(it, passEnv) }
         val process = builder.start()
         val toSign = if (input == "digest") java.security.MessageDigest.getInstance("SHA-256").digest(data) else data
 
@@ -100,10 +117,21 @@ class CommandSigner(
     companion object {
         private const val MAX_OUTPUT = 64 * 1024
 
-        /** This server's secrets, never passed to an external signer. */
-        private val SECRET_ENV = Regex(
-            "^(API_KEY|ADMIN_KEYS.*|SIGNING_KEY_PASSWORD.*|PKCS11_PIN.*|NOTIFY_WEBHOOK_SECRET|" +
-                "VAULT_AT_REST_PASSWORD|KEYSTORE_PASSWORD)$"
+        /** What every signer command is given besides `SIGNER_*`. */
+        private val PASSED_ENV = setOf("PATH", "HOME", "LANG", "TZ")
+
+        /**
+         * This server's secrets: not passed even when `SIGNER_PASS_ENV` asks
+         * for them. A second line behind the allowlist, not the list that
+         * decides — a variable missing here is still not passed.
+         */
+        private val SERVER_SECRET = Regex(
+            "^(API_KEY|ADMIN_KEYS.*|SIGNING_KEY_PASSWORD.*|PKCS11_PIN.*|NOTIFY_WEBHOOK_.*|" +
+                "VAULT_AT_REST_PASSWORD.*|KEYSTORE_PASSWORD.*|CLIENT_P12_PASSWORD.*|RECOVERY_.*)$"
         )
+
+        /** Whether the environment variable [name] reaches a signer command. */
+        internal fun passesToSigner(name: String, passEnv: Set<String> = emptySet()): Boolean =
+            name in PASSED_ENV || name.startsWith("SIGNER_") || (name in passEnv && !SERVER_SECRET.matches(name))
     }
 }

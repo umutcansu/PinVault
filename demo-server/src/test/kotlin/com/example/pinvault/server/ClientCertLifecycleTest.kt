@@ -334,7 +334,9 @@ class ClientCertLifecycleTest {
         clientCertStore.revoke("dev-legacy")
         assertEquals(ClientIdentityStore.Forget.FORGOTTEN, forget("dev-legacy"))
         assertNull(clientCertStore.get("dev-legacy"))
-        assertEquals(0, identityStore.retiredKeys("dev-legacy"))
+        // The server-made key is on record in client_keys since P12s come from the
+        // client CA: forgetting retires it like any other key of the id.
+        assertEquals(1, identityStore.retiredKeys("dev-legacy"))
 
         assertEquals(ClientIdentityStore.Forget.NOT_FOUND, forget("nobody"))
     }
