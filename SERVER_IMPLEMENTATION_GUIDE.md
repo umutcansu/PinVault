@@ -282,7 +282,7 @@ after your own client id, not the CSR's subject) and answer JSON with
 { "clientId": "tablet-07", "chain": ["-----BEGIN CERTIFICATE-----…(leaf)", "-----BEGIN CERTIFICATE-----…(issuing CA)"] }
 ```
 
-What the library holds the chain to before it stores it (next release):
+What the library holds the chain to before it stores it (2.2):
 
 - **at least two certificates** — the leaf, then the CA certificate that signed it. A leaf
   on its own is refused;
@@ -370,9 +370,9 @@ X-P12-SHA256: base64-encoded-sha256-of-response-body
 
 The library refuses to install the P12 if this header is missing or its value doesn't match the computed SHA-256 of the body. Guards against a header-stripping MITM that drops the integrity check to inject an attacker-controlled P12. Compute it as `base64(sha256(p12Bytes))` with no padding stripping.
 
-**P12 password:** the library sends `X-PinVault-Features: p12password`. Wrap the bundle with a random password used for this response only and return it in `X-P12-Password`. Without that header the bundle must open with the app's `clientKeyPassword` (default `"changeit"`). Never use the password that protects your own keystores: every app would have to carry it. The same applies to `GET {clientCertEndpoint}/{hostname}/download`. The library (next release) imports the key from the bundle into the Android Keystore as a non-exportable key and keeps only the certificate chain.
+**P12 password:** the library sends `X-PinVault-Features: p12password`. Wrap the bundle with a random password used for this response only and return it in `X-P12-Password`. Without that header the bundle must open with the app's `clientKeyPassword` (default `"changeit"`). Never use the password that protects your own keystores: every app would have to carry it. The same applies to `GET {clientCertEndpoint}/{hostname}/download`. The library (2.2) imports the key from the bundle into the Android Keystore as a non-exportable key and keeps only the certificate chain.
 
-**Never answer a request that carries a `csr` with a P12.** The library (next release)
+**Never answer a request that carries a `csr` with a P12.** The library (2.2)
 refuses such an answer unless the block called `allowServerGeneratedKey()` — and by then
 your one-time token is spent.
 

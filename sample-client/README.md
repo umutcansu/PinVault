@@ -48,7 +48,7 @@ Son iki mod `sample-host.properties` içindeki `target.pins`, özel backend modu
 `gradle.properties`:
 
 ```properties
-pinvault.version=2.1.1          # Maven Central sürümü
+pinvault.version=2.2.0          # Maven Central sürümü
 pinvault.localPath=..  # doluysa kütüphane bu checkout'tan derlenir
 ```
 

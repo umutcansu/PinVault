@@ -4,11 +4,11 @@ Dynamic SSL certificate pinning library for Android. Manage pins remotely, suppo
 
 [![Maven Central](https://img.shields.io/maven-central/v/io.github.umutcansu/pinvault)](https://central.sonatype.com/artifact/io.github.umutcansu/pinvault)
 
-> **Latest release: 2.1.1.** Anything marked *(2.1)* is new in 2.1 — see
-> [CHANGELOG.md](CHANGELOG.md) for the full list,
-> [Upgrading from 2.0.x to 2.1](#upgrading-from-20x-to-21) (no app code
-> changes are needed from 2.0.9) and [MIGRATION.md](MIGRATION.md) for the DSL
-> reference.
+> **Latest release: 2.2.0.** Anything marked *(2.2)* is new in 2.2, *(2.1)* in
+> 2.1 — see [CHANGELOG.md](CHANGELOG.md) for the full list,
+> [Upgrading from 2.1.x to 2.2](#upgrading-from-21x-to-22) (most apps compile
+> unchanged), [Upgrading from 2.0.x to 2.1](#upgrading-from-20x-to-21) and
+> [MIGRATION.md](MIGRATION.md) for the DSL reference.
 
 ## Features
 
@@ -26,10 +26,10 @@ Dynamic SSL certificate pinning library for Android. Manage pins remotely, suppo
 - **Encrypted storage** — values AES-256-GCM, names HMAC-SHA256, both keys generated in the Android Keystore (hardware-backed) and never leaving it *(2.1; 2.0.x uses EncryptedSharedPreferences)*
 - **Server-agnostic** — works with any backend, or offline with static pins
 - **ECDSA signed configs** — verify config integrity with SHA256withECDSA
-- **Signed vault files** *(2.1)* — every downloaded file is checked against the Config API's signing keys before it is saved, and *(next release)* again every time the stored copy is read
-- **Attested device keys** *(next release)* — the mTLS key is generated with an Android key attestation challenge and its chain goes along with enrollment, so a server can tell your app on a real phone from a script with a token
-- **No private key in app storage** *(next release)* — a key that arrives in a PKCS12 is imported into the Android Keystore as non-exportable; a server-made key is accepted only on request
-- **Offline lifetime** *(next release)* — `maxOfflineAge` stops a device that never comes back online from reading cached files for ever
+- **Signed vault files** *(2.1)* — every downloaded file is checked against the Config API's signing keys before it is saved, and *(2.2)* again every time the stored copy is read
+- **Attested device keys** *(2.2)* — the mTLS key is generated with an Android key attestation challenge and its chain goes along with enrollment, so a server can tell your app on a real phone from a script with a token
+- **No private key in app storage** *(2.2)* — a key that arrives in a PKCS12 is imported into the Android Keystore as non-exportable; a server-made key is accepted only on request
+- **Offline lifetime** *(2.2)* — `maxOfflineAge` stops a device that never comes back online from reading cached files for ever
 - **Issuer pins** *(2.1)* — pin your CA's key and survive leaf renewals
 - **Optional signing layers** *(2.1)* — backup keys, m-of-n signatures, signing-key rotation/revocation over the air ([SECURE_OPERATIONS.md](SECURE_OPERATIONS.md))
 
@@ -38,7 +38,7 @@ Dynamic SSL certificate pinning library for Android. Manage pins remotely, suppo
 ### 1. Add dependency
 
 ```gradle
-implementation("io.github.umutcansu:pinvault:2.1.1")
+implementation("io.github.umutcansu:pinvault:2.2.0")
 ```
 
 > Kotlin 1.9.x consumer projects: use `2.0.3` or later — older 2.0.x
@@ -141,7 +141,7 @@ already has open keep the certificate they were made with until they
 close, so after a re-enrollment call `client.connectionPool.evictAll()`
 to make sure none of them keeps using the revoked identity.
 
-**Open connections follow the pins too** *(next release)*. A TLS handshake
+**Open connections follow the pins too** *(2.2)*. A TLS handshake
 happens once per connection, so a connection kept alive (HTTP/2,
 keep-alive) or a resumed TLS session used to stay trusted after its pin was
 removed or the config expired. Every client PinVault builds or configures
@@ -474,7 +474,7 @@ PinVault.init(context, config)
 ```
 
 Static pins are checked at `init` like fetched ones (see
-[What a config may contain](#what-a-config-may-contain-next-release)); `init`
+[What a config may contain](#what-a-config-may-contain-22)); `init`
 returns `Failed` for a host name or pin that is not well-formed. They carry
 no signature and no expiry.
 
@@ -525,7 +525,7 @@ val config = PinVaultConfig.Builder()
 PinVault.init(context, config, MyApi()) { result -> /* ... */ }
 ```
 
-**Signed configs through a custom API** *(next release)*. `fetchConfig`
+**Signed configs through a custom API** *(2.2)*. `fetchConfig`
 returns a parsed config, and nothing can verify that. A block with
 `signaturePublicKey(...)` used to look signed while a custom API's configs
 went in unchecked. Now such a block gets verified configs or none: implement
@@ -562,7 +562,7 @@ with a signing key refuses an unsigned vault file (see
 [Signed vault files](#signed-vault-files-21)). Return the signature in
 `VaultFetchResponse(content, version, encryption, signature = …)`.
 
-`encryption(USER_AUTH)` files *(next release)* need
+`encryption(USER_AUTH)` files *(2.2)* need
 `registerUserAuthPublicKey(deviceId, publicKeyPem, attestationChain)`
 (Base64 DER certificates, leaf first; empty when the device cannot attest).
 An implementation compiled against 2.1.1 or earlier does not have it: those
@@ -624,7 +624,7 @@ code:
 A made-up token never matches: the server looks up the hash of what it
 receives and answers anything unknown, expired or used with `401`.
 
-**Bind the token to the phone** *(next release)*. The device id a phone sends
+**Bind the token to the phone** *(2.2)*. The device id a phone sends
 when it enrolls (its ANDROID_ID) is only its own claim. The reference server
 believes it only when it is *proven*: the token was minted for that id, the
 id equals the client id, or a key attestation with your app's package and
@@ -694,7 +694,7 @@ while (PinVault.isEnrollmentPending(context, config)) {
 A rejected device forgets the request and its key: entering the code again
 is a new request. `unenroll` gives a waiting request up.
 
-The verification code is 80 bits of the key's SHA-256 *(next release; it was
+The verification code is 80 bits of the key's SHA-256 *(2.2; it was
 40 bits, 8 characters — the first 8 characters are unchanged)*. It is what
 ties the request the administrator approves to the device in front of them:
 someone who wants their own key approved under a waiting device's code needs
@@ -783,9 +783,9 @@ val message = when (val result = PinVault.enrollForResult(context, config, token
         EnrollmentRefusal.REJECTED -> "An administrator turned this device away."
         EnrollmentRefusal.LIMIT_REACHED -> "This code has no device left. Ask for a new one."
         EnrollmentRefusal.EXPIRED -> "Nobody approved the request in time. Apply again."
-        EnrollmentRefusal.ATTESTATION_FAILED ->                                  // (next release)
+        EnrollmentRefusal.ATTESTATION_FAILED ->                                  // (2.2)
             "The server could not confirm this is a genuine device and app: ${result.message}"
-        EnrollmentRefusal.CSR_REQUIRED -> "This device could not make its key."  // (next release)
+        EnrollmentRefusal.CSR_REQUIRED -> "This device could not make its key."  // (2.2)
         EnrollmentRefusal.OTHER -> "Refused: HTTP ${result.httpStatus} ${result.serverError.orEmpty()}"
     }
     is ClientCertEnrollmentResult.Pending -> "Waiting for an administrator to approve this device."   // see above
@@ -799,7 +799,7 @@ serverError, serverMessage)`; anything else it throws becomes `Failed`.
 `Failed` is also what the library answers on its own account, with the reason
 in `message`: the server sent a key of its own making and the block did not
 ask for one (below), or the certificate chain it issued did not pass
-([what a certificate must look like](#what-an-issued-certificate-must-look-like-next-release)).
+([what a certificate must look like](#what-an-issued-certificate-must-look-like-22)).
 
 ### The device keeps its key *(2.1)*
 
@@ -810,7 +810,7 @@ leaves the device. Custom `CertificateConfigApi` implementations take part by
 overriding `enrollWithCsr` and `renewClientCert` (both have defaults; Java
 implementers delegate the rest to `CertificateConfigApi.DefaultImpls`).
 
-**The key is attested** *(next release)*. A token proves that someone has the
+**The key is attested** *(2.2)*. A token proves that someone has the
 token — not that the request comes from your app on a real phone. A script,
 an emulator or a repackaged app holding a token used to enroll exactly like a
 phone. The key is now generated with an Android key attestation challenge,
@@ -830,7 +830,7 @@ and asks once more by itself. Emulators attest with a software root, which an
 enforcing server refuses — enroll test devices against a server that only
 warns.
 
-**A key the server made is refused unless you ask for it** *(next release)*.
+**A key the server made is refused unless you ask for it** *(2.2)*.
 An older or P12-only server answers the same request with a PKCS12: a private
 key that was generated on the server and travelled over the wire. The library
 used to store it without a word, and to ask for one by itself when the
@@ -846,7 +846,7 @@ server-made key is acceptable for a block, say so:
 (The reference server answers a request without a CSR `403 csr_required`,
 `EnrollmentRefusal.CSR_REQUIRED`, unless its `ENROLLMENT_P12` is on.)
 
-**No P12 is kept on the device** *(next release)*. Wherever the library does
+**No P12 is kept on the device** *(2.2)*. Wherever the library does
 accept a PKCS12 — such an enrollment, a host's client certificate downloaded
 for an mTLS host, a `clientKeystore(...)` bundled with the app — it imports
 the private key into the Android Keystore as a non-exportable key and stores
@@ -933,7 +933,7 @@ with status `REENROLL_REQUIRED`. It is sent once per certificate; `init`
 still returns `Ready` with the stored config. Removing the app
 deletes the Keystore key, so a reinstall is a new enrollment, never a renewal.
 
-### What an issued certificate must look like *(next release)*
+### What an issued certificate must look like *(2.2)*
 
 Whoever holds the TLS key of the enrollment or renewal listener can answer a
 request with any certificate. Without a check, that includes a leaf valid for
@@ -969,7 +969,7 @@ when:
 The pin of the reference server's client CA:
 `keytool -exportcert -rfc -keystore certs/client-ca.jks -alias <alias> | openssl x509 -pubkey -noout | openssl pkey -pubin -outform der | openssl dgst -sha256 -binary | base64`.
 
-### Which hosts see the device's certificate *(next release)*
+### Which hosts see the device's certificate *(2.2)*
 
 A block presents its client identity only where it belongs: its own Config
 API URLs (config, enrollment, renewal), hosts that have their own client
@@ -1007,14 +1007,14 @@ val result = PinVault.updateNow()      // UpdateResult.Updated / AlreadyCurrent 
 `PinVault.reset()` drops the active and stored config of every Config API;
 the next `init` starts from the bootstrap pins again (clients built earlier
 refuse handshakes until then — pinning never falls back to system trust).
-*(next release)* It keeps the replay watermarks (the newest `issuedAt` and
+*(2.2)* It keeps the replay watermarks (the newest `issuedAt` and
 per-host versions the device has accepted), the signing-key set and the
 client certificate: `reset()` is callable by the app, and by whatever can
 reach the app's code, so it must not reopen the door to older signed
 configs. After a reset the device accepts the newest config it has seen, or
 a newer one.
 
-**A config expires** *(next release)*. A signed config is valid until its
+**A config expires** *(2.2)*. A signed config is valid until its
 `expiresAt` (the server's `CONFIG_TTL_SECONDS`, 24 hours by default). The
 device keeps that date with the stored config. Past it, `init` fails with
 `ConfigExpiredException` when no fresh config can be fetched, and pinned
@@ -1064,7 +1064,7 @@ leave every config "expired" — is a config newer than every config accepted
 before: the reference then becomes the later of the device clock and that
 config's signed `issuedAt`. The same config served again never does it.
 
-#### What a config may contain *(next release)*
+#### What a config may contain *(2.2)*
 
 Every config — fetched, static, or from a custom API — is checked before it
 is used, and refused as a whole if one entry fails:
@@ -1128,7 +1128,7 @@ val json = PinVault.loadFileAsString("feature-flags")
 PinVault.syncAllFiles()               // fetch every registered file
 PinVault.hasFile("ml-model")          // cached copy present?
 PinVault.fileVersion("ml-model")      // cached version (0 = none)
-PinVault.fileStatus("ml-model")       // (next release) why loadFile returned null
+PinVault.fileStatus("ml-model")       // (2.2) why loadFile returned null
 PinVault.clearFile("ml-model")        // drop the cached copy
 ```
 
@@ -1151,7 +1151,7 @@ per-device decryption, and refuses a validly signed but older version.
   against exactly that key instead.
 - Blocks with `allowUnsigned()` skip the check (and log a warning).
 
-**Signatures that name the Config API** *(next release)*. The v1 string above
+**Signatures that name the Config API** *(2.2)*. The v1 string above
 does not say which Config API a file belongs to, so with one signing key for
 several Config APIs a file of one verifies for another. The server now also
 sends `X-Vault-Signature-V2` (several signers: `X-Vault-Signatures-V2`, the
@@ -1163,7 +1163,7 @@ v2 signature and verifies it with that id — at download, at unlock, and
 whenever the stored copy is read. A block without `serverScope` verifies v1
 as before. Set `serverScope` on every block that shares its signing key.
 
-**The stored copy is verified every time it is read** *(next release)*. A
+**The stored copy is verified every time it is read** *(2.2)*. A
 file used to be checked when it was downloaded and then trusted for as long
 as it sat in the app's storage. Now the signatures a file was accepted with
 are stored with it, and `loadFile` / `unlockFile` verify the copy again with
@@ -1197,7 +1197,7 @@ state — an older file with its older, valid signature. Nothing kept on a
 device can; the offline lifetime below bounds it and the next fetch replaces
 the copy.
 
-### How long a file stays readable offline *(next release)*
+### How long a file stays readable offline *(2.2)*
 
 A device the server has revoked learns of it from the server. One that stays
 offline never hears it and keeps every cached file. Give a file — or all of
@@ -1293,7 +1293,7 @@ server performs the encryption, so it sees the content (the reference server
 keeps it encrypted on disk). Relays, caches and other devices cannot read a
 download. To hide a file from the server too, encrypt it before upload.
 
-### Locked behind the screen lock *(next release)*
+### Locked behind the screen lock *(2.2)*
 
 Every vault file is stored encrypted with a Keystore key, but the app itself
 can use that key at any time, so a rooted phone or a hooked app can read the
@@ -1410,7 +1410,7 @@ when (val r = PinVault.unlockFile(activity, "statement", VaultFileUnlockPrompt("
   is read (not an `encryption(USER_AUTH)` file: there only the server's
   sealed copy counts).
 
-### Wiping files when a device is revoked *(next release)*
+### Wiping files when a device is revoked *(2.2)*
 
 Files already on a device stay there when the server revokes it. To remove
 them when the Config API answers `403 reenroll_required` (the
@@ -1427,13 +1427,13 @@ left. Vault access tokens belong to the app (`accessToken { … }`): forget them
 when the event arrives.
 
 The answer is a plain `403` — nothing in it is signed — so it deletes files
-only when it was about this device's identity *(next release)*: it arrived on
+only when it was about this device's identity *(2.2)*: it arrived on
 a connection that presented the client certificate the block has loaded, or
 it is the answer to that certificate's own renewal request. A
 `reenroll_required` on a connection without a client certificate (a TLS-only
 block, a request before enrollment) still raises the event, and wipes
 nothing. A device that is revoked while offline never gets the answer at
-all: give its files an [offline lifetime](#how-long-a-file-stays-readable-offline-next-release). `PinVault.unenroll(context, label, wipeVaultFiles = true)`
+all: give its files an [offline lifetime](#how-long-a-file-stays-readable-offline-22). `PinVault.unenroll(context, label, wipeVaultFiles = true)`
 does the same on demand, after `init`, for the Config APIs that use that
 client certificate for mTLS (the label matches and the block names an
 `enrollmentUrl` or `renewalUrl`, bundles a `clientKeystore`, or has a
@@ -1476,7 +1476,7 @@ its configs.
 
 | Variable | Required? | Purpose |
 |---|---|---|
-| `API_KEY` | Required | X-API-Key header value for management endpoints. Server refuses to start when unset — pass `ALLOW_ANONYMOUS_ADMIN=true` to opt out (dev only). *(next release)* At least 16 characters (`openssl rand -hex 24`) unless `ALLOW_DEMO_SECRETS=true`. |
+| `API_KEY` | Required | X-API-Key header value for management endpoints. Server refuses to start when unset — pass `ALLOW_ANONYMOUS_ADMIN=true` to opt out (dev only). *(2.2)* At least 16 characters (`openssl rand -hex 24`) unless `ALLOW_DEMO_SECRETS=true`. |
 
 #### Optional env vars
 
@@ -1502,14 +1502,14 @@ its configs.
 | `CERT_EXPIRY_WARN_DAYS` | `30` | When `/api/v1/cert-expiry` and the dashboard start warning. |
 | `MANAGEMENT_HTTPS_PORT` | unset | Also serve the management API over TLS with the Config API's certificate (the one apps already pin), so device reports and remote admins don't cross the network in the clear. Not in the compose file — add it and a port mapping. |
 | `PORT` / `HTTPS_PORT` | `8080` / `PORT+1` | Management HTTP / Config API TLS ports. In Docker, change the host side instead (`PORT=9000 docker compose up`). |
-| `ALLOW_ANONYMOUS_ADMIN` | unset | Set to `true` to allow startup with no `API_KEY` (anonymous admin). Logs a warning. Do not use on any network you don't control. *(next release)* Anonymous admin answers only on the management port, only to connections from this machine, and never on a Config API port (`403 admin_key_required`). |
-| `ANONYMOUS_ADMIN_PEERS` | unset | *(next release)* Comma-separated IPs or CIDRs that count as "this machine" for anonymous admin, e.g. a container's gateway (`172.17.0.1`; Docker Desktop: `192.168.65.0/24`). Others get `403 peer_not_allowed`. |
-| `ADMIN_AUTH_FAILURE_LIMIT` | `30` | *(next release)* Invalid admin keys one address may send per 10 minutes before `429`. Correct keys are never counted; `0` turns it off. |
-| `ISSUANCE_RATE_LIMIT` | `10` | *(next release)* Certificates issued per client id per 10 minutes (open mode, enrollment codes). A device asking again with the same key within half its certificate's lifetime gets the same certificate back. |
-| `KEY_REPLACEMENT_RATE_LIMIT` | `10` | *(next release)* End-to-end / screen-lock key replacements one client id may make over its certificate per 10 minutes. |
-| `PICKUP_RATE_LIMIT` / `PICKUP_SOURCE_RATE_LIMIT` | `120` / `600` | *(next release)* How often a waiting request may be asked about, per request and per address, per 10 minutes. |
-| `VAULT_DOWNLOAD_CONCURRENCY` | `4` | *(next release)* Vault downloads one address may run at once (`429` beyond it). |
-| `CLIENT_DEVICES_MAX` | `20000` | *(next release)* Most rows the device list (connection reports) keeps; the oldest go first. |
+| `ALLOW_ANONYMOUS_ADMIN` | unset | Set to `true` to allow startup with no `API_KEY` (anonymous admin). Logs a warning. Do not use on any network you don't control. *(2.2)* Anonymous admin answers only on the management port, only to connections from this machine, and never on a Config API port (`403 admin_key_required`). |
+| `ANONYMOUS_ADMIN_PEERS` | unset | *(2.2)* Comma-separated IPs or CIDRs that count as "this machine" for anonymous admin, e.g. a container's gateway (`172.17.0.1`; Docker Desktop: `192.168.65.0/24`). Others get `403 peer_not_allowed`. |
+| `ADMIN_AUTH_FAILURE_LIMIT` | `30` | *(2.2)* Invalid admin keys one address may send per 10 minutes before `429`. Correct keys are never counted; `0` turns it off. |
+| `ISSUANCE_RATE_LIMIT` | `10` | *(2.2)* Certificates issued per client id per 10 minutes (open mode, enrollment codes). A device asking again with the same key within half its certificate's lifetime gets the same certificate back. |
+| `KEY_REPLACEMENT_RATE_LIMIT` | `10` | *(2.2)* End-to-end / screen-lock key replacements one client id may make over its certificate per 10 minutes. |
+| `PICKUP_RATE_LIMIT` / `PICKUP_SOURCE_RATE_LIMIT` | `120` / `600` | *(2.2)* How often a waiting request may be asked about, per request and per address, per 10 minutes. |
+| `VAULT_DOWNLOAD_CONCURRENCY` | `4` | *(2.2)* Vault downloads one address may run at once (`429` beyond it). |
+| `CLIENT_DEVICES_MAX` | `20000` | *(2.2)* Most rows the device list (connection reports) keeps; the oldest go first. |
 
 The optional signing and governance layers — named admins (`ADMIN_KEYS`),
 two-person approval (`PIN_CHANGE_APPROVALS`), live-certificate check
@@ -1527,8 +1527,8 @@ See [SERVER_IMPLEMENTATION_GUIDE.md](SERVER_IMPLEMENTATION_GUIDE.md) for the API
 
 Add these for the features you use:
 
-3. mTLS — `POST /api/v1/client-certs/enroll`. With `X-PinVault-Features: csr` and a `csr` field *(2.1, the default)*: sign the device's own key and answer with the certificate chain — leaf, then the CA certificate that signed it — as JSON (`X-PinVault-Cert-Format: pem-chain`); renew at `POST /api/v1/client-certs/renew`. *(next release)* Verify the request's `attestationChain` (challenge SHA-256 of `pinvault-identity-key:v1:<deviceUid>`), and answer a request without a `csr` `403 csr_required`: a PKCS12 answer (with `X-P12-SHA256`, optionally `X-P12-Password`) is taken only by apps that call `allowServerGeneratedKey()`. To make a device wait for an administrator, answer `202` with a `requestId` *(2.1)*; the code to show next to it is 16 characters *(next release)*. Details in [SERVER_IMPLEMENTATION_GUIDE.md](SERVER_IMPLEMENTATION_GUIDE.md).
-4. VaultFile — `GET /<your vault endpoint>`: the file bytes with `X-Vault-Version` and, for signed blocks, `X-Vault-Signature` *(2.1, see [Signed vault files](#signed-vault-files-21))* and `X-Vault-Signature-V2`, which names the Config API *(next release; required by blocks that set `serverScope`)*.
+3. mTLS — `POST /api/v1/client-certs/enroll`. With `X-PinVault-Features: csr` and a `csr` field *(2.1, the default)*: sign the device's own key and answer with the certificate chain — leaf, then the CA certificate that signed it — as JSON (`X-PinVault-Cert-Format: pem-chain`); renew at `POST /api/v1/client-certs/renew`. *(2.2)* Verify the request's `attestationChain` (challenge SHA-256 of `pinvault-identity-key:v1:<deviceUid>`), and answer a request without a `csr` `403 csr_required`: a PKCS12 answer (with `X-P12-SHA256`, optionally `X-P12-Password`) is taken only by apps that call `allowServerGeneratedKey()`. To make a device wait for an administrator, answer `202` with a `requestId` *(2.1)*; the code to show next to it is 16 characters *(2.2)*. Details in [SERVER_IMPLEMENTATION_GUIDE.md](SERVER_IMPLEMENTATION_GUIDE.md).
+4. VaultFile — `GET /<your vault endpoint>`: the file bytes with `X-Vault-Version` and, for signed blocks, `X-Vault-Signature` *(2.1, see [Signed vault files](#signed-vault-files-21))* and `X-Vault-Signature-V2`, which names the Config API *(2.2; required by blocks that set `serverScope`)*.
 5. Per-device encryption — `POST /api/v1/vault/devices/{deviceId}/public-key` to register the device key, then encrypt responses with it. Decide who may replace a registered key: the reference server takes a client certificate bound to the device, or over TLS the first key plus `X-Vault-Key` / `X-Vault-Token` (the device's token for an `end_to_end` file) for a replacement. Without a credential, bound what a caller can store: the reference server takes only RSA 2048–4096 keys, a quota per source address and a cap per Config API.
 
 On a client-authenticated listener, treat `X-Device-Id` as a claim to check against the certificate (the device it enrolled as), not as the identity: it selects per-device pins and token checks.
@@ -1640,7 +1640,7 @@ files) into its Keystore-backed store and deletes them. Going back to 2.0.x
 afterwards starts from scratch: bootstrap pins, re-enrollment, re-download.
 Details in [MIGRATION.md](MIGRATION.md).
 
-### Upgrading from 2.1.x to the next release
+### Upgrading from 2.1.x to 2.2
 
 Most apps compile unchanged. What to expect, and what may need a line:
 
@@ -1688,7 +1688,7 @@ password (`X-PinVault-Features: p12password`). A backend that returns it in
 password of its own: the library opens the bundle with it.
 Do not wrap device P12s with the password protecting your server's keystores.
 
-*(next release)* The key in such a bundle is then imported into the Android
+*(2.2)* The key in such a bundle is then imported into the Android
 Keystore as a non-exportable key and only the certificate chain is stored;
 no P12 stays in app storage (see
 [The device keeps its key](#the-device-keeps-its-key-21)). Prefer not to
@@ -1716,7 +1716,7 @@ see Quick Start step 5) only when `BuildConfig.DEBUG` is true.
 
 ### 3. Always use bootstrap pins for the first connection
 Without bootstrap pins, the first config fetch is unpinned (vulnerable to MITM
-on first install). *(next release)* `init` enforces it, however the config
+on first install). *(2.2)* `init` enforces it, however the config
 object was built: a Config API block must use `https://` (also for
 `enrollmentUrl` / `renewalUrl`) and carry bootstrap pins, or `init` returns
 `Failed` and the block's client refuses to connect. Tests against a local
@@ -1745,7 +1745,7 @@ in the APK:
 
 See `SERVER_IMPLEMENTATION_GUIDE.md` for the signing protocol.
 
-**Name the Config API the configs are for** *(next release)*. One signing
+**Name the Config API the configs are for** *(2.2)*. One signing
 key often signs for several Config APIs, and a config signed for another of
 them has a valid signature here too. With `serverScope("default-tls")` on
 the block (the server-side Config API id), a signed config must carry
@@ -1782,7 +1782,7 @@ Optional, stronger setups *(2.1)* — each off by default, pick what your team c
 `PinVault.signingStatus()` reports what a device currently trusts (key ids,
 required count, applied key-set version, who signed the last config).
 
-**Pins and a CA** *(next release)*. Whoever holds the config signing key
+**Pins and a CA** *(2.2)*. Whoever holds the config signing key
 decides the pins, so a stolen signing key can pin an attacker's certificate
 for any host. For hosts with certificates from a public CA, ask for both:
 
@@ -1821,12 +1821,12 @@ library's own ids; those files are moved and deleted on the first start of the
 new version.
 
 ### 6. Verify TLS configuration on your backend
-- TLS 1.2 or higher (1.3 preferred). *(next release)* The library enables
+- TLS 1.2 or higher (1.3 preferred). *(2.2)* The library enables
   TLS 1.2 and 1.3 only, whatever the client's `ConnectionSpec` says, and no
   longer caps connections at 1.2: with TLS 1.3 (Android 10+) the device's
   client certificate, whose subject names the device, is no longer sent in
   the clear
-- *(next release)* The device's client certificate is presented to the
+- *(2.2)* The device's client certificate is presented to the
   Config API's own listeners (config, enrollment and renewal URLs), to hosts
   whose pin entry has `mtls: true`, and — their own certificate — to hosts
   with a host-specific client certificate. Any other pinned host that asks
@@ -1854,7 +1854,7 @@ Config API behind diverse routes (multiple regions / CDN cache) and
 reserving `forceUpdate=true` for genuine revocation events rather than
 routine rotations.
 
-### 8. Bind the identity to real devices *(next release)*
+### 8. Bind the identity to real devices *(2.2)*
 
 - On the server, **enforce the enrollment key attestation** with your app's
   package name and signing certificate. Until you do, a token is enough to
@@ -1871,7 +1871,7 @@ routine rotations.
 - Name the hosts that may see the client certificate with
   `clientCertHosts(...)`.
 
-### 9. (Optional) Keys that work only while the phone is unlocked *(next release)*
+### 9. (Optional) Keys that work only while the phone is unlocked *(2.2)*
 
 ```kotlin
 PinVaultConfig.Builder()
