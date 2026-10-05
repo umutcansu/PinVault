@@ -52,9 +52,7 @@ class ClientCaMtlsSocketTest {
         val serverKeystore = certService.generateCertificate("sock", "localhost").keystorePath
         port = java.net.ServerSocket(0).use { it.localPort }
 
-        val keyStore = KeyStore.getInstance("JKS").apply {
-            FileInputStream(serverKeystore).use { load(it, CertificateService.KEYSTORE_PASSWORD.toCharArray()) }
-        }
+        val keyStore = com.example.pinvault.server.service.ServerKeyStores.load(File(serverKeystore), CertificateService.KEYSTORE_PASSWORD.toCharArray())
         val environment = applicationEnvironment {}
         server = embeddedServer(Netty, environment, configure = {
             sslConnector(

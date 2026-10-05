@@ -92,7 +92,7 @@ class P12TrustAnchorTest {
     private fun trust(alias: String, cert: X509Certificate): String {
         val file = certService.getTrustStoreFile()
         val password = CertificateService.KEYSTORE_PASSWORD.toCharArray()
-        val store = KeyStore.getInstance("JKS").apply { file.inputStream().use { load(it, password) } }
+        val store = com.example.pinvault.server.service.ServerKeyStores.load(file, password)
         store.setCertificateEntry(alias, cert)
         file.outputStream().use { store.store(it, password) }
         return sha256(cert.encoded)

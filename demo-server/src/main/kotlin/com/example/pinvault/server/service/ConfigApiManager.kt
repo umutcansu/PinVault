@@ -70,8 +70,7 @@ class ConfigApiManager(
             stop(conflict.key)
         }
 
-        val keyStore = KeyStore.getInstance("JKS")
-        FileInputStream(keystorePath).use { keyStore.load(it, CertificateService.KEYSTORE_PASSWORD.toCharArray()) }
+        val keyStore = ServerKeyStores.load(java.io.File(keystorePath), CertificateService.KEYSTORE_PASSWORD.toCharArray())
 
         val environment = applicationEnvironment {}
         val server = embeddedServer(Netty, environment, configure = {
@@ -83,9 +82,7 @@ class ConfigApiManager(
             ) {
                 this.port = port
                 if (mode == "mtls" && trustStorePath != null) {
-                    val ts = KeyStore.getInstance("JKS")
-                    FileInputStream(trustStorePath).use { ts.load(it, CertificateService.KEYSTORE_PASSWORD.toCharArray()) }
-                    this.trustStore = ts
+                    this.trustStore = ServerKeyStores.load(java.io.File(trustStorePath), CertificateService.KEYSTORE_PASSWORD.toCharArray())
                 }
             }
         }) {

@@ -31,10 +31,7 @@ class CertificateServiceSanTest {
     }
 
     private fun sansOf(result: CertGenResult): List<Pair<Int, String>> {
-        val ks = KeyStore.getInstance("JKS")
-        File(result.keystorePath).inputStream().use {
-            ks.load(it, CertificateService.KEYSTORE_PASSWORD.toCharArray())
-        }
+        val ks = ServerKeyStores.load(File(result.keystorePath), CertificateService.KEYSTORE_PASSWORD.toCharArray())
         val cert = ks.getCertificate("server") as X509Certificate
         return cert.subjectAlternativeNames.map { (it[0] as Int) to (it[1] as String) }
     }

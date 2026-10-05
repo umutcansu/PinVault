@@ -128,8 +128,7 @@ class CertificateService(
     fun backupPin(id: String): String? {
         val file = backupKeyFile(id)
         if (!file.exists()) return null
-        val ks = KeyStore.getInstance("JKS")
-        FileInputStream(file).use { ks.load(it, KEYSTORE_PASSWORD.toCharArray()) }
+        val ks = ServerKeyStores.load(file, KEYSTORE_PASSWORD.toCharArray())
         return ks.getCertificate(BACKUP_ALIAS)?.let { extractHash(it) }
     }
 
@@ -147,8 +146,7 @@ class CertificateService(
     fun planRotation(id: String, hostname: String): CertPlan {
         val file = backupKeyFile(id)
         check(file.exists()) { "No stored backup key for $id" }
-        val ks = KeyStore.getInstance("JKS")
-        FileInputStream(file).use { ks.load(it, KEYSTORE_PASSWORD.toCharArray()) }
+        val ks = ServerKeyStores.load(file, KEYSTORE_PASSWORD.toCharArray())
         val promoted = KeyPair(
             ks.getCertificate(BACKUP_ALIAS).publicKey,
             ks.getKey(BACKUP_ALIAS, KEYSTORE_PASSWORD.toCharArray()) as PrivateKey
@@ -216,20 +214,19 @@ class CertificateService(
     /** The TLS keystore (`<id>.jks`, alias "server") serving [hostname] from [keyPair], as bytes. */
     private fun serverKeystoreBytes(hostname: String, keyPair: KeyPair): Pair<ByteArray, X509Certificate> {
         val cert = selfSignedCertificate(hostname, keyPair)
-        val keyStore = KeyStore.getInstance("JKS")
-        keyStore.load(null, null)
+        val keyStore = ServerKeyStores.empty()
         keyStore.setKeyEntry("server", keyPair.private, KEYSTORE_PASSWORD.toCharArray(), arrayOf(cert))
         return java.io.ByteArrayOutputStream().also { keyStore.store(it, KEYSTORE_PASSWORD.toCharArray()) }.toByteArray() to cert
     }
 
     // A separate file, not a second entry in `<id>.jks`: the TLS listeners
-    // load that keystore and must only ever see the serving key. JKS keeps a
-    // private key only with a certificate, so the backup carries a
-    // self-signed placeholder that is never served.
+    // load that keystore and must only ever see the serving key. A keystore
+    // keeps a private key only with a certificate, so the backup carries a
+    // self-signed placeholder that is never served. (The file is PKCS12 like
+    // every server keystore; `.jks` is the historical name — ServerKeyStores.)
     private fun backupKeystoreBytes(hostname: String, keyPair: KeyPair): ByteArray {
         val cert = selfSignedCertificate(hostname, keyPair)
-        val keyStore = KeyStore.getInstance("JKS")
-        keyStore.load(null, null)
+        val keyStore = ServerKeyStores.empty()
         keyStore.setKeyEntry(BACKUP_ALIAS, keyPair.private, KEYSTORE_PASSWORD.toCharArray(), arrayOf(cert))
         return java.io.ByteArrayOutputStream().also { keyStore.store(it, KEYSTORE_PASSWORD.toCharArray()) }.toByteArray()
     }
@@ -268,9 +265,8 @@ class CertificateService(
 
         val cert = chain[0] as X509Certificate
 
-        // JKS olarak kaydet
-        val jksKs = KeyStore.getInstance("JKS")
-        jksKs.load(null, null)
+        // Re-wrapped in the server's own (PKCS12) keystore form under KEYSTORE_PASSWORD.
+        val jksKs = ServerKeyStores.empty()
         jksKs.setKeyEntry("server", key, KEYSTORE_PASSWORD.toCharArray(), chain)
         val keystore = java.io.ByteArrayOutputStream().also { jksKs.store(it, KEYSTORE_PASSWORD.toCharArray()) }.toByteArray()
 
@@ -395,8 +391,7 @@ class CertificateService(
      * Keystore'dan sertifika bilgilerini okur.
      */
     fun readCertInfo(keystorePath: String, sha256Pins: List<String>): CertInfo {
-        val keyStore = KeyStore.getInstance("JKS")
-        FileInputStream(keystorePath).use { keyStore.load(it, KEYSTORE_PASSWORD.toCharArray()) }
+        val keyStore = ServerKeyStores.load(File(keystorePath), KEYSTORE_PASSWORD.toCharArray())
         val cert = keyStore.getCertificate("server") as X509Certificate
 
         val sanList = mutableListOf<String>()
@@ -434,8 +429,7 @@ class CertificateService(
     }
 
     fun extractHashFromKeystore(keystorePath: String): String {
-        val keyStore = KeyStore.getInstance("JKS")
-        FileInputStream(keystorePath).use { keyStore.load(it, KEYSTORE_PASSWORD.toCharArray()) }
+        val keyStore = ServerKeyStores.load(File(keystorePath), KEYSTORE_PASSWORD.toCharArray())
         return extractHash(keyStore.getCertificate("server"))
     }
 
@@ -639,28 +633,21 @@ class CertificateService(
         // itself: every CSR identity was then refused at the handshake.
         if (isReservedAlias(clientId)) return
         if (!trustStoreFile.exists()) return
-        val ts = KeyStore.getInstance("JKS")
-        FileInputStream(trustStoreFile).use { ts.load(it, KEYSTORE_PASSWORD.toCharArray()) }
+        val ts = ServerKeyStores.load(trustStoreFile, KEYSTORE_PASSWORD.toCharArray())
         ts.deleteEntry(clientId)
         trustStoreFile.outputStream().use { ts.store(it, KEYSTORE_PASSWORD.toCharArray()) }
     }
 
     fun getTrustStore(): KeyStore? {
         if (!trustStoreFile.exists()) return null
-        val ts = KeyStore.getInstance("JKS")
-        FileInputStream(trustStoreFile).use { ts.load(it, KEYSTORE_PASSWORD.toCharArray()) }
+        val ts = ServerKeyStores.load(trustStoreFile, KEYSTORE_PASSWORD.toCharArray())
         return ts
     }
 
     fun getTrustStoreFile(): File = trustStoreFile
 
     private fun addToTrustStore(alias: String, cert: X509Certificate) {
-        val ts = KeyStore.getInstance("JKS")
-        if (trustStoreFile.exists()) {
-            FileInputStream(trustStoreFile).use { ts.load(it, KEYSTORE_PASSWORD.toCharArray()) }
-        } else {
-            ts.load(null, null)
-        }
+        val ts = if (trustStoreFile.exists()) ServerKeyStores.load(trustStoreFile, KEYSTORE_PASSWORD.toCharArray()) else ServerKeyStores.empty()
         ts.setCertificateEntry(alias, cert)
         trustStoreFile.outputStream().use { ts.store(it, KEYSTORE_PASSWORD.toCharArray()) }
     }
@@ -698,7 +685,7 @@ class CertificateService(
             builder.build(JcaContentSignerBuilder("SHA256withECDSA").build(keyPair.private))
         )
 
-        val ks = KeyStore.getInstance("JKS").apply { load(null, null) }
+        val ks = ServerKeyStores.empty()
         ks.setKeyEntry(CLIENT_CA_ALIAS, keyPair.private, KEYSTORE_PASSWORD.toCharArray(), arrayOf(cert))
         clientCaFile.outputStream().use { ks.store(it, KEYSTORE_PASSWORD.toCharArray()) }
         addToTrustStore(CLIENT_CA_ALIAS, cert)
@@ -709,8 +696,7 @@ class CertificateService(
 
     private fun loadClientCa(): Pair<PrivateKey, X509Certificate>? {
         if (!clientCaFile.exists()) return null
-        val ks = KeyStore.getInstance("JKS")
-        FileInputStream(clientCaFile).use { ks.load(it, KEYSTORE_PASSWORD.toCharArray()) }
+        val ks = ServerKeyStores.load(clientCaFile, KEYSTORE_PASSWORD.toCharArray())
         val key = ks.getKey(CLIENT_CA_ALIAS, KEYSTORE_PASSWORD.toCharArray()) as? PrivateKey ?: return null
         val cert = ks.getCertificate(CLIENT_CA_ALIAS) as? X509Certificate ?: return null
         return key to cert
@@ -972,8 +958,7 @@ class CertificateService(
         val (caKey, caCert) = loadCa(serverCaFile, SERVER_CA_ALIAS) ?: ensureServerCa().let { loadCa(serverCaFile, SERVER_CA_ALIAS)!! }
 
         runCatching {
-            val ks = KeyStore.getInstance("JKS")
-            FileInputStream(recoveryKeystoreFile).use { ks.load(it, KEYSTORE_PASSWORD.toCharArray()) }
+            val ks = ServerKeyStores.load(recoveryKeystoreFile, KEYSTORE_PASSWORD.toCharArray())
             val chain = ks.getCertificateChain("server")?.map { it as X509Certificate }
             val leaf = chain?.firstOrNull()
             val fresh = leaf != null &&
@@ -998,7 +983,7 @@ class CertificateService(
         val leaf = JcaX509CertificateConverter().getCertificate(
             builder.build(JcaContentSignerBuilder("SHA256withECDSA").build(caKey))
         )
-        val ks = KeyStore.getInstance("JKS").apply { load(null, null) }
+        val ks = ServerKeyStores.empty()
         ks.setKeyEntry("server", keyPair.private, KEYSTORE_PASSWORD.toCharArray(), arrayOf(leaf, caCert))
         recoveryKeystoreFile.outputStream().use { ks.store(it, KEYSTORE_PASSWORD.toCharArray()) }
         return RecoveryCertificate(recoveryKeystoreFile, leaf, caCert, regenerated = true)
@@ -1006,8 +991,7 @@ class CertificateService(
 
     private fun loadCa(file: File, alias: String): Pair<PrivateKey, X509Certificate>? {
         if (!file.exists()) return null
-        val ks = KeyStore.getInstance("JKS")
-        FileInputStream(file).use { ks.load(it, KEYSTORE_PASSWORD.toCharArray()) }
+        val ks = ServerKeyStores.load(file, KEYSTORE_PASSWORD.toCharArray())
         val key = ks.getKey(alias, KEYSTORE_PASSWORD.toCharArray()) as? PrivateKey ?: return null
         val cert = ks.getCertificate(alias) as? X509Certificate ?: return null
         return key to cert
@@ -1028,7 +1012,7 @@ class CertificateService(
         val cert = JcaX509CertificateConverter().getCertificate(
             builder.build(JcaContentSignerBuilder("SHA256withECDSA").build(keyPair.private))
         )
-        val ks = KeyStore.getInstance("JKS").apply { load(null, null) }
+        val ks = ServerKeyStores.empty()
         ks.setKeyEntry(alias, keyPair.private, KEYSTORE_PASSWORD.toCharArray(), arrayOf(cert))
         file.outputStream().use { ks.store(it, KEYSTORE_PASSWORD.toCharArray()) }
         return keyPair.private to cert

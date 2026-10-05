@@ -62,9 +62,7 @@ class RecoveryListener(
     }
 
     private fun launch(): EmbeddedServer<*, *> {
-        val keyStore = KeyStore.getInstance("JKS").apply {
-            FileInputStream(certService.recoveryKeystoreFile()).use { load(it, CertificateService.KEYSTORE_PASSWORD.toCharArray()) }
-        }
+        val keyStore = ServerKeyStores.load(certService.recoveryKeystoreFile(), CertificateService.KEYSTORE_PASSWORD.toCharArray())
         val module: Application.() -> Unit = {
             install(com.example.pinvault.server.plugin.EncodedPathGuard)
             // Everything here is open to anyone; a renewal body is a CSR of a few hundred bytes.

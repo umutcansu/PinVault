@@ -78,11 +78,7 @@ class MockServerManager {
             ) {
                 this.port = port
                 if (isMtls) {
-                    val ts = KeyStore.getInstance("JKS")
-                    FileInputStream(trustStorePath!!).use {
-                        ts.load(it, CertificateService.KEYSTORE_PASSWORD.toCharArray())
-                    }
-                    this.trustStore = ts
+                    this.trustStore = loadKeystore(trustStorePath!!)
                 }
             }
         }) {
@@ -170,11 +166,8 @@ class MockServerManager {
         return null
     }
 
-    private fun loadKeystore(path: String): KeyStore {
-        val ks = KeyStore.getInstance("JKS")
-        FileInputStream(path).use { ks.load(it, CertificateService.KEYSTORE_PASSWORD.toCharArray()) }
-        return ks
-    }
+    private fun loadKeystore(path: String): KeyStore =
+        ServerKeyStores.load(java.io.File(path), CertificateService.KEYSTORE_PASSWORD.toCharArray())
 
     private fun extractPin(keystorePath: String): String {
         val ks = loadKeystore(keystorePath)

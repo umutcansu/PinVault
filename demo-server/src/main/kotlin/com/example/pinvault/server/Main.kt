@@ -296,6 +296,7 @@ fun main() {
         val report = com.example.pinvault.server.service.KeystoreRekey(certService)
             .run(keystores, com.example.pinvault.server.store.HostClientCertStore(db))
         if (report.rekeyed.isNotEmpty()) println("KEYSTORE_PASSWORD: re-encrypted ${report.rekeyed.joinToString()}")
+        if (report.converted.isNotEmpty()) println("Keystores: rewrote legacy JKS as PKCS12: ${report.converted.joinToString()}")
         if (report.unreadable.isNotEmpty()) {
             System.err.println("KEYSTORE_PASSWORD: ${report.unreadable.joinToString()} open with neither the current, the previous " +
                 "(KEYSTORE_PASSWORD_PREVIOUS) nor the old default password; left as they are")
@@ -327,8 +328,7 @@ fun main() {
         serverPinsFile.readLines().filter { it.isNotBlank() }
     } else {
         // Pin dosyası yok — keystore'dan primary oku
-        val ks = KeyStore.getInstance("JKS")
-        FileInputStream(serverKeystorePath).use { ks.load(it, CertificateService.KEYSTORE_PASSWORD.toCharArray()) }
+        val ks = com.example.pinvault.server.service.ServerKeyStores.load(serverKeystorePath, CertificateService.KEYSTORE_PASSWORD.toCharArray())
         val cert = ks.getCertificate("server")
         val digest = java.security.MessageDigest.getInstance("SHA-256").digest(cert.publicKey.encoded)
         listOf(java.util.Base64.getEncoder().encodeToString(digest))
@@ -805,8 +805,7 @@ fun main() {
         // container health check still reach the server on 127.0.0.1.
         if (!bindsEverywhere && !bindsLoopback) connector { host = "127.0.0.1"; port = httpPort }
         if (managementHttpsPort != null) {
-            val keyStore = KeyStore.getInstance("JKS")
-            FileInputStream(serverKeystorePath).use { keyStore.load(it, CertificateService.KEYSTORE_PASSWORD.toCharArray()) }
+            val keyStore = com.example.pinvault.server.service.ServerKeyStores.load(serverKeystorePath, CertificateService.KEYSTORE_PASSWORD.toCharArray())
             sslConnector(
                 keyStore = keyStore,
                 keyAlias = "server",
