@@ -3,6 +3,7 @@ package com.example.sampleclient
 import android.content.Context
 import android.util.Log
 import io.github.umutcansu.pinvault.PinVault
+import io.github.umutcansu.pinvault.model.CertificateConfig
 import io.github.umutcansu.pinvault.model.ClientCertEnrollmentResult
 import io.github.umutcansu.pinvault.model.HostPin
 import io.github.umutcansu.pinvault.model.PinVaultConfig
@@ -52,15 +53,6 @@ object PinManagerLite {
         runBlocking { PinVault.enrollForResult(context, token) }
 
     /**
-     * `PinVault.autoEnrollForResult` için senkron köprü: token yerine cihaz
-     * kimliğiyle (ANDROID_ID) kayıt. Sunucu yalnızca `ENROLLMENT_MODE=open`
-     * iken kabul eder; token modundaysa sonuç bunu söyler.
-     */
-    @JvmStatic
-    fun autoEnrollBlocking(context: Context): ClientCertEnrollmentResult =
-        runBlocking { PinVault.autoEnrollForResult(context) }
-
-    /**
      * `PinVault.checkPendingEnrollment` için senkron köprü: kayıt kodu onay
      * bekliyorsa yönetici onayladı mı diye bir kez sorar. Onaylandıysa
      * sertifika saklanır ve pinli client'a yüklenir. UI thread'inden çağırma.
@@ -106,12 +98,16 @@ object PinManagerLite {
 
     /**
      * Sunucusuz (statik) PinVault yapılandırması: pin'ler APK'ya gömülü,
-     * hiçbir sunucuya bağlanılmaz. Kotlin'deki `PinVaultConfig.static` Java'dan
-     * çağrılamaz (`static` anahtar sözcük), köprü burada.
+     * hiçbir sunucuya bağlanılmaz. [requireCaTrust] açıksa host'un sertifikası
+     * pin'e ek olarak sistemin CA'larından da geçmeli (herkesin güvendiği bir
+     * CA'dan sertifikası olan hedefler için).
      */
     @JvmStatic
-    fun staticConfig(hostPattern: String, pins: List<String>): PinVaultConfig =
-        PinVaultConfig.static(HostPin(hostPattern, pins))
+    fun staticConfig(hostPattern: String, pins: List<String>, requireCaTrust: Boolean): PinVaultConfig =
+        PinVaultConfig.Builder()
+            .staticPins(CertificateConfig(pins = listOf(HostPin(hostPattern, pins)), forceUpdate = false))
+            .apply { if (requireCaTrust) requireCaTrust(hostPattern) }
+            .build()
 
     /**
      * Pin uyuşmazlığında [ProductionStyleClient]'ın interceptor'ı çağırır.

@@ -153,9 +153,20 @@ public class StorageActivity extends AppCompatActivity {
         } else {
             for (File f : vaultFiles) {
                 byte[] head = Files.readAllBytes(f.toPath());
-                int ivLen = head.length > 0 ? head[0] & 0xff : 0;
-                sb.append("• ").append(f.getName()).append(" — ").append(f.length()).append(" B, başlık: [iv_len=")
-                        .append(ivLen).append("] ").append(hex(head, 1, Math.min(ivLen, 12))).append(" …\n");
+                // Güncel biçim: "PVF2" [sürüm, 4 bayt] [iv_len, 1] [iv] [şifreli gövde + etiket];
+                // ad ve sürüm GCM etiketinin kapsadığı ek veride. Eski biçimde başlık yalnızca [iv_len][iv].
+                boolean pvf2 = head.length >= 9 && head[0] == 'P' && head[1] == 'V' && head[2] == 'F' && head[3] == '2';
+                int ivAt = pvf2 ? 9 : 1;
+                int ivLen = head.length >= ivAt ? head[ivAt - 1] & 0xff : 0;
+                sb.append("• ").append(f.getName()).append(" — ").append(f.length()).append(" B, başlık: ");
+                if (pvf2) {
+                    int version = ((head[4] & 0xff) << 24) | ((head[5] & 0xff) << 16) | ((head[6] & 0xff) << 8) | (head[7] & 0xff);
+                    sb.append("PVF2 [sürüm=").append(version).append("] ");
+                } else {
+                    sb.append("(eski biçim) ");
+                }
+                sb.append("[iv_len=").append(ivLen).append("] ")
+                        .append(hex(head, ivAt, Math.min(ivLen, 12))).append(" …\n");
             }
         }
 
@@ -168,7 +179,7 @@ public class StorageActivity extends AppCompatActivity {
         int aliases = 0;
         for (Enumeration<String> e = ks.aliases(); e.hasMoreElements(); ) {
             String alias = e.nextElement();
-            if (!alias.startsWith("pinvault") && !alias.contains("security_master_key")) continue;
+            if (!alias.startsWith("pinvault") && !alias.startsWith("sample_") && !alias.contains("security_master_key")) continue;
             aliases++;
             sb.append("• ").append(alias).append(": ").append(describeKey(ks, alias)).append('\n');
         }
@@ -188,9 +199,15 @@ public class StorageActivity extends AppCompatActivity {
                         ? "EVET ✗ (şifresiz!)" : "hayır ✓ (şifreli)").append('\n');
             }
         }
-        File manual = new File(getFilesDir(), App.MANUAL_P12_FILE);
-        sb.append("elle yüklenen P12: ").append(manual.isFile() ? manual.length() + " B" : "yok")
+        // Elle yüklenen P12 yalnızca Keystore anahtarıyla şifreli kopyasıyla durur;
+        // adb ile konan düz dosya içe aktarınca silinir (ManualP12Store).
+        File sealedP12 = new File(getFilesDir(), ManualP12Store.SEALED_FILE);
+        File inboxP12 = new File(getFilesDir(), ManualP12Store.INBOX_FILE);
+        sb.append("elle yüklenen P12: ")
+                .append(sealedP12.isFile() ? "şifreli kopya " + sealedP12.length() + " B (Keystore anahtarıyla)" : "yok")
                 .append(AppSettings.useManualP12(this) ? " (kullanılıyor)" : "").append('\n');
+        sb.append("düz P12 dosyası (files/").append(ManualP12Store.INBOX_FILE).append("): ")
+                .append(inboxP12.isFile() ? "VAR ✗ — içe aktarılmayı bekliyor" : "yok ✓").append('\n');
         return sb.toString();
     }
 
@@ -259,7 +276,8 @@ public class StorageActivity extends AppCompatActivity {
             }
             try {
                 KeyStore p12 = KeyStore.getInstance("PKCS12");
-                p12.load(new ByteArrayInputStream(raw), App.MANUAL_P12_PASSWORD.toCharArray());
+                // Saldırganın ilk deneyeceği parola: eski varsayılan "changeit".
+                p12.load(new ByteArrayInputStream(raw), "changeit".toCharArray());
                 if (p12.aliases().hasMoreElements()) return true;
             } catch (Exception e) {
                 // Beklenen: şifreli değer PKCS12 değildir.

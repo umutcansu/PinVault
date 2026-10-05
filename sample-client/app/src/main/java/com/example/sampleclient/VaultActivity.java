@@ -9,33 +9,44 @@ import java.nio.charset.StandardCharsets;
 import java.util.Map;
 
 import io.github.umutcansu.pinvault.PinVault;
+import io.github.umutcansu.pinvault.model.ScreenLockRequiredException;
 import io.github.umutcansu.pinvault.model.VaultFileResult;
+import io.github.umutcansu.pinvault.model.VaultFileUnlockPrompt;
+import io.github.umutcansu.pinvault.model.VaultFileUnlockResult;
+import kotlin.Unit;
 
 /**
  * Vault: host dashboard'unda yüklenen dosyaları indirir ve yönetir.
  *
+ * <p>Gizli olmayan dosyalar (TLS bloğu, herkes indirebilir):
  * <ul>
- *   <li>{@link App#VAULT_FLAGS} herkese açık bir dosya.</li>
- *   <li>{@link App#VAULT_SECRET} bu cihaza ve bu dosyaya bağlı bir token ister;
- *       token dashboard'da "Cihaz ID" için üretilir ve burada girilir.</li>
- *   <li>{@link App#VAULT_E2E} cihazın Android Keystore'daki RSA anahtarıyla
- *       şifrelenmiş gelir; yalnızca bu cihaz çözebilir.</li>
- *   <li>{@link App#VAULT_ATREST} sunucuda şifreli saklanır, telefona ek şifreleme olmadan (TLS ile) gelir.</li>
+ *   <li>{@link App#VAULT_FLAGS} herkese açık demo dosyası.</li>
+ *   <li>{@link App#VAULT_ATREST} sunucu diskinde şifreli durur ama herkese açıktır.</li>
  *   <li>{@link App#VAULT_ADMIN} yalnızca yönetim anahtarıyla inebilir; cihazdan
  *       her zaman reddedilir.</li>
  *   <li>{@link App#VAULT_MODEL} şifreli dosya deposunda tutulur ve config ile
  *       birlikte eşitlenir (Tümünü eşitle, arka plan görevi).</li>
- *   <li>{@link App#VAULT_MTLS_SECRET} mTLS bloğuna bağlıdır: istemci sertifikası
- *       ve cihaz token'ı ister.</li>
  * </ul>
  *
- * Her dosyanın içeriği config imzalama anahtarıyla doğrulanır; imza tutmazsa
- * dosya kaydedilmez. "Bilgi" saklı dosyayı sunucuya gitmeden okur; "Sil"
- * dosyayı ve (dosya deposundaysa) Keystore anahtarını siler.
+ * <p>Gizli dosyalar ({@link App#LOCKED_VAULT_KEYS}: secret, e2e, mtls-secret):
+ * mTLS bloğunda, cihaza özel token + istemci sertifikasıyla iner ve telefonda
+ * ekran kilidinin arkasında durur. İndirme içerik göstermez; "Aç" telefonun
+ * ekran kilidini (ya da parmak izini) sorar, ancak ondan sonra içerik görünür.
+ * Açılan içerik ekranda gerektiğinden uzun kalmaz: ekran öne gelmeyi bıraktığı
+ * anda (onPause) ya da {@link #UNLOCKED_VISIBLE_MS} dolunca silinir. Sonuç
+ * kutusu seçilebilir değildir (panoya kopyalanamaz); uygulamanın bütün
+ * ekranları ekran görüntüsüne kapalıdır (FLAG_SECURE, {@link App}).
+ *
+ * <p>Her dosyanın içeriği config imzalama anahtarıyla doğrulanır; imza tutmazsa
+ * dosya kaydedilmez. "Bilgi" saklı dosyayı sunucuya gitmeden okur (kilitli
+ * dosyanın içeriğini göstermez); "Sil" dosyayı ve (dosya deposundaysa)
+ * Keystore anahtarını siler.
  */
 public class VaultActivity extends ActionActivity {
 
     private static final int MAX_PREVIEW = 400;
+    /** Kilidi açılan içerik ekranda en çok bu kadar durur, sonra silinir. */
+    private static final long UNLOCKED_VISIBLE_MS = 60_000;
 
     private EditText keyInput;
     private EditText tokenInput;
@@ -48,10 +59,15 @@ public class VaultActivity extends ActionActivity {
     private Button fetchModelButton;
     private Button fetchMtlsSecretButton;
     private Button syncAllButton;
+    private Button unlockButton;
     private Button infoButton;
     private Button clearButton;
 
+    /** Ekranda açılmış (kilidi açılan) bir dosyanın içeriği duruyor mu. */
+    private boolean showingUnlocked;
+
     private final Runnable initObserver = () -> ui.post(this::updateButtons);
+    private final Runnable relockTimer = this::relock;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -71,6 +87,7 @@ public class VaultActivity extends ActionActivity {
         fetchModelButton = findViewById(R.id.fetchModelButton);
         fetchMtlsSecretButton = findViewById(R.id.fetchMtlsSecretButton);
         syncAllButton = findViewById(R.id.syncAllButton);
+        unlockButton = findViewById(R.id.unlockButton);
         infoButton = findViewById(R.id.infoButton);
         clearButton = findViewById(R.id.clearButton);
 
@@ -87,6 +104,7 @@ public class VaultActivity extends ActionActivity {
         fetchModelButton.setOnClickListener(v -> fetch(App.VAULT_MODEL));
         fetchMtlsSecretButton.setOnClickListener(v -> fetch(App.VAULT_MTLS_SECRET));
         syncAllButton.setOnClickListener(v -> syncAll());
+        unlockButton.setOnClickListener(v -> unlock());
         infoButton.setOnClickListener(v -> info());
         clearButton.setOnClickListener(v -> clear());
 
@@ -99,9 +117,39 @@ public class VaultActivity extends ActionActivity {
         boolean ready = App.INIT.get().phase == InitState.Phase.READY && !isBusy();
         saveTokenButton.setEnabled(!isBusy());
         for (Button b : new Button[]{fetchFlagsButton, fetchSecretButton, fetchE2eButton, fetchAtRestButton,
-                fetchAdminButton, fetchModelButton, fetchMtlsSecretButton, syncAllButton, infoButton, clearButton}) {
+                fetchAdminButton, fetchModelButton, fetchMtlsSecretButton, syncAllButton, unlockButton,
+                infoButton, clearButton}) {
             b.setEnabled(ready);
         }
+    }
+
+    @Override
+    protected void showResult(String text) {
+        showingUnlocked = false;
+        ui.removeCallbacks(relockTimer);
+        super.showResult(text);
+    }
+
+    @Override
+    protected void onPause() {
+        super.onPause();
+        // Açılan içerik ekranda kalmasın: ekran öne gelmeyi bıraktığı anda silinir
+        // (onStop'u beklemeden; üstüne başka bir pencerenin gelmesi de yeter).
+        relock();
+    }
+
+    @Override
+    protected void onStop() {
+        super.onStop();
+        relock();
+    }
+
+    /** Ekranda açık bir gizli dosya varsa içeriğini siler. UI thread'inde çağrılır. */
+    private void relock() {
+        ui.removeCallbacks(relockTimer);
+        if (!showingUnlocked) return;
+        showingUnlocked = false;
+        statusView.setText(R.string.vault_relocked);
     }
 
     private String key() {
@@ -112,10 +160,16 @@ public class VaultActivity extends ActionActivity {
     private void saveToken() {
         String key = key();
         VaultTokens.put(key, tokenInput.getText().toString().trim());
+        tokenInput.setText("");
         showResult(getString(R.string.vault_token_saved, key));
     }
 
     private void fetch(String key) {
+        // Gizli dosyalar mTLS bloğunda; cihaz kayıtlı değilse hiç tanımlanmadılar.
+        if (App.isLockedVaultKey(key) && !App.LOCKED_FILES_ACTIVE) {
+            showResult(getString(R.string.vault_needs_mtls, key));
+            return;
+        }
         runAction(getString(R.string.vault_fetching, key), () -> describe(key, PinManagerLite.fetchFileBlocking(key)));
     }
 
@@ -131,11 +185,85 @@ public class VaultActivity extends ActionActivity {
         });
     }
 
+    /**
+     * "Aç": kilitli dosyayı ekran kilidi sorularak açar (kilitsiz dosya soru
+     * sorulmadan gelir). Sonucun her hâli ele alınır: anahtar geçersiz olduysa
+     * ya da saklı kopya yoksa dosya yeniden indirilir.
+     */
+    private void unlock() {
+        String key = key();
+        if (App.isLockedVaultKey(key) && !App.LOCKED_FILES_ACTIVE) {
+            showResult(getString(R.string.vault_needs_mtls, key));
+            return;
+        }
+        setBusy(true);
+        statusView.setText(getString(R.string.vault_unlocking, key));
+        VaultFileUnlockPrompt prompt = new VaultFileUnlockPrompt(
+                getString(R.string.vault_unlock_prompt_title),
+                key,
+                getString(R.string.vault_unlock_prompt_description),
+                getString(R.string.vault_unlock_prompt_cancel));
+        try {
+            PinVault.INSTANCE.unlockFile(this, key, prompt, result -> {
+                onUnlockResult(key, result);
+                return Unit.INSTANCE;
+            });
+        } catch (IllegalStateException e) {
+            // PinVault henüz başlatılmadı.
+            showResult(getString(R.string.vault_unlock_failed, key, e.getMessage()));
+        }
+    }
+
+    private void onUnlockResult(String key, VaultFileUnlockResult result) {
+        if (result instanceof VaultFileUnlockResult.Unlocked) {
+            VaultFileUnlockResult.Unlocked u = (VaultFileUnlockResult.Unlocked) result;
+            String text = getString(R.string.vault_unlocked, key, u.getVersion(),
+                    preview(new String(u.getBytes(), StandardCharsets.UTF_8)));
+            java.util.Arrays.fill(u.getBytes(), (byte) 0);
+            ui.removeCallbacks(relockTimer);
+            super.showResult(text);
+            showingUnlocked = true;
+            // Kullanıcı ekranda kalsa da içerik süresiz durmaz.
+            ui.postDelayed(relockTimer, UNLOCKED_VISIBLE_MS);
+        } else if (result instanceof VaultFileUnlockResult.Cancelled) {
+            showResult(getString(R.string.vault_unlock_cancelled, key));
+        } else if (result instanceof VaultFileUnlockResult.Invalidated) {
+            // Ekran kilidi kaldırıldı/değişti ya da parmak izi eklendi: Android
+            // anahtarı geçersiz saydı, saklı kopya silindi. Yeni anahtarla yeniden indir.
+            refetchAfterUnlock(key, getString(R.string.vault_unlock_invalidated, key));
+        } else if (result instanceof VaultFileUnlockResult.NotFound) {
+            refetchAfterUnlock(key, getString(R.string.vault_unlock_not_found, key));
+        } else if (result instanceof VaultFileUnlockResult.Stale) {
+            // Sunucu kopyayı App.SECRET_MAX_OFFLINE_DAYS günden uzun süredir
+            // onaylamadı: kopya açılmaz. Telefon ağdaysa yeniden indirip açar;
+            // cihaz bu arada iptal edildiyse indirme reddedilir.
+            refetchAfterUnlock(key, getString(R.string.vault_unlock_stale, key, App.SECRET_MAX_OFFLINE_DAYS));
+        } else if (result instanceof VaultFileUnlockResult.Failed) {
+            showResult(getString(R.string.vault_unlock_failed, key, ((VaultFileUnlockResult.Failed) result).getReason()));
+        }
+    }
+
+    private void refetchAfterUnlock(String key, String why) {
+        statusView.setText(why);
+        io.execute(() -> {
+            String fetched;
+            try {
+                fetched = describe(key, PinManagerLite.fetchFileBlocking(key));
+            } catch (Exception e) {
+                fetched = "❌ " + e.getClass().getSimpleName() + "\n" + e.getMessage();
+            }
+            showResult(why + "\n\n" + fetched);
+        });
+    }
+
     private void info() {
         String key = key();
         runAction(getString(R.string.vault_info_pending, key), () -> {
             boolean has = PinVault.INSTANCE.hasFile(key);
             int version = PinVault.INSTANCE.fileVersion(key);
+            if (has && isLocked(key)) {
+                return getString(R.string.vault_info, key, "var", version, getString(R.string.vault_info_locked));
+            }
             String content = has ? PinVault.INSTANCE.loadFileAsString(key) : null;
             return getString(R.string.vault_info, key, has ? "var" : "yok", version,
                     content == null ? "(içerik yok)" : preview(content));
@@ -150,23 +278,43 @@ public class VaultActivity extends ActionActivity {
         });
     }
 
+    /** Kilitli kopya ya da kilitli tanımlı dosya: içerik yalnızca "Aç" ile gösterilir. */
+    private static boolean isLocked(String key) {
+        if (App.isLockedVaultKey(key)) return true;
+        try {
+            return PinVault.INSTANCE.isFileLocked(key);
+        } catch (IllegalStateException e) {
+            return false;
+        }
+    }
+
     private String describe(String key, VaultFileResult result) {
         if (result instanceof VaultFileResult.Updated) {
             VaultFileResult.Updated u = (VaultFileResult.Updated) result;
-            return getString(R.string.vault_updated, key, u.getVersion(), note(key),
-                    preview(new String(u.getBytes(), StandardCharsets.UTF_8)));
+            String body = isLocked(key)
+                    ? getString(R.string.vault_locked_note)
+                    : preview(new String(u.getBytes(), StandardCharsets.UTF_8));
+            return getString(R.string.vault_updated, key, u.getVersion(), note(key), body);
         }
         if (result instanceof VaultFileResult.AlreadyCurrent) {
             VaultFileResult.AlreadyCurrent c = (VaultFileResult.AlreadyCurrent) result;
-            return getString(R.string.vault_current, key, c.getVersion(), preview(PinVault.INSTANCE.loadFileAsString(key)));
+            String body = isLocked(key)
+                    ? getString(R.string.vault_locked_note)
+                    : preview(PinVault.INSTANCE.loadFileAsString(key));
+            return getString(R.string.vault_current, key, c.getVersion(), body);
         }
-        return getString(R.string.vault_failed, key, ((VaultFileResult.Failed) result).getReason());
+        VaultFileResult.Failed f = (VaultFileResult.Failed) result;
+        if (f.getException() instanceof ScreenLockRequiredException) {
+            return getString(R.string.vault_failed, key, getString(R.string.vault_screen_lock_required));
+        }
+        return getString(R.string.vault_failed, key, f.getReason());
     }
 
     private String summarize(VaultFileResult result) {
         if (result instanceof VaultFileResult.Updated) {
             VaultFileResult.Updated u = (VaultFileResult.Updated) result;
-            return u.getKey() + " → v" + u.getVersion() + " indirildi (" + u.getBytes().length + " B)";
+            String size = isLocked(u.getKey()) ? "kilitli" : u.getBytes().length + " B";
+            return u.getKey() + " → v" + u.getVersion() + " indirildi (" + size + ")";
         }
         if (result instanceof VaultFileResult.AlreadyCurrent) {
             VaultFileResult.AlreadyCurrent c = (VaultFileResult.AlreadyCurrent) result;
@@ -178,10 +326,11 @@ public class VaultActivity extends ActionActivity {
 
     private String note(String key) {
         switch (key) {
+            case App.VAULT_SECRET:
+            case App.VAULT_MTLS_SECRET: return getString(R.string.vault_user_auth_note);
             case App.VAULT_E2E: return getString(R.string.vault_e2e_note);
             case App.VAULT_ATREST: return getString(R.string.vault_atrest_note);
             case App.VAULT_MODEL: return getString(R.string.vault_model_note);
-            case App.VAULT_MTLS_SECRET: return getString(R.string.vault_mtls_note);
             default: return "";
         }
     }
@@ -194,6 +343,7 @@ public class VaultActivity extends ActionActivity {
     @Override
     protected void onDestroy() {
         super.onDestroy();
+        ui.removeCallbacks(relockTimer);
         App.INIT.removeObserver(initObserver);
     }
 }

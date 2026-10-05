@@ -8,6 +8,7 @@ import java.util.Date;
 import java.util.List;
 import java.util.Locale;
 
+import io.github.umutcansu.pinvault.api.ClientCertRenewalStatus;
 import io.github.umutcansu.pinvault.api.PinVaultConnectionEvent;
 import io.github.umutcansu.pinvault.api.PinVaultConnectionListener;
 
@@ -46,6 +47,14 @@ public class ConnectionEventLog implements PinVaultConnectionListener {
             String reason = u.getFailureReason() == null ? "" : " — " + u.getFailureReason();
             line = String.format(Locale.US, "%s [config] %s v%d%s",
                     time, u.getStatus().name(), u.getNewVersion(), reason);
+        } else if (event instanceof PinVaultConnectionEvent.ClientCertRenewal) {
+            // Yalnızca iptal: kullanıcının bilmesi gereken tek sertifika olayı.
+            PinVaultConnectionEvent.ClientCertRenewal r = (PinVaultConnectionEvent.ClientCertRenewal) event;
+            if (r.getStatus() == ClientCertRenewalStatus.REENROLL_REQUIRED) {
+                line = String.format(Locale.US,
+                        "%s [kimlik] %s bu cihazın kaydını iptal etti: vault dosyaları ve token'lar silindi, yeniden kayıt gerekli",
+                        time, r.getConfigApiId());
+            }
         }
 
         if (line != null) {

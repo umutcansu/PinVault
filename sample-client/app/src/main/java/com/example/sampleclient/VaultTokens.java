@@ -7,6 +7,10 @@ import java.util.concurrent.ConcurrentHashMap;
  * Vault erişim token'ları. Yalnızca bellekte tutulur ve uygulama kapanınca
  * silinir; diske yazılmaz. PinVault token'ı her indirmede
  * {@code accessToken { … }} sağlayıcısı üzerinden buradan okur.
+ *
+ * <p>Sunucu cihazın kimliğini iptal ettiğinde ({@code REENROLL_REQUIRED})
+ * {@link App} hepsini siler: iptal edilmiş bir cihazın elinde kullanılabilir
+ * token kalmasın.
  */
 public final class VaultTokens {
 
@@ -23,5 +27,12 @@ public final class VaultTokens {
     public static String get(String key) {
         String token = TOKENS.get(key);
         return token == null ? "" : token;
+    }
+
+    /** Bütün token'ları unutur; kaç tane olduğunu döndürür. */
+    public static int clear() {
+        int n = TOKENS.size();
+        TOKENS.clear();
+        return n;
     }
 }

@@ -1,8 +1,8 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!--
-  Düz HTTP her yerde kapalı. Bağlantı telemetrisi de şifreli: sample host'un
-  yönetim API'sinin TLS portuna (https://<host>:6655) config sunucusunun pin'leriyle
-  gider (PinVaultBackendReporter.pinnedClient).
+  Düz HTTP her yerde kapalı. Bağlantı telemetrisi de şifreli: Config API portuna
+  (https://<host>:6651), config sunucusunun pin'leriyle gider
+  (PinVaultBackendReporter.pinnedClient). Telefon yönetim portuna bağlanmaz.
 
   Pinlenmiş config trafiği (https://<host>:6651) bu dosyadan etkilenmez; güveni
   PinVault'un pin doğrulayan TrustManager'ı verir.

@@ -10,8 +10,7 @@
     <string name="status_ready">✅ Hazır — config %1$s\nMod: %2$s\n\nHedef: %3$s\nPin kaynağı: %4$s\n%5$s\n%6$s</string>
     <string name="status_failed">❌ PinVault başlatılamadı\n%1$s\n\nMod: %2$s\nPin kaynağı: %3$s\nHost ayakta mı? (docker compose ps)</string>
     <string name="status_no_pins">(config\'te pin\'li host yok)</string>
-    <string name="init_mtls_requires_cert">mTLS config modu için istemci sertifikası gerekir: önce TLS modunda kayıt ol ya da P12 içe aktar.</string>
-    <string name="init_mode_unconfigured">Bu mod için sample-host.properties içinde %1$s tanımlı değil.</string>
+    <string name="init_mtls_requires_cert">mTLS config modu için istemci sertifikası gerekir: önce TLS modunda kayıt ol ya da P12 içe aktar.</string>    <string name="init_mode_unconfigured">Bu mod için sample-host.properties içinde %1$s tanımlı değil.</string>
 
     <string name="connecting_fmt">Bağlanılıyor: %1$s</string>
     <string name="refreshing">Config yenileniyor…</string>
@@ -31,6 +30,8 @@
     <!-- mTLS -->
     <string name="mtls_title">mTLS — istemci sertifikası</string>
     <string name="mtls_intro">Kayıt token\'ını ya da ortak kayıt kodunu dashboard\'dan al: Config API sample-mtls → Client Sertifikaları (Enrollment Token ya da Kayıt politikaları).\n\nmTLS testi: %1$s</string>
+    <!-- Panelde token üretirken "Cihaz kimliği (ANDROID_ID)" alanına yazılır: token yalnızca bu telefona çalışır. Gizli değil. -->
+    <string name="mtls_device_id">Cihaz kimliği: %1$s</string>
     <string name="mtls_not_enrolled">Kayıtlı değil</string>
     <string name="mtls_enrolled">✅ Kayıtlı — CN=%1$s</string>
     <string name="mtls_manual_active">Elle yüklenen P12 kullanılıyor</string>
@@ -61,6 +62,7 @@
     <string name="mtls_refusal_rejected">kayıt isteği yönetici tarafından reddedildi: yeniden başvurmak için kodu tekrar gir</string>
     <string name="mtls_refusal_limit_reached">bu kodla kayıt sınırı doldu: yöneticiden yeni bir kod iste</string>
     <string name="mtls_refusal_expired">başvuru zamanında onaylanmadı ve düştü: tekrar başvur</string>
+    <string name="mtls_refusal_device_uid_mismatch">bu token başka bir telefon için üretilmiş (HTTP 403 device_uid_mismatch): yöneticiden bu telefonun kimliğiyle (%1$s) yeni token iste</string>
     <string name="mtls_refusal_other">sunucu reddetti: HTTP %1$d%2$s</string>
     <string name="mtls_enroll_not_completed">kayıt tamamlanamadı: %1$s</string>
     <string name="mtls_test_success">✅ mTLS bağlantısı başarılı\nHTTP %1$d\n(istemci sertifikası kabul edildi)</string>
@@ -68,37 +70,56 @@
     <string name="mtls_unenrolling">Kayıt siliniyor…</string>
     <string name="mtls_unenrolled">✅ Kayıt silindi\n(istemci sertifikası artık sunulmuyor)</string>
     <string name="mtls_manual_importing">P12 içe aktarılıyor…</string>
-    <string name="mtls_manual_missing">❌ P12 bulunamadı: files/%1$s\n(adb push + run-as ile kopyala)</string>
-    <string name="mtls_manual_imported">✅ P12 içe aktarıldı — CN=%1$s\n(clientKeystore ile mTLS bloğuna verildi)\nPinVault: %2$s</string>
+    <string name="mtls_p12_password_hint">P12 parolası (yalnızca içe aktarırken)</string>
+    <string name="mtls_manual_missing">❌ P12 bulunamadı: files/%1$s\n(adb push + run-as ile kopyala; içe aktarınca bu dosya silinir)</string>
+    <string name="mtls_manual_password_required">❌ Önce P12 parolasını gir</string>
+    <string name="mtls_manual_wrong_password">❌ P12 açılamadı: parola yanlış ya da dosya bozuk\n(dosya yerinde bırakıldı, tekrar dene)</string>
+    <string name="mtls_manual_imported">✅ P12 içe aktarıldı — CN=%1$s\n(telefonun anahtar deposundaki bir anahtarla şifrelendi, düz dosya silindi; mTLS bloğuna clientKeystore ile verildi)\nPinVault: %2$s</string>
     <string name="mtls_manual_dropping">Elle P12 bırakılıyor…</string>
-    <string name="mtls_manual_dropped">✅ Elle P12 bırakıldı\n(PinVault yeniden başlatıldı)</string>
+    <string name="mtls_manual_dropped">✅ Elle P12 bırakıldı\n(şifreli kopya ve anahtarı silindi, PinVault yeniden başlatıldı)</string>
 
     <!-- Vault -->
     <string name="vault_title">Vault — uzak dosyalar</string>
     <string name="vault_device_id">Cihaz ID: %1$s</string>
-    <string name="vault_intro">Dosyaları dashboard\'dan yükle: Config API default-tls → Vault.\nAnahtarlar: sample-flags, sample-secret, sample-e2e, sample-atrest, sample-admin, sample-model; sample-mtls → sample-mtls-secret.</string>
-    <string name="vault_key_hint">Anahtar (token, bilgi ve silme için)</string>
+    <string name="vault_intro">Herkese açık dosyalar (gizli değil): dashboard → Config API default-tls → Vault: sample-flags, sample-atrest, sample-admin, sample-model.\n\nGizli dosyalar: dashboard → sample-mtls → Vault, politika token_mtls: sample-secret ve sample-mtls-secret (şifreleme user_auth), sample-e2e (şifreleme end_to_end). Bunlar için önce mTLS ekranından kayıt ol, telefonda ekran kilidi olsun. İndirince içerik gösterilmez; görmek için anahtarı yaz, \"Aç\"a bas, telefon ekran kilidini sorar.</string>
+    <string name="vault_key_hint">Anahtar (token, aç, bilgi ve silme için)</string>
     <string name="vault_token_hint">Erişim token\'ı</string>
     <string name="vault_save_token">Token\'ı kaydet</string>
-    <string name="vault_token_saved">✅ Token kaydedildi (%1$s)\n(yalnızca bellekte; uygulama kapanınca silinir)</string>
-    <string name="vault_fetch_flags">flags (public)</string>
-    <string name="vault_fetch_secret">secret (token)</string>
-    <string name="vault_fetch_e2e">e2e (cihaza özel)</string>
-    <string name="vault_fetch_atrest">atrest (sunucuda şifreli)</string>
+    <string name="vault_token_saved">✅ Token kaydedildi (%1$s)\n(yalnızca bellekte; uygulama kapanınca ya da cihazın kaydı iptal edilince silinir)</string>
+    <string name="vault_fetch_flags">flags (herkese açık)</string>
+    <string name="vault_fetch_secret">secret (gizli, kilitli)</string>
+    <string name="vault_fetch_e2e">e2e (gizli, cihaza özel)</string>
+    <string name="vault_fetch_atrest">atrest (herkese açık)</string>
     <string name="vault_fetch_admin">admin (api_key)</string>
     <string name="vault_fetch_model">model (dosya deposu)</string>
-    <string name="vault_fetch_mtls_secret">mtls-secret (token+mTLS)</string>
+    <string name="vault_fetch_mtls_secret">mtls-secret (gizli, kilitli)</string>
     <string name="vault_sync_all">Tümünü eşitle</string>
+    <string name="vault_unlock_button">Aç</string>
     <string name="vault_info_button">Bilgi</string>
     <string name="vault_clear_button">Sil</string>
     <string name="vault_fetching">İndiriliyor: %1$s</string>
     <string name="vault_updated">✅ %1$s v%2$d indirildi\n(imza doğrulandı)%3$s\n\n%4$s</string>
     <string name="vault_current">✅ %1$s güncel (v%2$d)\n\n%3$s</string>
     <string name="vault_failed">❌ %1$s indirilemedi\n%2$s</string>
-    <string name="vault_e2e_note">\n(cihaz anahtarıyla çözüldü)</string>
-    <string name="vault_atrest_note">\n(sunucuda şifreli saklanır; telefona ek şifreleme olmadan, TLS ile gelir)</string>
+    <string name="vault_needs_mtls">❌ %1$s indirilemedi\nBu gizli bir dosya: yalnızca mTLS ile, bu cihazın istemci sertifikasıyla iner. Önce mTLS ekranından kayıt ol (ya da P12 içe aktar), sonra Ayarlar → \"Uygula ve yeniden başlat\".</string>
+    <string name="vault_screen_lock_required">Bu dosya telefonda ekran kilidi olmadan saklanmaz. Ayarlar → Güvenlik bölümünden bir PIN, desen ya da şifre koy, sonra tekrar indir.</string>
+    <string name="vault_locked_note">🔒 Kilitli: içerik burada gösterilmez. Görmek için anahtarı yazıp \"Aç\"a bas; telefon ekran kilidini sorar.</string>
+    <string name="vault_user_auth_note">\n(mTLS bloğu: istemci sertifikası + token; sunucu dosyayı bu telefonun ekran kilidi anahtarına kilitleyip gönderdi)</string>
+    <string name="vault_e2e_note">\n(mTLS bloğu: istemci sertifikası + token; cihaz anahtarıyla çözüldü ve ekran kilidi anahtarıyla yeniden kilitlendi)</string>
+    <string name="vault_atrest_note">\n(herkese açık dosya: sunucunun diskinde şifreli durur ama isteyen herkes indirir; gizli bilgi koyma)</string>
     <string name="vault_model_note">\n(şifreli dosya deposu: files/vault_files)</string>
-    <string name="vault_mtls_note">\n(mTLS bloğu: istemci sertifikası + token)</string>
+    <string name="vault_unlocking">Açılıyor: %1$s\n(telefon ekran kilidini sorabilir)</string>
+    <string name="vault_unlock_prompt_title">Gizli dosyayı aç</string>
+    <string name="vault_unlock_prompt_description">Dosyayı görmek için ekran kilidini aç.</string>
+    <string name="vault_unlock_prompt_cancel">Vazgeç</string>
+    <string name="vault_unlocked">🔓 %1$s v%2$d açıldı\n(ekrandan ayrılınca ya da 1 dakika sonra silinir)\n\n%3$s</string>
+    <string name="vault_unlock_cancelled">✋ %1$s açılmadı\n(ekran kilidi sorusu kapatıldı)</string>
+    <string name="vault_unlock_invalidated">⚠️ %1$s: kilit anahtarı artık geçersiz\n(ekran kilidi kaldırılmış ya da değişmiş; saklı kopya silindi, dosya yeniden indiriliyor)</string>
+    <string name="vault_unlock_not_found">ℹ️ %1$s telefonda yok, indiriliyor</string>
+    <string name="vault_unlock_stale">⏳ %1$s: telefondaki kopya %2$d günden eski\n(sunucu o zamandan beri onaylamadı; açılmadan önce yeniden indiriliyor)</string>
+    <string name="vault_unlock_failed">❌ %1$s açılamadı\n%2$s</string>
+    <string name="vault_relocked">🔒 Açılan dosya ekrandan silindi. Yeniden görmek için \"Aç\".</string>
+    <string name="vault_info_locked">🔒 kilitli: içerik yalnızca \"Aç\" ile, ekran kilidi sorulduktan sonra görünür</string>
     <string name="vault_syncing">Tümü eşitleniyor…</string>
     <string name="vault_sync_empty">✅ Eşitlenecek dosya yok\n(updateWithPins açık dosya yok)</string>
     <string name="vault_sync_title">✅ Eşitleme tamamlandı (updateWithPins açık dosyalar):</string>

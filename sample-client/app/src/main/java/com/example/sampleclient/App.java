@@ -1,17 +1,17 @@
 package com.example.sampleclient;
 
+import android.app.Activity;
 import android.app.Application;
 import android.content.Context;
 import android.net.Uri;
 import android.os.Build;
+import android.os.Bundle;
 import android.provider.Settings;
 import android.util.Log;
+import android.view.WindowManager;
 
 import androidx.annotation.Nullable;
 
-import java.io.File;
-import java.io.IOException;
-import java.nio.file.Files;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
@@ -20,6 +20,8 @@ import java.util.concurrent.TimeUnit;
 
 import io.github.umutcansu.pinvault.PinVault;
 import io.github.umutcansu.pinvault.api.CertificateConfigApi;
+import io.github.umutcansu.pinvault.api.ClientCertRenewalStatus;
+import io.github.umutcansu.pinvault.api.PinVaultConnectionEvent;
 import io.github.umutcansu.pinvault.api.PinVaultConnectionListener;
 import io.github.umutcansu.pinvault.model.ConfigApiBlock;
 import io.github.umutcansu.pinvault.model.HostPin;
@@ -27,6 +29,7 @@ import io.github.umutcansu.pinvault.model.InitResult;
 import io.github.umutcansu.pinvault.model.PinVaultConfig;
 import io.github.umutcansu.pinvault.model.StorageStrategy;
 import io.github.umutcansu.pinvault.model.UpdateResult;
+import io.github.umutcansu.pinvault.model.UserAuth;
 import io.github.umutcansu.pinvault.model.VaultFileAccessPolicy;
 import io.github.umutcansu.pinvault.model.VaultFileEncryption;
 import io.github.umutcansu.pinvault.reporter.PinVaultBackendReporter;
@@ -51,6 +54,10 @@ import okhttp3.OkHttpClient;
  *       ({@link #MTLS_API_ID}) mTLS üzerinden de config çeker.</li>
  *   <li>Her TLS el sıkışması {@link PinVaultConnectionListener} ile uygulama
  *       içi olay listesine ve host'un dashboard'una (telemetri) iletilir.</li>
+ *   <li>Gizli vault dosyaları mTLS bloğunda, token_mtls ve ekran kilidi
+ *       arkasında durur; sunucu cihazı iptal edince silinir, token'lar
+ *       unutulur. Herkese açık hedefin sertifikası pin'e ek olarak sistemin
+ *       CA'larından da geçmeli ({@code requireCaTrust}).</li>
  * </ol>
  *
  * <p>Diğer modlar ({@link AppSettings.Mode}) Ayarlar ekranından seçilir:
@@ -75,12 +82,14 @@ public class App extends Application {
             "https://" + SAMPLE_HOST_IP + ":" + BuildConfig.HOST_HTTPS_PORT + "/";
 
     /**
-     * Telemetri (bağlantı olayları) için yönetim API'sinin şifreli portu. Host
-     * onu config sunucusuyla aynı sertifikayla sunar; istemci başlangıç pin'leriyle
-     * pinlenir (PinVaultBackendReporter.pinnedClient). Düz HTTP hiçbir yerde açık değil.
+     * Telemetri (bağlantı olayları) Config API portuna gider: cihazların rapor
+     * uçları ({@code POST /api/v1/connection-history/client-report} ve
+     * {@code …/config-update-report}) orada da sunulur. Telefon yönetim
+     * portuna hiç bağlanmaz; o port ağa açılmak zorunda kalmaz. İstemci config
+     * sunucusunun başlangıç pin'leriyle pinlenir
+     * (PinVaultBackendReporter.pinnedClient). Düz HTTP hiçbir yerde açık değil.
      */
-    public static final String MANAGEMENT_URL =
-            "https://" + SAMPLE_HOST_IP + ":" + BuildConfig.HOST_MGMT_TLS_PORT + "/";
+    public static final String REPORT_URL = CONFIG_BASE_URL;
 
     /**
      * mTLS Config API: istemci sertifikası olmadan TLS el sıkışmasını kabul
@@ -119,28 +128,70 @@ public class App extends Application {
             "https://" + BuildConfig.MOCK_MTLS_HOST + ":" + BuildConfig.MOCK_MTLS_PORT + "/health";
 
     // ── Vault dosyaları (dashboard'da bu anahtarlarla yüklenir) ──────────────
+    //
+    // İki tür dosya var. Gizli OLMAYANLAR (flags, atrest, admin, model) TLS
+    // bloğunda: herkesin indirebileceği içerik. GİZLİ olanlar (secret, e2e,
+    // mtls-secret) mTLS bloğunda ve hepsi aynı kuralla korunur:
+    //   • token_mtls: cihaza özel token + bu cihazın istemci sertifikası;
+    //     sunucu cihazı iptal edince bir sonraki istekte reddeder,
+    //   • userAuth(REQUIRED) + encryption(USER_AUTH): sunucu dosyayı bu
+    //     telefonun ekran kilidi anahtarına kilitler; telefonda ekran kilidi
+    //     (PIN/desen/şifre ya da parmak izi) sorulmadan açılmaz. Root'lu
+    //     telefonda uygulama adına çalışan kod yalnızca kilitli kopyayı alır,
+    //     AMA ancak sunucu anahtar doğrulamasını (attestation) zorunlu
+    //     tuttuğunda (USER_AUTH_ATTESTATION=enforce + paket adı; bootloader
+    //     kilitli telefon). Zorunlu değilse cihazın ilk kaydettiği anahtara
+    //     güvenilir: uygulamanın kimlik bilgilerini ele geçiren kod, ilk kayıtta
+    //     kendi yazılım anahtarını kaydettirebilir. Sonradan anahtar değiştirmek
+    //     doğrulama ya da yönetici sıfırlaması ister. Android 7–10'da ekran
+    //     kilidi anahtarı 10 saniyeliğine açar (parmak izi yoksa),
+    //   • iptalde dosyalar silinir (wipeVaultFilesOnRevocation) ve uygulama
+    //     elindeki token'ları unutur.
+    // Gizli dosyalar yalnızca cihaz mTLS'e kayıtlıyken tanımlanır.
 
-    /** Herkese açık dosya. */
+    /** Herkese açık, gizli olmayan demo dosyası ("public" politikası). */
     public static final String VAULT_FLAGS = "sample-flags";
-    /** Bu cihaza ve dosyaya bağlı token ister. */
+    /**
+     * Gizli dosya, önerilen kurulum: mTLS + token_mtls, sunucu dosyayı bu
+     * telefonun ekran kilidi anahtarına kilitler (user_auth). İçerik uygulamaya
+     * ancak kullanıcı kilidi açınca ulaşır.
+     */
     public static final String VAULT_SECRET = "sample-secret";
-    /** Cihazın RSA anahtarıyla şifreli gelir (cihaza özel şifreleme; içeriği sunucu görür). */
+    /**
+     * Gizli dosya, cihaza özel şifreleme (end_to_end): sunucu cihazın RSA
+     * anahtarıyla şifreler, telefon çözer ve hemen ekran kilidi anahtarıyla
+     * yeniden kilitler. İndirme anında içerik uygulamanın belleğinden geçer;
+     * user_auth bundan daha sıkıdır.
+     */
     public static final String VAULT_E2E = "sample-e2e";
-    /** Sunucuda şifreli saklanır (at_rest); ağda yalnızca TLS, cihazda düz. */
+    /**
+     * Herkese açık dosya: sunucunun DİSKİNDE şifreli durur (at_rest) ama isteyen
+     * herkes indirir; gizli bilgi için değil.
+     */
     public static final String VAULT_ATREST = "sample-atrest";
     /** Yalnızca yönetim anahtarıyla inebilir; cihazdan her zaman reddedilir. */
     public static final String VAULT_ADMIN = "sample-admin";
-    /** Şifreli dosya deposunda tutulur ve config ile birlikte eşitlenir. */
+    /** Gizli olmayan, şifreli dosya deposunda tutulan ve config ile eşitlenen dosya. */
     public static final String VAULT_MODEL = "sample-model";
-    /** mTLS bloğuna bağlı: istemci sertifikası + cihaz token'ı ister. */
+    /** Gizli dosya, {@link #VAULT_SECRET} ile aynı koruma (mTLS + token_mtls + user_auth). */
     public static final String VAULT_MTLS_SECRET = "sample-mtls-secret";
 
     public static final List<String> VAULT_KEYS = Collections.unmodifiableList(Arrays.asList(
             VAULT_FLAGS, VAULT_SECRET, VAULT_E2E, VAULT_ATREST, VAULT_ADMIN, VAULT_MODEL, VAULT_MTLS_SECRET));
 
-    /** Elle yüklenen istemci sertifikası (files/ altında); bkz. MtlsActivity. */
-    public static final String MANUAL_P12_FILE = "manual-client.p12";
-    public static final String MANUAL_P12_PASSWORD = "changeit";
+    /** Ekran kilidi arkasındaki, mTLS bloğuna bağlı gizli dosyalar. */
+    public static final List<String> LOCKED_VAULT_KEYS = Collections.unmodifiableList(Arrays.asList(
+            VAULT_SECRET, VAULT_E2E, VAULT_MTLS_SECRET));
+
+    public static boolean isLockedVaultKey(String key) {
+        return LOCKED_VAULT_KEYS.contains(key);
+    }
+
+    /**
+     * Son kurulumda gizli dosyalar tanımlandı mı (cihaz mTLS'e kayıtlıydı ya da
+     * elle P12 vardı). Değilse Vault ekranı indirmeyi denemeden nedenini söyler.
+     */
+    public static volatile boolean LOCKED_FILES_ACTIVE = false;
 
     // ── Uygulama durumu ──────────────────────────────────────────────────────
 
@@ -171,10 +222,25 @@ public class App extends Application {
     public void onCreate() {
         super.onCreate();
 
-        // PinVault teşhis log'larını Timber ile yazar. Yalnızca debug build'de
-        // aç: release log'larına host adı ve pin önekleri düşmesin. Testler
-        // release derlemesinde -Psample.diagnosticLogs=true ile açar.
-        if (BuildConfig.DEBUG || BuildConfig.DIAGNOSTIC_LOGS) {
+        // Bütün ekranlar ekran görüntüsüne, ekran kaydına ve "son uygulamalar"
+        // önizlemesine kapalı (FLAG_SECURE): token, kayıt kodu, cihaz kimliği,
+        // pin ve dosya içeriği gösteriyorlar. Tek tek ekranlara bırakılmaz;
+        // sonradan eklenen bir ekran da buradan korunur. Yalnızca test
+        // derlemeleri -Psample.e2eScreenshots=true ile kapatabilir (kanıt
+        // görüntüleri); release'te bu bayrak her zaman kapalıdır.
+        if (!(BuildConfig.TEST_CONTROLS && BuildConfig.E2E_SCREENSHOTS)) {
+            registerActivityLifecycleCallbacks(new SecureWindows());
+        }
+
+        // Test kontrolleri olmayan derlemede (release) önceki sürümlerden kalmış
+        // elle P12 dosyalarını ve anahtarını siler; test derlemelerinde boştur.
+        TestControls.onAppStart(this);
+
+        // PinVault teşhis log'larını Timber ile yazar. Yalnızca debug'da ve test
+        // derlemesi bayrağıyla (-Psample.diagnosticLogs=true, e2e) açılır.
+        // Release'te hiç açılmaz: log'lara host adı ve pin önekleri düşmesin
+        // (ayrıca R8 release'te log çağrılarını siler, proguard-release.pro).
+        if (BuildConfig.DEBUG || (BuildConfig.TEST_CONTROLS && BuildConfig.DIAGNOSTIC_LOGS)) {
             PinVault.INSTANCE.enableDebugLogging();
         }
 
@@ -188,6 +254,22 @@ public class App extends Application {
         startPinVault();
     }
 
+    /** Her ekran oluşturulurken (içerik çizilmeden önce) FLAG_SECURE koyar. */
+    private static final class SecureWindows implements ActivityLifecycleCallbacks {
+        @Override
+        public void onActivityCreated(Activity activity, @Nullable Bundle savedInstanceState) {
+            activity.getWindow().setFlags(
+                    WindowManager.LayoutParams.FLAG_SECURE, WindowManager.LayoutParams.FLAG_SECURE);
+        }
+
+        @Override public void onActivityStarted(Activity activity) {}
+        @Override public void onActivityResumed(Activity activity) {}
+        @Override public void onActivityPaused(Activity activity) {}
+        @Override public void onActivityStopped(Activity activity) {}
+        @Override public void onActivitySaveInstanceState(Activity activity, Bundle outState) {}
+        @Override public void onActivityDestroyed(Activity activity) {}
+    }
+
     /**
      * PinVault'u seçili moda göre başlatır. İlk açılışta, başlatma hata
      * verdiğinde ("Tekrar dene") ve mod değişince çağrılır.
@@ -196,6 +278,7 @@ public class App extends Application {
         AppSettings.Mode mode = AppSettings.mode(this);
         final int generation = INIT_GENERATION.incrementAndGet();
         ACTIVE_MODE = mode;
+        LOCKED_FILES_ACTIVE = false;
         publishInit(generation, InitState.Phase.INITIALIZING, mode.label());
         try {
             switch (mode) {
@@ -259,7 +342,8 @@ public class App extends Application {
     /** TLS Config API (+ kayıtlıysa mTLS bloğu); [mtlsFirst] ile mTLS bloğu varsayılan olur. */
     private void startHosted(int generation, boolean mtlsFirst) {
         HostPin bootstrap = hostBootstrapPin();
-        byte[] manualP12 = AppSettings.useManualP12(this) ? readManualP12() : null;
+        // Elle yüklenen P12 bir test kontrolüdür: release'te her zaman null.
+        Object manualP12 = TestControls.loadManualIdentity(this);
         boolean enrolled = PinVault.INSTANCE.isEnrolled(this, null);
         boolean hasMtlsCredential = enrolled || manualP12 != null;
 
@@ -271,7 +355,9 @@ public class App extends Application {
         // Ayarlardaki "yalnızca hedef host'un pin'leri" anahtarı: açıkken TLS
         // bloğu wantPinsFor ile sunucudan yalnızca hedefin pin'lerini ister.
         boolean scopedPins = AppSettings.scopedPins(this);
-        // Ayarlardaki "iki imza iste" (m-of-n): config başına gereken imza sayısı.
+        // Config başına gereken imza sayısı (m-of-n). Derlemeye gömülü değerin
+        // (host.requiredSignatures) altına hiçbir derlemede inmez; test
+        // derlemelerinde Ayarlar'daki "iki imza iste" yalnızca yükseltebilir.
         int requiredSignatures = AppSettings.requiredSignatures(this);
 
         PinVaultConfig.Builder builder = new PinVaultConfig.Builder();
@@ -283,14 +369,32 @@ public class App extends Application {
             if (hasMtlsCredential) addMtlsBlock(builder, bootstrap, manualP12, requiredSignatures);
         }
         addVaultFiles(builder, hasMtlsCredential);
+        requireCaTrustForTarget(builder);
 
         PinVaultConfig config = builder
                 .deviceAlias(deviceAlias())
                 // WorkManager'ın izin verdiği en kısa periyot.
                 .updateIntervalMinutes(15L)
+                // Sunucu kimliği iptal edince (403 reenroll_required) o Config
+                // API'nin vault dosyaları, kilitli kopyalar dahil, silinir.
+                // Token'ları da listener() unutur.
+                .wipeVaultFilesOnRevocation()
                 .onConnectionEvent(listener())
                 .build();
+        LOCKED_FILES_ACTIVE = hasMtlsCredential;
         launch(generation, config, null);
+    }
+
+    /**
+     * Hedefin sertifikası herkesin güvendiği bir CA'dansa (sample-host.properties:
+     * target.requireCaTrust), pin'le birlikte sistemin CA onayı da istenir.
+     * Pin'leri config imza anahtarını elinde tutan belirler; bu anahtar
+     * çalınırsa saldırgan kendi sertifikasını pinleyebilir. CA şartı APK'ya
+     * gömülüdür, sunucudan kapatılamaz. Host'un kendi portları ve mock host'lar
+     * self-signed / özel CA'lı olduğu için burada YOK; eklenseler reddedilirlerdi.
+     */
+    private static void requireCaTrustForTarget(PinVaultConfig.Builder builder) {
+        if (BuildConfig.TARGET_REQUIRE_CA_TRUST) builder.requireCaTrust(TARGET_HOST);
     }
 
     /** Sunucusuz: pin'ler APK'ya gömülü, hiçbir sunucuya bağlanılmaz. */
@@ -300,7 +404,7 @@ public class App extends Application {
             publishInit(generation, InitState.Phase.FAILED, getString(R.string.init_mode_unconfigured, "target.pins"));
             return;
         }
-        launch(generation, PinManagerLite.staticConfig(TARGET_HOST, pins), null);
+        launch(generation, PinManagerLite.staticConfig(TARGET_HOST, pins, BuildConfig.TARGET_REQUIRE_CA_TRUST), null);
     }
 
     /** Config uygulama içindeki {@link EmbeddedConfigApi}'den; kütüphaneden HTTP çıkmaz. */
@@ -310,10 +414,29 @@ public class App extends Application {
             publishInit(generation, InitState.Phase.FAILED, getString(R.string.init_mode_unconfigured, "target.pins"));
             return;
         }
+        // Bu blokta İMZA DOĞRULAMASI YOK ve bu açıkça söylenir (allowUnsigned):
+        // EmbeddedConfigApi hazır, ayrıştırılmış bir config döndürür; kütüphanenin
+        // doğrulayabileceği imzalı bir zarf yoktur. Burada pin'ler APK'nın içinden
+        // geldiği için güven APK'nın kendisine (imzasına) dayanır, o yüzden kabul
+        // edilebilir. Pin'leri uzaktan getiren bir özel API için bu yol YANLIŞTIR:
+        // o API SignedConfigSource uygulamalı ve blok imza anahtarı taşımalıdır
+        // (bkz. EmbeddedConfigApi). İmza anahtarı verip allowUnsigned() çağırmamak
+        // artık init'i durdurur: "imzalı görünen ama doğrulanmayan" blok olmaz.
+        HostPin bootstrap = hostBootstrapPin();
         PinVaultConfig.Builder builder = new PinVaultConfig.Builder();
-        addTlsBlock(builder, hostBootstrapPin(), false, 1);
+        builder.configApi(CONFIG_API_ID, CONFIG_BASE_URL, block -> {
+            // Kütüphane her blokta https + başlangıç pin'i ister; bu modda bu
+            // adrese kütüphaneden istek çıkmaz (config özel API'den gelir).
+            block.bootstrapPins(Collections.singletonList(bootstrap));
+            block.allowUnsigned();
+            return Unit.INSTANCE;
+        });
+        requireCaTrustForTarget(builder);
         PinVaultConfig config = builder
                 .deviceAlias(deviceAlias())
+                // Bu modda kayıt yok (API desteklemez); yine de bir kimlik
+                // yüklüyse ve sunucu iptal ederse dosyalar silinsin.
+                .wipeVaultFilesOnRevocation()
                 .onConnectionEvent(listener())
                 .build();
         launch(generation, config, new EmbeddedConfigApi(TARGET_HOST, pins));
@@ -330,9 +453,14 @@ public class App extends Application {
         String customHost = Uri.parse(baseUrl).getHost();
         HostPin bootstrap = new HostPin(customHost, pins, 0, false, false, null);
 
-        PinVaultConfig config = new PinVaultConfig.Builder()
+        PinVaultConfig.Builder builder = new PinVaultConfig.Builder();
+        requireCaTrustForTarget(builder);
+        PinVaultConfig config = builder
                 .configApi(CUSTOM_API_ID, baseUrl, block -> {
                     block.bootstrapPins(Collections.singletonList(bootstrap));
+                    // Bu modda özel bir CertificateConfigApi YOK: yalnızca uç yolları
+                    // farklı. İstekleri kütüphanenin kendi HTTP istemcisi yapar ve
+                    // imzalı zarfı (imza, issuedAt/expiresAt, replay) kendisi doğrular.
                     block.signaturePublicKey(BuildConfig.CUSTOM_SIGNING_PUBLIC_KEY);
                     // Kütüphanenin varsayılan yolları yerine bu backend'in yolları.
                     block.configEndpoint("ssl/pins");
@@ -349,6 +477,9 @@ public class App extends Application {
                 })
                 .deviceAlias(deviceAlias())
                 .updateIntervalMinutes(15L)
+                // Bu blok da kayıt alabilir (auth/register) ve istemci sertifikası
+                // taşıyabilir: sunucu kimliği iptal edince dosyaları silinir.
+                .wipeVaultFilesOnRevocation()
                 .onConnectionEvent(listener())
                 .build();
         launch(generation, config, null);
@@ -384,6 +515,30 @@ public class App extends Application {
         if (recovery.length > 0) block.recoveryPublicKeys(recovery);
     }
 
+    /**
+     * Bloğu sunucudaki Config API kimliğine bağlar (host.tlsScope / host.mtlsScope,
+     * ör. default-tls ve sample-mtls). Aynı imza anahtarı birden çok Config API
+     * için imzalar; bu olmadan başka bir Config API için imzalanmış (başka
+     * host'lar, başka pin'ler) geçerli imzalı bir config burada da kabul
+     * edilirdi. Kimlik imzalı metnin içindedir, yolda değiştirilemez. Değer
+     * boşsa (eski bir değer dosyası) bağlama yapılmaz.
+     */
+    private static void applyServerScope(ConfigApiBlock.Builder block, String scope) {
+        if (!scope.isEmpty()) block.serverScope(scope);
+    }
+
+    /**
+     * Sunucunun verdiği istemci sertifikası (kayıtta ve her yenilemede) bu
+     * CA'nın imzasını taşımalı (host.clientCaPin): kayıt yanıtını yolda
+     * değiştiren biri kendi CA'sıyla imzaladığı bir sertifikayı kurduramaz.
+     * Değer boşsa (eski bir değer dosyası) ilk kayıtta gelen zincire güvenilir,
+     * yenileme önceki sertifikanın CA'sını ister.
+     */
+    private static void applyClientCaPins(ConfigApiBlock.Builder block) {
+        String[] pins = splitKeys(BuildConfig.HOST_CLIENT_CA_PINS);
+        if (pins.length > 0) block.clientCaPins(pins);
+    }
+
     private static String[] splitKeys(String csv) {
         List<String> keys = new ArrayList<>();
         for (String k : csv.split(",")) {
@@ -396,6 +551,15 @@ public class App extends Application {
         builder.configApi(CONFIG_API_ID, CONFIG_BASE_URL, block -> {
             block.bootstrapPins(Collections.singletonList(bootstrap));
             applySigning(block, requiredSignatures);
+            applyServerScope(block, BuildConfig.HOST_TLS_SCOPE);
+            // Kayıt (token, kod, otomatik) varsayılan blok olan bu bloktan yapılır.
+            applyClientCaPins(block);
+            // Kütüphane cihaz sertifikasını yalnızca bloğun kendi adreslerine ve
+            // mTLS işaretli host'lara verir. Uygulama bu bloğun istemcisiyle mTLS
+            // Config API'ye ve host'taki mTLS deneme hedefine de bağlanıyor (mTLS
+            // ekranındaki testler): bu iki adres burada açıkça yazılır, sertifika
+            // başka bir sunucuya gitmez.
+            block.clientCertHosts(MTLS_BASE_URL, MOCK_MTLS_URL);
             // Pin kapsamı: yalnızca bu host'un pin'lerini iste. Sunucu isteği
             // cihazın host ACL'iyle kesiştirir; izin yoksa hiç pin dönmez.
             if (scopedPins) block.wantPinsFor(TARGET_HOST);
@@ -403,7 +567,8 @@ public class App extends Application {
         });
     }
 
-    private static void addMtlsBlock(PinVaultConfig.Builder builder, HostPin bootstrap, @Nullable byte[] manualP12, int requiredSignatures) {
+    private static void addMtlsBlock(PinVaultConfig.Builder builder, HostPin bootstrap,
+                                     @Nullable Object manualP12, int requiredSignatures) {
         builder.configApi(MTLS_API_ID, MTLS_BASE_URL, block -> {
             List<HostPin> pins = new ArrayList<>();
             pins.add(bootstrap);
@@ -419,40 +584,37 @@ public class App extends Application {
             }
             block.bootstrapPins(pins);
             applySigning(block, requiredSignatures);
-            // Kayıtla alınan sertifika kütüphanenin şifreli deposundan gelir;
-            // elle yüklenen P12 varsa onun yerine bu kullanılır.
-            if (manualP12 != null) block.clientKeystore(manualP12, MANUAL_P12_PASSWORD);
+            applyServerScope(block, BuildConfig.HOST_MTLS_SCOPE);
+            applyClientCaPins(block);
+            // mTLS deneme hedefi: bu bloğun istemcisiyle de çağrılıyor (TLS bloğuyla aynı gerekçe).
+            block.clientCertHosts(MOCK_MTLS_URL);
+            // Kayıtla alınan sertifika kütüphanenin şifreli deposundan gelir.
+            // Test derlemelerinde elle yüklenen P12 varsa onun yerine o kullanılır
+            // (TestControls); release'te bu çağrı boştur.
+            TestControls.applyManualIdentity(block, manualP12);
             return Unit.INSTANCE;
         });
     }
 
-    private static void addVaultFiles(PinVaultConfig.Builder builder, boolean withMtlsFile) {
+    /**
+     * Vault dosyaları. Gizli olmayanlar her zaman TLS bloğunda; gizli olanlar
+     * ([withLockedFiles], cihaz mTLS'e kayıtlıyken) mTLS bloğunda, token_mtls
+     * ve ekran kilidiyle. Sunucuda da aynı kurallarla yüklenmeleri gerekir
+     * (sample-host/scripts/seed-vault.sh): gizli dosyalar sample-mtls kapsamında,
+     * policy=token_mtls, encryption=user_auth (sample-e2e için end_to_end).
+     */
+    private static void addVaultFiles(PinVaultConfig.Builder builder, boolean withLockedFiles) {
         builder
                 .vaultFile(VAULT_FLAGS, file -> {
                     file.configApi(CONFIG_API_ID);
                     file.endpoint(vaultPath(VAULT_FLAGS));
                     return Unit.INSTANCE;
                 })
-                .vaultFile(VAULT_SECRET, file -> {
-                    file.configApi(CONFIG_API_ID);
-                    file.endpoint(vaultPath(VAULT_SECRET));
-                    file.accessPolicy(VaultFileAccessPolicy.TOKEN);
-                    // Her indirmede okunur; token yalnızca bellekte (VaultTokens).
-                    file.accessToken(() -> VaultTokens.get(VAULT_SECRET));
-                    return Unit.INSTANCE;
-                })
-                .vaultFile(VAULT_E2E, file -> {
-                    file.configApi(CONFIG_API_ID);
-                    file.endpoint(vaultPath(VAULT_E2E));
-                    // PinVault cihaz için Android Keystore'da RSA anahtarı üretir
-                    // ve public yarısını host'a kaydeder.
-                    file.encryption(VaultFileEncryption.END_TO_END);
-                    return Unit.INSTANCE;
-                })
                 .vaultFile(VAULT_ATREST, file -> {
                     file.configApi(CONFIG_API_ID);
                     file.endpoint(vaultPath(VAULT_ATREST));
-                    // Sunucu diskte şifreli tutar, ek şifreleme olmadan (TLS ile) gönderir; cihaz için plain ile aynı.
+                    // Sunucu diskinde şifreli tutar, telefona ek şifreleme olmadan
+                    // (TLS ile) gönderir. Herkes indirebilir: gizli değil.
                     file.encryption(VaultFileEncryption.AT_REST);
                     return Unit.INSTANCE;
                 })
@@ -472,16 +634,52 @@ public class App extends Application {
                     file.updateWithPins(true);
                     return Unit.INSTANCE;
                 });
-        if (withMtlsFile) {
-            builder.vaultFile(VAULT_MTLS_SECRET, file -> {
-                file.configApi(MTLS_API_ID);
-                file.endpoint(vaultPath(VAULT_MTLS_SECRET));
-                file.accessPolicy(VaultFileAccessPolicy.TOKEN_MTLS);
-                file.accessToken(() -> VaultTokens.get(VAULT_MTLS_SECRET));
-                return Unit.INSTANCE;
-            });
-        }
+        if (!withLockedFiles) return;
+        builder
+                .vaultFile(VAULT_SECRET, file -> {
+                    lockedFile(file, VAULT_SECRET);
+                    // Sunucu dosyayı bu telefonun ekran kilidi anahtarına kilitler:
+                    // içerik ne indirme sonucunda ne depoda açık durur, yalnızca
+                    // unlockFile ekran kilidini sorduktan sonra verir.
+                    file.encryption(VaultFileEncryption.USER_AUTH);
+                    return Unit.INSTANCE;
+                })
+                .vaultFile(VAULT_E2E, file -> {
+                    lockedFile(file, VAULT_E2E);
+                    // Sunucu cihazın RSA anahtarıyla şifreler (PinVault anahtarı
+                    // Keystore'da üretir, public yarısını kaydeder); kütüphane çözer
+                    // ve saklarken ekran kilidi anahtarıyla kilitler.
+                    file.encryption(VaultFileEncryption.END_TO_END);
+                    return Unit.INSTANCE;
+                })
+                .vaultFile(VAULT_MTLS_SECRET, file -> {
+                    lockedFile(file, VAULT_MTLS_SECRET);
+                    file.encryption(VaultFileEncryption.USER_AUTH);
+                    return Unit.INSTANCE;
+                });
     }
+
+    /**
+     * Gizli dosyaların ortak kuralı: mTLS bloğu, token + istemci sertifikası,
+     * ekran kilidi zorunlu. Ekran kilidi olmayan telefonda dosya saklanmaz
+     * (ScreenLockRequiredException); Vault ekranı kullanıcıya kilit koymasını söyler.
+     */
+    private static void lockedFile(io.github.umutcansu.pinvault.model.VaultFileConfig.Builder file, String key) {
+        file.configApi(MTLS_API_ID);
+        file.endpoint(vaultPath(key));
+        file.accessPolicy(VaultFileAccessPolicy.TOKEN_MTLS);
+        // Her indirmede okunur; token yalnızca bellekte (VaultTokens).
+        file.accessToken(() -> VaultTokens.get(key));
+        file.userAuth(UserAuth.REQUIRED);
+        // Sunucu dosyayı en son 7 gün önce onayladıysa (indirme ya da "değişmedi")
+        // kopya açılmaz (STALE): iptal edilen ama çevrimdışı kalan bir telefon
+        // dosyayı sonsuza dek okuyamaz. Telefon ağa dönüp dosyayı yeniden çekince
+        // açılır. Süre güvenilen saatle ölçülür (saat geri alınarak uzatılamaz).
+        file.maxOfflineAge(SECRET_MAX_OFFLINE_DAYS, TimeUnit.DAYS);
+    }
+
+    /** Gizli dosyaların sunucuya danışmadan açılabileceği en uzun süre (gün). */
+    static final long SECRET_MAX_OFFLINE_DAYS = 7;
 
     private static String vaultPath(String key) {
         return "api/v1/vault/" + key;
@@ -493,15 +691,32 @@ public class App extends Application {
      * kendi formatını buradan gönder.
      */
     private PinVaultConnectionListener listener() {
-        // Raporlar config sunucusunun sertifikasıyla sunulan porta gider: aynı pin'ler.
+        // Raporlar Config API portuna gider (REPORT_URL): config'le aynı sunucu
+        // sertifikası, aynı başlangıç pin'leri. Yönetim portuna bağlanılmaz.
         OkHttpClient telemetryClient = PinVaultBackendReporter.pinnedClient(SAMPLE_HOST_IP,
                 java.util.Arrays.asList(BuildConfig.HOST_BOOTSTRAP_PIN_PRIMARY, BuildConfig.HOST_BOOTSTRAP_PIN_BACKUP));
         PinVaultBackendReporter reporter = new PinVaultBackendReporter(
-                MANAGEMENT_URL, telemetryClient, AppSettings.reportSuccess(this), AppSettings.dedupMs(this));
+                REPORT_URL, telemetryClient, AppSettings.reportSuccess(this), AppSettings.dedupMs(this));
         return event -> {
+            forgetTokensIfRevoked(event);
             EVENT_LOG.onEvent(event);
             reporter.onEvent(event);
         };
+    }
+
+    /**
+     * Sunucu bu cihazın kimliğini iptal etti (403 reenroll_required, kütüphane
+     * {@code REENROLL_REQUIRED} olarak bildirir). Kütüphane o Config API'nin
+     * vault dosyalarını siler (wipeVaultFilesOnRevocation); token'lar ise
+     * uygulamanın elinde, onları burada unutuyoruz.
+     */
+    private static void forgetTokensIfRevoked(PinVaultConnectionEvent event) {
+        if (!(event instanceof PinVaultConnectionEvent.ClientCertRenewal)) return;
+        PinVaultConnectionEvent.ClientCertRenewal renewal = (PinVaultConnectionEvent.ClientCertRenewal) event;
+        if (renewal.getStatus() != ClientCertRenewalStatus.REENROLL_REQUIRED) return;
+        int forgotten = VaultTokens.clear();
+        Log.w(TAG, "Identity revoked on " + renewal.getConfigApiId() + " — vault files wiped, "
+                + forgotten + " vault token(s) forgotten");
     }
 
     /**
@@ -568,18 +783,6 @@ public class App extends Application {
 
     private String deviceAlias() {
         return Build.MANUFACTURER + " " + Build.MODEL;
-    }
-
-    @Nullable
-    public byte[] readManualP12() {
-        File file = new File(getFilesDir(), MANUAL_P12_FILE);
-        if (!file.isFile()) return null;
-        try {
-            return Files.readAllBytes(file.toPath());
-        } catch (IOException e) {
-            Log.w(TAG, "Manual P12 unreadable", e);
-            return null;
-        }
     }
 
     /**

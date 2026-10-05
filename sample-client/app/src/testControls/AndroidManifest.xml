@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Yalnızca debug ve e2e derlemelerine girer (app/build.gradle.kts → sourceSets).
+  Ayarlar ve Depolama ekranları test kontrolleridir: mod değiştirme, gereken
+  imza sayısı, sıfırlama, planlı işi iptal etme, Keystore anahtar listesi.
+  Release derlemesinin manifest'inde bu ekranlar yoktur.
+-->
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <application>
+        <activity
+            android:name=".StorageActivity"
+            android:exported="false"
+            android:label="@string/storage_title" />
+
+        <activity
+            android:name=".SettingsActivity"
+            android:exported="false"
+            android:label="@string/settings_title" />
+    </application>
+</manifest>

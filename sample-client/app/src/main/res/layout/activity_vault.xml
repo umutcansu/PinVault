@@ -1,5 +1,10 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!-- Giriş alanları ve düğmeler üstte: yazılım klavyesi düğmelerin üstünü kapatmasın. -->
+<!--
+  filterTouchesWhenObscured: token alanı ile token'ı kaydeden, dosyayı açan ve silen
+  düğmeler, üstlerinde başka bir uygulamanın penceresi (overlay) varken dokunuşu kabul
+  etmez. Sonuç kutusu seçilebilir değil: açılan gizli içerik panoya kopyalanamasın.
+-->
 <ScrollView xmlns:android="http://schemas.android.com/apk/res/android"
     android:layout_width="match_parent"
     android:layout_height="match_parent">
@@ -21,6 +26,7 @@
 
         <EditText
             android:id="@+id/keyInput"
+            android:filterTouchesWhenObscured="true"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:hint="@string/vault_key_hint"
@@ -31,6 +37,7 @@
 
         <EditText
             android:id="@+id/tokenInput"
+            android:filterTouchesWhenObscured="true"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:hint="@string/vault_token_hint"
@@ -41,6 +48,7 @@
 
         <Button
             android:id="@+id/saveTokenButton"
+            android:filterTouchesWhenObscured="true"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:text="@string/vault_save_token"
@@ -140,16 +148,28 @@
             android:orientation="horizontal"
             android:layout_marginBottom="12dp">
 
+            <!-- Anahtar alanındaki dosyayı açar: kilitliyse telefonun ekran kilidini sorar. -->
+            <Button
+                android:id="@+id/unlockButton"
+                android:filterTouchesWhenObscured="true"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:layout_marginEnd="4dp"
+                android:text="@string/vault_unlock_button" />
+
             <Button
                 android:id="@+id/infoButton"
                 android:layout_width="0dp"
                 android:layout_height="wrap_content"
                 android:layout_weight="1"
+                android:layout_marginStart="4dp"
                 android:layout_marginEnd="4dp"
                 android:text="@string/vault_info_button" />
 
             <Button
                 android:id="@+id/clearButton"
+                android:filterTouchesWhenObscured="true"
                 android:layout_width="0dp"
                 android:layout_height="wrap_content"
                 android:layout_weight="1"
@@ -164,7 +184,7 @@
             android:textSize="13sp"
             android:padding="14dp"
             android:background="#22000000"
-            android:textIsSelectable="true"
+            android:textIsSelectable="false"
             android:minLines="5" />
     </LinearLayout>
 </ScrollView>

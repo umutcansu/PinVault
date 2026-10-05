@@ -62,11 +62,15 @@
             android:text="@string/nav_vault" />
     </LinearLayout>
 
+    <!-- Test kontrolleri (Depolama, Ayarlar): varsayılan gizli; yalnızca debug ve e2e
+         derlemeleri gösterir (TestControls.bindNavigation). Release'te bu ekranlar yok. -->
     <LinearLayout
+        android:id="@+id/testControlsRow"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:orientation="horizontal"
-        android:layout_marginBottom="16dp">
+        android:layout_marginBottom="16dp"
+        android:visibility="gone">
 
         <Button
             android:id="@+id/storageButton"

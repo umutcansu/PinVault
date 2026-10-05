@@ -1,0 +1,26 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Android 11 ve altı (API 30-). allowBackup="false" orada yedeği de cihaz
+  taşımayı da kapatır; bu dosya, biri allowBackup'ı açarsa diye kütüphanenin
+  kurallarını (pinvault_backup_rules.xml, aynen) ve örneğin kendi dosyalarını
+  dışarıda tutar. Ayrıntı: sample_data_extraction_rules.xml.
+-->
+<full-backup-content>
+    <!-- PinVault (pinvault_backup_rules.xml ile aynı) -->
+    <exclude domain="sharedpref" path="pinvault_secure_config.xml" />
+    <exclude domain="sharedpref" path="pinvault_secure_client_cert.xml" />
+    <exclude domain="sharedpref" path="pinvault_secure_signing_keys.xml" />
+    <exclude domain="sharedpref" path="pinvault_secure_vault_files.xml" />
+    <exclude domain="sharedpref" path="pinvault_vault_file_versions.xml" />
+    <exclude domain="file" path="vault_files" />
+    <exclude domain="sharedpref" path="pinvault_client_cert.xml" />
+    <exclude domain="sharedpref" path="ssl_cert_config.xml" />
+    <exclude domain="sharedpref" path="ssl_cert_config_default.xml" />
+    <exclude domain="sharedpref" path="ssl_cert_config_default-tls.xml" />
+    <exclude domain="sharedpref" path="ssl_cert_config_secure-mtls.xml" />
+    <exclude domain="sharedpref" path="pinvault_signing_keys.xml" />
+    <exclude domain="sharedpref" path="pinvault_vault_files.xml" />
+    <!-- Örnek uygulama -->
+    <exclude domain="file" path="manual-client.sealed" />
+    <exclude domain="file" path="manual-client.p12" />
+</full-backup-content>

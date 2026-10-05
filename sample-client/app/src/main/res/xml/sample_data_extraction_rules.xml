@@ -1,0 +1,57 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Android 12+ (API 31+): bulut yedeği ve cihazdan cihaza taşıma.
+
+  allowBackup="false" yalnızca bulut yedeğini kapatır; Android 12+ cihaz
+  taşıma (yeni telefona aktarma) yine çalışır. Bu dosya kütüphanenin kendi
+  kurallarının (pinvault_data_extraction_rules.xml) yerine geçtiği için onların
+  hepsini aynen içerir, üstüne örneğin kendi dosyalarını ekler:
+
+  - files/manual-client.sealed: elle yüklenen istemci sertifikasının
+    Keystore anahtarıyla şifreli kopyası (ManualP12Store). Anahtar yeni
+    telefona gitmez, kopya orada işe yaramaz; yine de taşınmasın.
+  - files/manual-client.p12: içe aktarılmayı bekleyen düz P12 (adb ile konur,
+    içe aktarınca silinir). Beklerken de taşınmasın.
+
+  Vault erişim token'ları hiç diske yazılmaz (VaultTokens).
+-->
+<data-extraction-rules>
+    <cloud-backup>
+        <!-- PinVault (pinvault_data_extraction_rules.xml ile aynı) -->
+        <exclude domain="sharedpref" path="pinvault_secure_config.xml" />
+        <exclude domain="sharedpref" path="pinvault_secure_client_cert.xml" />
+        <exclude domain="sharedpref" path="pinvault_secure_signing_keys.xml" />
+        <exclude domain="sharedpref" path="pinvault_secure_vault_files.xml" />
+        <exclude domain="sharedpref" path="pinvault_vault_file_versions.xml" />
+        <exclude domain="file" path="vault_files" />
+        <exclude domain="sharedpref" path="pinvault_client_cert.xml" />
+        <exclude domain="sharedpref" path="ssl_cert_config.xml" />
+        <exclude domain="sharedpref" path="ssl_cert_config_default.xml" />
+        <exclude domain="sharedpref" path="ssl_cert_config_default-tls.xml" />
+        <exclude domain="sharedpref" path="ssl_cert_config_secure-mtls.xml" />
+        <exclude domain="sharedpref" path="pinvault_signing_keys.xml" />
+        <exclude domain="sharedpref" path="pinvault_vault_files.xml" />
+        <!-- Örnek uygulama -->
+        <exclude domain="file" path="manual-client.sealed" />
+        <exclude domain="file" path="manual-client.p12" />
+    </cloud-backup>
+    <device-transfer>
+        <!-- PinVault (pinvault_data_extraction_rules.xml ile aynı) -->
+        <exclude domain="sharedpref" path="pinvault_secure_config.xml" />
+        <exclude domain="sharedpref" path="pinvault_secure_client_cert.xml" />
+        <exclude domain="sharedpref" path="pinvault_secure_signing_keys.xml" />
+        <exclude domain="sharedpref" path="pinvault_secure_vault_files.xml" />
+        <exclude domain="sharedpref" path="pinvault_vault_file_versions.xml" />
+        <exclude domain="file" path="vault_files" />
+        <exclude domain="sharedpref" path="pinvault_client_cert.xml" />
+        <exclude domain="sharedpref" path="ssl_cert_config.xml" />
+        <exclude domain="sharedpref" path="ssl_cert_config_default.xml" />
+        <exclude domain="sharedpref" path="ssl_cert_config_default-tls.xml" />
+        <exclude domain="sharedpref" path="ssl_cert_config_secure-mtls.xml" />
+        <exclude domain="sharedpref" path="pinvault_signing_keys.xml" />
+        <exclude domain="sharedpref" path="pinvault_vault_files.xml" />
+        <!-- Örnek uygulama -->
+        <exclude domain="file" path="manual-client.sealed" />
+        <exclude domain="file" path="manual-client.p12" />
+    </device-transfer>
+</data-extraction-rules>

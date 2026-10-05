@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Release derlemesinin metinleri. Ana dosyadaki bazı metinler yalnızca test
+  derlemelerinde bulunan ekranlardan (Ayarlar, elle P12) söz eder; release'te o
+  ekranlar yok, metinler buna göre yazılır.
+-->
+<resources>
+    <string name="status_failed">❌ PinVault başlatılamadı\n%1$s\n\nMod: %2$s\nPin kaynağı: %3$s\nİnternet bağlantını kontrol edip \"Tekrar dene\"ye bas.</string>
+    <string name="mtls_enroll_success">✅ Kayıt başarılı — CN=%1$s\n(sertifika doğrulandı ve şifreli saklandı)\nGizli dosyalar için uygulamayı kapatıp yeniden aç.</string>
+    <string name="vault_needs_mtls">❌ %1$s indirilemedi\nBu gizli bir dosya: yalnızca bu cihazın istemci sertifikasıyla iner. Önce mTLS ekranından kayıt ol, sonra uygulamayı kapatıp yeniden aç.</string>
+    <string name="vault_intro">Herkese açık dosyalar gizli değildir: sample-flags, sample-atrest, sample-admin, sample-model.\n\nGizli dosyalar (sample-secret, sample-mtls-secret, sample-e2e) için önce mTLS ekranından kayıt ol ve telefonda ekran kilidi olsun. İndirince içerik gösterilmez; görmek için anahtarı yaz, \"Aç\"a bas, telefon ekran kilidini sorar.</string>
+</resources>

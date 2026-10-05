@@ -1,15 +1,10 @@
 package com.example.sampleclient;
 
 import android.os.Bundle;
+import android.view.View;
 import android.widget.Button;
 import android.widget.EditText;
 import android.widget.TextView;
-
-import java.io.ByteArrayInputStream;
-import java.security.KeyStore;
-import java.security.cert.X509Certificate;
-import java.util.regex.Matcher;
-import java.util.regex.Pattern;
 
 import io.github.umutcansu.pinvault.PinVault;
 import io.github.umutcansu.pinvault.model.ClientCertEnrollmentResult;
@@ -22,23 +17,25 @@ import io.github.umutcansu.pinvault.model.ClientCertEnrollmentResult;
  *       istemci sertifikası alınır: anahtar telefonun Keystore'unda üretilir,
  *       sunucu CSR'ı imzalar (CSR bilmeyen sunucuda P12 gelir ve
  *       {@code X-P12-SHA256} ile doğrulanır). Olmazsa ekranda nedeni yazar.</li>
- *   <li><b>Otomatik kayıt:</b> token yerine cihaz kimliği (ANDROID_ID); sunucu
- *       yalnızca {@code ENROLLMENT_MODE=open} iken kabul eder.</li>
- *   <li><b>P12 içe aktar:</b> {@code files/manual-client.p12} dosyasındaki
- *       sertifika {@code clientKeystore(...)} ile kullanılır (kayıt yerine).</li>
+ *   <li><b>Otomatik kayıt</b> ve <b>P12 içe aktar</b> test kontrolleridir:
+ *       yalnızca debug ve e2e derlemelerinde görünür ({@link TestControls}).
+ *       Otomatik kayıt token yerine cihaz kimliğini (ANDROID_ID) kullanır;
+ *       elle P12, {@code files/manual-client.p12} dosyasını kayıt yerine
+ *       istemci sertifikası yapar. Release derlemesinde ikisi de yoktur: cihaz
+ *       yalnızca yöneticinin verdiği token ya da kayıt koduyla kayıt olur ve
+ *       özel anahtar telefonun Keystore'unda üretilir, dosyaya hiç düşmez.</li>
  *   <li><b>mTLS ile test:</b> mTLS Config API'nin {@code /health} ucuna
  *       sertifikalı, pinli istek. <b>Mock host'lar:</b> host'taki TLS ve
  *       mTLS mock hedeflerine pinli istek.</li>
- *   <li><b>Kaydı sil:</b> sertifika depodan silinir ve PinVault yeniden
- *       kurulur.</li>
+ *   <li><b>Kaydı sil:</b> sertifika depodan silinir; mTLS bloğunun vault
+ *       dosyaları (kilitli kopyalar dahil) da silinir.</li>
  * </ul>
  *
  * <p>Kayıttan sonra mTLS Config API bloğu bir sonraki PinVault kurulumunda
- * eklenir (Ayarlar → "Sıfırla ve yeniden başlat" ya da uygulamayı yeniden aç).
+ * eklenir (uygulamayı yeniden aç; test derlemelerinde Ayarlar → "Sıfırla ve
+ * başlat" da olur).
  */
 public class MtlsActivity extends ActionActivity {
-
-    private static final Pattern CN = Pattern.compile("CN=([^,]+)");
 
     /** Onay bekleyen kayıt kaç saniyede bir, en çok ne kadar sorulur. */
     private static final long APPROVAL_POLL_MS = 3_000;
@@ -46,6 +43,7 @@ public class MtlsActivity extends ActionActivity {
 
     private TextView enrollStateView;
     private EditText tokenInput;
+    private EditText p12PasswordInput;
     private Button enrollButton;
     private Button autoEnrollButton;
     private Button mtlsTestButton;
@@ -63,7 +61,9 @@ public class MtlsActivity extends ActionActivity {
 
         statusView = findViewById(R.id.statusView);
         enrollStateView = findViewById(R.id.enrollStateView);
+        TextView deviceIdView = findViewById(R.id.mtlsDeviceIdView);
         tokenInput = findViewById(R.id.tokenInput);
+        p12PasswordInput = findViewById(R.id.p12PasswordInput);
         enrollButton = findViewById(R.id.enrollButton);
         autoEnrollButton = findViewById(R.id.autoEnrollButton);
         mtlsTestButton = findViewById(R.id.mtlsTestButton);
@@ -73,13 +73,23 @@ public class MtlsActivity extends ActionActivity {
         mockMtlsButton = findViewById(R.id.mockMtlsButton);
 
         statusView.setText(getString(R.string.mtls_intro, App.MTLS_BASE_URL));
+        // Yönetici panelde token üretirken bu kimliği yazarsa token yalnızca bu
+        // telefona çalışır ve telefonun dosyaları/anahtarları sertifikasına bağlanır.
+        deviceIdView.setText(getString(R.string.mtls_device_id, App.deviceId(this)));
         enrollButton.setOnClickListener(v -> enroll());
-        autoEnrollButton.setOnClickListener(v -> autoEnroll());
         mtlsTestButton.setOnClickListener(v -> testMtls());
         unenrollButton.setOnClickListener(v -> unenroll());
-        importP12Button.setOnClickListener(v -> toggleManualP12());
         mockTlsButton.setOnClickListener(v -> connectMock(App.MOCK_TLS_URL, false));
         mockMtlsButton.setOnClickListener(v -> connectMock(App.MOCK_MTLS_URL, true));
+        if (BuildConfig.TEST_CONTROLS) {
+            // Test kontrolleri: düzende gizli dururlar, yalnızca debug ve e2e
+            // derlemeleri gösterir ve bağlar.
+            autoEnrollButton.setVisibility(View.VISIBLE);
+            p12PasswordInput.setVisibility(View.VISIBLE);
+            importP12Button.setVisibility(View.VISIBLE);
+            autoEnrollButton.setOnClickListener(v -> autoEnroll());
+            importP12Button.setOnClickListener(v -> TestControls.toggleManualP12(this, p12PasswordInput));
+        }
 
         App.INIT.addObserver(initObserver);
         updateButtons();
@@ -123,6 +133,7 @@ public class MtlsActivity extends ActionActivity {
         mtlsTestButton.setEnabled(ready && idle);
         unenrollButton.setEnabled(idle && enrolled);
         importP12Button.setEnabled(idle);
+        p12PasswordInput.setEnabled(idle && !manual);
         importP12Button.setText(manual ? R.string.mtls_manual_drop : R.string.mtls_manual_import);
         mockTlsButton.setEnabled(ready && idle);
         mockMtlsButton.setEnabled(ready && idle);
@@ -134,6 +145,9 @@ public class MtlsActivity extends ActionActivity {
             showResult(getString(R.string.mtls_token_required));
             return;
         }
+        // Token (ya da kayıt kodu) tek kullanımlık bir gizli değer: istek yola
+        // çıkınca ekranda ve alanın belleğinde kalmasın. Kayıt olmazsa yeniden girilir.
+        tokenInput.setText("");
         runAction(getString(R.string.mtls_enrolling), () -> {
             ClientCertEnrollmentResult result = PinManagerLite.enrollBlocking(getApplicationContext(), token);
             if (result instanceof ClientCertEnrollmentResult.Pending) {
@@ -184,9 +198,10 @@ public class MtlsActivity extends ActionActivity {
         return getString(R.string.mtls_still_pending);
     }
 
+    /** Test kontrolü (debug, e2e): token'sız kayıt. Release'te düğmesi de bu yol da yok. */
     private void autoEnroll() {
         runAction(getString(R.string.mtls_auto_enrolling), () -> {
-            ClientCertEnrollmentResult result = PinManagerLite.autoEnrollBlocking(getApplicationContext());
+            ClientCertEnrollmentResult result = TestControls.autoEnroll(getApplicationContext());
             // Sunucu kodsuz başvuruları açtıysa: yönetici onaylayana dek beklenir.
             if (result instanceof ClientCertEnrollmentResult.Pending) {
                 return awaitApproval((ClientCertEnrollmentResult.Pending) result);
@@ -220,6 +235,10 @@ public class MtlsActivity extends ActionActivity {
                 case EXPIRED: return getString(R.string.mtls_refusal_expired);
                 default:
                     String error = refused.getServerError();
+                    // Panelde token başka bir telefonun kimliğine bağlanmış (token harcanmadı).
+                    if ("device_uid_mismatch".equals(error)) {
+                        return getString(R.string.mtls_refusal_device_uid_mismatch, App.deviceId(this));
+                    }
                     return getString(R.string.mtls_refusal_other, refused.getHttpStatus(), error == null ? "" : " " + error);
             }
         }
@@ -252,7 +271,13 @@ public class MtlsActivity extends ActionActivity {
             // bellekten boşaltır; bağlantı aynı süreçte kesilir, yeniden kurmaya
             // gerek yok. (Eski sürümlerde anahtar bellekte kaldığı için burada
             // PinVault yeniden kuruluyordu.)
-            PinVault.INSTANCE.unenroll(getApplicationContext(), null);
+            // wipeVaultFiles=true: bu sertifikayla mTLS kullanan bloğun (sample-mtls)
+            // vault dosyaları da gider, kilitli kopyalar dahil. Kaydı silinen cihazda
+            // gizli dosya kalmamalı. TLS bloğunun herkese açık dosyaları kalır.
+            PinVault.INSTANCE.unenroll(getApplicationContext(), null, true);
+            // Vault token'ları bu cihaz kimliğine verilmişti; kayıt silinince onlar da
+            // unutulur (sunucunun kimliği iptal ettiği durumda App de aynısını yapar).
+            VaultTokens.clear();
 
             // Tek istisna: config'in kendisi mTLS üzerinden çekiliyorsa o blok
             // sertifikasız çalışamaz, o yüzden TLS moduna dönülür.
@@ -265,39 +290,6 @@ public class MtlsActivity extends ActionActivity {
             }
             return getString(R.string.mtls_unenrolled);
         });
-    }
-
-    /** files/manual-client.p12 dosyasını mTLS bloğunun istemci sertifikası yapar ya da bırakır. */
-    private void toggleManualP12() {
-        App app = (App) getApplication();
-        if (AppSettings.useManualP12(this)) {
-            runAction(getString(R.string.mtls_manual_dropping), () -> {
-                AppSettings.setUseManualP12(this, false);
-                app.restartPinVault();
-                App.INIT.awaitSettled(60_000);
-                return getString(R.string.mtls_manual_dropped);
-            });
-            return;
-        }
-        runAction(getString(R.string.mtls_manual_importing), () -> {
-            byte[] p12 = app.readManualP12();
-            if (p12 == null) return getString(R.string.mtls_manual_missing, App.MANUAL_P12_FILE);
-            String cn = p12CommonName(p12);
-            AppSettings.setUseManualP12(this, true);
-            app.restartPinVault();
-            InitState.Snapshot s = App.INIT.awaitSettled(60_000);
-            String init = s.phase == InitState.Phase.READY ? "Hazır — config " + s.detail : "başlatılamadı: " + s.detail;
-            return getString(R.string.mtls_manual_imported, cn, init);
-        });
-    }
-
-    private static String p12CommonName(byte[] p12) throws Exception {
-        KeyStore ks = KeyStore.getInstance("PKCS12");
-        ks.load(new ByteArrayInputStream(p12), App.MANUAL_P12_PASSWORD.toCharArray());
-        String alias = ks.aliases().nextElement();
-        X509Certificate cert = (X509Certificate) ks.getCertificate(alias);
-        Matcher m = CN.matcher(cert.getSubjectX500Principal().getName());
-        return m.find() ? m.group(1) : cert.getSubjectX500Principal().getName();
     }
 
     @Override

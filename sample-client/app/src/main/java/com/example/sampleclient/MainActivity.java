@@ -17,12 +17,12 @@ import okhttp3.Request;
  * istek, config yenileme ve kütüphanenin bağlantı olayları. mTLS, Vault,
  * Depolama ve Ayarlar ekranlarına buradan geçilir.
  *
- * <p>{@code --es mode <MOD>} intent ekiyle açılırsa mod değiştirilip PinVault
- * yeniden kurulur (uçtan uca testler ve kısayollar için).
+ * <p>Depolama ve Ayarlar yalnızca test derlemelerinde (debug, e2e) vardır; aynı
+ * derlemelerde {@code --es mode <MOD>} intent ekiyle açılırsa mod değiştirilip
+ * PinVault yeniden kurulur ({@link TestControls}). Release derlemesi dışarıdan
+ * gelen hiçbir intent ekini okumaz.
  */
 public class MainActivity extends ActionActivity {
-
-    public static final String EXTRA_MODE = "mode";
 
     private Button testButton;
     private Button prodStyleButton;
@@ -45,8 +45,6 @@ public class MainActivity extends ActionActivity {
         Button clearLogButton = findViewById(R.id.clearLogButton);
         Button mtlsButton = findViewById(R.id.mtlsButton);
         Button vaultButton = findViewById(R.id.vaultButton);
-        Button storageButton = findViewById(R.id.storageButton);
-        Button settingsButton = findViewById(R.id.settingsButton);
 
         testButton.setOnClickListener(v -> runPinnedRequest());
         prodStyleButton.setOnClickListener(v -> runProductionStyleRequest());
@@ -54,34 +52,22 @@ public class MainActivity extends ActionActivity {
         clearLogButton.setOnClickListener(v -> App.EVENT_LOG.clear());
         mtlsButton.setOnClickListener(v -> startActivity(new Intent(this, MtlsActivity.class)));
         vaultButton.setOnClickListener(v -> startActivity(new Intent(this, VaultActivity.class)));
-        storageButton.setOnClickListener(v -> startActivity(new Intent(this, StorageActivity.class)));
-        settingsButton.setOnClickListener(v -> startActivity(new Intent(this, SettingsActivity.class)));
+        // Depolama ve Ayarlar: test derlemelerinde gösterilir, release'te satır gizli kalır.
+        TestControls.bindNavigation(this, findViewById(R.id.testControlsRow),
+                findViewById(R.id.storageButton), findViewById(R.id.settingsButton));
 
         // Kütüphane callback'leri arka plan thread'inden gelir; UI'ya geç.
         App.EVENT_LOG.setObserver(eventLogObserver);
         App.INIT.addObserver(initObserver);
         renderEventLog();
         renderInitState();
-        applyModeExtra(getIntent());
+        TestControls.applyLaunchIntent(this, getIntent());
     }
 
     @Override
     protected void onNewIntent(Intent intent) {
         super.onNewIntent(intent);
-        applyModeExtra(intent);
-    }
-
-    /** Intent'te mod verildiyse ve aktif moddan farklıysa uygular. */
-    private void applyModeExtra(Intent intent) {
-        String raw = intent == null ? null : intent.getStringExtra(EXTRA_MODE);
-        if (raw == null) return;
-        AppSettings.Mode mode;
-        try {
-            mode = AppSettings.Mode.valueOf(raw.trim().toUpperCase());
-        } catch (IllegalArgumentException e) {
-            return;
-        }
-        if (mode != AppSettings.mode(this)) ((App) getApplication()).applyMode(mode);
+        TestControls.applyLaunchIntent(this, intent);
     }
 
     // ── Durum ────────────────────────────────────────────────────────────────
