@@ -2,6 +2,26 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
     <uses-permission android:name="android.permission.INTERNET" />
 
+    <!--
+        Attestation's `rooted` probe asks whether a root manager is installed.
+        From Android 11 a package is visible only when named here; without
+        this the probe sees none of them. Merged into the app's manifest.
+    -->
+    <queries>
+        <package android:name="com.topjohnwu.magisk" />
+        <package android:name="io.github.vvb2060.magisk" />
+        <package android:name="io.github.huskydg.magisk" />
+        <package android:name="me.weishu.kernelsu" />
+        <package android:name="me.bmax.apatch" />
+        <package android:name="eu.chainfire.supersu" />
+        <package android:name="com.noshufou.android.su" />
+        <package android:name="com.koushikdutta.superuser" />
+        <package android:name="com.thirdparty.superuser" />
+        <package android:name="com.kingroot.kinguser" />
+        <package android:name="com.kingo.root" />
+        <package android:name="com.zachspong.temprootremovejb" />
+    </queries>
+
     <application
         android:fullBackupContent="@xml/pinvault_backup_rules"
         android:dataExtractionRules="@xml/pinvault_data_extraction_rules">

@@ -36,6 +36,16 @@ class PinVaultConfigTest {
     }
 
     @Test
+    fun `Builder — managed trust roots and hardware-backed keys are off unless asked for`() {
+        val plain = api("https://api.example.com").build()
+        assertEquals(false, plain.managedTrustRoots)
+        assertEquals(false, plain.requireHardwareBackedKeys)
+        val hardened = api("https://api.example.com").managedTrustRoots().requireHardwareBackedKeys().build()
+        assertEquals(true, hardened.managedTrustRoots)
+        assertEquals(true, hardened.requireHardwareBackedKeys)
+    }
+
+    @Test
     fun `Builder — URL without trailing slash gets normalized`() {
         val block = api("https://api.example.com").build().defaultConfigApi!!
         assertEquals("https://api.example.com/", block.configUrl)

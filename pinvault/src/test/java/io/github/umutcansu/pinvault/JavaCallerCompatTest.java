@@ -88,6 +88,8 @@ public class JavaCallerCompatTest {
                 new io.github.umutcansu.pinvault.model.PinVaultConfig.Builder()
                     .vaultFileMaxOfflineAge(30, java.util.concurrent.TimeUnit.DAYS)
                     .requireUnlockedDevice()
+                    .requireHardwareBackedKeys()
+                    .managedTrustRoots()
                     .configApi("api", "https://config.example.com", block -> {
                         block.clientCaPins("AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=")
                             .clientCaPins(java.util.Collections.singletonList("AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="))
@@ -114,6 +116,26 @@ public class JavaCallerCompatTest {
             // New exception types an app may branch on.
             Class<?> unreadable = io.github.umutcansu.pinvault.model.StoreUnreadableException.class;
             Class<?> unpinned = io.github.umutcansu.pinvault.model.UnpinnedHostException.class;
+            // Attestation: the block options, the status read, the callback
+            // overloads next to the suspend ones, the header name.
+            io.github.umutcansu.pinvault.model.PinVaultConfig.Builder attesting =
+                new io.github.umutcansu.pinvault.model.PinVaultConfig.Builder()
+                    .expectedSignerSha256("3c:4f:" + "ab:".repeat(29) + "ab")
+                    .configApi("api", "https://config.example.com:8091/", block -> {
+                        block.attestation()
+                            .attestationInterval(5, java.util.concurrent.TimeUnit.MINUTES)
+                            .tokenHosts("api.example.com", "*.cdn.example.com")
+                            .tokenHosts(java.util.Collections.singletonList("api.example.com"))
+                            .allowUnsigned()
+                            .allowUnpinnedConfigApi();
+                        return kotlin.Unit.INSTANCE;
+                    });
+            io.github.umutcansu.pinvault.model.AttestationStatus attestationStatus = PinVault.INSTANCE.attestationStatus();
+            io.github.umutcansu.pinvault.model.AttestationStatus blockStatus = PinVault.INSTANCE.attestationStatus("api");
+            boolean passed = attestationStatus.getResult() == io.github.umutcansu.pinvault.model.AttestationResult.PASS;
+            PinVault.INSTANCE.attestNow("api", status -> kotlin.Unit.INSTANCE);
+            PinVault.INSTANCE.fetchAttestationToken("api.example.com", result -> kotlin.Unit.INSTANCE);
+            String header = PinVault.INSTANCE.attestationHeaderName();
         };
         assertNotNull(calls);
     }

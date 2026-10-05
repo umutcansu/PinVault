@@ -557,7 +557,12 @@ internal class DynamicSSLManager(
     fun buildDynamicClient(
         configProvider: () -> CertificateConfig?,
         connectionSettings: HttpConnectionSettings = HttpConnectionSettings(),
-        recoveryInterceptor: PinRecoveryInterceptor? = null
+        recoveryInterceptor: PinRecoveryInterceptor? = null,
+        /**
+         * Further application interceptors, added before [recoveryInterceptor]
+         * (so they run outside it): the attestation token interceptor.
+         */
+        extraInterceptors: List<okhttp3.Interceptor> = emptyList()
     ): OkHttpClient {
         // Remembered (weakly) so that a pin change can close its connections.
         val pool = ConnectionPool(
@@ -581,6 +586,7 @@ internal class DynamicSSLManager(
         // refused that since 2.2.0; app builders passed to applyTo keep
         // their own setting).
         builder.followSslRedirects(false)
+        extraInterceptors.forEach { builder.addInterceptor(it) }
         recoveryInterceptor?.let { builder.addInterceptor(it) }
         return builder.build()
     }

@@ -66,7 +66,13 @@ internal class ConfigApiClient(
      * answer on a connection without it changes nothing on the device — any
      * 403 with that body would otherwise be enough to wipe a block's files.
      */
-    private val onIdentityRevoked: () -> Unit = { }
+    private val onIdentityRevoked: () -> Unit = { },
+    /** `PinVaultConfig.expectedSignerSha256`: what the attestation report's `app_integrity` is judged against on the device. */
+    private val expectedSignerSha256: List<String> = emptyList(),
+    /** `PinVaultConfig.integrityVerdictProvider`: a second opinion forwarded in the attestation report. */
+    private val integrityVerdictProvider: io.github.umutcansu.pinvault.integrity.IntegrityVerdictProvider? = null,
+    /** `PinVaultConfig.managedTrustRoots`: hosts without a pin entry may validate to a root the signed config lists. */
+    managedTrustRoots: Boolean = false
 ) {
     /**
      * The block's store for the server it points at now: each server (scope,
@@ -94,6 +100,7 @@ internal class ConfigApiClient(
         this.expiredConfigGraceMs = this@ConfigApiClient.expiredConfigGraceMs
         this.clock = trustedClock::now
         requireCaTrust(caTrustHosts)
+        managedTrustRootsEnabled = managedTrustRoots
         // The client identity belongs to this block's own listeners (and to
         // hosts the config marks mtls); no other pinned host gets to see it.
         // A block that lists clientCertHosts has named every host itself:
@@ -149,6 +156,14 @@ internal class ConfigApiClient(
     val api: CertificateConfigApi
     val updater: SSLCertificateUpdater
     val renewer: ClientCertRenewer
+
+    /**
+     * This block's attestation (`attestation()` on the block), or null when
+     * the block does not attest. With a custom [CertificateConfigApi] the
+     * manager exists but reports `UNSUPPORTED`: the attest endpoints are
+     * reached through the library's own client only.
+     */
+    val attestation: AttestationManager?
 
     private val reenrollNotice = ReenrollNotice()
     private val revocation = IdentityRevocation { sslManager.defaultClientCertificate() }
@@ -220,6 +235,34 @@ internal class ConfigApiClient(
             // (no client certificate) never does.
             onRefusedOverMtls = { leaf -> if (revocation.refusedOnConnection(leaf)) onIdentityRevoked() }
         )
+
+        attestation = if (!block.attestationEnabled) {
+            null
+        } else {
+            val probe = io.github.umutcansu.pinvault.integrity.DeviceIntegrityProbe(
+                context = appContext,
+                expectedSignerSha256 = expectedSignerSha256.toSet(),
+                verdictProvider = integrityVerdictProvider
+            )
+            AttestationManager(
+                block = block,
+                api = api as? DefaultCertificateConfigApi,
+                identityKey = ::identityKey,
+                deviceId = { DeviceIdentity.androidId(appContext) },
+                currentConfigVersion = { configStore.getCurrentVersion() },
+                currentIssuedAt = { configStore.getCurrentIssuedAt() },
+                liveConfig = { clientProvider.currentConfig },
+                buildReport = { nonce, key -> probe.report(nonce, key).toJsonString() },
+                // The embedded config takes the fetched config's road, minus the fetch.
+                applyConfig = { signed -> updater.applySigned(signed) },
+                // Reported like a recovery update: the app's update listener and the ConfigUpdate event.
+                onConfigApplied = recoveryListener,
+                onEvent = { event -> sslManager.dispatchEvent(event) }
+            ).also { manager ->
+                // Every client built for this block carries the token from now on.
+                clientProvider.tokenInterceptor = io.github.umutcansu.pinvault.api.AttestationTokenInterceptor { listOf(manager) }
+            }
+        }
 
         // Pin mismatch recovery hooks into this block's updater only.
         clientProvider.recoveryUpdater = suspend {

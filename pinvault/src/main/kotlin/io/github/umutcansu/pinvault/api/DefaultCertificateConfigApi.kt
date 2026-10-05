@@ -556,7 +556,88 @@ internal class DefaultCertificateConfigApi(
                 Timber.e(e, "Failed to report vault download: %s", report.key)
             }
         }
+
+    // ── Attestation (ATTESTATION.md §2) ─────────────────────────────────
+
+    /**
+     * `GET <configUrl>api/v1/attest/challenge`: the nonce of an attestation
+     * round, as the server sent it (`nonce`, `expiresIn`, `serverTime`).
+     * Over the pinned bootstrap client, like every other call here.
+     *
+     * @throws AttestationHttpException for any non-2xx answer.
+     */
+    internal suspend fun attestChallenge(): org.json.JSONObject =
+        kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+            val request = okhttp3.Request.Builder()
+                .url("${configUrl}$ATTEST_CHALLENGE_ENDPOINT")
+                .get()
+                .build()
+            bootstrapClient.newCall(request).execute().use { response ->
+                val body = response.body?.string().orEmpty()
+                if (!response.isSuccessful) throw AttestationHttpException.of(response.code, body)
+                parseAttestJson(body, "challenge")
+            }
+        }
+
+    /**
+     * `POST <configUrl>api/v1/attest` with the signed report ([body] as
+     * `AttestationManager` built it) and returns the server's verdict as it
+     * came — `result`, `arc`, `token`, `config`, … (`ATTESTATION.md` §2.2).
+     *
+     * @throws AttestationHttpException for any non-2xx answer, with the
+     *   server's `error` (`nonce_expired`, `signature_invalid`, `key_mismatch`,
+     *   `attestation_required`, …) and its `message` or `reason`.
+     */
+    internal suspend fun attest(body: org.json.JSONObject): org.json.JSONObject =
+        kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+            val request = okhttp3.Request.Builder()
+                .url("${configUrl}$ATTEST_ENDPOINT")
+                .post(body.toString().toRequestBody("application/json".toMediaType()))
+                .build()
+            bootstrapClient.newCall(request).execute().use { response ->
+                val answer = response.body?.string().orEmpty()
+                if (!response.isSuccessful) throw AttestationHttpException.of(response.code, answer)
+                parseAttestJson(answer, "attest")
+            }
+        }
+
+    private fun parseAttestJson(body: String, what: String): org.json.JSONObject = try {
+        org.json.JSONObject(body)
+    } catch (e: org.json.JSONException) {
+        throw Exception("The attestation $what answer is not JSON (${body.take(80)})", e)
+    }
 }
+
+/**
+ * The server refused an attestation call. [serverError] is its `error`
+ * (`nonce_expired`, `signature_invalid`, `device_revoked`, `key_mismatch`,
+ * `attestation_required`, `attestation_invalid`, …), [serverMessage] its
+ * `message` or `reason`; both null when the body was not JSON.
+ */
+internal class AttestationHttpException(
+    val httpStatus: Int,
+    val serverError: String?,
+    val serverMessage: String?
+) : Exception(
+    "Attestation refused — HTTP $httpStatus" +
+        (serverError?.let { " $it" } ?: "") +
+        (serverMessage?.let { ": $it" } ?: "")
+) {
+    companion object {
+        fun of(httpStatus: Int, body: String): AttestationHttpException {
+            val json = runCatching { org.json.JSONObject(body) }.getOrNull()
+            return AttestationHttpException(
+                httpStatus,
+                json?.optString("error")?.ifBlank { null },
+                json?.optString("message")?.ifBlank { null } ?: json?.optString("reason")?.ifBlank { null }
+            )
+        }
+    }
+}
+
+/** Device-side attestation endpoints, relative to the block's `configUrl` (`ATTESTATION.md` §2). */
+internal const val ATTEST_CHALLENGE_ENDPOINT = "api/v1/attest/challenge"
+internal const val ATTEST_ENDPOINT = "api/v1/attest"
 
 /**
  * Proof that lets a device replace its registered E2E key over a TLS

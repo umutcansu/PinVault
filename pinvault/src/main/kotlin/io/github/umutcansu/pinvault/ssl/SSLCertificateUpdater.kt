@@ -16,6 +16,7 @@ import io.github.umutcansu.pinvault.model.ForceUpdateFailedException
 import io.github.umutcansu.pinvault.model.InitResult
 import io.github.umutcansu.pinvault.model.NoConfigAvailableException
 import io.github.umutcansu.pinvault.model.PinMismatchException
+import io.github.umutcansu.pinvault.model.SignedConfigResponse
 import io.github.umutcansu.pinvault.model.StoreUnreadableException
 import io.github.umutcansu.pinvault.model.UpdateResult
 import io.github.umutcansu.pinvault.store.CertificateConfigStore
@@ -564,199 +565,7 @@ internal class SSLCertificateUpdater(
 
             syncKeySetEpoch()
             val fetched = fetch(currentVersion)
-            val remoteConfig = fetched.config
-
-            // ── Shape (hosts, pins) before anything else looks at it ────────
-            //
-            // Host names and pin strings are checked at intake, for every
-            // config and every mode; one bad entry refuses the whole config.
-            // An empty pin set is refused here too — it used to slip through
-            // as "nothing changed" when the stored set was empty as well.
-            PinConfigValidator.validate(remoteConfig)
-
-            // ── Replay & downgrade guards (M-08) ────────────────────────────
-            //
-            // Two complementary checks, both must pass before we persist the
-            // fetched config. Both are no-ops on first install (no stored
-            // baseline yet) so initial enrollment continues to work.
-            //
-            //   1. issuedAt monotonicity — server stamps every signed config
-            //      with a wall-clock timestamp. An attacker capable of MITM
-            //      can replay an older signed payload; without this check the
-            //      signature alone wouldn't catch it. The verifier already
-            //      enforces the absolute expiresAt window; this layer
-            //      adds "must be strictly newer than what we last applied".
-            //
-            //   2. Per-host version monotonicity — reject any remote pin whose
-            //      version is below the highest one ever accepted for that
-            //      host, whether or not the host is in the active config.
-            // ── Values that would lock the device out for good (O6) ─────────
-            //
-            // The replay guards below only ever move forward, so a config
-            // that pushes them absurdly far — an issuedAt in the future, a
-            // version in the billions — would make every honest config after
-            // it look like a replay or a downgrade. Refuse those up front.
-            checkPlausible(remoteConfig, signed = fetched.envelope != null)
-
-            val storedIssuedAt = configStore.getCurrentIssuedAt()
-            val stored = loadStored()
-            val storedConfig = stored?.config
-            // Exactly the config a failed health check rolled back may be
-            // applied again: it sits at the watermark, it is not a replay.
-            val reapplyingRolledBack = storedIssuedAt > 0L && remoteConfig.issuedAt == storedIssuedAt &&
-                configStore.isRolledBack(remoteConfig)
-            // So may a config AT the watermark while nothing is active (after
-            // PinVault.reset(), or after a stored config was discarded): it is
-            // the newest config this device has seen, not an older one, and a
-            // backend that serves one signature until the content changes has
-            // nothing newer to offer.
-            val atWatermarkWithNothingActive = storedConfig == null && remoteConfig.issuedAt == storedIssuedAt
-            if (storedIssuedAt > 0L && remoteConfig.issuedAt <= storedIssuedAt &&
-                !reapplyingRolledBack && !atWatermarkWithNothingActive
-            ) {
-                // The SAME signed config served again is not a replay of an
-                // older one — it is the config already applied. Backends that
-                // sign once per change and cache the signature (an HSM/KMS
-                // signer, a CDN, a pre-signed file) serve exactly that until
-                // the content changes. Same issuedAt AND same pins → nothing to
-                // do. Its force flag was honoured on first delivery and is not
-                // re-applied. Anything else at or below the watermark is still
-                // a replay.
-                if (remoteConfig.issuedAt == storedIssuedAt && storedConfig != null &&
-                    storedConfig.issuedAt == storedIssuedAt && samePins(storedConfig, remoteConfig)
-                ) {
-                    // A config stored before expiresAt was kept carries an
-                    // estimate; the envelope's own value replaces it.
-                    if (remoteConfig.expiresAt != storedConfig.expiresAt) {
-                        storedConfig.copy(expiresAt = remoteConfig.expiresAt).let {
-                            configStore.save(it, fetched.envelope)
-                            httpClientProvider.replaceConfigInPlace(it)
-                        }
-                    }
-                    Timber.d("Config is already current — the same signed config was served again (issuedAt=%d)", storedIssuedAt)
-                    return UpdateResult.AlreadyCurrent
-                }
-                // An OLDER envelope of the config already applied (same pins
-                // and flags): fetches write the newer issuedAt back, so a
-                // proxy or cache serving an earlier copy of unchanged content
-                // lands here. Nothing in it differs, so nothing is applied and
-                // nothing is written back (its expiresAt is the older one) —
-                // but it is no attack either, and reporting it as a refused
-                // replay would only raise false alarms.
-                if (remoteConfig.issuedAt < storedIssuedAt && storedConfig != null &&
-                    samePins(storedConfig, remoteConfig) && remoteConfig.forceUpdate == storedConfig.forceUpdate &&
-                    forceFlags(remoteConfig) == forceFlags(storedConfig)
-                ) {
-                    Timber.d("Config is already current — an older copy of it was served (issuedAt=%d < %d)",
-                        remoteConfig.issuedAt, storedIssuedAt)
-                    return UpdateResult.AlreadyCurrent
-                }
-                throw SecurityException(
-                    "Config replay rejected: received issuedAt=${remoteConfig.issuedAt} " +
-                    "<= stored issuedAt=$storedIssuedAt. Possible MITM or stale-payload replay."
-                )
-            }
-
-            // Per-host versions are checked against the highest ever accepted,
-            // which neither a rollback (see rollBackAfterFailedHealthCheck)
-            // nor a config that dropped the host lowers.
-            val versionWatermarks = configStore.getVersionWatermarks().toMutableMap()
-            storedConfig?.pins?.forEach { pin ->
-                val host = pin.hostname.lowercase()
-                versionWatermarks[host] = maxOf(versionWatermarks[host] ?: 0, pin.version)
-            }
-
-            remoteConfig.pins.forEach { remotePin ->
-                val watermark = versionWatermarks[remotePin.hostname.lowercase()]
-                if (watermark == null) {
-                    // A host this device has never seen has nothing to jump
-                    // from, so its first version is capped instead: starting a
-                    // host at Int.MAX_VALUE would leave no version above it.
-                    if (remotePin.version > MAX_VERSION_JUMP) {
-                        throw SecurityException(
-                            "Per-host version rejected for ${remotePin.hostname}: first version " +
-                            "v${remotePin.version} is above $MAX_VERSION_JUMP."
-                        )
-                    }
-                    return@forEach
-                }
-                if (remotePin.version < watermark) {
-                    throw SecurityException(
-                        "Per-host version downgrade rejected for ${remotePin.hostname}: " +
-                        "remote v${remotePin.version} < stored v$watermark."
-                    )
-                }
-                if (remotePin.version.toLong() - watermark > MAX_VERSION_JUMP) {
-                    throw SecurityException(
-                        "Per-host version jump rejected for ${remotePin.hostname}: " +
-                        "remote v${remotePin.version} is more than $MAX_VERSION_JUMP above stored v$watermark."
-                    )
-                }
-            }
-
-            // Change detection over the whole shape — hosts, versions, pin
-            // hashes, the mTLS flags — not the versions alone. A pin removed
-            // without a version bump used to count as "nothing changed" and
-            // never reached the device. The replay check above has already
-            // established that this config is newer than the stored one
-            // (or, for an unsigned block, that there is nothing to compare).
-            val hasPinChanges = storedConfig == null || !samePins(storedConfig, remoteConfig)
-
-            // A raised force flag (global or on any single host) means
-            // "re-apply now, even at the same version".
-            val remoteForcesUpdate = remoteConfig.forceUpdate || remoteConfig.pins.any { it.forceUpdate }
-
-            val hasChanges = hasPinChanges || remoteForcesUpdate
-
-            if (!hasChanges) {
-                // Nothing about the pins changed and nothing is being forced,
-                // so this is not an update. But the force flag may have gone
-                // the OTHER way — true on disk, false on the wire — and that
-                // transition still has to reach the device: initializeAndUpdate
-                // reads the STORED flag on every cold start and refuses to come
-                // up offline while it is set (ForceUpdateFailedException).
-                // Without this branch an operator could switch force off and
-                // the device would stay unable to start without a reachable
-                // backend until some unrelated pin version happened to bump.
-                //
-                // The live HTTP client needs no rebuild because the pins are
-                // unchanged, but its in-memory config must follow the disk, or
-                // isForceUpdate() keeps answering "true" until the next start.
-                //
-                // The same goes for freshness: a newer envelope with the same
-                // pins moves issuedAt and expiresAt forward. Without that, a
-                // stored config would expire while the server keeps vouching
-                // for it. The envelope written with it is the remote one — the
-                // written-back config is, field for field, what it signs.
-                val writeBack = writeBack(storedConfig, remoteConfig)
-                if (writeBack != null) {
-                    configStore.save(writeBack, fetched.envelope)
-                    acceptedAsNewest(remoteConfig, storedIssuedAt)
-                    httpClientProvider.replaceConfigInPlace(writeBack)
-                    Timber.d(
-                        "Config is already current — flags/freshness written back (issuedAt=%d, expiresAt=%d, force=%s)",
-                        writeBack.issuedAt, writeBack.expiresAt, writeBack.forceUpdate
-                    )
-                } else {
-                    Timber.d("Config is already current — nothing changed")
-                }
-                return UpdateResult.AlreadyCurrent
-            }
-
-            configStore.save(remoteConfig, fetched.envelope)
-            acceptedAsNewest(remoteConfig, storedIssuedAt)
-            httpClientProvider.swap(remoteConfig)
-
-            // Sync host-specific client certs for mTLS hosts
-            syncHostClientCerts(remoteConfig, storedConfig)
-
-            val newVersion = remoteConfig.computedVersion()
-            Timber.d(
-                "Config updated: %d → %d (%d hosts pinned)",
-                currentVersion, newVersion, remoteConfig.pins.size
-            )
-
-            UpdateResult.Updated(newVersion)
+            applyFetched(fetched, currentVersion)
         } catch (e: kotlinx.coroutines.CancellationException) {
             throw e
         } catch (e: Exception) {
@@ -766,6 +575,249 @@ internal class SSLCertificateUpdater(
                 exception = e
             )
         }
+    }
+
+    /**
+     * Applies a signed config that arrived by another road than a fetch —
+     * the envelope inside an attestation answer (`ATTESTATION.md` §2.2,
+     * "config") — under exactly the checks a fetched one gets: its
+     * signing-key set first, then signatures, scope and freshness
+     * ([SignedConfigVerifier.verifyFetched]), then shape, plausibility,
+     * replay and change detection ([applyFetched]). Serialised with
+     * [updateNow] by the same lock; a fetch running at the same time
+     * finishes first, and this config is then judged against what it
+     * applied. Only for a signed block: an unsigned one has nothing to
+     * verify the envelope with, and the config is ignored.
+     */
+    suspend fun applySigned(signed: SignedConfigResponse): UpdateResult {
+        val verifier = verifier
+            ?: return UpdateResult.Failed("unsigned block: config inside an attestation response is ignored")
+        return updateLock.withLock {
+            try {
+                trustedClock?.checkpoint()
+                val currentVersion = configStore.getCurrentVersion()
+                Timber.d("Applying the config from an attestation answer — current version: %d", currentVersion)
+
+                syncKeySetEpoch()
+                verifier.applyKeySet(signed)
+                syncKeySetEpoch()
+                val verified = verifier.verifyFetched(signed) { detail ->
+                    "The config inside the attestation answer failed signature verification.$detail"
+                }
+                applyFetched(Fetched(verified.config, verified.envelope), currentVersion)
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                Timber.e(e, "Config from an attestation answer not applied")
+                UpdateResult.Failed(
+                    reason = e.message ?: "Unknown error",
+                    exception = e
+                )
+            }
+        }
+    }
+
+    /**
+     * Everything that happens to a config once it is in hand and (for a
+     * signed block) its envelope has verified: shape, plausibility, the
+     * replay and downgrade guards, change detection, storing, swapping the
+     * client and syncing host client certificates. Throws on refusal; the
+     * callers turn that into [UpdateResult.Failed].
+     */
+    private suspend fun applyFetched(fetched: Fetched, currentVersion: Int): UpdateResult {
+        val remoteConfig = fetched.config
+
+        // ── Shape (hosts, pins) before anything else looks at it ────────
+        //
+        // Host names and pin strings are checked at intake, for every
+        // config and every mode; one bad entry refuses the whole config.
+        // An empty pin set is refused here too — it used to slip through
+        // as "nothing changed" when the stored set was empty as well.
+        PinConfigValidator.validate(remoteConfig)
+
+        // ── Replay & downgrade guards (M-08) ────────────────────────────
+        //
+        // Two complementary checks, both must pass before we persist the
+        // fetched config. Both are no-ops on first install (no stored
+        // baseline yet) so initial enrollment continues to work.
+        //
+        //   1. issuedAt monotonicity — server stamps every signed config
+        //      with a wall-clock timestamp. An attacker capable of MITM
+        //      can replay an older signed payload; without this check the
+        //      signature alone wouldn't catch it. The verifier already
+        //      enforces the absolute expiresAt window; this layer
+        //      adds "must be strictly newer than what we last applied".
+        //
+        //   2. Per-host version monotonicity — reject any remote pin whose
+        //      version is below the highest one ever accepted for that
+        //      host, whether or not the host is in the active config.
+        // ── Values that would lock the device out for good (O6) ─────────
+        //
+        // The replay guards below only ever move forward, so a config
+        // that pushes them absurdly far — an issuedAt in the future, a
+        // version in the billions — would make every honest config after
+        // it look like a replay or a downgrade. Refuse those up front.
+        checkPlausible(remoteConfig, signed = fetched.envelope != null)
+
+        val storedIssuedAt = configStore.getCurrentIssuedAt()
+        val stored = loadStored()
+        val storedConfig = stored?.config
+        // Exactly the config a failed health check rolled back may be
+        // applied again: it sits at the watermark, it is not a replay.
+        val reapplyingRolledBack = storedIssuedAt > 0L && remoteConfig.issuedAt == storedIssuedAt &&
+            configStore.isRolledBack(remoteConfig)
+        // So may a config AT the watermark while nothing is active (after
+        // PinVault.reset(), or after a stored config was discarded): it is
+        // the newest config this device has seen, not an older one, and a
+        // backend that serves one signature until the content changes has
+        // nothing newer to offer.
+        val atWatermarkWithNothingActive = storedConfig == null && remoteConfig.issuedAt == storedIssuedAt
+        if (storedIssuedAt > 0L && remoteConfig.issuedAt <= storedIssuedAt &&
+            !reapplyingRolledBack && !atWatermarkWithNothingActive
+        ) {
+            // The SAME signed config served again is not a replay of an
+            // older one — it is the config already applied. Backends that
+            // sign once per change and cache the signature (an HSM/KMS
+            // signer, a CDN, a pre-signed file) serve exactly that until
+            // the content changes. Same issuedAt AND same pins → nothing to
+            // do. Its force flag was honoured on first delivery and is not
+            // re-applied. Anything else at or below the watermark is still
+            // a replay.
+            if (remoteConfig.issuedAt == storedIssuedAt && storedConfig != null &&
+                storedConfig.issuedAt == storedIssuedAt && samePins(storedConfig, remoteConfig)
+            ) {
+                // A config stored before expiresAt was kept carries an
+                // estimate; the envelope's own value replaces it.
+                if (remoteConfig.expiresAt != storedConfig.expiresAt) {
+                    storedConfig.copy(expiresAt = remoteConfig.expiresAt).let {
+                        configStore.save(it, fetched.envelope)
+                        httpClientProvider.replaceConfigInPlace(it)
+                    }
+                }
+                Timber.d("Config is already current — the same signed config was served again (issuedAt=%d)", storedIssuedAt)
+                return UpdateResult.AlreadyCurrent
+            }
+            // An OLDER envelope of the config already applied (same pins
+            // and flags): fetches write the newer issuedAt back, so a
+            // proxy or cache serving an earlier copy of unchanged content
+            // lands here. Nothing in it differs, so nothing is applied and
+            // nothing is written back (its expiresAt is the older one) —
+            // but it is no attack either, and reporting it as a refused
+            // replay would only raise false alarms.
+            if (remoteConfig.issuedAt < storedIssuedAt && storedConfig != null &&
+                samePins(storedConfig, remoteConfig) && remoteConfig.forceUpdate == storedConfig.forceUpdate &&
+                forceFlags(remoteConfig) == forceFlags(storedConfig)
+            ) {
+                Timber.d("Config is already current — an older copy of it was served (issuedAt=%d < %d)",
+                    remoteConfig.issuedAt, storedIssuedAt)
+                return UpdateResult.AlreadyCurrent
+            }
+            throw SecurityException(
+                "Config replay rejected: received issuedAt=${remoteConfig.issuedAt} " +
+                "<= stored issuedAt=$storedIssuedAt. Possible MITM or stale-payload replay."
+            )
+        }
+
+        // Per-host versions are checked against the highest ever accepted,
+        // which neither a rollback (see rollBackAfterFailedHealthCheck)
+        // nor a config that dropped the host lowers.
+        val versionWatermarks = configStore.getVersionWatermarks().toMutableMap()
+        storedConfig?.pins?.forEach { pin ->
+            val host = pin.hostname.lowercase()
+            versionWatermarks[host] = maxOf(versionWatermarks[host] ?: 0, pin.version)
+        }
+
+        remoteConfig.pins.forEach { remotePin ->
+            val watermark = versionWatermarks[remotePin.hostname.lowercase()]
+            if (watermark == null) {
+                // A host this device has never seen has nothing to jump
+                // from, so its first version is capped instead: starting a
+                // host at Int.MAX_VALUE would leave no version above it.
+                if (remotePin.version > MAX_VERSION_JUMP) {
+                    throw SecurityException(
+                        "Per-host version rejected for ${remotePin.hostname}: first version " +
+                        "v${remotePin.version} is above $MAX_VERSION_JUMP."
+                    )
+                }
+                return@forEach
+            }
+            if (remotePin.version < watermark) {
+                throw SecurityException(
+                    "Per-host version downgrade rejected for ${remotePin.hostname}: " +
+                    "remote v${remotePin.version} < stored v$watermark."
+                )
+            }
+            if (remotePin.version.toLong() - watermark > MAX_VERSION_JUMP) {
+                throw SecurityException(
+                    "Per-host version jump rejected for ${remotePin.hostname}: " +
+                    "remote v${remotePin.version} is more than $MAX_VERSION_JUMP above stored v$watermark."
+                )
+            }
+        }
+
+        // Change detection over the whole shape — hosts, versions, pin
+        // hashes, the mTLS flags — not the versions alone. A pin removed
+        // without a version bump used to count as "nothing changed" and
+        // never reached the device. The replay check above has already
+        // established that this config is newer than the stored one
+        // (or, for an unsigned block, that there is nothing to compare).
+        val hasPinChanges = storedConfig == null || !samePins(storedConfig, remoteConfig)
+
+        // A raised force flag (global or on any single host) means
+        // "re-apply now, even at the same version".
+        val remoteForcesUpdate = remoteConfig.forceUpdate || remoteConfig.pins.any { it.forceUpdate }
+
+        val hasChanges = hasPinChanges || remoteForcesUpdate
+
+        if (!hasChanges) {
+            // Nothing about the pins changed and nothing is being forced,
+            // so this is not an update. But the force flag may have gone
+            // the OTHER way — true on disk, false on the wire — and that
+            // transition still has to reach the device: initializeAndUpdate
+            // reads the STORED flag on every cold start and refuses to come
+            // up offline while it is set (ForceUpdateFailedException).
+            // Without this branch an operator could switch force off and
+            // the device would stay unable to start without a reachable
+            // backend until some unrelated pin version happened to bump.
+            //
+            // The live HTTP client needs no rebuild because the pins are
+            // unchanged, but its in-memory config must follow the disk, or
+            // isForceUpdate() keeps answering "true" until the next start.
+            //
+            // The same goes for freshness: a newer envelope with the same
+            // pins moves issuedAt and expiresAt forward. Without that, a
+            // stored config would expire while the server keeps vouching
+            // for it. The envelope written with it is the remote one — the
+            // written-back config is, field for field, what it signs.
+            val writeBack = writeBack(storedConfig, remoteConfig)
+            if (writeBack != null) {
+                configStore.save(writeBack, fetched.envelope)
+                acceptedAsNewest(remoteConfig, storedIssuedAt)
+                httpClientProvider.replaceConfigInPlace(writeBack)
+                Timber.d(
+                    "Config is already current — flags/freshness written back (issuedAt=%d, expiresAt=%d, force=%s)",
+                    writeBack.issuedAt, writeBack.expiresAt, writeBack.forceUpdate
+                )
+            } else {
+                Timber.d("Config is already current — nothing changed")
+            }
+            return UpdateResult.AlreadyCurrent
+        }
+
+        configStore.save(remoteConfig, fetched.envelope)
+        acceptedAsNewest(remoteConfig, storedIssuedAt)
+        httpClientProvider.swap(remoteConfig)
+
+        // Sync host-specific client certs for mTLS hosts
+        syncHostClientCerts(remoteConfig, storedConfig)
+
+        val newVersion = remoteConfig.computedVersion()
+        Timber.d(
+            "Config updated: %d → %d (%d hosts pinned)",
+            currentVersion, newVersion, remoteConfig.pins.size
+        )
+
+        return UpdateResult.Updated(newVersion)
     }
 
     /**

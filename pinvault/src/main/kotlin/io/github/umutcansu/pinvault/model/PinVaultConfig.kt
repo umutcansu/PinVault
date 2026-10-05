@@ -93,7 +93,16 @@ data class PinVaultConfig(
     /** Generate the library's Keystore keys so they work only while the device is unlocked. See [Builder.requireUnlockedDevice]. */
     val requireUnlockedDevice: Boolean = false,
     /** Refuse Keystore keys made outside secure hardware. See [Builder.requireHardwareBackedKeys]. */
-    val requireHardwareBackedKeys: Boolean = false
+    val requireHardwareBackedKeys: Boolean = false,
+    /** A second opinion forwarded inside attestation reports. See [Builder.integrityVerdictProvider]. */
+    val integrityVerdictProvider: io.github.umutcansu.pinvault.integrity.IntegrityVerdictProvider? = null,
+    /**
+     * SHA-256 digests of the app's expected signing certificates, lowercase
+     * hex without separators. See [Builder.expectedSignerSha256].
+     */
+    val expectedSignerSha256: List<String> = emptyList(),
+    /** Accept, for hosts without a pin entry, chains the platform validates to a root the signed config lists. See [Builder.managedTrustRoots]. */
+    val managedTrustRoots: Boolean = false
 ) {
 
     /** First registered block — convenience for internal single-API code paths. */
@@ -114,6 +123,41 @@ data class PinVaultConfig(
         private var vaultFileMaxOfflineAgeMs: Long = 0L
         private var requireUnlockedDevice = false
         private var requireHardwareBackedKeys = false
+        private var integrityVerdictProvider: io.github.umutcansu.pinvault.integrity.IntegrityVerdictProvider? = null
+        private var expectedSignerSha256: List<String> = emptyList()
+        private var managedTrustRoots = false
+
+        /**
+         * A second opinion on the device's integrity (Play Integrity,
+         * typically) that goes along inside every attestation report as
+         * `verdictProvider` — see
+         * [io.github.umutcansu.pinvault.integrity.IntegrityVerdictProvider].
+         * Only used by blocks that called `attestation()`. The library
+         * forwards the token verbatim; verifying it is the server's job.
+         */
+        fun integrityVerdictProvider(provider: io.github.umutcansu.pinvault.integrity.IntegrityVerdictProvider) = apply {
+            this.integrityVerdictProvider = provider
+        }
+
+        /**
+         * SHA-256 digests of the signing certificates this app is expected to
+         * carry — the release certificate's, and a debug one's if debug
+         * builds attest too. Hex, with or without colons (`3c:4f:…` as
+         * `apksigner` / `keytool` print it), any case. When set, the
+         * attestation report's `app_integrity` signal is raised by the
+         * device itself when none of the APK's signers matches; the server
+         * compares the digests with its own list (`ATTESTATION_SIGNER_SHA256`)
+         * either way. Not set: the client does not judge.
+         */
+        fun expectedSignerSha256(vararg hex: String) = apply {
+            this.expectedSignerSha256 = hex.map { digest ->
+                io.github.umutcansu.pinvault.integrity.normalizeSha256Hex(digest)
+                    ?: throw IllegalArgumentException("expectedSignerSha256: '$digest' is not a SHA-256 in hex (64 hex characters, colons allowed)")
+            }.distinct()
+        }
+
+        /** [expectedSignerSha256] for a list (Java-friendly). */
+        fun expectedSignerSha256(hex: List<String>) = expectedSignerSha256(*hex.toTypedArray())
 
         /**
          * Keep using a config for [amount] [unit] after its `expiresAt`.
@@ -255,6 +299,22 @@ data class PinVaultConfig(
         fun requireHardwareBackedKeys() = apply { this.requireHardwareBackedKeys = true }
 
         /**
+         * Managed trust roots (Approov's "managed trust roots"): a host that
+         * has **no pin entry** is accepted when the platform's CAs validate its
+         * chain **and** the chain contains a certificate whose key is one of
+         * the signed config's `trustRoots` (SPKI pins of root CAs), and the
+         * leaf names the host. The device's trust store stops being the
+         * authority for such hosts: a CA a user or an attacker added to the
+         * device is not in the list, and a root the operator stops listing
+         * stops being trusted on the next config, without an app update.
+         * Hosts with a pin entry are unchanged; pins stay the stricter choice.
+         * Off: hosts without a pin entry are refused, as always. The list
+         * comes from the server with the config (`"trustRoots": [...]`) and
+         * is covered by its signature.
+         */
+        fun managedTrustRoots() = apply { this.managedTrustRoots = true }
+
+        /**
          * Register a Config API. Calling twice with the same id replaces the
          * prior block (useful for overrides in tests).
          *
@@ -343,7 +403,10 @@ data class PinVaultConfig(
                 wipeVaultFilesOnRevocation = wipeVaultFilesOnRevocation,
                 vaultFileMaxOfflineAgeMs = vaultFileMaxOfflineAgeMs,
                 requireUnlockedDevice = requireUnlockedDevice,
-                requireHardwareBackedKeys = requireHardwareBackedKeys
+                requireHardwareBackedKeys = requireHardwareBackedKeys,
+                integrityVerdictProvider = integrityVerdictProvider,
+                expectedSignerSha256 = expectedSignerSha256,
+                managedTrustRoots = managedTrustRoots
             )
         }
     }
