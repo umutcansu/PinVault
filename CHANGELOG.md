@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased — Vault files behind the screen lock, configs that expire
+## 2.2.0 — 2026-10-05 — Vault files behind the screen lock, configs that expire
 
 ### Library
 
