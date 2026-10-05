@@ -139,6 +139,10 @@ The payload JSON itself **MUST** include freshness fields (alongside the usual `
 
 Missing or zero values for either field cause the client to refuse the response.
 
+| Field | Type | Required | Purpose |
+|---|---|---|---|
+| `configApiId` | String | When clients set `serverScope(...)` | Names the Config API this config is for. One signing key often signs for several Config APIs (TLS and mTLS listeners, tenants, environments); without this field a config signed for one of them verifies for all of them. A client whose block calls `serverScope("<id>")` refuses a payload that lacks the field or carries another id; clients without `serverScope` ignore it. Put it in every signed payload — it costs nothing and lets apps turn the check on. The same id goes into v2 vault file signatures (section 6). The reference server (2.2.0) writes the listener's Config API id into every signed payload and leaves it out of unsigned ones. It is not part of a signing-key set: those are signed offline by the recovery keys and the library does not read a scope from them. |
+
 **Signing spec:**
 - Algorithm: `SHA256withECDSA`
 - Key: ECDSA P-256 (secp256r1)
@@ -170,6 +174,16 @@ PinVaultConfig.Builder()
 ```
 
 For dev/test setups against an unsigned endpoint, callers can opt out with `allowUnsigned()` inside the `configApi { }` block. Don't ship that to production — it disables signature, freshness, and replay protection together.
+
+**A transport of your own (`SignedConfigSource`).** An app that talks to your backend
+through its own `CertificateConfigApi` (gRPC, a message bus, a file drop) hands the library
+the envelope, not a parsed config: its API also implements `SignedConfigSource`
+(`fetchSignedConfig(currentVersion)` → `SignedConfigResponse(payload, signature, …)`), and
+the library verifies it exactly as above — signatures, `issuedAt` / `expiresAt`, replay,
+key sets, `configApiId`. So whatever the transport, serve the same envelope and pass
+`payload` on **byte for byte**: the signature covers its UTF-8 bytes, and re-serialising
+the JSON on the way breaks it. A block with signing keys whose custom API does not
+implement `SignedConfigSource` fails `PinVault.init` unless the app calls `allowUnsigned()`.
 
 #### Optional envelope fields (library 2.1+)
 
@@ -203,7 +217,7 @@ All of these are optional and ignored by older clients. Clients announce what th
   printf '%s' "$KEYSET_PAYLOAD" | openssl dgst -sha256 -sign recovery.pem | openssl base64 -A
   ```
 
-- **Vault files:** `X-Vault-Signature` carries the primary signature. With several signers, also send `X-Vault-Signatures: <keyId>:<signature>,<keyId>:<signature>`. Base64 never contains `:` or `,`.
+- **Vault files:** `X-Vault-Signature` carries the primary signature. With several signers, also send `X-Vault-Signatures: <keyId>:<signature>,<keyId>:<signature>`. Base64 never contains `:` or `,`. The v2 headers (`X-Vault-Signature-V2`, `X-Vault-Signatures-V2`, section 6) use the same encoding.
 
 #### Serving the same signed config more than once
 
@@ -222,58 +236,154 @@ POST {configUrl}/api/v1/client-certs/enroll
 Content-Type: application/json
 ```
 
-**Request body (token-based):**
+The device makes its own key in the Android Keystore and sends a certificate signing
+request (library 2.1+). Issue the certificate over that key; do not generate keys for
+devices. The library sends `X-PinVault-Features: p12password,csr`.
+
+**Request body (a one-time token, or an enrollment code many devices share):**
 ```json
 {
   "token": "one-time-token",
   "deviceAlias": "Warehouse Tablet #3",
-  "deviceUid": "a1b2c3d4e5f6"
+  "deviceUid": "a1b2c3d4e5f6",
+  "csr": "<Base64 DER PKCS#10>",
+  "attestationChain": ["<Base64 DER, leaf>", "<Base64 DER>", "<Base64 DER, root>"]
 }
 ```
 
-**Request body (auto-enrollment):**
+**Request body (no token: open enrollment, or an application an administrator approves):**
 ```json
 {
-  "deviceId": "android-device-id",
+  "deviceId": "a1b2c3d4e5f6",
   "deviceAlias": "Warehouse Tablet #3",
-  "deviceUid": "a1b2c3d4e5f6"
+  "deviceUid": "a1b2c3d4e5f6",
+  "csr": "<Base64 DER PKCS#10>",
+  "attestationChain": ["…"]
 }
 ```
 
-**Response:** Raw PKCS12 bytes (`Content-Type: application/octet-stream`)
+`deviceUid` is the device's ANDROID_ID and is sent on every path; `deviceId` is the same
+value, sent only when there is no token. A device asking again for a request that waits
+for approval sends `{"requestId": "…", "deviceAlias": …, "deviceUid": …, "csr": …,
+"attestationChain": […]}` with a CSR over the same key.
 
-**Required response header:**
+**`deviceUid` is a claim.** Any holder of a token or an enrollment code can send any
+value. Do not let a certificate act for a device id (vault tokens, key replacement,
+per-device grants, lifting a revocation) unless that id is proven: the token was minted
+for it (refuse a different one with `403 device_uid_mismatch` before spending the token),
+it equals the client id, or the attestation above vouches for it with your app's package
+and signer. The reference server stores this as `device_uid_proven`.
+
+**Response.** Verify the CSR's self-signature, issue a certificate over its key (name it
+after your own client id, not the CSR's subject) and answer JSON with
+`X-PinVault-Cert-Format: pem-chain`:
+
+```json
+{ "clientId": "tablet-07", "chain": ["-----BEGIN CERTIFICATE-----…(leaf)", "-----BEGIN CERTIFICATE-----…(issuing CA)"] }
+```
+
+What the library holds the chain to before it stores it (next release):
+
+- **at least two certificates** — the leaf, then the CA certificate that signed it. A leaf
+  on its own is refused;
+- the leaf is over the CSR's key, valid now, and its signature verifies under the next
+  certificate;
+- the leaf's lifetime is at most the app's `maxClientCertLifetimeDays` (default **825
+  days**) — issue short-lived certificates (the reference server: 90 days) and let them
+  renew;
+- when the app pins your client CA (`clientCaPins`, the Base64 SHA-256 of the CA
+  certificate's SubjectPublicKeyInfo), the leaf must be signed **directly** by a
+  certificate of the chain whose key matches a pin. Publish that pin (and the next CA's,
+  before you rotate) to app developers.
+
+Renewals (`POST {clientCertEndpoint}/renew`, body `{"clientId": "…", "csr": "…"}`, the same
+JSON answer) are held to the same rules; without pins a renewal must be signed by the CA
+of the certificate it replaces.
+
+**Key attestation (library and reference server 2.2.0).** A token says someone has the token; it does not say
+the request comes from your app on a real phone. The library generates the device key
+with an Android key attestation challenge and sends the chain the Keystore made for it:
+
+- `attestationChain` — each certificate Base64 (standard, no line breaks) DER, **leaf
+  first**, exactly as `KeyStore.getCertificateChain` returns it. Absent when the device
+  could not attest the key (and for keys generated by library 2.1.x).
+- **Challenge:** `SHA-256("pinvault-identity-key:v1:" + deviceUid)` over the UTF-8 bytes,
+  where `deviceUid` is the value of the request's `deviceUid` field (or of `deviceId` when
+  a request carries no `deviceUid`). 32 bytes, found in the leaf's attestation extension
+  (OID `1.3.6.1.4.1.11129.2.1.17`, `attestationChallenge`).
+- To rely on it, verify: the chain up to a Google hardware attestation root (and its
+  revocation list); the challenge; that the leaf's public key **is the CSR's key**; the
+  key's properties (security level TEE or StrongBox, origin GENERATED, purpose SIGN); the
+  attested package name and signing certificate digest of your app; and a locked
+  bootloader / verified boot state. Without the app binding any app can attest a key for
+  any device id.
+- Refuse with `403 {"error":"attestation_required"}` when a chain is needed and missing,
+  or `403 {"error":"attestation_invalid","reason":"<why>"}`. Do not spend the token. The
+  app sees `EnrollmentRefusal.ATTESTATION_FAILED` with your `reason`. On
+  `attestation_required` for a key that has no chain (made by an earlier library
+  version) the library makes a new key and sends the request once more, so the refusal
+  must leave the token usable.
+- Emulators attest with a software root: a server that enforces refuses them. Keep a
+  non-enforcing mode for test fleets.
+- Check it after the cheap refusals and **before** you spend anything (the token, a
+  policy's device slot, a waiting request); on the code paths the chain comes with the
+  first request and again with the pickup.
+
+The reference server does all of this under `ENROLLMENT_ATTESTATION=off|warn|enforce`
+(default `warn`: enroll either way, store the verdict with the identity and show it next
+to every waiting request and certificate; `enforce`: the two `403`s above, and it does
+not start without `ATTESTATION_PACKAGE_NAMES` + `ATTESTATION_SIGNER_SHA256`). Its
+`reason` values: `chain_missing`, `chain_malformed`, `chain_too_long`, `key_mismatch`,
+`untrusted_root`, `chain_broken`, `certificate_expired`, `certificate_revoked`,
+`revocation_list_stale`, `challenge_mismatch`, `software_attestation`, `purpose_not_sign`,
+`origin_not_generated`, `device_unlocked`, `boot_not_verified`, `patch_level_too_old`,
+`package_not_allowed`, `signer_not_allowed`, `app_binding_not_configured`,
+`device_id_missing`.
+
+The user-auth key that seals `user_auth` vault files is attested the same way at its own
+registration (`POST …/vault/devices/{deviceId}/public-key` with `"purpose":"user_auth"`
+and `"attestationChain"`); its challenge is
+`SHA-256("pinvault-user-auth-key:v1:" + deviceId)`, with the `deviceId` of the URL. The
+two prefixes differ on purpose: a chain made for one key cannot be replayed for the
+other. For that key also check that user authentication is required, and how: the
+reference server refuses a time-bound key (`authTimeout` set) from Android 11 or newer,
+and with `USER_AUTH_REQUIRE_PER_USE=true` from every version.
+
+**A key the server makes (P12) — only for apps that ask for it.** Library versions before
+2.1, and blocks that call `allowServerGeneratedKey()` on a device whose Keystore cannot
+make a key, send no `csr`. Answer `403 {"error":"csr_required"}` unless you decide to
+support them (the reference server: `ENROLLMENT_P12=on|off`, default `on` for older apps,
+`off` in production; also refused under `ENROLLMENT_ATTESTATION=enforce`, since a key
+you made cannot be attested); refuse before the token is spent. The app sees
+`EnrollmentRefusal.CSR_REQUIRED`. If you do support it, issue the certificate from the
+same client CA as CSR certificates (CA:false, client authentication only) — **never as a
+self-signed certificate added to your truststore as its own trust anchor**: an anchor
+that can sign lets its holder sign a leaf naming any other client id, and a server that
+reads the identity from the CN accepts it. (The reference server did that until 2.2.0;
+it now also checks on every mTLS request that the presented certificate is the one on
+record for the id its CN names.) The answer is raw PKCS12 bytes
+(`Content-Type: application/octet-stream`) with
+
 ```
 X-P12-SHA256: base64-encoded-sha256-of-response-body
 ```
 
 The library refuses to install the P12 if this header is missing or its value doesn't match the computed SHA-256 of the body. Guards against a header-stripping MITM that drops the integrity check to inject an attacker-controlled P12. Compute it as `base64(sha256(p12Bytes))` with no padding stripping.
 
-**P12 password (recommended):** the library sends `X-PinVault-Features: p12password`. Wrap the bundle with a random password used for this response only and return it in `X-P12-Password`; the library checks the bundle with it and re-wraps it with its own `clientKeyPassword` before storing it. Without that header the bundle must open with the app's `clientKeyPassword` (default `"changeit"`). Never use the password that protects your own keystores: every app would have to carry it. The same applies to `GET {clientCertEndpoint}/{hostname}/download`.
+**P12 password:** the library sends `X-PinVault-Features: p12password`. Wrap the bundle with a random password used for this response only and return it in `X-P12-Password`. Without that header the bundle must open with the app's `clientKeyPassword` (default `"changeit"`). Never use the password that protects your own keystores: every app would have to carry it. The same applies to `GET {clientCertEndpoint}/{hostname}/download`. The library (next release) imports the key from the bundle into the Android Keystore as a non-exportable key and keeps only the certificate chain.
 
-**PKCS12 requirements:**
-- Must contain at least 1 private key + certificate entry
-- Must open with the `X-P12-Password` you sent, or else with the app's `clientKeyPassword`
-- Certificate must not be expired
-
-**CSR enrollment (library 2.1).** The library sends `X-PinVault-Features: p12password,csr`
-and a `csr` field: a Base64 DER PKCS#10 request over a key it keeps in the Android
-Keystore. A server that understands it verifies the request's self-signature, issues a
-certificate over that key (name it after your own client id, not the CSR's subject) and
-answers JSON with `X-PinVault-Cert-Format: pem-chain`:
-
-```json
-{ "clientId": "tablet-07", "chain": ["-----BEGIN CERTIFICATE-----…(leaf)", "-----BEGIN CERTIFICATE-----…(issuing CA)"] }
-```
-
-A server that ignores the feature answers with a P12 as above, in the same request.
+**Never answer a request that carries a `csr` with a P12.** The library (next release)
+refuses such an answer unless the block called `allowServerGeneratedKey()` — and by then
+your one-time token is spent.
 
 **Refusals (library 2.1).** Answer a refusal with a 4xx and a JSON body
 `{"error": "<code>", "message": "<text>"}`; the app learns the reason from
 `PinVault.enrollForResult`. The library maps `401` to *invalid token*, and the `error`
-codes `device_already_enrolled`, `revoked`, `enrollment_rejected`,
-`enrollment_limit_reached` and `enrollment_request_expired` to their own reasons; anything
-else is shown with its status and code. A 5xx is a failure to answer, not a refusal.
+codes `device_already_enrolled`, `identity_already_enrolled`, `revoked`,
+`enrollment_rejected`, `enrollment_limit_reached`, `enrollment_request_expired`,
+`csr_required` and `attestation_required` / `attestation_invalid` (whose `reason` is shown
+when there is no `message`) to their own reasons; anything else is shown with its status
+and code. A 5xx is a failure to answer, not a refusal.
 
 **Waiting for approval (library 2.1).** A server where an administrator approves devices
 first answers the enrollment with `202`:
@@ -295,13 +405,20 @@ and for applications without a code: a token-less `{"deviceId": …, "csr": …}
 administrator lets devices apply; see the README.)
 
 The device shows a verification code made from its own key, so put the same code next to
-the request in your approval screen: the first 40 bits of the SHA-256 of the CSR's
-SubjectPublicKeyInfo (DER), as eight Crockford base32 characters
-(`0123456789ABCDEFGHJKMNPQRSTVWXYZ`, five bits each, most significant first) split
-`XXXX-XXXX`. Check vectors: a digest starting with 40 zero bits → `0000-0000`, with 40 one
-bits → `ZZZZ-ZZZZ`; the digest SHA-256(`"pinvault"`) → `0XMH-GCGP`. Return it as
+the request in your approval screen: the first **80 bits** (10 bytes) of the SHA-256 of the
+CSR's SubjectPublicKeyInfo (DER), as sixteen Crockford base32 characters
+(`0123456789ABCDEFGHJKMNPQRSTVWXYZ`, five bits each, most significant first) in groups of
+four, `XXXX-XXXX-XXXX-XXXX`. Check vectors: a digest starting with 80 zero bits →
+`0000-0000-0000-0000`, with 80 one bits → `ZZZZ-ZZZZ-ZZZZ-ZZZZ`; the digest
+SHA-256(`"pinvault"`) (`07691832165f0df081e6…`) → `0XMH-GCGP-BW6Z-10F6`. Return it as
 `verificationCode` in the `202` if you like — the library shows the one it computes
 itself.
+
+Library 2.1.x showed the first 40 bits only (`0XMH-GCGP`, the first eight characters of
+the code above). Forty bits can be matched on purpose: someone who watches a device wait
+generates keys until one has the same code — minutes of work — and has their own request
+approved in its place. Show and compare all sixteen characters; during a rollout an older
+app's eight are the prefix of yours.
 
 **Known limitation of the reference implementation — one-shot tokens.**
 `demo-server` issues the certificate and marks the enrollment token used
@@ -309,7 +426,7 @@ itself.
 a stripped `X-P12-SHA256` header, a truncated body, a mid-transfer network
 failure — the token is already spent and the operator has to issue a new one.
 The device is left unenrolled while the server believes it is enrolled, and the
-certificate that was minted for it stays in the truststore.
+certificate that was minted for it stays valid until it is revoked.
 
 If you are designing your own enrollment flow, do not copy this shape. Either
 mark the token used only after the device confirms the install (a second round
@@ -355,6 +472,36 @@ X-Vault-Signature: <base64 ECDSA signature>
 signing key: the device refuses an unsigned file. It signs
 `pinvault-vault-file:v1:<key>:<version>:<lowercase sha256 hex of the plaintext>`
 with the config signing key; see section 3 for `X-Vault-Signatures` (m-of-n).
+
+**v2: the signature names the Config API (library and reference server 2.2.0).** The v1 string does not say
+which Config API a file belongs to, so where one key signs for several, a file of one
+verifies for another. Send, next to the v1 headers:
+
+```
+X-Vault-Signature-V2: <base64 ECDSA signature, primary signer>
+X-Vault-Signatures-V2: <keyId>:<signature>,<keyId>:<signature>
+```
+
+over
+
+```
+pinvault-vault-file:v2:<configApiId>:<key>:<version>:<lowercase sha256 hex of the plaintext>
+```
+
+with the same keys and the same `configApiId` as in the signed config payload (section
+3). A client whose block sets `serverScope("<configApiId>")` **requires** the v2 headers
+and ignores v1; a client without it verifies v1 and ignores v2. Send both. The plaintext
+is the file's content before any per-device encryption (`end_to_end`, `user_auth`), as
+for v1. `X-Vault-Version` must be the version the signature names, and versions must not
+jump: the library refuses a version more than 1,000,000 above the one it holds (or above
+zero for a first copy).
+
+The library keeps the signatures it accepted with the stored copy and verifies them again
+each time the app reads the file, with the signing keys trusted at that moment — a key you
+revoke with a signing-key set stops its files from being read, not only from being
+downloaded. A `304 Not Modified` (or the same version again) is also what keeps a file
+with an offline lifetime (`maxOfflineAge`) readable: answer it only to a device that may
+still have the file.
 
 ---
 
@@ -501,7 +648,12 @@ All paths are relative to `configUrl`. Leading `/` is stripped.
 - [ ] Pins are Base64(SHA256(SPKI)) — 44 characters each
 - [ ] Server certificate matches at least one pinned hash
 - [ ] HTTPS with valid TLS (self-signed OK)
-- [ ] `POST /api/v1/client-certs/enroll` returns PKCS12 (if using mTLS)
+- [ ] `POST /api/v1/client-certs/enroll` issues over the device's CSR and answers leaf + CA certificate as `pem-chain` (if using mTLS); a request without a CSR gets `403 csr_required`
+- [ ] The enrollment key's `attestationChain` is verified, bound to your app's package and signing certificate (challenge `SHA-256("pinvault-identity-key:v1:" + deviceUid)`)
+- [ ] The verification code next to a waiting request is the 16-character, 80-bit one
+- [ ] A claimed `deviceUid` is trusted only when proven (token bound to it, equal to the client id, or attested)
+- [ ] Pin configs follow the library's rules before you sign them (hosts unique ignoring case, at most 2000 hosts, 2–32 pins each, LDH names with at most one leading `*.`): one bad entry makes every device refuse the whole config
+- [ ] Signed payloads carry `configApiId`; vault files carry `X-Vault-Signature-V2` as well as `X-Vault-Signature`
 - [ ] Vault file endpoints return raw bytes (if using VaultFile feature)
 
 ---

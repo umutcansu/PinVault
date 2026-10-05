@@ -56,3 +56,44 @@ demo-server/.kotlin/
 /scripts/qa-evidence/node_modules/
 *.bak
 
+
+# ── Secrets and key material ────────────────────────────────────────────────
+# The README's Docker quick start puts the signing key, the CA keystores and
+# the database under demo-server/data/ ({db,certs,keys}). None of it may ever
+# be committed: this repository mirrors to a public one.
+demo-server/data/
+**/signing-key*.pem
+
+# Safety net, repository-wide: keystores, PKCS#12 bundles, PEM/DER keys and
+# databases are never source. Nothing tracked matches these patterns today
+# (git ls-files); if a file of one of these types must be tracked — a public
+# test certificate, say — add an explicit exception right below this block:
+#     !path/to/public-test-cert.pem
+# and make sure sample-host/scripts/check-secrets.sh still passes.
+*.jks
+*.p12
+*.pfx
+*.bks
+*.keystore
+*.pem
+*.key
+*.der
+*.p8
+key.properties
+keystore.properties
+*.db
+*.sqlite
+*.sqlite3
+# Public certificates the server ships as resources (no private key).
+!demo-server/src/main/resources/attestation/google-hardware-attestation-roots.pem
+
+# Offline keys, generated env files and moved-aside demo installs (sample-host)
+offline-keys/
+.env
+.env.*
+!.env.example
+!.env.production.example
+backup-before-production-*/
+
+# Internal comparison document; not part of the project
+/MASC-vs-PinVault-DexProtector.pdf
