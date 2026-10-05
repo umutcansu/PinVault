@@ -4,8 +4,11 @@
     <uses-permission android:name="android.permission.INTERNET" />
 
     <!-- audit L-11: cleartext is no longer permitted app-wide. The only
-         plaintext path is the demo management/report endpoint (port 8090);
-         network_security_config scopes cleartext to the lab hosts only. -->
+         plaintext path is the DEBUG build's management/report endpoint
+         (port 8090); src/debug's network_security_config scopes cleartext to
+         the lab hosts only. Release (security review A-2) permits none:
+         src/main's config has no cleartext domains and the release app
+         reports over the pinned TLS Config API. -->
     <application
         android:allowBackup="false"
         android:label="PinVault Demo"

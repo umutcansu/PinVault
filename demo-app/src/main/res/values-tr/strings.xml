@@ -43,6 +43,10 @@
     <string name="cancel">İptal</string>
     <string name="cert_info_title">SERTİFİKALAR</string>
 
+    <!-- Release korkuluğu (güvenlik incelemesi A-2): derleme değerleri eksik bir release burada durur -->
+    <string name="release_guard_title">Release derlemesi yapılandırılmamış</string>
+    <string name="release_guard_message">Bu, PinVault demosunun release derlemesi. İmzasız demo config\'ini ve yer tutucu pini hiçbir zaman kullanmaz; şu derleme değerleri eksik:\n\n%1$s\n\nBu Gradle özellikleriyle (-P… ya da ~/.gradle/gradle.properties) yeniden derleyin ya da laboratuvar akışları için debug derlemesini kurun.</string>
+
     <!-- TLS Demo -->
     <string name="tls_header">PinVault Demo</string>
     <string name="retrying">Tekrar deneniyor…</string>

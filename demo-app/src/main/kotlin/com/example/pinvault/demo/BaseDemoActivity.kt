@@ -41,7 +41,13 @@ abstract class BaseDemoActivity : AppCompatActivity() {
         }
         val HOST_IP: String by lazy { if (IS_EMULATOR) "10.0.2.2" else "192.168.1.80" }
         val TLS_HOST_PORT: Int by lazy { if (IS_EMULATOR) 8443 else 8444 }
+        /** Plain-HTTP management port: the DEBUG build's report channel (cleartext allowed by src/debug's network security config). */
         private val MANAGEMENT_URL get() = "http://$HOST_IP:8090/"
+        /** Pinned TLS Config API: the RELEASE build's report channel (security review A-2). */
+        private val TLS_CONFIG_API_URL get() = "https://$HOST_IP:8091/"
+        private val REPORT_BASE_URL get() = if (DemoReleaseGuard.insecureChannels) MANAGEMENT_URL else TLS_CONFIG_API_URL
+        /** Debug: a plain client. Release: accepts only the Config API's bootstrap pins. */
+        private val REPORT_CLIENT: okhttp3.OkHttpClient by lazy { DemoReleaseGuard.reportClient(HOST_IP) }
 
         /** Kurtarma kapısı: süresi dolmuş client sertifikası burada yenilenir (TLS, client cert istemez). */
         const val RECOVERY_PORT = 8093
@@ -52,13 +58,13 @@ abstract class BaseDemoActivity : AppCompatActivity() {
          * Bootstrap pins — demo-server TLS cert (8091/8092), plus the recovery
          * door, pinned to the server CA for that one port only: its own
          * certificate is reissued by the server, the CA stays.
+         *
+         * The second Config API pin is a placeholder in debug and
+         * `-Pdemo.backupPin` in release ([DemoReleaseGuard.configApiPins]).
          */
         val DEFAULT_BOOTSTRAP_PINS: List<HostPin> by lazy {
             listOf(
-                HostPin(HOST_IP, listOf(
-                    "ziA0hyMDbayVXZ0g8AkkJz+wmKPZYjMAwb+GdNg5HYM=",
-                    "vXC1UZ8OFlga9Ltwsa2Hyg2lqZkLUE+DbdBPvT3ah3o="
-                )),
+                HostPin(HOST_IP, DemoReleaseGuard.configApiPins()),
                 HostPin("$HOST_IP:$RECOVERY_PORT", listOf(
                     "WnVy/WigjwYatqBdJv6lM32kkpxMxYXwzgdlyrvVrTU=",
                     "TOZS0AAIaxwCKUEIKWb3X/4h0S27clD6Aijou32QiQo="
@@ -91,6 +97,14 @@ abstract class BaseDemoActivity : AppCompatActivity() {
     open val enrollmentUrl: String? get() = null
     /** true = enrollment kartını göster (mTLS config) */
     open val showsEnrollmentCard: Boolean get() = requiresEnrollment
+    /**
+     * The server-side Config API id a RELEASE build binds the signed config
+     * to (`serverScope`): the TLS listener is always `default-tls` on the
+     * demo-server, the mTLS one is created by the operator (`-Pdemo.mtlsScope`;
+     * empty = not bound). Debug reads the unsigned config and ignores this.
+     */
+    open val configApiScope: String
+        get() = if (requiresEnrollment) BuildConfig.DEMO_MTLS_SCOPE else BuildConfig.DEMO_TLS_SCOPE
 
     protected lateinit var binding: ActivityDemoBaseBinding
     private val scope = CoroutineScope(Dispatchers.Main + SupervisorJob())
@@ -110,7 +124,14 @@ abstract class BaseDemoActivity : AppCompatActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        if (!Timber.forest().any { it is Timber.DebugTree }) {
+        // Release guard (security review A-2): a release build without its
+        // signing key / backup pin explains itself and closes; nothing below runs.
+        if (!DemoReleaseGuard.check(this)) return
+
+        // Debug only: the library's diagnostic lines (host names, pin prefixes,
+        // client ids) reach logcat. Release plants no tree, and R8 strips the
+        // debug-level calls as well (proguard-rules.pro).
+        if (BuildConfig.DEBUG && !Timber.forest().any { it is Timber.DebugTree }) {
             Timber.plant(Timber.DebugTree())
         }
 
@@ -395,10 +416,10 @@ abstract class BaseDemoActivity : AppCompatActivity() {
         return PinVaultConfig.Builder()
             .configApi("default", configServerUrl) {
                 bootstrapPins(bootstrapPins)
-                configEndpoint("api/v1/certificate-config?signed=false")
-                // Demo runs against unsigned config endpoint; production
-                // apps must call signaturePublicKey(...) instead.
-                allowUnsigned()
+                // Debug: the unsigned demo endpoint + allowUnsigned(). Release:
+                // the signed endpoint, verified with the build's signing key and
+                // bound to the server's Config API id (security review A-2).
+                DemoReleaseGuard.configureSigning(this, configApiScope)
                 this@BaseDemoActivity.renewalUrl?.let { renewalUrl(it) }
                 this@BaseDemoActivity.enrollmentUrl?.let { enrollmentUrl(it) }
             }
@@ -678,9 +699,12 @@ abstract class BaseDemoActivity : AppCompatActivity() {
                     }
                 """.trimIndent()
 
-                okhttp3.OkHttpClient().newCall(
+                // Debug: plain HTTP to the management port. Release: the same
+                // report endpoint on the pinned TLS Config API, through a client
+                // that accepts only the bootstrap pins (security review A-2).
+                REPORT_CLIENT.newCall(
                     Request.Builder()
-                        .url("${MANAGEMENT_URL}api/v1/connection-history/client-report")
+                        .url("${REPORT_BASE_URL}api/v1/connection-history/client-report")
                         .post(json.toRequestBody("application/json".toMediaType()))
                         .build()
                 ).execute()

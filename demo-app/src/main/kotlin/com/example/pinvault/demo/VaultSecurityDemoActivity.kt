@@ -55,12 +55,10 @@ class VaultSecurityDemoActivity : AppCompatActivity() {
         }
     }
 
-    // Same bootstrap pin the library verifies against demo-server's cert.
+    // Same bootstrap pin the library verifies against demo-server's cert; the
+    // second pin is a placeholder in debug and `-Pdemo.backupPin` in release.
     private val bootstrapPinsTls: List<HostPin> by lazy {
-        listOf(HostPin(HOST_IP, listOf(
-            "ziA0hyMDbayVXZ0g8AkkJz+wmKPZYjMAwb+GdNg5HYM=",
-            "wmKPZYjMAwb+GdNg5HYMziA0hyMDbayVXZ0g8AkkJz8="
-        )))
+        listOf(HostPin(HOST_IP, DemoReleaseGuard.configApiPins()))
     }
 
     // Device-unique keys to avoid collisions in multi-device test runs.
@@ -98,11 +96,15 @@ class VaultSecurityDemoActivity : AppCompatActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        // Release guard (security review A-2): a release build without its
+        // signing key / backup pin explains itself and closes; nothing below runs.
+        if (!DemoReleaseGuard.check(this)) return
 
         // Ensure Timber is planted so library-side logs reach logcat during
         // debug runs. Idempotent: repeated plants with DebugTree are safe but
-        // we only plant once to avoid duplicate output.
-        if (timber.log.Timber.forest().isEmpty()) {
+        // we only plant once to avoid duplicate output. Release plants no tree
+        // (security review A-2); R8 strips the debug-level calls as well.
+        if (BuildConfig.DEBUG && timber.log.Timber.forest().isEmpty()) {
             timber.log.Timber.plant(timber.log.Timber.DebugTree())
         }
 
@@ -140,9 +142,10 @@ class VaultSecurityDemoActivity : AppCompatActivity() {
             // real multi-API app would also add a "secure-mtls" block.
             .configApi("default-tls", TLS_URL) {
                 bootstrapPins(bootstrapPinsTls)
-                configEndpoint("api/v1/certificate-config?signed=false")
                 wantPinsFor(HOST_IP)
-                allowUnsigned()
+                // Debug: unsigned demo endpoint. Release: signed config, verified
+                // and bound to the TLS Config API id (security review A-2).
+                DemoReleaseGuard.configureSigning(this, BuildConfig.DEMO_TLS_SCOPE)
             }
             // Public file — no token, no encryption
             .vaultFile(keyPublic) {

@@ -46,6 +46,10 @@
     <string name="cancel">Cancel</string>
     <string name="cert_info_title">CERTIFICATES</string>
 
+    <!-- Release guard (security review A-2): a release build without its build values stops here -->
+    <string name="release_guard_title">Release build not configured</string>
+    <string name="release_guard_message">This is a release build of the PinVault demo. It never uses the unsigned demo config or the placeholder pin, and these build values are missing:\n\n%1$s\n\nRebuild with these Gradle properties (-P… or ~/.gradle/gradle.properties), or install the debug build for the lab flows.</string>
+
     <!-- TLS Demo -->
     <string name="tls_header">PinVault Demo</string>
     <string name="retrying">Retrying…</string>

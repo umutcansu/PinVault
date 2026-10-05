@@ -57,16 +57,18 @@ class VaultFileDemoActivity : AppCompatActivity() {
 
     // Bootstrap pins for Config API server cert.
     // Config API (port 8091) uses demo-server's default TLS cert (CN=localhost).
-    // Pin must match the actual SPKI hash of that cert, for both emulator and physical.
+    // The primary pin matches that cert; the second one is a placeholder in
+    // debug and `-Pdemo.backupPin` in release (DemoReleaseGuard.configApiPins).
     private val bootstrapPins: List<HostPin> by lazy {
-        listOf(HostPin(HOST_IP, listOf(
-            "ziA0hyMDbayVXZ0g8AkkJz+wmKPZYjMAwb+GdNg5HYM=",
-            "wmKPZYjMAwb+GdNg5HYMziA0hyMDbayVXZ0g8AkkJz8="  // backup (placeholder)
-        )))
+        listOf(HostPin(HOST_IP, DemoReleaseGuard.configApiPins()))
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        // Release guard (security review A-2): a release build without its
+        // signing key / backup pin explains itself and closes; nothing below runs.
+        if (!DemoReleaseGuard.check(this)) return
+
         binding = ActivityDemoBaseBinding.inflate(layoutInflater)
         setContentView(binding.root)
 
@@ -83,7 +85,11 @@ class VaultFileDemoActivity : AppCompatActivity() {
         binding.tvTitle.text = "Vault Files"
         binding.tvTitle.setTextColor(color(R.color.accent_cyan))
 
-        binding.tvServer.text = "Config: $CONFIG_SERVER_URL\nVault: ${MANAGEMENT_URL}api/v1/vault/"
+        // Debug shows the management port's vault admin path as before; a
+        // release build knows no plain-HTTP address, the files come through
+        // the pinned Config API block (security review A-2).
+        val vaultBase = if (DemoReleaseGuard.insecureChannels) MANAGEMENT_URL else CONFIG_SERVER_URL
+        binding.tvServer.text = "Config: $CONFIG_SERVER_URL\nVault: ${vaultBase}api/v1/vault/"
 
         binding.enrollmentCard.visibility = View.GONE
         binding.certInfoCard.visibility = View.GONE
@@ -106,8 +112,9 @@ class VaultFileDemoActivity : AppCompatActivity() {
         val config = PinVaultConfig.Builder()
             .configApi("default", CONFIG_SERVER_URL) {
                 bootstrapPins(bootstrapPins)
-                configEndpoint("api/v1/certificate-config?signed=false")
-                allowUnsigned()
+                // Debug: unsigned demo endpoint. Release: signed config, verified
+                // and bound to the TLS Config API id (security review A-2).
+                DemoReleaseGuard.configureSigning(this, BuildConfig.DEMO_TLS_SCOPE)
             }
             .deviceAlias(deviceName)
             .vaultFile(keyFlags) {
