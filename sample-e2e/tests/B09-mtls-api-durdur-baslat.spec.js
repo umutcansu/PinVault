@@ -140,6 +140,7 @@ test('mTLS: mTLS Config API durdurulup yeniden başlatılınca cihazın davranı
   } finally {
     await startMtlsApi().catch(() => {});
     await mtlsScope.reset().catch(() => {});
-    await hostApi.revokeClientCertIfActive(clientId).catch(() => {});
+    // İptal + unut: token telefona bağlı, kimlik cihazı kanıtlıyor (bkz. retireClientIdentity).
+    await hostApi.retireClientIdentity(clientId);
   }
 });

@@ -127,6 +127,7 @@ test('mTLS: kayıt silinince bağlantı, uygulama yeniden açılmadan hemen kesi
       expect(cert.revoked).toBe(false);
     });
   } finally {
-    await hostApi.revokeClientCertIfActive(clientId).catch(() => {});
+    // İptal + unut: token telefona bağlı, kimlik cihazı kanıtlıyor (bkz. retireClientIdentity).
+    await hostApi.retireClientIdentity(clientId);
   }
 });

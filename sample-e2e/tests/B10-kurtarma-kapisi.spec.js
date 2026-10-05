@@ -143,6 +143,7 @@ test('mTLS: süresi dolmuş sertifika kurtarma kapısından yenilenir', async ({
   } finally {
     await hostControl.resetEnv().catch(() => {});
     await mtlsScope.reset().catch(() => {});
-    await hostApi.revokeClientCertIfActive(clientId).catch(() => {});
+    // İptal + unut: token telefona bağlı, kimlik cihazı kanıtlıyor (bkz. retireClientIdentity).
+    await hostApi.retireClientIdentity(clientId);
   }
 });

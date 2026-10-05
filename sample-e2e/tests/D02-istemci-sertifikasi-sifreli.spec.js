@@ -106,6 +106,7 @@ test('Depolama: istemci sertifikası şifreli saklanıyor, ham kayıt PKCS12 ola
       await app.backToMain();
     });
   } finally {
-    await hostApi.revokeClientCertIfActive(clientId).catch(() => {});
+    // İptal + unut: token telefona bağlı, kimlik cihazı kanıtlıyor (bkz. retireClientIdentity).
+    await hostApi.retireClientIdentity(clientId);
   }
 });

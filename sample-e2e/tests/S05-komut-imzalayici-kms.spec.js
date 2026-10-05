@@ -228,6 +228,12 @@ test('Sunucu+Mobil: dış komutla imzalama (KMS benzeri, komuta yalnızca SHA-25
         file: 'docker',
         args: ['compose', 'exec', '-T', 'pinvault-host', 'sh', '-c', inject],
       });
+      // Harici imzalayıcıda imza önbelleği hep açık: aynı içerik için komut bir daha
+      // çağrılmıyor. Her yönetici yazması önbelleği boşaltıyor; kodsuz başvuruları
+      // kapatmak (zaten kapalı) hiçbir şeyi değiştirmeyen bir yazma, sonraki istek
+      // komutu yeniden çalıştırıyor.
+      const flush = await fresh.api('/api/v1/enrollment-open', { method: 'DELETE' });
+      expect(flush.status).toBeLessThan(300);
       const bad = await fresh.api('/api/v1/certificate-config', { withKey: false });
       const logs = lab.run('sh', ['-c', 'docker compose logs --tail 200 pinvault-host 2>&1 | grep -i "does not verify" | tail -n 2 || true']);
       const lastCall = callsLog().slice(-1)[0] || '';
@@ -237,6 +243,7 @@ test('Sunucu+Mobil: dış komutla imzalama (KMS benzeri, komuta yalnızca SHA-25
         testInfo,
         'Yanlış anahtarla imza → sunucu config göndermiyor (503); düzelince yine imzalı config geliyor',
         [
+          `$ curl -s -X DELETE ${fresh.WEB_URL}/api/v1/enrollment-open → HTTP ${flush.status} (imza önbelleği boşaldı)`,
           `$ curl -s ${fresh.WEB_URL}/api/v1/certificate-config`,
           `HTTP ${bad.status}`,
           bad.text.trim(),

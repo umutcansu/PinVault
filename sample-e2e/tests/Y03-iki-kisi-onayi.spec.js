@@ -20,6 +20,8 @@
 //     taşıyabilir),
 //   • eskimiş istek (pin'ler bu arada değişti): aynı pin'ler üzerinde iki
 //     istekten biri onaylanınca diğeri 409 "changed after … was requested" (eskidi),
+//   • vault dosyası yükleme ve kayıt token'ı üretme de onaya tabi (202; dosya ve
+//     token onaylanmadan oluşmuyor),
 //   • onay açıkken Config API portları pin yazımını hiç kabul etmiyor (409).
 //
 // Ana host üzerinde koşar. Onay açıkken fixture'ın temel duruma dönüşü
@@ -35,6 +37,7 @@ const hostApi = require('../lib/hostApi');
 const hostControl = require('../lib/hostControl');
 const { keys, adminKeysEnv } = require('../lib/admins');
 const env = require('../lib/env');
+const { testDeviceUid } = require('../lib/android');
 
 const sha256Hex = (s) => crypto.createHash('sha256').update(s).digest('hex');
 const keyLabel = (name) => `<${name}'in kişisel anahtarı; sha256 ${sha256Hex(keys[name]).slice(0, 12)}…>`;
@@ -507,6 +510,53 @@ test('Web+Mobil+Terminal: iki kişi onayı — alice\'in pin değişikliği bob 
       expect(stored.version).toBe(v0 + 2);
       expect(stored.sha256).toContain(pins.c);
       expect(stored.sha256).not.toContain(pins.d);
+    });
+
+    await test.step('Terminal: onay açıkken vault dosyası yükleme ve kayıt token\'ı üretme de beklemeye alınıyor (alice → 202, dosya ve token oluşmadı); bob ikisini de reddediyor', async () => {
+      const vaultKey = `y03-onayli-${Date.now()}`;
+      const upload = await hostApi.api(
+        `/api/v1/config-apis/${env.VAULT_API}/vault/${vaultKey}?policy=public&encryption=plain`,
+        { method: 'PUT', rawBody: JSON.stringify({ not: 'iki kişi onayı denemesi' }), key: keys.alice },
+      );
+      const token = await hostApi.api('/api/v1/enrollment-tokens/generate', {
+        method: 'POST',
+        body: { clientId: `y03-onayli-${Date.now()}`, deviceUid: testDeviceUid() },
+        key: keys.alice,
+      });
+      for (const r of [upload, token]) if (r.status === 202 && r.json) created.push(r.json.changeRequestId);
+      const pending = await hostApi.changeRequests('pending', keys.alice);
+      const filePresent = (await hostApi.vaultFiles(env.VAULT_API)).some((f) => f.key === vaultKey);
+      const decisions = [];
+      for (const r of [upload, token]) {
+        if (r.status !== 202 || !r.json) continue;
+        const res = await hostApi.rejectChange(r.json.changeRequestId, 'Yalnızca onay kapısının denemesi (E2E)', keys.bob);
+        decisions.push(`#${r.json.changeRequestId} → bob reddetti: HTTP ${res.status} status=${res.json && res.json.status}`);
+      }
+      await attachText(
+        testInfo,
+        'Onaya tabi yeni işlemler: vault yükleme ve kayıt token\'ı',
+        [
+          `$ curl -X PUT -H 'X-API-Key: ${keyLabel('alice')}' …/api/v1/config-apis/${env.VAULT_API}/vault/${vaultKey}?policy=public&encryption=plain`,
+          `HTTP ${upload.status} ${upload.text.trim()}`,
+          '',
+          `$ curl -X POST -H 'X-API-Key: ${keyLabel('alice')}' …/api/v1/enrollment-tokens/generate`,
+          `HTTP ${token.status} ${token.text.trim()}`,
+          '',
+          `bekleyen istekler: ${pending.map((c) => `#${c.id} ${c.summary}`).join(' | ')}`,
+          `vault'ta ${vaultKey}: ${filePresent ? 'VAR' : 'yok'} (onaylanmadıkça yüklenmez)`,
+          ...decisions,
+          '',
+          'Bir vault dosyası onu çekebilen her cihaza gider; bir kayıt token\'ı yeni bir cihaz kimliği açar.',
+          'Onay açıkken ikisi de pin değişikliği gibi ikinci bir yöneticiyi bekler.',
+        ].join('\n'),
+      );
+      expect(upload.status).toBe(202);
+      expect(upload.json.pendingApproval).toBe(true);
+      expect(token.status).toBe(202);
+      expect(token.json.pendingApproval).toBe(true);
+      expect(token.json.token).toBeUndefined();
+      expect(filePresent).toBe(false);
+      expect(decisions).toHaveLength(2);
     });
 
     await test.step('Terminal: Config API portunda (6651) pin yazımı alice\'in anahtarıyla → 409 (onay açıkken Config API portları pin yazımını reddediyor)', async () => {

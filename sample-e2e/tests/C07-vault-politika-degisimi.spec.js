@@ -1,15 +1,21 @@
 // C07 — Vault erişim politikasının dashboard'dan değiştirilmesi.
 //
-// Dosya detayındaki "Erişim politikası" kartı içeriğe ve sürüme dokunmadan
+// Dosya detayındaki "Erişim politikası" kartı içeriğe dokunmadan
 // `access_policy` / `encryption` alanlarını güncelliyor
-// (PUT …/vault/{key}/policy). Aynı dosya public → token → public dolaşımında
-// telefonun gördüğü davranış her adımda değişiyor.
+// (PUT …/vault/{key}/policy). Kural değişince sürüm bir artar: eski kuralla
+// (ör. şifresiz) inmiş kopyası olan cihazlar 304 almasın, dosyayı yeni
+// kuralla yeniden çeksin. Aynı dosya public → token → public dolaşımında
+// telefonun gördüğü davranış her adımda değişiyor: sunucu kuralı uygular,
+// uygulamanın dosyayı nasıl tanımladığına bakmaz.
 const { test, expect } = require('../lib/fixtures');
-const { attachText, describeResponse, redact } = require('../lib/evidence');
+const { attachText, describeResponse } = require('../lib/evidence');
 const hostApi = require('../lib/hostApi');
 const env = require('../lib/env');
 
-const KEY = env.VAULT_KEYS.secret;
+// Herkese açık sample-flags: uygulama onu public tanımlar ve token göndermez.
+// Sunucu politikayı token yapınca uygulama ayarı ne olursa olsun reddeder.
+// (Token'la indirme 14 ve C03'te: gizli dosyalar mTLS + token_mtls ile.)
+const KEY = env.VAULT_KEYS.flags;
 
 test('Vault politika değişimi: public → token → public, telefon her adımda yeni kurala göre davranıyor', async ({
   app,
@@ -20,7 +26,6 @@ test('Vault politika değişimi: public → token → public, telefon her adımd
   const body = `politika-denemesi-${Date.now()}`;
   let version;
   let deviceId;
-  let token;
 
   try {
     await test.step('Web: dosya public olarak yüklenir', async () => {
@@ -39,7 +44,7 @@ test('Vault politika değişimi: public → token → public, telefon her adımd
       expect(status).toContain(body);
     });
 
-    await test.step('Web: politika token yapılır (içerik ve sürüm değişmeden)', async () => {
+    await test.step('Web: politika token yapılır (içerik aynı, sürüm bir artar)', async () => {
       const summary = await dashboard.setVaultPolicy(env.VAULT_API, KEY, { policy: 'token', encryption: 'plain' });
       await dashboard.snapVaultPolicy('erişim politikası kartı — token');
       expect(summary.policy).toBe('token');
@@ -52,11 +57,11 @@ test('Vault politika değişimi: public → token → public, telefon her adımd
         [
           `dosya listesi: v${cells.version}, ${cells.size}, politika=${cells.policy}, şifreleme=${cells.encryption}`,
           '',
-          `Sürüm hâlâ v${version}: politika değişikliği içeriğe dokunmuyor, yani`,
-          'telefondaki kopya "eski sürüm" sayılmıyor; yalnızca erişim kısıtlanıyor.',
+          `Sürüm v${version} → v${version + 1}: içerik aynı, ama kural değişince sürüm artıyor;`,
+          'eski kuralla inmiş kopyalar "eski sürüm" sayılıp yeni kuralla yeniden çekiliyor.',
         ].join('\n'),
       );
-      expect(Number(cells.version.replace(/\D/g, ''))).toBe(version);
+      expect(Number(cells.version.replace(/\D/g, ''))).toBe(version + 1);
       expect(cells.policy).toContain('token');
     });
 
@@ -67,36 +72,15 @@ test('Vault politika değişimi: public → token → public, telefon her adımd
       expect(status).toContain('401');
     });
 
-    await test.step('Web: bu cihaz için token üretilir', async () => {
-      token = await dashboard.generateVaultToken(env.VAULT_API, KEY, deviceId);
-      await dashboard.snap('cihaz için token üretildi');
-      expect(token).toMatch(/^[A-Za-z0-9_-]{32,}$/);
-    });
-
-    await test.step('Mobil: token girilince iniyor', async () => {
-      // Yerel kopya siliniyor ki sonuç 304 ("güncel") değil gerçek bir indirme olsun.
-      await app.vaultClear(KEY);
-      await app.saveVaultToken(token, KEY);
-      const status = await app.fetchVault(KEY);
-      await app.snap('token ile indirildi');
-      expect(status).toContain(`${KEY} v${version} indirildi`);
-      expect(status).toContain(body);
-      await attachText(
-        testInfo,
-        'Token ile indirme',
-        [`X-Vault-Token: ${redact(token)}`, `X-Device-Id: ${deviceId}`, '', status].join('\n'),
-      );
-    });
-
     await test.step('Web: politika public\'e döndürülür', async () => {
       const summary = await dashboard.setVaultPolicy(env.VAULT_API, KEY, { policy: 'public', encryption: 'plain' });
       await dashboard.snapVaultPolicy('erişim politikası kartı — public (geri)');
       expect(summary.policy).toBe('public');
     });
 
-    await test.step('Mobil: token bellekten silinince de iniyor', async () => {
-      // Token yalnızca bellekte (VaultTokens); uygulamanın yeniden açılması onu
-      // siliyor. Saklı config ve sertifika korunuyor.
+    await test.step('Mobil: politika public\'e dönünce yeniden açılan uygulamada da iniyor', async () => {
+      // Uygulama yeniden açılıyor (saklı config korunuyor) ve yerel kopya
+      // siliniyor: sonuç 304 ("güncel") değil gerçek bir indirme olsun.
       await app.backToMain();
       app.relaunch();
       await app.waitReady();
@@ -104,7 +88,8 @@ test('Vault politika değişimi: public → token → public, telefon her adımd
       await app.vaultClear(KEY);
       const status = await app.fetchVault(KEY);
       await app.snap('public: token olmadan yeniden indi');
-      expect(status).toContain(`${KEY} v${version} indirildi`);
+      // public → token → public: iki kural değişikliği, iki sürüm.
+      expect(status).toContain(`${KEY} v${version + 2} indirildi`);
       expect(status).toContain(body);
     });
 
@@ -124,7 +109,7 @@ test('Vault politika değişimi: public → token → public, telefon her adımd
       expect(res.body.toString('utf8')).toBe(body);
     });
 
-    await test.step('Web: dağıtım geçmişi üç davranışı da kaydediyor', async () => {
+    await test.step('Web: dağıtım geçmişi iki davranışı da kaydediyor (indirme ve 401)', async () => {
       await dashboard.expectDistribution(env.VAULT_API, {
         key: KEY,
         deviceModel: run.model,
@@ -140,7 +125,7 @@ test('Vault politika değişimi: public → token → public, telefon her adımd
           .map((d) => `${d.timestamp} ${d.status.padEnd(10)} v${d.version} auth=${d.authMethod} ${(d.failureReason || '').replace(/\s+/g, ' ').slice(0, 60)}`)
           .join('\n'),
       );
-      expect(dists.filter((d) => d.status === 'downloaded').length).toBeGreaterThanOrEqual(3);
+      expect(dists.filter((d) => d.status === 'downloaded').length).toBeGreaterThanOrEqual(2);
       expect(dists.some((d) => d.status === 'failed' && /401/.test(d.failureReason || ''))).toBe(true);
     });
   } finally {

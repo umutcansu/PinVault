@@ -4,9 +4,12 @@
 // sınırlı; taşan iş sessizce atılıyor. Böylece yanıt vermeyen bir rapor
 // sunucusu istekleri geciktiremiyor.
 //
-// Emülatörde raporların gittiği şifreli yönetim portuna giden TCP iptables ile DROP edilir:
-// paketler sessizce düşer, yani her rapor 5 saniyelik bağlantı zaman aşımına
-// takılır. Pinli istekler bu sırada da normal hızında tamamlanmalı.
+// Raporlar Config API portuna gider (config'le aynı dinleyici, aynı pin'ler;
+// telefon yönetim portuna bağlanmaz). Emülatörde o porta giden TCP iptables ile
+// DROP edilir: paketler sessizce düşer, yani her rapor 5 saniyelik bağlantı
+// zaman aşımına takılır. Pinli istekler bu sırada da normal hızında
+// tamamlanmalı. Aynı port config'i de sunduğu için bu sürede config yenileme
+// başarısız olur; uygulama saklı config'le çalışmaya devam eder.
 const { test, expect, TARGET_HOST } = require('../lib/fixtures');
 const { attachText } = require('../lib/evidence');
 const { sleep } = require('../lib/android');
@@ -69,23 +72,24 @@ test('Mobil+Sunucu: cihaz raporları (telemetri) gönderilemezken pinli istekler
       );
     });
 
-    await test.step(`Terminal: raporların gittiği şifreli yönetim portu (${env.MANAGEMENT_TLS_PORT}) kapatılır (iptables DROP: paketler sessizce atılır)`, async () => {
-      device.blockTcp(env.LAN_IP, env.MANAGEMENT_TLS_PORT, 'drop');
+    await test.step(`Terminal: raporların gittiği port (Config API, ${env.REPORT_PORT}) kapatılır (iptables DROP: paketler sessizce atılır)`, async () => {
+      device.blockTcp(env.LAN_IP, env.REPORT_PORT, 'drop');
       const rules = device.rootShell('iptables -S OUTPUT');
       await attachText(
         testInfo,
-        `iptables: ${env.LAN_IP}:${env.MANAGEMENT_TLS_PORT} DROP`,
+        `iptables: ${env.LAN_IP}:${env.REPORT_PORT} DROP`,
         [
-          '$ iptables -A OUTPUT -p tcp -d ' + env.LAN_IP + ' --dport ' + env.MANAGEMENT_TLS_PORT + ' -j DROP',
+          '$ iptables -A OUTPUT -p tcp -d ' + env.LAN_IP + ' --dport ' + env.REPORT_PORT + ' -j DROP',
           '',
           rules.trim(),
           '',
           'DROP: paketler sessizce atılır; rapor isteği (POST) "bağlantı reddedildi"',
           `yanıtını (RST) bile almaz ve 5 saniyelik bağlantı zaman aşımını bekler.`,
-          `Config API portu (${env.CONFIG_API_PORT}) ve hedef host açık kalır.`,
+          'Raporlar config ile aynı porttan gittiği için config yenileme de bu sürede',
+          'sunucuya ulaşamaz; hedef host açık kalır.',
         ].join('\n'),
       );
-      expect(rules).toContain(`--dport ${env.MANAGEMENT_TLS_PORT}`);
+      expect(rules).toContain(`--dport ${env.REPORT_PORT}`);
     });
 
     await test.step('Mobil: rapor adresi yanıt vermezken istekler yine hızlı tamamlanıyor', async () => {
@@ -121,17 +125,28 @@ test('Mobil+Sunucu: cihaz raporları (telemetri) gönderilemezken pinli istekler
       expect(median(blocked) - median(baseline)).toBeLessThan(4000);
     });
 
-    await test.step('Mobil: config yenileme de yavaşlamıyor (kesinti yalnızca rapor portunda)', async () => {
+    await test.step('Mobil: aynı port config\'i de sunuyor — yenileme başarısız, uygulama saklı config\'le çalışmaya devam ediyor', async () => {
       const startedAt = Date.now();
       const status = await app.refreshConfig();
       const elapsed = Date.now() - startedAt;
-      await app.snap('raporlar gidemiyor: config yenileme çalışıyor');
+      await app.snap('Config API portu kapalı: config yenilenemedi');
+      // Yenileme başarısız oldu ama saklı config yerinde: pinli istek yine geçer.
+      const after = await app.testLibraryClient();
+      await app.snap('Config API portu kapalı: pinli istek saklı config ile geçiyor');
       await attachText(
         testInfo,
-        'Raporlar gidemezken config yenileme',
-        [`Süre: ${elapsed} ms`, '', status.split('\n').slice(0, 2).join('\n')].join('\n'),
+        'Config API portu kapalıyken config yenileme ve ardından pinli istek',
+        [
+          `Yenileme süresi: ${elapsed} ms`,
+          '',
+          status.split('\n').slice(0, 2).join('\n'),
+          '',
+          'Ardından pinli istek:',
+          after.split('\n').slice(0, 2).join('\n'),
+        ].join('\n'),
       );
-      expect(status).toMatch(/Yeni config uygulandı|Config güncel/);
+      expect(status).toMatch(/Config yenilenemedi|zaman aşımına uğradı/);
+      expect(after).toContain('Pinned bağlantı başarılı');
     });
 
     await test.step('Terminal: kural kaldırılır → raporlar yeniden sunucuya gidiyor', async () => {
@@ -148,7 +163,7 @@ test('Mobil+Sunucu: cihaz raporları (telemetri) gönderilemezken pinli istekler
         testInfo,
         'Kural kaldırıldıktan sonra',
         [
-          `$ iptables -D OUTPUT -p tcp -d ${env.LAN_IP} --dport ${env.MANAGEMENT_TLS_PORT} -j DROP`,
+          `$ iptables -D OUTPUT -p tcp -d ${env.LAN_IP} --dport ${env.REPORT_PORT} -j DROP`,
           '',
           `Sunucuya gelen yeni kayıt: ${reports.length} (${reports.map((e) => e.status).join(', ')})`,
         ].join('\n'),

@@ -119,6 +119,22 @@ async function deleteVaultFile(apiId, key) {
   await api(`${vaultBase(apiId)}/${encodeURIComponent(key)}`, { method: 'DELETE' });
 }
 
+/**
+ * Bir cihazın sunucudaki E2E ve ekran kilidi (user_auth) anahtarlarını bütün
+ * kapsamlarda siler (yönetici sıfırlaması). TLS kapsamı ilk anahtarı tutar ve
+ * token'sız değiştirtmez; iptal de artık yalnızca kanıtlanmış cihazların
+ * anahtarını siliyor. Önceki koşudan kalan anahtar yeni kurulumun anahtarını
+ * gölgelemesin diye testler bununla başlar.
+ */
+async function forgetDeviceKeys(deviceId, apiIds) {
+  for (const apiId of apiIds) {
+    for (const purpose of ['', '?purpose=user_auth']) {
+      await api(`${vaultBase(apiId)}/devices/${encodeURIComponent(deviceId)}/public-key${purpose}`, { method: 'DELETE' })
+        .catch(() => {});
+    }
+  }
+}
+
 async function vaultFiles(apiId) {
   return (await api(vaultBase(apiId))).json || [];
 }
@@ -197,6 +213,17 @@ function vaultBlobFromDb(apiId, key) {
 function devicePublicKeyPem(deviceId, apiId) {
   const pem = dbQuery(
     `SELECT public_key_pem FROM device_public_keys WHERE device_id='${deviceId}' AND config_api_id='${apiId}';`,
+  );
+  return pem || null;
+}
+
+/**
+ * Cihazın ekran kilidi anahtarının (user_auth dosyaları buna kilitlenir) sunucuda
+ * kayıtlı public yarısı (PEM) — yoksa null. Tablo: device_user_auth_keys (V16).
+ */
+function deviceUserAuthKeyPem(deviceId, apiId) {
+  const pem = dbQuery(
+    `SELECT public_key_pem FROM device_user_auth_keys WHERE device_id='${deviceId}' AND config_api_id='${apiId}';`,
   );
   return pem || null;
 }
@@ -438,6 +465,37 @@ async function hostClientCertInfo(apiId, hostname) {
   return r.status === 200 ? r.json : null;
 }
 
+/**
+ * Cihaz sertifikalarını (CSR ile kayıt ve yenileme) imzalayan istemci CA'sının
+ * SPKI pin'i — uygulamanın clientCaPins değeri (host.clientCaPin). Sunucu CA'yı
+ * bir uçta yayımlamadığı için container içinde data/certs/client-ca.jks'ten
+ * keytool ile okunur (parola container'ın kendi ortamından); olmazsa sunucunun
+ * açılış log'undaki "client CA — SPKI <pin>" satırından. Bulunamazsa null.
+ */
+function clientCaPin() {
+  try {
+    const pem = execFileSync(
+      'docker',
+      ['exec', env.CONTAINER, 'sh', '-c',
+        'P="${KEYSTORE_PASSWORD:-changeit}"; export P; keytool -exportcert -rfc -alias client-ca ' +
+        '-keystore /data/certs/client-ca.jks -storetype JKS -storepass:env P'],
+      { encoding: 'utf8', timeout: 60_000, stdio: ['ignore', 'pipe', 'ignore'] },
+    );
+    const block = pem.match(/-----BEGIN CERTIFICATE-----[\s\S]+?-----END CERTIFICATE-----/);
+    if (block) return spkiPin(new crypto.X509Certificate(block[0]).raw);
+  } catch {
+    /* keytool yok ya da dosya okunamadı: log'a bakılır */
+  }
+  try {
+    const logs = execFileSync('docker', ['logs', env.CONTAINER], { encoding: 'utf8', timeout: 60_000, maxBuffer: 64 * 1024 * 1024 });
+    const hits = [...logs.matchAll(/client CA .* SPKI ([A-Za-z0-9+/]{43}=)/g)];
+    if (hits.length) return hits[hits.length - 1][1];
+  } catch {
+    /* container yok */
+  }
+  return null;
+}
+
 /** Container'daki bir keystore dosyasını yerel yola kopyalar (docker cp). */
 function exportKeystore(name, destFile) {
   fs.mkdirSync(path.dirname(destFile), { recursive: true });
@@ -469,6 +527,24 @@ async function revokeClientCertIfActive(id) {
 async function forgetClientIdentityIfRevoked(id) {
   const r = await api(`/api/v1/client-certs/${encodeURIComponent(id)}/forget`, { method: 'POST' });
   return r.status === 200;
+}
+
+/**
+ * Senaryonun test telefonuna verdiği kimliği temizlik için tümüyle kaldırır:
+ * etkinse iptal eder, sonra unutur.
+ *
+ * Yalnızca iptal yetmiyor: token cihaza bağlıyken (ya da kimlik cihazın
+ * token_mtls dosyasını kendi sertifikasıyla indirdiyse) cihaz kimliği
+ * kanıtlanmış sayılır ve iptal telefonu da keser — TLS Config API'deki
+ * token'lı indirmeleri de `403 reenroll_required` olur. Bu blok yalnızca
+ * cihazı kanıtlanmış biçimde yeniden kaydeden bir kimlikle kalkar; sonraki
+ * senaryo kayıt olmadan token'lı dosya indirebiliyorsa takılırdı. Unutmak
+ * kanıtları da siler, telefon bir sonraki senaryoya temiz başlar (pm clear
+ * zaten yeni anahtar üretir; unutulan kimliğin anahtarı emekliye ayrılır).
+ */
+async function retireClientIdentity(id) {
+  await revokeClientCertIfActive(id).catch(() => {});
+  return forgetClientIdentityIfRevoked(id).catch(() => false);
 }
 
 /**
@@ -555,6 +631,7 @@ async function notifications(key) {
 
 module.exports = {
   api,
+  forgetDeviceKeys,
   isHealthy,
   mtlsApiRunning,
   provision,
@@ -575,9 +652,11 @@ module.exports = {
   dbQuery,
   vaultBlobFromDb,
   devicePublicKeyPem,
+  deviceUserAuthKeyPem,
   rawVaultDownload,
   revokeClientCertIfActive,
   forgetClientIdentityIfRevoked,
+  retireClientIdentity,
   regenerateHostCert,
   spkiPin,
   livePins,
@@ -593,6 +672,7 @@ module.exports = {
   clientCerts,
   enrollmentTokens,
   hostClientCertInfo,
+  clientCaPin,
   exportKeystore,
   signingKeyInfo,
   signingStatus,

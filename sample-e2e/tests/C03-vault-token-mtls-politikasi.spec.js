@@ -6,9 +6,14 @@
 // kimlik yönetici tarafından seçildiği için `client_certs.device_uid` üzerinden
 // de bağlanabiliyor. Sızmış bir token, özel anahtar olmadan işe yaramıyor.
 //
+// Uygulama bu dosyayı ekran kilidi arkasında tanımlar (userAuth REQUIRED +
+// encryption USER_AUTH): sunucu onu telefonun ekran kilidi anahtarına kilitler.
+// Telefon indirdiğini göstermez, "Aç" ekran kilidini sorar. Senaryo emülatöre
+// geçici bir PIN koyar.
+//
 // Kanıt: telefonda token'sız red → token'la indirme; ağ trafiğinde dört durum
 // (sertifikasız el sıkışma, TLS dinleyicide geçerli token'la bile red, yanlış
-// cihazın sertifikasıyla red, kendi kimliğiyle kabul).
+// cihazın sertifikasıyla red, kendi kimliğiyle bile düz içerik yok: 412).
 const path = require('path');
 const fs = require('fs');
 const { execFileSync } = require('child_process');
@@ -56,10 +61,11 @@ async function mtlsDownload(opts, attempts = 8) {
 
 test('Vault token_mtls: token + istemci sertifikası birlikte gerekiyor', async ({
   app,
+  device,
   dashboard,
   run,
 }, testInfo) => {
-  test.setTimeout(12 * 60 * 1000);
+  test.setTimeout(14 * 60 * 1000);
   const stamp = Date.now();
   const deviceCertId = `c03-cihaz-${stamp}`;
   const otherCertId = `c03-baska-${stamp}`;
@@ -68,9 +74,17 @@ test('Vault token_mtls: token + istemci sertifikası birlikte gerekiyor', async 
   let deviceToken;
   let otherToken;
   let tlsScopeToken;
+  let lock = null;
   fs.mkdirSync(WORK_DIR, { recursive: true });
 
   try {
+    await test.step('Cihaz: telefona geçici ekran kilidi (PIN) konur', async () => {
+      // Gizli dosyalar ekran kilidi olmayan telefonda saklanmaz; kilit
+      // anahtarı da PinVault kurulurken (mod değişince) kaydedilir.
+      lock = device.setScreenLockPin(env.SCREEN_LOCK_PIN);
+      expect(device.hasScreenLock()).toBe(true);
+    });
+
     await test.step('Mobil: cihaz kimliği okunur', async () => {
       await app.openVault();
       deviceId = app.deviceId();
@@ -92,9 +106,13 @@ test('Vault token_mtls: token + istemci sertifikası birlikte gerekiyor', async 
       expect(subject).toContain(otherCertId);
     });
 
-    await test.step('Mobil: cihaz kayıt token\'ıyla kendi sertifikasını alır', async () => {
-      const token = await dashboard.generateEnrollmentToken(env.MTLS_API, deviceCertId);
+    await test.step('Mobil: cihaz, kendisine bağlı kayıt token\'ıyla kendi sertifikasını alır', async () => {
+      // token_mtls dosyası yalnızca cihaz kimliği KANITLANMIŞ bir sertifikaya
+      // açılır: yönetici token'ı telefonun mTLS ekranında yazan kimliğe bağlar.
       await app.openMtls();
+      const shown = app.mtlsDeviceId();
+      expect(shown).toBe(deviceId);
+      const token = await dashboard.generateEnrollmentToken(env.MTLS_API, deviceCertId, { deviceUid: shown });
       expect(await app.enroll(token)).toContain(`Kayıt başarılı — CN=PinVault Client: ${deviceCertId}`);
       await app.snap('cihaz kaydı tamam');
       await app.backToMain();
@@ -106,24 +124,29 @@ test('Vault token_mtls: token + istemci sertifikası birlikte gerekiyor', async 
         [
           `clientId=${mine.id}`,
           `deviceUid=${mine.deviceUid || '(yok)'}`,
+          `deviceUidProven=${mine.deviceUidProven}`,
           `revoked=${mine.revoked}`,
           '',
           'token_mtls\'te cihazı eşleştirmenin ikinci yolu bu: sertifikadaki ad (CN)',
           `yöneticinin seçtiği "${deviceCertId}", cihazın ANDROID_ID\'si ise "${deviceId}".`,
           'Kütüphane kayıt isteğinde deviceUid gönderdiği için sunucu ikisini',
-          'birbirine bağlayabiliyor.',
+          'birbirine bağlayabiliyor. Gönderilen kimlik tek başına bir iddia; yönetici',
+          'token\'ı bu kimliğe bağladığı için sunucu onu kanıtlanmış sayıyor',
+          '(bağlanmamış bir token\'la token_mtls indirmesi 401 alırdı).',
         ].join('\n'),
       );
       expect(mine.deviceUid).toBe(deviceId);
+      expect(mine.deviceUidProven).toBe(true);
     });
 
-    await test.step('Web: mTLS Config API\'nin host listesi hazırlanır, dosya token_mtls ile yüklenir', async () => {
+    await test.step('Web: mTLS Config API\'nin host listesi hazırlanır, dosya token_mtls + user_auth ile yüklenir', async () => {
       const report = await mtlsScope.ensureHosts(dashboard, [env.LAN_IP]);
-      const version = await dashboard.uploadVaultText(env.MTLS_API, KEY, secret, { policy: 'token_mtls' });
+      const version = await dashboard.uploadVaultText(env.MTLS_API, KEY, secret, { policy: 'token_mtls', encryption: 'user_auth' });
       const cells = await dashboard.vaultRowCells(KEY);
       await dashboard.snapCard('.card:has(#vault-upload-key) ~ .card', `${env.MTLS_API} vault dosyaları`);
       await attachText(testInfo, `${env.MTLS_API} host listesi`, report);
       expect(cells.policy).toContain('token_mtls');
+      expect(cells.encryption).toContain('user_auth');
       expect(version).toBeGreaterThan(0);
     });
 
@@ -149,11 +172,16 @@ test('Vault token_mtls: token + istemci sertifikası birlikte gerekiyor', async 
       await app.openVault();
       await app.saveVaultToken(deviceToken, KEY);
       const status = await app.fetchVault(KEY);
-      await app.snap('token_mtls: dosya indi');
+      await app.snap('token_mtls: dosya indi — kilitli');
       expect(status).toContain(`${KEY} v`);
       expect(status).toContain('indirildi');
       expect(status).toContain('mTLS bloğu: istemci sertifikası + token');
-      expect(status).toContain(secret);
+      expect(status).toContain('Kilitli');
+      expect(status).not.toContain(secret);
+      const opened = await app.unlockVault(KEY);
+      await app.snap('token_mtls: ekran kilidiyle açıldı');
+      expect(opened).toContain('açıldı');
+      expect(opened).toContain(secret);
       await attachText(
         testInfo,
         'Telefonun kullandığı kimlik bilgileri',
@@ -223,7 +251,7 @@ test('Vault token_mtls: token + istemci sertifikası birlikte gerekiyor', async 
       expect(res.body.toString('utf8')).toContain('device_identity_mismatch');
     });
 
-    await test.step('Ağ trafiği: aynı sertifika kendi kimliğiyle 200 alıyor', async () => {
+    await test.step('Ağ trafiği: aynı sertifika kendi kimliğiyle de düz içerik alamıyor (412, ekran kilidi anahtarı yok)', async () => {
       otherToken = await dashboard.generateVaultToken(env.MTLS_API, KEY, otherCertId);
       const res = await mtlsDownload({ deviceId: otherCertId, token: otherToken });
       await attachText(
@@ -232,12 +260,15 @@ test('Vault token_mtls: token + istemci sertifikası birlikte gerekiyor', async 
         [
           describeResponse(res, { maxBody: 256 }),
           '',
-          'Doğrudan eşleşme (certClientId == deviceId): otomatik kayıtta CN zaten',
-          'ANDROID_ID olduğu için gerçek kullanımda çalışan yol bu.',
+          'Kimlik eşleşiyor (certClientId == deviceId) ve token geçerli: politika kapısı',
+          'geçildi. Yine de içerik gelmiyor: dosya user_auth, yani sunucu onu yalnızca',
+          'cihazın ekran kilidi anahtarına kilitleyerek verir; bu kimlik öyle bir anahtar',
+          'kaydetmedi. Düz içerik hiçbir yoldan çıkmıyor.',
         ].join('\n'),
       );
-      expect(res.status).toBe(200);
-      expect(res.body.toString('utf8')).toBe(secret);
+      expect(res.status).toBe(412);
+      expect(res.body.toString('utf8')).toContain('user_auth_key_required');
+      expect(res.body.includes(Buffer.from(secret, 'utf8'))).toBe(false);
     });
 
     await test.step('Mobil: yanlış token ile indirme reddediliyor', async () => {
@@ -284,6 +315,14 @@ test('Vault token_mtls: token + istemci sertifikası birlikte gerekiyor', async 
     await hostApi.deleteVaultFile(env.VAULT_API, KEY).catch(() => {});
     await mtlsScope.reset().catch(() => {});
     await hostApi.revokeClientCertIfActive(otherCertId).catch(() => {});
-    await hostApi.revokeClientCertIfActive(deviceCertId).catch(() => {});
+    // Bağlı token cihazı kanıtladı: yalnızca iptal, telefonu sonraki senaryolarda da keserdi.
+    await hostApi.retireClientIdentity(deviceCertId);
+    if (lock) {
+      try {
+        device.clearScreenLock(env.SCREEN_LOCK_PIN, lock);
+      } catch {
+        /* cihaz yanıt vermiyorsa asıl hatayı gölgelemesin */
+      }
+    }
   }
 });

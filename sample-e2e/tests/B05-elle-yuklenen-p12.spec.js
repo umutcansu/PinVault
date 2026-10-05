@@ -1,7 +1,9 @@
 // B05 — Elle yüklenen istemci sertifikası (ConfigApiBlock.clientKeystore).
 //
 // Kayıt akışı hiç kullanılmıyor: dashboard'da üretilen P12 dosyası cihazın
-// files/ dizinine konuyor, uygulama onu `clientKeystore(bytes, password)` ile
+// files/ dizinine konuyor; uygulama parolasını kullanıcıdan bir kez isteyip
+// dosyayı Keystore anahtarıyla şifreli bir pakete çeviriyor (düz dosya
+// siliniyor) ve açılışta `clientKeystore(bytes, password)` ile
 // mTLS bloğuna veriyor ve cihaz bu sertifikayla hem mTLS Config API'ye hem de
 // mock mTLS hedefine bağlanıyor.
 //
@@ -120,19 +122,34 @@ test('mTLS: kayıt olmadan, elle yüklenen P12 ile bağlanma', async ({ app, dev
       expect(listing).toContain('manual-client.p12');
     });
 
-    await test.step('Mobil: "P12 içe aktar" ile sertifika mTLS bloğuna veriliyor', async () => {
+    await test.step('Mobil: yanlış parolayla içe aktarma reddediliyor, dosya yerinde kalıyor', async () => {
       await app.openMtls();
       expect(app.enrollState()).toContain('Kayıtlı değil');
-      const result = await app.toggleManualP12();
+      const result = await app.toggleManualP12('yanlis-parola');
+      await app.snap('elle P12: yanlış parola');
+      expect(result).toContain('P12 açılamadı');
+      expect(device.appFiles(env.APP_ID, 'files')).toContain('manual-client.p12');
+      expect(app.enrollState()).not.toContain('Elle yüklenen P12 kullanılıyor');
+    });
+
+    await test.step('Mobil: "P12 içe aktar" + parola ile sertifika mTLS bloğuna veriliyor, düz dosya siliniyor', async () => {
+      const result = await app.toggleManualP12('changeit');
       await app.snap('elle P12 içe aktarıldı');
       expect(result).toContain(`P12 içe aktarıldı — CN=PinVault Client: ${clientId}`);
       expect(app.enrollState()).toContain('Elle yüklenen P12 kullanılıyor');
+      const listing = device.appFiles(env.APP_ID, 'files');
       await attachText(
         testInfo,
-        'Uygulamanın sonucu',
-        [result, '', 'Kayıt (enroll) yapılmadı: sertifika depoda değil, dosyadan okunup',
-          'ConfigApiBlock.clientKeystore(bytes, "changeit") ile veriliyor.'].join('\n'),
+        'Uygulamanın sonucu ve files/ dizini',
+        [result, '', `$ run-as ${env.APP_ID} ls -la files`, listing.trim(), '',
+          'Kayıt (enroll) yapılmadı. Parola kullanıcıdan bir kez istendi ve saklanmadı;',
+          'P12 rastgele bir parolayla yeniden paketlenip Android Keystore\'daki bir',
+          'anahtarla şifrelendi (files/manual-client.sealed), düz dosya silindi.',
+          'Uygulama açılışta paketi çözüp ConfigApiBlock.clientKeystore(bytes, parola)',
+          'ile mTLS bloğuna veriyor.'].join('\n'),
       );
+      expect(listing).not.toContain('manual-client.p12');
+      expect(listing).toContain('manual-client.sealed');
       await app.backToMain();
     });
 
@@ -143,10 +160,11 @@ test('mTLS: kayıt olmadan, elle yüklenen P12 ile bağlanma', async ({ app, dev
       await attachText(
         testInfo,
         'Depolama ekranı (ilgili satırlar)',
-        text.split('\n').filter((l) => /İstemci sertifikası|kayıtlı|elle yüklenen/i.test(l)).join('\n'),
+        text.split('\n').filter((l) => /İstemci sertifikası|kayıtlı|elle yüklenen|düz P12/i.test(l)).join('\n'),
       );
       expect(text).toContain('elle yüklenen P12');
       expect(text).toContain('(kullanılıyor)');
+      expect(text).toMatch(/düz P12 dosyası \(files\/manual-client\.p12\): yok/);
       await app.backToMain();
     });
 

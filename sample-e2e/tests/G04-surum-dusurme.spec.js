@@ -21,11 +21,12 @@ const proxy = require('../lib/proxy');
 const hostApi = require('../lib/hostApi');
 const env = require('../lib/env');
 const crypto = require('crypto');
-const fs = require('fs');
+const signingKeyFile = require('../lib/signingKeyFile');
 
 /** Payload'ı host'un imzalama public key'i ile doğrular (kanıt paneli için). */
 function verifyWithHostKey(payload, signature) {
-  const pub = fs.readFileSync(env.SIGNING_KEY_FILE, 'utf8').split('\n').map((s) => s.trim()).filter(Boolean)[1];
+  // Dosya diskte şifreli (ENCv1:); public yarısı .env'deki parolayla açılarak okunur.
+  const pub = signingKeyFile.publicKeyBase64(env.SIGNING_KEY_FILE, env.SIGNING_KEY_PASSWORD);
   const key = crypto.createPublicKey({ key: Buffer.from(pub, 'base64'), format: 'der', type: 'spki' });
   return crypto.createVerify('SHA256').update(payload).end().verify(key, Buffer.from(signature, 'base64'));
 }

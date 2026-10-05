@@ -1,10 +1,11 @@
 // A17: joker alan adlı (wildcard) pin girdileri. `*.example.com` TEK bir
 // alt alan adını kapsar, yani `www.example.com` bu girdiyle
 // bağlanır. Buna karşılık `*.com` gibi yalnızca uzantıdan oluşan joker
-// kütüphane tarafından sessizce yok sayılır: yanlış yazılmış tek bir satır
-// bütün .com alan adlarına izin vermesin diye. Sunucu joker alan adını
-// denetlemeden kabul ediyor (host adı biçimi kontrol edilmiyor), bu yüzden
-// ayrımı yapan taraf kütüphanedir (PinHostMatcher).
+// kabul edilmez: yanlış yazılmış tek bir satır bütün .com alan adlarına izin
+// vermesin diye. Sunucu böyle bir girdiyi kayıt anında 400 ile reddeder
+// (HostPatternRules); kütüphane de aynı kuralı uygular ve böyle bir girdi
+// taşıyan config'in tamamını reddeder (PinConfigValidator), yani sunucu
+// kuralı atlansa bile telefon onu uygulamaz.
 const { test, expect, TARGET_HOST } = require('../lib/fixtures');
 const { attachText } = require('../lib/evidence');
 const { SampleApp } = require('../lib/sampleApp');
@@ -25,7 +26,7 @@ async function removeWildcards() {
   });
 }
 
-test(`Web+Mobil: joker alan adı ${SUB_WILDCARD} hedefi kapsıyor, *.com (yalnızca uzantı) yok sayılıyor`, async ({
+test(`Web+Mobil: joker alan adı ${SUB_WILDCARD} hedefi kapsıyor, *.com (yalnızca uzantı) sunucuda reddediliyor`, async ({
   app,
   dashboard,
   run,
@@ -83,43 +84,34 @@ test(`Web+Mobil: joker alan adı ${SUB_WILDCARD} hedefi kapsıyor, *.com (yalnı
       await app.waitForEvent(`[✓] ${TARGET_HOST}`);
     });
 
-    await test.step('Web: joker alan adı yalnızca uzantıya genişletilir (*.com)', async () => {
-      await dashboard.deleteHost(SUB_WILDCARD);
-      await dashboard.addHostManual(env.VAULT_API, TLD_WILDCARD, run.goodPins);
-      await dashboard.snap(`yalnızca uzantıdan oluşan joker eklendi: ${TLD_WILDCARD}`);
-      const cfg = await hostApi.getConfig();
-      expect(cfg.pins.map((p) => p.hostname)).toContain(TLD_WILDCARD);
-    });
-
-    await test.step('Mobil: *.com config\'e giriyor ama kütüphane onu eşleştirmiyor', async () => {
-      const status = await app.refreshConfig();
-      await app.snap(`config'te ${TLD_WILDCARD}`);
-      expect(status).toContain('Yeni config uygulandı');
-      expect(SampleApp.hostVersion(status, TLD_WILDCARD)).not.toBeNull();
-
-      const result = await app.testLibraryClient();
-      await app.snap('*.com ile bağlantı reddedildi');
+    await test.step('Web: yalnızca uzantıdan oluşan joker (*.com) sunucuda reddediliyor', async () => {
+      const before = await hostApi.getConfig();
+      const res = await hostApi.api('/api/v1/certificate-config', {
+        method: 'PUT',
+        body: { version: 0, pins: before.pins.concat([{ hostname: TLD_WILDCARD, sha256: run.goodPins }]), forceUpdate: false },
+      });
+      const after = await hostApi.getConfig();
       await attachText(
         testInfo,
-        `Yalnızca uzantıdan oluşan joker eşleşmiyor: ${TLD_WILDCARD}`,
+        `PUT /api/v1/certificate-config — ${TLD_WILDCARD} eklenmek istendi`,
         [
-          `Config'te girdi var: ${TLD_WILDCARD} → pin v${SampleApp.hostVersion(status, TLD_WILDCARD)}`,
+          `HTTP ${res.status} ${res.text}`,
           '',
-          result.split('\n').slice(0, 4).join('\n'),
+          `config'teki host'lar: ${after.pins.map((p) => p.hostname).join(', ')}`,
           '',
-          'PinHostMatcher.match: "*." sonrasındaki kısım nokta içermiyorsa',
-          '(com, tr, net…) girdi atlanır; tek bir yanlış satır o uzantıdaki bütün',
-          'alan adlarına izin vermesin diye. Eşleşme bulunamayınca bağlantı reddedilir',
-          '(şüphede bağlantıya izin verilmez); telefonun sistem sertifikalarına geri',
-          'dönülmez.',
+          'Sunucu joker alan adını kayıt anında denetliyor: "*." sonrasında kayıtlı bir alan adı',
+          'olmalı (*.example.com). Yalnızca uzantı (*.com, *.com.tr) ya da adres kabul edilmiyor.',
+          'Kütüphane aynı kuralı uygular; böyle bir girdi taşıyan imzalı bir config gelse bile',
+          'telefon config\'in tamamını reddeder ve eskisiyle devam eder.',
         ].join('\n'),
       );
-      expect(result).toContain('Bağlantı başarısız');
-      expect(result).toContain('No pin entry for hostname');
+      expect(res.status).toBe(400);
+      expect(res.text).toContain(TLD_WILDCARD);
+      expect(after.pins.map((p) => p.hostname)).not.toContain(TLD_WILDCARD);
     });
 
     await test.step('Web: tam adlı host geri eklenir, telefon yeniden bağlanır', async () => {
-      await dashboard.deleteHost(TLD_WILDCARD);
+      await dashboard.deleteHost(SUB_WILDCARD);
       await dashboard.addHostManual(env.VAULT_API, TARGET_HOST, run.goodPins);
       await dashboard.snap('tam adlı host geri geldi');
       const status = await app.refreshConfig();

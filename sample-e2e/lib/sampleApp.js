@@ -3,7 +3,7 @@
 //
 // Ekranlar: ana ekran, mTLS, Vault, Depolama, Ayarlar. Uygulama modu
 // (AppSettings.Mode) Ayarlar ekranından ya da açılışta intent ekiyle seçilir.
-const { APP_ID, VAULT_KEYS } = require('./env');
+const { APP_ID, VAULT_KEYS, SCREEN_LOCK_PIN, UNLOCK_PROMPT_TITLE } = require('./env');
 const { sleep } = require('./android');
 const { attachmentName } = require('./dashboard');
 
@@ -19,8 +19,10 @@ const RESULT = {
   mtls: /(mTLS bağlantısı başarılı|mTLS bağlantısı reddedildi)/,
   mock: /(host bağlantısı başarılı|host bağlantısı reddedildi)/,
   unenroll: /(Kayıt silindi|başlatılamadı)/,
-  p12: /(P12 içe aktarıldı|P12 bulunamadı|Elle P12 bırakıldı)/,
+  p12: /(P12 içe aktarıldı|P12 bulunamadı|Elle P12 bırakıldı|P12 açılamadı|P12 parolasını gir)/,
   vault: /( indirildi| güncel \(v| indirilemedi)/,
+  // "Aç": açıldı / vazgeçildi / açılamadı; anahtar geçersiz ya da kopya yoksa yeniden indirme sonucu.
+  vaultUnlock: /( açıldı\n| açılmadı| açılamadı| indirildi| güncel \(v| indirilemedi)/,
   vaultInfo: /ℹ️ /,
   vaultClear: / silindi/,
   vaultSync: /(Eşitleme tamamlandı|Eşitlenecek dosya yok)/,
@@ -489,8 +491,14 @@ class SampleApp {
     return this.press('unenrollButton', RESULT.unenroll, 'kayıt silme sonucu', 90_000);
   }
 
-  /** files/manual-client.p12 dosyasını mTLS bloğunun sertifikası yapar (ya da bırakır). */
-  toggleManualP12() {
+  /**
+   * files/manual-client.p12 dosyasını mTLS bloğunun sertifikası yapar (ya da
+   * bırakır). İçe aktarırken uygulama P12'nin parolasını ister: [password]
+   * parola alanına yazılır (bırakırken verilmez). Uygulama dosyayı Keystore
+   * anahtarıyla şifreleyip düz kopyayı siler.
+   */
+  async toggleManualP12(password) {
+    if (password) await this.enterText('p12PasswordInput', password);
     return this.press('importP12Button', RESULT.p12, 'P12 içe aktarma sonucu', 90_000);
   }
 
@@ -499,6 +507,16 @@ class SampleApp {
   deviceId() {
     const m = this.text('deviceIdView').match(/Cihaz ID:\s*(\S+)/);
     if (!m) throw new Error('Mobil: cihaz kimliği okunamadı');
+    return m[1];
+  }
+
+  /**
+   * mTLS ekranındaki "Cihaz kimliği: <ANDROID_ID>": yönetici panelde token'ı
+   * bu telefona bağlamak için onu yazar. Vault ekranındakiyle aynı değer.
+   */
+  mtlsDeviceId() {
+    const m = this.text('mtlsDeviceIdView').match(/Cihaz kimliği:\s*(\S+)/);
+    if (!m) throw new Error('Mobil: mTLS ekranında cihaz kimliği okunamadı');
     return m[1];
   }
 
@@ -516,6 +534,41 @@ class SampleApp {
     const button = VAULT_BUTTONS[key];
     if (!button) throw new Error(`Uygulamada düğmesi olmayan vault anahtarı: ${key}`);
     return this.press(button, RESULT.vault, `${key} indirme sonucu`);
+  }
+
+  /**
+   * "Aç": anahtar alanındaki dosyayı açar. Kilitli (gizli) dosyada sistem
+   * ekran kilidini sorar; pencere görünürse [pin] yazılır ([cancel] ise geri
+   * tuşuyla kapatılır). Kilitsiz dosya soru sorulmadan açılır. Sonuç metnini
+   * döndürür; açılan içerik ekranda görünür.
+   */
+  async unlockVault(key, { pin = SCREEN_LOCK_PIN, cancel = false, timeout = 45_000 } = {}) {
+    await this.setVaultKey(key);
+    const before = SampleApp.seqOf(this.status());
+    await this.tapButton('unlockButton');
+    const deadline = Date.now() + timeout;
+    let answered = false;
+    let last = '';
+    while (Date.now() < deadline) {
+      const node = this.node('statusView');
+      last = node ? node.text : last;
+      if (node && SampleApp.seqOf(node.text) > before && RESULT.vaultUnlock.test(node.text)) return node.text;
+      if (!answered && this.device.credentialPromptShown(UNLOCK_PROMPT_TITLE)) {
+        // Pencere yeni açıldıysa açılış animasyonu bitip PIN alanı hazır olana kadar beklenir.
+        await sleep(2000);
+        if (cancel) {
+          // İlk GERİ yalnızca PIN alanının açtığı klavyeyi kapatır; pencere
+          // ikincisinde kapanır. Pencere kapanana kadar (en çok 3 kez) basılır.
+          for (let i = 0; i < 3 && this.device.credentialPromptShown(UNLOCK_PROMPT_TITLE); i++) {
+            this.device.pressBack();
+            await sleep(1200);
+          }
+        } else this.device.enterCredential(pin);
+        answered = true;
+      }
+      await sleep(700);
+    }
+    throw new Error(`Mobil: "${key}" açma sonucu gelmedi.\nSon metin:\n${last}`);
   }
 
   async vaultInfo(key) {

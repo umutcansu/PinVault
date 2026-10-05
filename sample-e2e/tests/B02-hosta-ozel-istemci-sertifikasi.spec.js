@@ -238,6 +238,7 @@ test('mTLS: host\'a özel istemci sertifikası yalnızca mTLS Config API\'den in
     await mtlsScope.reset().catch(() => {});
     await hostApi.clearHostMtlsFlags(env.MOCK_MTLS_HOST).catch(() => {});
     await hostApi.revokeClientCertIfActive(hostCertId).catch(() => {});
-    await hostApi.revokeClientCertIfActive(deviceCertId).catch(() => {});
+    // İptal + unut: token telefona bağlı, kimlik cihazı kanıtlıyor (bkz. retireClientIdentity).
+    await hostApi.retireClientIdentity(deviceCertId);
   }
 });

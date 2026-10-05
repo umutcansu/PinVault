@@ -68,6 +68,7 @@ test('mTLS: web\'de üretilen token\'la telefon kayıt olur ve bağlanır; serti
     });
   } finally {
     // Yarıda kalan koşu sunucuda etkin bir test sertifikası bırakmasın.
-    await hostApi.revokeClientCertIfActive(clientId);
+    // İptal + unut: token telefona bağlı, kimlik cihazı kanıtlıyor (bkz. retireClientIdentity).
+    await hostApi.retireClientIdentity(clientId);
   }
 });

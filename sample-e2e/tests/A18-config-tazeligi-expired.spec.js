@@ -4,8 +4,11 @@
 // ele geçirilmiş eski bir yanıt sonsuza kadar tekrar gönderilemesin diye.
 //
 // Kanıt için TTL 60 saniyeye düşürülür ve cihazın saati iki saat ileri alınır;
-// telefon yenilemeyi "expired" diyerek reddeder ve ESKİ config'iyle çalışmaya
-// devam eder. Saat ve TTL geri alınınca yenileme yeniden çalışır.
+// telefon yenilemeyi "expired" diyerek reddeder. Saklı config'in de süresi
+// geçmiştir: pinli istekler, taze bir config gelene kadar reddedilir (fail
+// closed). Eskiden saklı config süresiz kullanılıyordu; Config API'ye giden
+// trafiği engelleyen biri cihazı eski (ele geçmiş) pin'lerde sonsuza kadar
+// tutabiliyordu. Saat ve TTL geri alınınca yenileme ve pinli istek yeniden çalışır.
 //
 // Saat kaydırma root ister: yalnızca emülatör.
 const { test, expect, TARGET_HOST } = require('../lib/fixtures');
@@ -28,7 +31,7 @@ async function freshnessStamp() {
   };
 }
 
-test('Sunucu+Mobil: süresi geçmiş imzalı config reddedilir, eski config çalışmaya devam eder', async ({
+test('Sunucu+Mobil: süresi geçmiş imzalı config reddedilir, süresi geçmiş saklı config ile bağlantı kurulmaz', async ({
   app,
   device,
 }, testInfo) => {
@@ -95,11 +98,12 @@ test('Sunucu+Mobil: süresi geçmiş imzalı config reddedilir, eski config çal
       expect(SampleApp.hostVersion(status, TARGET_HOST)).toBe(version);
     });
 
-    await test.step('Mobil: eski config ile pinli istek hâlâ başarılı', async () => {
+    await test.step('Mobil: süresi geçmiş saklı config ile pinli istek reddedilir (fail closed)', async () => {
       const result = await app.testLibraryClient();
-      await app.snap('eski config ile bağlantı sürüyor');
-      expect(result).toContain('Pinned bağlantı başarılı');
-      await app.waitForEvent(`[✓] ${TARGET_HOST}  pin v${version}`);
+      await app.snap('süresi geçmiş config ile bağlantı reddedildi');
+      await attachText(testInfo, 'Telefondaki sonuç', result);
+      expect(result).toContain('Bağlantı başarısız');
+      expect(result).toContain('Pin config expired');
     });
 
     await test.step('Mobil: saat geri alınır → yenileme yeniden çalışıyor', async () => {
@@ -110,6 +114,9 @@ test('Sunucu+Mobil: süresi geçmiş imzalı config reddedilir, eski config çal
       expect(status).toMatch(/Yeni config uygulandı|Config güncel/);
       expect(status).not.toContain('Config yenilenemedi');
       expect(SampleApp.hostVersion(status, TARGET_HOST)).toBe(version);
+      const result = await app.testLibraryClient();
+      await app.snap('taze config ile bağlantı yeniden kuruldu');
+      expect(result).toContain('Pinned bağlantı başarılı');
     });
 
     await test.step('Sunucu: geçerlilik süresi varsayılana döner (24 saat)', async () => {

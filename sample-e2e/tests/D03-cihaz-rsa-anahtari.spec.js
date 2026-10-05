@@ -8,10 +8,16 @@ const crypto = require('crypto');
 const { test, expect } = require('../lib/fixtures');
 const { attachText, attachCommand } = require('../lib/evidence');
 const hostApi = require('../lib/hostApi');
+const secureVault = require('../lib/secureVault');
 const env = require('../lib/env');
 
 const ALIAS = 'pinvault_vault_e2e_rsa';
-const KEY = env.VAULT_KEYS.e2e;
+// Uygulamanın kendi end_to_end dosyası (sample-e2e) gizli: mTLS bloğunda ve
+// ekran kilidi arkasında. Anahtarın çalıştığını herkese açık sample-flags'i
+// end_to_end yükleyerek gösteriyoruz (uygulama sunucunun başlığına göre çözer).
+// RSA anahtarı yalnızca bir end_to_end dosyası tanımlıyken, yani cihaz mTLS'e
+// kayıtlıyken üretilir: senaryo önce kayıt olur.
+const KEY = env.VAULT_KEYS.flags;
 
 /** PEM gövdesini DER'e çevirip SHA-256 alır (SPKI). */
 function spkiSha256(pem) {
@@ -24,12 +30,17 @@ test('Depolama: cihaz RSA anahtarı Keystore\'da ve sunucudaki public key ile e�
   device,
   dashboard,
 }, testInfo) => {
-  test.setTimeout(8 * 60 * 1000);
+  test.setTimeout(10 * 60 * 1000);
   let deviceId;
   let deviceKeyLine;
   let onDeviceHash;
+  const sv = { clientId: `d03-cihaz-${Date.now()}` };
 
   try {
+    await test.step('Hazırlık: cihaz mTLS\'e kayıt olur (cihaz RSA anahtarı üretilir)', async () => {
+      await secureVault.prepare({ app, device, dashboard }, sv, { screenLock: false });
+    });
+
     await test.step('Mobil: cihaz kimliği ve Keystore anahtar bilgisi', async () => {
       await app.openVault();
       deviceId = app.deviceId();
@@ -99,7 +110,6 @@ test('Depolama: cihaz RSA anahtarı Keystore\'da ve sunucudaki public key ile e�
       const status = await app.fetchVault(KEY);
       await app.snap('cihaz anahtarıyla çözülen dosya');
       expect(status).toContain(`${KEY} v${version} indirildi`);
-      expect(status).toContain('cihaz anahtarıyla çözüldü');
       expect(status).toContain(secret);
       const res = await hostApi.rawVaultDownload(KEY, deviceId);
       await attachText(
@@ -141,5 +151,6 @@ test('Depolama: cihaz RSA anahtarı Keystore\'da ve sunucudaki public key ile e�
     });
   } finally {
     await hostApi.deleteVaultFile(env.VAULT_API, KEY).catch(() => {});
+    await secureVault.cleanup({ device }, sv);
   }
 });

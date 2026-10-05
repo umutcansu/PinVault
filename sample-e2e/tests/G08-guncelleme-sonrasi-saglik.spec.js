@@ -108,15 +108,22 @@ test("Saldırı: config indikten sonra /health 500 döner → telefon başlatıl
           '',
           'Bu açılış "pm clear" sonrası yapıldı: geri dönülecek ÖNCEKİ config yok.',
           'Sağlık kontrolü geçmeyince kütüphane uygulanan config\'i geri alıyor —',
-          'önceki kopya olmadığı için depoyu temizliyor (configStore.clear) ve',
+          'önceki kopya olmadığı için etkin config\'i siliyor (configStore.clearActive) ve',
           'istemciyi, şüphede bağlantıya izin vermeyen duruma döndürüyor (httpClientProvider.reset).',
-          'Dosya diskte kalsa bile içinde tek bir kayıt yok.',
+          'Dosyada kalan kayıtlar yalnızca tekrar oynatma (replay) filigranları ve onların',
+          'dayanakları: kabul edilen en yeni issuedAt ve host sürümleri, geri alınan config\'in',
+          'izi (aynı config yeniden uygulanmasın diye), güvenilir saatin gördüğü en geç zaman,',
+          'deponun bağlı olduğu sunucu ve derlenmiş imza anahtarlarının parmak izi. Bunlar bilerek kalıyor; silinselerdi saldırgan aynı',
+          'ya da daha eski bir imzalı config\'i yeniden yutturabilirdi. Etkin config\'in gittiğini',
+          'bir sonraki adım gösteriyor: ikinci açılış da başlatılamıyor.',
           '',
           'Önceki davranış: config olduğu gibi depoda kalıyordu; healthCheck()',
           'istisnaları yuttuğu için "temizle ve sıfırla" dalı hiç çalışmıyordu.',
         ].join('\n'),
       );
-      expect(entryCount, 'geri alınan config depoda kayıt bırakmamalı').toBe(0);
+      // Kayıtlar şifreli (ad ve değer); sayıları yalnızca filigranları gösteriyor.
+      // Etkin config'in yokluğu bir sonraki adımda (ikinci açılış başlamıyor) kanıtlanıyor.
+      expect(entryCount, 'yalnızca filigranlar kalmalı').toBeLessThanOrEqual(9);
     });
 
     await test.step('Mobil: sağlık hâlâ bozukken ikinci açılış da başlatılamıyor', async () => {

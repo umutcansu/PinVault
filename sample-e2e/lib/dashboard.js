@@ -2,6 +2,7 @@
 // dilinden bağımsız `data-action` özniteliklerine ve form alanı kimliklerine
 // dayanır.
 const { expect } = require('@playwright/test');
+const { testDeviceUid } = require('./android');
 
 /**
  * Playwright ek adındaki son noktadan sonrasını dosya uzantısı sayar
@@ -32,6 +33,21 @@ class Dashboard {
    * prompt'lara [promptAnswers] kuyruğundaki değeri verir. Fixture ve taze
    * host sayfaları aynı davranışı paylaşsın diye burada.
    */
+  /**
+   * Yönetici anahtarını sayfanın sessionStorage'ına, sayfanın kendi betikleri
+   * çalışmadan önce yazar (her yüklemede). Dashboard anahtarı sessionStorage'da
+   * tutar; localStorage'daki eski kopyayı bir kez taşıyıp siler.
+   */
+  static async seedApiKey(page, key) {
+    await page.addInitScript((value) => {
+      try {
+        sessionStorage.setItem('pinvault_api_key', value);
+      } catch {
+        /* depolama kapalı: dashboard anahtarı sorar */
+      }
+    }, key);
+  }
+
   static attachDialogs(page, dashboard) {
     page.on('dialog', (dialog) => {
       dashboard.dialogs.push(dialog.message());
@@ -156,7 +172,7 @@ class Dashboard {
   async hostMtlsFlag(apiId, host) {
     return this.page.evaluate(
       async ([id, hostname]) => {
-        const key = localStorage.getItem('pinvault_api_key') || '';
+        const key = sessionStorage.getItem('pinvault_api_key') || '';
         const res = await fetch(`/api/v1/config/${encodeURIComponent(id)}`, { headers: { 'X-API-Key': key } });
         const cfg = await res.json();
         return !!(cfg.pins || []).find((p) => p.hostname === hostname)?.mtls;
@@ -186,7 +202,7 @@ class Dashboard {
   async hostClientCertVersion(apiId, host) {
     return this.page.evaluate(
       async ([id, hostname]) => {
-        const key = localStorage.getItem('pinvault_api_key') || '';
+        const key = sessionStorage.getItem('pinvault_api_key') || '';
         const res = await fetch(`/api/v1/config/${encodeURIComponent(id)}`, { headers: { 'X-API-Key': key } });
         const cfg = await res.json();
         return (cfg.pins || []).find((p) => p.hostname === hostname)?.clientCertVersion || 0;
@@ -405,7 +421,7 @@ class Dashboard {
   /** all-configs'teki çalışma durumu (kenar çubuğundaki nokta yerine kaynağından). */
   async apiRunning(apiId) {
     return this.page.evaluate(async (id) => {
-      const key = localStorage.getItem('pinvault_api_key') || '';
+      const key = sessionStorage.getItem('pinvault_api_key') || '';
       const res = await fetch('/api/v1/all-configs', { headers: { 'X-API-Key': key } });
       const list = await res.json();
       const api = (list || []).find((a) => a.id === id);
@@ -434,7 +450,7 @@ class Dashboard {
   async mockRunning(apiId, host) {
     return this.page.evaluate(
       async ([id, hostname]) => {
-        const key = localStorage.getItem('pinvault_api_key') || '';
+        const key = sessionStorage.getItem('pinvault_api_key') || '';
         const res = await fetch(
           `/api/v1/hosts/${encodeURIComponent(hostname)}/status?configApiId=${encodeURIComponent(id)}`,
           { headers: { 'X-API-Key': key } },
@@ -711,7 +727,7 @@ class Dashboard {
    * Dashboard'u ayrı bir tarayıcı bağlamında, verilen yönetici anahtarıyla
    * açar (ADMIN_KEYS: alice, bob). İki yönetici aynı anda iki bağlamda
    * çalışabilsin diye her çağrı yeni bir bağlam açar; anahtar yalnızca
-   * sayfanın localStorage'ına yazılır, kanıta girmez. Kapatmak için
+   * sayfanın sessionStorage'ına yazılır, kanıta girmez. Kapatmak için
    * `dashboard.context.close()`.
    */
   static async openAs(browser, testInfo, key, { baseUrl } = {}) {
@@ -722,7 +738,7 @@ class Dashboard {
     const dashboard = new Dashboard(page, testInfo, { baseUrl: origin });
     dashboard.context = context;
     Dashboard.attachDialogs(page, dashboard);
-    await page.addInitScript((value) => localStorage.setItem('pinvault_api_key', value), key);
+    await Dashboard.seedApiKey(page, key);
     await dashboard.open();
     return dashboard;
   }
@@ -1201,10 +1217,19 @@ class Dashboard {
    * üretildiği anda tek seferlik bir dialog'da gösteriliyor ve listede yalnızca
    * maskeli önek görünüyor. Bu yüzden token tablodan değil dialog'dan okunuyor
    * — generateVaultToken ile aynı akış.
+   *
+   * "Cihaz kimliği (ANDROID_ID)" alanı varsayılan olarak test telefonundaki
+   * uygulamanın ANDROID_ID'siyle doldurulur: token yalnızca o telefona çalışır
+   * ve sunucu telefonun kimliğini kanıtlanmış sayar (token_mtls dosyaları,
+   * mTLS üzerinden anahtar değişimi, host ACL'i, iptal bloğunun kalkması).
+   * `{ deviceUid: null }` alanı boş bırakır (bağlanmamış token); bir dize
+   * verilirse o yazılır.
    */
-  async generateEnrollmentToken(apiId, clientId) {
+  async generateEnrollmentToken(apiId, clientId, { deviceUid } = {}) {
+    const uid = deviceUid === undefined ? testDeviceUid() : deviceUid;
     await this.openConfigApiTab(apiId, 'mtls');
     await this.page.fill('#enrollment-client-id', clientId);
+    await this.page.fill('#enrollment-device-uid', uid || '');
     const before = this.dialogs.length;
     await this.page.locator('form[data-action-submit="generateEnrollmentToken"] button[type="submit"]').click();
     await expect.poll(() => this.dialogs.length).toBeGreaterThan(before);
@@ -1289,9 +1314,22 @@ class Dashboard {
 
   /** Sayfadaki tek bir öğenin görüntüsü rapora (kart, satır). */
   async snapElement(title, selector) {
-    const target = this.page.locator(selector).first();
-    await target.scrollIntoViewIfNeeded();
-    await this.testInfo.attach(attachmentName('🌐', title), { body: await target.screenshot(), contentType: 'image/png' });
+    // Kartlar sunucu cevabıyla yeniden çizilebiliyor; öğe o anda DOM'dan
+    // koparsa konumlayıcı yeniden çözülüp tekrar denenir.
+    let body;
+    for (let attempt = 0; ; attempt++) {
+      try {
+        const target = this.page.locator(selector).first();
+        await target.waitFor({ state: 'visible', timeout: 10_000 });
+        await target.scrollIntoViewIfNeeded();
+        body = await target.screenshot();
+        break;
+      } catch (e) {
+        if (attempt >= 4 || !/not attached|detached/i.test(String(e.message))) throw e;
+        await this.page.waitForTimeout(300);
+      }
+    }
+    await this.testInfo.attach(attachmentName('🌐', title), { body, contentType: 'image/png' });
   }
 
   /**

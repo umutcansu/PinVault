@@ -320,7 +320,7 @@ class EvidenceReporter {
     const allOk = passed === total;
     const when = this.startedAt.toLocaleString('tr-TR');
     const device = this.run ? `${this.run.manufacturer} ${this.run.model} (${this.run.serial})` : 'cihaz bilinmiyor';
-    const build = env.VARIANT === 'release' ? 'uygulama: release derlemesi (R8 ile küçültülmüş)' : 'uygulama: debug derlemesi';
+    const build = env.VARIANT === 'e2e' ? 'uygulama: e2e derlemesi (release ile aynı R8 küçültmesi + test kontrolleri)' : 'uygulama: debug derlemesi';
 
     const sorted = this.sortedEntries();
     // Bölümler grup grup: bir grup başlığı yalnızca bir kez, Kurulum en başta.

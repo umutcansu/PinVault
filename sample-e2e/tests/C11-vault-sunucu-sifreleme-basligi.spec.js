@@ -8,6 +8,7 @@
 const { test, expect } = require('../lib/fixtures');
 const { attachText, describeResponse, hexdump } = require('../lib/evidence');
 const hostApi = require('../lib/hostApi');
+const secureVault = require('../lib/secureVault');
 const env = require('../lib/env');
 
 const KEY = env.VAULT_KEYS.flags;
@@ -17,12 +18,20 @@ test('Vault şifreleme başlığı: sunucu end_to_end derse kütüphane uygulama
   device,
   dashboard,
 }, testInfo) => {
-  test.setTimeout(8 * 60 * 1000);
+  test.setTimeout(10 * 60 * 1000);
   const body = `basligin-ezdigi-icerik-${Date.now()}`;
   let version;
   let deviceId;
+  const sv = { clientId: `c11-cihaz-${Date.now()}` };
 
   try {
+    // Cihazın RSA anahtarı yalnızca bir end_to_end dosyası tanımlıyken üretilip
+    // kaydedilir; örnek uygulamada o dosya (sample-e2e) gizli ve mTLS bloğunda,
+    // yani cihaz mTLS'e kayıtlıyken. Bu yüzden önce kayıt olunur.
+    await test.step('Hazırlık: cihaz mTLS\'e kayıt olur (cihaz RSA anahtarı üretilip kaydedilir)', async () => {
+      await secureVault.prepare({ app, device, dashboard }, sv, { screenLock: false });
+    });
+
     await test.step('Web: dosya şifresiz (plain) yüklenir', async () => {
       version = await dashboard.uploadVaultText(env.VAULT_API, KEY, body, { policy: 'public', encryption: 'plain' });
       await dashboard.snapCard('.card:has(#vault-upload-key) ~ .card', 'vault dosyaları — plain');
@@ -45,7 +54,7 @@ test('Vault şifreleme başlığı: sunucu end_to_end derse kütüphane uygulama
       expect(status).toContain(body);
     });
 
-    await test.step('Web: şifreleme dashboard\'dan end_to_end yapılır (içerik değişmeden)', async () => {
+    await test.step('Web: şifreleme dashboard\'dan end_to_end yapılır (içerik aynı, sürüm bir artar)', async () => {
       const summary = await dashboard.setVaultPolicy(env.VAULT_API, KEY, {
         policy: 'public',
         encryption: 'end_to_end',
@@ -54,6 +63,9 @@ test('Vault şifreleme başlığı: sunucu end_to_end derse kütüphane uygulama
       expect(summary).toEqual({ policy: 'public', encryption: 'end_to_end' });
       await dashboard.openConfigApiTab(env.VAULT_API, 'vault');
       const cells = await dashboard.vaultRowCells(KEY);
+      // Şifreleme değişince sürüm artar: düz inmiş kopyalar 304 almasın, dosyayı
+      // yeni şifrelemeyle yeniden çeksin.
+      version += 1;
       expect(Number(cells.version.replace(/\D/g, ''))).toBe(version);
       expect(cells.encryption).toContain('end_to_end');
     });
@@ -144,5 +156,6 @@ test('Vault şifreleme başlığı: sunucu end_to_end derse kütüphane uygulama
     });
   } finally {
     await hostApi.deleteVaultFile(env.VAULT_API, KEY).catch(() => {});
+    await secureVault.cleanup({ device }, sv);
   }
 });

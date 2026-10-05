@@ -47,7 +47,8 @@ test('Kodsuz başvuru: telefon bir şey girmeden başvurur, panelde aynı doğru
       clientId = /kimlik: (\S+)/.exec(status)[1];
       code = /doğrulama kodu: (\S+)/.exec(status)[1];
       expect(clientId).toMatch(/^device-[0-9a-z]{6}$/);
-      expect(code).toMatch(/^[0-9A-HJKMNP-TV-Z]{4}-[0-9A-HJKMNP-TV-Z]{4}$/);
+      // 80 bit, 16 karakter: SHA-256(SPKI)'nin ilk 10 baytı, Crockford base32 (2.2.0; önce 8 karakterdi).
+      expect(code).toMatch(/^[0-9A-HJKMNP-TV-Z]{4}(-[0-9A-HJKMNP-TV-Z]{4}){3}$/);
       expect(app.enrollState()).toContain(code);
     });
 

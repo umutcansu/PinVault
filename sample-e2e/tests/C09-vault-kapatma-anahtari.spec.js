@@ -25,7 +25,7 @@ const WORK_DIR = path.join(env.LOCAL_DIR, 'c09');
 const P12 = path.join(WORK_DIR, 'client.p12');
 const CERT_PEM = path.join(WORK_DIR, 'client-cert.pem');
 const KEY_PEM = path.join(WORK_DIR, 'client-key.pem');
-const PINVAULT_DIR = process.env.E2E_PINVAULT_DIR || path.resolve(env.ROOT, '..', 'PinVault');
+const PINVAULT_DIR = process.env.E2E_PINVAULT_DIR || path.resolve(env.ROOT, '..');
 
 function splitP12(p12, password = 'changeit') {
   execFileSync('openssl', ['pkcs12', '-in', p12, '-passin', `pass:${password}`, '-nokeys', '-out', CERT_PEM]);
@@ -205,7 +205,8 @@ test('Vault\'u kapatma ayarı: "vault aktif" kapatılınca indirme gerçekten du
     await test.step('Ağ trafiği: mTLS portunda da indirme 403', async () => {
       await dashboard.generateClientCert(env.MTLS_API, certId, { saveTo: P12 });
       splitP12(P12);
-      const res = await mtlsDownload(KEY, `c09-gozlemci-${stamp}`);
+      // Cihaz kimliği sertifikaya ait olmalı (DeviceIdBinding): sertifikanın kendi id'si gönderilir.
+      const res = await mtlsDownload(KEY, certId);
       await attachText(
         testInfo,
         `GET https://${env.LAN_IP}:${env.MTLS_API_PORT}/api/v1/vault/${KEY} — vault_enabled = false`,

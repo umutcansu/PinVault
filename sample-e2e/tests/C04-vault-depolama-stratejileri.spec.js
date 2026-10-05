@@ -45,10 +45,13 @@ test('Vault depolama: ENCRYPTED_FILE şifreli .enc dosyası, ENCRYPTED_PREFS şi
       await app.snap(`${FLAGS} v${flagsVersion} indirildi (şifreli SharedPreferences)`);
     });
 
-    await test.step('Cihaz: ENCRYPTED_FILE — .enc dosyası şifreli, başında [iv_len][iv] var', async () => {
+    await test.step('Cihaz: ENCRYPTED_FILE — .enc dosyası şifreli, başında PVF2 [sürüm][iv_len][iv] var', async () => {
       const listing = device.appFiles(env.APP_ID, 'files/vault_files');
       const blob = device.appFileBytes(env.APP_ID, ENC_FILE);
-      const ivLen = blob[0];
+      const magic = blob.subarray(0, 4).toString('latin1');
+      const storedVersion = blob.readInt32BE(4);
+      const ivLen = blob[8];
+      const bodyLen = blob.length - 9 - ivLen;
       await attachText(
         testInfo,
         `adb shell run-as ${env.APP_ID} ls -la files/vault_files`,
@@ -59,36 +62,46 @@ test('Vault depolama: ENCRYPTED_FILE şifreli .enc dosyası, ENCRYPTED_PREFS şi
         `${ENC_FILE} — ham içerik`,
         [
           `düz metin: ${modelBody.length} bayt, dosya: ${blob.length} bayt`,
-          `başlık: [iv_len=${ivLen}] iv=${blob.subarray(1, 1 + ivLen).toString('hex')}`,
-          `şifreli gövde + GCM etiketi: ${blob.length - 1 - ivLen} bayt (düz metin + 16 bayt etiket)`,
+          `başlık: ${magic} [sürüm=${storedVersion}] [iv_len=${ivLen}] iv=${blob.subarray(9, 9 + ivLen).toString('hex')}`,
+          `şifreli gövde + GCM etiketi: ${bodyLen} bayt (düz metin + 16 bayt etiket)`,
           '',
           hexdump(blob, 96),
           '',
           `Düz metin ("${modelBody.slice(0, 24)}…") dosyada geçiyor mu: ` +
             `${blob.includes(Buffer.from(modelBody, 'utf8')) ? 'EVET ✗' : 'hayır ✓'}`,
           '',
+          'Dosyanın adı ve sürümü GCM etiketinin kapsadığı ek veride: dosya başka bir',
+          'adın yerine taşınır ya da sürümü değiştirilirse çözülmüyor, silinip yeniden iniyor.',
           'Şifreleme anahtarı dosyada değil, Android Keystore\'da (alias: pinvault_vault_' + MODEL + ';',
           'Depolama ekranında listeleniyor). Dosya başka bir cihaza kopyalansa açılamaz.',
         ].join('\n'),
       );
+      expect(magic).toBe('PVF2');
+      expect(storedVersion).toBe(Number(modelVersion));
       expect(ivLen).toBe(12);
-      expect(blob.length).toBe(1 + 12 + modelBody.length + 16);
+      expect(blob.length).toBe(4 + 4 + 1 + 12 + modelBody.length + 16);
       expect(blob.includes(Buffer.from(modelBody, 'utf8'))).toBe(false);
       expect(listing).toContain(`${MODEL}.enc`);
 
-      const versions = device.appFileText(env.APP_ID, 'shared_prefs/pinvault_vault_file_versions.xml');
+      // Sürüm artık düz bir tercih kaydında tutulmuyor (uygulamanın depolamasına
+      // yazabilen biri onu değiştirebiliyordu); dosyanın kendisinden okunuyor.
+      let versions = '';
+      try {
+        versions = device.appFileText(env.APP_ID, 'shared_prefs/pinvault_vault_file_versions.xml');
+      } catch {
+        versions = '(dosya yok)';
+      }
       await attachText(
         testInfo,
-        'shared_prefs/pinvault_vault_file_versions.xml (dosya deposunun sürüm tablosu)',
+        'shared_prefs/pinvault_vault_file_versions.xml (eski sürüm tablosu)',
         [
           versions.trim(),
           '',
-          'Sürüm numarası şifresiz: gizli bir bilgi değil ve sunucunun "değişmedi" (304)',
-          'yanıtı için gerekli. İçerik burada yok.',
+          `vault_file_ver_${MODEL} kaydı var mı: ${versions.includes(`vault_file_ver_${MODEL}`) ? 'EVET ✗' : 'hayır ✓'}`,
+          'Sürüm şifreli dosyanın başlığında ve GCM etiketinin kapsamında.',
         ].join('\n'),
       );
-      expect(versions).toContain(`vault_file_ver_${MODEL}`);
-      expect(versions).toContain(`value="${modelVersion}"`);
+      expect(versions).not.toContain(`vault_file_ver_${MODEL}`);
       expect(versions).not.toContain(modelBody.slice(0, 24));
     });
 
@@ -123,7 +136,7 @@ test('Vault depolama: ENCRYPTED_FILE şifreli .enc dosyası, ENCRYPTED_PREFS şi
       await app.snap('Depolama ekranı — vault depoları');
       await attachText(testInfo, 'Depolama ekranı dökümü', text);
       expect(text).toContain(`${MODEL}.enc`);
-      expect(text).toContain('[iv_len=12]');
+      expect(text).toContain(`PVF2 [sürüm=${modelVersion}] [iv_len=12]`);
       expect(text).toContain('pinvault_secure_vault_files.xml');
       expect(text).toContain('kayıt adları okunabilir mi: hayır ✓');
       expect(text).toContain('düz metin sızıntısı (host adı, IP, pin): yok');

@@ -244,7 +244,7 @@ test('Web+Mobil+Terminal: canlı sertifika kontrolü — sunucunun şu an sundu�
         testInfo,
         `Webhook alıcısı (${sink.url})`,
         [
-          `X-PinVault-Event: ${hit.event}   X-PinVault-Signature: ${hit.signature.slice(0, 23)}… → HMAC ${hit.signatureValid ? 'doğru ✓' : 'YANLIŞ'}`,
+          `X-PinVault-Event: ${hit.event}   X-PinVault-Timestamp: ${hit.timestamp}   X-PinVault-Signature: ${hit.signature.slice(0, 23)}… → HMAC("<zaman damgası>.<gövde>") ${hit.signatureValid ? 'doğru ✓' : 'YANLIŞ'}`,
           '',
           JSON.stringify({ ...hit.json, detail: '(canlı kontrol sonucu: sunulan sertifika, bağlanılan adres)' }, null, 2),
         ].join('\n'),

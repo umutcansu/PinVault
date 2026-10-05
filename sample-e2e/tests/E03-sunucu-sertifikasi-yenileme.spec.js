@@ -23,7 +23,7 @@ const UPLOAD_JKS = 'e03-upload-source.jks';
 const FRESH_PROPS = path.join(env.LOCAL_DIR, 'host-fresh.properties');
 
 function writeFreshProps() {
-  const out = fresh.run('./scripts/client-config.sh', ['--properties']);
+  const out = fresh.run('./scripts/client-config.sh', env.CLIENT_CONFIG_ARGS);
   fs.writeFileSync(FRESH_PROPS, out);
   return out;
 }

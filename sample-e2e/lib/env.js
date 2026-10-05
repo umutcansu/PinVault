@@ -10,12 +10,27 @@ const CLIENT_DIR = path.resolve(process.env.E2E_CLIENT_DIR || path.join(ROOT, '.
 /** Koşuya özel üretilen dosyalar (host değerleri, özel backend anahtarları); git dışı. */
 const LOCAL_DIR = path.join(ROOT, '.local');
 /**
- * Test edilen derleme. E2E_VARIANT=release: R8 ile küçültülmüş release
- * derlemesi (gerçek uygulamaların yayınladığı hâl); teşhis log'ları
- * -Psample.diagnosticLogs=true ile açılır, senaryolar log'lardan izler.
+ * Test edilen derleme türü (sample-client/app/build.gradle.kts):
+ *   debug (varsayılan) : geliştirme derlemesi.
+ *   e2e                : release'in aynısı (R8 ile küçültülmüş, aynı keep
+ *                        kuralları, aynı paket adı) + test kontrolleri, debug
+ *                        anahtarıyla imzalı. E2E_VARIANT=e2e ile seçilir;
+ *                        teşhis log'ları -Psample.diagnosticLogs=true ile açılır.
+ * Gerçek `release` türü burada KULLANILMAZ: test kontrolleri (Ayarlar, Depolama,
+ * mode eki, otomatik kayıt, elle P12) onda yoktur, test bayraklarıyla
+ * derlenmez ve gerçek imza anahtarı ister. E2E_VARIANT=release eski adıdır;
+ * e2e sayılır.
  */
-const VARIANT = process.env.E2E_VARIANT === 'release' ? 'release' : 'debug';
-const GRADLE_BUILD = VARIANT === 'release' ? ['assembleRelease', '-Psample.diagnosticLogs=true'] : ['assembleDebug'];
+const VARIANT = ['e2e', 'release'].includes(process.env.E2E_VARIANT) ? 'e2e' : 'debug';
+/**
+ * -Psample.e2eScreenshots=true: uygulamanın bütün ekranları normalde
+ * FLAG_SECURE ile ekran görüntüsüne kapalı (siyah çıkar). Kanıt sayfası her
+ * adımın görüntüsünü istediği için yalnızca test derlemeleri bunu kapatır
+ * (release türü bu bayrakla derlenmez).
+ */
+const GRADLE_BUILD = VARIANT === 'e2e'
+  ? ['assembleE2e', '-Psample.diagnosticLogs=true', '-Psample.e2eScreenshots=true']
+  : ['assembleDebug', '-Psample.e2eScreenshots=true'];
 
 function readDotEnv(file) {
   const out = {};
@@ -50,9 +65,14 @@ module.exports = {
   KEYSTORE_PASSWORD: hostEnv.KEYSTORE_PASSWORD || 'changeit',
   WEB_URL: process.env.E2E_WEB_URL || `http://localhost:${hostEnv.HOST_HTTP_PORT || '6650'}`,
   HTTP_PORT: Number(hostEnv.HOST_HTTP_PORT || 6650),
-  /** Yönetim API'sinin şifreli portu: telefonların raporları buraya gider. */
+  /** Yönetim API'sinin şifreli portu (başka makineden dashboard). Telefonlar bu porta bağlanmaz. */
   MANAGEMENT_TLS_PORT: Number(hostEnv.HOST_MANAGEMENT_TLS_PORT || 6655),
   CONFIG_API_PORT: Number(hostEnv.HOST_HTTPS_PORT || 6651),
+  /**
+   * Telefonların raporlarının (telemetri) gittiği port: Config API portu.
+   * Uygulama raporları config'le aynı dinleyiciye, aynı pin'lerle gönderir.
+   */
+  REPORT_PORT: Number(hostEnv.HOST_HTTPS_PORT || 6651),
   MTLS_API_PORT: Number(hostEnv.HOST_MTLS_PORT || 6652),
   MOCK_TLS_PORT: Number(hostEnv.HOST_MOCK_TLS_PORT || 6653),
   MOCK_MTLS_PORT: Number(hostEnv.HOST_MOCK_MTLS_PORT || 6654),
@@ -71,6 +91,12 @@ module.exports = {
   HOST_PINS_FILE: path.join(HOST_DIR, 'data/certs/demo-server.pins'),
   SIGNING_KEY_FILE: path.join(HOST_DIR, 'data/signing-key.pem'),
   /**
+   * Ana host'un imzalama anahtarı dosyasının parolası (.env → SIGNING_KEY_PASSWORD;
+   * setup.sh demo profilinde de üretir). Dosya diskte "ENCv1:" ile şifrelidir;
+   * lib/signingKeyFile.js bununla açar. Gizli: panellere girmez.
+   */
+  SIGNING_KEY_PASSWORD: hostEnv.SIGNING_KEY_PASSWORD || '',
+  /**
    * Harness'ın çevrimdışı anahtarları (yedek, kurtarma, ek imzalayıcılar);
    * lib/offlineKeys.js. Host'un signing-keys.sh betiği OFFLINE_KEYS_DIR ile
    * buraya yönlendirilir.
@@ -86,12 +112,33 @@ module.exports = {
   PROXY_KEY_FILE: path.join(HOST_DIR, 'data/proxy/server-key.pem'),
   PROXY_CERT_FILE: path.join(HOST_DIR, 'data/proxy/server-cert.pem'),
   CONTAINER: process.env.E2E_CONTAINER || 'pinvault-host',
+  /**
+   * Hedefin sertifikası herkesin güvendiği bir CA'dan değilse
+   * (E2E_TARGET_REQUIRE_CA_TRUST=false) host'un client-config.sh betiğine
+   * verilecek ek argüman; betik onsuz doğrulanmayan bir zincirden pin almaz.
+   */
+  CLIENT_CONFIG_ARGS: process.env.E2E_TARGET_REQUIRE_CA_TRUST === 'false'
+    ? ['--properties', '--target-private-ca']
+    : ['--properties'],
   /** Uygulamanın pin'lediği gerçek site: sample-host/.env'deki TARGET_HOST. */
   TARGET_HOST: process.env.E2E_TARGET_HOST || hostEnv.TARGET_HOST || 'www.example.com',
-  /** Uygulamanın vault dosyalarının ve telemetrisinin bağlı olduğu Config API. */
+  /**
+   * Uygulamanın vault dosyalarının ve telemetrisinin bağlı olduğu Config API.
+   * Uygulamanın TLS bloğu bu kimliğe bağlıdır (host.tlsScope → serverScope).
+   */
   VAULT_API: 'default-tls',
   /** scripts/provision.sh'ın açtığı mTLS Config API. */
   MTLS_API: 'sample-mtls',
+  /**
+   * Gizli vault dosyalarının (secret, e2e, mtlsSecret) bulunduğu Config API.
+   * Uygulama onları mTLS bloğunda, token_mtls ve ekran kilidiyle tanımlar;
+   * yalnızca cihaz mTLS'e kayıtlıyken (lib/secureVault.js).
+   */
+  SECURE_VAULT_API: 'sample-mtls',
+  /** Gizli dosya senaryolarının emülatöre geçici koyduğu ekran kilidi PIN'i. */
+  SCREEN_LOCK_PIN: process.env.E2E_SCREEN_LOCK_PIN || '1357',
+  /** Uygulamanın "Aç" düğmesindeki kilit sorusunun başlığı (strings.xml: vault_unlock_prompt_title). */
+  UNLOCK_PROMPT_TITLE: 'Gizli dosyayı aç',
   /** Uygulamanın tanıdığı vault anahtarları (App.java). */
   VAULT_KEYS: {
     flags: 'sample-flags',

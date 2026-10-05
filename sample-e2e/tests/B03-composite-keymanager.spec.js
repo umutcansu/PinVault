@@ -90,11 +90,14 @@ test('mTLS: composite KeyManager Config API\'ye kayıt sertifikasını, mock hos
         [
           log,
           '',
-          `Beklenen: "Host client cert loaded: ${env.MOCK_MTLS_HOST} → CN=PinVault Client: ${hostCertId}"`,
-          've pinleme uygulanırken defaultCert=true, hostCerts=1.',
+          `Beklenen: "Host client key loaded: ${env.MOCK_MTLS_HOST}" (anahtar Android Keystore\'a dışarı çıkarılamaz`,
+          'olarak alındı: "key in Keystore: true") ve pinleme uygulanırken defaultCert=true, hostCerts=1.',
+          'Sertifikanın adı (CN = cihaz kimliği) gizlilik için artık günlüğe yazılmıyor.',
         ].join('\n'),
       );
-      expect(log).toContain(`Host client cert loaded: ${env.MOCK_MTLS_HOST} → CN=PinVault Client: ${hostCertId}`);
+      expect(log).toMatch(new RegExp(`Host client (key|cert) loaded: ${env.MOCK_MTLS_HOST.replace(/\./g, '\\.')}`));
+      expect(log).toContain('key in Keystore: true');
+      expect(log).not.toContain(hostCertId);
       expect(log).toMatch(/defaultCert=true, hostCerts=1/);
     });
 
@@ -186,6 +189,7 @@ test('mTLS: composite KeyManager Config API\'ye kayıt sertifikasını, mock hos
   } finally {
     await mtlsScope.reset().catch(() => {});
     await hostApi.revokeClientCertIfActive(hostCertId).catch(() => {});
-    await hostApi.revokeClientCertIfActive(deviceCertId).catch(() => {});
+    // İptal + unut: token telefona bağlı, kimlik cihazı kanıtlıyor (bkz. retireClientIdentity).
+    await hostApi.retireClientIdentity(deviceCertId);
   }
 });

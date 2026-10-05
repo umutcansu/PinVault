@@ -2,6 +2,11 @@
 // alıcısı. Mac'te dinler; container ona host.docker.internal üzerinden ulaşır.
 // Her isteğin gövdesini, başlıklarını ve HMAC imzasının doğru olup olmadığını
 // saklar — kanıt panelleri bunları gösterir.
+//
+// İmza: X-PinVault-Signature = "sha256=" + HMAC-SHA256(gizli anahtar,
+// "<X-PinVault-Timestamp>.<gövde>"). Zaman damgası imzanın içinde olduğu için
+// yakalanan bir bildirim sonradan yeniden gönderilirse alıcı onu eski diye
+// reddedebilir (burada: 5 dakikadan eski ya da ileri tarihli → geçersiz).
 const http = require('http');
 const crypto = require('crypto');
 const env = require('./env');
@@ -19,9 +24,9 @@ async function start({ secret, port = env.WEBHOOK_PORT } = {}) {
     req.on('end', () => {
       const body = Buffer.concat(chunks).toString('utf8');
       const signature = req.headers['x-pinvault-signature'] || null;
-      const expected = secret
-        ? `sha256=${crypto.createHmac('sha256', secret).update(body).digest('hex')}`
-        : null;
+      const timestamp = req.headers['x-pinvault-timestamp'] || null;
+      const expected = secret && timestamp ? signatureFor(secret, timestamp, body) : null;
+      const fresh = timestamp !== null && /^\d+$/.test(timestamp) && Math.abs(Date.now() / 1000 - Number(timestamp)) <= MAX_AGE_SECONDS;
       let json = null;
       try {
         json = JSON.parse(body);
@@ -33,7 +38,10 @@ async function start({ secret, port = env.WEBHOOK_PORT } = {}) {
         path: req.url,
         event: req.headers['x-pinvault-event'] || null,
         signature,
-        signatureValid: expected ? signature === expected : null,
+        timestamp,
+        timestampFresh: fresh,
+        // Gizli anahtar verilmediyse null; verildiyse imza VE zaman damgası tutmalı.
+        signatureValid: secret ? expected !== null && signature === expected && fresh : null,
         body,
         json,
       });
@@ -68,4 +76,12 @@ async function start({ secret, port = env.WEBHOOK_PORT } = {}) {
   };
 }
 
-module.exports = { start };
+/** Bir alıcının yeniden hesapladığı imza: "sha256=" + HMAC-SHA256(secret, "<timestamp>.<body>"). */
+function signatureFor(secret, timestamp, body) {
+  return `sha256=${crypto.createHmac('sha256', secret).update(`${timestamp}.${body}`).digest('hex')}`;
+}
+
+/** Bundan eski (ya da bu kadar ileri) zaman damgalı bildirim geçersiz sayılır. */
+const MAX_AGE_SECONDS = 300;
+
+module.exports = { start, signatureFor };

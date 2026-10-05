@@ -10,7 +10,8 @@
 //     (sürüm, eklenen / çıkan pin) düşer; kayıtlar, kayıtları birbirine
 //     bağlayan bir hash zinciriyle tutulur,
 //   • NOTIFY_WEBHOOK_URL ile olay anında dışarı gönderilir: gövde paylaşılan
-//     gizli anahtarla imzalı (HMAC, X-PinVault-Signature) ve kaydın hash
+//     gizli anahtarla imzalı (HMAC, X-PinVault-Signature; imza "<X-PinVault-
+//     Timestamp>.<gövde>" üzerinden, yani eski bir bildirim yeniden gönderilemez) ve kaydın hash
 //     zincirindeki değerini taşır, yani veritabanında sonradan yeniden yazılan
 //     bir kayıt dışarıdaki kopyayla çelişir,
 //   • yanlış anahtar denemesi "auth_failed" olarak (kim: unknown, kaynak IP)
@@ -144,7 +145,8 @@ test('Web+Mobil+Terminal: kişisel yönetici anahtarları — kimlik rozeti, de�
 
     await test.step('Terminal: webhook pins_changed bildirimini aldı — X-PinVault-Signature (HMAC) imzası doğru; gövdedeki auditId/auditHash denetim kaydıyla aynı', async () => {
       const hit = await sink.waitFor((r) => r.json && r.json.event === 'pins_changed' && r.json.auditId === pinEntry.id);
-      const recomputed = `sha256=${crypto.createHmac('sha256', secret).update(hit.body).digest('hex')}`;
+      // İmza "<X-PinVault-Timestamp>.<gövde>" üzerinden: zaman damgası da imzalı.
+      const recomputed = webhookSink.signatureFor(secret, hit.timestamp, hit.body);
       await expect
         .poll(async () => ((await hostApi.notifications(keys.alice)).recent || []).some((d) => d.auditId === pinEntry.id && d.status === 204), {
           timeout: 20_000,
@@ -159,8 +161,10 @@ test('Web+Mobil+Terminal: kişisel yönetici anahtarları — kimlik rozeti, de�
         [
           `POST ${hit.path}   (${hit.at})`,
           `X-PinVault-Event    : ${hit.event}`,
+          `X-PinVault-Timestamp: ${hit.timestamp} (${hit.timestampFresh ? 'şimdiye yakın ✓' : 'ESKİ ya da İLERİ ✗'})`,
           `X-PinVault-Signature: ${hit.signature.slice(0, 23)}…`,
-          `HMAC-SHA256(NOTIFY_WEBHOOK_SECRET, gövde) yeniden hesaplandı: ${recomputed.slice(0, 23)}… → ${hit.signatureValid ? 'EŞİT ✓' : 'FARKLI ✗'}`,
+          `HMAC-SHA256(NOTIFY_WEBHOOK_SECRET, "<zaman damgası>.<gövde>") yeniden hesaplandı: ${recomputed.slice(0, 23)}… → ${hit.signatureValid ? 'EŞİT ✓' : 'FARKLI ✗'}`,
+          'Zaman damgası imzanın içinde: yakalanan bir bildirim sonradan yeniden gönderilirse alıcı onu eski diye reddeder.',
           '',
           JSON.stringify(body, null, 2),
           '',
@@ -171,6 +175,8 @@ test('Web+Mobil+Terminal: kişisel yönetici anahtarları — kimlik rozeti, de�
         ].join('\n'),
       );
       expect(hit.signatureValid).toBe(true);
+      expect(hit.timestamp).toMatch(/^\d+$/);
+      expect(hit.timestampFresh).toBe(true);
       expect(hit.signature).toBe(recomputed);
       expect(hit.event).toBe('pins_changed');
       expect(hit.json.actor).toBe('alice');

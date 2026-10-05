@@ -12,8 +12,11 @@
 //     çalışmaya devam eder (fail-safe),
 //   • saklı config'i olmayan uygulama hiç başlayamaz (şüphede bağlantıya izin
 //     vermez),
-//   • uyuşmazlık dashboard'a pin_mismatch olarak raporlanır; telefonun gördüğü
-//     pin ile beklenen pin kayda birlikte düşer.
+//   • uyuşmazlık telefonun kendi olay listesine düşer. Cihaz raporları
+//     (telemetri) da Config API portundan gittiği için saldırı sürerken
+//     sunucuya ULAŞAMAZ: araya giren, o yoldaki her şeyi düşürebilir. Raporlar
+//     da pinli olduğundan saldırgan onları okuyamaz ve sahtesini üretemez.
+//     (Hedef host'lardaki uyuşmazlığın dashboard'a düşmesi: senaryo 03.)
 const { test, expect, TARGET_HOST } = require('../lib/fixtures');
 const { attachText } = require('../lib/evidence');
 const { sleep } = require('../lib/android');
@@ -21,7 +24,7 @@ const proxy = require('../lib/proxy');
 const hostApi = require('../lib/hostApi');
 const env = require('../lib/env');
 
-test('Saldırı: araya sahte sertifikalı bir sunucu girer → telefon ona hiç istek göndermiyor, pin uyuşmazlığını raporluyor', async ({
+test('Saldırı: araya sahte sertifikalı bir sunucu girer → telefon ona hiç istek göndermiyor, uyuşmazlığı kaydediyor; saldırgan raporları da göremiyor', async ({
   app,
   device,
   dashboard,
@@ -75,7 +78,7 @@ test('Saldırı: araya sahte sertifikalı bir sunucu girer → telefon ona hiç 
           '',
           'Telefon hâlâ https://' + env.LAN_IP + ':' + env.CONFIG_API_PORT + '/ adresine',
           'bağlandığını sanıyor; paketler saldırgana gidiyor. Hedef host\'a (' + TARGET_HOST + ')',
-          've cihaz raporlarının (telemetri) gittiği porta (' + env.MANAGEMENT_TLS_PORT + ') dokunulmadı.',
+          'dokunulmadı. Cihaz raporları (telemetri) da bu porttan gittiği için onlar da saldırgana yönleniyor.',
         ].join('\n'),
       );
       expect(rules).toContain(`--dport ${env.CONFIG_API_PORT}`);
@@ -157,37 +160,36 @@ test('Saldırı: araya sahte sertifikalı bir sunucu girer → telefon ona hiç 
       expect(logcat).toMatch(/Pin mismatch|pinning failure/);
     });
 
-    await test.step("Web: telefonun gönderdiği pin_mismatch raporu dashboard'da (telefonun gördüğü pin ile beklenen pin yan yana)", async () => {
-      // Bağlantı Geçmişi kartı host detayında: uyuşmazlık Config API host'una
-      // (LAN IP) ait, hedef host'a değil.
-      await dashboard.openHost(env.LAN_IP);
-      await dashboard.expectLatestConnection(run.model, { status: 'pin_mismatch' });
-      await dashboard.snapCard('#conn-history-card', 'pin_mismatch raporu');
+    await test.step('Mobil+Sunucu: uyuşmazlık telefonun olay listesinde; raporlar saldırgana da sunucuya da ulaşmadı', async () => {
+      // Raporlar (telemetri) Config API portundan, config'le aynı pin'lerle
+      // gider. O port saldırgana yönlendiği için rapor isteği de aynı TLS
+      // kontrolüne takılır: saldırgan içeriğini göremez, sunucuya da ulaşmaz.
+      await app.backToMain();
+      const eventLog = app.eventLog();
+      await app.snap('araya girme: olay listesinde uyuşmazlık');
       const rows = (await hostApi.connectionHistory(env.LAN_IP)).filter(
         (e) => e.deviceModel === run.model && e.status === 'pin_mismatch' && Date.parse(e.timestamp) >= startedAt,
       );
       await attachText(
         testInfo,
-        `Sunucudaki uyuşmazlık kayıtları (host ${env.LAN_IP})`,
+        'Uyuşmazlığın kaydı: telefonda var, sunucuya ulaşmadı',
         [
-          `kayıt sayısı: ${rows.length}`,
+          'Telefonun olay listesi:',
+          eventLog.split('\n').slice(0, 5).join('\n'),
           '',
-          ...rows.slice(0, 3).flatMap((e) => [
-            `${e.timestamp}  ${e.status}  (${e.deviceManufacturer} ${e.deviceModel})`,
-            `  telefonun gördüğü pin : ${e.serverCertPin}`,
-            `  beklenen pin          : ${e.storedPin}`,
-            `  eşleşti mi            : ${e.pinMatched}`,
-            '',
-          ]),
+          `Sunucuda bu süreye ait, bu cihazdan gelen pin_mismatch kaydı (host ${env.LAN_IP}): ${rows.length}`,
+          `Saldırgana ulaşan HTTP isteği (rapor POST'ları dahil): ${mitm.requests.length}`,
           `saldırganın sertifikasının pin'i: ${proxy.certPin('rogue')}`,
           '',
-          'Cihaz raporları (telemetri) şifreli yönetim portundan (' + env.MANAGEMENT_TLS_PORT + ') gidiyor; o port',
-          'yönlendirilmediği için uyuşmazlık haberi sunucuya ulaşabiliyor.',
+          'Cihaz raporları Config API portundan gider; telefon yönetim portuna hiç',
+          'bağlanmaz. Araya giren biri o yoldaki raporu düşürebilir, ama okuyamaz ve',
+          'sahtesini üretemez (rapor istemcisi de pinli). Uyuşmazlığı fark etmenin yolu',
+          'telefonun kendi kaydı ve cihazın sunucuya hiç ulaşamamasıdır.',
         ].join('\n'),
       );
-      expect(rows.length, 'bu testte oluşan pin_mismatch kaydı').toBeGreaterThan(0);
-      expect(rows[0].serverCertPin).toBe(proxy.certPin('rogue'));
-      expect(rows[0].pinMatched).toBe(false);
+      expect(eventLog).toContain('UYUŞMAZLIK');
+      expect(rows.length, 'saldırı sürerken uyuşmazlık raporu sunucuya ulaşamaz (aynı port saldırganda)').toBe(0);
+      expect(mitm.requests.length, 'rapor istekleri de saldırgana ulaşmamalı').toBe(0);
     });
 
     await test.step('Terminal: yönlendirme kaldırılır → uygulama normale dönüyor', async () => {

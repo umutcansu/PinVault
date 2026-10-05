@@ -1,50 +1,86 @@
-// Web → Mobil (cihaza özel şifreleme, end_to_end): dashboard'da end_to_end yüklenen dosya
-// ağ trafiğinde cihazın RSA anahtarıyla şifrelenmiş gider; yalnızca cihaz çözer.
+// Web → Mobil (gizli dosya, cihaza özel şifreleme): sample-e2e uygulamada
+// mTLS bloğunda, token_mtls politikasıyla ve ekran kilidi arkasında tanımlı
+// (encryption END_TO_END + userAuth REQUIRED). Sunucu dosyayı cihazın RSA
+// anahtarıyla şifreler; telefon çözer ve hemen ekran kilidi anahtarıyla
+// yeniden kilitleyip saklar. İçerik yalnızca "Aç" + ekran kilidiyle görünür.
 const { test, expect } = require('../lib/fixtures');
+const { attachText } = require('../lib/evidence');
 const hostApi = require('../lib/hostApi');
+const secureVault = require('../lib/secureVault');
 const env = require('../lib/env');
 
 const KEY = env.VAULT_KEYS.e2e;
+const API = env.SECURE_VAULT_API;
 
-test('Vault cihaza özel şifreleme: dosya ağ trafiğinde şifreli, yalnızca cihaz çözer', async ({ app, dashboard, run }) => {
+test('Vault cihaza özel şifreleme (gizli dosya): cihaz anahtarıyla şifreli gelir, telefonda kilitli durur, ekran kilidiyle açılır', async ({
+  app,
+  device,
+  dashboard,
+  run,
+}, testInfo) => {
+  test.setTimeout(12 * 60 * 1000);
   const plaintext = `uçtan uca gizli: ${Date.now()}`;
+  const sv = { clientId: `t15-cihaz-${Date.now()}` };
   let deviceId;
 
   try {
-    await test.step('Web: dosya end_to_end şifrelemeyle yüklenir', async () => {
-      await dashboard.uploadVaultText(env.VAULT_API, KEY, plaintext, { policy: 'public', encryption: 'end_to_end' });
-      await dashboard.snapCard('.card:has(#vault-upload-key) ~ .card', `${KEY} end_to_end ile yüklendi`);
+    await test.step('Hazırlık: telefona ekran kilidi, cihaz mTLS\'e kayıt olur', async () => {
+      await secureVault.prepare({ app, device, dashboard }, sv);
     });
 
-    await test.step('Mobil: dosya iner ve cihaz anahtarıyla çözülür', async () => {
+    await test.step('Web: dosya sample-mtls\'e token_mtls + end_to_end ile yüklenir, cihaza token üretilir', async () => {
+      await dashboard.uploadVaultText(API, KEY, plaintext, { policy: 'token_mtls', encryption: 'end_to_end' });
+      await dashboard.snapCard('.card:has(#vault-upload-key) ~ .card', `${KEY} token_mtls + end_to_end ile yüklendi`);
       await app.openVault();
       deviceId = app.deviceId();
-      const status = await app.fetchVault(KEY);
-      expect(status).toContain('indirildi');
-      expect(status).toContain('cihaz anahtarıyla çözüldü');
-      expect(status).toContain(plaintext);
-      await app.snap('uçtan uca çözüldü');
+      const token = await dashboard.generateVaultToken(API, KEY, deviceId);
+      await app.saveVaultToken(token, KEY);
     });
 
-    await test.step('Ağ trafiği: aynı dosya şifreli gidiyor, içinde açık metin yok', async () => {
-      const res = await hostApi.rawVaultDownload(KEY, deviceId);
-      expect(res.status).toBe(200);
-      expect(res.headers['x-vault-encryption']).toBe('end_to_end');
-      expect(res.body.includes(Buffer.from(plaintext, 'utf8'))).toBe(false);
-      // [4 bayt uzunluk][RSA ile sarılmış AES anahtarı][12 bayt IV][AES-GCM şifreli metin]
-      const wrappedKeyLength = res.body.readUInt32BE(0);
-      expect(wrappedKeyLength).toBeGreaterThanOrEqual(256);
-      await test.info().attach('ağ trafiğindeki ham veri (ilk 64 bayt, hex)', {
-        body: res.body.subarray(0, 64).toString('hex').replace(/(.{32})/g, '$1\n'),
-        contentType: 'text/plain',
-      });
+    await test.step('Mobil: dosya iner, cihaz anahtarıyla çözülür ve kilitlenir; içerik gösterilmez', async () => {
+      const status = await app.fetchVault(KEY);
+      await app.snap('cihaza özel şifreli dosya indi — kilitli');
+      expect(status).toContain('indirildi');
+      expect(status).toContain('cihaz anahtarıyla çözüldü');
+      expect(status).toContain('Kilitli');
+      expect(status).not.toContain(plaintext);
+    });
+
+    await test.step('Mobil: "Aç" + ekran kilidi → içerik görünüyor', async () => {
+      const status = await app.unlockVault(KEY);
+      await app.snap('ekran kilidiyle açıldı');
+      expect(status).toContain('açıldı');
+      expect(status).toContain(plaintext);
+    });
+
+    await test.step('Sunucu: dosya diskte şifreli, cihazın RSA anahtarı kayıtlı', async () => {
+      const blob = hostApi.vaultBlobFromDb(API, KEY);
+      const pem = hostApi.devicePublicKeyPem(deviceId, API);
+      await attachText(
+        testInfo,
+        `vault_files (${API}/${KEY}) ve device_public_keys (${deviceId})`,
+        [
+          `veritabanındaki blob: ${blob.length} bayt, düz metin içinde geçiyor mu: ${blob.includes(Buffer.from(plaintext, 'utf8')) ? 'EVET ✗' : 'hayır ✓'}`,
+          `cihazın kayıtlı RSA public key'i: ${pem ? 'var ✓' : 'YOK ✗'}`,
+          '',
+          'Dosya ağda cihazın RSA anahtarıyla şifreli gider ([4B uzunluk][RSA-OAEP ile',
+          'sarılmış AES anahtarı][12B IV][AES-GCM]); token_mtls olduğu için bu cihazın',
+          'sertifikası olmadan Mac\'ten indirilemiyor (C10 aynı şifrelemeyi herkese',
+          'açık bir dosyayla ağ trafiğinde gösterir). Şifrelemeyi sunucu yapar, yani',
+          'içeriği sunucu görür; user_auth da öyle, ama orada içerik telefona kilitli',
+          'gelir ve uygulama belleğinden geçmez.',
+        ].join('\n'),
+      );
+      expect(blob.includes(Buffer.from(plaintext, 'utf8'))).toBe(false);
+      expect(pem).toContain('BEGIN PUBLIC KEY');
     });
 
     await test.step('Web: dağıtım geçmişinde indirme görünür', async () => {
-      await dashboard.expectDistribution(env.VAULT_API, { key: KEY, deviceModel: run.model, status: 'downloaded' });
+      await dashboard.expectDistribution(API, { key: KEY, deviceModel: run.model, status: 'downloaded' });
       await dashboard.snap('dağıtım geçmişi');
     });
   } finally {
-    await hostApi.deleteVaultFile(env.VAULT_API, KEY);
+    await hostApi.deleteVaultFile(API, KEY).catch(() => {});
+    await secureVault.cleanup({ device }, sv);
   }
 });

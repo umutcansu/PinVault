@@ -13,6 +13,9 @@
 // Son adım "bir cihaz, bir etkin kimlik" kuralını gösteriyor: telefonda kayıt
 // silinse de sunucuda eski kimlik etkinken aynı cihaz yeni bir kimlikle kayıt
 // olamıyor (409, token harcanmıyor); eski kimlik iptal edilince aynı token geçiyor.
+//
+// Bir de panelde başka bir telefonun kimliğine (ANDROID_ID) bağlanmış token:
+// bu telefon onunla kayıt olamıyor (403 device_uid_mismatch) ve token harcanmıyor.
 const { test, expect } = require('../lib/fixtures');
 const { attachText, redact } = require('../lib/evidence');
 const { sleep } = require('../lib/android');
@@ -27,6 +30,7 @@ test('mTLS: kayıt token\'ı tek kullanımlık ve süreli', async ({ app, dashbo
   const spareId = `b06-spare-${stamp}`;
   const expiredId = `b06-expired-${stamp}`;
   const freshId = `b06-fresh-${stamp}`;
+  const otherId = `b06-other-${stamp}`;
   let firstToken;
 
   try {
@@ -57,6 +61,45 @@ test('mTLS: kayıt token\'ı tek kullanımlık ve süreli', async ({ app, dashbo
       const stored = (await hostApi.enrollmentTokens()).find((t) => t.clientId === firstId);
       expect(stored.token).not.toBe(firstToken);
       expect(stored.token).not.toContain(firstToken.slice(8));
+    });
+
+    await test.step('Web+Mobil: başka bir telefona bağlı token bu telefonda reddediliyor (403 device_uid_mismatch), token harcanmıyor', async () => {
+      await app.openMtls();
+      const mine = app.mtlsDeviceId();
+      // Başka bir telefonun kimliği (ANDROID_ID biçiminde, bu telefonunkinden farklı).
+      const otherUid = mine === '00c0ffee00c0ffee' ? '00decaf000decaf0' : '00c0ffee00c0ffee';
+      const otherToken = await dashboard.generateEnrollmentToken(env.MTLS_API, otherId, { deviceUid: otherUid });
+      const row = await dashboard.enrollmentTokenCells(otherId);
+      const result = await app.enroll(otherToken);
+      await app.snap('başka telefona bağlı token reddedildi');
+      const listed = (await hostApi.enrollmentTokens()).find((t) => t.clientId === otherId);
+      const certs = (await hostApi.clientCerts()).filter((c) => c.id === otherId);
+      await attachText(
+        testInfo,
+        'Başka bir telefona bağlı kayıt token\'ı',
+        [
+          `Bu telefonun kimliği (mTLS ekranı): ${mine}`,
+          `Token panelde şu kimliğe bağlandı: ${otherUid}`,
+          `Listedeki satır: ${row}`,
+          '',
+          'Telefon:',
+          result,
+          '',
+          `GET /api/v1/enrollment-tokens → used=${listed.used}, deviceUid=${listed.deviceUid}`,
+          `sunucuda ${otherId} için sertifika: ${certs.length}`,
+          '',
+          'Panelde "Cihaz kimliği (ANDROID_ID)" doldurulursa token yalnızca o telefona çalışıyor.',
+          'Başka bir telefonun isteği token harcanmadan 403 device_uid_mismatch alıyor; doğru',
+          'telefon aynı token\'la hâlâ kayıt olabilir. Sızan bir bağlı token başka telefonda işe yaramıyor.',
+        ].join('\n'),
+      );
+      expect(row).toContain(otherUid);
+      expect(result).toContain('Kayıt başarısız');
+      expect(result).toContain('device_uid_mismatch');
+      expect(app.enrollState()).toContain('Kayıtlı değil');
+      expect(listed.deviceUid).toBe(otherUid);
+      expect(listed.used).toBe(false);
+      expect(certs).toHaveLength(0);
     });
 
     await test.step('Mobil: token ile kayıt başarılı', async () => {
@@ -91,7 +134,11 @@ test('mTLS: kayıt token\'ı tek kullanımlık ve süreli', async ({ app, dashbo
         ].join('\n'),
       );
       expect(fromApi).toBeGreaterThan(0);
-      expect(count).toBe(fromApi);
+      // Liste sayfalı (varsayılan 10 satır): sayfada min(toplam, 10) satır
+      // durur, sayfalayıcının "a-b / toplam" sayacı sunucudaki bütün token'ları sayar.
+      expect(count).toBe(Math.min(fromApi, 10));
+      const pager = await dashboard.page.locator('#enrollment-token-list').innerText();
+      expect(pager).toContain(`/ ${fromApi}`);
     });
 
     await test.step('Web: yeni token üretimi listeyi yeniliyor — ilk token "Kullanıldı"', async () => {
@@ -228,7 +275,8 @@ test('mTLS: kayıt token\'ı tek kullanımlık ve süreli', async ({ app, dashbo
     });
   } finally {
     await hostControl.resetEnv().catch(() => {});
-    await hostApi.revokeClientCertIfActive(firstId).catch(() => {});
-    await hostApi.revokeClientCertIfActive(freshId).catch(() => {});
+    // İptal + unut: token'lar telefona bağlı, kimlikler cihazı kanıtlıyor (bkz. retireClientIdentity).
+    await hostApi.retireClientIdentity(firstId);
+    await hostApi.retireClientIdentity(freshId);
   }
 });

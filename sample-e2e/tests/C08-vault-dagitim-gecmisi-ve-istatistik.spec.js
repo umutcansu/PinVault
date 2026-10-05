@@ -11,7 +11,10 @@ const env = require('../lib/env');
 
 const FLAGS = env.VAULT_KEYS.flags;
 const ADMIN = env.VAULT_KEYS.admin;
-const SECRET = env.VAULT_KEYS.secret;
+// Token'lı dosya örneği olarak herkese açık sample-atrest sunucuda token
+// politikasına alınır: uygulama onu public tanımladığı için token göndermez,
+// sunucu reddeder. (Gizli sample-secret mTLS'te; kayıt gerektirir.)
+const SECRET = env.VAULT_KEYS.atrest;
 
 test('Vault dağıtım geçmişi: durum, sürüm ve cihaz kaydı; filtre, istatistik ve cihaz detayı', async ({
   app,
@@ -27,7 +30,7 @@ test('Vault dağıtım geçmişi: durum, sürüm ve cihaz kaydı; filtre, istati
     await test.step('Web: üç farklı politikada dosya yüklenir', async () => {
       flagsVersion = await dashboard.uploadVaultText(env.VAULT_API, FLAGS, `bayraklar-${stamp}`, { policy: 'public' });
       await dashboard.uploadVaultText(env.VAULT_API, ADMIN, `yonetim-${stamp}`, { policy: 'api_key' });
-      await dashboard.uploadVaultText(env.VAULT_API, SECRET, `gizli-${stamp}`, { policy: 'token' });
+      await dashboard.uploadVaultText(env.VAULT_API, SECRET, `tokenli-${stamp}`, { policy: 'token' });
       await dashboard.snapCard('.card:has(#vault-upload-key) ~ .card', 'üç vault dosyası');
     });
 
@@ -61,13 +64,14 @@ test('Vault dağıtım geçmişi: durum, sürüm ve cihaz kaydı; filtre, istati
       const secretFail = byStatus('failed').find((d) => d.vaultKey === SECRET);
       expect(adminFail.authMethod).toBe('api_key');
       expect(adminFail.failureReason).toContain('X-API-Key header required');
-      expect(secretFail.authMethod).toBe('token');
-      // Örnek uygulama token yokken boş dizi döndürüyor (VaultTokens.get).
-      // Kütüphane boş/boşluk-dolu token'da X-Vault-Token başlığını hiç
-      // göndermiyor, bu yüzden sunucunun verdiği neden doğru olanı: "eksik
-      // başlık". Daha önce boş başlık gidiyor ve sunucu "geçersiz token"
-      // diyordu — ikisi de 401, ama geçmişteki neden operatörü hiç üretilmemiş
-      // bir token'ın iptalini aramaya gönderiyordu.
+      // authMethod uygulamanın raporu: dosyayı public tanımladığı için 'public'.
+      // Sunucu yine de kendi politikasını (token) uyguladı.
+      expect(secretFail.authMethod).toBe('public');
+      // Token gönderilmedi (public tanımlı dosyada kütüphane X-Vault-Token
+      // başlığını hiç eklemez; token politikalı dosyada da token boşsa eklemez),
+      // bu yüzden sunucunun verdiği neden doğru olanı: "eksik başlık", "geçersiz
+      // token" değil. Geçmişteki neden operatörü hiç üretilmemiş bir token'ın
+      // iptalini aramaya göndermesin.
       expect(secretFail.failureReason).toContain('X-Vault-Token header required');
       // Başarısız denemede sürüm 0: cihazda o dosyanın bir kopyası yok.
       expect(adminFail.version).toBe(0);

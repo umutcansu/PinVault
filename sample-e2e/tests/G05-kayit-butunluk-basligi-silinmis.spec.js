@@ -1,46 +1,134 @@
-// G05 — Kayıt yanıtındaki P12 bütünlük başlığı silinirse.
+// G05 — Kayıt yanıtındaki sertifika zinciri değiştirilirse.
 //
-// Kayıt (enrollment) sırasında sunucu cihaza bir PKCS#12 dosyası veriyor:
-// istemci sertifikası + özel anahtar. Bu dosya mTLS kimliğinin kendisi, yani
-// araya giren biri kendi ürettiği bir P12'yi yutturabilirse cihaz ondan sonra
-// SALDIRGANIN kimliğiyle konuşur.
+// Kayıtta (enrollment) telefon kendi anahtarını üretir (Android Keystore,
+// dışarı çıkmaz) ve sunucuya yalnızca bir sertifika isteği (CSR) gönderir;
+// sunucu istemci CA'sıyla imzaladığı sertifikayı, CA sertifikasıyla birlikte
+// bir zincir olarak döndürür. Araya giren biri bu zinciri kendi ürettiğiyle
+// değiştirebilirse cihazın mTLS kimliği onun istediği bir sertifika olur.
 //
-// Kütüphanenin şartı: sunucu P12 baytlarının SHA-256'sını `X-P12-SHA256`
-// başlığında vermek zorunda (PinVault.validateP12). Başlık yoksa kurulum
-// reddediliyor — "belki yoktur, devam edeyim" yok. Saldırgan proxy tam da bu
-// başlığı siliyor; gövdeye hiç dokunmuyor.
+// Kütüphanenin şartları (ClientCertRenewer.acceptIssuedChain), sertifika
+// diske yazılmadan önce:
+//   • zincir en az iki sertifika (yaprak + onu imzalayan CA),
+//   • yaprak TELEFONUN anahtarı için kesilmiş olmalı,
+//   • clientCaPins verilmişse (örnek uygulama host.clientCaPin ile verir)
+//     yaprak o pin'li CA tarafından imzalanmış olmalı.
+// Sunucunun eskiden verdiği hazır P12 (anahtarı sunucu üretir) ise
+// allowServerGeneratedKey() olmadan hiç kabul edilmiyor.
+//
+// Saldırgan vekil (sunucunun kendi TLS anahtarıyla, yani pin tutuyor) iki kez
+// araya girer: önce zinciri BAŞKA bir anahtar için kesilmiş bir sertifikayla,
+// sonra telefonun kendi anahtarı için ama KENDİ CA'sıyla imzaladığı bir
+// sertifikayla değiştirir. İkisinde de telefon sertifikayı kurmaz; vekil
+// bırakınca temiz kayıt tamamlanır.
+const fs = require('fs');
 const { test, expect } = require('../lib/fixtures');
-const { attachText, redact } = require('../lib/evidence');
+const { attachText } = require('../lib/evidence');
 const proxy = require('../lib/proxy');
 const hostApi = require('../lib/hostApi');
 const env = require('../lib/env');
 
-test('Saldırı: kayıt yanıtındaki bütünlük başlığı (X-P12-SHA256) silinir → telefon istemci sertifikasını kurmuyor', async ({
+/** Uygulamanın derlendiği istemci CA pin'i (global setup'ın yazdığı host.clientCaPin). */
+function builtClientCaPin() {
+  const props = fs.existsSync(env.PROPS_FILE) ? fs.readFileSync(env.PROPS_FILE, 'utf8') : '';
+  const m = props.match(/^host\.clientCaPin=(.*)$/m);
+  return m ? m[1].trim() : '';
+}
+
+const chainLines = (chain) =>
+  chain.map((c, i) => `  [${i}] konu: ${c.subject}\n      yayımcı: ${c.issuer}\n      anahtar (SPKI pin): ${c.spki}`).join('\n');
+
+test('Saldırı: kayıt yanıtındaki sertifika zinciri değiştirilir (başka anahtar / saldırganın CA\'sı) → telefon sertifikayı kurmuyor; temiz kayıt tamamlanıyor', async ({
   app,
   device,
   dashboard,
 }, testInfo) => {
   test.skip(!device.isEmulator(), 'iptables DNAT yalnızca emülatörde (root) kurulabilir');
-  test.setTimeout(8 * 60 * 1000);
+  test.setTimeout(10 * 60 * 1000);
 
   const stamp = Date.now();
-  const tamperedClient = `g05-kurcalanmis-${stamp}`;
+  const otherKeyClient = `g05-baska-anahtar-${stamp}`;
+  const rogueCaClient = `g05-sahte-ca-${stamp}`;
   const cleanClient = `g05-temiz-${stamp}`;
-  const wire = {};
+  const caPin = builtClientCaPin();
+  const tokens = {};
   let mitm;
-  let tamperedToken;
-  let cleanToken;
+
+  /**
+   * Vekil zinciri [mode] ile değiştirirken [token] ile kayıt dener. Telefonun
+   * cevabını, kabloda değişeni ve cihaz günlüğünü kanıt olarak ekler.
+   */
+  async function tamperedEnrollment(mode, token, title) {
+    const seen = [];
+    mitm.setMutate(proxy.forgeEnrollmentChain(mode, seen));
+    device.clearLogcat();
+    await app.openMtls();
+    const status = await app.enroll(token);
+    await app.snap(`${title}: kayıt başarısız`);
+    const logcat = device
+      .logcat({ match: /Issued (chain|certificate)|clientCaPins|Enrollment failed|SecurityException/, lines: 4000 })
+      .split('\n')
+      .slice(-8)
+      .join('\n');
+    const wire = seen[0];
+    await attachText(
+      testInfo,
+      `${title} (POST ${wire ? wire.path : '/api/v1/client-certs/enroll'})`,
+      [
+        'SUNUCUNUN GÖNDERDİĞİ ZİNCİR',
+        wire ? chainLines(wire.before) : '(kayıt yanıtı görülmedi)',
+        '',
+        'TELEFONUN ALDIĞI ZİNCİR (saldırgan değiştirdi)',
+        wire ? chainLines(wire.after) : '-',
+        '',
+        `uygulamanın istemci CA pin'i (host.clientCaPin): ${caPin || '(yok)'}`,
+        '',
+        'TELEFONUN CEVABI',
+        status.split('\n').slice(0, 3).join('\n'),
+        '',
+        'Cihazın günlüğü:',
+        logcat || '(ilgili satır yok)',
+      ].join('\n'),
+    );
+    mitm.setMutate(null);
+    return { status, logcat, wire };
+  }
+
+  /** Reddedilen kayıt sunucuda iz bırakır: sertifika kesildi, token harcandı. Kimlik iptal edilir. */
+  async function serverTrace(clientId, title) {
+    const certs = (await hostApi.clientCerts()).filter((c) => c.id === clientId);
+    const toks = (await hostApi.enrollmentTokens()).filter((t) => t.clientId === clientId);
+    const revoked = await hostApi.revokeClientCertIfActive(clientId);
+    await attachText(
+      testInfo,
+      `${title}: sunucu tarafı`,
+      [
+        `istemci kimliği: ${clientId}`,
+        `sunucunun kestiği sertifika: ${certs.length} (${certs.map((c) => (c.revoked ? 'iptal' : 'etkin')).join(', ') || '-'})`,
+        `token durumu: ${toks.map((t) => (t.used ? 'kullanıldı' : 'kullanılmadı')).join(', ') || '-'}`,
+        `iptal edildi: ${revoked ? 'evet' : 'hayır (zaten etkin değildi)'}`,
+        '',
+        'Sunucu isteği karşıladı (telefonun anahtarı için sertifika kesti, tek kullanımlık token',
+        'harcandı); sertifikayı telefon kurmadı. Operasyon notu: böyle bir kimlik iptal edilir',
+        've telefona yeni token verilir. Bir cihazın aynı anda tek etkin kimliği olabildiği için',
+        'iptal edilmeden sonraki kayıt da reddedilirdi (device_already_enrolled).',
+      ].join('\n'),
+    );
+    return certs;
+  }
 
   try {
-    await test.step('Web: iki tek kullanımlık kayıt token\'ı üretilir', async () => {
-      tamperedToken = await dashboard.generateEnrollmentToken(env.MTLS_API, tamperedClient);
-      cleanToken = await dashboard.generateEnrollmentToken(env.MTLS_API, cleanClient);
-      await dashboard.snapTokenList(env.MTLS_API, `iki kayıt token'ı bekliyor: ${tamperedClient}, ${cleanClient}`, [
-        { clientId: tamperedClient, status: 'Bekliyor' },
+    await test.step('Web: üç tek kullanımlık kayıt token\'ı üretilir (iki saldırı denemesi + temiz kayıt)', async () => {
+      tokens.otherKey = await dashboard.generateEnrollmentToken(env.MTLS_API, otherKeyClient);
+      tokens.rogueCa = await dashboard.generateEnrollmentToken(env.MTLS_API, rogueCaClient);
+      tokens.clean = await dashboard.generateEnrollmentToken(env.MTLS_API, cleanClient);
+      await dashboard.snapTokenList(env.MTLS_API, 'üç kayıt token\'ı bekliyor', [
+        { clientId: otherKeyClient, status: 'Bekliyor' },
+        { clientId: rogueCaClient, status: 'Bekliyor' },
         { clientId: cleanClient, status: 'Bekliyor' },
       ]);
-      expect(tamperedToken).toMatch(/^[A-Za-z0-9_-]{32,}$/);
-      expect(cleanToken).not.toBe(tamperedToken);
+      expect(new Set(Object.values(tokens)).size).toBe(3);
+      // Uygulama istemci CA pin'iyle derlenmiş olmalı: ikinci denemeyi yalnızca o yakalar.
+      expect(caPin, 'host.clientCaPin boş: global setup istemci CA\'sını okuyamadı').toMatch(/^[A-Za-z0-9+/]{43}=$/);
     });
 
     await test.step('Mobil: cihaz henüz kayıtlı değil', async () => {
@@ -59,106 +147,55 @@ test('Saldırı: kayıt yanıtındaki bütünlük başlığı (X-P12-SHA256) sil
       expect(ready).toContain('Hazır — config v');
     });
 
-    await test.step('Saldırgan: kayıt yanıtından X-P12-SHA256 başlığını siler → telefon sertifikayı kurmayı reddediyor', async () => {
-      mitm.setMutate((answer) => {
-        const mutated = proxy.stripP12Hash(answer);
-        if (mutated !== answer) {
-          wire.path = answer.path;
-          wire.status = answer.status;
-          wire.before = { ...answer.headers };
-          wire.after = { ...mutated.headers };
-          wire.bodyLength = answer.body.length;
-          wire.bodyHead = answer.body.subarray(0, 4).toString('hex');
-        }
-        return mutated;
-      });
-
-      device.clearLogcat();
-      await app.openMtls();
-      const status = await app.enroll(tamperedToken);
-      await app.snap('başlık silinmiş: kayıt başarısız');
+    await test.step('Saldırgan: kayıt yanıtındaki zinciri BAŞKA bir anahtar için kesilmiş sertifikayla değiştirir → telefon "Kayıt başarısız", sertifika kurulmadı', async () => {
+      const { status, logcat, wire } = await tamperedEnrollment('other-key', tokens.otherKey, 'Başka anahtar için sertifika');
+      expect(wire, 'vekil kayıt yanıtını görmedi').toBeTruthy();
+      expect(wire.before.length).toBeGreaterThanOrEqual(2);
+      expect(wire.after[0].spki).not.toBe(wire.before[0].spki);
       expect(status).toContain('Kayıt başarısız');
-
-      const logcat = device
-        .logcat({ match: /X-P12-SHA256|Enrollment failed|SecurityException/, lines: 4000 })
-        .split('\n')
-        .slice(-8)
-        .join('\n');
-      await attachText(
-        testInfo,
-        `Saldırganın yaptığı değişiklik (POST ${wire.path})`,
-        [
-          `HTTP ${wire.status}, gövde ${wire.bodyLength} bayt (PKCS#12, başlangıç 0x${wire.bodyHead})`,
-          '',
-          'SUNUCUNUN GÖNDERDİĞİ BAŞLIKLAR',
-          `  content-type  : ${wire.before['content-type']}`,
-          `  x-p12-sha256  : ${redact(wire.before['x-p12-sha256'], 12)}`,
-          '',
-          'TELEFONUN ALDIĞI (saldırgan sildi)',
-          `  content-type  : ${wire.after['content-type']}`,
-          `  x-p12-sha256  : ${wire.after['x-p12-sha256'] === undefined ? '(yok)' : wire.after['x-p12-sha256']}`,
-          '',
-          'Gövde bayt bayt aynı — yalnızca bütünlük başlığı düştü.',
-          '',
-          'TELEFONUN CEVABI',
-          status.split('\n').slice(0, 2).join('\n'),
-          '',
-          'Cihazın günlüğü:',
-          logcat || '(ilgili satır yok)',
-        ].join('\n'),
-      );
-      expect(wire.before['x-p12-sha256']).toBeTruthy();
-      expect(wire.after['x-p12-sha256']).toBeUndefined();
-      expect(logcat).toMatch(/X-P12-SHA256/);
-    });
-
-    await test.step('Mobil: sertifika cihazda saklanmadı (Depolama ekranı)', async () => {
+      expect(`${status}\n${logcat}`).toMatch(/not over this device's key/);
       expect(app.enrollState()).toContain('Kayıtlı değil');
       await app.backToMain();
+      await serverTrace(otherKeyClient, 'Başka anahtar için sertifika');
+    });
+
+    await test.step('Saldırgan: zinciri telefonun KENDİ anahtarı için ama kendi CA\'sıyla imzaladığı sertifikayla değiştirir → istemci CA pin\'i tutmuyor, telefon kurmuyor', async () => {
+      const { status, logcat, wire } = await tamperedEnrollment('rogue-ca', tokens.rogueCa, 'Saldırganın CA\'sıyla imzalı sertifika');
+      expect(wire, 'vekil kayıt yanıtını görmedi').toBeTruthy();
+      // Yaprak telefonun anahtarı için (sunucununkiyle aynı SPKI), CA saldırganın.
+      expect(wire.after[0].spki).toBe(wire.before[0].spki);
+      expect(wire.after[1].spki).not.toBe(caPin);
+      expect(wire.before[1].spki).toBe(caPin);
+      expect(status).toContain('Kayıt başarısız');
+      expect(`${status}\n${logcat}`).toMatch(/not signed by a pinned client CA/);
+      expect(app.enrollState()).toContain('Kayıtlı değil');
+      await app.backToMain();
+      await serverTrace(rogueCaClient, 'Saldırganın CA\'sıyla imzalı sertifika');
+    });
+
+    await test.step('Mobil: cihazda istemci sertifikası saklanmadı (Depolama ekranı)', async () => {
       await app.openStorage();
       const storage = await app.storageText();
-      await app.snap('başlık silinmiş: sertifika saklanmadı');
+      await app.snap('iki saldırı denemesinden sonra: sertifika saklanmadı');
       await attachText(
         testInfo,
         'Cihazdaki istemci sertifikası kaydı',
         [
           storage.split('\n').filter((line) => /İstemci sertifikası|kayıtlı|pinvault_secure_client_cert|elle yüklenen/i.test(line)).join('\n'),
           '',
-          'Doğrulama P12 diske YAZILMADAN önce yapılıyor: validateP12 önce hash,',
-          'sonra PKCS12 biçim kontrolü; ikisi de geçmeden certStore.save çağrılmıyor.',
+          'Zincir diske YAZILMADAN önce denetleniyor (acceptIssuedChain): en az iki sertifika,',
+          'yaprak bu cihazın anahtarı için, istemci CA pin\'iyle imzalı. Biri tutmazsa',
+          'certStore.saveChain hiç çağrılmıyor.',
         ].join('\n'),
       );
       expect(storage).toContain('kayıtlı değil');
       await app.backToMain();
     });
 
-    await test.step('Web: sunucu tarafında sertifika yine de üretildi ve token harcandı (not)', async () => {
-      const certs = (await hostApi.clientCerts()).filter((c) => c.id === tamperedClient);
-      const tokens = (await hostApi.enrollmentTokens()).filter((t) => t.clientId === tamperedClient);
-      await dashboard.snapTokenList(env.MTLS_API, `${tamperedClient} token'ı "Kullanıldı" (sunucu tarafında harcandı)`, [
-        { clientId: tamperedClient, status: 'Kullanıldı' },
-      ]);
-      await attachText(
-        testInfo,
-        'Sunucu tarafı: reddedilen kayıt sunucuda iz bırakıyor',
-        [
-          `istemci kimliği: ${tamperedClient}`,
-          `üretilen sertifika sayısı: ${certs.length} (${certs.map((c) => (c.revoked ? 'iptal' : 'etkin')).join(', ') || '-'})`,
-          `token durumu: ${tokens.map((t) => (t.used ? 'kullanıldı' : 'kullanılmadı')).join(', ') || '-'}`,
-          '',
-          'Sunucu isteği karşılayıp P12\'yi ürettiği ve tek kullanımlık token\'ı',
-          'harcadığı için, istemci kurulumu reddetse bile kaydın sunucudaki izi',
-          'kalıyor. Operasyon notu: böyle bir durumda sertifikanın iptal edilmesi',
-          've yeni token verilmesi gerekir (bu senaryo sonunda yapılıyor).',
-        ].join('\n'),
-      );
-      expect(certs.length).toBeGreaterThan(0);
-    });
-
-    await test.step('Saldırgan: değiştirmeyi bırakınca ikinci token ile kayıt tamamlanıyor', async () => {
+    await test.step('Saldırgan: değiştirmeyi bırakınca üçüncü token ile kayıt tamamlanıyor', async () => {
       mitm.setMutate(null);
       await app.openMtls();
-      const status = await app.enroll(cleanToken);
+      const status = await app.enroll(tokens.clean);
       await app.snap('saldırgan değiştirmeyi bıraktı: kayıt başarılı');
       expect(status).toContain(`Kayıt başarılı — CN=PinVault Client: ${cleanClient}`);
       expect(app.enrollState()).toContain(cleanClient);
@@ -171,7 +208,8 @@ test('Saldırı: kayıt yanıtındaki bütünlük başlığı (X-P12-SHA256) sil
         'Kurulum sonrası cihazdaki sertifika kaydı',
         storage.split('\n').filter((line) => /İstemci sertifikası|kayıtlı|PKCS12/i.test(line)).join('\n'),
       );
-      expect(storage).toContain('ham kayıt PKCS12 olarak açılıyor mu: hayır ✓ (şifreli)');
+      expect(storage).toContain(`kayıtlı — CN=PinVault Client: ${cleanClient}`);
+      expect(storage).not.toContain('EVET ✗ (şifresiz!)');
       await app.backToMain();
     });
 
@@ -181,12 +219,16 @@ test('Saldırı: kayıt yanıtındaki bütünlük başlığı (X-P12-SHA256) sil
       mitm = null;
       app.relaunch();
       expect(await app.waitReady()).toContain('Hazır — config v');
-      await app.snap('saldırgan proxy kapandı: doğrudan sunucuyla Hazır');
+      await app.snap('saldırgan vekil kapandı: doğrudan sunucuyla Hazır');
     });
   } finally {
     device.clearNetRules();
     if (mitm) await mitm.stop();
-    await hostApi.revokeClientCertIfActive(tamperedClient);
-    await hostApi.revokeClientCertIfActive(cleanClient);
+    // İptal + unut: token'lar telefona bağlı (bkz. retireClientIdentity). Saldırı
+    // denemelerinin kimlikleri adım içinde yalnızca iptal edildi: unutmak anahtarı
+    // emekliye ayırır, telefon bir sonraki denemede aynı anahtarı kullanıyor olabilir.
+    for (const id of [otherKeyClient, rogueCaClient, cleanClient]) {
+      await hostApi.retireClientIdentity(id);
+    }
   }
 });

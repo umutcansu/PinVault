@@ -181,6 +181,7 @@ test('mTLS: cihaz config\'i mTLS Config API\'den istemci sertifikasıyla çeker'
   } finally {
     // Ana host temel duruma: mTLS kapsamı boş, test sertifikası iptal.
     await mtlsScope.reset().catch(() => {});
-    await hostApi.revokeClientCertIfActive(clientId).catch(() => {});
+    // İptal + unut: token telefona bağlı, kimlik cihazı kanıtlıyor (bkz. retireClientIdentity).
+    await hostApi.retireClientIdentity(clientId);
   }
 });

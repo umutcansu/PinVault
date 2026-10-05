@@ -129,37 +129,39 @@ test('Mobil+Web: cihaz raporları (telemetri) — başarı raporunu kapatma, tek
   });
 
   if (device.isEmulator()) {
-    await test.step('Terminal+Mobil: config API\'ye erişim kesilir → config_update_failed raporlanıyor', async () => {
+    await test.step('Terminal+Mobil: Config API\'ye erişim kesilir → güncelleme hatası telefonun olay listesinde; rapor aynı porttan gittiği için sunucuya ulaşamıyor', async () => {
       // Kurtarma interceptor'ı config'i tazelemeye çalışır; Config API portu
-      // kapalı olduğu için güncelleme başarısız olur. Telemetri yönetim
-      // portuna (6650) gittiği için rapor yine de sunucuya ulaşır.
+      // kapalı olduğu için güncelleme başarısız olur. Cihaz raporları da aynı
+      // porttan gider (telefon yönetim portuna bağlanmaz): kesinti sürerken
+      // hata raporu sunucuya ulaşamaz, hata telefonun kendi kaydında görünür.
       device.blockTcp(env.LAN_IP, env.CONFIG_API_PORT, 'reject');
       const marker = Date.now();
       await sleep(2000);
       const result = await app.testLibraryClient();
       await app.snap('config API kapalı: kurtarma başarısız');
-      await expect
-        .poll(async () => (await configReportsSince(run.model, marker)).filter((e) => e.status === 'config_update_failed').length,
-          { timeout: 40_000 })
-        .toBeGreaterThan(0);
-      const failed = (await configReportsSince(run.model, marker)).find((e) => e.status === 'config_update_failed');
+      const eventLog = await app.waitForEvent('[config] FAILED', 40_000);
+      const arrived = (await configReportsSince(run.model, marker)).filter((e) => e.status === 'config_update_failed');
       await attachText(
         testInfo,
         `iptables: ${env.LAN_IP}:${env.CONFIG_API_PORT} REJECT → config güncelleme hatası`,
         [
           `Telefondaki sonuç:\n${result.split('\n').slice(0, 3).join('\n')}`,
           '',
-          'Sunucudaki config güncelleme raporu:',
-          `  status       : ${failed.status}`,
-          `  pinVersion   : ${failed.pinVersion}`,
-          `  failureReason: ${failed.errorMessage || '(yok)'}`,
+          'Telefonun olay listesi:',
+          eventLog.split('\n').filter((row) => row.includes('[config]')).slice(0, 3).join('\n'),
           '',
-          'Cihaz raporları (telemetri) yönetim portuna (6650) gidiyor; kesilen yalnızca',
-          `Config API portu (${env.CONFIG_API_PORT}). Hata raporu bu yüzden sunucuya ulaşıyor.`,
+          `Sunucuya bu sürede ulaşan config_update_failed raporu: ${arrived.length}`,
+          '',
+          `Cihaz raporları (telemetri) Config API portundan (${env.REPORT_PORT}) gider; kesilen de o port.`,
+          'Sunucuya ulaşılamadığını sunucuya bildirmenin yolu yoktur: hata telefonun kendi',
+          'kaydında durur, sunucu tarafında ise cihazın raporlarının kesilmesi görülür.',
         ].join('\n'),
       );
       device.clearNetRules();
       expect(result).toContain('Bağlantı başarısız');
+      expect(eventLog).toContain('[config] FAILED');
+      expect(arrived.length, 'port kesikken hata raporu sunucuya ulaşamaz').toBe(0);
+      summary.push('config güncelleme hatası (Config API kesik)  : telefonun olay listesinde; rapor aynı porttan gittiği için sunucuya ulaşmadı');
     });
   }
 

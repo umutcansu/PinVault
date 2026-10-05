@@ -59,7 +59,7 @@ const test = base.test.extend({
     // metinleri test okuyabilsin diye saklanır. prompt'lara test önceden
     // [answerPrompt] ile yanıt bırakabilir (cihaz ACL'i düzenleme).
     Dashboard.attachDialogs(page, dashboard);
-    await page.addInitScript((key) => localStorage.setItem('pinvault_api_key', key), env.API_KEY);
+    await Dashboard.seedApiKey(page, env.API_KEY);
     await dashboard.open();
     await use(dashboard);
   },

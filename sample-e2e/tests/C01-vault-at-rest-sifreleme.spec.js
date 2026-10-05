@@ -110,7 +110,8 @@ test('Vault at_rest: sunucu diskinde şifreli, ağ trafiğinde şifresiz, telefo
       await app.snap(`at_rest dosyası v${version} indirildi`);
       expect(status).toContain(`${KEY} v${version} indirildi`);
       expect(status).toContain('imza doğrulandı');
-      expect(status).toContain('sunucuda şifreli saklanır; telefona ek şifreleme olmadan, TLS ile gelir');
+      // Uygulama bu dosyanın gizli olmadığını açıkça söylüyor: diskte şifreli ama herkese açık.
+      expect(status).toContain('herkese açık dosya: sunucunun diskinde şifreli durur ama isteyen herkes indirir');
       expect(status).toContain(secret);
     });
 

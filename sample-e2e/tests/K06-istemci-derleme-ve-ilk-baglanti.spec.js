@@ -26,7 +26,7 @@ test('Kurulum: uygulama geçici test sunucusunun değerleriyle derlenir, telefon
 
   try {
     await test.step('Terminal: client-config.sh --properties — istemci değerleri (K10)', async () => {
-      const out = fresh.run('./scripts/client-config.sh', ['--properties']);
+      const out = fresh.run('./scripts/client-config.sh', env.CLIENT_CONFIG_ARGS);
       fs.writeFileSync(FRESH_PROPS, out);
       await attachText(testInfo, 'scripts/client-config.sh --properties (geçici test sunucusu)', `$ ./scripts/client-config.sh --properties\n${out}`);
       expect(out).toContain(`host.httpsPort=${fresh.PORTS.https}`);
@@ -38,15 +38,19 @@ test('Kurulum: uygulama geçici test sunucusunun değerleriyle derlenir, telefon
       const file = path.join(env.CLIENT_DIR, 'app/src/main/res/xml/network_security_config.xml');
       const xml = fs.readFileSync(file, 'utf8');
       const props = fs.readFileSync(FRESH_PROPS, 'utf8');
-      const reportPort = (/^host\.managementTlsPort=(\d+)$/m.exec(props) || [])[1];
+      // Raporlar Config API portuna gider (config'le aynı dinleyici, aynı pin'ler);
+      // telefon yönetim portunu hiç bilmez: değer dosyasında o port yoktur.
+      const reportPort = (/^host\.httpsPort=(\d+)$/m.exec(props) || [])[1];
       await attachText(
         testInfo,
         'app/src/main/res/xml/network_security_config.xml',
-        [xml, `Cihaz raporları: https://${env.LAN_IP}:${reportPort}/ (yönetim API'sinin şifreli portu, config sunucusunun pin'leriyle)`].join('\n'),
+        [xml, `Cihaz raporları: https://${env.LAN_IP}:${reportPort}/ (Config API portu, config sunucusunun pin'leriyle; yönetim portu uygulamaya verilmez)`].join('\n'),
       );
       expect(xml).toContain('cleartextTrafficPermitted="false"');
       expect(xml).not.toContain('<domain-config');
       expect(reportPort).toBeTruthy();
+      expect(props).not.toMatch(/^host\.managementTlsPort=/m);
+      expect(props).not.toMatch(/^host\.httpPort=/m);
     });
 
     await test.step('Terminal: derleme ve kurulum (K11)', async () => {

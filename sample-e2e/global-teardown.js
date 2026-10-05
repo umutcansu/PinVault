@@ -22,6 +22,9 @@ module.exports = async () => {
   const device = new Device(run.serial);
   try {
     if (device.isEmulator()) device.clearNetRules();
+    // Gizli dosya senaryolarının geçici ekran kilidi PIN'i yarıda kalmışsa kaldır
+    // (yalnızca emülatörde; PIN farklıysa locksettings dokunmaz).
+    if (device.isEmulator() && device.hasScreenLock()) device.shell(`locksettings clear --old ${env.SCREEN_LOCK_PIN} 2>&1; true`);
   } catch {
     /* cihaz kapanmış olabilir */
   }

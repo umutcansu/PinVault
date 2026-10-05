@@ -16,7 +16,29 @@ const env = require('../lib/env');
 const WORK_DIR = path.join(env.LOCAL_DIR, 'b08');
 const KEY = path.join(WORK_DIR, 'outside-key.pem');
 const CERT = path.join(WORK_DIR, 'outside-cert.pem');
+const CA_KEY = path.join(WORK_DIR, 'outside-ca-key.pem');
+const CA_CERT = path.join(WORK_DIR, 'outside-ca-cert.pem');
+const OPENSSL_CONF = path.join(WORK_DIR, 'client-leaf.cnf');
+const CA_CONF = path.join(WORK_DIR, 'ca.cnf');
+const V1_KEY = path.join(WORK_DIR, 'outside-v1-key.pem');
+const V1_CERT = path.join(WORK_DIR, 'outside-v1-cert.pem');
 const CONFIG_URL = `https://${env.LAN_IP}:${env.MTLS_API_PORT}/api/v1/certificate-config?signed=false`;
+
+/**
+ * Yönetim adresine panelin gönderdiği formun aynısını yollar (clientId + dosya).
+ * Reddedilen yüklemede panel satır çizmediği için sonucu doğrudan okumak gerekiyor.
+ */
+async function uploadDirect(clientId, certPath) {
+  const form = new FormData();
+  form.append('clientId', clientId);
+  form.append('file', new Blob([fs.readFileSync(certPath)]), path.basename(certPath));
+  const res = await fetch(`${env.WEB_URL}/api/v1/client-certs/upload`, {
+    method: 'POST',
+    headers: { 'X-API-Key': env.API_KEY },
+    body: form,
+  });
+  return { status: res.status, body: (await res.text()).trim() };
+}
 
 /** curl'ü istemci sertifikasıyla çalıştırır; { ok, output } döner. */
 function probe() {
@@ -40,9 +62,71 @@ test('mTLS: dışarıdan yüklenen istemci sertifikası truststore\'a girer ve i
   fs.mkdirSync(WORK_DIR, { recursive: true });
 
   try {
-    await test.step('Terminal: openssl ile anahtar çifti ve sertifika üretiliyor', async () => {
-      const out = await attachCommand(testInfo, 'openssl req -x509 (self-signed istemci sertifikası)', 'openssl', [
-        'req', '-x509', '-newkey', 'rsa:2048', '-nodes',
+    await test.step('Terminal: CA sertifikası istemci sertifikası diye yüklenemiyor', async () => {
+      // Bir CA sertifikası truststore'a girseydi, anahtarının imzaladığı HER
+      // sertifika mTLS'te kabul edilirdi: tek yüklemeyle listede olmayan istemciler.
+      const caId = `${clientId}-ca`;
+      fs.writeFileSync(CA_CONF, [
+        '[req]', 'distinguished_name = dn', 'x509_extensions = ca', '[dn]', '[ca]',
+        'basicConstraints = critical, CA:TRUE', 'keyUsage = critical, keyCertSign, cRLSign', '',
+      ].join('\n'));
+      await attachCommand(testInfo, 'openssl req -x509 (CA:TRUE, keyCertSign)', 'openssl', [
+        'req', '-x509', '-config', CA_CONF, '-newkey', 'rsa:2048', '-nodes',
+        '-keyout', CA_KEY, '-out', CA_CERT, '-days', '30',
+        '-subj', `/CN=${caId}/O=SamplePinVaultE2E/C=TR`,
+      ]);
+      const ext = execFileSync('openssl', ['x509', '-in', CA_CERT, '-noout', '-text'], { encoding: 'utf8' });
+      const res = await uploadDirect(caId, CA_CERT);
+      const listed = (await hostApi.clientCerts()).some((c) => c.id === caId);
+      await attachText(
+        testInfo,
+        'POST /api/v1/client-certs/upload (CA sertifikası)',
+        [
+          `HTTP ${res.status} ${res.body}`,
+          '',
+          (ext.match(/X509v3 Basic Constraints:[^\n]*\n[^\n]*/) || ['Basic Constraints yok'])[0].trim(),
+          `listede: ${listed}`,
+          '',
+          'Sunucu CA sertifikasını (basicConstraints CA veya keyCertSign) ve',
+          'clientAuth kullanımı yazmayan sertifikayı istemci olarak kabul etmiyor.',
+        ].join('\n'),
+      );
+      expect(res.status).toBe(400);
+      expect(res.body).toContain('CA certificate');
+      expect(listed).toBe(false);
+
+      // Eklentisiz (v1) bir sertifika "CA değilim" diyemez; JSSE böyle bir
+      // güven çapasının başka sertifika imzalamasına izin verir. O da reddediliyor.
+      const v1Id = `${clientId}-v1`;
+      fs.writeFileSync(path.join(WORK_DIR, 'v1.cnf'), '[req]\ndistinguished_name = dn\n[dn]\n');
+      execFileSync('openssl', ['req', '-x509', '-config', path.join(WORK_DIR, 'v1.cnf'), '-newkey', 'rsa:2048', '-nodes',
+        '-keyout', V1_KEY, '-out', V1_CERT, '-days', '30', '-subj', `/CN=${v1Id}/O=SamplePinVaultE2E/C=TR`], { encoding: 'utf8' });
+      const v1Version = execFileSync('openssl', ['x509', '-in', V1_CERT, '-noout', '-text'], { encoding: 'utf8' }).match(/Version: (\d+)/);
+      const v1 = await uploadDirect(v1Id, V1_CERT);
+      await attachText(
+        testInfo,
+        'POST /api/v1/client-certs/upload (eklentisiz v1 sertifika)',
+        [`sertifika sürümü: ${v1Version ? v1Version[1] : '?'}`, `HTTP ${v1.status} ${v1.body}`].join('\n'),
+      );
+      expect(v1.status).toBe(400);
+      expect(v1.body).toMatch(/version 1 certificate|extended key usage/);
+      expect((await hostApi.clientCerts()).some((c) => c.id === v1Id)).toBe(false);
+    });
+
+    await test.step('Terminal: openssl ile anahtar çifti ve istemci sertifikası üretiliyor', async () => {
+      fs.writeFileSync(OPENSSL_CONF, [
+        '[req]',
+        'distinguished_name = dn',
+        'x509_extensions = client_leaf',
+        '[dn]',
+        '[client_leaf]',
+        'basicConstraints = critical, CA:FALSE',
+        'keyUsage = critical, digitalSignature, keyEncipherment',
+        'extendedKeyUsage = clientAuth',
+        '',
+      ].join('\n'));
+      const out = await attachCommand(testInfo, 'openssl req -x509 (self-signed istemci sertifikası, CA:FALSE + clientAuth)', 'openssl', [
+        'req', '-x509', '-config', OPENSSL_CONF, '-newkey', 'rsa:2048', '-nodes',
         '-keyout', KEY, '-out', CERT, '-days', '30',
         '-subj', `/CN=${clientId}/O=SamplePinVaultE2E/C=TR`,
       ]);

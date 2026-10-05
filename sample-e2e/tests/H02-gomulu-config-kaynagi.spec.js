@@ -50,8 +50,8 @@ test('Uygulama içi config kaynağı: gömülü CertificateConfigApi ile kütüp
           '',
           rules.trim(),
           '',
-          `Cihaz raporlarının (telemetri) gittiği port (${env.MANAGEMENT_TLS_PORT}) ve hedef host açık`,
-          'kalıyor; kesilen yalnızca kütüphanenin pin config\'ini çektiği port.',
+          'Hedef host açık kalıyor; kesilen, kütüphanenin pin config\'ini çektiği (ve cihaz',
+          'raporlarının gittiği) port. Bu sürede raporlar da sunucuya ulaşamaz.',
         ].join('\n'),
       );
       expect(rules).toContain(`--dport ${env.CONFIG_API_PORT}`);
@@ -129,10 +129,16 @@ test('Uygulama içi config kaynağı: gömülü CertificateConfigApi ile kütüp
         [
           logcat || '(ilgili satır yok)',
           '',
-          'Kütüphane normal akışı izliyor: config alındı → doğrulandı →',
+          'Kütüphane normal akışı izliyor: config alındı → biçimi denetlendi →',
           'şifreli depoya yazıldı → pinlenmiş istemci kuruldu → sağlık kontrolü.',
           'Farkı, bu adımların hiçbirinin ağa çıkmaması: fetchConfig ve',
           'healthCheck uygulamanın kendi sınıfından geliyor.',
+          '',
+          'Bu modda İMZA DOĞRULANMAZ ve uygulama bunu kodda açıkça söyler: blok',
+          'allowUnsigned() ile kurulur (App.startEmbeddedApi). fetchConfig hazır bir',
+          'config döndürdüğü için doğrulanacak imzalı bir zarf yoktur; pin\'ler APK\'nın',
+          'içinden geldiğinden güven APK\'ya dayanır. Pin\'leri uzaktan getiren bir özel',
+          'API SignedConfigSource uygulamak zorundadır; aksi hâlde init hata verir.',
         ].join('\n'),
       );
       expect(logcat).toMatch(/Config updated|Init ready/);
@@ -154,7 +160,7 @@ test('Uygulama içi config kaynağı: gömülü CertificateConfigApi ile kütüp
           '',
           `config isteği: ${configLines.length} (${configLines.join(' | ') || 'yok ✓'})`,
           '',
-          'Kalanlar docker\'ın sağlık kontrolü ve uygulamanın cihaz raporu (telemetri) POST\'ları.',
+          'Kalanlar docker\'ın sağlık kontrolü (cihaz raporları Config API portundan gider; o port kesik).',
         ].join('\n'),
       );
       expect(configLines, 'gömülü modda sunucuya config isteği gitmemeli').toHaveLength(0);

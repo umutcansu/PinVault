@@ -145,38 +145,127 @@ test('Sunucu: yönetim uçları API anahtarı ister, cihaz uçları anahtarsız 
       expect(line).toContain('Refusing to start with anonymous admin access');
     });
 
-    await test.step('Sunucu: ALLOW_ANONYMOUS_ADMIN=true uyarı logluyor ve anahtarsız yönetime izin veriyor', async () => {
+    await test.step('Sunucu: parolalar (KEYSTORE_PASSWORD, VAULT_AT_REST_PASSWORD, SIGNING_KEY_PASSWORD) verilmemişse açılmayı reddediyor', async () => {
       const image = execFileSync('docker', ['inspect', '-f', '{{.Config.Image}}', env.CONTAINER], {
         encoding: 'utf8',
       }).trim();
-      execFileSync('docker', ['rm', '-f', 'pinvault-anon-probe'], { stdio: 'ignore' });
-      execFileSync('docker', [
-        'run', '-d', '--name', 'pinvault-anon-probe',
-        '-e', 'ALLOW_ANONYMOUS_ADMIN=true',
-        '-p', '6799:8080',
-        image,
-      ], { encoding: 'utf8', timeout: 120_000 });
+      let out;
       try {
-        let status = 0;
-        for (let i = 0; i < 60 && status !== 200; i++) {
+        out = execFileSync('docker', ['run', '--rm', '-e', 'API_KEY=e02-probe', image], { encoding: 'utf8', timeout: 180_000 });
+      } catch (e) {
+        out = `${e.stdout || ''}${e.stderr || ''}`;
+      }
+      const line = out.split('\n').find((l) => l.includes('Refusing to start with the demo values')) || out.slice(0, 500);
+      await attachText(
+        testInfo,
+        `docker run ${image} (API_KEY var, parolalar yok, ALLOW_DEMO_SECRETS yok)`,
+        [
+          `$ docker run --rm -e API_KEY=… ${image}`,
+          line,
+          '',
+          'Container açılmadan çıkıyor: kaynak koddaki demo parolalarıyla (changeit, sabit vault anahtarı,',
+          'şifresiz imza anahtarı) sunucu kendiliğinden açılmaz. Demo profili bu üçünü setup.sh ile üretir.',
+        ].join('\n'),
+      );
+      expect(line).toContain('KEYSTORE_PASSWORD');
+      expect(line).toContain('Refusing to start with the demo values');
+    });
+
+    await test.step('Sunucu: ALLOW_ANONYMOUS_ADMIN=true uyarı logluyor; anahtarsız yönetim yalnızca bu makineden (ANONYMOUS_ADMIN_PEERS olmadan köprü ağ geçidi 403 peer_not_allowed)', async () => {
+      const image = execFileSync('docker', ['inspect', '-f', '{{.Config.Image}}', env.CONTAINER], {
+        encoding: 'utf8',
+      }).trim();
+      // Yayımlanan porttan gelen istek container'a Docker'ın köprü ağının ağ geçidinden
+      // (varsayılan bridge: 172.17.0.1) gelir, loopback'ten değil. Anahtarsız modda sunucu
+      // yalnızca loopback'e ve ANONYMOUS_ADMIN_PEERS'e cevap verir.
+      let gateway = '';
+      try {
+        gateway = execFileSync('docker', ['network', 'inspect', 'bridge', '-f', '{{range .IPAM.Config}}{{.Gateway}} {{end}}'], {
+          encoding: 'utf8',
+        }).trim().split(/\s+/)[0];
+      } catch {
+        /* aşağıdaki varsayılan */
+      }
+      if (!/^\d{1,3}(\.\d{1,3}){3}$/.test(gateway)) gateway = '172.17.0.1';
+      // Linux'ta yayımlanan porttan gelen bağlantı köprü ağ geçidinden, macOS/Windows Docker
+      // Desktop'ta sanal makinenin ağ geçidinden (192.168.65.1) geliyor.
+      const peers = `${gateway},192.168.65.0/24`;
+
+      /** Anahtarsız probe container'ını [extraEnv] ile açar, ilk cevabı (ya da 60 sn) bekler. */
+      async function startProbe(extraEnv) {
+        execFileSync('docker', ['rm', '-f', 'pinvault-anon-probe'], { stdio: 'ignore' });
+        execFileSync('docker', [
+          'run', '-d', '--name', 'pinvault-anon-probe',
+          '-e', 'ALLOW_ANONYMOUS_ADMIN=true',
+          // Yalıtılmış deneme: parolalar sunucunun demo değerleriyle (yoksa açılmaz).
+          '-e', 'ALLOW_DEMO_SECRETS=true',
+          // Anahtarsız modda yönetim dinleyicisi 127.0.0.1'e bağlanır; container'ın
+          // içinde bu, yayımlanan porttan erişilemez demek. Bu yüzden 0.0.0.0, ve
+          // istekler yalnızca localhost:6799 adresiyle gelirse cevaplanır (DNS rebinding).
+          '-e', 'MANAGEMENT_BIND=0.0.0.0',
+          '-e', 'MANAGEMENT_ALLOWED_HOSTS=localhost:6799',
+          ...extraEnv.flatMap((e) => ['-e', e]),
+          '-p', '6799:8080',
+          image,
+        ], { encoding: 'utf8', timeout: 120_000 });
+        let res = { status: 0, text: '' };
+        for (let i = 0; i < 60 && res.status === 0; i++) {
           await new Promise((r) => setTimeout(r, 1000));
-          status = await fetch('http://localhost:6799/api/v1/all-configs').then((r) => r.status).catch(() => 0);
+          res = await fetch('http://localhost:6799/api/v1/all-configs')
+            .then(async (r) => ({ status: r.status, text: await r.text() }))
+            .catch(() => ({ status: 0, text: '' }));
         }
-        const logs = execFileSync('docker', ['logs', 'pinvault-anon-probe'], { encoding: 'utf8' });
-        const warn = logs.split('\n').filter((l) => l.includes('ALLOW_ANONYMOUS_ADMIN')).slice(0, 1).join('\n');
+        return res;
+      }
+
+      try {
+        // 1) ANONYMOUS_ADMIN_PEERS yok: istek doğru adla (localhost:6799) gelse de kaynağı
+        //    köprü ağ geçidi, loopback değil → 403 peer_not_allowed.
+        const refused = await startProbe([]);
         await attachText(
           testInfo,
-          'docker run -e ALLOW_ANONYMOUS_ADMIN=true (yalıtılmış container, :6799)',
+          'docker run -e ALLOW_ANONYMOUS_ADMIN=true (ANONYMOUS_ADMIN_PEERS yok, :6799)',
+          [
+            `GET http://localhost:6799/api/v1/all-configs (anahtarsız) → ${refused.status} ${refused.text.trim().slice(0, 200)}`,
+            '',
+            'Host başlığı izinli (localhost:6799) ama bağlantının kaynağı container\'ın gözünden Docker\'ın',
+            `köprü ağ geçidi (${gateway}), loopback değil. Host başlığı istemcinin sözü; kaynak adres değil.`,
+            'Anahtarsız yönetim yalnızca bu makineden gelen bağlantıya cevap veriyor: ağdaki başka bir',
+            'program "Host: localhost" yazarak yönetime erişemiyor.',
+          ].join('\n'),
+        );
+        expect(refused.status).toBe(403);
+        expect(refused.text).toContain('peer_not_allowed');
+
+        // 2) Köprü ağ geçidi ANONYMOUS_ADMIN_PEERS'e eklenince aynı istek cevaplanıyor.
+        const ok = await startProbe([`ANONYMOUS_ADMIN_PEERS=${peers}`]);
+        // Aynı container, bu makinenin başka bir adıyla (127.0.0.1): anahtarsız modda yönetim
+        // yalnızca MANAGEMENT_ALLOWED_HOSTS'taki adla cevap verir (DNS rebinding'e karşı).
+        const other = await fetch('http://127.0.0.1:6799/api/v1/all-configs').then(async (r) => ({ status: r.status, text: await r.text() })).catch((e) => ({ status: 0, text: e.message }));
+        const logs = execFileSync('docker', ['logs', 'pinvault-anon-probe'], { encoding: 'utf8' });
+        const warn = logs.split('\n').filter((l) => l.includes('authentication DISABLED')).slice(0, 1).join('\n');
+        await attachText(
+          testInfo,
+          `docker run -e ALLOW_ANONYMOUS_ADMIN=true -e ANONYMOUS_ADMIN_PEERS=${peers} (yalıtılmış container, :6799)`,
           [
             warn,
             '',
-            `GET /api/v1/all-configs (anahtarsız) → ${status}`,
+            `GET http://localhost:6799/api/v1/all-configs (anahtarsız) → ${ok.status}`,
+            `GET http://127.0.0.1:6799/api/v1/all-configs (anahtarsız, izinli olmayan ad) → ${other.status} ${other.text.trim().slice(0, 160)}`,
+            '',
+            'Container -e MANAGEMENT_BIND=0.0.0.0 -e MANAGEMENT_ALLOWED_HOSTS=localhost:6799 ile açıldı: anahtarsız modda',
+            'sunucu yönetim dinleyicisini kendiliğinden 127.0.0.1\'e bağlar (container içinde dışarıdan erişilemezdi) ve',
+            'isteğe yalnızca izinli adla gelirse cevap verir; başka bir adla (ör. saldırganın 127.0.0.1\'e yönlendirdiği',
+            'bir alan adı) gelen istek 403 host_not_allowed alır.',
+            `ANONYMOUS_ADMIN_PEERS=${peers}: yayımlanan porttan gelen bağlantının kaynağı (köprü ağ geçidi ya da Docker Desktop ağ geçidi) bu makine sayılıyor.`,
             '',
             'Ana host bu modda değil: .env\'deki API_KEY zorunlu (docker-compose.yml → API_KEY:?).',
           ].join('\n'),
         );
         expect(warn).toContain('authentication DISABLED');
-        expect(status).toBe(200);
+        expect(ok.status).toBe(200);
+        expect(other.status).toBe(403);
+        expect(other.text).toContain('host_not_allowed');
       } finally {
         execFileSync('docker', ['rm', '-f', 'pinvault-anon-probe'], { stdio: 'ignore' });
       }

@@ -187,9 +187,13 @@ function hostPins() {
     .filter(Boolean);
 }
 
-/** Kopyanın imzalama anahtarı dosyasının ham içeriği (ilk satır gizli!). */
+/**
+ * Kopyanın imzalama anahtarı, düz metin biçiminde: "<özel>\n<public>" (ilk satır
+ * gizli!). Dosya diskte kopyanın SIGNING_KEY_PASSWORD'ıyla şifreliyse (ENCv1:,
+ * setup.sh demo profilinde de parola üretir) o parolayla açılır.
+ */
 function signingKeyRaw() {
-  return fs.readFileSync(path.join(DIR, 'data/signing-key.pem'), 'utf8');
+  return require('./signingKeyFile').read(path.join(DIR, 'data/signing-key.pem'), readEnv().SIGNING_KEY_PASSWORD).plaintext;
 }
 
 function provision() {
@@ -228,7 +232,7 @@ async function openDashboard(browser, testInfo, { withKey = true } = {}) {
   const dashboard = new Dashboard(page, testInfo, { baseUrl: `${WEB_URL}/` });
   Dashboard.attachDialogs(page, dashboard);
   if (withKey) {
-    await page.addInitScript((value) => localStorage.setItem('pinvault_api_key', value), apiKey());
+    await Dashboard.seedApiKey(page, apiKey());
     await dashboard.open();
   }
   return dashboard;

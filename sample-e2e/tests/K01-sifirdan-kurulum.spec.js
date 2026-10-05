@@ -101,9 +101,12 @@ test('Kurulum: gereksinimler, setup.sh, docker compose up ve smoke-test — geç
       .split('\n')
       .filter((l) => l.trim() && !l.trim().startsWith('#'))
       .map((l) => (l.startsWith('API_KEY=') ? `API_KEY=${redact(fresh.apiKey())}` : l))
-      .map((l) => (l.startsWith('KEYSTORE_PASSWORD=') ? 'KEYSTORE_PASSWORD=<maskeli>' : l))
+      // Parolalar (KEYSTORE_, VAULT_AT_REST_, SIGNING_KEY_PASSWORD …) panele girmez.
+      .map((l) => l.replace(/^([A-Z0-9_]*PASSWORD[A-Z0-9_]*)=(.+)$/, '$1=<maskeli>'))
       .join('\n');
-    await attachText(testInfo, '.env (API anahtarı maskeli)', masked);
+    await attachText(testInfo, '.env (API anahtarı ve parolalar maskeli)', masked);
+    expect(fresh.readEnv().SIGNING_KEY_PASSWORD || '').not.toBe('');
+    expect(fresh.readEnv().FETCH_ALLOW_PRIVATE_TARGETS).toBe('true');
 
     await attachCommand(testInfo, 'Dosya izinleri', 'ls', ['-l', '.env', 'data/signing-key.pem'], { cwd: fresh.DIR });
     const mode = (fs.statSync(path.join(fresh.DIR, 'data/signing-key.pem')).mode & 0o777).toString(8);

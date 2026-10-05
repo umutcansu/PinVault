@@ -51,10 +51,16 @@ Yaptıkları:
 
 - `.env` yoksa `.env.example`'dan üretir (izin 600),
 - `API_KEY` boşsa rastgele üretir — dashboard bunu ister,
+- `KEYSTORE_PASSWORD`, `VAULT_AT_REST_PASSWORD` ve `SIGNING_KEY_PASSWORD` boşsa
+  rastgele üretir — sunucu bu üçü olmadan açılmaz,
+- `FETCH_ALLOW_PRIVATE_TARGETS=true` yazar (demo: sunucu "URL'den sertifika al" ile
+  bu makineye ve yerel ağa bağlanabilsin),
 - `HOST_LAN_IP` boşsa makinenin LAN IP'sini bulur (telefon bu adrese bağlanır;
   sunucu sertifikası bu adresi de kapsar, yani adres SAN listesine girer),
 - `data/signing-key.pem` yoksa ECDSA P-256 anahtar çifti üretir (izin 600).
   Dosyanın ilk satırı private (PKCS8, Base64), ikinci satırı public (X.509 SPKI).
+  Sunucu dosyayı ilk açılışta `SIGNING_KEY_PASSWORD` ile şifreler (`ENCv1:`); testler
+  onu `.env`'deki parolayla açar (`lib/signingKeyFile.js`).
 
 Yerel PinVault kaynağından derlemek için `.env`'e ekle:
 
@@ -170,11 +176,12 @@ kartlarında cihaz belirir.
 | Belirti | Sebep / çözüm |
 |---|---|
 | `API_KEY bos. Once ./scripts/setup.sh calistir.` | `.env` yok ya da `API_KEY` boş → `./scripts/setup.sh` |
+| Sunucu açılmıyor: `KEYSTORE_PASSWORD, … not set. Refusing to start with the demo values` | `.env`'de parolalar eksik (eski kurulum) → `./scripts/setup.sh` yeniden çalıştır, sonra `docker compose up -d` |
 | Sunucu açılmıyor: `API_KEY env var is not set. Refusing to start…` | container'a `API_KEY` geçilmemiş; yalnızca bilinçli olarak `ALLOW_ANONYMOUS_ADMIN=true` ile açılır (E02) |
 | Telefon: `başlatılamadı` / pin uyuşmazlığı | APK'ya gömülü ilk pin (bootstrap) sunucunun sertifikasıyla uyuşmuyor (sertifika yenilendi mi?) → `client-config.sh --properties` ile yeniden derle (E03) |
 | smoke-test: `SAN <ip> içermiyor` | sertifika LAN IP'si `.env`'e girmeden üretilmiş → `data/certs/demo-server.jks` ve `.pins` silinip container yeniden başlatılmalı |
-| Dashboard boş, sürekli anahtar soruyor | yanlış API anahtarı (403). `.env`'deki değeri gir; tarayıcıda `localStorage.pinvault_api_key` saklanır |
+| Dashboard boş, sürekli anahtar soruyor | yanlış API anahtarı (403). `.env`'deki değeri gir; anahtar yalnızca o sekmede (`sessionStorage.pinvault_api_key`) saklanır, sekme kapanınca yeniden sorulur |
 | mTLS Config API açılmıyor: `mTLS için önce client sertifika oluşturun` | truststore (sunucunun güvendiği istemci sertifikaları) yok → mTLS sekmesinden bir istemci sertifikası üret (K04) |
 | Telefon host'a ulaşamıyor | telefon ve Mac aynı ağda değil ya da `HOST_LAN_IP` yanlış; emülatörde 10.0.2.2 yerine LAN IP kullanılır |
-| `SIGNING_KEY_PASSWORD` ayarlayınca sunucu açılmıyor | anahtar dosyası şifreli kaldıysa parolayı geri ver ya da düz metin yedeği koy; anahtar dosyası `./data` dizin mount'u içinde olmalı (tek dosyalık mount'a yazılamıyor) |
+| `Signing key file is encrypted but SIGNING_KEY_PASSWORD is not set` ya da şifre çözme hatası | `.env`'deki `SIGNING_KEY_PASSWORD` dosyayı şifreleyen parola değil (silinmiş ya da değiştirilmiş) → eski parolayı geri yaz; anahtar dosyası `./data` dizin mount'u içinde olmalı (tek dosyalık mount'a yazılamıyor) |
 | `docker compose down` sonrası Config API'ler kayıp sanılıyor | veriler `./data` altında kalıcıdır; `up -d` sonrası kendiliğinden yeniden başlar (E08) |

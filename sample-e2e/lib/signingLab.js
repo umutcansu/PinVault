@@ -368,7 +368,7 @@ function mainApkBackup() {
  * katmanlarının ezilmesi. Dosyayı (değiştiyse) yazar; { text, primary, keys }.
  */
 async function writeLabProps(keys) {
-  const base = run('./scripts/client-config.sh', ['--properties'], { merge: false });
+  const base = run('./scripts/client-config.sh', env.CLIENT_CONFIG_ARGS, { merge: false });
   const info = await signingKeyInfo();
   const trusted = [info.publicKey, keys.backup.pub, keys.second.pub];
   let text = base;

@@ -214,6 +214,74 @@ class Device {
     this.shell('input keyevent KEYCODE_BACK');
   }
 
+  // ── Ekran kilidi ─────────────────────────────────────────────────────
+  //
+  // Örnek uygulamanın gizli vault dosyaları (userAuth REQUIRED) ekran kilidi
+  // olmayan telefonda saklanmaz ve yalnızca kilit sorulduktan sonra açılır.
+  // Bu senaryolar emülatöre geçici bir PIN koyar ve sonunda kaldırır; ekran
+  // kapanıp kilit ekranı gelmesin diye o süre boyunca ekran açık tutulur.
+
+  /** Cihazda ekran kilidi var mı. `locksettings verify` kilitsiz cihazda başarılı döner. */
+  hasScreenLock() {
+    const out = this.shell('locksettings verify 2>&1; true');
+    return !/verified successfully/i.test(out);
+  }
+
+  /**
+   * Geçici ekran kilidi PIN'i koyar ve ekranı açık tutar. Önceki "açık tut"
+   * ayarını döndürür ([clearScreenLock]'a verilir). Cihazda zaten bir kilit
+   * varsa dokunmaz: o zaman PIN'i E2E_SCREEN_LOCK_PIN ile vermek gerekir.
+   */
+  setScreenLockPin(pin) {
+    const stayOn = this.shell('settings get global stay_on_while_plugged_in').trim();
+    this.shell('svc power stayon true');
+    this.shell('input keyevent KEYCODE_WAKEUP');
+    const hadLock = this.hasScreenLock();
+    if (!hadLock) this.shell(`locksettings set-pin ${pin}`);
+    if (!this.hasScreenLock()) throw new Error('Cihaza ekran kilidi konamadı (locksettings set-pin)');
+    return { stayOn, ownLock: !hadLock };
+  }
+
+  /** [setScreenLockPin]'in koyduğu PIN'i kaldırır, "açık tut" ayarını geri koyar. */
+  clearScreenLock(pin, previous = {}) {
+    try {
+      if (previous.ownLock !== false) this.shell(`locksettings clear --old ${pin} 2>&1; true`);
+    } finally {
+      if (previous.stayOn !== undefined && previous.stayOn !== '' && previous.stayOn !== 'null') {
+        this.shell(`settings put global stay_on_while_plugged_in ${previous.stayOn}`);
+      } else {
+        this.shell('svc power stayon false');
+      }
+    }
+  }
+
+  /**
+   * Sistemin "ekran kilidini doğrula" penceresi (BiometricPrompt ya da kilit
+   * doğrulama ekranı) açık mı. Örnek uygulamanın başlığıyla ya da kilit
+   * ekranının PIN alanıyla tanınır.
+   */
+  credentialPromptShown(title) {
+    return this.uiNodes().some((n) =>
+      (title && n.text === title) || /lockPassword|password_entry|pinEntry|lockPattern/.test(n.id));
+  }
+
+  /**
+   * Açık kilit doğrulama penceresine PIN'i yazar ve onaylar. Önce PIN alanına
+   * dokunulur: pencere yeni açıldığında alan odağı henüz almamış olabiliyor ve
+   * yazılan rakamlar boşa gidiyordu.
+   */
+  enterCredential(pin) {
+    if (!/^\d+$/.test(String(pin))) throw new Error('Ekran kilidi PIN\'i yalnızca rakam olmalı');
+    const field = this.uiNodes().find((n) => /lockPassword|password_entry|pinEntry/.test(n.id) && n.bounds);
+    if (field) {
+      const [x1, y1, x2, y2] = field.bounds;
+      this.shell(`input tap ${Math.round((x1 + x2) / 2)} ${Math.round((y1 + y2) / 2)}`);
+      sleepSync(400);
+    }
+    this.shell(`input text ${pin}`);
+    this.shell('input keyevent KEYCODE_ENTER');
+  }
+
   waitForDevice() {
     adbRaw(['-s', this.serial, 'wait-for-device'], { timeout: 60_000 });
   }
@@ -398,12 +466,12 @@ class Device {
     }
   }
 
-  // ── Uygulama verisi (run-as; release derlemesinde emülatörde su) ────────
+  // ── Uygulama verisi (run-as; e2e derlemesinde emülatörde su) ────────────
 
   /**
    * Komutu uygulamanın kimliğiyle, uygulamanın veri dizininde çalıştırır.
-   * run-as yalnızca debug derlemelerinde çalışır; release derlemesinde
-   * (E2E_VARIANT=release) emülatörün su'suyla uygulamanın kullanıcısına
+   * run-as yalnızca debug derlemelerinde çalışır; küçültülmüş e2e derlemesinde
+   * (E2E_VARIANT=e2e, debuggable değil) emülatörün su'suyla uygulamanın kullanıcısına
    * geçilir, oluşan dosyalar yine uygulamanın olur.
    */
   runAs(pkg, command) {
@@ -443,6 +511,48 @@ class Device {
     this.shell(`rm -f ${tmp}`);
   }
 
+  /**
+   * [pkg]'nın gördüğü ANDROID_ID (kütüphanenin kayıtta `deviceUid` diye
+   * gönderdiği kimlik). Panelde token'ı bu telefona bağlamak için gerekir.
+   *
+   * Android 8 (API 26) ve sonrasında ANDROID_ID uygulamaya özel (imza anahtarı +
+   * kullanıcı + cihaz): `settings get secure android_id` shell'in kendi değerini
+   * verir, uygulamanınkini değil. O yüzden API 26+ değer SettingsProvider'ın
+   * uygulama başına tuttuğu dosyadan (`settings_ssaid.xml`, API 31+ ikili ABX)
+   * root ile okunur — yalnızca emülatörde. Gerçek telefonda `E2E_ANDROID_ID`
+   * ortam değişkeni verilir (uygulamanın mTLS ekranında "Cihaz kimliği: …").
+   * Değer `pm clear` ve yeniden kurulumda değişmez (aynı imza anahtarı).
+   */
+  appAndroidId(pkg) {
+    if (process.env.E2E_ANDROID_ID) return process.env.E2E_ANDROID_ID.trim();
+    if (!this._androidIds) this._androidIds = {};
+    if (this._androidIds[pkg]) return this._androidIds[pkg];
+    const sdk = Number(this.prop('ro.build.version.sdk'));
+    let id;
+    if (sdk < 26) {
+      id = this.shell('settings get secure android_id').trim();
+    } else {
+      if (!this.isEmulator()) {
+        throw new Error(`${this.serial}: uygulamanın ANDROID_ID'si root olmadan okunamıyor; ` +
+          'E2E_ANDROID_ID=<mTLS ekranındaki "Cihaz kimliği"> ver');
+      }
+      const file = '/data/system/users/0/settings_ssaid.xml';
+      let xml;
+      try {
+        xml = this.rootShell(sdk >= 31 ? `abx2xml ${file} -` : `cat ${file}`);
+      } catch {
+        xml = this.rootShell(`cat ${file}`); // ABX değil (düz XML) ya da abx2xml yok
+      }
+      const escaped = pkg.replace(/\./g, '\\.');
+      const row = xml.split('\n').find((line) => new RegExp(`<setting\\b[^>]*\\bpackage="${escaped}"`).test(line));
+      id = row && (row.match(/\bvalue="([^"]+)"/) || [])[1];
+      if (!id) throw new Error(`${pkg} için ANDROID_ID bulunamadı (${file}); uygulama kurulu ve bir kez açılmış olmalı`);
+    }
+    if (!/^[0-9a-fA-F]{1,64}$/.test(id)) throw new Error(`Beklenmeyen ANDROID_ID: ${JSON.stringify(id)}`);
+    this._androidIds[pkg] = id;
+    return id;
+  }
+
   /** `dumpsys jobscheduler` çıktısında paketin JobScheduler kayıt satırları (WorkManager işleri). */
   jobSchedulerJobs(pkg) {
     const dump = this.shell('dumpsys jobscheduler');
@@ -460,4 +570,18 @@ class Device {
   }
 }
 
-module.exports = { Device, sleep };
+/**
+ * Koşunun test cihazındaki sample-client'ın ANDROID_ID'si: token'lar varsayılan
+ * olarak buna bağlanır. Cihaz `ANDROID_SERIAL`, yoksa global setup'ın seçtiği
+ * cihazdır.
+ */
+let _testDeviceUid = null;
+function testDeviceUid() {
+  if (_testDeviceUid) return _testDeviceUid;
+  const serial = process.env.ANDROID_SERIAL || (require('./state').read() || {}).serial || Device.connected()[0];
+  if (!serial) throw new Error('Test cihazı yok: ANDROID_SERIAL ver ya da bir cihaz bağla');
+  _testDeviceUid = new Device(serial).appAndroidId(require('./env').APP_ID);
+  return _testDeviceUid;
+}
+
+module.exports = { Device, sleep, testDeviceUid };

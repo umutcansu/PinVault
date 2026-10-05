@@ -3,7 +3,10 @@
 // Kütüphane manifest'inde `fullBackupContent` (API ≤30) ve
 // `dataExtractionRules` (API 31+) kuralları var: istemci sertifikası, pin
 // config'i ve vault blob'ları hem bulut yedeğinden hem cihazdan cihaza
-// transferden çıkarılıyor. Örnek uygulama ayrıca `allowBackup="false"` diyor.
+// transferden çıkarılıyor. Örnek uygulama ayrıca `allowBackup="false"` diyor
+// ve kütüphanenin kurallarının yerine kendi kural dosyalarını koyuyor
+// (sample_*_rules.xml): kütüphanenin kurallarının hepsi + elle yüklenen
+// istemci sertifikasının dosyaları.
 //
 // Kara kutu kanıtı: emülatörde yerel yedekleme transport'u seçilip yedek
 // istendiğinde sistem paketi "Backup is not allowed" ile geri çeviriyor.
@@ -13,14 +16,21 @@ const { test, expect } = require('../lib/fixtures');
 const { attachText } = require('../lib/evidence');
 const env = require('../lib/env');
 
-const PINVAULT_DIR = process.env.E2E_PINVAULT_DIR || path.resolve(env.ROOT, '..', 'PinVault');
+// sample-e2e PinVault deposunun içinde (2026-10-02'den beri): kütüphane bir üst dizinde.
+const PINVAULT_DIR = process.env.E2E_PINVAULT_DIR || path.resolve(env.ROOT, '..');
 const RULES_DIR = path.join(PINVAULT_DIR, 'pinvault/src/main/res/xml');
 const VARIANT_TASK = env.VARIANT.charAt(0).toUpperCase() + env.VARIANT.slice(1);
 const MERGED_MANIFEST = path.join(
   env.CLIENT_DIR,
   `app/build/intermediates/merged_manifests/${env.VARIANT}/process${VARIANT_TASK}Manifest/AndroidManifest.xml`,
 );
-const RULE_RESOURCES = ['xml/pinvault_backup_rules', 'xml/pinvault_data_extraction_rules'];
+// Örnek uygulama kütüphanenin kurallarının yerine kendi kural dosyalarını koyar
+// (tools:replace): kütüphanenin bütün kurallarını aynen içerirler, üstüne elle
+// yüklenen istemci sertifikasının dosyalarını da dışarıda tutarlar.
+const APP_RULES_DIR = path.join(env.CLIENT_DIR, 'app/src/main/res/xml');
+const RULE_RESOURCES = ['xml/sample_backup_rules', 'xml/sample_data_extraction_rules'];
+/** Örnek uygulamanın kendi hassas dosyaları (files/ altında; ManualP12Store). */
+const APP_FILES = ['manual-client.sealed', 'manual-client.p12'];
 /** Kütüphanenin şifreli depo dosyaları (SecurePreferences). */
 const STORE_FILES = ['pinvault_secure_config.xml', 'pinvault_secure_client_cert.xml', 'pinvault_secure_signing_keys.xml', 'pinvault_secure_vault_files.xml'];
 
@@ -129,14 +139,14 @@ test('Depolama: uygulama verisi cihaz yedeğine alınmıyor', async ({ app, devi
           `APK içindeki kural dosyaları (${path.basename(env.APK)}, aapt2 dump resources + unzip -l):`,
           ...rules.map((r) => `  ${r.name} → ${r.file || '(kaynak yok)'}${r.inApk ? '' : '  APK\'DA YOK'}`),
           '',
-          'fullBackupContent ve dataExtractionRules kütüphanenin manifest\'inden',
-          'geliyor (manifest birleştirme); allowBackup="false" örnek uygulamanın kendi',
-          'kararı.',
+          'fullBackupContent ve dataExtractionRules örnek uygulamanın kendi kural',
+          'dosyaları (kütüphanenin kurallarının yerine, tools:replace); allowBackup="false" de',
+          'uygulamanın kararı.',
         ].join('\n'),
       );
       expect(attrs.join(' ')).toContain('android:allowBackup="false"');
-      expect(attrs.join(' ')).toContain('@xml/pinvault_backup_rules');
-      expect(attrs.join(' ')).toContain('@xml/pinvault_data_extraction_rules');
+      expect(attrs.join(' ')).toContain('@xml/sample_backup_rules');
+      expect(attrs.join(' ')).toContain('@xml/sample_data_extraction_rules');
       expect(rules.filter((r) => r.inApk)).toHaveLength(2);
     });
 
@@ -172,6 +182,36 @@ test('Depolama: uygulama verisi cihaz yedeğine alınmıyor', async ({ app, devi
         expect(r.extraction, `${r.file} bulut + cihaz transferi kurallarında`).toBe(2);
       }
       expect(legacy).toHaveLength(0);
+    });
+
+    await test.step('Kaynak: örnek uygulamanın kuralları kütüphaneninkileri aynen içeriyor ve elle yüklenen sertifikayı da dışarıda tutuyor', async () => {
+      const appBackup = fs.readFileSync(path.join(APP_RULES_DIR, 'sample_backup_rules.xml'), 'utf8');
+      const appExtraction = fs.readFileSync(path.join(APP_RULES_DIR, 'sample_data_extraction_rules.xml'), 'utf8');
+      const libBackup = fs.readFileSync(path.join(RULES_DIR, 'pinvault_backup_rules.xml'), 'utf8');
+      const excludes = (xml) => xml.match(/<exclude [^>]*\/>/g) || [];
+      const missingFromApp = [...new Set(excludes(libBackup))].filter((rule) => !appBackup.includes(rule) || !appExtraction.includes(rule));
+      const countFile = (xml, file) => xml.split(`<exclude domain="file" path="${file}" />`).length - 1;
+      const appRows = APP_FILES.map((file) => ({ file, backup: countFile(appBackup, file), extraction: countFile(appExtraction, file) }));
+      await attachText(testInfo, 'sample_data_extraction_rules.xml (API 31+, örnek uygulama)', appExtraction.trim());
+      await attachText(
+        testInfo,
+        'Örnek uygulamanın kuralları',
+        [
+          `kütüphanenin kurallarından örnekte eksik olan: ${missingFromApp.length ? missingFromApp.join(', ') : '(yok) ✓'}`,
+          '',
+          'dosya (files/)              API ≤ 30   API 31+ (bulut + cihaz transferi)',
+          ...appRows.map((r) => `${r.file.padEnd(27)} ${String(r.backup).padEnd(10)} ${r.extraction}`),
+          '',
+          'allowBackup="false" Android 12+\'da cihazdan cihaza taşımayı kapatmıyor; elle',
+          'yüklenen sertifikanın şifreli kopyası ve içe aktarılmayı bekleyen düz P12 bu',
+          'yüzden kurallarla dışarıda tutuluyor.',
+        ].join('\n'),
+      );
+      expect(missingFromApp).toHaveLength(0);
+      for (const r of appRows) {
+        expect(r.backup, `${r.file} API ≤ 30 kuralında`).toBe(1);
+        expect(r.extraction, `${r.file} bulut + cihaz transferi kurallarında`).toBe(2);
+      }
     });
 
     await test.step('Not: bu test neden daha ileri gidemiyor', async () => {

@@ -5,24 +5,39 @@
 // sarılıyor. Anahtarı kayıtlı olmayan bir istek sarmalanamaz — sunucu 412
 // dönüp ne yapılması gerektiğini söylüyor. Telefon anahtarını init sırasında
 // kaydettiği için aynı dosyayı alıp çözebiliyor.
+//
+// Uygulamanın kendi end_to_end dosyası (sample-e2e) artık gizli: mTLS bloğunda,
+// token_mtls ve ekran kilidiyle; ağ trafiği Mac'ten gösterilemez. Bu senaryo
+// şifrelemenin kendisini herkese açık sample-flags üzerinde gösterir (uygulama
+// sunucunun X-Vault-Encryption başlığına göre çözer, bkz. C11). Cihazın RSA
+// anahtarı ancak bir end_to_end dosyası tanımlıyken, yani cihaz mTLS'e
+// kayıtlıyken üretilip kaydedildiği için önce kayıt olunur.
 const { test, expect } = require('../lib/fixtures');
 const { attachText, attachCommand, describeResponse, hexdump } = require('../lib/evidence');
 const crypto = require('crypto');
 const hostApi = require('../lib/hostApi');
+const secureVault = require('../lib/secureVault');
 const env = require('../lib/env');
 
-const KEY = env.VAULT_KEYS.e2e;
+const KEY = env.VAULT_KEYS.flags;
 
 test('Vault cihaza özel şifreleme: public key\'i kayıtlı olmayan cihaz 412 alıyor, telefon dosyayı çözüyor', async ({
   app,
+  device,
   dashboard,
 }, testInfo) => {
+  test.setTimeout(10 * 60 * 1000);
   const plaintext = `bilinmeyen-cihaz-denemesi-${Date.now()}`;
   const unknownDevice = `e2e-bilinmeyen-${Date.now()}`;
+  const sv = { clientId: `c10-cihaz-${Date.now()}` };
   let deviceId;
   let version;
 
   try {
+    await test.step('Hazırlık: cihaz mTLS\'e kayıt olur (cihaz RSA anahtarı üretilip kaydedilir)', async () => {
+      await secureVault.prepare({ app, device, dashboard }, sv, { screenLock: false });
+    });
+
     await test.step('Web: dosya end_to_end şifrelemeyle yüklenir', async () => {
       version = await dashboard.uploadVaultText(env.VAULT_API, KEY, plaintext, {
         policy: 'public',
@@ -75,7 +90,6 @@ test('Vault cihaza özel şifreleme: public key\'i kayıtlı olmayan cihaz 412 a
       const status = await app.fetchVault(KEY);
       await app.snap('kendi anahtarıyla çözüldü');
       expect(status).toContain(`${KEY} v${version} indirildi`);
-      expect(status).toContain('cihaz anahtarıyla çözüldü');
       expect(status).toContain(plaintext);
     });
 
@@ -130,5 +144,6 @@ test('Vault cihaza özel şifreleme: public key\'i kayıtlı olmayan cihaz 412 a
     });
   } finally {
     await hostApi.deleteVaultFile(env.VAULT_API, KEY).catch(() => {});
+    await secureVault.cleanup({ device }, sv);
   }
 });
