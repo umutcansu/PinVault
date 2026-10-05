@@ -56,6 +56,10 @@ services:
       # yalnızca cihaz host ACL'inin adını yazdığı cihazlara verilir; ACL'siz bir
       # kapsam kimseye vermez.
       HOST_CLIENT_CERT_REQUIRE_GRANT: "true"
+      # Sabit: cihazların ulaştığı Config API portları yalnızca cihaz uçlarını
+      # yanıtlar; yönetim yalnızca yönetim portunda. Sızan bir API_KEY internetten
+      # pin yazamaz.
+      CONFIG_API_ADMIN_ROUTES: "off"
       # Değerlendirme kurulumu (setup.sh --evaluation-single-signer-NOT-FOR-PRODUCTION)
       # tek imzalayıcıyla açılır; entrypoint.sh her açılışta "ÜRETİM DEĞİLDİR" yazar.
       SAMPLE_EVALUATION: ${SAMPLE_EVALUATION:-}

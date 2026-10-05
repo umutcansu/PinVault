@@ -168,6 +168,10 @@ services:
       # cihazlara (true); boş = sunucu varsayılanı (false: ACL'siz kapsam her
       # kayıtlı cihaza verir). Üretim profili true sabitler.
       HOST_CLIENT_CERT_REQUIRE_GRANT: ${HOST_CLIENT_CERT_REQUIRE_GRANT:-}
+      # Config API portlarında yönetim uçları (on | off). Boş = on (demo:
+      # panel betikleri ve uçtan uca testler cihaz portundan da yönetir).
+      # Üretim profili off sabitler.
+      CONFIG_API_ADMIN_ROUTES: ${CONFIG_API_ADMIN_ROUTES:-}
       # Kötüye kullanım sınırları (boş = sunucu varsayılanı).
       # Bir adresin 10 dakikada toplayabileceği ret sayısı (varsayılan 300). DEMO: 0
       # (sınır yok): Docker Desktop arkasında bütün cihazlar tek adresten görünür ve

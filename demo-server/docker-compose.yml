@@ -95,6 +95,8 @@ services:
       - VAULT_DOWNLOAD_CONCURRENCY_TOTAL=${VAULT_DOWNLOAD_CONCURRENCY_TOTAL:-}
       # A host's client certificate only to devices the host ACL names (true); unset = every enrolled device.
       - HOST_CLIENT_CERT_REQUIRE_GRANT=${HOST_CLIENT_CERT_REQUIRE_GRANT:-}
+      # off: the Config API ports answer device endpoints only; admin routes live on the management port.
+      - CONFIG_API_ADMIN_ROUTES=${CONFIG_API_ADMIN_ROUTES:-}
       # Admin uploads other than vault files (keystores, certificates, JSON).
       - ADMIN_UPLOAD_MAX_BYTES=${ADMIN_UPLOAD_MAX_BYTES:-}
       # "Fetch the certificate of this URL" refuses loopback and private-network

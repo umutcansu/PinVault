@@ -117,6 +117,25 @@ class CertificateValidityException(
 ) : java.security.cert.CertificateException(message, cause)
 
 /**
+ * [PinVaultConfig.Builder.requireHardwareBackedKeys] is on and the Android
+ * Keystore made a key in software (or would not say where it made it). The
+ * key is deleted again and the operation that needed it fails: enrollment
+ * ([ClientCertEnrollmentResult.Failed] with this cause), a vault file
+ * ([VaultFileResult.Failed]), or the first use of the encrypted stores
+ * (`init` returns `Failed`). [level] is what the Keystore reported;
+ * [keyKind] names the key ("Client identity key", "Store encryption key", …).
+ */
+class HardwareBackedKeyRequiredException(
+    val keyKind: String,
+    val level: KeySecurityLevel,
+    cause: Throwable? = null
+) : SSLPinningException(
+    "$keyKind: the Android Keystore made the key at security level '${level.wireName}', " +
+        "and requireHardwareBackedKeys() accepts StrongBox or TEE only",
+    cause
+)
+
+/**
  * The server's chain matched an **issuer** pin — a CA the leaf really chains
  * to — but the leaf is not issued for the host being connected to (no
  * matching `subjectAltName`). An issuer pin vouches for the CA, not for the

@@ -1525,6 +1525,7 @@ its configs.
 | `PICKUP_RATE_LIMIT` / `PICKUP_SOURCE_RATE_LIMIT` | `120` / `600` | *(next release)* How often a waiting request may be asked about, per request and per address, per 10 minutes. |
 | `VAULT_DOWNLOAD_CONCURRENCY` | `4` | *(next release)* Vault downloads one address may run at once (`429` beyond it). |
 | `VAULT_DOWNLOAD_CONCURRENCY_TOTAL` | `16` | *(next release)* Vault downloads served at once in total, across addresses and listeners (`429` beyond it; `0` = unlimited). Each download holds the whole file in memory, so the per-address cap alone let a few addresses fill the heap with one large `public` file. The Docker images start the JVM with `-XX:MaxRAMPercentage=60`. |
+| `CONFIG_API_ADMIN_ROUTES` | `on` | *(next release)* `off`: the Config API listeners — the ports devices reach — answer device endpoints only; every admin route gets `403 admin_routes_disabled` there, with or without a key, and administration happens on the management port alone. A leaked `API_KEY` is then useless from the internet-facing ports. The production profile sets `off`. |
 | `HOST_CLIENT_CERT_REQUIRE_GRANT` | unset | *(next release)* `true`: a host's client certificate — one private key the whole fleet shares — is handed only to devices the device host ACL names; a scope with no ACL serves it to nobody. Unset: a scope without an ACL serves it to every enrolled device (so a device enrolled with a shared enrollment code, or a phone compromised before its revocation, could collect every host's key). The production profile sets `true`. |
 | `CLIENT_DEVICES_MAX` | `20000` | *(next release)* Most rows the device list (connection reports) keeps; the oldest go first. |
 
@@ -1893,6 +1894,28 @@ routine rotations.
   that leaks cannot be used to pose as another device.
 - Name the hosts that may see the client certificate with
   `clientCertHosts(...)`.
+
+### 8b. Know — or require — where the keys live *(next release)*
+
+The library asks the Keystore for StrongBox first and the TEE next, but
+where the key ends up is the Keystore's decision; a ROM that can do neither
+hands out a software key a rooted device can copy. Every key the library
+makes is now read back (`KeyInfo`) and its level logged. It is reported as
+`KeySecurityLevel` (`STRONGBOX`, `TRUSTED_ENVIRONMENT`, `SOFTWARE`,
+`UNKNOWN`) on `ClientCertEnrollmentResult.Enrolled.keySecurityLevel`, from
+`PinVault.identityKeySecurityLevel()`, and in the attestation report the
+server sees. To refuse anything but hardware:
+
+```kotlin
+PinVaultConfig.Builder()
+    .requireHardwareBackedKeys()
+```
+
+A `SOFTWARE` or `UNKNOWN` key is then deleted again and the operation fails
+with `HardwareBackedKeyRequiredException`: enrollment, vault-file and
+imported keys, the user-auth key, and the store keys made on first use
+(`init` returns `Failed`). Keys that already exist are used as they are.
+Emulators have no secure hardware, so leave this off in emulator builds.
 
 ### 9. (Optional) Keys that work only while the phone is unlocked *(next release)*
 

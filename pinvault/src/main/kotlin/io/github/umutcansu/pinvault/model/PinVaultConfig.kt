@@ -91,7 +91,9 @@ data class PinVaultConfig(
      */
     val vaultFileMaxOfflineAgeMs: Long = 0L,
     /** Generate the library's Keystore keys so they work only while the device is unlocked. See [Builder.requireUnlockedDevice]. */
-    val requireUnlockedDevice: Boolean = false
+    val requireUnlockedDevice: Boolean = false,
+    /** Refuse Keystore keys made outside secure hardware. See [Builder.requireHardwareBackedKeys]. */
+    val requireHardwareBackedKeys: Boolean = false
 ) {
 
     /** First registered block — convenience for internal single-API code paths. */
@@ -111,6 +113,7 @@ data class PinVaultConfig(
         private var wipeVaultFilesOnRevocation = false
         private var vaultFileMaxOfflineAgeMs: Long = 0L
         private var requireUnlockedDevice = false
+        private var requireHardwareBackedKeys = false
 
         /**
          * Keep using a config for [amount] [unit] after its `expiresAt`.
@@ -233,6 +236,25 @@ data class PinVaultConfig(
         fun requireUnlockedDevice() = apply { this.requireUnlockedDevice = true }
 
         /**
+         * Refuse a Keystore key the device makes outside secure hardware.
+         *
+         * The library asks for StrongBox first and the TEE next, but what it
+         * gets is the Keystore's decision: a ROM that cannot do either hands
+         * out a software key, which a rooted device can copy. By default the
+         * library uses such a key and logs a warning; its level is reported
+         * ([KeySecurityLevel]: on the enrollment result and in the
+         * attestation report, so the server sees it too). With this option a
+         * key the Keystore reports as `software` or `unknown` is deleted
+         * again and the operation fails with [HardwareBackedKeyRequiredException]:
+         * enrollment, vault files and — for the store keys made on first use —
+         * `init`. Applies to keys generated from now on; keys that already
+         * exist are used as they are (read their level with
+         * `PinVault.identityKeySecurityLevel`). Emulators have no secure
+         * hardware: do not set this for emulator builds.
+         */
+        fun requireHardwareBackedKeys() = apply { this.requireHardwareBackedKeys = true }
+
+        /**
          * Register a Config API. Calling twice with the same id replaces the
          * prior block (useful for overrides in tests).
          *
@@ -320,7 +342,8 @@ data class PinVaultConfig(
                 caTrustHosts = caTrustHosts.distinct(),
                 wipeVaultFilesOnRevocation = wipeVaultFilesOnRevocation,
                 vaultFileMaxOfflineAgeMs = vaultFileMaxOfflineAgeMs,
-                requireUnlockedDevice = requireUnlockedDevice
+                requireUnlockedDevice = requireUnlockedDevice,
+                requireHardwareBackedKeys = requireHardwareBackedKeys
             )
         }
     }

@@ -336,8 +336,18 @@ fun main() {
         certService, pinConfigStore, hostStore, serverCertId, bootstrapPins = { serverTlsPins.pins }
     )
 
+    // CONFIG_API_ADMIN_ROUTES: on (default) | off. Off: the Config API listeners — the
+    // ports devices reach, often from the internet — answer device endpoints only;
+    // every admin route, key or no key, is 403 there and lives on the management port.
+    val configApiAdminRoutes = when (System.getenv("CONFIG_API_ADMIN_ROUTES")?.trim()?.lowercase()) {
+        null, "", "on", "true" -> true
+        "off", "false" -> false
+        else -> error("CONFIG_API_ADMIN_ROUTES must be on or off (got '${System.getenv("CONFIG_API_ADMIN_ROUTES")}')")
+    }
+    println("CONFIG_API_ADMIN_ROUTES=${if (configApiAdminRoutes) "on" else "off"}" +
+        (if (configApiAdminRoutes) " — admin routes answer on the Config API ports too (with the admin key)" else " — Config API ports serve devices only"))
     // Config API manager (dinamik TLS/mTLS sunucuları)
-    val configApiManager = ConfigApiManager()
+    val configApiManager = ConfigApiManager(deviceOnly = !configApiAdminRoutes)
     // Invalid admin keys: one counter for every listener (ADMIN_AUTH_FAILURE_LIMIT, 0 = off).
     val adminAuthFailureLimit = (System.getenv("ADMIN_AUTH_FAILURE_LIMIT")?.toIntOrNull()
         ?: com.example.pinvault.server.plugin.DEFAULT_ADMIN_AUTH_FAILURE_LIMIT).coerceAtLeast(0)

@@ -100,6 +100,7 @@ internal class AndroidKeystoreDeviceKeyProvider(
                 gen.initialize(spec(strongBox = false, unlockedDeviceRequired))
                 gen.generateKeyPair()
             }
+            KeystoreOptions.checkLevel("Device RSA key", KeyInspector.securityLevel(getPrivateKey()), cleanUp = { runCatching { clear() } })
         }
     }
 

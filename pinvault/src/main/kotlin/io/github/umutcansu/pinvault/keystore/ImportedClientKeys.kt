@@ -69,7 +69,9 @@ internal object AndroidKeystoreImportedClientKeys : ImportedClientKeys {
         }
         // An entry that cannot be read back is of no use: say so now, while
         // the caller still holds the P12.
-        check(keyStore.getKey(alias, null) is PrivateKey) { "imported key cannot be read back" }
+        val imported = keyStore.getKey(alias, null) as? PrivateKey ?: error("imported key cannot be read back")
+        // Some devices import into software only; with requireHardwareBackedKeys() that is refused.
+        KeystoreOptions.checkLevel("Imported client key", KeyInspector.securityLevel(imported), cleanUp = { runCatching { delete(alias) } })
     }
 
     /**

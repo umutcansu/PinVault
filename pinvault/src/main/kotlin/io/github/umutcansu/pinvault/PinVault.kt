@@ -334,9 +334,22 @@ object PinVault {
         SetUp.Failed(InitResult.Failed(reason, e))
     }
 
-    /** `requireUnlockedDevice()` reaches the places that generate Keystore keys without seeing a config. */
+    /** `requireUnlockedDevice()` / `requireHardwareBackedKeys()` reach the places that generate Keystore keys without seeing a config. */
     private fun applyKeystoreOptions(config: PinVaultConfig) {
         io.github.umutcansu.pinvault.keystore.KeystoreOptions.unlockedDeviceRequired = config.requireUnlockedDevice
+        io.github.umutcansu.pinvault.keystore.KeystoreOptions.hardwareBackedRequired = config.requireHardwareBackedKeys
+    }
+
+    /**
+     * Where this device's mTLS identity key lives, as the Android Keystore
+     * reports it — StrongBox, the TEE, software — or null when no identity
+     * key exists yet (nothing enrolled). Read locally, no network. A key an
+     * earlier version generated is reported too; [PinVaultConfig.Builder.requireHardwareBackedKeys]
+     * applies only to keys generated after it is set.
+     */
+    fun identityKeySecurityLevel(label: String? = null): io.github.umutcansu.pinvault.model.KeySecurityLevel? {
+        val key = identityKeyFactory(label ?: defaultCertLabel())
+        return if (key.exists()) key.securityLevel() else null
     }
 
     /**
@@ -1013,8 +1026,8 @@ object PinVault {
             val api = ConfigApiClient(
                 block, context.applicationContext, identityKeyFactory = identityKeyFactory, importedKeys = importedKeysFactory()
             ).api
-            enrollAndStore(context, config, block, api, token, deviceId, certLabel)
-            ClientCertEnrollmentResult.Enrolled()
+            val enrolled = enrollAndStore(context, config, block, api, token, deviceId, certLabel)
+            ClientCertEnrollmentResult.Enrolled(keySecurityLevel = enrolled.keySecurityLevel())
         } catch (e: Exception) {
             enrollmentFailure(e)
         }
@@ -1042,7 +1055,7 @@ object PinVault {
             // Present the new identity on every client, the Config API's included.
             (configApi as? DefaultCertificateConfigApi)?.rebuildBootstrapClient()
             clientProvider.currentConfig?.let { clientProvider.swap(it) }
-            ClientCertEnrollmentResult.Enrolled()
+            ClientCertEnrollmentResult.Enrolled(keySecurityLevel = enrolled.keySecurityLevel())
         } catch (e: Exception) {
             enrollmentFailure(e)
         }
@@ -1054,6 +1067,14 @@ object PinVault {
         class Imported(val privateKey: java.security.PrivateKey, val certs: Array<java.security.cert.X509Certificate>) : Enrolled()
         /** A server-made key the platform refused to import: kept as a PKCS12. */
         class P12(val bytes: ByteArray) : Enrolled()
+
+        /** Where the private key of this enrollment lives, as the Keystore reports it. */
+        fun keySecurityLevel(): io.github.umutcansu.pinvault.model.KeySecurityLevel = when (this) {
+            is Chain -> runCatching { key.securityLevel() }.getOrDefault(io.github.umutcansu.pinvault.model.KeySecurityLevel.UNKNOWN)
+            is Imported -> io.github.umutcansu.pinvault.keystore.KeyInspector.securityLevel(privateKey)
+            // A PKCS12 in app storage: software by definition.
+            is P12 -> io.github.umutcansu.pinvault.model.KeySecurityLevel.SOFTWARE
+        }
     }
 
     private val NO_CONFIG_API_BLOCK = ClientCertEnrollmentResult.Failed("The config has no Config API block")

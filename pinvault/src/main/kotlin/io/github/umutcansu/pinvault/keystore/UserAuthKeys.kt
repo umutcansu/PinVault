@@ -291,7 +291,11 @@ internal class KeystoreUserAuthKeys(
         for ((strongBox, attest) in attempts) {
             try {
                 generate(perUseBiometric, strongBox, attest)
+                // requireHardwareBackedKeys(): a software key is deleted and refused, not tried another way.
+                KeystoreOptions.checkLevel("User-auth key", generatedLevel(), cleanUp = ::delete)
                 return
+            } catch (e: io.github.umutcansu.pinvault.model.HardwareBackedKeyRequiredException) {
+                throw e
             } catch (e: Exception) {
                 last = e
                 Timber.w(e, "User-auth key generation failed (strongBox=%s, attestation=%s), trying the next way",
@@ -300,6 +304,13 @@ internal class KeystoreUserAuthKeys(
             }
         }
         throw last ?: IllegalStateException("user-auth key generation failed")
+    }
+
+    /** Where the key just generated under [ALIAS] lives, as the Keystore reports it. */
+    private fun generatedLevel(): io.github.umutcansu.pinvault.model.KeySecurityLevel {
+        val key = keyStore().getKey(ALIAS, null) as? PrivateKey
+            ?: return io.github.umutcansu.pinvault.model.KeySecurityLevel.UNKNOWN
+        return KeyInspector.securityLevel(key)
     }
 
     private fun generate(perUseBiometric: Boolean, strongBox: Boolean, attestationChallenge: ByteArray?) {

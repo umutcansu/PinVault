@@ -64,6 +64,14 @@ interface ClientIdentityKeyProvider {
     /** SHA-256 of the SubjectPublicKeyInfo, Base64 — what the server keeps in its registry. */
     fun spkiSha256(): String
 
+    /**
+     * Where the key lives, as the Keystore reports it after generation
+     * (`KeyInfo`): StrongBox, the TEE, software, or unknown when it cannot be
+     * read. Sent with the enrollment request and the attestation report.
+     */
+    fun securityLevel(): io.github.umutcansu.pinvault.model.KeySecurityLevel =
+        io.github.umutcansu.pinvault.model.KeySecurityLevel.UNKNOWN
+
     /** Delete the key. The next [ensureKeyPair] generates a new identity. */
     fun clear()
 
@@ -139,6 +147,9 @@ internal class AndroidKeystoreClientIdentityKeyProvider(
                     gen.initialize(spec(strongBox, challenge, unlockedDeviceRequired))
                     gen.generateKeyPair()
                     Timber.i("Client identity key generated (strongBox=%s, attestation=%s)", strongBox, challenge != null)
+                    // Where it ended up is the Keystore's word, not the spec's:
+                    // refused and deleted when hardware is required and it is not.
+                    KeystoreOptions.checkLevel("Client identity key", securityLevel(), cleanUp = ::clear)
                     return@generating
                 } catch (e: Exception) {
                     last = e
@@ -195,6 +206,10 @@ internal class AndroidKeystoreClientIdentityKeyProvider(
 
     override fun spkiSha256(): String = Pkcs10Csr.spkiSha256Base64(publicKey())
 
+    override fun securityLevel(): io.github.umutcansu.pinvault.model.KeySecurityLevel =
+        if (!exists()) io.github.umutcansu.pinvault.model.KeySecurityLevel.UNKNOWN
+        else KeyInspector.securityLevel(privateKey())
+
     override fun clear() {
         if (keystore.containsAlias(alias)) keystore.deleteEntry(alias)
     }
@@ -229,6 +244,10 @@ internal class SoftwareClientIdentityKeyProvider(private val alias: String) : Cl
     override fun privateKey(): PrivateKey = keyPair().private
     override fun sign(data: ByteArray): ByteArray = signWith(privateKey(), data)
     override fun spkiSha256(): String = Pkcs10Csr.spkiSha256Base64(publicKey())
+    /** A software key, and says so (tests of `requireHardwareBackedKeys` rely on it). */
+    override fun securityLevel(): io.github.umutcansu.pinvault.model.KeySecurityLevel =
+        if (keys.containsKey(alias)) io.github.umutcansu.pinvault.model.KeySecurityLevel.SOFTWARE
+        else io.github.umutcansu.pinvault.model.KeySecurityLevel.UNKNOWN
     override fun clear() {
         keys.remove(alias)
         challenges.remove(alias)
