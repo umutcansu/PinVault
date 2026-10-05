@@ -322,6 +322,7 @@ async function renderConfigApiDetail(apiId) {
     { id: 'signing', label: t('tabSigning') },
     ...(api.mode === 'mtls' ? [{ id: 'mtls', label: t('tabMtlsCerts') }] : []),
     { id: 'vault', label: t('tabVault') },
+    { id: 'attestation', label: t('tabAttestation') },
     { id: 'history', label: t('tabHistory') }
   ];
   // Seçili tab bu API'de yoksa genel'e dön
@@ -378,6 +379,7 @@ async function renderConfigApiDetail(apiId) {
       case 'signing': await renderSigningSection(); break;
       case 'mtls': await renderMtlsSection(); break;
       case 'vault': await renderApiVaultTab(apiId); break;
+      case 'attestation': await renderAttestationTab(apiId); break;
       case 'history': await renderHealthSection(); break;
     }
     // Tab fonksiyonu content'i değiştirdi — başına header+tabbar ekle

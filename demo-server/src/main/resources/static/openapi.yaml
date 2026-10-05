@@ -290,6 +290,12 @@ tags:
       key changes, webhook notifications and the live certificate check.
   - name: monitoring
     description: Health probes, certificate expiry monitoring, API docs, dashboard.
+  - name: attestation
+    description: >
+      App and device attestation (ATTESTATION.md): the device-side challenge /
+      attest round trip on the Config API ports, the per-Config-API rejection
+      policy, attested devices with their verdicts and annotations, verdict
+      statistics, and the `PinVault-Token` HS256 secrets backends verify with.
 
 paths:
 
@@ -5394,6 +5400,493 @@ paths:
         '401': { $ref: '#/components/responses/MissingApiKey' }
         '403': { $ref: '#/components/responses/InvalidApiKey' }
 
+  # ─────────────────────────────────────────────────────────────────────
+  # attestation — device side (ATTESTATION.md §2)
+  # ─────────────────────────────────────────────────────────────────────
+
+  /api/v1/attest/challenge:
+    get:
+      tags: [attestation]
+      operationId: getAttestationChallenge
+      summary: A single-use attestation nonce
+      description: |
+        The nonce is stateless: `base64url( ts(8 bytes) ‖ rand(16) ‖
+        HMAC-SHA256(nonceKey, ts‖rand)[0..16) )`. The server verifies the MAC and
+        the age (≤ `ATTESTATION_NONCE_TTL_SECONDS`, default 120 s) and keeps a
+        bounded replay cache of the nonces it accepted. `serverTime` lets the
+        library notice a wildly wrong device clock; it is informational only.
+
+        Public (`isPublicEndpoint`), rate-limited per source address
+        (`ATTESTATION_RATE_LIMIT`), counted by the device refusal limiter. Served
+        only while `ATTESTATION_ENABLED=true` (`404` otherwise).
+
+        Registered on: **config-api** listeners only.
+      security: []
+      x-registered-on: config-api
+      responses:
+        '200':
+          description: A fresh nonce.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AttestationChallenge' }
+        '429':
+          description: Too many challenges from this source address (`Retry-After` set).
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+
+  /api/v1/attest:
+    post:
+      tags: [attestation]
+      operationId: attest
+      summary: Attest an app instance and receive a PinVault-Token
+      description: |
+        The library measures the app and the device (`DeviceIntegrityProbe`), signs
+        `pinvault-attest:v1:<nonce>:<deviceId>:<sha256-hex(report)>` with its device
+        key (`SHA256withECDSA`, DER) and posts the report **as a string**. The
+        server checks, in order: JSON / version / report size (`400 invalid_json`,
+        `400 unsupported_version`, `400 report_too_large`), the nonce (`400
+        nonce_invalid`, `400 nonce_expired`, `400 nonce_replayed`), the signature
+        (`401 signature_invalid`), revocation (`403 device_revoked`), the device key
+        (`403 key_mismatch` for a known device with another key; first registration
+        under `ATTESTATION_KEY_POLICY=enforce` needs a valid Android key attestation
+        chain: `403 attestation_required` / `403 attestation_invalid`), then the
+        rejection policy of this Config API (ATTESTATION.md §4).
+
+        On `pass` the answer carries a `PinVault-Token` (HS256 JWT, `tokenTtlSeconds`,
+        `aud` = this Config API id) and, when `currentConfigVersion` /
+        `currentIssuedAt` differ from what the server would serve, the same signed
+        config envelope `GET /api/v1/certificate-config` serves (scoped by the
+        device's host ACL). On `reject` there is **no token and no config**; the
+        ARC is always present and resolves in the dashboard to the reasons, which
+        the device itself sees only when the policy's `revealReasons` is on.
+
+        Audited: `attestation_device_registered` (first registration),
+        `attestation_key_mismatch`, `attestation_rejected` (routine; not in `*`
+        webhooks). Public, rate-limited per source address and per device id
+        (`ATTESTATION_DEVICE_RATE_LIMIT`), body capped at 64 KB.
+
+        Registered on: **config-api** listeners only.
+      security: []
+      x-registered-on: config-api
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/AttestationRequest' }
+      responses:
+        '200':
+          description: The verdict — a token only on `pass`.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AttestationResponse' }
+        '400':
+          description: '`invalid_json`, `unsupported_version`, `report_too_large`, `nonce_invalid`, `nonce_expired`, `nonce_replayed`, or a malformed field.'
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '401':
+          description: '`signature_invalid` — the signature does not verify with `publicKey`.'
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '403':
+          description: '`device_revoked`, `key_mismatch`, `attestation_required` or `attestation_invalid` (with the verifier''s reason).'
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '413':
+          description: Body larger than the 64 KB device limit.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '429':
+          description: Rate limit of the source address or the device id (`Retry-After` set).
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+
+  # ─────────────────────────────────────────────────────────────────────
+  # attestation — admin (ATTESTATION.md §6)
+  # ─────────────────────────────────────────────────────────────────────
+
+  /api/v1/config-apis/{id}/attestation/policy:
+    get:
+      tags: [attestation]
+      operationId: getAttestationPolicy
+      summary: The rejection policy of a Config API
+      description: |
+        Stored per Config API (`attestation_policies`). When none is stored the
+        answer is the `ATTESTATION_POLICY_DEFAULT` preset (`strict` or `lenient`)
+        with `version: 0`, `tokenTtlSeconds` = `ATTESTATION_TOKEN_TTL_SECONDS`,
+        `attestIntervalSeconds` = `ATTESTATION_INTERVAL_SECONDS` and
+        `revealReasons` = `ATTESTATION_REVEAL_REASONS`.
+
+        Registered on: **management** (and the Config API ports when
+        `CONFIG_API_ADMIN_ROUTES=on`).
+      security:
+        - ApiKeyAuth: []
+      x-registered-on: management
+      parameters:
+        - $ref: '#/components/parameters/AttestationConfigApiIdPath'
+      responses:
+        '200':
+          description: The policy in force.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AttestationPolicy' }
+        '404':
+          description: No Config API with this id.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '401': { $ref: '#/components/responses/MissingApiKey' }
+        '403': { $ref: '#/components/responses/InvalidApiKey' }
+    put:
+      tags: [attestation]
+      operationId: putAttestationPolicy
+      summary: Replace the rejection policy of a Config API
+      description: |
+        The whole object (ATTESTATION.md §4), every field optional: a flag or
+        field left out keeps its current value. Every one of the twelve flags
+        takes `reject`, `warn` or `ignore`; `tokenTtlSeconds` is 30..86400 and
+        `attestIntervalSeconds` 60..86400. The server bumps `version` on every
+        change (the `version` sent is ignored; a PUT that changes nothing keeps
+        the version and is not audited); tokens carry it in their `pol` claim.
+
+        **Two-person approval** (`PIN_CHANGE_APPROVALS>=2`): waits for a second admin
+        (`202`, operation `attestation_policy`). Audited as `attestation_policy_updated`.
+
+        Registered on: **management** (and the Config API ports when
+        `CONFIG_API_ADMIN_ROUTES=on`).
+      security:
+        - ApiKeyAuth: []
+      x-registered-on: management
+      parameters:
+        - $ref: '#/components/parameters/AttestationConfigApiIdPath'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/AttestationPolicy' }
+      responses:
+        '202': { $ref: '#/components/responses/PendingApproval' }
+        '200':
+          description: The stored policy, with its new `version`.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AttestationPolicy' }
+        '400':
+          description: '`invalid_policy` — not a JSON object, an unknown flag or action, or a duration out of range (`message` says which).'
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '401': { $ref: '#/components/responses/MissingApiKey' }
+        '403': { $ref: '#/components/responses/InvalidApiKey' }
+
+  /api/v1/config-apis/{id}/attestation/devices:
+    get:
+      tags: [attestation]
+      operationId: listAttestedDevices
+      summary: Attested devices of a Config API
+      description: |
+        Every device that registered a key with this Config API, with its last
+        verdict (`result`, `arc`, `rejectionReasons`, `warnings`), key security level
+        and attestation state, first / last seen and its annotations and overrides.
+        The ARC of a verdict resolves here: the dashboard shows the reasons behind
+        the code the device was given.
+
+        Registered on: **management** (and the Config API ports when
+        `CONFIG_API_ADMIN_ROUTES=on`).
+      security:
+        - ApiKeyAuth: []
+      x-registered-on: management
+      parameters:
+        - $ref: '#/components/parameters/AttestationConfigApiIdPath'
+        - name: result
+          in: query
+          required: false
+          description: Only devices whose last verdict is this.
+          schema: { type: string, enum: [pass, reject] }
+        - name: q
+          in: query
+          required: false
+          description: Substring of the device id, an annotation, a reason or a warning, or an exact ARC.
+          schema: { type: string, maxLength: 128 }
+        - name: page
+          in: query
+          required: false
+          description: 1-based page number.
+          schema: { type: integer, minimum: 1, default: 1 }
+        - name: pageSize
+          in: query
+          required: false
+          schema: { type: integer, minimum: 1, maximum: 500, default: 50 }
+      responses:
+        '200':
+          description: One page of devices, most recently seen first (an unknown Config API has none).
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AttestedDevicePage' }
+        '401': { $ref: '#/components/responses/MissingApiKey' }
+        '403': { $ref: '#/components/responses/InvalidApiKey' }
+
+  /api/v1/config-apis/{id}/attestation/devices/{deviceId}:
+    get:
+      tags: [attestation]
+      operationId: getAttestedDevice
+      summary: One attested device with its last report
+      description: |
+        The device row of the listing plus `lastReport`: the last report the
+        device sent, **trimmed** to its `app` and `device` blocks and the `signals`
+        with their evidence (ATTESTATION.md §3). The `verdictProvider` token, when
+        the app forwards one, is stored and reported by name; the reference server
+        does not verify it.
+
+        Registered on: **management** (and the Config API ports when
+        `CONFIG_API_ADMIN_ROUTES=on`).
+      security:
+        - ApiKeyAuth: []
+      x-registered-on: management
+      parameters:
+        - $ref: '#/components/parameters/AttestationConfigApiIdPath'
+        - $ref: '#/components/parameters/DeviceIdPath'
+      responses:
+        '200':
+          description: The device and its last report.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AttestedDeviceDetail' }
+        '404':
+          description: '`device_not_found` — no row for this device in this Config API.'
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '401': { $ref: '#/components/responses/MissingApiKey' }
+        '403': { $ref: '#/components/responses/InvalidApiKey' }
+    put:
+      tags: [attestation]
+      operationId: annotateAttestedDevice
+      summary: Overrides and annotations of a device
+      description: |
+        `forceFail` makes every attestation of the device a `reject` with reason
+        `force_fail`; `forcePass` makes it a `pass` with every raised flag demoted
+        to a warning (both are evaluated before the policy; they cannot both be
+        set). `annotations` replace the device's list and travel in the token's
+        `anno` claim (support cases, canary groups, "staff device"). A device that
+        never attested gets an unregistered row, so it can be annotated ahead of
+        its first attestation.
+
+        **Two-person approval** (`PIN_CHANGE_APPROVALS>=2`): waits for a second admin
+        (`202`, operation `attestation_device`). Audited as `attestation_device_annotated`
+        when something changed.
+
+        Registered on: **management** (and the Config API ports when
+        `CONFIG_API_ADMIN_ROUTES=on`).
+      security:
+        - ApiKeyAuth: []
+      x-registered-on: management
+      parameters:
+        - $ref: '#/components/parameters/AttestationConfigApiIdPath'
+        - $ref: '#/components/parameters/DeviceIdPath'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/AttestedDeviceUpdate' }
+      responses:
+        '202': { $ref: '#/components/responses/PendingApproval' }
+        '200':
+          description: The updated device (with `lastReport`).
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AttestedDeviceDetail' }
+        '400':
+          description: '`invalid_device_id`, `invalid_annotation` (not strings, a bad character, over 64 characters or more than 16) or `conflicting_overrides` (`forcePass` and `forceFail` both set).'
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '401': { $ref: '#/components/responses/MissingApiKey' }
+        '403': { $ref: '#/components/responses/InvalidApiKey' }
+    delete:
+      tags: [attestation]
+      operationId: forgetAttestedDevice
+      summary: Forget a device's key so it can register again
+      description: |
+        A reinstall on the same phone generates a new device key, which the server
+        refuses with `403 key_mismatch` until an operator forgets the registered one.
+        Deleting the record lets the next attestation register the device afresh
+        (`ATTESTATION_KEY_POLICY` applies as for a first registration). Annotations
+        and overrides of the device are deleted with it.
+
+        **Two-person approval** (`PIN_CHANGE_APPROVALS>=2`): waits for a second admin
+        (`202`, operation `attestation_device`, like the annotation PUT). Audited as
+        `attestation_device_forgotten`.
+
+        Registered on: **management** (and the Config API ports when
+        `CONFIG_API_ADMIN_ROUTES=on`).
+      security:
+        - ApiKeyAuth: []
+      x-registered-on: management
+      parameters:
+        - $ref: '#/components/parameters/AttestationConfigApiIdPath'
+        - $ref: '#/components/parameters/DeviceIdPath'
+      responses:
+        '202': { $ref: '#/components/responses/PendingApproval' }
+        '200':
+          description: The device was forgotten.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  forgotten: { type: boolean, example: true }
+                  deviceId: { type: string }
+        '404':
+          description: '`device_not_found` — no row for this device in this Config API.'
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '401': { $ref: '#/components/responses/MissingApiKey' }
+        '403': { $ref: '#/components/responses/InvalidApiKey' }
+
+  /api/v1/config-apis/{id}/attestation/stats:
+    get:
+      tags: [attestation]
+      operationId: getAttestationStats
+      summary: Attestation counts of the last 24 hours and 7 days
+      description: |
+        Passes, rejects, rejects by reason and warnings by flag for the two
+        windows (hourly counters, kept 30 days), plus how many devices are in
+        each state now and the policy version in force. What the dashboard's
+        stats strip shows; a fleet measurement to look at before tightening the
+        policy.
+
+        Registered on: **management** (and the Config API ports when
+        `CONFIG_API_ADMIN_ROUTES=on`).
+      security:
+        - ApiKeyAuth: []
+      x-registered-on: management
+      parameters:
+        - $ref: '#/components/parameters/AttestationConfigApiIdPath'
+      responses:
+        '200':
+          description: Counts per window (all zero for an unknown Config API).
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AttestationStats' }
+        '401': { $ref: '#/components/responses/MissingApiKey' }
+        '403': { $ref: '#/components/responses/InvalidApiKey' }
+
+  /api/v1/attestation/token-secrets:
+    get:
+      tags: [attestation]
+      operationId: listTokenSecrets
+      summary: The PinVault-Token signing secrets
+      description: |
+        The active secret and the previous ones still kept for verification,
+        **with their values**: backends load every listed secret keyed by `kid` and
+        verify a token's HS256 signature with the one its header names. Secrets
+        are 32 random bytes each, encrypted at rest with `VAULT_AT_REST_PASSWORD`.
+
+        **Two-person approval** (`PIN_CHANGE_APPROVALS>=2`): a secret read, so it
+        answers `202` with `runAfterApproval: true` (operation
+        `attestation_token_secrets`); once approved, the requester sends the
+        same `GET` again and receives the secrets alone. Answered with
+        `Cache-Control: no-store`. The first secret is made on first use, so the
+        listing is never empty.
+
+        Registered on: **management** only.
+      security:
+        - ApiKeyAuth: []
+      x-registered-on: management
+      responses:
+        '202': { $ref: '#/components/responses/PendingApproval' }
+        '200':
+          description: Every secret a backend needs, newest first.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/TokenSecretList' }
+        '401': { $ref: '#/components/responses/MissingApiKey' }
+        '403': { $ref: '#/components/responses/InvalidApiKey' }
+
+  /api/v1/attestation/token-secrets/rotate:
+    post:
+      tags: [attestation]
+      operationId: rotateTokenSecret
+      summary: Make a new active PinVault-Token secret
+      description: |
+        Generates a new secret, makes it the active one and keeps the previous
+        ones for verification until they are deleted. New tokens are signed with
+        the new `kid` at once, so backends must load it (`GET
+        /api/v1/attestation/token-secrets`) before they see such a token.
+
+        **Two-person approval** (`PIN_CHANGE_APPROVALS>=2`): waits for a second admin
+        (`202`, operation `attestation_token_secret_rotate`). Audited as
+        `attestation_token_secret_rotated` (never the secret itself).
+
+        Registered on: **management** only.
+      security:
+        - ApiKeyAuth: []
+      x-registered-on: management
+      responses:
+        '202': { $ref: '#/components/responses/PendingApproval' }
+        '200':
+          description: The new active secret's id (the value is read from the listing).
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/TokenSecretRotated' }
+        '401': { $ref: '#/components/responses/MissingApiKey' }
+        '403': { $ref: '#/components/responses/InvalidApiKey' }
+
+  /api/v1/attestation/token-secrets/{kid}:
+    delete:
+      tags: [attestation]
+      operationId: deleteTokenSecret
+      summary: Drop a previous PinVault-Token secret
+      description: |
+        Removes a secret that is no longer active. Tokens signed with it stop
+        verifying, which matters for at most one token lifetime after a rotation.
+        The active secret cannot be deleted (`409 secret_active`); rotate first.
+
+        **Two-person approval** (`PIN_CHANGE_APPROVALS>=2`): waits for a second admin
+        (`202`, operation `attestation_token_secret_delete`). Audited as
+        `attestation_token_secret_deleted`.
+
+        Registered on: **management** only.
+      security:
+        - ApiKeyAuth: []
+      x-registered-on: management
+      parameters:
+        - name: kid
+          in: path
+          required: true
+          description: 'The key id as the listing and the token header (`kid`) show it.'
+          schema: { type: string }
+          example: 2026-10-05-01
+      responses:
+        '202': { $ref: '#/components/responses/PendingApproval' }
+        '200':
+          description: The secret was deleted.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  deleted: { type: string, description: 'The deleted `kid`.', example: 2026-10-05-01 }
+        '404':
+          description: '`secret_not_found` — no secret with this `kid`.'
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '409':
+          description: '`secret_active` — the active secret is not deleted; rotate first.'
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '401': { $ref: '#/components/responses/MissingApiKey' }
+        '403': { $ref: '#/components/responses/InvalidApiKey' }
+
 components:
 
   securitySchemes:
@@ -5413,6 +5906,14 @@ components:
 
     ConfigApiIdPath:
       name: configApiId
+      in: path
+      required: true
+      description: Config API scope id, e.g. `default-tls`.
+      schema: { type: string }
+      example: default-tls
+
+    AttestationConfigApiIdPath:
+      name: id
       in: path
       required: true
       description: Config API scope id, e.g. `default-tls`.
@@ -6780,3 +7281,302 @@ components:
       properties:
         sent: { type: boolean, example: true }
         auditId: { type: integer, format: int64 }
+
+    # ── Attestation (ATTESTATION.md) ────────────────────────────────────
+
+    AttestationChallenge:
+      type: object
+      required: [nonce, expiresIn, serverTime]
+      properties:
+        nonce:
+          type: string
+          description: 'base64url( ts ‖ rand ‖ HMAC[0..16) ) — opaque to the device, single use.'
+          example: AAABkp0…Zg
+        expiresIn: { type: integer, description: 'Seconds the nonce stays valid.', example: 120 }
+        serverTime: { type: integer, format: int64, description: 'Server clock, epoch milliseconds (informational).', example: 1759660800000 }
+
+    AttestationSignal:
+      type: object
+      required: [flag]
+      properties:
+        flag: { type: boolean, description: The probe raised this signal. }
+        evidence:
+          type: array
+          description: What the probe found, e.g. `maps:frida-agent`, `settings:adb_enabled`; `error` when the probe threw.
+          items: { type: string }
+
+    AttestationReport:
+      type: object
+      description: >
+        What the library measures (ATTESTATION.md §3). Sent inside the request **as
+        a JSON string** and signed as bytes; the server stores it trimmed to the
+        blocks below.
+      properties:
+        sdkVersion: { type: string, example: 2.2.0 }
+        reportTime: { type: integer, format: int64, description: Epoch milliseconds. }
+        app:
+          type: object
+          properties:
+            packageName: { type: string, example: com.example.app }
+            versionCode: { type: integer }
+            versionName: { type: string }
+            signerSha256: { type: array, items: { type: string } }
+            installer: { type: string, nullable: true, example: com.android.vending }
+            debuggable: { type: boolean }
+        device:
+          type: object
+          properties:
+            manufacturer: { type: string }
+            model: { type: string }
+            brand: { type: string }
+            device: { type: string }
+            product: { type: string }
+            hardware: { type: string }
+            fingerprint: { type: string }
+            sdkInt: { type: integer }
+            securityPatch: { type: string, example: '2026-09-05' }
+            verifiedBootState: { type: string, example: green }
+            keySecurityLevel: { type: string, enum: [software, tee, strongbox, unknown] }
+            keyAttested: { type: boolean }
+        signals:
+          type: object
+          description: One entry per flag of `AttestationFlag`.
+          additionalProperties: { $ref: '#/components/schemas/AttestationSignal' }
+        verdictProvider:
+          type: object
+          nullable: true
+          description: An optional second opinion (Play Integrity) the app plugged in; forwarded verbatim, stored, not verified by the reference server.
+          properties:
+            name: { type: string, example: play-integrity }
+            token: { type: string }
+
+    AttestationFlag:
+      type: string
+      description: The signals a report can raise and a policy decides on.
+      enum: [rooted, emulator, debugger, debuggable, hooking_framework, app_integrity,
+             cloner, unknown_installer, adb_enabled, software_key, key_unattested, old_patch_level]
+
+    AttestationRequest:
+      type: object
+      required: [v, nonce, deviceId, publicKey, report, signature]
+      properties:
+        v: { type: integer, description: 'Protocol version; anything but 1 is `400 unsupported_version`.', example: 1 }
+        nonce: { type: string, description: 'From `GET /api/v1/attest/challenge`, unexpired, unused.' }
+        deviceId: { type: string, pattern: '^[A-Za-z0-9._:-]{1,64}$', example: 9774d56d682e549c }
+        publicKey: { type: string, description: Base64 DER SubjectPublicKeyInfo of the device key (EC P-256). }
+        attestationChain:
+          type: array
+          description: >
+            Base64 DER certificates, leaf first. Required on first registration under
+            `ATTESTATION_KEY_POLICY=enforce`, optional otherwise, ignored for a device
+            that is already registered.
+          items: { type: string }
+        report: { type: string, description: 'The `AttestationReport` JSON **as a string**, at most 16 KB.' }
+        signature: { type: string, description: 'Base64 DER `SHA256withECDSA` over the UTF-8 bytes of `pinvault-attest:v1:<nonce>:<deviceId>:<sha256-hex(report)>`.' }
+        currentConfigVersion: { type: integer, description: The pin config version the device holds. }
+        currentIssuedAt: { type: integer, format: int64, description: '`issuedAt` of the config the device holds.' }
+        hosts:
+          type: array
+          description: Optional `wantPinsFor` scoping, as on the config GET.
+          items: { type: string }
+
+    AttestationResponse:
+      type: object
+      required: [result, arc, nextAttestIn, policyVersion]
+      properties:
+        result: { type: string, enum: [pass, reject] }
+        arc: { type: string, description: 'Attestation result code — 8 hex characters an operator resolves in the dashboard.', example: 7f3a9c1e }
+        warnings:
+          type: array
+          description: Raised flags the policy only warns about.
+          items: { $ref: '#/components/schemas/AttestationFlag' }
+        rejectionReasons:
+          type: array
+          description: Present only when the policy's `revealReasons` is on. `force_fail` when the device is forced to fail.
+          items: { type: string }
+        token: { type: string, description: 'The `PinVault-Token` (HS256 JWT). Absent on `reject`.' }
+        tokenExpiresAt: { type: integer, format: int64, description: Epoch milliseconds. }
+        tokenTtlSeconds: { type: integer, example: 300 }
+        nextAttestIn: { type: integer, description: 'Seconds until the next attestation (the policy''s `attestIntervalSeconds`).', example: 300 }
+        configChanged: { type: boolean, description: '`config` is embedded because the device is behind.' }
+        config:
+          description: The same signed envelope `GET /api/v1/certificate-config` serves, scoped by the device's host ACL. Never present on `reject`.
+          type: object
+          additionalProperties: true
+        device:
+          type: object
+          properties:
+            registered: { type: boolean }
+            firstSeen: { type: boolean, description: This call registered the device. }
+            keyAttestation:
+              type: object
+              properties:
+                attested: { type: boolean }
+                securityLevel: { type: string, nullable: true, example: StrongBox }
+                reason: { type: string, example: ok }
+        policyVersion: { type: integer, example: 3 }
+
+    AttestationPolicy:
+      type: object
+      description: The rejection policy of one Config API (ATTESTATION.md §4).
+      required: [flags]
+      properties:
+        version: { type: integer, description: 'Bumped by the server on every change (the value sent in a PUT is ignored); `0` while the default preset is in force.', example: 3 }
+        flags:
+          type: object
+          description: One decision per `AttestationFlag`.
+          additionalProperties:
+            type: string
+            enum: [reject, warn, ignore]
+          example:
+            rooted: reject
+            emulator: reject
+            debugger: reject
+            debuggable: reject
+            hooking_framework: reject
+            app_integrity: reject
+            cloner: reject
+            unknown_installer: warn
+            adb_enabled: ignore
+            software_key: warn
+            key_unattested: warn
+            old_patch_level: warn
+        revealReasons: { type: boolean, description: 'Send `rejectionReasons` to the device.', default: false }
+        tokenTtlSeconds: { type: integer, minimum: 30, maximum: 86400, default: 300 }
+        attestIntervalSeconds: { type: integer, minimum: 60, maximum: 86400, default: 300 }
+
+    KeyAttestationResult:
+      type: object
+      description: What Android Key Attestation said about the device key when it registered.
+      properties:
+        attested: { type: boolean }
+        securityLevel: { type: string, nullable: true, example: StrongBox }
+        reason: { type: string, nullable: true, example: ok }
+
+    AttestedDevice:
+      type: object
+      description: A device of a Config API as the listing shows it (`attested_devices`).
+      required: [configApiId, deviceId, registered, firstSeen, lastSeen]
+      properties:
+        configApiId: { type: string, example: default-tls }
+        deviceId: { type: string, example: 9774d56d682e549c }
+        registered: { type: boolean, description: 'False for a row an operator annotated before the device ever attested (no key yet).' }
+        spkiSha256: { type: string, nullable: true, description: 'SHA-256 hex of the registered key''s SubjectPublicKeyInfo.' }
+        publicKey: { type: string, nullable: true, description: 'The registered key, Base64 DER.' }
+        keyAttestation:
+          nullable: true
+          description: 'Null when the chain was not checked (`ATTESTATION_KEY_POLICY=off`, or no chain was sent).'
+          allOf:
+            - $ref: '#/components/schemas/KeyAttestationResult'
+        firstSeen: { type: string, format: date-time }
+        lastSeen: { type: string, format: date-time }
+        lastResult: { type: string, enum: [pass, reject], nullable: true, description: 'Last verdict; null before the first evaluation.' }
+        lastArc: { type: string, nullable: true, example: 7f3a9c1e }
+        lastReasons: { type: array, items: { type: string }, description: 'Rejection reasons behind the last verdict (what its ARC resolves to).' }
+        lastWarnings: { type: array, items: { type: string } }
+        lastPolicyVersion: { type: integer, nullable: true, description: 'Policy version the last verdict used.' }
+        lastSdkVersion: { type: string, nullable: true, example: 2.2.0 }
+        attestCount: { type: integer, description: 'Verdicts recorded for this device.' }
+        forcePass: { type: boolean }
+        forceFail: { type: boolean }
+        annotations: { type: array, items: { type: string }, example: [staff, canary] }
+        keyMismatches: { type: integer, description: 'Attestations refused with `key_mismatch` since registration.' }
+        lastKeyMismatchAt: { type: string, format: date-time, nullable: true }
+        verdictProvider: { type: string, nullable: true, description: 'Name of the verdict provider the app plugged in (e.g. `play-integrity`).' }
+
+    AttestedDevicePage:
+      type: object
+      required: [items, total, page, pageSize]
+      properties:
+        items:
+          type: array
+          items: { $ref: '#/components/schemas/AttestedDevice' }
+        total: { type: integer, description: 'Devices matching the filter.' }
+        page: { type: integer, description: '1-based.' }
+        pageSize: { type: integer }
+
+    AttestedDeviceDetail:
+      allOf:
+        - $ref: '#/components/schemas/AttestedDevice'
+        - type: object
+          properties:
+            lastReport:
+              nullable: true
+              description: 'The last report, trimmed to its `app`, `device` and `signals` blocks. Null when the device never attested.'
+              allOf:
+                - $ref: '#/components/schemas/AttestationReport'
+
+    AttestedDeviceUpdate:
+      type: object
+      description: Every field optional; a missing one keeps the device's current value.
+      properties:
+        forcePass: { type: boolean, default: false }
+        forceFail: { type: boolean, default: false }
+        annotations:
+          type: array
+          description: 'Replaces the device''s list; each `[A-Za-z0-9._:@/ +-]{1,64}`, at most 16, duplicates dropped.'
+          items: { type: string }
+          example: [staff, canary]
+
+    AttestationWindowStats:
+      type: object
+      properties:
+        passes: { type: integer }
+        rejects: { type: integer }
+        byReason:
+          type: object
+          description: 'Rejects per reason (a device rejected for two reasons counts in both).'
+          additionalProperties: { type: integer }
+          example: { rooted: 12, hooking_framework: 3 }
+        byWarning:
+          type: object
+          description: 'Warnings per flag.'
+          additionalProperties: { type: integer }
+          example: { software_key: 40 }
+
+    AttestedDeviceCounts:
+      type: object
+      description: How many devices of the Config API are in each state right now.
+      properties:
+        total: { type: integer }
+        registered: { type: integer, description: 'With a registered key.' }
+        lastPassed: { type: integer }
+        lastRejected: { type: integer }
+        forcePass: { type: integer }
+        forceFail: { type: integer }
+        keyMismatches: { type: integer, description: 'Devices that saw at least one key mismatch.' }
+
+    AttestationStats:
+      type: object
+      properties:
+        last24h: { $ref: '#/components/schemas/AttestationWindowStats' }
+        last7d: { $ref: '#/components/schemas/AttestationWindowStats' }
+        devices: { $ref: '#/components/schemas/AttestedDeviceCounts' }
+        policyVersion: { type: integer, description: 'The policy version in force.' }
+
+    TokenSecret:
+      type: object
+      required: [kid, secret, active, createdAt]
+      properties:
+        kid: { type: string, description: 'What the token header''s `kid` names; `YYYY-MM-DD-NN`.', example: 2026-10-05-01 }
+        secret: { type: string, description: 'Base64 of the 32 secret bytes.' }
+        active: { type: boolean, description: 'New tokens are signed with this one.' }
+        createdAt: { type: string, format: date-time }
+        createdBy: { type: string, description: 'The admin who rotated it, or `system` for the one made on first use.' }
+
+    TokenSecretList:
+      type: object
+      required: [active, secrets]
+      properties:
+        active: { type: string, description: 'The `kid` of the active secret (made now when there was none).', example: 2026-10-05-01 }
+        secrets:
+          type: array
+          description: 'Newest first; exactly one entry is `active`.'
+          items: { $ref: '#/components/schemas/TokenSecret' }
+
+    TokenSecretRotated:
+      type: object
+      properties:
+        kid: { type: string, example: 2026-10-05-02 }
+        active: { type: boolean, example: true }
+        createdAt: { type: string, format: date-time }
