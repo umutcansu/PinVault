@@ -280,6 +280,26 @@ function rawVaultDownload(key, deviceId, opts = {}) {
   });
 }
 
+/**
+ * Host'taki mock TLS hedefine ham bir istek (telefonun yaptığının eşi, pin
+ * kontrolü yok: burada sınanan şey PinVault-Token doğrulaması). Başlıklar
+ * [headers] ile verilir; dönen nesnede durum kodu, başlıklar ve gövde vardır.
+ */
+function mockTlsRequest(pathname = '/health', { headers = {}, port = env.MOCK_TLS_PORT, servername = env.MOCK_TLS_HOST } = {}) {
+  return new Promise((resolve, reject) => {
+    const req = https.request(
+      { host: 'localhost', port, servername, path: pathname, method: 'GET', headers, rejectUnauthorized: false, agent: false },
+      (res) => {
+        const chunks = [];
+        res.on('data', (c) => chunks.push(c));
+        res.on('end', () => resolve({ status: res.statusCode, headers: res.headers, body: Buffer.concat(chunks).toString('utf8') }));
+      },
+    );
+    req.on('error', reject);
+    req.end();
+  });
+}
+
 // ── Pin'ler ───────────────────────────────────────────────────────────────
 
 function spkiPin(der) {
@@ -654,6 +674,7 @@ module.exports = {
   devicePublicKeyPem,
   deviceUserAuthKeyPem,
   rawVaultDownload,
+  mockTlsRequest,
   revokeClientCertIfActive,
   forgetClientIdentityIfRevoked,
   retireClientIdentity,

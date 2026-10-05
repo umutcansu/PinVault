@@ -12,6 +12,8 @@ const id = (name) => `${APP_ID}:id/${name}`;
 const RESULT = {
   request: /(bağlantı başarılı|Bağlantı başarısız|bağlantı başarısız|istemci bağlandı|istemci başarısız)/,
   refresh: /(Yeni config uygulandı|Config güncel|Config yenilenemedi|zaman aşımına uğradı)/,
+  // Atestasyon düğmesi: geçti / kaldı / yapılamadı / backend desteklemiyor.
+  attest: /(Atestasyon geçti|Atestasyon KALDI|Atestasyon yapılamadı|backend desteklemiyor)/,
   enroll: /(Kayıt başarılı|Kayıt başarısız|Önce kayıt token)/,
   // Onay isteyen bir kayıt kodu: sonuç gelmeden önce ekranda kalan ara metin.
   enrollPending: /Onay bekleniyor/,
@@ -267,6 +269,14 @@ class SampleApp {
 
   refreshConfig() {
     return this.press('refreshButton', RESULT.refresh, 'config yenileme sonucu');
+  }
+
+  /**
+   * Ana ekrandaki atestasyon düğmesi: raporu şimdi gönderir, token alır ve
+   * token'lı isteği mock TLS host'a atar; sonuç metnini döndürür.
+   */
+  attest() {
+    return this.press('attestButton', RESULT.attest, 'atestasyon sonucu', 60_000);
   }
 
   /**
