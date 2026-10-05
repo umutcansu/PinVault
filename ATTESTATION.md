@@ -371,5 +371,9 @@ one of `trustRoots`**, with the normal host-name check. Hosts with a pin
 entry are unchanged. This is Approov's "managed trust roots": the device's
 trust store (which a user or an attacker can add to) stops being the
 authority; your signed root list is. The reference server edits the list on
-the pin-config form and the `PUT /api/v1/certificate-config` body
-(`"trustRoots": ["…"]`).
+each Config API's General tab and in the `PUT /api/v1/certificate-config`
+body (`"trustRoots": ["…"]`, at most 64, no duplicates, each a valid pin): a
+body that carries the field replaces the list (`[]` clears it), a body
+without it keeps the scope's current list. The field is left out of the
+payload when empty, so a client older than this section sees nothing new;
+a change writes a `trust_roots_updated` history and audit entry.
