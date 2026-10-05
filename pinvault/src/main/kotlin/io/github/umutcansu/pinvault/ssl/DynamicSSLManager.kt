@@ -110,6 +110,19 @@ internal class DynamicSSLManager(
     internal var caCheck: ServerCaCheck = TrustManagerCaCheck.platform()
 
     /**
+     * Managed trust roots (`PinVaultConfig.Builder.managedTrustRoots()`): a
+     * host with no pin entry is accepted when the platform validates its
+     * chain to a root the signed config lists in `trustRoots`. Off: such a
+     * host is refused ([io.github.umutcansu.pinvault.model.UnpinnedHostException]).
+     */
+    @Volatile
+    internal var managedTrustRootsEnabled: Boolean = false
+
+    /** The platform's validated chain with its anchor, for managed trust roots; tests swap in their own. */
+    @Volatile
+    internal var anchorResolver: TrustAnchorResolver = TrustManagerAnchorResolver.platform()
+
+    /**
      * Hosts (same patterns as pins: exact, `*.example.com`, optional `:port`)
      * whose server chain must validate against the platform's trust store in
      * addition to matching a pin. Set from `PinVaultConfig.Builder.requireCaTrust`;
@@ -704,8 +717,12 @@ internal class DynamicSSLManager(
                 // Per-host pin lookup first: a hostname with no entry (and no
                 // matching wildcard) must be refused — the alternative is
                 // accepting any cert for unknown hosts, which is exactly the
-                // cross-host pin-reuse attack H-01 closes.
-                val acceptedForHost = pinsFor(config, hostname, port)
+                // cross-host pin-reuse attack H-01 closes. The one exception
+                // is a host managed trust roots cover (matchPins decides);
+                // here the set is only what the connection event reports.
+                val acceptedForHost = pinsForOrNull(config, hostname, port)
+                    ?: if (managedTrustRootsEnabled && config.trustRoots.isNotEmpty()) config.trustRoots.toSet()
+                    else pinsFor(config, hostname, port)
 
                 // Sertifika süre kontrolü.
                 //
@@ -802,6 +819,10 @@ internal class DynamicSSLManager(
             )
     }
 
+    /** The pins [config] accepts for [hostname] (and [port]), or null when it names none. */
+    private fun pinsForOrNull(config: CertificateConfig, hostname: String, port: Int?): Set<String>? =
+        matchPinsFor(buildAcceptedPins(config.pins), hostname, port)
+
     /**
      * The pin of [config] that [chain] satisfies for [hostname]: the leaf's
      * key, or an issuer the leaf really chains to ([ChainPinMatcher]). Throws
@@ -811,7 +832,16 @@ internal class DynamicSSLManager(
      */
     internal fun matchPins(config: CertificateConfig, chain: Array<X509Certificate>, hostname: String, port: Int?): String {
         if (chain.isEmpty()) throw CertificateException("No server certificate provided")
-        val acceptedForHost = pinsFor(config, hostname, port)
+        val acceptedForHost = pinsForOrNull(config, hostname, port)
+            ?: if (managedTrustRootsEnabled && config.trustRoots.isNotEmpty()) {
+                // No pin entry, but the config lists managed trust roots: the
+                // platform must validate the chain to one of them.
+                return ManagedTrustRoots.match(chain, "UNKNOWN", hostname, config.trustRoots.toSet(), anchorResolver) {
+                    sha256Base64(it.publicKey.encoded)
+                }
+            } else {
+                pinsFor(config, hostname, port)
+            }
         val certHash = sha256Base64(chain[0].publicKey.encoded)
         val matchedPin = ChainPinMatcher.match(chain, acceptedForHost) { sha256Base64(it.publicKey.encoded) }
         if (matchedPin == null) {

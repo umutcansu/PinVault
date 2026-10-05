@@ -128,6 +128,8 @@ internal class CertificateConfigStore private constructor(
             putBoolean(KEY_FORCE_UPDATE, config.forceUpdate)
             putString(KEY_PINS_JSON, pinsJson(config.pins))
             remove(KEY_PINS)
+            if (config.trustRoots.isNotEmpty()) putString(KEY_TRUST_ROOTS_JSON, stringsJson(config.trustRoots))
+            else remove(KEY_TRUST_ROOTS_JSON)
             if (envelope != null) putString(KEY_ENVELOPE, envelopeJson(envelope)) else remove(KEY_ENVELOPE)
             apply()
         }
@@ -170,7 +172,8 @@ internal class CertificateConfigStore private constructor(
             pins = pins,
             forceUpdate = forceUpdate,
             issuedAt = issuedAt,
-            expiresAt = expiresAt
+            expiresAt = expiresAt,
+            trustRoots = storedTrustRoots()
         ).also {
             Timber.d("Certificate config loaded — version: %d, issuedAt: %d, expiresAt: %d, forceUpdate: %s, %d pins",
                 it.version, it.issuedAt, it.expiresAt, it.forceUpdate, it.pins.size)
@@ -252,6 +255,7 @@ internal class CertificateConfigStore private constructor(
             .remove(KEY_ISSUED_AT)
             .remove(KEY_EXPIRES_AT)
             .remove(KEY_FORCE_UPDATE)
+            .remove(KEY_TRUST_ROOTS_JSON)
             .remove(KEY_ENVELOPE)
             .apply()
         Timber.d("Active certificate config cleared (watermarks kept)")
@@ -345,6 +349,21 @@ internal class CertificateConfigStore private constructor(
         Timber.i("Stored pins rewritten as JSON — %d host(s)", pins.size)
         return pins
     }
+
+    /** The stored managed trust roots; entries that are not valid pins are dropped. */
+    private fun storedTrustRoots(): List<String> {
+        val json = prefs.getString(KEY_TRUST_ROOTS_JSON, null) ?: return emptyList()
+        return try {
+            JsonParser.parseString(json).asJsonArray.mapNotNull { element ->
+                runCatching { element.asString }.getOrNull()?.takeIf { PinConfigValidator.pinError(it) == null }
+            }.distinct()
+        } catch (e: Exception) {
+            Timber.w(e, "Stored trust roots are not valid JSON — ignored")
+            emptyList()
+        }
+    }
+
+    private fun stringsJson(values: List<String>): String = JsonArray().apply { values.forEach { add(it) } }.toString()
 
     private fun pinsJson(pins: List<HostPin>): String = JsonArray().apply {
         pins.forEach { pin ->
@@ -553,6 +572,8 @@ internal class CertificateConfigStore private constructor(
         internal const val KEY_ISSUED_AT = "config_issued_at"
         internal const val KEY_FORCE_UPDATE = "config_force_update"
         internal const val KEY_EXPIRES_AT = "config_expires_at"
+        /** Managed trust roots of the active config (JSON array of pins). */
+        internal const val KEY_TRUST_ROOTS_JSON = "config_trust_roots_json"
         internal const val KEY_ENVELOPE = "config_envelope"
         internal const val KEY_WATERMARK_ISSUED_AT = "watermark_issued_at"
         /** Version watermarks in the pre-JSON format; read once, then replaced by [KEY_WATERMARK_VERSIONS_JSON]. */

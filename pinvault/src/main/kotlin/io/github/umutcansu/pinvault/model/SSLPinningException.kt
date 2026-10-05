@@ -155,6 +155,21 @@ class HostnameMismatchException(
 ) : java.security.cert.CertificateException(message, cause)
 
 /**
+ * Managed trust roots (`managedTrustRoots()` on the config, `trustRoots` in
+ * the signed config) refused a host that has no pin entry: the platform's
+ * CAs do not trust the chain, or the chain validates to a root the config
+ * does not list. Thrown by the pinning trust manager and the per-request
+ * check (the `cause` of an [javax.net.ssl.SSLHandshakeException]). A
+ * distinct type so that [io.github.umutcansu.pinvault.ssl.PinRecoveryInterceptor]
+ * refetches the config for it at most as for an unpinned host: a fresh
+ * config may list the root, so one refetch per window is allowed.
+ */
+class ManagedTrustRootException(
+    message: String,
+    cause: Throwable? = null
+) : java.security.cert.CertificateException(message, cause)
+
+/**
  * The pin config names no entry for the host being connected to. Thrown by
  * the pinning trust manager (the `cause` of an
  * [javax.net.ssl.SSLHandshakeException]).

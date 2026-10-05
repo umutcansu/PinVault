@@ -122,7 +122,12 @@ internal class PinRecoveryInterceptor(
                     Timber.d("Pin failure for %s — a config refetch finished since this request started, using its result", host)
                     finishedSinceStart.updated
                 } else {
-                    if (!takeBudget(host, unknownHost = e.cause is io.github.umutcansu.pinvault.model.UnpinnedHostException)) throw e
+                    // A host the config has no entry for — or that managed trust
+                    // roots refused — earns the smaller "unknown host" budget: a
+                    // fresh config may add the host or list the root.
+                    val unknownHost = e.cause is io.github.umutcansu.pinvault.model.UnpinnedHostException ||
+                        e.cause is io.github.umutcansu.pinvault.model.ManagedTrustRootException
+                    if (!takeBudget(host, unknownHost = unknownHost)) throw e
                     Timber.w("Pin mismatch detected for %s — attempting auto-recovery", host)
                     val result = try {
                         updater()

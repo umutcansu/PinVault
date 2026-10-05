@@ -791,7 +791,8 @@ internal class SSLCertificateUpdater(
         fun CertificateConfig.shape() = pins.associate {
             it.hostname.lowercase() to listOf(it.version, it.sha256.toSet(), it.mtls, it.clientCertVersion)
         }
-        return stored.shape() == remote.shape()
+        // Managed trust roots are part of what the config says about trust.
+        return stored.shape() == remote.shape() && stored.trustRoots.toSet() == remote.trustRoots.toSet()
     }
 
     private fun forceFlags(config: CertificateConfig): Map<String, Boolean> =
