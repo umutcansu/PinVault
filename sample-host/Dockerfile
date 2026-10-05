@@ -76,7 +76,10 @@ RUN groupadd --system --gid 10001 pinvault \
 COPY entrypoint.sh /usr/local/bin/pinvault-entrypoint
 RUN chmod 755 /usr/local/bin/pinvault-entrypoint
 
-ENV PORT=8080 \
+# JVM yığını container bellek sınırına bağlı: varsayılan (dörtte bir) vault
+# indirmelerine (her biri dosyayı bütün olarak bellekte tutar) az yer bırakır.
+ENV JAVA_OPTS="-XX:MaxRAMPercentage=60" \
+    PORT=8080 \
     HTTPS_PORT=8081 \
     DB_PATH=/data/db/pinvault.db \
     CERTS_DIR=/data/certs \

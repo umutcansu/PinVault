@@ -1049,6 +1049,21 @@ corrected. A config rolled back after a failed health check no longer lowers
 those checks either, and a host the server drops keeps its version
 watermark: it cannot come back at a lower version.
 
+**What the clock cannot tell** *(next release)*. Expiry is judged by a clock
+that never goes back on its own (the later of the device clock and the
+highest time seen). It goes back in one case: when a config is accepted whose
+`issuedAt` is newer than every config accepted before, and such a config is
+judged by the device clock, because a device whose clock once ran far ahead
+must be able to accept a fresh config again. The device cannot tell that
+config from a *captured* one it has never seen: someone holding a signed
+config the device never received, whose `expiresAt` has passed, and the
+private key of a pin it still lists, can set the device clock back (Android's
+automatic time is not authenticated) and have the device trust those pins for
+that config's remaining lifetime. The cost is bounded by `CONFIG_TTL_SECONDS`
+(24 hours by default, 30 days at most) and needs a key the pins were rotated
+away from. Keep the TTL short, and for public hosts pair pins with
+`requireCaTrust`, which a leaked old key does not pass.
+
 If a signing key is stolen, its holder can still push those checks to their
 limits. Revoking the key with a newer signing-key set (`recoveryPublicKeys`)
 undoes that: when a device applies a newer set it clears the `issuedAt` and
@@ -1509,6 +1524,8 @@ its configs.
 | `KEY_REPLACEMENT_RATE_LIMIT` | `10` | *(next release)* End-to-end / screen-lock key replacements one client id may make over its certificate per 10 minutes. |
 | `PICKUP_RATE_LIMIT` / `PICKUP_SOURCE_RATE_LIMIT` | `120` / `600` | *(next release)* How often a waiting request may be asked about, per request and per address, per 10 minutes. |
 | `VAULT_DOWNLOAD_CONCURRENCY` | `4` | *(next release)* Vault downloads one address may run at once (`429` beyond it). |
+| `VAULT_DOWNLOAD_CONCURRENCY_TOTAL` | `16` | *(next release)* Vault downloads served at once in total, across addresses and listeners (`429` beyond it; `0` = unlimited). Each download holds the whole file in memory, so the per-address cap alone let a few addresses fill the heap with one large `public` file. The Docker images start the JVM with `-XX:MaxRAMPercentage=60`. |
+| `HOST_CLIENT_CERT_REQUIRE_GRANT` | unset | *(next release)* `true`: a host's client certificate — one private key the whole fleet shares — is handed only to devices the device host ACL names; a scope with no ACL serves it to nobody. Unset: a scope without an ACL serves it to every enrolled device (so a device enrolled with a shared enrollment code, or a phone compromised before its revocation, could collect every host's key). The production profile sets `true`. |
 | `CLIENT_DEVICES_MAX` | `20000` | *(next release)* Most rows the device list (connection reports) keeps; the oldest go first. |
 
 The optional signing and governance layers — named admins (`ADMIN_KEYS`),
@@ -1836,9 +1853,15 @@ new version.
 - HTTP-only endpoints are off (the library refuses cleartext HTTPS hosts)
 
 ### 7. Rotate pins ahead of expiry
-Configure at least 2 different pins per host (primary + backup). From 2.1 a pin
+Configure at least 2 different pins per host (primary + backup; *(next
+release)* the same hash twice is refused). From 2.1 a pin
 may be the leaf's key or the key of a CA the leaf chains to (checked on the device), so
-pinning your CA survives leaf renewals. Add the new pin to the
+pinning your CA survives leaf renewals. *(next release)* An issuer pin also
+requires the leaf to be issued for the host (a matching `subjectAltName`),
+checked by the library itself: a pin on a public CA's key would otherwise
+accept any site's certificate, and an app that relaxed its own
+`HostnameVerifier` would not notice. A leaf pin needs no name — the key is
+the identity. Add the new pin to the
 config 30+ days before the old certificate expires. Set `forceUpdate: true`
 on the host entry to force clients to refresh immediately.
 

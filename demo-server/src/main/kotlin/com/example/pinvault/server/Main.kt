@@ -254,6 +254,16 @@ fun main() {
     val serverMadeKeys = enrollmentP12 && !enrollmentAttestation.refusesServerMadeKeys
     println("ENROLLMENT_ATTESTATION=${enrollmentAttestationMode.name.lowercase()}, ENROLLMENT_P12=${if (enrollmentP12) "on" else "off"}" +
         (if (serverMadeKeys) "" else " — no server-made keys: devices enroll over a CSR only"))
+    // A host's client certificate is one private key for the whole fleet. With
+    // HOST_CLIENT_CERT_REQUIRE_GRANT=true it is handed out only where the device
+    // host ACL names the device; a scope without an ACL serves it to nobody.
+    val requireHostCertGrant = when (System.getenv("HOST_CLIENT_CERT_REQUIRE_GRANT")?.trim()?.lowercase()) {
+        null, "", "false", "off" -> false
+        "true", "on" -> true
+        else -> error("HOST_CLIENT_CERT_REQUIRE_GRANT must be true or false (got '${System.getenv("HOST_CLIENT_CERT_REQUIRE_GRANT")}')")
+    }
+    println("HOST_CLIENT_CERT_REQUIRE_GRANT=$requireHostCertGrant" +
+        (if (requireHostCertGrant) "" else " — a scope without a device host ACL hands host client certificates to every enrolled device"))
     // Test-only endpoints (short certificate lifetimes for the Espresso suite). Never in production.
     val allowTestHooks = System.getenv("ALLOW_TEST_HOOKS") == "true"
     if (allowTestHooks) System.err.println("WARNING: ALLOW_TEST_HOOKS=true — test-only endpoints are enabled")
@@ -404,6 +414,12 @@ fun main() {
     // (VAULT_DOWNLOAD_CONCURRENCY, default 4; 0 = unlimited).
     val vaultDownloadSlots = ((System.getenv("VAULT_DOWNLOAD_CONCURRENCY")?.toIntOrNull() ?: 4).coerceAtLeast(0))
         .takeIf { it > 0 }?.let { com.example.pinvault.server.service.ConcurrencyLimiter(it) }
+    // ...and in total, across every address and listener (VAULT_DOWNLOAD_CONCURRENCY_TOTAL,
+    // default 16; 0 = unlimited). Each download holds the whole file (and its
+    // per-device encrypted copy) in memory: a public 50 MB file fetched from a
+    // handful of addresses at once would otherwise exhaust the heap.
+    val vaultDownloadTotal = ((System.getenv("VAULT_DOWNLOAD_CONCURRENCY_TOTAL")?.toIntOrNull() ?: 16).coerceAtLeast(0))
+        .takeIf { it > 0 }?.let { com.example.pinvault.server.service.ConcurrencyLimiter(it, maxKeys = 1) }
     // One-shot certificate lifetimes armed by the test hook, consumed by the next issuance.
     val testTtlOverrides = java.util.concurrent.ConcurrentHashMap<String, java.time.Duration>()
     val testTtlOverride: ((String) -> java.time.Duration?)? =
@@ -532,7 +548,7 @@ fun main() {
                 // restart'ta birleştirilir (CoalescedRestart).
                 refreshMtlsTrust("new truststore", true)
             }, enrollmentMode = enrollmentMode, configApiMode = mode,
-                deviceHostAclStore = deviceHostAclStore,
+                deviceHostAclStore = deviceHostAclStore, requireHostCertGrant = requireHostCertGrant,
                 signedConfigService = signedConfigService, keySetService = signingKeySetService,
                 liveGate = liveGate, audit = auditLog,
                 clientIdentityStore = clientIdentityStore,
@@ -570,8 +586,9 @@ fun main() {
                 userAuthAttestation = userAuthAttestation, userAuthAttestationMode = userAuthAttestationMode,
                 // Device ids a certificate proved it acts for: what revocation cuts off.
                 deviceProven = { clientId, deviceId, proof -> clientIdentityStore.recordDeviceProof(clientId, deviceId, proof) },
-                // Downloads at once per source address (VAULT_DOWNLOAD_CONCURRENCY, 0 = unlimited).
-                downloadSlots = vaultDownloadSlots,
+                // Downloads at once per source address (VAULT_DOWNLOAD_CONCURRENCY, 0 = unlimited)
+                // and in total (VAULT_DOWNLOAD_CONCURRENCY_TOTAL).
+                downloadSlots = vaultDownloadSlots, downloadSlotsTotal = vaultDownloadTotal,
                 reportLimits = reportLimits, maxFileBytes = vaultMaxFileBytes)
             get("/health") {
                 call.respond(mapOf("status" to "ok"))

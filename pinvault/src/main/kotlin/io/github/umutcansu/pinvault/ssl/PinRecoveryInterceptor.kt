@@ -234,6 +234,9 @@ internal class PinRecoveryInterceptor(
         // cannot make it trusted. An EXPIRED config, on the other hand, is
         // exactly what a refetch repairs, so it stays a recoverable failure.
         if (e.cause is io.github.umutcansu.pinvault.model.CaTrustException) return false
+        // And for a leaf that chains to a pinned issuer but is issued for
+        // another host: no pin set makes it valid for this one.
+        if (e.cause is io.github.umutcansu.pinvault.model.HostnameMismatchException) return false
 
         return e is SSLPeerUnverifiedException ||
             (e is SSLHandshakeException && e.cause is CertificateException)

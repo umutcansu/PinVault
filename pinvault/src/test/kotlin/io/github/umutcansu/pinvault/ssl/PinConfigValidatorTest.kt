@@ -94,6 +94,18 @@ class PinConfigValidatorTest {
     }
 
     @Test
+    fun `the same pin listed twice does not count as a backup`() {
+        assertRefused(
+            CertificateConfig(version = 1, pins = listOf(HostPin("api.example.com", listOf(pinA, pinA), version = 1))),
+            "2 different pins"
+        )
+        // Two different pins plus a repeat of one of them is fine.
+        PinConfigValidator.validate(
+            CertificateConfig(version = 1, pins = listOf(HostPin("api.example.com", listOf(pinA, pinB, pinA), version = 1)))
+        )
+    }
+
+    @Test
     fun `an empty config, a duplicate host and a negative version are refused`() {
         assertRefused(CertificateConfig(pins = emptyList()), "at least one pin entry")
         assertRefused(config("a.example.com", "A.example.com"), "more than once")

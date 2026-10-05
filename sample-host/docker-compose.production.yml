@@ -52,6 +52,10 @@ services:
       ENROLLMENT_ATTESTATION: enforce
       ENROLLMENT_P12: "off"
       USER_AUTH_REQUIRE_PER_USE: "true"
+      # Sabit: host istemci sertifikası (bütün filonun paylaştığı tek özel anahtar)
+      # yalnızca cihaz host ACL'inin adını yazdığı cihazlara verilir; ACL'siz bir
+      # kapsam kimseye vermez.
+      HOST_CLIENT_CERT_REQUIRE_GRANT: "true"
       # Değerlendirme kurulumu (setup.sh --evaluation-single-signer-NOT-FOR-PRODUCTION)
       # tek imzalayıcıyla açılır; entrypoint.sh her açılışta "ÜRETİM DEĞİLDİR" yazar.
       SAMPLE_EVALUATION: ${SAMPLE_EVALUATION:-}

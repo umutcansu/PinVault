@@ -117,6 +117,25 @@ class CertificateValidityException(
 ) : java.security.cert.CertificateException(message, cause)
 
 /**
+ * The server's chain matched an **issuer** pin — a CA the leaf really chains
+ * to — but the leaf is not issued for the host being connected to (no
+ * matching `subjectAltName`). An issuer pin vouches for the CA, not for the
+ * name, and a public CA issues for anyone; the name check is what keeps a
+ * pin on, say, a public intermediate from accepting another site's
+ * certificate. A leaf pin is not subject to it: the pinned key is the
+ * identity. Thrown by the pinning trust manager and by the per-request
+ * check (the `cause` of an [javax.net.ssl.SSLHandshakeException]).
+ *
+ * A distinct type so that [io.github.umutcansu.pinvault.ssl.PinRecoveryInterceptor]
+ * does not refetch the pin config for it: no pin set makes a certificate
+ * for another host valid for this one.
+ */
+class HostnameMismatchException(
+    message: String,
+    cause: Throwable? = null
+) : java.security.cert.CertificateException(message, cause)
+
+/**
  * The pin config names no entry for the host being connected to. Thrown by
  * the pinning trust manager (the `cause` of an
  * [javax.net.ssl.SSLHandshakeException]).

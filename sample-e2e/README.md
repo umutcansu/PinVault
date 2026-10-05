@@ -17,7 +17,7 @@ Kapsam planı ve senaryo listesi: [PLAN.md](PLAN.md).
 | 2 | Web'de yedek pin eklenince sürüm artar, telefon yeni sürümü alır ve iki client da bağlanır. Pin kaldırılınca döngü tekrar eder. |
 | 3 | Web'de yanlış pin girilince telefon bağlantıyı reddeder, uyuşmazlık dashboard'a düşer. Pin'ler düzeltilince telefon elle yenilemeden toparlanır. |
 | 4 | Force update açıkken telefon config'i sürüm değişmese de yeniden uygular; kapatılınca normale döner. |
-| 5 | PinVault'u import etmeyen production-style client da yanlış pin'i reddeder ve kendi interceptor'ıyla toparlanır. |
+| 5 | PinVault'u import etmeyen production-style client (pinlemeyi `PinVault::applyTo` geri çağrısıyla takar) da yanlış pin'i reddeder ve kütüphanenin kurtarma interceptor'ıyla toparlanır. |
 | 6 | Host kapalıyken ilk açılışta uygulama başlatılamadığını söyler ve istek yapılmasına izin vermez. Host dönünce "Tekrar dene" ile toparlanır. |
 | 7 | Host kapalıyken sonraki açılışta uygulama saklı config ile açılır ve hedefe pinli bağlanır. |
 | 8 | Web'de host silinince telefon o host'a bağlanmaz. Geri eklenince sürüm kaldığı yerden devam eder ve bağlantı döner. |

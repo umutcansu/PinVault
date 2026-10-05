@@ -91,6 +91,14 @@ internal object PinConfigValidator {
             if (hashes.size > MAX_PINS_PER_HOST) {
                 throw InvalidPinFormatException("Host ${printable(hostname)} has ${hashes.size} pins (at most $MAX_PINS_PER_HOST)")
             }
+            // Two pins exist so that one key can be rotated away while the
+            // other still works; the same hash twice gives that rotation
+            // nothing to fall back on and used to satisfy the count.
+            if (hashes.toSet().size < 2) {
+                throw InvalidPinFormatException(
+                    "Host ${printable(hostname)} must have at least 2 different pins (primary + backup); the same pin is listed twice"
+                )
+            }
             hashes.forEachIndexed { index, hash ->
                 pinError(hash)?.let { throw InvalidPinFormatException("Hash at index $index for ${printable(hostname)} $it") }
             }

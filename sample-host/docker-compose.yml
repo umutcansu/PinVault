@@ -164,6 +164,10 @@ services:
       ENROLLMENT_ATTESTATION: ${ENROLLMENT_ATTESTATION:-}
       ENROLLMENT_P12: ${ENROLLMENT_P12:-}
       USER_AUTH_REQUIRE_PER_USE: ${USER_AUTH_REQUIRE_PER_USE:-}
+      # Host istemci sertifikası yalnızca cihaz host ACL'inin adını yazdığı
+      # cihazlara (true); boş = sunucu varsayılanı (false: ACL'siz kapsam her
+      # kayıtlı cihaza verir). Üretim profili true sabitler.
+      HOST_CLIENT_CERT_REQUIRE_GRANT: ${HOST_CLIENT_CERT_REQUIRE_GRANT:-}
       # Kötüye kullanım sınırları (boş = sunucu varsayılanı).
       # Bir adresin 10 dakikada toplayabileceği ret sayısı (varsayılan 300). DEMO: 0
       # (sınır yok): Docker Desktop arkasında bütün cihazlar tek adresten görünür ve
@@ -175,6 +179,10 @@ services:
       DEVICE_KEY_RATE_LIMIT: ${DEVICE_KEY_RATE_LIMIT:-}
       DEVICE_KEY_LIMIT: ${DEVICE_KEY_LIMIT:-}
       VAULT_MAX_FILE_BYTES: ${VAULT_MAX_FILE_BYTES:-}
+      # Aynı anda sunulan vault indirmesi: adres başına (varsayılan 4) ve toplam
+      # (varsayılan 16; her indirme dosyayı bütün olarak bellekte tutar).
+      VAULT_DOWNLOAD_CONCURRENCY: ${VAULT_DOWNLOAD_CONCURRENCY:-}
+      VAULT_DOWNLOAD_CONCURRENCY_TOTAL: ${VAULT_DOWNLOAD_CONCURRENCY_TOTAL:-}
       MTLS_RESTART_MIN_INTERVAL_SECONDS: ${MTLS_RESTART_MIN_INTERVAL_SECONDS:-}
     volumes:
       # Bütün kalıcı durum tek dizin: veritabanı, sertifikalar ve imzalama

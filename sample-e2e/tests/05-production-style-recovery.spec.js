@@ -1,6 +1,8 @@
-// Web → Mobil: PinVault'u import etmeyen bir network katmanı (OkHttp
-// CertificatePinner) da web'den gelen pin değişikliğini alır; yanlış pin'de
-// reddeder, düzeltilince kendi interceptor'ıyla elle yenilemeden toparlanır.
+// Web → Mobil: PinVault'u import etmeyen bir network katmanı (kendi
+// OkHttpClient'ı; pinlemeyi uygulama katmanının verdiği PinVault::applyTo
+// geri çağrısı takar) da web'den gelen pin değişikliğini alır; yanlış pin'de
+// reddeder, düzeltilince kütüphanenin pin-kurtarma interceptor'ıyla elle
+// yenilemeden toparlanır.
 const { test, expect, TARGET_HOST } = require('../lib/fixtures');
 const hostApi = require('../lib/hostApi');
 const { SampleApp } = require('../lib/sampleApp');

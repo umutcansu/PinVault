@@ -41,6 +41,22 @@ internal object ChainPinMatcher {
         return null
     }
 
+    /**
+     * True when [leaf] is issued for [hostname]: a `subjectAltName` matches
+     * it (a DNS name, with RFC 6125 single-label wildcards, or an IP
+     * address literal). Same rules as OkHttp's own verifier, which an app
+     * that brings its own builder may have replaced. An empty host name
+     * never matches.
+     */
+    internal fun leafNamesHost(leaf: X509Certificate, hostname: String): Boolean {
+        if (hostname.isEmpty()) return false
+        return try {
+            okhttp3.internal.tls.OkHostnameVerifier.verify(hostname, leaf)
+        } catch (e: Exception) {
+            false
+        }
+    }
+
     /** True when `chain[0]` chains through `chain[1 until anchor]` to `chain[anchor]`. */
     internal fun chainsTo(chain: Array<X509Certificate>, anchor: Int): Boolean = try {
         chain[anchor].checkValidity()

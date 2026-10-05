@@ -90,6 +90,11 @@ services:
       - REPORT_RATE_LIMIT=${REPORT_RATE_LIMIT:-}
       - REPORT_DEVICE_RATE_LIMIT=${REPORT_DEVICE_RATE_LIMIT:-}
       - VAULT_MAX_FILE_BYTES=${VAULT_MAX_FILE_BYTES:-}
+      # Vault downloads served at once, per address (4) and in total (16); each holds the whole file in memory.
+      - VAULT_DOWNLOAD_CONCURRENCY=${VAULT_DOWNLOAD_CONCURRENCY:-}
+      - VAULT_DOWNLOAD_CONCURRENCY_TOTAL=${VAULT_DOWNLOAD_CONCURRENCY_TOTAL:-}
+      # A host's client certificate only to devices the host ACL names (true); unset = every enrolled device.
+      - HOST_CLIENT_CERT_REQUIRE_GRANT=${HOST_CLIENT_CERT_REQUIRE_GRANT:-}
       # Admin uploads other than vault files (keystores, certificates, JSON).
       - ADMIN_UPLOAD_MAX_BYTES=${ADMIN_UPLOAD_MAX_BYTES:-}
       # "Fetch the certificate of this URL" refuses loopback and private-network

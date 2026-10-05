@@ -116,6 +116,13 @@ fun Route.certificateConfigRoutes(
      */
     deviceHostAclStore: DeviceHostAclStore? = null,
     /**
+     * `HOST_CLIENT_CERT_REQUIRE_GRANT`: a host's client certificate (a private
+     * key the whole fleet shares) goes only to devices the host ACL names.
+     * With it on, a scope without any ACL serves the certificate to nobody;
+     * off (default) keeps the open behaviour: every enrolled device gets it.
+     */
+    requireHostCertGrant: Boolean = false,
+    /**
      * Builds the signed envelopes (per request, or cached per content with
      * `CONFIG_SIGNATURE_CACHE`) and attaches the signing-key set. Null = a
      * per-request signer over [signingService] without key sets.
@@ -544,7 +551,18 @@ fun Route.certificateConfigRoutes(
             // (the id per-device grants are stored under). Before the lookup, so
             // the answer does not say which hosts have a certificate. A scope
             // with no ACL at all keeps serving every enrolled device, as the
-            // config fetch does for a device that asks for no scoping.
+            // config fetch does for a device that asks for no scoping — unless
+            // HOST_CLIENT_CERT_REQUIRE_GRANT is on: the certificate is one
+            // private key for the whole fleet, and a device enrolled with a
+            // shared enrollment code (or a phone compromised before its
+            // revocation) would otherwise walk off with every host's key.
+            if (requireHostCertGrant && (deviceHostAclStore == null || !deviceHostAclStore.isConfigured(configApiId))) {
+                aclLog.warn("Host client certificate refused: configApi={} has no device host ACL and HOST_CLIENT_CERT_REQUIRE_GRANT is on", configApiId)
+                return@get call.respondText(
+                    """{"error":"host_not_allowed","message":"This device is not allowed the client certificate of this host."}""",
+                    ContentType.Application.Json, HttpStatusCode.Forbidden
+                )
+            }
             if (deviceHostAclStore != null && deviceHostAclStore.isConfigured(configApiId)) {
                 val certClientId = call.clientCertId()
                 // The device id only when it is proven (V20): one an enrolling party

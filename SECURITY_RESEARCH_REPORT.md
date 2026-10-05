@@ -229,7 +229,20 @@ Git geçmişi: `.p12/.jks/.pem/.key` olarak yalnızca Google'ın açık atestasy
 
 ## 7. Öncelikli düzeltme listesi
 
-**Hemen (kod, küçük):** L-1 TrustedClock sınırı · L-5/L-6 `followRedirects`/`followSslRedirects(false)` · L-7 `applyTo`'da `OkHostnameVerifier` · L-9 farklı pin zorunluluğu · L-3 `-keepnames` · A-1 `CertificatePinner` yerine `applyTo` · S-2 host sertifikası fail-closed · S-3 global indirme sınırı + `MaxRAMPercentage`.
+**Hemen (kod, küçük) — bu dalda uygulandı:**
+
+| Bulgu | Yapılan |
+|---|---|
+| L-1 TrustedClock | Kod değişmedi, **belgelendi** (README "What the clock cannot tell"). Daha derin analiz: yakalanmış-ama-görülmemiş imzalı zarf ile "saati ileri kaçmış cihazın tazelenmesi" cihaz tarafında ayırt edilemiyor; sıçrama kredisi, eşik veya önceki config süresi gibi her kural ya saldırıya da izin veriyor ya da meşru düzeltmeyi bozuyor. Gerçek azaltımlar: kısa `CONFIG_TTL_SECONDS` ve Config API host'u için `requireCaTrust` (sızan eski anahtar CA'dan geçmez). |
+| L-5 / L-6 | `buildDynamicClient` → `followSslRedirects(false)`; bootstrap istemcisi → `followRedirects(false)` + `followSslRedirects(false)` |
+| L-7 | `applyTo`'da verifier ezmek yerine (uygulamanın kendi verifier'ı ve SAN'sız test sertifikaları kırılırdı) kontrol kütüphanenin içine alındı: `matchPins` issuer pini eşleştiğinde leaf'in SAN'ını `OkHostnameVerifier` kurallarıyla host'a karşı doğrular; yeni `HostnameMismatchException`, kurtarma interceptor'ı için refetch dışı. Leaf pini için ad kontrolü yok (pin = kimlik). Test: `ChainPinMatcherTest` |
+| L-9 | `PinConfigValidator`: `toSet().size >= 2`. `HostPin` kurucusu değişmedi (testler aynı pini iki kez kullanıyor). Test: `PinConfigValidatorTest` |
+| L-3 | `consumer-rules.pro`'dan `-keepnames` kaldırıldı; gerekçe yorumda |
+| A-1 | `ProductionStyleClient` artık `CertificatePinner` kurmuyor; PinVault'u import etmeden `PinningInstaller` geri çağrısı alıyor, `App` ona `PinVault::applyTo` veriyor; kendi recovery interceptor'ı kaldırıldı (kütüphaneninki geliyor) |
+| S-2 | `HOST_CLIENT_CERT_REQUIRE_GRANT` (varsayılan kapalı; üretim profili `true` sabitler ve `entrypoint.sh` denetler). Test: `HostClientCertAclTest` |
+| S-3 | `VAULT_DOWNLOAD_CONCURRENCY_TOTAL` (varsayılan 16) toplam eşzamanlılık sınırı; her iki Dockerfile `JAVA_OPTS=-XX:MaxRAMPercentage=60` |
+
+Doğrulama: demo-server bu ortamda JDK 17 ile derlendi ve ilgili testler koşturuldu (sonuç commit mesajında). Kütüphane ve örnek uygulama **derlenemedi** (Android SDK yok, `dl.google.com` engelli); bu değişiklikler Android SDK'lı bir ortamda `./gradlew :pinvault:testDebugUnitTest` ve `sample-client` derlemesiyle doğrulanmalı.
 
 **Kısa vade:** L-2 Keystore seviyesi raporlama + `requireHardwareBackedKeys()` · L-25/S-11 nonce'lu challenge · S-1 cihaz portlarında admin rotalarını kapatma anahtarı · S-5 PKCS12 keystore · L-10/L-11 vault doğrula-sonra-yaz · L-13 gövde boyutu sınırı · A-2 demo-app release korkuluğu.
 

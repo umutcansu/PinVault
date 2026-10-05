@@ -23,6 +23,9 @@ COPY --from=build /build/build/install/pinvault-demo-server/ /app/
 # Persistent data directories, writable by the server's user
 RUN mkdir -p /data/db /data/certs /data/keys && chown -R pinvault:pinvault /data
 
+# Heap bound to the container's memory limit (the JVM default of a quarter of
+# it leaves vault downloads, each held whole in memory, little room).
+ENV JAVA_OPTS="-XX:MaxRAMPercentage=60"
 ENV PORT=8080
 ENV HTTPS_PORT=8081
 ENV DB_PATH=/data/db/pinvault.db

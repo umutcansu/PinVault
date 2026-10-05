@@ -795,9 +795,12 @@ public class App extends Application {
     }
 
     /**
-     * Hedef host'un aktif pin'leriyle {@link ProductionStyleClient}'ı kurar.
-     * Pin uyuşmazlığında {@link PinManagerLite#refreshNowBlocking(long)} config'i
-     * tazeler; production uygulamasındaki PinManager davranışının karşılığı.
+     * {@link ProductionStyleClient}'ı kurar: PinVault'u tanımayan network
+     * katmanına pinlemeyi {@code PinVault.applyTo} ile takar. Böylece o client
+     * da kütüphanenin trust manager'ını, istek başına yeniden kontrolü,
+     * {@code requireCaTrust}'ı ve pin-kurtarma interceptor'ını kullanır; pin
+     * listesini kendi {@code CertificatePinner}'ına kopyalamaz (o yol hazır
+     * bypass betiklerine açıktı).
      */
     private void initProductionStyleClient() {
         List<String> pins = PinVault.INSTANCE.pinsForHost(TARGET_HOST);
@@ -805,14 +808,11 @@ public class App extends Application {
             Log.w(TAG, "No pins for " + TARGET_HOST + " — ProductionStyleClient skipped");
             return;
         }
-        ProductionStyleClient.init(TARGET_HOST, pins, host -> PinManagerLite.refreshNowBlocking(5L));
+        ProductionStyleClient.init(PinVault.INSTANCE::applyTo);
     }
 
+    /** Yeni config uygulandı: canlı client yeni pinleri izler, açık bağlantılar boşaltılır. */
     static void bridgePinsToProductionStyleClient() {
-        List<String> pins = PinVault.INSTANCE.pinsForHost(TARGET_HOST);
-        if (pins != null && !pins.isEmpty()) {
-            ProductionStyleClient.updatePins(TARGET_HOST, pins);
-            Log.d(TAG, "ProductionStyleClient bridged — " + pins.size() + " pins");
-        }
+        ProductionStyleClient.updatePins();
     }
 }

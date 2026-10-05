@@ -6,7 +6,7 @@ Uygulama şunları gösterir:
 
 1. APK'ya gömülü **bootstrap pin**'lerle host'a bağlanıp pin config'ini çekmek.
 2. Config'in **ECDSA imzasını** ve `issuedAt/expiresAt` tazeliğini doğrulamak; tutmayan config uygulanmaz.
-3. Gelen pin'lerle gerçek bir hedefe iki farklı yoldan pinli istek atmak: kütüphaneyi kullanan client (`PinVault.applyTo`) ve PinVault'u import etmeyen **production-style** client (kendi `CertificatePinner`'ı).
+3. Gelen pin'lerle gerçek bir hedefe iki farklı yoldan pinli istek atmak: kütüphaneyi kullanan client (`PinVault.applyTo`) ve PinVault'u import etmeyen **production-style** client (kendi `OkHttpClient`'ı; pinlemeyi uygulama katmanının verdiği `PinVault::applyTo` geri çağrısı takar — önceki sürümdeki `CertificatePinner` kopyası, hazır Frida/objection bypass betiklerinin doğrudan hedefi olduğu için kaldırıldı).
 4. Config'i elle ya da 15 dakikada bir arka planda yenilemek.
 5. Her TLS el sıkışmasını ve config güncellemesini uygulama içinde listelemek ve host dashboard'una telemetri olarak göndermek (Config API portundan, pinli; telefon yönetim portuna hiç bağlanmaz).
 6. **mTLS:** telefonun cihaz kimliği (ANDROID_ID) ekranda yazar; panelde token üretirken bu kimlik "Cihaz kimliği" alanına yazılırsa token yalnızca bu telefonda geçer ve gizli dosyalar sertifikaya bağlanabilir (başka telefon "bu token başka bir telefon için üretilmiş" uyarısı alır, token harcanmaz). Token ya da kayıt koduyla kayıt; yönetici onayı gerekiyorsa doğrulama koduyla bekleme (panelde aynı kod görünür, onaylanınca kayıt kendiliğinden tamamlanır); reddedilen kaydın nedeni; mTLS Config API'ye ve host'taki mock mTLS hedefine bağlanma; süresi dolan sertifikanın kurtarma kapısından yenilenmesi; kaydı silme.
@@ -246,7 +246,7 @@ MockDns.java                mock host adlarını host IP'sine çözümler
 EmbeddedConfigApi.kt        HTTP yapmayan örnek CertificateConfigApi (imza doğrulanmaz; nedeni ve doğrusu içinde)
 VaultTokens.java            vault erişim token'ları (yalnızca bellekte; kayıt iptal edilince silinir)
 ConnectionEventLog.java     PinVaultConnectionListener → uygulama içi liste
-ProductionStyleClient.java  PinVault import etmeyen network katmanı (CertificatePinner)
+ProductionStyleClient.java  PinVault import etmeyen network katmanı (pinlemeyi geri çağrıyla takar)
 PinManagerLite.kt           suspend API'ler için senkron köprü, pin aktarımı
 res/xml/network_security_config.xml   düz HTTP hiçbir yere yok (raporlar da şifreli porttan)
 res/xml/sample_*_rules.xml  yedek ve cihaz taşıma kuralları: kütüphanenin kuralları + elle yüklenen P12

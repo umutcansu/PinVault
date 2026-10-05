@@ -166,16 +166,16 @@ public class MainActivity extends ActionActivity {
     // ── Production-style client ──────────────────────────────────────────────
 
     /**
-     * PinVault'u import etmeyen bir network katmanı: pin'leri PinVault'tan
-     * alan kendi {@code CertificatePinner}'ı ve kendi recovery interceptor'ı
-     * var (bkz. {@link ProductionStyleClient}).
+     * PinVault'u import etmeyen bir network katmanı: kendi OkHttpClient'ı
+     * var, pinlemeyi uygulama katmanının verdiği geri çağrı
+     * ({@code PinVault::applyTo}) takar (bkz. {@link ProductionStyleClient}).
      */
     private void runProductionStyleRequest() {
         runAction(getString(R.string.connecting_fmt, App.TARGET_URL), () -> {
             Request req = new Request.Builder().url(App.TARGET_URL).build();
             try (okhttp3.Response resp = ProductionStyleClient.execute(req)) {
                 return "✅ Production-style bağlantı başarılı\nHTTP " + resp.code()
-                        + "\n(OkHttp CertificatePinner, pin'ler PinVault'tan)";
+                        + "\n(kendi OkHttpClient'ı, pinleme PinVault.applyTo ile)";
             } catch (Exception e) {
                 return "❌ Production-style bağlantı başarısız\n"
                         + e.getClass().getSimpleName() + "\n" + e.getMessage();

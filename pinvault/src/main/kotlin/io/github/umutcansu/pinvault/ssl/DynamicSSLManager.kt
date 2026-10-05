@@ -563,6 +563,11 @@ internal class DynamicSSLManager(
             Timber.d("No config yet — building fail-closed client (TLS refused until a config is applied)")
         }
         applyTo(builder, configProvider)
+        // A pinned client never continues in the clear: a 30x from a pinned
+        // host to an http:// URL is not followed (the bootstrap client has
+        // refused that since 2.2.0; app builders passed to applyTo keep
+        // their own setting).
+        builder.followSslRedirects(false)
         recoveryInterceptor?.let { builder.addInterceptor(it) }
         return builder.build()
     }
@@ -601,7 +606,13 @@ internal class DynamicSSLManager(
             Timber.e("Bootstrap client has no pins — every TLS handshake is refused (set bootstrapPins)")
         }
         if (!allowUnpinned) {
-            // Not even by way of a redirect.
+            // Not even by way of a redirect: neither to http:// nor to another
+            // https:// host. The Config API's answers carry device headers
+            // (X-Device-Id, X-Vault-Token) and enrollment bodies (a 307 keeps
+            // the body); OkHttp strips only Authorization on a host change,
+            // so a redirect to a sibling host under a wildcard or CA pin
+            // would hand those over. The Config API never redirects.
+            builder.followRedirects(false)
             builder.followSslRedirects(false)
             builder.addInterceptor(okhttp3.Interceptor { chain ->
                 if (!chain.request().isHttps) {
@@ -801,9 +812,9 @@ internal class DynamicSSLManager(
     internal fun matchPins(config: CertificateConfig, chain: Array<X509Certificate>, hostname: String, port: Int?): String {
         if (chain.isEmpty()) throw CertificateException("No server certificate provided")
         val acceptedForHost = pinsFor(config, hostname, port)
+        val certHash = sha256Base64(chain[0].publicKey.encoded)
         val matchedPin = ChainPinMatcher.match(chain, acceptedForHost) { sha256Base64(it.publicKey.encoded) }
         if (matchedPin == null) {
-            val certHash = sha256Base64(chain[0].publicKey.encoded)
             emitConnectionEvent(hostname, success = false, actualPin = certHash, expectedPins = acceptedForHost, pinVersion = config.version)
             Timber.e("Pin mismatch for %s — cert=%s..., expected %d pins",
                 hostname, certHash.take(12), acceptedForHost.size)
@@ -811,6 +822,20 @@ internal class DynamicSSLManager(
                 "Certificate pinning failure for $hostname!\n" +
                 "  Cert hash: sha256/$certHash\n" +
                 "  Accepted pins for this host: ${acceptedForHost.size}"
+            )
+        }
+        // An issuer pin says "a certificate this CA issued": for a public CA
+        // that is any site's certificate, so the leaf must also name the host.
+        // A leaf pin names one key and needs no name check — the pin is the
+        // identity (which is what lets self-signed and SAN-less certificates
+        // work). The app's HostnameVerifier runs too, but an app that passes
+        // its own builder to applyTo may have relaxed it; this check does
+        // not depend on that.
+        if (matchedPin != certHash && !ChainPinMatcher.leafNamesHost(chain[0], hostname)) {
+            Timber.e("Issuer pin matched for %s but the certificate is not issued for that host", hostname)
+            throw io.github.umutcansu.pinvault.model.HostnameMismatchException(
+                "Certificate for $hostname chains to a pinned issuer but is not issued for $hostname " +
+                    "(no matching subjectAltName); an issuer pin vouches for the CA, not for the name"
             )
         }
         return matchedPin
