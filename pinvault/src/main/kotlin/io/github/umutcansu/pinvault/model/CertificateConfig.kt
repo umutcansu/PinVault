@@ -31,8 +31,8 @@ data class CertificateConfig(
      * applied config's [issuedAt] — guards against replay of older signed
      * payloads even when the version bumps somehow line up.
      *
-     * 0L means the server didn't populate the field (legacy / unsigned path);
-     * the freshness check rejects in that case.
+     * 0L means the server didn't populate the field. A signed config without
+     * it is refused; an unsigned one is accepted and has no replay protection.
      */
     val issuedAt: Long = 0L,
     /**
@@ -40,7 +40,8 @@ data class CertificateConfig(
      * client rejects configs received after this instant. Acts as the
      * server-controlled freshness window — a captured signed config stops
      * working once the wall clock crosses [expiresAt] regardless of how the
-     * attacker delivers it.
+     * attacker delivers it. At most 30 days from now; a signed config must
+     * carry it, an unsigned one without it (0) never expires.
      */
     val expiresAt: Long = 0L
 ) {
@@ -56,9 +57,14 @@ data class CertificateConfig(
  * The client downloads the host-specific P12 from the Config API when [clientCertVersion] changes.
  */
 data class HostPin(
-    /** Hostname pattern (e.g. "api.example.com" or "*.example.com"). */
+    /**
+     * Hostname pattern: `api.example.com`, `*.example.com` (exactly one
+     * label, never directly under a public suffix such as `*.com`), either
+     * with an optional `:port`. Letters, digits and hyphens per label, at most
+     * 253 characters; anything else and the whole config is refused.
+     */
     val hostname: String,
-    /** SHA-256 hashes of the SubjectPublicKeyInfo (Base64-encoded). */
+    /** SHA-256 hashes of the SubjectPublicKeyInfo (Base64, 44 characters each). */
     val sha256: List<String>,
     /** Per-host version — incremented when this host's pins change. */
     val version: Int = 0,

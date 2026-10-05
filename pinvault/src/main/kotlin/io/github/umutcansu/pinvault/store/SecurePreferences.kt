@@ -3,6 +3,7 @@ package io.github.umutcansu.pinvault.store
 import android.annotation.SuppressLint
 import android.content.Context
 import android.content.SharedPreferences
+import io.github.umutcansu.pinvault.model.StoreUnreadableException
 import okio.Buffer
 import okio.ByteString.Companion.decodeBase64
 import okio.ByteString.Companion.toByteString
@@ -26,7 +27,15 @@ import javax.crypto.AEADBadTagException
  * others. The sealed value carries its type and logical key and is bound to
  * its file and stored name (GCM associated data): an entry copied to another
  * name or file does not open. An entry that does not open reads as absent and
- * is dropped; a Keystore that fails outright only makes the read fail.
+ * is dropped.
+ *
+ * A Keystore that fails outright is a different thing: the entry may be
+ * perfectly good, it just cannot be read now. It is kept. What the read
+ * returns then depends on [strict]: a strict store throws
+ * [StoreUnreadableException], so its owner can tell "unreadable" from
+ * "absent" and fail closed (the pin config and the signing-key set: an
+ * unreadable replay watermark or key set must not read as "none"). The other
+ * stores get the default value, as before.
  *
  * Change listeners are called on the thread that commits or applies.
  */
@@ -34,7 +43,8 @@ internal class SecurePreferences(
     private val backing: SharedPreferences,
     private val fileName: String,
     private val namespace: String,
-    private val cipher: PrefsCipher
+    private val cipher: PrefsCipher,
+    private val strict: Boolean = false
 ) : SharedPreferences {
 
     private val namespaceTag = tag(cipher.mac(utf8("ns\u0000$namespace")), NAMESPACE_TAG_LENGTH) + "."
@@ -48,7 +58,13 @@ internal class SecurePreferences(
     private fun aad(storedName: String) = utf8("$fileName\u0000$storedName")
 
     private fun read(key: String): Any? {
-        val name = storedName(key)
+        val name = try {
+            storedName(key)
+        } catch (e: GeneralSecurityException) {
+            return unreadable(e)
+        } catch (e: ProviderException) {
+            return unreadable(e)
+        }
         val sealed = backing.getString(name, null) ?: return null
         val (storedKey, value) = open(name, sealed) ?: return null
         if (storedKey != key) {
@@ -67,11 +83,9 @@ internal class SecurePreferences(
             drop(name, "does not open with this app's key")
             return null
         } catch (e: GeneralSecurityException) {
-            Timber.e(e, "SecurePreferences[%s]: Keystore error, entry kept", fileName)
-            return null
+            return unreadable(e)
         } catch (e: ProviderException) {
-            Timber.e(e, "SecurePreferences[%s]: Keystore error, entry kept", fileName)
-            return null
+            return unreadable(e)
         }
         return try {
             decode(plaintext)
@@ -82,6 +96,17 @@ internal class SecurePreferences(
             drop(name, "is malformed")
             null
         }
+    }
+
+    /** The Keystore failed: the entry is kept; a [strict] store reports it instead of reading "absent". */
+    private fun unreadable(e: Exception): Nothing? {
+        Timber.e(e, "SecurePreferences[%s]: Keystore error, entry kept", fileName)
+        if (strict) {
+            throw StoreUnreadableException(
+                "Encrypted storage '$fileName' cannot be read right now (${e.javaClass.simpleName}: ${e.message})", e
+            )
+        }
+        return null
     }
 
     private fun drop(name: String, why: String) {
@@ -106,7 +131,18 @@ internal class SecurePreferences(
         return value.filterIsInstance<String>().toMutableSet()
     }
 
-    override fun contains(key: String): Boolean = backing.contains(storedName(key))
+    override fun contains(key: String): Boolean {
+        val name = try {
+            storedName(key)
+        } catch (e: GeneralSecurityException) {
+            unreadable(e)
+            return false
+        } catch (e: ProviderException) {
+            unreadable(e)
+            return false
+        }
+        return backing.contains(name)
+    }
 
     override fun getAll(): Map<String, *> {
         val all = mutableMapOf<String, Any>()
@@ -214,7 +250,8 @@ internal class SecurePreferences(
          * [namespace] of [fileName] in the app's private storage. If PinVault
          * 2.0.x left an EncryptedSharedPreferences file named [legacyName],
          * its entries move here first and the old file is deleted; one that
-         * no longer opens (its keys are gone) is only deleted.
+         * can never open again (its master key is gone or does not match) is
+         * only deleted; one that could not be read this time is kept.
          */
         fun open(
             context: Context,
@@ -223,9 +260,36 @@ internal class SecurePreferences(
             legacyName: String? = null,
             cipher: PrefsCipher = KeystorePrefsCipher.get(),
             readLegacy: (Context, String) -> Map<String, *>? = LegacyEncryptedPrefs::readAll
+        ): SecurePreferences = open(context, fileName, namespace, legacyName, cipher, strict = false, readLegacy)
+
+        /**
+         * [open] for a store that must tell "unreadable" from "absent": a
+         * Keystore failure on a read throws
+         * [StoreUnreadableException] instead of returning the default.
+         */
+        fun openStrict(
+            context: Context,
+            fileName: String,
+            namespace: String,
+            legacyName: String? = null,
+            cipher: PrefsCipher = KeystorePrefsCipher.get(),
+            readLegacy: (Context, String) -> Map<String, *>? = LegacyEncryptedPrefs::readAll
+        ): SecurePreferences = open(context, fileName, namespace, legacyName, cipher, strict = true, readLegacy)
+
+        private fun open(
+            context: Context,
+            fileName: String,
+            namespace: String,
+            legacyName: String?,
+            cipher: PrefsCipher,
+            strict: Boolean,
+            readLegacy: (Context, String) -> Map<String, *>?
         ): SecurePreferences {
             val app = context.applicationContext
-            val prefs = SecurePreferences(app.getSharedPreferences(fileName, Context.MODE_PRIVATE), fileName, namespace, cipher)
+            val prefs = SecurePreferences(app.getSharedPreferences(fileName, Context.MODE_PRIVATE), fileName, namespace, cipher, strict)
+            // Null: no legacy file, or one that could not be read this time —
+            // either way the file (if any) stays for the next start. Only a
+            // map (empty for a file that can never open) moves and deletes.
             val legacy = legacyName?.let { readLegacy(app, it) }
             if (legacyName != null && legacy != null) {
                 // Delete the old file only once its entries are on disk here.

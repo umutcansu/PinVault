@@ -2,6 +2,7 @@ package io.github.umutcansu.pinvault.store
 
 import android.security.keystore.KeyGenParameterSpec
 import android.security.keystore.KeyProperties
+import io.github.umutcansu.pinvault.keystore.KeystoreOptions
 import java.security.KeyStore
 import javax.crypto.AEADBadTagException
 import javax.crypto.Cipher
@@ -75,23 +76,38 @@ internal class KeystorePrefsCipher private constructor(
 
         private fun create(): KeystorePrefsCipher {
             val keyStore = KeyStore.getInstance(PROVIDER).apply { load(null) }
+            // With `requireUnlockedDevice()` keys made from now on work only
+            // while the device is unlocked; existing keys stay as they are.
             val aes = keyStore.getKey(AES_ALIAS, null) as SecretKey?
-                ?: KeyGenerator.getInstance(KeyProperties.KEY_ALGORITHM_AES, PROVIDER).run {
-                    init(
-                        KeyGenParameterSpec.Builder(AES_ALIAS, KeyProperties.PURPOSE_ENCRYPT or KeyProperties.PURPOSE_DECRYPT)
-                            .setBlockModes(KeyProperties.BLOCK_MODE_GCM)
-                            .setEncryptionPaddings(KeyProperties.ENCRYPTION_PADDING_NONE)
-                            .setKeySize(256)
-                            .build()
-                    )
-                    generateKey()
+                ?: KeystoreOptions.generating("Store encryption key") { unlockedDeviceRequired ->
+                    KeyGenerator.getInstance(KeyProperties.KEY_ALGORITHM_AES, PROVIDER).run {
+                        init(
+                            KeyGenParameterSpec.Builder(AES_ALIAS, KeyProperties.PURPOSE_ENCRYPT or KeyProperties.PURPOSE_DECRYPT)
+                                .setBlockModes(KeyProperties.BLOCK_MODE_GCM)
+                                .setEncryptionPaddings(KeyProperties.ENCRYPTION_PADDING_NONE)
+                                .setKeySize(256)
+                                .unlockedDeviceRequired(unlockedDeviceRequired)
+                                .build()
+                        )
+                        generateKey()
+                    }
                 }
             val mac = keyStore.getKey(MAC_ALIAS, null) as SecretKey?
-                ?: KeyGenerator.getInstance(KeyProperties.KEY_ALGORITHM_HMAC_SHA256, PROVIDER).run {
-                    init(KeyGenParameterSpec.Builder(MAC_ALIAS, KeyProperties.PURPOSE_SIGN).build())
-                    generateKey()
+                ?: KeystoreOptions.generating("Store name key") { unlockedDeviceRequired ->
+                    KeyGenerator.getInstance(KeyProperties.KEY_ALGORITHM_HMAC_SHA256, PROVIDER).run {
+                        init(
+                            KeyGenParameterSpec.Builder(MAC_ALIAS, KeyProperties.PURPOSE_SIGN)
+                                .unlockedDeviceRequired(unlockedDeviceRequired)
+                                .build()
+                        )
+                        generateKey()
+                    }
                 }
             return KeystorePrefsCipher(aes, mac)
+        }
+
+        private fun KeyGenParameterSpec.Builder.unlockedDeviceRequired(required: Boolean) = apply {
+            if (required && android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.P) setUnlockedDeviceRequired(true)
         }
     }
 }

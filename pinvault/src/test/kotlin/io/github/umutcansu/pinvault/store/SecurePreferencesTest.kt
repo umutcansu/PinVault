@@ -231,6 +231,39 @@ class SecurePreferencesTest {
     }
 
     @Test
+    fun `a legacy file that could not be read this time is kept for the next start`() {
+        context.getSharedPreferences(LEGACY, Context.MODE_PRIVATE).edit().putInt("config_version", 12).commit()
+        SecurePreferences.open(context, FILE, LEGACY, LEGACY, cipher) { _, _ -> null }
+        assertTrue(File(context.applicationInfo.dataDir, "shared_prefs/$LEGACY.xml").exists())
+
+        // Next start: it reads, moves and goes.
+        val p = SecurePreferences.open(context, FILE, LEGACY, LEGACY, cipher, plainLegacyReader())
+        assertEquals(12, p.getInt("config_version", 0))
+        assertFalse(File(context.applicationInfo.dataDir, "shared_prefs/$LEGACY.xml").exists())
+    }
+
+    @Test
+    fun `only a missing or mismatched master key gives a legacy file up`() {
+        val entries = mapOf("config_version" to 3)
+        assertEquals(entries, LegacyEncryptedPrefs.read(LEGACY, masterKeyPresent = { true }, open = { entries }))
+        assertEquals("master key gone: can never open", emptyMap<String, Any?>(),
+            LegacyEncryptedPrefs.read(LEGACY, masterKeyPresent = { false }, open = { fail("not opened"); entries }))
+        assertEquals("the keyset does not decrypt with it", emptyMap<String, Any?>(),
+            LegacyEncryptedPrefs.read(LEGACY, { true }) {
+                throw java.security.GeneralSecurityException("decryption failed", AEADBadTagException("tag mismatch"))
+            })
+        // Anything else: kept, tried again next start.
+        val transient = listOf(
+            java.security.KeyStoreException("Keystore busy"),
+            java.security.ProviderException("Keystore operation failed"),
+            java.io.IOException("read error"),
+            IllegalStateException("binder died")
+        )
+        for (e in transient) assertNull(e.toString(), LegacyEncryptedPrefs.read(LEGACY, { true }) { throw e })
+        assertNull("Keystore cannot even be listed", LegacyEncryptedPrefs.read(LEGACY, { throw java.security.KeyStoreException("x") }) { entries })
+    }
+
+    @Test
     fun `stores work unchanged on top, two blocks in one file`() {
         val a = CertificateConfigStore.createForTest(prefs("ssl_cert_config_block-a"))
         val b = CertificateConfigStore.createForTest(prefs("ssl_cert_config_block-b"))
@@ -242,7 +275,7 @@ class SecurePreferencesTest {
         assertEquals(4, loaded.version)
         assertEquals(config.pins, loaded.pins)
         assertEquals(7L, loaded.issuedAt)
-        a.clear() // PinVault.reset() on block a
+        a.clearActive() // PinVault.reset() on block a
         assertNull(CertificateConfigStore.createForTest(prefs("ssl_cert_config_block-a")).load())
         assertEquals(9, CertificateConfigStore.createForTest(prefs("ssl_cert_config_block-b")).load()!!.version)
     }

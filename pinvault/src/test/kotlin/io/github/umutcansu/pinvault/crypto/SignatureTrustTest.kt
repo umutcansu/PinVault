@@ -292,11 +292,60 @@ class SignatureTrustTest {
         store.save("default", set)
         assertEquals(set, store.load("default"))
 
-        // PinVault.reset() / corrupt-store recovery wipe the CONFIG store — a
-        // different file. The key set, and the revocation in it, stays.
+        // Wiping the CONFIG store touches a different file. The key set, and
+        // the revocation in it, stays.
         io.github.umutcansu.pinvault.store.CertificateConfigStore.createForTest(
             RuntimeEnvironment.getApplication().getSharedPreferences("ssl_cert_config_default", Context.MODE_PRIVATE)
-        ).clear()
+        ).wipeAll()
         assertEquals(4, trust(store = store).keySetVersion())
+    }
+
+    // ── A key set may name the Config API it is for (C5) ────────────────
+
+    private fun scopedKeySet(version: Int, keys: List<String>, configApiId: String?): SignedKeySet {
+        val body = linkedMapOf<String, Any>("type" to SignatureTrust.KEY_SET_TYPE, "version" to version, "keys" to keys)
+        if (configApiId != null) body["configApiId"] = configApiId
+        val payload = gson.toJson(body)
+        return SignedKeySet(payload, listOf(recovery.entry(payload)))
+    }
+
+    @Test
+    fun `a key set made for another Config API is refused by a scoped block`() {
+        val t = SignatureTrust("default", listOf(a.pub()), 1, listOf(recovery.pub()), 1, newStore(), serverScope = "prod-tls")
+        try {
+            t.applyKeySetUpdate(scopedKeySet(1, listOf(b.pub()), configApiId = "staging-tls"))
+            fail("a set for staging must not replace prod's keys")
+        } catch (e: SecurityException) {
+            assertTrue(e.message, e.message!!.contains("made for Config API 'staging-tls'"))
+        }
+        assertEquals(0, t.keySetVersion())
+
+        assertTrue(t.applyKeySetUpdate(scopedKeySet(1, listOf(b.pub()), configApiId = "prod-tls")))
+        assertTrue("a set that names no Config API is accepted as before",
+            t.applyKeySetUpdate(scopedKeySet(2, listOf(c.pub()), configApiId = null)))
+        assertEquals(2, t.keySetVersion())
+    }
+
+    @Test
+    fun `a block without serverScope ignores the field`() {
+        val t = SignatureTrust("default", listOf(a.pub()), 1, listOf(recovery.pub()), 1, newStore())
+        assertTrue(t.applyKeySetUpdate(scopedKeySet(1, listOf(b.pub()), configApiId = "anything")))
+    }
+
+    @Test
+    fun `the trust anchors' fingerprint changes only with the compiled-in keys`() {
+        val base = trust().anchorsFingerprint()
+        assertEquals("the same anchors, whatever the block", base,
+            SignatureTrust("x", listOf(a.pub()), 1, listOf(recovery.pub()), 1, null as SigningKeyStore?).anchorsFingerprint())
+        assertEquals("order does not matter", trust(keys = listOf(a.pub(), b.pub())).anchorsFingerprint(),
+            trust(keys = listOf(b.pub(), a.pub())).anchorsFingerprint())
+        assertNotEquals(base, trust(keys = listOf(b.pub())).anchorsFingerprint())
+        assertNotEquals(base, trust(keys = listOf(a.pub(), b.pub()), required = 2).anchorsFingerprint())
+        assertNotEquals(base, trust(recoveryKeys = listOf(recovery2.pub())).anchorsFingerprint())
+        // A key set applied over the air does not change it.
+        val store = newStore()
+        val t = trust(store = store)
+        t.applyKeySetUpdate(keySet(version = 1, keys = listOf(b.pub())))
+        assertEquals(base, t.anchorsFingerprint())
     }
 }

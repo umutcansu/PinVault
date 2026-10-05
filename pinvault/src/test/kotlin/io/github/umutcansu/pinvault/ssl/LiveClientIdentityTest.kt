@@ -41,7 +41,9 @@ class LiveClientIdentityTest {
     private val clientB = TestCertUtil.generateSelfSigned(cn = "client-b", password = password, alias = "client")
     private val config = CertificateConfig(
         version = 1,
-        pins = listOf(HostPin("localhost", listOf(serverCert.sha256Pin, serverCert.sha256Pin)))
+        // mtls = true: the default identity goes to hosts the config marks as
+        // mTLS (and to the block's own listeners), not to every pinned host.
+        pins = listOf(HostPin("localhost", listOf(serverCert.sha256Pin, serverCert.sha256Pin), mtls = true))
     )
 
     @Before

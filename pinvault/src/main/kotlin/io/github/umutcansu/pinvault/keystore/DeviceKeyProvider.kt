@@ -85,39 +85,36 @@ internal class AndroidKeystoreDeviceKeyProvider(
             return
         }
         Timber.i("Generating device RSA key in AndroidKeyStore: %s", alias)
-        val gen = KeyPairGenerator.getInstance(KeyProperties.KEY_ALGORITHM_RSA, "AndroidKeyStore")
-        val spec = KeyGenParameterSpec.Builder(
-            alias,
-            KeyProperties.PURPOSE_DECRYPT
-        )
+        KeystoreOptions.generating("Device RSA key", cleanUp = { runCatching { clear() } }) { unlockedDeviceRequired ->
+            val gen = KeyPairGenerator.getInstance(KeyProperties.KEY_ALGORITHM_RSA, "AndroidKeyStore")
+            try {
+                // StrongBox on API 28+ when available.
+                gen.initialize(spec(strongBox = Build.VERSION.SDK_INT >= Build.VERSION_CODES.P, unlockedDeviceRequired))
+                gen.generateKeyPair()
+            } catch (e: Exception) {
+                if (Build.VERSION.SDK_INT < Build.VERSION_CODES.P) throw e
+                // StrongBox might fail on devices that advertise support but don't
+                // have room for another key. Retry without StrongBox.
+                Timber.w(e, "StrongBox key generation failed, retrying without")
+                runCatching { clear() }
+                gen.initialize(spec(strongBox = false, unlockedDeviceRequired))
+                gen.generateKeyPair()
+            }
+        }
+    }
+
+    private fun spec(strongBox: Boolean, unlockedDeviceRequired: Boolean): KeyGenParameterSpec =
+        KeyGenParameterSpec.Builder(alias, KeyProperties.PURPOSE_DECRYPT)
             .setDigests(KeyProperties.DIGEST_SHA256)
             .setEncryptionPaddings(KeyProperties.ENCRYPTION_PADDING_RSA_OAEP)
             .setKeySize(2048)
             .apply {
-                // StrongBox on API 28+ when available. Fall back silently.
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
-                    try { setIsStrongBoxBacked(true) } catch (_: Exception) { /* optional */ }
+                    if (strongBox) setIsStrongBoxBacked(true)
+                    if (unlockedDeviceRequired) setUnlockedDeviceRequired(true)
                 }
             }
             .build()
-        try {
-            gen.initialize(spec)
-            gen.generateKeyPair()
-        } catch (e: Exception) {
-            // StrongBox might fail on devices that advertise support but don't
-            // have room for another key. Retry without StrongBox.
-            Timber.w(e, "StrongBox key generation failed, retrying without")
-            val fallback = KeyGenParameterSpec.Builder(
-                alias, KeyProperties.PURPOSE_DECRYPT
-            )
-                .setDigests(KeyProperties.DIGEST_SHA256)
-                .setEncryptionPaddings(KeyProperties.ENCRYPTION_PADDING_RSA_OAEP)
-                .setKeySize(2048)
-                .build()
-            gen.initialize(fallback)
-            gen.generateKeyPair()
-        }
-    }
 
     override fun getPublicKeyPem(): String {
         val cert = keystore.getCertificate(alias)
@@ -166,7 +163,7 @@ internal class SoftwareDeviceKeyProvider(private val alias: String) : DeviceKeyP
 
 // Okio's Base64 (via OkHttp): java.util.Base64 only exists from API 26 and minSdk is 24
 // (Android 7 threw NoClassDefFoundError here and the init coroutine crashed the app).
-private fun publicKeyToPem(publicKey: PublicKey): String {
+internal fun publicKeyToPem(publicKey: PublicKey): String {
     val encoded = publicKey.encoded.toByteString().base64()
     val chunked = encoded.chunked(64).joinToString("\n")
     return "-----BEGIN PUBLIC KEY-----\n$chunked\n-----END PUBLIC KEY-----"

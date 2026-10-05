@@ -22,6 +22,16 @@ import io.github.umutcansu.pinvault.model.VaultFetchResponse
  *     // ... other methods
  * }
  * ```
+ *
+ * ## Signed configs
+ * [fetchConfig] returns a parsed config: by then nothing is left to verify.
+ * A Config API block with signing keys therefore needs the custom API to
+ * implement [SignedConfigSource] as well — PinVault then fetches the signed
+ * envelope and verifies it itself (signatures, `issuedAt` / `expiresAt`,
+ * replay, signing-key sets, `serverScope`), exactly as for its own HTTP
+ * client, and [fetchConfig] is not called. Without it `PinVault.init` fails
+ * for that block unless it called `allowUnsigned()`. Whatever the mode, every
+ * config is checked for well-formed host names and pins before it is applied.
  */
 interface CertificateConfigApi {
     /**
@@ -32,6 +42,10 @@ interface CertificateConfigApi {
 
     /**
      * Fetches the latest certificate config from the backend.
+     *
+     * Called for blocks that run unsigned (`allowUnsigned()`). A block with
+     * signing keys is served through [SignedConfigSource.fetchSignedConfig]
+     * instead; see the class comment.
      *
      * @param currentVersion The version currently held by the client (0 if first call).
      * @throws Exception on network or server errors.
@@ -121,9 +135,36 @@ interface CertificateConfigApi {
     }
 
     /**
-     * Enrolls a device to obtain a PKCS12 client certificate.
-     * Called by [io.github.umutcansu.pinvault.PinVault.enroll] and
-     * [io.github.umutcansu.pinvault.PinVault.autoEnroll].
+     * Registers the device's user-auth RSA public key: the key the server
+     * wraps `encryption = "user_auth"` files with, whose private half the
+     * hardware uses only after the screen lock or a strong biometric. The
+     * reference server takes it at the same endpoint as the E2E key, with
+     * `"purpose": "user_auth"`.
+     *
+     * [attestationChain] is the key's Android key attestation chain, each
+     * certificate Base64 (standard, no line breaks) DER, leaf first — empty
+     * when the device could not attest the key. The leaf's attestation
+     * challenge is SHA-256 of `pinvault-user-auth-key:v1:<deviceId>`. A
+     * backend that checks it can tell a hardware key of the app from a key
+     * made in software with the app's credentials (the reference server:
+     * `USER_AUTH_ATTESTATION=enforce`).
+     *
+     * Default implementation is a no-op — custom backends without
+     * `user_auth` files can ignore this call. An implementation compiled
+     * against PinVault 2.1.1 or earlier does not have this method; PinVault
+     * then reports `user_auth` files as unsupported by the backend.
+     */
+    suspend fun registerUserAuthPublicKey(deviceId: String, publicKeyPem: String, attestationChain: List<String>) {
+        // Default: no-op.
+    }
+
+    /**
+     * Enrolls a device to obtain a PKCS12 client certificate whose key the
+     * server generated. Called by [io.github.umutcansu.pinvault.PinVault.enroll]
+     * and [io.github.umutcansu.pinvault.PinVault.autoEnroll] only for a
+     * block that called `allowServerGeneratedKey()`, when the device could
+     * not make its own key or the backend takes no CSR; every other
+     * enrollment goes through [enrollWithCsr].
      *
      * Implement token-based or device-based enrollment depending on your backend.
      *
@@ -148,10 +189,11 @@ interface CertificateConfigApi {
      * (the key never leaves the Android Keystore). Same authentication as
      * [enroll] — token or device id — plus the DER-encoded PKCS#10 [csrDer].
      *
-     * Return the issued chain in [EnrollmentResult.certificateChainPem]. A
-     * backend that only knows P12 may answer this call with a P12 result
-     * instead, exactly as [enroll] would. Return `null` to say the backend
-     * cannot take a CSR at all; the library then calls [enroll].
+     * Return the issued chain in [EnrollmentResult.certificateChainPem]: at
+     * least the leaf and the CA certificate that signed it (a chain of one is
+     * refused). A P12 result, or `null` ("this backend cannot take a CSR";
+     * the library then calls [enroll]), is accepted only when the block
+     * called `allowServerGeneratedKey()`; otherwise the enrollment fails.
      *
      * A backend where an administrator approves devices first throws
      * [io.github.umutcansu.pinvault.model.EnrollmentPendingException] with a
@@ -170,6 +212,37 @@ interface CertificateConfigApi {
         csrDer: ByteArray,
         requestId: String? = null
     ): EnrollmentResult? = null
+
+    /**
+     * [enrollWithCsr] with the device key's Android key attestation: what
+     * PinVault calls. [attestationChain] is the chain the Android Keystore
+     * made for the key, each certificate Base64 (standard, no line breaks)
+     * DER, leaf first — empty when the device could not attest the key. The
+     * leaf's attestation challenge is SHA-256 of
+     * `pinvault-identity-key:v1:<device id>` (UTF-8), where the device id is
+     * the [deviceUid] of this request, or its [deviceId] when no `deviceUid`
+     * is sent. A backend that verifies it (the chain up to a Google hardware
+     * attestation root, the challenge, the app's package and signing
+     * certificate, the leaf's key = the CSR's key) can tell a hardware key of
+     * the real app on a real phone from a key made by a script, an emulator
+     * or a repackaged app that got hold of a token. To refuse, throw
+     * [io.github.umutcansu.pinvault.model.EnrollmentRefusedException] with
+     * `attestation_required` or `attestation_invalid`.
+     *
+     * Default: drops the chain and calls [enrollWithCsr], so backends
+     * written before this method keep working. An implementation compiled
+     * against an earlier PinVault does not have it; PinVault then calls the
+     * six-argument method itself.
+     */
+    suspend fun enrollWithCsr(
+        token: String?,
+        deviceId: String?,
+        deviceAlias: String?,
+        deviceUid: String?,
+        csrDer: ByteArray,
+        requestId: String?,
+        attestationChain: List<String>
+    ): EnrollmentResult? = enrollWithCsr(token, deviceId, deviceAlias, deviceUid, csrDer, requestId)
 
     /**
      * Renews the client certificate of a CSR-enrolled device.

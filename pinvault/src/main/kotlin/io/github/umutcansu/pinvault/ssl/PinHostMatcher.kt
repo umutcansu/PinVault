@@ -34,15 +34,18 @@ internal object PinHostMatcher {
      * Wildcard suffixes must contain at least one dot — `*.com` or `*.tr`
      * would otherwise let a single misconfigured pin entry authorize every
      * domain under a TLD, turning a config-level mistake into a cross-host
-     * pin-reuse vulnerability. Such patterns are silently skipped here;
-     * config validation at intake should reject them outright.
+     * pin-reuse vulnerability. Such patterns are skipped here; config
+     * validation at intake ([PinConfigValidator]) rejects them outright.
      *
      * Returns `null` when nothing matches — callers must treat null as a
      * hard reject (fail-safe).
      *
      * With [port], an exact `host:port` entry is tried first (see below).
+     *
+     * Generic over what an entry maps to: the trust manager looks up pin
+     * sets, the client key manager the whole pin entry (is this an mTLS host?).
      */
-    fun match(pinMap: Map<String, Set<String>>, hostname: String, port: Int? = null): Set<String>? {
+    fun <T : Any> match(pinMap: Map<String, T>, hostname: String, port: Int? = null): T? {
         val host = hostname.lowercase()
 
         // A `host:port` entry pins that one listener and nothing else: when it
@@ -51,16 +54,36 @@ internal object PinHostMatcher {
         // certificate-renewal door pinned to the backend's own CA) carry a
         // different trust anchor than the rest of the host, without widening
         // what the other ports accept.
+        // A wildcard may carry a port too (`*.example.com:443`): exact
+        // `host:port` first, then a wildcard for that port, then the host's
+        // port-less entries — the same precedence as without a wildcard.
         if (port != null && port > 0) {
             pinMap["$host:$port"]?.let { return it }
+            matchWildcard(pinMap, host, ":$port")?.let { return it }
         }
 
         pinMap[host]?.let { return it }
 
+        return matchWildcard(pinMap, host, "")
+    }
+
+    /**
+     * The set of a `*.suffix` + [portSuffix] pattern covering exactly one
+     * label of [host]. With an empty [portSuffix] only port-less patterns
+     * count: a `*.example.com:443` entry never applies to another port.
+     */
+    private fun <T : Any> matchWildcard(pinMap: Map<String, T>, host: String, portSuffix: String): T? {
         for ((pattern, hashes) in pinMap) {
             if (!pattern.startsWith("*.")) continue
-            val suffix = pattern.substring(2)
-            if ('.' !in suffix) continue
+            val withoutPort = if (portSuffix.isEmpty()) {
+                if (':' in pattern) continue
+                pattern
+            } else {
+                if (!pattern.endsWith(portSuffix)) continue
+                pattern.removeSuffix(portSuffix)
+            }
+            val suffix = withoutPort.substring(2)
+            if ('.' !in suffix || ':' in suffix) continue
             if (!host.endsWith(".$suffix")) continue
             val left = host.substring(0, host.length - suffix.length - 1)
             if (left.isNotEmpty() && '.' !in left) return hashes

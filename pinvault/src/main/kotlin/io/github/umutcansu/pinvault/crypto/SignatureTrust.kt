@@ -6,6 +6,7 @@ import io.github.umutcansu.pinvault.model.SignatureEntry
 import io.github.umutcansu.pinvault.model.SignedKeySet
 import io.github.umutcansu.pinvault.model.SigningKeySetPayload
 import io.github.umutcansu.pinvault.model.SigningStatus
+import io.github.umutcansu.pinvault.model.StoreUnreadableException
 import io.github.umutcansu.pinvault.store.SigningKeyStore
 import timber.log.Timber
 import java.util.concurrent.ConcurrentHashMap
@@ -42,6 +43,14 @@ internal class SignatureTrust(
     builtInThreshold: Int,
     recoveryKeys: List<String>,
     recoveryThreshold: Int,
+    /**
+     * The block's `serverScope`. A signing-key set whose payload names a
+     * `configApiId` is applied only when it names this one: one recovery key
+     * set may serve several Config APIs, and a set made for another of them
+     * must not replace this block's keys. A set that names none is accepted
+     * as before (the field is optional; older sets do not carry it).
+     */
+    private val serverScope: String? = null,
     storeProvider: () -> SigningKeyStore?
 ) {
     /** Convenience for tests and callers that already hold the store. */
@@ -51,8 +60,9 @@ internal class SignatureTrust(
         builtInThreshold: Int,
         recoveryKeys: List<String>,
         recoveryThreshold: Int,
-        store: SigningKeyStore?
-    ) : this(configApiId, builtInKeys, builtInThreshold, recoveryKeys, recoveryThreshold, { store })
+        store: SigningKeyStore?,
+        serverScope: String? = null
+    ) : this(configApiId, builtInKeys, builtInThreshold, recoveryKeys, recoveryThreshold, serverScope, { store })
 
     private val builtInKeys: List<String> = canonicalize(builtInKeys, "signing")
     private val builtInThreshold = builtInThreshold.coerceAtLeast(1)
@@ -63,13 +73,42 @@ internal class SignatureTrust(
     }
     private val recoveryThreshold = recoveryThreshold.coerceAtLeast(1)
 
-    /** Opened on first use, off the init path; a store that fails to open means "no persisted set". */
+    /**
+     * SHA-256 (hex) over what this build trusts by itself: the compiled-in
+     * signing keys and how many must sign, the recovery keys and their
+     * threshold, in canonical form and order. It changes only with an app
+     * update that rotates them; see `SSLCertificateUpdater.syncTrustAnchors`.
+     */
+    fun anchorsFingerprint(): String {
+        val text = buildString {
+            append("pinvault-trust-anchors:v1\n")
+            append("signing:").append(builtInThreshold).append('\n')
+            builtInKeys.sorted().forEach { append(it).append('\n') }
+            append("recovery:").append(recoveryThreshold).append('\n')
+            recoveryKeys.sorted().forEach { append(it).append('\n') }
+        }
+        return java.security.MessageDigest.getInstance("SHA-256").digest(text.toByteArray(Charsets.UTF_8))
+            .joinToString("") { "%02x".format(it.toInt() and 0xFF) }
+    }
+
+    /**
+     * Opened on first use, off the init path. A store that fails to open is
+     * NOT "no persisted set": the set may hold a revocation, and falling back
+     * to the compiled-in keys would trust the revoked key again for the rest
+     * of the process. The failure is thrown as [StoreUnreadableException] to
+     * whoever asked (nothing verifies for that attempt) and opening is tried
+     * again on the next use — `lazy` does not keep a failed result.
+     */
     private val store: SigningKeyStore? by lazy {
         try {
             storeProvider()
+        } catch (e: StoreUnreadableException) {
+            throw e
         } catch (e: Exception) {
-            Timber.e(e, "Config API '%s': signing-key store unavailable — using the compiled-in keys", configApiId)
-            null
+            Timber.e(e, "Config API '%s': signing-key store unavailable — nothing is verified until it opens", configApiId)
+            throw StoreUnreadableException(
+                "Config API '$configApiId': the signing-key store cannot be opened right now (${e.javaClass.simpleName})", e
+            )
         }
     }
 
@@ -113,16 +152,20 @@ internal class SignatureTrust(
      * set means it, and silently keeping the old keys would hide a forged or
      * broken rotation. A set that is merely older or equal is ignored — it is
      * what every response carries once the rotation has reached this device.
+     *
+     * @return true when [incoming] was newer and is now the set in force.
+     * @throws StoreUnreadableException when the set applied so far cannot be
+     *   read right now; nothing is applied then.
      */
-    fun applyKeySetUpdate(incoming: SignedKeySet?) {
-        if (incoming == null) return
+    fun applyKeySetUpdate(incoming: SignedKeySet?): Boolean {
+        if (incoming == null) return false
         if (recoveryKeys.isEmpty()) {
             Timber.w(
                 "Config API '%s': the response carries a signing-key set but no recoveryPublicKeys " +
                     "are configured — ignoring it and keeping the compiled-in keys",
                 configApiId
             )
-            return
+            return false
         }
         val candidate = check(incoming)
         synchronized(lock) {
@@ -137,6 +180,7 @@ internal class SignatureTrust(
                         "Config API '%s': signing-key set v%d applied — %d trusted key(s), %d signature(s) required",
                         configApiId, candidate.version, candidate.keys.size, candidate.requiredSignatures
                     )
+                    return true
                 }
                 candidate.version == currentVersion && current != null &&
                     candidate.keys.toSet() != current.keys.toSet() ->
@@ -151,6 +195,7 @@ internal class SignatureTrust(
                 )
             }
         }
+        return false
     }
 
     /**
@@ -165,9 +210,29 @@ internal class SignatureTrust(
         return result
     }
 
-    /** Same as [verifyConfig] for a vault file's canonical content string. */
-    fun verifyVaultFile(key: String, version: Int, plaintext: ByteArray, entries: List<SignatureEntry>): Verification =
-        evaluate(ConfigSignatureVerifier.vaultCanonical(key, version, plaintext), entries)
+    /**
+     * [verifyConfig] for a config envelope read back from storage: the same
+     * check against the keys trusted now, without recording its signers as
+     * "the last accepted config".
+     */
+    fun verifyStoredConfig(payload: String, entries: List<SignatureEntry>): Verification = evaluate(payload, entries)
+
+    /**
+     * Same as [verifyConfig] for a vault file's canonical content string:
+     * v1 when [serverScope] is null, v2 (which names that Config API) when
+     * the block set one. [entries] must be the signatures of that scheme.
+     */
+    fun verifyVaultFile(
+        key: String,
+        version: Int,
+        plaintext: ByteArray,
+        entries: List<SignatureEntry>,
+        serverScope: String? = null
+    ): Verification = evaluate(
+        if (serverScope == null) ConfigSignatureVerifier.vaultCanonical(key, version, plaintext)
+        else ConfigSignatureVerifier.vaultCanonicalV2(serverScope, key, version, plaintext),
+        entries
+    )
 
     private fun evaluate(payload: String, entries: List<SignatureEntry>): Verification {
         // One snapshot for the keys AND the count: a key-set update landing
@@ -226,6 +291,11 @@ internal class SignatureTrust(
         return verified.toList()
     }
 
+    /**
+     * The applied key set, read from the store on first use. A read that
+     * fails ([StoreUnreadableException]) leaves it unloaded — never "loaded,
+     * none" — so the caller's check fails now and the read is tried again.
+     */
     private fun currentSet(): KeySet? {
         if (recoveryKeys.isEmpty()) return null
         if (!activeSetLoaded) {
@@ -275,6 +345,13 @@ internal class SignatureTrust(
         }
         if (parsed.version <= 0) {
             throw SecurityException("Signing-key set rejected — version must be positive.")
+        }
+        // Inside the recovery-signed payload, so it cannot be swapped.
+        val scopedTo = parsed.configApiId?.takeIf { it.isNotBlank() }
+        if (scopedTo != null && serverScope != null && scopedTo != serverScope) {
+            throw SecurityException(
+                "Signing-key set rejected — it was made for Config API '${scopedTo.take(64)}', this block is '$serverScope' (serverScope)."
+            )
         }
         val raw = parsed.keys.orEmpty().filterNotNull().filter { it.isNotBlank() }
         if (raw.size > MAX_SET_KEYS) {
@@ -342,7 +419,8 @@ internal class SignatureTrust(
                 builtInThreshold = block.requiredSignatures,
                 recoveryKeys = block.recoveryPublicKeys,
                 recoveryThreshold = block.requiredRecoverySignatures,
-                storeProvider = storeProvider
+                storeProvider = storeProvider,
+                serverScope = block.serverScope
             )
         }
 
@@ -350,6 +428,6 @@ internal class SignatureTrust(
 
         /** A single fixed key: one signature from it is required, no rotation. */
         fun single(configApiId: String, key: String) =
-            SignatureTrust(configApiId, listOf(key), 1, emptyList(), 1, { null })
+            SignatureTrust(configApiId, listOf(key), 1, emptyList(), 1) { null }
     }
 }

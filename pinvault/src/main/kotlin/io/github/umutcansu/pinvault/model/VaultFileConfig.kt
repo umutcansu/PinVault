@@ -48,7 +48,18 @@ data class VaultFileConfig(
      */
     val accessTokenProvider: (() -> String)? = null,
     /** V2: local decryption strategy. */
-    val encryption: VaultFileEncryption = VaultFileEncryption.PLAIN
+    val encryption: VaultFileEncryption = VaultFileEncryption.PLAIN,
+    /** Whether reading the stored copy needs the screen lock or a biometric; see [UserAuth]. */
+    val userAuth: UserAuth = UserAuth.NONE,
+    /**
+     * How long the stored copy may be read without the server confirming it,
+     * in milliseconds. Null = the config's default
+     * ([PinVaultConfig.vaultFileMaxOfflineAgeMs]); 0 = no limit. See
+     * [Builder.maxOfflineAge].
+     */
+    val maxOfflineAgeMs: Long? = null,
+    /** Delete the stored copy once it is older than [maxOfflineAgeMs]. See [Builder.wipeWhenStale]. */
+    val wipeWhenStale: Boolean = false
 ) {
     class Builder(private val key: String) {
         private var endpoint = ""
@@ -60,6 +71,9 @@ data class VaultFileConfig(
         private var accessPolicy: VaultFileAccessPolicy = VaultFileAccessPolicy.PUBLIC
         private var accessTokenProvider: (() -> String)? = null
         private var encryption: VaultFileEncryption = VaultFileEncryption.PLAIN
+        private var userAuth: UserAuth = UserAuth.NONE
+        private var maxOfflineAgeMs: Long? = null
+        private var wipeWhenStale: Boolean = false
 
         fun endpoint(ep: String) = apply { this.endpoint = ep }
         fun signaturePublicKey(key: String) = apply { this.signaturePublicKey = key }
@@ -82,8 +96,53 @@ data class VaultFileConfig(
         /** V2: set local decryption strategy. */
         fun encryption(e: VaultFileEncryption) = apply { this.encryption = e }
 
+        /**
+         * Lock the stored copy behind the screen lock or a biometric: read it
+         * with PinVault.unlockFile, which shows the prompt. See [UserAuth];
+         * with [VaultFileEncryption.USER_AUTH] the content never reaches the
+         * app before the prompt.
+         */
+        fun userAuth(policy: UserAuth) = apply { this.userAuth = policy }
+
+        /**
+         * How long the stored copy may be read without the server confirming
+         * it. `PinVault.loadFile` returns null and `PinVault.unlockFile`
+         * returns [VaultFileUnlockResult.Stale] once the last successful
+         * fetch of this file — a download, or the server's "you have the
+         * current version" — is older than this; `PinVault.fileStatus` says
+         * [VaultFileStatus.STALE]. The next successful fetch makes the copy
+         * readable again.
+         *
+         * Why: a device the server has revoked learns of it from the
+         * server's answer. One that stays offline never hears it and would
+         * keep every cached file for ever. With a limit, a file is usable
+         * offline for that long and no longer.
+         *
+         * The age is measured with the library's own clock, which does not
+         * follow the device clock when that is set back. A copy stored before
+         * a limit was set has no confirmation on record and counts as stale
+         * until the next successful fetch. The default is the config's
+         * `vaultFileMaxOfflineAge` (no limit unless set); `0` means no limit
+         * for this file whatever the config says.
+         */
+        fun maxOfflineAge(amount: Long, unit: java.util.concurrent.TimeUnit) = apply {
+            require(amount >= 0) { "maxOfflineAge must not be negative" }
+            this.maxOfflineAgeMs = unit.toMillis(amount)
+        }
+
+        /**
+         * Delete the stored copy when it is found older than [maxOfflineAge]:
+         * at `loadFile` / `unlockFile`, at `init` and on every periodic
+         * update. Without it a stale copy is kept (unreadable) and becomes
+         * readable again after a successful fetch.
+         */
+        fun wipeWhenStale() = apply { this.wipeWhenStale = true }
+
         fun build(): VaultFileConfig {
             require(endpoint.isNotBlank()) { "endpoint must not be blank for vault file: $key" }
+            require(encryption != VaultFileEncryption.USER_AUTH || userAuth != UserAuth.NONE) {
+                "encryption(USER_AUTH) needs userAuth(UserAuth.REQUIRED) or userAuth(UserAuth.IF_SCREEN_LOCK) (key: $key)"
+            }
             if (accessPolicy == VaultFileAccessPolicy.TOKEN ||
                 accessPolicy == VaultFileAccessPolicy.TOKEN_MTLS) {
                 require(accessTokenProvider != null) {
@@ -100,7 +159,10 @@ data class VaultFileConfig(
                 configApiId = configApiId,
                 accessPolicy = accessPolicy,
                 accessTokenProvider = accessTokenProvider,
-                encryption = encryption
+                encryption = encryption,
+                userAuth = userAuth,
+                maxOfflineAgeMs = maxOfflineAgeMs,
+                wipeWhenStale = wipeWhenStale
             )
         }
     }
@@ -170,9 +232,20 @@ enum class VaultFileAccessPolicy {
  *   and other devices cannot read it. The name is historical: the server
  *   performs the encryption, so it sees the content (it keeps it encrypted on
  *   disk). To hide a file from the server too, encrypt it before upload.
+ * - [USER_AUTH]: like [END_TO_END], but wrapped with the device's user-auth
+ *   key (see [UserAuth]), which the hardware opens only after the screen lock
+ *   or a strong biometric. The library stores the server's envelope as it
+ *   came and opens it in `PinVault.unlockFile`, so the content never reaches
+ *   the app before the prompt. The key is registered with its Android key
+ *   attestation chain; against root running as the app this holds only when
+ *   the server enforces that attestation (see [UserAuth]). Needs
+ *   `userAuth(REQUIRED or IF_SCREEN_LOCK)`; server value `user_auth`.
+ *   Adding this constant breaks an exhaustive `when` over the enum in
+ *   callers compiled against 2.1.1.
  */
 enum class VaultFileEncryption {
     PLAIN,
     AT_REST,
-    END_TO_END
+    END_TO_END,
+    USER_AUTH
 }

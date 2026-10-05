@@ -114,9 +114,17 @@ internal object ConfigSignatureVerifier {
         publicKeyBase64: String
     ): Boolean = verify(vaultCanonical(key, version, plaintext), signature, publicKeyBase64)
 
-    /** The string a vault file signature covers. */
+    /** The string a v1 vault file signature covers. It does not say which Config API the file belongs to. */
     fun vaultCanonical(key: String, version: Int, plaintext: ByteArray): String =
         "pinvault-vault-file:v1:$key:$version:${sha256HexLower(plaintext)}"
+
+    /**
+     * The string a v2 vault file signature covers: v1 plus the server-side
+     * Config API id, so a file signed for one Config API does not verify for
+     * another that shares the signing key.
+     */
+    fun vaultCanonicalV2(configApiId: String, key: String, version: Int, plaintext: ByteArray): String =
+        "pinvault-vault-file:v2:$configApiId:$key:$version:${sha256HexLower(plaintext)}"
 
     private fun sha256HexLower(bytes: ByteArray): String =
         MessageDigest.getInstance("SHA-256").digest(bytes)

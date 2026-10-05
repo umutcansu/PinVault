@@ -11,9 +11,9 @@ import timber.log.Timber
  * Encrypted persistence for the latest applied signing-key set of each
  * Config API block.
  *
- * Deliberately a separate file from [CertificateConfigStore]: that store is
- * wiped by `PinVault.reset()`, by corrupt-store recovery and by a health-gate
- * rollback with nothing to roll back to. A key set carries revocations, and
+ * Deliberately a separate file from [CertificateConfigStore]: that store's
+ * active config is dropped by `PinVault.reset()`, by corrupt-store recovery
+ * and by a health-gate rollback with nothing to roll back to. A key set carries revocations, and
  * forgetting one would put a revoked signing key back into trust — so it
  * survives all of those. It is excluded from cloud backup and device transfer
  * for the same reason (a restored older set would un-revoke keys).
@@ -31,11 +31,19 @@ import timber.log.Timber
 internal class SigningKeyStore private constructor(private val prefs: SharedPreferences) {
 
     constructor(context: Context) : this(
-        SecurePreferences.open(context, FILE_NAME, namespace = PREFS_NAME, legacyName = PREFS_NAME)
+        // Strict: a Keystore failure must not read as "no key set applied" —
+        // that would put a revoked signing key back into trust.
+        SecurePreferences.openStrict(context, FILE_NAME, namespace = PREFS_NAME, legacyName = PREFS_NAME)
     )
 
     private val gson = Gson()
 
+    /**
+     * The stored set, or null when none is stored.
+     * @throws io.github.umutcansu.pinvault.model.StoreUnreadableException when
+     *   the Keystore cannot open the entry right now — which says nothing
+     *   about whether a set is stored.
+     */
     fun load(configApiId: String): SignedKeySet? {
         val json = prefs.getString(key(configApiId), null) ?: return null
         return try {

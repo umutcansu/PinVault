@@ -36,7 +36,7 @@ sealed class ClientCertEnrollmentResult {
         val message: String? = null,
         val retryAfterSeconds: Int? = null,
         /**
-         * Short code from this device's key (`4F7K-2QXM`): show it, the
+         * Code from this device's key (`4F7K-2QXM-9D3T-H6WP`, 16 characters): show it, the
          * administrator sees the same next to the request and compares.
          */
         val verificationCode: String? = null
@@ -60,8 +60,10 @@ enum class EnrollmentRefusal {
 
     /**
      * This device is enrolled under another client id (409
-     * `device_already_enrolled`). Once an administrator revokes that one, the
-     * same token works: a refused enrollment does not spend it.
+     * `device_already_enrolled`), or this client id is already enrolled over
+     * another key (409 `identity_already_enrolled`). Once an administrator
+     * revokes that one (and, for the same id, forgets it), the same token
+     * works: a refused enrollment does not spend it.
      */
     DEVICE_ALREADY_ENROLLED,
 
@@ -83,6 +85,24 @@ enum class EnrollmentRefusal {
      */
     EXPIRED,
 
+    /**
+     * The server asks for an Android key attestation of the device key and
+     * got none (403 `attestation_required`: this device's Keystore could not
+     * attest the key) or refused the one it got (403 `attestation_invalid`;
+     * [ClientCertEnrollmentResult.Refused.message] carries the server's
+     * reason — an emulator, an unlocked bootloader, another app). Nothing
+     * the user can retry; the token is not spent.
+     */
+    ATTESTATION_FAILED,
+
+    /**
+     * The server issues certificates only over a certificate signing request
+     * (`csr_required`) and this request carried none: the device could not
+     * make its own key and the block allowed asking for a server-made one
+     * (`allowServerGeneratedKey()`), which the server does not hand out.
+     */
+    CSR_REQUIRED,
+
     /** Anything else the server refused; see [ClientCertEnrollmentResult.Refused.serverError]. */
     OTHER
 }
@@ -95,7 +115,8 @@ enum class EnrollmentRefusal {
  * [ClientCertEnrollmentResult.Failed].
  *
  * @param serverError the `error` field of the server's JSON answer, if any
- * @param serverMessage its `message` field, if any
+ * @param serverMessage its `message` field, if any — for an attestation
+ *   refusal the server's `reason`
  */
 class EnrollmentRefusedException(
     val httpStatus: Int,
@@ -107,11 +128,16 @@ class EnrollmentRefusedException(
     val refusal: EnrollmentRefusal
         get() = when {
             httpStatus == 401 -> EnrollmentRefusal.INVALID_TOKEN
-            serverError == "device_already_enrolled" -> EnrollmentRefusal.DEVICE_ALREADY_ENROLLED
+            serverError == "device_already_enrolled" || serverError == "identity_already_enrolled" ->
+                EnrollmentRefusal.DEVICE_ALREADY_ENROLLED
             serverError == "revoked" -> EnrollmentRefusal.REVOKED
             serverError == "enrollment_rejected" -> EnrollmentRefusal.REJECTED
             serverError == "enrollment_limit_reached" -> EnrollmentRefusal.LIMIT_REACHED
             serverError == "enrollment_request_expired" -> EnrollmentRefusal.EXPIRED
+            // The server issues this enrollment only over a CSR.
+            serverError == "csr_required" -> EnrollmentRefusal.CSR_REQUIRED
+            serverError == "attestation_required" || serverError == "attestation_invalid" ->
+                EnrollmentRefusal.ATTESTATION_FAILED
             // The reference server answers a token-less enrollment in token mode
             // with 403 and a sentence in `error` ("Token required for enrollment…").
             httpStatus == 403 && serverError?.startsWith("Token required") == true -> EnrollmentRefusal.TOKEN_REQUIRED

@@ -32,6 +32,24 @@ interface ClientIdentityKeyProvider {
     /** Generate the key pair if missing. Idempotent. */
     fun ensureKeyPair()
 
+    /**
+     * [ensureKeyPair] asking the Keystore to attest a key it generates now:
+     * the certificate chain of the new key then carries [attestationChallenge]
+     * and the key's properties, signed by the device's attestation key (see
+     * [attestationChain]). An existing key is left as it is — a challenge
+     * cannot be added to it. Null, or a Keystore that cannot attest: a key
+     * without attestation.
+     */
+    fun ensureKeyPair(attestationChallenge: ByteArray?) = ensureKeyPair()
+
+    /**
+     * The key's Android key attestation chain, DER, leaf first — exactly
+     * what `KeyStore.getCertificateChain` returns — or empty when the key was
+     * generated without an attestation challenge (the leaf has no attestation
+     * extension then, and there is nothing to send).
+     */
+    fun attestationChain(): List<ByteArray> = emptyList()
+
     /** True when the key exists (without generating it). */
     fun exists(): Boolean
 
@@ -59,6 +77,21 @@ interface ClientIdentityKeyProvider {
         fun androidKeystore(label: String): ClientIdentityKeyProvider =
             AndroidKeystoreClientIdentityKeyProvider(aliasFor(label))
 
+        /** OID of the Android key attestation extension in the leaf certificate. */
+        const val ATTESTATION_EXTENSION_OID = "1.3.6.1.4.1.11129.2.1.17"
+
+        /**
+         * The attestation challenge of an identity key: SHA-256 of
+         * `pinvault-identity-key:v1:<deviceUid>` (UTF-8), where [deviceUid] is
+         * the device id the enrollment request carries (its `deviceUid`, or
+         * its `deviceId` when it sends no `deviceUid`). The server computes
+         * the same from the request and refuses a chain whose leaf carries
+         * anything else.
+         */
+        fun attestationChallenge(deviceUid: String): ByteArray =
+            java.security.MessageDigest.getInstance("SHA-256")
+                .digest("pinvault-identity-key:v1:$deviceUid".toByteArray(Charsets.UTF_8))
+
         /**
          * Software fallback for tests / non-Android environments. Keys are
          * held per alias for the process lifetime, so separate instances for
@@ -79,26 +112,55 @@ internal class AndroidKeystoreClientIdentityKeyProvider(
         KeyStore.getInstance("AndroidKeyStore").apply { load(null) }
     }
 
-    override fun ensureKeyPair() {
+    override fun ensureKeyPair() = ensureKeyPair(null)
+
+    /**
+     * Tries, in order: StrongBox with attestation (Android 9+), the TEE with
+     * attestation, the TEE without. A device whose Keystore cannot attest
+     * still gets a key; it enrolls without a chain, and a server that
+     * enforces attestation refuses it. StrongBox may be advertised but full,
+     * or the ROM may reject the flag outright.
+     */
+    override fun ensureKeyPair(attestationChallenge: ByteArray?) {
         if (keystore.containsAlias(alias)) {
-            Timber.d("Client identity key exists: %s", alias)
+            Timber.d("Client identity key exists")
             return
         }
-        Timber.i("Generating client identity key in AndroidKeyStore: %s", alias)
-        val gen = KeyPairGenerator.getInstance(KeyProperties.KEY_ALGORITHM_EC, "AndroidKeyStore")
-        try {
-            gen.initialize(spec(strongBox = Build.VERSION.SDK_INT >= Build.VERSION_CODES.P))
-            gen.generateKeyPair()
-        } catch (e: Exception) {
-            // StrongBox may be advertised but full, or the ROM may reject the
-            // flag outright. Same key parameters, just not hardware-isolated.
-            Timber.w(e, "StrongBox key generation failed, retrying without")
-            gen.initialize(spec(strongBox = false))
-            gen.generateKeyPair()
+        val attempts = buildList {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) add(true to attestationChallenge)
+            if (attestationChallenge != null) add(false to attestationChallenge)
+            add(false to null)
+        }.distinct()
+        KeystoreOptions.generating("Client identity key", cleanUp = ::clear) { unlockedDeviceRequired ->
+            var last: Exception? = null
+            for ((strongBox, challenge) in attempts) {
+                try {
+                    val gen = KeyPairGenerator.getInstance(KeyProperties.KEY_ALGORITHM_EC, "AndroidKeyStore")
+                    gen.initialize(spec(strongBox, challenge, unlockedDeviceRequired))
+                    gen.generateKeyPair()
+                    Timber.i("Client identity key generated (strongBox=%s, attestation=%s)", strongBox, challenge != null)
+                    return@generating
+                } catch (e: Exception) {
+                    last = e
+                    Timber.w(e, "Client identity key generation failed (strongBox=%s, attestation=%s), trying the next way",
+                        strongBox, challenge != null)
+                    runCatching { clear() }
+                }
+            }
+            throw last ?: IllegalStateException("client identity key generation failed")
         }
     }
 
-    private fun spec(strongBox: Boolean): KeyGenParameterSpec =
+    override fun attestationChain(): List<ByteArray> {
+        val chain = keystore.getCertificateChain(alias) ?: return emptyList()
+        val leaf = chain.firstOrNull() as? java.security.cert.X509Certificate ?: return emptyList()
+        // Without a challenge the Keystore still returns a one-certificate
+        // chain (a self-signed placeholder): nothing a server can check.
+        if (leaf.getExtensionValue(ClientIdentityKeyProvider.ATTESTATION_EXTENSION_OID) == null) return emptyList()
+        return chain.map { it.encoded }
+    }
+
+    private fun spec(strongBox: Boolean, attestationChallenge: ByteArray?, unlockedDeviceRequired: Boolean): KeyGenParameterSpec =
         KeyGenParameterSpec.Builder(alias, KeyProperties.PURPOSE_SIGN)
             .setAlgorithmParameterSpec(ECGenParameterSpec("secp256r1"))
             // SHA-256 signs the CSR. NONE is what the TLS stack needs: Conscrypt
@@ -110,9 +172,11 @@ internal class AndroidKeystoreClientIdentityKeyProvider(
                 KeyProperties.DIGEST_SHA384, KeyProperties.DIGEST_SHA512
             )
             .apply {
-                if (strongBox && Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
-                    try { setIsStrongBoxBacked(true) } catch (_: Exception) { /* optional */ }
-                }
+                if (strongBox && Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) setIsStrongBoxBacked(true)
+                if (unlockedDeviceRequired && Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) setUnlockedDeviceRequired(true)
+                // The leaf certificate then carries this challenge and the
+                // key's properties, signed by the device's attestation key.
+                attestationChallenge?.let { setAttestationChallenge(it) }
             }
             .build()
 
@@ -142,12 +206,22 @@ internal class SoftwareClientIdentityKeyProvider(private val alias: String) : Cl
 
     private fun keyPair(): KeyPair = keys[alias] ?: error("ensureKeyPair() first")
 
-    override fun ensureKeyPair() {
+    override fun ensureKeyPair() = ensureKeyPair(null)
+
+    override fun ensureKeyPair(attestationChallenge: ByteArray?) {
         keys.computeIfAbsent(alias) {
             val gen = KeyPairGenerator.getInstance("EC")
             gen.initialize(ECGenParameterSpec("secp256r1"))
-            gen.generateKeyPair().also { Timber.d("Generated software client identity key: %s", alias) }
+            if (attestationChallenge != null) challenges[alias] = attestationChallenge.copyOf() else challenges.remove(alias)
+            gen.generateKeyPair().also { Timber.d("Generated software client identity key") }
         }
+    }
+
+    /** What [attestation] makes of the challenge this key was generated with; empty without either. */
+    override fun attestationChain(): List<ByteArray> {
+        if (!keys.containsKey(alias)) return emptyList()
+        val challenge = challenges[alias] ?: return emptyList()
+        return attestation?.invoke(challenge).orEmpty()
     }
 
     override fun exists(): Boolean = keys.containsKey(alias)
@@ -155,10 +229,22 @@ internal class SoftwareClientIdentityKeyProvider(private val alias: String) : Cl
     override fun privateKey(): PrivateKey = keyPair().private
     override fun sign(data: ByteArray): ByteArray = signWith(privateKey(), data)
     override fun spkiSha256(): String = Pkcs10Csr.spkiSha256Base64(publicKey())
-    override fun clear() { keys.remove(alias) }
+    override fun clear() {
+        keys.remove(alias)
+        challenges.remove(alias)
+    }
 
-    private companion object {
-        val keys = ConcurrentHashMap<String, KeyPair>()
+    internal companion object {
+        private val keys = ConcurrentHashMap<String, KeyPair>()
+        private val challenges = ConcurrentHashMap<String, ByteArray>()
+
+        /**
+         * Tests: stands in for the device's attestation key. Given the
+         * challenge a key was generated with, returns its "chain" (any
+         * bytes); null = this "device" cannot attest.
+         */
+        @Volatile
+        var attestation: ((challenge: ByteArray) -> List<ByteArray>)? = null
     }
 }
 

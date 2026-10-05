@@ -107,4 +107,40 @@ class VaultFileStoreTest {
         val loaded = store.load("big")
         assertArrayEquals(large, loaded)
     }
+
+    // ── Content and version are one entry ───────────────────────────────
+
+    @Test
+    fun `content and version are stored as one entry`() {
+        store.save("flags", "flags".toByteArray(), 7)
+        assertEquals("one entry: the two cannot be taken from different moments", 1, prefs.all.size)
+        assertFalse(prefs.contains("vault_ver_flags"))
+        assertEquals(7, store.getVersion("flags"))
+        assertArrayEquals("flags".toByteArray(), store.load("flags"))
+    }
+
+    @Test
+    fun `an empty file keeps its version`() {
+        store.save("empty", ByteArray(0), 3)
+        assertEquals(3, store.getVersion("empty"))
+        assertArrayEquals(ByteArray(0), store.load("empty"))
+        assertTrue(store.exists("empty"))
+    }
+
+    @Test
+    fun `a copy stored by an earlier version is read and written again as one entry`() {
+        // 2.1.x: Base64 content under one name, the version under another.
+        prefs.edit()
+            .putString("vault_data_model", android.util.Base64.encodeToString("legacy".toByteArray(), android.util.Base64.NO_WRAP))
+            .putInt("vault_ver_model", 5)
+            .commit()
+
+        assertEquals(5, store.getVersion("model"))
+        assertArrayEquals("legacy".toByteArray(), store.load("model"))
+
+        assertFalse("the separate version entry is gone", prefs.contains("vault_ver_model"))
+        assertTrue(prefs.getString("vault_data_model", "")!!.startsWith("2:5:"))
+        assertEquals(5, store.getVersion("model"))
+        assertArrayEquals("legacy".toByteArray(), store.load("model"))
+    }
 }

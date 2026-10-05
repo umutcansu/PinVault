@@ -44,12 +44,13 @@ class DefaultCertificateConfigApiTest {
         server.shutdown()
     }
 
-    private fun createApi(signaturePublicKey: String? = null): DefaultCertificateConfigApi {
+    private fun createApi(signaturePublicKey: String? = null, allowServerGeneratedKey: Boolean = false): DefaultCertificateConfigApi {
         return DefaultCertificateConfigApi(
             configUrl = server.url("/").toString(),
             signaturePublicKey = signaturePublicKey,
             bootstrapPins = listOf(HostPin("test.com", listOf("h1", "h2"))),
-            sslManager = sslManager
+            sslManager = sslManager,
+            allowServerGeneratedKey = allowServerGeneratedKey
         )
     }
 
@@ -437,8 +438,8 @@ class DefaultCertificateConfigApiTest {
 
         val request = server.takeRequest()
         assertEquals("/api/v1/client-certs/enroll", request.path)
-        val features = request.getHeader("X-PinVault-Features").orEmpty().split(',').map { it.trim() }
-        assertTrue(features.toString(), features.containsAll(listOf("p12password", "csr")))
+        // Only csr: without allowServerGeneratedKey() the device must not invite a server-made key.
+        assertEquals("csr", request.getHeader("X-PinVault-Features"))
         val body = org.json.JSONObject(request.body.readUtf8())
         assertEquals("tok", body.getString("token"))
         assertEquals("alias", body.getString("deviceAlias"))
@@ -447,6 +448,21 @@ class DefaultCertificateConfigApiTest {
         assertTrue(result.isCertificateChain)
         assertEquals(2, result.certificateChainPem!!.size)
         assertEquals(0, result.p12Bytes.size)
+    }
+
+    @Test
+    fun `a CSR enrollment offers p12password only when the block accepts a server-made key`() = runTest {
+        repeat(2) {
+            server.enqueue(MockResponse().setBody(chainJson).setHeader("X-PinVault-Cert-Format", "pem-chain"))
+        }
+        createApi(allowServerGeneratedKey = true).enrollWithCsr("tok", null, "alias", "uid", csr)
+        val features = server.takeRequest().getHeader("X-PinVault-Features").orEmpty().split(',').map { it.trim() }
+        assertEquals(listOf("p12password", "csr"), features)
+
+        createApi().enrollWithCsr("tok", null, "alias", "uid", csr)
+        assertEquals("csr", server.takeRequest().getHeader("X-PinVault-Features"))
+        // The P12 path is unchanged.
+        assertEquals("p12password", createApi().enrollmentFeatures(csr = false))
     }
 
     @Test
@@ -538,6 +554,13 @@ class DefaultCertificateConfigApiTest {
         assertEquals(EnrollmentRefusal.EXPIRED, EnrollmentRefusedException(410, "enrollment_request_expired").refusal)
         assertEquals(EnrollmentRefusal.OTHER, EnrollmentRefusedException(429, "too_many_pending_requests").refusal)
         assertEquals(EnrollmentRefusal.OTHER, EnrollmentRefusedException(400, "invalid_csr").refusal)
+        assertEquals(EnrollmentRefusal.DEVICE_ALREADY_ENROLLED, EnrollmentRefusedException(409, "identity_already_enrolled").refusal)
+        EnrollmentRefusedException(403, "csr_required", "Open enrollment issues certificates only over a CSR").let {
+            assertEquals(EnrollmentRefusal.CSR_REQUIRED, it.refusal)
+            assertEquals("Open enrollment issues certificates only over a CSR", it.serverMessage)
+        }
+        assertEquals(EnrollmentRefusal.ATTESTATION_FAILED, EnrollmentRefusedException(403, "attestation_required").refusal)
+        assertEquals(EnrollmentRefusal.ATTESTATION_FAILED, EnrollmentRefusedException(403, "attestation_invalid", "challenge_mismatch").refusal)
     }
 
     @Test
@@ -696,7 +719,130 @@ class DefaultCertificateConfigApiTest {
     }
 
     @Test
+    fun `user-auth registration sends the purpose and the attestation chain, leaf first`() = runTest {
+        server.enqueue(MockResponse().setBody("""{"registered":"true"}"""))
+        server.enqueue(MockResponse().setBody("""{"registered":"true"}"""))
+        val api = createApi()
+
+        api.registerUserAuthPublicKey("android-07", "PEM", listOf("bGVhZg==", "cm9vdA=="))
+        val body = org.json.JSONObject(server.takeRequest().body.readUtf8())
+        assertEquals("user_auth", body.getString("purpose"))
+        assertEquals("RSA-OAEP-SHA256", body.getString("algorithm"))
+        val chain = body.getJSONArray("attestationChain")
+        assertEquals(listOf("bGVhZg==", "cm9vdA=="), (0 until chain.length()).map { chain.getString(it) })
+
+        api.registerUserAuthPublicKey("android-07", "PEM", emptyList())
+        assertFalse("no chain, no field", org.json.JSONObject(server.takeRequest().body.readUtf8()).has("attestationChain"))
+    }
+
+    @Test
+    fun `user-auth registration refusals say what to do`() = runTest {
+        server.enqueue(MockResponse().setResponseCode(409).setBody("""{"error":"user_auth_key_exists"}"""))
+        server.enqueue(MockResponse().setResponseCode(403).setBody("""{"error":"attestation_required"}"""))
+        server.enqueue(MockResponse().setResponseCode(403).setBody("""{"error":"attestation_invalid","reason":"challenge mismatch"}"""))
+        server.enqueue(MockResponse().setResponseCode(409).setBody("""{"error":"key_change_requires_proof"}"""))
+        val api = createApi()
+
+        val exists = runCatching { api.registerUserAuthPublicKey("android-07", "PEM", listOf("bGVhZg==")) }.exceptionOrNull()
+        assertTrue(exists is UserAuthKeyRefusedException)
+        assertTrue(exists!!.message, exists.message!!.contains("administrator must reset this device's user-auth key"))
+        val required = runCatching { api.registerUserAuthPublicKey("android-07", "PEM", emptyList()) }.exceptionOrNull()
+        assertTrue(required!!.message, required.message!!.contains("attestation_required"))
+        val invalid = runCatching { api.registerUserAuthPublicKey("android-07", "PEM", listOf("bGVhZg==")) }.exceptionOrNull()
+        assertTrue(invalid!!.message, invalid.message!!.contains("attestation_invalid") && invalid.message!!.contains("challenge mismatch"))
+        val other = runCatching { api.registerUserAuthPublicKey("android-07", "PEM", emptyList()) }.exceptionOrNull()
+        assertFalse(other is UserAuthKeyRefusedException)
+        assertTrue(other!!.message, other.message!!.contains("409"))
+    }
+
+    @Test
     fun `a key proof never prints its token`() {
         assertFalse(DeviceKeyProof("secret-model", "tok-123").toString().contains("tok-123"))
+    }
+
+    // ── Enrollment key attestation ──────────────────────────────────────
+
+    private fun chainAnswer() = MockResponse().setBody(chainJson).setHeader("X-PinVault-Cert-Format", "pem-chain")
+
+    @Test
+    fun `a CSR enrollment carries the key's attestation chain, leaf first, on every path`() = runTest {
+        repeat(3) { server.enqueue(chainAnswer()) }
+        val api = createApi()
+        val attestation = listOf("bGVhZg==", "aW50ZXJtZWRpYXRl", "cm9vdA==")
+
+        // A token or an enrollment code: the device id travels as deviceUid.
+        api.enrollWithCsr("tok", null, "Pixel", "android-07", csr, null, attestation)
+        // No token (open mode, an application without a code): deviceId and deviceUid.
+        api.enrollWithCsr(null, "android-07", "Pixel", "android-07", csr, null, attestation)
+        // Asking again for a request that waits for approval: the same key, the same chain.
+        api.enrollWithCsr(null, null, "Pixel", "android-07", csr, "r-123", attestation)
+
+        repeat(3) { round ->
+            val body = org.json.JSONObject(server.takeRequest().body.readUtf8())
+            val sent = body.getJSONArray("attestationChain")
+            assertEquals("request $round", attestation, (0 until sent.length()).map { sent.getString(it) })
+            assertEquals("android-07", body.getString("deviceUid"))
+            assertTrue(body.has("csr"))
+        }
+    }
+
+    @Test
+    fun `no attestation chain, no field`() = runTest {
+        server.enqueue(chainAnswer())
+        server.enqueue(chainAnswer())
+        val api = createApi()
+        api.enrollWithCsr("tok", null, null, "uid", csr, null, emptyList())
+        api.enrollWithCsr("tok", null, null, "uid", csr)      // the method written against 2.1
+        repeat(2) { assertFalse(org.json.JSONObject(server.takeRequest().body.readUtf8()).has("attestationChain")) }
+    }
+
+    @Test
+    fun `attestation refusals carry the server's reason`() = runTest {
+        server.enqueue(MockResponse().setResponseCode(403).setBody("""{"error":"attestation_required"}"""))
+        server.enqueue(MockResponse().setResponseCode(403).setBody("""{"error":"attestation_invalid","reason":"not_hardware_backed"}"""))
+        val api = createApi()
+
+        val required = runCatching { api.enrollWithCsr("tok", null, null, "uid", csr, null, emptyList()) }.exceptionOrNull()
+        assertEquals(EnrollmentRefusal.ATTESTATION_FAILED, (required as EnrollmentRefusedException).refusal)
+        assertEquals("attestation_required", required.serverError)
+
+        val invalid = runCatching { api.enrollWithCsr("tok", null, null, "uid", csr, null, listOf("bGVhZg==")) }.exceptionOrNull()
+        assertEquals(EnrollmentRefusal.ATTESTATION_FAILED, (invalid as EnrollmentRefusedException).refusal)
+        assertEquals("attestation_invalid", invalid.serverError)
+        assertEquals("the reason reaches Refused.message", "not_hardware_backed", invalid.serverMessage)
+    }
+
+    // ── Vault signatures that name the Config API (v2) ──────────────────
+
+    @Test
+    fun `a vault download reads the v2 signature headers next to the v1 ones`() = runTest {
+        server.enqueue(
+            MockResponse().setBody("content")
+                .setHeader("X-Vault-Version", "4")
+                .setHeader("X-Vault-Signature", "djE=")
+                .setHeader("X-Vault-Signatures", "k1:djE=")
+                .setHeader("X-Vault-Signature-V2", "djI=")
+                .setHeader("X-Vault-Signatures-V2", "k1:djI=, k2:djJi")
+        )
+        val response = createApi().downloadVaultFileWithMeta("api/v1/vault/flags")
+
+        assertEquals("djE=", response.signature)
+        assertEquals(listOf(io.github.umutcansu.pinvault.model.SignatureEntry("k1", "djE=")), response.signatures)
+        assertEquals("djI=", response.signatureV2)
+        assertEquals(
+            listOf(
+                io.github.umutcansu.pinvault.model.SignatureEntry("k1", "djI="),
+                io.github.umutcansu.pinvault.model.SignatureEntry("k2", "djJi")
+            ),
+            response.signaturesV2
+        )
+    }
+
+    @Test
+    fun `a server without v2 headers leaves them null`() = runTest {
+        server.enqueue(MockResponse().setBody("content").setHeader("X-Vault-Version", "4").setHeader("X-Vault-Signature", "djE="))
+        val response = createApi().downloadVaultFileWithMeta("api/v1/vault/flags")
+        assertNull(response.signatureV2)
+        assertNull(response.signaturesV2)
     }
 }

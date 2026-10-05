@@ -108,6 +108,9 @@ dependencies {
     implementation("com.jakewharton.timber:timber:5.0.1")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.8.1")
     implementation("androidx.core:core-ktx:1.15.0")
+    // userAuth vault files: the unlock prompt. `api` because unlockFile takes
+    // a FragmentActivity, which reaches callers through this dependency.
+    api("androidx.biometric:biometric:1.1.0")
 
     testImplementation("junit:junit:4.13.2")
     testImplementation("io.mockk:mockk:1.13.13")

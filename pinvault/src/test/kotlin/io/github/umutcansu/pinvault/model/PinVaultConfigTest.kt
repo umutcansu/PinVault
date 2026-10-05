@@ -220,4 +220,66 @@ class PinVaultConfigTest {
             signaturePublicKey("MFkwEwYHKoZIzj0C"); recoveryPublicKeys(pem)
         }
     }
+
+    // ── Expiry grace, CA trust, wipe on revocation ──────────────────────
+
+    @Test
+    fun `defaults — fail closed, pins only, files kept`() {
+        val config = api("https://api.example.com").build()
+        assertEquals(0L, config.expiredConfigGraceMs)
+        assertTrue(config.caTrustHosts.isEmpty())
+        assertFalse(config.wipeVaultFilesOnRevocation)
+    }
+
+    @Test
+    fun `expiredConfigGrace converts to milliseconds`() {
+        val config = api("https://api.example.com")
+            .expiredConfigGrace(6, java.util.concurrent.TimeUnit.HOURS)
+            .build()
+        assertEquals(6 * 3_600_000L, config.expiredConfigGraceMs)
+    }
+
+    @Test(expected = IllegalArgumentException::class)
+    fun `negative grace is refused`() {
+        api("https://api.example.com").expiredConfigGrace(-1, java.util.concurrent.TimeUnit.SECONDS)
+    }
+
+    @Test
+    fun `requireCaTrust keeps host patterns, lowercased and once`() {
+        val config = api("https://api.example.com")
+            .requireCaTrust("API.example.com", "*.example.org", "pay.example.com:8443")
+            .requireCaTrust("api.example.com")
+            .build()
+        assertEquals(listOf("api.example.com", "*.example.org", "pay.example.com:8443"), config.caTrustHosts)
+    }
+
+    @Test
+    fun `requireCaTrust refuses what is not a host pattern`() {
+        for (bad in listOf("", "https://api.example.com", "api.example.com/path", "*.com", "*example.com", "a.*.example.com")) {
+            assertThrows(bad, IllegalArgumentException::class.java) {
+                api("https://api.example.com").requireCaTrust(bad)
+            }
+        }
+    }
+
+    @Test
+    fun `wipeVaultFilesOnRevocation is opt-in`() {
+        assertTrue(api("https://api.example.com").wipeVaultFilesOnRevocation().build().wipeVaultFilesOnRevocation)
+    }
+
+    @Test
+    fun `Builder — ids that would share a config store are refused`() {
+        fun two(a: String, b: String) = PinVaultConfig.Builder()
+            .configApi(a, "https://a.example.com/") { bootstrapPins(validPins); allowUnsigned() }
+            .configApi(b, "https://b.example.com/") { bootstrapPins(validPins); allowUnsigned() }
+        try {
+            two("prod.tls", "prod_tls").build()
+            fail("'prod.tls' and 'prod_tls' are both stored as 'prod_tls'")
+        } catch (e: IllegalArgumentException) {
+            assertTrue(e.message, e.message!!.contains("'prod.tls'") && e.message!!.contains("'prod_tls'"))
+        }
+        // Distinct after sanitising, and ids with other characters on their own, are fine.
+        assertEquals(2, two("default-tls", "sample-mtls").build().configApis.size)
+        assertEquals(2, two("api.v2", "api-v2").build().configApis.size)
+    }
 }

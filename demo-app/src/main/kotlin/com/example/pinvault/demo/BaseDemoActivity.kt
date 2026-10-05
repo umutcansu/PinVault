@@ -330,6 +330,9 @@ abstract class BaseDemoActivity : AppCompatActivity() {
             EnrollmentRefusal.REJECTED -> getString(R.string.enrollment_rejected)
             EnrollmentRefusal.LIMIT_REACHED -> getString(R.string.enrollment_limit_reached)
             EnrollmentRefusal.EXPIRED -> getString(R.string.enrollment_expired)
+            EnrollmentRefusal.ATTESTATION_FAILED ->
+                getString(R.string.enrollment_attestation_failed, result.message ?: result.serverError.orEmpty())
+            EnrollmentRefusal.CSR_REQUIRED -> getString(R.string.enrollment_csr_required)
             EnrollmentRefusal.OTHER -> getString(R.string.enrollment_refused, result.httpStatus, result.serverError?.let { " $it" } ?: "")
         }
         is ClientCertEnrollmentResult.Pending -> getString(R.string.enrollment_pending, result.clientId ?: "?", result.verificationCode ?: "?")

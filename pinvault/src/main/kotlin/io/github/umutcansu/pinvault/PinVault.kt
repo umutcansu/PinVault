@@ -1,11 +1,15 @@
 package io.github.umutcansu.pinvault
 
 import android.content.Context
+import androidx.fragment.app.FragmentActivity
 import io.github.umutcansu.pinvault.api.CertificateConfigApi
 import io.github.umutcansu.pinvault.api.DefaultCertificateConfigApi
 import io.github.umutcansu.pinvault.internal.ConfigApiClient
+import io.github.umutcansu.pinvault.internal.UserAuthPrompt
 import io.github.umutcansu.pinvault.internal.VaultFileRouter
 import io.github.umutcansu.pinvault.keystore.DeviceKeyProvider
+import io.github.umutcansu.pinvault.keystore.KeystoreUserAuthKeys
+import io.github.umutcansu.pinvault.keystore.UserAuthKeys
 import io.github.umutcansu.pinvault.model.ClientCertEnrollmentResult
 import io.github.umutcansu.pinvault.model.ConfigApiBlock
 import io.github.umutcansu.pinvault.model.EnrollmentRefusedException
@@ -13,14 +17,18 @@ import io.github.umutcansu.pinvault.model.HttpConnectionSettings
 import io.github.umutcansu.pinvault.model.InitResult
 import io.github.umutcansu.pinvault.model.PinVaultConfig
 import io.github.umutcansu.pinvault.model.UpdateResult
+import io.github.umutcansu.pinvault.model.UserAuth
 import io.github.umutcansu.pinvault.model.VaultFileConfig
 import io.github.umutcansu.pinvault.model.VaultFileResult
+import io.github.umutcansu.pinvault.model.VaultFileUnlockPrompt
+import io.github.umutcansu.pinvault.model.VaultFileUnlockResult
 import io.github.umutcansu.pinvault.ssl.DynamicSSLManager
 import io.github.umutcansu.pinvault.ssl.HttpClientProvider
 import io.github.umutcansu.pinvault.ssl.SSLCertificateUpdater
 import io.github.umutcansu.pinvault.store.CertificateConfigStore
 import io.github.umutcansu.pinvault.store.ClientCertSecureStore
 import io.github.umutcansu.pinvault.store.EncryptedFileStorageProvider
+import io.github.umutcansu.pinvault.store.UserAuthVaultStorage
 import io.github.umutcansu.pinvault.store.VaultFileStore
 import io.github.umutcansu.pinvault.store.VaultStorageProvider
 import kotlinx.coroutines.CoroutineScope
@@ -81,6 +89,35 @@ object PinVault {
      */
     internal var identityKeyFactory: (label: String) -> io.github.umutcansu.pinvault.keystore.ClientIdentityKeyProvider =
         { io.github.umutcansu.pinvault.keystore.ClientIdentityKeyProvider.androidKeystore(it) }
+
+    /**
+     * Where a private key that arrived in a PKCS12 is kept: the Android
+     * Keystore, non-exportable. Robolectric tests swap in
+     * [io.github.umutcansu.pinvault.keystore.ImportedClientKeys.software].
+     */
+    internal var importedKeysFactory: () -> io.github.umutcansu.pinvault.keystore.ImportedClientKeys =
+        { io.github.umutcansu.pinvault.keystore.ImportedClientKeys.androidKeystore() }
+
+    /** What is remembered about each stored vault file (signatures, last confirmation). Tests swap in an in-memory one. */
+    internal var vaultFileMetaFactory: (Context) -> io.github.umutcansu.pinvault.store.VaultFileMeta =
+        { io.github.umutcansu.pinvault.store.VaultFileMeta.persistent(it) }
+
+    /** Checks a stored vault file every time it is read; set up in [setup]. */
+    private var vaultGuard: io.github.umutcansu.pinvault.internal.VaultFileGuard? = null
+
+    /** Keys behind [UserAuth] vault files. Android Keystore in production; tests swap in a software one. */
+    internal var userAuthKeysFactory: (Context) -> UserAuthKeys = { context ->
+        // Generated with an attestation challenge bound to the device id the
+        // library sends (X-Device-Id), so the server can check the chain.
+        KeystoreUserAuthKeys(context) { resolveDeviceIdentity(pinManagerConfig, context)?.second }
+    }
+
+    /** Where the router keeps which user-auth key it registered with each Config API. */
+    internal var userAuthRegistrationsFactory: (Context) -> io.github.umutcansu.pinvault.store.UserAuthRegistrations =
+        { io.github.umutcansu.pinvault.store.UserAuthRegistrations.persistent(it) }
+
+    /** The device's user-auth key; null when no vault file uses [UserAuth]. */
+    private var userAuthKeys: UserAuthKeys? = null
 
     // V2: routes fetchFile() to the correct per-block client.
     private lateinit var vaultRouter: VaultFileRouter
@@ -197,9 +234,11 @@ object PinVault {
     /** Initializes the library with a [PinVaultConfig] (suspend version). */
     suspend fun init(context: Context, config: PinVaultConfig): InitResult {
         pinManagerConfig = config
-        setup(context, config, null)
-            ?: return InitResult.Ready(clientProvider.getVersion())
-        return executeInitSafely()
+        return when (val setUp = setupSafely(context, config, null)) {
+            is SetUp.Failed -> setUp.result
+            SetUp.AlreadyInitialized -> InitResult.Ready(clientProvider.getVersion())
+            SetUp.Done -> executeInitSafely()
+        }
     }
 
     /**
@@ -207,10 +246,10 @@ object PinVault {
      */
     fun init(context: Context, config: PinVaultConfig, onResult: (InitResult) -> Unit) {
         pinManagerConfig = config
-        val alreadyReady = setup(context, config, null)
-        if (alreadyReady == null) {
-            onResult(InitResult.Ready(clientProvider.getVersion()))
-            return
+        when (val setUp = setupSafely(context, config, null)) {
+            is SetUp.Failed -> return onResult(setUp.result)
+            SetUp.AlreadyInitialized -> return onResult(InitResult.Ready(clientProvider.getVersion()))
+            SetUp.Done -> Unit
         }
         CoroutineScope(Dispatchers.IO).launch {
             val result = executeInitSafely()
@@ -223,21 +262,36 @@ object PinVault {
      * The override is applied to the default (first-registered) Config API block.
      * For multi-API setups, implement one [CertificateConfigApi] per block and
      * branch inside the impl based on the caller's block id.
+     *
+     * ## Signed configs
+     * A block with signing keys (`signaturePublicKey(s)`) gets verified
+     * configs or none. `fetchConfig` returns an already parsed config that
+     * nothing can verify, so for such a block [configApi] must also implement
+     * [io.github.umutcansu.pinvault.api.SignedConfigSource]: PinVault then
+     * fetches the signed envelope through it and checks it exactly as it does
+     * for its own HTTP client — signatures, `issuedAt` / `expiresAt`, replay,
+     * signing-key sets, `serverScope` — and keeps the envelope with the
+     * stored config. Without it, init returns [InitResult.Failed] unless the
+     * block called `allowUnsigned()`, which says in the app's own code that
+     * these configs are not verified (no replay protection, no expiry, no
+     * integrity check on the stored config).
      */
     suspend fun init(context: Context, config: PinVaultConfig, configApi: CertificateConfigApi): InitResult {
         pinManagerConfig = config
-        setup(context, config, configApi)
-            ?: return InitResult.Ready(clientProvider.getVersion())
-        return executeInitSafely()
+        return when (val setUp = setupSafely(context, config, configApi)) {
+            is SetUp.Failed -> setUp.result
+            SetUp.AlreadyInitialized -> InitResult.Ready(clientProvider.getVersion())
+            SetUp.Done -> executeInitSafely()
+        }
     }
 
     /** Callback variant of [init] with a custom [CertificateConfigApi]. */
     fun init(context: Context, config: PinVaultConfig, configApi: CertificateConfigApi, onResult: (InitResult) -> Unit) {
         pinManagerConfig = config
-        val alreadyReady = setup(context, config, configApi)
-        if (alreadyReady == null) {
-            onResult(InitResult.Ready(clientProvider.getVersion()))
-            return
+        when (val setUp = setupSafely(context, config, configApi)) {
+            is SetUp.Failed -> return onResult(setUp.result)
+            SetUp.AlreadyInitialized -> return onResult(InitResult.Ready(clientProvider.getVersion()))
+            SetUp.Done -> Unit
         }
         CoroutineScope(Dispatchers.IO).launch {
             val result = executeInitSafely()
@@ -248,6 +302,42 @@ object PinVault {
     // ── Init (legacy — backward compatible) ───────────────────────────────
 
     // ── Internal setup ────────────────────────────────────────────────────
+
+    private sealed class SetUp {
+        object Done : SetUp()
+        object AlreadyInitialized : SetUp()
+        class Failed(val result: InitResult.Failed) : SetUp()
+    }
+
+    /**
+     * [setup], with a failure of the encrypted storage reported as
+     * [InitResult.Failed] instead of thrown at the caller: the stores open
+     * with Android Keystore keys, and a Keystore that cannot be used right
+     * now — a hiccup, or a locked device under `requireUnlockedDevice()` — is
+     * no reason to crash `Application.onCreate`. Nothing is initialized
+     * then; call `init` again.
+     */
+    private fun setupSafely(context: Context, config: PinVaultConfig, configApi: CertificateConfigApi?): SetUp = try {
+        applyKeystoreOptions(config)
+        if (setup(context, config, configApi) == null) SetUp.AlreadyInitialized else SetUp.Done
+    } catch (e: Exception) {
+        Timber.e(e, "PinVault setup failed")
+        synchronized(this) { initialized = false }
+        val locked = config.requireUnlockedDevice && runCatching {
+            context.applicationContext.getSystemService(android.app.KeyguardManager::class.java)?.isDeviceLocked == true
+        }.getOrDefault(false)
+        val reason = if (locked) {
+            "PinVault's storage is locked while the device is locked (requireUnlockedDevice): init again once it is unlocked"
+        } else {
+            "PinVault could not be set up (${e.javaClass.simpleName}: ${e.message}); nothing was initialized"
+        }
+        SetUp.Failed(InitResult.Failed(reason, e))
+    }
+
+    /** `requireUnlockedDevice()` reaches the places that generate Keystore keys without seeing a config. */
+    private fun applyKeystoreOptions(config: PinVaultConfig) {
+        io.github.umutcansu.pinvault.keystore.KeystoreOptions.unlockedDeviceRequired = config.requireUnlockedDevice
+    }
 
     /**
      * Sets up internal components. Returns Unit if setup was performed,
@@ -270,11 +360,18 @@ object PinVault {
             // not scoped per-API because file keys are globally unique).
             defaultVaultFileStore = VaultFileStore(appContext)
             val encryptedFileProvider by lazy { EncryptedFileStorageProvider(appContext) }
+            val keys = if (config.vaultFiles.values.any { it.userAuth != UserAuth.NONE }) userAuthKeysFactory(appContext) else null
+            userAuthKeys = keys
             vaultStorageProviders = config.vaultFiles.mapValues { (_, fileConfig) ->
-                fileConfig.storageProvider ?: when (fileConfig.storageStrategy) {
+                val storage = fileConfig.storageProvider ?: when (fileConfig.storageStrategy) {
                     io.github.umutcansu.pinvault.model.StorageStrategy.ENCRYPTED_FILE -> encryptedFileProvider
                     io.github.umutcansu.pinvault.model.StorageStrategy.ENCRYPTED_PREFS -> defaultVaultFileStore
                 }
+                if (fileConfig.userAuth == UserAuth.NONE || keys == null) storage
+                else UserAuthVaultStorage(
+                    storage, keys, fileConfig.userAuth,
+                    serverSealedOnly = fileConfig.encryption == io.github.umutcansu.pinvault.model.VaultFileEncryption.USER_AUTH
+                )
             }
 
             // ── Per-Config-API clients. Static-pin mode has zero blocks and
@@ -295,10 +392,25 @@ object PinVault {
                     // app at once, the same way a refused renewal does.
                     reenrollListener = { reason ->
                         dispatchRenewalEvent(id, io.github.umutcansu.pinvault.model.ClientCertRenewalResult.ReenrollRequired(reason))
-                    }
+                    },
+                    expiredConfigGraceMs = config.expiredConfigGraceMs,
+                    caTrustHosts = config.caTrustHosts,
+                    importedKeys = importedKeysFactory(),
+                    // The server refused THIS device's certificate: its files go.
+                    onIdentityRevoked = { wipeOnRevocation(id) }
                 )
             }
             configApiClients = clients
+
+            // ── What is checked every time a stored vault file is read: its
+            // signature, and how long ago the server last confirmed it.
+            val guard = io.github.umutcansu.pinvault.internal.VaultFileGuard(
+                meta = vaultFileMetaFactory(appContext),
+                now = { apiId -> configApiClients[apiId]?.trustedClock?.now() ?: System.currentTimeMillis() },
+                defaultMaxOfflineAgeMs = config.vaultFileMaxOfflineAgeMs,
+                onRemoved = { key, reason -> fileUpdateListener?.onFileUpdate(key, VaultFileResult.Failed(key, reason)) }
+            )
+            vaultGuard = guard
 
             // Wire the user-supplied PinVaultConnectionListener into every
             // per-Config-API SSL manager so that pin-verify success / mismatch
@@ -323,6 +435,7 @@ object PinVault {
                 // Static pin-only mode: create minimal placeholders. executeInit
                 // will swap in the static config directly.
                 sslManager = DynamicSSLManager()
+                sslManager.requireCaTrust(config.caTrustHosts)
                 config.connectionListener?.let { sslManager.setConnectionListener(it) }
                 clientProvider = HttpClientProvider(sslManager)
                 configStore = CertificateConfigStore(appContext)
@@ -367,7 +480,12 @@ object PinVault {
                 deviceKeyProvider = deviceKeyProvider,
                 deviceIdProvider = {
                     resolveDeviceIdentity(pinManagerConfig)?.second ?: ""
-                }
+                },
+                userAuthKeys = keys,
+                files = { pinManagerConfig?.vaultFiles?.values.orEmpty() },
+                registrations = if (keys != null) userAuthRegistrationsFactory(appContext)
+                else io.github.umutcansu.pinvault.store.UserAuthRegistrations.InMemory(),
+                guard = guard
             )
 
             initialized = true
@@ -401,6 +519,15 @@ object PinVault {
         if (staticConfig != null) {
             Timber.d("Static pin mode — using embedded config (v%d, %d hosts)",
                 staticConfig.computedVersion(), staticConfig.pins.size)
+            // Compiled-in pins are held to the same rules as fetched ones:
+            // host names that are host names, pins that are SHA-256 hashes.
+            try {
+                io.github.umutcansu.pinvault.ssl.PinConfigValidator.validate(staticConfig)
+            } catch (e: io.github.umutcansu.pinvault.model.InvalidPinFormatException) {
+                Timber.e("Static pins refused: %s", e.message)
+                synchronized(this) { initialized = false }
+                return InitResult.Failed("Static pins are not valid: ${e.message}", e)
+            }
             clientProvider.swap(staticConfig)
             configStore.save(staticConfig)
             return InitResult.Ready(staticConfig.computedVersion())
@@ -454,6 +581,24 @@ object PinVault {
             }
         }
 
+        // The user-auth key goes to every Config API with a user_auth file,
+        // so the server can seal those files for it. A key made later (a new
+        // one after Android retired the old) is registered before the next
+        // such fetch.
+        if (userAuthKeys != null) {
+            try {
+                vaultRouter.registerUserAuthKeyEverywhere(resolveDeviceIdentity(pinManagerConfig)?.second ?: "")
+            } catch (e: Exception) {
+                Timber.w(e, "User-auth key registration partially failed")
+            } catch (e: LinkageError) {
+                Timber.e(e, "User-auth key registration is not supported on this device")
+            }
+        }
+
+        // Files past their offline lifetime go now (wipeWhenStale), whether or
+        // not anything reads them.
+        wipeStaleVaultFiles()
+
         val defaultResult = results[defaultId] ?: results.values.firstOrNull()
             ?: return InitResult.Failed("No Config APIs configured", null)
 
@@ -500,6 +645,17 @@ object PinVault {
      * TLS handshake, so pins published by [updateNow] or WorkManager swaps
      * apply to the next request the builder issues without re-calling this
      * function and without waiting for the recovery interceptor.
+     *
+     * ## Connections that are already open
+     * A handshake happens once per connection; an HTTP/2 or keep-alive
+     * connection, or a resumed TLS session, is not shown to the trust manager
+     * again. This call therefore also adds a network interceptor that checks
+     * the connection's certificates against the live config — and the
+     * config's expiry — before every request, and closes a connection that no
+     * longer passes. That is the protection a client built this way has: the
+     * connection pool is the app's, the library does not empty it when pins
+     * change (it does for [getClient]). Keep the interceptors this call adds;
+     * a `builder.networkInterceptors().clear()` afterwards removes the check.
      */
     fun applyTo(builder: OkHttpClient.Builder) {
         checkInitialized()
@@ -545,7 +701,14 @@ object PinVault {
      * and PinVault does **not** automatically re-fetch the config and retry
      * the request. Rotating the server certificate therefore breaks requests
      * issued through this client until the next config update lands (periodic
-     * WorkManager run, or an explicit [updateNow]).
+     * WorkManager run, or an explicit [updateNow]). When one lands, this
+     * client's pooled connections are closed, and — as with every client the
+     * library builds or configures — each request re-checks its connection's
+     * certificates against the live config. The same goes for expiry:
+     * once the config passes its `expiresAt` (plus `expiredConfigGrace`) this
+     * client refuses every handshake with a `ConfigExpiredException` cause
+     * until something else fetches a fresh config — run
+     * [schedulePeriodicUpdates] alongside it.
      *
      * Pick this overload when you want custom timeouts with full control over
      * retry behaviour; use [applyTo] on your own builder when you want custom
@@ -607,9 +770,15 @@ object PinVault {
      * The device generates a signing key in the Android Keystore, sends a
      * certificate signing request over it, and stores the chain the server
      * issues; the private key never leaves the device and the certificate is
-     * renewed automatically from then on (see [renewClientCertIfNeeded]). A
-     * server without CSR support answers with a P12 instead, which is stored
-     * as before.
+     * renewed automatically from then on (see [renewClientCertIfNeeded]).
+     * The key is generated with an Android key attestation challenge made
+     * from the device id of the request, and its attestation chain goes
+     * along, so a server that checks it can tell a hardware key of this app
+     * on a real phone from a key made anywhere else.
+     *
+     * A server that answers with a key of its own making (a P12) is refused
+     * unless the block called `allowServerGeneratedKey()`; so is enrolling
+     * at all when the Keystore cannot make a key.
      *
      * @param label Optional label override. If null, uses the default Config API's clientCertLabel.
      * @return true if enrollment succeeded (or a credential already exists);
@@ -651,9 +820,10 @@ object PinVault {
         // a hardware-attested identity. For high-assurance use cases, gate
         // enrollment behind Play Integrity / SafetyNet attestation before
         // calling this method.
-        val deviceId = io.github.umutcansu.pinvault.internal.DeviceIdentity
-            .androidId(context) ?: "unknown-device"
-        Timber.d("Auto-enrollment: deviceId=%s", deviceId)
+        val androidId = io.github.umutcansu.pinvault.internal.DeviceIdentity.androidId(context)
+        val deviceId = androidId ?: "unknown-device"
+        // The id itself stays out of the log: it identifies the device.
+        Timber.d("Auto-enrollment: device id available: %b", androidId != null)
         return enrollInternal(context, token = null, deviceId = deviceId, label = null)
     }
 
@@ -699,12 +869,16 @@ object PinVault {
      * every existing `isEnrolled(context, null)` call ambiguous.
      */
     @JvmName("isEnrolledWithConfig")
-    fun isEnrolled(context: Context, config: PinVaultConfig): Boolean =
-        ClientCertSecureStore(context.applicationContext)
+    fun isEnrolled(context: Context, config: PinVaultConfig): Boolean {
+        applyKeystoreOptions(config)
+        return ClientCertSecureStore(context.applicationContext)
             .exists(config.defaultConfigApi?.clientCertLabel ?: ClientCertSecureStore.DEFAULT_LABEL)
+    }
 
     /**
-     * The verification code of this device's enrollment key, `4F7K-2QXM`: the
+     * The verification code of this device's enrollment key, `4F7K-2QXM-9D3T-H6WP`
+     * (80 bits of the key's SHA-256; the first eight characters are the code
+     * earlier versions showed): the
      * administrator sees the same code next to the device's request while it
      * waits for approval, so it is what the app shows on its "waiting" screen.
      * Null when there is no enrollment key (never applied, or unenrolled).
@@ -740,8 +914,10 @@ object PinVault {
      * From Java this is `isEnrollmentPendingWithConfig` (see [isEnrolled]).
      */
     @JvmName("isEnrollmentPendingWithConfig")
-    fun isEnrollmentPending(context: Context, config: PinVaultConfig): Boolean =
-        isEnrollmentPending(context, config.defaultConfigApi?.clientCertLabel ?: ClientCertSecureStore.DEFAULT_LABEL)
+    fun isEnrollmentPending(context: Context, config: PinVaultConfig): Boolean {
+        applyKeystoreOptions(config)
+        return isEnrollmentPending(context, config.defaultConfigApi?.clientCertLabel ?: ClientCertSecureStore.DEFAULT_LABEL)
+    }
 
     /**
      * Asks whether a device that was told to wait
@@ -760,20 +936,40 @@ object PinVault {
     /** [checkPendingEnrollment] for the default block of [config]; usable before [init]. */
     suspend fun checkPendingEnrollment(context: Context, config: PinVaultConfig): ClientCertEnrollmentResult {
         if (initialized) return checkPendingEnrollment(context)
+        applyKeystoreOptions(config)
         val block = config.defaultConfigApi ?: return NO_CONFIG_API_BLOCK
         pendingCheckShortcut(context, block.clientCertLabel)?.let { return it }
         return enrollBeforeInit(context, config, token = null, deviceId = null)
     }
 
     /** Enrolled already, or nothing waiting: answered without asking the server. */
-    private fun pendingCheckShortcut(context: Context, certLabel: String): ClientCertEnrollmentResult? {
-        val store = ClientCertSecureStore(context.applicationContext)
-        return when {
+    private fun pendingCheckShortcut(context: Context, certLabel: String): ClientCertEnrollmentResult? = try {
+        val store = ClientCertSecureStore.openStrict(context.applicationContext)
+        when {
             store.exists(certLabel) -> ClientCertEnrollmentResult.Enrolled(alreadyEnrolled = true)
             store.loadPendingRequest(certLabel) == null -> ClientCertEnrollmentResult.Failed("No enrollment is waiting for approval")
             else -> null
         }
+    } catch (e: Exception) {
+        credentialStoreUnreadable(certLabel, e)
     }
+
+    /**
+     * The enroll paths read the credential store strictly: a credential that
+     * cannot be read right now (a Keystore failure) must not look like none
+     * — a new enrollment would replace it, and a refused one may delete the
+     * key it was issued over. Nothing is sent then.
+     */
+    private fun credentialStoreUnreadable(certLabel: String, e: Exception): ClientCertEnrollmentResult.Failed {
+        Timber.e(e, "Client credential store cannot be read right now [%s] — not enrolling", certLabel)
+        return ClientCertEnrollmentResult.Failed(
+            "The stored client credentials cannot be read right now (${e.javaClass.simpleName}: ${e.message}); nothing was sent — try again later", e
+        )
+    }
+
+    /** True when a credential is stored under [certLabel]; throws when that cannot be told right now. */
+    private fun hasStoredCredential(context: Context, certLabel: String): Boolean =
+        ClientCertSecureStore.openStrict(context.applicationContext).exists(certLabel)
 
     /**
      * A device told to wait asks again on its own: at [init] (before the
@@ -783,8 +979,14 @@ object PinVault {
     internal suspend fun pickUpPendingEnrollments() {
         if (!initialized) return
         val certLabel = defaultCertLabel()
-        val store = ClientCertSecureStore(appContext)
-        if (store.exists(certLabel) || store.loadPendingRequest(certLabel) == null) return
+        val waiting = try {
+            val store = ClientCertSecureStore.openStrict(appContext)
+            !store.exists(certLabel) && store.loadPendingRequest(certLabel) != null
+        } catch (e: Exception) {
+            Timber.w(e, "Client credential store cannot be read right now [%s] — pending enrollment not checked", certLabel)
+            false
+        }
+        if (!waiting) return
         when (val result = enrollInternal(appContext, token = null, deviceId = null, label = null)) {
             is ClientCertEnrollmentResult.Enrolled -> Timber.i("Enrollment approved — client certificate stored [%s]", certLabel)
             is ClientCertEnrollmentResult.Pending -> Timber.d("Enrollment still waits for approval [%s]", certLabel)
@@ -794,16 +996,23 @@ object PinVault {
 
     private suspend fun enrollBeforeInit(context: Context, config: PinVaultConfig, token: String?, deviceId: String?): ClientCertEnrollmentResult {
         if (initialized) return enrollInternal(context, token, deviceId, label = null)
+        applyKeystoreOptions(config)
         val block = config.defaultConfigApi ?: return NO_CONFIG_API_BLOCK
         val certLabel = block.clientCertLabel
-        if (ClientCertSecureStore(context.applicationContext).exists(certLabel)) {
+        val stored = try { hasStoredCredential(context, certLabel) } catch (e: Exception) { return credentialStoreUnreadable(certLabel, e) }
+        if (stored) {
             Timber.d("Client cert already exists [%s] — skipping enrollment", certLabel)
             return ClientCertEnrollmentResult.Enrolled(alreadyEnrolled = true)
         }
+        // The same rule init applies: https and bootstrap pins, or an explicit opt-out.
+        block.configurationError()?.let { return ClientCertEnrollmentResult.Failed(it) }
         return try {
             // A client for the block alone — the library's state is untouched;
             // the next init picks the stored credential up.
-            val api = ConfigApiClient(block, context.applicationContext, identityKeyFactory = identityKeyFactory).api
+            applyKeystoreOptions(config)
+            val api = ConfigApiClient(
+                block, context.applicationContext, identityKeyFactory = identityKeyFactory, importedKeys = importedKeysFactory()
+            ).api
             enrollAndStore(context, config, block, api, token, deviceId, certLabel)
             ClientCertEnrollmentResult.Enrolled()
         } catch (e: Exception) {
@@ -818,7 +1027,8 @@ object PinVault {
         val defaultBlock = config.defaultConfigApi ?: return NO_CONFIG_API_BLOCK
         val certLabel = label ?: defaultBlock.clientCertLabel
 
-        if (ClientCertSecureStore(context.applicationContext).exists(certLabel)) {
+        val stored = try { hasStoredCredential(context, certLabel) } catch (e: Exception) { return credentialStoreUnreadable(certLabel, e) }
+        if (stored) {
             Timber.d("Client cert already exists [%s] — skipping enrollment", certLabel)
             return ClientCertEnrollmentResult.Enrolled(alreadyEnrolled = true)
         }
@@ -826,6 +1036,7 @@ object PinVault {
         return try {
             when (val enrolled = enrollAndStore(context, config, defaultBlock, configApi, token, deviceId, certLabel)) {
                 is Enrolled.Chain -> sslManager.loadClientKey(enrolled.key.privateKey(), enrolled.certs.toTypedArray())
+                is Enrolled.Imported -> sslManager.loadClientKey(enrolled.privateKey, enrolled.certs)
                 is Enrolled.P12 -> sslManager.loadClientKeystore(enrolled.bytes, defaultBlock.clientKeyPassword)
             }
             // Present the new identity on every client, the Config API's included.
@@ -839,6 +1050,9 @@ object PinVault {
 
     private sealed class Enrolled {
         class Chain(val key: io.github.umutcansu.pinvault.keystore.ClientIdentityKeyProvider, val certs: List<java.security.cert.X509Certificate>) : Enrolled()
+        /** A server-made key (`allowServerGeneratedKey()`), now a non-exportable Keystore key. */
+        class Imported(val privateKey: java.security.PrivateKey, val certs: Array<java.security.cert.X509Certificate>) : Enrolled()
+        /** A server-made key the platform refused to import: kept as a PKCS12. */
         class P12(val bytes: ByteArray) : Enrolled()
     }
 
@@ -860,8 +1074,12 @@ object PinVault {
 
     /**
      * Enrollment through [api] for [block], stored under [certLabel]: a CSR
-     * over a fresh Keystore key, answered with a chain — or, from a server
-     * that does not take CSRs, a P12. Throws on failure; stores nothing then.
+     * over a fresh Keystore key — attested when the device can — answered
+     * with a certificate chain. Only a block that called
+     * `allowServerGeneratedKey()` also takes a key the server made (a P12
+     * answer, or P12 enrollment when the Keystore cannot make a key); that
+     * key is then imported into the Keystore. Throws on failure; stores
+     * nothing then.
      */
     private suspend fun enrollAndStore(
         context: Context,
@@ -872,41 +1090,75 @@ object PinVault {
         deviceId: String?,
         certLabel: String
     ): Enrolled {
-        val certStore = ClientCertSecureStore(context.applicationContext)
+        applyKeystoreOptions(config)
+        // Strict: what EnrollmentRequests reads here decides whether a key may go.
+        val certStore = ClientCertSecureStore.openStrict(context.applicationContext)
         val identity = resolveDeviceIdentity(config, context)
         val key = identityKeyFactory(certLabel)
+        // The device id this request carries: `deviceUid` on every path, and
+        // `deviceId` alone when the device has no ANDROID_ID to send as one.
+        // The key's attestation challenge is made from it, so the server can
+        // tell the key was generated for this request's device.
+        val attestedId = identity?.second ?: deviceId
+        val challenge = attestedId?.takeIf { it.isNotBlank() }
+            ?.let { io.github.umutcansu.pinvault.keystore.ClientIdentityKeyProvider.attestationChallenge(it) }
 
         // A device told to wait for approval asks again by its request id (see EnrollmentRequests).
         val result = io.github.umutcansu.pinvault.internal.EnrollmentRequests.send(
-            api, certStore, key, certLabel, token, deviceId, identity?.first, identity?.second
+            api, certStore, key, certLabel, token, deviceId, identity?.first, identity?.second,
+            allowServerGeneratedKey = block.allowServerGeneratedKey
         ) {
-            // If the Keystore refuses (some ROMs do), enroll the old way and let
-            // the server make the key.
             try {
-                key.ensureKeyPair()
+                key.ensureKeyPair(challenge)
                 io.github.umutcansu.pinvault.crypto.Pkcs10Csr.encode(
                     deviceId ?: identity?.second ?: "device", key.publicKey(), key::sign
                 )
             } catch (e: Exception) {
-                Timber.w(e, "Could not build a CSR — falling back to P12 enrollment")
+                // Some ROMs' Keystores refuse. Only a block that asked for it
+                // falls back to a key the server makes.
+                if (!block.allowServerGeneratedKey) {
+                    throw IllegalStateException(
+                        "This device could not create its key in the Android Keystore (${e.javaClass.simpleName}: ${e.message}), " +
+                            "and the Config API block does not accept a key the server generates. Nothing was sent; the " +
+                            "token is not spent. Call allowServerGeneratedKey() on the block only if such a key is acceptable.",
+                        e
+                    )
+                }
+                Timber.w(e, "Could not build a CSR — asking the server for a key (allowServerGeneratedKey)")
                 null
             }
         }
 
         val chain = result.certificateChainPem
-        return if (chain != null) {
-            val certs = io.github.umutcansu.pinvault.internal.ClientCertRenewer.acceptIssuedChain(chain, key)
+        if (chain != null) {
+            val certs = io.github.umutcansu.pinvault.internal.ClientCertRenewer.acceptIssuedChain(
+                chain, key, expectedIssuer = null, caPins = block.clientCaPins, maxLifetimeDays = block.maxClientCertLifetimeDays
+            )
             certStore.saveChain(certLabel, chain)
-            Timber.d("Enrollment successful — certificate chain stored [%s], valid until %s", certLabel, certs[0].notAfter)
-            Enrolled.Chain(key, certs)
-        } else {
-            val p12 = acceptEnrolledP12(result, block.clientKeyPassword)
-            certStore.save(certLabel, p12)
-            // No orphan identity key next to a server-made P12.
-            runCatching { key.clear() }
-            Timber.d("Enrollment successful — P12 stored [%s], %d bytes", certLabel, p12.size)
-            Enrolled.P12(p12)
+            Timber.d("Enrollment successful — certificate chain stored, valid until %s", certs[0].notAfter)
+            return Enrolled.Chain(key, certs)
         }
+
+        // Only reached with allowServerGeneratedKey(): the server made the key.
+        val p12 = acceptEnrolledP12(result, block.clientKeyPassword)
+        // No orphan identity key next to a server-made one — unless a chain
+        // under this label is over it (never deleted then; see EnrollmentRequests).
+        if (io.github.umutcansu.pinvault.internal.EnrollmentRequests.mayDeleteKey(certStore, certLabel)) runCatching { key.clear() }
+        val imported = try {
+            io.github.umutcansu.pinvault.internal.ImportedIdentities(certStore, importedKeysFactory())
+                .import(certLabel, p12, block.clientKeyPassword)
+        } catch (e: Exception) {
+            Timber.w(e, "The enrolled PKCS12 could not be read for import")
+            null
+        }
+        if (imported != null) {
+            p12.fill(0)
+            Timber.d("Enrollment successful — server-made key imported into the Android Keystore, chain stored")
+            return Enrolled.Imported(imported.privateKey, imported.chain)
+        }
+        certStore.save(certLabel, p12)
+        Timber.w("Enrollment successful — the Keystore refused the server-made key; stored as a PKCS12 (%d bytes)", p12.size)
+        return Enrolled.P12(p12)
     }
 
     // ── Client certificate renewal ──────────────────────────────────────
@@ -944,6 +1196,24 @@ object PinVault {
         }
     }
 
+    /**
+     * Config fetch for every block but the default one (the worker updates
+     * that through [updateNow]), so their configs do not run past `expiresAt`
+     * in a long-lived process. Never throws.
+     */
+    internal suspend fun updateOtherConfigApis() {
+        if (!initialized) return
+        val defaultId = pinManagerConfig?.defaultConfigApi?.id
+        for ((id, client) in configApiClients) {
+            if (id == defaultId) continue
+            try {
+                client.updateNow()
+            } catch (e: Exception) {
+                Timber.e(e, "ConfigApi[%s] periodic config update failed", id)
+            }
+        }
+    }
+
     /** Every block's renewal check, for the periodic worker. Never throws. */
     internal suspend fun renewClientCertsIfNeeded() {
         if (!initialized) return
@@ -957,12 +1227,31 @@ object PinVault {
     }
 
     private fun emitRenewalEvent(configApiId: String, result: io.github.umutcansu.pinvault.model.ClientCertRenewalResult) {
+        // No wipe here: a refused renewal wipes only when it went over mTLS
+        // presenting the current certificate, and the renewer has done that
+        // already (ConfigApiClient's onRefusedOverMtls). The same answer on
+        // the recovery door — TLS, no client certificate, so from a listener
+        // that saw no identity — only reaches the app as the event.
         // The refusal that made renewal fail may already have been reported
         // from the request itself; the app hears it once per identity.
         if (result is io.github.umutcansu.pinvault.model.ClientCertRenewalResult.ReenrollRequired &&
             configApiClients[configApiId]?.claimReenrollNotice() == false
         ) return
         dispatchRenewalEvent(configApiId, result)
+    }
+
+    /**
+     * `wipeVaultFilesOnRevocation()`: deletes the files of a Config API whose
+     * server refused this device's identity. Called only for an answer that
+     * was about that identity — a `reenroll_required` on a connection that
+     * presented the certificate, or the answer to its own renewal over that
+     * mTLS connection (never one from the recovery door). A bare
+     * `403 reenroll_required` on a connection without a client certificate
+     * (a TLS-only block, a request before enrollment) reaches the app as the
+     * event, and deletes nothing.
+     */
+    private fun wipeOnRevocation(configApiId: String) {
+        if (pinManagerConfig?.wipeVaultFilesOnRevocation == true) wipeVaultFilesOf(setOf(configApiId))
     }
 
     private fun dispatchRenewalEvent(configApiId: String, result: io.github.umutcansu.pinvault.model.ClientCertRenewalResult) {
@@ -1043,6 +1332,10 @@ object PinVault {
         // re-enrollment is a new identity, not the old key with a new cert.
         runCatching { identityKeyFactory(certLabel).clear() }
             .onFailure { Timber.w(it, "Could not delete the client identity key [%s]", certLabel) }
+        // So does a server-made key that was imported into the Keystore.
+        runCatching {
+            importedKeysFactory().delete(io.github.umutcansu.pinvault.keystore.ImportedClientKeys.aliasFor(certLabel))
+        }.onFailure { Timber.w(it, "Could not delete the imported client key [%s]", certLabel) }
 
         // Drop the live key material too. Guarded on `initialized` because
         // unenroll is callable before/after init (QA flows call it on a cold
@@ -1060,6 +1353,68 @@ object PinVault {
         }
 
         Timber.i("Client certificate removed [%s] — client cert no longer presented", certLabel)
+    }
+
+    /**
+     * [unenroll], and with [wipeVaultFiles] also deletes the vault files of
+     * every Config API that uses the client certificate stored under that
+     * label for mTLS: its `clientCertLabel` is that label AND it names an
+     * `enrollmentUrl` or `renewalUrl`, bundles a `clientKeystore`, or has a
+     * `token_mtls` vault file. (Every block has a label — the default one
+     * unless set — so a TLS-only block sharing it keeps its files.) Copies
+     * locked with [VaultFileConfig.userAuth] are included — what
+     * [PinVaultConfig.Builder.wipeVaultFilesOnRevocation] does when the server
+     * revokes the device. The wipe needs [init] (the files' storage is set up
+     * there); before it, only the certificate is removed.
+     */
+    fun unenroll(context: Context, label: String?, wipeVaultFiles: Boolean) {
+        unenroll(context, label)
+        if (!wipeVaultFiles) return
+        if (!initialized) {
+            Timber.w("unenroll: vault files can only be wiped after init — none wiped")
+            return
+        }
+        val certLabel = label ?: defaultCertLabel()
+        val config = pinManagerConfig ?: return
+        val ids = io.github.umutcansu.pinvault.internal.VaultFileWipe.mtlsBlocksUsing(
+            certLabel, config.configApis.values, config.vaultFiles.values
+        )
+        if (ids.isEmpty()) Timber.w("unenroll: no Config API uses [%s] for mTLS — no vault files wiped", certLabel)
+        wipeVaultFilesOf(ids)
+    }
+
+    /**
+     * Deletes every stored vault file bound to [configApiIds]. The user-auth
+     * key belongs to the device, not to one Config API, so it goes only when
+     * no locked file is left anywhere; a new one is made and registered on
+     * the next fetch. Never throws.
+     */
+    private fun wipeVaultFilesOf(configApiIds: Set<String>) {
+        val config = pinManagerConfig ?: return
+        if (configApiIds.isEmpty() || !::defaultVaultFileStore.isInitialized) return
+        io.github.umutcansu.pinvault.internal.VaultFileWipe.wipe(
+            configApiIds, config.vaultFiles.values, ::getStorageFor, userAuthKeys
+        ) {
+            if (::vaultRouter.isInitialized) vaultRouter.forgetUserAuthRegistrations()
+        }
+        // What was remembered about the wiped copies goes with them.
+        config.vaultFiles.values.filter { it.configApiId in configApiIds }.forEach { vaultGuard?.forget(it.key) }
+    }
+
+    /**
+     * Deletes every stored vault file that is past its `maxOfflineAge` and
+     * asked for `wipeWhenStale()`. Runs at [init] and on every periodic
+     * update, so a device that stays offline loses such a file even when the
+     * app never tries to read it. Never throws.
+     */
+    internal fun wipeStaleVaultFiles() {
+        if (!initialized) return
+        val config = pinManagerConfig ?: return
+        try {
+            vaultGuard?.sweep(config.vaultFiles.values, ::getStorageFor)
+        } catch (e: Exception) {
+            Timber.w(e, "Could not check the offline lifetime of the stored vault files")
+        }
     }
 
     /**
@@ -1088,6 +1443,8 @@ object PinVault {
             when (store.mode(certLabel)) {
                 ClientCertSecureStore.Mode.CHAIN ->
                     io.github.umutcansu.pinvault.crypto.Pkcs10Csr.parsePemChain(store.loadChain(certLabel)!!).first()
+                ClientCertSecureStore.Mode.IMPORTED ->
+                    io.github.umutcansu.pinvault.crypto.Pkcs10Csr.parsePemChain(store.loadImported(certLabel)!!).first()
                 ClientCertSecureStore.Mode.P12 -> {
                     val p12 = store.load(certLabel) ?: return null
                     val password = pinManagerConfig?.configApis?.values?.firstOrNull()?.clientKeyPassword ?: return null
@@ -1109,6 +1466,10 @@ object PinVault {
     /**
      * Fetches a vault file from the backend and stores it encrypted.
      *
+     * For a file locked with [VaultFileConfig.userAuth], [VaultFileResult.Updated.bytes]
+     * is empty (so is the [OnFileUpdateListener]'s copy): the content is only
+     * handed out by [unlockFile], after the prompt.
+     *
      * @param key The vault file key registered in [PinVaultConfig].
      * @return [VaultFileResult.Updated], [VaultFileResult.AlreadyCurrent], or [VaultFileResult.Failed].
      */
@@ -1121,11 +1482,149 @@ object PinVault {
 
     /**
      * Loads a cached vault file from encrypted storage.
-     * Returns null if the file hasn't been fetched yet.
+     * Returns null if the file hasn't been fetched yet, and for a file locked
+     * with [VaultFileConfig.userAuth]: open those with [unlockFile].
+     *
+     * The stored copy is checked every time, not only when it was downloaded:
+     *  - a file of a Config API that signs its files is verified again with
+     *    the signatures it was stored with and the keys trusted now. A copy
+     *    that fails — changed, swapped, or signed by a key revoked since — is
+     *    deleted and null is returned;
+     *  - a file past its `maxOfflineAge` is not returned (and deleted with
+     *    `wipeWhenStale()`).
+     *
+     * [fileStatus] says which of these it was when this returns null. A copy
+     * a signed block stored with an earlier version of the library has no
+     * signature on record: it is not returned until the next [fetchFile] has
+     * downloaded it again ([VaultFileStatus.NEEDS_FETCH]).
      */
     fun loadFile(key: String): ByteArray? {
         checkInitialized()
-        return getStorageFor(key).load(key)
+        val storage = getStorageFor(key)
+        val file = pinManagerConfig?.vaultFiles?.get(key)
+        val guard = vaultGuard
+        if (file == null || guard == null) return storage.load(key)
+        return when (val read = guard.load(file, storage, vaultRouter.storedVerifier(file))) {
+            is io.github.umutcansu.pinvault.internal.VaultFileGuard.Read.Content -> read.bytes
+            else -> null
+        }
+    }
+
+    /**
+     * What [loadFile] / [unlockFile] would make of the stored copy of [key],
+     * without reading its content: available, locked, not stored, past its
+     * offline lifetime, waiting to be fetched again, or — after a copy was
+     * deleted because it failed its check — [VaultFileStatus.INTEGRITY_FAILED]
+     * until the next successful fetch. See [VaultFileStatus].
+     *
+     * A copy's signature is verified when it is read, so a tampered copy
+     * shows as `AVAILABLE` here until `loadFile` / `unlockFile` has looked.
+     */
+    fun fileStatus(key: String): io.github.umutcansu.pinvault.model.VaultFileStatus {
+        checkInitialized()
+        val storage = getStorageFor(key)
+        val file = pinManagerConfig?.vaultFiles?.get(key)
+        val guard = vaultGuard
+        if (file == null || guard == null) {
+            return if (storage.exists(key)) io.github.umutcansu.pinvault.model.VaultFileStatus.AVAILABLE
+            else io.github.umutcansu.pinvault.model.VaultFileStatus.NOT_STORED
+        }
+        return guard.status(file, storage, vaultRouter.storedVerifier(file))
+    }
+
+    /**
+     * Opens a vault file locked with [VaultFileConfig.userAuth]: shows the
+     * system prompt (strong biometric or the screen lock) and returns the
+     * content once the user passes it. A file without a lock comes back
+     * without a prompt, so callers can use this for every file.
+     *
+     * [VaultFileUnlockResult.Invalidated] means Android retired the key: the
+     * screen lock was removed, or — only for the fingerprint-only key made on
+     * Android 7–10 — the enrolled fingerprints changed (see [UserAuth]). The
+     * stored copy is gone and [fetchFile] downloads it again.
+     *
+     * [VaultFileUnlockResult.Stale] means the file is past its
+     * `maxOfflineAge`; no prompt is shown. A copy that is opened is checked
+     * like [loadFile] checks it: one that fails its stored signature is
+     * deleted and reported as [VaultFileUnlockResult.Failed].
+     *
+     * A [io.github.umutcansu.pinvault.model.VaultFileEncryption.USER_AUTH]
+     * file is decrypted here, after the prompt, and its signature checked
+     * with the same keys a fetch uses; one that fails is deleted and reported
+     * as [VaultFileUnlockResult.Failed]. For such a file anything stored that
+     * is not the server's sealed copy, and a copy sealed for another key, is
+     * deleted and reported as [VaultFileUnlockResult.Invalidated] (fetch it
+     * again; the key is registered again first).
+     */
+    suspend fun unlockFile(
+        activity: FragmentActivity,
+        key: String,
+        prompt: VaultFileUnlockPrompt
+    ): VaultFileUnlockResult {
+        checkInitialized()
+        val storage = getStorageFor(key)
+        val file = pinManagerConfig?.vaultFiles?.get(key)
+        val guard = vaultGuard
+        // A server-sealed (USER_AUTH) copy carries its signatures and is
+        // checked inside unlock, once it is open. No verifier for such a file
+        // = not opened (fail closed). Every other copy is checked below with
+        // the signatures stored when it was fetched.
+        val sealedByServer = file?.takeIf { it.encryption == io.github.umutcansu.pinvault.model.VaultFileEncryption.USER_AUTH }
+        val verifier = sealedByServer?.let { vaultRouter.unlockVerifier(it) }
+        return kotlinx.coroutines.withContext(Dispatchers.IO) {
+            // Past its offline lifetime: no prompt for a file that is not handed out.
+            if (file != null && guard != null) {
+                guard.beforeUnlock(file, storage)?.let { refused ->
+                    return@withContext if (refused.status == io.github.umutcansu.pinvault.model.VaultFileStatus.STALE) {
+                        VaultFileUnlockResult.Stale(key)
+                    } else {
+                        VaultFileUnlockResult.Failed(key, refused.reason)
+                    }
+                }
+            }
+            val hadCopy = storage.exists(key)
+            val result = if (storage is UserAuthVaultStorage) {
+                storage.unlock(
+                    key,
+                    { kind, cipher -> UserAuthPrompt.authenticate(activity, prompt, kind, cipher) },
+                    verify = verifier,
+                    // Sealed for a key the server no longer has: register again before the next fetch.
+                    onSealedForAnotherKey = { sealedByServer?.let { vaultRouter.forgetUserAuthRegistration(it.configApiId) } }
+                )
+            } else {
+                storage.load(key)?.let { VaultFileUnlockResult.Unlocked(key, storage.getVersion(key), it) }
+                    ?: VaultFileUnlockResult.NotFound(key)
+            }
+            if (file == null || guard == null) return@withContext result
+            if (result is VaultFileUnlockResult.Failed && hadCopy && !storage.exists(key)) {
+                // The copy failed the check done at unlock and was deleted there.
+                guard.integrityFailed(file, result.reason)
+            }
+            if (result !is VaultFileUnlockResult.Unlocked) return@withContext result
+            when (val read = guard.check(file, storage, result.bytes, result.version, vaultRouter.storedVerifier(file))) {
+                is io.github.umutcansu.pinvault.internal.VaultFileGuard.Read.Content -> result
+                is io.github.umutcansu.pinvault.internal.VaultFileGuard.Read.Refused -> VaultFileUnlockResult.Failed(key, read.reason)
+                io.github.umutcansu.pinvault.internal.VaultFileGuard.Read.Absent -> VaultFileUnlockResult.NotFound(key)
+            }
+        }
+    }
+
+    /** Callback variant of [unlockFile]; [onResult] runs on the main thread. */
+    fun unlockFile(
+        activity: FragmentActivity,
+        key: String,
+        prompt: VaultFileUnlockPrompt,
+        onResult: (VaultFileUnlockResult) -> Unit
+    ) {
+        CoroutineScope(Dispatchers.Main).launch {
+            onResult(unlockFile(activity, key, prompt))
+        }
+    }
+
+    /** True when the stored copy of [key] opens only through [unlockFile]. */
+    fun isFileLocked(key: String): Boolean {
+        checkInitialized()
+        return (getStorageFor(key) as? UserAuthVaultStorage)?.isLocked(key) == true
     }
 
     /**
@@ -1158,6 +1657,7 @@ object PinVault {
     fun clearFile(key: String) {
         checkInitialized()
         getStorageFor(key).clear(key)
+        vaultGuard?.forget(key)
         Timber.d("Vault file cleared: %s", key)
     }
 
@@ -1315,16 +1815,23 @@ object PinVault {
      * version, recovery keys, and which keys signed the last accepted config.
      *
      * @param configApiId the block id; `null` = the default (first) block.
-     * @return `null` for a block that runs unsigned (`allowUnsigned()`), a block
-     *   served by a custom [CertificateConfigApi] (which does its own checking),
-     *   an unknown id, or static-pin mode.
+     * @return `null` for a block whose configs are not verified — it runs
+     *   unsigned (`allowUnsigned()`), including a custom [CertificateConfigApi]
+     *   that does not implement
+     *   [io.github.umutcansu.pinvault.api.SignedConfigSource] — for an unknown
+     *   id, in static-pin mode, and while the signing-key store cannot be read.
      */
     @JvmOverloads
     fun signingStatus(configApiId: String? = null): io.github.umutcansu.pinvault.model.SigningStatus? {
         checkInitialized()
         val id = configApiId ?: pinManagerConfig?.defaultConfigApi?.id ?: return null
-        val client = configApiClients[id]?.takeUnless { it.usesCustomApi } ?: return null
-        return client.signatureTrust?.status()
+        val client = configApiClients[id]?.takeIf { it.configsVerified } ?: return null
+        return try {
+            client.signatureTrust?.status()
+        } catch (e: io.github.umutcansu.pinvault.model.StoreUnreadableException) {
+            Timber.w(e, "signingStatus: the signing-key store is unreadable right now")
+            null
+        }
     }
 
     /**
@@ -1407,22 +1914,62 @@ object PinVault {
     }
 
     /**
-     * Clears the active pinning state and the persisted config, and resets
-     * the initialized flag so the next [init] performs a full
-     * re-initialization (re-fetches config from the backend).
+     * Clears the active pinning state and the persisted config of every
+     * Config API, and resets the initialized flag so the next [init] performs
+     * a full re-initialization (re-fetches config from the backend).
      *
      * Clients obtained earlier refuse TLS handshakes until that re-init
      * publishes a config — pinning is never silently downgraded to system
      * trust.
+     *
+     * What it does NOT clear: the replay watermarks (the highest `issuedAt`
+     * and per-host versions accepted so far), the signing-key set, the
+     * trusted-clock reference, and the client certificate. `reset()` can be
+     * called by the host app — and by anything that can reach the host app's
+     * code — so it must not be a way to make the device accept an older
+     * signed config again. The re-init accepts the newest config the device
+     * has seen or a newer one, nothing older.
      */
     fun reset() {
         synchronized(this) {
             if (!initialized) return
-            clientProvider.reset()
-            configStore.clear()
+            if (configApiClients.isEmpty()) {
+                // Static-pin mode.
+                clientProvider.reset()
+                configStore.clearActive()
+            } else {
+                configApiClients.values.forEach { client ->
+                    client.clientProvider.reset()
+                    client.configStore.clearActive()
+                }
+            }
             initialized = false
         }
-        Timber.w("PinVault reset — config cleared, TLS refused until re-init")
+        Timber.w("PinVault reset — config cleared (replay watermarks kept), TLS refused until re-init")
+    }
+
+    /**
+     * [reset], and also wipes everything the config stores hold: replay
+     * watermarks and the trusted-clock reference included. For tests that
+     * need a clean slate between cases; not part of the public API, because
+     * forgetting the watermarks is exactly what a replay needs.
+     */
+    @androidx.annotation.VisibleForTesting
+    internal fun resetAndWipeStoredState() {
+        synchronized(this) {
+            if (!initialized) return
+            if (configApiClients.isEmpty()) {
+                clientProvider.reset()
+                configStore.wipeAll()
+            } else {
+                configApiClients.values.forEach { client ->
+                    client.clientProvider.reset()
+                    client.configStore.wipeAll()
+                }
+            }
+            initialized = false
+        }
+        Timber.w("PinVault reset — stored config state wiped, TLS refused until re-init")
     }
 
     private fun checkInitialized() {

@@ -20,7 +20,7 @@ import javax.crypto.spec.SecretKeySpec
  *     [AES-GCM ciphertext + 16-byte tag]
  *
  * Security:
- *   - RSA-OAEP-SHA256 with MGF1-SHA256 (matches the server).
+ *   - RSA-OAEP with SHA-256 and MGF1-SHA1 (matches the server; see the note in [decrypt]).
  *   - AES-256-GCM authenticates ciphertext; any tampering surfaces as
  *     [javax.crypto.AEADBadTagException] instead of corrupt plaintext.
  *   - Pure JCA — no Android dependency — so it runs in Robolectric tests
@@ -38,7 +38,36 @@ object VaultFileDecryptor {
      * @throws javax.crypto.AEADBadTagException if the ciphertext was tampered
      *         with or the wrong private key is used.
      */
-    fun decrypt(envelope: ByteArray, privateKey: PrivateKey): ByteArray {
+    fun decrypt(envelope: ByteArray, privateKey: PrivateKey): ByteArray = decrypt(envelope) { wrappedKey ->
+        // NOTE: We use OAEP-SHA256 hash with MGF1-SHA1 — the canonical Java
+        // default spec `OAEPWithSHA-256AndMGF1Padding`. Android's JCA only
+        // ships MGF1-SHA1; forcing MGF1-SHA256 throws on older devices
+        // (observed on Mi 9T / Android 11). Server mirrors this spec so the
+        // RSA-OAEP round-trip interoperates everywhere.
+        val rsa = Cipher.getInstance("RSA/ECB/OAEPWithSHA-256AndMGF1Padding")
+        val oaep = OAEPParameterSpec(
+            "SHA-256", "MGF1", MGF1ParameterSpec.SHA1, PSource.PSpecified.DEFAULT
+        )
+        rsa.init(Cipher.DECRYPT_MODE, privateKey, oaep)
+        rsa.doFinal(wrappedKey)
+    }
+
+    /**
+     * Decrypt an envelope whose RSA step is done by [unwrapKey]: a `user_auth`
+     * envelope is unwrapped by the cipher the unlock prompt authorised.
+     * Errors from [unwrapKey] propagate unchanged, so the caller can tell a
+     * Keystore failure from a damaged envelope.
+     */
+    fun decrypt(envelope: ByteArray, unwrapKey: (ByteArray) -> ByteArray): ByteArray {
+        val parts = parse(envelope)
+        val sessionKey = SecretKeySpec(unwrapKey(parts.wrappedKey), "AES")
+        return openContent(parts, sessionKey)
+    }
+
+    /** The parts of an envelope; throws [IllegalArgumentException] when it is malformed. */
+    internal class Parts(val wrappedKey: ByteArray, val iv: ByteArray, val ciphertext: ByteArray)
+
+    internal fun parse(envelope: ByteArray): Parts {
         require(envelope.size > 4 + GCM_IV_BYTES) {
             "Envelope too short (${envelope.size} bytes)"
         }
@@ -60,25 +89,13 @@ object VaultFileDecryptor {
         val wrappedKey = envelope.copyOfRange(offset, offset + wrappedKeyLen); offset += wrappedKeyLen
         val iv = envelope.copyOfRange(offset, offset + GCM_IV_BYTES); offset += GCM_IV_BYTES
         val ciphertext = envelope.copyOfRange(offset, envelope.size)
+        return Parts(wrappedKey, iv, ciphertext)
+    }
 
-        // 1. RSA-OAEP unwrap the AES session key.
-        //
-        // NOTE: We use OAEP-SHA256 hash with MGF1-SHA1 — the canonical Java
-        // default spec `OAEPWithSHA-256AndMGF1Padding`. Android's JCA only
-        // ships MGF1-SHA1; forcing MGF1-SHA256 throws on older devices
-        // (observed on Mi 9T / Android 11). Server mirrors this spec so the
-        // RSA-OAEP round-trip interoperates everywhere.
-        val rsa = Cipher.getInstance("RSA/ECB/OAEPWithSHA-256AndMGF1Padding")
-        val oaep = OAEPParameterSpec(
-            "SHA-256", "MGF1", MGF1ParameterSpec.SHA1, PSource.PSpecified.DEFAULT
-        )
-        rsa.init(Cipher.DECRYPT_MODE, privateKey, oaep)
-        val sessionKeyBytes = rsa.doFinal(wrappedKey)
-        val sessionKey = SecretKeySpec(sessionKeyBytes, "AES")
-
-        // 2. AES-GCM decrypt (tag auto-verified).
+    /** AES-GCM decrypt (tag auto-verified) once the session key is unwrapped. */
+    internal fun openContent(parts: Parts, sessionKey: SecretKeySpec): ByteArray {
         val aes = Cipher.getInstance("AES/GCM/NoPadding")
-        aes.init(Cipher.DECRYPT_MODE, sessionKey, GCMParameterSpec(GCM_TAG_BITS, iv))
-        return aes.doFinal(ciphertext)
+        aes.init(Cipher.DECRYPT_MODE, sessionKey, GCMParameterSpec(GCM_TAG_BITS, parts.iv))
+        return aes.doFinal(parts.ciphertext)
     }
 }

@@ -78,7 +78,20 @@ data class PinVaultConfig(
      * [Builder.onConnectionEvent] or use the canned helper
      * [Builder.reportToPinVaultBackend] for the demo-server JSON format.
      */
-    val connectionListener: PinVaultConnectionListener? = null
+    val connectionListener: PinVaultConnectionListener? = null,
+    /** How long a config may be used past its `expiresAt`. See [Builder.expiredConfigGrace]. */
+    val expiredConfigGraceMs: Long = 0L,
+    /** Hosts whose chain must also pass the platform CAs. See [Builder.requireCaTrust]. */
+    val caTrustHosts: List<String> = emptyList(),
+    /** Delete a Config API's vault files when its identity is revoked. See [Builder.wipeVaultFilesOnRevocation]. */
+    val wipeVaultFilesOnRevocation: Boolean = false,
+    /**
+     * Default offline lifetime of stored vault files, in milliseconds; 0 = no
+     * limit. See [Builder.vaultFileMaxOfflineAge].
+     */
+    val vaultFileMaxOfflineAgeMs: Long = 0L,
+    /** Generate the library's Keystore keys so they work only while the device is unlocked. See [Builder.requireUnlockedDevice]. */
+    val requireUnlockedDevice: Boolean = false
 ) {
 
     /** First registered block — convenience for internal single-API code paths. */
@@ -93,6 +106,131 @@ data class PinVaultConfig(
         private var staticPins: CertificateConfig? = null
         private val vaultFiles = mutableMapOf<String, VaultFileConfig>()
         private var connectionListener: PinVaultConnectionListener? = null
+        private var expiredConfigGraceMs: Long = 0L
+        private val caTrustHosts = mutableListOf<String>()
+        private var wipeVaultFilesOnRevocation = false
+        private var vaultFileMaxOfflineAgeMs: Long = 0L
+        private var requireUnlockedDevice = false
+
+        /**
+         * Keep using a config for [amount] [unit] after its `expiresAt`.
+         *
+         * A signed config is valid until its `expiresAt` (the server's
+         * `CONFIG_TTL_SECONDS`, 24 hours by default). Past that the device
+         * needs a fresh one: `init` fails with [ConfigExpiredException] when
+         * the Config API cannot be reached, and pinned clients refuse
+         * handshakes until a fetch succeeds. That is what keeps someone who
+         * blocks the Config API from holding the device on old pins.
+         *
+         * The default is zero (fail closed). Apps that prefer to keep working
+         * through a longer outage can allow a grace period here, accepting
+         * that a blocked Config API holds them on old pins that much longer.
+         * Configs without an `expiresAt` (static pins, `allowUnsigned()`
+         * backends that send none) never expire.
+         */
+        fun expiredConfigGrace(amount: Long, unit: java.util.concurrent.TimeUnit) = apply {
+            require(amount >= 0) { "expiredConfigGrace must not be negative" }
+            this.expiredConfigGraceMs = unit.toMillis(amount)
+        }
+
+        /**
+         * For these hosts the server's certificate must ALSO be trusted by the
+         * platform's certificate authorities, in addition to matching a pin.
+         * Both checks must pass.
+         *
+         * Pins come from whoever signs the config. Without this, the config
+         * signer is in effect a private certificate authority for every pinned
+         * host: a stolen signing key can pin an attacker's own certificate. A
+         * host listed here also needs a certificate from a real CA, so a
+         * signing key alone is not enough. This setting is compiled into the
+         * app; nothing the server sends can turn it off.
+         *
+         * Patterns use the pin syntax: `api.example.com`, `*.example.com`
+         * (exactly one label), optionally with `:port`. The trust store is the
+         * platform default, including the app's network security config. Do
+         * not list hosts with self-signed or private-CA certificates (such as
+         * the reference server's own listeners): their handshakes would fail.
+         * Applies to every handshake PinVault pins, the Config API's included.
+         */
+        fun requireCaTrust(vararg hostPatterns: String) = apply {
+            hostPatterns.forEach { pattern ->
+                val host = pattern.trim().lowercase()
+                require(host.isNotEmpty() && "://" !in host && '/' !in host) {
+                    "requireCaTrust: '$pattern' is not a host pattern (use api.example.com, *.example.com or host:port)"
+                }
+                val wildcard = host.startsWith("*.")
+                val rest = if (wildcard) host.substring(2) else host
+                require('*' !in rest && (!wildcard || '.' in rest.substringBefore(':'))) {
+                    "requireCaTrust: '$pattern' — a wildcard must be '*.' followed by a domain with at least one dot"
+                }
+                caTrustHosts += host
+            }
+        }
+
+        /**
+         * Delete every vault file bound to a Config API when that API says
+         * this device's identity is revoked (`403 reenroll_required`, the
+         * [io.github.umutcansu.pinvault.api.ClientCertRenewalStatus.REENROLL_REQUIRED]
+         * event). Off by default: by then the files are already on the device,
+         * and a revoked device keeps reading them until the app removes them.
+         *
+         * Only the files of the Config API that refused the device are wiped,
+         * including copies locked with `userAuth`. The answer is not signed,
+         * so it wipes only when it was about this device's identity: it came
+         * on a connection that presented the client certificate the block has
+         * loaded, or it answers that certificate's own renewal request. The
+         * same answer on a connection without a client certificate (a
+         * TLS-only block, a request before enrollment) raises the event and
+         * deletes nothing. A device revoked while it is offline never gets
+         * the answer: see [vaultFileMaxOfflineAge]. Access tokens for vault
+         * files belong to the app (`accessToken { … }`); forget them when the
+         * event arrives. `PinVault.unenroll(context, label, wipeVaultFiles = true)`
+         * does the same on demand.
+         */
+        fun wipeVaultFilesOnRevocation() = apply { this.wipeVaultFilesOnRevocation = true }
+
+        /**
+         * The default offline lifetime of every vault file: how long a stored
+         * copy may be read without the server confirming it. A file's own
+         * `maxOfflineAge(...)` overrides it. See
+         * [VaultFileConfig.Builder.maxOfflineAge] for what it does and why.
+         *
+         * Not set (the default): no limit — a stored file stays readable for
+         * as long as the app's data exists, also on a device the server has
+         * revoked in the meantime that never came online again.
+         */
+        fun vaultFileMaxOfflineAge(amount: Long, unit: java.util.concurrent.TimeUnit) = apply {
+            require(amount >= 0) { "vaultFileMaxOfflineAge must not be negative" }
+            this.vaultFileMaxOfflineAgeMs = unit.toMillis(amount)
+        }
+
+        /**
+         * Generate the library's Android Keystore keys so that they work only
+         * while the device is unlocked (`setUnlockedDeviceRequired(true)`,
+         * Android 9+): the mTLS identity key, the per-device vault key, the
+         * keys of the encrypted stores and of `ENCRYPTED_FILE` vault files,
+         * and keys imported from a P12. On a locked phone nothing the library
+         * stored can then be decrypted and the client certificate cannot be
+         * presented — by the app or by anything running as it.
+         *
+         * What it costs: work that runs behind a locked screen fails until
+         * the user unlocks the phone. A periodic update then ends in
+         * `UpdateResult.Failed` (the `ConfigUpdate` event's `FAILED`), a file
+         * sync in `VaultFileResult.Failed`, `init` in `InitResult.Failed`,
+         * `loadFile` returns null with `fileStatus` =
+         * [VaultFileStatus.STORAGE_UNAVAILABLE]; nothing stored is deleted and
+         * the next run after an unlock works again.
+         *
+         * It applies to keys generated from now on. Keys an earlier version
+         * (or an earlier start without this call) generated keep working
+         * while locked until they are replaced: the identity key at the next
+         * enrollment, the store keys when the app's data is cleared. A device
+         * without a screen lock has nothing to unlock: the flag has no effect
+         * there. On Android 7 and 8 it is ignored. If a device's Keystore
+         * refuses to generate a key with the flag, the key is generated
+         * without it and a warning is logged.
+         */
+        fun requireUnlockedDevice() = apply { this.requireUnlockedDevice = true }
 
         /**
          * Register a Config API. Calling twice with the same id replaces the
@@ -139,12 +277,23 @@ data class PinVaultConfig(
         }
 
         fun build(): PinVaultConfig {
+            // Each block keeps its config and replay watermarks in a namespace
+            // named after its id, with anything but [A-Za-z0-9_-] turned into
+            // `_`: ids like `a.b` and `a_b` would share one and overwrite each
+            // other's watermarks. Refused instead of silently merged.
+            configApiBlocks.keys.groupBy { io.github.umutcansu.pinvault.store.CertificateConfigStore.namespaceFor(it) }
+                .values.firstOrNull { it.size > 1 }?.let { clash ->
+                    throw IllegalArgumentException(
+                        "Config API ids ${clash.joinToString { "'$it'" }} would share one config store (characters " +
+                            "other than letters, digits, '_' and '-' are stored as '_'); give them distinct ids"
+                    )
+                }
             if (staticPins == null) {
                 require(configApiBlocks.isNotEmpty()) {
                     "At least one Config API (or staticPins for offline mode) is required"
                 }
                 configApiBlocks.values.forEach { block ->
-                    require(block.bootstrapPins.isNotEmpty()) {
+                    require(block.bootstrapPins.isNotEmpty() || block.allowUnpinnedConfigApi) {
                         "bootstrapPins must not be empty for Config API '${block.id}' (or use staticPins for offline mode)"
                     }
                 }
@@ -166,7 +315,12 @@ data class PinVaultConfig(
                 deviceAlias = deviceAlias,
                 vaultFiles = vaultFiles.toMap(),
                 staticPins = staticPins,
-                connectionListener = connectionListener
+                connectionListener = connectionListener,
+                expiredConfigGraceMs = expiredConfigGraceMs,
+                caTrustHosts = caTrustHosts.distinct(),
+                wipeVaultFilesOnRevocation = wipeVaultFilesOnRevocation,
+                vaultFileMaxOfflineAgeMs = vaultFileMaxOfflineAgeMs,
+                requireUnlockedDevice = requireUnlockedDevice
             )
         }
     }
@@ -205,7 +359,15 @@ data class PinVaultConfig(
             )
         }
 
-        /** Offline / embedded static pin config. No Config API required. */
+        /**
+         * Offline / embedded static pin config. No Config API required.
+         *
+         * The pins are checked at `PinVault.init` like fetched ones (host
+         * names, 44-character Base64 SHA-256 pins); init fails for a config
+         * that is not well-formed. Static pins carry no signature and no
+         * expiry, and their stored copy has no integrity check — they are
+         * re-applied from the app's own code at every init.
+         */
         fun static(vararg pins: HostPin) = PinVaultConfig(
             configApis = emptyMap(),
             staticPins = CertificateConfig(

@@ -121,4 +121,36 @@ class ClientCertSecureStoreTest {
         store.clearPendingRequest("default")
         assertNull(store.loadPendingRequest("default"))
     }
+
+    // ── A key imported into the Keystore: only its chain is stored ──────
+
+    @Test
+    fun `an imported chain round-trips, reports IMPORTED and replaces a stored P12`() {
+        store.save("default", byteArrayOf(1, 2, 3))
+        store.saveImported("default", listOf(pemA, pemB))
+
+        assertEquals(ClientCertSecureStore.Mode.IMPORTED, store.mode("default"))
+        assertTrue(store.exists("default"))
+        assertEquals(listOf(pemA, pemB), store.loadImported("default"))
+        assertFalse("the P12 bytes are dropped", store.hasP12("default"))
+        assertNull(store.load("default"))
+        assertNull("not a CSR identity: the renewer leaves it alone", store.loadChain("default"))
+    }
+
+    @Test
+    fun `each form replaces the imported one, and clear removes it`() {
+        store.saveImported("a", listOf(pemA))
+        store.saveChain("a", listOf(pemB))
+        assertEquals(ClientCertSecureStore.Mode.CHAIN, store.mode("a"))
+        assertFalse(store.hasImported("a"))
+
+        store.saveImported("b", listOf(pemA))
+        store.save("b", byteArrayOf(1))
+        assertEquals(ClientCertSecureStore.Mode.P12, store.mode("b"))
+
+        store.saveImported("c", listOf(pemA))
+        store.clear("c")
+        assertEquals(ClientCertSecureStore.Mode.NONE, store.mode("c"))
+        assertFalse(store.exists("c"))
+    }
 }

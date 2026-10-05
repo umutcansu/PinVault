@@ -4,7 +4,11 @@ package io.github.umutcansu.pinvault.model
  * Result of a vault file fetch/sync operation.
  */
 sealed class VaultFileResult {
-    /** File downloaded and stored successfully. */
+    /**
+     * File downloaded and stored successfully. [bytes] is the content, except
+     * for a file locked with [VaultFileConfig.userAuth]: then it is empty, and
+     * only `PinVault.unlockFile` hands the content out, after the prompt.
+     */
     data class Updated(val key: String, val version: Int, val bytes: ByteArray) : VaultFileResult() {
         override fun equals(other: Any?): Boolean {
             if (this === other) return true

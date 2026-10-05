@@ -10,6 +10,11 @@ import timber.log.Timber
  * When the certificate config is updated, [swap] atomically replaces
  * the client. Existing in-flight requests complete normally;
  * new requests use the new client.
+ *
+ * Every change of the pins — [swap], [reset], a [replaceConfigInPlace] whose
+ * pins differ — is reported to the SSL manager ([DynamicSSLManager.onPinsChanged]):
+ * fresh TLS session caches, and the pooled connections of every client the
+ * library handed out are closed, not only the one being replaced.
  */
 internal class HttpClientProvider(
     private val sslManager: DynamicSSLManager
@@ -60,13 +65,18 @@ internal class HttpClientProvider(
 
     fun swap(newConfig: CertificateConfig) {
         synchronized(this) {
-            val oldClient = currentClient
             currentConfig = newConfig
-            currentClient = sslManager.buildClient(newConfig, recoveryInterceptor = recoveryInterceptor)
+            // Over the LIVE config, not a snapshot of newConfig: a freshness
+            // write-back ([replaceConfigInPlace]) must reach this client too,
+            // or a config that expired and was then renewed with the same pins
+            // would keep refusing handshakes (ConfigExpiredException) for the
+            // rest of the process — the recovery interceptor retries on get().
+            currentClient = sslManager.buildDynamicClient({ currentConfig }, recoveryInterceptor = recoveryInterceptor)
             currentVersion = newConfig.computedVersion()
 
-            // evictAll on background thread to avoid NetworkOnMainThreadException
-            Thread { oldClient.connectionPool.evictAll() }.start()
+            // Closes the old client's pooled connections (and those of every
+            // other client built here), on a background thread.
+            sslManager.onPinsChanged()
 
             Timber.d(
                 "HttpClient swapped — new version: %d, %d pinned hosts",
@@ -78,21 +88,28 @@ internal class HttpClientProvider(
     /**
      * Replaces the live config WITHOUT rebuilding the client.
      *
-     * For changes that leave every pin untouched — today only a cleared
-     * `forceUpdate` flag — rebuilding the client and evicting its connection
-     * pool would be pure cost. But the in-memory copy must still follow the
+     * For changes that leave every pin untouched — a cleared `forceUpdate`
+     * flag, a newer `issuedAt` / `expiresAt` — rebuilding the client and
+     * evicting its connection pool would be pure cost. Should the pins differ
+     * after all, the change is treated as what it is: sessions and pooled
+     * connections go ([DynamicSSLManager.onPinsChanged]). But the in-memory copy must still follow the
      * disk, otherwise `PinVault.isForceUpdate()` (and anything else reading
      * [currentConfig]) keeps reporting the stale flag until the next process
-     * start. The dynamic trust manager reads [currentConfig] on every
-     * handshake, so it sees the new object immediately; the pins are equal,
-     * so nothing about verification changes.
+     * start. Every client [get] hands out reads [currentConfig] on every
+     * handshake, so it sees the new object immediately: the pins are equal,
+     * and a moved-forward `expiresAt` takes effect at the next handshake.
      */
     fun replaceConfigInPlace(newConfig: CertificateConfig) {
         synchronized(this) {
+            val pinsChanged = currentConfig?.let { pinShape(it) != pinShape(newConfig) } ?: true
             currentConfig = newConfig
             currentVersion = newConfig.computedVersion()
+            if (pinsChanged) sslManager.onPinsChanged()
         }
     }
+
+    private fun pinShape(config: CertificateConfig) =
+        config.pins.associate { it.hostname.lowercase() to it.sha256.toSet() }
 
     /**
      * Drops the active config. The replacement client is fail-closed (see
@@ -100,11 +117,10 @@ internal class HttpClientProvider(
      */
     fun reset() {
         synchronized(this) {
-            val oldClient = currentClient
             currentConfig = null
             currentClient = sslManager.buildDynamicClient({ currentConfig })
             currentVersion = 0
-            Thread { oldClient.connectionPool.evictAll() }.start()
+            sslManager.onPinsChanged()
             Timber.w("HttpClient reset — no config; TLS refused until the next init/swap")
         }
     }

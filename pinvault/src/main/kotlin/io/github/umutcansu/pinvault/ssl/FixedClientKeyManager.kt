@@ -16,10 +16,12 @@ import javax.net.ssl.X509ExtendedKeyManager
  * is the KeyChain pattern instead: hand Conscrypt the opaque [PrivateKey]
  * and let the hardware sign the handshake.
  *
- * The alias is offered unconditionally. The server's CertificateRequest
- * lists the key types and issuer names it accepts, but there is only ever
- * one identity here, and letting the server reject it beats second-guessing
- * how a given Conscrypt build spells "EC".
+ * The alias is offered whatever key types and issuers the server's
+ * CertificateRequest lists: there is only ever one identity here, and letting
+ * the server reject it beats second-guessing how a given Conscrypt build
+ * spells "EC". WHICH hosts get to see the identity at all is not decided
+ * here: `DynamicSSLManager` wraps this manager and asks it only for the
+ * block's own listeners and for hosts the config marks as mTLS.
  */
 internal class FixedClientKeyManager(
     private val alias: String,

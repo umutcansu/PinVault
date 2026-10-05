@@ -54,6 +54,34 @@ class NoConfigAvailableException(
 ) : SSLPinningException(message, cause)
 
 /**
+ * The stored pin config is past its `expiresAt` (plus
+ * [PinVaultConfig.Builder.expiredConfigGrace], zero by default) and no fresh
+ * config could be fetched. Someone who blocks the Config API cannot keep the
+ * device on old pins beyond that point: init fails, and pinned clients refuse
+ * handshakes until a fresh config arrives. [expiresAt] is Unix epoch ms.
+ */
+class ConfigExpiredException(
+    val expiresAt: Long,
+    message: String = "Stored pin config expired at $expiresAt (Unix ms) and no fresh config could be fetched",
+    cause: Throwable? = null
+) : SSLPinningException(message, cause)
+
+/**
+ * The server's chain matched its pins but is not trusted by the platform's
+ * certificate authorities, and the app asked for both on this host with
+ * [PinVaultConfig.Builder.requireCaTrust]. Thrown by the pinning trust
+ * manager (the `cause` of an [javax.net.ssl.SSLHandshakeException]).
+ *
+ * Like [CertificateValidityException] it is a distinct type so that
+ * [io.github.umutcansu.pinvault.ssl.PinRecoveryInterceptor] does not refetch
+ * the pin config for it: no config can make an untrusted chain trusted.
+ */
+class CaTrustException(
+    message: String,
+    cause: Throwable? = null
+) : java.security.cert.CertificateException(message, cause)
+
+/**
  * The Config API asks for a client certificate (its block has an
  * `enrollmentUrl`) and this device has none yet, so `init` did not try the
  * network — an mTLS listener would refuse the handshake anyway. Enroll first
@@ -87,3 +115,32 @@ class CertificateValidityException(
     message: String,
     cause: Throwable? = null
 ) : java.security.cert.CertificateException(message, cause)
+
+/**
+ * The pin config names no entry for the host being connected to. Thrown by
+ * the pinning trust manager (the `cause` of an
+ * [javax.net.ssl.SSLHandshakeException]).
+ *
+ * A distinct type so that [io.github.umutcansu.pinvault.ssl.PinRecoveryInterceptor]
+ * can tell it from a pin mismatch: a host the config has never heard of earns
+ * one config refetch per window, not one per request.
+ */
+class UnpinnedHostException(
+    message: String,
+    cause: Throwable? = null
+) : java.security.cert.CertificateException(message, cause)
+
+/**
+ * The library's encrypted storage could not be read right now — the Android
+ * Keystore failed — which is not the same as "nothing is stored". Whatever
+ * needed the value (a config update, a signature check) fails for this
+ * attempt and is tried again on the next call; the stored entry is kept.
+ *
+ * Before, such a read came back as "absent": the replay watermark read as 0,
+ * a stored `expiresAt` as "never", and a revoked signing key was trusted
+ * again because the applied signing-key set looked missing.
+ */
+class StoreUnreadableException(
+    message: String,
+    cause: Throwable? = null
+) : SSLPinningException(message, cause)

@@ -87,6 +87,8 @@
     <string name="enrollment_pending_status">⏳ Waiting for approval · %1$s</string>
     <string name="enrollment_apply">Apply without a code</string>
     <string name="enrollment_expired">✗ Nobody approved the request in time. Apply again.</string>
+    <string name="enrollment_attestation_failed">✗ The server could not confirm that this is a genuine device running the genuine app (key attestation): %1$s</string>
+    <string name="enrollment_csr_required">✗ The server only issues certificates for a key made on the device, and this device could not make one.</string>
     <string name="enrollment_rejected">✗ An administrator rejected the enrollment request. Enter the code again to retry.</string>
     <string name="enrollment_limit_reached">✗ This code has reached its device limit. Ask an administrator for a new one.</string>
     <string name="unenrolled">Client certificate removed</string>

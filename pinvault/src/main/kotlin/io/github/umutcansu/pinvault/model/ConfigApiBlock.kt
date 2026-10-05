@@ -1,5 +1,8 @@
 package io.github.umutcansu.pinvault.model
 
+import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
+import okio.ByteString.Companion.decodeBase64
+
 /**
  * A single Config API endpoint registered on a [PinVaultConfig]. Each block
  * has its own TLS/mTLS pipeline, bootstrap pins, and vault endpoints.
@@ -57,9 +60,13 @@ data class ConfigApiBlock @JvmOverloads constructor(
      * With several keys this is the first of [signaturePublicKeys].
      */
     val signaturePublicKey: String? = null,
-    /** PKCS12 client keystore bytes for mTLS. */
+    /** PKCS12 client keystore bytes for mTLS, bundled with the app. See [Builder.clientKeystore]. */
     val clientKeystoreBytes: ByteArray? = null,
-    /** Keystore password. Default "changeit" is placeholder only. */
+    /**
+     * Password of [clientKeystoreBytes], and of PKCS12 material kept in the
+     * old form on a device whose Keystore refused the import. Default
+     * "changeit" is a placeholder only.
+     */
     val clientKeyPassword: String = "changeit",
     /** Enrollment endpoint path. */
     val enrollmentEndpoint: String = PinVaultConfig.DEFAULT_ENROLLMENT_ENDPOINT,
@@ -105,8 +112,69 @@ data class ConfigApiBlock @JvmOverloads constructor(
     /** Renew when the remaining lifetime falls below this fraction. See [Builder.clientCertRenewalThreshold]. */
     val clientCertRenewalThreshold: Double = DEFAULT_RENEWAL_THRESHOLD,
     /** False = the library never renews on its own. See [Builder.disableClientCertRenewal]. */
-    val clientCertRenewalEnabled: Boolean = true
+    val clientCertRenewalEnabled: Boolean = true,
+    /**
+     * The server-side Config API id this block talks to. When set, a signed
+     * config must name it (`configApiId` in the signed payload) or it is
+     * refused. Null = not checked. See [Builder.serverScope].
+     */
+    val serverScope: String? = null,
+    /**
+     * True when the app called [Builder.allowUnsigned]. Only consulted for a
+     * block that has signing keys AND a custom
+     * [io.github.umutcansu.pinvault.api.CertificateConfigApi] that cannot
+     * hand over signed envelopes: that combination is accepted only with it.
+     */
+    val allowUnsigned: Boolean = false,
+    /**
+     * True = the Config API may be reached without bootstrap pins or over
+     * `http://`. See [Builder.allowUnpinnedConfigApi].
+     */
+    val allowUnpinnedConfigApi: Boolean = false,
+    /**
+     * True = a private key the server made may be this block's identity: a
+     * PKCS12 answer to enrollment, and P12 enrollment when the device cannot
+     * make its own key. See [Builder.allowServerGeneratedKey].
+     */
+    val allowServerGeneratedKey: Boolean = false,
+    /**
+     * SHA-256 pins (Base64) of the client CA's SubjectPublicKeyInfo. When not
+     * empty, every issued client certificate must be signed by a chain
+     * certificate that matches one. See [Builder.clientCaPins].
+     */
+    val clientCaPins: List<String> = emptyList(),
+    /** Longest lifetime of a client certificate this block stores. See [Builder.maxClientCertLifetimeDays]. */
+    val maxClientCertLifetimeDays: Int = DEFAULT_MAX_CLIENT_CERT_LIFETIME_DAYS,
+    /**
+     * Further listeners (`https://host:port/` or `host:port`) this block's
+     * client identity is offered to, besides its own Config API, enrollment
+     * and renewal URLs. See [Builder.clientCertHosts].
+     */
+    val clientCertHosts: List<String> = emptyList()
 ) {
+
+    /**
+     * Why this block must not be used, or null when it is fine: the Config
+     * API (and the enrollment / renewal URLs) must be `https://` and the block
+     * must carry bootstrap pins, unless [allowUnpinnedConfigApi] was asked
+     * for. Checked at `PinVault.init` and by every client built for the
+     * block, so a block made with the constructor instead of the builder is
+     * held to the same rule.
+     */
+    internal fun configurationError(): String? {
+        if (allowUnpinnedConfigApi) return null
+        listOf("configUrl" to configUrl, "enrollmentUrl" to enrollmentUrl, "renewalUrl" to renewalUrl).forEach { (name, url) ->
+            if (url != null && !url.trim().startsWith("https://", ignoreCase = true)) {
+                return "Config API '$id': $name must be an https:// URL — a config fetched over plain HTTP can be " +
+                    "replaced by anyone on the network. Call allowUnpinnedConfigApi() to accept that (tests, demos)."
+            }
+        }
+        if (bootstrapPins.isEmpty()) {
+            return "Config API '$id': bootstrapPins must not be empty — without them the first config fetch trusts " +
+                "every certificate authority on the device. Call allowUnpinnedConfigApi() to accept that (tests, demos)."
+        }
+        return null
+    }
 
     /**
      * The keys config signatures are checked against when no signing-key set
@@ -136,6 +204,12 @@ data class ConfigApiBlock @JvmOverloads constructor(
         private var enrollmentUrl: String? = null
         private var clientCertRenewalThreshold: Double = DEFAULT_RENEWAL_THRESHOLD
         private var clientCertRenewalEnabled: Boolean = true
+        private var serverScope: String? = null
+        private var allowUnpinnedConfigApi: Boolean = false
+        private var allowServerGeneratedKey: Boolean = false
+        private var clientCaPins: List<String> = emptyList()
+        private var maxClientCertLifetimeDays: Int = DEFAULT_MAX_CLIENT_CERT_LIFETIME_DAYS
+        private var clientCertHosts: List<String> = emptyList()
 
         fun bootstrapPins(pins: List<HostPin>) = apply { this.bootstrapPins = pins }
         fun configEndpoint(endpoint: String) = apply { this.configEndpoint = endpoint }
@@ -208,14 +282,162 @@ data class ConfigApiBlock @JvmOverloads constructor(
          * arbitrary or rolled-back pins. Use ONLY in tests, throwaway demos, or
          * transitional setups where the backend has no ECDSA signing key yet,
          * and document the risk wherever it is called.
+         *
+         * The stored config of an unsigned block has no integrity check either:
+         * a signed block keeps the signed envelope and verifies it again every
+         * time the stored config is read; an unsigned one has nothing to verify.
+         *
+         * Together with signing keys this call has one more meaning. A block
+         * with keys and a custom `CertificateConfigApi` gets verified configs
+         * only when that API implements
+         * [io.github.umutcansu.pinvault.api.SignedConfigSource]; when it does
+         * not, `PinVault.init` fails — unless this was called, which accepts
+         * the custom API's configs unverified (the keys then only check vault
+         * files). With the library's own HTTP client a block that has keys is
+         * always verified, whatever this says.
          */
         fun allowUnsigned() = apply { this.allowUnsigned = true }
 
-        /** mTLS client keystore. Default password "changeit" is placeholder only. */
+        /**
+         * The id of the Config API on the server this block talks to (the
+         * reference server's Config API id, e.g. `default-tls`).
+         *
+         * One signing key often signs for several Config APIs. Without this,
+         * a config signed for another of them — other hosts, other pins — is
+         * accepted here, because its signature is valid. With it, the signed
+         * payload must carry `"configApiId": "<id>"` with exactly this value;
+         * a payload without the field, or with another id, is refused. Needs
+         * a server that writes the field (the reference server does).
+         *
+         * Not set: the field is ignored, as before. It has no effect on an
+         * unsigned block — there is no signature to bind it to.
+         */
+        fun serverScope(id: String) = apply {
+            require(id.isNotBlank()) { "serverScope must not be blank" }
+            this.serverScope = id.trim()
+        }
+
+        /**
+         * Explicit opt-out from the two rules every Config API block is held
+         * to at `PinVault.init`: an `https://` URL (also for `enrollmentUrl`
+         * and `renewalUrl`) and at least one bootstrap pin.
+         *
+         * SECURITY: without bootstrap pins the first config fetch trusts
+         * every certificate authority on the device; over `http://` anyone on
+         * the network path reads and — for an unsigned block — rewrites the
+         * config. Tests against a local plain-HTTP server and throwaway demos
+         * only.
+         */
+        fun allowUnpinnedConfigApi() = apply { this.allowUnpinnedConfigApi = true }
+
+        /**
+         * mTLS client keystore bundled with the app. Default password
+         * "changeit" is placeholder only.
+         *
+         * The private key is imported into the Android Keystore as a
+         * non-exportable key when the block is first used and presented from
+         * there. The bytes passed here stay in the app (and in the APK they
+         * were read from), so a bundled key is the same for every install and
+         * readable by anyone who unpacks the app: use it to reach an mTLS
+         * Config API before enrollment, not as a device identity.
+         */
         fun clientKeystore(bytes: ByteArray, password: String = "changeit") = apply {
             this.clientKeystoreBytes = bytes
             this.clientKeyPassword = password
         }
+
+        /**
+         * Accept a private key the SERVER generated as this block's identity.
+         *
+         * By default the device makes its own key in the Android Keystore
+         * and enrolls with a certificate signing request; the key never
+         * exists anywhere else. Without this call the library refuses
+         *  - a PKCS12 answer to an enrollment (an older or P12-only server), and
+         *  - enrolling without a CSR when the Keystore cannot make a key:
+         * `enrollForResult` then returns `Failed` and says so. (The reference
+         * server answers such a request `403 csr_required` unless its
+         * `ENROLLMENT_P12` is on.)
+         *
+         * With it, both are accepted. A key that came in a P12 has been on
+         * the server and on the wire; the library imports it into the Android
+         * Keystore as a non-exportable key and keeps only the certificate
+         * chain, but it cannot undo that. Such an identity is not renewed.
+         */
+        fun allowServerGeneratedKey() = apply { this.allowServerGeneratedKey = true }
+
+        /**
+         * Pins the client CA: the certificate authority that issues this
+         * block's client certificates. Each value is the Base64 SHA-256 of a
+         * CA certificate's SubjectPublicKeyInfo — the same form as a host pin
+         * (a leading `sha256/` is accepted).
+         *
+         * With pins, a certificate chain the server issues — at enrollment
+         * and at every renewal — is stored only when it has at least two
+         * certificates, the leaf is over this device's key, valid now, and
+         * signed by a certificate of the chain whose key matches a pin.
+         * Without them the first chain is trusted as it comes from the pinned
+         * enrollment listener, and a renewal must be signed by the CA of the
+         * certificate it replaces. Pin the current CA and its successor to
+         * rotate the CA without an app update.
+         */
+        fun clientCaPins(vararg spkiSha256Base64: String) = apply {
+            this.clientCaPins = spkiSha256Base64.map { pin ->
+                val value = pin.trim().removePrefix("sha256/")
+                // Okio, not android.util.Base64: builders also run in plain JVM tests.
+                val decoded = value.decodeBase64()
+                require(decoded != null && decoded.size == 32) {
+                    "clientCaPins: '$pin' is not a Base64 SHA-256 hash (44 characters)"
+                }
+                decoded.base64()
+            }.distinct()
+        }
+
+        /** [clientCaPins] for a list (Java-friendly). */
+        fun clientCaPins(pins: List<String>) = clientCaPins(*pins.toTypedArray())
+
+        /**
+         * The longest lifetime (`notAfter - notBefore`, and `notAfter` from
+         * now) of a client certificate this block stores. Default 825 days.
+         * A chain with a longer-lived leaf is refused at enrollment and at
+         * renewal, and a stored one is renewed at the next check: a
+         * certificate that never comes up for renewal is never looked at
+         * again by the server.
+         */
+        fun maxClientCertLifetimeDays(days: Int) = apply {
+            require(days >= 1) { "maxClientCertLifetimeDays must be at least 1" }
+            this.maxClientCertLifetimeDays = days
+        }
+        /**
+         * Further listeners this block's client identity may be presented to,
+         * as `https://host:port/` or `host:port` (the port is required). The
+         * identity always goes to the block's own Config API, enrollment and
+         * renewal URLs; any other host that asks for a client certificate gets
+         * none, because the certificate names the device. List here an mTLS
+         * API the app calls with this block's client (for example a second
+         * listener of the same backend).
+         *
+         * Compiled in, and once set it is the whole list: the server config
+         * cannot add hosts to it — a pin entry with `mtls = true` then gets
+         * the identity only if its host is listed here (or is one of the
+         * block's own URLs). A block that sets no `clientCertHosts` keeps the
+         * earlier behaviour, where the signed config's `mtls = true` entries
+         * name the hosts the identity goes to (so whoever signs the config
+         * can name them). Host-specific client certificates are unaffected.
+         */
+        fun clientCertHosts(vararg hosts: String) = apply {
+            this.clientCertHosts = hosts.map { h ->
+                val url = if (h.contains("://")) h.trim() else "https://${h.trim()}/"
+                val parsed = url.toHttpUrlOrNull()
+                require(parsed != null && parsed.isHttps && Regex(":\\d+").containsMatchIn(url.substringAfter("://").substringBefore("/"))) {
+                    "clientCertHosts: '$h' must be https://host:port/ or host:port"
+                }
+                url
+            }.distinct()
+        }
+
+        /** [clientCertHosts] for a list (Java-friendly). */
+        fun clientCertHosts(hosts: List<String>) = clientCertHosts(*hosts.toTypedArray())
+
         fun enrollmentEndpoint(endpoint: String) = apply { this.enrollmentEndpoint = endpoint }
         fun clientCertEndpoint(endpoint: String) = apply { this.clientCertEndpoint = endpoint }
         fun vaultReportEndpoint(endpoint: String) = apply { this.vaultReportEndpoint = endpoint }
@@ -330,7 +552,14 @@ data class ConfigApiBlock @JvmOverloads constructor(
                 renewalUrl = renewalUrl,
                 enrollmentUrl = enrollmentUrl,
                 clientCertRenewalThreshold = clientCertRenewalThreshold,
-                clientCertRenewalEnabled = clientCertRenewalEnabled
+                clientCertRenewalEnabled = clientCertRenewalEnabled,
+                serverScope = serverScope,
+                allowUnsigned = allowUnsigned,
+                allowUnpinnedConfigApi = allowUnpinnedConfigApi,
+                allowServerGeneratedKey = allowServerGeneratedKey,
+                clientCaPins = clientCaPins,
+                maxClientCertLifetimeDays = maxClientCertLifetimeDays,
+                clientCertHosts = clientCertHosts
             )
         }
     }
@@ -357,7 +586,14 @@ data class ConfigApiBlock @JvmOverloads constructor(
                 renewalUrl == other.renewalUrl &&
                 enrollmentUrl == other.enrollmentUrl &&
                 clientCertRenewalThreshold == other.clientCertRenewalThreshold &&
-                clientCertRenewalEnabled == other.clientCertRenewalEnabled
+                clientCertRenewalEnabled == other.clientCertRenewalEnabled &&
+                serverScope == other.serverScope &&
+                allowUnsigned == other.allowUnsigned &&
+                allowUnpinnedConfigApi == other.allowUnpinnedConfigApi &&
+                allowServerGeneratedKey == other.allowServerGeneratedKey &&
+                clientCaPins == other.clientCaPins &&
+                maxClientCertLifetimeDays == other.maxClientCertLifetimeDays &&
+                clientCertHosts == other.clientCertHosts
     }
 
     override fun hashCode(): Int {
@@ -382,6 +618,13 @@ data class ConfigApiBlock @JvmOverloads constructor(
         r = 31 * r + (enrollmentUrl?.hashCode() ?: 0)
         r = 31 * r + clientCertRenewalThreshold.hashCode()
         r = 31 * r + clientCertRenewalEnabled.hashCode()
+        r = 31 * r + (serverScope?.hashCode() ?: 0)
+        r = 31 * r + allowUnsigned.hashCode()
+        r = 31 * r + allowUnpinnedConfigApi.hashCode()
+        r = 31 * r + allowServerGeneratedKey.hashCode()
+        r = 31 * r + clientCaPins.hashCode()
+        r = 31 * r + maxClientCertLifetimeDays
+        r = 31 * r + clientCertHosts.hashCode()
         return r
     }
 
@@ -390,6 +633,9 @@ data class ConfigApiBlock @JvmOverloads constructor(
 
         /** Renew with a third of the lifetime left. */
         const val DEFAULT_RENEWAL_THRESHOLD: Double = 1.0 / 3
+
+        /** Longest client-certificate lifetime accepted unless the block says otherwise (days). */
+        const val DEFAULT_MAX_CLIENT_CERT_LIFETIME_DAYS: Int = 825
 
         /**
          * Strips PEM armour and whitespace so a key pasted as a PEM block, or

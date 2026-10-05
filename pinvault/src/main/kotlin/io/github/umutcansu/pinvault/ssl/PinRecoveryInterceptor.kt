@@ -7,7 +7,6 @@ import okhttp3.Response
 import timber.log.Timber
 import java.io.IOException
 import java.security.cert.CertificateException
-import java.util.concurrent.ConcurrentHashMap
 import javax.net.ssl.SSLHandshakeException
 import javax.net.ssl.SSLPeerUnverifiedException
 
@@ -35,14 +34,27 @@ import javax.net.ssl.SSLPeerUnverifiedException
  * certificate expired or not yet valid). A config refresh cannot repair it,
  * so it is rethrown untouched instead of triggering recovery.
  *
- * ## Circuit breaker
+ * ## Budget
  *
- * Recovery is gated per-host so a backend that's actually serving bad pins
- * cannot thrash a client into a tight retry loop:
- *   - After [MAX_ATTEMPTS_PER_WINDOW] failed recoveries within
- *     [ATTEMPT_WINDOW_MS], the host enters cooldown for [COOLDOWN_MS].
- *   - During cooldown, the interceptor short-circuits and rethrows the
- *     original exception without consulting the updater.
+ * A refetch costs the backend a request, and a failing handshake is something
+ * anyone on the network can cause. Recovery is therefore bounded three ways:
+ *   - **Per host** (circuit breaker): after [MAX_ATTEMPTS_PER_WINDOW] failed
+ *     recoveries within [ATTEMPT_WINDOW_MS], the host enters cooldown for
+ *     [COOLDOWN_MS]; the interceptor then rethrows the original exception
+ *     without consulting the updater. At most [MAX_TRACKED_HOSTS] hosts are
+ *     tracked (least recently used first out).
+ *   - **Across hosts**: at most [GLOBAL_MAX_REFETCHES] refetches per
+ *     [ATTEMPT_WINDOW_MS], whatever the hosts. Without it every new host
+ *     name came with a fresh per-host budget.
+ *   - **Unknown hosts**: a host the config has no pin entry for
+ *     ([UnpinnedHostException]) is worth one refetch — the config may have
+ *     gained the host since — but only one per [ATTEMPT_WINDOW_MS] for all
+ *     such hosts together.
+ *
+ * Refetches are serialised, and requests that fail together share one: the
+ * cooldown and the budget are checked inside the lock, and a request that
+ * finds a refetch finished since it started takes that refetch's outcome
+ * instead of running its own.
  */
 internal class PinRecoveryInterceptor(
     private val updater: () -> Boolean,
@@ -50,9 +62,12 @@ internal class PinRecoveryInterceptor(
      * Optional fallback client for the retry, used only when retrying on the
      * caller's own chain still hits a pin mismatch. See [retry].
      */
-    private val newClientProvider: (() -> okhttp3.OkHttpClient)? = null
+    private val newClientProvider: (() -> okhttp3.OkHttpClient)? = null,
+    /** Wall clock for the windows and the cooldown. Tests set it. */
+    private val clock: () -> Long = System::currentTimeMillis
 ) : Interceptor {
 
+    /** Guards every field below and serialises refetches. */
     private val lock = Any()
 
     /**
@@ -65,24 +80,60 @@ internal class PinRecoveryInterceptor(
         var cooldownUntilMs: Long = 0L
     )
 
-    private val recoveryState = ConcurrentHashMap<String, RecoveryState>()
+    /** Access-ordered and bounded: host names come from requests, so the map must not grow with them. */
+    private val recoveryState = object : LinkedHashMap<String, RecoveryState>(16, 0.75f, true) {
+        override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, RecoveryState>?): Boolean =
+            size > MAX_TRACKED_HOSTS
+    }
+
+    /** When the refetches of the current window started, oldest first — the budget across hosts. */
+    private val refetchTimes = ArrayDeque<Long>()
+
+    /** When a refetch was last spent on a host without a pin entry; null = never. */
+    private var lastUnknownHostRefetchMs: Long? = null
+
+    /** The last refetch: when it finished ([System.nanoTime]) and whether it brought a usable config. */
+    private class Refetch(val finishedAtNanos: Long, val updated: Boolean)
+
+    private var lastRefetch: Refetch? = null
 
     override fun intercept(chain: Interceptor.Chain): Response {
         val request = chain.request()
+        // The fallback retry below runs on a client that has this interceptor
+        // too; one recovery per request, never a nested one.
+        if (request.tag(RecoveryAttempt::class.java) != null) return chain.proceed(request)
+        val startedAtNanos = System.nanoTime()
         return try {
             chain.proceed(request)
         } catch (e: IOException) {
             if (!isPinMismatch(e)) throw e
 
             val host = request.url.host
-            if (isInCooldown(host)) {
-                Timber.w("Pin recovery in cooldown for %s — rethrowing", host)
-                throw e
+            val updated = synchronized(lock) {
+                // Inside the lock on purpose: of several requests failing
+                // together, the first refetches; by the time the others get
+                // here the host may be in cooldown or the answer may be in.
+                if (isInCooldown(host)) {
+                    Timber.w("Pin recovery in cooldown for %s — rethrowing", host)
+                    throw e
+                }
+                val finishedSinceStart = lastRefetch?.takeIf { it.finishedAtNanos - startedAtNanos > 0 }
+                if (finishedSinceStart != null) {
+                    Timber.d("Pin failure for %s — a config refetch finished since this request started, using its result", host)
+                    finishedSinceStart.updated
+                } else {
+                    if (!takeBudget(host, unknownHost = e.cause is io.github.umutcansu.pinvault.model.UnpinnedHostException)) throw e
+                    Timber.w("Pin mismatch detected for %s — attempting auto-recovery", host)
+                    val result = try {
+                        updater()
+                    } catch (updateErr: Exception) {
+                        Timber.e(updateErr, "Auto-recovery for %s threw", host)
+                        false
+                    }
+                    lastRefetch = Refetch(System.nanoTime(), result)
+                    result
+                }
             }
-
-            Timber.w("Pin mismatch detected for %s — attempting auto-recovery", host)
-
-            val updated = synchronized(lock) { updater() }
 
             if (!updated) {
                 recordFailure(host)
@@ -98,6 +149,30 @@ internal class PinRecoveryInterceptor(
                 throw retryErr
             }
         }
+    }
+
+    /**
+     * True when one more refetch may be spent now, and then it is counted.
+     * Call with [lock] held.
+     */
+    private fun takeBudget(host: String, unknownHost: Boolean): Boolean {
+        val now = clock()
+        while (refetchTimes.isNotEmpty() && now - refetchTimes.first() > ATTEMPT_WINDOW_MS) refetchTimes.removeFirst()
+        if (unknownHost) {
+            val last = lastUnknownHostRefetchMs
+            if (last != null && now - last in 0..ATTEMPT_WINDOW_MS) {
+                Timber.w("No pin entry for %s — a refetch for an unknown host was already spent in this window, rethrowing", host)
+                return false
+            }
+        }
+        if (refetchTimes.size >= GLOBAL_MAX_REFETCHES) {
+            Timber.w("Pin recovery budget used up (%d refetches in %d min) — rethrowing for %s",
+                GLOBAL_MAX_REFETCHES, ATTEMPT_WINDOW_MS / 60_000, host)
+            return false
+        }
+        if (unknownHost) lastUnknownHostRefetchMs = now
+        refetchTimes.addLast(now)
+        return true
     }
 
     /**
@@ -124,7 +199,7 @@ internal class PinRecoveryInterceptor(
             if (newClient == null || !isPinMismatch(e)) throw e
             Timber.d("Retry on the caller's client still mismatched — retrying on the refreshed client")
             try {
-                newClient.newCall(request).execute()
+                newClient.newCall(request.newBuilder().tag(RecoveryAttempt::class.java, RecoveryAttempt).build()).execute()
             } catch (fallbackErr: IOException) {
                 // The fallback is the library's own client. It does NOT carry
                 // the caller's Dns, interceptors or timeouts, so when it fails
@@ -155,20 +230,24 @@ internal class PinRecoveryInterceptor(
         // something pinning can't fix. See
         // [io.github.umutcansu.pinvault.model.CertificateValidityException].
         if (e.cause is CertificateValidityException) return false
+        // Same for a chain the platform CAs refuse (requireCaTrust): pins
+        // cannot make it trusted. An EXPIRED config, on the other hand, is
+        // exactly what a refetch repairs, so it stays a recoverable failure.
+        if (e.cause is io.github.umutcansu.pinvault.model.CaTrustException) return false
 
         return e is SSLPeerUnverifiedException ||
             (e is SSLHandshakeException && e.cause is CertificateException)
     }
 
-    private fun isInCooldown(host: String): Boolean {
+    private fun isInCooldown(host: String): Boolean = synchronized(lock) {
         val state = recoveryState[host] ?: return false
-        return System.currentTimeMillis() < state.cooldownUntilMs
+        clock() < state.cooldownUntilMs
     }
 
     private fun recordFailure(host: String) {
-        val now = System.currentTimeMillis()
-        recoveryState.compute(host) { _, existing ->
-            val state = existing ?: RecoveryState()
+        val now = clock()
+        synchronized(lock) {
+            val state = recoveryState.getOrPut(host) { RecoveryState() }
             // Reset window if the previous window has elapsed.
             if (now - state.firstAttemptMs > ATTEMPT_WINDOW_MS) {
                 state.firstAttemptMs = now
@@ -180,7 +259,6 @@ internal class PinRecoveryInterceptor(
                 state.cooldownUntilMs = now + COOLDOWN_MS
                 Timber.w("Pin recovery circuit-broken for %s until +%dms", host, COOLDOWN_MS)
             }
-            state
         }
     }
 
@@ -205,5 +283,12 @@ internal class PinRecoveryInterceptor(
         private const val ATTEMPT_WINDOW_MS = 5L * 60 * 1000
         /** How long the breaker stays open after tripping (10 minutes). */
         private const val COOLDOWN_MS = 10L * 60 * 1000
+        /** Refetches allowed per [ATTEMPT_WINDOW_MS] across all hosts. */
+        internal const val GLOBAL_MAX_REFETCHES = 6
+        /** Hosts whose recovery state is kept; the least recently used one goes first. */
+        internal const val MAX_TRACKED_HOSTS = 64
     }
 }
+
+/** Marks the fallback retry of a recovery, so it does not start a recovery of its own. */
+internal object RecoveryAttempt

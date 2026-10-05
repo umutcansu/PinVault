@@ -39,6 +39,7 @@ class SSLCertificateUpdaterTest {
     private val backupCert = TestCertUtil.generateSelfSigned(cn = "pin-backup")
     private val pin1 = testCert.sha256Pin
     private val pin2 = backupCert.sha256Pin
+    private val pin3 = TestCertUtil.generateSelfSigned(cn = "pin-other").sha256Pin
 
     @Before
     fun setUp() {
@@ -369,7 +370,7 @@ class SSLCertificateUpdaterTest {
         // The stored config is the device's last known-good pin set; a
         // rejected fetch must leave it exactly as it was.
         verify(exactly = 0) { configStore.save(any()) }
-        verify(exactly = 0) { configStore.clear() }
+        verify(exactly = 0) { configStore.wipeAll() }
     }
 
     @Test
@@ -435,7 +436,11 @@ class SSLCertificateUpdaterTest {
             pins = listOf(HostPin("api.test", listOf(pin1, pin2), version = 5)),
             issuedAt = storedIssuedAt
         )
-        val remote = stored.copy(issuedAt = storedIssuedAt - 1)
+        // An older envelope with OTHER content (the pins it carried back then).
+        val remote = stored.copy(
+            issuedAt = storedIssuedAt - 1,
+            pins = listOf(HostPin("api.test", listOf(pin1, pin3), version = 5))
+        )
 
         every { configStore.getCurrentVersion() } returns 5
         every { configStore.getCurrentIssuedAt() } returns storedIssuedAt
@@ -449,21 +454,47 @@ class SSLCertificateUpdaterTest {
     }
 
     @Test
-    fun `updateNow — aynı imzalı config yeniden gelirse AlreadyCurrent, replay değil`() = runTest {
-        // A backend that signs once per change (HSM/KMS signer, signature
-        // cache, CDN) serves the byte-identical config until it changes.
-        val storedIssuedAt = 1_000_000_000_000L
+    fun `updateNow — an older copy of the current config is AlreadyCurrent and writes nothing`() = runTest {
+        // Fetches write the newer issuedAt back, so a cache serving an earlier
+        // envelope of unchanged content arrives below the watermark.
+        val storedIssuedAt = System.currentTimeMillis() - 60_000
         val stored = CertificateConfig(
             version = 5,
             pins = listOf(HostPin("api.test", listOf(pin1, pin2), version = 5)),
-            issuedAt = storedIssuedAt
+            issuedAt = storedIssuedAt,
+            expiresAt = storedIssuedAt + 3_600_000
+        )
+        val remote = stored.copy(issuedAt = storedIssuedAt - 5_000, expiresAt = storedIssuedAt + 1_000_000)
+
+        every { configStore.getCurrentVersion() } returns 5
+        every { configStore.getCurrentIssuedAt() } returns storedIssuedAt
+        every { configStore.load() } returns stored
+        coEvery { configApi.fetchConfig(5) } returns remote
+
+        val result = createUpdater().updateNow()
+
+        assertEquals(UpdateResult.AlreadyCurrent, result)
+        verify(exactly = 0) { configStore.save(any()) }
+        verify(exactly = 0) { configStore.save(any()) }
+    }
+
+    @Test
+    fun `updateNow — aynı imzalı config yeniden gelirse AlreadyCurrent, replay değil`() = runTest {
+        // A backend that signs once per change (HSM/KMS signer, signature
+        // cache, CDN) serves the byte-identical config until it changes.
+        // Recent: an already expired envelope is refused before the replay check.
+        val storedIssuedAt = System.currentTimeMillis() - 60_000
+        val stored = CertificateConfig(
+            version = 5,
+            pins = listOf(HostPin("api.test", listOf(pin1, pin2), version = 5)),
+            issuedAt = storedIssuedAt,
+            expiresAt = storedIssuedAt + 3_600_000
         )
         // Same config as delivered; its force flag was honoured on first
         // delivery and cleared on disk since — it must not be re-applied.
         val remote = stored.copy(
             forceUpdate = true,
-            pins = stored.pins.map { it.copy(forceUpdate = true) },
-            expiresAt = storedIssuedAt + 60_000
+            pins = stored.pins.map { it.copy(forceUpdate = true) }
         )
 
         every { configStore.getCurrentVersion() } returns 5
@@ -474,6 +505,7 @@ class SSLCertificateUpdaterTest {
         val result = createUpdater().updateNow()
 
         assertEquals(UpdateResult.AlreadyCurrent, result)
+        verify(exactly = 0) { configStore.save(any()) }
         verify(exactly = 0) { configStore.save(any()) }
     }
 
@@ -548,7 +580,7 @@ class SSLCertificateUpdaterTest {
         verify { configStore.save(remote) }
         // …and then rolled back to the last config known to reach the backend.
         verify { configStore.save(stored) }
-        verify(exactly = 0) { configStore.clear() }
+        verify(exactly = 0) { configStore.clearActive() }
         assertEquals(
             "live client must be rebuilt with the previous config",
             stored, httpClientProvider.currentConfig
@@ -574,7 +606,8 @@ class SSLCertificateUpdaterTest {
         val result = updater.initializeAndUpdate()
 
         assertTrue("Expected Failed but got $result", result is InitResult.Failed)
-        verify { configStore.clear() }
+        verify { configStore.clearActive() }
+        verify(exactly = 0) { configStore.wipeAll() }
         assertNull(
             "with nothing to roll back to the client must be fail-closed again",
             httpClientProvider.currentConfig
@@ -607,7 +640,7 @@ class SSLCertificateUpdaterTest {
         assertTrue("Expected Ready but got $result", result is InitResult.Ready)
         verify { configStore.save(remote) }
         verify(exactly = 0) { configStore.save(stored) }
-        verify(exactly = 0) { configStore.clear() }
+        verify(exactly = 0) { configStore.wipeAll() }
         assertEquals(
             "the freshly applied config must stay on the live client",
             remote, httpClientProvider.currentConfig
@@ -634,7 +667,7 @@ class SSLCertificateUpdaterTest {
 
         assertTrue("Expected Ready but got $result", result is InitResult.Ready)
         coVerify(exactly = 0) { configApi.healthCheck() }
-        verify(exactly = 0) { configStore.clear() }
+        verify(exactly = 0) { configStore.wipeAll() }
     }
 
     // ── forceUpdate bayrağının KAPANMASI cihaza ulaşmalı (D04) ──────────────
@@ -681,7 +714,10 @@ class SSLCertificateUpdaterTest {
         // never an unvalidated remote payload.
         assertEquals(stored.pins.map { it.hostname }, saved.captured.pins.map { it.hostname })
         assertEquals(stored.pins.map { it.version }, saved.captured.pins.map { it.version })
-        assertEquals(stored.issuedAt, saved.captured.issuedAt)
+        // The newer envelope's freshness is written back with the flags, so
+        // the stored config does not expire while the server vouches for it.
+        assertEquals(remote.issuedAt, saved.captured.issuedAt)
+        assertEquals(remote.expiresAt, saved.captured.expiresAt)
     }
 
     @Test

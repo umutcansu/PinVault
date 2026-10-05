@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <application>
+        <!-- Host for the unlock prompt in UserAuthKeystoreTest. -->
+        <activity
+            android:name="androidx.fragment.app.FragmentActivity"
+            android:exported="false" />
+    </application>
+</manifest>

@@ -13,10 +13,16 @@ import timber.log.Timber
  * on every request. Only the renewal endpoint used to read it, so a revoked
  * device kept running on its stored config until its renewal came due.
  *
+ * The listener also gets the client certificate the connection presented
+ * (from the TLS handshake of the response), or null when it presented none.
+ * The answer itself is not signed: what may follow from it depends on
+ * whether the server was looking at this device's identity when it gave it
+ * (see `ConfigApiClient`: vault files are wiped only then).
+ *
  * The response goes on untouched: the body is peeked, not consumed.
  */
 internal class ReenrollRequiredInterceptor(
-    private val onReenrollRequired: (reason: String) -> Unit
+    private val onReenrollRequired: (reason: String, presented: java.security.cert.X509Certificate?) -> Unit
 ) : Interceptor {
 
     override fun intercept(chain: Interceptor.Chain): Response {
@@ -24,7 +30,8 @@ internal class ReenrollRequiredInterceptor(
         if (response.code == 403) {
             reenrollReason(response)?.let { reason ->
                 try {
-                    onReenrollRequired(reason)
+                    val presented = response.handshake?.localCertificates?.firstOrNull() as? java.security.cert.X509Certificate
+                    onReenrollRequired(reason, presented)
                 } catch (e: Exception) {
                     Timber.w(e, "reenroll_required listener threw — ignoring")
                 }

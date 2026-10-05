@@ -22,11 +22,26 @@ class CertificateUpdateWorker(
         val updateResult = PinVault.updateNow()
         PinVault.notifyUpdateResult(updateResult)
 
+        // The other Config APIs' configs expire too; keep them fresh.
+        try {
+            PinVault.updateOtherConfigApis()
+        } catch (e: Exception) {
+            Timber.e(e, "Config update of the other Config APIs failed during periodic update")
+        }
+
         // Sync vault files with updateWithPins=true
         try {
             PinVault.syncAllFiles()
         } catch (e: Exception) {
             Timber.e(e, "Vault file sync failed during periodic update")
+        }
+
+        // Files past their offline lifetime (maxOfflineAge + wipeWhenStale) are
+        // deleted — after the sync, so a file just confirmed stays.
+        try {
+            PinVault.wipeStaleVaultFiles()
+        } catch (e: Exception) {
+            Timber.e(e, "Offline-lifetime check failed during periodic update")
         }
 
         // A device whose enrollment waits for approval asks again; once let in,

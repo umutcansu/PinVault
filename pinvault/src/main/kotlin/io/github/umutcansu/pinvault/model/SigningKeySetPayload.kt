@@ -12,5 +12,10 @@ internal data class SigningKeySetPayload(
     val type: String? = null,
     val version: Int = 0,
     val keys: List<String?>? = null,
-    val requiredSignatures: Int? = null
+    val requiredSignatures: Int? = null,
+    /**
+     * Optional: the Config API (`serverScope`) the set is for. When present
+     * and the block sets `serverScope`, they must match. Older sets omit it.
+     */
+    val configApiId: String? = null
 )

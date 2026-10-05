@@ -138,4 +138,33 @@ class PinHostMatcherTest {
         )
         assertEquals(setOf("PIN_NARROW"), PinHostMatcher.match(narrowMap, "api.example.com"))
     }
+
+    @Test
+    fun `wildcard with a port matches that port only`() {
+        val map = PinHostMatcher.build(
+            listOf(
+                "*.example.com:443" to setOf("PIN_443"),
+                "*.example.org" to setOf("PIN_ANY_PORT")
+            )
+        )
+        assertEquals(setOf("PIN_443"), PinHostMatcher.match(map, "api.example.com", 443))
+        assertNull("another port", PinHostMatcher.match(map, "api.example.com", 8443))
+        assertNull("no port known", PinHostMatcher.match(map, "api.example.com"))
+        assertNull("still one label only", PinHostMatcher.match(map, "a.b.example.com", 443))
+        assertEquals(setOf("PIN_ANY_PORT"), PinHostMatcher.match(map, "api.example.org", 443))
+    }
+
+    @Test
+    fun `wildcard with a port yields to an exact host-port entry and wins over the plain host`() {
+        val map = PinHostMatcher.build(
+            listOf(
+                "api.example.com:443" to setOf("EXACT_PORT"),
+                "*.example.com:443" to setOf("WILD_PORT"),
+                "web.example.com" to setOf("PLAIN_HOST")
+            )
+        )
+        assertEquals(setOf("EXACT_PORT"), PinHostMatcher.match(map, "api.example.com", 443))
+        assertEquals(setOf("WILD_PORT"), PinHostMatcher.match(map, "web.example.com", 443))
+        assertEquals(setOf("PLAIN_HOST"), PinHostMatcher.match(map, "web.example.com", 80))
+    }
 }

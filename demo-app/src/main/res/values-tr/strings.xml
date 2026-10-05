@@ -84,6 +84,8 @@
     <string name="enrollment_pending_status">⏳ Onay bekleniyor · %1$s</string>
     <string name="enrollment_apply">Kodsuz başvur</string>
     <string name="enrollment_expired">✗ Başvuru zamanında onaylanmadı ve düştü. Tekrar başvurun.</string>
+    <string name="enrollment_attestation_failed">✗ Sunucu bu cihazın ve uygulamanın gerçek olduğunu doğrulayamadı (anahtar doğrulaması): %1$s</string>
+    <string name="enrollment_csr_required">✗ Sunucu yalnızca cihazda üretilen anahtara sertifika veriyor; bu cihaz anahtar üretemedi.</string>
     <string name="enrollment_rejected">✗ Kayıt isteği yönetici tarafından reddedildi. Yeniden denemek için kodu tekrar girin.</string>
     <string name="enrollment_limit_reached">✗ Bu kodla kayıt sınırı doldu. Yöneticiden yeni bir kod isteyin.</string>
     <string name="unenrolled">Client sertifika silindi</string>

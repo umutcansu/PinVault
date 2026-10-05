@@ -32,6 +32,9 @@ class ReenrollRequiredDetectionTest {
     private lateinit var server: MockWebServer
     private val reasons = mutableListOf<String>()
 
+    /** What each refused connection had presented as its client certificate; null = none. */
+    private val presentedCertificates = mutableListOf<java.security.cert.X509Certificate?>()
+
     private val revoked = MockResponse().setResponseCode(403)
         .setBody("""{"error":"reenroll_required","message":"This identity was revoked."}""")
 
@@ -56,7 +59,10 @@ class ReenrollRequiredDetectionTest {
             configUrl = server.url("/").toString(),
             bootstrapPins = listOf(HostPin("test.com", listOf("h1", "h2"))),
             sslManager = sslManager,
-            onReenrollRequired = { reasons += it }
+            onReenrollRequired = { reason, presented ->
+                reasons += reason
+                presentedCertificates += presented
+            }
         )
     }
 
@@ -73,6 +79,9 @@ class ReenrollRequiredDetectionTest {
         server.enqueue(revoked)
         expectFailure { createApi().fetchConfig(currentVersion = 3) }
         assertEquals(listOf("This identity was revoked."), reasons)
+        // No client certificate on this connection: the listener is told so,
+        // and nothing is wiped on the strength of such an answer.
+        assertEquals(listOf<java.security.cert.X509Certificate?>(null), presentedCertificates)
     }
 
     @Test

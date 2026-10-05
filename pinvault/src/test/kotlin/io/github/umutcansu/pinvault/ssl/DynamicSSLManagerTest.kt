@@ -84,9 +84,11 @@ class DynamicSSLManagerTest {
     }
 
     @Test
-    fun `buildBootstrapClient — no pins returns unpinned client`() {
-        val client = manager.buildBootstrapClient(emptyList())
-        assertNotNull(client)
+    fun `buildBootstrapClient — no pins is unpinned only when asked for`() {
+        // Fail-closed by default (see BootstrapClientRulesTest); system trust
+        // only with allowUnpinnedConfigApi().
+        assertTrue(manager.buildBootstrapClient(emptyList()).networkInterceptors.isNotEmpty())
+        assertTrue(manager.buildBootstrapClient(emptyList(), allowUnpinned = true).networkInterceptors.isEmpty())
     }
 
     @Test
@@ -234,11 +236,13 @@ class DynamicSSLManagerTest {
         manager.loadClientKey(cert.keyPair.private, arrayOf(cert.certificate))
 
         assertTrue(manager.hasClientKeystore())
+        manager.setIdentityHosts(listOf("https://config.test:8092/"))
         val kms = manager.buildCompositeKeyManagers()!!
         assertEquals(1, kms.size)
         val km = kms[0] as javax.net.ssl.X509ExtendedKeyManager
-        val alias = km.chooseClientAlias(arrayOf("RSA"), null, null)
-        assertEquals("pinvault-client", alias)
+        // Offered to the block's own listener; the alias names its owner.
+        val alias = km.chooseEngineClientAlias(arrayOf("RSA"), null, engine("config.test", 8092))
+        assertEquals("d/pinvault-client", alias)
         assertSame(cert.keyPair.private, km.getPrivateKey(alias))
         assertEquals(cert.certificate, km.getCertificateChain(alias)!![0])
         assertEquals(cert.certificate, manager.defaultClientCertificate())
@@ -268,9 +272,85 @@ class DynamicSSLManagerTest {
         val km = manager.buildCompositeKeyManagers()!![0] as javax.net.ssl.X509ExtendedKeyManager
         // Aliases from both managers are visible through the composite.
         val aliases = km.getClientAliases("RSA", null)!!.toList()
-        assertTrue(aliases.contains("pinvault-client"))
+        assertTrue(aliases.contains("d/pinvault-client"))
         assertTrue(aliases.size >= 2)
-        assertSame(default.keyPair.private, km.getPrivateKey("pinvault-client"))
+        assertSame(default.keyPair.private, km.getPrivateKey("d/pinvault-client"))
+        // The host's own certificate wins for that host …
+        val hostAlias = km.chooseEngineClientAlias(arrayOf("RSA"), null, engine("specific.host", 443))!!
+        assertTrue(hostAlias, hostAlias.startsWith("h/specific.host/"))
+        assertEquals(host.certificate, km.getCertificateChain(hostAlias)!![0])
+    }
+
+    // ── Who gets to see the client identity ────────────────────────────
+
+    private fun engine(host: String, port: Int) = javax.net.ssl.SSLContext.getDefault().createSSLEngine(host, port)
+
+    private fun identityFor(host: String, port: Int, config: CertificateConfig? = null): java.security.cert.X509Certificate? {
+        val km = manager.buildCompositeKeyManagers { config }!![0] as javax.net.ssl.X509ExtendedKeyManager
+        val alias = km.chooseEngineClientAlias(arrayOf("RSA", "EC"), null, engine(host, port)) ?: return null
+        return km.getCertificateChain(alias)!![0]
+    }
+
+    @Test
+    fun `the default identity is offered to the block's own listeners only`() {
+        val device = TestCertUtil.generateSelfSigned(cn = "PinVault Client: dev-1", password = password)
+        manager.loadClientKey(device.keyPair.private, arrayOf(device.certificate))
+        manager.setIdentityHosts(listOf("https://config.test:8092/", "https://config.test:8093/", null))
+
+        assertEquals(device.certificate, identityFor("config.test", 8092))
+        assertEquals(device.certificate, identityFor("CONFIG.test", 8093))
+        // Another port of the same host, and any other host that asks: nothing.
+        assertNull(identityFor("config.test", 8444))
+        assertNull(identityFor("analytics.test", 443))
+    }
+
+    @Test
+    fun `a pinned host gets the default identity only when its pin entry says mtls`() {
+        val device = TestCertUtil.generateSelfSigned(cn = "PinVault Client: dev-1", password = password)
+        manager.loadClientKeystore(device.p12Bytes, password)
+        val pins = listOf(device.sha256Pin, device.sha256Pin)
+        val config = CertificateConfig(
+            version = 1,
+            pins = listOf(
+                HostPin("mtls.test", pins, mtls = true),
+                HostPin("*.mtls.example.com", pins, mtls = true),
+                HostPin("door.test:9443", pins, mtls = true),
+                HostPin("plain.test", pins)
+            )
+        )
+
+        assertEquals(device.certificate, identityFor("mtls.test", 443, config))
+        assertEquals(device.certificate, identityFor("a.mtls.example.com", 443, config))
+        assertEquals(device.certificate, identityFor("door.test", 9443, config))
+        assertNull("the entry names one port", identityFor("door.test", 443, config))
+        assertNull("pinned, but not an mTLS host", identityFor("plain.test", 443, config))
+        assertNull("no pin entry at all", identityFor("unknown.test", 443, config))
+    }
+
+    @Test
+    fun `an unknown peer host gets no client certificate`() {
+        val device = TestCertUtil.generateSelfSigned(cn = "PinVault Client: dev-1", password = password)
+        manager.loadClientKey(device.keyPair.private, arrayOf(device.certificate))
+        manager.setIdentityHosts(listOf("https://config.test/"))
+        val km = manager.buildCompositeKeyManagers()!![0] as javax.net.ssl.X509ExtendedKeyManager
+
+        // No socket, and a socket nobody named a host for: fail closed, no
+        // reverse DNS lookup of the remote address.
+        assertNull(km.chooseClientAlias(arrayOf("RSA"), null, null))
+        assertNull(km.chooseClientAlias(arrayOf("RSA"), null, java.net.Socket()))
+        assertNull(km.chooseEngineClientAlias(arrayOf("RSA"), null, javax.net.ssl.SSLContext.getDefault().createSSLEngine()))
+    }
+
+    @Test
+    fun `two key stores with the same alias do not get mixed up`() {
+        val a = TestCertUtil.generateSelfSigned(cn = "client-a", password = password, alias = "client")
+        val b = TestCertUtil.generateSelfSigned(cn = "client-b", password = password, alias = "client")
+        manager.loadClientKeystore(a.p12Bytes, password)
+        manager.loadHostClientCerts(mapOf("b.host" to b.p12Bytes), password)
+        manager.setIdentityHosts(listOf("https://config.test/"))
+
+        assertEquals(a.certificate, identityFor("config.test", 443))
+        assertEquals(b.certificate, identityFor("b.host", 443))
     }
 
     @Test
@@ -278,5 +358,26 @@ class DynamicSSLManagerTest {
         val cert = TestCertUtil.generateSelfSigned(cn = "p12-identity", password = password)
         manager.loadClientKeystore(cert.p12Bytes, password)
         assertEquals(cert.certificate, manager.defaultClientCertificate())
+    }
+
+    @Test
+    fun `with clientCertHosts listed, an mtls pin entry adds no host`() {
+        val device = TestCertUtil.generateSelfSigned(cn = "PinVault Client: dev-1", password = password)
+        manager.loadClientKey(device.keyPair.private, arrayOf(device.certificate))
+        val pins = listOf(device.sha256Pin, device.sha256Pin)
+        val config = CertificateConfig(
+            version = 1,
+            pins = listOf(HostPin("listed.test:9443", pins, mtls = true), HostPin("named-by-signer.test", pins, mtls = true))
+        )
+        // The block's own URL plus the app's clientCertHosts: the whole list.
+        manager.setIdentityHosts(listOf("https://config.test:8092/", "https://listed.test:9443/"), onlyThese = true)
+
+        assertEquals(device.certificate, identityFor("config.test", 8092, config))
+        assertEquals(device.certificate, identityFor("listed.test", 9443, config))
+        assertNull("the signed config cannot add a host the app did not list", identityFor("named-by-signer.test", 443, config))
+
+        // Without such a list, mtls = true entries still name hosts, as before.
+        manager.setIdentityHosts(listOf("https://config.test:8092/"))
+        assertEquals(device.certificate, identityFor("named-by-signer.test", 443, config))
     }
 }

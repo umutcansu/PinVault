@@ -5,6 +5,7 @@ import io.github.umutcansu.pinvault.model.CertificateValidityException
 import io.github.umutcansu.pinvault.model.HostPin
 import io.github.umutcansu.pinvault.model.HttpConnectionSettings
 import okhttp3.ConnectionPool
+import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 import okhttp3.OkHttpClient
 import timber.log.Timber
 import java.net.Socket
@@ -33,6 +34,19 @@ import javax.net.ssl.X509TrustManager
  *
  * Instead, `checkServerTrusted()` is invoked by Conscrypt during the TLS handshake
  * with the actual certificate chain, making the pin hash check 100 % reliable.
+ *
+ * ## After the handshake
+ * A trust manager is asked once per FULL handshake. A connection kept alive
+ * (HTTP/2, keep-alive) or a TLS session resumed from the cache never asks it
+ * again, so a pin removed or a config expired in the meantime would go
+ * unnoticed. Two things close that:
+ *  - every client built or configured here carries a network interceptor
+ *    ([PinnedConnectionInterceptor]) that checks, on every request, the
+ *    connection's certificates against the live config and the config's
+ *    expiry;
+ *  - every pin change ([onPinsChanged]) gives the socket factories a fresh
+ *    SSLContext — no cached session to resume — and closes the pooled
+ *    connections of the clients the library built itself.
  */
 internal class DynamicSSLManager(
     /**
@@ -72,6 +86,39 @@ internal class DynamicSSLManager(
         this.connectionListener = listener
     }
 
+    /**
+     * How long a config may still be used after its `expiresAt`
+     * (`PinVaultConfig.Builder.expiredConfigGrace`). Zero: an expired config
+     * pins nothing and every handshake through it is refused.
+     */
+    @Volatile
+    internal var expiredConfigGraceMs: Long = 0L
+
+    /**
+     * Clock for the expiry check: the block's [TrustedClock] in production
+     * (it does not go back when the device clock does), tests set their own.
+     */
+    @Volatile
+    internal var clock: () -> Long = System::currentTimeMillis
+
+    /** Host patterns whose chain must also pass the platform CAs (`requireCaTrust`), pattern → empty set. */
+    @Volatile
+    private var caTrustPatterns: Map<String, Set<String>> = emptyMap()
+
+    /** The platform CA check; tests swap in one over their own trust store. */
+    @Volatile
+    internal var caCheck: ServerCaCheck = TrustManagerCaCheck.platform()
+
+    /**
+     * Hosts (same patterns as pins: exact, `*.example.com`, optional `:port`)
+     * whose server chain must validate against the platform's trust store in
+     * addition to matching a pin. Set from `PinVaultConfig.Builder.requireCaTrust`;
+     * nothing the server sends changes it.
+     */
+    fun requireCaTrust(hostPatterns: List<String>) {
+        caTrustPatterns = PinHostMatcher.build(hostPatterns.map { it to emptySet() })
+    }
+
     /** Default client keystore for mTLS (optional — used when no host-specific cert exists) */
     @Volatile
     private var clientKeyManagers: Array<KeyManager>? = null
@@ -80,8 +127,73 @@ internal class DynamicSSLManager(
     @Volatile
     private var hostKeyManagers: Map<String, javax.net.ssl.X509ExtendedKeyManager> = emptyMap()
 
-    /** Bumped on every change of the client identity, so [LiveSocketFactory] notices it. */
+    /**
+     * Bumped on every change of the client identity AND of the pins, so
+     * [LiveSocketFactory] makes a fresh SSLContext for the next connection.
+     */
     private val keyGeneration = java.util.concurrent.atomic.AtomicLong()
+
+    /**
+     * `host:port` of the listeners the default client identity belongs to:
+     * the block's Config API, enrollment and renewal URLs. See
+     * [setIdentityHosts].
+     */
+    @Volatile
+    private var identityHosts: Map<String, Boolean> = emptyMap()
+
+    /** Connection pools of the clients built by [buildDynamicClient], held weakly. */
+    private val ownPools: MutableSet<ConnectionPool> =
+        java.util.Collections.synchronizedSet(java.util.Collections.newSetFromMap(java.util.WeakHashMap()))
+
+    /** The host each socket made by a [LiveSocketFactory] was opened for, as OkHttp named it. */
+    private val socketHosts: MutableMap<Socket, String> =
+        java.util.Collections.synchronizedMap(java.util.WeakHashMap())
+
+    /**
+     * Names the listeners the default client identity is for. It is offered
+     * to those, to hosts whose pin entry says `mtls = true` and — through
+     * their own certificate — to hosts with a host-specific client
+     * certificate. Any other pinned host that asks for a client certificate
+     * gets none: the certificate names the device (CN = device id), and a
+     * host the device merely talks to has no business learning it.
+     *
+     * @param urls base URLs; anything that is not an http(s) URL is skipped.
+     * @param onlyThese the app listed its mTLS hosts itself
+     *   (`clientCertHosts`): then [urls] are the ONLY hosts the default
+     *   identity goes to, and an `mtls = true` pin entry — which whoever
+     *   signs the config writes — adds none. Without such a list, `mtls =
+     *   true` entries still name further hosts, as before.
+     */
+    fun setIdentityHosts(urls: List<String?>, onlyThese: Boolean = false) {
+        identityHosts = urls.mapNotNull { url ->
+            url?.toHttpUrlOrNull()?.let { "${it.host.lowercase()}:${it.port}" to true }
+        }.toMap()
+        identityHostsOnly = onlyThese
+        keyGeneration.incrementAndGet()
+    }
+
+    /** See [setIdentityHosts]: `mtls = true` pins name no further identity hosts. */
+    @Volatile
+    private var identityHostsOnly: Boolean = false
+
+    /**
+     * The pins changed (a new config, a rollback, a reset). From here on:
+     *  - new connections come from a fresh SSLContext, so none of them can
+     *    resume a TLS session that was verified against the old pins;
+     *  - the pooled connections of the clients this manager built are closed.
+     *
+     * Clients the app built itself with [applyTo] keep their pool — it is the
+     * app's — and are protected by [PinnedConnectionInterceptor] instead: the
+     * next request on a connection whose certificate no longer matches fails
+     * and closes it.
+     */
+    fun onPinsChanged() {
+        keyGeneration.incrementAndGet()
+        val pools = synchronized(ownPools) { ownPools.toList() }
+        if (pools.isEmpty()) return
+        // Off the caller's thread: closing sockets is network I/O.
+        Thread({ pools.forEach { runCatching { it.evictAll() } } }, "PinVault-EvictPinned").apply { isDaemon = true }.start()
+    }
 
     /**
      * Loads a PKCS12 client keystore for mTLS (default — used for all hosts without specific cert).
@@ -94,11 +206,8 @@ internal class DynamicSSLManager(
         clientKeyManagers = kmf.keyManagers
         keyGeneration.incrementAndGet()
 
-        val alias = ks.aliases().toList().firstOrNull()
-        val cert = alias?.let { ks.getCertificate(it) as? java.security.cert.X509Certificate }
-        val cn = cert?.subjectX500Principal?.name?.substringAfter("CN=")?.substringBefore(",") ?: "?"
-        val fingerprint = cert?.let { sha256Base64(it.publicKey.encoded).take(16) } ?: "?"
-        Timber.d("Default client keystore loaded — CN=%s, pin=%s...", cn, fingerprint)
+        // The subject names the device: say that a certificate is loaded, not whose.
+        Timber.d("Default client keystore loaded — %d entr(ies)", ks.size())
     }
 
     /**
@@ -111,12 +220,7 @@ internal class DynamicSSLManager(
         val km = FixedClientKeyManager(alias, privateKey, chain)
         clientKeyManagers = arrayOf(km)
         keyGeneration.incrementAndGet()
-        val leaf = km.certificate
-        val cn = leaf.subjectX500Principal.name.substringAfter("CN=").substringBefore(",")
-        Timber.d(
-            "Default client key loaded — CN=%s, pin=%s..., notAfter=%s",
-            cn, sha256Base64(leaf.publicKey.encoded).take(16), leaf.notAfter
-        )
+        Timber.d("Default client key loaded — notAfter=%s", km.certificate.notAfter)
     }
 
     /** The leaf certificate the default client KeyManager presents, if one is loaded. */
@@ -165,10 +269,34 @@ internal class DynamicSSLManager(
      *
      * @param hostCerts hostname → P12 bytes
      */
-    fun loadHostClientCerts(hostCerts: Map<String, ByteArray>, password: String) {
+    fun loadHostClientCerts(hostCerts: Map<String, ByteArray>, password: String) =
+        loadHostClientIdentities(emptyMap(), hostCerts, password)
+
+    /**
+     * Loads host-specific client identities for mTLS, replacing the ones
+     * loaded before. [hostKeys] are identities whose private key stays in the
+     * Android Keystore (hostname → key and chain) — what a host's P12 becomes
+     * once its key is imported; [hostCerts] (hostname → P12 bytes) are the
+     * ones the platform refused to import. A host in both uses its key.
+     */
+    fun loadHostClientIdentities(
+        hostKeys: Map<String, Pair<java.security.PrivateKey, Array<X509Certificate>>>,
+        hostCerts: Map<String, ByteArray>,
+        password: String
+    ) {
         val managers = mutableMapOf<String, javax.net.ssl.X509ExtendedKeyManager>()
 
+        for ((hostname, identity) in hostKeys) {
+            try {
+                managers[hostname.lowercase()] = FixedClientKeyManager("pinvault-host", identity.first, identity.second)
+                Timber.d("Host client key loaded: %s", hostname)
+            } catch (e: Exception) {
+                Timber.e(e, "Failed to load client key for host: %s", hostname)
+            }
+        }
+
         for ((hostname, p12) in hostCerts) {
+            if (hostname.lowercase() in managers) continue
             try {
                 val ks = KeyStore.getInstance("PKCS12")
                 ks.load(p12.inputStream(), password.toCharArray())
@@ -176,11 +304,8 @@ internal class DynamicSSLManager(
                 kmf.init(ks, password.toCharArray())
                 val km = kmf.keyManagers.firstOrNull { it is javax.net.ssl.X509ExtendedKeyManager } as? javax.net.ssl.X509ExtendedKeyManager
                 if (km != null) {
-                    managers[hostname] = km
-                    val alias = ks.aliases().toList().firstOrNull()
-                    val cert = alias?.let { ks.getCertificate(it) as? java.security.cert.X509Certificate }
-                    val cn = cert?.subjectX500Principal?.name?.substringAfter("CN=")?.substringBefore(",") ?: "?"
-                    Timber.d("Host client cert loaded: %s → CN=%s", hostname, cn)
+                    managers[hostname.lowercase()] = km
+                    Timber.d("Host client cert loaded: %s", hostname)
                 }
             } catch (e: Exception) {
                 Timber.e(e, "Failed to load client cert for host: %s", hostname)
@@ -193,52 +318,88 @@ internal class DynamicSSLManager(
     }
 
     /**
-     * Creates a composite KeyManager that selects the right cert per hostname.
-     * Falls back to default client cert if no host-specific cert exists.
+     * The KeyManager that decides, per connection, which client certificate
+     * the peer gets — or none. Null when no identity is loaded at all.
+     *
+     *  1. A host with its own client certificate ([loadHostClientCerts]) gets
+     *     that certificate. Entries follow the pin syntax (exact, `*.domain`,
+     *     `host:port`).
+     *  2. The default identity goes to the block's own listeners
+     *     ([setIdentityHosts]) and — unless the app listed its hosts itself
+     *     (`clientCertHosts`) — to hosts whose pin entry in the live config
+     *     ([configProvider]) has `mtls = true`.
+     *  3. Everyone else gets nothing, as does a connection whose host is
+     *     unknown.
+     *
+     * It used to hand the default identity to every host that asked for a
+     * client certificate.
      */
-    internal fun buildCompositeKeyManagers(): Array<KeyManager>? {
-        if (hostKeyManagers.isEmpty()) return clientKeyManagers
-
+    internal fun buildCompositeKeyManagers(configProvider: () -> CertificateConfig? = { null }): Array<KeyManager>? {
         val defaultKm = clientKeyManagers?.firstOrNull { it is javax.net.ssl.X509ExtendedKeyManager } as? javax.net.ssl.X509ExtendedKeyManager
         val hostKms = hostKeyManagers
+        if (defaultKm == null && hostKms.isEmpty()) return null
 
         val composite = object : javax.net.ssl.X509ExtendedKeyManager() {
-            private fun resolveForHost(hostname: String?): javax.net.ssl.X509ExtendedKeyManager? {
-                if (hostname == null) return defaultKm
-                return hostKms[hostname] ?: defaultKm
+            // Two key stores may use the same alias ("client", "1"), so the
+            // alias handed to the TLS stack names its owner as well:
+            // `d/<alias>` for the default identity, `h/<host entry>/<alias>`.
+            private fun owner(alias: String?): Pair<javax.net.ssl.X509ExtendedKeyManager, String>? {
+                if (alias == null) return null
+                if (alias.startsWith(DEFAULT_ALIAS_PREFIX)) {
+                    return defaultKm?.let { it to alias.removePrefix(DEFAULT_ALIAS_PREFIX) }
+                }
+                if (alias.startsWith(HOST_ALIAS_PREFIX)) {
+                    val rest = alias.removePrefix(HOST_ALIAS_PREFIX)
+                    val entry = hostKms.keys.firstOrNull { rest.startsWith("$it/") } ?: return null
+                    return hostKms.getValue(entry) to rest.removePrefix("$entry/")
+                }
+                return null
             }
 
-            override fun chooseClientAlias(keyTypes: Array<String>, issuers: Array<java.security.Principal>?, socket: Socket): String? {
-                val host = (socket as? javax.net.ssl.SSLSocket)?.handshakeSession?.peerHost
-                    ?: socket.inetAddress?.hostName
-                return resolveForHost(host)?.chooseClientAlias(keyTypes, issuers, socket)
+            /** (key manager, alias prefix) for [host]:[port], or null: this peer gets no certificate. */
+            private fun resolve(host: String?, port: Int?): Pair<javax.net.ssl.X509ExtendedKeyManager, String>? {
+                if (host.isNullOrEmpty()) return null
+                val name = host.lowercase()
+                hostKms.entries.firstOrNull { (entry, _) ->
+                    PinHostMatcher.match(mapOf(entry to true), name, port) != null
+                }?.let { (entry, km) -> return km to "$HOST_ALIAS_PREFIX$entry/" }
+                if (defaultKm == null) return null
+                val ownListener = port != null && identityHosts["$name:$port"] == true
+                val mtlsHost = !ownListener && !identityHostsOnly && configProvider()?.pins
+                    ?.let { pins -> PinHostMatcher.match(pins.associateBy { it.hostname.lowercase() }, name, port) }
+                    ?.mtls == true
+                return if (ownListener || mtlsHost) defaultKm to DEFAULT_ALIAS_PREFIX else null
             }
 
-            override fun chooseEngineClientAlias(keyTypes: Array<String>, issuers: Array<java.security.Principal>?, engine: SSLEngine): String? {
-                return resolveForHost(engine.peerHost)?.chooseEngineClientAlias(keyTypes, issuers, engine)
+            override fun chooseClientAlias(keyTypes: Array<String>?, issuers: Array<java.security.Principal>?, socket: Socket?): String? {
+                val (km, prefix) = resolve(hostnameFromSocket(socket).ifEmpty { null }, socket?.port) ?: return null
+                return km.chooseClientAlias(keyTypes, issuers, socket)?.let { prefix + it }
             }
 
-            override fun getClientAliases(keyType: String, issuers: Array<java.security.Principal>?): Array<String>? {
+            override fun chooseEngineClientAlias(keyTypes: Array<String>?, issuers: Array<java.security.Principal>?, engine: SSLEngine?): String? {
+                val (km, prefix) = resolve(engine?.peerHost, engine?.peerPort) ?: return null
+                return km.chooseEngineClientAlias(keyTypes, issuers, engine)?.let { prefix + it }
+            }
+
+            override fun getClientAliases(keyType: String?, issuers: Array<java.security.Principal>?): Array<String>? {
                 val all = mutableListOf<String>()
-                defaultKm?.getClientAliases(keyType, issuers)?.let { all.addAll(it) }
-                hostKms.values.forEach { km -> km.getClientAliases(keyType, issuers)?.let { all.addAll(it) } }
+                defaultKm?.getClientAliases(keyType, issuers)?.forEach { all += DEFAULT_ALIAS_PREFIX + it }
+                hostKms.forEach { (entry, km) ->
+                    km.getClientAliases(keyType, issuers)?.forEach { all += "$HOST_ALIAS_PREFIX$entry/$it" }
+                }
                 return if (all.isEmpty()) null else all.toTypedArray()
             }
 
-            override fun getCertificateChain(alias: String): Array<java.security.cert.X509Certificate>? {
-                for (km in hostKms.values) { km.getCertificateChain(alias)?.let { return it } }
-                return defaultKm?.getCertificateChain(alias)
-            }
+            override fun getCertificateChain(alias: String?): Array<java.security.cert.X509Certificate>? =
+                owner(alias)?.let { (km, own) -> km.getCertificateChain(own) }
 
-            override fun getPrivateKey(alias: String): java.security.PrivateKey? {
-                for (km in hostKms.values) { km.getPrivateKey(alias)?.let { return it } }
-                return defaultKm?.getPrivateKey(alias)
-            }
+            override fun getPrivateKey(alias: String?): java.security.PrivateKey? =
+                owner(alias)?.let { (km, own) -> km.getPrivateKey(own) }
 
             // Server-side (unused in client)
-            override fun chooseServerAlias(keyType: String, issuers: Array<java.security.Principal>?, socket: Socket?) = null
-            override fun chooseEngineServerAlias(keyType: String, issuers: Array<java.security.Principal>?, engine: SSLEngine?) = null
-            override fun getServerAliases(keyType: String, issuers: Array<java.security.Principal>?) = null
+            override fun chooseServerAlias(keyType: String?, issuers: Array<java.security.Principal>?, socket: Socket?) = null
+            override fun chooseEngineServerAlias(keyType: String?, issuers: Array<java.security.Principal>?, engine: SSLEngine?) = null
+            override fun getServerAliases(keyType: String?, issuers: Array<java.security.Principal>?) = null
         }
 
         return arrayOf(composite)
@@ -246,20 +407,25 @@ internal class DynamicSSLManager(
 
     /**
      * The socket factory every client built by [applyTo] holds. Its sockets
-     * come from an SSLContext made for the client identity loaded now, and a
-     * new one is made whenever that identity changes (renewal, recovery,
-     * re-enrollment, unenroll, host certificates).
+     * come from an SSLContext made for the client identity and the pins in
+     * force now, and a new one is made whenever either changes (renewal,
+     * recovery, re-enrollment, unenroll, host certificates; a new config).
      *
      * A context built once kept presenting the identity of the moment the
      * client was built. Swapping only the key manager would not be enough
      * either: a new connection resumes the context's cached TLS session and
-     * the server sees the client certificate of that old session again. A
-     * fresh context has no such session.
+     * the server sees the client certificate of that old session again — and
+     * a resumed session is not shown to the trust manager, so it would also
+     * outlive a pin that has been removed. A fresh context has no such
+     * session.
      *
      * The factory object itself stays the same, so OkHttp keeps pooling
      * connections as before.
      */
-    private inner class LiveSocketFactory(private val trustManager: X509TrustManager) : javax.net.ssl.SSLSocketFactory() {
+    private inner class LiveSocketFactory(
+        private val trustManager: X509TrustManager,
+        private val configProvider: () -> CertificateConfig?
+    ) : javax.net.ssl.SSLSocketFactory() {
 
         private inner class Built(val generation: Long, val factory: javax.net.ssl.SSLSocketFactory)
 
@@ -269,28 +435,47 @@ internal class DynamicSSLManager(
         private fun current(): javax.net.ssl.SSLSocketFactory {
             val generation = keyGeneration.get()
             built?.takeIf { it.generation == generation }?.let { return it.factory }
-            // Explicit TLSv1.2: Android API 24+ negotiates 1.2 or 1.3 with this
-            // factory, but the JCA-default `"TLS"` algorithm string has, on rare
-            // OEM ROMs, been observed to fall back to 1.0/1.1 — protocols the
-            // pinning model still allows because pin verification happens after
-            // handshake. Pin a minimum here; OkHttp's ConnectionSpec layer still
-            // gets the final say on enabled cipher suites.
-            val sslCtx = SSLContext.getInstance("TLSv1.2")
-            sslCtx.init(buildCompositeKeyManagers(), arrayOf(trustManager), null)
+            // "TLS", not "TLSv1.2": the latter caps the connection at 1.2 on
+            // every platform, and below TLS 1.3 the client certificate — whose
+            // subject names the device — crosses the wire in the clear. The
+            // floor the old string was there for is set per socket instead
+            // (see harden): nothing below TLS 1.2 is ever enabled.
+            val sslCtx = SSLContext.getInstance("TLS")
+            sslCtx.init(buildCompositeKeyManagers(configProvider), arrayOf(trustManager), null)
             return sslCtx.socketFactory.also { built = Built(generation, it) }
+        }
+
+        /**
+         * Leaves only TLS 1.2 and newer enabled, whatever the platform's
+         * defaults are, and remembers the host the socket is for. OkHttp's
+         * ConnectionSpec narrows the enabled protocols further but never adds
+         * to them, so this is a floor no client configuration can lower.
+         */
+        private fun harden(socket: Socket, host: String?): Socket {
+            if (socket is javax.net.ssl.SSLSocket) {
+                val modern = socket.enabledProtocols.filter { it in MODERN_TLS }
+                    .ifEmpty { socket.supportedProtocols.filter { it in MODERN_TLS } }
+                if (modern.isEmpty()) {
+                    runCatching { socket.close() }
+                    throw javax.net.ssl.SSLException("This device supports neither TLS 1.2 nor TLS 1.3")
+                }
+                socket.enabledProtocols = modern.toTypedArray()
+                if (!host.isNullOrEmpty()) socketHosts[socket] = host
+            }
+            return socket
         }
 
         override fun getDefaultCipherSuites(): Array<String> = current().defaultCipherSuites
         override fun getSupportedCipherSuites(): Array<String> = current().supportedCipherSuites
-        override fun createSocket(): Socket = current().createSocket()
+        override fun createSocket(): Socket = harden(current().createSocket(), null)
         override fun createSocket(socket: Socket, host: String, port: Int, autoClose: Boolean): Socket =
-            current().createSocket(socket, host, port, autoClose)
-        override fun createSocket(host: String, port: Int): Socket = current().createSocket(host, port)
+            harden(current().createSocket(socket, host, port, autoClose), host)
+        override fun createSocket(host: String, port: Int): Socket = harden(current().createSocket(host, port), host)
         override fun createSocket(host: String, port: Int, localHost: java.net.InetAddress, localPort: Int): Socket =
-            current().createSocket(host, port, localHost, localPort)
-        override fun createSocket(host: java.net.InetAddress, port: Int): Socket = current().createSocket(host, port)
+            harden(current().createSocket(host, port, localHost, localPort), host)
+        override fun createSocket(host: java.net.InetAddress, port: Int): Socket = harden(current().createSocket(host, port), null)
         override fun createSocket(address: java.net.InetAddress, port: Int, localAddress: java.net.InetAddress, localPort: Int): Socket =
-            current().createSocket(address, port, localAddress, localPort)
+            harden(current().createSocket(address, port, localAddress, localPort), null)
     }
 
     /**
@@ -305,10 +490,22 @@ internal class DynamicSSLManager(
      * that re-reads the live config (e.g. `{ httpClientProvider.currentConfig }`)
      * for dynamic pin updates that follow [HttpClientProvider.swap] without
      * rebuilding the client; pass a constant lambda for a frozen snapshot.
+     *
+     * Also adds [PinnedConnectionInterceptor] as a network interceptor: the
+     * handshake check is repeated, against the live config, on every request
+     * — a connection opened before a pin was removed or before the config
+     * expired does not get to carry another request.
      */
     fun applyTo(builder: OkHttpClient.Builder, configProvider: () -> CertificateConfig?) {
         val tm = pinnedTrustManager(configProvider)
-        builder.sslSocketFactory(LiveSocketFactory(tm), tm)
+        builder.sslSocketFactory(LiveSocketFactory(tm, configProvider), tm)
+        builder.addNetworkInterceptor(
+            PinnedConnectionInterceptor(configProvider, ::requireUsableConfig, ::matchPins) { chain, host, port ->
+                // The handshake's auth type is not known here; "UNKNOWN" is the
+                // value the JDK passes for TLS 1.3; the platform trust managers accept it.
+                requireCaTrustFor(chain, "UNKNOWN", host, port)
+            }
+        )
 
         val initial = configProvider()
         val mtlsHosts = initial?.pins?.count { it.mtls } ?: 0
@@ -349,15 +546,16 @@ internal class DynamicSSLManager(
         connectionSettings: HttpConnectionSettings = HttpConnectionSettings(),
         recoveryInterceptor: PinRecoveryInterceptor? = null
     ): OkHttpClient {
+        // Remembered (weakly) so that a pin change can close its connections.
+        val pool = ConnectionPool(
+            connectionSettings.maxIdleConnections,
+            connectionSettings.keepAliveDuration,
+            connectionSettings.keepAliveDurationUnit
+        )
+        ownPools += pool
         val builder = OkHttpClient.Builder()
             .cache(null)
-            .connectionPool(
-                ConnectionPool(
-                    connectionSettings.maxIdleConnections,
-                    connectionSettings.keepAliveDuration,
-                    connectionSettings.keepAliveDurationUnit
-                )
-            )
+            .connectionPool(pool)
 
         applyTimeouts(builder, connectionSettings)
 
@@ -370,14 +568,22 @@ internal class DynamicSSLManager(
     }
 
     /**
-     * Builds a bootstrap OkHttpClient used for the initial config fetch.
+     * Builds the bootstrap OkHttpClient: the client a Config API block talks
+     * to its own backend with (config fetch, enrollment, renewal, vault
+     * files), pinned to [bootstrapPins].
      *
-     * If [bootstrapPins] are provided, the client is pinned so even the
-     * first config fetch is protected against MITM.
-     * If the config endpoint is plain HTTP, pinning is skipped automatically
-     * (TrustManager is only invoked for TLS connections).
+     * It is pinned and HTTPS-only, always. Without bootstrap pins it used to
+     * fall back to the system's certificate authorities, and a plain-HTTP URL
+     * skipped TLS altogether; both are now refused unless the block asked for
+     * it ([allowUnpinned], `ConfigApiBlock.Builder.allowUnpinnedConfigApi()`):
+     * no pins → every TLS handshake is refused, `http://` → the request fails
+     * before it is sent.
      */
-    fun buildBootstrapClient(bootstrapPins: List<HostPin>, interceptor: okhttp3.Interceptor? = null): OkHttpClient {
+    fun buildBootstrapClient(
+        bootstrapPins: List<HostPin>,
+        interceptor: okhttp3.Interceptor? = null,
+        allowUnpinned: Boolean = false
+    ): OkHttpClient {
         val builder = OkHttpClient.Builder()
             .connectTimeout(DEFAULT_TIMEOUT, TimeUnit.SECONDS)
             .readTimeout(DEFAULT_TIMEOUT, TimeUnit.SECONDS)
@@ -387,8 +593,25 @@ internal class DynamicSSLManager(
             val config = CertificateConfig(version = 0, pins = bootstrapPins)
             applyTo(builder) { config }
             Timber.d("Bootstrap client pinned — %d hosts", bootstrapPins.size)
+        } else if (allowUnpinned) {
+            Timber.w("Bootstrap client — no pins, using system defaults (allowUnpinnedConfigApi)")
         } else {
-            Timber.d("Bootstrap client — no pins, using system defaults")
+            // Fail closed: pinning over "no config" refuses every handshake.
+            applyTo(builder) { null }
+            Timber.e("Bootstrap client has no pins — every TLS handshake is refused (set bootstrapPins)")
+        }
+        if (!allowUnpinned) {
+            // Not even by way of a redirect.
+            builder.followSslRedirects(false)
+            builder.addInterceptor(okhttp3.Interceptor { chain ->
+                if (!chain.request().isHttps) {
+                    throw java.io.IOException(
+                        "Refusing a plain-HTTP request to the Config API (${chain.request().url.host}): " +
+                            "use https://, or allowUnpinnedConfigApi() for tests"
+                    )
+                }
+                chain.proceed(chain.request())
+            })
         }
 
         return builder.build()
@@ -424,8 +647,10 @@ internal class DynamicSSLManager(
      * without rebuilding the client pass a lambda over a live reference (e.g.
      * `HttpClientProvider.currentConfig`).
      *
-     * Security comes entirely from public-key pinning — this is equivalent to, and more
-     * reliable than, OkHttp's [okhttp3.CertificatePinner] on Android.
+     * Security comes from public-key pinning — this is equivalent to, and more
+     * reliable than, OkHttp's [okhttp3.CertificatePinner] on Android — plus,
+     * for the hosts named with [requireCaTrust], the platform's CA check. A
+     * config past its `expiresAt` (plus [expiredConfigGraceMs]) is refused.
      */
     private fun pinnedTrustManager(configProvider: () -> CertificateConfig?): X509TrustManager {
         return object : X509ExtendedTrustManager() {
@@ -436,18 +661,18 @@ internal class DynamicSSLManager(
                 chain: Array<X509Certificate>,
                 authType: String,
                 socket: Socket
-            ) = verifyPin(chain, hostnameFromSocket(socket), socket.port)
+            ) = verifyPin(chain, authType, hostnameFromSocket(socket), socket.port)
 
             override fun checkServerTrusted(
                 chain: Array<X509Certificate>,
                 authType: String,
                 engine: SSLEngine
-            ) = verifyPin(chain, engine.peerHost.orEmpty(), engine.peerPort)
+            ) = verifyPin(chain, authType, engine.peerHost.orEmpty(), engine.peerPort)
 
             override fun checkServerTrusted(
                 chain: Array<X509Certificate>,
                 authType: String
-            ) = verifyPin(chain, "")
+            ) = verifyPin(chain, authType, "")
 
             // ── Client auth ───────────────────────────────────────────────────────
 
@@ -459,30 +684,17 @@ internal class DynamicSSLManager(
 
             // ── Pin verification ──────────────────────────────────────────────────
 
-            private fun verifyPin(chain: Array<X509Certificate>, hostname: String, port: Int? = null) {
+            private fun verifyPin(chain: Array<X509Certificate>, authType: String, hostname: String, port: Int? = null) {
                 if (chain.isEmpty()) throw CertificateException("No server certificate provided")
 
                 val leaf = chain[0]
+                val config = requireUsableConfig(configProvider(), hostname)
 
-                val config = configProvider()
-                if (config == null || config.pins.isEmpty()) {
-                    throw CertificateException(
-                        "No pins configured — refusing connection. " +
-                        "Call PinVault.init() before making HTTPS requests."
-                    )
-                }
-                val pinMap = buildAcceptedPins(config.pins)
-                val pinVersion = config.version
-
-                // Per-host pin lookup. A hostname with no entry (and no
+                // Per-host pin lookup first: a hostname with no entry (and no
                 // matching wildcard) must be refused — the alternative is
                 // accepting any cert for unknown hosts, which is exactly the
                 // cross-host pin-reuse attack H-01 closes.
-                val acceptedForHost = matchPinsFor(pinMap, hostname, port)
-                    ?: throw CertificateException(
-                        "No pin entry for hostname '$hostname'. " +
-                        "Configured hosts: ${pinMap.keys.joinToString()}"
-                    )
+                val acceptedForHost = pinsFor(config, hostname, port)
 
                 // Sertifika süre kontrolü.
                 //
@@ -502,39 +714,121 @@ internal class DynamicSSLManager(
                 // Pin doğrulama: yaprak sertifika ya da yaprağın gerçekten
                 // bağlandığı bir üst sertifika (bkz. ChainPinMatcher).
                 val certHash = sha256Base64(leaf.publicKey.encoded)
-                val matchedPin = ChainPinMatcher.match(chain, acceptedForHost) { sha256Base64(it.publicKey.encoded) }
-                if (matchedPin == null) {
-                    emitConnectionEvent(hostname, success = false, actualPin = certHash, expectedPins = acceptedForHost, pinVersion = pinVersion)
-                    Timber.e("Pin mismatch for %s — cert=%s..., expected %d pins",
-                        hostname, certHash.take(12), acceptedForHost.size)
-                    throw CertificateException(
-                        "Certificate pinning failure for $hostname!\n" +
-                        "  Cert hash: sha256/$certHash\n" +
-                        "  Accepted pins for this host: ${acceptedForHost.size}"
-                    )
-                }
+                val matchedPin = matchPins(config, chain, hostname, port)
 
-                val cn = leaf.subjectX500Principal.name.substringAfter("CN=").substringBefore(",")
+                requireCaTrustFor(chain, authType, hostname, port)
+
                 val hasClientCert = clientKeyManagers != null
                 val via = if (matchedPin == certHash) "" else " (issuer pin sha256/${matchedPin.take(12)}...)"
-                Timber.d("Pin verified ✓ — host=%s, CN=%s, sha256/%s...%s, clientCert=%s",
-                    hostname, cn, certHash.take(12), via, hasClientCert)
-                emitConnectionEvent(hostname, success = true, actualPin = certHash, expectedPins = acceptedForHost, pinVersion = pinVersion)
+                // The host and the pin that matched; no certificate subject.
+                Timber.d("Pin verified ✓ — host=%s, sha256/%s...%s, clientCert=%s",
+                    hostname, certHash.take(12), via, hasClientCert)
+                emitConnectionEvent(hostname, success = true, actualPin = certHash, expectedPins = acceptedForHost, pinVersion = config.version)
             }
         }
     }
 
     /**
-     * SNI hostname extraction for the `Socket` overload of `checkServerTrusted`.
-     * The cast to `SSLSocket` is best-effort; on the rare TLS impl that hands
-     * back a plain `Socket`, we fall back to its remote address.
+     * `requireCaTrust`: the pins come from whoever signs the config, which on
+     * its own makes that signer a private CA for every pinned host. For the
+     * hosts the app named, the platform's CAs must accept the chain as well —
+     * both checks, not either. Throws a
+     * [io.github.umutcansu.pinvault.model.CaTrustException] (a
+     * [CertificateException]); nothing for other hosts. Shared by the
+     * handshake check and the per-request check ([PinnedConnectionInterceptor]).
+     */
+    internal fun requireCaTrustFor(chain: Array<X509Certificate>, authType: String, hostname: String, port: Int?) {
+        val patterns = caTrustPatterns
+        if (patterns.isEmpty() || PinHostMatcher.match(patterns, hostname, port) == null) return
+        try {
+            caCheck.check(chain, authType, hostname)
+        } catch (e: Exception) {
+            Timber.e("CA check failed for %s (requireCaTrust): %s", hostname, e.message)
+            throw io.github.umutcansu.pinvault.model.CaTrustException(
+                "Certificate for $hostname matches its pins but is not trusted by the platform's " +
+                    "certificate authorities, which requireCaTrust asks for: ${e.message}", e
+            )
+        }
+    }
+
+    /**
+     * [config] when it may be used right now, else a [CertificateException]:
+     * no config (or one without pins), or a config past its `expiresAt` plus
+     * [expiredConfigGraceMs]. Shared by the handshake check and the
+     * per-request check ([PinnedConnectionInterceptor]).
+     */
+    internal fun requireUsableConfig(config: CertificateConfig?, hostname: String): CertificateConfig {
+        if (config == null || config.pins.isEmpty()) {
+            throw CertificateException(
+                "No pins configured — refusing connection. " +
+                "Call PinVault.init() before making HTTPS requests."
+            )
+        }
+
+        // An expired config pins nothing: whoever keeps fresh configs
+        // away from the device must not keep it on old pins for good.
+        // A plain CertificateException on purpose — refetching the
+        // config is exactly what repairs this, so the recovery
+        // interceptor should try. Bootstrap and static configs carry
+        // no expiresAt (0) and are never refused here.
+        if (config.expiresAt > 0L && clock() > config.expiresAt + expiredConfigGraceMs) {
+            throw CertificateException(
+                "Pin config expired at ${config.expiresAt} (Unix ms) — refusing connection to '$hostname' " +
+                    "until a fresh config is fetched",
+                io.github.umutcansu.pinvault.model.ConfigExpiredException(config.expiresAt)
+            )
+        }
+        return config
+    }
+
+    /** The pins [config] accepts for [hostname] (and [port]); [UnpinnedHostException] when it names none. */
+    private fun pinsFor(config: CertificateConfig, hostname: String, port: Int?): Set<String> {
+        val pinMap = buildAcceptedPins(config.pins)
+        return matchPinsFor(pinMap, hostname, port)
+            ?: throw io.github.umutcansu.pinvault.model.UnpinnedHostException(
+                "No pin entry for hostname '$hostname'. " +
+                "Configured hosts: ${pinMap.keys.joinToString()}"
+            )
+    }
+
+    /**
+     * The pin of [config] that [chain] satisfies for [hostname]: the leaf's
+     * key, or an issuer the leaf really chains to ([ChainPinMatcher]). Throws
+     * [CertificateException] (and reports the mismatch to the listener) when
+     * there is none. The matcher of the handshake check and of the
+     * per-request check — exact, wildcard and `host:port` entries alike.
+     */
+    internal fun matchPins(config: CertificateConfig, chain: Array<X509Certificate>, hostname: String, port: Int?): String {
+        if (chain.isEmpty()) throw CertificateException("No server certificate provided")
+        val acceptedForHost = pinsFor(config, hostname, port)
+        val matchedPin = ChainPinMatcher.match(chain, acceptedForHost) { sha256Base64(it.publicKey.encoded) }
+        if (matchedPin == null) {
+            val certHash = sha256Base64(chain[0].publicKey.encoded)
+            emitConnectionEvent(hostname, success = false, actualPin = certHash, expectedPins = acceptedForHost, pinVersion = config.version)
+            Timber.e("Pin mismatch for %s — cert=%s..., expected %d pins",
+                hostname, certHash.take(12), acceptedForHost.size)
+            throw CertificateException(
+                "Certificate pinning failure for $hostname!\n" +
+                "  Cert hash: sha256/$certHash\n" +
+                "  Accepted pins for this host: ${acceptedForHost.size}"
+            )
+        }
+        return matchedPin
+    }
+
+    /**
+     * The host a socket is being connected to, for the `Socket` overloads of
+     * the trust manager and the key manager: the name OkHttp opened it with
+     * (remembered by [LiveSocketFactory]), else the handshake session's peer
+     * host. Nothing else — in particular no reverse DNS lookup of the remote
+     * address, whose answer is whatever the network says it is. Unknown →
+     * empty, and an empty host has no pin entry and gets no client
+     * certificate (fail closed).
      */
     private fun hostnameFromSocket(socket: Socket?): String {
-        val ssl = socket as? javax.net.ssl.SSLSocket
-        return ssl?.handshakeSession?.peerHost
-            ?: socket?.inetAddress?.hostName
-            ?: socket?.inetAddress?.hostAddress
-            ?: ""
+        if (socket == null) return ""
+        socketHosts[socket]?.let { return it }
+        return (socket as? javax.net.ssl.SSLSocket)?.handshakeSession?.peerHost.orEmpty()
     }
 
     /**
@@ -594,5 +888,11 @@ internal class DynamicSSLManager(
     companion object {
         private const val DEFAULT_TIMEOUT = 30L
         private const val LISTENER_QUEUE_CAPACITY = 256
+
+        /** The only protocol versions a socket of this library ever enables. */
+        private val MODERN_TLS = setOf("TLSv1.2", "TLSv1.3")
+
+        private const val DEFAULT_ALIAS_PREFIX = "d/"
+        private const val HOST_ALIAS_PREFIX = "h/"
     }
 }

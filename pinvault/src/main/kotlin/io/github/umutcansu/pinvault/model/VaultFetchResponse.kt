@@ -22,6 +22,13 @@ package io.github.umutcansu.pinvault.model
  * @property signatures Server-reported X-Vault-Signatures header: one entry
  *                     per signing key when the backend signs with several
  *                     (m-of-n). Used instead of [signature] when present.
+ * @property signatureV2 Server-reported X-Vault-Signature-V2 header: the same
+ *                     signature over the v2 canonical string, which also
+ *                     names the Config API
+ *                     (`pinvault-vault-file:v2:<configApiId>:<key>:<version>:<sha256 hex>`).
+ *                     Required when the block set `serverScope(...)`.
+ * @property signaturesV2 Server-reported X-Vault-Signatures-V2 header, the
+ *                     v2 counterpart of [signatures].
  */
 data class VaultFetchResponse @JvmOverloads constructor(
     val content: ByteArray,
@@ -29,7 +36,9 @@ data class VaultFetchResponse @JvmOverloads constructor(
     val encryption: String = "plain",
     val notModified: Boolean = false,
     val signature: String? = null,
-    val signatures: List<SignatureEntry>? = null
+    val signatures: List<SignatureEntry>? = null,
+    val signatureV2: String? = null,
+    val signaturesV2: List<SignatureEntry>? = null
 ) {
     override fun equals(other: Any?): Boolean {
         if (this === other) return true
@@ -39,6 +48,8 @@ data class VaultFetchResponse @JvmOverloads constructor(
                 notModified == other.notModified &&
                 signature == other.signature &&
                 signatures == other.signatures &&
+                signatureV2 == other.signatureV2 &&
+                signaturesV2 == other.signaturesV2 &&
                 content.contentEquals(other.content)
     }
 
@@ -48,6 +59,8 @@ data class VaultFetchResponse @JvmOverloads constructor(
         result = 31 * result + notModified.hashCode()
         result = 31 * result + (signature?.hashCode() ?: 0)
         result = 31 * result + (signatures?.hashCode() ?: 0)
+        result = 31 * result + (signatureV2?.hashCode() ?: 0)
+        result = 31 * result + (signaturesV2?.hashCode() ?: 0)
         result = 31 * result + content.contentHashCode()
         return result
     }

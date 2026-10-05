@@ -84,6 +84,30 @@ class PinRecoveryInterceptorTest {
         }
     }
 
+    @Test
+    fun `a mismatch the refetch does not fix ends after one recovery`() {
+        // The fallback client carries this interceptor too (as the library's
+        // own client does) and the updater keeps reporting success, as an
+        // in-place freshness write-back did: the request must still end.
+        var updates = 0
+        lateinit var client: OkHttpClient
+        val interceptor = PinRecoveryInterceptor(
+            updater = { updates++; true },
+            newClientProvider = { client }
+        )
+        client = OkHttpClient.Builder()
+            .addInterceptor(interceptor)
+            .addInterceptor { throw javax.net.ssl.SSLPeerUnverifiedException("pin mismatch") }
+            .build()
+
+        val e = assertThrows(javax.net.ssl.SSLPeerUnverifiedException::class.java) {
+            client.newCall(Request.Builder().url("https://example.com/test").build()).execute()
+        }
+
+        assertEquals("pin mismatch", e.message)
+        assertEquals("one refetch, no nested recovery", 1, updates)
+    }
+
     // ── Mocked Chain tests ────────────────────────────────────────────────
 
     @Test
@@ -266,6 +290,29 @@ class PinRecoveryInterceptorTest {
     }
 
     @Test
+    fun `chain refused by the platform CAs does NOT trigger config refresh`() {
+        // requireCaTrust: no pin config can make an untrusted chain trusted.
+        var updaterCalled = false
+        val interceptor = PinRecoveryInterceptor(
+            updater = { updaterCalled = true; true },
+            newClientProvider = { OkHttpClient() }
+        )
+        val chain = mockk<Interceptor.Chain>()
+        every { chain.request() } returns Request.Builder().url("https://example.com/test").build()
+        val cause = io.github.umutcansu.pinvault.model.CaTrustException("not trusted by the platform CAs")
+        every { chain.proceed(any()) } throws
+            javax.net.ssl.SSLHandshakeException("handshake failed").apply { initCause(cause) }
+
+        try {
+            interceptor.intercept(chain)
+            fail("Expected SSLHandshakeException to pass through")
+        } catch (e: javax.net.ssl.SSLHandshakeException) {
+            assertFalse(updaterCalled)
+            assertTrue(e.cause is io.github.umutcansu.pinvault.model.CaTrustException)
+        }
+    }
+
+    @Test
     fun `plain CertificateException cause still triggers recovery`() {
         // Guard against the validity-window carve-out swallowing real pin
         // mismatches: a bare CertificateException cause must still recover.
@@ -390,7 +437,7 @@ class PinRecoveryInterceptorTest {
         val stateField = PinRecoveryInterceptor::class.java.getDeclaredField("recoveryState")
         stateField.isAccessible = true
         @Suppress("UNCHECKED_CAST")
-        val recoveryState = stateField.get(interceptor) as java.util.concurrent.ConcurrentHashMap<String, *>
+        val recoveryState = stateField.get(interceptor) as Map<String, *>
 
         // The old behavior cleared the map outright on success — that's the
         // regression we're guarding against. Today the map can be either
@@ -409,7 +456,7 @@ class PinRecoveryInterceptorTest {
             failingInterceptor.intercept(chain)
         } catch (_: Exception) { /* expected */ }
         val failingState = stateField.get(failingInterceptor)
-                as java.util.concurrent.ConcurrentHashMap<String, *>
+                as Map<String, *>
         assertTrue(
             "Failure must seed the per-host state map",
             failingState.containsKey("example.com")
