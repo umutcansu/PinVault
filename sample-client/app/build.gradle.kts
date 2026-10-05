@@ -55,6 +55,9 @@ fun javaString(value: String): String {
 val diagnosticLogs = providers.gradleProperty("sample.diagnosticLogs").orNull?.toBoolean() ?: false
 val e2eScreenshots = providers.gradleProperty("sample.e2eScreenshots").orNull?.toBoolean() ?: false
 val targetRequireCaTrust = checkedValue("target.requireCaTrust", Regex("true|false"), "true ya da false") != "false"
+// Atestasyon (Approov benzeri): uygulama 5 dakikada bir bütünlük raporunu host'a imzalayıp
+// gönderir, geçerse kısa ömürlü PinVault-Token alır (host.attestation; boşsa true).
+val hostAttestation = checkedValue("host.attestation", Regex("true|false"), "true ya da false") != "false"
 
 // ── Yayın imzası ────────────────────────────────────────────────────────────
 // Anahtar deposu ve parolaları depoda DURMAZ. Gradle özelliği (~/.gradle/gradle.properties
@@ -119,6 +122,7 @@ android {
         // "false" yazılırsa kapanır (self-signed / kurum içi CA'lı hedef); release
         // derlemesi "false" ile derlenmez.
         buildConfigField("boolean", "TARGET_REQUIRE_CA_TRUST", targetRequireCaTrust.toString())
+        buildConfigField("boolean", "HOST_ATTESTATION", hostAttestation.toString())
         field("MOCK_TLS_HOST", "mock.tlsHost", hostNamePattern, "alan adı")
         field("MOCK_TLS_PORT", "mock.tlsPort", portPattern, "port")
         field("MOCK_MTLS_HOST", "mock.mtlsHost", hostNamePattern, "alan adı")

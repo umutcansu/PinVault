@@ -563,8 +563,25 @@ public class App extends Application {
             // Pin kapsamı: yalnızca bu host'un pin'lerini iste. Sunucu isteği
             // cihazın host ACL'iyle kesiştirir; izin yoksa hiç pin dönmez.
             if (scopedPins) block.wantPinsFor(TARGET_HOST);
+            applyAttestation(block);
             return Unit.INSTANCE;
         });
+    }
+
+    /**
+     * Atestasyon (Approov'un çalışma mantığı): kütüphane açılışta ve sonra
+     * 5 dakikada bir uygulamayı ve cihazı ölçer (root, emülatör, hata
+     * ayıklayıcı, hooking çerçevesi, imza, klon, kurulum kaynağı, anahtarın
+     * yeri), raporu Keystore'daki kimlik anahtarıyla imzalayıp host'a yollar.
+     * Host politikasına göre geçer/kalır: geçerse 5 dakikalık PinVault-Token
+     * döner ve kütüphane bunu bu bloğun pinli host'larına giden her isteğe
+     * ekler (mock host MOCK_HOST_REQUIRE_TOKEN=true ile token'sız isteği
+     * reddeder); yeni bir pin config'i varsa aynı yanıtın içinde gelir.
+     * Kalırsa token yok, pin güncellemesi yok. Sonuç ana ekranda ve olay
+     * listesinde görünür ({@link PinVault#attestationStatus}).
+     */
+    private static void applyAttestation(ConfigApiBlock.Builder block) {
+        if (BuildConfig.HOST_ATTESTATION) block.attestation();
     }
 
     private static void addMtlsBlock(PinVaultConfig.Builder builder, HostPin bootstrap,
@@ -592,6 +609,7 @@ public class App extends Application {
             // Test derlemelerinde elle yüklenen P12 varsa onun yerine o kullanılır
             // (TestControls); release'te bu çağrı boştur.
             TestControls.applyManualIdentity(block, manualP12);
+            applyAttestation(block);
             return Unit.INSTANCE;
         });
     }

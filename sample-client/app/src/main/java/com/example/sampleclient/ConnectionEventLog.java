@@ -55,6 +55,25 @@ public class ConnectionEventLog implements PinVaultConnectionListener {
                         "%s [kimlik] %s bu cihazın kaydını iptal etti: vault dosyaları ve token'lar silindi, yeniden kayıt gerekli",
                         time, r.getConfigApiId());
             }
+        } else if (event instanceof PinVaultConnectionEvent.Attestation) {
+            // Her atestasyon turu: geçti (token'ın süresi), kaldı (ARC ve açıklanan
+            // nedenler) ya da sunucuya ulaşılamadı.
+            PinVaultConnectionEvent.Attestation a = (PinVaultConnectionEvent.Attestation) event;
+            switch (a.getStatus()) {
+                case PASS:
+                    line = String.format(Locale.US, "%s [atestasyon] %s GEÇTİ  arc=%s  token→%s%s",
+                            time, a.getConfigApiId(), a.getArc(), expiry(a.getTokenExpiresAt()),
+                            a.getWarnings().isEmpty() ? "" : "  uyarı: " + String.join(",", a.getWarnings()));
+                    break;
+                case REJECT:
+                    line = String.format(Locale.US, "%s [atestasyon] %s KALDI  arc=%s  neden: %s",
+                            time, a.getConfigApiId(), a.getArc(),
+                            a.getRejectionReasons().isEmpty() ? "(sunucu açıklamıyor)" : String.join(",", a.getRejectionReasons()));
+                    break;
+                default:
+                    line = String.format(Locale.US, "%s [atestasyon] %s yapılamadı — %s",
+                            time, a.getConfigApiId(), a.getFailureReason() == null ? "?" : a.getFailureReason());
+            }
         }
 
         if (line != null) {
@@ -68,6 +87,11 @@ public class ConnectionEventLog implements PinVaultConnectionListener {
 
         Runnable o = this.observer;
         if (o != null) o.run();
+    }
+
+    private static String expiry(@Nullable Long epochMs) {
+        if (epochMs == null) return "?";
+        return new SimpleDateFormat("HH:mm:ss", Locale.US).format(new Date(epochMs));
     }
 
     public synchronized List<String> snapshot() {

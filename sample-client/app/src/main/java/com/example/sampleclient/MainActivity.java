@@ -27,6 +27,7 @@ public class MainActivity extends ActionActivity {
     private Button testButton;
     private Button prodStyleButton;
     private Button refreshButton;
+    private Button attestButton;
     private TextView eventLogView;
 
     private final Runnable eventLogObserver = () -> ui.post(this::renderEventLog);
@@ -41,6 +42,7 @@ public class MainActivity extends ActionActivity {
         testButton = findViewById(R.id.testButton);
         prodStyleButton = findViewById(R.id.prodStyleButton);
         refreshButton = findViewById(R.id.refreshButton);
+        attestButton = findViewById(R.id.attestButton);
         eventLogView = findViewById(R.id.eventLogView);
         Button clearLogButton = findViewById(R.id.clearLogButton);
         Button mtlsButton = findViewById(R.id.mtlsButton);
@@ -49,6 +51,7 @@ public class MainActivity extends ActionActivity {
         testButton.setOnClickListener(v -> runPinnedRequest());
         prodStyleButton.setOnClickListener(v -> runProductionStyleRequest());
         refreshButton.setOnClickListener(v -> onRefreshClicked());
+        attestButton.setOnClickListener(v -> runAttestation());
         clearLogButton.setOnClickListener(v -> App.EVENT_LOG.clear());
         mtlsButton.setOnClickListener(v -> startActivity(new Intent(this, MtlsActivity.class)));
         vaultButton.setOnClickListener(v -> startActivity(new Intent(this, VaultActivity.class)));
@@ -83,7 +86,7 @@ public class MainActivity extends ActionActivity {
             case READY:
                 statusView.setText(getString(R.string.status_ready,
                         s.detail, mode, App.TARGET_HOST, App.configSourceLabel(), describeHostVersions(),
-                        describeSigning()));
+                        describeSigning(), describeAttestation()));
                 refreshButton.setText(R.string.refresh_config);
                 break;
             case FAILED:
@@ -101,6 +104,86 @@ public class MainActivity extends ActionActivity {
         testButton.setEnabled(ready && !isBusy());
         prodStyleButton.setEnabled(ready && !isBusy());
         refreshButton.setEnabled(phase != InitState.Phase.INITIALIZING && !isBusy());
+        attestButton.setEnabled(ready && !isBusy() && BuildConfig.HOST_ATTESTATION);
+    }
+
+    // ── Atestasyon ───────────────────────────────────────────────────────────
+
+    /**
+     * Son atestasyon turu: geçti mi, kaldıysa ARC ve (politika açıklıyorsa)
+     * nedenler, token'ın süresi. Kütüphane turu kendisi 5 dakikada bir yineler;
+     * burada yalnızca okunur.
+     */
+    private String describeAttestation() {
+        if (!BuildConfig.HOST_ATTESTATION) return getString(R.string.attestation_status_off);
+        io.github.umutcansu.pinvault.model.AttestationStatus st = PinManagerLite.attestationStatusOrNull();
+        if (st == null) return getString(R.string.attestation_status_none);
+        switch (st.getResult()) {
+            case PASS:
+                return getString(R.string.attestation_status_pass, st.getArc(), time(st.getTokenExpiresAt()),
+                        st.getWarnings().isEmpty() ? "" : " · uyarı: " + String.join(",", st.getWarnings()));
+            case REJECT:
+                return getString(R.string.attestation_status_reject, st.getArc(),
+                        st.getRejectionReasons().isEmpty() ? "(sunucu açıklamıyor)" : String.join(",", st.getRejectionReasons()));
+            case FAILED:
+                return getString(R.string.attestation_status_failed, st.getLastError() == null ? "?" : st.getLastError());
+            case UNSUPPORTED:
+                return getString(R.string.attestation_status_unsupported);
+            default:
+                return getString(R.string.attestation_status_none);
+        }
+    }
+
+    private static String time(Long epochMs) {
+        if (epochMs == null) return "?";
+        return new java.text.SimpleDateFormat("HH:mm:ss", java.util.Locale.US).format(new java.util.Date(epochMs));
+    }
+
+    /**
+     * Approov akışının tamamı tek düğmede: raporu şimdi ölçüp gönder, token'ı
+     * al, token'lı isteği host'taki mock TLS hedefine at. Host
+     * MOCK_HOST_REQUIRE_TOKEN=true ile çalışıyorsa token'sız (kalmış) bir
+     * cihaz 401 alır; kütüphane token'ı kendisi eklediği için uygulama kodu
+     * başlığa dokunmaz.
+     */
+    private void runAttestation() {
+        runAction(getString(R.string.attesting), () -> {
+            io.github.umutcansu.pinvault.model.AttestationStatus st = PinManagerLite.attestNowBlocking(20L);
+            if (st == null) return getString(R.string.attestation_result_failed, "zaman aşımı ya da PinVault hazır değil");
+            String mock = requestMockHost();
+            switch (st.getResult()) {
+                case PASS: {
+                    io.github.umutcansu.pinvault.model.AttestationTokenResult tr = PinManagerLite.fetchTokenBlocking(null, 10L);
+                    String token = tr instanceof io.github.umutcansu.pinvault.model.AttestationTokenResult.Token
+                            ? ((io.github.umutcansu.pinvault.model.AttestationTokenResult.Token) tr).getValue() : "";
+                    return getString(R.string.attestation_result_pass, st.getArc(),
+                            st.getWarnings().isEmpty() ? "—" : String.join(",", st.getWarnings()),
+                            token.length(), time(st.getTokenExpiresAt()),
+                            token.length() > 24 ? token.substring(0, 24) : token,
+                            App.MOCK_TLS_URL, mock);
+                }
+                case REJECT:
+                    return getString(R.string.attestation_result_reject, st.getArc(),
+                            st.getRejectionReasons().isEmpty() ? "(sunucu açıklamıyor)" : String.join(",", st.getRejectionReasons()),
+                            App.MOCK_TLS_URL, mock);
+                case UNSUPPORTED:
+                    return getString(R.string.attestation_status_unsupported);
+                default:
+                    return getString(R.string.attestation_result_failed, st.getLastError() == null ? "?" : st.getLastError());
+            }
+        });
+    }
+
+    /** Kütüphanenin istemcisiyle mock TLS host'a bir istek; token varsa kütüphane ekler. */
+    private String requestMockHost() {
+        try (okhttp3.Response resp = PinVault.INSTANCE.getClient()
+                .newCall(new Request.Builder().url(App.MOCK_TLS_URL).build()).execute()) {
+            if (resp.isSuccessful()) return getString(R.string.attestation_mock_ok, resp.code());
+            String why = resp.header("WWW-Authenticate");
+            return getString(R.string.attestation_mock_refused, resp.code(), why == null ? "" : why);
+        } catch (Exception e) {
+            return getString(R.string.attestation_mock_unreachable, e.getClass().getSimpleName() + ": " + e.getMessage());
+        }
     }
 
     /**
