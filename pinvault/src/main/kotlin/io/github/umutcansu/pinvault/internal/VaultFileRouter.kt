@@ -1,6 +1,7 @@
 package io.github.umutcansu.pinvault.internal
 
 import io.github.umutcansu.pinvault.api.DefaultCertificateConfigApi
+import io.github.umutcansu.pinvault.api.UserAuthKeyRefusedException
 import io.github.umutcansu.pinvault.api.VaultFetchHttpException
 import io.github.umutcansu.pinvault.crypto.SignatureTrust
 import io.github.umutcansu.pinvault.crypto.VaultFileDecryptor
@@ -24,6 +25,7 @@ import io.github.umutcansu.pinvault.store.VaultStorageProvider
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import timber.log.Timber
+import java.io.IOException
 
 /**
  * Routes vault file fetches to the right [ConfigApiClient] and applies
@@ -82,7 +84,8 @@ internal class VaultFileRouter(
         val client = clients[file.configApiId]
             ?: return VaultFileResult.Failed(
                 file.key,
-                "VaultFile '${file.key}' bound to unknown configApi '${file.configApiId}'"
+                "VaultFile '${file.key}' bound to unknown configApi '${file.configApiId}'",
+                code = VaultFileResult.Failed.CODE_NOT_CONFIGURED
             )
 
         return try {
@@ -95,6 +98,14 @@ internal class VaultFileRouter(
             if (sealedByServer) prepareUserAuth(file, storage, deviceId)?.let { return it }
 
             val currentVersion = storage.getVersion(file.key)
+            // A user_auth copy waiting in the pending slot (downloaded, not
+            // yet opened; see UserAuthVaultStorage) counts for what the
+            // server is asked: with the verified copy's version alone it
+            // would serve the same file again on every sync until the next
+            // unlock. The downgrade and jump checks below keep using the
+            // verified copy's version, so nothing unverified raises the bar.
+            val pendingVersion = if (sealedByServer) (storage as? UserAuthVaultStorage)?.pendingVersion(file.key) ?: 0 else 0
+            val knownVersion = maxOf(currentVersion, pendingVersion)
             // A signed file stored without its signatures (by an earlier
             // version) is downloaded again: asking with its version would be
             // answered "not modified", and it could never be checked on read.
@@ -108,7 +119,7 @@ internal class VaultFileRouter(
             } else if (currentVersion > 0 && refetch) {
                 Timber.i("Vault file [%s] did not open after an approved unlock — downloading it again", file.key)
                 0
-            } else currentVersion
+            } else knownVersion
 
             // A blank provider result means "the host app has no token yet",
             // not "the token is the empty string". Sending `X-Vault-Token: `
@@ -147,7 +158,7 @@ internal class VaultFileRouter(
 
             if (response.notModified) {
                 guard?.confirmed(file)
-                return VaultFileResult.AlreadyCurrent(file.key, currentVersion)
+                return VaultFileResult.AlreadyCurrent(file.key, knownVersion)
             }
 
             // The version header is only as good as the response. A file whose
@@ -155,7 +166,9 @@ internal class VaultFileRouter(
             // (an unsigned block), must not be able to plant a version so high
             // that the real file is answered "older" from then on: the same
             // bound as for pin versions.
-            versionJumpProblem(file.key, response.version, currentVersion)?.let { return VaultFileResult.Failed(file.key, it) }
+            versionJumpProblem(file.key, response.version, currentVersion)?.let {
+                return VaultFileResult.Failed(file.key, it, code = VaultFileResult.Failed.CODE_VERSION_REJECTED)
+            }
 
             val served = VaultFileEncryption.entries.find { it.name.equals(response.encryption, ignoreCase = true) }
             if (sealedByServer || served == VaultFileEncryption.USER_AUTH) {
@@ -167,8 +180,30 @@ internal class VaultFileRouter(
             // so — that would let whoever answers skip the device-key layer.
             if (file.encryption == VaultFileEncryption.END_TO_END && served != null && served != VaultFileEncryption.END_TO_END) {
                 return VaultFileResult.Failed(
-                    file.key, "Vault file '${file.key}': the server answered encryption=${response.encryption} for an end_to_end file; refused"
+                    file.key, "Vault file '${file.key}': the server answered encryption=${response.encryption} for an end_to_end file; refused",
+                    code = VaultFileResult.Failed.CODE_ENCRYPTION_MISMATCH
                 )
+            }
+
+            // Integrity (default-on, fail-closed): vault files are signed by the
+            // Config API's signing keys — the same ones the device already trusts
+            // for config, including a rotated key set and an m-of-n requirement.
+            // A per-file key overrides them with exactly that one key. No trust
+            // only for allowUnsigned()/test setups → skip+warn.
+            //
+            // The signature covers the PLAINTEXT — the server signs the content
+            // it stores, one signature whatever the encryption — so it can only
+            // be checked once an end_to_end envelope is open. What can be done
+            // before the device key touches anything is done here: an answer
+            // without the signatures the block requires is refused unopened.
+            val trust = trustFor(file, client)?.takeIf { it.isEnabled }
+            // A block that names its server-side Config API (serverScope)
+            // takes only v2 signatures, which name it too: a file signed
+            // for another Config API with the same key does not pass.
+            val scope = client.block.serverScope
+            val entries = if (trust != null) signatureEntries(response, scope) else emptyList()
+            if (trust != null && entries.isEmpty()) {
+                return VaultFileResult.Failed(file.key, noSignatureMessage(file.key, scope), code = VaultFileResult.Failed.CODE_SIGNATURE_MISSING)
             }
 
             // Decrypt if E2E
@@ -177,37 +212,35 @@ internal class VaultFileRouter(
                     val kp = deviceKeyProvider
                         ?: return VaultFileResult.Failed(
                             file.key,
-                            "encryption=end_to_end requires DeviceKeyProvider; none configured"
+                            "encryption=end_to_end requires DeviceKeyProvider; none configured",
+                            code = VaultFileResult.Failed.CODE_NOT_CONFIGURED
                         )
                     kp.ensureKeyPair()
                     try {
                         VaultFileDecryptor.decrypt(response.content, kp.getPrivateKey())
                     } catch (e: Exception) {
+                        // One result for every way the envelope can fail — a
+                        // malformed layout, the RSA-OAEP unwrap, the AES-GCM
+                        // tag. The exception says which, and that goes to the
+                        // local log only: reported back to the server it would
+                        // tell whoever answers the download how its padding
+                        // fared (a padding oracle, one bit per request).
                         Timber.e(e, "E2E decrypt failed: %s", file.key)
-                        return VaultFileResult.Failed(file.key, "E2E decrypt failed: ${e.message}", e)
+                        return VaultFileResult.Failed(
+                            file.key,
+                            "Vault file '${file.key}': the end_to_end envelope did not open for this device's key; not saved",
+                            e,
+                            code = VaultFileResult.Failed.CODE_DECRYPT_FAILED
+                        )
                     }
                 }
                 else -> response.content
             }
 
-            // Integrity (default-on, fail-closed): vault files are signed by the
-            // Config API's signing keys — the same ones the device already trusts
-            // for config, including a rotated key set and an m-of-n requirement.
-            // A per-file key overrides them with exactly that one key. Verify the
-            // PLAINTEXT (post-E2E-decrypt) BEFORE persisting. No trust only for
-            // allowUnsigned()/test setups → skip+warn.
-            val trust = trustFor(file, client)
-            // What the stored copy is checked against again whenever it is read.
+            // Verify the PLAINTEXT (post-E2E-decrypt) BEFORE persisting. What
+            // the stored copy is checked against again whenever it is read.
             var accepted: StoredSignatures? = null
-            if (trust != null && trust.isEnabled) {
-                // A block that names its server-side Config API (serverScope)
-                // takes only v2 signatures, which name it too: a file signed
-                // for another Config API with the same key does not pass.
-                val scope = client.block.serverScope
-                val entries = signatureEntries(response, scope)
-                if (entries.isEmpty()) {
-                    return VaultFileResult.Failed(file.key, noSignatureMessage(file.key, scope))
-                }
+            if (trust != null) {
                 val verification = trust.verifyVaultFile(
                     key = file.key,
                     version = response.version,
@@ -220,13 +253,17 @@ internal class VaultFileRouter(
                     return VaultFileResult.Failed(
                         file.key,
                         "Vault file '${file.key}' signature verification FAILED — " +
-                            "possible tampering. Not saved.${verification.detail}"
+                            "possible tampering. Not saved.${verification.detail}",
+                        code = VaultFileResult.Failed.CODE_SIGNATURE_INVALID
                     )
                 }
                 // Downgrade guard: a validly-signed but OLDER version must not
                 // overwrite a newer stored copy (replay of a stale signed file).
                 if (response.version in 1 until currentVersion) {
-                    return VaultFileResult.Failed(file.key, downgradeMessage(file.key, response.version, currentVersion))
+                    return VaultFileResult.Failed(
+                        file.key, downgradeMessage(file.key, response.version, currentVersion),
+                        code = VaultFileResult.Failed.CODE_VERSION_REJECTED
+                    )
                 }
                 Timber.d("Vault file signature verified ✓ [%s] v%d", file.key, response.version)
             } else {
@@ -278,8 +315,21 @@ internal class VaultFileRouter(
             } else {
                 Timber.e(e, "Vault fetch failed [%s]: %s", file.configApiId, file.key)
             }
-            VaultFileResult.Failed(file.key, e.message ?: "Unknown error", e)
+            VaultFileResult.Failed(file.key, e.message ?: "Unknown error", e, code = codeOf(e))
         }
+    }
+
+    /**
+     * The fixed class of a failure that ended in an exception, for the
+     * distribution report ([VaultFileResult.Failed.code]). Never the text.
+     */
+    private fun codeOf(e: Exception): String = when (e) {
+        is VaultFetchHttpException -> VaultFileResult.Failed.http(e.code)
+        is ScreenLockRequiredException -> VaultFileResult.Failed.CODE_SCREEN_LOCK
+        is UserAuthKeyRefusedException -> VaultFileResult.Failed.CODE_USER_AUTH_KEY
+        is ResponseTooLargeException -> VaultFileResult.Failed.CODE_RESPONSE_TOO_LARGE
+        is IOException -> VaultFileResult.Failed.CODE_NETWORK
+        else -> VaultFileResult.Failed.CODE_OTHER
     }
 
     /**
@@ -289,7 +339,8 @@ internal class VaultFileRouter(
     private suspend fun prepareUserAuth(file: VaultFileConfig, storage: VaultStorageProvider, deviceId: String): VaultFileResult? {
         if (storage !is UserAuthVaultStorage || userAuthKeys == null) {
             return VaultFileResult.Failed(
-                file.key, "Vault file '${file.key}': encryption(USER_AUTH) needs userAuth(REQUIRED or IF_SCREEN_LOCK)"
+                file.key, "Vault file '${file.key}': encryption(USER_AUTH) needs userAuth(REQUIRED or IF_SCREEN_LOCK)",
+                code = VaultFileResult.Failed.CODE_NOT_CONFIGURED
             )
         }
         if (!userAuthKeys.isScreenLockSet()) {
@@ -299,16 +350,21 @@ internal class VaultFileRouter(
                 "Vault file '${file.key}' is sealed by the server for the screen lock (encryption = USER_AUTH) and the " +
                     "device has none, so it cannot be received; IF_SCREEN_LOCK cannot store this one unlocked"
             )
-            return VaultFileResult.Failed(file.key, error.message ?: "Screen lock required", error)
+            return VaultFileResult.Failed(file.key, error.message ?: "Screen lock required", error, code = VaultFileResult.Failed.CODE_SCREEN_LOCK)
         }
         if (deviceId.isBlank()) {
-            return VaultFileResult.Failed(file.key, "Vault file '${file.key}': user_auth files need a device id (X-Device-Id); none is available")
+            return VaultFileResult.Failed(
+                file.key, "Vault file '${file.key}': user_auth files need a device id (X-Device-Id); none is available",
+                code = VaultFileResult.Failed.CODE_NOT_CONFIGURED
+            )
         }
         try {
             ensureUserAuthKeyRegistered(file.configApiId, deviceId)
         } catch (e: Exception) {
             return VaultFileResult.Failed(
-                file.key, "Vault file '${file.key}': could not register the user-auth key with '${file.configApiId}': ${e.message}", e
+                file.key, "Vault file '${file.key}': could not register the user-auth key with '${file.configApiId}': ${e.message}", e,
+                // A request that did not complete is a network failure; any answer is the server's refusal of the key.
+                code = if (e is IOException) codeOf(e) else VaultFileResult.Failed.CODE_USER_AUTH_KEY
             )
         }
         // A copy sealed for a key other than the one the server has now can
@@ -320,6 +376,15 @@ internal class VaultFileRouter(
             Timber.w("Vault file [%s] was sealed for user-auth key %s, the server now has %s — downloading it again",
                 file.key, stamp, registered)
             storage.clear(file.key)
+        } else {
+            // The same for a copy waiting in the pending slot, on its own:
+            // the stored copy is for the right key and stays.
+            val pendingStamp = storage.pendingSealedKeyId(file.key)?.let { hex(it) }
+            if (pendingStamp != null && registered != null && pendingStamp != registered) {
+                Timber.w("Vault file [%s]: the pending copy was sealed for user-auth key %s, the server now has %s — dropped",
+                    file.key, pendingStamp, registered)
+                storage.clearPending(file.key)
+            }
         }
         return null
     }
@@ -328,6 +393,12 @@ internal class VaultFileRouter(
      * Stores a `user_auth` response as it came. Nothing is decrypted or
      * verified here — the content must not reach the app before the prompt —
      * but a missing signature and an older version are refused now.
+     *
+     * While a copy is stored, the new one goes to the storage's pending slot
+     * and the stored copy keeps its place and its confirmation: nothing in
+     * the download has been checked yet, and the copy on record has. The
+     * guard is told the download's time; `unlockFile` promotes the copy and
+     * writes the confirmation once the signature has passed.
      */
     private fun storeSealedByServer(
         file: VaultFileConfig,
@@ -339,14 +410,16 @@ internal class VaultFileRouter(
     ): VaultFileResult {
         if (file.encryption != VaultFileEncryption.USER_AUTH) {
             return VaultFileResult.Failed(
-                file.key, "Vault file '${file.key}': the server sent a user_auth file, but the app did not declare encryption(USER_AUTH)"
+                file.key, "Vault file '${file.key}': the server sent a user_auth file, but the app did not declare encryption(USER_AUTH)",
+                code = VaultFileResult.Failed.CODE_ENCRYPTION_MISMATCH
             )
         }
         if (served != VaultFileEncryption.USER_AUTH) {
             // Fail closed: a copy not sealed for the screen lock would put the
             // content in the app's hands without the prompt.
             return VaultFileResult.Failed(
-                file.key, "Vault file '${file.key}': the server answered encryption=${response.encryption} for a user_auth file; refused"
+                file.key, "Vault file '${file.key}': the server answered encryption=${response.encryption} for a user_auth file; refused",
+                code = VaultFileResult.Failed.CODE_ENCRYPTION_MISMATCH
             )
         }
         val trust = trustFor(file, client)
@@ -355,12 +428,16 @@ internal class VaultFileRouter(
         val scope = client.block.serverScope
         val entries = if (trust != null && trust.isEnabled) signatureEntries(response, scope) else signatureEntries(response, null)
         if (trust != null && trust.isEnabled && entries.isEmpty()) {
-            return VaultFileResult.Failed(file.key, noSignatureMessage(file.key, scope))
+            return VaultFileResult.Failed(file.key, noSignatureMessage(file.key, scope), code = VaultFileResult.Failed.CODE_SIGNATURE_MISSING)
         }
         if (response.version in 1 until currentVersion) {
-            return VaultFileResult.Failed(file.key, downgradeMessage(file.key, response.version, currentVersion))
+            return VaultFileResult.Failed(
+                file.key, downgradeMessage(file.key, response.version, currentVersion),
+                code = VaultFileResult.Failed.CODE_VERSION_REJECTED
+            )
         }
-        val refetch = (storage as UserAuthVaultStorage).needsFetch(file.key)
+        val userAuthStorage = storage as UserAuthVaultStorage
+        val refetch = userAuthStorage.needsFetch(file.key)
         if (response.version > 0 && response.version == currentVersion && storage.exists(file.key) && !refetch) {
             guard?.confirmed(file)
             return VaultFileResult.AlreadyCurrent(file.key, currentVersion)
@@ -369,7 +446,13 @@ internal class VaultFileRouter(
         // Stamped with the key the server was given (and sealed for), not
         // just whatever key the device holds now.
         val sealedFor = registrations.get(file.configApiId)?.let { unhex(it) }
-        storage.saveSealedByServer(file.key, response.content, newVersion, entries, sealedFor)
+        val pending = userAuthStorage.saveSealedByServer(file.key, response.content, newVersion, entries, sealedFor)
+        if (pending) {
+            guard?.pendingStored(file)
+            Timber.d("Vault file stored sealed [%s]: %s v%d waits in the pending slot beside v%d (user_auth, verified at unlockFile)",
+                file.configApiId, file.key, newVersion, currentVersion)
+            return VaultFileResult.Updated(file.key, newVersion, ByteArray(0))
+        }
         guard?.stored(file, newVersion, null)
         Timber.d("Vault file stored sealed [%s]: %s v%d → v%d (user_auth, opens with unlockFile)",
             file.configApiId, file.key, currentVersion, newVersion)

@@ -56,6 +56,23 @@ internal typealias UnlockVerifier = (plaintext: ByteArray, version: Int, signatu
  * never return its content; unlock reports
  * [VaultFileUnlockResult.Invalidated] (fetch again). [load] never returns
  * content for such a file.
+ *
+ * **The pending slot.** A server-sealed copy can only be checked after the
+ * prompt, so a download that arrives while a copy is already stored must
+ * not take that copy's place: whoever answers the download (the server, or
+ * whoever holds its TLS key) could otherwise destroy a good, verified copy
+ * with bytes that are found bad — and deleted — only at the next unlock.
+ * [saveSealedByServer] therefore writes a second copy to a slot of its own
+ * (`<key>.pending` in [inner]) whenever a copy exists, and leaves the
+ * existing one alone. [unlock] opens the pending copy first: when it passes
+ * its checks it is written under the file's own name and the slot is
+ * emptied; when it fails, it alone is deleted and the copy it was to
+ * replace is opened instead (asking for the prompt once more when the
+ * passed prompt's cipher was already used: a per-use key authorises one
+ * operation). The first copy ever stored goes straight to the file's own
+ * name, as there is nothing to protect. [exists], [getVersion], [isLocked]
+ * and [load] describe the copy under the file's own name; the pending copy
+ * is invisible to the app until it has been opened.
  * - **Open** — `PVUA` `0x00` `[content]`: an [UserAuth.IF_SCREEN_LOCK] copy
  *   saved while the device had no screen lock.
  * - Anything without the `PVUA` prefix is a copy stored before the app turned
@@ -103,6 +120,10 @@ internal class UserAuthVaultStorage(
      * user-auth key the library registered with the server, whose id is
      * [sealedFor] (the device's current key when not given), and is only
      * opened by [unlock].
+     *
+     * Returns true when the copy went to the pending slot: a copy is already
+     * stored and keeps its place until the new one has passed its checks in
+     * [unlock] (see the class comment). False: it is the stored copy now.
      */
     fun saveSealedByServer(
         key: String,
@@ -110,7 +131,7 @@ internal class UserAuthVaultStorage(
         version: Int,
         signatures: List<SignatureEntry>,
         sealedFor: ByteArray? = null
-    ) {
+    ): Boolean {
         VaultFileDecryptor.parse(envelope)   // refuse a malformed envelope now, not at unlock
         val keyId = sealedFor ?: UserAuthKeys.keyId(keys.publicKey())
         require(keyId.size == UserAuthKeys.KEY_ID_BYTES) { "key id must be ${UserAuthKeys.KEY_ID_BYTES} bytes" }
@@ -123,16 +144,43 @@ internal class UserAuthVaultStorage(
             .put(sigs)
             .put(envelope)
             .array()
+        if (inner.exists(key)) {
+            // Nothing in the new copy has been checked: the one on record
+            // stays, with its stamp and its failure counters, until the new
+            // one has opened. The whole file did arrive, though, so a copy
+            // kept after an inconclusive failure needs no download again.
+            inner.save(pendingKey(key), blob, version)
+            unwrapFailures.remove(pendingKey(key))
+            refetch.remove(key)
+            Timber.d("Vault file [%s] v%d stored in the pending slot; it replaces the stored copy once an unlock has verified it", key, version)
+            return true
+        }
         inner.save(key, blob, version)
         replaced(key)
+        return false
     }
+
+    /** The version waiting in the pending slot, or 0 when it is empty. */
+    fun pendingVersion(key: String): Int = if (inner.exists(pendingKey(key))) inner.getVersion(pendingKey(key)) else 0
+
+    /** Deletes the pending copy alone; the stored copy stays. */
+    fun clearPending(key: String) {
+        inner.clear(pendingKey(key))
+        unwrapFailures.remove(pendingKey(key))
+    }
+
+    /** The id of the key the pending copy was sealed for, or null when the slot is empty. */
+    fun pendingSealedKeyId(key: String): ByteArray? = inner.load(pendingKey(key))?.let(::sealedKeyIdOf)
+
+    /** Where a download waits while a copy is stored: the inner store binds it to this name, as it does the copy itself. */
+    private fun pendingKey(key: String) = "$key$PENDING_SUFFIX"
 
     override fun load(key: String): ByteArray? {
         val blob = inner.load(key) ?: return null
         if (serverSealedOnly) {
             // Never content: a server-sealed copy opens only in unlock, and
             // anything else was not written here for this file.
-            if (kindOf(blob) != Kind.SERVER) dropForeign(key)
+            if (kindOf(blob) != Kind.SERVER) dropForeign(key, Slot.MAIN)
             else Timber.d("Vault file [%s] is locked; PinVault.unlockFile opens it", key)
             return null
         }
@@ -150,9 +198,10 @@ internal class UserAuthVaultStorage(
 
     override fun exists(key: String): Boolean = inner.exists(key)
 
-    /** Deletes the copy. The key is the device's and stays (see [UserAuthKeys]). */
+    /** Deletes the copy, and a pending one. The key is the device's and stays (see [UserAuthKeys]). */
     override fun clear(key: String) {
         inner.clear(key)
+        inner.clear(pendingKey(key))
         replaced(key)
     }
 
@@ -169,6 +218,7 @@ internal class UserAuthVaultStorage(
     /** A new copy (or none) is stored: earlier failures say nothing about it. */
     private fun replaced(key: String) {
         unwrapFailures.remove(key)
+        unwrapFailures.remove(pendingKey(key))
         refetch.remove(key)
     }
 
@@ -182,8 +232,9 @@ internal class UserAuthVaultStorage(
      * The id of the key the stored copy was sealed for (8 bytes), or null
      * when nothing sealed is stored.
      */
-    fun sealedKeyId(key: String): ByteArray? {
-        val blob = inner.load(key) ?: return null
+    fun sealedKeyId(key: String): ByteArray? = inner.load(key)?.let(::sealedKeyIdOf)
+
+    private fun sealedKeyIdOf(blob: ByteArray): ByteArray? {
         val kind = kindOf(blob)
         if (kind != Kind.SEALED && kind != Kind.SERVER) return null
         if (blob.size < HEADER + UserAuthKeys.KEY_ID_BYTES) return null
@@ -203,19 +254,30 @@ internal class UserAuthVaultStorage(
      * useless: it is deleted, [onSealedForAnotherKey] runs (the router forgets the
      * registration so the key is registered again) and the result is
      * [VaultFileUnlockResult.Invalidated].
+     *
+     * A copy waiting in the pending slot is opened first. When it passes,
+     * it becomes the stored copy and [onPromoted] runs with its version
+     * (the guard records the confirmation only then); when it fails for a
+     * reason that is the copy's own, it alone is deleted and the stored
+     * copy is opened as if the pending one had never been there.
      */
     suspend fun unlock(
         key: String,
         authenticate: suspend (UserAuthKeyKind, Cipher?) -> AuthOutcome,
         onSealedForAnotherKey: () -> Unit = {},
+        onPromoted: (version: Int) -> Unit = {},
+        // Last on purpose: callers pass the verifier as a trailing lambda.
         verify: UnlockVerifier? = null
     ): VaultFileUnlockResult {
-        val blob = inner.load(key) ?: return VaultFileUnlockResult.NotFound(key)
-        val version = inner.getVersion(key)
+        var stored = inner.load(key)
+        val pending = inner.load(pendingKey(key))
+        if (stored == null && pending == null) return VaultFileUnlockResult.NotFound(key)
         if (serverSealedOnly) {
-            if (kindOf(blob) != Kind.SERVER) {
-                dropForeign(key)
-                return VaultFileUnlockResult.Invalidated(key)
+            if (stored != null && kindOf(stored) != Kind.SERVER) {
+                dropForeign(key, Slot.MAIN)
+                // A pending copy the server did seal may still open below.
+                if (pending == null) return VaultFileUnlockResult.Invalidated(key)
+                stored = null
             }
             if (verify == null) {
                 Timber.e("Vault file [%s]: no signature check available (its Config API is not configured) — not opened", key)
@@ -224,56 +286,125 @@ internal class UserAuthVaultStorage(
                 )
             }
         }
-        val unsealed = when (kindOf(blob)) {
+
+        // A prompt that passed for the pending copy and can still serve the
+        // stored one: a time-bound key, or a per-use cipher that was never
+        // used. Null = ask again.
+        var passed: AuthOutcome.Succeeded? = null
+        var pendingFailure: VaultFileUnlockResult? = null
+        if (pending != null) {
+            val attempt = openSlot(key, Slot.PENDING, pending, inner.getVersion(pendingKey(key)), authenticate, verify, onSealedForAnotherKey, null)
+            val result = attempt.result
+            if (result is VaultFileUnlockResult.Unlocked) {
+                promote(key, pending, result.version)
+                runCatching { onPromoted(result.version) }
+                return result
+            }
+            // Cancelled, a prompt error, a Keystore fault, a retired key:
+            // nothing more is tried, nothing else is touched.
+            if (!attempt.condemned) return result
+            Timber.w("Vault file [%s]: the pending copy did not open and was deleted; opening the copy it was to replace", key)
+            pendingFailure = result
+            passed = attempt.passed
+        }
+        val blob = stored ?: return pendingFailure ?: VaultFileUnlockResult.NotFound(key)
+        return openSlot(key, Slot.MAIN, blob, inner.getVersion(key), authenticate, verify, onSealedForAnotherKey, passed).result
+    }
+
+    /** The two places a copy can be: under the file's own name, and the pending slot. */
+    private enum class Slot { MAIN, PENDING }
+
+    /**
+     * What opening one slot came to. [condemned]: the copy was found bad and
+     * deleted, so the other slot may be tried; [passed]: a passed prompt the
+     * next slot may reuse (null when a per-use cipher was already used, or
+     * no prompt passed).
+     */
+    private class Attempt(val result: VaultFileUnlockResult, val condemned: Boolean = false, val passed: AuthOutcome.Succeeded? = null)
+
+    /** One slot, from the stored blob to the content: the checks before the prompt, the prompt, then [open]. */
+    private suspend fun openSlot(
+        key: String,
+        slot: Slot,
+        blob: ByteArray,
+        version: Int,
+        authenticate: suspend (UserAuthKeyKind, Cipher?) -> AuthOutcome,
+        verify: UnlockVerifier?,
+        onSealedForAnotherKey: () -> Unit,
+        passed: AuthOutcome.Succeeded?
+    ): Attempt {
+        val kindOfBlob = kindOf(blob)
+        if (slot == Slot.PENDING && kindOfBlob != Kind.SERVER) {
+            // Only saveSealedByServer writes this slot: anything else was planted.
+            dropForeign(key, slot)
+            return Attempt(VaultFileUnlockResult.Invalidated(key), condemned = true, passed = passed)
+        }
+        val unsealed = when (kindOfBlob) {
             Kind.OPEN -> blob.copyOfRange(HEADER, blob.size)
             Kind.EARLIER -> blob
             Kind.SEALED, Kind.SERVER -> null
-            Kind.RETIRED -> return invalidated(key)
+            Kind.RETIRED -> return Attempt(invalidated(key))
         }
         if (unsealed != null) {
-            val bytes = adopt(key, unsealed) ?: return invalidated(key)
-            return VaultFileUnlockResult.Unlocked(key, version, bytes)
+            val bytes = adopt(key, unsealed) ?: return Attempt(invalidated(key))
+            return Attempt(VaultFileUnlockResult.Unlocked(key, version, bytes))
         }
 
-        val sealed = try { Sealed.parse(blob) } catch (e: Exception) { return damaged(key, "the stored copy is malformed", e) }
+        val sealed = try { Sealed.parse(blob) } catch (e: Exception) {
+            return Attempt(damaged(key, slot, "the stored copy is malformed", e), condemned = true, passed = passed)
+        }
 
         // Which key the copy needs, and whether it is still there. Only a
-        // retired or missing key is a reason to give the copy up.
+        // retired or missing key is a reason to give the copy up — and that
+        // gives up every copy, not just this slot's.
         val kind = try {
-            if (keys.state() != UserAuthKeys.State.USABLE) return invalidated(key)
+            if (keys.state() != UserAuthKeys.State.USABLE) return Attempt(invalidated(key))
             if (!sealed.keyId.contentEquals(UserAuthKeys.keyId(keys.publicKey()))) {
                 Timber.w("Vault file [%s] was sealed with a user-auth key that no longer exists", key)
-                return invalidated(key)
+                // A pending copy for another key says nothing about the
+                // stored one, whose stamp is checked on its own turn.
+                return if (slot == Slot.PENDING) Attempt(givenUp(key, slot), condemned = true, passed = passed)
+                else Attempt(invalidated(key))
             }
             keys.kind()
         } catch (e: Exception) {
-            return keystoreFailure(key, "Could not read the unlock key", e)
+            return Attempt(keystoreFailure(key, "Could not read the unlock key", e))
         }
 
-        val promptCipher = try {
-            keys.cipherForPrompt()
-        } catch (e: Exception) {
-            return keystoreFailure(key, "Could not prepare the unlock", e)
+        val outcome = passed ?: run {
+            val promptCipher = try {
+                keys.cipherForPrompt()
+            } catch (e: Exception) {
+                return Attempt(keystoreFailure(key, "Could not prepare the unlock", e))
+            }
+            authenticate(kind, promptCipher)
         }
 
-        return when (val outcome = authenticate(kind, promptCipher)) {
-            is AuthOutcome.Succeeded -> open(key, version, sealed, outcome.cipher, verify, onSealedForAnotherKey)
-            AuthOutcome.Cancelled -> VaultFileUnlockResult.Cancelled(key)
-            AuthOutcome.NoScreenLock -> VaultFileUnlockResult.Failed(key, "The device has no screen lock; set one to open this file")
-            is AuthOutcome.Error -> VaultFileUnlockResult.Failed(key, outcome.message)
+        return when (outcome) {
+            is AuthOutcome.Succeeded -> open(key, slot, version, sealed, outcome, verify, onSealedForAnotherKey)
+            AuthOutcome.Cancelled -> Attempt(VaultFileUnlockResult.Cancelled(key))
+            AuthOutcome.NoScreenLock -> Attempt(VaultFileUnlockResult.Failed(key, "The device has no screen lock; set one to open this file"))
+            is AuthOutcome.Error -> Attempt(VaultFileUnlockResult.Failed(key, outcome.message))
         }
     }
 
     /** After a passed prompt: the Keystore step, then the software steps. */
     private fun open(
         key: String,
+        slot: Slot,
         version: Int,
         sealed: Sealed,
-        authorised: Cipher?,
+        outcome: AuthOutcome.Succeeded,
         verify: UnlockVerifier?,
         onSealedForAnotherKey: () -> Unit
-    ): VaultFileUnlockResult {
-        val unwrap = { wrapped: ByteArray -> keys.unwrap(authorised, wrapped) }
+    ): Attempt {
+        val authorised = outcome.cipher
+        // A per-use cipher does one operation: once the unwrap has run, the
+        // other slot needs a prompt of its own. A time-bound key opens
+        // without the cipher for as long as its window lasts.
+        var used = false
+        val unwrap = { wrapped: ByteArray -> used = true; keys.unwrap(authorised, wrapped) }
+        fun reusable(): AuthOutcome.Succeeded? = if (authorised == null || !used) outcome else null
         return when (sealed) {
             is Sealed.Local -> {
                 // Never given up here (only a retired key is): the copy's key
@@ -283,10 +414,10 @@ internal class UserAuthVaultStorage(
                 // next fetch downloads the file whole and replaces it.
                 val fileKey = try { unwrap(sealed.wrappedKey) } catch (e: Exception) {
                     if (!UserAuthKeys.isRetired(e) && !WrongKeyForCopy.isAuthFailure(e)) refetch.add(key)
-                    return keystoreFailure(key, "Unlock was approved but the key did not open", e)
+                    return Attempt(keystoreFailure(key, "Unlock was approved but the key did not open", e))
                 }
                 val content = try { sealed.open(key, version, fileKey) } catch (e: Exception) {
-                    return damaged(key, "the stored copy did not decrypt for this file and version", e)
+                    return Attempt(damaged(key, slot, "the stored copy did not decrypt for this file and version", e), condemned = true, passed = reusable())
                 }
                 if (!sealed.boundToVersion) {
                     // Sealed by an earlier build, without the version: write it
@@ -298,31 +429,60 @@ internal class UserAuthVaultStorage(
                     }
                 }
                 replaced(key)
-                VaultFileUnlockResult.Unlocked(key, version, content)
+                Attempt(VaultFileUnlockResult.Unlocked(key, version, content))
             }
             is Sealed.Server -> {
                 val parts = try { VaultFileDecryptor.parse(sealed.envelope) } catch (e: Exception) {
-                    return damaged(key, "the stored envelope is malformed", e)
+                    return Attempt(damaged(key, slot, "the stored envelope is malformed", e), condemned = true, passed = reusable())
                 }
                 val sessionKey = try { unwrap(parts.wrappedKey) } catch (e: Exception) {
-                    if (isWrongKeyForCopy(e) || failedAgain(key, e)) return sealedForAnotherKey(key, e, onSealedForAnotherKey)
+                    if (isWrongKeyForCopy(e) || failedAgain(slotKey(key, slot), e)) {
+                        return Attempt(sealedForAnotherKey(key, slot, e, onSealedForAnotherKey), condemned = true, passed = reusable())
+                    }
                     // Kept: what failed is not known to be the copy. A fresh
-                    // download replaces it if it was.
-                    if (!UserAuthKeys.isRetired(e) && !WrongKeyForCopy.isAuthFailure(e)) refetch.add(key)
-                    return keystoreFailure(key, "Unlock was approved but the key did not open", e)
+                    // download replaces a stored copy if it was (a pending
+                    // one is the fresh download already).
+                    if (slot == Slot.MAIN && !UserAuthKeys.isRetired(e) && !WrongKeyForCopy.isAuthFailure(e)) refetch.add(key)
+                    return Attempt(keystoreFailure(key, "Unlock was approved but the key did not open", e))
                 }
                 val content = try {
                     VaultFileDecryptor.openContent(parts, SecretKeySpec(sessionKey, "AES")).also { sessionKey.fill(0) }
                 } catch (e: Exception) {
-                    return damaged(key, "the server's envelope did not decrypt", e)
+                    return Attempt(damaged(key, slot, "the server's envelope did not decrypt", e), condemned = true, passed = reusable())
                 }
                 verify?.invoke(content, version, sealed.signatures)?.let { problem ->
                     content.fill(0)
-                    return damaged(key, problem, null)
+                    return Attempt(damaged(key, slot, problem, null), condemned = true, passed = reusable())
                 }
-                replaced(key)
-                VaultFileUnlockResult.Unlocked(key, version, content)
+                if (slot == Slot.MAIN) replaced(key)
+                Attempt(VaultFileUnlockResult.Unlocked(key, version, content))
             }
+        }
+    }
+
+    /**
+     * The pending copy passed: it is written under the file's own name (the
+     * inner store binds a blob to its name, so it cannot simply be renamed)
+     * and the slot is emptied. The copy it replaces is gone with that save.
+     */
+    private fun promote(key: String, blob: ByteArray, version: Int) {
+        inner.save(key, blob, version)
+        inner.clear(pendingKey(key))
+        replaced(key)
+        Timber.d("Vault file [%s]: the pending copy (v%d) opened and replaced the stored one", key, version)
+    }
+
+    /** The inner store's name for a slot's copy; also what the failure counter is kept under. */
+    private fun slotKey(key: String, slot: Slot) = if (slot == Slot.PENDING) pendingKey(key) else key
+
+    /** Deletes one slot's copy. The stored copy's deletion takes its failure marks with it. */
+    private fun condemn(key: String, slot: Slot) {
+        if (slot == Slot.PENDING) {
+            clearPending(key)
+        } else {
+            inner.clear(key)
+            unwrapFailures.remove(key)
+            refetch.remove(key)
         }
     }
 
@@ -352,16 +512,24 @@ internal class UserAuthVaultStorage(
         return bytes
     }
 
+    /** The key is gone: no copy of this file will open again, whichever slot it is in. */
     private fun invalidated(key: String): VaultFileUnlockResult {
         Timber.w("Vault file [%s]: the unlock key is gone (the screen lock was removed, or the fingerprints changed on a fingerprint-only key); stored copy deleted", key)
         clear(key)
         return VaultFileUnlockResult.Invalidated(key)
     }
 
-    /** A blob a [serverSealedOnly] file must not hold: deleted unread. */
-    private fun dropForeign(key: String) {
-        Timber.e("Vault file [%s]: the stored copy is not one the server sealed; deleted unread — fetch it again", key)
-        clear(key)
+    /** A pending copy stamped with a key the device no longer has: it alone is given up. */
+    private fun givenUp(key: String, slot: Slot): VaultFileUnlockResult {
+        Timber.w("Vault file [%s]: the %s copy was sealed for a key that is gone; deleted", key, slotName(slot))
+        condemn(key, slot)
+        return VaultFileUnlockResult.Invalidated(key)
+    }
+
+    /** A blob a [serverSealedOnly] file (or the pending slot) must not hold: deleted unread. */
+    private fun dropForeign(key: String, slot: Slot) {
+        Timber.e("Vault file [%s]: the %s copy is not one the server sealed; deleted unread — fetch it again", key, slotName(slot))
+        condemn(key, slot)
     }
 
     /**
@@ -369,12 +537,14 @@ internal class UserAuthVaultStorage(
      * for another key (the server kept an older registration, or the copy was
      * swapped). Nothing about it will ever open; give it up.
      */
-    private fun sealedForAnotherKey(key: String, e: Exception, onSealedForAnotherKey: () -> Unit): VaultFileUnlockResult {
-        Timber.w(e, "Vault file [%s]: approved, but the copy is not sealed for this key — deleted; fetch it again", key)
-        clear(key)
+    private fun sealedForAnotherKey(key: String, slot: Slot, e: Exception, onSealedForAnotherKey: () -> Unit): VaultFileUnlockResult {
+        Timber.w(e, "Vault file [%s]: approved, but the %s copy is not sealed for this key — deleted; fetch it again", key, slotName(slot))
+        condemn(key, slot)
         runCatching(onSealedForAnotherKey)
         return VaultFileUnlockResult.Invalidated(key)
     }
+
+    private fun slotName(slot: Slot) = if (slot == Slot.PENDING) "pending" else "stored"
 
     private fun isWrongKeyForCopy(e: Throwable): Boolean = WrongKeyForCopy.matches(e)
 
@@ -409,11 +579,11 @@ internal class UserAuthVaultStorage(
         return VaultFileUnlockResult.Failed(key, "$what: ${e.message}", e)
     }
 
-    /** The copy itself is bad (damaged, wrong signature): delete it, the next fetch replaces it. */
-    private fun damaged(key: String, problem: String, e: Exception?): VaultFileUnlockResult {
-        Timber.e(e, "Vault file [%s]: %s — stored copy deleted", key, problem)
-        clear(key)
-        return VaultFileUnlockResult.Failed(key, "Vault file '$key' did not open: $problem. The stored copy was deleted; fetch it again.", e)
+    /** The copy itself is bad (damaged, wrong signature): delete it — that slot's copy only — the next fetch replaces it. */
+    private fun damaged(key: String, slot: Slot, problem: String, e: Exception?): VaultFileUnlockResult {
+        Timber.e(e, "Vault file [%s]: %s — %s copy deleted", key, problem, slotName(slot))
+        condemn(key, slot)
+        return VaultFileUnlockResult.Failed(key, "Vault file '$key' did not open: $problem. The ${slotName(slot)} copy was deleted; fetch it again.", e)
     }
 
     private enum class Kind { SEALED, SERVER, OPEN, EARLIER, RETIRED }
@@ -515,6 +685,8 @@ internal class UserAuthVaultStorage(
         private const val SERVER: Byte = 0x03
         /** Sealed here, the tag covering file name AND version. */
         private const val SEALED_V3: Byte = 0x04
+        /** The pending slot's name in the inner store: `<key>.pending`. */
+        internal const val PENDING_SUFFIX = ".pending"
         private val HEADER = MAGIC.size + 1
         private const val AES_GCM = "AES/GCM/NoPadding"
         private const val GCM_IV_BYTES = 12

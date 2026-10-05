@@ -14,8 +14,11 @@ data class VaultDownloadReport(
     val deviceId: String,
     val deviceAlias: String,
     /**
-     * status == "failed" ise başarısızlık nedeni (HTTP 401 / 404 / decrypt fail
-     * / network error mesajı). Başarılı fetch'lerde null.
+     * status == "failed" ise başarısızlık sınıfı: sabit bir kod
+     * ([VaultFileResult.Failed.code]: `http_401`, `decrypt_failed`,
+     * `signature_invalid`, `network_error`, …). İstisna metni hiçbir zaman
+     * gönderilmez — şifre çözme hatasının türü sunucuya bir kahin olurdu;
+     * ayrıntı yalnızca yerel logda kalır. Başarılı fetch'lerde null.
      */
     val failureReason: String? = null,
     /**

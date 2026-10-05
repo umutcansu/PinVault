@@ -494,4 +494,117 @@ class UserAuthRouterTest {
         keys.unwrapError = null
         assertEquals(VaultFileUnlockResult.Unlocked("st", 3, content), storage.unlock("st", passes, verify = router.unlockVerifier(file())))
     }
+
+    // ── A download beside a verified copy waits in the pending slot (L-10) ──
+
+    private val meta = io.github.umutcansu.pinvault.store.VaultFileMeta.InMemory()
+    private var now = 1_800_000_000_000L
+
+    private fun guardedRouter(storage: UserAuthVaultStorage, guard: VaultFileGuard): VaultFileRouter {
+        val client = mockk<ConfigApiClient>()
+        every { client.api } returns api
+        every { client.block } returns block
+        every { client.signatureTrust } returns SignatureTrust.forBlock(block, null)
+        return VaultFileRouter(mapOf("default" to client), { storage }, null, { "device-1" }, keys, { listOf(file()) }, registrations, guard)
+    }
+
+    @Test
+    fun `a newer user_auth download leaves the verified copy and its confirmation alone until it is opened`() = runTest {
+        val storage = strictStorage()
+        val guard = VaultFileGuard(meta, { now })
+        val router = guardedRouter(storage, guard)
+        serverSealsForRegisteredKey(version = 3)
+        assertEquals(VaultFileResult.Updated("st", 3, ByteArray(0)), router.fetchFile(file()))
+        val confirmedV3 = meta.confirmedAt("st")
+        assertEquals("a first copy is confirmed as it is stored (nothing to protect yet)", now, confirmedV3)
+
+        now += 60_000
+        val served = now
+        serverSealsForRegisteredKey(version = 4)
+        assertEquals(VaultFileResult.Updated("st", 4, ByteArray(0)), router.fetchFile(file()))
+
+        assertEquals("the verified copy is what the app sees", 3, storage.getVersion("st"))
+        assertEquals(4, storage.pendingVersion("st"))
+        assertEquals("nothing unverified refreshes the confirmation", confirmedV3, meta.confirmedAt("st"))
+
+        now += 60_000
+        val unlocked = storage.unlock("st", passes, verify = router.unlockVerifier(file()), onPromoted = { guard.promoted(file(), it) })
+
+        assertEquals(VaultFileUnlockResult.Unlocked("st", 4, content), unlocked)
+        assertEquals(4, storage.getVersion("st"))
+        assertEquals(0, storage.pendingVersion("st"))
+        assertEquals("confirmed as of the download, not as of the unlock", served, meta.confirmedAt("st"))
+    }
+
+    @Test
+    fun `a bad newer copy is deleted at unlock and the verified copy still opens`() = runTest {
+        val storage = strictStorage()
+        val guard = VaultFileGuard(meta, { now })
+        val router = guardedRouter(storage, guard)
+        serverSealsForRegisteredKey(version = 3)
+        router.fetchFile(file())
+        val confirmedV3 = meta.confirmedAt("st")
+
+        // Whoever answers the download serves other bytes under a signature
+        // made for the real content: it can only be found out at unlock.
+        val asked = mutableListOf<Int>()
+        coEvery { api.downloadVaultFileWithMeta(any(), capture(asked), any(), any()) } answers {
+            VaultFetchResponse(
+                content = SoftwareUserAuthKeys.serverEnvelope("tampered".toByteArray(), keys.publicKey()),
+                version = 4, encryption = "user_auth", signature = sign("st", 4, content)
+            )
+        }
+        assertEquals(VaultFileResult.Updated("st", 4, ByteArray(0)), router.fetchFile(file()))
+        assertEquals(listOf(3), asked)
+        assertTrue("the verified copy is untouched", storage.exists("st"))
+        assertEquals(3, storage.getVersion("st"))
+
+        // Meanwhile the server is asked with the pending version, so it does
+        // not serve the file again on every sync; its 304 keeps the verified copy confirmed.
+        now += 1_000
+        coEvery { api.downloadVaultFileWithMeta(any(), capture(asked), any(), any()) } answers {
+            VaultFetchResponse(content = ByteArray(0), version = 4, encryption = "user_auth", notModified = true)
+        }
+        assertEquals(VaultFileResult.AlreadyCurrent("st", 4), router.fetchFile(file()))
+        assertEquals(listOf(3, 4), asked)
+        assertEquals(now, meta.confirmedAt("st"))
+
+        val result = storage.unlock(
+            "st", passes, verify = router.unlockVerifier(file()),
+            onPromoted = { fail("a copy that fails its check is never promoted") }
+        )
+
+        assertEquals("the verified copy opens; the bad one is gone", VaultFileUnlockResult.Unlocked("st", 3, content), result)
+        assertEquals(3, storage.getVersion("st"))
+        assertEquals(0, storage.pendingVersion("st"))
+        assertTrue(meta.confirmedAt("st") >= confirmedV3)
+
+        // Without a pending copy the server is asked with the verified version again.
+        router.fetchFile(file())
+        assertEquals(listOf(3, 4, 3), asked)
+    }
+
+    @Test
+    fun `a replaced key gives up the stored copy with its pending one, and the new download is the stored copy`() = runTest {
+        val storage = strictStorage()
+        val router = guardedRouter(storage, VaultFileGuard(meta, { now }))
+        serverSealsForRegisteredKey(version = 3)
+        router.fetchFile(file())
+        // A second download, stamped with the key registered now.
+        serverSealsForRegisteredKey(version = 4)
+        router.fetchFile(file())
+        assertEquals(4, storage.pendingVersion("st"))
+
+        // The server's key changes hands (an administrator reset, a new
+        // registration): the registration is forgotten and made again.
+        router.forgetUserAuthRegistration("default")
+        keys.delete(); keys.ensureKey()
+        serverSealsForRegisteredKey(version = 5)
+        val result = router.fetchFile(file())
+
+        assertEquals(VaultFileResult.Updated("st", 5, ByteArray(0)), result)
+        // Both earlier copies were for the old key: the stored one is given up with its pending one, the new download is the stored copy.
+        assertEquals(5, storage.getVersion("st"))
+        assertEquals(0, storage.pendingVersion("st"))
+    }
 }

@@ -1743,6 +1743,13 @@ object PinVault {
      * is not the server's sealed copy, and a copy sealed for another key, is
      * deleted and reported as [VaultFileUnlockResult.Invalidated] (fetch it
      * again; the key is registered again first).
+     *
+     * A newer `USER_AUTH` copy downloaded while a verified one was stored
+     * waits in a pending slot and is opened first here: when it passes, it
+     * replaces the stored copy (and only then counts as confirmed by the
+     * server); when it fails, it alone is deleted and the copy it was to
+     * replace is opened instead — which, for a per-use key, asks for the
+     * prompt once more.
      */
     suspend fun unlockFile(
         activity: FragmentActivity,
@@ -1777,7 +1784,10 @@ object PinVault {
                     { kind, cipher -> UserAuthPrompt.authenticate(activity, prompt, kind, cipher) },
                     verify = verifier,
                     // Sealed for a key the server no longer has: register again before the next fetch.
-                    onSealedForAnotherKey = { sealedByServer?.let { vaultRouter.forgetUserAuthRegistration(it.configApiId) } }
+                    onSealedForAnotherKey = { sealedByServer?.let { vaultRouter.forgetUserAuthRegistration(it.configApiId) } },
+                    // A newer server-sealed copy passed its check and replaced
+                    // the stored one: only now is it confirmed (L-10).
+                    onPromoted = { version -> if (file != null && guard != null) guard.promoted(file, version) }
                 )
             } else {
                 storage.load(key)?.let { VaultFileUnlockResult.Unlocked(key, storage.getVersion(key), it) }
@@ -1911,8 +1921,12 @@ object PinVault {
             enrollmentLabel = enrollmentLabel,
             deviceId = identity?.second ?: "unknown",
             deviceAlias = identity?.first ?: android.os.Build.MODEL,
-            // Başarısız fetch'te UI/debug için sebep gönder. Başarılıda null.
-            failureReason = (result as? VaultFileResult.Failed)?.reason,
+            // The fixed class of the failure, never its text. The reason can
+            // carry an exception message — which padding step of an
+            // end_to_end envelope failed, say — and whoever answers the
+            // download must not learn that from the report. The text stays in
+            // the local log (the router logs it) and in the result the app gets.
+            failureReason = (result as? VaultFileResult.Failed)?.code,
             // Hangi yetkilendirmeyle fetch denendi — audit için web UI + mobile
             // log'larda görünür. Policy enum'undan türetilir, runtime override yok.
             authMethod = when (fileConfig.accessPolicy) {

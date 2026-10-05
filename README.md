@@ -1333,7 +1333,9 @@ PinVaultConfig.Builder()
 `loadFile` returns `null` (`fileStatus` = `STALE`) and `unlockFile` returns
 `VaultFileUnlockResult.Stale` once the last successful fetch of the file — a
 download, or the server's "you have the current version" — is longer ago than
-that. A successful fetch makes the copy readable again; with `wipeWhenStale()`
+that. (An `encryption(USER_AUTH)` download beside a stored copy counts from
+the moment `unlockFile` has verified it, backdated to the download.) A
+successful fetch makes the copy readable again; with `wipeWhenStale()`
 the copy is deleted instead, at the next read, at `init` and on every periodic
 update, whether or not the app asks for it. The time is the library's own
 clock, the one config expiry uses: setting the device clock back does not
@@ -1436,6 +1438,14 @@ What is protected depends on who seals the file:
   update listener, not in storage. The signature is checked at unlock; a copy
   that fails is deleted, and so is anything in storage that is not a
   server-sealed copy (`loadFile` never returns content for such a file).
+  Because nothing can be checked before the prompt, a download that arrives
+  while a copy is already stored does not replace it: it waits in a pending
+  slot, and `unlockFile` opens it first — when it passes it becomes the
+  stored copy (and only then counts as confirmed by the server); when it
+  fails, it alone is deleted and the copy it was to replace is opened
+  instead (with a second prompt for a per-use key, which authorises one
+  operation). Until then `fileVersion` names the verified copy, and
+  `VaultFileResult.Updated` means "downloaded, verified at the next unlock".
 - **Against root running as the app** this holds only when the server
   enforces key attestation. The key is generated with an Android key
   attestation challenge bound to the device id, and its chain goes along

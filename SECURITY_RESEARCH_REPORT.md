@@ -268,7 +268,17 @@ Doğrulama: demo-server bu ortamda JDK 17 ile derlendi ve ilgili testler koştur
 
 **Kısa vade — bu dalda uygulananlar:** L-2 Keystore seviyesi raporlama + `requireHardwareBackedKeys()` (`KeySecurityLevel`, `HardwareBackedKeyRequiredException`) · S-1 `CONFIG_API_ADMIN_ROUTES=off` (üretim profili sabitler) · L-25/S-11 nonce: atestasyon protokolü her turda sunucu nonce'u imzalatır (kayıt challenge'ı değişmedi; cihaz anahtarı artık her 5 dakikada taze bir nonce'la kanıtlanıyor) · L-3 RASP: `integrity/` probe'ları ve atestasyon katmanı (bkz. 6.5).
 
-**Kısa vade — açık kalanlar:** S-5 PKCS12 keystore · L-10/L-11 vault doğrula-sonra-yaz · L-13 gövde boyutu sınırı · A-2 demo-app release korkuluğu.
+**Kısa vade — sonradan aynı dalda kapatılanlar:**
+
+| Bulgu | Yapılan |
+|---|---|
+| S-5 | Sunucunun tüm keystore'ları PKCS12 (`service/ServerKeyStores.kt`); `.jks` dosya adları korundu, eski JKS dosyası okunup bellekte PKCS12'ye çevriliyor, açılıştaki `KeystoreRekey` geçişi dosyayı atomik olarak yeniden yazıyor. Test: `ServerKeyStoresTest` (3/3), `BackendTest` rekey vakası |
+| L-10 | `user_auth` dosyası için gölge slot (`<key>.pending`): doğrulanmış kopya ve `confirmedAt` dokunulmadan kalır; yeni zarf kilit açılıp imzası doğrulanınca ana slota taşınır, doğrulanamazsa yalnızca bekleyen kopya silinir ve doğrulanmış kopya açılır. İlk kopya eski davranışla saklanır |
+| L-11 | Sunucu düz metnin özetini imzaladığı için imza şifre çözmeden önce doğrulanamıyor; yapılan: imza varlığı çözmeden önce kontrol ediliyor, yerleşim/OAEP/GCM hataları tek sabit `decrypt_failed` koduna iniyor ve sunucuya giden `failureReason` artık her sınıf için sabit kod (`http_<durum>`, `network_error`, `signature_invalid`, `decrypt_failed`, `response_too_large`, …); ayrıntı yalnızca yerel log'da |
+| L-13 | `internal/BoundedBody.kt`: her yanıt gövdesi sınırlı okunuyor (config/JSON 1 MiB, küçük yanıtlar 256 KiB, vault 64 MiB; `Content-Length` sınırı aşıyorsa hiç okunmadan reddediliyor); `ResponseTooLargeException`. Test: `BoundedBodyTest`, `DefaultCertificateConfigApiTest` |
+| A-2 | `demo-app` release korkuluğu: `BuildConfig.DEMO_INSECURE_CHANNELS` (release'te kapalı), imzalı config + `serverScope`, `-Pdemo.backupPin`, raporlar pinli TLS Config API'ye, cleartext yalnızca `src/debug`, minify açık, Timber yalnızca debug; anahtar/pin yoksa `assembleRelease` durur ve uygulama açılmayı reddeder |
+
+Kütüphane ve demo-app değişiklikleri bu ortamda Android SDK olmadığı için derlenmedi; kütüphane dosyaları AndroidX dışındaki bağımlılıklarla Kotlin derleyicisinden geçirildi (hata yok). SDK'lı makinede `./gradlew :pinvault:testDebugUnitTest` ve `:demo-app:assembleDebug` koşturulmalı.
 
 **Belgeleme:** L-4 rollback sınırı README'ye · anahtar rotasyonunda replay penceresi · `allowUnpinnedConfigApi` yan etkileri · issuer pin = CA güveni notu · kayıt atestasyonunun neyi kanıtlamadığı.
 
