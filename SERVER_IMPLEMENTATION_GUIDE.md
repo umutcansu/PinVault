@@ -605,6 +605,162 @@ of the admin UI.
 
 ---
 
+### 9. Attestation and PinVault-Token (OPTIONAL — only if the app calls `attestation()`)
+
+The contract is [ATTESTATION.md](ATTESTATION.md); this is the short form and
+the part your **API** has to do.
+
+The library talks to two endpoints on the config server:
+
+| Endpoint | What it does |
+|---|---|
+| `GET /api/v1/attest/challenge` | Answers `{"nonce": "…", "expiresIn": 120, "serverTime": 1759660800000}`. The nonce is single-use and short-lived. |
+| `POST /api/v1/attest` | Takes `{v: 1, nonce, deviceId, publicKey, attestationChain?, report, signature, currentConfigVersion?, currentIssuedAt?, hosts?}` where `signature` is `SHA256withECDSA` over the UTF-8 bytes of `pinvault-attest:v1:<nonce>:<deviceId>:<sha256-hex(report)>` with the device's EC P-256 Keystore key (the same key that signs mTLS CSRs). Answers `{"result": "pass"|"reject", "arc", "warnings", "rejectionReasons"?, "token"?, "tokenExpiresAt"?, "tokenTtlSeconds", "nextAttestIn", "configChanged", "config"?, "device": {...}, "policyVersion"}`. On `pass` the `token` is the `PinVault-Token`; on `reject` there is no token and no `config`. |
+
+The reference server registers the device key on first sight (optionally
+requiring an Android Key Attestation chain, `ATTESTATION_KEY_POLICY`),
+evaluates the report against a per-Config-API policy and signs the token.
+If you implement the server yourself, keep the order of checks in
+ATTESTATION.md §2.2 and never answer a token to a rejected device.
+
+**What your backend does on every request from the app** — the library adds
+`PinVault-Token: <jwt>` to requests whose host is a token host. Verify it
+locally; nothing calls the PinVault server on the request path:
+
+```
+header  { "alg": "HS256", "typ": "JWT", "kid": "2026-10-05-01" }
+payload { "iss": "pinvault", "sub": "<deviceId>", "aud": "<configApiId>",
+          "iat": 1759660800, "exp": 1759661100, "jti": "…",
+          "did": "<deviceId>", "arc": "7f3a9c1e", "pol": 3,
+          "anno": ["staff", "canary"] }        // only when the device has annotations
+```
+
+1. Load the secrets once (and again after a rotation):
+   `GET /api/v1/attestation/token-secrets` on the management port (admin key;
+   under two-person approval the requester sends the request again once it is
+   approved) → `{"active": "<kid>", "secrets": [{"kid", "secret" (Base64, 32 bytes), "active", "createdAt"}]}`.
+   Keep **every** listed secret keyed by `kid`: tokens signed before a
+   rotation stay valid until they expire.
+2. Pick the secret the header's `kid` names (unknown `kid` → refuse).
+3. Verify the HS256 signature, `exp` with at most 60 s of leeway, and `aud`
+   equal to your Config API id. Optionally require `anno` to contain a
+   string (staff builds, canaries), or `pol` to be at least a version.
+4. Refuse with `401` and `WWW-Authenticate: PinVault-Token error="invalid_token", error_description="…"`
+   (body `{"error":"invalid_token","reason":"expired|signature|audience|missing|malformed|unknown_kid"}`).
+   The library recognises a `401` that names `PinVault-Token`, attests once
+   more and retries the request once.
+
+The reference implementation is `demo-server/src/main/kotlin/com/example/pinvault/server/plugin/PinVaultTokenAuth.kt`
+(the mock hosts install it with `MOCK_HOST_REQUIRE_TOKEN=true`). Snippets:
+
+**Kotlin / Java (javax.crypto, no library)**
+
+```kotlin
+import java.util.Base64
+import javax.crypto.Mac
+import javax.crypto.spec.SecretKeySpec
+import kotlinx.serialization.json.*
+
+/** secrets: kid → 32 raw bytes, from GET /api/v1/attestation/token-secrets. */
+fun verifyPinVaultToken(token: String, secrets: Map<String, ByteArray>, audience: String, leewaySeconds: Long = 60): JsonObject? {
+    val parts = token.split('.')
+    if (parts.size != 3) return null                                        // malformed
+    val url = Base64.getUrlDecoder()
+    val header = Json.parseToJsonElement(String(url.decode(parts[0]))).jsonObject
+    if (header["alg"]?.jsonPrimitive?.content != "HS256") return null       // malformed
+    val secret = secrets[header["kid"]?.jsonPrimitive?.content] ?: return null   // unknown_kid
+    val mac = Mac.getInstance("HmacSHA256").apply { init(SecretKeySpec(secret, "HmacSHA256")) }
+    val expected = mac.doFinal((parts[0] + "." + parts[1]).toByteArray(Charsets.US_ASCII))
+    if (!java.security.MessageDigest.isEqual(expected, url.decode(parts[2]))) return null   // signature
+    val payload = Json.parseToJsonElement(String(url.decode(parts[1]))).jsonObject
+    val now = System.currentTimeMillis() / 1000
+    if (now > payload["exp"]!!.jsonPrimitive.long + leewaySeconds) return null     // expired
+    if (payload["aud"]?.jsonPrimitive?.content != audience) return null              // audience
+    // Optional: payload["anno"]?.jsonArray must contain "staff"; payload["pol"] >= 3.
+    return payload   // payload["did"] is the device id, payload["arc"] the result code
+}
+```
+
+**Node (`jsonwebtoken`)**
+
+```js
+const jwt = require('jsonwebtoken');
+// kid → Buffer of the 32 secret bytes (Base64-decoded from GET /api/v1/attestation/token-secrets)
+const secrets = { '2026-10-05-01': Buffer.from(process.env.PINVAULT_SECRET_01, 'base64') };
+
+function verifyPinVaultToken(token, audience) {
+  return jwt.verify(token, (header, done) => {
+    const secret = secrets[header.kid];
+    done(secret ? null : new Error('unknown_kid'), secret);
+  }, { algorithms: ['HS256'], audience, issuer: 'pinvault', clockTolerance: 60 });
+}
+
+// Express middleware
+app.use((req, res, next) => {
+  const token = req.get('PinVault-Token');
+  if (!token) return refuse(res, 'missing');
+  verifyPinVaultToken(token, 'default-tls', (err, claims) => {
+    if (err) return refuse(res, err.name === 'TokenExpiredError' ? 'expired' : err.message === 'unknown_kid' ? 'unknown_kid' : 'signature');
+    if (!(claims.anno || []).includes('staff')) { /* optional annotation rule */ }
+    req.device = claims.did; req.arc = claims.arc;
+    next();
+  });
+});
+function refuse(res, reason) {
+  res.set('WWW-Authenticate', `PinVault-Token error="invalid_token", error_description="${reason}"`);
+  res.status(401).json({ error: 'invalid_token', reason });
+}
+```
+
+**Python (`PyJWT`)**
+
+```python
+import base64, jwt
+from jwt import InvalidTokenError, ExpiredSignatureError, InvalidAudienceError
+
+# kid -> 32 raw bytes, from GET /api/v1/attestation/token-secrets
+SECRETS = {"2026-10-05-01": base64.b64decode(SECRET_01_B64)}
+
+def verify_pinvault_token(token: str, audience: str) -> dict:
+    kid = jwt.get_unverified_header(token).get("kid")
+    secret = SECRETS.get(kid)
+    if secret is None:
+        raise InvalidTokenError("unknown_kid")
+    return jwt.decode(token, secret, algorithms=["HS256"], audience=audience,
+                      issuer="pinvault", leeway=60)
+
+# Flask
+@app.before_request
+def require_pinvault_token():
+    token = request.headers.get("PinVault-Token")
+    if not token:
+        return refuse("missing")
+    try:
+        claims = verify_pinvault_token(token, "default-tls")
+    except ExpiredSignatureError:
+        return refuse("expired")
+    except InvalidAudienceError:
+        return refuse("audience")
+    except InvalidTokenError as e:
+        return refuse("unknown_kid" if "unknown_kid" in str(e) else "signature")
+    if "staff" not in claims.get("anno", []):
+        pass  # optional annotation rule
+    g.device_id, g.arc = claims["did"], claims.get("arc")
+
+def refuse(reason):
+    resp = jsonify(error="invalid_token", reason=reason); resp.status_code = 401
+    resp.headers["WWW-Authenticate"] = f'PinVault-Token error="invalid_token", error_description="{reason}"'
+    return resp
+```
+
+Rotation: `POST /api/v1/attestation/token-secrets/rotate` makes a new active
+secret; reload the list in your backends (the old `kid` keeps verifying
+until you `DELETE /api/v1/attestation/token-secrets/{kid}`). Tokens live 5
+minutes by default, so a rotation is complete a few minutes after every
+backend has the new secret.
+
+---
+
 ## All Configurable Paths
 
 | Config Method | Default Path | Purpose |
@@ -655,6 +811,7 @@ All paths are relative to `configUrl`. Leading `/` is stripped.
 - [ ] Pin configs follow the library's rules before you sign them (hosts unique ignoring case, at most 2000 hosts, 2–32 pins each, LDH names with at most one leading `*.`): one bad entry makes every device refuse the whole config
 - [ ] Signed payloads carry `configApiId`; vault files carry `X-Vault-Signature-V2` as well as `X-Vault-Signature`
 - [ ] Vault file endpoints return raw bytes (if using VaultFile feature)
+- [ ] If the app attests: `/api/v1/attest/challenge` and `/api/v1/attest` as in ATTESTATION.md, no token to a rejected device, and your API verifies `PinVault-Token` (HS256 by `kid`, `exp` ≤ 60 s leeway, `aud`) and answers `401` naming `PinVault-Token` otherwise
 
 ---
 

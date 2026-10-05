@@ -180,10 +180,10 @@ class WebhookNotifier(
             "vault_token_revoked", "auth_failed", "admin_request_refused", "enrollment_open_changed", "enrollment_policy_created",
             "enrollment_request_approved", "client_cert_uploaded", "client_cert_generated", "private_key_downloaded", "cert_expiring"
         )
-        private val SECURITY_PREFIXES = listOf("change_", "signing_", "live_check_", "keyset_")
+        private val SECURITY_PREFIXES = listOf("change_", "signing_", "live_check_", "keyset_", "attestation_policy", "attestation_token_secret")
 
         /** Recorded in the audit log, but sent only when named in `NOTIFY_EVENTS`. */
-        val ROUTINE_EVENTS = setOf("device_key_registered", "device_key_attested")
+        val ROUTINE_EVENTS = setOf("device_key_registered", "device_key_attested", "attestation_rejected")
 
         fun fromEnv(env: Map<String, String> = System.getenv()): WebhookNotifier? {
             val url = env["NOTIFY_WEBHOOK_URL"]?.takeIf { it.isNotBlank() } ?: return null

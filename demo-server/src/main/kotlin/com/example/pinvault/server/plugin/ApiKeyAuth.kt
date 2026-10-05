@@ -424,6 +424,12 @@ internal fun isPublicEndpoint(path: String, method: HttpMethod): Boolean {
     // Enrollment mode check (needed by client before enrollment)
     if (path == "/api/v1/enrollment-mode" && method == HttpMethod.Get) return true
 
+    // Attestation (ATTESTATION.md §2): the challenge and the attestation itself.
+    // The route authenticates the device by its own key; the admin API under
+    // /api/v1/attestation/… and …/attestation/… is not listed.
+    if (path == "/api/v1/attest/challenge" && method == HttpMethod.Get) return true
+    if (path == "/api/v1/attest" && method == HttpMethod.Post) return true
+
     return false
 }
 

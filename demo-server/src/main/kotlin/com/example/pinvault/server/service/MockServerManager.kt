@@ -38,6 +38,15 @@ class MockServerManager {
     @Volatile
     var revocationGate: (com.example.pinvault.server.plugin.RevocationGateConfig.() -> Unit)? = null
 
+    /**
+     * `MOCK_HOST_REQUIRE_TOKEN=true`: every mock host (TLS and mTLS) refuses
+     * requests without a valid `PinVault-Token`
+     * ([com.example.pinvault.server.plugin.PinVaultTokenAuth]), as an app's
+     * own API would. Null = not required. Read when a mock host starts.
+     */
+    @Volatile
+    var tokenVerifier: (com.example.pinvault.server.plugin.PinVaultTokenAuthConfig.() -> Unit)? = null
+
     private fun serverKey(hostname: String, mtls: Boolean = false): String =
         if (mtls) "$hostname:mtls" else hostname
 
@@ -78,6 +87,7 @@ class MockServerManager {
             }
         }) {
             if (isMtls) revocationGate?.let { install(com.example.pinvault.server.plugin.RevocationGate, it) }
+            tokenVerifier?.let { install(com.example.pinvault.server.plugin.PinVaultTokenAuth, it) }
             routing {
                 get("/health") {
                     call.respondText(

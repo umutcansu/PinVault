@@ -84,8 +84,8 @@ private val VAULT_FILE_PATH = Regex("/api/v1/vault/([A-Za-z0-9._-]{1,64})")
 
 /** The device endpoints [DeviceRefusalLimit] watches by default. */
 internal fun isRefusalLimitedEndpoint(path: String, method: HttpMethod): Boolean = when (method) {
-    HttpMethod.Post -> path == "/api/v1/client-certs/enroll" || PUBLIC_KEY_PATH.matches(path)
-    HttpMethod.Get -> HOST_CERT_DOWNLOAD_PATH.matches(path) ||
+    HttpMethod.Post -> path == "/api/v1/client-certs/enroll" || PUBLIC_KEY_PATH.matches(path) || path == "/api/v1/attest"
+    HttpMethod.Get -> HOST_CERT_DOWNLOAD_PATH.matches(path) || path == "/api/v1/attest/challenge" ||
         VAULT_FILE_PATH.matchEntire(path)?.groupValues?.get(1)?.let { it !in RESERVED_VAULT_SEGMENTS } == true
     else -> false
 }

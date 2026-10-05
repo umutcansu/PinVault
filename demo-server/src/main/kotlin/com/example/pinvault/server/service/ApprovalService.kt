@@ -62,7 +62,17 @@ object PinAffectingRoutes {
         Triple(HttpMethod.Post, Regex("^/api/v1/config-apis/[^/]+/vault/[^/]+/tokens$"), "vault_token_issue"),
         Triple(HttpMethod.Delete, Regex("^/api/v1/config-apis/[^/]+/vault/tokens/[^/]+$"), "vault_token_revoke"),
         Triple(HttpMethod.Delete, Regex("^/api/v1/config-apis/[^/]+/vault/devices/[^/]+/public-key$"), "device_key_reset"),
-        Triple(HttpMethod.Put, Regex("^/api/v1/config-apis/[^/]+/vault-enabled$"), "vault_enabled")
+        Triple(HttpMethod.Put, Regex("^/api/v1/config-apis/[^/]+/vault-enabled$"), "vault_enabled"),
+        // Attestation (ATTESTATION.md §6): the policy decides which devices get
+        // pins and a token; an override lets one device through (or none); a
+        // forgotten key lets a new one register; the token secrets are what
+        // every backend trusts.
+        Triple(HttpMethod.Put, Regex("^/api/v1/config-apis/[^/]+/attestation/policy$"), "attestation_policy"),
+        Triple(HttpMethod.Put, Regex("^/api/v1/config-apis/[^/]+/attestation/devices/[^/]+$"), "attestation_device"),
+        Triple(HttpMethod.Delete, Regex("^/api/v1/config-apis/[^/]+/attestation/devices/[^/]+$"), "attestation_device"),
+        Triple(HttpMethod.Get, Regex("^/api/v1/attestation/token-secrets$"), "attestation_token_secrets"),
+        Triple(HttpMethod.Post, Regex("^/api/v1/attestation/token-secrets/rotate$"), "attestation_token_secret_rotate"),
+        Triple(HttpMethod.Delete, Regex("^/api/v1/attestation/token-secrets/[^/]+$"), "attestation_token_secret_delete")
     )
 
     /**
@@ -73,7 +83,9 @@ object PinAffectingRoutes {
      * the REQUESTER sends the very same request again and it runs once, the
      * answer going to them alone (see [ApprovalService.claim]).
      */
-    val requesterRun: Set<String> = setOf("client_cert_generate", "enrollment_policy_create", "enrollment_token", "vault_token_issue")
+    val requesterRun: Set<String> = setOf("client_cert_generate", "enrollment_policy_create", "enrollment_token", "vault_token_issue",
+        // The HS256 secrets every backend verifies PinVault-Token with.
+        "attestation_token_secrets")
 
     /** The kind of change [method] + [path] makes, or null when it does not affect pins or keys. Pass a [canonicalPath]. */
     fun match(method: HttpMethod, path: String): String? =
@@ -119,7 +131,8 @@ object PinAffectingRoutes {
         Regex("^/api/v1/config/([^/]+)/update$"),
         Regex("^/api/v1/management/hosts/([^/]+)/generate-cert$"),
         Regex("^/api/v1/config-apis/([^/]+)/(?:default-host-acl|devices/[^/]+/host-acl)$"),
-        Regex("^/api/v1/config-apis/([^/]+)/(?:vault-enabled|vault/.+)$")
+        Regex("^/api/v1/config-apis/([^/]+)/(?:vault-enabled|vault/.+)$"),
+        Regex("^/api/v1/config-apis/([^/]+)/attestation/.+$")
     )
 
     /** The `{deviceId}` of a per-device host ACL write, as its handler reads it; null for the default ACL. */

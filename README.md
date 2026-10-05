@@ -989,6 +989,108 @@ Once `clientCertHosts` is set, it is the whole list: an `mtls = true` pin in
 a signed config no longer adds a host, so even the config signer cannot send
 the identity elsewhere. Without it, `mtls = true` pins work as before.
 
+## Attestation (Approov-style)
+
+Pinning protects the channel. Attestation decides **which app instances get
+the pins and a short-lived token at all**, so your API can refuse everything
+else. The model is Approov's: the library measures the app and the device,
+your PinVault server turns the measurement into a verdict, pins and a token
+are released only on a pass, the token is refreshed every few minutes, and
+your backend checks the token on every request. The full protocol is in
+[`ATTESTATION.md`](ATTESTATION.md); the reference server implements it.
+
+```kotlin
+val config = PinVaultConfig.Builder()
+    .configApi("api", "https://config.example.com:8091/") {
+        bootstrapPins(...)
+        signaturePublicKey(...)
+        attestation()                                        // on; off by default
+        attestationInterval(5, TimeUnit.MINUTES)             // ceiling; default 5 min, at least 1
+        tokenHosts("api.example.com", "*.cdn.example.com")   // default: every pinned host of this block
+    }
+    .expectedSignerSha256("3c:4f:…")                         // optional: your release signer
+    .integrityVerdictProvider(myPlayIntegrityProvider)       // optional: a second opinion
+    .build()
+```
+
+What happens:
+
+- **At `init`**, after the stored config is loaded and the mTLS renewal check
+  ran, each attesting block asks `GET api/v1/attest/challenge` for a nonce,
+  builds the report (`sdkVersion`, `app`, `device`, twelve `signals` —
+  `rooted`, `emulator`, `debugger`, `debuggable`, `hooking_framework`,
+  `app_integrity`, `cloner`, `unknown_installer`, `adb_enabled`,
+  `software_key`, `key_unattested`, `old_patch_level`), signs
+  `pinvault-attest:v1:<nonce>:<deviceId>:<sha256-hex(report)>` with the
+  block's device key (the same Keystore key that signs mTLS CSRs; made here
+  if the device never enrolled) and posts it to `api/v1/attest`. The first
+  request carries the key's Android key attestation chain, so a server with
+  `ATTESTATION_KEY_POLICY=enforce` can bind the key to your package on real
+  hardware.
+- **A pass** yields a `PinVault-Token` (HS256 JWT, 5 minutes) held in memory,
+  and — when the device is behind — a signed pin config that goes through
+  exactly the checks a fetched one gets (`SSLCertificateUpdater.applySigned`:
+  signatures, scope, freshness, replay, plausibility). **A reject** yields
+  neither; `init` still succeeds, and the app decides what to do with
+  `PinVault.attestationStatus()` (result, ARC, the reasons the policy
+  reveals, warnings, `tokenExpiresAt`, `nextAttestAt`, `clockSkewMs`,
+  `lastError`). A failure (network, a refused key) is retried with backoff
+  (30 s → 5 min) and the last token is kept until it expires.
+- **Refresh**: a coroutine per block re-attests at
+  `min(nextAttestIn, attestationInterval, tokenExpiry − 60 s)` with ±10 %
+  jitter while the process lives; the periodic WorkManager job attests too,
+  so a backgrounded app wakes with a fresh token.
+- **The header**: every client the library builds or configures
+  (`getClient()`, `getClient(settings)`, `applyTo`) adds `PinVault-Token` to
+  requests whose host matches a token host. Without a valid token it attests
+  once, synchronously (bounded by the single flight and the backoff), and
+  sends the request bare when that fails. A `401` whose `WWW-Authenticate`
+  names `PinVault-Token`, or whose body says `invalid_token`, forces one
+  re-attestation and one retry (never for a request body that can be sent
+  once only). For a client of your own, `PinVault.fetchAttestationToken(host)`
+  (suspend and callback) returns `AttestationTokenResult.Token | Rejected |
+  Failed | Unsupported`; put it in `PinVault.attestationHeaderName()`.
+- **Events**: `PinVaultConnectionEvent.Attestation(configApiId, status,
+  arc, rejectionReasons, warnings, tokenExpiresAt, failureReason)` on the
+  connection listener, once per attempt. `PinVault.attestNow(configApiId?)`
+  (suspend and callback) attests on demand.
+- **Storage**: nothing. The token and the status live in memory only.
+
+What this does **not** give you: Approov's hardened, obfuscated probes — the
+library's are plain Kotlin, so put the app through R8 and, for high-value
+targets, a packer — and a verdict independent of the device. For that,
+implement `IntegrityVerdictProvider` over Play Integrity: its token travels
+verbatim in the report (`verdictProvider`) and your server verifies it. The
+report is a measurement by code an attacker can hook; what makes it worth
+having is that a hooked report must still be signed by a Keystore key whose
+attestation chain names your package on real hardware, that the server adds
+signals the device cannot forge, and that the policy — `reject`, `warn` or
+`ignore` per flag, device overrides, an audit trail — is the server's.
+
+### Managed trust roots *(next release)*
+
+Approov's "managed trust roots", in PinVault terms: the signed config may
+carry `trustRoots`, SHA-256 SPKI pins of root CAs (the same form as pins).
+With `managedTrustRoots()` on the config, a host that has **no pin entry** is
+accepted when the platform's CAs validate its chain **and** the chain the
+platform validated contains a listed root, and the leaf names the host.
+The device's trust store stops being the authority for such hosts: a CA a
+user or an attacker added to the device is not in the list, and a root you
+stop listing stops being trusted on the next config, without an app update.
+Hosts with a pin entry are unchanged; pins stay the stricter choice.
+
+```kotlin
+PinVaultConfig.Builder()
+    .managedTrustRoots()
+```
+
+The reference server's pin-config form and `PUT /api/v1/certificate-config`
+take the list (`"trustRoots": ["…"]`); it is part of the signed payload, so a
+change rolls out like a pin change. A refusal is `ManagedTrustRootException`
+in the handshake error's cause and earns the recovery interceptor's
+"unknown host" budget (one refetch per window), since a fresh config may
+list the root.
+
 ## Keeping pins fresh
 
 `init` fetches the config once. To keep checking in the background, schedule a
@@ -1526,6 +1628,14 @@ its configs.
 | `VAULT_DOWNLOAD_CONCURRENCY` | `4` | *(next release)* Vault downloads one address may run at once (`429` beyond it). |
 | `VAULT_DOWNLOAD_CONCURRENCY_TOTAL` | `16` | *(next release)* Vault downloads served at once in total, across addresses and listeners (`429` beyond it; `0` = unlimited). Each download holds the whole file in memory, so the per-address cap alone let a few addresses fill the heap with one large `public` file. The Docker images start the JVM with `-XX:MaxRAMPercentage=60`. |
 | `CONFIG_API_ADMIN_ROUTES` | `on` | *(next release)* `off`: the Config API listeners — the ports devices reach — answer device endpoints only; every admin route gets `403 admin_routes_disabled` there, with or without a key, and administration happens on the management port alone. A leaked `API_KEY` is then useless from the internet-facing ports. The production profile sets `off`. |
+| `ATTESTATION_ENABLED` | `true` | *(next release)* Serves `GET /api/v1/attest/challenge` and `POST /api/v1/attest` on the Config API ports ([ATTESTATION.md](ATTESTATION.md)): the app measures itself and the device, signs the report with its Keystore key, and gets a verdict, a `PinVault-Token` (HS256 JWT, 5 min) and — when it is behind — the signed pin config. |
+| `ATTESTATION_KEY_POLICY` | `warn` | *(next release)* What a device key's **first** registration must show: `off` trusts on first use; `warn` checks the Android Key Attestation chain when there is one and stores the outcome (`key_unattested` becomes a signal); `enforce` registers no key without a passing chain (`403 attestation_required` / `attestation_invalid`) and needs `ATTESTATION_PACKAGE_NAMES` + `ATTESTATION_SIGNER_SHA256` to start. The production profile sets `enforce`. A registered key is never re-attested; a device that comes with another key is `403 key_mismatch` until an operator forgets it. |
+| `ATTESTATION_POLICY_DEFAULT` | `strict` | *(next release)* The policy of a Config API without a stored one: `strict` rejects `rooted`, `emulator`, `debugger`, `debuggable`, `hooking_framework`, `app_integrity`, `cloner`, warns on `unknown_installer`, `software_key`, `key_unattested`, `old_patch_level` and ignores `adb_enabled`; `lenient` warns on everything (measure the fleet first). Per Config API in the dashboard or `PUT /api/v1/config-apis/{id}/attestation/policy`. |
+| `ATTESTATION_TOKEN_TTL_SECONDS` / `ATTESTATION_INTERVAL_SECONDS` | `300` / `300` | *(next release)* Token lifetime and `nextAttestIn` when a policy has none (30–86400 / 60–86400). |
+| `ATTESTATION_NONCE_TTL_SECONDS` | `120` | *(next release)* How long a challenge nonce may be presented. Nonces are HMAC-stamped with a key made at start-up (a restart invalidates those in flight; the library asks for a new one) and remembered once accepted. |
+| `ATTESTATION_RATE_LIMIT` / `ATTESTATION_DEVICE_RATE_LIMIT` | `60` / `30` | *(next release)* Attestations per source address and per device id per 10 minutes (`0` = off); the challenge has twice the address quota. |
+| `ATTESTATION_REVEAL_REASONS` | `false` | *(next release)* Default for a policy's `revealReasons`: whether a rejected device is told its `rejectionReasons` (the 8-hex ARC is always sent and resolves to them in the dashboard). |
+| `MOCK_HOST_REQUIRE_TOKEN` | `false` | *(next release)* The mock TLS/mTLS hosts refuse requests without a valid `PinVault-Token` (`401` with `WWW-Authenticate: PinVault-Token …`), as an app's own API would — the reference verifier is `plugin/PinVaultTokenAuth.kt`; backends load the secrets from `GET /api/v1/attestation/token-secrets` (requester-run under two-person approval). |
 | `HOST_CLIENT_CERT_REQUIRE_GRANT` | unset | *(next release)* `true`: a host's client certificate — one private key the whole fleet shares — is handed only to devices the device host ACL names; a scope with no ACL serves it to nobody. Unset: a scope without an ACL serves it to every enrolled device (so a device enrolled with a shared enrollment code, or a phone compromised before its revocation, could collect every host's key). The production profile sets `true`. |
 | `CLIENT_DEVICES_MAX` | `20000` | *(next release)* Most rows the device list (connection reports) keeps; the oldest go first. |
 

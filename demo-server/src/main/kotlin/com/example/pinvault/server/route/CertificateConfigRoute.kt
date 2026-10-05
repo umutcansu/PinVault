@@ -588,91 +588,22 @@ fun Route.certificateConfigRoutes(
 
         get {
             // The view this device may see: loaded fresh on every call (see
-            // the signing loop below for why it may be loaded twice).
-            fun servedView(): PinConfig {
-                val config = store.load(configApiId)
-
-                // ── Pin scoping (V2): filter config.pins to the intersection of
-                // requested hosts and the device's ACL.
-                //
-                // Legacy behavior preserved when both `hosts` and `X-Device-Id`
-                // are absent OR when no ACL store is wired — returns full config.
-                val requested = call.request.queryParameters["hosts"]
-                    ?.split(",")?.map { it.trim() }?.filter { it.isNotEmpty() }
-                // On an mTLS listener DeviceIdBinding has already refused a header
-                // naming another device than the certificate's. On a TLS listener
-                // the header is the device's own claim: there the ACL shapes what
-                // an honest device gets, it keeps nothing from anyone (pins are
-                // public keys).
-                val headerDeviceId = call.request.header("X-Device-Id")
-
-                // The mTLS client certificate identifies the device when no header
-                // is sent. It is deliberately NOT part of the gate below: a cert
-                // alone must not switch filtering on for clients that send neither
-                // `?hosts=` nor `X-Device-Id`, or every existing mTLS device would
-                // suddenly be cut down to the (usually empty) default ACL. It only
-                // sharpens the identity once scoping was already requested, where
-                // a per-device ACL can add grants on top of the default.
-                val deviceId = headerDeviceId ?: extractCertCn(call)
-
-                val filtered = if (deviceHostAclStore != null && (requested != null || headerDeviceId != null)) {
-                    val decision = deviceHostAclStore.resolve(configApiId, deviceId ?: "anonymous", requested)
-                    if (decision.hasUnauthorized) {
-                        aclLog.warn("Unauthorized host request: configApi={} deviceId={} denied={}",
-                            configApiId, deviceId ?: "anonymous", decision.denied)
-                    }
-                    if (requested != null) {
-                        // Explicit ?hosts= filter — keep only pins in `granted`.
-                        config.copy(pins = config.pins.filter { it.hostname in decision.granted })
-                    } else {
-                        // No explicit request, but deviceId known — filter to ACL.
-                        config.copy(pins = config.pins.filter { it.hostname in decision.granted })
-                    }
-                } else {
-                    config
-                }
-                    // The library's "force update or refuse to start" gate reads the
-                    // config-level flag, while the dashboard only ever sets per-host
-                    // flags. Without this the admin-visible switch never reached that
-                    // gate, so a device with a stale forced config kept starting up
-                    // happily while the backend was unreachable.
-                    .let { it.copy(forceUpdate = it.hasAnyForceUpdate()) }
-                return filtered
-            }
+            // signEnvelope for why it may be loaded twice). `?hosts=` and
+            // X-Device-Id scope it; the attestation endpoint embeds the very
+            // same view (servedPinConfig), from the body's hosts and deviceId.
+            val requested = call.request.queryParameters["hosts"]
+                ?.split(",")?.map { it.trim() }?.filter { it.isNotEmpty() }
+            val headerDeviceId = call.request.header("X-Device-Id")
+            fun servedView(): PinConfig = servedPinConfig(call, configApiId, store, deviceHostAclStore, requested, headerDeviceId)
 
             val signed = call.request.queryParameters["signed"] != "false"
             if (!signed) return@get call.respond(servedView())
 
-            // issuedAt/expiresAt are stamped by the envelope service right
-            // before signing (or reused from a cached signature of the very
-            // same content — see SignedConfigService). The generation is taken
-            // BEFORE loading: if a change lands in between, the envelope
-            // service refuses (StaleLoad) and the view is loaded again, so a
-            // device never gets pre-change content with a post-change issuedAt.
             val features = call.request.header("X-PinVault-Features").orEmpty()
                 .split(',').map { it.trim() }
             val redelivery = "redelivery" in features
             try {
-                repeat(3) {
-                    val loadedAt = envelopes.generation()
-                    val view = servedView()
-                    try {
-                        // An external signer may take seconds, or make the request wait
-                        // its turn: never on the event loop.
-                        val envelope = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
-                            envelopes.envelope(configApiId, view, redelivery, loadedAt)
-                        }
-                        return@get call.respond(envelope)
-                    } catch (_: SignedConfigService.StaleLoad) {
-                        // A change landed while serving; load again.
-                    }
-                }
-                // Changes keep landing: sign the latest view uncached, which
-                // always carries the newest issuedAt.
-                val latest = servedView()
-                call.respond(kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
-                    envelopes.envelope(configApiId, latest, redeliveryOk = false)
-                })
+                call.respond(signEnvelope(envelopes, configApiId, redelivery, ::servedView))
             } catch (e: Exception) {
                 // Never hand signer internals (KMS ids, command stderr) to an
                 // unauthenticated caller.
@@ -924,6 +855,94 @@ fun Route.certificateConfigRoutes(
 /** The library's intake rules (see [com.example.pinvault.server.service.PinConfigRules]); empty when [config] may be published. */
 private fun validatePinConfig(config: PinConfig): List<String> =
     com.example.pinvault.server.service.PinConfigRules.errors(config.pins)
+
+/**
+ * The pin config a device may see in [configApiId]: the stored config
+ * filtered to the intersection of [requestedHosts] (`?hosts=`, or the
+ * attestation body's `hosts`) and the device's host ACL.
+ *
+ * Legacy behaviour is kept when both [requestedHosts] and [claimedDeviceId]
+ * are absent, or when no ACL store is wired: the full config.
+ *
+ * [claimedDeviceId] is `X-Device-Id` (or the attested `deviceId`). On an
+ * mTLS listener DeviceIdBinding has already refused a header naming another
+ * device than the certificate's. On a TLS listener it is the device's own
+ * claim: there the ACL shapes what an honest device gets, it keeps nothing
+ * from anyone (pins are public keys).
+ *
+ * The mTLS client certificate identifies the device when no id is claimed.
+ * It is deliberately NOT part of the gate: a cert alone must not switch
+ * filtering on for clients that send neither `?hosts=` nor `X-Device-Id`, or
+ * every existing mTLS device would suddenly be cut down to the (usually
+ * empty) default ACL. It only sharpens the identity once scoping was already
+ * requested, where a per-device ACL can add grants on top of the default.
+ */
+internal fun servedPinConfig(
+    call: ApplicationCall,
+    configApiId: String,
+    store: PinConfigStore,
+    deviceHostAclStore: DeviceHostAclStore?,
+    requestedHosts: List<String>?,
+    claimedDeviceId: String?
+): PinConfig {
+    val config = store.load(configApiId)
+    val deviceId = claimedDeviceId ?: extractCertCn(call)
+    val filtered = if (deviceHostAclStore != null && (requestedHosts != null || claimedDeviceId != null)) {
+        val decision = deviceHostAclStore.resolve(configApiId, deviceId ?: "anonymous", requestedHosts)
+        if (decision.hasUnauthorized) {
+            aclLog.warn("Unauthorized host request: configApi={} deviceId={} denied={}",
+                configApiId, deviceId ?: "anonymous", decision.denied)
+        }
+        // With `?hosts=`: only the granted ones of those; without: the ACL's.
+        config.copy(pins = config.pins.filter { it.hostname in decision.granted })
+    } else {
+        config
+    }
+    // The library's "force update or refuse to start" gate reads the
+    // config-level flag, while the dashboard only ever sets per-host flags.
+    // Without this the admin-visible switch never reached that gate, so a
+    // device with a stale forced config kept starting up happily while the
+    // backend was unreachable.
+    return filtered.copy(forceUpdate = filtered.hasAnyForceUpdate())
+}
+
+/**
+ * The signed envelope of the view [load] returns now.
+ *
+ * issuedAt/expiresAt are stamped by the envelope service right before
+ * signing (or reused from a cached signature of the very same content — see
+ * SignedConfigService). The generation is taken BEFORE loading: if a change
+ * lands in between, the envelope service refuses (StaleLoad) and the view is
+ * loaded again, so a device never gets pre-change content with a post-change
+ * issuedAt. Throws what the signer throws; the caller answers 503 (or, for
+ * an embedded config, leaves it out).
+ */
+internal suspend fun signEnvelope(
+    envelopes: SignedConfigService,
+    configApiId: String,
+    redelivery: Boolean,
+    load: () -> PinConfig
+): com.example.pinvault.server.model.SignedConfig {
+    repeat(3) {
+        val loadedAt = envelopes.generation()
+        val view = load()
+        try {
+            // An external signer may take seconds, or make the request wait
+            // its turn: never on the event loop.
+            return kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                envelopes.envelope(configApiId, view, redelivery, loadedAt)
+            }
+        } catch (_: SignedConfigService.StaleLoad) {
+            // A change landed while serving; load again.
+        }
+    }
+    // Changes keep landing: sign the latest view uncached, which always
+    // carries the newest issuedAt.
+    val latest = load()
+    return kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+        envelopes.envelope(configApiId, latest, redeliveryOk = false)
+    }
+}
 
 /**
  * Extract CN from the mTLS client cert's SubjectDN, if one is present on the

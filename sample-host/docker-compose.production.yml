@@ -60,6 +60,10 @@ services:
       # yanıtlar; yönetim yalnızca yönetim portunda. Sızan bir API_KEY internetten
       # pin yazamaz.
       CONFIG_API_ADMIN_ROUTES: "off"
+      # Sabit: bir cihazın attestation anahtarı ilk kaydında donanım belgesi
+      # (Android Key Attestation, uygulamanın paketi ve imzasıyla) olmadan
+      # kaydedilmez (ATTESTATION.md). Politika ve süreler .env'den geçer.
+      ATTESTATION_KEY_POLICY: enforce
       # Değerlendirme kurulumu (setup.sh --evaluation-single-signer-NOT-FOR-PRODUCTION)
       # tek imzalayıcıyla açılır; entrypoint.sh her açılışta "ÜRETİM DEĞİLDİR" yazar.
       SAMPLE_EVALUATION: ${SAMPLE_EVALUATION:-}

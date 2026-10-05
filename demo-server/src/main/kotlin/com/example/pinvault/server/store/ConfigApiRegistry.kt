@@ -163,7 +163,9 @@ class ConfigApiRegistry(private val db: DatabaseManager) {
         val SCOPED_TABLES = listOf(
             "pin_config", "pin_hashes", "pin_history", "hosts", "host_client_certs",
             "vault_files", "vault_file_tokens", "vault_distributions", "device_public_keys",
-            "device_user_auth_keys", "device_host_acl", "default_host_acl", "connection_history", "client_identities"
+            "device_user_auth_keys", "device_host_acl", "default_host_acl", "connection_history", "client_identities",
+            // Attestation (V21): the policy, the devices with their keys and verdicts, the counters.
+            "attestation_policies", "attested_devices", "attestation_verdict_counts"
         )
     }
 }
