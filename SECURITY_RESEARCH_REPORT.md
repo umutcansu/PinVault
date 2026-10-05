@@ -225,6 +225,28 @@ Git geçmişi: `.p12/.jks/.pem/.key` olarak yalnızca Google'ın açık atestasy
 | DexProtector (veya eşdeğeri) rehberini gerçekten test et ve belgele | RASP boşluğunu kapat | Orta |
 | Pin yayılma süresini kısalt: `updateIntervalMinutes(15)` + `forceUpdate` + sunucu webhook'u ile push tetikleyici | Approov'un 5 dk'sına yaklaş | Düşük |
 
+### 6.5 Bu dalda yapılan: Approov'un çalışma mantığı PinVault'a taşındı
+
+Rapordan sonra aynı dalda, Approov'un üç katmanı birebir aynı mantıkla
+kuruldu; sözleşme [ATTESTATION.md](ATTESTATION.md)'de.
+
+| Approov | PinVault karşılığı (bu dal) |
+|---|---|
+| SDK uygulamayı ve cihazı ölçer (root, emülatör, debugger, hooking, klon, bütünlük) | `integrity/DeviceIntegrityProbe`: 12 sinyal, kanıt listeleriyle; `IntegrityVerdictProvider` SPI ile Play Integrity ikinci görüş |
+| Ölçüm Approov bulutuna gider, her ~5 dakikada tekrarlanır | `POST /api/v1/attest`: nonce + Keystore kimlik anahtarıyla imzalı rapor; `AttestationManager` `min(nextAttestIn, aralık, token−60 s)` ile yeniler, WorkManager arka planda da |
+| Pinler yalnızca geçen uygulamaya verilir | İmzalı config atestasyon yanıtının içinde gelir (`applySigned`), kalan cihaz config almaz; cihaz anahtarı ilk kayıtta Android key attestation ile bağlanır (`ATTESTATION_KEY_POLICY`) |
+| Kısa ömürlü Approov-Token, backend doğrular | `PinVault-Token` (HS256 JWT, 5 dk, `aud`=Config API, `anno`); kütüphane başlığı token host'larına ekler; `PinVaultTokenAuth` Ktor eklentisi + Node/Python/Java örnekleri; mock host `MOCK_HOST_REQUIRE_TOKEN` |
+| Ret politikası bayrak bayrak özelleştirilir; cihaz ek açıklamaları; ARC | Config API başına politika (`reject/warn/ignore` × 12 bayrak, strict/lenient), `forcePass/forceFail/annotations`, 8 karakterlik ARC, `revealReasons` |
+| Managed Trust Roots | `trustRoots` imzalı config alanı + `managedTrustRoots()`: pinsiz host için platform doğrulaması + listelenen kök + host adı |
+| Yönetim: CLI + panel | Panel sekmesi (politika, cihazlar, istatistik, token sırları) + yönetim API'si + denetim kaydı/webhook olayları |
+
+Kalan fark, mimari değil kalite ve güvence farkıdır: Approov'un probe'ları
+kapalı kaynak ve kendini denetleyen, sürekli güncellenen imzalarla gelir;
+PinVault'unkiler düz Kotlin'dir (R8 + gerekirse packer önerilir) ve
+cihazdan bağımsız bir karar için Play Integrity sağlayıcısı takılmalıdır.
+Buna karşılık PinVault'un cihaz kimliği donanım atestasyonlu Keystore
+anahtarına bağlıdır, her şey self-hosted ve açık kaynaktır.
+
 ---
 
 ## 7. Öncelikli düzeltme listesi
@@ -244,7 +266,9 @@ Git geçmişi: `.p12/.jks/.pem/.key` olarak yalnızca Google'ın açık atestasy
 
 Doğrulama: demo-server bu ortamda JDK 17 ile derlendi ve ilgili testler koşturuldu (sonuç commit mesajında). Kütüphane ve örnek uygulama **derlenemedi** (Android SDK yok, `dl.google.com` engelli); bu değişiklikler Android SDK'lı bir ortamda `./gradlew :pinvault:testDebugUnitTest` ve `sample-client` derlemesiyle doğrulanmalı.
 
-**Kısa vade:** L-2 Keystore seviyesi raporlama + `requireHardwareBackedKeys()` · L-25/S-11 nonce'lu challenge · S-1 cihaz portlarında admin rotalarını kapatma anahtarı · S-5 PKCS12 keystore · L-10/L-11 vault doğrula-sonra-yaz · L-13 gövde boyutu sınırı · A-2 demo-app release korkuluğu.
+**Kısa vade — bu dalda uygulananlar:** L-2 Keystore seviyesi raporlama + `requireHardwareBackedKeys()` (`KeySecurityLevel`, `HardwareBackedKeyRequiredException`) · S-1 `CONFIG_API_ADMIN_ROUTES=off` (üretim profili sabitler) · L-25/S-11 nonce: atestasyon protokolü her turda sunucu nonce'u imzalatır (kayıt challenge'ı değişmedi; cihaz anahtarı artık her 5 dakikada taze bir nonce'la kanıtlanıyor) · L-3 RASP: `integrity/` probe'ları ve atestasyon katmanı (bkz. 6.5).
+
+**Kısa vade — açık kalanlar:** S-5 PKCS12 keystore · L-10/L-11 vault doğrula-sonra-yaz · L-13 gövde boyutu sınırı · A-2 demo-app release korkuluğu.
 
 **Belgeleme:** L-4 rollback sınırı README'ye · anahtar rotasyonunda replay penceresi · `allowUnpinnedConfigApi` yan etkileri · issuer pin = CA güveni notu · kayıt atestasyonunun neyi kanıtlamadığı.
 
