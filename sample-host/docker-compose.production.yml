@@ -1,0 +1,88 @@
+# sample-host — ÜRETİM profili. Tek başına kullanılmaz: docker-compose.yml'in
+# üstüne biner. ./scripts/setup.sh --production .env'e şunu yazar, compose her
+# komutta ikisini birlikte okur:
+#
+#   COMPOSE_FILE=docker-compose.yml:docker-compose.production.yml
+#
+# `!override` etiketi Docker Compose 2.24.4+ ister (setup.sh kontrol eder).
+#
+# Demo profilinden farkı:
+#   1. Yönetim portları (düz HTTP 6650, TLS 6655) YALNIZCA bu makineye açılır.
+#      Başka yerden yönetmek için VPN ya da SSH tüneli:
+#        ssh -L 6655:127.0.0.1:6655 kullanici@sunucu   →   https://localhost:6655
+#   2. Mock hedef host portları (6653, 6654) yayımlanmaz: yalnızca deneme içindir.
+#   3. Test anahtarları (ALLOW_TEST_HOOKS, ALLOW_ANONYMOUS_ADMIN, ALLOW_DEMO_SECRETS) sabit "false":
+#      .env'e ya da kabuk ortamına ne yazılırsa yazılsın container'a geçmez.
+#   4. Yönetişim ve donanım belgesi ayarları sabit: iki kişi onayı (2), canlı
+#      sertifika kontrolü (enforce), kayıtta ve ekran kilitli dosyada donanım
+#      belgesi (enforce), P12 ile kayıt kapalı (off), kilitli dosyada her
+#      kullanımda onay (true). .env'den gevşetilemez. Kişisel yönetici sayısını,
+#      kurtarma anahtarını ve imzalayıcıları entrypoint.sh her açılışta denetler.
+#   5. Container sıkılaştırılır: yeni yetki kazanılamaz, Linux yetkileri
+#      (capabilities) düşürülür, kök dosya sistemi salt okunur, bellek ve süreç
+#      sayısı sınırlıdır.
+services:
+  pinvault-host:
+    build:
+      additional_contexts:
+        # Üretimde kaynak sabit olmalı: PINVAULT_REF boşsa (ve yerel kaynak da yoksa)
+        # compose "main"e düşmez, durur. Dal adı denetimini setup.sh --production yapar.
+        pinvault-server: "${PINVAULT_SERVER_SRC:-${PINVAULT_REPO:-https://github.com/umutcansu/PinVault.git}#${PINVAULT_REF:?PINVAULT_REF bos. Uretimde tam commit SHA ya da PINVAULT_SERVER_SRC gerekir}:demo-server}"
+    # Cihazların bağlandığı portlar ağa açık; yönetim portları yalnızca 127.0.0.1.
+    ports: !override
+      - "127.0.0.1:${HOST_HTTP_PORT:-6650}:8080"            # Yönetim API + dashboard (düz HTTP)
+      - "127.0.0.1:${HOST_MANAGEMENT_TLS_PORT:-6655}:8082"  # Yönetim API (TLS)
+      - "${HOST_HTTPS_PORT:-6651}:8081"                     # Config API (TLS): config, kayıt, vault, cihaz raporları
+      - "${HOST_MTLS_PORT:-6652}:8092"                      # mTLS Config API
+      - "${HOST_RECOVERY_PORT:-6656}:8083"                  # Kurtarma kapısı (yalnızca sertifika yenileme)
+    environment:
+      SAMPLE_PROFILE: production
+      # Sabit: bu iki anahtar üretimde hiçbir yoldan açılamaz.
+      ALLOW_TEST_HOOKS: "false"
+      ALLOW_ANONYMOUS_ADMIN: "false"
+      # Sabit: sunucu kaynak koddaki demo parolalarıyla hiçbir yoldan açılmaz.
+      ALLOW_DEMO_SECRETS: "false"
+      # Sabit: kabukta kalmış bir `export ENROLLMENT_MODE=open` .env'i ezemesin.
+      ENROLLMENT_MODE: token
+      # Sabit: üretimin yönetişim ve donanım belgesi ayarları. .env'deki değer
+      # ne olursa olsun container'a bunlar geçer.
+      PIN_CHANGE_APPROVALS: "2"
+      PIN_LIVE_CHECK: enforce
+      USER_AUTH_ATTESTATION: enforce
+      ENROLLMENT_ATTESTATION: enforce
+      ENROLLMENT_P12: "off"
+      USER_AUTH_REQUIRE_PER_USE: "true"
+      # Değerlendirme kurulumu (setup.sh --evaluation-single-signer-NOT-FOR-PRODUCTION)
+      # tek imzalayıcıyla açılır; entrypoint.sh her açılışta "ÜRETİM DEĞİLDİR" yazar.
+      SAMPLE_EVALUATION: ${SAMPLE_EVALUATION:-}
+      # Sunucu okumaz: entrypoint.sh kaynağın sabit bir commit (40 haneli SHA) ya da
+      # yerel dizin olduğunu denetler.
+      PINVAULT_REF: ${PINVAULT_REF:-}
+      PINVAULT_SERVER_SRC: ${PINVAULT_SERVER_SRC:-}
+      # Üretimde ret sınırı sunucu varsayılanıyla (300 / 10 dk) ya da .env'deki değerle çalışır.
+      DEVICE_REFUSAL_RATE_LIMIT: ${DEVICE_REFUSAL_RATE_LIMIT:-}
+    # ── Sıkılaştırma ──
+    # Yeni yetki kazanılamaz (setuid dosyalar, sudo benzeri yollar işlemez).
+    security_opt:
+      - no-new-privileges:true
+    # Bütün Linux yetkileri düşürülür. Geri eklenenleri yalnızca entrypoint.sh'ın
+    # root olarak çalışan ilk adımı kullanır: data/ sahipliğini servis
+    # kullanıcısına vermek (CHOWN, DAC_OVERRIDE, FOWNER) ve o kullanıcıya geçmek
+    # (SETUID, SETGID). Sunucunun kendisi uid 10001 ile, hiçbir yetki taşımadan çalışır.
+    cap_drop:
+      - ALL
+    cap_add:
+      - CHOWN
+      - DAC_OVERRIDE
+      - FOWNER
+      - SETUID
+      - SETGID
+    # Kök dosya sistemi salt okunur; yazılan tek yerler /data (kalıcı veri) ve
+    # bellekteki /tmp (JVM geçici dosyaları; SQLite sürücüsü yerel kitaplığını buradan
+    # yüklediği için noexec konmaz).
+    read_only: true
+    tmpfs:
+      - /tmp:rw,nosuid,nodev,size=128m
+    # Kaynak sınırları: sunucu kimlik doğrulamasız isteklerle makineyi tüketemesin.
+    mem_limit: ${HOST_MEMORY_LIMIT:-1g}
+    pids_limit: ${HOST_PIDS_LIMIT:-512}

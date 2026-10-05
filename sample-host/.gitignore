@@ -1,9 +1,15 @@
 # Local environment
 .env
 
-# Persistent runtime state — keep folders, ignore contents
+# Persistent runtime state — everything under data/ is ignored except the two
+# .gitkeep files that keep the folders: keys, databases, the attestation status
+# list, signing-key backups (signing-keys.sh install) and anything a newer
+# server writes there never reach the repository.
+data/*
+!data/db/
 data/db/*
 !data/db/.gitkeep
+!data/certs/
 data/certs/*
 !data/certs/.gitkeep
 
@@ -24,8 +30,13 @@ data/proxy/
 data/signing-key-*.pem
 # - SoftHSM token'ı (scripts/softhsm-init.sh)
 data/softhsm/
-# - çevrimdışı yedek ve kurtarma anahtarları (scripts/signing-keys.sh). Üretimde
-#   bu dizin sunucuya hiç gelmez; internete kapalı bir makinede durur.
+# - çevrimdışı yedek ve kurtarma anahtarları (scripts/signing-keys.sh) ve
+#   setup.sh --production'ın ürettiği yönetici anahtarları (offline-keys/admins/).
+#   Üretimde bu dizin sunucuda kalmaz; internete kapalı bir makinede durur.
 offline-keys/
 # - imzalanmış anahtar seti dosyaları
 keyset-*.json
+
+# setup.sh --production: profil işareti ve --fresh ile kenara taşınan demo kurulumu
+data/.sample-profile
+backup-before-production-*/

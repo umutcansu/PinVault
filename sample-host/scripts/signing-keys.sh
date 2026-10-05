@@ -4,9 +4,13 @@
 # anahtarıyla imzalayıp sunucuya yükleme, bir anahtarı sunucunun yerel
 # imzalayıcısına kurma.
 #
-# ÜRETİMDE: bu betiği internete bağlı olmayan bir makinede (ya da donanım
-# token'ıyla) çalıştır; offline-keys/ dizini sunucuya ASLA kopyalanmaz. Kurtarma
-# anahtarının özel yarısı yalnızca anahtar seti imzalarken kullanılır.
+# ÜRETİMDE: özel anahtarlar bu betikle ÜRETİLMEZ ve sunucuda durmaz. Onları
+# internete kapalı bir makinede scripts/offline-keygen.sh üretir (parolayla
+# şifreli). Anahtar seti imzalama (keyset) ve public key okuma (pub) o çevrimdışı
+# makinede çalıştırılır; sunucuda yalnızca `upload` ve `server-keys` kullanılır.
+# Üretim profilindeki bir kurulumda `gen` çalışmaz.
+#
+# Buradaki `gen` şifresiz anahtar üretir: yalnızca demo ve uçtan uca testler için.
 #
 #   ./scripts/signing-keys.sh gen recovery-1          # offline-keys/recovery-1.{pem,pub}
 #   ./scripts/signing-keys.sh gen backup-1            # APK'ya gömülecek yedek imza anahtarı
@@ -16,6 +20,8 @@
 #   ./scripts/signing-keys.sh upload keyset-v2.json   # PUT /api/v1/signing-keyset
 #   ./scripts/signing-keys.sh install backup-1        # data/signing-key.pem olarak kur (yeniden başlatma gerekir)
 #   ./scripts/signing-keys.sh install backup-1 next   # data/signing-key-next.pem (CONFIG_SIGNERS=local,local:next)
+#   (install yerindeki anahtarın kopyasını data/signing-key*.pem.<tarih>.bak olarak
+#   saklar; üretim profilinde yalnızca --emergency ile çalışır)
 #
 # -k listesinde: offline-keys/ altındaki bir ad, bir .pub dosyası, doğrudan
 # Base64 anahtar ya da "server" (sunucunun etkin imzalayıcıları).
@@ -26,12 +32,9 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
 cd "${ROOT_DIR}"
 
-if [ -f .env ]; then
-    set -a
-    # shellcheck disable=SC1091
-    . ./.env
-    set +a
-fi
+# shellcheck source=scripts/lib.sh
+. "${SCRIPT_DIR}/lib.sh"
+load_env
 HTTP="http://localhost:${HOST_HTTP_PORT:-6650}"
 KEYS_DIR="${OFFLINE_KEYS_DIR:-${ROOT_DIR}/offline-keys}"
 
@@ -46,12 +49,15 @@ key_file() { # ad ya da yol → PKCS#8 PEM dosyası
 
 pub_of() { # ad | .pub | .pem | Base64 → Base64 X.509 SubjectPublicKeyInfo
     local ref="$1"
-    if [ -f "${KEYS_DIR}/${ref}.pub" ]; then tr -d '\n' < "${KEYS_DIR}/${ref}.pub"; return; fi
+    if [ -s "${KEYS_DIR}/${ref}.pub" ]; then tr -d ' \n' < "${KEYS_DIR}/${ref}.pub"; return; fi
     case "${ref}" in
-        *.pub) tr -d '\n' < "${ref}"; return ;;
-        *.pem) openssl ec -in "${ref}" -pubout -outform DER 2>/dev/null | openssl base64 -A; return ;;
+        *.pub) tr -d ' \n' < "${ref}"; return ;;
+        *.pem)
+            # Yanındaki .pub varsa onu kullan: parolayla şifreli anahtar boşuna açılmasın.
+            if [ -s "${ref%.pem}.pub" ]; then tr -d ' \n' < "${ref%.pem}.pub"; return; fi
+            openssl pkey -in "${ref}" -pubout -outform DER | openssl base64 -A; return ;;
     esac
-    [ -f "${KEYS_DIR}/${ref}.pem" ] && { openssl ec -in "${KEYS_DIR}/${ref}.pem" -pubout -outform DER 2>/dev/null | openssl base64 -A; return; }
+    [ -f "${KEYS_DIR}/${ref}.pem" ] && { openssl pkey -in "${KEYS_DIR}/${ref}.pem" -pubout -outform DER | openssl base64 -A; return; }
     # Doğrudan Base64 anahtar: gerçekten bir EC anahtarı mı?
     printf '%s' "${ref}" | openssl base64 -d -A 2>/dev/null | openssl pkey -pubin -inform DER -noout 2>/dev/null \
         || die "Tanınmayan anahtar: ${ref}"
@@ -76,6 +82,9 @@ cmd="${1:-}"; shift || true
 case "${cmd}" in
     gen)
         name="${1:?Kullanım: $0 gen <ad>}"
+        if is_production; then
+            die "Üretim profili: çevrimdışı anahtarlar sunucuda üretilmez. Başka bir makinede: ./scripts/offline-keygen.sh keys ${name}"
+        fi
         mkdir -p "${KEYS_DIR}"; chmod 700 "${KEYS_DIR}"
         [ -e "${KEYS_DIR}/${name}.pem" ] && die "Zaten var: ${KEYS_DIR}/${name}.pem (üzerine yazılmaz)"
         umask 077
@@ -141,16 +150,35 @@ case "${cmd}" in
         ;;
     upload)
         file="${1:?Kullanım: $0 upload <keyset.json>}"
-        curl -sS -X PUT "${HTTP}/api/v1/signing-keyset" \
-            -H "X-API-Key: $(admin_key)" -H 'Content-Type: application/json' \
+        # Anahtar komut satırına yazılmaz (lib.sh → curl_with_key).
+        curl_with_key "$(admin_key)" -sS -X PUT "${HTTP}/api/v1/signing-keyset" \
+            -H 'Content-Type: application/json' \
             --data-binary @"${file}" -w '\nHTTP %{http_code}\n'
         ;;
     install)
-        name="${1:?Kullanım: $0 install <ad> [imzalayıcı-adı]}"
+        emergency=0
+        if [ "${1:-}" = "--emergency" ]; then emergency=1; shift; fi
+        name="${1:?Kullanım: $0 install [--emergency] <ad> [imzalayıcı-adı]}"
         signer="${2:-}"
+        # Bu adım özel anahtarı sunucunun diskine koyar (yerel imzalayıcı olarak).
+        # Üretimde yalnızca acil durumda (bir imzalayıcı kayboldu), bilerek
+        # (--emergency) ve anahtar dosyası bu dizinin DIŞINDAKİ bir yoldan (ör. takılı
+        # şifreli disk) verilerek yapılır; parolayı openssl sorar.
+        if is_production && [ "${emergency}" = 0 ]; then
+            die "Üretim profili: install çevrimdışı bir özel anahtarı sunucunun diskine koyar; o andan sonra o anahtar çevrimdışı değildir.
+Yalnızca bir imzalayıcı kaybolduysa ve bilerek: $0 install --emergency /takili-disk/backup-1.pem
+(README → \"İşletim\" → \"Bir imzalayıcı kaybolursa\"). Sonra yeni bir yedek üretip anahtar setiyle duyur."
+        fi
         file="$(key_file "${name}")"
         target="data/signing-key${signer:+-${signer}}.pem"
         umask 077
+        # Yerindeki anahtarın üzerine yazmadan önce bir kopyası (geri dönmek için).
+        # data/ altında kalır (git'e girmez); işin bitince sil.
+        if [ -f "${target}" ]; then
+            previous="${target}.$(date +%Y%m%d-%H%M%S).bak"
+            cp -p "${target}" "${previous}"
+            echo "Önceki anahtar saklandı: ${previous} (gerekmiyorsa sil)"
+        fi
         {
             openssl pkcs8 -topk8 -nocrypt -in "${file}" -outform DER | openssl base64 -A; echo
             pub_of "${file}"
@@ -164,5 +192,5 @@ case "${cmd}" in
         fi
         ;;
     *)
-        sed -n '2,24p' "$0"; exit 2 ;;
+        sed -n '2,27p' "$0"; exit 2 ;;
 esac

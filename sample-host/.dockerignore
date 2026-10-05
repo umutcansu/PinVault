@@ -7,3 +7,8 @@
 data/
 scripts/
 README.md
+# Çevrimdışı anahtarlar (kurtarma/yedek imza anahtarları, yönetici anahtarları):
+# imaja asla girmemeli.
+offline-keys/
+# setup.sh --production --fresh ile kenara taşınan demo kurulumu (gizli değerler içerir)
+backup-before-production-*/

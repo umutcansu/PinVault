@@ -4,6 +4,12 @@
 #   docker compose up -d --build
 #   ./scripts/smoke-test.sh         # sağlık + imza + yetki kontrolleri
 #   ./scripts/client-config.sh      # Android client'a girilecek değerler
+#
+# Bu dosya DEMO profilidir. Üretim profili (./scripts/setup.sh --production)
+# .env'e COMPOSE_FILE=docker-compose.yml:docker-compose.production.yml yazar;
+# ikinci dosya bu dosyanın üstüne biner: yönetim portları yalnızca bu makineye
+# açılır, mock host portları yayımlanmaz, test anahtarları sabit kapalıdır ve
+# container sıkılaştırılır (docker-compose.production.yml).
 services:
   pinvault-host:
     build:
@@ -24,7 +30,12 @@ services:
       # (HOST_HTTP_BIND=127.0.0.1). Telefonların raporları ve uzaktan yönetim şifreli
       # porttan (HOST_MANAGEMENT_TLS_PORT) gider.
       - "${HOST_HTTP_BIND:-127.0.0.1}:${HOST_HTTP_PORT:-6650}:8080"
-      - "${HOST_MANAGEMENT_TLS_PORT:-6655}:8082"  # Yönetim API (TLS, sunucu sertifikası; telefonlar pinler)
+      # Yönetim API (TLS). Varsayılan olarak o da yalnızca bu makineden
+      # (HOST_MANAGEMENT_TLS_BIND=127.0.0.1): telefonlar ve uçtan uca testler bu
+      # porta ağdan bağlanmaz. Başka makineden dashboard için .env'de
+      # HOST_MANAGEMENT_TLS_BIND=0.0.0.0 (ya da SSH tüneli). Üretim profili her
+      # durumda 127.0.0.1'e bağlar.
+      - "${HOST_MANAGEMENT_TLS_BIND:-127.0.0.1}:${HOST_MANAGEMENT_TLS_PORT:-6655}:8082"
       - "${HOST_HTTPS_PORT:-6651}:8081"  # Config API (TLS, self-signed; client'lar pin'ler)
       - "${HOST_MTLS_PORT:-6652}:8092"   # mTLS Config API (scripts/provision.sh oluşturur)
       - "${HOST_MOCK_TLS_PORT:-6653}:8443"   # Mock TLS hedef host (mock-tls.sample)
@@ -41,6 +52,15 @@ services:
       DB_PATH: /data/db/pinvault.db
       CERTS_DIR: /data/certs
       SIGNING_KEY_PATH: /data/signing-key.pem
+      # demo | production. Sunucu okumaz; entrypoint.sh üretim profilinde açılış
+      # kontrollerini buna göre yapar.
+      SAMPLE_PROFILE: ${SAMPLE_PROFILE:-demo}
+      # Sunucunun çalıştığı kullanıcı (entrypoint.sh root olarak başlar, data/'nın
+      # sahipliğini buna verir ve yetkileri bırakır). Varsayılan imajdaki pinvault
+      # kullanıcısı (10001). Linux'ta data/ dosyalarını kendi kullanıcınla okumak
+      # istersen: PINVAULT_UID=$(id -u) PINVAULT_GID=$(id -g) (root olamaz).
+      PINVAULT_UID: ${PINVAULT_UID:-}
+      PINVAULT_GID: ${PINVAULT_GID:-}
       ENROLLMENT_MODE: ${ENROLLMENT_MODE:-token}
       # Zorunlu. Yönetim uçları ve dashboard bu anahtarı ister; anonim admin kapalı.
       API_KEY: ${API_KEY:?API_KEY bos. Once ./scripts/setup.sh calistir.}
@@ -50,7 +70,15 @@ services:
       EXTRA_CERT_SANS: ${HOST_LAN_IP:-}
       # İsteğe bağlı sunucu ayarları; boş bırakılınca sunucu varsayılanı geçerli.
       # Geçici değişiklik için: ./scripts/env-override.sh set KEY=VALUE ...
+      # Parolalar: sunucu KEYSTORE_PASSWORD, VAULT_AT_REST_PASSWORD ve (yerel imzalayıcı
+      # için) SIGNING_KEY_PASSWORD olmadan açılmaz; setup.sh üçünü de üretir.
       SIGNING_KEY_PASSWORD: ${SIGNING_KEY_PASSWORD:-}
+      # true: parolalar boşken kaynak koddaki demo değerleriyle açıl (yalnızca
+      # kullan-at denemeler). Üretim profilinde sabit "false".
+      ALLOW_DEMO_SECRETS: ${ALLOW_DEMO_SECRETS:-}
+      # "URL'den sertifika al" bu makineye ve yerel ağa yalnızca true iken bağlanır.
+      # Demo: true (setup.sh yazar). Üretim: boş.
+      FETCH_ALLOW_PRIVATE_TARGETS: ${FETCH_ALLOW_PRIVATE_TARGETS:-}
       ENROLLMENT_TOKEN_TTL_SECONDS: ${ENROLLMENT_TOKEN_TTL_SECONDS:-}
       # Onay bekleyen başvurular: cevapsız başvurunun ömrü (saat, varsayılan 24);
       # kodsuz başvurularda bir IP'den 10 dakikada en fazla yeni başvuru (20)
@@ -61,6 +89,7 @@ services:
       # Cihaz sertifikalarının ömrü (gün, varsayılan 90).
       CLIENT_CERT_TTL_DAYS: ${CLIENT_CERT_TTL_DAYS:-}
       # Yalnızca testler: kısa ömürlü sertifika kancası (/api/v1/test-hooks/client-cert-ttl).
+      # Üretim profilinde sabit "false" (docker-compose.production.yml).
       ALLOW_TEST_HOOKS: ${ALLOW_TEST_HOOKS:-}
       VAULT_AT_REST_PASSWORD: ${VAULT_AT_REST_PASSWORD:-}
       VAULT_AT_REST_PASSWORD_PREVIOUS: ${VAULT_AT_REST_PASSWORD_PREVIOUS:-}
@@ -68,7 +97,20 @@ services:
       KEYSTORE_PASSWORD: ${KEYSTORE_PASSWORD:-}
       KEYSTORE_PASSWORD_PREVIOUS: ${KEYSTORE_PASSWORD_PREVIOUS:-}
       CLIENT_P12_PASSWORD: ${CLIENT_P12_PASSWORD:-}
+      # Yalnızca testler (E02). Üretim profilinde sabit "false".
       ALLOW_ANONYMOUS_ADMIN: ${ALLOW_ANONYMOUS_ADMIN:-}
+      # Yönetim dinleyicisi container içinde her arayüzü dinler; dışarıya hangi
+      # adresten açıldığını yukarıdaki port eşlemesi (HOST_HTTP_BIND) belirler.
+      # Sunucu anahtarsız modda (ALLOW_ANONYMOUS_ADMIN) kendiliğinden 127.0.0.1'e
+      # bağlanırdı; o zaman yayımlanan porttan erişilemezdi.
+      MANAGEMENT_BIND: ${MANAGEMENT_BIND:-0.0.0.0}
+      # Anahtarsız modda yönetim isteği yalnızca bu adreslerle gelirse cevaplanır
+      # (DNS rebinding'e karşı); dışarıdaki port container'ınkinden farklı.
+      MANAGEMENT_ALLOWED_HOSTS: ${MANAGEMENT_ALLOWED_HOSTS:-localhost:${HOST_HTTP_PORT:-6650},127.0.0.1:${HOST_HTTP_PORT:-6650}}
+      # Dashboard, Host başlığını değiştiren bir ters vekilin arkasındaysa onun adresi.
+      ADMIN_ALLOWED_ORIGINS: ${ADMIN_ALLOWED_ORIGINS:-}
+      # Vault dışındaki yönetici yüklemelerinin (anahtar deposu, sertifika, JSON) en büyük boyutu.
+      ADMIN_UPLOAD_MAX_BYTES: ${ADMIN_UPLOAD_MAX_BYTES:-}
       # İsteğe bağlı güvenlik katmanları (README: "İsteğe bağlı güvenlik
       # katmanları"). Hepsi boşken sunucu önceki gibi davranır.
       # İmzalayıcılar: local (varsayılan) | pkcs11 | command; virgülle birden çok.
@@ -84,6 +126,8 @@ services:
       SIGNER_PUBLIC_KEY_FILE: ${SIGNER_PUBLIC_KEY_FILE:-}
       SIGNER_INPUT: ${SIGNER_INPUT:-}
       SIGNER_TIMEOUT_MS: ${SIGNER_TIMEOUT_MS:-}
+      # Komut imzalayıcısına geçen ek ortam değişkenleri (ör. AWS_PROFILE,AWS_REGION).
+      SIGNER_PASS_ENV: ${SIGNER_PASS_ENV:-}
       # İmzalama anahtarı setleri: uygulamaya gömülü kurtarma anahtar(lar)ı.
       RECOVERY_PUBLIC_KEYS: ${RECOVERY_PUBLIC_KEYS:-}
       RECOVERY_REQUIRED_SIGNATURES: ${RECOVERY_REQUIRED_SIGNATURES:-}
@@ -92,6 +136,7 @@ services:
       ADMIN_KEYS_FILE: ${ADMIN_KEYS_FILE:-}
       PIN_CHANGE_APPROVALS: ${PIN_CHANGE_APPROVALS:-}
       APPROVAL_TTL_HOURS: ${APPROVAL_TTL_HOURS:-}
+      APPROVAL_EXEMPT_OPERATIONS: ${APPROVAL_EXEMPT_OPERATIONS:-}
       NOTIFY_WEBHOOK_URL: ${NOTIFY_WEBHOOK_URL:-}
       NOTIFY_WEBHOOK_SECRET: ${NOTIFY_WEBHOOK_SECRET:-}
       NOTIFY_EVENTS: ${NOTIFY_EVENTS:-}
@@ -100,6 +145,37 @@ services:
       PIN_LIVE_CHECK_ALLOW_OVERRIDE: ${PIN_LIVE_CHECK_ALLOW_OVERRIDE:-}
       LIVE_CHECK_HOST_MAP: ${LIVE_CHECK_HOST_MAP:-}
       LIVE_CHECK_TIMEOUT_MS: ${LIVE_CHECK_TIMEOUT_MS:-}
+      # Ekran kilidiyle açılan dosyaların anahtarı için donanım belgesi
+      # (Android Key Attestation): off | warn | enforce (boş = warn).
+      USER_AUTH_ATTESTATION: ${USER_AUTH_ATTESTATION:-}
+      ATTESTATION_PACKAGE_NAMES: ${ATTESTATION_PACKAGE_NAMES:-}
+      ATTESTATION_SIGNER_SHA256: ${ATTESTATION_SIGNER_SHA256:-}
+      ATTESTATION_REQUIRE_VERIFIED_BOOT: ${ATTESTATION_REQUIRE_VERIFIED_BOOT:-}
+      # Google'ın iptal listesi (scripts/fetch-attestation-status.sh indirir), bu
+      # listenin en fazla kaç saatlik olabileceği (eskiyse hiçbir belge geçmez) ve
+      # telefonun en eski kabul edilen güvenlik yaması (YYYYAA, ör. 202401).
+      ATTESTATION_REVOKED_SERIALS_FILE: ${ATTESTATION_REVOKED_SERIALS_FILE:-}
+      ATTESTATION_STATUS_MAX_AGE_HOURS: ${ATTESTATION_STATUS_MAX_AGE_HOURS:-}
+      ATTESTATION_MIN_PATCH_LEVEL: ${ATTESTATION_MIN_PATCH_LEVEL:-}
+      # Kayıtta donanım belgesi (off | warn | enforce), P12 ile kaydı kapatma (off)
+      # ve ekran kilitli dosyalarda her kullanımda onay. Üretim profili en sıkı
+      # değerleri yazar (.env.production.example). Bu adları tanımayan bir sunucu
+      # sürümü onları yok sayar.
+      ENROLLMENT_ATTESTATION: ${ENROLLMENT_ATTESTATION:-}
+      ENROLLMENT_P12: ${ENROLLMENT_P12:-}
+      USER_AUTH_REQUIRE_PER_USE: ${USER_AUTH_REQUIRE_PER_USE:-}
+      # Kötüye kullanım sınırları (boş = sunucu varsayılanı).
+      # Bir adresin 10 dakikada toplayabileceği ret sayısı (varsayılan 300). DEMO: 0
+      # (sınır yok): Docker Desktop arkasında bütün cihazlar tek adresten görünür ve
+      # uçtan uca testler bilerek çok sayıda reddedilen istek yapar. Üretim profili
+      # sunucu varsayılanını kullanır.
+      DEVICE_REFUSAL_RATE_LIMIT: ${DEVICE_REFUSAL_RATE_LIMIT:-0}
+      REPORT_RATE_LIMIT: ${REPORT_RATE_LIMIT:-}
+      REPORT_DEVICE_RATE_LIMIT: ${REPORT_DEVICE_RATE_LIMIT:-}
+      DEVICE_KEY_RATE_LIMIT: ${DEVICE_KEY_RATE_LIMIT:-}
+      DEVICE_KEY_LIMIT: ${DEVICE_KEY_LIMIT:-}
+      VAULT_MAX_FILE_BYTES: ${VAULT_MAX_FILE_BYTES:-}
+      MTLS_RESTART_MIN_INTERVAL_SECONDS: ${MTLS_RESTART_MIN_INTERVAL_SECONDS:-}
     volumes:
       # Bütün kalıcı durum tek dizin: veritabanı, sertifikalar ve imzalama
       # anahtarı. Anahtar dosyası tek tek (ve salt okunur) bağlanınca sunucu

@@ -17,20 +17,19 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
 cd "${ROOT_DIR}"
 
-if [ -f .env ]; then
-    set -a
-    # shellcheck disable=SC1091
-    . ./.env
-    set +a
-fi
+# shellcheck source=scripts/lib.sh
+. "${SCRIPT_DIR}/lib.sh"
+load_env
 
 HTTP="http://localhost:${HOST_HTTP_PORT:-6650}"
-KEY="${API_KEY:?API_KEY .env içinde yok — ./scripts/setup.sh}"
+# Üretim profilinde kişisel yönetici anahtarı: ADMIN_KEY=… ./scripts/provision.sh
+KEY="${ADMIN_KEY:-${API_KEY:?API_KEY .env içinde yok — ./scripts/setup.sh}}"
 IP="${HOST_LAN_IP:?HOST_LAN_IP .env içinde yok — ./scripts/setup.sh}"
 MTLS_ID="sample-mtls"
 MTLS_CONTAINER_PORT=8092
 
-api() { curl -fsS -H "X-API-Key: ${KEY}" "$@"; }
+# Anahtar komut satırına yazılmaz (lib.sh → curl_with_key).
+api() { curl_with_key "${KEY}" -fsS "$@"; }
 
 for _ in $(seq 1 60); do
     curl -fsS "${HTTP}/health" >/dev/null 2>&1 && break
@@ -57,8 +56,10 @@ else
 fi
 
 # ── 2. Host'un kendi IP'si için pin kaydı ───────────────────────────────────
-PRIMARY="$(sed -n 1p data/certs/demo-server.pins)"
-BACKUP="$(sed -n 2p data/certs/demo-server.pins)"
+PINS="$(host_pins)" || true
+[ -n "${PINS}" ] || { echo "Sunucu pin'leri okunamadı (data/certs/demo-server.pins) — host ayakta mı?" >&2; exit 1; }
+PRIMARY="$(printf '%s\n' "${PINS}" | sed -n 1p)"
+BACKUP="$(printf '%s\n' "${PINS}" | sed -n 2p)"
 cfg="$(curl -fsS "${HTTP}/api/v1/certificate-config?signed=false")"
 
 if echo "${cfg}" | jq -e --arg h "${IP}" --arg p "${PRIMARY}" --arg b "${BACKUP}" \
@@ -93,12 +94,19 @@ ensure_mock() {
         echo ">> ${host} mock host'u başlatıldı (container :${port}, mtls=${mtls})"
     fi
 }
-ensure_mock "mock-tls.sample" 8443 false
-ensure_mock "mock-mtls.sample" 8444 true
+if is_production; then
+    # Mock host'lar yalnızca deneme içindir; üretim profilinde portları da yayımlanmaz.
+    echo ">> Üretim profili: mock hedef host'lar kurulmadı (yalnızca deneme içindir)"
+else
+    ensure_mock "mock-tls.sample" 8443 false
+    ensure_mock "mock-mtls.sample" 8444 true
+fi
 
 echo ""
 echo "== Hazır =="
 echo "  mTLS Config API : https://${IP}:${HOST_MTLS_PORT:-6652}/ (istemci sertifikası zorunlu)"
-echo "  Mock TLS host   : https://mock-tls.sample:${HOST_MOCK_TLS_PORT:-6653}/health  (ad → ${IP})"
-echo "  Mock mTLS host  : https://mock-mtls.sample:${HOST_MOCK_MTLS_PORT:-6654}/health (ad → ${IP})"
+if ! is_production; then
+    echo "  Mock TLS host   : https://mock-tls.sample:${HOST_MOCK_TLS_PORT:-6653}/health  (ad → ${IP})"
+    echo "  Mock mTLS host  : https://mock-mtls.sample:${HOST_MOCK_MTLS_PORT:-6654}/health (ad → ${IP})"
+fi
 echo "  Pin'li host'lar : $(curl -fsS "${HTTP}/api/v1/certificate-config?signed=false" | jq -r '[.pins[].hostname] | join(", ")')"

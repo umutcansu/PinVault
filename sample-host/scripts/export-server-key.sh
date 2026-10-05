@@ -9,6 +9,12 @@
 # keytool container'daki JRE'den çalışır (Mac'te JDK gerekmez); PKCS12 → PEM
 # dönüşümü openssl ile. Çıktılar 0600 izinli ve git dışıdır.
 #
+# DİKKAT: data/proxy/server-key.pem sunucunun TLS özel anahtarının DÜZ METİN
+# kopyasıdır. Onu ele geçiren, telefonların pinlediği sertifikayla araya
+# girebilir. Yalnızca demo profilinde ve test süresince durmalı; işin bitince
+# sil (rm -rf data/proxy). Üretim profilinde bu betik çalışmaz, setup.sh
+# --production data/proxy'yi siler ve sunucu o dizin varken açılmaz.
+#
 # Kullanım: ./scripts/export-server-key.sh
 
 set -euo pipefail
@@ -24,6 +30,12 @@ if [ -f .env ]; then
     set +a
 fi
 
+if [ "${SAMPLE_PROFILE:-demo}" = "production" ]; then
+    echo "Üretim profili: sunucunun TLS özel anahtarı dışa aktarılmaz (bu betik yalnızca uçtan uca testler içindir)." >&2
+    exit 2
+fi
+umask 077
+
 PASS="${KEYSTORE_PASSWORD:-changeit}"
 # Parola komut satırlarında (ps) görünmesin: keytool ve openssl ortamdan okur.
 export PASS
@@ -37,7 +49,7 @@ trap 'rm -rf "${tmp}"' EXIT
 
 # JKS → PKCS12 container içinde, sunucu kullanıcısıyla ve container'ın /tmp'sinde:
 # data/ altına root'a ait ya da geçici bir anahtar dosyası düşmez, paket stdout'tan gelir.
-docker compose exec -T -u pinvault -e PASS pinvault-host sh -c '
+docker compose exec -T -u "${PINVAULT_UID:-10001}:${PINVAULT_GID:-${PINVAULT_UID:-10001}}" -e PASS pinvault-host sh -c '
     keytool -importkeystore \
         -srckeystore /data/certs/demo-server.jks -srcstoretype JKS -srcstorepass:env PASS \
         -destkeystore /tmp/proxy-export.p12 -deststoretype PKCS12 -deststorepass:env PASS \

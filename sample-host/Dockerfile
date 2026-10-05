@@ -17,8 +17,16 @@
 #   docker buildx build --build-context pinvault-server=../demo-server .
 # ─────────────────────────────────────────────────────────────────────────────
 
+# Temel imajlar özetleriyle (digest) sabitlenir: etiket (8.7-jdk17, 17-jre-noble)
+# zamanla başka bir imajı gösterebilir, özet gösteremez. Aynı Dockerfile her
+# zaman aynı temelden derlenir; Hub'daki etiket değiştirilse de etkilenmez.
+# Güncellemek için (yeni imajı gözden geçirdikten sonra):
+#   docker pull gradle:8.7-jdk17 && docker image inspect --format '{{index .RepoDigests 0}}' gradle:8.7-jdk17
+#   docker pull eclipse-temurin:17-jre-noble && docker image inspect --format '{{index .RepoDigests 0}}' eclipse-temurin:17-jre-noble
+# ve aşağıdaki iki satırdaki sha256 değerlerini değiştir.
+
 # ---- Stage 1: build ----
-FROM gradle:8.7-jdk17 AS build
+FROM gradle:8.7-jdk17@sha256:4ad3845d9ee2843537747bd5f067cc6c7a18e737d0079a880a5a074feda392a4 AS build
 WORKDIR /build/demo-server
 # Yalnızca Gradle girdileri kopyalanır. Kaynak dizindeki yerel runtime state
 # (pinvault.db, certs/, signing-key.pem, build/) asla image'a girmez.
@@ -27,7 +35,7 @@ COPY --from=pinvault-server src ./src
 RUN gradle installDist --no-daemon
 
 # ---- Stage 2: runtime ----
-FROM eclipse-temurin:17-jre-noble
+FROM eclipse-temurin:17-jre-noble@sha256:39d618b8fda3408cfe792db2b666c0e3db8ea4ae263ab4d0c3805933e5355f45
 
 # - curl: healthcheck
 # - netcat-openbsd + openssl: /api/v1/hosts/{host}/ping-remote bunları
