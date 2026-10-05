@@ -6202,6 +6202,16 @@ components:
           type: boolean
           default: false
           description: Global force flag. The client treats any per-host flag as equivalent.
+        trustRoots:
+          type: array
+          items: { type: string }
+          description: >
+            Managed trust roots (ATTESTATION.md §10): SHA-256 SPKI pins of root CAs,
+            same format as a pin, at most 64, no duplicates. A client with
+            `managedTrustRoots()` accepts, for a host with NO pin entry, a chain the
+            platform validates to one of these roots. Omitted from responses when
+            empty. On PUT a body that carries the field replaces the list; a body
+            without it keeps the scope's current list.
         issuedAt:
           type: integer
           format: int64
@@ -6429,6 +6439,10 @@ components:
               sha256: { type: array, items: { type: string } }
               version: { type: integer }
               forceUpdate: { type: boolean }
+        trustRoots:
+          type: array
+          items: { type: string }
+          description: The scope's managed trust roots (empty when none).
         version:
           type: integer
           description: 'Computed as `max(pins[].version)`.'

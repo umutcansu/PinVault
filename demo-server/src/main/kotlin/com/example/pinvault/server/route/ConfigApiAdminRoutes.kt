@@ -94,6 +94,7 @@ fun Route.configApiAdminRoutes(
                             })
                         }
                     }
+                    putJsonArray("trustRoots") { config?.trustRoots?.forEach { add(it) } }
                     put("version", config?.computedVersion() ?: 0)
                     put("running", running)
                 })

@@ -634,7 +634,7 @@ const AUDIT_ACTIONS = [
   'client_cert_generated', 'client_cert_uploaded', 'enrollment_token_created',
   'vault_file_uploaded', 'vault_file_deleted', 'vault_policy_changed', 'vault_token_issued', 'vault_token_revoked',
   'vault_enabled_changed', 'host_acl_changed', 'private_key_downloaded', 'bootstrap_pins_changed',
-  'admin_request_refused',
+  'trust_roots_updated', 'admin_request_refused',
   'attestation_policy_updated', 'attestation_device_annotated', 'attestation_device_forgotten',
   'attestation_device_registered', 'attestation_key_mismatch', 'attestation_rejected',
   'attestation_token_secret_rotated', 'attestation_token_secret_deleted', 'http'
@@ -651,7 +651,7 @@ function auditActionLabel(action) {
 
 function auditActionBadge(action) {
   const cls =
-    action === 'pins_changed' ? 'act-pins' :
+    action === 'pins_changed' || action === 'trust_roots_updated' ? 'act-pins' :
     action === 'change_applied' || action === 'change_approved' ? 'act-ok' :
     action === 'change_requested' ? 'act-pins' :
     action === 'live_check_blocked' || action === 'auth_failed' || action === 'change_failed' ? 'act-bad' :

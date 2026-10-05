@@ -58,7 +58,10 @@ Returns the pin configuration. This is the core endpoint.
       "clientCertVersion": null
     }
   ],
-  "forceUpdate": false
+  "forceUpdate": false,
+  "trustRoots": [
+    "RRRRR/SSSS+TTTT9999UUUU0000VVVV1111WWWW2222XX=="
+  ]
 }
 ```
 
@@ -68,6 +71,7 @@ Returns the pin configuration. This is the core endpoint.
 - Each pin is Base64-encoded SHA-256 of the certificate's SubjectPublicKeyInfo (SPKI) — exactly 44 characters
 - `mtls: true` means the host requires a client certificate
 - `clientCertVersion` triggers client cert download when it changes
+- `trustRoots` (optional, [ATTESTATION.md §10](ATTESTATION.md)): SHA-256 SPKI pins of root CAs, same format as a pin, at most 64, no duplicates. A client built with `managedTrustRoots()` accepts, for a host that has **no** pin entry, a chain the platform validates to one of these roots; hosts with a pin entry are still checked by their pins only. Omit the field (or send `[]`) when you do not use it — the reference server leaves it out of the payload when empty, so older clients see nothing new. It is part of the signed payload, so a change rolls out like a pin change. On `PUT /api/v1/certificate-config` a body that carries `trustRoots` replaces the list; a body without the field keeps the scope's current list.
 
 **Hostname patterns:**
 - Exact match is case-insensitive: `api.example.com`

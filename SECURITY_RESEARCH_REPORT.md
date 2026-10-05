@@ -237,7 +237,7 @@ kuruldu; sözleşme [ATTESTATION.md](ATTESTATION.md)'de.
 | Pinler yalnızca geçen uygulamaya verilir | İmzalı config atestasyon yanıtının içinde gelir (`applySigned`), kalan cihaz config almaz; cihaz anahtarı ilk kayıtta Android key attestation ile bağlanır (`ATTESTATION_KEY_POLICY`) |
 | Kısa ömürlü Approov-Token, backend doğrular | `PinVault-Token` (HS256 JWT, 5 dk, `aud`=Config API, `anno`); kütüphane başlığı token host'larına ekler; `PinVaultTokenAuth` Ktor eklentisi + Node/Python/Java örnekleri; mock host `MOCK_HOST_REQUIRE_TOKEN` |
 | Ret politikası bayrak bayrak özelleştirilir; cihaz ek açıklamaları; ARC | Config API başına politika (`reject/warn/ignore` × 12 bayrak, strict/lenient), `forcePass/forceFail/annotations`, 8 karakterlik ARC, `revealReasons` |
-| Managed Trust Roots | `trustRoots` imzalı config alanı + `managedTrustRoots()`: pinsiz host için platform doğrulaması + listelenen kök + host adı |
+| Managed Trust Roots | `trustRoots` imzalı config alanı + `managedTrustRoots()`: pinsiz host için platform doğrulaması + listelenen kök + host adı. Sunucu tarafı: `pin_config.trust_roots` (V22), pin kurallarıyla doğrulama (format, tekrar yok, en fazla 64), boşken payload'da yok (eski istemci yeni alan görmez), `PUT /api/v1/certificate-config` alan gönderilince listeyi değiştirir / gönderilmeyince korur, `trust_roots_updated` geçmiş + denetim olayı, panelde Config API "Genel" sekmesinde düzenleme (`TrustRootsTest`) |
 | Yönetim: CLI + panel | Panel sekmesi (politika, cihazlar, istatistik, token sırları) + yönetim API'si + denetim kaydı/webhook olayları |
 
 Kalan fark, mimari değil kalite ve güvence farkıdır: Approov'un probe'ları
@@ -264,7 +264,7 @@ anahtarına bağlıdır, her şey self-hosted ve açık kaynaktır.
 | S-2 | `HOST_CLIENT_CERT_REQUIRE_GRANT` (varsayılan kapalı; üretim profili `true` sabitler ve `entrypoint.sh` denetler). Test: `HostClientCertAclTest` |
 | S-3 | `VAULT_DOWNLOAD_CONCURRENCY_TOTAL` (varsayılan 16) toplam eşzamanlılık sınırı; her iki Dockerfile `JAVA_OPTS=-XX:MaxRAMPercentage=60` |
 
-Doğrulama: demo-server bu ortamda JDK 17 ile derlendi ve ilgili testler koşturuldu (sonuç commit mesajında). Kütüphane ve örnek uygulama **derlenemedi** (Android SDK yok, `dl.google.com` engelli); bu değişiklikler Android SDK'lı bir ortamda `./gradlew :pinvault:testDebugUnitTest` ve `sample-client` derlemesiyle doğrulanmalı.
+Doğrulama: demo-server bu ortamda JDK 17 ile derlendi ve ilgili testler koşturuldu (sonuç commit mesajında); atestasyon ve yönetilen kök katmanının sunucu testleri (`AttestationRoutesTest`, `AttestationAdminRoutesTest`, `PinVaultTokenTest`, `AttestationPolicyTest`, `PinVaultTokenAuthTest`, `TrustRootsTest`, `DashboardGovernanceLabelsTest`, `AuditCoverageTest`) geçiyor. Kütüphane ve örnek uygulama **derlenemedi** (Android SDK yok, `dl.google.com` engelli); bu değişiklikler Android SDK'lı bir ortamda `./gradlew :pinvault:testDebugUnitTest` ve `sample-client` derlemesiyle doğrulanmalı.
 
 **Kısa vade — bu dalda uygulananlar:** L-2 Keystore seviyesi raporlama + `requireHardwareBackedKeys()` (`KeySecurityLevel`, `HardwareBackedKeyRequiredException`) · S-1 `CONFIG_API_ADMIN_ROUTES=off` (üretim profili sabitler) · L-25/S-11 nonce: atestasyon protokolü her turda sunucu nonce'u imzalatır (kayıt challenge'ı değişmedi; cihaz anahtarı artık her 5 dakikada taze bir nonce'la kanıtlanıyor) · L-3 RASP: `integrity/` probe'ları ve atestasyon katmanı (bkz. 6.5).
 

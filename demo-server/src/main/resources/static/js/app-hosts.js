@@ -455,6 +455,20 @@ async function renderApiGeneralTab(apiId) {
         <span style="color:#64748b;font-size:11px">${t('forceAllCount', (api.pins || []).filter(p => p.forceUpdate).length, api.pins?.length || 0)}</span>
       </div>
     </div>
+    <!-- Managed trust roots (ATTESTATION.md §10): part of the signed pin
+         config; a library block with managedTrustRoots() accepts, for a host
+         with NO pin entry, a chain the platform validates to one of these. -->
+    <div class="card">
+      <div class="card-title">${t('trustRootsTitle')}</div>
+      <div style="color:#94a3b8;font-size:12px;margin-bottom:10px">${t('trustRootsHint')}</div>
+      <textarea id="trust-roots-${esc(apiId)}" class="form-input mono" rows="4" spellcheck="false"
+                placeholder="${esc(t('trustRootsPlaceholder'))}"
+                style="width:100%;font-size:12px;resize:vertical">${esc((api.trustRoots || []).join('\n'))}</textarea>
+      <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-top:8px">
+        <button class="btn btn-primary" data-action="saveTrustRoots" data-arg0="${esc(apiId)}">${t('trustRootsSave')}</button>
+        <span style="color:#64748b;font-size:11px">${t('trustRootsCount', (api.trustRoots || []).length)}</span>
+      </div>
+    </div>
     <!-- V2 Vault toggle + Device ACL shortcut -->
     <div class="card">
       <div class="card-title">${t('vaultV2Section')}</div>
@@ -1494,7 +1508,7 @@ async function deleteHost(hostname) {
  * mTLS and force off for EVERY host of the scope whenever one host's pins
  * were edited. (`version` is informational: the server assigns versions.)
  */
-async function saveFullConfig(pins) {
+async function saveFullConfig(pins, extraFields) {
   const current = new Map((currentConfig?.pins || []).map(p => [p.hostname, p]));
   const merged = pins.map(p => {
     const cur = current.get(p.hostname) || {};
@@ -1513,7 +1527,13 @@ async function saveFullConfig(pins) {
   try {
     const res = await apiFetch(`/api/v1/certificate-config?configApiId=${encodeURIComponent(scopeId())}`, {
       method: 'PUT', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ version: 0, pins: merged, forceUpdate: !!currentConfig?.forceUpdate })
+      // `trustRoots` (managed trust roots, ATTESTATION.md §10) ride along the
+      // same PUT, so a pin edit must carry the current list or it would be
+      // wiped. The trust-roots card passes its own list through `extraFields`.
+      body: JSON.stringify({
+        version: 0, pins: merged, forceUpdate: !!currentConfig?.forceUpdate,
+        trustRoots: currentConfig?.trustRoots || [], ...(extraFields || {})
+      })
     });
     if (!res.ok) {
       // apiFetch already listed the hosts the live check failed on.
@@ -1568,6 +1588,41 @@ async function forceUpdateAll(apiId) {
     renderHostList();
     renderConfigApiDetail(apiId);
     toast(t('forceAllEnabled'), 'success');
+  } catch (e) { toast(t('error'), 'error'); }
+}
+
+/**
+ * Saves the managed trust roots of one Config API (ATTESTATION.md §10). The
+ * list rides the same PUT as the pins, so the scope's CURRENT config is read
+ * first (every host flag included) and written back with only `trustRoots`
+ * replaced: the general tab may show a scope other than the selected one,
+ * and `allApiConfigs` carries a reduced copy of each host.
+ */
+async function saveTrustRoots(apiId) {
+  const box = document.getElementById('trust-roots-' + apiId);
+  if (!box) return;
+  const roots = box.value.split(/\r?\n/).map(s => s.trim()).filter(s => s.length > 0);
+  try {
+    const cur = await apiFetch(`/api/v1/config/${encodeURIComponent(apiId)}`);
+    if (!cur.ok) { toast(t('error'), 'error'); return; }
+    const config = await cur.json();
+    const before = config.trustRoots || [];
+    if (before.length === roots.length && before.every((r, i) => r === roots[i])) { toast(t('trustRootsUnchanged'), 'info'); return; }
+    const res = await apiFetch(`/api/v1/certificate-config?configApiId=${encodeURIComponent(apiId)}`, {
+      method: 'PUT', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ ...config, version: 0, trustRoots: roots })
+    });
+    if (!res.ok) {
+      if (!res.liveCheckHandled) {
+        const err = await res.json().catch(() => ({}));
+        toast((err.errors || (err.error ? [err.error] : [t('saveError')])).join('\n'), 'error');
+      }
+      return;
+    }
+    if (res.status === 202) return; // change request stored; apiFetch told the user
+    await loadConfig();
+    renderConfigApiDetail(apiId);
+    toast(t('trustRootsSaved'), 'success');
   } catch (e) { toast(t('error'), 'error'); }
 }
 

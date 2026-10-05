@@ -72,7 +72,7 @@ const _actionHandlers = {
   renderConfigApiDetail, renderEditPins, renderEmpty, renderHostList, renderInlineEditPins,
   renewCertAuto, renewCertUpload, revokeClientCert, revokeVaultToken, runHealthCheck,
   rotateBootstrapToBackup, rotateHostToBackup,
-  saveDefaultAcl, saveInlinePins, savePins, saveVaultFilePolicy, selectHost,
+  saveDefaultAcl, saveInlinePins, savePins, saveTrustRoots, saveVaultFilePolicy, selectHost,
   selectHostInApi, setLang,
   setVaultEnabled, setVaultStatusFilter, showAddConfigApi, showAddHost, showCertUploadForm,
   showDeviceAclManager, showDeviceDetail, showVaultFileDetail, switchAddTab,

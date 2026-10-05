@@ -209,6 +209,15 @@ const i18n = {
     forceAllEnabled: 'Tüm host\'lara force update verildi',
     forceAllDisabled: 'Force bayrakları temizlendi',
     forceAllCount: '{0}/{1} host force durumunda',
+    // Yönetilen güven kökleri (ATTESTATION.md §10)
+    trustRootsTitle: 'Yönetilen Güven Kökleri',
+    trustRootsHint: 'Kök CA\'ların SHA-256 SPKI pin\'leri (Base64), her satıra bir tane. İmzalı pin config\'in parçasıdır: managedTrustRoots() açık bir istemci, pin kaydı OLMAYAN bir host için platformun bu köklerden birine doğruladığı zinciri kabul eder. Pin kaydı olan host\'lar yine yalnızca pin\'leriyle doğrulanır. Boş bırakılırsa özellik kapalıdır.',
+    trustRootsPlaceholder: 'AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=',
+    trustRootsSave: 'Kökleri Kaydet',
+    trustRootsSaved: 'Yönetilen güven kökleri güncellendi',
+    trustRootsUnchanged: 'Kök listesi değişmedi',
+    trustRootsCount: '{0} kök tanımlı (en fazla 64)',
+    act_trust_roots_updated: 'Yönetilen güven kökleri güncellendi',
     // Host ekleme — URL'den çek
     tabFetch: 'URL\'den Al',
     fetchUrlLabel: 'Sunucu adresi',
@@ -752,6 +761,15 @@ const i18n = {
     forceAllEnabled: 'Force update set on all hosts',
     forceAllDisabled: 'Force flags cleared',
     forceAllCount: '{0}/{1} hosts forced',
+    // Managed trust roots (ATTESTATION.md §10)
+    trustRootsTitle: 'Managed Trust Roots',
+    trustRootsHint: 'SHA-256 SPKI pins (Base64) of root CAs, one per line. Part of the signed pin config: a client with managedTrustRoots() enabled accepts, for a host that has NO pin entry, a chain the platform validates to one of these roots. Hosts with a pin entry are still checked by their pins only. Leave empty to keep the feature off.',
+    trustRootsPlaceholder: 'AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=',
+    trustRootsSave: 'Save Roots',
+    trustRootsSaved: 'Managed trust roots updated',
+    trustRootsUnchanged: 'Root list unchanged',
+    trustRootsCount: '{0} root(s) configured (at most 64)',
+    act_trust_roots_updated: 'Managed trust roots updated',
     // Add host — fetch from URL
     tabFetch: 'Fetch from URL',
     fetchUrlLabel: 'Server address',

@@ -3,6 +3,9 @@ package com.example.pinvault.server.store
 import com.example.pinvault.server.model.HostPin
 import com.example.pinvault.server.model.PinConfig
 import com.example.pinvault.server.model.PinConfigHistoryEntry
+import kotlinx.serialization.builtins.ListSerializer
+import kotlinx.serialization.builtins.serializer
+import kotlinx.serialization.json.Json
 
 class PinConfigStore(private val db: DatabaseManager) {
 
@@ -19,12 +22,16 @@ class PinConfigStore(private val db: DatabaseManager) {
 
     fun load(configApiId: String): PinConfig {
         db.connection().use { conn ->
+            var trustRoots: List<String> = emptyList()
             val forceUpdate = conn.prepareStatement(
-                "SELECT force_update FROM pin_config WHERE config_api_id = ?"
+                "SELECT force_update, trust_roots FROM pin_config WHERE config_api_id = ?"
             ).use { stmt ->
                 stmt.setString(1, configApiId)
                 val rs = stmt.executeQuery()
-                if (rs.next()) rs.getInt("force_update") == 1 else false
+                if (rs.next()) {
+                    trustRoots = parseTrustRoots(rs.getString("trust_roots"))
+                    rs.getInt("force_update") == 1
+                } else false
             }
 
             data class HostData(val version: Int, val forceUpdate: Boolean, val mtls: Boolean, val clientCertVersion: Int?, val hashes: MutableList<String> = mutableListOf())
@@ -49,10 +56,22 @@ class PinConfigStore(private val db: DatabaseManager) {
             return PinConfig(
                 version = pins.maxOfOrNull { it.version } ?: 1,
                 pins = pins,
-                forceUpdate = forceUpdate
+                forceUpdate = forceUpdate,
+                trustRoots = trustRoots
             )
         }
     }
+
+    /** The stored `trust_roots` JSON array; anything unreadable is an empty list. */
+    private fun parseTrustRoots(json: String?): List<String> = try {
+        if (json.isNullOrBlank()) emptyList()
+        else Json.decodeFromString(ListSerializer(String.serializer()), json)
+    } catch (e: Exception) {
+        emptyList()
+    }
+
+    private fun trustRootsJson(roots: List<String>): String =
+        Json.encodeToString(ListSerializer(String.serializer()), roots)
 
     /**
      * Persists [config] for [configApiId] and returns what was actually stored.
@@ -111,10 +130,11 @@ class PinConfigStore(private val db: DatabaseManager) {
                 val effective = config.copy(pins = pins, version = pins.maxOfOrNull { it.version } ?: config.version)
 
                 conn.prepareStatement(
-                    "UPDATE pin_config SET force_update = ? WHERE config_api_id = ?"
+                    "UPDATE pin_config SET force_update = ?, trust_roots = ? WHERE config_api_id = ?"
                 ).use { stmt ->
                     stmt.setInt(1, if (effective.forceUpdate) 1 else 0)
-                    stmt.setString(2, configApiId)
+                    stmt.setString(2, trustRootsJson(effective.trustRoots))
+                    stmt.setString(3, configApiId)
                     stmt.executeUpdate()
                 }
 

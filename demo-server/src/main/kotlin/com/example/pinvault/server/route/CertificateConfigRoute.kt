@@ -852,9 +852,13 @@ fun Route.certificateConfigRoutes(
     }
 }
 
+/** Decodes a pin-config write body the way the ContentNegotiation plugin would (unknown keys ignored). */
+private val PIN_CONFIG_JSON = Json { ignoreUnknownKeys = true }
+
 /** The library's intake rules (see [com.example.pinvault.server.service.PinConfigRules]); empty when [config] may be published. */
 private fun validatePinConfig(config: PinConfig): List<String> =
-    com.example.pinvault.server.service.PinConfigRules.errors(config.pins)
+    com.example.pinvault.server.service.PinConfigRules.errors(config.pins) +
+        com.example.pinvault.server.service.PinConfigRules.trustRootErrors(config.trustRoots)
 
 /**
  * The pin config a device may see in [configApiId]: the stored config
@@ -1047,7 +1051,16 @@ internal suspend fun ApplicationCall.applyPinConfigUpdate(
     liveGate: LiveCertificateGate?,
     audit: AuditLog?
 ) {
-    val incoming = receive<PinConfig>()
+    // Read as JSON first: whether `trustRoots` was SENT decides below whether
+    // the scope's list is replaced or kept (a data class default cannot tell
+    // an omitted field from an empty list).
+    val bodyJson = receive<JsonObject>()
+    val incoming = try {
+        PIN_CONFIG_JSON.decodeFromJsonElement(PinConfig.serializer(), bodyJson)
+    } catch (e: kotlinx.serialization.SerializationException) {
+        respond(HttpStatusCode.BadRequest, mapOf("errors" to listOf("Invalid pin config: ${e.message?.lineSequence()?.firstOrNull() ?: "cannot parse"}")))
+        return
+    }
     val current = store.load(scope)
 
     // Aynı hostname birden fazla kez eklenemez — büyük/küçük harf farkı da
@@ -1069,7 +1082,12 @@ internal suspend fun ApplicationCall.applyPinConfigUpdate(
             else -> newPin.copy(version = oldPin.version) // değişmedi
         }
     }
-    val updated = incoming.copy(pins = updatedPins)
+    // Managed trust roots (ATTESTATION.md §10) travel with the pins. A body
+    // that carries `trustRoots` replaces the scope's list (`[]` clears it); a
+    // body without the field — an older script or dashboard — keeps the list
+    // the scope has, so a pin edit cannot drop the roots by accident.
+    val trustRoots = if (bodyJson.containsKey("trustRoots")) incoming.trustRoots.map { it.trim() } else current.trustRoots
+    val updated = incoming.copy(pins = updatedPins, trustRoots = trustRoots)
 
     val errors = validatePinConfig(updated)
     if (errors.isNotEmpty()) {
@@ -1119,6 +1137,23 @@ internal suspend fun ApplicationCall.applyPinConfigUpdate(
                 event = "pins_updated", pinPrefix = newPin.sha256.firstOrNull()?.take(12) ?: ""
             ))
         }
+    }
+
+    // A changed root list is a trust change like a pin change; it rides the
+    // next signed envelope (the cache is dropped on every admin write).
+    if (current.trustRoots.toSet() != saved.trustRoots.toSet()) {
+        historyStore.add(scope, PinConfigHistoryEntry(
+            hostname = "*", version = saved.computedVersion(), timestamp = now,
+            event = "trust_roots_updated", pinPrefix = saved.trustRoots.firstOrNull()?.take(12) ?: ""
+        ))
+        audit?.record(
+            "trust_roots_updated",
+            "Managed trust roots of $scope set to ${saved.trustRoots.size} root(s)",
+            configApiId = scope,
+            detail = kotlinx.serialization.json.buildJsonObject {
+                put("count", kotlinx.serialization.json.JsonPrimitive(saved.trustRoots.size))
+            }
+        )
     }
 
     respond(HttpStatusCode.OK, saved)
