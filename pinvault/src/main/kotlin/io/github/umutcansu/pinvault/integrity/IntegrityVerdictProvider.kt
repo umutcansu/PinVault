@@ -4,17 +4,25 @@ package io.github.umutcansu.pinvault.integrity
  * A second opinion on the device's integrity from a service of the app's
  * choosing — Play Integrity, typically — forwarded verbatim inside the
  * attestation report (`verdictProvider` in `ATTESTATION.md` §3). The library
- * does not read or verify the token: the server stores it and may hand it
- * to a verifier of its own (`ATTESTATION_VERDICT_WEBHOOK`).
+ * does not read or verify the token: the server does. The reference server
+ * verifies Play Integrity tokens itself when it holds the Play Console
+ * response keys (`ATTESTATION.md` §11) and raises `play_integrity` /
+ * `play_integrity_missing` for the policy; any other provider's token is
+ * stored for a verifier of your own.
  *
  * Register one with
  * [io.github.umutcansu.pinvault.model.PinVaultConfig.Builder.integrityVerdictProvider].
+ * The ready-made Play Integrity provider lives in the optional
+ * `io.github.umutcansu:pinvault-play-integrity` artifact
+ * (`PlayIntegrityVerdictProvider(context, cloudProjectNumber)`), so an app
+ * that does not want Google's client in its APK does not get it. Writing
+ * one by hand is this:
  *
  * ```kotlin
- * class PlayIntegrityProvider(private val manager: IntegrityManager) : IntegrityVerdictProvider {
+ * class PlayIntegrityProvider(private val manager: IntegrityManager, private val project: Long) : IntegrityVerdictProvider {
  *     override suspend fun verdict(nonce: String): IntegrityVerdict? {
  *         val token = manager.requestIntegrityToken(
- *             IntegrityTokenRequest.builder().setNonce(nonce).build()
+ *             IntegrityTokenRequest.builder().setNonce(nonce).setCloudProjectNumber(project).build()
  *         ).await().token()
  *         return IntegrityVerdict("play-integrity", token)
  *     }

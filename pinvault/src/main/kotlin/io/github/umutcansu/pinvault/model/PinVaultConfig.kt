@@ -133,7 +133,10 @@ data class PinVaultConfig(
          * `verdictProvider` — see
          * [io.github.umutcansu.pinvault.integrity.IntegrityVerdictProvider].
          * Only used by blocks that called `attestation()`. The library
-         * forwards the token verbatim; verifying it is the server's job.
+         * forwards the token verbatim; verifying it is the server's job
+         * (the reference server verifies Play Integrity tokens with the
+         * Play Console keys). The optional `pinvault-play-integrity`
+         * artifact provides `PlayIntegrityVerdictProvider(context, cloudProjectNumber)`.
          */
         fun integrityVerdictProvider(provider: io.github.umutcansu.pinvault.integrity.IntegrityVerdictProvider) = apply {
             this.integrityVerdictProvider = provider
