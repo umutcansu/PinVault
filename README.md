@@ -1719,6 +1719,23 @@ Three projects next to the library show PinVault end to end (their READMEs are i
 | [`sample-client/`](sample-client) | An Android app (Java) that uses every PinVault feature against the sample host. It builds the library from this checkout (`pinvault.localPath=..`). Its secret vault files live on the mTLS Config API (`token_mtls`), behind the screen lock (`userAuth(REQUIRED)`, `encryption(USER_AUTH)`), are opened with `unlockFile` and wiped on revocation; it asks `requireCaTrust` for its publicly trusted target. |
 | [`sample-e2e/`](sample-e2e) | Playwright end-to-end tests: an action in the host's dashboard is checked on the phone, or the other way round, with a one-file evidence page of screenshots. Setting everything up from scratch: [`sample-e2e/SETUP.md`](sample-e2e/SETUP.md). |
 
+## Request-flow animation
+
+A single-file, step-by-step animation of what this branch does on the wire:
+the product introduction, the two kinds of Config API, the init order
+(pending enrollments → certificate renewal → config / host certificate /
+health per API → attestation → key registration → stale-file wipe), the
+5-minute attestation and token refresh loop, the policy, trust roots,
+revocation, and a drawing of the whole topology. 15 chapters, 99 steps; it
+runs offline in any browser.
+
+| Language | Open in the browser | File |
+|---|---|---|
+| Türkçe | [htmlpreview](https://htmlpreview.github.io/?https://github.com/umutcansu/PinVault/blob/main/docs/animation/pinvault-request-flow.tr.html) | [`docs/animation/pinvault-request-flow.tr.html`](docs/animation/pinvault-request-flow.tr.html) — download (*Raw* → save) and open in Chrome |
+
+The htmlpreview link works once the file is on `main`; from a branch, open
+the file's *Raw* view, save it and double-click it.
+
 ## Architecture
 
 ```
