@@ -1035,7 +1035,7 @@ paths:
         server never changes its environment through this endpoint.
 
         The rest are the public values an app's PinVault configuration is made of:
-        Config APIs (`id`, `port`, `mode`, `running`), the bootstrap pins and the host
+        Config APIs (`id`, `port`, `publicPort`, `mode`, `running`), the bootstrap pins and the host
         their certificate is issued for, the config signing keys and how many a
         config carries, `RECOVERY_PUBLIC_KEYS`, the client CA's SPKI pin, the recovery
         door's port and CA pins, and the enrollment, attestation and integrity modes.
@@ -1068,9 +1068,12 @@ paths:
                       properties:
                         id: { type: string }
                         port: { type: integer }
+                        publicPort: { type: integer, description: "The port phones reach it at (SETUP_PUBLIC_PORTS); = port without a mapping." }
                         mode: { type: string, enum: [tls, mtls] }
                         running: { type: boolean }
                   bootstrapHost: { type: string }
+                  publicHost: { type: string, description: "SETUP_PUBLIC_HOST, the address phones reach the server at; absent when not set." }
+                  recoveryPublicPort: { type: integer, description: "The recovery door's port as phones see it (SETUP_PUBLIC_PORTS)." }
                   bootstrapPins: { type: array, items: { type: string } }
                   signingKeys: { type: array, items: { type: string } }
                   requiredSignatures: { type: integer }

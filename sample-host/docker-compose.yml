@@ -68,6 +68,10 @@ services:
       # Telefonların bu makineye bağlandığı LAN IP. Container kendi içinden bu
       # adresi göremez; sunucu TLS sertifikası (yeniden) üretilirken SAN'a eklenir.
       EXTRA_CERT_SANS: ${HOST_LAN_IP:-}
+      # Kurulum sihirbazı uygulamanın kodunu telefonun gördüğü adres ve portlarla
+      # yazsın: container içindeki portlar (8081, 8092, 8083) dışarıda başka.
+      SETUP_PUBLIC_HOST: ${HOST_LAN_IP:-}
+      SETUP_PUBLIC_PORTS: "8081:${HOST_HTTPS_PORT:-6651},8092:${HOST_MTLS_PORT:-6652},8083:${HOST_RECOVERY_PORT:-6656}"
       # İsteğe bağlı sunucu ayarları; boş bırakılınca sunucu varsayılanı geçerli.
       # Geçici değişiklik için: ./scripts/env-override.sh set KEY=VALUE ...
       # Parolalar: sunucu KEYSTORE_PASSWORD, VAULT_AT_REST_PASSWORD ve (yerel imzalayıcı

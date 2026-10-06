@@ -36,7 +36,17 @@ data class SetupFacts(
     val attestationMode: String,
     val integrityMode: String,
     val configTtlSeconds: Long
+,
+    /**
+     * `SETUP_PUBLIC_HOST`: the address phones reach this server at (behind
+     * Docker or a proxy the dashboard's own address is not it). Null = unknown.
+     */
+    val publicHost: String? = null,
+    /** `SETUP_PUBLIC_PORTS`: listening port → the port phones reach it at; absent = the same. */
+    val publicPorts: Map<Int, Int> = emptyMap()
 ) {
+    fun publicPort(port: Int): Int = publicPorts[port] ?: port
+
     data class Api(val id: String, val port: Int, val mode: String, val running: Boolean)
 }
 
@@ -63,7 +73,8 @@ fun Route.setupRoutes(env: () -> Map<String, String>, facts: () -> SetupFacts) {
             putJsonArray("configApis") {
                 f.configApis.forEach { api ->
                     add(buildJsonObject {
-                        put("id", api.id); put("port", api.port); put("mode", api.mode); put("running", api.running)
+                        put("id", api.id); put("port", api.port); put("publicPort", f.publicPort(api.port))
+                        put("mode", api.mode); put("running", api.running)
                     })
                 }
             }
@@ -74,6 +85,8 @@ fun Route.setupRoutes(env: () -> Map<String, String>, facts: () -> SetupFacts) {
             put("recoveryKeys", JsonArray(f.recoveryKeys.map(::JsonPrimitive)))
             f.clientCaPin?.let { put("clientCaPin", it) }
             f.recoveryPort?.let { put("recoveryPort", it) }
+            f.recoveryPort?.let { put("recoveryPublicPort", f.publicPort(it)) }
+            f.publicHost?.let { put("publicHost", it) }
             put("recoveryPins", JsonArray(f.recoveryPins.map(::JsonPrimitive)))
             put("enrollmentMode", f.enrollmentMode)
             put("attestationMode", f.attestationMode)
@@ -83,3 +96,21 @@ fun Route.setupRoutes(env: () -> Map<String, String>, facts: () -> SetupFacts) {
         call.respondText(body.toString(), ContentType.Application.Json)
     }
 }
+
+/**
+ * `SETUP_PUBLIC_PORTS` — `8081:6651,8092:6652`: the port a listener binds to
+ * and the port phones reach it at (a Docker port mapping, a proxy). Entries
+ * that are not two ports are skipped.
+ */
+fun parsePublicPorts(raw: String?): Map<Int, Int> =
+    raw.orEmpty().split(',').mapNotNull { entry ->
+        val parts = entry.trim().split(':')
+        val from = parts.getOrNull(0)?.trim()?.toIntOrNull()
+        val to = parts.getOrNull(1)?.trim()?.toIntOrNull()
+        if (parts.size == 2 && from in 1..65535 && to in 1..65535) from!! to to!! else null
+    }.toMap()
+
+/** `SETUP_PUBLIC_HOST`, reduced to the characters a host name or an IP address has; null when empty. */
+fun parsePublicHost(raw: String?): String? =
+    raw?.trim()?.removePrefix("https://")?.substringBefore('/')?.substringBefore(':')
+        ?.filter { it.isLetterOrDigit() || it == '.' || it == '-' }?.takeIf { it.isNotEmpty() }

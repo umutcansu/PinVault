@@ -35,9 +35,9 @@ Dynamic SSL certificate pinning library for Android. Manage pins remotely, suppo
 - **Offline lifetime** *(2.2)* — `maxOfflineAge` stops a device that never comes back online from reading cached files for ever
 - **Issuer pins** *(2.1)* — pin your CA's key and survive leaf renewals
 - **Optional signing layers** *(2.1)* — backup keys, m-of-n signatures, signing-key rotation/revocation over the air ([SECURE_OPERATIONS.md](SECURE_OPERATIONS.md))
-- **Environment guard** *(unreleased)* — your root / hooking detection's verdict is asked before init, enrollment, downloads and unlocks ([Bypass protection](#10-bypass-protection-unreleased))
-- **Integrity verdicts at enrollment** *(unreleased)* — a Play Integrity token bound to the request goes with every enrollment; the server decides
-- **Setup wizard** *(unreleased)* — the reference server's dashboard lists what a production server still lacks and writes the app's PinVault configuration from the server's own pins and keys
+- **Environment guard** *(next release)* — your root / hooking detection's verdict is asked before init, enrollment, downloads and unlocks ([Bypass protection](#10-bypass-protection-next-release))
+- **Integrity verdicts at enrollment** *(next release)* — a Play Integrity token bound to the request goes with every enrollment; the server decides
+- **Setup wizard** *(next release)* — the reference server's dashboard lists what a production server still lacks and writes the app's PinVault configuration from the server's own pins and keys
 
 ## Quick Start
 
@@ -1689,10 +1689,11 @@ its configs.
 | `HOST_CLIENT_CERT_REQUIRE_GRANT` | unset | *(next release)* `true`: a host's client certificate — one private key the whole fleet shares — is handed only to devices the device host ACL names; a scope with no ACL serves it to nobody. Unset: a scope without an ACL serves it to every enrolled device (so a device enrolled with a shared enrollment code, or a phone compromised before its revocation, could collect every host's key). The production profile sets `true`. |
 | `CLIENT_DEVICES_MAX` | `20000` | *(2.2)* Most rows the device list (connection reports) keeps; the oldest go first. |
 
-| `INTEGRITY_VERIFICATION` | `off` | *(unreleased)* `off` \| `warn` \| `enforce`: the `integrityToken` of an enrollment (see [Bypass protection](#10-bypass-protection-unreleased)). `enforce`: `403 integrity_required` / `integrity_invalid` before anything is spent, and no server-made keys. Needs `INTEGRITY_VERIFIER_COMMAND`. |
-| `INTEGRITY_VERIFIER_COMMAND` | unset | *(unreleased)* Decodes the token: stdin `{"token","requestHash","deviceId"}`, stdout `{"passed","reason","summary"}`. For Play Integrity: `scripts/play-integrity-verify.sh` with `INTEGRITY_PLAY_PACKAGE` and `INTEGRITY_PLAY_SERVICE_ACCOUNT_FILE`. Gets `PATH`, `HOME`, `LANG`, `TZ`, `INTEGRITY_*` and `INTEGRITY_PASS_ENV`, never a server secret. `INTEGRITY_VERIFIER_TIMEOUT_MS` (default 10000). |
+| `INTEGRITY_VERIFICATION` | `off` | *(next release)* `off` \| `warn` \| `enforce`: the `integrityToken` of an enrollment (see [Bypass protection](#10-bypass-protection-next-release)). `enforce`: `403 integrity_required` / `integrity_invalid` before anything is spent, and no server-made keys. Needs `INTEGRITY_VERIFIER_COMMAND`. |
+| `INTEGRITY_VERIFIER_COMMAND` | unset | *(next release)* Decodes the token: stdin `{"token","requestHash","deviceId"}`, stdout `{"passed","reason","summary"}`. For Play Integrity: `scripts/play-integrity-verify.sh` with `INTEGRITY_PLAY_PACKAGE` and `INTEGRITY_PLAY_SERVICE_ACCOUNT_FILE`. Gets `PATH`, `HOME`, `LANG`, `TZ`, `INTEGRITY_*` and `INTEGRITY_PASS_ENV`, never a server secret. `INTEGRITY_VERIFIER_TIMEOUT_MS` (default 10000). |
+| `SETUP_PUBLIC_HOST` / `SETUP_PUBLIC_PORTS` | unset | *(next release)* What the dashboard's setup wizard writes into the app's configuration when the server sits behind Docker or a proxy: the address phones reach it at, and `listen:published` port pairs (`8081:6651,8092:6652,8083:6656`). Unset: the dashboard's own address and the listening ports. The sample host fills both from `HOST_LAN_IP` and its port mapping. |
 
-**Setup wizard** *(unreleased)*. The dashboard's *Setup Wizard* lists what a
+**Setup wizard** *(next release)*. The dashboard's *Setup Wizard* lists what a
 production server still lacks — admin keys, approvals, signers, attestation,
 integrity, demo secrets and the rest — with the `.env` lines to change (it
 reads the environment, never writes it, and never shows a secret), then
@@ -2161,7 +2162,7 @@ the key is made without the requirement and a warning is logged. Call
 `init` (or the config overloads of `enroll` / `isEnrolled`) with this config
 before anything else touches PinVault, since the first use creates the keys.
 
-### 10. Bypass protection *(unreleased)*
+### 10. Bypass protection *(next release)*
 
 Pinning stops an attacker on the network. On a device the attacker controls
 (root, Frida, Xposed, a repackaged app) code inside the app can switch the

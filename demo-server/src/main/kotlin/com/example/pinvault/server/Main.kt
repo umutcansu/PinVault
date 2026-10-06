@@ -959,7 +959,9 @@ fun main() {
                     enrollmentMode = enrollmentMode,
                     attestationMode = enrollmentAttestationMode.name.lowercase(),
                     integrityMode = integrityMode.name.lowercase(),
-                    configTtlSeconds = System.getenv("CONFIG_TTL_SECONDS")?.toLongOrNull() ?: 86_400
+                    configTtlSeconds = System.getenv("CONFIG_TTL_SECONDS")?.toLongOrNull() ?: 86_400,
+                    publicHost = com.example.pinvault.server.route.parsePublicHost(System.getenv("SETUP_PUBLIC_HOST")),
+                    publicPorts = com.example.pinvault.server.route.parsePublicPorts(System.getenv("SETUP_PUBLIC_PORTS"))
                 )
             }
 

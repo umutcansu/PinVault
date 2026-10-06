@@ -128,7 +128,8 @@ function defaultSetupOpts(d) {
   return {
     apiId: first ? first.id : '',
     enrollApiId: tls ? tls.id : '',
-    host: location.hostname || 'localhost',
+    // SETUP_PUBLIC_HOST (the sample host sets it from HOST_LAN_IP); else the dashboard's own address.
+    host: d.publicHost || location.hostname || 'localhost',
     lang: 'kotlin',
     signed: (d.signingKeys || []).length > 0,
     scope: true,
@@ -269,17 +270,26 @@ function setupInput(name, label, hint, type) {
     </div>`;
 }
 
+/** The port phones reach a listener at: SETUP_PUBLIC_PORTS (a Docker mapping, a proxy), else its own. */
+function setupPort(a) {
+  return (a && (a.publicPort || a.port)) || 443;
+}
+
+function setupRecoveryPort(d) {
+  return d.recoveryPublicPort || d.recoveryPort;
+}
+
 function setupSelectedApi() {
   return (setupData.configApis || []).find(a => a.id === setupOpts.apiId) || null;
 }
 
 function setupAppStep() {
   const apis = setupData.configApis || [];
-  const apiOptions = apis.map(a => `<option value="${esc(a.id)}" ${setupSelected(a.id === setupOpts.apiId)}>${esc(a.id)} · ${esc(a.mode.toUpperCase())} · :${esc(a.port)}${a.running ? '' : ' · ' + esc(t('setupStopped'))}</option>`).join('');
+  const apiOptions = apis.map(a => `<option value="${esc(a.id)}" ${setupSelected(a.id === setupOpts.apiId)}>${esc(a.id)} · ${esc(a.mode.toUpperCase())} · :${esc(setupPort(a))}${a.running ? '' : ' · ' + esc(t('setupStopped'))}</option>`).join('');
   const api = setupSelectedApi();
   const mtls = api && api.mode === 'mtls';
   const tlsApis = apis.filter(a => a.mode === 'tls');
-  const enrollOptions = tlsApis.map(a => `<option value="${esc(a.id)}" ${setupSelected(a.id === setupOpts.enrollApiId)}>${esc(a.id)} · :${esc(a.port)}</option>`).join('');
+  const enrollOptions = tlsApis.map(a => `<option value="${esc(a.id)}" ${setupSelected(a.id === setupOpts.enrollApiId)}>${esc(a.id)} · :${esc(setupPort(a))}</option>`).join('');
   const d = setupData;
   return `
     <div class="card">
@@ -371,7 +381,7 @@ function setupCode() {
   const d = setupData, o = setupOpts;
   const api = setupSelectedApi() || { id: 'default-tls', port: 443, mode: 'tls' };
   const host = setupHostOnly(o.host);
-  const url = `https://${host}:${api.port}/`;
+  const url = `https://${host}:${setupPort(api)}/`;
   const mtls = api.mode === 'mtls';
   const enrollApi = mtls ? (d.configApis || []).find(a => a.id === o.enrollApiId) : null;
   const door = mtls && o.recoveryDoor && d.recoveryPort != null && (d.recoveryPins || []).length > 0;
@@ -386,7 +396,7 @@ function setupCode() {
 
   const blockLines = [];
   const bootstrap = [{ host, pins: d.bootstrapPins || [], note: 'Config API certificate' }];
-  if (door) bootstrap.push({ host: `${host}:${d.recoveryPort}`, pins: d.recoveryPins, note: 'recovery door (server CA)' });
+  if (door) bootstrap.push({ host: `${host}:${setupRecoveryPort(d)}`, pins: d.recoveryPins, note: 'recovery door (server CA)' });
   if (java) {
     const hp = bootstrap.map((b, i) => `                new HostPin(${L(b.host)}, Arrays.asList(${pins(b.pins)}), 0, false, false, null)${i < bootstrap.length - 1 ? ',' : ''}   // ${b.note}`);
     blockLines.push(`            block.bootstrapPins(Arrays.asList(\n${hp.join('\n')}\n            ));`);
@@ -396,8 +406,8 @@ function setupCode() {
     if (recovery.length) blockLines.push(`            block.recoveryPublicKeys(${pins(recovery)});`);
     if (o.scope) blockLines.push(`            block.serverScope(${L(api.id)});`);
     if (o.clientCa && d.clientCaPin) blockLines.push(`            block.clientCaPins(${L(d.clientCaPin)});`);
-    if (enrollApi) blockLines.push(`            block.enrollmentUrl(${L(`https://${host}:${enrollApi.port}/`)});`);
-    if (door) blockLines.push(`            block.renewalUrl(${L(`https://${host}:${d.recoveryPort}/`)});`);
+    if (enrollApi) blockLines.push(`            block.enrollmentUrl(${L(`https://${host}:${setupPort(enrollApi)}/`)});`);
+    if (door) blockLines.push(`            block.renewalUrl(${L(`https://${host}:${setupRecoveryPort(d)}/`)});`);
     blockLines.push('            return Unit.INSTANCE;');
   } else {
     const hp = bootstrap.map((b, i) => `            HostPin(${L(b.host)}, listOf(${pins(b.pins)}))${i < bootstrap.length - 1 ? ',' : ''}   // ${b.note}`);
@@ -408,8 +418,8 @@ function setupCode() {
     if (recovery.length) blockLines.push(`        recoveryPublicKeys(${pins(recovery)})`);
     if (o.scope) blockLines.push(`        serverScope(${L(api.id)})`);
     if (o.clientCa && d.clientCaPin) blockLines.push(`        clientCaPins(${L(d.clientCaPin)})`);
-    if (enrollApi) blockLines.push(`        enrollmentUrl(${L(`https://${host}:${enrollApi.port}/`)})`);
-    if (door) blockLines.push(`        renewalUrl(${L(`https://${host}:${d.recoveryPort}/`)})`);
+    if (enrollApi) blockLines.push(`        enrollmentUrl(${L(`https://${host}:${setupPort(enrollApi)}/`)})`);
+    if (door) blockLines.push(`        renewalUrl(${L(`https://${host}:${setupRecoveryPort(d)}/`)})`);
   }
 
   const chain = [];
