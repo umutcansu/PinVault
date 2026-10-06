@@ -185,6 +185,20 @@ cihaz token da pin güncellemesi de almaz. Host'un mock TLS hedefi
 `SERVER_IMPLEMENTATION_GUIDE.md`'deki örneklerle yapar. Ayrıntı:
 [ATTESTATION.md](../ATTESTATION.md).
 
+**Play Integrity (isteğe bağlı).** `host.playIntegrityProjectNumber` dolu
+derlenirse uygulama `pinvault-play-integrity` modülünün
+`PlayIntegrityVerdictProvider`'ını kurar: rapor, Google'ın bu turun
+nonce'una bağlı kararını da taşır (`verdictProvider`). Host, Play
+Console'dan indirilen yanıt anahtarlarıyla (`PLAY_INTEGRITY_DECRYPTION_KEY`,
+`PLAY_INTEGRITY_VERIFICATION_KEY`) token'ı kendisi çözüp doğrular ve
+politikadaki `play_integrity` / `play_integrity_missing` bayraklarını
+kaldırır; panelde cihaz sayfasında Google'ın özeti görünür. Üç yerden ayrı
+ayrı açılıp kapanır: uygulamada proje numarası, host'ta anahtarlar,
+politikada bayrağın eylemi. Boş bırakılırsa uygulama Google'ın istemcisini
+hiç çağırmaz; Play Servisleri olmayan telefonda da atestasyon aynen çalışır.
+Sağlayıcı Google'a en çok 6 saatte bir sorar (klasik istek kotası günde
+10 000); host son doğrulanmış kararı 24 saat sayar.
+
 Uygulama kodunda token'a dokunulmaz: `PinVault.getClient()` ve `applyTo`
 istemcileri başlığı kendileri ekler. Ana ekrandaki düğme akışın tamamını
 gösterir; `PinManagerLite.attestNowBlocking()` / `fetchTokenBlocking()`

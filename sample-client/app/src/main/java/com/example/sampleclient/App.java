@@ -23,6 +23,7 @@ import io.github.umutcansu.pinvault.api.CertificateConfigApi;
 import io.github.umutcansu.pinvault.api.ClientCertRenewalStatus;
 import io.github.umutcansu.pinvault.api.PinVaultConnectionEvent;
 import io.github.umutcansu.pinvault.api.PinVaultConnectionListener;
+import io.github.umutcansu.pinvault.playintegrity.PlayIntegrityVerdictProvider;
 import io.github.umutcansu.pinvault.model.ConfigApiBlock;
 import io.github.umutcansu.pinvault.model.HostPin;
 import io.github.umutcansu.pinvault.model.InitResult;
@@ -370,6 +371,7 @@ public class App extends Application {
         }
         addVaultFiles(builder, hasMtlsCredential);
         requireCaTrustForTarget(builder);
+        addPlayIntegrity(builder);
 
         PinVaultConfig config = builder
                 .deviceAlias(deviceAlias())
@@ -582,6 +584,28 @@ public class App extends Application {
      */
     private static void applyAttestation(ConfigApiBlock.Builder block) {
         if (BuildConfig.HOST_ATTESTATION) block.attestation();
+    }
+
+    /**
+     * Play Integrity, isteğe bağlı (sample-host.properties:
+     * host.playIntegrityProjectNumber). Doluysa atestasyon raporuna Google'ın
+     * nonce'a bağlı kararı da eklenir (`verdictProvider`); host Play Console
+     * yanıt anahtarlarıyla çözüp doğrular ve politikaya göre `play_integrity`
+     * / `play_integrity_missing` bayraklarını kaldırır (ATTESTATION.md §11).
+     * Sağlayıcı Google'a en çok 6 saatte bir sorar (klasik istek kotası);
+     * aradaki turlarda rapor Play Integrity'siz gider ve host son doğrulanmış
+     * kararı 24 saat sayar. Boşsa sağlayıcı kurulmaz; kütüphane Play
+     * Servisleri olmayan telefonda da aynı şekilde çalışır.
+     */
+    private void addPlayIntegrity(PinVaultConfig.Builder builder) {
+        if (!BuildConfig.HOST_ATTESTATION || BuildConfig.HOST_PLAY_INTEGRITY_PROJECT.isEmpty()) return;
+        long project;
+        try {
+            project = Long.parseLong(BuildConfig.HOST_PLAY_INTEGRITY_PROJECT);
+        } catch (NumberFormatException e) {
+            return;
+        }
+        builder.integrityVerdictProvider(new PlayIntegrityVerdictProvider(this, project));
     }
 
     private static void addMtlsBlock(PinVaultConfig.Builder builder, HostPin bootstrap,
