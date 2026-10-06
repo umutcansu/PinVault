@@ -3,6 +3,7 @@ package com.example.pinvault.server
 import com.example.pinvault.server.model.HostActionResponse
 import com.example.pinvault.server.model.HostPin
 import com.example.pinvault.server.model.PinConfigHistoryEntry
+import com.example.pinvault.server.route.setupRoutes
 import com.example.pinvault.server.route.adminVaultRoutes
 import com.example.pinvault.server.route.certificateConfigRoutes
 import com.example.pinvault.server.route.clientCertAdminRoutes
@@ -251,7 +252,17 @@ fun main() {
         "off", "false" -> false
         else -> error("ENROLLMENT_P12 must be on or off (got '${System.getenv("ENROLLMENT_P12")}')")
     }
-    val serverMadeKeys = enrollmentP12 && !enrollmentAttestation.refusesServerMadeKeys
+    // The enrolling device's integrity verdict (Play Integrity or a RASP product's
+    // attestation): INTEGRITY_VERIFICATION=off|warn|enforce (default off), decoded
+    // by INTEGRITY_VERIFIER_COMMAND. Bound to the request's CSR and device id.
+    val integrityMode = com.example.pinvault.server.service.IntegrityVerificationMode.parse(System.getenv("INTEGRITY_VERIFICATION"))
+    val integrityVerifier = com.example.pinvault.server.service.CommandIntegrityVerifier.fromEnv(System::getenv)
+    com.example.pinvault.server.service.IntegrityVerificationMode.startupCheck(integrityMode, integrityVerifier)
+        ?.let { System.err.println(it) }
+    val enrollmentIntegrity = com.example.pinvault.server.service.EnrollmentIntegrity(integrityMode, integrityVerifier)
+    println("INTEGRITY_VERIFICATION=${integrityMode.name.lowercase()}" +
+        (if (integrityVerifier != null) " (verifier command set)" else ""))
+    val serverMadeKeys = enrollmentP12 && !enrollmentAttestation.refusesServerMadeKeys && !enrollmentIntegrity.refusesServerMadeKeys
     println("ENROLLMENT_ATTESTATION=${enrollmentAttestationMode.name.lowercase()}, ENROLLMENT_P12=${if (enrollmentP12) "on" else "off"}" +
         (if (serverMadeKeys) "" else " — no server-made keys: devices enroll over a CSR only"))
     // Test-only endpoints (short certificate lifetimes for the Espresso suite). Never in production.
@@ -544,10 +555,12 @@ fun main() {
                     auditLog, policyRefusals,
                     ttlFor = { id -> testTtlOverride?.invoke(id) ?: java.time.Duration.ofDays(clientCertTtlDays) },
                     pendingTtl = enrollmentRequestTtl, openMaxPending = openMaxPending, openLimiter = openLimiter,
-                    attestation = enrollmentAttestation, limits = enrollmentLimits
+                    attestation = enrollmentAttestation, limits = enrollmentLimits,
+                    integrity = enrollmentIntegrity
                 ),
                 reportLimits = reportLimits, enrollRefusals = enrollRefusals,
-                enrollmentAttestation = enrollmentAttestation, p12Enrollment = enrollmentP12,
+                enrollmentAttestation = enrollmentAttestation, enrollmentIntegrity = enrollmentIntegrity,
+                p12Enrollment = enrollmentP12,
                 enrollmentLimits = enrollmentLimits, renewIdentityLimiter = renewIdentityLimiter)
             hostRoutes(configApiId, pinConfigStore, hostStore, historyStore, certService, mockServerManager, hostClientCertStore,
                 liveGate = liveGate, audit = auditLog, planner = certPlanner, maxUploadBytes = adminUploadMaxBytes)
@@ -812,6 +825,27 @@ fun main() {
 
             // The Config API's own TLS certificate and its pins (the apps' bootstrap pins).
             serverTlsPinRoutes(serverTlsPins, certPlanner, httpsPort, auditLog, adminUploadMaxBytes)
+
+            // The setup wizard: production checklist from the environment, and the
+            // public values (pins, keys, ports) an app's PinVault config is made of.
+            setupRoutes(env = { System.getenv() }) {
+                com.example.pinvault.server.route.SetupFacts(
+                    configApis = configApiManager.getAll().map { com.example.pinvault.server.route.SetupFacts.Api(it.id, it.port, it.mode, true) } +
+                        configApiManager.getAllStopped().map { com.example.pinvault.server.route.SetupFacts.Api(it.id, it.port, it.mode, false) },
+                    bootstrapHost = com.example.pinvault.server.service.CertChangePlanner.BOOTSTRAP_HOST,
+                    bootstrapPins = serverTlsPins.pins,
+                    signingKeys = signingService.signers.map { it.publicKeyBase64 },
+                    requiredSignatures = signingKeySetService.status().requiredSignatures,
+                    recoveryKeys = System.getenv("RECOVERY_PUBLIC_KEYS")?.split(',')?.map { it.trim() }?.filter { it.isNotEmpty() }.orEmpty(),
+                    clientCaPin = runCatching { certService.spkiSha256(certService.ensureClientCa().publicKey) }.getOrNull(),
+                    recoveryPort = recoveryPort.takeIf { recoveryListener != null },
+                    recoveryPins = serverCa?.pins.orEmpty(),
+                    enrollmentMode = enrollmentMode,
+                    attestationMode = enrollmentAttestationMode.name.lowercase(),
+                    integrityMode = integrityMode.name.lowercase(),
+                    configTtlSeconds = System.getenv("CONFIG_TTL_SECONDS")?.toLongOrNull() ?: 86_400
+                )
+            }
 
             // ── Config API Management ────────────────────────
 

@@ -114,6 +114,7 @@ Kaynak değiştikten sonra `docker compose up -d --build` yeterli. Yerel dizinde
 | `DEVICE_REFUSAL_RATE_LIMIT` | demo `0`, üretim sunucu varsayılanı (300) | Bir adresin 10 dakikada toplayabileceği reddedilen istek sayısı. Demo profilinde sınır yoktur: Docker Desktop arkasında bütün cihazlar tek adresten görünür ve uçtan uca testler bilerek çok sayıda reddedilen istek yapar. Üretimde `0` yazma |
 | `REPORT_RATE_LIMIT`, `REPORT_DEVICE_RATE_LIMIT`, `DEVICE_KEY_RATE_LIMIT`, `DEVICE_KEY_LIMIT`, `VAULT_MAX_FILE_BYTES`, `MTLS_RESTART_MIN_INTERVAL_SECONDS` | sunucu varsayılanı | Kötüye kullanım sınırları: cihaz raporları, cihaz anahtarı kaydı, vault dosya boyutu, mTLS dinleyicilerinin yeniden başlatılma aralığı |
 | `ENROLLMENT_ATTESTATION`, `ENROLLMENT_P12`, `USER_AUTH_REQUIRE_PER_USE` | boş (üretim: `enforce`, `off`, `true`) | Kayıtta donanım belgesi, P12 ile kaydın kapatılması, ekran kilitli dosyada her kullanımda onay. Bu adları tanımayan bir sunucu sürümü onları yok sayar; derlediğin sürümde geçtiklerini doğrula |
+| `INTEGRITY_VERIFICATION`, `INTEGRITY_VERIFIER_COMMAND` | boş (`off`) | Kayıtta cihaz bütünlüğü: uygulama `integrityTokenProvider` ile bir Play Integrity token'ı gönderir, sunucu komutla çözer. Doğrulayıcı imajda: `/opt/pinvault/scripts/play-integrity-verify.sh`; `INTEGRITY_PLAY_PACKAGE` ve `INTEGRITY_PLAY_SERVICE_ACCOUNT_FILE` (servis hesabı JSON'u, `data/` altında, izinler 600) ister. Önce `warn` ile gerçek bir telefonda dene, sonra `enforce` |
 | `CONFIG_TTL_SECONDS` | `86400` | İmzalı config'in geçerlilik süresi |
 | `SIGNING_KEY_PASSWORD` | `setup.sh` üretir | İmzalama anahtarı diskte AES-256-GCM ile şifrelenir; düz metin bir anahtar dosyası (eski kurulum, `signing-keys.sh install`) ilk açılışta şifrelenir. Sunucuda yerel imzalayıcı varken boşsa sunucu açılmaz |
 | `ALLOW_DEMO_SECRETS` | boş | `true`: parolalar boşken sunucu kaynak koddaki demo değerleriyle açılır. Yalnızca kullan-at denemeler; üretim profilinde sabit `false` |
@@ -153,6 +154,16 @@ Kaynak değiştikten sonra `docker compose up -d --build` yeterli. Yerel dizinde
 > değiştirirken eskisini `VAULT_AT_REST_PASSWORD_PREVIOUS`'a yaz, sunucuyu
 > yeniden başlat, sonra sil. Hiçbir parolanın açmadığı bir dosya cihaza
 > gönderilmez (sunucu hata verir ve açılışta log'a yazar); onu yeniden yükle.
+
+### Kurulum sihirbazı
+
+Dashboard → **Kurulum Sihirbazı**. Üç adım:
+
+1. **Sunucu**: üretim için eksik olanları sıralar (yönetici anahtarları, iki kişi onayı, imzalayıcılar, donanım belgesi, cihaz bütünlüğü, demo parolaları…) ve her biri için `.env`'e yazılacak satırı verir. `.env`'i değiştirmez, hiçbir gizli değeri göstermez; satırları ekleyip `docker compose up -d` ile yeniden başlat.
+2. **Uygulama**: Config API'yi, telefonun sunucuya ulaştığı adresi ve açılacak korumaları seç.
+3. **Kod**: uygulamanın PinVault ayarı, Kotlin ya da Java, bu sunucunun pin'leri, imza anahtarları, istemci CA pin'i ve portlarıyla. Sertifika ya da imza anahtarı değişince sihirbazı yeniden çalıştır.
+
+`client-config.sh` örnek uygulamanın `sample-host.properties` dosyasını yazmaya devam eder; sihirbaz kendi uygulaman içindir.
 
 ## Kalıcı veri
 

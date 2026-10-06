@@ -1599,5 +1599,6 @@ function showSection(section) {
     case 'mtls': renderMtlsSection(); break;
     case 'approvals': renderApprovalsSection(); break;
     case 'audit': renderAuditSection(); break;
+    case 'setup': renderSetupSection(); break;
   }
 }

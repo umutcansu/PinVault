@@ -92,7 +92,9 @@ const _actionHandlers = {
   createEnrollmentPolicy, stopEnrollmentPolicy, closePolicyCode, approveEnrollmentRequest, rejectEnrollmentRequest,
   toggleOpenApplications,
   // Revoke / forget: device ids the identity only named, cut off only on purpose
-  cascadeRevokeClientCert, doForgetClientIdentity, dismissUnverifiedNotice
+  cascadeRevokeClientCert, doForgetClientIdentity, dismissUnverifiedNotice,
+  // Setup wizard (checklist and generated app configuration)
+  renderSetupSection, setSetupStep, setSetupOpt, copySetupText
 };
 
 function _collectArgs(el) {

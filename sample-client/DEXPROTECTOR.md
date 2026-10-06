@@ -46,7 +46,17 @@ Tepki uygulamanın kendi kodundadır. Örnek uygulamada yeri `App.onCreate` içi
 - **Dosya indirme** (`PinVault.fetchFile`, `syncAllFiles`, `VaultActivity`): riskli ortamda gizli dosya indirilmez.
 - **Dosya açma** (`PinVault.unlockFile`): riskli ortamda kilitli dosya açılmaz; içerik uygulamanın belleğine hiç gelmez.
 
-Ne yapılacağı ürüne göre değişir (uygulamayı kapatmak, kullanıcıya nedenini söylemek, sunucuya bildirmek). Değişmeyen kural: **tespit olumsuzsa bu üç işlem çalışmaz** ve kontrol yalnızca açılışta değil, bu işlemlerden hemen önce de yapılır (araç uygulama açıldıktan sonra da takılabilir). Mümkünse sonucu sunucuya da taşı: DexProtector'ın ürettiği cihaz/uygulama doğrulama bilgisi kayıt isteğinde sunucuda kontrol edilirse, uygulamadaki kontrolü atlatan biri yine de kayıt olamaz.
+Tespitin sonucunu PinVault'a `environmentGuard` ile ver: kütüphane bu kararı `init`, kayıt, dosya indirme ve dosya açma işlemlerinin her birinden hemen önce sorar ve `false` gelirse o işlemi başlatmaz (sonuç `Failed`, nedeni `UntrustedEnvironmentException`; hiçbir şey gönderilmez, token harcanmaz). Böylece kontrolün bir kod yolunda unutulması mümkün olmaz:
+
+```kotlin
+PinVaultConfig.Builder()
+    .environmentGuard { operation ->
+        // DexProtector'ın kararı; INIT açık kalırsa pinlenmiş trafik çalışmaya devam eder.
+        operation == GuardedOperation.INIT || !dexProtectorSaysCompromised()
+    }
+```
+
+Ne yapılacağı ürüne göre değişir (uygulamayı kapatmak, kullanıcıya nedenini söylemek, sunucuya bildirmek). Değişmeyen kural: **tespit olumsuzsa bu üç işlem çalışmaz** ve kontrol yalnızca açılışta değil, bu işlemlerden hemen önce de yapılır (araç uygulama açıldıktan sonra da takılabilir). Mümkünse sonucu sunucuya da taşı: DexProtector'ın ürettiği cihaz/uygulama doğrulama bilgisi kayıt isteğinde sunucuda kontrol edilirse, uygulamadaki kontrolü atlatan biri yine de kayıt olamaz. Bunun yolu `integrityTokenProvider`'dır: verdiği token (Play Integrity ya da DexProtector'ın doğrulama bilgisi) kayıt isteğine `integrityToken` olarak, istekteki CSR'a ve cihaz kimliğine bağlı gider; sunucu onu `INTEGRITY_VERIFIER_COMMAND` ile çözer ve `INTEGRITY_VERIFICATION=enforce` altında geçmeyen cihaza sertifika vermez. DexProtector'ın doğrulama bilgisini çözen bir komut yazmak gerekir; Play Integrity için hazır olanı `demo-server/scripts/play-integrity-verify.sh`.
 
 ### Bütünlük ve yeniden paketlemeye karşı koruma
 

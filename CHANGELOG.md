@@ -1,5 +1,25 @@
 # Changelog
 
+## Unreleased — Environment guard, integrity verdicts, setup wizard
+
+### Library
+
+- **`environmentGuard { operation -> … }`** on `PinVaultConfig.Builder`. The app's own verdict on the device (a RASP product, RootBeer) is asked before every guarded operation: `INIT` (`init`), `ENROLL` (every enroll / autoEnroll / checkPendingEnrollment overload, and the pick-up of a pending enrollment at init and on periodic updates), `FETCH_FILE` (`fetchFile`, `syncAllFiles`, the periodic sync) and `UNLOCK_FILE` (`unlockFile`, before any prompt). A `false` refuses that operation with `Failed` carrying an `UntrustedEnvironmentException`; nothing is sent, no enrollment token is spent, the library's state is untouched. A guard that throws refuses (fail closed). PinVault still detects nothing itself; the guard makes the check impossible to forget on one code path and runs it right before the operation, not only at app start. `loadFile` is not guarded: keep files that matter behind `userAuth`, so their content is only handed out by `unlockFile`.
+- **`integrityTokenProvider { requestHash -> token }`** on `PinVaultConfig.Builder`. Every enrollment request carries an integrity token (Google Play Integrity, or a RASP product's attestation) as `integrityToken`, bound to the request by `requestHash = base64url(SHA-256("pinvault-integrity:v1:" + deviceId + ":" + base64url(SHA-256(csrDer))))` (43 characters; a valid Play Integrity `requestHash` and classic `nonce`), where `deviceId` is the request's `deviceUid`, else its `deviceId`. The provider runs on `Dispatchers.IO` and may block (`Tasks.await`). `null`, a blank token or an exception: the request goes without one. The server decides; the app never judges the verdict.
+- **`CertificateConfigApi.enrollWithCsr(…, attestationChain, integrityToken)`**, an eight-argument overload whose default drops the token and calls the seven-argument one. Custom APIs compiled against 2.2.x keep working (the library falls back on a linkage error).
+- **Server refusals `integrity_required` / `integrity_invalid`** map to `EnrollmentRefusal.ATTESTATION_FAILED`; `Refused.serverError` tells them from an attestation refusal. No new enum value, so `when` expressions over `EnrollmentRefusal` keep compiling.
+
+### Server
+
+- **`INTEGRITY_VERIFICATION=off|warn|enforce`** (default `off`). The enrollment's `integrityToken` is verified on the one-time token path, the enrollment-code path and code-less applications, after the key attestation and before a token, a policy slot or anything else is spent. The server recomputes the request hash from the request's own `csr` and `deviceUid` / `deviceId`, so a verdict captured for another request does not pass. `enforce`: `403 integrity_required` without a token, `403 integrity_invalid` with a `reason` for a failing verdict or a verifier error (`verifier_error`), and no server-made key (`csr_required`). `warn`: enrolls either way and writes the verdict into the `client_cert_issued` audit entry. A waiting request's pickups are tied to its key and not verified again.
+- **`INTEGRITY_VERIFIER_COMMAND`**: the token is decoded by an external command (the server itself does not call Google). Stdin `{"token","requestHash","deviceId"}`, stdout `{"passed","reason","summary"}`; anything else is `verifier_error`. Allowlisted environment like the command signer: `PATH`, `HOME`, `LANG`, `TZ`, `INTEGRITY_*` and `INTEGRITY_PASS_ENV`, never a server secret. `INTEGRITY_VERIFIER_TIMEOUT_MS` (default 10000). `enforce` without a command refuses to start.
+- **`scripts/play-integrity-verify.sh`**: the verifier for Google Play Integrity (`decodeIntegrityToken` with a service account; curl, openssl and jq). It checks the request hash (or nonce), the package name, the token's age, `PLAY_RECOGNIZED` and the device label (`INTEGRITY_PLAY_DEVICE_VERDICT`, default `MEETS_DEVICE_INTEGRITY`), optionally `LICENSED`. Not tested against Google from this repository; try it in `warn` first.
+- **Setup wizard** in the dashboard (`GET /api/v1/setup`, admin key). Step 1 lists the production checklist read from the environment (admins, approvals, webhooks, management TLS, demo secrets, signers, recovery keys, config lifetime, live check, enrollment mode, attestation and its revocation list, server-made keys, integrity) with the `.env` lines to change; it never writes the environment and never shows a secret. Steps 2 and 3 generate the app's PinVault configuration in Kotlin or Java from this server's public values: bootstrap pins, signing keys and required count, recovery keys, `serverScope`, client CA pin, mTLS enrollment and recovery-door URLs, and the chosen protections (`environmentGuard`, `integrityTokenProvider`, `requireUnlockedDevice`, `wipeVaultFilesOnRevocation`, offline lifetime, `requireCaTrust`).
+
+### Samples
+
+- **sample-host**: the image ships `jq` and the server scripts under `/opt/pinvault/scripts/`; compose passes `INTEGRITY_*` through; `.env.example` and `.env.production.example` describe them.
+
 ## 2.2.0 — 2026-10-05 — Vault files behind the screen lock, configs that expire
 
 ### Library

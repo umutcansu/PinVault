@@ -963,6 +963,8 @@ function updateLangUI() {
   if (navApprovals) navApprovals.textContent = t('navApprovals');
   const navAudit = document.getElementById('nav-audit');
   if (navAudit) navAudit.textContent = t('navAudit');
+  const navSetup = document.getElementById('nav-setup');
+  if (navSetup) navSetup.textContent = t('navSetup');
   renderAdminChip();
   setApprovalsBadge(_approvalsPending);
 }

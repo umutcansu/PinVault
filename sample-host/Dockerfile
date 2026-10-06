@@ -44,8 +44,10 @@ FROM eclipse-temurin:17-jre-noble@sha256:39d618b8fda3408cfe792db2b666c0e3db8ea4a
 #   SoftHSM, gerçek bir HSM'in PKCS#11 arayüzünü taklit eden yazılım token'ıdır;
 #   aynı ayarlar gerçek bir HSM modülüyle de çalışır. pkcs11-tool (opensc) yalnızca
 #   anahtarın özniteliklerini göstermek için (scripts/softhsm-init.sh).
+# - jq: Play Integrity doğrulayıcısı (INTEGRITY_VERIFIER_COMMAND=
+#   /opt/pinvault/scripts/play-integrity-verify.sh) JSON'u onunla okur.
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends curl ca-certificates netcat-openbsd openssl softhsm2 opensc \
+    && apt-get install -y --no-install-recommends curl ca-certificates netcat-openbsd openssl softhsm2 opensc jq \
     && rm -rf /var/lib/apt/lists/*
 
 # PKCS#11 imzalayıcısı JDK'nın SunPKCS11 sağlayıcısını kullanır; modül ve
@@ -54,6 +56,8 @@ RUN java --list-modules | grep -q jdk.crypto.cryptoki \
     && test -e /usr/lib/softhsm/libsofthsm2.so
 
 COPY --from=build /build/demo-server/build/install/ /app/
+# Sunucunun yardımcı betikleri (attestation durum listesi, Play Integrity doğrulayıcısı).
+COPY --from=pinvault-server --chmod=755 scripts/ /opt/pinvault/scripts/
 
 # /app/<dist>/bin/<dist> binary'sini bul ve sabit bir yola link'le.
 RUN set -eux; \

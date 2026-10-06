@@ -60,7 +60,14 @@ class PolicyEnrollment(
      */
     private val attestation: com.example.pinvault.server.service.EnrollmentAttestation? = null,
     /** Issuance per client id and pickups per request and source (see [com.example.pinvault.server.service.EnrollmentLimits]). */
-    private val limits: com.example.pinvault.server.service.EnrollmentLimits = com.example.pinvault.server.service.EnrollmentLimits()
+    private val limits: com.example.pinvault.server.service.EnrollmentLimits = com.example.pinvault.server.service.EnrollmentLimits(),
+    /**
+     * The device's integrity verdict (`INTEGRITY_VERIFICATION`); null = not
+     * checked. Checked once, when a request is made (before it is recorded or
+     * a slot is taken), and noted in the audit log; a waiting device's
+     * pickups are tied to its key and are not verified again.
+     */
+    private val integrity: com.example.pinvault.server.service.EnrollmentIntegrity? = null
 ) {
     /** When lapsed requests were last expired; see [expireLapsed]. */
     @Volatile private var lastExpiry = 0L
@@ -146,6 +153,7 @@ class PolicyEnrollment(
             // The device key's attestation, before anything is recorded: under
             // enforce a key without a passing one never waits in the list.
             val verdict = attestationOf(call, json, csr, remote, policy) ?: return
+            val integrityNote = integrityOf(call, json, remote, policy) ?: return
             val recorded = policies.createRequest(policy, csr.spkiSha256, EnrollmentRequest.PENDING, configApiId,
                 deviceAlias, deviceUid, remote, now, attestation = verdict.record)
             if (!recorded.created) return answer(call, recorded.request, csr, json)
@@ -154,7 +162,7 @@ class PolicyEnrollment(
                 "enrollment_request_pending",
                 "${deviceAlias ?: deviceUid ?: "A device"} asks to enroll as ${request.clientId} " +
                     (if (policy.openApplications) "without a code" else "with policy ${policy.name}") +
-                    " (verification code ${request.verificationCode}; ${verdict.note})" +
+                    " (verification code ${request.verificationCode}; ${verdict.note}$integrityNote)" +
                     (holder?.let { "; this device is enrolled as $it" } ?: ""),
                 configApiId, request.clientId, actor = request.clientId, ip = remote,
                 detail = buildJsonObject {
@@ -172,8 +180,9 @@ class PolicyEnrollment(
             return respondPending(call, request)
         }
 
-        // The device key's attestation, before a slot is taken.
+        // The device key's attestation and the device's integrity, before a slot is taken.
         val verdict = attestationOf(call, json, csr, remote, policy) ?: return
+        val integrityNote = integrityOf(call, json, remote, policy) ?: return
         // No approval: take a slot, then issue.
         if (!policies.reserveSlot(policy.id)) {
             val current = policies.get(policy.id)
@@ -189,7 +198,7 @@ class PolicyEnrollment(
             policies.releaseSlot(policy.id)
             return answer(call, recorded.request, csr, json)
         }
-        issue(call, recorded.request, csr, json)
+        issue(call, recorded.request, csr, json, integrityNote)
     }
 
     /**
@@ -212,6 +221,30 @@ class PolicyEnrollment(
             is com.example.pinvault.server.service.EnrollmentAttestation.Outcome.Refuse -> {
                 refusals?.report(remote, "POST", call.request.path(),
                     reason = "device key not attested (${outcome.reason ?: outcome.error}) with policy ${policy.name}")
+                call.respondText(outcome.body(), ContentType.Application.Json, HttpStatusCode.Forbidden)
+                null
+            }
+        }
+    }
+
+    /**
+     * The device's integrity for a new request: "" when not checked, else
+     * "; <note>" for the audit text; null after answering 403
+     * (`INTEGRITY_VERIFICATION=enforce` and no passing verdict).
+     */
+    private suspend fun integrityOf(
+        call: ApplicationCall,
+        json: JsonObject?,
+        remote: String,
+        policy: EnrollmentPolicy
+    ): String? {
+        val outcome = integrity?.check(json) ?: return ""
+        return when (outcome) {
+            is com.example.pinvault.server.service.EnrollmentIntegrity.Outcome.Proceed ->
+                if (outcome.verdict == null) "" else "; ${outcome.note}"
+            is com.example.pinvault.server.service.EnrollmentIntegrity.Outcome.Refuse -> {
+                refusals?.report(remote, "POST", call.request.path(),
+                    reason = "device integrity not verified (${outcome.reason ?: outcome.error}) with policy ${policy.name}")
                 call.respondText(outcome.body(), ContentType.Application.Json, HttpStatusCode.Forbidden)
                 null
             }
@@ -297,7 +330,14 @@ class PolicyEnrollment(
     }
 
     /** Issues the certificate of an approved (or already issued) request over the CSR's key. */
-    private suspend fun issue(call: ApplicationCall, request: EnrollmentRequest, csr: CertificateService.ParsedCsr, json: JsonObject?) {
+    private suspend fun issue(
+        call: ApplicationCall,
+        request: EnrollmentRequest,
+        csr: CertificateService.ParsedCsr,
+        json: JsonObject?,
+        /** "; <integrity note>" for the audit text when the request was checked now; "" otherwise. */
+        integrityNote: String = ""
+    ) {
         val remote = call.request.origin.remoteAddress
         val clientId = request.clientId
         // client_certs.add below would un-revoke a revoked id: a revoked one stays revoked.
@@ -362,7 +402,7 @@ class PolicyEnrollment(
         audit?.record(
             "client_cert_issued",
             "Certificate issued to $clientId over its own key with policy ${request.policyName} (valid until ${issued.notAfter}; " +
-                "${attestationNote(keyAttestation)})",
+                "${attestationNote(keyAttestation)}$integrityNote)",
             configApiId, clientId, actor = clientId, ip = remote,
             detail = buildJsonObject {
                 put("serial", issued.serialHex)
