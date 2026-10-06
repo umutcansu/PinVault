@@ -30,7 +30,7 @@ class EnvironmentGuardTest {
     )
 
     private fun config(guard: ((GuardedOperation) -> Boolean)?) = PinVaultConfig.Builder()
-        .configApi("api", "https://api.example.com/") { bootstrapPins(pins) }
+        .configApi("api", "https://api.example.com/") { bootstrapPins(pins); allowUnsigned() }
         .apply { guard?.let { g -> environmentGuard { g(it) } } }
         .build()
 

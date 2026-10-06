@@ -166,7 +166,7 @@ internal class DebuggableProbe(private val applicationFlags: Int) {
 internal class HookingProbe(
     /** Distinct mapped paths from `/proc/self/maps`. */
     private val mappedPaths: () -> List<String>,
-    /** Names of the process's threads (`/proc/self/task/*/comm` and the JVM's). */
+    /** Names of the process's threads (`/proc/self/task/<tid>/comm` and the JVM's). */
     private val threadNames: () -> List<String>,
     /** `System.getProperty(name)`. */
     private val javaProperty: (String) -> String?,
@@ -314,7 +314,7 @@ internal object ProcReaders {
         emptyList()
     }
 
-    /** Native thread names from `/proc/self/task/*/comm`, plus the JVM's threads. */
+    /** Native thread names from `/proc/self/task/<tid>/comm`, plus the JVM's threads. */
     fun threadNames(): List<String> {
         val names = LinkedHashSet<String>()
         try {

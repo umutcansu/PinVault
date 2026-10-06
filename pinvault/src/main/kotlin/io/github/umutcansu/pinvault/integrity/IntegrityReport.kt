@@ -104,12 +104,6 @@ internal class IntegrityReport(
         /** The library version the report names. */
         const val SDK_VERSION = "2.2.0"
 
-        /** The signal keys of `ATTESTATION.md` §3, in report order. */
-        val SIGNAL_KEYS: List<String> = listOf(
-            ROOTED, EMULATOR, DEBUGGER, DEBUGGABLE, HOOKING_FRAMEWORK, APP_INTEGRITY, CLONER,
-            UNKNOWN_INSTALLER, ADB_ENABLED, SOFTWARE_KEY, KEY_UNATTESTED, OLD_PATCH_LEVEL
-        )
-
         const val ROOTED = "rooted"
         const val EMULATOR = "emulator"
         const val DEBUGGER = "debugger"
@@ -123,6 +117,12 @@ internal class IntegrityReport(
         const val KEY_UNATTESTED = "key_unattested"
         /** Decided by the server from `device.securityPatch`; the client always sends it down. */
         const val OLD_PATCH_LEVEL = "old_patch_level"
+
+        /** The signal keys of `ATTESTATION.md` §3, in report order. */
+        val SIGNAL_KEYS: List<String> = listOf(
+            ROOTED, EMULATOR, DEBUGGER, DEBUGGABLE, HOOKING_FRAMEWORK, APP_INTEGRITY, CLONER,
+            UNKNOWN_INSTALLER, ADB_ENABLED, SOFTWARE_KEY, KEY_UNATTESTED, OLD_PATCH_LEVEL
+        )
     }
 }
 

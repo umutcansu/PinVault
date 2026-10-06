@@ -107,6 +107,6 @@ class AttestationOptionsTest {
         assertEquals("eyJ.secret", token.value)
         assertEquals(token, AttestationTokenResult.Token("eyJ.secret", 5L))
         assertEquals("Unsupported", AttestationTokenResult.Unsupported.toString())
-        assertFalse(IntegrityVerdict("play-integrity", "tok").toString().contains("tok"))
+        assertFalse(IntegrityVerdict("play-integrity", "s3cr3t").toString().contains("s3cr3t"))
     }
 }

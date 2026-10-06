@@ -7,6 +7,8 @@ import okhttp3.Request
 import okhttp3.mockwebserver.MockResponse
 import okhttp3.mockwebserver.MockWebServer
 import org.bouncycastle.asn1.x500.X500Name
+import org.bouncycastle.asn1.x509.GeneralName
+import org.bouncycastle.asn1.x509.GeneralNames
 import org.bouncycastle.asn1.x509.BasicConstraints
 import org.bouncycastle.asn1.x509.Extension
 import org.bouncycastle.cert.jcajce.JcaX509CertificateConverter
@@ -76,6 +78,7 @@ class PortPinningIntegrationTest {
         val leaf = JcaX509CertificateConverter().setProvider("BC").getCertificate(
             JcaX509v3CertificateBuilder(X500Name("CN=Test Server CA"), BigInteger.valueOf(now), Date(now - 60_000), Date(now + 86_400_000L),
                 X500Name("CN=localhost"), leafKey.public)
+                .addExtension(Extension.subjectAlternativeName, false, GeneralNames(GeneralName(GeneralName.dNSName, "localhost")))
                 .build(JcaContentSignerBuilder("SHA256withECDSA").setProvider("BC").build(ca.private))
         )
         val ks = KeyStore.getInstance("PKCS12").apply { load(null, null) }

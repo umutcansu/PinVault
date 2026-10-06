@@ -23,18 +23,16 @@ internal object KeyInspector {
 
     /** What a key's [KeyInfo] says about it. */
     class Properties(
-        val level: KeySecurityLevel,
-        /** `setUnlockedDeviceRequired(true)` is in force (Android 9+; false where it cannot be read). */
-        val unlockedDeviceRequired: Boolean
+        val level: KeySecurityLevel
     )
 
     /** [Properties] of an Android Keystore private or secret key. */
     fun inspect(key: Key): Properties = try {
         val info = keyInfo(key)
-        if (info == null) Properties(KeySecurityLevel.UNKNOWN, false) else Properties(levelOf(info), unlockedOf(info))
+        if (info == null) Properties(KeySecurityLevel.UNKNOWN) else Properties(levelOf(info))
     } catch (e: Exception) {
         Timber.w(e, "Could not read the Keystore's description of a %s key", key.algorithm)
-        Properties(KeySecurityLevel.UNKNOWN, false)
+        Properties(KeySecurityLevel.UNKNOWN)
     }
 
     /** Shorthand for [inspect] when only the level matters. */
@@ -60,7 +58,4 @@ internal object KeyInspector {
         @Suppress("DEPRECATION")
         return if (info.isInsideSecureHardware) KeySecurityLevel.TRUSTED_ENVIRONMENT else KeySecurityLevel.SOFTWARE
     }
-
-    private fun unlockedOf(info: KeyInfo): Boolean =
-        Build.VERSION.SDK_INT >= Build.VERSION_CODES.P && info.isUnlockedDeviceRequired
 }

@@ -246,9 +246,11 @@ class ImportedIdentitiesTest {
         )
     }
 
+    private val BACKUP_PIN = "A".repeat(43) + "="
+
     private fun mtlsConfig(host: String, pin: String) = CertificateConfig(
         version = 1,
-        pins = listOf(HostPin(host, listOf(pin, pin), version = 1, mtls = true, clientCertVersion = 1))
+        pins = listOf(HostPin(host, listOf(pin, BACKUP_PIN), version = 1, mtls = true, clientCertVersion = 1))
     )
 
     @Test

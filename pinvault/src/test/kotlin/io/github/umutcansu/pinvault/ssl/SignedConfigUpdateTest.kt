@@ -405,7 +405,7 @@ class SignedConfigUpdateTest {
         // accepted: issuedAt ahead of the clock, the version a million up.
         assertEquals(
             UpdateResult.Updated(1_000_000),
-            apply(signed(payload(1_000_000, issuedAt = now + 50 * 60_000, expiresAt = now + 20 * day, pins = listOf(pin3, pin3))), updater)
+            apply(signed(payload(1_000_000, issuedAt = now + 50 * 60_000, expiresAt = now + 20 * day, pins = listOf(pin3, pin1))), updater)
         )
         // Every honest config now looks like a replay and a downgrade.
         val honest = payload(3, issuedAt = now)
@@ -425,7 +425,7 @@ class SignedConfigUpdateTest {
     fun `a config planted with a revoked key goes even when the config next to the new set fails`() = runTest {
         val trust = trust(keys = listOf(keyA, keyB), withRecovery = true)
         val updater = updater(trust = trust)
-        apply(signed(payload(7, issuedAt = now, pins = listOf(pin3, pin3))), updater)
+        apply(signed(payload(7, issuedAt = now, pins = listOf(pin3, pin1))), updater)
         assertNotNull(provider.currentConfig)
 
         // Set v2 revokes key A, but the config in the same response is still signed with A.

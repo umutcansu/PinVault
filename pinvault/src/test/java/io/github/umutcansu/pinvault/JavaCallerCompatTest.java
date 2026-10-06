@@ -133,7 +133,7 @@ public class JavaCallerCompatTest {
             io.github.umutcansu.pinvault.model.AttestationStatus attestationStatus = PinVault.INSTANCE.attestationStatus();
             io.github.umutcansu.pinvault.model.AttestationStatus blockStatus = PinVault.INSTANCE.attestationStatus("api");
             boolean passed = attestationStatus.getResult() == io.github.umutcansu.pinvault.model.AttestationResult.PASS;
-            PinVault.INSTANCE.attestNow("api", status -> kotlin.Unit.INSTANCE);
+            PinVault.INSTANCE.attestNow("api", attestStatus -> kotlin.Unit.INSTANCE);
             PinVault.INSTANCE.fetchAttestationToken("api.example.com", result -> kotlin.Unit.INSTANCE);
             String header = PinVault.INSTANCE.attestationHeaderName();
         };

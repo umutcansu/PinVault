@@ -4,6 +4,7 @@
 /.idea
 /build
 /pinvault/build
+/pinvault-play-integrity/build
 /captures
 .externalNativeBuild
 .cxx

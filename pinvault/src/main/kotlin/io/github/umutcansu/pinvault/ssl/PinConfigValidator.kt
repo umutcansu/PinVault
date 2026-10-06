@@ -59,6 +59,15 @@ internal object PinConfigValidator {
     )
 
     /**
+     * [config] with the optional lists Gson left null (absent from the JSON)
+     * set to empty, so code past intake can trust their Kotlin types.
+     */
+    fun normalized(config: CertificateConfig): CertificateConfig {
+        @Suppress("USELESS_CAST")
+        return if ((config.trustRoots as List<String>?) == null) config.copy(trustRoots = emptyList()) else config
+    }
+
+    /**
      * Throws [InvalidPinFormatException] unless [config] has at least one pin
      * entry and every entry is well-formed: a valid host pattern, no host
      * named twice, a version that is not negative, and at least two pins that

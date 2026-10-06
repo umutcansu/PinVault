@@ -625,7 +625,7 @@ internal class SSLCertificateUpdater(
      * callers turn that into [UpdateResult.Failed].
      */
     private suspend fun applyFetched(fetched: Fetched, currentVersion: Int): UpdateResult {
-        val remoteConfig = fetched.config
+        val remoteConfig = PinConfigValidator.normalized(fetched.config)
 
         // ── Shape (hosts, pins) before anything else looks at it ────────
         //

@@ -118,8 +118,10 @@ internal class SignedConfigVerifier(
     }
 
     private fun parse(payload: String): CertificateConfig =
-        gson.fromJson(payload, CertificateConfig::class.java)
-            ?: throw SecurityException("Signed config payload is empty.")
+        PinConfigValidator.normalized(
+            gson.fromJson(payload, CertificateConfig::class.java)
+                ?: throw SecurityException("Signed config payload is empty.")
+        )
 
     /** The audience check behind `serverScope`. The field is inside the signed payload, so it cannot be swapped. */
     private fun checkScope(payload: String) {

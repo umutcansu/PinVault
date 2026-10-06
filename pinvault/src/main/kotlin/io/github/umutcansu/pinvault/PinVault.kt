@@ -1256,7 +1256,8 @@ object PinVault {
         }
 
         return try {
-            when (val enrolled = enrollAndStore(context, config, defaultBlock, configApi, token, deviceId, certLabel)) {
+            val enrolled = enrollAndStore(context, config, defaultBlock, configApi, token, deviceId, certLabel)
+            when (enrolled) {
                 is Enrolled.Chain -> sslManager.loadClientKey(enrolled.key.privateKey(), enrolled.certs.toTypedArray())
                 is Enrolled.Imported -> sslManager.loadClientKey(enrolled.privateKey, enrolled.certs)
                 is Enrolled.P12 -> sslManager.loadClientKeystore(enrolled.bytes, defaultBlock.clientKeyPassword)
