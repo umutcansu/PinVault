@@ -79,6 +79,6 @@ class EgressFilter(
         address is Inet6Address && (address.address[0].toInt() and 0xfe) == 0xfc
 
     companion object {
-        fun fromEnv(env: Map<String, String> = System.getenv()) = EgressFilter(env["FETCH_ALLOW_PRIVATE_TARGETS"] == "true")
+        fun fromEnv(env: Map<String, String> = com.example.pinvault.server.service.ServerEnv.all()) = EgressFilter(env["FETCH_ALLOW_PRIVATE_TARGETS"] == "true")
     }
 }

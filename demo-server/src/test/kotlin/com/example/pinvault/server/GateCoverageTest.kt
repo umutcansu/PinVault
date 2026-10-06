@@ -4,6 +4,8 @@ import com.example.pinvault.server.plugin.AdminRegistry
 import com.example.pinvault.server.plugin.ApiKeyAuth
 import com.example.pinvault.server.plugin.isPublicEndpoint
 import com.example.pinvault.server.route.ServerTlsPins
+import com.example.pinvault.server.route.serverSettingsRoutes
+import com.example.pinvault.server.service.ServerSettingsStore
 import com.example.pinvault.server.route.adminVaultRoutes
 import com.example.pinvault.server.route.attestationAdminRoutes
 import com.example.pinvault.server.route.certificateConfigRoutes
@@ -81,6 +83,8 @@ class GateCoverageTest {
         "POST /api/v1/hosts/{hostname}/stop-mock" to "stops a local mock listener",
         "POST /api/v1/hosts/{hostname}/test-connection" to "connects to the host's own mock listener",
         "POST /api/v1/connection-history/web" to "the dashboard's own connection log",
+        "POST /api/v1/server-settings/restart" to "applies only settings already saved (and approved); needs a supervisor",
+        "DELETE /api/v1/server-settings/rejected" to "forgets the note about settings that did not start",
         // Main.kt, inline (not mounted here): ALLOW_TEST_HOOKS only, a lifetime for the next certificate.
         "POST /api/v1/test-hooks/client-cert-ttl" to "test-only (ALLOW_TEST_HOOKS)"
     )
@@ -156,6 +160,7 @@ class GateCoverageTest {
                     ),
                     attestationPolicies, attestedDevices, tokenSecrets, audit
                 )
+                serverSettingsRoutes(ServerSettingsStore(File(dir, "server-settings.json")), audit, restartSupervised = true) { }
             }
         }
         startApplication()

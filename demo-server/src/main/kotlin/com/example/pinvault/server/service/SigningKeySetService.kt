@@ -176,7 +176,7 @@ class SigningKeySetService(
         const val MAX_SET_KEYS = 32
         const val MAX_SIGNATURE_ENTRIES = 16
 
-        fun fromEnv(store: SigningKeySetStore, signing: ConfigSigningService, env: Map<String, String> = System.getenv()) =
+        fun fromEnv(store: SigningKeySetStore, signing: ConfigSigningService, env: Map<String, String> = com.example.pinvault.server.service.ServerEnv.all()) =
             SigningKeySetService(
                 store = store,
                 signing = signing,

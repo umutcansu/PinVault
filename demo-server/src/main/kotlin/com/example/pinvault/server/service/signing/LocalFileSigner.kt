@@ -36,7 +36,7 @@ import javax.crypto.spec.SecretKeySpec
  */
 class LocalFileSigner(
     private val keyFile: File,
-    private val password: String? = System.getenv("SIGNING_KEY_PASSWORD")?.takeIf { it.isNotBlank() },
+    private val password: String? = com.example.pinvault.server.service.ServerEnv.get("SIGNING_KEY_PASSWORD")?.takeIf { it.isNotBlank() },
     override val name: String = "local"
 ) : ConfigSigner {
 

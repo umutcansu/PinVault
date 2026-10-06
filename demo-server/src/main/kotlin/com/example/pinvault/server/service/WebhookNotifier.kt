@@ -185,7 +185,7 @@ class WebhookNotifier(
         /** Recorded in the audit log, but sent only when named in `NOTIFY_EVENTS`. */
         val ROUTINE_EVENTS = setOf("device_key_registered", "device_key_attested", "attestation_rejected")
 
-        fun fromEnv(env: Map<String, String> = System.getenv()): WebhookNotifier? {
+        fun fromEnv(env: Map<String, String> = com.example.pinvault.server.service.ServerEnv.all()): WebhookNotifier? {
             val url = env["NOTIFY_WEBHOOK_URL"]?.takeIf { it.isNotBlank() } ?: return null
             return WebhookNotifier(
                 url = url,

@@ -637,7 +637,7 @@ const AUDIT_ACTIONS = [
   'trust_roots_updated', 'admin_request_refused',
   'attestation_policy_updated', 'attestation_device_annotated', 'attestation_device_forgotten',
   'attestation_device_registered', 'attestation_key_mismatch', 'attestation_rejected',
-  'attestation_token_secret_rotated', 'attestation_token_secret_deleted', 'http'
+  'attestation_token_secret_rotated', 'attestation_token_secret_deleted', 'server_settings_update', 'server_restart', 'http'
 ];
 const AUDIT_PAG_KEY = 'audit-log';
 let auditActionFilter = '';
@@ -659,7 +659,7 @@ function auditActionBadge(action) {
       action === 'change_rejected' || action === 'change_expired' || action === 'change_stale' ||
       action === 'change_approval_refused' ? 'act-warn' :
     action === 'signing_key_regenerated' || action === 'signing_keyset_uploaded' ||
-      action === 'attestation_token_secret_rotated' || action === 'attestation_token_secret_deleted' ? 'act-key' :
+      action === 'attestation_token_secret_rotated' || action === 'attestation_token_secret_deleted' || action === 'server_settings_update' || action === 'server_restart' ? 'act-key' :
     action === 'attestation_rejected' || action === 'attestation_key_mismatch' ? 'act-bad' :
     action === 'attestation_device_registered' ? 'act-ok' :
     action === 'attestation_policy_updated' || action === 'attestation_device_annotated' ||

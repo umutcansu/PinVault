@@ -22,7 +22,7 @@ import java.security.KeyStore
 class KeystoreRekey(
     private val certService: CertificateService,
     private val password: String = CertificateService.KEYSTORE_PASSWORD,
-    previous: String? = System.getenv("KEYSTORE_PASSWORD_PREVIOUS")?.takeIf { it.isNotBlank() }
+    previous: String? = com.example.pinvault.server.service.ServerEnv.get("KEYSTORE_PASSWORD_PREVIOUS")?.takeIf { it.isNotBlank() }
 ) {
     private val candidates = listOfNotNull(previous, CertificateService.LEGACY_KEYSTORE_PASSWORD, P12Transfer.legacyPassword)
         .distinct().filter { it != password }

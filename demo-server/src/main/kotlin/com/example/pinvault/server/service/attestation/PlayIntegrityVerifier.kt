@@ -214,7 +214,7 @@ class PlayIntegrityVerifier(
          * `PLAY_INTEGRITY_REQUIRE_APP_RECOGNIZED` (default true);
          * `PLAY_INTEGRITY_TOKEN_MAX_AGE_SECONDS` (600); `PLAY_INTEGRITY_MAX_AGE_SECONDS` (86400).
          */
-        fun fromEnv(env: Map<String, String> = System.getenv(), fallbackPackageNames: Set<String> = emptySet()): PlayIntegrityVerifier? {
+        fun fromEnv(env: Map<String, String> = com.example.pinvault.server.service.ServerEnv.all(), fallbackPackageNames: Set<String> = emptySet()): PlayIntegrityVerifier? {
             val enabled = when (env["PLAY_INTEGRITY_ENABLED"]?.trim()?.lowercase()) {
                 null, "" -> null
                 "true", "on" -> true

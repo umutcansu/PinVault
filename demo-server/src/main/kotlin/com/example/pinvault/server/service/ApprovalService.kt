@@ -37,6 +37,10 @@ object PinAffectingRoutes {
         Triple(HttpMethod.Post, Regex("^/api/v1/server-tls-pins/(regenerate|rotate-to-backup|upload|fetch-from-url)$"), "bootstrap_pins"),
         Triple(HttpMethod.Post, Regex("^/api/v1/signing-key/regenerate$"), "signing_key"),
         Triple(HttpMethod.Put, Regex("^/api/v1/signing-keyset$"), "signing_keyset"),
+        // Server settings saved from the setup wizard: approvals, the live
+        // check and the attestation modes among them. One admin must not
+        // turn the two-person rule off alone.
+        Triple(HttpMethod.Put, Regex("^/api/v1/server-settings$"), "server_settings"),
         // Which hosts a device's config lists (and so which it may reach):
         // granting a device a host it should not see is as good as adding a pin
         // for it. Revocation (DELETE /api/v1/client-certs/{id}) is deliberately
@@ -495,7 +499,7 @@ class ApprovalService(
             return response.statusCode() to response.body()
         }
 
-        fun requiredFromEnv(env: Map<String, String> = System.getenv()): Int =
+        fun requiredFromEnv(env: Map<String, String> = com.example.pinvault.server.service.ServerEnv.all()): Int =
             env["PIN_CHANGE_APPROVALS"]?.toIntOrNull()?.coerceAtLeast(1) ?: 1
 
         /**
@@ -505,7 +509,7 @@ class ApprovalService(
          * error — a typo must not leave an operator believing something is exempt,
          * or gated.
          */
-        fun exemptFromEnv(env: Map<String, String> = System.getenv()): Set<String> {
+        fun exemptFromEnv(env: Map<String, String> = com.example.pinvault.server.service.ServerEnv.all()): Set<String> {
             val names = env["APPROVAL_EXEMPT_OPERATIONS"].orEmpty().split(',').map { it.trim() }.filter { it.isNotEmpty() }.toSet()
             val unknown = names - PinAffectingRoutes.operations
             require(unknown.isEmpty()) {

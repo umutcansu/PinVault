@@ -173,7 +173,7 @@ class AttestationPolicyDefaults(
     }
 
     companion object {
-        fun fromEnv(env: Map<String, String> = System.getenv()): AttestationPolicyDefaults {
+        fun fromEnv(env: Map<String, String> = com.example.pinvault.server.service.ServerEnv.all()): AttestationPolicyDefaults {
             val profile = env["ATTESTATION_POLICY_DEFAULT"]?.trim()?.lowercase()?.takeIf { it.isNotEmpty() } ?: "strict"
             val ttl = (env["ATTESTATION_TOKEN_TTL_SECONDS"]?.trim()?.toIntOrNull() ?: AttestationPolicy.DEFAULT_TOKEN_TTL_SECONDS)
                 .coerceIn(AttestationPolicy.TOKEN_TTL_RANGE)

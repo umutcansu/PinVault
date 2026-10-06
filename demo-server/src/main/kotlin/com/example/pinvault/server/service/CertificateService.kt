@@ -84,7 +84,7 @@ class CertificateService(
      * phone connects to, so TLS hostname verification would fail on the
      * device. Defaults to the comma-separated `EXTRA_CERT_SANS` env var.
      */
-    private val extraSans: List<String> = parseExtraSans(System.getenv("EXTRA_CERT_SANS")),
+    private val extraSans: List<String> = parseExtraSans(com.example.pinvault.server.service.ServerEnv.get("EXTRA_CERT_SANS")),
     /** Where [fetchFromUrl] may connect (`FETCH_ALLOW_PRIVATE_TARGETS`). */
     private val egress: EgressFilter = EgressFilter.fromEnv()
 ) {
@@ -1114,7 +1114,7 @@ class CertificateService(
          * it at startup. (audit L-2 / L-6)
          */
         val KEYSTORE_PASSWORD: String =
-            System.getenv("KEYSTORE_PASSWORD")?.takeIf { it.isNotBlank() } ?: LEGACY_KEYSTORE_PASSWORD
+            com.example.pinvault.server.service.ServerEnv.get("KEYSTORE_PASSWORD")?.takeIf { it.isNotBlank() } ?: LEGACY_KEYSTORE_PASSWORD
 
         /** What every keystore was written with before `KEYSTORE_PASSWORD` existed. */
         const val LEGACY_KEYSTORE_PASSWORD = "changeit"

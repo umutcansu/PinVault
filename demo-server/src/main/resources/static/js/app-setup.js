@@ -2,10 +2,10 @@
 // app's PinVault configuration, generated from this server's public values.
 // Classic scripts sharing one global scope, loaded in order by index.html.
 //
-// Read-only toward the server: every server setting is an environment value
-// read at start-up, so the wizard shows the `.env` lines to change and never
-// writes them. The app code it generates holds only public values (pins,
-// public keys, ports).
+// Server settings: the non-secret ones are changed in the Settings card and
+// saved for the next start (`/api/v1/server-settings`; a restart applies them);
+// secrets, ports and test switches stay `.env` lines. The app code it
+// generates holds only public values (pins, public keys, ports).
 
 Object.assign(i18n.tr, {
   navSetup: 'Kurulum Sihirbazı',
@@ -33,6 +33,46 @@ Object.assign(i18n.tr, {
   setup_attestation_revocation: 'Belge iptal listesi', setup_attestation_revocation_why: 'Google\'ın iptal ettiği belge anahtarları geçmesin.',
   setup_p12: 'Sunucuda üretilen anahtar', setup_p12_why: 'Özel anahtar hiç ağdan geçmesin; cihaz kendi anahtarıyla CSR göndersin.',
   setup_integrity: 'Cihaz bütünlüğü (Play Integrity)', setup_integrity_why: 'Root\'lu ya da kancalanmış cihaz, Play dışından kurulmuş uygulama kayıt olamasın. Karar sunucuda verilir, cihazda atlatılamaz.',
+  // Settings changed from the panel (server-settings.json, applied at the next start)
+  setsTitle: 'Ayarlar',
+  setsHint: 'Değiştir ve kaydet. Sunucu ayarları açılırken okur: kaydettiklerin sunucu yeniden başlayınca geçerli olur. Parolalar, gizli anahtarlar ve portlar burada yok; onlar .env dosyasında kalır.',
+  setsSave: 'Kaydet', setsSaved: 'Kaydedildi. Sunucu yeniden başlayınca geçerli olacak.', setsNoChange: 'Değişiklik yok.',
+  setsNotSaved: 'Kaydedilmedi: {0}', setsDefault: 'Varsayılan ({0})', setsDefaultEmpty: 'Varsayılan (boş)', setsOn: 'Açık',
+  setsNow: 'Şu an: {0}', setsNext: 'Yeniden başlayınca: {0}', setsUnset: 'varsayılan',
+  setsLocked: '.env dosyasında (ortam değişkeni) sabit; buradan değiştirilemez.',
+  setsPending: 'Kaydedilen değişiklikler sunucu yeniden başlayınca geçerli olacak.',
+  setsRestart: 'Şimdi yeniden başlat', setsRestartConfirm: 'Sunucu birkaç saniye kapanıp açılacak; o sırada telefonlar bağlanamaz. Devam edilsin mi?',
+  setsNoSupervisor: 'Bu sunucu kendini yeniden başlatamıyor: sunucuyu durdurup tekrar çalıştır.',
+  setsRestarting: 'Sunucu yeniden başlatılıyor…', setsRestarted: 'Sunucu yeniden başladı; ayarlar geçerli.',
+  setsRestartSlow: 'Sunucu henüz cevap vermiyor; birazdan sayfayı yenile.',
+  setsRejected: 'Panelden kaydedilen ayarlar sunucuyu başlatmadı, bu yüzden uygulanmadı. Neden: {0}', setsDismiss: 'Tamam',
+  setsFromPanel: 'Ayarlardan ↓',
+  setupFromPanelHint: '"Ayarlardan" işaretli maddeleri aşağıdaki Ayarlar kartından değiştirebilirsin. Parola ve gizli anahtar gibi diğerleri yalnızca .env dosyasından değişir.',
+  setsGroup_governance: 'Değişiklik denetimi ve onay', setsGroup_config: 'Config', setsGroup_devices: 'Cihazlar ve kayıt',
+  setsGroup_attestation: 'Atestasyon (uygulamanın ve telefonun düzenli kontrolü)', setsGroup_setup: 'Uygulama koduna yazılan adres',
+  setsChoice_off: 'Kapalı', setsChoice_warn: 'Uyarı ver', setsChoice_enforce: 'Engelle', setsChoice_on: 'Açık',
+  setsChoice_token: 'Yalnızca token ile', setsChoice_open: 'Açık (token gerekmez)', setsChoice_strict: 'Sıkı', setsChoice_lenient: 'Hoşgörülü',
+  sets_PIN_CHANGE_APPROVALS: 'Pin değişikliği için gereken yönetici sayısı', sets_PIN_CHANGE_APPROVALS_why: '2 ve üstünde pin, host ve sertifika değişiklikleri (bu ayarlar dahil) başka bir yöneticinin onayını bekler. Her yöneticinin kendi anahtarı gerekir (ADMIN_KEYS).',
+  sets_PIN_LIVE_CHECK: 'Canlı sertifika kontrolü', sets_PIN_LIVE_CHECK_why: 'Pin kaydedilmeden önce host\'un şu an sunduğu sertifika yeni listede mi diye bakılır. Uyarı ver: kaydeder ama uyarır. Engelle: kaydetmez.',
+  sets_CONFIG_TTL_SECONDS: 'Config ömrü (saniye)', sets_CONFIG_TTL_SECONDS_why: 'Telefon imzalı config\'i en fazla bu kadar geçerli sayar. Kısa olursa sunucuya ulaşamayan telefon daha erken durur; uzun olursa eski pin\'ler daha uzun kullanılabilir. 86400 = 1 gün.',
+  sets_CONFIG_API_ADMIN_ROUTES: 'Telefonların bağlandığı portlarda yönetim işlemleri', sets_CONFIG_API_ADMIN_ROUTES_why: 'Kapalı: yönetim yalnızca yönetim portundan yapılır, telefonların ulaştığı portlar yalnızca cihaz isteklerine cevap verir. Üretimde kapalı önerilir.',
+  sets_ENROLLMENT_MODE: 'Cihaz kaydı', sets_ENROLLMENT_MODE_why: 'Yalnızca token ile: panelden üretilen token olmadan kimse kayıt olamaz. Açık: cihaz kimliğini söyleyen her telefon kayıt olur; yalnızca deneme içindir.',
+  sets_CLIENT_CERT_TTL_DAYS: 'Cihaz sertifikasının ömrü (gün)', sets_CLIENT_CERT_TTL_DAYS_why: 'Telefonun mTLS sertifikası bu süre dolmadan yenilenir. En fazla 825.',
+  sets_HOST_CLIENT_CERT_REQUIRE_GRANT: 'Host istemci sertifikası yalnızca izin verilen cihazlara', sets_HOST_CLIENT_CERT_REQUIRE_GRANT_why: 'Bir host\'un istemci sertifikası (bütün telefonların paylaştığı tek özel anahtar) yalnızca o host için izin verilmiş cihazlara verilir.',
+  sets_ENROLLMENT_ATTESTATION: 'Kayıtta donanım belgesi', sets_ENROLLMENT_ATTESTATION_why: 'Telefonun anahtarının gerçek bir telefonda, senin uygulamanda üretildiğini gösteren Android belgesi istenir. Engelle için paket adı ve imza parmak izi gerekir.',
+  sets_USER_AUTH_ATTESTATION: 'Ekran kilidi anahtarında donanım belgesi', sets_USER_AUTH_ATTESTATION_why: 'Ekran kilidiyle açılan dosyaların anahtarı için aynı kontrol. Engelle için paket adı ve imza parmak izi gerekir.',
+  sets_INTEGRITY_VERIFICATION: 'Kayıtta Play Integrity kontrolü', sets_INTEGRITY_VERIFICATION_why: 'Kayıt isteğindeki Play Integrity token\'ı sunucuda doğrulanır. Doğrulayan komut (INTEGRITY_VERIFIER_COMMAND) .env dosyasında tanımlı olmalı.',
+  sets_ATTESTATION_PACKAGE_NAMES: 'Uygulamanın paket adı', sets_ATTESTATION_PACKAGE_NAMES_why: 'Donanım belgesinde aranacak paket adı, örneğin com.sirket.uygulama. Birden fazlaysa virgülle ayır.',
+  sets_ATTESTATION_SIGNER_SHA256: 'Uygulama imza sertifikasının SHA-256 parmak izi', sets_ATTESTATION_SIGNER_SHA256_why: 'Release imza sertifikasının SHA-256 değeri (keytool ya da apksigner gösterir). Birden fazlaysa virgülle ayır.',
+  sets_ATTESTATION_ENABLED: 'Atestasyon', sets_ATTESTATION_ENABLED_why: 'Uygulama birkaç dakikada bir kendini ve telefonu ölçüp imzalı bir rapor gönderir; sunucu politikaya göre karar verir, geçen telefona PinVault-Token verir.',
+  sets_ATTESTATION_KEY_POLICY: 'Atestasyon anahtarının ilk kaydında donanım belgesi', sets_ATTESTATION_KEY_POLICY_why: 'Kapalı: ilk gelen anahtar kabul edilir. Uyarı ver: belge varsa kontrol edilir. Engelle: belgesiz anahtar kaydedilmez (paket adı ve parmak izi gerekir).',
+  sets_ATTESTATION_POLICY_DEFAULT: 'Varsayılan politika', sets_ATTESTATION_POLICY_DEFAULT_why: 'Kendi politikası olmayan Config API\'ler için. Sıkı: root, emülatör, debugger ve kanca reddedilir. Hoşgörülü: hepsi yalnızca uyarı (önce telefonları ölçmek için).',
+  sets_ATTESTATION_TOKEN_TTL_SECONDS: 'PinVault-Token ömrü (saniye)', sets_ATTESTATION_TOKEN_TTL_SECONDS_why: 'Kontrolden geçen telefona verilen token\'ın geçerlilik süresi.',
+  sets_ATTESTATION_INTERVAL_SECONDS: 'Atestasyon aralığı (saniye)', sets_ATTESTATION_INTERVAL_SECONDS_why: 'Uygulamanın raporu ne sıklıkla yeniden göndereceği.',
+  sets_ATTESTATION_REVEAL_REASONS: 'Reddedilen telefona nedeni söyle', sets_ATTESTATION_REVEAL_REASONS_why: 'Kapalıyken telefon yalnızca bir kod (ARC) görür; nedeni panelde görünür.',
+  sets_MOCK_HOST_REQUIRE_TOKEN: 'Mock host\'lar token istesin', sets_MOCK_HOST_REQUIRE_TOKEN_why: 'Test için kurulan mock host\'lar geçerli PinVault-Token taşımayan isteği reddeder, senin API\'n gibi.',
+  sets_SETUP_PUBLIC_HOST: 'Telefonların sunucuya ulaştığı adres', sets_SETUP_PUBLIC_HOST_why: 'Sihirbazın uygulama koduna yazdığı adres. Boşsa panelin açıldığı adres kullanılır.',
+  sets_SETUP_PUBLIC_PORTS: 'Port eşlemesi', sets_SETUP_PUBLIC_PORTS_why: 'Sunucu Docker ya da bir proxy arkasındaysa: sunucunun dinlediği port ile telefonun bağlandığı port, örneğin 8081:6651,8092:6652.',
   setupAppIntro: 'Uygulamanın bağlanacağı Config API\'yi ve açılacak korumaları seç. Kod bir sonraki adımda.',
   setupApi: 'Config API', setupHost: 'Uygulamanın bağlanacağı adres (host ya da IP)',
   setupHostHint: 'Telefonun sunucuya ulaştığı adres. Pin\'ler bu ada yazılır.',
@@ -63,6 +103,46 @@ Object.assign(i18n.tr, {
 });
 
 Object.assign(i18n.en, {
+  // Settings changed from the panel (server-settings.json, applied at the next start)
+  setsTitle: 'Settings',
+  setsHint: 'Change and save. The server reads its settings when it starts: what you save applies after a restart. Passwords, secret keys and ports are not here; they stay in the .env file.',
+  setsSave: 'Save', setsSaved: 'Saved. Applies when the server restarts.', setsNoChange: 'Nothing changed.',
+  setsNotSaved: 'Not saved: {0}', setsDefault: 'Default ({0})', setsDefaultEmpty: 'Default (empty)', setsOn: 'On',
+  setsNow: 'Now: {0}', setsNext: 'After restart: {0}', setsUnset: 'default',
+  setsLocked: 'Fixed in the .env file (environment variable); cannot be changed here.',
+  setsPending: 'Saved changes apply when the server restarts.',
+  setsRestart: 'Restart now', setsRestartConfirm: 'The server goes down for a few seconds; phones cannot connect meanwhile. Continue?',
+  setsNoSupervisor: 'This server cannot restart itself: stop it and start it again.',
+  setsRestarting: 'Restarting the server…', setsRestarted: 'The server restarted; the settings apply.',
+  setsRestartSlow: 'The server does not answer yet; reload the page in a moment.',
+  setsRejected: 'Settings saved from the panel stopped the server from starting, so they were not applied. Reason: {0}', setsDismiss: 'OK',
+  setsFromPanel: 'In Settings ↓',
+  setupFromPanelHint: 'Items marked "In Settings" can be changed in the Settings card below. The others, such as passwords and secret keys, change only in the .env file.',
+  setsGroup_governance: 'Change control and approval', setsGroup_config: 'Config', setsGroup_devices: 'Devices and enrollment',
+  setsGroup_attestation: 'Attestation (regular check of the app and the phone)', setsGroup_setup: 'Address written into the app code',
+  setsChoice_off: 'Off', setsChoice_warn: 'Warn', setsChoice_enforce: 'Block', setsChoice_on: 'On',
+  setsChoice_token: 'Token only', setsChoice_open: 'Open (no token)', setsChoice_strict: 'Strict', setsChoice_lenient: 'Lenient',
+  sets_PIN_CHANGE_APPROVALS: 'Admins needed for a pin change', sets_PIN_CHANGE_APPROVALS_why: 'At 2 or more, pin, host and certificate changes (these settings included) wait for another admin. Every admin needs a personal key (ADMIN_KEYS).',
+  sets_PIN_LIVE_CHECK: 'Live certificate check', sets_PIN_LIVE_CHECK_why: 'Before pins are saved, the certificate the host serves now must be in the new list. Warn: saves and warns. Block: does not save.',
+  sets_CONFIG_TTL_SECONDS: 'Config lifetime (seconds)', sets_CONFIG_TTL_SECONDS_why: 'A phone treats a signed config as valid for at most this long. Shorter: a phone that cannot reach the server stops sooner; longer: old pins stay usable longer. 86400 = 1 day.',
+  sets_CONFIG_API_ADMIN_ROUTES: 'Admin actions on the ports phones use', sets_CONFIG_API_ADMIN_ROUTES_why: 'Off: administration happens on the management port only; the ports phones reach answer device requests only. Recommended off in production.',
+  sets_ENROLLMENT_MODE: 'Device enrollment', sets_ENROLLMENT_MODE_why: 'Token only: nobody enrolls without a token made in the panel. Open: any phone that names its device id enrolls; for trials only.',
+  sets_CLIENT_CERT_TTL_DAYS: 'Device certificate lifetime (days)', sets_CLIENT_CERT_TTL_DAYS_why: 'The phone\'s mTLS certificate is renewed before this runs out. At most 825.',
+  sets_HOST_CLIENT_CERT_REQUIRE_GRANT: 'Host client certificate only to allowed devices', sets_HOST_CLIENT_CERT_REQUIRE_GRANT_why: 'A host\'s client certificate (one private key every phone shares) goes only to devices allowed for that host.',
+  sets_ENROLLMENT_ATTESTATION: 'Hardware attestation at enrollment', sets_ENROLLMENT_ATTESTATION_why: 'The Android proof that the phone\'s key was made on a real phone, in your app. Block needs the package name and the signing fingerprint.',
+  sets_USER_AUTH_ATTESTATION: 'Hardware attestation for the screen-lock key', sets_USER_AUTH_ATTESTATION_why: 'The same check for the key of files opened with the screen lock. Block needs the package name and the signing fingerprint.',
+  sets_INTEGRITY_VERIFICATION: 'Play Integrity check at enrollment', sets_INTEGRITY_VERIFICATION_why: 'The enrollment\'s Play Integrity token is verified on the server. The verifying command (INTEGRITY_VERIFIER_COMMAND) must be set in the .env file.',
+  sets_ATTESTATION_PACKAGE_NAMES: 'App package name', sets_ATTESTATION_PACKAGE_NAMES_why: 'The package name attestation must show, e.g. com.company.app. Separate several with commas.',
+  sets_ATTESTATION_SIGNER_SHA256: 'SHA-256 fingerprint of the app signing certificate', sets_ATTESTATION_SIGNER_SHA256_why: 'The SHA-256 of the release signing certificate (keytool or apksigner prints it). Separate several with commas.',
+  sets_ATTESTATION_ENABLED: 'Attestation', sets_ATTESTATION_ENABLED_why: 'Every few minutes the app measures itself and the phone and sends a signed report; the server decides by policy and gives a passing phone a PinVault-Token.',
+  sets_ATTESTATION_KEY_POLICY: 'Hardware attestation at the attestation key\'s first registration', sets_ATTESTATION_KEY_POLICY_why: 'Off: the first key is trusted. Warn: checked when there is a proof. Block: no key without a proof (needs the package name and fingerprint).',
+  sets_ATTESTATION_POLICY_DEFAULT: 'Default policy', sets_ATTESTATION_POLICY_DEFAULT_why: 'For Config APIs without a policy of their own. Strict: root, emulators, debuggers and hooks are rejected. Lenient: all of them only warn (to measure phones first).',
+  sets_ATTESTATION_TOKEN_TTL_SECONDS: 'PinVault-Token lifetime (seconds)', sets_ATTESTATION_TOKEN_TTL_SECONDS_why: 'How long the token a passing phone gets stays valid.',
+  sets_ATTESTATION_INTERVAL_SECONDS: 'Attestation interval (seconds)', sets_ATTESTATION_INTERVAL_SECONDS_why: 'How often the app sends its report again.',
+  sets_ATTESTATION_REVEAL_REASONS: 'Tell a rejected phone why', sets_ATTESTATION_REVEAL_REASONS_why: 'Off: the phone sees only a code (ARC); the reason shows in the panel.',
+  sets_MOCK_HOST_REQUIRE_TOKEN: 'Mock hosts require a token', sets_MOCK_HOST_REQUIRE_TOKEN_why: 'The mock hosts set up for tests refuse requests without a valid PinVault-Token, as your API would.',
+  sets_SETUP_PUBLIC_HOST: 'Address phones reach the server at', sets_SETUP_PUBLIC_HOST_why: 'The address the wizard writes into the app code. Empty: the address the panel was opened at.',
+  sets_SETUP_PUBLIC_PORTS: 'Port mapping', sets_SETUP_PUBLIC_PORTS_why: 'When the server is behind Docker or a proxy: the port it listens on and the port phones connect to, e.g. 8081:6651,8092:6652.',
   navSetup: 'Setup Wizard',
   setupTitle: 'Setup Wizard',
   setupSub: 'Shows whether the server is ready for production and generates the app\'s PinVault configuration from this server\'s values.',
@@ -120,6 +200,10 @@ Object.assign(i18n.en, {
 let setupData = null;
 let setupStep = 'server';
 let setupOpts = null;
+/** `GET /api/v1/server-settings`; null until loaded (or when the server is older). */
+let settingsData = null;
+/** Unsaved changes in the settings form: key → value (`""` = back to the default). */
+let settingsDraft = {};
 
 function defaultSetupOpts(d) {
   const apis = d.configApis || [];
@@ -157,6 +241,7 @@ async function renderSetupSection() {
       return;
     }
     setupData = await res.json();
+    await loadServerSettings();
     if (!setupOpts) setupOpts = defaultSetupOpts(setupData);
     drawSetup();
   } catch (e) {
@@ -183,7 +268,8 @@ function copySetupText(which) {
 
 function setupEnvText() {
   // Plain text (copied, or shown through esc()), never markup.
-  return (setupData.checks || []).filter(c => c.fix).map(c => '# ' + t('setup_' + c.id) + '\n' + c.fix).join('\n\n');
+  // Only what the Settings card cannot change.
+  return (setupData.checks || []).filter(c => c.fix && !setupFixInPanel(c.fix)).map(c => '# ' + t('setup_' + c.id) + '\n' + c.fix).join('\n\n');
 }
 
 function drawSetup() {
@@ -233,18 +319,20 @@ function setupServerStep() {
         <td>${setupLevelBadge(c.level)}</td>
         <td><b>${esc(t('setup_' + c.id))}</b><div class="muted small">${esc(t('setup_' + c.id + '_why'))}</div></td>
         <td class="mono small">${esc(c.current)}</td>
-        <td>${setupFixBox(c.fix)}</td>
+        <td>${setupFixInPanel(c.fix) ? `<span class="act-badge act-ok">${esc(t('setsFromPanel'))}</span>` : setupFixBox(c.fix)}</td>
       </tr>`).join('');
   const env = setupEnvText();
   return `
+    ${settingsBanners()}
     <div class="card">
       <div class="card-head"><div class="card-title">${esc(t('setupReady', ready, checks.length))}</div></div>
-      <div class="card-hint">${esc(t('setupReadOnly'))}</div>
+      <div class="card-hint">${esc(t(settingsData ? 'setupFromPanelHint' : 'setupReadOnly'))}</div>
       <table class="data-table">
         <thead><tr><th></th><th>${t('setupColCheck')}</th><th>${t('setupColNow')}</th><th>${t('setupColFix')}</th></tr></thead>
         <tbody>${rows}</tbody>
       </table>
     </div>
+    ${settingsCard()}
     <div class="card">
       <div class="card-head">
         <div class="card-title">${t('setupAllEnv')}</div>
@@ -253,6 +341,167 @@ function setupServerStep() {
       ${setupEnvBox(env)}
     </div>
     <div class="form-actions"><button class="btn btn-primary" data-action="setSetupStep" data-arg0="app">${t('setupNext')}</button></div>`;
+}
+
+// ── Settings changed from the panel ─────────────────────────────────────────
+
+async function loadServerSettings() {
+  try {
+    const res = await apiFetch('/api/v1/server-settings', { quiet: true });
+    settingsData = res.ok ? await res.json() : null;
+  } catch (_) {
+    settingsData = null;
+  }
+}
+
+function settingsByKey(key) {
+  return settingsData ? (settingsData.settings || []).find(s => s.key === key) || null : null;
+}
+
+/** The `KEY=` names in a check's fix, when every one of them can be set in the form below. */
+function setupFixInPanel(fix) {
+  if (!settingsData || !fix) return false;
+  const keys = (String(fix).match(/^\s*([A-Z][A-Z0-9_]*)=/gm) || []).map(l => l.trim().replace(/=.*/, ''));
+  return keys.length > 0 && keys.every(k => { const s = settingsByKey(k); return s && !s.locked; });
+}
+
+/** A value as the form shows it: a choice's label, "On"/"Off", or the value itself. */
+function settingLabel(s, value) {
+  if (value == null || value === '') return t('setsUnset');
+  if (s.kind === 'bool') return value === 'true' ? t('setsChoice_on') : t('setsChoice_off');
+  if (s.kind === 'choice') return t('setsChoice_' + value);
+  return String(value);
+}
+
+function settingsBanners() {
+  if (!settingsData) return '';
+  const out = [];
+  const r = settingsData.rejected;
+  if (r) {
+    out.push(`<div class="card" style="border-left:4px solid #ef4444">
+      <div>${esc(t('setsRejected', r.reason || '?'))}</div>
+      <div class="form-actions"><button class="btn btn-secondary btn-sm" data-action="dismissSettingsRejected">${t('setsDismiss')}</button></div>
+    </div>`);
+  }
+  if (settingsData.pendingRestart) {
+    const action = settingsData.restartSupervised
+      ? `<button class="btn btn-primary btn-sm" data-action="restartServer">${t('setsRestart')}</button>`
+      : `<span class="muted">${esc(t('setsNoSupervisor'))}</span>`;
+    out.push(`<div class="card" id="settings-pending" style="border-left:4px solid #f59e0b">
+      <div>${esc(t('setsPending'))}</div>
+      <div class="form-actions">${action}</div>
+    </div>`);
+  }
+  return out.join('');
+}
+
+/** The control for one setting: its draft, else what is saved, else what runs. */
+function settingControl(s) {
+  const current = s.key in settingsDraft ? settingsDraft[s.key] : (s.saved != null ? s.saved : (s.locked ? s.running : ''));
+  const value = current == null ? '' : String(current);
+  const disabled = s.locked ? 'disabled' : '';
+  const attrs = `data-action-change="setServerSetting" data-arg0="${esc(s.key)}" data-event="1" ${disabled}`;
+  const defaultLabel = s.default === '' ? t('setsDefaultEmpty') : t('setsDefault', settingLabel(s, s.default));
+  if (s.kind === 'choice' || s.kind === 'bool') {
+    const choices = s.kind === 'bool' ? ['true', 'false'] : (s.choices || []);
+    const options = [`<option value="" ${value === '' ? 'selected' : ''}>${esc(defaultLabel)}</option>`]
+      .concat(choices.map(c => `<option value="${esc(c)}" ${value === c ? 'selected' : ''}>${esc(settingLabel(s, c))}</option>`));
+    return `<select class="form-input" ${attrs}>${options.join('')}</select>`;
+  }
+  const type = s.kind === 'number' ? 'number' : 'text';
+  const range = s.kind === 'number' ? `min="${esc(s.min)}" max="${esc(s.max)}"` : '';
+  return `<input class="form-input" type="${type}" ${range} value="${esc(value)}" placeholder="${esc(defaultLabel)}" ${attrs}/>`;
+}
+
+function settingState(s) {
+  if (s.locked) return `${esc(t('setsNow', settingLabel(s, s.running)))} · ${esc(t('setsLocked'))}`;
+  const now = esc(t('setsNow', settingLabel(s, s.running)));
+  return s.pending ? `${now} · <b>${esc(t('setsNext', settingLabel(s, s.saved)))}</b>` : now;
+}
+
+function settingsCard() {
+  if (!settingsData) return '';
+  const groups = [];
+  (settingsData.settings || []).forEach(s => {
+    let g = groups.find(x => x.id === s.group);
+    if (!g) { g = { id: s.group, items: [] }; groups.push(g); }
+    g.items.push(s);
+  });
+  const body = groups.map(g => `
+      <div class="card-title" style="margin:18px 0 6px">${esc(t('setsGroup_' + g.id))}</div>
+      ${g.items.map(s => `
+        <div class="form-group" id="setting-${esc(s.key)}">
+          <label class="form-label">${esc(t('sets_' + s.key))}</label>
+          ${settingControl(s)}
+          <div class="form-hint">${esc(t('sets_' + s.key + '_why'))}</div>
+          <div class="form-hint small">${settingState(s)}</div>
+        </div>`).join('')}`).join('');
+  return `
+    <div class="card" id="settings-card">
+      <div class="card-head"><div class="card-title">${t('setsTitle')}</div></div>
+      <div class="card-hint">${esc(t('setsHint'))}</div>
+      ${body}
+      <div class="form-actions"><button class="btn btn-primary" data-action="saveServerSettings">${t('setsSave')}</button></div>
+    </div>`;
+}
+
+function setServerSetting(key, ev) {
+  settingsDraft[key] = String(ev.target.value).trim();
+}
+
+async function saveServerSettings() {
+  const values = {};
+  Object.entries(settingsDraft).forEach(([key, value]) => {
+    const s = settingsByKey(key);
+    if (!s || s.locked) return;
+    const before = s.saved != null ? String(s.saved) : '';
+    if (value !== before) values[key] = value;
+  });
+  if (!Object.keys(values).length) { toast(t('setsNoChange'), 'info'); return; }
+  const res = await apiFetch('/api/v1/server-settings', {
+    method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ values })
+  });
+  if (res.status === 202) { settingsDraft = {}; return; }   // waits for a second admin (shown by apiFetch)
+  const body = await res.json().catch(() => null);
+  if (!res.ok) {
+    toast(t('setsNotSaved', ((body && body.details) || [res.status]).join(' · ')), 'error', 10000);
+    return;
+  }
+  settingsData = body;
+  settingsDraft = {};
+  toast(t('setsSaved'), 'success');
+  drawSetup();
+}
+
+async function restartServer() {
+  if (!confirm(t('setsRestartConfirm'))) return;
+  const res = await apiFetch('/api/v1/server-settings/restart', { method: 'POST' });
+  if (res.status !== 202) {
+    const body = await res.json().catch(() => null);
+    toast(t('setsNotSaved', ((body && body.details) || [res.status]).join(' · ')), 'error', 8000);
+    return;
+  }
+  toast(t('setsRestarting'), 'info', 6000);
+  // Wait for the old process to go, then for the new one to answer.
+  await new Promise(r => setTimeout(r, 2500));
+  for (let i = 0; i < 60; i++) {
+    try {
+      const probe = await fetch('/api/v1/server-settings', { headers: { 'X-API-Key': getApiKey(), 'X-PinVault-Admin': '1' } });
+      if (probe.ok) {
+        settingsData = await probe.json();
+        toast(t('setsRestarted'), 'success');
+        renderSetupSection();
+        return;
+      }
+    } catch (_) { /* still down */ }
+    await new Promise(r => setTimeout(r, 1500));
+  }
+  toast(t('setsRestartSlow'), 'warning', 10000);
+}
+
+async function dismissSettingsRejected() {
+  const res = await apiFetch('/api/v1/server-settings/rejected', { method: 'DELETE' });
+  if (res.ok) { settingsData = await res.json(); drawSetup(); }
 }
 
 function setupCheckbox(name, label, disabled) {

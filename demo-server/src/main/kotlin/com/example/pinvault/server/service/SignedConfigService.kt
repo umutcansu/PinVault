@@ -44,7 +44,7 @@ class SignedConfigService(
     private val signing: ConfigSigningService,
     private val keySets: SigningKeySetService? = null,
     val ttlMs: Long = ttlFromEnv(),
-    cacheEnabled: Boolean = System.getenv("CONFIG_SIGNATURE_CACHE") == "true",
+    cacheEnabled: Boolean = com.example.pinvault.server.service.ServerEnv.get("CONFIG_SIGNATURE_CACHE") == "true",
     private val clock: () -> Long = System::currentTimeMillis
 ) {
     /** Whether signatures are cached per content: asked for, or required by an external signer. */
@@ -258,6 +258,6 @@ class SignedConfigService(
          * 24h leaves a margin for devices that are offline for a while.
          */
         fun ttlFromEnv(): Long =
-            System.getenv("CONFIG_TTL_SECONDS")?.toLongOrNull()?.times(1000L) ?: (24L * 60 * 60 * 1000)
+            com.example.pinvault.server.service.ServerEnv.get("CONFIG_TTL_SECONDS")?.toLongOrNull()?.times(1000L) ?: (24L * 60 * 60 * 1000)
     }
 }

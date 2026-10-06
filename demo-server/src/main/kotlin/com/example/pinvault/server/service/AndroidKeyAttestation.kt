@@ -544,7 +544,7 @@ open class AndroidKeyAttestation(
          * `USER_AUTH_REQUIRE_PER_USE` (default false) and
          * `ATTESTATION_MIN_PATCH_LEVEL` (default off), trusting the Google roots.
          */
-        fun fromEnv(env: Map<String, String> = System.getenv(), clock: () -> Instant = Instant::now): AndroidKeyAttestation {
+        fun fromEnv(env: Map<String, String> = com.example.pinvault.server.service.ServerEnv.all(), clock: () -> Instant = Instant::now): AndroidKeyAttestation {
             val revokedFile = env["ATTESTATION_REVOKED_SERIALS_FILE"]?.takeIf { it.isNotBlank() }
             val maxAgeHours = env["ATTESTATION_STATUS_MAX_AGE_HOURS"]?.trim()?.takeIf { it.isNotEmpty() }?.let { raw ->
                 raw.toLongOrNull()?.takeIf { it > 0 }

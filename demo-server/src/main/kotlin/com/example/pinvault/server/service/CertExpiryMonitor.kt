@@ -11,7 +11,7 @@ import java.time.temporal.ChronoUnit
  */
 class CertExpiryMonitor(
     private val hostStore: HostStore,
-    private val warnDays: Int = System.getenv("CERT_EXPIRY_WARN_DAYS")?.toIntOrNull() ?: 30
+    private val warnDays: Int = com.example.pinvault.server.service.ServerEnv.get("CERT_EXPIRY_WARN_DAYS")?.toIntOrNull() ?: 30
 ) {
 
     fun checkAll(): List<CertExpiryStatus> {

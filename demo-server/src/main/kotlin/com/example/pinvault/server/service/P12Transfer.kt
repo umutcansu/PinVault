@@ -29,7 +29,7 @@ object P12Transfer {
     const val PASSWORD_HEADER = "X-P12-Password"
 
     val legacyPassword: String =
-        System.getenv("CLIENT_P12_PASSWORD")?.takeIf { it.isNotBlank() } ?: "changeit"
+        com.example.pinvault.server.service.ServerEnv.get("CLIENT_P12_PASSWORD")?.takeIf { it.isNotBlank() } ?: "changeit"
 
     private val random = SecureRandom()
 

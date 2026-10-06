@@ -116,6 +116,7 @@ class PathParameterIntegrityTest {
         Sample(HttpMethod.Post, "/api/v1/server-tls-pins/regenerate"),
         Sample(HttpMethod.Post, "/api/v1/signing-key/regenerate"),
         Sample(HttpMethod.Put, "/api/v1/signing-keyset"),
+        Sample(HttpMethod.Put, "/api/v1/server-settings"),
         Sample(HttpMethod.Put, "/api/v1/config-apis/{scope}/default-host-acl"),
         Sample(HttpMethod.Put, "/api/v1/config-apis/{scope}/devices/{device}/host-acl"),
         // Trust material and identities

@@ -610,7 +610,7 @@ class ClientDeviceStore(
      * seen go first. Reports need no credential on a TLS listener, so every
      * made-up device id was a row kept forever.
      */
-    private val maxRows: Int = (System.getenv("CLIENT_DEVICES_MAX")?.toIntOrNull() ?: 20_000).coerceAtLeast(100)
+    private val maxRows: Int = (com.example.pinvault.server.service.ServerEnv.get("CLIENT_DEVICES_MAX")?.toIntOrNull() ?: 20_000).coerceAtLeast(100)
 ) {
     private val writes = java.util.concurrent.atomic.AtomicLong()
 
@@ -1088,7 +1088,7 @@ class EnrollmentTokenStore(private val db: DatabaseManager) {
         val token = java.util.Base64.getUrlEncoder().withoutPadding()
             .encodeToString(ByteArray(32).also(rng::nextBytes))
         val now = java.time.Instant.now()
-        val ttlSeconds = System.getenv("ENROLLMENT_TOKEN_TTL_SECONDS")?.toLongOrNull() ?: 86_400L
+        val ttlSeconds = com.example.pinvault.server.service.ServerEnv.get("ENROLLMENT_TOKEN_TTL_SECONDS")?.toLongOrNull() ?: 86_400L
         val expiresAt = now.plusSeconds(ttlSeconds)
         db.connection().use { conn ->
             conn.prepareStatement(

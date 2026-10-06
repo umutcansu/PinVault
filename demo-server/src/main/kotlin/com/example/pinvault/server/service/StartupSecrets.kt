@@ -19,7 +19,7 @@ object StartupSecrets {
     const val ALLOW = "ALLOW_DEMO_SECRETS"
 
     /** The required secrets [env] does not set. */
-    fun missing(env: Map<String, String> = System.getenv()): List<String> = buildList {
+    fun missing(env: Map<String, String> = com.example.pinvault.server.service.ServerEnv.all()): List<String> = buildList {
         fun unset(name: String) = env[name].isNullOrBlank()
         if (unset("KEYSTORE_PASSWORD")) add("KEYSTORE_PASSWORD")
         if (unset("VAULT_AT_REST_PASSWORD")) add("VAULT_AT_REST_PASSWORD")
@@ -37,7 +37,7 @@ object StartupSecrets {
      * asked for. Returns the warning to print when they were, or null when
      * every secret is set.
      */
-    fun check(env: Map<String, String> = System.getenv()): String? {
+    fun check(env: Map<String, String> = com.example.pinvault.server.service.ServerEnv.all()): String? {
         val missing = missing(env)
         if (missing.isEmpty()) return null
         check(env[ALLOW] == "true") {
@@ -61,7 +61,7 @@ object AdminKeyStrength {
     const val MIN_API_KEY_LENGTH = 16
 
     /** Throws when `API_KEY` is set but short and demo secrets were not asked for; the warning to print otherwise, or null. */
-    fun check(env: Map<String, String> = System.getenv()): String? {
+    fun check(env: Map<String, String> = com.example.pinvault.server.service.ServerEnv.all()): String? {
         val key = env["API_KEY"]?.takeIf { it.isNotBlank() } ?: return null
         if (key.length >= MIN_API_KEY_LENGTH) return null
         check(env[StartupSecrets.ALLOW] == "true") {

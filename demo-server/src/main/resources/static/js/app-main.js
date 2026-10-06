@@ -99,7 +99,9 @@ const _actionHandlers = {
   showAttestationDevice, saveAttestDevice, forgetAttestDevice,
   loadTokenSecrets, toggleTokenSecretReveal, copyTokenSecret, rotateTokenSecret, deleteTokenSecret,
   // Setup wizard (checklist and generated app configuration)
-  renderSetupSection, setSetupStep, setSetupOpt, copySetupText
+  renderSetupSection, setSetupStep, setSetupOpt, copySetupText,
+  // Settings changed from the panel (applied at the next start)
+  setServerSetting, saveServerSettings, restartServer, dismissSettingsRejected
 };
 
 function _collectArgs(el) {

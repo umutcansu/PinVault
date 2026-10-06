@@ -61,10 +61,11 @@ services:
       # istersen: PINVAULT_UID=$(id -u) PINVAULT_GID=$(id -g) (root olamaz).
       PINVAULT_UID: ${PINVAULT_UID:-}
       PINVAULT_GID: ${PINVAULT_GID:-}
-      ENROLLMENT_MODE: ${ENROLLMENT_MODE:-token}
+      # Boş = sunucu varsayılanı (token); panelin Kurulum Sihirbazından da değişir.
+      ENROLLMENT_MODE: ${ENROLLMENT_MODE:-}
       # Zorunlu. Yönetim uçları ve dashboard bu anahtarı ister; anonim admin kapalı.
       API_KEY: ${API_KEY:?API_KEY bos. Once ./scripts/setup.sh calistir.}
-      CONFIG_TTL_SECONDS: ${CONFIG_TTL_SECONDS:-86400}
+      CONFIG_TTL_SECONDS: ${CONFIG_TTL_SECONDS:-}
       # Telefonların bu makineye bağlandığı LAN IP. Container kendi içinden bu
       # adresi göremez; sunucu TLS sertifikası (yeniden) üretilirken SAN'a eklenir.
       EXTRA_CERT_SANS: ${HOST_LAN_IP:-}
@@ -72,6 +73,9 @@ services:
       # yazsın: container içindeki portlar (8081, 8092, 8083) dışarıda başka.
       SETUP_PUBLIC_HOST: ${HOST_LAN_IP:-}
       SETUP_PUBLIC_PORTS: "8081:${HOST_HTTPS_PORT:-6651},8092:${HOST_MTLS_PORT:-6652},8083:${HOST_RECOVERY_PORT:-6656}"
+      # Panelden "Şimdi yeniden başlat": süreç çıkar, Docker (restart: unless-stopped)
+      # onu kaydedilen ayarlarla yeniden açar. Ayarlar data/db/server-settings.json'da.
+      PINVAULT_RESTART_ON_EXIT: "true"
       # İsteğe bağlı sunucu ayarları; boş bırakılınca sunucu varsayılanı geçerli.
       # Geçici değişiklik için: ./scripts/env-override.sh set KEY=VALUE ...
       # Parolalar: sunucu KEYSTORE_PASSWORD, VAULT_AT_REST_PASSWORD ve (yerel imzalayıcı

@@ -43,6 +43,7 @@ const FEATURES = [
   { id: 'K-istemci-degerleri', group: 'K', feature: 'client-config.sh --properties çıktısı BuildConfig\'e giriyor; network_security_config şifresiz HTTP\'ye hiç izin vermiyor (cihaz raporları Config API portundan, pinli; yönetim portu uygulamaya verilmiyor); gradle ile derleme ve adb install', scenarios: ['K06'] },
   { id: 'K-ilk-baglanti', group: 'K', feature: 'İlk açılışta "Hazır — config vN"; cihaz dashboard\'da Bağlı Cihazlar ve Bağlantı Geçmişi\'nde görünüyor', scenarios: ['K06'] },
   { id: 'K-docs', group: 'K', feature: 'Swagger UI (/docs) ve openapi.yaml; dashboard TR/EN; tablo sayfalaması', scenarios: ['K07'] },
+  { id: 'K-ayarlar', group: 'K', feature: 'Sunucu ayarları panelden: Kurulum Sihirbazında seçilir, kaydedilir, "Şimdi yeniden başlat" ile geçerli olur; .env\'de sabit olanlar kilitli; sunucuyu açmayacak ayar kaydedilmez, elle yazılsa da sunucu onsuz açılır', scenarios: ['K08'] },
   // ── E (sunucu işletimi) ───────────────────────────────────────────────
   { id: 'E-imzalama-sifreli', group: 'E', feature: 'SIGNING_KEY_PASSWORD (setup.sh demo profilinde de üretir; sunucu onsuz açılmaz): anahtar diskte AES-256-GCM ile şifreli (ENCv1:), diske konan düz metin anahtar ilk açılışta kendiliğinden şifreleniyor, imza doğrulanmaya devam ediyor', scenarios: ['E01'] },
   { id: 'E-yetki', group: 'E', feature: 'Yönetim uçları anahtarsız 401, yanlış anahtarla 403; cihaz uçları anahtar istemiyor; yanıtlarda güvenlik başlıkları var', scenarios: ['E02'] },

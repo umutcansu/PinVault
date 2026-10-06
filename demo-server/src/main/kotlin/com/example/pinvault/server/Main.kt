@@ -4,6 +4,7 @@ import com.example.pinvault.server.model.HostActionResponse
 import com.example.pinvault.server.model.HostPin
 import com.example.pinvault.server.model.PinConfigHistoryEntry
 import com.example.pinvault.server.route.setupRoutes
+import com.example.pinvault.server.route.serverSettingsRoutes
 import com.example.pinvault.server.route.adminVaultRoutes
 import com.example.pinvault.server.route.attestationAdminRoutes
 import com.example.pinvault.server.route.attestationRoutes
@@ -63,25 +64,44 @@ import java.io.FileInputStream
 import java.security.KeyStore
 
 fun main() {
+    // Settings saved from the dashboard (setup wizard) fill in what the
+    // environment leaves empty. If they stop the server from starting, they
+    // are set aside with the reason and the process exits: the next start
+    // (Docker restarts it) runs without them and the dashboard shows why.
+    val settings = com.example.pinvault.server.service.ServerSettingsStore.forDbPath(System.getenv("DB_PATH") ?: "pinvault.db")
+    com.example.pinvault.server.service.ServerEnv.overlay = settings.values()
+    try {
+        startServer()
+    } catch (e: Throwable) {
+        if (com.example.pinvault.server.service.ServerEnv.overlay.isEmpty()) throw e
+        val reason = e.message ?: e.javaClass.simpleName
+        System.err.println("Settings saved from the dashboard stopped the server from starting: $reason")
+        System.err.println("They are set aside (server-settings.json, \"rejected\"); the next start runs without them.")
+        settings.reject(reason)
+        kotlin.system.exitProcess(1)
+    }
+}
+
+private fun startServer() {
     // Before anything is read, written or listened on: no start without admin
     // keys (unless ALLOW_ANONYMOUS_ADMIN — it used to be noticed only after the
     // device listeners were already up), and none with the passwords that are
     // printed in the source code (unless ALLOW_DEMO_SECRETS).
-    check(!com.example.pinvault.server.plugin.AdminRegistry.fromEnv().isEmpty || System.getenv("ALLOW_ANONYMOUS_ADMIN") == "true") {
+    check(!com.example.pinvault.server.plugin.AdminRegistry.fromEnv().isEmpty || com.example.pinvault.server.service.ServerEnv.get("ALLOW_ANONYMOUS_ADMIN") == "true") {
         com.example.pinvault.server.plugin.NO_ADMIN_KEY_MESSAGE
     }
     com.example.pinvault.server.service.StartupSecrets.check()?.let { System.err.println(it) }
     // After the passwords: a guessable shared key is refused too (ALLOW_DEMO_SECRETS for local runs).
     com.example.pinvault.server.service.AdminKeyStrength.check()?.let { System.err.println(it) }
-    val dbPath = System.getenv("DB_PATH") ?: "pinvault.db"
+    val dbPath = com.example.pinvault.server.service.ServerEnv.get("DB_PATH") ?: "pinvault.db"
     val db = DatabaseManager(dbPath)
     val pinConfigStore = PinConfigStore(db)
     val historyStore = PinConfigHistoryStore(db)
     val connectionStore = ConnectionHistoryStore(db)
     val clientDeviceStore = ClientDeviceStore(db)
     val hostStore = HostStore(db)
-    val certsDir = File(System.getenv("CERTS_DIR") ?: "certs")
-    val signingKeyFile = File(System.getenv("SIGNING_KEY_PATH") ?: "signing-key.pem")
+    val certsDir = File(com.example.pinvault.server.service.ServerEnv.get("CERTS_DIR") ?: "certs")
+    val signingKeyFile = File(com.example.pinvault.server.service.ServerEnv.get("SIGNING_KEY_PATH") ?: "signing-key.pem")
     // Signers come from CONFIG_SIGNERS (default: the local key file above).
     val signingService = ConfigSigningService.fromEnv(signingKeyFile)
     val signingKeySetService = com.example.pinvault.server.service.SigningKeySetService.fromEnv(
@@ -148,10 +168,10 @@ fun main() {
     var changeDescriber: com.example.pinvault.server.service.ChangeDescriber? = null
 
     // The largest vault file an administrator may upload: read into memory whole.
-    val vaultMaxFileBytes = (System.getenv("VAULT_MAX_FILE_BYTES")?.toLongOrNull()
+    val vaultMaxFileBytes = (com.example.pinvault.server.service.ServerEnv.get("VAULT_MAX_FILE_BYTES")?.toLongOrNull()
         ?: com.example.pinvault.server.route.DEFAULT_VAULT_MAX_FILE_BYTES).coerceIn(1, Int.MAX_VALUE.toLong() - 64)
     // ...and the largest JSON body, keystore or certificate.
-    val adminUploadMaxBytes = (System.getenv("ADMIN_UPLOAD_MAX_BYTES")?.toLongOrNull()
+    val adminUploadMaxBytes = (com.example.pinvault.server.service.ServerEnv.get("ADMIN_UPLOAD_MAX_BYTES")?.toLongOrNull()
         ?: com.example.pinvault.server.plugin.DEFAULT_ADMIN_BODY_MAX_BYTES).coerceIn(1024, 64L * 1024 * 1024)
 
     // VAULT_AT_REST_PASSWORD: change-request bodies and plans, and the PinVault-Token secrets, wait under it.
@@ -161,8 +181,8 @@ fun main() {
         store = com.example.pinvault.server.store.ChangeRequestStore(db, atRestCipher),
         audit = auditLog,
         required = approvalsRequired,
-        ttlHours = System.getenv("APPROVAL_TTL_HOURS")?.toLongOrNull()?.coerceAtLeast(1) ?: 24,
-        managementPort = System.getenv("PORT")?.toIntOrNull() ?: 8080,
+        ttlHours = com.example.pinvault.server.service.ServerEnv.get("APPROVAL_TTL_HOURS")?.toLongOrNull()?.coerceAtLeast(1) ?: 24,
+        managementPort = com.example.pinvault.server.service.ServerEnv.get("PORT")?.toIntOrNull() ?: 8080,
         describe = { input -> (changeDescriber ?: error("The server is still starting")).describe(input) },
         stateHash = ::stateHash,
         exempt = com.example.pinvault.server.service.ApprovalService.exemptFromEnv().also { exempt ->
@@ -188,32 +208,32 @@ fun main() {
     val certService = CertificateService(certsDir)
     val mockServerManager = MockServerManager()
     val certExpiryMonitor = com.example.pinvault.server.service.CertExpiryMonitor(hostStore)
-    val httpPort = System.getenv("PORT")?.toIntOrNull() ?: 8080
-    val httpsPort = System.getenv("HTTPS_PORT")?.toIntOrNull() ?: (httpPort + 1)
+    val httpPort = com.example.pinvault.server.service.ServerEnv.get("PORT")?.toIntOrNull() ?: 8080
+    val httpsPort = com.example.pinvault.server.service.ServerEnv.get("HTTPS_PORT")?.toIntOrNull() ?: (httpPort + 1)
     // Certificate-renewal door for expired devices (TLS, no client cert, CA-pinned). 0 = off.
-    val recoveryPort = System.getenv("RECOVERY_PORT")?.toIntOrNull() ?: (httpPort + 3)
-    val enrollmentMode = System.getenv("ENROLLMENT_MODE")?.lowercase() ?: "token"
+    val recoveryPort = com.example.pinvault.server.service.ServerEnv.get("RECOVERY_PORT")?.toIntOrNull() ?: (httpPort + 3)
+    val enrollmentMode = com.example.pinvault.server.service.ServerEnv.get("ENROLLMENT_MODE")?.lowercase() ?: "token"
     // Lifetime of certificates issued over device-held keys (CSR enrollment).
-    val clientCertTtlDays = (System.getenv("CLIENT_CERT_TTL_DAYS")?.toLongOrNull() ?: 90L).coerceIn(1, 3650)
+    val clientCertTtlDays = (com.example.pinvault.server.service.ServerEnv.get("CLIENT_CERT_TTL_DAYS")?.toLongOrNull() ?: 90L).coerceIn(1, 3650)
     // E2E keys a source address may write over TLS per 10 minutes (0 = no limit), and
     // the most a Config API stores. Key registration asks for no credential there.
-    val deviceKeyRateLimit = (System.getenv("DEVICE_KEY_RATE_LIMIT")?.toIntOrNull() ?: 30).coerceAtLeast(0)
-    val deviceKeyLimit = (System.getenv("DEVICE_KEY_LIMIT")?.toIntOrNull() ?: 100_000).coerceAtLeast(1)
+    val deviceKeyRateLimit = (com.example.pinvault.server.service.ServerEnv.get("DEVICE_KEY_RATE_LIMIT")?.toIntOrNull() ?: 30).coerceAtLeast(0)
+    val deviceKeyLimit = (com.example.pinvault.server.service.ServerEnv.get("DEVICE_KEY_LIMIT")?.toIntOrNull() ?: 100_000).coerceAtLeast(1)
     // Refusals (400/401/403/404/409/411/413) a source address may collect per 10 minutes
     // on enrollment, key registration and the downloads before it is cut off with 429
     // (0 = no limit). Requests that are served are not counted.
-    val deviceRefusalRateLimit = (System.getenv("DEVICE_REFUSAL_RATE_LIMIT")?.toIntOrNull() ?: 300).coerceAtLeast(0)
+    val deviceRefusalRateLimit = (com.example.pinvault.server.service.ServerEnv.get("DEVICE_REFUSAL_RATE_LIMIT")?.toIntOrNull() ?: 300).coerceAtLeast(0)
     // Reports (vault downloads, connections, config updates) a source address and a
     // device may file per 10 minutes (0 = no limit). They ask for no credential.
-    val reportRateLimit = (System.getenv("REPORT_RATE_LIMIT")?.toIntOrNull() ?: 600).coerceAtLeast(0)
-    val reportDeviceRateLimit = (System.getenv("REPORT_DEVICE_RATE_LIMIT")?.toIntOrNull() ?: 120).coerceAtLeast(0)
+    val reportRateLimit = (com.example.pinvault.server.service.ServerEnv.get("REPORT_RATE_LIMIT")?.toIntOrNull() ?: 600).coerceAtLeast(0)
+    val reportDeviceRateLimit = (com.example.pinvault.server.service.ServerEnv.get("REPORT_DEVICE_RATE_LIMIT")?.toIntOrNull() ?: 120).coerceAtLeast(0)
     // The least time between two restarts of the mTLS listeners (a server-made P12
     // enrollment or revocation changes the truststore they read at start).
-    val mtlsRestartMinIntervalMs = (System.getenv("MTLS_RESTART_MIN_INTERVAL_SECONDS")?.toLongOrNull() ?: 5L).coerceIn(0, 3600) * 1000
+    val mtlsRestartMinIntervalMs = (com.example.pinvault.server.service.ServerEnv.get("MTLS_RESTART_MIN_INTERVAL_SECONDS")?.toLongOrNull() ?: 5L).coerceIn(0, 3600) * 1000
     // User-auth keys: Android Key Attestation (USER_AUTH_ATTESTATION=off|warn|enforce,
     // ATTESTATION_PACKAGE_NAMES, ATTESTATION_SIGNER_SHA256, ATTESTATION_REQUIRE_VERIFIED_BOOT,
     // ATTESTATION_REVOKED_SERIALS_FILE). An unknown mode is a startup error.
-    val userAuthAttestationMode = com.example.pinvault.server.service.UserAuthAttestationMode.parse(System.getenv("USER_AUTH_ATTESTATION"))
+    val userAuthAttestationMode = com.example.pinvault.server.service.UserAuthAttestationMode.parse(com.example.pinvault.server.service.ServerEnv.get("USER_AUTH_ATTESTATION"))
     // Also USER_AUTH_REQUIRE_PER_USE, ATTESTATION_MIN_PATCH_LEVEL and ATTESTATION_STATUS_MAX_AGE_HOURS.
     val userAuthAttestation = com.example.pinvault.server.service.AndroidKeyAttestation.fromEnv()
     println("USER_AUTH_ATTESTATION=${userAuthAttestationMode.name.lowercase()}" +
@@ -232,13 +252,13 @@ fun main() {
     // network): looked at on every verification and every 10 minutes here.
     userAuthAttestation.revocationListFile?.let { file ->
         println("ATTESTATION_REVOKED_SERIALS_FILE=${file.path} — re-read when it changes" +
-            (System.getenv("ATTESTATION_STATUS_MAX_AGE_HOURS")?.let { "; no attestation passes once it is older than $it h" } ?: ""))
+            (com.example.pinvault.server.service.ServerEnv.get("ATTESTATION_STATUS_MAX_AGE_HOURS")?.let { "; no attestation passes once it is older than $it h" } ?: ""))
         java.util.concurrent.Executors.newSingleThreadScheduledExecutor { r -> Thread(r, "attestation-revocation-list").apply { isDaemon = true } }
             .scheduleAtFixedRate({ runCatching { userAuthAttestation.refreshRevocationList() } }, 10, 10, java.util.concurrent.TimeUnit.MINUTES)
     }
     // Client identity keys: Android Key Attestation of every CSR enrollment
     // (ENROLLMENT_ATTESTATION=off|warn|enforce, default warn), same verifier settings.
-    val enrollmentAttestationMode = com.example.pinvault.server.service.EnrollmentAttestationMode.parse(System.getenv("ENROLLMENT_ATTESTATION"))
+    val enrollmentAttestationMode = com.example.pinvault.server.service.EnrollmentAttestationMode.parse(com.example.pinvault.server.service.ServerEnv.get("ENROLLMENT_ATTESTATION"))
     com.example.pinvault.server.service.EnrollmentAttestationMode.startupCheck(enrollmentAttestationMode, userAuthAttestation)
         ?.let { System.err.println(it) }
     val enrollmentAttestation = com.example.pinvault.server.service.EnrollmentAttestation(enrollmentAttestationMode) { userAuthAttestation }
@@ -251,15 +271,15 @@ fun main() {
     }
     // Server-made keys (P12): ENROLLMENT_P12=on (default, for older apps) | off.
     // Off — and under ENROLLMENT_ATTESTATION=enforce — no private key is made here.
-    val enrollmentP12 = when (System.getenv("ENROLLMENT_P12")?.trim()?.lowercase()) {
+    val enrollmentP12 = when (com.example.pinvault.server.service.ServerEnv.get("ENROLLMENT_P12")?.trim()?.lowercase()) {
         null, "", "on", "true" -> true
         "off", "false" -> false
-        else -> error("ENROLLMENT_P12 must be on or off (got '${System.getenv("ENROLLMENT_P12")}')")
+        else -> error("ENROLLMENT_P12 must be on or off (got '${com.example.pinvault.server.service.ServerEnv.get("ENROLLMENT_P12")}')")
     }
     // The enrolling device's integrity verdict (Play Integrity or a RASP product's
     // attestation): INTEGRITY_VERIFICATION=off|warn|enforce (default off), decoded
     // by INTEGRITY_VERIFIER_COMMAND. Bound to the request's CSR and device id.
-    val integrityMode = com.example.pinvault.server.service.IntegrityVerificationMode.parse(System.getenv("INTEGRITY_VERIFICATION"))
+    val integrityMode = com.example.pinvault.server.service.IntegrityVerificationMode.parse(com.example.pinvault.server.service.ServerEnv.get("INTEGRITY_VERIFICATION"))
     val integrityVerifier = com.example.pinvault.server.service.CommandIntegrityVerifier.fromEnv(System::getenv)
     com.example.pinvault.server.service.IntegrityVerificationMode.startupCheck(integrityMode, integrityVerifier)
         ?.let { System.err.println(it) }
@@ -272,15 +292,15 @@ fun main() {
     // A host's client certificate is one private key for the whole fleet. With
     // HOST_CLIENT_CERT_REQUIRE_GRANT=true it is handed out only where the device
     // host ACL names the device; a scope without an ACL serves it to nobody.
-    val requireHostCertGrant = when (System.getenv("HOST_CLIENT_CERT_REQUIRE_GRANT")?.trim()?.lowercase()) {
+    val requireHostCertGrant = when (com.example.pinvault.server.service.ServerEnv.get("HOST_CLIENT_CERT_REQUIRE_GRANT")?.trim()?.lowercase()) {
         null, "", "false", "off" -> false
         "true", "on" -> true
-        else -> error("HOST_CLIENT_CERT_REQUIRE_GRANT must be true or false (got '${System.getenv("HOST_CLIENT_CERT_REQUIRE_GRANT")}')")
+        else -> error("HOST_CLIENT_CERT_REQUIRE_GRANT must be true or false (got '${com.example.pinvault.server.service.ServerEnv.get("HOST_CLIENT_CERT_REQUIRE_GRANT")}')")
     }
     println("HOST_CLIENT_CERT_REQUIRE_GRANT=$requireHostCertGrant" +
         (if (requireHostCertGrant) "" else " — a scope without a device host ACL hands host client certificates to every enrolled device"))
     // Test-only endpoints (short certificate lifetimes for the Espresso suite). Never in production.
-    val allowTestHooks = System.getenv("ALLOW_TEST_HOOKS") == "true"
+    val allowTestHooks = com.example.pinvault.server.service.ServerEnv.get("ALLOW_TEST_HOOKS") == "true"
     if (allowTestHooks) System.err.println("WARNING: ALLOW_TEST_HOOKS=true — test-only endpoints are enabled")
 
     // Demo server sertifikası üret (yoksa)
@@ -354,17 +374,17 @@ fun main() {
     // CONFIG_API_ADMIN_ROUTES: on (default) | off. Off: the Config API listeners — the
     // ports devices reach, often from the internet — answer device endpoints only;
     // every admin route, key or no key, is 403 there and lives on the management port.
-    val configApiAdminRoutes = when (System.getenv("CONFIG_API_ADMIN_ROUTES")?.trim()?.lowercase()) {
+    val configApiAdminRoutes = when (com.example.pinvault.server.service.ServerEnv.get("CONFIG_API_ADMIN_ROUTES")?.trim()?.lowercase()) {
         null, "", "on", "true" -> true
         "off", "false" -> false
-        else -> error("CONFIG_API_ADMIN_ROUTES must be on or off (got '${System.getenv("CONFIG_API_ADMIN_ROUTES")}')")
+        else -> error("CONFIG_API_ADMIN_ROUTES must be on or off (got '${com.example.pinvault.server.service.ServerEnv.get("CONFIG_API_ADMIN_ROUTES")}')")
     }
     println("CONFIG_API_ADMIN_ROUTES=${if (configApiAdminRoutes) "on" else "off"}" +
         (if (configApiAdminRoutes) " — admin routes answer on the Config API ports too (with the admin key)" else " — Config API ports serve devices only"))
     // Config API manager (dinamik TLS/mTLS sunucuları)
     val configApiManager = ConfigApiManager(deviceOnly = !configApiAdminRoutes)
     // Invalid admin keys: one counter for every listener (ADMIN_AUTH_FAILURE_LIMIT, 0 = off).
-    val adminAuthFailureLimit = (System.getenv("ADMIN_AUTH_FAILURE_LIMIT")?.toIntOrNull()
+    val adminAuthFailureLimit = (com.example.pinvault.server.service.ServerEnv.get("ADMIN_AUTH_FAILURE_LIMIT")?.toIntOrNull()
         ?: com.example.pinvault.server.plugin.DEFAULT_ADMIN_AUTH_FAILURE_LIMIT).coerceAtLeast(0)
     val adminFailureLimiter = if (adminAuthFailureLimit > 0) {
         com.example.pinvault.server.service.RateLimiter(maxAttempts = adminAuthFailureLimit, windowMs = 10 * 60_000)
@@ -378,9 +398,9 @@ fun main() {
     // Requests nobody decides on lapse after this; code-less applications (the
     // dashboard's switch) may have this many waiting, and a source address may
     // make this many new ones per 10 minutes (0 = no limit).
-    val enrollmentRequestTtl = java.time.Duration.ofHours((System.getenv("ENROLLMENT_REQUEST_TTL_HOURS")?.toLongOrNull() ?: 24L).coerceIn(1, 720))
-    val openMaxPending = (System.getenv("OPEN_ENROLLMENT_MAX_PENDING")?.toIntOrNull() ?: 50).coerceIn(1, 10_000)
-    val openRateLimit = (System.getenv("OPEN_ENROLLMENT_RATE_LIMIT")?.toIntOrNull() ?: 20).coerceAtLeast(0)
+    val enrollmentRequestTtl = java.time.Duration.ofHours((com.example.pinvault.server.service.ServerEnv.get("ENROLLMENT_REQUEST_TTL_HOURS")?.toLongOrNull() ?: 24L).coerceIn(1, 720))
+    val openMaxPending = (com.example.pinvault.server.service.ServerEnv.get("OPEN_ENROLLMENT_MAX_PENDING")?.toIntOrNull() ?: 50).coerceIn(1, 10_000)
+    val openRateLimit = (com.example.pinvault.server.service.ServerEnv.get("OPEN_ENROLLMENT_RATE_LIMIT")?.toIntOrNull() ?: 20).coerceAtLeast(0)
     val openLimiter = if (openRateLimit > 0) com.example.pinvault.server.service.RateLimiter(maxAttempts = openRateLimit, windowMs = 10 * 60_000) else null
     // Anyone holding a shared code can cause these; one entry a minute at most.
     val policyRefusals = com.example.pinvault.server.service.AuthFailureRecorder(
@@ -437,13 +457,13 @@ fun main() {
     )
     // Vault downloads served at once per source address, on every listener
     // (VAULT_DOWNLOAD_CONCURRENCY, default 4; 0 = unlimited).
-    val vaultDownloadSlots = ((System.getenv("VAULT_DOWNLOAD_CONCURRENCY")?.toIntOrNull() ?: 4).coerceAtLeast(0))
+    val vaultDownloadSlots = ((com.example.pinvault.server.service.ServerEnv.get("VAULT_DOWNLOAD_CONCURRENCY")?.toIntOrNull() ?: 4).coerceAtLeast(0))
         .takeIf { it > 0 }?.let { com.example.pinvault.server.service.ConcurrencyLimiter(it) }
     // ...and in total, across every address and listener (VAULT_DOWNLOAD_CONCURRENCY_TOTAL,
     // default 16; 0 = unlimited). Each download holds the whole file (and its
     // per-device encrypted copy) in memory: a public 50 MB file fetched from a
     // handful of addresses at once would otherwise exhaust the heap.
-    val vaultDownloadTotal = ((System.getenv("VAULT_DOWNLOAD_CONCURRENCY_TOTAL")?.toIntOrNull() ?: 16).coerceAtLeast(0))
+    val vaultDownloadTotal = ((com.example.pinvault.server.service.ServerEnv.get("VAULT_DOWNLOAD_CONCURRENCY_TOTAL")?.toIntOrNull() ?: 16).coerceAtLeast(0))
         .takeIf { it > 0 }?.let { com.example.pinvault.server.service.ConcurrencyLimiter(it, maxKeys = 1) }
     // One-shot certificate lifetimes armed by the test hook, consumed by the next issuance.
     val testTtlOverrides = java.util.concurrent.ConcurrentHashMap<String, java.time.Duration>()
@@ -487,27 +507,27 @@ fun main() {
     // first registration's Android Key Attestation must do (same verifier settings as
     // above); ATTESTATION_POLICY_DEFAULT / _TOKEN_TTL_SECONDS / _INTERVAL_SECONDS /
     // _REVEAL_REASONS are the policy of a Config API with none stored.
-    val attestationEnabled = when (System.getenv("ATTESTATION_ENABLED")?.trim()?.lowercase()) {
+    val attestationEnabled = when (com.example.pinvault.server.service.ServerEnv.get("ATTESTATION_ENABLED")?.trim()?.lowercase()) {
         null, "", "on", "true" -> true
         "off", "false" -> false
-        else -> error("ATTESTATION_ENABLED must be true or false (got '${System.getenv("ATTESTATION_ENABLED")}')")
+        else -> error("ATTESTATION_ENABLED must be true or false (got '${com.example.pinvault.server.service.ServerEnv.get("ATTESTATION_ENABLED")}')")
     }
-    val attestationKeyPolicy = com.example.pinvault.server.service.attestation.AttestationKeyPolicy.parse(System.getenv("ATTESTATION_KEY_POLICY"))
+    val attestationKeyPolicy = com.example.pinvault.server.service.attestation.AttestationKeyPolicy.parse(com.example.pinvault.server.service.ServerEnv.get("ATTESTATION_KEY_POLICY"))
     // enforce without the package + signer binding refuses to start (as for the other two attestation modes).
     com.example.pinvault.server.service.attestation.AttestationKeyPolicy.startupCheck(attestationKeyPolicy, userAuthAttestation)
         ?.let { System.err.println(it) }
     val attestationDefaults = com.example.pinvault.server.service.attestation.AttestationPolicyDefaults.fromEnv()
-    val attestationNonceTtl = (System.getenv("ATTESTATION_NONCE_TTL_SECONDS")?.toIntOrNull() ?: 120).coerceIn(10, 3600)
+    val attestationNonceTtl = (com.example.pinvault.server.service.ServerEnv.get("ATTESTATION_NONCE_TTL_SECONDS")?.toIntOrNull() ?: 120).coerceIn(10, 3600)
     // Attestations per source address and per device id per 10 minutes (0 = off).
-    val attestationRateLimit = (System.getenv("ATTESTATION_RATE_LIMIT")?.toIntOrNull() ?: 60).coerceAtLeast(0)
-    val attestationDeviceRateLimit = (System.getenv("ATTESTATION_DEVICE_RATE_LIMIT")?.toIntOrNull() ?: 30).coerceAtLeast(0)
+    val attestationRateLimit = (com.example.pinvault.server.service.ServerEnv.get("ATTESTATION_RATE_LIMIT")?.toIntOrNull() ?: 60).coerceAtLeast(0)
+    val attestationDeviceRateLimit = (com.example.pinvault.server.service.ServerEnv.get("ATTESTATION_DEVICE_RATE_LIMIT")?.toIntOrNull() ?: 30).coerceAtLeast(0)
     // Most registered attestation devices per Config API (0 = unlimited); a new device beyond it gets 503.
-    val attestationDeviceLimit = (System.getenv("ATTESTATION_DEVICE_LIMIT")?.toIntOrNull() ?: 100_000).coerceAtLeast(0)
+    val attestationDeviceLimit = (com.example.pinvault.server.service.ServerEnv.get("ATTESTATION_DEVICE_LIMIT")?.toIntOrNull() ?: 100_000).coerceAtLeast(0)
     // The mock hosts refuse requests without a valid PinVault-Token, as an app's own API would.
-    val mockHostRequireToken = when (System.getenv("MOCK_HOST_REQUIRE_TOKEN")?.trim()?.lowercase()) {
+    val mockHostRequireToken = when (com.example.pinvault.server.service.ServerEnv.get("MOCK_HOST_REQUIRE_TOKEN")?.trim()?.lowercase()) {
         null, "", "false", "off" -> false
         "true", "on" -> true
-        else -> error("MOCK_HOST_REQUIRE_TOKEN must be true or false (got '${System.getenv("MOCK_HOST_REQUIRE_TOKEN")}')")
+        else -> error("MOCK_HOST_REQUIRE_TOKEN must be true or false (got '${com.example.pinvault.server.service.ServerEnv.get("MOCK_HOST_REQUIRE_TOKEN")}')")
     }
     val attestationPolicyStore = com.example.pinvault.server.store.AttestationPolicyStore(db)
     val attestedDeviceStore = com.example.pinvault.server.store.AttestedDeviceStore(db)
@@ -811,13 +831,13 @@ fun main() {
     // send their reports, and remote admins reach the dashboard, without
     // anything crossing the network in the clear. The sample host then
     // publishes the plain HTTP port on this machine only.
-    val managementHttpsPort = System.getenv("MANAGEMENT_HTTPS_PORT")?.toIntOrNull()?.takeIf { it > 0 }
+    val managementHttpsPort = com.example.pinvault.server.service.ServerEnv.get("MANAGEMENT_HTTPS_PORT")?.toIntOrNull()?.takeIf { it > 0 }
     // Without admin keys the network is the only thing between a stranger and
     // the admin API: listen on this machine only, unless MANAGEMENT_BIND says
     // where else (a container needs 0.0.0.0 and a host-side publish on
     // 127.0.0.1). With keys the default stays every interface.
     val anonymousAdmin = adminRegistry.isEmpty
-    val managementBind = System.getenv("MANAGEMENT_BIND")?.trim()?.takeIf { it.isNotEmpty() }
+    val managementBind = com.example.pinvault.server.service.ServerEnv.get("MANAGEMENT_BIND")?.trim()?.takeIf { it.isNotEmpty() }
         ?: if (anonymousAdmin) "127.0.0.1" else "0.0.0.0"
     val bindsEverywhere = runCatching { java.net.InetAddress.getByName(managementBind).isAnyLocalAddress }.getOrDefault(false)
     val bindsLoopback = runCatching { java.net.InetAddress.getByName(managementBind).isLoopbackAddress }.getOrDefault(false)
@@ -891,8 +911,8 @@ fun main() {
         install(com.example.pinvault.server.plugin.AdminBrowserGuard) {
             requireLocalHost = anonymousAdmin
             listenerPorts = setOfNotNull(httpPort, managementHttpsPort)
-            allowedHosts = System.getenv("MANAGEMENT_ALLOWED_HOSTS").orEmpty().split(',').map { it.trim() }.filter { it.isNotEmpty() }.toSet()
-            allowedOrigins = System.getenv("ADMIN_ALLOWED_ORIGINS").orEmpty().split(',').map { it.trim() }.filter { it.isNotEmpty() }.toSet()
+            allowedHosts = com.example.pinvault.server.service.ServerEnv.get("MANAGEMENT_ALLOWED_HOSTS").orEmpty().split(',').map { it.trim() }.filter { it.isNotEmpty() }.toSet()
+            allowedOrigins = com.example.pinvault.server.service.ServerEnv.get("ADMIN_ALLOWED_ORIGINS").orEmpty().split(',').map { it.trim() }.filter { it.isNotEmpty() }.toSet()
         }
         install(com.example.pinvault.server.plugin.ApiKeyAuth) {
             failureLimit = adminAuthFailureLimit
@@ -944,7 +964,12 @@ fun main() {
 
             // The setup wizard: production checklist from the environment, and the
             // public values (pins, keys, ports) an app's PinVault config is made of.
-            setupRoutes(env = { System.getenv() }) {
+            // The setup wizard's settings: saved for the next start, applied by a restart.
+            serverSettingsRoutes(
+                com.example.pinvault.server.service.ServerSettingsStore.forDbPath(dbPath), auditLog,
+                restartSupervised = com.example.pinvault.server.service.ServerEnv.get("PINVAULT_RESTART_ON_EXIT")?.trim()?.lowercase() == "true"
+            )
+            setupRoutes(env = { com.example.pinvault.server.service.ServerEnv.all() }) {
                 com.example.pinvault.server.route.SetupFacts(
                     configApis = configApiManager.getAll().map { com.example.pinvault.server.route.SetupFacts.Api(it.id, it.port, it.mode, true) } +
                         configApiManager.getAllStopped().map { com.example.pinvault.server.route.SetupFacts.Api(it.id, it.port, it.mode, false) },
@@ -952,16 +977,16 @@ fun main() {
                     bootstrapPins = serverTlsPins.pins,
                     signingKeys = signingService.signers.map { it.publicKeyBase64 },
                     requiredSignatures = signingKeySetService.status().requiredSignatures,
-                    recoveryKeys = System.getenv("RECOVERY_PUBLIC_KEYS")?.split(',')?.map { it.trim() }?.filter { it.isNotEmpty() }.orEmpty(),
+                    recoveryKeys = com.example.pinvault.server.service.ServerEnv.get("RECOVERY_PUBLIC_KEYS")?.split(',')?.map { it.trim() }?.filter { it.isNotEmpty() }.orEmpty(),
                     clientCaPin = runCatching { certService.spkiSha256(certService.ensureClientCa().publicKey) }.getOrNull(),
                     recoveryPort = recoveryPort.takeIf { recoveryListener != null },
                     recoveryPins = serverCa?.pins.orEmpty(),
                     enrollmentMode = enrollmentMode,
                     attestationMode = enrollmentAttestationMode.name.lowercase(),
                     integrityMode = integrityMode.name.lowercase(),
-                    configTtlSeconds = System.getenv("CONFIG_TTL_SECONDS")?.toLongOrNull() ?: 86_400,
-                    publicHost = com.example.pinvault.server.route.parsePublicHost(System.getenv("SETUP_PUBLIC_HOST")),
-                    publicPorts = com.example.pinvault.server.route.parsePublicPorts(System.getenv("SETUP_PUBLIC_PORTS"))
+                    configTtlSeconds = com.example.pinvault.server.service.ServerEnv.get("CONFIG_TTL_SECONDS")?.toLongOrNull() ?: 86_400,
+                    publicHost = com.example.pinvault.server.route.parsePublicHost(com.example.pinvault.server.service.ServerEnv.get("SETUP_PUBLIC_HOST")),
+                    publicPorts = com.example.pinvault.server.route.parsePublicPorts(com.example.pinvault.server.service.ServerEnv.get("SETUP_PUBLIC_PORTS"))
                 )
             }
 

@@ -68,7 +68,7 @@ class AdminRegistry(
         private val NAME = Regex("^[A-Za-z0-9._-]{1,32}$")
         private val HEX64 = Regex("^[0-9a-fA-F]{64}$")
 
-        fun fromEnv(env: Map<String, String> = System.getenv()): AdminRegistry {
+        fun fromEnv(env: Map<String, String> = com.example.pinvault.server.service.ServerEnv.all()): AdminRegistry {
             val legacy = env["API_KEY"]?.takeIf { it.isNotBlank() }
             val lines = env["ADMIN_KEYS"]?.split(',').orEmpty() +
                 env["ADMIN_KEYS_FILE"]?.takeIf { it.isNotBlank() }?.let { File(it).readLines() }.orEmpty()
@@ -102,7 +102,7 @@ class ApiKeyAuthConfig {
     var registry: AdminRegistry = AdminRegistry.fromEnv()
 
     /** Default: ALLOW_ANONYMOUS_ADMIN=true. */
-    var allowAnonymous: Boolean = System.getenv("ALLOW_ANONYMOUS_ADMIN") == "true"
+    var allowAnonymous: Boolean = com.example.pinvault.server.service.ServerEnv.get("ALLOW_ANONYMOUS_ADMIN") == "true"
 
     /**
      * Whether this listener may serve admin routes without a key when there is
@@ -116,14 +116,14 @@ class ApiKeyAuthConfig {
      * Anonymous admin: socket peers allowed besides loopback (`ANONYMOUS_ADMIN_PEERS`,
      * comma-separated IPs or CIDRs — a container's gateway, e.g. `172.17.0.1`).
      */
-    var anonymousPeers: List<String> = System.getenv("ANONYMOUS_ADMIN_PEERS").orEmpty()
+    var anonymousPeers: List<String> = com.example.pinvault.server.service.ServerEnv.get("ANONYMOUS_ADMIN_PEERS").orEmpty()
         .split(',').map { it.trim() }.filter { it.isNotEmpty() }
 
     /**
      * Invalid admin keys a source address may send per 10 minutes before every
      * admin request from it gets 429 (`ADMIN_AUTH_FAILURE_LIMIT`, default 30; 0 = no limit).
      */
-    var failureLimit: Int = (System.getenv("ADMIN_AUTH_FAILURE_LIMIT")?.toIntOrNull() ?: DEFAULT_ADMIN_AUTH_FAILURE_LIMIT).coerceAtLeast(0)
+    var failureLimit: Int = (com.example.pinvault.server.service.ServerEnv.get("ADMIN_AUTH_FAILURE_LIMIT")?.toIntOrNull() ?: DEFAULT_ADMIN_AUTH_FAILURE_LIMIT).coerceAtLeast(0)
 
     /**
      * The counter behind [failureLimit]; null = one of this listener's own. Main.kt
@@ -447,7 +447,7 @@ private fun constantTimeEquals(a: String, b: String): Boolean {
  */
 object ApiKeyPolicy {
     /** The configured admin key, or null when `API_KEY` is unset (anonymous-admin dev mode). */
-    fun configuredKey(): String? = System.getenv("API_KEY")?.takeIf { it.isNotBlank() }
+    fun configuredKey(): String? = com.example.pinvault.server.service.ServerEnv.get("API_KEY")?.takeIf { it.isNotBlank() }
 
     /** Constant-time comparison of a presented key against the expected one. */
     fun matches(provided: String?, expected: String): Boolean =

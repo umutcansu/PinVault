@@ -137,7 +137,7 @@ class LiveCertificateGate(
     }
 
     companion object {
-        fun fromEnv(env: Map<String, String> = System.getenv()) = LiveCertificateGate(
+        fun fromEnv(env: Map<String, String> = com.example.pinvault.server.service.ServerEnv.all()) = LiveCertificateGate(
             mode = when (env["PIN_LIVE_CHECK"]?.trim()?.lowercase()) {
                 "warn" -> Mode.WARN
                 "enforce" -> Mode.ENFORCE

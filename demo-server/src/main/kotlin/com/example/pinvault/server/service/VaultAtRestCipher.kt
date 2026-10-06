@@ -126,7 +126,7 @@ class VaultAtRestCipher(
         /** Used when `VAULT_AT_REST_PASSWORD` is unset. It is in the source code: encryption with it is cosmetic. */
         const val DEMO_PASSWORD = "pinvault-demo-at-rest-key"
 
-        fun fromEnv(env: Map<String, String> = System.getenv()): VaultAtRestCipher {
+        fun fromEnv(env: Map<String, String> = com.example.pinvault.server.service.ServerEnv.all()): VaultAtRestCipher {
             val password = env["VAULT_AT_REST_PASSWORD"]?.takeIf { it.isNotBlank() } ?: run {
                 println(
                     "VaultAtRestCipher: WARNING — VAULT_AT_REST_PASSWORD not set; using a demo key. " +

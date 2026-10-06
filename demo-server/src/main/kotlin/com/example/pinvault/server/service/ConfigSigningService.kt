@@ -184,7 +184,7 @@ class ConfigSigningService(
          * `CONFIG_SIGNERS=local,command:kms` + `SIGNER_COMMAND_KMS=…` +
          * `SIGNER_PUBLIC_KEY_KMS=…`.
          */
-        fun fromEnv(defaultKeyFile: File, env: Map<String, String> = System.getenv()): ConfigSigningService {
+        fun fromEnv(defaultKeyFile: File, env: Map<String, String> = com.example.pinvault.server.service.ServerEnv.all()): ConfigSigningService {
             val specs = (env["CONFIG_SIGNERS"]?.takeIf { it.isNotBlank() } ?: "local")
                 .split(',').map { it.trim() }.filter { it.isNotEmpty() }
             val signers = specs.map { spec -> buildSigner(spec, defaultKeyFile, env) }

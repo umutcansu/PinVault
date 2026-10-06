@@ -26,7 +26,7 @@ class EnrollmentLimits(
         /** Off: nothing limited (tests that are about something else). */
         val NONE = EnrollmentLimits(null, null, null, null)
 
-        fun fromEnv(env: Map<String, String> = System.getenv()): EnrollmentLimits {
+        fun fromEnv(env: Map<String, String> = com.example.pinvault.server.service.ServerEnv.all()): EnrollmentLimits {
             fun limit(name: String, default: Int) = (env[name]?.toIntOrNull() ?: default).coerceAtLeast(0)
             fun identity(n: Int) = if (n > 0) RateLimiter(maxAttempts = n, windowMs = 10 * 60_000, overflow = RateLimiter.Overflow.FAIL_OPEN) else null
             val sources = limit("PICKUP_SOURCE_RATE_LIMIT", 600)
