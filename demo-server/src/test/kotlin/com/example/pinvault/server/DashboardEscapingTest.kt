@@ -55,6 +55,25 @@ class DashboardEscapingTest {
     }
 
     @Test
+    fun `the setup wizard escapes what the server sends and labels every check in both languages`() {
+        val setup = script("app-setup.js")
+        val unescaped = markupInterpolations(setup, Regex("\\b(c\\.(current|fix|id|level)|a\\.(id|mode|port)|e\\.message|code|env)\\b"))
+            // setupFixBox / setupEnvBox / setupLevelBadge / setupSelected build the markup and escape (checked below).
+            .filterNot { it.startsWith("esc(") || Regex("^setup[A-Z]\\w*\\(").containsMatchIn(it) }
+        assertTrue(unescaped.isEmpty(), "unescaped server values in the setup wizard: $unescaped")
+        // The helpers that build markup from those values escape them.
+        assertTrue("<pre class=\"json-box\">${'$'}{esc(fix)}</pre>" in setup && "${'$'}{esc(text)}" in setup && "${'$'}{esc(code)}" in setup)
+        // Every checklist item the server can send has a title and a reason, in TR and EN.
+        val ids = com.example.pinvault.server.service.SetupReport.checks(emptyMap()).map { it.id } +
+            com.example.pinvault.server.service.SetupReport.checks(mapOf("ALLOW_TEST_HOOKS" to "true")).map { it.id }
+        for (id in ids.toSet()) {
+            for (key in listOf("setup_$id", "setup_${id}_why")) {
+                assertTrue(Regex("\\b$key:").findAll(setup).count() == 2, "$key in TR and EN")
+            }
+        }
+    }
+
+    @Test
     fun `host and Config API names are escaped where they become markup`() {
         val hosts = script("app-hosts.js")
         val unescaped = markupInterpolations(hosts, Regex("\\b(p\\.hostname|host\\.hostname|apiId|configApiId|commonName|api\\.mode)\\b"))

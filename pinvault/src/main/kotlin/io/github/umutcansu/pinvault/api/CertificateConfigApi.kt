@@ -245,6 +245,34 @@ interface CertificateConfigApi {
     ): EnrollmentResult? = enrollWithCsr(token, deviceId, deviceAlias, deviceUid, csrDer, requestId)
 
     /**
+     * [enrollWithCsr] with an integrity token as well: what PinVault calls
+     * when the app set `integrityTokenProvider(...)` and the provider returned
+     * a token. [integrityToken] is that token (a Play Integrity token, or a
+     * RASP product's attestation), bound to this request by its request
+     * hash; see [io.github.umutcansu.pinvault.model.IntegrityTokenProvider]
+     * for how the hash is made. A backend that verifies it decodes the token
+     * with its issuer, recomputes the hash from the request and checks the
+     * verdict. To refuse, throw
+     * [io.github.umutcansu.pinvault.model.EnrollmentRefusedException] with
+     * `integrity_required` or `integrity_invalid` (reported to the app as
+     * [io.github.umutcansu.pinvault.model.EnrollmentRefusal.ATTESTATION_FAILED]).
+     *
+     * Default: drops the token and calls the seven-argument [enrollWithCsr].
+     * An implementation compiled against an earlier PinVault does not have
+     * this method; PinVault then calls the seven-argument one itself.
+     */
+    suspend fun enrollWithCsr(
+        token: String?,
+        deviceId: String?,
+        deviceAlias: String?,
+        deviceUid: String?,
+        csrDer: ByteArray,
+        requestId: String?,
+        attestationChain: List<String>,
+        integrityToken: String?
+    ): EnrollmentResult? = enrollWithCsr(token, deviceId, deviceAlias, deviceUid, csrDer, requestId, attestationChain)
+
+    /**
      * Renews the client certificate of a CSR-enrolled device.
      *
      * With [recoveryUrl] null the request goes over the block's own

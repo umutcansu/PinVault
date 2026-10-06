@@ -186,6 +186,19 @@ services:
       ATTESTATION_RATE_LIMIT: ${ATTESTATION_RATE_LIMIT:-}
       ATTESTATION_DEVICE_RATE_LIMIT: ${ATTESTATION_DEVICE_RATE_LIMIT:-}
       MOCK_HOST_REQUIRE_TOKEN: ${MOCK_HOST_REQUIRE_TOKEN:-}
+      # Kayıtta cihaz bütünlüğü (Play Integrity ya da bir RASP ürününün kararı):
+      # off | warn | enforce (boş = off). Doğrulayıcı imajda:
+      # /opt/pinvault/scripts/play-integrity-verify.sh. Servis hesabı dosyasını
+      # data/ altına koyup yolunu INTEGRITY_PLAY_SERVICE_ACCOUNT_FILE'a yaz.
+      INTEGRITY_VERIFICATION: ${INTEGRITY_VERIFICATION:-}
+      INTEGRITY_VERIFIER_COMMAND: ${INTEGRITY_VERIFIER_COMMAND:-}
+      INTEGRITY_VERIFIER_TIMEOUT_MS: ${INTEGRITY_VERIFIER_TIMEOUT_MS:-}
+      INTEGRITY_PASS_ENV: ${INTEGRITY_PASS_ENV:-}
+      INTEGRITY_PLAY_PACKAGE: ${INTEGRITY_PLAY_PACKAGE:-}
+      INTEGRITY_PLAY_SERVICE_ACCOUNT_FILE: ${INTEGRITY_PLAY_SERVICE_ACCOUNT_FILE:-}
+      INTEGRITY_PLAY_DEVICE_VERDICT: ${INTEGRITY_PLAY_DEVICE_VERDICT:-}
+      INTEGRITY_PLAY_REQUIRE_LICENSED: ${INTEGRITY_PLAY_REQUIRE_LICENSED:-}
+      INTEGRITY_PLAY_MAX_AGE_SECONDS: ${INTEGRITY_PLAY_MAX_AGE_SECONDS:-}
       # Kötüye kullanım sınırları (boş = sunucu varsayılanı).
       # Bir adresin 10 dakikada toplayabileceği ret sayısı (varsayılan 300). DEMO: 0
       # (sınır yok): Docker Desktop arkasında bütün cihazlar tek adresten görünür ve

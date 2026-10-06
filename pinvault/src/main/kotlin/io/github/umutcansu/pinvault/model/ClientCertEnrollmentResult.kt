@@ -100,6 +100,14 @@ enum class EnrollmentRefusal {
      * [ClientCertEnrollmentResult.Refused.message] carries the server's
      * reason — an emulator, an unlocked bootloader, another app). Nothing
      * the user can retry; the token is not spent.
+     *
+     * Also the server's answer to an integrity verdict
+     * (`integrityTokenProvider`): `integrity_required` when the request
+     * carried no integrity token, `integrity_invalid` when the verdict was
+     * refused (a rooted device, an app not installed from Play, a token for
+     * another request). [ClientCertEnrollmentResult.Refused.serverError]
+     * tells the two kinds apart. An integrity refusal can be transient (the
+     * token service was unreachable): trying again later may work.
      */
     ATTESTATION_FAILED,
 
@@ -144,7 +152,8 @@ class EnrollmentRefusedException(
             serverError == "enrollment_request_expired" -> EnrollmentRefusal.EXPIRED
             // The server issues this enrollment only over a CSR.
             serverError == "csr_required" -> EnrollmentRefusal.CSR_REQUIRED
-            serverError == "attestation_required" || serverError == "attestation_invalid" ->
+            serverError == "attestation_required" || serverError == "attestation_invalid" ||
+                serverError == "integrity_required" || serverError == "integrity_invalid" ->
                 EnrollmentRefusal.ATTESTATION_FAILED
             // The reference server answers a token-less enrollment in token mode
             // with 403 and a sentence in `error` ("Token required for enrollment…").

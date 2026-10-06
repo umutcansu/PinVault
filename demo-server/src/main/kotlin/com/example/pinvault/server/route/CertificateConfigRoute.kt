@@ -158,6 +158,8 @@ fun Route.certificateConfigRoutes(
     enrollRefusals: com.example.pinvault.server.service.AuthFailureRecorder? = null,
     /** Android Key Attestation of CSR enrollment keys (`ENROLLMENT_ATTESTATION`); null = not checked. */
     enrollmentAttestation: com.example.pinvault.server.service.EnrollmentAttestation? = null,
+    /** Integrity verdict of the enrolling device (`INTEGRITY_VERIFICATION`); null = not checked. */
+    enrollmentIntegrity: com.example.pinvault.server.service.EnrollmentIntegrity? = null,
     /**
      * `ENROLLMENT_P12`: whether an enrollment without a CSR gets a server-made
      * key (P12). False → 403 `csr_required` before anything is spent.
@@ -367,7 +369,8 @@ fun Route.certificateConfigRoutes(
             // spent, when server-made keys are off (ENROLLMENT_P12=off) or every
             // key must be hardware-attested (ENROLLMENT_ATTESTATION=enforce: a
             // key made here cannot be). The library reports CSR_REQUIRED.
-            if (csr == null && (!p12Enrollment || enrollmentAttestation?.refusesServerMadeKeys == true)) {
+            if (csr == null && (!p12Enrollment || enrollmentAttestation?.refusesServerMadeKeys == true ||
+                    enrollmentIntegrity?.refusesServerMadeKeys == true)) {
                 enrollRefused(remote, clientId, "Enrollment of $clientId refused: no CSR, and this server issues no server-made keys", tokenValid)
                 return@post call.respondText(CSR_REQUIRED_NO_P12, ContentType.Application.Json, HttpStatusCode.Forbidden)
             }
@@ -382,6 +385,15 @@ fun Route.certificateConfigRoutes(
                 return@post call.respondText(attestationOutcome.body(), ContentType.Application.Json, HttpStatusCode.Forbidden)
             }
             val attestationRecord = (attestationOutcome as? com.example.pinvault.server.service.EnrollmentAttestation.Outcome.Proceed)?.record
+            // The device's integrity verdict (INTEGRITY_VERIFICATION), bound to this
+            // CSR and device id: also before the token is spent.
+            val integrityOutcome = if (csr != null) enrollmentIntegrity?.check(json) else null
+            if (integrityOutcome is com.example.pinvault.server.service.EnrollmentIntegrity.Outcome.Refuse) {
+                enrollRefused(remote, clientId, authenticated = tokenValid, summary = "Enrollment of $clientId refused under INTEGRITY_VERIFICATION=enforce: " +
+                    (integrityOutcome.reason ?: integrityOutcome.error))
+                return@post call.respondText(integrityOutcome.body(), ContentType.Application.Json, HttpStatusCode.Forbidden)
+            }
+            val integrityVerdict = (integrityOutcome as? com.example.pinvault.server.service.EnrollmentIntegrity.Outcome.Proceed)
             // Whether the device id is more than this request's word (V20): the
             // client id itself, a token an administrator bound to it, or a passing
             // attestation (with the app binding) over it. Only a proven device id
@@ -453,7 +465,7 @@ fun Route.certificateConfigRoutes(
                 clientIdentityStore.setCertPem(clientId, issued.chainPem.first())
                 val anchorRemoved = retireLegacyAnchor(certService, clientIdentityStore, clientId, keep = issued.spkiSha256, now = now)
                 audit?.record("client_cert_issued", "Certificate issued to $clientId over its own key (valid until ${issued.notAfter}; " +
-                        "${attestationNote(attestationRecord)})",
+                        "${attestationNote(attestationRecord)}" + (integrityVerdict?.takeIf { it.verdict != null }?.let { "; ${it.note}" } ?: "") + ")",
                     configApiId, clientId, actor = clientId, ip = remote,
                     detail = kotlinx.serialization.json.buildJsonObject {
                         put("format", kotlinx.serialization.json.JsonPrimitive("csr"))
@@ -465,6 +477,10 @@ fun Route.certificateConfigRoutes(
                             put("attested", kotlinx.serialization.json.JsonPrimitive(a.attested))
                             a.reason?.let { put("attestationReason", kotlinx.serialization.json.JsonPrimitive(it)) }
                             a.securityLevel?.let { put("securityLevel", kotlinx.serialization.json.JsonPrimitive(it)) }
+                        }
+                        integrityVerdict?.verdict?.let { v ->
+                            put("integrityPassed", kotlinx.serialization.json.JsonPrimitive(v.passed))
+                            v.reason?.let { put("integrityReason", kotlinx.serialization.json.JsonPrimitive(it)) }
                         }
                         if (anchorRemoved) put("legacyAnchorRemoved", kotlinx.serialization.json.JsonPrimitive(true))
                     })

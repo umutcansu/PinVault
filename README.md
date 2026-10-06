@@ -35,6 +35,9 @@ Dynamic SSL certificate pinning library for Android. Manage pins remotely, suppo
 - **Offline lifetime** *(2.2)* — `maxOfflineAge` stops a device that never comes back online from reading cached files for ever
 - **Issuer pins** *(2.1)* — pin your CA's key and survive leaf renewals
 - **Optional signing layers** *(2.1)* — backup keys, m-of-n signatures, signing-key rotation/revocation over the air ([SECURE_OPERATIONS.md](SECURE_OPERATIONS.md))
+- **Environment guard** *(unreleased)* — your root / hooking detection's verdict is asked before init, enrollment, downloads and unlocks ([Bypass protection](#10-bypass-protection-unreleased))
+- **Integrity verdicts at enrollment** *(unreleased)* — a Play Integrity token bound to the request goes with every enrollment; the server decides
+- **Setup wizard** *(unreleased)* — the reference server's dashboard lists what a production server still lacks and writes the app's PinVault configuration from the server's own pins and keys
 
 ## Quick Start
 
@@ -1686,6 +1689,16 @@ its configs.
 | `HOST_CLIENT_CERT_REQUIRE_GRANT` | unset | *(next release)* `true`: a host's client certificate — one private key the whole fleet shares — is handed only to devices the device host ACL names; a scope with no ACL serves it to nobody. Unset: a scope without an ACL serves it to every enrolled device (so a device enrolled with a shared enrollment code, or a phone compromised before its revocation, could collect every host's key). The production profile sets `true`. |
 | `CLIENT_DEVICES_MAX` | `20000` | *(2.2)* Most rows the device list (connection reports) keeps; the oldest go first. |
 
+| `INTEGRITY_VERIFICATION` | `off` | *(unreleased)* `off` \| `warn` \| `enforce`: the `integrityToken` of an enrollment (see [Bypass protection](#10-bypass-protection-unreleased)). `enforce`: `403 integrity_required` / `integrity_invalid` before anything is spent, and no server-made keys. Needs `INTEGRITY_VERIFIER_COMMAND`. |
+| `INTEGRITY_VERIFIER_COMMAND` | unset | *(unreleased)* Decodes the token: stdin `{"token","requestHash","deviceId"}`, stdout `{"passed","reason","summary"}`. For Play Integrity: `scripts/play-integrity-verify.sh` with `INTEGRITY_PLAY_PACKAGE` and `INTEGRITY_PLAY_SERVICE_ACCOUNT_FILE`. Gets `PATH`, `HOME`, `LANG`, `TZ`, `INTEGRITY_*` and `INTEGRITY_PASS_ENV`, never a server secret. `INTEGRITY_VERIFIER_TIMEOUT_MS` (default 10000). |
+
+**Setup wizard** *(unreleased)*. The dashboard's *Setup Wizard* lists what a
+production server still lacks — admin keys, approvals, signers, attestation,
+integrity, demo secrets and the rest — with the `.env` lines to change (it
+reads the environment, never writes it, and never shows a secret), then
+writes the app's PinVault configuration in Kotlin or Java from this server's
+own bootstrap pins, signing keys, client CA pin and ports.
+
 The optional signing and governance layers — named admins (`ADMIN_KEYS`),
 two-person approval (`PIN_CHANGE_APPROVALS`), live-certificate check
 (`PIN_LIVE_CHECK`), webhooks (`NOTIFY_WEBHOOK_URL`), HSM/KMS signers
@@ -2148,6 +2161,70 @@ the key is made without the requirement and a warning is logged. Call
 `init` (or the config overloads of `enroll` / `isEnrolled`) with this config
 before anything else touches PinVault, since the first use creates the keys.
 
+### 10. Bypass protection *(unreleased)*
+
+Pinning stops an attacker on the network. On a device the attacker controls
+(root, Frida, Xposed, a repackaged app) code inside the app can switch the
+pin check off. PinVault answers that in three layers:
+
+1. **Your detection, asked at the right moments.** PinVault detects nothing
+   itself; wire your RASP product's or RootBeer's verdict into
+   `environmentGuard`. It is asked before every `GuardedOperation` and a `false`
+   refuses that operation (`Failed` with `UntrustedEnvironmentException`;
+   nothing sent, no token spent). A guard that throws refuses.
+
+   ```kotlin
+   PinVaultConfig.Builder()
+       .environmentGuard { operation ->
+           // Keep pinned traffic working; no enrollment, downloads or unlocks on a compromised device.
+           operation == GuardedOperation.INIT || !shield.isCompromised()
+       }
+   ```
+
+   | Operation | Asked before | Refused as |
+   |---|---|---|
+   | `INIT` | `init` | `InitResult.Failed` |
+   | `ENROLL` | every enroll / autoEnroll / checkPendingEnrollment, the pending pick-up at init and on updates | `ClientCertEnrollmentResult.Failed` |
+   | `FETCH_FILE` | `fetchFile`, `syncAllFiles`, the periodic sync | `VaultFileResult.Failed` (reported to the server like any failed fetch) |
+   | `UNLOCK_FILE` | `unlockFile`, before the prompt | `VaultFileUnlockResult.Failed` |
+
+   `loadFile` is not guarded: keep files that matter behind `userAuth`, so
+   their content is only handed out by `unlockFile`.
+
+2. **A verdict the device cannot forge, judged by the server.** A check inside
+   the app can be hooked too. `integrityTokenProvider` sends a Google Play
+   Integrity token (or a RASP product's attestation) with every enrollment,
+   bound to that request's CSR and device id. The reference server decodes it
+   with `INTEGRITY_VERIFIER_COMMAND` (`scripts/play-integrity-verify.sh`) and,
+   under `INTEGRITY_VERIFICATION=enforce`, issues no certificate to a rooted
+   device or an app that did not come from Play. A refusal is
+   `EnrollmentRefusal.ATTESTATION_FAILED` with `serverError`
+   `integrity_required` or `integrity_invalid`.
+
+   ```kotlin
+   val integrity = IntegrityManagerFactory.createStandard(context)
+   // prepare once at app start (Tasks.await on a background thread, or a callback)
+   val provider = Tasks.await(integrity.prepareIntegrityToken(
+       PrepareIntegrityTokenRequest.builder().setCloudProjectNumber(CLOUD_PROJECT_NUMBER).build()))
+
+   PinVaultConfig.Builder()
+       .integrityTokenProvider { requestHash ->   // called on a background thread
+           Tasks.await(
+               provider.request(StandardIntegrityTokenRequest.builder().setRequestHash(requestHash).build()),
+               10, TimeUnit.SECONDS
+           ).token()
+       }
+   ```
+
+   The request hash is `base64url(SHA-256("pinvault-integrity:v1:" + deviceId + ":" + base64url(SHA-256(csrDer))))`
+   (unpadded, 43 characters), where `deviceId` is the request's `deviceUid`,
+   else its `deviceId`. A server built from scratch recomputes it from the
+   request ([SERVER_IMPLEMENTATION_GUIDE.md](SERVER_IMPLEMENTATION_GUIDE.md)).
+
+3. **Less to take when it is bypassed.** Keys stay in the Keystore and are
+   attested at enrollment (§8), files can need the screen lock (§9,
+   `userAuth`), a revoked device loses its files, and configs expire.
+
 ### What PinVault does NOT do
 - **Hardened, self-checking probes.** The attestation report *(next release)*
   does look for root, emulators, debuggers, Frida/Xposed-style hooking,
@@ -2159,6 +2236,10 @@ before anything else touches PinVault, since the first use creates the keys.
   (`userAuth` vault files with `encryption(USER_AUTH)` stay sealed on a
   rooted phone until the user unlocks them, but what the app then reads is
   in its memory.)
+- **A detector of its own beyond those probes** — a RASP product or RootBeer
+  can veto init, enrollment, downloads and unlocks through `environmentGuard`
+  *(next release)*, and `integrityTokenProvider` sends a Play Integrity token
+  with every enrollment for the server to enforce
 - **Code obfuscation** — enable R8/ProGuard in your app (`isMinifyEnabled = true`)
 - **Network anomaly detection** — pair with your APM/SIEM
 - **A verdict without Google or a server of your own** — the device alone

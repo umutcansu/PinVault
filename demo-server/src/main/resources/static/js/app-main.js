@@ -97,7 +97,9 @@ const _actionHandlers = {
   refreshAttestationView, refreshAttestationDevices, attestLevelChanged, applyAttestationPreset,
   saveAttestationPolicy, setAttestResultFilter, searchAttestDevices, toggleAttestRow,
   showAttestationDevice, saveAttestDevice, forgetAttestDevice,
-  loadTokenSecrets, toggleTokenSecretReveal, copyTokenSecret, rotateTokenSecret, deleteTokenSecret
+  loadTokenSecrets, toggleTokenSecretReveal, copyTokenSecret, rotateTokenSecret, deleteTokenSecret,
+  // Setup wizard (checklist and generated app configuration)
+  renderSetupSection, setSetupStep, setSetupOpt, copySetupText
 };
 
 function _collectArgs(el) {

@@ -233,6 +233,7 @@ object PinVault {
 
     /** Initializes the library with a [PinVaultConfig] (suspend version). */
     suspend fun init(context: Context, config: PinVaultConfig): InitResult {
+        initRefusal(config)?.let { return it }
         pinManagerConfig = config
         return when (val setUp = setupSafely(context, config, null)) {
             is SetUp.Failed -> setUp.result
@@ -245,6 +246,7 @@ object PinVault {
      * Initializes the library with a [PinVaultConfig] (callback version).
      */
     fun init(context: Context, config: PinVaultConfig, onResult: (InitResult) -> Unit) {
+        initRefusal(config)?.let { return onResult(it) }
         pinManagerConfig = config
         when (val setUp = setupSafely(context, config, null)) {
             is SetUp.Failed -> return onResult(setUp.result)
@@ -277,6 +279,7 @@ object PinVault {
      * integrity check on the stored config).
      */
     suspend fun init(context: Context, config: PinVaultConfig, configApi: CertificateConfigApi): InitResult {
+        initRefusal(config)?.let { return it }
         pinManagerConfig = config
         return when (val setUp = setupSafely(context, config, configApi)) {
             is SetUp.Failed -> setUp.result
@@ -287,6 +290,7 @@ object PinVault {
 
     /** Callback variant of [init] with a custom [CertificateConfigApi]. */
     fun init(context: Context, config: PinVaultConfig, configApi: CertificateConfigApi, onResult: (InitResult) -> Unit) {
+        initRefusal(config)?.let { return onResult(it) }
         pinManagerConfig = config
         when (val setUp = setupSafely(context, config, configApi)) {
             is SetUp.Failed -> return onResult(setUp.result)
@@ -302,6 +306,38 @@ object PinVault {
     // ── Init (legacy — backward compatible) ───────────────────────────────
 
     // ── Internal setup ────────────────────────────────────────────────────
+
+    /**
+     * The refusal of [config]'s [io.github.umutcansu.pinvault.model.EnvironmentGuard]
+     * for [operation], or null when there is no guard or it allows it. A
+     * guard that throws refuses (fail closed). Nothing is changed either way.
+     */
+    internal fun environmentRefusal(
+        config: PinVaultConfig?,
+        operation: io.github.umutcansu.pinvault.model.GuardedOperation
+    ): io.github.umutcansu.pinvault.model.UntrustedEnvironmentException? {
+        val guard = config?.environmentGuard ?: return null
+        val allowed = try {
+            guard.allows(operation)
+        } catch (e: Exception) {
+            Timber.e(e, "Environment guard threw for %s — refusing", operation)
+            return io.github.umutcansu.pinvault.model.UntrustedEnvironmentException(
+                operation, "The app's environment guard failed for $operation (${e.javaClass.simpleName}); refused", e
+            )
+        }
+        if (allowed) return null
+        Timber.w("Environment guard refused %s", operation)
+        return io.github.umutcansu.pinvault.model.UntrustedEnvironmentException(operation)
+    }
+
+    /** [InitResult.Failed] when the guard refuses init; the library's state is left as it was. */
+    private fun initRefusal(config: PinVaultConfig): InitResult.Failed? =
+        environmentRefusal(config, io.github.umutcansu.pinvault.model.GuardedOperation.INIT)
+            ?.let { InitResult.Failed(it.message ?: "Refused by the environment guard", it) }
+
+    private fun enrollRefusal(config: PinVaultConfig?): ClientCertEnrollmentResult.Failed? =
+        environmentRefusal(config, io.github.umutcansu.pinvault.model.GuardedOperation.ENROLL)
+            ?.let { ClientCertEnrollmentResult.Failed(it.message ?: "Refused by the environment guard", it) }
 
     private sealed class SetUp {
         object Done : SetUp()
@@ -997,9 +1033,9 @@ object PinVault {
         // SECURITY NOTE (M-02): ANDROID_ID is a soft identifier. On rooted
         // devices it can be spoofed; on multi-user devices it is per-user.
         // Treat the resulting enrollment as a convenience credential, not
-        // a hardware-attested identity. For high-assurance use cases, gate
-        // enrollment behind Play Integrity / SafetyNet attestation before
-        // calling this method.
+        // a hardware-attested identity. For high-assurance use cases, send a
+        // Play Integrity verdict with integrityTokenProvider and have the
+        // server enforce it (INTEGRITY_VERIFICATION=enforce).
         val androidId = io.github.umutcansu.pinvault.internal.DeviceIdentity.androidId(context)
         val deviceId = androidId ?: "unknown-device"
         // The id itself stays out of the log: it identifies the device.
@@ -1170,12 +1206,17 @@ object PinVault {
         when (val result = enrollInternal(appContext, token = null, deviceId = null, label = null)) {
             is ClientCertEnrollmentResult.Enrolled -> Timber.i("Enrollment approved — client certificate stored [%s]", certLabel)
             is ClientCertEnrollmentResult.Pending -> Timber.d("Enrollment still waits for approval [%s]", certLabel)
-            else -> Timber.w("Enrollment waiting for approval ended: %s", result)
+            else -> if ((result as? ClientCertEnrollmentResult.Failed)?.cause is io.github.umutcansu.pinvault.model.UntrustedEnvironmentException) {
+                Timber.w("Pending enrollment not checked: the environment guard refused it [%s]", certLabel)
+            } else {
+                Timber.w("Enrollment waiting for approval ended: %s", result)
+            }
         }
     }
 
     private suspend fun enrollBeforeInit(context: Context, config: PinVaultConfig, token: String?, deviceId: String?): ClientCertEnrollmentResult {
         if (initialized) return enrollInternal(context, token, deviceId, label = null)
+        enrollRefusal(config)?.let { return it }
         applyKeystoreOptions(config)
         val block = config.defaultConfigApi ?: return NO_CONFIG_API_BLOCK
         val certLabel = block.clientCertLabel
@@ -1204,6 +1245,7 @@ object PinVault {
         val config = pinManagerConfig ?: return ClientCertEnrollmentResult.Failed(
             "PinVault is not initialized: call init first, or enroll with the config before init"
         )
+        enrollRefusal(config)?.let { return it }
         val defaultBlock = config.defaultConfigApi ?: return NO_CONFIG_API_BLOCK
         val certLabel = label ?: defaultBlock.clientCertLabel
 
@@ -1294,7 +1336,8 @@ object PinVault {
         // A device told to wait for approval asks again by its request id (see EnrollmentRequests).
         val result = io.github.umutcansu.pinvault.internal.EnrollmentRequests.send(
             api, certStore, key, certLabel, token, deviceId, identity?.first, identity?.second,
-            allowServerGeneratedKey = block.allowServerGeneratedKey
+            allowServerGeneratedKey = block.allowServerGeneratedKey,
+            integrity = config.integrityTokenProvider
         ) {
             try {
                 key.ensureKeyPair(challenge)
@@ -1757,6 +1800,9 @@ object PinVault {
         prompt: VaultFileUnlockPrompt
     ): VaultFileUnlockResult {
         checkInitialized()
+        // Before the prompt: on a device the app does not trust, the content never reaches memory.
+        environmentRefusal(pinManagerConfig, io.github.umutcansu.pinvault.model.GuardedOperation.UNLOCK_FILE)
+            ?.let { return VaultFileUnlockResult.Failed(key, it.message ?: "Refused by the environment guard", it) }
         val storage = getStorageFor(key)
         val file = pinManagerConfig?.vaultFiles?.get(key)
         val guard = vaultGuard
@@ -1883,7 +1929,11 @@ object PinVault {
         // V2: delegate the actual fetch + decrypt to VaultFileRouter, then
         // send the distribution report ourselves (has to include deviceAlias
         // / manufacturer / model which live on PinVaultConfig).
-        val result = vaultRouter.fetchFile(fileConfig)
+        // A refusal by the app's environment guard downloads nothing and is
+        // reported like any failed fetch (the server sees why).
+        val result = environmentRefusal(pinManagerConfig, io.github.umutcansu.pinvault.model.GuardedOperation.FETCH_FILE)
+            ?.let { VaultFileResult.Failed(key, it.message ?: "Refused by the environment guard", it) }
+            ?: vaultRouter.fetchFile(fileConfig)
 
         try {
             kotlinx.coroutines.withTimeout(5000) { reportFileDownload(key, fileConfig, result) }

@@ -130,8 +130,11 @@ class CommandSigner(
                 "VAULT_AT_REST_PASSWORD.*|KEYSTORE_PASSWORD.*|CLIENT_P12_PASSWORD.*|RECOVERY_.*)$"
         )
 
+        /** Whether [name] is one of this server's own secrets (never passed to an external command). */
+        internal fun isServerSecret(name: String): Boolean = SERVER_SECRET.matches(name)
+
         /** Whether the environment variable [name] reaches a signer command. */
         internal fun passesToSigner(name: String, passEnv: Set<String> = emptySet()): Boolean =
-            name in PASSED_ENV || name.startsWith("SIGNER_") || (name in passEnv && !SERVER_SECRET.matches(name))
+            name in PASSED_ENV || name.startsWith("SIGNER_") || (name in passEnv && !isServerSecret(name))
     }
 }

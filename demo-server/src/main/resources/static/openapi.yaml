@@ -1022,6 +1022,69 @@ paths:
         '401': { $ref: '#/components/responses/MissingApiKey' }
         '403': { $ref: '#/components/responses/InvalidApiKey' }
 
+  /api/v1/setup:
+    get:
+      tags: [server-tls]
+      operationId: getSetup
+      summary: Setup wizard — production checklist and the app's public values
+      description: |
+        What the dashboard's setup wizard shows. `checks` is the production checklist
+        read from the environment: each item has an `id`, a `level` (`ok`, `warn`,
+        `fail`), what the server runs with now (`current`, words only — never a
+        secret) and, when it is not `ok`, the `.env` line(s) that fix it (`fix`). The
+        server never changes its environment through this endpoint.
+
+        The rest are the public values an app's PinVault configuration is made of:
+        Config APIs (`id`, `port`, `mode`, `running`), the bootstrap pins and the host
+        their certificate is issued for, the config signing keys and how many a
+        config carries, `RECOVERY_PUBLIC_KEYS`, the client CA's SPKI pin, the recovery
+        door's port and CA pins, and the enrollment, attestation and integrity modes.
+
+        Registered on: **management** only.
+      security:
+        - ApiKeyAuth: []
+      x-registered-on: management
+      responses:
+        '200':
+          description: Checklist and public setup values.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  checks:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        id: { type: string, example: integrity }
+                        level: { type: string, enum: [ok, warn, fail] }
+                        current: { type: string, example: "warn, no verifier" }
+                        fix: { type: string, example: "INTEGRITY_VERIFICATION=enforce" }
+                  configApis:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        id: { type: string }
+                        port: { type: integer }
+                        mode: { type: string, enum: [tls, mtls] }
+                        running: { type: boolean }
+                  bootstrapHost: { type: string }
+                  bootstrapPins: { type: array, items: { type: string } }
+                  signingKeys: { type: array, items: { type: string } }
+                  requiredSignatures: { type: integer }
+                  recoveryKeys: { type: array, items: { type: string } }
+                  clientCaPin: { type: string }
+                  recoveryPort: { type: integer }
+                  recoveryPins: { type: array, items: { type: string } }
+                  enrollmentMode: { type: string, enum: [token, open] }
+                  attestationMode: { type: string, enum: [off, warn, enforce] }
+                  integrityMode: { type: string, enum: [off, warn, enforce] }
+                  configTtlSeconds: { type: integer }
+        '401': { $ref: '#/components/responses/MissingApiKey' }
+        '403': { $ref: '#/components/responses/InvalidApiKey' }
+
   /api/v1/server-tls-pins/regenerate:
     post:
       tags: [server-tls]
@@ -3033,6 +3096,14 @@ paths:
                     CSR's key, Base64 DER, leaf first; the key made with the challenge
                     SHA-256(UTF-8 `pinvault-identity-key:v1:` + `deviceUid`, or `deviceId` when no
                     `deviceUid` is sent). Checked per `ENROLLMENT_ATTESTATION`.
+                integrityToken:
+                  type: string
+                  description: >
+                    Config API ports only, with a `csr`. An integrity token (Google Play
+                    Integrity, or a RASP product's attestation) requested with the request hash
+                    base64url(SHA-256(UTF-8 `pinvault-integrity:v1:` + `deviceUid` (else
+                    `deviceId`, else empty) + `:` + base64url(SHA-256(csr DER)))), unpadded.
+                    Checked per `INTEGRITY_VERIFICATION` by `INTEGRITY_VERIFIER_COMMAND`.
       responses:
         '200':
           description: >
@@ -3102,8 +3173,11 @@ paths:
             or one that fails (`attestation_invalid`, with `reason`: `challenge_mismatch`,
             `key_mismatch`, `purpose_not_sign`, `software_attestation`, `device_unlocked`,
             `boot_not_verified`, `package_not_allowed`, `signer_not_allowed`,
-            `certificate_revoked`, `revocation_list_stale`, `patch_level_too_old`, …). Nothing
-            is spent by any of these.
+            `certificate_revoked`, `revocation_list_stale`, `patch_level_too_old`, …). Under
+            `INTEGRITY_VERIFICATION=enforce`: no `integrityToken` (`integrity_required`), or a
+            verdict that fails (`integrity_invalid`, with `reason`: `request_hash_mismatch`,
+            `device_integrity`, `app_not_recognized`, `verifier_error`, …), and no server-made
+            key (`csr_required`). Nothing is spent by any of these.
           content:
             application/json:
               schema: { $ref: '#/components/schemas/Error' }

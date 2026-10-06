@@ -353,6 +353,40 @@ other. For that key also check that user authentication is required, and how: th
 reference server refuses a time-bound key (`authTimeout` set) from Android 11 or newer,
 and with `USER_AUTH_REQUIRE_PER_USE=true` from every version.
 
+**Integrity verdict (library and reference server, unreleased).** Key attestation says
+where the key was made. It does not say whether the phone is rooted or the app hooked
+right now. An app that sets `integrityTokenProvider` sends one more field with every CSR
+enrollment request (the first request and each pickup by `requestId`):
+
+- `integrityToken` — a string the app got from Google Play Integrity (or a RASP product),
+  requested with `requestHash` (standard request) or `nonce` (classic request) set to
+  ```
+  base64url(SHA-256("pinvault-integrity:v1:" + deviceId + ":" + base64url(SHA-256(csrDer))))
+  ```
+  unpadded (43 characters). `csrDer` is the decoded `csr` field; `deviceId` is the
+  request's `deviceUid`, else its `deviceId`, else empty. Test vector: `deviceId`
+  `a1b2c3d4e5f60718` and `csrDer` the ten bytes `00 01 … 09` give
+  `rFm1yo7zjKdHsevPadQ1stM-oQ8aG4umNk-CIGhG0ds`.
+- To rely on it: decode the token with its issuer (Play Integrity:
+  `decodeIntegrityToken`, never on the device), recompute the hash **from the request you
+  received** and compare it with the decoded `requestHash` / `nonce`, then check the
+  package name, the token's age, `appRecognitionVerdict` (`PLAY_RECOGNIZED`) and the
+  device labels you require (`MEETS_DEVICE_INTEGRITY` or stronger).
+- Refuse with `403 {"error":"integrity_required"}` when a token is needed and missing, or
+  `403 {"error":"integrity_invalid","reason":"<why>"}`; a verifier that cannot answer is a
+  refusal, never a pass. Do not spend the token. The app sees
+  `EnrollmentRefusal.ATTESTATION_FAILED` with your `error` in `serverError`; it does not
+  make a new key for it.
+- Check it next to the key attestation: after the cheap refusals, **before** you spend
+  anything. A request without a CSR cannot carry a bound token: refuse server-made keys
+  (`csr_required`) where you require one.
+
+The reference server does this under `INTEGRITY_VERIFICATION=off|warn|enforce` (default
+`off`) with `INTEGRITY_VERIFIER_COMMAND`, which gets `{"token","requestHash","deviceId"}`
+on stdin and prints `{"passed","reason","summary"}`; `scripts/play-integrity-verify.sh`
+is that command for Play Integrity. It verifies at a waiting request's creation only; the
+pickups are tied to the request's key.
+
 **A key the server makes (P12) — only for apps that ask for it.** Library versions before
 2.1, and blocks that call `allowServerGeneratedKey()` on a device whose Keystore cannot
 make a key, send no `csr`. Answer `403 {"error":"csr_required"}` unless you decide to
@@ -835,6 +869,7 @@ All paths are relative to `configUrl`. Leading `/` is stripped.
 - [ ] HTTPS with valid TLS (self-signed OK)
 - [ ] `POST /api/v1/client-certs/enroll` issues over the device's CSR and answers leaf + CA certificate as `pem-chain` (if using mTLS); a request without a CSR gets `403 csr_required`
 - [ ] The enrollment key's `attestationChain` is verified, bound to your app's package and signing certificate (challenge `SHA-256("pinvault-identity-key:v1:" + deviceUid)`)
+- [ ] An `integrityToken`, where required, is decoded by its issuer and its request hash recomputed from the request (`pinvault-integrity:v1:`), before anything is spent
 - [ ] The verification code next to a waiting request is the 16-character, 80-bit one
 - [ ] A claimed `deviceUid` is trusted only when proven (token bound to it, equal to the client id, or attested)
 - [ ] Pin configs follow the library's rules before you sign them (hosts unique ignoring case, at most 2000 hosts, 2–32 pins each, LDH names with at most one leading `*.`): one bad entry makes every device refuse the whole config

@@ -377,7 +377,7 @@ internal class DefaultCertificateConfigApi(
         deviceId: String?,
         deviceAlias: String?,
         deviceUid: String?
-    ): EnrollmentResult = enrollRequest(token, deviceId, deviceAlias, deviceUid, csrDer = null, requestId = null, attestationChain = emptyList())
+    ): EnrollmentResult = enrollRequest(token, deviceId, deviceAlias, deviceUid, csrDer = null, requestId = null, attestationChain = emptyList(), integrityToken = null)
 
     /**
      * Sends the CSR along with the usual enrollment fields and the `csr`
@@ -397,7 +397,7 @@ internal class DefaultCertificateConfigApi(
         deviceUid: String?,
         csrDer: ByteArray,
         requestId: String?
-    ): EnrollmentResult = enrollRequest(token, deviceId, deviceAlias, deviceUid, csrDer, requestId, attestationChain = emptyList())
+    ): EnrollmentResult = enrollRequest(token, deviceId, deviceAlias, deviceUid, csrDer, requestId, attestationChain = emptyList(), integrityToken = null)
 
     /**
      * [enrollWithCsr] with the key's attestation chain: a non-empty
@@ -412,7 +412,22 @@ internal class DefaultCertificateConfigApi(
         csrDer: ByteArray,
         requestId: String?,
         attestationChain: List<String>
-    ): EnrollmentResult = enrollRequest(token, deviceId, deviceAlias, deviceUid, csrDer, requestId, attestationChain)
+    ): EnrollmentResult = enrollRequest(token, deviceId, deviceAlias, deviceUid, csrDer, requestId, attestationChain, integrityToken = null)
+
+    /**
+     * [enrollWithCsr] with an integrity token: a non-blank [integrityToken]
+     * goes along as `"integrityToken"` (older servers ignore the field).
+     */
+    override suspend fun enrollWithCsr(
+        token: String?,
+        deviceId: String?,
+        deviceAlias: String?,
+        deviceUid: String?,
+        csrDer: ByteArray,
+        requestId: String?,
+        attestationChain: List<String>,
+        integrityToken: String?
+    ): EnrollmentResult = enrollRequest(token, deviceId, deviceAlias, deviceUid, csrDer, requestId, attestationChain, integrityToken)
 
     /**
      * What an enrollment request advertises. The P12 path ([enroll]) asks
@@ -432,7 +447,8 @@ internal class DefaultCertificateConfigApi(
         deviceUid: String?,
         csrDer: ByteArray?,
         requestId: String?,
-        attestationChain: List<String>
+        attestationChain: List<String>,
+        integrityToken: String?
     ): EnrollmentResult = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
         val json = org.json.JSONObject()
         token?.let { json.put("token", it) }
@@ -442,6 +458,8 @@ internal class DefaultCertificateConfigApi(
         csrDer?.let { json.put("csr", android.util.Base64.encodeToString(it, android.util.Base64.NO_WRAP)) }
         requestId?.let { json.put("requestId", it) }
         if (csrDer != null && attestationChain.isNotEmpty()) json.put("attestationChain", org.json.JSONArray(attestationChain))
+        // Bound to this CSR by its request hash; meaningless without one.
+        if (csrDer != null && !integrityToken.isNullOrBlank()) json.put("integrityToken", integrityToken)
 
         val requestBody = json.toString().toRequestBody("application/json".toMediaType())
         val request = okhttp3.Request.Builder()

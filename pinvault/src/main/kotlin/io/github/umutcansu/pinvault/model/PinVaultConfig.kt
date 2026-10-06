@@ -102,7 +102,11 @@ data class PinVaultConfig(
      */
     val expectedSignerSha256: List<String> = emptyList(),
     /** Accept, for hosts without a pin entry, chains the platform validates to a root the signed config lists. See [Builder.managedTrustRoots]. */
-    val managedTrustRoots: Boolean = false
+    val managedTrustRoots: Boolean = false,
+    /** The app's verdict on the device, asked before sensitive operations. See [Builder.environmentGuard]. */
+    val environmentGuard: EnvironmentGuard? = null,
+    /** Integrity token sent with every enrollment request. See [Builder.integrityTokenProvider]. */
+    val integrityTokenProvider: IntegrityTokenProvider? = null
 ) {
 
     /** First registered block — convenience for internal single-API code paths. */
@@ -161,6 +165,9 @@ data class PinVaultConfig(
 
         /** [expectedSignerSha256] for a list (Java-friendly). */
         fun expectedSignerSha256(hex: List<String>) = expectedSignerSha256(*hex.toTypedArray())
+
+        private var environmentGuard: EnvironmentGuard? = null
+        private var integrityTokenProvider: IntegrityTokenProvider? = null
 
         /**
          * Keep using a config for [amount] [unit] after its `expiresAt`.
@@ -318,6 +325,23 @@ data class PinVaultConfig(
         fun managedTrustRoots() = apply { this.managedTrustRoots = true }
 
         /**
+         * Ask [guard] before every [GuardedOperation] — init, enrollment,
+         * vault file download, unlock — and refuse the operation when it says
+         * no. Wire the verdict of your root / hooking / debugger detection
+         * here (a RASP product, RootBeer): PinVault detects nothing itself.
+         * See [EnvironmentGuard].
+         */
+        fun environmentGuard(guard: EnvironmentGuard) = apply { this.environmentGuard = guard }
+
+        /**
+         * Send an integrity token (Play Integrity, or a RASP product's
+         * attestation) with every enrollment request, bound to that request.
+         * The server verifies it (the reference server's
+         * `INTEGRITY_VERIFICATION`); the app does not. See [IntegrityTokenProvider].
+         */
+        fun integrityTokenProvider(provider: IntegrityTokenProvider) = apply { this.integrityTokenProvider = provider }
+
+        /**
          * Register a Config API. Calling twice with the same id replaces the
          * prior block (useful for overrides in tests).
          *
@@ -409,7 +433,9 @@ data class PinVaultConfig(
                 requireHardwareBackedKeys = requireHardwareBackedKeys,
                 integrityVerdictProvider = integrityVerdictProvider,
                 expectedSignerSha256 = expectedSignerSha256,
-                managedTrustRoots = managedTrustRoots
+                managedTrustRoots = managedTrustRoots,
+                environmentGuard = environmentGuard,
+                integrityTokenProvider = integrityTokenProvider
             )
         }
     }
