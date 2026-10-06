@@ -232,7 +232,7 @@ kuruldu; sözleşme [ATTESTATION.md](ATTESTATION.md)'de.
 
 | Approov | PinVault karşılığı (bu dal) |
 |---|---|
-| SDK uygulamayı ve cihazı ölçer (root, emülatör, debugger, hooking, klon, bütünlük) | `integrity/DeviceIntegrityProbe`: 12 sinyal, kanıt listeleriyle; `IntegrityVerdictProvider` SPI ile Play Integrity ikinci görüş |
+| SDK uygulamayı ve cihazı ölçer (root, emülatör, debugger, hooking, klon, bütünlük) | `integrity/DeviceIntegrityProbe`: 12 sinyal, kanıt listeleriyle; `IntegrityVerdictProvider` SPI ve isteğe bağlı `pinvault-play-integrity` artefaktı (`PlayIntegrityVerdictProvider`) ile Play Integrity ikinci görüşü — sunucu Play Console anahtarlarıyla token'ı kendisi çözüp doğrular (`PlayIntegrityVerifier`: nonce, tarih, paket, uygulama/cihaz kararı), `play_integrity` / `play_integrity_missing` bayrakları politikaya girer (ATTESTATION.md §11, V23) |
 | Ölçüm Approov bulutuna gider, her ~5 dakikada tekrarlanır | `POST /api/v1/attest`: nonce + Keystore kimlik anahtarıyla imzalı rapor; `AttestationManager` `min(nextAttestIn, aralık, token−60 s)` ile yeniler, WorkManager arka planda da |
 | Pinler yalnızca geçen uygulamaya verilir | İmzalı config atestasyon yanıtının içinde gelir (`applySigned`), kalan cihaz config almaz; cihaz anahtarı ilk kayıtta Android key attestation ile bağlanır (`ATTESTATION_KEY_POLICY`) |
 | Kısa ömürlü Approov-Token, backend doğrular | `PinVault-Token` (HS256 JWT, 5 dk, `aud`=Config API, `anno`); kütüphane başlığı token host'larına ekler; `PinVaultTokenAuth` Ktor eklentisi + Node/Python/Java örnekleri; mock host `MOCK_HOST_REQUIRE_TOKEN` |
@@ -242,8 +242,9 @@ kuruldu; sözleşme [ATTESTATION.md](ATTESTATION.md)'de.
 
 Kalan fark, mimari değil kalite ve güvence farkıdır: Approov'un probe'ları
 kapalı kaynak ve kendini denetleyen, sürekli güncellenen imzalarla gelir;
-PinVault'unkiler düz Kotlin'dir (R8 + gerekirse packer önerilir) ve
-cihazdan bağımsız bir karar için Play Integrity sağlayıcısı takılmalıdır.
+PinVault'unkiler düz Kotlin'dir (R8 + gerekirse packer önerilir); cihazdan
+bağımsız karar, isteğe bağlı Play Integrity katmanıyla (uygulamada sağlayıcı,
+sunucuda anahtarlar, politikada bayrak) eklenir.
 Buna karşılık PinVault'un cihaz kimliği donanım atestasyonlu Keystore
 anahtarına bağlıdır, her şey self-hosted ve açık kaynaktır.
 

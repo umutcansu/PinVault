@@ -195,6 +195,8 @@ What each probe looks at (Android, no root needed):
 | `software_key` | The device key's `KeySecurityLevel` is `software` or `unknown`. |
 | `key_unattested` | The device key has no attestation chain (set by the server from its own records once the device is registered). |
 | `old_patch_level` | Set by the server from `device.securityPatch` and `ATTESTATION_MIN_PATCH_LEVEL`. |
+| `play_integrity` | Set by the server (§11) when a `play-integrity` verdict the report carries does not verify or does not pass: wrong nonce, stale, another package, app not Play-recognized, device below `PLAY_INTEGRITY_DEVICE_LEVEL`. A failed verdict sticks to the device until a fresh pass. Only with the Play Console keys configured. |
+| `play_integrity_missing` | Set by the server (§11) when no Play Integrity verdict was verified for the device within `PLAY_INTEGRITY_MAX_AGE_SECONDS`. Only with the Play Console keys configured. |
 
 The report is a measurement by code the attacker can hook. That is true for
 every RASP; what makes it useful is that (a) a hooked report still has to be
@@ -202,10 +204,11 @@ signed by a Keystore key whose attestation chain proves it was made by **your**
 package on real hardware, (b) the server adds signals the client cannot
 forge (attestation, patch level, key level), and (c) tampering with the
 probes costs more than the generic unpinning scripts the pinning path already
-defeats. Apps that want a second opinion plug a `verdictProvider` (Play
-Integrity): the library forwards its token verbatim and the server stores
-it; verifying it against Google is a server-side hook (`ATTESTATION_VERDICT_WEBHOOK`,
-reference server: stored and shown, not verified).
+defeats. Apps that want a second opinion plug a `verdictProvider`: the
+library forwards its token verbatim. For Play Integrity the reference server
+verifies the token itself (§11) and turns it into the `play_integrity` /
+`play_integrity_missing` flags; any other provider's token is stored and
+shown, not judged.
 
 ## 4. Policy
 
@@ -219,7 +222,8 @@ with `PUT /api/v1/config-apis/{id}/attestation/policy`:
     "rooted": "reject", "emulator": "reject", "debugger": "reject", "debuggable": "reject",
     "hooking_framework": "reject", "app_integrity": "reject", "cloner": "reject",
     "unknown_installer": "warn", "adb_enabled": "ignore", "software_key": "warn",
-    "key_unattested": "warn", "old_patch_level": "warn"
+    "key_unattested": "warn", "old_patch_level": "warn",
+    "play_integrity": "warn", "play_integrity_missing": "warn"
   },
   "revealReasons": false,
   "tokenTtlSeconds": 300,
@@ -235,7 +239,9 @@ Evaluation:
    reason; `warn` flags are returned as `warnings`; `ignore` flags are dropped.
 4. Server-side signals are merged before step 3: `app_integrity` from the
    signer/package check, `software_key` / `key_unattested` from the device
-   record, `old_patch_level` from the report's patch level.
+   record, `old_patch_level` from the report's patch level, `play_integrity`
+   / `play_integrity_missing` from the Play Integrity verifier (§11; never
+   raised without the Play Console keys).
 5. ARC = first 8 hex characters of `HMAC-SHA256(nonceKey, sorted reasons ‖ "|" ‖ sorted warnings)`;
    the dashboard resolves an ARC to its reasons from the device's last verdict.
 
@@ -303,6 +309,12 @@ webhooks), `attestation_token_secret_rotated`, `attestation_token_secret_deleted
 | `ATTESTATION_REVEAL_REASONS` | `false` | Default for a policy's `revealReasons`. |
 | `MOCK_HOST_REQUIRE_TOKEN` | `false` | The mock hosts refuse requests without a valid `PinVault-Token`. |
 | `ATTESTATION_MIN_PATCH_LEVEL` | (existing) | Also feeds `old_patch_level`. |
+| `PLAY_INTEGRITY_DECRYPTION_KEY` / `PLAY_INTEGRITY_VERIFICATION_KEY` | unset | §11. The Play Console response keys (Base64); both or neither. Set, the server verifies `play-integrity` verdicts and raises the two flags; unset, Play Integrity is off on the server. `PLAY_INTEGRITY_ENABLED=false` turns it off with the keys in place. |
+| `PLAY_INTEGRITY_PACKAGE_NAMES` | `ATTESTATION_PACKAGE_NAMES` | Package names a verdict must name. Empty on both: any package (warned at start). |
+| `PLAY_INTEGRITY_DEVICE_LEVEL` | `device` | `basic` / `device` / `strong`: the least `deviceRecognitionVerdict` that passes. |
+| `PLAY_INTEGRITY_REQUIRE_APP_RECOGNIZED` | `true` | `appRecognitionVerdict` must be `PLAY_RECOGNIZED` (sideloaded and debug builds are not). |
+| `PLAY_INTEGRITY_TOKEN_MAX_AGE_SECONDS` | `600` | A token's `timestampMillis` may be at most this old (30–86400). |
+| `PLAY_INTEGRITY_MAX_AGE_SECONDS` | `86400` | How long a verified verdict covers the device's later rounds before `play_integrity_missing` (60–2592000). |
 
 ## 8. Library behaviour
 
@@ -315,7 +327,7 @@ PinVaultConfig.Builder()
         attestationInterval(5, TimeUnit.MINUTES)    // default 5 min, min 1
         tokenHosts("api.example.com", "*.cdn.example.com")  // default: every pinned host of this block
     }
-    .integrityVerdictProvider(myPlayIntegrityProvider)   // optional
+    .integrityVerdictProvider(PlayIntegrityVerdictProvider(context, cloudProjectNumber = 123456789012L))   // optional, §11
     .build()
 ```
 
@@ -358,10 +370,10 @@ software keys) before you decide to enforce anything.
 Does not give: Approov's closed-source SDK hardening (its probes are
 obfuscated and self-checking; PinVault's are plain Kotlin — put the app
 through R8 and, for high-value targets, a packer), Approov's managed
-infrastructure and its continuously updated detections, or a verdict that is
-independent of the device (for that, plug Play Integrity in as the verdict
-provider and verify it on your server). The probes are a floor, meant to be
-extended; the policy and token mechanics are the durable part.
+infrastructure and its continuously updated detections. A verdict that is
+independent of the device is optional: §11 plugs Play Integrity in as the
+verdict provider and verifies it on the server. The probes are a floor,
+meant to be extended; the policy and token mechanics are the durable part.
 
 ## 10. Managed trust roots
 
@@ -378,3 +390,78 @@ body that carries the field replaces the list (`[]` clears it), a body
 without it keeps the scope's current list. The field is left out of the
 payload when empty, so a client older than this section sees nothing new;
 a change writes a `trust_roots_updated` history and audit entry.
+
+## 11. Play Integrity (optional)
+
+Google's verdict as a second opinion — the closest thing to Approov's
+device-independent attestation on Android — switched on or off at three
+places that do not depend on each other:
+
+| Where | Switch | Off means |
+|---|---|---|
+| App | `.integrityVerdictProvider(PlayIntegrityVerdictProvider(context, cloudProjectNumber))` from the `io.github.umutcansu:pinvault-play-integrity` artifact | The report carries no `verdictProvider`; nothing of Play Services is in the APK. |
+| Server | `PLAY_INTEGRITY_DECRYPTION_KEY` + `PLAY_INTEGRITY_VERIFICATION_KEY` (Play Console → App integrity → *Manage and download my response encryption keys*) | Tokens are stored with the device, never judged; `play_integrity*` is never raised. |
+| Policy | `play_integrity` and `play_integrity_missing`, `reject` / `warn` / `ignore` (default `warn` in both profiles) | `ignore` records the verdict for the dashboard and changes no outcome. |
+
+**Client.** On an attestation round the provider asks Google for a
+**classic** integrity token with the round's attestation nonce as the
+Play Integrity nonce (the reference server's nonces are base64url of 40
+bytes, within Play Integrity's 16–500 byte URL-safe rule; a server of your
+own must issue nonces of that shape) and the app's Cloud project number.
+The token goes into the report as
+`"verdictProvider": {"name": "play-integrity", "token": "<JWE>"}` and is
+covered by the device key's signature over the report. Classic requests are
+quota-limited (10 000 per app per day by default) while the library attests
+every five minutes, so the provider asks at most once per `minInterval`
+(default 6 hours; 0 = every round) and answers null in between — the
+report then has no `verdictProvider`. `TOO_MANY_REQUESTS` waits a full
+interval; a failure that will not change (no Play Store / Play Services,
+invalid project number) turns the provider off for the process. A provider
+failure never fails an attestation: the probe attests without it (10 s
+budget), as for any provider.
+
+**Server.** With the keys set, `POST /api/v1/attest` opens a
+`play-integrity` token after the device key check and before the policy:
+JWE `A256KW` + `A256GCM` under the decryption key (AAD = the protected
+header), then JWS `ES256` under the verification key, then the verdict JSON.
+Checks, each with a fixed reason stored in the device's `play_integrity`
+summary: `malformed` / `unsupported_alg` / `decrypt_failed`,
+`signature_invalid`, `payload_invalid`, `nonce_mismatch`
+(`requestDetails.nonce` ≠ this round's nonce), `token_stale`
+(`timestampMillis` older than `PLAY_INTEGRITY_TOKEN_MAX_AGE_SECONDS` or
+more than a minute in the future), `package_mismatch`
+(`requestPackageName` / `appIntegrity.packageName` not in
+`PLAY_INTEGRITY_PACKAGE_NAMES`, falling back to `ATTESTATION_PACKAGE_NAMES`),
+`app_unrecognized` (`appRecognitionVerdict` ≠ `PLAY_RECOGNIZED`, unless
+`PLAY_INTEGRITY_REQUIRE_APP_RECOGNIZED=false`), `device_integrity`
+(`deviceRecognitionVerdict` below `PLAY_INTEGRITY_DEVICE_LEVEL`). Nothing is
+sent to Google on the request path. The outcome is stored with the device
+(`play_integrity_result` pass | fail, `play_integrity_at`, and a summary:
+reason, device verdicts, app verdict, licensing, package, version; never
+the token or the nonce — V23) and shown on the device page of the
+dashboard.
+
+Flags per round:
+
+- token present → verified; `play_integrity` raised when it fails;
+- no token, a stored verdict younger than `PLAY_INTEGRITY_MAX_AGE_SECONDS`
+  → that verdict stands (`pass` raises nothing, `fail` raises
+  `play_integrity`);
+- no token and no fresh verdict → `play_integrity_missing`.
+
+A device that sends a token minted for another round (a replay) fails
+`nonce_mismatch`; a token made for another developer's keys fails
+`decrypt_failed`; a hooked report cannot change what Google signed, and a
+report that drops the token lands on `play_integrity_missing` once the
+stored verdict ages out. What Play Integrity does not do is replace the
+report: the two measure different things (Google: the device's integrity
+and the app's provenance as Play sees them; the report: this process, now),
+and the policy weighs both.
+
+**Rollout.** Keep both flags on `warn` until the dashboard's stats show the
+fleet attesting with Play Integrity; then `reject` on `play_integrity`
+first, and on `play_integrity_missing` only once every supported app
+version ships the provider — a build without it is `missing` for ever.
+Emulators and debug builds fail `device_integrity` / `app_unrecognized` by
+design; a lab server runs `PLAY_INTEGRITY_REQUIRE_APP_RECOGNIZED=false` and
+`PLAY_INTEGRITY_DEVICE_LEVEL=basic`, or leaves the keys unset.
