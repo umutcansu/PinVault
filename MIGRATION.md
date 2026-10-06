@@ -3,6 +3,15 @@
 PinVault 2.0 uses a unified multi-Config-API DSL. This document is a quick
 reference for how to configure it in common scenarios.
 
+## Upgrading from 2.1.x to the next release
+
+Most apps compile unchanged; the per-item list — one fetch per signed vault
+file, `allowServerGeneratedKey()`, the 16-character verification code,
+`EnrollmentRefusal` branches, attestation and Play Integrity being opt-in,
+the reference server's V21–V23 migrations and PKCS12 keystores — is kept in
+the README under *Upgrading from 2.1.x to the next release*, next to the
+features it belongs to. The attestation protocol is in `ATTESTATION.md`.
+
 ## Upgrading from 2.0.x to the security-hardened stream
 
 The hardening changes (per-host pinning, required signatures, replay/freshness,

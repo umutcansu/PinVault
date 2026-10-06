@@ -1023,7 +1023,8 @@ What happens:
 
 - **At `init`**, after the stored config is loaded and the mTLS renewal check
   ran, each attesting block asks `GET api/v1/attest/challenge` for a nonce,
-  builds the report (`sdkVersion`, `app`, `device`, twelve `signals` —
+  builds the report (`sdkVersion`, `app`, `device`, twelve `signals` the
+  device measures — the server adds `play_integrity` / `play_integrity_missing` —
   `rooted`, `emulator`, `debugger`, `debuggable`, `hooking_framework`,
   `app_integrity`, `cloner`, `unknown_installer`, `adb_enabled`,
   `software_key`, `key_unattested`, `old_patch_level`), signs
@@ -1760,6 +1761,12 @@ PinVault.enroll()            ───→     POST /client-certs/enroll
 
 PinVault.fetchFile("key")   ───→     GET /vault/{key}
   File cached encrypted      ←───     Binary bytes
+
+attestation() blocks         ───→     GET /attest/challenge        (next release)
+  Report signed by the       ───→     POST /attest  {nonce, report, signature,
+  device key, every ~5 min              attestationChain?, Play Integrity token?}
+  PinVault-Token + pins      ←───     verdict by policy; token only on a pass
+  Header on pinned requests  ───→     Your API verifies PinVault-Token (HS256)
 ```
 
 ## Requirements
@@ -1870,6 +1877,17 @@ Most apps compile unchanged. What to expect, and what may need a line:
 - Stored P12 identities and host client certificates are moved into the
   Android Keystore on first load. Going back to 2.1.x afterwards means
   enrolling again (2.1.x does not know the imported form).
+- **Attestation is off** until a block calls `attestation()`; nothing changes
+  for apps that do not. Play Integrity needs the separate
+  `pinvault-play-integrity` artifact and a provider registered on the
+  config; without it the APK carries nothing of Play Services.
+- **Reference server:** migrations V21–V23 add the attestation tables and
+  the Play Integrity columns; stored policies gain `play_integrity` /
+  `play_integrity_missing` as `warn` automatically. Server keystores are
+  rewritten as PKCS12 at start-up (file names unchanged); a JDK 9+ server
+  of an older version still opens them. `CONFIG_API_ADMIN_ROUTES=off` and
+  `ATTESTATION_KEY_POLICY=enforce` are the production profile, not the
+  default.
 
 ## Production Security Checklist
 
@@ -2131,14 +2149,21 @@ the key is made without the requirement and a warning is logged. Call
 before anything else touches PinVault, since the first use creates the keys.
 
 ### What PinVault does NOT do
-- **Root/jailbreak detection** — combine with libraries like RootBeer if needed
+- **Hardened, self-checking probes.** The attestation report *(next release)*
+  does look for root, emulators, debuggers, Frida/Xposed-style hooking,
+  cloners and a changed signer — but with plain Kotlin an attacker can hook.
+  What holds it up is the server side: the report must be signed by a
+  hardware-attested Keystore key, the server adds signals the device cannot
+  forge, and Play Integrity can be verified as a second opinion. For
+  high-value targets add a packer or a dedicated RASP on top.
   (`userAuth` vault files with `encryption(USER_AUTH)` stay sealed on a
   rooted phone until the user unlocks them, but what the app then reads is
-  in its memory)
+  in its memory.)
 - **Code obfuscation** — enable R8/ProGuard in your app (`isMinifyEnabled = true`)
 - **Network anomaly detection** — pair with your APM/SIEM
-- **Frida/Xposed hooking detection** — out of scope; consider a dedicated
-  RASP solution for high-value targets
+- **A verdict without Google or a server of your own** — the device alone
+  cannot prove its integrity; the policy, the token and Play Integrity all
+  live on the server.
 
 ## License
 

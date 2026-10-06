@@ -773,6 +773,20 @@ secret; reload the list in your backends (the old `kid` keeps verifying
 until you `DELETE /api/v1/attestation/token-secrets/{kid}`). Tokens live 5
 minutes by default, so a rotation is complete a few minutes after every
 backend has the new secret.
+**Play Integrity in the report (optional, ATTESTATION.md §11).** When the
+app registers `PlayIntegrityVerdictProvider`, the report carries
+`"verdictProvider": {"name": "play-integrity", "token": "<JWE>"}` — a
+classic Play Integrity token whose nonce is this round's attestation nonce.
+A server of your own verifies it with the response keys from the Play
+Console (JWE `A256KW`/`A256GCM` with the decryption key, then JWS `ES256`
+with the verification key), checks `requestDetails.nonce` against the
+challenge it issued, `timestampMillis` against a few minutes, the package
+and the `appIntegrity` / `deviceIntegrity` verdicts, and feeds the outcome
+into its policy; the reference server's checks and reasons are the §11
+table. The provider sends a token only every few hours (quota), so keep the
+last verified verdict per device and treat its absence as a signal of its
+own (`play_integrity_missing`), not as a failure. A report without
+`verdictProvider` is a normal report.
 
 ---
 

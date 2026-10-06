@@ -2,6 +2,10 @@
 
 _OWASP-oriented audit — 2026-05-29. Method: automated multi-agent review — 8 parallel finder agents across server + library security dimensions, each candidate finding independently re-verified by an adversarial reviewer agent; 11 of 29 candidates were refuted and dropped. Not a third-party (human) audit._
 
+> **Superseded in part.** This is the 2026-05 snapshot. The current review,
+> with the Approov comparison and the findings closed on the attestation
+> branch (S-1 … S-14, L-10 … L-13, A-2), is `SECURITY_RESEARCH_REPORT.md`.
+
 ## Remediation status — 2026-05-29
 
 All findings have since been **addressed** — fixed where a fix doesn't break the demo, or documented as DEMO-ONLY where the proper fix needs production infrastructure or a client+server protocol change. Verified: `demo-server` compiles and the affected test classes pass (JDK 21); the `pinvault` library and `demo-app` build a debug APK.
