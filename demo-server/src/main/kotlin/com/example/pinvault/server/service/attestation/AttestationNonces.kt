@@ -31,16 +31,21 @@ class AttestationNonces(
     private val keySpec = SecretKeySpec(key, "HmacSHA256")
     private val random = SecureRandom()
 
-    /** Accepted nonces → the time they stop being presentable (ms). Oldest first. */
-    private val accepted = object : LinkedHashMap<String, Long>(1024, 0.75f, false) {
-        override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, Long>?) = size > maxCached
-    }
+    /**
+     * Accepted nonces → the time they stop being presentable (ms). Oldest
+     * first. Never evicted while presentable: when [maxCached] fresh nonces
+     * are held, [consume] answers [Check.Overloaded] instead of forgetting
+     * one, because a forgotten fresh nonce could be presented a second time.
+     */
+    private val accepted = LinkedHashMap<String, Long>(1024, 0.75f, false)
 
     sealed interface Check {
         data object Ok : Check
         data object Invalid : Check
         data object Expired : Check
         data object Replayed : Check
+        /** [maxCached] presentable nonces are already remembered; try again shortly (fail closed, never replayable). */
+        data object Overloaded : Check
     }
 
     /** A fresh nonce for `GET /api/v1/attest/challenge`. */
@@ -75,6 +80,7 @@ class AttestationNonces(
             if (entry.value <= now) iterator.remove() else break
         }
         if (accepted.containsKey(nonce)) return Check.Replayed
+        if (accepted.size >= maxCached) return Check.Overloaded
         accepted[nonce] = expiresAt
         return Check.Ok
     }

@@ -299,6 +299,7 @@ webhooks), `attestation_token_secret_rotated`, `attestation_token_secret_deleted
 | `ATTESTATION_NONCE_TTL_SECONDS` | `120` | |
 | `ATTESTATION_RATE_LIMIT` | `60` | Attestations per source address per 10 minutes (`0` = off). |
 | `ATTESTATION_DEVICE_RATE_LIMIT` | `30` | Per device id per 10 minutes. |
+| `ATTESTATION_DEVICE_LIMIT` | `100000` | Most registered devices one Config API holds (`0` = unlimited). `POST /api/v1/attest` asks for no credential, so under `warn`/`off` invented device ids could otherwise grow the table without bound; past the cap a new device gets `503 device_limit_reached`, known devices keep attesting. |
 | `ATTESTATION_REVEAL_REASONS` | `false` | Default for a policy's `revealReasons`. |
 | `MOCK_HOST_REQUIRE_TOKEN` | `false` | The mock hosts refuse requests without a valid `PinVault-Token`. |
 | `ATTESTATION_MIN_PATCH_LEVEL` | (existing) | Also feeds `old_patch_level`. |

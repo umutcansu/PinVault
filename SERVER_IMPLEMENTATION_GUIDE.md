@@ -653,6 +653,17 @@ payload { "iss": "pinvault", "sub": "<deviceId>", "aud": "<configApiId>",
    (body `{"error":"invalid_token","reason":"expired|signature|audience|missing|malformed|unknown_kid"}`).
    The library recognises a `401` that names `PinVault-Token`, attests once
    more and retries the request once.
+5. If your API is also behind mTLS with PinVault-issued client certificates,
+   compare the token's `sub` with the device id of the connection's
+   certificate and refuse a mismatch: a token is a bearer credential for its
+   5 minutes, and this binding closes the window in which a token lifted
+   from a passing device could be replayed from elsewhere.
+
+Attestation protects only what your backend enforces. A device the policy
+rejects keeps the pins it already holds until they expire; what it loses is
+the token (and new pins). If no backend verifies the token, a rejection
+changes nothing for the attacker — turn verification on before relying on
+the rejection policy (the dashboard's policy card says the same).
 
 The reference implementation is `demo-server/src/main/kotlin/com/example/pinvault/server/plugin/PinVaultTokenAuth.kt`
 (the mock hosts install it with `MOCK_HOST_REQUIRE_TOKEN=true`). Snippets:

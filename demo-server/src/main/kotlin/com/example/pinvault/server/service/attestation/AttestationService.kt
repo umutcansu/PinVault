@@ -57,7 +57,15 @@ class AttestationService(
      * Null = every rejection is written as it is (tests).
      */
     private val rejections: AuthFailureRecorder? = null,
-    private val clock: () -> Instant = Instant::now
+    private val clock: () -> Instant = Instant::now,
+    /**
+     * `ATTESTATION_DEVICE_LIMIT`: most registered devices one Config API
+     * holds (0 = unlimited). `POST /api/v1/attest` asks for no credential, so
+     * under `warn`/`off` anyone can register keys for invented device ids;
+     * past the cap a new device gets `503 device_limit_reached` while known
+     * devices keep attesting — the same shape as `DEVICE_KEY_LIMIT`.
+     */
+    private val deviceLimit: Int = 100_000
 ) {
     private val verifier by lazy(verifier)
 
@@ -166,6 +174,8 @@ class AttestationService(
             AttestationNonces.Check.Invalid -> return Outcome.Refused(HttpStatusCode.BadRequest, "nonce_invalid", "The nonce was not issued by this server. Ask for a new challenge.")
             AttestationNonces.Check.Expired -> return Outcome.Refused(HttpStatusCode.BadRequest, "nonce_expired", "The nonce is older than ${nonces.ttlSeconds} s. Ask for a new challenge.")
             AttestationNonces.Check.Replayed -> return Outcome.Refused(HttpStatusCode.BadRequest, "nonce_replayed", "This nonce was already used. Ask for a new challenge.")
+            // Fail closed rather than forget a presentable nonce: the library backs off and asks again.
+            AttestationNonces.Check.Overloaded -> return Outcome.Refused(HttpStatusCode.ServiceUnavailable, "attestation_busy", "Too many attestations in flight. Ask for a new challenge in a moment.")
             AttestationNonces.Check.Ok -> Unit
         }
 
@@ -198,6 +208,12 @@ class AttestationService(
             keyAttestation = when (val registration = checkRegistrationChain(chain, publicKey, deviceId)) {
                 is Registration.Refuse -> return registration.outcome
                 is Registration.Accept -> registration.attestation
+            }
+            // A Config API holds at most deviceLimit registered keys: an unauthenticated
+            // endpoint must not let invented device ids grow the table without bound.
+            if (deviceLimit > 0 && devices.counts(configApiId).registered >= deviceLimit) {
+                return Outcome.Refused(HttpStatusCode.ServiceUnavailable, "device_limit_reached",
+                    "This Config API already holds $deviceLimit registered devices (ATTESTATION_DEVICE_LIMIT). Known devices keep attesting; an administrator can forget stale ones.")
             }
             devices.register(configApiId, deviceId, spki, Base64.getEncoder().encodeToString(publicKey.encoded), keyAttestation, now)
             device = devices.get(configApiId, deviceId)!!

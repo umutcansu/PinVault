@@ -119,6 +119,7 @@ Kaynak değiştikten sonra `docker compose up -d --build` yeterli. Yerel dizinde
 | `ATTESTATION_POLICY_DEFAULT` | boş = `strict` | Politikası kaydedilmemiş Config API: `strict` root/emülatör/debugger/hook/klon reddeder, `lenient` hepsini uyarı sayar. Panelden Config API başına değişir |
 | `ATTESTATION_TOKEN_TTL_SECONDS`, `ATTESTATION_INTERVAL_SECONDS`, `ATTESTATION_NONCE_TTL_SECONDS`, `ATTESTATION_REVEAL_REASONS` | sunucu varsayılanı (300, 300, 120, `false`) | Token ömrü, yeniden attestation aralığı, nonce ömrü, ret nedenleri cihaza söylensin mi |
 | `ATTESTATION_RATE_LIMIT`, `ATTESTATION_DEVICE_RATE_LIMIT` | sunucu varsayılanı (60, 30) | 10 dakikada adres ve cihaz başına attestation; `0` sınırı kaldırır |
+| `ATTESTATION_DEVICE_LIMIT` | sunucu varsayılanı (100000) | Config API başına kayıtlı attestation cihazı tavanı; aşan yeni cihaz `503 device_limit_reached` alır, bilinenler çalışmaya devam eder |
 | `MOCK_HOST_REQUIRE_TOKEN` | boş (`false`) | `true`: mock host'lar geçerli `PinVault-Token` olmadan `401` döner; kendi API'nin yapacağının provası (`SERVER_IMPLEMENTATION_GUIDE.md`) |
 | `HOST_CLIENT_CERT_REQUIRE_GRANT` | boş (üretim: `true`) | Host istemci sertifikası (bütün filonun paylaştığı tek özel anahtar) yalnızca cihaz host ACL'inin adını yazdığı cihazlara; ACL'siz kapsam kimseye vermez. Boş: ACL'siz kapsam her kayıtlı cihaza verir |
 | `VAULT_DOWNLOAD_CONCURRENCY`, `VAULT_DOWNLOAD_CONCURRENCY_TOTAL` | sunucu varsayılanı (4, 16) | Aynı anda sunulan vault indirmesi, adres başına ve toplam; her indirme dosyayı bütün olarak bellekte tutar |

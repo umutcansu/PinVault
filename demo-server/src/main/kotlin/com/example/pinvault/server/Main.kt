@@ -490,6 +490,8 @@ fun main() {
     // Attestations per source address and per device id per 10 minutes (0 = off).
     val attestationRateLimit = (System.getenv("ATTESTATION_RATE_LIMIT")?.toIntOrNull() ?: 60).coerceAtLeast(0)
     val attestationDeviceRateLimit = (System.getenv("ATTESTATION_DEVICE_RATE_LIMIT")?.toIntOrNull() ?: 30).coerceAtLeast(0)
+    // Most registered attestation devices per Config API (0 = unlimited); a new device beyond it gets 503.
+    val attestationDeviceLimit = (System.getenv("ATTESTATION_DEVICE_LIMIT")?.toIntOrNull() ?: 100_000).coerceAtLeast(0)
     // The mock hosts refuse requests without a valid PinVault-Token, as an app's own API would.
     val mockHostRequireToken = when (System.getenv("MOCK_HOST_REQUIRE_TOKEN")?.trim()?.lowercase()) {
         null, "", "false", "off" -> false
@@ -510,7 +512,7 @@ fun main() {
         nonces = com.example.pinvault.server.service.attestation.AttestationNonces(ttlSeconds = attestationNonceTtl),
         defaults = attestationDefaults, keyPolicy = attestationKeyPolicy, verifier = { userAuthAttestation },
         isDeviceRevoked = { id -> clientIdentityStore.isDeviceRevoked(id) },
-        audit = auditLog, rejections = attestationRejections
+        audit = auditLog, rejections = attestationRejections, deviceLimit = attestationDeviceLimit
     )
     val attestationLimits = com.example.pinvault.server.route.AttestationLimits.of(attestationRateLimit, attestationDeviceRateLimit)
     println("ATTESTATION_ENABLED=${if (attestationEnabled) "true" else "false"}, ATTESTATION_KEY_POLICY=${attestationKeyPolicy.name.lowercase()}, " +
