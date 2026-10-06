@@ -12,6 +12,10 @@ class MainActivity : AppCompatActivity() {
         val binding = ActivityMainBinding.inflate(layoutInflater)
         setContentView(binding.root)
 
+        // Release guard (security review A-2): a release build without its
+        // signing key / backup pin explains itself and closes instead of running.
+        if (!DemoReleaseGuard.check(this)) return
+
         binding.cardTlsTls.setOnClickListener {
             startActivity(Intent(this, TlsToTlsActivity::class.java))
         }

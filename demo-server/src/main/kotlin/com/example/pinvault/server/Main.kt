@@ -4,6 +4,8 @@ import com.example.pinvault.server.model.HostActionResponse
 import com.example.pinvault.server.model.HostPin
 import com.example.pinvault.server.model.PinConfigHistoryEntry
 import com.example.pinvault.server.route.adminVaultRoutes
+import com.example.pinvault.server.route.attestationAdminRoutes
+import com.example.pinvault.server.route.attestationRoutes
 import com.example.pinvault.server.route.certificateConfigRoutes
 import com.example.pinvault.server.route.clientCertAdminRoutes
 import com.example.pinvault.server.route.configApiAdminRoutes
@@ -151,9 +153,11 @@ fun main() {
     val adminUploadMaxBytes = (System.getenv("ADMIN_UPLOAD_MAX_BYTES")?.toLongOrNull()
         ?: com.example.pinvault.server.plugin.DEFAULT_ADMIN_BODY_MAX_BYTES).coerceIn(1024, 64L * 1024 * 1024)
 
+    // VAULT_AT_REST_PASSWORD: change-request bodies and plans, and the PinVault-Token secrets, wait under it.
+    val atRestCipher = com.example.pinvault.server.service.VaultAtRestCipher.fromEnv()
     val approvalService = com.example.pinvault.server.service.ApprovalService(
         // Bodies and plans wait encrypted: an uploaded P12 and its password, a generated key.
-        store = com.example.pinvault.server.store.ChangeRequestStore(db, com.example.pinvault.server.service.VaultAtRestCipher.fromEnv()),
+        store = com.example.pinvault.server.store.ChangeRequestStore(db, atRestCipher),
         audit = auditLog,
         required = approvalsRequired,
         ttlHours = System.getenv("APPROVAL_TTL_HOURS")?.toLongOrNull()?.coerceAtLeast(1) ?: 24,
@@ -254,6 +258,16 @@ fun main() {
     val serverMadeKeys = enrollmentP12 && !enrollmentAttestation.refusesServerMadeKeys
     println("ENROLLMENT_ATTESTATION=${enrollmentAttestationMode.name.lowercase()}, ENROLLMENT_P12=${if (enrollmentP12) "on" else "off"}" +
         (if (serverMadeKeys) "" else " — no server-made keys: devices enroll over a CSR only"))
+    // A host's client certificate is one private key for the whole fleet. With
+    // HOST_CLIENT_CERT_REQUIRE_GRANT=true it is handed out only where the device
+    // host ACL names the device; a scope without an ACL serves it to nobody.
+    val requireHostCertGrant = when (System.getenv("HOST_CLIENT_CERT_REQUIRE_GRANT")?.trim()?.lowercase()) {
+        null, "", "false", "off" -> false
+        "true", "on" -> true
+        else -> error("HOST_CLIENT_CERT_REQUIRE_GRANT must be true or false (got '${System.getenv("HOST_CLIENT_CERT_REQUIRE_GRANT")}')")
+    }
+    println("HOST_CLIENT_CERT_REQUIRE_GRANT=$requireHostCertGrant" +
+        (if (requireHostCertGrant) "" else " — a scope without a device host ACL hands host client certificates to every enrolled device"))
     // Test-only endpoints (short certificate lifetimes for the Espresso suite). Never in production.
     val allowTestHooks = System.getenv("ALLOW_TEST_HOOKS") == "true"
     if (allowTestHooks) System.err.println("WARNING: ALLOW_TEST_HOOKS=true — test-only endpoints are enabled")
@@ -282,6 +296,7 @@ fun main() {
         val report = com.example.pinvault.server.service.KeystoreRekey(certService)
             .run(keystores, com.example.pinvault.server.store.HostClientCertStore(db))
         if (report.rekeyed.isNotEmpty()) println("KEYSTORE_PASSWORD: re-encrypted ${report.rekeyed.joinToString()}")
+        if (report.converted.isNotEmpty()) println("Keystores: rewrote legacy JKS as PKCS12: ${report.converted.joinToString()}")
         if (report.unreadable.isNotEmpty()) {
             System.err.println("KEYSTORE_PASSWORD: ${report.unreadable.joinToString()} open with neither the current, the previous " +
                 "(KEYSTORE_PASSWORD_PREVIOUS) nor the old default password; left as they are")
@@ -313,8 +328,7 @@ fun main() {
         serverPinsFile.readLines().filter { it.isNotBlank() }
     } else {
         // Pin dosyası yok — keystore'dan primary oku
-        val ks = KeyStore.getInstance("JKS")
-        FileInputStream(serverKeystorePath).use { ks.load(it, CertificateService.KEYSTORE_PASSWORD.toCharArray()) }
+        val ks = com.example.pinvault.server.service.ServerKeyStores.load(serverKeystorePath, CertificateService.KEYSTORE_PASSWORD.toCharArray())
         val cert = ks.getCertificate("server")
         val digest = java.security.MessageDigest.getInstance("SHA-256").digest(cert.publicKey.encoded)
         listOf(java.util.Base64.getEncoder().encodeToString(digest))
@@ -326,8 +340,18 @@ fun main() {
         certService, pinConfigStore, hostStore, serverCertId, bootstrapPins = { serverTlsPins.pins }
     )
 
+    // CONFIG_API_ADMIN_ROUTES: on (default) | off. Off: the Config API listeners — the
+    // ports devices reach, often from the internet — answer device endpoints only;
+    // every admin route, key or no key, is 403 there and lives on the management port.
+    val configApiAdminRoutes = when (System.getenv("CONFIG_API_ADMIN_ROUTES")?.trim()?.lowercase()) {
+        null, "", "on", "true" -> true
+        "off", "false" -> false
+        else -> error("CONFIG_API_ADMIN_ROUTES must be on or off (got '${System.getenv("CONFIG_API_ADMIN_ROUTES")}')")
+    }
+    println("CONFIG_API_ADMIN_ROUTES=${if (configApiAdminRoutes) "on" else "off"}" +
+        (if (configApiAdminRoutes) " — admin routes answer on the Config API ports too (with the admin key)" else " — Config API ports serve devices only"))
     // Config API manager (dinamik TLS/mTLS sunucuları)
-    val configApiManager = ConfigApiManager()
+    val configApiManager = ConfigApiManager(deviceOnly = !configApiAdminRoutes)
     // Invalid admin keys: one counter for every listener (ADMIN_AUTH_FAILURE_LIMIT, 0 = off).
     val adminAuthFailureLimit = (System.getenv("ADMIN_AUTH_FAILURE_LIMIT")?.toIntOrNull()
         ?: com.example.pinvault.server.plugin.DEFAULT_ADMIN_AUTH_FAILURE_LIMIT).coerceAtLeast(0)
@@ -404,6 +428,12 @@ fun main() {
     // (VAULT_DOWNLOAD_CONCURRENCY, default 4; 0 = unlimited).
     val vaultDownloadSlots = ((System.getenv("VAULT_DOWNLOAD_CONCURRENCY")?.toIntOrNull() ?: 4).coerceAtLeast(0))
         .takeIf { it > 0 }?.let { com.example.pinvault.server.service.ConcurrencyLimiter(it) }
+    // ...and in total, across every address and listener (VAULT_DOWNLOAD_CONCURRENCY_TOTAL,
+    // default 16; 0 = unlimited). Each download holds the whole file (and its
+    // per-device encrypted copy) in memory: a public 50 MB file fetched from a
+    // handful of addresses at once would otherwise exhaust the heap.
+    val vaultDownloadTotal = ((System.getenv("VAULT_DOWNLOAD_CONCURRENCY_TOTAL")?.toIntOrNull() ?: 16).coerceAtLeast(0))
+        .takeIf { it > 0 }?.let { com.example.pinvault.server.service.ConcurrencyLimiter(it, maxKeys = 1) }
     // One-shot certificate lifetimes armed by the test hook, consumed by the next issuance.
     val testTtlOverrides = java.util.concurrent.ConcurrentHashMap<String, java.time.Duration>()
     val testTtlOverride: ((String) -> java.time.Duration?)? =
@@ -440,6 +470,83 @@ fun main() {
     )
     val configApiRegistry = com.example.pinvault.server.store.ConfigApiRegistry(db)
     val vaultEncryptionService = com.example.pinvault.server.service.VaultEncryptionService()
+
+    // ── Attestation (ATTESTATION.md): which app instances get pins and a token ──
+    // ATTESTATION_ENABLED serves /api/v1/attest*; ATTESTATION_KEY_POLICY says what a
+    // first registration's Android Key Attestation must do (same verifier settings as
+    // above); ATTESTATION_POLICY_DEFAULT / _TOKEN_TTL_SECONDS / _INTERVAL_SECONDS /
+    // _REVEAL_REASONS are the policy of a Config API with none stored.
+    val attestationEnabled = when (System.getenv("ATTESTATION_ENABLED")?.trim()?.lowercase()) {
+        null, "", "on", "true" -> true
+        "off", "false" -> false
+        else -> error("ATTESTATION_ENABLED must be true or false (got '${System.getenv("ATTESTATION_ENABLED")}')")
+    }
+    val attestationKeyPolicy = com.example.pinvault.server.service.attestation.AttestationKeyPolicy.parse(System.getenv("ATTESTATION_KEY_POLICY"))
+    // enforce without the package + signer binding refuses to start (as for the other two attestation modes).
+    com.example.pinvault.server.service.attestation.AttestationKeyPolicy.startupCheck(attestationKeyPolicy, userAuthAttestation)
+        ?.let { System.err.println(it) }
+    val attestationDefaults = com.example.pinvault.server.service.attestation.AttestationPolicyDefaults.fromEnv()
+    val attestationNonceTtl = (System.getenv("ATTESTATION_NONCE_TTL_SECONDS")?.toIntOrNull() ?: 120).coerceIn(10, 3600)
+    // Attestations per source address and per device id per 10 minutes (0 = off).
+    val attestationRateLimit = (System.getenv("ATTESTATION_RATE_LIMIT")?.toIntOrNull() ?: 60).coerceAtLeast(0)
+    val attestationDeviceRateLimit = (System.getenv("ATTESTATION_DEVICE_RATE_LIMIT")?.toIntOrNull() ?: 30).coerceAtLeast(0)
+    // Most registered attestation devices per Config API (0 = unlimited); a new device beyond it gets 503.
+    val attestationDeviceLimit = (System.getenv("ATTESTATION_DEVICE_LIMIT")?.toIntOrNull() ?: 100_000).coerceAtLeast(0)
+    // The mock hosts refuse requests without a valid PinVault-Token, as an app's own API would.
+    val mockHostRequireToken = when (System.getenv("MOCK_HOST_REQUIRE_TOKEN")?.trim()?.lowercase()) {
+        null, "", "false", "off" -> false
+        "true", "on" -> true
+        else -> error("MOCK_HOST_REQUIRE_TOKEN must be true or false (got '${System.getenv("MOCK_HOST_REQUIRE_TOKEN")}')")
+    }
+    val attestationPolicyStore = com.example.pinvault.server.store.AttestationPolicyStore(db)
+    val attestedDeviceStore = com.example.pinvault.server.store.AttestedDeviceStore(db)
+    // The HS256 secrets of PinVault-Token, encrypted at rest; the first one is made on first use.
+    val attestationTokenSecretStore = com.example.pinvault.server.store.AttestationTokenSecretStore(db, atRestCipher)
+    // Repeated rejections of a device with the same verdict, and repeated key mismatches: summarised per minute.
+    val attestationRejections = com.example.pinvault.server.service.AuthFailureRecorder(
+        auditLog, action = "attestation_rejected", what = "Attestation rejected",
+        attemptsLabel = "repeated attestation rejection"
+    )
+    // Play Integrity (ATTESTATION.md §11), optional: with the Play Console response keys
+    // (PLAY_INTEGRITY_DECRYPTION_KEY / _VERIFICATION_KEY) the server verifies the Google
+    // verdict a report carries and raises play_integrity / play_integrity_missing;
+    // without them the token is stored and nothing is raised.
+    val playIntegrity = com.example.pinvault.server.service.attestation.PlayIntegrityVerifier.fromEnv(
+        fallbackPackageNames = userAuthAttestation.packageNames
+    )
+    val attestationService = com.example.pinvault.server.service.attestation.AttestationService(
+        attestationPolicyStore, attestedDeviceStore, attestationTokenSecretStore,
+        nonces = com.example.pinvault.server.service.attestation.AttestationNonces(ttlSeconds = attestationNonceTtl),
+        defaults = attestationDefaults, keyPolicy = attestationKeyPolicy, verifier = { userAuthAttestation },
+        isDeviceRevoked = { id -> clientIdentityStore.isDeviceRevoked(id) },
+        audit = auditLog, rejections = attestationRejections, deviceLimit = attestationDeviceLimit,
+        playIntegrity = playIntegrity
+    )
+    val attestationLimits = com.example.pinvault.server.route.AttestationLimits.of(attestationRateLimit, attestationDeviceRateLimit)
+    println("ATTESTATION_ENABLED=${if (attestationEnabled) "true" else "false"}, ATTESTATION_KEY_POLICY=${attestationKeyPolicy.name.lowercase()}, " +
+        "ATTESTATION_POLICY_DEFAULT=${attestationDefaults.profile} (token ${attestationDefaults.tokenTtlSeconds} s, re-attest every " +
+        "${attestationDefaults.attestIntervalSeconds} s, reasons ${if (attestationDefaults.revealReasons) "revealed" else "hidden"}), " +
+        "nonce ${attestationNonceTtl} s, limits $attestationRateLimit/address and $attestationDeviceRateLimit/device per 10 min" +
+        (if (mockHostRequireToken) ", mock hosts require PinVault-Token" else ""))
+    if (playIntegrity != null) {
+        println("PLAY_INTEGRITY: verifying play-integrity verdicts locally (device level ${playIntegrity.deviceLevel.name.lowercase()}, " +
+            "app recognized ${if (playIntegrity.requireAppRecognized) "required" else "not required"}, packages " +
+            (if (playIntegrity.packageNames.isEmpty()) "any" else playIntegrity.packageNames.joinToString()) +
+            ", token at most ${playIntegrity.tokenMaxAgeSeconds} s old, verdict kept ${playIntegrity.verdictMaxAgeSeconds} s)")
+        if (playIntegrity.packageNames.isEmpty()) {
+            System.err.println("WARNING: PLAY_INTEGRITY_PACKAGE_NAMES and ATTESTATION_PACKAGE_NAMES are both empty — a Play Integrity " +
+                "verdict for any app whose developer holds these keys passes. Set the package name.")
+        }
+    } else {
+        println("PLAY_INTEGRITY: off (set PLAY_INTEGRITY_DECRYPTION_KEY and PLAY_INTEGRITY_VERIFICATION_KEY to verify Google verdicts)")
+    }
+    if (mockHostRequireToken) {
+        mockServerManager.tokenVerifier = {
+            secrets = { attestationTokenSecretStore.secretsByKid() }
+            // A mock host does not know which Config API its app attests with: any `aud` a listed secret signed.
+            audience = null
+        }
+    }
 
     // Shutdown hook
     Runtime.getRuntime().addShutdownHook(Thread {
@@ -532,7 +639,7 @@ fun main() {
                 // restart'ta birleştirilir (CoalescedRestart).
                 refreshMtlsTrust("new truststore", true)
             }, enrollmentMode = enrollmentMode, configApiMode = mode,
-                deviceHostAclStore = deviceHostAclStore,
+                deviceHostAclStore = deviceHostAclStore, requireHostCertGrant = requireHostCertGrant,
                 signedConfigService = signedConfigService, keySetService = signingKeySetService,
                 liveGate = liveGate, audit = auditLog,
                 clientIdentityStore = clientIdentityStore,
@@ -570,9 +677,17 @@ fun main() {
                 userAuthAttestation = userAuthAttestation, userAuthAttestationMode = userAuthAttestationMode,
                 // Device ids a certificate proved it acts for: what revocation cuts off.
                 deviceProven = { clientId, deviceId, proof -> clientIdentityStore.recordDeviceProof(clientId, deviceId, proof) },
-                // Downloads at once per source address (VAULT_DOWNLOAD_CONCURRENCY, 0 = unlimited).
-                downloadSlots = vaultDownloadSlots,
+                // Downloads at once per source address (VAULT_DOWNLOAD_CONCURRENCY, 0 = unlimited)
+                // and in total (VAULT_DOWNLOAD_CONCURRENCY_TOTAL).
+                downloadSlots = vaultDownloadSlots, downloadSlotsTotal = vaultDownloadTotal,
                 reportLimits = reportLimits, maxFileBytes = vaultMaxFileBytes)
+            // Attestation: the device endpoints (ATTESTATION_ENABLED), and the admin
+            // API as every other admin route here (admin key; off with CONFIG_API_ADMIN_ROUTES=off).
+            if (attestationEnabled) {
+                attestationRoutes(configApiId, attestationService, pinConfigStore, signedConfigService,
+                    deviceHostAclStore = deviceHostAclStore, limits = attestationLimits)
+            }
+            attestationAdminRoutes(attestationService, attestationPolicyStore, attestedDeviceStore, attestationTokenSecretStore, auditLog)
             get("/health") {
                 call.respond(mapOf("status" to "ok"))
             }
@@ -712,8 +827,7 @@ fun main() {
         // container health check still reach the server on 127.0.0.1.
         if (!bindsEverywhere && !bindsLoopback) connector { host = "127.0.0.1"; port = httpPort }
         if (managementHttpsPort != null) {
-            val keyStore = KeyStore.getInstance("JKS")
-            FileInputStream(serverKeystorePath).use { keyStore.load(it, CertificateService.KEYSTORE_PASSWORD.toCharArray()) }
+            val keyStore = com.example.pinvault.server.service.ServerKeyStores.load(serverKeystorePath, CertificateService.KEYSTORE_PASSWORD.toCharArray())
             sslConnector(
                 keyStore = keyStore,
                 keyAlias = "server",
@@ -795,6 +909,8 @@ fun main() {
             scopedVaultAdminRoutes(vaultFileStore, vaultDistStore, vaultTokenStore, vaultTokenService,
                 publicKeyStore = devicePublicKeyStore, audit = auditLog, maxFileBytes = vaultMaxFileBytes)
             adminVaultRoutes(db, deviceHostAclStore, configApiRegistry, audit = auditLog)
+            // Attestation policies, devices, stats and the PinVault-Token secrets (ATTESTATION.md §6).
+            attestationAdminRoutes(attestationService, attestationPolicyStore, attestedDeviceStore, attestationTokenSecretStore, auditLog)
 
             // /api/v1/config/{configApiId}[/update], /api/v1/management/hosts/{configApiId}/generate-cert
             managementConfigRoutes(pinConfigStore, historyStore, hostStore, certService, liveGate, auditLog, certPlanner)
@@ -1093,6 +1209,12 @@ fun main() {
         println("  POST /api/v1/connection-history/web")
         println("  POST /api/v1/connection-history/client-report")
         println("  POST /api/v1/connection-history/config-update-report")
+        if (attestationEnabled) {
+            println("")
+            println("Attestation (Config API ports; ATTESTATION.md):")
+            println("  GET  /api/v1/attest/challenge")
+            println("  POST /api/v1/attest")
+        }
         println("=".repeat(60))
         println("ECDSA Public Key: ${signingService.publicKeyBase64}")
         signingService.signers.forEach { println("  signer ${it.name}: ${it.description} — keyId ${it.keyId}") }

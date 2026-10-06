@@ -139,6 +139,9 @@ class PinVaultBackendReporter @JvmOverloads constructor(
             // The server records renewals itself (audit log); nothing to report.
             is PinVaultConnectionEvent.ClientCertRenewal ->
                 Timber.d("Client cert renewal [%s]: %s", event.configApiId, event.status)
+            // The server made the verdict and keeps it (attestation audit log); nothing to report.
+            is PinVaultConnectionEvent.Attestation ->
+                Timber.d("Attestation [%s]: %s (arc=%s)", event.configApiId, event.status, event.arc)
         }
     }
 

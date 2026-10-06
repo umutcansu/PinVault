@@ -6,7 +6,7 @@ Uygulama şunları gösterir:
 
 1. APK'ya gömülü **bootstrap pin**'lerle host'a bağlanıp pin config'ini çekmek.
 2. Config'in **ECDSA imzasını** ve `issuedAt/expiresAt` tazeliğini doğrulamak; tutmayan config uygulanmaz.
-3. Gelen pin'lerle gerçek bir hedefe iki farklı yoldan pinli istek atmak: kütüphaneyi kullanan client (`PinVault.applyTo`) ve PinVault'u import etmeyen **production-style** client (kendi `CertificatePinner`'ı).
+3. Gelen pin'lerle gerçek bir hedefe iki farklı yoldan pinli istek atmak: kütüphaneyi kullanan client (`PinVault.applyTo`) ve PinVault'u import etmeyen **production-style** client (kendi `OkHttpClient`'ı; pinlemeyi uygulama katmanının verdiği `PinVault::applyTo` geri çağrısı takar — önceki sürümdeki `CertificatePinner` kopyası, hazır Frida/objection bypass betiklerinin doğrudan hedefi olduğu için kaldırıldı).
 4. Config'i elle ya da 15 dakikada bir arka planda yenilemek.
 5. Her TLS el sıkışmasını ve config güncellemesini uygulama içinde listelemek ve host dashboard'una telemetri olarak göndermek (Config API portundan, pinli; telefon yönetim portuna hiç bağlanmaz).
 6. **mTLS:** telefonun cihaz kimliği (ANDROID_ID) ekranda yazar; panelde token üretirken bu kimlik "Cihaz kimliği" alanına yazılırsa token yalnızca bu telefonda geçer ve gizli dosyalar sertifikaya bağlanabilir (başka telefon "bu token başka bir telefon için üretilmiş" uyarısı alır, token harcanmaz). Token ya da kayıt koduyla kayıt; yönetici onayı gerekiyorsa doğrulama koduyla bekleme (panelde aynı kod görünür, onaylanınca kayıt kendiliğinden tamamlanır); reddedilen kaydın nedeni; mTLS Config API'ye ve host'taki mock mTLS hedefine bağlanma; süresi dolan sertifikanın kurtarma kapısından yenilenmesi; kaydı silme.
@@ -152,6 +152,7 @@ Release'i DexProtector ile korumak için: [DEXPROTECTOR.md](DEXPROTECTOR.md).
 | Library client ile test | "✅ Pinned bağlantı başarılı, HTTP 403" |
 | Production-style client ile test | "✅ Production-style bağlantı başarılı, HTTP 403" |
 | Config'i şimdi yenile | "✅ Config güncel" ya da "✅ Yeni config uygulandı: vN" |
+| Atestasyon: şimdi ölç, token al, mock host'a git | Temiz telefonda "✅ Atestasyon geçti · arc … · PinVault-Token … · HTTP 200"; rootlu/emülatör/hooklu cihazda "⛔ Atestasyon KALDI · neden: rooted,…" ve mock host `MOCK_HOST_REQUIRE_TOKEN=true` ise HTTP 401. Durum satırı ("🛡 Atestasyon: …") her 5 dakikada kendiliğinden yenilenir |
 | Host kapalıyken açılış | "❌ PinVault başlatılamadı" ve "Tekrar dene" |
 | mTLS → token gir → Kayıt ol | "✅ Kayıt başarılı — CN=PinVault Client: …" |
 | mTLS → başka telefon için üretilmiş token gir → Kayıt ol | "bu token başka bir telefon için üretilmiş" uyarısı; token harcanmaz |
@@ -166,6 +167,45 @@ Release'i DexProtector ile korumak için: [DEXPROTECTOR.md](DEXPROTECTOR.md).
 | Vault → anahtar `sample-secret` → Aç | Telefon ekran kilidini sorar; sonra "🔓 sample-secret v1 açıldı" ve içerik. Vazgeçilirse "✋ … açılmadı" |
 | Vault → secret (telefonda ekran kilidi yok) | "❌ … indirilemedi — bu dosya telefonda ekran kilidi olmadan saklanmaz" |
 | Depolama (test derlemesi) | Şifreli dosyalar, "düz metin sızıntısı: yok ✓", Keystore anahtarları |
+
+## Atestasyon (Approov'un çalışma mantığı)
+
+`host.attestation=true` (varsayılan) ile TLS ve mTLS blokları `attestation()`
+açar. Kütüphane açılışta ve sonra 5 dakikada bir uygulamayı ve cihazı ölçer
+(root, emülatör, hata ayıklayıcı, debuggable, hooking çerçevesi, imza
+sertifikası, klon uygulama, kurulum kaynağı, ADB, anahtarın yeri), raporu
+Keystore'daki kimlik anahtarıyla imzalayıp `POST /api/v1/attest`'e gönderir.
+Host, Config API'nin **atestasyon politikasına** göre karar verir (panel →
+Config API → Atestasyon): geçen cihaz 5 dakikalık bir **PinVault-Token** alır
+ve kütüphane bunu bloğun pinli host'larına giden her isteğe `PinVault-Token`
+başlığı olarak ekler; yeni bir pin config'i varsa aynı yanıtta gelir. Kalan
+cihaz token da pin güncellemesi de almaz. Host'un mock TLS hedefi
+`MOCK_HOST_REQUIRE_TOKEN=true` ile token'sız ya da geçersiz token'lı isteği
+401 ile reddeder; gerçek bir backend aynı doğrulamayı
+`SERVER_IMPLEMENTATION_GUIDE.md`'deki örneklerle yapar. Ayrıntı:
+[ATTESTATION.md](../ATTESTATION.md).
+
+**Play Integrity (isteğe bağlı).** `host.playIntegrityProjectNumber` dolu
+derlenirse uygulama `pinvault-play-integrity` modülünün
+`PlayIntegrityVerdictProvider`'ını kurar: rapor, Google'ın bu turun
+nonce'una bağlı kararını da taşır (`verdictProvider`). Host, Play
+Console'dan indirilen yanıt anahtarlarıyla (`PLAY_INTEGRITY_DECRYPTION_KEY`,
+`PLAY_INTEGRITY_VERIFICATION_KEY`) token'ı kendisi çözüp doğrular ve
+politikadaki `play_integrity` / `play_integrity_missing` bayraklarını
+kaldırır; panelde cihaz sayfasında Google'ın özeti görünür. Üç yerden ayrı
+ayrı açılıp kapanır: uygulamada proje numarası, host'ta anahtarlar,
+politikada bayrağın eylemi. Boş bırakılırsa uygulama Google'ın istemcisini
+hiç çağırmaz; Play Servisleri olmayan telefonda da atestasyon aynen çalışır.
+Sağlayıcı Google'a en çok 6 saatte bir sorar (klasik istek kotası günde
+10 000); host son doğrulanmış kararı 24 saat sayar.
+
+Uygulama kodunda token'a dokunulmaz: `PinVault.getClient()` ve `applyTo`
+istemcileri başlığı kendileri ekler. Ana ekrandaki düğme akışın tamamını
+gösterir; `PinManagerLite.attestNowBlocking()` / `fetchTokenBlocking()`
+suspend API'lerin Java köprüleridir. Olay listesinde her tur `[atestasyon]`
+satırıyla görünür. Panelde cihaz başına son karar, ARC, anahtar seviyesi ve
+"geçir / düşür" ek açıklamaları vardır; ARC, nedenleri telefona açıklamayan
+bir politika altında bile panelden çözülebilir.
 
 ## Gizli dosyalar
 
@@ -246,8 +286,8 @@ MockDns.java                mock host adlarını host IP'sine çözümler
 EmbeddedConfigApi.kt        HTTP yapmayan örnek CertificateConfigApi (imza doğrulanmaz; nedeni ve doğrusu içinde)
 VaultTokens.java            vault erişim token'ları (yalnızca bellekte; kayıt iptal edilince silinir)
 ConnectionEventLog.java     PinVaultConnectionListener → uygulama içi liste
-ProductionStyleClient.java  PinVault import etmeyen network katmanı (CertificatePinner)
-PinManagerLite.kt           suspend API'ler için senkron köprü, pin aktarımı
+ProductionStyleClient.java  PinVault import etmeyen network katmanı (pinlemeyi geri çağrıyla takar)
+PinManagerLite.kt           suspend API'ler için senkron köprü (yenileme, kayıt, vault, atestasyon)
 res/xml/network_security_config.xml   düz HTTP hiçbir yere yok (raporlar da şifreli porttan)
 res/xml/sample_*_rules.xml  yedek ve cihaz taşıma kuralları: kütüphanenin kuralları + elle yüklenen P12
 

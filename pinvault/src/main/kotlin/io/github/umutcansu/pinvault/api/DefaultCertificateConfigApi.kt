@@ -2,6 +2,7 @@ package io.github.umutcansu.pinvault.api
 
 import io.github.umutcansu.pinvault.crypto.SignatureTrust
 import io.github.umutcansu.pinvault.crypto.SignedConfigVerifier
+import io.github.umutcansu.pinvault.internal.BoundedBody
 import io.github.umutcansu.pinvault.internal.P12Rewrap
 import io.github.umutcansu.pinvault.model.CertificateConfig
 import io.github.umutcansu.pinvault.model.ClientCertRenewalResponse
@@ -15,6 +16,7 @@ import io.github.umutcansu.pinvault.ssl.DynamicSSLManager
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.RequestBody.Companion.toRequestBody
 import okhttp3.ResponseBody
+import okhttp3.ResponseBody.Companion.toResponseBody
 import retrofit2.Retrofit
 import retrofit2.converter.gson.GsonConverterFactory
 import retrofit2.http.GET
@@ -69,7 +71,11 @@ internal class DefaultCertificateConfigApi(
      * server to answer with a key of its own making, which the device then
      * refuses anyway.
      */
-    private val allowServerGeneratedKey: Boolean = false
+    private val allowServerGeneratedKey: Boolean = false,
+    /** The most a config (or any JSON answer parsed through Retrofit) may be; tests lower it. */
+    private val configBodyLimit: Long = BoundedBody.CONFIG_MAX_BYTES,
+    /** The most a vault file download may be; tests lower it. */
+    private val vaultBodyLimit: Long = BoundedBody.VAULT_MAX_BYTES
 ) : CertificateConfigApi, SignedConfigSource {
 
     /** Null = the block runs unsigned (`allowUnsigned()`). */
@@ -105,7 +111,11 @@ internal class DefaultCertificateConfigApi(
             .baseUrl(configUrl)
             // Resolved per call, so a rebuilt bootstrap client is picked up.
             .callFactory(okhttp3.Call.Factory { request -> bootstrapClient.newCall(request) })
-            .addConverterFactory(GsonConverterFactory.create())
+            // Gson would otherwise parse a body of any length: the bytes are
+            // read with a ceiling first. Retrofit's built-in converters still
+            // handle the ResponseBody endpoints (P12, binary), which bound
+            // their own reads.
+            .addConverterFactory(BoundedConverterFactory(GsonConverterFactory.create(), configBodyLimit))
             .build()
             .create(DynamicConfigService::class.java)
     }
@@ -165,7 +175,8 @@ internal class DefaultCertificateConfigApi(
         Timber.d("Downloading host client cert: %s", url)
         val response = service.downloadP12(url)
         if (!response.isSuccessful) throw retrofit2.HttpException(response)
-        val bytes = response.body()?.bytes() ?: throw Exception("Empty host client certificate response")
+        val bytes = response.body()?.let { BoundedBody.readBytes(it, BoundedBody.SMALL_MAX_BYTES, "host client certificate") }
+            ?: throw Exception("Empty host client certificate response")
         val oneOff = response.headers()[P12Rewrap.PASSWORD_HEADER]
         return if (oneOff != null && clientKeyPassword != null) P12Rewrap.rewrap(bytes, oneOff, clientKeyPassword) else bytes
     }
@@ -173,7 +184,7 @@ internal class DefaultCertificateConfigApi(
     override suspend fun downloadVaultFile(endpoint: String): ByteArray {
         Timber.d("Downloading vault file: %s", endpoint)
         val body = service.downloadBinary(endpoint)
-        return body.bytes()
+        return body.use { BoundedBody.readBytes(it, vaultBodyLimit, "vault file") }
     }
 
     /**
@@ -222,10 +233,14 @@ internal class DefaultCertificateConfigApi(
             }
 
             if (!resp.isSuccessful) {
-                throw VaultFetchHttpException(resp.code, resp.body?.string()?.take(200))
+                // Quoted, never parsed whole: a long error body is cut, not refused.
+                throw VaultFetchHttpException(resp.code, resp.body?.let { BoundedBody.readPrefix(it, 200) })
             }
 
-            val bytes = resp.body?.bytes() ?: ByteArray(0)
+            // Refused before it is buffered when it is longer than a vault
+            // file may be: the body is held in memory whole (and decrypted,
+            // and stored) from here on.
+            val bytes = resp.body?.let { BoundedBody.readBytes(it, vaultBodyLimit, "vault file") } ?: ByteArray(0)
             VaultFetchResponse(
                 content = bytes,
                 version = version,
@@ -337,7 +352,7 @@ internal class DefaultCertificateConfigApi(
                 .build()
             bootstrapClient.newCall(request).execute().use { resp ->
                 if (!resp.isSuccessful && purpose == USER_AUTH_KEY_PURPOSE && (resp.code == 409 || resp.code == 403)) {
-                    val answer = runCatching { org.json.JSONObject(resp.body?.string().orEmpty()) }.getOrNull()
+                    val answer = runCatching { org.json.JSONObject(resp.body?.let { smallBody(it, "key registration") }.orEmpty()) }.getOrNull()
                     UserAuthKeyRefusedException.from(resp.code, answer?.optString("error")?.ifBlank { null },
                         answer?.optString("reason")?.ifBlank { null }, attestationChain.isNotEmpty())
                         ?.let { throw it }
@@ -439,7 +454,7 @@ internal class DefaultCertificateConfigApi(
             // Taken, but an administrator approves the device first (an enrollment
             // code whose policy asks for it): no certificate yet, a request id.
             if (response.code == 202) {
-                val answer = runCatching { org.json.JSONObject(response.body?.string().orEmpty()) }.getOrNull()
+                val answer = runCatching { org.json.JSONObject(response.body?.let { smallBody(it, "enrollment") }.orEmpty()) }.getOrNull()
                 val id = answer?.optString("requestId")?.ifBlank { null }
                     ?: throw Exception("Enrollment answered 202 without a requestId")
                 throw io.github.umutcansu.pinvault.model.EnrollmentPendingException(
@@ -453,7 +468,7 @@ internal class DefaultCertificateConfigApi(
                 // A refusal carries its reason in the body (`device_already_enrolled`,
                 // `revoked`, …); keep it, the app shows it to the user.
                 if (response.code in 400..499) {
-                    val answer = runCatching { org.json.JSONObject(response.body?.string().orEmpty()) }.getOrNull()
+                    val answer = runCatching { org.json.JSONObject(response.body?.let { smallBody(it, "enrollment") }.orEmpty()) }.getOrNull()
                     throw io.github.umutcansu.pinvault.model.EnrollmentRefusedException(
                         response.code,
                         answer?.optString("error")?.ifBlank { null },
@@ -463,7 +478,9 @@ internal class DefaultCertificateConfigApi(
                 }
                 throw Exception("Enrollment failed — HTTP ${response.code}")
             }
-            val body = response.body?.bytes() ?: throw Exception("Empty enrollment response")
+            // A P12 or a PEM chain: neither is large.
+            val body = response.body?.let { BoundedBody.readBytes(it, BoundedBody.SMALL_MAX_BYTES, "enrollment") }
+                ?: throw Exception("Empty enrollment response")
 
             if (response.header(CERT_FORMAT_HEADER) == CERT_FORMAT_PEM_CHAIN) {
                 val chain = parseChainResponse(String(body, Charsets.UTF_8))
@@ -497,7 +514,7 @@ internal class DefaultCertificateConfigApi(
             .build()
 
         bootstrapClient.newCall(request).execute().use { response ->
-            val body = response.body?.string().orEmpty()
+            val body = response.body?.let { smallBody(it, "certificate renewal") }.orEmpty()
             when (response.code) {
                 200 -> ClientCertRenewalResponse.Issued(parseChainResponse(body))
                 403 -> {
@@ -556,7 +573,131 @@ internal class DefaultCertificateConfigApi(
                 Timber.e(e, "Failed to report vault download: %s", report.key)
             }
         }
+
+    // ── Attestation (ATTESTATION.md §2) ─────────────────────────────────
+
+    /**
+     * `GET <configUrl>api/v1/attest/challenge`: the nonce of an attestation
+     * round, as the server sent it (`nonce`, `expiresIn`, `serverTime`).
+     * Over the pinned bootstrap client, like every other call here.
+     *
+     * @throws AttestationHttpException for any non-2xx answer.
+     */
+    internal suspend fun attestChallenge(): org.json.JSONObject =
+        kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+            val request = okhttp3.Request.Builder()
+                .url("${configUrl}$ATTEST_CHALLENGE_ENDPOINT")
+                .get()
+                .build()
+            bootstrapClient.newCall(request).execute().use { response ->
+                val body = response.body?.let { smallBody(it, "attestation challenge") }.orEmpty()
+                if (!response.isSuccessful) throw AttestationHttpException.of(response.code, body)
+                parseAttestJson(body, "challenge")
+            }
+        }
+
+    /**
+     * `POST <configUrl>api/v1/attest` with the signed report ([body] as
+     * `AttestationManager` built it) and returns the server's verdict as it
+     * came — `result`, `arc`, `token`, `config`, … (`ATTESTATION.md` §2.2).
+     *
+     * @throws AttestationHttpException for any non-2xx answer, with the
+     *   server's `error` (`nonce_expired`, `signature_invalid`, `key_mismatch`,
+     *   `attestation_required`, …) and its `message` or `reason`.
+     */
+    internal suspend fun attest(body: org.json.JSONObject): org.json.JSONObject =
+        kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+            val request = okhttp3.Request.Builder()
+                .url("${configUrl}$ATTEST_ENDPOINT")
+                .post(body.toString().toRequestBody("application/json".toMediaType()))
+                .build()
+            bootstrapClient.newCall(request).execute().use { response ->
+                val answer = response.body?.let { smallBody(it, "attestation") }.orEmpty()
+                if (!response.isSuccessful) throw AttestationHttpException.of(response.code, answer)
+                parseAttestJson(answer, "attest")
+            }
+        }
+
+    private fun parseAttestJson(body: String, what: String): org.json.JSONObject = try {
+        org.json.JSONObject(body)
+    } catch (e: org.json.JSONException) {
+        throw Exception("The attestation $what answer is not JSON (${body.take(80)})", e)
+    }
+
+    /** A JSON answer the library parses: read whole, but no more than [BoundedBody.SMALL_MAX_BYTES]. */
+    private fun smallBody(body: ResponseBody, what: String): String =
+        BoundedBody.readString(body, BoundedBody.SMALL_MAX_BYTES, what)
 }
+
+/**
+ * Wraps a converter factory so that every body it would parse is first read
+ * with a ceiling ([maxBytes], see [BoundedBody]): Gson streams the body, but
+ * what it builds from an endless one still ends in the heap. Request and
+ * string conversion are untouched.
+ */
+private class BoundedConverterFactory(
+    private val delegate: retrofit2.Converter.Factory,
+    private val maxBytes: Long
+) : retrofit2.Converter.Factory() {
+
+    override fun responseBodyConverter(
+        type: java.lang.reflect.Type,
+        annotations: Array<Annotation>,
+        retrofit: Retrofit
+    ): retrofit2.Converter<ResponseBody, *>? {
+        val inner = delegate.responseBodyConverter(type, annotations, retrofit) ?: return null
+        return retrofit2.Converter<ResponseBody, Any?> { body ->
+            val contentType = body.contentType()
+            val bytes = body.use { BoundedBody.readBytes(it, maxBytes, "config") }
+            inner.convert(bytes.toResponseBody(contentType))
+        }
+    }
+
+    override fun requestBodyConverter(
+        type: java.lang.reflect.Type,
+        parameterAnnotations: Array<Annotation>,
+        methodAnnotations: Array<Annotation>,
+        retrofit: Retrofit
+    ): retrofit2.Converter<*, okhttp3.RequestBody>? =
+        delegate.requestBodyConverter(type, parameterAnnotations, methodAnnotations, retrofit)
+
+    override fun stringConverter(
+        type: java.lang.reflect.Type,
+        annotations: Array<Annotation>,
+        retrofit: Retrofit
+    ): retrofit2.Converter<*, String>? = delegate.stringConverter(type, annotations, retrofit)
+}
+
+/**
+ * The server refused an attestation call. [serverError] is its `error`
+ * (`nonce_expired`, `signature_invalid`, `device_revoked`, `key_mismatch`,
+ * `attestation_required`, `attestation_invalid`, …), [serverMessage] its
+ * `message` or `reason`; both null when the body was not JSON.
+ */
+internal class AttestationHttpException(
+    val httpStatus: Int,
+    val serverError: String?,
+    val serverMessage: String?
+) : Exception(
+    "Attestation refused — HTTP $httpStatus" +
+        (serverError?.let { " $it" } ?: "") +
+        (serverMessage?.let { ": $it" } ?: "")
+) {
+    companion object {
+        fun of(httpStatus: Int, body: String): AttestationHttpException {
+            val json = runCatching { org.json.JSONObject(body) }.getOrNull()
+            return AttestationHttpException(
+                httpStatus,
+                json?.optString("error")?.ifBlank { null },
+                json?.optString("message")?.ifBlank { null } ?: json?.optString("reason")?.ifBlank { null }
+            )
+        }
+    }
+}
+
+/** Device-side attestation endpoints, relative to the block's `configUrl` (`ATTESTATION.md` §2). */
+internal const val ATTEST_CHALLENGE_ENDPOINT = "api/v1/attest/challenge"
+internal const val ATTEST_ENDPOINT = "api/v1/attest"
 
 /**
  * Proof that lets a device replace its registered E2E key over a TLS

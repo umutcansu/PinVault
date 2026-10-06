@@ -69,7 +69,7 @@ class HostClientCertAclTest {
     }
 
     /** An mTLS Config API as [clientId]'s certificate sees it. */
-    private fun ApplicationTestBuilder.configureApp(clientId: String) {
+    private fun ApplicationTestBuilder.configureApp(clientId: String, requireGrant: Boolean = false) {
         val presented = clientCert(clientId)
         install(ContentNegotiation) { json(Json { ignoreUnknownKeys = true }) }
         install(createApplicationPlugin("FakePeerCert") {
@@ -78,7 +78,8 @@ class HostClientCertAclTest {
         routing {
             certificateConfigRoutes(scope, PinConfigStore(db), PinConfigHistoryStore(db), ConnectionHistoryStore(db),
                 ConfigSigningService(signingFile), ClientDeviceStore(db), clientCertStore = clientCerts,
-                hostClientCertStore = hostCerts, configApiMode = "mtls", deviceHostAclStore = acl)
+                hostClientCertStore = hostCerts, configApiMode = "mtls", deviceHostAclStore = acl,
+                requireHostCertGrant = requireGrant)
         }
     }
 
@@ -152,6 +153,28 @@ class HostClientCertAclTest {
         assertEquals(HttpStatusCode.OK, download("payments.bank.example").status)
         assertEquals(HttpStatusCode.OK, download("hr.bank.example").status)
         assertEquals(HttpStatusCode.NotFound, download("no-such-host.example").status)
+    }
+
+    @Test
+    fun `with HOST_CLIENT_CERT_REQUIRE_GRANT a scope without any ACL serves the certificate to nobody`() {
+        testApplication {
+            // No ACL in this scope: the host's shared private key stays on the server,
+            // and the refusal is the same 403 whether or not the host has a certificate.
+            assertFalse(acl.isConfigured(scope))
+            configureApp("field-tablet", requireGrant = true)
+            val refused = download("payments.bank.example")
+            assertEquals(HttpStatusCode.Forbidden, refused.status)
+            assertTrue(refused.bodyAsText().contains("host_not_allowed"))
+            assertFalse(refused.bodyAsText().contains("p12 of"))
+            assertEquals(HttpStatusCode.Forbidden, download("no-such-host.example").status)
+        }
+        testApplication {
+            // With an ACL the grants decide, exactly as without the switch.
+            acl.addDefault(scope, "payments.bank.example")
+            configureApp("field-tablet", requireGrant = true)
+            assertEquals(HttpStatusCode.OK, download("payments.bank.example").status)
+            assertEquals(HttpStatusCode.Forbidden, download("hr.bank.example").status)
+        }
     }
 
     @Test

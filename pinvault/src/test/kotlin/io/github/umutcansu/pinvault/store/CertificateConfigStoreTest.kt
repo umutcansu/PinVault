@@ -29,6 +29,32 @@ class CertificateConfigStoreTest {
     }
 
     @Test
+    fun `managed trust roots are stored with the config, cleared with it, and malformed entries dropped`() {
+        val rootA = "A".repeat(43) + "="
+        val rootB = "B".repeat(43) + "="
+        val config = CertificateConfig(
+            version = 1,
+            pins = listOf(HostPin("api.example.com", listOf("hash1aaa", "hash2bbb"), version = 1)),
+            trustRoots = listOf(rootA, rootB)
+        )
+        store.save(config)
+        assertEquals(listOf(rootA, rootB), store.load()!!.trustRoots)
+
+        // A config without roots removes them.
+        store.save(config.copy(trustRoots = emptyList()))
+        assertEquals(emptyList<String>(), store.load()!!.trustRoots)
+
+        // Something that is not a pin in the stored list is ignored, not returned.
+        store.save(config)
+        prefs.edit().putString(CertificateConfigStore.KEY_TRUST_ROOTS_JSON, """["$rootA","garbage"]""").apply()
+        assertEquals(listOf(rootA), store.load()!!.trustRoots)
+
+        store.clearActive()
+        assertNull(store.load())
+        assertFalse(prefs.contains(CertificateConfigStore.KEY_TRUST_ROOTS_JSON))
+    }
+
+    @Test
     fun `save and load round-trip -- single host`() {
         val config = CertificateConfig(
             version = 1,

@@ -25,6 +25,21 @@ internal class HttpClientProvider(
         private set
 
     /**
+     * The attestation token interceptor of this block, or null when the
+     * block does not attest. Set once by `ConfigApiClient`; every client
+     * built here from then on carries it (application interceptor, outside
+     * the recovery interceptor), the fail-closed one included.
+     */
+    @Volatile
+    internal var tokenInterceptor: okhttp3.Interceptor? = null
+        set(value) {
+            synchronized(this) {
+                field = value
+                currentClient = build(withRecovery = currentConfig != null)
+            }
+        }
+
+    /**
      * Starts as a fail-closed client: pinning is installed over the live
      * [currentConfig], so every TLS handshake is refused until [swap]
      * publishes the first config — and starts succeeding right after, even
@@ -33,10 +48,20 @@ internal class HttpClientProvider(
      * skip pinning entirely during the init window and after [reset].
      */
     @Volatile
-    private var currentClient: OkHttpClient = sslManager.buildDynamicClient({ currentConfig })
+    private var currentClient: OkHttpClient = build(withRecovery = false)
 
     @Volatile
     private var currentVersion: Int = 0
+
+    /**
+     * A client over the LIVE config (see [swap]), with this block's token
+     * interceptor when it has one, and the recovery interceptor when asked.
+     */
+    private fun build(withRecovery: Boolean): OkHttpClient = sslManager.buildDynamicClient(
+        { currentConfig },
+        recoveryInterceptor = if (withRecovery) recoveryInterceptor else null,
+        extraInterceptors = listOfNotNull(tokenInterceptor)
+    )
 
     /** Set by PinVault after updater is created */
     @Volatile
@@ -71,7 +96,7 @@ internal class HttpClientProvider(
             // or a config that expired and was then renewed with the same pins
             // would keep refusing handshakes (ConfigExpiredException) for the
             // rest of the process — the recovery interceptor retries on get().
-            currentClient = sslManager.buildDynamicClient({ currentConfig }, recoveryInterceptor = recoveryInterceptor)
+            currentClient = build(withRecovery = true)
             currentVersion = newConfig.computedVersion()
 
             // Closes the old client's pooled connections (and those of every
@@ -118,7 +143,7 @@ internal class HttpClientProvider(
     fun reset() {
         synchronized(this) {
             currentConfig = null
-            currentClient = sslManager.buildDynamicClient({ currentConfig })
+            currentClient = build(withRecovery = false)
             currentVersion = 0
             sslManager.onPinsChanged()
             Timber.w("HttpClient reset — no config; TLS refused until the next init/swap")

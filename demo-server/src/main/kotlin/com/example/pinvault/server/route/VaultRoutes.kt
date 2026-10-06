@@ -78,6 +78,13 @@ fun Route.vaultRoutes(
      */
     downloadSlots: com.example.pinvault.server.service.ConcurrencyLimiter? = com.example.pinvault.server.service.ConcurrencyLimiter(4),
     /**
+     * Downloads served at once in total, whatever the source
+     * (`VAULT_DOWNLOAD_CONCURRENCY_TOTAL`, default 16); null = unlimited. Every
+     * download holds the whole file in memory, so the per-address cap alone
+     * lets a few addresses fill the heap. Beyond it: 429 with `Retry-After: 1`.
+     */
+    downloadSlotsTotal: com.example.pinvault.server.service.ConcurrencyLimiter? = null,
+    /**
      * Produces (and, with `CONFIG_SIGNATURE_CACHE`, caches) the vault file
      * signatures. Null = sign per request with [signingService].
      */
@@ -398,6 +405,12 @@ fun Route.vaultRoutes(
                 return@get call.respond(HttpStatusCode.TooManyRequests,
                     mapOf("error" to "rate_limited", "message" to "Too many downloads at once from this address. Try again."))
             }
+            if (downloadSlotsTotal?.tryAcquire(TOTAL_SLOT_KEY) == false) {
+                downloadSlots?.release(slotKey)
+                call.response.header(HttpHeaders.RetryAfter, "1")
+                return@get call.respond(HttpStatusCode.TooManyRequests,
+                    mapOf("error" to "rate_limited", "message" to "Too many downloads at once. Try again."))
+            }
             try {
                 val entry = vaultFileStore.get(configApiId, key)
                     ?: return@get call.respond(HttpStatusCode.NotFound, mapOf("error" to "File not found: $key"))
@@ -480,6 +493,7 @@ fun Route.vaultRoutes(
                 }
                 call.respondBytes(payload, ContentType.Application.OctetStream)
             } finally {
+                downloadSlotsTotal?.release(TOTAL_SLOT_KEY)
                 downloadSlots?.release(slotKey)
             }
         }
@@ -957,6 +971,8 @@ private fun canonicalPem(key: java.security.PublicKey): String {
 }
 
 /** How an identity proved it acts for a device (`identity_devices.proof`). */
+/** The single key of the total download limiter (`VAULT_DOWNLOAD_CONCURRENCY_TOTAL`). */
+private const val TOTAL_SLOT_KEY = "*"
 private const val PROOF_KEY = "key_over_certificate"
 private const val PROOF_TOKEN = "token_over_certificate"
 

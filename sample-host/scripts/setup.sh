@@ -655,6 +655,8 @@ EOF
     set_env ENROLLMENT_ATTESTATION enforce
     set_env ENROLLMENT_P12 off
     set_env USER_AUTH_REQUIRE_PER_USE true
+    # Attestation: cihaz anahtarının ilk kaydı da donanım belgesi ister (ATTESTATION.md).
+    set_env ATTESTATION_KEY_POLICY enforce
     # Donanım belgesi: kilidi açılmış (bootloader) telefon geçmez; Google'ın iptal
     # listesi data/'daki dosyadan okunur ve 48 saatten eskiyse hiçbir belge geçmez
     # (liste aşağıda bir kez indirilir; cron'a koymak README → "Donanım belgesi iptal listesi").
@@ -667,7 +669,7 @@ EOF
     # Ret sınırı: sunucu varsayılanı (demo'daki 0 = sınırsız değeri üretime taşınmasın).
     [ "$(get_env DEVICE_REFUSAL_RATE_LIMIT)" != "0" ] || set_env DEVICE_REFUSAL_RATE_LIMIT ""
     echo ">> Üretim ayarları: ENROLLMENT_MODE=token, PIN_CHANGE_APPROVALS=2, PIN_LIVE_CHECK=enforce," \
-        "USER_AUTH_ATTESTATION=enforce, ENROLLMENT_ATTESTATION=enforce, ENROLLMENT_P12=off, USER_AUTH_REQUIRE_PER_USE=true," \
+        "USER_AUTH_ATTESTATION=enforce, ENROLLMENT_ATTESTATION=enforce, ENROLLMENT_P12=off, USER_AUTH_REQUIRE_PER_USE=true, ATTESTATION_KEY_POLICY=enforce," \
         "ATTESTATION_REQUIRE_VERIFIED_BOOT=true, ATTESTATION_STATUS_MAX_AGE_HOURS=$(get_env ATTESTATION_STATUS_MAX_AGE_HOURS)"
 
     # Sunucunun yerel imzalayıcısı varsa (CONFIG_SIGNERS boş ya da "local" içeriyor)

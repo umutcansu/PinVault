@@ -216,4 +216,128 @@ class VaultFileSignatureRouterTest {
         assertTrue("two distinct signers must be accepted, got $result", result is VaultFileResult.Updated)
         assertArrayEquals(content, storage.load("m"))
     }
+
+    // ── end_to_end: one failure code whatever went wrong in the envelope (L-11) ──
+    //
+    // The signature covers the plaintext, so it cannot be checked before the
+    // envelope is open; what the server learns from a failure must therefore
+    // not say WHICH step failed (layout, RSA-OAEP, AES-GCM): that is the
+    // shape of a padding oracle.
+
+    private fun signedBlock() = ConfigApiBlock(
+        id = "default", configUrl = "https://example.test/", bootstrapPins = emptyList(), signaturePublicKey = pubB64
+    )
+
+    private fun routerWith(
+        storage: VaultStorageProvider,
+        api: CertificateConfigApi,
+        block: ConfigApiBlock = signedBlock(),
+        keys: io.github.umutcansu.pinvault.keystore.DeviceKeyProvider? = null
+    ): VaultFileRouter {
+        val client = mockk<ConfigApiClient>()
+        every { client.api } returns api
+        every { client.block } returns block
+        every { client.signatureTrust } returns SignatureTrust.forBlock(block, null)
+        return VaultFileRouter(mapOf("default" to client), { storage }, keys, { "test-device" })
+    }
+
+    private fun answering(response: VaultFetchResponse): CertificateConfigApi = mockk<CertificateConfigApi>().also {
+        coEvery { it.downloadVaultFileWithMeta(any(), any(), any(), any()) } returns response
+    }
+
+    private fun e2eFile(key: String) = VaultFileConfig(
+        key = key, endpoint = "api/v1/vault/$key", configApiId = "default",
+        encryption = io.github.umutcansu.pinvault.model.VaultFileEncryption.END_TO_END
+    )
+
+    /** The device's RSA public key, from the PEM the provider registers with the server. */
+    private fun publicKeyOf(provider: io.github.umutcansu.pinvault.keystore.DeviceKeyProvider): java.security.PublicKey {
+        provider.ensureKeyPair()
+        val der = provider.getPublicKeyPem().lines().filter { !it.startsWith("-----") }.joinToString("")
+        return java.security.KeyFactory.getInstance("RSA")
+            .generatePublic(java.security.spec.X509EncodedKeySpec(Base64.decode(der, Base64.DEFAULT)))
+    }
+
+    @Test
+    fun `every way an end_to_end envelope can fail gives the same code and reason, without the exception text`() = runTest {
+        val content = "model".toByteArray()
+        val device = io.github.umutcansu.pinvault.keystore.DeviceKeyProvider.software("e2e-codes-${System.nanoTime()}")
+        val other = KeyPairGenerator.getInstance("RSA").apply { initialize(2048) }.generateKeyPair()
+        val good = io.github.umutcansu.pinvault.store.SoftwareUserAuthKeys.serverEnvelope(content, publicKeyOf(device))
+        // The GCM tag fails / the RSA-OAEP unwrap fails / the layout fails.
+        val tampered = good.copyOf().also { it[it.size - 1] = (it[it.size - 1].toInt() xor 1).toByte() }
+        val wrongKey = io.github.umutcansu.pinvault.store.SoftwareUserAuthKeys.serverEnvelope(content, other.public)
+        val malformed = ByteArray(8)
+        val signature = sign("m", 1, content, keyPair.private)
+
+        val failures = listOf("tampered" to tampered, "wrong key" to wrongKey, "malformed" to malformed).map { (what, envelope) ->
+            val storage = MemStore()
+            val response = VaultFetchResponse(content = envelope, version = 1, encryption = "end_to_end", signature = signature)
+            val result = routerWith(storage, answering(response), keys = device).fetchFile(e2eFile("m"))
+            assertTrue("$what: expected Failed, was $result", result is VaultFileResult.Failed)
+            assertNull("$what: nothing stored", storage.load("m"))
+            result as VaultFileResult.Failed
+        }
+        for (failed in failures) {
+            assertEquals(VaultFileResult.Failed.CODE_DECRYPT_FAILED, failed.code)
+            assertEquals("one text whatever the step", failures[0].reason, failed.reason)
+            val message = failed.exception?.message
+            if (!message.isNullOrBlank()) assertFalse("the exception's text stays out of the reason", failed.reason.contains(message))
+        }
+
+        val storage = MemStore()
+        val response = VaultFetchResponse(content = good, version = 1, encryption = "end_to_end", signature = signature)
+        assertTrue(routerWith(storage, answering(response), keys = device).fetchFile(e2eFile("m")) is VaultFileResult.Updated)
+        assertArrayEquals(content, storage.load("m"))
+    }
+
+    @Test
+    fun `an unsigned end_to_end answer is refused before the device key touches it`() = runTest {
+        val device = io.github.umutcansu.pinvault.keystore.DeviceKeyProvider.software("e2e-unsigned-${System.nanoTime()}")
+        val envelope = io.github.umutcansu.pinvault.store.SoftwareUserAuthKeys.serverEnvelope("model".toByteArray(), publicKeyOf(device))
+        var keyUsed = false
+        val watched = object : io.github.umutcansu.pinvault.keystore.DeviceKeyProvider by device {
+            override fun getPrivateKey(): java.security.PrivateKey { keyUsed = true; return device.getPrivateKey() }
+        }
+        val response = VaultFetchResponse(content = envelope, version = 1, encryption = "end_to_end", signature = null)
+
+        val result = routerWith(MemStore(), answering(response), keys = watched).fetchFile(e2eFile("m")) as VaultFileResult.Failed
+
+        assertEquals(VaultFileResult.Failed.CODE_SIGNATURE_MISSING, result.code)
+        assertFalse("no signature, no decryption", keyUsed)
+    }
+
+    @Test
+    fun `failure codes name the class of a failure, never the server's text`() = runTest {
+        val content = "real".toByteArray()
+
+        val refused = mockk<CertificateConfigApi>()
+        coEvery { refused.downloadVaultFileWithMeta(any(), any(), any(), any()) } throws
+            io.github.umutcansu.pinvault.api.VaultFetchHttpException(401, """{"error":"invalid or revoked token"}""")
+        val http = routerWith(MemStore(), refused).fetchFile(fileFor("ts")) as VaultFileResult.Failed
+        assertEquals("http_401", http.code)
+        assertTrue("the app still gets the detail", http.reason.contains("HTTP 401"))
+
+        val forged = VaultFetchResponse(content = content, version = 1, signature = sign("ts", 1, "ATTACKER".toByteArray(), keyPair.private))
+        assertEquals(
+            VaultFileResult.Failed.CODE_SIGNATURE_INVALID,
+            (routerWith(MemStore(), answering(forged)).fetchFile(fileFor("ts")) as VaultFileResult.Failed).code
+        )
+
+        val unsigned = VaultFetchResponse(content = content, version = 1, signature = null)
+        assertEquals(
+            VaultFileResult.Failed.CODE_SIGNATURE_MISSING,
+            (routerWith(MemStore(), answering(unsigned)).fetchFile(fileFor("ts")) as VaultFileResult.Failed).code
+        )
+
+        val offline = mockk<CertificateConfigApi>()
+        coEvery { offline.downloadVaultFileWithMeta(any(), any(), any(), any()) } throws java.net.UnknownHostException("config.example.test")
+        assertEquals(
+            VaultFileResult.Failed.CODE_NETWORK,
+            (routerWith(MemStore(), offline).fetchFile(fileFor("ts")) as VaultFileResult.Failed).code
+        )
+
+        val unknownApi = routerWith(MemStore(), answering(unsigned)).fetchFile(fileFor("ts").copy(configApiId = "gone")) as VaultFileResult.Failed
+        assertEquals(VaultFileResult.Failed.CODE_NOT_CONFIGURED, unknownApi.code)
+    }
 }

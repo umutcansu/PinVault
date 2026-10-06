@@ -28,7 +28,16 @@ data class PinConfig(
      */
     @OptIn(kotlinx.serialization.ExperimentalSerializationApi::class)
     @kotlinx.serialization.EncodeDefault(kotlinx.serialization.EncodeDefault.Mode.NEVER)
-    val configApiId: String? = null
+    val configApiId: String? = null,
+    /**
+     * Managed trust roots: SHA-256 SPKI pins (Base64, like pins) of root CAs.
+     * A library block with `managedTrustRoots()` accepts, for a host that has
+     * NO pin entry, a chain the platform validates to one of these roots.
+     * Left out of the payload when empty, so older clients see no new field.
+     */
+    @OptIn(kotlinx.serialization.ExperimentalSerializationApi::class)
+    @kotlinx.serialization.EncodeDefault(kotlinx.serialization.EncodeDefault.Mode.NEVER)
+    val trustRoots: List<String> = emptyList()
 ) {
     fun computedVersion(): Int = pins.maxOfOrNull { it.version } ?: version
     /** Global forceUpdate = any host has forceUpdate */

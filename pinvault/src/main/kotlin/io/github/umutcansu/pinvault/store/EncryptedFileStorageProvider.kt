@@ -234,7 +234,12 @@ class EncryptedFileStorageProvider internal constructor(
                     }
                     .build()
             )
-            keyGen.generateKey()
+            keyGen.generateKey().also { key ->
+                KeystoreOptions.checkLevel(
+                    "Vault file key", io.github.umutcansu.pinvault.keystore.KeyInspector.securityLevel(key),
+                    cleanUp = { runCatching { KeyStore.getInstance(ANDROID_KEYSTORE).apply { load(null) }.deleteEntry(alias) } }
+                )
+            }
         }
 
     /**

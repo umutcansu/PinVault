@@ -26,6 +26,9 @@ internal object PinConfigValidator {
     /** Most pins one host may carry. */
     const val MAX_PINS_PER_HOST = 32
 
+    /** Most managed trust roots a config may list. */
+    const val MAX_TRUST_ROOTS = 64
+
     private val LABEL = Regex("[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?")
     private val PORT = Regex("[1-9][0-9]{0,4}")
 
@@ -71,6 +74,14 @@ internal object PinConfigValidator {
         if (pins.isEmpty()) throw InvalidPinFormatException("Config must contain at least one pin entry")
         if (pins.size > MAX_HOSTS) throw InvalidPinFormatException("Config has ${pins.size} pin entries (at most $MAX_HOSTS)")
 
+        @Suppress("USELESS_CAST")
+        val roots = (config.trustRoots as List<String?>?).orEmpty()
+        if (roots.size > MAX_TRUST_ROOTS) throw InvalidPinFormatException("Config lists ${roots.size} trust roots (at most $MAX_TRUST_ROOTS)")
+        roots.forEachIndexed { index, root ->
+            pinError(root)?.let { throw InvalidPinFormatException("Trust root at index $index $it") }
+        }
+        if (roots.toSet().size != roots.size) throw InvalidPinFormatException("A trust root is listed more than once")
+
         val seen = HashSet<String>()
         pins.forEach { pin ->
             if (pin == null) throw InvalidPinFormatException("Config has an empty pin entry")
@@ -90,6 +101,14 @@ internal object PinConfigValidator {
             }
             if (hashes.size > MAX_PINS_PER_HOST) {
                 throw InvalidPinFormatException("Host ${printable(hostname)} has ${hashes.size} pins (at most $MAX_PINS_PER_HOST)")
+            }
+            // Two pins exist so that one key can be rotated away while the
+            // other still works; the same hash twice gives that rotation
+            // nothing to fall back on and used to satisfy the count.
+            if (hashes.toSet().size < 2) {
+                throw InvalidPinFormatException(
+                    "Host ${printable(hostname)} must have at least 2 different pins (primary + backup); the same pin is listed twice"
+                )
             }
             hashes.forEachIndexed { index, hash ->
                 pinError(hash)?.let { throw InvalidPinFormatException("Hash at index $index for ${printable(hostname)} $it") }

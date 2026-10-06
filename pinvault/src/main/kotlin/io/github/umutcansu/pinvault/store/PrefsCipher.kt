@@ -89,7 +89,7 @@ internal class KeystorePrefsCipher private constructor(
                                 .unlockedDeviceRequired(unlockedDeviceRequired)
                                 .build()
                         )
-                        generateKey()
+                        generateKey().also { checked("Store encryption key", AES_ALIAS, it, keyStore) }
                     }
                 }
             val mac = keyStore.getKey(MAC_ALIAS, null) as SecretKey?
@@ -100,10 +100,18 @@ internal class KeystorePrefsCipher private constructor(
                                 .unlockedDeviceRequired(unlockedDeviceRequired)
                                 .build()
                         )
-                        generateKey()
+                        generateKey().also { checked("Store name key", MAC_ALIAS, it, keyStore) }
                     }
                 }
             return KeystorePrefsCipher(aes, mac)
+        }
+
+        /** `requireHardwareBackedKeys()`: a store key made in software is deleted and refused. */
+        private fun checked(what: String, alias: String, key: SecretKey, keyStore: KeyStore) {
+            KeystoreOptions.checkLevel(
+                what, io.github.umutcansu.pinvault.keystore.KeyInspector.securityLevel(key),
+                cleanUp = { if (keyStore.containsAlias(alias)) keyStore.deleteEntry(alias) }
+            )
         }
 
         private fun KeyGenParameterSpec.Builder.unlockedDeviceRequired(required: Boolean) = apply {

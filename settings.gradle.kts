@@ -16,4 +16,5 @@ dependencyResolutionManagement {
 
 rootProject.name = "PinVault"
 include(":pinvault")
+include(":pinvault-play-integrity")
 include(":demo-app")

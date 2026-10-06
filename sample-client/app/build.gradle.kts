@@ -55,6 +55,14 @@ fun javaString(value: String): String {
 val diagnosticLogs = providers.gradleProperty("sample.diagnosticLogs").orNull?.toBoolean() ?: false
 val e2eScreenshots = providers.gradleProperty("sample.e2eScreenshots").orNull?.toBoolean() ?: false
 val targetRequireCaTrust = checkedValue("target.requireCaTrust", Regex("true|false"), "true ya da false") != "false"
+// Atestasyon (Approov benzeri): uygulama 5 dakikada bir bütünlük raporunu host'a imzalayıp
+// gönderir, geçerse kısa ömürlü PinVault-Token alır (host.attestation; boşsa true).
+val hostAttestation = checkedValue("host.attestation", Regex("true|false"), "true ya da false") != "false"
+// Play Integrity (isteğe bağlı): Play Console'daki Cloud proje numarası. Doluysa
+// uygulama her atestasyon turunda (en çok 6 saatte bir) Google'dan nonce'a bağlı
+// bir karar alır ve raporla gönderir; host Play Console yanıt anahtarlarıyla
+// doğrular (ATTESTATION.md §11). Boşsa sağlayıcı hiç kurulmaz.
+val hostPlayIntegrityProject = checkedValue("host.playIntegrityProjectNumber", Regex("[0-9]{1,20}"), "Cloud proje numarası (rakam)")
 
 // ── Yayın imzası ────────────────────────────────────────────────────────────
 // Anahtar deposu ve parolaları depoda DURMAZ. Gradle özelliği (~/.gradle/gradle.properties
@@ -119,6 +127,8 @@ android {
         // "false" yazılırsa kapanır (self-signed / kurum içi CA'lı hedef); release
         // derlemesi "false" ile derlenmez.
         buildConfigField("boolean", "TARGET_REQUIRE_CA_TRUST", targetRequireCaTrust.toString())
+        buildConfigField("boolean", "HOST_ATTESTATION", hostAttestation.toString())
+        buildConfigField("String", "HOST_PLAY_INTEGRITY_PROJECT", javaString(hostPlayIntegrityProject))
         field("MOCK_TLS_HOST", "mock.tlsHost", hostNamePattern, "alan adı")
         field("MOCK_TLS_PORT", "mock.tlsPort", portPattern, "port")
         field("MOCK_MTLS_HOST", "mock.mtlsHost", hostNamePattern, "alan adı")
@@ -292,6 +302,9 @@ dependencies {
     // Sürüm gradle.properties → pinvault.version. pinvault.localPath doluysa
     // settings.gradle.kts bu bağımlılığı yerel PinVault kaynağıyla değiştirir.
     implementation("io.github.umutcansu:pinvault:${providers.gradleProperty("pinvault.version").get()}")
+    // Play Integrity karar sağlayıcısı (ayrı artefakt: Google'ın istemcisini yalnızca
+    // isteyen uygulama taşır). host.playIntegrityProjectNumber boşsa kurulmaz.
+    implementation("io.github.umutcansu:pinvault-play-integrity:${providers.gradleProperty("pinvault.version").get()}")
     implementation("androidx.appcompat:appcompat:1.7.0")
     implementation("com.google.android.material:material:1.12.0")
     implementation("com.squareup.okhttp3:okhttp:4.12.0")

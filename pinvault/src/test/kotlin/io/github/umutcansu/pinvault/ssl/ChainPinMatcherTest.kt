@@ -113,6 +113,31 @@ class ChainPinMatcherTest {
     }
 
     @Test
+    fun `an issuer pin does not accept a certificate the CA issued for another host`() {
+        // Pinning a public intermediate would otherwise accept any site's certificate.
+        val otherKeys = keys()
+        val forOtherHost = cert("CN=other.chain.test", otherKeys, "CN=Chain Test Intermediate", intKeys.private, ca = false, san = "other.chain.test")
+        try {
+            trustManager(listOf(pin(intermediate), randomPin())).checkServerTrusted(arrayOf(forOtherHost, intermediate), "RSA", engine())
+            fail("A certificate for another host must not pass on an issuer pin")
+        } catch (e: io.github.umutcansu.pinvault.model.HostnameMismatchException) {
+            assertTrue(e.message, e.message!!.contains("not issued for $host"))
+        }
+        // A leaf without any subjectAltName is refused on an issuer pin too...
+        val noName = cert("CN=$host", keys(), "CN=Chain Test Intermediate", intKeys.private, ca = false)
+        try {
+            trustManager(listOf(pin(intermediate), randomPin())).checkServerTrusted(arrayOf(noName, intermediate), "RSA", engine())
+            fail("A leaf without a subjectAltName must not pass on an issuer pin")
+        } catch (e: io.github.umutcansu.pinvault.model.HostnameMismatchException) {
+            // expected
+        }
+        // ...but its own key pin needs no name: the pin is the identity.
+        trustManager(listOf(pin(noName), randomPin())).checkServerTrusted(arrayOf(noName, intermediate), "RSA", engine())
+        assertFalse(ChainPinMatcher.leafNamesHost(leaf, ""))
+        assertTrue(ChainPinMatcher.leafNamesHost(leaf, host))
+    }
+
+    @Test
     fun `matcher reports which pin matched`() {
         val accepted = setOf(pin(intermediate), pin(root))
         assertEquals(pin(intermediate), ChainPinMatcher.match(arrayOf(leaf, intermediate, root), accepted, ::pin))

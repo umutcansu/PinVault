@@ -447,6 +447,186 @@ class UserAuthVaultStorageTest {
         assertTrue(s.exists("st"))
     }
 
+    // ── The pending slot: a download never replaces a stored copy unchecked ──
+
+    private fun envelope(bytes: ByteArray = content) = SoftwareUserAuthKeys.serverEnvelope(bytes, keys.publicKey())
+
+    @Test
+    fun `the first server copy goes straight to the stored slot`() = runTest {
+        val s = strict()
+        keys.ensureKey()
+
+        assertFalse("nothing to protect yet", s.saveSealedByServer("st", envelope(), 1, emptyList()))
+
+        assertEquals(1, s.getVersion("st"))
+        assertEquals(0, s.pendingVersion("st"))
+        assertFalse(inner.exists("st.pending"))
+    }
+
+    @Test
+    fun `a download beside a stored copy waits in the pending slot until it is opened`() = runTest {
+        val s = strict()
+        storedEnvelope(s, version = 5)
+        val newer = "statement-v6".toByteArray()
+
+        assertTrue("a second copy goes to the pending slot", s.saveSealedByServer("st", envelope(newer), 6, emptyList()))
+
+        assertEquals("the stored copy is still the one the app sees", 5, s.getVersion("st"))
+        assertEquals(6, s.pendingVersion("st"))
+        assertTrue(inner.exists("st.pending"))
+        assertTrue(s.isLocked("st"))
+        assertNull(s.load("st"))
+
+        val promoted = mutableListOf<Int>()
+        val result = s.unlock("st", passes.fn, verify = noCheck, onPromoted = { promoted += it })
+
+        assertEquals("the newer copy opens first", VaultFileUnlockResult.Unlocked("st", 6, newer), result)
+        assertEquals(listOf(6), promoted)
+        assertEquals("…and is the stored copy now", 6, s.getVersion("st"))
+        assertEquals(0, s.pendingVersion("st"))
+        assertFalse(inner.exists("st.pending"))
+        assertEquals(VaultFileUnlockResult.Unlocked("st", 6, newer), s.unlock("st", passes.fn, verify = noCheck))
+    }
+
+    @Test
+    fun `a pending copy that fails its signature is deleted alone and the stored copy opens`() = runTest {
+        val s = strict()
+        storedEnvelope(s, version = 5)
+        s.saveSealedByServer("st", envelope("garbage".toByteArray()), 6, emptyList())
+        val checked = mutableListOf<Int>()
+        val onlyV5Passes: UnlockVerifier = { _, version, _ -> checked += version; if (version == 5) null else "signature verification failed" }
+        var promoted = 0
+        val prompt = Prompt { AuthOutcome.Succeeded(it) }
+
+        val result = s.unlock("st", prompt.fn, verify = onlyV5Passes, onPromoted = { promoted++ })
+
+        assertEquals(VaultFileUnlockResult.Unlocked("st", 5, content), result)
+        assertEquals("the pending copy first, then the stored one", listOf(6, 5), checked)
+        assertEquals("a copy that fails is never promoted", 0, promoted)
+        assertFalse("only the pending copy is gone", inner.exists("st.pending"))
+        assertEquals(5, s.getVersion("st"))
+        assertTrue(s.exists("st"))
+        assertEquals("a per-use cipher does one operation: the stored copy asks again", 2, prompt.shown)
+    }
+
+    @Test
+    fun `a time-bound key opens the stored copy after a bad pending one without a second prompt`() = runTest {
+        keys.kind = UserAuthKeyKind.TIME_BOUND
+        val s = strict()
+        storedEnvelope(s, version = 5)
+        s.saveSealedByServer("st", envelope("garbage".toByteArray()), 6, emptyList())
+        val prompt = Prompt { AuthOutcome.Succeeded(it) }
+
+        val result = s.unlock("st", prompt.fn, verify = { _, version, _ -> if (version == 5) null else "signature verification failed" })
+
+        assertEquals(VaultFileUnlockResult.Unlocked("st", 5, content), result)
+        assertEquals("the window is still open", 1, prompt.shown)
+        assertEquals(0, s.pendingVersion("st"))
+    }
+
+    @Test
+    fun `a pending copy sealed for another key is given up, the stored copy stays`() = runTest {
+        val s = strict()
+        storedEnvelope(s, version = 5)
+        val other = java.security.KeyPairGenerator.getInstance("RSA").apply { initialize(2048) }.generateKeyPair()
+        s.saveSealedByServer("st", SoftwareUserAuthKeys.serverEnvelope(content, other.public), 6, emptyList())
+        var forgotten = 0
+
+        val result = s.unlock("st", passes.fn, onSealedForAnotherKey = { forgotten++ }, verify = noCheck)
+
+        assertEquals(VaultFileUnlockResult.Unlocked("st", 5, content), result)
+        assertEquals("the registration is made again before the next fetch", 1, forgotten)
+        assertEquals(0, s.pendingVersion("st"))
+        assertEquals(5, s.getVersion("st"))
+    }
+
+    @Test
+    fun `a pending copy stamped for a key that is gone is dropped alone`() = runTest {
+        val s = strict()
+        storedEnvelope(s, version = 5)
+        val gone = ByteArray(8) { 9 }
+        s.saveSealedByServer("st", envelope(), 6, emptyList(), sealedFor = gone)
+        assertArrayEquals(gone, s.pendingSealedKeyId("st"))
+        val prompt = Prompt { AuthOutcome.Succeeded(it) }
+
+        val result = s.unlock("st", prompt.fn, verify = noCheck)
+
+        assertEquals(VaultFileUnlockResult.Unlocked("st", 5, content), result)
+        assertNull(s.pendingSealedKeyId("st"))
+        assertEquals("given up before any prompt; the stored copy prompts once", 1, prompt.shown)
+    }
+
+    @Test
+    fun `a cancelled prompt leaves both copies where they are`() = runTest {
+        val s = strict()
+        storedEnvelope(s, version = 5)
+        s.saveSealedByServer("st", envelope(), 6, emptyList())
+
+        assertEquals(VaultFileUnlockResult.Cancelled("st"), s.unlock("st", Prompt { AuthOutcome.Cancelled }.fn, verify = noCheck))
+
+        assertEquals(5, s.getVersion("st"))
+        assertEquals(6, s.pendingVersion("st"))
+    }
+
+    @Test
+    fun `a Keystore fault on the pending copy keeps both copies and marks nothing for download`() = runTest {
+        val s = strict()
+        storedEnvelope(s, version = 5)
+        s.saveSealedByServer("st", envelope(), 6, emptyList())
+        keys.unwrapError = java.security.ProviderException("Keystore operation failed")
+
+        assertTrue(s.unlock("st", passes.fn, verify = noCheck) is VaultFileUnlockResult.Failed)
+
+        assertEquals(5, s.getVersion("st"))
+        assertEquals(6, s.pendingVersion("st"))
+        assertFalse("the whole file is there already", s.needsFetch("st"))
+
+        keys.unwrapError = null
+        assertEquals(VaultFileUnlockResult.Unlocked("st", 6, content), s.unlock("st", passes.fn, verify = noCheck))
+    }
+
+    @Test
+    fun `a pending download clears the mark left by an inconclusive failure`() = runTest {
+        val s = strict()
+        storedEnvelope(s, version = 5)
+        keys.unwrapError = java.security.ProviderException("Keystore operation failed")
+        assertTrue(s.unlock("st", passes.fn, verify = noCheck) is VaultFileUnlockResult.Failed)
+        assertTrue(s.needsFetch("st"))
+        keys.unwrapError = null
+
+        s.saveSealedByServer("st", envelope(), 5, emptyList())
+
+        assertFalse("the whole download arrived, in the pending slot", s.needsFetch("st"))
+        assertEquals(VaultFileUnlockResult.Unlocked("st", 5, content), s.unlock("st", passes.fn, verify = noCheck))
+    }
+
+    @Test
+    fun `clear and a retired key take the pending copy too`() = runTest {
+        val s = strict()
+        storedEnvelope(s, version = 5)
+        s.saveSealedByServer("st", envelope(), 6, emptyList())
+        s.clear("st")
+        assertFalse(inner.exists("st"))
+        assertFalse(inner.exists("st.pending"))
+
+        storedEnvelope(s, version = 5)
+        s.saveSealedByServer("st", envelope(), 6, emptyList())
+        keys.retired = true
+        assertEquals(VaultFileUnlockResult.Invalidated("st"), s.unlock("st", passes.fn, verify = noCheck))
+        assertFalse(inner.exists("st"))
+        assertFalse(inner.exists("st.pending"))
+    }
+
+    @Test
+    fun `a planted blob in the pending slot is deleted unread`() = runTest {
+        val s = strict()
+        storedEnvelope(s, version = 5)
+        inner.save("st.pending", "PVUA".toByteArray() + byteArrayOf(0x00) + content, 6)
+
+        assertEquals(VaultFileUnlockResult.Unlocked("st", 5, content), s.unlock("st", passes.fn, verify = noCheck))
+        assertFalse(inner.exists("st.pending"))
+    }
+
     // ── The prompt ──────────────────────────────────────────────────────
 
     @Test

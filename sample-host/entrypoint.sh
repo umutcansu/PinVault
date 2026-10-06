@@ -71,6 +71,9 @@ Bu dosyaları internete kapalı bir makineye taşıyıp buradan silin (README �
     expect_value ENROLLMENT_ATTESTATION enforce
     expect_value ENROLLMENT_P12 off
     expect_value USER_AUTH_REQUIRE_PER_USE true
+    expect_value HOST_CLIENT_CERT_REQUIRE_GRANT true
+    expect_value CONFIG_API_ADMIN_ROUTES off
+    expect_value ATTESTATION_KEY_POLICY enforce
 
     # 5. Kişisel yöneticiler: iki kişi onayı en az iki ayrı yönetici ister.
     admins="$(printf '%s' "${ADMIN_KEYS:-}" | tr ',' '\n')"

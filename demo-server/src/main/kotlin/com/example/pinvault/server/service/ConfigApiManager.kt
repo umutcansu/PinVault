@@ -20,7 +20,14 @@ import java.util.concurrent.TimeUnit
  * Web UI'dan TLS veya mTLS config API'leri başlatılıp durdurulabilir.
  * Her instance farklı port ve güvenlik seviyesinde çalışır.
  */
-class ConfigApiManager {
+class ConfigApiManager(
+    /**
+     * `CONFIG_API_ADMIN_ROUTES=off`: the listeners answer device endpoints
+     * only ([com.example.pinvault.server.plugin.DeviceOnlyRoutes]); admin
+     * routes exist on the management listener alone.
+     */
+    private val deviceOnly: Boolean = false
+) {
 
     data class ConfigApiInstance(
         val id: String,
@@ -63,8 +70,7 @@ class ConfigApiManager {
             stop(conflict.key)
         }
 
-        val keyStore = KeyStore.getInstance("JKS")
-        FileInputStream(keystorePath).use { keyStore.load(it, CertificateService.KEYSTORE_PASSWORD.toCharArray()) }
+        val keyStore = ServerKeyStores.load(java.io.File(keystorePath), CertificateService.KEYSTORE_PASSWORD.toCharArray())
 
         val environment = applicationEnvironment {}
         val server = embeddedServer(Netty, environment, configure = {
@@ -76,9 +82,7 @@ class ConfigApiManager {
             ) {
                 this.port = port
                 if (mode == "mtls" && trustStorePath != null) {
-                    val ts = KeyStore.getInstance("JKS")
-                    FileInputStream(trustStorePath).use { ts.load(it, CertificateService.KEYSTORE_PASSWORD.toCharArray()) }
-                    this.trustStore = ts
+                    this.trustStore = ServerKeyStores.load(java.io.File(trustStorePath), CertificateService.KEYSTORE_PASSWORD.toCharArray())
                 }
             }
         }) {
@@ -101,6 +105,10 @@ class ConfigApiManager {
             // Admin routes are served here too (with the admin key): the same
             // refusal of cross-site and form-posted writes as on the management
             // listener. Device endpoints are not touched.
+            //
+            // CONFIG_API_ADMIN_ROUTES=off takes that further: nothing but the
+            // device endpoints is answered here, key or no key.
+            if (deviceOnly) install(com.example.pinvault.server.plugin.DeviceOnlyRoutes)
             install(com.example.pinvault.server.plugin.AdminBrowserGuard)
             install(ApiKeyAuth) {
                 // Without admin keys this port serves device endpoints only (anonymous

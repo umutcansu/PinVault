@@ -116,6 +116,55 @@ sealed class PinVaultConnectionEvent {
         /** Failure detail, or the server's reason for [ClientCertRenewalStatus.REENROLL_REQUIRED]. */
         val failureReason: String? = null
     ) : PinVaultConnectionEvent()
+
+    /**
+     * Result of an attestation of a Config API block (`attestation()` on the
+     * block): at init, on every refresh of the token, on the periodic update
+     * and on `PinVault.attestNow`. See `ATTESTATION.md`.
+     *
+     * The token itself is never in an event; `PinVault.attestationStatus`
+     * and `fetchAttestationToken` are for that.
+     */
+    data class Attestation(
+        /** The Config API block that attested. */
+        val configApiId: String,
+
+        /** Pass, reject, or an attempt that could not be completed. */
+        val status: AttestationEventStatus,
+
+        /** The attestation result code of the verdict; null when no verdict was reached. */
+        val arc: String?,
+
+        /** The server's rejection reasons, when its policy reveals them (else empty). */
+        val rejectionReasons: List<String>,
+
+        /** Flags the policy marked `warn`. */
+        val warnings: List<String>,
+
+        /** When the issued token expires (epoch ms, device clock); null without a token. */
+        val tokenExpiresAt: Long?,
+
+        /** Static device label, mirrors `android.os.Build.MANUFACTURER`. */
+        val deviceManufacturer: String = android.os.Build.MANUFACTURER ?: "",
+
+        /** Static device label, mirrors `android.os.Build.MODEL`. */
+        val deviceModel: String = android.os.Build.MODEL ?: "",
+
+        /** Why the attempt failed, for [AttestationEventStatus.FAILED]; null otherwise. */
+        val failureReason: String? = null
+    ) : PinVaultConnectionEvent()
+}
+
+/** Outcome categories for [PinVaultConnectionEvent.Attestation]. */
+enum class AttestationEventStatus {
+    /** The server passed the device and issued a token. */
+    PASS,
+
+    /** The server rejected the device: no token, no config through this channel. */
+    REJECT,
+
+    /** The attestation could not be completed; retried with backoff. */
+    FAILED
 }
 
 /** Outcome categories for [PinVaultConnectionEvent.ClientCertRenewal]. */

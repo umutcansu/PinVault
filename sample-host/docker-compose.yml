@@ -164,6 +164,28 @@ services:
       ENROLLMENT_ATTESTATION: ${ENROLLMENT_ATTESTATION:-}
       ENROLLMENT_P12: ${ENROLLMENT_P12:-}
       USER_AUTH_REQUIRE_PER_USE: ${USER_AUTH_REQUIRE_PER_USE:-}
+      # Host istemci sertifikası yalnızca cihaz host ACL'inin adını yazdığı
+      # cihazlara (true); boş = sunucu varsayılanı (false: ACL'siz kapsam her
+      # kayıtlı cihaza verir). Üretim profili true sabitler.
+      HOST_CLIENT_CERT_REQUIRE_GRANT: ${HOST_CLIENT_CERT_REQUIRE_GRANT:-}
+      # Config API portlarında yönetim uçları (on | off). Boş = on (demo:
+      # panel betikleri ve uçtan uca testler cihaz portundan da yönetir).
+      # Üretim profili off sabitler.
+      CONFIG_API_ADMIN_ROUTES: ${CONFIG_API_ADMIN_ROUTES:-}
+      # Attestation (ATTESTATION.md): /api/v1/attest* uçları, cihaz anahtarının ilk
+      # kaydında donanım belgesi (off | warn | enforce), varsayılan politika
+      # (strict | lenient), süreler, sınırlar ve mock host'ların token istemesi.
+      # Boş = sunucu varsayılanı; üretim profili ATTESTATION_KEY_POLICY=enforce sabitler.
+      ATTESTATION_ENABLED: ${ATTESTATION_ENABLED:-}
+      ATTESTATION_KEY_POLICY: ${ATTESTATION_KEY_POLICY:-}
+      ATTESTATION_POLICY_DEFAULT: ${ATTESTATION_POLICY_DEFAULT:-}
+      ATTESTATION_TOKEN_TTL_SECONDS: ${ATTESTATION_TOKEN_TTL_SECONDS:-}
+      ATTESTATION_INTERVAL_SECONDS: ${ATTESTATION_INTERVAL_SECONDS:-}
+      ATTESTATION_NONCE_TTL_SECONDS: ${ATTESTATION_NONCE_TTL_SECONDS:-}
+      ATTESTATION_REVEAL_REASONS: ${ATTESTATION_REVEAL_REASONS:-}
+      ATTESTATION_RATE_LIMIT: ${ATTESTATION_RATE_LIMIT:-}
+      ATTESTATION_DEVICE_RATE_LIMIT: ${ATTESTATION_DEVICE_RATE_LIMIT:-}
+      MOCK_HOST_REQUIRE_TOKEN: ${MOCK_HOST_REQUIRE_TOKEN:-}
       # Kötüye kullanım sınırları (boş = sunucu varsayılanı).
       # Bir adresin 10 dakikada toplayabileceği ret sayısı (varsayılan 300). DEMO: 0
       # (sınır yok): Docker Desktop arkasında bütün cihazlar tek adresten görünür ve
@@ -175,6 +197,10 @@ services:
       DEVICE_KEY_RATE_LIMIT: ${DEVICE_KEY_RATE_LIMIT:-}
       DEVICE_KEY_LIMIT: ${DEVICE_KEY_LIMIT:-}
       VAULT_MAX_FILE_BYTES: ${VAULT_MAX_FILE_BYTES:-}
+      # Aynı anda sunulan vault indirmesi: adres başına (varsayılan 4) ve toplam
+      # (varsayılan 16; her indirme dosyayı bütün olarak bellekte tutar).
+      VAULT_DOWNLOAD_CONCURRENCY: ${VAULT_DOWNLOAD_CONCURRENCY:-}
+      VAULT_DOWNLOAD_CONCURRENCY_TOTAL: ${VAULT_DOWNLOAD_CONCURRENCY_TOTAL:-}
       MTLS_RESTART_MIN_INTERVAL_SECONDS: ${MTLS_RESTART_MIN_INTERVAL_SECONDS:-}
     volumes:
       # Bütün kalıcı durum tek dizin: veritabanı, sertifikalar ve imzalama

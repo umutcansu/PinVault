@@ -634,7 +634,10 @@ const AUDIT_ACTIONS = [
   'client_cert_generated', 'client_cert_uploaded', 'enrollment_token_created',
   'vault_file_uploaded', 'vault_file_deleted', 'vault_policy_changed', 'vault_token_issued', 'vault_token_revoked',
   'vault_enabled_changed', 'host_acl_changed', 'private_key_downloaded', 'bootstrap_pins_changed',
-  'admin_request_refused', 'http'
+  'trust_roots_updated', 'admin_request_refused',
+  'attestation_policy_updated', 'attestation_device_annotated', 'attestation_device_forgotten',
+  'attestation_device_registered', 'attestation_key_mismatch', 'attestation_rejected',
+  'attestation_token_secret_rotated', 'attestation_token_secret_deleted', 'http'
 ];
 const AUDIT_PAG_KEY = 'audit-log';
 let auditActionFilter = '';
@@ -648,14 +651,19 @@ function auditActionLabel(action) {
 
 function auditActionBadge(action) {
   const cls =
-    action === 'pins_changed' ? 'act-pins' :
+    action === 'pins_changed' || action === 'trust_roots_updated' ? 'act-pins' :
     action === 'change_applied' || action === 'change_approved' ? 'act-ok' :
     action === 'change_requested' ? 'act-pins' :
     action === 'live_check_blocked' || action === 'auth_failed' || action === 'change_failed' ? 'act-bad' :
     action === 'live_check_warning' || action === 'live_check_overridden' || action === 'cert_expiring' ||
       action === 'change_rejected' || action === 'change_expired' || action === 'change_stale' ||
       action === 'change_approval_refused' ? 'act-warn' :
-    action === 'signing_key_regenerated' || action === 'signing_keyset_uploaded' ? 'act-key' :
+    action === 'signing_key_regenerated' || action === 'signing_keyset_uploaded' ||
+      action === 'attestation_token_secret_rotated' || action === 'attestation_token_secret_deleted' ? 'act-key' :
+    action === 'attestation_rejected' || action === 'attestation_key_mismatch' ? 'act-bad' :
+    action === 'attestation_device_registered' ? 'act-ok' :
+    action === 'attestation_policy_updated' || action === 'attestation_device_annotated' ||
+      action === 'attestation_device_forgotten' ? 'act-warn' :
     'act-muted';
   return `<span class="act-badge ${cls}" title="${esc(auditActionLabel(action))}">${esc(action)}</span>`;
 }

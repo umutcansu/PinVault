@@ -3,6 +3,8 @@ package com.example.sampleclient
 import android.content.Context
 import android.util.Log
 import io.github.umutcansu.pinvault.PinVault
+import io.github.umutcansu.pinvault.model.AttestationStatus
+import io.github.umutcansu.pinvault.model.AttestationTokenResult
 import io.github.umutcansu.pinvault.model.CertificateConfig
 import io.github.umutcansu.pinvault.model.ClientCertEnrollmentResult
 import io.github.umutcansu.pinvault.model.HostPin
@@ -20,8 +22,8 @@ import kotlinx.coroutines.withTimeoutOrNull
  *
  *  1. PinVault'un suspend API'lerini Java'dan senkron çağrılabilir yapmak
  *     (arka plan thread'lerinde bloklamak güvenli).
- *  2. Yeni config geldiğinde [ProductionStyleClient]'a yeni pin listesini
- *     aktarmak.
+ *  2. Yeni config geldiğinde [ProductionStyleClient]'a haber vermek (client
+ *     pinleri canlı izler; açık bağlantıları boşaltır).
  */
 object PinManagerLite {
     private const val TAG = "PinManagerLite"
@@ -60,6 +62,40 @@ object PinManagerLite {
     @JvmStatic
     fun checkPendingBlocking(context: Context): ClientCertEnrollmentResult =
         runBlocking { PinVault.checkPendingEnrollment(context) }
+
+    /**
+     * `PinVault.attestNow` için senkron köprü: raporu şimdi gönderir ve
+     * sonucu (geçti / kaldı / yapılamadı) döndürür. PinVault başlatılmamışsa
+     * ya da süre dolarsa `null`. UI thread'inden çağırma.
+     */
+    @JvmStatic
+    @JvmOverloads
+    fun attestNowBlocking(timeoutSeconds: Long = 20L): AttestationStatus? = try {
+        runBlocking { withTimeoutOrNull(timeoutSeconds * 1000) { PinVault.attestNow() } }
+    } catch (e: IllegalStateException) {
+        null
+    }
+
+    /**
+     * `PinVault.fetchAttestationToken` için senkron köprü: elde geçerli bir
+     * token varsa onu, yoksa yeni bir atestasyon turunun sonucunu döndürür.
+     * UI thread'inden çağırma.
+     */
+    @JvmStatic
+    @JvmOverloads
+    fun fetchTokenBlocking(host: String? = null, timeoutSeconds: Long = 20L): AttestationTokenResult? = try {
+        runBlocking { withTimeoutOrNull(timeoutSeconds * 1000) { PinVault.fetchAttestationToken(host) } }
+    } catch (e: IllegalStateException) {
+        AttestationTokenResult.Failed(e.message ?: "PinVault not initialized")
+    }
+
+    /** Son atestasyon durumu, ağ yok; PinVault başlatılmamışsa `null`. */
+    @JvmStatic
+    fun attestationStatusOrNull(): AttestationStatus? = try {
+        PinVault.attestationStatus()
+    } catch (e: IllegalStateException) {
+        null
+    }
 
     /**
      * `PinVault.fetchFile` için senkron köprü. PinVault henüz başlatılmadıysa
@@ -110,10 +146,11 @@ object PinManagerLite {
             .build()
 
     /**
-     * Pin uyuşmazlığında [ProductionStyleClient]'ın interceptor'ı çağırır.
+     * Config'i hemen tazeler (örneğin kullanıcı "Yenile"ye bastığında).
+     * Pin uyuşmazlığındaki otomatik kurtarma artık PinVault'un kendi
+     * interceptor'ındadır ([ProductionStyleClient] de onu kullanır).
      *
-     * @return yeni bir config uygulandıysa `true` (interceptor isteği bir kez
-     *         yeni pin'lerle tekrarlar); aksi halde `false`.
+     * @return yeni bir config uygulandıysa `true`; aksi halde `false`.
      */
     @JvmStatic
     @JvmOverloads
@@ -121,8 +158,8 @@ object PinManagerLite {
         when (val result = updateNowBlocking(timeoutSeconds)) {
             is UpdateResult.Updated -> {
                 Log.d(TAG, "refresh OK → updated to v${result.newVersion}")
-                // setOnUpdateListener asenkron tetiklenir; retry yeni pin'lerle
-                // yapılsın diye pinner'ı burada senkron güncelle.
+                // setOnUpdateListener asenkron tetiklenir; açık bağlantılar
+                // hemen boşalsın diye burada senkron haber ver.
                 App.bridgePinsToProductionStyleClient()
                 true
             }

@@ -1,6 +1,8 @@
 package io.github.umutcansu.pinvault.keystore
 
 import android.os.Build
+import io.github.umutcansu.pinvault.model.HardwareBackedKeyRequiredException
+import io.github.umutcansu.pinvault.model.KeySecurityLevel
 import timber.log.Timber
 
 /**
@@ -18,6 +20,15 @@ internal object KeystoreOptions {
      */
     @Volatile
     var unlockedDeviceRequired: Boolean = false
+
+    /**
+     * `PinVaultConfig.Builder.requireHardwareBackedKeys()`: a key the
+     * Keystore made in software (or whose level it would not say) is deleted
+     * again and the operation fails with [HardwareBackedKeyRequiredException],
+     * instead of being used as if it were in hardware.
+     */
+    @Volatile
+    var hardwareBackedRequired: Boolean = false
 
     /** True when a key generated now should carry `setUnlockedDeviceRequired(true)`. */
     fun wantsUnlockedDevice(): Boolean = unlockedDeviceRequired && Build.VERSION.SDK_INT >= Build.VERSION_CODES.P
@@ -37,5 +48,25 @@ internal object KeystoreOptions {
             cleanUp()
             generate(false)
         }
+    }
+
+    /**
+     * The check every generator runs on the key it just made: logs where the
+     * key lives and, with [hardwareBackedRequired], refuses a key outside
+     * secure hardware ([cleanUp] deletes it first). Returns [level] so the
+     * caller can report it.
+     */
+    fun checkLevel(what: String, level: KeySecurityLevel, cleanUp: () -> Unit = {}): KeySecurityLevel {
+        if (level.hardwareBacked) {
+            Timber.i("%s: security level %s", what, level.wireName)
+            return level
+        }
+        if (hardwareBackedRequired) {
+            Timber.e("%s: the Keystore made the key at level %s and requireHardwareBackedKeys() is on — deleting it", what, level.wireName)
+            runCatching(cleanUp).onFailure { Timber.w(it, "%s: could not delete the refused key", what) }
+            throw HardwareBackedKeyRequiredException(what, level)
+        }
+        Timber.w("%s: the Keystore made the key at level %s — not in secure hardware", what, level.wireName)
+        return level
     }
 }

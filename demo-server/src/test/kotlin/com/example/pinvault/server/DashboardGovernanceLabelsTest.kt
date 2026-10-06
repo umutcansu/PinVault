@@ -50,7 +50,11 @@ class DashboardGovernanceLabelsTest {
         // Admin writes with their own action (routes) and refused cross-site admin requests (Main)
         "client_cert_generated", "client_cert_uploaded", "enrollment_token_created",
         "vault_file_uploaded", "vault_file_deleted", "vault_policy_changed", "vault_token_issued", "vault_token_revoked",
-        "vault_enabled_changed", "host_acl_changed", "private_key_downloaded", "bootstrap_pins_changed", "admin_request_refused"
+        "vault_enabled_changed", "host_acl_changed", "private_key_downloaded", "bootstrap_pins_changed", "trust_roots_updated",
+        "admin_request_refused",
+        // Attestation (ATTESTATION.md §6: routes, AttestationService, the AuthFailureRecorder in Main)
+        "attestation_policy_updated", "attestation_device_annotated", "attestation_device_forgotten", "attestation_device_registered",
+        "attestation_key_mismatch", "attestation_rejected", "attestation_token_secret_rotated", "attestation_token_secret_deleted"
     )
 
     @Test

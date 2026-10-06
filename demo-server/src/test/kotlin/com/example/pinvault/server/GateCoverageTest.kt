@@ -5,6 +5,7 @@ import com.example.pinvault.server.plugin.ApiKeyAuth
 import com.example.pinvault.server.plugin.isPublicEndpoint
 import com.example.pinvault.server.route.ServerTlsPins
 import com.example.pinvault.server.route.adminVaultRoutes
+import com.example.pinvault.server.route.attestationAdminRoutes
 import com.example.pinvault.server.route.certificateConfigRoutes
 import com.example.pinvault.server.route.clientCertAdminRoutes
 import com.example.pinvault.server.route.clientCertRevocationRoutes
@@ -142,6 +143,19 @@ class GateCoverageTest {
                 clientCertAdminRoutes(certService, clientCerts, identities, EnrollmentTokenStore(db), audit, { })
                 clientCertRevocationRoutes(clientCerts, identities, certService, audit) { _, _ -> }
                 enrollmentPolicyRoutes(EnrollmentPolicyStore(db), clientCerts, audit, approvalsRequired = 2)
+                val attestationPolicies = AttestationPolicyStore(db)
+                val attestedDevices = AttestedDeviceStore(db)
+                val tokenSecrets = AttestationTokenSecretStore(db)
+                attestationAdminRoutes(
+                    com.example.pinvault.server.service.attestation.AttestationService(
+                        attestationPolicies, attestedDevices, tokenSecrets,
+                        nonces = com.example.pinvault.server.service.attestation.AttestationNonces(),
+                        defaults = com.example.pinvault.server.service.attestation.AttestationPolicyDefaults(),
+                        keyPolicy = com.example.pinvault.server.service.attestation.AttestationKeyPolicy.OFF,
+                        verifier = { error("not used") }
+                    ),
+                    attestationPolicies, attestedDevices, tokenSecrets, audit
+                )
             }
         }
         startApplication()

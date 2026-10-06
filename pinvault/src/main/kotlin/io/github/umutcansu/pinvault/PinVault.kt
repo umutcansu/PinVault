@@ -334,9 +334,22 @@ object PinVault {
         SetUp.Failed(InitResult.Failed(reason, e))
     }
 
-    /** `requireUnlockedDevice()` reaches the places that generate Keystore keys without seeing a config. */
+    /** `requireUnlockedDevice()` / `requireHardwareBackedKeys()` reach the places that generate Keystore keys without seeing a config. */
     private fun applyKeystoreOptions(config: PinVaultConfig) {
         io.github.umutcansu.pinvault.keystore.KeystoreOptions.unlockedDeviceRequired = config.requireUnlockedDevice
+        io.github.umutcansu.pinvault.keystore.KeystoreOptions.hardwareBackedRequired = config.requireHardwareBackedKeys
+    }
+
+    /**
+     * Where this device's mTLS identity key lives, as the Android Keystore
+     * reports it — StrongBox, the TEE, software — or null when no identity
+     * key exists yet (nothing enrolled). Read locally, no network. A key an
+     * earlier version generated is reported too; [PinVaultConfig.Builder.requireHardwareBackedKeys]
+     * applies only to keys generated after it is set.
+     */
+    fun identityKeySecurityLevel(label: String? = null): io.github.umutcansu.pinvault.model.KeySecurityLevel? {
+        val key = identityKeyFactory(label ?: defaultCertLabel())
+        return if (key.exists()) key.securityLevel() else null
     }
 
     /**
@@ -397,7 +410,10 @@ object PinVault {
                     caTrustHosts = config.caTrustHosts,
                     importedKeys = importedKeysFactory(),
                     // The server refused THIS device's certificate: its files go.
-                    onIdentityRevoked = { wipeOnRevocation(id) }
+                    onIdentityRevoked = { wipeOnRevocation(id) },
+                    expectedSignerSha256 = config.expectedSignerSha256,
+                    integrityVerdictProvider = config.integrityVerdictProvider,
+                    managedTrustRoots = config.managedTrustRoots
                 )
             }
             configApiClients = clients
@@ -436,6 +452,7 @@ object PinVault {
                 // will swap in the static config directly.
                 sslManager = DynamicSSLManager()
                 sslManager.requireCaTrust(config.caTrustHosts)
+                sslManager.managedTrustRootsEnabled = config.managedTrustRoots
                 config.connectionListener?.let { sslManager.setConnectionListener(it) }
                 clientProvider = HttpClientProvider(sslManager)
                 configStore = CertificateConfigStore(appContext)
@@ -565,6 +582,22 @@ object PinVault {
             }
         }
 
+        // Attesting blocks attest once, now that the stored config is loaded
+        // and the mTLS renewal check ran, and keep re-attesting in the
+        // background. A reject (or a failure) never fails init: the app reads
+        // attestationStatus(); no token and no config come through this
+        // channel until the next pass.
+        for ((id, client) in configApiClients) {
+            val attestation = client.attestation ?: continue
+            try {
+                val status = attestation.attestNow()
+                Timber.d("ConfigApi[%s] attestation at init: %s", id, status.result)
+            } catch (e: Exception) {
+                Timber.e(e, "ConfigApi[%s] attestation at init failed", id)
+            }
+            attestation.start()
+        }
+
         // V2: register device public key on every Config API for E2E files.
         val kp = deviceKeyProvider
         if (kp != null) {
@@ -670,7 +703,23 @@ object PinVault {
             )
         }
         sslManager.applyTo(builder) { clientProvider.currentConfig }
+        // The token goes on before (outside) the recovery interceptor, so a
+        // request the recovery retries still carries it.
+        attestationTokenInterceptor()?.let { builder.addInterceptor(it) }
         builder.addInterceptor(clientProvider.recoveryInterceptor)
+    }
+
+    /**
+     * The interceptor that adds `PinVault-Token` for the token hosts of every
+     * attesting block (the default block's first), or null when no block
+     * attests. For clients the app owns ([applyTo], [getClient] with settings);
+     * each block's own client carries its own block's interceptor.
+     */
+    private fun attestationTokenInterceptor(): io.github.umutcansu.pinvault.api.AttestationTokenInterceptor? {
+        if (configApiClients.values.none { it.attestation != null }) return null
+        return io.github.umutcansu.pinvault.api.AttestationTokenInterceptor {
+            configApiClients.values.mapNotNull { it.attestation }
+        }
     }
 
     /**
@@ -716,7 +765,134 @@ object PinVault {
      */
     fun getClient(connectionSettings: HttpConnectionSettings): OkHttpClient {
         checkInitialized()
-        return sslManager.buildDynamicClient({ clientProvider.currentConfig }, connectionSettings)
+        return sslManager.buildDynamicClient(
+            { clientProvider.currentConfig },
+            connectionSettings,
+            extraInterceptors = listOfNotNull(attestationTokenInterceptor())
+        )
+    }
+
+    // ── Attestation (ATTESTATION.md) ────────────────────────────────────
+
+    /**
+     * Attests the device with a Config API block's server now — measures the
+     * app and the device, signs the report with the block's device key, and
+     * asks for a verdict — and returns what it came to. On a pass a fresh
+     * `PinVault-Token` is held (and a newer signed pin config applied when
+     * the server sent one); on a reject there is no token. The library
+     * attests on its own at [init], every few minutes while the process
+     * lives, and on every periodic update; call this to attest on demand
+     * (after the user fixed something, a "check again" button).
+     *
+     * Single flight per block: a call that arrives while an attestation is
+     * running waits for that one. Never throws for a server answer; see
+     * [io.github.umutcansu.pinvault.model.AttestationStatus.lastError].
+     *
+     * @param configApiId the block; null = the default block.
+     * @return the block's new status; `UNSUPPORTED` for a block without
+     *   `attestation()`, with a custom `CertificateConfigApi`, or for an
+     *   unknown id; `FAILED` before [init].
+     */
+    suspend fun attestNow(configApiId: String? = null): io.github.umutcansu.pinvault.model.AttestationStatus {
+        val id = configApiId ?: pinManagerConfig?.defaultConfigApi?.id ?: ""
+        if (!initialized) {
+            return io.github.umutcansu.pinvault.model.AttestationStatus(
+                id, io.github.umutcansu.pinvault.model.AttestationResult.FAILED, lastError = "PinVault not initialized"
+            )
+        }
+        val manager = configApiClients[id]?.attestation ?: return notAttesting(id)
+        return manager.attestNow()
+    }
+
+    /** Callback variant of [attestNow]; [onResult] runs on the main thread. */
+    fun attestNow(
+        configApiId: String? = null,
+        onResult: (io.github.umutcansu.pinvault.model.AttestationStatus) -> Unit
+    ) {
+        CoroutineScope(Dispatchers.IO).launch {
+            val result = attestNow(configApiId)
+            kotlinx.coroutines.withContext(Dispatchers.Main) { onResult(result) }
+        }
+    }
+
+    /**
+     * The `PinVault-Token` for requests the app sends through a client of
+     * its own (one not built or configured by PinVault): the token held for
+     * the block whose token hosts cover [host], attesting first when none
+     * with enough life is held. Put it in the header named by
+     * [attestationHeaderName]. Clients from [getClient] and [applyTo] add
+     * it themselves.
+     *
+     * @param host a host name (optionally `host:port`); null = the default block.
+     * @return the token, or why there is none: `Rejected` with the status,
+     *   `Failed` with the reason, `Unsupported` when no attesting block
+     *   covers the host.
+     */
+    suspend fun fetchAttestationToken(host: String? = null): io.github.umutcansu.pinvault.model.AttestationTokenResult {
+        if (!initialized) return io.github.umutcansu.pinvault.model.AttestationTokenResult.Failed("PinVault not initialized")
+        val manager = if (host == null) {
+            pinManagerConfig?.defaultConfigApi?.id?.let { configApiClients[it]?.attestation }
+        } else {
+            val name = host.substringBefore(':').trim()
+            val port = host.substringAfter(':', "").toIntOrNull() ?: -1
+            configApiClients.values.mapNotNull { it.attestation }.firstOrNull { it.handlesHost(name, port) }
+        }
+        return manager?.fetchToken() ?: io.github.umutcansu.pinvault.model.AttestationTokenResult.Unsupported
+    }
+
+    /** Callback variant of [fetchAttestationToken]; [onResult] runs on the main thread. */
+    fun fetchAttestationToken(
+        host: String? = null,
+        onResult: (io.github.umutcansu.pinvault.model.AttestationTokenResult) -> Unit
+    ) {
+        CoroutineScope(Dispatchers.IO).launch {
+            val result = fetchAttestationToken(host)
+            kotlinx.coroutines.withContext(Dispatchers.Main) { onResult(result) }
+        }
+    }
+
+    /**
+     * The last attestation outcome of a Config API block — result, ARC,
+     * the reasons and warnings the policy reveals, the token's expiry, when
+     * the next attestation is due, the clock skew and the last error. Read
+     * locally, no network. `NOT_ATTESTED` before the first round,
+     * `UNSUPPORTED` for a block that does not attest or an unknown id.
+     *
+     * @param configApiId the block; null = the default block.
+     */
+    @JvmOverloads
+    fun attestationStatus(configApiId: String? = null): io.github.umutcansu.pinvault.model.AttestationStatus {
+        checkInitialized()
+        val id = configApiId ?: pinManagerConfig?.defaultConfigApi?.id ?: ""
+        return configApiClients[id]?.attestation?.status ?: notAttesting(id)
+    }
+
+    /** The request header the attestation token travels in: `PinVault-Token`. */
+    fun attestationHeaderName(): String = io.github.umutcansu.pinvault.api.AttestationTokenInterceptor.HEADER
+
+    private fun notAttesting(configApiId: String) = io.github.umutcansu.pinvault.model.AttestationStatus(
+        configApiId = configApiId,
+        result = io.github.umutcansu.pinvault.model.AttestationResult.UNSUPPORTED,
+        lastError = if (configApiId in configApiClients) {
+            "Config API '$configApiId' does not attest: call attestation() on the block"
+        } else {
+            "No Config API block '$configApiId'"
+        }
+    )
+
+    /** Every attesting block attests, for the periodic worker. Never throws. */
+    internal suspend fun attestAll() {
+        if (!initialized) return
+        for ((id, client) in configApiClients) {
+            val attestation = client.attestation ?: continue
+            try {
+                attestation.attestNow()
+                // A process the worker woke runs no init: the loop starts here.
+                attestation.start()
+            } catch (e: Exception) {
+                Timber.e(e, "ConfigApi[%s] periodic attestation failed", id)
+            }
+        }
     }
 
     /**
@@ -773,8 +949,12 @@ object PinVault {
      * renewed automatically from then on (see [renewClientCertIfNeeded]).
      * The key is generated with an Android key attestation challenge made
      * from the device id of the request, and its attestation chain goes
-     * along, so a server that checks it can tell a hardware key of this app
-     * on a real phone from a key made anywhere else.
+     * along, so a server that verifies the chain can tell a key the Android
+     * Keystore made for this package, on hardware whose attestation root it
+     * trusts, from a key made in software or by other code; the chain speaks
+     * for where the key lives and which app asked for it, not for the state
+     * of the device beyond what verified boot records (see `ATTESTATION.md`
+     * for the device measurement).
      *
      * A server that answers with a key of its own making (a P12) is refused
      * unless the block called `allowServerGeneratedKey()`; so is enrolling
@@ -1013,8 +1193,8 @@ object PinVault {
             val api = ConfigApiClient(
                 block, context.applicationContext, identityKeyFactory = identityKeyFactory, importedKeys = importedKeysFactory()
             ).api
-            enrollAndStore(context, config, block, api, token, deviceId, certLabel)
-            ClientCertEnrollmentResult.Enrolled()
+            val enrolled = enrollAndStore(context, config, block, api, token, deviceId, certLabel)
+            ClientCertEnrollmentResult.Enrolled(keySecurityLevel = enrolled.keySecurityLevel())
         } catch (e: Exception) {
             enrollmentFailure(e)
         }
@@ -1042,7 +1222,7 @@ object PinVault {
             // Present the new identity on every client, the Config API's included.
             (configApi as? DefaultCertificateConfigApi)?.rebuildBootstrapClient()
             clientProvider.currentConfig?.let { clientProvider.swap(it) }
-            ClientCertEnrollmentResult.Enrolled()
+            ClientCertEnrollmentResult.Enrolled(keySecurityLevel = enrolled.keySecurityLevel())
         } catch (e: Exception) {
             enrollmentFailure(e)
         }
@@ -1054,6 +1234,14 @@ object PinVault {
         class Imported(val privateKey: java.security.PrivateKey, val certs: Array<java.security.cert.X509Certificate>) : Enrolled()
         /** A server-made key the platform refused to import: kept as a PKCS12. */
         class P12(val bytes: ByteArray) : Enrolled()
+
+        /** Where the private key of this enrollment lives, as the Keystore reports it. */
+        fun keySecurityLevel(): io.github.umutcansu.pinvault.model.KeySecurityLevel = when (this) {
+            is Chain -> runCatching { key.securityLevel() }.getOrDefault(io.github.umutcansu.pinvault.model.KeySecurityLevel.UNKNOWN)
+            is Imported -> io.github.umutcansu.pinvault.keystore.KeyInspector.securityLevel(privateKey)
+            // A PKCS12 in app storage: software by definition.
+            is P12 -> io.github.umutcansu.pinvault.model.KeySecurityLevel.SOFTWARE
+        }
     }
 
     private val NO_CONFIG_API_BLOCK = ClientCertEnrollmentResult.Failed("The config has no Config API block")
@@ -1555,6 +1743,13 @@ object PinVault {
      * is not the server's sealed copy, and a copy sealed for another key, is
      * deleted and reported as [VaultFileUnlockResult.Invalidated] (fetch it
      * again; the key is registered again first).
+     *
+     * A newer `USER_AUTH` copy downloaded while a verified one was stored
+     * waits in a pending slot and is opened first here: when it passes, it
+     * replaces the stored copy (and only then counts as confirmed by the
+     * server); when it fails, it alone is deleted and the copy it was to
+     * replace is opened instead — which, for a per-use key, asks for the
+     * prompt once more.
      */
     suspend fun unlockFile(
         activity: FragmentActivity,
@@ -1589,7 +1784,10 @@ object PinVault {
                     { kind, cipher -> UserAuthPrompt.authenticate(activity, prompt, kind, cipher) },
                     verify = verifier,
                     // Sealed for a key the server no longer has: register again before the next fetch.
-                    onSealedForAnotherKey = { sealedByServer?.let { vaultRouter.forgetUserAuthRegistration(it.configApiId) } }
+                    onSealedForAnotherKey = { sealedByServer?.let { vaultRouter.forgetUserAuthRegistration(it.configApiId) } },
+                    // A newer server-sealed copy passed its check and replaced
+                    // the stored one: only now is it confirmed (L-10).
+                    onPromoted = { version -> if (file != null && guard != null) guard.promoted(file, version) }
                 )
             } else {
                 storage.load(key)?.let { VaultFileUnlockResult.Unlocked(key, storage.getVersion(key), it) }
@@ -1723,8 +1921,12 @@ object PinVault {
             enrollmentLabel = enrollmentLabel,
             deviceId = identity?.second ?: "unknown",
             deviceAlias = identity?.first ?: android.os.Build.MODEL,
-            // Başarısız fetch'te UI/debug için sebep gönder. Başarılıda null.
-            failureReason = (result as? VaultFileResult.Failed)?.reason,
+            // The fixed class of the failure, never its text. The reason can
+            // carry an exception message — which padding step of an
+            // end_to_end envelope failed, say — and whoever answers the
+            // download must not learn that from the report. The text stays in
+            // the local log (the router logs it) and in the result the app gets.
+            failureReason = (result as? VaultFileResult.Failed)?.code,
             // Hangi yetkilendirmeyle fetch denendi — audit için web UI + mobile
             // log'larda görünür. Policy enum'undan türetilir, runtime override yok.
             authMethod = when (fileConfig.accessPolicy) {
@@ -1939,6 +2141,8 @@ object PinVault {
                 configStore.clearActive()
             } else {
                 configApiClients.values.forEach { client ->
+                    // The refresh loop stops and the token goes; the next init attests again.
+                    client.attestation?.reset()
                     client.clientProvider.reset()
                     client.configStore.clearActive()
                 }
@@ -1963,6 +2167,7 @@ object PinVault {
                 configStore.wipeAll()
             } else {
                 configApiClients.values.forEach { client ->
+                    client.attestation?.reset()
                     client.clientProvider.reset()
                     client.configStore.wipeAll()
                 }

@@ -37,6 +37,7 @@ if (pinvaultLocalPath.isNotEmpty()) {
         includeBuild(checkout) {
             dependencySubstitution {
                 substitute(module("io.github.umutcansu:pinvault")).using(project(":pinvault"))
+                substitute(module("io.github.umutcansu:pinvault-play-integrity")).using(project(":pinvault-play-integrity"))
             }
         }
         logger.lifecycle("PinVault: yerel kaynak kullanılıyor → ${checkout.canonicalPath}")

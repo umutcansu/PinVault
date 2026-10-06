@@ -8,8 +8,16 @@ package io.github.umutcansu.pinvault.model
  */
 sealed class ClientCertEnrollmentResult {
 
-    /** A certificate was issued and stored, or one was already stored ([alreadyEnrolled]). */
-    data class Enrolled(val alreadyEnrolled: Boolean = false) : ClientCertEnrollmentResult()
+    /**
+     * A certificate was issued and stored, or one was already stored
+     * ([alreadyEnrolled]). [keySecurityLevel] is where the private key lives
+     * as the Keystore reports it, for an enrollment made now; null for one
+     * that was already stored (read it with `PinVault.identityKeySecurityLevel`).
+     */
+    data class Enrolled(
+        val alreadyEnrolled: Boolean = false,
+        val keySecurityLevel: KeySecurityLevel? = null
+    ) : ClientCertEnrollmentResult()
 
     /**
      * The server answered and refused. [reason] says what to do next;

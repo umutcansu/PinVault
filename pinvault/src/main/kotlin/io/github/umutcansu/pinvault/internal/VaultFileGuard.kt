@@ -83,6 +83,41 @@ internal class VaultFileGuard(
     }
 
     /**
+     * A `user_auth` download went to the pending slot (see
+     * [UserAuthVaultStorage.saveSealedByServer]): nothing in it has been
+     * checked, so the copy on record keeps its signatures and its
+     * confirmation. Only the time the server served the new copy is written
+     * down, apart, for [promoted].
+     */
+    fun pendingStored(file: VaultFileConfig) = quietly(file.key) {
+        meta.setConfirmedAt(pendingRecord(file.key), now(file.configApiId))
+    }
+
+    /**
+     * `unlockFile` opened the pending copy and its signature passed: it is
+     * the stored copy now, as [version]. Its confirmation is the time the
+     * server served it, not the time the user opened it — the offline
+     * lifetime counts from the server's last word, and a device may have
+     * been offline between the two.
+     */
+    fun promoted(file: VaultFileConfig, version: Int) = quietly(file.key) {
+        val served = meta.confirmedAt(pendingRecord(file.key))
+        meta.clear(pendingRecord(file.key))
+        meta.saveSignatures(file.key, null)
+        meta.setConfirmedAt(file.key, if (served > 0L) served else now(file.configApiId))
+        meta.setProblem(file.key, null)
+        Timber.d("Vault file [%s] v%d verified at unlock; it is the stored copy now", file.key, version)
+    }
+
+    /**
+     * Where the serving time of a pending `user_auth` copy is kept: a record
+     * of its own next to the file's, under the slot's name, so the copy on
+     * record is not touched. (The storage keeps the copy itself under the
+     * same suffix.)
+     */
+    private fun pendingRecord(key: String) = "$key$PENDING_SUFFIX"
+
+    /**
      * The confirmation time is the trusted clock's reading, never more, and
      * it replaces whatever was on record — a time that lay ahead included.
      */
@@ -107,6 +142,7 @@ internal class VaultFileGuard(
     /** The app cleared the file, or it was wiped. */
     fun forget(key: String) = quietly(key) {
         meta.clear(key)
+        meta.clear(pendingRecord(key))
         meta.setProblem(key, null)
     }
 
@@ -177,6 +213,7 @@ internal class VaultFileGuard(
     /** A copy that did not open for this file and version, or failed the check done at unlock: gone already. */
     fun integrityFailed(file: VaultFileConfig, reason: String) = quietly(file.key) {
         meta.clear(file.key)
+        meta.clear(pendingRecord(file.key))
         meta.setProblem(file.key, VaultFileStatus.INTEGRITY_FAILED)
         onRemoved(file.key, reason)
     }
@@ -274,6 +311,7 @@ internal class VaultFileGuard(
         }
         quietly(file.key) {
             meta.clear(file.key)
+            meta.clear(pendingRecord(file.key))
             meta.setProblem(file.key, status)
         }
         runCatching { onRemoved(file.key, reason) }
@@ -298,5 +336,10 @@ internal class VaultFileGuard(
         } catch (e: Exception) {
             Timber.w(e, "Vault file [%s]: could not update its record", key)
         }
+    }
+
+    companion object {
+        /** Suffix of the pending slot's record; the same one [UserAuthVaultStorage] uses for the copy. */
+        private const val PENDING_SUFFIX = ".pending"
     }
 }

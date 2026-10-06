@@ -1118,7 +1118,11 @@ async function renderSigningSection() {
     .build()</div></div>
       ${status
         ? renderSignersCard(status) + renderKeySetCard(status) + renderSigCacheCard(status.cache || {})
-        : `<div class="card"><div class="empty-msg">${t('signingStatusError')}</div></div>`}`;
+        : `<div class="card"><div class="empty-msg">${t('signingStatusError')}</div></div>`}
+      ${renderTokenSecretsCard()}`;
+    // PinVault-Token secrets (ATTESTATION.md §5) are global like the signing key;
+    // the read is requester-run gated, so it fills its card on its own.
+    loadTokenSecrets();
   } catch (e) {
     document.getElementById('content').innerHTML = `<div class="card"><div class="empty-msg">${t('signingError')}</div></div>`;
   }

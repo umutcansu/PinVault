@@ -118,6 +118,21 @@ object PinConfigRules {
         return errors
     }
 
+    /** Most managed trust roots a config may list (the library's `MAX_TRUST_ROOTS`). */
+    const val MAX_TRUST_ROOTS = 64
+
+    /**
+     * Why the managed trust roots of a config break the rules: each a valid
+     * pin, no duplicates, at most [MAX_TRUST_ROOTS]. Empty when fine.
+     */
+    fun trustRootErrors(roots: List<String>): List<String> {
+        val errors = mutableListOf<String>()
+        if (roots.size > MAX_TRUST_ROOTS) errors.add("trustRoots: ${roots.size} kok (en fazla $MAX_TRUST_ROOTS)")
+        roots.forEachIndexed { index, root -> pinError(root)?.let { errors.add("trustRoots[$index]: $it") } }
+        if (roots.toSet().size != roots.size) errors.add("trustRoots: ayni kok birden fazla kez listelenmis")
+        return errors
+    }
+
     /** Host names that appear more than once, compared as the library compares them (ignoring case). */
     fun duplicateHosts(hostnames: List<String>): List<String> =
         hostnames.groupBy { it.lowercase() }.filter { it.value.size > 1 }.map { it.value.first() }

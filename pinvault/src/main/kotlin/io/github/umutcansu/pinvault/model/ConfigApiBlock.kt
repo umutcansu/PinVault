@@ -150,7 +150,20 @@ data class ConfigApiBlock @JvmOverloads constructor(
      * client identity is offered to, besides its own Config API, enrollment
      * and renewal URLs. See [Builder.clientCertHosts].
      */
-    val clientCertHosts: List<String> = emptyList()
+    val clientCertHosts: List<String> = emptyList(),
+    /** True = this block attests the device and carries a `PinVault-Token`. See [Builder.attestation]. */
+    val attestationEnabled: Boolean = false,
+    /**
+     * How often the device re-attests at most, ms (the server's `nextAttestIn`
+     * can ask for sooner). See [Builder.attestationInterval].
+     */
+    val attestationIntervalMs: Long = DEFAULT_ATTESTATION_INTERVAL_MS,
+    /**
+     * Hosts whose requests carry the token (pin host patterns, lower case).
+     * Empty = every pinned host of this block's live config, plus its Config
+     * API. See [Builder.tokenHosts].
+     */
+    val tokenHosts: List<String> = emptyList()
 ) {
 
     /**
@@ -210,6 +223,9 @@ data class ConfigApiBlock @JvmOverloads constructor(
         private var clientCaPins: List<String> = emptyList()
         private var maxClientCertLifetimeDays: Int = DEFAULT_MAX_CLIENT_CERT_LIFETIME_DAYS
         private var clientCertHosts: List<String> = emptyList()
+        private var attestationEnabled: Boolean = false
+        private var attestationIntervalMs: Long = DEFAULT_ATTESTATION_INTERVAL_MS
+        private var tokenHosts: List<String> = emptyList()
 
         fun bootstrapPins(pins: List<HostPin>) = apply { this.bootstrapPins = pins }
         fun configEndpoint(endpoint: String) = apply { this.configEndpoint = endpoint }
@@ -498,6 +514,53 @@ data class ConfigApiBlock @JvmOverloads constructor(
          */
         fun disableClientCertRenewal() = apply { this.clientCertRenewalEnabled = false }
 
+        /**
+         * Attest this device with the block's server (`ATTESTATION.md`): at
+         * init and every few minutes the library measures the app and the
+         * device, signs the report with the block's device key and sends it
+         * to `POST api/v1/attest`; on a pass the server issues a short-lived
+         * `PinVault-Token`, which every client the library builds or
+         * configures adds to requests for the [tokenHosts], and may embed a
+         * fresh signed pin config. On a reject there is no token and no
+         * config through this channel — `init` still succeeds; the app reads
+         * `PinVault.attestationStatus()`.
+         *
+         * Off by default. Needs the library's own HTTP client: a block with a
+         * custom `CertificateConfigApi` reports `UNSUPPORTED`.
+         */
+        fun attestation() = apply { this.attestationEnabled = true }
+
+        /**
+         * How often the device re-attests at most. Default 5 minutes, at
+         * least 1 minute. The server's `nextAttestIn` and the token's expiry
+         * can make it sooner (the library re-attests at
+         * `min(nextAttestIn, this, tokenExpiry − 60 s)` with ±10 % jitter), never later.
+         */
+        fun attestationInterval(amount: Long, unit: java.util.concurrent.TimeUnit) = apply {
+            val ms = unit.toMillis(amount)
+            require(ms >= MIN_ATTESTATION_INTERVAL_MS) { "attestationInterval must be at least 1 minute" }
+            this.attestationIntervalMs = ms
+        }
+
+        /**
+         * Which hosts' requests carry the `PinVault-Token`: pin host patterns
+         * (`api.example.com`, `*.cdn.example.com`, optionally `:port`), the
+         * same syntax as a pin entry. Not set: every host pinned by this
+         * block's live config, and the block's own Config API.
+         */
+        fun tokenHosts(vararg patterns: String) = apply {
+            this.tokenHosts = patterns.map { pattern ->
+                val host = pattern.trim().lowercase()
+                io.github.umutcansu.pinvault.ssl.PinConfigValidator.hostPatternError(host)?.let {
+                    throw IllegalArgumentException("tokenHosts: $it")
+                }
+                host
+            }.distinct()
+        }
+
+        /** [tokenHosts] for a list (Java-friendly). */
+        fun tokenHosts(patterns: List<String>) = tokenHosts(*patterns.toTypedArray())
+
         internal fun build(): ConfigApiBlock {
             require(id.isNotBlank()) { "ConfigApi id must not be blank" }
             require(configUrl.isNotBlank()) { "ConfigApi configUrl must not be blank" }
@@ -559,7 +622,10 @@ data class ConfigApiBlock @JvmOverloads constructor(
                 allowServerGeneratedKey = allowServerGeneratedKey,
                 clientCaPins = clientCaPins,
                 maxClientCertLifetimeDays = maxClientCertLifetimeDays,
-                clientCertHosts = clientCertHosts
+                clientCertHosts = clientCertHosts,
+                attestationEnabled = attestationEnabled,
+                attestationIntervalMs = attestationIntervalMs,
+                tokenHosts = tokenHosts
             )
         }
     }
@@ -593,7 +659,10 @@ data class ConfigApiBlock @JvmOverloads constructor(
                 allowServerGeneratedKey == other.allowServerGeneratedKey &&
                 clientCaPins == other.clientCaPins &&
                 maxClientCertLifetimeDays == other.maxClientCertLifetimeDays &&
-                clientCertHosts == other.clientCertHosts
+                clientCertHosts == other.clientCertHosts &&
+                attestationEnabled == other.attestationEnabled &&
+                attestationIntervalMs == other.attestationIntervalMs &&
+                tokenHosts == other.tokenHosts
     }
 
     override fun hashCode(): Int {
@@ -625,11 +694,20 @@ data class ConfigApiBlock @JvmOverloads constructor(
         r = 31 * r + clientCaPins.hashCode()
         r = 31 * r + maxClientCertLifetimeDays
         r = 31 * r + clientCertHosts.hashCode()
+        r = 31 * r + attestationEnabled.hashCode()
+        r = 31 * r + attestationIntervalMs.hashCode()
+        r = 31 * r + tokenHosts.hashCode()
         return r
     }
 
     companion object {
         const val DEFAULT_ID = "default"
+
+        /** Re-attest every 5 minutes unless the server or the token say sooner. */
+        const val DEFAULT_ATTESTATION_INTERVAL_MS: Long = 5L * 60 * 1000
+
+        /** Shortest [Builder.attestationInterval]. */
+        const val MIN_ATTESTATION_INTERVAL_MS: Long = 60L * 1000
 
         /** Renew with a third of the lifetime left. */
         const val DEFAULT_RENEWAL_THRESHOLD: Double = 1.0 / 3

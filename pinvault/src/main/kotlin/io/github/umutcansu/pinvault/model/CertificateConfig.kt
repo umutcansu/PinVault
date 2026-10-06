@@ -43,7 +43,16 @@ data class CertificateConfig(
      * attacker delivers it. At most 30 days from now; a signed config must
      * carry it, an unsigned one without it (0) never expires.
      */
-    val expiresAt: Long = 0L
+    val expiresAt: Long = 0L,
+    /**
+     * Managed trust roots: SHA-256 SPKI pins (Base64, as pins are written)
+     * of root CAs. With `PinVaultConfig.Builder.managedTrustRoots()`, a host
+     * that has no pin entry is accepted when the platform's CAs validate its
+     * chain to one of these roots (and the leaf names the host). Empty: hosts
+     * without a pin entry are refused, as always. At most 64; each a valid
+     * pin; no duplicates.
+     */
+    val trustRoots: List<String> = emptyList()
 ) {
     /** Computed version from per-host versions (backward compat). */
     fun computedVersion(): Int = pins.maxOfOrNull { it.version } ?: version

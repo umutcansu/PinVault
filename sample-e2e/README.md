@@ -17,7 +17,7 @@ Kapsam planı ve senaryo listesi: [PLAN.md](PLAN.md).
 | 2 | Web'de yedek pin eklenince sürüm artar, telefon yeni sürümü alır ve iki client da bağlanır. Pin kaldırılınca döngü tekrar eder. |
 | 3 | Web'de yanlış pin girilince telefon bağlantıyı reddeder, uyuşmazlık dashboard'a düşer. Pin'ler düzeltilince telefon elle yenilemeden toparlanır. |
 | 4 | Force update açıkken telefon config'i sürüm değişmese de yeniden uygular; kapatılınca normale döner. |
-| 5 | PinVault'u import etmeyen production-style client da yanlış pin'i reddeder ve kendi interceptor'ıyla toparlanır. |
+| 5 | PinVault'u import etmeyen production-style client (pinlemeyi `PinVault::applyTo` geri çağrısıyla takar) da yanlış pin'i reddeder ve kütüphanenin kurtarma interceptor'ıyla toparlanır. |
 | 6 | Host kapalıyken ilk açılışta uygulama başlatılamadığını söyler ve istek yapılmasına izin vermez. Host dönünce "Tekrar dene" ile toparlanır. |
 | 7 | Host kapalıyken sonraki açılışta uygulama saklı config ile açılır ve hedefe pinli bağlanır. |
 | 8 | Web'de host silinince telefon o host'a bağlanmaz. Geri eklenince sürüm kaldığı yerden devam eder ve bağlantı döner. |
@@ -28,6 +28,7 @@ Kapsam planı ve senaryo listesi: [PLAN.md](PLAN.md).
 | 13 | Web'de yüklenen dosya telefonda iner, içerik imzası doğrulanır, indirme dağıtım geçmişinde görünür. Güncellenince yeni sürüm gelir. |
 | 14 | Gizli dosya (mTLS + token_mtls + user_auth): cihaz kayıtlı ve telefonda ekran kilidi varken token olmadan inmez; bu cihaz için üretilen token'la iner ama içerik gösterilmez; "Aç" ekran kilidini sorar, PIN girilince içerik görünür; token iptal edilince yine reddedilir. |
 | 15 | Gizli, cihaza özel şifreli dosya (mTLS + token_mtls + end_to_end): telefon cihaz anahtarıyla çözer, ekran kilidi anahtarıyla yeniden kilitler; içerik yalnızca "Aç" + ekran kilidiyle görünür. Şifrelemeyi sunucu yapar, yani içeriği sunucu görür. |
+| 16 | Atestasyon (Approov mantığı): telefon imzalı bütünlük raporunu gönderir; politika emülatörü uyarı sayarken geçer, PinVault-Token alır ve `MOCK_HOST_REQUIRE_TOKEN=true` olan mock host 200 döner. Politika emülatörü reddedince aynı telefon kalır, token alamaz, mock host 401 döner; panelde cihazın kararı ve ARC'si görünür; "geçir / düşür" ek açıklamaları politikayı değiştirmeden kararı çevirir; token'sız ve sahte token'lı ham istek 401 alır. |
 
 Yeni senaryolar PLAN.md'deki gruplara göre eklenir: sıfırdan kurulum (K), pin yönetimi ve imzalı config (A), mTLS (B), vault (C), telefonda şifreli saklama (D), sunucu işletimi (E), sunucuya ulaşılamadığında (F), araya girme saldırıları (G), kendi sunucusuyla ya da sunucusuz kullanım (H), imza anahtarlarının korunması (S, isteğe bağlı), değişiklik denetimi ve onay (Y, isteğe bağlı), sürüm yükseltme (U). Dosya adı grup harfiyle başlar (`K01-…`, `E03-…`); kanıt sayfası grubu buradan okur.
 

@@ -829,13 +829,17 @@ class BackendTest {
         val rekey = com.example.pinvault.server.service.KeystoreRekey(certService, password = "a-real-secret", previous = null)
         val report = rekey.run(listOf(keystore, backup, stranger), hostClientCertStore)
         fun jksOpens(file: File, password: String) =
-            runCatching { java.security.KeyStore.getInstance("JKS").load(file.inputStream(), password.toCharArray()) }.isSuccess
+            runCatching { com.example.pinvault.server.service.ServerKeyStores.load(file, password.toCharArray()) }.isSuccess
         assertTrue(jksOpens(keystore, "a-real-secret") && !jksOpens(keystore, "changeit"))
         assertTrue(jksOpens(backup, "a-real-secret"))
+        // Written back in the server's current form (PKCS12), whatever it was before.
+        assertFalse(com.example.pinvault.server.service.ServerKeyStores.isLegacyJks(keystore.readBytes()))
         assertTrue(opens(hostClientCertStore.getP12("hcc.rekey", configApiId)!!, "a-real-secret"))
         assertEquals(listOf("stranger.jks"), report.unreadable, "a keystore it cannot open is left alone")
         assertTrue(jksOpens(stranger, "other"))
-        assertTrue(rekey.run(listOf(keystore, backup), hostClientCertStore).rekeyed.isEmpty(), "a second run changes nothing")
+        assertTrue(com.example.pinvault.server.service.ServerKeyStores.isLegacyJks(stranger.readBytes()), "not converted either")
+        val second = rekey.run(listOf(keystore, backup), hostClientCertStore)
+        assertTrue(second.rekeyed.isEmpty() && second.converted.isEmpty(), "a second run changes nothing")
     }
 
     // ── C.21: Mock server ───────────────────────────────

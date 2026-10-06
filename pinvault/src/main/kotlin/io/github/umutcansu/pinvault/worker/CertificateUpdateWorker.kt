@@ -60,6 +60,15 @@ class CertificateUpdateWorker(
             Timber.e(e, "Client cert renewal failed during periodic update")
         }
 
+        // Attesting blocks attest, so a backgrounded app wakes with a fresh
+        // token (and a config the attestation answer may carry). A reject or
+        // a failure never affects the worker result.
+        try {
+            PinVault.attestAll()
+        } catch (e: Exception) {
+            Timber.e(e, "Attestation failed during periodic update")
+        }
+
         return when (updateResult) {
             is UpdateResult.Updated -> {
                 Timber.d("Worker: config updated to version %d", updateResult.newVersion)

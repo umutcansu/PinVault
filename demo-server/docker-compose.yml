@@ -90,6 +90,26 @@ services:
       - REPORT_RATE_LIMIT=${REPORT_RATE_LIMIT:-}
       - REPORT_DEVICE_RATE_LIMIT=${REPORT_DEVICE_RATE_LIMIT:-}
       - VAULT_MAX_FILE_BYTES=${VAULT_MAX_FILE_BYTES:-}
+      # Vault downloads served at once, per address (4) and in total (16); each holds the whole file in memory.
+      - VAULT_DOWNLOAD_CONCURRENCY=${VAULT_DOWNLOAD_CONCURRENCY:-}
+      - VAULT_DOWNLOAD_CONCURRENCY_TOTAL=${VAULT_DOWNLOAD_CONCURRENCY_TOTAL:-}
+      # A host's client certificate only to devices the host ACL names (true); unset = every enrolled device.
+      - HOST_CLIENT_CERT_REQUIRE_GRANT=${HOST_CLIENT_CERT_REQUIRE_GRANT:-}
+      # off: the Config API ports answer device endpoints only; admin routes live on the management port.
+      - CONFIG_API_ADMIN_ROUTES=${CONFIG_API_ADMIN_ROUTES:-}
+      # Attestation (ATTESTATION.md; unset = defaults: enabled, key policy warn, strict policy,
+      # 300 s token and interval, 120 s nonce, 60/address and 30/device per 10 min, reasons hidden,
+      # mock hosts open). Production: ATTESTATION_KEY_POLICY=enforce with the app binding above.
+      - ATTESTATION_ENABLED=${ATTESTATION_ENABLED:-}
+      - ATTESTATION_KEY_POLICY=${ATTESTATION_KEY_POLICY:-}
+      - ATTESTATION_POLICY_DEFAULT=${ATTESTATION_POLICY_DEFAULT:-}
+      - ATTESTATION_TOKEN_TTL_SECONDS=${ATTESTATION_TOKEN_TTL_SECONDS:-}
+      - ATTESTATION_INTERVAL_SECONDS=${ATTESTATION_INTERVAL_SECONDS:-}
+      - ATTESTATION_NONCE_TTL_SECONDS=${ATTESTATION_NONCE_TTL_SECONDS:-}
+      - ATTESTATION_REVEAL_REASONS=${ATTESTATION_REVEAL_REASONS:-}
+      - ATTESTATION_RATE_LIMIT=${ATTESTATION_RATE_LIMIT:-}
+      - ATTESTATION_DEVICE_RATE_LIMIT=${ATTESTATION_DEVICE_RATE_LIMIT:-}
+      - MOCK_HOST_REQUIRE_TOKEN=${MOCK_HOST_REQUIRE_TOKEN:-}
       # Admin uploads other than vault files (keystores, certificates, JSON).
       - ADMIN_UPLOAD_MAX_BYTES=${ADMIN_UPLOAD_MAX_BYTES:-}
       # "Fetch the certificate of this URL" refuses loopback and private-network

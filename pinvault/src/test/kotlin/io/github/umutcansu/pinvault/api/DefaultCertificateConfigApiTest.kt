@@ -845,4 +845,100 @@ class DefaultCertificateConfigApiTest {
         assertNull(response.signatureV2)
         assertNull(response.signaturesV2)
     }
+
+    // ── Bodies are read with a ceiling (L-13) ───────────────────────────
+
+    private val oneMiB = 1L shl 20
+
+    private fun apiWithLimits(vaultBodyLimit: Long) = DefaultCertificateConfigApi(
+        configUrl = server.url("/").toString(),
+        bootstrapPins = listOf(HostPin("test.com", listOf("h1", "h2"))),
+        sslManager = sslManager,
+        vaultBodyLimit = vaultBodyLimit
+    )
+
+    @Test
+    fun `a config body over 1 MiB is refused by its Content-Length before it is read`() = runTest {
+        server.enqueue(MockResponse().setBody(okio.Buffer().write(ByteArray((oneMiB + 1).toInt()) { ' '.code.toByte() })))
+
+        try {
+            createApi().fetchConfig(1)
+            fail("expected the body to be refused")
+        } catch (e: io.github.umutcansu.pinvault.internal.ResponseTooLargeException) {
+            assertEquals(oneMiB, e.maxBytes)
+            assertEquals(oneMiB + 1, e.declared)
+        }
+    }
+
+    @Test
+    fun `a chunked config body is cut off at the limit while it is read`() = runTest {
+        // No Content-Length: the refusal can only come from counting.
+        server.enqueue(MockResponse().setChunkedBody(okio.Buffer().write(ByteArray((oneMiB + 1).toInt()) { ' '.code.toByte() }), 16 * 1024))
+
+        try {
+            createApi().fetchConfig(1)
+            fail("expected the body to be refused")
+        } catch (e: io.github.umutcansu.pinvault.internal.ResponseTooLargeException) {
+            assertNull("not from a declared length", e.declared)
+        }
+    }
+
+    @Test
+    fun `a vault download over its limit is refused, declared or chunked, and one at the limit is read`() = runTest {
+        val api = apiWithLimits(vaultBodyLimit = 1_000)
+
+        server.enqueue(MockResponse().setBody(okio.Buffer().write(ByteArray(1_001))).setHeader("X-Vault-Version", "4"))
+        try {
+            api.downloadVaultFileWithMeta("api/v1/vault/model")
+            fail("expected the body to be refused")
+        } catch (e: io.github.umutcansu.pinvault.internal.ResponseTooLargeException) {
+            assertEquals(1_001L, e.declared)
+        }
+
+        server.enqueue(MockResponse().setChunkedBody(okio.Buffer().write(ByteArray(1_001)), 256).setHeader("X-Vault-Version", "4"))
+        try {
+            api.downloadVaultFileWithMeta("api/v1/vault/model")
+            fail("expected the body to be refused")
+        } catch (e: io.github.umutcansu.pinvault.internal.ResponseTooLargeException) {
+            assertNull(e.declared)
+        }
+
+        server.enqueue(MockResponse().setBody(okio.Buffer().write(ByteArray(1_000))).setHeader("X-Vault-Version", "4"))
+        assertEquals(1_000, api.downloadVaultFileWithMeta("api/v1/vault/model").content.size)
+
+        // The one-argument download reads with the same ceiling.
+        server.enqueue(MockResponse().setBody(okio.Buffer().write(ByteArray(1_001))))
+        try {
+            api.downloadVaultFile("api/v1/vault/model")
+            fail("expected the body to be refused")
+        } catch (e: io.github.umutcansu.pinvault.internal.ResponseTooLargeException) {
+            assertEquals(1_000L, e.maxBytes)
+        }
+    }
+
+    @Test
+    fun `a long error body is cut, not refused, so the status still reaches the router`() = runTest {
+        server.enqueue(MockResponse().setResponseCode(412).setBody(okio.Buffer().write(ByteArray(5_000) { 'x'.code.toByte() })))
+
+        try {
+            apiWithLimits(vaultBodyLimit = 1_000).downloadVaultFileWithMeta("api/v1/vault/model")
+            fail("expected the refusal")
+        } catch (e: VaultFetchHttpException) {
+            assertEquals(412, e.code)
+            assertEquals(200, e.body!!.length)
+        }
+    }
+
+    @Test
+    fun `an oversized P12 or enrollment answer is refused`() = runTest {
+        val tooBig = okio.Buffer().write(ByteArray((256 shl 10) + 1))
+        server.enqueue(MockResponse().setBody(tooBig.clone()).setHeader("Content-Type", "application/octet-stream"))
+        server.enqueue(MockResponse().setBody(tooBig.clone()).setHeader("X-P12-SHA256", "hash"))
+        val api = createApi()
+
+        val p12 = runCatching { api.downloadHostClientCert("host.com") }.exceptionOrNull()
+        assertTrue("$p12", p12 is io.github.umutcansu.pinvault.internal.ResponseTooLargeException)
+        val enrollment = runCatching { api.enroll("tok", null, null, null) }.exceptionOrNull()
+        assertTrue("$enrollment", enrollment is io.github.umutcansu.pinvault.internal.ResponseTooLargeException)
+    }
 }

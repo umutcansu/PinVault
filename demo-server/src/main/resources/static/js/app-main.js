@@ -72,7 +72,7 @@ const _actionHandlers = {
   renderConfigApiDetail, renderEditPins, renderEmpty, renderHostList, renderInlineEditPins,
   renewCertAuto, renewCertUpload, revokeClientCert, revokeVaultToken, runHealthCheck,
   rotateBootstrapToBackup, rotateHostToBackup,
-  saveDefaultAcl, saveInlinePins, savePins, saveVaultFilePolicy, selectHost,
+  saveDefaultAcl, saveInlinePins, savePins, saveTrustRoots, saveVaultFilePolicy, selectHost,
   selectHostInApi, setLang,
   setVaultEnabled, setVaultStatusFilter, showAddConfigApi, showAddHost, showCertUploadForm,
   showDeviceAclManager, showDeviceDetail, showVaultFileDetail, switchAddTab,
@@ -92,7 +92,12 @@ const _actionHandlers = {
   createEnrollmentPolicy, stopEnrollmentPolicy, closePolicyCode, approveEnrollmentRequest, rejectEnrollmentRequest,
   toggleOpenApplications,
   // Revoke / forget: device ids the identity only named, cut off only on purpose
-  cascadeRevokeClientCert, doForgetClientIdentity, dismissUnverifiedNotice
+  cascadeRevokeClientCert, doForgetClientIdentity, dismissUnverifiedNotice,
+  // Attestation (ATTESTATION.md): policy, devices, stats per Config API; PinVault-Token secrets
+  refreshAttestationView, refreshAttestationDevices, attestLevelChanged, applyAttestationPreset,
+  saveAttestationPolicy, setAttestResultFilter, searchAttestDevices, toggleAttestRow,
+  showAttestationDevice, saveAttestDevice, forgetAttestDevice,
+  loadTokenSecrets, toggleTokenSecretReveal, copyTokenSecret, rotateTokenSecret, deleteTokenSecret
 };
 
 function _collectArgs(el) {

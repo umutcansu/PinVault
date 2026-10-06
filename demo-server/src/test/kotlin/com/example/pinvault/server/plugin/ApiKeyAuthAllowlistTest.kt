@@ -30,6 +30,17 @@ class ApiKeyAuthAllowlistTest {
         assertTrue(public("/api/v1/vault/devices/abc/public-key", HttpMethod.Post))
         assertTrue(public("/api/v1/connection-history/client-report", HttpMethod.Post))
         assertTrue(public("/api/v1/enrollment-mode"))
+        // Attestation: the challenge and the attestation; its admin API is not.
+        assertTrue(public("/api/v1/attest/challenge"))
+        assertTrue(public("/api/v1/attest", HttpMethod.Post))
+        assertFalse(public("/api/v1/attest"))
+        assertFalse(public("/api/v1/attest/challenge", HttpMethod.Post))
+        assertFalse(public("/api/v1/attestation/token-secrets"))
+        assertFalse(public("/api/v1/config-apis/x/attestation/policy"))
+        assertFalse(public("/api/v1/config-apis/x/attestation/devices"))
+        // ...and both are counted by the refusal limiter.
+        assertTrue(isRefusalLimitedEndpoint("/api/v1/attest", HttpMethod.Post))
+        assertTrue(isRefusalLimitedEndpoint("/api/v1/attest/challenge", HttpMethod.Get))
     }
 
     @Test

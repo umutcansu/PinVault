@@ -23,6 +23,7 @@ import io.github.umutcansu.pinvault.api.CertificateConfigApi;
 import io.github.umutcansu.pinvault.api.ClientCertRenewalStatus;
 import io.github.umutcansu.pinvault.api.PinVaultConnectionEvent;
 import io.github.umutcansu.pinvault.api.PinVaultConnectionListener;
+import io.github.umutcansu.pinvault.playintegrity.PlayIntegrityVerdictProvider;
 import io.github.umutcansu.pinvault.model.ConfigApiBlock;
 import io.github.umutcansu.pinvault.model.HostPin;
 import io.github.umutcansu.pinvault.model.InitResult;
@@ -370,6 +371,7 @@ public class App extends Application {
         }
         addVaultFiles(builder, hasMtlsCredential);
         requireCaTrustForTarget(builder);
+        addPlayIntegrity(builder);
 
         PinVaultConfig config = builder
                 .deviceAlias(deviceAlias())
@@ -563,8 +565,47 @@ public class App extends Application {
             // Pin kapsamı: yalnızca bu host'un pin'lerini iste. Sunucu isteği
             // cihazın host ACL'iyle kesiştirir; izin yoksa hiç pin dönmez.
             if (scopedPins) block.wantPinsFor(TARGET_HOST);
+            applyAttestation(block);
             return Unit.INSTANCE;
         });
+    }
+
+    /**
+     * Atestasyon (Approov'un çalışma mantığı): kütüphane açılışta ve sonra
+     * 5 dakikada bir uygulamayı ve cihazı ölçer (root, emülatör, hata
+     * ayıklayıcı, hooking çerçevesi, imza, klon, kurulum kaynağı, anahtarın
+     * yeri), raporu Keystore'daki kimlik anahtarıyla imzalayıp host'a yollar.
+     * Host politikasına göre geçer/kalır: geçerse 5 dakikalık PinVault-Token
+     * döner ve kütüphane bunu bu bloğun pinli host'larına giden her isteğe
+     * ekler (mock host MOCK_HOST_REQUIRE_TOKEN=true ile token'sız isteği
+     * reddeder); yeni bir pin config'i varsa aynı yanıtın içinde gelir.
+     * Kalırsa token yok, pin güncellemesi yok. Sonuç ana ekranda ve olay
+     * listesinde görünür ({@link PinVault#attestationStatus}).
+     */
+    private static void applyAttestation(ConfigApiBlock.Builder block) {
+        if (BuildConfig.HOST_ATTESTATION) block.attestation();
+    }
+
+    /**
+     * Play Integrity, isteğe bağlı (sample-host.properties:
+     * host.playIntegrityProjectNumber). Doluysa atestasyon raporuna Google'ın
+     * nonce'a bağlı kararı da eklenir (`verdictProvider`); host Play Console
+     * yanıt anahtarlarıyla çözüp doğrular ve politikaya göre `play_integrity`
+     * / `play_integrity_missing` bayraklarını kaldırır (ATTESTATION.md §11).
+     * Sağlayıcı Google'a en çok 6 saatte bir sorar (klasik istek kotası);
+     * aradaki turlarda rapor Play Integrity'siz gider ve host son doğrulanmış
+     * kararı 24 saat sayar. Boşsa sağlayıcı kurulmaz; kütüphane Play
+     * Servisleri olmayan telefonda da aynı şekilde çalışır.
+     */
+    private void addPlayIntegrity(PinVaultConfig.Builder builder) {
+        if (!BuildConfig.HOST_ATTESTATION || BuildConfig.HOST_PLAY_INTEGRITY_PROJECT.isEmpty()) return;
+        long project;
+        try {
+            project = Long.parseLong(BuildConfig.HOST_PLAY_INTEGRITY_PROJECT);
+        } catch (NumberFormatException e) {
+            return;
+        }
+        builder.integrityVerdictProvider(new PlayIntegrityVerdictProvider(this, project));
     }
 
     private static void addMtlsBlock(PinVaultConfig.Builder builder, HostPin bootstrap,
@@ -592,6 +633,7 @@ public class App extends Application {
             // Test derlemelerinde elle yüklenen P12 varsa onun yerine o kullanılır
             // (TestControls); release'te bu çağrı boştur.
             TestControls.applyManualIdentity(block, manualP12);
+            applyAttestation(block);
             return Unit.INSTANCE;
         });
     }
@@ -795,9 +837,12 @@ public class App extends Application {
     }
 
     /**
-     * Hedef host'un aktif pin'leriyle {@link ProductionStyleClient}'ı kurar.
-     * Pin uyuşmazlığında {@link PinManagerLite#refreshNowBlocking(long)} config'i
-     * tazeler; production uygulamasındaki PinManager davranışının karşılığı.
+     * {@link ProductionStyleClient}'ı kurar: PinVault'u tanımayan network
+     * katmanına pinlemeyi {@code PinVault.applyTo} ile takar. Böylece o client
+     * da kütüphanenin trust manager'ını, istek başına yeniden kontrolü,
+     * {@code requireCaTrust}'ı ve pin-kurtarma interceptor'ını kullanır; pin
+     * listesini kendi {@code CertificatePinner}'ına kopyalamaz (o yol hazır
+     * bypass betiklerine açıktı).
      */
     private void initProductionStyleClient() {
         List<String> pins = PinVault.INSTANCE.pinsForHost(TARGET_HOST);
@@ -805,14 +850,11 @@ public class App extends Application {
             Log.w(TAG, "No pins for " + TARGET_HOST + " — ProductionStyleClient skipped");
             return;
         }
-        ProductionStyleClient.init(TARGET_HOST, pins, host -> PinManagerLite.refreshNowBlocking(5L));
+        ProductionStyleClient.init(PinVault.INSTANCE::applyTo);
     }
 
+    /** Yeni config uygulandı: canlı client yeni pinleri izler, açık bağlantılar boşaltılır. */
     static void bridgePinsToProductionStyleClient() {
-        List<String> pins = PinVault.INSTANCE.pinsForHost(TARGET_HOST);
-        if (pins != null && !pins.isEmpty()) {
-            ProductionStyleClient.updatePins(TARGET_HOST, pins);
-            Log.d(TAG, "ProductionStyleClient bridged — " + pins.size() + " pins");
-        }
+        ProductionStyleClient.updatePins();
     }
 }

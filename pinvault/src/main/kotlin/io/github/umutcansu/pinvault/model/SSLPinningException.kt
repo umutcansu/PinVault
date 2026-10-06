@@ -117,6 +117,59 @@ class CertificateValidityException(
 ) : java.security.cert.CertificateException(message, cause)
 
 /**
+ * [PinVaultConfig.Builder.requireHardwareBackedKeys] is on and the Android
+ * Keystore made a key in software (or would not say where it made it). The
+ * key is deleted again and the operation that needed it fails: enrollment
+ * ([ClientCertEnrollmentResult.Failed] with this cause), a vault file
+ * ([VaultFileResult.Failed]), or the first use of the encrypted stores
+ * (`init` returns `Failed`). [level] is what the Keystore reported;
+ * [keyKind] names the key ("Client identity key", "Store encryption key", …).
+ */
+class HardwareBackedKeyRequiredException(
+    val keyKind: String,
+    val level: KeySecurityLevel,
+    cause: Throwable? = null
+) : SSLPinningException(
+    "$keyKind: the Android Keystore made the key at security level '${level.wireName}', " +
+        "and requireHardwareBackedKeys() accepts StrongBox or TEE only",
+    cause
+)
+
+/**
+ * The server's chain matched an **issuer** pin — a CA the leaf really chains
+ * to — but the leaf is not issued for the host being connected to (no
+ * matching `subjectAltName`). An issuer pin vouches for the CA, not for the
+ * name, and a public CA issues for anyone; the name check is what keeps a
+ * pin on, say, a public intermediate from accepting another site's
+ * certificate. A leaf pin is not subject to it: the pinned key is the
+ * identity. Thrown by the pinning trust manager and by the per-request
+ * check (the `cause` of an [javax.net.ssl.SSLHandshakeException]).
+ *
+ * A distinct type so that [io.github.umutcansu.pinvault.ssl.PinRecoveryInterceptor]
+ * does not refetch the pin config for it: no pin set makes a certificate
+ * for another host valid for this one.
+ */
+class HostnameMismatchException(
+    message: String,
+    cause: Throwable? = null
+) : java.security.cert.CertificateException(message, cause)
+
+/**
+ * Managed trust roots (`managedTrustRoots()` on the config, `trustRoots` in
+ * the signed config) refused a host that has no pin entry: the platform's
+ * CAs do not trust the chain, or the chain validates to a root the config
+ * does not list. Thrown by the pinning trust manager and the per-request
+ * check (the `cause` of an [javax.net.ssl.SSLHandshakeException]). A
+ * distinct type so that [io.github.umutcansu.pinvault.ssl.PinRecoveryInterceptor]
+ * refetches the config for it at most as for an unpinned host: a fresh
+ * config may list the root, so one refetch per window is allowed.
+ */
+class ManagedTrustRootException(
+    message: String,
+    cause: Throwable? = null
+) : java.security.cert.CertificateException(message, cause)
+
+/**
  * The pin config names no entry for the host being connected to. Thrown by
  * the pinning trust manager (the `cause` of an
  * [javax.net.ssl.SSLHandshakeException]).
