@@ -94,6 +94,7 @@ Object.assign(i18n.tr, {
   setupNotes: 'Notlar',
   setupNoteIntegrityOff: 'Sunucuda INTEGRITY_VERIFICATION kapalı: uygulama token gönderir ama sunucu bakmaz. 1. adımdaki satırları ekle.',
   setupNoteIntegrityDeps: 'integrityTokenProvider için uygulamaya com.google.android.play:integrity bağımlılığını ekle ve StandardIntegrityTokenProvider\'ı açılışta bir kez hazırla.',
+  setupNoteIntegrityDepsSwift: 'App Attest için uygulamaya App Attest yeteneğini (com.apple.developer.devicecheck.appattest-environment) ekle; sunucuda APP_ATTEST_APP_IDS ve APP_ATTEST_ROOT_CA_FILE ayarlı olmalı. Simülatörde App Attest yok: kayıt jetonsuz yapılır.',
   setupNoteGuard: 'environmentGuard içine kendi tespitini bağla (RASP ürünü, RootBeer). PinVault kendisi tespit yapmaz; uygulama içindeki kontrol atlatılabilir, asıl karar sunucudaki bütünlük doğrulamasıdır.',
   setupNoteNoSigning: 'Sunucuda imza anahtarı bulunamadı: config imzasız kalır. Bu üretim için uygun değil.',
   setupNoteMtls: 'mTLS Config API: cihaz ilk açılışta init\'ten önce kayıt olmalı (kod sonunda).',
@@ -189,6 +190,7 @@ Object.assign(i18n.en, {
   setupNotes: 'Notes',
   setupNoteIntegrityOff: 'INTEGRITY_VERIFICATION is off on the server: the app sends a token nobody reads. Add the lines from step 1.',
   setupNoteIntegrityDeps: 'For integrityTokenProvider add the com.google.android.play:integrity dependency and prepare a StandardIntegrityTokenProvider once at app start.',
+  setupNoteIntegrityDepsSwift: 'For App Attest add the App Attest capability (com.apple.developer.devicecheck.appattest-environment) to the app; the server needs APP_ATTEST_APP_IDS and APP_ATTEST_ROOT_CA_FILE. The simulator has no App Attest: it enrolls without a token.',
   setupNoteGuard: 'Wire your own detection into environmentGuard (a RASP product, RootBeer). PinVault detects nothing itself; a check inside the app can be bypassed, the server\'s integrity verification is what decides.',
   setupNoteNoSigning: 'The server has no signing key: configs stay unsigned. Not fit for production.',
   setupNoteMtls: 'mTLS Config API: on first start the device enrolls before init (end of the code).',
@@ -558,6 +560,7 @@ function setupAppStep() {
         <select class="form-input" data-action-change="setSetupOpt" data-arg0="lang" data-event="1">
           <option value="kotlin" ${setupOpts.lang === 'kotlin' ? 'selected' : ''}>Kotlin</option>
           <option value="java" ${setupOpts.lang === 'java' ? 'selected' : ''}>Java</option>
+          <option value="swift" ${setupOpts.lang === 'swift' ? 'selected' : ''}>Swift (iOS)</option>
         </select>
       </div>
     </div>
@@ -587,7 +590,7 @@ function setupCodeStep() {
   return `
     <div class="card">
       <div class="card-head">
-        <div class="card-title" lang="en">${setupOpts.lang === 'java' ? 'Java' : 'Kotlin'}</div>
+        <div class="card-title" lang="en">${({ java: 'Java', swift: 'Swift (iOS)' })[setupOpts.lang] || 'Kotlin'}</div>
         <button class="btn btn-primary btn-sm" data-action="copySetupText" data-arg0="code">${t('setupCopy')}</button>
       </div>
       <div class="card-hint">${esc(t('setupCodeIntro'))}</div>
@@ -604,7 +607,7 @@ function setupNotes() {
   if (api && api.mode === 'mtls') notes.push(t('setupNoteMtls'));
   if (o.guard) notes.push(t('setupNoteGuard'));
   if (o.integrity) {
-    notes.push(t('setupNoteIntegrityDeps'));
+    notes.push(t(o.lang === 'swift' ? 'setupNoteIntegrityDepsSwift' : 'setupNoteIntegrityDeps'));
     if (d.integrityMode === 'off') notes.push(t('setupNoteIntegrityOff'));
   }
   if (d.attestationMode && d.attestationMode !== 'off') notes.push(t('setupNoteAttestation', d.attestationMode));
@@ -622,11 +625,12 @@ function setupHostOnly(raw) {
 }
 
 /**
- * The app's configuration, Kotlin or Java. Every value comes from this
+ * The app's configuration, Kotlin, Java or Swift. Every value comes from this
  * server's public data or the wizard's own choices; literals are reduced to
  * the characters a host, a port, an id or a Base64 key can have.
  */
 function setupCode() {
+  if (setupOpts.lang === 'swift') return setupCodeSwift();
   const d = setupData, o = setupOpts;
   const api = setupSelectedApi() || { id: 'default-tls', port: 443, mode: 'tls' };
   const host = setupHostOnly(o.host);
@@ -737,4 +741,66 @@ function setupCode() {
     (chain.length ? chain.join('\n') + '\n' : '') +
     `    .build()\n` + enroll +
     `\nval result = PinVault.init(context, config)   // InitResult.Ready → PinVault.getClient()\n`;
+}
+
+/** [setupCode] for the iOS library (pinvault-ios, Swift package `PinVault`). */
+function setupCodeSwift() {
+  const d = setupData, o = setupOpts;
+  const api = setupSelectedApi() || { id: 'default-tls', port: 443, mode: 'tls' };
+  const host = setupHostOnly(o.host);
+  const url = `https://${host}:${setupPort(api)}/`;
+  const mtls = api.mode === 'mtls';
+  const enrollApi = mtls ? (d.configApis || []).find(a => a.id === o.enrollApiId) : null;
+  const door = mtls && o.recoveryDoor && d.recoveryPort != null && (d.recoveryPins || []).length > 0;
+  const keys = o.signed ? (d.signingKeys || []) : [];
+  const recovery = o.recovery ? (d.recoveryKeys || []) : [];
+  const caTrust = String(o.caTrust || '').split(',').map(s => s.trim()).filter(Boolean);
+  const offline = parseInt(o.offlineDays, 10);
+  const hours = parseInt(o.updateHours, 10);
+  const L = setupLiteral;
+  const pins = (list) => list.map(L).join(', ');
+
+  const bootstrap = [{ host, pins: d.bootstrapPins || [], note: 'Config API certificate' }];
+  if (door) bootstrap.push({ host: `${host}:${setupRecoveryPort(d)}`, pins: d.recoveryPins, note: 'recovery door (server CA)' });
+  const hp = bootstrap.map((b, i) => `            HostPin(hostname: ${L(b.host)}, sha256: [${pins(b.pins)}])${i < bootstrap.length - 1 ? ',' : ''}   // ${b.note}`);
+  const blockLines = [`        block.bootstrapPins([\n${hp.join('\n')}\n        ])`];
+  if (keys.length) blockLines.push(`        block.signaturePublicKeys(${pins(keys)})`);
+  else blockLines.push(`        block.allowUnsigned()   // the server has no signing key: not for production`);
+  if (keys.length && d.requiredSignatures > 1) blockLines.push(`        block.requiredSignatures(${d.requiredSignatures})`);
+  if (recovery.length) blockLines.push(`        block.recoveryPublicKeys(${pins(recovery)})`);
+  if (o.scope) blockLines.push(`        block.serverScope(${L(api.id)})`);
+  if (o.clientCa && d.clientCaPin) blockLines.push(`        block.clientCaPins(${L(d.clientCaPin)})`);
+  if (enrollApi) blockLines.push(`        block.enrollmentUrl(${L(`https://${host}:${setupPort(enrollApi)}/`)})`);
+  if (door) blockLines.push(`        block.renewalUrl(${L(`https://${host}:${setupRecoveryPort(d)}/`)})`);
+
+  const chain = [];
+  const dot = '    ';
+  if (caTrust.length) chain.push(`${dot}.requireCaTrust(${caTrust.map(L).join(', ')})`);
+  if (offline > 0) chain.push(`${dot}.vaultFileMaxOfflineAge(${offline}, .days)`);
+  if (o.wipe) chain.push(`${dot}.wipeVaultFilesOnRevocation()`);
+  if (o.unlocked) chain.push(`${dot}.requireUnlockedDevice()`);
+  if (hours > 0) chain.push(`${dot}.updateIntervalHours(${hours})`);
+  if (o.guard) {
+    chain.push(`${dot}// Your jailbreak / hooking detection (RASP). .start stays allowed so pinned traffic keeps working.\n` +
+      `${dot}.environmentGuard { operation in operation == .start || !DeviceShield.isCompromised() }`);
+  }
+  if (o.integrity) {
+    chain.push(`${dot}// App Attest, bound to the request; the server verifies it (INTEGRITY_VERIFICATION, APP_ATTEST_APP_IDS).\n` +
+      `${dot}.integrityTokenProvider(AppAttestIntegrityTokenProvider())`);
+  }
+
+  const date = new Date().toISOString().slice(0, 10);
+  const header = `// PinVault configuration — setup wizard, ${date}, Config API "${api.id}" (${api.mode}).\n` +
+    `// Swift package: the PinVault repository (Package.swift at its root), product "PinVault".`;
+  const enroll = mtls ? `\n// First start: enroll before start (an mTLS Config API needs the certificate).\n` +
+    `if !PinVault.shared.isEnrolled(config: config) {\n` +
+    `    _ = await PinVault.shared.enrollForResult(config: config, token: enrollmentToken)   // or autoEnrollForResult(config:)\n` +
+    `}\n` : '';
+  return `${header}\nimport PinVault\n\n` +
+    `let config = try PinVaultConfig.Builder()\n` +
+    `    .configApi(${L(api.id)}, url: ${L(url)}) { block in\n${blockLines.join('\n')}\n    }\n` +
+    (chain.length ? chain.join('\n') + '\n' : '') +
+    `    .build()\n` + enroll +
+    `\n// At launch (application(_:didFinishLaunchingWithOptions:) or App.init): PinVault.shared.registerBackgroundTask()\n` +
+    `let result = await PinVault.shared.start(config: config)   // .ready → PinVault.shared.session()\n`;
 }

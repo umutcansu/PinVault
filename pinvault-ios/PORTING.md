@@ -164,6 +164,9 @@ Kotlin files are grouped (results, small enums).
   `{"provider":"app-attest","keyId":"<base64>","assertion":"<base64 CBOR>"}`.
 - `DCAppAttestService.isSupported` is false on the simulator: the provider returns nil and the
   report carries no `verdictProvider`.
+- Public types (L5): `AppAttestVerdictProvider` (an `IntegrityVerdictProvider`, `init()`), and
+  `AppAttestIntegrityTokenProvider` (an `IntegrityTokenProvider`, `init()`). The panel's setup wizard
+  generates `.integrityTokenProvider(AppAttestIntegrityTokenProvider())` for Swift.
 
 ## 7. Sample app (sample-client-ios)
 
