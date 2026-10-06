@@ -1729,12 +1729,15 @@ health per API → attestation → key registration → stale-file wipe), the
 revocation, and a drawing of the whole topology. 15 chapters, 99 steps; it
 runs offline in any browser.
 
-| Language | Open in the browser | File |
+| Language | Open (renders in the browser) | Source |
 |---|---|---|
-| Türkçe | [htmlpreview](https://htmlpreview.github.io/?https://github.com/umutcansu/PinVault/blob/main/docs/animation/pinvault-request-flow.tr.html) | [`docs/animation/pinvault-request-flow.tr.html`](docs/animation/pinvault-request-flow.tr.html) — download (*Raw* → save) and open in Chrome |
+| Türkçe | [▶ pinvault-request-flow.tr.html](https://raw.githack.com/umutcansu/PinVault/claude/sharp-euler-uf519f/docs/animation/pinvault-request-flow.tr.html) | [`docs/animation/pinvault-request-flow.tr.html`](docs/animation/pinvault-request-flow.tr.html) |
 
-The htmlpreview link works once the file is on `main`; from a branch, open
-the file's *Raw* view, save it and double-click it.
+The "open" links go through raw.githack.com, which serves the file from
+this repository as a real page (GitHub's own file view shows the source).
+Once the branch is merged, replace `claude/sharp-euler-uf519f` in the URL
+with `main`. Offline: download the source file and double-click it; it has
+no external dependencies.
 
 ## Architecture
 
