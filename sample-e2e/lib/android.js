@@ -146,9 +146,13 @@ class Device {
   /** Ekrandaki görünümler: resource-id, metin, etkinlik, sınırlar. */
   uiNodes() {
     let lastError;
-    for (let attempt = 0; attempt < 3; attempt++) {
+    // Önce eski dosya silinir: döküm başarısız olunca ("UiAutomationService
+    // already registered", bir önceki döküm henüz bırakmadan) eski dosya
+    // yerinde kalıyordu ve `cat` başka bir ekranın içeriğini döndürüyordu.
+    for (let attempt = 0; attempt < 6; attempt++) {
+      if (attempt > 0) sleepSync(500);
       try {
-        const xml = this.shell('uiautomator dump /sdcard/pv-e2e-ui.xml >/dev/null 2>&1; cat /sdcard/pv-e2e-ui.xml');
+        const xml = this.shell('rm -f /sdcard/pv-e2e-ui.xml; uiautomator dump /sdcard/pv-e2e-ui.xml >/dev/null 2>&1; cat /sdcard/pv-e2e-ui.xml 2>/dev/null');
         if (xml.includes('<hierarchy')) return parseNodes(xml);
         lastError = new Error('UI dökümü boş döndü');
       } catch (e) {

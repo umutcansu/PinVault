@@ -135,6 +135,19 @@ async function forgetDeviceKeys(deviceId, apiIds) {
   }
 }
 
+/**
+ * Cihazın atestasyon kaydını (ilk kayıtta tutulan anahtarıyla) verilen
+ * kapsamlarda siler. Sunucu cihazı ilk anahtarıyla tanır; testler her
+ * senaryoda uygulama verisini sildiği için telefon yeni anahtar üretir ve
+ * kayıt silinmezse atestasyon `403 key_mismatch` olur.
+ */
+async function forgetAttestationDevice(deviceId, apiIds) {
+  for (const apiId of apiIds) {
+    await api(`/api/v1/config-apis/${encodeURIComponent(apiId)}/attestation/devices/${encodeURIComponent(deviceId)}`, { method: 'DELETE' })
+      .catch(() => {});
+  }
+}
+
 async function vaultFiles(apiId) {
   return (await api(vaultBase(apiId))).json || [];
 }
@@ -562,6 +575,19 @@ async function forgetClientIdentityIfRevoked(id) {
  * kanıtları da siler, telefon bir sonraki senaryoya temiz başlar (pm clear
  * zaten yeni anahtar üretir; unutulan kimliğin anahtarı emekliye ayrılır).
  */
+/**
+ * Bu cihaza ait iptal edilmiş kimlikleri unutur (kimliği cihazın kendisi olan
+ * ya da cihaz kimliğini taşıyanlar). Önceki bir senaryo telefonun kimliğini
+ * iptal ettiyse sunucu cihazı iptal edilmiş sayar; atestasyon `403
+ * device_revoked` döner. Unutulan kayıt sayısını verir.
+ */
+async function forgetRevokedIdentitiesOf(deviceId) {
+  const revoked = (await clientCerts()).filter((c) => c.revoked && (c.id === deviceId || c.deviceUid === deviceId));
+  let forgotten = 0;
+  for (const c of revoked) if (await forgetClientIdentityIfRevoked(c.id).catch(() => false)) forgotten++;
+  return forgotten;
+}
+
 async function retireClientIdentity(id) {
   await revokeClientCertIfActive(id).catch(() => {});
   return forgetClientIdentityIfRevoked(id).catch(() => false);
@@ -652,6 +678,7 @@ async function notifications(key) {
 module.exports = {
   api,
   forgetDeviceKeys,
+  forgetAttestationDevice,
   isHealthy,
   mtlsApiRunning,
   provision,
@@ -677,6 +704,7 @@ module.exports = {
   mockTlsRequest,
   revokeClientCertIfActive,
   forgetClientIdentityIfRevoked,
+  forgetRevokedIdentitiesOf,
   retireClientIdentity,
   regenerateHostCert,
   spkiPin,

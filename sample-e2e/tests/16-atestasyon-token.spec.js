@@ -6,7 +6,8 @@
 // pinli isteklere ekler. Mock TLS host MOCK_HOST_REQUIRE_TOKEN=true ile
 // token'sız isteği reddeder.
 //
-// Testler emülatörde koştuğu için `emulator` bayrağı yükselir. Senaryo bunu
+// Uygulama debug derlemesi olduğu için `debuggable` yükselir; hazırlık onu
+// uyarı sayar. Testler emülatörde koştuğu için `emulator` bayrağı da yükselir. Senaryo bunu
 // kullanır: politika emülatörü "warn" sayarken telefon GEÇER ve mock host
 // token'lı isteği 200 ile kabul eder; politika "reject" yapılınca aynı
 // telefon KALIR, token alamaz ve mock host 401 döner. Ek açıklama (forcePass)
@@ -45,13 +46,15 @@ test('Atestasyon: geçen telefon token alır ve mock host kabul eder; politika s
     await test.step('Hazırlık: politika emülatörü uyarı sayar; mock host token ister', async () => {
       original = (await hostApi.api(POLICY)).json;
       expect(original && original.flags, 'politika okunamadı').toBeTruthy();
-      await setPolicy({ emulator: 'warn', unknown_installer: 'warn', adb_enabled: 'ignore', software_key: 'warn', key_unattested: 'warn' },
+      await setPolicy({ emulator: 'warn', debuggable: 'warn', unknown_installer: 'warn', adb_enabled: 'ignore', software_key: 'warn', key_unattested: 'warn' },
         { revealReasons: true });
       await hostControl.setEnv({ MOCK_HOST_REQUIRE_TOKEN: 'true' });
       await app.relaunch();
       await app.waitReady();
       await app.openVault();
       deviceId = app.deviceId();
+      // Önceki senaryolar (12, B grubu) bu telefonun kimliğini iptal etmiş olabilir.
+      await hostApi.forgetRevokedIdentitiesOf(deviceId);
       await app.backToMain();
       attachText(testInfo, 'Politika (test için)', JSON.stringify((await hostApi.api(POLICY)).json, null, 2));
     });
@@ -64,7 +67,13 @@ test('Atestasyon: geçen telefon token alır ve mock host kabul eder; politika s
       expect(text).toContain('uyarı: ');
       expect(text).toContain('emulator');
       await app.snap('atestasyon geçti, token alındı, mock host 200');
-      expect(app.status()).toMatch(/🛡 Atestasyon: GEÇTİ · arc [0-9a-f]{8}/);
+      // Durum kutusu şimdi eylemin sonucunu gösteriyor; açılış ekranındaki
+      // atestasyon satırı uygulama yeniden açılınca (açılıştaki turla) gelir.
+      await app.relaunch();
+      await app.waitReady();
+      await app.waitFor('statusView', (n) => /🛡 Atestasyon: GEÇTİ · arc [0-9a-f]{8}/.test(n.text), {
+        timeout: 60_000, what: 'durum kutusunda "Atestasyon: GEÇTİ"',
+      });
     });
 
     await test.step('Web: cihaz panelde "pass" olarak, ARC\'siyle görünür', async () => {
@@ -114,10 +123,11 @@ test('Atestasyon: geçen telefon token alır ve mock host kabul eder; politika s
     });
 
     await test.step('Ağ trafiği: token olmadan mock host 401, geçersiz token da 401', async () => {
-      const bare = await hostApi.mockTlsRequest('/health');
+      // `/health` token kontrolünden muaf (sağlık yoklaması); kök korunur.
+      const bare = await hostApi.mockTlsRequest('/');
       expect(bare.status).toBe(401);
       expect(bare.headers['www-authenticate'] || '').toContain('PinVault-Token');
-      const forged = await hostApi.mockTlsRequest('/health', { headers: { 'PinVault-Token': 'eyJhbGciOiJIUzI1NiJ9.e30.sahte' } });
+      const forged = await hostApi.mockTlsRequest('/', { headers: { 'PinVault-Token': 'eyJhbGciOiJIUzI1NiJ9.e30.sahte' } });
       expect(forged.status).toBe(401);
       attachText(testInfo, 'Mock host, token yok', `HTTP ${bare.status}\n${JSON.stringify(bare.headers, null, 2)}`);
     });

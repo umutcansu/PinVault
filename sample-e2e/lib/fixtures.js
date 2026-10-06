@@ -30,6 +30,14 @@ const test = base.test.extend({
     device.syncClockToHost();
     await hostControl.ensureUp();
     await hostApi.restoreBaseline(run.baseline);
+    // Atestasyon cihazı ilk anahtarıyla tanır; launchFresh uygulama verisini
+    // sildiği için telefon yeni anahtar üretir. Eski kayıt silinmezse her
+    // atestasyon key_mismatch olur.
+    try {
+      await hostApi.forgetAttestationDevice(device.appAndroidId(env.APP_ID), [env.VAULT_API, env.MTLS_API]);
+    } catch {
+      /* uygulama henüz hiç açılmadıysa ANDROID_ID yok; kayıt da yok */
+    }
     const app = new SampleApp(device, testInfo);
     app.launchFresh();
     await app.waitReady();

@@ -63,16 +63,16 @@ test('Vault dağıtım geçmişi: durum, sürüm ve cihaz kaydı; filtre, istati
       const adminFail = byStatus('failed').find((d) => d.vaultKey === ADMIN);
       const secretFail = byStatus('failed').find((d) => d.vaultKey === SECRET);
       expect(adminFail.authMethod).toBe('api_key');
-      expect(adminFail.failureReason).toContain('X-API-Key header required');
+      // Kütüphane hata nedenini sabit bir kodla raporlar (VaultFileResult.Failed.code),
+      // sunucunun mesajını ya da istisna metnini değil.
+      expect(adminFail.failureReason).toBe('http_401');
       // authMethod uygulamanın raporu: dosyayı public tanımladığı için 'public'.
       // Sunucu yine de kendi politikasını (token) uyguladı.
       expect(secretFail.authMethod).toBe('public');
       // Token gönderilmedi (public tanımlı dosyada kütüphane X-Vault-Token
-      // başlığını hiç eklemez; token politikalı dosyada da token boşsa eklemez),
-      // bu yüzden sunucunun verdiği neden doğru olanı: "eksik başlık", "geçersiz
-      // token" değil. Geçmişteki neden operatörü hiç üretilmemiş bir token'ın
-      // iptalini aramaya göndermesin.
-      expect(secretFail.failureReason).toContain('X-Vault-Token header required');
+      // başlığını hiç eklemez); sunucu 401 "X-Vault-Token header required" verdi.
+      // Rapor yalnızca sabit kodu taşır, sunucunun mesajını değil.
+      expect(secretFail.failureReason).toBe('http_401');
       // Başarısız denemede sürüm 0: cihazda o dosyanın bir kopyası yok.
       expect(adminFail.version).toBe(0);
     });

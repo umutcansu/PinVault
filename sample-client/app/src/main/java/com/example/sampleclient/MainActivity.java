@@ -160,12 +160,12 @@ public class MainActivity extends ActionActivity {
                             st.getWarnings().isEmpty() ? "—" : String.join(",", st.getWarnings()),
                             token.length(), time(st.getTokenExpiresAt()),
                             token.length() > 24 ? token.substring(0, 24) : token,
-                            App.MOCK_TLS_URL, mock);
+                            App.MOCK_TLS_API_URL, mock);
                 }
                 case REJECT:
                     return getString(R.string.attestation_result_reject, st.getArc(),
                             st.getRejectionReasons().isEmpty() ? "(sunucu açıklamıyor)" : String.join(",", st.getRejectionReasons()),
-                            App.MOCK_TLS_URL, mock);
+                            App.MOCK_TLS_API_URL, mock);
                 case UNSUPPORTED:
                     return getString(R.string.attestation_status_unsupported);
                 default:
@@ -174,10 +174,13 @@ public class MainActivity extends ActionActivity {
         });
     }
 
-    /** Kütüphanenin istemcisiyle mock TLS host'a bir istek; token varsa kütüphane ekler. */
+    /**
+     * Kütüphanenin istemcisiyle mock TLS host'a bir istek; token varsa kütüphane
+     * ekler. Mock host adı gerçek DNS'te yok, {@link MockDns} host IP'sine çözer.
+     */
     private String requestMockHost() {
-        try (okhttp3.Response resp = PinVault.INSTANCE.getClient()
-                .newCall(new Request.Builder().url(App.MOCK_TLS_URL).build()).execute()) {
+        try (okhttp3.Response resp = PinVault.INSTANCE.getClient().newBuilder().dns(MockDns.INSTANCE).build()
+                .newCall(new Request.Builder().url(App.MOCK_TLS_API_URL).build()).execute()) {
             if (resp.isSuccessful()) return getString(R.string.attestation_mock_ok, resp.code());
             String why = resp.header("WWW-Authenticate");
             return getString(R.string.attestation_mock_refused, resp.code(), why == null ? "" : why);

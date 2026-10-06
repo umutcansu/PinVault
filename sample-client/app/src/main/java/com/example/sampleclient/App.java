@@ -127,6 +127,12 @@ public class App extends Application {
             "https://" + BuildConfig.MOCK_TLS_HOST + ":" + BuildConfig.MOCK_TLS_PORT + "/health";
     public static final String MOCK_MTLS_URL =
             "https://" + BuildConfig.MOCK_MTLS_HOST + ":" + BuildConfig.MOCK_MTLS_PORT + "/health";
+    /**
+     * Mock TLS host'un kökü. `/health` PinVault-Token kontrolünden muaf
+     * (MOCK_HOST_REQUIRE_TOKEN açıkken de açık kalır); token'ın etkisi kökte görünür.
+     */
+    public static final String MOCK_TLS_API_URL =
+            "https://" + BuildConfig.MOCK_TLS_HOST + ":" + BuildConfig.MOCK_TLS_PORT + "/";
 
     // ── Vault dosyaları (dashboard'da bu anahtarlarla yüklenir) ──────────────
     //
