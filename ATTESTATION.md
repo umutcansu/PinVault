@@ -204,6 +204,15 @@ before. The server stores the platform with the device (`platform`:
 it. `keySecurityLevel` may be `secure_enclave`: hardware, like `tee` and
 `strongbox`.
 
+The platform is the app's own claim, so the server holds a device to the
+platform it is on record as: a key whose Android Key Attestation chain
+verified is Android, a device with an App Attest key on record is iOS, and
+otherwise the platform of its earlier verdicts stands. A report that claims
+another platform is judged by the recorded one and raises `app_integrity`
+(an Android device cannot call itself an iPhone to skip the signer, patch
+or Play Integrity checks). An iOS device skips `play_integrity_missing` only
+while App Attest is configured (`APP_ATTEST_APP_IDS`) to judge it instead.
+
 What each probe looks at (Android, no root needed; iOS probes:
 `pinvault-ios/PORTING.md` §4):
 

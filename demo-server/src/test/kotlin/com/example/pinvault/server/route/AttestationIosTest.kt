@@ -391,11 +391,58 @@ class AttestationIosTest {
     }
 
     @Test
-    fun `an iPhone is not missing a Play Integrity verdict`() = testApplication {
+    fun `an iPhone is not missing a Play Integrity verdict while App Attest judges it`() = testApplication {
+        val google = PlayIntegrityTokens()
+        app(service(playIntegrity = google.verifier(packageNames = setOf(TestAttestationChains.PACKAGE)), appAttest = apple.verifier()))
+        val ios = attest("ios-1", ecKey()) { iosReport() }.json().warnings()
+        assertFalse("play_integrity_missing" in ios)
+        assertTrue("app_attest_missing" in ios, "App Attest is its counterpart")
+        assertTrue("play_integrity_missing" in attest("android-1", ecKey()) { androidReport() }.json().warnings(), "Android: unchanged")
+    }
+
+    @Test
+    fun `without App Attest configured an iOS claim is no way out of play_integrity_missing`() = testApplication {
         val google = PlayIntegrityTokens()
         app(service(playIntegrity = google.verifier(packageNames = setOf(TestAttestationChains.PACKAGE))))
-        assertFalse("play_integrity_missing" in attest("ios-1", ecKey()) { iosReport() }.json().warnings())
-        assertTrue("play_integrity_missing" in attest("android-1", ecKey()) { androidReport() }.json().warnings(), "Android: unchanged")
+        // Nothing would judge an "iPhone" here; the claim alone must not skip the Android check.
+        assertTrue("play_integrity_missing" in attest("ios-1", ecKey()) { iosReport() }.json().warnings())
+    }
+
+    @Test
+    fun `a device cannot switch platforms to pick easier checks`() = testApplication {
+        val service = service(appAttest = apple.verifier())
+        app(service)
+        policies.put(scope, AttestationPolicy.parse(buildJsonObject { put("revealReasons", true) }, service.defaultPolicy).getOrThrow(), "test")
+        // An Android device on record (its first verdict) that then claims to be an iPhone.
+        val androidKey = ecKey()
+        assertEquals("pass", attest("android-1", androidKey) { androidReport() }.json()["result"]!!.jsonPrimitive.content)
+        val switched = attest("android-1", androidKey) { iosReport() }.json()
+        assertEquals("reject", switched["result"]!!.jsonPrimitive.content)
+        assertTrue("app_integrity" in strings(switched["rejectionReasons"]))
+        assertFalse("app_attest_missing" in switched.warnings(), "judged as the Android device it is on record as")
+        assertEquals("android", devices.get(scope, "android-1")!!.platform, "the record keeps its platform")
+
+        // An iPhone whose App Attest key is on record that then claims to be Android.
+        val iosKey = ecKey()
+        assertEquals(emptyList(), attest("ios-1", iosKey, attested("ios-1", AppAttestFixtures.Key())).json().warnings())
+        val androidClaim = attest("ios-1", iosKey) { androidReport() }.json()
+        assertEquals("reject", androidClaim["result"]!!.jsonPrimitive.content)
+        assertTrue("app_integrity" in strings(androidClaim["rejectionReasons"]))
+        assertEquals("ios", devices.get(scope, "ios-1")!!.platform)
+    }
+
+    @Test
+    fun `the platform a device is on record as is what its report is judged by`() {
+        val base = devices.run {
+            register(scope, "d", "00", "AA==", null, Instant.ofEpochMilli(now))
+            get(scope, "d")!!
+        }
+        assertEquals("ios", AttestationService.effectivePlatform("ios", base), "nothing on record: the claim")
+        assertEquals("android", AttestationService.effectivePlatform("ios", base.copy(platform = "android")))
+        assertEquals("ios", AttestationService.effectivePlatform("android", base.copy(appAttestKeyId = "k")))
+        assertEquals("android", AttestationService.effectivePlatform("ios",
+            base.copy(keyAttestation = com.example.pinvault.server.store.KeyAttestation(true, "strongbox", "ok"))),
+            "a verified Android Key Attestation chain fixes the platform")
     }
 
     @Test

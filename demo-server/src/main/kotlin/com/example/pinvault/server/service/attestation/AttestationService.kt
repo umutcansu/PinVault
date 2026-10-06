@@ -247,10 +247,17 @@ class AttestationService(
         // ── 6. Policy ──────────────────────────────────────────────────
         val policy = policyFor(configApiId)
         val provider = reportJson["verdictProvider"] as? JsonObject
-        val platform = platformOf(reportJson)
+        // The report names its platform itself, and a hooked app writes what it likes:
+        // the claim is taken only while nothing the server verified or recorded
+        // contradicts it. A contradiction is judged by the platform on record and
+        // raises `app_integrity` (an Android-attested device claiming to be an
+        // iPhone to skip the Android checks).
+        val platform = effectivePlatform(platformOf(reportJson), device)
+        val platformMismatch = platform != platformOf(reportJson)
         val isIos = platform == PLATFORM_IOS
         val appAttestRound = appAttestFlags(configApiId, deviceId, nonce, provider, device, isIos, now)
-        val raised = (raisedFlags(reportJson, device, appAttestRound.verified) +
+        val raised = (raisedFlags(reportJson, device, appAttestRound.verified, platform) +
+            (if (platformMismatch) listOf(AttestationFlag.APP_INTEGRITY) else emptyList()) +
             playIntegrityFlags(configApiId, deviceId, nonce, provider, device, now, isIos) + appAttestRound.flags).distinct()
         val reasons: List<String>
         val policyWarnings: List<String>
@@ -345,13 +352,16 @@ class AttestationService(
      * reported key level (`secure_enclave` is hardware), and `old_patch_level`
      * compares `device.osVersion` with `ATTESTATION_MIN_IOS_VERSION`.
      */
-    internal fun raisedFlags(report: JsonObject, device: AttestedDevice, appAttestVerified: Boolean = false): List<AttestationFlag> {
+    internal fun raisedFlags(
+        report: JsonObject, device: AttestedDevice, appAttestVerified: Boolean = false,
+        platform: String = effectivePlatform(platformOf(report), device)
+    ): List<AttestationFlag> {
         val raised = LinkedHashSet<AttestationFlag>()
         (report["signals"] as? JsonObject)?.forEach { (name, value) ->
             val flag = AttestationFlag.of(name) ?: return@forEach
             if ((value as? JsonObject)?.get("flag")?.let { (it as? JsonPrimitive)?.booleanOrNull } == true) raised += flag
         }
-        if (platformOf(report) == PLATFORM_IOS) return raisedIosFlags(report, appAttestVerified, raised)
+        if (platform == PLATFORM_IOS) return raisedIosFlags(report, appAttestVerified, raised)
         val app = report["app"] as? JsonObject
         if (verifier.packageNames.isNotEmpty()) {
             val packageName = app?.string("packageName")
@@ -494,8 +504,10 @@ class AttestationService(
             devices.recordPlayIntegrity(configApiId, deviceId, if (result.passed) "pass" else "fail", result.summary.toString(), now)
             return if (result.passed) emptyList() else listOf(AttestationFlag.PLAY_INTEGRITY)
         }
-        // An iPhone never has a Play Integrity verdict: its absence says nothing there (App Attest is its counterpart).
-        if (isIos) return emptyList()
+        // An iPhone never has a Play Integrity verdict: its absence says nothing there,
+        // but only while App Attest (its counterpart) is configured to judge it. Without
+        // it an "iOS" claim is not a way out of `play_integrity_missing`.
+        if (isIos && appAttest != null) return emptyList()
         val verifiedAt = device.playIntegrityAt?.let { runCatching { Instant.parse(it) }.getOrNull() }
         val fresh = verifiedAt != null && !now.isAfter(verifiedAt.plusSeconds(verifier.verdictMaxAgeSeconds))
         return when {
@@ -569,6 +581,18 @@ class AttestationService(
 
         /** Key levels that are not hardware (`secure_enclave`, `tee`, `strongbox` are). */
         private val SOFTWARE_LEVELS = setOf("software", "unknown")
+
+        /**
+         * The platform [claimed] by a report, unless the device's record contradicts
+         * it: a key whose Android Key Attestation chain verified, or an App Attest key
+         * on record, fixes the platform; so does the platform of earlier verdicts.
+         */
+        fun effectivePlatform(claimed: String, device: AttestedDevice): String = when {
+            device.keyAttestation?.attested == true -> PLATFORM_ANDROID
+            device.appAttestKeyId != null -> PLATFORM_IOS
+            device.platform != null -> device.platform
+            else -> claimed
+        }
 
         /** What [report] ran on: its `device.platform` (lowercase), `android` when it names none. */
         fun platformOf(report: JsonObject): String =
