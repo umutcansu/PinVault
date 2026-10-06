@@ -8,6 +8,7 @@
 // — yoksa diğer bütün senaryolar kırılır.
 const fs = require('fs');
 const path = require('path');
+const { execFileSync } = require('child_process');
 const { test, expect } = require('../lib/fixtures');
 const { attachText } = require('../lib/evidence');
 const { SampleApp } = require('../lib/sampleApp');
@@ -34,20 +35,48 @@ test('Kurulum: uygulama geçici test sunucusunun değerleriyle derlenir, telefon
       expect(out).toContain(`host.signingPublicKey=${fresh.signingKeyRaw().split('\n')[1].trim()}`);
     });
 
-    await test.step('Terminal: network_security_config.xml hiçbir yere şifresiz HTTP\'ye izin vermez; cihaz raporları da şifreli porttan gider (K10)', async () => {
-      const file = path.join(env.CLIENT_DIR, 'app/src/main/res/xml/network_security_config.xml');
-      const xml = fs.readFileSync(file, 'utf8');
+    const k10 = device.platform === 'ios'
+      ? 'Terminal: Info.plist\'in ATS ayarı (NSAppTransportSecurity) hiçbir yere şifresiz HTTP\'ye izin vermez; cihaz raporları da şifreli porttan gider (K10)'
+      : 'Terminal: network_security_config.xml hiçbir yere şifresiz HTTP\'ye izin vermez; cihaz raporları da şifreli porttan gider (K10)';
+    await test.step(k10, async () => {
       const props = fs.readFileSync(FRESH_PROPS, 'utf8');
       // Raporlar Config API portuna gider (config'le aynı dinleyici, aynı pin'ler);
       // telefon yönetim portunu hiç bilmez: değer dosyasında o port yoktur.
       const reportPort = (/^host\.httpsPort=(\d+)$/m.exec(props) || [])[1];
-      await attachText(
-        testInfo,
-        'app/src/main/res/xml/network_security_config.xml',
-        [xml, `Cihaz raporları: https://${env.LAN_IP}:${reportPort}/ (Config API portu, config sunucusunun pin'leriyle; yönetim portu uygulamaya verilmez)`].join('\n'),
-      );
-      expect(xml).toContain('cleartextTrafficPermitted="false"');
-      expect(xml).not.toContain('<domain-config');
+      const reportLine = `Cihaz raporları: https://${env.LAN_IP}:${reportPort}/ (Config API portu, config sunucusunun pin'leriyle; yönetim portu uygulamaya verilmez)`;
+      if (device.platform === 'ios') {
+        // iOS'ta şifresiz HTTP'yi ATS kapatır; derlenmiş uygulamanın Info.plist'i okunur.
+        const plist = path.join(env.APP_ARTIFACT, 'Info.plist');
+        const info = JSON.parse(execFileSync('plutil', ['-convert', 'json', '-o', '-', plist], { encoding: 'utf8' }));
+        const ats = info.NSAppTransportSecurity || {};
+        const insecureDomains = Object.entries(ats.NSExceptionDomains || {})
+          .filter(([, d]) => d && d.NSExceptionAllowsInsecureHTTPLoads === true)
+          .map(([name]) => name);
+        await attachText(
+          testInfo,
+          `${path.basename(env.APP_ARTIFACT)}/Info.plist — NSAppTransportSecurity`,
+          [
+            `$ plutil -extract NSAppTransportSecurity json -o - ${path.basename(env.APP_ARTIFACT)}/Info.plist`,
+            JSON.stringify(ats, null, 2),
+            '',
+            `NSAllowsArbitraryLoads: ${ats.NSAllowsArbitraryLoads === true ? 'AÇIK ✗' : 'kapalı ✓'}`,
+            `şifresiz HTTP izni olan alan adı: ${insecureDomains.length ? insecureDomains.join(', ') + ' ✗' : 'yok ✓'}`,
+            reportLine,
+          ].join('\n'),
+        );
+        expect(ats.NSAllowsArbitraryLoads).not.toBe(true);
+        expect(insecureDomains).toHaveLength(0);
+      } else {
+        const file = path.join(env.CLIENT_DIR, 'app/src/main/res/xml/network_security_config.xml');
+        const xml = fs.readFileSync(file, 'utf8');
+        await attachText(
+          testInfo,
+          'app/src/main/res/xml/network_security_config.xml',
+          [xml, reportLine].join('\n'),
+        );
+        expect(xml).toContain('cleartextTrafficPermitted="false"');
+        expect(xml).not.toContain('<domain-config');
+      }
       expect(reportPort).toBeTruthy();
       expect(props).not.toMatch(/^host\.managementTlsPort=/m);
       expect(props).not.toMatch(/^host\.httpPort=/m);
@@ -57,12 +86,12 @@ test('Kurulum: uygulama geçici test sunucusunun değerleriyle derlenir, telefon
       const out = clientBuild.buildAndInstall(device, FRESH_PROPS);
       await attachText(
         testInfo,
-        `${env.BUILD_COMMAND.replace('./', '')} -PsampleHostProps=… + adb install`,
-        `$ ${env.BUILD_COMMAND} -PsampleHostProps=${FRESH_PROPS}\n${out}`,
+        `${env.buildCommandFor('…').replace('./', '')} + ${device.platform === 'ios' ? 'simctl install' : 'adb install'}`,
+        `$ ${env.buildCommandFor(FRESH_PROPS)}\n${out}`,
       );
       expect(out).toContain('host-fresh.properties');
-      expect(out).toMatch(/BUILD SUCCESSFUL/);
-      expect(out).toContain('Success');
+      expect(out).toMatch(env.BUILD_OK_REGEX);
+      expect(out).toMatch(env.INSTALL_OK_REGEX);
     });
 
     await test.step('Mobil: ilk açılış — "Hazır — config vN" (K12)', async () => {
@@ -90,7 +119,7 @@ test('Kurulum: uygulama geçici test sunucusunun değerleriyle derlenir, telefon
     await attachText(
       testInfo,
       'Ana host değerleriyle yeniden derleme ve kurulum',
-      `$ ${env.BUILD_COMMAND} -PsampleHostProps=${env.PROPS_FILE}\n${restore}`,
+      `$ ${env.buildCommandFor(env.PROPS_FILE)}\n${restore}`,
     );
     app.launchFresh();
     const status = await app.waitReady();

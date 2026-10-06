@@ -338,7 +338,7 @@ test('Sunucu+Web+Mobil: anahtar seti (telefonun güvendiği imza anahtarları) �
           '',
           detail.text,
           '',
-          `$ adb shell run-as ${env.APP_ID} ls -la shared_prefs`,
+          device.appLabel(`$ adb shell run-as ${env.APP_ID} ls -la shared_prefs`),
           prefs.trim(),
           '',
           'Set pinvault_secure_signing_keys.xml\'de (anahtarı Keystore\'da) saklanıyor; config deposundan',
@@ -347,7 +347,7 @@ test('Sunucu+Web+Mobil: anahtar seti (telefonun güvendiği imza anahtarları) �
       );
       expect(detail.keySetVersion).toBe(N + 1);
       expect(detail.trusted).toEqual([next.keyId]);
-      expect(prefs).toContain('pinvault_secure_signing_keys.xml');
+      expect(prefs).toContain(device.prefsFileName('pinvault_secure_signing_keys'));
     });
   } finally {
     await test.step('Sunucu+Terminal: geçici test sunucusunun ortamı sıfırlanır, data/signing-key-next.pem silinir; telefona ana host için derlenen APK geri kurulur', async () => {

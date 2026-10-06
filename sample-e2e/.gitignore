@@ -7,3 +7,6 @@ evidence/
 
 # Koşuya özel üretilen dosyalar (host değerleri, backend/vekil anahtarları)
 .local/
+
+# iOS koşusunun ayarları: örnek dosya depoda, .env.ios yerel (kökteki .env.* kuralı)
+!.env.ios.example

@@ -74,10 +74,10 @@ test('Sunucu+Mobil: süresi geçmiş imzalı config reddedilir, süresi geçmiş
     await test.step('Mobil: cihaz saati iki saat ileri alınır', async () => {
       device.shiftClock(CLOCK_SHIFT_S);
       shifted = true;
-      const deviceNow = device.shell('date').trim();
+      const deviceNow = device.clockText();
       await attachText(
         testInfo,
-        'Cihaz saati (adb shell date)',
+        device.platform === 'ios' ? 'Uygulamanın saati (E2E denetim dosyası: clockOffsetSeconds)' : 'Cihaz saati (adb shell date)',
         [
           `cihaz : ${deviceNow}`,
           `Mac   : ${new Date().toString()}`,

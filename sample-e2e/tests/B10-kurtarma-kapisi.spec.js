@@ -14,7 +14,7 @@
 // kapıdan geçer ve mod hazır olur.
 const { test, expect } = require('../lib/fixtures');
 const { attachText, attachCommand } = require('../lib/evidence');
-const { sleep } = require('../lib/android');
+const { sleep } = require('../lib/device');
 const hostApi = require('../lib/hostApi');
 const hostControl = require('../lib/hostControl');
 const mtlsScope = require('../lib/mtlsScope');

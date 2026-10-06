@@ -73,11 +73,11 @@ test('mTLS: kayıt silinince bağlantı, uygulama yeniden açılmadan hemen kesi
       await app.openStorage();
       const text = await app.storageText();
       await app.snap('Depolama: istemci sertifikası yok');
-      const prefs = device.runAs(env.APP_ID, 'cat shared_prefs/pinvault_secure_client_cert.xml 2>/dev/null || echo "(dosya yok)"');
-      const entries = [...prefs.matchAll(/<string name="/g)].length;
+      const prefs = device.prefsFileText(env.APP_ID, 'pinvault_secure_client_cert');
+      const entries = device.parsePrefs(prefs).filter((e) => e.type === 'string').length;
       await attachText(
         testInfo,
-        `run-as ${env.APP_ID} — shared_prefs/pinvault_secure_client_cert.xml`,
+        device.appLabel(`run-as ${env.APP_ID} — shared_prefs/pinvault_secure_client_cert.xml`),
         [
           prefs.trim().slice(0, 1200),
           '',

@@ -185,3 +185,154 @@ kartlarında cihaz belirir.
 | Telefon host'a ulaşamıyor | telefon ve Mac aynı ağda değil ya da `HOST_LAN_IP` yanlış; emülatörde 10.0.2.2 yerine LAN IP kullanılır |
 | `Signing key file is encrypted but SIGNING_KEY_PASSWORD is not set` ya da şifre çözme hatası | `.env`'deki `SIGNING_KEY_PASSWORD` dosyayı şifreleyen parola değil (silinmiş ya da değiştirilmiş) → eski parolayı geri yaz; anahtar dosyası `./data` dizin mount'u içinde olmalı (tek dosyalık mount'a yazılamıyor) |
 | `docker compose down` sonrası Config API'ler kayıp sanılıyor | veriler `./data` altında kalıcıdır; `up -d` sonrası kendiliğinden yeniden başlar (E08) |
+
+## iOS koşusu (`E2E_PLATFORM=ios`)
+
+Aynı senaryolar iPhone simülatöründeki iOS örnek uygulamasına
+(`sample-client-ios`, paket kimliği yine `com.example.sampleclient`) karşı da
+koşar. Web tarafı aynı; telefon tarafında adb'nin yerini simülatör araçları
+(`xcrun simctl`) ve küçük bir UI sürücüsü alır. Uygulamayla harness arasındaki
+anlaşma: [`pinvault-ios/PORTING.md`](../pinvault-ios/PORTING.md) §7 (örnek
+uygulama) ve §8 (test denetim kanalı).
+
+### Gereksinimler
+
+| Araç | Niçin |
+|---|---|
+| Xcode 27 (komut satırı araçlarıyla) ve iOS 26.5 simülatörü | uygulamayı ve UI sürücüsünü derlemek, simülatör |
+| XcodeGen (`brew install xcodegen`) | `project.yml`'dan Xcode projesi |
+| Docker, Node 18+, `openssl`, `curl`, `jq` | Android koşusundaki gibi |
+
+```bash
+xcodebuild -version && xcodegen --version && xcrun simctl list runtimes | grep iOS
+```
+
+### Simülatör
+
+Koşu simülatördeki uygulamanın verisini ve **simülatörün bütün Keychain'ini**
+siler. Bu yüzden yalnızca bu koşuya ayrılmış bir simülatör kullanılır:
+
+```bash
+xcrun simctl create PinVault-iOS-E2E com.apple.CoreSimulator.SimDeviceType.iPhone-16-Pro \
+  com.apple.CoreSimulator.SimRuntime.iOS-26-5     # çıkan UDID → E2E_IOS_UDID
+```
+
+Kapalıysa global setup açar (bitince yalnızca kendi açtığını kapatır;
+`E2E_KEEP_EMULATOR=1` ile açık kalır). Uygulama her test başında silinmez,
+yalnızca verisi temizlenir: uygulama silinip yeniden kurulursa cihaz kimliği
+(`identifierForVendor`) değişir.
+
+### UI sürücüsü (`ios-driver/`)
+
+Simülatörde ekrana dokunmak ve ekrandaki metni okumak için Xcode'un UI test
+altyapısıyla (XCUITest) yazılmış küçük bir sunucu: bir UI test paketinin tek
+testi `127.0.0.1:6870`'te (`E2E_IOS_DRIVER_PORT`) HTTP isteklerini bekler;
+`lib/iosDriver.js` onu derler (`.local/ios-driver-derived`), arka planda
+başlatır, ölürse yeniden başlatır, koşu sonunda durdurur. Günlüğü
+`.local/ios-driver.log`. (idb'nin dokunma yolu Xcode 27'de çalışmadığı için.)
+
+Elle denemek için:
+
+```bash
+cd ios-driver && xcodegen generate
+xcodebuild build-for-testing -project PinVaultDriver.xcodeproj -scheme PinVaultDriver \
+  -sdk iphonesimulator -destination "platform=iOS Simulator,id=$E2E_IOS_UDID" -derivedDataPath ../.local/ios-driver-derived
+TEST_RUNNER_DRIVER_PORT=6870 xcodebuild test-without-building \
+  -xctestrun ../.local/ios-driver-derived/Build/Products/PinVaultDriver_*.xctestrun \
+  -destination "platform=iOS Simulator,id=$E2E_IOS_UDID" &
+curl -s localhost:6870/health
+curl -s "localhost:6870/tree?bundle=com.example.sampleclient" | head -c 400
+curl -s -X POST localhost:6870/stop
+```
+
+Uçlar: `GET /health`, `GET /tree?bundle=`, `POST /tap {x,y}`,
+`POST /tapElement {id}` (gerekirse kaydırarak; ekran dışındaki SwiftUI
+öğeleri ağaçta durur ama dokunulamaz), `POST /type {text}`,
+`POST /clearAndType {id,text}`, `POST /swipe {x1,y1,x2,y2,duration}`,
+`POST /scrollTo {id}`, `GET /alerts` ve `POST /tapAlertButton {id|label}`
+(sistem pencereleri: Face ID), `POST /pressHome`, `GET /keyboard`,
+`POST /dismissKeyboard`, `POST /stop`.
+
+### Ayrı bir host örneği
+
+Aynı Mac'te başka bir Android koşusu varsa (host 6650–6656, `pinvault-host`)
+iOS koşusu kendi host'unu kullanır: bu çalışma kopyasının `sample-host`'u, kendi
+compose projesi, container adı ve portlarıyla. `docker-compose.yml` container
+adını `.env`'deki `HOST_CONTAINER_NAME`'den alır (boşsa `pinvault-host`).
+
+```bash
+cd ../sample-host
+./scripts/setup.sh                 # demo profili: .env, API anahtarı, parolalar, imzalama anahtarı
+```
+
+`.env`'de şunlar değiştirilir (ya da eklenir):
+
+```
+COMPOSE_PROJECT_NAME=pinvault-ios
+HOST_CONTAINER_NAME=pinvault-host-ios
+HOST_HTTP_PORT=6850
+HOST_HTTPS_PORT=6851
+HOST_MTLS_PORT=6852
+HOST_MOCK_TLS_PORT=6853
+HOST_MOCK_MTLS_PORT=6854
+HOST_MANAGEMENT_TLS_PORT=6855
+HOST_RECOVERY_PORT=6856
+PINVAULT_SERVER_SRC=../demo-server
+TARGET_HOST=<Android host'unun hedefiyle aynı>
+```
+
+```bash
+docker compose up -d --build
+./scripts/provision.sh
+./scripts/smoke-test.sh            # hepsi PASS
+./scripts/export-server-key.sh     # saldırgan proxy için (G senaryoları)
+```
+
+Mock host'lar (`mock-tls.sample`, `mock-mtls.sample`) sertifikayı porta göre
+seçer; iOS uygulaması bu adları kütüphanenin `resolve(host:to:)` ayarıyla host
+IP'sine yönlendirir, `/etc/hosts` değişmez.
+
+### Ortam değişkenleri
+
+`sample-e2e/.env.ios.example` → `.env.ios` (git dışı). `lib/env.js` iOS
+koşusunda bu dosyayı okur; ortamda zaten verilmiş değişkenleri ezmez.
+
+| Değişken | iOS değeri | Açıklama |
+|---|---|---|
+| `E2E_PLATFORM` | `ios` | `npm run test:ios` verir |
+| `E2E_IOS_UDID` | simülatörün UDID'si | yalnızca bu koşunun simülatörü |
+| `E2E_IOS_DRIVER_PORT` | `6870` | UI sürücüsü |
+| `E2E_HOST_DIR`, `E2E_CONTAINER` | `../sample-host`, `pinvault-host-ios` | host örneği (container adı verilmezse host `.env`'indeki `HOST_CONTAINER_NAME`) |
+| `E2E_CUSTOM_BACKEND_PORT`, `E2E_PROXY_PORT`, `E2E_WEBHOOK_PORT` | `6860`, `6861`, `6862` | harness'ın Mac'te açtığı servisler |
+| `E2E_BLACKHOLE_PORT` | `6863` | "paketleri düşür" kuralının karşılığı (bağlantıyı kabul edip yanıt vermeyen sunucu) |
+| `E2E_FRESH_PORT_BASE`, `E2E_FRESH_PROJECT`, `E2E_FRESH_CONTAINER` | `6950`, `pinvault-ios-fresh`, `pinvault-host-ios-fresh` | geçici test sunucusu (taban … taban+6) |
+| `E2E_VARIANT` | `debug` / `e2e` | `Debug` ya da `E2E` derleme yapılandırması |
+| `E2E_IOS_CLIENT_DIR`, `E2E_IOS_APP_NAME` | `../sample-client-ios`, `SampleClient` | uygulama projesi ve `.app` adı |
+| `E2E_IOS_DEVICE_ID` | — | uygulamanın cihaz kimliği elle (normalde `report.json`'dan) |
+
+### Çalıştırma
+
+```bash
+npm run test:ios
+E2E_PLATFORM=ios npx playwright test tests/12-mtls-enroll-and-revoke.spec.js
+```
+
+Global setup simülatörü açar, UI sürücüsünü derleyip başlatır, uygulamayı
+`SAMPLE_HOST_PROPS=.local/sample-host.properties xcodebuild … build` ile derler
+(`.local/ios-derived`) ve `xcrun simctl install` ile kurar.
+
+### Android'den farklar
+
+| Android | iOS |
+|---|---|
+| `am start --es mode`, `date -s`, iptables | uygulamanın test denetim dosyası `Library/Caches/pinvault-e2e/control.json` (`mode`, `clockOffsetSeconds`, `redirects`) + `com.example.sampleclient.e2e.control` bildirimi. REJECT → kapalı yerel port, DROP → yanıt vermeyen yerel sunucu |
+| `cmd jobscheduler run -f`, `dumpsys jobscheduler` | `…e2e.runScheduledWork` bildirimi; planlı işler `report.json`'da (BGTaskScheduler simülatörde yok) |
+| `run-as` | veri kabı Mac'ten okunur: `shared_prefs/<ad>.xml` → `Library/Application Support/pinvault/<ad>.plist`, `files/vault_files/…` → `Library/Application Support/pinvault/vault_files/…` |
+| `pm clear` | uygulama kapatılır, `Documents`, `Library`, `tmp` boşaltılır, simülatörün Keychain'i sıfırlanır |
+| logcat | `log show` (`io.github.umutcansu.pinvault` ve uygulamanın satırları) |
+| ekran kilidi PIN'i | Face ID kaydı; "PIN'i yaz" = eşleşme, "vazgeç" = eşleşmeme + Vazgeç düğmesi. Simülatörde cihaz şifresi hep var: "ekran kilidi yok" kurulamaz |
+| GERİ tuşu | her ekranın `backButton`'u |
+
+Yalnızca Android'de koşan senaryolar (`lib/env.js` → `ANDROID_ONLY_TESTS`,
+iOS'ta atlanır): D05 (yedekleme, `bmgr`), U01 (2.0.9 APK'sından sürüm
+yükseltme). iOS'a özgü kanıtlar kapsam matrisinde **I** grubunda.

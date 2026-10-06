@@ -10,7 +10,7 @@
 const { test, expect, TARGET_HOST } = require('../lib/fixtures');
 const { attachText } = require('../lib/evidence');
 const { SampleApp } = require('../lib/sampleApp');
-const { sleep } = require('../lib/android');
+const { sleep } = require('../lib/device');
 const hostApi = require('../lib/hostApi');
 const env = require('../lib/env');
 

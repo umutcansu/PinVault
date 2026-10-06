@@ -2,7 +2,7 @@
 // kullanıcı gibi dokunur ve ekrandaki metni UI Automator dökümünden okur;
 // uygulamaya test kodu gömülmez.
 const { execFileSync, spawn } = require('child_process');
-const { ADB, EMULATOR } = require('./env');
+const { ADB, EMULATOR, APP_ID } = require('./env');
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 // Eşzamanlı adb yardımcıları için: olay döngüsünü değil yalnızca bu akışı bekletir.
@@ -57,9 +57,27 @@ function parseNodes(xml) {
   return nodes;
 }
 
+/**
+ * SharedPreferences XML'inin kayıtları: [{ name, value, type, selfClosing, raw }].
+ * type: string | int | long | float | boolean | set; selfClosing: `<string name="x" />`.
+ */
+const PREF_ENTRY = /<(string|int|long|float|boolean|set)\s+name="([^"]*)"(?:\s+value="([^"]*)")?\s*(\/>|>([\s\S]*?)<\/\1>)/g;
+
+function parsePrefsXml(xml) {
+  const out = [];
+  for (const m of String(xml || '').matchAll(PREF_ENTRY)) {
+    const [raw, type, name, attrValue, close, body] = m;
+    let value = attrValue !== undefined ? attrValue : body || '';
+    if (type === 'set') value = [...value.matchAll(/<string>([^<]*)<\/string>/g)].map((s) => unescapeXml(s[1])).join(',');
+    out.push({ name: unescapeXml(name), value: type === 'set' ? value : unescapeXml(value), type, selfClosing: close === '/>', raw });
+  }
+  return out;
+}
+
 class Device {
   constructor(serial) {
     this.serial = serial;
+    this.platform = 'android';
   }
 
   /** `adb devices` içinde hazır ("device") durumdaki seri numaraları. */
@@ -208,6 +226,33 @@ class Device {
     this.shell(`input tap ${Math.round((x1 + x2) / 2)} ${Math.round((y1 + y2) / 2)}`);
   }
 
+  /** UI dökümündeki resource-id: <paket>:id/<ad>. */
+  viewId(name, pkg = APP_ID) {
+    return `${pkg}:id/${name}`;
+  }
+
+  /** UI dökümündeki bir görünüme dokunur (ortasına). */
+  tapNode(node) {
+    this.tapCenter(node.bounds);
+  }
+
+  /** Alanı boşaltır: dokun, imleç sona, mevcut metin kadar silme. */
+  async clearField(node) {
+    this.tapCenter(node.bounds);
+    await sleep(300);
+    const length = (node.text || '').length;
+    if (length > 0) {
+      this.shell('input keyevent KEYCODE_MOVE_END');
+      this.shell(`input keyevent ${Array(length).fill('KEYCODE_DEL').join(' ')}`);
+    }
+  }
+
+  /** Alanın metnini [value] yapar (boşalt + yaz). */
+  async setFieldText(node, value) {
+    await this.clearField(node);
+    this.typeText(value);
+  }
+
   /** Odaktaki alana yazar. Token'lar URL güvenli Base64'tür; tırnak gerekmez. */
   typeText(text) {
     if (!/^[A-Za-z0-9_\-.]+$/.test(text)) throw new Error(`Bu karakterler adb ile yazılamaz: ${text}`);
@@ -284,6 +329,24 @@ class Device {
     }
     this.shell(`input text ${pin}`);
     this.shell('input keyevent KEYCODE_ENTER');
+  }
+
+  /**
+   * Açık kilit doğrulama penceresini kapatır (vazgeç). İlk GERİ yalnızca PIN
+   * alanının açtığı klavyeyi kapatır; pencere ikincisinde kapanır. Pencere
+   * kapanana kadar (en çok 3 kez) basılır. Pencere kapandıysa true.
+   */
+  async cancelCredentialPrompt(title) {
+    for (let i = 0; i < 3 && this.credentialPromptShown(title); i++) {
+      this.pressBack();
+      await sleep(1200);
+    }
+    return !this.credentialPromptShown(title);
+  }
+
+  /** Teardown: senaryoların yarıda bıraktığı geçici ekran kilidi PIN'i (yalnızca emülatör; PIN farklıysa dokunmaz). */
+  clearLeftoverScreenLock(pin) {
+    if (this.isEmulator() && this.hasScreenLock()) this.shell(`locksettings clear --old ${pin} 2>&1; true`);
   }
 
   waitForDevice() {
@@ -418,6 +481,11 @@ class Device {
     }
   }
 
+  /** Cihazın saati (`date`), kanıt paneli için. */
+  clockText() {
+    return this.shell('date').trim();
+  }
+
   /**
    * Cihaz saatini [seconds] kadar kaydırır (negatif geri alır). WorkManager
    * periyodik bir görevi zamanı gelmeden çalıştırmadığı için arka plan
@@ -470,6 +538,16 @@ class Device {
     }
   }
 
+  /** Kanıt paneli için kurallar: "nat" → `iptables -t nat -S OUTPUT`, "filter" → `iptables -S OUTPUT`. */
+  describeNetRules(table = 'nat') {
+    return this.rootShell(table === 'nat' ? 'iptables -t nat -S OUTPUT' : 'iptables -S OUTPUT');
+  }
+
+  /** [dstPort] için kural var mı ([table] tablosunda). */
+  netRuleActive(dstIp, dstPort, table = 'nat') {
+    return this.describeNetRules(table).includes(`--dport ${dstPort}`);
+  }
+
   // ── Uygulama verisi (run-as; e2e derlemesinde emülatörde su) ────────────
 
   /**
@@ -515,6 +593,88 @@ class Device {
     this.shell(`rm -f ${tmp}`);
   }
 
+  /** PinVault tercih deposunun dosya adı (pinvault_secure_config → pinvault_secure_config.xml). */
+  prefsFileName(store) {
+    return `${store}.xml`;
+  }
+
+  /** Tercih deposunun metni (shared_prefs/<ad>.xml); yoksa "(dosya yok)". */
+  prefsFileText(pkg, store) {
+    return this.runAs(pkg, `cat shared_prefs/${store}.xml 2>/dev/null || echo "(dosya yok)"`);
+  }
+
+  /** [appFileText]'in döndürdüğü tercih dosyasının kayıtları: [{ name, value, type, selfClosing, raw }]. */
+  parsePrefs(text) {
+    return parsePrefsXml(text);
+  }
+
+  prefsEntries(pkg, store) {
+    return this.parsePrefs(this.prefsFileText(pkg, store));
+  }
+
+  /** `grep -rl <pattern> <dizinler>` uygulama dizininde; eşleşme yoksa "(eşleşme yok)". */
+  appGrep(pkg, pattern, dirs = 'shared_prefs files') {
+    return this.runAs(pkg, `grep -rl "${pattern}" ${dirs} 2>/dev/null || echo "(eşleşme yok)"`);
+  }
+
+  /** Kanıt paneli başlığı ya da komut satırı (iOS'ta yollar çevrilir; burada olduğu gibi). */
+  appLabel(text) {
+    return text;
+  }
+
+  /** Cihaz kimliği biçimi: ANDROID_ID (16 hex). */
+  get deviceIdPattern() {
+    return /^[0-9a-f]{16}$/;
+  }
+
+  // ── Uygulama yaşam döngüsü ───────────────────────────────────────────
+
+  stopApp(pkg = APP_ID) {
+    this.shell(`am force-stop ${pkg}`);
+  }
+
+  clearApp(pkg = APP_ID) {
+    this.shell(`pm clear ${pkg}`);
+  }
+
+  /** Uygulamayı açar; [mode] verilirse `--es mode <MOD>` ekiyle. */
+  startApp(mode, pkg = APP_ID) {
+    const extra = mode ? ` --es mode ${mode}` : '';
+    return this.shell(`am start -W -n ${pkg}/.MainActivity${extra}`);
+  }
+
+  /** Kapatıp açar; keepData false ise önce veriyi siler. */
+  launchApp(mode, { keepData = true, pkg = APP_ID } = {}) {
+    this.stopApp(pkg);
+    if (!keepData) this.clearApp(pkg);
+    return this.startApp(mode, pkg);
+  }
+
+  installApp(file) {
+    return this.adb(['install', '-r', '-t', file]);
+  }
+
+  uninstallApp(pkg = APP_ID) {
+    return this.adb(['uninstall', pkg]);
+  }
+
+  /** Panellerde gösterilen kurulum komutu. */
+  installCommandLabel(file) {
+    return `adb install -r -t ${file}`;
+  }
+
+  /** Cihazda kurulu APK'nın yolu ve SHA-256'sı ("uygulama güncellenmedi" kanıtı). */
+  installedAppInfo(pkg = APP_ID) {
+    const apkPath = this.shell(`pm path ${pkg}`).trim().replace(/^package:/, '').split('\n')[0].trim();
+    const hash = this.shell(`sha256sum ${apkPath}`).trim().split(/\s+/)[0];
+    return { path: apkPath, sha256: hash };
+  }
+
+  /** Emülatörü kapatır (yalnızca bu koşu açtıysa çağrılır). */
+  shutdown() {
+    this.adb(['emu', 'kill']);
+  }
+
   /**
    * [pkg]'nın gördüğü ANDROID_ID (kütüphanenin kayıtta `deviceUid` diye
    * gönderdiği kimlik). Panelde token'ı bu telefona bağlamak için gerekir.
@@ -557,6 +717,15 @@ class Device {
     return id;
   }
 
+  appDeviceId(pkg = APP_ID) {
+    return this.appAndroidId(pkg);
+  }
+
+  /** Planlı işlerin kaynağı (panel başlığı). */
+  jobsSourceLabel(pkg = APP_ID) {
+    return `dumpsys jobscheduler | grep ${pkg}`;
+  }
+
   /** `dumpsys jobscheduler` çıktısında paketin JobScheduler kayıt satırları (WorkManager işleri). */
   jobSchedulerJobs(pkg) {
     const dump = this.shell('dumpsys jobscheduler');
@@ -588,4 +757,4 @@ function testDeviceUid() {
   return _testDeviceUid;
 }
 
-module.exports = { Device, sleep, testDeviceUid };
+module.exports = { Device, sleep, testDeviceUid, parsePrefsXml };

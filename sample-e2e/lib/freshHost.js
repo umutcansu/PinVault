@@ -13,6 +13,10 @@
 // kendi portlarını (6750–6756), kendi compose projesini (`pinvault-fresh`) ve
 // kendi container adını (`pinvault-host-fresh`) kullanır. Koşu sonunda
 // `docker compose down -v` ile tamamen silinir (global-teardown).
+//
+// Port tabanı, proje ve container adı E2E_FRESH_PORT_BASE, E2E_FRESH_PROJECT,
+// E2E_FRESH_CONTAINER ile değişir (lib/env.js): aynı makinede başka bir
+// oturumun koşusu (ör. Android ve iOS) varken iki kopya çakışmasın.
 const fs = require('fs');
 const path = require('path');
 const { execFileSync } = require('child_process');
@@ -20,10 +24,19 @@ const env = require('./env');
 
 /** Kopyanın kök dizini; git dışı (.local). */
 const DIR = path.join(env.LOCAL_DIR, 'host-fresh');
-const PROJECT = 'pinvault-fresh';
-const CONTAINER = 'pinvault-host-fresh';
-/** Ana host 6650–6656 kullanıyor; kopya çakışmasın diye 6750–6756. */
-const PORTS = { http: 6750, https: 6751, mtls: 6752, mockTls: 6753, mockMtls: 6754, managementTls: 6755, recovery: 6756 };
+const PROJECT = env.FRESH_PROJECT;
+const CONTAINER = env.FRESH_CONTAINER;
+/** Ana host 6650–6656 kullanıyor; kopya çakışmasın diye varsayılan 6750–6756 (E2E_FRESH_PORT_BASE). */
+const BASE = env.FRESH_PORT_BASE;
+const PORTS = {
+  http: BASE,
+  https: BASE + 1,
+  mtls: BASE + 2,
+  mockTls: BASE + 3,
+  mockMtls: BASE + 4,
+  managementTls: BASE + 5,
+  recovery: BASE + 6,
+};
 const WEB_URL = `http://localhost:${PORTS.http}`;
 /**
  * Taze örneğin keystore parolası (.env → KEYSTORE_PASSWORD). Varsayılan
@@ -56,7 +69,9 @@ function exists() {
 
 /**
  * Depoyu kopyalar (`data/` ve `.env` hariç) ve kopyadaki compose dosyasında
- * container adını değiştirir; ana depo olduğu gibi kalır.
+ * container adını değiştirir; ana depo olduğu gibi kalır. (Güncel compose
+ * dosyası adı HOST_CONTAINER_NAME'den alır, configureEnv onu da yazar; sabit
+ * adlı eski dosya için yerinde değiştirme kalıyor.)
  */
 function copyTree() {
   fs.mkdirSync(DIR, { recursive: true });
@@ -109,6 +124,7 @@ function configureEnv() {
     HOST_MANAGEMENT_TLS_PORT: String(PORTS.managementTls),
     HOST_RECOVERY_PORT: String(PORTS.recovery),
     COMPOSE_PROJECT_NAME: PROJECT,
+    HOST_CONTAINER_NAME: CONTAINER,
     PINVAULT_SERVER_SRC: serverSrc,
     // Sertifikalar ilk açılışta bu parolayla üretilsin (sonradan değiştirmek
     // var olan JKS'leri açılamaz kılar).

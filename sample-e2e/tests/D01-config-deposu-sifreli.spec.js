@@ -37,7 +37,7 @@ test('Depolama: saklı pin config\'i şifreli; host adı, IP ve pin\'ler düz me
   await test.step('Cihaz: config dosyası şifreli ve düz metin içermiyor', async () => {
     const listing = device.appFiles(env.APP_ID, 'shared_prefs');
     const xml = device.appFileText(env.APP_ID, PREFS);
-    const names = [...xml.matchAll(/<string name="([^"]+)"/g)].map((m) => m[1]);
+    const names = device.parsePrefs(xml).filter((e) => e.type === 'string' && e.name).map((e) => e.name);
     const secrets = {
       'hedef host adı': TARGET_HOST,
       'host IP\'si': env.LAN_IP,
@@ -51,12 +51,12 @@ test('Depolama: saklı pin config\'i şifreli; host adı, IP ve pin\'ler düz me
     const leaks = Object.entries(secrets).filter(([, value]) => value && xml.includes(value));
     await attachText(
       testInfo,
-      `adb shell run-as ${env.APP_ID} ls -la shared_prefs`,
+      device.appLabel(`adb shell run-as ${env.APP_ID} ls -la shared_prefs`),
       listing,
     );
     await attachText(
       testInfo,
-      `adb shell run-as ${env.APP_ID} cat ${PREFS}`,
+      device.appLabel(`adb shell run-as ${env.APP_ID} cat ${PREFS}`),
       [
         xml.length > 1600 ? `${xml.slice(0, 1600)}\n… (${xml.length - 1600} karakter daha)` : xml,
         '',
@@ -84,14 +84,20 @@ test('Depolama: saklı pin config\'i şifreli; host adı, IP ve pin\'ler düz me
     const text = await app.refreshStorage();
     await app.snap('Depolama ekranı — şifreli tercih dosyaları');
     await attachText(testInfo, 'Depolama ekranı dökümü', text);
-    expect(text).toContain('pinvault_secure_config.xml');
+    expect(text).toContain(device.prefsFileName('pinvault_secure_config'));
     expect(text).toContain('kayıt adları okunabilir mi: hayır ✓');
     expect(text).toContain('düz metin sızıntısı (host adı, IP, pin): yok');
     expect(text).not.toContain('VAR ✗');
     expect(text).not.toContain('EVET ✗');
-    // Ekran şifrelemenin iki Keystore anahtarını da listeliyor.
-    expect(text).toMatch(/pinvault_prefs_aes: AES 256 bit/);
-    expect(text).toMatch(/pinvault_prefs_mac: HmacSHA256 \d+ bit/);
+    // Ekran şifrelemenin iki Keystore anahtarını da listeliyor (iOS: Keychain'deki
+    // iki 32 baytlık anahtar; adları aynı, tür ve boy satırı platforma özgü).
+    if (device.platform === 'ios') {
+      expect(text).toContain('pinvault_prefs_aes');
+      expect(text).toContain('pinvault_prefs_mac');
+    } else {
+      expect(text).toMatch(/pinvault_prefs_aes: AES 256 bit/);
+      expect(text).toMatch(/pinvault_prefs_mac: HmacSHA256 \d+ bit/);
+    }
     await app.backToMain();
   });
 });

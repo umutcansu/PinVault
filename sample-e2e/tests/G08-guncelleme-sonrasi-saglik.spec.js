@@ -22,8 +22,9 @@ const { attachText } = require('../lib/evidence');
 const proxy = require('../lib/proxy');
 const env = require('../lib/env');
 
-const prefsOf = (listing) =>
-  listing.split('\n').map((l) => l.trim()).filter((l) => l.endsWith('.xml')).map((l) => l.split(/\s+/).pop());
+/** `ls -la` çıktısındaki tercih dosyaları ([ext]: Android .xml, iOS .plist). */
+const prefsOf = (listing, ext = '.xml') =>
+  listing.split('\n').map((l) => l.trim()).filter((l) => l.endsWith(ext)).map((l) => l.split(/\s+/).pop());
 
 test("Saldırı: config indikten sonra /health 500 döner → telefon başlatılamıyor ve uyguladığı config'i geri alıyor", async ({
   app,
@@ -90,17 +91,17 @@ test("Saldırı: config indikten sonra /health 500 döner → telefon başlatıl
 
     await test.step('Mobil: uygulanan config geri alındı — şifreli depo boş', async () => {
       const listing = device.appFiles(env.APP_ID, 'shared_prefs');
-      const files = prefsOf(listing);
-      const configFile = files.find((f) => f === 'pinvault_secure_config.xml');
+      const files = prefsOf(listing, device.prefsFileName(''));
+      const configFile = files.find((f) => f === device.prefsFileName('pinvault_secure_config'));
       const contents = configFile ? device.appFileText(env.APP_ID, `shared_prefs/${configFile}`) : '';
       // Uygulama bu açılışta tek blokla (sample-host) çalışıyor: dosyadaki
       // her kayıt onun.
-      const entryCount = (contents.match(/<string name="([^"]*)"/g) || []).length;
+      const entryCount = device.parsePrefs(contents).filter((e) => e.type === 'string').length;
       await attachText(
         testInfo,
-        `Cihazdaki tercih dosyaları (adb shell run-as ${env.APP_ID})`,
+        device.appLabel(`Cihazdaki tercih dosyaları (adb shell run-as ${env.APP_ID})`),
         [
-          `$ run-as ${env.APP_ID} ls -la shared_prefs`,
+          device.appLabel(`$ run-as ${env.APP_ID} ls -la shared_prefs`),
           listing.trim(),
           '',
           `config deposu: ${configFile || '(yok)'}`,
@@ -181,7 +182,7 @@ test("Saldırı: config indikten sonra /health 500 döner → telefon başlatıl
       app.relaunch();
       expect(await app.waitReady()).toContain('Hazır — config v');
       await app.snap('saldırgan proxy kapandı: doğrudan sunucuyla Hazır');
-      expect(device.rootShell('iptables -t nat -S OUTPUT')).not.toContain(`--dport ${env.CONFIG_API_PORT}`);
+      expect(device.describeNetRules('nat')).not.toContain(`--dport ${env.CONFIG_API_PORT}`);
     });
   } finally {
     device.clearNetRules();

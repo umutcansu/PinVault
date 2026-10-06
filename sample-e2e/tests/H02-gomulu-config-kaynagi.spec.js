@@ -41,7 +41,7 @@ test('Uygulama içi config kaynağı: gömülü CertificateConfigApi ile kütüp
     await test.step(`Terminal: Config API portu (${env.CONFIG_API_PORT}) tamamen kesilir`, async () => {
       mark = logMark();
       device.blockTcp(env.LAN_IP, env.CONFIG_API_PORT, 'reject');
-      const rules = device.rootShell('iptables -S OUTPUT');
+      const rules = device.describeNetRules('filter');
       await attachText(
         testInfo,
         `iptables REJECT: ${env.LAN_IP}:${env.CONFIG_API_PORT}`,

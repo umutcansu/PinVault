@@ -175,12 +175,12 @@ test('Saldırı: çalınmış imzalama anahtarıyla imzalı sahte anahtar seti e
       app.relaunch();
       const ready = await app.waitReady();
       await app.snap('saldırgan proxy kapandı: doğrudan sunucuyla Hazır, anahtar seti v1');
-      const rules = device.rootShell('iptables -t nat -S OUTPUT');
+      const rules = device.describeNetRules('nat');
       await attachText(
         testInfo,
         'iptables + telefonun durumu',
         [
-          '$ adb shell su 0 iptables -t nat -S OUTPUT',
+          device.appLabel('$ adb shell su 0 iptables -t nat -S OUTPUT'),
           rules.trim(),
           '',
           ready.split('\n').filter((l) => /Hazır|İmza|imzalayan/.test(l)).join('\n'),

@@ -90,7 +90,7 @@ test('Vault token_mtls: token + istemci sertifikası birlikte gerekiyor', async 
       deviceId = app.deviceId();
       await app.snap('vault ekranı — cihaz kimliği');
       await app.backToMain();
-      expect(deviceId).toMatch(/^[0-9a-f]{16}$/);
+      expect(deviceId).toMatch(device.deviceIdPattern);
     });
 
     await test.step('Web: başka bir cihaza ait istemci sertifikası üretilir', async () => {

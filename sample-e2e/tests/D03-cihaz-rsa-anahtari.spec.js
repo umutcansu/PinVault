@@ -129,18 +129,15 @@ test('Depolama: cihaz RSA anahtarı Keystore\'da ve sunucudaki public key ile e�
     });
 
     await test.step('Cihaz: anahtar uygulama dosyalarında değil', async () => {
-      const files = device.runAs(env.APP_ID, 'ls -la shared_prefs files');
-      const grep = device.runAs(
-        env.APP_ID,
-        'grep -rl "PRIVATE KEY" shared_prefs files 2>/dev/null || echo "(eşleşme yok)"',
-      );
+      const files = device.appFiles(env.APP_ID, 'shared_prefs files');
+      const grep = device.appGrep(env.APP_ID, 'PRIVATE KEY', 'shared_prefs files');
       await attachText(
         testInfo,
-        `adb shell run-as ${env.APP_ID} — dosyalarda private key araması`,
+        device.appLabel(`adb shell run-as ${env.APP_ID} — dosyalarda private key araması`),
         [
           files.trim(),
           '',
-          '$ grep -rl "PRIVATE KEY" shared_prefs files',
+          device.appLabel('$ grep -rl "PRIVATE KEY" shared_prefs files'),
           grep.trim(),
           '',
           'Keystore anahtarları uygulamanın veri dizininde değil; sistem tarafında',

@@ -1,12 +1,13 @@
 // Testlerden sonra: cihazdaki geçici ağ kurallarını kaldır, host'u ayağa
 // kaldır, ortam değişkeni ezmelerini geri al, temel pin durumuna dön, test
-// vault dosyalarını sil, açtığımız emülatörü kapat.
+// vault dosyalarını sil, açtığımız emülatörü kapat. iOS: denetim dosyasındaki
+// yönlendirmeleri sıfırla, UI sürücüsünü durdur, açtığımız simülatörü kapat.
 const env = require('./lib/env');
 const hostApi = require('./lib/hostApi');
 const hostControl = require('./lib/hostControl');
 const freshHost = require('./lib/freshHost');
 const state = require('./lib/state');
-const { Device } = require('./lib/android');
+const { createDevice } = require('./lib/device');
 
 module.exports = async () => {
   // Kurulum ve yıkıcı sunucu senaryolarının kullandığı ikinci host örneği
@@ -19,14 +20,21 @@ module.exports = async () => {
 
   const run = state.read();
   if (!run) return;
-  const device = new Device(run.serial);
+  const device = createDevice(run.serial);
   try {
     if (device.isEmulator()) device.clearNetRules();
     // Gizli dosya senaryolarının geçici ekran kilidi PIN'i yarıda kalmışsa kaldır
     // (yalnızca emülatörde; PIN farklıysa locksettings dokunmaz).
-    if (device.isEmulator() && device.hasScreenLock()) device.shell(`locksettings clear --old ${env.SCREEN_LOCK_PIN} 2>&1; true`);
+    device.clearLeftoverScreenLock(env.SCREEN_LOCK_PIN);
   } catch {
     /* cihaz kapanmış olabilir */
+  }
+  if (env.PLATFORM === 'ios') {
+    try {
+      require('./lib/iosDriver').stop({ udid: run.serial });
+    } catch (e) {
+      console.warn(`[e2e] iOS sürücüsü durdurulamadı: ${e.message}`);
+    }
   }
   try {
     await hostControl.resetEnv();
@@ -40,7 +48,7 @@ module.exports = async () => {
   }
   if (run.booted && process.env.E2E_KEEP_EMULATOR !== '1') {
     try {
-      device.adb(['emu', 'kill']);
+      device.shutdown();
     } catch {
       /* zaten kapalı */
     }

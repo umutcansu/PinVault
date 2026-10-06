@@ -17,6 +17,10 @@
 // paylaşır. Gradle çıktısı (env.APK) ana APK'nın yoludur; lab derlemesinden
 // sonra ana APK'nın yedeği geri yazılır, yani env.APK her zaman ana host'a göre
 // derlenmiş APK olarak kalır ve senaryolar finally'de onu kurar.
+//
+// iOS koşusunda "APK" derleme çıktısıdır (env.APP_ARTIFACT: .app dizini,
+// .local/ios-derived altında); kopyalama, gömülü anahtar araması ve kurulum
+// lib/clientBuild.js ile cihaz nesnesinden geçer.
 const crypto = require('crypto');
 const fs = require('fs');
 const https = require('https');
@@ -321,22 +325,21 @@ async function showKey(testInfo, name, title) {
 
 // ── Lab APK'sı ─────────────────────────────────────────────────────────────
 
-/** APK'nın dex'lerinde [needle] geçiyor mu (BuildConfig sabitleri düz metin durur). */
+/** APK'nın dex'lerinde (iOS: .app'in çalıştırılabilir dosyasında) [needle] geçiyor mu (BuildConfig sabitleri düz metin durur). */
 function apkEmbeds(apkFile, needle) {
-  if (!needle || !fs.existsSync(apkFile)) return false;
-  const res = spawnSync('sh', ['-c', 'unzip -p "$1" "classes*.dex" | grep -a -c -F -- "$2"', 'sh', apkFile, needle], {
-    encoding: 'utf8',
-    maxBuffer: 256 * 1024 * 1024,
-  });
-  return Number((res.stdout || '0').trim()) > 0;
+  return clientBuild.artifactEmbeds(apkFile, needle);
 }
+
+/** Önbellekteki derleme çıktılarının uzantısı (.apk ya da .app). */
+const EXT = env.APP_ARTIFACT_EXT;
+const cachedName = (prefix) => new RegExp(`^${prefix}-.*\\${EXT}$`);
 
 function mainPropsText() {
   return fs.readFileSync(env.PROPS_FILE, 'utf8');
 }
 
-/** env.APK ana host'a göre mi derlenmiş (ana imzalama anahtarı dex'te mi). */
-function isMainApk(file = env.APK) {
+/** env.APK (iOS: env.APP_ARTIFACT) ana host'a göre mi derlenmiş (ana imzalama anahtarı dex'te mi). */
+function isMainApk(file = env.APP_ARTIFACT) {
   return apkEmbeds(file, propValue(mainPropsText(), 'host.signingPublicKey'));
 }
 
@@ -347,18 +350,18 @@ function isMainApk(file = env.APK) {
  */
 function mainApkBackup() {
   fs.mkdirSync(CACHE_DIR, { recursive: true });
-  const file = path.join(CACHE_DIR, `main-${sha256Hex(mainPropsText()).slice(0, 16)}.apk`);
+  const file = path.join(CACHE_DIR, `main-${sha256Hex(mainPropsText()).slice(0, 16)}${EXT}`);
   if (!isMainApk()) {
     if (fs.existsSync(file) && isMainApk(file)) {
-      fs.copyFileSync(file, env.APK);
+      clientBuild.copyArtifact(file, env.APP_ARTIFACT);
     } else {
       clientBuild.build(env.PROPS_FILE);
     }
   }
-  if (!isMainApk()) throw new Error(`env.APK ana host değerleriyle derlenmiş görünmüyor: ${env.APK}`);
-  fs.copyFileSync(env.APK, file);
+  if (!isMainApk()) throw new Error(`env.APK ana host değerleriyle derlenmiş görünmüyor: ${env.APP_ARTIFACT}`);
+  clientBuild.copyArtifact(env.APP_ARTIFACT, file);
   for (const f of fs.readdirSync(CACHE_DIR)) {
-    if (/^main-.*\.apk$/.test(f) && path.join(CACHE_DIR, f) !== file) fs.rmSync(path.join(CACHE_DIR, f), { force: true });
+    if (cachedName('main').test(f) && path.join(CACHE_DIR, f) !== file) fs.rmSync(path.join(CACHE_DIR, f), { force: true, recursive: true });
   }
   return file;
 }
@@ -388,32 +391,30 @@ async function writeLabProps(keys) {
  */
 function installLabApk(device, propsText) {
   const mainBackup = mainApkBackup();
-  const stamp = sha256Hex(`${propsText}\n${sha256Hex(fs.readFileSync(mainBackup))}`).slice(0, 16);
-  const file = path.join(CACHE_DIR, `lab-${stamp}.apk`);
+  const stamp = sha256Hex(`${propsText}\n${clientBuild.artifactHash(mainBackup)}`).slice(0, 16);
+  const file = path.join(CACHE_DIR, `lab-${stamp}${EXT}`);
   let built = false;
   let log = '';
   if (!fs.existsSync(file)) {
     try {
       log = clientBuild.build(LAB_PROPS);
-      fs.copyFileSync(env.APK, file);
+      clientBuild.copyArtifact(env.APP_ARTIFACT, file);
       built = true;
     } finally {
-      // Gradle çıktısı ana APK'nın yolu: ana APK geri yazılır.
-      fs.copyFileSync(mainBackup, env.APK);
+      // Gradle (iOS: xcodebuild) çıktısı ana APK'nın yolu: ana APK geri yazılır.
+      clientBuild.copyArtifact(mainBackup, env.APP_ARTIFACT);
     }
     for (const f of fs.readdirSync(CACHE_DIR)) {
-      if (/^lab-.*\.apk$/.test(f) && f !== path.basename(file)) fs.rmSync(path.join(CACHE_DIR, f), { force: true });
+      if (cachedName('lab').test(f) && f !== path.basename(file)) fs.rmSync(path.join(CACHE_DIR, f), { force: true, recursive: true });
     }
   }
-  const installOut = device.adb(['install', '-r', '-t', file]);
+  const installOut = device.installApp(file);
   return { file, built, log, installOut };
 }
 
 /** Cihazda kurulu APK'nın yolu ve SHA-256'sı ("uygulama güncellenmedi" kanıtı). */
 function installedApk(device) {
-  const apkPath = device.shell(`pm path ${env.APP_ID}`).trim().replace(/^package:/, '').split('\n')[0].trim();
-  const hash = device.shell(`sha256sum ${apkPath}`).trim().split(/\s+/)[0];
-  return { path: apkPath, sha256: hash };
+  return device.installedAppInfo(env.APP_ID);
 }
 
 /**
@@ -443,9 +444,9 @@ async function setup(device, testInfo, { title = 'Bu test için derlenen uygulam
     `  ${KEYS.recovery.padEnd(27)} : ${keys.recovery.keyId}`,
     '',
     apk.built
-      ? `$ ${env.BUILD_COMMAND} -PsampleHostProps=${path.relative(env.CLIENT_DIR, LAB_PROPS)}\n${apk.log.trim().split('\n').slice(-4).join('\n')}`
+      ? `$ ${env.buildCommandFor(path.relative(env.CLIENT_DIR, LAB_PROPS))}\n${apk.log.trim().split('\n').slice(-4).join('\n')}`
       : `(uygulama bu derleme değerleriyle daha önce derlenmişti: ${path.relative(env.ROOT, apk.file)})`,
-    `$ adb install -r -t ${path.basename(apk.file)}`,
+    `$ ${device.installCommandLabel(path.basename(apk.file))}`,
     apk.installOut.trim(),
   ];
   await attachText(testInfo, title, lines.join('\n'));
@@ -458,7 +459,7 @@ async function setup(device, testInfo, { title = 'Bu test için derlenen uygulam
  */
 async function restoreMain(device, app, testInfo) {
   mainApkBackup(); // env.APK ana derleme değilse düzeltir
-  const out = device.adb(['install', '-r', '-t', env.APK]);
+  const out = device.installApp(env.APP_ARTIFACT);
   app.launchFresh();
   const status = await app.waitReady();
   await app.snap('ana host için derlenen APK geri kuruldu: Hazır');
@@ -466,7 +467,7 @@ async function restoreMain(device, app, testInfo) {
     testInfo,
     'Geri dönüş: ana host için derlenen APK',
     [
-      `$ adb install -r -t ${path.relative(env.ROOT, env.APK) || env.APK}`,
+      `$ ${device.installCommandLabel(path.relative(env.ROOT, env.APP_ARTIFACT) || env.APP_ARTIFACT)}`,
       out.trim(),
       `APK'da ana host'un imza anahtarı var: ${isMainApk() ? 'evet' : 'HAYIR'}`,
       '',

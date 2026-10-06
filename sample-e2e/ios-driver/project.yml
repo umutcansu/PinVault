@@ -1,0 +1,61 @@
+# sample-e2e iOS UI sürücüsü (XcodeGen).
+#
+#   xcodegen generate
+#   xcodebuild build-for-testing -project PinVaultDriver.xcodeproj -scheme PinVaultDriver \
+#     -sdk iphonesimulator -destination 'platform=iOS Simulator,id=<udid>' -derivedDataPath <dizin>
+#   TEST_RUNNER_DRIVER_PORT=6870 xcodebuild test-without-building … (aynı argümanlar)
+#
+# PinVaultDriver bir UI test paketidir: tek test yöntemi 127.0.0.1:<DRIVER_PORT>
+# üzerinde küçük bir HTTP sunucusu açar ve simctl ile başlatılmış uygulamaya
+# (XCUIApplication(bundleIdentifier:)) dokunur, yazar, erişilebilirlik ağacını
+# okur. PinVaultDriverHost yalnızca XCTest'in istediği boş ana uygulamadır;
+# hiç açılmaz. lib/iosDriver.js derler, başlatır, durdurur.
+#
+# İmza: ad-hoc ("-"). Simülatör imzasız uygulamada Keychain'i -34018 ile
+# reddediyor; sürücü Keychain kullanmasa da örnek uygulamayla aynı ayar.
+name: PinVaultDriver
+options:
+  bundleIdPrefix: io.github.umutcansu.pinvault
+  deploymentTarget:
+    iOS: "17.0"
+settings:
+  base:
+    CODE_SIGN_IDENTITY: "-"
+    CODE_SIGN_STYLE: Manual
+    DEVELOPMENT_TEAM: ""
+targets:
+  PinVaultDriverHost:
+    type: application
+    platform: iOS
+    sources: [Host]
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: io.github.umutcansu.pinvault.driverhost
+        PRODUCT_NAME: PinVaultDriverHost
+        SWIFT_VERSION: "5.0"
+        GENERATE_INFOPLIST_FILE: YES
+        INFOPLIST_KEY_UILaunchScreen_Generation: YES
+        INFOPLIST_KEY_CFBundleDisplayName: "PinVault Driver"
+        MARKETING_VERSION: "1.0"
+        CURRENT_PROJECT_VERSION: "1"
+  PinVaultDriver:
+    type: bundle.ui-testing
+    platform: iOS
+    sources: [Driver]
+    dependencies:
+      - target: PinVaultDriverHost
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: io.github.umutcansu.pinvault.driver
+        SWIFT_VERSION: "5.0"
+        GENERATE_INFOPLIST_FILE: YES
+        TEST_TARGET_NAME: PinVaultDriverHost
+        MARKETING_VERSION: "1.0"
+        CURRENT_PROJECT_VERSION: "1"
+schemes:
+  PinVaultDriver:
+    build:
+      targets:
+        PinVaultDriver: [test]
+    test:
+      targets: [PinVaultDriver]

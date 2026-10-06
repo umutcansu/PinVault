@@ -10,7 +10,8 @@
 // saklama, E sunucu işletimi, F sunucuya ulaşılamadığında, G araya girme
 // saldırıları, H kendi sunucusuyla ya da sunucusuz kullanım, S imza
 // anahtarlarının korunması (isteğe bağlı), Y değişiklik denetimi ve onay
-// (isteğe bağlı), U sürüm yükseltme. Grup ajanları kendi satırlarını ekler; PLAN.md bölüm 3 ile
+// (isteğe bağlı), U sürüm yükseltme, I iOS'a özgü (E2E_PLATFORM=ios; senaryolar
+// tests/I*.spec.js). Grup ajanları kendi satırlarını ekler; PLAN.md bölüm 3 ile
 // aynı adlandırma.
 
 const GROUPS = {
@@ -26,6 +27,7 @@ const GROUPS = {
   S: 'İmza anahtarlarının korunması (isteğe bağlı)',
   Y: 'Değişiklik denetimi ve onay (isteğe bağlı)',
   U: 'Sürüm yükseltme',
+  I: "iOS'a özgü",
 };
 
 const FEATURES = [
@@ -158,6 +160,15 @@ const FEATURES = [
   { id: 'Y-onay-reddi', group: 'Y', feature: 'Ret, Config API durdurmanın da onaya bağlı olması ve eskimiş istek: bob\'un gerekçeyle reddettiği istek uygulanmıyor; varsayılan Config API\'yi durdurmak da onay istiyor (202, onay kartında "Config API başlat/durdur"), bob reddedince Config API çalışmaya, telefon config almaya devam ediyor; karara bağlanan isteklerin saklanan içeriği siliniyor; aynı pin\'ler için açılan iki istekten biri onaylanınca diğeri 409 "changed after … was requested" alıyor (eskimiş istek: pin\'ler bu arada değişti)', scenarios: ['Y03'] },
   { id: 'Y-canli-kapi-enforce', group: 'Y', feature: 'Canlı sertifika kontrolü, engelleme modu (PIN_LIVE_CHECK=enforce, LIVE_CHECK_HOST_MAP): host\'un şu an sunduğu sertifikanın pin\'ini içermeyen pin listesi 422 ile reddediliyor, dashboard o sertifikayı gösterip gerekçe istiyor; gerekçe boşsa kaydedilmiyor ve telefon mock host\'a bağlanmaya devam ediyor; "Canlı Kontrol" düğmesi kaydetmeden aynı sonucu veriyor (✗ / ✓); o sertifikayı içeren liste kontrolden geçiyor', scenarios: ['Y04'] },
   { id: 'Y-canli-kapi-override', group: 'Y', feature: 'Gerekçe yazıp yine de kaydetme: gerekçe sorusu yanıtlanınca liste ?liveCheckOverride ile kaydediliyor, live_check_overridden gerekçesiyle denetim kaydına ve webhook\'a (HMAC imzası doğru) düşüyor; bu yanlış listeyi alan telefon mock host\'a pin uyuşmazlığı yüzünden bağlanamıyor (kontrolün önlediği tam da bu); uyarı modunda (warn) liste kaydediliyor ama uyarı veriliyor (X-PinVault-Live-Check: warn, live_check_warning)', scenarios: ['Y04'] },
+  // ── I (iOS'a özgü; E2E_PLATFORM=ios, pinvault-ios/PORTING.md) ─────────
+  { id: 'I-secure-enclave', group: 'I', feature: 'Cihaz kimlik anahtarı (mTLS kaydı) Secure Enclave\'de üretiliyor: kayıtta keySecurityLevel=secure_enclave, sunucu kaydında ve Depolama ekranında aynı düzey; anahtar Keychain\'den dışarı alınamıyor', scenarios: ['I01'] },
+  { id: 'I-keychain-yedek', group: 'I', feature: 'Telefonda saklama: şifreli tercih dosyaları Library/Application Support/pinvault altında (plist; ad HMAC, değer AES-256-GCM), yedeğe girmiyor (isExcludedFromBackup), dosya koruması açık; iki anahtar Keychain\'de ThisDeviceOnly', scenarios: ['I02'] },
+  { id: 'I-oaep-mgf1', group: 'I', feature: 'Cihaz RSA anahtarı RSA-OAEP-SHA256-MGF1-SHA256 algoritmasıyla kaydediliyor; sunucu end_to_end ve ekran kilitli dosyaları bu algoritmayla sarıyor, telefon açıyor (Android anahtarları RSA-OAEP-SHA256 olarak kalıyor)', scenarios: ['I03'] },
+  { id: 'I-face-id', group: 'I', feature: 'Ekran kilitli vault dosyası Face ID ile açılıyor: eşleşince içerik görünüyor; eşleşmeyince ya da Vazgeç\'e basılınca açılmıyor (LocalAuthentication .deviceOwnerAuthentication)', scenarios: ['I04'] },
+  { id: 'I-arka-plan', group: 'I', feature: 'Periyodik güncelleme: BGTaskScheduler simülatörde yok, kütüphane uygulama içi zamanlayıcıya geçiyor; işin durumları (ENQUEUED / RUNNING / CANCELLED) ve "şimdi çalıştır" bildirimiyle yeni config düğmeye basmadan geliyor', scenarios: ['I05'] },
+  { id: 'I-atestasyon', group: 'I', feature: 'Atestasyon raporu iOS biçiminde (platform: ios, bundleId, installer: simulator, sinyallerde emulator ve debuggable); App Attest simülatörde yok, rapor verdictProvider taşımıyor; politika simülatörü uyarı sayınca token alınıyor', scenarios: ['I06'] },
+  { id: 'I-cihaz-kimligi', group: 'I', feature: 'Cihaz kimliği identifierForVendor (küçük harf UUID): kayıt token\'ı ona bağlanıyor; uygulama verisi ve Keychain silinince değişmiyor', scenarios: ['I07'] },
+  { id: 'I-resolve', group: 'I', feature: 'Mock host adları (mock-tls.sample, mock-mtls.sample) resolve(host:to:) ile host IP\'sine gidiyor; pin, ad doğrulaması ve istemci sertifikası seçimi mantıksal adla yapılıyor (/etc/hosts değişmeden)', scenarios: ['I08'] },
   { id: 'U-yukseltme', group: 'U', feature: 'Sürüm yükseltme: önceki sürüm (örnek uygulamanın main dalı, Maven Central\'daki PinVault 2.0.9) güncel sunucuya karşı hazır oluyor, token\'la kayıt oluyor, vault dosyası indiriyor; güncel APK üstüne kurulunca (ilk kurulum zamanı aynı) saklı config okunuyor ("Loaded stored config"), eski sürümün sertifikasıyla mTLS geçiyor, eski sürümün indirdiği dosya güncel sayılıyor, eski sürümün planladığı arka plan işi (CertificateUpdateWorker) yeni kodla çalışıyor', scenarios: ['U01'] },
 ];
 

@@ -112,23 +112,32 @@ test('Vault çevrimdışı: host kapalıyken saklı içerik okunuyor, "Sil" geri
 
     await test.step('Cihaz: .enc dosyası ve SharedPreferences kaydı gerçekten silindi', async () => {
       const listing = device.appFiles(env.APP_ID, 'files/vault_files');
-      const versions = device.appFileText(env.APP_ID, 'shared_prefs/pinvault_vault_file_versions.xml');
-      const prefs = device.appFileText(env.APP_ID, 'shared_prefs/pinvault_secure_vault_files.xml');
+      // iOS kütüphanesi eski sürüm tablosunu hiç yazmayabilir: orada dosyanın yokluğu "kayıt yok" demek.
+      const readStore = (file) => {
+        try {
+          return device.appFileText(env.APP_ID, file);
+        } catch (e) {
+          if (device.platform === 'android') throw e;
+          return '(dosya yok)';
+        }
+      };
+      const versions = readStore('shared_prefs/pinvault_vault_file_versions.xml');
+      const prefs = readStore('shared_prefs/pinvault_secure_vault_files.xml');
       // Hiçbir vault kaydı (içerik ya da sürüm) kalmamalı.
-      const dataNames = [...prefs.matchAll(/<string name="([^"]+)"/g)].map((m) => m[1]);
+      const dataNames = device.parsePrefs(prefs).filter((e) => e.type === 'string' && e.name).map((e) => e.name);
       await attachText(
         testInfo,
-        `adb shell run-as ${env.APP_ID} — silme sonrası depo`,
+        device.appLabel(`adb shell run-as ${env.APP_ID} — silme sonrası depo`),
         [
-          `$ ls -la files/vault_files`,
+          device.appLabel(`$ ls -la files/vault_files`),
           listing.trim(),
           '',
-          '$ cat shared_prefs/pinvault_vault_file_versions.xml',
+          device.appLabel('$ cat shared_prefs/pinvault_vault_file_versions.xml'),
           versions.trim(),
           '',
           `${MODEL}.enc dosyası duruyor mu: ${listing.includes(`${MODEL}.enc`) ? 'EVET ✗' : 'hayır ✓'}`,
           `sürüm kaydı duruyor mu: ${versions.includes(`vault_file_ver_${MODEL}`) ? 'EVET ✗' : 'hayır ✓'}`,
-          '$ cat shared_prefs/pinvault_secure_vault_files.xml (kayıt adları)',
+          device.appLabel('$ cat shared_prefs/pinvault_secure_vault_files.xml (kayıt adları)'),
           dataNames.length ? dataNames.map((n) => `  ${n}`).join('\n') : '  (kayıt yok)',
           `veri kaydı kaldı mı: ${dataNames.length === 0 ? 'hayır ✓' : `EVET ✗ (${dataNames.length})`}`,
           '',

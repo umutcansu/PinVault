@@ -37,7 +37,7 @@ const hostApi = require('../lib/hostApi');
 const hostControl = require('../lib/hostControl');
 const { keys, adminKeysEnv } = require('../lib/admins');
 const env = require('../lib/env');
-const { testDeviceUid } = require('../lib/android');
+const { testDeviceUid } = require('../lib/device');
 
 const sha256Hex = (s) => crypto.createHash('sha256').update(s).digest('hex');
 const keyLabel = (name) => `<${name}'in kişisel anahtarı; sha256 ${sha256Hex(keys[name]).slice(0, 12)}…>`;

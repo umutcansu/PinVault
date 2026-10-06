@@ -156,7 +156,7 @@ test("Saldırı: config'in imzası bozulursa telefon onu uygulamıyor, önceki c
       const ready = await app.waitReady();
       await app.snap('saldırgan proxy kapandı: doğrudan sunucuyla Hazır');
       expect(ready).toContain('Hazır — config v');
-      expect(device.rootShell('iptables -t nat -S OUTPUT')).not.toContain(`--dport ${env.CONFIG_API_PORT}`);
+      expect(device.describeNetRules('nat')).not.toContain(`--dport ${env.CONFIG_API_PORT}`);
     });
   } finally {
     device.clearNetRules();
