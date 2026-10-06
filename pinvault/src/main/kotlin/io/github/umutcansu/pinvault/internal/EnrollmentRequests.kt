@@ -5,6 +5,7 @@ import io.github.umutcansu.pinvault.keystore.ClientIdentityKeyProvider
 import io.github.umutcansu.pinvault.model.EnrollmentPendingException
 import io.github.umutcansu.pinvault.model.EnrollmentRefusedException
 import io.github.umutcansu.pinvault.model.EnrollmentResult
+import io.github.umutcansu.pinvault.model.IntegrityTokenProvider
 import io.github.umutcansu.pinvault.store.ClientCertSecureStore
 import timber.log.Timber
 
@@ -42,6 +43,9 @@ internal object EnrollmentRequests {
      * @param allowServerGeneratedKey the block's `allowServerGeneratedKey()`.
      *   Without it a request without a CSR is never sent, and a PKCS12
      *   answer to a CSR is refused ([ServerGeneratedKeyRefusedException]).
+     * @param integrity the app's `integrityTokenProvider`: asked for a token
+     *   bound to this request's CSR and device id ([IntegrityRequestHash]),
+     *   sent along when it gives one.
      */
     suspend fun send(
         api: CertificateConfigApi,
@@ -55,6 +59,7 @@ internal object EnrollmentRequests {
         allowServerGeneratedKey: Boolean = false,
         retried: Boolean = false,
         attestationRefusal: EnrollmentRefusedException? = null,
+        integrity: IntegrityTokenProvider? = null,
         buildCsr: () -> ByteArray?
     ): EnrollmentResult {
         val pending = certStore.loadPendingRequest(certLabel)
@@ -65,9 +70,10 @@ internal object EnrollmentRequests {
         // Second round after an attestation refusal: a new key that still
         // cannot be attested gets the same answer — do not ask twice.
         if (attestationRefusal != null && attestation.isEmpty()) throw attestationRefusal
+        val integrityToken = if (csr != null && integrity != null) integrityTokenOf(integrity, deviceUid ?: deviceId, csr) else null
         try {
             val answer = csr?.let {
-                enrollWithCsr(api, token, deviceId, deviceAlias, deviceUid, it, pending?.requestId, attestation)
+                enrollWithCsr(api, token, deviceId, deviceAlias, deviceUid, it, pending?.requestId, attestation, integrityToken)
             } ?: run {
                 if (!allowServerGeneratedKey) {
                     throw ServerGeneratedKeyRefusedException(
@@ -106,7 +112,7 @@ internal object EnrollmentRequests {
                 runCatching { key.clear() }.onFailure { Timber.w(it, "Could not delete the identity key") }
                 return send(
                     api, certStore, key, certLabel, token, deviceId, deviceAlias, deviceUid,
-                    allowServerGeneratedKey, retried, attestationRefusal = e, buildCsr = buildCsr
+                    allowServerGeneratedKey, retried, attestationRefusal = e, integrity = integrity, buildCsr = buildCsr
                 )
             }
             val over = e.serverError in OVER && (pending != null || e.serverError in OVER_FOR_THIS_KEY)
@@ -119,7 +125,7 @@ internal object EnrollmentRequests {
             if (e.serverError in ASK_AGAIN && (token != null || deviceId != null) && !retried) {
                 return send(
                     api, certStore, key, certLabel, token, deviceId, deviceAlias, deviceUid,
-                    allowServerGeneratedKey, retried = true, attestationRefusal = attestationRefusal, buildCsr = buildCsr
+                    allowServerGeneratedKey, retried = true, attestationRefusal = attestationRefusal, integrity = integrity, buildCsr = buildCsr
                 )
             }
             throw e
@@ -154,6 +160,50 @@ internal object EnrollmentRequests {
     } catch (e: LinkageError) {
         // A key provider compiled against an earlier PinVault has no such method.
         emptyList()
+    }
+
+    /**
+     * The app's integrity token for this request, or null: none given, or
+     * the provider failed (logged; the request goes without, and a server
+     * that requires one refuses without spending the enrollment token).
+     */
+    private suspend fun integrityTokenOf(provider: IntegrityTokenProvider, deviceId: String?, csr: ByteArray): String? =
+        // Off the caller's thread: the provider may block (Tasks.await refuses the main thread).
+        kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+            try {
+                provider.token(IntegrityRequestHash.of(deviceId, csr))?.takeIf { it.isNotBlank() }
+                    .also { if (it == null) Timber.w("Integrity token provider gave no token; enrolling without") }
+            } catch (e: Exception) {
+                Timber.w(e, "Integrity token provider failed; enrolling without")
+                null
+            }
+        }
+
+    /**
+     * With an [integrityToken], the eight-argument `enrollWithCsr`; a custom
+     * [CertificateConfigApi] compiled against PinVault 2.2.x or earlier has
+     * none, and the call falls back to the seven-argument one (the token is
+     * dropped).
+     */
+    private suspend fun enrollWithCsr(
+        api: CertificateConfigApi,
+        token: String?,
+        deviceId: String?,
+        deviceAlias: String?,
+        deviceUid: String?,
+        csr: ByteArray,
+        requestId: String?,
+        attestation: List<String>,
+        integrityToken: String?
+    ): EnrollmentResult? {
+        if (integrityToken == null) return enrollWithCsr(api, token, deviceId, deviceAlias, deviceUid, csr, requestId, attestation)
+        return try {
+            api.enrollWithCsr(token, deviceId, deviceAlias, deviceUid, csr, requestId, attestation, integrityToken)
+        } catch (e: AbstractMethodError) {
+            enrollWithCsr(api, token, deviceId, deviceAlias, deviceUid, csr, requestId, attestation)
+        } catch (e: NoSuchMethodError) {
+            enrollWithCsr(api, token, deviceId, deviceAlias, deviceUid, csr, requestId, attestation)
+        }
     }
 
     /**
