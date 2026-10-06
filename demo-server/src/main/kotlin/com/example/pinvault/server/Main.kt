@@ -507,12 +507,20 @@ fun main() {
         auditLog, action = "attestation_rejected", what = "Attestation rejected",
         attemptsLabel = "repeated attestation rejection"
     )
+    // Play Integrity (ATTESTATION.md §11), optional: with the Play Console response keys
+    // (PLAY_INTEGRITY_DECRYPTION_KEY / _VERIFICATION_KEY) the server verifies the Google
+    // verdict a report carries and raises play_integrity / play_integrity_missing;
+    // without them the token is stored and nothing is raised.
+    val playIntegrity = com.example.pinvault.server.service.attestation.PlayIntegrityVerifier.fromEnv(
+        fallbackPackageNames = userAuthAttestation.packageNames
+    )
     val attestationService = com.example.pinvault.server.service.attestation.AttestationService(
         attestationPolicyStore, attestedDeviceStore, attestationTokenSecretStore,
         nonces = com.example.pinvault.server.service.attestation.AttestationNonces(ttlSeconds = attestationNonceTtl),
         defaults = attestationDefaults, keyPolicy = attestationKeyPolicy, verifier = { userAuthAttestation },
         isDeviceRevoked = { id -> clientIdentityStore.isDeviceRevoked(id) },
-        audit = auditLog, rejections = attestationRejections, deviceLimit = attestationDeviceLimit
+        audit = auditLog, rejections = attestationRejections, deviceLimit = attestationDeviceLimit,
+        playIntegrity = playIntegrity
     )
     val attestationLimits = com.example.pinvault.server.route.AttestationLimits.of(attestationRateLimit, attestationDeviceRateLimit)
     println("ATTESTATION_ENABLED=${if (attestationEnabled) "true" else "false"}, ATTESTATION_KEY_POLICY=${attestationKeyPolicy.name.lowercase()}, " +
@@ -520,6 +528,18 @@ fun main() {
         "${attestationDefaults.attestIntervalSeconds} s, reasons ${if (attestationDefaults.revealReasons) "revealed" else "hidden"}), " +
         "nonce ${attestationNonceTtl} s, limits $attestationRateLimit/address and $attestationDeviceRateLimit/device per 10 min" +
         (if (mockHostRequireToken) ", mock hosts require PinVault-Token" else ""))
+    if (playIntegrity != null) {
+        println("PLAY_INTEGRITY: verifying play-integrity verdicts locally (device level ${playIntegrity.deviceLevel.name.lowercase()}, " +
+            "app recognized ${if (playIntegrity.requireAppRecognized) "required" else "not required"}, packages " +
+            (if (playIntegrity.packageNames.isEmpty()) "any" else playIntegrity.packageNames.joinToString()) +
+            ", token ≤ ${playIntegrity.tokenMaxAgeSeconds} s, verdict kept ${playIntegrity.verdictMaxAgeSeconds} s)")
+        if (playIntegrity.packageNames.isEmpty()) {
+            System.err.println("WARNING: PLAY_INTEGRITY_PACKAGE_NAMES and ATTESTATION_PACKAGE_NAMES are both empty — a Play Integrity " +
+                "verdict for any app whose developer holds these keys passes. Set the package name.")
+        }
+    } else {
+        println("PLAY_INTEGRITY: off (set PLAY_INTEGRITY_DECRYPTION_KEY and PLAY_INTEGRITY_VERIFICATION_KEY to verify Google verdicts)")
+    }
     if (mockHostRequireToken) {
         mockServerManager.tokenVerifier = {
             secrets = { attestationTokenSecretStore.secretsByKid() }

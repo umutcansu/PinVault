@@ -4,10 +4,12 @@
 
 // ── Constants ────────────────────────────────────────
 
-// The 12 flags a report can raise, in the order the policy table shows them (ATTESTATION.md §3/§4).
+// The 14 flags a report can raise, in the order the policy table shows them (ATTESTATION.md §3/§4/§11).
+// The last two are raised only by a server with the Play Integrity keys configured.
 const ATTEST_FLAGS = [
   'rooted', 'emulator', 'debugger', 'debuggable', 'hooking_framework', 'app_integrity',
-  'cloner', 'unknown_installer', 'adb_enabled', 'software_key', 'key_unattested', 'old_patch_level'
+  'cloner', 'unknown_installer', 'adb_enabled', 'software_key', 'key_unattested', 'old_patch_level',
+  'play_integrity', 'play_integrity_missing'
 ];
 const ATTEST_LEVELS = ['reject', 'warn', 'ignore'];
 const ATTEST_PRESETS = {
@@ -15,7 +17,8 @@ const ATTEST_PRESETS = {
     rooted: 'reject', emulator: 'reject', debugger: 'reject', debuggable: 'reject',
     hooking_framework: 'reject', app_integrity: 'reject', cloner: 'reject',
     unknown_installer: 'warn', adb_enabled: 'ignore', software_key: 'warn',
-    key_unattested: 'warn', old_patch_level: 'warn'
+    key_unattested: 'warn', old_patch_level: 'warn',
+    play_integrity: 'warn', play_integrity_missing: 'warn'
   },
   lenient: Object.fromEntries(ATTEST_FLAGS.map(f => [f, 'warn']))
 };
@@ -75,7 +78,11 @@ function attestDev(d) {
     report,
     // The device row carries the provider's name; a report carries {name, token}.
     verdictProviderName: typeof provider === 'string' ? provider : (provider && provider.name) || null,
-    verdictProviderToken: !!(provider && typeof provider === 'object' && provider.token)
+    verdictProviderToken: !!(provider && typeof provider === 'object' && provider.token),
+    // Play Integrity, verified on the server (ATTESTATION.md §11): pass | fail, when, and Google's summary.
+    playIntegrityResult: d.playIntegrityResult ?? null,
+    playIntegrityAt: d.playIntegrityAt ?? null,
+    playIntegrity: typeof d.playIntegrity === 'string' ? parseJsonText(d.playIntegrity) : (d.playIntegrity && typeof d.playIntegrity === 'object' ? d.playIntegrity : null)
   };
 }
 
@@ -520,6 +527,30 @@ async function forgetAttestDevice(apiId, deviceId) {
   } catch (err) { toast(t('error'), 'error'); }
 }
 
+/**
+ * The Play Integrity card of the device page (ATTESTATION.md §11): what the
+ * server last verified for this device, or that it never saw a verdict. The
+ * token itself is never shown; the summary is what the verifier stored.
+ */
+function attestPlayIntegrityCard(dev) {
+  const pi = dev.playIntegrity || {};
+  const result = dev.playIntegrityResult;
+  if (!result && !dev.verdictProviderName) return '';
+  const badge = result === 'pass' ? `<span class="attest-badge attest-pass">${esc(t('attPiPass'))}</span>`
+    : result === 'fail' ? `<span class="attest-badge attest-reject">${esc(t('attPiFail'))}</span>`
+    : `<span class="attest-badge attest-none">${esc(t('attPiNotVerified'))}</span>`;
+  const list = (v) => Array.isArray(v) && v.length ? v.map(x => `<span class="attest-chip">${esc(x)}</span>`).join(' ') : '<span class="muted">&#x2014;</span>';
+  return `<div class="card">
+      <div class="card-title">${esc(t('attPiTitle'))}</div>
+      <div class="card-hint">${esc(t('attPiHint'))}</div>
+      <div class="info-row"><span class="info-key">${esc(t('attThResult'))}</span><span class="info-val">${badge}${pi.reason && pi.reason !== 'ok' ? ` <span class="mono small">${esc(pi.reason)}</span>` : ''}</span></div>
+      <div class="info-row"><span class="info-key">${esc(t('attPiVerifiedAt'))}</span><span class="info-val">${attestTime(dev.playIntegrityAt)}</span></div>
+      <div class="info-row"><span class="info-key">${esc(t('attPiDevice'))}</span><span class="info-val">${list(pi.deviceVerdicts)}</span></div>
+      <div class="info-row"><span class="info-key">${esc(t('attPiApp'))}</span><span class="info-val">${esc(pi.appVerdict || '—')}${pi.packageName ? ` <span class="mono small">${esc(pi.packageName)}</span>` : ''}${pi.versionCode != null ? ` <span class="muted small">v${esc(pi.versionCode)}</span>` : ''}</span></div>
+      <div class="info-row" style="border:none"><span class="info-key">${esc(t('attPiLicensing'))}</span><span class="info-val">${esc(pi.licensing || '—')}</span></div>
+    </div>`;
+}
+
 // ── Device detail (last trimmed report) ──────────────
 
 /** GET …/devices/{deviceId}: the device with its last report (app, device, signals). Full page, like the vault device view. */
@@ -590,6 +621,7 @@ async function showAttestationDevice(apiId, deviceId) {
           </div>
         </div>
       </div>
+      ${attestPlayIntegrityCard(dev)}
       ${report ? `
       <div class="attest-detail-grid">
         <div class="card"><div class="card-title">${esc(t('attAppBlock'))}</div>${kv(report.app)}</div>

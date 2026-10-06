@@ -10,8 +10,10 @@ import kotlinx.serialization.json.jsonObject
 
 /**
  * The signals a report can raise (ATTESTATION.md §3). The client measures
- * the first nine; the last three are set (or confirmed) by the server from
- * its own records.
+ * the first nine; `software_key`, `key_unattested` and `old_patch_level` are
+ * set (or confirmed) by the server from its own records; the last two come
+ * from the Play Integrity verifier (§11) and are raised only when the server
+ * has the Play Console keys configured.
  */
 enum class AttestationFlag(val wire: String) {
     ROOTED("rooted"),
@@ -25,7 +27,11 @@ enum class AttestationFlag(val wire: String) {
     ADB_ENABLED("adb_enabled"),
     SOFTWARE_KEY("software_key"),
     KEY_UNATTESTED("key_unattested"),
-    OLD_PATCH_LEVEL("old_patch_level");
+    OLD_PATCH_LEVEL("old_patch_level"),
+    /** Google's verdict did not meet the configured level, named another package or nonce, or the token did not verify. */
+    PLAY_INTEGRITY("play_integrity"),
+    /** No Play Integrity verdict verified for this device within `PLAY_INTEGRITY_MAX_AGE_SECONDS`. */
+    PLAY_INTEGRITY_MISSING("play_integrity_missing");
 
     companion object {
         private val byWire = entries.associateBy { it.wire }
@@ -78,7 +84,9 @@ data class AttestationPolicy(
             "rooted" to "reject", "emulator" to "reject", "debugger" to "reject", "debuggable" to "reject",
             "hooking_framework" to "reject", "app_integrity" to "reject", "cloner" to "reject",
             "unknown_installer" to "warn", "adb_enabled" to "ignore", "software_key" to "warn",
-            "key_unattested" to "warn", "old_patch_level" to "warn"
+            "key_unattested" to "warn", "old_patch_level" to "warn",
+            // Warn until the fleet is measured: a reject here needs every app build to carry the provider.
+            "play_integrity" to "warn", "play_integrity_missing" to "warn"
         )
 
         /** `lenient`: everything a warning — what a first rollout measures the fleet with. */

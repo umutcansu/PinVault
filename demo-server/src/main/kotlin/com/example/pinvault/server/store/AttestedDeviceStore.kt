@@ -37,6 +37,12 @@ data class AttestedDevice(
     val keyMismatches: Int = 0,
     val lastKeyMismatchAt: String? = null,
     val verdictProvider: String? = null,
+    /** pass | fail: the last Play Integrity verdict this server verified (ATTESTATION.md §11); null = none yet. */
+    val playIntegrityResult: String? = null,
+    /** When that verdict was verified (ISO instant). */
+    val playIntegrityAt: String? = null,
+    /** What Google said, as `PlayIntegrityVerifier` summarised it (JSON text: reason, deviceVerdicts, appVerdict, licensing, …). */
+    val playIntegrity: String? = null,
     /** The last report trimmed to its app, device and signals blocks (JSON text); only in the single-device answer. */
     val lastReport: String? = null
 )
@@ -162,6 +168,18 @@ class AttestedDeviceStore(private val db: DatabaseManager) {
                 stmt.setLong(1, hour - RETENTION_HOURS)
                 stmt.executeUpdate()
             }
+        }
+    }
+
+    /** Records a Play Integrity verdict this server verified ([result] = pass | fail, [summary] JSON). */
+    fun recordPlayIntegrity(configApiId: String, deviceId: String, result: String, summary: String, now: Instant = Instant.now()) = db.connection().use { conn ->
+        conn.prepareStatement("UPDATE attested_devices SET play_integrity_result = ?, play_integrity_at = ?, play_integrity = ? WHERE config_api_id = ? AND device_id = ?").use { stmt ->
+            stmt.setString(1, result)
+            stmt.setString(2, now.toString())
+            stmt.setString(3, summary)
+            stmt.setString(4, configApiId)
+            stmt.setString(5, deviceId)
+            stmt.executeUpdate()
         }
     }
 
@@ -319,6 +337,9 @@ class AttestedDeviceStore(private val db: DatabaseManager) {
             keyMismatches = rs.getInt("key_mismatches"),
             lastKeyMismatchAt = rs.getString("last_key_mismatch_at"),
             verdictProvider = rs.getString("verdict_provider"),
+            playIntegrityResult = rs.getString("play_integrity_result"),
+            playIntegrityAt = rs.getString("play_integrity_at"),
+            playIntegrity = rs.getString("play_integrity"),
             lastReport = if (withReport) rs.getString("last_report") else null
         )
     }

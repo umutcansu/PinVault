@@ -65,7 +65,13 @@ class AttestationService(
      * past the cap a new device gets `503 device_limit_reached` while known
      * devices keep attesting — the same shape as `DEVICE_KEY_LIMIT`.
      */
-    private val deviceLimit: Int = 100_000
+    private val deviceLimit: Int = 100_000,
+    /**
+     * Play Integrity (§11): verifies the `play-integrity` verdict a report
+     * carries and raises `play_integrity` / `play_integrity_missing`. Null
+     * (no Play Console keys configured) = the token is stored, nothing raised.
+     */
+    val playIntegrity: PlayIntegrityVerifier? = null
 ) {
     private val verifier by lazy(verifier)
 
@@ -231,7 +237,8 @@ class AttestationService(
 
         // ── 6. Policy ──────────────────────────────────────────────────
         val policy = policyFor(configApiId)
-        val raised = raisedFlags(reportJson, device)
+        val provider = reportJson["verdictProvider"] as? JsonObject
+        val raised = (raisedFlags(reportJson, device) + playIntegrityFlags(configApiId, deviceId, nonce, provider, device, now)).distinct()
         val reasons: List<String>
         val warnings: List<String>
         val passed: Boolean
@@ -265,7 +272,6 @@ class AttestationService(
             tokenExpiresAt = (nowSeconds + policy.tokenTtlSeconds) * 1000
         }
 
-        val provider = reportJson["verdictProvider"] as? JsonObject
         devices.recordVerdict(
             configApiId, deviceId, if (passed) "pass" else "reject", arc, reasons, warnings, policy.version,
             trimmedReport = trimReport(reportJson), sdkVersion = reportJson.string("sdkVersion"),
@@ -343,6 +349,34 @@ class AttestationService(
         return raised.toList()
     }
 
+    /**
+     * §11: with a verifier configured, the report's `play-integrity` token is
+     * verified against this round's [nonce] and the outcome stored with the
+     * device; `play_integrity` is raised when it fails. Without a token this
+     * round, the stored verdict stands while it is younger than
+     * `verdictMaxAgeSeconds` (a failed one keeps `play_integrity` raised
+     * until a fresh pass); older or absent → `play_integrity_missing`. A
+     * provider under another name is stored as before and not judged.
+     */
+    private fun playIntegrityFlags(
+        configApiId: String, deviceId: String, nonce: String, provider: JsonObject?, device: AttestedDevice, now: Instant
+    ): List<AttestationFlag> {
+        val verifier = playIntegrity ?: return emptyList()
+        val token = provider?.takeIf { it.string("name") == PLAY_INTEGRITY_PROVIDER }?.string("token")
+        if (token != null) {
+            val result = verifier.verify(token, nonce, now)
+            devices.recordPlayIntegrity(configApiId, deviceId, if (result.passed) "pass" else "fail", result.summary.toString(), now)
+            return if (result.passed) emptyList() else listOf(AttestationFlag.PLAY_INTEGRITY)
+        }
+        val verifiedAt = device.playIntegrityAt?.let { runCatching { Instant.parse(it) }.getOrNull() }
+        val fresh = verifiedAt != null && !now.isAfter(verifiedAt.plusSeconds(verifier.verdictMaxAgeSeconds))
+        return when {
+            !fresh -> listOf(AttestationFlag.PLAY_INTEGRITY_MISSING)
+            device.playIntegrityResult == "pass" -> emptyList()
+            else -> listOf(AttestationFlag.PLAY_INTEGRITY)
+        }
+    }
+
     private fun auditRejection(configApiId: String, deviceId: String, remote: String, arc: String, reasons: List<String>, warnings: List<String>, before: AttestedDevice) {
         val audit = audit ?: return
         // Written once per verdict: a rejected device re-attests every few minutes with the same answer.
@@ -393,6 +427,9 @@ class AttestationService(
 
         /** A verdict provider's token is stored up to this length. */
         const val MAX_VERDICT_TOKEN = 8 * 1024
+
+        /** `verdictProvider.name` of the Play Integrity provider (`pinvault-play-integrity`). */
+        const val PLAY_INTEGRITY_PROVIDER = "play-integrity"
 
         const val NOT_CHECKED = "not_checked"
         const val APP_BINDING_NOT_CONFIGURED = "app_binding_not_configured"
