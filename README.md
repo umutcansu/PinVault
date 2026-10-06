@@ -1731,6 +1731,7 @@ runs offline in any browser.
 
 | Language | Open (renders in the browser) | Source |
 |---|---|---|
+| English | [▶ pinvault-request-flow.en.html](https://raw.githack.com/umutcansu/PinVault/claude/sharp-euler-uf519f/docs/animation/pinvault-request-flow.en.html) | [`docs/animation/pinvault-request-flow.en.html`](docs/animation/pinvault-request-flow.en.html) |
 | Türkçe | [▶ pinvault-request-flow.tr.html](https://raw.githack.com/umutcansu/PinVault/claude/sharp-euler-uf519f/docs/animation/pinvault-request-flow.tr.html) | [`docs/animation/pinvault-request-flow.tr.html`](docs/animation/pinvault-request-flow.tr.html) |
 
 The "open" links go through raw.githack.com, which serves the file from
