@@ -532,7 +532,7 @@ fun main() {
         println("PLAY_INTEGRITY: verifying play-integrity verdicts locally (device level ${playIntegrity.deviceLevel.name.lowercase()}, " +
             "app recognized ${if (playIntegrity.requireAppRecognized) "required" else "not required"}, packages " +
             (if (playIntegrity.packageNames.isEmpty()) "any" else playIntegrity.packageNames.joinToString()) +
-            ", token ≤ ${playIntegrity.tokenMaxAgeSeconds} s, verdict kept ${playIntegrity.verdictMaxAgeSeconds} s)")
+            ", token at most ${playIntegrity.tokenMaxAgeSeconds} s old, verdict kept ${playIntegrity.verdictMaxAgeSeconds} s)")
         if (playIntegrity.packageNames.isEmpty()) {
             System.err.println("WARNING: PLAY_INTEGRITY_PACKAGE_NAMES and ATTESTATION_PACKAGE_NAMES are both empty — a Play Integrity " +
                 "verdict for any app whose developer holds these keys passes. Set the package name.")
