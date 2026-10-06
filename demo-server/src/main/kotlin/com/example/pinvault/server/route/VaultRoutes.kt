@@ -434,7 +434,8 @@ fun Route.vaultRoutes(
                         val did = deviceId
                         val pubKey = deviceKey!!
                         try {
-                            encryptionService.encryptForDevice(entry.content, pubKey.publicKeyPem)
+                            // Wrapped with the MGF1 hash the key was registered with (Android SHA-1, iOS SHA-256).
+                            encryptionService.encryptForDevice(entry.content, pubKey.publicKeyPem, pubKey.algorithm)
                         } catch (e: Exception) {
                             // The cause goes to the log under an id, never to the caller.
                             val errorId = java.util.UUID.randomUUID().toString().take(8)
@@ -583,11 +584,14 @@ fun Route.vaultRoutes(
             val userAuth = purpose == PURPOSE_USER_AUTH
             val keyStore = if (userAuth) userAuthKeyStore else publicKeyStore
             val what = if (userAuth) "User-auth key" else "E2E key"
-            val algorithm = body.string("algorithm") ?: "RSA-OAEP-SHA256"
-            if (algorithm != "RSA-OAEP-SHA256") {
+            // How files are wrapped for this key: the MGF1 hash differs per platform
+            // (Android MGF1-SHA1, the default; iOS MGF1-SHA256), so it is stored with it.
+            val algorithm = body.string("algorithm") ?: com.example.pinvault.server.service.VaultEncryptionService.RSA_OAEP_SHA256
+            if (algorithm !in com.example.pinvault.server.service.VaultEncryptionService.ALGORITHMS) {
                 return@post call.respond(HttpStatusCode.BadRequest, mapOf(
                     "error" to "unsupported_algorithm",
-                    "message" to "Only RSA-OAEP-SHA256 is supported."))
+                    "message" to "algorithm must be RSA-OAEP-SHA256 (SHA-256 with MGF1-SHA1, Android; the default) " +
+                        "or RSA-OAEP-SHA256-MGF1-SHA256 (SHA-256 with MGF1-SHA256, iOS)."))
             }
             val parsedKey = parseDeviceRsaKey(pem)
                 ?: return@post call.respond(HttpStatusCode.BadRequest, mapOf(
@@ -605,7 +609,8 @@ fun Route.vaultRoutes(
                     "message" to "The client certificate does not belong to device $deviceId."))
             }
             val existing = keyStore.get(deviceId, configApiId)
-            val changed = existing == null || !samePublicKey(existing.publicKeyPem, key)
+            // The same key under another algorithm is a change too: files would be wrapped differently.
+            val changed = existing == null || !samePublicKey(existing.publicKeyPem, key) || existing.algorithm != algorithm
 
             // The device's token for a file wrapped with a device key: an
             // end_to_end file for the E2E key; end_to_end or user_auth for
@@ -831,7 +836,8 @@ fun Route.vaultRoutes(
                         // Only an unauthenticated request gets here for such a device; the
                         // administrator reads it here, the caller is told nothing.
                         (if (revoked) " — without a credential, for a device id whose identity was revoked" else "") +
-                        (if (userAuth) " ($attestationNote${if (!replaced && verdict != null && !verdict.passed) "; accepted on first use" else ""})" else ""),
+                        (if (userAuth) " ($attestationNote${if (!replaced && verdict != null && !verdict.passed) "; accepted on first use" else ""})" else "") +
+                        (if (algorithm != com.example.pinvault.server.service.VaultEncryptionService.RSA_OAEP_SHA256) ", $algorithm" else ""),
                     configApiId, deviceId, actor = certClientId ?: deviceId, ip = remote,
                     detail = attestationDetail
                 )

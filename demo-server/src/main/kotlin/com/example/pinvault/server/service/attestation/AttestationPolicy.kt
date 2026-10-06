@@ -11,9 +11,10 @@ import kotlinx.serialization.json.jsonObject
 /**
  * The signals a report can raise (ATTESTATION.md §3). The client measures
  * the first nine; `software_key`, `key_unattested` and `old_patch_level` are
- * set (or confirmed) by the server from its own records; the last two come
- * from the Play Integrity verifier (§11) and are raised only when the server
- * has the Play Console keys configured.
+ * set (or confirmed) by the server from its own records; `play_integrity*`
+ * come from the Play Integrity verifier (§11) and are raised only when the
+ * server has the Play Console keys configured, `app_attest*` from the App
+ * Attest verifier (§12), only with `APP_ATTEST_APP_IDS` configured.
  */
 enum class AttestationFlag(val wire: String) {
     ROOTED("rooted"),
@@ -31,7 +32,11 @@ enum class AttestationFlag(val wire: String) {
     /** Google's verdict did not meet the configured level, named another package or nonce, or the token did not verify. */
     PLAY_INTEGRITY("play_integrity"),
     /** No Play Integrity verdict verified for this device within `PLAY_INTEGRITY_MAX_AGE_SECONDS`. */
-    PLAY_INTEGRITY_MISSING("play_integrity_missing");
+    PLAY_INTEGRITY_MISSING("play_integrity_missing"),
+    /** An App Attest attestation or assertion the report carried did not verify (or the last one failed). */
+    APP_ATTEST("app_attest"),
+    /** An iOS device without an App Attest verdict verified within `APP_ATTEST_MAX_AGE_SECONDS`. */
+    APP_ATTEST_MISSING("app_attest_missing");
 
     companion object {
         private val byWire = entries.associateBy { it.wire }
@@ -86,7 +91,8 @@ data class AttestationPolicy(
             "unknown_installer" to "warn", "adb_enabled" to "ignore", "software_key" to "warn",
             "key_unattested" to "warn", "old_patch_level" to "warn",
             // Warn until the fleet is measured: a reject here needs every app build to carry the provider.
-            "play_integrity" to "warn", "play_integrity_missing" to "warn"
+            "play_integrity" to "warn", "play_integrity_missing" to "warn",
+            "app_attest" to "warn", "app_attest_missing" to "warn"
         )
 
         /** `lenient`: everything a warning — what a first rollout measures the fleet with. */

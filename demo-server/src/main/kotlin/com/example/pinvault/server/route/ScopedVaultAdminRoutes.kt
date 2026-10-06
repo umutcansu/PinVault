@@ -42,6 +42,7 @@ import java.time.Instant
  *   DELETE /api/v1/config-apis/{id}/vault/devices/{deviceId}/public-key — reset a device's E2E key
  *          (`?purpose=user_auth`: its user-auth key)
  *   GET    /api/v1/config-apis/{id}/vault/devices/user-auth-keys — user-auth keys with their attestation
+ *   GET    /api/v1/config-apis/{id}/vault/devices/{deviceId}/keys — one device's E2E and user-auth key
  */
 fun Route.scopedVaultAdminRoutes(
     vaultFileStore: VaultFileStore,
@@ -250,6 +251,24 @@ fun Route.scopedVaultAdminRoutes(
         if (publicKeyStore != null) get("/devices/user-auth-keys") {
             val cid = call.pathParameters["configApiId"]!!
             call.respond(publicKeyStore.userAuthKeys().listForConfigApi(cid))
+        }
+
+        /**
+         * One device's two keys (`e2e`, `userAuth`; null = none registered),
+         * each with its `algorithm` — the MGF1 hash its files are wrapped with
+         * (Android `RSA-OAEP-SHA256`, iOS `RSA-OAEP-SHA256-MGF1-SHA256`).
+         */
+        if (publicKeyStore != null) get("/devices/{deviceId}/keys") {
+            val cid = call.pathParameters["configApiId"]!!
+            val deviceId = call.pathParameters["deviceId"]!!
+            val e2e = publicKeyStore.get(deviceId, cid)
+            val userAuth = publicKeyStore.userAuthKeys().get(deviceId, cid)
+            val json = Json { encodeDefaults = true }
+            call.respondText(buildJsonObject {
+                put("deviceId", deviceId)
+                put("e2e", e2e?.let { json.encodeToJsonElement(com.example.pinvault.server.store.DevicePublicKey.serializer(), it) } ?: JsonNull)
+                put("userAuth", userAuth?.let { json.encodeToJsonElement(com.example.pinvault.server.store.DevicePublicKey.serializer(), it) } ?: JsonNull)
+            }.toString(), ContentType.Application.Json)
         }
 
         if (publicKeyStore != null) delete("/devices/{deviceId}/public-key") {

@@ -125,7 +125,8 @@ object ServerSettingsCatalog {
                 add("$key=enforce needs ATTESTATION_PACKAGE_NAMES and ATTESTATION_SIGNER_SHA256")
             }
         }
-        if (v("INTEGRITY_VERIFICATION").lowercase() == "enforce" && v("INTEGRITY_VERIFIER_COMMAND").isEmpty()) {
+        // App Attest (iOS) verifies its own tokens; without either the server does not start.
+        if (v("INTEGRITY_VERIFICATION").lowercase() == "enforce" && v("INTEGRITY_VERIFIER_COMMAND").isEmpty() && v("APP_ATTEST_APP_IDS").isEmpty()) {
             add("INTEGRITY_VERIFICATION=enforce needs INTEGRITY_VERIFIER_COMMAND (set in the environment)")
         }
     }

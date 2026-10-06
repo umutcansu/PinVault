@@ -24,7 +24,11 @@ import java.util.concurrent.TimeUnit
  *  - [ENFORCE]: no certificate without a passing verdict — 403
  *    `integrity_required` without a token, `integrity_invalid` with a
  *    `reason` for one that fails. The server does not start without
- *    `INTEGRITY_VERIFIER_COMMAND`.
+ *    `INTEGRITY_VERIFIER_COMMAND` or App Attest (`APP_ATTEST_APP_IDS`).
+ *
+ * An iOS app's token is App Attest JSON (PORTING.md §6) and is verified here,
+ * with Apple's root, by [com.example.pinvault.server.service.attestation.AppAttestVerifier];
+ * any other token goes to the verifier command.
  *
  * An Android key attestation (`ENROLLMENT_ATTESTATION`) proves where the key
  * was made. An integrity verdict (Google Play Integrity, or a RASP product's
@@ -45,14 +49,21 @@ enum class IntegrityVerificationMode {
         }
 
         /**
-         * [ENFORCE] without a verifier refuses to start; [WARN] without one
+         * [ENFORCE] without any verifier refuses to start; [WARN] without one
          * returns the warning to print (tokens arrive but nothing reads them).
+         * With App Attest only ([appAttest]) Android tokens are not verified:
+         * warned, not refused (an iOS-only fleet needs no command).
          */
-        fun startupCheck(mode: IntegrityVerificationMode, verifier: IntegrityVerifier?): String? {
+        fun startupCheck(mode: IntegrityVerificationMode, verifier: IntegrityVerifier?, appAttest: Boolean = false): String? {
             if (mode == OFF || verifier != null) return null
+            if (appAttest) {
+                return "WARNING: INTEGRITY_VERIFICATION=${mode.name.lowercase()} without INTEGRITY_VERIFIER_COMMAND — only App Attest " +
+                    "tokens (iOS) are verified; Android integrity tokens are recorded as not verified" +
+                    (if (mode == ENFORCE) " and their enrollments refused." else ".")
+            }
             check(mode != ENFORCE) {
                 "INTEGRITY_VERIFICATION=enforce needs INTEGRITY_VERIFIER_COMMAND: a command that decodes the token " +
-                    "(Play Integrity: scripts/play-integrity-verify.sh). Set it, or run INTEGRITY_VERIFICATION=warn."
+                    "(Play Integrity: scripts/play-integrity-verify.sh), or APP_ATTEST_APP_IDS for iOS apps. Set it, or run INTEGRITY_VERIFICATION=warn."
             }
             return "WARNING: INTEGRITY_VERIFICATION=warn without INTEGRITY_VERIFIER_COMMAND — integrity tokens are " +
                 "recorded as not verified."
@@ -114,9 +125,16 @@ object IntegrityRequestHash {
 class EnrollmentIntegrity(
     /** Read on every check (tests switch it; Main passes a fixed mode). */
     private val modeOf: () -> IntegrityVerificationMode,
-    private val verifier: IntegrityVerifier?
+    private val verifier: IntegrityVerifier?,
+    /** Verifies App Attest tokens (iOS); null = they go to [verifier] like any other. */
+    private val appAttest: com.example.pinvault.server.service.attestation.AppAttestVerifier? = null,
+    private val clock: () -> java.time.Instant = java.time.Instant::now
 ) {
-    constructor(mode: IntegrityVerificationMode, verifier: IntegrityVerifier?) : this({ mode }, verifier)
+    constructor(
+        mode: IntegrityVerificationMode,
+        verifier: IntegrityVerifier?,
+        appAttest: com.example.pinvault.server.service.attestation.AppAttestVerifier? = null
+    ) : this({ mode }, verifier, appAttest)
 
     val mode: IntegrityVerificationMode get() = modeOf()
 
@@ -175,9 +193,15 @@ class EnrollmentIntegrity(
         val csrDer = json.string("csr")?.let { runCatching { Base64.getDecoder().decode(it) }.getOrNull() }
             ?: return IntegrityVerdict(false, "csr_missing")
         val deviceId = json.string("deviceUid") ?: json.string("deviceId")
+        val requestHash = IntegrityRequestHash.of(deviceId, csrDer)
+        // An iOS app's token: a fresh App Attest key whose attestation was made with
+        // SHA-256(requestHash) as its client data, so it is bound to this CSR and device id.
+        appAttest?.let { appAttest ->
+            AppAttestToken.verdict(appAttest, token, requestHash, clock())?.let { return it }
+        }
         val verifier = verifier ?: return IntegrityVerdict.NOT_CONFIGURED
         return try {
-            verifier.verify(token, IntegrityRequestHash.of(deviceId, csrDer), deviceId)
+            verifier.verify(token, requestHash, deviceId)
         } catch (e: Exception) {
             // Never the token or the verifier's output in the answer: only the log.
             System.err.println("Integrity verifier failed: ${e.message}")
@@ -191,6 +215,24 @@ class EnrollmentIntegrity(
     companion object {
         /** Play Integrity tokens are a few kilobytes; anything far larger is not one. */
         const val MAX_TOKEN_CHARS = 16 * 1024
+    }
+
+    /** App Attest at enrollment (PORTING.md §6): always an attestation, never an assertion. */
+    private object AppAttestToken {
+        /** The verdict for an App Attest [token]; null when it is not one (another provider's token). */
+        fun verdict(
+            verifier: com.example.pinvault.server.service.attestation.AppAttestVerifier,
+            token: String, requestHash: String, now: java.time.Instant
+        ): IntegrityVerdict? {
+            val parsed = com.example.pinvault.server.service.attestation.AppAttestVerifier.parseToken(token) ?: return null
+            val attestation = parsed.attestation
+            val keyId = parsed.keyId
+            if (!parsed.wellFormed || attestation == null || keyId == null) return IntegrityVerdict(false, "app_attest_attestation_required")
+            val result = verifier.verifyAttestation(attestation, keyId,
+                com.example.pinvault.server.service.attestation.AppAttestVerifier.enrollmentClientDataHash(requestHash), now)
+            return if (result.passed) IntegrityVerdict(true, summary = "App Attest ${verifier.environment.wire}, ${result.appId}")
+            else IntegrityVerdict(false, "app_attest_${result.reason}")
+        }
     }
 }
 

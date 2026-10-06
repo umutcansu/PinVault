@@ -98,3 +98,10 @@ backup-before-production-*/
 
 # Internal comparison document; not part of the project
 /MASC-vs-PinVault-DexProtector.pdf
+
+# SwiftPM / Xcode (iOS library and sample)
+.build/
+.swiftpm/
+xcuserdata/
+*.xcodeproj/project.xcworkspace/xcuserdata/
+DerivedData/

@@ -3106,7 +3106,11 @@ paths:
                     Integrity, or a RASP product's attestation) requested with the request hash
                     base64url(SHA-256(UTF-8 `pinvault-integrity:v1:` + `deviceUid` (else
                     `deviceId`, else empty) + `:` + base64url(SHA-256(csr DER)))), unpadded.
-                    Checked per `INTEGRITY_VERIFICATION` by `INTEGRITY_VERIFIER_COMMAND`.
+                    Checked per `INTEGRITY_VERIFICATION` by `INTEGRITY_VERIFIER_COMMAND`. From
+                    iOS: the JSON string `{"provider":"app-attest","keyId":"<Base64>","attestation":"<Base64 CBOR>"}`,
+                    a fresh App Attest key attested with the client data hash SHA-256(UTF-8 request
+                    hash); verified on the server against Apple's App Attestation Root CA when
+                    `APP_ATTEST_APP_IDS` is set (ATTESTATION.md §12; reasons `app_attest_…`).
       responses:
         '200':
           description: >
@@ -4523,7 +4527,12 @@ paths:
         **What may be stored.** TLS asks for no credential, so the key must be RSA of
         2048–4096 bits (stored re-encoded, a few hundred bytes), `{deviceId}` must be
         letters, digits, `.`, `_`, `:` or `-` (at most 64), and `algorithm`
-        `RSA-OAEP-SHA256`. Without a client certificate, a source address writes at
+        `RSA-OAEP-SHA256` (SHA-256 with MGF1-SHA1: Android, the default) or
+        `RSA-OAEP-SHA256-MGF1-SHA256` (SHA-256 with MGF1-SHA256: iOS, Apple's
+        `.rsaEncryptionOAEPSHA256`). The algorithm is stored with the key and every
+        `end_to_end` / `user_auth` file for it is wrapped that way; the same key sent
+        again under the other algorithm is a key change (the proof rules above apply).
+        Without a client certificate, a source address writes at
         most `DEVICE_KEY_RATE_LIMIT` new or changed keys per 10 minutes (default 30;
         the same key again is not counted); a Config API holds at most
         `DEVICE_KEY_LIMIT` keys (default 100 000), after which only devices it
@@ -4562,7 +4571,9 @@ paths:
                   description: PEM-encoded RSA public key.
                 algorithm:
                   type: string
+                  enum: [RSA-OAEP-SHA256, RSA-OAEP-SHA256-MGF1-SHA256]
                   default: RSA-OAEP-SHA256
+                  description: 'How files are wrapped for this key: RSA-OAEP with SHA-256 and MGF1-SHA1 (`RSA-OAEP-SHA256`, Android) or MGF1-SHA256 (`RSA-OAEP-SHA256-MGF1-SHA256`, iOS). Anything else: `400 unsupported_algorithm`.'
                 purpose:
                   type: string
                   enum: [e2e, user_auth]
@@ -5043,6 +5054,45 @@ paths:
           description: Removed.
         '404':
           description: No key registered for this device in this scope.
+        '401': { $ref: '#/components/responses/MissingApiKey' }
+        '403': { $ref: '#/components/responses/InvalidApiKey' }
+
+  /api/v1/config-apis/{configApiId}/vault/devices/{deviceId}/keys:
+    get:
+      tags: [vault-admin]
+      operationId: getDeviceVaultKeys
+      summary: One device's E2E and user-auth key, with their algorithm
+      description: |
+        The keys `end_to_end` (`e2e`) and `user_auth` (`userAuth`) files are
+        wrapped with for `{deviceId}` in this scope; `null` when none is
+        registered. `algorithm` tells the platform: `RSA-OAEP-SHA256` (MGF1-SHA1,
+        Android) or `RSA-OAEP-SHA256-MGF1-SHA256` (MGF1-SHA256, iOS). The
+        dashboard shows it on the vault's device page.
+
+        Registered on: **management** only.
+      security:
+        - ApiKeyAuth: []
+      x-registered-on: management
+      parameters:
+        - $ref: '#/components/parameters/ConfigApiIdPath'
+        - $ref: '#/components/parameters/DeviceIdPath'
+      responses:
+        '200':
+          description: The device's two key slots.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  deviceId: { type: string }
+                  e2e:
+                    nullable: true
+                    allOf:
+                      - $ref: '#/components/schemas/DeviceVaultKey'
+                  userAuth:
+                    nullable: true
+                    allOf:
+                      - $ref: '#/components/schemas/DeviceVaultKey'
         '401': { $ref: '#/components/responses/MissingApiKey' }
         '403': { $ref: '#/components/responses/InvalidApiKey' }
 
@@ -7409,6 +7459,8 @@ components:
           type: object
           properties:
             packageName: { type: string, example: com.example.app }
+            bundleId: { type: string, description: 'iOS: the bundle id (checked against `ATTESTATION_PACKAGE_NAMES`).' }
+            teamId: { type: string, nullable: true, description: 'iOS: the Apple team id (checked against `ATTESTATION_IOS_TEAM_IDS`).' }
             versionCode: { type: integer }
             versionName: { type: string }
             signerSha256: { type: array, items: { type: string } }
@@ -7417,6 +7469,8 @@ components:
         device:
           type: object
           properties:
+            platform: { type: string, enum: [ios], description: 'Absent from Android reports. `ios` switches the server''s own signals to the iOS rules (ATTESTATION.md §3).' }
+            osVersion: { type: string, example: '26.5', description: 'iOS: compared with `ATTESTATION_MIN_IOS_VERSION` for `old_patch_level`.' }
             manufacturer: { type: string }
             model: { type: string }
             brand: { type: string }
@@ -7425,9 +7479,9 @@ components:
             hardware: { type: string }
             fingerprint: { type: string }
             sdkInt: { type: integer }
-            securityPatch: { type: string, example: '2026-09-05' }
-            verifiedBootState: { type: string, example: green }
-            keySecurityLevel: { type: string, enum: [software, tee, strongbox, unknown] }
+            securityPatch: { type: string, nullable: true, example: '2026-09-05', description: 'Null on iOS.' }
+            verifiedBootState: { type: string, nullable: true, example: green }
+            keySecurityLevel: { type: string, enum: [software, tee, strongbox, secure_enclave, unknown], description: '`tee`, `strongbox` and `secure_enclave` (iOS) are hardware; `software` / `unknown` raise `software_key`.' }
             keyAttested: { type: boolean }
         signals:
           type: object
@@ -7436,16 +7490,17 @@ components:
         verdictProvider:
           type: object
           nullable: true
-          description: An optional second opinion (Play Integrity) the app plugged in; forwarded verbatim, stored, not verified by the reference server.
+          description: 'An optional second opinion the app plugged in, forwarded verbatim and stored: `play-integrity` (a JWE, verified with the Play Console keys, ATTESTATION.md §11) or `app-attest` (iOS: the JSON string `{"provider":"app-attest","keyId","attestation"|"assertion"}`, verified with Apple''s App Attestation Root CA, §12). Neither is judged without its server settings.'
           properties:
-            name: { type: string, example: play-integrity }
+            name: { type: string, enum: [play-integrity, app-attest] }
             token: { type: string }
 
     AttestationFlag:
       type: string
       description: The signals a report can raise and a policy decides on.
       enum: [rooted, emulator, debugger, debuggable, hooking_framework, app_integrity,
-             cloner, unknown_installer, adb_enabled, software_key, key_unattested, old_patch_level]
+             cloner, unknown_installer, adb_enabled, software_key, key_unattested, old_patch_level,
+             play_integrity, play_integrity_missing, app_attest, app_attest_missing]
 
     AttestationRequest:
       type: object
@@ -7479,8 +7534,8 @@ components:
         arc: { type: string, description: 'Attestation result code — 8 hex characters an operator resolves in the dashboard.', example: 7f3a9c1e }
         warnings:
           type: array
-          description: Raised flags the policy only warns about.
-          items: { $ref: '#/components/schemas/AttestationFlag' }
+          description: 'Raised flags the policy only warns about, plus `app_attest_unknown_key` (whatever the policy says) when an App Attest assertion named a key the server has no record of: the app attests a new key next round.'
+          items: { type: string }
         rejectionReasons:
           type: array
           description: Present only when the policy's `revealReasons` is on. `force_fail` when the device is forced to fail.
@@ -7532,6 +7587,10 @@ components:
             software_key: warn
             key_unattested: warn
             old_patch_level: warn
+            play_integrity: warn
+            play_integrity_missing: warn
+            app_attest: warn
+            app_attest_missing: warn
         revealReasons: { type: boolean, description: 'Send `rejectionReasons` to the device.', default: false }
         tokenTtlSeconds: { type: integer, minimum: 30, maximum: 86400, default: 300 }
         attestIntervalSeconds: { type: integer, minimum: 60, maximum: 86400, default: 300 }
@@ -7573,7 +7632,31 @@ components:
         annotations: { type: array, items: { type: string }, example: [staff, canary] }
         keyMismatches: { type: integer, description: 'Attestations refused with `key_mismatch` since registration.' }
         lastKeyMismatchAt: { type: string, format: date-time, nullable: true }
-        verdictProvider: { type: string, nullable: true, description: 'Name of the verdict provider the app plugged in (e.g. `play-integrity`).' }
+        verdictProvider: { type: string, nullable: true, description: 'Name of the verdict provider the app plugged in (`play-integrity`, `app-attest`).' }
+        playIntegrityResult: { type: string, enum: [pass, fail], nullable: true, description: 'The last Play Integrity verdict this server verified (ATTESTATION.md §11).' }
+        playIntegrityAt: { type: string, format: date-time, nullable: true }
+        playIntegrity: { type: string, nullable: true, description: 'JSON text: what the verifier read from the token (reason, device and app verdicts, licensing).' }
+        platform: { type: string, nullable: true, enum: [ios, android], description: 'What the last report ran on; `android` for a report without `device.platform`. Null before the first verdict.' }
+        appAttestKeyId: { type: string, nullable: true, description: 'Base64 key id of the App Attest key an attestation registered (ATTESTATION.md §12).' }
+        appAttestCounter: { type: integer, format: int64, nullable: true, description: 'Authenticator counter of that key''s last verified assertion (0 after the attestation).' }
+        appAttestResult: { type: string, enum: [pass, fail], nullable: true, description: 'The last App Attest verdict this server verified.' }
+        appAttestAt: { type: string, format: date-time, nullable: true }
+        appAttest: { type: string, nullable: true, description: 'JSON text: reason (`ok`, `chain_invalid`, `nonce_mismatch`, `counter_replay`, `app_attest_unknown_key`, …), kind (`attestation` / `assertion`), app id, environment, key id, counter.' }
+
+    DeviceVaultKey:
+      type: object
+      description: A device's RSA key for `end_to_end` (E2E) or `user_auth` files.
+      properties:
+        deviceId: { type: string }
+        configApiId: { type: string }
+        publicKeyPem: { type: string }
+        algorithm: { type: string, enum: [RSA-OAEP-SHA256, RSA-OAEP-SHA256-MGF1-SHA256] }
+        registeredAt: { type: string, format: date-time }
+        attestation:
+          nullable: true
+          description: 'User-auth keys: what Android Key Attestation said (null = not checked).'
+          allOf:
+            - $ref: '#/components/schemas/KeyAttestationResult'
 
     AttestedDevicePage:
       type: object

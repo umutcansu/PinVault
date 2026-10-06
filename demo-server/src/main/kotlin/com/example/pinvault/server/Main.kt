@@ -276,16 +276,23 @@ private fun startServer() {
         "off", "false" -> false
         else -> error("ENROLLMENT_P12 must be on or off (got '${com.example.pinvault.server.service.ServerEnv.get("ENROLLMENT_P12")}')")
     }
+    // Apple App Attest (ATTESTATION.md §12), optional: with APP_ATTEST_APP_IDS the server
+    // verifies iOS apps' App Attest objects itself — at enrollment (below) and on every
+    // attestation round — against Apple's root in APP_ATTEST_ROOT_CA_FILE; without a
+    // readable root it does not start. Nothing is sent to Apple.
+    val appAttest = com.example.pinvault.server.service.attestation.AppAttestVerifier.fromEnv()
     // The enrolling device's integrity verdict (Play Integrity or a RASP product's
     // attestation): INTEGRITY_VERIFICATION=off|warn|enforce (default off), decoded
-    // by INTEGRITY_VERIFIER_COMMAND. Bound to the request's CSR and device id.
+    // by INTEGRITY_VERIFIER_COMMAND (App Attest tokens by the verifier above).
+    // Bound to the request's CSR and device id.
     val integrityMode = com.example.pinvault.server.service.IntegrityVerificationMode.parse(com.example.pinvault.server.service.ServerEnv.get("INTEGRITY_VERIFICATION"))
     val integrityVerifier = com.example.pinvault.server.service.CommandIntegrityVerifier.fromEnv(System::getenv)
-    com.example.pinvault.server.service.IntegrityVerificationMode.startupCheck(integrityMode, integrityVerifier)
+    com.example.pinvault.server.service.IntegrityVerificationMode.startupCheck(integrityMode, integrityVerifier, appAttest = appAttest != null)
         ?.let { System.err.println(it) }
-    val enrollmentIntegrity = com.example.pinvault.server.service.EnrollmentIntegrity(integrityMode, integrityVerifier)
+    val enrollmentIntegrity = com.example.pinvault.server.service.EnrollmentIntegrity(integrityMode, integrityVerifier, appAttest)
     println("INTEGRITY_VERIFICATION=${integrityMode.name.lowercase()}" +
-        (if (integrityVerifier != null) " (verifier command set)" else ""))
+        (if (integrityVerifier != null) " (verifier command set)" else "") +
+        (if (appAttest != null) " (App Attest tokens verified here)" else ""))
     val serverMadeKeys = enrollmentP12 && !enrollmentAttestation.refusesServerMadeKeys && !enrollmentIntegrity.refusesServerMadeKeys
     println("ENROLLMENT_ATTESTATION=${enrollmentAttestationMode.name.lowercase()}, ENROLLMENT_P12=${if (enrollmentP12) "on" else "off"}" +
         (if (serverMadeKeys) "" else " — no server-made keys: devices enroll over a CSR only"))
@@ -551,7 +558,10 @@ private fun startServer() {
         defaults = attestationDefaults, keyPolicy = attestationKeyPolicy, verifier = { userAuthAttestation },
         isDeviceRevoked = { id -> clientIdentityStore.isDeviceRevoked(id) },
         audit = auditLog, rejections = attestationRejections, deviceLimit = attestationDeviceLimit,
-        playIntegrity = playIntegrity
+        playIntegrity = playIntegrity,
+        appAttest = appAttest,
+        // ATTESTATION_MIN_IOS_VERSION / ATTESTATION_IOS_TEAM_IDS: what an iOS report is held to.
+        ios = com.example.pinvault.server.service.attestation.IosAttestationRules.fromEnv()
     )
     val attestationLimits = com.example.pinvault.server.route.AttestationLimits.of(attestationRateLimit, attestationDeviceRateLimit)
     println("ATTESTATION_ENABLED=${if (attestationEnabled) "true" else "false"}, ATTESTATION_KEY_POLICY=${attestationKeyPolicy.name.lowercase()}, " +
@@ -570,6 +580,14 @@ private fun startServer() {
         }
     } else {
         println("PLAY_INTEGRITY: off (set PLAY_INTEGRITY_DECRYPTION_KEY and PLAY_INTEGRITY_VERIFICATION_KEY to verify Google verdicts)")
+    }
+    if (appAttest != null) {
+        // The fingerprint lets the operator compare the file with the root Apple publishes.
+        println("APP_ATTEST: verifying app-attest verdicts locally (apps ${appAttest.appIds.joinToString()}, environment " +
+            "${appAttest.environment.wire}, verdict kept ${appAttest.verdictMaxAgeSeconds} s; root " +
+            appAttest.roots.joinToString { "${it.subjectX500Principal.name} SHA-256 ${com.example.pinvault.server.service.attestation.AttestationService.sha256Hex(it.encoded)}" } + ")")
+    } else {
+        println("APP_ATTEST: off (set APP_ATTEST_APP_IDS and APP_ATTEST_ROOT_CA_FILE to verify Apple App Attest)")
     }
     if (mockHostRequireToken) {
         mockServerManager.tokenVerifier = {

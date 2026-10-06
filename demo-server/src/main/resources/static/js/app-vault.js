@@ -514,8 +514,13 @@ async function showDeviceDetail(apiId, deviceId) {
   content.innerHTML = `<div class="loading">${t('loading')}</div>`;
 
   try {
-    const res = await apiFetch(`${vaultBase(apiId)}/distributions/device/${encodeURIComponent(deviceId)}`);
+    // The device's keys are a second, independent read: a failure leaves the card out, not the page.
+    const [res, keysRes] = await Promise.all([
+      apiFetch(`${vaultBase(apiId)}/distributions/device/${encodeURIComponent(deviceId)}`),
+      apiFetch(`${vaultBase(apiId)}/devices/${encodeURIComponent(deviceId)}/keys`, { quiet: true }).catch(() => null)
+    ]);
     const dists = await res.json();
+    const keys = keysRes && keysRes.ok ? await keysRes.json().catch(() => null) : null;
     if (!Array.isArray(dists)) {
       content.innerHTML = `<div class="card"><div class="empty-msg">${t('error')}: ${esc(JSON.stringify(dists).slice(0, 120))}</div></div>`;
       return;
@@ -594,10 +599,41 @@ async function showDeviceDetail(apiId, deviceId) {
           <thead><tr><th>${t('vaultKey')}</th><th>${t('vaultVersion')}</th><th>${t('vaultStatus')}</th><th>${t('vaultTimestamp')}</th></tr></thead>
           <tbody>${fullRows}</tbody>
         </table>${devFullPagNav}
-      </div>`;
+      </div>
+      ${renderDeviceKeysCard(keys, locale)}`;
   } catch (e) {
     content.innerHTML = `<div class="card"><div class="empty-msg">${t('error')}: ${esc(e.message)}</div></div>`;
   }
+}
+
+/**
+ * The device's E2E and user-auth keys (GET …/vault/devices/{deviceId}/keys):
+ * which algorithm its end_to_end / user_auth files are wrapped with —
+ * RSA-OAEP-SHA256 (MGF1-SHA1) for Android, RSA-OAEP-SHA256-MGF1-SHA256 for iOS.
+ */
+function renderDeviceKeysCard(keys, locale) {
+  if (!keys || typeof keys !== 'object') return '';
+  const row = (label, k) => {
+    if (!k || typeof k !== 'object') {
+      return `<tr><td>${esc(label)}</td><td colspan="3" class="muted">${esc(t('vaultKeyNone'))}</td></tr>`;
+    }
+    const platform = k.algorithm === 'RSA-OAEP-SHA256-MGF1-SHA256' ? 'iOS' : k.algorithm === 'RSA-OAEP-SHA256' ? 'Android' : '';
+    const registered = k.registeredAt ? new Date(k.registeredAt).toLocaleString(locale) : '—';
+    return `<tr>
+        <td>${esc(label)}</td>
+        <td class="mono small">${esc(k.algorithm || '—')}</td>
+        <td class="small">${esc(platform || '—')}</td>
+        <td style="color:#64748b;font-size:11px">${esc(registered)}</td>
+      </tr>`;
+  };
+  return `<div class="card">
+      <div class="card-title">${esc(t('vaultDeviceKeys'))}</div>
+      <div class="card-hint">${esc(t('vaultDeviceKeysHint'))}</div>
+      <table class="data-table">
+        <thead><tr><th>${esc(t('vaultKeyPurpose'))}</th><th>${esc(t('vaultKeyAlgorithm'))}</th><th>${esc(t('vaultKeyPlatform'))}</th><th>${esc(t('vaultKeyRegistered'))}</th></tr></thead>
+        <tbody>${row(t('vaultKeyE2e'), keys.e2e)}${row(t('vaultKeyUserAuth'), keys.userAuth)}</tbody>
+      </table>
+    </div>`;
 }
 
 // Distribution status badge: distinguish a fresh download from a 304 cache-hit.
