@@ -32,6 +32,9 @@ public class SettingsActivity extends ActionActivity {
     private CheckBox reportSuccessCheck;
     private CheckBox scopedPinsCheck;
     private CheckBox twoSignaturesCheck;
+    private CheckBox environmentGuardCheck;
+    private CheckBox unlockedDeviceCheck;
+    private CheckBox hardwareKeysCheck;
     private EditText dedupMsInput;
     private Button applyButton;
     private Button settingsClientButton;
@@ -54,6 +57,9 @@ public class SettingsActivity extends ActionActivity {
         reportSuccessCheck = findViewById(R.id.reportSuccessCheck);
         scopedPinsCheck = findViewById(R.id.scopedPinsCheck);
         twoSignaturesCheck = findViewById(R.id.twoSignaturesCheck);
+        environmentGuardCheck = findViewById(R.id.environmentGuardCheck);
+        unlockedDeviceCheck = findViewById(R.id.unlockedDeviceCheck);
+        hardwareKeysCheck = findViewById(R.id.hardwareKeysCheck);
         dedupMsInput = findViewById(R.id.dedupMsInput);
         applyButton = findViewById(R.id.applyButton);
         settingsClientButton = findViewById(R.id.settingsClientButton);
@@ -68,6 +74,9 @@ public class SettingsActivity extends ActionActivity {
         reportSuccessCheck.setChecked(AppSettings.reportSuccess(this));
         scopedPinsCheck.setChecked(AppSettings.scopedPins(this));
         twoSignaturesCheck.setChecked(AppSettings.requiredSignatures(this) >= 2);
+        environmentGuardCheck.setChecked(AppSettings.environmentGuard(this));
+        unlockedDeviceCheck.setChecked(AppSettings.requireUnlockedDevice(this));
+        hardwareKeysCheck.setChecked(AppSettings.requireHardwareBackedKeys(this));
         dedupMsInput.setText(String.valueOf(AppSettings.dedupMs(this)));
         statusView.setText(getString(R.string.settings_intro, App.ACTIVE_MODE.label()));
 
@@ -135,6 +144,12 @@ public class SettingsActivity extends ActionActivity {
         // m-of-n: işaretliyken her config iki ayrı anahtardan imza taşımalı.
         final int required = twoSignaturesCheck.isChecked() ? 2 : 1;
         AppSettings.setRequiredSignatures(this, required);
+        // Yerel sertleştirme katmanları (release'te hep açık): yeniden kurulumda
+        // App.harden okur. Anahtar seçenekleri bundan sonra üretilen anahtarlara
+        // uygulanır; var olanlar olduğu gibi kalır.
+        AppSettings.setEnvironmentGuard(this, environmentGuardCheck.isChecked());
+        AppSettings.setRequireUnlockedDevice(this, unlockedDeviceCheck.isChecked());
+        AppSettings.setRequireHardwareBackedKeys(this, hardwareKeysCheck.isChecked());
         runAction(getString(R.string.settings_applying, mode.label()), () -> {
             ((App) getApplication()).applyMode(mode);
             InitState.Snapshot s = App.INIT.awaitSettled(INIT_WAIT_MS);

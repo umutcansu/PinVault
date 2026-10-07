@@ -23,7 +23,7 @@ Uygulama şunları gösterir:
 | mTLS | Cihaz kimliği (panelde token'ı bu telefona bağlamak için), kayıt (token / kayıt kodu), onay bekleme ve doğrulama kodu, ret nedeni, mTLS Config API ve mock host testleri, kaydı silme. Test derlemelerinde ayrıca otomatik kayıt ve P12 içe aktarma (parolayla) |
 | Vault | Yedi dosya (dördü herkese açık, üçü gizli ve kilitli), "Aç" (ekran kilidi sorulur), "Tümünü eşitle", dosya bilgisi (sunucuya gitmeden; kilitli dosyanın içeriği gösterilmez), silme, cihaz kimliği, erişim token'ı |
 | Depolama (yalnızca test derlemeleri) | Şifreli tercih dosyaları ve düz metin sızıntısı kontrolü, `files/vault_files/*.enc`, Keystore anahtarları (algoritma, bit, donanım), istemci sertifikası kaydı |
-| Ayarlar (yalnızca test derlemeleri) | Mod seçimi, telemetri (başarıları raporla, tekrar bastırma), özel ayarlı istemci, reset / init tekrar / yeniden başlat, WorkManager işleri |
+| Ayarlar (yalnızca test derlemeleri) | Mod seçimi, telemetri (başarıları raporla, tekrar bastırma), yerel sertleştirme (ortam kontrolü, kilitli cihaz, donanım anahtarı — release'te hep açık), özel ayarlı istemci, reset / init tekrar / yeniden başlat, WorkManager işleri |
 
 ## Modlar
 
@@ -71,7 +71,9 @@ Başka bir dosya kullanmak için `./gradlew installDebug -PsampleHostProps=/yol/
 
 `host.clientCaPin` cihaz sertifikalarını imzalayan sunucu CA'sının SPKI pin'idir (`client-config.sh` sunucudan okur; CA değişecekse yenisi virgülle eklenir). Uygulama onu kayıt yapan bloğa ve mTLS bloğuna `clientCaPins(...)` olarak verir: kayıtta ve her yenilemede gelen zincir en az iki sertifika olmalı, yaprak telefonun kendi anahtarı için kesilmiş ve bu CA tarafından imzalanmış olmalı. Kayıt yanıtını yolda değiştiren biri (başka anahtar için ya da kendi CA'sıyla imzaladığı bir sertifika) telefona kimlik kurduramaz. Boşsa ilk kayıtta gelen zincire güvenilir. Sunucunun ürettiği anahtar (P12 ile kayıt) kabul edilmez: örnek uygulama `allowServerGeneratedKey()` çağırmaz; elle yüklenen P12 (yalnızca test derlemeleri) kayıt değil, `clientKeystore(...)` ile verilir.
 
-Dosyadaki her değer derlemede biçimine göre denetlenir (IP, port, Base64 pin, public key) ve `BuildConfig`'e kaçışlanarak yazılır; biçime uymayan bir değer derlemeyi durdurur.
+`host.expectedSignerSha256` uygulamanın beklenen imza sertifikasının SHA-256'sıdır (hex; `apksigner verify --print-certs` ya da `keytool -list -v` çıktısı, iki noktalı ya da bitişik; birden çoksa virgülle: yayın anahtarı + Play App Signing). Uygulama bunu `expectedSignerSha256(...)` ile kütüphaneye verir; kütüphane atestasyon raporunda `app_integrity`'yi buna göre işaretler, yani başka bir anahtarla imzalanmış (yeniden paketlenmiş) bir kopya sunucuda görünür. Sunucudaki `ATTESTATION_SIGNER_SHA256` ile aynı değerdir; `client-config.sh --properties` onu `.env`'den yazar. Boşsa verilmez (demo dosyası); release boşken derlenmez. Debug derlemesinde debug anahtarının SHA-256'sı yazılabilir.
+
+Dosyadaki her değer derlemede biçimine göre denetlenir (IP, port, Base64 pin, public key, SHA-256) ve `BuildConfig`'e kaçışlanarak yazılır; biçime uymayan bir değer derlemeyi durdurur.
 
 `target.requireCaTrust=true` (varsayılan; `client-config.sh` hedefin zincirine bakıp yazar): hedefin (`www.example.com`) sertifikası pin'i tutmakla kalmamalı, telefonun güvendiği CA'lardan da geçmeli (`PinVaultConfig.Builder.requireCaTrust`). Config imza anahtarı çalınsa bile saldırgan bu hedef için kendi sertifikasını pinleyemez. Sertifikası self-signed ya da kurum içi CA'lı bir hedef için `false` yazılır; bunu `client-config.sh` yalnızca açıkça `--target-private-ca` verilince yapar ve **release derlemesi `false` ile derlenmez**. Host'un kendi portları ve mock host'lar bu listede değildir (sunucunun kendi CA'sı).
 
@@ -105,7 +107,23 @@ Release ayrıca:
 - Bütün ekranlarda `FLAG_SECURE` (ekran görüntüsü, ekran kaydı, "son uygulamalar" önizlemesi kapalı).
 - `Log.d/v/i` ve kütüphanenin teşhis log çağrıları R8 ile koddan silinir (`app/proguard-release.pro`); kütüphanenin debug log'u hiç açılmaz.
 - Test bayraklarıyla derlenmez: `-Psample.diagnosticLogs=true`, `-Psample.e2eScreenshots=true` ya da `target.requireCaTrust=false` verilirse derleme durur. Bu bayraklar yalnızca debug ve e2e içindir.
-- Demo host değerleriyle derlenmez. Depodaki `sample-host.properties` bir demo dosyasıdır; release şunları ister, biri eksikse ne gerektiğini yazıp durur: `host.requiredSignatures` en az 2, gereken imzadan en az bir fazla güvenilen anahtar (`host.signingPublicKey` + `host.signingPublicKeys`, yani yedek anahtar), dolu `host.recoveryPublicKeys`, `host.clientCaPin`, `host.tlsScope` ve `host.mtlsScope`. Bu değerleri host'un üretim profili üretir: `../sample-host/scripts/client-config.sh --properties > sample-host.properties` (README → [Üretim profili](../sample-host/README.md#üretim-profili)).
+- Demo host değerleriyle derlenmez. Depodaki `sample-host.properties` bir demo dosyasıdır; release şunları ister, biri eksikse ne gerektiğini yazıp durur: `host.requiredSignatures` en az 2, gereken imzadan en az bir fazla güvenilen anahtar (`host.signingPublicKey` + `host.signingPublicKeys`, yani yedek anahtar), dolu `host.recoveryPublicKeys`, `host.clientCaPin`, `host.tlsScope`, `host.mtlsScope` ve `host.expectedSignerSha256`. Bu değerleri host'un üretim profili üretir: `../sample-host/scripts/client-config.sh --properties > sample-host.properties` (README → [Üretim profili](../sample-host/README.md#üretim-profili)).
+- Üç yerel sertleştirme katmanı her zaman açıktır ve kapatılamaz (aşağıda, "Yerel sertleştirme").
+
+### Yerel sertleştirme
+
+Kütüphane telefonda root, emülatör, debugger ve hooking izlerini ölçüp atestasyon raporuyla sunucuya gönderir ama cihazda kendi başına hiçbir şeyi durdurmaz; yerel tepki uygulamanındır. Örnek uygulama kütüphanenin üç kancasını `App.harden` içinde, her modda bağlar:
+
+| Kanca | Ne yapar | Örnekte |
+|---|---|---|
+| `environmentGuard` | Kütüphane kayıt, dosya indirme ve dosya açma öncesinde uygulamaya "bu telefon güvenilir mi?" diye sorar; `false` gelirse işlem `Failed` döner (`UntrustedEnvironmentException`), hiçbir şey gönderilmez, token harcanmaz. | `DeviceShield`: `su` ikilileri ve Magisk / KernelSU / APatch dosyaları (root), bağlı debugger ya da `TracerPid` (hata ayıklayıcı), `/proc/self/maps` içinde Frida / Xposed / Substrate / Dobby (hooking). `init` her zaman geçer: pinli trafik çalışır, sunucu atestasyonla kendi kararını verir. Düz Java, hook'lanabilir; gerçek uygulamada yerine bir RASP ürünü ya da RootBeer koy, kararını aynı yere bağla. |
+| `expectedSignerSha256` | Atestasyon raporunda `app_integrity`: APK'yı imzalayan sertifika beklenenden farklıysa (yeniden paketlenmiş kopya) işaretlenir, sunucu politikasına göre token vermez. | `host.expectedSignerSha256` (yukarıda). |
+| `requireUnlockedDevice()` | Bundan sonra üretilen Keystore anahtarları yalnızca telefonun kilidi açıkken çalışır (Android 9+). Keystore böyle bir anahtar yapamazsa işlem reddedilir; sessizce bayraksız anahtar üretilmez. | Release'te açık. |
+| `requireHardwareBackedKeys()` | Keystore'un yazılımda ürettiği bir anahtar silinir ve işlem reddedilir. | Release'te açık. Emülatörde güvenli donanım yoktur. |
+
+Release'te üçü de her zaman açıktır. Test derlemelerinde (debug, e2e) Ayarlar ekranında üç kutu vardır ve **varsayılan kapalıdır**: uçtan uca testler `su` taşıyan userdebug emülatör imajlarında koşar (ortam kontrolü onları root'lu sayar) ve emülatörde donanım anahtarı yoktur. Kutular `environmentGuardCheck`, `unlockedDeviceCheck`, `hardwareKeysCheck`; "Uygula ve yeniden başlat" ile PinVault yeniden kurulur. Anahtar seçenekleri yalnızca bundan sonra üretilen anahtarlara uygulanır; var olanlar olduğu gibi kalır (Depolama ekranı anahtarların yerini gösterir).
+
+Ortam kontrolü açıkken root'lu telefonda mTLS ekranındaki kayıt ve Vault ekranındaki indirme / "Aç" düğmeleri "❌ … environment guard refused ENROLL/FETCH_FILE/UNLOCK_FILE" ile biter; ana ekrandaki pinli istekler çalışmaya devam eder.
 
 > **e2e APK'sı gerçek telefona kurulmaz.** Test kontrollerini (mod değiştirme, otomatik kayıt, elle P12, gereken imza sayısını değiştiren Ayarlar ekranı) taşır, herkesin bildiği debug anahtarıyla imzalıdır ve demo host değerleriyle derlenir. Yalnızca test telefonu ve emülatör içindir; kullanıcılara yalnızca `release` gider.
 

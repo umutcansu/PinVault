@@ -40,6 +40,26 @@ user-auth key, and the silent `requireUnlockedDevice()` fallback).
   28, 29, 30 and 34 with Robolectric. The reference server accepts windows
   up to 10 s, so no server change is needed.
 
+### Samples
+
+- **sample-client wires the three local hardening hooks** it only
+  documented before (audit F-1), in every mode, from `App.harden`:
+  `environmentGuard` with a small in-app check (`DeviceShield`: `su`
+  binaries and Magisk/KernelSU/APatch files, an attached debugger or
+  `TracerPid`, Frida/Xposed/Substrate/Dobby in `/proc/self/maps`) that
+  refuses `ENROLL`, `FETCH_FILE` and `UNLOCK_FILE` on a compromised device
+  and always allows `INIT`; `expectedSignerSha256` from the new
+  `host.expectedSignerSha256` property in `sample-host.properties`
+  (`client-config.sh --properties` writes it from the server's
+  `ATTESTATION_SIGNER_SHA256`; empty = not set; the release build refuses
+  an empty value like the other release guards); `requireUnlockedDevice()`
+  and `requireHardwareBackedKeys()`. All three are always on in the
+  release build type. Test builds (debug, e2e) get three Settings
+  checkboxes (`environmentGuardCheck`, `unlockedDeviceCheck`,
+  `hardwareKeysCheck`), off by default, so the E2E suite keeps its
+  behaviour on userdebug emulator images that carry `su` and have no
+  secure hardware. Existing strings and view ids are unchanged.
+
 ## 2.3.0 — 2026-10-07 — iOS library, attestation, Play Integrity, managed trust roots, environment guard, setup wizard
 
 ### iOS (new)
