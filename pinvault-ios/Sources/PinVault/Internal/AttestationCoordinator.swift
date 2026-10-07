@@ -81,6 +81,7 @@ final class AttestationCoordinator: Sendable {
                 onVerdict: { warnings, reasons in
                     roundAware?.roundAnswered(scope: id, warnings: warnings, rejectionReasons: reasons)
                 },
+                onRegistrationWanted: { roundAware?.registrationWanted(scope: id) },
                 clock: clock,
                 jitter: jitter,
                 sleep: sleep

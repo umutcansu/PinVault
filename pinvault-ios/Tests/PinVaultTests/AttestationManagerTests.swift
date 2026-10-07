@@ -536,7 +536,7 @@ private final class SlowAttestationApi: AttestationApi, @unchecked Sendable {
 
     func attestChallenge() async throws -> Data {
         lock.withLock { _rounds += 1 }
-        try await Task.sleep(nanoseconds: 200_000_000)
+        try await Task.sleep(nanoseconds: 400_000_000)
         return Data(#"{"nonce":"n"}"#.utf8)
     }
 

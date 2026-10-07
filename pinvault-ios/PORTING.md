@@ -121,13 +121,16 @@ Kotlin files are grouped (results, small enums).
   iOS probes: `rooted` = jailbreak artefacts (`/Applications/Cydia.app`, `/Applications/Sileo.app`,
   `/Applications/Zebra.app`, `/var/jb`, `/private/var/lib/apt`, `/usr/sbin/sshd`, `/bin/bash`,
   `/etc/apt`, write test outside the sandbox under `/private`, `cydia://` / `sileo://` URL schemes are
-  NOT queried (needs Info.plist entries)); `emulator` = `targetEnvironment(simulator)` or
+  NOT queried (needs Info.plist entries); `/usr/sbin/sshd` and `/bin/bash` are not evidence on the
+  simulator, which sees the Mac's file system); `emulator` = `targetEnvironment(simulator)` or
   `SIMULATOR_DEVICE_NAME` env; `debugger` = `sysctl` `P_TRACED`; `debuggable` = `get-task-allow`
   entitlement (read from the embedded provisioning profile; on the simulator `#if DEBUG`);
   `hooking_framework` = loaded dyld images matching `frida|substrate|substitute|libhooker|ellekit|cycript|SSLKillSwitch|FridaGadget`,
   `DYLD_INSERT_LIBRARIES` set, frida's default port 27042 open on 127.0.0.1; `app_integrity` = bundle id /
   team id differ from the values the app gave the library (`expectedBundleId`, `expectedTeamId`);
   `unknown_installer` = not App Store / TestFlight (an embedded provisioning profile, or the simulator).
+  `key_unattested` goes down with the flag off (evidence `app-attest:none` without an App Attest
+  verdict): the server decides it, and only a verified App Attest verdict lifts it there.
   The server (§5) treats `platform: ios` specially.
 - App Attest tokens (§6).
 - `X-PinVault-Features: forbidden-as-409` on every library request to a Config API, and on app
@@ -170,6 +173,22 @@ Kotlin files are grouped (results, small enums).
   `{"provider":"app-attest","keyId":"<base64>","assertion":"<base64 CBOR>"}`.
 - `DCAppAttestService.isSupported` is false on the simulator: the provider returns nil and the
   report carries no `verdictProvider`.
+- **App Attest in place of Android Key Attestation** (server side only when `APP_ATTEST_APP_IDS` is
+  configured; without it an iPhone is refused wherever a setting says `enforce`, as before). Each use
+  generates a fresh App Attest key and sends an attestation (token JSON above) whose client data hash
+  binds it to what is being registered:
+  - Enrollment (`POST …/client-certs/enroll`): body field `appAttestation`,
+    `clientDataHash = SHA256(UTF8(integrityRequestHash))` (the 43-char hash of the CSR and device id).
+    `ENROLLMENT_ATTESTATION=warn|enforce` accepts a verified one in place of `attestationChain`.
+  - Screen-lock key registration (`POST …/vault/devices/{id}/public-key`, `purpose: user_auth`):
+    body field `appAttestation`, `clientDataHash = SHA256(UTF8("pinvault-user-auth-key:v1:" + deviceId + ":" + base64(SHA256(SPKI DER))))`.
+    `USER_AUTH_ATTESTATION=enforce` accepts a verified one in place of the Android chain (the server
+    cannot learn the key's access control from it; it records the key kind as `app_attest`). The same
+    rule applies when a registered key is replaced.
+  - Attestation (`ATTESTATION_KEY_POLICY=enforce`): the first round's report carries the attestation
+    (the round format above); a verified one registers the device key in place of the Android chain.
+  App Attest proves the request came from the genuine app on genuine Apple hardware, not that the
+  device is not jailbroken, and not where the identity / RSA key lives: the docs say so.
 - Public types (L5): `AppAttestVerdictProvider` (an `IntegrityVerdictProvider`, `init()`), and
   `AppAttestIntegrityTokenProvider` (an `IntegrityTokenProvider`, `init()`). The panel's setup wizard
   generates `.integrityTokenProvider(AppAttestIntegrityTokenProvider())` for Swift.

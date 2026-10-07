@@ -17,7 +17,8 @@ import Foundation
 /// ``IntegrityVerdictProvider``. It answers nil — the report then carries no
 /// verdict — where `DCAppAttestService.isSupported` is false (the simulator,
 /// devices without a Secure Enclave) and, for the rest of the process, after
-/// App Attest said the app cannot use it (missing App Attest capability).
+/// App Attest said the app cannot use it (missing App Attest capability) or
+/// three attestations in a row failed.
 ///
 /// ```swift
 /// .integrityVerdictProvider(AppAttestVerdictProvider())
@@ -45,6 +46,10 @@ public final class AppAttestVerdictProvider: IntegrityVerdictProvider, Sendable 
     private let deviceId: @Sendable () -> String?
     /// Set when App Attest said this app or device cannot use it: nil for the rest of the process.
     private let disabled = Locked<Bool>(false)
+    /// Attestations that failed in a row (other than "server unavailable").
+    private let attestFailures = Locked<Int>(0)
+    /// After this many failed attestations in a row the provider stays off for the process.
+    static let maxAttestFailures = 3
     private let log = PinVaultLog.tag("AppAttestVerdictProvider")
 
     /// The provider over `DCAppAttestService.shared`.
@@ -172,13 +177,25 @@ extension AppAttestVerdictProvider: AttestationRoundVerdictProvider {
         do {
             let attestation = try await service.attestKey(keyId, clientDataHash: clientDataHash)
             save(scope: scope, keyId: keyId, state: .sent)
+            attestFailures.set(0)
             return IntegrityVerdict(name: AppAttestToken.provider, token: AppAttestToken.attestation(keyId: keyId, object: attestation))
         } catch AppAttestServiceError.serverUnavailable {
             // Apple asks to retry later with the same key.
             log.w("App Attest: Apple's server is unavailable — the key of [\(scope)] is attested next round")
             return nil
         } catch {
-            if (error as? AppAttestServiceError) != .featureUnsupported { dropKey(scope: scope) }
+            if (error as? AppAttestServiceError) != .featureUnsupported {
+                dropKey(scope: scope)
+                // Every round would otherwise ask Apple for a new key's attestation.
+                let failures = attestFailures.withLock { count -> Int in
+                    count += 1
+                    return count
+                }
+                if failures >= Self.maxAttestFailures {
+                    disabled.set(true)
+                    log.w("App Attest: \(failures) attestations failed in a row — attesting without it for the rest of the process")
+                }
+            }
             throw error
         }
     }
@@ -192,5 +209,14 @@ extension AppAttestVerdictProvider: AttestationRoundVerdictProvider {
         if let stored = key(scope: scope), stored.state == .sent {
             save(scope: scope, keyId: stored.keyId, state: .confirmed)
         }
+    }
+
+    /// Under `ATTESTATION_KEY_POLICY=enforce` a device the server does not
+    /// know registers only with an App Attest attestation in its report: a key
+    /// that would assert is dropped so the next round attests a new one.
+    func registrationWanted(scope: String) {
+        guard let stored = key(scope: scope), stored.state == .confirmed else { return }
+        log.w("App Attest: the server wants the device registered — attesting a new key for [\(scope)] next round")
+        dropKey(scope: scope)
     }
 }

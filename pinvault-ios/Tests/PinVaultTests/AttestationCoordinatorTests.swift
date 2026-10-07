@@ -213,6 +213,51 @@ final class AttestationCoordinatorTests: XCTestCase {
         XCTAssertNil(provider.key(scope: "mtls"), "another block's key is its own")
     }
 
+    func testAServerThatWantsTheKeyRegisteredGetsAFreshAppAttestAttestationNextRound() async throws {
+        let service = FakeAppAttestService()
+        let store = InMemoryPreferences()
+        let provider = AppAttestVerdictProvider(service: service, store: { store }, deviceId: { nil })
+        let probe = DeviceIntegrityProbe(verdictProvider: provider, clock: { 1 }, inputs: DeviceIntegrityProbeTests.iPhone())
+        let s = try setup(probe: probe)
+        let api = s.apis["tls"]!.attestation
+
+        enqueuePass(s.apis["tls"]!, token: "eyJ.1")
+        _ = await s.coordinator.attestNow(configApiId: "tls")
+        let firstKey = try XCTUnwrap(provider.key(scope: "tls"))
+        XCTAssertEqual(firstKey.state, .confirmed)
+
+        // The server forgot the device and registers keys only with an attestation (ATTESTATION_KEY_POLICY=enforce).
+        api.enqueue(.json(#"{"nonce":"nonce-2"}"#))
+        api.enqueue(.http(403, #"{"error":"attestation_required","message":"This server registers only attested keys."}"#))
+        let refused = await s.coordinator.attestNow(configApiId: "tls")
+        XCTAssertEqual(refused.result, .failed)
+        XCTAssertNil(provider.key(scope: "tls"), "the asserting key is dropped")
+
+        // The next round's report carries a new key's attestation, made for that round.
+        enqueuePass(s.apis["tls"]!, token: "eyJ.3")
+        _ = await s.coordinator.attestNow(configApiId: "tls")
+        let report = try XCTUnwrap(LenientJSON.object(Data(try XCTUnwrap(api.attestBodies.last?["report"] as? String).utf8)))
+        let token = try XCTUnwrap(LenientJSON.object(Data(try XCTUnwrap((report["verdictProvider"] as? [String: Any])?["token"] as? String).utf8)))
+        XCTAssertNotNil(token["attestation"])
+        XCTAssertNotEqual(token["keyId"] as? String, firstKey.keyId)
+        XCTAssertEqual(service.attested.last?.clientDataHash, AppAttestToken.roundClientDataHash(nonce: "nonce-eyJ.3", deviceId: "device-07"))
+    }
+
+    func testOtherRefusalsKeepTheAppAttestKey() async throws {
+        let service = FakeAppAttestService()
+        let store = InMemoryPreferences()
+        let provider = AppAttestVerdictProvider(service: service, store: { store }, deviceId: { nil })
+        let probe = DeviceIntegrityProbe(verdictProvider: provider, clock: { 1 }, inputs: DeviceIntegrityProbeTests.iPhone())
+        let s = try setup(probe: probe)
+        enqueuePass(s.apis["tls"]!, token: "eyJ.1")
+        _ = await s.coordinator.attestNow(configApiId: "tls")
+        let api = s.apis["tls"]!.attestation
+        api.enqueue(.json(#"{"nonce":"nonce-2"}"#))
+        api.enqueue(.http(400, #"{"error":"nonce_expired"}"#))
+        _ = await s.coordinator.attestNow(configApiId: "tls")
+        XCTAssertEqual(provider.key(scope: "tls")?.state, .confirmed)
+    }
+
     func testNoAttestingBlockMeansNoInterceptorAndNoProbe() throws {
         let config = try PinVaultConfig.Builder()
             .configApi("plain", url: "https://plain.example.com/") { $0.allowUnpinnedConfigApi().allowUnsigned() }

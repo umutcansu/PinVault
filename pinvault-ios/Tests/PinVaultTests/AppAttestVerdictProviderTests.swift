@@ -84,6 +84,18 @@ final class AppAttestVerdictProviderTests: XCTestCase {
         XCTAssertNil(provider.key(scope: "api"))
     }
 
+    func testARegistrationRequestDropsOnlyAKeyThatWouldAssert() async throws {
+        let provider = provider()
+        _ = try await provider.verdict(nonce: "n1", deviceId: "d", scope: "api")
+        provider.registrationWanted(scope: "api")
+        XCTAssertEqual(provider.key(scope: "api")?.state, .sent, "an unconfirmed attestation is replaced next round anyway")
+        provider.roundAnswered(scope: "api", warnings: [], rejectionReasons: [])
+        provider.registrationWanted(scope: "api")
+        XCTAssertNil(provider.key(scope: "api"))
+        let next = try token(await provider.verdict(nonce: "n2", deviceId: "d", scope: "api"))
+        XCTAssertNotNil(next["attestation"], "the registration round carries an attestation")
+    }
+
     func testAnAttestationNoVerdictConfirmedIsNotTrustedTheNextRoundAttestsAgain() async throws {
         let provider = provider()
         let first = try token(await provider.verdict(nonce: "n1", deviceId: "d", scope: "api"))
@@ -152,6 +164,33 @@ final class AppAttestVerdictProviderTests: XCTestCase {
             XCTAssertEqual(error, .failed("unknownSystemFailure"))
         }
         XCTAssertNil(provider.key(scope: "api"))
+    }
+
+    func testThreeFailedAttestationsInARowTurnTheProviderOffForTheProcess() async throws {
+        let provider = provider()
+        for round in 1...3 {
+            service.failNextAttest(.invalidInput)
+            do {
+                _ = try await provider.verdict(nonce: "n\(round)", deviceId: "d", scope: "api")
+                XCTFail("round \(round) should fail")
+            } catch {}
+        }
+        XCTAssertEqual(service.generated.count, 3)
+        let after = try await provider.verdict(nonce: "n4", deviceId: "d", scope: "api")
+        XCTAssertNil(after)
+        XCTAssertEqual(service.generated.count, 3, "Apple is not asked again")
+
+        // A success in between resets the count.
+        let other = self.provider()
+        service.failNextAttest(.invalidInput)
+        _ = try? await other.verdict(nonce: "a", deviceId: "d", scope: "x")
+        service.failNextAttest(.invalidInput)
+        _ = try? await other.verdict(nonce: "b", deviceId: "d", scope: "x")
+        _ = try await other.verdict(nonce: "c", deviceId: "d", scope: "x")
+        service.failNextAttest(.invalidInput)
+        _ = try? await other.verdict(nonce: "d", deviceId: "d", scope: "y")
+        let stillOn = try await other.verdict(nonce: "e", deviceId: "d", scope: "y")
+        XCTAssertNotNil(stillOn)
     }
 
     func testALostKeyIsReplacedInTheSameRound() async throws {

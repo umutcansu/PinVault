@@ -48,6 +48,7 @@ final class AttestationManager: AttestationTokenSource, @unchecked Sendable {
     private let onConfigApplied: @Sendable (UpdateResult) -> Void
     private let onEvent: @Sendable (PinVaultConnectionEvent) -> Void
     private let onVerdict: @Sendable (_ warnings: [String], _ rejectionReasons: [String]) -> Void
+    private let onRegistrationWanted: @Sendable () -> Void
     private let clock: @Sendable () -> Int64
     private let jitter: @Sendable () -> Double
     private let sleep: @Sendable (Int64) async throws -> Void
@@ -93,6 +94,9 @@ final class AttestationManager: AttestationTokenSource, @unchecked Sendable {
     ///     recovery interceptor reports its updates.
     ///   - onEvent: receives one ``PinVaultConnectionEvent/attestation(configApiId:status:arc:rejectionReasons:warnings:tokenExpiresAt:deviceManufacturer:deviceModel:failureReason:)`` per attempt.
     ///   - onVerdict: told the warnings and reasons of every verdict (the App Attest provider drops an unknown key).
+    ///   - onRegistrationWanted: told when the server wants the key's attestation again
+    ///     (`key_unknown`, `attestation_required`, `attestation_invalid`); the App Attest
+    ///     provider then attests a fresh key in the next round's report.
     ///   - jitter: a value in [0, 1) per call. Tests fix it.
     ///   - sleep: waits the given ms (the refresh loop). Tests replace it.
     init(
@@ -108,6 +112,7 @@ final class AttestationManager: AttestationTokenSource, @unchecked Sendable {
         onConfigApplied: @escaping @Sendable (UpdateResult) -> Void = { _ in },
         onEvent: @escaping @Sendable (PinVaultConnectionEvent) -> Void = { _ in },
         onVerdict: @escaping @Sendable (_ warnings: [String], _ rejectionReasons: [String]) -> Void = { _, _ in },
+        onRegistrationWanted: @escaping @Sendable () -> Void = {},
         clock: @escaping @Sendable () -> Int64 = { Int64(Date().timeIntervalSince1970 * 1000) },
         jitter: @escaping @Sendable () -> Double = { Double.random(in: 0..<1) },
         sleep: @escaping @Sendable (Int64) async throws -> Void = { ms in
@@ -126,6 +131,7 @@ final class AttestationManager: AttestationTokenSource, @unchecked Sendable {
         self.onConfigApplied = onConfigApplied
         self.onEvent = onEvent
         self.onVerdict = onVerdict
+        self.onRegistrationWanted = onRegistrationWanted
         self.clock = clock
         self.jitter = jitter
         self.sleep = sleep
@@ -240,7 +246,11 @@ final class AttestationManager: AttestationTokenSource, @unchecked Sendable {
             state.withLock { $0.chainWanted = false }
             return await handleVerdict(answer, skew: skew)
         } catch let error as AttestationHttpError {
-            if Self.chainWantedAgain.contains(error.serverError ?? "") { state.withLock { $0.chainWanted = true } }
+            if Self.chainWantedAgain.contains(error.serverError ?? "") {
+                state.withLock { $0.chainWanted = true }
+                // iOS: the App Attest attestation stands in for the chain (PORTING.md §6).
+                onRegistrationWanted()
+            }
             return failed(error.message, skew: skew)
         } catch is CancellationError {
             // Cancelled (reset during a round): nothing to report.

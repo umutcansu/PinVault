@@ -10,6 +10,11 @@ protocol AttestationRoundVerdictProvider: IntegrityVerdictProvider {
 
     /// The server answered block `scope`'s round with a verdict (pass or reject).
     func roundAnswered(scope: String, warnings: [String], rejectionReasons: [String])
+
+    /// The server refused block `scope`'s round because it wants the device
+    /// key registered with an attestation (`key_unknown`, `attestation_required`,
+    /// `attestation_invalid`): the next round must carry a fresh one.
+    func registrationWanted(scope: String)
 }
 
 /// Builds the ``IntegrityReport`` of `ATTESTATION.md` §3 (iOS shape,
