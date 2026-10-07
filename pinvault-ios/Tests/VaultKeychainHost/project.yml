@@ -6,6 +6,11 @@
 #   xcodebuild test -project VaultKeychainHost.xcodeproj -scheme VaultKeychainHost \
 #     -destination 'platform=iOS Simulator,id=<udid>'
 #
+# The biometrics-only key tests (UserAuthKeychainKeysTests.testABiometricsOnlyKey…)
+# need Face ID enrolled on the simulator (Features > Face ID > Enrolled), else they skip:
+#   xcrun simctl spawn <udid> notifyutil -s com.apple.BiometricKit.enrollmentChanged 1
+#   xcrun simctl spawn <udid> notifyutil -p com.apple.BiometricKit.enrollmentChanged
+#
 # The manual Face ID check (UserAuthKeychainKeysTests.testManualFaceIDThroughTheSystemSheet):
 #   xcrun simctl spawn <udid> notifyutil -s com.apple.BiometricKit.enrollmentChanged 1
 #   xcrun simctl spawn <udid> notifyutil -p com.apple.BiometricKit.enrollmentChanged

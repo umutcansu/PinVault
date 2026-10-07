@@ -48,6 +48,8 @@ public struct PinVaultConfig: Sendable {
     public let requireUnlockedDevice: Bool
     /// Refuse keys made outside secure hardware.
     public let requireHardwareBackedKeys: Bool
+    /// iOS: what the screen-lock key of `userAuth` files is bound to (``UserAuthStrength``).
+    public let userAuthStrength: UserAuthStrength
     /// A second opinion forwarded inside attestation reports.
     public let integrityVerdictProvider: (any IntegrityVerdictProvider)?
     /// Android: SHA-256 of the expected APK signers (lowercase hex). iOS reports no signer digests.
@@ -80,6 +82,7 @@ public struct PinVaultConfig: Sendable {
         vaultFileMaxOfflineAgeMs: Int64 = 0,
         requireUnlockedDevice: Bool = false,
         requireHardwareBackedKeys: Bool = false,
+        userAuthStrength: UserAuthStrength = .deviceOwner,
         integrityVerdictProvider: (any IntegrityVerdictProvider)? = nil,
         expectedSignerSha256: [String] = [],
         managedTrustRoots: Bool = false,
@@ -117,6 +120,7 @@ public struct PinVaultConfig: Sendable {
         self.vaultFileMaxOfflineAgeMs = vaultFileMaxOfflineAgeMs
         self.requireUnlockedDevice = requireUnlockedDevice
         self.requireHardwareBackedKeys = requireHardwareBackedKeys
+        self.userAuthStrength = userAuthStrength
         self.integrityVerdictProvider = integrityVerdictProvider
         self.expectedSignerSha256 = expectedSignerSha256
         self.managedTrustRoots = managedTrustRoots
@@ -163,6 +167,7 @@ public struct PinVaultConfig: Sendable {
         private var vaultFileMaxOfflineAgeMs: Int64 = 0
         private var unlockedDeviceRequired = false
         private var hardwareKeysRequired = false
+        private var userAuthStrength = UserAuthStrength.deviceOwner
         private var integrityVerdictProvider: (any IntegrityVerdictProvider)?
         private var expectedSignerSha256: [String] = []
         private var managedRootsEnabled = false
@@ -307,6 +312,19 @@ public struct PinVaultConfig: Sendable {
         /// a key is deleted again and the operation fails with
         /// ``PinVaultError/hardwareBackedKeyRequired(keyKind:level:cause:)``. Not for simulator builds.
         @discardableResult public func requireHardwareBackedKeys() -> Builder { hardwareKeysRequired = true; return self }
+
+        /// iOS: what the screen-lock key of `userAuth` files is bound to and
+        /// what its prompt accepts (``UserAuthStrength``; default
+        /// ``UserAuthStrength/deviceOwner``: Face ID / Touch ID or the passcode).
+        @discardableResult public func userAuthStrength(_ strength: UserAuthStrength) -> Builder {
+            userAuthStrength = strength
+            return self
+        }
+
+        /// ``userAuthStrength(_:)`` with ``UserAuthStrength/biometricCurrentSet``:
+        /// biometrics only, no passcode fallback, and the key is retired when
+        /// the enrolled biometrics change (every locked copy is fetched again).
+        @discardableResult public func userAuthBiometricOnly() -> Builder { userAuthStrength(.biometricCurrentSet) }
 
         /// Managed trust roots: a host without a pin entry is accepted when the
         /// platform validates its chain to a root the signed config lists in `trustRoots`.
@@ -464,6 +482,7 @@ public struct PinVaultConfig: Sendable {
                 vaultFileMaxOfflineAgeMs: vaultFileMaxOfflineAgeMs,
                 requireUnlockedDevice: unlockedDeviceRequired,
                 requireHardwareBackedKeys: hardwareKeysRequired,
+                userAuthStrength: userAuthStrength,
                 integrityVerdictProvider: integrityVerdictProvider,
                 expectedSignerSha256: expectedSignerSha256,
                 managedTrustRoots: managedRootsEnabled,

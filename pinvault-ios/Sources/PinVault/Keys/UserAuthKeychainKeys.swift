@@ -4,20 +4,32 @@ import Security
 
 /// The Keychain user-auth key (Kotlin `KeystoreUserAuthKeys`): a permanent
 /// RSA-2048 private key, application tag ``UserAuthKeyConstants/alias``, whose
-/// access control is `SecAccessControl(kSecAttrAccessibleWhenPasscodeSetThisDeviceOnly,
-/// .userPresence)`:
+/// access control is `SecAccessControl(kSecAttrAccessibleWhenPasscodeSetThisDeviceOnly, flags)`
+/// with `flags` chosen by the config's ``UserAuthStrength``:
 ///
-/// - every use needs the device owner (Face ID / Touch ID or the passcode);
-///   the library evaluates `.deviceOwnerAuthentication` on an `LAContext` first
-///   and uses the key with `kSecUseAuthenticationContext: thatContext`, so a
-///   device shows one prompt. A key use never prompts by itself
-///   (`interactionNotAllowed`): without a passed evaluation it fails, and the
-///   copy is kept.
-/// - `.userPresence` is not bound to the enrolled biometrics, so enrolling a
-///   new face or finger does not retire it; removing the passcode deletes the
-///   item (`WhenPasscodeSet…`), which the library sees as a missing key
-///   (``UserAuthKeyState/missing``) — the counterpart of Android retiring it.
-/// - ThisDeviceOnly: never in a backup, never on another device.
+/// - ``UserAuthStrength/deviceOwner`` (default): `.userPresence`. Every use
+///   needs the device owner (Face ID / Touch ID or the passcode); the library
+///   evaluates `.deviceOwnerAuthentication` on an `LAContext` first and uses
+///   the key with `kSecUseAuthenticationContext: thatContext`, so a device
+///   shows one prompt. `.userPresence` is not bound to the enrolled
+///   biometrics, so enrolling a new face or finger does not retire it;
+///   removing the passcode deletes the item (`WhenPasscodeSet…`), which the
+///   library sees as a missing key (``UserAuthKeyState/missing``) — the
+///   counterpart of Android retiring it.
+/// - ``UserAuthStrength/biometricCurrentSet``: `.biometryCurrentSet`. Only the
+///   biometrics enrolled when the key was made open it (the prompt evaluates
+///   `.deviceOwnerAuthenticationWithBiometrics`; no passcode fallback). When
+///   the enrolment changes the Keychain refuses the key even after a passed
+///   prompt: that refusal (`errSecAuthFailed` on a use the evaluated context
+///   authorised, or an item the Keychain no longer finds) is read as the key
+///   being retired, the item is deleted and every copy sealed with it is given
+///   up (``VaultFileUnlockResult/invalidated(key:)``); the next fetch makes a
+///   new key. Removing the last face or finger is reported by the prompt
+///   itself (`LAError.biometryNotEnrolled`, see ``UserAuthPrompt``).
+///
+/// A key use never prompts by itself (`interactionNotAllowed`): without a
+/// passed evaluation it fails, and the copy is kept. ThisDeviceOnly: never in
+/// a backup, never on another device.
 ///
 /// The Secure Enclave holds no RSA keys, so with `requireHardwareBacked` the
 /// key is refused (``PinVaultError/hardwareBackedKeyRequired(keyKind:level:cause:)``).
@@ -25,6 +37,7 @@ final class KeychainUserAuthKeys: UserAuthKeys {
     private let alias: String
     private let evaluator: any UserAuthEvaluator
     private let requireHardwareBacked: Bool
+    let strength: UserAuthStrength
     /// Serialises ensureKey: a local seal and a registration may both find no
     /// key; only one may make it, or the other deletes the new key.
     private let lock = Locked(())
@@ -32,14 +45,26 @@ final class KeychainUserAuthKeys: UserAuthKeys {
 
     init(
         alias: String = UserAuthKeyConstants.alias,
-        evaluator: any UserAuthEvaluator = SystemUserAuthEvaluator(),
-        requireHardwareBacked: Bool = false
+        evaluator: (any UserAuthEvaluator)? = nil,
+        requireHardwareBacked: Bool = false,
+        strength: UserAuthStrength = .deviceOwner
     ) {
         self.alias = alias
-        self.evaluator = evaluator
+        self.evaluator = evaluator ?? SystemUserAuthEvaluator(strength: strength)
         self.requireHardwareBacked = requireHardwareBacked
+        self.strength = strength
     }
 
+    /// The access-control flags of the key for `strength`.
+    static func accessControlFlags(for strength: UserAuthStrength) -> SecAccessControlCreateFlags {
+        switch strength {
+        case .deviceOwner: return .userPresence
+        case .biometricCurrentSet: return .biometryCurrentSet
+        }
+    }
+
+    /// Whether the key's policy can be evaluated: a passcode, or (biometrics
+    /// only) enrolled and usable biometrics.
     func isScreenLockSet() -> Bool {
         evaluator.canEvaluate()
     }
@@ -61,7 +86,7 @@ final class KeychainUserAuthKeys: UserAuthKeys {
             if try state() == .usable { return false }
             delete()
             try generate()
-            log.i("User-auth key created (\(UserAuthKeyKind.perUse.rawValue))")
+            log.i("User-auth key created (\(kindForStrength.rawValue))")
             return true
         }
     }
@@ -70,9 +95,15 @@ final class KeychainUserAuthKeys: UserAuthKeys {
         try SPKI.publicKeyOf(privateKey(context: UserAuthContexts.silent()))
     }
 
+    /// ``UserAuthKeyKind/perUse`` for the default key, ``UserAuthKeyKind/perUseBiometric``
+    /// for a biometrics-only one (Android's "every use asks, fingerprint only").
     func kind() throws -> UserAuthKeyKind {
         _ = try privateKey(context: UserAuthContexts.silent())
-        return .perUse
+        return kindForStrength
+    }
+
+    private var kindForStrength: UserAuthKeyKind {
+        strength == .biometricCurrentSet ? .perUseBiometric : .perUse
     }
 
     func grantForPrompt() throws -> UserAuthGrant? {
@@ -86,7 +117,18 @@ final class KeychainUserAuthKeys: UserAuthKeys {
         let context = (grant?.context as? LAContext) ?? LAContext()
         context.interactionNotAllowed = true
         let key = try privateKey(context: context)
-        return try UserAuthKeyConstants.unwrap(wrapped, with: key)
+        do {
+            return try UserAuthKeyConstants.unwrap(wrapped, with: key)
+        } catch UserAuthKeyError.notAuthenticated(let status, let message)
+            where strength == .biometricCurrentSet && status == errSecAuthFailed && grant?.context != nil {
+            // The storage calls this only after the prompt passed on this very
+            // context, and the Keychain still refuses the key: its
+            // `.biometryCurrentSet` no longer matches the enrolled biometrics.
+            // Retired — delete it so the next fetch makes a new one.
+            log.w("User-auth key refused after a passed biometric prompt: the enrolled biometrics changed; retiring it (\(message))")
+            delete()
+            throw UserAuthKeyError.retired("the enrolled biometrics changed; the key was bound to the previous set")
+        }
     }
 
     func attestationChain() throws -> [Data] { [] }
@@ -115,7 +157,7 @@ final class KeychainUserAuthKeys: UserAuthKeys {
     private func generate() throws {
         var error: Unmanaged<CFError>?
         guard let access = SecAccessControlCreateWithFlags(
-            nil, kSecAttrAccessibleWhenPasscodeSetThisDeviceOnly, .userPresence, &error
+            nil, kSecAttrAccessibleWhenPasscodeSetThisDeviceOnly, Self.accessControlFlags(for: strength), &error
         ) else {
             throw PinVaultError.crypto(message: "User-auth key: access control refused", cause: error?.takeRetainedValue())
         }

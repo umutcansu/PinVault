@@ -154,4 +154,69 @@ final class UserAuthPromptTests: XCTestCase {
         XCTAssertFalse(context.canEvaluatePolicy(.deviceOwnerAuthentication, error: &error))
         XCTAssertEqual(error?.code, LAError.Code.invalidContext.rawValue, "the evaluated context no longer authorises anything")
     }
+
+    // MARK: Biometrics only (`userAuthBiometricOnly()`)
+
+    func testTheSystemEvaluatorAsksForTheKeysPolicy() {
+        XCTAssertEqual(SystemUserAuthEvaluator().policy, .deviceOwnerAuthentication)
+        XCTAssertEqual(SystemUserAuthEvaluator(strength: .deviceOwner).policy, .deviceOwnerAuthentication)
+        XCTAssertEqual(SystemUserAuthEvaluator(strength: .biometricCurrentSet).policy, .deviceOwnerAuthenticationWithBiometrics)
+    }
+
+    func testABiometricsOnlyPromptReadsNoEnrolledBiometricsAsADeadKey() {
+        guard case .keyInvalidated(let why) = UserAuthPrompt.outcomeOf(LAError(.biometryNotEnrolled), biometricOnly: true) else {
+            return XCTFail("a .biometryCurrentSet key dies with the last enrolled face or finger")
+        }
+        XCTAssertTrue(why.contains("no biometrics are enrolled"), why)
+        // The default key is opened by the passcode too: no enrolment is just a prompt error.
+        guard case .error = UserAuthPrompt.outcomeOf(LAError(.biometryNotEnrolled)) else { return XCTFail() }
+        // "Enter Passcode" on a biometrics-only sheet cancels: there is no passcode way in.
+        guard case .cancelled = UserAuthPrompt.outcomeOf(LAError(.userFallback), biometricOnly: true) else { return XCTFail() }
+        // A lockout or missing hardware leaves the key alone: the unlock fails, the copy stays.
+        for code: LAError.Code in [.biometryLockout, .biometryNotAvailable, .authenticationFailed] {
+            guard case .error = UserAuthPrompt.outcomeOf(LAError(code), biometricOnly: true) else { return XCTFail("\(code)") }
+        }
+    }
+
+    func testTheEnrolmentChangeRetiresTheKeyAndGivesUpTheCopy() async throws {
+        keys.kindValue = .perUseBiometric
+        let storage = UserAuthVaultStorage(inner: inner, keys: keys, policy: .required)
+        try storage.save(key: "st", bytes: content, version: 7)
+        XCTAssertEqual(keys.generated, 1)
+
+        let result = await unlock(storage, ScriptedEvaluator([.fail(.biometryNotEnrolled)]))
+        XCTAssertEqual(result, .invalidated(key: "st"))
+        XCTAssertFalse(try storage.exists(key: "st"), "the copy is deleted")
+        XCTAssertEqual(try keys.state(), .missing, "the key is deleted with it")
+        XCTAssertEqual(keys.unwraps, 0)
+
+        // The next save makes a new key and seals with it; the new prompt opens it.
+        try storage.save(key: "st", bytes: content, version: 8)
+        XCTAssertEqual(keys.generated, 2)
+        let reopened = await unlock(storage, ScriptedEvaluator([.approve]))
+        XCTAssertEqual(reopened, .unlocked(key: "st", version: 8, bytes: content))
+    }
+
+    func testTheDefaultKeyIsNotRetiredByAPromptError() async throws {
+        let storage = UserAuthVaultStorage(inner: inner, keys: keys, policy: .required)
+        try storage.save(key: "st", bytes: content, version: 7)
+        let failed = unlockFailure(await unlock(storage, ScriptedEvaluator([.fail(.biometryNotEnrolled)])))
+        XCTAssertTrue(failed.reason.hasPrefix("Unlock prompt error -7"), failed.reason)
+        XCTAssertTrue(try storage.exists(key: "st"))
+        XCTAssertEqual(try keys.state(), .usable)
+    }
+
+    func testAKeyRetiredDuringTheUnwrapGivesUpTheCopy() async throws {
+        // What the Keychain key does when `.biometryCurrentSet` no longer matches:
+        // the unwrap after the passed prompt throws `retired` (and deletes the key).
+        keys.kindValue = .perUseBiometric
+        let storage = UserAuthVaultStorage(inner: inner, keys: keys, policy: .required)
+        try storage.save(key: "st", bytes: content, version: 7)
+        keys.unwrapError = UserAuthKeyError.retired("the enrolled biometrics changed")
+
+        let result = await unlock(storage, ScriptedEvaluator([.approve]))
+        XCTAssertEqual(result, .invalidated(key: "st"))
+        XCTAssertFalse(try storage.exists(key: "st"))
+        XCTAssertEqual(keys.unwraps, 1)
+    }
 }

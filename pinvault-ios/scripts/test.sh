@@ -32,6 +32,10 @@ echo "== IdentityKeychainHost on $UDID"
 sh pinvault-ios/Tests/IdentityKeychainHost/run-tests.sh "$UDID"
 
 echo "== VaultKeychainHost on $UDID"
+# The biometrics-only screen-lock key (`userAuthBiometricOnly()`) can only be
+# made with Face ID enrolled (Features > Face ID > Enrolled); its tests skip otherwise.
+xcrun simctl spawn "$UDID" notifyutil -s com.apple.BiometricKit.enrollmentChanged 1
+xcrun simctl spawn "$UDID" notifyutil -p com.apple.BiometricKit.enrollmentChanged
 HOST="$ROOT/pinvault-ios/Tests/VaultKeychainHost"
 ( cd "$HOST" && xcodegen generate --quiet )
 trap 'rm -rf "$HOST/VaultKeychainHost.xcodeproj"' EXIT

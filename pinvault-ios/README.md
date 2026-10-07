@@ -147,7 +147,21 @@ if case .unlocked(_, _, let bytes) = unlocked { use(bytes) }
   wraps for iOS keys with it (Android keys stay `RSA-OAEP-SHA256`, MGF1-SHA1).
 - The screen-lock key is `SecAccessControl(.userPresence)`; `unlockFile`
   evaluates `.deviceOwnerAuthentication` and opens the key with that context
-  (one Face ID / passcode prompt).
+  (one Face ID / passcode prompt). Enrolling a new face or finger does not
+  retire that key; removing the passcode does.
+- **Biometrics only** (MASVS L2, MASTG-TEST-0064): `PinVaultConfig.Builder()
+  .userAuthBiometricOnly()` (= `.userAuthStrength(.biometricCurrentSet)`) makes
+  the key with `.biometryCurrentSet` and evaluates
+  `.deviceOwnerAuthenticationWithBiometrics`: no passcode fallback ("Enter
+  Passcode" cancels), and the key dies with the enrolled set — a new or
+  removed face or finger makes the next `unlockFile` return `.invalidated`,
+  every locked copy is deleted and `fetchFile` downloads them again with a new
+  key (which the server registers anew, under its replacement rules). A device
+  without biometrics counts as having no screen lock for `userAuth` files
+  (`.required` files are not stored); a biometric lockout makes the unlock fail
+  until the user unlocks the device with the passcode. One key serves every
+  locked file, so this is a config-wide choice; the default stays biometrics
+  or passcode.
 - Stored files live under `Library/Application Support/pinvault/`, encrypted,
   excluded from backups; their keys are `ThisDeviceOnly` Keychain items.
 

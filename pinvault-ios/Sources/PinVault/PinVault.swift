@@ -125,12 +125,13 @@ public final class PinVault: @unchecked Sendable {
     }
     private let appAttestationBox = Locked<EnrollmentAppAttestation.Source?>({ await AppAttestBinder.attestation(clientDataHash: $0) })
 
-    /// What shows the passcode / biometrics prompt of `userAuth` files (tests swap it).
-    var userAuthEvaluator: any UserAuthEvaluator {
+    /// What shows the passcode / biometrics prompt of `userAuth` files (tests
+    /// swap it); nil = the system's, built for the config's `userAuthStrength` at start.
+    var userAuthEvaluator: (any UserAuthEvaluator)? {
         get { userAuthEvaluatorBox.get() }
         set { userAuthEvaluatorBox.set(newValue) }
     }
-    private let userAuthEvaluatorBox = Locked<any UserAuthEvaluator>(SystemUserAuthEvaluator())
+    private let userAuthEvaluatorBox = Locked<(any UserAuthEvaluator)?>(nil)
 
     /// The enrollment half of the façade, over ``enrollmentStorage``.
     var enrollment: EnrollmentService {

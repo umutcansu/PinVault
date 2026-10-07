@@ -8,6 +8,10 @@ enum AuthOutcome: Sendable {
     case succeeded(UserAuthGrant?)
     case cancelled
     case noScreenLock
+    /// The prompt itself says the key can never be opened again (iOS,
+    /// biometrics-only key: no biometrics enrolled any more). The key is
+    /// retired and every locked copy given up, like a missing key.
+    case keyInvalidated(String)
     case error(String)
 }
 
@@ -381,6 +385,11 @@ final class UserAuthVaultStorage: VaultStorageProvider {
             return Attempt(result: .cancelled(key: key))
         case .noScreenLock:
             return Attempt(result: .failed(key: key, reason: "The device has no screen lock; set one to open this file"))
+        case .keyInvalidated(let why):
+            // The next fetch makes a new key (ensureKey sees none) and seals again.
+            log.w("Vault file [\(key)]: the unlock key is retired (\(why)); deleting it")
+            keys.delete()
+            return Attempt(result: invalidated(key))
         case .error(let message):
             return Attempt(result: .failed(key: key, reason: message))
         }
