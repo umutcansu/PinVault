@@ -137,6 +137,11 @@ class IosDeviceKeyCrossCheckTest {
 
     @Test
     fun `the iOS provider's key registers with the iOS algorithm and the route wraps for it with MGF1-SHA256`() = testApplication {
+        // The iOS test key is generated, not committed (pinvault-ios/scripts/generate-test-keys.sh).
+        if (!File(fixtures, "ios-device-key.pkcs1.bin").exists()) {
+            println("SKIPPED: no iOS cross-check key — run pinvault-ios/scripts/generate-test-keys.sh")
+            return@testApplication
+        }
         configureApp()
         files.put(scope, "e2e-file", endToEndPlaintext, "public", "end_to_end")
         files.put(scope, "ua-file", userAuthPlaintext, "public", "user_auth")

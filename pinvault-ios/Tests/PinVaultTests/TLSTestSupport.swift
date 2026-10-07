@@ -9,7 +9,7 @@ enum TLSFixture {
 
     static func data(_ name: String, _ ext: String) -> Data {
         guard let url = Bundle.module.url(forResource: name, withExtension: ext, subdirectory: "Fixtures/tls") else {
-            fatalError("missing TLS fixture \(name).\(ext)")
+            fatalError("missing TLS fixture \(name).\(ext): the TLS test keys are not in the repository, run pinvault-ios/scripts/generate-test-keys.sh")
         }
         return try! Data(contentsOf: url)
     }

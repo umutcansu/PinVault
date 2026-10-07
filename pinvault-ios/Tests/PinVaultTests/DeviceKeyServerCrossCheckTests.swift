@@ -10,7 +10,7 @@ import XCTest
 /// envelopes its real download route made for that key (VaultEncryptionService,
 /// end_to_end and user_auth) are fixtures here. They must open on iOS.
 ///
-/// Fixtures (`Fixtures/vault/`): `ios-device-key.spki.txt` (the PEM the provider
+/// Fixtures (`Fixtures/vault/`, generated, not in the repository): `ios-device-key.spki.txt` (the PEM the provider
 /// exported), `ios-device-key.pkcs1.bin` (its private key, test only),
 /// `server-end-to-end.envelope.bin`, `server-user-auth.envelope.bin`.
 /// Regenerate: `PINVAULT_WRITE_IOS_FIXTURES=1 swift test --filter DeviceKeyServerCrossCheckTests/testWriteTheCrossCheckKey`,
@@ -26,8 +26,8 @@ final class DeviceKeyServerCrossCheckTests: XCTestCase {
 
     private func fixture(_ name: String) throws -> Data {
         guard let url = Bundle.module.url(forResource: name, withExtension: nil, subdirectory: "Fixtures/vault") else {
-            XCTFail("missing fixture vault/\(name)")
-            throw CocoaError(.fileNoSuchFile)
+            // The test key is not in the repository: pinvault-ios/scripts/generate-test-keys.sh makes it.
+            throw XCTSkip("missing fixture vault/\(name): run pinvault-ios/scripts/generate-test-keys.sh")
         }
         return try Data(contentsOf: url)
     }

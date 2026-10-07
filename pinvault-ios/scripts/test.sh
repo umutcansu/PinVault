@@ -16,6 +16,9 @@ ROOT=$(cd "$(dirname "$0")/../.." && pwd)
 UDID=${1:-}
 cd "$ROOT"
 
+# The throwaway test keys are not in the repository: make the missing ones first.
+sh pinvault-ios/scripts/generate-test-keys.sh
+
 echo "== swift test (macOS)"
 swift test
 
