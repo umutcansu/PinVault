@@ -1,5 +1,7 @@
 package com.example.pinvault.server.service
 
+import com.example.pinvault.server.service.attestation.AppAttestAdmission
+import com.example.pinvault.server.service.attestation.AppAttestVerifier
 import com.example.pinvault.server.store.KeyAttestation
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonNull
@@ -21,6 +23,10 @@ import java.security.PublicKey
  *    `reason` for one that fails; a server-made key (P12) cannot be attested,
  *    so an enrollment without a CSR gets 403 `csr_required`. The server does
  *    not start without the app binding ([AndroidKeyAttestation.bindsApp]).
+ *
+ * With `APP_ATTEST_APP_IDS` an iPhone's `appAttestation` stands in for the
+ * chain under [WARN] and [ENFORCE] ([EnrollmentAttestation]); without it an
+ * iPhone is refused under [ENFORCE].
  */
 enum class EnrollmentAttestationMode {
     OFF, WARN, ENFORCE;
@@ -64,6 +70,16 @@ enum class EnrollmentAttestationMode {
  * request's `deviceUid`, or its `deviceId` when it sends none — exactly what
  * the library hashed into the key.
  *
+ * An iPhone has no such chain. With App Attest configured ([appAttest],
+ * `APP_ATTEST_APP_IDS`) a request without `attestationChain` that carries
+ * `appAttestation` — a fresh App Attest key's attestation whose client data
+ * hash is SHA-256 of the request's integrity hash (the CSR and the same
+ * device id) — stands in for it (PORTING.md §6): a pass is stored as
+ * [AppAttestAdmission.record], a failure is refused or recorded like a
+ * failing chain, with the verifier's reason prefixed `app_attest_`. It says
+ * the genuine app on genuine Apple hardware asked for this CSR, not where
+ * the key lives.
+ *
  * Callers run this after the CSR was parsed and BEFORE a token, a policy slot
  * or anything else is spent: a refusal costs the device nothing it would
  * need again.
@@ -71,9 +87,16 @@ enum class EnrollmentAttestationMode {
 class EnrollmentAttestation(
     /** Read on every check (tests switch it; Main passes a fixed mode). */
     private val modeOf: () -> EnrollmentAttestationMode,
+    /** Apple App Attest in place of the chain (iOS); null = `APP_ATTEST_APP_IDS` empty, an iPhone has no way in under enforce. */
+    private val appAttest: AppAttestVerifier? = null,
+    private val clock: () -> java.time.Instant = java.time.Instant::now,
     verifier: () -> AndroidKeyAttestation
 ) {
-    constructor(mode: EnrollmentAttestationMode, verifier: () -> AndroidKeyAttestation) : this({ mode }, verifier)
+    constructor(
+        mode: EnrollmentAttestationMode,
+        appAttest: AppAttestVerifier? = null,
+        verifier: () -> AndroidKeyAttestation
+    ) : this({ mode }, appAttest, verifier = verifier)
 
     val mode: EnrollmentAttestationMode get() = modeOf()
 
@@ -86,6 +109,7 @@ class EnrollmentAttestation(
             /** For the audit log. */
             val note: String get() = when {
                 record == null -> "attestation not checked"
+                AppAttestAdmission.admitted(record) -> "admitted by App Attest"
                 record.attested -> "hardware-attested (${record.securityLevel})"
                 else -> "not attested: ${record.reason}"
             }
@@ -111,13 +135,23 @@ class EnrollmentAttestation(
     fun check(json: JsonObject?, csrKey: PublicKey, deviceUid: String? = null): Outcome {
         val mode = this.mode
         if (mode == EnrollmentAttestationMode.OFF) return Outcome.Proceed(null)
+        // An iPhone: App Attest in place of the chain (configured, and no chain came).
+        when (val appAttested = appAttestVerdict(json, deviceUid)) {
+            null, AppAttestAdmission.Result.Absent -> Unit
+            is AppAttestAdmission.Result.Passed ->
+                return Outcome.Proceed(AppAttestAdmission.record())
+            is AppAttestAdmission.Result.Failed -> return when {
+                mode != EnrollmentAttestationMode.ENFORCE -> Outcome.Proceed(KeyAttestation(false, null, appAttested.reason))
+                appAttested.reason == NO_DEVICE_ID -> attestationRequired()
+                else -> Outcome.Refuse("attestation_invalid", appAttested.reason,
+                    "The request's App Attest attestation (appAttestation) did not pass: ${appAttested.reason}.")
+            }
+        }
         val verdict = verdictFor(json, csrKey, deviceUid)
         if (verdict.passed) return Outcome.Proceed(KeyAttestation(true, verdict.securityLevel, verdict.reason))
         if (mode == EnrollmentAttestationMode.ENFORCE) {
             return if (verdict.reason == AndroidKeyAttestation.Verdict.MISSING.reason || verdict.reason == NO_DEVICE_ID) {
-                Outcome.Refuse("attestation_required", null,
-                    "This server enrolls only keys with an Android Key Attestation chain (attestationChain), " +
-                        "made with the challenge of the request's deviceUid (or deviceId).")
+                attestationRequired()
             } else {
                 Outcome.Refuse("attestation_invalid", verdict.reason,
                     "The device key's Android Key Attestation did not pass: ${verdict.reason}.")
@@ -126,13 +160,47 @@ class EnrollmentAttestation(
         return Outcome.Proceed(KeyAttestation(false, verdict.securityLevel, verdict.reason))
     }
 
-    private fun verdictFor(json: JsonObject?, csrKey: PublicKey, effectiveDeviceUid: String?): AndroidKeyAttestation.Verdict {
-        // The device id the server records for the identity when the route
-        // decided it (open mode: always the device id); otherwise the library's
-        // rule — deviceUid, or deviceId when the request has none. A passing
-        // chain proves exactly the id that is stored.
-        val id = effectiveDeviceUid ?: (json?.get("deviceUid") as? JsonPrimitive)?.takeIf { it !is JsonNull && it.isString }?.content
+    private fun attestationRequired() = Outcome.Refuse("attestation_required", null,
+        "This server enrolls only keys with an Android Key Attestation chain (attestationChain), " +
+            "made with the challenge of the request's deviceUid (or deviceId)" +
+            (if (appAttest != null) ", or, from an iOS app, an App Attest attestation (appAttestation) bound to the request." else "."))
+
+    /**
+     * The device id the server records for the identity when the route
+     * decided it (open mode: always the device id); otherwise the library's
+     * rule — deviceUid, or deviceId when the request has none. A passing
+     * attestation proves exactly the id that is stored.
+     */
+    private fun deviceIdOf(json: JsonObject?, effectiveDeviceUid: String?): String? =
+        effectiveDeviceUid ?: (json?.get("deviceUid") as? JsonPrimitive)?.takeIf { it !is JsonNull && it.isString }?.content
             ?: (json?.get("deviceId") as? JsonPrimitive)?.takeIf { it !is JsonNull && it.isString }?.content
+
+    /**
+     * App Attest in place of the chain: null unless App Attest is configured,
+     * the request carries no chain (absent, null or empty) and has an
+     * `appAttestation`. Its client data hash is SHA-256 of the integrity
+     * request hash over the CSR and the device id that is stored.
+     */
+    private fun appAttestVerdict(json: JsonObject?, effectiveDeviceUid: String?): AppAttestAdmission.Result? {
+        val verifier = appAttest ?: return null
+        val field = json?.get(AppAttestAdmission.FIELD)?.takeIf { it !is JsonNull } ?: return null
+        when (val chain = json["attestationChain"]) {
+            null, JsonNull -> Unit
+            is JsonArray -> if (chain.isNotEmpty()) return null
+            else -> return null
+        }
+        val id = deviceIdOf(json, effectiveDeviceUid)
+        if (id.isNullOrBlank()) return AppAttestAdmission.Result.Failed(NO_DEVICE_ID)
+        val csrDer = (json["csr"] as? JsonPrimitive)?.takeIf { it.isString }?.content
+            ?.let { runCatching { java.util.Base64.getDecoder().decode(it) }.getOrNull() }
+            ?: return AppAttestAdmission.Result.Failed(
+                AppAttestAdmission.REASON_PREFIX + "malformed")
+        val clientDataHash = AppAttestVerifier.enrollmentClientDataHash(IntegrityRequestHash.of(id, csrDer))
+        return AppAttestAdmission.verify(verifier, field, clientDataHash, clock())
+    }
+
+    private fun verdictFor(json: JsonObject?, csrKey: PublicKey, effectiveDeviceUid: String?): AndroidKeyAttestation.Verdict {
+        val id = deviceIdOf(json, effectiveDeviceUid)
         val chain = when (val element = json?.get("attestationChain")) {
             null, JsonNull -> return AndroidKeyAttestation.Verdict.MISSING
             is JsonArray -> element.map { (it as? JsonPrimitive)?.takeIf { p -> p.isString }?.content }

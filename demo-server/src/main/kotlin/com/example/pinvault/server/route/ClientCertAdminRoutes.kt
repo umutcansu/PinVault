@@ -225,6 +225,8 @@ internal fun retireLegacyAnchor(
 /** How an enrollment's attestation reads in the audit log. */
 internal fun attestationNote(record: com.example.pinvault.server.store.KeyAttestation?): String = when {
     record == null -> "attestation not checked"
+    // Apple vouched for the app and the hardware, not for where the key lives.
+    com.example.pinvault.server.service.attestation.AppAttestAdmission.admitted(record) -> "admitted by App Attest"
     record.attested -> "hardware-attested key (${record.securityLevel})"
     else -> "key not attested: ${record.reason}"
 }

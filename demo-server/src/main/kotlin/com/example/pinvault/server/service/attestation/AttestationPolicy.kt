@@ -205,7 +205,9 @@ class AttestationPolicyDefaults(
  *    outcome stored with the device (`key_unattested` is then a signal).
  *  - [ENFORCE]: no registration without a passing chain (`403
  *    attestation_required` / `attestation_invalid`); the server does not
- *    start without the app binding.
+ *    start without the app binding. With `APP_ATTEST_APP_IDS` an iPhone's
+ *    first-round App Attest attestation stands in for the chain
+ *    ([AppAttestAdmission]); without it every iPhone is refused.
  */
 enum class AttestationKeyPolicy {
     OFF, WARN, ENFORCE;

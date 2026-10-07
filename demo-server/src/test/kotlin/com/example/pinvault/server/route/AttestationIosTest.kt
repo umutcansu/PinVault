@@ -108,10 +108,11 @@ class AttestationIosTest {
         appAttest: AppAttestVerifier? = null,
         ios: IosAttestationRules = IosAttestationRules(),
         minPatchLevel: Int? = null,
-        playIntegrity: PlayIntegrityVerifier? = null
+        playIntegrity: PlayIntegrityVerifier? = null,
+        keyPolicy: AttestationKeyPolicy = AttestationKeyPolicy.WARN
     ) = AttestationService(
         policies, devices, secrets, nonces = AttestationNonces(ttlSeconds = 120, clock = { now }),
-        defaults = AttestationPolicyDefaults(), keyPolicy = AttestationKeyPolicy.WARN, verifier = { androidPki.verifier(minPatchLevel = minPatchLevel) },
+        defaults = AttestationPolicyDefaults(), keyPolicy = keyPolicy, verifier = { androidPki.verifier(minPatchLevel = minPatchLevel) },
         audit = AuditLog(AuditLogStore(db), null), rejections = null, clock = { Instant.ofEpochMilli(now) },
         playIntegrity = playIntegrity, appAttest = appAttest, ios = ios
     )
@@ -186,12 +187,19 @@ class AttestationIosTest {
     }
 
     /** One round: challenge, the report [reportFor] builds for that nonce, the signed body. */
-    private suspend fun ApplicationTestBuilder.attest(deviceId: String, key: KeyPair, reportFor: (nonce: String) -> String): HttpResponse {
+    private suspend fun ApplicationTestBuilder.attest(deviceId: String, key: KeyPair, reportFor: (nonce: String) -> String): HttpResponse =
+        attestWithChain(deviceId, key, null, reportFor)
+
+    /** [attest] with an Android Key Attestation [chain]. */
+    private suspend fun ApplicationTestBuilder.attestWithChain(
+        deviceId: String, key: KeyPair, chain: List<String>?, reportFor: (nonce: String) -> String
+    ): HttpResponse {
         val nonce = challenge()
         val report = reportFor(nonce)
         val body = buildJsonObject {
             put("v", 1); put("nonce", nonce); put("deviceId", deviceId)
             put("publicKey", Base64.getEncoder().encodeToString(key.public.encoded))
+            chain?.let { putJsonArray("attestationChain") { it.forEach { c -> add(JsonPrimitive(c)) } } }
             put("report", report)
             put("signature", sign(key.private, AttestationService.canonical(nonce, deviceId, report)))
         }.toString()
@@ -465,5 +473,130 @@ class AttestationIosTest {
             assertEquals("warn", profile.flags["app_attest"])
             assertEquals("warn", profile.flags["app_attest_missing"])
         }
+    }
+
+    // ── ATTESTATION_KEY_POLICY=enforce: App Attest in place of the chain ─
+
+    /** A 403 refusal's body, after checking [error] and [reason]. */
+    private suspend fun HttpResponse.refusal(error: String, reason: String? = null): JsonObject {
+        assertEquals(HttpStatusCode.Forbidden, status, bodyAsText())
+        val json = Json.parseToJsonElement(bodyAsText()).jsonObject
+        assertEquals(error, json["error"]!!.jsonPrimitive.content, bodyAsText())
+        assertEquals(reason, json["reason"]?.jsonPrimitive?.content, bodyAsText())
+        return json
+    }
+
+    /** A round whose report carries an attestation of a fresh key made with [clientDataHash] (whatever it binds). */
+    private fun attestedWith(clientDataHash: ByteArray, pki: AppAttestFixtures.Pki = apple, appId: String = AppAttestFixtures.APP_ID): String {
+        val aaKey = AppAttestFixtures.Key()
+        return iosReport(appAttestProvider(AppAttestFixtures.token(aaKey.keyIdBase64,
+            attestation = AppAttestFixtures.attestation(pki, aaKey, clientDataHash, appId = appId))))
+    }
+
+    @Test
+    fun `under enforce an iPhone registers with its first round's App Attest attestation and is held to iOS`() = testApplication {
+        val service = service(appAttest = apple.verifier(), keyPolicy = AttestationKeyPolicy.ENFORCE)
+        app(service)
+        val key = ecKey()
+        val aaKey = AppAttestFixtures.Key()
+        val first = attest("ios-1", key, attested("ios-1", aaKey)).json()
+        assertEquals("pass", first["result"]!!.jsonPrimitive.content)
+        assertEquals(emptyList(), first.warnings(), "verified once, in place of the chain: key_unattested lifted")
+        assertTrue(first["device"]!!.jsonObject["firstSeen"]!!.jsonPrimitive.content.toBoolean())
+        val ka = first["device"]!!.jsonObject["keyAttestation"]!!.jsonObject
+        assertEquals("true", ka["attested"]!!.jsonPrimitive.content)
+        assertEquals("app_attest", ka["reason"]!!.jsonPrimitive.content)
+        assertEquals("app_attest", ka["attestedBy"]!!.jsonPrimitive.content)
+        assertEquals(JsonNull, ka["securityLevel"], "App Attest says nothing about where the key lives")
+
+        val device = devices.get(scope, "ios-1")!!
+        assertTrue(device.registered)
+        assertTrue(com.example.pinvault.server.service.attestation.AppAttestAdmission.admitted(device.keyAttestation))
+        assertEquals(aaKey.keyIdBase64, device.appAttestKeyId, "the App Attest key is on record")
+        assertEquals(0L, device.appAttestCounter)
+        assertEquals("pass", device.appAttestResult)
+        assertEquals("ios", device.platform)
+        val registered = AuditLogStore(db).page(50, 0).first { it.action == "attestation_device_registered" }
+        assertTrue(registered.summary.contains("admitted by App Attest, ${AppAttestFixtures.APP_ID}"), registered.summary)
+        assertTrue(registered.detail.contains("\"attestedBy\":\"app_attest\""), registered.detail)
+
+        // Later rounds are any iPhone's: assertions with the key on record.
+        now += 60_000
+        assertEquals(emptyList(), attest("ios-1", key, asserted("ios-1", aaKey, 1)).json().warnings())
+        assertEquals(1L, devices.get(scope, "ios-1")!!.appAttestCounter)
+
+        // Held to iOS: a report claiming Android is judged as the iPhone on record and raises app_integrity.
+        policies.put(scope, AttestationPolicy.parse(buildJsonObject { put("revealReasons", true) }, service.defaultPolicy).getOrThrow(), "test")
+        val claim = attest("ios-1", key) { androidReport() }.json()
+        assertEquals("reject", claim["result"]!!.jsonPrimitive.content)
+        assertTrue("app_integrity" in strings(claim["rejectionReasons"]))
+        assertEquals("ios", devices.get(scope, "ios-1")!!.platform)
+        // The admission alone fixes the platform, App Attest key or not.
+        assertEquals("ios", AttestationService.effectivePlatform("android", devices.get(scope, "ios-1")!!.copy(appAttestKeyId = null, platform = null)))
+    }
+
+    @Test
+    fun `under enforce an App Attest attestation made for another round, device, app, root or place is refused`() = testApplication {
+        app(service(appAttest = apple.verifier(), keyPolicy = AttestationKeyPolicy.ENFORCE))
+        val key = ecKey()
+        // Another round's nonce, another device id: the client data hash does not match.
+        attest("ios-1", key) { attestedWith(AppAttestVerifier.roundClientDataHash("another-nonce", "ios-1")) }
+            .refusal("attestation_invalid", "app_attest_nonce_mismatch")
+        attest("ios-1", key) { nonce -> attestedWith(AppAttestVerifier.roundClientDataHash(nonce, "ios-2")) }
+            .refusal("attestation_invalid", "app_attest_nonce_mismatch")
+        // Another developer's app, a root that is not Apple's.
+        attest("ios-1", key) { nonce -> attestedWith(AppAttestVerifier.roundClientDataHash(nonce, "ios-1"), appId = "ZZZZZ99999.com.evil") }
+            .refusal("attestation_invalid", "app_attest_app_id_mismatch")
+        attest("ios-1", key) { nonce -> attestedWith(AppAttestVerifier.roundClientDataHash(nonce, "ios-1"), pki = AppAttestFixtures.Pki("CN=Not Apple")) }
+            .refusal("attestation_invalid", "app_attest_chain_invalid")
+        // Each place needs its own attestation: one made for an enrollment or a screen-lock key does not register a device here.
+        val csr = ByteArray(64) { 3 }
+        attest("ios-1", key) { attestedWith(AppAttestVerifier.enrollmentClientDataHash(com.example.pinvault.server.service.IntegrityRequestHash.of("ios-1", csr))) }
+            .refusal("attestation_invalid", "app_attest_nonce_mismatch")
+        attest("ios-1", key) { attestedWith(com.example.pinvault.server.service.attestation.AppAttestAdmission.userAuthClientDataHash("ios-1", key.public.encoded)) }
+            .refusal("attestation_invalid", "app_attest_nonce_mismatch")
+        assertNull(devices.get(scope, "ios-1"), "nothing registered, no verdict stored")
+    }
+
+    @Test
+    fun `under enforce an iPhone without an App Attest attestation is refused as before`() = testApplication {
+        app(service(appAttest = apple.verifier(), keyPolicy = AttestationKeyPolicy.ENFORCE))
+        // A simulator: no verdict provider at all.
+        val missing = attest("ios-sim", ecKey()) { iosReport() }.refusal("attestation_required")
+        assertTrue(missing["message"]!!.jsonPrimitive.content.contains("App Attest"), "the refusal names the way in")
+        // An assertion: this server has no App Attest key for an unknown device — the app attests a new one.
+        attest("ios-2", ecKey(), asserted("ios-2", AppAttestFixtures.Key(), 3)).refusal("attestation_required", AttestationService.APP_ATTEST_UNKNOWN_KEY)
+        // A token that is not App Attest JSON.
+        attest("ios-3", ecKey()) { iosReport(appAttestProvider("garbage")) }.refusal("attestation_invalid", "app_attest_malformed")
+        // Another provider's token is no App Attest.
+        attest("ios-4", ecKey()) { iosReport(buildJsonObject { put("name", "play-integrity"); put("token", "eyJ") }) }.refusal("attestation_required")
+        for (id in listOf("ios-sim", "ios-2", "ios-3", "ios-4")) assertNull(devices.get(scope, id), id)
+    }
+
+    @Test
+    fun `without App Attest configured enforce refuses every iPhone, attestation or not`() = testApplication {
+        app(service(keyPolicy = AttestationKeyPolicy.ENFORCE))
+        val refused = attest("ios-1", ecKey(), attested("ios-1", AppAttestFixtures.Key())).refusal("attestation_required")
+        assertFalse(refused["message"]!!.jsonPrimitive.content.contains("App Attest"), "the message is the old one")
+        assertNull(devices.get(scope, "ios-1"))
+    }
+
+    @Test
+    fun `under enforce an Android device still needs its chain, App Attest configured or not`() = testApplication {
+        app(service(appAttest = apple.verifier(), keyPolicy = AttestationKeyPolicy.ENFORCE))
+        val key = ecKey()
+        attest("android-1", key) { androidReport() }.refusal("attestation_required")
+        val good = TestAttestationChains.chain(androidPki, key.public, TestAttestationChains.identityDescription("android-1"))
+        val json = attestWithChain("android-1", key, good) { androidReport() }.json()
+        assertEquals("pass", json["result"]!!.jsonPrimitive.content)
+        val ka = json["device"]!!.jsonObject["keyAttestation"]!!.jsonObject
+        assertEquals("ok", ka["reason"]!!.jsonPrimitive.content)
+        assertNull(ka["attestedBy"])
+        assertEquals("android", devices.get(scope, "android-1")!!.platform)
+        // A chain decides when there is one: a failing chain is not rescued by an App Attest verdict next to it.
+        val other = ecKey()
+        val wrong = TestAttestationChains.chain(androidPki, other.public, TestAttestationChains.identityDescription("someone-else"))
+        attestWithChain("android-2", other, wrong, attested("android-2", AppAttestFixtures.Key())).refusal("attestation_invalid", "challenge_mismatch")
+        assertNull(devices.get(scope, "android-2"))
     }
 }
