@@ -3099,6 +3099,16 @@ paths:
                     CSR's key, Base64 DER, leaf first; the key made with the challenge
                     SHA-256(UTF-8 `pinvault-identity-key:v1:` + `deviceUid`, or `deviceId` when no
                     `deviceUid` is sent). Checked per `ENROLLMENT_ATTESTATION`.
+                appAttestation:
+                  type: string
+                  description: >
+                    Config API ports only, with a `csr`, from iOS (no `attestationChain`). The JSON
+                    string `{"provider":"app-attest","keyId":"<Base64>","attestation":"<Base64 CBOR>"}`:
+                    a fresh App Attest key attested with the client data hash SHA-256(UTF-8 integrity
+                    request hash, see `integrityToken`). With `APP_ATTEST_APP_IDS` set it stands in for
+                    the chain under `ENROLLMENT_ATTESTATION=warn|enforce` (stored with reason
+                    `app_attest`; failures `attestation_invalid` with `reason` `app_attest_…`); without
+                    it, it is not read. A request with a chain is judged by the chain.
                 integrityToken:
                   type: string
                   description: >
@@ -3176,8 +3186,9 @@ paths:
             a CSR (`csr_required`): open mode issues no P12 — and on every path with
             `ENROLLMENT_P12=off` or `ENROLLMENT_ATTESTATION=enforce`. `device_uid_mismatch` —
             the token was bound to another device (`deviceUid` at minting). Under
-            `ENROLLMENT_ATTESTATION=enforce`: no `attestationChain` (`attestation_required`),
-            or one that fails (`attestation_invalid`, with `reason`: `challenge_mismatch`,
+            `ENROLLMENT_ATTESTATION=enforce`: no `attestationChain` (nor, with
+            `APP_ATTEST_APP_IDS`, `appAttestation`) (`attestation_required`),
+            or one that fails (`attestation_invalid`, with `reason`: `app_attest_…`, `challenge_mismatch`,
             `key_mismatch`, `purpose_not_sign`, `software_attestation`, `device_unlocked`,
             `boot_not_verified`, `package_not_allowed`, `signer_not_allowed`,
             `certificate_revoked`, `revocation_list_stale`, `patch_level_too_old`, …). Under
@@ -4583,6 +4594,9 @@ paths:
                   type: array
                   items: { type: string, format: byte }
                   description: 'User-auth keys: the key''s Android Key Attestation chain, Base64 DER, leaf first (`KeyStore.getCertificateChain`). Challenge: SHA-256("pinvault-user-auth-key:v1:" + deviceId). Absent from older clients.'
+                appAttestation:
+                  type: string
+                  description: 'User-auth keys from iOS (no `attestationChain`): the JSON string `{"provider":"app-attest","keyId":"<Base64>","attestation":"<Base64 CBOR>"}`, a fresh App Attest key attested with the client data hash SHA-256(UTF-8 "pinvault-user-auth-key:v1:" + deviceId + ":" + Base64(SHA-256(SPKI DER of the key))). With `APP_ATTEST_APP_IDS` set it stands in for the chain under the same rules (first key, replacement with the device''s credential, `enforce`); a pass is stored as `keyKind` `app_attest`, a failure answers with `reason` `app_attest_…`. Not read without `APP_ATTEST_APP_IDS`.'
       responses:
         '200':
           description: Registered.
@@ -5142,12 +5156,13 @@ paths:
                         keyKind:
                           type: string
                           nullable: true
-                          enum: [per_use, time_bound]
+                          enum: [per_use, time_bound, app_attest]
                           description: >
                             How the key asks for the user (read from a passing attestation; null
                             otherwise, or for a key registered before 2.2.0): on every use, or
                             for `authTimeoutSeconds` after an unlock (Android 7–10 phones without
-                            a strong fingerprint).
+                            a strong fingerprint). `app_attest`: an iPhone's key admitted by App
+                            Attest, whose access control the server cannot read.
                         authTimeoutSeconds: { type: integer, nullable: true, example: 10 }
                         biometricOnly: { type: boolean, nullable: true, description: Only a biometric unlocks it (not the screen-lock PIN / pattern / password). }
         '401': { $ref: '#/components/responses/MissingApiKey' }
@@ -7515,7 +7530,11 @@ components:
           description: >
             Base64 DER certificates, leaf first. Required on first registration under
             `ATTESTATION_KEY_POLICY=enforce`, optional otherwise, ignored for a device
-            that is already registered.
+            that is already registered. iOS sends none: with `APP_ATTEST_APP_IDS` set, the
+            report's `app-attest` verdict carrying a fresh key's attestation for this round
+            registers the device in its place (`attestation_invalid` with `reason`
+            `app_attest_…` when it fails, `attestation_required` with `reason`
+            `app_attest_unknown_key` for an assertion).
           items: { type: string }
         report: { type: string, description: 'The `AttestationReport` JSON **as a string**, at most 16 KB.' }
         signature: { type: string, description: 'Base64 DER `SHA256withECDSA` over the UTF-8 bytes of `pinvault-attest:v1:<nonce>:<deviceId>:<sha256-hex(report)>`.' }

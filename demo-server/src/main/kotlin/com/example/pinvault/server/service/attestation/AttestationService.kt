@@ -144,6 +144,7 @@ class AttestationService(
                             put("attested", ka.attested)
                             put("securityLevel", ka.securityLevel)
                             put("reason", ka.reason)
+                            if (AppAttestAdmission.admitted(ka)) put("attestedBy", AppAttestAdmission.KIND)
                         }
                     } ?: JsonNull)
                 })
@@ -211,6 +212,8 @@ class AttestationService(
         var device = devices.get(configApiId, deviceId)
         var firstSeen = false
         var keyAttestation: KeyAttestation?
+        // The report's App Attest attestation, when it admitted an unknown device under enforce (verified once).
+        var appAttestAdmitted: AppAttestAdmission.Result.Passed? = null
         if (device?.registered == true) {
             if (device.spkiSha256 != spki) {
                 val mismatches = devices.recordKeyMismatch(configApiId, deviceId, now)
@@ -220,7 +223,8 @@ class AttestationService(
             }
             keyAttestation = device.keyAttestation
         } else {
-            keyAttestation = when (val registration = checkRegistrationChain(chain, publicKey, deviceId)) {
+            val registration = checkRegistrationChain(chain, publicKey, deviceId, nonce, reportJson, now)
+            keyAttestation = when (registration) {
                 is Registration.Refuse -> return registration.outcome
                 is Registration.Accept -> registration.attestation
             }
@@ -231,16 +235,32 @@ class AttestationService(
                     "This Config API already holds $deviceLimit registered devices (ATTESTATION_DEVICE_LIMIT). Known devices keep attesting; an administrator can forget stale ones.")
             }
             devices.register(configApiId, deviceId, spki, Base64.getEncoder().encodeToString(publicKey.encoded), keyAttestation, now)
+            // Admitted by App Attest (enforce, no chain): its key is on record from now on,
+            // which also holds the device to platform ios.
+            appAttestAdmitted = registration.appAttest?.also { passed ->
+                devices.registerAppAttestKey(configApiId, deviceId, passed.keyId, Base64.getEncoder().encodeToString(passed.publicKey),
+                    appAttestSummary(appAttest!!, "attestation", "ok", passed.keyId, passed.appId, 0, now), now)
+            }
             device = devices.get(configApiId, deviceId)!!
             firstSeen = true
+            val how = when {
+                keyAttestation == null -> "attestation not checked"
+                appAttestAdmitted != null -> "admitted by App Attest, ${appAttestAdmitted.appId}"
+                keyAttestation.attested -> "hardware-attested, ${keyAttestation.securityLevel}"
+                else -> "not attested: ${keyAttestation.reason}"
+            }
             audit?.record("attestation_device_registered",
-                "Device $deviceId registered its attestation key (${keyAttestation?.let { if (it.attested) "hardware-attested, ${it.securityLevel}" else "not attested: ${it.reason}" } ?: "attestation not checked"})",
+                "Device $deviceId registered its attestation key ($how)",
                 configApiId, deviceId, actor = deviceId, ip = remote,
                 detail = buildJsonObject {
                     put("spkiSha256", spki)
                     put("keyAttested", keyAttestation?.attested ?: false)
                     keyAttestation?.securityLevel?.let { put("securityLevel", it) }
                     keyAttestation?.reason?.let { put("reason", it) }
+                    appAttestAdmitted?.let {
+                        put("attestedBy", AppAttestAdmission.KIND)
+                        put("appId", it.appId)
+                    }
                 })
         }
 
@@ -255,7 +275,8 @@ class AttestationService(
         val platform = effectivePlatform(platformOf(reportJson), device)
         val platformMismatch = platform != platformOf(reportJson)
         val isIos = platform == PLATFORM_IOS
-        val appAttestRound = appAttestFlags(configApiId, deviceId, nonce, provider, device, isIos, now)
+        val appAttestRound = if (appAttestAdmitted != null) AppAttestRound(emptyList(), verified = true, unknownKey = false)
+            else appAttestFlags(configApiId, deviceId, nonce, provider, device, isIos, now)
         val raised = (raisedFlags(reportJson, device, appAttestRound.verified, platform) +
             (if (platformMismatch) listOf(AttestationFlag.APP_INTEGRITY) else emptyList()) +
             playIntegrityFlags(configApiId, deviceId, nonce, provider, device, now, isIos) + appAttestRound.flags).distinct()
@@ -315,12 +336,45 @@ class AttestationService(
 
     private sealed interface Registration {
         class Refuse(val outcome: Outcome.Refused) : Registration
-        class Accept(val attestation: KeyAttestation?) : Registration
+        /** [appAttest]: the report's App Attest attestation that admitted the device in place of a chain. */
+        class Accept(val attestation: KeyAttestation?, val appAttest: AppAttestAdmission.Result.Passed? = null) : Registration
     }
 
-    /** Step 5 for an unknown device: what `ATTESTATION_KEY_POLICY` makes of its chain. */
-    private fun checkRegistrationChain(chain: List<String>?, publicKey: PublicKey, deviceId: String): Registration {
+    /**
+     * Step 5 for an unknown device: what `ATTESTATION_KEY_POLICY` makes of its chain.
+     *
+     * Under enforce an iPhone has no chain: with App Attest configured, a
+     * report whose `app-attest` verdict carries a fresh key's attestation made
+     * for this round (client data hash of the nonce and the device id) is
+     * verified here, first, and admits the device in place of the chain; a
+     * failing one is refused `attestation_invalid` with the verifier's reason
+     * (`app_attest_…`), an assertion (a key this server has no record of)
+     * `attestation_required` with `app_attest_unknown_key`, so the app attests
+     * a new key. Without such a verdict the refusal is the chain's, as before.
+     */
+    private fun checkRegistrationChain(
+        chain: List<String>?, publicKey: PublicKey, deviceId: String, nonce: String, report: JsonObject, now: Instant
+    ): Registration {
         if (keyPolicy == AttestationKeyPolicy.OFF) return Registration.Accept(KeyAttestation(false, null, NOT_CHECKED))
+        if (keyPolicy == AttestationKeyPolicy.ENFORCE && chain.isNullOrEmpty()) appAttest?.let { verifier ->
+            val token = (report["verdictProvider"] as? JsonObject)?.takeIf { it.string("name") == AppAttestVerifier.PROVIDER }?.string("token")
+            if (token != null) {
+                return when (val result = AppAttestAdmission.verify(verifier, token, AppAttestVerifier.roundClientDataHash(nonce, deviceId), now)) {
+                    is AppAttestAdmission.Result.Passed -> Registration.Accept(AppAttestAdmission.record(), result)
+                    is AppAttestAdmission.Result.Failed -> Registration.Refuse(
+                        if (result.reason == AppAttestAdmission.ATTESTATION_REQUIRED) {
+                            Outcome.Refused(HttpStatusCode.Forbidden, "attestation_required",
+                                "This server has no App Attest key on record for this device: it registers a device only with a " +
+                                    "fresh App Attest key's attestation (or an Android Key Attestation chain). Attest a new key.",
+                                reason = APP_ATTEST_UNKNOWN_KEY)
+                        } else {
+                            Outcome.Refused(HttpStatusCode.Forbidden, "attestation_invalid",
+                                "The report's App Attest attestation did not pass: ${result.reason}.", reason = result.reason)
+                        })
+                    AppAttestAdmission.Result.Absent -> Registration.Refuse(attestationRequired())
+                }
+            }
+        }
         val verdict = if (chain.isNullOrEmpty()) AndroidKeyAttestation.Verdict.MISSING else {
             val v = verifier.verifyIdentityKey(chain, publicKey, deviceId)
             // Without the package + signer binding a passing chain says nothing about which app made the key.
@@ -329,8 +383,7 @@ class AttestationService(
         if (verdict.passed) return Registration.Accept(KeyAttestation(true, verdict.securityLevel, verdict.reason))
         if (keyPolicy == AttestationKeyPolicy.ENFORCE) {
             return Registration.Refuse(if (verdict.reason == AndroidKeyAttestation.Verdict.MISSING.reason) {
-                Outcome.Refused(HttpStatusCode.Forbidden, "attestation_required",
-                    "This server registers only keys with an Android Key Attestation chain (attestationChain), made with the challenge of the deviceId.")
+                attestationRequired()
             } else {
                 Outcome.Refused(HttpStatusCode.Forbidden, "attestation_invalid",
                     "The device key's Android Key Attestation did not pass: ${verdict.reason}.", reason = verdict.reason)
@@ -338,6 +391,10 @@ class AttestationService(
         }
         return Registration.Accept(KeyAttestation(false, verdict.securityLevel, verdict.reason))
     }
+
+    private fun attestationRequired() = Outcome.Refused(HttpStatusCode.Forbidden, "attestation_required",
+        "This server registers only keys with an Android Key Attestation chain (attestationChain), made with the challenge of the deviceId" +
+            (if (appAttest != null) ", or, from an iOS app, a report whose app-attest verdict carries a fresh App Attest key's attestation for this round." else "."))
 
     /**
      * Step 4 of §4: the flags the report raises, with the server-side ones
@@ -372,7 +429,8 @@ class AttestationService(
                 ?.map { it.replace(":", "").lowercase() }.orEmpty()
             if (signers.none { it in verifier.signerDigests }) raised += AttestationFlag.APP_INTEGRITY
         }
-        val keyAttested = device.keyAttestation?.attested == true
+        // Only an Android chain attests the key itself (App Attest vouches for the app).
+        val keyAttested = device.keyAttestation?.attested == true && !AppAttestAdmission.admitted(device.keyAttestation)
         if (!keyAttested) {
             raised += AttestationFlag.KEY_UNATTESTED
             val level = (report["device"] as? JsonObject)?.string("keySecurityLevel")?.lowercase()
@@ -588,6 +646,8 @@ class AttestationService(
          * on record, fixes the platform; so does the platform of earlier verdicts.
          */
         fun effectivePlatform(claimed: String, device: AttestedDevice): String = when {
+            // Admitted by App Attest in place of a chain: Apple hardware.
+            AppAttestAdmission.admitted(device.keyAttestation) -> PLATFORM_IOS
             device.keyAttestation?.attested == true -> PLATFORM_ANDROID
             device.appAttestKeyId != null -> PLATFORM_IOS
             device.platform != null -> device.platform
