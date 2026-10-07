@@ -243,9 +243,15 @@ private fun startServer() {
         (if (userAuthAttestation.requireVerifiedBoot) "" else ", verified boot NOT required") +
         (if (userAuthAttestation.requirePerUse) ", per-use user-auth keys only" else "") +
         (userAuthAttestation.minPatchLevel?.let { ", security patch $it or newer" } ?: ""))
+    // Apple App Attest (ATTESTATION.md §12), optional: with APP_ATTEST_APP_IDS the server
+    // verifies iOS apps' App Attest objects itself — at enrollment, on every attestation
+    // round, and in place of the Android chain where a setting says enforce (enrollment,
+    // user-auth keys, attestation registration) — against Apple's root in
+    // APP_ATTEST_ROOT_CA_FILE; without a readable root it does not start. Nothing is sent to Apple.
+    val appAttest = com.example.pinvault.server.service.attestation.AppAttestVerifier.fromEnv()
     // enforce without the package + signer binding refuses to start; warn without it
     // lets no attestation count (replacement then needs an administrator's reset).
-    com.example.pinvault.server.service.UserAuthAttestationMode.startupCheck(userAuthAttestationMode, userAuthAttestation)
+    com.example.pinvault.server.service.UserAuthAttestationMode.startupCheck(userAuthAttestationMode, userAuthAttestation, appAttest = appAttest != null)
         ?.let { System.err.println(it) }
     // The attestation revocation list is re-read when its file changes (an
     // operator's cron job fetches Google's list; the server never goes to the
@@ -256,17 +262,11 @@ private fun startServer() {
         java.util.concurrent.Executors.newSingleThreadScheduledExecutor { r -> Thread(r, "attestation-revocation-list").apply { isDaemon = true } }
             .scheduleAtFixedRate({ runCatching { userAuthAttestation.refreshRevocationList() } }, 10, 10, java.util.concurrent.TimeUnit.MINUTES)
     }
-    // Apple App Attest (ATTESTATION.md §12), optional: with APP_ATTEST_APP_IDS the server
-    // verifies iOS apps' App Attest objects itself — at enrollment, on every attestation
-    // round, and in place of the Android chain where a setting says enforce (enrollment,
-    // user-auth keys, attestation registration) — against Apple's root in
-    // APP_ATTEST_ROOT_CA_FILE; without a readable root it does not start. Nothing is sent to Apple.
-    val appAttest = com.example.pinvault.server.service.attestation.AppAttestVerifier.fromEnv()
     // Client identity keys: Android Key Attestation of every CSR enrollment
     // (ENROLLMENT_ATTESTATION=off|warn|enforce, default warn), same verifier settings;
     // an iPhone's appAttestation in place of the chain when App Attest is configured.
     val enrollmentAttestationMode = com.example.pinvault.server.service.EnrollmentAttestationMode.parse(com.example.pinvault.server.service.ServerEnv.get("ENROLLMENT_ATTESTATION"))
-    com.example.pinvault.server.service.EnrollmentAttestationMode.startupCheck(enrollmentAttestationMode, userAuthAttestation)
+    com.example.pinvault.server.service.EnrollmentAttestationMode.startupCheck(enrollmentAttestationMode, userAuthAttestation, appAttest = appAttest != null)
         ?.let { System.err.println(it) }
     val enrollmentAttestation = com.example.pinvault.server.service.EnrollmentAttestation(enrollmentAttestationMode, appAttest) { userAuthAttestation }
     // enforce without Google's revocation list: a phone whose attestation key was revoked still passes.
@@ -523,7 +523,7 @@ private fun startServer() {
     }
     val attestationKeyPolicy = com.example.pinvault.server.service.attestation.AttestationKeyPolicy.parse(com.example.pinvault.server.service.ServerEnv.get("ATTESTATION_KEY_POLICY"))
     // enforce without the package + signer binding refuses to start (as for the other two attestation modes).
-    com.example.pinvault.server.service.attestation.AttestationKeyPolicy.startupCheck(attestationKeyPolicy, userAuthAttestation)
+    com.example.pinvault.server.service.attestation.AttestationKeyPolicy.startupCheck(attestationKeyPolicy, userAuthAttestation, appAttest = appAttest != null)
         ?.let { System.err.println(it) }
     // An iPhone has no Android chain: under any of the three enforce settings it is
     // refused unless App Attest (APP_ATTEST_APP_IDS) stands in for the chain.

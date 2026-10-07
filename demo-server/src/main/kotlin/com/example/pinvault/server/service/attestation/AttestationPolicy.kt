@@ -222,12 +222,16 @@ enum class AttestationKeyPolicy {
         }
 
         /** As [com.example.pinvault.server.service.EnrollmentAttestationMode.startupCheck]: enforce without the app binding refuses to start; warn returns the warning. */
-        fun startupCheck(policy: AttestationKeyPolicy, attestation: com.example.pinvault.server.service.AndroidKeyAttestation): String? {
+        fun startupCheck(policy: AttestationKeyPolicy, attestation: com.example.pinvault.server.service.AndroidKeyAttestation, appAttest: Boolean = false): String? {
             if (policy == OFF || attestation.bindsApp) return null
             val missing = listOfNotNull(
                 "ATTESTATION_PACKAGE_NAMES".takeIf { attestation.packageNames.isEmpty() },
                 "ATTESTATION_SIGNER_SHA256".takeIf { attestation.signerDigests.isEmpty() }
             ).joinToString(" and ")
+            if (policy == ENFORCE && appAttest) {
+                return "WARNING: ATTESTATION_KEY_POLICY=enforce without $missing — Android devices are refused (their chains " +
+                    "cannot be bound to your app); iPhones are admitted by App Attest (APP_ATTEST_APP_IDS)."
+            }
             check(policy != ENFORCE) {
                 "ATTESTATION_KEY_POLICY=enforce needs ATTESTATION_PACKAGE_NAMES and ATTESTATION_SIGNER_SHA256 " +
                     "($missing empty): without them any app on any locked phone can attest a key for any device id. " +

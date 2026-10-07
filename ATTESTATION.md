@@ -350,7 +350,7 @@ webhooks), `attestation_token_secret_rotated`, `attestation_token_secret_deleted
 | Variable | Default | Meaning |
 |---|---|---|
 | `ATTESTATION_ENABLED` | `true` | Serves `/api/v1/attest*`. |
-| `ATTESTATION_KEY_POLICY` | `warn` (production profile: `enforce`) | What a first registration's Android key attestation must do. `enforce` needs `ATTESTATION_PACKAGE_NAMES` and `ATTESTATION_SIGNER_SHA256`; an iPhone gets in under it only by App Attest (`APP_ATTEST_APP_IDS`, §12). |
+| `ATTESTATION_KEY_POLICY` | `warn` (production profile: `enforce`) | What a first registration's Android key attestation must do. `enforce` needs `ATTESTATION_PACKAGE_NAMES` and `ATTESTATION_SIGNER_SHA256`, or `APP_ATTEST_APP_IDS` for an iOS-only fleet (Android devices are then refused); an iPhone gets in under it only by App Attest (§12). |
 | `ATTESTATION_POLICY_DEFAULT` | `strict` (production profile: `strict`, fixed) | Policy for a Config API with none stored. |
 | `ATTESTATION_TOKEN_TTL_SECONDS` | `300` | Token lifetime when a policy has none. |
 | `ATTESTATION_INTERVAL_SECONDS` | `300` | `nextAttestIn` when a policy has none. |
@@ -639,7 +639,11 @@ screen-lock key still needs the device's credential as well; revocation,
 rate limits and limits are unchanged; Android devices still need their
 chain. Without `APP_ATTEST_APP_IDS` the field is not read and every iPhone
 is refused under `enforce`, as before; the server warns at start when one
-of the three is on `enforce` and App Attest is not configured.
+of the three is on `enforce` and App Attest is not configured. An iOS-only
+fleet can run the three on `enforce` with `APP_ATTEST_APP_IDS` alone
+(without `ATTESTATION_PACKAGE_NAMES` / `ATTESTATION_SIGNER_SHA256`): the
+server starts, warns that Android devices are refused, and refuses every
+Android chain, since none can be bound to your app.
 
 What it proves, and what it does not. App Attest proves the request came
 from **your genuine app on genuine Apple hardware**. It does **not** prove
