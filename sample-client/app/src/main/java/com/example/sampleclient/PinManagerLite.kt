@@ -136,13 +136,20 @@ object PinManagerLite {
      * Sunucusuz (statik) PinVault yapılandırması: pin'ler APK'ya gömülü,
      * hiçbir sunucuya bağlanılmaz. [requireCaTrust] açıksa host'un sertifikası
      * pin'e ek olarak sistemin CA'larından da geçmeli (herkesin güvendiği bir
-     * CA'dan sertifikası olan hedefler için).
+     * CA'dan sertifikası olan hedefler için). [harden] yerel sertleştirme
+     * katmanlarını ekler (App.harden): bu modda da geçerlidirler.
      */
     @JvmStatic
-    fun staticConfig(hostPattern: String, pins: List<String>, requireCaTrust: Boolean): PinVaultConfig =
+    fun staticConfig(
+        hostPattern: String,
+        pins: List<String>,
+        requireCaTrust: Boolean,
+        harden: (PinVaultConfig.Builder) -> Unit
+    ): PinVaultConfig =
         PinVaultConfig.Builder()
             .staticPins(CertificateConfig(pins = listOf(HostPin(hostPattern, pins)), forceUpdate = false))
             .apply { if (requireCaTrust) requireCaTrust(hostPattern) }
+            .apply(harden)
             .build()
 
     /**

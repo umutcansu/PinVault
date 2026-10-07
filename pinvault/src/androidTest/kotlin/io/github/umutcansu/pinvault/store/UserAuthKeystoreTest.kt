@@ -8,7 +8,7 @@ import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import io.github.umutcansu.pinvault.internal.UserAuthPrompt
 import io.github.umutcansu.pinvault.keystore.KeystoreUserAuthKeys
-import io.github.umutcansu.pinvault.keystore.UserAuthKeyKind
+import io.github.umutcansu.pinvault.model.UserAuthKeyKind
 import io.github.umutcansu.pinvault.keystore.UserAuthKeys
 import io.github.umutcansu.pinvault.model.SignatureEntry
 import io.github.umutcansu.pinvault.model.UserAuth

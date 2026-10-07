@@ -3,6 +3,7 @@ package io.github.umutcansu.pinvault.keystore
 import android.os.Build
 import io.github.umutcansu.pinvault.model.HardwareBackedKeyRequiredException
 import io.github.umutcansu.pinvault.model.KeySecurityLevel
+import io.github.umutcansu.pinvault.model.UnlockedDeviceKeyRequiredException
 import timber.log.Timber
 
 /**
@@ -22,6 +23,14 @@ internal object KeystoreOptions {
     var unlockedDeviceRequired: Boolean = false
 
     /**
+     * `PinVaultConfig.Builder.requireUnlockedDevice(allowFallback = true)`:
+     * when the Keystore refuses an unlocked-device key, make the key without
+     * the requirement (and warn) instead of refusing the operation.
+     */
+    @Volatile
+    var unlockedDeviceFallbackAllowed: Boolean = false
+
+    /**
      * `PinVaultConfig.Builder.requireHardwareBackedKeys()`: a key the
      * Keystore made in software (or whose level it would not say) is deleted
      * again and the operation fails with [HardwareBackedKeyRequiredException],
@@ -34,18 +43,31 @@ internal object KeystoreOptions {
     fun wantsUnlockedDevice(): Boolean = unlockedDeviceRequired && Build.VERSION.SDK_INT >= Build.VERSION_CODES.P
 
     /**
-     * Runs [generate] asking for an unlocked-device key when the option is on,
-     * and once more without the flag when the Keystore refuses it: a ROM that
-     * cannot make such a key must not leave the app without any key.
-     * [cleanUp] removes whatever a failed attempt left behind.
+     * Runs [generate] asking for an unlocked-device key when the option is
+     * on. When the Keystore refuses such a key the operation fails with
+     * [UnlockedDeviceKeyRequiredException] — the app asked for keys that
+     * work only while the device is unlocked, and a key without that
+     * requirement would not be what it asked for. Only with
+     * [unlockedDeviceFallbackAllowed] is [generate] run once more without
+     * the flag (a ROM that cannot make such a key then still gets a key),
+     * with a warning in the log. [cleanUp] removes whatever a failed
+     * attempt left behind. A key the Keystore did make but
+     * `requireHardwareBackedKeys()` refused is not the flag's doing: that
+     * refusal passes through unchanged, in both modes.
      */
     inline fun <T> generating(what: String, cleanUp: () -> Unit = {}, generate: (unlockedDeviceRequired: Boolean) -> T): T {
         if (!wantsUnlockedDevice()) return generate(false)
         return try {
             generate(true)
+        } catch (e: HardwareBackedKeyRequiredException) {
+            throw e
         } catch (e: Exception) {
-            Timber.w(e, "%s: the Keystore refused an unlocked-device key — generating it without that requirement", what)
-            cleanUp()
+            runCatching(cleanUp).onFailure { Timber.w(it, "%s: could not clean up after the refused key", what) }
+            if (!unlockedDeviceFallbackAllowed) {
+                Timber.e(e, "%s: the Keystore refused an unlocked-device key and requireUnlockedDevice() allows no fallback — refusing", what)
+                throw UnlockedDeviceKeyRequiredException(what, e)
+            }
+            Timber.w(e, "%s: the Keystore refused an unlocked-device key — generating it without that requirement (allowFallback)", what)
             generate(false)
         }
     }

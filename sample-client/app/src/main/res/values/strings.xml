@@ -164,6 +164,10 @@
     <string name="settings_applying">Uygulanıyor: %1$s…</string>
     <string name="settings_applied">✅ Ayarlar uygulandı\nMod: %1$s\nBaşarı raporu: %2$s, tekrar bastırma: %3$d ms\nPin kapsamı: %4$s\nGereken imza: %6$d\nPinVault: %5$s</string>
     <string name="settings_two_signatures">İki imza iste (m-of-n: her config iki ayrı anahtarla imzalı olmalı)</string>
+    <string name="settings_hardening_title">Yerel sertleştirme (release\'te hep açık; emülatörde kapalı bırak)</string>
+    <string name="settings_environment_guard">Ortam kontrolü: root / debugger / hooking görülürse kayıt, indirme ve açma reddedilsin (environmentGuard)</string>
+    <string name="settings_unlocked_device">Yeni anahtarlar yalnızca telefon kilidi açıkken çalışsın (requireUnlockedDevice)</string>
+    <string name="settings_hardware_keys">Yazılımda üretilen anahtar reddedilsin (requireHardwareBackedKeys)</string>
     <string name="signing_status">🔏 İmza: %1$d imza gerekli · %2$d güvenilen anahtar · anahtar seti v%3$d\nSon config\'i imzalayan: %4$s</string>
     <string name="signing_status_none">🔏 İmza doğrulaması yok (allowUnsigned ya da statik mod)</string>
     <string name="settings_advanced_title">Gelişmiş</string>

@@ -1,5 +1,65 @@
 # Changelog
 
+## Unreleased
+
+Closes the three medium findings of the Android MASVS 2.x audit (a
+white-box source read of 2.3.0; RESILIENCE in the sample, the Android 7–10
+user-auth key, and the silent `requireUnlockedDevice()` fallback).
+
+### Library
+
+- **`requireUnlockedDevice()` no longer falls back silently.** When a
+  device's Keystore refused a key with `setUnlockedDeviceRequired(true)`,
+  the key was made without the requirement and the app learnt of it from a
+  log line only. Now the operation that needed the key fails with the new
+  `UnlockedDeviceKeyRequiredException` (`init` → `InitResult.Failed` for
+  the store keys; enrollment, vault files and imported identities report
+  `Failed` with that cause). The old behaviour is an explicit opt-in:
+  `requireUnlockedDevice(allowFallback = true)` (Java:
+  `requireUnlockedDevice(true)`), still with the warning in the log.
+  `PinVaultConfig.requireUnlockedDeviceFallback` carries the choice. A key
+  the Keystore did make but `requireHardwareBackedKeys()` refused is no
+  longer retried without the flag. See `MIGRATION.md`.
+- **The Android 7–10 user-auth key, as far as the platform allows.** Before
+  Android 11 the Keystore cannot bind the screen lock to a single use, so a
+  phone without a strong fingerprint gets a time-bound key. Its window is
+  now **5 s** (was 10 s): the Keystore checks it when the cipher is
+  initialised, right after the prompt returns. On Android 7–8 the prompt
+  for that key now offers a strong biometric and the screen lock
+  (`BIOMETRIC_STRONG | DEVICE_CREDENTIAL`, supported there) instead of any
+  biometric; Android 9–10 keep `BIOMETRIC_WEAK | DEVICE_CREDENTIAL`, the
+  only pair androidx.biometric allows with the screen lock on API 28–29. A
+  phone with a strong fingerprint still gets a per-use `CryptoObject`-bound
+  key on 7–10, as before. The limitation is now visible: the enum
+  `UserAuthKeyKind` (`PER_USE`, `PER_USE_BIOMETRIC`, `TIME_BOUND`; `perUse`,
+  `windowSeconds`) moved to `model` and is public, `PinVault.userAuthKeyKind()`
+  reads this device's kind, `UserAuthKeyKind.expected(sdkInt, strongFingerprint)`
+  tells what a key made now would be, a time-bound key is logged as a
+  warning when it is made, and the README's *Locked behind the screen lock*
+  has the per-version table. Unit tests run the decisions at API 24, 27,
+  28, 29, 30 and 34 with Robolectric. The reference server accepts windows
+  up to 10 s, so no server change is needed.
+
+### Samples
+
+- **sample-client wires the three local hardening hooks** it only
+  documented before (audit F-1), in every mode, from `App.harden`:
+  `environmentGuard` with a small in-app check (`DeviceShield`: `su`
+  binaries and Magisk/KernelSU/APatch files, an attached debugger or
+  `TracerPid`, Frida/Xposed/Substrate/Dobby in `/proc/self/maps`) that
+  refuses `ENROLL`, `FETCH_FILE` and `UNLOCK_FILE` on a compromised device
+  and always allows `INIT`; `expectedSignerSha256` from the new
+  `host.expectedSignerSha256` property in `sample-host.properties`
+  (`client-config.sh --properties` writes it from the server's
+  `ATTESTATION_SIGNER_SHA256`; empty = not set; the release build refuses
+  an empty value like the other release guards); `requireUnlockedDevice()`
+  and `requireHardwareBackedKeys()`. All three are always on in the
+  release build type. Test builds (debug, e2e) get three Settings
+  checkboxes (`environmentGuardCheck`, `unlockedDeviceCheck`,
+  `hardwareKeysCheck`), off by default, so the E2E suite keeps its
+  behaviour on userdebug emulator images that carry `su` and have no
+  secure hardware. Existing strings and view ids are unchanged.
+
 ## 2.3.0 — 2026-10-07 — iOS library, attestation, Play Integrity, managed trust roots, environment guard, setup wizard
 
 ### iOS (new)

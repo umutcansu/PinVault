@@ -1,7 +1,7 @@
 package io.github.umutcansu.pinvault.store
 
 import io.github.umutcansu.pinvault.crypto.VaultFileDecryptor
-import io.github.umutcansu.pinvault.keystore.UserAuthKeyKind
+import io.github.umutcansu.pinvault.model.UserAuthKeyKind
 import io.github.umutcansu.pinvault.keystore.UserAuthKeys
 import io.github.umutcansu.pinvault.model.ScreenLockRequiredException
 import io.github.umutcansu.pinvault.model.SignatureEntry

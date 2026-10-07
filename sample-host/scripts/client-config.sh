@@ -383,6 +383,10 @@ host.tlsScope=${TLS_SCOPE}
 host.mtlsScope=${MTLS_SCOPE}
 # Atestasyon (Approov benzeri): 5 dakikada bir imzalı bütünlük raporu, geçene PinVault-Token. Boş = true.
 host.attestation=true
+# Uygulamanın yayın imza sertifikasının SHA-256'sı (hex, virgülle birden çok): atestasyon
+# raporunda app_integrity buna göre işaretlenir. Sunucudaki ATTESTATION_SIGNER_SHA256 ile aynı
+# değer; release derlemesi boşken durur.
+host.expectedSignerSha256=${ATTESTATION_SIGNER_SHA256:-}
 host.bootstrapPinPrimary=${PRIMARY}
 host.bootstrapPinBackup=${BACKUP}
 host.signingPublicKey=${SIGNING}

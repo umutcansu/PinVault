@@ -42,8 +42,10 @@ package io.github.umutcansu.pinvault.model
  * screen lock does not open it), and because that key is bound to the
  * enrolled biometrics, a new fingerprint, removing all fingerprints or
  * removing the screen lock retires it; otherwise the screen lock opens the
- * key for 10 seconds — after the prompt, but also after the phone itself is
- * unlocked — and only removing the screen lock retires it.
+ * key for [UserAuthKeyKind.TIME_BOUND_WINDOW_SECONDS] seconds — after the
+ * prompt, but also after the phone itself is unlocked — and only removing
+ * the screen lock retires it. [UserAuthKeyKind] has the table;
+ * `PinVault.userAuthKeyKind()` says which kind this device's key is.
  *
  * The reference server holds registered keys to rules of its own: on Android
  * 11+ it refuses a key that is not per-use (the library's keys there always
