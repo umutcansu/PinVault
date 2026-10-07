@@ -121,6 +121,7 @@ enum StorageReport {
             out += "kayıtlı değil\n"
         } else {
             out += "kayıtlı — CN=\(PinVault.shared.enrolledClientCN() ?? "?")\n"
+            out += "kimlik anahtarının yeri (PinVault.identityKeySecurityLevel): \(PinVault.shared.identityKeySecurityLevel()?.wireName ?? "yok")\n"
             let certPrefs = pinvaultDir.appendingPathComponent("pinvault_secure_client_cert.plist")
             if let raw = try? Data(contentsOf: certPrefs) {
                 let dict = (try? PropertyListSerialization.propertyList(from: raw, format: nil)) as? [String: Any] ?? [:]
@@ -289,22 +290,45 @@ enum StorageReport {
             if let publicKey, let spki = spki(publicKey) {
                 line += ", public key SHA-256: " + SHA256.hash(data: spki).map { String(format: "%02x", $0) }.joined()
             }
+            // Özel anahtarın baytları istenir: Secure Enclave ve kSecAttrIsExtractable=false
+            // anahtarlarında Keychain reddeder (OSStatus koduyla).
+            if cls == "private" {
+                var error: Unmanaged<CFError>?
+                if SecKeyCopyExternalRepresentation(key, &error) != nil {
+                    line += ", dışa aktarılabilir: EVET"
+                } else {
+                    let code = error.map { CFErrorGetCode($0.takeRetainedValue()) }.map(String.init) ?? "?"
+                    line += ", dışa aktarılabilir: hayır (SecKeyCopyExternalRepresentation → \(code))"
+                }
+            }
         }
         line += ", erişim: \(accessibility(item))"
         return line
     }
 
+    /// Erişim sınıfı. Erişim denetimiyle (SecAccessControl) üretilen anahtarlarda —
+    /// Secure Enclave anahtarları — sınıfı denetim nesnesi taşır; Keychain'in
+    /// `kSecAttrAccessible` alanı orada anlamlı değildir (Secure Enclave anahtarı "dk" gösterir).
     private static func accessibility(_ item: [String: Any]) -> String {
+        if let ref = item[kSecAttrAccessControl as String], CFGetTypeID(ref as CFTypeRef) == SecAccessControlGetTypeID() {
+            // "<SecAccessControlRef: cku;od(cpo(DeviceOwnerAuthentication));…>": ilk alan koruma sınıfı.
+            let description = String(describing: ref)
+            let code = description.range(of: #"SecAccessControlRef: ([a-z]+)"#, options: .regularExpression)
+                .map { String(description[$0].dropFirst("SecAccessControlRef: ".count)) }
+            return "\(code.flatMap { protectionNames[$0] } ?? code ?? "?") (SecAccessControl)"
+        }
         let value = item[kSecAttrAccessible as String] as? String
-        let names: [(CFString, String)] = [
-            (kSecAttrAccessibleWhenUnlocked, "WhenUnlocked"),
-            (kSecAttrAccessibleAfterFirstUnlock, "AfterFirstUnlock"),
-            (kSecAttrAccessibleWhenPasscodeSetThisDeviceOnly, "WhenPasscodeSetThisDeviceOnly"),
-            (kSecAttrAccessibleWhenUnlockedThisDeviceOnly, "WhenUnlockedThisDeviceOnly"),
-            (kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly, "AfterFirstUnlockThisDeviceOnly"),
-        ]
-        return names.first { ($0.0 as String) == value }?.1 ?? (value ?? "?")
+        return value.flatMap { protectionNames[$0] } ?? (value ?? "?")
     }
+
+    /// Keychain'in koruma sınıfı kodları (`kSecAttrAccessible…` sabitlerinin değerleri).
+    private static let protectionNames: [String: String] = [
+        kSecAttrAccessibleWhenUnlocked as String: "WhenUnlocked",
+        kSecAttrAccessibleAfterFirstUnlock as String: "AfterFirstUnlock",
+        kSecAttrAccessibleWhenPasscodeSetThisDeviceOnly as String: "WhenPasscodeSetThisDeviceOnly",
+        kSecAttrAccessibleWhenUnlockedThisDeviceOnly as String: "WhenUnlockedThisDeviceOnly",
+        kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly as String: "AfterFirstUnlockThisDeviceOnly",
+    ]
 
     /// X.509 SubjectPublicKeyInfo (sunucunun kaydettiği public key'in DER'i).
     private static func spki(_ publicKey: SecKey) -> Data? {
