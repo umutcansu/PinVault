@@ -507,9 +507,13 @@ class PolicyEnrollment(
     }
 }
 
-/** A device's name for itself, fit to show an administrator: letters, digits, a little punctuation, at most 64. */
+/**
+ * A device's name for itself, fit to show an administrator: letters, digits, a
+ * little punctuation, at most 64. The comma stays: Apple model identifiers carry
+ * one (`iPhone17,1`), and without it `iPhone17,1` and `iPhone1,71` read the same.
+ */
 internal fun displayAlias(raw: String?): String? =
-    raw?.filter { it.isLetterOrDigit() || it in " ._:()+-'" }?.trim()?.take(64)?.ifBlank { null }
+    raw?.filter { it.isLetterOrDigit() || it in " ._:()+-'," }?.trim()?.take(64)?.ifBlank { null }
 
 /**
  * A string field of a JSON body; JSON `null` counts as absent, and so does an

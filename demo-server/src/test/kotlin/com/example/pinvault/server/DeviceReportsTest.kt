@@ -160,6 +160,26 @@ class DeviceReportsTest {
         assertTrue(Instant.parse(row.timestamp).isAfter(before), "the reported time was not taken: ${row.timestamp}")
     }
 
+    @Test
+    fun `an Apple model identifier keeps its comma and nothing else is let through`() = testApplication {
+        configureApp()
+        val response = vaultReport("/a", buildJsonObject {
+            put("key", "model"); put("version", 1); put("deviceId", "ios-1"); put("status", "downloaded")
+            put("deviceManufacturer", "Apple"); put("deviceModel", "iPhone17,1")
+            put("enrollmentLabel", "iPad16,3 <img src=x onerror=alert(1)>"); put("deviceAlias", "Ali's iPhone,\"x\";\n")
+        }.toString())
+        assertEquals(HttpStatusCode.OK, response.status, response.bodyAsText())
+
+        val row = dist.getAll(scopeA).single()
+        assertEquals("iPhone17,1", row.deviceModel, "iPhone17,1 and iPhone1,71 must not read the same")
+        assertEquals("iPad16,3 img srcx onerroralert(1)", row.enrollmentLabel)
+        assertEquals("Ali's iPhone,x", row.deviceAlias)
+        for (shown in listOf(row.deviceModel!!, row.enrollmentLabel!!, row.deviceAlias!!)) {
+            assertTrue(shown.none { it in "<>\"&;=\n" || it.isISOControl() }, shown)
+        }
+        assertEquals("iPhone17,1", com.example.pinvault.server.route.displayAlias(" iPhone17,1 "))
+    }
+
     // ── the eviction attack ──────────────────────────────────────────────
 
     @Test
