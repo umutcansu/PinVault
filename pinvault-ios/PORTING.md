@@ -118,6 +118,14 @@ Kotlin files are grouped (results, small enums).
     "verdictProvider": { "name": "app-attest", "token": "<JSON string, see §6>" }
   }
   ```
+  iOS probes run twice where it matters: in Swift and in a small C target (`PinVaultNative`) that
+  uses raw system calls (`svc #0x80` on arm64) for file and process checks, so a hook on libc `stat` /
+  `access` / `open` / `sysctl` does not hide them; probe strings are stored XOR-obfuscated and decoded
+  on use. Rootless jailbreaks: `/var/jb` (and whether it is a symlink), `/private/preboot/<hash>/jb`,
+  `.jbroot-*` directories next to app bundles, `/var/binpack`, Dopamine/palera1n markers, ElleKit /
+  libhooker / substitute / `systemhook.dylib` images. Frida: loaded image names, thread names
+  (`gum-js-loop`, `gmain`, `gdbus`, `pool-frida`), the default ports 27042/27043 answering on
+  127.0.0.1, and the `LIBFRIDA` marker in the mapped images.
   iOS probes: `rooted` = jailbreak artefacts (`/Applications/Cydia.app`, `/Applications/Sileo.app`,
   `/Applications/Zebra.app`, `/var/jb`, `/private/var/lib/apt`, `/usr/sbin/sshd`, `/bin/bash`,
   `/etc/apt`, write test outside the sandbox under `/private`, `cydia://` / `sileo://` URL schemes are
