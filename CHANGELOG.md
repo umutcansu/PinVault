@@ -20,6 +20,25 @@ user-auth key, and the silent `requireUnlockedDevice()` fallback).
   `PinVaultConfig.requireUnlockedDeviceFallback` carries the choice. A key
   the Keystore did make but `requireHardwareBackedKeys()` refused is no
   longer retried without the flag. See `MIGRATION.md`.
+- **The Android 7–10 user-auth key, as far as the platform allows.** Before
+  Android 11 the Keystore cannot bind the screen lock to a single use, so a
+  phone without a strong fingerprint gets a time-bound key. Its window is
+  now **5 s** (was 10 s): the Keystore checks it when the cipher is
+  initialised, right after the prompt returns. On Android 7–8 the prompt
+  for that key now offers a strong biometric and the screen lock
+  (`BIOMETRIC_STRONG | DEVICE_CREDENTIAL`, supported there) instead of any
+  biometric; Android 9–10 keep `BIOMETRIC_WEAK | DEVICE_CREDENTIAL`, the
+  only pair androidx.biometric allows with the screen lock on API 28–29. A
+  phone with a strong fingerprint still gets a per-use `CryptoObject`-bound
+  key on 7–10, as before. The limitation is now visible: the enum
+  `UserAuthKeyKind` (`PER_USE`, `PER_USE_BIOMETRIC`, `TIME_BOUND`; `perUse`,
+  `windowSeconds`) moved to `model` and is public, `PinVault.userAuthKeyKind()`
+  reads this device's kind, `UserAuthKeyKind.expected(sdkInt, strongFingerprint)`
+  tells what a key made now would be, a time-bound key is logged as a
+  warning when it is made, and the README's *Locked behind the screen lock*
+  has the per-version table. Unit tests run the decisions at API 24, 27,
+  28, 29, 30 and 34 with Robolectric. The reference server accepts windows
+  up to 10 s, so no server change is needed.
 
 ## 2.3.0 — 2026-10-07 — iOS library, attestation, Play Integrity, managed trust roots, environment guard, setup wizard
 

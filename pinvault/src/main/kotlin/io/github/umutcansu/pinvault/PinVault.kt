@@ -390,6 +390,26 @@ object PinVault {
     }
 
     /**
+     * How this device's user-auth key — the key behind [UserAuth] vault
+     * files — is opened: on every use (Android 11+, or a fingerprint-only
+     * key on 7–10), or for a time window after the screen lock is passed
+     * (Android 7–10 without a strong fingerprint, the weak kind). Null when
+     * there is no usable key yet: nothing locked was fetched, the key was
+     * retired, or `init` has not run. Read locally, no network, no prompt.
+     * [io.github.umutcansu.pinvault.model.UserAuthKeyKind] says which
+     * Android versions get which kind; `UserAuthKeyKind.expected` tells
+     * what a key made now would be, before one exists.
+     */
+    fun userAuthKeyKind(): io.github.umutcansu.pinvault.model.UserAuthKeyKind? {
+        val keys = userAuthKeys ?: (if (::appContext.isInitialized) userAuthKeysFactory(appContext) else return null)
+        return try {
+            if (keys.state() == UserAuthKeys.State.USABLE) keys.kind() else null
+        } catch (e: Exception) {
+            null
+        }
+    }
+
+    /**
      * Sets up internal components. Returns Unit if setup was performed,
      * null if already initialized (caller should return early).
      */

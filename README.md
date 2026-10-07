@@ -1554,9 +1554,41 @@ when (val r = PinVault.unlockFile(activity, "statement", VaultFileUnlockPrompt("
     one fingerprint-only key, bound to the enrolled fingerprints: adding a
     fingerprint, removing all fingerprints or removing the screen lock
     retires it.
-  - It has none: the screen lock opens the key for 10 seconds, after the
+  - It has none: the screen lock opens the key for 5 seconds, after the
     prompt but also after the phone itself is unlocked. Only removing the
     screen lock retires this key; adding a fingerprint does not.
+
+  **Which Android versions get which key.** Decide, before you ship
+  `userAuth` files, whether a time-bound key is acceptable for them; the
+  table is what the platform allows, not a library choice.
+
+  | Android | Key | Opened by | Prompt offers |
+  |---|---|---|---|
+  | 11+ (API 30+) | per use (`PER_USE`) | every use: strong biometric or screen lock, bound to the operation | strong biometric + screen lock |
+  | 7–10, a strong fingerprint enrolled when the key is made | per use, fingerprint only (`PER_USE_BIOMETRIC`) | every use: the fingerprint, bound to the operation | fingerprint only |
+  | 7–10, no strong fingerprint then | time-bound (`TIME_BOUND`) | the screen lock or a fingerprint, for **5 s** after it is passed — in the prompt, or by unlocking the phone | Android 7–8: strong biometric + screen lock; Android 9–10: any biometric + screen lock |
+
+  Why 5 seconds: before Android 11 `setUserAuthenticationValidityDurationSeconds`
+  is the only way to let the screen lock open a key (`-1` makes a
+  fingerprint-only key, `0` is not a window the Keystore honours), and the
+  Keystore checks the window when the decrypt cipher is initialised — which
+  the library does on the thread hop right after the prompt returns, well
+  under a second. 5 s leaves room for a slow Keystore and keeps the key
+  shut the rest of the time; it was 10 s until 2.3.0. Why Android 9 and 10
+  list any biometric: androidx.biometric does not support
+  `BIOMETRIC_STRONG | DEVICE_CREDENTIAL` on API 28–29, and the screen lock
+  must stay on offer for a key the screen lock opens; a weak biometric (a
+  face unlock the Keystore does not count) passes the prompt but does not
+  open the key, and the unlock reports `Failed`. Read the kind of this
+  device's key with `PinVault.userAuthKeyKind()` (`perUse`,
+  `windowSeconds`; null until a key exists), or ask
+  `UserAuthKeyKind.expected(Build.VERSION.SDK_INT, strongFingerprint)` what a
+  key made now would be; a time-bound key is also logged as a warning when
+  it is made. The kind is fixed when the key is made: a phone that gains a
+  fingerprint later keeps its time-bound key until that key is retired or
+  the app's data is cleared. If a time-bound key is not acceptable, refuse
+  it on the server (`USER_AUTH_REQUIRE_PER_USE=true`, below) or do not
+  configure `userAuth` files below Android 11.
 - **What the server accepts.** The reference server reads the key's
   properties from its attestation and refuses a time-bound key from a phone
   on Android 11 or newer (the library's key there is always per-use, so this

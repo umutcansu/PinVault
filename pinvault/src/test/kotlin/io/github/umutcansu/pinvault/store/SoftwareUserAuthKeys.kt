@@ -1,7 +1,7 @@
 package io.github.umutcansu.pinvault.store
 
 import android.security.keystore.KeyPermanentlyInvalidatedException
-import io.github.umutcansu.pinvault.keystore.UserAuthKeyKind
+import io.github.umutcansu.pinvault.model.UserAuthKeyKind
 import io.github.umutcansu.pinvault.keystore.UserAuthKeys
 import java.nio.ByteBuffer
 import java.security.KeyPair

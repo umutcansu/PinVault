@@ -1,6 +1,6 @@
 package io.github.umutcansu.pinvault.store
 
-import io.github.umutcansu.pinvault.keystore.UserAuthKeyKind
+import io.github.umutcansu.pinvault.model.UserAuthKeyKind
 import io.github.umutcansu.pinvault.model.UserAuth
 import io.github.umutcansu.pinvault.model.VaultFileUnlockResult
 import kotlinx.coroutines.test.runTest

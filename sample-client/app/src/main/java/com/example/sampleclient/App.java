@@ -151,7 +151,7 @@ public class App extends Application {
     //     güvenilir: uygulamanın kimlik bilgilerini ele geçiren kod, ilk kayıtta
     //     kendi yazılım anahtarını kaydettirebilir. Sonradan anahtar değiştirmek
     //     doğrulama ya da yönetici sıfırlaması ister. Android 7–10'da ekran
-    //     kilidi anahtarı 10 saniyeliğine açar (parmak izi yoksa),
+    //     kilidi anahtarı 5 saniyeliğine açar (parmak izi yoksa),
     //   • iptalde dosyalar silinir (wipeVaultFilesOnRevocation) ve uygulama
     //     elindeki token'ları unutur.
     // Gizli dosyalar yalnızca cihaz mTLS'e kayıtlıyken tanımlanır.
