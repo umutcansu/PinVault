@@ -905,6 +905,15 @@ All paths are relative to `configUrl`. Leading `/` is stripped.
 - Server certificate must match the pins in the config
 - For mTLS endpoints: require and validate client certificates
 - Self-signed certificates work — the library pins by SPKI hash, not by CA
+- **iOS and 403 on mTLS listeners:** on a connection where the server asked for a
+  client certificate, Apple's URL loading system turns every HTTP 403 into a
+  "client certificate required" error and drops the response, so an iPhone
+  never sees `403 {"error":"reenroll_required"}` or any other 403 body there.
+  The iOS library sends `X-PinVault-Features: forbidden-as-409` on such requests;
+  answer it with `409`, the same body, and `X-PinVault-Status: 403`. The library
+  reads that as the 403 it is. Clients that do not send the feature (Android)
+  keep getting the 403. The reference server does this on every mTLS listener
+  (`plugin/ForbiddenAsConflict.kt`).
 
 ---
 

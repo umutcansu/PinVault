@@ -82,6 +82,7 @@ class MockServerManager {
                 }
             }
         }) {
+            if (isMtls) install(com.example.pinvault.server.plugin.ForbiddenAsConflict)
             if (isMtls) revocationGate?.let { install(com.example.pinvault.server.plugin.RevocationGate, it) }
             tokenVerifier?.let { install(com.example.pinvault.server.plugin.PinVaultTokenAuth, it) }
             routing {

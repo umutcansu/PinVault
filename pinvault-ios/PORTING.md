@@ -130,6 +130,12 @@ Kotlin files are grouped (results, small enums).
   `unknown_installer` = not App Store / TestFlight (an embedded provisioning profile, or the simulator).
   The server (§5) treats `platform: ios` specially.
 - App Attest tokens (§6).
+- `X-PinVault-Features: forbidden-as-409` on every library request to a Config API, and on app
+  requests to hosts where the library presents a client identity: on a connection where the server
+  asked for a client certificate, URLSession turns any HTTP 403 into `URLError.clientCertificateRequired`
+  (-1206) and drops the body (verified, `ReenrollRequiredDetectionTests`). The server answers such a
+  request's 403 as `409` + `X-PinVault-Status: 403` with the same body; the transport hands it to the
+  interceptors and the API client as a 403.
 
 ## 5. Server changes (demo-server)
 

@@ -673,6 +673,8 @@ private fun startServer() {
         }
         // Device-facing bodies are a few hundred bytes; refuse big ones unread.
         install(com.example.pinvault.server.plugin.ClientBodyLimit)
+        // An iPhone cannot read a 403 on a connection that asked for its certificate.
+        if (mode == "mtls") install(com.example.pinvault.server.plugin.ForbiddenAsConflict)
         // The handshake trusts the client CA, revocation is checked here, per request.
         if (mode == "mtls") install(com.example.pinvault.server.plugin.RevocationGate, revocationGate)
         // ...and X-Device-Id may only name the device the certificate belongs to.
