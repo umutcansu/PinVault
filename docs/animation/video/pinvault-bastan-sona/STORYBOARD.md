@@ -1,7 +1,7 @@
 ---
 format: 1920x1080
 duration: 196s
-message: "Yeni bir telefon, sunucunuzla ilk güvenli isteğe kadar on halkadan geçer: sunucu kurulur, APK hazırlanır, token verilir, telefon kartını alır, listesini ve biletini alır, sonra konuşur."
+message: "Yeni bir telefon, sunucunuzla ilk güvenli isteğe kadar on halkadan geçer: sunucu kurulur, APK hazırlanır, token verilir, telefon kartını alır, listesini ve PinVault-Token'ıni alır, sonra konuşur."
 arc: how-to-process
 audience: PinVault'u ilk kez kuracak geliştirici ve yöneticiler
 mode: autonomous
@@ -19,7 +19,7 @@ Sessiz video. Anlatım ekrandaki yazıyla yapılır; ses, müzik ve efekt yoktur
 **Palet (frame.md, creative-mode).** Zemin `cream`, çizgi ve yazı `ink`, ikinci yüzey `cream-2`. Vurguların anlamı bütün videoda sabittir:
 - `green` = geçti, güvenli, eşleşti (✓).
 - `orange` = saldırgan, ret, yanlış inanış (✗). Sert gölgenin rengi de turuncudur; bir karede en çok bir sert gölge.
-- `yellow` = token ve bilet (PinVault-Token) ve imza mührü.
+- `yellow` = kayıt token'ı ve PinVault-Token ve imza mührü.
 - `pink` = cihazın kimlik kartı (cihaz sertifikası).
 Bir karede en çok üç vurgu. Yeşil zemin yalnızca son karede. Saf beyaz, degrade, bulanık gölge, parıltı yok. Köşeler kare; tek yuvarlak öğe üst çubuktaki hap etiket.
 
@@ -30,16 +30,16 @@ Bir karede en çok üç vurgu. Yeşil zemin yalnızca son karede. Saf beyaz, deg
 - API sunucunuz: ink çerçeveli kutu, başlık "API SUNUCUNUZ", altında mono "api.ornek.com".
 - Token: sarı, kenarı ink, yatay kısa şerit; içinde mono "token".
 - Kimlik kartı: pembe, kare köşeli küçük kart; üstünde mono "tablet-07".
-- Bilet: sarı kart, solda "PINVAULT-TOKEN", sağda kesik çizgiyle ayrılmış "5 DK".
+- PinVault-Token: sarı kart, solda "PINVAULT-TOKEN", sağda kesik çizgiyle ayrılmış "5 DK".
 - Pin: krem-2 kutucuk içinde mono parmak izi ("ziA0hyMD…").
 
-**Zincir şeridi (halka kareleri 3–12'de, kare 1'de tanıtılır, kare 14'te tamamlanır).** Üst çubuğun hemen altında, y = 104 px'ten başlayan, 40 px yüksekliğinde yatay bir şerit: 10 hücre, her biri 160 px genişlikte, x = 96 + i × 174 (i = 0…9). Hücre metni mono 15 px, büyük harf: "1 KURULUM", "2 APK", "3 HOST", "4 TOKEN", "5 TELEFONA", "6 KAYIT İSTEĞİ", "7 KART", "8 PİN LİSTESİ", "9 BİLET", "10 İLK İSTEK". Hücreler arasında 14 px'lik ince ink çizgi (zincir). Biten halkalar: ink dolgu, krem yazı. Şu anki halka: krem dolgu, 4 px ink kenar, ink yazı, altında 4 px turuncu değil sarı alt çizgi. Gelecek halkalar: 2 px ink kenar, %35 saydamlık. Şerit karenin ilk 0,6 saniyesinde zaten durur (önceki kareden devam ediyor gibi); yalnızca şu anki hücrenin dolgusu ve alt çizgisi 0,2–0,8 sn arasında oturur.
+**Zincir şeridi (halka kareleri 3–12'de, kare 1'de tanıtılır, kare 14'te tamamlanır).** Üst çubuğun hemen altında, y = 104 px'ten başlayan, 40 px yüksekliğinde yatay bir şerit: 10 hücre, her biri 160 px genişlikte, x = 96 + i × 174 (i = 0…9). Hücre metni mono 15 px, büyük harf: "1 KURULUM", "2 APK", "3 HOST", "4 KAYIT TOKEN'I", "5 TELEFONA", "6 KAYIT İSTEĞİ", "7 KART", "8 PİN LİSTESİ", "9 ATESTASYON", "10 İLK İSTEK". Hücreler arasında 14 px'lik ince ink çizgi (zincir). Biten halkalar: ink dolgu, krem yazı. Şu anki halka: krem dolgu, 4 px ink kenar, ink yazı, altında 4 px turuncu değil sarı alt çizgi. Gelecek halkalar: 2 px ink kenar, %35 saydamlık. Şerit karenin ilk 0,6 saniyesinde zaten durur (önceki kareden devam ediyor gibi); yalnızca şu anki hücrenin dolgusu ve alt çizgisi 0,2–0,8 sn arasında oturur.
 
 **Benzetme şeridi (halka kareleri 3–12).** Her halka karesinin altında, y ≈ 830–880 arasında, sol kenara yaslı, krem-2 dolgulu, 2 px ink kenarlı yatay kutu: solda siyah zeminli küçük mono etiket "BENZETME", sağında gövde metni (Space Grotesk, ≈26 px). Karenin son üçte birinde belirir.
 
 **Çerçeve süsü.** Üstte mono üst çubuk: solda "PINVAULT BAŞTAN SONA", sağda hap etiket (karede verilir). Altta mono künye: solda kare adı, sağda "NN • 14". Son kare krem renkli künye varyantını kullanır.
 
-**Hareket dili.** Uzun kuyruklu yumuşak oturma (`power3`); zıplama, aşma, elastik yok. Her parça kendi okuma anında girer: sessiz video olduğu için zamanlama okuma ritmine göre yapılır. Bir satır geldikten sonra bir sonraki parça gelmeden önce kabaca kelime başına 0,35 sn (en az 1,2 sn) beklenir. Hiçbir kare ilk %25'te her şeyi dökmez. Paketler (token, kart, bilet, liste) çizgi boyunca kayan küçük kartlardır; yolun kendisi soldan sağa çizilerek belirir. Panelde bir düğmeye "basılması" düğmenin kısa bir an içe çökmesi ve ink dolguya dönmesiyle gösterilir; imleç çizilmez.
+**Hareket dili.** Uzun kuyruklu yumuşak oturma (`power3`); zıplama, aşma, elastik yok. Her parça kendi okuma anında girer: sessiz video olduğu için zamanlama okuma ritmine göre yapılır. Bir satır geldikten sonra bir sonraki parça gelmeden önce kabaca kelime başına 0,35 sn (en az 1,2 sn) beklenir. Hiçbir kare ilk %25'te her şeyi dökmez. Paketler (token, kart, PinVault-Token, liste) çizgi boyunca kayan küçük kartlardır; yolun kendisi soldan sağa çizilerek belirir. Panelde bir düğmeye "basılması" düğmenin kısa bir an içe çökmesi ve ink dolguya dönmesiyle gösterilir; imleç çizilmez.
 
 **Ritim.** Tutma (nefes) kareleri: Kare 2'nin sonu ve Kare 14. Diğerleri okuma ritmiyle açılır, son parça geldikten sonra sakin durur; tutma sırasında en çok hafif titreşim.
 
@@ -73,7 +73,7 @@ Ekran metni:
 - satır 2 (display-head): "SUNUCUNUZLA İLK GÜVENLİ İSTEĞE KADAR NE OLUR?"
 - tablet etiketi (mono): "tablet-07"
 - API kutusu: "API SUNUCUNUZ" / "api.ornek.com"
-- zincir hücreleri: "1 KURULUM" "2 APK" "3 HOST" "4 TOKEN" "5 TELEFONA" "6 KAYIT İSTEĞİ" "7 KART" "8 PİN LİSTESİ" "9 BİLET" "10 İLK İSTEK"
+- zincir hücreleri: "1 KURULUM" "2 APK" "3 HOST" "4 KAYIT TOKEN'I" "5 TELEFONA" "6 KAYIT İSTEĞİ" "7 KART" "8 PİN LİSTESİ" "9 ATESTASYON" "10 İLK İSTEK"
 - alt satır (body-lg): "On halka, bu sırayla. Her birinde kim, nerede, ne yapıyor."
 - künye: "Giriş"
 
@@ -229,7 +229,7 @@ Scene 5 (11.0–15.0s): Sağda kod panelinden APK kutusuna kısa bir ok; APK kut
 - roles: panel = foreground subject · api.ornek.com kutusu = supporting · iki pin kutucuğu = foreground subject · imzalı liste = supporting · benzetme = supporting
 
 narrativeRole: Üçüncü halka: telefonun konuşacağı asıl sunucunun pin'leri APK'ya değil, panelden imzalı listeye girer.
-keyMessage: Yönetici API sunucusunu panelde ekler; pin'leri imzalı listeye girer; API sunucusu da bileti doğrulamak için sırrını alır.
+keyMessage: Yönetici API sunucusunu panelde ekler; pin'leri imzalı listeye girer; API sunucusu da PinVault-Token'ı doğrulamak için sırrını alır.
 
 Ekran metni:
 - üst çubuk hap: "HALKA 3 / 10"
@@ -245,7 +245,7 @@ Ekran metni:
 - sonuç notu (body-md): "Panel sunucuya bağlanır, sertifikasından iki pin'i kendisi çıkarır."
 - imzalı liste kartı (mono): "PİN LİSTESİ · mtls-8092" / "api.ornek.com · q8Hs2LkP… · Xm4tR9wE…" / sarı mühür "İMZALI"
 - alt bölüm başlığı (mono): "API SUNUCUNUZ İÇİN BİR KEZ"
-- alt bölüm satırı (body-md): "Bilet sırrını panelin İmzalama sekmesinden alır; bileti sonra kendisi doğrular."
+- alt bölüm satırı (body-md): "PinVault-Token sırrını panelin İmzalama sekmesinden alır; PinVault-Token'ı sonra kendisi doğrular."
 - benzetme: "Çalışanın gidebileceği ofislerin listesi hazırlanır ve mühürlenir."
 - künye: "Host"
 
@@ -254,7 +254,7 @@ Scene 1 (0.0–1.5s): Zincir, kicker, başlık.
 Scene 2 (1.5–5.0s): Panel ekranı açılır; sekmeler görünür, "URL'den Al" sekmesi seçilir (ink dolgu); "Sunucu adresi" alanına "api.ornek.com" harf harf yazılır; "Oluştur"a basılır.
 Scene 3 (5.0–8.0s): Sağda api.ornek.com kutusu belirir; panelden ona ince kesik çizgi uzanır ve geri döner (bağlanıp sertifikayı okuma); panelde iki pin satırı sırayla belirir; altında sonuç notu.
 Scene 4 (8.0–11.0s): İki pin satırı panelden sağdaki imzalı liste kartına kayar; liste kartına sarı "İMZALI" mührü basılır (karenin tek sert gölgesi).
-Scene 5 (11.0–15.0s): "API SUNUCUNUZ İÇİN BİR KEZ" bölümü gelir; küçük sarı bilet simgesi panelden api.ornek.com kutusuna kayar. Benzetme şeridi. Tutma.
+Scene 5 (11.0–15.0s): "API SUNUCUNUZ İÇİN BİR KEZ" bölümü gelir; küçük sarı PinVault-Token simgesi panelden api.ornek.com kutusuna kayar. Benzetme şeridi. Tutma.
 
 ## Frame 6 — Halka 4: Token üretilir
 
@@ -276,7 +276,7 @@ keyMessage: Yönetici panelde cihaz için token üretir; token bir kez gösteril
 
 Ekran metni:
 - üst çubuk hap: "HALKA 4 / 10"
-- zincir: şu anki hücre "4 TOKEN"
+- zincir: şu anki hücre "4 KAYIT TOKEN'I"
 - kicker: "KİM: YÖNETİCİ · NEREDE: PANEL → mtls-8092 → CLIENT SERTİFİKALARI"
 - başlık (display-head): "TOKEN ÜRETİLİR"
 - panel başlığı (mono): "Panel · 8090 · Client Sertifikaları · Enrollment Token"
@@ -462,9 +462,9 @@ Scene 3 (4.0–7.0s): Adım 2 gelir. Telefondan 8092'ye hat çizilir; pembe kart
 Scene 4 (7.0–11.0s): Liste kartı 8092'den telefona kayar (mühür karenin tek sert gölgesi); adım 3 gelir, liste kartının "son kullanma" satırı ve mühür kısa yeşil kenar alır.
 Scene 5 (11.0–15.0s): Adım 4: telefonun içinde "api.ornek.com → pinli" satırı belirir. Adım 5 gelir, ✓. Benzetme şeridi. Tutma.
 
-## Frame 11 — Halka 9: Bilet alınır
+## Frame 11 — Halka 9: PinVault-Token alınır
 
-- scene: Telefon kendini ölçer, raporu kasa anahtarıyla imzalar, 8092 karar verir, 5 dakikalık sarı bilet gelir
+- scene: Telefon kendini ölçer, raporu kasa anahtarıyla imzalar, 8092 karar verir, 5 dakikalık sarı PinVault-Token gelir
 - voiceover:
 - duration: 14s
 - transition_in: push-slide LEFT
@@ -474,38 +474,38 @@ Scene 5 (11.0–15.0s): Adım 4: telefonun içinde "api.ornek.com → pinli" sat
 - persuasion: Causal chain + analogy (güvenlik kontrolü)
 - beat: fascination
 - blueprint: compose
-- focal: sarı bilet "PINVAULT-TOKEN · 5 DK"
-- roles: ölçüm çipleri = foreground subject (ilk yarı) · bilet = foreground subject (ikinci yarı) · sunucu = supporting · benzetme = supporting
+- focal: sarı PinVault-Token "PINVAULT-TOKEN · 5 DK"
+- roles: ölçüm çipleri = foreground subject (ilk yarı) · PinVault-Token = foreground subject (ikinci yarı) · sunucu = supporting · benzetme = supporting
 
-narrativeRole: Dokuzuncu halka: kart kimliği kanıtlar; bilet uygulamanın değiştirilmemiş olduğunu kanıtlar.
-keyMessage: init'in sonunda telefon kendini ölçüp imzalar; geçerse 5 dakikalık bilet alır ve bilet arka planda yenilenir.
+narrativeRole: Dokuzuncu halka: kart kimliği kanıtlar; PinVault-Token uygulamanın değiştirilmemiş olduğunu kanıtlar.
+keyMessage: init'in sonunda telefon kendini ölçüp imzalar; geçerse 5 dakikalık PinVault-Token alır ve PinVault-Token arka planda yenilenir.
 
 Ekran metni:
 - üst çubuk hap: "HALKA 9 / 10"
-- zincir: şu anki hücre "9 BİLET"
+- zincir: şu anki hücre "9 ATESTASYON"
 - kicker: "KİM: PINVAULT KÜTÜPHANESİ · NEREDE: TELEFON → 8092"
-- başlık (display-head): "BİLET ALINIR"
+- başlık (display-head): "PINVAULT-TOKEN ALINIR"
 - adım 1 (mono kicker): "1 · SUNUCUDAN TEK KULLANIMLIK SORU"
 - adım 2 (mono kicker): "2 · ÖLÇ VE KASA ANAHTARIYLA İMZALA"
 - ölçüm çipleri (mono, kare): "root?" "emülatör?" "debugger?" "Frida?" "APK değişmiş mi?"
 - adım 3 (mono kicker): "3 · SUNUCU KARAR VERİR"
 - karar damgası (yeşil): "GEÇTİ"
-- bilet (sarı): "PINVAULT-TOKEN" / "5 DK"
+- PinVault-Token (sarı): "PINVAULT-TOKEN" / "5 DK"
 - not (body-md): "Kurulum sihirbazı attestation() satırını üretmez; geliştirici ekler (Halka 2)."
-- not 2 (body-md): "Bilet arka planda yaklaşık 5 dakikada bir kendiliğinden yenilenir."
+- not 2 (body-md): "PinVault-Token arka planda yaklaşık 5 dakikada bir kendiliğinden yenilenir."
 - benzetme: "Güvenlik masası çantayı kontrol eder ve 5 dakikalık ziyaret bandı takar."
-- künye: "Bilet"
+- künye: "PinVault-Token"
 
 Compose. Yerleşim: solda telefon, sağda sunucu; adım kickerları üstte bir rayda soldan sağa birikir; ölçüm çipleri telefonun yanında.
 Scene 1 (0.0–1.5s): Zincir, kicker, başlık.
 Scene 2 (1.5–3.5s): Adım 1; sunucudan telefona küçük "?" kartı (soru) kayar.
 Scene 3 (3.5–7.0s): Adım 2; beş ölçüm çipi ≈0,4 sn arayla gelir, her birine yeşil ✓; çipler bir rapor kartına toplanır, köşesine kasa simgesiyle mühür.
-Scene 4 (7.0–10.5s): Adım 3; rapor sunucuya kayar; yeşil "GEÇTİ"; sunucudan sarı bilet telefona kayar (karenin tek sert gölgesi bilette).
+Scene 4 (7.0–10.5s): Adım 3; rapor sunucuya kayar; yeşil "GEÇTİ"; sunucudan sarı PinVault-Token telefona kayar (karenin tek sert gölgesi PinVault-Token'da).
 Scene 5 (10.5–14.0s): Not ve not 2. Benzetme şeridi. Tutma.
 
 ## Frame 12 — Halka 10: İlk gerçek istek
 
-- scene: Uygulama getClient() ile api.ornek.com'a bağlanır: pin listeden, bilet başlıkta; API sunucusu bileti kendisi doğrular ve 200 döner
+- scene: Uygulama getClient() ile api.ornek.com'a bağlanır: pin listeden, PinVault-Token başlıkta; API sunucusu PinVault-Token'ı kendisi doğrular ve 200 döner
 - voiceover:
 - duration: 15s
 - transition_in: push-slide LEFT
@@ -519,7 +519,7 @@ Scene 5 (10.5–14.0s): Not ve not 2. Benzetme şeridi. Tutma.
 - roles: telefon = foreground subject · API sunucusu = foreground subject · istek kartı = supporting · üç geri çağrı etiketi = supporting · benzetme = supporting
 
 narrativeRole: Onuncu halka: bütün zincirin amacı; önceki halkaların her biri burada bir işe yarar.
-keyMessage: İlk korumalı istek, Halka 8'deki pin'le kurulan bağlantıdan ve Halka 9'daki biletle gider; API sunucusu bileti kendisi doğrular.
+keyMessage: İlk korumalı istek, Halka 8'deki pin'le kurulan bağlantıdan ve Halka 9'daki PinVault-Token'la gider; API sunucusu PinVault-Token'ı kendisi doğrular.
 
 Ekran metni:
 - üst çubuk hap: "HALKA 10 / 10"
@@ -529,7 +529,7 @@ Ekran metni:
 - kod satırı (mono): "PinVault.getClient().newCall(GET https://api.ornek.com/siparisler)"
 - istek kartı satırları (mono): "GET /siparisler" / "PinVault-Token: eyJhbGciOiJIUzI1NiIs…"
 - geri çağrı 1 (mono, yeşil kutucuk): "pin: Halka 8'deki listeden"
-- geri çağrı 2 (mono, sarı kutucuk): "bilet: Halka 9'dan"
+- geri çağrı 2 (mono, sarı kutucuk): "PinVault-Token: Halka 9'dan"
 - API kutusu içi satırlar (mono, her biri yeşil ✓): "imza (HS256) tutuyor" / "süresi geçmemiş" / "aud: mtls-8092"
 - API kutusu altı (body-md): "PinVault'a sormaz; sırrı Halka 3'te almıştı."
 - cevap (Archivo, yeşil kutu): "200 OK"
@@ -539,7 +539,7 @@ Ekran metni:
 Compose. Yerleşim: solda telefon, sağda API sunucusu kutusu (büyük); aralarında hat; hattın üstünde istek kartı; altta geri çağrı etiketleri.
 Scene 1 (0.0–1.5s): Zincir, kicker, başlık.
 Scene 2 (1.5–4.0s): Telefonun üstünde kod satırı yazılır.
-Scene 3 (4.0–7.5s): Hat çizilir; API'den telefona sertifika kartı gelir ve telefondaki "api.ornek.com → pinli" satırıyla eşleşir (yeşil); geri çağrı 1 belirir. İstek kartı açılır, iki satırı gelir; bilet satırı sarı; geri çağrı 2 belirir.
+Scene 3 (4.0–7.5s): Hat çizilir; API'den telefona sertifika kartı gelir ve telefondaki "api.ornek.com → pinli" satırıyla eşleşir (yeşil); geri çağrı 1 belirir. İstek kartı açılır, iki satırı gelir; PinVault-Token satırı sarı; geri çağrı 2 belirir.
 Scene 4 (7.5–11.5s): İstek kartı API'ye kayar; API kutusunun içinde üç kontrol ≈0,7 sn arayla ✓ alır; API altı satırı.
 Scene 5 (11.5–15.0s): API'den telefona yeşil "200 OK" kutusu döner (karenin tek sert gölgesi). Benzetme şeridi. Tutma.
 
@@ -559,13 +559,13 @@ Scene 5 (11.5–15.0s): API'den telefona yeşil "200 OK" kutusu döner (karenin 
 - roles: şerit = foreground subject · beş istasyon kartı = foreground subject · pembe kart = supporting
 
 narrativeRole: Zincir bir kez kurulur; sonrasında neyin kendiliğinden, neyin panelden olduğunu gösterir.
-keyMessage: Token bir daha sorulmaz; kart yenilenir, liste ve bilet tazelenir; yönetici isterse iptal eder.
+keyMessage: Token bir daha sorulmaz; kart yenilenir, liste ve PinVault-Token tazelenir; yönetici isterse iptal eder.
 
 Ekran metni:
 - üst çubuk hap: "SONRASI"
 - başlık (display-head): "ZİNCİR BİR KEZ KURULUR"
-- istasyon 1: "HER AÇILIŞ" / "init: kart tarihi → liste → bilet. Token sorulmaz."
-- istasyon 2: "ARKA PLAN" / "Bilet ≈5 dakikada bir. Liste, schedulePeriodicUpdates() çağırırsanız."
+- istasyon 1: "HER AÇILIŞ" / "init: kart tarihi → liste → PinVault-Token. Token sorulmaz."
+- istasyon 2: "ARKA PLAN" / "PinVault-Token ≈5 dakikada bir. Liste, schedulePeriodicUpdates() çağırırsanız."
 - istasyon 3: "60. GÜN" / "Kart, süresinin üçte biri kalınca 8092'den yenilenir. Anahtar aynı."
 - istasyon 4: "SÜRE DOLDUYSA" / "8093'ten kurtarılır; kimliği aynı anahtarla atılan imza kanıtlar."
 - istasyon 5: "İPTAL" / "Panel → Client Sertifikaları → İptal Et. Kart hiçbir kapıyı açmaz."
@@ -574,7 +574,7 @@ Ekran metni:
 Compose. Yerleşim: çerçeve genişliğinde yatay şerit, üstünde beş istasyon noktası, altlarında beş açıklama kartı; şeridin başında küçük pembe kart.
 Scene 1 (0.0–1.5s): Başlık. Şerit soldan sağa çizilir.
 Scene 2 (1.5–4.0s): İstasyon 1 noktası ve kartı; pembe kart istasyon 1'e oturur.
-Scene 3 (4.0–6.5s): İstasyon 2; kartın yanında küçük sarı bilet bir kez yenilenir (eski soluklaşır, yenisi gelir).
+Scene 3 (4.0–6.5s): İstasyon 2; kartın yanında küçük sarı PinVault-Token bir kez yenilenir (eski soluklaşır, yenisi gelir).
 Scene 4 (6.5–9.0s): İstasyon 3; pembe kart çevrilir, yenisi gelir, kısa yeşil ✓.
 Scene 5 (9.0–11.5s): İstasyon 4; kart griye döner, sonra imza simgesiyle yeniden pembeleşir.
 Scene 6 (11.5–14.0s): İstasyon 5; kartın üstüne turuncu "İPTAL" damgası (karenin tek sert gölgesi). Tutma.
@@ -595,13 +595,13 @@ Scene 6 (11.5–14.0s): İstasyon 5; kartın üstüne turuncu "İPTAL" damgası 
 - roles: yeşil zemin = background · zincir = foreground subject · özet = foreground subject · dosya yolu = supporting
 
 narrativeRole: Kare 1'deki boş zinciri dolu hâliyle geri getirir ve izleyiciyi ayrıntıya yollar.
-keyMessage: Token yalnızca bir kez, kayıtta kullanılır; sonra telefonun kimliği kartı, güveni imzalı liste ve bilettir.
+keyMessage: Token yalnızca bir kez, kayıtta kullanılır; sonra telefonun kimliği kartı, güveni imzalı liste ve PinVault-Token'dır.
 
 Ekran metni:
 - üst çubuk hap (krem varyant): "SON"
-- zincir hücreleri (krem çerçeve, krem yazı, hepsi dolu): "1 KURULUM" "2 APK" "3 HOST" "4 TOKEN" "5 TELEFONA" "6 KAYIT İSTEĞİ" "7 KART" "8 PİN LİSTESİ" "9 BİLET" "10 İLK İSTEK"
+- zincir hücreleri (krem çerçeve, krem yazı, hepsi dolu): "1 KURULUM" "2 APK" "3 HOST" "4 KAYIT TOKEN'I" "5 TELEFONA" "6 KAYIT İSTEĞİ" "7 KART" "8 PİN LİSTESİ" "9 ATESTASYON" "10 İLK İSTEK"
 - başlık (display-lg, krem): "TOKEN BİR KEZ."
-- başlık 2 (display-head, krem): "SONRA KİMLİK KART, GÜVEN LİSTE VE BİLET."
+- başlık 2 (display-head, krem): "SONRA KİMLİK KART, GÜVEN LİSTE VE PINVAULT-TOKEN."
 - alt satır (mono, krem): "Ayrıntı: docs/animation/pinvault-request-flow.tr.html"
 - künye: "Kapanış"
 

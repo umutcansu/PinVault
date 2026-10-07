@@ -19,11 +19,11 @@ Sessiz video. Anlatım ekrandaki yazıyla yapılır; ses, müzik ve efekt yoktur
 **Palet (frame.md, creative-mode).** Zemin `cream`, çizgi ve yazı `ink`, ikinci yüzey `cream-2`. Vurguların anlamı bütün videoda sabittir ve izleyici bunu öğrenir:
 - `green` = geçti, güvenli, eşleşti (✓).
 - `orange` = saldırgan, ret, kesilen bağlantı (✗). Sert gölgenin rengi de turuncudur; bir karede en çok bir sert gölge.
-- `yellow` = bilet (PinVault-Token) ve imzalı liste mührü.
+- `yellow` = PinVault-Token ve imzalı liste mührü.
 - `pink` = cihazın kimlik kartı (cihaz sertifikası).
 Bir karede en çok üç vurgu. Yeşil zemin yalnızca son karede. Saf beyaz, degrade, bulanık gölge, parıltı yok. Köşeler kare; tek yuvarlak öğe üst çubuktaki hap etiket.
 
-**Sabit oyuncular.** Telefon: ink çerçeveli, köşeleri kare, dikey bir dikdörtgen; içinde mono "Uygulamanız" ve alt satırda "PinVault kütüphanesi". Sunucu: ink çerçeveli yatay kutu, başlıkta "PinVault sunucusu". Kapılar: sunucu kutusunun yan kenarında küçük etiketli kutucuklar (8090, 8091, 8092, 8093). Kimlik kartı: pembe, kare köşeli küçük kart. Bilet: sarı, kenarı ink, yan yüzünde mono "5 DK". Saldırgan: turuncu dolgulu kare, içinde "?" ya da "SAHTE". Bu şekiller her karede aynı çizilir; böylece kareler tek bir film gibi okunur.
+**Sabit oyuncular.** Telefon: ink çerçeveli, köşeleri kare, dikey bir dikdörtgen; içinde mono "Uygulamanız" ve alt satırda "PinVault kütüphanesi". Sunucu: ink çerçeveli yatay kutu, başlıkta "PinVault sunucusu". Kapılar: sunucu kutusunun yan kenarında küçük etiketli kutucuklar (8090, 8091, 8092, 8093). Kimlik kartı: pembe, kare köşeli küçük kart. PinVault-Token: sarı, kenarı ink, yan yüzünde mono "5 DK". Saldırgan: turuncu dolgulu kare, içinde "?" ya da "SAHTE". Bu şekiller her karede aynı çizilir; böylece kareler tek bir film gibi okunur.
 
 **Çerçeve süsü.** Her karede üstte mono üst çubuk: solda "PINVAULT NASIL ÇALIŞIR", sağda hap etiket (karede verilir). Altta mono künye: solda kare adı, sağda "NN • 13". Son kare krem renkli künye varyantını kullanır.
 
@@ -125,7 +125,7 @@ Ekran metni:
 - alt satır (body-lg): "Uygulamanıza giren bir kütüphane ve sizin makinenizde çalışan bir sunucu."
 - kart 1: büyük rakam "1", başlık "PİNLEME", alt satır "Telefon yalnızca gerçek sunucunuzla konuşur."
 - kart 2: büyük rakam "2", başlık "KİMLİK", alt satır "Sunucu, tanıdığı cihazı içeri alır."
-- kart 3: büyük rakam "3", başlık "ATESTASYON", alt satır "Bilet yalnızca değiştirilmemiş uygulamaya verilir."
+- kart 3: büyük rakam "3", başlık "ATESTASYON", alt satır "PinVault-Token yalnızca değiştirilmemiş uygulamaya verilir."
 - künye: "Üç iş"
 
 Adapt: grid-card-assemble'ın "kartlar sırayla yuvalarına oturur, sonra tutar" yapısı; üstte wordmark kitap ayracı gibi durur, kartlar sırayla değil okuma ritmiyle gelir.
@@ -150,7 +150,7 @@ Scene 4 (9.0–11.0s): Tutma.
 - roles: üç kesik çizgili bölge = background · telefon, kapı kutuları, arka uç kutuları = foreground subject · bağlantı çizgileri ve etiketleri = supporting · alttaki iki satırlık özet = supporting
 
 narrativeRole: Sistemin haritasını verir: neyin nerede çalıştığı ve hangi kapının internete açık olduğu.
-keyMessage: Cihazlar yalnızca üç kapıyla konuşur; yönetim kapısı ve depo iç ağda kalır; bileti sizin arka ucunuz kendisi doğrular.
+keyMessage: Cihazlar yalnızca üç kapıyla konuşur; yönetim kapısı ve depo iç ağda kalır; PinVault-Token'ı sizin arka ucunuz kendisi doğrular.
 
 Ekran metni:
 - üst çubuk hap: "TOPOLOJİ"
@@ -163,9 +163,9 @@ Ekran metni:
 - kapı 8093 kutusu: "8093 · KURTARMA" / "süresi dolan sertifika"
 - depo kutusu: "DEPO" / "sertifikalar · kayıtlar · imza anahtarı"
 - bölge 3 etiketi (mono): "SİZİN ARKA UCUNUZ"
-- arka uç kutusu 1: "API SUNUCULARINIZ" / "bileti kendisi doğrular"
+- arka uç kutusu 1: "API SUNUCULARINIZ" / "PinVault-Token'ı kendisi doğrular"
 - arka uç kutusu 2: "GİRİŞ SUNUCUNUZ" / "cihazlara kayıt token'ı ister"
-- telefon → API çizgisi etiketi (mono): "istek + bilet"
+- telefon → API çizgisi etiketi (mono): "istek + PinVault-Token"
 - iç ağ bölgesi etiketi (mono): "YALNIZCA İÇ AĞ"
 - kapı 8090 kutusu: "8090 · YÖNETİM" / "panel · API anahtarı"
 - yönetici kutusu: "YÖNETİCİ"
@@ -178,7 +178,7 @@ Compose: hiçbir kalıp üç bölgeli ağ diyagramını taşımıyor; diyagram b
 Scene 1 (0.0–1.5s): Başlık üstte gelir. Hiçbir bölge yok.
 Scene 2 (1.5–4.0s): Cihaz bölgesinin kesik çizgisi çizilir, telefon içine oturur. Sunucu bölgesinin kesik çizgisi çizilir; içinde sağda depo kutusu belirir.
 Scene 3 (4.0–7.0s): 8091, 8092, 8093 kutuları sunucu bölgesinin sol kenarına yukarıdan aşağı sırayla oturur. Telefondan her birine birer çizgi çizilir (`svg-path-draw`). Her çizginin sunucu ucu depoya ince çizgiyle bağlanır.
-Scene 4 (7.0–10.0s): Arka uç bölgesi çizilir; API kutusu ve giriş sunucusu kutusu oturur. Telefondan API kutusuna, üstten dolaşan uzun bir çizgi çizilir; etiketi "istek + bilet". Çizgi boyunca küçük sarı bilet bir kez kayar.
+Scene 4 (7.0–10.0s): Arka uç bölgesi çizilir; API kutusu ve giriş sunucusu kutusu oturur. Telefondan API kutusuna, üstten dolaşan uzun bir çizgi çizilir; etiketi "istek + PinVault-Token". Çizgi boyunca küçük sarı PinVault-Token bir kez kayar.
 Scene 5 (10.0–13.0s): Sunucu bölgesinin altında iç ağ şeridi çizilir; içinde 8090 kutusu ve yönetici kutusu oturur. Yöneticiden 8090'a kısa çizgi. Giriş sunucusundan 8090'a kesik çizgi çizilir (kayıt token'ı isteği).
 Scene 6 (13.0–17.0s): Diyagramın altında özet satırı 1, 1,5 sn sonra özet satırı 2 gelir; dipnot en son. Sağdaki üç açık kapı kutusuna kısa yeşil vurgu, 8090'a kısa turuncu vurgu (kenar rengi değişir, dolgu değişmez). Tutma.
 
@@ -331,21 +331,21 @@ Scene 5 (9.5–13.0s): İstasyon 4: kartın üstüne turuncu "İPTAL" damgası b
 
 ## Frame 9 — Kapıdaki kontrol: atestasyon
 
-- scene: Telefon kendini ölçer, raporu imzalar, sunucu karar verir, geçene 5 dakikalık sarı bilet; bilet API sunucunuza gider
+- scene: Telefon kendini ölçer, raporu imzalar, sunucu karar verir, geçene 5 dakikalık sarı PinVault-Token; PinVault-Token API sunucunuza gider
 - voiceover:
 - duration: 17s
 - transition_in: push-slide LEFT
 - status: animated
 - src: compositions/frames/09-atestasyon.html
 - type: feature_showcase
-- persuasion: Analogy (kapıda bilet kontrolü) + causal chain
+- persuasion: Analogy (kapıda PinVault-Token kontrolü) + causal chain
 - beat: fascination + comprehension
 - blueprint: compose
-- focal: sarı bilet "PINVAULT-TOKEN · 5 DK"
-- roles: telefonun ölçüm listesi = foreground subject (ilk yarı) · bilet = foreground subject (ikinci yarı) · sunucu ve API sunucusu = supporting
+- focal: sarı PinVault-Token "PINVAULT-TOKEN · 5 DK"
+- roles: telefonun ölçüm listesi = foreground subject (ilk yarı) · PinVault-Token = foreground subject (ikinci yarı) · sunucu ve API sunucusu = supporting
 
-narrativeRole: Katman 3'ü bilet benzetmesiyle kurar: kimlik yetmez, uygulamanın kendisinin değiştirilmemiş olduğu da kanıtlanmalı.
-keyMessage: Telefon kendini ölçüp imzalar, karar sunucunundur; geçen uygulama 5 dakikalık bir bilet alır ve API sunucunuz bileti kendisi kontrol eder.
+narrativeRole: Katman 3'ü PinVault-Token benzetmesiyle kurar: kimlik yetmez, uygulamanın kendisinin değiştirilmemiş olduğu da kanıtlanmalı.
+keyMessage: Telefon kendini ölçüp imzalar, karar sunucunundur; geçen uygulama 5 dakikalık bir PinVault-Token alır ve API sunucunuz PinVault-Token'ı kendisi kontrol eder.
 
 Ekran metni:
 - üst çubuk hap: "3/3 · ATESTASYON"
@@ -356,23 +356,23 @@ Ekran metni:
 - imza etiketi (mono): "telefonun kasasındaki anahtarla"
 - adım satırı 3 (mono kicker): "3 · SUNUCU KARAR VERİR"
 - karar damgası (yeşil): "GEÇTİ"
-- bilet (sarı): "PINVAULT-TOKEN" / "5 DK"
-- adım satırı 4 (mono kicker): "4 · BİLET HER İSTEKTE GİDER"
-- API kutusu: "API SUNUCUNUZ" / "bileti kendisi doğrular"
-- alt not (body-md): "Bilet arka planda yaklaşık 5 dakikada bir yenilenir."
+- PinVault-Token (sarı): "PINVAULT-TOKEN" / "5 DK"
+- adım satırı 4 (mono kicker): "4 · PINVAULT-TOKEN HER İSTEKTE GİDER"
+- API kutusu: "API SUNUCUNUZ" / "PinVault-Token'ı kendisi doğrular"
+- alt not (body-md): "PinVault-Token arka planda yaklaşık 5 dakikada bir yenilenir."
 - künye: "Atestasyon"
 
 Compose. Yerleşim: soldan sağa üç durak: telefon (sol), PinVault sunucusu (orta), API sunucunuz (sağ); adım satırları üstte bir rayda soldan sağa birikir.
 Scene 1 (0.0–2.0s): Başlık. Solda telefon oturur.
 Scene 2 (2.0–6.0s): Adım satırı 1. Telefonun yanında altı ölçüm çipi teker teker belirir (≈0,4 sn arayla); her birinin yanına küçük yeşil ✓ gelir.
 Scene 3 (6.0–8.5s): Adım satırı 2. Çipler bir "rapor" kartında toplanır (`center-outward-expansion` tersine, kart içine toplanma); kartın köşesine ink mühür, yanında imza etiketi.
-Scene 4 (8.5–11.5s): Adım satırı 3. Rapor kartı ortadaki sunucuya kayar; sunucunun üstünde yeşil "GEÇTİ" damgası belirir. Sunucudan sarı bilet çıkıp telefona kayar (karenin tek sert gölgesi bilette).
-Scene 5 (11.5–15.0s): Adım satırı 4. API kutusu sağda belirir. Telefondan API'ye istek çizgisi çizilir; bilet çizgi boyunca kayar, API kutusunun üstünde yeşil ✓ belirir.
+Scene 4 (8.5–11.5s): Adım satırı 3. Rapor kartı ortadaki sunucuya kayar; sunucunun üstünde yeşil "GEÇTİ" damgası belirir. Sunucudan sarı PinVault-Token çıkıp telefona kayar (karenin tek sert gölgesi PinVault-Token'da).
+Scene 5 (11.5–15.0s): Adım satırı 4. API kutusu sağda belirir. Telefondan API'ye istek çizgisi çizilir; PinVault-Token çizgi boyunca kayar, API kutusunun üstünde yeşil ✓ belirir.
 Scene 6 (15.0–17.0s): Alt not belirir. Tutma.
 
-## Frame 10 — Root'lu telefon bilet alamaz
+## Frame 10 — Root'lu telefon PinVault-Token alamaz
 
-- scene: Root'lu, Frida'lı telefon aynı yolu dener: rapor reddedilir, bilet yok, API 401 döner; liste gizli değil, kilit bilettir
+- scene: Root'lu, Frida'lı telefon aynı yolu dener: rapor reddedilir, PinVault-Token yok, API 401 döner; liste gizli değil, kilit PinVault-Token'dır
 - voiceover:
 - duration: 13s
 - transition_in: push-slide LEFT
@@ -382,11 +382,11 @@ Scene 6 (15.0–17.0s): Alt not belirir. Tutma.
 - persuasion: Counterexample + common-belief vs reality
 - beat: unease → clarity
 - blueprint: compose
-- focal: API kutusunun döndüğü "401" ve son satır "KAPIYI TUTAN, BİLETTİR"
+- focal: API kutusunun döndüğü "401" ve son satır "KAPIYI TUTAN, PINVAULT-TOKEN'DIR"
 - roles: turuncu telefon = foreground subject · sunucu ve API kutusu = supporting · gerçek satırı = foreground subject (son 3 sn)
 
 narrativeRole: Kanıt karesi: geçmeyen uygulamaya ne olduğunu ve neyin kilit olduğunu gösterir; pin listesinin gizli olmadığı yanlış anlamasını düzeltir.
-keyMessage: Geçmeyen uygulama bilet alamaz, API sunucunuz onu çevirir; pin listesi gizli değildir, asıl kilit bilettir.
+keyMessage: Geçmeyen uygulama PinVault-Token alamaz, API sunucunuz onu çevirir; pin listesi gizli değildir, asıl kilit PinVault-Token'dır.
 
 Ekran metni:
 - üst çubuk hap: "3/3 · ATESTASYON"
@@ -394,17 +394,17 @@ Ekran metni:
 - telefon etiketi (turuncu kenarlı): "root · Frida"
 - ölçüm çipleri: "root!" "Frida!" (turuncu ✗ ile)
 - karar damgası (turuncu): "RET"
-- bilet yerine boş kesik çizgili çerçeve (mono): "bilet yok"
-- API kutusu cevabı (mono, turuncu): "401 · bilet yok"
-- gerçek satırı (display-head): "KAPIYI TUTAN, BİLETTİR."
-- gerçek alt satırı (body-md): "Pin listesi gizli değildir; herkes alabilir. Değiştirilmiş uygulama yine de bilet alamaz."
+- PinVault-Token yerine boş kesik çizgili çerçeve (mono): "PinVault-Token yok"
+- API kutusu cevabı (mono, turuncu): "401 · PinVault-Token yok"
+- gerçek satırı (display-head): "KAPIYI TUTAN, PINVAULT-TOKEN'DIR."
+- gerçek alt satırı (body-md): "Pin listesi gizli değildir; herkes alabilir. Değiştirilmiş uygulama yine de PinVault-Token alamaz."
 - künye: "Ret"
 
 Compose. Aynı üç duraklı sahne, Frame 9'un aynası; telefon turuncu kenarlı.
 Scene 1 (0.0–2.0s): Başlık. Turuncu kenarlı telefon solda; "root · Frida" etiketi.
 Scene 2 (2.0–4.5s): İki ölçüm çipi belirir, her birine turuncu ✗.
-Scene 3 (4.5–7.0s): Rapor ortadaki sunucuya kayar; turuncu "RET" damgası basılır. Bilet çıkacak yerde boş kesik çizgili çerçeve "bilet yok" belirir.
-Scene 4 (7.0–9.5s): Telefon yine de API'ye istek atar; çizgi API kutusunun önünde kesilir ve kutuda "401 · bilet yok" yazar (sert gölge bu kutuda).
+Scene 3 (4.5–7.0s): Rapor ortadaki sunucuya kayar; turuncu "RET" damgası basılır. PinVault-Token çıkacak yerde boş kesik çizgili çerçeve "PinVault-Token yok" belirir.
+Scene 4 (7.0–9.5s): Telefon yine de API'ye istek atar; çizgi API kutusunun önünde kesilir ve kutuda "401 · PinVault-Token yok" yazar (sert gölge bu kutuda).
 Scene 5 (9.5–13.0s): Sahne yukarı kayar ve soluklaşır; altta gerçek satırı büyük, sonra alt satırı gelir. Son 3 sn tutma (nefes karesi).
 
 ## Frame 11 — Her açılışta, bu sırayla
@@ -423,7 +423,7 @@ Scene 5 (9.5–13.0s): Sahne yukarı kayar ve soluklaşır; altta gerçek satır
 - roles: beş adım kartı = foreground subject · sağdaki "neden" notları = supporting
 
 narrativeRole: Üç katmanın uygulama açılırken hangi sırayla çalıştığını, nedenleriyle gösterir.
-keyMessage: Her açılışta önce kart yenilenir, sonra liste alınır ve kontrol edilir, en son atestasyon bileti alınır.
+keyMessage: Her açılışta önce kart yenilenir, sonra liste alınır ve kontrol edilir, en son atestasyon PinVault-Token'ı alınır.
 
 Ekran metni:
 - üst çubuk hap: "SIRA"
@@ -432,7 +432,7 @@ Ekran metni:
 - adım 1 neden (mono, sağda): "süresi dolmuş kartla 8092'ye girilmez"
 - adım 2: "2" / "PİN LİSTESİ ALINIR" / "İmzası kontrol edilir, saklanır."
 - adım 3: "3" / "SUNUCUYA HÂLÂ ULAŞILIYOR MU?" / "Yeni liste bağlantıyı kopardıysa eskisine dönülür."
-- adım 4: "4" / "ATESTASYON → BİLET" / "Uygulamada açıksa. Kart ve liste hazır olmalı."
+- adım 4: "4" / "ATESTASYON → PINVAULT-TOKEN" / "Uygulamada açıksa. Kart ve liste hazır olmalı."
 - adım 4 neden (mono, sağda): "imza için anahtar ve kart gerekir"
 - adım 5: "5" / "ŞİFRELEME ANAHTARLARI BİLDİRİLİR" / "Uçtan uca şifreli ya da ekran kilitli dosya varsa."
 - dipnot (mono, küçük): "Ayrıntı: adım adım animasyonun 2. bölümü."
@@ -443,7 +443,7 @@ Scene 1 (0.0–1.5s): Başlık.
 Scene 2 (1.5–4.0s): Adım 1 kartı girer (sol %65), sağında neden notu ince ink çizgiyle bağlanır.
 Scene 3 (4.0–6.5s): Adım 2 kartı girer; 1 ile 2 arasına kısa aşağı ok çizilir.
 Scene 4 (6.5–9.0s): Adım 3 kartı girer, ok.
-Scene 5 (9.0–11.5s): Adım 4 kartı girer (sarı dolgu: bilet), ok; neden notu sağda.
+Scene 5 (9.0–11.5s): Adım 4 kartı girer (sarı dolgu: PinVault-Token), ok; neden notu sağda.
 Scene 6 (11.5–15.0s): Adım 5 kartı girer (yeşil dolgu, liste yeşille biter), ok. Dipnot en altta. Tutma.
 
 ## Frame 12 — Üç cümlede PinVault

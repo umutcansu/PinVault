@@ -1,0 +1,528 @@
+<template id="d5-telefonda-template">
+  <div id="root" data-composition-id="d5-telefonda" data-start="0" data-duration="15.5" data-width="1920" data-height="1080" lang="tr">
+    <style>
+      @import url("https://fonts.googleapis.com/css2?family=Archivo+Black&family=JetBrains+Mono:wght@400;700&family=Space+Grotesk:wght@400;500&display=block");
+
+      #root {
+        position: relative;
+        width: 1920px;
+        height: 1080px;
+        overflow: hidden;
+      }
+      [data-composition-id="d5-telefonda"] * {
+        margin: 0;
+        padding: 0;
+        box-sizing: border-box;
+      }
+
+      /* full-bleed ground (clip layer, not #root) */
+      #d5-telefonda-stage {
+        position: absolute;
+        inset: 0;
+        width: 1920px;
+        height: 1080px;
+        background: #efe9d9;
+        container-type: size;
+        overflow: hidden;
+        color: #0f0f0f;
+      }
+
+      /* ---------- chrome ---------- */
+      #d5-telefonda-topbar {
+        position: absolute;
+        top: 48px;
+        left: 64px;
+        right: 64px;
+        height: 44px;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        font-family: "JetBrains Mono", monospace;
+        font-size: 22px;
+        letter-spacing: 0.06em;
+      }
+      #d5-telefonda-pill {
+        border: 4px solid #0f0f0f;
+        border-radius: 999px;
+        background: #efe9d9;
+        padding: 4px 20px;
+        line-height: 1.3;
+      }
+      #d5-telefonda-footer {
+        position: absolute;
+        bottom: 48px;
+        left: 64px;
+        right: 64px;
+        height: 32px;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        font-family: "JetBrains Mono", monospace;
+        font-size: 22px;
+        letter-spacing: 0.06em;
+      }
+      #d5-telefonda-counter {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+      }
+      #d5-telefonda-dot {
+        width: 10px;
+        height: 10px;
+        border-radius: 50%;
+        background: #0f0f0f;
+      }
+
+      /* ---------- kicker + title ---------- */
+      #d5-telefonda-kicker {
+        position: absolute;
+        left: 96px;
+        top: 136px;
+        background: #0f0f0f;
+        color: #efe9d9;
+        font-family: "JetBrains Mono", monospace;
+        font-size: 22px;
+        letter-spacing: 0.06em;
+        line-height: 1.25;
+        white-space: nowrap;
+        padding: 8px 16px;
+      }
+      #d5-telefonda-title {
+        position: absolute;
+        left: 96px;
+        top: 196px;
+        font-family: "Archivo Black", sans-serif;
+        font-size: 4.2cqw;
+        line-height: 0.92;
+        letter-spacing: -0.01em;
+        white-space: nowrap;
+      }
+
+      /* ---------- phone ---------- */
+      #d5-telefonda-phone {
+        position: absolute;
+        left: 233px;
+        top: 312px;
+        width: 390px;
+        height: 446px;
+        border: 4px solid #0f0f0f;
+        background: #efe9d9;
+        padding: 16px;
+        display: flex;
+        flex-direction: column;
+        gap: 12px;
+        z-index: 1;
+      }
+      .d5-telefonda-speaker {
+        align-self: center;
+        width: 64px;
+        height: 8px;
+        background: #0f0f0f;
+        flex: none;
+      }
+      .d5-telefonda-screen {
+        flex: 1;
+        border: 3px solid #0f0f0f;
+        background: #e4dcc4;
+        display: flex;
+        flex-direction: column;
+      }
+      .d5-telefonda-app {
+        font-family: "JetBrains Mono", monospace;
+        font-size: 20px;
+        line-height: 1.25;
+        letter-spacing: 0.02em;
+        padding: 10px 12px;
+        flex: none;
+      }
+      #d5-telefonda-file {
+        margin: 0 12px;
+        height: 60px;
+        border: 3px solid #0f0f0f;
+        background: #efe9d9;
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        padding: 0 12px;
+        flex: none;
+        font-family: "JetBrains Mono", monospace;
+        font-size: 24px;
+        letter-spacing: 0.01em;
+        white-space: nowrap;
+      }
+      #d5-telefonda-file svg {
+        width: 26px;
+        height: 32px;
+        display: block;
+        flex: none;
+      }
+      .d5-telefonda-state {
+        position: relative;
+        margin: 10px 12px;
+        height: 32px;
+        flex: none;
+      }
+      #d5-telefonda-locked,
+      #d5-telefonda-open {
+        position: absolute;
+        left: 0;
+        top: 0;
+        height: 32px;
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        font-family: "JetBrains Mono", monospace;
+        font-size: 20px;
+        white-space: nowrap;
+      }
+      #d5-telefonda-locked svg {
+        width: 22px;
+        height: 26px;
+        display: block;
+      }
+      .d5-telefonda-ok {
+        width: 26px;
+        height: 26px;
+        background: #1f8a4c;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        flex: none;
+      }
+      .d5-telefonda-ok svg {
+        width: 20px;
+        height: 20px;
+        display: block;
+      }
+      #d5-telefonda-content {
+        flex: 1;
+        margin: 0 12px 12px;
+        border: 2px dashed #0f0f0f;
+        padding: 16px 14px;
+        display: flex;
+        flex-direction: column;
+        gap: 16px;
+      }
+      .d5-telefonda-bar {
+        height: 10px;
+        background: #0f0f0f;
+        transform-origin: 0 50%;
+      }
+      .d5-telefonda-lib {
+        background: #0f0f0f;
+        color: #efe9d9;
+        font-family: "JetBrains Mono", monospace;
+        font-size: 20px;
+        line-height: 1.25;
+        padding: 10px 12px;
+        flex: none;
+      }
+
+      /* ---------- code line under the phone ---------- */
+      #d5-telefonda-call {
+        position: absolute;
+        left: 96px;
+        top: 786px;
+        background: #0f0f0f;
+        color: #efe9d9;
+        font-family: "JetBrains Mono", monospace;
+        font-size: 20px;
+        line-height: 1.3;
+        padding: 10px 16px;
+        white-space: pre;
+        z-index: 1;
+      }
+
+      /* ---------- system lock window (the one hard shadow) ---------- */
+      #d5-telefonda-dialog {
+        position: absolute;
+        left: 196px;
+        top: 418px;
+        width: 464px;
+        height: 286px;
+        border: 4px solid #0f0f0f;
+        background: #efe9d9;
+        box-shadow: 24px 24px 0 #e85a1f, 24px 24px 0 4px #0f0f0f;
+        padding: 26px 28px;
+        display: flex;
+        flex-direction: column;
+        z-index: 3;
+        transform-origin: 50% 50%;
+      }
+      #d5-telefonda-dtitle {
+        font-family: "Space Grotesk", sans-serif;
+        font-weight: 500;
+        font-size: 32px;
+        line-height: 1.2;
+      }
+      #d5-telefonda-dsub {
+        margin-top: 6px;
+        font-family: "Space Grotesk", sans-serif;
+        font-size: 24px;
+        line-height: 1.3;
+      }
+      #d5-telefonda-print {
+        margin-top: 18px;
+        align-self: center;
+        width: 120px;
+        height: 120px;
+        display: block;
+        overflow: visible;
+      }
+      .d5-telefonda-ridge {
+        fill: none;
+        stroke: #0f0f0f;
+        stroke-width: 6;
+        stroke-linecap: butt;
+        stroke-linejoin: miter;
+      }
+
+      /* ---------- rule cards ---------- */
+      .d5-telefonda-card {
+        position: absolute;
+        left: 820px;
+        width: 1004px;
+        border: 4px solid #0f0f0f;
+        background: #e4dcc4;
+        padding: 24px 28px;
+        display: flex;
+        flex-direction: column;
+      }
+      .d5-telefonda-chead {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        height: 44px;
+      }
+      .d5-telefonda-ctitle {
+        font-family: "Archivo Black", sans-serif;
+        font-size: 34px;
+        line-height: 0.92;
+        white-space: nowrap;
+      }
+      .d5-telefonda-cicon {
+        width: 44px;
+        height: 44px;
+        display: block;
+        flex: none;
+      }
+      .d5-telefonda-cline {
+        margin-top: 12px;
+        font-family: "Space Grotesk", sans-serif;
+        font-size: 27px;
+        line-height: 1.3;
+      }
+      .d5-telefonda-ccode {
+        margin-top: 16px;
+        align-self: flex-start;
+        background: #0f0f0f;
+        color: #efe9d9;
+        font-family: "JetBrains Mono", monospace;
+        font-size: 22px;
+        line-height: 1.3;
+        padding: 8px 14px;
+        white-space: pre;
+      }
+
+      /* ---------- note ---------- */
+      #d5-telefonda-note {
+        position: absolute;
+        left: 820px;
+        top: 802px;
+        border-left: 4px solid #0f0f0f;
+        padding-left: 18px;
+        font-family: "Space Grotesk", sans-serif;
+        font-size: 27px;
+        line-height: 1.3;
+        white-space: nowrap;
+      }
+    </style>
+
+    <div id="d5-telefonda-stage" class="clip" data-start="0" data-duration="15.5" data-track-index="0">
+      <!-- chrome -->
+      <div id="d5-telefonda-topbar">
+        <span>PINVAULT · 4 DOSYALAR</span>
+        <span id="d5-telefonda-pill">DOSYA 5 / 5</span>
+      </div>
+      <div id="d5-telefonda-footer">
+        <span>Telefonda</span>
+        <span id="d5-telefonda-counter"><span>29</span><span id="d5-telefonda-dot"></span><span>32</span></span>
+      </div>
+
+      <!-- kicker + title -->
+      <div id="d5-telefonda-kicker">KİM: KULLANICI VE UYGULAMA · NEREDE: TELEFON</div>
+      <div id="d5-telefonda-title">TELEFONDA: KİLİT, SÜRE, İPTAL</div>
+
+      <!-- phone -->
+      <div id="d5-telefonda-phone">
+        <div class="d5-telefonda-speaker"></div>
+        <div class="d5-telefonda-screen">
+          <div class="d5-telefonda-app">Uygulamanız</div>
+          <div id="d5-telefonda-file">
+            <svg viewBox="0 0 26 32" xmlns="http://www.w3.org/2000/svg">
+              <path d="M2 2 H17 L24 9 V30 H2 Z" fill="#E4DCC4" stroke="#0F0F0F" stroke-width="3" stroke-linejoin="miter" />
+              <path d="M17 2 V9 H24" fill="none" stroke="#0F0F0F" stroke-width="3" stroke-linejoin="miter" />
+            </svg>
+            <span>saha-ayarlari</span>
+          </div>
+          <div class="d5-telefonda-state">
+            <div id="d5-telefonda-locked">
+              <svg viewBox="0 0 22 26" xmlns="http://www.w3.org/2000/svg">
+                <path d="M5.5 12 V8 A5.5 5.5 0 0 1 16.5 8 V12" fill="none" stroke="#0F0F0F" stroke-width="3" />
+                <rect x="2" y="12" width="18" height="12.5" fill="#0F0F0F" />
+                <rect x="9.5" y="15.5" width="3" height="5" fill="#EFE9D9" />
+              </svg>
+              <span>kilitli</span>
+            </div>
+            <div id="d5-telefonda-open">
+              <span class="d5-telefonda-ok"><svg viewBox="0 0 24 24"><polyline points="5,12.5 10,17.5 19,7" fill="none" stroke="#EFE9D9" stroke-width="3.5" stroke-linecap="square" /></svg></span>
+              <span>açıldı · içerik okundu</span>
+            </div>
+          </div>
+          <div id="d5-telefonda-content">
+            <div class="d5-telefonda-bar" style="width: 236px"></div>
+            <div class="d5-telefonda-bar" style="width: 188px"></div>
+            <div class="d5-telefonda-bar" style="width: 252px"></div>
+            <div class="d5-telefonda-bar" style="width: 150px"></div>
+          </div>
+          <div class="d5-telefonda-lib">PinVault kütüphanesi</div>
+        </div>
+      </div>
+
+      <!-- code line typed under the phone -->
+      <div id="d5-telefonda-call" data-code="PinVault.unlockFile(activity, &quot;saha-ayarlari&quot;, prompt)"></div>
+
+      <!-- system lock window -->
+      <div id="d5-telefonda-dialog" data-layout-allow-overlap>
+        <div id="d5-telefonda-dtitle" data-layout-allow-overlap>Kilidi açın</div>
+        <div id="d5-telefonda-dsub">Parmak izi, PIN ya da desen</div>
+        <svg id="d5-telefonda-print" viewBox="0 0 100 100" xmlns="http://www.w3.org/2000/svg">
+          <path class="d5-telefonda-ridge" pathLength="1" stroke-dasharray="1 1" stroke-dashoffset="1" d="M12 36 A42 42 0 0 1 88 36" />
+          <path class="d5-telefonda-ridge" pathLength="1" stroke-dasharray="1 1" stroke-dashoffset="1" d="M20 74 V54 A30 30 0 0 1 80 54 V66" />
+          <path class="d5-telefonda-ridge" pathLength="1" stroke-dasharray="1 1" stroke-dashoffset="1" d="M32 86 V54 A18 18 0 0 1 68 54 V78" />
+          <path class="d5-telefonda-ridge" pathLength="1" stroke-dasharray="1 1" stroke-dashoffset="1" d="M44 94 V54 A6 6 0 0 1 56 54 V88" />
+        </svg>
+      </div>
+
+      <!-- rule 1 -->
+      <div id="d5-telefonda-card1" class="d5-telefonda-card" style="top: 312px">
+        <div class="d5-telefonda-chead">
+          <div id="d5-telefonda-c1title" class="d5-telefonda-ctitle">ÇEVRİMDIŞI ÖMÜR</div>
+          <svg id="d5-telefonda-c1icon" class="d5-telefonda-cicon" viewBox="0 0 44 44" xmlns="http://www.w3.org/2000/svg">
+            <circle cx="22" cy="22" r="18" fill="#EFE9D9" stroke="#0F0F0F" stroke-width="4" />
+            <polyline points="22,11 22,22 30,27" fill="none" stroke="#0F0F0F" stroke-width="4" stroke-linecap="square" />
+          </svg>
+        </div>
+        <div id="d5-telefonda-c1line" class="d5-telefonda-cline">Sunucu dosyayı belirlediğiniz süre boyunca doğrulamazsa dosya açılmaz; isterseniz silinir.</div>
+        <div id="d5-telefonda-c1code" class="d5-telefonda-ccode">maxOfflineAge(7, TimeUnit.DAYS) · wipeWhenStale()</div>
+      </div>
+
+      <!-- rule 2 -->
+      <div id="d5-telefonda-card2" class="d5-telefonda-card" style="top: 573px">
+        <div class="d5-telefonda-chead">
+          <div id="d5-telefonda-c2title" class="d5-telefonda-ctitle">İPTAL EDİLİNCE</div>
+          <svg id="d5-telefonda-c2icon" class="d5-telefonda-cicon" viewBox="0 0 44 44" xmlns="http://www.w3.org/2000/svg">
+            <line x1="6" y1="11" x2="38" y2="11" stroke="#0F0F0F" stroke-width="4" />
+            <polyline points="16,11 16,5 28,5 28,11" fill="none" stroke="#0F0F0F" stroke-width="4" />
+            <path d="M10 15 H34 V40 H10 Z" fill="#EFE9D9" stroke="#0F0F0F" stroke-width="4" stroke-linejoin="miter" />
+            <line x1="18" y1="21" x2="18" y2="34" stroke="#0F0F0F" stroke-width="3" />
+            <line x1="26" y1="21" x2="26" y2="34" stroke="#0F0F0F" stroke-width="3" />
+          </svg>
+        </div>
+        <div id="d5-telefonda-c2line" class="d5-telefonda-cline">Panelden iptal edilen cihazdaki dosyalar silinir.</div>
+        <div id="d5-telefonda-c2code" class="d5-telefonda-ccode">wipeVaultFilesOnRevocation()</div>
+      </div>
+
+      <!-- note -->
+      <div id="d5-telefonda-note">Bu iki kural uygulamanın kodunda açılır.</div>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/gsap@3.14.2/dist/gsap.min.js"></script>
+    <script>
+      (function () {
+        var FID = "d5-telefonda";
+        var host = document.querySelector('[data-composition-id="' + FID + '"]') || document;
+        var $ = function (n) {
+          return host.querySelector("#" + FID + "-" + n);
+        };
+        var $$ = function (n) {
+          return Array.prototype.slice.call(host.querySelectorAll("." + FID + "-" + n));
+        };
+
+        // build the typed code line as per-character spans (deterministic, synchronous)
+        var call = $("call");
+        var code = call.getAttribute("data-code");
+        var chars = [];
+        for (var c = 0; c < code.length; c++) {
+          var s = document.createElement("span");
+          s.textContent = code.charAt(c);
+          call.appendChild(s);
+          chars.push(s);
+        }
+
+        var tl = gsap.timeline({ paused: true });
+        var SOFT = "power3.out";
+
+        // ---------- Scene 1 (0.0–1.8): kicker, title; phone body settles ----------
+        tl.fromTo($("kicker"), { opacity: 0, x: -20 }, { opacity: 1, x: 0, duration: 0.6, ease: SOFT }, 0.15);
+        tl.fromTo($("phone"), { opacity: 0, y: 30 }, { opacity: 1, y: 0, duration: 0.8, ease: SOFT }, 0.3);
+        tl.fromTo($("title"), { opacity: 0, y: 32 }, { opacity: 1, y: 0, duration: 0.8, ease: SOFT }, 0.45);
+
+        // ---------- Scene 2 (1.8–4.0): file name + "kilitli" on the screen; code line types ----------
+        tl.fromTo($("file"), { opacity: 0, x: -16 }, { opacity: 1, x: 0, duration: 0.5, ease: SOFT }, 1.8);
+        tl.fromTo($("locked"), { opacity: 0, x: -12 }, { opacity: 1, x: 0, duration: 0.45, ease: SOFT }, 2.25);
+        tl.fromTo($("open"), { opacity: 0 }, { opacity: 0, duration: 0.01 }, 0);
+        $$("bar").forEach(function (b) {
+          tl.fromTo(b, { scaleX: 0 }, { scaleX: 0, duration: 0.01 }, 0);
+        });
+        tl.fromTo(call, { opacity: 0 }, { opacity: 1, duration: 0.2, ease: SOFT }, 2.6);
+        chars.forEach(function (s, i) {
+          tl.fromTo(s, { opacity: 0 }, { opacity: 1, duration: 0.01, ease: "none" }, 2.7 + i * 0.021);
+        });
+
+        // ---------- Scene 3 (4.0–7.5): system lock window, fingerprint draws, window closes, unlocked ----------
+        var dialog = $("dialog");
+        tl.fromTo(dialog, { opacity: 0, scale: 0.9, y: 20 }, { opacity: 1, scale: 1, y: 0, duration: 0.5, ease: SOFT }, 4.0);
+        tl.fromTo($("dtitle"), { opacity: 0, y: 10 }, { opacity: 1, y: 0, duration: 0.4, ease: SOFT }, 4.15);
+        tl.fromTo($("dsub"), { opacity: 0, y: 10 }, { opacity: 1, y: 0, duration: 0.4, ease: SOFT }, 4.35);
+        var ridges = $$("ridge");
+        ridges.forEach(function (p, i) {
+          tl.fromTo(
+            p,
+            { attr: { "stroke-dashoffset": 1 } },
+            { attr: { "stroke-dashoffset": 0 }, duration: 0.55, ease: "power2.inOut" },
+            4.75 + i * 0.18
+          );
+        });
+        // recognized: ridges turn green
+        tl.fromTo(ridges, { stroke: "#0F0F0F" }, { stroke: "#1F8A4C", duration: 0.25, ease: SOFT }, 5.95);
+        // window closes (mid-shot state change, not a frame exit)
+        tl.to(dialog, { opacity: 0, scale: 0.94, duration: 0.35, ease: "power2.in" }, 6.4);
+        tl.to($("locked"), { opacity: 0, x: -8, duration: 0.25, ease: "power2.in" }, 6.7);
+        tl.fromTo($("open"), { opacity: 0, x: -12 }, { opacity: 1, x: 0, duration: 0.45, ease: SOFT, immediateRender: false }, 6.9);
+        $$("bar").forEach(function (b, i) {
+          tl.fromTo(b, { scaleX: 0 }, { scaleX: 1, duration: 0.45, ease: SOFT, immediateRender: false }, 7.0 + i * 0.08);
+        });
+
+        // ---------- Scene 4 (7.5–11.0): rule 1 card: title, line, code ----------
+        tl.fromTo($("card1"), { opacity: 0, x: 30 }, { opacity: 1, x: 0, duration: 0.6, ease: SOFT }, 7.5);
+        tl.fromTo($("c1title"), { opacity: 0, y: 12 }, { opacity: 1, y: 0, duration: 0.5, ease: SOFT }, 7.65);
+        tl.fromTo($("c1icon"), { opacity: 0, scale: 0.6 }, { opacity: 1, scale: 1, duration: 0.4, ease: SOFT }, 7.8);
+        tl.fromTo($("c1line"), { opacity: 0, y: 12 }, { opacity: 1, y: 0, duration: 0.5, ease: SOFT }, 8.2);
+        tl.fromTo($("c1code"), { opacity: 0, x: -16 }, { opacity: 1, x: 0, duration: 0.5, ease: SOFT }, 9.8);
+
+        // ---------- Scene 5 (11.0–15.0): rule 2 card; note; hold ----------
+        tl.fromTo($("card2"), { opacity: 0, x: 30 }, { opacity: 1, x: 0, duration: 0.6, ease: SOFT }, 11.0);
+        tl.fromTo($("c2title"), { opacity: 0, y: 12 }, { opacity: 1, y: 0, duration: 0.5, ease: SOFT }, 11.15);
+        tl.fromTo($("c2icon"), { opacity: 0, scale: 0.6 }, { opacity: 1, scale: 1, duration: 0.4, ease: SOFT }, 11.3);
+        tl.fromTo($("c2line"), { opacity: 0, y: 12 }, { opacity: 1, y: 0, duration: 0.5, ease: SOFT }, 11.6);
+        tl.fromTo($("c2code"), { opacity: 0, x: -16 }, { opacity: 1, x: 0, duration: 0.5, ease: SOFT }, 12.5);
+        tl.fromTo($("note"), { opacity: 0, y: 14 }, { opacity: 1, y: 0, duration: 0.6, ease: SOFT }, 13.4);
+        tl.to({}, { duration: 0.01 }, 14.99);
+
+        window.__timelines = window.__timelines || {};
+        window.__timelines[FID] = tl;
+      })();
+    </script>
+  </div>
+</template>

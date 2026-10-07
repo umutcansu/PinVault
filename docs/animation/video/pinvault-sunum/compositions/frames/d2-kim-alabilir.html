@@ -1,0 +1,374 @@
+<template>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo+Black&family=JetBrains+Mono:wght@400;700&family=Space+Grotesk:wght@400;500;700&display=block">
+  <script src="https://cdn.jsdelivr.net/npm/gsap@3.14.2/dist/gsap.min.js"></script>
+  <style>
+    #root,
+    #root * {
+      box-sizing: border-box;
+    }
+    #root {
+      position: relative;
+      width: 1920px;
+      height: 1080px;
+      overflow: hidden;
+      container-type: size;
+      font-family: "Space Grotesk", sans-serif;
+      color: #0f0f0f;
+    }
+    #d2-kim-alabilir-bg {
+      position: absolute;
+      inset: 0;
+      background: #efe9d9;
+    }
+
+    /* ---------- frame chrome ---------- */
+    .d2-kim-alabilir-topbar {
+      position: absolute;
+      top: 48px;
+      left: 64px;
+      right: 64px;
+      height: 44px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      font-family: "JetBrains Mono", monospace;
+      font-size: 22px;
+      letter-spacing: 0.06em;
+      z-index: 10;
+    }
+    .d2-kim-alabilir-pill {
+      border: 3px solid #0f0f0f;
+      border-radius: 999px;
+      padding: 4px 18px;
+      background: #efe9d9;
+    }
+    .d2-kim-alabilir-footer {
+      position: absolute;
+      bottom: 44px;
+      left: 64px;
+      right: 64px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      font-family: "JetBrains Mono", monospace;
+      font-size: 22px;
+      letter-spacing: 0.06em;
+    }
+    .d2-kim-alabilir-counter {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+    .d2-kim-alabilir-dot {
+      width: 10px;
+      height: 10px;
+      border-radius: 50%;
+      background: #0f0f0f;
+    }
+
+    /* ---------- kicker + title ---------- */
+    #d2-kim-alabilir-kicker {
+      position: absolute;
+      left: 96px;
+      top: 136px;
+      padding: 8px 16px;
+      background: #0f0f0f;
+      color: #efe9d9;
+      font-family: "JetBrains Mono", monospace;
+      font-size: 22px;
+      letter-spacing: 0.1em;
+      white-space: nowrap;
+    }
+    #d2-kim-alabilir-title {
+      position: absolute;
+      left: 96px;
+      top: 196px;
+      margin: 0;
+      padding-top: 6px;
+      font-family: "Archivo Black", sans-serif;
+      font-weight: 400;
+      font-size: 4.2cqw;
+      line-height: 0.92;
+      letter-spacing: -0.01em;
+      white-space: nowrap;
+    }
+
+    /* ---------- policy strip ---------- */
+    .d2-kim-alabilir-pcard {
+      position: absolute;
+      top: 324px;
+      width: 408px;
+      height: 186px;
+      border: 4px solid #0f0f0f;
+      background: #efe9d9;
+      padding: 30px 22px 0;
+      overflow: hidden;
+    }
+    .d2-kim-alabilir-pband {
+      position: absolute;
+      left: 0;
+      top: 0;
+      right: 0;
+      height: 12px;
+      background: #1f8a4c;
+    }
+    .d2-kim-alabilir-phead {
+      font-family: "JetBrains Mono", monospace;
+      font-size: 27px;
+      font-weight: 700;
+      letter-spacing: 0.02em;
+      line-height: 1;
+      white-space: nowrap;
+    }
+    .d2-kim-alabilir-pbody {
+      margin-top: 16px;
+      font-size: 25px;
+      line-height: 1.3;
+    }
+    #d2-kim-alabilir-p1 { left: 96px; }
+    #d2-kim-alabilir-p2 { left: 536px; }
+    #d2-kim-alabilir-p3 { left: 976px; }
+    #d2-kim-alabilir-p4 {
+      left: 1416px;
+      background: #e4dcc4;
+      color: #2a2a2a;
+    }
+    #d2-kim-alabilir-p4 .d2-kim-alabilir-phead,
+    #d2-kim-alabilir-p4 .d2-kim-alabilir-pbody {
+      opacity: 0.7;
+    }
+
+    /* ---------- panel: Token Yönetimi ---------- */
+    #d2-kim-alabilir-panel {
+      position: absolute;
+      left: 96px;
+      top: 552px;
+      width: 1060px;
+      height: 334px;
+      border: 4px solid #0f0f0f;
+      background: #efe9d9;
+      z-index: 2;
+    }
+    .d2-kim-alabilir-phd {
+      position: absolute;
+      left: 0;
+      top: 0;
+      right: 0;
+      height: 52px;
+      background: #0f0f0f;
+      color: #efe9d9;
+      display: flex;
+      align-items: center;
+      padding-left: 24px;
+      font-family: "JetBrains Mono", monospace;
+      font-size: 22px;
+      letter-spacing: 0.04em;
+      white-space: nowrap;
+    }
+    #d2-kim-alabilir-flabel {
+      position: absolute;
+      left: 36px;
+      top: 74px;
+      font-family: "JetBrains Mono", monospace;
+      font-size: 22px;
+      letter-spacing: 0.06em;
+      line-height: 1;
+    }
+    #d2-kim-alabilir-fbox {
+      position: absolute;
+      left: 36px;
+      top: 106px;
+      width: 620px;
+      height: 64px;
+      border: 3px solid #0f0f0f;
+      background: #e4dcc4;
+      display: flex;
+      align-items: center;
+      padding-left: 20px;
+      font-family: "JetBrains Mono", monospace;
+      font-size: 30px;
+      font-weight: 700;
+      letter-spacing: 0.02em;
+      white-space: nowrap;
+    }
+    #d2-kim-alabilir-btn {
+      position: absolute;
+      left: 684px;
+      top: 106px;
+      width: 300px;
+      height: 64px;
+      border: 4px solid #0f0f0f;
+      background: #efe9d9;
+      color: #0f0f0f;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 28px;
+      font-weight: 700;
+      white-space: nowrap;
+    }
+
+    /* ---------- popup (the frame's one hard shadow) ---------- */
+    #d2-kim-alabilir-popup {
+      position: absolute;
+      left: 128px;
+      top: 742px;
+      width: 1000px;
+      height: 142px;
+      border: 4px solid #0f0f0f;
+      background: #efe9d9;
+      box-shadow: 12px 12px 0 #e85a1f, 12px 12px 0 3px #0f0f0f;
+      z-index: 4;
+    }
+    #d2-kim-alabilir-poptxt {
+      position: absolute;
+      left: 26px;
+      top: 18px;
+      font-family: "JetBrains Mono", monospace;
+      font-size: 20px;
+      line-height: 1.2;
+      white-space: nowrap;
+    }
+    #d2-kim-alabilir-strip {
+      position: absolute;
+      left: 26px;
+      top: 58px;
+      width: 520px;
+      height: 62px;
+      border: 4px solid #0f0f0f;
+      background: #f5c518;
+      display: flex;
+      align-items: center;
+      padding-left: 22px;
+      font-family: "JetBrains Mono", monospace;
+      font-size: 36px;
+      font-weight: 700;
+      letter-spacing: 0.02em;
+      white-space: nowrap;
+    }
+
+    /* ---------- note ---------- */
+    #d2-kim-alabilir-note {
+      position: absolute;
+      left: 1200px;
+      top: 552px;
+      width: 624px;
+      border-left: 8px solid #0f0f0f;
+      padding: 6px 0 6px 28px;
+      font-size: 28px;
+      line-height: 1.4;
+    }
+    .d2-kim-alabilir-ns {
+      display: inline;
+    }
+  </style>
+
+  <div id="root" data-composition-id="d2-kim-alabilir" data-start="0" data-duration="16.5" data-width="1920" data-height="1080" lang="tr">
+    <div id="d2-kim-alabilir-bg" class="clip" data-start="0" data-duration="16.5" data-track-index="0"></div>
+
+    <!-- chrome -->
+    <div class="d2-kim-alabilir-topbar">
+      <div>PINVAULT · 4 DOSYALAR</div>
+      <div class="d2-kim-alabilir-pill">DOSYA 2 / 5</div>
+    </div>
+    <div class="d2-kim-alabilir-footer">
+      <div>Kim alabilir</div>
+      <div class="d2-kim-alabilir-counter"><span>26</span><span class="d2-kim-alabilir-dot"></span><span>32</span></div>
+    </div>
+
+    <!-- kicker + title -->
+    <div id="d2-kim-alabilir-kicker">KİM: YÖNETİCİ · NEREDE: PANEL → VAULT → saha-ayarlari → TOKEN YÖNETİMİ</div>
+    <h1 id="d2-kim-alabilir-title">KİM ALABİLİR?</h1>
+
+    <!-- policy strip -->
+    <div id="d2-kim-alabilir-p1" class="d2-kim-alabilir-pcard">
+      <div class="d2-kim-alabilir-phead">public (demo)</div>
+      <div class="d2-kim-alabilir-pbody">Herkes indirir. Yalnız deneme için.</div>
+    </div>
+    <div id="d2-kim-alabilir-p2" class="d2-kim-alabilir-pcard">
+      <div id="d2-kim-alabilir-band2" class="d2-kim-alabilir-pband"></div>
+      <div class="d2-kim-alabilir-phead">token (önerilen)</div>
+      <div class="d2-kim-alabilir-pbody">Doğru cihaz kimliği + o cihazın dosya token'ı.</div>
+    </div>
+    <div id="d2-kim-alabilir-p3" class="d2-kim-alabilir-pcard">
+      <div id="d2-kim-alabilir-band3" class="d2-kim-alabilir-pband"></div>
+      <div class="d2-kim-alabilir-phead">token + mTLS</div>
+      <div class="d2-kim-alabilir-pbody">Dosya token'ı + o cihazın kartı. Yalnız 8092'de açılır.</div>
+    </div>
+    <div id="d2-kim-alabilir-p4" class="d2-kim-alabilir-pcard">
+      <div class="d2-kim-alabilir-phead">api_key</div>
+      <div class="d2-kim-alabilir-pbody">Cihazdan hiç inmez; yalnız yönetici okur.</div>
+    </div>
+
+    <!-- panel: Token Yönetimi -->
+    <div id="d2-kim-alabilir-panel">
+      <div class="d2-kim-alabilir-phd">Token Yönetimi</div>
+      <div id="d2-kim-alabilir-flabel">ANDROID_ID</div>
+      <div id="d2-kim-alabilir-fbox"><span id="d2-kim-alabilir-fval"><span>a</span><span>4</span><span>1</span><span>c</span><span>7</span><span>e</span><span>0</span><span>9</span><span>d</span><span>3</span><span>b</span><span>2</span><span>f</span><span>5</span><span>8</span><span>6</span></span></div>
+      <div id="d2-kim-alabilir-btn">+ Yeni Token</div>
+    </div>
+
+    <!-- popup: file token shown once -->
+    <div id="d2-kim-alabilir-popup" data-layout-allow-overlap>
+      <div id="d2-kim-alabilir-poptxt">Token üretildi ve panoya kopyalandı. Cihaza güvenli kanaldan iletin.</div>
+      <div id="d2-kim-alabilir-strip">Vt8sKq2mPz4…</div>
+    </div>
+
+    <!-- note -->
+    <div id="d2-kim-alabilir-note"><span id="d2-kim-alabilir-n1" class="d2-kim-alabilir-ns">Sunucu yalnızca özetini saklar.</span> <span id="d2-kim-alabilir-n2" class="d2-kim-alabilir-ns">Dosya token'ı da APK'da değildir: uygulama her indirmede onu isteğe ekler.</span></div>
+  </div>
+
+  <script>
+    (function () {
+      var ID = "d2-kim-alabilir";
+      var $ = function (n) { return document.getElementById(ID + "-" + n); };
+      var tl = gsap.timeline({ paused: true });
+      var OUT = "power3.out";
+      var WIPE_FROM = "inset(-20% 100% -20% 0%)";
+      var WIPE_TO = "inset(-20% 0% -20% 0%)";
+      var INK = "#0F0F0F";
+      var CREAM = "#EFE9D9";
+      var GREEN = "#1F8A4C";
+
+      // Scene 1 (0.0–1.8s): kicker, title
+      tl.fromTo($("kicker"), { clipPath: WIPE_FROM }, { clipPath: WIPE_TO, duration: 0.7, ease: OUT }, 0.1);
+      tl.fromTo($("title"), { autoAlpha: 0, y: 30 }, { autoAlpha: 1, y: 0, duration: 0.7, ease: OUT }, 0.25);
+
+      // Scene 2 (1.8–7.0s): four policy cards left to right ~1.2s apart; 2 and 3 take a green edge
+      var cards = ["p1", "p2", "p3", "p4"];
+      for (var c = 0; c < cards.length; c++) {
+        tl.fromTo($(cards[c]), { autoAlpha: 0, y: 28 }, { autoAlpha: 1, y: 0, duration: 0.6, ease: OUT }, 1.8 + c * 1.2);
+      }
+      tl.fromTo($("p2"), { borderColor: INK }, { borderColor: GREEN, duration: 0.5, ease: OUT }, 3.5);
+      tl.fromTo($("band2"), { scaleX: 0, transformOrigin: "0% 50%" }, { scaleX: 1, duration: 0.6, ease: OUT }, 3.5);
+      tl.fromTo($("p3"), { borderColor: INK }, { borderColor: GREEN, duration: 0.5, ease: OUT }, 4.7);
+      tl.fromTo($("band3"), { scaleX: 0, transformOrigin: "0% 50%" }, { scaleX: 1, duration: 0.6, ease: OUT }, 4.7);
+
+      // Scene 3 (7.0–11.0s): Token Yönetimi opens, ANDROID_ID typed, "+ Yeni Token" pressed, popup + yellow file token
+      tl.fromTo($("panel"), { autoAlpha: 0, y: 36 }, { autoAlpha: 1, y: 0, duration: 0.6, ease: OUT }, 7.0);
+      tl.fromTo([$("flabel"), $("fbox")], { autoAlpha: 0, y: 12 }, { autoAlpha: 1, y: 0, duration: 0.4, ease: OUT, stagger: 0.08 }, 7.35);
+      var chars = $("fval").children;
+      for (var i = 0; i < chars.length; i++) {
+        tl.fromTo(chars[i], { autoAlpha: 0 }, { autoAlpha: 1, duration: 0.02, ease: "none" }, 7.75 + i * 0.06);
+      }
+      tl.fromTo($("btn"), { autoAlpha: 0, y: 12 }, { autoAlpha: 1, y: 0, duration: 0.45, ease: OUT }, 8.2);
+      // press: quick inward collapse + ink fill
+      tl.to($("btn"), { scale: 0.92, backgroundColor: INK, color: CREAM, duration: 0.12, ease: OUT }, 9.0);
+      tl.to($("btn"), { scale: 1, duration: 0.35, ease: OUT }, 9.12);
+      tl.fromTo($("popup"), { autoAlpha: 0, scale: 0.94, transformOrigin: "50% 50%" }, { autoAlpha: 1, scale: 1, duration: 0.5, ease: OUT }, 9.35);
+      tl.fromTo($("poptxt"), { clipPath: WIPE_FROM }, { clipPath: WIPE_TO, duration: 0.6, ease: OUT }, 9.55);
+      tl.fromTo($("strip"), { clipPath: "inset(0% 100% 0% 0%)" }, { clipPath: "inset(0% 0% 0% 0%)", duration: 0.8, ease: OUT }, 10.1);
+
+      // Scene 4 (11.0–16.0s): note, sentence by sentence; then hold
+      tl.fromTo($("note"), { autoAlpha: 0, x: -20 }, { autoAlpha: 1, x: 0, duration: 0.5, ease: OUT }, 11.0);
+      tl.fromTo($("n1"), { autoAlpha: 0 }, { autoAlpha: 1, duration: 0.5, ease: OUT }, 11.1);
+      tl.fromTo($("n2"), { autoAlpha: 0 }, { autoAlpha: 1, duration: 0.6, ease: OUT }, 12.8);
+
+      // pad to the fixed 16s duration (hold)
+      tl.set({}, {}, 16);
+
+      window.__timelines = window.__timelines || {};
+      window.__timelines[ID] = tl;
+    })();
+  </script>
+</template>

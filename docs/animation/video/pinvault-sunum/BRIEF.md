@@ -2,12 +2,12 @@
 workflow: faceless-explainer
 flow: automation
 storyboard: no
-message: "SSL pinning telefonu sahte sunucudan korur; PinVault pinlemenin üç eksiğini kapatır ve bunu kurulumdan ilk isteğe on halkada yapar."
+message: "SSL pinning telefonu sahte sunucudan korur; PinVault pinlemenin üç eksiğini kapatır, kurulumdan ilk isteğe on halkada çalışır ve dosyaları seçtiğiniz cihaza, seçtiğiniz korumayla dağıtır."
 destination: presentation
 aspect: 1920x1080
 language: tr
 audience: "PinVault'u ilk kez görecek geliştirici ve yöneticiler"
-length: 309s
+length: 412s
 angle: concept
 ---
 
@@ -25,3 +25,10 @@ SSL pinning, bunu anlatıp sonra bizim sistem nasıl çalışıyor falan yapsan?
 
 - Kareler iki kardeş projeden aynen alınır; yalnızca üst çubuk, hap ve sayaç değişir. Yeni kareler: bölüm kartları, normal TLS, üç eksik.
 - Eski iki videoda olup burada olmayanlar (mühürlü liste, kimlik kartı, kartın ömrü, atestasyon kavram kareleri, açılış sırası) üçüncü bölümün halkalarında zaten anlatıldığı için çıkarıldı.
+
+## Update (2026-10-07)
+
+Kullanıcı: "Dosyalar bölümünü de ekle. İlk işlemlerin panel karşılıkları yok videoda; hani panelden ekledik, şunu yaptık, şifrelendi gibi." ve "bilet yerine token daha mantıklı".
+- Dördüncü bölüm "Dosyalar ve şifreleme" eklendi (panelden yükleme, Policy ve dosya token'ı, telefon alır, üç koruma, telefonda kilit/süre/iptal).
+- Panel karşılıkları: "PinVault ne ekler" kartlarına PANELDE şeritleri; atestasyondan sonra "Panelde: atestasyon ayarı" karesi.
+- "Bilet" yerine her yerde "PinVault-Token"; kayıttakine "kayıt token'ı".

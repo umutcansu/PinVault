@@ -195,10 +195,22 @@
       line-height: 1.3;
       color: #0f0f0f;
     }
+    [class~="03-uc-is-panel"] {
+      display: inline-block;
+      margin-top: 0.7cqw;
+      padding: 0.3cqw 0.6cqw;
+      background: #0f0f0f;
+      color: #efe9d9;
+      font-family: "JetBrains Mono", monospace;
+      font-size: 0.86cqw;
+      letter-spacing: 0.02em;
+      line-height: 1.2;
+      white-space: nowrap;
+    }
   </style>
 
-  <div data-hf-id="hf-vsvw" id="root" lang="tr" data-composition-id="03-uc-is" data-start="0" data-duration="11.5" data-width="1920" data-height="1080">
-    <div data-hf-id="hf-u978" class="03-uc-is-ground clip" data-start="0" data-duration="11.5" data-track-index="0"></div>
+  <div data-hf-id="hf-vsvw" id="root" lang="tr" data-composition-id="03-uc-is" data-start="0" data-duration="13.5" data-width="1920" data-height="1080">
+    <div data-hf-id="hf-u978" class="03-uc-is-ground clip" data-start="0" data-duration="13.5" data-track-index="0"></div>
 
     <div data-hf-id="hf-mee6" class="03-uc-is-topbar">
       <span data-hf-id="hf-vq1v">PINVAULT · 2 ÇÖZÜM</span>
@@ -217,6 +229,7 @@
       <div data-hf-id="hf-yeow">
         <div data-hf-id="hf-47nn" class="03-uc-is-title">PİNLEME</div>
         <div data-hf-id="hf-9sor" class="03-uc-is-line">Pin listesi sunucudan, imzalı gelir; APK değişmez.</div>
+        <div class="03-uc-is-panel">PANELDE · + Host ekle → URL'den Al</div>
       </div>
     </div>
     <div data-hf-id="hf-4csb" class="03-uc-is-card 03-uc-is-c2" data-target-x="0">
@@ -224,19 +237,21 @@
       <div data-hf-id="hf-y7yw">
         <div data-hf-id="hf-8cf7" class="03-uc-is-title">KİMLİK</div>
         <div data-hf-id="hf-iclk" class="03-uc-is-line">Sunucu, tanıdığı cihazı içeri alır.</div>
+        <div class="03-uc-is-panel">PANELDE · Client Sertifikaları → Token Üret</div>
       </div>
     </div>
     <div data-hf-id="hf-t8ki" class="03-uc-is-card 03-uc-is-c3" data-target-x="585">
       <div data-hf-id="hf-kcqv" class="03-uc-is-num">3</div>
       <div data-hf-id="hf-x11t">
         <div data-hf-id="hf-1wiz" class="03-uc-is-title">ATESTASYON</div>
-        <div data-hf-id="hf-bisy" class="03-uc-is-line">Bilet yalnızca değiştirilmemiş uygulamaya verilir.</div>
+        <div data-hf-id="hf-bisy" class="03-uc-is-line">PinVault-Token yalnızca değiştirilmemiş uygulamaya verilir.</div>
+        <div class="03-uc-is-panel">PANELDE · Attestation → Red politikası</div>
       </div>
     </div>
 
     <div data-hf-id="hf-blct" class="03-uc-is-meta">
       <span data-hf-id="hf-2w1o">Üç iş</span>
-      <span data-hf-id="hf-3gev" class="03-uc-is-counter"><span data-hf-id="hf-q0nk">07</span><span data-hf-id="hf-ebf6" class="03-uc-is-dot"></span><span data-hf-id="hf-1qd5">25</span></span>
+      <span data-hf-id="hf-3gev" class="03-uc-is-counter"><span data-hf-id="hf-q0nk">07</span><span data-hf-id="hf-ebf6" class="03-uc-is-dot"></span><span data-hf-id="hf-1qd5">32</span></span>
     </div>
   </div>
 
@@ -307,10 +322,17 @@
           { y: 0, opacity: 1, duration: 0.8, ease: "power3.out" },
           starts[i] + 0.45
         );
+        var panel = card.querySelector('[class~="03-uc-is-panel"]');
+        tl.fromTo(
+          panel,
+          { y: 10, opacity: 0 },
+          { y: 0, opacity: 1, duration: 0.6, ease: "power3.out" },
+          starts[i] + 1.4
+        );
       });
 
       // ---- Scene 4 (9.0–11.0s): hold ----
-      tl.to({}, { duration: 0.01 }, 10.99);
+      tl.to({}, { duration: 0.01 }, 12.99);
 
       window.__timelines["03-uc-is"] = tl;
     })();

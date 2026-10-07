@@ -1758,13 +1758,16 @@ no external dependencies.
 
 ### Presentation film (Turkish)
 
-The one to show first: a silent 5:08 film in three parts. It starts with the
+The one to show first: a silent 6:52 film in four parts. It starts with the
 purpose (what SSL pinning is, why normal TLS is not enough, and what pinning
 alone leaves open), then what PinVault adds, then the whole flow from the
-server's first start to the first protected API call.
+server's first start to the first protected API call, and finally file
+delivery: uploading in the panel, who may download, the phone's download, and
+the three protections (encrypted on the server, end to end, screen lock).
+Each step shows its panel screen first.
 
 [▶ pinvault-sunum.tr.mp4](docs/animation/pinvault-sunum.tr.mp4) (1920×1080,
-8.2 MB), built from
+10.9 MB), built from
 [`docs/animation/video/pinvault-sunum/`](docs/animation/video/pinvault-sunum).
 The two videos below are its shorter parts.
 
@@ -1776,7 +1779,7 @@ certificate's lifetime and the order of work on every start. The narration is
 the on-screen Turkish text, so it plays fine muted.
 
 [▶ pinvault-nasil-calisir.tr.mp4](docs/animation/pinvault-nasil-calisir.tr.mp4)
-(1920×1080, 4.3 MB). It is built with HyperFrames from
+(1920×1080, 4.4 MB). It is built with HyperFrames from
 [`docs/animation/video/pinvault-nasil-calisir/`](docs/animation/video/pinvault-nasil-calisir);
 that folder's README explains how to edit and re-render it.
 
@@ -1789,7 +1792,7 @@ to the phone, the enrollment request, the certificate, the signed pin list, the
 attestation ticket and the first protected API call.
 
 [▶ pinvault-bastan-sona.tr.mp4](docs/animation/pinvault-bastan-sona.tr.mp4)
-(1920×1080, 5.1 MB), built from
+(1920×1080, 5.2 MB), built from
 [`docs/animation/video/pinvault-bastan-sona/`](docs/animation/video/pinvault-bastan-sona).
 
 ## Architecture

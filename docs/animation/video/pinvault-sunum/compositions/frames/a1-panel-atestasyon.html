@@ -1,0 +1,685 @@
+<template>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo+Black&family=JetBrains+Mono:wght@400;700&family=Space+Grotesk:wght@400;500;700&display=block">
+  <script src="https://cdn.jsdelivr.net/npm/gsap@3.14.2/dist/gsap.min.js"></script>
+  <style>
+    #root,
+    #root * {
+      box-sizing: border-box;
+    }
+    #root {
+      position: relative;
+      width: 1920px;
+      height: 1080px;
+      overflow: hidden;
+      container-type: size;
+      font-family: "Space Grotesk", sans-serif;
+      color: #0f0f0f;
+    }
+    #a1-panel-atestasyon-bg {
+      position: absolute;
+      inset: 0;
+      background: #efe9d9;
+    }
+
+    /* ---------- frame chrome ---------- */
+    .a1-panel-atestasyon-topbar {
+      position: absolute;
+      top: 48px;
+      left: 64px;
+      right: 64px;
+      height: 44px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      font-family: "JetBrains Mono", monospace;
+      font-size: 22px;
+      letter-spacing: 0.06em;
+      z-index: 10;
+    }
+    .a1-panel-atestasyon-pill {
+      border: 3px solid #0f0f0f;
+      border-radius: 999px;
+      padding: 4px 18px;
+      background: #efe9d9;
+    }
+    .a1-panel-atestasyon-footer {
+      position: absolute;
+      bottom: 44px;
+      left: 64px;
+      right: 64px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      font-family: "JetBrains Mono", monospace;
+      font-size: 22px;
+      letter-spacing: 0.06em;
+    }
+    .a1-panel-atestasyon-counter {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+    .a1-panel-atestasyon-dot {
+      width: 10px;
+      height: 10px;
+      border-radius: 50%;
+      background: #0f0f0f;
+    }
+
+    /* ---------- kicker + title ---------- */
+    #a1-panel-atestasyon-kicker {
+      position: absolute;
+      left: 96px;
+      top: 112px;
+      padding: 8px 16px;
+      background: #0f0f0f;
+      color: #efe9d9;
+      font-family: "JetBrains Mono", monospace;
+      font-size: 22px;
+      letter-spacing: 0.1em;
+      white-space: nowrap;
+    }
+    #a1-panel-atestasyon-title {
+      position: absolute;
+      left: 96px;
+      top: 164px;
+      margin: 0;
+      padding-top: 6px;
+      font-family: "Archivo Black", sans-serif;
+      font-weight: 400;
+      font-size: 4.2cqw;
+      line-height: 0.92;
+      letter-spacing: -0.01em;
+      white-space: nowrap;
+    }
+
+    /* ---------- left: panel window ---------- */
+    #a1-panel-atestasyon-panel {
+      position: absolute;
+      left: 96px;
+      top: 264px;
+      width: 1044px;
+      height: 552px;
+      border: 4px solid #0f0f0f;
+      background: #efe9d9;
+      z-index: 2;
+    }
+    .a1-panel-atestasyon-phead {
+      position: absolute;
+      left: 0;
+      top: 0;
+      right: 0;
+      height: 44px;
+      background: #0f0f0f;
+      color: #efe9d9;
+      display: flex;
+      align-items: center;
+      padding-left: 22px;
+      font-family: "JetBrains Mono", monospace;
+      font-size: 20px;
+      letter-spacing: 0.04em;
+      white-space: nowrap;
+    }
+    .a1-panel-atestasyon-tab {
+      position: absolute;
+      top: 54px;
+      height: 40px;
+      border: 3px solid #0f0f0f;
+      background: #efe9d9;
+      font-family: "JetBrains Mono", monospace;
+      font-size: 20px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      white-space: nowrap;
+    }
+    #a1-panel-atestasyon-tabsel {
+      position: absolute;
+      inset: 0;
+      background: #0f0f0f;
+      color: #efe9d9;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+
+    /* ---------- policy card ---------- */
+    #a1-panel-atestasyon-card {
+      position: absolute;
+      left: 18px;
+      top: 104px;
+      width: 1000px;
+      height: 432px;
+      border: 3px solid #0f0f0f;
+      background: #efe9d9;
+    }
+    #a1-panel-atestasyon-chead {
+      position: absolute;
+      left: 24px;
+      top: 12px;
+      height: 40px;
+      display: flex;
+      align-items: center;
+      gap: 14px;
+      white-space: nowrap;
+    }
+    .a1-panel-atestasyon-ctitle {
+      font-size: 26px;
+      font-weight: 700;
+      line-height: 1;
+    }
+    #a1-panel-atestasyon-badge {
+      position: relative;
+      width: 56px;
+      height: 34px;
+      border: 3px solid #0f0f0f;
+      background: #e4dcc4;
+      overflow: hidden;
+      font-family: "JetBrains Mono", monospace;
+      font-size: 20px;
+      font-weight: 700;
+    }
+    .a1-panel-atestasyon-bv {
+      position: absolute;
+      inset: 0;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+    #a1-panel-atestasyon-preset {
+      position: absolute;
+      right: 24px;
+      top: 12px;
+      height: 40px;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      font-family: "JetBrains Mono", monospace;
+      font-size: 20px;
+      white-space: nowrap;
+    }
+    .a1-panel-atestasyon-pbtn {
+      height: 36px;
+      padding: 0 16px;
+      border: 3px solid #0f0f0f;
+      display: flex;
+      align-items: center;
+      background: #efe9d9;
+    }
+
+    /* table */
+    #a1-panel-atestasyon-thead {
+      position: absolute;
+      left: 0;
+      right: 0;
+      top: 62px;
+      height: 34px;
+      background: #0f0f0f;
+      color: #efe9d9;
+      font-family: "JetBrains Mono", monospace;
+      font-size: 20px;
+      letter-spacing: 0.06em;
+    }
+    .a1-panel-atestasyon-c1,
+    .a1-panel-atestasyon-c2,
+    .a1-panel-atestasyon-c3 {
+      position: absolute;
+      top: 0;
+      height: 100%;
+      display: flex;
+      align-items: center;
+      white-space: nowrap;
+    }
+    .a1-panel-atestasyon-c1 { left: 24px; }
+    .a1-panel-atestasyon-c2 { left: 330px; }
+    .a1-panel-atestasyon-c3 { left: 780px; }
+    .a1-panel-atestasyon-row {
+      position: absolute;
+      left: 0;
+      right: 0;
+      height: 38px;
+      border-bottom: 2px solid rgba(15, 15, 15, 0.25);
+    }
+    .a1-panel-atestasyon-flag {
+      font-family: "JetBrains Mono", monospace;
+      font-size: 22px;
+      font-weight: 700;
+    }
+    .a1-panel-atestasyon-mean {
+      font-size: 22px;
+    }
+    .a1-panel-atestasyon-dd {
+      position: relative;
+      width: 170px;
+      height: 30px;
+      border: 3px solid #0f0f0f;
+      background: #efe9d9;
+      display: flex;
+      align-items: center;
+      padding-left: 12px;
+      font-family: "JetBrains Mono", monospace;
+      font-size: 20px;
+    }
+    .a1-panel-atestasyon-caret {
+      position: absolute;
+      right: 12px;
+      top: 9px;
+      width: 0;
+      height: 0;
+      border-left: 7px solid transparent;
+      border-right: 7px solid transparent;
+      border-top: 8px solid #0f0f0f;
+    }
+    #a1-panel-atestasyon-more {
+      position: absolute;
+      left: 24px;
+      top: 330px;
+      height: 36px;
+      display: flex;
+      align-items: center;
+      font-family: "JetBrains Mono", monospace;
+      font-size: 20px;
+      opacity: 0.7;
+      white-space: nowrap;
+    }
+    #a1-panel-atestasyon-toast {
+      position: absolute;
+      right: 24px;
+      top: 328px;
+      height: 36px;
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      padding: 0 16px 0 10px;
+      border: 3px solid #0f0f0f;
+      background: #e4dcc4;
+      font-family: "JetBrains Mono", monospace;
+      font-size: 20px;
+      white-space: nowrap;
+    }
+    .a1-panel-atestasyon-ok {
+      width: 16px;
+      height: 16px;
+      background: #1f8a4c;
+      border: 2px solid #0f0f0f;
+    }
+    #a1-panel-atestasyon-field {
+      position: absolute;
+      left: 24px;
+      top: 370px;
+      height: 46px;
+      display: flex;
+      align-items: center;
+      gap: 14px;
+      font-family: "JetBrains Mono", monospace;
+      font-size: 20px;
+      white-space: nowrap;
+    }
+    .a1-panel-atestasyon-fbox {
+      width: 110px;
+      height: 44px;
+      border: 3px solid #0f0f0f;
+      background: #e4dcc4;
+      display: flex;
+      align-items: center;
+      padding-left: 16px;
+      font-size: 22px;
+      font-weight: 700;
+    }
+    #a1-panel-atestasyon-save {
+      position: absolute;
+      right: 24px;
+      top: 368px;
+      width: 270px;
+      height: 48px;
+      border: 4px solid #0f0f0f;
+      background: #efe9d9;
+      color: #0f0f0f;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 24px;
+      font-weight: 700;
+      white-space: nowrap;
+    }
+
+    /* ---------- right: devices card ---------- */
+    #a1-panel-atestasyon-dev {
+      position: absolute;
+      left: 1176px;
+      top: 264px;
+      width: 648px;
+      height: 176px;
+      border: 4px solid #0f0f0f;
+      background: #efe9d9;
+      z-index: 3;
+    }
+    .a1-panel-atestasyon-dhead {
+      position: absolute;
+      left: 0;
+      top: 0;
+      right: 0;
+      height: 48px;
+      background: #0f0f0f;
+      color: #efe9d9;
+      display: flex;
+      align-items: center;
+      padding-left: 20px;
+      font-family: "JetBrains Mono", monospace;
+      font-size: 22px;
+      letter-spacing: 0.04em;
+      white-space: nowrap;
+    }
+    .a1-panel-atestasyon-drow {
+      position: absolute;
+      left: 16px;
+      right: 16px;
+      height: 44px;
+      border: 3px solid #0f0f0f;
+      background: #e4dcc4;
+      display: block;
+      line-height: 38px;
+      padding-left: 14px;
+      font-family: "JetBrains Mono", monospace;
+      font-size: 22px;
+      white-space: nowrap;
+    }
+    .a1-panel-atestasyon-pass {
+      color: #136636;
+      font-weight: 700;
+    }
+    .a1-panel-atestasyon-fail {
+      color: #e85a1f;
+      font-weight: 700;
+    }
+    #a1-panel-atestasyon-arc {
+      position: relative;
+      font-weight: 700;
+    }
+    #a1-panel-atestasyon-uline {
+      position: absolute;
+      left: 0;
+      right: 0;
+      bottom: -5px;
+      height: 4px;
+      background: #e85a1f;
+    }
+    #a1-panel-atestasyon-conn {
+      position: absolute;
+      left: 50%;
+      margin-left: -2px;
+      top: 31px;
+      width: 4px;
+      height: 33px;
+      background: #0f0f0f;
+    }
+
+    /* ARC drop-down: the frame's one hard shadow */
+    #a1-panel-atestasyon-drop {
+      position: absolute;
+      display: block;
+      right: -70px;
+      top: 64px;
+      width: 470px;
+      border: 4px solid #0f0f0f;
+      background: #efe9d9;
+      box-shadow: 14px 14px 0 #e85a1f, 14px 14px 0 3px #0f0f0f;
+      font-family: "Space Grotesk", sans-serif;
+      font-weight: 400;
+      color: #0f0f0f;
+    }
+    .a1-panel-atestasyon-drophead {
+      box-sizing: border-box;
+      height: 44px;
+      border-bottom: 3px solid #0f0f0f;
+      background: #e4dcc4;
+      display: flex;
+      align-items: center;
+      padding-left: 18px;
+      font-size: 24px;
+      font-weight: 700;
+    }
+    .a1-panel-atestasyon-reason {
+      height: 42px;
+      display: flex;
+      align-items: center;
+      gap: 14px;
+      padding-left: 18px;
+      font-family: "JetBrains Mono", monospace;
+      font-size: 22px;
+    }
+    .a1-panel-atestasyon-rmark {
+      width: 14px;
+      height: 14px;
+      background: #e85a1f;
+      border: 2px solid #0f0f0f;
+    }
+    #a1-panel-atestasyon-reasons {
+      display: block;
+      padding: 6px 0 8px;
+    }
+
+    #a1-panel-atestasyon-note {
+      position: absolute;
+      left: 1176px;
+      top: 640px;
+      width: 648px;
+      font-size: 24px;
+      line-height: 1.3;
+    }
+
+    /* ---------- analogy strip ---------- */
+    #a1-panel-atestasyon-analogy {
+      position: absolute;
+      left: 96px;
+      top: 834px;
+      height: 52px;
+      display: flex;
+      align-items: stretch;
+      border: 2px solid #0f0f0f;
+      background: #e4dcc4;
+      z-index: 2;
+    }
+    .a1-panel-atestasyon-alabel {
+      display: flex;
+      align-items: center;
+      padding: 0 14px;
+      background: #0f0f0f;
+      color: #efe9d9;
+      font-family: "JetBrains Mono", monospace;
+      font-size: 18px;
+      letter-spacing: 0.12em;
+    }
+    .a1-panel-atestasyon-atext {
+      display: flex;
+      align-items: center;
+      padding: 0 22px;
+      font-size: 26px;
+      white-space: nowrap;
+    }
+  </style>
+
+  <div id="root" data-composition-id="a1-panel-atestasyon" data-start="0" data-duration="16.5" data-width="1920" data-height="1080" lang="tr">
+    <div id="a1-panel-atestasyon-bg" class="clip" data-start="0" data-duration="16.5" data-track-index="0"></div>
+
+    <!-- chrome -->
+    <div class="a1-panel-atestasyon-topbar">
+      <div>PINVAULT · 3 AKIŞ</div>
+      <div class="a1-panel-atestasyon-pill">PANELDE</div>
+    </div>
+    <div class="a1-panel-atestasyon-footer">
+      <div>Atestasyon ayarı</div>
+      <div class="a1-panel-atestasyon-counter"><span>23</span><span class="a1-panel-atestasyon-dot"></span><span>32</span></div>
+    </div>
+
+    <!-- kicker + title -->
+    <div id="a1-panel-atestasyon-kicker">KİM: YÖNETİCİ · NEREDE: PANEL → mtls-8092 → ATTESTATION</div>
+    <h1 id="a1-panel-atestasyon-title">PANELDE: ATESTASYON AYARI</h1>
+
+    <!-- left: panel window -->
+    <div id="a1-panel-atestasyon-panel">
+      <div class="a1-panel-atestasyon-phead">Panel · 8090 · mtls-8092</div>
+      <div class="a1-panel-atestasyon-tab" style="left: 18px; width: 100px">Genel</div>
+      <div class="a1-panel-atestasyon-tab" style="left: 128px; width: 132px">İmzalama</div>
+      <div class="a1-panel-atestasyon-tab" style="left: 270px; width: 276px">Client Sertifikaları</div>
+      <div class="a1-panel-atestasyon-tab" style="left: 556px; width: 100px">Vault</div>
+      <div id="a1-panel-atestasyon-tab5" class="a1-panel-atestasyon-tab" style="left: 666px; width: 170px">Attestation<div id="a1-panel-atestasyon-tabsel">Attestation</div></div>
+
+      <!-- card 1: rejection policy -->
+      <div id="a1-panel-atestasyon-card">
+        <div id="a1-panel-atestasyon-chead">
+          <span class="a1-panel-atestasyon-ctitle">Red politikası</span>
+          <div id="a1-panel-atestasyon-badge">
+            <span id="a1-panel-atestasyon-bv3" class="a1-panel-atestasyon-bv">v3</span>
+            <span id="a1-panel-atestasyon-bv4" class="a1-panel-atestasyon-bv">v4</span>
+          </div>
+        </div>
+        <div id="a1-panel-atestasyon-preset">
+          <span>Hazır ayar:</span>
+          <span class="a1-panel-atestasyon-pbtn">Sıkı</span>
+          <span class="a1-panel-atestasyon-pbtn">Gevşek</span>
+        </div>
+
+        <div id="a1-panel-atestasyon-thead">
+          <span class="a1-panel-atestasyon-c1">Bayrak</span>
+          <span class="a1-panel-atestasyon-c2">Anlamı</span>
+          <span class="a1-panel-atestasyon-c3">Karar</span>
+        </div>
+
+        <div id="a1-panel-atestasyon-r0" class="a1-panel-atestasyon-row" style="top: 96px">
+          <span class="a1-panel-atestasyon-c1 a1-panel-atestasyon-flag">rooted</span>
+          <span class="a1-panel-atestasyon-c2 a1-panel-atestasyon-mean">root'lu cihaz</span>
+          <span class="a1-panel-atestasyon-c3"><span id="a1-panel-atestasyon-d0" class="a1-panel-atestasyon-dd">reddet<span class="a1-panel-atestasyon-caret"></span></span></span>
+        </div>
+        <div id="a1-panel-atestasyon-r1" class="a1-panel-atestasyon-row" style="top: 134px">
+          <span class="a1-panel-atestasyon-c1 a1-panel-atestasyon-flag">emulator</span>
+          <span class="a1-panel-atestasyon-c2 a1-panel-atestasyon-mean">emülatör</span>
+          <span class="a1-panel-atestasyon-c3"><span id="a1-panel-atestasyon-d1" class="a1-panel-atestasyon-dd">reddet<span class="a1-panel-atestasyon-caret"></span></span></span>
+        </div>
+        <div id="a1-panel-atestasyon-r2" class="a1-panel-atestasyon-row" style="top: 172px">
+          <span class="a1-panel-atestasyon-c1 a1-panel-atestasyon-flag">hooking_framework</span>
+          <span class="a1-panel-atestasyon-c2 a1-panel-atestasyon-mean">Frida, Xposed gibi araçlar</span>
+          <span class="a1-panel-atestasyon-c3"><span id="a1-panel-atestasyon-d2" class="a1-panel-atestasyon-dd">reddet<span class="a1-panel-atestasyon-caret"></span></span></span>
+        </div>
+        <div id="a1-panel-atestasyon-r3" class="a1-panel-atestasyon-row" style="top: 210px">
+          <span class="a1-panel-atestasyon-c1 a1-panel-atestasyon-flag">app_integrity</span>
+          <span class="a1-panel-atestasyon-c2 a1-panel-atestasyon-mean">APK değiştirilmiş</span>
+          <span class="a1-panel-atestasyon-c3"><span id="a1-panel-atestasyon-d3" class="a1-panel-atestasyon-dd">reddet<span class="a1-panel-atestasyon-caret"></span></span></span>
+        </div>
+        <div id="a1-panel-atestasyon-r4" class="a1-panel-atestasyon-row" style="top: 248px">
+          <span class="a1-panel-atestasyon-c1 a1-panel-atestasyon-flag">unknown_installer</span>
+          <span class="a1-panel-atestasyon-c2 a1-panel-atestasyon-mean">mağaza dışından kurulmuş</span>
+          <span class="a1-panel-atestasyon-c3"><span id="a1-panel-atestasyon-d4" class="a1-panel-atestasyon-dd">uyar<span class="a1-panel-atestasyon-caret"></span></span></span>
+        </div>
+        <div id="a1-panel-atestasyon-r5" class="a1-panel-atestasyon-row" style="top: 286px">
+          <span class="a1-panel-atestasyon-c1 a1-panel-atestasyon-flag">adb_enabled</span>
+          <span class="a1-panel-atestasyon-c2 a1-panel-atestasyon-mean">USB hata ayıklama açık</span>
+          <span class="a1-panel-atestasyon-c3"><span id="a1-panel-atestasyon-d5" class="a1-panel-atestasyon-dd">yoksay<span class="a1-panel-atestasyon-caret"></span></span></span>
+        </div>
+
+        <div id="a1-panel-atestasyon-more">… 14 bayrak</div>
+        <div id="a1-panel-atestasyon-toast"><span class="a1-panel-atestasyon-ok"></span><span>Politika kaydedildi — sürüm v4</span></div>
+
+        <div id="a1-panel-atestasyon-field">
+          <span>Token ömrü (saniye, tokenTtlSeconds)</span>
+          <span class="a1-panel-atestasyon-fbox">300</span>
+        </div>
+        <div id="a1-panel-atestasyon-save">Politikayı Kaydet</div>
+      </div>
+    </div>
+
+    <!-- right: devices that ran attestation -->
+    <div id="a1-panel-atestasyon-dev">
+      <div class="a1-panel-atestasyon-dhead">Attestation yapan cihazlar</div>
+      <div id="a1-panel-atestasyon-dr1" class="a1-panel-atestasyon-drow" style="top: 60px">tablet-07 · <span class="a1-panel-atestasyon-pass">Geçti</span>&nbsp;· ARC 7f3a9c1e</div>
+      <div id="a1-panel-atestasyon-dr2" class="a1-panel-atestasyon-drow" style="top: 112px">tablet-11 · <span class="a1-panel-atestasyon-fail">Reddedildi</span>&nbsp;· ARC&nbsp;<span id="a1-panel-atestasyon-arc">b21e04c9<span id="a1-panel-atestasyon-uline"></span><span id="a1-panel-atestasyon-conn"></span><span id="a1-panel-atestasyon-drop" data-layout-allow-overlap>
+            <span class="a1-panel-atestasyon-drophead">Red nedenleri</span>
+            <span id="a1-panel-atestasyon-reasons">
+              <span id="a1-panel-atestasyon-rs1" class="a1-panel-atestasyon-reason"><span class="a1-panel-atestasyon-rmark"></span><span>rooted</span></span>
+              <span id="a1-panel-atestasyon-rs2" class="a1-panel-atestasyon-reason"><span class="a1-panel-atestasyon-rmark"></span><span>hooking_framework</span></span>
+            </span>
+          </span></span></div>
+    </div>
+
+    <div id="a1-panel-atestasyon-note">Telefona yalnızca ARC kodu gider; nedeni siz panelde görürsünüz.</div>
+
+    <!-- analogy strip -->
+    <div id="a1-panel-atestasyon-analogy">
+      <div class="a1-panel-atestasyon-alabel">BENZETME</div>
+      <div class="a1-panel-atestasyon-atext">Güvenlik masasının kural listesi: neye takılan girmez, neye yalnızca not düşülür.</div>
+    </div>
+  </div>
+
+  <script>
+    (function () {
+      var ID = "a1-panel-atestasyon";
+      var $ = function (n) { return document.getElementById(ID + "-" + n); };
+      var $$ = function (c) { return Array.prototype.slice.call(document.querySelectorAll("." + ID + "-" + c)); };
+      var tl = gsap.timeline({ paused: true });
+      var OUT = "power3.out";
+      var INOUT = "power3.inOut";
+      var WIPE_FROM = "inset(-20% 100% -20% 0%)";
+      var WIPE_TO = "inset(-20% 0% -20% 0%)";
+      var INK = "#0F0F0F";
+      var CREAM = "#EFE9D9";
+      var ORANGE = "#E85A1F";
+      var YELLOW = "#F5C518";
+      var GREY = "rgba(15, 15, 15, 0.35)";
+
+      // Scene 1 (0.0–1.8s): kicker, title
+      tl.fromTo($("kicker"), { clipPath: WIPE_FROM }, { clipPath: WIPE_TO, duration: 0.7, ease: OUT }, 0.1);
+      tl.fromTo($("title"), { autoAlpha: 0, y: 30 }, { autoAlpha: 1, y: 0, duration: 0.7, ease: OUT }, 0.4);
+
+      // Scene 2 (1.8–4.0s): panel opens, tabs appear, "Attestation" is selected (ink fill)
+      tl.fromTo($("panel"), { autoAlpha: 0, y: 36 }, { autoAlpha: 1, y: 0, duration: 0.6, ease: OUT }, 1.8);
+      $$("tab").forEach(function (el, i) {
+        tl.fromTo(el, { autoAlpha: 0, y: 10 }, { autoAlpha: 1, y: 0, duration: 0.4, ease: OUT }, 2.2 + i * 0.12);
+      });
+      tl.fromTo($("tabsel"), { autoAlpha: 0 }, { autoAlpha: 1, duration: 0.25, ease: OUT }, 3.1);
+      tl.to($("tab5"), { scale: 0.94, duration: 0.1, ease: "power2.in" }, 3.0);
+      tl.to($("tab5"), { scale: 1, duration: 0.35, ease: OUT }, 3.1);
+
+      // Scene 3 (4.0–9.0s): policy card, badge, preset row, six rows ~0.6s apart, token lifetime field
+      tl.fromTo($("card"), { autoAlpha: 0, y: 20 }, { autoAlpha: 1, y: 0, duration: 0.5, ease: OUT }, 4.0);
+      tl.fromTo($("chead"), { autoAlpha: 0, x: -16 }, { autoAlpha: 1, x: 0, duration: 0.45, ease: OUT }, 4.15);
+      tl.fromTo($("preset"), { autoAlpha: 0, x: 16 }, { autoAlpha: 1, x: 0, duration: 0.45, ease: OUT }, 4.5);
+      tl.fromTo($("thead"), { clipPath: "inset(0% 100% 0% 0%)" }, { clipPath: "inset(0% 0% 0% 0%)", duration: 0.5, ease: OUT }, 4.85);
+      var colors = [ORANGE, ORANGE, ORANGE, ORANGE, YELLOW, GREY];
+      for (var i = 0; i < 6; i++) {
+        var at = 5.2 + i * 0.6;
+        tl.fromTo($("r" + i), { autoAlpha: 0, x: -16 }, { autoAlpha: 1, x: 0, duration: 0.4, ease: OUT }, at);
+        tl.fromTo($("d" + i), { borderColor: INK }, { borderColor: colors[i], duration: 0.3, ease: OUT }, at + 0.25);
+      }
+      tl.fromTo($("more"), { autoAlpha: 0 }, { autoAlpha: 0.7, duration: 0.4, ease: OUT }, 8.3);
+      tl.fromTo($("field"), { autoAlpha: 0, y: 10 }, { autoAlpha: 1, y: 0, duration: 0.45, ease: OUT }, 8.45);
+      tl.fromTo($("save"), { autoAlpha: 0, y: 10 }, { autoAlpha: 1, y: 0, duration: 0.45, ease: OUT }, 8.6);
+
+      // Scene 4 (9.0–11.0s): "Politikayı Kaydet" pressed, toast, badge v3 -> v4
+      tl.to($("save"), { scale: 0.92, backgroundColor: INK, color: CREAM, duration: 0.12, ease: OUT }, 9.25);
+      tl.to($("save"), { scale: 1, duration: 0.35, ease: OUT }, 9.37);
+      tl.fromTo($("toast"), { autoAlpha: 0, clipPath: "inset(0% 0% 0% 100%)" }, { autoAlpha: 1, clipPath: "inset(0% 0% 0% 0%)", duration: 0.5, ease: OUT }, 9.55);
+      tl.fromTo($("bv3"), { yPercent: 0 }, { yPercent: -100, duration: 0.45, ease: INOUT }, 9.95);
+      tl.fromTo($("bv4"), { yPercent: 100 }, { yPercent: 0, duration: 0.45, ease: INOUT }, 9.95);
+
+      // Scene 5 (11.0–14.0s): devices card, two rows, ARC underline, drop-down, side note
+      tl.fromTo($("dev"), { autoAlpha: 0, y: 24 }, { autoAlpha: 1, y: 0, duration: 0.5, ease: OUT }, 11.0);
+      tl.fromTo($("dr1"), { autoAlpha: 0, x: -16 }, { autoAlpha: 1, x: 0, duration: 0.4, ease: OUT }, 11.3);
+      tl.fromTo($("dr2"), { autoAlpha: 0, x: -16 }, { autoAlpha: 1, x: 0, duration: 0.4, ease: OUT }, 11.75);
+      tl.fromTo($("uline"), { scaleX: 0, transformOrigin: "0% 50%" }, { scaleX: 1, duration: 0.4, ease: OUT }, 12.2);
+      tl.fromTo($("conn"), { scaleY: 0, transformOrigin: "50% 0%" }, { scaleY: 1, duration: 0.25, ease: OUT }, 12.45);
+      tl.fromTo($("drop"), { autoAlpha: 0, y: -12 }, { autoAlpha: 1, y: 0, duration: 0.45, ease: OUT }, 12.6);
+      tl.fromTo($("rs1"), { autoAlpha: 0, x: -12 }, { autoAlpha: 1, x: 0, duration: 0.35, ease: OUT }, 12.85);
+      tl.fromTo($("rs2"), { autoAlpha: 0, x: -12 }, { autoAlpha: 1, x: 0, duration: 0.35, ease: OUT }, 13.05);
+      tl.fromTo($("note"), { autoAlpha: 0, y: 12 }, { autoAlpha: 1, y: 0, duration: 0.45, ease: OUT }, 13.4);
+
+      // Scene 6 (14.0–16.0s): analogy strip, hold
+      tl.fromTo($("analogy"), { autoAlpha: 0, x: -24 }, { autoAlpha: 1, x: 0, duration: 0.6, ease: OUT }, 14.0);
+
+      // pad to the fixed 16s duration (hold)
+      tl.set({}, {}, 16);
+
+      window.__timelines = window.__timelines || {};
+      window.__timelines[ID] = tl;
+    })();
+  </script>
+</template>
