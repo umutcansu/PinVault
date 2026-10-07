@@ -1,0 +1,7 @@
+# xcodegen generate çıktısı (project.yml'dan üretilir)
+*.xcodeproj/
+# scripts/gen-host-config.sh çıktısı (sample-host.properties'ten, her derlemede)
+Sources/Generated/
+build/
+DerivedData/
+.DS_Store
