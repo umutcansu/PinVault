@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+### Server
+
+- **A host's version moves for every change to its entry.** `PUT /api/v1/certificate-config` bumped a host only when its pins changed; a change to `mtls`, `forceUpdate` or `clientCertVersion` alone was stored without a bump, and since devices detect changes by version, a fielded device never re-read the entry — a host switched to mTLS, or a rotated host client certificate, reached only devices whose data had been wiped (the `toggle-mtls` and `upload-client-cert` routes already bumped for their own change). Now the whole entry but its version is compared. History records the move as `mtls_enabled` / `mtls_disabled` or the new `host_updated` event.
+
 ## 2.3.0 — 2026-10-07 — iOS library, attestation, Play Integrity, managed trust roots, environment guard, setup wizard
 
 ### iOS (new)

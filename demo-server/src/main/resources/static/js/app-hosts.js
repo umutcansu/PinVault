@@ -843,6 +843,7 @@ async function loadPinHistory(hostname) {
       host_added:   { icon: '&#x2795;', text: t('evHostAdded'),   color: '#22c55e' },
       host_removed: { icon: '&#x274C;', text: t('evHostRemoved'), color: '#ef4444' },
       pins_updated: { icon: '&#x270F;', text: t('evPinsUpdated'), color: '#60a5fa' },
+      host_updated: { icon: '&#x270F;', text: t('evHostUpdated'), color: '#60a5fa' },
       force_update: { icon: '&#x26A1;', text: t('evForce'),       color: '#f59e0b' },
       mtls_enabled: { icon: '&#x1F512;', text: 'mTLS Enabled',    color: '#f59e0b' },
       mtls_disabled:{ icon: '&#x1F513;', text: 'mTLS Disabled',   color: '#94a3b8' },

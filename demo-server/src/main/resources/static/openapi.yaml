@@ -510,16 +510,20 @@ paths:
 
         **Per-host versioning** is applied server-side before validation: a host
         absent from the current config is stored at `version: 1`, a host whose
-        `sha256` list changed gets `oldVersion + 1`, an unchanged host keeps its
-        version. Client-supplied `version` values are overwritten. Re-added hosts
-        continue their previous sequence (see `PinConfigStore.save`), so versions
-        never move backwards.
+        entry changed in anything but its version — the `sha256` list, `mtls`,
+        `forceUpdate` or `clientCertVersion` — gets `oldVersion + 1`, an unchanged
+        host keeps its version (devices detect changes by version, so a flag that
+        moved without one never reached them). Client-supplied `version` values
+        are overwritten. Re-added hosts continue their previous sequence (see
+        `PinConfigStore.save`), so versions never move backwards.
 
         **Validation** (`validatePinConfig`): every host needs a non-blank hostname
         and **at least 2 pins** (primary + backup); every pin must be 44 characters
         of Base64 decoding to exactly 32 bytes.
 
-        Writes `host_added` / `host_removed` / `pins_updated` history entries.
+        Writes `host_added` / `host_removed` / `pins_updated` history entries; a
+        kept host whose version moved for a flag alone gets `mtls_enabled` /
+        `mtls_disabled` or `host_updated`.
 
         The body replaces the scope **including every flag**: a client that edits one
         host must send the other hosts' `forceUpdate` / `mtls` /
@@ -582,8 +586,8 @@ paths:
       description: |
         Events recorded for this hostname: `cert_generated`, `cert_regenerated`,
         `cert_uploaded`, `cert_fetched`, `fetched_from_url`, `host_added`,
-        `host_removed`, `pins_updated`, `force_update`, `mtls_enabled`,
-        `mtls_disabled`, `client_cert_uploaded`.
+        `host_removed`, `pins_updated`, `host_updated`, `force_update`,
+        `mtls_enabled`, `mtls_disabled`, `client_cert_uploaded`.
 
         The lookup is by hostname across all scopes (`getByHostname`), not scoped to
         the listener's Config API.
@@ -6428,6 +6432,7 @@ components:
             - host_added
             - host_removed
             - pins_updated
+            - host_updated
             - force_update
             - mtls_enabled
             - mtls_disabled
