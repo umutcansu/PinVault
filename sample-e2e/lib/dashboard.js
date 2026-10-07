@@ -2,7 +2,7 @@
 // dilinden bağımsız `data-action` özniteliklerine ve form alanı kimliklerine
 // dayanır.
 const { expect } = require('@playwright/test');
-const { testDeviceUid } = require('./android');
+const { testDeviceUid } = require('./device');
 
 /**
  * Playwright ek adındaki son noktadan sonrasını dosya uzantısı sayar
@@ -1090,9 +1090,12 @@ class Dashboard {
 
   /** Vault sekmesinin "Dağıtım Geçmişi" tablosunda cihazın bu dosya için en yeni kaydı. */
   async expectDistribution(apiId, { key, deviceModel, status, version }) {
+    // Sunucu raporun model adını görüntü güvenli karakterlere indirir
+    // (displayAlias): iOS'un "iPhone17,1"i tabloda "iPhone171" görünür.
+    const shownModel = deviceModel.replace(/[^\p{L}\p{N} ._:()+\-']/gu, '');
     await expect(async () => {
       await this.openConfigApiTab(apiId, 'vault');
-      const row = this.page.locator('tbody tr', { hasText: deviceModel }).filter({ hasText: key }).first();
+      const row = this.page.locator('tbody tr', { hasText: shownModel }).filter({ hasText: key }).first();
       await expect(row).toContainText(status, { timeout: 1000 });
       if (version) await expect(row).toContainText(`v${version}`, { timeout: 1000 });
     }).toPass({ timeout: 30_000, intervals: [1000, 2000] });
