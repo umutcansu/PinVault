@@ -17,7 +17,7 @@ Swift Package Manager, from the repository root (`Package.swift` lives there):
 ```swift
 // Package.swift
 dependencies: [
-    .package(url: "https://github.com/umutcansu/PinVault.git", from: "2.3.0"),
+    .package(url: "https://github.com/umutcansu/PinVault.git", from: "2.3.1"),
 ],
 targets: [
     .target(name: "MyApp", dependencies: [.product(name: "PinVault", package: "PinVault")]),

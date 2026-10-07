@@ -4,7 +4,7 @@ Dynamic SSL certificate pinning library for Android and iOS. Manage pins remotel
 
 [![Maven Central](https://img.shields.io/maven-central/v/io.github.umutcansu/pinvault)](https://central.sonatype.com/artifact/io.github.umutcansu/pinvault)
 
-> **Latest release: 2.3.0** — with the new iOS library ([`pinvault-ios/`](pinvault-ios/README.md)). Anything marked *(2.3)* is new in 2.3, *(2.2)* in 2.2, *(2.1)* in
+> **Latest release: 2.3.1** — with the new iOS library ([`pinvault-ios/`](pinvault-ios/README.md)). Anything marked *(2.3)* is new in 2.3, *(2.2)* in 2.2, *(2.1)* in
 > 2.1 — see [CHANGELOG.md](CHANGELOG.md) for the full list,
 > [Upgrading from 2.1.x to 2.2](#upgrading-from-21x-to-22) (most apps compile
 > unchanged), [Upgrading from 2.0.x to 2.1](#upgrading-from-20x-to-21) and
@@ -21,7 +21,7 @@ Integrity). Install, quick start and the platform differences:
 to iOS: [`pinvault-ios/PORTING.md`](pinvault-ios/PORTING.md).
 
 ```swift
-.package(url: "https://github.com/umutcansu/PinVault.git", from: "2.3.0")
+.package(url: "https://github.com/umutcansu/PinVault.git", from: "2.3.1")
 ```
 
 ## Features
@@ -58,9 +58,9 @@ to iOS: [`pinvault-ios/PORTING.md`](pinvault-ios/PORTING.md).
 ### 1. Add dependency
 
 ```gradle
-implementation("io.github.umutcansu:pinvault:2.3.0")
+implementation("io.github.umutcansu:pinvault:2.3.1")
 // optional: Play Integrity as the attestation's second opinion
-implementation("io.github.umutcansu:pinvault-play-integrity:2.3.0")
+implementation("io.github.umutcansu:pinvault-play-integrity:2.3.1")
 ```
 
 > Kotlin 1.9.x consumer projects: use `2.0.3` or later — older 2.0.x

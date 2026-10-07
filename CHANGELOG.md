@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 2.3.1 — 2026-10-08 — OWASP audit fixes (MASVS Android/iOS, ASVS server)
 
 Closes the medium findings of the OWASP audits of 2.3.0 (MASVS on Android
 and iOS, ASVS / API Top 10 on the reference server).
