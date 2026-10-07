@@ -497,7 +497,12 @@ public final class PinVault: @unchecked Sendable {
     /// policy): pinning, the attestation token and pin-mismatch recovery, like
     /// ``session()``. The pins are re-read on every handshake and the session
     /// is rebuilt when they change. Fail-closed until a config is applied.
-    public func applyTo(_ configuration: URLSessionConfiguration) -> PinnedSession {
+    ///
+    /// A redirect from `https` to `http` is not followed (the 3xx is the
+    /// answer) unless `followCleartextRedirects` is true — OkHttp's
+    /// `followSslRedirects`, off here where OkHttp defaults to on. The
+    /// library's own sessions never follow one.
+    public func applyTo(_ configuration: URLSessionConfiguration, followCleartextRedirects: Bool = false) -> PinnedSession {
         guard let primary else { return unavailableSession() }
         let provider = primary.clientProvider
         if provider.currentConfig == nil {
@@ -513,7 +518,10 @@ public final class PinVault: @unchecked Sendable {
         var interceptors: [any PinnedInterceptor] = []
         if let token = attestationTokenInterceptor() { interceptors.append(token) }
         interceptors.append(provider.recoveryInterceptor)
-        return primary.sslManager.applyTo(configuration, configProvider: { provider.currentConfig }, interceptors: interceptors)
+        return primary.sslManager.applyTo(
+            configuration, configProvider: { provider.currentConfig }, interceptors: interceptors,
+            followCleartextRedirects: followCleartextRedirects
+        )
     }
 
     /// The ready-to-use pinned session (`getClient()`): pinning, attestation

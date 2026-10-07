@@ -79,6 +79,14 @@ pooled connections without checking their certificates again, so PinVault
 rebuilds its sessions whenever pins, identities or routing change. Use the
 returned `PinnedSession` for every request.
 
+A pinned session never continues in plain HTTP: a redirect from `https` to
+`http` is not followed, the 3xx is returned and your code decides. That holds
+for `session()`, `session(settings:)` and `applyTo` alike (OkHttp follows such
+redirects by default; PinVault for iOS does not). A backend that must redirect
+into the clear needs an explicit opt-in, which never reaches the library's own
+sessions: `applyTo(configuration, followCleartextRedirects: true)` or
+`HttpConnectionSettings(followCleartextRedirects: true)`.
+
 ### Hosts that resolve elsewhere
 
 The counterpart of OkHttp's `Dns`: the request goes to the given address,

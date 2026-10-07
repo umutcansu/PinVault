@@ -444,7 +444,9 @@ final class DynamicSSLManager: @unchecked Sendable {
     /// without being rebuilt. Used for ``HttpClientProvider`` and `session(settings:)`.
     ///
     /// A pinned session never continues in the clear: a redirect between
-    /// `https` and `http` is not followed (OkHttp `followSslRedirects(false)`).
+    /// `https` and `http` is not followed (OkHttp `followSslRedirects(false)`)
+    /// unless the app's `settings` opt in (`followCleartextRedirects`); the
+    /// library's own callers pass the defaults.
     /// - Parameter extraInterceptors: added outside `recovery` (the attestation token).
     func buildDynamicClient(
         configProvider: @escaping @Sendable () -> CertificateConfig?,
@@ -460,7 +462,7 @@ final class DynamicSSLManager: @unchecked Sendable {
             configuration: Self.sessionConfiguration(settings),
             trust: .pinned(configProvider),
             resolveOverrides: settings.resolvedHosts,
-            redirects: .sameScheme
+            redirects: settings.followCleartextRedirects ? .all : .sameScheme
         )
         logApplied(configProvider())
         return PinnedSession(interceptors: extraInterceptors + [recovery].compactMap { $0 }, transport: transport)
@@ -524,11 +526,14 @@ final class DynamicSSLManager: @unchecked Sendable {
     /// Forced on the copy: TLS 1.2 or newer, no `URLCache` (a cache shared with
     /// an unpinned session would answer pinned requests with responses that
     /// never crossed a pinned connection), no credential storage (the client
-    /// identity is never stored where another session's default handling finds it).
+    /// identity is never stored where another session's default handling finds it),
+    /// and no redirect from `https` into `http` unless `followCleartextRedirects`
+    /// (OkHttp `followSslRedirects`, off here where OkHttp defaults to on).
     func applyTo(
         _ configuration: URLSessionConfiguration,
         configProvider: @escaping @Sendable () -> CertificateConfig?,
-        interceptors: [any PinnedInterceptor] = []
+        interceptors: [any PinnedInterceptor] = [],
+        followCleartextRedirects: Bool = false
     ) -> PinnedSession {
         let copy = configuration.copy() as! URLSessionConfiguration
         Self.harden(copy, libraryOwned: false)
@@ -537,7 +542,7 @@ final class DynamicSSLManager: @unchecked Sendable {
             configuration: copy,
             trust: .pinned(configProvider),
             resolveOverrides: [:],
-            redirects: .all
+            redirects: followCleartextRedirects ? .all : .sameScheme
         )
         logApplied(configProvider())
         return PinnedSession(interceptors: interceptors, transport: transport)

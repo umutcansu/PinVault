@@ -5,6 +5,7 @@
 ### iOS
 
 - **PKCS12 import and the Keychain (MASVS audit, finding 1):** the audit suspected that `SecPKCS12Import` without `kSecImportToMemoryOnly` (iOS 16–17) persists the identity in the Keychain with default accessibility and refuses a second import. Checked on the iOS 18.0 and 26.5 simulators (the bare call and the library's): nothing is persisted, the same bundle opens repeatedly, and the key signs — Apple documents memory-only as the iOS default on every version, and the implementation stores items only with `kSecUseDataProtectionKeychain` (macOS), which the library never passes. No behaviour change; the comment in `ClientIdentity.fromPKCS12` now says so, a new app-hosted test (`PKCS12ImportKeychainTests`, identity host suite) pins it on every runtime, and the README says which runtimes CI should cover (18.0 and current).
+- **No pinned session follows a redirect into plain HTTP (finding 2):** sessions built with `applyTo(_:)` used to follow `https → http` redirects (OkHttp's `followSslRedirects` default); now they answer the 3xx like the library's own sessions and `session(settings:)`. A backend that must redirect into the clear opts in with `applyTo(configuration, followCleartextRedirects: true)` or `HttpConnectionSettings(followCleartextRedirects: true)`; the library's own sessions never follow one.
 
 ## 2.3.0 — 2026-10-07 — iOS library, attestation, Play Integrity, managed trust roots, environment guard, setup wizard
 
