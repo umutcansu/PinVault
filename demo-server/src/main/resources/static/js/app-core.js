@@ -45,6 +45,76 @@ function clearApiKey() {
     try { sessionStorage.removeItem(API_KEY_STORE); localStorage.removeItem(API_KEY_STORE); } catch (_) { /* nothing stored */ }
 }
 
+// ── In-page input dialog (replaces window.prompt) ───────
+// window.prompt() is blocked in embedded/automated browsers (and shows a raw
+// "prompt() is not supported" error). This is a theme-matched modal that
+// resolves to the entered text, or null when cancelled. Enter submits, Esc or
+// a click on the backdrop cancels.
+function pvInputDialog({ title, message = '', placeholder = '', value = '', type = 'text', okLabel, cancelLabel } = {}) {
+    const label = (k, fallback) => {
+        try { return typeof t === 'function' ? t(k) : fallback; } catch (_) { return fallback; }
+    };
+    return new Promise((resolve) => {
+        const existing = document.getElementById('pv-input-dialog');
+        if (existing) existing.remove();
+        const overlay = document.createElement('div');
+        overlay.id = 'pv-input-dialog';
+        overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:2000;display:flex;align-items:center;justify-content:center;padding:16px;';
+        const box = document.createElement('div');
+        box.style.cssText = 'background:#1e293b;border:1px solid #334155;border-radius:12px;padding:20px;max-width:440px;width:100%;box-shadow:0 10px 40px rgba(0,0,0,.5);';
+        const h = document.createElement('div');
+        h.textContent = title || '';
+        h.style.cssText = 'font-size:15px;font-weight:600;color:#f1f5f9;margin-bottom:8px;';
+        box.appendChild(h);
+        if (message) {
+            const m = document.createElement('div');
+            m.textContent = message;
+            m.style.cssText = 'font-size:12px;color:#94a3b8;margin-bottom:14px;white-space:pre-wrap;word-break:break-word;';
+            box.appendChild(m);
+        }
+        const input = document.createElement('input');
+        input.type = type;
+        input.placeholder = placeholder;
+        input.value = value;
+        input.autocomplete = 'off';
+        input.style.cssText = 'width:100%;box-sizing:border-box;background:#0f172a;border:1px solid #334155;border-radius:8px;padding:10px 12px;color:#f1f5f9;font-size:13px;margin-bottom:16px;';
+        box.appendChild(input);
+        const row = document.createElement('div');
+        row.style.cssText = 'display:flex;gap:8px;justify-content:flex-end;';
+        const cancel = document.createElement('button');
+        cancel.type = 'button';
+        cancel.textContent = cancelLabel || label('cancel', 'İptal');
+        cancel.style.cssText = 'padding:8px 16px;border:1px solid #334155;border-radius:8px;background:transparent;color:#94a3b8;font-size:13px;cursor:pointer;';
+        const ok = document.createElement('button');
+        ok.type = 'button';
+        ok.textContent = okLabel || label('save', 'Kaydet');
+        ok.style.cssText = 'padding:8px 16px;border:1px solid #3b82f6;border-radius:8px;background:#3b82f6;color:#fff;font-size:13px;cursor:pointer;';
+        row.appendChild(cancel);
+        row.appendChild(ok);
+        box.appendChild(row);
+        overlay.appendChild(box);
+        document.body.appendChild(overlay);
+        input.focus();
+
+        let done = false;
+        const close = (val) => {
+            if (done) return;
+            done = true;
+            document.removeEventListener('keydown', onKey, true);
+            overlay.remove();
+            resolve(val);
+        };
+        const onKey = (e) => {
+            if (e.key === 'Enter') { e.preventDefault(); close(input.value); }
+            else if (e.key === 'Escape') { e.preventDefault(); close(null); }
+        };
+        ok.addEventListener('click', () => close(input.value));
+        cancel.addEventListener('click', () => close(null));
+        overlay.addEventListener('mousedown', (e) => { if (e.target === overlay) close(null); });
+        document.addEventListener('keydown', onKey, true);
+    });
+}
+
 /**
  * Authenticated fetch wrapper — adds the X-API-Key header and handles the
  * answers any admin write may get from the governance features:
@@ -82,7 +152,12 @@ async function apiFetch(url, options = {}) {
     }
     let resp = await fetch(url, init);
     if ((resp.status === 401 || resp.status === 403) && !quiet) {
-        const newKey = prompt('API Key gerekli (X-API-Key):');
+        const newKey = await pvInputDialog({
+            title: t('apiKeyDialogTitle'),
+            message: t('apiKeyDialogMessage'),
+            placeholder: 'X-API-Key',
+            type: 'password',
+        });
         if (newKey) {
             setApiKey(newKey);
             init.headers = { ...init.headers, 'X-API-Key': newKey };
@@ -107,8 +182,11 @@ async function handleGovernanceResponse(url, init, resp, ctx) {
         if (body && body.liveCheck) {
             const failures = liveCheckFailureLines(body.liveCheck);
             if (body.overridable && !ctx.liveCheckRetry) {
-                const reason = prompt(t('liveCheckOverridePrompt',
-                    t('liveCheckFailedHeader') + '\n• ' + failures.join('\n• ')));
+                const reason = await pvInputDialog({
+                    title: t('liveCheckFailedHeader'),
+                    message: '• ' + failures.join('\n• ') + '\n\n' + t('liveCheckOverrideHint'),
+                    placeholder: t('liveCheckReasonPlaceholder'),
+                });
                 if (reason && reason.trim()) {
                     const sep = url.includes('?') ? '&' : '?';
                     return apiFetch(`${url}${sep}liveCheckOverride=${encodeURIComponent(reason.trim())}`,
