@@ -136,7 +136,7 @@ test("Saldırı: config'in imzası bozulursa telefon onu uygulamıyor, önceki c
           'yakalayıp UpdateResult.Failed dönüyor, configStore.save() hiç çağrılmıyor.',
         ].join('\n'),
       );
-      expect(storage).toContain('pinvault_secure_config.xml');
+      expect(storage).toContain(device.prefsFileName('pinvault_secure_config'));
       await app.backToMain();
     });
 

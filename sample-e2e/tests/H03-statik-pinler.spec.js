@@ -49,7 +49,8 @@ test('Sunucusuz kullanım: statik pin\'lerle host kapalıyken bile pinli bağlan
         ].join('\n'),
       );
       expect(SampleApp.modeOf(status)).toBe("statik pin'ler");
-      expect(status).toContain("APK'ya gömülü statik pin'ler (sunucu yok)");
+      // Android: "APK'ya gömülü …", iOS: "uygulamaya gömülü …".
+      expect(status).toMatch(/(APK'ya|uygulamaya) gömülü statik pin'ler \(sunucu yok\)/);
       expect(SampleApp.hostVersion(status, TARGET_HOST)).not.toBeNull();
     });
 
