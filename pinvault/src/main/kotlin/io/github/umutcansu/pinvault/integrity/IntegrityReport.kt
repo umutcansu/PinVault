@@ -102,7 +102,7 @@ internal class IntegrityReport(
 
     companion object {
         /** The library version the report names. */
-        const val SDK_VERSION = "2.2.0"
+        const val SDK_VERSION = "2.3.0"
 
         const val ROOTED = "rooted"
         const val EMULATOR = "emulator"

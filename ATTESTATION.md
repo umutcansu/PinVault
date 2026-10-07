@@ -1,6 +1,6 @@
 # PinVault Attestation — protocol and design
 
-_Status: implemented in the 2.2.0 development stream (library, reference server, dashboard). This document is the contract between the Android library and any server that speaks it; the reference server implements it in full._
+_Status: released in 2.3.0 (Android and iOS libraries, reference server, dashboard). This document is the contract between the Android library and any server that speaks it; the reference server implements it in full._
 
 PinVault's pinning protects the channel. Attestation protects what the channel
 carries: it is the layer that decides **which app instances get the pins and a
@@ -70,7 +70,7 @@ Request:
   "deviceId": "9774d56d682e549c",
   "publicKey": "MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAE…",
   "attestationChain": ["MIIC…", "MIIB…"],
-  "report": "{\"sdkVersion\":\"2.2.0\",…}",
+  "report": "{\"sdkVersion\":\"2.3.0\",…}",
   "signature": "MEUCIQ…",
   "currentConfigVersion": 7,
   "currentIssuedAt": 1759600000000,
@@ -144,7 +144,7 @@ crash, and never a false "clean".
 
 ```json
 {
-  "sdkVersion": "2.2.0",
+  "sdkVersion": "2.3.0",
   "reportTime": 1759660801234,
   "app": {
     "packageName": "com.example.app",

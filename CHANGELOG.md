@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased — Attestation, Play Integrity, managed trust roots, environment guard, setup wizard
+## 2.3.0 — 2026-10-07 — iOS library, attestation, Play Integrity, managed trust roots, environment guard, setup wizard
 
 ### iOS (new)
 
