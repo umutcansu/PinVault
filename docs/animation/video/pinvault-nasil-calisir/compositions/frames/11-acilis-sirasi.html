@@ -1,0 +1,394 @@
+<template>
+  <style>
+    @import url('https://fonts.googleapis.com/css2?family=Archivo+Black&family=JetBrains+Mono:wght@400;800&family=Space+Grotesk:wght@400;500&display=block');
+
+    #root {
+      position: absolute;
+      inset: 0;
+      overflow: hidden;
+      container-type: size;
+      --u: calc(100cqw / 1920);
+      --cream: #EFE9D9;
+      --cream-2: #E4DCC4;
+      --ink: #0F0F0F;
+      --ink-2: #2A2A2A;
+      --green: #1F8A4C;
+      --green-dark: #136636;
+      --pink: #F06CA8;
+      --yellow: #F5C518;
+      color: var(--ink);
+      font-family: 'Space Grotesk', sans-serif;
+    }
+    #root * { box-sizing: border-box; margin: 0; padding: 0; }
+
+    [class~="11-acilis-sirasi-ground"] {
+      position: absolute;
+      inset: 0;
+      background: var(--cream);
+    }
+
+    /* chrome */
+    [class~="11-acilis-sirasi-topbar"] {
+      position: absolute;
+      top: calc(48 * var(--u));
+      left: calc(64 * var(--u));
+      right: calc(64 * var(--u));
+      height: calc(44 * var(--u));
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      font-family: 'JetBrains Mono', monospace;
+      font-size: calc(22 * var(--u));
+      letter-spacing: 0.06em;
+    }
+    [class~="11-acilis-sirasi-pill"] {
+      border: calc(4 * var(--u)) solid var(--ink);
+      border-radius: 999px;
+      background: var(--cream);
+      padding: calc(5 * var(--u)) calc(22 * var(--u));
+      line-height: 1.2;
+    }
+    [class~="11-acilis-sirasi-meta"] {
+      position: absolute;
+      bottom: calc(48 * var(--u));
+      left: calc(64 * var(--u));
+      right: calc(64 * var(--u));
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      font-family: 'JetBrains Mono', monospace;
+      font-size: calc(22 * var(--u));
+      letter-spacing: 0.06em;
+      line-height: 1.2;
+    }
+
+    /* title */
+    [class~="11-acilis-sirasi-title"] {
+      position: absolute;
+      left: calc(96 * var(--u));
+      top: calc(102 * var(--u));
+      font-family: 'Archivo Black', sans-serif;
+      font-size: calc(72 * var(--u));
+      line-height: 0.92;
+      letter-spacing: -0.01em;
+      white-space: nowrap;
+    }
+
+    /* list */
+    [class~="11-acilis-sirasi-list"] {
+      position: absolute;
+      left: calc(96 * var(--u));
+      top: calc(212 * var(--u));
+      width: calc(1728 * var(--u));
+      height: calc(644 * var(--u));
+    }
+    [class~="11-acilis-sirasi-card"] {
+      position: absolute;
+      left: 0;
+      width: calc(1150 * var(--u));
+      height: calc(108 * var(--u));
+      border: calc(4 * var(--u)) solid var(--ink);
+      background: var(--cream);
+      display: flex;
+      align-items: stretch;
+    }
+    [class~="11-acilis-sirasi-num"] {
+      flex: 0 0 calc(108 * var(--u));
+      border-right: calc(4 * var(--u)) solid var(--ink);
+      background: var(--cream-2);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-family: 'Archivo Black', sans-serif;
+      font-size: calc(64 * var(--u));
+      line-height: 0.85;
+    }
+    [class~="11-acilis-sirasi-text"] {
+      flex: 1 1 auto;
+      display: flex;
+      flex-direction: column;
+      justify-content: center;
+      gap: calc(8 * var(--u));
+      padding: 0 calc(28 * var(--u));
+    }
+    [class~="11-acilis-sirasi-step-title"] {
+      font-family: 'Archivo Black', sans-serif;
+      font-size: calc(34 * var(--u));
+      line-height: 1.0;
+      white-space: nowrap;
+    }
+    [class~="11-acilis-sirasi-glyph"] {
+      font-family: 'JetBrains Mono', monospace;
+      font-weight: 800;
+    }
+    [class~="11-acilis-sirasi-body"] {
+      font-family: 'Space Grotesk', sans-serif;
+      font-size: calc(28 * var(--u));
+      line-height: 1.2;
+      white-space: nowrap;
+    }
+    [class~="11-acilis-sirasi-card--yellow"] { background: var(--yellow); }
+    [class~="11-acilis-sirasi-card--yellow"] [class~="11-acilis-sirasi-num"] {
+      background: var(--ink);
+      color: var(--yellow);
+    }
+    [class~="11-acilis-sirasi-card--green"] { background: var(--green); color: var(--cream); }
+    [class~="11-acilis-sirasi-card--green"] [class~="11-acilis-sirasi-num"] {
+      background: var(--green-dark);
+      color: var(--cream);
+    }
+
+    /* pink ID card (device certificate) on step 1 */
+    [class~="11-acilis-sirasi-idcard"] {
+      position: absolute;
+      right: calc(28 * var(--u));
+      top: calc(25 * var(--u));
+      width: calc(72 * var(--u));
+      height: calc(50 * var(--u));
+      background: var(--pink);
+      border: calc(4 * var(--u)) solid var(--ink);
+    }
+    [class~="11-acilis-sirasi-idcard-photo"] {
+      position: absolute;
+      left: calc(7 * var(--u));
+      top: calc(8 * var(--u));
+      width: calc(18 * var(--u));
+      height: calc(26 * var(--u));
+      background: var(--ink);
+    }
+    [class~="11-acilis-sirasi-idcard-bar"] {
+      position: absolute;
+      left: calc(31 * var(--u));
+      height: calc(4 * var(--u));
+      background: var(--ink);
+    }
+
+    /* arrows */
+    [class~="11-acilis-sirasi-arrows"] {
+      position: absolute;
+      left: 0;
+      top: 0;
+      width: calc(120 * var(--u));
+      height: calc(644 * var(--u));
+      overflow: visible;
+    }
+    [class~="11-acilis-sirasi-arrow-line"] {
+      fill: none;
+      stroke: var(--ink);
+      stroke-width: 4;
+      stroke-dasharray: 22;
+      stroke-dashoffset: 22;
+    }
+    [class~="11-acilis-sirasi-arrow-head"] {
+      fill: none;
+      stroke: var(--ink);
+      stroke-width: 4;
+      stroke-linejoin: miter;
+    }
+
+    /* "neden" notes */
+    [class~="11-acilis-sirasi-note"] {
+      position: absolute;
+      left: calc(1150 * var(--u));
+      width: calc(578 * var(--u));
+      height: calc(108 * var(--u));
+      display: flex;
+      align-items: center;
+    }
+    [class~="11-acilis-sirasi-tether"] {
+      flex: 0 0 calc(54 * var(--u));
+      height: calc(3 * var(--u));
+      background: var(--ink);
+      transform-origin: 0 50%;
+    }
+    [class~="11-acilis-sirasi-tether-dot"] {
+      flex: 0 0 calc(12 * var(--u));
+      height: calc(12 * var(--u));
+      background: var(--ink);
+      margin-left: calc(-2 * var(--u));
+    }
+    [class~="11-acilis-sirasi-note-text"] {
+      margin-left: calc(16 * var(--u));
+      font-family: 'JetBrains Mono', monospace;
+      font-size: calc(26 * var(--u));
+      line-height: 1.25;
+      letter-spacing: 0.02em;
+      color: var(--ink);
+    }
+
+    [class~="11-acilis-sirasi-foot"] {
+      position: absolute;
+      left: calc(96 * var(--u));
+      top: calc(868 * var(--u));
+      font-family: 'JetBrains Mono', monospace;
+      font-size: calc(20 * var(--u));
+      line-height: 1.2;
+      letter-spacing: 0.04em;
+      color: var(--ink-2);
+    }
+  </style>
+
+  <div data-hf-id="hf-uw29" id="root" lang="tr" data-composition-id="11-acilis-sirasi" data-start="0" data-duration="15.5" data-width="1920" data-height="1080">
+    <div data-hf-id="hf-af55" class="clip 11-acilis-sirasi-ground" data-start="0" data-duration="15.5" data-track-index="0"></div>
+
+    <div data-hf-id="hf-syfn" class="11-acilis-sirasi-topbar">
+      <span data-hf-id="hf-vq1v">PINVAULT NASIL ÇALIŞIR</span>
+      <span data-hf-id="hf-e9x0" class="11-acilis-sirasi-pill">SIRA</span>
+    </div>
+
+    <h1 data-hf-id="hf-zggn" class="11-acilis-sirasi-title">HER AÇILIŞTA, BU SIRAYLA</h1>
+
+    <div data-hf-id="hf-95rf" class="11-acilis-sirasi-list">
+      <svg data-hf-id="hf-hvkf" class="11-acilis-sirasi-arrows" viewBox="0 0 120 644" aria-hidden="true">
+        <path data-hf-id="hf-mdbe" class="11-acilis-sirasi-arrow-line" d="M56 110 V132" />
+        <path data-hf-id="hf-kwkw" class="11-acilis-sirasi-arrow-head" d="M48 124 L56 132 L64 124" />
+        <path data-hf-id="hf-k1qi" class="11-acilis-sirasi-arrow-line" d="M56 244 V266" />
+        <path data-hf-id="hf-emz4" class="11-acilis-sirasi-arrow-head" d="M48 258 L56 266 L64 258" />
+        <path data-hf-id="hf-p2zc" class="11-acilis-sirasi-arrow-line" d="M56 378 V400" />
+        <path data-hf-id="hf-xp8e" class="11-acilis-sirasi-arrow-head" d="M48 392 L56 400 L64 392" />
+        <path data-hf-id="hf-ln6u" class="11-acilis-sirasi-arrow-line" d="M56 512 V534" />
+        <path data-hf-id="hf-jjl6" class="11-acilis-sirasi-arrow-head" d="M48 526 L56 534 L64 526" />
+      </svg>
+
+      <div data-hf-id="hf-td4w" class="11-acilis-sirasi-card" style="top: calc(0 * var(--u));">
+        <div data-hf-id="hf-8qwg" class="11-acilis-sirasi-num">1</div>
+        <div data-hf-id="hf-ldky" class="11-acilis-sirasi-text">
+          <div data-hf-id="hf-wd3v" class="11-acilis-sirasi-step-title">KART YENİLENİR</div>
+          <div data-hf-id="hf-bh10" class="11-acilis-sirasi-body">Vakti geldiyse. Yalnız kimlikli (mTLS) uygulamada.</div>
+        </div>
+        <div data-hf-id="hf-3zrl" class="11-acilis-sirasi-idcard" aria-hidden="true">
+          <div data-hf-id="hf-uwcl" class="11-acilis-sirasi-idcard-photo"></div>
+          <div data-hf-id="hf-ibh6" class="11-acilis-sirasi-idcard-bar" style="top: calc(10 * var(--u)); width: calc(26 * var(--u));"></div>
+          <div data-hf-id="hf-r0mj" class="11-acilis-sirasi-idcard-bar" style="top: calc(20 * var(--u)); width: calc(20 * var(--u));"></div>
+          <div data-hf-id="hf-r6ku" class="11-acilis-sirasi-idcard-bar" style="top: calc(30 * var(--u)); width: calc(24 * var(--u));"></div>
+        </div>
+      </div>
+
+      <div data-hf-id="hf-j9mc" class="11-acilis-sirasi-card" style="top: calc(134 * var(--u));">
+        <div data-hf-id="hf-7jzd" class="11-acilis-sirasi-num">2</div>
+        <div data-hf-id="hf-c2g6" class="11-acilis-sirasi-text">
+          <div data-hf-id="hf-ycos" class="11-acilis-sirasi-step-title">PİN LİSTESİ ALINIR</div>
+          <div data-hf-id="hf-nlmq" class="11-acilis-sirasi-body">İmzası kontrol edilir, saklanır.</div>
+        </div>
+      </div>
+
+      <div data-hf-id="hf-um3w" class="11-acilis-sirasi-card" style="top: calc(268 * var(--u));">
+        <div data-hf-id="hf-7yae" class="11-acilis-sirasi-num">3</div>
+        <div data-hf-id="hf-cgr7" class="11-acilis-sirasi-text">
+          <div data-hf-id="hf-d5s8" class="11-acilis-sirasi-step-title">SUNUCUYA HÂLÂ ULAŞILIYOR MU?</div>
+          <div data-hf-id="hf-khyh" class="11-acilis-sirasi-body">Yeni liste bağlantıyı kopardıysa eskisine dönülür.</div>
+        </div>
+      </div>
+
+      <div data-hf-id="hf-fqtj" class="11-acilis-sirasi-card 11-acilis-sirasi-card--yellow" style="top: calc(402 * var(--u));">
+        <div data-hf-id="hf-6rdb" class="11-acilis-sirasi-num">4</div>
+        <div data-hf-id="hf-cv28" class="11-acilis-sirasi-text">
+          <div data-hf-id="hf-zn1m" class="11-acilis-sirasi-step-title">ATESTASYON <span data-hf-id="hf-0yso" class="11-acilis-sirasi-glyph">→</span> BİLET</div>
+          <div data-hf-id="hf-2xkh" class="11-acilis-sirasi-body">Uygulamada açıksa. Kart ve liste hazır olmalı.</div>
+        </div>
+      </div>
+
+      <div data-hf-id="hf-fm0g" class="11-acilis-sirasi-card 11-acilis-sirasi-card--green" style="top: calc(536 * var(--u));">
+        <div data-hf-id="hf-75oc" class="11-acilis-sirasi-num">5</div>
+        <div data-hf-id="hf-a2x1" class="11-acilis-sirasi-text">
+          <div data-hf-id="hf-pyef" class="11-acilis-sirasi-step-title">ŞİFRELEME ANAHTARLARI BİLDİRİLİR</div>
+          <div data-hf-id="hf-x0s0" class="11-acilis-sirasi-body">Uçtan uca şifreli ya da ekran kilitli dosya varsa.</div>
+        </div>
+      </div>
+
+      <div data-hf-id="hf-0opm" class="11-acilis-sirasi-note" style="top: calc(0 * var(--u));">
+        <div data-hf-id="hf-302r" class="11-acilis-sirasi-tether"></div>
+        <div data-hf-id="hf-zvzl" class="11-acilis-sirasi-tether-dot"></div>
+        <div data-hf-id="hf-krzv" class="11-acilis-sirasi-note-text">süresi dolmuş kartla 8092'ye girilmez</div>
+      </div>
+
+      <div data-hf-id="hf-uw00" class="11-acilis-sirasi-note" style="top: calc(402 * var(--u));">
+        <div data-hf-id="hf-lhr7" class="11-acilis-sirasi-tether"></div>
+        <div data-hf-id="hf-s4h1" class="11-acilis-sirasi-tether-dot"></div>
+        <div data-hf-id="hf-6048" class="11-acilis-sirasi-note-text">imza için anahtar ve kart gerekir</div>
+      </div>
+    </div>
+
+    <div data-hf-id="hf-s52u" class="11-acilis-sirasi-foot">Ayrıntı: adım adım animasyonun 2. bölümü.</div>
+
+    <div data-hf-id="hf-45hk" class="11-acilis-sirasi-meta">
+      <span data-hf-id="hf-d2fh">Açılış sırası</span>
+      <span data-hf-id="hf-o8rj">11 • 13</span>
+    </div>
+  </div>
+
+  <script src="https://cdn.jsdelivr.net/npm/gsap@3.14.2/dist/gsap.min.js"></script>
+  <script>
+    (function () {
+      var P = "11-acilis-sirasi-";
+      var all = function (name) {
+        return Array.prototype.slice.call(document.querySelectorAll('[class~="' + P + name + '"]'));
+      };
+      var cards = all("card");
+      var lines = all("arrow-line");
+      var heads = all("arrow-head");
+      var notes = all("note");
+      var foot = all("foot");
+      var title = all("title");
+
+      var E = "power3.out";
+      var tl = gsap.timeline({ paused: true });
+
+      // Scene 1 (0.0–1.5s): title
+      tl.fromTo(title, { opacity: 0, y: 30 }, { opacity: 1, y: 0, duration: 0.8, ease: E }, 0.1);
+
+      // one card arrival: fade + short slide into its slot, inner pieces staggered
+      function cardIn(card, t) {
+        var num = card.querySelector('[class~="' + P + 'num"]');
+        var st = card.querySelector('[class~="' + P + 'step-title"]');
+        var body = card.querySelector('[class~="' + P + 'body"]');
+        tl.fromTo(card, { opacity: 0, y: 28 }, { opacity: 1, y: 0, duration: 0.7, ease: E }, t);
+        tl.fromTo(num, { opacity: 0, scale: 0.8 }, { opacity: 1, scale: 1, duration: 0.6, ease: E }, t + 0.12);
+        tl.fromTo(st, { opacity: 0, x: -18 }, { opacity: 1, x: 0, duration: 0.6, ease: E }, t + 0.18);
+        tl.fromTo(body, { opacity: 0, x: -18 }, { opacity: 1, x: 0, duration: 0.6, ease: E }, t + 0.4);
+      }
+      // short down arrow between card k-1 and k (path draw, then head)
+      function arrowIn(i, t) {
+        tl.fromTo(lines[i], { strokeDashoffset: 22 }, { strokeDashoffset: 0, duration: 0.35, ease: "power2.out" }, t);
+        tl.fromTo(heads[i], { opacity: 0 }, { opacity: 1, duration: 0.2, ease: E }, t + 0.28);
+      }
+      // "neden" note: thin ink tether draws out of the card, then the mono note
+      function noteIn(note, t) {
+        var tether = note.querySelector('[class~="' + P + 'tether"]');
+        var dot = note.querySelector('[class~="' + P + 'tether-dot"]');
+        var txt = note.querySelector('[class~="' + P + 'note-text"]');
+        tl.fromTo(tether, { scaleX: 0 }, { scaleX: 1, duration: 0.45, ease: E }, t);
+        tl.fromTo(dot, { opacity: 0, scale: 0.4 }, { opacity: 1, scale: 1, duration: 0.3, ease: E }, t + 0.35);
+        tl.fromTo(txt, { opacity: 0, x: -14 }, { opacity: 1, x: 0, duration: 0.6, ease: E }, t + 0.42);
+      }
+
+      // Scene 2 (1.5–4.0s): step 1 + its reason note
+      cardIn(cards[0], 1.5);
+      noteIn(notes[0], 2.5);
+
+      // Scene 3 (4.0–6.5s): arrow, step 2
+      arrowIn(0, 4.0);
+      cardIn(cards[1], 4.15);
+
+      // Scene 4 (6.5–9.0s): arrow, step 3
+      arrowIn(1, 6.5);
+      cardIn(cards[2], 6.65);
+
+      // Scene 5 (9.0–11.5s): arrow, step 4 (yellow: ticket) + its reason note
+      arrowIn(2, 9.0);
+      cardIn(cards[3], 9.15);
+      noteIn(notes[1], 10.15);
+
+      // Scene 6 (11.5–15.0s): arrow, step 5 (green: list ends green), footnote, hold
+      arrowIn(3, 11.5);
+      cardIn(cards[4], 11.65);
+      tl.fromTo(foot, { opacity: 0, y: 10 }, { opacity: 1, y: 0, duration: 0.6, ease: E }, 12.9);
+
+      // pin the timeline length to the frame duration (static hold to the end)
+      tl.set({}, {}, 15);
+
+      window.__timelines = window.__timelines || {};
+      window.__timelines["11-acilis-sirasi"] = tl;
+    })();
+  </script>
+</template>

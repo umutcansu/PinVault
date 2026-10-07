@@ -1,0 +1,318 @@
+<template>
+  <script src="https://cdn.jsdelivr.net/npm/gsap@3.14.2/dist/gsap.min.js"></script>
+  <style>
+    /* latin-ext */
+    @font-face {
+      font-family: "Archivo Black";
+      font-style: normal;
+      font-weight: 400;
+      font-display: block;
+      src: url(https://fonts.gstatic.com/s/archivoblack/v23/HTxqL289NzCGg4MzN6KJ7eW6CYKF_jzx13HOvQ.woff2) format("woff2");
+      unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C4, U+2113, U+2C60-2C7F, U+A720-A7FF;
+    }
+    /* latin */
+    @font-face {
+      font-family: "Archivo Black";
+      font-style: normal;
+      font-weight: 400;
+      font-display: block;
+      src: url(https://fonts.gstatic.com/s/archivoblack/v23/HTxqL289NzCGg4MzN6KJ7eW6CYyF_jzx13E.woff2) format("woff2");
+      unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+    }
+    /* latin-ext */
+    @font-face {
+      font-family: "JetBrains Mono";
+      font-style: normal;
+      font-weight: 400;
+      font-display: block;
+      src: url(https://fonts.gstatic.com/s/jetbrainsmono/v24/tDbY2o-flEEny0FZhsfKu5WU4zr3E_BX0PnT8RD8yKxTNFOVk6OThhvAWV8.woff2) format("woff2");
+      unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C4, U+2113, U+2C60-2C7F, U+A720-A7FF;
+    }
+    /* latin */
+    @font-face {
+      font-family: "JetBrains Mono";
+      font-style: normal;
+      font-weight: 400;
+      font-display: block;
+      src: url(https://fonts.gstatic.com/s/jetbrainsmono/v24/tDbY2o-flEEny0FZhsfKu5WU4zr3E_BX0PnT8RD8yKxTOlOVk6OThhvA.woff2) format("woff2");
+      unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+    }
+    /* latin-ext */
+    @font-face {
+      font-family: "Space Grotesk";
+      font-style: normal;
+      font-weight: 400;
+      font-display: block;
+      src: url(https://fonts.gstatic.com/s/spacegrotesk/v22/V8mQoQDjQSkFtoMM3T6r8E7mF71Q-gOoraIAEj7oUXsqPMBBSSJLm2FXTQ.woff2) format("woff2");
+      unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C4, U+2113, U+2C60-2C7F, U+A720-A7FF;
+    }
+    /* latin */
+    @font-face {
+      font-family: "Space Grotesk";
+      font-style: normal;
+      font-weight: 400;
+      font-display: block;
+      src: url(https://fonts.gstatic.com/s/spacegrotesk/v22/V8mQoQDjQSkFtoMM3T6r8E7mF71Q-gOoraIAEj7oUXskPMBBSSJLm2E.woff2) format("woff2");
+      unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+    }
+
+    #root {
+      position: absolute;
+      inset: 0;
+      width: 100%;
+      height: 100%;
+      overflow: hidden;
+      container-type: size;
+      color: #0f0f0f;
+      font-family: "Space Grotesk", sans-serif;
+    }
+
+    /* full-bleed cream ground (clip layer, not on #root) */
+    [class~="03-uc-is-ground"] {
+      position: absolute;
+      inset: 0;
+      background: #efe9d9;
+    }
+
+    /* ---- frame chrome ---- */
+    [class~="03-uc-is-topbar"],
+    [class~="03-uc-is-meta"] {
+      position: absolute;
+      left: 3.3cqw;
+      right: 3.3cqw;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      font-family: "JetBrains Mono", monospace;
+      font-size: 1.25cqw;
+      letter-spacing: 0.06em;
+      line-height: 1;
+      color: #0f0f0f;
+    }
+    [class~="03-uc-is-topbar"] {
+      top: 2.5cqw;
+    }
+    [class~="03-uc-is-meta"] {
+      bottom: 2.5cqw;
+    }
+    [class~="03-uc-is-pill"] {
+      background: #efe9d9;
+      border: 0.2cqw solid #0f0f0f;
+      border-radius: 999px;
+      padding: 0.55cqw 1.3cqw;
+    }
+    [class~="03-uc-is-counter"] {
+      display: flex;
+      align-items: center;
+      gap: 0.6cqw;
+    }
+    [class~="03-uc-is-dot"] {
+      width: 0.5cqw;
+      height: 0.5cqw;
+      border-radius: 50%;
+      background: #0f0f0f;
+    }
+
+    /* ---- wordmark lockup ---- */
+    [class~="03-uc-is-lockup-row"] {
+      position: absolute;
+      left: 0;
+      right: 0;
+      top: 7.4cqw; /* final resting place: upper third */
+      display: flex;
+      justify-content: center;
+    }
+    [class~="03-uc-is-lockup"] {
+      display: flex;
+      flex-direction: column;
+      align-items: flex-start;
+    }
+    [class~="03-uc-is-wordmark"] {
+      font-family: "Archivo Black", sans-serif;
+      font-weight: 400;
+      font-size: 11cqw;
+      line-height: 0.9;
+      letter-spacing: -0.01em;
+      color: #0f0f0f;
+      white-space: nowrap;
+    }
+    [class~="03-uc-is-sub"] {
+      margin-top: 1.5cqw;
+      font-family: "Space Grotesk", sans-serif;
+      font-size: 1.46cqw;
+      line-height: 1.4;
+      color: #0f0f0f;
+      white-space: nowrap;
+    }
+
+    /* ---- three step cards ---- */
+    [class~="03-uc-is-card"] {
+      position: absolute;
+      top: 25.6cqw; /* ~492px */
+      width: 28.6cqw; /* ~549px */
+      height: 18.6cqw; /* ~357px, bottom ~849px */
+      box-sizing: border-box;
+      border: 0.4cqw solid #0f0f0f;
+      border-radius: 0;
+      padding: 1.7cqw;
+      display: flex;
+      flex-direction: column;
+      justify-content: space-between;
+    }
+    [class~="03-uc-is-c1"] {
+      left: 5cqw;
+      background: #efe9d9;
+      z-index: 2;
+    }
+    [class~="03-uc-is-c2"] {
+      left: 35.7cqw;
+      background: #f06ca8;
+      z-index: 3;
+    }
+    [class~="03-uc-is-c3"] {
+      left: 66.4cqw;
+      background: #f5c518;
+      z-index: 1;
+    }
+    [class~="03-uc-is-num"] {
+      font-family: "Archivo Black", sans-serif;
+      font-weight: 400;
+      font-size: 7cqw;
+      line-height: 0.85;
+      color: #0f0f0f;
+    }
+    [class~="03-uc-is-title"] {
+      font-family: "Archivo Black", sans-serif;
+      font-weight: 400;
+      font-size: 1.77cqw;
+      line-height: 0.92;
+      color: #0f0f0f;
+      margin-bottom: 0.9cqw;
+    }
+    [class~="03-uc-is-line"] {
+      font-family: "Space Grotesk", sans-serif;
+      font-size: 1.4cqw;
+      line-height: 1.3;
+      color: #0f0f0f;
+    }
+  </style>
+
+  <div data-hf-id="hf-vsvw" id="root" lang="tr" data-composition-id="03-uc-is" data-start="0" data-duration="11.5" data-width="1920" data-height="1080">
+    <div data-hf-id="hf-u978" class="03-uc-is-ground clip" data-start="0" data-duration="11.5" data-track-index="0"></div>
+
+    <div data-hf-id="hf-mee6" class="03-uc-is-topbar">
+      <span data-hf-id="hf-vq1v">PINVAULT NASIL ÇALIŞIR</span>
+      <span data-hf-id="hf-0cvy" class="03-uc-is-pill">ÇÖZÜM</span>
+    </div>
+
+    <div data-hf-id="hf-6xdr" class="03-uc-is-lockup-row">
+      <div data-hf-id="hf-sesw" class="03-uc-is-lockup">
+        <div data-hf-id="hf-uvdv" class="03-uc-is-wordmark">PİNVAULT</div>
+        <div data-hf-id="hf-1ykg" class="03-uc-is-sub">Uygulamanıza giren bir kütüphane ve sizin makinenizde çalışan bir sunucu.</div>
+      </div>
+    </div>
+
+    <div data-hf-id="hf-dop7" class="03-uc-is-card 03-uc-is-c1" data-target-x="-585">
+      <div data-hf-id="hf-jk4t" class="03-uc-is-num">1</div>
+      <div data-hf-id="hf-yeow">
+        <div data-hf-id="hf-47nn" class="03-uc-is-title">PİNLEME</div>
+        <div data-hf-id="hf-9sor" class="03-uc-is-line">Telefon yalnızca gerçek sunucunuzla konuşur.</div>
+      </div>
+    </div>
+    <div data-hf-id="hf-4csb" class="03-uc-is-card 03-uc-is-c2" data-target-x="0">
+      <div data-hf-id="hf-kr1w" class="03-uc-is-num">2</div>
+      <div data-hf-id="hf-y7yw">
+        <div data-hf-id="hf-8cf7" class="03-uc-is-title">KİMLİK</div>
+        <div data-hf-id="hf-iclk" class="03-uc-is-line">Sunucu, tanıdığı cihazı içeri alır.</div>
+      </div>
+    </div>
+    <div data-hf-id="hf-t8ki" class="03-uc-is-card 03-uc-is-c3" data-target-x="585">
+      <div data-hf-id="hf-kcqv" class="03-uc-is-num">3</div>
+      <div data-hf-id="hf-x11t">
+        <div data-hf-id="hf-1wiz" class="03-uc-is-title">ATESTASYON</div>
+        <div data-hf-id="hf-bisy" class="03-uc-is-line">Bilet yalnızca değiştirilmemiş uygulamaya verilir.</div>
+      </div>
+    </div>
+
+    <div data-hf-id="hf-blct" class="03-uc-is-meta">
+      <span data-hf-id="hf-2w1o">Üç iş</span>
+      <span data-hf-id="hf-3gev" class="03-uc-is-counter"><span data-hf-id="hf-q0nk">03</span><span data-hf-id="hf-ebf6" class="03-uc-is-dot"></span><span data-hf-id="hf-1qd5">13</span></span>
+    </div>
+  </div>
+
+  <script>
+    (function () {
+      var root = document.querySelector('[data-composition-id="03-uc-is"]');
+      var scope = root || document;
+      function one(name) {
+        return scope.querySelector('[class~="03-uc-is-' + name + '"]');
+      }
+
+      window.__timelines = window.__timelines || {};
+      var tl = gsap.timeline({ paused: true });
+
+      var lockup = one("lockup");
+      var wordmark = one("wordmark");
+      var sub = one("sub");
+
+      // Lockup starts centred in the content area, ~215px below its upper-third resting place.
+      var DROP = 215;
+
+      // ---- Scene 1 (0.0–2.5s): wordmark rises alone, long tail; sub line 0.8s later ----
+      tl.fromTo(
+        lockup,
+        { y: DROP },
+        { y: DROP, duration: 0.01, ease: "none" },
+        0
+      );
+      tl.fromTo(
+        wordmark,
+        { y: 70, opacity: 0 },
+        { y: 0, opacity: 1, duration: 1.6, ease: "power3.out" },
+        0.1
+      );
+      tl.fromTo(
+        sub,
+        { y: 22, opacity: 0 },
+        { y: 0, opacity: 1, duration: 1.0, ease: "power3.out" },
+        0.9
+      );
+
+      // ---- Scene 2 (2.5–3.5s): nudge-curve slide up to the upper third ----
+      // ramp-in 10% dist / 20% time · burst 65% / 18% · tail 25% / 62%
+      tl.to(lockup, { y: DROP * 0.9, duration: 0.2, ease: "power3.in" }, 2.5);
+      tl.to(lockup, { y: DROP * 0.25, duration: 0.18, ease: "none" }, 2.7);
+      tl.to(lockup, { y: 0, duration: 0.62, ease: "power4.out" }, 2.88);
+
+      // ---- Scene 3 (3.5–9.0s): cards settle into their slots, ~1.8s apart ----
+      // center-outward-expansion, direct-into-slot form: each card starts partially
+      // spread (START_PROGRESS) toward the row centre and expands out to its slot.
+      var START_PROGRESS = 0.65;
+      var EXPAND_DUR = 1.3;
+      var cards = [one("c1"), one("c2"), one("c3")];
+      var starts = [3.6, 5.4, 7.2];
+      cards.forEach(function (card, i) {
+        var targetX = Number(card.getAttribute("data-target-x"));
+        var fromX = -targetX * (1 - START_PROGRESS);
+        tl.fromTo(
+          card,
+          { x: fromX, y: 24, scale: 0.86, opacity: 0 },
+          { x: 0, y: 0, scale: 1, opacity: 1, duration: EXPAND_DUR, ease: "power3.out" },
+          starts[i]
+        );
+        var line = card.querySelector('[class~="03-uc-is-line"]');
+        tl.fromTo(
+          line,
+          { y: 12, opacity: 0 },
+          { y: 0, opacity: 1, duration: 0.8, ease: "power3.out" },
+          starts[i] + 0.45
+        );
+      });
+
+      // ---- Scene 4 (9.0–11.0s): hold ----
+      tl.to({}, { duration: 0.01 }, 10.99);
+
+      window.__timelines["03-uc-is"] = tl;
+    })();
+  </script>
+</template>

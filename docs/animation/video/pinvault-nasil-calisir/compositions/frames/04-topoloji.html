@@ -1,0 +1,377 @@
+<template>
+  <style>
+    /* latin-ext */
+    @font-face { font-family: "Archivo Black"; font-style: normal; font-weight: 400; font-display: block;
+      src: url(https://fonts.gstatic.com/s/archivoblack/v23/HTxqL289NzCGg4MzN6KJ7eW6CYKF_jzx13HOvQ.woff2) format("woff2");
+      unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C4, U+2113, U+2C60-2C7F, U+A720-A7FF; }
+    /* latin */
+    @font-face { font-family: "Archivo Black"; font-style: normal; font-weight: 400; font-display: block;
+      src: url(https://fonts.gstatic.com/s/archivoblack/v23/HTxqL289NzCGg4MzN6KJ7eW6CYyF_jzx13E.woff2) format("woff2");
+      unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD; }
+    @font-face { font-family: "JetBrains Mono"; font-style: normal; font-weight: 100 800; font-display: block;
+      src: url(https://fonts.gstatic.com/s/jetbrainsmono/v24/tDbv2o-flEEny0FZhsfKu5WU4zr3E_BX0PnT8RD8yKwBNntkaToggR7BYRbKPx7cwgknk-6nFg.woff2) format("woff2");
+      unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C4, U+2113, U+2C60-2C7F, U+A720-A7FF; }
+    @font-face { font-family: "JetBrains Mono"; font-style: normal; font-weight: 100 800; font-display: block;
+      src: url(https://fonts.gstatic.com/s/jetbrainsmono/v24/tDbv2o-flEEny0FZhsfKu5WU4zr3E_BX0PnT8RD8yKwBNntkaToggR7BYRbKPxDcwgknk-4.woff2) format("woff2");
+      unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD; }
+    @font-face { font-family: "Space Grotesk"; font-style: normal; font-weight: 300 700; font-display: block;
+      src: url(https://fonts.gstatic.com/s/spacegrotesk/v22/V8mDoQDjQSkFtoMM3T6r8E7mPb94C_k3HqUtEw.woff2) format("woff2");
+      unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C4, U+2113, U+2C60-2C7F, U+A720-A7FF; }
+    @font-face { font-family: "Space Grotesk"; font-style: normal; font-weight: 300 700; font-display: block;
+      src: url(https://fonts.gstatic.com/s/spacegrotesk/v22/V8mDoQDjQSkFtoMM3T6r8E7mPbF4C_k3HqU.woff2) format("woff2");
+      unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD; }
+
+    #root {
+      position: absolute;
+      inset: 0;
+      width: 1920px;
+      height: 1080px;
+      overflow: hidden;
+      container-type: size;
+      color: #0F0F0F;
+      font-family: "Space Grotesk", sans-serif;
+      -webkit-font-smoothing: antialiased;
+    }
+    #root * { box-sizing: border-box; }
+
+    [class~="04-topoloji-ground"] { position: absolute; inset: 0; background: #EFE9D9; }
+    [class~="04-topoloji-layer"] { position: absolute; inset: 0; }
+
+    /* chrome */
+    [class~="04-topoloji-mono"] {
+      font-family: "JetBrains Mono", monospace;
+      font-size: 24px;
+      letter-spacing: 0.06em;
+      line-height: 1.25;
+      white-space: nowrap;
+    }
+    [class~="04-topoloji-topleft"] { position: absolute; left: 64px; top: 48px; }
+    [class~="04-topoloji-pill"] {
+      position: absolute; right: 64px; top: 40px;
+      height: 46px; padding: 0 22px;
+      display: flex; align-items: center;
+      background: #EFE9D9;
+      border: 4px solid #0F0F0F;
+      border-radius: 999px;
+    }
+    [class~="04-topoloji-foot"] { position: absolute; bottom: 48px; }
+    [class~="04-topoloji-footleft"] { left: 64px; }
+    [class~="04-topoloji-footright"] { right: 64px; display: flex; align-items: center; gap: 14px; }
+    [class~="04-topoloji-dot"] { width: 10px; height: 10px; border-radius: 50%; background: #0F0F0F; }
+
+    /* title */
+    [class~="04-topoloji-title"] {
+      position: absolute; left: 72px; top: 104px;
+      font-family: "Archivo Black", sans-serif;
+      font-size: 80px; line-height: 0.92; letter-spacing: -0.01em;
+      white-space: nowrap;
+    }
+
+    /* svg overlay */
+    [class~="04-topoloji-svg"] { position: absolute; left: 0; top: 0; width: 1920px; height: 1080px; overflow: visible; }
+    [class~="04-topoloji-zone"] { fill: none; stroke: #0F0F0F; stroke-width: 3; stroke-dasharray: 16 10; }
+    [class~="04-topoloji-maskpath"] { fill: none; stroke: #FFFFFF; stroke-width: 14; stroke-linecap: butt; stroke-linejoin: miter; }
+    [class~="04-topoloji-wire"] { fill: none; stroke: #0F0F0F; stroke-width: 4; stroke-linecap: butt; stroke-linejoin: miter; }
+    [class~="04-topoloji-thin"] { fill: none; stroke: #0F0F0F; stroke-width: 2; }
+    [class~="04-topoloji-dashwire"] { fill: none; stroke: #0F0F0F; stroke-width: 3; stroke-dasharray: 12 9; }
+    [class~="04-topoloji-arrow"] { fill: #0F0F0F; }
+
+    /* zone legends (sit on the dashed border) */
+    [class~="04-topoloji-legend"] {
+      position: absolute;
+      height: 34px; padding: 0 16px 0 12px;
+      display: flex; align-items: center;
+      background: #EFE9D9;
+    }
+
+    /* boxes */
+    [class~="04-topoloji-box"] {
+      position: absolute;
+      background: #EFE9D9;
+      border: 4px solid #0F0F0F;
+      padding: 10px 16px;
+      display: flex; flex-direction: column; justify-content: center;
+    }
+    [class~="04-topoloji-box2"] { background: #E4DCC4; }
+    [class~="04-topoloji-head"] {
+      font-family: "Archivo Black", sans-serif;
+      font-size: 28px; line-height: 1; letter-spacing: -0.01em;
+      white-space: nowrap;
+    }
+    [class~="04-topoloji-sub"] {
+      font-family: "Space Grotesk", sans-serif;
+      font-size: 24px; line-height: 1.25;
+      margin-top: 6px;
+      white-space: nowrap;
+    }
+
+    /* phone */
+    [class~="04-topoloji-phone"] {
+      position: absolute; left: 108px; top: 300px; width: 248px; height: 268px;
+      background: #EFE9D9; border: 4px solid #0F0F0F;
+    }
+    [class~="04-topoloji-notch"] { position: absolute; left: 92px; top: 10px; width: 56px; height: 6px; background: #0F0F0F; }
+    [class~="04-topoloji-screen"] {
+      position: absolute; left: 12px; top: 26px; right: 12px; bottom: 12px;
+      background: #E4DCC4; border: 3px solid #0F0F0F;
+      padding: 12px 10px;
+    }
+    [class~="04-topoloji-lib"] {
+      position: absolute; left: 10px; right: 10px; bottom: 10px;
+      background: #EFE9D9; border: 3px solid #0F0F0F;
+      padding: 8px 10px;
+      font-size: 22px; line-height: 1.2;
+    }
+
+    /* ticket */
+    [class~="04-topoloji-ticket"] {
+      position: absolute; left: 0; top: 0;
+      width: 80px; height: 34px;
+      background: #F5C518; border: 3px solid #0F0F0F;
+      display: flex; align-items: center; justify-content: center;
+      font-family: "JetBrains Mono", monospace; font-weight: 700;
+      font-size: 18px; letter-spacing: 0.06em;
+    }
+
+    /* summary */
+    [class~="04-topoloji-sum"] {
+      position: absolute; left: 72px;
+      display: flex; align-items: center; gap: 16px;
+      font-family: "Space Grotesk", sans-serif;
+      font-size: 27px; line-height: 1.25;
+      white-space: nowrap;
+    }
+    [class~="04-topoloji-sq"] { width: 20px; height: 20px; border: 3px solid #0F0F0F; flex: none; }
+    [class~="04-topoloji-note"] {
+      position: absolute; left: 72px; top: 862px;
+      font-family: "JetBrains Mono", monospace;
+      font-size: 20px; letter-spacing: 0.06em; line-height: 1.25;
+      color: #2A2A2A;
+    }
+  </style>
+
+  <div data-hf-id="hf-4avc" id="root" data-composition-id="04-topoloji" data-start="0" data-duration="17.5" data-width="1920" data-height="1080" lang="tr">
+
+    <div data-hf-id="hf-novh" id="04-topoloji-ground" class="clip 04-topoloji-ground" data-start="0" data-duration="17.5" data-track-index="0"></div>
+
+    <div data-hf-id="hf-w2xe" id="04-topoloji-layer" class="clip 04-topoloji-layer" data-start="0" data-duration="17.5" data-track-index="1">
+
+      <!-- ===== connectors + zone borders (under the boxes) ===== -->
+      <svg data-hf-id="hf-8agb" class="04-topoloji-svg" viewBox="0 0 1920 1080" xmlns="http://www.w3.org/2000/svg">
+        <defs data-hf-id="hf-mh0t">
+          <mask data-hf-id="hf-7vxp" id="04-topoloji-m-dev" maskUnits="userSpaceOnUse" x="0" y="0" width="1920" height="1080">
+            <path data-hf-id="hf-chby" id="04-topoloji-mp-dev" class="04-topoloji-maskpath" d="M 72 264 L 392 264 L 392 596 L 72 596 Z" />
+          </mask>
+          <mask data-hf-id="hf-urg3" id="04-topoloji-m-srv" maskUnits="userSpaceOnUse" x="0" y="0" width="1920" height="1080">
+            <path data-hf-id="hf-sj86" id="04-topoloji-mp-srv" class="04-topoloji-maskpath" d="M 472 264 L 1272 264 L 1272 596 L 472 596 Z" />
+          </mask>
+          <mask data-hf-id="hf-e4gd" id="04-topoloji-m-be" maskUnits="userSpaceOnUse" x="0" y="0" width="1920" height="1080">
+            <path data-hf-id="hf-4reu" id="04-topoloji-mp-be" class="04-topoloji-maskpath" d="M 1368 264 L 1848 264 L 1848 596 L 1368 596 Z" />
+          </mask>
+          <mask data-hf-id="hf-xzbt" id="04-topoloji-m-lan" maskUnits="userSpaceOnUse" x="0" y="0" width="1920" height="1080">
+            <path data-hf-id="hf-f4e4" id="04-topoloji-mp-lan" class="04-topoloji-maskpath" d="M 472 624 L 1272 624 L 1272 748 L 472 748 Z" />
+          </mask>
+          <mask data-hf-id="hf-og4u" id="04-topoloji-m-reg" maskUnits="userSpaceOnUse" x="0" y="0" width="1920" height="1080">
+            <path data-hf-id="hf-b2hr" id="04-topoloji-mp-reg" class="04-topoloji-maskpath" d="M 1560 572 L 1560 687 L 1256 687" />
+          </mask>
+        </defs>
+
+        <!-- zones (dashed, revealed by their masks) -->
+        <path data-hf-id="hf-yinr" class="04-topoloji-zone" mask="url(#04-topoloji-m-dev)" d="M 72 264 L 392 264 L 392 596 L 72 596 Z" />
+        <path data-hf-id="hf-3lv7" class="04-topoloji-zone" mask="url(#04-topoloji-m-srv)" d="M 472 264 L 1272 264 L 1272 596 L 472 596 Z" />
+        <path data-hf-id="hf-tx6f" class="04-topoloji-zone" mask="url(#04-topoloji-m-be)" d="M 1368 264 L 1848 264 L 1848 596 L 1368 596 Z" />
+        <path data-hf-id="hf-lf45" class="04-topoloji-zone" mask="url(#04-topoloji-m-lan)" d="M 472 624 L 1272 624 L 1272 748 L 472 748 Z" />
+
+        <!-- phone -> open ports -->
+        <path data-hf-id="hf-q33d" id="04-topoloji-w1" class="04-topoloji-wire" d="M 356 338 L 486 338" />
+        <path data-hf-id="hf-eaeu" id="04-topoloji-w2" class="04-topoloji-wire" d="M 356 434 L 486 434" />
+        <path data-hf-id="hf-or2f" id="04-topoloji-w3" class="04-topoloji-wire" d="M 356 530 L 486 530" />
+        <polygon data-hf-id="hf-xiyo" id="04-topoloji-a1" class="04-topoloji-arrow" points="496,338 482,330 482,346" />
+        <polygon data-hf-id="hf-0o4z" id="04-topoloji-a2" class="04-topoloji-arrow" points="496,434 482,426 482,442" />
+        <polygon data-hf-id="hf-z0la" id="04-topoloji-a3" class="04-topoloji-arrow" points="496,530 482,522 482,538" />
+
+        <!-- ports -> storage -->
+        <path data-hf-id="hf-3wy5" id="04-topoloji-d1" class="04-topoloji-thin" d="M 960 338 L 1032 338" />
+        <path data-hf-id="hf-ecck" id="04-topoloji-d2" class="04-topoloji-thin" d="M 960 434 L 1032 434" />
+        <path data-hf-id="hf-z2fr" id="04-topoloji-d3" class="04-topoloji-thin" d="M 960 530 L 1032 530" />
+
+        <!-- phone -> your API, routed over the top -->
+        <path data-hf-id="hf-00v9" id="04-topoloji-route" class="04-topoloji-wire" d="M 300 300 L 300 222 L 1764 222 L 1764 286" />
+        <polygon data-hf-id="hf-qdok" id="04-topoloji-a4" class="04-topoloji-arrow" points="1764,296 1756,282 1772,282" />
+
+        <!-- admin -> 8090 -->
+        <path data-hf-id="hf-xxj8" id="04-topoloji-w5" class="04-topoloji-wire" d="M 720 687 L 790 687" />
+        <polygon data-hf-id="hf-idon" id="04-topoloji-a5" class="04-topoloji-arrow" points="800,687 786,679 786,695" />
+
+        <!-- login server -> 8090 (dashed, revealed by its mask) -->
+        <path data-hf-id="hf-o30f" class="04-topoloji-dashwire" mask="url(#04-topoloji-m-reg)" d="M 1560 572 L 1560 687 L 1256 687" />
+        <polygon data-hf-id="hf-68mx" id="04-topoloji-a6" class="04-topoloji-arrow" points="1244,687 1258,679 1258,695" />
+      </svg>
+
+      <!-- ===== chrome ===== -->
+      <div data-hf-id="hf-iujt" id="04-topoloji-topleft" class="04-topoloji-mono 04-topoloji-topleft">PINVAULT NASIL ÇALIŞIR</div>
+      <div data-hf-id="hf-tt30" id="04-topoloji-pill" class="04-topoloji-mono 04-topoloji-pill">TOPOLOJİ</div>
+      <div data-hf-id="hf-33ag" id="04-topoloji-footl" class="04-topoloji-mono 04-topoloji-foot 04-topoloji-footleft">Topoloji</div>
+      <div data-hf-id="hf-bjej" id="04-topoloji-footr" class="04-topoloji-mono 04-topoloji-foot 04-topoloji-footright"><span data-hf-id="hf-n8id">04</span><span data-hf-id="hf-iydw" class="04-topoloji-dot"></span><span data-hf-id="hf-1qd5">13</span></div>
+
+      <!-- ===== title ===== -->
+      <div data-hf-id="hf-exjz" id="04-topoloji-title" class="04-topoloji-title">PARÇALAR NEREDE DURUR</div>
+
+      <!-- ===== zone legends ===== -->
+      <div data-hf-id="hf-ebqc" id="04-topoloji-lg-dev" class="04-topoloji-mono 04-topoloji-legend" style="left: 88px; top: 247px;">CİHAZ</div>
+      <div data-hf-id="hf-0ekb" id="04-topoloji-lg-srv" class="04-topoloji-mono 04-topoloji-legend" style="left: 488px; top: 247px;">PİNVAULT SUNUCUSU · SİZİN MAKİNENİZ</div>
+      <div data-hf-id="hf-p51w" id="04-topoloji-lg-be" class="04-topoloji-mono 04-topoloji-legend" style="left: 1384px; top: 247px;">SİZİN ARKA UCUNUZ</div>
+      <div data-hf-id="hf-q1p9" id="04-topoloji-lg-lan" class="04-topoloji-mono 04-topoloji-legend" style="left: 488px; top: 607px;">YALNIZCA İÇ AĞ</div>
+
+      <!-- ===== zone 1: device ===== -->
+      <div data-hf-id="hf-0s36" id="04-topoloji-phone" class="04-topoloji-phone">
+        <div data-hf-id="hf-mwbw" class="04-topoloji-notch"></div>
+        <div data-hf-id="hf-rtrm" class="04-topoloji-screen">
+          <div data-hf-id="hf-jg19" class="04-topoloji-mono">Uygulamanız</div>
+          <div data-hf-id="hf-l3tw" class="04-topoloji-mono 04-topoloji-lib">PinVault<br data-hf-id="hf-x5px">kütüphanesi</div>
+        </div>
+      </div>
+
+      <!-- ===== zone 2: PinVault server ===== -->
+      <div data-hf-id="hf-q71x" id="04-topoloji-p1" class="04-topoloji-box" style="left: 496px; top: 296px; width: 464px; height: 84px;">
+        <div data-hf-id="hf-57u6" class="04-topoloji-head">8091 · TLS</div>
+        <div data-hf-id="hf-w2px" class="04-topoloji-sub">pin listesi · kayıt · atestasyon</div>
+      </div>
+      <div data-hf-id="hf-pdvz" id="04-topoloji-p2" class="04-topoloji-box" style="left: 496px; top: 392px; width: 464px; height: 84px;">
+        <div data-hf-id="hf-8k7m" class="04-topoloji-head">8092 · mTLS</div>
+        <div data-hf-id="hf-uvl6" class="04-topoloji-sub">kimlikli cihaz: dosya · yenileme</div>
+      </div>
+      <div data-hf-id="hf-moa6" id="04-topoloji-p3" class="04-topoloji-box" style="left: 496px; top: 488px; width: 464px; height: 84px;">
+        <div data-hf-id="hf-czc0" class="04-topoloji-head">8093 · KURTARMA</div>
+        <div data-hf-id="hf-iymy" class="04-topoloji-sub">süresi dolan sertifika</div>
+      </div>
+      <div data-hf-id="hf-wzno" id="04-topoloji-depo" class="04-topoloji-box 04-topoloji-box2" style="left: 1032px; top: 296px; width: 216px; height: 276px;">
+        <div data-hf-id="hf-p7ie" class="04-topoloji-head">DEPO</div>
+        <div data-hf-id="hf-4g29" class="04-topoloji-sub" style="margin-top: 12px;">sertifikalar ·<br data-hf-id="hf-rsrt">kayıtlar ·<br data-hf-id="hf-szow">imza anahtarı</div>
+      </div>
+
+      <!-- ===== zone 3: your backend ===== -->
+      <div data-hf-id="hf-ju5i" id="04-topoloji-api" class="04-topoloji-box" style="left: 1392px; top: 296px; width: 432px; height: 120px;">
+        <div data-hf-id="hf-jswc" class="04-topoloji-head">API SUNUCULARINIZ</div>
+        <div data-hf-id="hf-l3z6" class="04-topoloji-sub">bileti kendisi doğrular</div>
+      </div>
+      <div data-hf-id="hf-o205" id="04-topoloji-login" class="04-topoloji-box" style="left: 1392px; top: 452px; width: 432px; height: 120px;">
+        <div data-hf-id="hf-yws7" class="04-topoloji-head">GİRİŞ SUNUCUNUZ</div>
+        <div data-hf-id="hf-xzjt" class="04-topoloji-sub">cihazlara kayıt token'ı ister</div>
+      </div>
+      <div data-hf-id="hf-uj22" id="04-topoloji-rlabel" class="04-topoloji-mono" style="position: absolute; left: 1500px; top: 172px; width: 248px; text-align: right;">istek + bilet</div>
+
+      <!-- ===== internal-network strip ===== -->
+      <div data-hf-id="hf-upxr" id="04-topoloji-admin" class="04-topoloji-box 04-topoloji-box2" style="left: 500px; top: 646px; width: 220px; height: 82px; align-items: center;">
+        <div data-hf-id="hf-tgkp" class="04-topoloji-head">YÖNETİCİ</div>
+      </div>
+      <div data-hf-id="hf-t9iw" id="04-topoloji-p0" class="04-topoloji-box" style="left: 800px; top: 646px; width: 444px; height: 82px;">
+        <div data-hf-id="hf-tu3t" class="04-topoloji-head">8090 · YÖNETİM</div>
+        <div data-hf-id="hf-p36d" class="04-topoloji-sub">panel · API anahtarı</div>
+      </div>
+
+      <!-- ===== ticket (slides once along the over-the-top route) ===== -->
+      <div data-hf-id="hf-r2mm" id="04-topoloji-ticket" class="04-topoloji-ticket">5 DK</div>
+
+      <!-- ===== summary ===== -->
+      <div data-hf-id="hf-hffl" id="04-topoloji-s1" class="04-topoloji-sum" style="top: 774px;"><span data-hf-id="hf-xgmg" class="04-topoloji-sq" style="background: #1F8A4C;"></span><span data-hf-id="hf-seke">İnternete açık: 8091 · 8092 · 8093 ve sizin arka ucunuz.</span></div>
+      <div data-hf-id="hf-a8jj" id="04-topoloji-s2" class="04-topoloji-sum" style="top: 816px;"><span data-hf-id="hf-99ed" class="04-topoloji-sq" style="background: #E85A1F;"></span><span data-hf-id="hf-t2ac">İç ağda: 8090 yönetim kapısı ve depo.</span></div>
+      <div data-hf-id="hf-2xpv" id="04-topoloji-note" class="04-topoloji-note">Kapı numaraları demo kurulumundan.</div>
+    </div>
+  </div>
+
+  <script src="https://cdn.jsdelivr.net/npm/gsap@3.14.2/dist/gsap.min.js"></script>
+  <script>
+    (function () {
+      var FID = "04-topoloji";
+      var INK = "#0F0F0F", GREEN = "#1F8A4C", ORANGE = "#E85A1F";
+      function el(name) { return document.getElementById(FID + "-" + name); }
+
+      var tl = gsap.timeline({ paused: true });
+
+      // svg-path-draw: dash = measured length, offset length -> 0
+      function draw(name, at, dur, ease) {
+        var p = el(name);
+        var len = (p.getTotalLength ? p.getTotalLength() : 0) * 1.02 + 2;
+        p.style.strokeDasharray = len + " " + (len + 24);
+        tl.fromTo(p, { strokeDashoffset: len + 6 }, { strokeDashoffset: 0, duration: dur, ease: ease || "power2.out" }, at);
+      }
+      function rise(name, at, dur, dy) {
+        tl.fromTo(el(name), { opacity: 0, y: dy == null ? 18 : dy }, { opacity: 1, y: 0, duration: dur || 0.6, ease: "power3.out" }, at);
+      }
+      function slideIn(name, at, dx) {
+        tl.fromTo(el(name), { opacity: 0, x: dx }, { opacity: 1, x: 0, duration: 0.55, ease: "power3.out" }, at);
+      }
+      function fade(name, at, dur) {
+        tl.fromTo(el(name), { opacity: 0 }, { opacity: 1, duration: dur || 0.35, ease: "power1.out" }, at);
+      }
+
+      // ---- Scene 1 (0.0–1.5): chrome + title, no zones yet
+      tl.fromTo([el("topleft"), el("pill"), el("footl"), el("footr")], { opacity: 0 }, { opacity: 1, duration: 0.35, ease: "power1.out" }, 0);
+      rise("title", 0.05, 0.7, 28);
+
+      // ---- Scene 2 (1.5–4.0): device zone + phone, server zone + storage
+      draw("mp-dev", 1.5, 0.7);
+      fade("lg-dev", 1.95);
+      rise("phone", 1.9, 0.6, 24);
+      draw("mp-srv", 2.5, 0.85);
+      fade("lg-srv", 3.05);
+      rise("depo", 3.25, 0.55, 18);
+
+      // ---- Scene 3 (4.0–7.0): three open ports, a wire from the phone to each, each wire's server end tied to storage
+      slideIn("p1", 4.0, -28);
+      slideIn("p2", 4.35, -28);
+      slideIn("p3", 4.7, -28);
+      draw("w1", 4.3, 0.45);
+      fade("a1", 4.68, 0.15);
+      draw("w2", 4.65, 0.45);
+      fade("a2", 5.03, 0.15);
+      draw("w3", 5.0, 0.45);
+      fade("a3", 5.38, 0.15);
+      draw("d1", 5.7, 0.35);
+      draw("d2", 5.95, 0.35);
+      draw("d3", 6.2, 0.35);
+
+      // ---- Scene 4 (7.0–10.0): backend zone, API + login boxes, long over-the-top wire, ticket slides once
+      draw("mp-be", 7.0, 0.7);
+      fade("lg-be", 7.45);
+      rise("api", 7.5, 0.55, 18);
+      rise("login", 7.85, 0.55, 18);
+      draw("route", 8.25, 0.85, "power2.inOut");
+      fade("a4", 9.05, 0.15);
+      fade("rlabel", 8.85, 0.4);
+
+      // ticket rides the routed wire once: phone top -> over the top -> down onto the API box
+      var ticket = el("ticket");
+      gsap.set(ticket, { xPercent: -50, yPercent: -50 });
+      tl.fromTo(ticket, { x: 300, y: 300, opacity: 0 }, { x: 300, y: 222, opacity: 1, duration: 0.12, ease: "power1.in" }, 9.15);
+      tl.to(ticket, { x: 1764, duration: 0.82, ease: "none" }, 9.27);
+      tl.to(ticket, { y: 262, duration: 0.1, ease: "power1.out" }, 10.09);
+      tl.to(ticket, { opacity: 0, duration: 0.15, ease: "power1.out" }, 10.19);
+
+      // ---- Scene 5 (10.0–13.0): internal strip, 8090 + admin, admin wire, dashed login -> 8090
+      draw("mp-lan", 10.0, 0.7);
+      fade("lg-lan", 10.45);
+      rise("p0", 10.6, 0.55, 18);
+      rise("admin", 11.0, 0.55, 18);
+      draw("w5", 11.45, 0.3);
+      fade("a5", 11.72, 0.12);
+      draw("mp-reg", 11.85, 0.8);
+      fade("a6", 12.6, 0.15);
+
+      // ---- Scene 6 (13.0–17.0): summary lines, footnote, brief border accents, then hold
+      rise("s1", 13.0, 0.6, 14);
+      tl.to([el("p1"), el("p2"), el("p3")], { borderColor: GREEN, duration: 0.3, ease: "power1.out" }, 13.25);
+      tl.to([el("p1"), el("p2"), el("p3")], { borderColor: INK, duration: 0.5, ease: "power1.out" }, 14.9);
+      rise("s2", 14.5, 0.6, 14);
+      tl.to(el("p0"), { borderColor: ORANGE, duration: 0.3, ease: "power1.out" }, 14.75);
+      tl.to(el("p0"), { borderColor: INK, duration: 0.5, ease: "power1.out" }, 16.3);
+      fade("note", 15.7, 0.5);
+
+      tl.set({}, {}, 17);
+
+      window.__timelines = window.__timelines || {};
+      window.__timelines[FID] = tl;
+    })();
+  </script>
+</template>

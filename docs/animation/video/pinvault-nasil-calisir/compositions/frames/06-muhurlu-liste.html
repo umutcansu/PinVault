@@ -1,0 +1,665 @@
+<template>
+  <style>
+    @import url("https://fonts.googleapis.com/css2?family=Archivo+Black&family=JetBrains+Mono:wght@400;700&family=Space+Grotesk:wght@400;500&display=block");
+
+    #root {
+      position: absolute;
+      inset: 0;
+      width: 100%;
+      height: 100%;
+      overflow: hidden;
+      container-type: size;
+      color: #0f0f0f;
+      --px: calc(100cqw / 1920);
+    }
+
+    /* full-bleed ground (lowest track) */
+    #\30 6-muhurlu-liste-ground {
+      position: absolute;
+      inset: 0;
+      background: #efe9d9;
+    }
+
+    #\30 6-muhurlu-liste-stage {
+      position: absolute;
+      inset: 0;
+    }
+    #\30 6-muhurlu-liste-stage,
+    #\30 6-muhurlu-liste-stage * {
+      box-sizing: border-box;
+      margin: 0;
+    }
+    #\30 6-muhurlu-liste-stage .mh-abs {
+      position: absolute;
+    }
+
+    /* ---------- chrome ---------- */
+    #\30 6-muhurlu-liste-stage .mh-topbar,
+    #\30 6-muhurlu-liste-stage .mh-footer {
+      position: absolute;
+      left: calc(64 * var(--px));
+      right: calc(64 * var(--px));
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      font-family: "JetBrains Mono", monospace;
+      font-size: 1.25cqw;
+      letter-spacing: 0.06em;
+      line-height: 1;
+    }
+    #\30 6-muhurlu-liste-stage .mh-topbar {
+      top: 2.5cqw;
+    }
+    #\30 6-muhurlu-liste-stage .mh-footer {
+      bottom: 2.5cqw;
+    }
+    #\30 6-muhurlu-liste-stage .mh-pill {
+      border: 0.2cqw solid #0f0f0f;
+      border-radius: 999px;
+      background: #efe9d9;
+      padding: calc(8 * var(--px)) calc(20 * var(--px));
+    }
+    #\30 6-muhurlu-liste-stage .mh-counter {
+      display: flex;
+      align-items: center;
+      gap: calc(14 * var(--px));
+    }
+    #\30 6-muhurlu-liste-stage .mh-dot {
+      width: 0.5cqw;
+      height: 0.5cqw;
+      border-radius: 50%;
+      background: #0f0f0f;
+    }
+
+    /* ---------- headline ---------- */
+    #\30 6-muhurlu-liste-stage .mh-title {
+      left: calc(96 * var(--px));
+      top: calc(122 * var(--px));
+      font-family: "Archivo Black", sans-serif;
+      font-size: 4.2cqw;
+      line-height: 0.92;
+      letter-spacing: -0.01em;
+      white-space: nowrap;
+    }
+
+    /* ---------- wiring (svg) ---------- */
+    #\30 6-muhurlu-liste-stage .mh-wires {
+      position: absolute;
+      inset: 0;
+      width: 100%;
+      height: 100%;
+      z-index: 1;
+      overflow: visible;
+    }
+
+    /* ---------- panel ---------- */
+    #\30 6-muhurlu-liste-stage .mh-panel {
+      left: calc(96 * var(--px));
+      top: calc(330 * var(--px));
+      width: calc(250 * var(--px));
+      height: calc(190 * var(--px));
+      background: #e4dcc4;
+      border: calc(4 * var(--px)) solid #0f0f0f;
+      z-index: 5;
+      padding: calc(20 * var(--px)) calc(22 * var(--px));
+    }
+    #\30 6-muhurlu-liste-stage .mh-panel-label {
+      font-family: "JetBrains Mono", monospace;
+      font-weight: 700;
+      font-size: calc(30 * var(--px));
+      letter-spacing: 0.14em;
+      line-height: 1;
+    }
+    #\30 6-muhurlu-liste-stage .mh-panel-bar {
+      height: calc(12 * var(--px));
+      background: #0f0f0f;
+      margin-top: calc(20 * var(--px));
+      transform-origin: 0 50%;
+    }
+
+    /* ---------- the sealed document (focal) ---------- */
+    #\30 6-muhurlu-liste-stage .mh-doc {
+      left: calc(480 * var(--px));
+      top: calc(258 * var(--px));
+      width: calc(600 * var(--px));
+      height: calc(340 * var(--px));
+      background: #efe9d9;
+      border: calc(4 * var(--px)) solid #0f0f0f;
+      z-index: 4;
+    }
+    #\30 6-muhurlu-liste-stage .mh-doc-head {
+      height: calc(64 * var(--px));
+      background: #0f0f0f;
+      color: #efe9d9;
+      font-family: "JetBrains Mono", monospace;
+      font-weight: 700;
+      font-size: calc(28 * var(--px));
+      letter-spacing: 0.14em;
+      line-height: calc(64 * var(--px));
+      padding-left: calc(28 * var(--px));
+    }
+    #\30 6-muhurlu-liste-stage .mh-row {
+      height: calc(88 * var(--px));
+      border-top: calc(3 * var(--px)) solid #0f0f0f;
+      padding-left: calc(28 * var(--px));
+      display: flex;
+      align-items: center;
+      font-family: "JetBrains Mono", monospace;
+      font-size: calc(28 * var(--px));
+      white-space: pre;
+    }
+    #\30 6-muhurlu-liste-stage .mh-row:first-of-type {
+      border-top: 0;
+    }
+    #\30 6-muhurlu-liste-stage .mh-hashwrap {
+      position: relative;
+      display: inline-block;
+      white-space: pre;
+    }
+    #\30 6-muhurlu-liste-stage .mh-strike {
+      position: absolute;
+      left: calc(-4 * var(--px));
+      right: calc(-4 * var(--px));
+      top: 50%;
+      height: calc(6 * var(--px));
+      margin-top: calc(-3 * var(--px));
+      background: #e85a1f;
+      transform-origin: 0 50%;
+      opacity: 0;
+    }
+    #\30 6-muhurlu-liste-stage .mh-cursor {
+      display: inline-block;
+      width: 0.55em;
+      height: 1.05em;
+      margin-left: calc(3 * var(--px));
+      background: #0f0f0f;
+      opacity: 0;
+    }
+
+    /* the one hard shadow of the frame */
+    #\30 6-muhurlu-liste-stage .mh-seal {
+      right: calc(-44 * var(--px));
+      top: calc(-36 * var(--px));
+      background: #f5c518;
+      border: 0.4cqw solid #0f0f0f;
+      font-family: "Archivo Black", sans-serif;
+      font-size: calc(44 * var(--px));
+      line-height: 0.92;
+      padding: calc(14 * var(--px)) calc(26 * var(--px)) calc(12 * var(--px));
+      box-shadow:
+        1.25cqw 1.25cqw 0 #e85a1f,
+        1.25cqw 1.25cqw 0 0.2cqw #0f0f0f;
+      opacity: 0;
+    }
+
+    /* ---------- phones ---------- */
+    #\30 6-muhurlu-liste-stage .mh-phone {
+      top: calc(300 * var(--px));
+      width: calc(150 * var(--px));
+      height: calc(270 * var(--px));
+      background: #efe9d9;
+      border: calc(4 * var(--px)) solid #0f0f0f;
+      z-index: 2;
+      font-family: "JetBrains Mono", monospace;
+      display: flex;
+      flex-direction: column;
+      justify-content: space-between;
+    }
+    #\30 6-muhurlu-liste-stage .mh-phone-app {
+      font-size: calc(16 * var(--px));
+      text-align: center;
+      padding-top: calc(14 * var(--px));
+      line-height: 1;
+    }
+    #\30 6-muhurlu-liste-stage .mh-phone-lib {
+      border-top: calc(3 * var(--px)) solid #0f0f0f;
+      font-size: calc(14 * var(--px));
+      line-height: 1.2;
+      text-align: center;
+      padding: calc(8 * var(--px)) 0 calc(10 * var(--px));
+    }
+    #\30 6-muhurlu-liste-stage .mh-check {
+      top: calc(238 * var(--px));
+      width: calc(46 * var(--px));
+      height: calc(46 * var(--px));
+      background: #1f8a4c;
+      border: calc(3 * var(--px)) solid #0f0f0f;
+      z-index: 2;
+      opacity: 0;
+    }
+    #\30 6-muhurlu-liste-stage .mh-check svg {
+      display: block;
+      width: 100%;
+      height: 100%;
+    }
+
+    /* ---------- travelling list copies ---------- */
+    #\30 6-muhurlu-liste-stage .mh-copy {
+      left: 0;
+      top: 0;
+      width: calc(56 * var(--px));
+      height: calc(70 * var(--px));
+      background: #efe9d9;
+      border: calc(3 * var(--px)) solid #0f0f0f;
+      z-index: 3;
+      opacity: 0;
+      padding: calc(7 * var(--px)) calc(7 * var(--px)) 0;
+    }
+    #\30 6-muhurlu-liste-stage .mh-copy-head {
+      height: calc(9 * var(--px));
+      background: #0f0f0f;
+    }
+    #\30 6-muhurlu-liste-stage .mh-copy-line {
+      height: calc(4 * var(--px));
+      background: #0f0f0f;
+      margin-top: calc(6 * var(--px));
+      width: 80%;
+    }
+    #\30 6-muhurlu-liste-stage .mh-copy-seal {
+      position: absolute;
+      right: calc(-8 * var(--px));
+      bottom: calc(-8 * var(--px));
+      width: calc(20 * var(--px));
+      height: calc(16 * var(--px));
+      background: #f5c518;
+      border: calc(2 * var(--px)) solid #0f0f0f;
+    }
+
+    /* ---------- step lines ---------- */
+    #\30 6-muhurlu-liste-stage .mh-step {
+      left: calc(96 * var(--px));
+      display: flex;
+      align-items: center;
+      gap: calc(18 * var(--px));
+      font-family: "Space Grotesk", sans-serif;
+      font-size: calc(28 * var(--px));
+      line-height: 1.3;
+      white-space: nowrap;
+      opacity: 0;
+    }
+    #\30 6-muhurlu-liste-stage .mh-step-num {
+      background: #0f0f0f;
+      color: #efe9d9;
+      font-family: "JetBrains Mono", monospace;
+      font-weight: 700;
+      font-size: calc(24 * var(--px));
+      line-height: 1;
+      padding: calc(8 * var(--px)) calc(13 * var(--px));
+    }
+
+    /* ---------- APK box ---------- */
+    #\30 6-muhurlu-liste-stage .mh-apk-label {
+      left: calc(1560 * var(--px));
+      top: calc(664 * var(--px));
+      display: flex;
+      align-items: center;
+      gap: calc(14 * var(--px));
+      font-family: "JetBrains Mono", monospace;
+      font-size: calc(26 * var(--px));
+      opacity: 0;
+    }
+    #\30 6-muhurlu-liste-stage .mh-apk-label .mh-mini-check {
+      width: calc(38 * var(--px));
+      height: calc(38 * var(--px));
+      background: #1f8a4c;
+      border: calc(3 * var(--px)) solid #0f0f0f;
+    }
+    #\30 6-muhurlu-liste-stage .mh-apk-label .mh-mini-check svg {
+      display: block;
+      width: 100%;
+      height: 100%;
+    }
+    #\30 6-muhurlu-liste-stage .mh-apk {
+      left: calc(1560 * var(--px));
+      top: calc(718 * var(--px));
+      width: calc(264 * var(--px));
+      height: calc(112 * var(--px));
+      background: #e4dcc4;
+      border: calc(4 * var(--px)) solid #0f0f0f;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-family: "Archivo Black", sans-serif;
+      font-size: calc(58 * var(--px));
+      line-height: 0.92;
+      opacity: 0;
+    }
+
+    /* ---------- fallback note ---------- */
+    #\30 6-muhurlu-liste-stage .mh-note {
+      left: calc(96 * var(--px));
+      top: calc(800 * var(--px));
+      border: calc(2 * var(--px)) solid #0f0f0f;
+      padding: calc(14 * var(--px)) calc(24 * var(--px));
+      font-family: "Space Grotesk", sans-serif;
+      font-size: calc(28 * var(--px));
+      line-height: 1.3;
+      white-space: nowrap;
+      opacity: 0;
+    }
+  </style>
+
+  <div data-hf-id="hf-05nw" id="root" lang="tr" data-composition-id="06-muhurlu-liste" data-start="0" data-duration="15.5" data-width="1920" data-height="1080">
+    <div data-hf-id="hf-9os4" id="06-muhurlu-liste-ground" class="clip" data-start="0" data-duration="15.5" data-track-index="0"></div>
+
+    <div data-hf-id="hf-8u5d" id="06-muhurlu-liste-stage">
+      <!-- chrome -->
+      <div data-hf-id="hf-40gc" class="mh-topbar">
+        <span data-hf-id="hf-vq1v">PINVAULT NASIL ÇALIŞIR</span>
+        <span data-hf-id="hf-i7mh" class="mh-pill">1/3 · PİNLEME</span>
+      </div>
+      <div data-hf-id="hf-9gvt" class="mh-footer">
+        <span data-hf-id="hf-2y85">Mühürlü liste</span>
+        <span data-hf-id="hf-alxt" class="mh-counter"><span data-hf-id="hf-o14f">06</span><span data-hf-id="hf-o208" class="mh-dot"></span><span data-hf-id="hf-1qd5">13</span></span>
+      </div>
+
+      <!-- headline -->
+      <div data-hf-id="hf-s7is" class="mh-abs mh-title" id="06-muhurlu-liste-title">LİSTE SUNUCUDAN GELİR</div>
+
+      <!-- wiring -->
+      <svg data-hf-id="hf-nyje" class="mh-wires" viewBox="0 0 1920 1080" preserveAspectRatio="none" aria-hidden="true">
+        <path data-hf-id="hf-mffj" id="06-muhurlu-liste-arrow" d="M346,428 H470" pathLength="1" fill="none" stroke="#0F0F0F" stroke-width="4" stroke-dasharray="1" stroke-dashoffset="1" />
+        <polygon data-hf-id="hf-fzxp" id="06-muhurlu-liste-arrowhead" points="462,416 480,428 462,440" fill="#0F0F0F" opacity="0" />
+        <path data-hf-id="hf-qn10" id="06-muhurlu-liste-wire-0" d="M1080,428 H1250 V630 H1405 V420" pathLength="1" fill="none" stroke="#0F0F0F" stroke-width="4" stroke-dasharray="1" stroke-dashoffset="1" />
+        <path data-hf-id="hf-qp7z" id="06-muhurlu-liste-wire-1" d="M1080,428 H1250 V630 H1577 V420" pathLength="1" fill="none" stroke="#0F0F0F" stroke-width="4" stroke-dasharray="1" stroke-dashoffset="1" />
+        <path data-hf-id="hf-okh1" id="06-muhurlu-liste-wire-2" d="M1080,428 H1250 V630 H1749 V420" pathLength="1" fill="none" stroke="#0F0F0F" stroke-width="4" stroke-dasharray="1" stroke-dashoffset="1" />
+      </svg>
+
+      <!-- panel -->
+      <div data-hf-id="hf-9huw" class="mh-abs mh-panel" id="06-muhurlu-liste-panel">
+        <div data-hf-id="hf-ouub" class="mh-panel-label">PANEL</div>
+        <div data-hf-id="hf-b2aq" class="mh-panel-bar" style="width: 100%"></div>
+        <div data-hf-id="hf-1mbo" class="mh-panel-bar" style="width: 72%"></div>
+        <div data-hf-id="hf-r8hf" class="mh-panel-bar" style="width: 86%"></div>
+      </div>
+
+      <!-- the sealed list -->
+      <div data-hf-id="hf-v1pw" class="mh-abs mh-doc" id="06-muhurlu-liste-doc">
+        <div data-hf-id="hf-2j6c" class="mh-doc-head">PİN LİSTESİ</div>
+        <div data-hf-id="hf-5cun" class="mh-rows">
+          <div data-hf-id="hf-2aj8" class="mh-row"><span data-hf-id="hf-oysf" id="06-muhurlu-liste-r1-pre"></span><span data-hf-id="hf-4wt7" class="mh-hashwrap"><span data-hf-id="hf-iv9g" id="06-muhurlu-liste-r1-hash"></span><span data-hf-id="hf-ghp9" class="mh-strike" id="06-muhurlu-liste-strike"></span></span><span data-hf-id="hf-1dpf" class="mh-cursor" id="06-muhurlu-liste-c1"></span></div>
+          <div data-hf-id="hf-l0x8" class="mh-row"><span data-hf-id="hf-yiyg" id="06-muhurlu-liste-r2"></span><span data-hf-id="hf-sptk" class="mh-cursor" id="06-muhurlu-liste-c2"></span></div>
+          <div data-hf-id="hf-ju05" class="mh-row"><span data-hf-id="hf-zam9" id="06-muhurlu-liste-r3"></span><span data-hf-id="hf-thhd" class="mh-cursor" id="06-muhurlu-liste-c3"></span></div>
+        </div>
+        <div data-hf-id="hf-1ud3" class="mh-abs mh-seal" id="06-muhurlu-liste-seal">İMZALI</div>
+      </div>
+
+      <!-- phones -->
+      <div data-hf-id="hf-ycfr" class="mh-abs mh-phone" id="06-muhurlu-liste-phone-0" style="left: calc(1330 * var(--px))">
+        <div data-hf-id="hf-w0x6" class="mh-phone-app">Uygulamanız</div>
+        <div data-hf-id="hf-wegy" class="mh-phone-lib">PinVault<br data-hf-id="hf-x5px">kütüphanesi</div>
+      </div>
+      <div data-hf-id="hf-sl0z" class="mh-abs mh-phone" id="06-muhurlu-liste-phone-1" style="left: calc(1502 * var(--px))">
+        <div data-hf-id="hf-bnu6" class="mh-phone-app">Uygulamanız</div>
+        <div data-hf-id="hf-8c6e" class="mh-phone-lib">PinVault<br data-hf-id="hf-rsrt">kütüphanesi</div>
+      </div>
+      <div data-hf-id="hf-fmum" class="mh-abs mh-phone" id="06-muhurlu-liste-phone-2" style="left: calc(1674 * var(--px))">
+        <div data-hf-id="hf-c257" class="mh-phone-app">Uygulamanız</div>
+        <div data-hf-id="hf-8qhf" class="mh-phone-lib">PinVault<br data-hf-id="hf-szow">kütüphanesi</div>
+      </div>
+
+      <!-- checks above phones -->
+      <div data-hf-id="hf-w8ci" class="mh-abs mh-check" id="06-muhurlu-liste-check-0" style="left: calc(1382 * var(--px))">
+        <svg data-hf-id="hf-flyh" viewBox="0 0 40 40"><polyline data-hf-id="hf-7baa" points="9,21 17,29 31,12" fill="none" stroke="#EFE9D9" stroke-width="5" stroke-linecap="square" /></svg>
+      </div>
+      <div data-hf-id="hf-b660" class="mh-abs mh-check" id="06-muhurlu-liste-check-1" style="left: calc(1554 * var(--px))">
+        <svg data-hf-id="hf-6wgt" viewBox="0 0 40 40"><polyline data-hf-id="hf-0edi" points="9,21 17,29 31,12" fill="none" stroke="#EFE9D9" stroke-width="5" stroke-linecap="square" /></svg>
+      </div>
+      <div data-hf-id="hf-wxsm" class="mh-abs mh-check" id="06-muhurlu-liste-check-2" style="left: calc(1726 * var(--px))">
+        <svg data-hf-id="hf-83dw" viewBox="0 0 40 40"><polyline data-hf-id="hf-0soj" points="9,21 17,29 31,12" fill="none" stroke="#EFE9D9" stroke-width="5" stroke-linecap="square" /></svg>
+      </div>
+
+      <!-- travelling copies: first wave (a), updated wave (b) -->
+      <div data-hf-id="hf-9o04" class="mh-abs mh-copy" id="06-muhurlu-liste-copy-a0"><div data-hf-id="hf-l16e" class="mh-copy-head"></div><div data-hf-id="hf-xseu" class="mh-copy-line"></div><div data-hf-id="hf-0kqi" class="mh-copy-line"></div><div data-hf-id="hf-0z1j" class="mh-copy-line"></div><div data-hf-id="hf-olsb" class="mh-copy-seal"></div></div>
+      <div data-hf-id="hf-afnx" class="mh-abs mh-copy" id="06-muhurlu-liste-copy-a1"><div data-hf-id="hf-zica" class="mh-copy-head"></div><div data-hf-id="hf-1dck" class="mh-copy-line"></div><div data-hf-id="hf-1rnl" class="mh-copy-line"></div><div data-hf-id="hf-25ym" class="mh-copy-line"></div><div data-hf-id="hf-plm3" class="mh-copy-seal"></div></div>
+      <div data-hf-id="hf-edry" class="mh-abs mh-copy" id="06-muhurlu-liste-copy-a2"><div data-hf-id="hf-zwnb" class="mh-copy-head"></div><div data-hf-id="hf-2k9n" class="mh-copy-line"></div><div data-hf-id="hf-2yko" class="mh-copy-line"></div><div data-hf-id="hf-3cvp" class="mh-copy-line"></div><div data-hf-id="hf-p7b2" class="mh-copy-seal"></div></div>
+      <div data-hf-id="hf-5779" class="mh-abs mh-copy" id="06-muhurlu-liste-copy-b0"><div data-hf-id="hf-0ayc" class="mh-copy-head"></div><div data-hf-id="hf-3r6q" class="mh-copy-line"></div><div data-hf-id="hf-cj5q" class="mh-copy-line"></div><div data-hf-id="hf-c4up" class="mh-copy-line"></div><div data-hf-id="hf-ot01" class="mh-copy-seal"></div></div>
+      <div data-hf-id="hf-4fjg" class="mh-abs mh-copy" id="06-muhurlu-liste-copy-b1"><div data-hf-id="hf-0p9d" class="mh-copy-head"></div><div data-hf-id="hf-dbrs" class="mh-copy-line"></div><div data-hf-id="hf-cxgr" class="mh-copy-line"></div><div data-hf-id="hf-axxm" class="mh-copy-line"></div><div data-hf-id="hf-oep0" class="mh-copy-seal"></div></div>
+      <div data-hf-id="hf-fb13" class="mh-abs mh-copy" id="06-muhurlu-liste-copy-b2"><div data-hf-id="hf-13ke" class="mh-copy-head"></div><div data-hf-id="hf-ajml" class="mh-copy-line"></div><div data-hf-id="hf-bqjo" class="mh-copy-line"></div><div data-hf-id="hf-bc8n" class="mh-copy-line"></div><div data-hf-id="hf-o0dz" class="mh-copy-seal"></div></div>
+
+      <!-- steps -->
+      <div data-hf-id="hf-2xv1" class="mh-abs mh-step" id="06-muhurlu-liste-step-1" style="top: calc(664 * var(--px))">
+        <span data-hf-id="hf-nohd" class="mh-step-num">1</span><span data-hf-id="hf-aogd">Telefon listeyi ister, imzasını kontrol eder, saklar.</span>
+      </div>
+      <div data-hf-id="hf-p1e3" class="mh-abs mh-step" id="06-muhurlu-liste-step-2" style="top: calc(724 * var(--px))">
+        <span data-hf-id="hf-oveg" class="mh-step-num">2</span><span data-hf-id="hf-u0rj">Sertifika değişti mi? Panelde güncellenir, telefonlar yeni listeyi alır.</span>
+      </div>
+
+      <!-- APK -->
+      <div data-hf-id="hf-0y4s" class="mh-abs mh-apk-label" id="06-muhurlu-liste-apk-label">
+        <span data-hf-id="hf-8h11" class="mh-mini-check"><svg data-hf-id="hf-7p2v" viewBox="0 0 40 40"><polyline data-hf-id="hf-16zk" points="9,21 17,29 31,12" fill="none" stroke="#EFE9D9" stroke-width="5" stroke-linecap="square" /></svg></span>
+        <span data-hf-id="hf-qwg1">aynı kalır</span>
+      </div>
+      <div data-hf-id="hf-w5rq" class="mh-abs mh-apk" id="06-muhurlu-liste-apk">APK</div>
+
+      <!-- note -->
+      <div data-hf-id="hf-4ppt" class="mh-abs mh-note" id="06-muhurlu-liste-note">Sunucuya ulaşılamazsa telefon son listeyle, süresi dolana kadar çalışır.</div>
+    </div>
+  </div>
+
+  <script src="https://cdn.jsdelivr.net/npm/gsap@3.14.2/dist/gsap.min.js" integrity="sha384-sG0Hv1tP1lZCk9KQmrIbY/XNwi+OY84GQqhMscbnsoBFqAz8KNCil1kvfL3Hbbk2" crossorigin="anonymous"></script>
+  <script>
+    (function () {
+      var FID = "06-muhurlu-liste";
+      var $ = function (id) {
+        return document.getElementById(FID + "-" + id);
+      };
+      var DUR = 15;
+      var tl = gsap.timeline({ paused: true });
+
+      // ---------- discrete-text-sequence states ----------
+      var CHUNKS = [3, 2, 4, 2, 3];
+      function typeSeq(text, t0, base, from) {
+        var states = [];
+        var i = from || 0;
+        var k = 0;
+        var t = t0;
+        while (i < text.length) {
+          i = Math.min(text.length, i + CHUNKS[k % CHUNKS.length]);
+          states.push({ t: t, text: text.slice(0, i) });
+          var last = text.charAt(i - 1);
+          t += last === " " || last === "·" ? base + 0.06 : base;
+          k++;
+        }
+        return { states: states, end: t };
+      }
+      function textAt(states, time) {
+        for (var i = states.length - 1; i >= 0; i--) {
+          if (time >= states[i].t) return states[i].text;
+        }
+        return "";
+      }
+
+      var ROW1 = "api.ornek.com · ziA0hyMD…";
+      var PRE_LEN = 16; // "api.ornek.com · "
+      var OLD_HASH = "ziA0hyMD…";
+      var NEW_HASH = "vXC1UZ8O…";
+      var ROW2 = "cdn.ornek.com · kök CA";
+      var ROW3 = "son kullanma: 24 saat";
+
+      // Scene 2 typing
+      var r1 = typeSeq(ROW1, 2.8, 0.06);
+      var r2 = typeSeq(ROW2, r1.end + 0.1, 0.06);
+      var r3 = typeSeq(ROW3, r2.end + 0.1, 0.06);
+      var T_SEAL = r3.end + 0.08;
+
+      // Scene 4 edit: strike, backspace to empty, retype
+      var T_STRIKE = 8.0;
+      var T_BS = 8.6;
+      var hashEdit = [];
+      for (var b = 0; b <= OLD_HASH.length; b++) {
+        hashEdit.push({ t: T_BS + b * 0.06, text: OLD_HASH.slice(0, OLD_HASH.length - b) });
+      }
+      var T_RETYPE = T_BS + OLD_HASH.length * 0.06 + 0.25;
+      var retype = typeSeq(NEW_HASH, T_RETYPE, 0.07);
+      hashEdit = hashEdit.concat(retype.states);
+      var T_EDIT_DONE = retype.end;
+
+      var preEl = $("r1-pre");
+      var hashEl = $("r1-hash");
+      var r2El = $("r2");
+      var r3El = $("r3");
+      var cursors = [$("c1"), $("c2"), $("c3")];
+      var cursorWindows = [
+        [2.75, r1.end + 0.05, 0],
+        [r1.end + 0.05, r2.end + 0.05, 1],
+        [r2.end + 0.05, r3.end + 0.3, 2],
+        [T_BS - 0.15, T_EDIT_DONE + 0.35, 0],
+      ];
+
+      function renderText(t) {
+        if (t < T_BS) {
+          var s1 = textAt(r1.states, t);
+          preEl.textContent = s1.slice(0, PRE_LEN);
+          hashEl.textContent = s1.slice(PRE_LEN);
+        } else {
+          preEl.textContent = ROW1.slice(0, PRE_LEN);
+          hashEl.textContent = textAt(hashEdit, t);
+        }
+        r2El.textContent = textAt(r2.states, t);
+        r3El.textContent = textAt(r3.states, t);
+
+        var active = -1;
+        for (var w = 0; w < cursorWindows.length; w++) {
+          if (t >= cursorWindows[w][0] && t < cursorWindows[w][1]) active = cursorWindows[w][2];
+        }
+        var on = Math.sin((t * Math.PI * 2) / 0.55) > -0.2;
+        for (var c = 0; c < cursors.length; c++) {
+          cursors[c].style.opacity = c === active && on ? "1" : "0";
+        }
+      }
+
+      var driver = { t: 0 };
+      tl.to(
+        driver,
+        {
+          t: DUR,
+          duration: DUR,
+          ease: "none",
+          onUpdate: function () {
+            renderText(driver.t);
+          },
+        },
+        0,
+      );
+
+      // ---------- path motion helper (orthogonal polylines, in canvas px) ----------
+      function polyAt(pts, p) {
+        var lens = [];
+        var total = 0;
+        for (var i = 1; i < pts.length; i++) {
+          var l = Math.abs(pts[i][0] - pts[i - 1][0]) + Math.abs(pts[i][1] - pts[i - 1][1]);
+          lens.push(l);
+          total += l;
+        }
+        var d = p * total;
+        for (var j = 0; j < lens.length; j++) {
+          if (d <= lens[j] || j === lens.length - 1) {
+            var f = lens[j] === 0 ? 0 : Math.min(1, d / lens[j]);
+            return [
+              pts[j][0] + (pts[j + 1][0] - pts[j][0]) * f,
+              pts[j][1] + (pts[j + 1][1] - pts[j][1]) * f,
+            ];
+          }
+          d -= lens[j];
+        }
+        return pts[pts.length - 1];
+      }
+      var PHONE_CX = [1405, 1577, 1749];
+      function wirePts(i) {
+        return [
+          [1080, 428],
+          [1250, 428],
+          [1250, 630],
+          [PHONE_CX[i], 630],
+          [PHONE_CX[i], 420],
+        ];
+      }
+      function placeCopy(el, xy) {
+        var x = (xy[0] - 28) / 19.2;
+        var y = (xy[1] - 35) / 19.2;
+        el.style.transform = "translate(" + x + "cqw," + y + "cqw)";
+      }
+      function sendCopy(el, i, start, dur) {
+        var pts = wirePts(i);
+        var prog = { p: 0 };
+        tl.set(el, { opacity: 1 }, start);
+        tl.to(
+          prog,
+          {
+            p: 1,
+            duration: dur,
+            ease: "power3.inOut",
+            onUpdate: function () {
+              placeCopy(el, polyAt(pts, prog.p));
+            },
+          },
+          start,
+        );
+        return start + dur;
+      }
+      // park every copy at its start point (hidden) so the first rendered frame is defined
+      ["a0", "a1", "a2", "b0", "b1", "b2"].forEach(function (k) {
+        placeCopy($("copy-" + k), [1080, 428]);
+      });
+
+      // ================= Scene 1 (0.0–2.0): headline + PANEL =================
+      tl.fromTo($("title"), { y: 28, opacity: 0 }, { y: 0, opacity: 1, duration: 0.8, ease: "power3.out" }, 0.1);
+      tl.fromTo($("panel"), { x: -36, opacity: 0 }, { x: 0, opacity: 1, duration: 0.8, ease: "power3.out" }, 0.75);
+      tl.fromTo(
+        $("panel").querySelectorAll(".mh-panel-bar"),
+        { scaleX: 0 },
+        { scaleX: 1, duration: 0.5, ease: "power3.out", stagger: 0.12 },
+        1.2,
+      );
+
+      // ================= Scene 2 (2.0–5.0): list leaves the panel, rows typed, seal =================
+      tl.fromTo($("arrow"), { attr: { "stroke-dashoffset": 1 } }, { attr: { "stroke-dashoffset": 0 }, duration: 0.35, ease: "power2.out" }, 2.0);
+      tl.fromTo($("arrowhead"), { opacity: 0 }, { opacity: 1, duration: 0.15, ease: "none" }, 2.3);
+      tl.fromTo(
+        $("doc"),
+        { xPercent: -93.2, scale: 0.3, opacity: 0 },
+        { xPercent: 0, scale: 1, opacity: 1, duration: 0.75, ease: "power3.out" },
+        2.0,
+      );
+      tl.fromTo(
+        $("seal"),
+        { opacity: 0, scale: 1.7, rotation: -4 },
+        { opacity: 1, scale: 1, rotation: -4, duration: 0.32, ease: "power3.out" },
+        T_SEAL,
+      );
+
+      // ================= Scene 3 (5.0–8.0): copies ride the wires to three phones =================
+      for (var p = 0; p < 3; p++) {
+        tl.fromTo($("phone-" + p), { y: 26, opacity: 0 }, { y: 0, opacity: 1, duration: 0.6, ease: "power3.out" }, 4.95 + p * 0.12);
+        tl.fromTo($("wire-" + p), { attr: { "stroke-dashoffset": 1 } }, { attr: { "stroke-dashoffset": 0 }, duration: 0.65, ease: "power2.inOut" }, 5.25 + p * 0.06);
+        var arriveA = sendCopy($("copy-a" + p), p, 5.65 + p * 0.15, 1.0);
+        tl.fromTo($("check-" + p), { opacity: 0, scale: 0.4 }, { opacity: 1, scale: 1, duration: 0.35, ease: "power3.out" }, arriveA);
+      }
+      tl.fromTo($("step-1"), { x: -24, opacity: 0 }, { x: 0, opacity: 1, duration: 0.6, ease: "power3.out" }, 7.05);
+
+      // ================= Scene 4 (8.0–11.5): certificate changes, list rewritten, re-sent; APK untouched =================
+      tl.fromTo($("strike"), { opacity: 1, scaleX: 0 }, { opacity: 1, scaleX: 1, duration: 0.35, ease: "power3.out" }, T_STRIKE);
+      tl.to($("strike"), { opacity: 0, duration: 0.1, ease: "none" }, T_BS - 0.02);
+
+      var T_SEND_B = Math.max(T_EDIT_DONE + 0.25, 9.85);
+      for (var q = 0; q < 3; q++) {
+        var arriveB = sendCopy($("copy-b" + q), q, T_SEND_B + q * 0.12, 0.9);
+        tl.set($("copy-a" + q), { opacity: 0 }, arriveB);
+        tl.fromTo($("check-" + q), { scale: 0.55 }, { scale: 1, duration: 0.35, ease: "power3.out", immediateRender: false }, arriveB);
+      }
+      tl.fromTo($("step-2"), { x: -24, opacity: 0 }, { x: 0, opacity: 1, duration: 0.6, ease: "power3.out" }, 10.15);
+      tl.fromTo($("apk"), { y: 22, opacity: 0 }, { y: 0, opacity: 1, duration: 0.6, ease: "power3.out" }, 10.15);
+      tl.fromTo($("apk-label"), { y: 14, opacity: 0 }, { y: 0, opacity: 1, duration: 0.5, ease: "power3.out" }, 10.55);
+
+      // ================= Scene 5 (11.5–15.0): fallback note, hold =================
+      tl.fromTo($("note"), { y: 18, opacity: 0 }, { y: 0, opacity: 1, duration: 0.7, ease: "power3.out" }, 11.6);
+
+      // pad to full duration (hold)
+      tl.set({}, {}, DUR);
+
+      window.__timelines = window.__timelines || {};
+      window.__timelines[FID] = tl;
+    })();
+  </script>
+</template>

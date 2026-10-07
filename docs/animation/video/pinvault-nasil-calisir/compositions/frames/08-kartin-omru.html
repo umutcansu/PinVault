@@ -1,0 +1,402 @@
+<template>
+  <style>
+    @import url("https://fonts.googleapis.com/css2?family=Archivo+Black&family=JetBrains+Mono:wght@400;700&family=Space+Grotesk:wght@400;500&display=swap");
+
+    #root {
+      position: absolute;
+      inset: 0;
+      width: 1920px;
+      height: 1080px;
+      overflow: hidden;
+      container-type: size;
+      color: #0F0F0F;
+      font-family: "Space Grotesk", sans-serif;
+    }
+
+    #root * {
+      box-sizing: border-box;
+    }
+
+    /* full-bleed cream ground (clip layer, not the root) */
+    #\30 8-kartin-omru-bg {
+      position: absolute;
+      inset: 0;
+      z-index: 0;
+      background: #EFE9D9;
+    }
+
+    #\30 8-kartin-omru-stage {
+      position: absolute;
+      inset: 0;
+      z-index: 1;
+    }
+
+    /* ---------- chrome ---------- */
+    #\30 8-kartin-omru-topbar {
+      position: absolute;
+      top: 2.5cqw;
+      left: 3.3cqw;
+      right: 3.3cqw;
+      height: 2.6cqw;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      font-family: "JetBrains Mono", monospace;
+      font-size: 1.15cqw;
+      letter-spacing: 0.06em;
+      color: #0F0F0F;
+    }
+    #\30 8-kartin-omru-pill {
+      background: #EFE9D9;
+      border: 0.2cqw solid #0F0F0F;
+      border-radius: 999px;
+      padding: 0.35cqw 1cqw;
+      line-height: 1;
+    }
+    #\30 8-kartin-omru-footer {
+      position: absolute;
+      bottom: 2.5cqw;
+      left: 3.3cqw;
+      right: 3.3cqw;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      font-family: "JetBrains Mono", monospace;
+      font-size: 1.15cqw;
+      letter-spacing: 0.06em;
+      color: #0F0F0F;
+      line-height: 1;
+    }
+    #\30 8-kartin-omru-counter {
+      display: flex;
+      align-items: center;
+      gap: 0.6cqw;
+    }
+    #\30 8-kartin-omru-meta-dot {
+      width: 0.5cqw;
+      height: 0.5cqw;
+      border-radius: 50%;
+      background: #0F0F0F;
+    }
+
+    /* ---------- title ---------- */
+    #\30 8-kartin-omru-title {
+      position: absolute;
+      left: 96px;
+      top: 118px;
+      margin: 0;
+      font-family: "Archivo Black", sans-serif;
+      font-weight: 400;
+      font-size: 4.2cqw;
+      line-height: 0.92;
+      letter-spacing: -0.01em;
+      color: #0F0F0F;
+      white-space: nowrap;
+    }
+
+    /* ---------- strip ---------- */
+    #\30 8-kartin-omru-strip {
+      position: absolute;
+      left: 96px;
+      top: 447px;
+      width: 1728px;
+      height: 6px;
+      background: #0F0F0F;
+      transform-origin: 0% 50%;
+    }
+    .\30 8-kartin-omru-dot {
+      position: absolute;
+      top: 434px;
+      width: 32px;
+      height: 32px;
+      border: 0.25cqw solid #0F0F0F;
+      background: #EFE9D9;
+    }
+    .\30 8-kartin-omru-link {
+      position: absolute;
+      top: 466px;
+      width: 4px;
+      height: 54px;
+      background: #0F0F0F;
+      transform-origin: 50% 0%;
+    }
+
+    /* ---------- station description cards ---------- */
+    .\30 8-kartin-omru-desc {
+      position: absolute;
+      top: 520px;
+      width: 411px;
+      height: 260px;
+      background: #EFE9D9;
+      border: 0.4cqw solid #0F0F0F;
+      padding: 1.7cqw;
+    }
+    .\30 8-kartin-omru-desc-title {
+      font-family: "Archivo Black", sans-serif;
+      font-weight: 400;
+      font-size: 1.77cqw;
+      line-height: 0.92;
+      color: #0F0F0F;
+    }
+    .\30 8-kartin-omru-desc-body {
+      margin-top: 18px;
+      font-family: "Space Grotesk", sans-serif;
+      font-weight: 400;
+      font-size: 1.46cqw;
+      line-height: 1.32;
+      color: #0F0F0F;
+    }
+
+    /* ---------- the pink ID card riding the strip ---------- */
+    #\30 8-kartin-omru-rider {
+      position: absolute;
+      left: 209.5px;
+      top: 298px;
+      width: 184px;
+      height: 136px;
+    }
+    #\30 8-kartin-omru-card {
+      position: absolute;
+      left: 0;
+      top: 0;
+      width: 184px;
+      height: 116px;
+      background: #F06CA8;
+      border: 0.25cqw solid #0F0F0F;
+    }
+    #\30 8-kartin-omru-stem {
+      position: absolute;
+      left: 90px;
+      top: 116px;
+      width: 4px;
+      height: 20px;
+      background: #0F0F0F;
+    }
+    .\30 8-kartin-omru-detail {
+      position: absolute;
+      background: #0F0F0F;
+    }
+    #\30 8-kartin-omru-chip {
+      position: absolute;
+      left: 14px;
+      top: 14px;
+      width: 32px;
+      height: 25px;
+      background: #E4DCC4;
+      border: 3px solid #0F0F0F;
+    }
+    #\30 8-kartin-omru-line-a {
+      left: 14px;
+      top: 62px;
+      width: 72px;
+      height: 6px;
+    }
+    #\30 8-kartin-omru-line-b {
+      left: 14px;
+      top: 78px;
+      width: 48px;
+      height: 6px;
+    }
+    #\30 8-kartin-omru-sign {
+      position: absolute;
+      left: 92px;
+      top: 10px;
+      width: 78px;
+      height: 46px;
+      overflow: visible;
+    }
+    #\30 8-kartin-omru-sign-path {
+      fill: none;
+      stroke: #0F0F0F;
+      stroke-width: 4;
+      stroke-linecap: butt;
+      stroke-linejoin: miter;
+      stroke-dasharray: 140;
+    }
+    #\30 8-kartin-omru-sign-label {
+      position: absolute;
+      right: 10px;
+      bottom: 8px;
+      font-family: "JetBrains Mono", monospace;
+      font-weight: 700;
+      font-size: 1.15cqw;
+      line-height: 1;
+      letter-spacing: 0.06em;
+      color: #0F0F0F;
+    }
+    #\30 8-kartin-omru-check {
+      position: absolute;
+      left: 156px;
+      top: -20px;
+      width: 46px;
+      height: 46px;
+      background: #1F8A4C;
+      border: 0.25cqw solid #0F0F0F;
+    }
+    #\30 8-kartin-omru-check svg {
+      position: absolute;
+      left: 6px;
+      top: 6px;
+      width: 26px;
+      height: 26px;
+    }
+    #\30 8-kartin-omru-stamp {
+      position: absolute;
+      left: -44px;
+      top: 30px;
+      width: 272px;
+      height: 84px;
+      background: #E85A1F;
+      border: 0.4cqw solid #0F0F0F;
+      box-shadow: 1.25cqw 1.25cqw 0 #E85A1F, 1.25cqw 1.25cqw 0 0.2cqw #0F0F0F;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-family: "Archivo Black", sans-serif;
+      font-weight: 400;
+      font-size: 3cqw;
+      line-height: 0.92;
+      letter-spacing: -0.01em;
+      color: #0F0F0F;
+    }
+  </style>
+
+  <div data-hf-id="hf-2vhb" id="root" data-composition-id="08-kartin-omru" data-width="1920" data-height="1080" lang="tr" data-duration="13.5">
+    <div data-hf-id="hf-nuw9" id="08-kartin-omru-bg" class="clip" data-start="0" data-duration="13.5" data-track-index="0"></div>
+
+    <div data-hf-id="hf-mv5o" id="08-kartin-omru-stage">
+      <!-- chrome -->
+      <div data-hf-id="hf-80we" id="08-kartin-omru-topbar">
+        <span data-hf-id="hf-vq1v">PINVAULT NASIL ÇALIŞIR</span>
+        <span data-hf-id="hf-lknu" id="08-kartin-omru-pill">2/3 · KİMLİK</span>
+      </div>
+      <div data-hf-id="hf-ui8f" id="08-kartin-omru-footer">
+        <span data-hf-id="hf-adhf">Kartın ömrü</span>
+        <span data-hf-id="hf-yk7l" id="08-kartin-omru-counter"><span data-hf-id="hf-lna9">08</span><span data-hf-id="hf-z6im" id="08-kartin-omru-meta-dot"></span><span data-hf-id="hf-1qd5">13</span></span>
+      </div>
+
+      <!-- title -->
+      <h1 data-hf-id="hf-zo7y" id="08-kartin-omru-title">KARTIN ÖMRÜ</h1>
+
+      <!-- strip + stations -->
+      <div data-hf-id="hf-uqyk" id="08-kartin-omru-strip"></div>
+
+      <div data-hf-id="hf-ws82" id="08-kartin-omru-link-1" class="08-kartin-omru-link" style="left: 299.5px"></div>
+      <div data-hf-id="hf-u2ob" id="08-kartin-omru-link-2" class="08-kartin-omru-link" style="left: 738.5px"></div>
+      <div data-hf-id="hf-4lgi" id="08-kartin-omru-link-3" class="08-kartin-omru-link" style="left: 1177.5px"></div>
+      <div data-hf-id="hf-6w1j" id="08-kartin-omru-link-4" class="08-kartin-omru-link" style="left: 1616.5px"></div>
+
+      <div data-hf-id="hf-f0rr" id="08-kartin-omru-dot-1" class="08-kartin-omru-dot" style="left: 285.5px"></div>
+      <div data-hf-id="hf-4dzq" id="08-kartin-omru-dot-2" class="08-kartin-omru-dot" style="left: 724.5px"></div>
+      <div data-hf-id="hf-hci7" id="08-kartin-omru-dot-3" class="08-kartin-omru-dot" style="left: 1163.5px"></div>
+      <div data-hf-id="hf-bi9q" id="08-kartin-omru-dot-4" class="08-kartin-omru-dot" style="left: 1602.5px"></div>
+
+      <div data-hf-id="hf-rvzw" id="08-kartin-omru-desc-1" class="08-kartin-omru-desc" style="left: 96px">
+        <div data-hf-id="hf-wc2f" class="08-kartin-omru-desc-title">KAYIT</div>
+        <div data-hf-id="hf-m74v" class="08-kartin-omru-desc-body">Kart bir kez alınır.</div>
+      </div>
+      <div data-hf-id="hf-7sf1" id="08-kartin-omru-desc-2" class="08-kartin-omru-desc" style="left: 535px">
+        <div data-hf-id="hf-d5su" class="08-kartin-omru-desc-title">YENİLEME</div>
+        <div data-hf-id="hf-z1v7" class="08-kartin-omru-desc-body">Süre dolmadan, 8092'den. Anahtar aynı, kart yeni.</div>
+      </div>
+      <div data-hf-id="hf-r325" id="08-kartin-omru-desc-3" class="08-kartin-omru-desc" style="left: 974px">
+        <div data-hf-id="hf-pmj8" class="08-kartin-omru-desc-title">KURTARMA</div>
+        <div data-hf-id="hf-a46t" class="08-kartin-omru-desc-body">Süre dolduysa 8093'ten. Kimliği, aynı anahtarla atılan imza kanıtlar.</div>
+      </div>
+      <div data-hf-id="hf-zn2x" id="08-kartin-omru-desc-4" class="08-kartin-omru-desc" style="left: 1413px">
+        <div data-hf-id="hf-ztto" class="08-kartin-omru-desc-title">İPTAL</div>
+        <div data-hf-id="hf-ggk3" class="08-kartin-omru-desc-body">Yönetici panelden iptal eder; kart artık hiçbir kapıyı açmaz.</div>
+      </div>
+
+      <!-- the pink identity card riding the strip -->
+      <div data-hf-id="hf-q6qi" id="08-kartin-omru-rider">
+        <div data-hf-id="hf-93z9" id="08-kartin-omru-stem"></div>
+        <div data-hf-id="hf-vuz4" id="08-kartin-omru-card">
+          <div data-hf-id="hf-f5u0" id="08-kartin-omru-chip"></div>
+          <div data-hf-id="hf-4c01" id="08-kartin-omru-line-a" class="08-kartin-omru-detail"></div>
+          <div data-hf-id="hf-8a42" id="08-kartin-omru-line-b" class="08-kartin-omru-detail"></div>
+          <svg data-hf-id="hf-jl6g" id="08-kartin-omru-sign" viewBox="0 0 78 46">
+            <path data-hf-id="hf-2m38" id="08-kartin-omru-sign-path" pathLength="140" d="M4 34 C 12 8, 22 6, 26 26 S 38 42, 46 22 S 62 6, 74 30" />
+          </svg>
+          <div data-hf-id="hf-3mfj" id="08-kartin-omru-sign-label">imza</div>
+        </div>
+        <div data-hf-id="hf-yoba" id="08-kartin-omru-check">
+          <svg data-hf-id="hf-neyx" viewBox="0 0 26 26">
+            <path data-hf-id="hf-c1zk" d="M3 13 L10 20 L23 5" fill="none" stroke="#EFE9D9" stroke-width="5" stroke-linecap="square" stroke-linejoin="miter" />
+          </svg>
+        </div>
+        <div data-hf-id="hf-98k8" id="08-kartin-omru-stamp">İPTAL</div>
+      </div>
+    </div>
+  </div>
+
+  <script src="https://cdn.jsdelivr.net/npm/gsap@3.14.2/dist/gsap.min.js"></script>
+  <script>
+    (function () {
+      var P = "08-kartin-omru-";
+      var el = function (id) {
+        return document.getElementById(P + id);
+      };
+      var INK = "#0F0F0F";
+      var PINK = "#F06CA8";
+      var CREAM2 = "#E4DCC4";
+      var STEP = 439; // station spacing (411px column + 28px gap)
+
+      var tl = gsap.timeline({ paused: true });
+
+      // ---- Scene 1 (0.0–1.5): chrome, title, strip draws left → right
+      tl.fromTo(el("topbar"), { opacity: 0, y: -12 }, { opacity: 1, y: 0, duration: 0.5, ease: "power3.out" }, 0);
+      tl.fromTo(el("footer"), { opacity: 0 }, { opacity: 1, duration: 0.5, ease: "power3.out" }, 0.1);
+      tl.fromTo(el("title"), { opacity: 0, y: 40 }, { opacity: 1, y: 0, duration: 0.8, ease: "power3.out" }, 0.1);
+      tl.fromTo(el("strip"), { scaleX: 0 }, { scaleX: 1, duration: 1.2, ease: "power3.inOut" }, 0.3);
+
+      // station reveal helper: dot, link, description card
+      var station = function (n, t, descDelay) {
+        tl.fromTo(el("dot-" + n), { opacity: 0, scale: 0 }, { opacity: 1, scale: 1, duration: 0.45, ease: "power3.out" }, t);
+        tl.fromTo(el("link-" + n), { scaleY: 0 }, { scaleY: 1, duration: 0.4, ease: "power3.out" }, t + 0.1);
+        tl.fromTo(el("desc-" + n), { opacity: 0, y: 30 }, { opacity: 1, y: 0, duration: 0.6, ease: "power3.out" }, t + descDelay);
+      };
+      var reach = function (n, t) {
+        tl.fromTo(el("dot-" + n), { backgroundColor: "#EFE9D9" }, { backgroundColor: INK, duration: 0.3, ease: "power3.out", immediateRender: false }, t);
+      };
+
+      // ---- Scene 2 (1.5–4.0): KAYIT — card seats at the head of the strip
+      station(1, 1.5, 0.3);
+      tl.fromTo(el("rider"), { opacity: 0, y: -60 }, { opacity: 1, y: 0, duration: 0.7, ease: "power3.out" }, 2.4);
+      reach(1, 3.0);
+
+      // ---- Scene 3 (4.0–6.5): YENİLEME — slide, flip, new card, green check
+      station(2, 4.0, 0.3);
+      tl.fromTo(el("rider"), { x: 0 }, { x: STEP, duration: 0.9, ease: "power3.inOut", immediateRender: false }, 4.2);
+      reach(2, 5.0);
+      tl.fromTo(el("card"), { rotationY: 0, transformPerspective: 800 }, { rotationY: 90, transformPerspective: 800, duration: 0.22, ease: "power3.in" }, 5.15);
+      tl.fromTo(el("card"), { rotationY: -90, transformPerspective: 800 }, { rotationY: 0, transformPerspective: 800, duration: 0.3, ease: "power3.out", immediateRender: false }, 5.37);
+      tl.fromTo(el("check"), { opacity: 0, scale: 0 }, { opacity: 1, scale: 1, duration: 0.35, ease: "power3.out" }, 5.7);
+
+      // ---- Scene 4 (6.5–9.5): KURTARMA — expires (faded), signature brings it back
+      station(3, 6.5, 0.3);
+      tl.fromTo(el("check"), { opacity: 1 }, { opacity: 0, duration: 0.25, ease: "power3.out", immediateRender: false }, 6.7);
+      tl.fromTo(el("rider"), { x: STEP }, { x: STEP * 2, duration: 0.9, ease: "power3.inOut", immediateRender: false }, 6.7);
+      reach(3, 7.5);
+      tl.fromTo(el("card"), { backgroundColor: PINK }, { backgroundColor: CREAM2, duration: 0.5, ease: "power3.out", immediateRender: false }, 7.7);
+      tl.fromTo([el("chip"), el("line-a"), el("line-b")], { opacity: 1 }, { opacity: 0.3, duration: 0.5, ease: "power3.out", immediateRender: false }, 7.7);
+      tl.fromTo(el("sign-path"), { strokeDashoffset: 140 }, { strokeDashoffset: 0, duration: 0.6, ease: "power3.inOut" }, 8.5);
+      tl.fromTo(el("sign-label"), { opacity: 0 }, { opacity: 1, duration: 0.3, ease: "power3.out" }, 8.75);
+      tl.fromTo(el("card"), { backgroundColor: CREAM2 }, { backgroundColor: PINK, duration: 0.4, ease: "power3.out", immediateRender: false }, 9.05);
+      tl.fromTo([el("chip"), el("line-a"), el("line-b")], { opacity: 0.3 }, { opacity: 1, duration: 0.4, ease: "power3.out", immediateRender: false }, 9.05);
+
+      // ---- Scene 5 (9.5–13.0): İPTAL — orange stamp, the frame's one hard shadow, then hold
+      station(4, 9.5, 0.3);
+      tl.fromTo(el("rider"), { x: STEP * 2 }, { x: STEP * 3, duration: 0.9, ease: "power3.inOut", immediateRender: false }, 9.7);
+      reach(4, 10.5);
+      tl.fromTo([el("sign-label"), el("sign")], { opacity: 1 }, { opacity: 0, duration: 0.3, ease: "power3.in", immediateRender: false }, 10.5);
+      tl.fromTo(el("stamp"), { opacity: 0, scale: 1.8, rotation: -6 }, { opacity: 1, scale: 1, rotation: -6, duration: 0.35, ease: "power3.out" }, 10.8);
+
+      // hold to the full 13s
+      tl.set({}, {}, 13);
+
+      window.__timelines = window.__timelines || {};
+      window.__timelines["08-kartin-omru"] = tl;
+    })();
+  </script>
+</template>

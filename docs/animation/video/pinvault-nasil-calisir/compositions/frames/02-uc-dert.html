@@ -1,0 +1,320 @@
+<template>
+  <style>
+    @import url("https://fonts.googleapis.com/css2?family=Archivo+Black&family=JetBrains+Mono:wght@400;700&family=Space+Grotesk:wght@400;500&display=block");
+
+    #root {
+      position: absolute;
+      inset: 0;
+      width: 1920px;
+      height: 1080px;
+      overflow: hidden;
+      container-type: size;
+      color: #0F0F0F;
+    }
+    [id="02-uc-dert-bg"] {
+      position: absolute;
+      inset: 0;
+      background: #EFE9D9;
+    }
+    [id="02-uc-dert-stage"] {
+      position: absolute;
+      inset: 0;
+    }
+
+    /* ---- frame chrome ---- */
+    [id="02-uc-dert-topbar"] {
+      position: absolute;
+      top: 2.5cqw;
+      left: 3.3cqw;
+      right: 3.3cqw;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      font-family: "JetBrains Mono", monospace;
+      font-size: 1.25cqw;
+      letter-spacing: 0.06em;
+      line-height: 1;
+    }
+    [id="02-uc-dert-pill"] {
+      border: 0.2cqw solid #0F0F0F;
+      border-radius: 999px;
+      padding: 0.45cqw 1.1cqw;
+      background: #EFE9D9;
+    }
+    [id="02-uc-dert-meta"] {
+      position: absolute;
+      bottom: 2.5cqw;
+      left: 3.3cqw;
+      right: 3.3cqw;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      font-family: "JetBrains Mono", monospace;
+      font-size: 1.25cqw;
+      letter-spacing: 0.06em;
+      line-height: 1;
+    }
+    [id="02-uc-dert-count"] {
+      display: flex;
+      align-items: center;
+      gap: 0.8cqw;
+    }
+    [id="02-uc-dert-dot"] {
+      display: inline-block;
+      width: 0.5cqw;
+      height: 0.5cqw;
+      border-radius: 50%;
+      background: #0F0F0F;
+    }
+
+    /* ---- headline ---- */
+    [id="02-uc-dert-head"] {
+      position: absolute;
+      top: 8.4cqw;
+      left: 5cqw;
+      right: 5cqw;
+      margin: 0;
+      font-family: "Archivo Black", sans-serif;
+      font-weight: 400;
+      font-size: 4.2cqw;
+      line-height: 0.92;
+      letter-spacing: -0.01em;
+      white-space: nowrap;
+    }
+    [class~="02-uc-dert-hw"] {
+      display: inline-block;
+    }
+
+    /* ---- triptych ---- */
+    [id="02-uc-dert-row"] {
+      position: absolute;
+      top: 17.2cqw;
+      left: 5cqw;
+      right: 5cqw;
+      height: 26cqw;
+      display: flex;
+      gap: 2.1cqw;
+    }
+    [class~="02-uc-dert-slot"] {
+      position: relative;
+      flex: 1 1 0;
+      height: 100%;
+      opacity: 0;
+    }
+    [class~="02-uc-dert-shadow"] {
+      position: absolute;
+      inset: 0;
+      background: #E85A1F;
+      box-shadow: 0 0 0 0.2cqw #0F0F0F;
+      opacity: 0;
+      z-index: 0;
+    }
+    [class~="02-uc-dert-card"] {
+      position: relative;
+      z-index: 1;
+      box-sizing: border-box;
+      width: 100%;
+      height: 100%;
+      background: #E4DCC4;
+      border: 0.4cqw solid #0F0F0F;
+      padding: 1.7cqw;
+      display: flex;
+      flex-direction: column;
+    }
+    [class~="02-uc-dert-title"] {
+      margin: 0;
+      padding-right: 2.2cqw;
+      font-family: "Archivo Black", sans-serif;
+      font-weight: 400;
+      font-size: 2.4cqw;
+      line-height: 1.0;
+      letter-spacing: -0.01em;
+    }
+    [class~="02-uc-dert-tw"] {
+      display: inline-block;
+      opacity: 0;
+    }
+    [class~="02-uc-dert-lower"] {
+      margin-top: auto;
+      opacity: 0;
+    }
+    [class~="02-uc-dert-rule"] {
+      height: 0.3cqw;
+      background: #0F0F0F;
+      margin-bottom: 1.3cqw;
+    }
+    [class~="02-uc-dert-body"] {
+      margin: 0;
+      font-family: "Space Grotesk", sans-serif;
+      font-weight: 400;
+      font-size: 1.46cqw;
+      line-height: 1.4;
+    }
+    [class~="02-uc-dert-stamp"] {
+      position: absolute;
+      top: -1.3cqw;
+      right: -1.3cqw;
+      width: 3.6cqw;
+      height: 3.6cqw;
+      box-sizing: border-box;
+      background: #E85A1F;
+      border: 0.4cqw solid #0F0F0F;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      opacity: 0;
+      z-index: 2;
+    }
+    [class~="02-uc-dert-stamp"] svg {
+      width: 62%;
+      height: 62%;
+      display: block;
+    }
+  </style>
+
+  <div data-hf-id="hf-mj10" id="root" data-composition-id="02-uc-dert" data-start="0" data-duration="13.5" data-width="1920" data-height="1080" lang="tr">
+    <div data-hf-id="hf-tdqw" id="02-uc-dert-bg" class="clip" data-start="0" data-duration="13.5" data-track-index="0"></div>
+
+    <div data-hf-id="hf-ywwg" id="02-uc-dert-stage" class="clip" data-start="0" data-duration="13.5" data-track-index="1">
+      <div data-hf-id="hf-axtj" id="02-uc-dert-topbar">
+        <span data-hf-id="hf-vq1v">PINVAULT NASIL ÇALIŞIR</span>
+        <span data-hf-id="hf-giy6" id="02-uc-dert-pill">SORUN</span>
+      </div>
+
+      <h1 data-hf-id="hf-kuar" id="02-uc-dert-head"><span data-hf-id="hf-5ok0" class="02-uc-dert-hw">BUGÜN</span> <span data-hf-id="hf-oj09" class="02-uc-dert-hw">İŞLER</span> <span data-hf-id="hf-ditr" class="02-uc-dert-hw">NASIL</span> <span data-hf-id="hf-ppmt" class="02-uc-dert-hw">BOZULUYOR</span></h1>
+
+      <div data-hf-id="hf-ai8t" id="02-uc-dert-row">
+        <!-- card 1 -->
+        <div data-hf-id="hf-11yb" id="02-uc-dert-slot1" class="02-uc-dert-slot">
+          <div data-hf-id="hf-x5q2" class="02-uc-dert-card">
+            <h2 data-hf-id="hf-gixh" class="02-uc-dert-title"><span data-hf-id="hf-khyk" class="02-uc-dert-tw">TELEFONUN</span> <span data-hf-id="hf-vnag" class="02-uc-dert-tw">GÜVEN</span> <span data-hf-id="hf-ah7b" class="02-uc-dert-tw">DEPOSUNA</span> <span data-hf-id="hf-see7" class="02-uc-dert-tw">GÜVENMEK</span></h2>
+            <div data-hf-id="hf-z7an" class="02-uc-dert-lower">
+              <div data-hf-id="hf-cwui" class="02-uc-dert-rule"></div>
+              <p data-hf-id="hf-uos8" class="02-uc-dert-body">Araya giren biri telefona kendi sertifikasını ekletirse, sahte sunucu da güvenilir görünür.</p>
+            </div>
+            <div data-hf-id="hf-ijg5" class="02-uc-dert-stamp">
+              <svg data-hf-id="hf-sav0" viewBox="0 0 40 40" aria-hidden="true"><path data-hf-id="hf-q07q" d="M8 8 L32 32 M32 8 L8 32" stroke="#0F0F0F" stroke-width="7" stroke-linecap="square" fill="none" /></svg>
+            </div>
+          </div>
+        </div>
+
+        <!-- card 2 -->
+        <div data-hf-id="hf-se2g" id="02-uc-dert-slot2" class="02-uc-dert-slot">
+          <div data-hf-id="hf-9gwu" class="02-uc-dert-card">
+            <h2 data-hf-id="hf-noy1" class="02-uc-dert-title"><span data-hf-id="hf-zflq" class="02-uc-dert-tw">PİN'LERİ</span> <span data-hf-id="hf-m48t" class="02-uc-dert-tw">APK'YA</span> <span data-hf-id="hf-8gh7" class="02-uc-dert-tw">GÖMMEK</span></h2>
+            <div data-hf-id="hf-ll8v" class="02-uc-dert-lower">
+              <div data-hf-id="hf-hkb2" class="02-uc-dert-rule"></div>
+              <p data-hf-id="hf-lfkm" class="02-uc-dert-body">Sunucunun sertifikası değişince uygulama güncellemesi gerekir; eski sürümler bağlanamaz.</p>
+            </div>
+            <div data-hf-id="hf-sfmx" class="02-uc-dert-stamp">
+              <svg data-hf-id="hf-j0xg" viewBox="0 0 40 40" aria-hidden="true"><path data-hf-id="hf-rrlm" d="M8 8 L32 32 M32 8 L8 32" stroke="#0F0F0F" stroke-width="7" stroke-linecap="square" fill="none" /></svg>
+            </div>
+          </div>
+        </div>
+
+        <!-- card 3: carries the frame's single hard orange shadow -->
+        <div data-hf-id="hf-t5q9" id="02-uc-dert-slot3" class="02-uc-dert-slot">
+          <div data-hf-id="hf-3fb0" class="02-uc-dert-shadow"></div>
+          <div data-hf-id="hf-9v7v" class="02-uc-dert-card">
+            <h2 data-hf-id="hf-ovv4" class="02-uc-dert-title"><span data-hf-id="hf-ieo9" class="02-uc-dert-tw">SUNUCU</span> <span data-hf-id="hf-jy77" class="02-uc-dert-tw">KİMİNLE</span> <span data-hf-id="hf-a7ao" class="02-uc-dert-tw">KONUŞTUĞUNU</span> <span data-hf-id="hf-8p72" class="02-uc-dert-tw">BİLMEZ</span></h2>
+            <div data-hf-id="hf-l6xu" class="02-uc-dert-lower">
+              <div data-hf-id="hf-hym3" class="02-uc-dert-rule"></div>
+              <p data-hf-id="hf-bg78" class="02-uc-dert-body">Karşısındaki gerçek uygulamanız mı, bir kopya mı, root'lu bir telefonda değiştirilmiş hâli mi?</p>
+            </div>
+            <div data-hf-id="hf-tmk0" class="02-uc-dert-stamp">
+              <svg data-hf-id="hf-hu0d" viewBox="0 0 40 40" aria-hidden="true"><path data-hf-id="hf-s5wn" d="M8 8 L32 32 M32 8 L8 32" stroke="#0F0F0F" stroke-width="7" stroke-linecap="square" fill="none" /></svg>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div data-hf-id="hf-53v8" id="02-uc-dert-meta">
+        <span data-hf-id="hf-mq8s">Sorun</span>
+        <span data-hf-id="hf-b3er" id="02-uc-dert-count"><span data-hf-id="hf-pmcj">02</span><span data-hf-id="hf-xevf" id="02-uc-dert-dot"></span><span data-hf-id="hf-1qd5">13</span></span>
+      </div>
+    </div>
+  </div>
+
+  <script src="https://cdn.jsdelivr.net/npm/gsap@3.14.2/dist/gsap.min.js"></script>
+  <script>
+    (function () {
+      var FID = "02-uc-dert";
+      var F = 1 / 60;
+      var scope = document.querySelector('[data-composition-id="' + FID + '"]') || document;
+      function q(sel) { return scope.querySelector(sel); }
+      function qa(sel, ctx) { return Array.prototype.slice.call((ctx || scope).querySelectorAll(sel)); }
+      function byId(id) { return q('[id="' + FID + "-" + id + '"]'); }
+
+      window.__timelines = window.__timelines || {};
+      var tl = gsap.timeline({ paused: true });
+
+      // Binary arrival (waterfall-entry): opacity snaps 0 -> 1, travel whips to rest.
+      function arrive(el, t, dy, dur) {
+        tl.fromTo(el, { opacity: 0 }, { opacity: 1, duration: F, ease: "none", immediateRender: true }, t);
+        tl.fromTo(el, { y: dy }, { y: 0, duration: dur, ease: "power4.out", immediateRender: true }, t);
+      }
+
+      // ---- Scene 1 (0.0–1.5s): headline, per-word from the left ----
+      var hw = qa('[class~="' + FID + '-hw"]');
+      hw.forEach(function (w, i) {
+        tl.fromTo(
+          w,
+          { opacity: 0, x: -70 },
+          { opacity: 1, x: 0, duration: 0.55, ease: "power3.out", immediateRender: true },
+          0.1 + i * 0.12
+        );
+      });
+
+      // ---- One card beat: shell -> title cascade -> lower line (+0.6s) -> ✗ stamp ----
+      function cardBeat(slotId, t, stampAt) {
+        var slot = byId(slotId);
+        // heavy anchor: the card shell whips up from below
+        arrive(slot, t, 110, 0.42);
+        // title words cascade right behind it (overlapping wave, gaps shrink)
+        var words = qa('[class~="' + FID + '-tw"]', slot);
+        var wt = t + 0.1;
+        var durs = [0.2, 0.17, 0.16, 0.15];
+        var dys = [60, 48, 45, 42];
+        words.forEach(function (w, i) {
+          var d = durs[Math.min(i, durs.length - 1)];
+          arrive(w, wt, dys[Math.min(i, dys.length - 1)], d);
+          wt = wt + d - F * (i + 1);
+        });
+        // the cause-effect line arrives 0.6s after the title
+        var lower = slot.querySelector('[class~="' + FID + '-lower"]');
+        arrive(lower, t + 0.6, 40, 0.3);
+        // small orange ✗ stamp pressed onto the top-right corner
+        var stamp = slot.querySelector('[class~="' + FID + '-stamp"]');
+        tl.fromTo(stamp, { opacity: 0 }, { opacity: 1, duration: F, ease: "none", immediateRender: true }, stampAt);
+        tl.fromTo(
+          stamp,
+          { scale: 1.7, rotation: -6 },
+          { scale: 1, rotation: -6, duration: 0.32, ease: "power3.out", immediateRender: true },
+          stampAt
+        );
+      }
+
+      // ---- Scene 2 (1.5–5.0s): card 1, left slot ----
+      cardBeat("slot1", 1.5, 3.1);
+
+      // ---- Scene 3 (5.0–8.5s): card 2, middle slot ----
+      cardBeat("slot2", 5.0, 6.6);
+
+      // ---- Scene 4 (8.5–13.0s): card 3, right slot + the single hard shadow ----
+      cardBeat("slot3", 8.5, 10.1);
+      var shadow = q('[id="' + FID + '-slot3"] [class~="' + FID + '-shadow"]');
+      tl.fromTo(shadow, { opacity: 0 }, { opacity: 1, duration: F, ease: "none", immediateRender: true }, 10.6);
+      tl.fromTo(
+        shadow,
+        { x: 0, y: 0 },
+        { x: 24, y: 24, duration: 0.7, ease: "power3.out", immediateRender: true },
+        10.6
+      );
+
+      // settle: hold the full triptych to the end of the 13s window (no exit)
+      tl.to({}, { duration: 0.01 }, 12.99);
+
+      window.__timelines[FID] = tl;
+    })();
+  </script>
+</template>

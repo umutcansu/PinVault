@@ -1,0 +1,600 @@
+<template id="09-atestasyon-template">
+  <div data-hf-id="hf-8zva" id="root" data-composition-id="09-atestasyon" data-start="0" data-duration="17.5" data-width="1920" data-height="1080" lang="tr">
+    <style>
+      @import url("https://fonts.googleapis.com/css2?family=Archivo+Black&family=JetBrains+Mono:wght@400;700&family=Space+Grotesk:wght@400;500&display=block");
+
+      #root {
+        position: relative;
+        width: 1920px;
+        height: 1080px;
+        overflow: hidden;
+      }
+      [data-composition-id="09-atestasyon"] * {
+        margin: 0;
+        padding: 0;
+        box-sizing: border-box;
+      }
+
+      /* full-bleed ground (clip layer, not #root) */
+      [id="09-atestasyon-stage"] {
+        position: absolute;
+        inset: 0;
+        width: 1920px;
+        height: 1080px;
+        background: #efe9d9;
+        container-type: size;
+        overflow: hidden;
+        color: #0f0f0f;
+      }
+
+      /* ---------- chrome ---------- */
+      [id="09-atestasyon-topbar"] {
+        position: absolute;
+        top: 48px;
+        left: 64px;
+        right: 64px;
+        height: 44px;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        font-family: "JetBrains Mono", monospace;
+        font-size: 22px;
+        letter-spacing: 0.06em;
+        color: #0f0f0f;
+      }
+      [id="09-atestasyon-pill"] {
+        border: 4px solid #0f0f0f;
+        border-radius: 999px;
+        background: #efe9d9;
+        padding: 4px 20px;
+        line-height: 1.3;
+      }
+      [id="09-atestasyon-footer"] {
+        position: absolute;
+        bottom: 48px;
+        left: 64px;
+        right: 64px;
+        height: 32px;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        font-family: "JetBrains Mono", monospace;
+        font-size: 22px;
+        letter-spacing: 0.06em;
+        color: #0f0f0f;
+      }
+      [id="09-atestasyon-counter"] {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+      }
+      [id="09-atestasyon-dot"] {
+        width: 10px;
+        height: 10px;
+        border-radius: 50%;
+        background: #0f0f0f;
+      }
+
+      /* ---------- title + rail ---------- */
+      [id="09-atestasyon-title"] {
+        position: absolute;
+        left: 96px;
+        top: 104px;
+        font-family: "Archivo Black", sans-serif;
+        font-size: 80px;
+        line-height: 0.92;
+        letter-spacing: -0.01em;
+        white-space: nowrap;
+      }
+      [id="09-atestasyon-rail"] {
+        position: absolute;
+        left: 96px;
+        top: 204px;
+        width: 1728px;
+        height: 4px;
+        background: #0f0f0f;
+        transform-origin: 0 50%;
+      }
+      [class~="09-atestasyon-kicker"] {
+        position: absolute;
+        top: 216px;
+        max-width: 408px;
+        background: #0f0f0f;
+        color: #efe9d9;
+        font-family: "JetBrains Mono", monospace;
+        font-size: 20px;
+        letter-spacing: 0.06em;
+        line-height: 1.25;
+        white-space: nowrap;
+        padding: 9px 16px;
+      }
+
+      /* ---------- phone ---------- */
+      [id="09-atestasyon-phone"] {
+        position: absolute;
+        left: 110px;
+        top: 340px;
+        width: 250px;
+        height: 440px;
+        border: 4px solid #0f0f0f;
+        background: #efe9d9;
+        padding: 14px;
+        display: flex;
+        flex-direction: column;
+        gap: 12px;
+        z-index: 1;
+      }
+      [class~="09-atestasyon-speaker"] {
+        align-self: center;
+        width: 64px;
+        height: 8px;
+        background: #0f0f0f;
+      }
+      [class~="09-atestasyon-screen"] {
+        flex: 1;
+        border: 3px solid #0f0f0f;
+        background: #e4dcc4;
+        display: flex;
+        flex-direction: column;
+        justify-content: space-between;
+      }
+      [class~="09-atestasyon-app"] {
+        font-family: "JetBrains Mono", monospace;
+        font-size: 24px;
+        letter-spacing: 0.02em;
+        padding: 16px 14px;
+      }
+      [class~="09-atestasyon-lib"] {
+        background: #0f0f0f;
+        color: #efe9d9;
+        font-family: "JetBrains Mono", monospace;
+        font-size: 20px;
+        line-height: 1.25;
+        padding: 10px 12px;
+      }
+
+      /* ---------- measurement chips ---------- */
+      [class~="09-atestasyon-chip"] {
+        position: absolute;
+        left: 410px;
+        width: 340px;
+        height: 54px;
+        border: 3px solid #0f0f0f;
+        background: #efe9d9;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        padding: 0 9px 0 16px;
+        font-family: "JetBrains Mono", monospace;
+        font-size: 24px;
+        letter-spacing: 0.04em;
+        white-space: nowrap;
+        z-index: 5;
+      }
+      [class~="09-atestasyon-ok"] {
+        width: 34px;
+        height: 34px;
+        background: #1f8a4c;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+      }
+      [class~="09-atestasyon-ok"] svg {
+        width: 26px;
+        height: 26px;
+        display: block;
+      }
+
+      /* ---------- report card ---------- */
+      [id="09-atestasyon-card"] {
+        position: absolute;
+        left: 460px;
+        top: 418px;
+        width: 240px;
+        height: 254px;
+        border: 4px solid #0f0f0f;
+        background: #e4dcc4;
+        padding: 22px;
+        display: flex;
+        flex-direction: column;
+        gap: 14px;
+        z-index: 4;
+        transform-origin: 50% 50%;
+      }
+      [class~="09-atestasyon-row"] {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        height: 22px;
+      }
+      [class~="09-atestasyon-rowok"] {
+        width: 22px;
+        height: 22px;
+        background: #1f8a4c;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        flex: none;
+      }
+      [class~="09-atestasyon-rowok"] svg {
+        width: 18px;
+        height: 18px;
+        display: block;
+      }
+      [class~="09-atestasyon-bar"] {
+        height: 10px;
+        background: #0f0f0f;
+        transform-origin: 0 50%;
+      }
+      [id="09-atestasyon-seal"] {
+        position: absolute;
+        right: -40px;
+        top: -38px;
+        width: 80px;
+        height: 80px;
+        background: #0f0f0f;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+      }
+      [id="09-atestasyon-seal"] svg {
+        width: 64px;
+        height: 64px;
+        display: block;
+      }
+      [id="09-atestasyon-siglabel"] {
+        position: absolute;
+        left: 375px;
+        top: 700px;
+        width: 410px;
+        text-align: center;
+        font-family: "JetBrains Mono", monospace;
+        font-size: 22px;
+        letter-spacing: 0.02em;
+        color: #0f0f0f;
+        z-index: 1;
+      }
+
+      /* ---------- PinVault server ---------- */
+      [id="09-atestasyon-server"] {
+        position: absolute;
+        left: 880px;
+        top: 400px;
+        width: 400px;
+        height: 300px;
+        border: 4px solid #0f0f0f;
+        background: #e4dcc4;
+        z-index: 3;
+      }
+      [class~="09-atestasyon-srvhead"] {
+        height: 56px;
+        background: #0f0f0f;
+        color: #efe9d9;
+        font-family: "JetBrains Mono", monospace;
+        font-size: 24px;
+        letter-spacing: 0.04em;
+        display: flex;
+        align-items: center;
+        padding: 0 18px;
+      }
+      [id="09-atestasyon-stamp"] {
+        position: absolute;
+        left: 1156px;
+        top: 360px;
+        width: 228px;
+        height: 80px;
+        background: #1f8a4c;
+        border: 4px solid #0f0f0f;
+        color: #efe9d9;
+        font-family: "Archivo Black", sans-serif;
+        font-size: 44px;
+        line-height: 0.92;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        z-index: 6;
+      }
+
+      /* ---------- ticket (the one hard shadow) ---------- */
+      [id="09-atestasyon-ticket"] {
+        position: absolute;
+        left: 120px;
+        top: 556px;
+        width: 400px;
+        height: 88px;
+        border: 4px solid #0f0f0f;
+        background: #f5c518;
+        display: flex;
+        box-shadow: 24px 24px 0 #e85a1f, 24px 24px 0 4px #0f0f0f;
+        z-index: 2;
+      }
+      [class~="09-atestasyon-tmain"] {
+        flex: 1;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-family: "Archivo Black", sans-serif;
+        font-size: 26px;
+        line-height: 0.92;
+        white-space: nowrap;
+      }
+      [class~="09-atestasyon-tstub"] {
+        width: 104px;
+        border-left: 4px dashed #0f0f0f;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-family: "JetBrains Mono", monospace;
+        font-weight: 700;
+        font-size: 28px;
+        white-space: nowrap;
+      }
+
+      /* ---------- your API server ---------- */
+      [id="09-atestasyon-api"] {
+        position: absolute;
+        left: 1430px;
+        top: 430px;
+        width: 380px;
+        height: 270px;
+        border: 4px solid #0f0f0f;
+        background: #efe9d9;
+        padding: 28px 22px;
+        display: flex;
+        flex-direction: column;
+        gap: 18px;
+        z-index: 3;
+      }
+      [class~="09-atestasyon-apihead"] {
+        font-family: "Archivo Black", sans-serif;
+        font-size: 30px;
+        line-height: 0.92;
+        white-space: nowrap;
+        padding-bottom: 18px;
+        border-bottom: 3px solid #0f0f0f;
+      }
+      [class~="09-atestasyon-apibody"] {
+        font-family: "Space Grotesk", sans-serif;
+        font-size: 26px;
+        line-height: 1.3;
+      }
+      [id="09-atestasyon-apiok"] {
+        position: absolute;
+        left: 1764px;
+        top: 394px;
+        width: 72px;
+        height: 72px;
+        background: #1f8a4c;
+        border: 4px solid #0f0f0f;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        z-index: 6;
+      }
+      [id="09-atestasyon-apiok"] svg {
+        width: 50px;
+        height: 50px;
+        display: block;
+      }
+
+      /* ---------- request line ---------- */
+      [id="09-atestasyon-wire"] {
+        position: absolute;
+        left: 0;
+        top: 0;
+        width: 1920px;
+        height: 1080px;
+        z-index: 1;
+        overflow: visible;
+      }
+
+      /* ---------- bottom note ---------- */
+      [id="09-atestasyon-note"] {
+        position: absolute;
+        left: 96px;
+        top: 860px;
+        font-family: "Space Grotesk", sans-serif;
+        font-size: 24px;
+        line-height: 1.3;
+        white-space: nowrap;
+        color: #0f0f0f;
+      }
+    </style>
+
+    <div data-hf-id="hf-zuw7" id="09-atestasyon-stage" class="clip" data-start="0" data-duration="17.5" data-track-index="0">
+      <!-- chrome -->
+      <div data-hf-id="hf-kzmx" id="09-atestasyon-topbar">
+        <span data-hf-id="hf-vq1v">PINVAULT NASIL ÇALIŞIR</span>
+        <span data-hf-id="hf-7d5u" id="09-atestasyon-pill">3/3 · ATESTASYON</span>
+      </div>
+      <div data-hf-id="hf-do60" id="09-atestasyon-footer">
+        <span data-hf-id="hf-xag2">Atestasyon</span>
+        <span data-hf-id="hf-aofu" id="09-atestasyon-counter"><span data-hf-id="hf-m1la">09</span><span data-hf-id="hf-af73" id="09-atestasyon-dot"></span><span data-hf-id="hf-1qd5">13</span></span>
+      </div>
+
+      <!-- title + step rail -->
+      <div data-hf-id="hf-qvgj" id="09-atestasyon-title">KAPIDAKİ KONTROL</div>
+      <div data-hf-id="hf-2by1" id="09-atestasyon-rail"></div>
+      <div data-hf-id="hf-pteg" id="09-atestasyon-k1" class="09-atestasyon-kicker" style="left: 96px">1 · TELEFON KENDİNİ ÖLÇER</div>
+      <div data-hf-id="hf-sv1w" id="09-atestasyon-k2" class="09-atestasyon-kicker" style="left: 536px">2 · SONUCU İMZALAR</div>
+      <div data-hf-id="hf-hgjp" id="09-atestasyon-k3" class="09-atestasyon-kicker" style="left: 976px">3 · SUNUCU KARAR VERİR</div>
+      <div data-hf-id="hf-psoq" id="09-atestasyon-k4" class="09-atestasyon-kicker" style="left: 1416px">4 · BİLET HER İSTEKTE GİDER</div>
+
+      <!-- request line (svg-path-draw) -->
+      <svg data-hf-id="hf-8z0h" id="09-atestasyon-wire" viewBox="0 0 1920 1080" xmlns="http://www.w3.org/2000/svg">
+        <path data-hf-id="hf-9h73" id="09-atestasyon-wirepath" d="M360 600 H580 V830 H1620 V702" fill="none" stroke="#0F0F0F" stroke-width="4" stroke-linejoin="miter" stroke-dasharray="1618" stroke-dashoffset="1618" />
+      </svg>
+
+      <!-- phone -->
+      <div data-hf-id="hf-l8rv" id="09-atestasyon-phone">
+        <div data-hf-id="hf-iden" class="09-atestasyon-speaker"></div>
+        <div data-hf-id="hf-4spk" class="09-atestasyon-screen">
+          <div data-hf-id="hf-5yrf" class="09-atestasyon-app">Uygulamanız</div>
+          <div data-hf-id="hf-f3c7" class="09-atestasyon-lib">PinVault kütüphanesi</div>
+        </div>
+      </div>
+
+      <!-- signature label -->
+      <div data-hf-id="hf-f0ad" id="09-atestasyon-siglabel">telefonun kasasındaki anahtarla</div>
+
+      <!-- report card -->
+      <div data-hf-id="hf-hj07" id="09-atestasyon-card">
+        <div data-hf-id="hf-4h7c" class="09-atestasyon-row"><span data-hf-id="hf-dikx" class="09-atestasyon-rowok"><svg data-hf-id="hf-ulu9" viewBox="0 0 24 24"><polyline data-hf-id="hf-zatx" points="5,12.5 10,17.5 19,7" fill="none" stroke="#EFE9D9" stroke-width="3.5" stroke-linecap="square" /></svg></span><span data-hf-id="hf-nw3c" class="09-atestasyon-bar" style="width: 150px"></span></div>
+        <div data-hf-id="hf-ibg0" class="09-atestasyon-row"><span data-hf-id="hf-68jp" class="09-atestasyon-rowok"><svg data-hf-id="hf-1tol" viewBox="0 0 24 24"><polyline data-hf-id="hf-li2x" points="5,12.5 10,17.5 19,7" fill="none" stroke="#EFE9D9" stroke-width="3.5" stroke-linecap="square" /></svg></span><span data-hf-id="hf-y67g" class="09-atestasyon-bar" style="width: 118px"></span></div>
+        <div data-hf-id="hf-h4ix" class="09-atestasyon-row"><span data-hf-id="hf-7fgs" class="09-atestasyon-rowok"><svg data-hf-id="hf-30lo" viewBox="0 0 24 24"><polyline data-hf-id="hf-mp00" points="5,12.5 10,17.5 19,7" fill="none" stroke="#EFE9D9" stroke-width="3.5" stroke-linecap="square" /></svg></span><span data-hf-id="hf-olyq" class="09-atestasyon-bar" style="width: 138px"></span></div>
+        <div data-hf-id="hf-hity" class="09-atestasyon-row"><span data-hf-id="hf-715r" class="09-atestasyon-rowok"><svg data-hf-id="hf-2man" viewBox="0 0 24 24"><polyline data-hf-id="hf-maoz" points="5,12.5 10,17.5 19,7" fill="none" stroke="#EFE9D9" stroke-width="3.5" stroke-linecap="square" /></svg></span><span data-hf-id="hf-qpsb" class="09-atestasyon-bar" style="width: 96px"></span></div>
+        <div data-hf-id="hf-gbwv" class="09-atestasyon-row"><span data-hf-id="hf-882u" class="09-atestasyon-rowok"><svg data-hf-id="hf-3t7q" viewBox="0 0 24 24"><polyline data-hf-id="hf-kb5u" points="5,12.5 10,17.5 19,7" fill="none" stroke="#EFE9D9" stroke-width="3.5" stroke-linecap="square" /></svg></span><span data-hf-id="hf-epwl" class="09-atestasyon-bar" style="width: 128px"></span></div>
+        <div data-hf-id="hf-gq7w" class="09-atestasyon-row"><span data-hf-id="hf-7trt" class="09-atestasyon-rowok"><svg data-hf-id="hf-3ewp" viewBox="0 0 24 24"><polyline data-hf-id="hf-jwut" points="5,12.5 10,17.5 19,7" fill="none" stroke="#EFE9D9" stroke-width="3.5" stroke-linecap="square" /></svg></span><span data-hf-id="hf-ierj" class="09-atestasyon-bar" style="width: 108px"></span></div>
+        <div data-hf-id="hf-vge6" id="09-atestasyon-seal">
+          <svg data-hf-id="hf-l6o9" viewBox="0 0 64 64">
+            <circle data-hf-id="hf-z8db" cx="32" cy="32" r="26" fill="none" stroke="#EFE9D9" stroke-width="3" />
+            <circle data-hf-id="hf-sebc" cx="22" cy="32" r="7" fill="none" stroke="#EFE9D9" stroke-width="4" />
+            <polyline data-hf-id="hf-5ws4" points="29,32 46,32 46,39" fill="none" stroke="#EFE9D9" stroke-width="4" stroke-linecap="square" />
+            <line data-hf-id="hf-mekl" x1="39" y1="32" x2="39" y2="38" stroke="#EFE9D9" stroke-width="4" stroke-linecap="square" />
+          </svg>
+        </div>
+      </div>
+
+      <!-- measurement chips -->
+      <div data-hf-id="hf-i3b4" class="09-atestasyon-chip" style="top: 340px"><span data-hf-id="hf-o6le">root?</span><span data-hf-id="hf-lptz" class="09-atestasyon-ok"><svg data-hf-id="hf-4lts" viewBox="0 0 24 24"><polyline data-hf-id="hf-l3rw" points="5,12.5 10,17.5 19,7" fill="none" stroke="#EFE9D9" stroke-width="3.5" stroke-linecap="square" /></svg></span></div>
+      <div data-hf-id="hf-6gkr" class="09-atestasyon-chip" style="top: 408px"><span data-hf-id="hf-hydn">emülatör?</span><span data-hf-id="hf-4z6v" class="09-atestasyon-ok"><svg data-hf-id="hf-47ir" viewBox="0 0 24 24"><polyline data-hf-id="hf-kpgv" points="5,12.5 10,17.5 19,7" fill="none" stroke="#EFE9D9" stroke-width="3.5" stroke-linecap="square" /></svg></span></div>
+      <div data-hf-id="hf-dfj0" class="09-atestasyon-chip" style="top: 476px"><span data-hf-id="hf-ipf3">debugger?</span><span data-hf-id="hf-4kvu" class="09-atestasyon-ok"><svg data-hf-id="hf-z1je" viewBox="0 0 24 24"><polyline data-hf-id="hf-ipxq" points="5,12.5 10,17.5 19,7" fill="none" stroke="#EFE9D9" stroke-width="3.5" stroke-linecap="square" /></svg></span></div>
+      <div data-hf-id="hf-qeiq" class="09-atestasyon-chip" style="top: 544px"><span data-hf-id="hf-6owk">Frida?</span><span data-hf-id="hf-46kt" class="09-atestasyon-ok"><svg data-hf-id="hf-yn8d" viewBox="0 0 24 24"><polyline data-hf-id="hf-ibmp" points="5,12.5 10,17.5 19,7" fill="none" stroke="#EFE9D9" stroke-width="3.5" stroke-linecap="square" /></svg></span></div>
+      <div data-hf-id="hf-x1mc" class="09-atestasyon-chip" style="top: 612px"><span data-hf-id="hf-c4m7">kopya uygulama?</span><span data-hf-id="hf-6yq0" class="09-atestasyon-ok"><svg data-hf-id="hf-lxbj" viewBox="0 0 24 24"><polyline data-hf-id="hf-wfln" points="5,12.5 10,17.5 19,7" fill="none" stroke="#EFE9D9" stroke-width="3.5" stroke-linecap="square" /></svg></span></div>
+      <div data-hf-id="hf-o3kp" class="09-atestasyon-chip" style="top: 680px"><span data-hf-id="hf-jj9r">APK değişmiş mi?</span><span data-hf-id="hf-6kez" class="09-atestasyon-ok"><svg data-hf-id="hf-mbmk" viewBox="0 0 24 24"><polyline data-hf-id="hf-wtwo" points="5,12.5 10,17.5 19,7" fill="none" stroke="#EFE9D9" stroke-width="3.5" stroke-linecap="square" /></svg></span></div>
+
+      <!-- ticket (behind the server until it comes out) -->
+      <div data-hf-id="hf-6mxd" id="09-atestasyon-ticket">
+        <div data-hf-id="hf-w6pe" class="09-atestasyon-tmain">PINVAULT-TOKEN</div>
+        <div data-hf-id="hf-p6bg" class="09-atestasyon-tstub">5 DK</div>
+      </div>
+
+      <!-- PinVault server -->
+      <div data-hf-id="hf-3p2o" id="09-atestasyon-server">
+        <div data-hf-id="hf-p2ux" class="09-atestasyon-srvhead">PinVault sunucusu</div>
+      </div>
+      <div data-hf-id="hf-jo97" id="09-atestasyon-stamp">GEÇTİ</div>
+
+      <!-- your API server -->
+      <div data-hf-id="hf-fc77" id="09-atestasyon-api">
+        <div data-hf-id="hf-in4g" class="09-atestasyon-apihead">API SUNUCUNUZ</div>
+        <div data-hf-id="hf-ftbe" class="09-atestasyon-apibody">bileti kendisi doğrular</div>
+      </div>
+      <div data-hf-id="hf-sx5d" id="09-atestasyon-apiok"><svg data-hf-id="hf-l4ph" viewBox="0 0 24 24"><polyline data-hf-id="hf-vmzl" points="5,12.5 10,17.5 19,7" fill="none" stroke="#EFE9D9" stroke-width="3.5" stroke-linecap="square" /></svg></div>
+
+      <!-- bottom note -->
+      <div data-hf-id="hf-mdnw" id="09-atestasyon-note">Bilet arka planda yaklaşık 5 dakikada bir yenilenir.</div>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/gsap@3.14.2/dist/gsap.min.js"></script>
+    <script>
+      (function () {
+        var FID = "09-atestasyon";
+        var host = document.querySelector('[data-composition-id="' + FID + '"]') || document;
+        var $ = function (n) {
+          return host.querySelector('[id="' + FID + "-" + n + '"]');
+        };
+        var $$ = function (n) {
+          return Array.prototype.slice.call(host.querySelectorAll('[class~="' + FID + "-" + n + '"]'));
+        };
+
+        var tl = gsap.timeline({ paused: true });
+        var SOFT = "power3.out";
+        var TRAVEL = "power3.inOut";
+
+        // ---------- Scene 1 (0.0–2.0): chrome, title, rail, phone ----------
+        tl.fromTo([$("topbar"), $("footer")], { opacity: 0 }, { opacity: 1, duration: 0.4, ease: SOFT }, 0);
+        tl.fromTo($("title"), { opacity: 0, y: 32 }, { opacity: 1, y: 0, duration: 0.8, ease: SOFT }, 0.1);
+        tl.fromTo($("rail"), { scaleX: 0 }, { scaleX: 1, duration: 1.4, ease: SOFT }, 0.4);
+        tl.fromTo($("phone"), { opacity: 0, y: 40 }, { opacity: 1, y: 0, duration: 0.8, ease: SOFT }, 0.7);
+
+        // ---------- Scene 2 (2.0–6.0): step 1, six measurements + checks ----------
+        tl.fromTo($("k1"), { opacity: 0, x: -20 }, { opacity: 1, x: 0, duration: 0.5, ease: SOFT }, 2.0);
+        var chips = $$("chip");
+        var oks = $$("ok");
+        chips.forEach(function (el, i) {
+          var at = 2.6 + i * 0.4;
+          tl.fromTo(el, { opacity: 0, x: -24 }, { opacity: 1, x: 0, duration: 0.5, ease: SOFT }, at);
+          tl.fromTo(oks[i], { opacity: 0, scale: 0.4 }, { opacity: 1, scale: 1, duration: 0.35, ease: SOFT }, at + 0.3);
+        });
+
+        // ---------- Scene 3 (6.0–8.5): step 2, chips gather into the report card, seal, label ----------
+        tl.fromTo($("k2"), { opacity: 0, x: -20 }, { opacity: 1, x: 0, duration: 0.5, ease: SOFT }, 6.0);
+        tl.fromTo($("card"), { opacity: 0, scale: 0.85 }, { opacity: 1, scale: 1, duration: 0.6, ease: SOFT }, 6.45);
+        // inverse center-outward-expansion: every chip collapses onto the shared card center (580, 545)
+        chips.forEach(function (el, i) {
+          var chipCenterY = 340 + 27 + i * 68;
+          tl.to(el, { y: 545 - chipCenterY, scale: 0.3, opacity: 0, duration: 0.7, ease: SOFT }, 6.5 + i * 0.06);
+        });
+        $$("row").forEach(function (row, i) {
+          var bar = row.querySelector('[class~="' + FID + '-bar"]');
+          var ok = row.querySelector('[class~="' + FID + '-rowok"]');
+          tl.fromTo(ok, { opacity: 0, scale: 0.4 }, { opacity: 1, scale: 1, duration: 0.3, ease: SOFT }, 6.75 + i * 0.07);
+          tl.fromTo(bar, { scaleX: 0 }, { scaleX: 1, duration: 0.45, ease: SOFT }, 6.8 + i * 0.07);
+        });
+        tl.fromTo(
+          $("seal"),
+          { opacity: 0, scale: 1.4, rotation: -6 },
+          { opacity: 1, scale: 1, rotation: -6, duration: 0.4, ease: SOFT },
+          7.3
+        );
+        tl.fromTo($("siglabel"), { opacity: 0, y: 12 }, { opacity: 1, y: 0, duration: 0.5, ease: SOFT }, 7.6);
+
+        // ---------- Scene 4 (8.5–11.5): step 3, card to server, GEÇTİ, ticket out to the phone ----------
+        tl.fromTo($("k3"), { opacity: 0, x: -20 }, { opacity: 1, x: 0, duration: 0.5, ease: SOFT }, 8.5);
+        tl.fromTo($("server"), { opacity: 0, y: 30 }, { opacity: 1, y: 0, duration: 0.6, ease: SOFT }, 8.5);
+        // card center (580,545) -> server body center (1080,578)
+        tl.to($("card"), { x: 500, y: 33, scale: 0.75, duration: 0.9, ease: TRAVEL }, 9.0);
+        tl.to($("siglabel"), { opacity: 0, duration: 0.6, ease: SOFT }, 9.2);
+        tl.fromTo(
+          $("stamp"),
+          { opacity: 0, scale: 1.6, rotation: -6 },
+          { opacity: 1, scale: 1, rotation: -6, duration: 0.35, ease: SOFT },
+          10.0
+        );
+        // ticket park center = (320,600); it starts hidden behind the server body (1080,600)
+        tl.fromTo(
+          $("ticket"),
+          { opacity: 0, x: 760, y: 0, scale: 0.8 },
+          { opacity: 1, x: 760, y: 175, scale: 1, duration: 0.45, ease: SOFT },
+          10.4
+        );
+        tl.to($("ticket"), { x: 0, y: 0, duration: 0.7, ease: TRAVEL }, 10.85);
+
+        // ---------- Scene 5 (11.5–15.0): step 4, API box, request line, ticket rides it, check ----------
+        tl.fromTo($("k4"), { opacity: 0, x: -20 }, { opacity: 1, x: 0, duration: 0.5, ease: SOFT }, 11.5);
+        tl.fromTo($("api"), { opacity: 0, y: 30 }, { opacity: 1, y: 0, duration: 0.6, ease: SOFT }, 11.7);
+        tl.fromTo(
+          $("wirepath"),
+          { attr: { "stroke-dashoffset": 1618 } },
+          { attr: { "stroke-dashoffset": 0 }, duration: 0.85, ease: "power2.inOut" },
+          12.3
+        );
+        // ticket center rides (320,600) -> (580,600) -> (580,830) -> (1620,830)
+        tl.to(
+          $("ticket"),
+          {
+            keyframes: {
+              "0%": { x: 0, y: 0 },
+              "17%": { x: 260, y: 0 },
+              "32%": { x: 260, y: 230 },
+              "100%": { x: 1300, y: 230 },
+              easeEach: "none",
+            },
+            duration: 1.3,
+            ease: "power2.inOut",
+          },
+          13.2
+        );
+        tl.fromTo($("apiok"), { opacity: 0, scale: 0.4 }, { opacity: 1, scale: 1, duration: 0.35, ease: SOFT }, 14.55);
+
+        // ---------- Scene 6 (15.0–17.0): note, hold ----------
+        tl.fromTo($("note"), { opacity: 0, y: 14 }, { opacity: 1, y: 0, duration: 0.6, ease: SOFT }, 15.0);
+        tl.to({}, { duration: 0.01 }, 16.99);
+
+        window.__timelines = window.__timelines || {};
+        window.__timelines[FID] = tl;
+      })();
+    </script>
+  </div>
+</template>

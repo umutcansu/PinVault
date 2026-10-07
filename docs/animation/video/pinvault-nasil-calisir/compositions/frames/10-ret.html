@@ -1,0 +1,434 @@
+<template>
+  <style>
+    /* Fonts: Google Fonts files (latin + latin-ext for Turkish glyphs) */
+    @font-face { font-family: "Archivo Black"; font-style: normal; font-weight: 400; font-display: block;
+      src: url(https://fonts.gstatic.com/s/archivoblack/v23/HTxqL289NzCGg4MzN6KJ7eW6CYKF_jzx13HOvQ.woff2) format("woff2");
+      unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C4, U+2113, U+2C60-2C7F, U+A720-A7FF; }
+    @font-face { font-family: "Archivo Black"; font-style: normal; font-weight: 400; font-display: block;
+      src: url(https://fonts.gstatic.com/s/archivoblack/v23/HTxqL289NzCGg4MzN6KJ7eW6CYyF_jzx13E.woff2) format("woff2");
+      unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD; }
+    @font-face { font-family: "JetBrains Mono"; font-style: normal; font-weight: 400 700; font-display: block;
+      src: url(https://fonts.gstatic.com/s/jetbrainsmono/v24/tDbv2o-flEEny0FZhsfKu5WU4zr3E_BX0PnT8RD8yKwBNntkaToggR7BYRbKPx7cwgknk-6nFg.woff2) format("woff2");
+      unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C4, U+2113, U+2C60-2C7F, U+A720-A7FF; }
+    @font-face { font-family: "JetBrains Mono"; font-style: normal; font-weight: 400 700; font-display: block;
+      src: url(https://fonts.gstatic.com/s/jetbrainsmono/v24/tDbv2o-flEEny0FZhsfKu5WU4zr3E_BX0PnT8RD8yKwBNntkaToggR7BYRbKPxDcwgknk-4.woff2) format("woff2");
+      unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD; }
+    @font-face { font-family: "Space Grotesk"; font-style: normal; font-weight: 400 500; font-display: block;
+      src: url(https://fonts.gstatic.com/s/spacegrotesk/v22/V8mDoQDjQSkFtoMM3T6r8E7mPb94C_k3HqUtEw.woff2) format("woff2");
+      unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C4, U+2113, U+2C60-2C7F, U+A720-A7FF; }
+    @font-face { font-family: "Space Grotesk"; font-style: normal; font-weight: 400 500; font-display: block;
+      src: url(https://fonts.gstatic.com/s/spacegrotesk/v22/V8mDoQDjQSkFtoMM3T6r8E7mPbF4C_k3HqU.woff2) format("woff2");
+      unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD; }
+
+    #root {
+      position: absolute;
+      inset: 0;
+      width: 100%;
+      height: 100%;
+      overflow: hidden;
+      container-type: size;
+      --u: calc(100cqw / 1920);
+      --cream: #EFE9D9;
+      --cream-2: #E4DCC4;
+      --ink: #0F0F0F;
+      --ink-2: #2A2A2A;
+      --orange: #E85A1F;
+      color: var(--ink);
+      font-family: "Space Grotesk", sans-serif;
+    }
+    :where(#root) * { box-sizing: border-box; margin: 0; padding: 0; }
+
+    /* full-bleed ground (clip layer, not on #root) */
+    [id="10-ret-bg"] { position: absolute; inset: 0; background: var(--cream); }
+
+    /* ---------- frame chrome ---------- */
+    [id="10-ret-topbar"], [id="10-ret-meta"] {
+      position: absolute;
+      left: calc(64 * var(--u));
+      right: calc(64 * var(--u));
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      font-family: "JetBrains Mono", monospace;
+      font-size: 1.15cqw;
+      letter-spacing: 0.06em;
+      line-height: 1;
+    }
+    [id="10-ret-topbar"] { top: calc(40 * var(--u)); }
+    [id="10-ret-meta"] { bottom: calc(44 * var(--u)); }
+    [id="10-ret-pill"] {
+      border: 0.2cqw solid var(--ink);
+      border-radius: 999px;
+      padding: calc(8 * var(--u)) calc(20 * var(--u));
+      background: var(--cream);
+    }
+    [id="10-ret-counter"] { display: flex; align-items: center; gap: calc(12 * var(--u)); }
+    [id="10-ret-dot"] { width: 0.5cqw; height: 0.5cqw; border-radius: 50%; background: var(--ink); display: inline-block; }
+
+    /* ---------- stage (everything that slides up in Scene 5) ---------- */
+    [id="10-ret-stage"] { position: absolute; inset: 0; }
+
+    [id="10-ret-title"] {
+      position: absolute;
+      left: calc(96 * var(--u));
+      top: calc(112 * var(--u));
+      font-family: "Archivo Black", sans-serif;
+      font-size: 4.2cqw;
+      line-height: 0.92;
+      letter-spacing: -0.01em;
+      white-space: nowrap;
+    }
+
+    /* phone (orange outline) */
+    [id="10-ret-phone"] {
+      position: absolute;
+      left: calc(150 * var(--u));
+      top: calc(270 * var(--u));
+      width: calc(270 * var(--u));
+      height: calc(430 * var(--u));
+      background: var(--cream);
+      border: 0.4cqw solid var(--orange);
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: space-between;
+    }
+    [id="10-ret-phone-app"] {
+      margin-top: calc(28 * var(--u));
+      font-family: "JetBrains Mono", monospace;
+      font-size: calc(24 * var(--u));
+      letter-spacing: 0.04em;
+    }
+    [id="10-ret-tag"] {
+      font-family: "JetBrains Mono", monospace;
+      font-size: calc(26 * var(--u));
+      font-weight: 700;
+      letter-spacing: 0.02em;
+      color: var(--ink);
+      background: var(--cream);
+      border: 0.25cqw solid var(--orange);
+      padding: calc(10 * var(--u)) calc(16 * var(--u));
+      white-space: nowrap;
+    }
+    [id="10-ret-phone-lib"] {
+      width: 100%;
+      border-top: 0.25cqw solid var(--ink);
+      padding: calc(16 * var(--u)) 0;
+      text-align: center;
+      font-family: "JetBrains Mono", monospace;
+      font-size: calc(18 * var(--u));
+      letter-spacing: 0.02em;
+      white-space: nowrap;
+    }
+
+    /* report: two measurement chips that later slide into the server */
+    [id="10-ret-report"] {
+      position: absolute;
+      left: calc(430 * var(--u));
+      top: calc(310 * var(--u));
+      width: calc(290 * var(--u));
+      height: calc(196 * var(--u));
+    }
+    [id="10-ret-report-card"] {
+      position: absolute;
+      inset: 0;
+      background: var(--cream-2);
+      border: 0.25cqw solid var(--ink);
+    }
+    [class~="10-ret-chip"] {
+      position: absolute;
+      left: calc(20 * var(--u));
+      display: flex;
+      height: calc(64 * var(--u));
+    }
+    [class~="10-ret-chip-text"] {
+      width: calc(170 * var(--u));
+      height: 100%;
+      background: var(--cream);
+      border: 0.25cqw solid var(--ink);
+      display: flex;
+      align-items: center;
+      padding-left: calc(18 * var(--u));
+      font-family: "JetBrains Mono", monospace;
+      font-size: calc(28 * var(--u));
+      white-space: nowrap;
+    }
+    [class~="10-ret-x"] {
+      width: calc(64 * var(--u));
+      height: calc(64 * var(--u));
+      margin-left: calc(-4.8 * var(--u));
+      background: var(--orange);
+      border: 0.25cqw solid var(--ink);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+    [class~="10-ret-x"] svg { width: 62%; height: 62%; display: block; }
+
+    /* PinVault server */
+    [id="10-ret-server"] {
+      position: absolute;
+      left: calc(800 * var(--u));
+      top: calc(300 * var(--u));
+      width: calc(380 * var(--u));
+      height: calc(260 * var(--u));
+      background: var(--cream);
+      border: 0.4cqw solid var(--ink);
+    }
+    [class~="10-ret-boxhead"] {
+      background: var(--ink);
+      color: var(--cream);
+      font-family: "JetBrains Mono", monospace;
+      font-size: calc(22 * var(--u));
+      letter-spacing: 0.04em;
+      height: calc(52 * var(--u));
+      display: flex;
+      align-items: center;
+      padding-left: calc(18 * var(--u));
+      white-space: nowrap;
+    }
+    [id="10-ret-ports"] {
+      position: absolute;
+      left: calc(-36 * var(--u));
+      top: calc(70 * var(--u));
+      display: flex;
+      flex-direction: column;
+      gap: calc(8 * var(--u));
+    }
+    [class~="10-ret-port"] {
+      width: calc(72 * var(--u));
+      height: calc(34 * var(--u));
+      background: var(--cream-2);
+      border: 0.2cqw solid var(--ink);
+      font-family: "JetBrains Mono", monospace;
+      font-size: calc(16 * var(--u));
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+
+    /* RET stamp (rotation handled by GSAP, no CSS transform) */
+    [id="10-ret-stamp"] {
+      position: absolute;
+      left: calc(1096 * var(--u));
+      top: calc(234 * var(--u));
+      width: calc(210 * var(--u));
+      height: calc(104 * var(--u));
+      background: var(--orange);
+      border: 0.4cqw solid var(--ink);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-family: "Archivo Black", sans-serif;
+      font-size: calc(62 * var(--u));
+      line-height: 0.92;
+      color: var(--ink);
+    }
+
+    /* empty ticket slot */
+    [id="10-ret-noticket"] {
+      position: absolute;
+      left: calc(860 * var(--u));
+      top: calc(598 * var(--u));
+      width: calc(260 * var(--u));
+      height: calc(76 * var(--u));
+      border: 0.25cqw dashed var(--ink-2);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-family: "JetBrains Mono", monospace;
+      font-size: calc(27 * var(--u));
+      color: var(--ink-2);
+      white-space: nowrap;
+    }
+
+    /* your API server + its hard shadow */
+    [id="10-ret-api-shadow"], [id="10-ret-api"] {
+      position: absolute;
+      left: calc(1450 * var(--u));
+      top: calc(330 * var(--u));
+      width: calc(360 * var(--u));
+      height: calc(230 * var(--u));
+    }
+    [id="10-ret-api-shadow"] { background: var(--orange); border: 0.2cqw solid var(--ink); }
+    [id="10-ret-api"] { background: var(--cream); border: 0.4cqw solid var(--ink); }
+    [id="10-ret-api-body"] {
+      height: calc(100% - 52 * var(--u));
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+    [id="10-ret-401"] {
+      font-family: "JetBrains Mono", monospace;
+      font-weight: 700;
+      font-size: calc(34 * var(--u));
+      color: var(--orange);
+      white-space: nowrap;
+    }
+
+    /* request line */
+    [id="10-ret-wire"] { position: absolute; left: 0; top: 0; width: 100cqw; height: calc(1080 * var(--u)); overflow: visible; }
+    [id="10-ret-wire-path"] { fill: none; stroke: var(--ink); stroke-width: 5; stroke-linejoin: miter; stroke-linecap: butt; }
+    [id="10-ret-cut"] line { stroke: var(--orange); stroke-width: 7; stroke-linecap: butt; }
+    [id="10-ret-packet"] {
+      position: absolute;
+      left: calc(271 * var(--u));
+      top: calc(686 * var(--u));
+      width: calc(28 * var(--u));
+      height: calc(28 * var(--u));
+      border-radius: 50%;
+      background: var(--orange);
+      border: 0.2cqw solid var(--ink);
+    }
+
+    /* ---------- truth lines (Scene 5) ---------- */
+    [id="10-ret-truth"] {
+      position: absolute;
+      left: calc(96 * var(--u));
+      top: calc(682 * var(--u));
+      font-family: "Archivo Black", sans-serif;
+      font-size: 4.2cqw;
+      line-height: 0.92;
+      letter-spacing: -0.01em;
+      white-space: nowrap;
+    }
+    [class~="10-ret-word"] { display: inline-block; }
+    [id="10-ret-truth-sub"] {
+      position: absolute;
+      left: calc(96 * var(--u));
+      top: calc(790 * var(--u));
+      width: calc(1700 * var(--u));
+      font-family: "Space Grotesk", sans-serif;
+      font-size: 1.46cqw;
+      line-height: 1.3;
+      color: var(--ink-2);
+    }
+  </style>
+
+  <div data-hf-id="hf-wug6" id="root" data-composition-id="10-ret" data-width="1920" data-height="1080" data-start="0" data-duration="13.5" lang="tr">
+    <div data-hf-id="hf-9urm" id="10-ret-bg" class="clip" data-start="0" data-duration="13.5" data-track-index="0"></div>
+
+    <div data-hf-id="hf-zixt" id="10-ret-stage">
+      <div data-hf-id="hf-4seh" id="10-ret-title">ROOT'LU TELEFON NE OLUR</div>
+
+      <svg data-hf-id="hf-mmfh" id="10-ret-wire" viewBox="0 0 1920 1080" preserveAspectRatio="none" xmlns="http://www.w3.org/2000/svg">
+        <path data-hf-id="hf-6pla" id="10-ret-wire-path" d="M 285 700 V 750 H 1630 V 640" />
+        <g data-hf-id="hf-3wwh" id="10-ret-cut">
+          <line data-hf-id="hf-kdrf" x1="1614" y1="596" x2="1646" y2="628" />
+          <line data-hf-id="hf-js7f" x1="1646" y1="596" x2="1614" y2="628" />
+        </g>
+      </svg>
+
+      <div data-hf-id="hf-2apr" id="10-ret-phone">
+        <div data-hf-id="hf-7ggn" id="10-ret-phone-app">Uygulamanız</div>
+        <div data-hf-id="hf-evhy" id="10-ret-tag">root · Frida</div>
+        <div data-hf-id="hf-9ynn" id="10-ret-phone-lib">PinVault kütüphanesi</div>
+      </div>
+
+      <div data-hf-id="hf-h82k" id="10-ret-server">
+        <div data-hf-id="hf-rft3" class="10-ret-boxhead">PinVault sunucusu</div>
+        <div data-hf-id="hf-si8r" id="10-ret-ports">
+          <div data-hf-id="hf-167y" class="10-ret-port">8090</div>
+          <div data-hf-id="hf-0rwx" class="10-ret-port">8091</div>
+          <div data-hf-id="hf-1yu0" class="10-ret-port">8092</div>
+          <div data-hf-id="hf-1kiz" class="10-ret-port">8093</div>
+        </div>
+      </div>
+
+      <div data-hf-id="hf-167j" id="10-ret-noticket">bilet yok</div>
+
+      <div data-hf-id="hf-h2h8" id="10-ret-api-shadow"></div>
+      <div data-hf-id="hf-8qan" id="10-ret-api">
+        <div data-hf-id="hf-oq27" class="10-ret-boxhead">API SUNUCUNUZ</div>
+        <div data-hf-id="hf-yg4s" id="10-ret-api-body"><div data-hf-id="hf-d747" id="10-ret-401">401 · bilet yok</div></div>
+      </div>
+
+      <div data-hf-id="hf-4hbf" id="10-ret-report">
+        <div data-hf-id="hf-nx9q" id="10-ret-report-card"></div>
+        <div data-hf-id="hf-l9dh" id="10-ret-chip-1" class="10-ret-chip" style="top: calc(28 * var(--u));">
+          <div data-hf-id="hf-7bzn" class="10-ret-chip-text">root!</div>
+          <div data-hf-id="hf-pwps" id="10-ret-x-1" class="10-ret-x"><svg data-hf-id="hf-0n2h" viewBox="0 0 20 20"><path data-hf-id="hf-bhof" d="M3 3 L17 17 M17 3 L3 17" stroke="#0F0F0F" stroke-width="3.4" fill="none" /></svg></div>
+        </div>
+        <div data-hf-id="hf-goap" id="10-ret-chip-2" class="10-ret-chip" style="top: calc(104 * var(--u));">
+          <div data-hf-id="hf-jrhj" class="10-ret-chip-text">Frida!</div>
+          <div data-hf-id="hf-0s7f" id="10-ret-x-2" class="10-ret-x"><svg data-hf-id="hf-ebb1" viewBox="0 0 20 20"><path data-hf-id="hf-2f5r" d="M3 3 L17 17 M17 3 L3 17" stroke="#0F0F0F" stroke-width="3.4" fill="none" /></svg></div>
+        </div>
+      </div>
+
+      <div data-hf-id="hf-ixex" id="10-ret-stamp">RET</div>
+      <div data-hf-id="hf-8ptt" id="10-ret-packet"></div>
+    </div>
+
+    <div data-hf-id="hf-6x08" id="10-ret-truth"><span data-hf-id="hf-u0ew" class="10-ret-word">KAPIYI</span> <span data-hf-id="hf-3cqf" class="10-ret-word">TUTAN,</span> <span data-hf-id="hf-e12w" class="10-ret-word">BİLETTİR.</span></div>
+    <div data-hf-id="hf-q0zb" id="10-ret-truth-sub">Pin listesi gizli değildir; herkes alabilir. Değiştirilmiş uygulama yine de bilet alamaz.</div>
+
+    <div data-hf-id="hf-6rnh" id="10-ret-topbar">
+      <span data-hf-id="hf-vq1v">PINVAULT NASIL ÇALIŞIR</span>
+      <span data-hf-id="hf-zesk" id="10-ret-pill">3/3 · ATESTASYON</span>
+    </div>
+    <div data-hf-id="hf-sxi6" id="10-ret-meta">
+      <span data-hf-id="hf-gtao">Ret</span>
+      <span data-hf-id="hf-bbeo" id="10-ret-counter"><span data-hf-id="hf-2xa8">10</span><span data-hf-id="hf-4nqx" id="10-ret-dot"></span><span data-hf-id="hf-1qd5">13</span></span>
+    </div>
+  </div>
+
+  <script src="https://cdn.jsdelivr.net/npm/gsap@3.14.2/dist/gsap.min.js"></script>
+  <script>
+    (function () {
+      var FID = "10-ret";
+      var q = function (id) { return document.getElementById(FID + "-" + id); };
+      var E = "power3.out";
+      var tl = gsap.timeline({ paused: true });
+
+      /* ---- Scene 1 (0.0–2.0): title, orange-outlined phone, "root · Frida" tag ---- */
+      tl.fromTo(q("phone"), { opacity: 0, x: -48 }, { opacity: 1, x: 0, duration: 0.8, ease: E }, 0.05);
+      tl.fromTo(q("title"), { opacity: 0, y: 28 }, { opacity: 1, y: 0, duration: 0.8, ease: E }, 0.15);
+      tl.fromTo(q("tag"), { opacity: 0, y: 14 }, { opacity: 1, y: 0, duration: 0.6, ease: E }, 1.05);
+
+      /* ---- Scene 2 (2.0–4.5): two measurement chips, each gets an orange ✗ ---- */
+      tl.fromTo(q("chip-1"), { opacity: 0, x: -30 }, { opacity: 1, x: 0, duration: 0.55, ease: E }, 2.05);
+      tl.fromTo(q("x-1"), { opacity: 0, scale: 0.4 }, { opacity: 1, scale: 1, duration: 0.4, ease: E }, 2.5);
+      tl.fromTo(q("chip-2"), { opacity: 0, x: -30 }, { opacity: 1, x: 0, duration: 0.55, ease: E }, 2.95);
+      tl.fromTo(q("x-2"), { opacity: 0, scale: 0.4 }, { opacity: 1, scale: 1, duration: 0.4, ease: E }, 3.4);
+
+      /* ---- Scene 3 (4.5–7.0): report forms, slides to the server, RET stamp, empty ticket slot ---- */
+      tl.fromTo(q("report-card"), { opacity: 0, scale: 0.92 }, { opacity: 1, scale: 1, duration: 0.45, ease: E }, 4.5);
+      tl.fromTo(q("server"), { opacity: 0, y: 24 }, { opacity: 1, y: 0, duration: 0.6, ease: E }, 4.55);
+      tl.fromTo(q("report"), { x: 0, y: 0, scale: 1 }, { x: 425 * 1, y: 48, scale: 0.72, duration: 0.85, ease: "power3.inOut" }, 5.0);
+      tl.fromTo(q("stamp"), { opacity: 0, scale: 1.5, rotation: -6 }, { opacity: 1, scale: 1, rotation: -6, duration: 0.35, ease: E }, 5.9);
+      tl.fromTo(q("noticket"), { opacity: 0, y: 16 }, { opacity: 1, y: 0, duration: 0.55, ease: E }, 6.35);
+
+      /* ---- Scene 4 (7.0–9.5): request still goes to the API; line is cut, API answers 401 ---- */
+      tl.fromTo(q("api"), { opacity: 0, x: 40 }, { opacity: 1, x: 0, duration: 0.6, ease: E }, 7.0);
+
+      var path = q("wire-path");
+      var LEN = 1505; /* 50 + 1345 + 110 (orthogonal segments) */
+      try { var m = path.getTotalLength(); if (m > 0) { LEN = m; } } catch (e) {}
+      path.style.strokeDasharray = LEN + " " + LEN;
+      tl.fromTo(path, { strokeDashoffset: LEN }, { strokeDashoffset: 0, duration: 1.1, ease: "none" }, 7.4);
+
+      var pk = q("packet");
+      var D = 1.1;
+      tl.fromTo(pk, { opacity: 0 }, { opacity: 1, duration: 0.15, ease: "none" }, 7.4);
+      tl.fromTo(pk, { x: 0, y: 0 }, { x: 0, y: 50, duration: D * 50 / 1505, ease: "none" }, 7.4);
+      tl.to(pk, { x: 1345, duration: D * 1345 / 1505, ease: "none" }, 7.4 + D * 50 / 1505);
+      tl.to(pk, { y: -50, duration: D * 100 / 1505, ease: "none" }, 7.4 + D * 1395 / 1505);
+
+      tl.fromTo(q("cut"), { opacity: 0, scale: 0.4, transformOrigin: "50% 50%" }, { opacity: 1, scale: 1, transformOrigin: "50% 50%", duration: 0.3, ease: E }, 8.5);
+      tl.fromTo(q("api-shadow"), { opacity: 0, x: 0, y: 0 }, { opacity: 1, x: 24, y: 24, duration: 0.45, ease: E }, 8.65);
+      tl.fromTo(q("401"), { opacity: 0, y: 14 }, { opacity: 1, y: 0, duration: 0.5, ease: E }, 8.7);
+
+      /* ---- Scene 5 (9.5–13.0): stage slides up and fades; truth line, then its sub-line; hold ---- */
+      tl.to(q("stage"), { y: -24, scale: 0.8, opacity: 0.3, transformOrigin: "50% 9%", duration: 0.8, ease: E }, 9.5);
+      var words = document.querySelectorAll('[class~="10-ret-word"]');
+      tl.fromTo(words, { opacity: 0, y: 46 }, { opacity: 1, y: 0, duration: 0.6, ease: E, stagger: 0.12 }, 9.6);
+      tl.fromTo(q("truth-sub"), { opacity: 0, y: 18 }, { opacity: 1, y: 0, duration: 0.6, ease: E }, 10.05);
+
+      /* pad the timeline to the frame duration (13 s); last 3 s are a held breath */
+      tl.to({}, { duration: 0.01 }, 12.99);
+
+      window.__timelines = window.__timelines || {};
+      window.__timelines["10-ret"] = tl;
+    })();
+  </script>
+</template>

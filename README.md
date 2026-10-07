@@ -1756,6 +1756,18 @@ Once the branch is merged, replace `claude/sharp-euler-uf519f` in the URL
 with `main`. Offline: download the source file and double-click it; it has
 no external dependencies.
 
+### Explainer video (Turkish)
+
+A silent 2:49 video that introduces the animation one level up: the problem,
+the three layers (pinning, device identity, attestation), the topology, a
+certificate's lifetime and the order of work on every start. The narration is
+the on-screen Turkish text, so it plays fine muted.
+
+[▶ pinvault-nasil-calisir.tr.mp4](docs/animation/pinvault-nasil-calisir.tr.mp4)
+(1920×1080, 4.3 MB). It is built with HyperFrames from
+[`docs/animation/video/pinvault-nasil-calisir/`](docs/animation/video/pinvault-nasil-calisir);
+that folder's README explains how to edit and re-render it.
+
 ## Architecture
 
 ```

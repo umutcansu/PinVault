@@ -1,0 +1,514 @@
+<template>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo+Black&family=JetBrains+Mono:wght@400;700&family=Space+Grotesk:wght@400;500;700&display=block">
+  <script src="https://cdn.jsdelivr.net/npm/gsap@3.14.2/dist/gsap.min.js"></script>
+  <style>
+    #root,
+    #root * {
+      box-sizing: border-box;
+    }
+    #root {
+      position: relative;
+      width: 1920px;
+      height: 1080px;
+      overflow: hidden;
+      container-type: size;
+      font-family: "Space Grotesk", sans-serif;
+      color: #0f0f0f;
+    }
+    #f07-bg {
+      position: absolute;
+      inset: 0;
+      background: #efe9d9;
+    }
+
+    /* ---------- frame chrome ---------- */
+    .f07-topbar {
+      position: absolute;
+      top: 48px;
+      left: 64px;
+      right: 64px;
+      height: 44px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      font-family: "JetBrains Mono", monospace;
+      font-size: 22px;
+      letter-spacing: 0.06em;
+    }
+    .f07-pill {
+      border: 3px solid #0f0f0f;
+      border-radius: 999px;
+      padding: 5px 18px;
+      background: #efe9d9;
+    }
+    .f07-footer {
+      position: absolute;
+      bottom: 44px;
+      left: 64px;
+      right: 64px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      font-family: "JetBrains Mono", monospace;
+      font-size: 22px;
+      letter-spacing: 0.06em;
+    }
+    .f07-counter {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+    .f07-dot {
+      width: 10px;
+      height: 10px;
+      border-radius: 50%;
+      background: #0f0f0f;
+    }
+
+    /* ---------- right column: title + analogy + steps ---------- */
+    .f07-col {
+      position: absolute;
+      left: 1000px;
+      top: 120px;
+      width: 824px;
+    }
+    #f07-title {
+      font-family: "Archivo Black", sans-serif;
+      font-size: 4.2cqw;
+      line-height: 0.92;
+      letter-spacing: -0.01em;
+      margin: 0;
+      padding-top: 6px;
+    }
+    #f07-analogy {
+      margin-top: 18px;
+      font-size: 28px;
+      line-height: 1.4;
+      max-width: 824px;
+    }
+    .f07-steps {
+      position: absolute;
+      left: 1000px;
+      top: 362px;
+      width: 824px;
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+    }
+    .f07-step {
+      display: flex;
+      align-items: flex-start;
+      gap: 20px;
+      border: 4px solid #0f0f0f;
+      padding: 13px 20px;
+      background: #efe9d9;
+    }
+    .f07-step-pink {
+      background: #f06ca8;
+    }
+    .f07-step-green {
+      background: #1f8a4c;
+    }
+    .f07-num {
+      flex: 0 0 72px;
+      height: 72px;
+      border: 4px solid #0f0f0f;
+      background: #e4dcc4;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-family: "Archivo Black", sans-serif;
+      font-size: 42px;
+      line-height: 1;
+    }
+    .f07-step-pink .f07-num,
+    .f07-step-green .f07-num {
+      background: #efe9d9;
+    }
+    .f07-stxt {
+      flex: 1 1 auto;
+      min-width: 0;
+    }
+    .f07-stitle {
+      font-family: "Archivo Black", sans-serif;
+      font-size: 34px;
+      line-height: 1;
+      padding-top: 3px;
+    }
+    .f07-sbody {
+      margin-top: 6px;
+      font-size: 24px;
+      line-height: 1.3;
+    }
+
+    /* ---------- left stage ---------- */
+    #f07-lines {
+      position: absolute;
+      left: 0;
+      top: 0;
+      width: 1920px;
+      height: 1080px;
+      z-index: 1;
+      overflow: visible;
+    }
+    #f07-lines path {
+      fill: none;
+      stroke: #0f0f0f;
+      stroke-width: 4;
+      stroke-linecap: square;
+      stroke-linejoin: miter;
+    }
+    #f07-phone {
+      position: absolute;
+      left: 96px;
+      top: 300px;
+      width: 260px;
+      height: 500px;
+      border: 4px solid #0f0f0f;
+      background: #efe9d9;
+      z-index: 2;
+      display: flex;
+      flex-direction: column;
+    }
+    .f07-phone-top {
+      height: 50px;
+      display: flex;
+      align-items: center;
+      padding-left: 16px;
+      font-family: "JetBrains Mono", monospace;
+      font-size: 18px;
+      letter-spacing: 0.04em;
+    }
+    .f07-phone-screen {
+      flex: 1 1 auto;
+      margin: 0 12px;
+      border: 3px solid #0f0f0f;
+      background: #e4dcc4;
+    }
+    .f07-phone-bottom {
+      height: 52px;
+      display: flex;
+      align-items: center;
+      padding-left: 16px;
+      font-family: "JetBrains Mono", monospace;
+      font-size: 16px;
+      letter-spacing: 0.02em;
+    }
+    #f07-token {
+      position: absolute;
+      left: 166px;
+      top: 150px;
+      width: 120px;
+      height: 40px;
+      border: 3px solid #0f0f0f;
+      background: #efe9d9;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-family: "JetBrains Mono", monospace;
+      font-size: 18px;
+      font-weight: 700;
+      letter-spacing: 0.04em;
+      z-index: 3;
+    }
+    #f07-key {
+      position: absolute;
+      left: 194px;
+      top: 544px;
+      width: 64px;
+      height: 32px;
+      z-index: 6;
+      overflow: visible;
+    }
+    #f07-vault {
+      position: absolute;
+      left: 172px;
+      top: 522px;
+      width: 108px;
+      height: 76px;
+      z-index: 6;
+      overflow: visible;
+    }
+    #f07-vault rect {
+      fill: none;
+      stroke: #0f0f0f;
+      stroke-width: 4;
+    }
+    #f07-card {
+      position: absolute;
+      left: 392px;
+      top: 405px;
+      width: 260px;
+      height: 150px;
+      border: 4px solid #0f0f0f;
+      background: #f06ca8;
+      box-shadow: 16px 16px 0 #e85a1f, 16px 16px 0 3px #0f0f0f;
+      z-index: 5;
+      display: flex;
+      gap: 14px;
+      padding: 18px 14px;
+    }
+    .f07-photo {
+      flex: 0 0 54px;
+      height: 76px;
+      border: 3px solid #0f0f0f;
+      background: #efe9d9;
+      position: relative;
+    }
+    .f07-photo-glyph {
+      position: absolute;
+      left: 14px;
+      top: 14px;
+      width: 20px;
+      height: 36px;
+      border: 3px solid #0f0f0f;
+    }
+    .f07-card-txt {
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+      padding-top: 4px;
+    }
+    .f07-card-name {
+      white-space: nowrap;
+      font-family: "JetBrains Mono", monospace;
+      font-size: 22px;
+      font-weight: 700;
+      letter-spacing: 0.02em;
+      line-height: 1;
+    }
+    .f07-bar {
+      height: 6px;
+      background: #0f0f0f;
+    }
+    #f07-door {
+      position: absolute;
+      left: 820px;
+      top: 370px;
+      width: 140px;
+      height: 220px;
+      border: 4px solid #0f0f0f;
+      background: #efe9d9;
+      z-index: 3;
+      display: flex;
+      flex-direction: column;
+    }
+    .f07-door-head {
+      height: 44px;
+      background: #0f0f0f;
+      color: #efe9d9;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-family: "JetBrains Mono", monospace;
+      font-size: 22px;
+      font-weight: 700;
+      letter-spacing: 0.06em;
+    }
+    .f07-door-gap {
+      position: relative;
+      flex: 1 1 auto;
+      margin: 10px;
+      overflow: hidden;
+      background: #efe9d9;
+      border: 3px solid #0f0f0f;
+    }
+    .f07-half {
+      position: absolute;
+      top: 0;
+      bottom: 0;
+      width: 50%;
+      background: #e4dcc4;
+    }
+    #f07-half-l {
+      left: 0;
+      border-right: 2px solid #0f0f0f;
+    }
+    #f07-half-r {
+      right: 0;
+      border-left: 2px solid #0f0f0f;
+    }
+    #f07-file {
+      position: absolute;
+      left: 858px;
+      top: 560px;
+      width: 64px;
+      height: 80px;
+      z-index: 7;
+      overflow: visible;
+    }
+  </style>
+
+  <div data-hf-id="hf-r3s3" id="root" data-composition-id="07-kimlik-karti" data-start="0" data-duration="16.5" data-width="1920" data-height="1080" lang="tr">
+    <div data-hf-id="hf-xiwl" id="f07-bg" class="clip" data-start="0" data-duration="16.5" data-track-index="0"></div>
+
+    <!-- chrome -->
+    <div data-hf-id="hf-ktta" class="f07-topbar">
+      <div data-hf-id="hf-rvtu">PINVAULT NASIL ÇALIŞIR</div>
+      <div data-hf-id="hf-6pwr" class="f07-pill">2/3 · KİMLİK</div>
+    </div>
+    <div data-hf-id="hf-cizz" class="f07-footer">
+      <div data-hf-id="hf-vqb5">Kimlik</div>
+      <div data-hf-id="hf-7u6u" class="f07-counter"><span data-hf-id="hf-offg">07</span><span data-hf-id="hf-dpjk" class="f07-dot"></span><span data-hf-id="hf-1qd5">13</span></div>
+    </div>
+
+    <!-- right column: title + analogy -->
+    <div data-hf-id="hf-44ww" class="f07-col">
+      <h1 data-hf-id="hf-3778" id="f07-title">CİHAZIN<br data-hf-id="hf-x5px">KİMLİK KARTI</h1>
+      <div data-hf-id="hf-haqw" id="f07-analogy">Bir personel kartı gibi: kapıda gösterilir, gerekirse iptal edilir.</div>
+    </div>
+
+    <!-- right column: four steps -->
+    <div data-hf-id="hf-zd5v" class="f07-steps">
+      <div data-hf-id="hf-mr33" class="f07-step" id="f07-step1">
+        <div data-hf-id="hf-cxxm" class="f07-num" id="f07-num1">1</div>
+        <div data-hf-id="hf-in1b" class="f07-stxt" id="f07-stxt1">
+          <div data-hf-id="hf-c92r" class="f07-stitle">BİR KEZ KAYIT</div>
+          <div data-hf-id="hf-62v6" class="f07-sbody">Yöneticinin verdiği token, ortak kayıt kodu ya da yönetici onayıyla.</div>
+        </div>
+      </div>
+      <div data-hf-id="hf-e378" class="f07-step" id="f07-step2">
+        <div data-hf-id="hf-vdxu" class="f07-num" id="f07-num2">2</div>
+        <div data-hf-id="hf-9z5g" class="f07-stxt" id="f07-stxt2">
+          <div data-hf-id="hf-vac0" class="f07-stitle">KART TELEFONDA ÜRETİLİR</div>
+          <div data-hf-id="hf-8txd" class="f07-sbody">Anahtarı telefonun kasasından çıkmaz.</div>
+        </div>
+      </div>
+      <div data-hf-id="hf-av0a" class="f07-step f07-step-pink" id="f07-step3">
+        <div data-hf-id="hf-daei" class="f07-num" id="f07-num3">3</div>
+        <div data-hf-id="hf-aqt9" class="f07-stxt" id="f07-stxt3">
+          <div data-hf-id="hf-qrt7" class="f07-stitle">HER BAĞLANTIDA GÖSTERİLİR</div>
+          <div data-hf-id="hf-c2xx" class="f07-sbody">8092 yalnızca tanıdığı kartı içeri alır.</div>
+        </div>
+      </div>
+      <div data-hf-id="hf-o7os" class="f07-step f07-step-green" id="f07-step4">
+        <div data-hf-id="hf-pxbu" class="f07-num" id="f07-num4">4</div>
+        <div data-hf-id="hf-rax6" class="f07-stxt" id="f07-stxt4">
+          <div data-hf-id="hf-kwnt" class="f07-stitle">DOSYALAR YALNIZCA ONA</div>
+          <div data-hf-id="hf-s85e" class="f07-sbody">Dosya, kartı tanınan cihaza gider.</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- left stage: connection lines -->
+    <svg data-hf-id="hf-rdel" id="f07-lines" viewBox="0 0 1920 1080" xmlns="http://www.w3.org/2000/svg">
+      <path data-hf-id="hf-o30c" id="f07-path-card" pathLength="1" d="M 656 480 H 816" />
+      <path data-hf-id="hf-o98h" id="f07-path-file" pathLength="1" d="M 890 596 V 690 H 362" />
+    </svg>
+
+    <!-- phone -->
+    <div data-hf-id="hf-7gst" id="f07-phone">
+      <div data-hf-id="hf-wtw4" class="f07-phone-top">Uygulamanız</div>
+      <div data-hf-id="hf-28j7" class="f07-phone-screen"></div>
+      <div data-hf-id="hf-wtu0" class="f07-phone-bottom">PinVault kütüphanesi</div>
+    </div>
+
+    <!-- vault outline around the key (drawn once the card has left) -->
+    <svg data-hf-id="hf-bwl1" id="f07-vault" viewBox="0 0 108 76" xmlns="http://www.w3.org/2000/svg">
+      <rect data-hf-id="hf-tigc" id="f07-vault-rect" pathLength="1" x="2" y="2" width="104" height="72" />
+    </svg>
+
+    <!-- key: stays inside the phone -->
+    <svg data-hf-id="hf-v333" id="f07-key" viewBox="0 0 64 32" xmlns="http://www.w3.org/2000/svg">
+      <circle data-hf-id="hf-a95s" cx="14" cy="16" r="10" fill="none" stroke="#0F0F0F" stroke-width="5" />
+      <rect data-hf-id="hf-m6xk" x="23" y="13" width="39" height="6" fill="#0F0F0F" />
+      <rect data-hf-id="hf-a7kk" x="50" y="17" width="5" height="10" fill="#0F0F0F" />
+      <rect data-hf-id="hf-c5cs" x="40" y="17" width="5" height="8" fill="#0F0F0F" />
+    </svg>
+
+    <!-- token strip -->
+    <div data-hf-id="hf-loz7" id="f07-token">token</div>
+
+    <!-- pink identity card -->
+    <div data-hf-id="hf-64r9" id="f07-card">
+      <div data-hf-id="hf-nwa6" class="f07-photo"><div data-hf-id="hf-c1tb" class="f07-photo-glyph"></div></div>
+      <div data-hf-id="hf-72fj" class="f07-card-txt">
+        <div data-hf-id="hf-3mt6" class="f07-card-name">tablet-07</div>
+        <div data-hf-id="hf-9k35" class="f07-bar" style="width: 112px"></div>
+        <div data-hf-id="hf-pilw" class="f07-bar" style="width: 76px"></div>
+      </div>
+    </div>
+
+    <!-- 8092 door -->
+    <div data-hf-id="hf-hvnv" id="f07-door">
+      <div data-hf-id="hf-rawy" class="f07-door-head">8092</div>
+      <div data-hf-id="hf-0fnl" class="f07-door-gap">
+        <div data-hf-id="hf-btx1" class="f07-half" id="f07-half-l"></div>
+        <div data-hf-id="hf-pzcb" class="f07-half" id="f07-half-r"></div>
+      </div>
+    </div>
+
+    <!-- file card -->
+    <svg data-hf-id="hf-llw7" id="f07-file" viewBox="0 0 64 80" xmlns="http://www.w3.org/2000/svg">
+      <path data-hf-id="hf-4zm6" d="M 2 2 H 44 L 62 20 V 78 H 2 Z" fill="#EFE9D9" stroke="#0F0F0F" stroke-width="4" stroke-linejoin="miter" />
+      <path data-hf-id="hf-vgbp" d="M 44 2 V 20 H 62" fill="none" stroke="#0F0F0F" stroke-width="4" />
+      <rect data-hf-id="hf-095t" x="12" y="34" width="38" height="5" fill="#0F0F0F" />
+      <rect data-hf-id="hf-0iva" x="12" y="46" width="38" height="5" fill="#0F0F0F" />
+      <rect data-hf-id="hf-ke8c" x="12" y="58" width="24" height="5" fill="#0F0F0F" />
+    </svg>
+  </div>
+
+  <script>
+    (function () {
+      var ID = "07-kimlik-karti";
+      var tl = gsap.timeline({ paused: true });
+      var OUT = "power3.out";
+      var INOUT = "power3.inOut";
+      var WIPE_FROM = "inset(-20% 100% -20% 0%)";
+      var WIPE_TO = "inset(-20% 0% -20% 0%)";
+
+      function stepIn(n, t) {
+        tl.fromTo("#f07-step" + n, { autoAlpha: 0, x: 40 }, { autoAlpha: 1, x: 0, duration: 0.6, ease: OUT }, t);
+        tl.fromTo("#f07-num" + n, { scale: 0.6 }, { scale: 1, duration: 0.5, ease: OUT }, t + 0.1);
+        tl.fromTo("#f07-stxt" + n, { clipPath: WIPE_FROM }, { clipPath: WIPE_TO, duration: 0.8, ease: OUT }, t + 0.15);
+      }
+
+      // Scene 1 (0.0–2.5s): title + analogy top right, phone sits alone on the left
+      tl.fromTo("#f07-phone", { autoAlpha: 0, y: 40 }, { autoAlpha: 1, y: 0, duration: 0.7, ease: OUT }, 0.05);
+      tl.fromTo("#f07-key", { autoAlpha: 0 }, { autoAlpha: 1, duration: 0.5, ease: OUT }, 0.35);
+      tl.fromTo("#f07-title", { autoAlpha: 0, y: 30 }, { autoAlpha: 1, y: 0, duration: 0.7, ease: OUT }, 0.2);
+      tl.fromTo("#f07-analogy", { autoAlpha: 0, y: 20 }, { autoAlpha: 1, y: 0, duration: 0.7, ease: OUT }, 1.35);
+
+      // Scene 2 (2.5–5.5s): step 1; token strip drops into the phone
+      stepIn(1, 2.6);
+      tl.fromTo("#f07-token", { autoAlpha: 0, y: -50 }, { autoAlpha: 1, y: 0, duration: 0.5, ease: OUT }, 3.1);
+      tl.to("#f07-token", { y: 222, duration: 0.9, ease: INOUT }, 3.8);
+
+      // Scene 3 (5.5–8.5s): step 2; the pink card rises out of the phone, the key stays inside
+      stepIn(2, 5.6);
+      tl.to("#f07-token", { opacity: 0.35, duration: 0.4, ease: OUT }, 6.2);
+      tl.fromTo(
+        "#f07-card",
+        { autoAlpha: 0, x: -296, y: 115, scale: 0.55 },
+        { autoAlpha: 1, x: -296, y: 50, scale: 1, duration: 0.7, ease: OUT },
+        6.2
+      );
+      tl.to("#f07-card", { x: 0, y: 0, duration: 0.8, ease: INOUT }, 7.0);
+      tl.fromTo("#f07-vault-rect", { strokeDasharray: 1, strokeDashoffset: 1 }, { strokeDashoffset: 0, duration: 0.6, ease: "power2.out" }, 7.75);
+
+      // Scene 4 (8.5–12.0s): step 3; 8092 door appears, card slides along the line, door turns green and opens
+      stepIn(3, 8.6);
+      tl.fromTo("#f07-door", { autoAlpha: 0, y: 30 }, { autoAlpha: 1, y: 0, duration: 0.6, ease: OUT }, 9.1);
+      tl.fromTo("#f07-path-card", { strokeDasharray: 1, strokeDashoffset: 1 }, { strokeDashoffset: 0, duration: 0.6, ease: "power2.out" }, 9.6);
+      tl.to("#f07-card", { x: 140, duration: 0.8, ease: INOUT }, 10.2);
+      tl.to("#f07-door", { borderColor: "#1F8A4C", duration: 0.3, ease: OUT }, 11.05);
+      tl.to(".f07-door-head", { backgroundColor: "#1F8A4C", color: "#0F0F0F", duration: 0.3, ease: OUT }, 11.05);
+      tl.to("#f07-path-card", { stroke: "#1F8A4C", duration: 0.3, ease: OUT }, 11.05);
+      tl.to("#f07-half-l", { x: -40, duration: 0.7, ease: OUT }, 11.25);
+      tl.to("#f07-half-r", { x: 40, duration: 0.7, ease: OUT }, 11.25);
+
+      // Scene 5 (12.0–16.0s): step 4; a file card slides from the door back to the phone, then hold
+      stepIn(4, 12.1);
+      tl.fromTo("#f07-path-file", { strokeDasharray: 1, strokeDashoffset: 1 }, { strokeDashoffset: 0, duration: 0.7, ease: "power2.out" }, 12.75);
+      tl.fromTo("#f07-file", { autoAlpha: 0, scale: 0.6 }, { autoAlpha: 1, scale: 1, duration: 0.4, ease: OUT }, 13.25);
+      tl.to("#f07-file", { y: 90, duration: 0.45, ease: "power2.inOut" }, 13.65);
+      tl.to("#f07-file", { x: -600, duration: 0.95, ease: INOUT }, 14.1);
+
+      // pad to the fixed 16s duration (hold)
+      tl.set({}, {}, 16);
+
+      window.__timelines = window.__timelines || {};
+      window.__timelines[ID] = tl;
+    })();
+  </script>
+</template>

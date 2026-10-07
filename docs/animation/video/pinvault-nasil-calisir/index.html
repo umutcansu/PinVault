@@ -1,0 +1,110 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=1920, height=1080">
+    <script src="https://cdn.jsdelivr.net/npm/gsap@3.14.2/dist/gsap.min.js" integrity="sha384-sG0Hv1tP1lZCk9KQmrIbY/XNwi+OY84GQqhMscbnsoBFqAz8KNCil1kvfL3Hbbk2" crossorigin="anonymous"></script>
+    <style>
+      * {
+        margin: 0;
+        padding: 0;
+        box-sizing: border-box;
+      }
+      html,
+      body {
+        width: 1920px;
+        height: 1080px;
+        overflow: hidden;
+        background: #000;
+      }
+      #root {
+        position: relative;
+        width: 1920px;
+        height: 1080px;
+        overflow: hidden;
+        background: #EFE9D9;
+      }
+      .scene {
+        position: absolute;
+        inset: 0;
+        width: 100%;
+        height: 100%;
+      }
+    </style>
+  </head>
+  <body>
+    <div data-hf-id="hf-e8no" id="root" data-composition-id="main" data-start="0" data-duration="169" data-width="1920" data-height="1080">
+      <div data-hf-id="hf-p672" id="el-01-arada-kim-var" class="scene" data-composition-id="01-arada-kim-var" data-composition-src="compositions/frames/01-arada-kim-var.html" data-start="0" data-duration="7.5" data-track-index="0"></div>
+
+      <div data-hf-id="hf-1noh" id="el-02-uc-dert" class="scene" data-composition-id="02-uc-dert" data-composition-src="compositions/frames/02-uc-dert.html" data-start="7" data-duration="13.5" data-track-index="1"></div>
+
+      <div data-hf-id="hf-jk1z" id="el-03-uc-is" class="scene" data-composition-id="03-uc-is" data-composition-src="compositions/frames/03-uc-is.html" data-start="20" data-duration="11.5" data-track-index="0"></div>
+
+      <div data-hf-id="hf-baeg" id="el-04-topoloji" class="scene" data-composition-id="04-topoloji" data-composition-src="compositions/frames/04-topoloji.html" data-start="31" data-duration="17.5" data-track-index="1"></div>
+
+      <div data-hf-id="hf-1087" id="el-05-parmak-izi" class="scene" data-composition-id="05-parmak-izi" data-composition-src="compositions/frames/05-parmak-izi.html" data-start="48" data-duration="15.5" data-track-index="0"></div>
+
+      <div data-hf-id="hf-7d3z" id="el-06-muhurlu-liste" class="scene" data-composition-id="06-muhurlu-liste" data-composition-src="compositions/frames/06-muhurlu-liste.html" data-start="63" data-duration="15.5" data-track-index="1"></div>
+
+      <div data-hf-id="hf-926n" id="el-07-kimlik-karti" class="scene" data-composition-id="07-kimlik-karti" data-composition-src="compositions/frames/07-kimlik-karti.html" data-start="78" data-duration="16.5" data-track-index="0"></div>
+
+      <div data-hf-id="hf-3lau" id="el-08-kartin-omru" class="scene" data-composition-id="08-kartin-omru" data-composition-src="compositions/frames/08-kartin-omru.html" data-start="94" data-duration="13.5" data-track-index="1"></div>
+
+      <div data-hf-id="hf-w2px" id="el-09-atestasyon" class="scene" data-composition-id="09-atestasyon" data-composition-src="compositions/frames/09-atestasyon.html" data-start="107" data-duration="17.5" data-track-index="0"></div>
+
+      <div data-hf-id="hf-06a3" id="el-10-ret" class="scene" data-composition-id="10-ret" data-composition-src="compositions/frames/10-ret.html" data-start="124" data-duration="13.5" data-track-index="1"></div>
+
+      <div data-hf-id="hf-x7j1" id="el-11-acilis-sirasi" class="scene" data-composition-id="11-acilis-sirasi" data-composition-src="compositions/frames/11-acilis-sirasi.html" data-start="137" data-duration="15.5" data-track-index="0"></div>
+
+      <div data-hf-id="hf-xwzz" id="el-12-uc-cumle" class="scene" data-composition-id="12-uc-cumle" data-composition-src="compositions/frames/12-uc-cumle.html" data-start="152" data-duration="9.5" data-track-index="1"></div>
+
+      <div data-hf-id="hf-kpz5" id="el-13-kapanis" class="scene" data-composition-id="13-kapanis" data-composition-src="compositions/frames/13-kapanis.html" data-start="161" data-duration="8" data-track-index="0"></div>
+
+    </div>
+
+    <script>
+      window.__timelines = window.__timelines || {};
+      window.__timelines["main"] = gsap.timeline({ paused: true });
+      // ── frame transitions (injected by transitions.mjs) ──
+      (function () { var tl = window.__timelines["main"];
+        tl.to("#el-01-arada-kim-var", { opacity: 0, duration: 0.5, ease: "power2.inOut" }, 7);
+        tl.fromTo("#el-02-uc-dert", { opacity: 0 }, { opacity: 1, duration: 0.5, ease: "power2.inOut" }, 7);
+        tl.addLabel("hf:transition:01-arada-kim-var:02-uc-dert:crossfade", 7);
+        tl.to("#el-02-uc-dert", { opacity: 0, duration: 0.5, ease: "power2.inOut" }, 20);
+        tl.fromTo("#el-03-uc-is", { opacity: 0 }, { opacity: 1, duration: 0.5, ease: "power2.inOut" }, 20);
+        tl.addLabel("hf:transition:02-uc-dert:03-uc-is:crossfade", 20);
+        tl.to("#el-03-uc-is", { x: -1920, duration: 0.5, ease: "power3.inOut" }, 31);
+        tl.fromTo("#el-04-topoloji", { x: 1920, opacity: 1 }, { x: 0, opacity: 1, duration: 0.5, ease: "power3.inOut" }, 31);
+        tl.addLabel("hf:transition:03-uc-is:04-topoloji:push-slide", 31);
+        tl.to("#el-04-topoloji", { x: -1920, duration: 0.5, ease: "power3.inOut" }, 48);
+        tl.fromTo("#el-05-parmak-izi", { x: 1920, opacity: 1 }, { x: 0, opacity: 1, duration: 0.5, ease: "power3.inOut" }, 48);
+        tl.addLabel("hf:transition:04-topoloji:05-parmak-izi:push-slide", 48);
+        tl.to("#el-05-parmak-izi", { x: -1920, duration: 0.5, ease: "power3.inOut" }, 63);
+        tl.fromTo("#el-06-muhurlu-liste", { x: 1920, opacity: 1 }, { x: 0, opacity: 1, duration: 0.5, ease: "power3.inOut" }, 63);
+        tl.addLabel("hf:transition:05-parmak-izi:06-muhurlu-liste:push-slide", 63);
+        tl.to("#el-06-muhurlu-liste", { x: -1920, duration: 0.5, ease: "power3.inOut" }, 78);
+        tl.fromTo("#el-07-kimlik-karti", { x: 1920, opacity: 1 }, { x: 0, opacity: 1, duration: 0.5, ease: "power3.inOut" }, 78);
+        tl.addLabel("hf:transition:06-muhurlu-liste:07-kimlik-karti:push-slide", 78);
+        tl.to("#el-07-kimlik-karti", { x: -1920, duration: 0.5, ease: "power3.inOut" }, 94);
+        tl.fromTo("#el-08-kartin-omru", { x: 1920, opacity: 1 }, { x: 0, opacity: 1, duration: 0.5, ease: "power3.inOut" }, 94);
+        tl.addLabel("hf:transition:07-kimlik-karti:08-kartin-omru:push-slide", 94);
+        tl.to("#el-08-kartin-omru", { x: -1920, duration: 0.5, ease: "power3.inOut" }, 107);
+        tl.fromTo("#el-09-atestasyon", { x: 1920, opacity: 1 }, { x: 0, opacity: 1, duration: 0.5, ease: "power3.inOut" }, 107);
+        tl.addLabel("hf:transition:08-kartin-omru:09-atestasyon:push-slide", 107);
+        tl.to("#el-09-atestasyon", { x: -1920, duration: 0.5, ease: "power3.inOut" }, 124);
+        tl.fromTo("#el-10-ret", { x: 1920, opacity: 1 }, { x: 0, opacity: 1, duration: 0.5, ease: "power3.inOut" }, 124);
+        tl.addLabel("hf:transition:09-atestasyon:10-ret:push-slide", 124);
+        tl.to("#el-10-ret", { x: -1920, duration: 0.5, ease: "power3.inOut" }, 137);
+        tl.fromTo("#el-11-acilis-sirasi", { x: 1920, opacity: 1 }, { x: 0, opacity: 1, duration: 0.5, ease: "power3.inOut" }, 137);
+        tl.addLabel("hf:transition:10-ret:11-acilis-sirasi:push-slide", 137);
+        tl.to("#el-11-acilis-sirasi", { opacity: 0, duration: 0.5, ease: "power2.inOut" }, 152);
+        tl.fromTo("#el-12-uc-cumle", { opacity: 0 }, { opacity: 1, duration: 0.5, ease: "power2.inOut" }, 152);
+        tl.addLabel("hf:transition:11-acilis-sirasi:12-uc-cumle:crossfade", 152);
+        tl.to("#el-12-uc-cumle", { opacity: 0, duration: 0.5, ease: "power2.inOut" }, 161);
+        tl.fromTo("#el-13-kapanis", { opacity: 0 }, { opacity: 1, duration: 0.5, ease: "power2.inOut" }, 161);
+        tl.addLabel("hf:transition:12-uc-cumle:13-kapanis:crossfade", 161);
+        tl.to({}, { duration: 169 }, 0); // full-span anchor — main.duration() == composition total (Studio master duration)
+      })();
+    </script>
+  </body>
+</html>
