@@ -759,11 +759,12 @@ payload { "iss": "pinvault", "sub": "<deviceId>", "aud": "<configApiId>",
    Keep **every** listed secret keyed by `kid`: tokens signed before a
    rotation stay valid until they expire.
 2. Pick the secret the header's `kid` names (unknown `kid` → refuse).
-3. Verify the HS256 signature, `exp` with at most 60 s of leeway, and `aud`
-   equal to your Config API id. Optionally require `anno` to contain a
-   string (staff builds, canaries), or `pol` to be at least a version.
+3. Verify the HS256 signature, `iss` equal to `pinvault`, `exp` with at most
+   60 s of leeway, and `aud` equal to your Config API id. Optionally require
+   `anno` to contain a string (staff builds, canaries), or `pol` to be at
+   least a version.
 4. Refuse with `401` and `WWW-Authenticate: PinVault-Token error="invalid_token", error_description="…"`
-   (body `{"error":"invalid_token","reason":"expired|signature|audience|missing|malformed|unknown_kid"}`).
+   (body `{"error":"invalid_token","reason":"expired|signature|issuer|audience|missing|malformed|unknown_kid"}`).
    The library recognises a `401` that names `PinVault-Token`, attests once
    more and retries the request once.
 5. If your API is also behind mTLS with PinVault-issued client certificates,

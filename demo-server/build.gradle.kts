@@ -20,7 +20,6 @@ dependencies {
     implementation("io.ktor:ktor-serialization-kotlinx-json:3.0.3")
     implementation("io.ktor:ktor-server-status-pages:3.0.3")
     implementation("io.ktor:ktor-server-call-logging:3.0.3")
-    implementation("io.ktor:ktor-server-default-headers:3.0.3")
     implementation("io.ktor:ktor-server-body-limit:3.0.3")
     // Ktor 3.0.3 brings Netty 4.1.116, which has known advisories (HTTP/2 resets,
     // request smuggling, SNI handling): the newest 4.1 patch, same line as Ktor's.

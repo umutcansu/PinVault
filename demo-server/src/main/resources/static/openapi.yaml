@@ -955,7 +955,7 @@ paths:
           `RECOVERY_PUBLIC_KEYS` over the exact `payload` string;
         * `payload` is `{"type":"pinvault-signing-keys","version":N,"keys":[…],"requiredSignatures":n}`
           with `version` above the current set's, parseable EC keys, no recovery key
-          doubling as a signing key, and `requiredSignatures` ≤ number of keys;
+          doubling as a signing key, and 1 ≤ `requiredSignatures` ≤ number of keys;
         * enough of this server's active signers are listed to satisfy
           `requiredSignatures` — otherwise every device that applied the set would
           refuse every config (`409`).
@@ -3664,7 +3664,8 @@ paths:
         TLS listeners too. Audited as `client_cert_revoked`.
 
         Not behind the approval gate (`PIN_CHANGE_APPROVALS`): an emergency
-        revocation takes effect at once. An unknown id still returns `200`.
+        revocation takes effect at once. An unknown id — no certificate row and
+        no identity — is `404 client_cert_not_found`.
 
         Registered on: **management** only.
       security:
@@ -3698,6 +3699,11 @@ paths:
                   userAuthKeysDeleted: { type: integer }
         '401': { $ref: '#/components/responses/MissingApiKey' }
         '403': { $ref: '#/components/responses/InvalidApiKey' }
+        '404':
+          description: No client certificate or identity with this id (`client_cert_not_found`).
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
 
   /api/v1/client-certs/{id}/devices:
     get:
@@ -6463,7 +6469,9 @@ components:
       type: object
       properties:
         hostname: { type: string }
-        keystorePath: { type: string, nullable: true }
+        hasCertificate:
+          type: boolean
+          description: A keystore for the host is installed. (Replaces `keystorePath`, which named a file on the server.)
         certValidUntil: { type: string, nullable: true, format: date-time }
         mockServerRunning: { type: boolean }
         mockServerPort:

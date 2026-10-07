@@ -41,6 +41,19 @@ class PinVaultTokenTest {
     }
 
     @Test
+    fun `the issuer is checked, after the signature`() {
+        val parts = issue().split('.')
+        val payload = String(Base64.getUrlDecoder().decode(parts[1])).replace("\"iss\":\"pinvault\"", "\"iss\":\"other\"")
+        val signingInput = parts[0] + "." + Base64.getUrlEncoder().withoutPadding().encodeToString(payload.toByteArray())
+        // Re-signed with the right secret: everything but the issuer is in order.
+        val mac = javax.crypto.Mac.getInstance("HmacSHA256").apply { init(javax.crypto.spec.SecretKeySpec(secret, "HmacSHA256")) }
+        val resigned = signingInput + "." + Base64.getUrlEncoder().withoutPadding().encodeToString(mac.doFinal(signingInput.toByteArray(Charsets.US_ASCII)))
+        assertEquals(PinVaultToken.Result.Invalid("issuer"), PinVaultToken.verify(resigned, secrets, "default-tls", now))
+        // With the old signature it is the signature that fails, before the issuer is looked at.
+        assertEquals(PinVaultToken.Result.Invalid("signature"), PinVaultToken.verify(signingInput + "." + parts[2], secrets, "default-tls", now))
+    }
+
+    @Test
     fun `anno is absent without annotations`() {
         val payload = String(Base64.getUrlDecoder().decode(issue().split('.')[1]))
         assertTrue(!payload.contains("anno"), payload)

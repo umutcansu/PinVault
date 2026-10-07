@@ -169,6 +169,19 @@ class DeviceRevocationTest {
 
     private suspend fun HttpResponse.json(): JsonObject = Json.parseToJsonElement(bodyAsText()).jsonObject
 
+    @Test
+    fun `revoking an unknown client id is a 404, a revoked one again is not`() = testApplication {
+        configureApp()
+        val missing = client.delete("/api/v1/client-certs/never-enrolled")
+        assertEquals(HttpStatusCode.NotFound, missing.status)
+        assertEquals("client_cert_not_found", missing.json()["error"]!!.jsonPrimitive.content)
+
+        assertEquals(HttpStatusCode.OK, tokenEnroll("tablet-9", deviceKey()).status)
+        assertEquals(HttpStatusCode.OK, client.delete("/api/v1/client-certs/tablet-9").status)
+        // The documented repeat on a revoked id (cascading what it only claimed) still answers 200.
+        assertEquals(HttpStatusCode.OK, client.delete("/api/v1/client-certs/tablet-9?cascadeUnverified=true").status)
+    }
+
     private suspend fun HttpResponse.leaf(): X509Certificate {
         val pem = json()["chain"]!!.jsonArray[0].jsonPrimitive.content
         return CertificateFactory.getInstance("X.509").generateCertificate(pem.byteInputStream()) as X509Certificate

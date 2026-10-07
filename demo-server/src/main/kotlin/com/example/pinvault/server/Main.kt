@@ -49,7 +49,6 @@ import io.ktor.server.engine.*
 import io.ktor.server.netty.*
 import io.ktor.server.plugins.calllogging.*
 import io.ktor.server.plugins.contentnegotiation.*
-import io.ktor.server.plugins.defaultheaders.*
 import io.ktor.server.plugins.origin
 import io.ktor.server.plugins.statuspages.*
 import io.ktor.server.request.*
@@ -920,23 +919,8 @@ private fun startServer() {
                 ignoreUnknownKeys = true
             })
         }
-        // Security headers (M-05). CSP is intentionally permissive on
-        // 'style-src' because the admin UI inlines a few utility styles;
-        // 'script-src self' still kills the H-02 stored-XSS payload class.
-        // Markup that still slips into the page can neither submit a form
-        // anywhere nor re-point relative URLs (form-action, base-uri); every
-        // dashboard form is handled in script.
-        install(DefaultHeaders) {
-            header("X-Content-Type-Options", "nosniff")
-            header("X-Frame-Options", "DENY")
-            header("Referrer-Policy", "no-referrer")
-            header(
-                "Content-Security-Policy",
-                "default-src 'self'; script-src 'self'; " +
-                "style-src 'self' 'unsafe-inline'; img-src 'self' data:; " +
-                "connect-src 'self'; frame-ancestors 'none'; form-action 'none'; base-uri 'none'"
-            )
-        }
+        // Security headers (M-05), no Server header, HSTS on the TLS port (SecurityHeaders.kt).
+        install(com.example.pinvault.server.plugin.SecurityHeaders)
         install(CallLogging)
         // Before anything that decides on the path (auth allowlist, approval gate).
         install(com.example.pinvault.server.plugin.EncodedPathGuard)

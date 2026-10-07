@@ -385,7 +385,7 @@ fun Route.hostRoutes(
                 val mtlsPort = mockServerManager.getMtlsPort(hostname)
                 call.respond(HostStatusResponse(
                     hostname = hostname,
-                    keystorePath = hostRecord?.keystorePath,
+                    hasCertificate = hostRecord?.keystorePath != null,
                     certValidUntil = hostRecord?.certValidUntil,
                     mockServerRunning = mockServerManager.isRunning(hostname),
                     mockServerPort = tlsPort ?: mtlsPort,
