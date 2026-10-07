@@ -1768,6 +1768,18 @@ the on-screen Turkish text, so it plays fine muted.
 [`docs/animation/video/pinvault-nasil-calisir/`](docs/animation/video/pinvault-nasil-calisir);
 that folder's README explains how to edit and re-render it.
 
+### End-to-end video (Turkish)
+
+A silent 3:16 video that walks the whole chain in order, ring by ring, with the
+real panel and phone screens: the server's first start and setup wizard, what
+goes into the APK, adding the API host, issuing the enrollment token, getting it
+to the phone, the enrollment request, the certificate, the signed pin list, the
+attestation ticket and the first protected API call.
+
+[▶ pinvault-bastan-sona.tr.mp4](docs/animation/pinvault-bastan-sona.tr.mp4)
+(1920×1080, 5.1 MB), built from
+[`docs/animation/video/pinvault-bastan-sona/`](docs/animation/video/pinvault-bastan-sona).
+
 ## Architecture
 
 ```

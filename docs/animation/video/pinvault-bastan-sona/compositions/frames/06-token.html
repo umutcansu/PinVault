@@ -1,0 +1,554 @@
+<template>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo+Black&family=JetBrains+Mono:wght@400;700&family=Space+Grotesk:wght@400;500;700&display=block">
+  <script src="https://cdn.jsdelivr.net/npm/gsap@3.14.2/dist/gsap.min.js"></script>
+  <style>
+    #root,
+    #root * {
+      box-sizing: border-box;
+    }
+    #root {
+      position: relative;
+      width: 1920px;
+      height: 1080px;
+      overflow: hidden;
+      container-type: size;
+      font-family: "Space Grotesk", sans-serif;
+      color: #0f0f0f;
+    }
+    #\30 6-token-bg {
+      position: absolute;
+      inset: 0;
+      background: #efe9d9;
+    }
+
+    /* ---------- frame chrome ---------- */
+    .\30 6-token-topbar {
+      position: absolute;
+      top: 48px;
+      left: 64px;
+      right: 64px;
+      height: 44px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      font-family: "JetBrains Mono", monospace;
+      font-size: 22px;
+      letter-spacing: 0.06em;
+      z-index: 10;
+    }
+    .\30 6-token-pill {
+      border: 3px solid #0f0f0f;
+      border-radius: 999px;
+      padding: 4px 18px;
+      background: #efe9d9;
+    }
+    .\30 6-token-footer {
+      position: absolute;
+      bottom: 44px;
+      left: 64px;
+      right: 64px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      font-family: "JetBrains Mono", monospace;
+      font-size: 22px;
+      letter-spacing: 0.06em;
+    }
+    .\30 6-token-counter {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+    .\30 6-token-dot {
+      width: 10px;
+      height: 10px;
+      border-radius: 50%;
+      background: #0f0f0f;
+    }
+
+    /* ---------- chain strip (fixed geometry) ---------- */
+    .\30 6-token-cell {
+      position: absolute;
+      top: 104px;
+      width: 160px;
+      height: 40px;
+      border: 2px solid #0f0f0f;
+      background: #efe9d9;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-family: "JetBrains Mono", monospace;
+      font-size: 15px;
+      letter-spacing: 0.04em;
+      white-space: nowrap;
+      z-index: 2;
+    }
+    .\30 6-token-done {
+      background: #0f0f0f;
+      color: #efe9d9;
+    }
+    .\30 6-token-future {
+      opacity: 0.35;
+    }
+    .\30 6-token-link {
+      position: absolute;
+      top: 123px;
+      width: 14px;
+      height: 2px;
+      background: #0f0f0f;
+      z-index: 1;
+    }
+    .\30 6-token-link-future {
+      opacity: 0.35;
+    }
+    #\30 6-token-cur-line {
+      position: absolute;
+      left: 618px;
+      top: 148px;
+      width: 160px;
+      height: 4px;
+      background: #f5c518;
+      z-index: 2;
+    }
+
+    /* ---------- kicker + title ---------- */
+    #\30 6-token-kicker {
+      position: absolute;
+      left: 96px;
+      top: 176px;
+      padding: 8px 16px;
+      background: #0f0f0f;
+      color: #efe9d9;
+      font-family: "JetBrains Mono", monospace;
+      font-size: 22px;
+      letter-spacing: 0.1em;
+      white-space: nowrap;
+    }
+    #\30 6-token-title {
+      position: absolute;
+      left: 96px;
+      top: 232px;
+      margin: 0;
+      padding-top: 6px;
+      font-family: "Archivo Black", sans-serif;
+      font-weight: 400;
+      font-size: 4.2cqw;
+      line-height: 0.92;
+      letter-spacing: -0.01em;
+      white-space: nowrap;
+    }
+
+    /* ---------- left: panel ---------- */
+    #\30 6-token-panel {
+      position: absolute;
+      left: 96px;
+      top: 344px;
+      width: 964px;
+      height: 456px;
+      border: 4px solid #0f0f0f;
+      background: #efe9d9;
+      z-index: 2;
+    }
+    .\30 6-token-phead {
+      position: absolute;
+      left: 0;
+      top: 0;
+      right: 0;
+      height: 52px;
+      background: #0f0f0f;
+      color: #efe9d9;
+      display: flex;
+      align-items: center;
+      padding-left: 24px;
+      font-family: "JetBrains Mono", monospace;
+      font-size: 20px;
+      letter-spacing: 0.04em;
+      white-space: nowrap;
+    }
+    .\30 6-token-flabel {
+      position: absolute;
+      left: 36px;
+      font-size: 24px;
+      font-weight: 500;
+      line-height: 1;
+    }
+    .\30 6-token-fbox {
+      position: absolute;
+      left: 36px;
+      width: 884px;
+      height: 64px;
+      border: 3px solid #0f0f0f;
+      background: #e4dcc4;
+      display: flex;
+      align-items: center;
+      padding-left: 20px;
+      font-family: "JetBrains Mono", monospace;
+      font-size: 30px;
+      font-weight: 700;
+      letter-spacing: 0.02em;
+      white-space: nowrap;
+    }
+    #\30 6-token-f1label { top: 78px; }
+    #\30 6-token-f1box { top: 112px; }
+    #\30 6-token-f2label { top: 204px; }
+    #\30 6-token-f2box { top: 238px; }
+    .\30 6-token-faded {
+      font-weight: 400;
+      opacity: 0.45;
+    }
+    #\30 6-token-btn {
+      position: absolute;
+      left: 36px;
+      top: 340px;
+      width: 260px;
+      height: 68px;
+      border: 4px solid #0f0f0f;
+      background: #efe9d9;
+      color: #0f0f0f;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 28px;
+      font-weight: 700;
+      white-space: nowrap;
+    }
+
+    /* ---------- popup (the frame's one hard shadow) ---------- */
+    #\30 6-token-popup {
+      position: absolute;
+      left: 176px;
+      top: 498px;
+      width: 820px;
+      height: 232px;
+      border: 4px solid #0f0f0f;
+      background: #efe9d9;
+      box-shadow: 16px 16px 0 #e85a1f, 16px 16px 0 3px #0f0f0f;
+      z-index: 4;
+    }
+    #\30 6-token-poptitle {
+      position: absolute;
+      left: 32px;
+      top: 28px;
+      font-size: 32px;
+      font-weight: 700;
+      line-height: 1.1;
+      white-space: nowrap;
+    }
+    #\30 6-token-strip {
+      position: absolute;
+      left: 32px;
+      top: 100px;
+      width: 748px;
+      height: 92px;
+      border: 4px solid #0f0f0f;
+      background: #f5c518;
+      display: flex;
+      align-items: center;
+      padding-left: 28px;
+      font-family: "JetBrains Mono", monospace;
+      font-size: 46px;
+      font-weight: 700;
+      letter-spacing: 0.02em;
+      white-space: nowrap;
+    }
+
+    /* ---------- path from popup to the server card ---------- */
+    #\30 6-token-lines {
+      position: absolute;
+      left: 0;
+      top: 0;
+      width: 1920px;
+      height: 1080px;
+      z-index: 3;
+      overflow: visible;
+    }
+    #\30 6-token-path {
+      fill: none;
+      stroke: #0f0f0f;
+      stroke-width: 4;
+      stroke-linecap: square;
+      stroke-linejoin: miter;
+    }
+
+    /* ---------- right: server card ---------- */
+    #\30 6-token-card {
+      position: absolute;
+      left: 1112px;
+      top: 344px;
+      width: 712px;
+      height: 256px;
+      border: 4px solid #0f0f0f;
+      background: #efe9d9;
+      z-index: 2;
+    }
+    .\30 6-token-chead {
+      position: absolute;
+      left: 0;
+      top: 0;
+      right: 0;
+      height: 48px;
+      background: #0f0f0f;
+      color: #efe9d9;
+      display: flex;
+      align-items: center;
+      padding-left: 20px;
+      font-family: "JetBrains Mono", monospace;
+      font-size: 22px;
+      letter-spacing: 0.12em;
+      white-space: nowrap;
+    }
+    #\30 6-token-note {
+      position: absolute;
+      left: 20px;
+      top: 172px;
+      width: 664px;
+      font-size: 24px;
+      line-height: 1.3;
+    }
+    #\30 6-token-row {
+      position: absolute;
+      left: 1136px;
+      top: 408px;
+      width: 664px;
+      height: 88px;
+      border: 3px solid #0f0f0f;
+      background: #e4dcc4;
+      overflow: hidden;
+      z-index: 6;
+    }
+    #\30 6-token-mini {
+      position: absolute;
+      inset: 0;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-family: "JetBrains Mono", monospace;
+      font-size: 20px;
+      font-weight: 700;
+      white-space: nowrap;
+    }
+    #\30 6-token-rowtxt {
+      position: absolute;
+      left: 0;
+      top: 0;
+      width: 658px;
+      padding: 11px 18px;
+      font-family: "JetBrains Mono", monospace;
+      font-size: 22px;
+      line-height: 1.35;
+    }
+    .\30 6-token-seg {
+      white-space: nowrap;
+    }
+
+    /* ---------- right: alternative path ---------- */
+    #\30 6-token-alt {
+      position: absolute;
+      left: 1112px;
+      top: 628px;
+      width: 712px;
+      border: 4px solid #0f0f0f;
+      background: #efe9d9;
+      z-index: 2;
+    }
+    .\30 6-token-ahead {
+      height: 44px;
+      border-bottom: 3px solid #0f0f0f;
+      background: #e4dcc4;
+      display: flex;
+      align-items: center;
+      padding-left: 20px;
+      font-family: "JetBrains Mono", monospace;
+      font-size: 22px;
+      letter-spacing: 0.12em;
+      white-space: nowrap;
+    }
+    #\30 6-token-alttxt {
+      padding: 14px 20px 16px;
+      font-size: 24px;
+      line-height: 1.3;
+    }
+
+    /* ---------- analogy strip ---------- */
+    #\30 6-token-analogy {
+      position: absolute;
+      left: 96px;
+      top: 830px;
+      height: 52px;
+      display: flex;
+      align-items: stretch;
+      border: 2px solid #0f0f0f;
+      background: #e4dcc4;
+      z-index: 2;
+    }
+    .\30 6-token-alabel {
+      display: flex;
+      align-items: center;
+      padding: 0 14px;
+      background: #0f0f0f;
+      color: #efe9d9;
+      font-family: "JetBrains Mono", monospace;
+      font-size: 18px;
+      letter-spacing: 0.12em;
+    }
+    .\30 6-token-atext {
+      display: flex;
+      align-items: center;
+      padding: 0 22px;
+      font-size: 26px;
+      white-space: nowrap;
+    }
+  </style>
+
+  <div id="root" data-composition-id="06-token" data-start="0" data-duration="15.5" data-width="1920" data-height="1080" lang="tr">
+    <div id="06-token-bg" class="clip" data-start="0" data-duration="15.5" data-track-index="0"></div>
+
+    <!-- chrome -->
+    <div class="06-token-topbar">
+      <div>PINVAULT BAŞTAN SONA</div>
+      <div class="06-token-pill">HALKA 4 / 10</div>
+    </div>
+    <div class="06-token-footer">
+      <div>Token</div>
+      <div class="06-token-counter"><span>06</span><span class="06-token-dot"></span><span>14</span></div>
+    </div>
+
+    <!-- chain strip: cells at x = 96 + i*174, links between -->
+    <div class="06-token-link" style="left: 256px"></div>
+    <div class="06-token-link" style="left: 430px"></div>
+    <div class="06-token-link" style="left: 604px"></div>
+    <div class="06-token-link 06-token-link-future" style="left: 778px"></div>
+    <div class="06-token-link 06-token-link-future" style="left: 952px"></div>
+    <div class="06-token-link 06-token-link-future" style="left: 1126px"></div>
+    <div class="06-token-link 06-token-link-future" style="left: 1300px"></div>
+    <div class="06-token-link 06-token-link-future" style="left: 1474px"></div>
+    <div class="06-token-link 06-token-link-future" style="left: 1648px"></div>
+    <div class="06-token-cell 06-token-done" style="left: 96px">1 KURULUM</div>
+    <div class="06-token-cell 06-token-done" style="left: 270px">2 APK</div>
+    <div class="06-token-cell 06-token-done" style="left: 444px">3 HOST</div>
+    <div id="06-token-cur" class="06-token-cell" style="left: 618px">4 TOKEN</div>
+    <div class="06-token-cell 06-token-future" style="left: 792px">5 TELEFONA</div>
+    <div class="06-token-cell 06-token-future" style="left: 966px">6 KAYIT İSTEĞİ</div>
+    <div class="06-token-cell 06-token-future" style="left: 1140px">7 KART</div>
+    <div class="06-token-cell 06-token-future" style="left: 1314px">8 PİN LİSTESİ</div>
+    <div class="06-token-cell 06-token-future" style="left: 1488px">9 BİLET</div>
+    <div class="06-token-cell 06-token-future" style="left: 1662px">10 İLK İSTEK</div>
+    <div id="06-token-cur-line"></div>
+
+    <!-- kicker + title -->
+    <div id="06-token-kicker">KİM: YÖNETİCİ · NEREDE: PANEL → mtls-8092 → CLIENT SERTİFİKALARI</div>
+    <h1 id="06-token-title">TOKEN ÜRETİLİR</h1>
+
+    <!-- left: panel -->
+    <div id="06-token-panel">
+      <div class="06-token-phead">Panel · 8090 · Client Sertifikaları · Enrollment Token</div>
+      <div id="06-token-f1label" class="06-token-flabel">Client ID</div>
+      <div id="06-token-f1box" class="06-token-fbox"><span id="06-token-f1val"><span>t</span><span>a</span><span>b</span><span>l</span><span>e</span><span>t</span><span>-</span><span>0</span><span>7</span></span></div>
+      <div id="06-token-f2label" data-layout-allow-overlap class="06-token-flabel">Cihaz kimliği (ANDROID_ID)</div>
+      <div id="06-token-f2box" class="06-token-fbox"><span class="06-token-faded">isteğe bağlı</span></div>
+      <div id="06-token-btn">Token Üret</div>
+    </div>
+
+    <!-- path popup -> server card -->
+    <svg id="06-token-lines" viewBox="0 0 1920 1080" xmlns="http://www.w3.org/2000/svg">
+      <path id="06-token-path" pathLength="1" d="M 1000 648 H 1084 V 452 H 1132" />
+    </svg>
+
+    <!-- popup: token shown once -->
+    <div id="06-token-popup" data-layout-allow-overlap>
+      <div id="06-token-poptitle">Token yalnızca bir kez gösterilir</div>
+      <div id="06-token-strip">Qk3xAbCdE5fGh7…</div>
+    </div>
+
+    <!-- right: what stays on the server -->
+    <div id="06-token-card">
+      <div class="06-token-chead">SUNUCUDA KALAN</div>
+      <div id="06-token-note">Düz token saklanmaz; kaybolursa yenisi üretilir.</div>
+    </div>
+
+    <!-- the small token copy that becomes the stored row -->
+    <div id="06-token-row">
+      <div id="06-token-mini">Qk3xAbCd…</div>
+      <div id="06-token-rowtxt"><span class="06-token-seg">SHA-256 özeti ·</span> <span class="06-token-seg">Qk3xAbCd… ·</span> <span class="06-token-seg">tablet-07 ·</span> <span class="06-token-seg">Bekliyor ·</span> <span class="06-token-seg">24 saat</span></div>
+    </div>
+
+    <!-- right: automatic alternative -->
+    <div id="06-token-alt">
+      <div class="06-token-ahead">YA DA OTOMATİK</div>
+      <div id="06-token-alttxt">Kullanıcı uygulamanıza giriş yapınca giriş sunucunuz token'ı 8090'dan kendisi ister ve uygulamaya verir.</div>
+    </div>
+
+    <!-- analogy strip -->
+    <div id="06-token-analogy">
+      <div class="06-token-alabel">BENZETME</div>
+      <div class="06-token-atext">İK yeni çalışan için tek kullanımlık bir davet kodu üretir.</div>
+    </div>
+  </div>
+
+  <script>
+    (function () {
+      var ID = "06-token";
+      var $ = function (n) { return document.getElementById(ID + "-" + n); };
+      var tl = gsap.timeline({ paused: true });
+      var OUT = "power3.out";
+      var INOUT = "power3.inOut";
+      var WIPE_FROM = "inset(-20% 100% -20% 0%)";
+      var WIPE_TO = "inset(-20% 0% -20% 0%)";
+      var INK = "#0F0F0F";
+      var CREAM = "#EFE9D9";
+      var CREAM2 = "#E4DCC4";
+      var YELLOW = "#F5C518";
+
+      // Scene 1 (0.0–1.5s): chain already in place; current cell settles; kicker, title
+      tl.fromTo($("cur"), { opacity: 0.35, borderWidth: 2 }, { opacity: 1, borderWidth: 4, duration: 0.6, ease: OUT }, 0.2);
+      tl.fromTo($("cur-line"), { scaleX: 0, transformOrigin: "0% 50%" }, { scaleX: 1, duration: 0.6, ease: OUT }, 0.2);
+      tl.fromTo($("kicker"), { clipPath: WIPE_FROM }, { clipPath: WIPE_TO, duration: 0.7, ease: OUT }, 0.1);
+      tl.fromTo($("title"), { autoAlpha: 0, y: 30 }, { autoAlpha: 1, y: 0, duration: 0.7, ease: OUT }, 0.4);
+
+      // Scene 2 (1.5–5.0s): panel opens, "tablet-07" is typed, optional field, button pressed
+      tl.fromTo($("panel"), { autoAlpha: 0, y: 36 }, { autoAlpha: 1, y: 0, duration: 0.6, ease: OUT }, 1.5);
+      tl.fromTo([$("f1label"), $("f1box")], { autoAlpha: 0, y: 12 }, { autoAlpha: 1, y: 0, duration: 0.4, ease: OUT, stagger: 0.08 }, 1.9);
+      var chars = $("f1val").children;
+      for (var i = 0; i < chars.length; i++) {
+        tl.fromTo(chars[i], { autoAlpha: 0 }, { autoAlpha: 1, duration: 0.02, ease: "none" }, 2.35 + i * 0.09);
+      }
+      tl.fromTo([$("f2label"), $("f2box")], { autoAlpha: 0, y: 12 }, { autoAlpha: 1, y: 0, duration: 0.45, ease: OUT, stagger: 0.08 }, 3.25);
+      tl.fromTo($("btn"), { autoAlpha: 0, y: 12 }, { autoAlpha: 1, y: 0, duration: 0.45, ease: OUT }, 3.75);
+      // press: quick inward collapse + ink fill
+      tl.to($("btn"), { scale: 0.92, backgroundColor: INK, color: CREAM, duration: 0.12, ease: OUT }, 4.45);
+      tl.to($("btn"), { scale: 1, duration: 0.35, ease: OUT }, 4.57);
+
+      // Scene 3 (5.0–8.0s): popup over the panel; title, then the yellow token strip opens left to right
+      tl.fromTo($("popup"), { autoAlpha: 0, scale: 0.94, transformOrigin: "50% 50%" }, { autoAlpha: 1, scale: 1, duration: 0.5, ease: OUT }, 5.0);
+      tl.fromTo($("poptitle"), { autoAlpha: 0, y: 14 }, { autoAlpha: 1, y: 0, duration: 0.45, ease: OUT }, 5.3);
+      tl.fromTo($("strip"), { clipPath: "inset(0% 100% 0% 0%)" }, { clipPath: "inset(0% 0% 0% 0%)", duration: 0.9, ease: OUT }, 6.2);
+
+      // Scene 4 (8.0–11.0s): server card; a small copy slides along the path, turns cream-2, becomes the stored row; note
+      tl.fromTo($("card"), { autoAlpha: 0, y: 24 }, { autoAlpha: 1, y: 0, duration: 0.5, ease: OUT }, 8.0);
+      tl.fromTo($("path"), { strokeDasharray: 1, strokeDashoffset: 1 }, { strokeDashoffset: 0, duration: 0.55, ease: "power2.out" }, 8.35);
+      tl.fromTo(
+        $("row"),
+        { autoAlpha: 0, x: -336, y: 218, width: 200, height: 44, scale: 0.6, backgroundColor: YELLOW },
+        { autoAlpha: 1, scale: 1, duration: 0.35, ease: OUT },
+        8.6
+      );
+      tl.to($("row"), { x: -152, duration: 0.4, ease: INOUT }, 9.0);
+      tl.to($("row"), { y: 22, duration: 0.4, ease: INOUT }, 9.4);
+      tl.to($("row"), { x: 0, y: 0, width: 664, height: 88, backgroundColor: CREAM2, duration: 0.5, ease: INOUT }, 9.8);
+      tl.to($("mini"), { autoAlpha: 0, duration: 0.25, ease: OUT }, 9.8);
+      tl.fromTo($("rowtxt"), { autoAlpha: 0, clipPath: WIPE_FROM }, { autoAlpha: 1, clipPath: WIPE_TO, duration: 0.55, ease: OUT }, 10.15);
+      tl.fromTo($("note"), { autoAlpha: 0, y: 12 }, { autoAlpha: 1, y: 0, duration: 0.45, ease: OUT }, 10.6);
+
+      // Scene 5 (11.0–15.0s): automatic alternative, analogy strip, hold
+      tl.fromTo($("alt"), { autoAlpha: 0, y: 24 }, { autoAlpha: 1, y: 0, duration: 0.5, ease: OUT }, 11.1);
+      tl.fromTo($("alttxt"), { clipPath: WIPE_FROM }, { clipPath: WIPE_TO, duration: 0.7, ease: OUT }, 11.4);
+      tl.fromTo($("analogy"), { autoAlpha: 0, x: -24 }, { autoAlpha: 1, x: 0, duration: 0.6, ease: OUT }, 13.3);
+
+      // pad to the fixed 15s duration (hold)
+      tl.set({}, {}, 15);
+
+      window.__timelines = window.__timelines || {};
+      window.__timelines[ID] = tl;
+    })();
+  </script>
+</template>

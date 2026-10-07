@@ -1,0 +1,352 @@
+<template id="01-yeni-tablet-template">
+  <div id="root" data-composition-id="01-yeni-tablet" data-start="0" data-duration="10.5" data-width="1920" data-height="1080" lang="tr">
+    <style>
+      @import url("https://fonts.googleapis.com/css2?family=Archivo+Black&family=JetBrains+Mono:wght@400;700&family=Space+Grotesk:wght@400;500&display=block");
+
+      #root {
+        position: relative;
+        width: 1920px;
+        height: 1080px;
+        overflow: hidden;
+      }
+      [data-composition-id="01-yeni-tablet"] * {
+        margin: 0;
+        padding: 0;
+        box-sizing: border-box;
+      }
+
+      /* full-bleed ground (clip layer, not #root) */
+      [id="01-yeni-tablet-stage"] {
+        position: absolute;
+        inset: 0;
+        width: 1920px;
+        height: 1080px;
+        background: #efe9d9;
+        container-type: size;
+        overflow: hidden;
+        color: #0f0f0f;
+      }
+
+      /* ---------- chrome ---------- */
+      [id="01-yeni-tablet-topbar"] {
+        position: absolute;
+        top: 48px;
+        left: 64px;
+        right: 64px;
+        height: 44px;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        font-family: "JetBrains Mono", monospace;
+        font-size: 22px;
+        letter-spacing: 0.06em;
+        color: #0f0f0f;
+      }
+      [id="01-yeni-tablet-pill"] {
+        border: 4px solid #0f0f0f;
+        border-radius: 999px;
+        background: #efe9d9;
+        padding: 4px 20px;
+        line-height: 1.3;
+      }
+      [id="01-yeni-tablet-footer"] {
+        position: absolute;
+        bottom: 48px;
+        left: 64px;
+        right: 64px;
+        height: 32px;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        font-family: "JetBrains Mono", monospace;
+        font-size: 22px;
+        letter-spacing: 0.06em;
+        color: #0f0f0f;
+      }
+      [id="01-yeni-tablet-counter"] {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+      }
+      [id="01-yeni-tablet-dot"] {
+        width: 10px;
+        height: 10px;
+        border-radius: 50%;
+        background: #0f0f0f;
+      }
+
+      /* ---------- headline ---------- */
+      [class~="01-yeni-tablet-head"] {
+        position: absolute;
+        left: 96px;
+        font-family: "Archivo Black", sans-serif;
+        line-height: 0.92;
+        letter-spacing: -0.01em;
+        white-space: nowrap;
+        color: #0f0f0f;
+      }
+      [id="01-yeni-tablet-line1"] {
+        top: 150px;
+        font-size: 72px;
+      }
+      [id="01-yeni-tablet-line2"] {
+        top: 240px;
+        font-size: 50px;
+      }
+      [class~="01-yeni-tablet-w"] {
+        display: inline-block;
+      }
+
+      /* ---------- tablet (left) ---------- */
+      [id="01-yeni-tablet-tablet"] {
+        position: absolute;
+        left: 72px;
+        top: 435px;
+        width: 130px;
+        height: 220px;
+        border: 4px solid #0f0f0f;
+        background: #efe9d9;
+        padding: 12px 10px 14px;
+        display: flex;
+        flex-direction: column;
+        gap: 10px;
+        z-index: 3;
+      }
+      [class~="01-yeni-tablet-speaker"] {
+        align-self: center;
+        width: 40px;
+        height: 6px;
+        background: #0f0f0f;
+        flex: none;
+      }
+      [class~="01-yeni-tablet-screen"] {
+        flex: 1;
+        border: 3px solid #0f0f0f;
+        background: #e4dcc4;
+      }
+      [id="01-yeni-tablet-tlabel"] {
+        position: absolute;
+        left: 72px;
+        top: 672px;
+        width: 130px;
+        text-align: center;
+        font-family: "JetBrains Mono", monospace;
+        font-size: 22px;
+        letter-spacing: 0.02em;
+        white-space: nowrap;
+        color: #0f0f0f;
+        z-index: 3;
+      }
+
+      /* ---------- API server (right) ---------- */
+      [id="01-yeni-tablet-api"] {
+        position: absolute;
+        left: 1600px;
+        top: 445px;
+        width: 248px;
+        height: 200px;
+        border: 4px solid #0f0f0f;
+        background: #efe9d9;
+        padding: 22px 18px;
+        display: flex;
+        flex-direction: column;
+        justify-content: space-between;
+        z-index: 3;
+      }
+      [class~="01-yeni-tablet-apihead"] {
+        font-family: "Archivo Black", sans-serif;
+        font-size: 26px;
+        line-height: 0.92;
+        white-space: nowrap;
+        padding-bottom: 16px;
+        border-bottom: 3px solid #0f0f0f;
+      }
+      [class~="01-yeni-tablet-apihost"] {
+        font-family: "JetBrains Mono", monospace;
+        font-size: 18px;
+        letter-spacing: 0.02em;
+        white-space: nowrap;
+      }
+
+      /* ---------- empty dashed line + its reveal cover ---------- */
+      [id="01-yeni-tablet-wire"] {
+        position: absolute;
+        left: 0;
+        top: 0;
+        width: 1920px;
+        height: 1080px;
+        overflow: visible;
+        z-index: 1;
+      }
+      [id="01-yeni-tablet-wirecover"] {
+        position: absolute;
+        left: 202px;
+        top: 535px;
+        width: 1398px;
+        height: 20px;
+        background: #efe9d9;
+        transform-origin: 100% 50%;
+        z-index: 2;
+      }
+
+      /* ---------- chain (focal) ---------- */
+      [class~="01-yeni-tablet-cell"] {
+        position: absolute;
+        top: 513px;
+        width: 122px;
+        height: 64px;
+        border: 4px solid #0f0f0f;
+        background: #efe9d9;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        gap: 4px;
+        z-index: 4;
+      }
+      [class~="01-yeni-tablet-num"] {
+        font-family: "Archivo Black", sans-serif;
+        font-size: 24px;
+        line-height: 0.92;
+      }
+      [class~="01-yeni-tablet-lbl"] {
+        font-family: "JetBrains Mono", monospace;
+        font-size: 14px;
+        letter-spacing: 0.02em;
+        line-height: 1;
+        white-space: nowrap;
+      }
+      [class~="01-yeni-tablet-link"] {
+        position: absolute;
+        top: 543px;
+        width: 14px;
+        height: 4px;
+        background: #0f0f0f;
+        transform-origin: 0 50%;
+        z-index: 4;
+      }
+
+      /* ---------- bottom line ---------- */
+      [id="01-yeni-tablet-note"] {
+        position: absolute;
+        left: 96px;
+        top: 790px;
+        font-family: "Space Grotesk", sans-serif;
+        font-size: 28px;
+        line-height: 1.4;
+        white-space: nowrap;
+        color: #0f0f0f;
+      }
+    </style>
+
+    <div id="01-yeni-tablet-stage" class="clip" data-start="0" data-duration="10.5" data-track-index="0">
+      <!-- chrome -->
+      <div id="01-yeni-tablet-topbar">
+        <span>PINVAULT BAŞTAN SONA</span>
+        <span id="01-yeni-tablet-pill">GİRİŞ</span>
+      </div>
+      <div id="01-yeni-tablet-footer">
+        <span>Giriş</span>
+        <span id="01-yeni-tablet-counter"><span>01</span><span id="01-yeni-tablet-dot"></span><span>14</span></span>
+      </div>
+
+      <!-- headline -->
+      <div id="01-yeni-tablet-line1" class="01-yeni-tablet-head"><span class="01-yeni-tablet-w 01-yeni-tablet-w1">KUTUDAN</span> <span class="01-yeni-tablet-w 01-yeni-tablet-w1">YENİ</span> <span class="01-yeni-tablet-w 01-yeni-tablet-w1">ÇIKMIŞ</span> <span class="01-yeni-tablet-w 01-yeni-tablet-w1">BİR</span> <span class="01-yeni-tablet-w 01-yeni-tablet-w1">TABLET.</span></div>
+      <div id="01-yeni-tablet-line2" class="01-yeni-tablet-head"><span class="01-yeni-tablet-w 01-yeni-tablet-w2">SUNUCUNUZLA</span> <span class="01-yeni-tablet-w 01-yeni-tablet-w2">İLK</span> <span class="01-yeni-tablet-w 01-yeni-tablet-w2">GÜVENLİ</span> <span class="01-yeni-tablet-w 01-yeni-tablet-w2">İSTEĞE</span> <span class="01-yeni-tablet-w 01-yeni-tablet-w2">KADAR</span> <span class="01-yeni-tablet-w 01-yeni-tablet-w2">NE</span> <span class="01-yeni-tablet-w 01-yeni-tablet-w2">OLUR?</span></div>
+
+      <!-- empty dashed line between tablet and API -->
+      <svg id="01-yeni-tablet-wire" viewBox="0 0 1920 1080" xmlns="http://www.w3.org/2000/svg">
+        <line x1="202" y1="545" x2="1600" y2="545" stroke="#0F0F0F" stroke-width="4" stroke-dasharray="14 10" />
+      </svg>
+      <div id="01-yeni-tablet-wirecover"></div>
+
+      <!-- tablet -->
+      <div id="01-yeni-tablet-tablet">
+        <div class="01-yeni-tablet-speaker"></div>
+        <div class="01-yeni-tablet-screen"></div>
+      </div>
+      <div id="01-yeni-tablet-tlabel">tablet-07</div>
+
+      <!-- API server -->
+      <div id="01-yeni-tablet-api">
+        <div class="01-yeni-tablet-apihead">API<br />SUNUCUNUZ</div>
+        <div class="01-yeni-tablet-apihost">api.ornek.com</div>
+      </div>
+
+      <!-- chain: cells at x = 228 + i*136, links in the 14px gaps -->
+      <div class="01-yeni-tablet-cell" style="left: 228px"><span class="01-yeni-tablet-num">1</span><span class="01-yeni-tablet-lbl">KURULUM</span></div>
+      <div class="01-yeni-tablet-cell" style="left: 364px"><span class="01-yeni-tablet-num">2</span><span class="01-yeni-tablet-lbl">APK</span></div>
+      <div class="01-yeni-tablet-cell" style="left: 500px"><span class="01-yeni-tablet-num">3</span><span class="01-yeni-tablet-lbl">HOST</span></div>
+      <div class="01-yeni-tablet-cell" style="left: 636px"><span class="01-yeni-tablet-num">4</span><span class="01-yeni-tablet-lbl">TOKEN</span></div>
+      <div class="01-yeni-tablet-cell" style="left: 772px"><span class="01-yeni-tablet-num">5</span><span class="01-yeni-tablet-lbl">TELEFONA</span></div>
+      <div class="01-yeni-tablet-cell" style="left: 908px"><span class="01-yeni-tablet-num">6</span><span class="01-yeni-tablet-lbl">KAYIT İSTEĞİ</span></div>
+      <div class="01-yeni-tablet-cell" style="left: 1044px"><span class="01-yeni-tablet-num">7</span><span class="01-yeni-tablet-lbl">KART</span></div>
+      <div class="01-yeni-tablet-cell" style="left: 1180px"><span class="01-yeni-tablet-num">8</span><span class="01-yeni-tablet-lbl">PİN LİSTESİ</span></div>
+      <div class="01-yeni-tablet-cell" style="left: 1316px"><span class="01-yeni-tablet-num">9</span><span class="01-yeni-tablet-lbl">BİLET</span></div>
+      <div class="01-yeni-tablet-cell" style="left: 1452px"><span class="01-yeni-tablet-num">10</span><span class="01-yeni-tablet-lbl">İLK İSTEK</span></div>
+
+      <div class="01-yeni-tablet-link" style="left: 350px"></div>
+      <div class="01-yeni-tablet-link" style="left: 486px"></div>
+      <div class="01-yeni-tablet-link" style="left: 622px"></div>
+      <div class="01-yeni-tablet-link" style="left: 758px"></div>
+      <div class="01-yeni-tablet-link" style="left: 894px"></div>
+      <div class="01-yeni-tablet-link" style="left: 1030px"></div>
+      <div class="01-yeni-tablet-link" style="left: 1166px"></div>
+      <div class="01-yeni-tablet-link" style="left: 1302px"></div>
+      <div class="01-yeni-tablet-link" style="left: 1438px"></div>
+
+      <!-- bottom line -->
+      <div id="01-yeni-tablet-note">On halka, bu sırayla. Her birinde kim, nerede, ne yapıyor.</div>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/gsap@3.14.2/dist/gsap.min.js"></script>
+    <script>
+      (function () {
+        var FID = "01-yeni-tablet";
+        var host = document.querySelector('[data-composition-id="' + FID + '"]') || document;
+        var $ = function (n) {
+          return host.querySelector('[id="' + FID + "-" + n + '"]');
+        };
+        var $$ = function (n) {
+          return Array.prototype.slice.call(host.querySelectorAll('[class~="' + FID + "-" + n + '"]'));
+        };
+
+        var tl = gsap.timeline({ paused: true });
+        var SOFT = "power3.out";
+
+        // ---------- Scene 1 (0.0–2.5): line 1 word by word, tablet settles left ----------
+        tl.fromTo([$("topbar"), $("footer")], { opacity: 0 }, { opacity: 1, duration: 0.4, ease: SOFT }, 0);
+        $$("w1").forEach(function (w, i) {
+          tl.fromTo(w, { opacity: 0, y: 28 }, { opacity: 1, y: 0, duration: 0.6, ease: SOFT }, 0.1 + i * 0.14);
+        });
+        tl.fromTo($("tablet"), { opacity: 0, y: 40 }, { opacity: 1, y: 0, duration: 0.8, ease: SOFT }, 1.0);
+        tl.fromTo($("tlabel"), { opacity: 0, y: 10 }, { opacity: 1, y: 0, duration: 0.5, ease: SOFT }, 1.4);
+
+        // ---------- Scene 2 (2.5–4.5): line 2, API box settles right, empty dashed line ----------
+        $$("w2").forEach(function (w, i) {
+          tl.fromTo(w, { opacity: 0, y: 22 }, { opacity: 1, y: 0, duration: 0.55, ease: SOFT }, 2.5 + i * 0.1);
+        });
+        tl.fromTo($("api"), { opacity: 0, y: 40 }, { opacity: 1, y: 0, duration: 0.8, ease: SOFT }, 3.3);
+        tl.fromTo($("wirecover"), { scaleX: 1 }, { scaleX: 0, duration: 0.8, ease: "power2.inOut" }, 3.7);
+
+        // ---------- Scene 3 (4.5–8.0): ten cells settle left to right, 0.3 s apart, each linked to the previous ----------
+        var cells = $$("cell");
+        var links = $$("link");
+        cells.forEach(function (c, i) {
+          var at = 4.6 + i * 0.3;
+          tl.fromTo(c, { opacity: 0, y: -28 }, { opacity: 1, y: 0, duration: 0.5, ease: SOFT }, at);
+          if (i > 0) {
+            tl.fromTo(links[i - 1], { scaleX: 0 }, { scaleX: 1, duration: 0.25, ease: SOFT }, at + 0.2);
+          }
+        });
+
+        // ---------- Scene 4 (8.0–10.0): bottom line, hold ----------
+        tl.fromTo($("note"), { opacity: 0, y: 14 }, { opacity: 1, y: 0, duration: 0.6, ease: SOFT }, 8.1);
+        tl.to({}, { duration: 0.01 }, 9.99);
+
+        window.__timelines = window.__timelines || {};
+        window.__timelines[FID] = tl;
+      })();
+    </script>
+  </div>
+</template>

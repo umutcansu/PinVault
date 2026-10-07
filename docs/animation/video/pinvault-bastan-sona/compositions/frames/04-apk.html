@@ -1,0 +1,571 @@
+<template id="04-apk-template">
+  <div id="root" data-composition-id="04-apk" data-start="0" data-duration="15.5" data-width="1920" data-height="1080" lang="tr">
+    <style>
+      @import url("https://fonts.googleapis.com/css2?family=Archivo+Black&family=JetBrains+Mono:wght@400;700&family=Space+Grotesk:wght@400;500&display=block");
+
+      #root {
+        position: relative;
+        width: 1920px;
+        height: 1080px;
+        overflow: hidden;
+      }
+      [data-composition-id="04-apk"] * {
+        margin: 0;
+        padding: 0;
+        box-sizing: border-box;
+      }
+
+      /* full-bleed ground (clip layer, not #root) */
+      [id="04-apk-stage"] {
+        position: absolute;
+        inset: 0;
+        width: 1920px;
+        height: 1080px;
+        background: #efe9d9;
+        container-type: size;
+        overflow: hidden;
+        color: #0f0f0f;
+      }
+
+      /* ---------- chrome ---------- */
+      [id="04-apk-topbar"] {
+        position: absolute;
+        top: 40px;
+        left: 64px;
+        right: 64px;
+        height: 48px;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        font-family: "JetBrains Mono", monospace;
+        font-size: 22px;
+        letter-spacing: 0.06em;
+      }
+      [id="04-apk-pill"] {
+        border: 4px solid #0f0f0f;
+        border-radius: 999px;
+        background: #efe9d9;
+        padding: 4px 20px;
+        line-height: 1.3;
+      }
+      [id="04-apk-footer"] {
+        position: absolute;
+        bottom: 40px;
+        left: 64px;
+        right: 64px;
+        height: 32px;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        font-family: "JetBrains Mono", monospace;
+        font-size: 22px;
+        letter-spacing: 0.06em;
+      }
+      [id="04-apk-counter"] {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+      }
+      [id="04-apk-dot"] {
+        width: 10px;
+        height: 10px;
+        border-radius: 50%;
+        background: #0f0f0f;
+      }
+
+      /* ---------- chain strip (fixed geometry) ---------- */
+      [class~="04-apk-cell"] {
+        position: absolute;
+        top: 104px;
+        width: 160px;
+        height: 40px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-family: "JetBrains Mono", monospace;
+        font-size: 15px;
+        letter-spacing: 0.04em;
+        white-space: nowrap;
+      }
+      [class~="04-apk-done"] {
+        background: #0f0f0f;
+        color: #efe9d9;
+      }
+      [class~="04-apk-future"] {
+        border: 2px solid #0f0f0f;
+        color: #0f0f0f;
+        opacity: 0.35;
+      }
+      [id="04-apk-cellcur"] {
+        background: #efe9d9;
+        border: 4px solid #0f0f0f;
+        color: #0f0f0f;
+      }
+      [id="04-apk-cellline"] {
+        position: absolute;
+        left: 270px;
+        top: 148px;
+        width: 160px;
+        height: 4px;
+        background: #f5c518;
+        transform-origin: 0 50%;
+      }
+      [class~="04-apk-link"] {
+        position: absolute;
+        top: 123px;
+        width: 14px;
+        height: 2px;
+        background: #0f0f0f;
+      }
+
+      /* ---------- kicker + title ---------- */
+      [id="04-apk-kicker"] {
+        position: absolute;
+        left: 96px;
+        top: 168px;
+        background: #0f0f0f;
+        color: #efe9d9;
+        font-family: "JetBrains Mono", monospace;
+        font-size: 20px;
+        letter-spacing: 0.1em;
+        line-height: 1.25;
+        white-space: nowrap;
+        padding: 7px 14px;
+      }
+      [id="04-apk-title"] {
+        position: absolute;
+        left: 96px;
+        top: 222px;
+        font-family: "Archivo Black", sans-serif;
+        font-size: 80px;
+        line-height: 0.92;
+        letter-spacing: -0.01em;
+        white-space: nowrap;
+      }
+
+      /* ---------- code panel (focal) ---------- */
+      [id="04-apk-panel"] {
+        position: absolute;
+        left: 96px;
+        top: 316px;
+        width: 1152px;
+        height: 486px;
+        border: 4px solid #0f0f0f;
+        background: #e4dcc4;
+        transform-origin: 50% 0%;
+      }
+      [id="04-apk-phead"] {
+        position: absolute;
+        left: 0;
+        top: 0;
+        right: 0;
+        height: 46px;
+        background: #0f0f0f;
+        color: #efe9d9;
+        font-family: "JetBrains Mono", monospace;
+        font-size: 20px;
+        letter-spacing: 0.06em;
+        display: flex;
+        align-items: center;
+        padding: 0 22px;
+        white-space: nowrap;
+      }
+      [class~="04-apk-line"] {
+        position: absolute;
+        left: 28px;
+        height: 36px;
+        font-family: "JetBrains Mono", monospace;
+        font-size: 24px;
+        line-height: 36px;
+        white-space: pre;
+        color: #0f0f0f;
+        z-index: 2;
+      }
+      [id="04-apk-panel"] b {
+        font-weight: 700;
+      }
+      [class~="04-apk-cmt"] {
+        color: #2a2a2a;
+      }
+      [class~="04-apk-cur"] {
+        display: inline-block;
+        width: 13px;
+        height: 27px;
+        margin-left: 2px;
+        vertical-align: -6px;
+        background: #0f0f0f;
+        opacity: 0;
+      }
+      [id="04-apk-band"] {
+        position: absolute;
+        left: 14px;
+        top: 388px;
+        width: 832px;
+        height: 36px;
+        background: #efe9d9;
+        z-index: 1;
+      }
+
+      /* highlight frames */
+      [class~="04-apk-frame"] {
+        position: absolute;
+        left: 14px;
+        width: 832px;
+        border: 4px solid #1f8a4c;
+        box-shadow: 0 0 0 2px #0f0f0f;
+        z-index: 3;
+      }
+      [id="04-apk-frame3"] {
+        border-color: #f5c518;
+      }
+
+      /* side notes */
+      [class~="04-apk-note"] {
+        position: absolute;
+        left: 866px;
+        width: 270px;
+        border: 3px solid #1f8a4c;
+        background: #efe9d9;
+        font-family: "JetBrains Mono", monospace;
+        font-size: 22px;
+        line-height: 1.15;
+        padding: 4px 10px;
+        white-space: nowrap;
+        z-index: 3;
+      }
+      [class~="04-apk-note"]::before {
+        content: "";
+        position: absolute;
+        left: -23px;
+        top: 50%;
+        width: 20px;
+        height: 3px;
+        margin-top: -1.5px;
+        background: #0f0f0f;
+      }
+      [id="04-apk-note3"] {
+        border-color: #f5c518;
+      }
+
+      /* ---------- right column ---------- */
+      [id="04-apk-arrow"] {
+        position: absolute;
+        left: 1262px;
+        top: 504px;
+        width: 62px;
+        height: 28px;
+        transform-origin: 0% 50%;
+      }
+      [id="04-apk-arrow"] svg {
+        display: block;
+        width: 62px;
+        height: 28px;
+      }
+      [id="04-apk-box"] {
+        position: absolute;
+        left: 1332px;
+        top: 400px;
+        width: 420px;
+        height: 236px;
+        border: 4px solid #0f0f0f;
+        background: #efe9d9;
+        padding: 30px 30px;
+        display: flex;
+        flex-direction: column;
+        justify-content: center;
+        gap: 18px;
+        box-shadow: 24px 24px 0 #e85a1f, 24px 24px 0 4px #0f0f0f;
+      }
+      [id="04-apk-boxname"] {
+        font-family: "Archivo Black", sans-serif;
+        font-size: 128px;
+        line-height: 0.92;
+        letter-spacing: -0.01em;
+      }
+      [id="04-apk-boxsub"] {
+        font-family: "JetBrains Mono", monospace;
+        font-size: 22px;
+        letter-spacing: 0.04em;
+        white-space: nowrap;
+      }
+      [id="04-apk-no"] {
+        position: absolute;
+        left: 1300px;
+        top: 692px;
+        width: 524px;
+        display: flex;
+        align-items: flex-start;
+        gap: 16px;
+        font-family: "Space Grotesk", sans-serif;
+        font-size: 28px;
+        line-height: 1.3;
+      }
+      [id="04-apk-nomark"] {
+        flex: 0 0 auto;
+        width: 38px;
+        height: 38px;
+        margin-top: -1px;
+        background: #e85a1f;
+        border: 3px solid #0f0f0f;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+      }
+      [id="04-apk-nomark"] svg {
+        display: block;
+        width: 22px;
+        height: 22px;
+      }
+
+      /* ---------- analogy strip ---------- */
+      [id="04-apk-analogy"] {
+        position: absolute;
+        left: 96px;
+        top: 822px;
+        height: 58px;
+        display: flex;
+        align-items: stretch;
+        background: #e4dcc4;
+        border: 2px solid #0f0f0f;
+      }
+      [id="04-apk-anlabel"] {
+        background: #0f0f0f;
+        color: #efe9d9;
+        font-family: "JetBrains Mono", monospace;
+        font-size: 18px;
+        letter-spacing: 0.14em;
+        display: flex;
+        align-items: center;
+        padding: 0 16px;
+      }
+      [id="04-apk-antext"] {
+        font-family: "Space Grotesk", sans-serif;
+        font-size: 26px;
+        display: flex;
+        align-items: center;
+        padding: 0 24px;
+        white-space: nowrap;
+      }
+    </style>
+
+    <div id="04-apk-stage" class="clip" data-start="0" data-duration="15.5" data-track-index="0">
+      <!-- chrome -->
+      <div id="04-apk-topbar">
+        <span>PINVAULT BAŞTAN SONA</span>
+        <span id="04-apk-pill">HALKA 2 / 10</span>
+      </div>
+      <div id="04-apk-footer">
+        <span>APK</span>
+        <span id="04-apk-counter"><span>04</span><span id="04-apk-dot"></span><span>14</span></span>
+      </div>
+
+      <!-- chain strip: x = 96 + i*174 -->
+      <div class="04-apk-cell 04-apk-done" style="left: 96px">1 KURULUM</div>
+      <div class="04-apk-link" style="left: 256px"></div>
+      <div class="04-apk-cell 04-apk-future" style="left: 270px">2 APK</div>
+      <div id="04-apk-cellcur" data-layout-allow-overlap class="04-apk-cell" style="left: 270px">2 APK</div>
+      <div id="04-apk-cellline"></div>
+      <div class="04-apk-link" style="left: 430px"></div>
+      <div class="04-apk-cell 04-apk-future" style="left: 444px">3 HOST</div>
+      <div class="04-apk-link" style="left: 604px"></div>
+      <div class="04-apk-cell 04-apk-future" style="left: 618px">4 TOKEN</div>
+      <div class="04-apk-link" style="left: 778px"></div>
+      <div class="04-apk-cell 04-apk-future" style="left: 792px">5 TELEFONA</div>
+      <div class="04-apk-link" style="left: 952px"></div>
+      <div class="04-apk-cell 04-apk-future" style="left: 966px">6 KAYIT İSTEĞİ</div>
+      <div class="04-apk-link" style="left: 1126px"></div>
+      <div class="04-apk-cell 04-apk-future" style="left: 1140px">7 KART</div>
+      <div class="04-apk-link" style="left: 1300px"></div>
+      <div class="04-apk-cell 04-apk-future" style="left: 1314px">8 PİN LİSTESİ</div>
+      <div class="04-apk-link" style="left: 1474px"></div>
+      <div class="04-apk-cell 04-apk-future" style="left: 1488px">9 BİLET</div>
+      <div class="04-apk-link" style="left: 1648px"></div>
+      <div class="04-apk-cell 04-apk-future" style="left: 1662px">10 İLK İSTEK</div>
+
+      <!-- kicker + title -->
+      <div id="04-apk-kicker">KİM: GELİŞTİRİCİ · NEREDE: PANEL → KURULUM SİHİRBAZI → 3 · KOD</div>
+      <div id="04-apk-title">APK HAZIRLANIR</div>
+
+      <!-- code panel -->
+      <div id="04-apk-panel">
+        <div id="04-apk-phead">Kurulum Sihirbazı · 3 · Kod</div>
+        <div id="04-apk-band"></div>
+
+        <div id="04-apk-l0" class="04-apk-line" style="top: 64px">.<b>configApi</b>("mtls-8092", "https://192.168.1.80:8092/") {<span class="04-apk-cur"></span></div>
+        <div id="04-apk-l1" class="04-apk-line" style="top: 100px">    <b>bootstrapPins</b>(<b>listOf</b>(<span class="04-apk-cur"></span></div>
+        <div id="04-apk-l2" class="04-apk-line" style="top: 136px">        <b>HostPin</b>("192.168.1.80",<span class="04-apk-cur"></span></div>
+        <div id="04-apk-l3" class="04-apk-line" style="top: 172px">                <b>listOf</b>("ziA0hyMD…", "vXC1UZ8O…")),<span class="04-apk-cur"></span></div>
+        <div id="04-apk-l4" class="04-apk-line" style="top: 208px">        <b>HostPin</b>("192.168.1.80:8093",<span class="04-apk-cur"></span></div>
+        <div id="04-apk-l5" class="04-apk-line" style="top: 244px">                <b>listOf</b>("WnVy/Wig…", "TOZS0AAI…"))<span class="04-apk-cur"></span></div>
+        <div id="04-apk-l6" class="04-apk-line" style="top: 280px">    ))<span class="04-apk-cur"></span></div>
+        <div id="04-apk-l7" class="04-apk-line" style="top: 316px">    <b>enrollmentUrl</b>("https://192.168.1.80:8091/")<span class="04-apk-cur"></span></div>
+        <div id="04-apk-l8" class="04-apk-line" style="top: 352px">    <b>renewalUrl</b>("https://192.168.1.80:8093/")<span class="04-apk-cur"></span></div>
+        <div id="04-apk-l9" class="04-apk-line" style="top: 388px">    <b id="04-apk-atname"></b><span id="04-apk-atrest" class="04-apk-cmt"></span><span class="04-apk-cur"></span></div>
+        <div id="04-apk-l10" class="04-apk-line" style="top: 424px">}<span class="04-apk-cur"></span></div>
+
+        <div id="04-apk-frame1" class="04-apk-frame" style="top: 137px; height: 70px"></div>
+        <div id="04-apk-frame2" class="04-apk-frame" style="top: 209px; height: 70px"></div>
+        <div id="04-apk-frame3" class="04-apk-frame" style="top: 317px; height: 34px"></div>
+
+        <div id="04-apk-note1" class="04-apk-note" style="top: 140px">8091 ve 8092'nin<br>pin'leri</div>
+        <div id="04-apk-note2" class="04-apk-note" style="top: 212px">kurtarma kapısının<br>pin'leri</div>
+        <div id="04-apk-note3" class="04-apk-note" style="top: 314px">kayıt buraya gider</div>
+      </div>
+
+      <!-- right column -->
+      <div id="04-apk-arrow">
+        <svg viewBox="0 0 62 28"><line x1="0" y1="14" x2="44" y2="14" stroke="#0F0F0F" stroke-width="4" /><polygon points="40,3 62,14 40,25" fill="#0F0F0F" /></svg>
+      </div>
+      <div id="04-apk-box">
+        <div id="04-apk-boxname">APK</div>
+        <div id="04-apk-boxsub">herkes aynısını yükler</div>
+      </div>
+      <div id="04-apk-no">
+        <span id="04-apk-nomark"><svg viewBox="0 0 24 24"><path d="M5 5 L19 19 M19 5 L5 19" fill="none" stroke="#EFE9D9" stroke-width="4" stroke-linecap="square" /></svg></span>
+        <span>Token yok. API sunucularınızın pin'leri yok.</span>
+      </div>
+
+      <!-- analogy strip -->
+      <div id="04-apk-analogy">
+        <div id="04-apk-anlabel">BENZETME</div>
+        <div id="04-apk-antext">Yeni çalışana binanın adresi ve kapı mührünün resmi verilir; henüz kartı yok.</div>
+      </div>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/gsap@3.14.2/dist/gsap.min.js"></script>
+    <script>
+      (function () {
+        var FID = "04-apk";
+        var TOTAL = 15;
+        var SOFT = "power3.out";
+        function $(n) {
+          return document.getElementById(FID + "-" + n);
+        }
+        var tl = gsap.timeline({ paused: true });
+
+        // ---------- Scene 1 (0.0–1.5): chain cell settles, kicker, title ----------
+        tl.fromTo($("cellcur"), { opacity: 0 }, { opacity: 1, duration: 0.6, ease: SOFT }, 0.2);
+        tl.fromTo($("cellline"), { scaleX: 0 }, { scaleX: 1, duration: 0.6, ease: SOFT }, 0.2);
+        tl.fromTo($("kicker"), { opacity: 0, x: -16 }, { opacity: 1, x: 0, duration: 0.5, ease: SOFT }, 0.15);
+        tl.fromTo($("title"), { opacity: 0, y: 24 }, { opacity: 1, y: 0, duration: 0.6, ease: SOFT }, 0.45);
+
+        // ---------- Scene 2 (1.5–6.0): panel opens, lines land one by one ----------
+        tl.fromTo($("panel"), { opacity: 0, scaleY: 0.06 }, { opacity: 1, scaleY: 1, duration: 0.55, ease: SOFT }, 1.5);
+
+        // discrete line states: wizard output arrives line by line (slot 9 stays empty)
+        var LINE_SEQ = [
+          { t: 2.1, line: 0 },
+          { t: 2.4, line: 1 },
+          { t: 2.7, line: 2 },
+          { t: 3.0, line: 3 },
+          { t: 3.3, line: 4 },
+          { t: 3.6, line: 5 },
+          { t: 3.9, line: 6 },
+          { t: 4.2, line: 7 },
+          { t: 4.5, line: 8 },
+          { t: 4.8, line: 10 },
+        ];
+
+        // ---------- Scene 4 (9.0–11.0): attestation() typed by hand ----------
+        var AT_FULL = "attestation()   // sihirbaz üretmez, elle eklenir";
+        var AT_NAME_LEN = 11; // "attestation"
+        var AT_SEQ = [{ t: 0, k: 0 }];
+        var i;
+        for (i = 1; i <= 13; i++) AT_SEQ.push({ t: 9.05 + (i - 1) * 0.05, k: i }); // attestation()
+        for (i = 14; i <= AT_FULL.length; i++) AT_SEQ.push({ t: 10.0 + (i - 14) * 0.024, k: i }); // comment
+        var AT_DONE = AT_SEQ[AT_SEQ.length - 1].t;
+
+        var lines = [];
+        var curs = [];
+        for (i = 0; i <= 10; i++) {
+          lines[i] = $("l" + i);
+          curs[i] = lines[i].querySelector("span:last-child");
+        }
+        var atName = $("atname");
+        var atRest = $("atrest");
+
+        function atK(t) {
+          for (var j = AT_SEQ.length - 1; j >= 0; j--) {
+            if (t >= AT_SEQ[j].t) return AT_SEQ[j].k;
+          }
+          return 0;
+        }
+
+        function render(t) {
+          // line visibility (line 9 is the hand-typed slot, always present but empty until typed)
+          var lastLine = -1;
+          for (var j = 0; j <= 10; j++) {
+            if (j === 9) continue;
+            lines[j].style.visibility = "hidden";
+          }
+          for (var s = 0; s < LINE_SEQ.length; s++) {
+            if (t >= LINE_SEQ[s].t) {
+              lines[LINE_SEQ[s].line].style.visibility = "visible";
+              lastLine = LINE_SEQ[s].line;
+            }
+          }
+
+          // hand typing
+          var k = atK(t);
+          atName.textContent = AT_FULL.slice(0, Math.min(k, AT_NAME_LEN));
+          atRest.textContent = k > AT_NAME_LEN ? AT_FULL.slice(AT_NAME_LEN, k) : "";
+
+          // cursor host + blink
+          var host = -1;
+          var solid = false;
+          if (t >= 2.1 && t < 5.1) {
+            host = lastLine;
+            solid = true;
+          } else if (t >= 5.1 && t < 9.05) {
+            host = 9; // parks in the empty slot
+          } else if (t >= 9.05 && t < AT_DONE + 0.1) {
+            host = 9;
+            solid = true;
+          } else if (t >= AT_DONE + 0.1 && t < 11.6) {
+            host = 9;
+          }
+          var on = solid || Math.sin((t * Math.PI * 2) / 0.7) > 0;
+          for (var c = 0; c <= 10; c++) {
+            curs[c].style.opacity = c === host && on ? "1" : "0";
+          }
+        }
+
+        var driver = { t: 0 };
+        tl.to(
+          driver,
+          {
+            t: TOTAL,
+            duration: TOTAL,
+            ease: "none",
+            onUpdate: function () {
+              render(driver.t);
+            },
+          },
+          0,
+        );
+        render(0);
+
+        // ---------- Scene 3 (6.0–9.0): framing + notes ----------
+        tl.fromTo($("frame1"), { opacity: 0, scale: 1.03 }, { opacity: 1, scale: 1, duration: 0.35, ease: SOFT }, 6.0);
+        tl.fromTo($("note1"), { opacity: 0, x: -14 }, { opacity: 1, x: 0, duration: 0.4, ease: SOFT }, 6.25);
+        tl.fromTo($("frame2"), { opacity: 0, scale: 1.03 }, { opacity: 1, scale: 1, duration: 0.35, ease: SOFT }, 7.0);
+        tl.fromTo($("note2"), { opacity: 0, x: -14 }, { opacity: 1, x: 0, duration: 0.4, ease: SOFT }, 7.25);
+        tl.fromTo($("frame3"), { opacity: 0, scale: 1.03 }, { opacity: 1, scale: 1, duration: 0.35, ease: SOFT }, 8.0);
+        tl.fromTo($("note3"), { opacity: 0, x: -14 }, { opacity: 1, x: 0, duration: 0.4, ease: SOFT }, 8.25);
+
+        // hand-typed line gets a lighter band
+        tl.fromTo($("band"), { opacity: 0 }, { opacity: 1, duration: 0.3, ease: SOFT }, 9.0);
+
+        // ---------- Scene 5 (11.0–15.0): arrow, APK box settles, ✗ line, analogy, hold ----------
+        tl.fromTo($("arrow"), { scaleX: 0 }, { scaleX: 1, duration: 0.45, ease: SOFT }, 11.0);
+        tl.fromTo($("box"), { opacity: 0, y: -28 }, { opacity: 1, y: 0, duration: 0.7, ease: SOFT }, 11.35);
+        tl.fromTo($("no"), { opacity: 0, y: 14 }, { opacity: 1, y: 0, duration: 0.5, ease: SOFT }, 12.3);
+        tl.fromTo($("analogy"), { opacity: 0, x: -20 }, { opacity: 1, x: 0, duration: 0.6, ease: SOFT }, 13.0);
+        tl.to({}, { duration: 0.01 }, TOTAL - 0.01);
+
+        window.__timelines = window.__timelines || {};
+        window.__timelines[FID] = tl;
+      })();
+    </script>
+  </div>
+</template>
