@@ -550,6 +550,9 @@ private fun startServer() {
     val attestedDeviceStore = com.example.pinvault.server.store.AttestedDeviceStore(db)
     // The HS256 secrets of PinVault-Token, encrypted at rest; the first one is made on first use.
     val attestationTokenSecretStore = com.example.pinvault.server.store.AttestationTokenSecretStore(db, atRestCipher)
+    // Sealed secrets the password at hand cannot open stop the start here, like
+    // the other secret checks: not a server that signs tokens with ciphertext.
+    attestationTokenSecretStore.checkReadable()
     // Repeated rejections of a device with the same verdict, and repeated key mismatches: summarised per minute.
     val attestationRejections = com.example.pinvault.server.service.AuthFailureRecorder(
         auditLog, action = "attestation_rejected", what = "Attestation rejected",

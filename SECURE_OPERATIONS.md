@@ -153,6 +153,8 @@ The server does not start while `KEYSTORE_PASSWORD`, `VAULT_AT_REST_PASSWORD` or
 
 A change waiting for approval keeps its request until it is decided — an uploaded P12 and its password, a generated keystore with its private key. Its body and plan are stored under `VAULT_AT_REST_PASSWORD` (AES-GCM, as vault files); requests stored before this release are read as they are. A request still waiting across a `VAULT_AT_REST_PASSWORD` change opens with `VAULT_AT_REST_PASSWORD_PREVIOUS`; without it, request it again.
 
+The HS256 secrets of `PinVault-Token` are sealed under the same password. At start-up every secret must open with it: one that no password opens stops the server with a message naming `VAULT_AT_REST_PASSWORD` (it used to start and sign tokens with the ciphertext), one that only `VAULT_AT_REST_PASSWORD_PREVIOUS` opens is re-sealed under the current one.
+
 The reference `docker-compose.yml` publishes the management port on `127.0.0.1` and runs the server as uid 10001, not root. Give it its data directories once (`chown -R 10001:10001 data`), or run it as yourself with `PINVAULT_UID`/`PINVAULT_GID`. Reach the dashboard from another machine through an SSH tunnel or a TLS reverse proxy.
 
 ### Signer isolation
@@ -232,7 +234,7 @@ Put the new password in `KEYSTORE_PASSWORD` and the old one in `KEYSTORE_PASSWOR
 
 ### Changing the vault password
 
-Same pattern: new password in `VAULT_AT_REST_PASSWORD`, old one in `VAULT_AT_REST_PASSWORD_PREVIOUS`, restart. At startup every at_rest and per-device file that opens only with the previous password is re-encrypted under the new one; files written while the variable was unset (the demo password) move over without `_PREVIOUS`. A file that no password opens is named in the log, and downloads of it fail until the old password is supplied or the file is uploaded again: the server never hands a device the encrypted bytes as the file. Devices are not affected.
+Same pattern: new password in `VAULT_AT_REST_PASSWORD`, old one in `VAULT_AT_REST_PASSWORD_PREVIOUS`, restart. At startup every at_rest and per-device file that opens only with the previous password is re-encrypted under the new one; files written while the variable was unset (the demo password) move over without `_PREVIOUS`. A file that no password opens is named in the log, and downloads of it fail until the old password is supplied or the file is uploaded again: the server never hands a device the encrypted bytes as the file. The `PinVault-Token` secrets move over the same way, except that one no password opens refuses the start (tokens would be signed with the wrong bytes): supply the old password, or delete that secret. Devices are not affected.
 
 ### The config server is down
 
