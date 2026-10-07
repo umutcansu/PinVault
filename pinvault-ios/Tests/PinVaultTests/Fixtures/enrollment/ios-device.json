@@ -1,0 +1,9 @@
+{
+  "appAttestClientDataHash" : "icgQZ5M45jhS2fIctJkdTIX/krVNkVQhkGz3qPurwe4=",
+  "commonName" : "6f1c2a9e-3b4d-4e5f-8a7b-9c0d1e2f3a4b",
+  "integrityRequestHash" : "PtOi83tZ8PTE9ju0QdnyvQwTxuFKw1AziGXCbDssWHk",
+  "keySecurityLevel" : "secure_enclave",
+  "made" : "IdentityKeychainTests.testWriteTheCsrFixture (Pkcs10Csr over a Secure Enclave key, iOS simulator)",
+  "spkiSha256" : "c+s0mNcgaMtaWazHrUEhUzu9E+1uajAfWgDS85GIr9Y=",
+  "verificationCode" : "EFNK-966Q-41MC-PPJS"
+}
