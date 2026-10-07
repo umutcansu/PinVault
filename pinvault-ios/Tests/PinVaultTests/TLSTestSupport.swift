@@ -399,6 +399,17 @@ final class TestServer: @unchecked Sendable {
     private func encode(_ response: Response) -> Data {
         var text = "HTTP/1.1 \(response.status) \(HTTPURLResponse.localizedString(forStatusCode: response.status))\r\n"
         for (name, value) in response.headers { text += "\(name): \(value)\r\n" }
+        // `Transfer-Encoding: chunked` in the headers: the body goes out in 1 KiB chunks, no Content-Length.
+        if response.headers.contains(where: { $0.key.lowercased() == "transfer-encoding" && $0.value.lowercased() == "chunked" }) {
+            var out = Data((text + "\r\n").utf8)
+            var offset = 0
+            while offset < response.body.count {
+                let chunk = response.body[offset..<min(offset + 1024, response.body.count)]
+                out += Data((String(chunk.count, radix: 16) + "\r\n").utf8) + chunk + Data("\r\n".utf8)
+                offset += chunk.count
+            }
+            return out + Data("0\r\n\r\n".utf8)
+        }
         text += "Content-Length: \(response.body.count)\r\n\r\n"
         return Data(text.utf8) + response.body
     }

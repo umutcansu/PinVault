@@ -474,10 +474,16 @@ final class DynamicSSLManager: @unchecked Sendable {
     /// handshake is refused, `http://` → the request fails before it is sent,
     /// and no redirect is followed (the Config API's requests carry device
     /// headers and enrollment bodies; it never redirects).
+    ///
+    /// - Parameters:
+    ///   - timeout: connect/read timeout in seconds (30; the reporter's pinned client uses 5).
+    ///   - forbiddenAs409: `.always` for the Config API client (PORTING.md §4).
     func buildBootstrapClient(
         _ bootstrapPins: [HostPin],
         interceptor: (any PinnedInterceptor)? = nil,
-        allowUnpinned: Bool = false
+        allowUnpinned: Bool = false,
+        timeout: TimeInterval = DynamicSSLManager.defaultTimeout,
+        forbiddenAs409: ForbiddenAsConflict.Policy = .identityHosts
     ) -> PinnedSession {
         let trust: TrustMode
         if !bootstrapPins.isEmpty {
@@ -493,14 +499,15 @@ final class DynamicSSLManager: @unchecked Sendable {
             Self.log.e("Bootstrap client has no pins — every TLS handshake is refused (set bootstrapPins)")
         }
         let configuration = Self.sessionConfiguration(HttpConnectionSettings(
-            connectTimeout: Int64(Self.defaultTimeout), readTimeout: Int64(Self.defaultTimeout), writeTimeout: 0
+            connectTimeout: Int64(timeout), readTimeout: Int64(timeout), writeTimeout: 0
         ))
         let transport = URLSessionTransport(
             manager: self,
             configuration: configuration,
             trust: trust,
             resolveOverrides: [:],
-            redirects: allowUnpinned ? .all : .none
+            redirects: allowUnpinned ? .all : .none,
+            forbiddenAs409: forbiddenAs409
         )
         var interceptors: [any PinnedInterceptor] = []
         if let interceptor { interceptors.append(interceptor) }
@@ -897,7 +904,7 @@ final class DynamicSSLManager: @unchecked Sendable {
 /// The delegate of one library-built `URLSession` (one logical host and port):
 /// answers its authentication challenges through the ``DynamicSSLManager``
 /// and records, per task, why it refused a peer.
-final class PinnedSessionDelegate: NSObject, URLSessionTaskDelegate, @unchecked Sendable {
+final class PinnedSessionDelegate: NSObject, URLSessionDataDelegate, @unchecked Sendable {
 
     /// What this session's connections are for.
     struct Context: Sendable {
@@ -916,10 +923,40 @@ final class PinnedSessionDelegate: NSObject, URLSessionTaskDelegate, @unchecked 
     let context: Context
     private let failures = Locked<[Int: DynamicSSLManager.PinCheckError]>([:])
     private let presented = Locked<X509Certificate?>(nil)
+    /// Who receives each running task's response and body.
+    private let collectors = Locked<[Int: ResponseCollector]>([:])
 
     init(manager: DynamicSSLManager, context: Context) {
         self.manager = manager
         self.context = context
+    }
+
+    /// Routes the response and body of task `taskIdentifier` to `collector` (before the task is resumed).
+    func collect(_ taskIdentifier: Int, _ collector: ResponseCollector) {
+        collectors.withLock { $0[taskIdentifier] = collector }
+    }
+
+    func urlSession(
+        _ session: URLSession,
+        dataTask: URLSessionDataTask,
+        didReceive response: URLResponse,
+        completionHandler: @escaping @Sendable (URLSession.ResponseDisposition) -> Void
+    ) {
+        guard let collector = collectors.withLock({ $0[dataTask.taskIdentifier] }) else {
+            completionHandler(.allow)
+            return
+        }
+        completionHandler(collector.receive(response) ? .allow : .cancel)
+    }
+
+    func urlSession(_ session: URLSession, dataTask: URLSessionDataTask, didReceive data: Data) {
+        guard let collector = collectors.withLock({ $0[dataTask.taskIdentifier] }) else { return }
+        if !collector.receive(data) { dataTask.cancel() }
+    }
+
+    func urlSession(_ session: URLSession, task: URLSessionTask, didCompleteWithError error: (any Error)?) {
+        let collector = collectors.withLock { $0.removeValue(forKey: task.taskIdentifier) }
+        collector?.complete(taskIdentifier: task.taskIdentifier, error: error)
     }
 
     /// The refusal recorded for `taskIdentifier`, removed.
