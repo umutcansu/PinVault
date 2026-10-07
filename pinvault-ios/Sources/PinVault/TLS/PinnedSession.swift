@@ -69,10 +69,14 @@ struct PinnedExchange: Sendable {
 
     var request: URLRequest
     var tags: Set<Tag> = []
+    /// How much of the response body the transport reads (Kotlin `BoundedBody`);
+    /// nil = all of it (sessions handed to the app).
+    var bodyLimit: BoundedBody.Limit?
 
-    init(request: URLRequest, tags: Set<Tag> = []) {
+    init(request: URLRequest, tags: Set<Tag> = [], bodyLimit: BoundedBody.Limit? = nil) {
         self.request = request
         self.tags = tags
+        self.bodyLimit = bodyLimit
     }
 
     func tagged(_ tag: Tag) -> PinnedExchange {

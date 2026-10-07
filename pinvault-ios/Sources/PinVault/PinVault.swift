@@ -1,4 +1,5 @@
 import Foundation
+import Security
 #if canImport(BackgroundTasks) && os(iOS)
 import BackgroundTasks
 #endif
@@ -44,15 +45,25 @@ public final class PinVault: @unchecked Sendable {
     /// periodic sync, a stored copy removed by its checks), on the main actor.
     public typealias OnFileUpdateListener = @MainActor @Sendable (_ key: String, _ result: VaultFileResult) -> Void
 
+    /// The default block's parts (Kotlin's "primary mirrors"); in static-pin
+    /// mode a stand-alone set over the embedded pins.
+    struct Primary: @unchecked Sendable {
+        let sslManager: DynamicSSLManager
+        let clientProvider: HttpClientProvider
+        let updater: SSLCertificateUpdater
+        let configStore: CertificateConfigStore
+        let api: any CertificateConfigApi
+    }
+
     struct State {
         var config: PinVaultConfig?
         var initialized = false
-        /// The active pin config (set by L2's client provider).
-        var currentConfig: CertificateConfig?
-        var currentVersion = 0
+        /// Per-Config-API clients, by block id; ``clientOrder`` keeps the config's order.
+        var clients: [String: ConfigApiClient] = [:]
+        var clientOrder: [String] = []
+        var primary: Primary?
         var updateListener: OnUpdateListener?
         var fileUpdateListener: OnFileUpdateListener?
-        var connectionListener: PinVaultConnectionListener?
         var backgroundTaskRegistered = false
     }
 
@@ -68,12 +79,54 @@ public final class PinVault: @unchecked Sendable {
     let e2e = Locked(E2EState())
     let log = PinVaultLog.tag("PinVault")
 
+    /// Where the encrypted stores live; tests use a directory and keys of their own.
+    var storeEnvironment: SecureStoreEnvironment {
+        get { storeEnvironmentBox.get() }
+        set { storeEnvironmentBox.set(newValue) }
+    }
+    private let storeEnvironmentBox = Locked(SecureStoreEnvironment.shared)
+
+    /// What the later layers plug into each block (``ConfigApiClient/Collaborators``):
+    /// enrollment and host certificates (L3), attestation (L5). The integration
+    /// step sets this; tests swap in their own.
+    var collaboratorsFactory: @Sendable (_ block: ConfigApiBlock, _ vault: PinVault) -> ConfigApiClient.Collaborators {
+        get { collaboratorsBox.get() }
+        set { collaboratorsBox.set(newValue) }
+    }
+    private let collaboratorsBox = Locked<@Sendable (ConfigApiBlock, PinVault) -> ConfigApiClient.Collaborators>(
+        PinVault.defaultCollaborators
+    )
+
+    /// The updater's wait between start attempts (2 s, 4 s); tests make it instant.
+    var retrySleep: (@Sendable (_ milliseconds: Int64) async -> Void)? {
+        get { retrySleepBox.get() }
+        set { retrySleepBox.set(newValue) }
+    }
+    private let retrySleepBox = Locked<(@Sendable (Int64) async -> Void)?>(nil)
+
+    private let schedulerBox = Locked<PeriodicUpdateScheduler?>(nil)
+
     init() {}
 
     static let notInitializedMessage = "PinVault not initialized. Call PinVault.start() first."
 
     var isInitialized: Bool { state.withLock { $0.initialized } }
     var config: PinVaultConfig? { state.withLock { $0.config } }
+
+    /// The default block's parts while started.
+    var primary: Primary? { state.withLock { $0.initialized ? $0.primary : nil } }
+
+    /// The per-block clients in the config's order (empty before start and in static-pin mode).
+    var configApiClients: [ConfigApiClient] {
+        state.withLock { state in state.clientOrder.compactMap { state.clients[$0] } }
+    }
+
+    func configApiClient(_ id: String) -> ConfigApiClient? {
+        state.withLock { $0.clients[id] }
+    }
+
+    /// The active config of the default block (or the static pins); nil before start.
+    var currentConfig: CertificateConfig? { primary?.clientProvider.currentConfig }
 
     /// The text of a failure result for work a later layer of the port implements.
     static func unavailable(_ what: String, _ layer: String) -> String {
@@ -88,16 +141,15 @@ public final class PinVault: @unchecked Sendable {
     }
 
     /// Attach (or with nil detach) a connection listener at runtime, replacing
-    /// the one from `onConnectionEvent(...)`. Events fired before this call
-    /// (the bootstrap handshake) are not delivered. Needs ``start(config:)``.
+    /// the one from `onConnectionEvent(...)`, on every block's SSL manager.
+    /// Events fired before this call (the bootstrap handshake) are not
+    /// delivered. Needs ``start(config:)``.
     public func setConnectionListener(_ listener: PinVaultConnectionListener?) {
-        let applied = state.withLock { state -> Bool in
-            guard state.initialized else { return false }
-            state.connectionListener = listener
-            return true
+        guard isInitialized else {
+            log.w(Self.notInitializedMessage)
+            return
         }
-        if !applied { log.w(Self.notInitializedMessage) }
-        // TODO(L2): hand the listener to every block's DynamicSSLManager.
+        for manager in sslManagers() { manager.setConnectionListener(listener) }
     }
 
     /// Listener for vault file sync results; nil detaches.
@@ -127,17 +179,9 @@ public final class PinVault: @unchecked Sendable {
             return .failed(reason: refusal.message, exception: refusal)
         }
         await DeviceIdentity.warmUp()
-        let alreadyInitialized = state.withLock { state -> Int? in
-            state.config = config
-            return state.initialized ? state.currentVersion : nil
-        }
-        if let version = alreadyInitialized {
-            log.w("PinVault already initialized — skipping")
-            return .ready(version: version)
-        }
-        if let staticConfig = config.staticPins {
-            log.d("Static pin mode — using embedded config (v\(staticConfig.computedVersion()), \(staticConfig.pins.count) hosts)")
-            // Compiled-in pins are held to the same rules as fetched ones.
+        if !isInitialized, let staticConfig = config.staticPins {
+            // Compiled-in pins are held to the same rules as fetched ones:
+            // host names that are host names, pins that are SHA-256 hashes.
             do {
                 try PinConfigValidator.validate(staticConfig)
             } catch {
@@ -146,11 +190,208 @@ public final class PinVault: @unchecked Sendable {
                 return .failed(reason: "Static pins are not valid: \(message)", exception: error)
             }
         }
-        // TODO(L2): setup (stores, per-block ConfigApiClient, DynamicSSLManager, vault router) and
-        // executeInit (pending enrollments, renewal, initializeAndUpdate, attestation, key registration).
-        _ = customApi
-        let reason = Self.unavailable("start", "L2")
-        return .failed(reason: reason, exception: PinVaultError.illegalState(reason))
+        state.withLock { $0.config = config }
+        switch setupSafely(config, customApi) {
+        case .failed(let result):
+            return result
+        case .alreadyInitialized:
+            return .ready(version: primary?.clientProvider.getVersion() ?? 0)
+        case .done:
+            return await executeInitSafely()
+        }
+    }
+
+    private enum SetUp {
+        case done
+        case alreadyInitialized
+        case failed(InitResult)
+    }
+
+    /// ``setup(_:_:)``, with a failure of the encrypted storage reported as
+    /// ``InitResult/failed(reason:exception:)`` instead of thrown: a Keychain
+    /// that cannot be used right now — a hiccup, or a locked device under
+    /// `requireUnlockedDevice()` — is no reason to crash the app. Nothing is
+    /// started then; call `start` again.
+    private func setupSafely(_ config: PinVaultConfig, _ customApi: (any CertificateConfigApi)?) -> SetUp {
+        do {
+            return try setup(config, customApi) ? .done : .alreadyInitialized
+        } catch {
+            log.e("PinVault setup failed", error)
+            state.withLock { $0.initialized = false }
+            let name = (error as? PinVaultError)?.exceptionName ?? String(describing: type(of: error))
+            let reason = config.requireUnlockedDevice && Self.isLockedDeviceError(error)
+                ? "PinVault's storage is locked while the device is locked (requireUnlockedDevice): init again once it is unlocked"
+                : "PinVault could not be set up (\(name): \(ErrorMessage.of(error) ?? "null")); nothing was initialized"
+            return .failed(.failed(reason: reason, exception: error))
+        }
+    }
+
+    /// Builds every block's ``ConfigApiClient`` (or, in static-pin mode, a
+    /// stand-alone pinning stack). Returns false when already started.
+    private func setup(_ config: PinVaultConfig, _ customApi: (any CertificateConfigApi)?) throws -> Bool {
+        if isInitialized {
+            log.w("PinVault already initialized — skipping")
+            return false
+        }
+        let environment = storeEnvironment
+        // Store files written and Keychain keys made from now on follow the config.
+        environment.requireUnlockedDevice = config.requireUnlockedDevice
+
+        var clients: [String: ConfigApiClient] = [:]
+        let defaultId = config.defaultConfigApi?.id
+        let factory = collaboratorsFactory
+        let sleep = retrySleep
+        for block in config.orderedConfigApis {
+            // The custom API serves the default block only; a multi-API backend
+            // implements CertificateConfigApi per block itself.
+            clients[block.id] = try ConfigApiClient(
+                block: block,
+                customApi: block.id == defaultId ? customApi : nil,
+                recoveryListener: { [weak self] result in
+                    guard let self else { return }
+                    Task { await self.notifyUpdateResult(result) }
+                },
+                expiredConfigGraceMs: config.expiredConfigGraceMs,
+                caTrustHosts: config.caTrustHosts,
+                managedTrustRoots: config.managedTrustRoots,
+                resolvedHosts: config.resolvedHosts,
+                collaborators: factory(block, self),
+                storeEnvironment: environment,
+                sleep: sleep
+            )
+        }
+
+        // The app's listener on every block's SSL manager, so handshake events
+        // of every block reach the same callback.
+        if let listener = config.connectionListener {
+            clients.values.forEach { $0.sslManager.setConnectionListener(listener) }
+        }
+
+        let primary: Primary
+        if let defaultId, let client = clients[defaultId] {
+            primary = Primary(
+                sslManager: client.sslManager, clientProvider: client.clientProvider, updater: client.updater,
+                configStore: client.configStore, api: client.api
+            )
+        } else {
+            // Static-pin mode: a stand-alone stack that start fills with the embedded config.
+            let manager = DynamicSSLManager(connectionListener: config.connectionListener)
+            manager.requireCaTrust(config.caTrustHosts)
+            manager.managedTrustRootsEnabled = config.managedTrustRoots
+            manager.resolvedHosts = config.resolvedHosts
+            let provider = HttpClientProvider(sslManager: manager)
+            let store = try CertificateConfigStore.open(environment: environment)
+            let api = StaticPinsApi(pins: config.staticPins ?? CertificateConfig(pins: []))
+            primary = Primary(
+                sslManager: manager,
+                clientProvider: provider,
+                updater: SSLCertificateUpdater(
+                    configApi: api, configStore: store, httpClientProvider: provider, sslManager: manager,
+                    clientKeyPassword: "", maxRetryCount: config.maxRetryCount,
+                    sleep: sleep ?? { try? await Task.sleep(nanoseconds: UInt64($0) * 1_000_000) }
+                ),
+                configStore: store,
+                api: api
+            )
+        }
+
+        // TODO(L4): vault file storage providers, device / user-auth keys, the vault guard and router.
+
+        return state.withLock { state -> Bool in
+            if state.initialized { return false }
+            state.clients = clients
+            state.clientOrder = config.orderedConfigApis.map(\.id)
+            state.primary = primary
+            state.initialized = true
+            return true
+        }
+    }
+
+    /// ``executeInit()`` behind a safety net: an unexpected failure becomes
+    /// ``InitResult/failed(reason:exception:)`` (pinning stays fail-closed).
+    private func executeInitSafely() async -> InitResult {
+        do {
+            return try await executeInit()
+        } catch {
+            log.e("PinVault init failed unexpectedly", error)
+            state.withLock { $0.initialized = false }
+            return .failed(reason: ErrorMessage.of(error) ?? String(describing: type(of: error)), exception: error)
+        }
+    }
+
+    private func executeInit() async throws -> InitResult {
+        guard let config else { return .failed(reason: Self.notInitializedMessage) }
+
+        // Static pin mode — no server contact.
+        if let staticConfig = config.staticPins, let primary {
+            log.d("Static pin mode — using embedded config (v\(staticConfig.computedVersion()), \(staticConfig.pins.count) hosts)")
+            primary.clientProvider.swap(staticConfig)
+            try primary.configStore.save(staticConfig, envelope: nil)
+            return .ready(version: staticConfig.computedVersion())
+        }
+
+        // Every Config API starts; the default block's result is returned,
+        // the others' failures are logged.
+        let defaultId = config.defaultConfigApi?.id
+        let clients = configApiClients
+
+        // A device whose enrollment waited for approval asks again first: once
+        // let in, its certificate is what reaches an mTLS Config API below.
+        await pickUpPendingEnrollments()
+
+        // Keep CSR-enrolled client certificates alive BEFORE the first config
+        // fetch: an expired certificate would make that fetch fail on an mTLS
+        // Config API. The outcome never changes the start result.
+        for client in clients {
+            emitRenewalEvent(client.block.id, await client.renewIfNeeded())
+        }
+
+        var results: [String: InitResult] = [:]
+        for client in clients {
+            do {
+                results[client.block.id] = try await client.initializeAndUpdate()
+            } catch {
+                log.e("ConfigApi[\(client.block.id)] init failed", error)
+                results[client.block.id] = .failed(reason: ErrorMessage.of(error) ?? "init failed", exception: error)
+            }
+        }
+
+        // Attesting blocks attest once, now that the stored config is loaded,
+        // and keep re-attesting in the background. Never fails start.
+        for client in clients {
+            guard let attestation = client.attestation else { continue }
+            let status = await attestation.attestNow()
+            log.d("ConfigApi[\(client.block.id)] attestation at init: \(status.result.rawValue)")
+            attestation.start()
+        }
+
+        // TODO(L4): register the device public key (end_to_end files) and the
+        // user-auth key on every Config API that serves such files.
+
+        // Files past their offline lifetime go now (wipeWhenStale).
+        await wipeStaleVaultFiles()
+
+        guard let defaultResult = defaultId.flatMap({ results[$0] }) ?? clients.first.flatMap({ results[$0.block.id] }) else {
+            return .failed(reason: "No Config APIs configured")
+        }
+        if case .failed = defaultResult { state.withLock { $0.initialized = false } }
+        return defaultResult
+    }
+
+    /// True when `error` (or a cause of it) is the Keychain's "the device is
+    /// locked" (`errSecInteractionNotAllowed`) or a file the data protection
+    /// keeps closed: what `requireUnlockedDevice` stores answer while locked.
+    static func isLockedDeviceError(_ error: any Error) -> Bool {
+        var next: (any Error)? = error
+        var depth = 0
+        while let current = next, depth < 8 {
+            let ns = current as NSError
+            if ns.domain == NSOSStatusErrorDomain, ns.code == Int(errSecInteractionNotAllowed) { return true }
+            if ns.domain == NSCocoaErrorDomain, ns.code == NSFileReadNoPermissionError { return true }
+            next = (current as? PinVaultError)?.cause ?? ns.userInfo[NSUnderlyingErrorKey] as? any Error
+            depth += 1
+        }
+        return false
     }
 
     /// Where this device's mTLS identity key lives (Secure Enclave, software),
@@ -179,39 +420,59 @@ public final class PinVault: @unchecked Sendable {
     /// ``session()``. The pins are re-read on every handshake and the session
     /// is rebuilt when they change. Fail-closed until a config is applied.
     public func applyTo(_ configuration: URLSessionConfiguration) -> PinnedSession {
-        if isInitialized, state.withLock({ $0.currentConfig == nil }) {
+        guard let primary else { return unavailableSession() }
+        let provider = primary.clientProvider
+        if provider.currentConfig == nil {
+            // Started, but no config has reached the provider yet: the dynamic
+            // trust check refuses the first handshake (fail-closed) until one does.
             log.w(
                 "PinVault.applyTo called before initial config arrived — " +
                     "TLS handshakes will refuse to connect until init completes."
             )
         }
-        // TODO(L2): DynamicSSLManager-backed transport over `configuration` + token + recovery interceptors.
-        _ = configuration
-        return unavailableSession()
+        // The token goes on before (outside) the recovery interceptor, so a
+        // request the recovery retries still carries it.
+        var interceptors: [any PinnedInterceptor] = []
+        if let token = attestationTokenInterceptor() { interceptors.append(token) }
+        interceptors.append(provider.recoveryInterceptor)
+        return primary.sslManager.applyTo(configuration, configProvider: { provider.currentConfig }, interceptors: interceptors)
     }
 
     /// The ready-to-use pinned session (`getClient()`): pinning, attestation
     /// token, re-attest on 401, pin-mismatch recovery. Fail-closed: before a
     /// config is applied every request fails. Wait for ``InitResult/ready(version:)``.
     public func session() -> PinnedSession {
-        if !isInitialized { log.w(Self.notInitializedMessage) }
-        // TODO(L2): the default block's HttpClientProvider session.
-        return unavailableSession()
+        guard let primary else { return unavailableSession() }
+        return primary.clientProvider.get()
     }
 
     /// A pinned session with custom `settings` (`getClient(HttpConnectionSettings)`):
     /// pinning and the attestation token, but NO pin-mismatch recovery — a
     /// mismatch reaches the caller until the next config update.
     public func session(settings: HttpConnectionSettings) -> PinnedSession {
-        if !isInitialized { log.w(Self.notInitializedMessage) }
-        // TODO(L2): DynamicSSLManager.buildDynamicClient(settings, extra: token interceptor).
-        _ = settings
-        return unavailableSession()
+        guard let primary else { return unavailableSession() }
+        let provider = primary.clientProvider
+        return primary.sslManager.buildDynamicClient(
+            configProvider: { provider.currentConfig },
+            settings: settings,
+            extraInterceptors: [attestationTokenInterceptor()].compactMap { $0 }
+        )
     }
 
     private func unavailableSession() -> PinnedSession {
-        let reason = isInitialized ? Self.unavailable("pinned sessions", "L2") : Self.notInitializedMessage
-        return PinnedSession(transport: UnavailableTransport(reason: reason))
+        log.w(Self.notInitializedMessage)
+        return PinnedSession(transport: UnavailableTransport(reason: Self.notInitializedMessage))
+    }
+
+    /// The interceptor that adds `PinVault-Token` for the token hosts of every
+    /// attesting block (the default block's first), or nil when no block
+    /// attests. For sessions the app owns (``applyTo(_:)``, ``session(settings:)``);
+    /// each block's own sessions carry their block's interceptor.
+    private func attestationTokenInterceptor() -> AttestationTokenInterceptor? {
+        guard configApiClients.contains(where: { $0.attestation != nil }) else { return nil }
+        return AttestationTokenInterceptor(sources: { [weak self] in
+            self?.configApiClients.compactMap { $0.attestation } ?? []
+        })
     }
 
     // MARK: Attestation (ATTESTATION.md)
@@ -226,8 +487,8 @@ public final class PinVault: @unchecked Sendable {
         guard isInitialized else {
             return AttestationStatus(configApiId: id, result: .failed, lastError: "PinVault not initialized")
         }
-        // TODO(L5): configApiClients[id]?.attestation?.attestNow()
-        return notAttesting(id)
+        guard let attestation = configApiClient(id)?.attestation else { return notAttesting(id) }
+        return await attestation.attestNow()
     }
 
     /// The `PinVault-Token` for requests sent through a client of the app's
@@ -237,9 +498,17 @@ public final class PinVault: @unchecked Sendable {
     /// - Parameter host: a host name (optionally `host:port`); nil = the default block.
     public func fetchAttestationToken(host: String? = nil) async -> AttestationTokenResult {
         guard isInitialized else { return .failed(message: "PinVault not initialized") }
-        // TODO(L5): pick the attesting block (handlesHost) and fetchToken().
-        _ = host
-        return .unsupported
+        let attestation: (any BlockAttestation)?
+        if let host {
+            let parts = host.split(separator: ":", maxSplits: 1, omittingEmptySubsequences: false)
+            let name = parts[0].trimmingCharacters(in: .whitespaces)
+            let port = parts.count > 1 ? Int(parts[1]) ?? -1 : -1
+            attestation = configApiClients.compactMap(\.attestation).first { $0.handlesHost(name, port: port) }
+        } else {
+            attestation = config?.defaultConfigApi.flatMap { configApiClient($0.id)?.attestation }
+        }
+        guard let attestation else { return .unsupported }
+        return await attestation.fetchToken()
     }
 
     /// The last attestation outcome of a block, from memory. `NOT_ATTESTED`
@@ -250,8 +519,7 @@ public final class PinVault: @unchecked Sendable {
         guard isInitialized else {
             return AttestationStatus(configApiId: id, result: .failed, lastError: "PinVault not initialized")
         }
-        // TODO(L5): configApiClients[id]?.attestation?.status
-        return notAttesting(id)
+        return configApiClient(id)?.attestation?.status ?? notAttesting(id)
     }
 
     /// The request header the attestation token travels in: `PinVault-Token`.
@@ -270,33 +538,55 @@ public final class PinVault: @unchecked Sendable {
         )
     }
 
+    /// Every attesting block attests, for the periodic job. Never throws.
+    func attestAll() async {
+        guard isInitialized else { return }
+        for client in configApiClients {
+            guard let attestation = client.attestation else { continue }
+            _ = await attestation.attestNow()
+            // A process the job woke runs no start: the loop starts here.
+            attestation.start()
+        }
+    }
+
     // MARK: Updates
 
     /// Fetches the latest config from the backend, persists it and updates pinning.
     public func updateNow() async -> UpdateResult {
-        guard isInitialized else {
+        guard let primary else {
             return .failed(reason: Self.notInitializedMessage, exception: PinVaultError.illegalState(Self.notInitializedMessage))
         }
-        // TODO(L2): updater.updateNow()
-        let reason = Self.unavailable("updateNow", "L2")
-        return .failed(reason: reason, exception: PinVaultError.illegalState(reason))
+        if let id = config?.defaultConfigApi?.id, let client = configApiClient(id) {
+            return await client.updateNow()
+        }
+        return await primary.updater.updateNow()
+    }
+
+    /// Config fetch for every block but the default one (the periodic job
+    /// updates that through ``updateNow()``), so their configs do not run past
+    /// `expiresAt` in a long-lived process. Never throws.
+    func updateOtherConfigApis() async {
+        guard isInitialized else { return }
+        let defaultId = config?.defaultConfigApi?.id
+        for client in configApiClients where client.block.id != defaultId {
+            _ = await client.updateNow()
+        }
     }
 
     /// Schedules the periodic update (`BGTaskScheduler`, or the in-process
-    /// scheduler where `submit` is unavailable, e.g. the simulator).
+    /// scheduler where `submit` is unavailable, e.g. the simulator). A new
+    /// schedule replaces the previous one and runs the update once right away.
     /// `updateIntervalMinutes` of the config wins over hours when set.
     /// - Parameter intervalHours: nil = the config's `updateIntervalHours`.
     /// - Returns: whether the task was scheduled.
     @discardableResult
     public func schedulePeriodicUpdates(intervalHours: Int64? = nil) -> Bool {
-        guard isInitialized else {
+        guard isInitialized, let config else {
             log.w(Self.notInitializedMessage)
             return false
         }
-        // TODO(L2): Background scheduler (BGAppRefreshTaskRequest / in-process fallback), then
-        // notifyScheduledTasksChanged().
-        _ = intervalHours
-        return false
+        let minutes = config.updateIntervalMinutes ?? (intervalHours ?? config.updateIntervalHours) * 60
+        return scheduler.schedule(intervalMinutes: minutes)
     }
 
     /// Cancels the periodic update.
@@ -305,13 +595,40 @@ public final class PinVault: @unchecked Sendable {
             log.w(Self.notInitializedMessage)
             return
         }
-        // TODO(L2): cancel the BGTask request / in-process timer, then notifyScheduledTasksChanged().
+        scheduler.cancel()
     }
 
-    /// The scheduled pin update tasks (`getScheduledWorkInfo`).
+    /// The scheduled pin update tasks (`getScheduledWorkInfo`): ENQUEUED
+    /// between runs, RUNNING during one, CANCELLED once cancelled or replaced.
     public func scheduledTasks() async -> [ScheduledTaskInfo] {
-        // TODO(L2): BGTaskScheduler.pendingTaskRequests() / in-process scheduler state.
-        []
+        scheduler.tasks()
+    }
+
+    /// The periodic update's scheduler (created on first use).
+    var scheduler: PeriodicUpdateScheduler {
+        schedulerBox.withLock { slot in
+            if let slot { return slot }
+            let made = PeriodicUpdateScheduler(
+                work: { [weak self] attempts in
+                    guard let self else { return .failure }
+                    return await self.runPeriodicWork(runAttemptCount: attempts)
+                },
+                onChange: { [weak self] in self?.notifyScheduledTasksChanged() },
+                backgroundSubmitter: { [weak self] in self?.backgroundSubmitter() }
+            )
+            slot = made
+            return made
+        }
+    }
+
+    /// The BGTaskScheduler road, once the launch handler is registered.
+    private func backgroundSubmitter() -> PeriodicUpdateScheduler.BackgroundSubmitter? {
+        #if canImport(BackgroundTasks) && os(iOS)
+        guard state.withLock({ $0.backgroundTaskRegistered }) else { return nil }
+        return .appRefresh(Self.backgroundTaskIdentifier)
+        #else
+        return nil
+        #endif
     }
 
     /// Registers the periodic update's `BGTaskScheduler` launch handler. Call
@@ -345,22 +662,20 @@ public final class PinVault: @unchecked Sendable {
 
     #if canImport(BackgroundTasks) && os(iOS)
     private func handleBackgroundTask(_ task: UncheckedSendable<BGTask>) {
-        let work = Task { [self] in
-            await runPeriodicWork()
-            task.value.setTaskCompleted(success: !Task.isCancelled)
+        let scheduler = self.scheduler
+        let work = Task {
+            let succeeded = await scheduler.runFromBackground()
+            task.value.setTaskCompleted(success: succeeded && !Task.isCancelled)
         }
         task.value.expirationHandler = { work.cancel() }
-        // TODO(L2): submit the next BGAppRefreshTaskRequest.
     }
     #endif
 
     /// The periodic job (`CertificateUpdateWorker.doWork`): update the default
-    /// block, the others, renew certificates, pick up a pending enrollment,
-    /// attest, wipe stale files, sync `updateWithPins` files.
-    func runPeriodicWork() async {
-        // TODO(L2): CertificateUpdateWorker port (updateNow, updateOtherConfigApis, renewClientCertsIfNeeded,
-        // pickUpPendingEnrollments, attestAll, wipeStaleVaultFiles, syncAllFiles) with retries.
-        log.d("Periodic work: nothing to do until L2 lands")
+    /// block, the others, sync files, wipe stale files, pick up a pending
+    /// enrollment, renew certificates, attest.
+    func runPeriodicWork(runAttemptCount: Int = 0) async -> CertificateUpdateWorker.Result {
+        await CertificateUpdateWorker.doWork(self, runAttemptCount: runAttemptCount)
     }
 
     // MARK: Enrollment
@@ -493,9 +808,15 @@ public final class PinVault: @unchecked Sendable {
             return .failed(message: refusal.message, cause: refusal)
         }
         guard config.defaultConfigApi != nil else { return Self.noConfigApiBlock }
-        // TODO(L3): EnrollmentRequests.send over the default block's API, store, load the identity, rebuild sessions.
+        // TODO(L3): EnrollmentRequests.send over the default block's API, store, then
+        // configApiClient(id)?.reloadClientIdentity() (rebuilds every session).
         _ = (token, deviceId, label)
         return .failed(message: Self.unavailable("enrollment", "L3"))
+    }
+
+    /// A device whose enrollment waited for approval asks again (start and the periodic job).
+    func pickUpPendingEnrollments() async {
+        // TODO(L3): for the default block with a pending request: checkPendingEnrollment().
     }
 
     /// Renews a block's client certificate when its remaining lifetime is below
@@ -504,12 +825,55 @@ public final class PinVault: @unchecked Sendable {
     /// - Parameter configApiId: the block; nil = the default block.
     public func renewClientCertIfNeeded(configApiId: String? = nil, force: Bool = false) async -> ClientCertRenewalResult {
         guard isInitialized else { return .failed(reason: "PinVault not initialized") }
-        guard let id = configApiId ?? config?.defaultConfigApi?.id, config?.configApis[id] != nil else {
+        guard let id = configApiId ?? config?.defaultConfigApi?.id, let client = configApiClient(id) else {
             return .notApplicable
         }
-        // TODO(L3): client.renewer.renewIfNeeded(force) + emitRenewalEvent
-        _ = force
-        return .failed(reason: Self.unavailable("certificate renewal", "L3"))
+        let result = await client.renewIfNeeded(force: force)
+        emitRenewalEvent(client.block.id, result)
+        return result
+    }
+
+    /// Every block's renewal check, for the periodic job. Never throws.
+    func renewClientCertsIfNeeded() async {
+        guard isInitialized else { return }
+        for client in configApiClients {
+            emitRenewalEvent(client.block.id, await client.renewIfNeeded())
+        }
+    }
+
+    private func emitRenewalEvent(_ configApiId: String, _ result: ClientCertRenewalResult) {
+        // The refusal that made renewal fail may already have been reported from
+        // the request itself; the app hears it once per identity.
+        if case .reenrollRequired = result, configApiClient(configApiId)?.claimReenrollNotice() == false { return }
+        dispatchRenewalEvent(configApiId, result)
+    }
+
+    func dispatchRenewalEvent(_ configApiId: String, _ result: ClientCertRenewalResult) {
+        let status: ClientCertRenewalStatus
+        var notAfter: Int64 = 0
+        var via: ClientCertRenewalVia?
+        var failureReason: String?
+        switch result {
+        case .renewed(let notAfterEpochMs, let renewedVia):
+            status = .renewed
+            notAfter = notAfterEpochMs
+            via = renewedVia
+        case .notNeeded(let notAfterEpochMs):
+            status = .notNeeded
+            notAfter = notAfterEpochMs
+        case .reenrollRequired(let reason):
+            status = .reenrollRequired
+            failureReason = reason
+        case .failed(let reason, _):
+            status = .failed
+            failureReason = reason
+        case .notApplicable:
+            return
+        }
+        dispatchEvent(.clientCertRenewal(
+            status: status, notAfterEpochMs: notAfter, via: via, configApiId: configApiId,
+            deviceManufacturer: DeviceInfo.manufacturer, deviceModel: DeviceInfo.model, failureReason: failureReason
+        ))
     }
 
     /// Removes the enrolled client certificate (and its identity key, and a
@@ -519,7 +883,8 @@ public final class PinVault: @unchecked Sendable {
     /// - Parameter label: nil = the default block's `clientCertLabel`.
     public func unenroll(label: String? = nil, wipeVaultFiles: Bool = false) {
         let certLabel = label ?? defaultCertLabel()
-        // TODO(L3): store.clear(certLabel), identity key + imported key deletion, drop live key material.
+        // TODO(L3): store.clear(certLabel), identity key + imported key deletion, then
+        // reloadClientIdentity() on every block using the label (drops the live key material).
         if wipeVaultFiles {
             if !isInitialized {
                 log.w("unenroll: vault files can only be wiped after init — none wiped")
@@ -562,7 +927,7 @@ public final class PinVault: @unchecked Sendable {
         if let refusal = environmentRefusal(config, .fetchFile) {
             return .failed(key: key, reason: refusal.message, exception: refusal)
         }
-        // TODO(L4): vaultRouter.fetchFile(fileConfig) + reportFileDownload (5 s budget).
+        // TODO(L4): vaultRouter.fetchFile(fileConfig) over configApiClient(file.configApiId).api + reportFileDownload (5 s budget).
         return .failed(key: key, reason: Self.unavailable("vault files", "L4"), code: VaultFileResult.FailureCode.notConfigured)
     }
 
@@ -647,20 +1012,23 @@ public final class PinVault: @unchecked Sendable {
         return results
     }
 
+    /// Files past their offline lifetime go now (`wipeWhenStale`), whether or not anything reads them.
+    func wipeStaleVaultFiles() async {
+        // TODO(L4): vaultGuard.wipeStale(files, storageFor) + notifyFileUpdate per removed key.
+    }
+
     // MARK: Pins and config state
 
     /// The current config version, or 0 when none is loaded.
     public func currentVersion() -> Int {
-        state.withLock { $0.currentVersion }
+        primary?.clientProvider.getVersion() ?? 0
     }
 
     /// Per-host pin versions of the current config, by hostname.
     public func hostPinVersions() -> [String: Int] {
-        state.withLock { state in
-            var versions: [String: Int] = [:]
-            for pin in state.currentConfig?.pins ?? [] { versions[pin.hostname] = pin.version }
-            return versions
-        }
+        var versions: [String: Int] = [:]
+        for pin in currentConfig?.pins ?? [] { versions[pin.hostname] = pin.version }
+        return versions
     }
 
     /// The applied SHA-256 SPKI pins (Base64, no `sha256/` prefix) for
@@ -668,30 +1036,33 @@ public final class PinVault: @unchecked Sendable {
     /// or nil when the host has no entry. Re-read after every update.
     public func pinsForHost(_ hostname: String) -> [String]? {
         let needle = hostname.lowercased()
-        return state.withLock { $0.currentConfig?.pins.first { $0.hostname.lowercased() == needle }?.sha256 }
+        return currentConfig?.pins.first { $0.hostname.lowercased() == needle }?.sha256
     }
 
     /// Every hostname → pins pair of the active config (wildcards verbatim); empty before a config is applied.
     public var currentPins: [String: [String]] {
-        state.withLock { state in
-            var pins: [String: [String]] = [:]
-            for pin in state.currentConfig?.pins ?? [] { pins[pin.hostname] = pin.sha256 }
-            return pins
-        }
+        var pins: [String: [String]] = [:]
+        for pin in currentConfig?.pins ?? [] { pins[pin.hostname] = pin.sha256 }
+        return pins
     }
 
     /// How a block verifies signatures right now; nil for an unsigned block,
     /// an unknown id, static pins, or while the signing-key store is unreadable.
     /// - Parameter configApiId: nil = the default block.
     public func signingStatus(configApiId: String? = nil) -> SigningStatus? {
-        // TODO(L2): configApiClients[id]?.signatureTrust?.status() when configs are verified.
-        _ = configApiId
-        return nil
+        guard isInitialized, let id = configApiId ?? config?.defaultConfigApi?.id,
+              let client = configApiClient(id), client.configsVerified else { return nil }
+        do {
+            return try client.signatureTrust?.status()
+        } catch {
+            log.w("signingStatus: the signing-key store is unreadable right now", error)
+            return nil
+        }
     }
 
     /// True when the current config says `forceUpdate`.
     public func isForceUpdate() -> Bool {
-        state.withLock { $0.currentConfig?.forceUpdate ?? false }
+        currentConfig?.forceUpdate ?? false
     }
 
     /// Clears the active pins and the persisted config of every Config API
@@ -700,33 +1071,66 @@ public final class PinVault: @unchecked Sendable {
     /// watermarks, the signing-key set, the trusted clock and the client
     /// certificate are kept: reset must not let an older signed config back in.
     public func reset() {
-        let wasInitialized = state.withLock { state -> Bool in
-            guard state.initialized else { return false }
-            state.initialized = false
-            state.currentConfig = nil
-            state.currentVersion = 0
-            return true
+        guard let (clients, primary) = takeForReset() else { return }
+        if clients.isEmpty {
+            // Static-pin mode.
+            primary?.clientProvider.reset()
+            clearActive(primary?.configStore)
+        } else {
+            for client in clients {
+                // The refresh loop stops and the token goes; the next start attests again.
+                client.attestation?.reset()
+                // Sessions handed out earlier stay fail-closed: their recovery fetches nothing.
+                client.retire()
+                client.clientProvider.reset()
+                clearActive(client.configStore)
+            }
         }
-        guard wasInitialized else { return }
-        // TODO(L2/L5): attestation.reset(), clientProvider.reset(), configStore.clearActive() per block.
         log.w("PinVault reset — config cleared (replay watermarks kept), TLS refused until re-init")
     }
 
     /// ``reset()`` that also wipes the replay watermarks and the trusted clock. Tests only.
     func resetAndWipeStoredState() {
-        let wasInitialized = state.withLock { state -> Bool in
-            guard state.initialized else { return false }
-            state.initialized = false
-            state.currentConfig = nil
-            state.currentVersion = 0
-            return true
+        guard let (clients, primary) = takeForReset() else { return }
+        let stacks = clients.isEmpty
+            ? [(primary?.clientProvider, primary?.configStore)]
+            : clients.map { client -> (HttpClientProvider?, CertificateConfigStore?) in
+                client.attestation?.reset()
+                client.retire()
+                return (client.clientProvider, client.configStore)
+            }
+        for (provider, store) in stacks {
+            provider?.reset()
+            do { try store?.wipeAll() } catch { log.e("Config store could not be wiped", error) }
         }
-        guard wasInitialized else { return }
-        // TODO(L4): configStore.wipeAll() per block.
         log.w("PinVault reset — stored config state wiped, TLS refused until re-init")
     }
 
-    // MARK: Internal plumbing for the later layers
+    /// Flips the started flag off; nil when not started.
+    private func takeForReset() -> ([ConfigApiClient], Primary?)? {
+        state.withLock { state -> ([ConfigApiClient], Primary?)? in
+            guard state.initialized else { return nil }
+            state.initialized = false
+            return (state.clientOrder.compactMap { state.clients[$0] }, state.primary)
+        }
+    }
+
+    private func clearActive(_ store: CertificateConfigStore?) {
+        do {
+            try store?.clearActive(keepAsWatermarks: true)
+        } catch {
+            log.e("Config store could not be cleared", error)
+        }
+    }
+
+    // MARK: Internal plumbing
+
+    /// Every SSL manager the library runs: one per block, or the static-pin one.
+    func sslManagers() -> [DynamicSSLManager] {
+        let clients = configApiClients
+        if !clients.isEmpty { return clients.map(\.sslManager) }
+        return state.withLock { $0.primary?.sslManager }.map { [$0] } ?? []
+    }
 
     /// The refusal of `config`'s ``EnvironmentGuard`` for `operation`, or nil
     /// when there is no guard or it allows it. A guard that throws refuses.
@@ -749,17 +1153,17 @@ public final class PinVault: @unchecked Sendable {
         return .untrustedEnvironment(operation: operation)
     }
 
-    /// Delivers `event` to the connection listener (the config's, or the one
-    /// set at runtime) off the caller's task. Never throws.
+    /// Delivers `event` to the connection listener through the default
+    /// block's SSL manager (ordered, bounded, off the caller's task). Never throws.
     func dispatchEvent(_ event: PinVaultConnectionEvent) {
-        guard let listener = state.withLock({ $0.connectionListener ?? $0.config?.connectionListener }) else { return }
-        Task.detached { listener(event) }
+        state.withLock { $0.primary?.sslManager }?.dispatchEvent(event)
     }
 
     /// Tells the update listener and the connection listener about a config update.
     func notifyUpdateResult(_ result: UpdateResult) async {
-        let (listener, version) = state.withLock { ($0.updateListener, $0.currentVersion) }
+        let listener = state.withLock { $0.updateListener }
         if let listener { await listener(result) }
+        let version = state.withLock { $0.primary?.clientProvider }?.getVersion() ?? 0
         let status: ConfigUpdateStatus
         let newVersion: Int
         let failureReason: String?
@@ -781,7 +1185,7 @@ public final class PinVault: @unchecked Sendable {
         await listener(key, result)
     }
 
-    /// Wall-clock offset the E2E harness set (ms), for L2's TrustedClock and certificate checks.
+    /// Wall-clock offset the E2E harness set (ms), for the library clock.
     var e2eClockOffsetMs: Int64 {
         e2e.withLock { $0.clockOffsetSeconds } * 1000
     }
@@ -791,17 +1195,22 @@ public final class PinVault: @unchecked Sendable {
         e2e.withLock { $0.redirects[hostPort.lowercased()] }
     }
 
-    /// The E2E control generation; sessions built under an older one are rebuilt (L2).
+    /// The E2E control generation; sessions built under an older one are rebuilt.
     var e2eGeneration: Int {
         e2e.withLock { $0.generation }
     }
 
-    /// Called by the scheduler (L2) whenever the scheduled tasks change.
+    /// Called by the scheduler whenever the scheduled tasks change.
     func notifyScheduledTasksChanged() {
         guard let observer = e2e.withLock({ $0.scheduledTasksObserver }) else { return }
         observer()
     }
+
+    /// The collaborators every block gets until the later layers are wired in: none.
+    static let defaultCollaborators: @Sendable (ConfigApiBlock, PinVault) -> ConfigApiClient.Collaborators = { _, _ in .none }
 }
+
+extension PinVault: PeriodicWorkTarget {}
 
 // MARK: - E2E control hooks (PORTING.md §8)
 
@@ -811,13 +1220,15 @@ extension PinVault {
     /// certificate validity, `SecTrustSetVerifyDate`). New connections only.
     @_spi(PinVaultE2E)
     public func e2eSetClockOffset(seconds: Int64) {
-        e2e.withLock { state in
-            guard state.clockOffsetSeconds != seconds else { return }
+        let changed = e2e.withLock { state -> Bool in
+            guard state.clockOffsetSeconds != seconds else { return false }
             state.clockOffsetSeconds = seconds
             state.generation += 1
+            return true
         }
         log.i("E2E: clock offset \(seconds) s")
-        // TODO(L2): rebuild the library's sessions.
+        // Sessions see the new generation on their next request; idle connections close now.
+        if changed { sslManagers().forEach { $0.onPinsChanged() } }
     }
 
     /// Connection-address overrides `host:port` → `host:port`, applied on top
@@ -826,20 +1237,21 @@ extension PinVault {
     public func e2eSetRedirects(_ redirects: [String: String]) {
         var normalized: [String: String] = [:]
         for (from, to) in redirects { normalized[from.lowercased()] = to }
-        e2e.withLock { state in
-            guard state.redirects != normalized else { return }
+        let changed = e2e.withLock { state -> Bool in
+            guard state.redirects != normalized else { return false }
             state.redirects = normalized
             state.generation += 1
+            return true
         }
         log.i("E2E: \(normalized.count) redirect(s)")
-        // TODO(L2): rebuild the library's sessions.
+        if changed { sslManagers().forEach { $0.onPinsChanged() } }
     }
 
-    /// Runs the periodic job now (`cmd jobscheduler run -f` counterpart).
+    /// Runs the periodic job now (`cmd jobscheduler run -f` counterpart); nothing when none is scheduled.
     @_spi(PinVaultE2E)
     public func e2eRunPeriodicWorkNow() async {
         log.i("E2E: running the periodic work now")
-        await runPeriodicWork()
+        await scheduler.runNow()
     }
 
     /// The device id the library sends (`X-Device-Id`).
@@ -852,6 +1264,19 @@ extension PinVault {
     @_spi(PinVaultE2E)
     public func e2eSetScheduledTasksObserver(_ observer: (@Sendable () -> Void)?) {
         e2e.withLock { $0.scheduledTasksObserver = observer }
+    }
+}
+
+/// The Config API of static-pin mode: always the embedded pins, never a network request.
+private struct StaticPinsApi: CertificateConfigApi {
+    let pins: CertificateConfig
+
+    func healthCheck() async throws -> Bool { true }
+    func fetchConfig(currentVersion: Int) async throws -> CertificateConfig { pins }
+    func downloadHostClientCert(hostname: String) async throws -> Data { Data() }
+    func downloadVaultFile(endpoint: String) async throws -> Data { Data() }
+    func enroll(token: String?, deviceId: String?, deviceAlias: String?, deviceUid: String?) async throws -> EnrollmentResult {
+        EnrollmentResult(p12Bytes: Data())
     }
 }
 

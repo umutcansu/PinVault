@@ -40,6 +40,11 @@ final class URLSessionTransport: PinnedTransport, @unchecked Sendable {
     let trust: DynamicSSLManager.TrustMode
     let resolveOverrides: [String: String]
     let redirects: RedirectPolicy
+    /// Which requests ask for `forbidden-as-409` (see ``ForbiddenAsConflict``).
+    let forbiddenAs409: ForbiddenAsConflict.Policy
+
+    /// The configuration every session of this transport is a copy of.
+    var configuration: URLSessionConfiguration { template }
 
     private struct Entry {
         let session: URLSession
@@ -60,7 +65,8 @@ final class URLSessionTransport: PinnedTransport, @unchecked Sendable {
         configuration: URLSessionConfiguration,
         trust: DynamicSSLManager.TrustMode,
         resolveOverrides: [String: String],
-        redirects: RedirectPolicy
+        redirects: RedirectPolicy,
+        forbiddenAs409: ForbiddenAsConflict.Policy = .identityHosts
     ) {
         self.manager = manager
         self.template = configuration
@@ -69,6 +75,7 @@ final class URLSessionTransport: PinnedTransport, @unchecked Sendable {
         for (host, address) in resolveOverrides { normalized[host.lowercased()] = address }
         self.resolveOverrides = normalized
         self.redirects = redirects
+        self.forbiddenAs409 = forbiddenAs409
         manager.register(self)
     }
 
@@ -104,7 +111,7 @@ final class URLSessionTransport: PinnedTransport, @unchecked Sendable {
         var request = exchange.request
         var followUps = 0
         while true {
-            let response = try await sendOnce(request)
+            let response = try await sendOnce(request, limit: exchange.bodyLimit)
             guard let next = followUp(response, for: request) else { return response }
             followUps += 1
             if followUps > Self.maxFollowUps {
@@ -114,7 +121,18 @@ final class URLSessionTransport: PinnedTransport, @unchecked Sendable {
         }
     }
 
-    private func sendOnce(_ request: URLRequest) async throws -> PinnedResponse {
+    /// True when a request to the logical `host:port` asks for `forbidden-as-409`.
+    private func asksForbiddenAs409(scheme: String, host: String, port: Int) -> Bool {
+        switch forbiddenAs409 {
+        case .always:
+            return true
+        case .identityHosts:
+            guard scheme == "https", let provider = trust.configProvider else { return false }
+            return manager.clientIdentity(forHost: host, port: port, config: provider) != nil
+        }
+    }
+
+    private func sendOnce(_ request: URLRequest, limit: BoundedBody.Limit?) async throws -> PinnedResponse {
         guard let url = request.url, let scheme = url.scheme?.lowercased(), scheme == "https" || scheme == "http",
               let rawHost = url.host, !rawHost.isEmpty else {
             throw PinVaultError.illegalArgument("Expected an http or https URL with a host: \(request.url?.absoluteString ?? "nil")")
@@ -149,35 +167,49 @@ final class URLSessionTransport: PinnedTransport, @unchecked Sendable {
             wire.url = wireURL
             wire.setValue(Self.hostHeader(host, port, scheme: scheme), forHTTPHeaderField: "Host")
         }
+        if asksForbiddenAs409(scheme: scheme, host: host, port: port) {
+            let features = wire.value(forHTTPHeaderField: ForbiddenAsConflict.featuresHeader)
+            wire.setValue(ForbiddenAsConflict.adding(to: features), forHTTPHeaderField: ForbiddenAsConflict.featuresHeader)
+        }
+        let askedForbiddenAs409 = ForbiddenAsConflict.requested(wire.value(forHTTPHeaderField: ForbiddenAsConflict.featuresHeader))
 
-        let (data, response, taskIdentifier, error) = await run(entry.session, wire)
-        if let error {
-            if let failure = entry.delegate.takeFailure(taskIdentifier) { throw failure.thrown }
+        let outcome = await run(entry.session, entry.delegate, wire, limit: limit)
+        if let error = outcome.error {
+            if let failure = entry.delegate.takeFailure(outcome.taskIdentifier) { throw failure.thrown }
+            if let tooLarge = error as? ResponseTooLargeException { throw tooLarge }
             if Task.isCancelled { throw CancellationError() }
             throw Self.transportError(error)
         }
-        _ = entry.delegate.takeFailure(taskIdentifier)
-        guard let response else { throw PinVaultError.io(message: "No response for \(url.absoluteString)") }
+        _ = entry.delegate.takeFailure(outcome.taskIdentifier)
+        guard let response = outcome.response else { throw PinVaultError.io(message: "No response for \(url.absoluteString)") }
         var answer: URLResponse = response
-        if rewritten, let http = response as? HTTPURLResponse {
-            // The app sees the URL it asked for, not the address the connection went to.
-            var fields: [String: String] = [:]
-            for (name, value) in http.allHeaderFields {
-                if let name = name as? String { fields[name] = "\(value)" }
+        if let http = response as? HTTPURLResponse {
+            if askedForbiddenAs409, let forbidden = ForbiddenAsConflict.normalized(http, url: url) {
+                // The 403 the server sent as 409 (forbidden-as-409): the interceptors and the API client see a 403.
+                answer = forbidden
+            } else if rewritten {
+                // The app sees the URL it asked for, not the address the connection went to.
+                answer = HTTPURLResponse(
+                    url: url, statusCode: http.statusCode, httpVersion: nil, headerFields: ForbiddenAsConflict.headerFields(http)
+                ) ?? http
             }
-            answer = HTTPURLResponse(url: url, statusCode: http.statusCode, httpVersion: nil, headerFields: fields) ?? http
         }
-        return PinnedResponse(data: data ?? Data(), response: answer, presentedClientCertificate: entry.delegate.presentedClientCertificate)
+        return PinnedResponse(data: outcome.data, response: answer, presentedClientCertificate: entry.delegate.presentedClientCertificate)
     }
 
-    /// Runs one data task; the task identifier says where the delegate recorded a refusal.
-    private func run(_ session: URLSession, _ request: URLRequest) async -> (Data?, URLResponse?, Int, (any Error)?) {
+    /// Runs one data task whose body the delegate collects under `limit`; the
+    /// task identifier says where the delegate recorded a refusal.
+    private func run(
+        _ session: URLSession,
+        _ delegate: PinnedSessionDelegate,
+        _ request: URLRequest,
+        limit: BoundedBody.Limit?
+    ) async -> ResponseCollector.Outcome {
         let box = TaskBox()
         return await withTaskCancellationHandler {
-            await withCheckedContinuation { (continuation: CheckedContinuation<(Data?, URLResponse?, Int, (any Error)?), Never>) in
-                let task = session.dataTask(with: request) { data, response, error in
-                    continuation.resume(returning: (data, response, box.identifier, error))
-                }
+            await withCheckedContinuation { (continuation: CheckedContinuation<ResponseCollector.Outcome, Never>) in
+                let task = session.dataTask(with: request)
+                delegate.collect(task.taskIdentifier, ResponseCollector(limit: limit, continuation: continuation))
                 box.start(task)
             }
         } onCancel: {
@@ -307,6 +339,90 @@ final class URLSessionTransport: PinnedTransport, @unchecked Sendable {
         default:
             return .io(message: urlError.localizedDescription, cause: urlError)
         }
+    }
+}
+
+/// Collects one data task's response and body for ``URLSessionTransport``,
+/// fed by the session delegate (``PinnedSessionDelegate``) on its queue.
+///
+/// The body is read under the exchange's ``BoundedBody/Limit``: a declared
+/// length over the ceiling cancels the task at the response head, a counted
+/// one as soon as it passes the ceiling (``ResponseTooLargeException``); a body
+/// that is only wanted as a prefix stops the task once the prefix is in, and
+/// the answer is what was read.
+final class ResponseCollector: @unchecked Sendable {
+
+    struct Outcome: Sendable {
+        var data = Data()
+        var response: URLResponse?
+        var taskIdentifier = -1
+        var error: (any Error)?
+    }
+
+    private let lock = NSLock()
+    private var buffer: BoundedBuffer
+    private var response: URLResponse?
+    /// Why the collector stopped the task itself: a refusal, or nil for a complete prefix.
+    private var stoppedEarly = false
+    private var refusal: (any Error)?
+    private var continuation: CheckedContinuation<Outcome, Never>?
+
+    init(limit: BoundedBody.Limit?, continuation: CheckedContinuation<Outcome, Never>) {
+        self.buffer = BoundedBuffer(limit: limit)
+        self.continuation = continuation
+    }
+
+    /// The response head: false = cancel the task (refused, or no body wanted).
+    func receive(_ response: URLResponse) -> Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        self.response = response
+        let status = (response as? HTTPURLResponse)?.statusCode ?? 200
+        do {
+            try buffer.begin(statusCode: status, declaredLength: response.expectedContentLength)
+        } catch {
+            refusal = error
+            stoppedEarly = true
+            return false
+        }
+        if buffer.isComplete {
+            stoppedEarly = true
+            return false
+        }
+        return true
+    }
+
+    /// A piece of the body: false = cancel the task (refused, or the prefix is complete).
+    func receive(_ data: Data) -> Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        guard !stoppedEarly else { return false }
+        do {
+            try buffer.append(data)
+        } catch {
+            refusal = error
+            stoppedEarly = true
+            return false
+        }
+        if buffer.isComplete {
+            stoppedEarly = true
+            return false
+        }
+        return true
+    }
+
+    /// The task ended: resumes the waiting request exactly once.
+    func complete(taskIdentifier: Int, error: (any Error)?) {
+        lock.lock()
+        var outcome = Outcome(data: buffer.data, response: response, taskIdentifier: taskIdentifier, error: error)
+        if stoppedEarly {
+            // The collector cancelled the task itself: the refusal, or a complete prefix.
+            outcome.error = refusal
+        }
+        let continuation = self.continuation
+        self.continuation = nil
+        lock.unlock()
+        continuation?.resume(returning: outcome)
     }
 }
 

@@ -217,9 +217,16 @@ public final class PinVaultBackendReporter: Sendable {
     /// A session that accepts only `pins` for `hostname` — for reports to a
     /// backend the app already pins. Its handshakes raise no connection events.
     public static func pinnedClient(hostname: String, pins: [String]) -> PinnedSession {
-        // TODO(L2): DynamicSSLManager bootstrap client over [HostPin(hostname, pins)], 5 s timeouts.
-        PinnedSession(transport: UnavailableTransport(reason: "PinVaultBackendReporter.pinnedClient is not available yet"))
+        pinnedClient(hostname: hostname, pins: pins, manager: DynamicSSLManager())
     }
+
+    /// ``pinnedClient(hostname:pins:)`` over `manager` (tests inject their clock).
+    static func pinnedClient(hostname: String, pins: [String], manager: DynamicSSLManager) -> PinnedSession {
+        manager.buildBootstrapClient([HostPin(hostname: hostname, sha256: pins)], timeout: pinnedClientTimeout)
+    }
+
+    /// Connect / read timeout of ``pinnedClient(hostname:pins:)``, seconds.
+    static let pinnedClientTimeout: TimeInterval = 5
 }
 
 extension PinVaultBackendReporter {

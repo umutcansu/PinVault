@@ -7,9 +7,9 @@ import XCTest
 /// (`storeUnreadable`); the signature check fails closed for that attempt and
 /// works again once the Keychain does.
 ///
-/// Not ported yet (needs the updater, L2): "an update with an unreadable store
-/// applies nothing and works again afterwards" and "init with an unreadable
-/// store fails and applies no config".
+/// The two updater cases ("an update with an unreadable store applies nothing
+/// and works again afterwards", "init with an unreadable store fails and
+/// applies no config") are in `UpdaterStoreUnreadableTests`.
 final class StoreUnreadableTests: XCTestCase {
 
     private let cipher = FlakyCipher()

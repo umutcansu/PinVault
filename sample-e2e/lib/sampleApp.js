@@ -295,16 +295,27 @@ class SampleApp {
   // kalmasın (ana ekrana dönülmediğinde "vaultButton" UI dökümünde olmadığı
   // için ikinci çağrı düşüyordu).
 
+  /**
+   * iOS: during the navigation animation the main screen (and its statusView)
+   * is still in the UI tree; a result sequence read then belongs to the wrong
+   * screen. Waits (up to 5 s) until the main screen has left the tree.
+   */
+  async waitForMainGone() {
+    for (let i = 0; i < 25 && this.node('mtlsButton'); i++) await sleep(200);
+  }
+
   async openMtls() {
     if (this.node('enrollButton')) return;
     await this.tapButton('mtlsButton');
     await this.waitFor('enrollButton', () => true, { what: 'mTLS ekranı' });
+    await this.waitForMainGone();
   }
 
   async openVault() {
     if (this.node('fetchFlagsButton')) return;
     await this.tapButton('vaultButton');
     await this.waitFor('fetchFlagsButton', () => true, { what: 'Vault ekranı' });
+    await this.waitForMainGone();
   }
 
   async openStorage() {
@@ -318,6 +329,7 @@ class SampleApp {
     if (this.node('applyButton')) return;
     await this.tapButton('settingsButton');
     await this.waitFor('applyButton', () => true, { what: 'Ayarlar ekranı' });
+    await this.waitForMainGone();
   }
 
   async backToMain() {

@@ -90,6 +90,13 @@ internal class EnrollRefusalLog(
  */
 private val CLIENT_REPORT_IDENT_REGEX = Regex("^[A-Za-z0-9._:\\- ]{1,128}$")
 
+/**
+ * [CLIENT_REPORT_IDENT_REGEX] for the device fields, plus the comma of Apple's
+ * machine identifiers ("iPhone17,1"), which the iOS library reports as the model.
+ */
+private val CLIENT_REPORT_DEVICE_REGEX = Regex("^[A-Za-z0-9._:,\\- ]{1,128}$")
+private const val CLIENT_REPORT_DEVICE_RULE = "Letters, digits, spaces and . _ : , - only, at most 128."
+
 fun Route.certificateConfigRoutes(
     configApiId: String,
     store: PinConfigStore,
@@ -779,11 +786,11 @@ fun Route.certificateConfigRoutes(
         if (hostname.isNotBlank() && !CLIENT_REPORT_IDENT_REGEX.matches(hostname)) {
             return@post call.respondInvalidReport("hostname", "A host name of at most 128 characters.")
         }
-        if (manufacturer != null && !CLIENT_REPORT_IDENT_REGEX.matches(manufacturer)) {
-            return@post call.respondInvalidReport("deviceManufacturer", "Letters, digits, spaces and . _ : - only, at most 128.")
+        if (manufacturer != null && !CLIENT_REPORT_DEVICE_REGEX.matches(manufacturer)) {
+            return@post call.respondInvalidReport("deviceManufacturer", CLIENT_REPORT_DEVICE_RULE)
         }
-        if (model != null && !CLIENT_REPORT_IDENT_REGEX.matches(model)) {
-            return@post call.respondInvalidReport("deviceModel", "Letters, digits, spaces and . _ : - only, at most 128.")
+        if (model != null && !CLIENT_REPORT_DEVICE_REGEX.matches(model)) {
+            return@post call.respondInvalidReport("deviceModel", CLIENT_REPORT_DEVICE_RULE)
         }
         // The dashboard counts and colours by status: only what the library reports.
         if (status == null || status !in ConnectionHistoryStore.CLIENT_REPORT_STATUSES) {
@@ -833,11 +840,11 @@ fun Route.certificateConfigRoutes(
 
         // Same M-04 hardening as /client-report: device identifiers must look
         // like identifiers, not HTML — the admin UI renders them later.
-        if (manufacturer != null && !CLIENT_REPORT_IDENT_REGEX.matches(manufacturer)) {
-            return@post call.respondInvalidReport("deviceManufacturer", "Letters, digits, spaces and . _ : - only, at most 128.")
+        if (manufacturer != null && !CLIENT_REPORT_DEVICE_REGEX.matches(manufacturer)) {
+            return@post call.respondInvalidReport("deviceManufacturer", CLIENT_REPORT_DEVICE_RULE)
         }
-        if (model != null && !CLIENT_REPORT_IDENT_REGEX.matches(model)) {
-            return@post call.respondInvalidReport("deviceModel", "Letters, digits, spaces and . _ : - only, at most 128.")
+        if (model != null && !CLIENT_REPORT_DEVICE_REGEX.matches(model)) {
+            return@post call.respondInvalidReport("deviceModel", CLIENT_REPORT_DEVICE_RULE)
         }
         if (status == null || status !in ConnectionHistoryStore.CONFIG_UPDATE_STATUSES) {
             return@post call.respondInvalidReport("status", "One of ${ConnectionHistoryStore.CONFIG_UPDATE_STATUSES.joinToString()}.")
