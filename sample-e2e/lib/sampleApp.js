@@ -323,6 +323,7 @@ class SampleApp {
     await this.waitFor('storageView', (n) => n.text && !n.text.startsWith('Okunuyor'), {
       what: 'Depolama ekranı',
     });
+    await this.waitForMainGone();
   }
 
   async openSettings() {
