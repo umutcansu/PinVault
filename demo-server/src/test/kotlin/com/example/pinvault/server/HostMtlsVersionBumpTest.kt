@@ -200,6 +200,77 @@ class HostMtlsVersionBumpTest {
         assertEquals(before + 2, after.version, "a cert rotation must be visible to already-provisioned devices")
     }
 
+    // ── PUT: any change to the entry moves the version ──────────────────
+
+    private fun putBody(mtls: Boolean? = null, forceUpdate: Boolean? = null, clientCertVersion: Int? = null, pins: List<String> = pinsA) =
+        buildJsonObject {
+            put("version", 0)
+            put("forceUpdate", false)
+            putJsonArray("pins") {
+                addJsonObject {
+                    put("hostname", host)
+                    putJsonArray("sha256") { pins.forEach { add(it) } }
+                    mtls?.let { put("mtls", it) }
+                    forceUpdate?.let { put("forceUpdate", it) }
+                    clientCertVersion?.let { put("clientCertVersion", it) }
+                }
+            }
+        }.toString()
+
+    private suspend fun ApplicationTestBuilder.put(body: String): HttpResponse =
+        client.put("/api/v1/certificate-config") { contentType(ContentType.Application.Json); setBody(body) }
+
+    /** The host's version in the config a device downloads (unsigned view, same content as the envelope). */
+    private suspend fun ApplicationTestBuilder.servedVersion(): Int {
+        val served = Json.parseToJsonElement(client.get("/api/v1/certificate-config?signed=false").bodyAsText()).jsonObject
+        return served["pins"]!!.jsonArray.map { it.jsonObject }.first { it["hostname"]!!.jsonPrimitive.content == host }["version"]!!.jsonPrimitive.int
+    }
+
+    @Test
+    fun `PUT with the same pins and a changed mtls flag bumps the version and reaches devices`() = testApplication {
+        configureApp()
+        val before = storedPin().version
+        assertEquals(before, servedVersion())
+
+        val res = put(putBody(mtls = true))
+        assertEquals(HttpStatusCode.OK, res.status, res.bodyAsText())
+
+        val after = storedPin()
+        assertTrue(after.mtls)
+        assertEquals(pinsA, after.sha256, "the pins are what was sent")
+        assertEquals(before + 1, after.version, "a device holding version $before must see a change")
+        assertEquals(before + 1, servedVersion(), "the device download carries the new version")
+        val body = Json.parseToJsonElement(res.bodyAsText()).jsonObject
+        assertEquals(before + 1, body["pins"]!!.jsonArray.first().jsonObject["version"]!!.jsonPrimitive.int)
+
+        val latest = historyStore.getByHostname(host).first()
+        assertEquals("mtls_enabled", latest.event)
+        assertEquals(before + 1, latest.version)
+    }
+
+    @Test
+    fun `PUT bumps for forceUpdate and clientCertVersion alone, and not for an unchanged entry`() = testApplication {
+        configureApp()
+        val v0 = storedPin().version
+
+        assertEquals(HttpStatusCode.OK, put(putBody()).status)
+        assertEquals(v0, storedPin().version, "the same entry again: no bump")
+        assertTrue(historyStore.getByHostname(host).isEmpty(), "nothing to record")
+
+        assertEquals(HttpStatusCode.OK, put(putBody(forceUpdate = true)).status)
+        assertEquals(v0 + 1, storedPin().version, "forceUpdate is part of what the device caches")
+        assertEquals("host_updated", historyStore.getByHostname(host).first().event)
+
+        assertEquals(HttpStatusCode.OK, put(putBody(forceUpdate = true, clientCertVersion = 3)).status)
+        assertEquals(v0 + 2, storedPin().version, "a rotated host client certificate must reach devices")
+        assertEquals(3, storedPin().clientCertVersion)
+
+        // The flags sent back as they are, with new pins: one bump, recorded as a pin change.
+        assertEquals(HttpStatusCode.OK, put(putBody(forceUpdate = true, clientCertVersion = 3, pins = pinsB)).status)
+        assertEquals(v0 + 3, storedPin().version)
+        assertEquals("pins_updated", historyStore.getByHostname(host).first().event)
+    }
+
     // ── PUT scope parameter ─────────────────────────────────────────────
 
     @Test

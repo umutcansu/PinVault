@@ -1395,7 +1395,7 @@ async function loadMockStatus(hostname) {
     const running = data.mockServerRunning;
     const port = data.mockServerPort || 8443;
 
-    if (!data.keystorePath) {
+    if (!data.hasCertificate) {
       card.innerHTML = `<div class="card-title">${t('mockServerTitle')}</div><div class="empty-msg">${t('noCert')} — ${t('mockCertNeeded')}</div>`;
       return;
     }

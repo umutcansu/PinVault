@@ -99,9 +99,11 @@ info:
       length `411 length_required`. The cap also holds while reading: a body that
       declares nothing (HTTP/2 needs neither header) is read up to the cap and
       answered `413`. Vault uploads (admin) are capped at `VAULT_MAX_FILE_BYTES`
-      (default 50 MB, `413`), every other admin upload or JSON body that is read
-      into memory — keystores, certificates, and any body held for approval — at
-      `ADMIN_UPLOAD_MAX_BYTES` (default 1 MB, `413`).
+      (default 50 MB, `413`), every other admin request body — keystores,
+      certificates, every JSON body, and any body held for approval — at
+      `ADMIN_UPLOAD_MAX_BYTES` (default 1 MB, `413`): a declared length above the
+      cap is refused before the handler runs, a longer streamed body while it is
+      read, on the management listener and the Config API ports alike.
     * **Refusal limit.** Every refusal (`400`, `401`, `403`, `404`, `409`, `411`,
       `413`) on enrollment, E2E key registration, vault downloads and host client
       certificate downloads is counted per source address (an IPv6 address by its
@@ -510,16 +512,20 @@ paths:
 
         **Per-host versioning** is applied server-side before validation: a host
         absent from the current config is stored at `version: 1`, a host whose
-        `sha256` list changed gets `oldVersion + 1`, an unchanged host keeps its
-        version. Client-supplied `version` values are overwritten. Re-added hosts
-        continue their previous sequence (see `PinConfigStore.save`), so versions
-        never move backwards.
+        entry changed in anything but its version — the `sha256` list, `mtls`,
+        `forceUpdate` or `clientCertVersion` — gets `oldVersion + 1`, an unchanged
+        host keeps its version (devices detect changes by version, so a flag that
+        moved without one never reached them). Client-supplied `version` values
+        are overwritten. Re-added hosts continue their previous sequence (see
+        `PinConfigStore.save`), so versions never move backwards.
 
         **Validation** (`validatePinConfig`): every host needs a non-blank hostname
         and **at least 2 pins** (primary + backup); every pin must be 44 characters
         of Base64 decoding to exactly 32 bytes.
 
-        Writes `host_added` / `host_removed` / `pins_updated` history entries.
+        Writes `host_added` / `host_removed` / `pins_updated` history entries; a
+        kept host whose version moved for a flag alone gets `mtls_enabled` /
+        `mtls_disabled` or `host_updated`.
 
         The body replaces the scope **including every flag**: a client that edits one
         host must send the other hosts' `forceUpdate` / `mtls` /
@@ -582,8 +588,8 @@ paths:
       description: |
         Events recorded for this hostname: `cert_generated`, `cert_regenerated`,
         `cert_uploaded`, `cert_fetched`, `fetched_from_url`, `host_added`,
-        `host_removed`, `pins_updated`, `force_update`, `mtls_enabled`,
-        `mtls_disabled`, `client_cert_uploaded`.
+        `host_removed`, `pins_updated`, `host_updated`, `force_update`,
+        `mtls_enabled`, `mtls_disabled`, `client_cert_uploaded`.
 
         The lookup is by hostname across all scopes (`getByHostname`), not scoped to
         the listener's Config API.
@@ -949,7 +955,7 @@ paths:
           `RECOVERY_PUBLIC_KEYS` over the exact `payload` string;
         * `payload` is `{"type":"pinvault-signing-keys","version":N,"keys":[…],"requiredSignatures":n}`
           with `version` above the current set's, parseable EC keys, no recovery key
-          doubling as a signing key, and `requiredSignatures` ≤ number of keys;
+          doubling as a signing key, and 1 ≤ `requiredSignatures` ≤ number of keys;
         * enough of this server's active signers are listed to satisfy
           `requiredSignatures` — otherwise every device that applied the set would
           refuse every config (`409`).
@@ -3658,7 +3664,8 @@ paths:
         TLS listeners too. Audited as `client_cert_revoked`.
 
         Not behind the approval gate (`PIN_CHANGE_APPROVALS`): an emergency
-        revocation takes effect at once. An unknown id still returns `200`.
+        revocation takes effect at once. An unknown id — no certificate row and
+        no identity — is `404 client_cert_not_found`.
 
         Registered on: **management** only.
       security:
@@ -3692,6 +3699,11 @@ paths:
                   userAuthKeysDeleted: { type: integer }
         '401': { $ref: '#/components/responses/MissingApiKey' }
         '403': { $ref: '#/components/responses/InvalidApiKey' }
+        '404':
+          description: No client certificate or identity with this id (`client_cert_not_found`).
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
 
   /api/v1/client-certs/{id}/devices:
     get:
@@ -6226,7 +6238,8 @@ components:
     AdminBodyTooLarge:
       description: >
         The body is larger than `ADMIN_UPLOAD_MAX_BYTES` (default 1 MB; keystores,
-        certificates and JSON bodies of admin routes). Refused while it is read.
+        certificates and every JSON body of an admin route). Refused from the
+        declared length before the handler runs, or while it is read.
       content:
         application/json:
           schema: { $ref: '#/components/schemas/Error' }
@@ -6428,6 +6441,7 @@ components:
             - host_added
             - host_removed
             - pins_updated
+            - host_updated
             - force_update
             - mtls_enabled
             - mtls_disabled
@@ -6455,7 +6469,9 @@ components:
       type: object
       properties:
         hostname: { type: string }
-        keystorePath: { type: string, nullable: true }
+        hasCertificate:
+          type: boolean
+          description: A keystore for the host is installed. (Replaces `keystorePath`, which named a file on the server.)
         certValidUntil: { type: string, nullable: true, format: date-time }
         mockServerRunning: { type: boolean }
         mockServerPort:

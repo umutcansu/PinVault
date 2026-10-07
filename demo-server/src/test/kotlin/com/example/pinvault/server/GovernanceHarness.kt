@@ -6,6 +6,7 @@ import com.example.pinvault.server.plugin.AdminAudit
 import com.example.pinvault.server.plugin.AdminRegistry
 import com.example.pinvault.server.plugin.ApiKeyAuth
 import com.example.pinvault.server.plugin.ApprovalGate
+import com.example.pinvault.server.plugin.installAdminBodyLimit
 import com.example.pinvault.server.route.ServerTlsPins
 import com.example.pinvault.server.route.adminVaultRoutes
 import com.example.pinvault.server.route.certificateConfigRoutes
@@ -95,6 +96,7 @@ class GovernanceHarness(
     private val server = embeddedServer(Netty, port = port, host = "127.0.0.1") {
         install(ContentNegotiation) { json(Json { ignoreUnknownKeys = true; encodeDefaults = true }) }
         install(ApiKeyAuth) { registry = admins(); allowAnonymous = false }
+        installAdminBodyLimit(adminBodyMax, vaultMax)
         install(AdminAudit) { this.audit = this@GovernanceHarness.audit }
         install(ApprovalGate) {
             this.approvals = this@GovernanceHarness.approvals

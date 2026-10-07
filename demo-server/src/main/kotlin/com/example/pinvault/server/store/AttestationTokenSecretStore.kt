@@ -1,6 +1,7 @@
 package com.example.pinvault.server.store
 
 import com.example.pinvault.server.service.VaultAtRestCipher
+import com.example.pinvault.server.service.VaultKeyMismatchException
 import java.security.SecureRandom
 import java.time.Instant
 import java.time.LocalDate
@@ -119,10 +120,68 @@ class AttestationTokenSecretStore(
         }
     }
 
+    /**
+     * The start-up pass (Main), as VaultFileStore makes for vault files: every
+     * secret must open with `VAULT_AT_REST_PASSWORD`. One that opens only with
+     * a previous password (`VAULT_AT_REST_PASSWORD_PREVIOUS`, the demo
+     * password) or sits in the clear is re-sealed under the current one; one
+     * that nothing opens, or any sealed one when there is no cipher, stops
+     * the start with an [IllegalStateException] naming
+     * `VAULT_AT_REST_PASSWORD` — not a server that signs and verifies tokens
+     * with bytes that are not the secret.
+     */
+    @Synchronized
+    fun checkReadable() {
+        if (cipher == null) { all(); return }
+        db.connection().use { conn ->
+            val rows = conn.prepareStatement("SELECT kid, secret FROM attestation_token_secrets").use { stmt ->
+                val rs = stmt.executeQuery()
+                buildList { while (rs.next()) add(rs.getString(1) to rs.getBytes(2)) }
+            }
+            for ((kid, stored) in rows) {
+                val plaintext: ByteArray = if (!VaultAtRestCipher.isEncrypted(stored)) stored else when (val opened = cipher.open(stored)) {
+                    VaultAtRestCipher.Opened.Current -> continue
+                    is VaultAtRestCipher.Opened.Previous -> opened.plaintext
+                    VaultAtRestCipher.Opened.Unreadable -> throw IllegalStateException(
+                        "PinVault-Token secret $kid does not open with VAULT_AT_REST_PASSWORD or VAULT_AT_REST_PASSWORD_PREVIOUS: " +
+                            "it was sealed under another password. Set the password it was sealed with, or delete the secret " +
+                            "(every token signed with it is then refused)."
+                    )
+                }
+                conn.prepareStatement("UPDATE attestation_token_secrets SET secret = ? WHERE kid = ?").use { stmt ->
+                    stmt.setBytes(1, cipher.encrypt(plaintext))
+                    stmt.setString(2, kid)
+                    stmt.executeUpdate()
+                }
+                println("AttestationTokenSecretStore: secret $kid re-sealed under VAULT_AT_REST_PASSWORD")
+            }
+            cached = null
+        }
+    }
+
     private fun seal(secret: ByteArray): ByteArray = cipher?.encrypt(secret) ?: secret
 
-    private fun open(stored: ByteArray): ByteArray =
-        if (cipher != null && VaultAtRestCipher.isEncrypted(stored)) cipher.decrypt(stored) else stored
+    /**
+     * A sealed value needs the cipher: without one the ciphertext used to be
+     * handed back as if it were the secret, and tokens were silently signed
+     * and verified with it. A value in the clear (written before the secrets
+     * were sealed, or by a store without a cipher) is read as it is.
+     */
+    private fun open(stored: ByteArray): ByteArray = when {
+        !VaultAtRestCipher.isEncrypted(stored) -> stored
+        cipher == null -> throw IllegalStateException(
+            "A PinVault-Token secret is sealed under VAULT_AT_REST_PASSWORD, but no password is configured to open it. " +
+                "Set VAULT_AT_REST_PASSWORD to the one the secrets were sealed with."
+        )
+        else -> try {
+            cipher.decrypt(stored)
+        } catch (e: VaultKeyMismatchException) {
+            throw IllegalStateException(
+                "A PinVault-Token secret does not open with VAULT_AT_REST_PASSWORD: it was sealed under another password " +
+                    "(a restart with the old one in VAULT_AT_REST_PASSWORD_PREVIOUS re-seals it).", e
+            )
+        }
+    }
 
     companion object {
         private const val CACHE_MS = 5_000L

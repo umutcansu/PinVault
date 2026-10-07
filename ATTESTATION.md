@@ -318,8 +318,9 @@ payload { "iss": "pinvault", "sub": "<deviceId>", "aud": "<configApiId>",
   `GET /api/v1/attestation/token-secrets` returns them (requester-run under
   two-person approval, like other secret reads); `POST …/rotate` makes a new
   active one. Backends load all listed secrets keyed by `kid`.
-- A backend verifies: signature with the secret named by `kid`, `exp` (with ≤
-  60 s leeway), `aud` is its Config API id, optionally `anno`. Nothing else is
+- A backend verifies: signature with the secret named by `kid`, `iss` is
+  `pinvault`, `exp` (with ≤ 60 s leeway), `aud` is its Config API id,
+  optionally `anno`. Nothing else is
   needed; there is no call back to the PinVault server on the request path.
 - Reference verifier: `PinVaultTokenAuth` Ktor plugin (`plugin/PinVaultTokenAuth.kt`);
   the mock TLS/mTLS hosts install it when `MOCK_HOST_REQUIRE_TOKEN=true`.

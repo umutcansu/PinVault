@@ -89,8 +89,8 @@ object PinVaultToken {
 
     /**
      * Verifies [token]: three segments, `alg` HS256, a `kid` in [secrets],
-     * the signature, `exp` (with [leewaySeconds]) and, when [audience] is
-     * given, `aud`. Nothing is believed before the signature checks out.
+     * the signature, `iss`, `exp` (with [leewaySeconds]) and, when [audience]
+     * is given, `aud`. Nothing is believed before the signature checks out.
      */
     fun verify(
         token: String,
@@ -108,6 +108,8 @@ object PinVaultToken {
         val signature = try { Base64.getUrlDecoder().decode(parts[2]) } catch (_: IllegalArgumentException) { return Result.Invalid("malformed") }
         if (!MessageDigest.isEqual(hmac(secret, parts[0] + "." + parts[1]), signature)) return Result.Invalid("signature")
         val payload = decodeObject(parts[1]) ?: return Result.Invalid("malformed")
+        // Signed by a secret of ours, but not issued as one of our tokens.
+        if (string(payload, "iss") != ISSUER) return Result.Invalid("issuer")
         val exp = (payload["exp"] as? JsonPrimitive)?.longOrNull ?: return Result.Invalid("malformed")
         val iat = (payload["iat"] as? JsonPrimitive)?.longOrNull ?: 0L
         val sub = string(payload, "sub") ?: string(payload, "did") ?: return Result.Invalid("malformed")

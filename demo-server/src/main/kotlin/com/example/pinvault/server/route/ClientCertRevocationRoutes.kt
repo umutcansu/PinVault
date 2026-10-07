@@ -61,7 +61,14 @@ fun Route.clientCertRevocationRoutes(
             refreshMtlsTrust("certificate revoked: $id", true)
         }
         val cleanup = revocation.cleanup
-        if (revocation.found) {
+        // Nothing was revoked: no certificate row and no identity under this id.
+        if (!revocation.found) {
+            return@delete call.respondText(
+                """{"error":"client_cert_not_found","message":"No client certificate or identity with this id."}""",
+                ContentType.Application.Json, HttpStatusCode.NotFound
+            )
+        }
+        run {
             audit?.record(
                 "client_cert_revoked",
                 "Client id $id revoked" + (if (cleanup.isEmpty) "" else

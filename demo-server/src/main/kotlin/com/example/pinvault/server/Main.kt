@@ -1,5 +1,6 @@
 package com.example.pinvault.server
 
+import com.example.pinvault.server.plugin.installAdminBodyLimit
 import com.example.pinvault.server.model.HostActionResponse
 import com.example.pinvault.server.model.HostPin
 import com.example.pinvault.server.model.PinConfigHistoryEntry
@@ -48,7 +49,6 @@ import io.ktor.server.engine.*
 import io.ktor.server.netty.*
 import io.ktor.server.plugins.calllogging.*
 import io.ktor.server.plugins.contentnegotiation.*
-import io.ktor.server.plugins.defaultheaders.*
 import io.ktor.server.plugins.origin
 import io.ktor.server.plugins.statuspages.*
 import io.ktor.server.request.*
@@ -549,6 +549,9 @@ private fun startServer() {
     val attestedDeviceStore = com.example.pinvault.server.store.AttestedDeviceStore(db)
     // The HS256 secrets of PinVault-Token, encrypted at rest; the first one is made on first use.
     val attestationTokenSecretStore = com.example.pinvault.server.store.AttestationTokenSecretStore(db, atRestCipher)
+    // Sealed secrets the password at hand cannot open stop the start here, like
+    // the other secret checks: not a server that signs tokens with ciphertext.
+    attestationTokenSecretStore.checkReadable()
     // Repeated rejections of a device with the same verdict, and repeated key mismatches: summarised per minute.
     val attestationRejections = com.example.pinvault.server.service.AuthFailureRecorder(
         auditLog, action = "attestation_rejected", what = "Attestation rejected",
@@ -683,6 +686,8 @@ private fun startServer() {
         }
         // Device-facing bodies are a few hundred bytes; refuse big ones unread.
         install(com.example.pinvault.server.plugin.ClientBodyLimit)
+        // ...and the admin routes served here (CONFIG_API_ADMIN_ROUTES) have the admin cap.
+        installAdminBodyLimit(adminUploadMaxBytes, vaultMaxFileBytes)
         // An iPhone cannot read a 403 on a connection that asked for its certificate.
         if (mode == "mtls") install(com.example.pinvault.server.plugin.ForbiddenAsConflict)
         // The handshake trusts the client CA, revocation is checked here, per request.
@@ -914,23 +919,8 @@ private fun startServer() {
                 ignoreUnknownKeys = true
             })
         }
-        // Security headers (M-05). CSP is intentionally permissive on
-        // 'style-src' because the admin UI inlines a few utility styles;
-        // 'script-src self' still kills the H-02 stored-XSS payload class.
-        // Markup that still slips into the page can neither submit a form
-        // anywhere nor re-point relative URLs (form-action, base-uri); every
-        // dashboard form is handled in script.
-        install(DefaultHeaders) {
-            header("X-Content-Type-Options", "nosniff")
-            header("X-Frame-Options", "DENY")
-            header("Referrer-Policy", "no-referrer")
-            header(
-                "Content-Security-Policy",
-                "default-src 'self'; script-src 'self'; " +
-                "style-src 'self' 'unsafe-inline'; img-src 'self' data:; " +
-                "connect-src 'self'; frame-ancestors 'none'; form-action 'none'; base-uri 'none'"
-            )
-        }
+        // Security headers (M-05), no Server header, HSTS on the TLS port (SecurityHeaders.kt).
+        install(com.example.pinvault.server.plugin.SecurityHeaders)
         install(CallLogging)
         // Before anything that decides on the path (auth allowlist, approval gate).
         install(com.example.pinvault.server.plugin.EncodedPathGuard)
@@ -943,6 +933,8 @@ private fun startServer() {
             refusals = refusalCutOffs
         }
         install(com.example.pinvault.server.plugin.ClientBodyLimit)
+        // Admin JSON bodies and uploads: ADMIN_UPLOAD_MAX_BYTES; vault files VAULT_MAX_FILE_BYTES.
+        installAdminBodyLimit(adminUploadMaxBytes, vaultMaxFileBytes)
         // Other pages in an admin's browser: cross-site writes, form posts, and —
         // without admin keys — DNS rebinding (the Host must name this machine).
         install(com.example.pinvault.server.plugin.AdminBrowserGuard) {
