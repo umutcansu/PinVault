@@ -434,9 +434,10 @@ final class AppModel: ObservableObject {
     /// simülatörde desteklenmez, sağlayıcı nil döner.
     private static func addAppAttest(_ builder: PinVaultConfig.Builder) {
         guard SampleHostConfig.hostAttestation else { return }
-        // TODO(api): AppAttestVerdictProvider (PORTING.md §6, L5) henüz kütüphanede yok;
-        // gelince: builder.integrityVerdictProvider(AppAttestVerdictProvider())
-        _ = builder
+        // Apple App Attest: raporun ikinci görüşü. Uygulama sağlayıcı vermese de
+        // kütüphane bunu kullanır; burada açıkça yazılı. Simülatörde App Attest
+        // yoktur: rapor o zaman doğrulama sonucu olmadan gider.
+        builder.integrityVerdictProvider(AppAttestVerdictProvider())
     }
 
     private static func addMtlsBlock(

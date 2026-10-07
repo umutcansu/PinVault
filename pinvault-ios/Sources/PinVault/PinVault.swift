@@ -62,6 +62,10 @@ public final class PinVault: @unchecked Sendable {
         var clients: [String: ConfigApiClient] = [:]
         var clientOrder: [String] = []
         var primary: Primary?
+        /// The vault files of the started config (L4).
+        var vault: VaultService?
+        /// The attestation of the started config's blocks (L5).
+        var attestation: AttestationCoordinator?
         var updateListener: OnUpdateListener?
         var fileUpdateListener: OnFileUpdateListener?
         var backgroundTaskRegistered = false
@@ -103,6 +107,41 @@ public final class PinVault: @unchecked Sendable {
         set { retrySleepBox.set(newValue) }
     }
     private let retrySleepBox = Locked<(@Sendable (Int64) async -> Void)?>(nil)
+
+    /// Where enrolled credentials live and identity keys are made (L3): the
+    /// Keychain and Secure Enclave; tests use in-memory keys in their own stores.
+    var enrollmentStorage: EnrollmentService.Storage {
+        get { enrollmentStorageBox.get() }
+        set { enrollmentStorageBox.set(newValue) }
+    }
+    private let enrollmentStorageBox = Locked(EnrollmentService.Storage.shared)
+
+    /// The App Attest attestation of a registration for a client data hash
+    /// (enrollment requests, the screen-lock key): `AppAttestBinder`; nil
+    /// where none is made (the simulator answers nil anyway). Tests set nil.
+    var appAttestationSource: EnrollmentAppAttestation.Source? {
+        get { appAttestationBox.get() }
+        set { appAttestationBox.set(newValue) }
+    }
+    private let appAttestationBox = Locked<EnrollmentAppAttestation.Source?>({ await AppAttestBinder.attestation(clientDataHash: $0) })
+
+    /// What shows the passcode / biometrics prompt of `userAuth` files (tests swap it).
+    var userAuthEvaluator: any UserAuthEvaluator {
+        get { userAuthEvaluatorBox.get() }
+        set { userAuthEvaluatorBox.set(newValue) }
+    }
+    private let userAuthEvaluatorBox = Locked<any UserAuthEvaluator>(SystemUserAuthEvaluator())
+
+    /// The enrollment half of the façade, over ``enrollmentStorage``.
+    var enrollment: EnrollmentService {
+        EnrollmentService(storage: enrollmentStorage, appAttestation: appAttestationSource)
+    }
+
+    /// The vault files of the started config; nil before start.
+    var vaultService: VaultService? { state.withLock { $0.initialized ? $0.vault : nil } }
+
+    /// The attestation of the started config; nil before start.
+    var attestationCoordinator: AttestationCoordinator? { state.withLock { $0.initialized ? $0.attestation : nil } }
 
     private let schedulerBox = Locked<PeriodicUpdateScheduler?>(nil)
 
@@ -234,8 +273,9 @@ public final class PinVault: @unchecked Sendable {
             return false
         }
         let environment = storeEnvironment
-        // Store files written and Keychain keys made from now on follow the config.
-        environment.requireUnlockedDevice = config.requireUnlockedDevice
+        // Store files written and Keychain keys made from now on follow the config
+        // (requireUnlockedDevice / requireHardwareBackedKeys).
+        enrollmentStorage.options.apply(config, stores: environment)
 
         var clients: [String: ConfigApiClient] = [:]
         let defaultId = config.defaultConfigApi?.id
@@ -295,13 +335,57 @@ public final class PinVault: @unchecked Sendable {
             )
         }
 
-        // TODO(L4): vault file storage providers, device / user-auth keys, the vault guard and router.
+        let byId = clients
+        let ordered = config.orderedConfigApis.compactMap { byId[$0.id] }
+
+        // Attestation (L5): one manager per block with attestation(); every
+        // session of that block carries its token from now on.
+        let storage = enrollmentStorage
+        let attestation = AttestationCoordinator(
+            config: config,
+            api: { byId[$0.id]?.api },
+            identityKey: { block in storage.identityKeys(block.clientCertLabel) },
+            deviceId: { DeviceIdentity.deviceId() },
+            clock: LibraryClock.wallMillis,
+            onEvent: { [weak self] event in self?.dispatchEvent(event) },
+            currentConfigVersion: { id in (try? byId[id]?.configStore.getCurrentVersion()) ?? 0 },
+            currentIssuedAt: { id in (try? byId[id]?.configStore.getCurrentIssuedAt()) ?? 0 },
+            liveConfig: { id in byId[id]?.clientProvider.currentConfig },
+            applyConfig: { id, signed in
+                guard let client = byId[id] else { return .failed(reason: "No Config API block '\(id)'") }
+                return await client.updater.applySigned(signed)
+            },
+            // Reported like a recovery update: the app's update listener and the ConfigUpdate event.
+            onConfigApplied: { [weak self] _, result in
+                guard let self else { return }
+                Task { await self.notifyUpdateResult(result) }
+            }
+        )
+        for manager in attestation.managers { byId[manager.block.id]?.attach(attestation: manager) }
+
+        // Vault files (L4): storage per file, the router over the blocks, the
+        // read-time guard, the device keys (made now when a file needs them).
+        let vault = try VaultService.make(
+            config: config,
+            clients: ordered.map { VaultFileRouter.Client(api: $0.api, block: $0.block, signatureTrust: $0.signatureTrust) },
+            now: { id in byId[id]?.trustedClock.now() ?? LibraryClock.wallMillis() },
+            environmentRefusal: { [weak self] operation in self?.environmentRefusal(config, operation) },
+            onFileRemoved: { [weak self] key, result in
+                guard let self else { return }
+                Task { await self.notifyFileUpdate(key, result) }
+            },
+            environment: environment,
+            evaluator: userAuthEvaluator,
+            appAttestation: appAttestationSource
+        )
 
         return state.withLock { state -> Bool in
             if state.initialized { return false }
             state.clients = clients
             state.clientOrder = config.orderedConfigApis.map(\.id)
             state.primary = primary
+            state.vault = vault
+            state.attestation = attestation
             state.initialized = true
             return true
         }
@@ -358,15 +442,11 @@ public final class PinVault: @unchecked Sendable {
 
         // Attesting blocks attest once, now that the stored config is loaded,
         // and keep re-attesting in the background. Never fails start.
-        for client in clients {
-            guard let attestation = client.attestation else { continue }
-            let status = await attestation.attestNow()
-            log.d("ConfigApi[\(client.block.id)] attestation at init: \(status.result.rawValue)")
-            attestation.start()
-        }
+        await state.withLock { $0.attestation }?.attestAtStart()
 
-        // TODO(L4): register the device public key (end_to_end files) and the
-        // user-auth key on every Config API that serves such files.
+        // The device public key (end_to_end files) and the user-auth key go to
+        // every Config API that serves such files.
+        await state.withLock { $0.vault }?.registerKeysAtStart()
 
         // Files past their offline lifetime go now (wipeWhenStale).
         await wipeStaleVaultFiles()
@@ -397,9 +477,7 @@ public final class PinVault: @unchecked Sendable {
     /// Where this device's mTLS identity key lives (Secure Enclave, software),
     /// or nil when no identity key exists yet. Local, no network.
     public func identityKeySecurityLevel(label: String? = nil) -> KeySecurityLevel? {
-        // TODO(L3): identityKeyFactory(label ?? defaultCertLabel()) → securityLevel() when the key exists.
-        _ = label
-        return nil
+        enrollment.identityKeySecurityLevel(label: label ?? defaultCertLabel())
     }
 
     /// Diagnostic logging: PinVault's debug and info lines are written at
@@ -469,10 +547,7 @@ public final class PinVault: @unchecked Sendable {
     /// attests. For sessions the app owns (``applyTo(_:)``, ``session(settings:)``);
     /// each block's own sessions carry their block's interceptor.
     private func attestationTokenInterceptor() -> AttestationTokenInterceptor? {
-        guard configApiClients.contains(where: { $0.attestation != nil }) else { return nil }
-        return AttestationTokenInterceptor(sources: { [weak self] in
-            self?.configApiClients.compactMap { $0.attestation } ?? []
-        })
+        attestationCoordinator?.tokenInterceptor()
     }
 
     // MARK: Attestation (ATTESTATION.md)
@@ -484,11 +559,10 @@ public final class PinVault: @unchecked Sendable {
     ///   API or an unknown id; `FAILED` before start.
     public func attestNow(configApiId: String? = nil) async -> AttestationStatus {
         let id = configApiId ?? config?.defaultConfigApi?.id ?? ""
-        guard isInitialized else {
+        guard isInitialized, let coordinator = attestationCoordinator else {
             return AttestationStatus(configApiId: id, result: .failed, lastError: "PinVault not initialized")
         }
-        guard let attestation = configApiClient(id)?.attestation else { return notAttesting(id) }
-        return await attestation.attestNow()
+        return await coordinator.attestNow(configApiId: id)
     }
 
     /// The `PinVault-Token` for requests sent through a client of the app's
@@ -497,18 +571,8 @@ public final class PinVault: @unchecked Sendable {
     /// enough life is held.
     /// - Parameter host: a host name (optionally `host:port`); nil = the default block.
     public func fetchAttestationToken(host: String? = nil) async -> AttestationTokenResult {
-        guard isInitialized else { return .failed(message: "PinVault not initialized") }
-        let attestation: (any BlockAttestation)?
-        if let host {
-            let parts = host.split(separator: ":", maxSplits: 1, omittingEmptySubsequences: false)
-            let name = parts[0].trimmingCharacters(in: .whitespaces)
-            let port = parts.count > 1 ? Int(parts[1]) ?? -1 : -1
-            attestation = configApiClients.compactMap(\.attestation).first { $0.handlesHost(name, port: port) }
-        } else {
-            attestation = config?.defaultConfigApi.flatMap { configApiClient($0.id)?.attestation }
-        }
-        guard let attestation else { return .unsupported }
-        return await attestation.fetchToken()
+        guard isInitialized, let coordinator = attestationCoordinator else { return .failed(message: "PinVault not initialized") }
+        return await coordinator.fetchAttestationToken(host: host)
     }
 
     /// The last attestation outcome of a block, from memory. `NOT_ATTESTED`
@@ -516,10 +580,10 @@ public final class PinVault: @unchecked Sendable {
     /// or an unknown id; `FAILED` with "PinVault not initialized" before start.
     public func attestationStatus(configApiId: String? = nil) -> AttestationStatus {
         let id = configApiId ?? config?.defaultConfigApi?.id ?? ""
-        guard isInitialized else {
+        guard isInitialized, let coordinator = attestationCoordinator else {
             return AttestationStatus(configApiId: id, result: .failed, lastError: "PinVault not initialized")
         }
-        return configApiClient(id)?.attestation?.status ?? notAttesting(id)
+        return coordinator.attestationStatus(configApiId: id)
     }
 
     /// The request header the attestation token travels in: `PinVault-Token`.
@@ -540,13 +604,8 @@ public final class PinVault: @unchecked Sendable {
 
     /// Every attesting block attests, for the periodic job. Never throws.
     func attestAll() async {
-        guard isInitialized else { return }
-        for client in configApiClients {
-            guard let attestation = client.attestation else { continue }
-            _ = await attestation.attestNow()
-            // A process the job woke runs no start: the loop starts here.
-            attestation.start()
-        }
+        // A process the job woke runs no start: the loops start here.
+        await attestationCoordinator?.attestAll()
     }
 
     // MARK: Updates
@@ -703,9 +762,7 @@ public final class PinVault: @unchecked Sendable {
     public func autoEnrollForResult() async -> ClientCertEnrollmentResult {
         // SECURITY NOTE (M-02): identifierForVendor is a soft identifier; treat the
         // enrollment as a convenience credential unless the server enforces an integrity verdict.
-        let vendorId = DeviceIdentity.deviceId()
-        log.d("Auto-enrollment: device id available: \(vendorId != nil)")
-        return await enrollInternal(token: nil, deviceId: vendorId ?? "unknown-device", label: nil)
+        await enrollInternal(token: nil, deviceId: enrollment.autoEnrollDeviceId(), label: nil)
     }
 
     /// Enrolls before ``start(config:)`` — the first start of an app whose
@@ -731,61 +788,59 @@ public final class PinVault: @unchecked Sendable {
 
     /// ``autoEnroll(config:)`` with the reason when it does not work.
     public func autoEnrollForResult(config: PinVaultConfig) async -> ClientCertEnrollmentResult {
-        await enrollBeforeStart(config: config, token: nil, deviceId: DeviceIdentity.deviceId() ?? "unknown-device")
+        await enrollBeforeStart(config: config, token: nil, deviceId: enrollment.autoEnrollDeviceId())
     }
 
     /// Whether the default block of `config` has an enrolled client certificate. Usable before start.
     public func isEnrolled(config: PinVaultConfig) -> Bool {
-        // TODO(L3): ClientCertSecureStore.exists(config.defaultConfigApi?.clientCertLabel ?? default)
-        _ = config
-        return false
+        enrollment.isEnrolled(config: config)
     }
 
     /// Whether a client certificate is enrolled under `label` (nil = the default block's label).
     public func isEnrolled(label: String? = nil) -> Bool {
-        // TODO(L3): ClientCertSecureStore.exists(label ?? defaultCertLabel())
-        _ = label
-        return false
+        enrollment.isEnrolled(label: label ?? defaultCertLabel())
     }
 
     /// The verification code of this device's enrollment key
     /// (`4F7K-2QXM-9D3T-H6WP`, 80 bits of the key's SHA-256): show it on the
     /// "waiting for approval" screen. Nil without an enrollment key.
     public func enrollmentVerificationCode(label: String? = nil) -> String? {
-        // TODO(L3): VerificationCode.of(identityKey(label ?? defaultCertLabel()).publicKey())
-        _ = label
-        return nil
+        enrollment.enrollmentVerificationCode(label: label ?? defaultCertLabel())
     }
 
     /// Whether an enrollment waits for an administrator's approval and no certificate is stored yet.
     public func isEnrollmentPending(label: String? = nil) -> Bool {
-        // TODO(L3): !store.exists(label) && store.loadPendingRequest(label) != nil
-        _ = label
-        return false
+        enrollment.isEnrollmentPending(label: label ?? defaultCertLabel())
     }
 
     /// ``isEnrollmentPending(label:)`` for the default block of `config`; usable before start.
     public func isEnrollmentPending(config: PinVaultConfig) -> Bool {
-        isEnrollmentPending(label: config.defaultConfigApi?.clientCertLabel ?? PinVaultConfig.defaultCertLabel)
+        enrollment.isEnrollmentPending(config: config)
     }
 
     /// Asks whether a device that was told to wait has been approved:
     /// `enrolled` once it has, `pending` while it waits, `refused(.rejected)`
     /// when turned away. Start and the periodic update ask on their own.
     public func checkPendingEnrollment() async -> ClientCertEnrollmentResult {
-        // TODO(L3): pendingCheckShortcut(defaultCertLabel()) then enrollInternal(token: nil, deviceId: nil)
-        await enrollInternal(token: nil, deviceId: nil, label: nil)
+        let service = enrollment
+        guard let config, let block = config.defaultConfigApi else {
+            // Nothing to ask through: only the local answers (Kotlin's shortcut, then "not initialized").
+            let label = defaultCertLabel()
+            if service.isEnrolled(label: label) { return .enrolled(alreadyEnrolled: true) }
+            if !service.isEnrollmentPending(label: label) { return .failed(message: "No enrollment is waiting for approval") }
+            return await enrollInternal(token: nil, deviceId: nil, label: nil)
+        }
+        return await service.checkPendingEnrollment(target: enrollmentTarget(config, block, refusal: true))
     }
 
     /// ``checkPendingEnrollment()`` for the default block of `config`; usable before start.
     public func checkPendingEnrollment(config: PinVaultConfig) async -> ClientCertEnrollmentResult {
         if isInitialized { return await checkPendingEnrollment() }
-        guard config.defaultConfigApi != nil else { return Self.noConfigApiBlock }
-        // TODO(L3): pendingCheckShortcut(block.clientCertLabel)
-        return await enrollBeforeStart(config: config, token: nil, deviceId: nil)
+        guard let block = config.defaultConfigApi else { return Self.noConfigApiBlock }
+        return await enrollment.checkPendingEnrollmentBeforeStart(target: standaloneTarget(config, block))
     }
 
-    static let noConfigApiBlock = ClientCertEnrollmentResult.failed(message: "The config has no Config API block")
+    static let noConfigApiBlock = EnrollmentService.noConfigApiBlock
 
     private func enrollBeforeStart(config: PinVaultConfig, token: String?, deviceId: String?) async -> ClientCertEnrollmentResult {
         if isInitialized { return await enrollInternal(token: token, deviceId: deviceId, label: nil) }
@@ -793,11 +848,9 @@ public final class PinVault: @unchecked Sendable {
             return .failed(message: refusal.message, cause: refusal)
         }
         guard let block = config.defaultConfigApi else { return Self.noConfigApiBlock }
-        // The same rule start applies: https and bootstrap pins, or an explicit opt-out.
-        if let error = block.configurationError() { return .failed(message: error) }
-        // TODO(L3): stored credential check, then a ConfigApiClient for the block alone + enrollAndStore.
-        _ = (token, deviceId)
-        return .failed(message: Self.unavailable("enrollment", "L3"))
+        // A client for the block alone — the library's state is untouched; the
+        // next start picks the stored credential up.
+        return await enrollment.enrollBeforeStart(token: token, deviceId: deviceId, target: standaloneTarget(config, block, refusal: false))
     }
 
     private func enrollInternal(token: String?, deviceId: String?, label: String?) async -> ClientCertEnrollmentResult {
@@ -807,16 +860,58 @@ public final class PinVault: @unchecked Sendable {
         if let refusal = environmentRefusal(config, .enroll) {
             return .failed(message: refusal.message, cause: refusal)
         }
-        guard config.defaultConfigApi != nil else { return Self.noConfigApiBlock }
-        // TODO(L3): EnrollmentRequests.send over the default block's API, store, then
-        // configApiClient(id)?.reloadClientIdentity() (rebuilds every session).
-        _ = (token, deviceId, label)
-        return .failed(message: Self.unavailable("enrollment", "L3"))
+        guard let block = config.defaultConfigApi else { return Self.noConfigApiBlock }
+        return await enrollment.enroll(token: token, deviceId: deviceId, label: label, target: enrollmentTarget(config, block, refusal: false))
+    }
+
+    /// The default block of a set-up library as an enrollment target: its API,
+    /// and its SSL manager for the new identity. Before setup a client for the block alone.
+    /// - Parameter refusal: whether the service asks the environment guard (false when the façade already did).
+    private func enrollmentTarget(_ config: PinVaultConfig, _ block: ConfigApiBlock, refusal: Bool) -> EnrollmentService.Target {
+        guard let client = configApiClient(block.id) else { return standaloneTarget(config, block, refusal: refusal) }
+        return EnrollmentService.Target(
+            config: config,
+            block: block,
+            api: { client.api },
+            live: .init(sslManager: client.sslManager, identityChanged: { client.identityChanged() }),
+            environmentRefusal: enrollRefusal(config, asked: refusal)
+        )
+    }
+
+    /// An enrollment target for `block` alone (before start): its API is built
+    /// only when a request is sent; the credential is stored, nothing is loaded.
+    private func standaloneTarget(_ config: PinVaultConfig, _ block: ConfigApiBlock, refusal: Bool = true) -> EnrollmentService.Target {
+        let environment = storeEnvironment
+        let collaborators = collaboratorsFactory(block, self)
+        return EnrollmentService.Target(
+            config: config,
+            block: block,
+            api: {
+                try ConfigApiClient(
+                    block: block,
+                    caTrustHosts: config.caTrustHosts,
+                    managedTrustRoots: config.managedTrustRoots,
+                    resolvedHosts: config.resolvedHosts,
+                    collaborators: collaborators,
+                    storeEnvironment: environment
+                ).api
+            },
+            live: nil,
+            environmentRefusal: enrollRefusal(config, asked: refusal)
+        )
+    }
+
+    /// The environment guard's answer for an enrollment, asked when the service
+    /// is to ask (`asked`); always nil when the façade asked already.
+    private func enrollRefusal(_ config: PinVaultConfig, asked: Bool) -> @Sendable () -> PinVaultError? {
+        guard asked else { return { nil } }
+        return { [weak self] in self?.environmentRefusal(config, .enroll) }
     }
 
     /// A device whose enrollment waited for approval asks again (start and the periodic job).
     func pickUpPendingEnrollments() async {
-        // TODO(L3): for the default block with a pending request: checkPendingEnrollment().
+        guard isInitialized, let config, let block = config.defaultConfigApi else { return }
+        await enrollment.pickUpPendingEnrollment(target: enrollmentTarget(config, block, refusal: true))
     }
 
     /// Renews a block's client certificate when its remaining lifetime is below
@@ -842,8 +937,10 @@ public final class PinVault: @unchecked Sendable {
     }
 
     private func emitRenewalEvent(_ configApiId: String, _ result: ClientCertRenewalResult) {
-        // The refusal that made renewal fail may already have been reported from
-        // the request itself; the app hears it once per identity.
+        // No wipe here: a refused renewal wipes only when it went over mTLS
+        // presenting the current certificate, and the renewer has done that
+        // already. The refusal that made renewal fail may already have been
+        // reported from the request itself; the app hears it once per identity.
         if case .reenrollRequired = result, configApiClient(configApiId)?.claimReenrollNotice() == false { return }
         dispatchRenewalEvent(configApiId, result)
     }
@@ -876,6 +973,12 @@ public final class PinVault: @unchecked Sendable {
         ))
     }
 
+    /// `wipeVaultFilesOnRevocation()`: deletes the files of a Config API whose
+    /// server refused this device's identity on a connection that presented it.
+    func wipeOnRevocation(_ configApiId: String) {
+        state.withLock { $0.vault }?.wipeOnRevocation(configApiId)
+    }
+
     /// Removes the enrolled client certificate (and its identity key, and a
     /// pending enrollment) so the next request presents none. With
     /// `wipeVaultFiles` also deletes the vault files of every Config API that
@@ -883,29 +986,37 @@ public final class PinVault: @unchecked Sendable {
     /// - Parameter label: nil = the default block's `clientCertLabel`.
     public func unenroll(label: String? = nil, wipeVaultFiles: Bool = false) {
         let certLabel = label ?? defaultCertLabel()
-        // TODO(L3): store.clear(certLabel), identity key + imported key deletion, then
-        // reloadClientIdentity() on every block using the label (drops the live key material).
-        if wipeVaultFiles {
-            if !isInitialized {
-                log.w("unenroll: vault files can only be wiped after init — none wiped")
+        enrollment.forgetIdentity(label: certLabel)
+        // Drop the live key material too, and rebuild every session so the
+        // very next request presents no client certificate.
+        if isInitialized {
+            let clients = configApiClients
+            for client in clients {
+                client.sslManager.clearClientKeystore()
+                client.identityChanged()
             }
-            // TODO(L4): VaultFileWipe.mtlsBlocksUsing(certLabel, …) → wipeVaultFilesOf(ids)
+            if clients.isEmpty, let primary {
+                primary.sslManager.clearClientKeystore()
+                if let current = primary.clientProvider.currentConfig { primary.clientProvider.swap(current) }
+            }
         }
         log.i("Client certificate removed [\(certLabel)] — client cert no longer presented")
+        guard wipeVaultFiles else { return }
+        guard isInitialized, let vault = vaultService else {
+            log.w("unenroll: vault files can only be wiped after init — none wiped")
+            return
+        }
+        vault.wipeFiles(usingCertLabel: certLabel)
     }
 
     /// The CN of the enrolled client certificate, or nil.
     public func enrolledClientCN(label: String? = nil) -> String? {
-        // TODO(L3): enrolledLeaf(label)?.subject.commonName
-        _ = label
-        return nil
+        enrollment.enrolledClientCN(label: label ?? defaultCertLabel(), p12Password: config?.orderedConfigApis.first?.clientKeyPassword)
     }
 
     /// When the enrolled client certificate expires (epoch ms), or nil. Local, no network.
     public func enrolledClientNotAfter(label: String? = nil) -> Int64? {
-        // TODO(L3): enrolledLeaf(label)?.notAfter
-        _ = label
-        return nil
+        enrollment.enrolledClientNotAfter(label: label ?? defaultCertLabel(), p12Password: config?.orderedConfigApis.first?.clientKeyPassword)
     }
 
     /// The label enroll / isEnrolled / unenroll use when none is passed.
@@ -916,58 +1027,41 @@ public final class PinVault: @unchecked Sendable {
     // MARK: Vault files
 
     /// Fetches a vault file and stores it encrypted. For a `userAuth` file
-    /// ``VaultFileResult/updated(key:version:bytes:)`` carries no bytes.
+    /// ``VaultFileResult/updated(key:version:bytes:)`` carries no bytes. A
+    /// refusal of the app's environment guard downloads nothing and is
+    /// reported like any failed fetch.
     public func fetchFile(_ key: String) async -> VaultFileResult {
-        guard isInitialized else {
+        guard let vault = vaultService else {
             return .failed(key: key, reason: Self.notInitializedMessage, exception: PinVaultError.illegalState(Self.notInitializedMessage))
         }
-        guard let config, config.vaultFiles[key] != nil else {
-            return .failed(key: key, reason: "Vault file '\(key)' not registered in config")
-        }
-        if let refusal = environmentRefusal(config, .fetchFile) {
-            return .failed(key: key, reason: refusal.message, exception: refusal)
-        }
-        // TODO(L4): vaultRouter.fetchFile(fileConfig) over configApiClient(file.configApiId).api + reportFileDownload (5 s budget).
-        return .failed(key: key, reason: Self.unavailable("vault files", "L4"), code: VaultFileResult.FailureCode.notConfigured)
+        return await vault.fetchFile(key)
     }
 
     /// The stored copy, checked on every read (signature, offline lifetime);
     /// nil when not fetched, for a `userAuth` file (use ``unlockFile(key:prompt:)``),
     /// and when a check fails — ``fileStatus(_:)`` says which.
     public func loadFile(_ key: String) -> Data? {
-        // TODO(L4): vaultGuard.load(file, storage, storedVerifier)
-        _ = key
-        return nil
+        vaultService?.loadFile(key)
     }
 
     /// What ``loadFile(_:)`` / ``unlockFile(key:prompt:)`` would make of the stored copy, without reading it.
     public func fileStatus(_ key: String) -> VaultFileStatus {
-        // TODO(L4): guard.status(file, storage, storedVerifier)
-        _ = key
-        return .notStored
+        vaultService?.fileStatus(key) ?? .notStored
     }
 
     /// Opens a vault file locked with `userAuth`: shows the passcode /
     /// biometrics prompt and returns the content once the user passes it. A
     /// file without a lock comes back without a prompt.
     public func unlockFile(key: String, prompt: VaultFileUnlockPrompt) async -> VaultFileUnlockResult {
-        guard isInitialized else {
+        guard let vault = vaultService else {
             return .failed(key: key, reason: Self.notInitializedMessage, exception: PinVaultError.illegalState(Self.notInitializedMessage))
         }
-        // Before the prompt: on a device the app does not trust, the content never reaches memory.
-        if let refusal = environmentRefusal(config, .unlockFile) {
-            return .failed(key: key, reason: refusal.message, exception: refusal)
-        }
-        // TODO(L4): guard.beforeUnlock → UserAuthVaultStorage.unlock (LAContext prompt) → guard.check
-        _ = prompt
-        return .failed(key: key, reason: Self.unavailable("unlockFile", "L4"))
+        return await vault.unlockFile(key: key, prompt: prompt)
     }
 
     /// True when the stored copy of `key` opens only through ``unlockFile(key:prompt:)``.
     public func isFileLocked(_ key: String) -> Bool {
-        // TODO(L4): (storage as? UserAuthVaultStorage)?.isLocked(key)
-        _ = key
-        return false
+        vaultService?.isFileLocked(key) ?? false
     }
 
     /// ``loadFile(_:)`` as UTF-8 text (malformed bytes replaced).
@@ -977,44 +1071,34 @@ public final class PinVault: @unchecked Sendable {
 
     /// True when a copy of `key` is stored.
     public func hasFile(_ key: String) -> Bool {
-        // TODO(L4): getStorageFor(key).exists(key)
-        _ = key
-        return false
+        vaultService?.hasFile(key) ?? false
     }
 
     /// The version of the stored copy, or 0.
     public func fileVersion(_ key: String) -> Int {
-        // TODO(L4): getStorageFor(key).getVersion(key)
-        _ = key
-        return 0
+        vaultService?.fileVersion(key) ?? 0
     }
 
     /// Deletes the stored copy of `key`.
     public func clearFile(_ key: String) {
-        guard isInitialized else {
+        guard let vault = vaultService else {
             log.w(Self.notInitializedMessage)
             return
         }
-        // TODO(L4): storage.clear(key); vaultGuard.forget(key)
+        vault.clearFile(key)
         log.d("Vault file cleared: \(key)")
     }
 
     /// Syncs every file with `updateWithPins(true)`; also runs in the periodic update.
     /// - Returns: file key → result.
     public func syncAllFiles() async -> [String: VaultFileResult] {
-        guard isInitialized, let config else { return [:] }
-        var results: [String: VaultFileResult] = [:]
-        for file in config.orderedVaultFiles where file.updateWithPins {
-            let result = await fetchFile(file.key)
-            results[file.key] = result
-            await notifyFileUpdate(file.key, result)
-        }
-        return results
+        guard let vault = vaultService else { return [:] }
+        return await vault.syncAllFiles { [weak self] key, result in await self?.notifyFileUpdate(key, result) }
     }
 
     /// Files past their offline lifetime go now (`wipeWhenStale`), whether or not anything reads them.
     func wipeStaleVaultFiles() async {
-        // TODO(L4): vaultGuard.wipeStale(files, storageFor) + notifyFileUpdate per removed key.
+        vaultService?.wipeStaleFiles()
     }
 
     // MARK: Pins and config state
@@ -1207,7 +1291,9 @@ public final class PinVault: @unchecked Sendable {
     }
 
     /// The collaborators every block gets until the later layers are wired in: none.
-    static let defaultCollaborators: @Sendable (ConfigApiBlock, PinVault) -> ConfigApiClient.Collaborators = { _, _ in .none }
+    static let defaultCollaborators: @Sendable (ConfigApiBlock, PinVault) -> ConfigApiClient.Collaborators = { block, vault in
+        ConfigApiClient.Collaborators.standard(block: block, vault: vault)
+    }
 }
 
 extension PinVault: PeriodicWorkTarget {}

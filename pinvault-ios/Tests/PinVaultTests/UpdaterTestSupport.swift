@@ -92,7 +92,10 @@ final class SleepRecorder: @unchecked Sendable {
 /// in-memory keys, and whose start never waits between attempts.
 func isolatedPinVault(_ testCase: XCTestCase) throws -> PinVault {
     let vault = PinVault()
-    vault.storeEnvironment = SecureStoreEnvironment(directory: try temporaryStoreDirectory(testCase))
+    let environment = SecureStoreEnvironment(directory: try temporaryStoreDirectory(testCase))
+    vault.storeEnvironment = environment
+    vault.enrollmentStorage = .on(environment, identityKeys: { ClientIdentityKeys.software(label: $0) }, importedKeys: InMemoryImportedClientKeys())
+    vault.appAttestationSource = nil
     vault.retrySleep = { _ in }
     return vault
 }

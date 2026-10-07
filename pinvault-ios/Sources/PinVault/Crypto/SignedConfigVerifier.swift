@@ -35,7 +35,8 @@ final class SignedConfigVerifier: Sendable {
     private let trustedNow: (@Sendable () throws -> Int64)?
     /// The highest `issuedAt` this block has accepted (0 = none).
     private let issuedAtWatermark: @Sendable () throws -> Int64
-    /// Wall clock, Unix ms.
+    /// Wall clock, Unix ms: ``LibraryClock`` by default, so the E2E clock
+    /// offset reaches expiry as `date -s` does on Android.
     private let clock: @Sendable () -> Int64
     private let log = PinVaultLog.tag("SignedConfigVerifier")
 
@@ -44,7 +45,7 @@ final class SignedConfigVerifier: Sendable {
         serverScope: String? = nil,
         trustedNow: (@Sendable () throws -> Int64)? = nil,
         issuedAtWatermark: @escaping @Sendable () throws -> Int64 = { 0 },
-        clock: @escaping @Sendable () -> Int64 = { Int64(Date().timeIntervalSince1970 * 1000) }
+        clock: @escaping @Sendable () -> Int64 = LibraryClock.wallMillis
     ) {
         self.trust = trust
         self.serverScope = serverScope

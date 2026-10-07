@@ -212,7 +212,9 @@ private fun startServer() {
     val httpsPort = com.example.pinvault.server.service.ServerEnv.get("HTTPS_PORT")?.toIntOrNull() ?: (httpPort + 1)
     // Certificate-renewal door for expired devices (TLS, no client cert, CA-pinned). 0 = off.
     val recoveryPort = com.example.pinvault.server.service.ServerEnv.get("RECOVERY_PORT")?.toIntOrNull() ?: (httpPort + 3)
-    val enrollmentMode = com.example.pinvault.server.service.ServerEnv.get("ENROLLMENT_MODE")?.lowercase() ?: "token"
+    // Blank (`ENROLLMENT_MODE=` in .env.example) is the default, as for every other setting.
+    val enrollmentMode = com.example.pinvault.server.service.ServerEnv.get("ENROLLMENT_MODE")
+        ?.trim()?.lowercase()?.ifBlank { null } ?: "token"
     // Lifetime of certificates issued over device-held keys (CSR enrollment).
     val clientCertTtlDays = (com.example.pinvault.server.service.ServerEnv.get("CLIENT_CERT_TTL_DAYS")?.toLongOrNull() ?: 90L).coerceIn(1, 3650)
     // E2E keys a source address may write over TLS per 10 minutes (0 = no limit), and

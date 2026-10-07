@@ -323,6 +323,7 @@ class SampleApp {
     await this.waitFor('storageView', (n) => n.text && !n.text.startsWith('Okunuyor'), {
       what: 'Depolama ekranı',
     });
+    await this.waitForMainGone();
   }
 
   async openSettings() {
@@ -334,11 +335,22 @@ class SampleApp {
 
   async backToMain() {
     for (let i = 0; i < 4; i++) {
-      if (this.node('mtlsButton')) return;
+      if (this.node('mtlsButton')) return this.waitForChildScreensGone();
       this.device.pressBack();
       await sleep(800);
     }
     if (!this.node('mtlsButton')) throw new Error('Mobil: ana ekrana dönülemedi');
+    await this.waitForChildScreensGone();
+  }
+
+  /**
+   * The mirror of [waitForMainGone]: on iOS the main screen is in the tree
+   * while the pushed screen is still sliding out, and a tap then is lost.
+   * Waits (up to 5 s) until no pushed screen is left.
+   */
+  async waitForChildScreensGone() {
+    const child = () => ['applyButton', 'enrollButton', 'fetchFlagsButton', 'storageView'].some((id) => this.node(id));
+    for (let i = 0; i < 25 && child(); i++) await sleep(200);
   }
 
   // ── Ayarlar ekranı ───────────────────────────────────────────────────

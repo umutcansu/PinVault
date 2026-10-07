@@ -85,6 +85,9 @@ function build({ udid = env.IOS_UDID, force = false } = {}) {
   }
   fs.mkdirSync(DERIVED, { recursive: true });
   fs.writeFileSync(STAMP, hash);
+  // Önceki koşudan çalışan sürücü eski derlemedir: start() onu sağlıklı bulup
+  // yeniden kullanmasın.
+  if (healthy()) stop({ udid });
   return out.split('\n').filter((l) => /BUILD|warning: |error/.test(l)).slice(-10).join('\n');
 }
 

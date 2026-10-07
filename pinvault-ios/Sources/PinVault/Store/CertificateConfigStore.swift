@@ -64,7 +64,7 @@ final class CertificateConfigStore: Sendable {
     /// shared by every origin of the block (see ``forOrigin(namespace:origin:open:)``),
     /// so pointing a block at another server never sets its clock back.
     private let clockPrefs: any PreferenceStore
-    private let clockBox = Locked<@Sendable () -> Int64>({ Int64(Date().timeIntervalSince1970 * 1000) })
+    private let clockBox = Locked<@Sendable () -> Int64>(LibraryClock.wallMillis)
     private let log = PinVaultLog.tag("CertificateConfigStore")
 
     /// A store over `prefs` (Kotlin `createForTest`, and the stores below).

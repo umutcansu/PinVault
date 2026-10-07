@@ -117,7 +117,8 @@ final class ConfigApiClient: @unchecked Sendable {
     /// The block's attestation (`attestation()` on the block), or nil when it
     /// does not attest (L5). With a custom ``CertificateConfigApi`` the
     /// manager exists but reports `UNSUPPORTED` — L5's decision.
-    private(set) var attestation: (any BlockAttestation)?
+    var attestation: (any BlockAttestation)? { attestationBox.get() }
+    private let attestationBox = Locked<(any BlockAttestation)?>(nil)
 
     private let reenrollNotice = ReenrollNotice()
     private let revocation: IdentityRevocation
@@ -191,7 +192,7 @@ final class ConfigApiClient: @unchecked Sendable {
                 )
             }
 
-        revocation = IdentityRevocation { [weak manager] in manager?.defaultClientCertificate() }
+        revocation = IdentityRevocation(currentIdentity: { [weak manager] in manager?.defaultClientCertificate() })
         clientProvider = HttpClientProvider(sslManager: manager)
 
         // Filled in below once self is complete; the API's reenroll hook reads them.
@@ -255,11 +256,7 @@ final class ConfigApiClient: @unchecked Sendable {
         }
 
         renewer = collaborators.renewer?(self)
-        if block.attestationEnabled, let made = collaborators.attestation?(self) {
-            attestation = made
-            // Every session built for this block carries the token from now on.
-            clientProvider.tokenInterceptor = AttestationTokenInterceptor(sources: { [made] in [made] })
-        }
+        if block.attestationEnabled, let made = collaborators.attestation?(self) { attach(attestation: made) }
 
         // Pin mismatch recovery hooks into this block's updater only.
         clientProvider.recoveryUpdater = { [weak self] in
@@ -305,7 +302,7 @@ final class ConfigApiClient: @unchecked Sendable {
     /// the renewal endpoint; all of those share this one notice.
     func claimReenrollNotice() -> Bool {
         let leaf = sslManager.defaultClientCertificate()
-        return reenrollNotice.claim(leaf.map { "\($0.issuer.rfc2253)#\(Hex.encode($0.serialNumber))" } ?? "none")
+        return reenrollNotice.claim(leaf.map(ReenrollNotice.identityName) ?? "none")
     }
 
     /// Installs the block's client credentials into the SSL manager: the
@@ -342,6 +339,13 @@ final class ConfigApiClient: @unchecked Sendable {
     /// handshake presents them. Called after enroll, renew and unenroll (L3).
     func reloadClientIdentity() {
         loadClientIdentity()
+        identityChanged()
+    }
+
+    /// The identity in the SSL manager changed (enroll, renew, unenroll):
+    /// every session — the Config API's bootstrap client included — is rebuilt,
+    /// so no request rides a connection made with the previous identity.
+    func identityChanged() {
         (api as? DefaultCertificateConfigApi)?.rebuildBootstrapClient()
         if let current = clientProvider.currentConfig { clientProvider.swap(current) }
     }
@@ -398,55 +402,22 @@ final class ConfigApiClient: @unchecked Sendable {
         return trimmed
     }
 
-    // MARK: Re-enroll notices (internal/ReenrollNotice.kt)
-
-    /// One "re-enroll" notice per client identity: a revoked device hears
-    /// `reenroll_required` on every request until it re-enrolls; the app wants
-    /// to be told once. A new identity can be reported again.
-    final class ReenrollNotice: @unchecked Sendable {
-        private let notifiedFor = Locked<String?>(nil)
-
-        /// True the first time it is called for `identity`, false after that.
-        func claim(_ identity: String) -> Bool {
-            notifiedFor.withLock { last in
-                if last == identity { return false }
-                last = identity
-                return true
-            }
-        }
+    /// The server refused this block's identity on a connection that showed
+    /// `presented` (the renewal over mTLS): the files go when it is the
+    /// identity loaded now (``Collaborators/onIdentityRevoked``), once per identity.
+    func identityRefused(presented: X509Certificate?) {
+        if revocation.refusedOnConnection(presented) { collaborators.onIdentityRevoked?(block.id) }
     }
 
-    /// Decides when a `reenroll_required` answer is about THIS device's
-    /// identity — the only time something on the device is deleted because of
-    /// it: on a connection that presented the client certificate loaded now.
-    /// Any other connection (a TLS-only block, a request before enrollment)
-    /// only tells the app.
-    final class IdentityRevocation: @unchecked Sendable {
-        private let currentIdentity: @Sendable () -> X509Certificate?
-        private let notice = ReenrollNotice()
-
-        init(_ currentIdentity: @escaping @Sendable () -> X509Certificate?) {
-            self.currentIdentity = currentIdentity
-        }
-
-        /// True when `presented` — what a connection showed the server — is the identity loaded now.
-        func presentedCurrent(_ presented: X509Certificate?) -> Bool {
-            guard let current = currentIdentity(), let presented else { return false }
-            return presented.der == current.der
-        }
-
-        /// True the first time the identity loaded now is found revoked; false when none is loaded.
-        func claim() -> Bool {
-            guard let leaf = currentIdentity() else { return false }
-            return notice.claim("\(leaf.issuer.rfc2253)#\(Hex.encode(leaf.serialNumber))")
-        }
-
-        /// A refusal that arrived on a connection showing `presented`: true when the device's files should go now.
-        func refusedOnConnection(_ presented: X509Certificate?) -> Bool {
-            presentedCurrent(presented) && claim()
-        }
+    /// Attaches the block's attestation (L5's manager, built once every block
+    /// exists): every session of this block carries its token from now on.
+    func attach(attestation manager: any BlockAttestation) {
+        attestationBox.set(manager)
+        clientProvider.tokenInterceptor = AttestationTokenInterceptor(sources: { [manager] in [manager] })
     }
 }
+
+extension AttestationManager: BlockAttestation {}
 
 /// A block's client-certificate renewal (L3's `ClientCertRenewer`).
 protocol ClientCertRenewing: Sendable {

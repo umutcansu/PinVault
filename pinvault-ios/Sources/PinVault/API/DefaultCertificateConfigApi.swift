@@ -16,7 +16,8 @@ import Foundation
 /// Every body is read with a ceiling (``BoundedBody``), and every request asks
 /// for `forbidden-as-409` (PORTING.md §4): an mTLS listener's 403 reaches this
 /// client (and ``ReenrollRequiredInterceptor``) as a 403.
-final class DefaultCertificateConfigApi: CertificateConfigApi, SignedConfigSource, @unchecked Sendable {
+final class DefaultCertificateConfigApi: CertificateConfigApi, SignedConfigSource, AppAttestedEnrollmentApi,
+    VaultKeyProofRegistering, AttestationApi, @unchecked Sendable {
 
     private static let log = PinVaultLog.tag("DefaultCertificateConfigApi")
 
@@ -369,52 +370,48 @@ final class DefaultCertificateConfigApi: CertificateConfigApi, SignedConfigSourc
     /// and replaces it only for a request that carries the device's token for
     /// an end_to_end file (`X-Vault-Key` + `X-Vault-Token`). Over mTLS the
     /// client certificate is the proof and the headers are ignored.
-    /// - Parameter algorithm: what the key provider names (L4: `RSA-OAEP-SHA256-MGF1-SHA256`).
-    func registerDevicePublicKey(
-        deviceId: String,
-        publicKeyPem: String,
-        proof: DeviceKeyProof?,
-        algorithm: String = DeviceKeys.registrationAlgorithm
-    ) async throws {
-        try await registerKey(deviceId, publicKeyPem, proof, purpose: nil, attestationChain: [], algorithm: algorithm)
+    func registerDevicePublicKey(deviceId: String, publicKeyPem: String, proof: VaultDeviceKeyProof?) async throws {
+        try await registerKey(deviceId, proof, purpose: nil, attestationChain: [], body: try VaultKeyRegistrationBody.json(publicKeyPem: publicKeyPem))
     }
 
     /// Registers the device's user-auth key (`purpose: user_auth`), which `user_auth` files are sealed for.
     func registerUserAuthPublicKey(deviceId: String, publicKeyPem: String, attestationChain: [String]) async throws {
-        try await registerUserAuthPublicKey(deviceId: deviceId, publicKeyPem: publicKeyPem, attestationChain: attestationChain, proof: nil)
+        try await registerUserAuthPublicKey(
+            deviceId: deviceId, publicKeyPem: publicKeyPem, attestationChain: attestationChain, proof: nil, appAttestation: nil
+        )
     }
 
     /// ``registerUserAuthPublicKey(deviceId:publicKeyPem:attestationChain:)``
-    /// with the same proof rules as ``registerDevicePublicKey(deviceId:publicKeyPem:proof:algorithm:)``.
-    /// A non-empty `attestationChain` goes along as `attestationChain` (older
-    /// servers ignore it). The server's refusals become a
+    /// with the same proof rules as ``registerDevicePublicKey(deviceId:publicKeyPem:proof:)``
+    /// and the key's App Attest attestation (`appAttestation`, a JSON string
+    /// value; omitted when nil). The server's refusals become a
     /// ``UserAuthKeyRefusedException`` that says what to do.
     func registerUserAuthPublicKey(
         deviceId: String,
         publicKeyPem: String,
         attestationChain: [String],
-        proof: DeviceKeyProof?,
-        algorithm: String = DeviceKeys.registrationAlgorithm
+        proof: VaultDeviceKeyProof?,
+        appAttestation: String?
     ) async throws {
-        try await registerKey(deviceId, publicKeyPem, proof, purpose: Self.userAuthKeyPurpose, attestationChain: attestationChain, algorithm: algorithm)
+        let body = try VaultKeyRegistrationBody.json(
+            publicKeyPem: publicKeyPem, purpose: VaultKeyRegistrationBody.userAuthPurpose,
+            attestationChain: attestationChain, appAttestation: appAttestation
+        )
+        try await registerKey(deviceId, proof, purpose: VaultKeyRegistrationBody.userAuthPurpose, attestationChain: attestationChain, body: body)
     }
 
     private func registerKey(
         _ deviceId: String,
-        _ publicKeyPem: String,
-        _ proof: DeviceKeyProof?,
+        _ proof: VaultDeviceKeyProof?,
         purpose: String?,
         attestationChain: [String],
-        algorithm: String
+        body: Data
     ) async throws {
-        var json: [String: Any] = ["publicKeyPem": publicKeyPem, "algorithm": algorithm]
-        if let purpose { json["purpose"] = purpose }
-        if !attestationChain.isEmpty { json["attestationChain"] = attestationChain }
         let request = Self.request(
             try concat(configUrl, "api/v1/vault/devices/\(deviceId)/public-key"),
             method: "POST",
             headers: ["X-Vault-Key": proof?.vaultKey, "X-Vault-Token": proof?.token],
-            json: try Self.jsonBody(json)
+            json: body
         )
         let response = try await send(request, BoundedBody.Limit(
             maxBytes: BoundedBody.smallMaxBytes, what: "key registration", prefixBytes: Int(BoundedBody.smallMaxBytes),
@@ -487,6 +484,19 @@ final class DefaultCertificateConfigApi: CertificateConfigApi, SignedConfigSourc
         )
     }
 
+    /// The CSR enrollment with the App Attest attestation of the request
+    /// (``AppAttestedEnrollmentApi``): `appAttestation` goes into the body as a
+    /// JSON string value, like `integrityToken`.
+    func enrollWithCsr(
+        token: String?, deviceId: String?, deviceAlias: String?, deviceUid: String?, csrDer: Data, requestId: String?,
+        attestationChain: [String], integrityToken: String?, appAttestation: String
+    ) async throws -> EnrollmentResult? {
+        try await enrollRequest(
+            token, deviceId, deviceAlias, deviceUid, csrDer: csrDer, requestId: requestId,
+            attestationChain: attestationChain, integrityToken: integrityToken, appAttestation: appAttestation
+        )
+    }
+
     /// What an enrollment request advertises (before `forbidden-as-409`). The
     /// P12 path asks for a one-off P12 password; a CSR enrollment asks for a
     /// chain, and adds `p12password` only when the block would accept a server-made key.
@@ -503,7 +513,8 @@ final class DefaultCertificateConfigApi: CertificateConfigApi, SignedConfigSourc
         csrDer: Data?,
         requestId: String?,
         attestationChain: [String],
-        integrityToken: String?
+        integrityToken: String?,
+        appAttestation: String? = nil
     ) async throws -> EnrollmentResult {
         var json: [String: Any] = [:]
         if let token { json["token"] = token }
@@ -515,6 +526,8 @@ final class DefaultCertificateConfigApi: CertificateConfigApi, SignedConfigSourc
         if csrDer != nil, !attestationChain.isEmpty { json["attestationChain"] = attestationChain }
         // Bound to this CSR by its request hash; meaningless without one.
         if csrDer != nil, let integrityToken, !integrityToken.isBlank { json["integrityToken"] = integrityToken }
+        // App Attest in place of a key attestation chain (PORTING.md §6): the token JSON as a string value.
+        if csrDer != nil, let appAttestation, !appAttestation.isBlank { json["appAttestation"] = appAttestation }
 
         let request = Self.request(
             try concat(enrollmentUrl ?? configUrl, enrollmentEndpoint),
@@ -642,33 +655,30 @@ final class DefaultCertificateConfigApi: CertificateConfigApi, SignedConfigSourc
 
     // MARK: Attestation (ATTESTATION.md §2)
 
-    /// `GET <configUrl>api/v1/attest/challenge`: the nonce of an attestation
-    /// round, as the server sent it (`nonce`, `expiresIn`, `serverTime`).
-    /// - Throws: ``AttestationHttpException`` for any non-2xx answer.
-    func attestChallenge() async throws -> [String: Any] {
-        let response = try await send(Self.request(try concat(configUrl, Self.attestChallengeEndpoint)), .always(BoundedBody.smallMaxBytes, "attestation challenge"))
-        let body = BoundedBody.text(response.data, response.response)
-        guard (200..<300).contains(response.statusCode) else { throw AttestationHttpException.of(httpStatus: response.statusCode, body: body) }
-        return try Self.parseAttestJson(body, "challenge")
-    }
-
-    /// `POST <configUrl>api/v1/attest` with the signed report and returns the
-    /// server's verdict as it came — `result`, `arc`, `token`, `config`, …
-    /// - Throws: ``AttestationHttpException`` for any non-2xx answer, with the
-    ///   server's `error` and its `message` or `reason`.
-    func attest(_ body: Data) async throws -> [String: Any] {
-        let request = Self.request(try concat(configUrl, Self.attestEndpoint), method: "POST", json: body)
-        let response = try await send(request, .always(BoundedBody.smallMaxBytes, "attestation"))
-        let answer = BoundedBody.text(response.data, response.response)
-        guard (200..<300).contains(response.statusCode) else { throw AttestationHttpException.of(httpStatus: response.statusCode, body: answer) }
-        return try Self.parseAttestJson(answer, "attest")
-    }
-
-    private static func parseAttestJson(_ body: String, _ what: String) throws -> [String: Any] {
-        guard let object = jsonObject(Data(body.utf8)) else {
-            throw Exception(message: "The attestation \(what) answer is not JSON (\(body.kotlinTake(80)))")
+    /// `GET <configUrl>api/v1/attest/challenge` (``AttestationApi``): the body
+    /// of an attestation round's nonce, as the server sent it (`nonce`,
+    /// `expiresIn`, `serverTime`). Over the pinned bootstrap client.
+    /// - Throws: ``AttestationHttpError`` for any non-2xx answer.
+    func attestChallenge() async throws -> Data {
+        let request = Self.request(try concat(configUrl, AttestationEndpoints.challenge))
+        let response = try await send(request, .always(BoundedBody.smallMaxBytes, "attestation challenge"))
+        guard (200..<300).contains(response.statusCode) else {
+            throw AttestationHttpError.of(httpStatus: response.statusCode, body: response.data)
         }
-        return object
+        return response.data
+    }
+
+    /// `POST <configUrl>api/v1/attest` with the signed report (``AttestationApi``),
+    /// returning the server's verdict body as it came — `result`, `arc`, `token`, `config`, …
+    /// - Throws: ``AttestationHttpError`` for any non-2xx answer, with the
+    ///   server's `error` and its `message` or `reason`.
+    func attest(body: Data) async throws -> Data {
+        let request = Self.request(try concat(configUrl, AttestationEndpoints.attest), method: "POST", json: body)
+        let response = try await send(request, .always(BoundedBody.smallMaxBytes, "attestation"))
+        guard (200..<300).contains(response.statusCode) else {
+            throw AttestationHttpError.of(httpStatus: response.statusCode, body: response.data)
+        }
+        return response.data
     }
 
     // MARK: JSON helpers (org.json semantics)
@@ -714,11 +724,8 @@ final class DefaultCertificateConfigApi: CertificateConfigApi, SignedConfigSourc
     /// Vault signature headers of the v2 scheme (`pinvault-vault-file:v2:<configApiId>:<key>:<version>:<sha256 hex>`).
     static let vaultSignatureV2Header = "X-Vault-Signature-V2"
     static let vaultSignaturesV2Header = "X-Vault-Signatures-V2"
-    /// Device-side attestation endpoints, relative to the block's `configUrl` (`ATTESTATION.md` §2).
-    static let attestChallengeEndpoint = "api/v1/attest/challenge"
-    static let attestEndpoint = "api/v1/attest"
     /// `purpose` of a user-auth key registration.
-    static let userAuthKeyPurpose = "user_auth"
+    static let userAuthKeyPurpose = VaultKeyRegistrationBody.userAuthPurpose
 }
 
 // MARK: - Errors (Kotlin exception classes of DefaultCertificateConfigApi.kt and Retrofit)
@@ -780,33 +787,14 @@ struct VaultFetchHttpException: Error, Sendable, LocalizedError, CustomStringCon
     var description: String { "VaultFetchHttpException: \(message)" }
 }
 
-/// The server refused an attestation call. `serverError` is its `error`
-/// (`nonce_expired`, `signature_invalid`, `device_revoked`, `key_mismatch`,
-/// `attestation_required`, `attestation_invalid`, …), `serverMessage` its
-/// `message` or `reason`; both nil when the body was not JSON.
-struct AttestationHttpException: Error, Sendable, LocalizedError, CustomStringConvertible {
-    let httpStatus: Int
-    let serverError: String?
-    let serverMessage: String?
-
-    var message: String {
-        "Attestation refused — HTTP \(httpStatus)" + (serverError.map { " \($0)" } ?? "") + (serverMessage.map { ": \($0)" } ?? "")
-    }
-
-    var errorDescription: String? { message }
-    var description: String { "AttestationHttpException: \(message)" }
-
-    static func of(httpStatus: Int, body: String) -> AttestationHttpException {
-        let json = DefaultCertificateConfigApi.jsonObject(Data(body.utf8))
-        return AttestationHttpException(
-            httpStatus: httpStatus,
-            serverError: json.flatMap { DefaultCertificateConfigApi.optString($0, "error").nonBlank },
-            serverMessage: json.flatMap {
-                DefaultCertificateConfigApi.optString($0, "message").nonBlank ?? DefaultCertificateConfigApi.optString($0, "reason").nonBlank
-            }
-        )
-    }
+extension VaultFetchHttpException: VaultFetchHTTPFailure {
+    var httpStatus: Int { code }
+    var responseBody: String? { body }
 }
+
+extension ResponseTooLargeException: VaultResponseTooLargeFailure {}
+
+extension UserAuthKeyRefusedException: VaultKeyRefusalFailure {}
 
 /// The server refused the device's user-auth key. The message says what the
 /// app (or its operator) has to do; `serverError` is the server's `error`.
@@ -844,17 +832,6 @@ struct UserAuthKeyRefusedException: Error, Sendable, LocalizedError, CustomStrin
             return nil
         }
     }
-}
-
-/// Proof that lets a device replace its registered E2E key over a TLS
-/// listener: its access token for an end_to_end vault file (`vaultKey` is the
-/// server-side key, the last segment of the file's endpoint).
-struct DeviceKeyProof: Sendable, Equatable, CustomStringConvertible {
-    let vaultKey: String
-    let token: String
-
-    /// Never prints the token.
-    var description: String { "DeviceKeyProof(vaultKey=\(vaultKey), token=***)" }
 }
 
 /// Kotlin's `e.message`, for any error the library reports as a reason.

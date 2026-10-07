@@ -1,6 +1,6 @@
 import Foundation
 import XCTest
-@testable import PinVault
+@_spi(PinVaultE2E) @testable import PinVault
 
 /// SignedConfigVerifier on its own: the checks the updater (L2) relies on —
 /// scope, freshness, the expiry clock, stored envelopes. The Kotlin suite
@@ -48,6 +48,18 @@ final class SignedConfigVerifierTests: XCTestCase {
         assertSecurityRefusal("(scoped fetch). The envelope has no payload.") {
             _ = try self.verifier().verifyFetched(SignedConfigResponse(payload: "", signature: "x")) { "Config signature verification failed (scoped fetch).\($0)" }
         }
+    }
+
+    /// The default clock is the library's: the E2E clock offset (Android's
+    /// `date -s`) makes a config expired here too, not only in the updater.
+    func testTheDefaultClockIsTheLibraryClock() {
+        let wall = LibraryClock.wallMillis()
+        let body = payload(issuedAt: wall - 1_000, expiresAt: wall + hour)
+        let plain = SignedConfigVerifier(trust: .single(configApiId: "default", key: key.pub))
+        XCTAssertNoThrow(try plain.verifyFetched(signed(body)))
+        PinVault.shared.e2eSetClockOffset(seconds: 2 * 3_600)
+        defer { PinVault.shared.e2eSetClockOffset(seconds: 0) }
+        assertSecurityRefusal("Signed config expired") { _ = try plain.verifyFetched(self.signed(body)) }
     }
 
     func testFreshnessFieldsAreRequiredAndExpiryEnforced() {

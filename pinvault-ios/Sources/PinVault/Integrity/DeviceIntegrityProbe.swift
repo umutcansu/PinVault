@@ -47,7 +47,7 @@ final class DeviceIntegrityProbe: Sendable {
         expectedBundleIds: [String] = [],
         expectedTeamIds: [String] = [],
         verdictProvider: (any IntegrityVerdictProvider)? = nil,
-        clock: @escaping @Sendable () -> Int64 = { Int64(Date().timeIntervalSince1970 * 1000) },
+        clock: @escaping @Sendable () -> Int64 = LibraryClock.wallMillis,
         inputs: IntegrityProbeInputs = .live,
         verdictTimeoutMs: Int64 = DeviceIntegrityProbe.verdictTimeoutMs
     ) {

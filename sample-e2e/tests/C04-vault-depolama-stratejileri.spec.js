@@ -39,7 +39,7 @@ test('Vault depolama: ENCRYPTED_FILE şifreli .enc dosyası, ENCRYPTED_PREFS şi
 
     await test.step('Mobil: iki dosya da iniyor', async () => {
       await app.openVault();
-      expect(await app.fetchVault(MODEL)).toContain('şifreli dosya deposu: files/vault_files');
+      expect(await app.fetchVault(MODEL)).toContain(`şifreli dosya deposu: ${device.appLabel('files/vault_files')}`);
       await app.snap(`${MODEL} v${modelVersion} indirildi (dosya deposu)`);
       expect(await app.fetchVault(FLAGS)).toContain(`${FLAGS} v${flagsVersion} indirildi`);
       await app.snap(`${FLAGS} v${flagsVersion} indirildi (şifreli SharedPreferences)`);
