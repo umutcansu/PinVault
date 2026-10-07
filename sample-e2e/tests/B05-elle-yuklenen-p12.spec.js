@@ -164,7 +164,8 @@ test('mTLS: kayıt olmadan, elle yüklenen P12 ile bağlanma', async ({ app, dev
       );
       expect(text).toContain('elle yüklenen P12');
       expect(text).toContain('(kullanılıyor)');
-      expect(text).toMatch(/düz P12 dosyası \(files\/manual-client\.p12\): yok/);
+      // Uygulamanın dosya yolu platformun adıyla (iOS: Library/Application Support/…).
+      expect(text).toContain(`düz P12 dosyası (${device.appLabel('files/manual-client.p12')}): yok`);
       await app.backToMain();
     });
 

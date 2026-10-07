@@ -17,6 +17,7 @@ const env = require('../lib/env');
 test('mTLS: otomatik kayıt yalnızca ENROLLMENT_MODE=open iken kabul ediliyor', async ({
   app,
   dashboard,
+  device,
 }, testInfo) => {
   test.setTimeout(14 * 60 * 1000);
   let deviceId;
@@ -27,7 +28,7 @@ test('mTLS: otomatik kayıt yalnızca ENROLLMENT_MODE=open iken kabul ediliyor',
       deviceId = app.deviceId();
       await app.snap(`cihaz kimliği: ${deviceId}`);
       await app.backToMain();
-      expect(deviceId).toMatch(/^[0-9a-f]{8,}$/);
+      expect(deviceId).toMatch(device.deviceIdPattern);
     });
 
     await test.step('Sunucu: kayıt modu "token" iken otomatik kayıt reddediliyor', async () => {

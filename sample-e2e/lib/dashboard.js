@@ -416,6 +416,10 @@ class Dashboard {
     const toggle = this.page.locator(`[data-action="toggleConfigApi"][data-arg0="${apiId}"]`).first();
     if ((await this.apiRunning(apiId)) !== running) await toggle.click();
     await expect.poll(() => this.apiRunning(apiId), { timeout: 30_000 }).toBe(running);
+    // Sunucu API'yi listeden hemen düşürür, dinleyiciyi ise 1,5 sn bekleme +
+    // 3 sn üst sınırla kapatır (ConfigApiManager.stop): o arada açık bağlantılar
+    // hâlâ yanıt alır. Hızlı bir istemci (iOS) bu pencereye düşmesin.
+    if (!running) await this.page.waitForTimeout(3_500);
   }
 
   /** all-configs'teki çalışma durumu (kenar çubuğundaki nokta yerine kaynağından). */
