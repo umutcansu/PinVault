@@ -81,7 +81,7 @@ ensure_mock() {
     local host="$1" port="$2" mtls="$3"
     local status
     status="$(api "${HTTP}/api/v1/hosts/${host}/status" 2>/dev/null || echo '{}')"
-    if ! echo "${status}" | jq -e '.keystorePath != null' >/dev/null 2>&1; then
+    if ! echo "${status}" | jq -e '.hasCertificate == true' >/dev/null 2>&1; then
         api -X POST -H 'Content-Type: application/json' -d "{\"hostname\":\"${host}\"}" \
             "${HTTP}/api/v1/management/hosts/default-tls/generate-cert" >/dev/null
         echo ">> ${host} için sertifika üretildi ve pin kaydı eklendi"

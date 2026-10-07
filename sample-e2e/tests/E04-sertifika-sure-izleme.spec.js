@@ -186,7 +186,7 @@ test('Sunucu: süresi geçmiş sertifika cert-expiry\'de "expired", dashboard ka
           '',
           `HTTP ${res.status} ${res.body}`,
           '',
-          `host durumu: mock çalışıyor=${status.mockServerRunning}, keystore=${status.keystorePath || '-'}`,
+          `host durumu: mock çalışıyor=${status.mockServerRunning}, sertifika=${status.hasCertificate ? 'var' : 'yok'}`,
           '',
           'Yükleme host\'un pin\'lerini yeni sertifikaya geçirir (sürüm +1) ve çalışan',
           'mock dinleyiciyi yeni keystore ile yeniden başlatır: hedef artık süresi',

@@ -115,3 +115,6 @@ backup-before-production-*/
 xcuserdata/
 *.xcodeproj/project.xcworkspace/xcuserdata/
 DerivedData/
+
+# Session-only audit reports
+.local-reports/
