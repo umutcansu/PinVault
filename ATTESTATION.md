@@ -235,6 +235,18 @@ What each probe looks at (Android, no root needed; iOS probes:
 | `app_attest` | Set by the server (§12) when an `app-attest` attestation or assertion the report carries does not verify: another root, another challenge, another app or environment, a counter that did not rise, a key the server has no record of (then `app_attest_unknown_key` is added to `warnings`, whatever the policy does with the flag). A failed verdict sticks to the device until a fresh pass. Only with `APP_ATTEST_APP_IDS` configured. |
 | `app_attest_missing` | Set by the server (§12) when an iOS device has no App Attest verdict verified within `APP_ATTEST_MAX_AGE_SECONDS` (a simulator, a device without App Attest). Only with `APP_ATTEST_APP_IDS` configured. |
 
+On iOS the probes look for jailbreak files (Cydia, Sileo, Zebra, `/var/jb`,
+apt, `sshd`, `bash`; the last two not on the simulator, which sees the Mac's
+own) and a write outside the sandbox, the simulator, a tracing debugger
+(`P_TRACED`), the `get-task-allow` entitlement, hooking libraries among the
+loaded images, `DYLD_INSERT_LIBRARIES` and Frida's port, the bundle and team
+id against the ones the app names, and where the app was installed from;
+`key_unattested` and `old_patch_level` are sent down and decided by the
+server (`pinvault-ios/PORTING.md` §4). All of these probes run on the device,
+in the app, and can be defeated there — App Attest proves the app is genuine,
+not that the device is not jailbroken — so an app whose value justifies it
+should add a dedicated RASP product on top of them.
+
 The report is a measurement by code the attacker can hook. That is true for
 every RASP; what makes it useful is that (a) a hooked report still has to be
 signed by a Keystore key whose attestation chain proves it was made by **your**

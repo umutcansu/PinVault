@@ -121,13 +121,16 @@ Kotlin files are grouped (results, small enums).
   iOS probes: `rooted` = jailbreak artefacts (`/Applications/Cydia.app`, `/Applications/Sileo.app`,
   `/Applications/Zebra.app`, `/var/jb`, `/private/var/lib/apt`, `/usr/sbin/sshd`, `/bin/bash`,
   `/etc/apt`, write test outside the sandbox under `/private`, `cydia://` / `sileo://` URL schemes are
-  NOT queried (needs Info.plist entries)); `emulator` = `targetEnvironment(simulator)` or
+  NOT queried (needs Info.plist entries); `/usr/sbin/sshd` and `/bin/bash` are not evidence on the
+  simulator, which sees the Mac's file system); `emulator` = `targetEnvironment(simulator)` or
   `SIMULATOR_DEVICE_NAME` env; `debugger` = `sysctl` `P_TRACED`; `debuggable` = `get-task-allow`
   entitlement (read from the embedded provisioning profile; on the simulator `#if DEBUG`);
   `hooking_framework` = loaded dyld images matching `frida|substrate|substitute|libhooker|ellekit|cycript|SSLKillSwitch|FridaGadget`,
   `DYLD_INSERT_LIBRARIES` set, frida's default port 27042 open on 127.0.0.1; `app_integrity` = bundle id /
   team id differ from the values the app gave the library (`expectedBundleId`, `expectedTeamId`);
   `unknown_installer` = not App Store / TestFlight (an embedded provisioning profile, or the simulator).
+  `key_unattested` goes down with the flag off (evidence `app-attest:none` without an App Attest
+  verdict): the server decides it, and only a verified App Attest verdict lifts it there.
   The server (§5) treats `platform: ios` specially.
 - App Attest tokens (§6).
 - `X-PinVault-Features: forbidden-as-409` on every library request to a Config API, and on app
