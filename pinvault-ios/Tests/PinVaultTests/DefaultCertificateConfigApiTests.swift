@@ -463,16 +463,32 @@ final class DefaultCertificateConfigApiTests: XCTestCase {
         XCTAssertEqual(plain.jsonBody["publicKeyPem"] as? String, "PEM")
         XCTAssertNil(plain.jsonBody["purpose"])
 
-        try await api.registerDevicePublicKey(deviceId: "ios-07", publicKeyPem: "PEM", proof: DeviceKeyProof(vaultKey: "secret-model", token: "tok-123"))
+        try await api.registerDevicePublicKey(deviceId: "ios-07", publicKeyPem: "PEM", proof: VaultDeviceKeyProof(vaultKey: "secret-model", token: "tok-123"))
         let proven = try XCTUnwrap(server.takeRequest())
         XCTAssertEqual(proven.header("X-Vault-Key"), "secret-model")
         XCTAssertEqual(proven.header("X-Vault-Token"), "tok-123")
     }
 
-    func testRegisterDevicePublicKeySendsTheAlgorithmTheKeyProviderNames() async throws {
+    func testTheScreenLockKeyCarriesItsAppAttestationAsAJSONString() async throws {
         enqueueJSON("{}")
-        try await api().registerDevicePublicKey(deviceId: "ios-07", publicKeyPem: "PEM", proof: nil, algorithm: "RSA-OAEP-SHA256")
-        XCTAssertEqual(try XCTUnwrap(server.takeRequest()).jsonBody["algorithm"] as? String, "RSA-OAEP-SHA256")
+        enqueueJSON("{}")
+        let token = #"{"provider":"app-attest","keyId":"a2V5","attestation":"YXR0"}"#
+        try await api().registerUserAuthPublicKey(deviceId: "ios-07", publicKeyPem: "PEM", attestationChain: [], proof: nil, appAttestation: token)
+        let body = try XCTUnwrap(server.takeRequest()).jsonBody
+        XCTAssertEqual(body["appAttestation"] as? String, token, "a string value, never a nested object")
+        XCTAssertEqual(body["purpose"] as? String, "user_auth")
+        try await api().registerDevicePublicKey(deviceId: "ios-07", publicKeyPem: "PEM", proof: nil)
+        XCTAssertNil(try XCTUnwrap(server.takeRequest()).jsonBody["appAttestation"], "only for the screen-lock key")
+    }
+
+    func testACSREnrollmentCarriesTheAppAttestationAsAJSONString() async throws {
+        enqueueChain()
+        let token = #"{"provider":"app-attest","keyId":"a2V5","attestation":"YXR0"}"#
+        _ = try await api().enrollWithCsr(token: "tok", deviceId: nil, deviceAlias: nil, deviceUid: "uid", csrDer: csr, requestId: nil,
+                                          attestationChain: [], integrityToken: nil, appAttestation: token)
+        let body = try XCTUnwrap(server.takeRequest()).jsonBody
+        XCTAssertEqual(body["appAttestation"] as? String, token)
+        XCTAssertNil(body["integrityToken"])
     }
 
     func testRegisterDevicePublicKeyReportsARefusedKeyChangeAndAForeignCertificate() async throws {
@@ -535,7 +551,17 @@ final class DefaultCertificateConfigApiTests: XCTestCase {
     }
 
     func testAKeyProofNeverPrintsItsToken() {
-        XCTAssertFalse(DeviceKeyProof(vaultKey: "secret-model", token: "tok-123").description.contains("tok-123"))
+        XCTAssertFalse(VaultDeviceKeyProof(vaultKey: "secret-model", token: "tok-123").description.contains("tok-123"))
+    }
+
+    func testTheClientsErrorsAreTheOnesTheVaultLayerRecognises() {
+        let refused = VaultFetchHttpException(code: 412, body: "x")
+        XCTAssertEqual((refused as any VaultFetchHTTPFailure).httpStatus, 412)
+        XCTAssertEqual((refused as any VaultFetchHTTPFailure).responseBody, "x")
+        let tooLarge: any Error = ResponseTooLargeException(what: "vault file", maxBytes: 1, declared: nil)
+        XCTAssertTrue(tooLarge is any VaultResponseTooLargeFailure)
+        let refusal: (any Error)? = UserAuthKeyRefusedException.from(httpStatus: 409, error: "user_auth_key_exists", reason: nil, sentChain: false)
+        XCTAssertTrue(refusal is any VaultKeyRefusalFailure)
     }
 
     // MARK: Enrollment key attestation
@@ -731,12 +757,12 @@ final class DefaultCertificateConfigApiTests: XCTestCase {
         server.enqueue(.status(403, #"{"error":"device_revoked","message":"gone"}"#))
         let api = api()
         let challenge = try await api.attestChallenge()
-        XCTAssertEqual(challenge["nonce"] as? String, "abc")
+        XCTAssertEqual(String(decoding: challenge, as: UTF8.self), #"{"nonce":"abc","expiresIn":60,"serverTime":1}"#)
         XCTAssertEqual(server.takeRequest()?.path, "/api/v1/attest/challenge")
         do {
-            _ = try await api.attest(Data(#"{"report":1}"#.utf8))
+            _ = try await api.attest(body: Data(#"{"report":1}"#.utf8))
             XCTFail("expected a refusal")
-        } catch let error as AttestationHttpException {
+        } catch let error as AttestationHttpError {
             XCTAssertEqual(error.httpStatus, 403)
             XCTAssertEqual(error.serverError, "device_revoked")
             XCTAssertEqual(error.serverMessage, "gone")
