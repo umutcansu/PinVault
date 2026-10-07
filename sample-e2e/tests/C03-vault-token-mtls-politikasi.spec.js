@@ -91,6 +91,10 @@ test('Vault token_mtls: token + istemci sertifikası birlikte gerekiyor', async 
       await app.snap('vault ekranı — cihaz kimliği');
       await app.backToMain();
       expect(deviceId).toMatch(device.deviceIdPattern);
+      // Önceki koşulardan kalan anahtarlar silinir (secureVault.prepare gibi):
+      // sunucu eskisini yalnızca anahtar atestasyonuyla değiştirir; iOS
+      // simülatörünün o kanıtı (App Attest) yok.
+      await hostApi.forgetDeviceKeys(deviceId, [env.VAULT_API, env.MTLS_API]);
     });
 
     await test.step('Web: başka bir cihaza ait istemci sertifikası üretilir', async () => {
