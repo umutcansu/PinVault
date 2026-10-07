@@ -2267,7 +2267,11 @@ pin check off. PinVault answers that in three layers:
    | `UNLOCK_FILE` | `unlockFile`, before the prompt | `VaultFileUnlockResult.Failed` |
 
    `loadFile` is not guarded: keep files that matter behind `userAuth`, so
-   their content is only handed out by `unlockFile`.
+   their content is only handed out by `unlockFile`. The sample app wires
+   all of this (`sample-client/.../App.java`, `harden`): a small in-app
+   check (`DeviceShield`) as the guard, `expectedSignerSha256` from its
+   host properties, and `requireUnlockedDevice()` /
+   `requireHardwareBackedKeys()`, always on in its release build.
 
 2. **A verdict the device cannot forge, judged by the server.** A check inside
    the app can be hooked too. `integrityTokenProvider` sends a Google Play
