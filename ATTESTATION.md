@@ -84,7 +84,7 @@ Request:
 | `nonce` | From 2.1, unexpired, unused. |
 | `deviceId` | `^[A-Za-z0-9._:-]{1,64}$`. |
 | `publicKey` | Base64 DER SubjectPublicKeyInfo of the device key (EC P-256). |
-| `attestationChain` | Base64 DER, leaf first. Required on **first** registration under `ATTESTATION_KEY_POLICY=enforce`; optional otherwise; ignored for a device already registered (a key cannot be re-attested). iOS sends none (the Secure Enclave has no such chain): it registers like an Android key without one — accepted under `warn` / `off`, `403 attestation_required` under `enforce` — and App Attest (§12) stands in for it in `key_unattested`. |
+| `attestationChain` | Base64 DER, leaf first. Required on **first** registration under `ATTESTATION_KEY_POLICY=enforce`; optional otherwise; ignored for a device already registered (a key cannot be re-attested). iOS sends none (the Secure Enclave has no such chain): it registers like an Android key without one under `warn` / `off`, and App Attest (§12) stands in for it in `key_unattested`. Under `enforce` the first round's App Attest attestation registers it in place of the chain when `APP_ATTEST_APP_IDS` is configured (§12, "In place of the Android chain"); without it, `403 attestation_required`. |
 | `report` | The report JSON **as a string** (section 3). At most 16 KB. |
 | `signature` | `SHA256withECDSA` (DER) over the UTF-8 bytes of `pinvault-attest:v1:<nonce>:<deviceId>:<sha256-hex(report)>`. |
 | `currentConfigVersion`, `currentIssuedAt` | What the device holds; the server embeds a fresh signed config when either differs from what it would serve. |
@@ -98,7 +98,7 @@ Server checks, in order (each refusal is counted by the refusal limiter):
 4. Revoked device (`client_identities` / attested device marked revoked): `403 device_revoked`.
 5. Device key:
    - Device known: `publicKey` must hash to the registered SPKI, else `403 key_mismatch` (an operator resets the device to let a new key in — a reinstall on the same phone generates a new key, so the dashboard shows these).
-   - Device unknown: register. Under `ATTESTATION_KEY_POLICY=enforce` the chain must verify (Google hardware root, identity challenge, your package names and signer digests, verified boot) or `403 attestation_required` / `403 attestation_invalid` with the verifier's reason; under `warn` the verdict is recorded; under `off` nothing is checked (trust on first use).
+   - Device unknown: register. Under `ATTESTATION_KEY_POLICY=enforce` the chain must verify (Google hardware root, identity challenge, your package names and signer digests, verified boot) or `403 attestation_required` / `403 attestation_invalid` with the verifier's reason; without a chain, and with `APP_ATTEST_APP_IDS` configured, the report's `app-attest` attestation for this round is verified first and registers an iPhone in its place (§12); under `warn` the verdict is recorded; under `off` nothing is checked (trust on first use).
 6. Policy evaluation (section 4) → `pass` / `reject`, ARC, warnings.
 7. Token issuance on pass; config embedding when the device is behind.
 
@@ -338,8 +338,8 @@ webhooks), `attestation_token_secret_rotated`, `attestation_token_secret_deleted
 | Variable | Default | Meaning |
 |---|---|---|
 | `ATTESTATION_ENABLED` | `true` | Serves `/api/v1/attest*`. |
-| `ATTESTATION_KEY_POLICY` | `warn` (production profile: `enforce`) | What a first registration's Android key attestation must do. `enforce` needs `ATTESTATION_PACKAGE_NAMES` and `ATTESTATION_SIGNER_SHA256`. |
-| `ATTESTATION_POLICY_DEFAULT` | `strict` | Policy for a Config API with none stored. |
+| `ATTESTATION_KEY_POLICY` | `warn` (production profile: `enforce`) | What a first registration's Android key attestation must do. `enforce` needs `ATTESTATION_PACKAGE_NAMES` and `ATTESTATION_SIGNER_SHA256`; an iPhone gets in under it only by App Attest (`APP_ATTEST_APP_IDS`, §12). |
+| `ATTESTATION_POLICY_DEFAULT` | `strict` (production profile: `strict`, fixed) | Policy for a Config API with none stored. |
 | `ATTESTATION_TOKEN_TTL_SECONDS` | `300` | Token lifetime when a policy has none. |
 | `ATTESTATION_INTERVAL_SECONDS` | `300` | `nextAttestIn` when a policy has none. |
 | `ATTESTATION_NONCE_TTL_SECONDS` | `120` | |
@@ -357,7 +357,7 @@ webhooks), `attestation_token_secret_rotated`, `attestation_token_secret_deleted
 | `PLAY_INTEGRITY_MAX_AGE_SECONDS` | `86400` | How long a verified verdict covers the device's later rounds before `play_integrity_missing` (60–2592000). |
 | `ATTESTATION_MIN_IOS_VERSION` | unset | Dotted iOS version (`17.4`): an iOS report with an older (or no) `device.osVersion` raises `old_patch_level`. Unset: not checked. A malformed value is a start-up error. |
 | `ATTESTATION_IOS_TEAM_IDS` | unset | Comma-separated 10-character Apple team ids: an iOS report whose `app.teamId` is not one raises `app_integrity`. Unset: not checked. The bundle id is checked against `ATTESTATION_PACKAGE_NAMES`. |
-| `APP_ATTEST_APP_IDS` | unset | §12. Comma-separated `TEAMID.bundle.id`. Set, the server verifies `app-attest` verdicts (attestation rounds and enrollment) and raises the two flags; unset, App Attest is off on the server. |
+| `APP_ATTEST_APP_IDS` | unset | §12. Comma-separated `TEAMID.bundle.id`. Set, the server verifies `app-attest` verdicts (attestation rounds and enrollment), raises the two flags, and takes an iPhone's App Attest attestation in place of the Android chain under `ENROLLMENT_ATTESTATION`, `USER_AUTH_ATTESTATION` and `ATTESTATION_KEY_POLICY`; unset, App Attest is off on the server and those three refuse every iPhone under `enforce` (warned at start). |
 | `APP_ATTEST_ROOT_CA_FILE` | unset | Path of Apple's App Attestation Root CA (PEM). Required with `APP_ATTEST_APP_IDS`: missing or unreadable, the server does not start. |
 | `APP_ATTEST_ENVIRONMENT` | `production` | `production` / `development`: the aaguid an attestation must carry (the app's `appattest-environment` entitlement). |
 | `APP_ATTEST_MAX_AGE_SECONDS` | `86400` | How long a verified App Attest verdict covers rounds without one before `app_attest_missing` (60–2592000). |
@@ -598,11 +598,56 @@ for a token made for another CSR). Any other token still goes to
 iOS-only fleet needs no command), with a warning that Android tokens are
 then not verified.
 
+**In place of the Android chain.** Three settings ask for an Android Key
+Attestation chain, and the production profile puts all three on `enforce`.
+An iPhone has no such chain. With `APP_ATTEST_APP_IDS` configured, an App
+Attest attestation of a **fresh** key stands in for it in each place; its
+client data hash binds it to what that place registers, so one made for a
+place does not pass another, and a device admitted in one place is not
+admitted in the others (each needs its own):
+
+| Where | iOS sends | Client data hash | Recorded as |
+|---|---|---|---|
+| Enrollment, `ENROLLMENT_ATTESTATION=warn\|enforce` (every CSR path) | body field `appAttestation`, no `attestationChain` | `SHA-256(UTF-8(integrityRequestHash))` — the 43-character hash of the CSR and the device id that is stored (`deviceUid`, else `deviceId`) | identity attestation `attested`, reason `app_attest`; the device id counts as proven, as with a passing chain |
+| Screen-lock key, `USER_AUTH_ATTESTATION` (`purpose: user_auth`, first key and replacement) | body field `appAttestation`, no `attestationChain` | `SHA-256(UTF-8("pinvault-user-auth-key:v1:" + deviceId + ":" + Base64(SHA-256(SPKI DER of the key))))` | `attested`, `keyKind: app_attest` |
+| Attestation registration, `ATTESTATION_KEY_POLICY=enforce` (unknown device, no chain) | the first round's `verdictProvider` `app-attest` with an `attestation` | the round's, `SHA-256(UTF-8("pinvault-app-attest:v1:" + nonce + ":" + deviceId))` | device key `attested`, reason `app_attest`; its App Attest key on record (counter 0), the device held to platform `ios` |
+
+`appAttestation` is a JSON **string**, the token of PORTING.md §6
+(`{"provider":"app-attest","keyId":"<Base64>","attestation":"<Base64 CBOR>"}`),
+like `integrityToken`. The attestation is checked as above (Apple's root,
+the nonce, the key id, `APP_ATTEST_APP_IDS`, counter 0, the environment's
+aaguid). A failure is refused as a failing chain is, with the reason
+prefixed `app_attest_` (`attestation_invalid`, e.g. `app_attest_nonce_mismatch`;
+`app_attest_attestation_required` for an assertion) and recorded under
+`warn`. At registration an assertion means the device was forgotten while
+the app kept its key: `403 attestation_required` with reason
+`app_attest_unknown_key`, and the app attests a new key. Every other rule
+stays: a request with a chain is judged by the chain; replacing a
+screen-lock key still needs the device's credential as well; revocation,
+rate limits and limits are unchanged; Android devices still need their
+chain. Without `APP_ATTEST_APP_IDS` the field is not read and every iPhone
+is refused under `enforce`, as before; the server warns at start when one
+of the three is on `enforce` and App Attest is not configured.
+
+What it proves, and what it does not. App Attest proves the request came
+from **your genuine app on genuine Apple hardware**. It does **not** prove
+that the device is not jailbroken (Apple's attestation works on a
+jailbroken phone, and a hooked genuine app can still ask for one over any
+data it likes, another device id included), and it does **not** say where
+the identity key or the RSA screen-lock key lives or how it is protected:
+the server cannot read the key's access control, so
+`USER_AUTH_REQUIRE_PER_USE` takes the library's per-use key on Apple's word
+that the genuine app made the request. The dashboard shows such keys and
+identities as "Apple-attested", never as "hardware-attested". For
+high-value apps add a RASP product (jailbreak, hooking and tamper
+detection) through `environmentGuard` and `integrityTokenProvider`.
+
 **Rollout.** As for §11: `warn` on both flags until the dashboard shows the
 iOS fleet attesting, then `reject` on `app_attest`, and on
 `app_attest_missing` only once every supported app version ships the
 provider (simulators and older devices are `missing` for ever). A
 development build attests with the development aaguid: a lab server runs
-`APP_ATTEST_ENVIRONMENT=development`. `ATTESTATION_KEY_POLICY=enforce`
-registers no iPhone (no Android chain); a mixed fleet runs `warn` and
-rejects on `key_unattested` instead, which App Attest lifts.
+`APP_ATTEST_ENVIRONMENT=development`. Before switching an iOS fleet to
+`enforce`, set `APP_ATTEST_APP_IDS` and `APP_ATTEST_ROOT_CA_FILE`: without
+them `enforce` registers no iPhone. Simulators have no App Attest and are
+refused under `enforce`.

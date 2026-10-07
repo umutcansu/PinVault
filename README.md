@@ -2104,6 +2104,16 @@ routine rotations.
   that leaks cannot be used to pose as another device.
 - Name the hosts that may see the client certificate with
   `clientCertHosts(...)`.
+- **iOS fleets: configure App Attest before you enforce.** An iPhone has no
+  Android Key Attestation chain, so a server that enforces one (enrollment,
+  screen-lock keys, attestation registration) refuses every iPhone until
+  App Attest is configured (`APP_ATTEST_APP_IDS`, `APP_ATTEST_ROOT_CA_FILE`
+  with Apple's App Attestation Root CA, `APP_ATTEST_ENVIRONMENT=production`);
+  the reference server warns at start. App Attest then stands in for the
+  chain, verified separately for each request. It proves your genuine app on
+  genuine Apple hardware — not that the phone is not jailbroken, and not
+  where the keys live; for high-value apps add a RASP product
+  ([ATTESTATION.md §12](ATTESTATION.md#12-apple-app-attest-optional-ios)).
 
 ### 8b. Know — or require — where the keys live *(next release)*
 

@@ -353,6 +353,35 @@ other. For that key also check that user authentication is required, and how: th
 reference server refuses a time-bound key (`authTimeout` set) from Android 11 or newer,
 and with `USER_AUTH_REQUIRE_PER_USE=true` from every version.
 
+**iOS: App Attest in place of the chain.** An iPhone has no Android Key Attestation
+chain; where you require one, the iOS library sends instead an App Attest attestation of
+a **fresh** App Attest key, in a body field `appAttestation` whose value is a JSON
+**string** (like `integrityToken`), never an object:
+
+```json
+"appAttestation": "{\"provider\":\"app-attest\",\"keyId\":\"<Base64>\",\"attestation\":\"<Base64 CBOR>\"}"
+```
+
+The attestation's client data hash binds it to what is being registered:
+
+| Request | `clientDataHash` (SHA-256 over UTF-8) |
+|---|---|
+| CSR enrollment (`POST …/client-certs/enroll`, no `attestationChain`) | `SHA-256(integrityRequestHash)`, the 43-character request hash below, over the CSR and the device id you store (`deviceUid`, else `deviceId`) |
+| User-auth key (`POST …/public-key`, `"purpose":"user_auth"`, no `attestationChain`) | `SHA-256("pinvault-user-auth-key:v1:" + deviceId + ":" + Base64(SHA-256(SPKI DER of publicKeyPem)))`, standard Base64 with padding |
+| First attestation round (`POST /api/v1/attest`, no `attestationChain`) | the round's: `SHA-256("pinvault-app-attest:v1:" + nonce + ":" + deviceId)`, the token in `report.verdictProvider` (section 9) |
+
+Verify it as an attestation (never an assertion) against Apple's App Attestation Root CA
+(ATTESTATION.md §12 lists the checks) with that hash, then treat it as a passing chain:
+refuse a failing one with `403 attestation_invalid` and a `reason` (the reference server
+prefixes them `app_attest_`, e.g. `app_attest_nonce_mismatch` for one made for another
+CSR, key, device or round), keep every other rule (a replacement still needs the device's
+credential; spend nothing before the check). Record that App Attest, not a chain,
+admitted the identity or key: it proves the genuine app on genuine Apple hardware, not
+that the phone is not jailbroken and not where the key lives or how it is protected.
+When a request carries a chain, judge the chain. The reference server does this only with
+`APP_ATTEST_APP_IDS` (and `APP_ATTEST_ROOT_CA_FILE`) set; without them every iPhone is
+refused under `enforce`.
+
 **Integrity verdict (library and reference server, unreleased).** Key attestation says
 where the key was made. It does not say whether the phone is rooted or the app hooked
 right now. An app that sets `integrityTokenProvider` sends one more field with every CSR
@@ -703,7 +732,13 @@ carries `device.platform: "ios"`, `device.osVersion` (dotted, `26.5`),
 an iOS report by what it has: the bundle id and team id instead of the
 signer digest, the iOS version instead of the patch date, App Attest
 instead of the key attestation chain; a report without `platform` is an
-Android one. Store the platform with the device.
+Android one. Store the platform with the device. If you require a chain
+for a first registration, accept instead the first round's `app-attest`
+verdict carrying an `attestation` for that round (section 4, "iOS: App
+Attest in place of the chain"): register the device key and the App Attest
+key, and hold the device to iOS. An `assertion` from a device you do not
+know means you forgot it: refuse with `reason` `app_attest_unknown_key`
+and the app attests a new key.
 
 **What your backend does on every request from the app** — the library adds
 `PinVault-Token: <jwt>` to requests whose host is a token host. Verify it
@@ -946,6 +981,7 @@ All paths are relative to `configUrl`. Leading `/` is stripped.
 - [ ] Vault file endpoints return raw bytes (if using VaultFile feature)
 - [ ] Device keys keep their `algorithm`: `end_to_end` / `user_auth` files for an iOS key (`RSA-OAEP-SHA256-MGF1-SHA256`) are wrapped with MGF1-SHA256, Android's (`RSA-OAEP-SHA256`) with MGF1-SHA1
 - [ ] If iOS apps attest: a report with `device.platform: "ios"` is judged by bundle id, team id and iOS version, and an `app-attest` verdict against Apple's App Attestation Root CA (ATTESTATION.md §12)
+- [ ] Where you require an Android chain and serve iPhones: `appAttestation` (a JSON string) is verified as a fresh key's App Attest attestation with the client data hash of that request (enrollment, user-auth key, first round), recorded as App Attest, not as a hardware-attested key
 - [ ] If the app attests: `/api/v1/attest/challenge` and `/api/v1/attest` as in ATTESTATION.md, no token to a rejected device, and your API verifies `PinVault-Token` (HS256 by `kid`, `exp` ≤ 60 s leeway, `aud`) and answers `401` naming `PinVault-Token` otherwise
 
 ---
