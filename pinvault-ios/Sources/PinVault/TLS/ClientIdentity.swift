@@ -40,8 +40,17 @@ final class ClientIdentity: @unchecked Sendable {
         return URLCredential(identity: identity, certificates: intermediates.isEmpty ? nil : intermediates, persistence: .forSession)
     }
 
-    /// The identity inside a PKCS12, held in process memory only (never in
-    /// the Keychain; `kSecImportToMemoryOnly` on macOS 15+ / iOS 18+, the iOS default before).
+    /// The identity inside a PKCS12, held in process memory only: nothing is
+    /// added to the Keychain, and the same bundle opens any number of times.
+    ///
+    /// On iOS that is what `SecPKCS12Import` does on every version: Apple's
+    /// header says `kSecImportToMemoryOnly` "is already default behavior on
+    /// iOS", and the implementation stores items only when the caller asks for
+    /// the data-protection Keychain (`kSecUseDataProtectionKeychain`, a macOS
+    /// 14+ option this code never passes). The flag is set where it exists
+    /// (macOS 15+ / iOS 18+) so macOS behaves the same way, and
+    /// `PKCS12ImportKeychainTests` (app-hosted) checks on each simulator runtime
+    /// that neither call leaves an identity, key or certificate behind.
     /// - Throws: ``PinVaultError/crypto(message:cause:)`` when the bytes or the password are wrong.
     static func fromPKCS12(_ p12: Data, password: String) throws -> ClientIdentity {
         var options: [String: Any] = [kSecImportExportPassphrase as String: password]

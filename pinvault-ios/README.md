@@ -188,6 +188,17 @@ two app-hosted Keychain suites (SwiftPM's test runner has no Keychain access on
 the simulator). Without a simulator id it runs the Mac suites only. The test
 fixtures are throwaway keys and certificates (`Tests/PinVaultTests/Fixtures/README.md`).
 
+Runtimes: CI should run the simulator suites on the **oldest iOS runtime Xcode
+still ships (18.0)** and on the **current one**, so that Keychain behaviour that
+differs between versions is covered where it can be (iOS 16 and 17 simulators no
+longer ship, so the library's calls there are checked by reading Apple's
+sources rather than by running them). `PKCS12ImportKeychainTests` in the identity
+host suite is the one that depends on it: it checks that opening a PKCS12
+(`SecPKCS12Import`, with `kSecImportToMemoryOnly` on iOS 18+ and without it
+before, as iOS 16–17 get it) leaves nothing in the Keychain and opens the same
+bundle again and again. Apple's header documents memory-only as the iOS default
+on every version; the test makes sure a runtime does not drift from that.
+
 End to end against the sample host, with the SwiftUI sample app
 ([`sample-client-ios/`](../sample-client-ios)): `cd sample-e2e && npm run test:ios`
 ([`sample-e2e/SETUP.md`](../sample-e2e/SETUP.md), iOS section).
