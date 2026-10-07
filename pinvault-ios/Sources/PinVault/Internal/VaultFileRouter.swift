@@ -628,7 +628,3 @@ final class VaultFileRouter: Sendable {
     }
 }
 
-fileprivate extension String {
-    /// Kotlin `takeIf { it.isNotBlank() }`.
-    var nonBlank: String? { isBlank ? nil : self }
-}
