@@ -86,7 +86,11 @@ ensure_mock() {
             "${HTTP}/api/v1/management/hosts/default-tls/generate-cert" >/dev/null
         echo ">> ${host} için sertifika üretildi ve pin kaydı eklendi"
     fi
-    if echo "${status}" | jq -e '.mockServerRunning == true' >/dev/null 2>&1; then
+    local mode="tls"
+    [ "${mtls}" = "true" ] && mode="mtls"
+    # Çalışıyor ama yanlış kipte (eski bir sunucu yeniden açılışta mTLS mock'unu TLS
+    # olarak başlatıyordu): aynı portta istenen kiple yeniden başlatılır.
+    if echo "${status}" | jq -e --arg m "${mode}" '.mockServerRunning == true and .mockServerMode == $m' >/dev/null 2>&1; then
         echo ">> ${host} mock host'u zaten çalışıyor"
     else
         api -X POST -H 'Content-Type: application/json' -d "{\"port\":${port},\"mtls\":${mtls}}" \

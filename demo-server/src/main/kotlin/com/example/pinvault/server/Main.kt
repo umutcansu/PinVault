@@ -817,7 +817,7 @@ private fun startServer() {
 
     // DB'deki config API'leri ve mock server'ları auto-start et
     data class ApiToStart(val id: String, val port: Int, val mode: String)
-    data class MockToStart(val hostname: String, val keystorePath: String, val port: Int)
+    data class MockToStart(val hostname: String, val keystorePath: String, val port: Int, val mtls: Boolean)
 
     val apisToStart = mutableListOf<ApiToStart>()
     val mocksToStart = mutableListOf<MockToStart>()
@@ -827,9 +827,9 @@ private fun startServer() {
             val rs = stmt.executeQuery()
             while (rs.next()) apisToStart.add(ApiToStart(rs.getString("id"), rs.getInt("port"), rs.getString("mode")))
         }
-        conn.prepareStatement("SELECT hostname, keystore_path, mock_server_port FROM hosts WHERE mock_server_port IS NOT NULL AND keystore_path IS NOT NULL").use { stmt ->
+        conn.prepareStatement("SELECT hostname, keystore_path, mock_server_port, mock_server_mtls FROM hosts WHERE mock_server_port IS NOT NULL AND keystore_path IS NOT NULL").use { stmt ->
             val rs = stmt.executeQuery()
-            while (rs.next()) mocksToStart.add(MockToStart(rs.getString("hostname"), rs.getString("keystore_path"), rs.getInt("mock_server_port")))
+            while (rs.next()) mocksToStart.add(MockToStart(rs.getString("hostname"), rs.getString("keystore_path"), rs.getInt("mock_server_port"), rs.getInt("mock_server_mtls") == 1))
         }
     }
 
@@ -849,8 +849,13 @@ private fun startServer() {
     for (mock in mocksToStart) {
         if (!mockServerManager.isRunning(mock.hostname)) {
             try {
-                mockServerManager.start(mock.hostname, mock.port, mock.keystorePath)
-                println("Auto-started mock server: ${mock.hostname} on port ${mock.port}")
+                // An mTLS mock comes back as one, or not at all: never as a TLS mock that lets anyone in.
+                val trustPath = if (mock.mtls) {
+                    certService.getTrustStoreFile()?.absolutePath?.takeIf { File(it).exists() }
+                        ?: throw IllegalStateException("mTLS mock needs the client truststore, which is missing")
+                } else null
+                mockServerManager.start(mock.hostname, mock.port, mock.keystorePath, trustPath)
+                println("Auto-started mock server: ${mock.hostname} on port ${mock.port} (${if (mock.mtls) "mTLS" else "TLS"})")
             } catch (e: Exception) {
                 println("Failed to auto-start mock ${mock.hostname}: ${e.message}")
             }
