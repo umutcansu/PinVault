@@ -142,11 +142,14 @@ test('iOS: kilitli vault dosyası yalnızca eşleşen Face ID taramasıyla açı
       await attachText(testInfo, 'pinvault-ios/Sources/PinVault/Internal/UserAuthPrompt.swift', [
         ...lines,
         '',
-        '.deviceOwnerAuthentication: Face ID (kayıtlıysa) ve onun yerine cihaz parolası. Eşleşmeyen',
-        'tarama soruyu kapatmaz; Vazgeç LAError.userCancel döndürür, kütüphane bunu "kullanıcı',
-        'vazgeçti" sayar ve şifreli kopyaya dokunmaz.',
+        'Varsayılan anahtar (.deviceOwner): .deviceOwnerAuthentication = Face ID (kayıtlıysa) ve onun',
+        'yerine cihaz parolası. userAuthBiometricOnly() ise .deviceOwnerAuthenticationWithBiometrics.',
+        'Eşleşmeyen tarama soruyu kapatmaz; Vazgeç LAError.userCancel döndürür, kütüphane bunu',
+        '"kullanıcı vazgeçti" sayar ve şifreli kopyaya dokunmaz.',
       ].join('\n'));
-      expect(lines.join('\n')).toContain('evaluatePolicy(.deviceOwnerAuthentication');
+      const source = lines.join('\n');
+      expect(source).toContain('case .deviceOwner: return .deviceOwnerAuthentication');
+      expect(source).toContain('context.evaluatePolicy(policy, localizedReason: reason)');
     });
   } finally {
     await hostApi.deleteVaultFile(API, KEY).catch(() => {});
