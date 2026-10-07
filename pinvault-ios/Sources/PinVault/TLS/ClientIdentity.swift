@@ -34,7 +34,10 @@ final class ClientIdentity: @unchecked Sendable {
     /// The credential answering a client-certificate challenge: the identity
     /// and the intermediates (the leaf is the identity's own certificate).
     func credential() -> URLCredential {
-        URLCredential(identity: identity, certificates: Array(chain.dropFirst()), persistence: .forSession)
+        // nil, not [], without intermediates: CFNetwork reads element 0 of a
+        // non-nil array and an empty one crashes the process (a self-signed identity).
+        let intermediates = Array(chain.dropFirst())
+        return URLCredential(identity: identity, certificates: intermediates.isEmpty ? nil : intermediates, persistence: .forSession)
     }
 
     /// The identity inside a PKCS12, held in process memory only (never in
