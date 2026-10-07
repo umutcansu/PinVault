@@ -125,7 +125,7 @@ final class PinVaultFacadeTests: XCTestCase {
         let http = try PinVaultConfig.Builder()
             .configApi("api", url: "http://api.example.com/") { $0.bootstrapPins(self.pins).allowUnsigned() }
             .build()
-        let result = await PinVault().enrollForResult(config: http, token: "t")
+        let result = try await isolatedPinVault(self).enrollForResult(config: http, token: "t")
         guard case .failed(let message, _) = result else { return XCTFail("\(result)") }
         XCTAssertTrue(message.contains("configUrl must be an https:// URL"), message)
         let none = await PinVault().checkPendingEnrollment(config: PinVaultConfig.static(pins[0]))
