@@ -1,0 +1,442 @@
+<template id="h2-hsm-kazanc-template">
+  <div id="root" data-composition-id="h2-hsm-kazanc" data-start="0" data-duration="19.5" data-width="1920" data-height="1080" lang="tr">
+    <style>
+      @import url("https://fonts.googleapis.com/css2?family=Archivo+Black&family=JetBrains+Mono:wght@400;700&family=Space+Grotesk:wght@400;500&display=block");
+
+      #root {
+        position: relative;
+        width: 1920px;
+        height: 1080px;
+        overflow: hidden;
+      }
+      [data-composition-id="h2-hsm-kazanc"] * {
+        margin: 0;
+        padding: 0;
+        box-sizing: border-box;
+      }
+
+      /* full-bleed ground (clip layer, not #root) */
+      #h2-hsm-kazanc-stage {
+        position: absolute;
+        inset: 0;
+        width: 1920px;
+        height: 1080px;
+        background: #efe9d9;
+        container-type: size;
+        overflow: hidden;
+        color: #0f0f0f;
+      }
+
+      /* ---------- chrome ---------- */
+      #h2-hsm-kazanc-topbar {
+        position: absolute;
+        top: 48px;
+        left: 64px;
+        right: 64px;
+        height: 44px;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        font-family: "JetBrains Mono", monospace;
+        font-size: 22px;
+        letter-spacing: 0.06em;
+      }
+      #h2-hsm-kazanc-pill {
+        border: 4px solid #0f0f0f;
+        border-radius: 999px;
+        background: #efe9d9;
+        padding: 4px 20px;
+        line-height: 1.3;
+      }
+      #h2-hsm-kazanc-footer {
+        position: absolute;
+        bottom: 48px;
+        left: 64px;
+        right: 64px;
+        height: 32px;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        font-family: "JetBrains Mono", monospace;
+        font-size: 22px;
+        letter-spacing: 0.06em;
+      }
+      #h2-hsm-kazanc-counter {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+      }
+      #h2-hsm-kazanc-dot {
+        width: 10px;
+        height: 10px;
+        border-radius: 50%;
+        background: #0f0f0f;
+      }
+
+      /* ---------- kicker + title ---------- */
+      #h2-hsm-kazanc-kicker {
+        position: absolute;
+        left: 96px;
+        top: 128px;
+        background: #0f0f0f;
+        color: #efe9d9;
+        font-family: "JetBrains Mono", monospace;
+        font-size: 22px;
+        letter-spacing: 0.14em;
+        line-height: 1.25;
+        white-space: nowrap;
+        padding: 8px 18px;
+      }
+      #h2-hsm-kazanc-title {
+        position: absolute;
+        left: 96px;
+        top: 186px;
+        font-family: "Archivo Black", sans-serif;
+        font-size: 80px;
+        line-height: 0.92;
+        letter-spacing: -0.01em;
+        white-space: nowrap;
+      }
+
+      /* ---------- benefit list (left, focal) ---------- */
+      #h2-hsm-kazanc-gains {
+        position: absolute;
+        left: 96px;
+        top: 304px;
+        width: 890px;
+        display: flex;
+        flex-direction: column;
+        gap: 26px;
+      }
+      .h2-hsm-kazanc-gain {
+        position: relative;
+        display: flex;
+        align-items: flex-start;
+        gap: 22px;
+      }
+      .h2-hsm-kazanc-check {
+        flex: 0 0 auto;
+        width: 46px;
+        height: 46px;
+        margin-top: -2px;
+        border: 4px solid #0f0f0f;
+        background: #1f8a4c;
+        position: relative;
+      }
+      .h2-hsm-kazanc-check svg {
+        position: absolute;
+        left: 0;
+        top: 0;
+        width: 38px;
+        height: 38px;
+        overflow: visible;
+      }
+      .h2-hsm-kazanc-gaintext {
+        font-family: "Space Grotesk", sans-serif;
+        font-size: 28px;
+        line-height: 1.4;
+        width: 822px;
+      }
+
+      /* ---------- note (bottom-left) ---------- */
+      #h2-hsm-kazanc-note {
+        position: absolute;
+        left: 96px;
+        top: 806px;
+        height: 48px;
+        border-left: 8px solid #0f0f0f;
+        padding-left: 20px;
+        display: flex;
+        align-items: center;
+        font-family: "Space Grotesk", sans-serif;
+        font-size: 26px;
+        line-height: 1.3;
+        white-space: nowrap;
+      }
+
+      /* ---------- panel window (right, supporting) ---------- */
+      #h2-hsm-kazanc-panel {
+        position: absolute;
+        left: 1036px;
+        top: 304px;
+        width: 764px;
+        height: 270px;
+        border: 4px solid #0f0f0f;
+        background: #efe9d9;
+      }
+      #h2-hsm-kazanc-panelhead {
+        position: absolute;
+        left: 0;
+        top: 0;
+        right: 0;
+        height: 46px;
+        background: #0f0f0f;
+        color: #efe9d9;
+        font-family: "JetBrains Mono", monospace;
+        font-size: 22px;
+        letter-spacing: 0.04em;
+        display: flex;
+        align-items: center;
+        padding: 0 20px;
+        white-space: nowrap;
+      }
+      #h2-hsm-kazanc-cardtitle {
+        position: absolute;
+        left: 22px;
+        top: 60px;
+        font-family: "Space Grotesk", sans-serif;
+        font-weight: 500;
+        font-size: 28px;
+        line-height: 36px;
+        white-space: nowrap;
+      }
+      #h2-hsm-kazanc-table {
+        position: absolute;
+        left: 22px;
+        top: 106px;
+        width: 712px;
+        height: 144px;
+        border: 3px solid #0f0f0f;
+        background: #e4dcc4;
+      }
+      .h2-hsm-kazanc-tr {
+        position: absolute;
+        left: 0;
+        right: 0;
+        height: 46px;
+        font-family: "JetBrains Mono", monospace;
+        font-size: 22px;
+        white-space: nowrap;
+      }
+      #h2-hsm-kazanc-thead {
+        top: 0;
+        height: 42px;
+        background: #0f0f0f;
+        color: #efe9d9;
+        letter-spacing: 0.04em;
+      }
+      #h2-hsm-kazanc-row1 {
+        top: 42px;
+        border-bottom: 3px solid #0f0f0f;
+      }
+      #h2-hsm-kazanc-row2 {
+        top: 91px;
+      }
+      .h2-hsm-kazanc-td {
+        position: absolute;
+        top: 0;
+        height: 100%;
+        display: flex;
+        align-items: center;
+      }
+      .h2-hsm-kazanc-c1 { left: 16px; }
+      .h2-hsm-kazanc-c2 { left: 176px; }
+      .h2-hsm-kazanc-c3 { left: 356px; }
+      #h2-hsm-kazanc-badge {
+        position: absolute;
+        left: 530px;
+        top: 7px;
+        height: 32px;
+        padding: 0 12px;
+        border: 3px solid #0f0f0f;
+        background: #f5c518;
+        font-family: "JetBrains Mono", monospace;
+        font-weight: 700;
+        font-size: 20px;
+        line-height: 26px;
+        white-space: nowrap;
+      }
+
+      /* ---------- limit box (the one hard shadow) ---------- */
+      #h2-hsm-kazanc-limit {
+        position: absolute;
+        left: 1036px;
+        top: 602px;
+        width: 740px;
+        height: 262px;
+        border: 4px solid #0f0f0f;
+        background: #efe9d9;
+        box-shadow: 24px 24px 0 #e85a1f, 24px 24px 0 4px #0f0f0f;
+        padding: 18px 22px;
+      }
+      #h2-hsm-kazanc-limithead {
+        display: flex;
+        align-items: center;
+        gap: 14px;
+        font-family: "JetBrains Mono", monospace;
+        font-size: 22px;
+        letter-spacing: 0.1em;
+        line-height: 28px;
+        white-space: nowrap;
+      }
+      #h2-hsm-kazanc-limitmark {
+        width: 20px;
+        height: 20px;
+        background: #e85a1f;
+        border: 3px solid #0f0f0f;
+      }
+      #h2-hsm-kazanc-limitbody {
+        margin-top: 10px;
+        font-family: "Space Grotesk", sans-serif;
+        font-size: 24px;
+        line-height: 1.3;
+      }
+      #h2-hsm-kazanc-code {
+        margin-top: 12px;
+        background: #e4dcc4;
+        border: 3px solid #0f0f0f;
+        padding: 6px 14px;
+        height: 68px;
+        font-family: "JetBrains Mono", monospace;
+        font-size: 20px;
+        line-height: 26px;
+        white-space: pre;
+      }
+    </style>
+
+    <div id="h2-hsm-kazanc-stage" class="clip" data-start="0" data-duration="19.5" data-track-index="0">
+      <!-- chrome -->
+      <div id="h2-hsm-kazanc-topbar">
+        <span>PINVAULT · 3 AKIŞ</span>
+        <span id="h2-hsm-kazanc-pill">SEÇENEK</span>
+      </div>
+      <div id="h2-hsm-kazanc-footer">
+        <span>HSM kazancı</span>
+        <span id="h2-hsm-kazanc-counter"><span>16</span><span id="h2-hsm-kazanc-dot"></span><span>38</span></span>
+      </div>
+
+      <!-- kicker + title -->
+      <div id="h2-hsm-kazanc-kicker">HSM SEÇERSENİZ</div>
+      <div id="h2-hsm-kazanc-title">HSM KULLANIRSANIZ</div>
+
+      <!-- benefit list (focal) -->
+      <div id="h2-hsm-kazanc-gains">
+        <div id="h2-hsm-kazanc-gain1" class="h2-hsm-kazanc-gain">
+          <div class="h2-hsm-kazanc-check"><svg viewBox="0 0 38 38"><polyline class="h2-hsm-kazanc-tick" points="8,20 16,28 31,11" fill="none" stroke="#EFE9D9" stroke-width="5" stroke-linecap="square" stroke-dasharray="40" stroke-dashoffset="0" /></svg></div>
+          <div class="h2-hsm-kazanc-gaintext">Sunucunun diski ya da yedeği çalınsa bile imza anahtarı çalınmaz.</div>
+        </div>
+        <div id="h2-hsm-kazanc-gain2" class="h2-hsm-kazanc-gain">
+          <div class="h2-hsm-kazanc-check"><svg viewBox="0 0 38 38"><polyline class="h2-hsm-kazanc-tick" points="8,20 16,28 31,11" fill="none" stroke="#EFE9D9" stroke-width="5" stroke-linecap="square" stroke-dasharray="40" stroke-dashoffset="0" /></svg></div>
+          <div class="h2-hsm-kazanc-gaintext">Anahtar başka bir makineye kopyalanıp sahte liste mühürlemek için kullanılamaz; çalışanlar dahil kimse dışarı alamaz.</div>
+        </div>
+        <div id="h2-hsm-kazanc-gain3" class="h2-hsm-kazanc-gain">
+          <div class="h2-hsm-kazanc-check"><svg viewBox="0 0 38 38"><polyline class="h2-hsm-kazanc-tick" points="8,20 16,28 31,11" fill="none" stroke="#EFE9D9" stroke-width="5" stroke-linecap="square" stroke-dasharray="40" stroke-dashoffset="0" /></svg></div>
+          <div class="h2-hsm-kazanc-gaintext">Anahtarın donanımda tutulmasını şart koşan güvenlik denetimlerini karşılamaya yardımcı olur.</div>
+        </div>
+        <div id="h2-hsm-kazanc-gain4" class="h2-hsm-kazanc-gain">
+          <div class="h2-hsm-kazanc-check"><svg viewBox="0 0 38 38"><polyline class="h2-hsm-kazanc-tick" points="8,20 16,28 31,11" fill="none" stroke="#EFE9D9" stroke-width="5" stroke-linecap="square" stroke-dasharray="40" stroke-dashoffset="0" /></svg></div>
+          <div class="h2-hsm-kazanc-gaintext">Anahtarı değiştirmek gerekince yenisi HSM'de üretilir; sunucu yeni anahtarla yeniden başlatılır.</div>
+        </div>
+      </div>
+
+      <!-- panel: İmzalama tab, signers card -->
+      <div id="h2-hsm-kazanc-panel">
+        <div id="h2-hsm-kazanc-panelhead">Panel · 8090 · mtls-8092 · İmzalama</div>
+        <div id="h2-hsm-kazanc-cardtitle">İmzalayıcılar</div>
+        <div id="h2-hsm-kazanc-table">
+          <div id="h2-hsm-kazanc-thead" class="h2-hsm-kazanc-tr">
+            <span class="h2-hsm-kazanc-td h2-hsm-kazanc-c1">Ad</span>
+            <span class="h2-hsm-kazanc-td h2-hsm-kazanc-c2">Tür</span>
+            <span class="h2-hsm-kazanc-td h2-hsm-kazanc-c3">Anahtar kimliği</span>
+          </div>
+          <div id="h2-hsm-kazanc-row1" class="h2-hsm-kazanc-tr">
+            <span class="h2-hsm-kazanc-td h2-hsm-kazanc-c1">hsm</span>
+            <span class="h2-hsm-kazanc-td h2-hsm-kazanc-c2">pkcs11</span>
+            <span class="h2-hsm-kazanc-td h2-hsm-kazanc-c3">3fA9c2…</span>
+            <span id="h2-hsm-kazanc-badge">birincil</span>
+          </div>
+          <div id="h2-hsm-kazanc-row2" class="h2-hsm-kazanc-tr">
+            <span class="h2-hsm-kazanc-td h2-hsm-kazanc-c1">ekip-b</span>
+            <span class="h2-hsm-kazanc-td h2-hsm-kazanc-c2">command</span>
+            <span class="h2-hsm-kazanc-td h2-hsm-kazanc-c3">Qm7Lr0…</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- limit box -->
+      <div id="h2-hsm-kazanc-limit">
+        <div id="h2-hsm-kazanc-limithead"><span id="h2-hsm-kazanc-limitmark"></span><span>TEK BAŞINA ÇÖZMEDİĞİ</span></div>
+        <div id="h2-hsm-kazanc-limitbody">Sunucuyu ele geçiren, HSM'e yine imza attırabilir. Buna karşı ikinci bir imzalayıcı: anahtarı başka bir ekipte ya da sistemde durur.</div>
+        <div id="h2-hsm-kazanc-code"><span id="h2-hsm-kazanc-codeline1"></span>
+<span id="h2-hsm-kazanc-codeline2"></span></div>
+      </div>
+
+      <!-- note -->
+      <div id="h2-hsm-kazanc-note">Telefon, iki imzası birden olmayan listeyi kabul etmez.</div>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/gsap@3.14.2/dist/gsap.min.js"></script>
+    <script>
+      (function () {
+        var FID = "h2-hsm-kazanc";
+        var host = document.querySelector('[data-composition-id="' + FID + '"]') || document;
+        var $ = function (n) {
+          return host.querySelector('[id="' + FID + "-" + n + '"]');
+        };
+        var $$ = function (sel) {
+          return Array.prototype.slice.call(host.querySelectorAll(sel));
+        };
+
+        // code line, split into per-character spans for typing (deterministic, built synchronously)
+        var CODE = [
+          "sunucu: CONFIG_SIGNERS=hsm,ekip-b ·",
+          "uygulama: requiredSignatures(2)"
+        ];
+        var codeChars = [];
+        CODE.forEach(function (line, li) {
+          var holder = $("codeline" + (li + 1));
+          for (var i = 0; i < line.length; i++) {
+            var s = document.createElement("span");
+            s.textContent = line.charAt(i);
+            holder.appendChild(s);
+            codeChars.push(s);
+          }
+        });
+
+        var tl = gsap.timeline({ paused: true });
+        var SOFT = "power3.out";
+
+        // ---------- Scene 1 (0.0–1.8): kicker, title ----------
+        tl.fromTo($("kicker"), { opacity: 0, x: -20 }, { opacity: 1, x: 0, duration: 0.5, ease: SOFT }, 0.15);
+        tl.fromTo($("title"), { opacity: 0, y: 30 }, { opacity: 1, y: 0, duration: 0.8, ease: SOFT }, 0.35);
+
+        // ---------- Scene 2 (1.8–9.0): four benefits, ~1.7 s apart, each with a green check ----------
+        var gains = [$("gain1"), $("gain2"), $("gain3"), $("gain4")];
+        gains.forEach(function (g, i) {
+          var at = 1.8 + i * 1.7;
+          var box = g.querySelector(".h2-hsm-kazanc-check");
+          var tick = g.querySelector(".h2-hsm-kazanc-tick");
+          var txt = g.querySelector(".h2-hsm-kazanc-gaintext");
+          tl.fromTo(box, { opacity: 0, scale: 0.6 }, { opacity: 1, scale: 1, duration: 0.4, ease: SOFT }, at);
+          tl.fromTo(tick, { strokeDashoffset: 40 }, { strokeDashoffset: 0, duration: 0.35, ease: "power2.out" }, at + 0.2);
+          tl.fromTo(txt, { opacity: 0, x: -24 }, { opacity: 1, x: 0, duration: 0.6, ease: SOFT }, at + 0.1);
+        });
+
+        // ---------- Scene 3 (9.0–12.0): panel card opens; table head, row 1, "birincil" badge ----------
+        tl.fromTo($("panel"), { opacity: 0, y: 36 }, { opacity: 1, y: 0, duration: 0.7, ease: SOFT }, 9.0);
+        tl.fromTo($("cardtitle"), { opacity: 0, y: 10 }, { opacity: 1, y: 0, duration: 0.45, ease: SOFT }, 9.45);
+        tl.fromTo($("table"), { opacity: 0 }, { opacity: 1, duration: 0.3, ease: SOFT }, 9.8);
+        tl.fromTo($("thead"), { opacity: 0, y: 8 }, { opacity: 1, y: 0, duration: 0.4, ease: SOFT }, 9.85);
+        tl.fromTo($("row1"), { opacity: 0, x: -20 }, { opacity: 1, x: 0, duration: 0.5, ease: SOFT }, 10.3);
+        tl.fromTo($("badge"), { opacity: 0, scale: 0.7 }, { opacity: 1, scale: 1, duration: 0.4, ease: SOFT }, 10.9);
+
+        // ---------- Scene 4 (12.0–16.5): limit box (hard shadow), head, body; row 2 joins; code typed ----------
+        tl.fromTo($("limit"), { opacity: 0, y: 40 }, { opacity: 1, y: 0, duration: 0.7, ease: SOFT }, 12.0);
+        tl.fromTo($("limithead"), { opacity: 0, x: -16 }, { opacity: 1, x: 0, duration: 0.45, ease: SOFT }, 12.35);
+        tl.fromTo($("limitbody"), { opacity: 0, y: 12 }, { opacity: 1, y: 0, duration: 0.55, ease: SOFT }, 12.7);
+        tl.fromTo($("row2"), { opacity: 0, x: -20 }, { opacity: 1, x: 0, duration: 0.5, ease: SOFT }, 13.9);
+        tl.fromTo($("code"), { opacity: 0 }, { opacity: 1, duration: 0.3, ease: SOFT }, 14.3);
+        codeChars.forEach(function (ch, i) {
+          tl.fromTo(ch, { opacity: 0 }, { opacity: 1, duration: 0.01, ease: "none" }, 14.5 + i * 0.022);
+        });
+
+        // ---------- Scene 5 (16.5–19.0): note, hold ----------
+        tl.fromTo($("note"), { opacity: 0, x: -20 }, { opacity: 1, x: 0, duration: 0.6, ease: SOFT }, 16.5);
+        tl.to({}, { duration: 0.01 }, 18.99);
+
+        window.__timelines = window.__timelines || {};
+        window.__timelines[FID] = tl;
+      })();
+    </script>
+  </div>
+</template>

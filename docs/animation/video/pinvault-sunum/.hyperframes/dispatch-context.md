@@ -5,7 +5,7 @@
 - Captions: disabled (no caption track; keep load-bearing content at y ≤ 900; only the mono footer chrome sits below)
 - Confirmed sketch: none (autonomous run; no storyboard.html)
 - Audio: none. Fully SILENT video (music: none, no SCRIPT.md, no sfx).
-- Total frames in this film: 32 (footer counter reads "NN • 32"; the orchestrator renumbers counters after assembly, so any NN is fine).
+- Total frames in this film: 38 (footer counter reads "NN • 38"; the orchestrator renumbers counters after assembly, so any NN is fine).
 
 ### Exception to "visible text is short motion-graphics copy / never render narration"
 
@@ -63,7 +63,7 @@ Bir karede en çok üç vurgu. Yeşil zemin yalnızca son karede. Saf beyaz, deg
 
 - Fonts: Archivo Black, Space Grotesk, JetBrains Mono from Google Fonts (latin-ext subset). Put `lang="tr"` on the frame root.
 - Never use CSS text-transform; uppercase strings are already uppercase.
-- Your frame_id starts with a letter ("a1-…", "d1-…"), so plain `#a1-…` selectors are fine.
+- Your frame_id starts with a letter ("c1-…", "e1-…"), so plain `#a1-…` selectors are fine.
 - These frames have NO chain strip ("Zincir şeridi") — that strip belongs only to the ten ring frames. Keep the top bar, pill and footer.
 - Panel screens must look like the panel screens already in this film. Read-only references (match their panel window, tabs, fields, buttons, toast, phone and server drawing):
   - /Users/thell/Programming/PinVault/.claude/worktrees/animasyon-topoloji-sira-33e587/docs/animation/video/pinvault-sunum/compositions/frames/06-token.html (panel window, field, button press, popup)

@@ -1,0 +1,542 @@
+<template id="h1-hsm-secenek-template">
+  <div id="root" data-composition-id="h1-hsm-secenek" data-start="0" data-duration="19.5" data-width="1920" data-height="1080" lang="tr">
+    <style>
+      @import url("https://fonts.googleapis.com/css2?family=Archivo+Black&family=JetBrains+Mono:wght@400;700&family=Space+Grotesk:wght@400;500;700&display=block");
+
+      #root {
+        position: relative;
+        width: 1920px;
+        height: 1080px;
+        overflow: hidden;
+      }
+      [data-composition-id="h1-hsm-secenek"] * {
+        margin: 0;
+        padding: 0;
+        box-sizing: border-box;
+      }
+
+      /* full-bleed ground (clip layer, not #root) */
+      #h1-hsm-secenek-stage {
+        position: absolute;
+        inset: 0;
+        width: 1920px;
+        height: 1080px;
+        background: #efe9d9;
+        container-type: size;
+        overflow: hidden;
+        color: #0f0f0f;
+      }
+
+      /* ---------- chrome ---------- */
+      #h1-hsm-secenek-topbar {
+        position: absolute;
+        top: 48px;
+        left: 64px;
+        right: 64px;
+        height: 44px;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        font-family: "JetBrains Mono", monospace;
+        font-size: 22px;
+        letter-spacing: 0.06em;
+      }
+      #h1-hsm-secenek-pill {
+        border: 4px solid #0f0f0f;
+        border-radius: 999px;
+        background: #efe9d9;
+        padding: 4px 20px;
+        line-height: 1.3;
+      }
+      #h1-hsm-secenek-footer {
+        position: absolute;
+        bottom: 48px;
+        left: 64px;
+        right: 64px;
+        height: 32px;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        font-family: "JetBrains Mono", monospace;
+        font-size: 22px;
+        letter-spacing: 0.06em;
+      }
+      #h1-hsm-secenek-counter {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+      }
+      #h1-hsm-secenek-dot {
+        width: 10px;
+        height: 10px;
+        border-radius: 50%;
+        background: #0f0f0f;
+      }
+
+      /* ---------- kicker + title ---------- */
+      #h1-hsm-secenek-kicker {
+        position: absolute;
+        left: 96px;
+        top: 112px;
+        background: #0f0f0f;
+        color: #efe9d9;
+        font-family: "JetBrains Mono", monospace;
+        font-size: 20px;
+        letter-spacing: 0.1em;
+        line-height: 1.25;
+        white-space: nowrap;
+        padding: 8px 16px;
+      }
+      #h1-hsm-secenek-title {
+        position: absolute;
+        left: 96px;
+        top: 160px;
+        padding-top: 8px;
+        font-family: "Archivo Black", sans-serif;
+        font-size: 80px;
+        line-height: 0.92;
+        letter-spacing: -0.01em;
+        white-space: nowrap;
+      }
+
+      /* ---------- "why it matters" strip ---------- */
+      #h1-hsm-secenek-why {
+        position: absolute;
+        left: 96px;
+        top: 272px;
+        width: 1728px;
+        height: 160px;
+        border: 4px solid #0f0f0f;
+        background: #e4dcc4;
+        z-index: 2;
+      }
+      #h1-hsm-secenek-whymark {
+        position: absolute;
+        left: 0;
+        top: 0;
+        bottom: 0;
+        width: 18px;
+        background: #e85a1f;
+        border-right: 4px solid #0f0f0f;
+        transform-origin: 50% 0;
+      }
+      #h1-hsm-secenek-whyhead {
+        position: absolute;
+        left: 44px;
+        top: 14px;
+        font-family: "JetBrains Mono", monospace;
+        font-weight: 700;
+        font-size: 22px;
+        letter-spacing: 0.12em;
+        line-height: 28px;
+        white-space: nowrap;
+      }
+      #h1-hsm-secenek-whybody {
+        position: absolute;
+        left: 44px;
+        top: 50px;
+        width: 1220px;
+        font-family: "Space Grotesk", sans-serif;
+        font-size: 28px;
+        line-height: 1.35;
+      }
+
+      /* small drawing at the strip's right end (strip-relative coords) */
+      #h1-hsm-secenek-list {
+        position: absolute;
+        left: 1300px;
+        top: 26px;
+        width: 80px;
+        height: 100px;
+        border: 3px solid #0f0f0f;
+        background: #efe9d9;
+        z-index: 3;
+      }
+      .h1-hsm-secenek-lline {
+        position: absolute;
+        left: 10px;
+        height: 4px;
+        background: #0f0f0f;
+      }
+      #h1-hsm-secenek-seal {
+        position: absolute;
+        right: 8px;
+        bottom: 8px;
+        width: 22px;
+        height: 22px;
+        background: #f5c518;
+        border: 3px solid #0f0f0f;
+      }
+      #h1-hsm-secenek-wire {
+        position: absolute;
+        left: 0;
+        top: 0;
+        width: 1728px;
+        height: 160px;
+        overflow: visible;
+        z-index: 2;
+      }
+      #h1-hsm-secenek-phone {
+        position: absolute;
+        left: 1450px;
+        top: 22px;
+        width: 60px;
+        height: 108px;
+        border: 4px solid #0f0f0f;
+        background: #efe9d9;
+        z-index: 3;
+      }
+      #h1-hsm-secenek-speaker {
+        position: absolute;
+        left: 18px;
+        top: 7px;
+        width: 16px;
+        height: 4px;
+        background: #0f0f0f;
+      }
+      #h1-hsm-secenek-pscreen {
+        position: absolute;
+        left: 6px;
+        right: 6px;
+        top: 18px;
+        bottom: 12px;
+        border: 2px solid #0f0f0f;
+      }
+      #h1-hsm-secenek-fake {
+        position: absolute;
+        left: 1586px;
+        top: 38px;
+        width: 116px;
+        height: 80px;
+        border: 4px solid #0f0f0f;
+        background: #efe9d9;
+        z-index: 3;
+      }
+      #h1-hsm-secenek-fakehead {
+        position: absolute;
+        left: 0;
+        right: 0;
+        top: 0;
+        height: 20px;
+        background: #e85a1f;
+        border-bottom: 3px solid #0f0f0f;
+      }
+      .h1-hsm-secenek-fline {
+        position: absolute;
+        left: 12px;
+        height: 4px;
+        background: #0f0f0f;
+      }
+      #h1-hsm-secenek-sahte {
+        position: absolute;
+        left: 1282px;
+        top: 56px;
+        width: 116px;
+        height: 40px;
+        background: #e85a1f;
+        border: 4px solid #0f0f0f;
+        font-family: "Archivo Black", sans-serif;
+        font-size: 22px;
+        line-height: 0.92;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        z-index: 4;
+      }
+
+      /* ---------- three option cards ---------- */
+      .h1-hsm-secenek-card {
+        position: absolute;
+        top: 460px;
+        width: 540px;
+        height: 300px;
+        border: 4px solid #0f0f0f;
+        background: #efe9d9;
+        z-index: 2;
+      }
+      #h1-hsm-secenek-card2 {
+        border: 6px solid #1f8a4c;
+        box-shadow: 16px 16px 0 #e85a1f, 16px 16px 0 4px #0f0f0f;
+        z-index: 3;
+      }
+      .h1-hsm-secenek-ctitle {
+        position: absolute;
+        left: 20px;
+        top: 18px;
+        font-family: "Archivo Black", sans-serif;
+        font-size: 38px;
+        line-height: 0.92;
+        white-space: nowrap;
+      }
+      .h1-hsm-secenek-cset {
+        position: absolute;
+        left: 20px;
+        top: 66px;
+        font-family: "JetBrains Mono", monospace;
+        font-size: 20px;
+        letter-spacing: 0.02em;
+        line-height: 26px;
+        white-space: nowrap;
+      }
+      .h1-hsm-secenek-cbody {
+        position: absolute;
+        left: 20px;
+        top: 104px;
+        width: 488px;
+        font-family: "Space Grotesk", sans-serif;
+        font-size: 24px;
+        line-height: 1.3;
+      }
+      #h1-hsm-secenek-cbody2 {
+        width: 356px;
+      }
+      .h1-hsm-secenek-cpick {
+        position: absolute;
+        left: 20px;
+        right: 20px;
+        top: 206px;
+        border-top: 3px solid #0f0f0f;
+        padding-top: 10px;
+        font-family: "JetBrains Mono", monospace;
+        font-size: 18px;
+        line-height: 1.35;
+      }
+      .h1-hsm-secenek-mono {
+        font-family: "JetBrains Mono", monospace;
+        font-size: 21px;
+      }
+      #h1-hsm-secenek-check {
+        color: #136636;
+        font-weight: 700;
+      }
+
+      /* ---------- vault drawing inside the HSM card ---------- */
+      #h1-hsm-secenek-imza {
+        position: absolute;
+        left: 400px;
+        top: 50px;
+        width: 92px;
+        height: 34px;
+        border: 3px solid #0f0f0f;
+        background: #f5c518;
+        font-family: "JetBrains Mono", monospace;
+        font-weight: 700;
+        font-size: 18px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        z-index: 1;
+      }
+      #h1-hsm-secenek-vault {
+        position: absolute;
+        left: 396px;
+        top: 14px;
+        width: 100px;
+        height: 82px;
+        border: 4px solid #0f0f0f;
+        background: #e4dcc4;
+        z-index: 2;
+      }
+      #h1-hsm-secenek-door {
+        position: absolute;
+        left: 8px;
+        top: 8px;
+        right: 8px;
+        bottom: 14px;
+        border: 3px solid #0f0f0f;
+        background: #efe9d9;
+      }
+      #h1-hsm-secenek-slot {
+        position: absolute;
+        left: 18px;
+        right: 18px;
+        bottom: 4px;
+        height: 4px;
+        background: #0f0f0f;
+      }
+      #h1-hsm-secenek-key {
+        position: absolute;
+        left: 14px;
+        top: 12px;
+        width: 50px;
+        height: 34px;
+        overflow: visible;
+      }
+
+      /* ---------- analogy strip ---------- */
+      #h1-hsm-secenek-analogy {
+        position: absolute;
+        left: 96px;
+        top: 806px;
+        height: 50px;
+        border: 2px solid #0f0f0f;
+        background: #e4dcc4;
+        display: flex;
+        align-items: stretch;
+        white-space: nowrap;
+      }
+      #h1-hsm-secenek-analogylabel {
+        background: #0f0f0f;
+        color: #efe9d9;
+        font-family: "JetBrains Mono", monospace;
+        font-size: 18px;
+        letter-spacing: 0.1em;
+        display: flex;
+        align-items: center;
+        padding: 0 16px;
+      }
+      #h1-hsm-secenek-analogytext {
+        font-family: "Space Grotesk", sans-serif;
+        font-size: 26px;
+        display: flex;
+        align-items: center;
+        padding: 0 20px;
+      }
+    </style>
+
+    <div id="h1-hsm-secenek-stage" class="clip" data-start="0" data-duration="19.5" data-track-index="0">
+      <!-- chrome -->
+      <div id="h1-hsm-secenek-topbar">
+        <span>PINVAULT · 3 AKIŞ</span>
+        <span id="h1-hsm-secenek-pill">SEÇENEK</span>
+      </div>
+      <div id="h1-hsm-secenek-footer">
+        <span>İmza anahtarı</span>
+        <span id="h1-hsm-secenek-counter"><span>15</span><span id="h1-hsm-secenek-dot"></span><span>38</span></span>
+      </div>
+
+      <!-- kicker + title -->
+      <div id="h1-hsm-secenek-kicker">KİM: YÖNETİCİ · NEREDE: SUNUCU AYARI (CONFIG_SIGNERS)</div>
+      <div id="h1-hsm-secenek-title">İMZA ANAHTARI NEREDE DURUR?</div>
+
+      <!-- why it matters -->
+      <div id="h1-hsm-secenek-why">
+        <div id="h1-hsm-secenek-whymark"></div>
+        <div id="h1-hsm-secenek-whyhead">NEDEN ÖNEMLİ</div>
+        <div id="h1-hsm-secenek-whybody">Telefonlar bu anahtarın mühürlediği pin listesine güvenir. Anahtarı ele geçiren, sahte bir liste mühürleyip telefonlarınızı kendi sunucusuna bağlatabilir.</div>
+
+        <!-- signed list -> phone; stamped fake -> phone goes to fake server -->
+        <svg id="h1-hsm-secenek-wire" viewBox="0 0 1728 160" xmlns="http://www.w3.org/2000/svg">
+          <line id="h1-hsm-secenek-w1" x1="1380" y1="76" x2="1450" y2="76" stroke="#0F0F0F" stroke-width="4" />
+          <line id="h1-hsm-secenek-w2" x1="1510" y1="76" x2="1586" y2="76" stroke="#E85A1F" stroke-width="5" stroke-dasharray="10 6" />
+        </svg>
+        <div id="h1-hsm-secenek-list">
+          <div class="h1-hsm-secenek-lline" style="top: 14px; width: 54px"></div>
+          <div class="h1-hsm-secenek-lline" style="top: 28px; width: 40px"></div>
+          <div class="h1-hsm-secenek-lline" style="top: 42px; width: 50px"></div>
+          <div id="h1-hsm-secenek-seal"></div>
+        </div>
+        <div id="h1-hsm-secenek-phone">
+          <div id="h1-hsm-secenek-speaker"></div>
+          <div id="h1-hsm-secenek-pscreen"></div>
+        </div>
+        <div id="h1-hsm-secenek-fake">
+          <div id="h1-hsm-secenek-fakehead"></div>
+          <div class="h1-hsm-secenek-fline" style="top: 34px; width: 70px"></div>
+          <div class="h1-hsm-secenek-fline" style="top: 50px; width: 50px"></div>
+        </div>
+        <div id="h1-hsm-secenek-sahte">SAHTE</div>
+      </div>
+
+      <!-- card 1: file -->
+      <div id="h1-hsm-secenek-card1" class="h1-hsm-secenek-card" style="left: 96px">
+        <div id="h1-hsm-secenek-ctitle1" class="h1-hsm-secenek-ctitle">DOSYA</div>
+        <div id="h1-hsm-secenek-cset1" class="h1-hsm-secenek-cset">CONFIG_SIGNERS=local</div>
+        <div id="h1-hsm-secenek-cbody1" class="h1-hsm-secenek-cbody"><span class="h1-hsm-secenek-mono">signing-key.pem</span>, diskte parolayla şifreli.</div>
+        <div id="h1-hsm-secenek-cpick1" class="h1-hsm-secenek-cpick">En kolayı. Sunucu ya da yedeği çalınırsa anahtar da kopyalanabilir.</div>
+      </div>
+
+      <!-- card 2: HSM (focal, green edge, the one hard shadow) -->
+      <div id="h1-hsm-secenek-card2" class="h1-hsm-secenek-card" style="left: 690px">
+        <div id="h1-hsm-secenek-ctitle2" class="h1-hsm-secenek-ctitle">HSM</div>
+        <div id="h1-hsm-secenek-cset2" class="h1-hsm-secenek-cset">CONFIG_SIGNERS=pkcs11</div>
+        <div id="h1-hsm-secenek-cbody2" class="h1-hsm-secenek-cbody">Donanım güvenlik modülü. Anahtar içinde üretilir, dışarı hiç çıkmaz.</div>
+        <div id="h1-hsm-secenek-cpick2" class="h1-hsm-secenek-cpick"><span id="h1-hsm-secenek-check">✓</span> Anahtar kopyalanamaz; sunucu yalnızca imza ister.</div>
+        <div id="h1-hsm-secenek-imza">imza</div>
+        <div id="h1-hsm-secenek-vault">
+          <div id="h1-hsm-secenek-door">
+            <svg id="h1-hsm-secenek-key" viewBox="0 0 50 34" xmlns="http://www.w3.org/2000/svg">
+              <rect x="2" y="7" width="18" height="18" fill="#efe9d9" stroke="#0F0F0F" stroke-width="4" />
+              <rect x="8" y="13" width="6" height="6" fill="#0F0F0F" />
+              <line x1="20" y1="16" x2="48" y2="16" stroke="#0F0F0F" stroke-width="4" />
+              <line x1="38" y1="16" x2="38" y2="25" stroke="#0F0F0F" stroke-width="4" />
+              <line x1="45" y1="16" x2="45" y2="23" stroke="#0F0F0F" stroke-width="4" />
+            </svg>
+          </div>
+          <div id="h1-hsm-secenek-slot"></div>
+        </div>
+      </div>
+
+      <!-- card 3: KMS -->
+      <div id="h1-hsm-secenek-card3" class="h1-hsm-secenek-card" style="left: 1284px">
+        <div id="h1-hsm-secenek-ctitle3" class="h1-hsm-secenek-ctitle">KMS</div>
+        <div id="h1-hsm-secenek-cset3" class="h1-hsm-secenek-cset">CONFIG_SIGNERS=command</div>
+        <div id="h1-hsm-secenek-cbody3" class="h1-hsm-secenek-cbody">Bulut anahtar servisi imzalar.</div>
+        <div id="h1-hsm-secenek-cpick3" class="h1-hsm-secenek-cpick">Anahtar sağlayıcıda kalır; erişim kuralları ve kayıt onun tarafında.</div>
+      </div>
+
+      <!-- analogy strip -->
+      <div id="h1-hsm-secenek-analogy">
+        <div id="h1-hsm-secenek-analogylabel">BENZETME</div>
+        <div id="h1-hsm-secenek-analogytext">Mühür kasada durur; kasa mührü vermez, yalnızca belgeyi mühürleyip geri uzatır.</div>
+      </div>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/gsap@3.14.2/dist/gsap.min.js"></script>
+    <script>
+      (function () {
+        var FID = "h1-hsm-secenek";
+        var host = document.querySelector('[data-composition-id="' + FID + '"]') || document;
+        var $ = function (n) {
+          return host.querySelector('[id="' + FID + "-" + n + '"]');
+        };
+
+        var tl = gsap.timeline({ paused: true });
+        var SOFT = "power3.out";
+        var TRAVEL = "power3.inOut";
+
+        // ---------- Scene 1 (0.0–1.8): kicker, title ----------
+        tl.fromTo($("kicker"), { opacity: 0, x: -20 }, { opacity: 1, x: 0, duration: 0.5, ease: SOFT }, 0.2);
+        tl.fromTo($("title"), { opacity: 0, y: 30 }, { opacity: 1, y: 0, duration: 0.8, ease: SOFT }, 0.5);
+
+        // ---------- Scene 2 (1.8–6.0): why-it-matters strip, head then line, small drawing ----------
+        tl.fromTo($("why"), { opacity: 0, y: 30 }, { opacity: 1, y: 0, duration: 0.6, ease: SOFT }, 1.8);
+        tl.fromTo($("whymark"), { scaleY: 0 }, { scaleY: 1, duration: 0.5, ease: SOFT }, 1.95);
+        tl.fromTo($("whyhead"), { opacity: 0, x: -14 }, { opacity: 1, x: 0, duration: 0.45, ease: SOFT }, 2.1);
+        tl.fromTo($("whybody"), { opacity: 0, y: 12 }, { opacity: 1, y: 0, duration: 0.6, ease: SOFT }, 2.5);
+        // signed list -> phone
+        tl.fromTo($("list"), { opacity: 0, y: 14 }, { opacity: 1, y: 0, duration: 0.4, ease: SOFT }, 3.4);
+        tl.fromTo($("w1"), { attr: { x2: 1380 } }, { attr: { x2: 1450 }, duration: 0.4, ease: TRAVEL }, 3.75);
+        tl.fromTo($("phone"), { opacity: 0, y: 14 }, { opacity: 1, y: 0, duration: 0.4, ease: SOFT }, 4.0);
+        // the list gets the orange SAHTE stamp -> phone connects to the fake server
+        tl.fromTo($("sahte"), { opacity: 0, scale: 1.5, rotation: -6 }, { opacity: 1, scale: 1, rotation: -6, duration: 0.35, ease: SOFT }, 4.6);
+        tl.fromTo($("fake"), { opacity: 0, y: 14 }, { opacity: 1, y: 0, duration: 0.4, ease: SOFT }, 5.0);
+        tl.fromTo($("w2"), { attr: { x2: 1510 } }, { attr: { x2: 1586 }, duration: 0.45, ease: TRAVEL }, 5.2);
+
+        // ---------- Scene 3 (6.0–15.0): three cards left to right, ~2.8 s apart ----------
+        [1, 2, 3].forEach(function (n, i) {
+          var t0 = 6.0 + i * 2.8;
+          tl.fromTo($("card" + n), { opacity: 0, y: 40 }, { opacity: 1, y: 0, duration: 0.7, ease: SOFT }, t0);
+          tl.fromTo($("ctitle" + n), { opacity: 0, x: -14 }, { opacity: 1, x: 0, duration: 0.45, ease: SOFT }, t0 + 0.25);
+          tl.fromTo($("cset" + n), { opacity: 0, x: -14 }, { opacity: 1, x: 0, duration: 0.45, ease: SOFT }, t0 + 0.45);
+          tl.fromTo($("cbody" + n), { opacity: 0, y: 12 }, { opacity: 1, y: 0, duration: 0.5, ease: SOFT }, t0 + 0.7);
+          tl.fromTo($("cpick" + n), { opacity: 0, y: 12 }, { opacity: 1, y: 0, duration: 0.5, ease: SOFT }, t0 + 1.6);
+        });
+        // HSM vault: the key stays inside; only a short "imza" card comes out
+        tl.fromTo($("vault"), { opacity: 0, scale: 0.85 }, { opacity: 1, scale: 1, duration: 0.5, ease: SOFT }, 9.2);
+        tl.fromTo($("key"), { opacity: 0, y: 0 }, { opacity: 1, duration: 0.35, ease: SOFT }, 9.5);
+        tl.to($("key"), { y: 6, duration: 0.14, ease: "power2.in" }, 9.95);
+        tl.to($("key"), { y: 0, duration: 0.3, ease: SOFT }, 10.09);
+        tl.fromTo($("imza"), { opacity: 0, y: 0 }, { opacity: 1, duration: 0.05, ease: "none" }, 10.12);
+        tl.to($("imza"), { y: 64, duration: 0.7, ease: SOFT }, 10.15);
+
+        // ---------- Scene 4 (15.0–19.0): analogy, hold ----------
+        tl.fromTo($("analogy"), { opacity: 0, y: 16 }, { opacity: 1, y: 0, duration: 0.6, ease: SOFT }, 15.0);
+        tl.to({}, { duration: 0.01 }, 18.99);
+
+        window.__timelines = window.__timelines || {};
+        window.__timelines[FID] = tl;
+      })();
+    </script>
+  </div>
+</template>

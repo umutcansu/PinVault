@@ -2,7 +2,8 @@
 const fs=require('fs');
 const order=JSON.parse(fs.readFileSync('.hyperframes/order.json','utf8'));const T=order.length;
 const pad=n=>String(n).padStart(2,'0');
-const part=i=>{const n=i+1;return n<=5?'PINVAULT · 1 AMAÇ':n<=8?'PINVAULT · 2 ÇÖZÜM':n<=23?'PINVAULT · 3 AKIŞ':n<=29?'PINVAULT · 4 DOSYALAR':'PINVAULT · ÖZET';};
+const pos=id=>order.indexOf(id);const P4=pos('p4-bolum-pinvault'),P5=pos('p5-bolum-akis'),P6=pos('p6-bolum-dosyalar'),PE=pos('e2-anahtar-haritasi');
+const part=i=>i<P4?'PINVAULT · 1 AMAÇ':i<P5?'PINVAULT · 2 ÇÖZÜM':i<P6?'PINVAULT · 3 AKIŞ':i<PE?'PINVAULT · 4 DOSYALAR':'PINVAULT · ÖZET';
 order.forEach((id,i)=>{
   const f='compositions/frames/'+id+'.html';let s=fs.readFileSync(f,'utf8');const o=s;
   if(!id.match(/^p\d-bolum/)) s=s.replace(/PINVAULT · (1 AMAÇ|2 ÇÖZÜM|3 AKIŞ|4 DOSYALAR|ÖZET)/g,part(i));

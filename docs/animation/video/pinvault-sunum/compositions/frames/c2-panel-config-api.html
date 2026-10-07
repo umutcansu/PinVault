@@ -1,0 +1,513 @@
+<template>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo+Black&family=JetBrains+Mono:wght@400;700&family=Space+Grotesk:wght@400;500;700&display=block">
+  <script src="https://cdn.jsdelivr.net/npm/gsap@3.14.2/dist/gsap.min.js"></script>
+  <style>
+    #root,
+    #root * {
+      box-sizing: border-box;
+    }
+    #root {
+      position: relative;
+      width: 1920px;
+      height: 1080px;
+      overflow: hidden;
+      container-type: size;
+      font-family: "Space Grotesk", sans-serif;
+      color: #0f0f0f;
+    }
+    #c2-panel-config-api-bg {
+      position: absolute;
+      inset: 0;
+      background: #efe9d9;
+    }
+
+    /* ---------- frame chrome ---------- */
+    .c2-panel-config-api-topbar {
+      position: absolute;
+      top: 48px;
+      left: 64px;
+      right: 64px;
+      height: 44px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      font-family: "JetBrains Mono", monospace;
+      font-size: 22px;
+      letter-spacing: 0.06em;
+      z-index: 10;
+    }
+    .c2-panel-config-api-pill {
+      border: 3px solid #0f0f0f;
+      border-radius: 999px;
+      padding: 4px 18px;
+      background: #efe9d9;
+    }
+    .c2-panel-config-api-footer {
+      position: absolute;
+      bottom: 44px;
+      left: 64px;
+      right: 64px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      font-family: "JetBrains Mono", monospace;
+      font-size: 22px;
+      letter-spacing: 0.06em;
+    }
+    .c2-panel-config-api-counter {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+    .c2-panel-config-api-dot {
+      width: 10px;
+      height: 10px;
+      border-radius: 50%;
+      background: #0f0f0f;
+    }
+
+    /* ---------- kicker + title ---------- */
+    #c2-panel-config-api-kicker {
+      position: absolute;
+      left: 96px;
+      top: 112px;
+      padding: 8px 16px;
+      background: #0f0f0f;
+      color: #efe9d9;
+      font-family: "JetBrains Mono", monospace;
+      font-size: 22px;
+      letter-spacing: 0.1em;
+      white-space: nowrap;
+    }
+    #c2-panel-config-api-title {
+      position: absolute;
+      left: 96px;
+      top: 164px;
+      margin: 0;
+      padding-top: 6px;
+      font-family: "Archivo Black", sans-serif;
+      font-weight: 400;
+      font-size: 3.5cqw;
+      line-height: 0.92;
+      letter-spacing: -0.01em;
+      white-space: nowrap;
+    }
+
+    /* ---------- panel window ---------- */
+    #c2-panel-config-api-panel {
+      position: absolute;
+      left: 96px;
+      top: 270px;
+      width: 1536px;
+      height: 400px;
+      border: 4px solid #0f0f0f;
+      background: #efe9d9;
+      z-index: 2;
+    }
+    .c2-panel-config-api-phead {
+      position: absolute;
+      left: 0;
+      top: 0;
+      right: 0;
+      height: 44px;
+      background: #0f0f0f;
+      color: #efe9d9;
+      display: flex;
+      align-items: center;
+      padding-left: 22px;
+      font-family: "JetBrains Mono", monospace;
+      font-size: 20px;
+      letter-spacing: 0.04em;
+      white-space: nowrap;
+    }
+
+    /* sidebar: config API list */
+    #c2-panel-config-api-side {
+      position: absolute;
+      left: 0;
+      top: 44px;
+      width: 460px;
+      bottom: 0;
+      border-right: 3px solid #0f0f0f;
+      background: #e4dcc4;
+    }
+    #c2-panel-config-api-stitle {
+      position: absolute;
+      left: 22px;
+      top: 18px;
+      font-family: "JetBrains Mono", monospace;
+      font-size: 20px;
+      letter-spacing: 0.12em;
+      white-space: nowrap;
+    }
+    .c2-panel-config-api-srow {
+      position: absolute;
+      left: 20px;
+      width: 404px;
+      height: 56px;
+      border: 3px solid #0f0f0f;
+      background: #efe9d9;
+      display: flex;
+      align-items: center;
+      gap: 14px;
+      padding-left: 14px;
+      font-family: "JetBrains Mono", monospace;
+      font-size: 22px;
+      white-space: nowrap;
+    }
+    #c2-panel-config-api-row1 { top: 58px; }
+    #c2-panel-config-api-row2 {
+      top: 128px;
+      font-weight: 700;
+      z-index: 3;
+    }
+    #c2-panel-config-api-badge {
+      height: 32px;
+      padding: 0 10px;
+      border: 2px solid #0f0f0f;
+      background: #e4dcc4;
+      display: flex;
+      align-items: center;
+      font-size: 18px;
+    }
+    #c2-panel-config-api-ok {
+      position: relative;
+      width: 32px;
+      height: 32px;
+      border: 2px solid #0f0f0f;
+      background: #1f8a4c;
+      flex: none;
+    }
+    #c2-panel-config-api-oksvg {
+      position: absolute;
+      left: 3px;
+      top: 3px;
+      width: 22px;
+      height: 22px;
+      overflow: visible;
+    }
+    #c2-panel-config-api-okpath {
+      fill: none;
+      stroke: #efe9d9;
+      stroke-width: 4;
+      stroke-linecap: square;
+      stroke-linejoin: miter;
+    }
+    #c2-panel-config-api-add {
+      position: absolute;
+      left: 20px;
+      top: 268px;
+      width: 260px;
+      height: 56px;
+      border: 4px solid #0f0f0f;
+      background: #efe9d9;
+      color: #0f0f0f;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-family: "JetBrains Mono", monospace;
+      font-size: 22px;
+      font-weight: 700;
+      white-space: nowrap;
+    }
+
+    /* form */
+    #c2-panel-config-api-form {
+      position: absolute;
+      left: 460px;
+      top: 44px;
+      right: 0;
+      bottom: 0;
+    }
+    #c2-panel-config-api-ftitle {
+      position: absolute;
+      left: 40px;
+      top: 20px;
+      font-size: 32px;
+      font-weight: 700;
+      line-height: 1.1;
+      white-space: nowrap;
+    }
+    #c2-panel-config-api-fsub {
+      position: absolute;
+      left: 40px;
+      top: 62px;
+      font-size: 24px;
+      line-height: 1.3;
+      white-space: nowrap;
+    }
+    .c2-panel-config-api-flabel {
+      position: absolute;
+      font-size: 22px;
+      font-weight: 500;
+      line-height: 1;
+      white-space: nowrap;
+    }
+    .c2-panel-config-api-fbox {
+      position: absolute;
+      height: 58px;
+      border: 3px solid #0f0f0f;
+      background: #e4dcc4;
+      display: flex;
+      align-items: center;
+      padding-left: 18px;
+      font-family: "JetBrains Mono", monospace;
+      font-size: 28px;
+      font-weight: 700;
+      letter-spacing: 0.02em;
+      white-space: nowrap;
+    }
+    #c2-panel-config-api-l1 { left: 40px; top: 116px; }
+    #c2-panel-config-api-b1 { left: 40px; top: 144px; width: 420px; }
+    #c2-panel-config-api-l2 { left: 488px; top: 116px; }
+    #c2-panel-config-api-b2 { left: 488px; top: 144px; width: 220px; }
+    #c2-panel-config-api-l3 { left: 40px; top: 226px; }
+    #c2-panel-config-api-b3 {
+      left: 40px;
+      top: 254px;
+      width: 620px;
+      padding-left: 0;
+      overflow: hidden;
+      font-size: 20px;
+      font-weight: 700;
+    }
+    .c2-panel-config-api-mval {
+      position: absolute;
+      left: 16px;
+      top: 0;
+      height: 100%;
+      display: flex;
+      align-items: center;
+    }
+    .c2-panel-config-api-caret {
+      position: absolute;
+      right: 16px;
+      top: 22px;
+      width: 0;
+      height: 0;
+      border-left: 8px solid transparent;
+      border-right: 8px solid transparent;
+      border-top: 9px solid #0f0f0f;
+    }
+    #c2-panel-config-api-list {
+      position: absolute;
+      left: 40px;
+      top: 309px;
+      width: 620px;
+      border: 3px solid #0f0f0f;
+      background: #efe9d9;
+      z-index: 5;
+    }
+    .c2-panel-config-api-opt {
+      height: 50px;
+      display: flex;
+      align-items: center;
+      padding-left: 16px;
+      font-family: "JetBrains Mono", monospace;
+      font-size: 20px;
+      white-space: nowrap;
+    }
+    #c2-panel-config-api-opt1 {
+      border-bottom: 2px solid #0f0f0f;
+    }
+    #c2-panel-config-api-start {
+      position: absolute;
+      left: 688px;
+      top: 254px;
+      width: 340px;
+      height: 58px;
+      border: 4px solid #0f0f0f;
+      background: #efe9d9;
+      color: #0f0f0f;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 26px;
+      font-weight: 700;
+      white-space: nowrap;
+    }
+
+    /* ---------- note + analogy ---------- */
+    #c2-panel-config-api-note {
+      position: absolute;
+      left: 96px;
+      top: 712px;
+      width: 1536px;
+      font-size: 24px;
+      line-height: 1.3;
+    }
+    #c2-panel-config-api-analogy {
+      position: absolute;
+      left: 96px;
+      top: 834px;
+      height: 52px;
+      display: flex;
+      align-items: stretch;
+      border: 2px solid #0f0f0f;
+      background: #e4dcc4;
+      z-index: 2;
+    }
+    .c2-panel-config-api-alabel {
+      display: flex;
+      align-items: center;
+      padding: 0 14px;
+      background: #0f0f0f;
+      color: #efe9d9;
+      font-family: "JetBrains Mono", monospace;
+      font-size: 18px;
+      letter-spacing: 0.12em;
+    }
+    .c2-panel-config-api-atext {
+      display: flex;
+      align-items: center;
+      padding: 0 22px;
+      font-size: 26px;
+      white-space: nowrap;
+    }
+  </style>
+
+  <div id="root" data-composition-id="c2-panel-config-api" data-start="0" data-duration="14.5" data-width="1920" data-height="1080" lang="tr">
+    <div id="c2-panel-config-api-bg" class="clip" data-start="0" data-duration="14.5" data-track-index="0"></div>
+
+    <!-- chrome -->
+    <div class="c2-panel-config-api-topbar">
+      <div>PINVAULT · 2 ÇÖZÜM</div>
+      <div class="c2-panel-config-api-pill">PANELDE</div>
+    </div>
+    <div class="c2-panel-config-api-footer">
+      <div>mTLS açılır</div>
+      <div class="c2-panel-config-api-counter"><span>09</span><span class="c2-panel-config-api-dot"></span><span>38</span></div>
+    </div>
+
+    <!-- kicker + title -->
+    <div id="c2-panel-config-api-kicker">KİM: YÖNETİCİ · NEREDE: PANEL → + CONFIG API</div>
+    <h1 id="c2-panel-config-api-title">PANELDE: mTLS CONFIG API AÇILIR</h1>
+
+    <!-- panel window -->
+    <div id="c2-panel-config-api-panel">
+      <div class="c2-panel-config-api-phead">Panel · 8090</div>
+
+      <!-- sidebar: config API list -->
+      <div id="c2-panel-config-api-side">
+        <div id="c2-panel-config-api-stitle">CONFIG API'LER</div>
+        <div id="c2-panel-config-api-row1" class="c2-panel-config-api-srow"><span>default-tls · 8091</span><span id="c2-panel-config-api-badge">varsayılan</span></div>
+        <div id="c2-panel-config-api-row2" class="c2-panel-config-api-srow">
+          <span>mtls-8092 · 8092</span>
+          <span id="c2-panel-config-api-ok"><svg id="c2-panel-config-api-oksvg" viewBox="0 0 22 22" xmlns="http://www.w3.org/2000/svg"><path id="c2-panel-config-api-okpath" pathLength="1" d="M 3 11 L 9 17 L 19 5" /></svg></span>
+        </div>
+        <div id="c2-panel-config-api-add">+ Config API</div>
+      </div>
+
+      <!-- form -->
+      <div id="c2-panel-config-api-form">
+        <div id="c2-panel-config-api-ftitle">Yeni Config API</div>
+        <div id="c2-panel-config-api-fsub">TLS veya mTLS config API başlatın</div>
+
+        <div id="c2-panel-config-api-l1" class="c2-panel-config-api-flabel">API ID</div>
+        <div id="c2-panel-config-api-b1" class="c2-panel-config-api-fbox"><span id="c2-panel-config-api-v1"><span>m</span><span>t</span><span>l</span><span>s</span><span>-</span><span>8</span><span>0</span><span>9</span><span>2</span></span></div>
+
+        <div id="c2-panel-config-api-l2" class="c2-panel-config-api-flabel">Port</div>
+        <div id="c2-panel-config-api-b2" class="c2-panel-config-api-fbox"><span id="c2-panel-config-api-v2"><span>8</span><span>0</span><span>9</span><span>2</span></span></div>
+
+        <div id="c2-panel-config-api-l3" class="c2-panel-config-api-flabel">Mod</div>
+        <div id="c2-panel-config-api-b3" class="c2-panel-config-api-fbox">
+          <span id="c2-panel-config-api-mtls0" class="c2-panel-config-api-mval">TLS (tek yönlü)</span>
+          <span id="c2-panel-config-api-mtls1" class="c2-panel-config-api-mval">mTLS (çift yönlü — client cert gerekir)</span>
+          <span class="c2-panel-config-api-caret"></span>
+        </div>
+
+        <div id="c2-panel-config-api-start">Config API Başlat</div>
+
+        <div id="c2-panel-config-api-list" data-layout-allow-overlap>
+          <div id="c2-panel-config-api-opt1" class="c2-panel-config-api-opt">TLS (tek yönlü)</div>
+          <div id="c2-panel-config-api-opt2" class="c2-panel-config-api-opt">mTLS (çift yönlü — client cert gerekir)</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- note -->
+    <div id="c2-panel-config-api-note">default-tls sunucuyla kendiliğinden açılır. mTLS kapısı yalnızca istemci CA'sının imzaladığı kartlara güvenir; kartı olmayan telefon içeri giremez.</div>
+
+    <!-- analogy strip -->
+    <div id="c2-panel-config-api-analogy">
+      <div class="c2-panel-config-api-alabel">BENZETME</div>
+      <div class="c2-panel-config-api-atext">Binaya ikinci bir kapı açılır: bu kapıdan yalnızca kartı olan girer.</div>
+    </div>
+  </div>
+
+  <script>
+    (function () {
+      var ID = "c2-panel-config-api";
+      var $ = function (n) { return document.getElementById(ID + "-" + n); };
+      var tl = gsap.timeline({ paused: true });
+      var OUT = "power3.out";
+      var INOUT = "power3.inOut";
+      var WIPE_FROM = "inset(-20% 100% -20% 0%)";
+      var WIPE_TO = "inset(-20% 0% -20% 0%)";
+      var INK = "#0F0F0F";
+      var CREAM = "#EFE9D9";
+      var SHADOW_OFF = "0px 0px 0px 0px #E85A1F, 0px 0px 0px 0px #0F0F0F";
+      var SHADOW_ON = "12px 12px 0px 0px #E85A1F, 12px 12px 0px 3px #0F0F0F";
+
+      // Scene 1 (0.0–1.8s): kicker, title
+      tl.fromTo($("kicker"), { clipPath: WIPE_FROM }, { clipPath: WIPE_TO, duration: 0.7, ease: OUT }, 0.1);
+      tl.fromTo($("title"), { autoAlpha: 0, y: 30 }, { autoAlpha: 1, y: 0, duration: 0.7, ease: OUT }, 0.4);
+
+      // Scene 2 (1.8–4.0s): panel opens; sidebar shows only default-tls; "+ Config API" pressed
+      tl.fromTo($("panel"), { autoAlpha: 0, y: 36 }, { autoAlpha: 1, y: 0, duration: 0.6, ease: OUT }, 1.8);
+      tl.fromTo($("stitle"), { autoAlpha: 0, x: -14 }, { autoAlpha: 1, x: 0, duration: 0.4, ease: OUT }, 2.2);
+      tl.fromTo($("row1"), { autoAlpha: 0, x: -16 }, { autoAlpha: 1, x: 0, duration: 0.45, ease: OUT }, 2.45);
+      tl.fromTo($("badge"), { autoAlpha: 0, scale: 0.85 }, { autoAlpha: 1, scale: 1, duration: 0.35, ease: OUT }, 2.75);
+      tl.fromTo($("add"), { autoAlpha: 0, y: 12 }, { autoAlpha: 1, y: 0, duration: 0.45, ease: OUT }, 3.0);
+      // press: quick inward collapse + ink fill
+      tl.to($("add"), { scale: 0.92, backgroundColor: INK, color: CREAM, duration: 0.12, ease: OUT }, 3.6);
+      tl.to($("add"), { scale: 1, duration: 0.35, ease: OUT }, 3.72);
+
+      // Scene 3 (4.0–9.0s): form opens; API ID and Port typed; Mod list opens, mTLS selected
+      tl.fromTo($("form"), { autoAlpha: 0, x: 28 }, { autoAlpha: 1, x: 0, duration: 0.5, ease: OUT }, 4.0);
+      tl.fromTo($("ftitle"), { autoAlpha: 0, y: 12 }, { autoAlpha: 1, y: 0, duration: 0.45, ease: OUT }, 4.1);
+      tl.fromTo($("fsub"), { clipPath: WIPE_FROM }, { clipPath: WIPE_TO, duration: 0.6, ease: OUT }, 4.35);
+      tl.fromTo([$("l1"), $("b1")], { autoAlpha: 0, y: 10 }, { autoAlpha: 1, y: 0, duration: 0.4, ease: OUT, stagger: 0.08 }, 4.8);
+      var c1 = $("v1").children;
+      for (var i = 0; i < c1.length; i++) {
+        tl.fromTo(c1[i], { autoAlpha: 0 }, { autoAlpha: 1, duration: 0.02, ease: "none" }, 5.1 + i * 0.08);
+      }
+      tl.fromTo([$("l2"), $("b2")], { autoAlpha: 0, y: 10 }, { autoAlpha: 1, y: 0, duration: 0.4, ease: OUT, stagger: 0.08 }, 5.9);
+      var c2 = $("v2").children;
+      for (var j = 0; j < c2.length; j++) {
+        tl.fromTo(c2[j], { autoAlpha: 0 }, { autoAlpha: 1, duration: 0.02, ease: "none" }, 6.2 + j * 0.09);
+      }
+      tl.fromTo([$("l3"), $("b3")], { autoAlpha: 0, y: 10 }, { autoAlpha: 1, y: 0, duration: 0.4, ease: OUT, stagger: 0.08 }, 6.65);
+      // list opens under the Mod box
+      tl.to($("b3"), { scale: 0.97, duration: 0.1, ease: "power2.in" }, 7.05);
+      tl.to($("b3"), { scale: 1, duration: 0.3, ease: OUT }, 7.15);
+      tl.fromTo($("list"), { autoAlpha: 0, clipPath: "inset(0% 0% 100% 0%)" }, { autoAlpha: 1, clipPath: "inset(0% 0% 0% 0%)", duration: 0.45, ease: OUT }, 7.2);
+      tl.fromTo($("opt1"), { autoAlpha: 0, x: -10 }, { autoAlpha: 1, x: 0, duration: 0.35, ease: OUT }, 7.35);
+      tl.fromTo($("opt2"), { autoAlpha: 0, x: -10 }, { autoAlpha: 1, x: 0, duration: 0.35, ease: OUT }, 7.55);
+      // mTLS chosen: ink fill, then the box shows it and the list folds away
+      tl.fromTo($("opt2"), { backgroundColor: CREAM, color: INK }, { backgroundColor: INK, color: CREAM, duration: 0.15, ease: OUT }, 8.2);
+      tl.to($("list"), { clipPath: "inset(0% 0% 100% 0%)", duration: 0.35, ease: INOUT }, 8.45);
+      tl.to($("mtls0"), { yPercent: -100, duration: 0.4, ease: INOUT }, 8.45);
+      tl.fromTo($("mtls1"), { yPercent: 100 }, { yPercent: 0, duration: 0.4, ease: INOUT }, 8.45);
+      tl.fromTo($("start"), { autoAlpha: 0, y: 12 }, { autoAlpha: 1, y: 0, duration: 0.4, ease: OUT }, 8.6);
+
+      // Scene 4 (9.0–11.5s): "Config API Başlat" pressed; mtls-8092 row lands in the sidebar
+      tl.to($("start"), { scale: 0.92, backgroundColor: INK, color: CREAM, duration: 0.12, ease: OUT }, 9.2);
+      tl.to($("start"), { scale: 1, duration: 0.35, ease: OUT }, 9.32);
+      tl.fromTo($("row2"), { autoAlpha: 0, x: 48, boxShadow: SHADOW_OFF }, { autoAlpha: 1, x: 0, duration: 0.55, ease: OUT }, 9.6);
+      tl.fromTo($("ok"), { scale: 0.6 }, { scale: 1, duration: 0.35, ease: OUT }, 10.05);
+      tl.fromTo($("okpath"), { strokeDasharray: 1, strokeDashoffset: 1 }, { strokeDashoffset: 0, duration: 0.4, ease: "power2.out" }, 10.15);
+      tl.fromTo($("row2"), { boxShadow: SHADOW_OFF, x: 0, y: 0 }, { boxShadow: SHADOW_ON, x: -6, y: -6, duration: 0.5, ease: OUT, immediateRender: false }, 10.4);
+
+      // Scene 5 (11.5–14.0s): note, analogy, hold
+      tl.fromTo($("note"), { autoAlpha: 0, clipPath: WIPE_FROM }, { autoAlpha: 1, clipPath: WIPE_TO, duration: 0.8, ease: OUT }, 11.5);
+      tl.fromTo($("analogy"), { autoAlpha: 0, x: -24 }, { autoAlpha: 1, x: 0, duration: 0.6, ease: OUT }, 12.8);
+
+      // pad to the fixed 14s duration (hold)
+      tl.set({}, {}, 14);
+
+      window.__timelines = window.__timelines || {};
+      window.__timelines[ID] = tl;
+    })();
+  </script>
+</template>
