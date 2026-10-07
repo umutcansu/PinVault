@@ -1,6 +1,6 @@
 # PinVault
 
-Dynamic SSL certificate pinning library for Android. Manage pins remotely, support mTLS, distribute versioned files — all with encrypted storage.
+Dynamic SSL certificate pinning library for Android and iOS. Manage pins remotely, support mTLS, distribute versioned files — all with encrypted storage.
 
 [![Maven Central](https://img.shields.io/maven-central/v/io.github.umutcansu/pinvault)](https://central.sonatype.com/artifact/io.github.umutcansu/pinvault)
 
@@ -9,6 +9,20 @@ Dynamic SSL certificate pinning library for Android. Manage pins remotely, suppo
 > [Upgrading from 2.1.x to 2.2](#upgrading-from-21x-to-22) (most apps compile
 > unchanged), [Upgrading from 2.0.x to 2.1](#upgrading-from-20x-to-21) and
 > [MIGRATION.md](MIGRATION.md) for the DSL reference.
+
+## iOS
+
+The iOS library (Swift, iOS 16+, Swift Package Manager) speaks the same
+protocol to the same server, with the same names: pinning with signed remote
+configs, mTLS enrollment with a Secure Enclave key, signed and encrypted vault
+files, and attestation (App Attest where Android has Key Attestation and Play
+Integrity). Install, quick start and the platform differences:
+[`pinvault-ios/README.md`](pinvault-ios/README.md); how every Android piece maps
+to iOS: [`pinvault-ios/PORTING.md`](pinvault-ios/PORTING.md).
+
+```swift
+.package(url: "https://github.com/umutcansu/PinVault.git", from: "2.3.0")
+```
 
 ## Features
 
@@ -1727,13 +1741,14 @@ Works with any language: Python, Node.js, Go, .NET, etc.
 
 ## Samples
 
-Three projects next to the library show PinVault end to end (their READMEs are in Turkish):
+Four projects next to the libraries show PinVault end to end (their READMEs are in Turkish):
 
 | Directory | What it is |
 |---|---|
 | [`sample-host/`](sample-host) | The demo server in Docker, set up for phones on the LAN: `./scripts/setup.sh`, then `docker compose up -d --build`. With `PINVAULT_SERVER_SRC=../demo-server` it builds the server from this checkout. The default is a **demo profile**; `./scripts/setup.sh --production` starts from named admins, two-person approval, the live certificate check and offline recovery/backup keys (generated into `offline-keys/`, to be moved off the server). |
 | [`sample-client/`](sample-client) | An Android app (Java) that uses every PinVault feature against the sample host. It builds the library from this checkout (`pinvault.localPath=..`). Its secret vault files live on the mTLS Config API (`token_mtls`), behind the screen lock (`userAuth(REQUIRED)`, `encryption(USER_AUTH)`), are opened with `unlockFile` and wiped on revocation; it asks `requireCaTrust` for its publicly trusted target. |
-| [`sample-e2e/`](sample-e2e) | Playwright end-to-end tests: an action in the host's dashboard is checked on the phone, or the other way round, with a one-file evidence page of screenshots. Setting everything up from scratch: [`sample-e2e/SETUP.md`](sample-e2e/SETUP.md). |
+| [`sample-client-ios/`](sample-client-ios) | The same app for iOS (SwiftUI): the same screens, settings and Turkish texts, built against the iOS library in this checkout (XcodeGen project). |
+| [`sample-e2e/`](sample-e2e) | Playwright end-to-end tests on Android (adb) and on the iOS simulator (`E2E_PLATFORM=ios`): an action in the host's dashboard is checked on the phone, or the other way round, with a one-file evidence page of screenshots. Setting everything up from scratch: [`sample-e2e/SETUP.md`](sample-e2e/SETUP.md). |
 
 ## Request-flow animation
 
@@ -1794,6 +1809,8 @@ attestation() blocks         ───→     GET /attest/challenge        (next
 | Gradle                | 8.2     |
 | JDK                   | 17      |
 | OkHttp                | 4.x     |
+
+iOS: iOS 16+, Swift 6 toolchain (Xcode 16 or newer), no third-party dependencies.
 
 PinVault `2.0.0+` is compiled with Kotlin 2.1 but emits Kotlin 1.9
 metadata, so projects on Kotlin 1.9.x through 2.x can depend on it without
