@@ -9,9 +9,10 @@ import XCTest
 /// config — never a different config, and never a crash.
 ///
 /// The Kotlin test serves the body through MockWebServer and
-/// `DefaultCertificateConfigApi.fetchConfig`; until the HTTP client exists
-/// (L2) the body goes through the same steps here: decode the envelope, apply
-/// the key set riding along, verify.
+/// `DefaultCertificateConfigApi.fetchConfig`; here the body goes through the
+/// same steps without HTTP (decode the envelope, apply the key set riding
+/// along, verify). `SignedConfigFetchFuzzTests` serves damaged envelopes over
+/// TLS through the Config API client and the updater.
 final class SignedConfigFuzzTests: XCTestCase {
 
     private let signer = TestSigner()
