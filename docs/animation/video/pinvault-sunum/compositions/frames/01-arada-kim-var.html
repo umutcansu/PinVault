@@ -1,0 +1,383 @@
+<template>
+  <script src="https://cdn.jsdelivr.net/npm/gsap@3.14.2/dist/gsap.min.js"></script>
+  <style>
+    @import url("https://fonts.googleapis.com/css2?family=Archivo+Black&family=Space+Grotesk:wght@400;500;700&family=JetBrains+Mono:wght@400;500&display=swap");
+
+    #root {
+      position: absolute;
+      inset: 0;
+      width: 1920px;
+      height: 1080px;
+      overflow: hidden;
+      container-type: size;
+      color: #0f0f0f;
+      font-family: "Space Grotesk", sans-serif;
+    }
+
+    [id="01-arada-kim-var-ground"] {
+      position: absolute;
+      inset: 0;
+      background: #efe9d9;
+    }
+
+    /* ---------- chrome ---------- */
+    [id="01-arada-kim-var-topbar"],
+    [id="01-arada-kim-var-meta"] {
+      position: absolute;
+      left: 3.3cqw;
+      right: 3.3cqw;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      font-family: "JetBrains Mono", monospace;
+      font-size: 1.15cqw;
+      letter-spacing: 0.14em;
+      color: #0f0f0f;
+      z-index: 5;
+    }
+    [id="01-arada-kim-var-topbar"] {
+      top: 2.5cqw;
+    }
+    [id="01-arada-kim-var-meta"] {
+      bottom: 2.5cqw;
+      letter-spacing: 0.06em;
+    }
+    [id="01-arada-kim-var-pill"] {
+      border: 0.2cqw solid #0f0f0f;
+      border-radius: 999px;
+      padding: 0.3cqw 1.1cqw;
+      background: #efe9d9;
+    }
+    [id="01-arada-kim-var-counter"] {
+      display: flex;
+      align-items: center;
+      gap: 0.6cqw;
+    }
+    [id="01-arada-kim-var-dot"] {
+      width: 0.5cqw;
+      height: 0.5cqw;
+      border-radius: 50%;
+      background: #0f0f0f;
+    }
+
+    /* ---------- headline ---------- */
+    [id="01-arada-kim-var-head"] {
+      position: absolute;
+      left: 0;
+      right: 0;
+      top: 6.6cqw;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      z-index: 4;
+    }
+    [id="01-arada-kim-var-line1"],
+    [id="01-arada-kim-var-line2"] {
+      font-family: "Archivo Black", sans-serif;
+      font-weight: 400;
+      letter-spacing: -0.01em;
+      line-height: 0.92;
+      text-align: center;
+      max-width: 78cqw;
+      color: #0f0f0f;
+    }
+    [id="01-arada-kim-var-line1"] {
+      font-size: 4.2cqw;
+    }
+    [id="01-arada-kim-var-line2"] {
+      margin-top: 1.4cqw;
+      font-size: 5.6cqw;
+      min-height: 5.6cqw;
+      white-space: nowrap;
+    }
+    [class~="01-arada-kim-var-row"] {
+      display: block;
+      white-space: nowrap;
+    }
+    [class~="01-arada-kim-var-word"] {
+      display: inline-block;
+      position: relative;
+    }
+    [class~="01-arada-kim-var-wordtext"] {
+      position: relative;
+      z-index: 1;
+    }
+    [id="01-arada-kim-var-marker"] {
+      position: absolute;
+      left: -0.08em;
+      right: -0.08em;
+      bottom: -0.14em;
+      height: 0.16em;
+      background: #e85a1f;
+      transform-origin: left center;
+      z-index: 0;
+    }
+
+    /* ---------- diagram ---------- */
+    [id="01-arada-kim-var-wires"] {
+      position: absolute;
+      inset: 0;
+      width: 100%;
+      height: 100%;
+      z-index: 1;
+      overflow: visible;
+    }
+    [class~="01-arada-kim-var-wire"] {
+      fill: none;
+      stroke: #0f0f0f;
+      stroke-width: 6;
+      stroke-linecap: butt;
+    }
+    [class~="01-arada-kim-var-packet"] {
+      fill: #0f0f0f;
+    }
+
+    [id="01-arada-kim-var-phone"] {
+      position: absolute;
+      box-sizing: border-box;
+      left: 20cqw;
+      top: 25.78cqw;
+      width: 13.54cqw;
+      height: 17.19cqw;
+      background: #e4dcc4;
+      border: 0.4cqw solid #0f0f0f;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      z-index: 2;
+      font-family: "JetBrains Mono", monospace;
+      color: #0f0f0f;
+    }
+    [id="01-arada-kim-var-speaker"] {
+      margin-top: 0.8cqw;
+      width: 2.6cqw;
+      height: 0.42cqw;
+      background: #0f0f0f;
+    }
+    [id="01-arada-kim-var-app"] {
+      flex: 1;
+      display: flex;
+      align-items: center;
+      font-size: 1.25cqw;
+      letter-spacing: 0.02em;
+    }
+    [id="01-arada-kim-var-lib"] {
+      box-sizing: border-box;
+      width: 100%;
+      border-top: 0.2cqw solid #0f0f0f;
+      padding: 0.7cqw 0.6cqw 0.8cqw;
+      font-size: 1.05cqw;
+      line-height: 1.25;
+      text-align: center;
+    }
+
+    [id="01-arada-kim-var-server"] {
+      position: absolute;
+      box-sizing: border-box;
+      left: 57.08cqw;
+      top: 27.86cqw;
+      width: 22.92cqw;
+      height: 13.02cqw;
+      background: #e4dcc4;
+      border: 0.4cqw solid #0f0f0f;
+      display: flex;
+      flex-direction: column;
+      z-index: 2;
+      font-family: "JetBrains Mono", monospace;
+    }
+    [id="01-arada-kim-var-server-head"] {
+      background: #0f0f0f;
+      color: #efe9d9;
+      font-size: 1.25cqw;
+      letter-spacing: 0.04em;
+      padding: 0.6cqw 1cqw;
+    }
+    [id="01-arada-kim-var-racks"] {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      justify-content: center;
+      gap: 0.6cqw;
+      padding: 0 1.2cqw;
+    }
+    [class~="01-arada-kim-var-rack"] {
+      height: 1.6cqw;
+      border: 0.2cqw solid #0f0f0f;
+      background: #efe9d9;
+      display: flex;
+      align-items: center;
+      padding-left: 0.5cqw;
+    }
+    [class~="01-arada-kim-var-led"] {
+      width: 0.6cqw;
+      height: 0.6cqw;
+      background: #0f0f0f;
+    }
+
+    [id="01-arada-kim-var-stranger"] {
+      position: absolute;
+      box-sizing: border-box;
+      left: 41.67cqw;
+      top: 30.73cqw;
+      width: 7.29cqw;
+      height: 7.29cqw;
+      background: #e85a1f;
+      border: 0.4cqw solid #0f0f0f;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-family: "Archivo Black", sans-serif;
+      font-size: 4.8cqw;
+      line-height: 1;
+      color: #0f0f0f;
+      z-index: 3;
+    }
+  </style>
+
+  <div data-hf-id="hf-m5ov" id="root" lang="tr" data-composition-id="01-arada-kim-var" data-start="0" data-duration="7.5" data-width="1920" data-height="1080">
+    <div data-hf-id="hf-0dxl" id="01-arada-kim-var-ground" class="clip" data-start="0" data-duration="7.5" data-track-index="0"></div>
+
+    <div data-hf-id="hf-lrrv" id="01-arada-kim-var-topbar">
+      <span data-hf-id="hf-vq1v">PINVAULT · 1 AMAÇ</span>
+      <span data-hf-id="hf-55sk" id="01-arada-kim-var-pill">AMAÇ</span>
+    </div>
+
+    <div data-hf-id="hf-39u1" id="01-arada-kim-var-head">
+      <div data-hf-id="hf-giva" id="01-arada-kim-var-line1">
+        <span data-hf-id="hf-x7kx" class="01-arada-kim-var-row"><span data-hf-id="hf-gjl3" class="01-arada-kim-var-word 01-arada-kim-var-w1"><span data-hf-id="hf-30ca" class="01-arada-kim-var-wordtext">UYGULAMANIZ</span></span>
+          <span data-hf-id="hf-9upz" class="01-arada-kim-var-word 01-arada-kim-var-w1"><span data-hf-id="hf-uy2t" class="01-arada-kim-var-wordtext">SUNUCUSUYLA</span></span></span>
+        <span data-hf-id="hf-1j91" class="01-arada-kim-var-row"><span data-hf-id="hf-9gey" class="01-arada-kim-var-word 01-arada-kim-var-w1"><span data-hf-id="hf-vnbw" class="01-arada-kim-var-wordtext">KONUŞUYOR.</span></span></span>
+      </div>
+      <div data-hf-id="hf-ckr9" id="01-arada-kim-var-line2">
+        <span data-hf-id="hf-7vp8" class="01-arada-kim-var-word 01-arada-kim-var-w2"><span data-hf-id="hf-9q9e" class="01-arada-kim-var-wordtext">PEKİ</span></span>
+        <span data-hf-id="hf-na9g" class="01-arada-kim-var-word 01-arada-kim-var-w2"><span data-hf-id="hf-q9iv" class="01-arada-kim-var-wordtext">ARADA</span></span>
+        <span data-hf-id="hf-m3cd" class="01-arada-kim-var-word 01-arada-kim-var-w2"><span data-hf-id="hf-m734" id="01-arada-kim-var-marker"></span><span data-hf-id="hf-2xck" class="01-arada-kim-var-wordtext">KİM</span></span>
+        <span data-hf-id="hf-mhne" class="01-arada-kim-var-word 01-arada-kim-var-w2"><span data-hf-id="hf-srz4" class="01-arada-kim-var-wordtext">VAR?</span></span>
+      </div>
+    </div>
+
+    <svg data-hf-id="hf-sgty" id="01-arada-kim-var-wires" viewBox="0 0 1920 1080" preserveAspectRatio="none" xmlns="http://www.w3.org/2000/svg">
+      <path data-hf-id="hf-3c59" id="01-arada-kim-var-wire-left" class="01-arada-kim-var-wire" d="M 644 660 L 870 660" />
+      <path data-hf-id="hf-cmmk" id="01-arada-kim-var-wire-right" class="01-arada-kim-var-wire" d="M 870 660 L 1096 660" />
+      <circle data-hf-id="hf-1xqr" id="01-arada-kim-var-req" class="01-arada-kim-var-packet" cx="620" cy="660" r="13" />
+      <circle data-hf-id="hf-ti4b" id="01-arada-kim-var-res" class="01-arada-kim-var-packet" cx="1120" cy="660" r="13" />
+      <circle data-hf-id="hf-pv6u" id="01-arada-kim-var-hit" class="01-arada-kim-var-packet" cx="620" cy="660" r="13" />
+    </svg>
+
+    <div data-hf-id="hf-vc85" id="01-arada-kim-var-phone">
+      <div data-hf-id="hf-zpce" id="01-arada-kim-var-speaker"></div>
+      <div data-hf-id="hf-czcc" id="01-arada-kim-var-app">Uygulamanız</div>
+      <div data-hf-id="hf-q0g2" id="01-arada-kim-var-lib">PinVault kütüphanesi</div>
+    </div>
+
+    <div data-hf-id="hf-qhda" id="01-arada-kim-var-server">
+      <div data-hf-id="hf-74gd" id="01-arada-kim-var-server-head">PinVault sunucusu</div>
+      <div data-hf-id="hf-5ok1" id="01-arada-kim-var-racks">
+        <div data-hf-id="hf-9b65" class="01-arada-kim-var-rack"><span data-hf-id="hf-2s86" class="01-arada-kim-var-led"></span></div>
+        <div data-hf-id="hf-nim9" class="01-arada-kim-var-rack"><span data-hf-id="hf-xzvu" class="01-arada-kim-var-led"></span></div>
+        <div data-hf-id="hf-opjc" class="01-arada-kim-var-rack"><span data-hf-id="hf-ye6v" class="01-arada-kim-var-led"></span></div>
+      </div>
+    </div>
+
+    <div data-hf-id="hf-gpba" id="01-arada-kim-var-stranger">?</div>
+
+    <div data-hf-id="hf-yihc" id="01-arada-kim-var-meta">
+      <span data-hf-id="hf-tp1h">Arada kim var?</span>
+      <span data-hf-id="hf-f6la" id="01-arada-kim-var-counter"><span data-hf-id="hf-p81i">02</span><span data-hf-id="hf-ygtv" id="01-arada-kim-var-dot"></span><span data-hf-id="hf-1qd5">25</span></span>
+    </div>
+  </div>
+
+  <script>
+    (function () {
+      var FID = "01-arada-kim-var";
+      var root = document.querySelector('[data-composition-id="' + FID + '"]');
+      var byId = function (s) {
+        return root.querySelector('[id="' + FID + "-" + s + '"]');
+      };
+      var byClass = function (s) {
+        return Array.prototype.slice.call(root.querySelectorAll('[class~="' + FID + "-" + s + '"]'));
+      };
+
+      var tl = gsap.timeline({ paused: true });
+      var EASE = "power3.out";
+
+      // Content-aware word pacing (dynamic-content-sequencing): each word's window is
+      // BASE + chars x SEC_PER_CHAR, pre-computed once into absolute start times.
+      function sequence(els, t0, base, perChar) {
+        var cumulative = t0;
+        return els.map(function (el) {
+          var start = cumulative;
+          cumulative += base + el.textContent.trim().length * perChar;
+          return { el: el, start: start };
+        });
+      }
+      function revealWords(plan) {
+        plan.forEach(function (p) {
+          tl.fromTo(
+            p.el,
+            { opacity: 0, y: 34 },
+            { opacity: 1, y: 0, duration: 0.55, ease: EASE },
+            p.start
+          );
+        });
+      }
+
+      // ---------- Scene 1 (0.0-2.2): line 1 word by word, strip below, wire draws ----------
+      revealWords(sequence(byClass("w1"), 0.15, 0.18, 0.025));
+
+      tl.fromTo(byId("phone"), { opacity: 0, x: -40 }, { opacity: 1, x: 0, duration: 0.6, ease: EASE }, 0.55);
+      tl.fromTo(byId("server"), { opacity: 0, x: 40 }, { opacity: 1, x: 0, duration: 0.6, ease: EASE }, 0.75);
+
+      var wireL = byId("wire-left");
+      var wireR = byId("wire-right");
+      var lenL = wireL.getTotalLength ? wireL.getTotalLength() : 226;
+      var lenR = wireR.getTotalLength ? wireR.getTotalLength() : 226;
+      // left half at constant speed, right half lands with power2.out -> one continuous pen stroke
+      tl.fromTo(
+        wireL,
+        { strokeDasharray: lenL, strokeDashoffset: lenL },
+        { strokeDashoffset: 0, duration: 0.42, ease: "none" },
+        1.05
+      );
+      tl.fromTo(
+        wireR,
+        { strokeDasharray: lenR, strokeDashoffset: lenR },
+        { strokeDashoffset: 0, duration: 0.55, ease: "power2.out" },
+        1.47
+      );
+
+      // ---------- Scene 2 (2.2-4.4): request + response, the stranger drops in, wire splits ----------
+      var req = byId("req");
+      var res = byId("res");
+      var hit = byId("hit");
+      tl.fromTo([req, res, hit], { opacity: 0 }, { opacity: 1, duration: 0.01, ease: "none" }, 2.2);
+      tl.fromTo(req, { attr: { cx: 620 } }, { attr: { cx: 1120 }, duration: 0.7, ease: "power1.inOut" }, 2.2);
+      tl.fromTo(res, { attr: { cx: 1120 } }, { attr: { cx: 620 }, duration: 0.7, ease: "power1.inOut" }, 2.95);
+
+      tl.fromTo(
+        byId("stranger"),
+        { opacity: 0, y: -240 },
+        { opacity: 1, y: 0, duration: 0.55, ease: EASE },
+        3.6
+      );
+      tl.fromTo(wireL, { attr: { d: "M 644 660 L 870 660" } }, { attr: { d: "M 644 660 L 774 660" }, duration: 0.35, ease: EASE }, 3.95);
+      tl.fromTo(wireR, { attr: { d: "M 870 660 L 1096 660" } }, { attr: { d: "M 966 660 L 1096 660" }, duration: 0.35, ease: EASE }, 3.95);
+
+      // a third packet now runs into the stranger and stops dead
+      tl.fromTo(hit, { attr: { cx: 620 } }, { attr: { cx: 787 }, duration: 0.42, ease: "power2.in" }, 4.05);
+
+      // ---------- Scene 3 (4.4-7.0): line 1 dims, line 2 lands word by word, marker under KİM ----------
+      tl.fromTo(byId("line1"), { opacity: 1 }, { opacity: 0.45, duration: 0.5, ease: EASE }, 4.45);
+      revealWords(sequence(byClass("w2"), 4.6, 0.2, 0.03));
+
+      // css-marker-patterns, highlight mode: orange bar sweeps in under the word
+      tl.fromTo(byId("marker"), { scaleX: 0 }, { scaleX: 1, duration: 0.5, ease: "power2.out" }, 5.95);
+
+      // hold to the frame's full length
+      tl.set({}, {}, 7);
+
+      window.__timelines = window.__timelines || {};
+      window.__timelines[FID] = tl;
+    })();
+  </script>
+</template>

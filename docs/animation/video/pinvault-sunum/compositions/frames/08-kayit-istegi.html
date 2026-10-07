@@ -1,0 +1,709 @@
+<template id="08-kayit-istegi-template">
+  <div id="root" data-composition-id="08-kayit-istegi" data-start="0" data-duration="15.5" data-width="1920" data-height="1080" lang="tr">
+    <style>
+      @import url("https://fonts.googleapis.com/css2?family=Archivo+Black&family=JetBrains+Mono:wght@400;700&family=Space+Grotesk:wght@400;500&display=block");
+
+      #root {
+        position: relative;
+        width: 1920px;
+        height: 1080px;
+        overflow: hidden;
+      }
+      [data-composition-id="08-kayit-istegi"] * {
+        margin: 0;
+        padding: 0;
+        box-sizing: border-box;
+      }
+
+      /* full-bleed ground (clip layer, not #root) */
+      [id="08-kayit-istegi-stage"] {
+        position: absolute;
+        inset: 0;
+        width: 1920px;
+        height: 1080px;
+        background: #efe9d9;
+        container-type: size;
+        overflow: hidden;
+        color: #0f0f0f;
+      }
+
+      /* ---------- chrome ---------- */
+      [id="08-kayit-istegi-topbar"] {
+        position: absolute;
+        top: 48px;
+        left: 64px;
+        right: 64px;
+        height: 44px;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        font-family: "JetBrains Mono", monospace;
+        font-size: 22px;
+        letter-spacing: 0.06em;
+        color: #0f0f0f;
+      }
+      [id="08-kayit-istegi-pill"] {
+        border: 4px solid #0f0f0f;
+        border-radius: 999px;
+        background: #efe9d9;
+        padding: 4px 20px;
+        line-height: 1.3;
+      }
+      [id="08-kayit-istegi-footer"] {
+        position: absolute;
+        bottom: 48px;
+        left: 64px;
+        right: 64px;
+        height: 32px;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        font-family: "JetBrains Mono", monospace;
+        font-size: 22px;
+        letter-spacing: 0.06em;
+        color: #0f0f0f;
+      }
+      [id="08-kayit-istegi-counter"] {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+      }
+      [id="08-kayit-istegi-dot"] {
+        width: 10px;
+        height: 10px;
+        border-radius: 50%;
+        background: #0f0f0f;
+      }
+
+      /* ---------- chain strip (fixed geometry) ---------- */
+      [class~="08-kayit-istegi-cell"] {
+        position: absolute;
+        top: 104px;
+        width: 160px;
+        height: 40px;
+        border: 2px solid #0f0f0f;
+        background: #efe9d9;
+        color: #0f0f0f;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-family: "JetBrains Mono", monospace;
+        font-size: 15px;
+        letter-spacing: 0.04em;
+        white-space: nowrap;
+      }
+      [class~="08-kayit-istegi-done"] {
+        background: #0f0f0f;
+        color: #efe9d9;
+      }
+      [class~="08-kayit-istegi-future"] {
+        opacity: 0.35;
+      }
+      [id="08-kayit-istegi-cur"] {
+        border: 4px solid #0f0f0f;
+        background: #efe9d9;
+      }
+      [id="08-kayit-istegi-curline"] {
+        position: absolute;
+        left: 966px;
+        top: 147px;
+        width: 160px;
+        height: 4px;
+        background: #f5c518;
+        transform-origin: 0 50%;
+      }
+      [class~="08-kayit-istegi-link"] {
+        position: absolute;
+        top: 123px;
+        width: 14px;
+        height: 2px;
+        background: #0f0f0f;
+      }
+
+      /* ---------- kicker + title ---------- */
+      [id="08-kayit-istegi-kicker"] {
+        position: absolute;
+        left: 96px;
+        top: 166px;
+        background: #0f0f0f;
+        color: #efe9d9;
+        font-family: "JetBrains Mono", monospace;
+        font-size: 22px;
+        letter-spacing: 0.12em;
+        line-height: 1.2;
+        white-space: nowrap;
+        padding: 8px 16px;
+      }
+      [id="08-kayit-istegi-title"] {
+        position: absolute;
+        left: 96px;
+        top: 224px;
+        font-family: "Archivo Black", sans-serif;
+        font-size: 4.2cqw;
+        line-height: 0.92;
+        letter-spacing: -0.01em;
+        white-space: nowrap;
+      }
+
+      /* ---------- phone ---------- */
+      [id="08-kayit-istegi-phone"] {
+        position: absolute;
+        left: 120px;
+        top: 320px;
+        width: 250px;
+        height: 360px;
+        border: 4px solid #0f0f0f;
+        background: #efe9d9;
+        z-index: 2;
+      }
+      [class~="08-kayit-istegi-speaker"] {
+        position: absolute;
+        left: 89px;
+        top: 12px;
+        width: 64px;
+        height: 8px;
+        background: #0f0f0f;
+      }
+      [class~="08-kayit-istegi-screen"] {
+        position: absolute;
+        left: 12px;
+        top: 32px;
+        width: 218px;
+        height: 308px;
+        border: 3px solid #0f0f0f;
+        background: #efe9d9;
+      }
+      [class~="08-kayit-istegi-app"] {
+        position: absolute;
+        left: 12px;
+        top: 12px;
+        font-family: "JetBrains Mono", monospace;
+        font-size: 22px;
+        letter-spacing: 0.02em;
+        white-space: nowrap;
+      }
+      [id="08-kayit-istegi-pin"] {
+        position: absolute;
+        left: 10px;
+        top: 58px;
+        width: 192px;
+        height: 46px;
+        border: 3px solid #0f0f0f;
+        background: #e4dcc4;
+        display: flex;
+        align-items: center;
+        padding: 0 12px;
+        font-family: "JetBrains Mono", monospace;
+        font-size: 20px;
+        white-space: nowrap;
+      }
+      [id="08-kayit-istegi-pinok"] {
+        position: absolute;
+        left: 184px;
+        top: 44px;
+        width: 32px;
+        height: 32px;
+        background: #1f8a4c;
+        border: 3px solid #0f0f0f;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        z-index: 3;
+      }
+      [class~="08-kayit-istegi-lib"] {
+        position: absolute;
+        left: 0;
+        right: 0;
+        bottom: 0;
+        height: 64px;
+        background: #0f0f0f;
+        color: #efe9d9;
+        font-family: "JetBrains Mono", monospace;
+        font-size: 19px;
+        line-height: 1.25;
+        padding: 8px 12px;
+      }
+
+      /* ---------- vault (Android Keystore) ---------- */
+      [id="08-kayit-istegi-vshadow"] {
+        position: absolute;
+        left: 120px;
+        top: 696px;
+        width: 110px;
+        height: 110px;
+        background: #e85a1f;
+        border: 4px solid #0f0f0f;
+        z-index: 2;
+      }
+      [id="08-kayit-istegi-vault"] {
+        position: absolute;
+        left: 120px;
+        top: 696px;
+        width: 110px;
+        height: 110px;
+        border: 4px solid #0f0f0f;
+        background: #e4dcc4;
+        z-index: 3;
+        overflow: hidden;
+      }
+      [id="08-kayit-istegi-key"] {
+        position: absolute;
+        left: 4px;
+        top: 4px;
+        width: 94px;
+        height: 94px;
+        display: block;
+      }
+      [id="08-kayit-istegi-door"] {
+        position: absolute;
+        left: 0;
+        top: 0;
+        width: 102px;
+        height: 102px;
+        background: #0f0f0f;
+        transform-origin: 0 50%;
+      }
+      [class~="08-kayit-istegi-dial"] {
+        position: absolute;
+        left: 34px;
+        top: 34px;
+        width: 34px;
+        height: 34px;
+        border: 4px solid #efe9d9;
+      }
+      [class~="08-kayit-istegi-handle"] {
+        position: absolute;
+        left: 76px;
+        top: 47px;
+        width: 18px;
+        height: 8px;
+        background: #efe9d9;
+      }
+      [id="08-kayit-istegi-vlabel"] {
+        position: absolute;
+        left: 268px;
+        top: 698px;
+        font-family: "JetBrains Mono", monospace;
+        font-size: 22px;
+        letter-spacing: 0.04em;
+        white-space: nowrap;
+      }
+      [id="08-kayit-istegi-vbody"] {
+        position: absolute;
+        left: 268px;
+        top: 732px;
+        font-family: "Space Grotesk", sans-serif;
+        font-size: 24px;
+        line-height: 1.3;
+        white-space: nowrap;
+      }
+      [id="08-kayit-istegi-nogo"] {
+        position: absolute;
+        left: 268px;
+        top: 774px;
+        height: 38px;
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        font-family: "JetBrains Mono", monospace;
+        font-size: 22px;
+        letter-spacing: 0.02em;
+        white-space: nowrap;
+      }
+      [class~="08-kayit-istegi-x"] {
+        width: 34px;
+        height: 34px;
+        background: #e85a1f;
+        border: 3px solid #0f0f0f;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        flex: none;
+      }
+
+      /* ---------- shared tick / cross icons ---------- */
+      [class~="08-kayit-istegi-ico"] {
+        width: 22px;
+        height: 22px;
+        display: block;
+      }
+
+      /* ---------- the wire ---------- */
+      [id="08-kayit-istegi-wire"] {
+        position: absolute;
+        left: 0;
+        top: 0;
+        width: 1920px;
+        height: 1080px;
+        z-index: 1;
+        overflow: visible;
+      }
+
+      /* ---------- certificate card (server -> phone) ---------- */
+      [id="08-kayit-istegi-cert"] {
+        position: absolute;
+        left: 1250px;
+        top: 600px;
+        width: 160px;
+        height: 58px;
+        border: 3px solid #0f0f0f;
+        background: #efe9d9;
+        z-index: 6;
+      }
+      [class~="08-kayit-istegi-certbar"] {
+        height: 12px;
+        background: #0f0f0f;
+      }
+      [class~="08-kayit-istegi-certfp"] {
+        height: 40px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-family: "JetBrains Mono", monospace;
+        font-size: 18px;
+        white-space: nowrap;
+      }
+
+      /* ---------- connection label ---------- */
+      [id="08-kayit-istegi-linklabel"] {
+        position: absolute;
+        right: 528px;
+        top: 650px;
+        height: 40px;
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        font-family: "JetBrains Mono", monospace;
+        font-size: 22px;
+        letter-spacing: 0.02em;
+        white-space: nowrap;
+        z-index: 2;
+      }
+      [class~="08-kayit-istegi-ok"] {
+        width: 34px;
+        height: 34px;
+        background: #1f8a4c;
+        border: 3px solid #0f0f0f;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        flex: none;
+      }
+
+      /* ---------- packet card ---------- */
+      [id="08-kayit-istegi-pkt"] {
+        position: absolute;
+        left: 597px;
+        top: 324px;
+        width: 580px;
+        border: 4px solid #0f0f0f;
+        background: #efe9d9;
+        z-index: 5;
+        transform-origin: 50% 100%;
+      }
+      [id="08-kayit-istegi-pkthead"] {
+        height: 50px;
+        background: #0f0f0f;
+        color: #efe9d9;
+        display: flex;
+        align-items: center;
+        padding: 0 16px;
+        font-family: "JetBrains Mono", monospace;
+        font-size: 22px;
+        letter-spacing: 0.02em;
+        white-space: nowrap;
+      }
+      [class~="08-kayit-istegi-rows"] {
+        padding: 8px 10px 10px;
+      }
+      [class~="08-kayit-istegi-row"] {
+        height: 42px;
+        display: flex;
+        align-items: center;
+        padding: 0 10px;
+        border-bottom: 2px solid #0f0f0f;
+        font-family: "JetBrains Mono", monospace;
+        font-size: 22px;
+        letter-spacing: 0.01em;
+        white-space: nowrap;
+      }
+      [class~="08-kayit-istegi-row"]:last-child {
+        border-bottom: none;
+      }
+      [class~="08-kayit-istegi-tok"] {
+        background: #f5c518;
+        border: 2px solid #0f0f0f;
+      }
+
+      /* ---------- PinVault server + ports ---------- */
+      [id="08-kayit-istegi-server"] {
+        position: absolute;
+        left: 1500px;
+        top: 330px;
+        width: 324px;
+        height: 480px;
+        border: 4px solid #0f0f0f;
+        background: #e4dcc4;
+        z-index: 3;
+      }
+      [class~="08-kayit-istegi-srvhead"] {
+        height: 56px;
+        background: #0f0f0f;
+        color: #efe9d9;
+        font-family: "JetBrains Mono", monospace;
+        font-size: 24px;
+        letter-spacing: 0.04em;
+        display: flex;
+        align-items: center;
+        padding: 0 18px;
+        white-space: nowrap;
+      }
+      [class~="08-kayit-istegi-port"] {
+        position: absolute;
+        left: 1404px;
+        width: 100px;
+        height: 44px;
+        border: 4px solid #0f0f0f;
+        background: #efe9d9;
+        color: #0f0f0f;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-family: "JetBrains Mono", monospace;
+        font-size: 22px;
+        letter-spacing: 0.04em;
+        z-index: 4;
+      }
+      [class~="08-kayit-istegi-dim"] {
+        opacity: 0.45;
+      }
+
+      /* ---------- analogy strip ---------- */
+      [id="08-kayit-istegi-benz"] {
+        position: absolute;
+        left: 96px;
+        top: 838px;
+        height: 52px;
+        display: flex;
+        align-items: stretch;
+        border: 2px solid #0f0f0f;
+        background: #e4dcc4;
+        white-space: nowrap;
+      }
+      [class~="08-kayit-istegi-benzlabel"] {
+        background: #0f0f0f;
+        color: #efe9d9;
+        font-family: "JetBrains Mono", monospace;
+        font-size: 18px;
+        letter-spacing: 0.12em;
+        display: flex;
+        align-items: center;
+        padding: 0 16px;
+      }
+      [class~="08-kayit-istegi-benztext"] {
+        font-family: "Space Grotesk", sans-serif;
+        font-size: 26px;
+        display: flex;
+        align-items: center;
+        padding: 0 22px;
+      }
+    </style>
+
+    <div id="08-kayit-istegi-stage" class="clip" data-start="0" data-duration="15.5" data-track-index="0">
+      <!-- chrome -->
+      <div id="08-kayit-istegi-topbar">
+        <span>PINVAULT · 3 AKIŞ</span>
+        <span id="08-kayit-istegi-pill">HALKA 6 / 10</span>
+      </div>
+      <div id="08-kayit-istegi-footer">
+        <span>Kayıt isteği</span>
+        <span id="08-kayit-istegi-counter"><span>17</span><span id="08-kayit-istegi-dot"></span><span>25</span></span>
+      </div>
+
+      <!-- chain strip: x = 96 + i*174 -->
+      <div class="08-kayit-istegi-cell 08-kayit-istegi-done" style="left: 96px">1 KURULUM</div>
+      <div class="08-kayit-istegi-cell 08-kayit-istegi-done" style="left: 270px">2 APK</div>
+      <div class="08-kayit-istegi-cell 08-kayit-istegi-done" style="left: 444px">3 HOST</div>
+      <div class="08-kayit-istegi-cell 08-kayit-istegi-done" style="left: 618px">4 TOKEN</div>
+      <div class="08-kayit-istegi-cell 08-kayit-istegi-done" style="left: 792px">5 TELEFONA</div>
+      <div class="08-kayit-istegi-cell 08-kayit-istegi-future" style="left: 966px">6 KAYIT İSTEĞİ</div>
+      <div class="08-kayit-istegi-cell 08-kayit-istegi-future" style="left: 1140px">7 KART</div>
+      <div class="08-kayit-istegi-cell 08-kayit-istegi-future" style="left: 1314px">8 PİN LİSTESİ</div>
+      <div class="08-kayit-istegi-cell 08-kayit-istegi-future" style="left: 1488px">9 BİLET</div>
+      <div class="08-kayit-istegi-cell 08-kayit-istegi-future" style="left: 1662px">10 İLK İSTEK</div>
+      <div class="08-kayit-istegi-link" style="left: 256px"></div>
+      <div class="08-kayit-istegi-link" style="left: 430px"></div>
+      <div class="08-kayit-istegi-link" style="left: 604px"></div>
+      <div class="08-kayit-istegi-link" style="left: 778px"></div>
+      <div class="08-kayit-istegi-link" style="left: 952px"></div>
+      <div class="08-kayit-istegi-link 08-kayit-istegi-future" style="left: 1126px"></div>
+      <div class="08-kayit-istegi-link 08-kayit-istegi-future" style="left: 1300px"></div>
+      <div class="08-kayit-istegi-link 08-kayit-istegi-future" style="left: 1474px"></div>
+      <div class="08-kayit-istegi-link 08-kayit-istegi-future" style="left: 1648px"></div>
+      <div id="08-kayit-istegi-cur" data-layout-allow-overlap class="08-kayit-istegi-cell" style="left: 966px">6 KAYIT İSTEĞİ</div>
+      <div id="08-kayit-istegi-curline"></div>
+
+      <!-- kicker + title -->
+      <div id="08-kayit-istegi-kicker">KİM: PINVAULT KÜTÜPHANESİ · NEREDE: TELEFON → 8091 (TLS)</div>
+      <div id="08-kayit-istegi-title">KAYIT İSTEĞİ GİDER</div>
+
+      <!-- wire: phone (x 370) -> port 8091 (x 1404), y 629 -->
+      <svg id="08-kayit-istegi-wire" viewBox="0 0 1920 1080" xmlns="http://www.w3.org/2000/svg">
+        <path id="08-kayit-istegi-wirepath" d="M370 629 H1392" pathLength="1" fill="none" stroke="#0F0F0F" stroke-width="4" stroke-dasharray="1" stroke-dashoffset="1" />
+        <polygon id="08-kayit-istegi-arrow" points="1402,629 1384,618 1384,640" fill="#0F0F0F" />
+      </svg>
+
+      <!-- phone -->
+      <div id="08-kayit-istegi-phone">
+        <div class="08-kayit-istegi-speaker"></div>
+        <div class="08-kayit-istegi-screen">
+          <div class="08-kayit-istegi-app">Uygulamanız</div>
+          <div id="08-kayit-istegi-pin">ziA0hyMD…</div>
+          <div id="08-kayit-istegi-pinok"><svg class="08-kayit-istegi-ico" viewBox="0 0 24 24"><polyline points="5,12.5 10,17.5 19,7" fill="none" stroke="#EFE9D9" stroke-width="3.5" stroke-linecap="square" /></svg></div>
+          <div class="08-kayit-istegi-lib">PinVault kütüphanesi</div>
+        </div>
+      </div>
+
+      <!-- vault (the one hard shadow) -->
+      <div id="08-kayit-istegi-vshadow"></div>
+      <div id="08-kayit-istegi-vault">
+        <svg id="08-kayit-istegi-key" viewBox="0 0 94 94" xmlns="http://www.w3.org/2000/svg">
+          <path id="08-kayit-istegi-keybow" d="M14 35 H38 V59 H14 Z" pathLength="1" fill="none" stroke="#0F0F0F" stroke-width="6" stroke-linejoin="miter" stroke-dasharray="1" stroke-dashoffset="1" />
+          <path id="08-kayit-istegi-keyshaft" d="M38 47 H80 M70 47 V61 M80 47 V58" pathLength="1" fill="none" stroke="#0F0F0F" stroke-width="6" stroke-linecap="square" stroke-dasharray="1" stroke-dashoffset="1" />
+        </svg>
+        <div id="08-kayit-istegi-door">
+          <div class="08-kayit-istegi-dial"></div>
+          <div class="08-kayit-istegi-handle"></div>
+        </div>
+      </div>
+      <div id="08-kayit-istegi-vlabel">Android Keystore</div>
+      <div id="08-kayit-istegi-vbody">Anahtar çifti burada üretilir.</div>
+      <div id="08-kayit-istegi-nogo">
+        <span class="08-kayit-istegi-x"><svg class="08-kayit-istegi-ico" viewBox="0 0 24 24"><path d="M6 6 L18 18 M18 6 L6 18" fill="none" stroke="#EFE9D9" stroke-width="3.5" stroke-linecap="square" /></svg></span>
+        <span>özel anahtar · telefondan hiç çıkmaz</span>
+      </div>
+
+      <!-- PinVault server -->
+      <div id="08-kayit-istegi-server">
+        <div class="08-kayit-istegi-srvhead">PinVault sunucusu</div>
+      </div>
+      <div id="08-kayit-istegi-p90" class="08-kayit-istegi-port 08-kayit-istegi-dim" style="top: 541px">8090</div>
+      <div id="08-kayit-istegi-p91" class="08-kayit-istegi-port" style="top: 607px">8091</div>
+      <div id="08-kayit-istegi-p92" class="08-kayit-istegi-port 08-kayit-istegi-dim" style="top: 673px">8092</div>
+      <div id="08-kayit-istegi-p93" class="08-kayit-istegi-port 08-kayit-istegi-dim" style="top: 739px">8093</div>
+
+      <!-- server certificate card -->
+      <div id="08-kayit-istegi-cert">
+        <div class="08-kayit-istegi-certbar"></div>
+        <div class="08-kayit-istegi-certfp">ziA0hyMD…</div>
+      </div>
+
+      <!-- connection label -->
+      <div id="08-kayit-istegi-linklabel">
+        <span class="08-kayit-istegi-ok"><svg class="08-kayit-istegi-ico" viewBox="0 0 24 24"><polyline points="5,12.5 10,17.5 19,7" fill="none" stroke="#EFE9D9" stroke-width="3.5" stroke-linecap="square" /></svg></span>
+        <span>8091 · sunucu sertifikası APK'daki pin'le tuttu</span>
+      </div>
+
+      <!-- packet card -->
+      <div id="08-kayit-istegi-pkt">
+        <div id="08-kayit-istegi-pkthead">POST /api/v1/client-certs/enroll</div>
+        <div class="08-kayit-istegi-rows">
+          <div class="08-kayit-istegi-row 08-kayit-istegi-tok">token · Qk3xAbCd…</div>
+          <div class="08-kayit-istegi-row">cihaz adı · Samsung SM-T505</div>
+          <div class="08-kayit-istegi-row">deviceUid · a41c7e09d3b2f586</div>
+          <div class="08-kayit-istegi-row">CSR · açık anahtar + imza</div>
+          <div class="08-kayit-istegi-row">anahtarın donanım belgesi</div>
+        </div>
+      </div>
+
+      <!-- analogy strip -->
+      <div id="08-kayit-istegi-benz">
+        <span class="08-kayit-istegi-benzlabel">BENZETME</span>
+        <span class="08-kayit-istegi-benztext">Çalışan danışmaya davet kodunu ve kendi fotoğrafını getirir; evinin anahtarını vermez.</span>
+      </div>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/gsap@3.14.2/dist/gsap.min.js"></script>
+    <script>
+      (function () {
+        var FID = "08-kayit-istegi";
+        var host = document.querySelector('[data-composition-id="' + FID + '"]') || document;
+        var $ = function (n) {
+          return host.querySelector('[id="' + FID + "-" + n + '"]');
+        };
+        var $$ = function (n) {
+          return Array.prototype.slice.call(host.querySelectorAll('[class~="' + FID + "-" + n + '"]'));
+        };
+
+        var tl = gsap.timeline({ paused: true });
+        var SOFT = "power3.out";
+        var TRAVEL = "power3.inOut";
+        var INK = "#0F0F0F";
+        var CREAM = "#EFE9D9";
+        var GREEN = "#1F8A4C";
+
+        // ---------- Scene 1 (0.0–1.5): chain cell settles, kicker, title; phone on stage ----------
+        tl.fromTo($("cur"), { opacity: 0 }, { opacity: 1, duration: 0.6, ease: SOFT }, 0.2);
+        tl.fromTo($("curline"), { scaleX: 0 }, { scaleX: 1, duration: 0.6, ease: SOFT }, 0.2);
+        tl.fromTo($("phone"), { opacity: 0, y: 40 }, { opacity: 1, y: 0, duration: 0.8, ease: SOFT }, 0.05);
+        tl.fromTo($("kicker"), { opacity: 0, x: -24 }, { opacity: 1, x: 0, duration: 0.6, ease: SOFT }, 0.25);
+        tl.fromTo($("title"), { opacity: 0, y: 32 }, { opacity: 1, y: 0, duration: 0.8, ease: SOFT }, 0.5);
+
+        // ---------- Scene 2 (1.5–4.0): vault under the phone, key drawn, labels ----------
+        tl.fromTo($("vault"), { opacity: 0, scale: 0.8 }, { opacity: 1, scale: 1, duration: 0.5, ease: SOFT }, 1.5);
+        tl.fromTo($("keybow"), { attr: { "stroke-dashoffset": 1 } }, { attr: { "stroke-dashoffset": 0 }, duration: 0.45, ease: "power2.inOut" }, 1.85);
+        tl.fromTo($("keyshaft"), { attr: { "stroke-dashoffset": 1 } }, { attr: { "stroke-dashoffset": 0 }, duration: 0.5, ease: "power2.inOut" }, 2.2);
+        tl.fromTo($("vlabel"), { opacity: 0, x: -20 }, { opacity: 1, x: 0, duration: 0.5, ease: SOFT }, 2.05);
+        tl.fromTo($("vbody"), { opacity: 0, y: 12 }, { opacity: 1, y: 0, duration: 0.5, ease: SOFT }, 2.85);
+
+        // ---------- Scene 3 (4.0–6.0): server + 8091, wire, cert card rides to the pin, green check ----------
+        tl.fromTo($("server"), { opacity: 0, x: 40 }, { opacity: 1, x: 0, duration: 0.6, ease: SOFT }, 4.0);
+        tl.fromTo([$("p90"), $("p92"), $("p93")], { opacity: 0 }, { opacity: 0.45, duration: 0.5, ease: SOFT, stagger: 0.05 }, 4.15);
+        tl.fromTo($("p91"), { opacity: 0, x: 60 }, { opacity: 1, x: 0, duration: 0.5, ease: SOFT }, 4.2);
+        tl.fromTo($("wirepath"), { attr: { "stroke-dashoffset": 1 } }, { attr: { "stroke-dashoffset": 0 }, duration: 0.6, ease: "power2.inOut" }, 4.35);
+        tl.fromTo($("arrow"), { opacity: 0 }, { opacity: 1, duration: 0.2, ease: SOFT }, 4.85);
+        // cert card: emerges at the port (center 1330,629), rides left, rises to the pin box (center 245,440)
+        tl.fromTo($("cert"), { opacity: 0, x: 60, y: 0, scale: 1 }, { opacity: 1, x: 0, y: 0, scale: 1, duration: 0.3, ease: SOFT }, 4.85);
+        tl.to(
+          $("cert"),
+          {
+            keyframes: {
+              "0%": { x: 0, y: 0, scale: 1 },
+              "72%": { x: -880, y: 0, scale: 1 },
+              "100%": { x: -1085, y: -189, scale: 0.75 },
+              easeEach: "none",
+            },
+            duration: 0.75,
+            ease: "power2.inOut",
+          },
+          5.05
+        );
+        tl.to($("cert"), { opacity: 0, scale: 0.5, duration: 0.2, ease: SOFT }, 5.8);
+        tl.fromTo($("pin"), { borderColor: INK }, { borderColor: GREEN, duration: 0.2, ease: SOFT }, 5.8);
+        tl.fromTo($("pinok"), { opacity: 0, scale: 0.4 }, { opacity: 1, scale: 1, duration: 0.3, ease: SOFT }, 5.85);
+        tl.fromTo($("linklabel"), { opacity: 0, y: 12 }, { opacity: 1, y: 0, duration: 0.5, ease: SOFT }, 5.95);
+
+        // ---------- Scene 4 (6.0–11.0): packet card opens on the wire, rows every 0.8s, slides to 8091 ----------
+        tl.fromTo($("pkt"), { opacity: 0, scaleY: 0.04, x: 0 }, { opacity: 1, scaleY: 1, x: 0, duration: 0.5, ease: SOFT }, 6.2);
+        tl.fromTo($("pkthead"), { opacity: 0 }, { opacity: 1, duration: 0.4, ease: SOFT }, 6.45);
+        $$("row").forEach(function (row, i) {
+          tl.fromTo(row, { opacity: 0, x: -16 }, { opacity: 1, x: 0, duration: 0.4, ease: SOFT }, 7.0 + i * 0.8);
+        });
+        tl.to($("pkt"), { x: 219, duration: 0.6, ease: TRAVEL }, 10.55);
+        // 8091 "takes" the packet: brief press, ink fill
+        tl.fromTo($("p91"), { scale: 1, backgroundColor: CREAM, color: INK }, { scale: 0.88, backgroundColor: INK, color: CREAM, duration: 0.12, ease: "power2.out" }, 11.1);
+        tl.to($("p91"), { scale: 1, duration: 0.22, ease: SOFT }, 11.22);
+
+        // ---------- Scene 5 (11.0–15.0): what never leaves, vault door shuts, analogy, hold ----------
+        tl.fromTo($("nogo"), { opacity: 0, x: -20 }, { opacity: 1, x: 0, duration: 0.5, ease: SOFT }, 11.15);
+        tl.fromTo($("door"), { scaleX: 0.08 }, { scaleX: 1, duration: 0.55, ease: TRAVEL }, 11.85);
+        tl.fromTo($("vshadow"), { opacity: 0, x: 0, y: 0 }, { opacity: 1, x: 16, y: 16, duration: 0.35, ease: SOFT }, 12.3);
+        tl.fromTo($("benz"), { opacity: 0, y: 16 }, { opacity: 1, y: 0, duration: 0.6, ease: SOFT }, 12.3);
+        tl.to({}, { duration: 0.01 }, 14.99);
+
+        window.__timelines = window.__timelines || {};
+        window.__timelines[FID] = tl;
+      })();
+    </script>
+  </div>
+</template>

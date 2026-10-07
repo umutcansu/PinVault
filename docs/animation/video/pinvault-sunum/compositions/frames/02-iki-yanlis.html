@@ -1,0 +1,337 @@
+<template>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo+Black&family=JetBrains+Mono:wght@400;700&family=Space+Grotesk:wght@400;500;700&display=block">
+  <script src="https://cdn.jsdelivr.net/npm/gsap@3.14.2/dist/gsap.min.js"></script>
+  <style>
+    #root,
+    #root * {
+      box-sizing: border-box;
+    }
+    #root {
+      position: relative;
+      width: 1920px;
+      height: 1080px;
+      overflow: hidden;
+      container-type: size;
+      font-family: "Space Grotesk", sans-serif;
+      color: #0f0f0f;
+    }
+    .f02iy-bg {
+      position: absolute;
+      inset: 0;
+      background: #efe9d9;
+    }
+
+    /* ---------- frame chrome ---------- */
+    .f02iy-topbar {
+      position: absolute;
+      top: 48px;
+      left: 64px;
+      right: 64px;
+      height: 44px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      font-family: "JetBrains Mono", monospace;
+      font-size: 22px;
+      letter-spacing: 0.06em;
+    }
+    .f02iy-pill {
+      border: 3px solid #0f0f0f;
+      border-radius: 999px;
+      padding: 5px 18px;
+      background: #efe9d9;
+    }
+    .f02iy-footer {
+      position: absolute;
+      bottom: 44px;
+      left: 64px;
+      right: 64px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      font-family: "JetBrains Mono", monospace;
+      font-size: 22px;
+      letter-spacing: 0.06em;
+    }
+    .f02iy-counter {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+    .f02iy-dot {
+      width: 10px;
+      height: 10px;
+      border-radius: 50%;
+      background: #0f0f0f;
+    }
+
+    /* ---------- title ---------- */
+    .f02iy-title {
+      position: absolute;
+      left: 96px;
+      top: 138px;
+      margin: 0;
+      font-family: "Archivo Black", sans-serif;
+      font-size: 4.2cqw;
+      line-height: 0.92;
+      letter-spacing: -0.01em;
+      white-space: nowrap;
+    }
+
+    /* ---------- left: two correction cards ---------- */
+    .f02iy-card {
+      position: absolute;
+      left: 96px;
+      width: 1060px;
+      height: 288px;
+      border: 4px solid #0f0f0f;
+      background: #efe9d9;
+      padding: 34px 36px;
+      display: flex;
+      flex-direction: column;
+      justify-content: center;
+      gap: 26px;
+    }
+    .f02iy-card-1 {
+      top: 262px;
+    }
+    .f02iy-card-2 {
+      top: 582px;
+    }
+    .f02iy-row {
+      display: flex;
+      align-items: flex-start;
+      gap: 22px;
+    }
+    .f02iy-icon {
+      flex: 0 0 40px;
+      width: 40px;
+      height: 40px;
+      margin-top: 0;
+      overflow: visible;
+    }
+    .f02iy-wrong {
+      position: relative;
+      display: inline-block;
+      font-size: 28px;
+      line-height: 1.4;
+      white-space: nowrap;
+    }
+    .f02iy-wrong > span {
+      display: inline-block;
+    }
+    .f02iy-strike {
+      position: absolute;
+      left: -8px;
+      right: -8px;
+      top: 50%;
+      height: 7px;
+      margin-top: -2px;
+      background: #e85a1f;
+      transform-origin: 0% 50%;
+    }
+    .f02iy-sep {
+      height: 0;
+      border-top: 3px dashed #0f0f0f;
+      opacity: 0.35;
+      margin-left: 62px;
+    }
+    .f02iy-right {
+      font-size: 28px;
+      line-height: 1.4;
+      font-weight: 500;
+      max-width: 920px;
+    }
+
+    /* ---------- right: APK box (the one hard shadow) ---------- */
+    .f02iy-apk {
+      position: absolute;
+      left: 1216px;
+      top: 336px;
+      width: 608px;
+      border: 4px solid #0f0f0f;
+      background: #e4dcc4;
+      box-shadow: 24px 24px 0 #e85a1f, 24px 24px 0 4px #0f0f0f;
+    }
+    .f02iy-apk-head {
+      height: 72px;
+      background: #0f0f0f;
+      color: #efe9d9;
+      display: flex;
+      align-items: center;
+      padding-left: 28px;
+      font-family: "JetBrains Mono", monospace;
+      font-size: 26px;
+      font-weight: 700;
+      letter-spacing: 0.14em;
+    }
+    .f02iy-apk-row {
+      height: 86px;
+      display: flex;
+      align-items: center;
+      gap: 18px;
+      padding: 0 24px;
+      border-top: 3px solid #0f0f0f;
+      font-family: "JetBrains Mono", monospace;
+      font-size: 26px;
+      letter-spacing: 0.01em;
+      white-space: nowrap;
+    }
+    .f02iy-apk-row:first-of-type {
+      border-top: 0;
+    }
+  </style>
+
+  <div id="root" data-composition-id="02-iki-yanlis" data-start="0" data-duration="13.5" data-width="1920" data-height="1080" lang="tr">
+    <div id="02-iki-yanlis-bg" class="f02iy-bg clip" data-start="0" data-duration="13.5" data-track-index="0"></div>
+
+    <!-- chrome -->
+    <div class="f02iy-topbar">
+      <div>PINVAULT · 3 AKIŞ</div>
+      <div class="f02iy-pill">ÖNCE BİR DÜZELTME</div>
+    </div>
+    <div class="f02iy-footer">
+      <div>Düzeltme</div>
+      <div class="f02iy-counter"><span>11</span><span class="f02iy-dot"></span><span>25</span></div>
+    </div>
+
+    <!-- title -->
+    <h1 id="02-iki-yanlis-title" class="f02iy-title">BAŞLAMADAN İKİ DÜZELTME</h1>
+
+    <!-- card 1 -->
+    <div id="02-iki-yanlis-card1" class="f02iy-card f02iy-card-1">
+      <div class="f02iy-row">
+        <svg id="02-iki-yanlis-x1" class="f02iy-icon" viewBox="0 0 40 40" xmlns="http://www.w3.org/2000/svg">
+          <rect x="2" y="2" width="36" height="36" fill="#E85A1F" stroke="#0F0F0F" stroke-width="4" />
+          <path d="M 12 12 L 28 28 M 28 12 L 12 28" fill="none" stroke="#EFE9D9" stroke-width="5" stroke-linecap="square" />
+        </svg>
+        <div id="02-iki-yanlis-w1" class="f02iy-wrong">
+          <span id="02-iki-yanlis-w1t">Telefon hiç pin'siz başlar, önce token'la kayıt olur.</span>
+          <i id="02-iki-yanlis-s1" class="f02iy-strike"></i>
+        </div>
+      </div>
+      <div id="02-iki-yanlis-sep1" class="f02iy-sep"></div>
+      <div class="f02iy-row">
+        <svg id="02-iki-yanlis-c1" class="f02iy-icon" viewBox="0 0 40 40" xmlns="http://www.w3.org/2000/svg">
+          <rect x="2" y="2" width="36" height="36" fill="#1F8A4C" stroke="#0F0F0F" stroke-width="4" />
+          <path d="M 10 21 L 17 28 L 30 12" fill="none" stroke="#EFE9D9" stroke-width="5" stroke-linecap="square" stroke-linejoin="miter" />
+        </svg>
+        <div id="02-iki-yanlis-r1" class="f02iy-right">PinVault sunucusunun pin'leri APK'nın içindedir. Kayıt bile pinli bağlantıyla yapılır.</div>
+      </div>
+    </div>
+
+    <!-- card 2 -->
+    <div id="02-iki-yanlis-card2" class="f02iy-card f02iy-card-2">
+      <div class="f02iy-row">
+        <svg id="02-iki-yanlis-x2" class="f02iy-icon" viewBox="0 0 40 40" xmlns="http://www.w3.org/2000/svg">
+          <rect x="2" y="2" width="36" height="36" fill="#E85A1F" stroke="#0F0F0F" stroke-width="4" />
+          <path d="M 12 12 L 28 28 M 28 12 L 12 28" fill="none" stroke="#EFE9D9" stroke-width="5" stroke-linecap="square" />
+        </svg>
+        <div id="02-iki-yanlis-w2" class="f02iy-wrong">
+          <span id="02-iki-yanlis-w2t">Token APK'ya gömülür.</span>
+          <i id="02-iki-yanlis-s2" class="f02iy-strike"></i>
+        </div>
+      </div>
+      <div id="02-iki-yanlis-sep2" class="f02iy-sep"></div>
+      <div class="f02iy-row">
+        <svg id="02-iki-yanlis-c2" class="f02iy-icon" viewBox="0 0 40 40" xmlns="http://www.w3.org/2000/svg">
+          <rect x="2" y="2" width="36" height="36" fill="#1F8A4C" stroke="#0F0F0F" stroke-width="4" />
+          <path d="M 10 21 L 17 28 L 30 12" fill="none" stroke="#EFE9D9" stroke-width="5" stroke-linecap="square" stroke-linejoin="miter" />
+        </svg>
+        <div id="02-iki-yanlis-r2" class="f02iy-right">Token APK'da değildir. Herkes aynı APK'yı yükler; her cihaz kendi token'ını sonradan alır.</div>
+      </div>
+    </div>
+
+    <!-- APK box -->
+    <div id="02-iki-yanlis-apk" class="f02iy-apk">
+      <div class="f02iy-apk-head">APK'DA OLAN</div>
+      <div>
+        <div id="02-iki-yanlis-row1" class="f02iy-apk-row">
+          <svg class="f02iy-icon" viewBox="0 0 40 40" xmlns="http://www.w3.org/2000/svg" aria-label="✓">
+            <rect x="2" y="2" width="36" height="36" fill="#1F8A4C" stroke="#0F0F0F" stroke-width="4" />
+            <path d="M 10 21 L 17 28 L 30 12" fill="none" stroke="#EFE9D9" stroke-width="5" stroke-linecap="square" stroke-linejoin="miter" />
+          </svg>
+          <span>PinVault sunucusunun adresi</span>
+        </div>
+        <div id="02-iki-yanlis-row2" class="f02iy-apk-row">
+          <svg class="f02iy-icon" viewBox="0 0 40 40" xmlns="http://www.w3.org/2000/svg" aria-label="✓">
+            <rect x="2" y="2" width="36" height="36" fill="#1F8A4C" stroke="#0F0F0F" stroke-width="4" />
+            <path d="M 10 21 L 17 28 L 30 12" fill="none" stroke="#EFE9D9" stroke-width="5" stroke-linecap="square" stroke-linejoin="miter" />
+          </svg>
+          <span>PinVault sunucusunun pin'leri</span>
+        </div>
+        <div id="02-iki-yanlis-row3" class="f02iy-apk-row">
+          <svg class="f02iy-icon" viewBox="0 0 40 40" xmlns="http://www.w3.org/2000/svg" aria-label="✗">
+            <rect x="2" y="2" width="36" height="36" fill="#E85A1F" stroke="#0F0F0F" stroke-width="4" />
+            <path d="M 12 12 L 28 28 M 28 12 L 12 28" fill="none" stroke="#EFE9D9" stroke-width="5" stroke-linecap="square" />
+          </svg>
+          <span>token</span>
+        </div>
+        <div id="02-iki-yanlis-row4" class="f02iy-apk-row">
+          <svg class="f02iy-icon" viewBox="0 0 40 40" xmlns="http://www.w3.org/2000/svg" aria-label="✗">
+            <rect x="2" y="2" width="36" height="36" fill="#E85A1F" stroke="#0F0F0F" stroke-width="4" />
+            <path d="M 12 12 L 28 28 M 28 12 L 12 28" fill="none" stroke="#EFE9D9" stroke-width="5" stroke-linecap="square" />
+          </svg>
+          <span>API sunucularınızın pin'leri</span>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    (function () {
+      var ID = "02-iki-yanlis";
+      var P = ID + "-";
+      function $(s) {
+        return document.getElementById(P + s);
+      }
+      var tl = gsap.timeline({ paused: true });
+      var OUT = "power3.out";
+      var WIPE_FROM = "inset(-20% 100% -20% 0%)";
+      var WIPE_TO = "inset(-20% 0% -20% 0%)";
+
+      function card(n, t) {
+        tl.fromTo($("card" + n), { autoAlpha: 0, y: 36 }, { autoAlpha: 1, y: 0, duration: 0.6, ease: OUT }, t);
+        tl.fromTo($("w" + n + "t"), { clipPath: WIPE_FROM }, { clipPath: WIPE_TO, duration: 0.8, ease: OUT }, t + 0.2);
+      }
+      function strike(n, t) {
+        tl.fromTo($("s" + n), { scaleX: 0 }, { scaleX: 1, duration: 0.5, ease: "power3.inOut" }, t);
+        tl.fromTo($("x" + n), { autoAlpha: 0, scale: 0.6 }, { autoAlpha: 1, scale: 1, duration: 0.4, ease: OUT }, t + 0.3);
+        tl.fromTo($("w" + n + "t"), { opacity: 1 }, { opacity: 0.5, duration: 0.4, ease: OUT }, t + 0.4);
+      }
+      function correct(n, t) {
+        tl.fromTo($("sep" + n), { scaleX: 0, transformOrigin: "0% 50%" }, { scaleX: 1, duration: 0.5, ease: OUT }, t);
+        tl.fromTo($("c" + n), { autoAlpha: 0, scale: 0.6 }, { autoAlpha: 1, scale: 1, duration: 0.4, ease: OUT }, t + 0.1);
+        tl.fromTo($("r" + n), { autoAlpha: 0, clipPath: WIPE_FROM }, { autoAlpha: 1, clipPath: WIPE_TO, duration: 0.9, ease: OUT }, t + 0.15);
+      }
+
+      // Scene 1 (0.0–1.5s): title
+      tl.fromTo($("title"), { autoAlpha: 0, y: 30 }, { autoAlpha: 1, y: 0, duration: 0.7, ease: OUT }, 0.1);
+
+      // Scene 2 (1.5–4.5s): card 1 — wrong line, orange strike, green correct line
+      card(1, 1.5);
+      strike(1, 2.8);
+      correct(1, 3.3);
+
+      // Scene 3 (4.5–8.0s): card 2 — same pattern
+      card(2, 4.6);
+      strike(2, 5.9);
+      correct(2, 6.4);
+
+      // Scene 4 (8.0–13.0s): APK box, four rows ~0.7s apart, then hold
+      tl.fromTo($("apk"), { autoAlpha: 0, y: 40 }, { autoAlpha: 1, y: 0, duration: 0.7, ease: OUT }, 8.0);
+      [1, 2, 3, 4].forEach(function (i) {
+        var t = 8.7 + (i - 1) * 0.7;
+        var row = $("row" + i);
+        tl.fromTo(row, { autoAlpha: 0, x: 30 }, { autoAlpha: 1, x: 0, duration: 0.5, ease: OUT }, t);
+        tl.fromTo(row.querySelector("svg"), { scale: 0.6 }, { scale: 1, duration: 0.4, ease: OUT }, t + 0.1);
+      });
+
+      // hold to the fixed 13s duration
+      tl.set({}, {}, 13);
+
+      window.__timelines = window.__timelines || {};
+      window.__timelines[ID] = tl;
+    })();
+  </script>
+</template>

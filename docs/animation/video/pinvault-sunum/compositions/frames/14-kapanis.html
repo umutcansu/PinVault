@@ -1,0 +1,331 @@
+<template>
+  <script src="https://cdn.jsdelivr.net/npm/gsap@3.14.2/dist/gsap.min.js"></script>
+  <style>
+    /* latin-ext */
+    @font-face {
+      font-family: "Archivo Black";
+      font-style: normal;
+      font-weight: 400;
+      font-display: block;
+      src: url(https://fonts.gstatic.com/s/archivoblack/v23/HTxqL289NzCGg4MzN6KJ7eW6CYKF_jzx13HOvQ.woff2) format("woff2");
+      unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C4, U+2113, U+2C60-2C7F, U+A720-A7FF;
+    }
+    /* latin */
+    @font-face {
+      font-family: "Archivo Black";
+      font-style: normal;
+      font-weight: 400;
+      font-display: block;
+      src: url(https://fonts.gstatic.com/s/archivoblack/v23/HTxqL289NzCGg4MzN6KJ7eW6CYyF_jzx13E.woff2) format("woff2");
+      unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+    }
+    /* latin-ext */
+    @font-face {
+      font-family: "JetBrains Mono";
+      font-style: normal;
+      font-weight: 400;
+      font-display: block;
+      src: url(https://fonts.gstatic.com/s/jetbrainsmono/v24/tDbY2o-flEEny0FZhsfKu5WU4zr3E_BX0PnT8RD8yKxTNFOVk6OThhvAWV8.woff2) format("woff2");
+      unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C4, U+2113, U+2C60-2C7F, U+A720-A7FF;
+    }
+    /* latin */
+    @font-face {
+      font-family: "JetBrains Mono";
+      font-style: normal;
+      font-weight: 400;
+      font-display: block;
+      src: url(https://fonts.gstatic.com/s/jetbrainsmono/v24/tDbY2o-flEEny0FZhsfKu5WU4zr3E_BX0PnT8RD8yKxTOlOVk6OThhvA.woff2) format("woff2");
+      unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+    }
+    /* latin-ext */
+    @font-face {
+      font-family: "Space Grotesk";
+      font-style: normal;
+      font-weight: 400;
+      font-display: block;
+      src: url(https://fonts.gstatic.com/s/spacegrotesk/v22/V8mQoQDjQSkFtoMM3T6r8E7mF71Q-gOoraIAEj7oUXsqPMBBSSJLm2FXTQ.woff2) format("woff2");
+      unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C4, U+2113, U+2C60-2C7F, U+A720-A7FF;
+    }
+    /* latin */
+    @font-face {
+      font-family: "Space Grotesk";
+      font-style: normal;
+      font-weight: 400;
+      font-display: block;
+      src: url(https://fonts.gstatic.com/s/spacegrotesk/v22/V8mQoQDjQSkFtoMM3T6r8E7mF71Q-gOoraIAEj7oUXskPMBBSSJLm2E.woff2) format("woff2");
+      unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+    }
+    #root {
+      position: relative;
+      width: 1920px;
+      height: 1080px;
+      overflow: hidden;
+      container-type: size;
+      color: #efe9d9;
+      font-family: "Space Grotesk", sans-serif;
+    }
+
+    /* Background: the single green closing-plate ground of the film. */
+    [class~="14-kapanis-ground"] {
+      position: absolute;
+      inset: 0;
+      background: #1f8a4c;
+    }
+
+    /* Frame chrome, cream variant */
+    [class~="14-kapanis-topbar"],
+    [class~="14-kapanis-meta"] {
+      position: absolute;
+      left: 3.3cqw;
+      right: 3.3cqw;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      font-family: "JetBrains Mono", monospace;
+      font-size: 1.25cqw;
+      letter-spacing: 0.06em;
+      line-height: 1;
+      color: #efe9d9;
+    }
+    [class~="14-kapanis-topbar"] {
+      top: 2.5cqw;
+    }
+    [class~="14-kapanis-meta"] {
+      bottom: 2.5cqw;
+    }
+    [class~="14-kapanis-pill"] {
+      border: 0.2cqw solid #efe9d9;
+      border-radius: 999px;
+      padding: 0.4cqw 1.2cqw;
+    }
+    [class~="14-kapanis-counter"] {
+      display: flex;
+      align-items: center;
+      gap: 0.6cqw;
+    }
+    [class~="14-kapanis-dot"] {
+      width: 0.5cqw;
+      height: 0.5cqw;
+      border-radius: 50%;
+      background: #efe9d9;
+    }
+
+    /* Foreground: the ten-link chain, now complete (callback to frame 1). */
+    [class~="14-kapanis-chain"] {
+      position: absolute;
+      left: 96px;
+      right: 96px;
+      top: 214px;
+      height: 56px;
+      display: flex;
+      align-items: center;
+    }
+    [class~="14-kapanis-cell"] {
+      position: relative;
+      flex: 0 0 150px;
+      height: 56px;
+      box-sizing: border-box;
+      border: 4px solid #efe9d9;
+      overflow: hidden;
+    }
+    [class~="14-kapanis-fill"] {
+      position: absolute;
+      inset: 0;
+      background: #efe9d9;
+      transform-origin: 0% 50%;
+    }
+    [class~="14-kapanis-label"] {
+      position: absolute;
+      inset: 0;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-family: "JetBrains Mono", monospace;
+      font-size: 15px;
+      letter-spacing: 0.02em;
+      line-height: 1;
+      white-space: nowrap;
+      color: #efe9d9;
+    }
+    [class~="14-kapanis-link"] {
+      flex: 1 1 auto;
+      height: 4px;
+      background: #efe9d9;
+    }
+
+    /* Foreground: headline (display-lg) */
+    [class~="14-kapanis-head"] {
+      position: absolute;
+      left: 0;
+      right: 0;
+      top: 338px;
+      text-align: center;
+      font-family: "Archivo Black", sans-serif;
+      font-size: 8cqw;
+      line-height: 0.9;
+      letter-spacing: -0.01em;
+      color: #efe9d9;
+    }
+
+    /* Foreground: second headline (display-head), two lines */
+    [class~="14-kapanis-head2"] {
+      position: absolute;
+      left: 0;
+      right: 0;
+      top: 516px;
+      text-align: center;
+      font-family: "Archivo Black", sans-serif;
+      font-size: 4.2cqw;
+      line-height: 0.92;
+      letter-spacing: -0.01em;
+      color: #efe9d9;
+    }
+    [class~="14-kapanis-line"] {
+      display: block;
+    }
+    [class~="14-kapanis-line"] + [class~="14-kapanis-line"] {
+      margin-top: 0.1em;
+    }
+
+    /* Supporting: pointer to the detailed animation (mono) */
+    [class~="14-kapanis-pathrow"] {
+      position: absolute;
+      left: 0;
+      right: 0;
+      top: 736px;
+      text-align: center;
+    }
+    [class~="14-kapanis-path"] {
+      display: inline-block;
+      border: 0.2cqw solid #efe9d9;
+      padding: 0.7cqw 1.3cqw;
+      font-family: "JetBrains Mono", monospace;
+      font-size: 1.6cqw;
+      letter-spacing: 0.02em;
+      line-height: 1.2;
+      color: #efe9d9;
+    }
+
+    /* Final-frame exit: everything settles into the cream ground. */
+    [class~="14-kapanis-fade"] {
+      position: absolute;
+      inset: 0;
+      background: #efe9d9;
+      opacity: 0;
+    }
+  </style>
+
+  <div id="root" lang="tr" data-composition-id="14-kapanis" data-start="0" data-duration="11" data-width="1920" data-height="1080">
+    <div class="clip 14-kapanis-ground" data-start="0" data-duration="11" data-track-index="0"></div>
+
+    <div class="14-kapanis-topbar">
+      <span>PINVAULT · ÖZET</span>
+      <span class="14-kapanis-pill">SON</span>
+    </div>
+
+    <div class="14-kapanis-chain">
+      <div class="14-kapanis-cell"><div class="14-kapanis-fill"></div><span class="14-kapanis-label">1 KURULUM</span></div>
+      <div class="14-kapanis-link"></div>
+      <div class="14-kapanis-cell"><div class="14-kapanis-fill"></div><span class="14-kapanis-label">2 APK</span></div>
+      <div class="14-kapanis-link"></div>
+      <div class="14-kapanis-cell"><div class="14-kapanis-fill"></div><span class="14-kapanis-label">3 HOST</span></div>
+      <div class="14-kapanis-link"></div>
+      <div class="14-kapanis-cell"><div class="14-kapanis-fill"></div><span class="14-kapanis-label">4 TOKEN</span></div>
+      <div class="14-kapanis-link"></div>
+      <div class="14-kapanis-cell"><div class="14-kapanis-fill"></div><span class="14-kapanis-label">5 TELEFONA</span></div>
+      <div class="14-kapanis-link"></div>
+      <div class="14-kapanis-cell"><div class="14-kapanis-fill"></div><span class="14-kapanis-label">6 KAYIT İSTEĞİ</span></div>
+      <div class="14-kapanis-link"></div>
+      <div class="14-kapanis-cell"><div class="14-kapanis-fill"></div><span class="14-kapanis-label">7 KART</span></div>
+      <div class="14-kapanis-link"></div>
+      <div class="14-kapanis-cell"><div class="14-kapanis-fill"></div><span class="14-kapanis-label">8 PİN LİSTESİ</span></div>
+      <div class="14-kapanis-link"></div>
+      <div class="14-kapanis-cell"><div class="14-kapanis-fill"></div><span class="14-kapanis-label">9 BİLET</span></div>
+      <div class="14-kapanis-link"></div>
+      <div class="14-kapanis-cell"><div class="14-kapanis-fill"></div><span class="14-kapanis-label">10 İLK İSTEK</span></div>
+    </div>
+
+    <div class="14-kapanis-head">
+      <span class="14-kapanis-line 14-kapanis-h1">TOKEN BİR KEZ.</span>
+    </div>
+
+    <div class="14-kapanis-head2">
+      <span class="14-kapanis-line 14-kapanis-h2">SONRA KİMLİK KART,</span>
+      <span class="14-kapanis-line 14-kapanis-h2">GÜVEN LİSTE VE BİLET.</span>
+    </div>
+
+    <div class="14-kapanis-pathrow">
+      <span class="14-kapanis-path">Ayrıntı: docs/animation/pinvault-request-flow.tr.html</span>
+    </div>
+
+    <div class="14-kapanis-meta">
+      <span>Kapanış</span>
+      <span class="14-kapanis-counter"><span>25</span><span class="14-kapanis-dot"></span><span>25</span></span>
+    </div>
+
+    <div class="clip 14-kapanis-fade" data-start="0" data-duration="11" data-track-index="1"></div>
+  </div>
+
+  <script>
+    (function () {
+      var ROOT = '[data-composition-id="14-kapanis"] ';
+      function q(name) {
+        return ROOT + '[class~="14-kapanis-' + name + '"]';
+      }
+
+      var tl = gsap.timeline({ paused: true });
+
+      // Scene 1 (0.0–3.0s): the empty cream-outlined chain is already there; the links
+      // fill with cream left to right, ~0.2 s apart, their labels turning green.
+      // The chain waits out the 0.5 s crossfade so its cream outline never sits on the previous cream frame.
+      tl.fromTo(q("topbar"), { opacity: 0 }, { opacity: 1, duration: 0.3, ease: "power3.out" }, 0.5);
+      tl.fromTo(q("meta"), { opacity: 0 }, { opacity: 1, duration: 0.3, ease: "power3.out" }, 0.5);
+      tl.fromTo(q("chain"), { opacity: 0 }, { opacity: 1, duration: 0.3, ease: "power3.out" }, 0.5);
+      tl.fromTo(
+        q("fill"),
+        { scaleX: 0 },
+        { scaleX: 1, duration: 0.45, ease: "power3.out", stagger: 0.2 },
+        0.6
+      );
+      tl.fromTo(
+        q("label"),
+        { color: "#efe9d9" },
+        { color: "#1f8a4c", duration: 0.3, ease: "power3.out", stagger: 0.2 },
+        0.72
+      );
+
+      // Scene 2 (3.0–6.0s): the headline slides up into place; one second later, headline 2.
+      tl.fromTo(
+        q("h1"),
+        { y: 70, opacity: 0 },
+        { y: 0, opacity: 1, duration: 1.2, ease: "power3.out" },
+        3.0
+      );
+      tl.fromTo(
+        q("h2"),
+        { y: 50, opacity: 0 },
+        { y: 0, opacity: 1, duration: 1.1, ease: "power3.out", stagger: 0.14 },
+        4.0
+      );
+
+      // Scene 3 (6.0–11.0s): the pointer line arrives, then a still hold.
+      tl.fromTo(
+        q("pathrow"),
+        { y: 24, opacity: 0 },
+        { y: 0, opacity: 1, duration: 0.9, ease: "power3.out" },
+        6.4
+      );
+
+      // Final frame only: the film's single real exit — everything fades into the cream ground.
+      tl.fromTo(
+        q("fade"),
+        { opacity: 0 },
+        { opacity: 1, duration: 0.8, ease: "sine.inOut" },
+        10.2
+      );
+
+      window.__timelines = window.__timelines || {};
+      window.__timelines["14-kapanis"] = tl;
+    })();
+  </script>
+</template>

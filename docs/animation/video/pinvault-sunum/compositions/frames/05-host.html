@@ -1,0 +1,713 @@
+<template id="05-host-template">
+  <div id="root" data-composition-id="05-host" data-start="0" data-duration="15.5" data-width="1920" data-height="1080" lang="tr">
+    <style>
+      @import url("https://fonts.googleapis.com/css2?family=Archivo+Black&family=JetBrains+Mono:wght@400;700&family=Space+Grotesk:wght@400;500&display=block");
+
+      #root {
+        position: relative;
+        width: 1920px;
+        height: 1080px;
+        overflow: hidden;
+      }
+      [data-composition-id="05-host"] * {
+        margin: 0;
+        padding: 0;
+        box-sizing: border-box;
+      }
+
+      /* full-bleed ground (clip layer, not #root) */
+      [id="05-host-stage"] {
+        position: absolute;
+        inset: 0;
+        width: 1920px;
+        height: 1080px;
+        background: #efe9d9;
+        container-type: size;
+        overflow: hidden;
+        color: #0f0f0f;
+      }
+
+      /* ---------- chrome ---------- */
+      [id="05-host-topbar"] {
+        position: absolute;
+        top: 48px;
+        left: 64px;
+        right: 64px;
+        height: 44px;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        font-family: "JetBrains Mono", monospace;
+        font-size: 22px;
+        letter-spacing: 0.06em;
+      }
+      [id="05-host-pill"] {
+        border: 4px solid #0f0f0f;
+        border-radius: 999px;
+        background: #efe9d9;
+        padding: 4px 20px;
+        line-height: 1.3;
+      }
+      [id="05-host-footer"] {
+        position: absolute;
+        bottom: 48px;
+        left: 64px;
+        right: 64px;
+        height: 32px;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        font-family: "JetBrains Mono", monospace;
+        font-size: 22px;
+        letter-spacing: 0.06em;
+      }
+      [id="05-host-counter"] {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+      }
+      [id="05-host-dot"] {
+        width: 10px;
+        height: 10px;
+        border-radius: 50%;
+        background: #0f0f0f;
+      }
+
+      /* ---------- chain strip ---------- */
+      [class~="05-host-cell"] {
+        position: absolute;
+        top: 104px;
+        width: 160px;
+        height: 40px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-family: "JetBrains Mono", monospace;
+        font-size: 15px;
+        letter-spacing: 0.02em;
+        white-space: nowrap;
+      }
+      [class~="05-host-done"] {
+        background: #0f0f0f;
+        color: #efe9d9;
+      }
+      [class~="05-host-future"] {
+        border: 2px solid #0f0f0f;
+        opacity: 0.35;
+      }
+      [id="05-host-cellnow"] {
+        background: #efe9d9;
+        border: 4px solid #0f0f0f;
+        color: #0f0f0f;
+      }
+      [id="05-host-cellline"] {
+        position: absolute;
+        left: 444px;
+        top: 148px;
+        width: 160px;
+        height: 4px;
+        background: #f5c518;
+        transform-origin: 0 50%;
+      }
+      [class~="05-host-link"] {
+        position: absolute;
+        top: 123px;
+        width: 14px;
+        height: 2px;
+        background: #0f0f0f;
+      }
+
+      /* ---------- kicker + title ---------- */
+      [id="05-host-kicker"] {
+        position: absolute;
+        left: 96px;
+        top: 168px;
+        background: #0f0f0f;
+        color: #efe9d9;
+        font-family: "JetBrains Mono", monospace;
+        font-size: 20px;
+        letter-spacing: 0.1em;
+        line-height: 1.25;
+        white-space: nowrap;
+        padding: 8px 16px;
+      }
+      [id="05-host-title"] {
+        position: absolute;
+        left: 96px;
+        top: 228px;
+        font-family: "Archivo Black", sans-serif;
+        font-size: 80px;
+        line-height: 0.92;
+        letter-spacing: -0.01em;
+        white-space: nowrap;
+      }
+
+      /* ---------- panel screen ---------- */
+      [id="05-host-panel"] {
+        position: absolute;
+        left: 96px;
+        top: 326px;
+        width: 980px;
+        height: 484px;
+        border: 4px solid #0f0f0f;
+        background: #efe9d9;
+        z-index: 2;
+      }
+      [id="05-host-panelhead"] {
+        position: absolute;
+        left: 0;
+        top: 0;
+        right: 0;
+        height: 48px;
+        background: #0f0f0f;
+        color: #efe9d9;
+        font-family: "JetBrains Mono", monospace;
+        font-size: 22px;
+        letter-spacing: 0.04em;
+        display: flex;
+        align-items: center;
+        padding: 0 20px;
+        white-space: nowrap;
+      }
+      [class~="05-host-tab"] {
+        position: absolute;
+        top: 74px;
+        height: 52px;
+        border: 3px solid #0f0f0f;
+        background: #efe9d9;
+        font-family: "JetBrains Mono", monospace;
+        font-size: 22px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        white-space: nowrap;
+      }
+      [id="05-host-tabsel"] {
+        position: absolute;
+        inset: 0;
+        background: #0f0f0f;
+        color: #efe9d9;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+      }
+      [id="05-host-fieldlabel"] {
+        position: absolute;
+        left: 28px;
+        top: 152px;
+        font-family: "Space Grotesk", sans-serif;
+        font-size: 24px;
+        line-height: 1.3;
+      }
+      [id="05-host-input"] {
+        position: absolute;
+        left: 28px;
+        top: 190px;
+        width: 620px;
+        height: 60px;
+        border: 3px solid #0f0f0f;
+        background: #e4dcc4;
+      }
+      [id="05-host-typed"] {
+        position: absolute;
+        left: 15px;
+        top: 0;
+        height: 54px;
+        display: flex;
+        align-items: center;
+        font-family: "JetBrains Mono", monospace;
+        font-size: 26px;
+        white-space: pre;
+      }
+      [id="05-host-caret"] {
+        position: absolute;
+        left: 16px;
+        top: 12px;
+        width: 3px;
+        height: 30px;
+        background: #0f0f0f;
+      }
+      [id="05-host-button"] {
+        position: absolute;
+        left: 668px;
+        top: 190px;
+        width: 276px;
+        height: 60px;
+        border: 4px solid #0f0f0f;
+        background: #efe9d9;
+        font-family: "Space Grotesk", sans-serif;
+        font-weight: 500;
+        font-size: 26px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+      }
+      [id="05-host-buttonfill"] {
+        position: absolute;
+        inset: 0;
+        background: #0f0f0f;
+        color: #efe9d9;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+      }
+      [class~="05-host-row"] {
+        position: absolute;
+        left: 28px;
+        width: 360px;
+        height: 46px;
+        border: 3px solid #0f0f0f;
+        background: #efe9d9;
+        font-family: "JetBrains Mono", monospace;
+        font-size: 22px;
+        white-space: pre;
+      }
+      [class~="05-host-rowlabel"] {
+        position: absolute;
+        left: 13px;
+        top: 0;
+        height: 40px;
+        line-height: 40px;
+      }
+      [class~="05-host-pin"] {
+        position: absolute;
+        width: 140px;
+        height: 34px;
+        background: #e4dcc4;
+        font-family: "JetBrains Mono", monospace;
+        font-size: 22px;
+        line-height: 34px;
+        text-align: center;
+        white-space: nowrap;
+        color: #0f0f0f;
+      }
+      [id="05-host-note"] {
+        position: absolute;
+        left: 28px;
+        top: 392px;
+        font-family: "Space Grotesk", sans-serif;
+        font-size: 24px;
+        line-height: 1.3;
+        white-space: nowrap;
+      }
+
+      /* ---------- connection line ---------- */
+      [id="05-host-wire"] {
+        position: absolute;
+        left: 0;
+        top: 0;
+        width: 1920px;
+        height: 1080px;
+        z-index: 1;
+        overflow: visible;
+      }
+      [id="05-host-tip"] {
+        position: absolute;
+        left: 1074px;
+        top: 412px;
+        width: 12px;
+        height: 12px;
+        background: #0f0f0f;
+        z-index: 3;
+      }
+
+      /* ---------- API server box ---------- */
+      [id="05-host-api"] {
+        position: absolute;
+        left: 1324px;
+        top: 326px;
+        width: 500px;
+        height: 120px;
+        border: 4px solid #0f0f0f;
+        background: #efe9d9;
+        z-index: 2;
+      }
+      [id="05-host-apihead"] {
+        position: absolute;
+        left: 20px;
+        top: 18px;
+        font-family: "Archivo Black", sans-serif;
+        font-size: 28px;
+        line-height: 0.92;
+        white-space: nowrap;
+      }
+      [id="05-host-apirule"] {
+        position: absolute;
+        left: 20px;
+        right: 20px;
+        top: 56px;
+        height: 3px;
+        background: #0f0f0f;
+      }
+      [id="05-host-apihost"] {
+        position: absolute;
+        left: 20px;
+        top: 68px;
+        font-family: "JetBrains Mono", monospace;
+        font-size: 24px;
+        line-height: 30px;
+        white-space: nowrap;
+      }
+
+      /* ---------- signed list card ---------- */
+      [id="05-host-card"] {
+        position: absolute;
+        left: 1124px;
+        top: 482px;
+        width: 700px;
+        height: 180px;
+        border: 4px solid #0f0f0f;
+        background: #e4dcc4;
+        z-index: 2;
+      }
+      [id="05-host-cardhead"] {
+        position: absolute;
+        left: 0;
+        top: 0;
+        right: 0;
+        height: 46px;
+        background: #0f0f0f;
+        color: #efe9d9;
+        font-family: "JetBrains Mono", monospace;
+        font-size: 22px;
+        letter-spacing: 0.04em;
+        display: flex;
+        align-items: center;
+        padding: 0 16px;
+        white-space: nowrap;
+      }
+      [id="05-host-cardhost"] {
+        position: absolute;
+        left: 16px;
+        top: 86px;
+        width: 210px;
+        height: 34px;
+        line-height: 34px;
+        text-align: right;
+        font-family: "JetBrains Mono", monospace;
+        font-size: 22px;
+        white-space: pre;
+      }
+      [id="05-host-cardsep"] {
+        position: absolute;
+        left: 374px;
+        top: 86px;
+        width: 40px;
+        height: 34px;
+        line-height: 34px;
+        text-align: center;
+        font-family: "JetBrains Mono", monospace;
+        font-size: 22px;
+      }
+      [class~="05-host-fly"] {
+        top: 572px;
+        z-index: 6;
+        background: #efe9d9;
+        border: 2px solid #0f0f0f;
+        line-height: 30px;
+      }
+      [id="05-host-stamp"] {
+        position: absolute;
+        left: 1640px;
+        top: 460px;
+        width: 160px;
+        height: 64px;
+        background: #f5c518;
+        border: 4px solid #0f0f0f;
+        font-family: "Archivo Black", sans-serif;
+        font-size: 32px;
+        line-height: 0.92;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        box-shadow: 16px 16px 0 #e85a1f, 16px 16px 0 4px #0f0f0f;
+        z-index: 7;
+      }
+
+      /* ---------- once-for-your-API section ---------- */
+      [id="05-host-once"] {
+        position: absolute;
+        left: 1124px;
+        top: 688px;
+        width: 700px;
+        border-top: 4px solid #0f0f0f;
+        padding-top: 12px;
+      }
+      [id="05-host-oncehead"] {
+        font-family: "JetBrains Mono", monospace;
+        font-size: 22px;
+        letter-spacing: 0.08em;
+        line-height: 28px;
+        white-space: nowrap;
+      }
+      [id="05-host-oncebody"] {
+        margin-top: 10px;
+        font-family: "Space Grotesk", sans-serif;
+        font-size: 24px;
+        line-height: 1.3;
+      }
+
+      /* ---------- ticket ---------- */
+      [id="05-host-ticket"] {
+        position: absolute;
+        left: 840px;
+        top: 400px;
+        width: 220px;
+        height: 36px;
+        border: 3px solid #0f0f0f;
+        background: #f5c518;
+        display: flex;
+        z-index: 8;
+      }
+      [class~="05-host-tmain"] {
+        flex: 1;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-family: "Archivo Black", sans-serif;
+        font-size: 13px;
+        line-height: 0.92;
+        white-space: nowrap;
+      }
+      [class~="05-host-tstub"] {
+        width: 56px;
+        border-left: 3px dashed #0f0f0f;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-family: "JetBrains Mono", monospace;
+        font-weight: 700;
+        font-size: 14px;
+        white-space: nowrap;
+      }
+
+      /* ---------- analogy strip ---------- */
+      [id="05-host-analogy"] {
+        position: absolute;
+        left: 96px;
+        top: 830px;
+        height: 50px;
+        border: 2px solid #0f0f0f;
+        background: #e4dcc4;
+        display: flex;
+        align-items: stretch;
+        white-space: nowrap;
+      }
+      [id="05-host-analogylabel"] {
+        background: #0f0f0f;
+        color: #efe9d9;
+        font-family: "JetBrains Mono", monospace;
+        font-size: 18px;
+        letter-spacing: 0.1em;
+        display: flex;
+        align-items: center;
+        padding: 0 16px;
+      }
+      [id="05-host-analogytext"] {
+        font-family: "Space Grotesk", sans-serif;
+        font-size: 26px;
+        display: flex;
+        align-items: center;
+        padding: 0 20px;
+      }
+    </style>
+
+    <div id="05-host-stage" class="clip" data-start="0" data-duration="15.5" data-track-index="0">
+      <!-- chrome -->
+      <div id="05-host-topbar">
+        <span>PINVAULT · 3 AKIŞ</span>
+        <span id="05-host-pill">HALKA 3 / 10</span>
+      </div>
+      <div id="05-host-footer">
+        <span>Host</span>
+        <span id="05-host-counter"><span>14</span><span id="05-host-dot"></span><span>25</span></span>
+      </div>
+
+      <!-- chain strip: x = 96 + i*174, links in the 14px gaps -->
+      <div class="05-host-cell 05-host-done" style="left: 96px">1 KURULUM</div>
+      <div class="05-host-cell 05-host-done" style="left: 270px">2 APK</div>
+      <div id="05-host-cellprev" class="05-host-cell 05-host-future" style="left: 444px">3 HOST</div>
+      <div id="05-host-cellnow" class="05-host-cell" style="left: 444px">3 HOST</div>
+      <div class="05-host-cell 05-host-future" style="left: 618px">4 TOKEN</div>
+      <div class="05-host-cell 05-host-future" style="left: 792px">5 TELEFONA</div>
+      <div class="05-host-cell 05-host-future" style="left: 966px">6 KAYIT İSTEĞİ</div>
+      <div class="05-host-cell 05-host-future" style="left: 1140px">7 KART</div>
+      <div class="05-host-cell 05-host-future" style="left: 1314px">8 PİN LİSTESİ</div>
+      <div class="05-host-cell 05-host-future" style="left: 1488px">9 BİLET</div>
+      <div class="05-host-cell 05-host-future" style="left: 1662px">10 İLK İSTEK</div>
+      <div class="05-host-link" style="left: 256px"></div>
+      <div class="05-host-link" style="left: 430px"></div>
+      <div class="05-host-link" style="left: 604px"></div>
+      <div class="05-host-link" style="left: 778px"></div>
+      <div class="05-host-link" style="left: 952px"></div>
+      <div class="05-host-link" style="left: 1126px"></div>
+      <div class="05-host-link" style="left: 1300px"></div>
+      <div class="05-host-link" style="left: 1474px"></div>
+      <div class="05-host-link" style="left: 1648px"></div>
+      <div id="05-host-cellline"></div>
+
+      <!-- kicker + title -->
+      <div id="05-host-kicker">KİM: YÖNETİCİ · NEREDE: PANEL → mtls-8092 → + HOST EKLE</div>
+      <div id="05-host-title">API SUNUCUNUZ EKLENİR</div>
+
+      <!-- connection line (panel -> api box and back) -->
+      <svg id="05-host-wire" viewBox="0 0 1920 1080" xmlns="http://www.w3.org/2000/svg">
+        <defs>
+          <clipPath id="05-host-wireclip">
+            <rect id="05-host-wirerect" x="1076" y="398" width="252" height="40" />
+          </clipPath>
+        </defs>
+        <line x1="1076" y1="418" x2="1324" y2="418" stroke="#0F0F0F" stroke-width="3" stroke-dasharray="10 8" clip-path="url(#05-host-wireclip)" />
+      </svg>
+      <div id="05-host-tip"></div>
+
+      <!-- panel screen (focal) -->
+      <div id="05-host-panel">
+        <div id="05-host-panelhead">Panel · 8090 · mtls-8092 · Yeni Host Ekle</div>
+        <div class="05-host-tab" style="left: 28px; width: 150px">Elle Gir</div>
+        <div class="05-host-tab" style="left: 190px; width: 230px">Sertifika Üret</div>
+        <div id="05-host-tab3" class="05-host-tab" style="left: 432px; width: 180px">URL'den Al<div id="05-host-tabsel">URL'den Al</div></div>
+        <div id="05-host-fieldlabel">Sunucu adresi</div>
+        <div id="05-host-input">
+          <div id="05-host-typed"><span class="05-host-ch">a</span><span class="05-host-ch">p</span><span class="05-host-ch">i</span><span class="05-host-ch">.</span><span class="05-host-ch">o</span><span class="05-host-ch">r</span><span class="05-host-ch">n</span><span class="05-host-ch">e</span><span class="05-host-ch">k</span><span class="05-host-ch">.</span><span class="05-host-ch">c</span><span class="05-host-ch">o</span><span class="05-host-ch">m</span></div>
+          <div id="05-host-caret"></div>
+        </div>
+        <div id="05-host-button">Oluştur<div id="05-host-buttonfill">Oluştur</div></div>
+        <div id="05-host-row1" class="05-host-row" style="top: 276px">
+          <span class="05-host-rowlabel">Primary Pin  </span>
+          <span class="05-host-pin" style="left: 189px; top: 3px">q8Hs2LkP…</span>
+        </div>
+        <div id="05-host-row2" class="05-host-row" style="top: 332px">
+          <span class="05-host-rowlabel">Backup Pin  </span>
+          <span class="05-host-pin" style="left: 189px; top: 3px">Xm4tR9wE…</span>
+        </div>
+        <div id="05-host-note">Panel sunucuya bağlanır, sertifikasından iki pin'i kendisi çıkarır.</div>
+      </div>
+
+      <!-- your API server -->
+      <div id="05-host-api">
+        <div id="05-host-apihead">API SUNUCUNUZ</div>
+        <div id="05-host-apirule"></div>
+        <div id="05-host-apihost">api.ornek.com</div>
+      </div>
+
+      <!-- signed pin list card -->
+      <div id="05-host-card">
+        <div id="05-host-cardhead">PİN LİSTESİ · mtls-8092</div>
+        <div id="05-host-cardhost">api.ornek.com ·</div>
+        <div id="05-host-cardsep">·</div>
+      </div>
+      <!-- the two pins that slide from the panel into the card -->
+      <div id="05-host-fly1" class="05-host-pin 05-host-fly" style="left: 1362px">q8Hs2LkP…</div>
+      <div id="05-host-fly2" class="05-host-pin 05-host-fly" style="left: 1542px">Xm4tR9wE…</div>
+      <div id="05-host-stamp">İMZALI</div>
+
+      <!-- once-for-your-API section -->
+      <div id="05-host-once">
+        <div id="05-host-oncehead">API SUNUCUNUZ İÇİN BİR KEZ</div>
+        <div id="05-host-oncebody">Bilet sırrını panelin İmzalama sekmesinden alır; bileti sonra kendisi doğrular.</div>
+      </div>
+
+      <!-- small ticket -->
+      <div id="05-host-ticket">
+        <div class="05-host-tmain">PINVAULT-TOKEN</div>
+        <div class="05-host-tstub">5 DK</div>
+      </div>
+
+      <!-- analogy strip -->
+      <div id="05-host-analogy">
+        <div id="05-host-analogylabel">BENZETME</div>
+        <div id="05-host-analogytext">Çalışanın gidebileceği ofislerin listesi hazırlanır ve mühürlenir.</div>
+      </div>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/gsap@3.14.2/dist/gsap.min.js"></script>
+    <script>
+      (function () {
+        var FID = "05-host";
+        var host = document.querySelector('[data-composition-id="' + FID + '"]') || document;
+        var $ = function (n) {
+          return host.querySelector('[id="' + FID + "-" + n + '"]');
+        };
+        var $$ = function (n) {
+          return Array.prototype.slice.call(host.querySelectorAll('[class~="' + FID + "-" + n + '"]'));
+        };
+
+        var tl = gsap.timeline({ paused: true });
+        var SOFT = "power3.out";
+        var TRAVEL = "power3.inOut";
+
+        // ---------- Scene 1 (0.0–1.5): chain (already standing), current cell settles, kicker, title ----------
+        tl.fromTo($("cellprev"), { opacity: 0.35 }, { opacity: 0, duration: 0.6, ease: SOFT }, 0.2);
+        tl.fromTo($("cellnow"), { opacity: 0 }, { opacity: 1, duration: 0.6, ease: SOFT }, 0.2);
+        tl.fromTo($("cellline"), { scaleX: 0 }, { scaleX: 1, duration: 0.6, ease: SOFT }, 0.2);
+        tl.fromTo($("kicker"), { opacity: 0, x: -20 }, { opacity: 1, x: 0, duration: 0.5, ease: SOFT }, 0.25);
+        tl.fromTo($("title"), { opacity: 0, y: 30 }, { opacity: 1, y: 0, duration: 0.8, ease: SOFT }, 0.5);
+
+        // ---------- Scene 2 (1.5–5.0): panel opens, tabs, URL'den Al selected, address typed, Oluştur pressed ----------
+        tl.fromTo($("panel"), { opacity: 0, y: 40 }, { opacity: 1, y: 0, duration: 0.7, ease: SOFT }, 1.5);
+        $$("tab").forEach(function (el, i) {
+          tl.fromTo(el, { opacity: 0, y: 12 }, { opacity: 1, y: 0, duration: 0.4, ease: SOFT }, 1.85 + i * 0.12);
+        });
+        tl.fromTo($("tabsel"), { opacity: 0 }, { opacity: 1, duration: 0.25, ease: SOFT }, 2.45);
+        tl.fromTo($("fieldlabel"), { opacity: 0, y: 10 }, { opacity: 1, y: 0, duration: 0.4, ease: SOFT }, 2.6);
+        tl.fromTo([$("input"), $("button")], { opacity: 0, y: 10 }, { opacity: 1, y: 0, duration: 0.4, ease: SOFT }, 2.7);
+        tl.fromTo($("buttonfill"), { opacity: 0 }, { opacity: 0, duration: 0.01 }, 0);
+        // letter-by-letter typing; caret steps one mono advance (0.6em of 26px) per char
+        var chars = $$("ch");
+        tl.fromTo($("caret"), { opacity: 0, x: 0 }, { opacity: 1, duration: 0.01 }, 2.9);
+        chars.forEach(function (ch, i) {
+          var at = 3.0 + i * 0.09;
+          tl.fromTo(ch, { opacity: 0 }, { opacity: 1, duration: 0.01 }, at);
+          tl.to($("caret"), { x: (i + 1) * 15.6, duration: 0.01, ease: "none" }, at);
+        });
+        // press: the button sinks briefly and turns ink
+        tl.to($("caret"), { opacity: 0, duration: 0.01 }, 4.45);
+        tl.to($("button"), { scale: 0.92, duration: 0.09, ease: "power2.in" }, 4.5);
+        tl.to($("buttonfill"), { opacity: 1, duration: 0.09, ease: "none" }, 4.5);
+        tl.to($("button"), { scale: 1, duration: 0.3, ease: SOFT }, 4.59);
+        // the ink overlay now covers the base label; match the base text to the overlay (cream) so it never reads ink-on-ink
+        tl.fromTo([$("button"), $("tab3")], { color: "#0f0f0f" }, { color: "#efe9d9", duration: 0.01, immediateRender: false }, 4.6);
+
+        // ---------- Scene 3 (5.0–8.0): API box, line reaches out and returns, two pins, note ----------
+        tl.fromTo($("api"), { opacity: 0, y: 30 }, { opacity: 1, y: 0, duration: 0.6, ease: SOFT }, 5.0);
+        tl.fromTo($("wirerect"), { scaleX: 0 }, { scaleX: 1, duration: 0.6, ease: TRAVEL, svgOrigin: "1076 418" }, 5.4);
+        tl.fromTo($("tip"), { opacity: 0, x: 0 }, { opacity: 1, duration: 0.05 }, 5.4);
+        tl.to($("tip"), { x: 248, duration: 0.6, ease: TRAVEL }, 5.4);
+        tl.to($("wirerect"), { scaleX: 0, duration: 0.6, ease: TRAVEL, svgOrigin: "1076 418" }, 6.15);
+        tl.to($("tip"), { x: 0, duration: 0.6, ease: TRAVEL }, 6.15);
+        tl.to($("tip"), { opacity: 0, duration: 0.05 }, 6.75);
+        tl.fromTo($("row1"), { opacity: 0, x: -20 }, { opacity: 1, x: 0, duration: 0.45, ease: SOFT }, 6.8);
+        tl.fromTo($("row2"), { opacity: 0, x: -20 }, { opacity: 1, x: 0, duration: 0.45, ease: SOFT }, 7.1);
+        tl.fromTo($("note"), { opacity: 0, y: 12 }, { opacity: 1, y: 0, duration: 0.5, ease: SOFT }, 7.4);
+
+        // ---------- Scene 4 (8.0–11.0): pins slide into the signed list card, İMZALI stamp ----------
+        tl.fromTo($("card"), { opacity: 0, y: 30 }, { opacity: 1, y: 0, duration: 0.6, ease: SOFT }, 8.0);
+        // flyers start exactly over the panel pin chips (panel chip at 320,612 / 320,668; card slots at 1362,572 / 1542,572)
+        tl.fromTo($("fly1"), { opacity: 0, x: -1042, y: 40 }, { opacity: 1, duration: 0.15, ease: "none" }, 8.55);
+        tl.to($("fly1"), { x: 0, y: 0, duration: 0.9, ease: TRAVEL }, 8.65);
+        tl.fromTo($("fly2"), { opacity: 0, x: -1222, y: 96 }, { opacity: 1, duration: 0.15, ease: "none" }, 8.85);
+        tl.to($("fly2"), { x: 0, y: 0, duration: 0.9, ease: TRAVEL }, 8.95);
+        tl.fromTo($("cardsep"), { opacity: 0 }, { opacity: 1, duration: 0.3, ease: SOFT }, 9.8);
+        tl.fromTo(
+          $("stamp"),
+          { opacity: 0, scale: 1.5, rotation: -6 },
+          { opacity: 1, scale: 1, rotation: -6, duration: 0.35, ease: SOFT },
+          10.15
+        );
+
+        // ---------- Scene 5 (11.0–15.0): once-for-your-API section, ticket to the API box, analogy, hold ----------
+        tl.fromTo($("oncehead"), { opacity: 0, x: -16 }, { opacity: 1, x: 0, duration: 0.45, ease: SOFT }, 11.0);
+        tl.fromTo($("once"), { opacity: 0 }, { opacity: 1, duration: 0.3, ease: SOFT }, 11.0);
+        tl.fromTo($("oncebody"), { opacity: 0, y: 12 }, { opacity: 1, y: 0, duration: 0.5, ease: SOFT }, 11.3);
+        tl.fromTo($("ticket"), { opacity: 0, scale: 0.8, x: 0 }, { opacity: 1, scale: 1, duration: 0.35, ease: SOFT }, 11.8);
+        tl.to($("ticket"), { x: 744, duration: 0.9, ease: TRAVEL }, 12.15);
+        tl.fromTo($("analogy"), { opacity: 0, y: 16 }, { opacity: 1, y: 0, duration: 0.6, ease: SOFT }, 12.5);
+        tl.to({}, { duration: 0.01 }, 14.99);
+
+        window.__timelines = window.__timelines || {};
+        window.__timelines[FID] = tl;
+      })();
+    </script>
+  </div>
+</template>

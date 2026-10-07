@@ -1,0 +1,377 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=1920, height=1080" />
+    <script src="https://cdn.jsdelivr.net/npm/gsap@3.14.2/dist/gsap.min.js" integrity="sha384-sG0Hv1tP1lZCk9KQmrIbY/XNwi+OY84GQqhMscbnsoBFqAz8KNCil1kvfL3Hbbk2" crossorigin="anonymous"></script>
+    <style>
+      * {
+        margin: 0;
+        padding: 0;
+        box-sizing: border-box;
+      }
+      html,
+      body {
+        width: 1920px;
+        height: 1080px;
+        overflow: hidden;
+        background: #000;
+      }
+      #root {
+        position: relative;
+        width: 1920px;
+        height: 1080px;
+        overflow: hidden;
+        background: #EFE9D9;
+      }
+      .scene {
+        position: absolute;
+        inset: 0;
+        width: 100%;
+        height: 100%;
+      }
+    </style>
+  </head>
+  <body>
+    <div
+      id="root"
+      data-composition-id="main"
+      data-start="0"
+      data-duration="308.5"
+      data-width="1920"
+      data-height="1080"
+    >
+      <div
+        id="el-p1-bolum-amac"
+        class="scene"
+        data-composition-id="p1-bolum-amac"
+        data-composition-src="compositions/frames/p1-bolum-amac.html"
+        data-start="0"
+        data-duration="5"
+        data-track-index="0"
+      ></div>
+
+      <div
+        id="el-01-arada-kim-var"
+        class="scene"
+        data-composition-id="01-arada-kim-var"
+        data-composition-src="compositions/frames/01-arada-kim-var.html"
+        data-start="4.5"
+        data-duration="7.5"
+        data-track-index="1"
+      ></div>
+
+      <div
+        id="el-p2-normal-tls"
+        class="scene"
+        data-composition-id="p2-normal-tls"
+        data-composition-src="compositions/frames/p2-normal-tls.html"
+        data-start="11.5"
+        data-duration="13.5"
+        data-track-index="0"
+      ></div>
+
+      <div
+        id="el-05-parmak-izi"
+        class="scene"
+        data-composition-id="05-parmak-izi"
+        data-composition-src="compositions/frames/05-parmak-izi.html"
+        data-start="24.5"
+        data-duration="15.5"
+        data-track-index="1"
+      ></div>
+
+      <div
+        id="el-p3-uc-eksik"
+        class="scene"
+        data-composition-id="p3-uc-eksik"
+        data-composition-src="compositions/frames/p3-uc-eksik.html"
+        data-start="39.5"
+        data-duration="14.5"
+        data-track-index="0"
+      ></div>
+
+      <div
+        id="el-p4-bolum-pinvault"
+        class="scene"
+        data-composition-id="p4-bolum-pinvault"
+        data-composition-src="compositions/frames/p4-bolum-pinvault.html"
+        data-start="53.5"
+        data-duration="5"
+        data-track-index="1"
+      ></div>
+
+      <div
+        id="el-03-uc-is"
+        class="scene"
+        data-composition-id="03-uc-is"
+        data-composition-src="compositions/frames/03-uc-is.html"
+        data-start="58"
+        data-duration="11.5"
+        data-track-index="0"
+      ></div>
+
+      <div
+        id="el-04-topoloji"
+        class="scene"
+        data-composition-id="04-topoloji"
+        data-composition-src="compositions/frames/04-topoloji.html"
+        data-start="69"
+        data-duration="17.5"
+        data-track-index="1"
+      ></div>
+
+      <div
+        id="el-p5-bolum-akis"
+        class="scene"
+        data-composition-id="p5-bolum-akis"
+        data-composition-src="compositions/frames/p5-bolum-akis.html"
+        data-start="86"
+        data-duration="5"
+        data-track-index="0"
+      ></div>
+
+      <div
+        id="el-01-yeni-tablet"
+        class="scene"
+        data-composition-id="01-yeni-tablet"
+        data-composition-src="compositions/frames/01-yeni-tablet.html"
+        data-start="90.5"
+        data-duration="10.5"
+        data-track-index="1"
+      ></div>
+
+      <div
+        id="el-02-iki-yanlis"
+        class="scene"
+        data-composition-id="02-iki-yanlis"
+        data-composition-src="compositions/frames/02-iki-yanlis.html"
+        data-start="100.5"
+        data-duration="13.5"
+        data-track-index="0"
+      ></div>
+
+      <div
+        id="el-03-kurulum"
+        class="scene"
+        data-composition-id="03-kurulum"
+        data-composition-src="compositions/frames/03-kurulum.html"
+        data-start="113.5"
+        data-duration="15.5"
+        data-track-index="1"
+      ></div>
+
+      <div
+        id="el-04-apk"
+        class="scene"
+        data-composition-id="04-apk"
+        data-composition-src="compositions/frames/04-apk.html"
+        data-start="128.5"
+        data-duration="15.5"
+        data-track-index="0"
+      ></div>
+
+      <div
+        id="el-05-host"
+        class="scene"
+        data-composition-id="05-host"
+        data-composition-src="compositions/frames/05-host.html"
+        data-start="143.5"
+        data-duration="15.5"
+        data-track-index="1"
+      ></div>
+
+      <div
+        id="el-06-token"
+        class="scene"
+        data-composition-id="06-token"
+        data-composition-src="compositions/frames/06-token.html"
+        data-start="158.5"
+        data-duration="15.5"
+        data-track-index="0"
+      ></div>
+
+      <div
+        id="el-07-telefona"
+        class="scene"
+        data-composition-id="07-telefona"
+        data-composition-src="compositions/frames/07-telefona.html"
+        data-start="173.5"
+        data-duration="14.5"
+        data-track-index="1"
+      ></div>
+
+      <div
+        id="el-08-kayit-istegi"
+        class="scene"
+        data-composition-id="08-kayit-istegi"
+        data-composition-src="compositions/frames/08-kayit-istegi.html"
+        data-start="187.5"
+        data-duration="15.5"
+        data-track-index="0"
+      ></div>
+
+      <div
+        id="el-09-kart"
+        class="scene"
+        data-composition-id="09-kart"
+        data-composition-src="compositions/frames/09-kart.html"
+        data-start="202.5"
+        data-duration="15.5"
+        data-track-index="1"
+      ></div>
+
+      <div
+        id="el-10-pin-listesi"
+        class="scene"
+        data-composition-id="10-pin-listesi"
+        data-composition-src="compositions/frames/10-pin-listesi.html"
+        data-start="217.5"
+        data-duration="15.5"
+        data-track-index="0"
+      ></div>
+
+      <div
+        id="el-11-bilet"
+        class="scene"
+        data-composition-id="11-bilet"
+        data-composition-src="compositions/frames/11-bilet.html"
+        data-start="232.5"
+        data-duration="14.5"
+        data-track-index="1"
+      ></div>
+
+      <div
+        id="el-12-ilk-istek"
+        class="scene"
+        data-composition-id="12-ilk-istek"
+        data-composition-src="compositions/frames/12-ilk-istek.html"
+        data-start="246.5"
+        data-duration="15.5"
+        data-track-index="0"
+      ></div>
+
+      <div
+        id="el-10-ret"
+        class="scene"
+        data-composition-id="10-ret"
+        data-composition-src="compositions/frames/10-ret.html"
+        data-start="261.5"
+        data-duration="13.5"
+        data-track-index="1"
+      ></div>
+
+      <div
+        id="el-13-sonrasi"
+        class="scene"
+        data-composition-id="13-sonrasi"
+        data-composition-src="compositions/frames/13-sonrasi.html"
+        data-start="274.5"
+        data-duration="14.5"
+        data-track-index="0"
+      ></div>
+
+      <div
+        id="el-12-uc-cumle"
+        class="scene"
+        data-composition-id="12-uc-cumle"
+        data-composition-src="compositions/frames/12-uc-cumle.html"
+        data-start="288.5"
+        data-duration="9.5"
+        data-track-index="1"
+      ></div>
+
+      <div
+        id="el-14-kapanis"
+        class="scene"
+        data-composition-id="14-kapanis"
+        data-composition-src="compositions/frames/14-kapanis.html"
+        data-start="297.5"
+        data-duration="11"
+        data-track-index="0"
+      ></div>
+
+    </div>
+
+    <script>
+      window.__timelines = window.__timelines || {};
+      window.__timelines["main"] = gsap.timeline({ paused: true });
+      // ── frame transitions (injected by transitions.mjs) ──
+      (function () { var tl = window.__timelines["main"];
+        tl.to("#el-p1-bolum-amac", { opacity: 0, duration: 0.5, ease: "power2.inOut" }, 4.5);
+        tl.fromTo("#el-01-arada-kim-var", { opacity: 0 }, { opacity: 1, duration: 0.5, ease: "power2.inOut" }, 4.5);
+        tl.addLabel("hf:transition:p1-bolum-amac:01-arada-kim-var:crossfade", 4.5);
+        tl.to("#el-01-arada-kim-var", { opacity: 0, duration: 0.5, ease: "power2.inOut" }, 11.5);
+        tl.fromTo("#el-p2-normal-tls", { opacity: 0 }, { opacity: 1, duration: 0.5, ease: "power2.inOut" }, 11.5);
+        tl.addLabel("hf:transition:01-arada-kim-var:p2-normal-tls:crossfade", 11.5);
+        tl.to("#el-p2-normal-tls", { opacity: 0, duration: 0.5, ease: "power2.inOut" }, 24.5);
+        tl.fromTo("#el-05-parmak-izi", { opacity: 0 }, { opacity: 1, duration: 0.5, ease: "power2.inOut" }, 24.5);
+        tl.addLabel("hf:transition:p2-normal-tls:05-parmak-izi:crossfade", 24.5);
+        tl.to("#el-05-parmak-izi", { opacity: 0, duration: 0.5, ease: "power2.inOut" }, 39.5);
+        tl.fromTo("#el-p3-uc-eksik", { opacity: 0 }, { opacity: 1, duration: 0.5, ease: "power2.inOut" }, 39.5);
+        tl.addLabel("hf:transition:05-parmak-izi:p3-uc-eksik:crossfade", 39.5);
+        tl.to("#el-p3-uc-eksik", { opacity: 0, duration: 0.5, ease: "power2.inOut" }, 53.5);
+        tl.fromTo("#el-p4-bolum-pinvault", { opacity: 0 }, { opacity: 1, duration: 0.5, ease: "power2.inOut" }, 53.5);
+        tl.addLabel("hf:transition:p3-uc-eksik:p4-bolum-pinvault:crossfade", 53.5);
+        tl.to("#el-p4-bolum-pinvault", { opacity: 0, duration: 0.5, ease: "power2.inOut" }, 58);
+        tl.fromTo("#el-03-uc-is", { opacity: 0 }, { opacity: 1, duration: 0.5, ease: "power2.inOut" }, 58);
+        tl.addLabel("hf:transition:p4-bolum-pinvault:03-uc-is:crossfade", 58);
+        tl.to("#el-03-uc-is", { opacity: 0, duration: 0.5, ease: "power2.inOut" }, 69);
+        tl.fromTo("#el-04-topoloji", { opacity: 0 }, { opacity: 1, duration: 0.5, ease: "power2.inOut" }, 69);
+        tl.addLabel("hf:transition:03-uc-is:04-topoloji:crossfade", 69);
+        tl.to("#el-04-topoloji", { opacity: 0, duration: 0.5, ease: "power2.inOut" }, 86);
+        tl.fromTo("#el-p5-bolum-akis", { opacity: 0 }, { opacity: 1, duration: 0.5, ease: "power2.inOut" }, 86);
+        tl.addLabel("hf:transition:04-topoloji:p5-bolum-akis:crossfade", 86);
+        tl.to("#el-p5-bolum-akis", { opacity: 0, duration: 0.5, ease: "power2.inOut" }, 90.5);
+        tl.fromTo("#el-01-yeni-tablet", { opacity: 0 }, { opacity: 1, duration: 0.5, ease: "power2.inOut" }, 90.5);
+        tl.addLabel("hf:transition:p5-bolum-akis:01-yeni-tablet:crossfade", 90.5);
+        tl.to("#el-01-yeni-tablet", { opacity: 0, duration: 0.5, ease: "power2.inOut" }, 100.5);
+        tl.fromTo("#el-02-iki-yanlis", { opacity: 0 }, { opacity: 1, duration: 0.5, ease: "power2.inOut" }, 100.5);
+        tl.addLabel("hf:transition:01-yeni-tablet:02-iki-yanlis:crossfade", 100.5);
+        tl.to("#el-02-iki-yanlis", { x: -1920, duration: 0.5, ease: "power3.inOut" }, 113.5);
+        tl.fromTo("#el-03-kurulum", { x: 1920, opacity: 1 }, { x: 0, opacity: 1, duration: 0.5, ease: "power3.inOut" }, 113.5);
+        tl.addLabel("hf:transition:02-iki-yanlis:03-kurulum:push-slide", 113.5);
+        tl.to("#el-03-kurulum", { x: -1920, duration: 0.5, ease: "power3.inOut" }, 128.5);
+        tl.fromTo("#el-04-apk", { x: 1920, opacity: 1 }, { x: 0, opacity: 1, duration: 0.5, ease: "power3.inOut" }, 128.5);
+        tl.addLabel("hf:transition:03-kurulum:04-apk:push-slide", 128.5);
+        tl.to("#el-04-apk", { x: -1920, duration: 0.5, ease: "power3.inOut" }, 143.5);
+        tl.fromTo("#el-05-host", { x: 1920, opacity: 1 }, { x: 0, opacity: 1, duration: 0.5, ease: "power3.inOut" }, 143.5);
+        tl.addLabel("hf:transition:04-apk:05-host:push-slide", 143.5);
+        tl.to("#el-05-host", { x: -1920, duration: 0.5, ease: "power3.inOut" }, 158.5);
+        tl.fromTo("#el-06-token", { x: 1920, opacity: 1 }, { x: 0, opacity: 1, duration: 0.5, ease: "power3.inOut" }, 158.5);
+        tl.addLabel("hf:transition:05-host:06-token:push-slide", 158.5);
+        tl.to("#el-06-token", { x: -1920, duration: 0.5, ease: "power3.inOut" }, 173.5);
+        tl.fromTo("#el-07-telefona", { x: 1920, opacity: 1 }, { x: 0, opacity: 1, duration: 0.5, ease: "power3.inOut" }, 173.5);
+        tl.addLabel("hf:transition:06-token:07-telefona:push-slide", 173.5);
+        tl.to("#el-07-telefona", { x: -1920, duration: 0.5, ease: "power3.inOut" }, 187.5);
+        tl.fromTo("#el-08-kayit-istegi", { x: 1920, opacity: 1 }, { x: 0, opacity: 1, duration: 0.5, ease: "power3.inOut" }, 187.5);
+        tl.addLabel("hf:transition:07-telefona:08-kayit-istegi:push-slide", 187.5);
+        tl.to("#el-08-kayit-istegi", { x: -1920, duration: 0.5, ease: "power3.inOut" }, 202.5);
+        tl.fromTo("#el-09-kart", { x: 1920, opacity: 1 }, { x: 0, opacity: 1, duration: 0.5, ease: "power3.inOut" }, 202.5);
+        tl.addLabel("hf:transition:08-kayit-istegi:09-kart:push-slide", 202.5);
+        tl.to("#el-09-kart", { x: -1920, duration: 0.5, ease: "power3.inOut" }, 217.5);
+        tl.fromTo("#el-10-pin-listesi", { x: 1920, opacity: 1 }, { x: 0, opacity: 1, duration: 0.5, ease: "power3.inOut" }, 217.5);
+        tl.addLabel("hf:transition:09-kart:10-pin-listesi:push-slide", 217.5);
+        tl.to("#el-10-pin-listesi", { x: -1920, duration: 0.5, ease: "power3.inOut" }, 232.5);
+        tl.fromTo("#el-11-bilet", { x: 1920, opacity: 1 }, { x: 0, opacity: 1, duration: 0.5, ease: "power3.inOut" }, 232.5);
+        tl.addLabel("hf:transition:10-pin-listesi:11-bilet:push-slide", 232.5);
+        tl.to("#el-11-bilet", { x: -1920, duration: 0.5, ease: "power3.inOut" }, 246.5);
+        tl.fromTo("#el-12-ilk-istek", { x: 1920, opacity: 1 }, { x: 0, opacity: 1, duration: 0.5, ease: "power3.inOut" }, 246.5);
+        tl.addLabel("hf:transition:11-bilet:12-ilk-istek:push-slide", 246.5);
+        tl.to("#el-12-ilk-istek", { opacity: 0, duration: 0.5, ease: "power2.inOut" }, 261.5);
+        tl.fromTo("#el-10-ret", { opacity: 0 }, { opacity: 1, duration: 0.5, ease: "power2.inOut" }, 261.5);
+        tl.addLabel("hf:transition:12-ilk-istek:10-ret:crossfade", 261.5);
+        tl.to("#el-10-ret", { opacity: 0, duration: 0.5, ease: "power2.inOut" }, 274.5);
+        tl.fromTo("#el-13-sonrasi", { opacity: 0 }, { opacity: 1, duration: 0.5, ease: "power2.inOut" }, 274.5);
+        tl.addLabel("hf:transition:10-ret:13-sonrasi:crossfade", 274.5);
+        tl.to("#el-13-sonrasi", { opacity: 0, duration: 0.5, ease: "power2.inOut" }, 288.5);
+        tl.fromTo("#el-12-uc-cumle", { opacity: 0 }, { opacity: 1, duration: 0.5, ease: "power2.inOut" }, 288.5);
+        tl.addLabel("hf:transition:13-sonrasi:12-uc-cumle:crossfade", 288.5);
+        tl.to("#el-12-uc-cumle", { opacity: 0, duration: 0.5, ease: "power2.inOut" }, 297.5);
+        tl.fromTo("#el-14-kapanis", { opacity: 0 }, { opacity: 1, duration: 0.5, ease: "power2.inOut" }, 297.5);
+        tl.addLabel("hf:transition:12-uc-cumle:14-kapanis:crossfade", 297.5);
+        tl.to({}, { duration: 308.5 }, 0); // full-span anchor — main.duration() == composition total (Studio master duration)
+      })();
+    </script>
+  </body>
+</html>

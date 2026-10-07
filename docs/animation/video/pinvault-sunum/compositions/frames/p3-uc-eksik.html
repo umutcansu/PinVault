@@ -1,0 +1,313 @@
+<template>
+  <script src="https://cdn.jsdelivr.net/npm/gsap@3.14.2/dist/gsap.min.js"></script>
+  <style>
+    /* latin-ext */
+    @font-face {
+      font-family: "Archivo Black";
+      font-style: normal;
+      font-weight: 400;
+      font-display: block;
+      src: url(https://fonts.gstatic.com/s/archivoblack/v23/HTxqL289NzCGg4MzN6KJ7eW6CYKF_jzx13HOvQ.woff2) format("woff2");
+      unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C4, U+2113, U+2C60-2C7F, U+A720-A7FF;
+    }
+    /* latin */
+    @font-face {
+      font-family: "Archivo Black";
+      font-style: normal;
+      font-weight: 400;
+      font-display: block;
+      src: url(https://fonts.gstatic.com/s/archivoblack/v23/HTxqL289NzCGg4MzN6KJ7eW6CYyF_jzx13E.woff2) format("woff2");
+      unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+    }
+    /* latin-ext */
+    @font-face {
+      font-family: "JetBrains Mono";
+      font-style: normal;
+      font-weight: 400;
+      font-display: block;
+      src: url(https://fonts.gstatic.com/s/jetbrainsmono/v24/tDbY2o-flEEny0FZhsfKu5WU4zr3E_BX0PnT8RD8yKxTNFOVk6OThhvAWV8.woff2) format("woff2");
+      unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C4, U+2113, U+2C60-2C7F, U+A720-A7FF;
+    }
+    /* latin */
+    @font-face {
+      font-family: "JetBrains Mono";
+      font-style: normal;
+      font-weight: 400;
+      font-display: block;
+      src: url(https://fonts.gstatic.com/s/jetbrainsmono/v24/tDbY2o-flEEny0FZhsfKu5WU4zr3E_BX0PnT8RD8yKxTOlOVk6OThhvA.woff2) format("woff2");
+      unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+    }
+    /* latin-ext */
+    @font-face {
+      font-family: "Space Grotesk";
+      font-style: normal;
+      font-weight: 400;
+      font-display: block;
+      src: url(https://fonts.gstatic.com/s/spacegrotesk/v22/V8mQoQDjQSkFtoMM3T6r8E7mF71Q-gOoraIAEj7oUXsqPMBBSSJLm2FXTQ.woff2) format("woff2");
+      unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C4, U+2113, U+2C60-2C7F, U+A720-A7FF;
+    }
+    /* latin */
+    @font-face {
+      font-family: "Space Grotesk";
+      font-style: normal;
+      font-weight: 400;
+      font-display: block;
+      src: url(https://fonts.gstatic.com/s/spacegrotesk/v22/V8mQoQDjQSkFtoMM3T6r8E7mF71Q-gOoraIAEj7oUXskPMBBSSJLm2E.woff2) format("woff2");
+      unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+    }
+
+    #root {
+      position: absolute;
+      inset: 0;
+      width: 100%;
+      height: 100%;
+      overflow: hidden;
+      container-type: size;
+      color: #0f0f0f;
+      font-family: "Space Grotesk", sans-serif;
+    }
+
+    /* full-bleed cream ground (clip layer, not on #root) */
+    .p3-uc-eksik-ground {
+      position: absolute;
+      inset: 0;
+      background: #efe9d9;
+    }
+
+    /* ---- frame chrome ---- */
+    .p3-uc-eksik-topbar,
+    .p3-uc-eksik-meta {
+      position: absolute;
+      left: 3.3cqw;
+      right: 3.3cqw;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      font-family: "JetBrains Mono", monospace;
+      font-size: 1.25cqw;
+      letter-spacing: 0.06em;
+      line-height: 1;
+      color: #0f0f0f;
+    }
+    .p3-uc-eksik-topbar {
+      top: 2.5cqw;
+    }
+    .p3-uc-eksik-meta {
+      bottom: 2.5cqw;
+    }
+    .p3-uc-eksik-pill {
+      background: #efe9d9;
+      border: 0.2cqw solid #0f0f0f;
+      border-radius: 999px;
+      padding: 0.55cqw 1.3cqw;
+    }
+    .p3-uc-eksik-counter {
+      display: flex;
+      align-items: center;
+      gap: 0.6cqw;
+    }
+    .p3-uc-eksik-dot {
+      width: 0.5cqw;
+      height: 0.5cqw;
+      border-radius: 50%;
+      background: #0f0f0f;
+    }
+
+    /* ---- headline (display-head, two lines, aligned to the card grid) ---- */
+    .p3-uc-eksik-head {
+      position: absolute;
+      left: 5cqw;
+      top: 6.6cqw; /* ~127px */
+      width: 78cqw;
+      font-family: "Archivo Black", sans-serif;
+      font-weight: 400;
+      font-size: 4.2cqw;
+      line-height: 0.92;
+      letter-spacing: -0.01em;
+      color: #0f0f0f;
+    }
+    .p3-uc-eksik-hline {
+      display: block;
+      white-space: nowrap;
+    }
+    .p3-uc-eksik-word {
+      display: inline-block;
+    }
+
+    /* ---- three numbered cards (same grid + number style as 03-uc-is) ---- */
+    .p3-uc-eksik-card {
+      position: absolute;
+      top: 16.2cqw; /* ~311px */
+      width: 28.6cqw; /* ~549px */
+      height: 23.4cqw; /* ~449px, bottom ~760px */
+      box-sizing: border-box;
+      border: 0.4cqw solid #0f0f0f;
+      border-radius: 0;
+      padding: 1.7cqw;
+      display: flex;
+      flex-direction: column;
+      justify-content: space-between;
+    }
+    .p3-uc-eksik-c1 {
+      left: 5cqw;
+      background: #efe9d9;
+    }
+    .p3-uc-eksik-c2 {
+      left: 35.7cqw;
+      background: #f06ca8;
+    }
+    .p3-uc-eksik-c3 {
+      left: 66.4cqw;
+      background: #f5c518;
+      /* the frame's single hard offset shadow */
+      box-shadow: 1.25cqw 1.25cqw 0 #e85a1f, 1.25cqw 1.25cqw 0 0.2cqw #0f0f0f;
+    }
+    .p3-uc-eksik-num {
+      font-family: "Archivo Black", sans-serif;
+      font-weight: 400;
+      font-size: 7cqw;
+      line-height: 0.85;
+      color: #0f0f0f;
+    }
+    .p3-uc-eksik-title {
+      font-family: "Archivo Black", sans-serif;
+      font-weight: 400;
+      font-size: 1.77cqw;
+      line-height: 0.92;
+      color: #0f0f0f;
+      margin-bottom: 0.9cqw;
+    }
+    .p3-uc-eksik-line {
+      font-family: "Space Grotesk", sans-serif;
+      font-size: 1.4cqw;
+      line-height: 1.3;
+      color: #0f0f0f;
+    }
+
+    /* ---- closing line (body-lg) ---- */
+    .p3-uc-eksik-foot {
+      position: absolute;
+      left: 5cqw;
+      top: 42.4cqw; /* ~814px, below card 3's shadow */
+      font-family: "Space Grotesk", sans-serif;
+      font-size: 1.46cqw;
+      line-height: 1.4;
+      color: #0f0f0f;
+      white-space: nowrap;
+    }
+  </style>
+
+  <div id="root" lang="tr" data-composition-id="p3-uc-eksik" data-start="0" data-duration="14.5" data-width="1920" data-height="1080">
+    <div class="p3-uc-eksik-ground clip" data-start="0" data-duration="14.5" data-track-index="0"></div>
+
+    <div class="p3-uc-eksik-topbar">
+      <span>PINVAULT · 1 AMAÇ</span>
+      <span class="p3-uc-eksik-pill">AMAÇ</span>
+    </div>
+
+    <div class="p3-uc-eksik-head">
+      <span class="p3-uc-eksik-hline"><span class="p3-uc-eksik-word">PİNLEME</span> <span class="p3-uc-eksik-word">TEK</span> <span class="p3-uc-eksik-word">BAŞINA</span></span>
+      <span class="p3-uc-eksik-hline"><span class="p3-uc-eksik-word">ÜÇ</span> <span class="p3-uc-eksik-word">ŞEYİ</span> <span class="p3-uc-eksik-word">ÇÖZMEZ</span></span>
+    </div>
+
+    <div class="p3-uc-eksik-card p3-uc-eksik-c1">
+      <div class="p3-uc-eksik-num">1</div>
+      <div>
+        <div class="p3-uc-eksik-title">PİN'LER APK'DA KALIR</div>
+        <div class="p3-uc-eksik-line">Sunucunun sertifikası değişince uygulama güncellemesi gerekir; eski sürümler bağlanamaz.</div>
+      </div>
+    </div>
+    <div class="p3-uc-eksik-card p3-uc-eksik-c2">
+      <div class="p3-uc-eksik-num">2</div>
+      <div>
+        <div class="p3-uc-eksik-title">SUNUCU CİHAZI TANIMAZ</div>
+        <div class="p3-uc-eksik-line">Hangi telefonla konuştuğunu bilmez; tek bir cihazı uzaktan kesemez.</div>
+      </div>
+    </div>
+    <div class="p3-uc-eksik-card p3-uc-eksik-c3">
+      <div class="p3-uc-eksik-num">3</div>
+      <div>
+        <div class="p3-uc-eksik-title">UYGULAMANIN GERÇEK OLDUĞUNU BİLMEZ</div>
+        <div class="p3-uc-eksik-line">Kopya, root'lu telefondaki ya da Frida ile değiştirilmiş uygulama da aynı pinli bağlantıyı kurar.</div>
+      </div>
+    </div>
+
+    <div class="p3-uc-eksik-foot">PinVault bu üçüne birer cevap verir.</div>
+
+    <div class="p3-uc-eksik-meta">
+      <span>Üç eksik</span>
+      <span class="p3-uc-eksik-counter"><span>05</span><span class="p3-uc-eksik-dot"></span><span>25</span></span>
+    </div>
+  </div>
+
+  <script>
+    (function () {
+      var root = document.querySelector('[data-composition-id="p3-uc-eksik"]');
+      var scope = root || document;
+      function one(sel) {
+        return scope.querySelector(sel);
+      }
+      function all(sel) {
+        return Array.prototype.slice.call(scope.querySelectorAll(sel));
+      }
+
+      window.__timelines = window.__timelines || {};
+      var tl = gsap.timeline({ paused: true });
+
+      // ---- Scene 1 (0.0–1.8s): headline word by word ----
+      all(".p3-uc-eksik-word").forEach(function (w, i) {
+        tl.fromTo(
+          w,
+          { y: 40, opacity: 0 },
+          { y: 0, opacity: 1, duration: 0.7, ease: "power3.out" },
+          0.1 + i * 0.2
+        );
+      });
+
+      // ---- Scenes 2–4: each card rises into its slot; number, title, then the line ----
+      var cards = [one(".p3-uc-eksik-c1"), one(".p3-uc-eksik-c2"), one(".p3-uc-eksik-c3")];
+      var starts = [1.8, 5.5, 9.0];
+      cards.forEach(function (card, i) {
+        var t = starts[i];
+        var num = card.querySelector(".p3-uc-eksik-num");
+        var title = card.querySelector(".p3-uc-eksik-title");
+        var line = card.querySelector(".p3-uc-eksik-line");
+        tl.fromTo(
+          card,
+          { y: 90, opacity: 0 },
+          { y: 0, opacity: 1, duration: 1.2, ease: "power3.out" },
+          t
+        );
+        tl.fromTo(
+          num,
+          { y: 30, opacity: 0 },
+          { y: 0, opacity: 1, duration: 0.8, ease: "power3.out" },
+          t + 0.3
+        );
+        tl.fromTo(
+          title,
+          { y: 16, opacity: 0 },
+          { y: 0, opacity: 1, duration: 0.8, ease: "power3.out" },
+          t + 0.65
+        );
+        tl.fromTo(
+          line,
+          { y: 12, opacity: 0 },
+          { y: 0, opacity: 1, duration: 0.8, ease: "power3.out" },
+          t + 1.25
+        );
+      });
+
+      // ---- Scene 5 (12.5–14.0s): closing line, then hold ----
+      tl.fromTo(
+        one(".p3-uc-eksik-foot"),
+        { y: 18, opacity: 0 },
+        { y: 0, opacity: 1, duration: 0.9, ease: "power3.out" },
+        12.5
+      );
+      tl.to({}, { duration: 0.01 }, 13.99);
+
+      window.__timelines["p3-uc-eksik"] = tl;
+    })();
+  </script>
+</template>

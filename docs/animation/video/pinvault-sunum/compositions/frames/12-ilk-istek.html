@@ -1,0 +1,663 @@
+<template id="12-ilk-istek-template">
+  <div id="root" data-composition-id="12-ilk-istek" data-start="0" data-duration="15.5" data-width="1920" data-height="1080" lang="tr">
+    <style>
+      @import url("https://fonts.googleapis.com/css2?family=Archivo+Black&family=JetBrains+Mono:wght@400;700&family=Space+Grotesk:wght@400;500&display=block");
+
+      #root {
+        position: relative;
+        width: 1920px;
+        height: 1080px;
+        overflow: hidden;
+      }
+      [data-composition-id="12-ilk-istek"] * {
+        margin: 0;
+        padding: 0;
+        box-sizing: border-box;
+      }
+
+      /* full-bleed ground (clip layer, not #root) */
+      [id="12-ilk-istek-stage"] {
+        position: absolute;
+        inset: 0;
+        width: 1920px;
+        height: 1080px;
+        background: #efe9d9;
+        container-type: size;
+        overflow: hidden;
+        color: #0f0f0f;
+      }
+
+      /* ---------- chrome ---------- */
+      [id="12-ilk-istek-topbar"] {
+        position: absolute;
+        top: 48px;
+        left: 64px;
+        right: 64px;
+        height: 44px;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        font-family: "JetBrains Mono", monospace;
+        font-size: 22px;
+        letter-spacing: 0.06em;
+      }
+      [id="12-ilk-istek-pill"] {
+        border: 4px solid #0f0f0f;
+        border-radius: 999px;
+        background: #efe9d9;
+        padding: 4px 20px;
+        line-height: 1.3;
+      }
+      [id="12-ilk-istek-footer"] {
+        position: absolute;
+        bottom: 48px;
+        left: 64px;
+        right: 64px;
+        height: 32px;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        font-family: "JetBrains Mono", monospace;
+        font-size: 22px;
+        letter-spacing: 0.06em;
+      }
+      [id="12-ilk-istek-counter"] {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+      }
+      [id="12-ilk-istek-dot"] {
+        width: 10px;
+        height: 10px;
+        border-radius: 50%;
+        background: #0f0f0f;
+      }
+
+      /* ---------- chain strip ---------- */
+      [class~="12-ilk-istek-cell"] {
+        position: absolute;
+        top: 104px;
+        width: 160px;
+        height: 40px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-family: "JetBrains Mono", monospace;
+        font-size: 15px;
+        letter-spacing: 0.04em;
+        white-space: nowrap;
+      }
+      [class~="12-ilk-istek-done"] {
+        background: #0f0f0f;
+        color: #efe9d9;
+        border: 2px solid #0f0f0f;
+      }
+      [class~="12-ilk-istek-future"] {
+        background: #efe9d9;
+        color: #0f0f0f;
+        border: 2px solid #0f0f0f;
+        opacity: 0.35;
+      }
+      [class~="12-ilk-istek-now"] {
+        background: #efe9d9;
+        color: #0f0f0f;
+        border: 4px solid #0f0f0f;
+        z-index: 2;
+      }
+      [class~="12-ilk-istek-link"] {
+        position: absolute;
+        top: 123px;
+        width: 14px;
+        height: 2px;
+        background: #0f0f0f;
+      }
+      [id="12-ilk-istek-underline"] {
+        position: absolute;
+        left: 1662px;
+        top: 148px;
+        width: 160px;
+        height: 4px;
+        background: #f5c518;
+        transform-origin: 0 50%;
+      }
+
+      /* ---------- kicker + title ---------- */
+      [id="12-ilk-istek-kicker"] {
+        position: absolute;
+        left: 96px;
+        top: 170px;
+        background: #0f0f0f;
+        color: #efe9d9;
+        font-family: "JetBrains Mono", monospace;
+        font-size: 22px;
+        letter-spacing: 0.08em;
+        line-height: 1.25;
+        white-space: nowrap;
+        padding: 6px 16px;
+      }
+      [id="12-ilk-istek-title"] {
+        position: absolute;
+        left: 96px;
+        top: 224px;
+        font-family: "Archivo Black", sans-serif;
+        font-size: 80px;
+        line-height: 0.92;
+        letter-spacing: -0.01em;
+        white-space: nowrap;
+      }
+
+      /* ---------- code line (typed) ---------- */
+      [id="12-ilk-istek-code"] {
+        position: absolute;
+        left: 96px;
+        top: 320px;
+        height: 54px;
+        border: 3px solid #0f0f0f;
+        background: #e4dcc4;
+        padding: 0 18px;
+        display: flex;
+        align-items: center;
+        z-index: 2;
+      }
+      [id="12-ilk-istek-codetext"] {
+        position: relative;
+        display: block;
+        width: 66ch;
+        overflow: hidden;
+        font-family: "JetBrains Mono", monospace;
+        font-size: 26px;
+        letter-spacing: 0;
+        line-height: 1.3;
+        white-space: pre;
+      }
+      [id="12-ilk-istek-codemask"] {
+        position: absolute;
+        left: 0;
+        top: 0;
+        width: 100%;
+        height: 100%;
+        background: #e4dcc4;
+      }
+      [id="12-ilk-istek-caret"] {
+        position: absolute;
+        left: 0;
+        top: 3px;
+        bottom: 3px;
+        width: 0.6ch;
+        background: #0f0f0f;
+      }
+
+      /* ---------- wire ---------- */
+      [id="12-ilk-istek-wire"] {
+        position: absolute;
+        left: 0;
+        top: 0;
+        width: 1920px;
+        height: 1080px;
+        z-index: 1;
+        overflow: visible;
+      }
+
+      /* ---------- phone ---------- */
+      [id="12-ilk-istek-phone"] {
+        position: absolute;
+        left: 110px;
+        top: 392px;
+        width: 320px;
+        height: 348px;
+        border: 4px solid #0f0f0f;
+        background: #efe9d9;
+        z-index: 3;
+      }
+      [class~="12-ilk-istek-speaker"] {
+        position: absolute;
+        left: 124px;
+        top: 12px;
+        width: 64px;
+        height: 8px;
+        background: #0f0f0f;
+      }
+      [class~="12-ilk-istek-screen"] {
+        position: absolute;
+        left: 14px;
+        right: 14px;
+        top: 32px;
+        bottom: 14px;
+        border: 3px solid #0f0f0f;
+        background: #e4dcc4;
+      }
+      [class~="12-ilk-istek-app"] {
+        position: absolute;
+        left: 14px;
+        top: 14px;
+        font-family: "JetBrains Mono", monospace;
+        font-size: 24px;
+        letter-spacing: 0.02em;
+      }
+      [id="12-ilk-istek-pinrow"] {
+        position: absolute;
+        left: 10px;
+        right: 10px;
+        top: 105px;
+        height: 48px;
+        border: 2px solid #0f0f0f;
+        background: #efe9d9;
+        display: flex;
+        align-items: center;
+        padding: 0 10px;
+        font-family: "JetBrains Mono", monospace;
+        font-size: 18px;
+        white-space: nowrap;
+      }
+      [id="12-ilk-istek-pinrowon"] {
+        position: absolute;
+        inset: -2px;
+        border: 2px solid #0f0f0f;
+        background: #1f8a4c;
+        color: #efe9d9;
+        display: flex;
+        align-items: center;
+        padding: 0 10px;
+      }
+      [class~="12-ilk-istek-lib"] {
+        position: absolute;
+        left: 0;
+        right: 0;
+        bottom: 0;
+        background: #0f0f0f;
+        color: #efe9d9;
+        font-family: "JetBrains Mono", monospace;
+        font-size: 20px;
+        line-height: 1.25;
+        padding: 10px 12px;
+      }
+
+      /* ---------- certificate card (API -> phone) ---------- */
+      [id="12-ilk-istek-cert"] {
+        position: absolute;
+        left: 440px;
+        top: 528px;
+        width: 92px;
+        height: 64px;
+        border: 3px solid #0f0f0f;
+        background: #efe9d9;
+        z-index: 2;
+      }
+      [id="12-ilk-istek-cert"] svg {
+        position: absolute;
+        left: 0;
+        top: 0;
+        width: 86px;
+        height: 58px;
+        display: block;
+      }
+      [id="12-ilk-istek-certok"] {
+        position: absolute;
+        right: -14px;
+        top: -14px;
+        width: 30px;
+        height: 30px;
+        background: #1f8a4c;
+        border: 2px solid #0f0f0f;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+      }
+      [id="12-ilk-istek-certok"] svg {
+        position: static;
+        width: 22px;
+        height: 22px;
+      }
+
+      /* ---------- request card ---------- */
+      [id="12-ilk-istek-req"] {
+        position: absolute;
+        left: 560px;
+        top: 404px;
+        width: 600px;
+        height: 120px;
+        z-index: 6;
+        transform-origin: 50% 50%;
+      }
+      [id="12-ilk-istek-reqbody"] {
+        position: absolute;
+        inset: 0;
+        border: 4px solid #0f0f0f;
+        background: #efe9d9;
+        padding: 8px 0;
+        transform-origin: 50% 0;
+      }
+      [class~="12-ilk-istek-reqrow"] {
+        height: 46px;
+        display: flex;
+        align-items: center;
+        padding: 0 18px;
+        font-family: "JetBrains Mono", monospace;
+        font-size: 24px;
+        white-space: nowrap;
+      }
+      [id="12-ilk-istek-reqtok"] {
+        margin-top: 4px;
+        background: #f5c518;
+        border-top: 3px solid #0f0f0f;
+        border-bottom: 3px solid #0f0f0f;
+      }
+
+      /* ---------- callbacks ---------- */
+      [class~="12-ilk-istek-cb"] {
+        position: absolute;
+        left: 560px;
+        height: 48px;
+        border: 3px solid #0f0f0f;
+        background: #efe9d9;
+        display: flex;
+        align-items: center;
+        gap: 14px;
+        padding: 0 16px 0 12px;
+        font-family: "JetBrains Mono", monospace;
+        font-size: 22px;
+        white-space: nowrap;
+        z-index: 2;
+      }
+      [class~="12-ilk-istek-sw"] {
+        width: 22px;
+        height: 22px;
+        border: 2px solid #0f0f0f;
+        flex: none;
+      }
+
+      /* ---------- API server ---------- */
+      [id="12-ilk-istek-api"] {
+        position: absolute;
+        left: 1180px;
+        top: 380px;
+        width: 640px;
+        height: 360px;
+        border: 4px solid #0f0f0f;
+        background: #efe9d9;
+        z-index: 4;
+      }
+      [class~="12-ilk-istek-apihead"] {
+        position: absolute;
+        left: 28px;
+        top: 22px;
+        font-family: "Archivo Black", sans-serif;
+        font-size: 34px;
+        line-height: 0.92;
+        white-space: nowrap;
+      }
+      [class~="12-ilk-istek-apihost"] {
+        position: absolute;
+        left: 28px;
+        top: 62px;
+        font-family: "JetBrains Mono", monospace;
+        font-size: 22px;
+        letter-spacing: 0.02em;
+      }
+      [class~="12-ilk-istek-apirule"] {
+        position: absolute;
+        left: 0;
+        right: 0;
+        top: 100px;
+        height: 3px;
+        background: #0f0f0f;
+      }
+      [class~="12-ilk-istek-chk"] {
+        position: absolute;
+        left: 1208px;
+        height: 40px;
+        display: flex;
+        align-items: center;
+        gap: 16px;
+        font-family: "JetBrains Mono", monospace;
+        font-size: 24px;
+        white-space: nowrap;
+        z-index: 5;
+      }
+      [class~="12-ilk-istek-ok"] {
+        width: 34px;
+        height: 34px;
+        background: #1f8a4c;
+        border: 2px solid #0f0f0f;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        flex: none;
+      }
+      [class~="12-ilk-istek-ok"] svg {
+        width: 26px;
+        height: 26px;
+        display: block;
+      }
+      [id="12-ilk-istek-apinote"] {
+        position: absolute;
+        left: 1180px;
+        top: 756px;
+        font-family: "Space Grotesk", sans-serif;
+        font-size: 24px;
+        line-height: 1.3;
+        white-space: nowrap;
+      }
+
+      /* ---------- 200 OK (the one hard shadow) ---------- */
+      [id="12-ilk-istek-resp"] {
+        position: absolute;
+        left: 560px;
+        top: 420px;
+        width: 280px;
+        height: 104px;
+        border: 4px solid #0f0f0f;
+        background: #1f8a4c;
+        color: #efe9d9;
+        font-family: "Archivo Black", sans-serif;
+        font-size: 58px;
+        line-height: 0.92;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        white-space: nowrap;
+        box-shadow: 24px 24px 0 #e85a1f, 24px 24px 0 4px #0f0f0f;
+        z-index: 3;
+      }
+
+      /* ---------- analogy strip ---------- */
+      [id="12-ilk-istek-analogy"] {
+        position: absolute;
+        left: 96px;
+        top: 824px;
+        height: 60px;
+        border: 2px solid #0f0f0f;
+        background: #e4dcc4;
+        display: flex;
+        align-items: center;
+        gap: 18px;
+        padding: 0 22px 0 10px;
+        white-space: nowrap;
+      }
+      [class~="12-ilk-istek-anlabel"] {
+        background: #0f0f0f;
+        color: #efe9d9;
+        font-family: "JetBrains Mono", monospace;
+        font-size: 18px;
+        letter-spacing: 0.08em;
+        padding: 6px 12px;
+      }
+      [class~="12-ilk-istek-antext"] {
+        font-family: "Space Grotesk", sans-serif;
+        font-size: 26px;
+        line-height: 1.3;
+      }
+    </style>
+
+    <div id="12-ilk-istek-stage" class="clip" data-start="0" data-duration="15.5" data-track-index="0">
+      <!-- chrome -->
+      <div id="12-ilk-istek-topbar">
+        <span>PINVAULT · 3 AKIŞ</span>
+        <span id="12-ilk-istek-pill">HALKA 10 / 10</span>
+      </div>
+      <div id="12-ilk-istek-footer">
+        <span>İlk istek</span>
+        <span id="12-ilk-istek-counter"><span>21</span><span id="12-ilk-istek-dot"></span><span>25</span></span>
+      </div>
+
+      <!-- chain strip: x = 96 + i*174 -->
+      <div class="12-ilk-istek-cell 12-ilk-istek-done" style="left: 96px">1 KURULUM</div>
+      <div class="12-ilk-istek-link" style="left: 256px"></div>
+      <div class="12-ilk-istek-cell 12-ilk-istek-done" style="left: 270px">2 APK</div>
+      <div class="12-ilk-istek-link" style="left: 430px"></div>
+      <div class="12-ilk-istek-cell 12-ilk-istek-done" style="left: 444px">3 HOST</div>
+      <div class="12-ilk-istek-link" style="left: 604px"></div>
+      <div class="12-ilk-istek-cell 12-ilk-istek-done" style="left: 618px">4 TOKEN</div>
+      <div class="12-ilk-istek-link" style="left: 778px"></div>
+      <div class="12-ilk-istek-cell 12-ilk-istek-done" style="left: 792px">5 TELEFONA</div>
+      <div class="12-ilk-istek-link" style="left: 952px"></div>
+      <div class="12-ilk-istek-cell 12-ilk-istek-done" style="left: 966px">6 KAYIT İSTEĞİ</div>
+      <div class="12-ilk-istek-link" style="left: 1126px"></div>
+      <div class="12-ilk-istek-cell 12-ilk-istek-done" style="left: 1140px">7 KART</div>
+      <div class="12-ilk-istek-link" style="left: 1300px"></div>
+      <div class="12-ilk-istek-cell 12-ilk-istek-done" style="left: 1314px">8 PİN LİSTESİ</div>
+      <div class="12-ilk-istek-link" style="left: 1474px"></div>
+      <div class="12-ilk-istek-cell 12-ilk-istek-done" style="left: 1488px">9 BİLET</div>
+      <div class="12-ilk-istek-link" style="left: 1648px"></div>
+      <div class="12-ilk-istek-cell 12-ilk-istek-future" style="left: 1662px">10 İLK İSTEK</div>
+      <div id="12-ilk-istek-nowcell" data-layout-allow-overlap class="12-ilk-istek-cell 12-ilk-istek-now" style="left: 1662px">10 İLK İSTEK</div>
+      <div id="12-ilk-istek-underline"></div>
+
+      <!-- kicker + title -->
+      <div id="12-ilk-istek-kicker">KİM: UYGULAMANIZ · NEREDE: TELEFON → API SUNUCUNUZ</div>
+      <div id="12-ilk-istek-title">İLK GERÇEK İSTEK</div>
+
+      <!-- code line -->
+      <div id="12-ilk-istek-code">
+        <span id="12-ilk-istek-codetext">PinVault.getClient().newCall(GET https://api.ornek.com/siparisler)<span id="12-ilk-istek-codemask"><span id="12-ilk-istek-caret"></span></span></span>
+      </div>
+
+      <!-- wire (drawn left to right) -->
+      <svg id="12-ilk-istek-wire" viewBox="0 0 1920 1080" xmlns="http://www.w3.org/2000/svg">
+        <path id="12-ilk-istek-wirepath" d="M430 560 H1180" fill="none" stroke="#0F0F0F" stroke-width="4" stroke-dasharray="750" stroke-dashoffset="750" />
+      </svg>
+
+      <!-- phone -->
+      <div id="12-ilk-istek-phone">
+        <div class="12-ilk-istek-speaker"></div>
+        <div class="12-ilk-istek-screen">
+          <div class="12-ilk-istek-app">Uygulamanız</div>
+          <div id="12-ilk-istek-pinrow">api.ornek.com → pinli<span id="12-ilk-istek-pinrowon">api.ornek.com → pinli</span></div>
+          <div class="12-ilk-istek-lib">PinVault kütüphanesi</div>
+        </div>
+      </div>
+
+      <!-- certificate card -->
+      <div id="12-ilk-istek-cert">
+        <svg viewBox="0 0 86 58" xmlns="http://www.w3.org/2000/svg">
+          <rect x="10" y="12" width="40" height="6" fill="#0F0F0F" />
+          <rect x="10" y="26" width="30" height="5" fill="#0F0F0F" />
+          <rect x="10" y="38" width="34" height="5" fill="#0F0F0F" />
+          <circle id="12-ilk-istek-certseal" cx="66" cy="34" r="11" fill="#E4DCC4" stroke="#0F0F0F" stroke-width="3" />
+        </svg>
+        <div id="12-ilk-istek-certok"><svg viewBox="0 0 24 24"><polyline points="5,12.5 10,17.5 19,7" fill="none" stroke="#EFE9D9" stroke-width="3.5" stroke-linecap="square" /></svg></div>
+      </div>
+
+      <!-- callbacks -->
+      <div id="12-ilk-istek-cb1" class="12-ilk-istek-cb" style="top: 600px"><span class="12-ilk-istek-sw" style="background: #1f8a4c"></span><span>pin: Halka 8'deki listeden</span></div>
+      <div id="12-ilk-istek-cb2" class="12-ilk-istek-cb" style="top: 662px"><span class="12-ilk-istek-sw" style="background: #f5c518"></span><span>bilet: Halka 9'dan</span></div>
+
+      <!-- 200 OK (starts hidden behind the API box) -->
+      <div id="12-ilk-istek-resp">200 OK</div>
+
+      <!-- API server -->
+      <div id="12-ilk-istek-api">
+        <div class="12-ilk-istek-apihead">API SUNUCUNUZ</div>
+        <div class="12-ilk-istek-apihost">api.ornek.com</div>
+        <div class="12-ilk-istek-apirule"></div>
+      </div>
+      <div id="12-ilk-istek-c1" class="12-ilk-istek-chk" style="top: 590px"><span class="12-ilk-istek-ok"><svg viewBox="0 0 24 24"><polyline points="5,12.5 10,17.5 19,7" fill="none" stroke="#EFE9D9" stroke-width="3.5" stroke-linecap="square" /></svg></span><span class="12-ilk-istek-chktext">imza (HS256) tutuyor</span></div>
+      <div id="12-ilk-istek-c2" class="12-ilk-istek-chk" style="top: 638px"><span class="12-ilk-istek-ok"><svg viewBox="0 0 24 24"><polyline points="5,12.5 10,17.5 19,7" fill="none" stroke="#EFE9D9" stroke-width="3.5" stroke-linecap="square" /></svg></span><span class="12-ilk-istek-chktext">süresi geçmemiş</span></div>
+      <div id="12-ilk-istek-c3" class="12-ilk-istek-chk" style="top: 686px"><span class="12-ilk-istek-ok"><svg viewBox="0 0 24 24"><polyline points="5,12.5 10,17.5 19,7" fill="none" stroke="#EFE9D9" stroke-width="3.5" stroke-linecap="square" /></svg></span><span class="12-ilk-istek-chktext">aud: mtls-8092</span></div>
+      <div id="12-ilk-istek-apinote">PinVault'a sormaz; sırrı Halka 3'te almıştı.</div>
+
+      <!-- request card -->
+      <div id="12-ilk-istek-req">
+        <div id="12-ilk-istek-reqbody">
+          <div id="12-ilk-istek-reqget" class="12-ilk-istek-reqrow">GET /siparisler</div>
+          <div id="12-ilk-istek-reqtok" class="12-ilk-istek-reqrow">PinVault-Token: eyJhbGciOiJIUzI1NiIs…</div>
+        </div>
+      </div>
+
+      <!-- analogy strip -->
+      <div id="12-ilk-istek-analogy">
+        <span class="12-ilk-istek-anlabel">BENZETME</span>
+        <span class="12-ilk-istek-antext">Çalışan ofise gider; kapıdaki görevli kartın listede, bandın geçerli olduğuna kendisi bakar.</span>
+      </div>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/gsap@3.14.2/dist/gsap.min.js"></script>
+    <script>
+      (function () {
+        var FID = "12-ilk-istek";
+        var host = document.querySelector('[data-composition-id="' + FID + '"]') || document;
+        var $ = function (n) {
+          return host.querySelector('[id="' + FID + "-" + n + '"]');
+        };
+
+        var tl = gsap.timeline({ paused: true });
+        var SOFT = "power3.out";
+        var TRAVEL = "power3.inOut";
+
+        // ---------- Scene 1 (0.0–1.5): chain current cell, kicker, title, phone ----------
+        tl.fromTo($("nowcell"), { opacity: 0 }, { opacity: 1, duration: 0.6, ease: SOFT }, 0.2);
+        tl.fromTo($("underline"), { scaleX: 0 }, { scaleX: 1, duration: 0.6, ease: SOFT }, 0.2);
+        tl.fromTo($("kicker"), { opacity: 0, x: -24 }, { opacity: 1, x: 0, duration: 0.5, ease: SOFT }, 0.15);
+        tl.fromTo($("title"), { opacity: 0, y: 30 }, { opacity: 1, y: 0, duration: 0.8, ease: SOFT }, 0.4);
+        tl.fromTo($("phone"), { opacity: 0, y: 40 }, { opacity: 1, y: 0, duration: 0.8, ease: SOFT }, 0.9);
+
+        // ---------- Scene 2 (1.5–4.0): code line types above the phone; API box arrives ----------
+        tl.fromTo($("code"), { opacity: 0, y: 16 }, { opacity: 1, y: 0, duration: 0.4, ease: SOFT }, 1.5);
+        tl.fromTo($("codemask"), { xPercent: 0 }, { xPercent: 100, duration: 1.9, ease: "steps(66)" }, 1.75);
+        tl.fromTo($("api"), { opacity: 0, y: 30 }, { opacity: 1, y: 0, duration: 0.6, ease: SOFT }, 3.3);
+
+        // ---------- Scene 3 (4.0–7.5): wire, certificate meets the pin, callback 1, request card, callback 2 ----------
+        tl.fromTo(
+          $("wirepath"),
+          { attr: { "stroke-dashoffset": 750 } },
+          { attr: { "stroke-dashoffset": 0 }, duration: 0.6, ease: "power2.inOut" },
+          4.0
+        );
+        // certificate leaves the API box (hidden behind it) and slides left to the phone
+        tl.fromTo($("cert"), { opacity: 0 }, { opacity: 1, duration: 0.1 }, 4.65);
+        tl.fromTo($("cert"), { x: 760 }, { x: 0, duration: 0.75, ease: TRAVEL }, 4.65);
+        tl.fromTo($("certok"), { opacity: 0, scale: 0.4 }, { opacity: 1, scale: 1, duration: 0.3, ease: SOFT }, 5.45);
+        tl.fromTo($("certseal"), { attr: { fill: "#E4DCC4" } }, { attr: { fill: "#1F8A4C" }, duration: 0.3, ease: SOFT }, 5.45);
+        tl.fromTo($("pinrowon"), { opacity: 0 }, { opacity: 1, duration: 0.35, ease: SOFT }, 5.45);
+        tl.fromTo($("cb1"), { opacity: 0, y: 14 }, { opacity: 1, y: 0, duration: 0.5, ease: SOFT }, 5.75);
+        // request card opens above the wire
+        tl.fromTo($("reqbody"), { opacity: 0, scaleY: 0.1 }, { opacity: 1, scaleY: 1, duration: 0.45, ease: SOFT }, 6.1);
+        tl.fromTo($("reqget"), { opacity: 0, x: -16 }, { opacity: 1, x: 0, duration: 0.4, ease: SOFT }, 6.4);
+        tl.fromTo($("reqtok"), { opacity: 0, x: -16 }, { opacity: 1, x: 0, duration: 0.4, ease: SOFT }, 6.75);
+        tl.fromTo($("cb2"), { opacity: 0, y: 14 }, { opacity: 1, y: 0, duration: 0.5, ease: SOFT }, 7.1);
+
+        // ---------- Scene 4 (7.5–11.5): card slides into the API box, three checks, note ----------
+        // card centre (860,464) -> dock centre (1394,536), scaled to 0.62
+        tl.fromTo($("req"), { x: 0, y: 0, scale: 1 }, { x: 534, y: 72, scale: 0.62, duration: 0.9, ease: TRAVEL }, 7.55);
+        ["c1", "c2", "c3"].forEach(function (id, i) {
+          var at = 8.6 + i * 0.7;
+          var row = $(id);
+          var ok = row.querySelector('[class~="' + FID + '-ok"]');
+          var txt = row.querySelector('[class~="' + FID + '-chktext"]');
+          tl.fromTo(txt, { opacity: 0, x: -14 }, { opacity: 1, x: 0, duration: 0.4, ease: SOFT }, at);
+          tl.fromTo(ok, { opacity: 0, scale: 0.4 }, { opacity: 1, scale: 1, duration: 0.3, ease: SOFT }, at + 0.15);
+        });
+        tl.fromTo($("apinote"), { opacity: 0, y: 12 }, { opacity: 1, y: 0, duration: 0.5, ease: SOFT }, 10.5);
+
+        // ---------- Scene 5 (11.5–15.0): 200 OK returns to the phone, analogy, hold ----------
+        tl.fromTo($("resp"), { opacity: 0 }, { opacity: 1, duration: 0.1 }, 11.6);
+        tl.fromTo($("resp"), { x: 740 }, { x: 0, duration: 0.95, ease: TRAVEL }, 11.6);
+        tl.fromTo($("analogy"), { opacity: 0, y: 16 }, { opacity: 1, y: 0, duration: 0.6, ease: SOFT }, 12.7);
+        tl.to({}, { duration: 0.01 }, 14.99);
+
+        window.__timelines = window.__timelines || {};
+        window.__timelines[FID] = tl;
+      })();
+    </script>
+  </div>
+</template>

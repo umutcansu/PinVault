@@ -1,0 +1,524 @@
+<template id="03-kurulum-template">
+  <div id="root" data-composition-id="03-kurulum" data-start="0" data-duration="15.5" data-width="1920" data-height="1080" lang="tr">
+    <style>
+      @import url("https://fonts.googleapis.com/css2?family=Archivo+Black&family=JetBrains+Mono:wght@400;700&family=Space+Grotesk:wght@400;500&display=block");
+
+      #root {
+        position: relative;
+        width: 1920px;
+        height: 1080px;
+        overflow: hidden;
+      }
+      [data-composition-id="03-kurulum"] * {
+        margin: 0;
+        padding: 0;
+        box-sizing: border-box;
+      }
+
+      /* full-bleed ground (clip layer, not #root) */
+      [id="03-kurulum-stage"] {
+        position: absolute;
+        inset: 0;
+        width: 1920px;
+        height: 1080px;
+        background: #efe9d9;
+        container-type: size;
+        overflow: hidden;
+        color: #0f0f0f;
+      }
+
+      /* ---------- chrome ---------- */
+      [id="03-kurulum-topbar"] {
+        position: absolute;
+        top: 48px;
+        left: 64px;
+        right: 64px;
+        height: 44px;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        font-family: "JetBrains Mono", monospace;
+        font-size: 22px;
+        letter-spacing: 0.06em;
+        color: #0f0f0f;
+      }
+      [id="03-kurulum-pill"] {
+        border: 4px solid #0f0f0f;
+        border-radius: 999px;
+        background: #efe9d9;
+        padding: 4px 20px;
+        line-height: 1.3;
+      }
+      [id="03-kurulum-footer"] {
+        position: absolute;
+        bottom: 48px;
+        left: 64px;
+        right: 64px;
+        height: 32px;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        font-family: "JetBrains Mono", monospace;
+        font-size: 22px;
+        letter-spacing: 0.06em;
+        color: #0f0f0f;
+      }
+      [id="03-kurulum-counter"] {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+      }
+      [id="03-kurulum-dot"] {
+        width: 10px;
+        height: 10px;
+        border-radius: 50%;
+        background: #0f0f0f;
+      }
+
+      /* ---------- chain strip (fixed geometry) ---------- */
+      [class~="03-kurulum-cell"] {
+        position: absolute;
+        top: 104px;
+        width: 160px;
+        height: 40px;
+        border: 2px solid #0f0f0f;
+        background: #efe9d9;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-family: "JetBrains Mono", monospace;
+        font-size: 15px;
+        letter-spacing: 0.02em;
+        white-space: nowrap;
+        color: #0f0f0f;
+      }
+      [class~="03-kurulum-future"] {
+        opacity: 0.35;
+      }
+      [class~="03-kurulum-link"] {
+        position: absolute;
+        top: 123px;
+        width: 14px;
+        height: 2px;
+        background: #0f0f0f;
+      }
+      [id="03-kurulum-current"] {
+        position: absolute;
+        left: 96px;
+        top: 104px;
+        width: 160px;
+        height: 40px;
+        border: 4px solid #0f0f0f;
+        background: #efe9d9;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-family: "JetBrains Mono", monospace;
+        font-size: 15px;
+        letter-spacing: 0.02em;
+        white-space: nowrap;
+        color: #0f0f0f;
+        z-index: 2;
+      }
+      [id="03-kurulum-underline"] {
+        position: absolute;
+        left: 96px;
+        top: 148px;
+        width: 160px;
+        height: 4px;
+        background: #f5c518;
+        transform-origin: 0 50%;
+      }
+
+      /* ---------- kicker + title ---------- */
+      [id="03-kurulum-kicker"] {
+        position: absolute;
+        left: 96px;
+        top: 166px;
+        background: #0f0f0f;
+        color: #efe9d9;
+        font-family: "JetBrains Mono", monospace;
+        font-size: 20px;
+        letter-spacing: 0.08em;
+        line-height: 1.25;
+        white-space: nowrap;
+        padding: 8px 16px;
+      }
+      [id="03-kurulum-title"] {
+        position: absolute;
+        left: 96px;
+        top: 220px;
+        font-family: "Archivo Black", sans-serif;
+        font-size: 80px;
+        line-height: 0.92;
+        letter-spacing: -0.01em;
+        white-space: nowrap;
+      }
+
+      /* ---------- PinVault server ---------- */
+      [id="03-kurulum-server"] {
+        position: absolute;
+        left: 150px;
+        top: 330px;
+        width: 400px;
+        height: 170px;
+        border: 4px solid #0f0f0f;
+        background: #e4dcc4;
+        z-index: 4;
+      }
+      [class~="03-kurulum-srvhead"] {
+        height: 50px;
+        background: #0f0f0f;
+        color: #efe9d9;
+        font-family: "JetBrains Mono", monospace;
+        font-size: 22px;
+        letter-spacing: 0.04em;
+        display: flex;
+        align-items: center;
+        padding: 0 18px 0 30px;
+      }
+      [class~="03-kurulum-port"] {
+        position: absolute;
+        left: 96px;
+        width: 60px;
+        height: 24px;
+        border: 2px solid #0f0f0f;
+        background: #efe9d9;
+        font-family: "JetBrains Mono", monospace;
+        font-size: 15px;
+        letter-spacing: 0.02em;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        z-index: 5;
+      }
+      [id="03-kurulum-line1"] {
+        position: absolute;
+        left: 196px;
+        top: 516px;
+        width: 704px;
+        font-family: "Space Grotesk", sans-serif;
+        font-size: 24px;
+        line-height: 1.3;
+        color: #0f0f0f;
+      }
+
+      /* ---------- generated files ---------- */
+      [id="03-kurulum-fileshead"] {
+        position: absolute;
+        left: 196px;
+        top: 598px;
+        font-family: "JetBrains Mono", monospace;
+        font-size: 20px;
+        letter-spacing: 0.12em;
+        white-space: nowrap;
+        color: #0f0f0f;
+      }
+      [class~="03-kurulum-sq"] {
+        position: absolute;
+        left: 150px;
+        width: 24px;
+        height: 24px;
+        border: 3px solid #0f0f0f;
+        background: #efe9d9;
+        z-index: 3;
+      }
+      [class~="03-kurulum-file"] {
+        position: absolute;
+        left: 196px;
+        height: 34px;
+        display: flex;
+        align-items: center;
+        font-family: "JetBrains Mono", monospace;
+        font-size: 21px;
+        letter-spacing: 0;
+        white-space: nowrap;
+        color: #0f0f0f;
+      }
+
+      /* ---------- panel screen ---------- */
+      [id="03-kurulum-panel"] {
+        position: absolute;
+        left: 940px;
+        top: 330px;
+        width: 884px;
+        height: 376px;
+        border: 4px solid #0f0f0f;
+        background: #efe9d9;
+        z-index: 2;
+      }
+      [class~="03-kurulum-panelhead"] {
+        height: 50px;
+        background: #0f0f0f;
+        color: #efe9d9;
+        font-family: "JetBrains Mono", monospace;
+        font-size: 20px;
+        letter-spacing: 0.04em;
+        display: flex;
+        align-items: center;
+        padding: 0 22px;
+        white-space: nowrap;
+      }
+      [class~="03-kurulum-label"] {
+        position: absolute;
+        left: 30px;
+        font-family: "Space Grotesk", sans-serif;
+        font-size: 24px;
+        font-weight: 500;
+        line-height: 1.3;
+        white-space: nowrap;
+      }
+      [class~="03-kurulum-input"] {
+        position: absolute;
+        left: 30px;
+        width: 816px;
+        height: 56px;
+        border: 3px solid #0f0f0f;
+        background: #e4dcc4;
+        display: flex;
+        align-items: center;
+        padding: 0 18px;
+        font-family: "JetBrains Mono", monospace;
+        white-space: pre;
+      }
+      [id="03-kurulum-v1"] {
+        font-size: 28px;
+        letter-spacing: 0.02em;
+        color: #0f0f0f;
+      }
+      [id="03-kurulum-v2"] {
+        font-size: 22px;
+        color: rgba(15, 15, 15, 0.5);
+      }
+      [id="03-kurulum-btn"] {
+        position: absolute;
+        left: 30px;
+        top: 302px;
+        width: 180px;
+        height: 54px;
+        border: 3px solid #0f0f0f;
+        background: #efe9d9;
+        font-family: "Space Grotesk", sans-serif;
+        font-size: 26px;
+        font-weight: 500;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        transform-origin: 50% 50%;
+      }
+      [id="03-kurulum-btnfill"] {
+        position: absolute;
+        inset: 0;
+        background: #0f0f0f;
+        color: #efe9d9;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+      }
+      [id="03-kurulum-note"] {
+        position: absolute;
+        left: 940px;
+        top: 726px;
+        width: 884px;
+        font-family: "Space Grotesk", sans-serif;
+        font-size: 24px;
+        line-height: 1.3;
+        color: #0f0f0f;
+      }
+
+      /* ---------- analogy strip + footnote ---------- */
+      [id="03-kurulum-analogy"] {
+        position: absolute;
+        left: 96px;
+        top: 830px;
+        height: 50px;
+        border: 2px solid #0f0f0f;
+        background: #e4dcc4;
+        display: flex;
+        align-items: center;
+        gap: 18px;
+        padding: 0 22px 0 8px;
+        white-space: nowrap;
+      }
+      [class~="03-kurulum-tag"] {
+        background: #0f0f0f;
+        color: #efe9d9;
+        font-family: "JetBrains Mono", monospace;
+        font-size: 18px;
+        letter-spacing: 0.12em;
+        padding: 5px 12px;
+      }
+      [class~="03-kurulum-analogytext"] {
+        font-family: "Space Grotesk", sans-serif;
+        font-size: 26px;
+        line-height: 1;
+      }
+      [id="03-kurulum-footnote"] {
+        position: absolute;
+        right: 96px;
+        top: 844px;
+        font-family: "JetBrains Mono", monospace;
+        font-size: 18px;
+        letter-spacing: 0.02em;
+        white-space: nowrap;
+        color: #0f0f0f;
+      }
+    </style>
+
+    <div id="03-kurulum-stage" class="clip" data-start="0" data-duration="15.5" data-track-index="0">
+      <!-- chrome -->
+      <div id="03-kurulum-topbar">
+        <span>PINVAULT · 3 AKIŞ</span>
+        <span id="03-kurulum-pill">HALKA 1 / 10</span>
+      </div>
+      <div id="03-kurulum-footer">
+        <span>Kurulum</span>
+        <span id="03-kurulum-counter"><span>12</span><span id="03-kurulum-dot"></span><span>25</span></span>
+      </div>
+
+      <!-- chain strip: cells at x = 96 + i*174, links in the 14px gaps -->
+      <div class="03-kurulum-cell 03-kurulum-future" style="left: 96px">1 KURULUM</div>
+      <div class="03-kurulum-cell 03-kurulum-future" style="left: 270px">2 APK</div>
+      <div class="03-kurulum-cell 03-kurulum-future" style="left: 444px">3 HOST</div>
+      <div class="03-kurulum-cell 03-kurulum-future" style="left: 618px">4 TOKEN</div>
+      <div class="03-kurulum-cell 03-kurulum-future" style="left: 792px">5 TELEFONA</div>
+      <div class="03-kurulum-cell 03-kurulum-future" style="left: 966px">6 KAYIT İSTEĞİ</div>
+      <div class="03-kurulum-cell 03-kurulum-future" style="left: 1140px">7 KART</div>
+      <div class="03-kurulum-cell 03-kurulum-future" style="left: 1314px">8 PİN LİSTESİ</div>
+      <div class="03-kurulum-cell 03-kurulum-future" style="left: 1488px">9 BİLET</div>
+      <div class="03-kurulum-cell 03-kurulum-future" style="left: 1662px">10 İLK İSTEK</div>
+      <div class="03-kurulum-link 03-kurulum-future" style="left: 256px"></div>
+      <div class="03-kurulum-link 03-kurulum-future" style="left: 430px"></div>
+      <div class="03-kurulum-link 03-kurulum-future" style="left: 604px"></div>
+      <div class="03-kurulum-link 03-kurulum-future" style="left: 778px"></div>
+      <div class="03-kurulum-link 03-kurulum-future" style="left: 952px"></div>
+      <div class="03-kurulum-link 03-kurulum-future" style="left: 1126px"></div>
+      <div class="03-kurulum-link 03-kurulum-future" style="left: 1300px"></div>
+      <div class="03-kurulum-link 03-kurulum-future" style="left: 1474px"></div>
+      <div class="03-kurulum-link 03-kurulum-future" style="left: 1648px"></div>
+      <div id="03-kurulum-current" data-layout-allow-overlap>1 KURULUM</div>
+      <div id="03-kurulum-underline"></div>
+
+      <!-- kicker + title -->
+      <div id="03-kurulum-kicker">KİM: YÖNETİCİ · NEREDE: SUNUCU MAKİNESİ VE PANEL</div>
+      <div id="03-kurulum-title">SUNUCU KURULUR</div>
+
+      <!-- generated-file squares: start hidden behind the server body -->
+      <div id="03-kurulum-sq4" class="03-kurulum-sq" style="top: 769px; background: #f5c518"></div>
+      <div id="03-kurulum-sq3" class="03-kurulum-sq" style="top: 727px"></div>
+      <div id="03-kurulum-sq2" class="03-kurulum-sq" style="top: 685px; background: #f06ca8"></div>
+      <div id="03-kurulum-sq1" class="03-kurulum-sq" style="top: 643px; background: #e4dcc4"></div>
+
+      <!-- PinVault server -->
+      <div id="03-kurulum-server">
+        <div class="03-kurulum-srvhead">PinVault sunucusu</div>
+      </div>
+      <div id="03-kurulum-p1" class="03-kurulum-port" style="top: 386px">8090</div>
+      <div id="03-kurulum-p2" class="03-kurulum-port" style="top: 414px">8091</div>
+      <div id="03-kurulum-p3" class="03-kurulum-port" style="top: 442px">8092</div>
+      <div id="03-kurulum-p4" class="03-kurulum-port" style="top: 470px">8093</div>
+
+      <div id="03-kurulum-line1">Docker ile açılır. Parolalar ve yönetici anahtarı verilmeden açılmaz.</div>
+
+      <!-- generated files -->
+      <div id="03-kurulum-fileshead">İLK AÇILIŞTA KENDİSİ ÜRETİR</div>
+      <div id="03-kurulum-f1" class="03-kurulum-file" style="top: 638px">sunucu sertifikası + yedeği → pin'leri APK'ya gidecek</div>
+      <div id="03-kurulum-f2" class="03-kurulum-file" style="top: 680px">istemci CA'sı → cihaz kartlarını imzalar</div>
+      <div id="03-kurulum-f3" class="03-kurulum-file" style="top: 722px">sunucu CA'sı → kurtarma kapısı (8093)</div>
+      <div id="03-kurulum-f4" class="03-kurulum-file" style="top: 764px">imza anahtarı → pin listesini mühürler</div>
+
+      <!-- panel screen: setup wizard -->
+      <div id="03-kurulum-panel">
+        <div class="03-kurulum-panelhead">Panel · 8090 · Kurulum Sihirbazı · 1 · Sunucu</div>
+        <div id="03-kurulum-l1" class="03-kurulum-label" style="top: 72px">Telefonların sunucuya ulaştığı adres</div>
+        <div class="03-kurulum-input" style="top: 108px"><span id="03-kurulum-v1">192.168.1.80</span></div>
+        <div id="03-kurulum-l2" class="03-kurulum-label" style="top: 186px">Port eşlemesi</div>
+        <div class="03-kurulum-input" style="top: 222px"><span id="03-kurulum-v2">boş · Docker dışarıda başka numara verirse doldurulur</span></div>
+        <div id="03-kurulum-btn">Kaydet<div id="03-kurulum-btnfill">Kaydet</div></div>
+      </div>
+      <div id="03-kurulum-note">Kaydedip sunucuyu yeniden başlatırsınız. mTLS kapısını (8092) panelde “+ Config API” ile açarsınız.</div>
+
+      <!-- analogy strip + footnote -->
+      <div id="03-kurulum-analogy">
+        <span class="03-kurulum-tag">BENZETME</span>
+        <span class="03-kurulum-analogytext">Bina açılır; kapı mühürleri ve kart basma makinesi hazırlanır.</span>
+      </div>
+      <div id="03-kurulum-footnote">Kapı numaraları demo kurulumundan (PORT=8090).</div>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/gsap@3.14.2/dist/gsap.min.js"></script>
+    <script>
+      (function () {
+        var FID = "03-kurulum";
+        var host = document.querySelector('[data-composition-id="' + FID + '"]') || document;
+        var $ = function (n) {
+          return host.querySelector('[id="' + FID + "-" + n + '"]');
+        };
+
+        var tl = gsap.timeline({ paused: true });
+        var SOFT = "power3.out";
+
+        // type a value letter by letter (one span per character, revealed in order)
+        function typeIn(el, start, per) {
+          var chars = Array.from(el.textContent);
+          el.textContent = "";
+          chars.forEach(function (c, i) {
+            var s = document.createElement("span");
+            s.textContent = c;
+            el.appendChild(s);
+            tl.fromTo(s, { opacity: 0 }, { opacity: 1, duration: 0.01, ease: "none" }, start + i * per);
+          });
+          return start + chars.length * per;
+        }
+
+        // ---------- Scene 1 (0.0–1.5): strip already standing; current link settles; kicker, title ----------
+        tl.fromTo($("current"), { opacity: 0 }, { opacity: 1, duration: 0.6, ease: SOFT }, 0.2);
+        tl.fromTo($("underline"), { scaleX: 0 }, { scaleX: 1, duration: 0.6, ease: SOFT }, 0.2);
+        tl.fromTo($("kicker"), { opacity: 0, x: -20 }, { opacity: 1, x: 0, duration: 0.5, ease: SOFT }, 0.3);
+        tl.fromTo($("title"), { opacity: 0, y: 28 }, { opacity: 1, y: 0, duration: 0.8, ease: SOFT }, 0.6);
+
+        // ---------- Scene 2 (1.5–4.0): server box settles, ports, line 1 ----------
+        tl.fromTo($("server"), { opacity: 0, y: 30 }, { opacity: 1, y: 0, duration: 0.7, ease: SOFT }, 1.5);
+        ["p1", "p2", "p3", "p4"].forEach(function (p, i) {
+          tl.fromTo($(p), { opacity: 0, x: -14 }, { opacity: 1, x: 0, duration: 0.4, ease: SOFT }, 1.9 + i * 0.1);
+        });
+        tl.fromTo($("line1"), { opacity: 0, y: 14 }, { opacity: 1, y: 0, duration: 0.6, ease: SOFT }, 2.5);
+
+        // ---------- Scene 3 (4.0–8.0): files come out of the server box, ~0.8 s apart ----------
+        tl.fromTo($("fileshead"), { opacity: 0, x: -16 }, { opacity: 1, x: 0, duration: 0.5, ease: SOFT }, 4.0);
+        var BODY_Y = 440; // square starts here, hidden behind the opaque server body
+        var sqTops = [643, 685, 727, 769];
+        [1, 2, 3, 4].forEach(function (n, i) {
+          var at = 4.6 + i * 0.8;
+          tl.fromTo(
+            $("sq" + n),
+            { y: BODY_Y - sqTops[i], opacity: 0 },
+            { y: 0, opacity: 1, duration: 0.6, ease: SOFT },
+            at
+          );
+          tl.fromTo($("f" + n), { opacity: 0, x: -14 }, { opacity: 1, x: 0, duration: 0.5, ease: SOFT }, at + 0.35);
+        });
+
+        // ---------- Scene 4 (8.0–12.0): panel opens, fields typed, Kaydet pressed, note ----------
+        tl.fromTo($("panel"), { opacity: 0, y: 30 }, { opacity: 1, y: 0, duration: 0.7, ease: SOFT }, 8.0);
+        tl.fromTo($("l1"), { opacity: 0 }, { opacity: 1, duration: 0.4, ease: SOFT }, 8.4);
+        typeIn($("v1"), 8.75, 0.04);
+        tl.fromTo($("l2"), { opacity: 0 }, { opacity: 1, duration: 0.4, ease: SOFT }, 9.4);
+        typeIn($("v2"), 9.7, 0.024);
+        tl.fromTo($("btn"), { opacity: 0 }, { opacity: 1, duration: 0.4, ease: SOFT }, 8.4);
+        tl.fromTo($("btn"), { scale: 1 }, { scale: 0.92, duration: 0.1, ease: "power2.in" }, 11.0);
+        tl.fromTo($("btnfill"), { opacity: 0 }, { opacity: 1, duration: 0.1, ease: "none" }, 11.05);
+        tl.to($("btn"), { scale: 1, duration: 0.4, ease: SOFT }, 11.1);
+        tl.fromTo($("note"), { opacity: 0, y: 14 }, { opacity: 1, y: 0, duration: 0.6, ease: SOFT }, 11.4);
+
+        // ---------- Scene 5 (12.0–15.0): analogy strip, footnote, hold ----------
+        tl.fromTo($("analogy"), { opacity: 0, x: -24 }, { opacity: 1, x: 0, duration: 0.6, ease: SOFT }, 12.0);
+        tl.fromTo($("footnote"), { opacity: 0 }, { opacity: 1, duration: 0.5, ease: SOFT }, 12.8);
+        tl.to({}, { duration: 0.01 }, 14.99);
+
+        window.__timelines = window.__timelines || {};
+        window.__timelines[FID] = tl;
+      })();
+    </script>
+  </div>
+</template>

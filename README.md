@@ -1756,6 +1756,18 @@ Once the branch is merged, replace `claude/sharp-euler-uf519f` in the URL
 with `main`. Offline: download the source file and double-click it; it has
 no external dependencies.
 
+### Presentation film (Turkish)
+
+The one to show first: a silent 5:08 film in three parts. It starts with the
+purpose (what SSL pinning is, why normal TLS is not enough, and what pinning
+alone leaves open), then what PinVault adds, then the whole flow from the
+server's first start to the first protected API call.
+
+[▶ pinvault-sunum.tr.mp4](docs/animation/pinvault-sunum.tr.mp4) (1920×1080,
+8.2 MB), built from
+[`docs/animation/video/pinvault-sunum/`](docs/animation/video/pinvault-sunum).
+The two videos below are its shorter parts.
+
 ### Explainer video (Turkish)
 
 A silent 2:49 video that introduces the animation one level up: the problem,
