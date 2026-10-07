@@ -79,6 +79,14 @@ pooled connections without checking their certificates again, so PinVault
 rebuilds its sessions whenever pins, identities or routing change. Use the
 returned `PinnedSession` for every request.
 
+A pinned session never continues in plain HTTP: a redirect from `https` to
+`http` is not followed, the 3xx is returned and your code decides. That holds
+for `session()`, `session(settings:)` and `applyTo` alike (OkHttp follows such
+redirects by default; PinVault for iOS does not). A backend that must redirect
+into the clear needs an explicit opt-in, which never reaches the library's own
+sessions: `applyTo(configuration, followCleartextRedirects: true)` or
+`HttpConnectionSettings(followCleartextRedirects: true)`.
+
 ### Hosts that resolve elsewhere
 
 The counterpart of OkHttp's `Dns`: the request goes to the given address,
@@ -139,7 +147,21 @@ if case .unlocked(_, _, let bytes) = unlocked { use(bytes) }
   wraps for iOS keys with it (Android keys stay `RSA-OAEP-SHA256`, MGF1-SHA1).
 - The screen-lock key is `SecAccessControl(.userPresence)`; `unlockFile`
   evaluates `.deviceOwnerAuthentication` and opens the key with that context
-  (one Face ID / passcode prompt).
+  (one Face ID / passcode prompt). Enrolling a new face or finger does not
+  retire that key; removing the passcode does.
+- **Biometrics only** (MASVS L2, MASTG-TEST-0064): `PinVaultConfig.Builder()
+  .userAuthBiometricOnly()` (= `.userAuthStrength(.biometricCurrentSet)`) makes
+  the key with `.biometryCurrentSet` and evaluates
+  `.deviceOwnerAuthenticationWithBiometrics`: no passcode fallback ("Enter
+  Passcode" cancels), and the key dies with the enrolled set — a new or
+  removed face or finger makes the next `unlockFile` return `.invalidated`,
+  every locked copy is deleted and `fetchFile` downloads them again with a new
+  key (which the server registers anew, under its replacement rules). A device
+  without biometrics counts as having no screen lock for `userAuth` files
+  (`.required` files are not stored); a biometric lockout makes the unlock fail
+  until the user unlocks the device with the passcode. One key serves every
+  locked file, so this is a config-wide choice; the default stays biometrics
+  or passcode.
 - Stored files live under `Library/Application Support/pinvault/`, encrypted,
   excluded from backups; their keys are `ThisDeviceOnly` Keychain items.
 
@@ -187,6 +209,17 @@ It runs `swift test` on the Mac, the package tests on the simulator, and the
 two app-hosted Keychain suites (SwiftPM's test runner has no Keychain access on
 the simulator). Without a simulator id it runs the Mac suites only. The test
 fixtures are throwaway keys and certificates (`Tests/PinVaultTests/Fixtures/README.md`).
+
+Runtimes: CI should run the simulator suites on the **oldest iOS runtime Xcode
+still ships (18.0)** and on the **current one**, so that Keychain behaviour that
+differs between versions is covered where it can be (iOS 16 and 17 simulators no
+longer ship, so the library's calls there are checked by reading Apple's
+sources rather than by running them). `PKCS12ImportKeychainTests` in the identity
+host suite is the one that depends on it: it checks that opening a PKCS12
+(`SecPKCS12Import`, with `kSecImportToMemoryOnly` on iOS 18+ and without it
+before, as iOS 16–17 get it) leaves nothing in the Keychain and opens the same
+bundle again and again. Apple's header documents memory-only as the iOS default
+on every version; the test makes sure a runtime does not drift from that.
 
 End to end against the sample host, with the SwiftUI sample app
 ([`sample-client-ios/`](../sample-client-ios)): `cd sample-e2e && npm run test:ios`

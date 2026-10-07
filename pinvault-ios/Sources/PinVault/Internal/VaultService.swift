@@ -110,12 +110,16 @@ final class VaultService: Sendable {
         onFileRemoved: @escaping @Sendable (_ key: String, _ result: VaultFileResult) -> Void,
         deviceIdentity: DeviceIdentityProvider? = nil,
         environment: SecureStoreEnvironment = .shared,
-        evaluator: any UserAuthEvaluator = SystemUserAuthEvaluator(),
+        evaluator: (any UserAuthEvaluator)? = nil,
         appAttestation: (@Sendable (Data) async -> String?)? = nil
     ) throws -> VaultService {
         let files = config.orderedVaultFiles
+        // The system evaluator asks for what the key is bound to (`userAuthStrength`).
+        let evaluator = evaluator ?? SystemUserAuthEvaluator(strength: config.userAuthStrength)
         let userAuthKeys: (any UserAuthKeys)? = files.contains { $0.userAuth != .none }
-            ? KeychainUserAuthKeys(evaluator: evaluator, requireHardwareBacked: config.requireHardwareBackedKeys)
+            ? KeychainUserAuthKeys(
+                evaluator: evaluator, requireHardwareBacked: config.requireHardwareBackedKeys, strength: config.userAuthStrength
+            )
             : nil
         let deviceKeys: (any DeviceKeyProvider)?
         if files.contains(where: { $0.encryption == .endToEnd }) {

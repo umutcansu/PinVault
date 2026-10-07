@@ -21,6 +21,31 @@ public enum UserAuth: String, Sendable, Equatable, Hashable, CaseIterable {
     case ifScreenLock = "IF_SCREEN_LOCK"
 }
 
+/// What the unlock prompt of ``UserAuth`` files accepts, and what the key
+/// behind them is bound to (iOS; `PinVaultConfig.Builder.userAuthStrength(_:)`).
+/// One key serves every locked file of the device, so this is a config-wide
+/// choice. Android has no counterpart: its key is bound to the screen lock
+/// (see the Kotlin `UserAuth` docs).
+public enum UserAuthStrength: String, Sendable, Equatable, Hashable, CaseIterable {
+    /// Face ID / Touch ID **or the device passcode** (default): the key is
+    /// `SecAccessControl(.userPresence)` and the prompt evaluates
+    /// `.deviceOwnerAuthentication`. Enrolling or removing a face or finger
+    /// does not retire the key; removing the passcode does.
+    case deviceOwner = "DEVICE_OWNER"
+    /// **Biometrics only, bound to the enrolled set**: the key is
+    /// `SecAccessControl(.biometryCurrentSet)` and the prompt evaluates
+    /// `.deviceOwnerAuthenticationWithBiometrics` — no passcode fallback (the
+    /// "Enter Passcode" button cancels). Enrolling a new face or finger, or
+    /// removing the last one, retires the key: the next unlock reports
+    /// ``VaultFileUnlockResult/invalidated(key:)``, every locked copy is
+    /// deleted and `fetchFile` downloads them again with a new key. A device
+    /// without biometrics enrolled counts as having no screen lock for
+    /// ``UserAuth`` files (`.required` files are not stored), and a biometric
+    /// lockout (too many failed attempts) makes the unlock fail until the
+    /// user unlocks the device with the passcode. MASVS L2 (MASTG-TEST-0064).
+    case biometricCurrentSet = "BIOMETRIC_CURRENT_SET"
+}
+
 /// Texts of the unlock prompt. iOS shows `description` (else `subtitle`, else
 /// `title`) as the LocalAuthentication reason; `negativeButtonText` is the
 /// cancel title where the system allows one.

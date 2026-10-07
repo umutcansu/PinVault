@@ -2,14 +2,17 @@ import Foundation
 import Security
 
 /// How the user-auth key is opened (Kotlin `UserAuthKeyKind`). The iOS key is
-/// always ``perUse``: every unlock evaluates the device owner policy (Face ID,
-/// Touch ID or the passcode) and the key is used with that evaluated context.
-/// The other two kinds exist on Android 7–10 and are kept so the shared
+/// ``perUse`` (``UserAuthStrength/deviceOwner``: every unlock evaluates the
+/// device owner policy — Face ID, Touch ID or the passcode) or
+/// ``perUseBiometric`` (``UserAuthStrength/biometricCurrentSet``: biometrics
+/// only, bound to the enrolled set), and the key is used with the evaluated
+/// context. ``timeBound`` exists on Android 7–10 and is kept so the shared
 /// storage logic (and its tests) read the same.
 enum UserAuthKeyKind: String, Sendable, Equatable {
     /// Every use asks: the biometrics or the passcode.
     case perUse = "PER_USE"
-    /// Android 7–10 with a strong fingerprint: every use asks, fingerprint only.
+    /// Every use asks, biometrics only; the key dies with the enrolled set
+    /// (Android 7–10 with a strong fingerprint; iOS `.biometryCurrentSet`).
     case perUseBiometric = "PER_USE_BIOMETRIC"
     /// Android 7–10 otherwise: opens for a few seconds after the screen lock.
     case timeBound = "TIME_BOUND"

@@ -134,6 +134,71 @@ final class UserAuthKeychainKeysTests: XCTestCase {
         XCTAssertFalse(try storage.exists(key: "st"))
     }
 
+    // MARK: Biometrics only (`userAuthBiometricOnly()`)
+
+    /// A `.biometryCurrentSet` item can only be made where biometrics are
+    /// enrolled: on the simulator *Features › Face ID › Enrolled*
+    /// (`xcrun simctl spawn <udid> notifyutil -s com.apple.BiometricKit.enrollmentChanged 1`
+    /// then `-p com.apple.BiometricKit.enrollmentChanged`; `scripts/test.sh` does it).
+    private func biometricKeys() throws -> KeychainUserAuthKeys {
+        let keys = KeychainUserAuthKeys(alias: alias, evaluator: ScriptedEvaluator([]), strength: .biometricCurrentSet)
+        try XCTSkipUnless(SystemUserAuthEvaluator(strength: .biometricCurrentSet).canEvaluate(),
+                          "no biometrics enrolled on this simulator (Features › Face ID › Enrolled)")
+        return keys
+    }
+
+    func testABiometricsOnlyKeyIsBoundToTheEnrolledBiometrics() throws {
+        let keys = try biometricKeys()
+        try keys.ensureKey()
+        XCTAssertEqual(try keys.kind(), .perUseBiometric)
+        XCTAssertEqual(try keys.state(), .usable)
+
+        var query = DeviceKeyKeychain.query(tag: alias)
+        query[kSecReturnAttributes] = true
+        query[kSecUseAuthenticationContext] = UserAuthContexts.silent()
+        var item: CFTypeRef?
+        XCTAssertEqual(SecItemCopyMatching(query as CFDictionary, &item), errSecSuccess)
+        let attributes = try XCTUnwrap(item as? [String: Any])
+        XCTAssertEqual(attributes[kSecAttrAccessible as String] as? String, kSecAttrAccessibleWhenPasscodeSetThisDeviceOnly as String)
+        XCTAssertNotEqual(attributes[kSecAttrSynchronizable as String] as? Bool, true)
+        // The ACL has no public reader; its description names the constraint:
+        // `cbio` (biometryCurrentSet) here, `cpo(DeviceOwnerAuthentication)`
+        // (userPresence: biometrics or passcode) on the default key.
+        let biometric = String(describing: try XCTUnwrap(attributes[kSecAttrAccessControl as String]))
+        XCTAssertTrue(biometric.contains("cbio"), "biometryCurrentSet: \(biometric)")
+        XCTAssertFalse(biometric.contains("cpo("), "no passcode (device owner) way in: \(biometric)")
+
+        keys.delete()
+        try KeychainUserAuthKeys(alias: alias, evaluator: ScriptedEvaluator([])).ensureKey()
+        XCTAssertEqual(SecItemCopyMatching(query as CFDictionary, &item), errSecSuccess)
+        let standard = String(describing: try XCTUnwrap((item as? [String: Any])?[kSecAttrAccessControl as String]))
+        XCTAssertTrue(standard.contains("cpo(DeviceOwnerAuthentication)"), "userPresence: \(standard)")
+        XCTAssertFalse(standard.contains("cbio"), standard)
+    }
+
+    func testABiometricsOnlyKeyOpensAfterTheBiometricPromptAndDiesWithTheEnrolment() async throws {
+        let keys = try biometricKeys()
+        let storage = UserAuthVaultStorage(inner: inner, keys: keys, policy: .required)
+        try storage.save(key: "st", bytes: content, version: 7)
+        XCTAssertTrue(try storage.isLocked("st"))
+
+        let evaluator = ScriptedEvaluator([.approve])
+        let result = await unlock(storage, evaluator)
+        XCTAssertEqual(result, .unlocked(key: "st", version: 7, bytes: content))
+
+        // The last face or finger is removed: LocalAuthentication says so, the
+        // key is retired and the copy given up; the next save makes a new key.
+        let before = try SPKI.der(for: keys.publicKey())
+        let gone = await unlock(storage, ScriptedEvaluator([.fail(.biometryNotEnrolled)]))
+        XCTAssertEqual(gone, .invalidated(key: "st"))
+        XCTAssertFalse(try storage.exists(key: "st"))
+        XCTAssertEqual(try keys.state(), .missing, "the key is deleted")
+        try storage.save(key: "st", bytes: content, version: 8)
+        XCTAssertNotEqual(try SPKI.der(for: keys.publicKey()), before, "a new key")
+        let reopened = await unlock(storage, ScriptedEvaluator([.approve]))
+        XCTAssertEqual(reopened, .unlocked(key: "st", version: 8, bytes: content))
+    }
+
     #if !targetEnvironment(simulator)
     /// On a device the Keychain enforces `.userPresence`: a forged "prompt
     /// passed" (an unevaluated context) fools our code, not the Keychain.

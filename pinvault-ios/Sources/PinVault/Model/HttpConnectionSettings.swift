@@ -19,6 +19,12 @@ public struct HttpConnectionSettings: Sendable, Equatable, Hashable {
     /// the connection goes to. Pin lookup, hostname verification and the
     /// client certificate use the logical host. See ``resolve(host:to:)``.
     public var resolvedHosts: [String: String]
+    /// iOS: whether the session follows a redirect from `https` to `http`
+    /// (OkHttp `followSslRedirects`). Off by default: a pinned session never
+    /// continues in the clear — the 3xx is the answer and the app decides.
+    /// Opt in only for a backend that must redirect to plain HTTP; the
+    /// library's own sessions never do, whatever this says.
+    public var followCleartextRedirects: Bool
 
     public init(
         connectTimeout: Int64 = 30,
@@ -28,7 +34,8 @@ public struct HttpConnectionSettings: Sendable, Equatable, Hashable {
         maxIdleConnections: Int = 5,
         keepAliveDuration: Int64 = 5,
         keepAliveDurationUnit: TimeUnit = .seconds,
-        resolvedHosts: [String: String] = [:]
+        resolvedHosts: [String: String] = [:],
+        followCleartextRedirects: Bool = false
     ) {
         self.connectTimeout = connectTimeout
         self.readTimeout = readTimeout
@@ -38,6 +45,7 @@ public struct HttpConnectionSettings: Sendable, Equatable, Hashable {
         self.keepAliveDuration = keepAliveDuration
         self.keepAliveDurationUnit = keepAliveDurationUnit
         self.resolvedHosts = resolvedHosts
+        self.followCleartextRedirects = followCleartextRedirects
     }
 
     /// A copy that sends connections for `host` to `address` (an IP address

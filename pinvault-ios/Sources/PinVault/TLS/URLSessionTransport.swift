@@ -27,9 +27,11 @@ final class URLSessionTransport: PinnedTransport, @unchecked Sendable {
     enum RedirectPolicy: Sendable {
         /// None: the 3xx is the answer (the bootstrap client).
         case none
-        /// Not between `http` and `https`, either way (library-built clients).
+        /// Not between `http` and `https`, either way: every pinned session
+        /// (library-built, `applyTo`, `session(settings:)`) unless the app opts in.
         case sameScheme
-        /// All (OkHttp's defaults: `applyTo` and the unpinned bootstrap client).
+        /// All (OkHttp's defaults): the unpinned bootstrap client, and an
+        /// app session with `followCleartextRedirects`.
         case all
     }
 

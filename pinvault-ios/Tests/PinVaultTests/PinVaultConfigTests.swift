@@ -61,6 +61,12 @@ final class PinVaultConfigTests: XCTestCase {
         XCTAssertTrue(hardened.requireHardwareBackedKeys)
     }
 
+    func testTheScreenLockKeyAcceptsThePasscodeUnlessBiometricsOnlyIsAskedFor() throws {
+        XCTAssertEqual(try api("https://api.example.com").build().userAuthStrength, .deviceOwner)
+        XCTAssertEqual(try api("https://api.example.com").userAuthBiometricOnly().build().userAuthStrength, .biometricCurrentSet)
+        XCTAssertEqual(try api("https://api.example.com").userAuthStrength(.biometricCurrentSet).userAuthStrength(.deviceOwner).build().userAuthStrength, .deviceOwner)
+    }
+
     func testURLTrailingSlashIsAddedOnce() throws {
         XCTAssertEqual(try api("https://api.example.com").build().defaultConfigApi?.configUrl, "https://api.example.com/")
         XCTAssertEqual(try api("https://api.example.com/").build().defaultConfigApi?.configUrl, "https://api.example.com/")

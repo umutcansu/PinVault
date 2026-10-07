@@ -273,7 +273,7 @@ final class RequestRoutingTests: XCTestCase {
         XCTAssertEqual(server.requests.map(\.path), ["/307"])
     }
 
-    func testALibrarySessionDoesNotFollowARedirectIntoTheClearButAnAppliedOneDoes() async throws {
+    func testNoPinnedSessionFollowsARedirectIntoTheClearUnlessTheAppOptsIn() async throws {
         let tls = try await server()
         let plain = try await server(nil)
         tls.setHandler { _ in .status(302, headers: ["Location": plain.url("/clear").absoluteString]) }
@@ -284,9 +284,26 @@ final class RequestRoutingTests: XCTestCase {
         XCTAssertEqual(plain.requestCount, 0)
 
         let applied = testManager().applyTo(.ephemeral, configProvider: { config })
-        let followed = try await status(applied, tls.url("/start"))
-        XCTAssertEqual(followed.statusCode, 200, "the app's own configuration keeps OkHttp's default")
+        let alsoRefused = try await status(applied, tls.url("/start"))
+        XCTAssertEqual(alsoRefused.statusCode, 302, "the app's own configuration does not continue in the clear either")
+        XCTAssertEqual(plain.requestCount, 0)
+
+        let settings = testManager().buildDynamicClient(configProvider: { config }, settings: HttpConnectionSettings())
+        let settingsRefused = try await status(settings, tls.url("/start"))
+        XCTAssertEqual(settingsRefused.statusCode, 302, "session(settings:) neither")
+        XCTAssertEqual(plain.requestCount, 0)
+
+        let optedIn = testManager().applyTo(.ephemeral, configProvider: { config }, followCleartextRedirects: true)
+        let followed = try await status(optedIn, tls.url("/start"))
+        XCTAssertEqual(followed.statusCode, 200, "followCleartextRedirects: true is OkHttp's followSslRedirects(true)")
         XCTAssertEqual(plain.requests.map(\.path), ["/clear"])
+
+        var optedInSettings = HttpConnectionSettings()
+        optedInSettings.followCleartextRedirects = true
+        let viaSettings = testManager().buildDynamicClient(configProvider: { config }, settings: optedInSettings)
+        let viaSettingsFollowed = try await status(viaSettings, tls.url("/start"))
+        XCTAssertEqual(viaSettingsFollowed.statusCode, 200)
+        XCTAssertEqual(plain.requests.map(\.path), ["/clear", "/clear"])
     }
 
     func testTooManyFollowUpsFail() async throws {

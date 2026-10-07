@@ -46,6 +46,7 @@ targets:
     sources:
       - path: Support
       - path: ../PinVaultTests/IdentityKeychainTests.swift
+      - path: ../PinVaultTests/PKCS12ImportKeychainTests.swift
       - path: ../PinVaultTests/ClientCertTestSupport.swift
       - path: ../PinVaultTests/TLSTestSupport.swift
       - path: ../PinVaultTests/StoreTestSupport.swift
