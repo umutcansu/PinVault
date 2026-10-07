@@ -252,6 +252,33 @@ class DeploymentHardeningTest {
     }
 
     @Test
+    fun `admin JSON bodies are capped on every route, gated or not`() {
+        GovernanceHarness(dir, required = 2, adminBodyMax = 2_000, vaultMax = 3_000).use { h ->
+            val pinsBefore = h.pins.load(h.scope)
+            val padded = """{"version":0,"forceUpdate":false,"pins":[]}""" + " ".repeat(2_000)
+            // Gated: refused before the gate stores a change request.
+            val gated = h.call("PUT", "/api/v1/certificate-config", GovernanceHarness.ALICE, padded)
+            assertEquals(413, gated.status, gated.body)
+            assertTrue(h.changeRequests.list(null).isEmpty(), "no change request for a body that was refused")
+            assertEquals(pinsBefore, h.pins.load(h.scope))
+            // Not gated, read with a typed receive: the same cap.
+            val plain = h.call("POST", "/api/v1/connection-history/web", GovernanceHarness.ALICE, """{"hostname":"a"}""" + " ".repeat(2_000))
+            assertEquals(413, plain.status, plain.body)
+            assertEquals(200, h.call("POST", "/api/v1/connection-history/web", GovernanceHarness.ALICE, """{"hostname":"a"}""").status)
+            // The vault upload keeps VAULT_MAX_FILE_BYTES: just under it is stored as a change request.
+            val upload = h.call("PUT", "/api/v1/config-apis/${h.scope}/vault/model.bin", GovernanceHarness.ALICE, ByteArray(2_999), "application/octet-stream")
+            assertEquals(202, upload.status, upload.body)
+        }
+        GovernanceHarness(File(dir, "no-approvals").also { it.mkdirs() }, required = 1, adminBodyMax = 2_000, vaultMax = 3_000).use { h ->
+            // Without approvals the upload reaches the store.
+            val upload = h.call("PUT", "/api/v1/config-apis/${h.scope}/vault/model.bin", GovernanceHarness.ALICE, ByteArray(2_999), "application/octet-stream")
+            assertEquals(200, upload.status, upload.body)
+            assertEquals(2_999, h.vaultFiles.get(h.scope, "model.bin")!!.content.size)
+            assertEquals(413, h.call("PUT", "/api/v1/config-apis/${h.scope}/vault/model.bin", GovernanceHarness.ALICE, ByteArray(3_001), "application/octet-stream").status)
+        }
+    }
+
+    @Test
     fun `admin uploads of keystores and certificates are capped`() {
         GovernanceHarness(dir, required = 1, adminBodyMax = 8_000).use { h ->
             val (type, big) = GovernanceHarness.multipart(mapOf("hostname" to "big.example.com", "format" to "jks"), ByteArray(9_000))

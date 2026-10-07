@@ -5,6 +5,7 @@
 ### Server
 
 - **A host's version moves for every change to its entry.** `PUT /api/v1/certificate-config` bumped a host only when its pins changed; a change to `mtls`, `forceUpdate` or `clientCertVersion` alone was stored without a bump, and since devices detect changes by version, a fielded device never re-read the entry — a host switched to mTLS, or a rotated host client certificate, reached only devices whose data had been wiped (the `toggle-mtls` and `upload-client-cert` routes already bumped for their own change). Now the whole entry but its version is compared. History records the move as `mtls_enabled` / `mtls_disabled` or the new `host_updated` event.
+- **Every admin request body is capped.** The admin routes that read JSON with a typed `receive` (hosts, vault admin, governance, server settings, Config API admin, enrollment policies, signing) had no body limit unless the approval gate happened to cover them; a leaked or misused admin key could have the server buffer anything. Ktor's `RequestBodyLimit` is now installed on the management listener and the Config API ports with `ADMIN_UPLOAD_MAX_BYTES` (default 1 MB) as the limit — a declared length above it is `413 body_too_large` before the handler runs, a longer streamed body is cut off while it is read — while the vault upload keeps `VAULT_MAX_FILE_BYTES` and the device endpoints their 64 KB `ClientBodyLimit`. No existing cap is lowered.
 
 ## 2.3.0 — 2026-10-07 — iOS library, attestation, Play Integrity, managed trust roots, environment guard, setup wizard
 

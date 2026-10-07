@@ -99,9 +99,11 @@ info:
       length `411 length_required`. The cap also holds while reading: a body that
       declares nothing (HTTP/2 needs neither header) is read up to the cap and
       answered `413`. Vault uploads (admin) are capped at `VAULT_MAX_FILE_BYTES`
-      (default 50 MB, `413`), every other admin upload or JSON body that is read
-      into memory — keystores, certificates, and any body held for approval — at
-      `ADMIN_UPLOAD_MAX_BYTES` (default 1 MB, `413`).
+      (default 50 MB, `413`), every other admin request body — keystores,
+      certificates, every JSON body, and any body held for approval — at
+      `ADMIN_UPLOAD_MAX_BYTES` (default 1 MB, `413`): a declared length above the
+      cap is refused before the handler runs, a longer streamed body while it is
+      read, on the management listener and the Config API ports alike.
     * **Refusal limit.** Every refusal (`400`, `401`, `403`, `404`, `409`, `411`,
       `413`) on enrollment, E2E key registration, vault downloads and host client
       certificate downloads is counted per source address (an IPv6 address by its
@@ -6230,7 +6232,8 @@ components:
     AdminBodyTooLarge:
       description: >
         The body is larger than `ADMIN_UPLOAD_MAX_BYTES` (default 1 MB; keystores,
-        certificates and JSON bodies of admin routes). Refused while it is read.
+        certificates and every JSON body of an admin route). Refused from the
+        declared length before the handler runs, or while it is read.
       content:
         application/json:
           schema: { $ref: '#/components/schemas/Error' }

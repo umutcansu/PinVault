@@ -1,5 +1,6 @@
 package com.example.pinvault.server
 
+import com.example.pinvault.server.plugin.installAdminBodyLimit
 import com.example.pinvault.server.model.HostActionResponse
 import com.example.pinvault.server.model.HostPin
 import com.example.pinvault.server.model.PinConfigHistoryEntry
@@ -683,6 +684,8 @@ private fun startServer() {
         }
         // Device-facing bodies are a few hundred bytes; refuse big ones unread.
         install(com.example.pinvault.server.plugin.ClientBodyLimit)
+        // ...and the admin routes served here (CONFIG_API_ADMIN_ROUTES) have the admin cap.
+        installAdminBodyLimit(adminUploadMaxBytes, vaultMaxFileBytes)
         // An iPhone cannot read a 403 on a connection that asked for its certificate.
         if (mode == "mtls") install(com.example.pinvault.server.plugin.ForbiddenAsConflict)
         // The handshake trusts the client CA, revocation is checked here, per request.
@@ -943,6 +946,8 @@ private fun startServer() {
             refusals = refusalCutOffs
         }
         install(com.example.pinvault.server.plugin.ClientBodyLimit)
+        // Admin JSON bodies and uploads: ADMIN_UPLOAD_MAX_BYTES; vault files VAULT_MAX_FILE_BYTES.
+        installAdminBodyLimit(adminUploadMaxBytes, vaultMaxFileBytes)
         // Other pages in an admin's browser: cross-site writes, form posts, and —
         // without admin keys — DNS rebinding (the Host must name this machine).
         install(com.example.pinvault.server.plugin.AdminBrowserGuard) {
