@@ -373,6 +373,7 @@ object PinVault {
     /** `requireUnlockedDevice()` / `requireHardwareBackedKeys()` reach the places that generate Keystore keys without seeing a config. */
     private fun applyKeystoreOptions(config: PinVaultConfig) {
         io.github.umutcansu.pinvault.keystore.KeystoreOptions.unlockedDeviceRequired = config.requireUnlockedDevice
+        io.github.umutcansu.pinvault.keystore.KeystoreOptions.unlockedDeviceFallbackAllowed = config.requireUnlockedDeviceFallback
         io.github.umutcansu.pinvault.keystore.KeystoreOptions.hardwareBackedRequired = config.requireHardwareBackedKeys
     }
 

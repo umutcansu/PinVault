@@ -88,6 +88,7 @@ public class JavaCallerCompatTest {
                 new io.github.umutcansu.pinvault.model.PinVaultConfig.Builder()
                     .vaultFileMaxOfflineAge(30, java.util.concurrent.TimeUnit.DAYS)
                     .requireUnlockedDevice()
+                    .requireUnlockedDevice(true)
                     .requireHardwareBackedKeys()
                     .managedTrustRoots()
                     .configApi("api", "https://config.example.com", block -> {

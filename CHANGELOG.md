@@ -1,5 +1,26 @@
 # Changelog
 
+## Unreleased
+
+Closes the three medium findings of the Android MASVS 2.x audit (a
+white-box source read of 2.3.0; RESILIENCE in the sample, the Android 7–10
+user-auth key, and the silent `requireUnlockedDevice()` fallback).
+
+### Library
+
+- **`requireUnlockedDevice()` no longer falls back silently.** When a
+  device's Keystore refused a key with `setUnlockedDeviceRequired(true)`,
+  the key was made without the requirement and the app learnt of it from a
+  log line only. Now the operation that needed the key fails with the new
+  `UnlockedDeviceKeyRequiredException` (`init` → `InitResult.Failed` for
+  the store keys; enrollment, vault files and imported identities report
+  `Failed` with that cause). The old behaviour is an explicit opt-in:
+  `requireUnlockedDevice(allowFallback = true)` (Java:
+  `requireUnlockedDevice(true)`), still with the warning in the log.
+  `PinVaultConfig.requireUnlockedDeviceFallback` carries the choice. A key
+  the Keystore did make but `requireHardwareBackedKeys()` refused is no
+  longer retried without the flag. See `MIGRATION.md`.
+
 ## 2.3.0 — 2026-10-07 — iOS library, attestation, Play Integrity, managed trust roots, environment guard, setup wizard
 
 ### iOS (new)

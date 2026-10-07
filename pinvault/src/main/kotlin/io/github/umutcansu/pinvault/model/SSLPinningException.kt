@@ -136,6 +136,28 @@ class HardwareBackedKeyRequiredException(
 )
 
 /**
+ * [PinVaultConfig.Builder.requireUnlockedDevice] is on and the Android
+ * Keystore refused to make a key that works only while the device is
+ * unlocked (`setUnlockedDeviceRequired`). The app asked for such keys, so
+ * no key is made without the requirement and the operation that needed it
+ * fails: enrollment ([ClientCertEnrollmentResult.Failed] with this cause),
+ * a vault file ([VaultFileResult.Failed]), an imported identity, or the
+ * first use of the encrypted stores (`init` returns `Failed`). [cause] is
+ * the Keystore's refusal; [keyKind] names the key ("Client identity key",
+ * "Store encryption key", …). `requireUnlockedDevice(allowFallback = true)`
+ * makes the key without the requirement instead, with a warning in the log.
+ */
+class UnlockedDeviceKeyRequiredException(
+    val keyKind: String,
+    cause: Throwable? = null
+) : SSLPinningException(
+    "$keyKind: the Android Keystore refused a key that works only while the device is unlocked, " +
+        "and requireUnlockedDevice() allows no key without that requirement " +
+        "(requireUnlockedDevice(allowFallback = true) would)",
+    cause
+)
+
+/**
  * The server's chain matched an **issuer** pin — a CA the leaf really chains
  * to — but the leaf is not issued for the host being connected to (no
  * matching `subjectAltName`). An issuer pin vouches for the CA, not for the

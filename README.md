@@ -2185,10 +2185,27 @@ It applies to keys generated after you turn it on. Existing installs keep
 the keys they have (usable while locked) until those are replaced: the
 identity key at the next enrollment, the store keys when the app's data is
 cleared. A phone without a screen lock has nothing to unlock, so the option
-changes nothing there. If a device's Keystore refuses to make such a key,
-the key is made without the requirement and a warning is logged. Call
-`init` (or the config overloads of `enroll` / `isEnrolled`) with this config
-before anything else touches PinVault, since the first use creates the keys.
+changes nothing there. Call `init` (or the config overloads of `enroll` /
+`isEnrolled`) with this config before anything else touches PinVault, since
+the first use creates the keys.
+
+**When the Keystore refuses such a key** (a ROM that does not support
+`setUnlockedDeviceRequired`), the operation that needed the key fails with
+`UnlockedDeviceKeyRequiredException` — `init` returns `Failed` for the
+store keys, enrollment and vault files report `Failed` with that cause —
+and the error is logged. You asked for keys that work only while the
+device is unlocked; a key made without that requirement would not be what
+you asked for, and until 2.3.0 the library made one anyway with only a
+warning. To keep that behaviour, opt into it:
+
+```kotlin
+PinVaultConfig.Builder()
+    .requireUnlockedDevice(allowFallback = true)   // Java: requireUnlockedDevice(true)
+```
+
+The key is then made without the requirement and a warning is logged, as
+before. Decide per app: a device whose Keystore cannot make the key is a
+device on which the option protects nothing.
 
 ### 10. Bypass protection *(2.3)*
 
