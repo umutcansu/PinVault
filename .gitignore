@@ -87,6 +87,10 @@ keystore.properties
 *.sqlite3
 # Public certificates the server ships as resources (no private key).
 !demo-server/src/main/resources/attestation/google-hardware-attestation-roots.pem
+# iOS library test fixtures: public certificates and throwaway test keys made by
+# the generate.sh scripts next to them (Fixtures/README.md). Each file is also
+# listed in .secrets-allow.
+!pinvault-ios/Tests/PinVaultTests/Fixtures/**
 
 # Offline keys, generated env files and moved-aside demo installs (sample-host)
 offline-keys/

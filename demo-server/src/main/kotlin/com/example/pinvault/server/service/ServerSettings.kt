@@ -120,9 +120,11 @@ object ServerSettingsCatalog {
     fun startProblems(effective: Map<String, String>): List<String> = buildList {
         fun v(key: String) = effective[key]?.trim().orEmpty()
         val bindsApp = v("ATTESTATION_PACKAGE_NAMES").isNotEmpty() && v("ATTESTATION_SIGNER_SHA256").isNotEmpty()
+        // App Attest admits iPhones on its own; without the Android binding Android devices are refused (fail closed).
+        val appAttest = v("APP_ATTEST_APP_IDS").isNotEmpty()
         for (key in listOf("ENROLLMENT_ATTESTATION", "USER_AUTH_ATTESTATION", "ATTESTATION_KEY_POLICY")) {
-            if (v(key).lowercase() == "enforce" && !bindsApp) {
-                add("$key=enforce needs ATTESTATION_PACKAGE_NAMES and ATTESTATION_SIGNER_SHA256")
+            if (v(key).lowercase() == "enforce" && !bindsApp && !appAttest) {
+                add("$key=enforce needs ATTESTATION_PACKAGE_NAMES and ATTESTATION_SIGNER_SHA256 (or APP_ATTEST_APP_IDS for an iOS-only fleet)")
             }
         }
         // App Attest (iOS) verifies its own tokens; without either the server does not start.

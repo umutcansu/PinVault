@@ -61,12 +61,16 @@ enum class UserAuthAttestationMode {
          * the warning to print (no attestation counts then; replacing a key
          * needs an administrator's reset), [OFF] and a bound verifier: null.
          */
-        fun startupCheck(mode: UserAuthAttestationMode, attestation: AndroidKeyAttestation): String? {
+        fun startupCheck(mode: UserAuthAttestationMode, attestation: AndroidKeyAttestation, appAttest: Boolean = false): String? {
             if (mode == OFF || attestation.bindsApp) return null
             val missing = listOfNotNull(
                 "ATTESTATION_PACKAGE_NAMES".takeIf { attestation.packageNames.isEmpty() },
                 "ATTESTATION_SIGNER_SHA256".takeIf { attestation.signerDigests.isEmpty() }
             ).joinToString(" and ")
+            if (mode == ENFORCE && appAttest) {
+                return "WARNING: USER_AUTH_ATTESTATION=enforce without $missing — Android devices are refused (their chains cannot be " +
+                    "bound to your app); iPhones are admitted by App Attest (APP_ATTEST_APP_IDS)."
+            }
             check(mode != ENFORCE) {
                 "USER_AUTH_ATTESTATION=enforce needs ATTESTATION_PACKAGE_NAMES and ATTESTATION_SIGNER_SHA256 " +
                     "($missing empty): without them a key attested by ANY app on any locked phone, for any device id, " +

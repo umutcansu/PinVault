@@ -243,9 +243,15 @@ private fun startServer() {
         (if (userAuthAttestation.requireVerifiedBoot) "" else ", verified boot NOT required") +
         (if (userAuthAttestation.requirePerUse) ", per-use user-auth keys only" else "") +
         (userAuthAttestation.minPatchLevel?.let { ", security patch $it or newer" } ?: ""))
+    // Apple App Attest (ATTESTATION.md §12), optional: with APP_ATTEST_APP_IDS the server
+    // verifies iOS apps' App Attest objects itself — at enrollment, on every attestation
+    // round, and in place of the Android chain where a setting says enforce (enrollment,
+    // user-auth keys, attestation registration) — against Apple's root in
+    // APP_ATTEST_ROOT_CA_FILE; without a readable root it does not start. Nothing is sent to Apple.
+    val appAttest = com.example.pinvault.server.service.attestation.AppAttestVerifier.fromEnv()
     // enforce without the package + signer binding refuses to start; warn without it
     // lets no attestation count (replacement then needs an administrator's reset).
-    com.example.pinvault.server.service.UserAuthAttestationMode.startupCheck(userAuthAttestationMode, userAuthAttestation)
+    com.example.pinvault.server.service.UserAuthAttestationMode.startupCheck(userAuthAttestationMode, userAuthAttestation, appAttest = appAttest != null)
         ?.let { System.err.println(it) }
     // The attestation revocation list is re-read when its file changes (an
     // operator's cron job fetches Google's list; the server never goes to the
@@ -257,11 +263,12 @@ private fun startServer() {
             .scheduleAtFixedRate({ runCatching { userAuthAttestation.refreshRevocationList() } }, 10, 10, java.util.concurrent.TimeUnit.MINUTES)
     }
     // Client identity keys: Android Key Attestation of every CSR enrollment
-    // (ENROLLMENT_ATTESTATION=off|warn|enforce, default warn), same verifier settings.
+    // (ENROLLMENT_ATTESTATION=off|warn|enforce, default warn), same verifier settings;
+    // an iPhone's appAttestation in place of the chain when App Attest is configured.
     val enrollmentAttestationMode = com.example.pinvault.server.service.EnrollmentAttestationMode.parse(com.example.pinvault.server.service.ServerEnv.get("ENROLLMENT_ATTESTATION"))
-    com.example.pinvault.server.service.EnrollmentAttestationMode.startupCheck(enrollmentAttestationMode, userAuthAttestation)
+    com.example.pinvault.server.service.EnrollmentAttestationMode.startupCheck(enrollmentAttestationMode, userAuthAttestation, appAttest = appAttest != null)
         ?.let { System.err.println(it) }
-    val enrollmentAttestation = com.example.pinvault.server.service.EnrollmentAttestation(enrollmentAttestationMode) { userAuthAttestation }
+    val enrollmentAttestation = com.example.pinvault.server.service.EnrollmentAttestation(enrollmentAttestationMode, appAttest) { userAuthAttestation }
     // enforce without Google's revocation list: a phone whose attestation key was revoked still passes.
     if ((enrollmentAttestationMode == com.example.pinvault.server.service.EnrollmentAttestationMode.ENFORCE ||
             userAuthAttestationMode == com.example.pinvault.server.service.UserAuthAttestationMode.ENFORCE) &&
@@ -276,11 +283,6 @@ private fun startServer() {
         "off", "false" -> false
         else -> error("ENROLLMENT_P12 must be on or off (got '${com.example.pinvault.server.service.ServerEnv.get("ENROLLMENT_P12")}')")
     }
-    // Apple App Attest (ATTESTATION.md §12), optional: with APP_ATTEST_APP_IDS the server
-    // verifies iOS apps' App Attest objects itself — at enrollment (below) and on every
-    // attestation round — against Apple's root in APP_ATTEST_ROOT_CA_FILE; without a
-    // readable root it does not start. Nothing is sent to Apple.
-    val appAttest = com.example.pinvault.server.service.attestation.AppAttestVerifier.fromEnv()
     // The enrolling device's integrity verdict (Play Integrity or a RASP product's
     // attestation): INTEGRITY_VERIFICATION=off|warn|enforce (default off), decoded
     // by INTEGRITY_VERIFIER_COMMAND (App Attest tokens by the verifier above).
@@ -521,8 +523,13 @@ private fun startServer() {
     }
     val attestationKeyPolicy = com.example.pinvault.server.service.attestation.AttestationKeyPolicy.parse(com.example.pinvault.server.service.ServerEnv.get("ATTESTATION_KEY_POLICY"))
     // enforce without the package + signer binding refuses to start (as for the other two attestation modes).
-    com.example.pinvault.server.service.attestation.AttestationKeyPolicy.startupCheck(attestationKeyPolicy, userAuthAttestation)
+    com.example.pinvault.server.service.attestation.AttestationKeyPolicy.startupCheck(attestationKeyPolicy, userAuthAttestation, appAttest = appAttest != null)
         ?.let { System.err.println(it) }
+    // An iPhone has no Android chain: under any of the three enforce settings it is
+    // refused unless App Attest (APP_ATTEST_APP_IDS) stands in for the chain.
+    com.example.pinvault.server.service.attestation.AppAttestAdmission.iosRefusedWarning(
+        enrollmentAttestationMode, userAuthAttestationMode, attestationKeyPolicy, appAttestConfigured = appAttest != null
+    )?.let { System.err.println(it) }
     val attestationDefaults = com.example.pinvault.server.service.attestation.AttestationPolicyDefaults.fromEnv()
     val attestationNonceTtl = (com.example.pinvault.server.service.ServerEnv.get("ATTESTATION_NONCE_TTL_SECONDS")?.toIntOrNull() ?: 120).coerceIn(10, 3600)
     // Attestations per source address and per device id per 10 minutes (0 = off).
@@ -585,7 +592,8 @@ private fun startServer() {
         // The fingerprint lets the operator compare the file with the root Apple publishes.
         println("APP_ATTEST: verifying app-attest verdicts locally (apps ${appAttest.appIds.joinToString()}, environment " +
             "${appAttest.environment.wire}, verdict kept ${appAttest.verdictMaxAgeSeconds} s; root " +
-            appAttest.roots.joinToString { "${it.subjectX500Principal.name} SHA-256 ${com.example.pinvault.server.service.attestation.AttestationService.sha256Hex(it.encoded)}" } + ")")
+            appAttest.roots.joinToString { "${it.subjectX500Principal.name} SHA-256 ${com.example.pinvault.server.service.attestation.AttestationService.sha256Hex(it.encoded)}" } + ")" +
+            "; stands in for the Android chain where enforce asks for one (enrollment, user-auth keys, attestation registration)")
     } else {
         println("APP_ATTEST: off (set APP_ATTEST_APP_IDS and APP_ATTEST_ROOT_CA_FILE to verify Apple App Attest)")
     }
@@ -726,8 +734,10 @@ private fun startServer() {
                 keyReplacementLimiter = enrollmentLimits.keyReplacements,
                 // A revoked device gets no token, end_to_end or user_auth file, on any listener.
                 deviceRevoked = { id -> clientIdentityStore.isDeviceRevoked(id) },
-                // User-auth keys: Android Key Attestation (USER_AUTH_ATTESTATION).
+                // User-auth keys: Android Key Attestation (USER_AUTH_ATTESTATION), an
+                // iPhone's App Attest in its place when APP_ATTEST_APP_IDS is set.
                 userAuthAttestation = userAuthAttestation, userAuthAttestationMode = userAuthAttestationMode,
+                appAttest = appAttest,
                 // Device ids a certificate proved it acts for: what revocation cuts off.
                 deviceProven = { clientId, deviceId, proof -> clientIdentityStore.recordDeviceProof(clientId, deviceId, proof) },
                 // Downloads at once per source address (VAULT_DOWNLOAD_CONCURRENCY, 0 = unlimited)
