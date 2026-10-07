@@ -352,7 +352,7 @@ enum Routes {
     static func scrollIntoView(_ element: XCUIElement, _ app: XCUIApplication) throws -> Bool {
         var scrolled = false
         for _ in 0..<14 {
-            if element.isHittable { return scrolled }
+            if element.isHittable { break }
             let frame = element.frame
             let screen = app.frame
             if frame.isEmpty || screen.isEmpty { break }
@@ -372,7 +372,9 @@ enum Routes {
                 drag(app, from: CGPoint(x: x, y: start), to: CGPoint(x: x, y: start - max(distance, 60)), seconds: 0.5)
             } else if frame.midY < visibleTop {
                 let distance = min((visibleTop + visibleBottom) / 2 - frame.midY, (visibleBottom - visibleTop) * 0.8)
-                let start = visibleTop + 10
+                // Üstteki %12'nin hemen altı Dynamic Island'lı cihazlarda hâlâ
+                // gezinme çubuğu: oradan başlayan sürükleme içeriği kaydırmıyor.
+                let start = screen.minY + screen.height * 0.2
                 drag(app, from: CGPoint(x: x, y: start), to: CGPoint(x: x, y: start + max(distance, 60)), seconds: 0.5)
             } else {
                 // Görünür alanda ama dokunulamıyor (üstünde başka bir pencere ya da
@@ -384,7 +386,26 @@ enum Routes {
         if !element.isHittable {
             throw DriverError("öğe görünür hale getirilemedi: \(element.identifier) \(rect(element.frame))", status: 409)
         }
+        if scrolled { waitUntilSettled(element) }
         return scrolled
+    }
+
+    /// Kaydırmadan sonra içerik bir süre daha kayar (yaylanma). O sırada gelen
+    /// dokunuş kaydırmayı durdurur, düğmeye ulaşmaz. Sürükleme içeriğin sonunu
+    /// aştıysa içerik geri yaylanır; bu sırada okunan çerçeve durgun görünebiliyor.
+    /// Önce yaylanma süresi kadar (0,8 sn) beklenir, sonra çerçeve art arda üç
+    /// ölçümde (0,2 sn arayla) aynı kalana kadar (en çok 3 sn).
+    static func waitUntilSettled(_ element: XCUIElement) {
+        RunLoop.current.run(until: Date().addingTimeInterval(0.8))
+        var last = element.frame
+        var steady = 0
+        let deadline = Date().addingTimeInterval(3)
+        while Date() < deadline && steady < 3 {
+            RunLoop.current.run(until: Date().addingTimeInterval(0.2))
+            let now = element.frame
+            steady = now == last ? steady + 1 : 0
+            last = now
+        }
     }
 
     /// Öğenin ortasına, o anki çerçevesinden hesaplanan koordinatla dokunur.
