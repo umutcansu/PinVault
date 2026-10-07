@@ -65,7 +65,8 @@ final class PinVaultFacadeTests: XCTestCase {
     }
 
     func testBeforeStartGettersAreEmptyAndOperationsFail() async throws {
-        let vault = PinVault()
+        // Isolated: the simulator's Keychain may keep an identity key of an earlier run.
+        let vault = try isolatedPinVault(self)
         XCTAssertEqual(vault.currentVersion(), 0)
         XCTAssertTrue(vault.hostPinVersions().isEmpty)
         XCTAssertTrue(vault.currentPins.isEmpty)
