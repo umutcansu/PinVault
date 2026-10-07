@@ -445,17 +445,14 @@ final class EnrollmentService: Sendable {
             Self.log.d("Enrollment successful — server-made key imported into the Keychain, chain stored")
             return .imported(imported)
         }
-        if result.p12Password != nil {
-            // iOS cannot re-wrap a PKCS12 (no export API): one under a one-off
-            // password would not open with the block's password later.
-            throw PinVaultError.security(
-                message: "The Keychain refused the server-made key, and its PKCS12 came with a one-off password, so it " +
-                    "cannot be kept. Nothing was stored."
-            )
-        }
-        try certStore.save(certLabel, p12: result.p12Bytes)
-        Self.log.w("Enrollment successful — the Keychain refused the server-made key; stored as a PKCS12 (\(result.p12Bytes.count) bytes)")
-        return .p12(result.p12Bytes)
+        // Kept as a PKCS12 under the block's password (Kotlin re-wraps it the
+        // same way): a one-off password is used here once and never stored.
+        let bytes = result.p12Password != nil
+            ? try P12Rewrap.rewrap(result.p12Bytes, from: password, to: block.clientKeyPassword)
+            : result.p12Bytes
+        try certStore.save(certLabel, p12: bytes)
+        Self.log.w("Enrollment successful — the Keychain refused the server-made key; stored as a PKCS12 (\(bytes.count) bytes)")
+        return .p12(bytes)
     }
 
     /// Loads what an enrollment stored into `sslManager`.
@@ -473,8 +470,8 @@ final class EnrollmentService: Sendable {
     /// Checks an enrolled P12 (integrity hash, format) and returns the password
     /// it opens with: the one-off password the server sent (`X-P12-Password`,
     /// used here once and never stored), else the block's `clientKeyPassword`.
-    /// (Android re-wraps the bundle to the block's password; iOS imports it
-    /// into the Keychain instead.)
+    /// The key is imported into the Keychain with it; only a bundle the
+    /// Keychain refuses is kept, re-wrapped to the block's password (``P12Rewrap``).
     func acceptEnrolledP12(_ result: EnrollmentResult, localPassword: String) throws -> String {
         let password = result.p12Password ?? localPassword
         try Self.validateP12(result.p12Bytes, serverHash: result.p12Hash, password: password)
