@@ -266,16 +266,27 @@ final class URLSessionTransport: PinnedTransport, @unchecked Sendable {
                 for name in ["Transfer-Encoding", "Content-Length", "Content-Type"] { next.setValue(nil, forHTTPHeaderField: name) }
             }
         }
-        // A request for another host keeps no credentials (OkHttp drops Authorization).
+        // A request for another endpoint keeps no credentials. OkHttp drops only
+        // Authorization; the library's own secrets (the attestation token, vault
+        // tokens, API keys) and cookies must not follow a redirect to another
+        // host, port or scheme either.
         let sameEndpoint = target.host?.lowercased() == current.host?.lowercased()
             && (target.port ?? (scheme == "https" ? 443 : 80)) == (current.port ?? (current.scheme?.lowercased() == "https" ? 443 : 80))
             && sameScheme
-        if !sameEndpoint { next.setValue(nil, forHTTPHeaderField: "Authorization") }
+        if !sameEndpoint {
+            for name in Self.credentialHeaders { next.setValue(nil, forHTTPHeaderField: name) }
+        }
         next.setValue(nil, forHTTPHeaderField: "Host")
         // A body that can be sent once only (a stream, already read) is not sent again: the 3xx is the answer.
         if next.httpBodyStream != nil { return nil }
         return next
     }
+
+    /// Headers that never follow a redirect to another endpoint.
+    static let credentialHeaders = [
+        "Authorization", "Proxy-Authorization", "Cookie",
+        AttestationTokenInterceptor.header, "X-Vault-Token", "X-Vault-Key", "X-API-Key",
+    ]
 
     // MARK: Errors
 

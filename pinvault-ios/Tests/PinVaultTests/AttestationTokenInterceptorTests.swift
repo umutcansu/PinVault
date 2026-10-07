@@ -82,6 +82,20 @@ final class AttestationTokenInterceptorTests: XCTestCase {
         XCTAssertEqual(source.asked, 0)
     }
 
+    func testTheTokenNeverGoesOutOverCleartext() async throws {
+        let seen = Locked<[String?]>([])
+        let session = PinnedSession(
+            interceptors: [AttestationTokenInterceptor { [source] in [source] }],
+            transport: FakeTransport { exchange in
+                seen.withLock { $0.append(exchange.request.value(forHTTPHeaderField: "PinVault-Token")) }
+                return fakeResponse(url: exchange.request.url)
+            }
+        )
+        _ = try await session.data(from: URL(string: "http://example.com/plain")!)
+        _ = try await session.data(from: URL(string: "https://example.com/tls")!)
+        XCTAssertEqual(seen.withLock { $0 }, [nil, "t1"], "a bearer token is attached to https requests only")
+    }
+
     func testWithoutATokenTheRequestGoesOutBare() async throws {
         source.token = nil
         source.nextOnForce = nil

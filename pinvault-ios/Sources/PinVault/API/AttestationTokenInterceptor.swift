@@ -46,6 +46,8 @@ struct AttestationTokenInterceptor: PinnedInterceptor {
     ) async throws -> PinnedResponse {
         if exchange.tags.contains(.attestationRetry) { return try await proceed(exchange) }
 
+        // The token is a bearer credential: never over cleartext.
+        guard exchange.request.url?.scheme?.lowercased() == "https" else { return try await proceed(exchange) }
         let host = exchange.host
         let port = exchange.port
         guard let source = sources().first(where: { $0.handlesHost(host, port: port) }) else {

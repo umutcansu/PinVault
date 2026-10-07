@@ -222,13 +222,18 @@ final class RequestRoutingTests: XCTestCase {
         let session = testManager().buildDynamicClient(configProvider: { config }, settings: settings)
         for path in ["/same", "/other"] {
             var request = URLRequest(url: logicalURL("mock-tls.sample", server, path))
-            request.setValue("Bearer secret", forHTTPHeaderField: "Authorization")
+            for name in URLSessionTransport.credentialHeaders { request.setValue("secret-\(name)", forHTTPHeaderField: name) }
             _ = try await session.data(for: request)
         }
         let requests = server.requests
         XCTAssertEqual(requests.map(\.path), ["/same", "/same2", "/other", "/x"])
-        XCTAssertEqual(requests[1].header("Authorization"), "Bearer secret", "same host keeps it")
-        XCTAssertNil(requests[3].header("Authorization"), "another host gets no credentials")
+        XCTAssertEqual(requests[1].header("Authorization"), "secret-Authorization", "same host keeps it")
+        XCTAssertEqual(requests[1].header("PinVault-Token"), "secret-PinVault-Token", "same host keeps it")
+        for name in URLSessionTransport.credentialHeaders {
+            XCTAssertNil(requests[3].header(name), "another host gets no \(name)")
+        }
+        XCTAssertTrue(URLSessionTransport.credentialHeaders.contains("PinVault-Token"))
+        XCTAssertTrue(URLSessionTransport.credentialHeaders.contains("X-Vault-Token"))
     }
 
     func testA302TurnsAPOSTIntoAGETWhileA307KeepsMethodAndBody() async throws {
