@@ -1,10 +1,10 @@
 # Changelog
 
-## Unreleased
+## 2.3.2 — 2026-10-08 — React Native library; iOS bounded app-session reads
 
 ### React Native (new)
 
-- **`@umutcansu/react-native-pinvault` 2.3.1** (`pinvault-react-native/`): a TurboModule
+- **`@umutcansu/react-native-pinvault` 2.3.2** (`pinvault-react-native/`): a TurboModule
   bridge over the Android and iOS libraries for React Native 0.87+ (New
   Architecture). Pinning, keys, signatures and vault decryption stay native; the
   plugin's `fetch` runs on the pinned native session, and React Native's own

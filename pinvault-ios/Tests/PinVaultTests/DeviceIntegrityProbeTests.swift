@@ -147,7 +147,7 @@ final class DeviceIntegrityProbeTests: XCTestCase {
     func testTheStringIsStableSoTheOneHashedIsTheOneSent() async {
         let (report, _) = await report(Self.iPhone())
         XCTAssertEqual(report.jsonString(), report.jsonString())
-        XCTAssertTrue(report.jsonString().hasPrefix(#"{"sdkVersion":"2.3.0","reportTime":1759660801234,"app":{"packageName":"com.example.sampleclient","#))
+        XCTAssertTrue(report.jsonString().hasPrefix(#"{"sdkVersion":"2.3.2","reportTime":1759660801234,"app":{"packageName":"com.example.sampleclient","#))
         XCTAssertFalse(report.jsonString().contains("\n"))
     }
 

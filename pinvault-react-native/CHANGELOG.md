@@ -1,6 +1,10 @@
 # Changelog
 
-## Unreleased — MASVS audit fixes
+## 2.3.2 — 2026-10-08 — first release
+
+First published version (2.3.1 was never published). Needs PinVault 2.3.2 on both platforms.
+
+### MASVS audit fixes
 
 - **Native security file** (`pinvault_security.json`: Android assets, iOS app
   bundle): bootstrap pins, signing / recovery keys, `requiredSignatures`,
@@ -36,7 +40,7 @@
 - README: token handling described as it is (JS values until garbage
   collection; native memory only on the plugin's side).
 
-## 2.3.1
+### Initial bridge
 
 First release of the React Native plugin, aligned with PinVault 2.3.1
 (Android `io.github.umutcansu:pinvault:2.3.1`, iOS Swift package `v2.3.1`).
