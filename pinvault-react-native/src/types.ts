@@ -111,12 +111,27 @@ export type PinVaultConfig = {
   environmentGuard?: EnvironmentGuard;
   /** How long the native side waits for `environmentGuard` (ms, 100–30000, default 5000). */
   environmentGuardTimeoutMs?: number;
+  /**
+   * `start` fails with `E_NETWORKING_NOT_PINNED` when React Native's own networking
+   * does not go through PinVault: on Android when another library replaced the
+   * OkHttp hooks (or they are not installed), on iOS when RCTNetworking does not
+   * pick the plugin's request handler for https. Default false (a warning is logged).
+   */
+  requirePinnedReactNativeNetworking?: boolean;
   /** Android-only settings (ignored on iOS). */
   android?: {
     /** `requireUnlockedDevice(allowFallback = true)`. */
     requireUnlockedDeviceAllowFallback?: boolean;
-    /** Pin React Native's own `fetch` / `XMLHttpRequest` / `WebSocket` (default true). */
+    /**
+     * Pin React Native's own `fetch` / `XMLHttpRequest` / `WebSocket` / images (default true).
+     * The plugin's content provider installs the hooks before the app starts; `false`
+     * is refused while they are installed — opt out natively (README, "Networking").
+     */
     pinGlobalNetworking?: boolean;
+    /** Keep React Native's 10 MiB disk HTTP cache for its `fetch` / XHR (default false: no disk cache). */
+    keepReactNativeHttpCache?: boolean;
+    /** Keep React Native's persistent cookie jar for its `fetch` / XHR (default false: no cookies). */
+    keepReactNativeCookies?: boolean;
   };
   /** iOS-only settings (ignored on Android). */
   ios?: {
@@ -126,6 +141,8 @@ export type PinVaultConfig = {
     expectedTeamIds?: string[];
     /** `userAuthStrength(_:)`; `BIOMETRIC_CURRENT_SET` = `userAuthBiometricOnly()`. */
     userAuthStrength?: 'DEVICE_OWNER' | 'BIOMETRIC_CURRENT_SET';
+    /** The largest answer React Native's own https request may get (bytes, default 50 MiB, at most 256 MiB). */
+    reactNativeMaxResponseBytes?: number;
   };
 };
 

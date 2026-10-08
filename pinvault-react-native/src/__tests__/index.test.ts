@@ -125,6 +125,44 @@ describe('start', () => {
   });
 });
 
+describe('start: networking and native security', () => {
+  it('passes the React Native networking options through unchanged', async () => {
+    const withNetworking: PinVaultConfig = {
+      ...config,
+      requirePinnedReactNativeNetworking: true,
+      android: { keepReactNativeHttpCache: false, keepReactNativeCookies: true },
+      ios: { reactNativeMaxResponseBytes: 1024 },
+    };
+    await PinVault.start(withNetworking);
+    expect(JSON.parse(mockNative.start.mock.calls[0]![0])).toEqual(withNetworking);
+  });
+
+  it('keeps E_NETWORKING_NOT_PINNED and a native-file refusal as they come', async () => {
+    mockNative.start.mockRejectedValueOnce({ code: 'E_NETWORKING_NOT_PINNED', message: 'requirePinnedReactNativeNetworking: replaced' });
+    await expect(PinVault.start(config)).rejects.toMatchObject({ code: 'E_NETWORKING_NOT_PINNED' });
+    mockNative.start.mockRejectedValueOnce({
+      code: 'E_INVALID_CONFIG',
+      message: "config.configApis[0].serverScope: differs from the app's native security file",
+    });
+    await expect(PinVault.start(config)).rejects.toMatchObject({
+      code: 'E_INVALID_CONFIG',
+      message: expect.stringContaining('native security file'),
+    });
+  });
+
+  it('refuses nesting deeper than the native parsers allow, before it reaches native', async () => {
+    let deep: unknown = 'x';
+    for (let i = 0; i < 100_000; i++) deep = [deep];
+    await expect(PinVault.start({ ...config, deviceAlias: deep } as unknown as PinVaultConfig)).rejects.toMatchObject({
+      code: 'E_INVALID_CONFIG',
+      message: expect.stringContaining('nested too deeply'),
+    });
+    await expect(PinVault.fetch('https://a/', { headers: deep } as never)).rejects.toMatchObject({ code: 'E_INVALID_ARGUMENT' });
+    expect(mockNative.start).not.toHaveBeenCalled();
+    expect(mockNative.fetch).not.toHaveBeenCalled();
+  });
+});
+
 describe('environmentGuard (fail closed)', () => {
   it('answers true only for a true verdict', async () => {
     await PinVault.start({ ...config, environmentGuard: async (op) => op === 'INIT' });

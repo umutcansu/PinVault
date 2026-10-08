@@ -37,7 +37,9 @@ export type PinVaultErrorCode =
   /** The pinned request failed: pin mismatch, TLS, network, timeout, size limit. */
   | 'E_FETCH'
   | 'E_NO_ACTIVITY'
-  | 'E_NATIVE';
+  | 'E_NATIVE'
+  /** `requirePinnedReactNativeNetworking`: React Native's own networking is not pinned. */
+  | 'E_NETWORKING_NOT_PINNED';
 
 /** A rejected PinVault call. `exception` is the native exception (class name + message). */
 export class PinVaultError extends Error {
@@ -59,6 +61,7 @@ const KNOWN_CODES: ReadonlySet<string> = new Set([
   'E_FETCH',
   'E_NO_ACTIVITY',
   'E_NATIVE',
+  'E_NETWORKING_NOT_PINNED',
 ]);
 
 /** Native rejections → PinVaultError (keeps the native code, message and exception). */
@@ -90,7 +93,12 @@ async function call<T>(promise: Promise<unknown>): Promise<T> {
 // JSON.stringify silently drops functions and turns NaN into null; the native
 // parser could then not refuse them. Anything that is not plain data is refused here.
 
-function assertPlainData(value: unknown, path: string, code: PinVaultErrorCode): void {
+/** The native parsers' nesting limit (the root object is level 0). */
+const MAX_DEPTH = 8;
+
+function assertPlainData(value: unknown, path: string, code: PinVaultErrorCode, depth = 0): void {
+  // Before recursing further: a deep structure would otherwise overflow the JS stack.
+  if (depth > MAX_DEPTH) throw new PinVaultError(code, `${path}: nested too deeply`);
   if (value === null) return;
   switch (typeof value) {
     case 'string':
@@ -103,7 +111,7 @@ function assertPlainData(value: unknown, path: string, code: PinVaultErrorCode):
       if (Array.isArray(value)) {
         value.forEach((item, i) => {
           if (item === undefined) throw new PinVaultError(code, `${path}[${i}]: undefined in a list`);
-          assertPlainData(item, `${path}[${i}]`, code);
+          assertPlainData(item, `${path}[${i}]`, code, depth + 1);
         });
         return;
       }
@@ -113,7 +121,7 @@ function assertPlainData(value: unknown, path: string, code: PinVaultErrorCode):
       }
       for (const [k, v] of Object.entries(value as Record<string, unknown>)) {
         if (v === undefined) continue; // an optional field left out
-        assertPlainData(v, `${path}.${k}`, code);
+        assertPlainData(v, `${path}.${k}`, code, depth + 1);
       }
       return;
     }
