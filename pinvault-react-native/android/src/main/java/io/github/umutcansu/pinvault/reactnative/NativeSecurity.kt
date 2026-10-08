@@ -4,6 +4,8 @@ import android.content.Context
 import android.content.pm.ApplicationInfo
 import io.github.umutcansu.pinvault.model.CertificateConfig
 import io.github.umutcansu.pinvault.model.HostPin
+import io.github.umutcansu.pinvault.model.UserAuth
+import io.github.umutcansu.pinvault.model.VaultFileEncryption
 import java.io.FileNotFoundException
 import java.io.IOException
 
@@ -22,9 +24,17 @@ import java.io.IOException
  *     "signaturePublicKeys": ["…", "…"], "requiredSignatures": 2,
  *     "recoveryPublicKeys": ["…"], "requiredRecoverySignatures": 1,
  *     "serverScope": "default-tls", "clientCaPins": ["…"],
+ *     "url": "https://config.example.com/", "attestation": true,
+ *     "tokenHosts": ["api.example.com"], "clientCertHosts": ["api.example.com:443"],
  *     "allowUnsigned": false, "allowUnpinnedConfigApi": false, "allowServerGeneratedKey": false
  *   }],
- *   "staticPins": { "pins": [ … ], "version": 1 }
+ *   "staticPins": { "pins": [ … ], "version": 1 },
+ *   "require": {
+ *     "requireUnlockedDevice": true, "requireHardwareBackedKeys": true, "managedTrustRoots": true,
+ *     "wipeVaultFilesOnRevocation": true, "requireCaTrust": ["api.example.com"],
+ *     "expectedSignerSha256": ["…"], "expiredConfigGraceSeconds": 0
+ *   },
+ *   "vaultFiles": [{ "key": "statement", "signaturePublicKey": "…", "encryption": "USER_AUTH", "userAuth": "REQUIRED" }]
  * }
  * ```
  *
@@ -35,17 +45,51 @@ import java.io.IOException
  * - a field the file declares is the value: JS may leave it out or repeat it,
  *   a different value is refused (`E_INVALID_CONFIG`);
  * - `allowUnsigned`, `allowUnpinnedConfigApi`, `allowServerGeneratedKey` from
- *   JS are refused unless the file allows them for that block.
+ *   JS are refused unless the file allows them for that block;
+ * - `url`, `tokenHosts` and `clientCertHosts` of a block are fixed where the
+ *   file gives them, and `attestation: true` there cannot be switched off;
+ * - `require` only tightens: a protection it turns on stays on whatever JS
+ *   says, `requireCaTrust` hosts are added to JS's, `expectedSignerSha256` is
+ *   fixed, and `expiredConfigGraceSeconds` is the most JS may ask for;
+ * - `vaultFiles` fixes those files' signature key, encryption and screen lock;
+ *   with the section present, a JS vault file it does not name is refused.
  *
- * Without the file, release builds (the app is not debuggable) refuse those
- * three relaxations from JS; debug builds take them as before.
+ * Without the file, release builds (the app is not debuggable) refuse to start
+ * a config with Config APIs or static pins: the trust anchors would come from
+ * JS alone. An app that accepts that says so natively, in its manifest
+ * (`<meta-data android:name="io.github.umutcansu.pinvault.ALLOW_NO_NATIVE_SECURITY_FILE" android:value="true"/>`);
+ * the three relaxations stay refused from JS then. Debug builds take
+ * everything as before. Whatever the file says, a release build caps
+ * `expiredConfigGrace` at [MAX_RELEASE_GRACE_MS].
  */
 internal class NativeSecurity(
     /** Where the file came from, for messages. */
     val source: String,
     val blocks: Map<String, Block>,
     val staticPins: CertificateConfig?,
+    val require: Require = Require(),
+    /** Null when the file has no `vaultFiles` section. */
+    val vaultFiles: Map<String, VaultFilePolicy>? = null,
 ) {
+
+    /** The `require` section: protections JS cannot switch off. */
+    class Require(
+        val requireUnlockedDevice: Boolean = false,
+        val requireHardwareBackedKeys: Boolean = false,
+        val managedTrustRoots: Boolean = false,
+        val wipeVaultFilesOnRevocation: Boolean = false,
+        val requireCaTrust: List<String>? = null,
+        val expectedSignerSha256: List<String>? = null,
+        /** The most `expiredConfigGrace` JS may set; null = only the release cap. */
+        val expiredConfigGraceMs: Long? = null,
+    )
+
+    /** One `vaultFiles` entry: what JS cannot change about that file. */
+    class VaultFilePolicy(
+        val signaturePublicKey: String?,
+        val encryption: VaultFileEncryption?,
+        val userAuth: UserAuth?,
+    )
 
     class Block(
         val bootstrapPins: List<HostPin>?,
@@ -58,10 +102,17 @@ internal class NativeSecurity(
         val allowUnsigned: Boolean,
         val allowUnpinnedConfigApi: Boolean,
         val allowServerGeneratedKey: Boolean,
+        val url: String? = null,
+        val attestation: Boolean = false,
+        val tokenHosts: List<String>? = null,
+        val clientCertHosts: List<String>? = null,
     )
 
     companion object {
         const val ASSET_NAME = "pinvault_security.json"
+        const val NO_FILE_META_DATA = "io.github.umutcansu.pinvault.ALLOW_NO_NATIVE_SECURITY_FILE"
+        /** The longest `expiredConfigGrace` a release build takes: an expired pin set must not live on for months. */
+        const val MAX_RELEASE_GRACE_MS = 7L * 24 * 3600 * 1000
         private const val MAX_FILE_CHARS = 256 * 1024
 
         /** The file from the app's assets; null when the app ships none. A broken file throws [BridgeInputException]. */
@@ -75,6 +126,15 @@ internal class NativeSecurity(
                 throw BridgeInputException("native security file assets/$ASSET_NAME: cannot be read (${e.javaClass.simpleName})")
             }
             return parse(text, "assets/$ASSET_NAME")
+        }
+
+        /** True when the app's manifest says it starts without a native security file in release. */
+        fun noFileAllowed(context: Context): Boolean = try {
+            @Suppress("DEPRECATION")
+            context.packageManager.getApplicationInfo(context.packageName, android.content.pm.PackageManager.GET_META_DATA)
+                .metaData?.getBoolean(NO_FILE_META_DATA, false) == true
+        } catch (_: Exception) {
+            false
         }
 
         /** True for a release build of the app (not `android:debuggable`). */
@@ -103,15 +163,51 @@ internal class NativeSecurity(
                         allowUnsigned = b.bool("allowUnsigned") == true,
                         allowUnpinnedConfigApi = b.bool("allowUnpinnedConfigApi") == true,
                         allowServerGeneratedKey = b.bool("allowServerGeneratedKey") == true,
+                        url = b.string("url", 2048)?.also {
+                            if (!it.startsWith("https://")) throw BridgeInputException("${b.path}.url: must be an https:// URL")
+                        },
+                        attestation = b.bool("attestation") == true,
+                        tokenHosts = b.stringList("tokenHosts", 64, 255),
+                        clientCertHosts = b.stringList("clientCertHosts", 64, 2048),
                     )
                     b.finish()
                 }
                 val staticPins = root.obj("staticPins")?.let(ConfigParser::staticPins)
+                val require = root.obj("require")?.let { r ->
+                    Require(
+                        requireUnlockedDevice = r.bool("requireUnlockedDevice") == true,
+                        requireHardwareBackedKeys = r.bool("requireHardwareBackedKeys") == true,
+                        managedTrustRoots = r.bool("managedTrustRoots") == true,
+                        wipeVaultFilesOnRevocation = r.bool("wipeVaultFilesOnRevocation") == true,
+                        requireCaTrust = r.stringList("requireCaTrust", 64, 255),
+                        expectedSignerSha256 = r.stringList("expectedSignerSha256", 16, 128),
+                        expiredConfigGraceMs = r.long("expiredConfigGraceSeconds", 0, MAX_RELEASE_GRACE_MS / 1000)?.let { it * 1000 },
+                    ).also {
+                        // iOS-only (bundle and team ids): read for the shape, used by the iOS side.
+                        r.stringList("expectedBundleIds", 16, 255)
+                        r.stringList("expectedTeamIds", 16, 32)
+                        r.finish()
+                    }
+                } ?: Require()
+                val vaultFiles = root.objList("vaultFiles", ConfigParser.MAX_VAULT_FILES)?.let { list ->
+                    val map = LinkedHashMap<String, VaultFilePolicy>()
+                    list.forEach { f ->
+                        val key = f.requireString("key", 128)
+                        if (key in map) throw BridgeInputException("${f.path}.key: '$key' is declared twice")
+                        map[key] = VaultFilePolicy(
+                            signaturePublicKey = f.string("signaturePublicKey", ConfigParser.KEY_LENGTH, multiline = true),
+                            encryption = f.enum("encryption", VaultFileEncryption.values()),
+                            userAuth = f.enum("userAuth", UserAuth.values()),
+                        )
+                        f.finish()
+                    }
+                    map
+                }
                 root.finish()
                 if (blocks.isEmpty() && staticPins == null) {
                     throw BridgeInputException("$source: declares neither configApis nor staticPins")
                 }
-                return NativeSecurity(source, blocks, staticPins)
+                return NativeSecurity(source, blocks, staticPins, require, vaultFiles)
             } catch (e: BridgeInputException) {
                 val message = e.message ?: ""
                 throw BridgeInputException(if (message.startsWith("native security file")) message else "native security file $message")

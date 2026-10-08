@@ -30,23 +30,37 @@ public enum ConfigParser {
 
     /// - Parameters:
     ///   - native: the app's native security file (``NativeSecurity``); nil = none.
-    ///   - release: a release build: without a native file, the relaxations (`allowUnsigned`, …) are refused from JS.
+    ///   - release: a release build: without a native file, a config with Config APIs or static
+    ///     pins is refused (unless `noFileAllowed`) and the relaxations (`allowUnsigned`, …) are
+    ///     refused from JS; `expiredConfigGrace` is capped.
+    ///   - noFileAllowed: the app's Info.plist accepts a release start without the file (``NativeSecurity/noFileInfoKey``).
     public static func parse(
         _ json: String,
         tokens: VaultTokenStore,
         guardFactory: (Int64) -> any EnvironmentGuard,
         listener: PinVaultConnectionListener?,
         native: NativeSecurity? = nil,
-        release: Bool = false
+        release: Bool = false,
+        noFileAllowed: Bool = false
     ) throws -> ParsedConfig {
         let root = try StrictJSON.parseObject(json, path: "config")
         let builder = PinVaultConfig.Builder()
+        let require = native?.require ?? NativeSecurity.Require()
 
-        for api in try root.objectList("configApis", maxItems: maxConfigApis) ?? [] {
+        let configApis = try root.objectList("configApis", maxItems: maxConfigApis)
+        let vaultFiles = try root.objectList("vaultFiles", maxItems: maxVaultFiles)
+        let jsStaticPins = try root.object("staticPins").map(staticPins)
+        if release && native == nil && !noFileAllowed && (configApis != nil || jsStaticPins != nil) {
+            throw BridgeInputError(
+                "config: a release build takes its trust anchors only from the app's native security file " +
+                    "(\(NativeSecurity.resourceName).json, README \"Native security file\"); none is shipped. " +
+                    "An app that accepts JS-only anchors says so in its Info.plist: \(NativeSecurity.noFileInfoKey) = YES"
+            )
+        }
+        for api in configApis ?? [] {
             try addConfigApi(builder, api, native: native, release: release)
         }
-        for file in try root.objectList("vaultFiles", maxItems: maxVaultFiles) ?? [] { try addVaultFile(builder, file, tokens) }
-        let jsStaticPins = try root.object("staticPins").map(staticPins)
+        for file in vaultFiles ?? [] { try addVaultFile(builder, file, tokens, native: native) }
         if let pins = try SecurityPolicy.staticPins(path: "config.staticPins", js: jsStaticPins, native: native) {
             builder.staticPins(pins)
         }
@@ -55,13 +69,28 @@ public enum ConfigParser {
         if let v = try root.int64("updateIntervalHours", min: 1, max: 24 * 30) { builder.updateIntervalHours(v) }
         if let v = try root.int64("updateIntervalMinutes", min: 15, max: 60 * 24 * 30) { builder.updateIntervalMinutes(v) }
         if let v = try root.string("deviceAlias", maxLength: 128) { builder.deviceAlias(v) }
-        if let d = try root.object("expiredConfigGrace") { let (a, u) = try duration(d); builder.expiredConfigGrace(a, u) }
-        if let v = try root.stringList("requireCaTrust", maxItems: 64, maxLength: 255) { builder.requireCaTrust(v) }
-        if try root.bool("wipeVaultFilesOnRevocation") == true { builder.wipeVaultFilesOnRevocation() }
+        if let d = try root.object("expiredConfigGrace") {
+            let (a, u) = try duration(d)
+            let ms = millis(a, u)
+            if release && ms > NativeSecurity.maxReleaseGraceMs { throw BridgeInputError("\(d.path): a release build takes at most 7 days") }
+            if let max = require.expiredConfigGraceMs, ms > max {
+                throw BridgeInputError("\(d.path): longer than the app's native security file allows (\(max / 1000) s)")
+            }
+            builder.expiredConfigGrace(a, u)
+        } else if let max = require.expiredConfigGraceMs {
+            builder.expiredConfigGrace(max, .milliseconds)
+        }
+        // `require` hosts are added to JS's: JS can name more, never fewer.
+        let caTrust = (try root.stringList("requireCaTrust", maxItems: 64, maxLength: 255) ?? []) + (require.requireCaTrust ?? [])
+        if !caTrust.isEmpty {
+            var seen = Set<String>()
+            builder.requireCaTrust(caTrust.filter { seen.insert($0).inserted })
+        }
+        if try root.bool("wipeVaultFilesOnRevocation") == true || require.wipeVaultFilesOnRevocation { builder.wipeVaultFilesOnRevocation() }
         if let d = try root.object("vaultFileMaxOfflineAge") { let (a, u) = try duration(d); builder.vaultFileMaxOfflineAge(a, u) }
-        if try root.bool("requireUnlockedDevice") == true { builder.requireUnlockedDevice() }
-        if try root.bool("requireHardwareBackedKeys") == true { builder.requireHardwareBackedKeys() }
-        if try root.bool("managedTrustRoots") == true { builder.managedTrustRoots() }
+        if try root.bool("requireUnlockedDevice") == true || require.requireUnlockedDevice { builder.requireUnlockedDevice() }
+        if try root.bool("requireHardwareBackedKeys") == true || require.requireHardwareBackedKeys { builder.requireHardwareBackedKeys() }
+        if try root.bool("managedTrustRoots") == true || require.managedTrustRoots { builder.managedTrustRoots() }
         if let v = try root.stringList("expectedSignerSha256", maxItems: 16, maxLength: 128) { builder.expectedSignerSha256(v) }
 
         var guardTimeout: Int64?
@@ -73,7 +102,8 @@ public enum ConfigParser {
             builder.environmentGuard(guardFactory(timeout))
         }
 
-        let requirePinned = try root.bool("requirePinnedReactNativeNetworking") == true
+        // On by default in a release build: RN's https must go through PinVault there.
+        let requirePinned = try root.bool("requirePinnedReactNativeNetworking") ?? release
         // Android-only settings: the Android side reads them; here only their shape is checked.
         _ = try root.object("android")
         var maxRN = ReactNetworking.defaultMaxResponseBytes
@@ -82,10 +112,21 @@ public enum ConfigParser {
             if let resolve = try ios.stringMap("resolve", maxItems: 64, maxKeyLength: 255, maxValueLength: 255) {
                 for (host, address) in resolve.sorted(by: { $0.key < $1.key }) { builder.resolve(host: host, to: address) }
             }
-            if let v = try ios.stringList("expectedBundleIds", maxItems: 16, maxLength: 255) { builder.expectedBundleId(v) }
-            if let v = try ios.stringList("expectedTeamIds", maxItems: 16, maxLength: 32) { builder.expectedTeamId(v) }
+            if let v = try fixedList("config.ios.expectedBundleIds", require.expectedBundleIds,
+                                     try ios.stringList("expectedBundleIds", maxItems: 16, maxLength: 255), native) {
+                builder.expectedBundleId(v)
+            }
+            if let v = try fixedList("config.ios.expectedTeamIds", require.expectedTeamIds,
+                                     try ios.stringList("expectedTeamIds", maxItems: 16, maxLength: 32), native) {
+                builder.expectedTeamId(v)
+            }
             if let v = try ios.enumValue("userAuthStrength", UserAuthStrength.self) { builder.userAuthStrength(v) }
             try ios.finish()
+        }
+
+        else {
+            if let v = require.expectedBundleIds { builder.expectedBundleId(v) }
+            if let v = require.expectedTeamIds { builder.expectedTeamId(v) }
         }
 
         try root.finish()
@@ -95,6 +136,26 @@ public enum ConfigParser {
         parsed.reactNativeMaxResponseBytes = maxRN
         parsed.nativeSecurityApplied = native != nil
         return parsed
+    }
+
+    /// A JS list against the native file's: fixed where the file gives it.
+    static func fixedList(_ path: String, _ native: [String]?, _ js: [String]?, _ file: NativeSecurity?) throws -> [String]? {
+        guard let native else { return js }
+        if let js, !NativeSecurity.sameKeys(js, native) {
+            throw BridgeInputError("\(path): differs from the app's native security file (\(file?.source ?? "")); the native value is fixed")
+        }
+        return native
+    }
+
+    static func millis(_ amount: Int64, _ unit: TimeUnit) -> Int64 {
+        switch unit {
+        case .milliseconds: return amount
+        case .seconds: return amount.multipliedReportingOverflow(by: 1000).overflow ? .max : amount * 1000
+        case .minutes: return amount.multipliedReportingOverflow(by: 60_000).overflow ? .max : amount * 60_000
+        case .hours: return amount.multipliedReportingOverflow(by: 3_600_000).overflow ? .max : amount * 3_600_000
+        case .days: return amount.multipliedReportingOverflow(by: 86_400_000).overflow ? .max : amount * 86_400_000
+        default: return .max
+        }
     }
 
     static func duration(_ d: Fields) throws -> (Int64, TimeUnit) {
@@ -178,10 +239,36 @@ public enum ConfigParser {
         let enrollmentUrl = try httpsUrl(b, "enrollmentUrl")
         let threshold = try b.double("clientCertRenewalThreshold", min: 0, max: 1)
         let disableRenewal = try b.bool("disableClientCertRenewal") == true
-        let attestation = try b.bool("attestation") == true
+        let jsAttestation = try b.bool("attestation")
         let attestationInterval = try b.object("attestationInterval").map(duration)
-        let tokenHosts = try b.stringList("tokenHosts", maxItems: 64, maxLength: 255)
+        let jsTokenHosts = try b.stringList("tokenHosts", maxItems: 64, maxLength: 255)
         try b.finish()
+
+        // Where the block talks to and who gets its token and identity: fixed where the file says.
+        let nativeBlock = native?.blocks[id]
+        func fixed(_ key: String) -> BridgeInputError {
+            BridgeInputError("\(b.path).\(key): differs from the app's native security file (\(native?.source ?? "")); the native value is fixed")
+        }
+        var blockUrl = url
+        if let n = nativeBlock?.url {
+            if n != url { throw fixed("url") }
+            blockUrl = n
+        }
+        if nativeBlock?.attestation == true && jsAttestation == false {
+            throw BridgeInputError("\(b.path).attestation: the app's native security file turns it on; JS cannot turn it off")
+        }
+        let attestation = jsAttestation == true || nativeBlock?.attestation == true
+        let lower: ([String]) -> [String] = { $0.map { $0.lowercased() } }
+        var tokenHosts = jsTokenHosts
+        if let n = nativeBlock?.tokenHosts {
+            if let j = jsTokenHosts, !NativeSecurity.sameKeys(lower(j), lower(n)) { throw fixed("tokenHosts") }
+            tokenHosts = n
+        }
+        var certHosts = clientCertHosts
+        if let n = nativeBlock?.clientCertHosts {
+            if let j = clientCertHosts, !NativeSecurity.sameKeys(lower(j), lower(n)) { throw fixed("clientCertHosts") }
+            certHosts = n
+        }
 
         // The trust anchors and relaxations: the native security file decides, JS only repeats.
         let sec = try SecurityPolicy.apply(
@@ -195,7 +282,7 @@ public enum ConfigParser {
             native: native, release: release
         )
 
-        builder.configApi(id, url: url) { api in
+        builder.configApi(id, url: blockUrl) { api in
             if let v = sec.bootstrapPins { api.bootstrapPins(v) }
             if let configEndpoint { api.configEndpoint(configEndpoint) }
             if let healthEndpoint { api.healthEndpoint(healthEndpoint) }
@@ -210,7 +297,7 @@ public enum ConfigParser {
             if sec.allowServerKey { api.allowServerGeneratedKey() }
             if let v = sec.clientCaPins { api.clientCaPins(v) }
             if let maxLifetime { api.maxClientCertLifetimeDays(maxLifetime) }
-            if let clientCertHosts { api.clientCertHosts(clientCertHosts) }
+            if let certHosts { api.clientCertHosts(certHosts) }
             if let enrollmentEndpoint { api.enrollmentEndpoint(enrollmentEndpoint) }
             if let clientCertEndpoint { api.clientCertEndpoint(clientCertEndpoint) }
             if let vaultReportEndpoint { api.vaultReportEndpoint(vaultReportEndpoint) }
@@ -226,19 +313,46 @@ public enum ConfigParser {
         }
     }
 
-    static func addVaultFile(_ builder: PinVaultConfig.Builder, _ f: Fields, _ tokens: VaultTokenStore) throws {
+    static func addVaultFile(_ builder: PinVaultConfig.Builder, _ f: Fields, _ tokens: VaultTokenStore, native: NativeSecurity?) throws {
         let key = try f.requireString("key", maxLength: 128)
         let endpoint = try f.requireString("endpoint", maxLength: 512)
-        let signatureKey = try f.string("signaturePublicKey", maxLength: keyLength, multiline: true)
+        let jsSignatureKey = try f.string("signaturePublicKey", maxLength: keyLength, multiline: true)
         let updateWithPins = try f.bool("updateWithPins")
         let storage = try f.enumValue("storage", StorageStrategy.self)
         let configApi = try f.string("configApi", maxLength: 128)
         let policy = try f.enumValue("accessPolicy", VaultFileAccessPolicy.self)
-        let encryption = try f.enumValue("encryption", VaultFileEncryption.self)
-        let userAuth = try f.enumValue("userAuth", UserAuth.self)
+        let jsEncryption = try f.enumValue("encryption", VaultFileEncryption.self)
+        let jsUserAuth = try f.enumValue("userAuth", UserAuth.self)
         let maxOfflineAge = try f.object("maxOfflineAge").map(duration)
         let wipeWhenStale = try f.bool("wipeWhenStale") == true
         try f.finish()
+
+        // A file the native security file names keeps its signature key, encryption and lock.
+        var signatureKey = jsSignatureKey
+        var encryption = jsEncryption
+        var userAuth = jsUserAuth
+        if let files = native?.vaultFiles {
+            guard let declared = files[key] else {
+                throw BridgeInputError("\(f.path): vault file '\(key)' is not declared in the app's native security file (\(native?.source ?? ""))")
+            }
+            func fixed(_ field: String) -> BridgeInputError {
+                BridgeInputError("\(f.path).\(field): differs from the app's native security file (\(native?.source ?? "")); the native value is fixed")
+            }
+            if let n = declared.signaturePublicKey {
+                if let j = jsSignatureKey, j.trimmingCharacters(in: .whitespacesAndNewlines) != n.trimmingCharacters(in: .whitespacesAndNewlines) {
+                    throw fixed("signaturePublicKey")
+                }
+                signatureKey = n
+            }
+            if let n = declared.encryption {
+                if let j = jsEncryption, j != n { throw fixed("encryption") }
+                encryption = n
+            }
+            if let n = declared.userAuth {
+                if let j = jsUserAuth, j != n { throw fixed("userAuth") }
+                userAuth = n
+            }
+        }
 
         builder.vaultFile(key) { file in
             file.endpoint(endpoint)

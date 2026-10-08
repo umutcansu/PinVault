@@ -167,7 +167,10 @@ export async function evaluateGuard(
   }
 }
 
-const GUARDED_OPERATIONS: ReadonlySet<string> = new Set(['INIT', 'ENROLL', 'FETCH_FILE', 'UNLOCK_FILE']);
+const GUARDED_OPERATIONS: ReadonlySet<string> = new Set(['INIT', 'ENROLL', 'FETCH_FILE', 'UNLOCK_FILE', 'LOAD_FILE']);
+
+/** The guard of the running config, put back when a new config is refused. */
+let activeGuard: { guard: EnvironmentGuard | undefined; timeoutMs: number } = { guard: undefined, timeoutMs: DEFAULT_GUARD_TIMEOUT_MS };
 
 function installGuard(guard: EnvironmentGuard | undefined, timeoutMs: number): void {
   guardSubscription?.remove();
@@ -214,8 +217,18 @@ export async function start(config: PinVaultConfig): Promise<InitResult> {
   const nativeConfig: Record<string, unknown> = { ...rest };
   if (environmentGuard) nativeConfig.environmentGuard = { timeoutMs };
   const json = strictJson(nativeConfig, 'config', 'E_INVALID_CONFIG');
+  // The new guard answers during start (INIT is asked then). A config the
+  // native side refuses changes nothing, so the running config's guard comes back.
+  const previous = activeGuard;
   installGuard(environmentGuard, timeoutMs);
-  return call<InitResult>(NativePinVault.start(json));
+  try {
+    const result = await call<InitResult>(NativePinVault.start(json));
+    activeGuard = { guard: environmentGuard, timeoutMs };
+    return result;
+  } catch (error) {
+    installGuard(previous.guard, previous.timeoutMs);
+    throw error;
+  }
 }
 
 export const updateNow = (): Promise<UpdateResult> => call(NativePinVault.updateNow());

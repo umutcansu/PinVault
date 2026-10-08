@@ -19,15 +19,15 @@ final class SecurityAndNetworkingTests: XCTestCase {
           "serverScope":"default-tls","clientCaPins":["\(pinA)"]}]}
         """, source: "pinvault_security.json")
 
-    func parse(_ json: String, native: NativeSecurity?, release: Bool = true) throws -> ParsedConfig {
+    func parse(_ json: String, native: NativeSecurity?, release: Bool = true, noFileAllowed: Bool = false) throws -> ParsedConfig {
         try ConfigParser.parse(json, tokens: tokens, guardFactory: { _ in ClosureEnvironmentGuard { _ in true } },
-                               listener: nil, native: native, release: release)
+                               listener: nil, native: native, release: release, noFileAllowed: noFileAllowed)
     }
 
-    func assertRefused(_ json: String, native: NativeSecurity?, release: Bool = true, _ fragments: String...,
+    func assertRefused(_ json: String, native: NativeSecurity?, release: Bool = true, noFileAllowed: Bool = false, _ fragments: String...,
                        file: StaticString = #filePath, line: UInt = #line) {
         do {
-            _ = try parse(json, native: native, release: release)
+            _ = try parse(json, native: native, release: release, noFileAllowed: noFileAllowed)
             XCTFail("accepted: \(json.prefix(200))", file: file, line: line)
         } catch {
             let message = (error as? BridgeInputError)?.message ?? (error as? PinVaultError)?.message ?? "\(error)"
@@ -71,10 +71,18 @@ final class SecurityAndNetworkingTests: XCTestCase {
         assertRefused(#"{"configApis":[{\#(base),"allowServerGeneratedKey":true}]}"#, native: file, "allowServerGeneratedKey")
     }
 
+    func testWithoutAFileReleaseRefusesJsAnchorsUnlessThePlistAcceptsThem() throws {
+        let api = #""id":"a","url":"https://h/","bootstrapPins":[{"hostname":"h","sha256":["\#(pinA)","\#(pinB)"]}],"signaturePublicKey":"\#(key)""#
+        assertRefused(#"{"configApis":[{\#(api)}]}"#, native: nil, "none is shipped", NativeSecurity.noFileInfoKey)
+        assertRefused(#"{"staticPins":{"pins":[{"hostname":"x","sha256":["\#(pinA)","\#(pinB)"]}]}}"#, native: nil, "none is shipped")
+        let accepted = try parse(#"{"configApis":[{\#(api)}]}"#, native: nil, noFileAllowed: true)
+        XCTAssertFalse(accepted.nativeSecurityApplied)
+    }
+
     func testWithoutAFileReleaseRefusesTheRelaxationsDebugTakesThem() throws {
         let api = #""id":"a","url":"https://h/","bootstrapPins":[{"hostname":"h","sha256":["\#(pinA)","\#(pinB)"]}],"signaturePublicKey":"\#(key)""#
-        assertRefused(#"{"configApis":[{\#(api),"allowServerGeneratedKey":true}]}"#, native: nil, "refused from JS", "native security file")
-        assertRefused(#"{"configApis":[{"id":"a","url":"https://h/","allowUnsigned":true}]}"#, native: nil, "allowUnsigned")
+        assertRefused(#"{"configApis":[{\#(api),"allowServerGeneratedKey":true}]}"#, native: nil, noFileAllowed: true, "refused from JS", "native security file")
+        assertRefused(#"{"configApis":[{"id":"a","url":"https://h/","allowUnsigned":true}]}"#, native: nil, noFileAllowed: true, "allowUnsigned")
         let debug = try parse(#"{"configApis":[{\#(api),"allowServerGeneratedKey":true}]}"#, native: nil, release: false)
         XCTAssertEqual(debug.config.configApis["a"]?.allowServerGeneratedKey, true)
     }
@@ -84,6 +92,44 @@ final class SecurityAndNetworkingTests: XCTestCase {
         let p = try parse(#"{"configApis":[{\#(base),"bootstrapPins":[{"hostname":"h","sha256":["\#(pinA)","\#(pinB)"]}],"signaturePublicKey":"\#(key)"}]}"#,
                           native: allowing)
         XCTAssertEqual(p.config.configApis["default"]?.allowServerGeneratedKey, true)
+    }
+
+    func testRequireOnlyTightensAndFixesTheIds() throws {
+        let strict = try NativeSecurity.parse("""
+            {"configApis":[{"id":"default","url":"https://h.example:8081/","attestation":true,"tokenHosts":["api.example"],
+              "bootstrapPins":[{"hostname":"h.example","sha256":["\(pinA)","\(pinB)"]}],"signaturePublicKeys":["\(key)"]}],
+             "require":{"requireUnlockedDevice":true,"requireHardwareBackedKeys":true,"requireCaTrust":["h.example"],
+                        "expectedBundleIds":["com.example.app"],"expiredConfigGraceSeconds":3600}}
+            """, source: "f")
+        let p = try parse(#"{"configApis":[{\#(base)}],"requireUnlockedDevice":false,"requireCaTrust":["other.example"]}"#, native: strict)
+        XCTAssertTrue(p.config.requireUnlockedDevice, "JS false does not switch it off")
+        XCTAssertTrue(p.config.requireHardwareBackedKeys)
+        XCTAssertEqual(Set(p.config.caTrustHosts), ["other.example", "h.example"])
+        XCTAssertEqual(p.config.expectedBundleIds, ["com.example.app"])
+        XCTAssertEqual(p.config.configApis["default"]?.attestationEnabled, true)
+        assertRefused(#"{"configApis":[{\#(base),"attestation":false}]}"#, native: strict, "attestation", "cannot turn it off")
+        assertRefused(#"{"configApis":[{\#(base),"tokenHosts":["evil.example"]}]}"#, native: strict, "tokenHosts", "fixed")
+        assertRefused(#"{"configApis":[{"id":"default","url":"https://evil.example/"}]}"#, native: strict, "url", "fixed")
+        assertRefused(#"{"configApis":[{\#(base)}],"ios":{"expectedBundleIds":["com.evil"]}}"#, native: strict, "expectedBundleIds", "fixed")
+        assertRefused(#"{"configApis":[{\#(base)}],"expiredConfigGrace":{"amount":2,"unit":"HOURS"}}"#, native: strict, "expiredConfigGrace")
+        _ = try parse(#"{"configApis":[{\#(base)}],"expiredConfigGrace":{"amount":30,"unit":"MINUTES"}}"#, native: strict)
+    }
+
+    func testAReleaseBuildCapsTheExpiredConfigGrace() {
+        assertRefused(#"{"deviceAlias":"x","expiredConfigGrace":{"amount":8,"unit":"DAYS"}}"#, native: nil, "at most 7 days")
+    }
+
+    func testDeclaredVaultFilesKeepTheirProtection() throws {
+        let files = try NativeSecurity.parse("""
+            {"configApis":[{"id":"default","bootstrapPins":[{"hostname":"h.example","sha256":["\(pinA)","\(pinB)"]}],"signaturePublicKeys":["\(key)"]}],
+             "vaultFiles":[{"key":"statement","signaturePublicKey":"\(key)","encryption":"USER_AUTH","userAuth":"REQUIRED"}]}
+            """, source: "f")
+        let ok = try parse(#"{"configApis":[{\#(base)}],"vaultFiles":[{"key":"statement","endpoint":"api/v1/vault/statement"}]}"#, native: files)
+        let file = try XCTUnwrap(ok.config.vaultFiles["statement"])
+        XCTAssertEqual(file.encryption, .userAuth)
+        XCTAssertEqual(file.userAuth, .required)
+        assertRefused(#"{"configApis":[{\#(base)}],"vaultFiles":[{"key":"statement","endpoint":"e","encryption":"PLAIN"}]}"#, native: files, "encryption", "fixed")
+        assertRefused(#"{"configApis":[{\#(base)}],"vaultFiles":[{"key":"other","endpoint":"e"}]}"#, native: files, "'other' is not declared")
     }
 
     func testTheFileIsParsedStrictly() {
@@ -104,11 +150,14 @@ final class SecurityAndNetworkingTests: XCTestCase {
 
     func testNetworkingOptions() throws {
         let api = #"{"id":"a","url":"https://h/","bootstrapPins":[{"hostname":"h","sha256":["\#(pinA)","\#(pinB)"]}],"signaturePublicKey":"\#(key)"}"#
-        let p = try parse(#"{"configApis":[\#(api)],"requirePinnedReactNativeNetworking":true,"ios":{"reactNativeMaxResponseBytes":1024}}"#, native: nil)
+        let p = try parse(#"{"configApis":[\#(api)],"requirePinnedReactNativeNetworking":true,"ios":{"reactNativeMaxResponseBytes":1024}}"#, native: nil, noFileAllowed: true)
         XCTAssertTrue(p.requirePinnedReactNativeNetworking)
         XCTAssertEqual(p.reactNativeMaxResponseBytes, 1024)
-        XCTAssertEqual(try parse(#"{"configApis":[\#(api)]}"#, native: nil).reactNativeMaxResponseBytes, ReactNetworking.defaultMaxResponseBytes)
-        assertRefused(#"{"configApis":[\#(api)],"ios":{"reactNativeMaxResponseBytes":0}}"#, native: nil, "reactNativeMaxResponseBytes")
+        XCTAssertEqual(try parse(#"{"configApis":[\#(api)]}"#, native: nil, noFileAllowed: true).reactNativeMaxResponseBytes, ReactNetworking.defaultMaxResponseBytes)
+        assertRefused(#"{"configApis":[\#(api)],"ios":{"reactNativeMaxResponseBytes":0}}"#, native: nil, noFileAllowed: true, "reactNativeMaxResponseBytes")
+        // On by default in release, off by default in debug; JS may still say false.
+        XCTAssertTrue(try parse(#"{"configApis":[\#(api)]}"#, native: nil, noFileAllowed: true).requirePinnedReactNativeNetworking)
+        XCTAssertFalse(try parse(#"{"configApis":[\#(api)]}"#, native: nil, release: false).requirePinnedReactNativeNetworking)
     }
 
     // MARK: deep nesting

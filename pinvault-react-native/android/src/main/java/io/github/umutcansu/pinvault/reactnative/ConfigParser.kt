@@ -55,11 +55,16 @@ internal object ConfigParser {
     const val MAX_PINS = 256
     const val MAX_PINS_PER_HOST = 16
     const val KEY_LENGTH = 4096
+    private val VAULT_KEY = Regex("^[A-Za-z0-9._-]{1,64}$")
 
     /**
      * @param native the app's native security file ([NativeSecurity]); null = none.
-     * @param release a release build of the app: without a native file, the
-     *   relaxations (`allowUnsigned`, …) are refused from JS.
+     * @param release a release build of the app: without a native file, a
+     *   config with Config APIs or static pins is refused (unless
+     *   [noFileAllowed]) and the relaxations (`allowUnsigned`, …) are refused
+     *   from JS; `expiredConfigGrace` is capped.
+     * @param noFileAllowed the app's manifest accepts a release start without
+     *   a native security file ([NativeSecurity.NO_FILE_META_DATA]).
      */
     fun parse(
         json: String,
@@ -68,27 +73,56 @@ internal object ConfigParser {
         listener: PinVaultConnectionListener?,
         native: NativeSecurity? = null,
         release: Boolean = false,
+        noFileAllowed: Boolean = false,
     ): ParsedConfig {
         val root = StrictJson.parseObject(json, "config")
         val builder = PinVaultConfig.Builder()
+        val nativeRequire = native?.require ?: NativeSecurity.Require()
 
-        root.objList("configApis", MAX_CONFIG_APIS)?.forEach { addConfigApi(builder, it, native, release) }
-        root.objList("vaultFiles", MAX_VAULT_FILES)?.forEach { addVaultFile(builder, it, tokens) }
+        val configApis = root.objList("configApis", MAX_CONFIG_APIS)
+        val vaultFiles = root.objList("vaultFiles", MAX_VAULT_FILES)
         val staticPins = root.obj("staticPins")?.let(::staticPins)
+        if (release && native == null && !noFileAllowed && (configApis != null || staticPins != null)) {
+            throw BridgeInputException(
+                "config: a release build takes its trust anchors only from the app's native security file " +
+                    "(assets/${NativeSecurity.ASSET_NAME}, README \"Native security file\"); none is shipped. " +
+                    "An app that accepts JS-only anchors says so in its manifest: meta-data ${NativeSecurity.NO_FILE_META_DATA}=true"
+            )
+        }
+        configApis?.forEach { addConfigApi(builder, it, native, release) }
+        vaultFiles?.forEach { addVaultFile(builder, it, tokens, native) }
         SecurityPolicy.staticPins("config.staticPins", staticPins, native)?.let { builder.staticPins(it) }
 
         root.int("maxRetryCount", 0, 10)?.let { builder.maxRetryCount(it) }
         root.long("updateIntervalHours", 1, 24L * 30)?.let { builder.updateIntervalHours(it) }
         root.long("updateIntervalMinutes", 15, 60L * 24 * 30)?.let { builder.updateIntervalMinutes(it) }
         root.string("deviceAlias", 128)?.let { builder.deviceAlias(it) }
-        root.obj("expiredConfigGrace")?.let { d -> duration(d).let { builder.expiredConfigGrace(it.first, it.second) } }
-        root.stringList("requireCaTrust", 64, 255)?.let { builder.requireCaTrust(*it.toTypedArray()) }
-        if (root.bool("wipeVaultFilesOnRevocation") == true) builder.wipeVaultFilesOnRevocation()
+        root.obj("expiredConfigGrace")?.let { d ->
+            val (amount, unit) = duration(d)
+            val ms = unit.toMillis(amount)
+            if (release && ms > NativeSecurity.MAX_RELEASE_GRACE_MS) {
+                throw BridgeInputException("${d.path}: a release build takes at most 7 days")
+            }
+            nativeRequire.expiredConfigGraceMs?.let { max ->
+                if (ms > max) throw BridgeInputException("${d.path}: longer than the app's native security file allows (${max / 1000} s)")
+            }
+            builder.expiredConfigGrace(amount, unit)
+        } ?: nativeRequire.expiredConfigGraceMs?.let { builder.expiredConfigGrace(it, TimeUnit.MILLISECONDS) }
+        // `require` hosts are added to JS's: JS can name more, never fewer.
+        val caTrust = (root.stringList("requireCaTrust", 64, 255) ?: emptyList()) + (nativeRequire.requireCaTrust ?: emptyList())
+        if (caTrust.isNotEmpty()) builder.requireCaTrust(*caTrust.distinct().toTypedArray())
+        if (root.bool("wipeVaultFilesOnRevocation") == true || nativeRequire.wipeVaultFilesOnRevocation) builder.wipeVaultFilesOnRevocation()
         root.obj("vaultFileMaxOfflineAge")?.let { d -> duration(d).let { builder.vaultFileMaxOfflineAge(it.first, it.second) } }
-        val requireUnlocked = root.bool("requireUnlockedDevice") == true
-        if (root.bool("requireHardwareBackedKeys") == true) builder.requireHardwareBackedKeys()
-        if (root.bool("managedTrustRoots") == true) builder.managedTrustRoots()
-        root.stringList("expectedSignerSha256", 16, 128)?.let { builder.expectedSignerSha256(it) }
+        val requireUnlocked = root.bool("requireUnlockedDevice") == true || nativeRequire.requireUnlockedDevice
+        if (root.bool("requireHardwareBackedKeys") == true || nativeRequire.requireHardwareBackedKeys) builder.requireHardwareBackedKeys()
+        if (root.bool("managedTrustRoots") == true || nativeRequire.managedTrustRoots) builder.managedTrustRoots()
+        val signers = root.stringList("expectedSignerSha256", 16, 128)
+        nativeRequire.expectedSignerSha256?.let { fixed ->
+            if (signers != null && !NativeSecurity.sameKeys(signers.map(String::lowercase), fixed.map(String::lowercase))) {
+                throw BridgeInputException("config.expectedSignerSha256: differs from the app's native security file (${native?.source}); the native value is fixed")
+            }
+        }
+        (nativeRequire.expectedSignerSha256 ?: signers)?.let { builder.expectedSignerSha256(it) }
 
         var guardTimeout: Long? = null
         root.obj("environmentGuard")?.let { g ->
@@ -109,7 +143,8 @@ internal object ConfigParser {
             keepCookies = a.bool("keepReactNativeCookies") == true
             a.finish()
         }
-        val requirePinned = root.bool("requirePinnedReactNativeNetworking") == true
+        // On by default in a release build: RN's https must go through PinVault there.
+        val requirePinned = root.bool("requirePinnedReactNativeNetworking") ?: (release && pinGlobal)
         if (requirePinned && !pinGlobal) {
             throw BridgeInputException("config.requirePinnedReactNativeNetworking: contradicts android.pinGlobalNetworking: false")
         }
@@ -206,10 +241,26 @@ internal object ConfigParser {
         val enrollmentUrl = httpsUrl(b, "enrollmentUrl")
         val threshold = b.double("clientCertRenewalThreshold", 0.0, 1.0)
         val disableRenewal = b.bool("disableClientCertRenewal") == true
-        val attestation = b.bool("attestation") == true
+        val jsAttestation = b.bool("attestation")
         val attestationInterval = b.obj("attestationInterval")?.let(::duration)
-        val tokenHosts = b.stringList("tokenHosts", 64, 255)
+        val jsTokenHosts = b.stringList("tokenHosts", 64, 255)
         b.finish()
+
+        // Where the block talks to and who gets its token and identity: fixed where the file says.
+        val nativeBlock = native?.blocks?.get(id)
+        fun fixed(key: String): Nothing =
+            throw BridgeInputException("${b.path}.$key: differs from the app's native security file (${native?.source}); the native value is fixed")
+        val blockUrl = nativeBlock?.url?.also { if (it != url) fixed("url") } ?: url
+        if (nativeBlock?.attestation == true && jsAttestation == false) {
+            throw BridgeInputException("${b.path}.attestation: the app's native security file turns it on; JS cannot turn it off")
+        }
+        val attestation = jsAttestation == true || nativeBlock?.attestation == true
+        val tokenHosts = nativeBlock?.tokenHosts?.also { n ->
+            if (jsTokenHosts != null && !NativeSecurity.sameKeys(jsTokenHosts.map(String::lowercase), n.map(String::lowercase))) fixed("tokenHosts")
+        } ?: jsTokenHosts
+        val certHosts = nativeBlock?.clientCertHosts?.also { n ->
+            if (clientCertHosts != null && !NativeSecurity.sameKeys(clientCertHosts.map(String::lowercase), n.map(String::lowercase))) fixed("clientCertHosts")
+        } ?: clientCertHosts
 
         // The trust anchors and relaxations: the native security file decides, JS only repeats.
         val sec = SecurityPolicy.apply(
@@ -221,7 +272,7 @@ internal object ConfigParser {
             native, release,
         )
 
-        builder.configApi(id, url) {
+        builder.configApi(id, blockUrl) {
             sec.bootstrapPins?.let { this.bootstrapPins(it) }
             configEndpoint?.let { this.configEndpoint(it) }
             healthEndpoint?.let { this.healthEndpoint(it) }
@@ -236,7 +287,7 @@ internal object ConfigParser {
             if (sec.allowServerKey) this.allowServerGeneratedKey()
             sec.clientCaPins?.let { this.clientCaPins(it) }
             maxLifetime?.let { this.maxClientCertLifetimeDays(it) }
-            clientCertHosts?.let { this.clientCertHosts(it) }
+            certHosts?.let { this.clientCertHosts(it) }
             enrollmentEndpoint?.let { this.enrollmentEndpoint(it) }
             clientCertEndpoint?.let { this.clientCertEndpoint(it) }
             vaultReportEndpoint?.let { this.vaultReportEndpoint(it) }
@@ -252,19 +303,35 @@ internal object ConfigParser {
         }
     }
 
-    private fun addVaultFile(builder: PinVaultConfig.Builder, f: Fields, tokens: VaultTokenStore) {
+    private fun addVaultFile(builder: PinVaultConfig.Builder, f: Fields, tokens: VaultTokenStore, native: NativeSecurity?) {
         val key = f.requireString("key", 128)
+        // The same rule as the library's (the key names the stored copy's file).
+        if (!VAULT_KEY.matches(key) || key.all { it == '.' }) {
+            throw BridgeInputException("${f.path}.key: must match [A-Za-z0-9._-]{1,64} and not be only dots")
+        }
         val endpoint = f.requireString("endpoint", 512)
-        val signatureKey = f.string("signaturePublicKey", KEY_LENGTH, multiline = true)
+        val jsSignatureKey = f.string("signaturePublicKey", KEY_LENGTH, multiline = true)
         val updateWithPins = f.bool("updateWithPins")
         val storage = f.enum("storage", StorageStrategy.values())
         val configApi = f.string("configApi", 128)
         val policy = f.enum("accessPolicy", VaultFileAccessPolicy.values())
-        val encryption = f.enum("encryption", VaultFileEncryption.values())
-        val userAuth = f.enum("userAuth", UserAuth.values())
+        val jsEncryption = f.enum("encryption", VaultFileEncryption.values())
+        val jsUserAuth = f.enum("userAuth", UserAuth.values())
         val maxOfflineAge = f.obj("maxOfflineAge")?.let(::duration)
         val wipeWhenStale = f.bool("wipeWhenStale") == true
         f.finish()
+
+        // A file the native security file names keeps its signature key, encryption and lock.
+        val declared = native?.vaultFiles?.let { files ->
+            files[key] ?: throw BridgeInputException("${f.path}: vault file '$key' is not declared in the app's native security file (${native.source})")
+        }
+        fun fixed(field: String): Nothing =
+            throw BridgeInputException("${f.path}.$field: differs from the app's native security file (${native?.source}); the native value is fixed")
+        val signatureKey = declared?.signaturePublicKey?.also { n ->
+            if (jsSignatureKey != null && jsSignatureKey.trim() != n.trim()) fixed("signaturePublicKey")
+        } ?: jsSignatureKey
+        val encryption = declared?.encryption?.also { if (jsEncryption != null && jsEncryption != it) fixed("encryption") } ?: jsEncryption
+        val userAuth = declared?.userAuth?.also { if (jsUserAuth != null && jsUserAuth != it) fixed("userAuth") } ?: jsUserAuth
 
         builder.vaultFile(key) {
             this.endpoint(endpoint)

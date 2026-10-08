@@ -103,6 +103,7 @@ class PinVaultModule(reactContext: ReactApplicationContext) : NativePinVaultSpec
                         listener = connectionListener,
                         native = NativeSecurity.load(app),
                         release = NativeSecurity.isReleaseBuild(app),
+                        noFileAllowed = NativeSecurity.noFileAllowed(app),
                     )
                 } catch (e: IllegalArgumentException) {
                     // The guard of the running config stays: a refused config changes nothing.
@@ -119,7 +120,9 @@ class PinVaultModule(reactContext: ReactApplicationContext) : NativePinVaultSpec
                         )
                         return@launch
                     }
-                    if (parsed.pinGlobalNetworking) PinVaultNetworking.install(app)
+                    // Installed here only when the plugin's provider was removed and the app did not
+                    // install it before React Native started: marked late (HookStatus.installedLate).
+                    if (parsed.pinGlobalNetworking && !PinVaultNetworking.isInstalled) PinVaultNetworking.install(app, late = true)
                     val hooks = PinVaultNetworking.warnIfNotPinned("PinVault.start")
                     if (parsed.networking.requirePinned && !hooks.pinned) {
                         promise.reject(E_NETWORKING_NOT_PINNED, "requirePinnedReactNativeNetworking: ${hooks.describe()}")
@@ -142,7 +145,8 @@ class PinVaultModule(reactContext: ReactApplicationContext) : NativePinVaultSpec
                             // Setup failed (InitResult.Failed): RN's https stays refused.
                         }
                     }
-                    promise.resolve(toBridge(mapper.init(result)))
+                    // Says whether the anchors came from the native security file (README "Native security file").
+                    promise.resolve(toBridge(mapper.init(result) + ("nativeSecurityApplied" to parsed.nativeSecurityApplied)))
                 } catch (e: Exception) {
                     promise.reject(E_NATIVE, tokens.redact("${e.javaClass.simpleName}: ${e.message}"), exceptionInfo(e))
                 }
@@ -337,8 +341,11 @@ class PinVaultModule(reactContext: ReactApplicationContext) : NativePinVaultSpec
         guard?.answer(requestId, allowed)
     }
 
+    /** A vault file key: the library's rule (it names the stored copy's file). */
     private fun checkKey(key: String) {
-        if (key.isEmpty() || key.length > 128) throw BridgeInputException("key: must be 1 to 128 characters")
+        if (!VAULT_KEY.matches(key) || key.all { it == '.' }) {
+            throw BridgeInputException("key: must match [A-Za-z0-9._-]{1,64} and not be only dots")
+        }
     }
 
     private fun rejectNow(promise: Promise, code: String, message: String): Nothing {
@@ -408,3 +415,5 @@ class PinVaultModule(reactContext: ReactApplicationContext) : NativePinVaultSpec
         }
     }
 }
+
+private val VAULT_KEY = Regex("^[A-Za-z0-9._-]{1,64}$")

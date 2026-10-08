@@ -92,8 +92,15 @@ public final class PinVaultBridge: NSObject {
         return ["exceptionName": mapped["name"] ?? "Error", "exceptionMessage": mapped["message"] ?? NSNull()]
     }
 
+    /// A vault file key: the library's rule (it names the stored copy's file).
     private static func checkKey(_ key: String) throws {
-        if key.isEmpty || key.count > 128 { throw BridgeInputError("key: must be 1 to 128 characters") }
+        let allowed = key.utf8.allSatisfy { byte in
+            (byte >= 0x30 && byte <= 0x39) || (byte >= 0x41 && byte <= 0x5A) || (byte >= 0x61 && byte <= 0x7A) ||
+                byte == 0x2E || byte == 0x5F || byte == 0x2D
+        }
+        if key.isEmpty || key.utf8.count > 64 || !allowed || key.allSatisfy({ $0 == "." }) {
+            throw BridgeInputError("key: must match [A-Za-z0-9._-]{1,64} and not be only dots")
+        }
     }
 
     private static func checkToken(_ token: String?) throws {
@@ -129,7 +136,8 @@ public final class PinVaultBridge: NSObject {
                             bridge.emitConnectionEvent?(bridge.mapper.event(event))
                         },
                         native: try NativeSecurity.load(),
-                        release: release
+                        release: release,
+                        noFileAllowed: NativeSecurity.noFileAllowed()
                     )
                 } catch let e as BridgeInputError {
                     // The guard of the running config stays: a refused config changes nothing.
@@ -162,7 +170,10 @@ public final class PinVaultBridge: NSObject {
                 // INIT, and ENROLL for a pending enrollment the start picks up.
                 let result = await Self.guarded([.start, .enroll]) { await PinVault.shared.start(config: parsed.config) }
                 Self.locked { Self.startedInProcess = true }
-                resolve(self.mapper.initResult(result))
+                // Says whether the anchors came from the native security file (README "Native security file").
+                var answer = self.mapper.initResult(result)
+                answer["nativeSecurityApplied"] = parsed.nativeSecurityApplied
+                resolve(answer)
             }
         }
     }
@@ -335,7 +346,7 @@ public final class PinVaultBridge: NSObject {
         run(resolve, reject) {
             try Self.checkKey(key)
             let enc = try ResultMapper.checkEncoding(encoding)
-            return PinVault.shared.loadFile(key).map { ResultMapper.encode($0, enc) }
+            return await Self.guarded([.loadFile]) { PinVault.shared.loadFile(key) }.map { ResultMapper.encode($0, enc) }
         }
     }
 

@@ -198,6 +198,18 @@ describe('environmentGuard (fail closed)', () => {
     expect(mockNative.answerGuard).toHaveBeenCalledWith('r3', false);
   });
 
+  it('a start the native side refuses puts the running config\'s guard back', async () => {
+    await PinVault.start({ ...config, environmentGuard: async (op) => op !== 'LOAD_FILE' });
+    mockNative.start.mockRejectedValueOnce({ code: 'E_INVALID_CONFIG', message: 'config.x: unknown key' });
+    await expect(PinVault.start({ ...config, environmentGuard: async () => true })).rejects.toBeInstanceOf(PinVaultError);
+    expect(mockListeners.guard).toHaveLength(1);
+    mockListeners.guard.forEach((h) => h({ requestId: 'r4', operation: 'LOAD_FILE' }));
+    mockListeners.guard.forEach((h) => h({ requestId: 'r5', operation: 'FETCH_FILE' }));
+    await flush();
+    expect(mockNative.answerGuard).toHaveBeenCalledWith('r4', false);
+    expect(mockNative.answerGuard).toHaveBeenCalledWith('r5', true);
+  });
+
   it('a second start replaces the previous guard subscription', async () => {
     await PinVault.start({ ...config, environmentGuard: () => true });
     await PinVault.start({ ...config, environmentGuard: () => true });

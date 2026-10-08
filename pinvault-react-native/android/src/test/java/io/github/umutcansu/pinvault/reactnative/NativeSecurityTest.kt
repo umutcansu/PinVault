@@ -25,12 +25,12 @@ class NativeSecurityTest {
           "serverScope":"default-tls","clientCaPins":["$pinA"]}]}
     """.trimIndent(), "assets/pinvault_security.json")
 
-    private fun parse(json: String, native: NativeSecurity? = file, release: Boolean = true) =
-        ConfigParser.parse(json, tokens, noGuard, null, native, release)
+    private fun parse(json: String, native: NativeSecurity? = file, release: Boolean = true, noFileAllowed: Boolean = false) =
+        ConfigParser.parse(json, tokens, noGuard, null, native, release, noFileAllowed)
 
-    private fun refused(json: String, native: NativeSecurity? = file, release: Boolean = true, vararg fragments: String) {
+    private fun refused(json: String, native: NativeSecurity? = file, release: Boolean = true, vararg fragments: String, noFileAllowed: Boolean = false) {
         try {
-            parse(json, native, release)
+            parse(json, native, release, noFileAllowed)
             fail("accepted: $json")
         } catch (e: IllegalArgumentException) {
             fragments.forEach { assertTrue("'${e.message}' lacks '$it'", e.message!!.contains(it)) }
@@ -85,16 +85,73 @@ class NativeSecurityTest {
         assertTrue(parse("""{"configApis":[{$base,"allowServerGeneratedKey":true}]}""", allowing).config.configApis.getValue("default").allowServerGeneratedKey)
     }
 
+    @Test fun `without a file, a release build refuses JS-only anchors unless the manifest accepts them`() {
+        val api = """"id":"a","url":"https://h/","bootstrapPins":[{"hostname":"h","sha256":["$pinA","$pinB"]}],"signaturePublicKey":"$key""""
+        refused("""{"configApis":[{$api}]}""", native = null, fragments = arrayOf("none is shipped", NativeSecurity.NO_FILE_META_DATA))
+        refused("""{"staticPins":{"pins":[{"hostname":"x","sha256":["$pinA","$pinB"]}]}}""", native = null, fragments = arrayOf("none is shipped"))
+        assertFalse(parse("""{"configApis":[{$api}]}""", native = null, noFileAllowed = true).nativeSecurityApplied)
+        // A debug build takes it as before.
+        assertFalse(parse("""{"configApis":[{$api}]}""", native = null, release = false).nativeSecurityApplied)
+    }
+
     @Test fun `without a file, a release build refuses the relaxations from JS, a debug build takes them`() {
         val api = """"id":"a","url":"https://h/","bootstrapPins":[{"hostname":"h","sha256":["$pinA","$pinB"]}],"signaturePublicKey":"$key""""
         refused("""{"configApis":[{$api,"allowServerGeneratedKey":true}]}""", native = null, release = true,
-            fragments = arrayOf("allowServerGeneratedKey: refused from JS", "native security file"))
-        refused("""{"configApis":[{"id":"a","url":"https://h/","allowUnsigned":true}]}""", native = null, release = true, fragments = arrayOf("allowUnsigned"))
-        refused("""{"configApis":[{$api,"allowUnpinnedConfigApi":true}]}""", native = null, release = true, fragments = arrayOf("allowUnpinnedConfigApi"))
+            fragments = arrayOf("allowServerGeneratedKey: refused from JS", "native security file"), noFileAllowed = true)
+        refused("""{"configApis":[{"id":"a","url":"https://h/","allowUnsigned":true}]}""", native = null, release = true,
+            fragments = arrayOf("allowUnsigned"), noFileAllowed = true)
+        refused("""{"configApis":[{$api,"allowUnpinnedConfigApi":true}]}""", native = null, release = true,
+            fragments = arrayOf("allowUnpinnedConfigApi"), noFileAllowed = true)
         assertTrue(parse("""{"configApis":[{$api,"allowServerGeneratedKey":true}]}""", native = null, release = false)
             .config.configApis.getValue("a").allowServerGeneratedKey)
-        // Nothing else changes without a file.
-        assertFalse(parse("""{"configApis":[{$api}]}""", native = null, release = true).nativeSecurityApplied)
+    }
+
+    @Test fun `require only tightens, and the block's url, token hosts and attestation are fixed`() {
+        val strict = NativeSecurity.parse("""
+            {"configApis":[{"id":"default","url":"https://h.example:8081/","attestation":true,"tokenHosts":["api.example"],
+              "bootstrapPins":[{"hostname":"h.example","sha256":["$pinA","$pinB"]}],"signaturePublicKeys":["$key"]}],
+             "require":{"requireUnlockedDevice":true,"requireHardwareBackedKeys":true,"requireCaTrust":["h.example"],
+                        "expectedSignerSha256":["${"ab".repeat(32)}"],"expiredConfigGraceSeconds":3600,
+                        "expectedBundleIds":["com.example.ios"]}}
+        """.trimIndent(), "f")
+        val base = """"id":"default","url":"https://h.example:8081/""""
+        val p = parse("""{"configApis":[{$base}],"requireUnlockedDevice":false,"requireCaTrust":["other.example"]}""", native = strict)
+        assertTrue("JS false does not switch it off", p.config.requireUnlockedDevice)
+        assertTrue(p.config.requireHardwareBackedKeys)
+        assertEquals(setOf("other.example", "h.example"), p.config.caTrustHosts.toSet())
+        assertEquals(listOf("ab".repeat(32)), p.config.expectedSignerSha256)
+        assertTrue(p.config.configApis.getValue("default").attestationEnabled)
+        refused("""{"configApis":[{$base,"attestation":false}]}""", native = strict, fragments = arrayOf("attestation", "cannot turn it off"))
+        refused("""{"configApis":[{$base,"tokenHosts":["evil.example"]}]}""", native = strict, fragments = arrayOf("tokenHosts", "fixed"))
+        refused("""{"configApis":[{"id":"default","url":"https://evil.example/"}]}""", native = strict, fragments = arrayOf("url", "fixed"))
+        refused("""{"configApis":[{$base}],"expectedSignerSha256":["${"cd".repeat(32)}"]}""", native = strict, fragments = arrayOf("expectedSignerSha256", "fixed"))
+        refused("""{"configApis":[{$base}],"expiredConfigGrace":{"amount":2,"unit":"HOURS"}}""", native = strict, fragments = arrayOf("expiredConfigGrace"))
+        parse("""{"configApis":[{$base}],"expiredConfigGrace":{"amount":30,"unit":"MINUTES"}}""", native = strict)
+    }
+
+    @Test fun `a release build caps the expired config grace`() {
+        val api = """"id":"a","url":"https://h/","bootstrapPins":[{"hostname":"h","sha256":["$pinA","$pinB"]}],"signaturePublicKey":"$key""""
+        refused("""{"configApis":[{$api}],"expiredConfigGrace":{"amount":8,"unit":"DAYS"}}""", native = null,
+            fragments = arrayOf("at most 7 days"), noFileAllowed = true)
+        parse("""{"configApis":[{$api}],"expiredConfigGrace":{"amount":8,"unit":"DAYS"}}""", native = null, release = false)
+    }
+
+    @Test fun `declared vault files keep their protection, undeclared ones are refused`() {
+        val files = NativeSecurity.parse("""
+            {"configApis":[{"id":"default","bootstrapPins":[{"hostname":"h.example","sha256":["$pinA","$pinB"]}],"signaturePublicKeys":["$key"]}],
+             "vaultFiles":[{"key":"statement","signaturePublicKey":"$key","encryption":"USER_AUTH","userAuth":"REQUIRED"}]}
+        """.trimIndent(), "f")
+        val base = """"id":"default","url":"https://h.example:8081/""""
+        val ok = parse("""{"configApis":[{$base}],"vaultFiles":[{"key":"statement","endpoint":"api/v1/vault/statement"}]}""", native = files)
+        val file = ok.config.vaultFiles.getValue("statement")
+        assertEquals(io.github.umutcansu.pinvault.model.VaultFileEncryption.USER_AUTH, file.encryption)
+        assertEquals(io.github.umutcansu.pinvault.model.UserAuth.REQUIRED, file.userAuth)
+        refused("""{"configApis":[{$base}],"vaultFiles":[{"key":"statement","endpoint":"e","encryption":"PLAIN"}]}""", native = files,
+            fragments = arrayOf("encryption", "fixed"))
+        refused("""{"configApis":[{$base}],"vaultFiles":[{"key":"other","endpoint":"e"}]}""", native = files, fragments = arrayOf("'other' is not declared"))
+        val signed = """"id":"a","url":"https://h/","bootstrapPins":[{"hostname":"h","sha256":["$pinA","$pinB"]}],"signaturePublicKey":"$key""""
+        refused("""{"configApis":[{$signed}],"vaultFiles":[{"key":"../x","endpoint":"e"}]}""", native = null, release = false,
+            fragments = arrayOf("[A-Za-z0-9._-]"))
     }
 
     @Test fun `the file itself is parsed strictly`() {

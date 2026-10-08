@@ -73,14 +73,18 @@ object PinVaultNetworking {
 
     /** The two hooks this object installed; compared by identity in [status]. */
     private val factory = OkHttpClientFactory {
-        pinning.configureLongLived(OkHttpClientProvider.createClientBuilder()).build()
+        pinning.track(pinning.configureLongLived(OkHttpClientProvider.createClientBuilder()).build())
     }
     private val clientBuilder = CustomClientBuilder { builder -> pinning.configurePerRequest(builder) }
 
     internal val pinning = NetworkPinning(
         applier = { builder -> PinVault.applyTo(builder) },
         httpCache = { app?.let { ReactHttpCache.get(it) } },
+        hooksPinned = { status().pinned },
     )
+
+    /** True when [install] ran only from `start()`: React Native may have built clients before it. */
+    @Volatile private var installedLate = false
 
     /**
      * Installs both hooks (once per process). The plugin's content provider
@@ -90,12 +94,17 @@ object PinVaultNetworking {
      */
     @JvmStatic
     @Synchronized
-    fun install(context: Context) {
+    fun install(context: Context) = install(context, late = false)
+
+    /** [late]: called from `start()`, after React Native may already have built its clients. */
+    @Synchronized
+    internal fun install(context: Context, late: Boolean) {
         if (installed) return
         app = context.applicationContext
         OkHttpClientProvider.setOkHttpClientFactory(factory)
         NetworkingModule.setCustomClientBuilder(clientBuilder)
         installed = true
+        installedLate = late
     }
 
     @JvmStatic
@@ -103,7 +112,7 @@ object PinVaultNetworking {
 
     /** Whether React Native's two networking hooks are still the ones [install] set. */
     @JvmStatic
-    fun status(): HookStatus = HookStatus.read(installed, factory, clientBuilder)
+    fun status(): HookStatus = HookStatus.read(installed, factory, clientBuilder, installedLate)
 
     private val warned = java.util.concurrent.atomic.AtomicReference<HookStatus?>(null)
 
@@ -126,11 +135,16 @@ data class HookStatus(
     val factoryIsPinVault: Boolean?,
     /** `NetworkingModule`'s custom client builder is PinVault's. */
     val clientBuilderIsPinVault: Boolean?,
+    /** Installed only by `start()`: clients React Native built before (Fresco's, among them) keep the system's trust. */
+    val installedLate: Boolean = false,
 ) {
-    val pinned: Boolean get() = installed && factoryIsPinVault == true && clientBuilderIsPinVault == true
+    val pinned: Boolean get() = installed && !installedLate && factoryIsPinVault == true && clientBuilderIsPinVault == true
 
     fun describe(): String = when {
         pinned -> "React Native's networking is pinned by PinVault"
+        installed && installedLate -> "React Native's networking hooks were installed only by start() (the plugin's content provider " +
+            "was removed and PinVaultNetworking.install was not called before React Native started): clients it built " +
+            "before, such as the image client, are NOT pinned"
         !installed -> "React Native's networking hooks are not installed (the plugin's content provider was removed " +
             "and PinVaultNetworking.install was not called, or android.pinGlobalNetworking is false): " +
             "RN fetch / XHR / WebSocket / images are NOT pinned"
@@ -141,10 +155,11 @@ data class HookStatus(
     }
 
     internal companion object {
-        fun read(installed: Boolean, ourFactory: Any, ourBuilder: Any): HookStatus = HookStatus(
+        fun read(installed: Boolean, ourFactory: Any, ourBuilder: Any, installedLate: Boolean = false): HookStatus = HookStatus(
             installed,
             isOurs(OkHttpClientProvider::class.java, "factory", ourFactory),
             isOurs(NetworkingModule::class.java, "customClientBuilder", ourBuilder),
+            installedLate,
         )
 
         /**
@@ -199,7 +214,29 @@ internal object ReactHttpCache {
 internal class NetworkPinning(
     private val applier: (OkHttpClient.Builder) -> Unit,
     private val httpCache: () -> Cache? = { null },
+    /** Whether React Native's hooks are still PinVault's (``PinVaultNetworking.status``). */
+    private val hooksPinned: () -> Boolean = { true },
 ) {
+
+    /** The long-lived clients React Native built through the factory: their pools are emptied on every change. */
+    private val longLived = java.util.Collections.synchronizedList(mutableListOf<java.lang.ref.WeakReference<OkHttpClient>>())
+
+    /** Last answer of [hooksPinned] and when it was read (reflection: not on every request). */
+    @Volatile private var hooksCheckedAt = 0L
+    @Volatile private var hooksWerePinned = true
+
+    fun track(client: OkHttpClient): OkHttpClient {
+        longLived.add(java.lang.ref.WeakReference(client))
+        return client
+    }
+
+    /** Closes the idle pooled connections of every long-lived client: the next request makes a fresh, pinned handshake. */
+    private fun evictLongLived() {
+        synchronized(longLived) {
+            longLived.removeAll { it.get() == null }
+            longLived.forEach { it.get()?.connectionPool?.evictAll() }
+        }
+    }
 
     /** A client `PinVault.applyTo` configured after the last `start()`; null = not started. */
     @Volatile private var template: OkHttpClient? = null
@@ -212,11 +249,13 @@ internal class NetworkPinning(
     fun activate(options: NetworkingOptions = this.options) {
         this.options = options
         template = OkHttpClient.Builder().also(applier).build()
+        evictLongLived()
     }
 
     @Synchronized
     fun deactivate() {
         template = null
+        evictLongLived()
     }
 
     /** NetworkingModule's per-request builder (fetch / XHR). */
@@ -247,18 +286,62 @@ internal class NetworkPinning(
         val forwarding = ForwardingSocketFactory { template?.sslSocketFactory }
         builder.sslSocketFactory(forwarding, ForwardingTrustManager { template?.x509TrustManager })
         builder.addInterceptor(httpsGate)
+        // The current start's network interceptors (the per-request pin check of a pooled
+        // or coalesced connection, among them) run for these clients too.
+        builder.addNetworkInterceptor(forwardingNetwork)
         builder.cache(null)
         builder.followSslRedirects(false)
         return builder
     }
 
-    /** Refuses `https` while PinVault has not started. */
+    /**
+     * Refuses `https` while PinVault has not started, and — with
+     * `requirePinnedReactNativeNetworking` — once another library has replaced
+     * React Native's hooks after start (checked at most every few seconds).
+     */
     private val httpsGate = Interceptor { chain ->
-        if (chain.request().isHttps && template == null) {
-            throw IOException("PinVault has not started: https requests are refused until start() returns")
+        if (chain.request().isHttps) {
+            if (template == null) throw IOException("PinVault has not started: https requests are refused until start() returns")
+            if (options.requirePinned && !hooksStillPinned()) {
+                throw IOException("requirePinnedReactNativeNetworking: React Native's networking hooks are no longer PinVault's")
+            }
         }
         chain.proceed(chain.request())
     }
+
+    private fun hooksStillPinned(): Boolean {
+        val now = android.os.SystemClock.elapsedRealtime()
+        if (now - hooksCheckedAt > HOOK_CHECK_MS) {
+            hooksWerePinned = hooksPinned()
+            hooksCheckedAt = now
+        }
+        return hooksWerePinned
+    }
+
+    /** Runs the current start's network interceptors in order, then the request. */
+    private val forwardingNetwork = Interceptor { chain ->
+        val interceptors = template?.networkInterceptors ?: emptyList()
+        ForwardingChain(chain, interceptors, 0).proceed(chain.request())
+    }
+
+    companion object {
+        const val HOOK_CHECK_MS = 5_000L
+    }
+}
+
+/** A chain that hands the request to `interceptors[index]`, …, and finally to the real chain. */
+internal class ForwardingChain(
+    private val base: Interceptor.Chain,
+    private val interceptors: List<Interceptor>,
+    private val index: Int,
+) : Interceptor.Chain by base {
+    override fun proceed(request: okhttp3.Request): okhttp3.Response =
+        if (index >= interceptors.size) base.proceed(request)
+        else interceptors[index].intercept(ForwardingChain(base, interceptors, index + 1).withRequest(request))
+
+    private var current: okhttp3.Request = base.request()
+    private fun withRequest(request: okhttp3.Request) = also { current = request }
+    override fun request(): okhttp3.Request = current
 }
 
 /** Hands every socket to the pinned factory of the current start; none before `start()`. */

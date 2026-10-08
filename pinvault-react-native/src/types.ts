@@ -80,7 +80,7 @@ export type VaultFileConfig = {
 };
 
 /** Operations the environment guard is asked about (`GuardedOperation`). */
-export type GuardedOperation = 'INIT' | 'ENROLL' | 'FETCH_FILE' | 'UNLOCK_FILE';
+export type GuardedOperation = 'INIT' | 'ENROLL' | 'FETCH_FILE' | 'UNLOCK_FILE' | 'LOAD_FILE';
 
 /**
  * The app's device verdict (root / jailbreak / hooking detection of your choice)
@@ -151,9 +151,13 @@ export type PinVaultConfig = {
 /** A native exception: its class name (`SSLPinningException`, …) and message. */
 export type NativeException = { name: string; message: string | null };
 
+/**
+ * `nativeSecurityApplied`: the trust anchors came from the app's native
+ * security file (README "Native security file"); false when JS supplied them.
+ */
 export type InitResult =
-  | { type: 'ready'; version: number }
-  | { type: 'failed'; reason: string; exception: NativeException | null };
+  | { type: 'ready'; version: number; nativeSecurityApplied: boolean }
+  | { type: 'failed'; reason: string; exception: NativeException | null; nativeSecurityApplied: boolean };
 
 export type UpdateResult =
   | { type: 'updated'; newVersion: number }
