@@ -64,7 +64,14 @@ class AppAttestVerifier(
     appIds: Set<String>,
     val environment: Environment = Environment.PRODUCTION,
     /** A verified verdict covers the device's rounds this long before `app_attest_missing`. */
-    val verdictMaxAgeSeconds: Long = DEFAULT_VERDICT_MAX_AGE_SECONDS
+    val verdictMaxAgeSeconds: Long = DEFAULT_VERDICT_MAX_AGE_SECONDS,
+    /**
+     * `APP_ATTEST_REQUIRE_V2`: an attestation round's verdict must use the v2
+     * client data hash ([roundClientDataHashV2], bound to the report); a v1
+     * one (nonce and device id only) fails `client_data_v1`. Off = v1 still
+     * verifies, with the warning `app_attest_v1`.
+     */
+    val requireV2: Boolean = false
 ) {
     /** `APP_ATTEST_ENVIRONMENT`: what the app's entitlement `com.apple.developer.devicecheck.appattest-environment` says. */
     enum class Environment(val wire: String, private val aaguidText: String) {
@@ -224,9 +231,20 @@ class AppAttestVerifier(
         /** `TEAMID.bundle.id`: a 10-character team id, a dot, the bundle id. */
         private val APP_ID = Regex("^[A-Z0-9]{10}\\.[A-Za-z0-9][A-Za-z0-9.-]{0,254}$")
 
-        /** An attestation round's client data hash: SHA-256 of `pinvault-app-attest:v1:<nonce>:<deviceId>`. */
+        /** An attestation round's client data hash, v1: SHA-256 of `pinvault-app-attest:v1:<nonce>:<deviceId>`. */
         fun roundClientDataHash(nonce: String, deviceId: String): ByteArray =
             sha256("pinvault-app-attest:v1:$nonce:$deviceId".toByteArray(Charsets.UTF_8))
+
+        /**
+         * An attestation round's client data hash, v2: SHA-256 of
+         * `pinvault-app-attest:v2:` + [canonical], the string the device key
+         * signs (`pinvault-attest:v1:<nonce>:<deviceId>:<sha256-hex(report)>`,
+         * [AttestationService.canonical]). It binds Apple's verdict to the
+         * report itself, so the report cannot carry the token: a v2 token
+         * travels in the request body's own `verdictProvider`.
+         */
+        fun roundClientDataHashV2(canonical: String): ByteArray =
+            sha256("pinvault-app-attest:v2:$canonical".toByteArray(Charsets.UTF_8))
 
         /** An enrollment's client data hash: SHA-256 of the integrity request hash (the 43-character string). */
         fun enrollmentClientDataHash(integrityRequestHash: String): ByteArray =
@@ -248,7 +266,8 @@ class AppAttestVerifier(
          * when it is empty. `APP_ATTEST_ROOT_CA_FILE` must then name a readable
          * PEM with Apple's App Attestation Root CA, or the server does not
          * start. `APP_ATTEST_ENVIRONMENT` production|development (default
-         * production); `APP_ATTEST_MAX_AGE_SECONDS` (default 86400).
+         * production); `APP_ATTEST_MAX_AGE_SECONDS` (default 86400);
+         * `APP_ATTEST_REQUIRE_V2` (default false).
          */
         fun fromEnv(env: Map<String, String> = com.example.pinvault.server.service.ServerEnv.all()): AppAttestVerifier? {
             val ids = env["APP_ATTEST_APP_IDS"]?.split(',')?.map { it.trim() }?.filter { it.isNotEmpty() }?.toSet().orEmpty()
@@ -260,7 +279,12 @@ class AppAttestVerifier(
             val maxAge = env["APP_ATTEST_MAX_AGE_SECONDS"]?.trim()?.takeIf { it.isNotEmpty() }?.let {
                 it.toLongOrNull()?.takeIf { v -> v in 60..(30 * 86_400L) } ?: throw IllegalArgumentException("APP_ATTEST_MAX_AGE_SECONDS must be 60..2592000 (got '$it')")
             } ?: DEFAULT_VERDICT_MAX_AGE_SECONDS
-            return AppAttestVerifier(loadRoots(env["APP_ATTEST_ROOT_CA_FILE"]), ids, environment, maxAge)
+            val requireV2 = when (env["APP_ATTEST_REQUIRE_V2"]?.trim()?.lowercase()) {
+                null, "", "false", "off" -> false
+                "true", "on" -> true
+                else -> throw IllegalArgumentException("APP_ATTEST_REQUIRE_V2 must be true or false (got '${env["APP_ATTEST_REQUIRE_V2"]}')")
+            }
+            return AppAttestVerifier(loadRoots(env["APP_ATTEST_ROOT_CA_FILE"]), ids, environment, maxAge, requireV2)
         }
 
         /**

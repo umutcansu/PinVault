@@ -110,13 +110,14 @@ class AttestationRoutesTest {
         verifier: AndroidKeyAttestation = pki.verifier(),
         defaults: AttestationPolicyDefaults = AttestationPolicyDefaults(),
         revoked: Set<String> = emptySet(),
-        nonceTtl: Int = 120
+        nonceTtl: Int = 120,
+        keySetVersion: () -> Int = { 0 }
     ) = AttestationService(
         policies, devices, secrets,
         nonces = AttestationNonces(ttlSeconds = nonceTtl, clock = { now }),
         defaults = defaults, keyPolicy = keyPolicy, verifier = { verifier },
         isDeviceRevoked = { it in revoked }, audit = AuditLog(auditStore, null), rejections = null,
-        clock = { Instant.ofEpochMilli(now) }
+        clock = { Instant.ofEpochMilli(now) }, keySetVersion = keySetVersion
     )
 
     private fun ApplicationTestBuilder.app(service: AttestationService, limits: AttestationLimits? = null) {
@@ -140,7 +141,10 @@ class AttestationRoutesTest {
         packageName: String = TestAttestationChains.PACKAGE,
         signer: String = TestAttestationChains.SIGNER_HEX.chunked(2).joinToString(":"),
         keySecurityLevel: String = "strongbox",
-        securityPatch: String = "2026-09-05"
+        securityPatch: String = "2026-09-05",
+        /** What the genuine library says when it sends a chain with the round; the tests mostly send none. */
+        keyAttested: Boolean = false,
+        verifiedBootState: String = "green"
     ): String = buildJsonObject {
         put("sdkVersion", "2.2.0")
         put("reportTime", now)
@@ -151,8 +155,8 @@ class AttestationRoutesTest {
         })
         put("device", buildJsonObject {
             put("manufacturer", "Google"); put("model", "Pixel 8"); put("sdkInt", 35)
-            put("securityPatch", securityPatch); put("verifiedBootState", "green")
-            put("keySecurityLevel", keySecurityLevel); put("keyAttested", true)
+            put("securityPatch", securityPatch); put("verifiedBootState", verifiedBootState)
+            put("keySecurityLevel", keySecurityLevel); put("keyAttested", keyAttested)
         })
         put("signals", buildJsonObject {
             for (flag in listOf("rooted", "emulator", "debugger", "debuggable", "hooking_framework", "app_integrity", "cloner",
@@ -274,11 +278,12 @@ class AttestationRoutesTest {
 
         // Behind by a version and scoped (`hosts`, as a wantPinsFor block sends): the
         // GET's rule — requested ∩ the device's ACL. No ACL: nothing, as on the GET.
-        val unscoped = attestJson(body(challenge(), "pixel-01", key, report(), currentConfigVersion = version - 1, currentIssuedAt = issuedAt - 5, hosts = listOf("api.example.com")))
+        // (No currentIssuedAt: a lower one than the device reported before is config_rollback.)
+        val unscoped = attestJson(body(challenge(), "pixel-01", key, report(), currentConfigVersion = version - 1, hosts = listOf("api.example.com")))
         assertTrue(unscoped["configChanged"]!!.jsonPrimitive.boolean)
         assertTrue(Json.parseToJsonElement(unscoped["config"]!!.jsonObject["payload"]!!.jsonPrimitive.content).jsonObject["pins"]!!.jsonArray.isEmpty())
         DeviceHostAclStore(db).grant(scope, "pixel-01", "api.example.com", Instant.ofEpochMilli(now).toString())
-        val behind = attestJson(body(challenge(), "pixel-01", key, report(), currentConfigVersion = version - 1, currentIssuedAt = issuedAt - 5, hosts = listOf("api.example.com", "cdn.example.com")))
+        val behind = attestJson(body(challenge(), "pixel-01", key, report(), currentConfigVersion = version - 1, hosts = listOf("api.example.com", "cdn.example.com")))
         assertTrue(behind["configChanged"]!!.jsonPrimitive.boolean)
         val scoped = Json.parseToJsonElement(behind["config"]!!.jsonObject["payload"]!!.jsonPrimitive.content).jsonObject
         assertEquals(listOf("api.example.com"), scoped["pins"]!!.jsonArray.map { it.jsonObject["hostname"]!!.jsonPrimitive.content })
@@ -473,8 +478,11 @@ class AttestationRoutesTest {
         app(service(keyPolicy = AttestationKeyPolicy.WARN))
         val key = ecKey()
         val bad = TestAttestationChains.chain(pki, key.public, TestAttestationChains.identityDescription("warn-1").copy(deviceLocked = false))
-        val answer = attestJson(body(challenge(), "warn-1", key, report(), chain = bad))
-        assertEquals("pass", answer["result"]!!.jsonPrimitive.content)
+        // Registered unattested, as before — and what the hardware said is kept: bootloader_unlocked (strict: reject).
+        policies.put(scope, AttestationPolicy.strict(revealReasons = true), "test")
+        val answer = attestJson(body(challenge(), "warn-1", key, report(verifiedBootState = "orange"), chain = bad))
+        assertEquals("reject", answer["result"]!!.jsonPrimitive.content)
+        assertEquals(listOf("bootloader_unlocked"), answer.strings("rejectionReasons"))
         assertEquals("device_unlocked", answer["device"]!!.jsonObject["keyAttestation"]!!.jsonObject["reason"]!!.jsonPrimitive.content)
         assertTrue("key_unattested" in answer.strings("warnings"))
         val good = ecKey()
@@ -551,5 +559,207 @@ class AttestationRoutesTest {
         assertNotNull(answer["token"])
         assertFalse(answer["configChanged"]!!.jsonPrimitive.boolean)
         assertNull(answer["config"])
+    }
+
+    // ── Facts from the registration's chain (bootloader, boot, revocation, patch, contradictions) ──
+
+    /** Registers [deviceId] with a chain described by [description] and returns the answer. */
+    private suspend fun ApplicationTestBuilder.register(
+        deviceId: String, key: KeyPair, description: TestAttestationChains.Description, report: String = report()
+    ): JsonObject = attestJson(body(challenge(), deviceId, key, report, chain = TestAttestationChains.chain(pki, key.public, description)))
+
+    @Test
+    fun `a TEE chain with an unlocked bootloader raises bootloader_unlocked under warn, on every round, a software one never`() = testApplication {
+        app(service(keyPolicy = AttestationKeyPolicy.WARN))
+        policies.put(scope, AttestationPolicy.strict(revealReasons = true), "test")
+        val key = ecKey()
+        val unlocked = TestAttestationChains.identityDescription("magisk-1").copy(deviceLocked = false, verifiedBootState = 2)
+        val first = register("magisk-1", key, unlocked, report(verifiedBootState = "orange"))
+        assertEquals("reject", first["result"]!!.jsonPrimitive.content)
+        assertEquals(setOf("bootloader_unlocked", "boot_not_verified"), first.strings("rejectionReasons").toSet())
+        assertNull(first["token"])
+        val facts = devices.get(scope, "magisk-1")!!.keyFacts!!
+        assertEquals(false, facts.deviceLocked)
+        assertEquals("unverified", facts.verifiedBootState)
+        assertEquals("tee", facts.securityLevel)
+        assertEquals(3, facts.chainSerials.size, "leaf, intermediate, root")
+        // The chain went once; the record keeps judging. Root hidden from every client probe, the report clean: still rejected.
+        val later = attestJson(body(challenge(), "magisk-1", key, report(verifiedBootState = "orange")))
+        assertEquals(setOf("bootloader_unlocked", "boot_not_verified"), later.strings("rejectionReasons").toSet())
+        // ... and a report that claims a green boot on such a phone contradicts the hardware.
+        val lying = attestJson(body(challenge(), "magisk-1", key, report(verifiedBootState = "green")))
+        assertEquals(setOf("bootloader_unlocked", "boot_not_verified", "report_mismatch"), lying.strings("rejectionReasons").toSet())
+
+        // StrongBox: the same.
+        val sb = ecKey()
+        val strongbox = register("sb-1", sb, TestAttestationChains.identityDescription("sb-1").copy(deviceLocked = false, attestationLevel = 2, keyMintLevel = 2),
+            report(verifiedBootState = "orange"))
+        assertEquals(listOf("bootloader_unlocked"), strongbox.strings("rejectionReasons"))
+
+        // A software-level chain (an emulator) says nothing about any device: no fact, no flag.
+        val emu = ecKey()
+        val software = register("emu-1", emu, TestAttestationChains.identityDescription("emu-1")
+            .copy(deviceLocked = false, verifiedBootState = 2, attestationLevel = 0, keyMintLevel = 0))
+        assertEquals("pass", software["result"]!!.jsonPrimitive.content, software.toString())
+        assertEquals(setOf("key_unattested"), software.strings("warnings").toSet())
+        assertNull(devices.get(scope, "emu-1")!!.keyFacts)
+
+        // A stock locked phone: nothing.
+        val stock = ecKey()
+        val clean = register("pixel-1", stock, TestAttestationChains.identityDescription("pixel-1"))
+        assertEquals("pass", clean["result"]!!.jsonPrimitive.content)
+        assertTrue(clean.strings("warnings").isEmpty(), clean["warnings"].toString())
+        assertEquals("verified", devices.get(scope, "pixel-1")!!.keyFacts!!.verifiedBootState)
+
+        // lenient: warnings, as every other flag.
+        policies.put(scope, AttestationPolicy.lenient(revealReasons = true), "test")
+        val lenient = attestJson(body(challenge(), "magisk-1", key, report(verifiedBootState = "orange")))
+        assertEquals("pass", lenient["result"]!!.jsonPrimitive.content)
+        assertTrue(lenient.strings("warnings").containsAll(listOf("bootloader_unlocked", "boot_not_verified")))
+    }
+
+    @Test
+    fun `ATTESTATION_TRUSTED_BOOT_KEYS accepts a SelfSigned boot of a trusted OS, at registration and every round`() = testApplication {
+        // The test chains carry verifiedBootKey = 32 bytes of 0x01.
+        val bootKey = "01".repeat(32)
+        val trusting = AndroidKeyAttestation(listOf(pki.root), setOf(TestAttestationChains.PACKAGE), setOf(TestAttestationChains.SIGNER_HEX),
+            trustedBootKeys = setOf(bootKey.uppercase().chunked(2).joinToString(":")))
+        assertEquals(setOf(bootKey), trusting.trustedBootKeys, "colons and case ignored")
+        app(service(keyPolicy = AttestationKeyPolicy.ENFORCE, verifier = trusting))
+        val key = ecKey()
+        val graphene = register("graphene-1", key, TestAttestationChains.identityDescription("graphene-1").copy(verifiedBootState = 1),
+            report(verifiedBootState = "yellow"))
+        assertEquals("pass", graphene["result"]!!.jsonPrimitive.content, graphene.toString())
+        assertTrue(graphene.strings("warnings").isEmpty(), graphene["warnings"].toString())
+        assertEquals("self_signed", devices.get(scope, "graphene-1")!!.keyFacts!!.verifiedBootState)
+
+        // Not trusted: enforce refuses the chain, as before.
+        val untrusting = AndroidKeyAttestation(listOf(pki.root), setOf(TestAttestationChains.PACKAGE), setOf(TestAttestationChains.SIGNER_HEX))
+        val other = AttestationService(policies, devices, secrets, nonces = AttestationNonces(clock = { now }), defaults = AttestationPolicyDefaults(),
+            keyPolicy = AttestationKeyPolicy.ENFORCE, verifier = { untrusting }, clock = { Instant.ofEpochMilli(now) })
+        val k2 = ecKey()
+        val nonce = other.nonces.issue()
+        val refused = other.attest(scope, Json.parseToJsonElement(body(nonce, "graphene-2", k2, report(verifiedBootState = "yellow"),
+            chain = TestAttestationChains.chain(pki, k2.public, TestAttestationChains.identityDescription("graphene-2").copy(verifiedBootState = 1)))).jsonObject, "test")
+        assertEquals("boot_not_verified", assertIs<AttestationService.Outcome.Refused>(refused).reason)
+        assertTrue(runCatching { AndroidKeyAttestation.parseTrustedBootKeys("abc") }.isFailure, "a typo is a start-up error")
+    }
+
+    @Test
+    fun `a chain serial revoked after registration raises key_revoked on the next round`() = testApplication {
+        val file = File(dir, "status.json").apply { writeText("""{"entries":{}}""") }
+        val list = com.example.pinvault.server.service.RevocationList(file, checkInterval = java.time.Duration.ZERO)
+        app(service(keyPolicy = AttestationKeyPolicy.WARN, verifier = pki.verifier(revocationList = list)))
+        policies.put(scope, AttestationPolicy.strict(revealReasons = true), "test")
+        val key = ecKey()
+        assertEquals("pass", register("leaked-1", key, TestAttestationChains.identityDescription("leaked-1"))["result"]!!.jsonPrimitive.content)
+        // Google revokes the keybox the chain was made with (its intermediate).
+        file.writeText("""{"entries":{"${pki.intermediate.serialNumber.toString(16)}":{"status":"REVOKED","reason":"KEY_COMPROMISE"}}}""")
+        file.setLastModified(file.lastModified() + 5_000)
+        val after = attestJson(body(challenge(), "leaked-1", key, report()))
+        assertEquals("reject", after["result"]!!.jsonPrimitive.content)
+        assertEquals(listOf("key_revoked"), after.strings("rejectionReasons"))
+        // Revoked already at registration (warn: registered unattested): the same flag.
+        val k2 = ecKey()
+        val atRegistration = attestJson(body(challenge(), "leaked-2", k2, report(),
+            chain = TestAttestationChains.chain(pki, k2.public, TestAttestationChains.identityDescription("leaked-2"))))
+        assertEquals("certificate_revoked", devices.get(scope, "leaked-2")!!.keyAttestation!!.reason)
+        assertTrue("key_revoked" in atRegistration.strings("rejectionReasons"))
+    }
+
+    @Test
+    fun `old_patch_level reads the attested patch level, and a report older than it is a contradiction`() = testApplication {
+        app(service(keyPolicy = AttestationKeyPolicy.WARN, verifier = pki.verifier(minPatchLevel = 202401)))
+        policies.put(scope, AttestationPolicy.strict(revealReasons = true), "test")
+        // The hardware says 2023-01; the report claims a current patch.
+        val old = ecKey()
+        val answer = register("old-1", old, TestAttestationChains.identityDescription("old-1").copy(osPatchLevel = 202301), report(securityPatch = "2026-09-05"))
+        // The chain itself fails ATTESTATION_MIN_PATCH_LEVEL (warn: registered unattested); its facts are kept.
+        assertEquals(setOf("key_unattested", "old_patch_level"), answer.strings("warnings").toSet(), "the attested level, not the claim")
+        assertEquals(202301, devices.get(scope, "old-1")!!.keyFacts!!.osPatchLevel)
+        // Attested 2026-09, the report says 2026-01: a patch level does not go back.
+        val current = ecKey()
+        assertEquals("pass", register("cur-1", current, TestAttestationChains.identityDescription("cur-1").copy(osPatchLevel = 202609),
+            report(securityPatch = "2026-09-05"))["result"]!!.jsonPrimitive.content)
+        assertEquals("pass", attestJson(body(challenge(), "cur-1", current, report(securityPatch = "2026-08-01")))["result"]!!.jsonPrimitive.content,
+            "a month behind is within the tolerance")
+        val behind = attestJson(body(challenge(), "cur-1", current, report(securityPatch = "2026-01-05")))
+        assertEquals(listOf("report_mismatch"), behind.strings("rejectionReasons"))
+    }
+
+    @Test
+    fun `a report that claims a chain the registration did not send is a contradiction on that round`() = testApplication {
+        app(service(keyPolicy = AttestationKeyPolicy.WARN))
+        policies.put(scope, AttestationPolicy.strict(revealReasons = true), "test")
+        val key = ecKey()
+        // The library sends the chain on the first round whenever its key has one.
+        val dropped = attestJson(body(challenge(), "hooked-1", key, report(keyAttested = true)))
+        assertEquals(listOf("report_mismatch"), dropped.strings("rejectionReasons"))
+        // Not a standing verdict: a device an operator forgot while the app ran registers chain-less once.
+        assertEquals("pass", attestJson(body(challenge(), "hooked-1", key, report(keyAttested = true)))["result"]!!.jsonPrimitive.content)
+        // A key without a chain says so: no contradiction.
+        assertEquals("pass", attestJson(body(challenge(), "plain-1", ecKey(), report(keyAttested = false)))["result"]!!.jsonPrimitive.content)
+    }
+
+    // ── config_rollback ──
+
+    @Test
+    fun `a lower config watermark from the same key raises config_rollback, a newer signing-key set starts again`() = testApplication {
+        var keySet = 1
+        app(service(keySetVersion = { keySet }))
+        policies.put(scope, AttestationPolicy.strict(revealReasons = true), "test")
+        val key = ecKey()
+        suspend fun round(issuedAt: Long?) = body(challenge(), "phone-1", key, report(), currentConfigVersion = 1, currentIssuedAt = issuedAt)
+        val t = now - 3_600_000
+        assertEquals("pass", attestJson(round(t))["result"]!!.jsonPrimitive.content)
+        assertEquals("pass", attestJson(round(t + 60_000))["result"]!!.jsonPrimitive.content)
+        assertEquals(t + 60_000, devices.get(scope, "phone-1")!!.configWatermark)
+        // The same envelope again, and none at all (0: a fresh store), are not rollbacks.
+        assertEquals("pass", attestJson(round(t + 60_000))["result"]!!.jsonPrimitive.content)
+        assertEquals("pass", attestJson(round(0))["result"]!!.jsonPrimitive.content)
+        assertEquals("pass", attestJson(round(null))["result"]!!.jsonPrimitive.content)
+        // A restored backup: an older config than the device reported before.
+        val restored = attestJson(round(t))
+        assertEquals("reject", restored["result"]!!.jsonPrimitive.content)
+        assertEquals(listOf("config_rollback"), restored.strings("rejectionReasons"))
+        assertEquals(t + 60_000, devices.get(scope, "phone-1")!!.configWatermark, "a lower report never lowers the record")
+        // A value from the future is no config this server signed: not stored.
+        assertEquals("pass", attestJson(round(now + 2 * 3_600_000))["result"]!!.jsonPrimitive.content)
+        assertEquals(t + 60_000, devices.get(scope, "phone-1")!!.configWatermark)
+        // A newer signing-key set resets the devices' watermarks: the comparison starts again.
+        keySet = 2
+        assertEquals("pass", attestJson(round(t - 60_000))["result"]!!.jsonPrimitive.content)
+        assertEquals(2, devices.get(scope, "phone-1")!!.configWatermarkKeySet)
+        assertEquals(t - 60_000, devices.get(scope, "phone-1")!!.configWatermark)
+    }
+
+    // ── cnf ──
+
+    @Test
+    fun `the token names the key that signed the report and, over mTLS, the client certificate`() = testApplication {
+        val service = service()
+        app(service)
+        val key = ecKey()
+        val answer = attestJson(body(challenge(), "dev-1", key, report()))
+        val claims = assertIs<PinVaultToken.Result.Valid>(PinVaultToken.verify(answer["token"]!!.jsonPrimitive.content, secrets.secretsByKid(), scope, now / 1000)).claims
+        // RFC 7638 thumbprint, derived here from the SPKI's uncompressed point.
+        val point = key.public.encoded.takeLast(65).toByteArray()
+        val url = Base64.getUrlEncoder().withoutPadding()
+        val jwk = """{"crv":"P-256","kty":"EC","x":"${url.encodeToString(point.copyOfRange(1, 33))}","y":"${url.encodeToString(point.copyOfRange(33, 65))}"}"""
+        assertEquals(url.encodeToString(java.security.MessageDigest.getInstance("SHA-256").digest(jwk.toByteArray())), claims.keyThumbprint)
+        assertNull(claims.certThumbprint, "plain TLS: no certificate to name")
+
+        val cert = Base64.getDecoder().decode(TestAttestationChains.chain(pki, key.public, TestAttestationChains.identityDescription("x")).last())
+        val overMtls = service.attest(scope, Json.parseToJsonElement(body(challenge(), "dev-1", key, report())).jsonObject, "test", clientCertificate = cert)
+        val token = assertIs<AttestationService.Outcome.Decided>(overMtls).token!!
+        val mtlsClaims = assertIs<PinVaultToken.Result.Valid>(PinVaultToken.verify(token, secrets.secretsByKid(), scope, now / 1000)).claims
+        assertEquals(url.encodeToString(java.security.MessageDigest.getInstance("SHA-256").digest(cert)), mtlsClaims.certThumbprint)
+    }
+
+    @Test
+    fun `verdictProvider in the body must be an object`() = testApplication {
+        app(service())
+        val json = Json.parseToJsonElement(body(challenge(), "dev-1", ecKey(), report())).jsonObject
+        refused(JsonObject(json + ("verdictProvider" to JsonPrimitive("x"))).toString(), HttpStatusCode.BadRequest, "invalid_json")
     }
 }

@@ -23,6 +23,10 @@ class AttestationPolicyTest {
             assertEquals("reject", strict.flags[flag], flag)
         }
         for (flag in listOf("unknown_installer", "software_key", "key_unattested", "old_patch_level")) assertEquals("warn", strict.flags[flag], flag)
+        // What the hardware said at registration, and reports that contradict the record: no false positive on a stock locked phone.
+        for (flag in listOf("bootloader_unlocked", "boot_not_verified", "key_revoked", "report_mismatch", "config_rollback")) {
+            assertEquals("reject", strict.flags[flag], flag)
+        }
         assertEquals("ignore", strict.flags["adb_enabled"])
         assertFalse(strict.revealReasons)
         assertEquals(300, strict.tokenTtlSeconds)

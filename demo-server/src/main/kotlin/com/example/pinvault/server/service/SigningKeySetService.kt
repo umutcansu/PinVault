@@ -41,6 +41,9 @@ class SigningKeySetService(
 
     fun latestWire(): SignedKeySetWire? = if (enabled) store.latest()?.toWire() else null
 
+    /** The version of the set devices are sent (0 = none, or the feature is off): what resets their watermarks. */
+    fun currentVersion(): Int = if (enabled) store.latest()?.version ?: 0 else 0
+
     /** A refused upload; [conflict] = valid on its own but unsafe against this server's current signers. */
     class Rejected(message: String, val conflict: Boolean = false) : Exception(message)
 

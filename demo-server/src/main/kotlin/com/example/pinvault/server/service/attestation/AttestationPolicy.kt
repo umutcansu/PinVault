@@ -14,7 +14,13 @@ import kotlinx.serialization.json.jsonObject
  * set (or confirmed) by the server from its own records; `play_integrity*`
  * come from the Play Integrity verifier (§11) and are raised only when the
  * server has the Play Console keys configured, `app_attest*` from the App
- * Attest verifier (§12), only with `APP_ATTEST_APP_IDS` configured.
+ * Attest verifier (§12), only with `APP_ATTEST_APP_IDS` configured. The last
+ * five are the server's own as well: `bootloader_unlocked`,
+ * `boot_not_verified` and `key_revoked` from what a hardware-level Android
+ * Key Attestation chain said at registration (never from a software-level
+ * chain: emulators do not raise them), `report_mismatch` when the report
+ * contradicts that record, `config_rollback` when a device reports an older
+ * config than it did before.
  */
 enum class AttestationFlag(val wire: String) {
     ROOTED("rooted"),
@@ -36,7 +42,17 @@ enum class AttestationFlag(val wire: String) {
     /** An App Attest attestation or assertion the report carried did not verify (or the last one failed). */
     APP_ATTEST("app_attest"),
     /** An iOS device without an App Attest verdict verified within `APP_ATTEST_MAX_AGE_SECONDS`. */
-    APP_ATTEST_MISSING("app_attest_missing");
+    APP_ATTEST_MISSING("app_attest_missing"),
+    /** The registration's hardware chain said the bootloader is unlocked (RootOfTrust `deviceLocked` = false). */
+    BOOTLOADER_UNLOCKED("bootloader_unlocked"),
+    /** The registration's hardware chain said the boot was not Verified (nor SelfSigned with a key in `ATTESTATION_TRUSTED_BOOT_KEYS`). */
+    BOOT_NOT_VERIFIED("boot_not_verified"),
+    /** A certificate of the registration's chain is on the attestation revocation list now (or was then). */
+    KEY_REVOKED("key_revoked"),
+    /** The report contradicts what the hardware said at registration: boot state, patch level, a chain it claims and did not send. */
+    REPORT_MISMATCH("report_mismatch"),
+    /** The device reports an older config (`currentIssuedAt`) than it reported before under the same signing-key set. */
+    CONFIG_ROLLBACK("config_rollback");
 
     companion object {
         private val byWire = entries.associateBy { it.wire }
@@ -92,7 +108,10 @@ data class AttestationPolicy(
             "key_unattested" to "warn", "old_patch_level" to "warn",
             // Warn until the fleet is measured: a reject here needs every app build to carry the provider.
             "play_integrity" to "warn", "play_integrity_missing" to "warn",
-            "app_attest" to "warn", "app_attest_missing" to "warn"
+            "app_attest" to "warn", "app_attest_missing" to "warn",
+            // What the hardware said, or a report that contradicts it: no false positive on a stock locked phone.
+            "bootloader_unlocked" to "reject", "boot_not_verified" to "reject", "key_revoked" to "reject",
+            "report_mismatch" to "reject", "config_rollback" to "reject"
         )
 
         /** `lenient`: everything a warning — what a first rollout measures the fleet with. */

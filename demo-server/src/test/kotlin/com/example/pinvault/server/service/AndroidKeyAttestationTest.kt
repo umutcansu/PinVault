@@ -223,4 +223,60 @@ class AndroidKeyAttestationTest {
         assertEquals(UserAuthAttestationMode.OFF, UserAuthAttestationMode.parse("off"))
         assertFailsWith<IllegalArgumentException> { UserAuthAttestationMode.parse("strict") }
     }
+
+    @Test
+    fun `a hardware chain reports the device's facts, also when a later check refuses it`() {
+        val passed = verify(Description(deviceId, osPatchLevel = 202609, osVersion = 150000))
+        val facts = assertNotNull(passed.facts)
+        assertEquals(true, facts.deviceLocked)
+        assertEquals(KeyFacts.VERIFIED, facts.verifiedBootState)
+        assertEquals("01".repeat(32), facts.verifiedBootKey)
+        assertEquals(202609, facts.osPatchLevel)
+        assertEquals(150000, facts.osVersion)
+        assertEquals("tee", facts.securityLevel)
+        assertEquals(3, facts.chainSerials.size)
+        assertTrue(verifier.bootTrusted(facts))
+
+        val unlocked = verify(Description(deviceId, deviceLocked = false, verifiedBootState = 2))
+        assertRefused("device_unlocked", unlocked)
+        assertEquals(false, unlocked.facts!!.deviceLocked)
+        assertEquals(KeyFacts.UNVERIFIED, unlocked.facts!!.verifiedBootState)
+        // Refused for another app, for another device id: what the hardware said still stands.
+        assertNotNull(verify(Description(deviceId, packages = listOf("com.other"))).facts)
+        assertNotNull(verify(Description(deviceId, challenge = AndroidKeyAttestation.challengeFor("x"))).facts)
+    }
+
+    @Test
+    fun `no facts from a software-level chain, a broken chain or a revoked one`() {
+        val software = verify(Description(deviceId, attestationLevel = 0, keyMintLevel = 0, deviceLocked = false))
+        assertRefused("software_attestation", software)
+        assertNull(software.facts, "an emulator's chain says nothing about a device")
+        assertNull(verify(Description(deviceId, keyMintLevel = 0)).facts, "a software KeyMint neither")
+        assertNull(verify(chain = chain(pki, key.public, Description(deviceId), leafSigner = java.security.KeyPairGenerator.getInstance("EC").apply { initialize(256) }.generateKeyPair().private)).facts)
+        val revoked = pki.verifier(revokedSerials = setOf(pki.intermediate.serialNumber.toString(16)))
+        assertRefused("certificate_revoked", verify(with = revoked))
+        assertNull(verify(with = revoked).facts)
+        assertTrue(revoked.isRevoked(pki.intermediate.serialNumber.toString(16).uppercase()))
+        assertFalse(revoked.isRevoked(pki.root.serialNumber.toString(16)))
+    }
+
+    @Test
+    fun `a SelfSigned boot passes requireVerifiedBoot only with its key in ATTESTATION_TRUSTED_BOOT_KEYS`() {
+        val selfSigned = Description(deviceId, verifiedBootState = 1)
+        assertRefused("boot_not_verified", verify(selfSigned))
+        assertFalse(verifier.bootTrusted(verify(selfSigned).facts!!))
+        val trusting = AndroidKeyAttestation(listOf(pki.root), setOf(TestAttestationChains.PACKAGE), setOf(TestAttestationChains.SIGNER_HEX),
+            trustedBootKeys = setOf("01".repeat(32)))
+        val verdict = verify(selfSigned, with = trusting)
+        assertTrue(verdict.passed, verdict.reason)
+        assertEquals(KeyFacts.SELF_SIGNED, verdict.facts!!.verifiedBootState)
+        assertTrue(trusting.bootTrusted(verdict.facts!!))
+        // Another key, or an unlocked bootloader, is not made good by the list.
+        assertRefused("device_unlocked", verify(selfSigned.copy(deviceLocked = false), with = trusting))
+        val otherKey = AndroidKeyAttestation(listOf(pki.root), setOf(TestAttestationChains.PACKAGE), setOf(TestAttestationChains.SIGNER_HEX),
+            trustedBootKeys = setOf("02".repeat(32)))
+        assertRefused("boot_not_verified", verify(selfSigned, with = otherKey))
+        assertEquals(setOf("ab".repeat(32)), AndroidKeyAttestation.fromEnv(mapOf("ATTESTATION_TRUSTED_BOOT_KEYS" to " AB".repeat(1) + "ab".repeat(31))).trustedBootKeys)
+        assertFailsWith<IllegalArgumentException> { AndroidKeyAttestation.fromEnv(mapOf("ATTESTATION_TRUSTED_BOOT_KEYS" to "not-hex")) }
+    }
 }

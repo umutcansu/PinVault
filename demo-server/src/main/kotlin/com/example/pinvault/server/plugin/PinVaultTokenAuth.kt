@@ -1,5 +1,6 @@
 package com.example.pinvault.server.plugin
 
+import com.example.pinvault.server.route.clientCertificate
 import com.example.pinvault.server.service.attestation.PinVaultToken
 import io.ktor.http.ContentType
 import io.ktor.http.HttpHeaders
@@ -20,9 +21,12 @@ import io.ktor.util.AttributeKey
  * in [PinVaultTokenAuthConfig.secrets], unexpired (with the leeway), with the
  * `aud` of this backend's Config API when [PinVaultTokenAuthConfig.audience]
  * is set, and every annotation of [PinVaultTokenAuthConfig.requireAnnotations]
- * in its `anno` claim. Anything else is `401` with
+ * in its `anno` claim. A request that names its device (`X-Device-Id`) must
+ * name the token's `did`. With [PinVaultTokenAuthConfig.requireCertBinding]
+ * the request must arrive over mTLS with the client certificate the token's
+ * `cnf.x5t#S256` names (the one the device attested with). Anything else is `401` with
  * `WWW-Authenticate: PinVault-Token error="invalid_token", error_description="…"`
- * and `{"error":"invalid_token","reason":"missing|malformed|unknown_kid|signature|issuer|expired|audience|annotations"}`
+ * and `{"error":"invalid_token","reason":"missing|malformed|unknown_kid|signature|issuer|expired|audience|annotations|device_mismatch|cert_binding"}`
  * — the shape the library's interceptor recognises to re-attest once and
  * retry. `/health` (and [PinVaultTokenAuthConfig.skipPaths]) stays open.
  *
@@ -46,6 +50,20 @@ class PinVaultTokenAuthConfig {
     /** Paths served without a token. */
     var skipPaths: Set<String> = setOf("/health")
 
+    /**
+     * `PINVAULT_TOKEN_REQUIRE_CERT_BINDING`: the request must come over mTLS
+     * with the client certificate whose SHA-256 the token's `cnf.x5t#S256`
+     * carries — a token lifted from the device is then useless without the
+     * device's private key. Tokens without that claim (attested over plain
+     * TLS, or issued before `cnf`) are refused. Only for a backend that
+     * terminates mTLS itself with the identity the app attests with; off,
+     * `cnf` is not looked at.
+     */
+    var requireCertBinding: Boolean = false
+
+    /** The verified client certificate of the call (tests replace it). */
+    var clientCertificate: (ApplicationCall) -> java.security.cert.X509Certificate? = { it.clientCertificate() }
+
     /** Seconds since the epoch (tests). */
     var clock: () -> Long = { System.currentTimeMillis() / 1000 }
 }
@@ -63,6 +81,8 @@ val PinVaultTokenAuth = createApplicationPlugin(name = "PinVaultTokenAuth", ::Pi
     val required = pluginConfig.requireAnnotations.orEmpty()
     val skip = pluginConfig.skipPaths
     val clock = pluginConfig.clock
+    val requireCertBinding = pluginConfig.requireCertBinding
+    val certificateOf = pluginConfig.clientCertificate
 
     onCall { call ->
         if (call.response.isCommitted) return@onCall
@@ -81,6 +101,18 @@ val PinVaultTokenAuth = createApplicationPlugin(name = "PinVaultTokenAuth", ::Pi
             is PinVaultToken.Result.Valid -> {
                 if (required.isNotEmpty() && !result.claims.annotations.containsAll(required)) {
                     return@onCall call.refuseToken("annotations", "The token lacks a required annotation.")
+                }
+                // A request that says which device it is must be that token's device.
+                val claimedDevice = call.request.header("X-Device-Id")?.trim()?.takeIf { it.isNotEmpty() }
+                if (claimedDevice != null && claimedDevice != result.claims.deviceId) {
+                    return@onCall call.refuseToken("device_mismatch", "The token was issued to another device.")
+                }
+                if (requireCertBinding) {
+                    val bound = result.claims.certThumbprint
+                    val presented = certificateOf(call)?.let { PinVaultToken.certThumbprint(it.encoded) }
+                    if (bound == null || presented == null || !java.security.MessageDigest.isEqual(bound.toByteArray(), presented.toByteArray())) {
+                        return@onCall call.refuseToken("cert_binding", "The token is bound to another client certificate, or the request carries none.")
+                    }
                 }
                 call.attributes.put(PinVaultTokenClaimsKey, result.claims)
             }

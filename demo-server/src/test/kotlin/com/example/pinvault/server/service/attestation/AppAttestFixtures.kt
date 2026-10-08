@@ -56,8 +56,9 @@ object AppAttestFixtures {
         fun verifier(
             appIds: Set<String> = setOf(APP_ID),
             environment: AppAttestVerifier.Environment = AppAttestVerifier.Environment.PRODUCTION,
-            verdictMaxAgeSeconds: Long = AppAttestVerifier.DEFAULT_VERDICT_MAX_AGE_SECONDS
-        ) = AppAttestVerifier(listOf(root), appIds, environment, verdictMaxAgeSeconds)
+            verdictMaxAgeSeconds: Long = AppAttestVerifier.DEFAULT_VERDICT_MAX_AGE_SECONDS,
+            requireV2: Boolean = false
+        ) = AppAttestVerifier(listOf(root), appIds, environment, verdictMaxAgeSeconds, requireV2)
 
         /** The PEM of [root], as an operator stores Apple's. */
         fun rootPem(): String = "-----BEGIN CERTIFICATE-----\n" +

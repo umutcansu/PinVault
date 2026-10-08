@@ -4,13 +4,15 @@
 
 // ── Constants ────────────────────────────────────────
 
-// The 16 flags a report can raise, in the order the policy table shows them (ATTESTATION.md §3/§4/§11/§12).
+// The 21 flags a report can raise, in the order the policy table shows them (ATTESTATION.md §3/§4/§11/§12).
 // play_integrity* are raised only by a server with the Play Integrity keys configured,
-// app_attest* only with APP_ATTEST_APP_IDS.
+// app_attest* only with APP_ATTEST_APP_IDS; the last five by the server from its own
+// records (the registration's hardware chain, the device's earlier config watermark).
 const ATTEST_FLAGS = [
   'rooted', 'emulator', 'debugger', 'debuggable', 'hooking_framework', 'app_integrity',
   'cloner', 'unknown_installer', 'adb_enabled', 'software_key', 'key_unattested', 'old_patch_level',
-  'play_integrity', 'play_integrity_missing', 'app_attest', 'app_attest_missing'
+  'play_integrity', 'play_integrity_missing', 'app_attest', 'app_attest_missing',
+  'bootloader_unlocked', 'boot_not_verified', 'key_revoked', 'report_mismatch', 'config_rollback'
 ];
 const ATTEST_LEVELS = ['reject', 'warn', 'ignore'];
 const ATTEST_PRESETS = {
@@ -20,7 +22,9 @@ const ATTEST_PRESETS = {
     unknown_installer: 'warn', adb_enabled: 'ignore', software_key: 'warn',
     key_unattested: 'warn', old_patch_level: 'warn',
     play_integrity: 'warn', play_integrity_missing: 'warn',
-    app_attest: 'warn', app_attest_missing: 'warn'
+    app_attest: 'warn', app_attest_missing: 'warn',
+    bootloader_unlocked: 'reject', boot_not_verified: 'reject', key_revoked: 'reject',
+    report_mismatch: 'reject', config_rollback: 'reject'
   },
   lenient: Object.fromEntries(ATTEST_FLAGS.map(f => [f, 'warn']))
 };
@@ -67,6 +71,8 @@ function attestDev(d) {
     keyLevel: ka.securityLevel ?? d.keySecurityLevel ?? (report && report.device && report.device.keySecurityLevel) ?? null,
     attested: ka.attested ?? d.keyAttested ?? null,
     attestReason: ka.reason ?? d.keyAttestationReason ?? null,
+    // What the registration's hardware chain said about the device (null: no such chain).
+    keyFacts: d.keyFacts && typeof d.keyFacts === 'object' ? d.keyFacts : null,
     firstSeen: d.firstSeen ?? null,
     lastSeen: d.lastSeen ?? null,
     policyVersion: d.lastPolicyVersion ?? d.policyVersion ?? null,
@@ -95,6 +101,23 @@ function attestDev(d) {
     appAttestCounter: d.appAttestCounter ?? null,
     appAttest: typeof d.appAttest === 'string' ? parseJsonText(d.appAttest) : (d.appAttest && typeof d.appAttest === 'object' ? d.appAttest : null)
   };
+}
+
+/**
+ * The device-key card's rows for what the registration's hardware chain said
+ * (RootOfTrust and patch level); nothing when there was no such chain.
+ */
+function attestKeyFactsRows(facts) {
+  if (!facts) return '';
+  const locked = facts.deviceLocked === true ? `<span class="status-healthy">${esc(t('attLocked'))}</span>`
+    : facts.deviceLocked === false ? `<span class="status-error">${esc(t('attUnlocked'))}</span>` : '—';
+  const boot = facts.verifiedBootState
+    ? (facts.verifiedBootState === 'verified' ? `<span class="status-healthy">${esc(facts.verifiedBootState)}</span>` : `<span class="status-error">${esc(facts.verifiedBootState)}</span>`)
+    : '—';
+  const patch = Number.isInteger(facts.osPatchLevel) ? `${Math.floor(facts.osPatchLevel / 100)}-${String(facts.osPatchLevel % 100).padStart(2, '0')}` : '—';
+  return `<div class="info-row"><span class="info-key" title="${esc(t('attFactsHint'))}">${esc(t('attKeyBootloader'))}</span><span class="info-val">${locked}</span></div>
+          <div class="info-row"><span class="info-key" title="${esc(t('attFactsHint'))}">${esc(t('attKeyBoot'))}</span><span class="info-val">${boot}</span></div>
+          <div class="info-row"><span class="info-key" title="${esc(t('attFactsHint'))}">${esc(t('attKeyPatch'))}</span><span class="info-val">${esc(patch)}</span></div>`;
 }
 
 /** `ios` → iOS, `android` → Android; anything else as it came (escaped by the caller); null → —. */
@@ -670,6 +693,7 @@ async function showAttestationDevice(apiId, deviceId) {
           <div class="info-row"><span class="info-key">${esc(t('attKeyLevel'))}</span><span class="info-val">${esc(dev.keyLevel || '—')}</span></div>
           <div class="info-row"><span class="info-key">${esc(t('attKeyAttested'))}</span><span class="info-val">${dev.attested === true ? `<span class="status-healthy">${esc(t('attYes'))}</span>` : dev.attested === false ? `<span class="status-error">${esc(t('attNo'))}</span>` : '—'}</span></div>
           <div class="info-row"><span class="info-key">${esc(t('attKeyReason'))}</span><span class="info-val">${esc(dev.attestReason || '—')}</span></div>
+          ${attestKeyFactsRows(dev.keyFacts)}
           <div class="info-row" style="border:none"><span class="info-key">${esc(t('attKeyMismatches'))}</span><span class="info-val">${esc(dev.keyMismatches)}${dev.lastKeyMismatchAt ? ` <span class="muted">(${attestTime(dev.lastKeyMismatchAt)})</span>` : ''}</span></div>
           ${dev.revoked ? `<div class="notice notice-danger" style="margin-top:10px">${esc(t('attRevokedNotice'))}</div>` : ''}
           <div style="margin-top:12px;display:flex;gap:8px;flex-wrap:wrap">

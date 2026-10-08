@@ -122,7 +122,8 @@ class AttestationPlayIntegrityTest {
         })
         put("device", buildJsonObject {
             put("manufacturer", "Google"); put("model", "Pixel 8"); put("sdkInt", 35); put("securityPatch", "2026-09-05")
-            put("verifiedBootState", "green"); put("keySecurityLevel", "strongbox"); put("keyAttested", true)
+            // No chain is sent: the genuine library says keyAttested only for a key it sends a chain for.
+            put("verifiedBootState", "green"); put("keySecurityLevel", "strongbox"); put("keyAttested", false)
         })
         put("signals", buildJsonObject {
             for (flag in listOf("rooted", "emulator", "debugger", "debuggable", "hooking_framework", "app_integrity", "cloner",
@@ -139,15 +140,25 @@ class AttestationPlayIntegrityTest {
         return Json.parseToJsonElement(response.bodyAsText()).jsonObject["nonce"]!!.jsonPrimitive.content
     }
 
-    /** One full round: challenge, a report with [token] for that nonce (built by [tokenFor]), the signed body. */
-    private suspend fun ApplicationTestBuilder.attest(deviceId: String, key: KeyPair, tokenFor: ((nonce: String) -> String)?): HttpResponse {
+    /**
+     * One full round: challenge, a report with the token [tokenFor] makes for
+     * the Play Integrity nonce the provider asks Google with — v2 (the round's
+     * nonce and the device id), or with [v1] the round's nonce itself, as an
+     * older provider did — and the signed body. [outside]: the token in the
+     * body's own `verdictProvider` instead of the report.
+     */
+    private suspend fun ApplicationTestBuilder.attest(
+        deviceId: String, key: KeyPair, tokenFor: ((nonce: String) -> String)?, v1: Boolean = false, outside: Boolean = false
+    ): HttpResponse {
         val nonce = challenge()
-        val report = report(tokenFor?.invoke(nonce))
+        val token = tokenFor?.invoke(if (v1) nonce else PlayIntegrityVerifier.roundNonceV2(nonce, deviceId))
+        val report = report(token.takeIf { !outside })
         val body = buildJsonObject {
             put("v", 1); put("nonce", nonce); put("deviceId", deviceId)
             put("publicKey", Base64.getEncoder().encodeToString(key.public.encoded))
             put("report", report)
             put("signature", sign(key.private, AttestationService.canonical(nonce, deviceId, report)))
+            if (outside && token != null) put("verdictProvider", buildJsonObject { put("name", "play-integrity"); put("token", token) })
         }.toString()
         return client.post("/api/v1/attest") { contentType(ContentType.Application.Json); setBody(body) }
     }
@@ -221,7 +232,7 @@ class AttestationPlayIntegrityTest {
         assertEquals(emptyList(), piFlags(attest("dev-1", key, ::genuine).json()["warnings"]))
 
         // A token minted for another round's nonce (a replay) fails too.
-        val stale = attest("dev-1", key) { _ -> genuine("some-other-nonce-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA") }
+        val stale = attest("dev-1", key, tokenFor = { _ -> genuine("some-other-nonce-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA") })
         assertEquals(listOf("play_integrity"), piFlags(stale.json()["warnings"]))
         assertEquals("nonce_mismatch", Json.parseToJsonElement(devices.get(scope, "dev-1")!!.playIntegrity!!).jsonObject["reason"]!!.jsonPrimitive.content)
     }
@@ -252,5 +263,70 @@ class AttestationPlayIntegrityTest {
         assertEquals("pass", ignored["result"]!!.jsonPrimitive.content)
         assertTrue(piFlags(ignored["warnings"]).isEmpty())
         assertEquals("fail", devices.get(scope, "dev-2")!!.playIntegrityResult, "still recorded for the dashboard")
+    }
+
+    @Test
+    fun `the v2 nonce binds the token to the device - v1 passes with a warning, PLAY_INTEGRITY_REQUIRE_V2 refuses it`() = testApplication {
+        val nonce = "AAABkp0-round-nonce"
+        assertEquals(
+            Base64.getUrlEncoder().withoutPadding().encodeToString(
+                java.security.MessageDigest.getInstance("SHA-256").digest("pinvault-play-integrity:v2:$nonce:dev-1".toByteArray())),
+            PlayIntegrityVerifier.roundNonceV2(nonce, "dev-1"), "the wire string the Android provider must match")
+        assertEquals(43, PlayIntegrityVerifier.roundNonceV2(nonce, "dev-1").length)
+
+        app(service(google.verifier(packageNames = setOf(TestAttestationChains.PACKAGE))))
+        // An older provider asked Google with the round's nonce itself: still a pass, with the note.
+        val key = ecKey()
+        val v1 = attest("dev-1", key, ::genuine, v1 = true).json()
+        assertEquals("pass", v1["result"]!!.jsonPrimitive.content)
+        assertEquals(listOf("play_integrity_v1"), piFlags(v1["warnings"]))
+        assertEquals("pass", devices.get(scope, "dev-1")!!.playIntegrityResult)
+        // The current one: no note.
+        assertEquals(emptyList(), piFlags(attest("dev-1", key, ::genuine).json()["warnings"]))
+        // A v2 token minted for another device does not fit this one.
+        val foreign = attest("dev-2", ecKey(), { _ -> genuine(PlayIntegrityVerifier.roundNonceV2("x", "dev-3")) }).json()
+        assertEquals(listOf("play_integrity"), piFlags(foreign["warnings"]))
+        assertEquals("nonce_mismatch", Json.parseToJsonElement(devices.get(scope, "dev-2")!!.playIntegrity!!).jsonObject["reason"]!!.jsonPrimitive.content)
+        // Beside the report (the body's own verdictProvider) a token must be v2.
+        assertEquals(emptyList(), piFlags(attest("dev-4", ecKey(), ::genuine, outside = true).json()["warnings"]))
+        assertEquals(listOf("play_integrity"), piFlags(attest("dev-5", ecKey(), ::genuine, v1 = true, outside = true).json()["warnings"]))
+        assertEquals("nonce_v1", Json.parseToJsonElement(devices.get(scope, "dev-5")!!.playIntegrity!!).jsonObject["reason"]!!.jsonPrimitive.content)
+    }
+
+    @Test
+    fun `PLAY_INTEGRITY_REQUIRE_V2 fails a v1 token, PLAY_INTEGRITY_REQUIRE_LICENSED an unlicensed one`() = testApplication {
+        app(service(google.verifier(packageNames = setOf(TestAttestationChains.PACKAGE), requireV2 = true, requireLicensed = true)))
+        val v1 = attest("dev-1", ecKey(), ::genuine, v1 = true).json()
+        assertEquals(listOf("play_integrity"), piFlags(v1["warnings"]))
+        assertEquals("nonce_v1", Json.parseToJsonElement(devices.get(scope, "dev-1")!!.playIntegrity!!).jsonObject["reason"]!!.jsonPrimitive.content)
+        assertEquals(emptyList(), piFlags(attest("dev-2", ecKey(), ::genuine).json()["warnings"]), "v2 and LICENSED")
+        val sideloaded = attest("dev-3", ecKey(), { n -> google.token(google.payload(n, now, packageName = TestAttestationChains.PACKAGE, licensing = "UNLICENSED")) }).json()
+        assertEquals(listOf("play_integrity"), piFlags(sideloaded["warnings"]))
+        val summary = Json.parseToJsonElement(devices.get(scope, "dev-3")!!.playIntegrity!!).jsonObject
+        assertEquals("app_unlicensed", summary["reason"]!!.jsonPrimitive.content)
+        assertEquals("UNLICENSED", summary["licensing"]!!.jsonPrimitive.content)
+    }
+
+    @Test
+    fun `PLAY_INTEGRITY_STALE_PASS_SECONDS - a stored pass covers rounds without a token only that long, a fail sticks longer`() = testApplication {
+        app(service(google.verifier(packageNames = setOf(TestAttestationChains.PACKAGE), verdictMaxAgeSeconds = 3600, stalePassSeconds = 600)))
+        val key = ecKey()
+        assertEquals(emptyList(), piFlags(attest("dev-1", key, ::genuine).json()["warnings"]))
+        now += 5 * 60_000L
+        assertEquals(emptyList(), piFlags(attest("dev-1", key, null).json()["warnings"]), "within the stale-pass window")
+        now += 6 * 60_000L
+        assertEquals(listOf("play_integrity_missing"), piFlags(attest("dev-1", key, null).json()["warnings"]),
+            "a token dropped for longer than the window is missing, not covered for the full max age")
+        // A failed verdict is not shortened by the window: it stands for the max age.
+        val other = ecKey()
+        assertEquals(listOf("play_integrity"), piFlags(attest("dev-2", other, ::basicOnly).json()["warnings"]))
+        now += 30 * 60_000L
+        assertEquals(listOf("play_integrity"), piFlags(attest("dev-2", other, null).json()["warnings"]))
+        assertEquals(600L, PlayIntegrityVerifier.fromEnv(mapOf(
+            "PLAY_INTEGRITY_DECRYPTION_KEY" to google.decryptionKeyBase64, "PLAY_INTEGRITY_VERIFICATION_KEY" to google.verificationKeyBase64,
+            "PLAY_INTEGRITY_STALE_PASS_SECONDS" to "600"))!!.stalePassSeconds)
+        assertEquals(PlayIntegrityVerifier.DEFAULT_VERDICT_MAX_AGE_SECONDS, PlayIntegrityVerifier.fromEnv(mapOf(
+            "PLAY_INTEGRITY_DECRYPTION_KEY" to google.decryptionKeyBase64, "PLAY_INTEGRITY_VERIFICATION_KEY" to google.verificationKeyBase64))!!.stalePassSeconds,
+            "default: the verdict's max age, as before")
     }
 }
