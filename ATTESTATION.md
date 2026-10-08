@@ -93,7 +93,7 @@ Request:
 Server checks, in order (each refusal is counted by the refusal limiter):
 
 1. `400 invalid_json` / `400 unsupported_version` / `400 report_too_large`.
-2. Nonce: `400 nonce_invalid`, `400 nonce_expired`, `400 nonce_replayed`.
+2. Nonce: `400 nonce_invalid`, `400 nonce_expired`, `400 nonce_replayed`; `503 attestation_busy` when the server's nonce cache is full (too many attestations in flight — the library backs off and asks for a new challenge).
 3. Signature over the canonical string with `publicKey`: `401 signature_invalid`.
 4. Revoked device (`client_identities` / attested device marked revoked): `403 device_revoked`.
 5. Device key:
@@ -374,6 +374,8 @@ webhooks), `attestation_token_secret_rotated`, `attestation_token_secret_deleted
 | `APP_ATTEST_ROOT_CA_FILE` | unset | Path of Apple's App Attestation Root CA (PEM). Required with `APP_ATTEST_APP_IDS`: missing or unreadable, the server does not start. |
 | `APP_ATTEST_ENVIRONMENT` | `production` | `production` / `development`: the aaguid an attestation must carry (the app's `appattest-environment` entitlement). |
 | `APP_ATTEST_MAX_AGE_SECONDS` | `86400` | How long a verified App Attest verdict covers rounds without one before `app_attest_missing` (60–2592000). |
+| `INTEGRITY_VERIFICATION` | `off` | `off` / `warn` / `enforce`: the `integrityToken` an enrollment carries (§12, "Enrollment"). `enforce` refuses a missing or failing token with `403 integrity_required` / `integrity_invalid` and allows no server-made keys; it needs `INTEGRITY_VERIFIER_COMMAND` or `APP_ATTEST_APP_IDS`, else the server does not start. Any other value is a start-up error. |
+| `INTEGRITY_VERIFIER_COMMAND` | unset | The command that decodes a non-App-Attest `integrityToken` (stdin `{"token","requestHash","deviceId"}`, stdout `{"passed","reason","summary"}`). `INTEGRITY_VERIFIER_TIMEOUT_MS` bounds one run (default `10000`, 1000–60000). Details in [demo-server/README.md](demo-server/README.md). |
 
 ## 8. Library behaviour
 
@@ -394,8 +396,9 @@ PinVaultConfig.Builder()
   each attesting block attests once. A `reject` does not fail `init` — the
   app decides what to do with `PinVault.attestationStatus()` — but no token is
   issued and no config update arrives through this channel.
-- **Refresh**: a coroutine per block re-attests at `min(nextAttestIn, exp − 60 s)`
-  while the process lives, with jitter; the periodic WorkManager job attests
+- **Refresh**: a coroutine per block re-attests at
+  `min(nextAttestIn, attestationInterval, exp − 60 s)` (at least 30 s), spread
+  by ±10 % jitter, while the process lives; the periodic WorkManager job attests
   too, so a backgrounded app wakes with a fresh token. Failures back off
   (30 s → 5 min) and keep the last token until it expires.
 - **Header**: every client the library builds or configures (`getClient()`,
@@ -403,11 +406,11 @@ PinVaultConfig.Builder()
   adds `PinVault-Token` to requests whose host matches a token host. If no
   valid token is held it attests synchronously once (bounded by the single
   flight), and sends the request without the header if that fails. A `401`
-  whose body or `WWW-Authenticate` names `PinVault-Token` forces one
-  re-attestation and one retry.
+  whose `WWW-Authenticate` names `PinVault-Token`, or whose body contains
+  `invalid_token`, forces one re-attestation and one retry.
 - **API**: `PinVault.attestNow(configApiId?)`, `PinVault.fetchAttestationToken(host)`
   (suspend and callback), `PinVault.attestationStatus(configApiId?)` →
-  `AttestationStatus(result, arc, rejectionReasons, warnings, tokenExpiresAt, lastAttestedAt, lastError)`,
+  `AttestationStatus(configApiId, result, arc, rejectionReasons, warnings, tokenExpiresAt, lastAttestedAt, nextAttestAt, clockSkewMs, lastError, policyVersion)`,
   and the event `PinVaultConnectionEvent.Attestation`.
 - **Config piggyback**: a `config` in the response goes through the same
   verification, plausibility and replay checks as a fetched one
@@ -436,8 +439,9 @@ meant to be extended; the policy and token mechanics are the durable part.
 
 ## 10. Managed trust roots
 
-A signed config may carry `trustRoots`: SHA-256 SPKI pins of root CAs. A
-block with `managedTrustRoots()` accepts, for a host that has **no pin
+A signed config may carry `trustRoots`: SHA-256 SPKI pins of root CAs.
+`managedTrustRoots()` is a `PinVaultConfig.Builder` setting (the whole
+config, not one block); with it on, the library accepts, for a host that has **no pin
 entry**, a chain the platform's CAs validate **whose trust anchor's key is
 one of `trustRoots`**, with the normal host-name check. Hosts with a pin
 entry are unchanged. This is Approov's "managed trust roots": the device's

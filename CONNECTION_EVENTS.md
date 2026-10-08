@@ -1,7 +1,7 @@
 # Connection events and the backend reporter
 
 The basics — `onConnectionEvent { … }` and `reportToPinVaultBackend(...)` —
-are in the [README](README.md#4-optional-subscribe-to-connection-events).
+are in the [guide](GUIDE.md#4-optional-subscribe-to-connection-events).
 This page covers pinning the reporter's own traffic and the Java form of the
 listener.
 
@@ -47,7 +47,8 @@ PinVault.init(context, config) { result ->
 Prerequisite: the active config must contain a pin entry for the
 management hostname. If it doesn't, the trust manager fails closed and
 every reporter POST throws `CertificateException: No pin entry for
-hostname 'management.example.com'`. Confirm with
+hostname 'management.example.com'` (unless `managedTrustRoots()` is on and
+the config lists the host's root CA: then it is accepted without a pin). Confirm with
 `curl https://management.example.com:.../api/v1/certificate-config?currentVersion=0`
 and look for the host under `pins`.
 

@@ -14,10 +14,13 @@ pinvault-ios/
   PORTING.md                          this file
   README.md                           user documentation (install, quick start, platform notes)
   Sources/PinVault/                   the library; zero third-party dependencies
-    PinVault.swift                    the façade (public actor)
+    PinVault.swift                    the façade (lock-protected final class, see §2)
     Model/ API/ TLS/ Crypto/ Keys/ Store/ Internal/ Integrity/ Background/ Logging/ Util/
   Sources/PinVaultE2E/                test-control glue used only by the sample app's E2E build
   Tests/PinVaultTests/                XCTest; fixtures in Tests/PinVaultTests/Fixtures/
+  Tests/IdentityKeychainHost/         ad-hoc signed host app (XcodeGen) running the Secure Enclave / Keychain identity tests
+  Tests/VaultKeychainHost/            ad-hoc signed host app (XcodeGen) running the Keychain device / screen-lock key tests
+  scripts/                            test.sh (every suite: swift test, simulator, both hosts), generate-test-keys.sh
 sample-client-ios/                    SwiftUI sample app (XcodeGen project.yml)
 sample-e2e/ios-driver/                XCUITest-based UI driver (HTTP on 127.0.0.1) used by sample-e2e/lib/ios.js
 ```
@@ -32,8 +35,9 @@ Kotlin files are grouped (results, small enums).
 - Swift 6 language mode, strict concurrency. Platforms: iOS 16+, macOS 13+ (macOS only so that
   `swift test` runs the pure-logic suites on the Mac; iOS-only APIs behind `#if os(iOS)` /
   `#if canImport(UIKit)`).
-- Frameworks allowed: Foundation, Security, CryptoKit, LocalAuthentication, DeviceCheck,
-  BackgroundTasks, UIKit (device info only), Network, os. No third-party packages.
+- Frameworks allowed: Foundation, Security, CryptoKit, CommonCrypto (PKCS#12 re-wrap),
+  LocalAuthentication, DeviceCheck, BackgroundTasks, UIKit (device info only), Darwin and MachO
+  (integrity probes: `sysctl`, sockets, loaded dyld images), os. No third-party packages.
 - Public type and member names mirror the Android names (`PinVault`, `PinVaultConfig`,
   `ConfigApiBlock`, `VaultFileConfig`, `HostPin`, `CertificateConfig`, `InitResult`,
   `UpdateResult`, `ClientCertEnrollmentResult`, `AttestationStatus`, `VaultFileResult`,
@@ -69,7 +73,8 @@ Kotlin files are grouped (results, small enums).
   ```
   Kotlin `require(...)` → `throws PinVaultError.invalidConfiguration(String)` from `build()`.
 - Errors: `public enum PinVaultError: Error` mirrors `model/SSLPinningException.kt`
-  (one case per exception class, same message texts).
+  (one case per exception class, same message texts), except `UnlockedDeviceKeyRequiredException`,
+  which iOS never raises (see `requireUnlockedDevice` in §3).
 - CF types (`SecKey`, `SecCertificate`, `SecTrust`, `SecIdentity`) are wrapped in
   `final class … : @unchecked Sendable` holders where they cross actors.
 
@@ -82,14 +87,15 @@ Kotlin files are grouped (results, small enums).
 | Keystore key attestation chain | none (`attestationChain` omitted). App Attest is a separate, optional provider (§6) |
 | `KeySecurityLevel` wire names `strongbox` / `tee` / `software` / `unknown` | add `secure_enclave` (`hardwareBacked == true`) |
 | RSA-2048 device key `pinvault_vault_e2e_rsa` (end_to_end files) | Keychain RSA-2048 (software; SE holds no RSA), ThisDeviceOnly, tag = same alias |
-| RSA-2048 user-auth key (screen lock) | Keychain RSA-2048 with `SecAccessControl(.userPresence)`. Use it as: `LAContext.evaluatePolicy(.deviceOwnerAuthentication, localizedReason: prompt.description)` first, then the key with `kSecUseAuthenticationContext: thatContext` (one prompt on a device; on the simulator the key ACL is not enforced, the explicit evaluation is what shows the prompt). `PinVaultConfig.Builder.userAuthBiometricOnly()` / `userAuthStrength(.biometricCurrentSet)` (iOS only, no Kotlin counterpart) makes the key with `.biometryCurrentSet` and evaluates `.deviceOwnerAuthenticationWithBiometrics` instead; its kind is `PER_USE_BIOMETRIC`. An enrolment change then retires the key: `LAError.biometryNotEnrolled` from the prompt, or `errSecAuthFailed` from a key use the passed prompt's context authorised, both map to `UserAuthKeyError.retired` → `.invalidated` (the key item is deleted, the next fetch makes a new one). Default `.deviceOwner` keeps the E2E and the simulator behaviour |
+| RSA-2048 user-auth key (screen lock) | Keychain RSA-2048, `kSecAttrAccessibleWhenPasscodeSetThisDeviceOnly` with `SecAccessControl(.userPresence)`. Use it as: `LAContext.evaluatePolicy(.deviceOwnerAuthentication, localizedReason: prompt.description)` first, then the key with `kSecUseAuthenticationContext: thatContext` (one prompt on a device; on the simulator the key ACL is not enforced, the explicit evaluation is what shows the prompt). `PinVaultConfig.Builder.userAuthBiometricOnly()` / `userAuthStrength(.biometricCurrentSet)` (iOS only, no Kotlin counterpart) makes the key with `.biometryCurrentSet` and evaluates `.deviceOwnerAuthenticationWithBiometrics` instead; its (internal) `UserAuthKeyKind` is `.perUseBiometric`. An enrolment change then retires the key: `LAError.biometryNotEnrolled` from the prompt, or `errSecAuthFailed` from a key use the passed prompt's context authorised, both map to `UserAuthKeyError.retired` → `.invalidated` (the key item is deleted, the next fetch makes a new one). Default `.deviceOwner` keeps the E2E and the simulator behaviour |
 | RSA-OAEP SHA-256 + MGF1-SHA1 (server ↔ Android) | Apple's `.rsaEncryptionOAEPSHA256` is SHA-256 + **MGF1-SHA256** (verified: it cannot open MGF1-SHA1). iOS registers its keys with `"algorithm": "RSA-OAEP-SHA256-MGF1-SHA256"`; the server stores the algorithm per key and wraps with the matching MGF1 hash. Android keeps `"RSA-OAEP-SHA256"` (= MGF1-SHA1), unchanged |
 | EncryptedSharedPreferences-like `SecurePreferences` (AES-256-GCM values, HMAC-SHA256 names) | same scheme; file `Library/Application Support/pinvault/<fileName>.plist` (dictionary HMAC name → Base64 value); the two 32-byte keys are Keychain generic passwords `pinvault_prefs_aes` / `pinvault_prefs_mac` (ThisDeviceOnly). Files are excluded from backup (`isExcludedFromBackup`) and get `NSFileProtectionCompleteUntilFirstUserAuthentication` (`Complete` with `requireUnlockedDevice`) |
 | Vault files `files/vault_files/<key>.enc` | `Library/Application Support/pinvault/vault_files/<key>.enc`, same PVF2 layout, per-file key in Keychain |
 | WorkManager periodic job | `BGTaskScheduler` identifier `io.github.umutcansu.pinvault.refresh` (`PinVault.registerBackgroundTask()` at launch, Info.plist `BGTaskSchedulerPermittedIdentifiers`). `submit` throws `.unavailable` on the simulator → an in-process scheduler takes over (states ENQUEUED / RUNNING / CANCELLED in `ScheduledTaskInfo`) |
 | OkHttp `Dns` (sample's `MockDns`) | `PinVaultConfig.Builder.resolve(host:to:)` / `HttpConnectionSettings.resolve`: the request is sent to the given address, while pin lookup, hostname verification and client-certificate selection use the original (logical) host. Used by the sample app for `mock-tls.sample` / `mock-mtls.sample` |
 | Timber | `os.Logger(subsystem: "io.github.umutcansu.pinvault", category: <Kotlin class name>)`; every interpolation `privacy: .public`; message texts copied verbatim from the Kotlin code (E2E tests grep them). Debug-mode lines are logged at `.notice` (persisted) when diagnostic logging is on |
-| `requireUnlockedDevice` | `kSecAttrAccessibleWhenUnlockedThisDeviceOnly` + `NSFileProtectionComplete` |
+| `requireUnlockedDevice(allowFallback)` | `requireUnlockedDevice()`, no parameter: `kSecAttrAccessibleWhenUnlockedThisDeviceOnly` + `NSFileProtectionComplete`. On iOS the requirement is a Keychain accessibility class, not a Keystore capability a ROM may lack; if the Keychain still refuses such a key, `Keys/KeystoreOptions.generating` makes it once more without the requirement and logs a warning. That is Kotlin's `allowFallback = true`, always on, so there is no parameter and no `UnlockedDeviceKeyRequiredException` counterpart in `PinVaultError` |
+| `PinVault.userAuthKeyKind()` / `UserAuthKeyKind.expected` | none public. Android's kind depends on the OS version and the fingerprint hardware (`PER_USE`, `PER_USE_BIOMETRIC`, `TIME_BOUND`), so an app has to ask. On iOS it follows from the config alone: `.deviceOwner` (default) → per use, `userAuthBiometricOnly()` / `.biometricCurrentSet` → per use, biometrics only; there is no time-bound key. `UserAuthKeyKind` stays internal (`Keys/UserAuthKeys.swift`) for the shared storage logic |
 | BiometricPrompt / device credential | LocalAuthentication `.deviceOwnerAuthentication` |
 | backup exclusion XML | `URLResourceValues.isExcludedFromBackup = true` on `Library/Application Support/pinvault` and everything below; Keychain items are ThisDeviceOnly (never migrate to a backup) |
 
@@ -101,7 +107,7 @@ Kotlin files are grouped (results, small enums).
 - Attestation report (ATTESTATION.md §3) from iOS keeps the exact shape and all 12 signal keys:
   ```json
   {
-    "sdkVersion": "2.3.0", "reportTime": 1759660801234,
+    "sdkVersion": "2.3.2", "reportTime": 1759660801234,
     "app": { "packageName": "<bundle id>", "bundleId": "<bundle id>", "teamId": "<team id or null>",
              "versionCode": <CFBundleVersion as int, else 0>, "versionName": "<CFBundleShortVersionString>",
              "signerSha256": [], "installer": "app-store|testflight|provisioned|simulator|unknown",
@@ -255,8 +261,7 @@ iOS. Instead:
 
 ## 9. Public API index
 
-What L1a declared; later layers fill the bodies behind it (grep `TODO(L2)` … `TODO(L5)` in
-`Sources/PinVault`). The public surface is meant to stay as listed here.
+The public surface of `Sources/PinVault`, meant to stay as listed here.
 
 ### Conventions
 
@@ -271,9 +276,11 @@ What L1a declared; later layers fill the bodies behind it (grep `TODO(L2)` … `
   `build()` throws it as `PinVaultError.invalidConfiguration(message)`, same text as Kotlin. DSL
   closures take the builder as their argument: `.configApi("id", url: "https://…") { block in … }`.
 - `HostPin(...)` never throws (so the DSL needs no `try`); the Kotlin constructor rule (≥ 2 pins)
-  is `HostPin.validate()`, applied by `bootstrapPins(_:)`/`build()`, `ConfigApiBlock.configurationError()`
-  and, for static pins, by the pin config validator at `start`.
-- Errors: `PinVaultError` (one case per Kotlin exception class + JVM families). `exceptionName` is the
+  is `HostPin.validate()`, applied by `bootstrapPins(_:)`/`build()`, by the internal
+  `ConfigApiClient.configurationError(_:customApi:)` (through `ConfigApiBlock.configurationError()`, for
+  blocks made with the initializer) and, for static pins, by the pin config validator at `start`.
+- Errors: `PinVaultError` (one case per Kotlin exception class + JVM families; no
+  `UnlockedDeviceKeyRequiredException`, see §3). `exceptionName` is the
   Kotlin/Java simple class name, `message` the Kotlin message → the Android sample's
   `getSimpleName() + "\n" + getMessage()` is `error.exceptionName + "\n" + error.message`.
   Result enums carry `(any Error)?`; cast with `as? PinVaultError`.
@@ -297,7 +304,7 @@ What L1a declared; later layers fill the bodies behind it (grep `TODO(L2)` … `
 | `start(config:configApi:) async -> InitResult` | `init(context, config, configApi)` | custom `CertificateConfigApi` for the default block |
 | `identityKeySecurityLevel(label:) -> KeySecurityLevel?` | same | where the mTLS identity key lives; nil = none |
 | `static enableDebugLogging()` / `enableDebugLogging()` | same | debug/info logs at `.notice` (persisted) |
-| `applyTo(_: URLSessionConfiguration) -> PinnedSession` | `applyTo(OkHttpClient.Builder)` | pinning + token + recovery over your configuration |
+| `applyTo(_: URLSessionConfiguration, followCleartextRedirects:) -> PinnedSession` | `applyTo(OkHttpClient.Builder)` | pinning + token + recovery over your configuration |
 | `session() -> PinnedSession` | `getClient()` | the pinned session (pinning, token, re-attest on 401, recovery) |
 | `session(settings:) -> PinnedSession` | `getClient(HttpConnectionSettings)` | custom timeouts / `resolve`; no pin-mismatch recovery |
 | `attestNow(configApiId:) async -> AttestationStatus` | same | attest now |
@@ -317,7 +324,7 @@ What L1a declared; later layers fill the bodies behind it (grep `TODO(L2)` … `
 | `isEnrolled(label:) -> Bool`, `isEnrolled(config:) -> Bool` | `isEnrolled` / `isEnrolledWithConfig` | stored client certificate? |
 | `enrollmentVerificationCode(label:) -> String?` | same | `4F7K-2QXM-9D3T-H6WP` for the waiting screen |
 | `isEnrollmentPending(label:)`, `isEnrollmentPending(config:)` | same | waits for admin approval? |
-| `checkPendingEnrollment() async`, `checkPendingEnrollment(config:) async` | same | ask again whether approved |
+| `checkPendingEnrollment() async -> ClientCertEnrollmentResult`, `checkPendingEnrollment(config:) async -> ClientCertEnrollmentResult` | same | ask again whether approved |
 | `renewClientCertIfNeeded(configApiId:force:) async -> ClientCertRenewalResult` | same | renew now if due (or forced) |
 | `unenroll(label:wipeVaultFiles:)` | `unenroll(context, label[, wipe])` | forget the identity (and mTLS blocks' files) |
 | `enrolledClientCN(label:) -> String?`, `enrolledClientNotAfter(label:) -> Int64?` | same | stored leaf CN / expiry (epoch ms) |
@@ -381,9 +388,9 @@ What L1a declared; later layers fill the bodies behind it (grep `TODO(L2)` … `
 | `SignedConfigSource` (protocol) | custom backend that hands over signed envelopes |
 | `IntegrityVerdictProvider` (protocol), `IntegrityVerdict` | second opinion inside attestation reports |
 | `VaultStorageProvider` (protocol) | custom vault file store (methods may throw) |
-| `ClientIdentityKeyProvider` (protocol), `ClientIdentityKeys` | mTLS identity key contract; `aliasFor(_:)`, `attestationChallenge(deviceUid:)` (L3 adds the Secure Enclave / software factories) |
-| `DeviceKeyProvider` (protocol), `DeviceKeys` | `end_to_end` RSA key contract; `defaultAlias`, `registrationAlgorithm` (L4 adds the Keychain factory) |
+| `ClientIdentityKeyProvider` (protocol), `ClientIdentityKeys` | mTLS identity key contract; `aliasFor(_:)`, `attestationChallenge(deviceUid:)`; factories `ClientIdentityKeys.secureEnclave(label:)` (Keychain software key where the Secure Enclave cannot make one) and `software(label:)` (in memory) |
+| `DeviceKeyProvider` (protocol), `DeviceKeys` | `end_to_end` RSA key contract; `defaultAlias`, `registrationAlgorithm`; factories `DeviceKeys.keychain(alias:requireUnlockedDevice:requireHardwareBacked:)` and `software(alias:)` (in memory) |
 | `VaultFileDecryptor` | `decrypt(_:privateKey:)` (RSA-OAEP-SHA256/MGF1-SHA256 + AES-GCM), `decrypt(_:unwrapKey:)` |
-| `PinnedSession` | `data(for:)`, `data(from:)`, `invalidateAndCancel()` |
+| `PinnedSession` | `data(for:)`, `data(for:maxResponseBytes:)`, `data(from:)`, `invalidateAndCancel()` |
 | `PinVaultBackendReporter` | demo-server telemetry: `init(managementUrl:session:reportSuccessEvents:dedupWindowMs:)`, `init(managementUrl:pinnedSession:…)`, `listener`, `onEvent(_:)`, `pinnedClient(hostname:pins:)`, `defaultSession()` |
 | `PinVaultE2E.E2EControls` | §8 control channel: `shared`, `init(controlNotification:runScheduledWorkNotification:directory:pinVault:)`, `start()`, `stop()`, `control`, `onControl`, `readControl()`, `reloadControl()`, `apply(_:)`, `writeReport()`, `Control`, `Report` |

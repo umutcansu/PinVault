@@ -13,7 +13,7 @@ It is a thin bridge over the two native libraries — Android
 Secure Enclave), signature checks and vault decryption all stay native: no
 crypto runs in JavaScript, and JavaScript never sees TLS. Names are the native
 ones (`InitResult`, `ClientCertEnrollmentResult`, `VaultFileResult`, …), so the
-[library documentation](https://github.com/umutcansu/PinVault/blob/main/README.md) applies as it is.
+[library documentation](https://github.com/umutcansu/PinVault/blob/main/GUIDE.md) applies as it is.
 
 - React Native **0.87+**, New Architecture only (TurboModule, codegen), Hermes.
 - Android minSdk 24; iOS 16+.
