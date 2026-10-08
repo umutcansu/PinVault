@@ -2,7 +2,7 @@
 const fs=require('fs');
 const order=JSON.parse(fs.readFileSync('.hyperframes/order.json','utf8'));const T=order.length;
 const pad=n=>String(n).padStart(2,'0');
-const pos=id=>order.indexOf(id);const P4=pos('p4-bolum-pinvault'),P5=pos('p5-bolum-akis'),P6=pos('p6-bolum-dosyalar'),PE=pos('e2-anahtar-haritasi');
+const pos=id=>order.indexOf(id);const P4=pos('p4-bolum-pinvault'),P5=pos('p5-bolum-akis'),P6=pos('p6-bolum-dosyalar'),PE=pos('f1-fabrika');
 const part=i=>i<P4?'PINVAULT · 1 AMAÇ':i<P5?'PINVAULT · 2 ÇÖZÜM':i<P6?'PINVAULT · 3 AKIŞ':i<PE?'PINVAULT · 4 DOSYALAR':'PINVAULT · ÖZET';
 order.forEach((id,i)=>{
   const f='compositions/frames/'+id+'.html';let s=fs.readFileSync(f,'utf8');const o=s;

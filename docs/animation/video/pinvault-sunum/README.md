@@ -1,6 +1,6 @@
 # PinVault — presentation film (Turkish)
 
-A silent 8:35 film for presenting PinVault, in four parts, each opened by a chapter card:
+A silent 9:45 film for presenting PinVault, in four parts, each opened by a chapter card:
 
 1. **Amaç: SSL pinning** — who could sit in the middle, what normal TLS trusts, how pinning checks the
    fingerprint, and the three things pinning alone does not solve.
@@ -15,14 +15,15 @@ A silent 8:35 film for presenting PinVault, in four parts, each opened by a chap
    token, the phone's download and the panel's download history, the three protections (at_rest,
    end_to_end, user_auth), and unlock, offline lifetime and wipe on revocation on the phone.
 
-The film ends with a map of every key and its algorithm, what happens afterwards, and a summary.
+The film ends with "İşleyen fabrika", one fixed map of the whole system on which all ten rings and the
+file flow run as packets on conveyor belts, then a map of every key and its algorithm, what happens afterwards, and a summary.
 
 The rendered file is [`../../pinvault-sunum.tr.mp4`](../../pinvault-sunum.tr.mp4).
 
 Most frames are copied from the two sister projects ([`../pinvault-nasil-calisir/`](../pinvault-nasil-calisir)
 and [`../pinvault-bastan-sona/`](../pinvault-bastan-sona)); only their top-bar label, pill and counter were
 changed. The new frames are the chapter cards (`p1`, `p4`, `p5`, `p6`), "Normal TLS neye güvenir" (`p2`),
-"Pinlemenin üç eksiği" (`p3`), TLS/mTLS (`c1`, `c2`), HSM (`h1`, `h2`), elliptic curve and key map (`e1`, `e2`),
+"Pinlemenin üç eksiği" (`p3`), TLS/mTLS (`c1`, `c2`), HSM (`h1`, `h2`), elliptic curve and key map (`e1`, `e2`), the working-factory scene (`f1`),
 "Panelde: atestasyon ayarı" (`a1`) and the files part (`d1`–`d5`). The footer
 counters and part labels are renumbered with `node .hyperframes/renumber.cjs` after the frame order
 (`.hyperframes/order.json`) changes. Edits to a copied frame belong here, not in the sister project.

@@ -433,7 +433,7 @@
       </div>
       <div id="d3-telefon-alir-footer">
         <span>Telefon alır</span>
-        <span id="d3-telefon-alir-counter"><span>32</span><span id="d3-telefon-alir-dot"></span><span>38</span></span>
+        <span id="d3-telefon-alir-counter"><span>32</span><span id="d3-telefon-alir-dot"></span><span>39</span></span>
       </div>
 
       <!-- kicker + title -->
@@ -537,6 +537,8 @@
           4.0
         );
         tl.fromTo($("porton"), { opacity: 0 }, { opacity: 1, duration: 0.3, ease: SOFT }, 4.45);
+        // the ink overlay covers the base port label; match the base text to the overlay so it never reads ink-on-ink
+        tl.fromTo($("porton").parentNode, { color: "#0f0f0f" }, { color: "#efe9d9", duration: 0.01, immediateRender: false }, 4.76);
         tl.fromTo($("reqbody"), { opacity: 0, scaleY: 0.1 }, { opacity: 1, scaleY: 1, duration: 0.45, ease: SOFT }, 4.6);
         ["r1", "r2", "reqtok", "r4"].forEach(function (id, i) {
           tl.fromTo($(id), { opacity: 0, x: -16 }, { opacity: 1, x: 0, duration: 0.35, ease: SOFT }, 4.9 + i * 0.38);

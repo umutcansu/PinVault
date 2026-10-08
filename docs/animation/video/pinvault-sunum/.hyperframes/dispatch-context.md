@@ -5,7 +5,7 @@
 - Captions: disabled (no caption track; keep load-bearing content at y ≤ 900; only the mono footer chrome sits below)
 - Confirmed sketch: none (autonomous run; no storyboard.html)
 - Audio: none. Fully SILENT video (music: none, no SCRIPT.md, no sfx).
-- Total frames in this film: 38 (footer counter reads "NN • 38"; the orchestrator renumbers counters after assembly, so any NN is fine).
+- Total frames in this film: 39 (footer counter reads "NN • 39"; the orchestrator renumbers counters after assembly, so any NN is fine).
 
 ### Exception to "visible text is short motion-graphics copy / never render narration"
 

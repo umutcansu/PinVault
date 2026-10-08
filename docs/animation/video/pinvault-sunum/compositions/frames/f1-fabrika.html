@@ -1,0 +1,968 @@
+<template id="f1-fabrika-template">
+  <div id="root" data-composition-id="f1-fabrika" data-start="0" data-duration="70.5" data-width="1920" data-height="1080" lang="tr">
+    <style>
+      @import url("https://fonts.googleapis.com/css2?family=Archivo+Black&family=JetBrains+Mono:wght@400;700&family=Space+Grotesk:wght@400;500&display=block");
+
+      #root {
+        position: relative;
+        width: 1920px;
+        height: 1080px;
+        overflow: hidden;
+      }
+      [data-composition-id="f1-fabrika"] * {
+        margin: 0;
+        padding: 0;
+        box-sizing: border-box;
+      }
+
+      /* full-bleed ground (clip layer, not #root) */
+      #f1-fabrika-stage {
+        position: absolute;
+        inset: 0;
+        width: 1920px;
+        height: 1080px;
+        background: #efe9d9;
+        container-type: size;
+        overflow: hidden;
+        color: #0f0f0f;
+      }
+
+      /* ---------- chrome ---------- */
+      #f1-fabrika-topbar {
+        position: absolute;
+        top: 48px;
+        left: 64px;
+        right: 64px;
+        height: 44px;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        font-family: "JetBrains Mono", monospace;
+        font-size: 22px;
+        letter-spacing: 0.06em;
+      }
+      #f1-fabrika-pill {
+        border: 4px solid #0f0f0f;
+        border-radius: 999px;
+        background: #efe9d9;
+        padding: 4px 20px;
+        line-height: 1.3;
+      }
+      #f1-fabrika-footer {
+        position: absolute;
+        bottom: 48px;
+        left: 64px;
+        right: 64px;
+        height: 32px;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        font-family: "JetBrains Mono", monospace;
+        font-size: 22px;
+        letter-spacing: 0.06em;
+      }
+      #f1-fabrika-counter {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+      }
+      #f1-fabrika-dot {
+        width: 10px;
+        height: 10px;
+        border-radius: 50%;
+        background: #0f0f0f;
+      }
+
+      /* ---------- chain strip (fixed geometry, same as ring frames) ---------- */
+      .f1-fabrika-cell {
+        position: absolute;
+        top: 104px;
+        width: 160px;
+        height: 40px;
+        border: 2px solid #0f0f0f;
+        background: #efe9d9;
+        color: #0f0f0f;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-family: "JetBrains Mono", monospace;
+        font-size: 15px;
+        letter-spacing: 0.04em;
+        white-space: nowrap;
+        z-index: 5;
+      }
+      .f1-fabrika-future {
+        opacity: 0.35;
+      }
+      .f1-fabrika-now {
+        border: 4px solid #0f0f0f;
+        background: #efe9d9;
+        z-index: 6;
+      }
+      .f1-fabrika-done {
+        background: #0f0f0f;
+        color: #efe9d9;
+        z-index: 7;
+      }
+      .f1-fabrika-link {
+        position: absolute;
+        top: 123px;
+        width: 14px;
+        height: 2px;
+        background: #0f0f0f;
+        opacity: 0.35;
+        z-index: 5;
+      }
+      #f1-fabrika-underline {
+        position: absolute;
+        left: 96px;
+        top: 144px;
+        width: 160px;
+        height: 4px;
+        background: #f5c518;
+        transform-origin: 0 50%;
+        z-index: 8;
+      }
+
+      /* ---------- belts ---------- */
+      #f1-fabrika-belts {
+        position: absolute;
+        left: 0;
+        top: 0;
+        width: 1920px;
+        height: 1080px;
+        z-index: 2;
+        overflow: visible;
+      }
+
+      /* ---------- phone ---------- */
+      #f1-fabrika-phone {
+        position: absolute;
+        left: 96px;
+        top: 250px;
+        width: 240px;
+        height: 440px;
+        border: 4px solid #0f0f0f;
+        background: #efe9d9;
+        z-index: 3;
+      }
+      .f1-fabrika-speaker {
+        position: absolute;
+        left: 84px;
+        top: 10px;
+        width: 64px;
+        height: 8px;
+        background: #0f0f0f;
+      }
+      .f1-fabrika-screen {
+        position: absolute;
+        left: 10px;
+        top: 28px;
+        width: 212px;
+        height: 394px;
+        border: 3px solid #0f0f0f;
+        background: #e4dcc4;
+      }
+      .f1-fabrika-app {
+        position: absolute;
+        left: 10px;
+        top: 8px;
+        font-family: "JetBrains Mono", monospace;
+        font-size: 19px;
+        letter-spacing: 0.02em;
+        white-space: nowrap;
+      }
+      .f1-fabrika-pline {
+        position: absolute;
+        left: 5px;
+        width: 196px;
+        height: 48px;
+        border: 2px solid #0f0f0f;
+        border-left: 8px solid #0f0f0f;
+        background: #efe9d9;
+        padding: 0 6px;
+        display: flex;
+        align-items: center;
+        font-family: "JetBrains Mono", monospace;
+        font-size: 14px;
+        line-height: 1.2;
+      }
+      .f1-fabrika-lib {
+        position: absolute;
+        left: 0;
+        right: 0;
+        bottom: 0;
+        height: 52px;
+        background: #0f0f0f;
+        color: #efe9d9;
+        font-family: "JetBrains Mono", monospace;
+        font-size: 16px;
+        line-height: 1.15;
+        padding: 6px 10px;
+        display: flex;
+        align-items: center;
+      }
+
+      /* ---------- PinVault server ---------- */
+      #f1-fabrika-server {
+        position: absolute;
+        left: 620px;
+        top: 220px;
+        width: 620px;
+        height: 420px;
+        border: 4px solid #0f0f0f;
+        background: #e4dcc4;
+        z-index: 1;
+      }
+      .f1-fabrika-srvhead {
+        height: 46px;
+        background: #0f0f0f;
+        color: #efe9d9;
+        font-family: "JetBrains Mono", monospace;
+        font-size: 24px;
+        letter-spacing: 0.04em;
+        display: flex;
+        align-items: center;
+        padding: 0 22px;
+        white-space: nowrap;
+      }
+      .f1-fabrika-port {
+        position: absolute;
+        width: 100px;
+        height: 56px;
+        border: 4px solid #0f0f0f;
+        background: #efe9d9;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        font-family: "JetBrains Mono", monospace;
+        white-space: nowrap;
+        z-index: 4;
+      }
+      .f1-fabrika-pnum {
+        font-size: 18px;
+        font-weight: 700;
+        line-height: 1;
+      }
+      .f1-fabrika-ptag {
+        font-size: 14px;
+        line-height: 1.05;
+      }
+      .f1-fabrika-machine {
+        position: absolute;
+        left: 720px;
+        width: 440px;
+        height: 90px;
+        border: 4px solid #0f0f0f;
+        background: #efe9d9;
+        z-index: 3;
+      }
+      .f1-fabrika-stripe {
+        position: absolute;
+        left: 0;
+        top: 0;
+        bottom: 0;
+        width: 14px;
+      }
+      .f1-fabrika-mtitle {
+        position: absolute;
+        left: 32px;
+        top: 12px;
+        font-family: "Space Grotesk", sans-serif;
+        font-weight: 500;
+        font-size: 24px;
+        line-height: 1.1;
+        white-space: nowrap;
+      }
+      .f1-fabrika-msub {
+        position: absolute;
+        left: 32px;
+        top: 50px;
+        font-family: "JetBrains Mono", monospace;
+        font-size: 16px;
+        letter-spacing: 0.01em;
+        white-space: nowrap;
+      }
+      #f1-fabrika-lock {
+        position: absolute;
+        left: 392px;
+        top: 24px;
+        width: 34px;
+        height: 34px;
+        display: block;
+      }
+
+      /* ---------- API server ---------- */
+      #f1-fabrika-api {
+        position: absolute;
+        left: 1520px;
+        top: 290px;
+        width: 304px;
+        height: 180px;
+        border: 4px solid #0f0f0f;
+        background: #efe9d9;
+        z-index: 3;
+      }
+      .f1-fabrika-apihead {
+        position: absolute;
+        left: 20px;
+        top: 22px;
+        font-family: "Archivo Black", sans-serif;
+        font-size: 22px;
+        line-height: 0.92;
+        letter-spacing: -0.01em;
+        white-space: nowrap;
+      }
+      .f1-fabrika-apihost {
+        position: absolute;
+        left: 20px;
+        top: 54px;
+        font-family: "JetBrains Mono", monospace;
+        font-size: 18px;
+        letter-spacing: 0.02em;
+        white-space: nowrap;
+      }
+      .f1-fabrika-chk {
+        position: absolute;
+        top: 112px;
+        width: 34px;
+        height: 34px;
+        background: #1f8a4c;
+        border: 2px solid #0f0f0f;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+      }
+      .f1-fabrika-chk svg {
+        width: 24px;
+        height: 24px;
+        display: block;
+      }
+
+      /* ---------- admin ---------- */
+      #f1-fabrika-admin {
+        position: absolute;
+        left: 820px;
+        top: 712px;
+        width: 220px;
+        height: 60px;
+        border: 4px solid #0f0f0f;
+        background: #efe9d9;
+        z-index: 3;
+      }
+      .f1-fabrika-adbar {
+        height: 10px;
+        background: #0f0f0f;
+      }
+      .f1-fabrika-adtext {
+        height: 42px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-family: "JetBrains Mono", monospace;
+        font-size: 18px;
+        letter-spacing: 0.04em;
+        white-space: nowrap;
+      }
+      #f1-fabrika-msglabel {
+        position: absolute;
+        left: 470px;
+        top: 764px;
+        height: 24px;
+        display: flex;
+        align-items: center;
+        font-family: "JetBrains Mono", monospace;
+        font-size: 18px;
+        letter-spacing: 0.04em;
+        white-space: nowrap;
+        z-index: 3;
+      }
+
+      /* ---------- packets (positioned only by GSAP x/y; centred with xPercent/yPercent) ---------- */
+      .f1-fabrika-pk {
+        position: absolute;
+        left: 0;
+        top: 0;
+        height: 36px;
+        border: 3px solid #0f0f0f;
+        background: #e4dcc4;
+        color: #0f0f0f;
+        display: flex;
+        align-items: center;
+        padding: 0 10px;
+        font-family: "JetBrains Mono", monospace;
+        font-size: 16px;
+        letter-spacing: 0.02em;
+        white-space: nowrap;
+        z-index: 9;
+      }
+      .f1-fabrika-yel {
+        background: #f5c518;
+      }
+      .f1-fabrika-ink {
+        background: #0f0f0f;
+        color: #efe9d9;
+      }
+      .f1-fabrika-grn {
+        background: #1f8a4c;
+        color: #efe9d9;
+        font-weight: 700;
+      }
+      .f1-fabrika-bold {
+        font-weight: 700;
+      }
+      .f1-fabrika-card {
+        position: absolute;
+        left: 0;
+        top: 0;
+        width: 112px;
+        height: 46px;
+        border: 3px solid #0f0f0f;
+        background: #f06ca8;
+        z-index: 9;
+      }
+      .f1-fabrika-cardbar {
+        height: 9px;
+        background: #0f0f0f;
+      }
+      .f1-fabrika-cardtxt {
+        height: 31px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-family: "JetBrains Mono", monospace;
+        font-size: 16px;
+        white-space: nowrap;
+      }
+      .f1-fabrika-ontok {
+        position: absolute;
+        left: 8px;
+        top: -14px;
+        width: 34px;
+        height: 14px;
+        background: #f5c518;
+        border: 2px solid #0f0f0f;
+      }
+      .f1-fabrika-mini {
+        width: 34px;
+        height: 18px;
+        margin-left: 10px;
+        background: #f5c518;
+        border: 2px solid #0f0f0f;
+        display: flex;
+        flex: none;
+      }
+      .f1-fabrika-ministub {
+        margin-left: 20px;
+        border-left: 2px dashed #0f0f0f;
+      }
+      .f1-fabrika-seal {
+        position: absolute;
+        right: -10px;
+        top: -12px;
+        width: 20px;
+        height: 20px;
+        background: #f5c518;
+        border: 2px solid #0f0f0f;
+        transform: rotate(-6deg);
+      }
+      .f1-fabrika-pvt {
+        position: absolute;
+        left: 0;
+        top: 0;
+        height: 40px;
+        border: 3px solid #0f0f0f;
+        background: #f5c518;
+        display: flex;
+        font-family: "JetBrains Mono", monospace;
+        white-space: nowrap;
+        z-index: 9;
+      }
+      .f1-fabrika-pvtmain {
+        display: flex;
+        align-items: center;
+        padding: 0 10px;
+        font-size: 15px;
+        font-weight: 700;
+        letter-spacing: 0.02em;
+      }
+      .f1-fabrika-pvtstub {
+        display: flex;
+        align-items: center;
+        padding: 0 9px;
+        border-left: 3px dashed #0f0f0f;
+        font-size: 15px;
+        font-weight: 700;
+      }
+      #f1-fabrika-pvt9 {
+        box-shadow: 10px 10px 0 #e85a1f, 10px 10px 0 3px #0f0f0f;
+      }
+      .f1-fabrika-lk {
+        width: 16px;
+        height: 18px;
+        margin-right: 8px;
+        display: block;
+        flex: none;
+      }
+
+      /* ---------- caption bar ---------- */
+      #f1-fabrika-capbar {
+        position: absolute;
+        left: 96px;
+        top: 800px;
+        width: 1728px;
+        height: 70px;
+        border: 2px solid #0f0f0f;
+        background: #e4dcc4;
+        z-index: 5;
+      }
+      .f1-fabrika-caplabel {
+        position: absolute;
+        left: 0;
+        top: 0;
+        bottom: 0;
+        width: 96px;
+        background: #0f0f0f;
+        color: #efe9d9;
+        font-family: "JetBrains Mono", monospace;
+        font-size: 20px;
+        letter-spacing: 0.12em;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+      }
+      .f1-fabrika-capline {
+        position: absolute;
+        left: 120px;
+        right: 12px;
+        top: 0;
+        bottom: 0;
+        display: flex;
+        align-items: center;
+        font-family: "Space Grotesk", sans-serif;
+        font-size: 28px;
+        line-height: 1.4;
+        white-space: nowrap;
+      }
+      #f1-fabrika-title {
+        position: absolute;
+        left: 96px;
+        top: 796px;
+        width: 1728px;
+        height: 78px;
+        background: #efe9d9;
+        display: flex;
+        align-items: center;
+        font-family: "Archivo Black", sans-serif;
+        font-size: 4.2cqw;
+        line-height: 0.92;
+        letter-spacing: -0.01em;
+        white-space: nowrap;
+        z-index: 6;
+      }
+    </style>
+
+    <div id="f1-fabrika-stage" class="clip" data-start="0" data-duration="70.5" data-track-index="0">
+      <!-- chrome -->
+      <div id="f1-fabrika-topbar">
+        <span>PINVAULT · ÖZET</span>
+        <span id="f1-fabrika-pill">HEPSİ BİR ARADA</span>
+      </div>
+      <div id="f1-fabrika-footer">
+        <span>Hepsi bir arada</span>
+        <span id="f1-fabrika-counter"><span>35</span><span id="f1-fabrika-dot"></span><span>39</span></span>
+      </div>
+
+      <!-- chain strip: x = 96 + i*174 (future base / current overlay / done overlay) -->
+      <div class="f1-fabrika-cell f1-fabrika-future" style="left: 96px">1 KURULUM</div>
+      <div class="f1-fabrika-cell f1-fabrika-future" style="left: 270px">2 APK</div>
+      <div class="f1-fabrika-cell f1-fabrika-future" style="left: 444px">3 HOST</div>
+      <div class="f1-fabrika-cell f1-fabrika-future" style="left: 618px">4 KAYIT TOKEN'I</div>
+      <div class="f1-fabrika-cell f1-fabrika-future" style="left: 792px">5 TELEFONA</div>
+      <div class="f1-fabrika-cell f1-fabrika-future" style="left: 966px">6 KAYIT İSTEĞİ</div>
+      <div class="f1-fabrika-cell f1-fabrika-future" style="left: 1140px">7 KART</div>
+      <div class="f1-fabrika-cell f1-fabrika-future" style="left: 1314px">8 PİN LİSTESİ</div>
+      <div class="f1-fabrika-cell f1-fabrika-future" style="left: 1488px">9 ATESTASYON</div>
+      <div class="f1-fabrika-cell f1-fabrika-future" style="left: 1662px">10 İLK İSTEK</div>
+      <div id="f1-fabrika-link0" class="f1-fabrika-link" style="left: 256px"></div>
+      <div id="f1-fabrika-link1" class="f1-fabrika-link" style="left: 430px"></div>
+      <div id="f1-fabrika-link2" class="f1-fabrika-link" style="left: 604px"></div>
+      <div id="f1-fabrika-link3" class="f1-fabrika-link" style="left: 778px"></div>
+      <div id="f1-fabrika-link4" class="f1-fabrika-link" style="left: 952px"></div>
+      <div id="f1-fabrika-link5" class="f1-fabrika-link" style="left: 1126px"></div>
+      <div id="f1-fabrika-link6" class="f1-fabrika-link" style="left: 1300px"></div>
+      <div id="f1-fabrika-link7" class="f1-fabrika-link" style="left: 1474px"></div>
+      <div id="f1-fabrika-link8" class="f1-fabrika-link" style="left: 1648px"></div>
+      <div id="f1-fabrika-cur0" data-layout-allow-overlap class="f1-fabrika-cell f1-fabrika-now" style="left: 96px">1 KURULUM</div>
+      <div id="f1-fabrika-cur1" data-layout-allow-overlap class="f1-fabrika-cell f1-fabrika-now" style="left: 270px">2 APK</div>
+      <div id="f1-fabrika-cur2" data-layout-allow-overlap class="f1-fabrika-cell f1-fabrika-now" style="left: 444px">3 HOST</div>
+      <div id="f1-fabrika-cur3" data-layout-allow-overlap class="f1-fabrika-cell f1-fabrika-now" style="left: 618px">4 KAYIT TOKEN'I</div>
+      <div id="f1-fabrika-cur4" data-layout-allow-overlap class="f1-fabrika-cell f1-fabrika-now" style="left: 792px">5 TELEFONA</div>
+      <div id="f1-fabrika-cur5" data-layout-allow-overlap class="f1-fabrika-cell f1-fabrika-now" style="left: 966px">6 KAYIT İSTEĞİ</div>
+      <div id="f1-fabrika-cur6" data-layout-allow-overlap class="f1-fabrika-cell f1-fabrika-now" style="left: 1140px">7 KART</div>
+      <div id="f1-fabrika-cur7" data-layout-allow-overlap class="f1-fabrika-cell f1-fabrika-now" style="left: 1314px">8 PİN LİSTESİ</div>
+      <div id="f1-fabrika-cur8" data-layout-allow-overlap class="f1-fabrika-cell f1-fabrika-now" style="left: 1488px">9 ATESTASYON</div>
+      <div id="f1-fabrika-cur9" data-layout-allow-overlap class="f1-fabrika-cell f1-fabrika-now" style="left: 1662px">10 İLK İSTEK</div>
+      <div id="f1-fabrika-done0" data-layout-allow-overlap class="f1-fabrika-cell f1-fabrika-done" style="left: 96px">1 KURULUM</div>
+      <div id="f1-fabrika-done1" data-layout-allow-overlap class="f1-fabrika-cell f1-fabrika-done" style="left: 270px">2 APK</div>
+      <div id="f1-fabrika-done2" data-layout-allow-overlap class="f1-fabrika-cell f1-fabrika-done" style="left: 444px">3 HOST</div>
+      <div id="f1-fabrika-done3" data-layout-allow-overlap class="f1-fabrika-cell f1-fabrika-done" style="left: 618px">4 KAYIT TOKEN'I</div>
+      <div id="f1-fabrika-done4" data-layout-allow-overlap class="f1-fabrika-cell f1-fabrika-done" style="left: 792px">5 TELEFONA</div>
+      <div id="f1-fabrika-done5" data-layout-allow-overlap class="f1-fabrika-cell f1-fabrika-done" style="left: 966px">6 KAYIT İSTEĞİ</div>
+      <div id="f1-fabrika-done6" data-layout-allow-overlap class="f1-fabrika-cell f1-fabrika-done" style="left: 1140px">7 KART</div>
+      <div id="f1-fabrika-done7" data-layout-allow-overlap class="f1-fabrika-cell f1-fabrika-done" style="left: 1314px">8 PİN LİSTESİ</div>
+      <div id="f1-fabrika-done8" data-layout-allow-overlap class="f1-fabrika-cell f1-fabrika-done" style="left: 1488px">9 ATESTASYON</div>
+      <div id="f1-fabrika-done9" data-layout-allow-overlap class="f1-fabrika-cell f1-fabrika-done" style="left: 1662px">10 İLK İSTEK</div>
+      <div id="f1-fabrika-underline"></div>
+
+      <!-- PinVault server shell (behind the belts) -->
+      <div id="f1-fabrika-server">
+        <div class="f1-fabrika-srvhead">PinVault sunucusu</div>
+      </div>
+
+      <!-- belts: dashed thin ink lines; packets ride on them -->
+      <svg id="f1-fabrika-belts" viewBox="0 0 1920 1080" xmlns="http://www.w3.org/2000/svg">
+        <g fill="none" stroke="#0F0F0F" stroke-width="3" stroke-dasharray="10 8">
+          <!-- phone -> ports -->
+          <path d="M336 312 H560" />
+          <path d="M336 422 H560" />
+          <path d="M336 532 H560" stroke-opacity="0.3" />
+          <!-- phone -> API (over the server, y 186) -->
+          <path d="M216 250 V186 H1672 V290" />
+          <!-- admin -> phone (under the server, y 742) -->
+          <path d="M820 742 H216 V690" />
+          <!-- admin -> 8090 -> Depo -->
+          <path d="M930 712 V684" />
+          <path d="M930 640 V600" />
+          <!-- ports -> internal spine -> machines -->
+          <path d="M660 312 H690" />
+          <path d="M660 422 H690" />
+          <path d="M660 532 H690" stroke-opacity="0.3" />
+          <path d="M690 312 V555" />
+          <path d="M690 335 H720" />
+          <path d="M690 445 H720" />
+          <path d="M690 555 H720" />
+        </g>
+      </svg>
+
+      <!-- ports -->
+      <div id="f1-fabrika-p91" data-layout-allow-overlap class="f1-fabrika-port" style="left: 560px; top: 284px"><span class="f1-fabrika-pnum">8091</span><span class="f1-fabrika-ptag">· TLS</span></div>
+      <div id="f1-fabrika-p92" data-layout-allow-overlap class="f1-fabrika-port" style="left: 560px; top: 394px"><span class="f1-fabrika-pnum">8092</span><span class="f1-fabrika-ptag">· mTLS</span></div>
+      <div id="f1-fabrika-p93" data-layout-allow-overlap class="f1-fabrika-port" style="left: 560px; top: 504px"><span class="f1-fabrika-pnum">8093</span><span class="f1-fabrika-ptag">· kurtarma</span></div>
+      <div id="f1-fabrika-p90" data-layout-allow-overlap class="f1-fabrika-port" style="left: 880px; top: 634px"><span class="f1-fabrika-pnum">8090</span><span class="f1-fabrika-ptag">· yönetim</span></div>
+
+      <!-- machines inside the server -->
+      <div id="f1-fabrika-ca" data-layout-allow-overlap class="f1-fabrika-machine" style="top: 290px">
+        <div class="f1-fabrika-stripe" style="background: #f06ca8"></div>
+        <div class="f1-fabrika-mtitle">İstemci CA'sı</div>
+        <div class="f1-fabrika-msub">kartları imzalar</div>
+      </div>
+      <div id="f1-fabrika-hsm" data-layout-allow-overlap class="f1-fabrika-machine" style="top: 400px">
+        <div class="f1-fabrika-stripe" style="background: #f5c518"></div>
+        <div class="f1-fabrika-mtitle">İmza anahtarı · HSM</div>
+        <div class="f1-fabrika-msub">listeyi mühürler</div>
+        <svg id="f1-fabrika-lock" viewBox="0 0 34 34" xmlns="http://www.w3.org/2000/svg">
+          <path d="M10 15 V9 H24 V15" fill="none" stroke="#0F0F0F" stroke-width="4" stroke-linecap="square" />
+          <rect x="5" y="15" width="24" height="16" fill="#0F0F0F" />
+          <rect x="15" y="20" width="4" height="6" fill="#F5C518" />
+        </svg>
+      </div>
+      <div id="f1-fabrika-depo" data-layout-allow-overlap class="f1-fabrika-machine" style="top: 510px">
+        <div class="f1-fabrika-stripe" style="background: #2a2a2a; opacity: 0.4"></div>
+        <div class="f1-fabrika-mtitle">Depo</div>
+        <div class="f1-fabrika-msub">kayıtlar · liste · dosyalar</div>
+      </div>
+
+      <!-- API server -->
+      <div id="f1-fabrika-api">
+        <div class="f1-fabrika-apihead">API SUNUCUNUZ</div>
+        <div class="f1-fabrika-apihost">api.ornek.com</div>
+        <div id="f1-fabrika-chk0" class="f1-fabrika-chk" style="left: 20px"><svg viewBox="0 0 24 24"><polyline points="5,12.5 10,17.5 19,7" fill="none" stroke="#EFE9D9" stroke-width="3.5" stroke-linecap="square" /></svg></div>
+        <div id="f1-fabrika-chk1" class="f1-fabrika-chk" style="left: 66px"><svg viewBox="0 0 24 24"><polyline points="5,12.5 10,17.5 19,7" fill="none" stroke="#EFE9D9" stroke-width="3.5" stroke-linecap="square" /></svg></div>
+        <div id="f1-fabrika-chk2" class="f1-fabrika-chk" style="left: 112px"><svg viewBox="0 0 24 24"><polyline points="5,12.5 10,17.5 19,7" fill="none" stroke="#EFE9D9" stroke-width="3.5" stroke-linecap="square" /></svg></div>
+      </div>
+
+      <!-- admin / panel -->
+      <div id="f1-fabrika-admin">
+        <div class="f1-fabrika-adbar"></div>
+        <div class="f1-fabrika-adtext">YÖNETİCİ · PANEL</div>
+      </div>
+      <div id="f1-fabrika-msglabel">mesaj</div>
+
+      <!-- phone -->
+      <div id="f1-fabrika-phone">
+        <div class="f1-fabrika-speaker"></div>
+        <div class="f1-fabrika-screen">
+          <div class="f1-fabrika-app">Uygulamanız</div>
+          <div id="f1-fabrika-line0" class="f1-fabrika-pline" style="top: 40px; border-left-color: #0f0f0f">APK: PinVault pin'leri</div>
+          <div id="f1-fabrika-line1" class="f1-fabrika-pline" style="top: 92px; border-left-color: #f06ca8">kart: tablet-07</div>
+          <div id="f1-fabrika-line2" class="f1-fabrika-pline" style="top: 144px; border-left-color: #1f8a4c">liste: api.ornek.com pinli</div>
+          <div id="f1-fabrika-line3" class="f1-fabrika-pline" style="top: 196px; border-left-color: #f5c518">PinVault-Token: 5 dk</div>
+          <div id="f1-fabrika-line4" class="f1-fabrika-pline" style="top: 248px; border-left-color: #0f0f0f">dosya: saha-ayarlari</div>
+          <div class="f1-fabrika-lib">PinVault kütüphanesi</div>
+        </div>
+      </div>
+
+      <!-- ===== packets ===== -->
+      <div id="f1-fabrika-apk" data-layout-allow-overlap class="f1-fabrika-pk f1-fabrika-ink f1-fabrika-bold">APK</div>
+      <div id="f1-fabrika-host3" data-layout-allow-overlap class="f1-fabrika-pk">api.ornek.com</div>
+      <div id="f1-fabrika-stamp" data-layout-allow-overlap class="f1-fabrika-pk f1-fabrika-yel f1-fabrika-bold">İMZALI</div>
+      <div id="f1-fabrika-token" data-layout-allow-overlap class="f1-fabrika-pk f1-fabrika-yel">token</div>
+      <div id="f1-fabrika-kayit" data-layout-allow-overlap class="f1-fabrika-pk">kayıt isteği<span id="f1-fabrika-kayittok" class="f1-fabrika-ontok"></span></div>
+      <div id="f1-fabrika-card7" data-layout-allow-overlap class="f1-fabrika-card"><div class="f1-fabrika-cardbar"></div><div class="f1-fabrika-cardtxt">tablet-07</div></div>
+      <div id="f1-fabrika-card8" data-layout-allow-overlap class="f1-fabrika-card"><div class="f1-fabrika-cardbar"></div><div class="f1-fabrika-cardtxt">tablet-07</div></div>
+      <div id="f1-fabrika-list8" data-layout-allow-overlap class="f1-fabrika-pk">liste · İMZALI<span class="f1-fabrika-seal"></span></div>
+      <div id="f1-fabrika-rapor9" data-layout-allow-overlap class="f1-fabrika-pk">rapor</div>
+      <div id="f1-fabrika-pvt9" data-layout-allow-overlap class="f1-fabrika-pvt"><span class="f1-fabrika-pvtmain">PINVAULT-TOKEN</span><span class="f1-fabrika-pvtstub">5 DK</span></div>
+      <div id="f1-fabrika-istek10" data-layout-allow-overlap class="f1-fabrika-pk f1-fabrika-ink">istek<span class="f1-fabrika-mini"><span class="f1-fabrika-ministub"></span></span></div>
+      <div id="f1-fabrika-ok10" data-layout-allow-overlap class="f1-fabrika-pk f1-fabrika-grn">200 OK</div>
+      <div id="f1-fabrika-dosyaA" data-layout-allow-overlap class="f1-fabrika-pk"><svg class="f1-fabrika-lk" viewBox="0 0 16 18" xmlns="http://www.w3.org/2000/svg"><path d="M4 8 V3 H12 V8" fill="none" stroke="#0F0F0F" stroke-width="2.5" /><rect x="1" y="8" width="14" height="10" fill="#0F0F0F" /></svg>dosya</div>
+      <div id="f1-fabrika-dosyaB" data-layout-allow-overlap class="f1-fabrika-pk"><svg class="f1-fabrika-lk" viewBox="0 0 16 18" xmlns="http://www.w3.org/2000/svg"><path d="M4 8 V3 H12 V8" fill="none" stroke="#0F0F0F" stroke-width="2.5" /><rect x="1" y="8" width="14" height="10" fill="#0F0F0F" /></svg>dosya</div>
+      <!-- the quick second round -->
+      <div id="f1-fabrika-card12" data-layout-allow-overlap class="f1-fabrika-card"><div class="f1-fabrika-cardbar"></div><div class="f1-fabrika-cardtxt">tablet-07</div></div>
+      <div id="f1-fabrika-list12" data-layout-allow-overlap class="f1-fabrika-pk">liste · İMZALI<span class="f1-fabrika-seal"></span></div>
+      <div id="f1-fabrika-rapor12" data-layout-allow-overlap class="f1-fabrika-pk">rapor</div>
+      <div id="f1-fabrika-pvt12" data-layout-allow-overlap class="f1-fabrika-pvt"><span class="f1-fabrika-pvtmain">PINVAULT-TOKEN</span><span class="f1-fabrika-pvtstub">5 DK</span></div>
+      <div id="f1-fabrika-istek12" data-layout-allow-overlap class="f1-fabrika-pk f1-fabrika-ink">istek<span class="f1-fabrika-mini"><span class="f1-fabrika-ministub"></span></span></div>
+      <div id="f1-fabrika-ok12" data-layout-allow-overlap class="f1-fabrika-pk f1-fabrika-grn">200 OK</div>
+
+      <!-- caption bar: one stacked line per step, cross-faded -->
+      <div id="f1-fabrika-capbar">
+        <div class="f1-fabrika-caplabel">ADIM</div>
+        <div id="f1-fabrika-cap0" class="f1-fabrika-capline">1 · Sunucu açılır: kendi sertifikalarını ve imza anahtarını üretir.</div>
+        <div id="f1-fabrika-cap1" class="f1-fabrika-capline">2 · APK'ya PinVault sunucusunun adresi ve pin'leri girer.</div>
+        <div id="f1-fabrika-cap2" class="f1-fabrika-capline">3 · Yönetici API sunucusunu panelde ekler; pin'leri imzalı listeye girer.</div>
+        <div id="f1-fabrika-cap3" class="f1-fabrika-capline">4 · Yönetici panelde kayıt token'ı üretir.</div>
+        <div id="f1-fabrika-cap4" class="f1-fabrika-capline">5 · Kayıt token'ı telefona ulaşır: mesajla ya da girişte.</div>
+        <div id="f1-fabrika-cap5" class="f1-fabrika-capline">6 · Telefon 8091'e kayıt isteği gönderir: kayıt token'ı + sertifika isteği.</div>
+        <div id="f1-fabrika-cap6" class="f1-fabrika-capline">7 · İstemci CA'sı kartı imzalar; token harcanır, kart telefona döner.</div>
+        <div id="f1-fabrika-cap7" class="f1-fabrika-capline">8 · Telefon kartıyla 8092'ye girer, imzalı pin listesini alır.</div>
+        <div id="f1-fabrika-cap8" class="f1-fabrika-capline">9 · Atestasyon: telefon raporunu gönderir, 5 dakikalık PinVault-Token alır.</div>
+        <div id="f1-fabrika-cap9" class="f1-fabrika-capline">10 · İlk istek: pin listeden, PinVault-Token başlıkta; API sunucusu doğrular: 200 OK.</div>
+        <div id="f1-fabrika-cap10" class="f1-fabrika-capline">Dosya: yönetici panelden yükler; telefon kendi dosyasını 8092'den alır.</div>
+        <div id="f1-fabrika-cap11" class="f1-fabrika-capline">Fabrika çalışmaya devam eder: her açılışta kart, liste, PinVault-Token; her istekte PinVault-Token.</div>
+      </div>
+
+      <!-- closing title: settles over the caption bar's place -->
+      <div id="f1-fabrika-title">İŞLEYEN FABRİKA.</div>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/gsap@3.14.2/dist/gsap.min.js"></script>
+    <script>
+      (function () {
+        var FID = "f1-fabrika";
+        var host = document.querySelector('[data-composition-id="' + FID + '"]') || document;
+        var $ = function (n) {
+          return host.querySelector('[id="' + FID + "-" + n + '"]');
+        };
+
+        var tl = gsap.timeline({ paused: true });
+        var SOFT = "power3.out";
+        var TRAVEL = "power2.inOut";
+        var INK = "#0F0F0F";
+        var GREEN = "#1F8A4C";
+        var YELLOW = "#F5C518";
+        var PINK = "#F06CA8";
+
+        // ---------- helpers ----------
+        function appear(el, p, t, fi) {
+          tl.fromTo(
+            el,
+            { xPercent: -50, yPercent: -50, x: p[0], y: p[1], opacity: 0, scale: 0.8 },
+            { xPercent: -50, yPercent: -50, x: p[0], y: p[1], opacity: 1, scale: 1, duration: fi, ease: SOFT },
+            t
+          );
+        }
+        // constant-speed ride along a belt polyline, one power2.inOut ease over the whole ride
+        function move(el, pts, t, dur) {
+          var acc = [0];
+          var total = 0;
+          for (var i = 1; i < pts.length; i++) {
+            total += Math.abs(pts[i][0] - pts[i - 1][0]) + Math.abs(pts[i][1] - pts[i - 1][1]);
+            acc.push(total);
+          }
+          var kf = { easeEach: "none" };
+          for (var j = 0; j < pts.length; j++) {
+            kf[((acc[j] / total) * 100).toFixed(2) + "%"] = { x: pts[j][0], y: pts[j][1] };
+          }
+          tl.to(el, { keyframes: kf, duration: dur, ease: TRAVEL }, t);
+        }
+        function fade(el, t, fo) {
+          tl.to(el, { opacity: 0, scale: 0.7, duration: fo, ease: "power2.in" }, t);
+        }
+        function trip(n, pts, t, dur, fi, fo) {
+          var el = $(n);
+          fi = fi || 0.3;
+          appear(el, pts[0], t, fi);
+          move(el, pts, t + fi, dur);
+          fade(el, t + fi + dur, fo || 0.25);
+          return t + fi + dur;
+        }
+        function hl(names, color, t) {
+          names.forEach(function (n) {
+            tl.to($(n), { borderColor: color, duration: 0.3, ease: SOFT }, t);
+          });
+        }
+        function rise(n, t, toOpacity) {
+          tl.fromTo($(n), { opacity: 0, y: 16 }, { opacity: toOpacity || 1, y: 0, duration: 0.6, ease: SOFT }, t);
+        }
+        function lineIn(i, t) {
+          tl.fromTo($("line" + i), { opacity: 0, x: -12 }, { opacity: 1, x: 0, duration: 0.5, ease: SOFT }, t);
+        }
+
+        // belt routes (packet centres)
+        var TOP = [[216, 228], [216, 186], [1672, 186], [1672, 276]];
+        var TOP_BACK = [[1672, 276], [1672, 186], [216, 186], [216, 228]];
+        var DEPO_TO_PHONE = [[712, 555], [690, 555], [690, 422], [400, 422]];
+        var ADMIN_TO_DEPO = [[930, 716], [930, 596]];
+
+        // ---------- Scene 0 (0.0–4.0): the map builds left to right ----------
+        rise("phone", 0.2);
+        tl.fromTo($("belts"), { clipPath: "inset(0% 100% 0% 0%)" }, { clipPath: "inset(0% 0% 0% 0%)", duration: 3.0, ease: "power1.inOut" }, 0.5);
+        rise("p91", 0.8);
+        rise("p92", 0.9);
+        rise("p93", 1.0, 0.45);
+        rise("server", 1.1);
+        rise("ca", 1.4);
+        rise("hsm", 1.7);
+        rise("depo", 2.0);
+        rise("p90", 2.3);
+        rise("admin", 2.6);
+        rise("msglabel", 2.9);
+        rise("api", 3.2);
+        rise("capbar", 3.4);
+
+        // ---------- chain strip + caption swaps ----------
+        var STEPS = [4.0, 9.0, 13.5, 19.0, 23.0, 27.0, 32.0, 37.0, 42.0, 47.0, 53.0];
+        for (var k = 0; k < 10; k++) {
+          tl.fromTo($("cur" + k), { opacity: 0 }, { opacity: 1, duration: 0.5, ease: SOFT }, STEPS[k] + 0.1);
+          tl.to($("cur" + k), { opacity: 0, duration: 0.4, ease: SOFT }, STEPS[k + 1]);
+          tl.fromTo($("done" + k), { opacity: 0 }, { opacity: 1, duration: 0.5, ease: SOFT }, STEPS[k + 1]);
+          if (k > 0) {
+            tl.fromTo($("link" + (k - 1)), { opacity: 0.35 }, { opacity: 1, duration: 0.4, ease: SOFT }, STEPS[k] + 0.1);
+            tl.to($("underline"), { x: k * 174, duration: 0.5, ease: "power3.inOut" }, STEPS[k] + 0.1);
+          }
+        }
+        tl.fromTo($("underline"), { scaleX: 0, x: 0, opacity: 1 }, { scaleX: 1, x: 0, opacity: 1, duration: 0.6, ease: SOFT }, 4.1);
+        tl.to($("underline"), { opacity: 0, duration: 0.4, ease: SOFT }, 53.0);
+
+        var CAPS = [4.0, 9.0, 13.5, 19.0, 23.0, 27.0, 32.0, 37.0, 42.0, 47.0, 53.0, 59.0];
+        for (var c = 0; c < CAPS.length; c++) {
+          tl.fromTo($("cap" + c), { opacity: 0, y: 14 }, { opacity: 1, y: 0, duration: 0.5, ease: SOFT }, CAPS[c] + 0.1);
+          if (c > 0) {
+            tl.to($("cap" + (c - 1)), { opacity: 0, y: -10, duration: 0.3, ease: "power2.in" }, CAPS[c] - 0.15);
+          }
+        }
+
+        // ---------- Scene 1 (4.0–9.0): server starts; three machines come alive ----------
+        hl(["ca"], GREEN, 4.4);
+        hl(["hsm"], GREEN, 5.0);
+        tl.fromTo($("lock"), { opacity: 0, scale: 0.5 }, { opacity: 1, scale: 1, duration: 0.4, ease: SOFT }, 5.3);
+        hl(["depo"], GREEN, 5.6);
+        hl(["ca", "hsm", "depo"], INK, 8.4);
+
+        // ---------- Scene 2 (9.0–13.5): APK drops into the phone ----------
+        hl(["phone"], GREEN, 9.4);
+        trip("apk", [[216, 196], [216, 349]], 9.5, 1.1);
+        lineIn(0, 11.0);
+        hl(["phone"], INK, 13.0);
+
+        // ---------- Scene 3 (13.5–19.0): host enters the store; the list gets sealed ----------
+        hl(["admin"], YELLOW, 13.8);
+        trip("host3", ADMIN_TO_DEPO, 14.1, 1.2);
+        hl(["p90"], YELLOW, 14.7);
+        hl(["depo"], YELLOW, 15.4);
+        hl(["hsm"], YELLOW, 15.9);
+        appear($("stamp"), [1050, 445], 16.1, 0.3);
+        move($("stamp"), [[1050, 445], [1108, 538]], 16.4, 0.8);
+        tl.to($("stamp"), { rotation: -6, duration: 0.3, ease: SOFT }, 17.2);
+        hl(["admin", "p90", "depo", "hsm"], INK, 18.6);
+
+        // ---------- Scene 4 (19.0–23.0): token appears beside the admin ----------
+        hl(["admin"], YELLOW, 19.3);
+        appear($("token"), [760, 742], 19.6, 0.4);
+        hl(["admin"], INK, 22.6);
+
+        // ---------- Scene 5 (23.0–27.0): token rides the message belt to the phone ----------
+        hl(["admin"], YELLOW, 23.2);
+        move($("token"), [[760, 742], [216, 742], [216, 704]], 23.5, 1.5);
+        hl(["phone"], YELLOW, 24.8);
+        fade($("token"), 25.0, 0.25);
+        hl(["admin", "phone"], INK, 26.6);
+
+        // ---------- Scene 6 (27.0–32.0): enrolment request to 8091 ----------
+        hl(["phone"], GREEN, 27.3);
+        appear($("kayit"), [392, 312], 27.5, 0.3);
+        move($("kayit"), [[392, 312], [494, 312]], 27.8, 1.0);
+        hl(["p91"], GREEN, 28.6);
+        hl(["phone"], INK, 31.0);
+
+        // ---------- Scene 7 (32.0–37.0): CA signs; token spent; card returns ----------
+        move($("kayit"), [[494, 312], [690, 312], [690, 335], [712, 335]], 32.3, 1.1);
+        hl(["ca"], PINK, 33.2);
+        tl.to($("kayittok"), { backgroundColor: "#2A2A2A", opacity: 0.35, duration: 0.4, ease: SOFT }, 33.6);
+        fade($("kayit"), 34.2, 0.25);
+        trip("card7", [[712, 335], [690, 335], [690, 312], [392, 312]], 34.4, 1.3);
+        hl(["phone"], PINK, 35.7);
+        lineIn(1, 36.1);
+        hl(["ca", "p91", "phone"], INK, 36.6);
+
+        // ---------- Scene 8 (37.0–42.0): card to 8092; signed list returns ----------
+        hl(["phone"], PINK, 37.2);
+        trip("card8", [[392, 422], [560, 422]], 37.4, 1.0);
+        hl(["p92"], GREEN, 38.5);
+        hl(["depo"], GREEN, 38.9);
+        trip("list8", DEPO_TO_PHONE, 39.1, 1.4);
+        hl(["phone"], GREEN, 40.6);
+        lineIn(2, 40.9);
+        hl(["phone", "p92", "depo"], INK, 41.6);
+
+        // ---------- Scene 9 (42.0–47.0): report out, PinVault-Token back ----------
+        trip("rapor9", [[380, 422], [560, 422]], 42.3, 1.0);
+        hl(["p92"], GREEN, 43.3);
+        trip("pvt9", [[740, 422], [420, 422]], 43.9, 1.3);
+        hl(["phone"], YELLOW, 45.3);
+        lineIn(3, 45.7);
+        hl(["p92", "phone"], INK, 46.6);
+
+        // ---------- Scene 10 (47.0–53.0): first request over the top belt; 200 OK ----------
+        hl(["phone"], GREEN, 47.2);
+        trip("istek10", TOP, 47.4, 1.6);
+        hl(["api"], GREEN, 49.1);
+        tl.fromTo($("chk0"), { opacity: 0, scale: 0.4 }, { opacity: 1, scale: 1, duration: 0.3, ease: SOFT }, 49.5);
+        tl.fromTo($("chk1"), { opacity: 0, scale: 0.4 }, { opacity: 1, scale: 1, duration: 0.3, ease: SOFT }, 49.8);
+        tl.fromTo($("chk2"), { opacity: 0, scale: 0.4 }, { opacity: 1, scale: 1, duration: 0.3, ease: SOFT }, 50.1);
+        trip("ok10", TOP_BACK, 50.4, 1.6);
+        hl(["phone", "api"], INK, 52.6);
+
+        // ---------- Scene 11 (53.0–59.0): file — admin -> 8090 -> Depo -> 8092 -> phone ----------
+        hl(["admin"], GREEN, 53.2);
+        trip("dosyaA", ADMIN_TO_DEPO, 53.4, 1.2);
+        hl(["p90"], GREEN, 54.4);
+        hl(["depo"], GREEN, 54.8);
+        trip("dosyaB", DEPO_TO_PHONE, 55.3, 1.4);
+        hl(["p92"], GREEN, 56.3);
+        hl(["phone"], GREEN, 56.8);
+        lineIn(4, 57.2);
+        hl(["admin", "p90", "depo", "p92", "phone"], INK, 58.6);
+
+        // ---------- Scene 12 (59.0–65.0): the factory keeps running — a quick, quiet round ----------
+        trip("card12", [[392, 422], [560, 422]], 59.1, 0.6, 0.2, 0.2);
+        trip("list12", DEPO_TO_PHONE, 60.0, 0.8, 0.2, 0.2);
+        trip("rapor12", [[380, 422], [560, 422]], 61.1, 0.6, 0.2, 0.2);
+        trip("pvt12", [[740, 422], [420, 422]], 62.0, 0.7, 0.2, 0.2);
+        trip("istek12", TOP, 62.95, 0.85, 0.2, 0.2);
+        trip("ok12", TOP_BACK, 64.05, 0.8, 0.2, 0.2);
+
+        // ---------- Scene 13 (65.0–70.0): closing title settles in the caption's place; hold ----------
+        tl.to([document.getElementById("f1-fabrika-cap11"), document.querySelector('[class~="f1-fabrika-caplabel"]')], { opacity: 0, duration: 0.4, ease: "power3.in" }, 64.9);
+        tl.fromTo($("title"), { opacity: 0, y: 20 }, { opacity: 1, y: 0, duration: 0.9, ease: SOFT }, 65.4);
+        tl.to({}, { duration: 0.01 }, 69.99);
+
+        window.__timelines = window.__timelines || {};
+        window.__timelines[FID] = tl;
+      })();
+    </script>
+  </div>
+</template>

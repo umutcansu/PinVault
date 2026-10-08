@@ -1758,7 +1758,7 @@ no external dependencies.
 
 ### Presentation film (Turkish)
 
-The one to show first: a silent 8:35 film in four parts. It starts with the
+The one to show first: a silent 9:45 film in four parts. It starts with the
 purpose (what SSL pinning is, why normal TLS is not enough, and what pinning
 alone leaves open), then what PinVault adds (including the two kinds of
 Config API, TLS and mTLS, and how an mTLS one is opened in the panel), then the
@@ -1768,7 +1768,8 @@ where the signing key lives: file, HSM or KMS, and why the phone's key is an
 elliptic-curve key), and finally file
 delivery: uploading in the panel, who may download, the phone's download, and
 the three protections (encrypted on the server, end to end, screen lock).
-Each step shows its panel screen first.
+Each step shows its panel screen first. Near the end a single "working
+factory" scene plays the whole flow on one fixed map of the system.
 
 [▶ pinvault-sunum.tr.mp4](docs/animation/pinvault-sunum.tr.mp4) (1920×1080,
 13.5 MB), built from
