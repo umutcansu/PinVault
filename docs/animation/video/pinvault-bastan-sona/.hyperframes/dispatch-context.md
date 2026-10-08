@@ -1,6 +1,6 @@
 ## Dispatch context
 
-- PROJECT_DIR: /Users/thell/Programming/PinVault/.claude/worktrees/animasyon-topoloji-sira-33e587/docs/animation/video/pinvault-bastan-sona
+- PROJECT_DIR: docs/animation/video/pinvault-bastan-sona
 - Canvas: 1920×1080
 - Captions: disabled (no caption track; keep load-bearing content at y ≤ 900; only the mono footer chrome sits below)
 - Confirmed sketch: none (autonomous run; no storyboard.html)
@@ -14,9 +14,9 @@ This video has NO voiceover and NO captions. The on-screen text under `Ekran met
 ### Visual reference (optional, read-only)
 
 A sister film in the same design already exists. For consistent drawing of the shared actors (phone, PinVault server box, port boxes, pink ID card, yellow ticket, panel-like boxes, stamps, chrome), you MAY open these finished frames read-only and match their look:
-- /Users/thell/Programming/PinVault/.claude/worktrees/animasyon-topoloji-sira-33e587/docs/animation/video/pinvault-nasil-calisir/compositions/frames/09-atestasyon.html (phone, server, ticket, API box)
-- /Users/thell/Programming/PinVault/.claude/worktrees/animasyon-topoloji-sira-33e587/docs/animation/video/pinvault-nasil-calisir/compositions/frames/07-kimlik-karti.html (pink card, step list)
-- /Users/thell/Programming/PinVault/.claude/worktrees/animasyon-topoloji-sira-33e587/docs/animation/video/pinvault-nasil-calisir/compositions/frames/04-topoloji.html (boxes, labels, lines)
+- docs/animation/video/pinvault-nasil-calisir/compositions/frames/09-atestasyon.html (phone, server, ticket, API box)
+- docs/animation/video/pinvault-nasil-calisir/compositions/frames/07-kimlik-karti.html (pink card, step list)
+- docs/animation/video/pinvault-nasil-calisir/compositions/frames/04-topoloji.html (boxes, labels, lines)
 Never copy their ids: your ids must be prefixed with your own frame_id.
 
 ### Video direction (verbatim from STORYBOARD.md — shared by all 14 frames)

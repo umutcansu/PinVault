@@ -494,7 +494,7 @@ Uygulamanın kendi sunucusu da telefondan kimlik isteyebilir. Telefon ya kendi c
 Cihaz sertifikası telefonun kimliğidir; her soran sunucuya gösterilmemeli. Telefon onu yalnızca kendi config API adreslerine ve izin verilen sunuculara gösterir. Pinli olsa bile başka bir sunucu sertifika isterse eli boş döner.
   - Neden: Sertifika telefonu tanıtır. Uygulamanın konuştuğu her sunucu onu toplayabilseydi telefonun kimliği üçüncü taraflara dağılırdı.
   - Kural: Kimlik her zaman bloğun kendi adreslerine gider: config API, kayıt (enrollmentUrl) ve yenileme (renewalUrl). Kendi host sertifikası yüklenmiş sunucu o sertifikayı görür. Başka bir sunucu kimliği ancak izinle görür.
-  - İzin: Uygulama clientCertHosts("https://192.168.1.217:9443/") ile sunucuları adıyla yazar; port zorunlu, yalnızca https. Yazdıysa liste tamdır: imzalı listedeki mtls: true bile yeni sunucu ekleyemez. Hiç yazmadıysa imzalı listede mtls: true olan sunucular kimliği görür.
+  - İzin: Uygulama clientCertHosts("https://192.168.1.20:9443/") ile sunucuları adıyla yazar; port zorunlu, yalnızca https. Yazdıysa liste tamdır: imzalı listedeki mtls: true bile yeni sunucu ekleyemez. Hiç yazmadıysa imzalı listede mtls: true olan sunucular kimliği görür.
   - Diğerleri: Pinli bir analiz ya da reklam sunucusu sertifika isterse telefon göstermez; sunucu bağlantıyı CERTIFICATE_REQUIRED ile reddeder. Telefon kararı kendi açtığı bağlantının adı ve portuyla verir.
   - Değişen: 2.2.0 ile geldi: önceden kimlik, sertifika isteyen pinli sunuculara da gidebiliyordu.
 

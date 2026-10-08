@@ -1,6 +1,6 @@
 ## Dispatch context
 
-- PROJECT_DIR: /Users/thell/Programming/PinVault/.claude/worktrees/animasyon-topoloji-sira-33e587/docs/animation/video/pinvault-nasil-calisir
+- PROJECT_DIR: docs/animation/video/pinvault-nasil-calisir
 - Canvas: 1920×1080
 - Captions: disabled (no caption track; still keep load-bearing content above y ≤ 900, the bottom mono footer chrome is the only thing below)
 - Confirmed sketch: none (autonomous run; no storyboard.html)
