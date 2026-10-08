@@ -30,10 +30,14 @@ class NetworkPinningTest {
     private val marker = Interceptor { it.proceed(it.request().newBuilder().header("X-Pinned", "1").build()) }
     private val networkMarker = Interceptor { it.proceed(it.request()) }
     private var applied = 0
-    private val pinning = NetworkPinning { b ->
-        applied++
-        b.sslSocketFactory(pinnedFactory, tm).addInterceptor(marker).addNetworkInterceptor(networkMarker)
-    }
+    private val cache = okhttp3.Cache(java.io.File(System.getProperty("java.io.tmpdir"), "pv-rn-test-cache"), 1024 * 1024)
+    private val pinning = NetworkPinning(
+        applier = { b ->
+            applied++
+            b.sslSocketFactory(pinnedFactory, tm).addInterceptor(marker).addNetworkInterceptor(networkMarker)
+        },
+        httpCache = { cache },
+    )
 
     @Test fun `before start an https request through RN's networking is refused`() {
         val builder = OkHttpClient.Builder()
@@ -101,6 +105,43 @@ class NetworkPinningTest {
         pinning.activate()
         runCatching { forwarding.createSocket(Socket(), "example.com", 443, true) }
         assertEquals(1, pinnedFactory.created)
+    }
+
+    @Test fun `RN's disk cache and cookie jar are off by default, kept on request`() {
+        val jar = object : okhttp3.CookieJar {
+            override fun saveFromResponse(url: okhttp3.HttpUrl, cookies: List<okhttp3.Cookie>) {}
+            override fun loadForRequest(url: okhttp3.HttpUrl): List<okhttp3.Cookie> = emptyList()
+        }
+        // RN's base client carries its 10 MiB cache and its persistent jar.
+        val base = OkHttpClient.Builder().cache(cache).cookieJar(jar).build()
+        pinning.activate(NetworkingOptions())
+        val plain = base.newBuilder().also(pinning::configurePerRequest).build()
+        assertEquals(null, plain.cache)
+        assertSame(okhttp3.CookieJar.NO_COOKIES, plain.cookieJar)
+        pinning.activate(NetworkingOptions(keepHttpCache = true, keepCookies = true))
+        val kept = OkHttpClient.Builder().cookieJar(jar).build().newBuilder().also(pinning::configurePerRequest).build()
+        assertSame(cache, kept.cache)
+        assertSame(jar, kept.cookieJar)
+        // Long-lived clients (WebSocket, images) never get a disk cache.
+        assertEquals(null, pinning.configureLongLived(OkHttpClient.Builder().cache(cache)).build().cache)
+    }
+
+    @Test fun `https to http redirects are not followed, per request and long-lived`() {
+        pinning.activate()
+        val perRequest = OkHttpClient.Builder().also(pinning::configurePerRequest).build()
+        assertEquals(false, perRequest.followSslRedirects)
+        assertEquals(true, perRequest.followRedirects) // same-scheme redirects still are
+        assertEquals(false, pinning.configureLongLived(OkHttpClient.Builder()).build().followSslRedirects)
+        // Before start too.
+        pinning.deactivate()
+        assertEquals(false, OkHttpClient.Builder().also(pinning::configurePerRequest).build().followSslRedirects)
+    }
+
+    @Test fun `a request built twice before start carries the gate once`() {
+        val b = OkHttpClient.Builder()
+        pinning.configurePerRequest(b)
+        pinning.configurePerRequest(b)
+        assertEquals(1, b.interceptors().size)
     }
 
     private class RecordingFactory(private val d: SSLSocketFactory) : SSLSocketFactory() {

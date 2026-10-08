@@ -24,14 +24,52 @@ internal object StrictJson {
 
     fun parseObject(json: String, path: String, maxChars: Int = MAX_INPUT_CHARS): Fields {
         if (json.length > maxChars) throw BridgeInputException("$path: larger than $maxChars characters")
+        // Before the parser: org.json's tokener recurses once per level, and a
+        // StackOverflowError is no Exception the bridge would catch.
+        if (nestingDepth(json) > MAX_DEPTH + 1) throw BridgeInputException("$path: nested too deeply")
         val value = try {
             JSONTokener(json).nextValue()
         } catch (e: JSONException) {
             throw BridgeInputException("$path: not valid JSON")
+        } catch (e: StackOverflowError) {
+            throw BridgeInputException("$path: nested too deeply")
         }
         if (value !is JSONObject) throw BridgeInputException("$path: must be an object")
         @Suppress("UNCHECKED_CAST")
         return Fields(path, toKotlin(value, path, 0) as Map<String, Any?>)
+    }
+
+    /**
+     * The deepest `[` / `{` nesting of [json], strings skipped; stops counting
+     * past the limit. Malformed text is left to the parser.
+     */
+    fun nestingDepth(json: String, stopAt: Int = MAX_DEPTH + 2): Int {
+        var depth = 0
+        var deepest = 0
+        var inString = false
+        var escaped = false
+        for (c in json) {
+            if (inString) {
+                when {
+                    escaped -> escaped = false
+                    c == '\\' -> escaped = true
+                    c == '"' -> inString = false
+                }
+                continue
+            }
+            when (c) {
+                '"' -> inString = true
+                '[', '{' -> {
+                    depth++
+                    if (depth > deepest) {
+                        deepest = depth
+                        if (deepest >= stopAt) return deepest
+                    }
+                }
+                ']', '}' -> if (depth > 0) depth--
+            }
+        }
+        return deepest
     }
 
     private fun toKotlin(value: Any?, path: String, depth: Int): Any? {

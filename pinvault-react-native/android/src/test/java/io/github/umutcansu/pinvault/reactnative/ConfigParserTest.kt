@@ -148,6 +148,30 @@ class ConfigParserTest {
         refused("""{"configApis":[${api(""","signaturePublicKeys":["$key"]""")}]}""", "not both")
     }
 
+    @Test fun `deep nesting is refused before the parser runs`() {
+        val deep = "[".repeat(5000) + "]".repeat(5000)
+        refused("""{"configApis":$deep}""", "nested too deeply")
+        // Brackets inside strings do not count.
+        assertEquals(1, StrictJson.nestingDepth("""{"a":"[[[[[[[[[[{{{{{{"}"""))
+        assertEquals(3, StrictJson.nestingDepth("""{"a":[{"b":"\"]"}]}"""))
+        // Far beyond what the tokener's recursion survives: still a plain refusal.
+        try {
+            val open = "{\"a\":".repeat(100_000)
+            PinnedFetch.parse("{\"url\":\"https://h/\",\"headers\":" + open + "\"x\"" + "}".repeat(100_001))
+            fail()
+        } catch (e: BridgeInputException) {
+            assertTrue(e.message!!.contains("nested too deeply"))
+        }
+    }
+
+    @Test fun `the networking options are read`() {
+        val p = parse("""{"configApis":[${api()}],"requirePinnedReactNativeNetworking":true,
+            "android":{"keepReactNativeHttpCache":true,"keepReactNativeCookies":true}}""")
+        assertEquals(NetworkingOptions(requirePinned = true, keepHttpCache = true, keepCookies = true), p.networking)
+        assertEquals(NetworkingOptions(), parse("""{"configApis":[${api()}]}""").networking)
+        refused("""{"configApis":[${api()}],"requirePinnedReactNativeNetworking":true,"android":{"pinGlobalNetworking":false}}""", "contradicts")
+    }
+
     @Test fun `the JS guard factory gets the timeout`() {
         var timeout = -1L
         ConfigParser.parse("""{"configApis":[${api()}],"environmentGuard":{}}""", tokens, { t -> timeout = t; EnvironmentGuard { false } }, null)

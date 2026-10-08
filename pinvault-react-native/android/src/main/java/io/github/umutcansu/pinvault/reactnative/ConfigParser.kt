@@ -20,6 +20,20 @@ internal class ParsedConfig(
     val guardTimeoutMs: Long?,
     /** `android.pinGlobalNetworking` (default true). */
     val pinGlobalNetworking: Boolean,
+    /** RN's networking options of `android` and `requirePinnedReactNativeNetworking`. */
+    val networking: NetworkingOptions = NetworkingOptions(),
+    /** True when a native security file was applied. */
+    val nativeSecurityApplied: Boolean = false,
+)
+
+/** How React Native's own networking is pinned (see [PinVaultNetworking]). */
+internal data class NetworkingOptions(
+    /** `requirePinnedReactNativeNetworking`: start fails when RN's hooks are not PinVault's. */
+    val requirePinned: Boolean = false,
+    /** `android.keepReactNativeHttpCache`: RN's 10 MiB disk HTTP cache for fetch / XHR (default off). */
+    val keepHttpCache: Boolean = false,
+    /** `android.keepReactNativeCookies`: RN's persistent cookie jar for fetch / XHR (default off). */
+    val keepCookies: Boolean = false,
 )
 
 /**
@@ -40,20 +54,28 @@ internal object ConfigParser {
     const val MAX_VAULT_FILES = 64
     const val MAX_PINS = 256
     const val MAX_PINS_PER_HOST = 16
-    private const val KEY_LENGTH = 4096
+    const val KEY_LENGTH = 4096
 
+    /**
+     * @param native the app's native security file ([NativeSecurity]); null = none.
+     * @param release a release build of the app: without a native file, the
+     *   relaxations (`allowUnsigned`, …) are refused from JS.
+     */
     fun parse(
         json: String,
         tokens: VaultTokenStore,
         guardFactory: (timeoutMs: Long) -> EnvironmentGuard,
         listener: PinVaultConnectionListener?,
+        native: NativeSecurity? = null,
+        release: Boolean = false,
     ): ParsedConfig {
         val root = StrictJson.parseObject(json, "config")
         val builder = PinVaultConfig.Builder()
 
-        root.objList("configApis", MAX_CONFIG_APIS)?.forEach { addConfigApi(builder, it) }
+        root.objList("configApis", MAX_CONFIG_APIS)?.forEach { addConfigApi(builder, it, native, release) }
         root.objList("vaultFiles", MAX_VAULT_FILES)?.forEach { addVaultFile(builder, it, tokens) }
-        root.obj("staticPins")?.let { builder.staticPins(staticPins(it)) }
+        val staticPins = root.obj("staticPins")?.let(::staticPins)
+        SecurityPolicy.staticPins("config.staticPins", staticPins, native)?.let { builder.staticPins(it) }
 
         root.int("maxRetryCount", 0, 10)?.let { builder.maxRetryCount(it) }
         root.long("updateIntervalHours", 1, 24L * 30)?.let { builder.updateIntervalHours(it) }
@@ -78,10 +100,18 @@ internal object ConfigParser {
 
         var allowFallback = false
         var pinGlobal = true
+        var keepCache = false
+        var keepCookies = false
         root.obj("android")?.let { a ->
             allowFallback = a.bool("requireUnlockedDeviceAllowFallback") == true
             pinGlobal = a.bool("pinGlobalNetworking") ?: true
+            keepCache = a.bool("keepReactNativeHttpCache") == true
+            keepCookies = a.bool("keepReactNativeCookies") == true
             a.finish()
+        }
+        val requirePinned = root.bool("requirePinnedReactNativeNetworking") == true
+        if (requirePinned && !pinGlobal) {
+            throw BridgeInputException("config.requirePinnedReactNativeNetworking: contradicts android.pinGlobalNetworking: false")
         }
         if (allowFallback && !requireUnlocked) {
             throw BridgeInputException("config.android.requireUnlockedDeviceAllowFallback: needs requireUnlockedDevice: true")
@@ -92,7 +122,11 @@ internal object ConfigParser {
 
         root.finish()
         listener?.let { builder.onConnectionEvent(it) }
-        return ParsedConfig(builder.build(), guardTimeout, pinGlobal)
+        return ParsedConfig(
+            builder.build(), guardTimeout, pinGlobal,
+            NetworkingOptions(requirePinned, keepCache, keepCookies),
+            nativeSecurityApplied = native != null,
+        )
     }
 
     private fun duration(d: Fields): Pair<Long, TimeUnit> {
@@ -130,7 +164,7 @@ internal object ConfigParser {
         return pin
     }
 
-    private fun staticPins(s: Fields): CertificateConfig {
+    fun staticPins(s: Fields): CertificateConfig {
         val pins = s.objList("pins", MAX_PINS)?.map(::hostPin) ?: throw BridgeInputException("${s.path}.pins: required")
         val config = CertificateConfig(
             version = s.int("version", 0, Int.MAX_VALUE) ?: 0,
@@ -141,7 +175,7 @@ internal object ConfigParser {
         return config
     }
 
-    private fun addConfigApi(builder: PinVaultConfig.Builder, b: Fields) {
+    private fun addConfigApi(builder: PinVaultConfig.Builder, b: Fields, native: NativeSecurity?, release: Boolean) {
         val id = b.requireString("id", 128)
         val url = httpsUrl(b, "url") ?: throw BridgeInputException("${b.path}.url: required")
         // Read everything before the builder runs, so a refusal names the JSON path.
@@ -177,20 +211,30 @@ internal object ConfigParser {
         val tokenHosts = b.stringList("tokenHosts", 64, 255)
         b.finish()
 
+        // The trust anchors and relaxations: the native security file decides, JS only repeats.
+        val sec = SecurityPolicy.apply(
+            b.path, id,
+            SecurityFields(
+                bootstrapPins, oneKey, keys, requiredSignatures, recoveryKeys, requiredRecovery,
+                serverScope, clientCaPins, allowUnsigned, allowUnpinned, allowServerKey,
+            ),
+            native, release,
+        )
+
         builder.configApi(id, url) {
-            bootstrapPins?.let { this.bootstrapPins(it) }
+            sec.bootstrapPins?.let { this.bootstrapPins(it) }
             configEndpoint?.let { this.configEndpoint(it) }
             healthEndpoint?.let { this.healthEndpoint(it) }
-            oneKey?.let { this.signaturePublicKey(it) }
-            keys?.let { this.signaturePublicKeys(it) }
-            requiredSignatures?.let { this.requiredSignatures(it) }
-            recoveryKeys?.let { this.recoveryPublicKeys(it) }
-            requiredRecovery?.let { this.requiredRecoverySignatures(it) }
-            if (allowUnsigned) this.allowUnsigned()
-            serverScope?.let { this.serverScope(it) }
-            if (allowUnpinned) this.allowUnpinnedConfigApi()
-            if (allowServerKey) this.allowServerGeneratedKey()
-            clientCaPins?.let { this.clientCaPins(it) }
+            sec.oneKey?.let { this.signaturePublicKey(it) }
+            sec.keys?.let { this.signaturePublicKeys(it) }
+            sec.requiredSignatures?.let { this.requiredSignatures(it) }
+            sec.recoveryKeys?.let { this.recoveryPublicKeys(it) }
+            sec.requiredRecovery?.let { this.requiredRecoverySignatures(it) }
+            if (sec.allowUnsigned) this.allowUnsigned()
+            sec.serverScope?.let { this.serverScope(it) }
+            if (sec.allowUnpinned) this.allowUnpinnedConfigApi()
+            if (sec.allowServerKey) this.allowServerGeneratedKey()
+            sec.clientCaPins?.let { this.clientCaPins(it) }
             maxLifetime?.let { this.maxClientCertLifetimeDays(it) }
             clientCertHosts?.let { this.clientCertHosts(it) }
             enrollmentEndpoint?.let { this.enrollmentEndpoint(it) }

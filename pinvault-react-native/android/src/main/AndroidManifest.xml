@@ -1,3 +1,16 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
     <!-- PinVault itself declares what it needs (INTERNET, biometrics). -->
+    <application>
+        <!--
+          Pins React Native's own networking before the app's code runs: Android
+          creates content providers before Application.onCreate, so the hooks are
+          in place before React Native builds its HTTP clients (README, "Networking").
+          Opt out in the app's manifest with tools:node="remove" on this element.
+        -->
+        <provider
+            android:name="io.github.umutcansu.pinvault.reactnative.PinVaultNetworkingInitializer"
+            android:authorities="${applicationId}.pinvault-networking"
+            android:exported="false"
+            android:initOrder="1000" />
+    </application>
 </manifest>

@@ -93,30 +93,51 @@ class PinVaultModule(reactContext: ReactApplicationContext) : NativePinVaultSpec
     override fun start(configJson: String, promise: Promise) {
         scope.launch {
             startLock.withLock {
+                var newGuard: JsEnvironmentGuard? = null
                 val parsed = try {
                     ConfigParser.parse(
                         configJson, tokens,
-                        guardFactory = { timeout -> JsEnvironmentGuard(timeout) { id, op -> current?.emitGuard(id, op) }.also { guard = it } },
+                        guardFactory = { timeout ->
+                            JsEnvironmentGuard(timeout) { id, op -> current?.emitGuard(id, op) }.also { newGuard = it }
+                        },
                         listener = connectionListener,
+                        native = NativeSecurity.load(app),
+                        release = NativeSecurity.isReleaseBuild(app),
                     )
                 } catch (e: IllegalArgumentException) {
+                    // The guard of the running config stays: a refused config changes nothing.
                     promise.reject(E_INVALID_CONFIG, tokens.redact(e.message))
                     return@launch
                 }
                 try {
-                    if (parsed.guardTimeoutMs == null) guard = null
+                    if (!parsed.pinGlobalNetworking && PinVaultNetworking.isInstalled) {
+                        promise.reject(
+                            E_INVALID_CONFIG,
+                            "config.android.pinGlobalNetworking: false, but React Native's networking is already pinned " +
+                                "(the plugin's content provider, or PinVaultNetworking.install); opt out natively: " +
+                                "remove the provider in the app's manifest (tools:node=\"remove\", README \"Networking\")",
+                        )
+                        return@launch
+                    }
                     if (parsed.pinGlobalNetworking) PinVaultNetworking.install(app)
+                    val hooks = PinVaultNetworking.warnIfNotPinned("PinVault.start")
+                    if (parsed.networking.requirePinned && !hooks.pinned) {
+                        promise.reject(E_NETWORKING_NOT_PINNED, "requirePinnedReactNativeNetworking: ${hooks.describe()}")
+                        return@launch
+                    }
+                    guard = newGuard
                     // A second start applies the new config: the library keeps the
                     // first one otherwise (the samples restart the same way).
                     if (startedInProcess) {
                         PinVaultNetworking.pinning.deactivate()
                         PinVault.reset()
                     }
+                    PinVaultNetworking.pinning.options = parsed.networking
                     val result = PinVault.init(app, parsed.config)
                     startedInProcess = true
                     if (PinVaultNetworking.isInstalled) {
                         try {
-                            PinVaultNetworking.pinning.activate()
+                            PinVaultNetworking.pinning.activate(parsed.networking)
                         } catch (_: IllegalStateException) {
                             // Setup failed (InitResult.Failed): RN's https stays refused.
                         }
@@ -180,6 +201,8 @@ class PinVaultModule(reactContext: ReactApplicationContext) : NativePinVaultSpec
 
     override fun fetch(requestJson: String, promise: Promise) {
         scope.launch {
+            // RN's own fetch is pinned only while both hooks are PinVault's: say so when another library replaced one.
+            if (PinVaultNetworking.isInstalled) PinVaultNetworking.warnIfNotPinned("PinVault.fetch")
             val request = try {
                 PinnedFetch.parse(requestJson)
             } catch (e: IllegalArgumentException) {
@@ -335,6 +358,7 @@ class PinVaultModule(reactContext: ReactApplicationContext) : NativePinVaultSpec
         const val E_FETCH = "E_FETCH"
         const val E_NO_ACTIVITY = "E_NO_ACTIVITY"
         const val E_NATIVE = "E_NATIVE"
+        const val E_NETWORKING_NOT_PINNED = "E_NETWORKING_NOT_PINNED"
 
         /** Process-wide: the library is a process singleton, a JS reload makes a new module. */
         @Volatile private var current: PinVaultModule? = null
