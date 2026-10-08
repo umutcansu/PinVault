@@ -28,11 +28,37 @@ function findJavaHome() {
 }
 
 /**
+ * Debug/e2e derlemelerini imzalayan anahtarın (`~/.android/debug.keystore`)
+ * sertifika SHA-256'sı, 64 hane küçük harf hex. Android'de
+ * host.expectedSignerSha256'ya yazılır: uygulama başka anahtarla imzalanmış
+ * (yeniden paketlenmiş) bir kopyayı atestasyonda `app_integrity` ile bildirir
+ * (R06). iOS'ta ve hesaplanamazsa '' (değer verilmez, istemci yargılamaz).
+ */
+function debugSignerSha256() {
+  if (env.PLATFORM === 'ios') return '';
+  try {
+    const keystore = path.join(os.homedir(), '.android', 'debug.keystore');
+    if (!fs.existsSync(keystore)) return '';
+    const javaHome = findJavaHome();
+    const keytool = javaHome ? path.join(javaHome, 'bin', 'keytool') : 'keytool';
+    const out = execFileSync(
+      keytool,
+      ['-list', '-v', '-keystore', keystore, '-storepass', 'android', '-alias', 'androiddebugkey'],
+      { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] },
+    );
+    const m = out.match(/SHA256:\s*([0-9A-Fa-f:]+)/);
+    return m ? m[1].replace(/:/g, '').toLowerCase() : '';
+  } catch {
+    return '';
+  }
+}
+
+/**
  * Uygulamanın derlemeye gömeceği host değerleri (sample-host.properties).
  * Host'un kendi dosyalarından ve canlı hedef pin'lerinden üretilir; özel
  * backend değerleri harness'ın ürettiği anahtarlardan gelir.
  */
-function writeProperties({ goodPins, hostPins, custom, signing, backup, recovery, door, clientCaPin, scoped }) {
+function writeProperties({ goodPins, hostPins, custom, signing, backup, recovery, door, clientCaPin, scoped, expectedSigner }) {
   const lines = [
     '# sample-e2e global setup tarafından üretildi; elle düzenleme.',
     `host.ip=${env.LAN_IP}`,
@@ -74,6 +100,9 @@ function writeProperties({ goodPins, hostPins, custom, signing, backup, recovery
     `custom.baseUrl=${custom.baseUrl}`,
     `custom.bootstrapPins=${custom.pins.join(',')}`,
     `custom.signingPublicKey=${custom.signingPublicKey}`,
+    // Yeniden paketleme tespiti (R06): APK'yı imzalayan debug anahtarının SHA-256'sı.
+    // Boşsa istemci app_integrity'yi yargılamaz.
+    `host.expectedSignerSha256=${expectedSigner || ''}`,
     '',
   ];
   fs.mkdirSync(env.LOCAL_DIR, { recursive: true });
@@ -198,7 +227,7 @@ module.exports = async () => {
         'uygulama serverScope olmadan derleniyor (host.tlsScope/host.mtlsScope boş).',
     );
   }
-  const propsChanged = writeProperties({ goodPins, hostPins, custom, signing, backup, recovery, door, clientCaPin, scoped });
+  const propsChanged = writeProperties({ goodPins, hostPins, custom, signing, backup, recovery, door, clientCaPin, scoped, expectedSigner: debugSignerSha256() });
   if (env.PLATFORM === 'ios') {
     if (process.env.E2E_SKIP_BUILD !== '1' || propsChanged || !fs.existsSync(env.APP_ARTIFACT)) {
       console.log(`[e2e] sample-client-ios derleniyor (${env.IOS_CONFIGURATION})…`);

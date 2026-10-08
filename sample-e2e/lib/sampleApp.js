@@ -379,6 +379,16 @@ class SampleApp {
     return this.press('applyButton', RESULT.settings, `gereken imza ${enabled ? 2 : 1}`, 90_000);
   }
 
+  /**
+   * "Ortam kontrolü" (environmentGuard → DeviceShield) ve "Uygula": açıkken
+   * root / debugger / hooking görülen telefonda kayıt, indirme ve açma
+   * reddedilir. Test derlemelerinde varsayılan kapalı. Sonuç metnini döndürür.
+   */
+  async setEnvironmentGuard(enabled) {
+    await this.setChecked('environmentGuardCheck', enabled);
+    return this.press('applyButton', RESULT.settings, `ortam kontrolü ${enabled ? 'açık' : 'kapalı'}`, 90_000);
+  }
+
   async setTelemetry({ reportSuccess = true, dedupMs = 0 } = {}) {
     await this.setChecked('reportSuccessCheck', reportSuccess);
     await this.enterText('dedupMsInput', String(dedupMs));
