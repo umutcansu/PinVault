@@ -1,6 +1,6 @@
 ---
 format: 1920x1080
-duration: 585s
+duration: 598s
 message: "SSL pinning telefonu sahte sunucudan korur; PinVault pinlemenin üç eksiğini kapatır, kurulumdan ilk isteğe on halkada çalışır ve dosyaları seçtiğiniz cihaza, seçtiğiniz korumayla dağıtır."
 arc: concept-explainer with process
 audience: PinVault'u ilk kez görecek geliştirici ve yöneticiler (sunum)
@@ -1426,7 +1426,7 @@ Scene 5 (11.0–15.0s): Kural 2 kartı gelir; not. Tutma.
 
 - scene: Bütün topoloji tek sabit sahnede; on halka ve dosya akışı, makineler arasındaki bantlarda paketler olarak sırayla akar; zincir şeridi dolar, altta her adımın tek cümlesi
 - voiceover:
-- duration: 70s
+- duration: 83s
 - transition_in: crossfade
 - status: animated
 - src: compositions/frames/f1-fabrika.html
@@ -1445,7 +1445,7 @@ Ekran metni:
 - üst çubuk hap: "HEPSİ BİR ARADA"
 - zincir hücreleri (ring karelerindeki geometriyle aynı): "1 KURULUM" "2 APK" "3 HOST" "4 KAYIT TOKEN'I" "5 TELEFONA" "6 KAYIT İSTEĞİ" "7 KART" "8 PİN LİSTESİ" "9 ATESTASYON" "10 İLK İSTEK"
 - telefon: "Uygulamanız" / şerit "PinVault kütüphanesi"
-- telefon içi küçük satırlar (sırayla belirir, mono): "APK: PinVault pin'leri" · "kart: tablet-07" · "liste: api.ornek.com pinli" · "PinVault-Token: 5 dk" · "dosya: saha-ayarlari"
+- telefon içi küçük satırlar (sırayla belirir, mono): "APK: PinVault pin'leri" · "kart: tablet-07" · "liste: api.ornek.com pinli" · "PinVault-Token: 5 dk" · "dosya: saha-ayarlari" · (yenilemede "kart: tablet-07" satırının yanına "yenilendi", kurtarmada önce "süresi doldu" sonra "yenilendi")
 - sunucu başlığı (mono, siyah şerit): "PinVault sunucusu"
 - sunucu içi makine 1 (pembe kenar): "İstemci CA'sı" / alt (mono): "kartları imzalar"
 - sunucu içi makine 2 (sarı kenar): "İmza anahtarı · HSM" / alt (mono): "listeyi mühürler"
@@ -1453,7 +1453,7 @@ Ekran metni:
 - kapılar (mono): "8091 · TLS" "8092 · mTLS" "8093 · kurtarma" "8090 · yönetim"
 - API kutusu: "API SUNUCUNUZ" / "api.ornek.com"
 - yönetici kutusu: "YÖNETİCİ · PANEL"
-- paket etiketleri (mono): "token" (sarı) · "kayıt isteği" (krem-2) · "tablet-07" (pembe kart) · "liste · İMZALI" (krem-2, sarı mühür) · "rapor" (krem-2) · "PINVAULT-TOKEN" (sarı) · "istek" (ink) · "200 OK" (yeşil) · "dosya" (krem-2, kilit)
+- paket etiketleri (mono): "token" (sarı) · "kayıt isteği" (krem-2) · "tablet-07" (pembe kart) · "liste · İMZALI" (krem-2, sarı mühür) · "rapor" (krem-2) · "PINVAULT-TOKEN" (sarı) · "istek" (ink) · "200 OK" (yeşil) · "dosya" (krem-2, kilit) · "yenileme isteği" (krem-2) · "kurtarma isteği · imzalı" (krem-2)
 - adım satırları (alt açıklama, body-lg, her biri kendi adımında yazılır, öncekinin yerini alır):
   "1 · Sunucu açılır: kendi sertifikalarını ve imza anahtarını üretir."
   "2 · APK'ya PinVault sunucusunun adresi ve pin'leri girer."
@@ -1466,6 +1466,8 @@ Ekran metni:
   "9 · Atestasyon: telefon raporunu gönderir, 5 dakikalık PinVault-Token alır."
   "10 · İlk istek: pin listeden, PinVault-Token başlıkta; API sunucusu doğrular: 200 OK."
   "Dosya: yönetici panelden yükler; telefon kendi dosyasını 8092'den alır."
+  "Yenileme: kartın süresinin üçte biri kalınca telefon 8092'den aynı anahtarla yeni kart alır."
+  "Kurtarma: kartın süresi dolduysa telefon 8093'e gider, kimliğini aynı anahtarın imzasıyla kanıtlar ve yeni kartını alır."
   "Fabrika çalışmaya devam eder: her açılışta kart, liste, PinVault-Token; her istekte PinVault-Token."
 - kapanış başlığı (display-head, son 5 sn, alt açıklama satırının yerinde): "İŞLEYEN FABRİKA."
 - künye: "Hepsi bir arada"
@@ -1477,7 +1479,7 @@ Compose. SABİT HARİTA (1920×1080 piksel, hiç yer değiştirmez; yalnızca ke
 - Sunucu içi makineler (x 720–1160, her biri 440×90): İstemci CA'sı (y 290), İmza anahtarı · HSM (y 400), Depo (y 510).
 - API sunucunuz: x 1520–1824, y 290–470.
 - Yönetici · panel: x 820–1040, y 712–772; 8090 kapısına kısa dikey bantla bağlı.
-- Bantlar (kesik çizgili ince ink hatlar, paketler üzerlerinde kayar): telefon→8091, telefon→8092, telefon→8093 (soluk, bu sahnede kullanılmaz), telefon→API (sunucunun üstünden, y ≈ 186 hattından), yönetici→8090, yönetici→telefon (sunucunun altından, y ≈ 742 hattından, "mesaj" etiketli, PinVault'un dışından), kapılar→iç makineler (kısa yatay bantlar).
+- Bantlar (kesik çizgili ince ink hatlar, paketler üzerlerinde kayar): telefon→8091, telefon→8092, telefon→8093 (kurtarma adımına kadar soluk, kurtarmada canlanır), telefon→API (sunucunun üstünden, y ≈ 186 hattından), yönetici→8090, yönetici→telefon (sunucunun altından, y ≈ 742 hattından, "mesaj" etiketli, PinVault'un dışından), kapılar→iç makineler (kısa yatay bantlar).
 - Alt açıklama satırı: x 96–1824, y 800–870, krem-2 dolgu, 2 px ink kenar, solda siyah mono etiket "ADIM", sağında body-lg metin.
 
 ZAMANLAMA (her adımda: ilgili iki makinenin kenarı aksan rengine döner, paket banttan kayar, adım bitince kenarlar ink'e döner; önceki paket izleri kaybolur ama telefonun içindeki satırlar kalır):
@@ -1493,8 +1495,10 @@ Scene 8 (37.0–42.0s): Adım 8. Pembe kart telefondan 8092'ye gider (kapı yeş
 Scene 9 (42.0–47.0s): Adım 9. "rapor" paketi 8092'ye gider; sarı "PINVAULT-TOKEN" paketi döner (karenin tek sert gölgesi bu pakette); telefon satırı "PinVault-Token: 5 dk". Hücre 9.
 Scene 10 (47.0–53.0s): Adım 10. "istek" paketi (yanında küçük sarı PinVault-Token) üst banttan API sunucusuna gider; API kutusu içinde üç küçük ✓; yeşil "200 OK" geri döner. Hücre 10.
 Scene 11 (53.0–59.0s): Dosya adımı. Yöneticiden 8090 üzerinden Depo'ya "dosya" paketi (kilitli) kayar; sonra Depo'dan 8092 üzerinden telefona; telefon satırı "dosya: saha-ayarlari".
-Scene 12 (59.0–65.0s): Devam vuruşu. Daha hızlı ve sessiz bir tur: pembe kart 8092'ye gidip liste döner, rapor gidip PinVault-Token döner, istek API'ye gidip 200 OK döner (her biri ≈1,5 sn). Alt satırda "Fabrika çalışmaya devam eder…".
-Scene 13 (65.0–70.0s): Bütün hücreler dolu; alt açıklama satırının yerine "İŞLEYEN FABRİKA." başlığı oturur. Tutma, en çok hafif titreşim.
+Scene 12a (59.0–65.0s): Yenileme. Telefonun yanındaki pembe kart küçük bir "yenileme isteği" paketiyle 8092'ye gider (kapı yeşil), İstemci CA'sına ulaşır; yeni pembe kart "tablet-07 · 90 gün" 8092'den telefona döner; telefon satırında "yenilendi".
+Scene 12b (65.0–72.0s): Kurtarma. Telefondaki kart griye döner ve yanında küçük "süresi doldu" etiketi belirir; telefon kartın tarihine kendisi baktığı için 8092'yi denemez. 8093 kapısı ilk kez canlanır (soluk hâlden ink kenara); "kurtarma isteği · imzalı" paketi telefondan 8093'e, oradan İstemci CA'sına gider; yeni pembe kart 8093'ten telefona döner (karenin ikinci vurgusu, sert gölge yok); kart yeniden pembe, satırda "yenilendi".
+Scene 12 (72.0–78.0s): Devam vuruşu. Daha hızlı ve sessiz bir tur: pembe kart 8092'ye gidip liste döner, rapor gidip PinVault-Token döner, istek API'ye gidip 200 OK döner (her biri ≈1,5 sn). Alt satırda "Fabrika çalışmaya devam eder…".
+Scene 13 (78.0–83.0s): Bütün hücreler dolu; alt açıklama satırının yerine "İŞLEYEN FABRİKA." başlığı oturur. Tutma, en çok hafif titreşim.
 
 ## Frame 36 — Hangi anahtar, hangi algoritma
 

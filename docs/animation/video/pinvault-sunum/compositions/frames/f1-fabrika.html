@@ -1,5 +1,5 @@
 <template id="f1-fabrika-template">
-  <div id="root" data-composition-id="f1-fabrika" data-start="0" data-duration="70.5" data-width="1920" data-height="1080" lang="tr">
+  <div id="root" data-composition-id="f1-fabrika" data-start="0" data-duration="83.5" data-width="1920" data-height="1080" lang="tr">
     <style>
       @import url("https://fonts.googleapis.com/css2?family=Archivo+Black&family=JetBrains+Mono:wght@400;700&family=Space+Grotesk:wght@400;500&display=block");
 
@@ -435,6 +435,50 @@
         font-size: 16px;
         white-space: nowrap;
       }
+      .f1-fabrika-ontokp {
+        position: absolute;
+        left: 8px;
+        top: -14px;
+        width: 34px;
+        height: 14px;
+        background: #f06ca8;
+        border: 2px solid #0f0f0f;
+      }
+      .f1-fabrika-pk2 {
+        height: 48px;
+        flex-direction: column;
+        align-items: flex-start;
+        justify-content: center;
+        font-size: 15px;
+        line-height: 1.15;
+      }
+      /* small state tags (phone card line + parked card) */
+      .f1-fabrika-tag {
+        position: absolute;
+        height: 16px;
+        padding: 0 5px;
+        font-family: "JetBrains Mono", monospace;
+        font-size: 12px;
+        line-height: 16px;
+        letter-spacing: 0.02em;
+        white-space: nowrap;
+      }
+      .f1-fabrika-tagok {
+        background: #1f8a4c;
+        color: #efe9d9;
+      }
+      .f1-fabrika-tagold {
+        background: #2a2a2a;
+        color: #efe9d9;
+      }
+      .f1-fabrika-ltag {
+        left: 6px;
+        bottom: 4px;
+      }
+      .f1-fabrika-ctag {
+        left: -3px;
+        top: 46px;
+      }
       .f1-fabrika-ontok {
         position: absolute;
         left: 8px;
@@ -545,6 +589,11 @@
         line-height: 1.4;
         white-space: nowrap;
       }
+      .f1-fabrika-caplong {
+        font-size: 24px;
+        line-height: 1.15;
+        white-space: normal;
+      }
       #f1-fabrika-title {
         position: absolute;
         left: 96px;
@@ -563,7 +612,7 @@
       }
     </style>
 
-    <div id="f1-fabrika-stage" class="clip" data-start="0" data-duration="70.5" data-track-index="0">
+    <div id="f1-fabrika-stage" class="clip" data-start="0" data-duration="83.5" data-track-index="0">
       <!-- chrome -->
       <div id="f1-fabrika-topbar">
         <span>PINVAULT · ÖZET</span>
@@ -627,7 +676,7 @@
           <!-- phone -> ports -->
           <path d="M336 312 H560" />
           <path d="M336 422 H560" />
-          <path d="M336 532 H560" stroke-opacity="0.3" />
+          <path id="f1-fabrika-b93a" d="M336 532 H560" stroke-opacity="0.3" />
           <!-- phone -> API (over the server, y 186) -->
           <path d="M216 250 V186 H1672 V290" />
           <!-- admin -> phone (under the server, y 742) -->
@@ -638,7 +687,7 @@
           <!-- ports -> internal spine -> machines -->
           <path d="M660 312 H690" />
           <path d="M660 422 H690" />
-          <path d="M660 532 H690" stroke-opacity="0.3" />
+          <path id="f1-fabrika-b93b" d="M660 532 H690" stroke-opacity="0.3" />
           <path d="M690 312 V555" />
           <path d="M690 335 H720" />
           <path d="M690 445 H720" />
@@ -696,7 +745,7 @@
         <div class="f1-fabrika-screen">
           <div class="f1-fabrika-app">Uygulamanız</div>
           <div id="f1-fabrika-line0" class="f1-fabrika-pline" style="top: 40px; border-left-color: #0f0f0f">APK: PinVault pin'leri</div>
-          <div id="f1-fabrika-line1" class="f1-fabrika-pline" style="top: 92px; border-left-color: #f06ca8">kart: tablet-07</div>
+          <div id="f1-fabrika-line1" class="f1-fabrika-pline" style="top: 92px; border-left-color: #f06ca8"><span id="f1-fabrika-line1txt">kart: tablet-07</span><span id="f1-fabrika-ltagY1" class="f1-fabrika-tag f1-fabrika-tagok f1-fabrika-ltag">yenilendi</span><span id="f1-fabrika-ltagS" class="f1-fabrika-tag f1-fabrika-tagold f1-fabrika-ltag">süresi doldu</span><span id="f1-fabrika-ltagY2" class="f1-fabrika-tag f1-fabrika-tagok f1-fabrika-ltag">yenilendi</span></div>
           <div id="f1-fabrika-line2" class="f1-fabrika-pline" style="top: 144px; border-left-color: #1f8a4c">liste: api.ornek.com pinli</div>
           <div id="f1-fabrika-line3" class="f1-fabrika-pline" style="top: 196px; border-left-color: #f5c518">PinVault-Token: 5 dk</div>
           <div id="f1-fabrika-line4" class="f1-fabrika-pline" style="top: 248px; border-left-color: #0f0f0f">dosya: saha-ayarlari</div>
@@ -719,6 +768,13 @@
       <div id="f1-fabrika-ok10" data-layout-allow-overlap class="f1-fabrika-pk f1-fabrika-grn">200 OK</div>
       <div id="f1-fabrika-dosyaA" data-layout-allow-overlap class="f1-fabrika-pk"><svg class="f1-fabrika-lk" viewBox="0 0 16 18" xmlns="http://www.w3.org/2000/svg"><path d="M4 8 V3 H12 V8" fill="none" stroke="#0F0F0F" stroke-width="2.5" /><rect x="1" y="8" width="14" height="10" fill="#0F0F0F" /></svg>dosya</div>
       <div id="f1-fabrika-dosyaB" data-layout-allow-overlap class="f1-fabrika-pk"><svg class="f1-fabrika-lk" viewBox="0 0 16 18" xmlns="http://www.w3.org/2000/svg"><path d="M4 8 V3 H12 V8" fill="none" stroke="#0F0F0F" stroke-width="2.5" /><rect x="1" y="8" width="14" height="10" fill="#0F0F0F" /></svg>dosya</div>
+      <!-- the phone's own card, parked beside the phone after step 7 -->
+      <div id="f1-fabrika-cardpark" data-layout-allow-overlap class="f1-fabrika-card"><div class="f1-fabrika-cardbar"></div><div class="f1-fabrika-cardtxt">tablet-07</div><span id="f1-fabrika-ctagY1" class="f1-fabrika-tag f1-fabrika-tagok f1-fabrika-ctag">yenilendi</span><span id="f1-fabrika-ctagS" class="f1-fabrika-tag f1-fabrika-tagold f1-fabrika-ctag">süresi doldu</span><span id="f1-fabrika-ctagY2" class="f1-fabrika-tag f1-fabrika-tagok f1-fabrika-ctag">yenilendi</span></div>
+      <!-- renewal (12a) and recovery (12b) -->
+      <div id="f1-fabrika-yenile" data-layout-allow-overlap class="f1-fabrika-pk">yenileme isteği<span class="f1-fabrika-ontokp"></span></div>
+      <div id="f1-fabrika-card90" data-layout-allow-overlap class="f1-fabrika-card" style="width: 200px"><div class="f1-fabrika-cardbar"></div><div class="f1-fabrika-cardtxt">tablet-07 · 90 gün</div></div>
+      <div id="f1-fabrika-kurtar" data-layout-allow-overlap class="f1-fabrika-pk f1-fabrika-pk2"><span>kurtarma isteği</span><span>· imzalı</span></div>
+      <div id="f1-fabrika-card93" data-layout-allow-overlap class="f1-fabrika-card"><div class="f1-fabrika-cardbar"></div><div class="f1-fabrika-cardtxt">tablet-07</div></div>
       <!-- the quick second round -->
       <div id="f1-fabrika-card12" data-layout-allow-overlap class="f1-fabrika-card"><div class="f1-fabrika-cardbar"></div><div class="f1-fabrika-cardtxt">tablet-07</div></div>
       <div id="f1-fabrika-list12" data-layout-allow-overlap class="f1-fabrika-pk">liste · İMZALI<span class="f1-fabrika-seal"></span></div>
@@ -741,7 +797,9 @@
         <div id="f1-fabrika-cap8" class="f1-fabrika-capline">9 · Atestasyon: telefon raporunu gönderir, 5 dakikalık PinVault-Token alır.</div>
         <div id="f1-fabrika-cap9" class="f1-fabrika-capline">10 · İlk istek: pin listeden, PinVault-Token başlıkta; API sunucusu doğrular: 200 OK.</div>
         <div id="f1-fabrika-cap10" class="f1-fabrika-capline">Dosya: yönetici panelden yükler; telefon kendi dosyasını 8092'den alır.</div>
-        <div id="f1-fabrika-cap11" class="f1-fabrika-capline">Fabrika çalışmaya devam eder: her açılışta kart, liste, PinVault-Token; her istekte PinVault-Token.</div>
+        <div id="f1-fabrika-cap11" class="f1-fabrika-capline">Yenileme: kartın süresinin üçte biri kalınca telefon 8092'den aynı anahtarla yeni kart alır.</div>
+        <div id="f1-fabrika-cap12" class="f1-fabrika-capline f1-fabrika-caplong">Kurtarma: kartın süresi dolduysa telefon 8093'e gider, kimliğini aynı anahtarın imzasıyla kanıtlar ve yeni kartını alır.</div>
+        <div id="f1-fabrika-cap13" class="f1-fabrika-capline">Fabrika çalışmaya devam eder: her açılışta kart, liste, PinVault-Token; her istekte PinVault-Token.</div>
       </div>
 
       <!-- closing title: settles over the caption bar's place -->
@@ -847,7 +905,7 @@
         tl.fromTo($("underline"), { scaleX: 0, x: 0, opacity: 1 }, { scaleX: 1, x: 0, opacity: 1, duration: 0.6, ease: SOFT }, 4.1);
         tl.to($("underline"), { opacity: 0, duration: 0.4, ease: SOFT }, 53.0);
 
-        var CAPS = [4.0, 9.0, 13.5, 19.0, 23.0, 27.0, 32.0, 37.0, 42.0, 47.0, 53.0, 59.0];
+        var CAPS = [4.0, 9.0, 13.5, 19.0, 23.0, 27.0, 32.0, 37.0, 42.0, 47.0, 53.0, 59.0, 65.0, 72.0];
         for (var c = 0; c < CAPS.length; c++) {
           tl.fromTo($("cap" + c), { opacity: 0, y: 14 }, { opacity: 1, y: 0, duration: 0.5, ease: SOFT }, CAPS[c] + 0.1);
           if (c > 0) {
@@ -906,6 +964,7 @@
         trip("card7", [[712, 335], [690, 335], [690, 312], [392, 312]], 34.4, 1.3);
         hl(["phone"], PINK, 35.7);
         lineIn(1, 36.1);
+        appear($("cardpark"), [420, 640], 36.1, 0.5);
         hl(["ca", "p91", "phone"], INK, 36.6);
 
         // ---------- Scene 8 (37.0–42.0): card to 8092; signed list returns ----------
@@ -947,18 +1006,59 @@
         lineIn(4, 57.2);
         hl(["admin", "p90", "depo", "p92", "phone"], INK, 58.6);
 
-        // ---------- Scene 12 (59.0–65.0): the factory keeps running — a quick, quiet round ----------
-        trip("card12", [[392, 422], [560, 422]], 59.1, 0.6, 0.2, 0.2);
-        trip("list12", DEPO_TO_PHONE, 60.0, 0.8, 0.2, 0.2);
-        trip("rapor12", [[380, 422], [560, 422]], 61.1, 0.6, 0.2, 0.2);
-        trip("pvt12", [[740, 422], [420, 422]], 62.0, 0.7, 0.2, 0.2);
-        trip("istek12", TOP, 62.95, 0.85, 0.2, 0.2);
-        trip("ok12", TOP_BACK, 64.05, 0.8, 0.2, 0.2);
+        // state tags (all hidden until their beat)
+        function tagIn(n, t) {
+          tl.fromTo($(n), { opacity: 0, x: -6 }, { opacity: 1, x: 0, duration: 0.4, ease: SOFT }, t);
+        }
+        function tagOut(n, t) {
+          tl.to($(n), { opacity: 0, duration: 0.3, ease: "power2.in" }, t);
+        }
 
-        // ---------- Scene 13 (65.0–70.0): closing title settles in the caption's place; hold ----------
-        tl.to([document.getElementById("f1-fabrika-cap11"), document.querySelector('[class~="f1-fabrika-caplabel"]')], { opacity: 0, duration: 0.4, ease: "power3.in" }, 64.9);
-        tl.fromTo($("title"), { opacity: 0, y: 20 }, { opacity: 1, y: 0, duration: 0.9, ease: SOFT }, 65.4);
-        tl.to({}, { duration: 0.01 }, 69.99);
+        // ---------- Scene 12a (59.0–65.0): renewal — same key, new card via 8092 ----------
+        hl(["phone"], PINK, 59.3);
+        trip("yenile", [[420, 422], [690, 422], [690, 335], [712, 335]], 59.4, 1.5);
+        hl(["p92"], GREEN, 60.2);
+        hl(["ca"], PINK, 61.0);
+        trip("card90", [[712, 335], [690, 335], [690, 422], [420, 422]], 61.5, 1.3);
+        tl.fromTo($("line1txt"), { y: 0 }, { y: -9, duration: 0.4, ease: SOFT }, 63.2);
+        tagIn("ltagY1", 63.3);
+        tagIn("ctagY1", 63.3);
+        hl(["phone", "p92", "ca"], INK, 64.6);
+
+        // ---------- Scene 12b (65.0–72.0): recovery — expired card, 8093 comes alive ----------
+        tagOut("ltagY1", 65.4);
+        tagOut("ctagY1", 65.4);
+        tl.fromTo($("cardpark"), { filter: "grayscale(0)" }, { filter: "grayscale(1)", duration: 0.5, ease: SOFT }, 65.5);
+        tl.fromTo($("line1"), { filter: "grayscale(0)" }, { filter: "grayscale(1)", duration: 0.5, ease: SOFT }, 65.5);
+        tagIn("ltagS", 65.8);
+        tagIn("ctagS", 65.8);
+        tl.to($("p93"), { opacity: 1, duration: 0.5, ease: SOFT }, 66.4);
+        tl.fromTo([$("b93a"), $("b93b")], { attr: { "stroke-opacity": 0.3 } }, { attr: { "stroke-opacity": 1 }, duration: 0.5, ease: SOFT }, 66.4);
+        trip("kurtar", [[420, 532], [690, 532], [690, 335], [712, 335]], 66.9, 1.5);
+        hl(["p93"], GREEN, 67.7);
+        hl(["ca"], PINK, 68.5);
+        trip("card93", [[712, 335], [690, 335], [690, 532], [400, 532]], 69.0, 1.3);
+        hl(["phone"], PINK, 70.4);
+        tagOut("ltagS", 70.5);
+        tagOut("ctagS", 70.5);
+        tl.to($("cardpark"), { filter: "grayscale(0)", duration: 0.5, ease: SOFT }, 70.6);
+        tl.to($("line1"), { filter: "grayscale(0)", duration: 0.5, ease: SOFT }, 70.6);
+        tagIn("ltagY2", 70.8);
+        tagIn("ctagY2", 70.8);
+        hl(["phone", "p93", "ca"], INK, 71.6);
+
+        // ---------- Scene 12 (72.0–78.0): the factory keeps running — a quick, quiet round ----------
+        trip("card12", [[392, 422], [560, 422]], 72.1, 0.6, 0.2, 0.2);
+        trip("list12", DEPO_TO_PHONE, 73.0, 0.8, 0.2, 0.2);
+        trip("rapor12", [[380, 422], [560, 422]], 74.1, 0.6, 0.2, 0.2);
+        trip("pvt12", [[740, 422], [420, 422]], 75.0, 0.7, 0.2, 0.2);
+        trip("istek12", TOP, 75.95, 0.85, 0.2, 0.2);
+        trip("ok12", TOP_BACK, 76.85, 0.8, 0.2, 0.2);
+
+        // ---------- Scene 13 (78.0–83.0): closing title settles in the caption's place; hold ----------
+        tl.to([document.getElementById("f1-fabrika-cap13"), document.querySelector('[class~="f1-fabrika-caplabel"]')], { opacity: 0, duration: 0.4, ease: "power3.in" }, 77.9);
+        tl.fromTo($("title"), { opacity: 0, y: 20 }, { opacity: 1, y: 0, duration: 0.9, ease: SOFT }, 78.4);
+        tl.to({}, { duration: 0.01 }, 82.99);
 
         window.__timelines = window.__timelines || {};
         window.__timelines[FID] = tl;

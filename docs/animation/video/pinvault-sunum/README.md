@@ -1,6 +1,6 @@
 # PinVault — presentation film (Turkish)
 
-A silent 9:45 film for presenting PinVault, in four parts, each opened by a chapter card:
+A silent 9:58 film for presenting PinVault, in four parts, each opened by a chapter card:
 
 1. **Amaç: SSL pinning** — who could sit in the middle, what normal TLS trusts, how pinning checks the
    fingerprint, and the three things pinning alone does not solve.
@@ -15,8 +15,8 @@ A silent 9:45 film for presenting PinVault, in four parts, each opened by a chap
    token, the phone's download and the panel's download history, the three protections (at_rest,
    end_to_end, user_auth), and unlock, offline lifetime and wipe on revocation on the phone.
 
-The film ends with "İşleyen fabrika", one fixed map of the whole system on which all ten rings and the
-file flow run as packets on conveyor belts, then a map of every key and its algorithm, what happens afterwards, and a summary.
+The film ends with "İşleyen fabrika", one fixed map of the whole system on which all ten rings, the file flow,
+renewal and recovery (8093) run as packets on conveyor belts, then a map of every key and its algorithm, what happens afterwards, and a summary.
 
 The rendered file is [`../../pinvault-sunum.tr.mp4`](../../pinvault-sunum.tr.mp4).
 
