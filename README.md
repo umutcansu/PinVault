@@ -1772,7 +1772,7 @@ Each step shows its panel screen first. Near the end a single "working
 factory" scene plays the whole flow on one fixed map of the system.
 
 [▶ pinvault-sunum.tr.mp4](docs/animation/pinvault-sunum.tr.mp4) (1920×1080,
-13.5 MB), built from
+15.1 MB), built from
 [`docs/animation/video/pinvault-sunum/`](docs/animation/video/pinvault-sunum).
 The two videos below are its shorter parts.
 
