@@ -2,7 +2,13 @@ import React, { useEffect, useState } from 'react';
 import { Platform, Text } from 'react-native';
 import PinVault from '@umutcansu/react-native-pinvault';
 import { HOST } from '../generated/hostConfig';
-import { TestControls } from '../generated/testControls';
+// Test kontrolleri iki kilitle dışarıda: release'te gen-host-config.js
+// testControls.ts'yi boş yazar, ayrıca __DEV__ false olduğu için bu require
+// release paketinde hiç kalmaz (Metro ölü dalı atar).
+const TestControls: React.ComponentType | null = __DEV__
+  ? // eslint-disable-next-line @typescript-eslint/no-require-imports
+    (require('../generated/testControls') as typeof import('../generated/testControls')).TestControls
+  : null;
 import { TARGET_URL } from '../pinvault';
 import { describeError, useAction, useApp } from '../state';
 import { Button, Card, Status, styles } from '../ui';
@@ -37,15 +43,14 @@ export function MainScreen() {
       }
     });
 
-  // React Native'in kendi fetch'i: Android'de PinVaultNetworking ile pinli,
-  // iOS'ta pinsiz (kütüphane bunu start sırasında log'a da yazar).
+  // React Native'in kendi fetch'i de PinVault'tan geçer: Android'de OkHttp
+  // kancaları (eklentinin content provider'ı uygulama açılırken kurar), iOS'ta
+  // eklentinin RCTURLRequestHandler'ı.
   const globalFetch = () =>
     action.run(`RN fetch: ${TARGET_URL}`, async () => {
       try {
         const r = await fetch(TARGET_URL);
-        return Platform.OS === 'android'
-          ? `✅ RN fetch başarılı — HTTP ${r.status}\n(Android: istek PinVault'un pinli istemcisinden geçti)`
-          : `⚠️ RN fetch — HTTP ${r.status}\n(iOS: React Native'in fetch'i pinlenmez; pinli istek için PinVault.fetch)`;
+        return `✅ RN fetch başarılı — HTTP ${r.status}\n(${Platform.OS === 'android' ? 'Android' : 'iOS'}: istek PinVault'un pinli bağlantısından geçti)`;
       } catch (e) {
         return `❌ RN fetch reddedildi\n${describeError(e)}`;
       }

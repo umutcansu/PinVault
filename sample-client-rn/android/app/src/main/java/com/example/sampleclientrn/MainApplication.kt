@@ -6,7 +6,6 @@ import com.facebook.react.ReactApplication
 import com.facebook.react.ReactHost
 import com.facebook.react.ReactNativeApplicationEntryPoint.loadReactNative
 import com.facebook.react.defaults.DefaultReactHost.getDefaultReactHost
-import io.github.umutcansu.pinvault.reactnative.PinVaultNetworking
 
 class MainApplication : Application(), ReactApplication {
 
@@ -19,10 +18,10 @@ class MainApplication : Application(), ReactApplication {
 
   override fun onCreate() {
     super.onCreate()
-    // React Native'in kendi fetch / WebSocket istemcileri de PinVault'tan geçsin:
-    // RN bunları bir kez kurar, bu yüzden React başlamadan önce. start() dönene
-    // kadar https istekleri reddedilir (fail closed).
-    PinVaultNetworking.install(this)
+    // React Native'in kendi fetch / WebSocket / resim istemcileri PinVault'tan
+    // geçer: eklentinin content provider'ı kancaları bu satırdan ÖNCE kurar
+    // (PinVaultNetworking.install burada gerekmez). start() dönene kadar https
+    // istekleri reddedilir (fail closed).
     loadReactNative(this)
   }
 }

@@ -2,6 +2,7 @@
 // sample-host.properties → src/generated/hostConfig.ts (+ src/generated/testControls.ts)
 //
 //   node scripts/gen-host-config.js [--props <dosya>] [--release] [--platform android|ios]
+//                                   [--native-out <klasör>]
 //
 // Dosya verilmezse SAMPLE_HOST_PROPS, o da yoksa sample-client-rn/sample-host.properties.
 // Android'deki BuildConfig alanlarının ve iOS'taki SampleHostConfig.swift'in
@@ -9,6 +10,11 @@
 // değer derlemeyi durdurur. Değerler TypeScript'e JSON.stringify ile yazılır,
 // yani hiçbir değer koda dönüşemez. --release (ya da CONFIGURATION=Release):
 // demo değerleri reddedilir ve test kontrolleri pakete hiç girmez.
+// --native-out (yalnız --release ile): eklentinin yerel güvenlik dosyası
+// (pinvault_security.json) bu klasöre yazılır — sabit noktalar (bootstrap pin'leri,
+// imza / kurtarma anahtarları, kaç imza, kapsam, istemci CA pin'i) JS paketinden
+// değil APK'nın / uygulama paketinin kendisinden gelsin (eklenti README'si,
+// "Native security file"). Android'de Gradle, iOS'ta Xcode betiği verir.
 // Üçüncü parti bağımlılık yok (react-native-config yerine).
 'use strict';
 
@@ -25,6 +31,7 @@ function arg(name) {
 const release =
   process.argv.includes('--release') || /^release$/i.test(process.env.CONFIGURATION || '');
 const platform = arg('--platform') || '';
+const nativeOut = arg('--native-out');
 let props = arg('--props') || process.env.SAMPLE_HOST_PROPS || path.join(HERE, 'sample-host.properties');
 if (!path.isAbsolute(props)) props = path.resolve(HERE, props);
 const outDir = path.join(HERE, 'src', 'generated');
@@ -179,6 +186,39 @@ write(
   'hostConfig.ts',
   `${header}export const HOST = ${JSON.stringify({ ...host, release }, null, 2)} as const;\n`,
 );
+// ── Yerel güvenlik dosyası (release) ─────────────────────────────────────────
+// src/pinvault.ts'nin kurduğu iki bloğun sabit noktaları, aynı kurallarla:
+// JS config'i bunları tekrar eder (eşit olmalı), farklı bir değer start'ı durdurur.
+function securityFile() {
+  const pinEntry = { hostname: host.ip, sha256: host.bootstrapPins };
+  const keys = host.signingPublicKeys.length > 0 ? host.signingPublicKeys : [host.signingPublicKey];
+  const signing = {
+    signaturePublicKeys: keys,
+    requiredSignatures: host.requiredSignatures,
+    ...(host.recoveryPublicKeys.length > 0 ? { recoveryPublicKeys: host.recoveryPublicKeys } : {}),
+    ...(host.clientCaPins.length > 0 ? { clientCaPins: host.clientCaPins } : {}),
+  };
+  const mtlsPins = [pinEntry];
+  if (host.recoveryPort && host.recoveryPins.length > 0) {
+    mtlsPins.push({ hostname: `${host.ip}:${host.recoveryPort}`, sha256: host.recoveryPins });
+  }
+  return {
+    configApis: [
+      { id: 'sample-host', bootstrapPins: [pinEntry], ...signing, ...(host.tlsScope ? { serverScope: host.tlsScope } : {}) },
+      { id: 'sample-mtls', bootstrapPins: mtlsPins, ...signing, ...(host.mtlsScope ? { serverScope: host.mtlsScope } : {}) },
+    ],
+  };
+}
+if (nativeOut) {
+  if (!release) fail('--native-out yalnız --release ile: debug derlemesi yerel güvenlik dosyası taşımaz.');
+  const dir = path.resolve(nativeOut);
+  fs.mkdirSync(dir, { recursive: true });
+  const target = path.join(dir, 'pinvault_security.json');
+  const content = JSON.stringify(securityFile(), null, 2) + '\n';
+  if (!fs.existsSync(target) || fs.readFileSync(target, 'utf8') !== content) fs.writeFileSync(target, content);
+  console.log(`gen-host-config: yerel güvenlik dosyası → ${target}`);
+}
+
 // Release'te test kontrolleri modülü hiç içe aktarılmaz: JS paketinde yoktur.
 write(
   'testControls.ts',

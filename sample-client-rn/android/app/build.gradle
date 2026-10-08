@@ -13,15 +13,22 @@ react {
 // Release türü demo değerleriyle derlenmez ve test kontrollerini pakete almaz.
 def appRoot = file("../..")
 def hostProps = providers.gradleProperty("sampleHostProps").orNull ?: System.getenv("SAMPLE_HOST_PROPS") ?: ""
+// Release: eklentinin yerel güvenlik dosyası (assets/pinvault_security.json) da
+// buradan üretilir; yalnız release kaynak kümesinin assets'ine girer.
+def nativeSecurityDir = layout.buildDirectory.dir("generated/pinvault/release/assets").get().asFile
 ["Debug", "Release"].each { type ->
     def task = tasks.register("genHostConfig${type}", Exec) {
         workingDir appRoot
         def args = ["node", "scripts/gen-host-config.js", "--platform", "android"]
-        if (type == "Release") args += "--release"
+        if (type == "Release") args += ["--release", "--native-out", nativeSecurityDir.absolutePath]
         if (!hostProps.isEmpty()) args += ["--props", new File(hostProps).absolutePath]
         commandLine args
     }
     tasks.matching { it.name == "pre${type}Build" }.configureEach { dependsOn task }
+    // Görev sırasına bırakılmaz: JS paketi ve assets, üretilen dosyalardan sonra.
+    tasks.matching { it.name == "createBundle${type}JsAndAssets" || it.name == "merge${type}Assets" }.configureEach {
+        dependsOn task
+    }
 }
 
 // ── Test bayrakları (yalnız debug) ──────────────────────────────────────────
@@ -59,6 +66,11 @@ android {
     }
     buildFeatures {
         buildConfig true
+    }
+    sourceSets {
+        release {
+            assets.srcDirs += [nativeSecurityDir]
+        }
     }
     signingConfigs {
         if (releaseSigningReady) {
