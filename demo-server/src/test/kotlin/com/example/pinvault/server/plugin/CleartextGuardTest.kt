@@ -71,7 +71,7 @@ class CleartextGuardTest {
         for (address in listOf("127.0.0.1", "127.8.9.10", "::1", "0:0:0:0:0:0:0:1", "localhost")) {
             assertTrue(isLoopbackAddress(address), address)
         }
-        for (address in listOf("192.168.1.80", "10.0.2.2", "172.17.0.1", "0.0.0.0", "2001:db8::1", "fe80::1%en0",
+        for (address in listOf("192.168.1.10", "10.0.2.2", "172.17.0.1", "0.0.0.0", "2001:db8::1", "fe80::1%en0",
             "localhost.attacker.example", "127.0.0.1.attacker.example", "", "not an address")) {
             assertFalse(isLoopbackAddress(address), address)
         }
@@ -81,7 +81,7 @@ class CleartextGuardTest {
     fun `the guarded endpoints are the ones that take a token or return a key`() {
         assertTrue(carriesDeviceSecrets("/api/v1/client-certs/enroll", HttpMethod.Post))
         assertTrue(carriesDeviceSecrets("/api/v1/client-certs/renew", HttpMethod.Post))
-        assertTrue(carriesDeviceSecrets("/api/v1/client-certs/192.168.1.217/download", HttpMethod.Get))
+        assertTrue(carriesDeviceSecrets("/api/v1/client-certs/192.168.1.20/download", HttpMethod.Get))
         assertTrue(carriesDeviceSecrets("/api/v1/vault/ml-model", HttpMethod.Get))
         assertTrue(carriesDeviceSecrets("/api/v1/vault/devices/android-1/public-key", HttpMethod.Post))
         assertFalse(carriesDeviceSecrets("/api/v1/vault/distributions", HttpMethod.Get), "an admin route, not a file")

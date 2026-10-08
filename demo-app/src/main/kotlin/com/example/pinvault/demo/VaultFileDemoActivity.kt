@@ -28,7 +28,7 @@ class VaultFileDemoActivity : AppCompatActivity() {
             val isEmulator = android.os.Build.FINGERPRINT.contains("generic") ||
                 android.os.Build.MODEL.contains("Emulator") ||
                 android.os.Build.PRODUCT.contains("sdk")
-            if (isEmulator) "10.0.2.2" else "192.168.1.80"
+            if (isEmulator) "10.0.2.2" else "192.168.1.10"
         }
         private val CONFIG_SERVER_URL get() = "https://$HOST_IP:8091/"
         private val MANAGEMENT_URL get() = "http://$HOST_IP:8090/"

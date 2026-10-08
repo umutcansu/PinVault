@@ -278,7 +278,7 @@ button:focus-visible{outline:2px solid var(--border-accent);outline-offset:2px}
 <div class="back" id="back"></div>
 <svg width="100%" viewBox="0 0 680 236" role="img"><title>Requests, tokens and certificates the device sends to the server</title><desc>On the left the device, and below it the admin, the app's own server or another device; on the right the server's 8090 (admin), 8091 (TLS), 8092 (mTLS), 8093 (TLS) ports and the server store.</desc>
 <rect x="300" y="4" width="372" height="214" rx="12" fill="none" stroke="var(--border-strong)" stroke-width="0.5" stroke-dasharray="4 4"/>
-<text class="ts" x="312" y="212">Server · 192.168.1.80</text>
+<text class="ts" x="312" y="212">Server · 192.168.1.10</text>
 <g id="g-dev" class="c-gray"><rect x="12" y="52" width="160" height="54" rx="4"/><text id="dev-n" class="th" x="92" y="75" text-anchor="middle">Device · tablet-07</text><text class="ts" x="92" y="93" text-anchor="middle">pins in the APK</text></g>
 <g id="g-att" class="c-red" opacity="0"><rect x="12" y="150" width="160" height="54" rx="4"/><text id="att-n" class="th" x="92" y="173" text-anchor="middle"> </text><text id="att-s" class="ts" x="92" y="191" text-anchor="middle"> </text></g>
 <g id="g90" class="c-amber"><rect x="318" y="12" width="150" height="36" rx="4"/><text class="th" x="393" y="27" text-anchor="middle">8090 · admin</text><text class="ts" x="393" y="42" text-anchor="middle">dashboard · API key</text></g>
@@ -382,7 +382,7 @@ key: RSA 2048
 issuer: itself (self-signed)
 validity: 365 days
 SAN: localhost, 127.0.0.1, 10.0.2.2,
-     the machine's IPs (192.168.1.80)
+     the machine's IPs (192.168.1.10)
 
 ~// certs/demo-server.backup.jks
 backup key: RSA 2048 (standby)`;
@@ -393,7 +393,7 @@ const S_SRC_SRV=`~// certs/demo-server.pins and the dashboard:
 
 ~// in the app (APK):
 bootstrapPins(
-  HostPin("192.168.1.80", listOf(
+  HostPin("192.168.1.10", listOf(
     "ziA0hyMD…", "vXC1UZ8O…")))
 ~// no port given, so valid on 8091 and 8092
 ~// (8093 has its own pin, with a port)`;
@@ -415,7 +415,7 @@ const S_SRC_REC=`~// printed at startup, shown in the dashboard:
 
 ~// in the app (APK), for this port only:
 bootstrapPins(
-  HostPin("192.168.1.80:8093", listOf(
+  HostPin("192.168.1.10:8093", listOf(
     "WnVy/Wig…", "TOZS0AAI…")))`;
 const Q_SRC_CCA=`~// certs/client-ca.jks (on first start, 10 years)
 +subject: CN=PinVault Client CA
@@ -455,7 +455,7 @@ validity: 90 days (CLIENT_CERT_TTL_DAYS)
 ~// renewed with the same key on day 60 via 8092,
 ~// or via 8093 if it has expired`;
 const Q_SRC_HOST=`~// the app's own servers
-~// (e.g. api.example.com, 192.168.1.217:9443)
+~// (e.g. api.example.com, 192.168.1.20:9443)
 
 +their pins: the signed list from the config API
 ~// not in the APK; changed from the dashboard
@@ -474,7 +474,7 @@ and the host version; devices download it`;
 
 const Q_TLSONLY=`GET /api/v1/certificate-config
     ?currentVersion=0
-Host: 192.168.1.80:8091
+Host: 192.168.1.10:8091
 X-PinVault-Features:
     redelivery,multisig,keyset
 
@@ -499,9 +499,9 @@ const S_TLSONLY=`200 OK
  "configApiId": "default-tls"}
 ~// expiresAt = issuedAt + 24 hours
 ~// (CONFIG_TTL_SECONDS, default 86400)`;
-const Q_MITM=`~// the device connects to 192.168.1.80:8091
+const Q_MITM=`~// the device connects to 192.168.1.10:8091
 ~// the interceptor shows its own certificate:
-!subject: CN=192.168.1.80 (fake)
+!subject: CN=192.168.1.10 (fake)
 !key hash: Zx91…
 ~// the pins in the APK (for this host):
 ziA0hyMD…
@@ -515,11 +515,11 @@ const S_MITM=`!connection dropped on the device side
 ~// obtained from a CA does not match either`;
 const Q_MTLSFLOW=`~// once on first start, TLS:
 POST /api/v1/client-certs/enroll
-Host: 192.168.1.80:8091
+Host: 192.168.1.10:8091
 
 ~// then on every init and request, mTLS:
 GET /api/v1/certificate-config
-Host: 192.168.1.80:8092
+Host: 192.168.1.10:8092
 ~// + device certificate and Keystore signature`;
 const S_MTLSFLOW=`~// from 8091:
 200 OK  {"chain": ["…device…", "…CA…"]}
@@ -558,7 +558,7 @@ report: only on its own behalf
 +revocation: 403 on the next request
 +renewal: in the last third of its life, via 8092
 +recovery: via 8093 if expired`;
-const Q_PIN_OK=`~// the phone connects to 192.168.1.80:8091
+const Q_PIN_OK=`~// the phone connects to 192.168.1.10:8091
 ~// the server shows its certificate:
 subject: CN=localhost (demo-server)
 +key hash (pin): ziA0hyMD…
@@ -598,7 +598,7 @@ tablet-09  token Zt2c…  → enroll → certificate
 ~// same APK, a separate token per device;
 ~// a new token does not need a new APK`;
 const Q_TOK_MINT=`POST /api/v1/enrollment-tokens/generate
-Host: 192.168.1.80:8090
+Host: 192.168.1.10:8090
 +X-API-Key: ••••••••
 Content-Type: application/json
 
@@ -692,7 +692,7 @@ sha256("Qk3x…") = 9f2ce1…a07b
 ~// the same token again: 401
 ~// the library did not store the token`;
 const Q_TOK_BIND=`POST /api/v1/enrollment-tokens/generate
-Host: 192.168.1.80:8090
+Host: 192.168.1.10:8090
 +X-API-Key: ••••••••
 Content-Type: application/json
 
@@ -719,7 +719,7 @@ POST /api/v1/client-certs/enroll
 +// same identity → counts as proven
 ~// client_certs.device_uid_proven = 1`;
 const Q_ENR_UIDX=`POST /api/v1/client-certs/enroll
-Host: 192.168.1.80:8091
+Host: 192.168.1.10:8091
 X-PinVault-Features: csr
 
 {
@@ -743,7 +743,7 @@ const S_ENR_UIDX=`403 Forbidden
 ~// with the same token`;
 const Q_VTOK_MINT=`POST /api/v1/config-apis/mtls-8092/
      vault/ml-model/tokens
-Host: 192.168.1.80:8090
+Host: 192.168.1.10:8090
 +X-API-Key: ••••••••
 Content-Type: application/json
 
@@ -772,7 +772,7 @@ const Q_VTOK_APP=`~// the app code
 ~// tokenStore: the app's own encrypted
 ~// storage (EncryptedSharedPreferences in the demo)`;
 const S_VTOK_APP=`GET /api/v1/vault/ml-model?version=2
-Host: 192.168.1.80:8092
+Host: 192.168.1.10:8092
 X-Device-Id: 3f2a9c0d81b4e6a7
 +X-Vault-Token: Zp7q…
 
@@ -1067,7 +1067,7 @@ const REQ1={dev:'samsung SM-X200',uid:'8c41d2e07a9b3f15',ip:'192.168.1.54',vc:VC
 const REQ2={dev:'Zebra Technologies TC21',uid:'3c9e51a8d02f7b64',ip:'192.168.1.61',vc:VC2,id:'device-w3hvpz',pol:'without a code',open:1},REQ2A=Object.assign({},REQ2,{approved:1});
 const REQ3={dev:'Zebra Technologies TC52',uid:'5be0a2c97d41f683',ip:'192.168.1.63',vc:'KP2M-8VXC-Y4N9-QB3F',id:'device-q8n2mk',pol:'without a code',open:1,dup:1},REQ4={dev:'Zebra Technologies TC52',uid:'5be0a2c97d41f683',ip:'192.168.1.63',vc:'H5WR-0TQ3-D7GS-2JKM',id:'device-m4c7tx',pol:'without a code',open:1,dup:1};
 const Q_POL_MINT=`POST /api/v1/enrollment-policies
-Host: 192.168.1.80:8090
+Host: 192.168.1.10:8090
 +X-API-Key: ••••••••
 Content-Type: application/json
 
@@ -1091,7 +1091,7 @@ Cache-Control: no-store
 ~// 25 characters, 125 bits; case and dashes
 ~// do not matter`;
 const Q_POL_ENR=`POST /api/v1/client-certs/enroll
-Host: 192.168.1.80:8091
+Host: 192.168.1.10:8091
 X-PinVault-Features: csr
 
 {
@@ -1135,7 +1135,7 @@ const S_POL_LIST=`200 OK
 {"status": "approved"}
 ~// 1 / 50 on the policy; written to the audit log`;
 const Q_POL_PICK=`POST /api/v1/client-certs/enroll
-Host: 192.168.1.80:8091
+Host: 192.168.1.10:8091
 X-PinVault-Features: csr
 
 {
@@ -1155,7 +1155,7 @@ X-PinVault-Cert-Format: pem-chain
 ~// one arriving with a different key:
 ~// 403 enrollment_request_mismatch`;
 const Q_OPEN_APPLY=`POST /api/v1/client-certs/enroll
-Host: 192.168.1.80:8091
+Host: 192.168.1.10:8091
 X-PinVault-Features: csr
 
 {
@@ -1195,12 +1195,12 @@ ENROLLMENT_REQUEST_TTL_HOURS=24
 const CERT_REV={id:'3f2a9c0d81b4e6a7',revoked:1},CERT_NEW={id:'3f2a9c0d81b4e6a7',revoked:0};
 const Q_FORGET=`~// "Forget identity" on a revoked row in the dashboard:
 POST /api/v1/client-certs/3f2a9c0d81b4e6a7/forget
-Host: 192.168.1.80:8090
+Host: 192.168.1.10:8090
 +X-API-Key: ••••••••
 
 ~// phone: Unenroll, then enroll again
 POST /api/v1/client-certs/enroll
-Host: 192.168.1.80:8091
+Host: 192.168.1.10:8091
 {
 +  "deviceId": "3f2a9c0d81b4e6a7",
   "csr": "MIHn… (new key)"
@@ -1218,7 +1218,7 @@ const S_FORGET=`200 OK
 ~// enrollment with the old key, under any identity:
 !403 {"error":"revoked"}`;
 const H_ENR=`POST /api/v1/client-certs/enroll
-Host: 192.168.1.80:8091
+Host: 192.168.1.10:8091
 Content-Type: application/json
 X-PinVault-Features: csr`;
 const Q_ENR=`${H_ENR}
@@ -1315,7 +1315,7 @@ const S_OPEN=`?200 OK
 const H_CFG=`GET /api/v1/certificate-config
     ?currentVersion=0`;
 const Q_CFG=`${H_CFG}
-Host: 192.168.1.80:8092
+Host: 192.168.1.10:8092
 X-PinVault-Features:
     redelivery,multisig,keyset
 ~// signed path; the demo debug build uses
@@ -1362,7 +1362,7 @@ const S_CFG_STORE=`~// the phone rejects it when:
 
 ~// if the same envelope arrives again: AlreadyCurrent`;
 const Q_CFG_NOCERT=`${H_CFG}
-Host: 192.168.1.80:8092
+Host: 192.168.1.10:8092
 
 ~// server: show your device certificate
 !// certificate sent: none`;
@@ -1371,7 +1371,7 @@ const S_NOCONN=`!connection could not be established
 ~// the server cut the connection in the handshake`;
 const Q_CFG_08=`GET /api/v1/certificate-config
     ?hosts=api.example.com,odeme.example.com
-Host: 192.168.1.80:8092
+Host: 192.168.1.10:8092
 !X-Device-Id: 3f2a9c0d81b4e6a7
 ~// the ANDROID_ID of tablet-07;
 ~// the certificate on the connection is tablet-08's`;
@@ -1385,7 +1385,7 @@ const S_CFG_08=`403 Forbidden
 ~// previously: the pins of hosts opened
 ~// to tablet-07 were returned`;
 const Q_CFG_TLS=`${H_CFG}
-Host: 192.168.1.80:8091
+Host: 192.168.1.10:8091
 ~// plain TLS: no certificate requested`;
 const S_CFG_TLS=`200 OK
 {
@@ -1397,7 +1397,7 @@ const S_CFG_TLS=`200 OK
 const H_HOST=`GET /api/v1/client-certs/
     api.example.com/download`;
 const Q_HOST=`${H_HOST}
-Host: 192.168.1.80:8092
+Host: 192.168.1.10:8092
 X-PinVault-Features: p12password`;
 const S_HOST=`200 OK
 Content-Type: application/octet-stream
@@ -1429,17 +1429,17 @@ Content-Type: application/octet-stream
 ~// the P12 is wrapped with a new one-time
 ~// password on every download; the content is the same`;
 const Q_CCH=`~// the app code (mTLS block)
-.configApi("mtls-8092", "https://192.168.1.80:8092/") {
+.configApi("mtls-8092", "https://192.168.1.10:8092/") {
     bootstrapPins(…)
-    enrollmentUrl("https://192.168.1.80:8091/")
-    renewalUrl("https://192.168.1.80:8093/")
-+    clientCertHosts("https://192.168.1.217:9443/")
+    enrollmentUrl("https://192.168.1.10:8091/")
+    renewalUrl("https://192.168.1.10:8093/")
++    clientCertHosts("https://192.168.1.20:9443/")
 }
 ~// port required, https only`;
 const S_CCH=`~// the device certificate is shown to:
 +8092 · 8091 · 8093  (the block's own addresses:
 +                    config, enroll, renewal)
-+192.168.1.217:9443 (clientCertHosts)
++192.168.1.20:9443 (clientCertHosts)
 ~// to a server that has its own host certificate:
 ~// that certificate
 
@@ -1449,13 +1449,13 @@ const S_CCH=`~// the device certificate is shown to:
 ~// having a pin in the list is not enough`;
 
 const Q_HEALTH=`GET /health
-Host: 192.168.1.80:8092`;
+Host: 192.168.1.10:8092`;
 const S_HEALTH=`200 OK
 {"status":"ok"}`;
 
 const Q_E2E=`POST /api/v1/vault/devices/
      3f2a9c0d81b4e6a7/public-key
-Host: 192.168.1.80:8092
+Host: 192.168.1.10:8092
 Content-Type: application/json
 
 {
@@ -1473,7 +1473,7 @@ const S_E2E=`200 OK
 409 {"error": "key_change_requires_proof"}`;
 const Q_E2E_08=`POST /api/v1/vault/devices/
 !     3f2a9c0d81b4e6a7/public-key
-Host: 192.168.1.80:8092
+Host: 192.168.1.10:8092
 Content-Type: application/json
 ~// tablet-08 with its own certificate
 
@@ -1490,7 +1490,7 @@ const S_E2E_08_FIXED=`403 Forbidden
 ~// the key of tablet-07 did not change`;
 const Q_E2E_TLS=`POST /api/v1/vault/devices/
      3f2a9c0d81b4e6a7/public-key
-Host: 192.168.1.80:8091
+Host: 192.168.1.10:8091
 +X-Vault-Key: demo-e2e-v2-pixel-6-pro
 +X-Vault-Token: Zp7q…
 ~// the library adds the encrypted file's
@@ -1511,7 +1511,7 @@ const S_E2E_TLS=`~// another device (no token, different key):
 const Q_KEY_FLOOD=`~// with random identities, one after another:
 POST /api/v1/vault/devices/
      random-0031/public-key
-Host: 192.168.1.80:8091
+Host: 192.168.1.10:8091
 Content-Type: application/json
 
 {
@@ -1527,7 +1527,7 @@ const S_KEY_FLOOD=`~// garbage text, EC or a 1024-bit key:
 503 {"error":"device_key_limit_reached"}`;
 
 const Q_VAULT=`GET /api/v1/vault/ml-model?version=2
-Host: 192.168.1.80:8092
+Host: 192.168.1.10:8092
 X-Device-Id: 3f2a9c0d81b4e6a7
 +X-Vault-Token: Zp7q…
 ~// token: only for token policies`;
@@ -1546,14 +1546,14 @@ X-Vault-Signatures-V2: u8Fq…:MEUCIQ…
 ~//   ml-model:3:<sha256 of the bytes>
 ~// if the device version is current: 304 Not Modified`;
 const Q_VAULT_NOCERT=`GET /api/v1/vault/ml-model?version=0
-Host: 192.168.1.80:8092
+Host: 192.168.1.10:8092
 X-Device-Id: 3f2a9c0d81b4e6a7
 X-Vault-Token: Zp7q…
 !// certificate shown: none`;
 const S_VAULT_NOCERT=`!connection could not be established
 ~// it never got as far as sending the token`;
 const Q_VAULT_08=`GET /api/v1/vault/ml-model?version=0
-Host: 192.168.1.80:8092
+Host: 192.168.1.10:8092
 !X-Device-Id: 3f2a9c0d81b4e6a7
 !X-Vault-Token: Zp7q… (stolen)
 ~// tablet-08 with its own certificate`;
@@ -1568,7 +1568,7 @@ const S_VAULT_08_FIXED=`403 Forbidden
 ~// the token was not even looked at`;
 
 const Q_REP=`POST /api/v1/vault/report
-Host: 192.168.1.80:8092
+Host: 192.168.1.10:8092
 Content-Type: application/json
 
 {
@@ -1584,7 +1584,7 @@ Content-Type: application/json
 const S_REP=`200 OK
 {"recorded":"true"}`;
 const Q_REP_08=`POST /api/v1/vault/report
-Host: 192.168.1.80:8092
+Host: 192.168.1.10:8092
 ~// tablet-08 with its own certificate
 
 {
@@ -1609,7 +1609,7 @@ const Q_REN_LOCAL=`~// no network call, the device checks locally
 +// → renew`;
 const H_REN=`POST /api/v1/client-certs/renew`;
 const Q_REN=`${H_REN}
-Host: 192.168.1.80:8092
+Host: 192.168.1.10:8092
 Content-Type: application/json
 X-PinVault-Features: csr
 
@@ -1630,7 +1630,7 @@ X-PinVault-Cert-Format: pem-chain
   …
 }`;
 const Q_REN_08=`${H_REN}
-Host: 192.168.1.80:8092
+Host: 192.168.1.10:8092
 ~// tablet-08 with its own certificate
 
 {
@@ -1651,7 +1651,7 @@ const Q_REC_LOCAL=`~// no network call, the device checks locally
 ~// today: 2027-01-15 → expired
 +// 8092 is not tried → straight to 8093`;
 const Q_REC=`${H_REN}
-Host: 192.168.1.80:8093
+Host: 192.168.1.10:8093
 Content-Type: application/json
 X-PinVault-Features: csr
 
@@ -1672,7 +1672,7 @@ X-PinVault-Cert-Format: pem-chain
   …
 }`;
 const Q_REC_OTHER=`${H_REN}
-Host: 192.168.1.80:8093
+Host: 192.168.1.10:8093
 Content-Type: application/json
 
 {
@@ -1687,7 +1687,7 @@ const S_REC_OTHER=`403 Forbidden
 ~// after 10 rejections from one address in 10 minutes:
 429 {"error":"rate_limited"}`;
 const Q_REC_REPLAY=`${H_REN}
-Host: 192.168.1.80:8093
+Host: 192.168.1.10:8093
 Content-Type: application/json
 
 {
@@ -1755,7 +1755,7 @@ const S_ORDER_MTLS=`~// on first install, once:
 ~// enrollment · certificate renewal · attestation`;
 const Q_HOST_ADD=`POST /api/v1/hosts/fetch-from-url
     ?configApiId=mtls-8092
-Host: 192.168.1.80:8090
+Host: 192.168.1.10:8090
 +X-API-Key: ••••••••
 Content-Type: application/json
 
@@ -1781,7 +1781,7 @@ list on the phone (version 3): Ab3…, Kq9…
 
 ~// the library immediately asks for the current list:
 GET /api/v1/certificate-config?currentVersion=3
-Host: 192.168.1.80:8092`;
+Host: 192.168.1.10:8092`;
 const S_PINCHG=`200 OK
 +new list (version 4): Zt5…, Ab3…
 
@@ -1807,7 +1807,7 @@ const S_BG=`~// on every background run, in order:
 +6. attestation: a fresh PinVault-Token
 ~//    (so it does not wake up with an expired token)`;
 const Q_OFFLINE=`GET /api/v1/certificate-config?currentVersion=3
-Host: 192.168.1.80:8092
+Host: 192.168.1.10:8092
 !connection could not be established (server down or no network)
 ~// tried 3 times`;
 const S_OFFLINE=`~// a stored list exists and has not expired:
@@ -1844,7 +1844,7 @@ PinVault.setConnectionListener(
 ~// in the dashboard: the Connection History tab`;
 const Q_VUP=`PUT /api/v1/config-apis/mtls-8092/vault/ml-model
     ?policy=token&encryption=plain
-Host: 192.168.1.80:8090
+Host: 192.168.1.10:8090
 +X-API-Key: ••••••••
 Content-Type: application/octet-stream
 
@@ -1860,7 +1860,7 @@ const S_VUP=`200 OK
 ~// uploading again under the same name bumps the version;
 ~// devices get the new version on their next request`;
 const Q_REVOKE=`DELETE /api/v1/client-certs/tablet-07
-Host: 192.168.1.80:8090
+Host: 192.168.1.10:8090
 +X-API-Key: ••••••••
 ~// on "Revoke" and confirming`;
 const S_REVOKE=`200 OK
@@ -1876,7 +1876,7 @@ const S_REVOKE=`200 OK
 ~// renewal and recovery included:
 !403 {"error":"reenroll_required"}`;
 const Q_REVOKED_REQ=`GET /api/v1/certificate-config?currentVersion=3
-Host: 192.168.1.80:8092
+Host: 192.168.1.10:8092
 ~// tablet-07 connects with its own certificate;
 ~// its dates are valid, the connection is set up`;
 const S_REVOKED_REQ=`!403 Forbidden
@@ -1933,7 +1933,7 @@ enforce → a key without attestation or failing it:
 const Q_UA_UP=`PUT /api/v1/config-apis/mtls-8092/
     vault/gizli-rapor
     ?policy=token_mtls&encryption=user_auth
-Host: 192.168.1.80:8090
+Host: 192.168.1.10:8090
 +X-API-Key: ••••••••
 Content-Type: application/octet-stream
 
@@ -1958,7 +1958,7 @@ const S_UA_UP=`200 OK
 }`;
 const Q_UA_KEY=`POST /api/v1/vault/devices/
      3f2a9c0d81b4e6a7/public-key
-Host: 192.168.1.80:8092
+Host: 192.168.1.10:8092
 Content-Type: application/json
 
 {
@@ -1983,7 +1983,7 @@ const S_UA_KEY=`200 OK
 ~// the library registers the key, retries once
 ~// another key without proof: 409 user_auth_key_exists`;
 const Q_UA_GET=`GET /api/v1/vault/gizli-rapor?version=0
-Host: 192.168.1.80:8092
+Host: 192.168.1.10:8092
 X-Device-Id: 3f2a9c0d81b4e6a7
 +X-Vault-Token: Wd4k…
 ~// fetchFile; no screen-lock prompt,
@@ -2040,7 +2040,7 @@ const S_UA_LIM=`~// code running as the app
 ~// in the app's memory`;
 // ── Attestation (ATTESTATION.md) ──────────────────────────────────────
 const Q_ATT_CH=`GET /api/v1/attest/challenge
-Host: 192.168.1.80:8092
+Host: 192.168.1.10:8092
 
 ~// to the block's own config API port;
 ~// in a TLS block the same request goes to 8091
@@ -2092,7 +2092,7 @@ const S_ATT_MEASURE=`~// report (shortened):
 ~// value comes from the signature (hardware-attested
 ~// key) and the signals the server adds itself`;
 const Q_ATT_POST=`POST /api/v1/attest
-Host: 192.168.1.80:8092
+Host: 192.168.1.10:8092
 Content-Type: application/json
 
 {
@@ -2158,7 +2158,7 @@ const S_PVT_USE=`~// the app server verifies it itself,
 ~// sample: the PinVaultTokenAuth plugin; the mock host
 ~// does the same with MOCK_HOST_REQUIRE_TOKEN=true`;
 const Q_ATT_REJECT=`POST /api/v1/attest
-Host: 192.168.1.80:8092
+Host: 192.168.1.10:8092
 ~// same request; the signals in the report differ:
 !"rooted": {"flag": true,
 !  "evidence": ["file:/data/adb/magisk"]}
@@ -2208,7 +2208,7 @@ PinVault.attestationStatus()
 ~// event: PinVaultConnectionEvent.Attestation`;
 const Q_ATT_POLICY=`PUT /api/v1/config-apis/mtls-8092/
     attestation/policy
-Host: 192.168.1.80:8090
+Host: 192.168.1.10:8090
 +X-API-Key: ••••••••
 
 {"flags": {
@@ -2695,11 +2695,11 @@ const S=[
   [`What the device does`,`Opens the P12 with the received password, imports the private key into the Android Keystore as non-exportable and keeps only the certificate chain. It does not store the password. If the Keystore refuses the import, the P12 stays in encrypted storage.`,'ok']]},
 {c:5,k:'n',t:`The device certificate goes only to allowed servers`,d:`The device certificate is the phone identity; it should not be shown to every server that asks. The phone shows it only to its own config API addresses and to allowed servers. Even if pinned, another server that asks for a certificate gets nothing.`,act:[`Another server`,`analiz.example.com (pinned)`,'c-blue'],hl:['g-att','g-dev','g92'],
  sx:{tag:'clientCertHosts',cls:'mtls',title:`who gets to see the device identity`,rows:[[`Always`,`the block's own addresses`,`→ config, enrollment (enrollmentUrl), renewal (renewalUrl)`,3,'ok'],[`With permission`,`servers listed in clientCertHosts`,`→ if none listed, those marked mtls: true in the list`,null,'ok'],[`Has its own certificate`,`a server with a host certificate uploaded`,`→ sees that certificate`,4,''],[`Others`,`nothing`,`→ server: CERTIFICATE_REQUIRED`,null,'bad']]},
- scr:{phone:'log',dev:'tablet-07',stat:['t-ok','✓ Client Certificate Enrolled'],log:[['t-ok','192.168.1.80:8092 · device certificate shown'],['t-ok','192.168.1.217:9443 · shown (clientCertHosts)']]},tq:`The app code`,q:Q_CCH,ts:`The phone connections`,s:S_CCH,
- mv:[...mtls('d2'),m('d2',0,BL,'GET config'),m('d2',1,TE,''),cert('ob',0,PU,'server certificate'),flash(116,122,'✓ pin matched','ok','end'),m('ob',0,RD,'show your certificate'),flash(116,140,'✗ no certificate given','bad','end'),sc({log:[['t-ok','192.168.1.80:8092 · device certificate shown'],['t-ok','192.168.1.217:9443 · shown (clientCertHosts)'],['t-bad','analiz.example.com:443 · asked, not given']]})],mk:[DM('identity only to allowed servers','ok')],
+ scr:{phone:'log',dev:'tablet-07',stat:['t-ok','✓ Client Certificate Enrolled'],log:[['t-ok','192.168.1.10:8092 · device certificate shown'],['t-ok','192.168.1.20:9443 · shown (clientCertHosts)']]},tq:`The app code`,q:Q_CCH,ts:`The phone connections`,s:S_CCH,
+ mv:[...mtls('d2'),m('d2',0,BL,'GET config'),m('d2',1,TE,''),cert('ob',0,PU,'server certificate'),flash(116,122,'✓ pin matched','ok','end'),m('ob',0,RD,'show your certificate'),flash(116,140,'✗ no certificate given','bad','end'),sc({log:[['t-ok','192.168.1.10:8092 · device certificate shown'],['t-ok','192.168.1.20:9443 · shown (clientCertHosts)'],['t-bad','analiz.example.com:443 · asked, not given']]})],mk:[DM('identity only to allowed servers','ok')],
  rows:[[`Why`,`The certificate identifies the phone. If every server the app talks to could collect it, the phone identity would spread to third parties.`],
   [`Rule`,`The identity always goes to the block's own addresses: the config API, enrollment (enrollmentUrl) and renewal (renewalUrl). A server with its own host certificate uploaded sees that certificate. Any other server sees the identity only with permission.`,'ok'],
-  [`Permission`,`The app names servers with clientCertHosts("https://192.168.1.217:9443/"); the port is required, https only. If it lists them, the list is complete: not even mtls: true in the signed list can add a new server. If it lists none, the servers marked mtls: true in the signed list see the identity.`],
+  [`Permission`,`The app names servers with clientCertHosts("https://192.168.1.20:9443/"); the port is required, https only. If it lists them, the list is complete: not even mtls: true in the signed list can add a new server. If it lists none, the servers marked mtls: true in the signed list see the identity.`],
   [`Others`,`If a pinned analytics or ad server asks for a certificate, the phone does not show it; the server rejects the connection with CERTIFICATE_REQUIRED. The phone decides by the name and port of the connection it opened itself.`,'wr'],
   [`What changed`,`Came with 2.2.0: before that, the identity could also go to pinned servers that asked for a certificate.`]]},
 {c:5,k:'b',t:`Attack: an unenrolled device asks for the host certificate`,d:`A device that has not enrolled tries to get the host certificate. 8092 does not talk to it; 8091 also rejects this request.`,cx:'92',cl:NOCERT(`→ 8092 cuts it; 403 on 8091`),att:[`Another device`,`has no certificate`],hl:['g-att','g92','g91'],tq:`Request · another device → 8092, then 8091`,q:Q_HOST_OTHER,ts:`Result`,s:S_HOST_OTHER,
@@ -3008,7 +3008,7 @@ const S=[
   [`How the device recognises it`,`It does not look at a CA. It compares the hash of the certificate's key (the pin) with the list in the APK; this is called SSL pinning. Both pins are shown in the dashboard and in the certs/demo-server.pins file; the developer writes them into bootstrapPins.`,'ok'],
   [`When renewing`,`Press "Switch to backup key" in the dashboard and restart the server; from then on 8091 and 8092 start with the backup key. Since devices already know the backup pin, no APK update is needed; the pin of the new backup is added to the next release.`,'wr']]},
 {c:13,id:'rec',k:'s',t:`The 8093 certificate and the server CA`,d:`The recovery port has its own certificate, signed by the server's own certificate authority (CA). For this port the app carries that authority pin.`,hl:['g93','g-db'],
- src:{t:`The recovery port certificate`,r:[[`Generated by`,`demo-server: first the server CA, then the port certificate`,`→ server-ca.jks, recovery.jks`],[`Used by`,`only 8093`,``],[`Device recognises it`,`by the CA pin in the APK`,`→ only for 192.168.1.80:8093`]],use:[11]},
+ src:{t:`The recovery port certificate`,r:[[`Generated by`,`demo-server: first the server CA, then the port certificate`,`→ server-ca.jks, recovery.jks`],[`Used by`,`only 8093`,``],[`Device recognises it`,`by the CA pin in the APK`,`→ only for 192.168.1.10:8093`]],use:[11]},
  tq:`Generated on the server`,q:Q_SRC_REC,ts:`Pins → APK`,s:S_SRC_REC,
  mv:[cert('b3',1,PU,'')],mk:[BMK('recovery.jks ← server CA','muted'),DM("in the APK: CA pin (8093)",'muted')],
  rows:[[`What it is`,`On the connection, 8093 sends its own certificate together with the server CA that signed it.`],
@@ -3113,7 +3113,7 @@ function certsHtml(st){
   return h;
 }
 function newApiHtml(st){
-  let h='<div class="pm"><div class="pm-bar"><i class="ti ti-world" aria-hidden="true"></i><span>192.168.1.80:8090 · PinVault dashboard</span></div><div class="pm-body">';
+  let h='<div class="pm"><div class="pm-bar"><i class="ti ti-world" aria-hidden="true"></i><span>192.168.1.10:8090 · PinVault dashboard</span></div><div class="pm-body">';
   h+='<div class="pm-title">New Config API</div><div class="pm-hint">Start a TLS or mTLS config API</div>';
   h+='<div class="pm-lbl">API ID</div>'+(st.apiId?'<div class="pm-in">'+esc(st.apiId)+'</div>':'<div class="pm-in ph">tls-8093 or mtls-8092</div>');
   h+='<div class="pm-lbl">Port</div>'+(st.port?'<div class="pm-in">'+esc(st.port)+'</div>':'<div class="pm-in ph">8093</div>');
@@ -3124,7 +3124,7 @@ function newApiHtml(st){
   h+='<div style="margin-top:8px">'+btn('Start Config API',st.hot==='start',1)+'</div>';
   return h+'</div></div>';
 }
-function pmFrame(where){return '<div class="pm"><div class="pm-bar"><i class="ti ti-world" aria-hidden="true"></i><span>192.168.1.80:8090 · PinVault dashboard · '+esc(where)+'</span></div><div class="pm-body">';}
+function pmFrame(where){return '<div class="pm"><div class="pm-bar"><i class="ti ti-world" aria-hidden="true"></i><span>192.168.1.10:8090 · PinVault dashboard · '+esc(where)+'</span></div><div class="pm-body">';}
 function addHostHtml(st){
   let h=pmFrame('mtls-8092')+'<div class="pm-title">Add New Host</div>';
   h+='<div class="pm-tabs" style="padding:6px 0 0;margin-bottom:8px">'+['Manual','Generate Cert','Upload File','Fetch from URL'].map(function(t,i){return '<span'+(i===3?' class="on"':'')+'>'+esc(t)+'</span>';}).join('')+'</div>';
@@ -3177,7 +3177,7 @@ function pmHtml(st){
   if(st.panel==='hostcert')return hostCertHtml(st);
   const tabs=['General','Signing','Client Certificates','Vault','Attestation','Connection History'];
   const on=(st.panel==='vault'||st.panel==='vaultup')?'Vault':st.panel==='attest'?'Attestation':'Client Certificates';
-  let h='<div class="pm"><div class="pm-bar"><i class="ti ti-world" aria-hidden="true"></i><span>192.168.1.80:8090 · PinVault dashboard · mtls-8092</span></div>';
+  let h='<div class="pm"><div class="pm-bar"><i class="ti ti-world" aria-hidden="true"></i><span>192.168.1.10:8090 · PinVault dashboard · mtls-8092</span></div>';
   h+='<div class="pm-tabs">'+tabs.map(function(t){return '<span'+(t===on?' class="on"':'')+'>'+t+'</span>';}).join('')+'</div><div class="pm-body">';
   if(st.panel==='attest'){h+=attestHtml(st);}
   else if(st.panel==='policy'){h+=polHtml(st);}

@@ -77,8 +77,8 @@ class CertificateServiceSanTest {
     @Test
     fun `parseExtraSans keeps valid IPs and names and drops the rest`() {
         assertEquals(
-            listOf("192.168.1.80", "pinvault.lan", "*.example.com"),
-            CertificateService.parseExtraSans(" 192.168.1.80, pinvault.lan ,, *.example.com ,192.168.1.80")
+            listOf("192.168.1.10", "pinvault.lan", "*.example.com"),
+            CertificateService.parseExtraSans(" 192.168.1.10, pinvault.lan ,, *.example.com ,192.168.1.10")
         )
         assertEquals(emptyList(), CertificateService.parseExtraSans(null))
         assertEquals(emptyList(), CertificateService.parseExtraSans(""))

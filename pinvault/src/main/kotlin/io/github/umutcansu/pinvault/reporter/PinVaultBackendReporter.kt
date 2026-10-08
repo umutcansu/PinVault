@@ -91,7 +91,7 @@ import java.util.concurrent.TimeUnit
  * It can never weaken pinning itself; the TLS trust check is independent.
  *
  * @param managementUrl Demo-server management base URL, e.g.
- *   `"https://192.168.1.80:6650/"`. The reporter appends
+ *   `"https://192.168.1.10:6650/"`. The reporter appends
  *   `api/v1/connection-history/client-report` automatically. A non-https URL
  *   logs a warning at construction.
  * @param httpClient Optional preconfigured OkHttpClient. Defaults to an

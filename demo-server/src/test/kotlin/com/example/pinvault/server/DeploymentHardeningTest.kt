@@ -120,7 +120,7 @@ class DeploymentHardeningTest {
             assertNotNull(strict.refusal(address(never)), never)
             assertNotNull(lab.refusal(address(never)), "$never even with FETCH_ALLOW_PRIVATE_TARGETS=true")
         }
-        for (private in listOf("127.0.0.1", "::1", "10.1.2.3", "172.16.0.9", "172.31.255.1", "192.168.1.80", "100.64.0.1", "fc00::1", "fd12:3456::1", "::ffff:10.0.0.1")) {
+        for (private in listOf("127.0.0.1", "::1", "10.1.2.3", "172.16.0.9", "172.31.255.1", "192.168.1.10", "100.64.0.1", "fc00::1", "fd12:3456::1", "::ffff:10.0.0.1")) {
             val reason = strict.refusal(address(private))
             assertNotNull(reason, private)
             assertTrue(reason.contains("FETCH_ALLOW_PRIVATE_TARGETS"), reason)
@@ -162,7 +162,7 @@ class DeploymentHardeningTest {
             assertEquals(400, plain.status, "https only: ${plain.body}")
         }
         val strict = com.example.pinvault.server.service.CertificateService(File(dir, "strict").also { it.mkdirs() }, egress = EgressFilter(allowPrivate = false))
-        for (url in listOf("https://127.0.0.1:1", "https://localhost:1", "https://[::1]:1", "https://192.168.1.217:9443", "https://10.0.0.1")) {
+        for (url in listOf("https://127.0.0.1:1", "https://localhost:1", "https://[::1]:1", "https://192.168.1.20:9443", "https://10.0.0.1")) {
             assertFailsWith<EgressRefusedException>(url) { strict.fetchFromUrl(url) }
         }
     }

@@ -15,11 +15,11 @@ final class PinConfigValidatorTests: XCTestCase {
         for host in [
             "api.example.com", "API.Example.COM", "localhost", "xn--mnchen-3ya.de", "a-b.example.com",
             "*.example.com", "*.cdn.example.co.uk", "api.example.com:8443", "*.example.com:443",
-            "192.168.1.80", "192.168.1.80:8091", "host:1", "host:65535",
+            "192.168.1.10", "192.168.1.10:8091", "host:1", "host:65535",
         ] {
             XCTAssertNil(PinConfigValidator.hostPatternError(host), host)
         }
-        XCTAssertNoThrow(try PinConfigValidator.validate(config("api.example.com", "*.example.com", "192.168.1.80:8091")))
+        XCTAssertNoThrow(try PinConfigValidator.validate(config("api.example.com", "*.example.com", "192.168.1.10:8091")))
     }
 
     func testNamesThatCarryTheOldStoresSeparatorsAreRefused() {

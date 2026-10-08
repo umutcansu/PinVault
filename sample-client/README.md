@@ -325,7 +325,7 @@ TestControls.java           boş karşılık: test kontrolü yok; elle P12 kalı
 `client-config.sh` bunları host'un dosyalarından okur. Elle doğrulamak için:
 
 ```bash
-openssl s_client -connect 192.168.1.80:6651 -servername 192.168.1.80 < /dev/null 2>/dev/null \
+openssl s_client -connect 192.168.1.10:6651 -servername 192.168.1.10 < /dev/null 2>/dev/null \
   | openssl x509 -pubkey -noout | openssl pkey -pubin -outform der \
   | openssl dgst -sha256 -binary | openssl base64
 ```

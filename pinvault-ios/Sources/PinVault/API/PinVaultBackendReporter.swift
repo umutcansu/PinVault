@@ -35,7 +35,7 @@ public final class PinVaultBackendReporter: Sendable {
     private static let log = PinVaultLog.tag("PinVaultBackendReporter")
 
     /// - Parameters:
-    ///   - managementUrl: demo-server base URL, e.g. `https://192.168.1.80:6650/`; the paths are appended.
+    ///   - managementUrl: demo-server base URL, e.g. `https://192.168.1.10:6650/`; the paths are appended.
     ///   - session: defaults to an UNPINNED 5-second session (``defaultSession()``).
     ///   - reportSuccessEvents: false = only anomalies are posted.
     ///   - dedupWindowMs: minimum interval between duplicate healthy reports; 0 = none.

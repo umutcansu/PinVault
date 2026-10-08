@@ -15,7 +15,7 @@ import io.github.umutcansu.pinvault.model.PinVaultConfig
  *
  * From Java: `PinVaultBuilderExtensions.reportToPinVaultBackend(builder, url, …)`.
  *
- * @param managementUrl e.g. `"http://192.168.1.80:6650/"`. The reporter
+ * @param managementUrl e.g. `"http://192.168.1.10:6650/"`. The reporter
  *   appends the endpoint path itself.
  * @param reportSuccessEvents Pass `false` to suppress healthy-handshake
  *   reports entirely and POST only pin mismatches. Default `true`.

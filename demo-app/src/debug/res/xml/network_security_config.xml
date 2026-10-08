@@ -12,7 +12,7 @@
 <network-security-config>
     <base-config cleartextTrafficPermitted="false" />
     <domain-config cleartextTrafficPermitted="true">
-        <domain includeSubdomains="false">192.168.1.80</domain>
+        <domain includeSubdomains="false">192.168.1.10</domain>
         <domain includeSubdomains="false">10.0.2.2</domain>
     </domain-config>
 </network-security-config>

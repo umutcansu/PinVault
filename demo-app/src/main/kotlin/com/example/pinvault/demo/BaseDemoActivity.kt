@@ -39,7 +39,7 @@ abstract class BaseDemoActivity : AppCompatActivity() {
                 android.os.Build.PRODUCT.contains("sdk") ||
                 android.os.Build.PRODUCT.contains("emulator")
         }
-        val HOST_IP: String by lazy { if (IS_EMULATOR) "10.0.2.2" else "192.168.1.80" }
+        val HOST_IP: String by lazy { if (IS_EMULATOR) "10.0.2.2" else "192.168.1.10" }
         val TLS_HOST_PORT: Int by lazy { if (IS_EMULATOR) 8443 else 8444 }
         /** Plain-HTTP management port: the DEBUG build's report channel (cleartext allowed by src/debug's network security config). */
         private val MANAGEMENT_URL get() = "http://$HOST_IP:8090/"

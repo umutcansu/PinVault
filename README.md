@@ -297,7 +297,7 @@ schemas), there is a one-line opt-in helper:
 import io.github.umutcansu.pinvault.reporter.reportToPinVaultBackend
 
 PinVaultConfig.Builder()
-    .reportToPinVaultBackend("http://192.168.1.80:6650/")
+    .reportToPinVaultBackend("http://192.168.1.10:6650/")
     .configApi("api", "https://api.example.com/") { ... }
     .build()
 ```
@@ -309,14 +309,14 @@ scales poorly to a production fleet. Two opt-in knobs cut that down:
 // Heartbeat throttle — at most one healthy report per (host, version,
 // cert) tuple per minute; pin mismatches always go through.
 .reportToPinVaultBackend(
-    managementUrl = "http://192.168.1.80:6650/",
+    managementUrl = "http://192.168.1.10:6650/",
     dedupWindowMs = 60_000L
 )
 
 // Anomalies only — drop the healthy stream entirely; only pin
 // mismatches and config-update failures reach the backend.
 .reportToPinVaultBackend(
-    managementUrl = "http://192.168.1.80:6650/",
+    managementUrl = "http://192.168.1.10:6650/",
     reportSuccessEvents = false
 )
 ```
@@ -424,8 +424,8 @@ own traffic:
 ```kotlin
 PinVault.setConnectionListener(
     PinVaultBackendReporter(
-        managementUrl = "https://192.168.1.80:6655/",
-        httpClient = PinVaultBackendReporter.pinnedClient("192.168.1.80", listOf(primaryPin, backupPin)),
+        managementUrl = "https://192.168.1.10:6655/",
+        httpClient = PinVaultBackendReporter.pinnedClient("192.168.1.10", listOf(primaryPin, backupPin)),
         reportSuccessEvents = false
     )
 )

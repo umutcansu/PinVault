@@ -154,9 +154,9 @@ final class PinVaultBackendReporterTests: XCTestCase {
 
     func testEndpointsAreBuiltFromTheManagementURL() {
         XCTAssertEqual(PinVaultBackendReporter.buildEndpoint("https://h:6650///", "api/x"), "https://h:6650/api/x")
-        let reporter = PinVaultBackendReporter(managementUrl: "http://192.168.1.80:6650")
-        XCTAssertEqual(reporter.connectionEndpoint, "http://192.168.1.80:6650/api/v1/connection-history/client-report")
-        XCTAssertEqual(reporter.configUpdateEndpoint, "http://192.168.1.80:6650/api/v1/connection-history/config-update-report")
+        let reporter = PinVaultBackendReporter(managementUrl: "http://192.168.1.10:6650")
+        XCTAssertEqual(reporter.connectionEndpoint, "http://192.168.1.10:6650/api/v1/connection-history/client-report")
+        XCTAssertEqual(reporter.configUpdateEndpoint, "http://192.168.1.10:6650/api/v1/connection-history/config-update-report")
     }
 
     func testTheBuilderExtensionInstallsTheReporterAsTheListener() throws {

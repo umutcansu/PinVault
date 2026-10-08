@@ -886,7 +886,7 @@ async function testHostConnection(hostname) {
 
     // Yerel mock çalışmıyorsa (ya sertifika hiç yok ya da sunucu başlatılmamış)
     // ping-remote ile gerçek uzak host'u dene. Bazı host'larda server cert dosyası
-    // üretilmiş olsa bile fiziksel olarak uzakta olabilir (örn. 192.168.1.217) —
+    // üretilmiş olsa bile fiziksel olarak uzakta olabilir (örn. 192.168.1.20) —
     // bu nedenle yalnızca hasCertificate'e değil mockServerRunning'e de bakılır.
     if (!status.hasCertificate || !status.mockServerRunning) {
       const pingRes = await apiFetch(`/api/v1/hosts/${encodeURIComponent(hostname)}/ping-remote`);

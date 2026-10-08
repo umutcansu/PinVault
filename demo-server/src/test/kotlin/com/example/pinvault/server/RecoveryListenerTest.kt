@@ -155,7 +155,7 @@ class RecoveryListenerTest {
         ).statusCode()
         assertEquals(200, status("/health"))
         assertEquals(404, status("/api/v1/certificate-config"))
-        assertEquals(404, status("/api/v1/client-certs/192.168.1.217/download"))
+        assertEquals(404, status("/api/v1/client-certs/192.168.1.20/download"))
         // EncodedPathGuard: a separator hidden in an escape is refused outright.
         assertEquals(400, status("/api/v1/client-certs%2Frenew"))
     }

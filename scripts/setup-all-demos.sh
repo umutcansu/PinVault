@@ -12,7 +12,7 @@
 #   ./scripts/setup-all-demos.sh
 #
 # Env override (opsiyonel):
-#   MANAGEMENT_URL=http://192.168.1.80:8090
+#   MANAGEMENT_URL=http://192.168.1.10:8090
 #   API_KEY=testkey
 #   CONFIG_API=default-tls
 #   DEVICE_SERIAL=4360fdf2
@@ -21,7 +21,7 @@
 # ──────────────────────────────────────────────────────────────────────
 set -euo pipefail
 
-MANAGEMENT_URL="${MANAGEMENT_URL:-http://192.168.1.80:8090}"
+MANAGEMENT_URL="${MANAGEMENT_URL:-http://192.168.1.10:8090}"
 API_KEY="${API_KEY:-testkey}"
 CONFIG_API="${CONFIG_API:-default-tls}"
 DEVICE_SERIAL="${DEVICE_SERIAL:-4360fdf2}"
