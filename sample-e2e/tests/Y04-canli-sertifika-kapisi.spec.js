@@ -167,7 +167,7 @@ test('Web+Mobil+Terminal: canlı sertifika kontrolü — sunucunun şu an sundu�
         [
           `HTTP ${res.status()} ${JSON.stringify(body)}`,
           '',
-          'prompt():',
+          'gerekçe sorusu:',
           prompt,
           '→ yanıt: "" (boş) — yeniden gönderilmedi',
           '',

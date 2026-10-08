@@ -94,7 +94,7 @@ const test = base.test.extend({
     // Onay ve bilgi pencereleri (force update, silme, iptal, token) kabul edilir;
     // metinleri test okuyabilsin diye saklanır. prompt'lara test önceden
     // [answerPrompt] ile yanıt bırakabilir (cihaz ACL'i düzenleme).
-    Dashboard.attachDialogs(page, dashboard);
+    await Dashboard.attachDialogs(page, dashboard);
     await Dashboard.seedApiKey(page, env.API_KEY);
     await dashboard.open();
     await use(dashboard);

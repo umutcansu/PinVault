@@ -52,7 +52,12 @@ function renderAdminChip() {
 /** Forget the stored key, ask for another, then reload everything with it. */
 async function switchAdminKey() {
   clearApiKey();
-  const key = prompt(t('switchAdminKeyPrompt'));
+  const key = await pvInputDialog({
+    title: t('switchAdminKey'),
+    message: t('switchAdminKeyPrompt'),
+    placeholder: 'X-API-Key',
+    type: 'password',
+  });
   if (key && key.trim()) setApiKey(key.trim());
   adminMe = null;
   renderAdminChip();
@@ -603,7 +608,12 @@ async function approveChange(id) {
 async function rejectChange(id) {
   const cr = await changeRequestFor(id);
   const own = !!(cr && adminMe && cr.requestedBy === adminMe.name);
-  const reason = prompt(t(own ? 'withdrawReasonPrompt' : 'rejectReasonPrompt', id, changeSummaryText(cr)[0]), '');
+  const reason = await pvInputDialog({
+    title: t(own ? 'withdraw' : 'reject'),
+    message: t(own ? 'withdrawReasonPrompt' : 'rejectReasonPrompt', id, changeSummaryText(cr)[0]),
+    placeholder: t('liveCheckReasonPlaceholder'),
+    okLabel: t(own ? 'withdraw' : 'reject'),
+  });
   if (reason === null) return;
   try {
     const res = await apiFetch(`/api/v1/change-requests/${encodeURIComponent(id)}/reject`, {

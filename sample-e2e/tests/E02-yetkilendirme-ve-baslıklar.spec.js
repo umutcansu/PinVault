@@ -59,20 +59,20 @@ test('Sunucu: yönetim uçları API anahtarı ister, cihaz uçları anahtarsız 
     });
 
     await test.step("Web: dashboard'a yanlış API anahtarı girilince hiç veri gelmiyor (host listesi boş)", async () => {
-      // Anahtarsız yeni sayfa: dashboard prompt ile anahtar sorar; yanlış
+      // Anahtarsız yeni sayfa: dashboard kendi penceresiyle anahtar sorar; yanlış
       // anahtar 403 aldığı için host ağacı çizilmez.
       const page = await browser.newPage();
       const view = new Dashboard(page, testInfo);
-      Dashboard.attachDialogs(page, view);
+      await Dashboard.attachDialogs(page, view);
       view.answerPrompt('yanlis-anahtar');
       try {
         await page.goto(`${env.WEB_URL}/`);
         await expect.poll(() => view.dialogs.length, { timeout: 20_000 }).toBeGreaterThan(0);
         await expect(page.locator('#host-list .api-header')).toHaveCount(0);
-        await view.snap('yanlış anahtar: host listesi boş (tarayıcının anahtar sorusu panelde)');
+        await view.snap('yanlış anahtar: host listesi boş (dashboard\'un anahtar sorusu panelde)');
         await attachText(
           testInfo,
-          'Tarayıcının anahtar sorusu (prompt) ve sonucu',
+          'Dashboard\'un anahtar sorusu ve sonucu',
           [
             ...view.dialogs.map((d, i) => `#${i + 1} ${d}`),
             '',

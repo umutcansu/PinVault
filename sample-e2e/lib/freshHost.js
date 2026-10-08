@@ -258,7 +258,7 @@ async function openDashboard(browser, testInfo, { withKey = true } = {}) {
   const { Dashboard } = require('./dashboard');
   const page = await browser.newPage();
   const dashboard = new Dashboard(page, testInfo, { baseUrl: `${WEB_URL}/` });
-  Dashboard.attachDialogs(page, dashboard);
+  await Dashboard.attachDialogs(page, dashboard);
   if (withKey) {
     await Dashboard.seedApiKey(page, apiKey());
     await dashboard.open();

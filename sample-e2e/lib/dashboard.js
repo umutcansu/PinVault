@@ -48,15 +48,44 @@ class Dashboard {
     }, key);
   }
 
-  static attachDialogs(page, dashboard) {
+  static async attachDialogs(page, dashboard) {
     page.on('dialog', (dialog) => {
       dashboard.dialogs.push(dialog.message());
       const answer = dialog.type() === 'prompt' ? dashboard.promptAnswers.shift() : undefined;
       dialog.accept(answer);
     });
+    // Dashboard'un kendi giriş penceresi (app-core.js pvInputDialog) prompt()'un
+    // yerini aldı: aynı kuyruktan, aynı kuralla yanıtlanır. Metni (başlık +
+    // açıklama) [dialogs]'a yazılır; kuyrukta yanıt varsa kutuya o yazılır, yoksa
+    // kutudaki hazır değer kalır (prompt'un accept() davranışı) ve "Tamam" basılır.
+    await page.exposeBinding('__pvE2EInputDialog', (_source, text) => {
+      dashboard.dialogs.push(text);
+      return dashboard.promptAnswers.length
+        ? { answer: true, value: String(dashboard.promptAnswers.shift()) }
+        : { answer: false, value: '' };
+    });
+    await page.addInitScript(() => {
+      const handled = new WeakSet();
+      const answer = async (overlay) => {
+        if (handled.has(overlay)) return;
+        handled.add(overlay);
+        const text = (id) => (overlay.querySelector(id) || {}).textContent || '';
+        const reply = await window.__pvE2EInputDialog(
+          [text('#pv-input-dialog-title'), text('#pv-input-dialog-message')].filter(Boolean).join('\n'),
+        );
+        const input = overlay.querySelector('#pv-input-dialog-input');
+        if (reply.answer && input) input.value = reply.value;
+        const ok = overlay.querySelector('#pv-input-dialog-ok');
+        if (ok) ok.click();
+      };
+      new MutationObserver(() => {
+        const overlay = document.getElementById('pv-input-dialog');
+        if (overlay) answer(overlay);
+      }).observe(document, { childList: true, subtree: true });
+    });
   }
 
-  /** Sıradaki prompt() diyaloğunun yanıtı. */
+  /** Sıradaki prompt() / dashboard giriş penceresinin yanıtı. */
   answerPrompt(value) {
     this.promptAnswers.push(value);
   }
@@ -741,7 +770,7 @@ class Dashboard {
     const page = await context.newPage();
     const dashboard = new Dashboard(page, testInfo, { baseUrl: origin });
     dashboard.context = context;
-    Dashboard.attachDialogs(page, dashboard);
+    await Dashboard.attachDialogs(page, dashboard);
     await Dashboard.seedApiKey(page, key);
     await dashboard.open();
     return dashboard;

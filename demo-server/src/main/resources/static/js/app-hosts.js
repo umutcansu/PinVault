@@ -606,7 +606,11 @@ async function editDeviceAcl(configApiId, deviceId) {
     const res = await apiFetch(`/api/v1/config-apis/${encodeURIComponent(configApiId)}/devices/${encodeURIComponent(deviceId)}/host-acl`);
     const current = res.ok ? await res.json() : [];
     const currentStr = Array.isArray(current) ? current.join(', ') : '';
-    const newStr = prompt(t('aclEditPrompt', deviceId), currentStr);
+    const newStr = await pvInputDialog({
+      title: t('aclEditBtn'),
+      message: t('aclEditPrompt', deviceId),
+      value: currentStr,
+    });
     if (newStr === null) return;
     const hostnames = newStr.split(',').map(s => s.trim()).filter(Boolean);
     const putRes = await apiFetch(`/api/v1/config-apis/${encodeURIComponent(configApiId)}/devices/${encodeURIComponent(deviceId)}/host-acl`, {
@@ -1098,7 +1102,13 @@ async function toggleHostMtls(hostname, enable) {
 async function uploadHostClientCert(hostname) {
   const file = document.getElementById('host-cc-file').files[0];
   if (!file) return;
-  const password = prompt('P12 password:', 'changeit');
+  const password = await pvInputDialog({
+    title: t('uploadClientCert'),
+    message: t('p12PasswordPrompt'),
+    value: 'changeit',
+    type: 'password',
+    okLabel: t('uploadClientCert'),
+  });
   if (password === null) return;
 
   const formData = new FormData();

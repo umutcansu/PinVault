@@ -23,11 +23,11 @@ test('Kurulum: dashboard ilk açılışta API anahtarı ister; Config API sekmel
       await expect.poll(() => dashboard.dialogs.length, { timeout: 20_000 }).toBeGreaterThan(0);
       await attachText(
         testInfo,
-        'Tarayıcıda açılan prompt pencereleri',
+        'Dashboard\'un açtığı anahtar sorusu pencereleri',
         dashboard.dialogs.map((d, i) => `#${i + 1} ${d}`).join('\n'),
       );
-      expect(dashboard.lastDialog()).toContain('API Key');
-      await dashboard.snap('yanlış anahtardan sonra dashboard: host listesi boş (prompt metni ayrı panelde)');
+      expect(dashboard.lastDialog()).toContain('X-API-Key');
+      await dashboard.snap('yanlış anahtardan sonra dashboard: host listesi boş (anahtar sorusunun metni ayrı panelde)');
     });
 
     await test.step('Sunucu: anahtarsız istek 401, yanlış anahtarlı istek 403 alır (K4)', async () => {

@@ -59,20 +59,26 @@ function pvInputDialog({ title, message = '', placeholder = '', value = '', type
         if (existing) existing.remove();
         const overlay = document.createElement('div');
         overlay.id = 'pv-input-dialog';
+        overlay.setAttribute('role', 'dialog');
+        overlay.setAttribute('aria-modal', 'true');
         overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:2000;display:flex;align-items:center;justify-content:center;padding:16px;';
         const box = document.createElement('div');
         box.style.cssText = 'background:#1e293b;border:1px solid #334155;border-radius:12px;padding:20px;max-width:440px;width:100%;box-shadow:0 10px 40px rgba(0,0,0,.5);';
         const h = document.createElement('div');
+        h.id = 'pv-input-dialog-title';
         h.textContent = title || '';
+        overlay.setAttribute('aria-labelledby', h.id);
         h.style.cssText = 'font-size:15px;font-weight:600;color:#f1f5f9;margin-bottom:8px;';
         box.appendChild(h);
         if (message) {
             const m = document.createElement('div');
+            m.id = 'pv-input-dialog-message';
             m.textContent = message;
             m.style.cssText = 'font-size:12px;color:#94a3b8;margin-bottom:14px;white-space:pre-wrap;word-break:break-word;';
             box.appendChild(m);
         }
         const input = document.createElement('input');
+        input.id = 'pv-input-dialog-input';
         input.type = type;
         input.placeholder = placeholder;
         input.value = value;
@@ -82,10 +88,12 @@ function pvInputDialog({ title, message = '', placeholder = '', value = '', type
         const row = document.createElement('div');
         row.style.cssText = 'display:flex;gap:8px;justify-content:flex-end;';
         const cancel = document.createElement('button');
+        cancel.id = 'pv-input-dialog-cancel';
         cancel.type = 'button';
         cancel.textContent = cancelLabel || label('cancel', 'İptal');
         cancel.style.cssText = 'padding:8px 16px;border:1px solid #334155;border-radius:8px;background:transparent;color:#94a3b8;font-size:13px;cursor:pointer;';
         const ok = document.createElement('button');
+        ok.id = 'pv-input-dialog-ok';
         ok.type = 'button';
         ok.textContent = okLabel || label('save', 'Kaydet');
         ok.style.cssText = 'padding:8px 16px;border:1px solid #3b82f6;border-radius:8px;background:#3b82f6;color:#fff;font-size:13px;cursor:pointer;';
