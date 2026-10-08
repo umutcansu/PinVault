@@ -52,7 +52,7 @@ class EncryptedFileStorageProvider internal constructor(
         val file = fileFor(key)
         // Written beside the copy and moved over it: a failure (a locked or
         // busy Keystore, a full disk) leaves the copy that was there intact.
-        val temp = File(vaultDir, "${key}.enc.tmp")
+        val temp = File(vaultDir, "${fileFor(key).name}.tmp")
         try {
             val secretKey = keyOf(key)
             val cipher = Cipher.getInstance(AES_GCM_TRANSFORMATION)
@@ -189,7 +189,15 @@ class EncryptedFileStorageProvider internal constructor(
 
     private fun keyOf(key: String): SecretKey = keyFor?.invoke(key) ?: getOrCreateKey(key)
 
-    private fun fileFor(key: String) = File(vaultDir, "${key}.enc")
+    private fun fileFor(key: String): File {
+        // The key names a file in vaultDir and nothing else (VaultFileConfig holds keys
+        // to the same rule; a custom caller of this provider may not).
+        require(isValidStoredKey(key)) { "vault file key is not a plain file name: $key" }
+        return File(vaultDir, "${key}.enc")
+    }
+
+    private fun isValidStoredKey(key: String) =
+        key.isNotEmpty() && key.length <= 64 && key.any { it != '.' } && key.all { it.isLetterOrDigit() && it.code < 128 || it == '.' || it == '_' || it == '-' }
     private fun versionKey(key: String) = "vault_file_ver_$key"
     private fun encKeyFor(key: String) = "vault_file_enckey_$key"
 

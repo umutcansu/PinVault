@@ -17,26 +17,49 @@ import java.io.File
  * through `getprop` where reflection is refused; null when unreadable or empty.
  */
 internal object SystemProperties {
-    fun get(name: String): String? = viaReflection(name) ?: viaGetprop(name)
+    /** `ro.*` values never change while the process lives: read once each. */
+    private val cache = java.util.concurrent.ConcurrentHashMap<String, Optional>()
 
-    private fun viaReflection(name: String): String? = try {
-        val clazz = Class.forName("android.os.SystemProperties")
-        val get = clazz.getMethod("get", String::class.java)
-        (get.invoke(null, name) as? String)?.trim()?.ifEmpty { null }
-    } catch (_: Throwable) {
-        null
+    private class Optional(val value: String?)
+
+    fun get(name: String): String? = cache.getOrPut(name) { Optional(read(name)) }.value
+
+    /** Reflection first; `getprop` only where reflection is refused (not for a property that is merely absent). */
+    private fun read(name: String): String? {
+        val viaReflection = try {
+            val clazz = Class.forName("android.os.SystemProperties")
+            val get = clazz.getMethod("get", String::class.java)
+            Result.success(get.invoke(null, name) as? String)
+        } catch (e: Throwable) {
+            Result.failure(e)
+        }
+        if (viaReflection.isSuccess) return viaReflection.getOrNull()?.trim()?.ifEmpty { null }
+        return viaGetprop(name)
     }
 
     private fun viaGetprop(name: String): String? = try {
         if (!PROP_NAME.matches(name)) null
         else {
             val process = ProcessBuilder("getprop", name).redirectErrorStream(true).start()
-            val value = process.inputStream.bufferedReader().use { it.readText() }
-            if (process.waitFor() == 0) value.trim().ifEmpty { null } else null
+            // Process.waitFor(timeout) is API 26; minSdk is 24.
+            val deadline = System.nanoTime() + GETPROP_TIMEOUT_MS * 1_000_000
+            var exit: Int? = null
+            while (exit == null && System.nanoTime() < deadline) {
+                exit = try { process.exitValue() } catch (_: IllegalThreadStateException) { Thread.sleep(10); null }
+            }
+            if (exit == null) {
+                process.destroy()
+                null
+            } else {
+                val value = process.inputStream.bufferedReader().use { it.readText() }
+                if (exit == 0) value.trim().ifEmpty { null } else null
+            }
         }
     } catch (_: Throwable) {
         null
     }
+
+    private const val GETPROP_TIMEOUT_MS = 500L
 
     private val PROP_NAME = Regex("^[A-Za-z0-9._-]{1,92}$")
 }
@@ -94,21 +117,23 @@ internal class RootProbe(
         if (systemProperty("ro.build.type") == null) evidence += "error:prop"
         if (systemProperty("ro.debuggable") == "1") evidence += "prop:ro.debuggable=1"
         if (systemProperty("ro.secure") == "0") evidence += "prop:ro.secure=0"
-        // An unlocked bootloader is what every root method on a stock phone
-        // starts from. Hiding modules reset these, so they catch only the
-        // careless; the server reads the same facts from key attestation.
+        // An unlocked bootloader is not root: dev phones and custom ROMs have
+        // one, and GrapheneOS / CalyxOS boot "yellow" with it locked. These go
+        // along as hints that raise nothing; the server judges the same facts
+        // from key attestation (bootloader_unlocked, boot_not_verified,
+        // ATTESTATION_TRUSTED_BOOT_KEYS).
         systemProperty("ro.boot.verifiedbootstate")?.lowercase()?.takeIf { it in UNVERIFIED_BOOT_STATES }
-            ?.let { evidence += "prop:ro.boot.verifiedbootstate=$it" }
-        if (systemProperty("ro.boot.vbmeta.device_state")?.lowercase() == "unlocked") evidence += "prop:ro.boot.vbmeta.device_state=unlocked"
-        if (systemProperty("ro.boot.flash.locked") == "0") evidence += "prop:ro.boot.flash.locked=0"
+            ?.let { evidence += "hint:ro.boot.verifiedbootstate=$it" }
+        if (systemProperty("ro.boot.vbmeta.device_state")?.lowercase() == "unlocked") evidence += "hint:ro.boot.vbmeta.device_state=unlocked"
+        if (systemProperty("ro.boot.flash.locked") == "0") evidence += "hint:ro.boot.flash.locked=0"
         if (systemWritable()) evidence += "fs:/system-writable"
         ROOT_PACKAGES.filter(packageInstalled).forEach { evidence += "package:$it" }
-        return Signal(evidence.any { !it.startsWith("error:") }, evidence.distinct())
+        return Signal(evidence.any { !it.startsWith("error:") && !it.startsWith("hint:") }, evidence.distinct())
     }
 
     companion object {
-        /** `ro.boot.verifiedbootstate` values other than `green` (locked, verified). */
-        val UNVERIFIED_BOOT_STATES = setOf("orange", "yellow", "red")
+        /** `ro.boot.verifiedbootstate` values that mean an unlocked bootloader or a failed verification (not `yellow`: a locked custom key). */
+        val UNVERIFIED_BOOT_STATES = setOf("orange", "red")
         val SU_PATHS = listOf(
             "/system/bin/su", "/system/xbin/su", "/sbin/su", "/system/sd/xbin/su", "/system/bin/failsafe/su",
             "/data/local/su", "/data/local/bin/su", "/data/local/xbin/su", "/su/bin/su", "/system/su",
@@ -194,8 +219,8 @@ internal class DebuggableProbe(private val applicationFlags: Int) {
  * the Xposed bridge class, Xposed frames on the stack.
  */
 internal class HookingProbe(
-    /** Distinct mapped paths from `/proc/self/maps`. */
-    private val mappedPaths: () -> List<String>,
+    /** Distinct mapped paths from `/proc/self/maps`; null when it could not be read. */
+    private val mappedPaths: () -> List<String>?,
     /** Names of the process's threads (`/proc/self/task/<tid>/comm` and the JVM's). */
     private val threadNames: () -> List<String>,
     /** `System.getProperty(name)`. */
@@ -208,7 +233,9 @@ internal class HookingProbe(
 ) {
     fun probe(): Signal {
         val evidence = mutableListOf<String>()
-        mappedPaths().forEach { path ->
+        val maps = mappedPaths()
+        if (maps == null) evidence += "error:maps"
+        maps?.forEach { path ->
             val name = path.substringAfterLast('/').lowercase()
             // Every marker a name carries (`liblsposed.so` is both `lsposed` and `xposed`).
             MAP_MARKERS.filter { name.contains(it) }.forEach { evidence += "maps:$it" }
@@ -223,7 +250,7 @@ internal class HookingProbe(
         // frida-server's default port. A renamed or re-ported server is not
         // seen here; its agent still shows in the maps and threads above.
         listeningPorts().forEach { evidence += "port:$it" }
-        return Signal(evidence.isNotEmpty(), evidence.distinct())
+        return Signal(evidence.any { !it.startsWith("error:") }, evidence.distinct())
     }
 
     companion object {
@@ -339,7 +366,7 @@ internal object ProcReaders {
     fun procSelfStatus(): String? = readSmall("/proc/self/status")
 
     /** The distinct mapped paths of this process, from `/proc/self/maps`. */
-    fun mappedPaths(): List<String> = try {
+    fun mappedPaths(): List<String>? = try {
         File("/proc/self/maps").useLines { lines ->
             lines.mapNotNull { line ->
                 val path = line.substringAfterLast(' ', "").trim()
@@ -347,7 +374,7 @@ internal object ProcReaders {
             }.distinct().take(MAX_ENTRIES).toList()
         }
     } catch (_: Throwable) {
-        emptyList()
+        null
     }
 
     /** Native thread names from `/proc/self/task/<tid>/comm`, plus the JVM's threads. */

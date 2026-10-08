@@ -57,16 +57,22 @@ class ProbesTest {
     }
 
     @Test
-    fun `an unlocked bootloader or an unverified boot is evidence`() {
+    fun `an unlocked bootloader goes along as a hint and raises nothing`() {
         val props = mapOf(
             "ro.build.type" to "user", "ro.boot.verifiedbootstate" to "orange",
             "ro.boot.vbmeta.device_state" to "unlocked", "ro.boot.flash.locked" to "0"
         )
         val signal = RootProbe(none, "release-keys", { props[it] }, none, { false }, "/system/bin").probe()
-        assertTrue(signal.flag)
+        // A dev phone or custom ROM is not rooted; the server judges the bootloader from key attestation.
+        assertFalse(signal.flag)
         assertEquals(listOf(
-            "prop:ro.boot.verifiedbootstate=orange", "prop:ro.boot.vbmeta.device_state=unlocked", "prop:ro.boot.flash.locked=0"
+            "hint:ro.boot.verifiedbootstate=orange", "hint:ro.boot.vbmeta.device_state=unlocked", "hint:ro.boot.flash.locked=0"
         ), signal.evidence)
+        // GrapheneOS / CalyxOS: locked with their own key, "yellow" — not even a hint.
+        val yellow = mapOf("ro.build.type" to "user", "ro.boot.verifiedbootstate" to "yellow")
+        assertTrue(RootProbe(none, "release-keys", { yellow[it] }, none, { false }, "/system/bin").probe().evidence.isEmpty())
+        // A hint beside real evidence: the evidence raises the flag.
+        assertTrue(RootProbe({ it == "/sbin/su" }, "release-keys", { props[it] }, none, { false }, "/system/bin").probe().flag)
         val green = mapOf("ro.build.type" to "user", "ro.boot.verifiedbootstate" to "green", "ro.boot.vbmeta.device_state" to "locked", "ro.boot.flash.locked" to "1")
         assertFalse(RootProbe(none, "release-keys", { green[it] }, none, { false }, "/system/bin").probe().flag)
     }
@@ -188,6 +194,15 @@ class ProbesTest {
         )
         assertTrue(signal.flag)
         assertEquals(listOf("maps:frida", "thread:gmain", "thread:gum-js-loop", "thread:pool-frida"), signal.evidence)
+    }
+
+    @Test
+    fun `maps that cannot be read are an error, not clean, and the rest still counts`() {
+        val unread = HookingProbe({ null }, { listOf("main") }, { null }, { false }, { emptyList() }, { emptyList() }).probe()
+        assertFalse(unread.flag)
+        assertEquals(listOf("error:maps"), unread.evidence)
+        val threads = HookingProbe({ null }, { listOf("gum-js-loop") }, { null }, { false }, { emptyList() }, { emptyList() }).probe()
+        assertTrue(threads.flag)
     }
 
     @Test
@@ -368,6 +383,20 @@ class ProbesTest {
         // No key: unknown level, unattested — reported, not a crash.
         val device = JSONObject(DeviceIntegrityProbe(context).report("n", null).toJsonString()).getJSONObject("device")
         assertEquals("unknown", device.getString("keySecurityLevel"))
+    }
+
+    @Test
+    fun `a provider built before verdict(nonce, deviceId) is asked with the nonce alone`() = runTest {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        val asked = mutableListOf<String>()
+        val old = object : IntegrityVerdictProvider {
+            override suspend fun verdict(nonce: String): IntegrityVerdict? { asked += nonce; return IntegrityVerdict("x", "t") }
+            // What a provider compiled against the older interface does when the new method is called.
+            override suspend fun verdict(nonce: String, deviceId: String): IntegrityVerdict? = throw AbstractMethodError()
+        }
+        val json = JSONObject(DeviceIntegrityProbe(context, verdictProvider = old).report("n", null, deviceId = "d").toJsonString())
+        assertEquals(listOf("n"), asked)
+        assertEquals("x", json.getJSONObject("verdictProvider").getString("name"))
     }
 
     @Test

@@ -54,6 +54,7 @@ class AttestationManagerTest {
     private val applied = mutableListOf<SignedConfigResponse>()
     private val applyResults = mutableListOf<UpdateResult>()
     private var report = """{"sdkVersion":"2.2.0","signals":{}}"""
+    private val reportedDeviceIds = mutableListOf<String?>()
 
     @Before
     fun setUp() {
@@ -98,7 +99,7 @@ class AttestationManagerTest {
         currentConfigVersion = { 7 },
         currentIssuedAt = { 1_000L },
         liveConfig = liveConfig,
-        buildReport = { _, _, _ -> report },
+        buildReport = { _, deviceId, _ -> reportedDeviceIds += deviceId; report },
         applyConfig = { signed -> applied += signed; UpdateResult.Updated(9) },
         onConfigApplied = { applyResults += it },
         onEvent = { events += it },
@@ -106,9 +107,9 @@ class AttestationManagerTest {
         jitter = { 0.5 }
     )
 
-    private fun challenge(nonce: String = "nonce-1", serverTime: Long = now + 5_000) = MockResponse()
+    private fun challenge(nonce: String = "nonce-1", serverTime: Long = now + 5_000, verdictBinding: Int? = null) = MockResponse()
         .setHeader("Content-Type", "application/json")
-        .setBody("""{"nonce":"$nonce","expiresIn":120,"serverTime":$serverTime}""")
+        .setBody("""{"nonce":"$nonce","expiresIn":120,"serverTime":$serverTime${verdictBinding?.let { ",\"verdictBinding\":$it" } ?: ""}}""")
 
     private fun pass(
         token: String = "eyJ.token.1",
@@ -166,6 +167,18 @@ class AttestationManagerTest {
         assertTrue(verifier.verify(Base64.getDecoder().decode(json.getString("signature"))))
 
         assertEquals(AttestationResult.PASS, status.result)
+    }
+
+    @Test
+    fun `the device id reaches the verdict provider only for a server that takes v2 verdicts`() = runTest {
+        server.enqueue(challenge())
+        server.enqueue(pass())
+        server.enqueue(challenge(nonce = "nonce-2", verdictBinding = 2))
+        server.enqueue(pass(token = "eyJ.token.2"))
+        val m = manager()
+        m.attestNow()
+        m.attestNow()
+        assertEquals("an older server: v1, the nonce alone", listOf(null, "device-07"), reportedDeviceIds)
     }
 
     @Test

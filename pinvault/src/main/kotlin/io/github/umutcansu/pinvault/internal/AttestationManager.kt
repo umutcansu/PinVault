@@ -64,7 +64,8 @@ internal class AttestationManager(
     private val currentConfigVersion: () -> Int,
     private val currentIssuedAt: () -> Long,
     private val liveConfig: () -> CertificateConfig?,
-    private val buildReport: suspend (nonce: String, deviceId: String, key: ClientIdentityKeyProvider) -> String,
+    /** `deviceId` is non-null when the server takes v2 verdicts, bound to the device. */
+    private val buildReport: suspend (nonce: String, deviceId: String?, key: ClientIdentityKeyProvider) -> String,
     private val applyConfig: suspend (SignedConfigResponse) -> UpdateResult,
     private val onConfigApplied: (UpdateResult) -> Unit = { },
     private val onEvent: (PinVaultConnectionEvent.Attestation) -> Unit = { },
@@ -181,8 +182,10 @@ internal class AttestationManager(
                 throw IllegalStateException("The attestation challenge carries no nonce")
             }
             challenge.optLong("serverTime", 0L).takeIf { it > 0L }?.let { skew = it - clock() }
+            // v2 verdicts (bound to the device) only for a server that takes them (ATTESTATION.md §2.1).
+            val bindVerdict = challenge.optInt("verdictBinding", 1) >= 2
 
-            val report = buildReport(nonce, did, key)
+            val report = buildReport(nonce, did.takeIf { bindVerdict }, key)
             val canonical = canonicalString(nonce, did, report)
             val signature = base64(key.sign(canonical.toByteArray(Charsets.UTF_8)))
             val chain = if (chainWanted) attestationChainOf(key) else emptyList()

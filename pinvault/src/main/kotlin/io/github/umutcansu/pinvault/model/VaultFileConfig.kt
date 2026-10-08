@@ -61,6 +61,11 @@ data class VaultFileConfig(
     /** Delete the stored copy once it is older than [maxOfflineAgeMs]. See [Builder.wipeWhenStale]. */
     val wipeWhenStale: Boolean = false
 ) {
+    init {
+        // Also for configs made without the Builder (the constructor, copy()).
+        require(isValidKey(key)) { "vault file key must match [A-Za-z0-9._-]{1,64} and not be only dots: $key" }
+    }
+
     class Builder(private val key: String) {
         private var endpoint = ""
         private var signaturePublicKey: String? = null

@@ -129,7 +129,15 @@ internal class DeviceIntegrityProbe(
     private suspend fun verdict(nonce: String, deviceId: String?): IntegrityVerdict? {
         val provider = verdictProvider ?: return null
         return try {
-            withTimeout(VERDICT_TIMEOUT_MS) { if (deviceId != null) provider.verdict(nonce, deviceId) else provider.verdict(nonce) }
+            withTimeout(VERDICT_TIMEOUT_MS) {
+                if (deviceId == null) provider.verdict(nonce)
+                else try {
+                    provider.verdict(nonce, deviceId)
+                } catch (e: AbstractMethodError) {
+                    // A provider compiled against the interface before verdict(nonce, deviceId).
+                    provider.verdict(nonce)
+                }
+            }
         } catch (e: kotlinx.coroutines.CancellationException) {
             if (e is kotlinx.coroutines.TimeoutCancellationException) {
                 Timber.w("Integrity verdict provider took longer than %d ms — attesting without it", VERDICT_TIMEOUT_MS)

@@ -34,12 +34,21 @@ what the hardware vouches for; the clients bind their verdicts to the report.
   renamed in minified apps (`GsonModelPackageTest` guards both directions).
 - **`GuardedOperation.LOAD_FILE`:** `loadFile` asks the environment guard.
   An exhaustive `when` over the enum needs a branch for it.
-- **Vault file keys** must match `[A-Za-z0-9._-]{1,64}` and not be only dots.
-- Root probe: properties fall back to `getprop`, unreadable ones are
-  `error:prop` evidence; unverified boot, unlocked vbmeta / flash are evidence.
-  Hooking probe: frida-server's default loopback ports.
-- `IntegrityVerdictProvider.verdict(nonce, deviceId)` (default: `verdict(nonce)`);
-  `PlayIntegrityVerdictProvider` sends the v2 nonce.
+- **Breaking — vault file keys** must match `[A-Za-z0-9._-]{1,64}` and not be
+  only dots, for the Builder, the constructor and `copy()` alike: an app with
+  another key fails at init. Rename the file (`vaultFile("<new key>")`) and let
+  it be fetched again.
+- Root probe: properties fall back to `getprop` only where reflection is
+  refused (read once, 500 ms at most); unreadable ones are `error:prop`
+  evidence. An unverified boot or an unlocked bootloader goes along as `hint:`
+  evidence that raises nothing (the server judges them from key attestation;
+  GrapheneOS / CalyxOS boot `yellow` with a locked bootloader). Unreadable
+  `/proc/self/maps` is `error:maps`. Hooking probe: frida-server's default
+  loopback ports.
+- `IntegrityVerdictProvider.verdict(nonce, deviceId)` (default: `verdict(nonce)`;
+  a provider compiled against the older interface is asked with the nonce);
+  `PlayIntegrityVerdictProvider` sends the v2 nonce — to a server whose
+  challenge says `verdictBinding: 2` only, like the iOS App Attest v2 round.
 
 ### iOS library
 
