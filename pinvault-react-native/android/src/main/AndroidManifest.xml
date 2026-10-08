@@ -1,0 +1,3 @@
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <!-- PinVault itself declares what it needs (INTERNET, biometrics). -->
+</manifest>
