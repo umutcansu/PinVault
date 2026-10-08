@@ -71,9 +71,9 @@ final class AttestationCoordinator: Sendable {
                 currentConfigVersion: { currentConfigVersion(id) },
                 currentIssuedAt: { currentIssuedAt(id) },
                 liveConfig: { liveConfig(id) },
-                buildReport: { nonce, did, key in
+                buildReport: { nonce, did, key, bindVerdict in
                     guard let probe else { return "{}" }
-                    return await probe.report(nonce: nonce, deviceId: did, scope: id, key: key).jsonString()
+                    return await probe.report(nonce: nonce, deviceId: did, scope: id, key: key, bindVerdict: bindVerdict).jsonString()
                 },
                 roundVerdict: { canonical in await probe?.roundVerdict(canonical: canonical, scope: id) },
                 applyConfig: { signed in try await applyConfig(id, signed) },

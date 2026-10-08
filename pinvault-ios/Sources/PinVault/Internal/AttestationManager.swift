@@ -43,7 +43,7 @@ final class AttestationManager: AttestationTokenSource, @unchecked Sendable {
     private let currentConfigVersion: @Sendable () -> Int
     private let currentIssuedAt: @Sendable () -> Int64
     private let liveConfig: @Sendable () -> CertificateConfig?
-    private let buildReport: @Sendable (_ nonce: String, _ deviceId: String, _ key: any ClientIdentityKeyProvider) async -> String
+    private let buildReport: @Sendable (_ nonce: String, _ deviceId: String, _ key: any ClientIdentityKeyProvider, _ bindVerdict: Bool) async -> String
     private let roundVerdict: @Sendable (_ canonical: String) async -> IntegrityVerdict?
     private let applyConfig: @Sendable (SignedConfigResponse) async throws -> UpdateResult
     private let onConfigApplied: @Sendable (UpdateResult) -> Void
@@ -112,7 +112,7 @@ final class AttestationManager: AttestationTokenSource, @unchecked Sendable {
         currentConfigVersion: @escaping @Sendable () -> Int,
         currentIssuedAt: @escaping @Sendable () -> Int64,
         liveConfig: @escaping @Sendable () -> CertificateConfig?,
-        buildReport: @escaping @Sendable (_ nonce: String, _ deviceId: String, _ key: any ClientIdentityKeyProvider) async -> String,
+        buildReport: @escaping @Sendable (_ nonce: String, _ deviceId: String, _ key: any ClientIdentityKeyProvider, _ bindVerdict: Bool) async -> String,
         roundVerdict: @escaping @Sendable (_ canonical: String) async -> IntegrityVerdict? = { _ in nil },
         applyConfig: @escaping @Sendable (SignedConfigResponse) async throws -> UpdateResult,
         onConfigApplied: @escaping @Sendable (UpdateResult) -> Void = { _ in },
@@ -225,9 +225,11 @@ final class AttestationManager: AttestationTokenSource, @unchecked Sendable {
                 throw AttestationAnswerError("The attestation challenge carries no nonce", kotlinName: "IllegalStateException")
             }
             let serverTime = LenientJSON.long(challenge, "serverTime", 0)
+            // v2 verdicts only for a server that takes them (ATTESTATION.md §2.1).
+            let bindVerdict = LenientJSON.long(challenge, "verdictBinding", 1) >= 2
             if serverTime > 0 { skew = serverTime - clock() }
 
-            let report = await buildReport(nonce, did, key)
+            let report = await buildReport(nonce, did, key, bindVerdict)
             let canonical = Self.canonicalString(nonce: nonce, deviceId: did, report: report)
             let signature = Base64.encode(try key.sign(Data(canonical.utf8)))
             let chain = chainWanted ? attestationChain(of: key) : []
@@ -242,7 +244,7 @@ final class AttestationManager: AttestationTokenSource, @unchecked Sendable {
                 .init("currentConfigVersion", .int(Int64(currentConfigVersion()))),
                 .init("currentIssuedAt", .int(currentIssuedAt())),
             ]
-            if let verdict = await roundVerdict(canonical) {
+            if bindVerdict, let verdict = await roundVerdict(canonical) {
                 members.append(.init("verdictProvider", .object([.init("name", .string(verdict.name)), .init("token", .string(verdict.token))])))
             }
             if !chain.isEmpty { members.append(.init("attestationChain", .strings(chain))) }

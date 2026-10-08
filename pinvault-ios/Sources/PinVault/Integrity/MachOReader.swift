@@ -64,7 +64,9 @@ enum MachOReader {
             for index in 0..<min(arches, 32) {
                 let at = 8 + index * entry
                 guard at + entry <= head.count else { break }
-                let offset = magicBE == fatMagic64 ? Int(head.bigEndianUInt64(at: at + 8)) : Int(head.bigEndianUInt32(at: at + 8))
+                // A 64-bit offset past Int.max is not a slice of any real file: not there.
+                guard let offset = magicBE == fatMagic64 ? Int(exactly: head.bigEndianUInt64(at: at + 8)) : Int(head.bigEndianUInt32(at: at + 8)),
+                      offset < Int(Int32.max) else { return nil }
                 if chosen == nil || head.bigEndianUInt32(at: at) == cpuTypeArm64 { chosen = offset }
                 if head.bigEndianUInt32(at: at) == cpuTypeArm64 { break }
             }

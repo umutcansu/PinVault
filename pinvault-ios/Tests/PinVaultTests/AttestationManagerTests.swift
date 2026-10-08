@@ -51,7 +51,7 @@ final class AttestationManagerTests: XCTestCase {
             currentConfigVersion: { 7 },
             currentIssuedAt: { 1_000 },
             liveConfig: liveConfig,
-            buildReport: { _, _, _ in report },
+            buildReport: { _, _, _, _ in report },
             applyConfig: { signed in applied.append(signed); return .updated(newVersion: 9) },
             onConfigApplied: { applyResults.append($0) },
             onEvent: { events.append($0) },
@@ -141,7 +141,7 @@ final class AttestationManagerTests: XCTestCase {
         let m = AttestationManager(
             block: try attestingBlock(), api: api, identityKey: { key }, deviceId: { "device-07" },
             currentConfigVersion: { 0 }, currentIssuedAt: { 0 }, liveConfig: { nil },
-            buildReport: { _, _, _ in tricky }, applyConfig: { _ in .alreadyCurrent }, clock: { 1 }, jitter: { 0.5 }
+            buildReport: { _, _, _, _ in tricky }, applyConfig: { _ in .alreadyCurrent }, clock: { 1 }, jitter: { 0.5 }
         )
         _ = await m.attestNow()
         let json = try XCTUnwrap(api.attestBodies.first)
@@ -398,7 +398,7 @@ final class AttestationManagerTests: XCTestCase {
         let m = AttestationManager(
             block: try attestingBlock(tokenHosts: ["api.example.com"]), api: slow, identityKey: { key }, deviceId: { "d" },
             currentConfigVersion: { 0 }, currentIssuedAt: { 0 }, liveConfig: { nil },
-            buildReport: { _, _, _ in "{}" }, applyConfig: { _ in .alreadyCurrent }, clock: { 1_000 }, jitter: { 0.5 }
+            buildReport: { _, _, _, _ in "{}" }, applyConfig: { _ in .alreadyCurrent }, clock: { 1_000 }, jitter: { 0.5 }
         )
         async let a = m.attestNow()
         async let b = m.attestNow()
@@ -448,7 +448,7 @@ final class AttestationManagerTests: XCTestCase {
         let m = AttestationManager(
             block: try attestingBlock(), api: api, identityKey: { throw PinVaultError.illegalState("Keychain unavailable") },
             deviceId: { "d" }, currentConfigVersion: { 0 }, currentIssuedAt: { 0 }, liveConfig: { nil },
-            buildReport: { _, _, _ in "{}" }, applyConfig: { _ in .alreadyCurrent }, clock: { 1 }, jitter: { 0.5 }
+            buildReport: { _, _, _, _ in "{}" }, applyConfig: { _ in .alreadyCurrent }, clock: { 1 }, jitter: { 0.5 }
         )
         let status = await m.attestNow()
         XCTAssertEqual(status.result, .failed)

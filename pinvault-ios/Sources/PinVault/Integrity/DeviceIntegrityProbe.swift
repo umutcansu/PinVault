@@ -84,7 +84,10 @@ final class DeviceIntegrityProbe: Sendable {
     /// signature over the canonical string. `key` is the block's device key,
     /// for the key signals; nil when it cannot be read (reported as unknown).
     /// `scope` names the block, for a provider that keeps per-block state.
-    func report(nonce: String, deviceId: String, scope: String, key: (any ClientIdentityKeyProvider)?) async -> IntegrityReport {
+    /// `bindVerdict`: the server takes v2 verdicts (its challenge says `verdictBinding: 2`);
+    /// a provider that binds its verdict to the report then answers after it
+    /// (``roundVerdict(canonical:scope:)``). Otherwise every verdict goes inside the report (v1).
+    func report(nonce: String, deviceId: String, scope: String, key: (any ClientIdentityKeyProvider)?, bindVerdict: Bool = true) async -> IntegrityReport {
         let inputs = self.inputs
         let environment = inputs.environment()
         let keyLevel = key?.securityLevel() ?? .unknown
@@ -92,7 +95,7 @@ final class DeviceIntegrityProbe: Sendable {
         // built (``roundVerdict(canonical:scope:)``); the report then says
         // only that a verdict will travel with it.
         let roundAware = verdictProvider as? any AttestationRoundVerdictProvider
-        let deferred = roundAware?.bindsReport == true
+        let deferred = bindVerdict && roundAware?.bindsReport == true
         let verdict = deferred ? nil : await verdict(nonce: nonce, deviceId: deviceId, scope: scope)
         let appAttestVerdict = deferred || verdict?.name == AppAttestToken.provider
 

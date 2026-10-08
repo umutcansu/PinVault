@@ -48,7 +48,7 @@ final class AttestationInteropFixtureTests: XCTestCase {
     ) async throws -> String {
         let api = FakeAttestationApi()
         let nonce = ServerNonce.make(key: Self.nonceKey, timestampMs: Self.fixtureTime)
-        api.enqueue(.json(#"{"nonce":"\#(nonce)","expiresIn":120,"serverTime":\#(Self.fixtureTime)}"#))
+        api.enqueue(.json(#"{"nonce":"\#(nonce)","expiresIn":120,"serverTime":\#(Self.fixtureTime),"verdictBinding":2}"#))
         api.enqueue(.json(#"{"result":"pass","arc":"00000000","warnings":[],"token":"eyJ.fixture","tokenTtlSeconds":300,"nextAttestIn":300}"#))
 
         var appAttestJson = IntegrityJSON.null
@@ -81,8 +81,8 @@ final class AttestationInteropFixtureTests: XCTestCase {
             currentConfigVersion: { 0 },
             currentIssuedAt: { 0 },
             liveConfig: { nil },
-            buildReport: { nonce, deviceId, key in
-                await probe.report(nonce: nonce, deviceId: deviceId, scope: Self.configApiId, key: key).jsonString()
+            buildReport: { nonce, deviceId, key, bindVerdict in
+                await probe.report(nonce: nonce, deviceId: deviceId, scope: Self.configApiId, key: key, bindVerdict: bindVerdict).jsonString()
             },
             roundVerdict: { canonical in await probe.roundVerdict(canonical: canonical, scope: Self.configApiId) },
             applyConfig: { _ in .alreadyCurrent },

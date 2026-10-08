@@ -91,7 +91,7 @@ final class AttestationCoordinatorTests: XCTestCase {
     }
 
     private func enqueuePass(_ api: OwnApi, token: String) {
-        api.attestation.enqueue(.json(#"{"nonce":"nonce-\#(token)","serverTime":\#(now)}"#))
+        api.attestation.enqueue(.json(#"{"nonce":"nonce-\#(token)","serverTime":\#(now),"verdictBinding":2}"#))
         api.attestation.enqueue(.json(#"{"result":"pass","arc":"7f3a9c1e","warnings":[],"token":"\#(token)","tokenTtlSeconds":300,"nextAttestIn":300,"policyVersion":1}"#))
     }
 
@@ -206,7 +206,7 @@ final class AttestationCoordinatorTests: XCTestCase {
         XCTAssertEqual(service.attested.last?.clientDataHash, try Self.roundHashV2(firstBody))
 
         // The server does not know the key: it says so in the warnings, the provider starts over.
-        s.apis["tls"]!.attestation.enqueue(.json(#"{"nonce":"nonce-2"}"#))
+        s.apis["tls"]!.attestation.enqueue(.json(#"{"nonce":"nonce-2","verdictBinding":2}"#))
         s.apis["tls"]!.attestation.enqueue(.json(#"{"result":"pass","warnings":["app_attest","app_attest_unknown_key"],"token":"eyJ.2","tokenTtlSeconds":300}"#))
         _ = await s.coordinator.attestNow(configApiId: "tls")
         let second = s.apis["tls"]!.attestation.attestBodies[1]
@@ -230,7 +230,7 @@ final class AttestationCoordinatorTests: XCTestCase {
         XCTAssertEqual(firstKey.state, .confirmed)
 
         // The server forgot the device and registers keys only with an attestation (ATTESTATION_KEY_POLICY=enforce).
-        api.enqueue(.json(#"{"nonce":"nonce-2"}"#))
+        api.enqueue(.json(#"{"nonce":"nonce-2","verdictBinding":2}"#))
         api.enqueue(.http(403, #"{"error":"attestation_required","message":"This server registers only attested keys."}"#))
         let refused = await s.coordinator.attestNow(configApiId: "tls")
         XCTAssertEqual(refused.result, .failed)
@@ -246,6 +246,22 @@ final class AttestationCoordinatorTests: XCTestCase {
         XCTAssertEqual(service.attested.last?.clientDataHash, try Self.roundHashV2(body))
     }
 
+    func testAServerThatDoesNotAdvertiseV2GetsTheVerdictInsideTheReport() async throws {
+        let service = FakeAppAttestService()
+        let provider = AppAttestVerdictProvider(service: service, store: { InMemoryPreferences() }, deviceId: { nil })
+        let probe = DeviceIntegrityProbe(verdictProvider: provider, clock: { 1 }, inputs: DeviceIntegrityProbeTests.iPhone())
+        let s = try setup(probe: probe)
+        // An older server: its challenge says nothing about verdict binding.
+        s.apis["tls"]!.attestation.enqueue(.json(#"{"nonce":"nonce-old","serverTime":\#(now)}"#))
+        s.apis["tls"]!.attestation.enqueue(.json(#"{"result":"pass","arc":"7f3a9c1e","warnings":[],"token":"eyJ.old","tokenTtlSeconds":300,"nextAttestIn":300,"policyVersion":1}"#))
+        _ = await s.coordinator.attestNow(configApiId: "tls")
+        let body = s.apis["tls"]!.attestation.attestBodies[0]
+        XCTAssertNil(body["verdictProvider"], "nothing beside the report")
+        let report = try XCTUnwrap(LenientJSON.object(Data(try XCTUnwrap(body["report"] as? String).utf8)))
+        XCTAssertNotNil(report["verdictProvider"], "the v1 place")
+        XCTAssertEqual(service.attested.last?.clientDataHash, AppAttestToken.roundClientDataHash(nonce: "nonce-old", deviceId: "device-07"))
+    }
+
     func testOtherRefusalsKeepTheAppAttestKey() async throws {
         let service = FakeAppAttestService()
         let store = InMemoryPreferences()
@@ -255,7 +271,7 @@ final class AttestationCoordinatorTests: XCTestCase {
         enqueuePass(s.apis["tls"]!, token: "eyJ.1")
         _ = await s.coordinator.attestNow(configApiId: "tls")
         let api = s.apis["tls"]!.attestation
-        api.enqueue(.json(#"{"nonce":"nonce-2"}"#))
+        api.enqueue(.json(#"{"nonce":"nonce-2","verdictBinding":2}"#))
         api.enqueue(.http(400, #"{"error":"nonce_expired"}"#))
         _ = await s.coordinator.attestNow(configApiId: "tls")
         XCTAssertEqual(provider.key(scope: "tls")?.state, .confirmed)
