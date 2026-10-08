@@ -43,6 +43,18 @@ data class AttestedDevice(
     val playIntegrityAt: String? = null,
     /** What Google said, as `PlayIntegrityVerifier` summarised it (JSON text: reason, deviceVerdicts, appVerdict, licensing, …). */
     val playIntegrity: String? = null,
+    /** What the last report ran on: `ios`, or `android` for a report that names no platform; null before the first verdict. */
+    val platform: String? = null,
+    /** Base64 key id of the App Attest key an attestation registered (ATTESTATION.md §12); null = none. */
+    val appAttestKeyId: String? = null,
+    /** The authenticator counter of that key's last verified assertion (0 right after the attestation). */
+    val appAttestCounter: Long? = null,
+    /** pass | fail: the last App Attest verdict this server verified; null = none yet. */
+    val appAttestResult: String? = null,
+    /** When that verdict was verified (ISO instant). */
+    val appAttestAt: String? = null,
+    /** The verdict's summary (JSON text: reason, kind, appId, environment). */
+    val appAttest: String? = null,
     /** The last report trimmed to its app, device and signals blocks (JSON text); only in the single-device answer. */
     val lastReport: String? = null
 )
@@ -126,13 +138,16 @@ class AttestedDeviceStore(private val db: DatabaseManager) {
         configApiId: String, deviceId: String, result: String, arc: String,
         reasons: List<String>, warnings: List<String>, policyVersion: Int,
         trimmedReport: String?, sdkVersion: String?, verdictProvider: String?, verdictToken: String?,
-        now: Instant = Instant.now()
+        now: Instant = Instant.now(),
+        /** What the report ran on (`ios`, `android`); null keeps the stored one. */
+        platform: String? = null
     ) = db.connection().use { conn ->
         inTransaction(conn) {
             conn.prepareStatement(
                 """UPDATE attested_devices SET last_seen = ?, last_result = ?, last_arc = ?, last_reasons = ?, last_warnings = ?,
                    last_report = ?, last_policy_version = ?, last_sdk_version = ?, attest_count = attest_count + 1,
-                   verdict_provider = COALESCE(?, verdict_provider), verdict_token = COALESCE(?, verdict_token)
+                   verdict_provider = COALESCE(?, verdict_provider), verdict_token = COALESCE(?, verdict_token),
+                   platform = COALESCE(?, platform)
                    WHERE config_api_id = ? AND device_id = ?"""
             ).use { stmt ->
                 stmt.setString(1, now.toString())
@@ -145,8 +160,9 @@ class AttestedDeviceStore(private val db: DatabaseManager) {
                 stmt.setString(8, sdkVersion)
                 stmt.setString(9, verdictProvider)
                 stmt.setString(10, verdictToken)
-                stmt.setString(11, configApiId)
-                stmt.setString(12, deviceId)
+                stmt.setString(11, platform)
+                stmt.setString(12, configApiId)
+                stmt.setString(13, deviceId)
                 stmt.executeUpdate()
             }
             val hour = now.toEpochMilli() / HOUR_MS
@@ -179,6 +195,71 @@ class AttestedDeviceStore(private val db: DatabaseManager) {
             stmt.setString(3, summary)
             stmt.setString(4, configApiId)
             stmt.setString(5, deviceId)
+            stmt.executeUpdate()
+        }
+    }
+
+    /** The App Attest key on record for a device: [keyId] Base64, [publicKey] Base64 DER SPKI, its last [counter]. */
+    data class AppAttestKey(val keyId: String, val publicKey: String, val counter: Long)
+
+    fun appAttestKey(configApiId: String, deviceId: String): AppAttestKey? = db.connection().use { conn ->
+        conn.prepareStatement("SELECT app_attest_key_id, app_attest_public_key, app_attest_counter FROM attested_devices WHERE config_api_id = ? AND device_id = ?").use { stmt ->
+            stmt.setString(1, configApiId)
+            stmt.setString(2, deviceId)
+            val rs = stmt.executeQuery()
+            if (!rs.next()) return@use null
+            val keyId = rs.getString(1) ?: return@use null
+            val publicKey = rs.getString(2) ?: return@use null
+            AppAttestKey(keyId, publicKey, rs.getLong(3))
+        }
+    }
+
+    /** Stores the key a verified App Attest attestation registered (counter 0) with its verdict. */
+    fun registerAppAttestKey(configApiId: String, deviceId: String, keyId: String, publicKey: String, summary: String, now: Instant = Instant.now()) =
+        db.connection().use { conn ->
+            conn.prepareStatement(
+                """UPDATE attested_devices SET app_attest_key_id = ?, app_attest_public_key = ?, app_attest_counter = 0,
+                   app_attest_result = 'pass', app_attest_at = ?, app_attest = ? WHERE config_api_id = ? AND device_id = ?"""
+            ).use { stmt ->
+                stmt.setString(1, keyId)
+                stmt.setString(2, publicKey)
+                stmt.setString(3, now.toString())
+                stmt.setString(4, summary)
+                stmt.setString(5, configApiId)
+                stmt.setString(6, deviceId)
+                stmt.executeUpdate()
+            }
+        }
+
+    /**
+     * Moves [keyId]'s counter to [counter] and records a passing verdict —
+     * only while the stored counter is lower, so two rounds racing with the
+     * same counter cannot both pass. False when it was not (a replay).
+     */
+    fun advanceAppAttestCounter(configApiId: String, deviceId: String, keyId: String, counter: Long, summary: String, now: Instant = Instant.now()): Boolean =
+        db.connection().use { conn ->
+            conn.prepareStatement(
+                """UPDATE attested_devices SET app_attest_counter = ?, app_attest_result = 'pass', app_attest_at = ?, app_attest = ?
+                   WHERE config_api_id = ? AND device_id = ? AND app_attest_key_id = ? AND app_attest_counter < ?"""
+            ).use { stmt ->
+                stmt.setLong(1, counter)
+                stmt.setString(2, now.toString())
+                stmt.setString(3, summary)
+                stmt.setString(4, configApiId)
+                stmt.setString(5, deviceId)
+                stmt.setString(6, keyId)
+                stmt.setLong(7, counter)
+                stmt.executeUpdate() > 0
+            }
+        }
+
+    /** Records an App Attest verdict that failed; the key on record (if any) stays. */
+    fun recordAppAttestFailure(configApiId: String, deviceId: String, summary: String, now: Instant = Instant.now()) = db.connection().use { conn ->
+        conn.prepareStatement("UPDATE attested_devices SET app_attest_result = 'fail', app_attest_at = ?, app_attest = ? WHERE config_api_id = ? AND device_id = ?").use { stmt ->
+            stmt.setString(1, now.toString())
+            stmt.setString(2, summary)
+            stmt.setString(3, configApiId)
+            stmt.setString(4, deviceId)
             stmt.executeUpdate()
         }
     }
@@ -340,6 +421,12 @@ class AttestedDeviceStore(private val db: DatabaseManager) {
             playIntegrityResult = rs.getString("play_integrity_result"),
             playIntegrityAt = rs.getString("play_integrity_at"),
             playIntegrity = rs.getString("play_integrity"),
+            platform = rs.getString("platform"),
+            appAttestKeyId = rs.getString("app_attest_key_id"),
+            appAttestCounter = rs.getObject("app_attest_counter")?.let { rs.getLong("app_attest_counter") },
+            appAttestResult = rs.getString("app_attest_result"),
+            appAttestAt = rs.getString("app_attest_at"),
+            appAttest = rs.getString("app_attest"),
             lastReport = if (withReport) rs.getString("last_report") else null
         )
     }

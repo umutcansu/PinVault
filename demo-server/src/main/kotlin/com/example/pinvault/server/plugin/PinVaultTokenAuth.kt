@@ -22,7 +22,7 @@ import io.ktor.util.AttributeKey
  * is set, and every annotation of [PinVaultTokenAuthConfig.requireAnnotations]
  * in its `anno` claim. Anything else is `401` with
  * `WWW-Authenticate: PinVault-Token error="invalid_token", error_description="…"`
- * and `{"error":"invalid_token","reason":"missing|malformed|unknown_kid|signature|expired|audience|annotations"}`
+ * and `{"error":"invalid_token","reason":"missing|malformed|unknown_kid|signature|issuer|expired|audience|annotations"}`
  * — the shape the library's interceptor recognises to re-attest once and
  * retry. `/health` (and [PinVaultTokenAuthConfig.skipPaths]) stays open.
  *
@@ -74,6 +74,7 @@ val PinVaultTokenAuth = createApplicationPlugin(name = "PinVaultTokenAuth", ::Pi
                 "expired" -> "The token has expired; attest again."
                 "unknown_kid" -> "The token was signed with a secret this backend does not know."
                 "signature" -> "The token's signature does not verify."
+                "issuer" -> "The token was not issued by PinVault."
                 "audience" -> "The token was issued for another Config API."
                 else -> "The token is not a PinVault-Token."
             })

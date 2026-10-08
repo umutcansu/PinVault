@@ -9,6 +9,7 @@ import android.security.keystore.KeyPermanentlyInvalidatedException
 import android.security.keystore.KeyProperties
 import android.security.keystore.UserNotAuthenticatedException
 import androidx.biometric.BiometricManager
+import io.github.umutcansu.pinvault.model.UserAuthKeyKind
 import timber.log.Timber
 import java.security.KeyFactory
 import java.security.KeyPairGenerator
@@ -22,39 +23,6 @@ import java.security.spec.X509EncodedKeySpec
 import javax.crypto.Cipher
 import javax.crypto.spec.OAEPParameterSpec
 import javax.crypto.spec.PSource
-
-/**
- * How the user-auth key is opened. Fixed when the key is made and read back
- * from the key itself, so a key made on Android 10 keeps its kind after an
- * upgrade to 11.
- */
-internal enum class UserAuthKeyKind {
-    /**
-     * Android 11+: every use asks; a strong biometric or the screen lock.
-     * Authorised by `BIOMETRIC_STRONG | DEVICE_CREDENTIAL`, the key is bound
-     * to the device credential (the Keystore ties it to the screen lock's
-     * secure id, not to the enrolled biometrics): only removing the screen
-     * lock retires it. Enrolling a new fingerprint or face does NOT — that
-     * invalidates biometric-only keys, which this is not.
-     */
-    PER_USE,
-
-    /**
-     * Android 7–10 with a strong fingerprint at key generation: every use
-     * asks, fingerprint only. This is the one biometric-only kind, bound to
-     * the enrolled fingerprints: a new fingerprint, removing all fingerprints
-     * or removing the screen lock retires the key.
-     */
-    PER_USE_BIOMETRIC,
-
-    /**
-     * Android 7–10 without one: opens for [KeystoreUserAuthKeys.LEGACY_WINDOW_SECONDS]
-     * seconds after the screen lock is passed, in the prompt or by unlocking
-     * the phone. Only removing the screen lock retires it; a new fingerprint
-     * does not.
-     */
-    TIME_BOUND
-}
 
 /**
  * The key behind [io.github.umutcansu.pinvault.model.UserAuth] vault files:
@@ -189,7 +157,17 @@ internal class KeystoreUserAuthKeys(
         if (state() == UserAuthKeys.State.USABLE) return false
         delete()
         generate()
-        Timber.i("User-auth key created (%s)", kind())
+        val kind = kind()
+        Timber.i("User-auth key created (%s)", kind)
+        if (kind == UserAuthKeyKind.TIME_BOUND) {
+            // Surfaced on purpose: an integrator reading the log should know this
+            // device's key is the weak kind (README → "Locked behind the screen lock").
+            Timber.w(
+                "User-auth key is TIME_BOUND: Android %d cannot bind the screen lock to a single use and no strong " +
+                    "fingerprint is enrolled, so the key opens for %d s after the screen lock is passed (per-use from Android 11)",
+                Build.VERSION.SDK_INT, kind.windowSeconds
+            )
+        }
         return true
     }
 
@@ -261,7 +239,9 @@ internal class KeystoreUserAuthKeys(
             BiometricManager.BIOMETRIC_SUCCESS
 
     private fun generate() {
-        val perUseBiometric = Build.VERSION.SDK_INT < Build.VERSION_CODES.R && strongFingerprintEnrolled()
+        // The decision table is UserAuthKeyKind.expected (tested per SDK level).
+        val perUseBiometric = Build.VERSION.SDK_INT < Build.VERSION_CODES.R &&
+            UserAuthKeyKind.expected(Build.VERSION.SDK_INT, strongFingerprintEnrolled()) == UserAuthKeyKind.PER_USE_BIOMETRIC
         try {
             generate(perUseBiometric)
         } catch (e: Exception) {
@@ -338,6 +318,9 @@ internal class KeystoreUserAuthKeys(
                         setInvalidatedByBiometricEnrollment(true)
                     }
                     else ->
+                        // Android 7–10 without a strong fingerprint: the platform
+                        // cannot bind the screen lock to one use (-1 would make a
+                        // fingerprint-only key), so the shortest window that works.
                         @Suppress("DEPRECATION")
                         setUserAuthenticationValidityDurationSeconds(LEGACY_WINDOW_SECONDS)
                 }
@@ -356,7 +339,7 @@ internal class KeystoreUserAuthKeys(
     companion object {
         private const val ANDROID_KEYSTORE = "AndroidKeyStore"
         private const val ALIAS = UserAuthKeys.ALIAS
-        /** Long enough to unwrap right after the prompt, short enough to matter. */
-        const val LEGACY_WINDOW_SECONDS = 10
+        /** The time-bound key's window; the number and its reasoning live on [UserAuthKeyKind]. */
+        const val LEGACY_WINDOW_SECONDS = UserAuthKeyKind.TIME_BOUND_WINDOW_SECONDS
     }
 }

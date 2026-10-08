@@ -107,7 +107,8 @@ data class HostActionResponse(
 @Serializable
 data class HostStatusResponse(
     val hostname: String,
-    val keystorePath: String? = null,
+    /** A keystore for the host is installed (its path on the server is not the caller's business). */
+    val hasCertificate: Boolean = false,
     val certValidUntil: String? = null,
     val mockServerRunning: Boolean = false,
     val mockServerPort: Int? = null,

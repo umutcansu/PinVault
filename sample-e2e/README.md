@@ -65,6 +65,8 @@ npm run check-evidence      # kanıt sayfası denetimi (kanıtsız adım, tekrar
 
 Tek bir senaryo için: `npx playwright test tests/12-mtls-enroll-and-revoke.spec.js`.
 
+**iOS:** `npm run test:ios` aynı senaryoları iPhone simülatöründeki `sample-client-ios`'a karşı koşar (`E2E_PLATFORM=ios`; ayarlar `.env.ios`, örneği `.env.ios.example`). Simülatör, UI sürücüsü (`ios-driver/`, XCUITest), ayrı host örneği ve Android'den farklar: [SETUP.md → iOS koşusu](SETUP.md#ios-koşusu-e2e_platformios). Yalnızca Android'de anlamlı senaryolar (D05, U01) orada atlanır.
+
 Kurulum aşaması şunları yapar:
 
 1. Host'un sağlığını ve `.env`'deki API anahtarını kontrol eder, `scripts/provision.sh` ile mTLS Config API'sini, host'un kendi pin kaydını ve mock hedef host'ları açar.
@@ -99,6 +101,8 @@ Her koşu `evidence/index.html` dosyasını yeniden üretir. En üstte kapsam ma
 | `E2E_CUSTOM_BACKEND_PORT` | `6660` | Özel backend'in dinlediği port |
 | `E2E_WEBHOOK_PORT` | `6662` | Webhook alıcısının dinlediği port (Y senaryoları) |
 | `E2E_HOST_DIR`, `E2E_CLIENT_DIR` | kardeş klasörler | Host ve istemci projelerinin yolu |
+| `E2E_PLATFORM` | `android` | `ios`: iOS simülatörü (SETUP.md → iOS koşusu; `E2E_IOS_*` değişkenleri orada) |
+| `E2E_FRESH_PORT_BASE`, `E2E_FRESH_PROJECT`, `E2E_FRESH_CONTAINER` | `6750`, `pinvault-fresh`, `pinvault-host-fresh` | Geçici test sunucusunun portları (taban … taban+6), compose projesi ve container adı |
 
 ## Bilinmesi gerekenler
 
@@ -133,6 +137,12 @@ lib/hostControl.js  host container'ı: durdur/başlat, ortam değişkeni ezme, l
 lib/freshHost.js    geçici test sunucusu (tek kullanımlık ikinci host): kur, hazırla, dashboard'unu aç, sil
 lib/clientBuild.js  istemciyi verilen host değerleriyle derle ve cihaza kur
 lib/android.js      adb: cihaz, emülatör, UI dökümü, dokunma, yazma, klavye, saat, iptables, run-as
+lib/ios.js          iOS simülatörü: android.js ile aynı yöntemler (simctl, UI sürücüsü, Face ID, test denetim dosyası, log show)
+lib/device.js       platform seçici (E2E_PLATFORM): Android ya da iOS cihaz nesnesi
+lib/iosDriver.js    ios-driver (XCUITest UI sürücüsü): derle, başlat, istek, durdur
+lib/iosBuild.js     sample-client-ios: xcodegen + xcodebuild, simülatöre kurulum
+lib/blackhole.js    iOS'ta "paketleri düşür" kuralının karşılığı: bağlantıyı kabul edip yanıt vermeyen sunucu
+ios-driver/         XCUITest UI sürücüsü (XcodeGen project.yml, Driver/Driver.swift)
 lib/sampleApp.js    uygulama ekranları: ana, mTLS, Vault, Depolama, Ayarlar
 lib/dashboard.js    web dashboard: host'lar, pin'ler, force, vault, mTLS
 lib/proxy.js        araya giren saldırgan proxy (sahte anahtarla ya da host'un anahtarıyla) ve hazır trafik değişiklikleri (config/vault imzası, kayıt yanıtındaki sertifika zinciri)

@@ -10,7 +10,7 @@ class HostPatternRulesTest {
 
     @Test
     fun `accepts host names, addresses, single-label wildcards and ports`() {
-        for (ok in listOf("api.example.com", "192.168.1.80", "10.0.2.2", "*.example.com", "mock-tls.sample", "api.example.com:8443", "*.provisionpay.com")) {
+        for (ok in listOf("api.example.com", "192.168.1.10", "10.0.2.2", "*.example.com", "mock-tls.sample", "api.example.com:8443", "*.provisionpay.com")) {
             assertNull(HostPatternRules.error(ok), ok)
         }
     }

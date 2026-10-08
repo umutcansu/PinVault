@@ -113,7 +113,7 @@ function pagSize(key, size, onChangeGlobalFn) {
 
 // ── Host List ────────────────────────────────────────
 
-let hostStatuses = {}; // hostname -> { mockServerRunning, mockServerPort, keystorePath }
+let hostStatuses = {}; // hostname -> { mockServerRunning, mockServerPort, hasCertificate }
 let _hostStatusesLastFetch = 0;     // epoch ms — in-flight throttle
 let _hostStatusesInFlight = null;   // promise varsa tekrar atma
 const HOST_STATUS_TTL_MS = 15000;   // 15sn içinde tekrar fetch etme
@@ -234,14 +234,14 @@ function renderHostListSync() {
               (hs?.remote?.reachable && hs?.remote?.pinMatch) ? 'host-dot-remote' :
               (hs?.remote?.reachable && !hs?.remote?.pinMatch) ? 'host-dot-warn' :
               (hs?.remote && hs?.remote?.reachable === false) ? 'host-dot-offline' :
-              hs?.keystorePath                          ? 'host-dot-cert'     :
+              hs?.hasCertificate                        ? 'host-dot-cert'     :
                                                           'host-dot';
           const dotTitle =
               hs?.mockServerRunning                     ? 'Local mock ayakta' :
               (hs?.remote?.reachable && hs?.remote?.pinMatch) ? `Remote OK (:${hs.remote.port}) · pin match` :
               (hs?.remote?.reachable && !hs?.remote?.pinMatch) ? `⚠ Pin mismatch (:${hs.remote.port}) — cert rotate?` :
               (hs?.remote && hs?.remote?.reachable === false) ? `Offline — ${hs.remote.error || 'unreachable'}` :
-              hs?.keystorePath                          ? 'Cert var, mock kapalı' :
+              hs?.hasCertificate                        ? 'Cert var, mock kapalı' :
                                                           'Durum bilinmiyor';
           html += `
             <div class="host-item ${isSelected ? 'selected' : ''}" style="margin-left:20px" data-action="selectHostInApi" data-arg0="${esc(p.hostname)}" data-arg1="${esc(api.id)}">
@@ -843,6 +843,7 @@ async function loadPinHistory(hostname) {
       host_added:   { icon: '&#x2795;', text: t('evHostAdded'),   color: '#22c55e' },
       host_removed: { icon: '&#x274C;', text: t('evHostRemoved'), color: '#ef4444' },
       pins_updated: { icon: '&#x270F;', text: t('evPinsUpdated'), color: '#60a5fa' },
+      host_updated: { icon: '&#x270F;', text: t('evHostUpdated'), color: '#60a5fa' },
       force_update: { icon: '&#x26A1;', text: t('evForce'),       color: '#f59e0b' },
       mtls_enabled: { icon: '&#x1F512;', text: 'mTLS Enabled',    color: '#f59e0b' },
       mtls_disabled:{ icon: '&#x1F513;', text: 'mTLS Disabled',   color: '#94a3b8' },
@@ -883,11 +884,11 @@ async function testHostConnection(hostname) {
     if (!statusRes.ok) { toast(t('error'), 'error'); return; }
     const status = await statusRes.json();
 
-    // Yerel mock çalışmıyorsa (ya keystorePath hiç yok ya da sunucu başlatılmamış)
+    // Yerel mock çalışmıyorsa (ya sertifika hiç yok ya da sunucu başlatılmamış)
     // ping-remote ile gerçek uzak host'u dene. Bazı host'larda server cert dosyası
-    // üretilmiş olsa bile fiziksel olarak uzakta olabilir (örn. 192.168.1.217) —
-    // bu nedenle yalnızca keystorePath'e değil mockServerRunning'e de bakılır.
-    if (!status.keystorePath || !status.mockServerRunning) {
+    // üretilmiş olsa bile fiziksel olarak uzakta olabilir (örn. 192.168.1.20) —
+    // bu nedenle yalnızca hasCertificate'e değil mockServerRunning'e de bakılır.
+    if (!status.hasCertificate || !status.mockServerRunning) {
       const pingRes = await apiFetch(`/api/v1/hosts/${encodeURIComponent(hostname)}/ping-remote`);
       if (pingRes.ok) {
         const ping = await pingRes.json();

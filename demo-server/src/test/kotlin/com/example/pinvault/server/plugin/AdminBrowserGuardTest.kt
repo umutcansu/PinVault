@@ -141,7 +141,7 @@ class AdminBrowserGuardTest {
         val json = HttpHeaders.ContentType to "application/json"
 
         // DNS rebinding: the page's own name, pointed at 127.0.0.1. Same-origin as far as the browser can tell.
-        for (host in listOf("attacker.example:8090", "attacker.example", "localhost:9999", "127.0.0.1", "localhost.attacker.example:8090", "192.168.1.80:8090")) {
+        for (host in listOf("attacker.example:8090", "attacker.example", "localhost:9999", "127.0.0.1", "localhost.attacker.example:8090", "192.168.1.10:8090")) {
             val read = client.get("/api/v1/audit-log") { header(HttpHeaders.Host, host) }
             assertEquals(HttpStatusCode.Forbidden, read.status, "GET with Host $host")
             assertTrue(read.bodyAsText().contains("host_not_allowed"), read.bodyAsText())
@@ -155,8 +155,8 @@ class AdminBrowserGuardTest {
             assertEquals(HttpStatusCode.OK, write(json, HttpHeaders.Host to host, HttpHeaders.Origin to "http://${host.lowercase()}").status, host)
         }
         // Devices and the health probe reach their endpoints under any name.
-        assertEquals(HttpStatusCode.OK, client.get("/health") { header(HttpHeaders.Host, "192.168.1.80:8090") }.status)
-        assertEquals(HttpStatusCode.OK, client.post("/api/v1/client-certs/enroll") { header(HttpHeaders.Host, "192.168.1.80:8090"); setBody("x") }.status)
+        assertEquals(HttpStatusCode.OK, client.get("/health") { header(HttpHeaders.Host, "192.168.1.10:8090") }.status)
+        assertEquals(HttpStatusCode.OK, client.post("/api/v1/client-certs/enroll") { header(HttpHeaders.Host, "192.168.1.10:8090"); setBody("x") }.status)
     }
 
     @Test

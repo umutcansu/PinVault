@@ -1,0 +1,8 @@
+node_modules/
+lib/
+android/build/
+android/.gradle/
+android/.cxx/
+ios/Tests/.build/
+ios/Tests/.swiftpm/
+*.tgz

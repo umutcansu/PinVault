@@ -191,6 +191,31 @@ class AndroidKeyAttestationTest {
     }
 
     @Test
+    fun `an iOS-only fleet runs enforce on App Attest, and Android devices are refused there`() {
+        val unbound = AndroidKeyAttestation.fromEnv(emptyMap())
+        val userAuth = UserAuthAttestationMode.startupCheck(UserAuthAttestationMode.ENFORCE, unbound, appAttest = true)
+        val enrollment = EnrollmentAttestationMode.startupCheck(EnrollmentAttestationMode.ENFORCE, unbound, appAttest = true)
+        val keyPolicy = com.example.pinvault.server.service.attestation.AttestationKeyPolicy.startupCheck(
+            com.example.pinvault.server.service.attestation.AttestationKeyPolicy.ENFORCE, unbound, appAttest = true)
+        for (warning in listOf(userAuth, enrollment, keyPolicy)) {
+            assertNotNull(warning)
+            assertTrue(warning.contains("Android devices are refused") && warning.contains("App Attest"), warning)
+        }
+        // Without App Attest nothing changes: enforce without the Android binding does not start.
+        assertFailsWith<IllegalStateException> { EnrollmentAttestationMode.startupCheck(EnrollmentAttestationMode.ENFORCE, unbound) }
+        assertFailsWith<IllegalStateException> {
+            com.example.pinvault.server.service.attestation.AttestationKeyPolicy.startupCheck(
+                com.example.pinvault.server.service.attestation.AttestationKeyPolicy.ENFORCE, unbound)
+        }
+        // With both, nothing to say.
+        assertNull(EnrollmentAttestationMode.startupCheck(EnrollmentAttestationMode.ENFORCE, pki.verifier(), appAttest = true))
+        // The panel's settings check follows the same rule.
+        val enforce = mapOf("ENROLLMENT_ATTESTATION" to "enforce", "USER_AUTH_ATTESTATION" to "enforce", "ATTESTATION_KEY_POLICY" to "enforce")
+        assertEquals(3, ServerSettingsCatalog.startProblems(enforce).size)
+        assertEquals(emptyList(), ServerSettingsCatalog.startProblems(enforce + ("APP_ATTEST_APP_IDS" to "ABCDE12345.com.example.sampleclient")))
+    }
+
+    @Test
     fun `the mode parses strictly`() {
         assertEquals(UserAuthAttestationMode.WARN, UserAuthAttestationMode.parse(null))
         assertEquals(UserAuthAttestationMode.WARN, UserAuthAttestationMode.parse(""))

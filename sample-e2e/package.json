@@ -5,6 +5,7 @@
   "scripts": {
     "test": "playwright test",
     "test:emulator": "E2E_AVD=${E2E_AVD:-Pixel_6_Pro-ParlaForTest} playwright test",
+    "test:ios": "E2E_PLATFORM=ios playwright test",
     "report": "playwright show-report",
     "evidence": "open evidence/index.html",
     "check-evidence": "node scripts/check-evidence.js"

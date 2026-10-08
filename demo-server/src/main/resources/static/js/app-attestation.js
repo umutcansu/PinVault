@@ -4,12 +4,13 @@
 
 // ── Constants ────────────────────────────────────────
 
-// The 14 flags a report can raise, in the order the policy table shows them (ATTESTATION.md §3/§4/§11).
-// The last two are raised only by a server with the Play Integrity keys configured.
+// The 16 flags a report can raise, in the order the policy table shows them (ATTESTATION.md §3/§4/§11/§12).
+// play_integrity* are raised only by a server with the Play Integrity keys configured,
+// app_attest* only with APP_ATTEST_APP_IDS.
 const ATTEST_FLAGS = [
   'rooted', 'emulator', 'debugger', 'debuggable', 'hooking_framework', 'app_integrity',
   'cloner', 'unknown_installer', 'adb_enabled', 'software_key', 'key_unattested', 'old_patch_level',
-  'play_integrity', 'play_integrity_missing'
+  'play_integrity', 'play_integrity_missing', 'app_attest', 'app_attest_missing'
 ];
 const ATTEST_LEVELS = ['reject', 'warn', 'ignore'];
 const ATTEST_PRESETS = {
@@ -18,7 +19,8 @@ const ATTEST_PRESETS = {
     hooking_framework: 'reject', app_integrity: 'reject', cloner: 'reject',
     unknown_installer: 'warn', adb_enabled: 'ignore', software_key: 'warn',
     key_unattested: 'warn', old_patch_level: 'warn',
-    play_integrity: 'warn', play_integrity_missing: 'warn'
+    play_integrity: 'warn', play_integrity_missing: 'warn',
+    app_attest: 'warn', app_attest_missing: 'warn'
   },
   lenient: Object.fromEntries(ATTEST_FLAGS.map(f => [f, 'warn']))
 };
@@ -61,7 +63,8 @@ function attestDev(d) {
     arc: d.lastArc ?? d.arc ?? null,
     reasons: d.lastReasons ?? d.rejectionReasons ?? [],
     warnings: d.lastWarnings ?? d.warnings ?? [],
-    keyLevel: ka.securityLevel ?? d.keySecurityLevel ?? null,
+    // The attested level, else (an iPhone: no Android chain) what the last report says.
+    keyLevel: ka.securityLevel ?? d.keySecurityLevel ?? (report && report.device && report.device.keySecurityLevel) ?? null,
     attested: ka.attested ?? d.keyAttested ?? null,
     attestReason: ka.reason ?? d.keyAttestationReason ?? null,
     firstSeen: d.firstSeen ?? null,
@@ -82,8 +85,24 @@ function attestDev(d) {
     // Play Integrity, verified on the server (ATTESTATION.md §11): pass | fail, when, and Google's summary.
     playIntegrityResult: d.playIntegrityResult ?? null,
     playIntegrityAt: d.playIntegrityAt ?? null,
-    playIntegrity: typeof d.playIntegrity === 'string' ? parseJsonText(d.playIntegrity) : (d.playIntegrity && typeof d.playIntegrity === 'object' ? d.playIntegrity : null)
+    playIntegrity: typeof d.playIntegrity === 'string' ? parseJsonText(d.playIntegrity) : (d.playIntegrity && typeof d.playIntegrity === 'object' ? d.playIntegrity : null),
+    // What the last report ran on: 'ios', 'android' (a report without a platform), null before a verdict.
+    platform: d.platform ?? (report && report.device && report.device.platform) ?? null,
+    // Apple App Attest, verified on the server (ATTESTATION.md §12): pass | fail, when, the key and its summary.
+    appAttestResult: d.appAttestResult ?? null,
+    appAttestAt: d.appAttestAt ?? null,
+    appAttestKeyId: d.appAttestKeyId ?? null,
+    appAttestCounter: d.appAttestCounter ?? null,
+    appAttest: typeof d.appAttest === 'string' ? parseJsonText(d.appAttest) : (d.appAttest && typeof d.appAttest === 'object' ? d.appAttest : null)
   };
+}
+
+/** `ios` → iOS, `android` → Android; anything else as it came (escaped by the caller); null → —. */
+function attestPlatformLabel(platform) {
+  if (!platform) return null;
+  if (platform === 'ios') return 'iOS';
+  if (platform === 'android') return 'Android';
+  return String(platform);
 }
 
 function attestResultBadge(result) {
@@ -93,6 +112,16 @@ function attestResultBadge(result) {
 }
 
 function attestKeyCell(dev) {
+  // An iPhone's key has no Android chain: the mark is App Attest's verdict (Apple vouching for the app).
+  if (dev.platform === 'ios') {
+    const lvl = dev.keyLevel ? esc(String(dev.keyLevel)) : '&#x2014;';
+    const mark = dev.appAttestResult === 'pass'
+      ? `<span class="status-healthy" title="${esc(t('attAaPassHint'))}">&#x2713;</span>`
+      : dev.appAttestResult === 'fail'
+        ? `<span class="status-error" title="${esc(t('attAaFailHint', (dev.appAttest && dev.appAttest.reason) || '—'))}">&#x26A0;</span>`
+        : `<span class="muted" title="${esc(t('attAaNoneHint'))}">?</span>`;
+    return `<span class="mono">${lvl}</span> ${mark}`;
+  }
   const level = dev.keyLevel ? esc(String(dev.keyLevel)) : '&#x2014;';
   const att = dev.attested === true
     ? `<span class="status-healthy" title="${esc(t('attKeyAttestedHint'))}">&#x2713;</span>`
@@ -396,7 +425,7 @@ function renderAttestDevicesCard(apiId, data, status) {
       <div class="card-hint">${esc(t('attDevicesHint'))}</div>
       ${items.length ? `<table class="data-table attest-devices-table">
         <thead><tr>
-          <th>${esc(t('attThDevice'))}</th><th>${esc(t('attThResult'))}</th><th>ARC</th><th>${esc(t('attThKey'))}</th>
+          <th>${esc(t('attThDevice'))}</th><th>${esc(t('attThPlatform'))}</th><th>${esc(t('attThResult'))}</th><th>ARC</th><th>${esc(t('attThKey'))}</th>
           <th>${esc(t('attThFirstSeen'))}</th><th>${esc(t('attThLastSeen'))}</th><th>${esc(t('attThAnnotations'))}</th><th>${esc(t('attThForce'))}</th><th></th>
         </tr></thead>
         <tbody>${rows}</tbody>
@@ -435,6 +464,7 @@ function renderAttestDeviceRow(apiId, dev) {
     </form>`;
   return `<tr>
       <td class="mono small">${esc(dev.deviceId)}${revoked}${unregistered}${mismatch}</td>
+      <td class="small">${attestPlatformLabel(dev.platform) ? esc(attestPlatformLabel(dev.platform)) : '<span class="muted">&#x2014;</span>'}</td>
       <td>${attestResultBadge(dev.result)}</td>
       <td>${dev.arc
         ? `<span class="attest-arc" data-action="toggleAttestRow" data-arg0="arc" data-arg1="${esc(k)}" title="${esc(arcTitle)}">${esc(dev.arc)}</span>`
@@ -450,7 +480,7 @@ function renderAttestDeviceRow(apiId, dev) {
         <button class="btn btn-danger btn-sm" data-action="forgetAttestDevice" data-arg0="${esc(apiId)}" data-arg1="${esc(dev.deviceId)}" title="${esc(t('attForgetHint'))}">${esc(t('attForget'))}</button>
       </td>
     </tr>
-    <tr class="detail-row" id="attest-arc-${k}" style="${arcOpen ? '' : 'display:none'}"><td colspan="9">
+    <tr class="detail-row" id="attest-arc-${k}" style="${arcOpen ? '' : 'display:none'}"><td colspan="10">
       <div class="attest-arc-detail">
         <div><span class="muted small">ARC</span> <span class="mono">${esc(dev.arc || '—')}</span>
           ${dev.policyVersion != null ? `<span class="muted small" style="margin-left:10px">${esc(t('attPolicyVersionShort'))} v${esc(dev.policyVersion)}</span>` : ''}
@@ -459,7 +489,7 @@ function renderAttestDeviceRow(apiId, dev) {
         <div><span class="muted small">${esc(t('attWarnings'))}:</span> ${attestChips(dev.warnings, 'attest-chip-warn')}</div>
       </div>
     </td></tr>
-    <tr class="detail-row" id="attest-annot-${k}" style="${annotOpen ? '' : 'display:none'}"><td colspan="9">${annotForm}</td></tr>`;
+    <tr class="detail-row" id="attest-annot-${k}" style="${annotOpen ? '' : 'display:none'}"><td colspan="10">${annotForm}</td></tr>`;
 }
 
 /** Opens / closes a device's ARC detail or its annotate form (kind: 'arc' | 'annot'). */
@@ -535,7 +565,8 @@ async function forgetAttestDevice(apiId, deviceId) {
 function attestPlayIntegrityCard(dev) {
   const pi = dev.playIntegrity || {};
   const result = dev.playIntegrityResult;
-  if (!result && !dev.verdictProviderName) return '';
+  // An App Attest token is not a Play Integrity one: its own card below.
+  if (!result && (!dev.verdictProviderName || dev.verdictProviderName === 'app-attest')) return '';
   const badge = result === 'pass' ? `<span class="attest-badge attest-pass">${esc(t('attPiPass'))}</span>`
     : result === 'fail' ? `<span class="attest-badge attest-reject">${esc(t('attPiFail'))}</span>`
     : `<span class="attest-badge attest-none">${esc(t('attPiNotVerified'))}</span>`;
@@ -548,6 +579,30 @@ function attestPlayIntegrityCard(dev) {
       <div class="info-row"><span class="info-key">${esc(t('attPiDevice'))}</span><span class="info-val">${list(pi.deviceVerdicts)}</span></div>
       <div class="info-row"><span class="info-key">${esc(t('attPiApp'))}</span><span class="info-val">${esc(pi.appVerdict || '—')}${pi.packageName ? ` <span class="mono small">${esc(pi.packageName)}</span>` : ''}${pi.versionCode != null ? ` <span class="muted small">v${esc(pi.versionCode)}</span>` : ''}</span></div>
       <div class="info-row" style="border:none"><span class="info-key">${esc(t('attPiLicensing'))}</span><span class="info-val">${esc(pi.licensing || '—')}</span></div>
+    </div>`;
+}
+
+/**
+ * The App Attest card of the device page (ATTESTATION.md §12): Apple's
+ * verdict on this app instance as the server last verified it — an
+ * attestation (a new key) or an assertion (a later round, counter rising).
+ */
+function attestAppAttestCard(dev) {
+  const aa = dev.appAttest || {};
+  const result = dev.appAttestResult;
+  if (!result && dev.verdictProviderName !== 'app-attest' && dev.platform !== 'ios') return '';
+  const badge = result === 'pass' ? `<span class="attest-badge attest-pass">${esc(t('attPiPass'))}</span>`
+    : result === 'fail' ? `<span class="attest-badge attest-reject">${esc(t('attPiFail'))}</span>`
+    : `<span class="attest-badge attest-none">${esc(t('attPiNotVerified'))}</span>`;
+  const kind = aa.kind === 'attestation' ? t('attAaKindAttestation') : aa.kind === 'assertion' ? t('attAaKindAssertion') : '—';
+  return `<div class="card">
+      <div class="card-title">${esc(t('attAaTitle'))}</div>
+      <div class="card-hint">${esc(t('attAaHint'))}</div>
+      <div class="info-row"><span class="info-key">${esc(t('attThResult'))}</span><span class="info-val">${badge}${aa.reason && aa.reason !== 'ok' ? ` <span class="mono small">${esc(aa.reason)}</span>` : ''}</span></div>
+      <div class="info-row"><span class="info-key">${esc(t('attPiVerifiedAt'))}</span><span class="info-val">${attestTime(dev.appAttestAt)}</span></div>
+      <div class="info-row"><span class="info-key">${esc(t('attAaKind'))}</span><span class="info-val">${esc(kind)}${aa.environment ? ` <span class="muted small">${esc(aa.environment)}</span>` : ''}</span></div>
+      <div class="info-row"><span class="info-key">${esc(t('attAaKeyId'))}</span><span class="info-val mono small">${esc(dev.appAttestKeyId || '—')}</span></div>
+      <div class="info-row" style="border:none"><span class="info-key">${esc(t('attAaCounter'))}</span><span class="info-val">${dev.appAttestCounter != null ? esc(dev.appAttestCounter) : '&#x2014;'}</span></div>
     </div>`;
 }
 
@@ -601,6 +656,7 @@ async function showAttestationDevice(apiId, deviceId) {
         <div class="card">
           <div class="card-title">${esc(t('attVerdictTitle'))}</div>
           <div class="info-row"><span class="info-key">${esc(t('attThResult'))}</span><span class="info-val">${attestResultBadge(dev.result)}</span></div>
+          <div class="info-row"><span class="info-key">${esc(t('attThPlatform'))}</span><span class="info-val">${esc(attestPlatformLabel(dev.platform) || '—')}</span></div>
           <div class="info-row"><span class="info-key">ARC</span><span class="info-val">${esc(dev.arc || '—')}</span></div>
           <div class="info-row"><span class="info-key">${esc(t('attReasons'))}</span><span class="info-val">${attestChips(dev.reasons, 'attest-chip-reason')}</span></div>
           <div class="info-row"><span class="info-key">${esc(t('attWarnings'))}</span><span class="info-val">${attestChips(dev.warnings, 'attest-chip-warn')}</span></div>
@@ -622,6 +678,7 @@ async function showAttestationDevice(apiId, deviceId) {
         </div>
       </div>
       ${attestPlayIntegrityCard(dev)}
+      ${attestAppAttestCard(dev)}
       ${report ? `
       <div class="attest-detail-grid">
         <div class="card"><div class="card-title">${esc(t('attAppBlock'))}</div>${kv(report.app)}</div>

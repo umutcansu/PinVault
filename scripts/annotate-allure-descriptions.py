@@ -52,7 +52,7 @@ SUITE_DESC = {
         '**Dosya yaşam döngüsü:** Web upload → Android fetch → web update → Android re-fetch '
         'döngüsü. 304 Not Modified, multiple-device dağıtım kaydı, enrollment label tracking.',
     'VaultFileMtlsCrossTest':
-        '**mTLS transport üzerinden vault fetch:** Gerçek mTLS host (192.168.1.217:9443) ile '
+        '**mTLS transport üzerinden vault fetch:** Gerçek mTLS host (192.168.1.20:9443) ile '
         'el sıkışma, client cert olmadan reddedilme, çoklu enrollment label\'lı fetch kayıtları.',
     'VaultFileStoreScopingTest':
         '**Store seviyesi scope izolasyonu:** Aynı key iki farklı Config API altında çakışmaz, '

@@ -18,7 +18,7 @@
 // bu telefon onunla kayıt olamıyor (403 device_uid_mismatch) ve token harcanmıyor.
 const { test, expect } = require('../lib/fixtures');
 const { attachText, redact } = require('../lib/evidence');
-const { sleep } = require('../lib/android');
+const { sleep } = require('../lib/device');
 const hostApi = require('../lib/hostApi');
 const hostControl = require('../lib/hostControl');
 const env = require('../lib/env');

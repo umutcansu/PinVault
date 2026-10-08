@@ -1,5 +1,6 @@
 package com.example.pinvault.server
 
+import com.example.pinvault.server.plugin.installAdminBodyLimit
 import com.example.pinvault.server.model.HostActionResponse
 import com.example.pinvault.server.model.HostPin
 import com.example.pinvault.server.model.PinConfigHistoryEntry
@@ -48,7 +49,6 @@ import io.ktor.server.engine.*
 import io.ktor.server.netty.*
 import io.ktor.server.plugins.calllogging.*
 import io.ktor.server.plugins.contentnegotiation.*
-import io.ktor.server.plugins.defaultheaders.*
 import io.ktor.server.plugins.origin
 import io.ktor.server.plugins.statuspages.*
 import io.ktor.server.request.*
@@ -212,7 +212,9 @@ private fun startServer() {
     val httpsPort = com.example.pinvault.server.service.ServerEnv.get("HTTPS_PORT")?.toIntOrNull() ?: (httpPort + 1)
     // Certificate-renewal door for expired devices (TLS, no client cert, CA-pinned). 0 = off.
     val recoveryPort = com.example.pinvault.server.service.ServerEnv.get("RECOVERY_PORT")?.toIntOrNull() ?: (httpPort + 3)
-    val enrollmentMode = com.example.pinvault.server.service.ServerEnv.get("ENROLLMENT_MODE")?.lowercase() ?: "token"
+    // Blank (`ENROLLMENT_MODE=` in .env.example) is the default, as for every other setting.
+    val enrollmentMode = com.example.pinvault.server.service.ServerEnv.get("ENROLLMENT_MODE")
+        ?.trim()?.lowercase()?.ifBlank { null } ?: "token"
     // Lifetime of certificates issued over device-held keys (CSR enrollment).
     val clientCertTtlDays = (com.example.pinvault.server.service.ServerEnv.get("CLIENT_CERT_TTL_DAYS")?.toLongOrNull() ?: 90L).coerceIn(1, 3650)
     // E2E keys a source address may write over TLS per 10 minutes (0 = no limit), and
@@ -243,9 +245,15 @@ private fun startServer() {
         (if (userAuthAttestation.requireVerifiedBoot) "" else ", verified boot NOT required") +
         (if (userAuthAttestation.requirePerUse) ", per-use user-auth keys only" else "") +
         (userAuthAttestation.minPatchLevel?.let { ", security patch $it or newer" } ?: ""))
+    // Apple App Attest (ATTESTATION.md §12), optional: with APP_ATTEST_APP_IDS the server
+    // verifies iOS apps' App Attest objects itself — at enrollment, on every attestation
+    // round, and in place of the Android chain where a setting says enforce (enrollment,
+    // user-auth keys, attestation registration) — against Apple's root in
+    // APP_ATTEST_ROOT_CA_FILE; without a readable root it does not start. Nothing is sent to Apple.
+    val appAttest = com.example.pinvault.server.service.attestation.AppAttestVerifier.fromEnv()
     // enforce without the package + signer binding refuses to start; warn without it
     // lets no attestation count (replacement then needs an administrator's reset).
-    com.example.pinvault.server.service.UserAuthAttestationMode.startupCheck(userAuthAttestationMode, userAuthAttestation)
+    com.example.pinvault.server.service.UserAuthAttestationMode.startupCheck(userAuthAttestationMode, userAuthAttestation, appAttest = appAttest != null)
         ?.let { System.err.println(it) }
     // The attestation revocation list is re-read when its file changes (an
     // operator's cron job fetches Google's list; the server never goes to the
@@ -257,11 +265,12 @@ private fun startServer() {
             .scheduleAtFixedRate({ runCatching { userAuthAttestation.refreshRevocationList() } }, 10, 10, java.util.concurrent.TimeUnit.MINUTES)
     }
     // Client identity keys: Android Key Attestation of every CSR enrollment
-    // (ENROLLMENT_ATTESTATION=off|warn|enforce, default warn), same verifier settings.
+    // (ENROLLMENT_ATTESTATION=off|warn|enforce, default warn), same verifier settings;
+    // an iPhone's appAttestation in place of the chain when App Attest is configured.
     val enrollmentAttestationMode = com.example.pinvault.server.service.EnrollmentAttestationMode.parse(com.example.pinvault.server.service.ServerEnv.get("ENROLLMENT_ATTESTATION"))
-    com.example.pinvault.server.service.EnrollmentAttestationMode.startupCheck(enrollmentAttestationMode, userAuthAttestation)
+    com.example.pinvault.server.service.EnrollmentAttestationMode.startupCheck(enrollmentAttestationMode, userAuthAttestation, appAttest = appAttest != null)
         ?.let { System.err.println(it) }
-    val enrollmentAttestation = com.example.pinvault.server.service.EnrollmentAttestation(enrollmentAttestationMode) { userAuthAttestation }
+    val enrollmentAttestation = com.example.pinvault.server.service.EnrollmentAttestation(enrollmentAttestationMode, appAttest) { userAuthAttestation }
     // enforce without Google's revocation list: a phone whose attestation key was revoked still passes.
     if ((enrollmentAttestationMode == com.example.pinvault.server.service.EnrollmentAttestationMode.ENFORCE ||
             userAuthAttestationMode == com.example.pinvault.server.service.UserAuthAttestationMode.ENFORCE) &&
@@ -278,14 +287,16 @@ private fun startServer() {
     }
     // The enrolling device's integrity verdict (Play Integrity or a RASP product's
     // attestation): INTEGRITY_VERIFICATION=off|warn|enforce (default off), decoded
-    // by INTEGRITY_VERIFIER_COMMAND. Bound to the request's CSR and device id.
+    // by INTEGRITY_VERIFIER_COMMAND (App Attest tokens by the verifier above).
+    // Bound to the request's CSR and device id.
     val integrityMode = com.example.pinvault.server.service.IntegrityVerificationMode.parse(com.example.pinvault.server.service.ServerEnv.get("INTEGRITY_VERIFICATION"))
     val integrityVerifier = com.example.pinvault.server.service.CommandIntegrityVerifier.fromEnv(System::getenv)
-    com.example.pinvault.server.service.IntegrityVerificationMode.startupCheck(integrityMode, integrityVerifier)
+    com.example.pinvault.server.service.IntegrityVerificationMode.startupCheck(integrityMode, integrityVerifier, appAttest = appAttest != null)
         ?.let { System.err.println(it) }
-    val enrollmentIntegrity = com.example.pinvault.server.service.EnrollmentIntegrity(integrityMode, integrityVerifier)
+    val enrollmentIntegrity = com.example.pinvault.server.service.EnrollmentIntegrity(integrityMode, integrityVerifier, appAttest)
     println("INTEGRITY_VERIFICATION=${integrityMode.name.lowercase()}" +
-        (if (integrityVerifier != null) " (verifier command set)" else ""))
+        (if (integrityVerifier != null) " (verifier command set)" else "") +
+        (if (appAttest != null) " (App Attest tokens verified here)" else ""))
     val serverMadeKeys = enrollmentP12 && !enrollmentAttestation.refusesServerMadeKeys && !enrollmentIntegrity.refusesServerMadeKeys
     println("ENROLLMENT_ATTESTATION=${enrollmentAttestationMode.name.lowercase()}, ENROLLMENT_P12=${if (enrollmentP12) "on" else "off"}" +
         (if (serverMadeKeys) "" else " — no server-made keys: devices enroll over a CSR only"))
@@ -514,8 +525,13 @@ private fun startServer() {
     }
     val attestationKeyPolicy = com.example.pinvault.server.service.attestation.AttestationKeyPolicy.parse(com.example.pinvault.server.service.ServerEnv.get("ATTESTATION_KEY_POLICY"))
     // enforce without the package + signer binding refuses to start (as for the other two attestation modes).
-    com.example.pinvault.server.service.attestation.AttestationKeyPolicy.startupCheck(attestationKeyPolicy, userAuthAttestation)
+    com.example.pinvault.server.service.attestation.AttestationKeyPolicy.startupCheck(attestationKeyPolicy, userAuthAttestation, appAttest = appAttest != null)
         ?.let { System.err.println(it) }
+    // An iPhone has no Android chain: under any of the three enforce settings it is
+    // refused unless App Attest (APP_ATTEST_APP_IDS) stands in for the chain.
+    com.example.pinvault.server.service.attestation.AppAttestAdmission.iosRefusedWarning(
+        enrollmentAttestationMode, userAuthAttestationMode, attestationKeyPolicy, appAttestConfigured = appAttest != null
+    )?.let { System.err.println(it) }
     val attestationDefaults = com.example.pinvault.server.service.attestation.AttestationPolicyDefaults.fromEnv()
     val attestationNonceTtl = (com.example.pinvault.server.service.ServerEnv.get("ATTESTATION_NONCE_TTL_SECONDS")?.toIntOrNull() ?: 120).coerceIn(10, 3600)
     // Attestations per source address and per device id per 10 minutes (0 = off).
@@ -533,6 +549,9 @@ private fun startServer() {
     val attestedDeviceStore = com.example.pinvault.server.store.AttestedDeviceStore(db)
     // The HS256 secrets of PinVault-Token, encrypted at rest; the first one is made on first use.
     val attestationTokenSecretStore = com.example.pinvault.server.store.AttestationTokenSecretStore(db, atRestCipher)
+    // Sealed secrets the password at hand cannot open stop the start here, like
+    // the other secret checks: not a server that signs tokens with ciphertext.
+    attestationTokenSecretStore.checkReadable()
     // Repeated rejections of a device with the same verdict, and repeated key mismatches: summarised per minute.
     val attestationRejections = com.example.pinvault.server.service.AuthFailureRecorder(
         auditLog, action = "attestation_rejected", what = "Attestation rejected",
@@ -551,7 +570,10 @@ private fun startServer() {
         defaults = attestationDefaults, keyPolicy = attestationKeyPolicy, verifier = { userAuthAttestation },
         isDeviceRevoked = { id -> clientIdentityStore.isDeviceRevoked(id) },
         audit = auditLog, rejections = attestationRejections, deviceLimit = attestationDeviceLimit,
-        playIntegrity = playIntegrity
+        playIntegrity = playIntegrity,
+        appAttest = appAttest,
+        // ATTESTATION_MIN_IOS_VERSION / ATTESTATION_IOS_TEAM_IDS: what an iOS report is held to.
+        ios = com.example.pinvault.server.service.attestation.IosAttestationRules.fromEnv()
     )
     val attestationLimits = com.example.pinvault.server.route.AttestationLimits.of(attestationRateLimit, attestationDeviceRateLimit)
     println("ATTESTATION_ENABLED=${if (attestationEnabled) "true" else "false"}, ATTESTATION_KEY_POLICY=${attestationKeyPolicy.name.lowercase()}, " +
@@ -570,6 +592,15 @@ private fun startServer() {
         }
     } else {
         println("PLAY_INTEGRITY: off (set PLAY_INTEGRITY_DECRYPTION_KEY and PLAY_INTEGRITY_VERIFICATION_KEY to verify Google verdicts)")
+    }
+    if (appAttest != null) {
+        // The fingerprint lets the operator compare the file with the root Apple publishes.
+        println("APP_ATTEST: verifying app-attest verdicts locally (apps ${appAttest.appIds.joinToString()}, environment " +
+            "${appAttest.environment.wire}, verdict kept ${appAttest.verdictMaxAgeSeconds} s; root " +
+            appAttest.roots.joinToString { "${it.subjectX500Principal.name} SHA-256 ${com.example.pinvault.server.service.attestation.AttestationService.sha256Hex(it.encoded)}" } + ")" +
+            "; stands in for the Android chain where enforce asks for one (enrollment, user-auth keys, attestation registration)")
+    } else {
+        println("APP_ATTEST: off (set APP_ATTEST_APP_IDS and APP_ATTEST_ROOT_CA_FILE to verify Apple App Attest)")
     }
     if (mockHostRequireToken) {
         mockServerManager.tokenVerifier = {
@@ -655,6 +686,10 @@ private fun startServer() {
         }
         // Device-facing bodies are a few hundred bytes; refuse big ones unread.
         install(com.example.pinvault.server.plugin.ClientBodyLimit)
+        // ...and the admin routes served here (CONFIG_API_ADMIN_ROUTES) have the admin cap.
+        installAdminBodyLimit(adminUploadMaxBytes, vaultMaxFileBytes)
+        // An iPhone cannot read a 403 on a connection that asked for its certificate.
+        if (mode == "mtls") install(com.example.pinvault.server.plugin.ForbiddenAsConflict)
         // The handshake trusts the client CA, revocation is checked here, per request.
         if (mode == "mtls") install(com.example.pinvault.server.plugin.RevocationGate, revocationGate)
         // ...and X-Device-Id may only name the device the certificate belongs to.
@@ -706,8 +741,10 @@ private fun startServer() {
                 keyReplacementLimiter = enrollmentLimits.keyReplacements,
                 // A revoked device gets no token, end_to_end or user_auth file, on any listener.
                 deviceRevoked = { id -> clientIdentityStore.isDeviceRevoked(id) },
-                // User-auth keys: Android Key Attestation (USER_AUTH_ATTESTATION).
+                // User-auth keys: Android Key Attestation (USER_AUTH_ATTESTATION), an
+                // iPhone's App Attest in its place when APP_ATTEST_APP_IDS is set.
                 userAuthAttestation = userAuthAttestation, userAuthAttestationMode = userAuthAttestationMode,
+                appAttest = appAttest,
                 // Device ids a certificate proved it acts for: what revocation cuts off.
                 deviceProven = { clientId, deviceId, proof -> clientIdentityStore.recordDeviceProof(clientId, deviceId, proof) },
                 // Downloads at once per source address (VAULT_DOWNLOAD_CONCURRENCY, 0 = unlimited)
@@ -785,7 +822,7 @@ private fun startServer() {
 
     // DB'deki config API'leri ve mock server'ları auto-start et
     data class ApiToStart(val id: String, val port: Int, val mode: String)
-    data class MockToStart(val hostname: String, val keystorePath: String, val port: Int)
+    data class MockToStart(val hostname: String, val keystorePath: String, val port: Int, val mtls: Boolean)
 
     val apisToStart = mutableListOf<ApiToStart>()
     val mocksToStart = mutableListOf<MockToStart>()
@@ -795,9 +832,9 @@ private fun startServer() {
             val rs = stmt.executeQuery()
             while (rs.next()) apisToStart.add(ApiToStart(rs.getString("id"), rs.getInt("port"), rs.getString("mode")))
         }
-        conn.prepareStatement("SELECT hostname, keystore_path, mock_server_port FROM hosts WHERE mock_server_port IS NOT NULL AND keystore_path IS NOT NULL").use { stmt ->
+        conn.prepareStatement("SELECT hostname, keystore_path, mock_server_port, mock_server_mtls FROM hosts WHERE mock_server_port IS NOT NULL AND keystore_path IS NOT NULL").use { stmt ->
             val rs = stmt.executeQuery()
-            while (rs.next()) mocksToStart.add(MockToStart(rs.getString("hostname"), rs.getString("keystore_path"), rs.getInt("mock_server_port")))
+            while (rs.next()) mocksToStart.add(MockToStart(rs.getString("hostname"), rs.getString("keystore_path"), rs.getInt("mock_server_port"), rs.getInt("mock_server_mtls") == 1))
         }
     }
 
@@ -817,8 +854,13 @@ private fun startServer() {
     for (mock in mocksToStart) {
         if (!mockServerManager.isRunning(mock.hostname)) {
             try {
-                mockServerManager.start(mock.hostname, mock.port, mock.keystorePath)
-                println("Auto-started mock server: ${mock.hostname} on port ${mock.port}")
+                // An mTLS mock comes back as one, or not at all: never as a TLS mock that lets anyone in.
+                val trustPath = if (mock.mtls) {
+                    certService.getTrustStoreFile()?.absolutePath?.takeIf { File(it).exists() }
+                        ?: throw IllegalStateException("mTLS mock needs the client truststore, which is missing")
+                } else null
+                mockServerManager.start(mock.hostname, mock.port, mock.keystorePath, trustPath)
+                println("Auto-started mock server: ${mock.hostname} on port ${mock.port} (${if (mock.mtls) "mTLS" else "TLS"})")
             } catch (e: Exception) {
                 println("Failed to auto-start mock ${mock.hostname}: ${e.message}")
             }
@@ -877,23 +919,8 @@ private fun startServer() {
                 ignoreUnknownKeys = true
             })
         }
-        // Security headers (M-05). CSP is intentionally permissive on
-        // 'style-src' because the admin UI inlines a few utility styles;
-        // 'script-src self' still kills the H-02 stored-XSS payload class.
-        // Markup that still slips into the page can neither submit a form
-        // anywhere nor re-point relative URLs (form-action, base-uri); every
-        // dashboard form is handled in script.
-        install(DefaultHeaders) {
-            header("X-Content-Type-Options", "nosniff")
-            header("X-Frame-Options", "DENY")
-            header("Referrer-Policy", "no-referrer")
-            header(
-                "Content-Security-Policy",
-                "default-src 'self'; script-src 'self'; " +
-                "style-src 'self' 'unsafe-inline'; img-src 'self' data:; " +
-                "connect-src 'self'; frame-ancestors 'none'; form-action 'none'; base-uri 'none'"
-            )
-        }
+        // Security headers (M-05), no Server header, HSTS on the TLS port (SecurityHeaders.kt).
+        install(com.example.pinvault.server.plugin.SecurityHeaders)
         install(CallLogging)
         // Before anything that decides on the path (auth allowlist, approval gate).
         install(com.example.pinvault.server.plugin.EncodedPathGuard)
@@ -906,6 +933,8 @@ private fun startServer() {
             refusals = refusalCutOffs
         }
         install(com.example.pinvault.server.plugin.ClientBodyLimit)
+        // Admin JSON bodies and uploads: ADMIN_UPLOAD_MAX_BYTES; vault files VAULT_MAX_FILE_BYTES.
+        installAdminBodyLimit(adminUploadMaxBytes, vaultMaxFileBytes)
         // Other pages in an admin's browser: cross-site writes, form posts, and —
         // without admin keys — DNS rebinding (the Host must name this machine).
         install(com.example.pinvault.server.plugin.AdminBrowserGuard) {

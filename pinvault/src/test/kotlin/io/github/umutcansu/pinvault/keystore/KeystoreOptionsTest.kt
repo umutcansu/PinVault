@@ -2,6 +2,7 @@ package io.github.umutcansu.pinvault.keystore
 
 import io.github.umutcansu.pinvault.model.HardwareBackedKeyRequiredException
 import io.github.umutcansu.pinvault.model.KeySecurityLevel
+import io.github.umutcansu.pinvault.model.UnlockedDeviceKeyRequiredException
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -25,6 +26,72 @@ class KeystoreOptionsTest {
     fun reset() {
         KeystoreOptions.hardwareBackedRequired = false
         KeystoreOptions.unlockedDeviceRequired = false
+        KeystoreOptions.unlockedDeviceFallbackAllowed = false
+    }
+
+    // ── requireUnlockedDevice() ──────────────────────────────────────────
+
+    @Test
+    @Config(manifest = Config.NONE, sdk = [34])
+    fun `an unlocked-device key the Keystore refuses is a refusal, not a silent fallback`() {
+        KeystoreOptions.unlockedDeviceRequired = true
+        val asked = mutableListOf<Boolean>()
+        var cleaned = false
+        try {
+            KeystoreOptions.generating("Store encryption key", cleanUp = { cleaned = true }) { unlocked ->
+                asked += unlocked
+                throw java.security.ProviderException("Keystore: unlocked device required is not supported")
+            }
+            fail("the refusal must be reported, not worked around")
+        } catch (e: UnlockedDeviceKeyRequiredException) {
+            assertEquals("asked once, with the flag", listOf(true), asked)
+            assertTrue("the failed attempt is cleaned up", cleaned)
+            assertEquals("Store encryption key", e.keyKind)
+            assertTrue(e.cause is java.security.ProviderException)
+            assertTrue(e.message, e.message!!.contains("allowFallback"))
+        }
+    }
+
+    @Test
+    @Config(manifest = Config.NONE, sdk = [34])
+    fun `with allowFallback the key is made without the requirement`() {
+        KeystoreOptions.unlockedDeviceRequired = true
+        KeystoreOptions.unlockedDeviceFallbackAllowed = true
+        val asked = mutableListOf<Boolean>()
+        var cleaned = false
+        val key = KeystoreOptions.generating("Store encryption key", cleanUp = { cleaned = true }) { unlocked ->
+            asked += unlocked
+            if (unlocked) throw java.security.ProviderException("refused") else "key"
+        }
+        assertEquals("key", key)
+        assertEquals("with the flag first, then without", listOf(true, false), asked)
+        assertTrue(cleaned)
+    }
+
+    @Test
+    @Config(manifest = Config.NONE, sdk = [34])
+    fun `a key the Keystore did make but refused for its level is not retried without the flag`() {
+        KeystoreOptions.unlockedDeviceRequired = true
+        KeystoreOptions.unlockedDeviceFallbackAllowed = true
+        val asked = mutableListOf<Boolean>()
+        try {
+            KeystoreOptions.generating("Device RSA key") { unlocked ->
+                asked += unlocked
+                throw HardwareBackedKeyRequiredException("Device RSA key", KeySecurityLevel.SOFTWARE)
+            }
+            fail("must be refused")
+        } catch (e: HardwareBackedKeyRequiredException) {
+            assertEquals("the level refusal is not the flag's doing: no second attempt", listOf(true), asked)
+        }
+    }
+
+    @Test
+    @Config(manifest = Config.NONE, sdk = [27])
+    fun `before Android 9 the flag does not exist and nothing is refused`() {
+        KeystoreOptions.unlockedDeviceRequired = true
+        val asked = mutableListOf<Boolean>()
+        assertEquals("key", KeystoreOptions.generating("Store encryption key") { unlocked -> asked += unlocked; "key" })
+        assertEquals(listOf(false), asked)
     }
 
     @Test

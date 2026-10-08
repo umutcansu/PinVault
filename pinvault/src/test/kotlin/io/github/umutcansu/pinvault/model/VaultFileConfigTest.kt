@@ -155,6 +155,7 @@ class VaultFileConfigTest {
         val defaults = config()
         assertEquals("0 = no limit", 0L, defaults.vaultFileMaxOfflineAgeMs)
         assertFalse(defaults.requireUnlockedDevice)
+        assertFalse(defaults.requireUnlockedDeviceFallback)
 
         val hardened = config {
             vaultFileMaxOfflineAge(30, java.util.concurrent.TimeUnit.DAYS)
@@ -162,6 +163,10 @@ class VaultFileConfigTest {
         }
         assertEquals(30L * 24 * 60 * 60 * 1000, hardened.vaultFileMaxOfflineAgeMs)
         assertTrue(hardened.requireUnlockedDevice)
+        assertFalse("strict unless the app opts into the fallback", hardened.requireUnlockedDeviceFallback)
+        val lenient = config { requireUnlockedDevice(allowFallback = true) }
+        assertTrue(lenient.requireUnlockedDevice)
+        assertTrue(lenient.requireUnlockedDeviceFallback)
         assertThrows(IllegalArgumentException::class.java) {
             PinVaultConfig.Builder().vaultFileMaxOfflineAge(-1, java.util.concurrent.TimeUnit.HOURS)
         }

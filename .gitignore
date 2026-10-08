@@ -87,6 +87,16 @@ keystore.properties
 *.sqlite3
 # Public certificates the server ships as resources (no private key).
 !demo-server/src/main/resources/attestation/google-hardware-attestation-roots.pem
+# iOS library test fixtures: the public certificates of the DER/SPKI/X509 tests
+# are tracked (listed in .secrets-allow); the throwaway test KEYS are not —
+# pinvault-ios/scripts/generate-test-keys.sh makes them in every checkout
+# (Fixtures/README.md).
+!pinvault-ios/Tests/PinVaultTests/Fixtures/*.der
+!pinvault-ios/Tests/PinVaultTests/Fixtures/*.pem
+pinvault-ios/Tests/PinVaultTests/Fixtures/tls/*
+!pinvault-ios/Tests/PinVaultTests/Fixtures/tls/generate.sh
+pinvault-ios/Tests/PinVaultTests/Fixtures/vault/ios-device-key.*
+pinvault-ios/Tests/PinVaultTests/Fixtures/vault/server-*.envelope.bin
 
 # Offline keys, generated env files and moved-aside demo installs (sample-host)
 offline-keys/
@@ -98,3 +108,13 @@ backup-before-production-*/
 
 # Internal comparison document; not part of the project
 /MASC-vs-PinVault-DexProtector.pdf
+
+# SwiftPM / Xcode (iOS library and sample)
+.build/
+.swiftpm/
+xcuserdata/
+*.xcodeproj/project.xcworkspace/xcuserdata/
+DerivedData/
+
+# Session-only audit reports
+.local-reports/

@@ -29,11 +29,11 @@ import kotlin.test.*
 /**
  * Remote mTLS E2E Test
  *
- * Gerçek mTLS host'a (192.168.1.217:9443) bağlantı testi.
+ * Gerçek mTLS host'a (192.168.1.20:9443) bağlantı testi.
  * client.p12 ile mTLS handshake yapılır.
  *
  * Önkoşul:
- * - 192.168.1.217:9443'te mTLS sunucu çalışıyor
+ * - 192.168.1.20:9443'te mTLS sunucu çalışıyor
  * - /Users/thell/Downloads/certs/client.p12 mevcut (password: changeit)
  * - /Users/thell/Downloads/certs/server.jks mevcut (server cert)
  *
@@ -43,7 +43,7 @@ import kotlin.test.*
 class RemoteMtlsE2ETest {
 
     companion object {
-        private const val REMOTE_HOST = "192.168.1.217"
+        private const val REMOTE_HOST = "192.168.1.20"
         private const val REMOTE_PORT = 9443
         private const val REMOTE_URL = "https://$REMOTE_HOST:$REMOTE_PORT"
         private const val CLIENT_P12_PATH = "/Users/thell/Downloads/certs/client.p12"

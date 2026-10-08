@@ -54,7 +54,7 @@ test('Kurulum: host dört yolla eklenir (elle, sertifika üreterek, URL\'den, do
         `GET /api/v1/hosts/${GENERATED_HOST}/status`,
         `HTTP ${status.status}\n${status.text}`,
       );
-      expect(status.json.keystorePath).toBeTruthy();
+      expect(status.json.hasCertificate).toBe(true);
     });
 
     await test.step('Web: pin\'ler verilen URL\'deki sunucudan çekilerek host eklenir (K6)', async () => {

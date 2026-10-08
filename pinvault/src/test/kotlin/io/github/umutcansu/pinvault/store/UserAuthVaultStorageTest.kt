@@ -6,7 +6,7 @@ import androidx.biometric.BiometricManager.Authenticators.BIOMETRIC_WEAK
 import androidx.biometric.BiometricManager.Authenticators.DEVICE_CREDENTIAL
 import androidx.biometric.BiometricPrompt
 import io.github.umutcansu.pinvault.internal.UserAuthPrompt
-import io.github.umutcansu.pinvault.keystore.UserAuthKeyKind
+import io.github.umutcansu.pinvault.model.UserAuthKeyKind
 import io.github.umutcansu.pinvault.model.ScreenLockRequiredException
 import io.github.umutcansu.pinvault.model.SignatureEntry
 import io.github.umutcansu.pinvault.model.UserAuth
@@ -643,7 +643,12 @@ class UserAuthVaultStorageTest {
         assertEquals(BIOMETRIC_STRONG or DEVICE_CREDENTIAL, UserAuthPrompt.authenticators(UserAuthKeyKind.PER_USE, 33))
         assertEquals("fingerprint key: no screen-lock option", BIOMETRIC_STRONG,
             UserAuthPrompt.authenticators(UserAuthKeyKind.PER_USE_BIOMETRIC, 28))
-        assertEquals(BIOMETRIC_WEAK or DEVICE_CREDENTIAL, UserAuthPrompt.authenticators(UserAuthKeyKind.TIME_BOUND, 28))
+        assertEquals("Android 9–10: androidx.biometric cannot pair STRONG with the screen lock",
+            BIOMETRIC_WEAK or DEVICE_CREDENTIAL, UserAuthPrompt.authenticators(UserAuthKeyKind.TIME_BOUND, 28))
+        assertEquals(BIOMETRIC_WEAK or DEVICE_CREDENTIAL, UserAuthPrompt.authenticators(UserAuthKeyKind.TIME_BOUND, 29))
+        assertEquals("Android 7–8: the pair is supported, no weak biometric",
+            BIOMETRIC_STRONG or DEVICE_CREDENTIAL, UserAuthPrompt.authenticators(UserAuthKeyKind.TIME_BOUND, 24))
+        assertEquals(BIOMETRIC_STRONG or DEVICE_CREDENTIAL, UserAuthPrompt.authenticators(UserAuthKeyKind.TIME_BOUND, 27))
         assertEquals("a time-bound key that survived an upgrade to 11",
             BIOMETRIC_STRONG or DEVICE_CREDENTIAL, UserAuthPrompt.authenticators(UserAuthKeyKind.TIME_BOUND, 30))
     }

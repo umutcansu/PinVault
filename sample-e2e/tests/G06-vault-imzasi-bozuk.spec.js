@@ -127,7 +127,7 @@ test('Saldırı: vault dosyasının imzası bozulur ya da silinir → telefon do
           `cihazdaki içerik    : v${v1}'in metni (yeni metin cihazda yok)`,
           '',
           'sample-flags ENCRYPTED_PREFS ile saklanıyor: hem içerik hem sürüm',
-          'kaydı pinvault_secure_vault_files.xml içinde şifreli; dosyada anahtar adı bile',
+          `kaydı ${device.prefsFileName('pinvault_secure_vault_files')} içinde şifreli; dosyada anahtar adı bile`,
           'düz geçmiyor. Sürümü bu yüzden uygulamanın kendi "Bilgi" ekranından',
           'okuyoruz.',
           '',
@@ -135,7 +135,7 @@ test('Saldırı: vault dosyasının imzası bozulur ya da silinir → telefon do
           'hiç çağrılmıyor, yani yarım/değiştirilmiş içerik diske yazılmıyor.',
         ].join('\n'),
       );
-      expect(storage).toContain('pinvault_secure_vault_files.xml');
+      expect(storage).toContain(device.prefsFileName('pinvault_secure_vault_files'));
       await app.backToMain();
     });
 

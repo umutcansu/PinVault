@@ -476,11 +476,18 @@ data class HostRecord(
 
 class HostStore(private val db: DatabaseManager) {
 
+    /** Writes [record]; a running mock keeps its mTLS mode (set by [updateMockPort]). */
     fun save(record: HostRecord) {
         db.connection().use { conn ->
             conn.prepareStatement("""
-                INSERT OR REPLACE INTO hosts (hostname, config_api_id, keystore_path, cert_valid_until, mock_server_port, created_at)
+                INSERT INTO hosts (hostname, config_api_id, keystore_path, cert_valid_until, mock_server_port, created_at)
                 VALUES (?, ?, ?, ?, ?, ?)
+                ON CONFLICT(hostname, config_api_id) DO UPDATE SET
+                    keystore_path = excluded.keystore_path,
+                    cert_valid_until = excluded.cert_valid_until,
+                    mock_server_port = excluded.mock_server_port,
+                    mock_server_mtls = CASE WHEN excluded.mock_server_port IS NULL THEN 0 ELSE hosts.mock_server_mtls END,
+                    created_at = excluded.created_at
             """).use { stmt ->
                 stmt.setString(1, record.hostname)
                 stmt.setString(2, record.configApiId)
@@ -581,12 +588,14 @@ class HostStore(private val db: DatabaseManager) {
         }
     }
 
-    fun updateMockPort(hostname: String, configApiId: String, port: Int?) {
+    /** The mock listener of [hostname]: its port (null = stopped) and whether it asks for a client certificate. */
+    fun updateMockPort(hostname: String, configApiId: String, port: Int?, mtls: Boolean = false) {
         db.connection().use { conn ->
-            conn.prepareStatement("UPDATE hosts SET mock_server_port = ? WHERE hostname = ? AND config_api_id = ?").use { stmt ->
+            conn.prepareStatement("UPDATE hosts SET mock_server_port = ?, mock_server_mtls = ? WHERE hostname = ? AND config_api_id = ?").use { stmt ->
                 stmt.setObject(1, port)
-                stmt.setString(2, hostname)
-                stmt.setString(3, configApiId)
+                stmt.setInt(2, if (port != null && mtls) 1 else 0)
+                stmt.setString(3, hostname)
+                stmt.setString(4, configApiId)
                 stmt.executeUpdate()
             }
         }

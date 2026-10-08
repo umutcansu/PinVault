@@ -20,7 +20,9 @@ services:
         # Yerel checkout (yayınlanmamış değişiklikler dahil) için .env'de:
         #   PINVAULT_SERVER_SRC=../demo-server
         pinvault-server: "${PINVAULT_SERVER_SRC:-${PINVAULT_REPO:-https://github.com/umutcansu/PinVault.git}#${PINVAULT_REF:-main}:demo-server}"
-    container_name: pinvault-host
+    # Aynı makinede ikinci bir örnek (ör. iOS uçtan uca testlerinin host'u)
+    # için .env'de HOST_CONTAINER_NAME (ve COMPOSE_PROJECT_NAME) değiştirilir.
+    container_name: ${HOST_CONTAINER_NAME:-pinvault-host}
     restart: unless-stopped
     # PID 1 olarak küçük bir init (tini): komut imzalayıcının (CONFIG_SIGNERS=command)
     # alt süreçleri ve zaman aşımında öldürülenler zombi kalmasın.
@@ -194,6 +196,26 @@ services:
       ATTESTATION_RATE_LIMIT: ${ATTESTATION_RATE_LIMIT:-}
       ATTESTATION_DEVICE_RATE_LIMIT: ${ATTESTATION_DEVICE_RATE_LIMIT:-}
       MOCK_HOST_REQUIRE_TOKEN: ${MOCK_HOST_REQUIRE_TOKEN:-}
+      # iPhone uygulamaları (ATTESTATION.md §3). Boş = denetlenmez: en eski kabul
+      # edilen iOS sürümü (ör. 17.4) ve uygulamayı imzalayan Apple ekip kimlikleri
+      # (10 karakter, virgülle).
+      ATTESTATION_MIN_IOS_VERSION: ${ATTESTATION_MIN_IOS_VERSION:-}
+      ATTESTATION_IOS_TEAM_IDS: ${ATTESTATION_IOS_TEAM_IDS:-}
+      # Apple App Attest (ATTESTATION.md §12): Apple'ın, isteğin gerçek bir Apple
+      # cihazındaki değiştirilmemiş uygulamadan geldiğini gösteren belgesi; sunucu
+      # kendisi denetler, Apple'a bir şey gönderilmez. Açmak için uygulama
+      # kimliklerini (EKIPKIMLIGI.bundle.id, virgülle) yaz ve Apple'ın kök
+      # sertifikasını bir kez indirip data/ altına koy:
+      #   https://www.apple.com/certificateauthority/Apple_App_Attestation_Root_CA.pem
+      # APP_ATTEST_ROOT_CA_FILE dosyanın container içindeki yolu (ör.
+      # /data/apple-app-attestation-root.pem). Kimlikler yazılıyken dosya yoksa ya
+      # da okunamıyorsa sunucu açılmaz. Ortam: production (App Store, TestFlight) |
+      # development (Xcode'dan kurulan yapı); boş = production. Doğrulanmış belge
+      # bu kadar saniye geçerli sayılır (boş = 86400).
+      APP_ATTEST_APP_IDS: ${APP_ATTEST_APP_IDS:-}
+      APP_ATTEST_ROOT_CA_FILE: ${APP_ATTEST_ROOT_CA_FILE:-}
+      APP_ATTEST_ENVIRONMENT: ${APP_ATTEST_ENVIRONMENT:-}
+      APP_ATTEST_MAX_AGE_SECONDS: ${APP_ATTEST_MAX_AGE_SECONDS:-}
       # Kayıtta cihaz bütünlüğü (Play Integrity ya da bir RASP ürününün kararı):
       # off | warn | enforce (boş = off). Doğrulayıcı imajda:
       # /opt/pinvault/scripts/play-integrity-verify.sh. Servis hesabı dosyasını

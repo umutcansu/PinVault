@@ -19,7 +19,7 @@
 //     (Hedef host'lardaki uyuşmazlığın dashboard'a düşmesi: senaryo 03.)
 const { test, expect, TARGET_HOST } = require('../lib/fixtures');
 const { attachText } = require('../lib/evidence');
-const { sleep } = require('../lib/android');
+const { sleep } = require('../lib/device');
 const proxy = require('../lib/proxy');
 const hostApi = require('../lib/hostApi');
 const env = require('../lib/env');
@@ -66,7 +66,7 @@ test('Saldırı: araya sahte sertifikalı bir sunucu girer → telefon ona hiç 
 
     await test.step(`Terminal: telefonun ${env.CONFIG_API_PORT} portuna giden trafiği saldırgana yönlendirilir (iptables DNAT)`, async () => {
       device.redirectTcp(env.LAN_IP, env.CONFIG_API_PORT, env.PROXY_PORT);
-      const rules = device.rootShell('iptables -t nat -S OUTPUT');
+      const rules = device.describeNetRules('nat');
       await attachText(
         testInfo,
         `Yönlendirme kuralı (iptables DNAT): ${env.LAN_IP}:${env.CONFIG_API_PORT} → ${env.LAN_IP}:${env.PROXY_PORT}`,
@@ -196,7 +196,7 @@ test('Saldırı: araya sahte sertifikalı bir sunucu girer → telefon ona hiç 
       device.clearNetRules();
       await mitm.stop();
       mitm = null;
-      const rules = device.rootShell('iptables -t nat -S OUTPUT');
+      const rules = device.describeNetRules('nat');
       await sleep(1000);
       app.launchFresh();
       const ready = await app.waitReady();

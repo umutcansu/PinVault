@@ -1,0 +1,28 @@
+{
+  "ca": {
+    "serialHex": "0a1b2c3d4e5f",
+    "notBefore": 1791326427,
+    "notAfter": 2737406427,
+    "subject": "CN=PinVault Test CA,OU=Fixtures,O=PinVault Test,C=TR",
+    "issuer": "CN=PinVault Test CA,OU=Fixtures,O=PinVault Test,C=TR",
+    "spkiPin": "ExXrpT1Plg4cjdfykzRM/PmrwOwznCyssNPVB5pEHk4="
+  },
+  "leaf": {
+    "serialHex": "00ff00ff00ff00ff01",
+    "notBefore": 1791326427,
+    "notAfter": 1862606427,
+    "subject": "CN=mock-tls.sample,O=PinVault Test",
+    "issuer": "CN=PinVault Test CA,OU=Fixtures,O=PinVault Test,C=TR",
+    "dnsNames": ["mock-tls.sample", "*.example.com"],
+    "ipAddresses": ["192.168.1.10", "fe80::1"],
+    "spkiPin": "lGuEndHp4adDMhXI+fpPwCFvgsXWtocXcVKcy+3QYoI="
+  },
+  "rsa": {
+    "serialHex": "07",
+    "notBefore": 1791326427,
+    "notAfter": 1822862427,
+    "subject": "O=Comma\\, Quote \\\"Org\\\",CN=RSA Fixture\\, Inc",
+    "commonName": "RSA Fixture, Inc",
+    "spkiPin": "YANgGVIT0qEb47NH4HLw8+6q84SqWs9imKSMgTNteOc="
+  }
+}

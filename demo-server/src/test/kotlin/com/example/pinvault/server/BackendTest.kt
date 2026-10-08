@@ -857,6 +857,8 @@ class BackendTest {
         val status = Json.parseToJsonElement(statusResp.bodyAsText()).jsonObject
         assertEquals("mock.test", status["hostname"]?.jsonPrimitive?.content)
         assertFalse(status["mockServerRunning"]?.jsonPrimitive?.boolean ?: true)
+        assertTrue(status["hasCertificate"]!!.jsonPrimitive.boolean, "a keystore was generated")
+        assertNull(status["keystorePath"], "the server's file paths are not in the admin JSON")
     }
 
     // ── E.28: Aynı host'a iki cert yükle ────────────────

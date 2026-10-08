@@ -15,7 +15,7 @@ const { GROUPS, FEATURES } = require('./coverage');
 
 const HAS_SIPS = process.platform === 'darwin' && fs.existsSync('/usr/bin/sips');
 /** Sayfadaki bölüm sırası: Kurulum en başta, sonra PLAN.md'deki grup sırası. */
-const GROUP_ORDER = ['K', 'A', 'B', 'C', 'D', 'E', 'F', 'G', 'H', 'S', 'Y', 'U'];
+const GROUP_ORDER = ['K', 'A', 'B', 'C', 'D', 'E', 'F', 'G', 'H', 'S', 'Y', 'U', 'I'];
 
 const esc = (s) =>
   String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
@@ -320,7 +320,9 @@ class EvidenceReporter {
     const allOk = passed === total;
     const when = this.startedAt.toLocaleString('tr-TR');
     const device = this.run ? `${this.run.manufacturer} ${this.run.model} (${this.run.serial})` : 'cihaz bilinmiyor';
-    const build = env.VARIANT === 'e2e' ? 'uygulama: e2e derlemesi (release ile aynı R8 küçültmesi + test kontrolleri)' : 'uygulama: debug derlemesi';
+    const build = env.PLATFORM === 'ios'
+      ? `uygulama: iOS ${env.IOS_CONFIGURATION} derlemesi (simülatör${env.IOS_CONFIGURATION === 'E2E' ? ', Release optimizasyonu + test kontrolleri' : ''})`
+      : env.VARIANT === 'e2e' ? 'uygulama: e2e derlemesi (release ile aynı R8 küçültmesi + test kontrolleri)' : 'uygulama: debug derlemesi';
 
     const sorted = this.sortedEntries();
     // Bölümler grup grup: bir grup başlığı yalnızca bir kez, Kurulum en başta.

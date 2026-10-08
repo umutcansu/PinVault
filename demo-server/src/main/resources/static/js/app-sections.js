@@ -756,6 +756,8 @@ function attestationBadge(a, serverMade) {
     `<span style="font-size:11px;font-weight:600;color:${color};white-space:nowrap" title="${esc(hint)}">${esc(text)}</span>`;
   if (serverMade) return label(t('keyServerMade'), '#94a3b8', t('keyServerMadeHint'));
   if (!a) return label(t('keyUnchecked'), '#64748b', t('keyUncheckedHint'));
+  // An iPhone admitted by App Attest in place of the chain: Apple vouched for the app, not for the key.
+  if (a.attested && (a.keyKind === 'app_attest' || a.reason === 'app_attest')) return label(`✓ ${t('keyAppAttest')}`, '#22c55e', t('keyAppAttestHint'));
   if (a.attested) return label(`✓ ${t('keyAttested')}`, '#22c55e', t('keyAttestedHint', a.securityLevel || 'tee'));
   return label(`⚠ ${t('keyNotAttested')}`, '#f59e0b', t('keyNotAttestedHint', a.reason || '—'));
 }
@@ -1393,7 +1395,7 @@ async function loadMockStatus(hostname) {
     const running = data.mockServerRunning;
     const port = data.mockServerPort || 8443;
 
-    if (!data.keystorePath) {
+    if (!data.hasCertificate) {
       card.innerHTML = `<div class="card-title">${t('mockServerTitle')}</div><div class="empty-msg">${t('noCert')} — ${t('mockCertNeeded')}</div>`;
       return;
     }

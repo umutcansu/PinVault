@@ -1,14 +1,67 @@
 # PinVault
 
-Dynamic SSL certificate pinning library for Android. Manage pins remotely, support mTLS, distribute versioned files — all with encrypted storage.
+Dynamic SSL certificate pinning library for Android, iOS and React Native. Manage pins remotely, support mTLS, distribute versioned files — all with encrypted storage.
 
 [![Maven Central](https://img.shields.io/maven-central/v/io.github.umutcansu/pinvault)](https://central.sonatype.com/artifact/io.github.umutcansu/pinvault)
+[![npm](https://img.shields.io/npm/v/@umutcansu/react-native-pinvault)](https://www.npmjs.com/package/@umutcansu/react-native-pinvault)
 
-> **Latest release: 2.2.0.** Anything marked *(2.2)* is new in 2.2, *(2.1)* in
+> **Latest release: 2.3.2** — with the iOS library ([`pinvault-ios/`](pinvault-ios/README.md)) and the new React Native library ([`pinvault-react-native/`](pinvault-react-native/README.md), on npm). Anything marked *(2.3)* is new in 2.3, *(2.2)* in 2.2, *(2.1)* in
 > 2.1 — see [CHANGELOG.md](CHANGELOG.md) for the full list,
 > [Upgrading from 2.1.x to 2.2](#upgrading-from-21x-to-22) (most apps compile
 > unchanged), [Upgrading from 2.0.x to 2.1](#upgrading-from-20x-to-21) and
 > [MIGRATION.md](MIGRATION.md) for the DSL reference.
+
+## iOS
+
+The iOS library (Swift, iOS 16+, Swift Package Manager) speaks the same
+protocol to the same server, with the same names: pinning with signed remote
+configs, mTLS enrollment with a Secure Enclave key, signed and encrypted vault
+files, and attestation (App Attest where Android has Key Attestation and Play
+Integrity). Install, quick start and the platform differences:
+[`pinvault-ios/README.md`](pinvault-ios/README.md); how every Android piece maps
+to iOS: [`pinvault-ios/PORTING.md`](pinvault-ios/PORTING.md).
+
+```swift
+.package(url: "https://github.com/umutcansu/PinVault.git", from: "2.3.2")
+```
+
+## React Native
+
+`@umutcansu/react-native-pinvault` (React Native 0.87+, New Architecture) is a
+thin bridge over the two native libraries: pinning, keys (Keystore / Secure
+Enclave), signature checks and vault decryption stay native, and JavaScript
+never sees TLS. Its `fetch` runs on the pinned native session, and React
+Native's own `fetch` / XHR / `<Image>` go through PinVault too (WebSocket on
+Android only); release builds take the trust anchors from a native security
+file, not from the JS bundle. Install, API and the security notes:
+[`pinvault-react-native/README.md`](pinvault-react-native/README.md); sample app:
+[`sample-client-rn/`](sample-client-rn).
+
+| | |
+|---|---|
+| Package | [`@umutcansu/react-native-pinvault`](https://www.npmjs.com/package/@umutcansu/react-native-pinvault) on npm |
+| Needs | React Native 0.87+ with the New Architecture (the default), Hermes; Android minSdk 24, iOS 16+ |
+| Pulls in | Android `io.github.umutcansu:pinvault` from Maven Central and the iOS Swift package from this repository, both at the package's own version |
+
+1. Add the package and the iOS pod:
+
+   ```bash
+   npm install @umutcansu/react-native-pinvault
+   cd ios && pod install
+   ```
+
+2. **iOS:** register the background task in `AppDelegate` (`PinVaultBridge.registerBackgroundTask()`)
+   and add the Info.plist keys from the [plugin README](pinvault-react-native/README.md#install).
+   **Android:** nothing to add; the plugin pins React Native's own networking by itself.
+3. Start PinVault from JavaScript with your server's values
+   ([quick start](pinvault-react-native/README.md#quick-start)).
+4. For release builds, ship the trust anchors inside the app as well
+   ([native security file](pinvault-react-native/README.md#native-security-file)).
+
+The app does not add the native libraries itself: the plugin brings the
+matching versions (npm 2.3.2 uses Android 2.3.2 and the iOS tag `v2.3.2`). If
+the Android app also depends on `io.github.umutcansu:pinvault` directly, keep
+it on the same version.
 
 ## Features
 
@@ -28,25 +81,25 @@ Dynamic SSL certificate pinning library for Android. Manage pins remotely, suppo
 - **ECDSA signed configs** — verify config integrity with SHA256withECDSA
 - **Signed vault files** *(2.1)* — every downloaded file is checked against the Config API's signing keys before it is saved, and *(2.2)* again every time the stored copy is read
 - **Attested device keys** *(2.2)* — the mTLS key is generated with an Android key attestation challenge and its chain goes along with enrollment, so a server can tell your app on a real phone from a script with a token
-- **Attestation** *(next release)* — Approov-style: the app measures itself and the device every few minutes, the server turns the signed report into a verdict, releases pins and a short-lived `PinVault-Token` only on a pass, and your API checks the token ([ATTESTATION.md](ATTESTATION.md))
-- **Play Integrity, optional** *(next release)* — Google's verdict as a second opinion, verified on your server with the Play Console keys; a separate artifact, switched on in the app, on the server and in the policy independently
-- **Managed trust roots** *(next release)* — a root list in the signed config replaces the device's trust store for hosts without a pin
+- **Attestation** *(2.3)* — Approov-style: the app measures itself and the device every few minutes, the server turns the signed report into a verdict, releases pins and a short-lived `PinVault-Token` only on a pass, and your API checks the token ([ATTESTATION.md](ATTESTATION.md))
+- **Play Integrity, optional** *(2.3)* — Google's verdict as a second opinion, verified on your server with the Play Console keys; a separate artifact, switched on in the app, on the server and in the policy independently
+- **Managed trust roots** *(2.3)* — a root list in the signed config replaces the device's trust store for hosts without a pin
 - **No private key in app storage** *(2.2)* — a key that arrives in a PKCS12 is imported into the Android Keystore as non-exportable; a server-made key is accepted only on request
 - **Offline lifetime** *(2.2)* — `maxOfflineAge` stops a device that never comes back online from reading cached files for ever
 - **Issuer pins** *(2.1)* — pin your CA's key and survive leaf renewals
 - **Optional signing layers** *(2.1)* — backup keys, m-of-n signatures, signing-key rotation/revocation over the air ([SECURE_OPERATIONS.md](SECURE_OPERATIONS.md))
-- **Environment guard** *(next release)* — your root / hooking detection's verdict is asked before init, enrollment, downloads and unlocks ([Bypass protection](#10-bypass-protection-next-release))
-- **Integrity verdicts at enrollment** *(next release)* — a Play Integrity token bound to the request goes with every enrollment; the server decides
-- **Setup wizard** *(next release)* — the reference server's dashboard lists what a production server still lacks and writes the app's PinVault configuration from the server's own pins and keys
+- **Environment guard** *(2.3)* — your root / hooking detection's verdict is asked before init, enrollment, downloads and unlocks ([Bypass protection](#10-bypass-protection-23))
+- **Integrity verdicts at enrollment** *(2.3)* — a Play Integrity token bound to the request goes with every enrollment; the server decides
+- **Setup wizard** *(2.3)* — the reference server's dashboard lists what a production server still lacks and writes the app's PinVault configuration from the server's own pins and keys
 
 ## Quick Start
 
 ### 1. Add dependency
 
 ```gradle
-implementation("io.github.umutcansu:pinvault:2.2.0")
-// optional, next release: Play Integrity as the attestation's second opinion
-implementation("io.github.umutcansu:pinvault-play-integrity:<next>")
+implementation("io.github.umutcansu:pinvault:2.3.2")
+// optional: Play Integrity as the attestation's second opinion
+implementation("io.github.umutcansu:pinvault-play-integrity:2.3.2")
 ```
 
 > Kotlin 1.9.x consumer projects: use `2.0.3` or later — older 2.0.x
@@ -244,7 +297,7 @@ schemas), there is a one-line opt-in helper:
 import io.github.umutcansu.pinvault.reporter.reportToPinVaultBackend
 
 PinVaultConfig.Builder()
-    .reportToPinVaultBackend("http://192.168.1.80:6650/")
+    .reportToPinVaultBackend("http://192.168.1.10:6650/")
     .configApi("api", "https://api.example.com/") { ... }
     .build()
 ```
@@ -256,14 +309,14 @@ scales poorly to a production fleet. Two opt-in knobs cut that down:
 // Heartbeat throttle — at most one healthy report per (host, version,
 // cert) tuple per minute; pin mismatches always go through.
 .reportToPinVaultBackend(
-    managementUrl = "http://192.168.1.80:6650/",
+    managementUrl = "http://192.168.1.10:6650/",
     dedupWindowMs = 60_000L
 )
 
 // Anomalies only — drop the healthy stream entirely; only pin
 // mismatches and config-update failures reach the backend.
 .reportToPinVaultBackend(
-    managementUrl = "http://192.168.1.80:6650/",
+    managementUrl = "http://192.168.1.10:6650/",
     reportSuccessEvents = false
 )
 ```
@@ -371,8 +424,8 @@ own traffic:
 ```kotlin
 PinVault.setConnectionListener(
     PinVaultBackendReporter(
-        managementUrl = "https://192.168.1.80:6655/",
-        httpClient = PinVaultBackendReporter.pinnedClient("192.168.1.80", listOf(primaryPin, backupPin)),
+        managementUrl = "https://192.168.1.10:6655/",
+        httpClient = PinVaultBackendReporter.pinnedClient("192.168.1.10", listOf(primaryPin, backupPin)),
         reportSuccessEvents = false
     )
 )
@@ -1076,7 +1129,7 @@ hardware, that the server adds signals the device cannot forge, and that
 the policy — `reject`, `warn` or `ignore` per flag, device overrides, an
 audit trail — is the server's.
 
-### Play Integrity, optional *(next release)*
+### Play Integrity, optional *(2.3)*
 
 Google's verdict as a second opinion, in the same report and under the
 same policy. Three independent switches, so nothing changes until you turn
@@ -1103,7 +1156,7 @@ all of them:
 Details, reasons and the rollout order are in
 [ATTESTATION.md §11](ATTESTATION.md#11-play-integrity-optional).
 
-### Managed trust roots *(next release)*
+### Managed trust roots *(2.3)*
 
 Approov's "managed trust roots", in PinVault terms: the signed config may
 carry `trustRoots`, SHA-256 SPKI pins of root CAs (the same form as pins).
@@ -1187,7 +1240,7 @@ corrected. A config rolled back after a failed health check no longer lowers
 those checks either, and a host the server drops keeps its version
 watermark: it cannot come back at a lower version.
 
-**What the clock cannot tell** *(next release)*. Expiry is judged by a clock
+**What the clock cannot tell** *(2.3)*. Expiry is judged by a clock
 that never goes back on its own (the later of the device clock and the
 highest time seen). It goes back in one case: when a config is accepted whose
 `issuedAt` is newer than every config accepted before, and such a config is
@@ -1540,9 +1593,41 @@ when (val r = PinVault.unlockFile(activity, "statement", VaultFileUnlockPrompt("
     one fingerprint-only key, bound to the enrolled fingerprints: adding a
     fingerprint, removing all fingerprints or removing the screen lock
     retires it.
-  - It has none: the screen lock opens the key for 10 seconds, after the
+  - It has none: the screen lock opens the key for 5 seconds, after the
     prompt but also after the phone itself is unlocked. Only removing the
     screen lock retires this key; adding a fingerprint does not.
+
+  **Which Android versions get which key.** Decide, before you ship
+  `userAuth` files, whether a time-bound key is acceptable for them; the
+  table is what the platform allows, not a library choice.
+
+  | Android | Key | Opened by | Prompt offers |
+  |---|---|---|---|
+  | 11+ (API 30+) | per use (`PER_USE`) | every use: strong biometric or screen lock, bound to the operation | strong biometric + screen lock |
+  | 7–10, a strong fingerprint enrolled when the key is made | per use, fingerprint only (`PER_USE_BIOMETRIC`) | every use: the fingerprint, bound to the operation | fingerprint only |
+  | 7–10, no strong fingerprint then | time-bound (`TIME_BOUND`) | the screen lock or a fingerprint, for **5 s** after it is passed — in the prompt, or by unlocking the phone | Android 7–8: strong biometric + screen lock; Android 9–10: any biometric + screen lock |
+
+  Why 5 seconds: before Android 11 `setUserAuthenticationValidityDurationSeconds`
+  is the only way to let the screen lock open a key (`-1` makes a
+  fingerprint-only key, `0` is not a window the Keystore honours), and the
+  Keystore checks the window when the decrypt cipher is initialised — which
+  the library does on the thread hop right after the prompt returns, well
+  under a second. 5 s leaves room for a slow Keystore and keeps the key
+  shut the rest of the time; it was 10 s until 2.3.0. Why Android 9 and 10
+  list any biometric: androidx.biometric does not support
+  `BIOMETRIC_STRONG | DEVICE_CREDENTIAL` on API 28–29, and the screen lock
+  must stay on offer for a key the screen lock opens; a weak biometric (a
+  face unlock the Keystore does not count) passes the prompt but does not
+  open the key, and the unlock reports `Failed`. Read the kind of this
+  device's key with `PinVault.userAuthKeyKind()` (`perUse`,
+  `windowSeconds`; null until a key exists), or ask
+  `UserAuthKeyKind.expected(Build.VERSION.SDK_INT, strongFingerprint)` what a
+  key made now would be; a time-bound key is also logged as a warning when
+  it is made. The kind is fixed when the key is made: a phone that gains a
+  fingerprint later keeps its time-bound key until that key is retired or
+  the app's data is cleared. If a time-bound key is not acceptable, refuse
+  it on the server (`USER_AUTH_REQUIRE_PER_USE=true`, below) or do not
+  configure `userAuth` files below Android 11.
 - **What the server accepts.** The reference server reads the key's
   properties from its attestation and refuses a time-bound key from a phone
   on Android 11 or newer (the library's key there is always per-use, so this
@@ -1672,29 +1757,29 @@ its configs.
 | `KEY_REPLACEMENT_RATE_LIMIT` | `10` | *(2.2)* End-to-end / screen-lock key replacements one client id may make over its certificate per 10 minutes. |
 | `PICKUP_RATE_LIMIT` / `PICKUP_SOURCE_RATE_LIMIT` | `120` / `600` | *(2.2)* How often a waiting request may be asked about, per request and per address, per 10 minutes. |
 | `VAULT_DOWNLOAD_CONCURRENCY` | `4` | *(2.2)* Vault downloads one address may run at once (`429` beyond it). |
-| `VAULT_DOWNLOAD_CONCURRENCY_TOTAL` | `16` | *(next release)* Vault downloads served at once in total, across addresses and listeners (`429` beyond it; `0` = unlimited). Each download holds the whole file in memory, so the per-address cap alone let a few addresses fill the heap with one large `public` file. The Docker images start the JVM with `-XX:MaxRAMPercentage=60`. |
-| `CONFIG_API_ADMIN_ROUTES` | `on` | *(next release)* `off`: the Config API listeners — the ports devices reach — answer device endpoints only; every admin route gets `403 admin_routes_disabled` there, with or without a key, and administration happens on the management port alone. A leaked `API_KEY` is then useless from the internet-facing ports. The production profile sets `off`. |
-| `ATTESTATION_ENABLED` | `true` | *(next release)* Serves `GET /api/v1/attest/challenge` and `POST /api/v1/attest` on the Config API ports ([ATTESTATION.md](ATTESTATION.md)): the app measures itself and the device, signs the report with its Keystore key, and gets a verdict, a `PinVault-Token` (HS256 JWT, 5 min) and — when it is behind — the signed pin config. |
-| `ATTESTATION_KEY_POLICY` | `warn` | *(next release)* What a device key's **first** registration must show: `off` trusts on first use; `warn` checks the Android Key Attestation chain when there is one and stores the outcome (`key_unattested` becomes a signal); `enforce` registers no key without a passing chain (`403 attestation_required` / `attestation_invalid`) and needs `ATTESTATION_PACKAGE_NAMES` + `ATTESTATION_SIGNER_SHA256` to start. The production profile sets `enforce`. A registered key is never re-attested; a device that comes with another key is `403 key_mismatch` until an operator forgets it. |
-| `ATTESTATION_POLICY_DEFAULT` | `strict` | *(next release)* The policy of a Config API without a stored one: `strict` rejects `rooted`, `emulator`, `debugger`, `debuggable`, `hooking_framework`, `app_integrity`, `cloner`, warns on `unknown_installer`, `software_key`, `key_unattested`, `old_patch_level`, `play_integrity`, `play_integrity_missing` and ignores `adb_enabled`; `lenient` warns on everything (measure the fleet first). Per Config API in the dashboard or `PUT /api/v1/config-apis/{id}/attestation/policy`. |
-| `ATTESTATION_TOKEN_TTL_SECONDS` / `ATTESTATION_INTERVAL_SECONDS` | `300` / `300` | *(next release)* Token lifetime and `nextAttestIn` when a policy has none (30–86400 / 60–86400). |
-| `ATTESTATION_NONCE_TTL_SECONDS` | `120` | *(next release)* How long a challenge nonce may be presented. Nonces are HMAC-stamped with a key made at start-up (a restart invalidates those in flight; the library asks for a new one) and remembered once accepted. |
-| `ATTESTATION_RATE_LIMIT` / `ATTESTATION_DEVICE_RATE_LIMIT` | `60` / `30` | *(next release)* Attestations per source address and per device id per 10 minutes (`0` = off); the challenge has twice the address quota. |
-| `ATTESTATION_DEVICE_LIMIT` | `100000` | *(next release)* Most registered attestation devices one Config API holds (`0` = unlimited); a new device beyond it gets `503 device_limit_reached`, known devices keep attesting. |
-| `ATTESTATION_REVEAL_REASONS` | `false` | *(next release)* Default for a policy's `revealReasons`: whether a rejected device is told its `rejectionReasons` (the 8-hex ARC is always sent and resolves to them in the dashboard). |
-| `PLAY_INTEGRITY_DECRYPTION_KEY` / `PLAY_INTEGRITY_VERIFICATION_KEY` | unset | *(next release)* The Play Console response keys (Base64, both or neither). Set, the server verifies the `play-integrity` verdict a report carries ([ATTESTATION.md §11](ATTESTATION.md#11-play-integrity-optional)) and raises `play_integrity` / `play_integrity_missing`; unset, the token is only stored. `PLAY_INTEGRITY_ENABLED=false` turns it off with the keys in place. |
-| `PLAY_INTEGRITY_PACKAGE_NAMES` / `PLAY_INTEGRITY_DEVICE_LEVEL` / `PLAY_INTEGRITY_REQUIRE_APP_RECOGNIZED` | `ATTESTATION_PACKAGE_NAMES` / `device` / `true` | *(next release)* What a verdict must say: the package, the least `deviceRecognitionVerdict` (`basic`, `device`, `strong`), whether the app must be `PLAY_RECOGNIZED`. |
-| `PLAY_INTEGRITY_TOKEN_MAX_AGE_SECONDS` / `PLAY_INTEGRITY_MAX_AGE_SECONDS` | `600` / `86400` | *(next release)* How old a token may be; how long a verified verdict covers the device's later rounds (the client sends a token every few hours, not every round). |
-| `MOCK_HOST_REQUIRE_TOKEN` | `false` | *(next release)* The mock TLS/mTLS hosts refuse requests without a valid `PinVault-Token` (`401` with `WWW-Authenticate: PinVault-Token …`), as an app's own API would — the reference verifier is `plugin/PinVaultTokenAuth.kt`; backends load the secrets from `GET /api/v1/attestation/token-secrets` (requester-run under two-person approval). |
-| `HOST_CLIENT_CERT_REQUIRE_GRANT` | unset | *(next release)* `true`: a host's client certificate — one private key the whole fleet shares — is handed only to devices the device host ACL names; a scope with no ACL serves it to nobody. Unset: a scope without an ACL serves it to every enrolled device (so a device enrolled with a shared enrollment code, or a phone compromised before its revocation, could collect every host's key). The production profile sets `true`. |
+| `VAULT_DOWNLOAD_CONCURRENCY_TOTAL` | `16` | *(2.3)* Vault downloads served at once in total, across addresses and listeners (`429` beyond it; `0` = unlimited). Each download holds the whole file in memory, so the per-address cap alone let a few addresses fill the heap with one large `public` file. The Docker images start the JVM with `-XX:MaxRAMPercentage=60`. |
+| `CONFIG_API_ADMIN_ROUTES` | `on` | *(2.3)* `off`: the Config API listeners — the ports devices reach — answer device endpoints only; every admin route gets `403 admin_routes_disabled` there, with or without a key, and administration happens on the management port alone. A leaked `API_KEY` is then useless from the internet-facing ports. The production profile sets `off`. |
+| `ATTESTATION_ENABLED` | `true` | *(2.3)* Serves `GET /api/v1/attest/challenge` and `POST /api/v1/attest` on the Config API ports ([ATTESTATION.md](ATTESTATION.md)): the app measures itself and the device, signs the report with its Keystore key, and gets a verdict, a `PinVault-Token` (HS256 JWT, 5 min) and — when it is behind — the signed pin config. |
+| `ATTESTATION_KEY_POLICY` | `warn` | *(2.3)* What a device key's **first** registration must show: `off` trusts on first use; `warn` checks the Android Key Attestation chain when there is one and stores the outcome (`key_unattested` becomes a signal); `enforce` registers no key without a passing chain (`403 attestation_required` / `attestation_invalid`) and needs `ATTESTATION_PACKAGE_NAMES` + `ATTESTATION_SIGNER_SHA256` to start. The production profile sets `enforce`. A registered key is never re-attested; a device that comes with another key is `403 key_mismatch` until an operator forgets it. |
+| `ATTESTATION_POLICY_DEFAULT` | `strict` | *(2.3)* The policy of a Config API without a stored one: `strict` rejects `rooted`, `emulator`, `debugger`, `debuggable`, `hooking_framework`, `app_integrity`, `cloner`, warns on `unknown_installer`, `software_key`, `key_unattested`, `old_patch_level`, `play_integrity`, `play_integrity_missing` and ignores `adb_enabled`; `lenient` warns on everything (measure the fleet first). Per Config API in the dashboard or `PUT /api/v1/config-apis/{id}/attestation/policy`. |
+| `ATTESTATION_TOKEN_TTL_SECONDS` / `ATTESTATION_INTERVAL_SECONDS` | `300` / `300` | *(2.3)* Token lifetime and `nextAttestIn` when a policy has none (30–86400 / 60–86400). |
+| `ATTESTATION_NONCE_TTL_SECONDS` | `120` | *(2.3)* How long a challenge nonce may be presented. Nonces are HMAC-stamped with a key made at start-up (a restart invalidates those in flight; the library asks for a new one) and remembered once accepted. |
+| `ATTESTATION_RATE_LIMIT` / `ATTESTATION_DEVICE_RATE_LIMIT` | `60` / `30` | *(2.3)* Attestations per source address and per device id per 10 minutes (`0` = off); the challenge has twice the address quota. |
+| `ATTESTATION_DEVICE_LIMIT` | `100000` | *(2.3)* Most registered attestation devices one Config API holds (`0` = unlimited); a new device beyond it gets `503 device_limit_reached`, known devices keep attesting. |
+| `ATTESTATION_REVEAL_REASONS` | `false` | *(2.3)* Default for a policy's `revealReasons`: whether a rejected device is told its `rejectionReasons` (the 8-hex ARC is always sent and resolves to them in the dashboard). |
+| `PLAY_INTEGRITY_DECRYPTION_KEY` / `PLAY_INTEGRITY_VERIFICATION_KEY` | unset | *(2.3)* The Play Console response keys (Base64, both or neither). Set, the server verifies the `play-integrity` verdict a report carries ([ATTESTATION.md §11](ATTESTATION.md#11-play-integrity-optional)) and raises `play_integrity` / `play_integrity_missing`; unset, the token is only stored. `PLAY_INTEGRITY_ENABLED=false` turns it off with the keys in place. |
+| `PLAY_INTEGRITY_PACKAGE_NAMES` / `PLAY_INTEGRITY_DEVICE_LEVEL` / `PLAY_INTEGRITY_REQUIRE_APP_RECOGNIZED` | `ATTESTATION_PACKAGE_NAMES` / `device` / `true` | *(2.3)* What a verdict must say: the package, the least `deviceRecognitionVerdict` (`basic`, `device`, `strong`), whether the app must be `PLAY_RECOGNIZED`. |
+| `PLAY_INTEGRITY_TOKEN_MAX_AGE_SECONDS` / `PLAY_INTEGRITY_MAX_AGE_SECONDS` | `600` / `86400` | *(2.3)* How old a token may be; how long a verified verdict covers the device's later rounds (the client sends a token every few hours, not every round). |
+| `MOCK_HOST_REQUIRE_TOKEN` | `false` | *(2.3)* The mock TLS/mTLS hosts refuse requests without a valid `PinVault-Token` (`401` with `WWW-Authenticate: PinVault-Token …`), as an app's own API would — the reference verifier is `plugin/PinVaultTokenAuth.kt`; backends load the secrets from `GET /api/v1/attestation/token-secrets` (requester-run under two-person approval). |
+| `HOST_CLIENT_CERT_REQUIRE_GRANT` | unset | *(2.3)* `true`: a host's client certificate — one private key the whole fleet shares — is handed only to devices the device host ACL names; a scope with no ACL serves it to nobody. Unset: a scope without an ACL serves it to every enrolled device (so a device enrolled with a shared enrollment code, or a phone compromised before its revocation, could collect every host's key). The production profile sets `true`. |
 | `CLIENT_DEVICES_MAX` | `20000` | *(2.2)* Most rows the device list (connection reports) keeps; the oldest go first. |
 
-| `INTEGRITY_VERIFICATION` | `off` | *(next release)* `off` \| `warn` \| `enforce`: the `integrityToken` of an enrollment (see [Bypass protection](#10-bypass-protection-next-release)). `enforce`: `403 integrity_required` / `integrity_invalid` before anything is spent, and no server-made keys. Needs `INTEGRITY_VERIFIER_COMMAND`. |
-| `INTEGRITY_VERIFIER_COMMAND` | unset | *(next release)* Decodes the token: stdin `{"token","requestHash","deviceId"}`, stdout `{"passed","reason","summary"}`. For Play Integrity: `scripts/play-integrity-verify.sh` with `INTEGRITY_PLAY_PACKAGE` and `INTEGRITY_PLAY_SERVICE_ACCOUNT_FILE`. Gets `PATH`, `HOME`, `LANG`, `TZ`, `INTEGRITY_*` and `INTEGRITY_PASS_ENV`, never a server secret. `INTEGRITY_VERIFIER_TIMEOUT_MS` (default 10000). |
-| `SETUP_PUBLIC_HOST` / `SETUP_PUBLIC_PORTS` | unset | *(next release)* What the dashboard's setup wizard writes into the app's configuration when the server sits behind Docker or a proxy: the address phones reach it at, and `listen:published` port pairs (`8081:6651,8092:6652,8083:6656`). Unset: the dashboard's own address and the listening ports. The sample host fills both from `HOST_LAN_IP` and its port mapping. |
-| `PINVAULT_RESTART_ON_EXIT` | unset | *(next release)* `true`: something (Docker's `restart: unless-stopped`) starts the server again when it exits, so the setup wizard's "Restart now" may exit it to apply saved settings. Settings saved from the wizard live in `server-settings.json` next to the database and fill in what the environment leaves empty; a value set here in the environment is locked in the panel. |
+| `INTEGRITY_VERIFICATION` | `off` | *(2.3)* `off` \| `warn` \| `enforce`: the `integrityToken` of an enrollment (see [Bypass protection](#10-bypass-protection-23)). `enforce`: `403 integrity_required` / `integrity_invalid` before anything is spent, and no server-made keys. Needs `INTEGRITY_VERIFIER_COMMAND`. |
+| `INTEGRITY_VERIFIER_COMMAND` | unset | *(2.3)* Decodes the token: stdin `{"token","requestHash","deviceId"}`, stdout `{"passed","reason","summary"}`. For Play Integrity: `scripts/play-integrity-verify.sh` with `INTEGRITY_PLAY_PACKAGE` and `INTEGRITY_PLAY_SERVICE_ACCOUNT_FILE`. Gets `PATH`, `HOME`, `LANG`, `TZ`, `INTEGRITY_*` and `INTEGRITY_PASS_ENV`, never a server secret. `INTEGRITY_VERIFIER_TIMEOUT_MS` (default 10000). |
+| `SETUP_PUBLIC_HOST` / `SETUP_PUBLIC_PORTS` | unset | *(2.3)* What the dashboard's setup wizard writes into the app's configuration when the server sits behind Docker or a proxy: the address phones reach it at, and `listen:published` port pairs (`8081:6651,8092:6652,8083:6656`). Unset: the dashboard's own address and the listening ports. The sample host fills both from `HOST_LAN_IP` and its port mapping. |
+| `PINVAULT_RESTART_ON_EXIT` | unset | *(2.3)* `true`: something (Docker's `restart: unless-stopped`) starts the server again when it exits, so the setup wizard's "Restart now" may exit it to apply saved settings. Settings saved from the wizard live in `server-settings.json` next to the database and fill in what the environment leaves empty; a value set here in the environment is locked in the panel. |
 
-**Setup wizard** *(next release)*. The dashboard's *Setup Wizard* lists what a
+**Setup wizard** *(2.3)*. The dashboard's *Setup Wizard* lists what a
 production server still lacks — admin keys, approvals, signers, attestation,
 integrity, demo secrets and the rest — with the `.env` lines to change (it
 reads the environment, never writes it, and never shows a secret), then
@@ -1727,13 +1812,15 @@ Works with any language: Python, Node.js, Go, .NET, etc.
 
 ## Samples
 
-Three projects next to the library show PinVault end to end (their READMEs are in Turkish):
+Five projects next to the libraries show PinVault end to end (their READMEs are in Turkish):
 
 | Directory | What it is |
 |---|---|
 | [`sample-host/`](sample-host) | The demo server in Docker, set up for phones on the LAN: `./scripts/setup.sh`, then `docker compose up -d --build`. With `PINVAULT_SERVER_SRC=../demo-server` it builds the server from this checkout. The default is a **demo profile**; `./scripts/setup.sh --production` starts from named admins, two-person approval, the live certificate check and offline recovery/backup keys (generated into `offline-keys/`, to be moved off the server). |
 | [`sample-client/`](sample-client) | An Android app (Java) that uses every PinVault feature against the sample host. It builds the library from this checkout (`pinvault.localPath=..`). Its secret vault files live on the mTLS Config API (`token_mtls`), behind the screen lock (`userAuth(REQUIRED)`, `encryption(USER_AUTH)`), are opened with `unlockFile` and wiped on revocation; it asks `requireCaTrust` for its publicly trusted target. |
-| [`sample-e2e/`](sample-e2e) | Playwright end-to-end tests: an action in the host's dashboard is checked on the phone, or the other way round, with a one-file evidence page of screenshots. Setting everything up from scratch: [`sample-e2e/SETUP.md`](sample-e2e/SETUP.md). |
+| [`sample-client-ios/`](sample-client-ios) | The same app for iOS (SwiftUI): the same screens, settings and Turkish texts, built against the iOS library in this checkout (XcodeGen project). |
+| [`sample-client-rn/`](sample-client-rn) | The React Native app (Ana / mTLS / Vault screens) over `@umutcansu/react-native-pinvault`, against the same sample host. |
+| [`sample-e2e/`](sample-e2e) | Playwright end-to-end tests on Android (adb) and on the iOS simulator (`E2E_PLATFORM=ios`): an action in the host's dashboard is checked on the phone, or the other way round, with a one-file evidence page of screenshots. Setting everything up from scratch: [`sample-e2e/SETUP.md`](sample-e2e/SETUP.md). |
 
 ## Request-flow animation
 
@@ -1825,7 +1912,7 @@ PinVault.enroll()            ───→     POST /client-certs/enroll
 PinVault.fetchFile("key")   ───→     GET /vault/{key}
   File cached encrypted      ←───     Binary bytes
 
-attestation() blocks         ───→     GET /attest/challenge        (next release)
+attestation() blocks         ───→     GET /attest/challenge        (2.3)
   Report signed by the       ───→     POST /attest  {nonce, report, signature,
   device key, every ~5 min              attestationChain?, Play Integrity token?}
   PinVault-Token + pins      ←───     verdict by policy; token only on a pass
@@ -1842,6 +1929,8 @@ attestation() blocks         ───→     GET /attest/challenge        (next
 | Gradle                | 8.2     |
 | JDK                   | 17      |
 | OkHttp                | 4.x     |
+
+iOS: iOS 16+, Swift 6 toolchain (Xcode 16 or newer), no third-party dependencies.
 
 PinVault `2.0.0+` is compiled with Kotlin 2.1 but emits Kotlin 1.9
 metadata, so projects on Kotlin 1.9.x through 2.x can depend on it without
@@ -2115,7 +2204,7 @@ new version.
 Configure at least 2 different pins per host (primary + backup; *(next
 release)* the same hash twice is refused). From 2.1 a pin
 may be the leaf's key or the key of a CA the leaf chains to (checked on the device), so
-pinning your CA survives leaf renewals. *(next release)* An issuer pin also
+pinning your CA survives leaf renewals. *(2.3)* An issuer pin also
 requires the leaf to be issued for the host (a matching `subjectAltName`),
 checked by the library itself: a pin on a public CA's key would otherwise
 accept any site's certificate, and an app that relaxed its own
@@ -2152,8 +2241,18 @@ routine rotations.
   that leaks cannot be used to pose as another device.
 - Name the hosts that may see the client certificate with
   `clientCertHosts(...)`.
+- **iOS fleets: configure App Attest before you enforce.** An iPhone has no
+  Android Key Attestation chain, so a server that enforces one (enrollment,
+  screen-lock keys, attestation registration) refuses every iPhone until
+  App Attest is configured (`APP_ATTEST_APP_IDS`, `APP_ATTEST_ROOT_CA_FILE`
+  with Apple's App Attestation Root CA, `APP_ATTEST_ENVIRONMENT=production`);
+  the reference server warns at start. App Attest then stands in for the
+  chain, verified separately for each request. It proves your genuine app on
+  genuine Apple hardware — not that the phone is not jailbroken, and not
+  where the keys live; for high-value apps add a RASP product
+  ([ATTESTATION.md §12](ATTESTATION.md#12-apple-app-attest-optional-ios)).
 
-### 8b. Know — or require — where the keys live *(next release)*
+### 8b. Know — or require — where the keys live *(2.3)*
 
 The library asks the Keystore for StrongBox first and the TEE next, but
 where the key ends up is the Keystore's decision; a ROM that can do neither
@@ -2206,12 +2305,29 @@ It applies to keys generated after you turn it on. Existing installs keep
 the keys they have (usable while locked) until those are replaced: the
 identity key at the next enrollment, the store keys when the app's data is
 cleared. A phone without a screen lock has nothing to unlock, so the option
-changes nothing there. If a device's Keystore refuses to make such a key,
-the key is made without the requirement and a warning is logged. Call
-`init` (or the config overloads of `enroll` / `isEnrolled`) with this config
-before anything else touches PinVault, since the first use creates the keys.
+changes nothing there. Call `init` (or the config overloads of `enroll` /
+`isEnrolled`) with this config before anything else touches PinVault, since
+the first use creates the keys.
 
-### 10. Bypass protection *(next release)*
+**When the Keystore refuses such a key** (a ROM that does not support
+`setUnlockedDeviceRequired`), the operation that needed the key fails with
+`UnlockedDeviceKeyRequiredException` — `init` returns `Failed` for the
+store keys, enrollment and vault files report `Failed` with that cause —
+and the error is logged. You asked for keys that work only while the
+device is unlocked; a key made without that requirement would not be what
+you asked for, and until 2.3.0 the library made one anyway with only a
+warning. To keep that behaviour, opt into it:
+
+```kotlin
+PinVaultConfig.Builder()
+    .requireUnlockedDevice(allowFallback = true)   // Java: requireUnlockedDevice(true)
+```
+
+The key is then made without the requirement and a warning is logged, as
+before. Decide per app: a device whose Keystore cannot make the key is a
+device on which the option protects nothing.
+
+### 10. Bypass protection *(2.3)*
 
 Pinning stops an attacker on the network. On a device the attacker controls
 (root, Frida, Xposed, a repackaged app) code inside the app can switch the
@@ -2239,7 +2355,11 @@ pin check off. PinVault answers that in three layers:
    | `UNLOCK_FILE` | `unlockFile`, before the prompt | `VaultFileUnlockResult.Failed` |
 
    `loadFile` is not guarded: keep files that matter behind `userAuth`, so
-   their content is only handed out by `unlockFile`.
+   their content is only handed out by `unlockFile`. The sample app wires
+   all of this (`sample-client/.../App.java`, `harden`): a small in-app
+   check (`DeviceShield`) as the guard, `expectedSignerSha256` from its
+   host properties, and `requireUnlockedDevice()` /
+   `requireHardwareBackedKeys()`, always on in its release build.
 
 2. **A verdict the device cannot forge, judged by the server.** A check inside
    the app can be hooked too. `integrityTokenProvider` sends a Google Play
@@ -2276,7 +2396,7 @@ pin check off. PinVault answers that in three layers:
    `userAuth`), a revoked device loses its files, and configs expire.
 
 ### What PinVault does NOT do
-- **Hardened, self-checking probes.** The attestation report *(next release)*
+- **Hardened, self-checking probes.** The attestation report *(2.3)*
   does look for root, emulators, debuggers, Frida/Xposed-style hooking,
   cloners and a changed signer — but with plain Kotlin an attacker can hook.
   What holds it up is the server side: the report must be signed by a
@@ -2288,7 +2408,7 @@ pin check off. PinVault answers that in three layers:
   in its memory.)
 - **A detector of its own beyond those probes** — a RASP product or RootBeer
   can veto init, enrollment, downloads and unlocks through `environmentGuard`
-  *(next release)*, and `integrityTokenProvider` sends a Play Integrity token
+  *(2.3)*, and `integrityTokenProvider` sends a Play Integrity token
   with every enrollment for the server to enforce
 - **Code obfuscation** — enable R8/ProGuard in your app (`isMinifyEnabled = true`)
 - **Network anomaly detection** — pair with your APM/SIEM

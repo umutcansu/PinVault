@@ -12,7 +12,7 @@
 // başarısız olur; uygulama saklı config'le çalışmaya devam eder.
 const { test, expect, TARGET_HOST } = require('../lib/fixtures');
 const { attachText } = require('../lib/evidence');
-const { sleep } = require('../lib/android');
+const { sleep } = require('../lib/device');
 const hostApi = require('../lib/hostApi');
 const env = require('../lib/env');
 
@@ -74,7 +74,7 @@ test('Mobil+Sunucu: cihaz raporları (telemetri) gönderilemezken pinli istekler
 
     await test.step(`Terminal: raporların gittiği port (Config API, ${env.REPORT_PORT}) kapatılır (iptables DROP: paketler sessizce atılır)`, async () => {
       device.blockTcp(env.LAN_IP, env.REPORT_PORT, 'drop');
-      const rules = device.rootShell('iptables -S OUTPUT');
+      const rules = device.describeNetRules('filter');
       await attachText(
         testInfo,
         `iptables: ${env.LAN_IP}:${env.REPORT_PORT} DROP`,

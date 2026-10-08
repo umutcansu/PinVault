@@ -37,7 +37,7 @@ import kotlin.test.*
  *   3. Client reports download
  *   4. Web admin verifies distribution history
  *
- * Also tests real mTLS connectivity to sample-mtls-host (192.168.1.217:9443)
+ * Also tests real mTLS connectivity to sample-mtls-host (192.168.1.20:9443)
  * when it's running. Tests are skipped gracefully if host is unreachable.
  */
 class VaultFileMtlsCrossTest {
@@ -235,7 +235,7 @@ class VaultFileMtlsCrossTest {
             return
         }
 
-        val mtlsHost = System.getenv("MTLS_HOST") ?: "192.168.1.217"
+        val mtlsHost = System.getenv("MTLS_HOST") ?: "192.168.1.20"
         val mtlsPort = System.getenv("MTLS_PORT")?.toIntOrNull() ?: 9443
         val password = "changeit"
 
@@ -282,7 +282,7 @@ class VaultFileMtlsCrossTest {
 
     @Test
     fun `real mtls host rejects connection without client cert`() {
-        val mtlsHost = System.getenv("MTLS_HOST") ?: "192.168.1.217"
+        val mtlsHost = System.getenv("MTLS_HOST") ?: "192.168.1.20"
         val mtlsPort = System.getenv("MTLS_PORT")?.toIntOrNull() ?: 9443
 
         try {

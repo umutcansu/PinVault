@@ -116,7 +116,7 @@ test('mTLS: kayıt olmadan, elle yüklenen P12 ile bağlanma', async ({ app, dev
       const listing = device.appFiles(env.APP_ID, 'files');
       await attachText(
         testInfo,
-        `adb push + run-as ${env.APP_ID} (files/)`,
+        device.appLabel(`adb push + run-as ${env.APP_ID} (files/)`),
         [`kaynak: ${P12}`, `hedef : files/manual-client.p12`, '', listing.trim()].join('\n'),
       );
       expect(listing).toContain('manual-client.p12');
@@ -141,7 +141,7 @@ test('mTLS: kayıt olmadan, elle yüklenen P12 ile bağlanma', async ({ app, dev
       await attachText(
         testInfo,
         'Uygulamanın sonucu ve files/ dizini',
-        [result, '', `$ run-as ${env.APP_ID} ls -la files`, listing.trim(), '',
+        [result, '', device.appLabel(`$ run-as ${env.APP_ID} ls -la files`), listing.trim(), '',
           'Kayıt (enroll) yapılmadı. Parola kullanıcıdan bir kez istendi ve saklanmadı;',
           'P12 rastgele bir parolayla yeniden paketlenip Android Keystore\'daki bir',
           'anahtarla şifrelendi (files/manual-client.sealed), düz dosya silindi.',
@@ -164,7 +164,8 @@ test('mTLS: kayıt olmadan, elle yüklenen P12 ile bağlanma', async ({ app, dev
       );
       expect(text).toContain('elle yüklenen P12');
       expect(text).toContain('(kullanılıyor)');
-      expect(text).toMatch(/düz P12 dosyası \(files\/manual-client\.p12\): yok/);
+      // Uygulamanın dosya yolu platformun adıyla (iOS: Library/Application Support/…).
+      expect(text).toContain(`düz P12 dosyası (${device.appLabel('files/manual-client.p12')}): yok`);
       await app.backToMain();
     });
 

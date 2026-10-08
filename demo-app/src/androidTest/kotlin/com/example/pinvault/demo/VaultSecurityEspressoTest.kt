@@ -24,7 +24,7 @@ import org.junit.runner.RunWith
  *
  * **Preconditions**
  *  - demo-server running on :8090/:8091 with V2 migration applied
- *  - Device has network access to the server (Mi 9T: 192.168.1.80)
+ *  - Device has network access to the server (Mi 9T: 192.168.1.10)
  *  - Each test adds HOST_IP to default-tls's default host ACL for its
  *    duration (the activity uses `wantPinsFor`; see [grantHostInDefaultAcl])
  *

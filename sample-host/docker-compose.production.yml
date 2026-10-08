@@ -16,7 +16,9 @@
 #   4. Yönetişim ve donanım belgesi ayarları sabit: iki kişi onayı (2), canlı
 #      sertifika kontrolü (enforce), kayıtta ve ekran kilitli dosyada donanım
 #      belgesi (enforce), P12 ile kayıt kapalı (off), kilitli dosyada her
-#      kullanımda onay (true). .env'den gevşetilemez. Kişisel yönetici sayısını,
+#      kullanımda onay (true), varsayılan attestation politikası (strict).
+#      .env'den gevşetilemez. iPhone'lar için App Attest ayarları .env'den
+#      geçer (boşsa iPhone'lar reddedilir). Kişisel yönetici sayısını,
 #      kurtarma anahtarını ve imzalayıcıları entrypoint.sh her açılışta denetler.
 #   5. Container sıkılaştırılır: yeni yetki kazanılamaz, Linux yetkileri
 #      (capabilities) düşürülür, kök dosya sistemi salt okunur, bellek ve süreç
@@ -62,8 +64,21 @@ services:
       CONFIG_API_ADMIN_ROUTES: "off"
       # Sabit: bir cihazın attestation anahtarı ilk kaydında donanım belgesi
       # (Android Key Attestation, uygulamanın paketi ve imzasıyla) olmadan
-      # kaydedilmez (ATTESTATION.md). Politika ve süreler .env'den geçer.
+      # kaydedilmez (ATTESTATION.md). Süreler .env'den geçer.
       ATTESTATION_KEY_POLICY: enforce
+      # Sabit: politikası kaydedilmemiş Config API'ler sıkı politikayla başlar
+      # (lenient her bayrağı yalnızca uyarı yapar, hiçbir cihazı reddetmez).
+      # Config API başına panelden değişir.
+      ATTESTATION_POLICY_DEFAULT: strict
+      # iPhone'lar (ATTESTATION.md §12): yukarıdaki üç enforce ayarı Android'in
+      # donanım belgesini ister, iPhone'da bu belge yok. APP_ATTEST_APP_IDS boşsa
+      # her iPhone reddedilir (sunucu açılışta uyarır); doluysa Apple'ın App Attest
+      # belgesi onun yerine geçer. Ortam boşsa production.
+      APP_ATTEST_APP_IDS: ${APP_ATTEST_APP_IDS:-}
+      APP_ATTEST_ROOT_CA_FILE: ${APP_ATTEST_ROOT_CA_FILE:-}
+      APP_ATTEST_ENVIRONMENT: ${APP_ATTEST_ENVIRONMENT:-production}
+      ATTESTATION_IOS_TEAM_IDS: ${ATTESTATION_IOS_TEAM_IDS:-}
+      ATTESTATION_MIN_IOS_VERSION: ${ATTESTATION_MIN_IOS_VERSION:-}
       # Değerlendirme kurulumu (setup.sh --evaluation-single-signer-NOT-FOR-PRODUCTION)
       # tek imzalayıcıyla açılır; entrypoint.sh her açılışta "ÜRETİM DEĞİLDİR" yazar.
       SAMPLE_EVALUATION: ${SAMPLE_EVALUATION:-}

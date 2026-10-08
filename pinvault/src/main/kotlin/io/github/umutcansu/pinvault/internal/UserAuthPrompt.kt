@@ -7,7 +7,7 @@ import androidx.biometric.BiometricManager.Authenticators.DEVICE_CREDENTIAL
 import androidx.biometric.BiometricPrompt
 import androidx.core.content.ContextCompat
 import androidx.fragment.app.FragmentActivity
-import io.github.umutcansu.pinvault.keystore.UserAuthKeyKind
+import io.github.umutcansu.pinvault.model.UserAuthKeyKind
 import io.github.umutcansu.pinvault.model.VaultFileUnlockPrompt
 import io.github.umutcansu.pinvault.store.AuthOutcome
 import kotlinx.coroutines.Dispatchers
@@ -62,17 +62,21 @@ internal object UserAuthPrompt {
      * - Per-use fingerprint key (made on Android 7–10): a strong biometric
      *   only; the Keystore takes nothing else for it.
      * - Time-bound key: anything that passes the screen lock opens its
-     *   window. Before Android 11 androidx.biometric cannot pair the screen
-     *   lock with a strong-only biometric, so weak is listed there; a face
-     *   unlock passes the prompt but does not open the key, which then fails
-     *   to unwrap and reports Failed.
+     *   window, so the prompt offers the screen lock and a strong biometric
+     *   wherever androidx.biometric supports that pair: Android 11+ and
+     *   Android 7–8 (a fingerprint dialog, or the keyguard). On Android 9
+     *   and 10 the library cannot pair the screen lock with a strong-only
+     *   biometric (`BIOMETRIC_STRONG | DEVICE_CREDENTIAL` is unsupported on
+     *   API 28–29), so weak is listed there; a face unlock passes the prompt
+     *   but does not open the key, which then fails to unwrap and reports
+     *   Failed.
      */
     internal fun authenticators(kind: UserAuthKeyKind, sdk: Int = Build.VERSION.SDK_INT): Int = when (kind) {
         UserAuthKeyKind.PER_USE -> BIOMETRIC_STRONG or DEVICE_CREDENTIAL
         UserAuthKeyKind.PER_USE_BIOMETRIC -> BIOMETRIC_STRONG
         UserAuthKeyKind.TIME_BOUND ->
-            if (sdk >= Build.VERSION_CODES.R) BIOMETRIC_STRONG or DEVICE_CREDENTIAL
-            else BIOMETRIC_WEAK or DEVICE_CREDENTIAL
+            if (sdk in Build.VERSION_CODES.P..Build.VERSION_CODES.Q) BIOMETRIC_WEAK or DEVICE_CREDENTIAL
+            else BIOMETRIC_STRONG or DEVICE_CREDENTIAL
     }
 
     internal fun outcomeOf(errorCode: Int, errString: CharSequence): AuthOutcome = when (errorCode) {

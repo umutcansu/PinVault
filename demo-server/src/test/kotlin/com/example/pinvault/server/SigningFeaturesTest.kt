@@ -266,6 +266,10 @@ class SigningFeaturesTest {
         assertTrue(forged.message!!.contains("0 of 1 required recovery signature"))
         assertFailsWith<SigningKeySetService.Rejected> { service.upload(keySet(1, listOf(recovery.pub()), recovery), "alice") }
         assertFailsWith<SigningKeySetService.Rejected> { service.upload(keySet(1, listOf(second), recovery, required = 2), "alice") }
+        // Zero signatures required would have devices accept unsigned configs.
+        val zero = assertFailsWith<SigningKeySetService.Rejected> { service.upload(keySet(1, listOf(primary, second), recovery, required = 0), "alice") }
+        assertTrue(zero.message!!.contains("at least 1"), zero.message)
+        assertFailsWith<SigningKeySetService.Rejected> { service.upload(keySet(1, listOf(primary, second), recovery, required = -1), "alice") }
 
         // A set listing only keys this server does not sign with would leave
         // every device that applies it refusing every config: refused.

@@ -22,8 +22,9 @@ import javax.crypto.spec.SecretKeySpec
  *   1. Generate a fresh AES-256 session key + 12-byte GCM IV.
  *   2. Encrypt content with AES-256-GCM → ciphertext + 16-byte tag.
  *   3. Wrap the AES session key with the device's RSA public key using
- *      RSA-OAEP with a SHA-256 hash and MGF1-SHA1 (the Android-JCA-compatible
- *      "OAEPWithSHA-256AndMGF1Padding" variant — see the SHA-1 note below).
+ *      RSA-OAEP with a SHA-256 hash and the MGF1 hash the key was registered
+ *      with ([RSA_OAEP_SHA256]: MGF1-SHA1, Android; [RSA_OAEP_SHA256_MGF1_SHA256]:
+ *      MGF1-SHA256, iOS — see the SHA-1 note below).
  *   4. Emit a framed envelope the device can parse:
  *
  *      [4 bytes: wrappedKey length BE]
@@ -40,13 +41,16 @@ import javax.crypto.spec.SecretKeySpec
  *   - A fresh session key is generated on EVERY call — no key reuse across
  *     files or fetches. Even two fetches of the same file produce different
  *     ciphertext (random IV, random session key).
- *   - RSA-OAEP (SHA-256 hash, MGF1-SHA1) is used instead of PKCS#1 v1.5
- *     (which is vulnerable to Bleichenbacher oracles). The MGF1 hash is SHA-1
- *     ON PURPOSE: it matches the JCA provider's actual default for
+ *   - RSA-OAEP (SHA-256 hash) is used instead of PKCS#1 v1.5 (which is
+ *     vulnerable to Bleichenbacher oracles). For an Android key
+ *     ([RSA_OAEP_SHA256], the default) the MGF1 hash is SHA-1 ON PURPOSE: it
+ *     matches the JCA provider's actual default for
  *     "OAEPWithSHA-256AndMGF1Padding" on Android 11, and the device-side
  *     decryptor (VaultFileDecryptor) plus the test helper below mirror it
- *     exactly. Do NOT "upgrade" this to MGF1-SHA256 — it would break client
- *     decryption. (audit I-1)
+ *     exactly. Do NOT "upgrade" that one to MGF1-SHA256 — it would break
+ *     client decryption. (audit I-1) Apple's `.rsaEncryptionOAEPSHA256` is
+ *     SHA-256 with MGF1-SHA256 and cannot open MGF1-SHA1, so an iOS key is
+ *     registered as [RSA_OAEP_SHA256_MGF1_SHA256] and wrapped that way.
  *   - AES-GCM authenticates the ciphertext (16-byte tag); any tampering
  *     makes the device decrypt fail rather than return garbage.
  */
@@ -56,13 +60,14 @@ class VaultEncryptionService(
 
     /**
      * Encrypt [plaintext] for delivery to the device whose RSA public key is
-     * [devicePublicKeyPem]. Returns the raw envelope bytes (HTTP response
-     * body will be this ByteArray).
+     * [devicePublicKeyPem], registered with [algorithm] (one of [ALGORITHMS]).
+     * Returns the raw envelope bytes (HTTP response body will be this ByteArray).
      *
-     * @throws IllegalArgumentException if the PEM is malformed or the key is
-     *         weaker than 2048 bits.
+     * @throws IllegalArgumentException if the PEM is malformed, the key is
+     *         weaker than 2048 bits, or the algorithm is unknown.
      */
-    fun encryptForDevice(plaintext: ByteArray, devicePublicKeyPem: String): ByteArray {
+    fun encryptForDevice(plaintext: ByteArray, devicePublicKeyPem: String, algorithm: String = RSA_OAEP_SHA256): ByteArray {
+        val oaep = oaepSpec(algorithm)
         val publicKey = parseRsaPublicKey(devicePublicKeyPem)
         require(publicKey.keySizeBits() >= 2048) {
             "Device RSA public key must be ≥2048 bits; got ${publicKey.keySizeBits()}"
@@ -78,7 +83,7 @@ class VaultEncryptionService(
         val ciphertext = aesCipher.doFinal(plaintext)
 
         // 3. RSA-OAEP wrap the session key
-        val wrappedKey = rsaOaepEncrypt(sessionKey, publicKey)
+        val wrappedKey = rsaOaepEncrypt(sessionKey, publicKey, oaep)
 
         // 4. Frame: [4-byte wrappedKey length BE][wrappedKey][12-byte IV][ciphertext+tag]
         val out = ByteArrayOutputStream()
@@ -108,14 +113,8 @@ class VaultEncryptionService(
 
     private fun aesKeyGen(): KeyGenerator = KeyGenerator.getInstance("AES").apply { init(256, random) }
 
-    private fun rsaOaepEncrypt(sessionKey: SecretKey, publicKey: PublicKey): ByteArray {
+    private fun rsaOaepEncrypt(sessionKey: SecretKey, publicKey: PublicKey, oaep: OAEPParameterSpec): ByteArray {
         val cipher = Cipher.getInstance("RSA/ECB/OAEPWithSHA-256AndMGF1Padding")
-        val oaep = OAEPParameterSpec(
-            "SHA-256",
-            "MGF1",
-            MGF1ParameterSpec.SHA1,
-            PSource.PSpecified.DEFAULT
-        )
         cipher.init(Cipher.ENCRYPT_MODE, publicKey, oaep)
         return cipher.doFinal(sessionKey.encoded)
     }
@@ -130,6 +129,22 @@ class VaultEncryptionService(
     companion object {
         const val GCM_IV_BYTES = 12
         const val GCM_TAG_BITS = 128
+
+        /** SHA-256 with MGF1-SHA1: Android keys, and every key registered before the algorithm was chosen per key. */
+        const val RSA_OAEP_SHA256 = "RSA-OAEP-SHA256"
+
+        /** SHA-256 with MGF1-SHA256: iOS keys (Apple's `.rsaEncryptionOAEPSHA256`). */
+        const val RSA_OAEP_SHA256_MGF1_SHA256 = "RSA-OAEP-SHA256-MGF1-SHA256"
+
+        /** What `algorithm` of a device key registration may be. */
+        val ALGORITHMS: Set<String> = linkedSetOf(RSA_OAEP_SHA256, RSA_OAEP_SHA256_MGF1_SHA256)
+
+        /** The OAEP parameters of [algorithm]; an unknown one is refused, never guessed. */
+        fun oaepSpec(algorithm: String): OAEPParameterSpec = when (algorithm) {
+            RSA_OAEP_SHA256 -> OAEPParameterSpec("SHA-256", "MGF1", MGF1ParameterSpec.SHA1, PSource.PSpecified.DEFAULT)
+            RSA_OAEP_SHA256_MGF1_SHA256 -> OAEPParameterSpec("SHA-256", "MGF1", MGF1ParameterSpec.SHA256, PSource.PSpecified.DEFAULT)
+            else -> throw IllegalArgumentException("Unknown device key algorithm '$algorithm' (known: ${ALGORITHMS.joinToString()})")
+        }
     }
 }
 
@@ -140,7 +155,12 @@ class VaultEncryptionService(
  * verify round-trip correctness without pulling in Android dependencies.
  */
 object VaultEncryptionRoundtripTestHelper {
-    fun decrypt(envelope: ByteArray, privateKey: java.security.PrivateKey): ByteArray {
+    /** [algorithm]: the one the key was registered with, as the device decrypts with it. */
+    fun decrypt(
+        envelope: ByteArray,
+        privateKey: java.security.PrivateKey,
+        algorithm: String = VaultEncryptionService.RSA_OAEP_SHA256
+    ): ByteArray {
         val wrappedKeyLen = ((envelope[0].toInt() and 0xFF) shl 24) or
                 ((envelope[1].toInt() and 0xFF) shl 16) or
                 ((envelope[2].toInt() and 0xFF) shl 8) or
@@ -152,10 +172,7 @@ object VaultEncryptionRoundtripTestHelper {
         val ciphertext = envelope.copyOfRange(offset, envelope.size)
 
         val rsa = Cipher.getInstance("RSA/ECB/OAEPWithSHA-256AndMGF1Padding")
-        val oaep = OAEPParameterSpec(
-            "SHA-256", "MGF1", MGF1ParameterSpec.SHA1, PSource.PSpecified.DEFAULT
-        )
-        rsa.init(Cipher.DECRYPT_MODE, privateKey, oaep)
+        rsa.init(Cipher.DECRYPT_MODE, privateKey, VaultEncryptionService.oaepSpec(algorithm))
         val sessionKeyBytes = rsa.doFinal(wrappedKey)
         val sessionKey = SecretKeySpec(sessionKeyBytes, "AES")
 

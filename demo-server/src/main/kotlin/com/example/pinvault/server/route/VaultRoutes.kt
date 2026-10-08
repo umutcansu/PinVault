@@ -121,6 +121,12 @@ fun Route.vaultRoutes(
     userAuthAttestationMode: com.example.pinvault.server.service.UserAuthAttestationMode =
         com.example.pinvault.server.service.UserAuthAttestationMode.WARN,
     /**
+     * Apple App Attest in place of the Android chain for an iPhone's user-auth
+     * key (`appAttestation`, PORTING.md §6); null = `APP_ATTEST_APP_IDS` empty,
+     * the field is not read.
+     */
+    appAttest: com.example.pinvault.server.service.attestation.AppAttestVerifier? = null,
+    /**
      * Records that the client certificate of `clientId` proved it acts for
      * `deviceId` (a vault token of the device used over it, or a device key
      * registered over it together with the device's token or re-registering
@@ -148,6 +154,10 @@ fun Route.vaultRoutes(
      * download route. `key_not_attested` (enforce), `time_bound_key` /
      * `key_kind_unknown` (USER_AUTH_REQUIRE_PER_USE). Reads the verifier's
      * settings only when one was given (the Google-roots default has none).
+     * An iPhone's key admitted by App Attest (kind `app_attest`) counts as
+     * attested; its access control cannot be read on the server, so
+     * USER_AUTH_REQUIRE_PER_USE takes the genuine library's per-use key on
+     * Apple's word that the genuine app sent it (ATTESTATION.md §12).
      */
     fun userAuthKeyUnusable(record: com.example.pinvault.server.store.KeyAttestation?): String? {
         if (userAuthAttestationMode == com.example.pinvault.server.service.UserAuthAttestationMode.OFF) return null
@@ -434,7 +444,8 @@ fun Route.vaultRoutes(
                         val did = deviceId
                         val pubKey = deviceKey!!
                         try {
-                            encryptionService.encryptForDevice(entry.content, pubKey.publicKeyPem)
+                            // Wrapped with the MGF1 hash the key was registered with (Android SHA-1, iOS SHA-256).
+                            encryptionService.encryptForDevice(entry.content, pubKey.publicKeyPem, pubKey.algorithm)
                         } catch (e: Exception) {
                             // The cause goes to the log under an id, never to the caller.
                             val errorId = java.util.UUID.randomUUID().toString().take(8)
@@ -540,6 +551,15 @@ fun Route.vaultRoutes(
          * `warn` stores the outcome with it. The body carries the chain as
          * `attestationChain` (Base64 DER, leaf first).
          *
+         * An iPhone has no such chain: with App Attest configured ([appAttest])
+         * a user-auth key sent without `attestationChain` but with
+         * `appAttestation` — a fresh App Attest key's attestation with client
+         * data hash SHA-256 of `pinvault-user-auth-key:v1:<deviceId>:<base64
+         * SHA-256 of the key's SPKI DER>` — is judged by that instead, under
+         * the same rules (first key, replacement, enforce). A pass is stored as
+         * key kind `app_attest`: the server cannot read the key's access
+         * control from it, only that the genuine app on Apple hardware sent it.
+         *
          * A device whose identity was revoked: an authenticated request (bound
          * certificate or token proof; an attestation does not count) gets 403
          * `reenroll_required`. A request without a credential is handled as
@@ -583,11 +603,14 @@ fun Route.vaultRoutes(
             val userAuth = purpose == PURPOSE_USER_AUTH
             val keyStore = if (userAuth) userAuthKeyStore else publicKeyStore
             val what = if (userAuth) "User-auth key" else "E2E key"
-            val algorithm = body.string("algorithm") ?: "RSA-OAEP-SHA256"
-            if (algorithm != "RSA-OAEP-SHA256") {
+            // How files are wrapped for this key: the MGF1 hash differs per platform
+            // (Android MGF1-SHA1, the default; iOS MGF1-SHA256), so it is stored with it.
+            val algorithm = body.string("algorithm") ?: com.example.pinvault.server.service.VaultEncryptionService.RSA_OAEP_SHA256
+            if (algorithm !in com.example.pinvault.server.service.VaultEncryptionService.ALGORITHMS) {
                 return@post call.respond(HttpStatusCode.BadRequest, mapOf(
                     "error" to "unsupported_algorithm",
-                    "message" to "Only RSA-OAEP-SHA256 is supported."))
+                    "message" to "algorithm must be RSA-OAEP-SHA256 (SHA-256 with MGF1-SHA1, Android; the default) " +
+                        "or RSA-OAEP-SHA256-MGF1-SHA256 (SHA-256 with MGF1-SHA256, iOS)."))
             }
             val parsedKey = parseDeviceRsaKey(pem)
                 ?: return@post call.respond(HttpStatusCode.BadRequest, mapOf(
@@ -605,7 +628,8 @@ fun Route.vaultRoutes(
                     "message" to "The client certificate does not belong to device $deviceId."))
             }
             val existing = keyStore.get(deviceId, configApiId)
-            val changed = existing == null || !samePublicKey(existing.publicKeyPem, key)
+            // The same key under another algorithm is a change too: files would be wrapped differently.
+            val changed = existing == null || !samePublicKey(existing.publicKeyPem, key) || existing.algorithm != algorithm
 
             // The device's token for a file wrapped with a device key: an
             // end_to_end file for the E2E key; end_to_end or user_auth for
@@ -660,10 +684,15 @@ fun Route.vaultRoutes(
                 else -> existing.attestation?.attested != true || existing.attestation.keyKind == null
             }
             val chainElement = body["attestationChain"]
+            // An iPhone's App Attest in place of the chain: configured, no chain sent
+            // (absent, null or empty) and an `appAttestation` in the body.
+            val appAttestElement = body[com.example.pinvault.server.service.attestation.AppAttestAdmission.FIELD]?.takeIf { it !is JsonNull }
+            val viaAppAttest = userAuth && appAttest != null && appAttestElement != null &&
+                (chainElement == null || chainElement is JsonNull || (chainElement is JsonArray && chainElement.isEmpty()))
             // Verifying a chain costs signature checks, and over TLS anyone may ask:
             // a caller without a credential is counted BEFORE it (and not again below).
             var counted = false
-            if (needsVerdict && chainElement is JsonArray && chainElement.isNotEmpty() && !credentialed && keyLimiter != null) {
+            if (needsVerdict && ((chainElement is JsonArray && chainElement.isNotEmpty()) || viaAppAttest) && !credentialed && keyLimiter != null) {
                 counted = true
                 if (!keyLimiter.allow(com.example.pinvault.server.service.RateLimiter.sourceKey(remote))) {
                     keyRefusals?.report(remote, "POST", call.request.path(), actor = deviceId, reason = "rate limited")
@@ -674,7 +703,18 @@ fun Route.vaultRoutes(
             }
             val verdict: com.example.pinvault.server.service.AndroidKeyAttestation.Verdict? =
                 if (!needsVerdict) null
-                else when (chainElement) {
+                else if (viaAppAttest) {
+                    // Bound to this device id and this key: one made for another key or device fails nonce_mismatch.
+                    val clientDataHash = com.example.pinvault.server.service.attestation.AppAttestAdmission.userAuthClientDataHash(deviceId, parsedKey.encoded)
+                    when (val r = com.example.pinvault.server.service.attestation.AppAttestAdmission.verify(appAttest!!, appAttestElement, clientDataHash)) {
+                        is com.example.pinvault.server.service.attestation.AppAttestAdmission.Result.Passed ->
+                            com.example.pinvault.server.service.AndroidKeyAttestation.Verdict(true, com.example.pinvault.server.service.attestation.AppAttestAdmission.KIND)
+                        is com.example.pinvault.server.service.attestation.AppAttestAdmission.Result.Failed ->
+                            com.example.pinvault.server.service.AndroidKeyAttestation.Verdict(false, r.reason)
+                        com.example.pinvault.server.service.attestation.AppAttestAdmission.Result.Absent ->
+                            com.example.pinvault.server.service.AndroidKeyAttestation.Verdict.MISSING
+                    }
+                } else when (chainElement) {
                     null, JsonNull -> com.example.pinvault.server.service.AndroidKeyAttestation.Verdict.MISSING
                     is JsonArray -> {
                         val entries = chainElement.map { (it as? JsonPrimitive)?.takeIf { p -> p.isString }?.content }
@@ -690,8 +730,16 @@ fun Route.vaultRoutes(
                     else v
                 }
             val attested = verdict?.passed == true
-            val attestationNote = verdict?.let { if (it.passed) "attested: ${it.securityLevel}" else "attestation: ${it.reason}" }
-                ?: "attestation not checked"
+            val attestationNote = verdict?.let {
+                when {
+                    it.passed && viaAppAttest -> "admitted by App Attest"
+                    it.passed -> "attested: ${it.securityLevel}"
+                    viaAppAttest -> "App Attest: ${it.reason}"
+                    else -> "attestation: ${it.reason}"
+                }
+            } ?: "attestation not checked"
+            // What a refusal names: the chain, or — with App Attest configured — either.
+            val attestationWord = if (appAttest != null) "Android Key Attestation (or, from an iOS app, App Attest attestation)" else "Android Key Attestation"
 
             if (userAuth) {
                 if (existing != null && changed) {
@@ -712,7 +760,7 @@ fun Route.vaultRoutes(
                             put("error", "user_auth_key_exists")
                             put("reason", refusal)
                             put("message", "A user-auth key is already registered for this device. It is replaced only by a key " +
-                                "whose Android Key Attestation passes, sent with the device's client certificate or vault token" +
+                                "whose $attestationWord passes, sent with the device's client certificate or vault token" +
                                 (if (mode == com.example.pinvault.server.service.UserAuthAttestationMode.OFF) " (attestation is not checked on this server)" else "") +
                                 ", or after an administrator removed the old one.")
                         }.toString(), ContentType.Application.Json, HttpStatusCode.Conflict)
@@ -729,11 +777,12 @@ fun Route.vaultRoutes(
                     return@post call.respondText(buildJsonObject {
                         if (missing) {
                             put("error", "attestation_required")
-                            put("message", "This server needs the key's Android Key Attestation chain (attestationChain).")
+                            put("message", "This server needs the key's Android Key Attestation chain (attestationChain)" +
+                                (if (appAttest != null) " or, from an iOS app, an App Attest attestation of the key (appAttestation)." else "."))
                         } else {
                             put("error", "attestation_invalid")
                             put("reason", verdict.reason)
-                            put("message", "The key's Android Key Attestation did not pass: ${verdict.reason}.")
+                            put("message", "The key's ${if (viaAppAttest) "App Attest attestation" else "Android Key Attestation"} did not pass: ${verdict.reason}.")
                         }
                     }.toString(), ContentType.Application.Json, HttpStatusCode.Forbidden)
                 }
@@ -802,6 +851,8 @@ fun Route.vaultRoutes(
             val record = when {
                 !userAuth -> null
                 verdict == null -> if (changed) null else existing?.attestation
+                // App Attest: kind app_attest — how the key asks for the user is not known to the server.
+                verdict.passed && viaAppAttest -> com.example.pinvault.server.service.attestation.AppAttestAdmission.record()
                 verdict.passed -> com.example.pinvault.server.store.KeyAttestation(
                     true, verdict.securityLevel, verdict.reason,
                     keyKind = verdict.keyKind?.name,
@@ -820,6 +871,7 @@ fun Route.vaultRoutes(
                     put("attested", verdict.passed)
                     put("attestationReason", verdict.reason)
                     verdict.securityLevel?.let { put("securityLevel", it) }
+                    if (viaAppAttest) put("attestedBy", com.example.pinvault.server.service.attestation.AppAttestAdmission.KIND)
                 }
             }
             if (changed) {
@@ -831,7 +883,8 @@ fun Route.vaultRoutes(
                         // Only an unauthenticated request gets here for such a device; the
                         // administrator reads it here, the caller is told nothing.
                         (if (revoked) " — without a credential, for a device id whose identity was revoked" else "") +
-                        (if (userAuth) " ($attestationNote${if (!replaced && verdict != null && !verdict.passed) "; accepted on first use" else ""})" else ""),
+                        (if (userAuth) " ($attestationNote${if (!replaced && verdict != null && !verdict.passed) "; accepted on first use" else ""})" else "") +
+                        (if (algorithm != com.example.pinvault.server.service.VaultEncryptionService.RSA_OAEP_SHA256) ", $algorithm" else ""),
                     configApiId, deviceId, actor = certClientId ?: deviceId, ip = remote,
                     detail = attestationDetail
                 )

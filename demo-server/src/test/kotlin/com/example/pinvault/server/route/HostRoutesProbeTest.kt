@@ -20,7 +20,7 @@ class HostRoutesProbeTest {
 
     @Test
     fun `hostname shape accepts plain hostnames and IPv4 literals`() {
-        for (ok in listOf("api.example.com", "192.168.1.217", "localhost", "a", "x-y.z1", "mtls-host.local")) {
+        for (ok in listOf("api.example.com", "192.168.1.20", "localhost", "a", "x-y.z1", "mtls-host.local")) {
             assertTrue(PROBE_HOSTNAME_REGEX.matches(ok), "expected '$ok' to be accepted")
         }
     }

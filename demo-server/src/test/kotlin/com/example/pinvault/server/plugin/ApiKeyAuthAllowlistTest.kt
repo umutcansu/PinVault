@@ -23,7 +23,7 @@ class ApiKeyAuthAllowlistTest {
         assertTrue(public("/api/v1/client-certs/enroll", HttpMethod.Post))
         assertTrue(public("/api/v1/client-certs/renew", HttpMethod.Post))
         assertFalse(public("/api/v1/client-certs/renew"))
-        assertTrue(public("/api/v1/client-certs/192.168.1.217/download"))
+        assertTrue(public("/api/v1/client-certs/192.168.1.20/download"))
         assertTrue(public("/api/v1/vault/ml-model"))
         assertTrue(public("/api/v1/vault/feature.flags_v2"))
         assertTrue(public("/api/v1/vault/report", HttpMethod.Post))

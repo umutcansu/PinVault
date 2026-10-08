@@ -120,7 +120,7 @@ class DeploymentHardeningTest {
             assertNotNull(strict.refusal(address(never)), never)
             assertNotNull(lab.refusal(address(never)), "$never even with FETCH_ALLOW_PRIVATE_TARGETS=true")
         }
-        for (private in listOf("127.0.0.1", "::1", "10.1.2.3", "172.16.0.9", "172.31.255.1", "192.168.1.80", "100.64.0.1", "fc00::1", "fd12:3456::1", "::ffff:10.0.0.1")) {
+        for (private in listOf("127.0.0.1", "::1", "10.1.2.3", "172.16.0.9", "172.31.255.1", "192.168.1.10", "100.64.0.1", "fc00::1", "fd12:3456::1", "::ffff:10.0.0.1")) {
             val reason = strict.refusal(address(private))
             assertNotNull(reason, private)
             assertTrue(reason.contains("FETCH_ALLOW_PRIVATE_TARGETS"), reason)
@@ -162,7 +162,7 @@ class DeploymentHardeningTest {
             assertEquals(400, plain.status, "https only: ${plain.body}")
         }
         val strict = com.example.pinvault.server.service.CertificateService(File(dir, "strict").also { it.mkdirs() }, egress = EgressFilter(allowPrivate = false))
-        for (url in listOf("https://127.0.0.1:1", "https://localhost:1", "https://[::1]:1", "https://192.168.1.217:9443", "https://10.0.0.1")) {
+        for (url in listOf("https://127.0.0.1:1", "https://localhost:1", "https://[::1]:1", "https://192.168.1.20:9443", "https://10.0.0.1")) {
             assertFailsWith<EgressRefusedException>(url) { strict.fetchFromUrl(url) }
         }
     }
@@ -249,6 +249,33 @@ class DeploymentHardeningTest {
         assertNull(MultipartForm.parse(null, body))
         assertNull(MultipartForm.parse(type, body.copyOf(body.size - 20)), "a body cut short is refused, not half-read")
         assertNull(MultipartForm.parse("multipart/form-data; boundary=other", body))
+    }
+
+    @Test
+    fun `admin JSON bodies are capped on every route, gated or not`() {
+        GovernanceHarness(dir, required = 2, adminBodyMax = 2_000, vaultMax = 3_000).use { h ->
+            val pinsBefore = h.pins.load(h.scope)
+            val padded = """{"version":0,"forceUpdate":false,"pins":[]}""" + " ".repeat(2_000)
+            // Gated: refused before the gate stores a change request.
+            val gated = h.call("PUT", "/api/v1/certificate-config", GovernanceHarness.ALICE, padded)
+            assertEquals(413, gated.status, gated.body)
+            assertTrue(h.changeRequests.list(null).isEmpty(), "no change request for a body that was refused")
+            assertEquals(pinsBefore, h.pins.load(h.scope))
+            // Not gated, read with a typed receive: the same cap.
+            val plain = h.call("POST", "/api/v1/connection-history/web", GovernanceHarness.ALICE, """{"hostname":"a"}""" + " ".repeat(2_000))
+            assertEquals(413, plain.status, plain.body)
+            assertEquals(200, h.call("POST", "/api/v1/connection-history/web", GovernanceHarness.ALICE, """{"hostname":"a"}""").status)
+            // The vault upload keeps VAULT_MAX_FILE_BYTES: just under it is stored as a change request.
+            val upload = h.call("PUT", "/api/v1/config-apis/${h.scope}/vault/model.bin", GovernanceHarness.ALICE, ByteArray(2_999), "application/octet-stream")
+            assertEquals(202, upload.status, upload.body)
+        }
+        GovernanceHarness(File(dir, "no-approvals").also { it.mkdirs() }, required = 1, adminBodyMax = 2_000, vaultMax = 3_000).use { h ->
+            // Without approvals the upload reaches the store.
+            val upload = h.call("PUT", "/api/v1/config-apis/${h.scope}/vault/model.bin", GovernanceHarness.ALICE, ByteArray(2_999), "application/octet-stream")
+            assertEquals(200, upload.status, upload.body)
+            assertEquals(2_999, h.vaultFiles.get(h.scope, "model.bin")!!.content.size)
+            assertEquals(413, h.call("PUT", "/api/v1/config-apis/${h.scope}/vault/model.bin", GovernanceHarness.ALICE, ByteArray(3_001), "application/octet-stream").status)
+        }
     }
 
     @Test

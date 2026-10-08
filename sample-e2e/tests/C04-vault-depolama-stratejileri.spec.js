@@ -39,7 +39,7 @@ test('Vault depolama: ENCRYPTED_FILE şifreli .enc dosyası, ENCRYPTED_PREFS şi
 
     await test.step('Mobil: iki dosya da iniyor', async () => {
       await app.openVault();
-      expect(await app.fetchVault(MODEL)).toContain('şifreli dosya deposu: files/vault_files');
+      expect(await app.fetchVault(MODEL)).toContain(`şifreli dosya deposu: ${device.appLabel('files/vault_files')}`);
       await app.snap(`${MODEL} v${modelVersion} indirildi (dosya deposu)`);
       expect(await app.fetchVault(FLAGS)).toContain(`${FLAGS} v${flagsVersion} indirildi`);
       await app.snap(`${FLAGS} v${flagsVersion} indirildi (şifreli SharedPreferences)`);
@@ -54,12 +54,12 @@ test('Vault depolama: ENCRYPTED_FILE şifreli .enc dosyası, ENCRYPTED_PREFS şi
       const bodyLen = blob.length - 9 - ivLen;
       await attachText(
         testInfo,
-        `adb shell run-as ${env.APP_ID} ls -la files/vault_files`,
+        device.appLabel(`adb shell run-as ${env.APP_ID} ls -la files/vault_files`),
         listing,
       );
       await attachText(
         testInfo,
-        `${ENC_FILE} — ham içerik`,
+        `${device.appLabel(ENC_FILE)} — ham içerik`,
         [
           `düz metin: ${modelBody.length} bayt, dosya: ${blob.length} bayt`,
           `başlık: ${magic} [sürüm=${storedVersion}] [iv_len=${ivLen}] iv=${blob.subarray(9, 9 + ivLen).toString('hex')}`,
@@ -93,7 +93,7 @@ test('Vault depolama: ENCRYPTED_FILE şifreli .enc dosyası, ENCRYPTED_PREFS şi
       }
       await attachText(
         testInfo,
-        'shared_prefs/pinvault_vault_file_versions.xml (eski sürüm tablosu)',
+        device.appLabel('shared_prefs/pinvault_vault_file_versions.xml (eski sürüm tablosu)'),
         [
           versions.trim(),
           '',
@@ -107,10 +107,10 @@ test('Vault depolama: ENCRYPTED_FILE şifreli .enc dosyası, ENCRYPTED_PREFS şi
 
     await test.step('Cihaz: ENCRYPTED_PREFS — SharedPreferences dosyasında ad da değer de şifreli', async () => {
       const xml = device.appFileText(env.APP_ID, PREFS_FILE);
-      const entryNames = [...xml.matchAll(/<string name="([^"]+)"/g)].map((m) => m[1]);
+      const entryNames = device.parsePrefs(xml).filter((e) => e.type === 'string' && e.name).map((e) => e.name);
       await attachText(
         testInfo,
-        `adb shell run-as ${env.APP_ID} cat ${PREFS_FILE}`,
+        device.appLabel(`adb shell run-as ${env.APP_ID} cat ${PREFS_FILE}`),
         [
           xml.length > 1200 ? `${xml.slice(0, 1200)}\n… (${xml.length - 1200} karakter daha)` : xml,
           '',
@@ -137,7 +137,7 @@ test('Vault depolama: ENCRYPTED_FILE şifreli .enc dosyası, ENCRYPTED_PREFS şi
       await attachText(testInfo, 'Depolama ekranı dökümü', text);
       expect(text).toContain(`${MODEL}.enc`);
       expect(text).toContain(`PVF2 [sürüm=${modelVersion}] [iv_len=12]`);
-      expect(text).toContain('pinvault_secure_vault_files.xml');
+      expect(text).toContain(device.prefsFileName('pinvault_secure_vault_files'));
       expect(text).toContain('kayıt adları okunabilir mi: hayır ✓');
       expect(text).toContain('düz metin sızıntısı (host adı, IP, pin): yok');
       expect(text).toContain(`pinvault_vault_${MODEL}`);

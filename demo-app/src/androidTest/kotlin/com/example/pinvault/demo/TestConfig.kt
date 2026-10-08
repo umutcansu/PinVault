@@ -21,7 +21,7 @@ object TestConfig {
             || Build.PRODUCT.contains("emulator")
 
     /** Demo-server'ın çalıştığı bilgisayarın IP'si */
-    val HOST_IP: String = if (isEmulator) "10.0.2.2" else "192.168.1.80"
+    val HOST_IP: String = if (isEmulator) "10.0.2.2" else "192.168.1.10"
 
     /** TLS Config API */
     val TLS_CONFIG_URL = "https://$HOST_IP:8091/"
@@ -37,7 +37,7 @@ object TestConfig {
     val TLS_HOST_URL = "https://$HOST_IP:$TLS_HOST_PORT/health"
 
     /** Remote mTLS Host IP */
-    const val MTLS_HOST_IP = "192.168.1.217"
+    const val MTLS_HOST_IP = "192.168.1.20"
 
     /** mTLS Host URL */
     val MTLS_HOST_URL = "https://$MTLS_HOST_IP:9443/health"

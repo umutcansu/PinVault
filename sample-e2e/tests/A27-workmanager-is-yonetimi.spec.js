@@ -19,7 +19,7 @@ test('Mobil: planlı WorkManager işi listeleniyor, iptal edilince JobScheduler\
 }, testInfo) => {
   test.setTimeout(6 * 60 * 1000);
   const readJobs = () => device.jobSchedulerJobs(env.APP_ID);
-  const jobsPanel = (jobs) => [`$ dumpsys jobscheduler | grep ${env.APP_ID}`, ...(jobs.length ? jobs.map((j) => `  ${j}`) : ['  (kayıt yok)'])];
+  const jobsPanel = (jobs) => [`$ ${device.jobsSourceLabel(env.APP_ID)}`, ...(jobs.length ? jobs.map((j) => `  ${j}`) : ['  (kayıt yok)'])];
 
   await test.step('Mobil: Ayarlar → "Planlı iş" — periyodik güncelleme işi listede', async () => {
     await app.openSettings();

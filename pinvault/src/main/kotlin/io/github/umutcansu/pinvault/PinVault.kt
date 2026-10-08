@@ -373,6 +373,7 @@ object PinVault {
     /** `requireUnlockedDevice()` / `requireHardwareBackedKeys()` reach the places that generate Keystore keys without seeing a config. */
     private fun applyKeystoreOptions(config: PinVaultConfig) {
         io.github.umutcansu.pinvault.keystore.KeystoreOptions.unlockedDeviceRequired = config.requireUnlockedDevice
+        io.github.umutcansu.pinvault.keystore.KeystoreOptions.unlockedDeviceFallbackAllowed = config.requireUnlockedDeviceFallback
         io.github.umutcansu.pinvault.keystore.KeystoreOptions.hardwareBackedRequired = config.requireHardwareBackedKeys
     }
 
@@ -386,6 +387,26 @@ object PinVault {
     fun identityKeySecurityLevel(label: String? = null): io.github.umutcansu.pinvault.model.KeySecurityLevel? {
         val key = identityKeyFactory(label ?: defaultCertLabel())
         return if (key.exists()) key.securityLevel() else null
+    }
+
+    /**
+     * How this device's user-auth key — the key behind [UserAuth] vault
+     * files — is opened: on every use (Android 11+, or a fingerprint-only
+     * key on 7–10), or for a time window after the screen lock is passed
+     * (Android 7–10 without a strong fingerprint, the weak kind). Null when
+     * there is no usable key yet: nothing locked was fetched, the key was
+     * retired, or `init` has not run. Read locally, no network, no prompt.
+     * [io.github.umutcansu.pinvault.model.UserAuthKeyKind] says which
+     * Android versions get which kind; `UserAuthKeyKind.expected` tells
+     * what a key made now would be, before one exists.
+     */
+    fun userAuthKeyKind(): io.github.umutcansu.pinvault.model.UserAuthKeyKind? {
+        val keys = userAuthKeys ?: (if (::appContext.isInitialized) userAuthKeysFactory(appContext) else return null)
+        return try {
+            if (keys.state() == UserAuthKeys.State.USABLE) keys.kind() else null
+        } catch (e: Exception) {
+            null
+        }
     }
 
     /**

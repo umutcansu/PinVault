@@ -356,7 +356,7 @@ fun Route.hostRoutes(
 
                 try {
                     mockServerManager.start(hostname, port, keystorePath, trustStorePath)
-                    hostStore.updateMockPort(hostname, call.scopedApiId(), port)
+                    hostStore.updateMockPort(hostname, call.scopedApiId(), port, mtls = trustStorePath != null)
                     call.respond(MockServerResponse(hostname, port, true))
                 } catch (e: Exception) {
                     call.respondText("{\"error\":\"Mock server baslatılamadı: ${e.message}\"}", ContentType.Application.Json, HttpStatusCode.InternalServerError)
@@ -385,7 +385,7 @@ fun Route.hostRoutes(
                 val mtlsPort = mockServerManager.getMtlsPort(hostname)
                 call.respond(HostStatusResponse(
                     hostname = hostname,
-                    keystorePath = hostRecord?.keystorePath,
+                    hasCertificate = hostRecord?.keystorePath != null,
                     certValidUntil = hostRecord?.certValidUntil,
                     mockServerRunning = mockServerManager.isRunning(hostname),
                     mockServerPort = tlsPort ?: mtlsPort,

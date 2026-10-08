@@ -151,7 +151,7 @@ public class App extends Application {
     //     güvenilir: uygulamanın kimlik bilgilerini ele geçiren kod, ilk kayıtta
     //     kendi yazılım anahtarını kaydettirebilir. Sonradan anahtar değiştirmek
     //     doğrulama ya da yönetici sıfırlaması ister. Android 7–10'da ekran
-    //     kilidi anahtarı 10 saniyeliğine açar (parmak izi yoksa),
+    //     kilidi anahtarı 5 saniyeliğine açar (parmak izi yoksa),
     //   • iptalde dosyalar silinir (wipeVaultFilesOnRevocation) ve uygulama
     //     elindeki token'ları unutur.
     // Gizli dosyalar yalnızca cihaz mTLS'e kayıtlıyken tanımlanır.
@@ -378,6 +378,7 @@ public class App extends Application {
         addVaultFiles(builder, hasMtlsCredential);
         requireCaTrustForTarget(builder);
         addPlayIntegrity(builder);
+        harden(builder);
 
         PinVaultConfig config = builder
                 .deviceAlias(deviceAlias())
@@ -412,7 +413,10 @@ public class App extends Application {
             publishInit(generation, InitState.Phase.FAILED, getString(R.string.init_mode_unconfigured, "target.pins"));
             return;
         }
-        launch(generation, PinManagerLite.staticConfig(TARGET_HOST, pins, BuildConfig.TARGET_REQUIRE_CA_TRUST), null);
+        launch(generation, PinManagerLite.staticConfig(TARGET_HOST, pins, BuildConfig.TARGET_REQUIRE_CA_TRUST, builder -> {
+            harden(builder);
+            return Unit.INSTANCE;
+        }), null);
     }
 
     /** Config uygulama içindeki {@link EmbeddedConfigApi}'den; kütüphaneden HTTP çıkmaz. */
@@ -440,6 +444,7 @@ public class App extends Application {
             return Unit.INSTANCE;
         });
         requireCaTrustForTarget(builder);
+        harden(builder);
         PinVaultConfig config = builder
                 .deviceAlias(deviceAlias())
                 // Bu modda kayıt yok (API desteklemez); yine de bir kimlik
@@ -463,6 +468,7 @@ public class App extends Application {
 
         PinVaultConfig.Builder builder = new PinVaultConfig.Builder();
         requireCaTrustForTarget(builder);
+        harden(builder);
         PinVaultConfig config = builder
                 .configApi(CUSTOM_API_ID, baseUrl, block -> {
                     block.bootstrapPins(Collections.singletonList(bootstrap));
@@ -491,6 +497,44 @@ public class App extends Application {
                 .onConnectionEvent(listener())
                 .build();
         launch(generation, config, null);
+    }
+
+    // ── Yerel sertleştirme ───────────────────────────────────────────────────
+
+    /**
+     * Kütüphanenin cihaz üstündeki üç savunma kancası (README → "Bypass
+     * protection", "Know — or require — where the keys live", "Keys that
+     * work only while the phone is unlocked"). Her modda eklenir.
+     *
+     * <ul>
+     *   <li><b>environmentGuard</b>: {@link DeviceShield}'in kararı. Kütüphane
+     *       kayıt, dosya indirme ve dosya açma öncesinde sorar; root / debugger
+     *       / hooking görülen telefonda bu üçü reddedilir, {@code init} her
+     *       zaman geçer (pinli trafik çalışmaya devam eder, atestasyonla sunucu
+     *       kendi kararını verir).</li>
+     *   <li><b>expectedSignerSha256</b>: uygulamanın yayın imza sertifikasının
+     *       SHA-256'sı ({@code host.expectedSignerSha256}). Atestasyon raporunda
+     *       {@code app_integrity} buna göre işaretlenir; yeniden paketlenmiş
+     *       (başka anahtarla imzalanmış) bir kopya sunucuda görünür. Boşsa
+     *       (demo dosyası) verilmez; release bu değer olmadan derlenmez.</li>
+     *   <li><b>requireUnlockedDevice</b>: bundan sonra üretilen Keystore
+     *       anahtarları yalnızca telefonun kilidi açıkken çalışır. Keystore
+     *       böyle bir anahtar yapamazsa işlem reddedilir (sessiz geri düşüş
+     *       yok; {@code requireUnlockedDevice(true)} onu açardı).</li>
+     *   <li><b>requireHardwareBackedKeys</b>: yazılımda üretilen anahtar silinir
+     *       ve işlem reddedilir. Emülatörde güvenli donanım yoktur.</li>
+     * </ul>
+     * Son ikisi ve ortam kontrolü release'te her zaman açık; test
+     * derlemelerinde Ayarlar'dan ({@link AppSettings}) açılır, varsayılan
+     * kapalı: uçtan uca testler emülatörde koşar.
+     */
+    private void harden(PinVaultConfig.Builder builder) {
+        final Context context = getApplicationContext();
+        builder.environmentGuard(operation -> DeviceShield.allows(context, operation));
+        String[] signers = splitKeys(BuildConfig.EXPECTED_SIGNER_SHA256);
+        if (signers.length > 0) builder.expectedSignerSha256(signers);
+        if (AppSettings.requireUnlockedDevice(this)) builder.requireUnlockedDevice();
+        if (AppSettings.requireHardwareBackedKeys(this)) builder.requireHardwareBackedKeys();
     }
 
     // ── Config parçaları ─────────────────────────────────────────────────────

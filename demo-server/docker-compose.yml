@@ -110,6 +110,16 @@ services:
       - ATTESTATION_RATE_LIMIT=${ATTESTATION_RATE_LIMIT:-}
       - ATTESTATION_DEVICE_RATE_LIMIT=${ATTESTATION_DEVICE_RATE_LIMIT:-}
       - MOCK_HOST_REQUIRE_TOKEN=${MOCK_HOST_REQUIRE_TOKEN:-}
+      # iOS apps (ATTESTATION.md §3, §12; unset = not checked / App Attest off). APP_ATTEST_APP_IDS
+      # (TEAMID.bundle.id, comma separated) needs APP_ATTEST_ROOT_CA_FILE: Apple's App Attestation
+      # Root CA, downloaded once from https://www.apple.com/certificateauthority/Apple_App_Attestation_Root_CA.pem
+      # (the server does not start without it).
+      - ATTESTATION_MIN_IOS_VERSION=${ATTESTATION_MIN_IOS_VERSION:-}
+      - ATTESTATION_IOS_TEAM_IDS=${ATTESTATION_IOS_TEAM_IDS:-}
+      - APP_ATTEST_APP_IDS=${APP_ATTEST_APP_IDS:-}
+      - APP_ATTEST_ROOT_CA_FILE=${APP_ATTEST_ROOT_CA_FILE:-}
+      - APP_ATTEST_ENVIRONMENT=${APP_ATTEST_ENVIRONMENT:-}
+      - APP_ATTEST_MAX_AGE_SECONDS=${APP_ATTEST_MAX_AGE_SECONDS:-}
       # Admin uploads other than vault files (keystores, certificates, JSON).
       - ADMIN_UPLOAD_MAX_BYTES=${ADMIN_UPLOAD_MAX_BYTES:-}
       # "Fetch the certificate of this URL" refuses loopback and private-network

@@ -106,7 +106,13 @@ data class PinVaultConfig(
     /** The app's verdict on the device, asked before sensitive operations. See [Builder.environmentGuard]. */
     val environmentGuard: EnvironmentGuard? = null,
     /** Integrity token sent with every enrollment request. See [Builder.integrityTokenProvider]. */
-    val integrityTokenProvider: IntegrityTokenProvider? = null
+    val integrityTokenProvider: IntegrityTokenProvider? = null,
+    /**
+     * With [requireUnlockedDevice]: make a key without the requirement when
+     * the Keystore refuses one with it, instead of failing. See
+     * [Builder.requireUnlockedDevice].
+     */
+    val requireUnlockedDeviceFallback: Boolean = false
 ) {
 
     /** First registered block — convenience for internal single-API code paths. */
@@ -126,6 +132,7 @@ data class PinVaultConfig(
         private var wipeVaultFilesOnRevocation = false
         private var vaultFileMaxOfflineAgeMs: Long = 0L
         private var requireUnlockedDevice = false
+        private var requireUnlockedDeviceFallback = false
         private var requireHardwareBackedKeys = false
         private var integrityVerdictProvider: io.github.umutcansu.pinvault.integrity.IntegrityVerdictProvider? = null
         private var expectedSignerSha256: List<String> = emptyList()
@@ -283,11 +290,23 @@ data class PinVaultConfig(
          * while locked until they are replaced: the identity key at the next
          * enrollment, the store keys when the app's data is cleared. A device
          * without a screen lock has nothing to unlock: the flag has no effect
-         * there. On Android 7 and 8 it is ignored. If a device's Keystore
-         * refuses to generate a key with the flag, the key is generated
-         * without it and a warning is logged.
+         * there. On Android 7 and 8 it is ignored.
+         *
+         * If a device's Keystore refuses to generate a key with the flag,
+         * the operation that needed the key fails with
+         * [UnlockedDeviceKeyRequiredException] (`init` returns `Failed` for
+         * the store keys, enrollment and vault files report `Failed`): you
+         * asked for keys that work only while the device is unlocked, and a
+         * key without that requirement would silently be less than that.
+         * With [allowFallback] the key is generated without the flag
+         * instead and a warning is logged — for apps that would rather run
+         * unprotected on such a ROM than not at all.
          */
-        fun requireUnlockedDevice() = apply { this.requireUnlockedDevice = true }
+        @JvmOverloads
+        fun requireUnlockedDevice(allowFallback: Boolean = false) = apply {
+            this.requireUnlockedDevice = true
+            this.requireUnlockedDeviceFallback = allowFallback
+        }
 
         /**
          * Refuse a Keystore key the device makes outside secure hardware.
@@ -435,7 +454,8 @@ data class PinVaultConfig(
                 expectedSignerSha256 = expectedSignerSha256,
                 managedTrustRoots = managedTrustRoots,
                 environmentGuard = environmentGuard,
-                integrityTokenProvider = integrityTokenProvider
+                integrityTokenProvider = integrityTokenProvider,
+                requireUnlockedDeviceFallback = requireUnlockedDeviceFallback
             )
         }
     }

@@ -1,5 +1,7 @@
 // Testlerden önce bir kez: host ayakta ve hazırlanmış mı, cihaz var mı,
 // uygulama host değerleriyle derlenip kurulmuş mu, sunucu bilinen iyi durumda mı.
+// iOS koşusunda (E2E_PLATFORM=ios) cihaz simülatördür: açılır, UI sürücüsü
+// (ios-driver) derlenip başlatılır, sample-client-ios derlenip kurulur.
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
@@ -8,7 +10,7 @@ const env = require('./lib/env');
 const hostApi = require('./lib/hostApi');
 const hostControl = require('./lib/hostControl');
 const state = require('./lib/state');
-const { Device } = require('./lib/android');
+const { Device } = require('./lib/device');
 const customBackend = require('./lib/custom-backend');
 const offlineKeys = require('./lib/offlineKeys');
 
@@ -132,17 +134,30 @@ module.exports = async () => {
   hostApi.provision();
 
   // 2. Cihaz
-  let serial = process.env.ANDROID_SERIAL || Device.connected()[0] || null;
+  let serial;
   let booted = false;
-  if (!serial && process.env.E2E_AVD) {
-    console.log(`[e2e] Emülatör açılıyor: ${process.env.E2E_AVD}`);
-    serial = (await Device.bootEmulator(process.env.E2E_AVD)).serial;
-    booted = true;
+  let device;
+  if (env.PLATFORM === 'ios') {
+    // Yalnızca bu koşuya ayrılmış simülatör (E2E_IOS_UDID): verisi ve Keychain'i silinir.
+    console.log(`[e2e] iOS simülatörü: ${env.IOS_UDID}`);
+    ({ device, booted } = Device.boot(env.IOS_UDID));
+    serial = env.IOS_UDID;
+    const iosDriver = require('./lib/iosDriver');
+    console.log('[e2e] iOS UI sürücüsü (ios-driver) derleniyor…');
+    console.log(iosDriver.build({ udid: serial }));
+    iosDriver.start({ udid: serial });
+  } else {
+    serial = process.env.ANDROID_SERIAL || Device.connected()[0] || null;
+    if (!serial && process.env.E2E_AVD) {
+      console.log(`[e2e] Emülatör açılıyor: ${process.env.E2E_AVD}`);
+      serial = (await Device.bootEmulator(process.env.E2E_AVD)).serial;
+      booted = true;
+    }
+    if (!serial) {
+      throw new Error('Bağlı Android cihaz yok. Telefonu USB ile bağla ya da E2E_AVD=<avd adı> ile çalıştır.');
+    }
+    device = new Device(serial);
   }
-  if (!serial) {
-    throw new Error('Bağlı Android cihaz yok. Telefonu USB ile bağla ya da E2E_AVD=<avd adı> ile çalıştır.');
-  }
-  const device = new Device(serial);
   device.disableAnimationsIfEmulator();
 
   // 3. Sunucunun temel durumu: hedefin canlı pin'leri, host'un ve mock host'ların pin'leri.
@@ -184,7 +199,15 @@ module.exports = async () => {
     );
   }
   const propsChanged = writeProperties({ goodPins, hostPins, custom, signing, backup, recovery, door, clientCaPin, scoped });
-  if (process.env.E2E_SKIP_BUILD !== '1' || propsChanged || !fs.existsSync(env.APK)) {
+  if (env.PLATFORM === 'ios') {
+    if (process.env.E2E_SKIP_BUILD !== '1' || propsChanged || !fs.existsSync(env.APP_ARTIFACT)) {
+      console.log(`[e2e] sample-client-ios derleniyor (${env.IOS_CONFIGURATION})…`);
+      console.log(require('./lib/iosBuild').build(env.PROPS_FILE));
+    }
+    if (!fs.existsSync(env.APP_ARTIFACT)) throw new Error(`Uygulama bulunamadı: ${env.APP_ARTIFACT}`);
+    // Yüklemenin üstüne kurar: uygulama silinmez (identifierForVendor değişmesin).
+    console.log(device.installApp(env.APP_ARTIFACT));
+  } else if (process.env.E2E_SKIP_BUILD !== '1' || propsChanged || !fs.existsSync(env.APK)) {
     console.log('[e2e] sample-client derleniyor…');
     const javaHome = findJavaHome();
     execFileSync('./gradlew', [...env.GRADLE_BUILD, '-q', `-PsampleHostProps=${env.PROPS_FILE}`], {
@@ -194,12 +217,15 @@ module.exports = async () => {
       env: { ...process.env, ...(javaHome ? { JAVA_HOME: javaHome } : {}) },
     });
   }
-  if (!fs.existsSync(env.APK)) throw new Error(`APK bulunamadı: ${env.APK}`);
-  device.adb(['install', '-r', '-t', env.APK]);
+  if (env.PLATFORM === 'android') {
+    if (!fs.existsSync(env.APK)) throw new Error(`APK bulunamadı: ${env.APK}`);
+    device.adb(['install', '-r', '-t', env.APK]);
+  }
 
   await hostApi.restoreBaseline(baseline);
 
   state.write({
+    platform: env.PLATFORM,
     serial,
     booted,
     goodPins,
@@ -211,6 +237,7 @@ module.exports = async () => {
     signing: { primaryKeyId: signing.keyId, backupKeyId: backup.keyId, recoveryKeyId: recovery.keyId },
     model: device.prop('ro.product.model'),
     manufacturer: device.prop('ro.product.manufacturer'),
+    ...(env.PLATFORM === 'ios' ? { deviceName: device.name(), osVersion: device.osVersion() } : {}),
   });
-  console.log(`[e2e] Hazır: cihaz ${serial}, hedef ${env.TARGET_HOST}`);
+  console.log(`[e2e] Hazır: ${env.PLATFORM === 'ios' ? 'simülatör' : 'cihaz'} ${serial}, hedef ${env.TARGET_HOST}`);
 };

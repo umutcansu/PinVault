@@ -92,7 +92,7 @@ class UserAuthRouterTest {
         }
     }
 
-    private val passes: suspend (io.github.umutcansu.pinvault.keystore.UserAuthKeyKind, javax.crypto.Cipher?) -> AuthOutcome =
+    private val passes: suspend (io.github.umutcansu.pinvault.model.UserAuthKeyKind, javax.crypto.Cipher?) -> AuthOutcome =
         { _, c -> AuthOutcome.Succeeded(c) }
 
     @Test

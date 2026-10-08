@@ -138,7 +138,7 @@ test('Web+Mobil: CA pini, CA\'nın imzaladığı sertifikayı kabul ediyor; ger�
     await test.step('Saldırgan: sahte sertifikanın arkasına gerçek CA sertifikasını ekleyip araya girer', async () => {
       mitm = await proxy.start({ material: ca.forgedMaterial(), upstreamPort: env.MOCK_TLS_PORT });
       device.redirectTcp(env.LAN_IP, env.MOCK_TLS_PORT, env.PROXY_PORT);
-      const rules = device.rootShell('iptables -t nat -S OUTPUT');
+      const rules = device.describeNetRules('nat');
       await attachText(
         testInfo,
         'Saldırganın sunduğu zincir ve yönlendirme',

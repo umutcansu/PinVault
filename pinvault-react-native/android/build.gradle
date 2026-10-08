@@ -1,0 +1,68 @@
+// @umutcansu/react-native-pinvault — Android TurboModule over
+// io.github.umutcansu:pinvault (Maven Central).
+//
+// Development against an unpublished PinVault: the app's settings.gradle can
+// substitute the Maven artifact with the repository's :pinvault project
+// (sample-client-rn/android/settings.gradle, Gradle property pinvault.localPath).
+buildscript {
+  ext.PinVaultRN = [
+    kotlinVersion: "2.2.0",
+    minSdkVersion: 24,
+    compileSdkVersion: 36,
+    pinvaultVersion: "2.3.2",
+  ]
+  ext.pinvaultRnExt = { prop ->
+    rootProject.ext.has(prop) ? rootProject.ext.get(prop) : PinVaultRN[prop]
+  }
+  repositories {
+    google()
+    mavenCentral()
+  }
+  dependencies {
+    classpath "com.android.tools.build:gradle:8.7.2"
+    // noinspection DifferentKotlinGradleVersion
+    classpath "org.jetbrains.kotlin:kotlin-gradle-plugin:${pinvaultRnExt('kotlinVersion')}"
+  }
+}
+
+apply plugin: "com.android.library"
+if (project.extensions.findByName("kotlin") == null) {
+  apply plugin: "kotlin-android"
+}
+apply plugin: "com.facebook.react"
+
+def pinvaultVersion = project.findProperty("pinvault.version") ?: pinvaultRnExt("pinvaultVersion")
+
+android {
+  namespace "io.github.umutcansu.pinvault.reactnative"
+  compileSdkVersion pinvaultRnExt("compileSdkVersion")
+
+  defaultConfig {
+    minSdkVersion pinvaultRnExt("minSdkVersion")
+    consumerProguardFiles "consumer-rules.pro"
+  }
+
+  compileOptions {
+    sourceCompatibility JavaVersion.VERSION_17
+    targetCompatibility JavaVersion.VERSION_17
+  }
+
+  testOptions {
+    unitTests.returnDefaultValues = true
+  }
+}
+
+dependencies {
+  implementation "com.facebook.react:react-android"
+  implementation "io.github.umutcansu:pinvault:${pinvaultVersion}"
+  implementation "com.squareup.okhttp3:okhttp:4.12.0"
+  implementation "org.jetbrains.kotlinx:kotlinx-coroutines-android:1.8.1"
+  implementation "androidx.fragment:fragment-ktx:1.8.5"
+
+  testImplementation "junit:junit:4.13.2"
+  // The real org.json (android.jar only has stubs in JVM tests).
+  testImplementation "org.json:json:20240303"
+  testImplementation "com.squareup.okhttp3:mockwebserver:4.12.0"
+  testImplementation "com.squareup.okhttp3:okhttp-tls:4.12.0"
+  testImplementation "org.jetbrains.kotlinx:kotlinx-coroutines-test:1.8.1"
+}

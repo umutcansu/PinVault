@@ -1,0 +1,41 @@
+pluginManagement { includeBuild("../node_modules/@react-native/gradle-plugin") }
+plugins { id("com.facebook.react.settings") }
+extensions.configure(com.facebook.react.ReactSettingsExtension){ ex -> ex.autolinkLibrariesFromCommand() }
+rootProject.name = 'SampleClientRN'
+include ':app'
+includeBuild('../node_modules/@react-native/gradle-plugin')
+
+// ── PinVault kütüphanesinin kaynağı ─────────────────────────────────────────
+// gradle.properties → `pinvault.localPath` bir PinVault checkout'unu gösteriyorsa
+// eklentinin bağımlılığı io.github.umutcansu:pinvault o kaynaktan derlenir;
+// henüz yayınlanmamış değişiklikler de dahil olur. Boşsa Maven Central'daki
+// sürüm kullanılır (sample-client/settings.gradle.kts ile aynı amaç).
+//
+// sample-client gibi composite build (includeBuild) burada olmaz: PinVault
+// AGP 8.7 ile, React Native 0.87 AGP 9 ile derlenir ve Gradle aynı derlemede
+// iki AGP sürümüne izin vermez. Bunun yerine checkout'un kendi Gradle'ı
+// :pinvault'u imzasız olarak build/pinvault-maven altına yayımlar (her
+// derlemede; değişiklik yoksa birkaç saniye) ve bağımlılık yalnızca oradan
+// çözülür (build.gradle → exclusiveContent).
+//
+// Tek seferlik Maven Central denemesi:  ./gradlew assembleDebug -Ppinvault.localPath=
+def pinvaultLocalPath = (providers.gradleProperty("pinvault.localPath").getOrElse("") ?: "").trim()
+if (!pinvaultLocalPath.isEmpty()) {
+    def checkout = file(pinvaultLocalPath)
+    if (new File(checkout, "pinvault/build.gradle.kts").isFile()) {
+        def repo = new File(settingsDir, "build/pinvault-maven")
+        logger.lifecycle("PinVault: yerel kaynak kullanılıyor → ${checkout.canonicalPath} (yayımlanıyor: ${repo})")
+        def proc = new ProcessBuilder(
+                new File(checkout, "gradlew").absolutePath, "-q", "--console=plain",
+                "-I", new File(settingsDir, "pinvault-local.init.gradle").absolutePath,
+                ":pinvault:publishToMavenLocal", "-Dmaven.repo.local=${repo.absolutePath}")
+            .directory(checkout).redirectErrorStream(true).start()
+        def output = proc.inputStream.text
+        if (proc.waitFor() != 0) {
+            throw new GradleException("PinVault yerel yayımı başarısız (pinvault.localPath=${pinvaultLocalPath}):\n${output}")
+        }
+        gradle.ext.pinvaultLocalRepo = repo
+    } else {
+        logger.warn("PinVault: pinvault.localPath=${pinvaultLocalPath} bir PinVault checkout'u değil; Maven Central sürümü kullanılacak.")
+    }
+}

@@ -90,6 +90,13 @@ internal class EnrollRefusalLog(
  */
 private val CLIENT_REPORT_IDENT_REGEX = Regex("^[A-Za-z0-9._:\\- ]{1,128}$")
 
+/**
+ * [CLIENT_REPORT_IDENT_REGEX] for the device fields, plus the comma of Apple's
+ * machine identifiers ("iPhone17,1"), which the iOS library reports as the model.
+ */
+private val CLIENT_REPORT_DEVICE_REGEX = Regex("^[A-Za-z0-9._:,\\- ]{1,128}$")
+private const val CLIENT_REPORT_DEVICE_RULE = "Letters, digits, spaces and . _ : , - only, at most 128."
+
 fun Route.certificateConfigRoutes(
     configApiId: String,
     store: PinConfigStore,
@@ -779,11 +786,11 @@ fun Route.certificateConfigRoutes(
         if (hostname.isNotBlank() && !CLIENT_REPORT_IDENT_REGEX.matches(hostname)) {
             return@post call.respondInvalidReport("hostname", "A host name of at most 128 characters.")
         }
-        if (manufacturer != null && !CLIENT_REPORT_IDENT_REGEX.matches(manufacturer)) {
-            return@post call.respondInvalidReport("deviceManufacturer", "Letters, digits, spaces and . _ : - only, at most 128.")
+        if (manufacturer != null && !CLIENT_REPORT_DEVICE_REGEX.matches(manufacturer)) {
+            return@post call.respondInvalidReport("deviceManufacturer", CLIENT_REPORT_DEVICE_RULE)
         }
-        if (model != null && !CLIENT_REPORT_IDENT_REGEX.matches(model)) {
-            return@post call.respondInvalidReport("deviceModel", "Letters, digits, spaces and . _ : - only, at most 128.")
+        if (model != null && !CLIENT_REPORT_DEVICE_REGEX.matches(model)) {
+            return@post call.respondInvalidReport("deviceModel", CLIENT_REPORT_DEVICE_RULE)
         }
         // The dashboard counts and colours by status: only what the library reports.
         if (status == null || status !in ConnectionHistoryStore.CLIENT_REPORT_STATUSES) {
@@ -833,11 +840,11 @@ fun Route.certificateConfigRoutes(
 
         // Same M-04 hardening as /client-report: device identifiers must look
         // like identifiers, not HTML — the admin UI renders them later.
-        if (manufacturer != null && !CLIENT_REPORT_IDENT_REGEX.matches(manufacturer)) {
-            return@post call.respondInvalidReport("deviceManufacturer", "Letters, digits, spaces and . _ : - only, at most 128.")
+        if (manufacturer != null && !CLIENT_REPORT_DEVICE_REGEX.matches(manufacturer)) {
+            return@post call.respondInvalidReport("deviceManufacturer", CLIENT_REPORT_DEVICE_RULE)
         }
-        if (model != null && !CLIENT_REPORT_IDENT_REGEX.matches(model)) {
-            return@post call.respondInvalidReport("deviceModel", "Letters, digits, spaces and . _ : - only, at most 128.")
+        if (model != null && !CLIENT_REPORT_DEVICE_REGEX.matches(model)) {
+            return@post call.respondInvalidReport("deviceModel", CLIENT_REPORT_DEVICE_RULE)
         }
         if (status == null || status !in ConnectionHistoryStore.CONFIG_UPDATE_STATUSES) {
             return@post call.respondInvalidReport("status", "One of ${ConnectionHistoryStore.CONFIG_UPDATE_STATUSES.joinToString()}.")
@@ -1088,13 +1095,22 @@ internal suspend fun ApplicationCall.applyPinConfigUpdate(
         return
     }
 
-    // Per-host versioning: sadece değişen host'ların versiyonunu artır
+    // Per-host versioning: sadece değişen host'ların versiyonunu artır.
+    //
+    // "Changed" is the whole entry but its version — pins, `mtls`,
+    // `forceUpdate`, `clientCertVersion`. The client's change detection is
+    // version based (SSLCertificateUpdater.updateNow answers AlreadyCurrent
+    // for a version it holds), so a flag that moved without the version
+    // never reached a fielded device: a host switched to mTLS, or a rotated
+    // host client certificate, was seen only by a device whose data had been
+    // wiped. The toggle-mtls and upload-client-cert routes bump for their own
+    // change; this is the same rule for the whole entry.
     val currentPinMap = current.pins.associateBy { it.hostname }
     val updatedPins = incoming.pins.map { newPin ->
         val oldPin = currentPinMap[newPin.hostname]
         when {
             oldPin == null -> newPin.copy(version = 1) // yeni host
-            oldPin.sha256 != newPin.sha256 -> newPin.copy(version = oldPin.version + 1) // pin değişti
+            oldPin.copy(version = newPin.version) != newPin -> newPin.copy(version = oldPin.version + 1) // girdi değişti
             else -> newPin.copy(version = oldPin.version) // değişmedi
         }
     }
@@ -1147,10 +1163,18 @@ internal suspend fun ApplicationCall.applyPinConfigUpdate(
     kept.forEach { hostname ->
         val oldPin = current.pins.first { it.hostname == hostname }
         val newPin = saved.pins.first { it.hostname == hostname }
-        if (oldPin.sha256 != newPin.sha256) {
+        // Every version move is in the history, under what moved it: the
+        // pins, the mTLS flag (the toggle route's events), or another flag.
+        val event = when {
+            oldPin.sha256 != newPin.sha256 -> "pins_updated"
+            oldPin.mtls != newPin.mtls -> if (newPin.mtls) "mtls_enabled" else "mtls_disabled"
+            newPin.version != oldPin.version -> "host_updated"
+            else -> null
+        }
+        if (event != null) {
             historyStore.add(scope, PinConfigHistoryEntry(
                 hostname = hostname, version = newPin.version, timestamp = now,
-                event = "pins_updated", pinPrefix = newPin.sha256.firstOrNull()?.take(12) ?: ""
+                event = event, pinPrefix = newPin.sha256.firstOrNull()?.take(12) ?: ""
             ))
         }
     }

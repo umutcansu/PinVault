@@ -11,8 +11,10 @@ import android.content.SharedPreferences;
  * <p><b>Release derlemesinde</b> ({@code BuildConfig.TEST_CONTROLS == false})
  * buradaki tercihler güvenliği etkileyemez: mod her zaman {@link Mode#TLS},
  * gereken imza sayısı her zaman derlemeye gömülü değer, pin kapsamı ve elle
- * P12 kapalıdır; tercih dosyasında ne yazdığına bakılmaz. Onları değiştiren
- * ekran (Ayarlar) da yalnızca test derlemelerinde vardır.
+ * P12 kapalı, üç yerel sertleştirme katmanı (ortam kontrolü, kilitli cihaz,
+ * donanım anahtarı) her zaman açıktır; tercih dosyasında ne yazdığına
+ * bakılmaz. Onları değiştiren ekran (Ayarlar) da yalnızca test
+ * derlemelerinde vardır.
  */
 public final class AppSettings {
 
@@ -47,6 +49,9 @@ public final class AppSettings {
     private static final String KEY_MANUAL_P12 = "mtls_manual_p12";
     private static final String KEY_SCOPED_PINS = "scoped_pins";
     private static final String KEY_REQUIRED_SIGNATURES = "required_signatures";
+    private static final String KEY_ENVIRONMENT_GUARD = "environment_guard";
+    private static final String KEY_UNLOCKED_DEVICE = "require_unlocked_device";
+    private static final String KEY_HARDWARE_KEYS = "require_hardware_keys";
 
     private AppSettings() {}
 
@@ -122,6 +127,58 @@ public final class AppSettings {
     public static void setScopedPins(Context context, boolean value) {
         if (!BuildConfig.TEST_CONTROLS) return;
         prefs(context).edit().putBoolean(KEY_SCOPED_PINS, value).apply();
+    }
+
+    // ── Yerel sertleştirme ──────────────────────────────────────────────────
+    //
+    // Üç katman release'te HER ZAMAN açıktır ve kapatılamaz. Test derlemelerinde
+    // Ayarlar'dan açılıp kapanır ve varsayılan KAPALIdır: uçtan uca testler su
+    // taşıyan userdebug emülatör imajlarında (ortam kontrolü onları "root'lu"
+    // sayar) ve güvenli donanımı olmayan emülatörlerde koşar.
+
+    /**
+     * {@link DeviceShield} kararı PinVault'un {@code environmentGuard}'ına
+     * gitsin mi: açıkken root / debugger / hooking görülen telefonda kayıt,
+     * dosya indirme ve dosya açma reddedilir ({@code init} hep geçer).
+     */
+    public static boolean environmentGuard(Context context) {
+        if (!BuildConfig.TEST_CONTROLS) return true;
+        return prefs(context).getBoolean(KEY_ENVIRONMENT_GUARD, false);
+    }
+
+    public static void setEnvironmentGuard(Context context, boolean value) {
+        if (!BuildConfig.TEST_CONTROLS) return;
+        prefs(context).edit().putBoolean(KEY_ENVIRONMENT_GUARD, value).apply();
+    }
+
+    /**
+     * {@code requireUnlockedDevice()}: bundan sonra üretilen Keystore anahtarları
+     * yalnızca telefonun kilidi açıkken çalışır (Android 9+). Keystore böyle bir
+     * anahtar yapamazsa işlem reddedilir, sessizce bayraksız anahtar üretilmez.
+     */
+    public static boolean requireUnlockedDevice(Context context) {
+        if (!BuildConfig.TEST_CONTROLS) return true;
+        return prefs(context).getBoolean(KEY_UNLOCKED_DEVICE, false);
+    }
+
+    public static void setRequireUnlockedDevice(Context context, boolean value) {
+        if (!BuildConfig.TEST_CONTROLS) return;
+        prefs(context).edit().putBoolean(KEY_UNLOCKED_DEVICE, value).apply();
+    }
+
+    /**
+     * {@code requireHardwareBackedKeys()}: Keystore'un yazılımda ürettiği bir
+     * anahtar silinir ve işlem reddedilir. Emülatörde güvenli donanım yoktur;
+     * test derlemelerinde bu yüzden varsayılan kapalı.
+     */
+    public static boolean requireHardwareBackedKeys(Context context) {
+        if (!BuildConfig.TEST_CONTROLS) return true;
+        return prefs(context).getBoolean(KEY_HARDWARE_KEYS, false);
+    }
+
+    public static void setRequireHardwareBackedKeys(Context context, boolean value) {
+        if (!BuildConfig.TEST_CONTROLS) return;
+        prefs(context).edit().putBoolean(KEY_HARDWARE_KEYS, value).apply();
     }
 
     /** mTLS için kayıt yerine {@code files/manual-client.p12} kullanılsın mı. Test kontrolü. */

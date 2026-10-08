@@ -13,6 +13,10 @@
 // kendi portlarını (6750–6756), kendi compose projesini (`pinvault-fresh`) ve
 // kendi container adını (`pinvault-host-fresh`) kullanır. Koşu sonunda
 // `docker compose down -v` ile tamamen silinir (global-teardown).
+//
+// Port tabanı, proje ve container adı E2E_FRESH_PORT_BASE, E2E_FRESH_PROJECT,
+// E2E_FRESH_CONTAINER ile değişir (lib/env.js): aynı makinede başka bir
+// oturumun koşusu (ör. Android ve iOS) varken iki kopya çakışmasın.
 const fs = require('fs');
 const path = require('path');
 const { execFileSync } = require('child_process');
@@ -20,10 +24,28 @@ const env = require('./env');
 
 /** Kopyanın kök dizini; git dışı (.local). */
 const DIR = path.join(env.LOCAL_DIR, 'host-fresh');
-const PROJECT = 'pinvault-fresh';
-const CONTAINER = 'pinvault-host-fresh';
-/** Ana host 6650–6656 kullanıyor; kopya çakışmasın diye 6750–6756. */
-const PORTS = { http: 6750, https: 6751, mtls: 6752, mockTls: 6753, mockMtls: 6754, managementTls: 6755, recovery: 6756 };
+const PROJECT = env.FRESH_PROJECT;
+const CONTAINER = env.FRESH_CONTAINER;
+/** Ana host 6650–6656 kullanıyor; kopya çakışmasın diye varsayılan 6750–6756 (E2E_FRESH_PORT_BASE). */
+const BASE = env.FRESH_PORT_BASE;
+/**
+ * Kopyanın Docker ağı. Docker kendi seçtiğinde 172.17–31 aralıkları dolunca
+ * 192.168.0.0/20'yi veriyor: bu, ev / ofis ağını (192.168.1.x) örter ve
+ * container'lar (ör. Jenkins) o ağdaki adreslere — GitLab'a, modeme — artık
+ * ulaşamaz. Bu yüzden sabit, yerel ağlarla çakışmayan bir /24: varsayılan
+ * 10.213.<port tabanı / 100>.0/24 (6750 → 10.213.67.0/24, 6950 → 10.213.69.0/24),
+ * E2E_FRESH_SUBNET ile değişir.
+ */
+const SUBNET = env.FRESH_SUBNET || `10.213.${Math.floor(BASE / 100) % 256}.0/24`;
+const PORTS = {
+  http: BASE,
+  https: BASE + 1,
+  mtls: BASE + 2,
+  mockTls: BASE + 3,
+  mockMtls: BASE + 4,
+  managementTls: BASE + 5,
+  recovery: BASE + 6,
+};
 const WEB_URL = `http://localhost:${PORTS.http}`;
 /**
  * Taze örneğin keystore parolası (.env → KEYSTORE_PASSWORD). Varsayılan
@@ -56,7 +78,9 @@ function exists() {
 
 /**
  * Depoyu kopyalar (`data/` ve `.env` hariç) ve kopyadaki compose dosyasında
- * container adını değiştirir; ana depo olduğu gibi kalır.
+ * container adını değiştirir; ana depo olduğu gibi kalır. (Güncel compose
+ * dosyası adı HOST_CONTAINER_NAME'den alır, configureEnv onu da yazar; sabit
+ * adlı eski dosya için yerinde değiştirme kalıyor.)
  */
 function copyTree() {
   fs.mkdirSync(DIR, { recursive: true });
@@ -69,7 +93,10 @@ function copyTree() {
   const patched = fs
     .readFileSync(composeFile, 'utf8')
     .replace(/container_name:\s*pinvault-host\s*$/m, `container_name: ${CONTAINER}`);
-  fs.writeFileSync(composeFile, patched);
+  if (/^networks:/m.test(patched)) throw new Error(`${composeFile}: networks bloğu zaten var; alt ağ eklenemedi`);
+  // Sabit alt ağ (SUBNET'in açıklaması): Docker'ın 192.168.x'i seçmesine izin verilmez.
+  const withSubnet = `${patched.replace(/\s*$/, '\n')}\nnetworks:\n  default:\n    ipam:\n      config:\n        - subnet: ${SUBNET}\n`;
+  fs.writeFileSync(composeFile, withSubnet);
   fs.mkdirSync(path.join(DIR, 'data/db'), { recursive: true });
   fs.mkdirSync(path.join(DIR, 'data/certs'), { recursive: true });
   return out;
@@ -109,6 +136,7 @@ function configureEnv() {
     HOST_MANAGEMENT_TLS_PORT: String(PORTS.managementTls),
     HOST_RECOVERY_PORT: String(PORTS.recovery),
     COMPOSE_PROJECT_NAME: PROJECT,
+    HOST_CONTAINER_NAME: CONTAINER,
     PINVAULT_SERVER_SRC: serverSrc,
     // Sertifikalar ilk açılışta bu parolayla üretilsin (sonradan değiştirmek
     // var olan JKS'leri açılamaz kılar).
@@ -258,6 +286,7 @@ async function destroy() {
 module.exports = {
   DIR,
   PROJECT,
+  SUBNET,
   CONTAINER,
   PORTS,
   WEB_URL,

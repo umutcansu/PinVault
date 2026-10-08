@@ -278,7 +278,7 @@ button:focus-visible{outline:2px solid var(--border-accent);outline-offset:2px}
 <div class="back" id="back"></div>
 <svg width="100%" viewBox="0 0 680 236" role="img"><title>Cihazın sunucuya attığı istekler, token'lar ve sertifikalar</title><desc>Solda cihaz ve altında yönetici, uygulamanın sunucusu ya da başka bir cihaz; sağda sunucunun 8090 (yönetim), 8091 (TLS), 8092 (mTLS), 8093 (TLS) kapıları ve sunucu deposu.</desc>
 <rect x="300" y="4" width="372" height="214" rx="12" fill="none" stroke="var(--border-strong)" stroke-width="0.5" stroke-dasharray="4 4"/>
-<text class="ts" x="312" y="212">Sunucu · 192.168.1.80</text>
+<text class="ts" x="312" y="212">Sunucu · 192.168.1.10</text>
 <g id="g-dev" class="c-gray"><rect x="12" y="52" width="160" height="54" rx="4"/><text id="dev-n" class="th" x="92" y="75" text-anchor="middle">Cihaz · tablet-07</text><text class="ts" x="92" y="93" text-anchor="middle">pin'ler APK'da</text></g>
 <g id="g-att" class="c-red" opacity="0"><rect x="12" y="150" width="160" height="54" rx="4"/><text id="att-n" class="th" x="92" y="173" text-anchor="middle"> </text><text id="att-s" class="ts" x="92" y="191" text-anchor="middle"> </text></g>
 <g id="g90" class="c-amber"><rect x="318" y="12" width="150" height="36" rx="4"/><text class="th" x="393" y="27" text-anchor="middle">8090 · yönetim</text><text class="ts" x="393" y="42" text-anchor="middle">panel · API anahtarı</text></g>
@@ -382,7 +382,7 @@ anahtar: RSA 2048
 imzalayan: kendisi (kendinden imzalı)
 geçerlilik: 365 gün
 SAN: localhost, 127.0.0.1, 10.0.2.2,
-     makinenin IP'leri (192.168.1.80)
+     makinenin IP'leri (192.168.1.10)
 
 ~// certs/demo-server.backup.jks
 yedek anahtar: RSA 2048 (bekliyor)`;
@@ -393,7 +393,7 @@ const S_SRC_SRV=`~// certs/demo-server.pins ve panel:
 
 ~// uygulamada (APK):
 bootstrapPins(
-  HostPin("192.168.1.80", listOf(
+  HostPin("192.168.1.10", listOf(
     "ziA0hyMD…", "vXC1UZ8O…")))
 ~// port yazılmadığı için 8091 ve 8092'de
 ~// geçerli (8093'ün kendi, portlu pin'i var)`;
@@ -415,7 +415,7 @@ const S_SRC_REC=`~// açılışta yazdırılır, panelde görünür:
 
 ~// uygulamada (APK), yalnızca bu port:
 bootstrapPins(
-  HostPin("192.168.1.80:8093", listOf(
+  HostPin("192.168.1.10:8093", listOf(
     "WnVy/Wig…", "TOZS0AAI…")))`;
 const Q_SRC_CCA=`~// certs/client-ca.jks (ilk açılışta, 10 yıl)
 +konu: CN=PinVault Client CA
@@ -455,7 +455,7 @@ geçerlilik: 90 gün (CLIENT_CERT_TTL_DAYS)
 ~// 60. günde 8092'den, dolmuşsa 8093'ten
 ~// aynı anahtarla yenilenir`;
 const Q_SRC_HOST=`~// uygulamanın kendi sunucuları
-~// (örn. api.ornek.com, 192.168.1.217:9443)
+~// (örn. api.ornek.com, 192.168.1.20:9443)
 
 +pin'leri: config API'den gelen imzalı liste
 ~// APK'da değil; panelden değiştirilir
@@ -474,7 +474,7 @@ ve host sürümü artar; cihazlar indirir`;
 
 const Q_TLSONLY=`GET /api/v1/certificate-config
     ?currentVersion=0
-Host: 192.168.1.80:8091
+Host: 192.168.1.10:8091
 X-PinVault-Features:
     redelivery,multisig,keyset
 
@@ -499,9 +499,9 @@ const S_TLSONLY=`200 OK
  "configApiId": "default-tls"}
 ~// expiresAt = issuedAt + 24 saat
 ~// (CONFIG_TTL_SECONDS, varsayılan 86400)`;
-const Q_MITM=`~// cihaz 192.168.1.80:8091'e bağlanıyor
+const Q_MITM=`~// cihaz 192.168.1.10:8091'e bağlanıyor
 ~// araya giren kendi sertifikasını gösterir:
-!konu: CN=192.168.1.80 (sahte)
+!konu: CN=192.168.1.10 (sahte)
 !anahtar özeti: Zx91…
 ~// APK'daki pin'ler (bu host için):
 ziA0hyMD…
@@ -515,11 +515,11 @@ const S_MITM=`!bağlantı cihaz tarafında kesildi
 ~// alınmış sertifika da tutmaz`;
 const Q_MTLSFLOW=`~// ilk açılışta bir kez, TLS:
 POST /api/v1/client-certs/enroll
-Host: 192.168.1.80:8091
+Host: 192.168.1.10:8091
 
 ~// sonra her init ve istekte, mTLS:
 GET /api/v1/certificate-config
-Host: 192.168.1.80:8092
+Host: 192.168.1.10:8092
 ~// + cihaz sertifikası ve Keystore imzası`;
 const S_MTLSFLOW=`~// 8091'den:
 200 OK  {"chain": ["…cihaz…", "…CA…"]}
@@ -558,7 +558,7 @@ rapor: yalnızca kendi adına
 +iptal: bir sonraki istekte 403
 +yenileme: ömrün son üçte birinde, 8092'den
 +kurtarma: süresi dolmuşsa 8093'ten`;
-const Q_PIN_OK=`~// telefon 192.168.1.80:8091'e bağlanıyor
+const Q_PIN_OK=`~// telefon 192.168.1.10:8091'e bağlanıyor
 ~// sunucu sertifikasını gösterir:
 konu: CN=localhost (demo-server)
 +anahtar özeti (pin): ziA0hyMD…
@@ -598,7 +598,7 @@ tablet-09  token Zt2c…  → kayıt → sertifika
 ~// aynı APK, her cihaza ayrı token;
 ~// yeni token için yeni APK gerekmez`;
 const Q_TOK_MINT=`POST /api/v1/enrollment-tokens/generate
-Host: 192.168.1.80:8090
+Host: 192.168.1.10:8090
 +X-API-Key: ••••••••
 Content-Type: application/json
 
@@ -692,7 +692,7 @@ sha256("Qk3x…") = 9f2ce1…a07b
 ~// aynı token bir daha: 401
 ~// kütüphane token'ı saklamadı`;
 const Q_TOK_BIND=`POST /api/v1/enrollment-tokens/generate
-Host: 192.168.1.80:8090
+Host: 192.168.1.10:8090
 +X-API-Key: ••••••••
 Content-Type: application/json
 
@@ -719,7 +719,7 @@ POST /api/v1/client-certs/enroll
 +// aynı kimlik → kanıtlanmış sayılır
 ~// client_certs.device_uid_proven = 1`;
 const Q_ENR_UIDX=`POST /api/v1/client-certs/enroll
-Host: 192.168.1.80:8091
+Host: 192.168.1.10:8091
 X-PinVault-Features: csr
 
 {
@@ -743,7 +743,7 @@ const S_ENR_UIDX=`403 Forbidden
 ~// yine kayıt olabilir`;
 const Q_VTOK_MINT=`POST /api/v1/config-apis/mtls-8092/
      vault/ml-model/tokens
-Host: 192.168.1.80:8090
+Host: 192.168.1.10:8090
 +X-API-Key: ••••••••
 Content-Type: application/json
 
@@ -772,7 +772,7 @@ const Q_VTOK_APP=`~// uygulamanın kodu
 ~// tokenStore: uygulamanın kendi şifreli
 ~// deposu (demoda EncryptedSharedPreferences)`;
 const S_VTOK_APP=`GET /api/v1/vault/ml-model?version=2
-Host: 192.168.1.80:8092
+Host: 192.168.1.10:8092
 X-Device-Id: 3f2a9c0d81b4e6a7
 +X-Vault-Token: Zp7q…
 
@@ -1067,7 +1067,7 @@ const REQ1={dev:'samsung SM-X200',uid:'8c41d2e07a9b3f15',ip:'192.168.1.54',vc:VC
 const REQ2={dev:'Zebra Technologies TC21',uid:'3c9e51a8d02f7b64',ip:'192.168.1.61',vc:VC2,id:'device-w3hvpz',pol:'kodsuz başvuru',open:1},REQ2A=Object.assign({},REQ2,{approved:1});
 const REQ3={dev:'Zebra Technologies TC52',uid:'5be0a2c97d41f683',ip:'192.168.1.63',vc:'KP2M-8VXC-Y4N9-QB3F',id:'device-q8n2mk',pol:'kodsuz başvuru',open:1,dup:1},REQ4={dev:'Zebra Technologies TC52',uid:'5be0a2c97d41f683',ip:'192.168.1.63',vc:'H5WR-0TQ3-D7GS-2JKM',id:'device-m4c7tx',pol:'kodsuz başvuru',open:1,dup:1};
 const Q_POL_MINT=`POST /api/v1/enrollment-policies
-Host: 192.168.1.80:8090
+Host: 192.168.1.10:8090
 +X-API-Key: ••••••••
 Content-Type: application/json
 
@@ -1091,7 +1091,7 @@ Cache-Control: no-store
 ~// 25 karakter, 125 bit; büyük-küçük harf
 ~// ve tire önemli değil`;
 const Q_POL_ENR=`POST /api/v1/client-certs/enroll
-Host: 192.168.1.80:8091
+Host: 192.168.1.10:8091
 X-PinVault-Features: csr
 
 {
@@ -1135,7 +1135,7 @@ const S_POL_LIST=`200 OK
 {"status": "approved"}
 ~// politikada 1 / 50; denetim kaydına yazılır`;
 const Q_POL_PICK=`POST /api/v1/client-certs/enroll
-Host: 192.168.1.80:8091
+Host: 192.168.1.10:8091
 X-PinVault-Features: csr
 
 {
@@ -1155,7 +1155,7 @@ X-PinVault-Cert-Format: pem-chain
 ~// başka anahtarla gelen:
 ~// 403 enrollment_request_mismatch`;
 const Q_OPEN_APPLY=`POST /api/v1/client-certs/enroll
-Host: 192.168.1.80:8091
+Host: 192.168.1.10:8091
 X-PinVault-Features: csr
 
 {
@@ -1195,12 +1195,12 @@ ENROLLMENT_REQUEST_TTL_HOURS=24
 const CERT_REV={id:'3f2a9c0d81b4e6a7',revoked:1},CERT_NEW={id:'3f2a9c0d81b4e6a7',revoked:0};
 const Q_FORGET=`~// panelde iptal edilmiş satırda "Kimliği unut":
 POST /api/v1/client-certs/3f2a9c0d81b4e6a7/forget
-Host: 192.168.1.80:8090
+Host: 192.168.1.10:8090
 +X-API-Key: ••••••••
 
 ~// telefon: Kaydı Sil, sonra yeniden kayıt
 POST /api/v1/client-certs/enroll
-Host: 192.168.1.80:8091
+Host: 192.168.1.10:8091
 {
 +  "deviceId": "3f2a9c0d81b4e6a7",
   "csr": "MIHn… (yeni anahtar)"
@@ -1218,7 +1218,7 @@ const S_FORGET=`200 OK
 ~// eski anahtarla kayıt, hangi kimlikle olursa:
 !403 {"error":"revoked"}`;
 const H_ENR=`POST /api/v1/client-certs/enroll
-Host: 192.168.1.80:8091
+Host: 192.168.1.10:8091
 Content-Type: application/json
 X-PinVault-Features: csr`;
 const Q_ENR=`${H_ENR}
@@ -1315,7 +1315,7 @@ const S_OPEN=`?200 OK
 const H_CFG=`GET /api/v1/certificate-config
     ?currentVersion=0`;
 const Q_CFG=`${H_CFG}
-Host: 192.168.1.80:8092
+Host: 192.168.1.10:8092
 X-PinVault-Features:
     redelivery,multisig,keyset
 ~// imzalı yol; demonun debug derlemesi
@@ -1362,7 +1362,7 @@ const S_CFG_STORE=`~// telefon reddeder:
 
 ~// aynı zarf yeniden gelirse: AlreadyCurrent`;
 const Q_CFG_NOCERT=`${H_CFG}
-Host: 192.168.1.80:8092
+Host: 192.168.1.10:8092
 
 ~// sunucu: cihaz sertifikanı göster
 !// gönderilen sertifika: yok`;
@@ -1371,7 +1371,7 @@ const S_NOCONN=`!bağlantı kurulamadı
 ~// sunucu bağlantıyı el sıkışmada kesti`;
 const Q_CFG_08=`GET /api/v1/certificate-config
     ?hosts=api.ornek.com,odeme.ornek.com
-Host: 192.168.1.80:8092
+Host: 192.168.1.10:8092
 !X-Device-Id: 3f2a9c0d81b4e6a7
 ~// tablet-07'nin ANDROID_ID'si;
 ~// bağlantıdaki sertifika tablet-08'in`;
@@ -1385,7 +1385,7 @@ const S_CFG_08=`403 Forbidden
 ~// önceden: tablet-07'ye açılmış
 ~// host'ların pin'leri dönüyordu`;
 const Q_CFG_TLS=`${H_CFG}
-Host: 192.168.1.80:8091
+Host: 192.168.1.10:8091
 ~// düz TLS: sertifika istenmez`;
 const S_CFG_TLS=`200 OK
 {
@@ -1397,7 +1397,7 @@ const S_CFG_TLS=`200 OK
 const H_HOST=`GET /api/v1/client-certs/
     api.ornek.com/download`;
 const Q_HOST=`${H_HOST}
-Host: 192.168.1.80:8092
+Host: 192.168.1.10:8092
 X-PinVault-Features: p12password`;
 const S_HOST=`200 OK
 Content-Type: application/octet-stream
@@ -1429,11 +1429,11 @@ Content-Type: application/octet-stream
 ~// P12 her indirmede yeni bir tek seferlik
 ~// şifreyle sarılır; içindeki aynı`;
 const Q_CCH=`~// uygulamanın kodu (mTLS bloğu)
-.configApi("mtls-8092", "https://192.168.1.80:8092/") {
+.configApi("mtls-8092", "https://192.168.1.10:8092/") {
     bootstrapPins(…)
-    enrollmentUrl("https://192.168.1.80:8091/")
-    renewalUrl("https://192.168.1.80:8093/")
-+    clientCertHosts("https://192.168.1.217:9443/")
+    enrollmentUrl("https://192.168.1.10:8091/")
+    renewalUrl("https://192.168.1.10:8093/")
++    clientCertHosts("https://192.168.1.20:9443/")
 }
 ~// port zorunlu, yalnızca https`;
 const S_CCH=`~// cihaz sertifikası gösterilir (isterse):
@@ -1441,7 +1441,7 @@ const S_CCH=`~// cihaz sertifikası gösterilir (isterse):
 +                    config, kayıt, kurtarma)
 ~// bunlardan yalnız 8092 sertifika ister;
 ~// 8091 ve 8093 istemez
-+192.168.1.217:9443 (clientCertHosts)
++192.168.1.20:9443 (clientCertHosts)
 ~// kendi host sertifikası olan sunucuya:
 ~// o sertifika
 
@@ -1451,13 +1451,13 @@ const S_CCH=`~// cihaz sertifikası gösterilir (isterse):
 ~// listede pin'i olması yetmez`;
 
 const Q_HEALTH=`GET /health
-Host: 192.168.1.80:8092`;
+Host: 192.168.1.10:8092`;
 const S_HEALTH=`200 OK
 {"status":"ok"}`;
 
 const Q_E2E=`POST /api/v1/vault/devices/
      3f2a9c0d81b4e6a7/public-key
-Host: 192.168.1.80:8092
+Host: 192.168.1.10:8092
 Content-Type: application/json
 
 {
@@ -1475,7 +1475,7 @@ const S_E2E=`200 OK
 409 {"error": "key_change_requires_proof"}`;
 const Q_E2E_08=`POST /api/v1/vault/devices/
 !     3f2a9c0d81b4e6a7/public-key
-Host: 192.168.1.80:8092
+Host: 192.168.1.10:8092
 Content-Type: application/json
 ~// tablet-08 kendi sertifikasıyla
 
@@ -1492,7 +1492,7 @@ const S_E2E_08_FIXED=`403 Forbidden
 ~// tablet-07'nin anahtarı değişmedi`;
 const Q_E2E_TLS=`POST /api/v1/vault/devices/
      3f2a9c0d81b4e6a7/public-key
-Host: 192.168.1.80:8091
+Host: 192.168.1.10:8091
 +X-Vault-Key: demo-e2e-v2-pixel-6-pro
 +X-Vault-Token: Zp7q…
 ~// kütüphane, varsa şifreli dosyanın
@@ -1513,7 +1513,7 @@ const S_E2E_TLS=`~// başka cihaz (token yok, farklı anahtar):
 const Q_KEY_FLOOD=`~// rastgele kimliklerle, art arda:
 POST /api/v1/vault/devices/
      rastgele-0031/public-key
-Host: 192.168.1.80:8091
+Host: 192.168.1.10:8091
 Content-Type: application/json
 
 {
@@ -1529,7 +1529,7 @@ const S_KEY_FLOOD=`~// çöp metin, EC ya da 1024 bit anahtar:
 503 {"error":"device_key_limit_reached"}`;
 
 const Q_VAULT=`GET /api/v1/vault/ml-model?version=2
-Host: 192.168.1.80:8092
+Host: 192.168.1.10:8092
 X-Device-Id: 3f2a9c0d81b4e6a7
 +X-Vault-Token: Zp7q…
 ~// token: yalnızca token politikalarında`;
@@ -1548,14 +1548,14 @@ X-Vault-Signatures-V2: u8Fq…:MEUCIQ…
 ~//   ml-model:3:<baytların sha256'sı>
 ~// cihazdaki sürüm güncelse: 304 Not Modified`;
 const Q_VAULT_NOCERT=`GET /api/v1/vault/ml-model?version=0
-Host: 192.168.1.80:8092
+Host: 192.168.1.10:8092
 X-Device-Id: 3f2a9c0d81b4e6a7
 X-Vault-Token: Zp7q…
 !// gösterilen sertifika: yok`;
 const S_VAULT_NOCERT=`!bağlantı kurulamadı
 ~// token'ı göndermeye sıra gelmedi`;
 const Q_VAULT_08=`GET /api/v1/vault/ml-model?version=0
-Host: 192.168.1.80:8092
+Host: 192.168.1.10:8092
 !X-Device-Id: 3f2a9c0d81b4e6a7
 !X-Vault-Token: Zp7q… (çalınmış)
 ~// tablet-08 kendi sertifikasıyla`;
@@ -1570,7 +1570,7 @@ const S_VAULT_08_FIXED=`403 Forbidden
 ~// token'a bakılmadı bile`;
 
 const Q_REP=`POST /api/v1/vault/report
-Host: 192.168.1.80:8092
+Host: 192.168.1.10:8092
 Content-Type: application/json
 
 {
@@ -1589,7 +1589,7 @@ Content-Type: application/json
 const S_REP=`200 OK
 {"recorded":"true"}`;
 const Q_REP_08=`POST /api/v1/vault/report
-Host: 192.168.1.80:8092
+Host: 192.168.1.10:8092
 ~// tablet-08 kendi sertifikasıyla
 
 {
@@ -1614,7 +1614,7 @@ const Q_REN_LOCAL=`~// ağa çıkılmadı, cihaz kendi içinde bakar
 +// → yenile`;
 const H_REN=`POST /api/v1/client-certs/renew`;
 const Q_REN=`${H_REN}
-Host: 192.168.1.80:8092
+Host: 192.168.1.10:8092
 Content-Type: application/json
 X-PinVault-Features: csr
 
@@ -1635,7 +1635,7 @@ X-PinVault-Cert-Format: pem-chain
   …
 }`;
 const Q_REN_08=`${H_REN}
-Host: 192.168.1.80:8092
+Host: 192.168.1.10:8092
 ~// tablet-08 kendi sertifikasıyla
 
 {
@@ -1656,7 +1656,7 @@ const Q_REC_LOCAL=`~// ağa çıkılmadı, cihaz kendi içinde bakar
 ~// bugün: 2027-01-15 → süresi dolmuş
 +// 8092 denenmez → doğrudan 8093`;
 const Q_REC=`${H_REN}
-Host: 192.168.1.80:8093
+Host: 192.168.1.10:8093
 Content-Type: application/json
 X-PinVault-Features: csr
 
@@ -1677,7 +1677,7 @@ X-PinVault-Cert-Format: pem-chain
   …
 }`;
 const Q_REC_OTHER=`${H_REN}
-Host: 192.168.1.80:8093
+Host: 192.168.1.10:8093
 Content-Type: application/json
 
 {
@@ -1692,7 +1692,7 @@ const S_REC_OTHER=`403 Forbidden
 ~// aynı adresten 10 dakikada 10 retten sonra:
 429 {"error":"rate_limited"}`;
 const Q_REC_REPLAY=`${H_REN}
-Host: 192.168.1.80:8093
+Host: 192.168.1.10:8093
 Content-Type: application/json
 
 {
@@ -1760,7 +1760,7 @@ const S_ORDER_MTLS=`~// ilk kurulumda, bir kez:
 ~// kayıt · sertifika yenileme · atestasyon`;
 const Q_HOST_ADD=`POST /api/v1/hosts/fetch-from-url
     ?configApiId=mtls-8092
-Host: 192.168.1.80:8090
+Host: 192.168.1.10:8090
 +X-API-Key: ••••••••
 Content-Type: application/json
 
@@ -1786,7 +1786,7 @@ telefondaki liste (sürüm 3): Ab3…, Kq9…
 
 ~// kütüphane hemen güncel listeyi ister:
 GET /api/v1/certificate-config?currentVersion=3
-Host: 192.168.1.80:8092`;
+Host: 192.168.1.10:8092`;
 const S_PINCHG=`200 OK
 +yeni liste (sürüm 4): Zt5…, Ab3…
 
@@ -1812,7 +1812,7 @@ const S_BG=`~// arka plandaki her çalışmada, sırayla:
 +6. atestasyon: taze PinVault-Token
 ~//    (uyanınca token'ı süresi geçmiş bulmasın)`;
 const Q_OFFLINE=`GET /api/v1/certificate-config?currentVersion=3
-Host: 192.168.1.80:8092
+Host: 192.168.1.10:8092
 !bağlantı kurulamadı (sunucu kapalı ya da ağ yok)
 ~// 3 kez denenir`;
 const S_OFFLINE=`~// kayıtlı liste var, süresi dolmamış:
@@ -1849,7 +1849,7 @@ PinVault.setConnectionListener(
 ~// panelde: Bağlantı Geçmişi sekmesi`;
 const Q_VUP=`PUT /api/v1/config-apis/mtls-8092/vault/ml-model
     ?policy=token&encryption=plain
-Host: 192.168.1.80:8090
+Host: 192.168.1.10:8090
 +X-API-Key: ••••••••
 Content-Type: application/octet-stream
 
@@ -1865,7 +1865,7 @@ const S_VUP=`200 OK
 ~// aynı adla yeniden yüklenince sürüm artar;
 ~// cihazlar yeni sürümü bir sonraki istekte alır`;
 const Q_REVOKE=`DELETE /api/v1/client-certs/tablet-07
-Host: 192.168.1.80:8090
+Host: 192.168.1.10:8090
 +X-API-Key: ••••••••
 ~// "İptal Et"e basıp onaylayınca`;
 const S_REVOKE=`200 OK
@@ -1881,7 +1881,7 @@ const S_REVOKE=`200 OK
 ~// yenileme de dahil, ve 8093'teki kurtarma:
 !403 {"error":"reenroll_required"}`;
 const Q_REVOKED_REQ=`GET /api/v1/certificate-config?currentVersion=3
-Host: 192.168.1.80:8092
+Host: 192.168.1.10:8092
 ~// tablet-07 kendi sertifikasıyla bağlanır;
 ~// sertifikanın tarihi geçerli, bağlantı kurulur`;
 const S_REVOKED_REQ=`!403 Forbidden
@@ -1938,7 +1938,7 @@ enforce → belgesiz ya da geçmeyen anahtar:
 const Q_UA_UP=`PUT /api/v1/config-apis/mtls-8092/
     vault/gizli-rapor
     ?policy=token_mtls&encryption=user_auth
-Host: 192.168.1.80:8090
+Host: 192.168.1.10:8090
 +X-API-Key: ••••••••
 Content-Type: application/octet-stream
 
@@ -1963,7 +1963,7 @@ const S_UA_UP=`200 OK
 }`;
 const Q_UA_KEY=`POST /api/v1/vault/devices/
      3f2a9c0d81b4e6a7/public-key
-Host: 192.168.1.80:8092
+Host: 192.168.1.10:8092
 Content-Type: application/json
 
 {
@@ -1988,7 +1988,7 @@ const S_UA_KEY=`200 OK
 ~// kütüphane anahtarı kaydeder, bir kez dener
 ~// kanıtsız başka anahtar: 409 user_auth_key_exists`;
 const Q_UA_GET=`GET /api/v1/vault/gizli-rapor?version=0
-Host: 192.168.1.80:8092
+Host: 192.168.1.10:8092
 X-Device-Id: 3f2a9c0d81b4e6a7
 +X-Vault-Token: Wd4k…
 ~// fetchFile; ekran kilidi sorulmaz,
@@ -2046,7 +2046,7 @@ const S_UA_LIM=`~// root'lu telefonda uygulamanın
 ~// uygulamanın belleğindedir`;
 // ── Atestasyon (ATTESTATION.md) ──────────────────────────────────────
 const Q_ATT_CH=`GET /api/v1/attest/challenge
-Host: 192.168.1.80:8092
+Host: 192.168.1.10:8092
 
 ~// bloğun kendi config API kapısına;
 ~// TLS bloğunda aynı istek 8091'e gider
@@ -2100,7 +2100,7 @@ const S_ATT_MEASURE=`~// rapor (kısaltılmış):
 ~// imzadan (anahtar donanım belgeli) ve sunucunun
 ~// kendi eklediği sinyallerden gelir`;
 const Q_ATT_POST=`POST /api/v1/attest
-Host: 192.168.1.80:8092
+Host: 192.168.1.10:8092
 Content-Type: application/json
 
 {
@@ -2166,7 +2166,7 @@ const S_PVT_USE=`~// uygulamanın sunucusu kendi doğrular,
 ~// örnek: PinVaultTokenAuth eklentisi; mock host
 ~// MOCK_HOST_REQUIRE_TOKEN=true ile aynısını yapar`;
 const Q_ATT_REJECT=`POST /api/v1/attest
-Host: 192.168.1.80:8092
+Host: 192.168.1.10:8092
 ~// aynı istek; rapordaki sinyaller farklı:
 !"rooted": {"flag": true,
 !  "evidence": ["file:/data/adb/magisk"]}
@@ -2216,7 +2216,7 @@ PinVault.attestationStatus()
 ~// olay: PinVaultConnectionEvent.Attestation`;
 const Q_ATT_POLICY=`PUT /api/v1/config-apis/mtls-8092/
     attestation/policy
-Host: 192.168.1.80:8090
+Host: 192.168.1.10:8090
 +X-API-Key: ••••••••
 
 {"version": 3, "flags": {
@@ -2706,11 +2706,11 @@ const S=[
   [`Cihaz ne yapar`,`P12'yi gelen şifreyle açar, özel anahtarı Android Keystore'a dışarı çıkarılamaz biçimde aktarır ve yalnızca sertifika zincirini saklar. Gelen şifreyi saklamaz. Keystore aktarmayı reddederse P12 şifreli depoda kalır.`,'ok']]},
 {c:5,k:'n',t:`Cihaz sertifikası yalnızca izin verilen sunuculara gider`,d:`Cihaz sertifikası telefonun kimliğidir; her soran sunucuya gösterilmemeli. Telefon onu yalnızca kendi config API adreslerine ve izin verilen sunuculara gösterir. Pinli olsa bile başka bir sunucu sertifika isterse eli boş döner.`,act:[`Başka bir sunucu`,`analiz.ornek.com (pinli)`,'c-blue'],hl:['g-att','g-dev','g92'],
  sx:{tag:'clientCertHosts',cls:'mtls',title:`cihazın kimliği kime gösterilir`,rows:[[`Her zaman`,`bloğun kendi adresleri`,`→ config, kayıt (enrollmentUrl), kurtarma (renewalUrl); yalnız 8092 sertifika ister`,3,'ok'],[`İzinle`,`clientCertHosts'ta yazan sunucular`,`→ hiç yazılmamışsa listede mtls: true olanlar`,null,'ok'],[`Kendi sertifikası olan`,`host sertifikası yüklenmiş sunucu`,`→ o sertifikayı görür`,4,''],[`Diğerleri`,`hiçbir şey`,`→ sunucu: CERTIFICATE_REQUIRED`,null,'bad']]},
- scr:{phone:'log',dev:'tablet-07',stat:['t-ok','✓ Client Sertifika Yüklü'],log:[['t-ok','192.168.1.80:8092 · cihaz sertifikası gösterildi'],['t-ok','192.168.1.217:9443 · gösterildi (clientCertHosts)']]},tq:`Uygulamanın kodu`,q:Q_CCH,ts:`Telefonun bağlantıları`,s:S_CCH,
- mv:[...mtls('d2'),m('d2',0,BL,'GET config'),m('d2',1,TE,''),cert('ob',0,PU,'sunucu sertifikası'),flash(116,122,'✓ pin tuttu','ok','end'),m('ob',0,RD,'sertifikanı göster'),flash(116,140,'✗ sertifika verilmedi','bad','end'),sc({log:[['t-ok','192.168.1.80:8092 · cihaz sertifikası gösterildi'],['t-ok','192.168.1.217:9443 · gösterildi (clientCertHosts)'],['t-bad','analiz.ornek.com:443 · istedi, verilmedi']]})],mk:[DM('kimlik yalnızca izinli sunuculara','ok')],
+ scr:{phone:'log',dev:'tablet-07',stat:['t-ok','✓ Client Sertifika Yüklü'],log:[['t-ok','192.168.1.10:8092 · cihaz sertifikası gösterildi'],['t-ok','192.168.1.20:9443 · gösterildi (clientCertHosts)']]},tq:`Uygulamanın kodu`,q:Q_CCH,ts:`Telefonun bağlantıları`,s:S_CCH,
+ mv:[...mtls('d2'),m('d2',0,BL,'GET config'),m('d2',1,TE,''),cert('ob',0,PU,'sunucu sertifikası'),flash(116,122,'✓ pin tuttu','ok','end'),m('ob',0,RD,'sertifikanı göster'),flash(116,140,'✗ sertifika verilmedi','bad','end'),sc({log:[['t-ok','192.168.1.10:8092 · cihaz sertifikası gösterildi'],['t-ok','192.168.1.20:9443 · gösterildi (clientCertHosts)'],['t-bad','analiz.ornek.com:443 · istedi, verilmedi']]})],mk:[DM('kimlik yalnızca izinli sunuculara','ok')],
  rows:[[`Neden`,`Sertifika telefonu tanıtır. Uygulamanın konuştuğu her sunucu onu toplayabilseydi telefonun kimliği üçüncü taraflara dağılırdı.`],
   [`Kural`,`Kimlik, isterlerse her zaman bloğun kendi adreslerine gider: config API, kayıt (enrollmentUrl) ve kurtarma (renewalUrl); bunlardan yalnız 8092 sertifika ister. Kendi host sertifikası yüklenmiş sunucu o sertifikayı görür. Başka bir sunucu kimliği ancak izinle görür.`,'ok'],
-  [`İzin`,`Uygulama clientCertHosts("https://192.168.1.217:9443/") ile sunucuları adıyla yazar; port zorunlu, yalnızca https. Yazdıysa liste tamdır: imzalı listedeki mtls: true bile yeni sunucu ekleyemez. Hiç yazmadıysa imzalı listede mtls: true olan sunucular kimliği görür.`],
+  [`İzin`,`Uygulama clientCertHosts("https://192.168.1.20:9443/") ile sunucuları adıyla yazar; port zorunlu, yalnızca https. Yazdıysa liste tamdır: imzalı listedeki mtls: true bile yeni sunucu ekleyemez. Hiç yazmadıysa imzalı listede mtls: true olan sunucular kimliği görür.`],
   [`Diğerleri`,`Pinli bir analiz ya da reklam sunucusu sertifika isterse telefon göstermez; sunucu bağlantıyı CERTIFICATE_REQUIRED ile reddeder. Telefon kararı kendi açtığı bağlantının adı ve portuyla verir.`,'wr'],
   [`Değişen`,`2.2.0 ile geldi: önceden kimlik, sertifika isteyen pinli sunuculara da gidebiliyordu.`]]},
 {c:5,k:'b',t:`Saldırı: kayıtsız cihaz host sertifikasını ister`,d:`Kayıt olmamış bir cihaz host sertifikasını almayı dener. 8092 onunla konuşmaz; 8091 de bu isteği reddeder.`,cx:'92',cl:NOCERT(`→ 8092 keser; 8091'de 403`),att:[`Başka bir cihaz`,`sertifikası yok`],hl:['g-att','g92','g91'],tq:`İstek · başka cihaz → 8092, sonra 8091`,q:Q_HOST_OTHER,ts:`Sonuç`,s:S_HOST_OTHER,
@@ -3019,7 +3019,7 @@ const S=[
   [`Cihaz nasıl tanır`,`Bir CA'ya bakmaz. Sertifikanın anahtarının özetini (pin) APK'daki listeyle karşılaştırır; buna SSL pinning denir. İki pin de panelde ve certs/demo-server.pins dosyasında görünür; geliştirici bunları bootstrapPins'e yazar.`,'ok'],
   [`Yenilerken`,`Panelde "Yedek Anahtara Geç"e basılır ve sunucu yeniden başlatılır; 8091 ve 8092 bundan sonra yedek anahtarla açılır. Cihazlar yedeğin pin'ini zaten bildiği için APK güncellemesi gerekmez; yeni yedeğin pin'i sonraki sürüme eklenir.`,'wr']]},
 {c:13,id:'rec',k:'s',t:`8093'ün sertifikası ve sunucu CA'sı`,d:`Kurtarma kapısının kendi sertifikası vardır; onu sunucunun kendi sertifika kurumu (CA) imzalar. Uygulama bu kapı için o kurumun pin'ini taşır.`,hl:['g93','g-db'],
- src:{t:`Kurtarma kapısının sertifikası`,r:[[`Üretir`,`demo-server: önce sunucu CA'sı, sonra kapı sertifikası`,`→ server-ca.jks, recovery.jks`],[`Kullanan`,`yalnızca 8093`,``],[`Cihaz tanır`,`APK'daki CA pin'iyle`,`→ yalnızca 192.168.1.80:8093 için`]],use:[11]},
+ src:{t:`Kurtarma kapısının sertifikası`,r:[[`Üretir`,`demo-server: önce sunucu CA'sı, sonra kapı sertifikası`,`→ server-ca.jks, recovery.jks`],[`Kullanan`,`yalnızca 8093`,``],[`Cihaz tanır`,`APK'daki CA pin'iyle`,`→ yalnızca 192.168.1.10:8093 için`]],use:[11]},
  tq:`Sunucuda üretilen`,q:Q_SRC_REC,ts:`Pin'ler → APK`,s:S_SRC_REC,
  mv:[cert('b3',1,PU,'')],mk:[BMK('recovery.jks ← sunucu CA','muted'),DM("APK'da: CA pin'i (8093)",'muted')],
  rows:[[`Nedir`,`8093 bağlantıda kendi sertifikasını ve onu imzalayan sunucu CA'sını birlikte gönderir.`],
@@ -3125,7 +3125,7 @@ function certsHtml(st){
   return h;
 }
 function newApiHtml(st){
-  let h='<div class="pm"><div class="pm-bar"><i class="ti ti-world" aria-hidden="true"></i><span>192.168.1.80:8090 · PinVault paneli</span></div><div class="pm-body">';
+  let h='<div class="pm"><div class="pm-bar"><i class="ti ti-world" aria-hidden="true"></i><span>192.168.1.10:8090 · PinVault paneli</span></div><div class="pm-body">';
   h+='<div class="pm-title">Yeni Config API</div><div class="pm-hint">TLS veya mTLS config API başlatın</div>';
   h+='<div class="pm-lbl">API ID</div>'+(st.apiId?'<div class="pm-in">'+esc(st.apiId)+'</div>':'<div class="pm-in ph">tls-8093 veya mtls-8092</div>');
   h+='<div class="pm-lbl">Port</div>'+(st.port?'<div class="pm-in">'+esc(st.port)+'</div>':'<div class="pm-in ph">8093</div>');
@@ -3136,7 +3136,7 @@ function newApiHtml(st){
   h+='<div style="margin-top:8px">'+btn('Config API Başlat',st.hot==='start',1)+'</div>';
   return h+'</div></div>';
 }
-function pmFrame(where){return '<div class="pm"><div class="pm-bar"><i class="ti ti-world" aria-hidden="true"></i><span>192.168.1.80:8090 · PinVault paneli · '+esc(where)+'</span></div><div class="pm-body">';}
+function pmFrame(where){return '<div class="pm"><div class="pm-bar"><i class="ti ti-world" aria-hidden="true"></i><span>192.168.1.10:8090 · PinVault paneli · '+esc(where)+'</span></div><div class="pm-body">';}
 function addHostHtml(st){
   let h=pmFrame('mtls-8092')+'<div class="pm-title">Yeni Host Ekle</div>';
   h+='<div class="pm-tabs" style="padding:6px 0 0;margin-bottom:8px">'+['Elle Gir','Sertifika Üret','Dosya Yükle','URL\'den Al'].map(function(t,i){return '<span'+(i===3?' class="on"':'')+'>'+esc(t)+'</span>';}).join('')+'</div>';
@@ -3190,7 +3190,7 @@ function pmHtml(st){
   if(st.panel==='hostcert')return hostCertHtml(st);
   const tabs=['Genel','İmzalama','Client Sertifikaları','Vault','Attestation','Bağlantı Geçmişi'];
   const on=(st.panel==='vault'||st.panel==='vaultup')?'Vault':st.panel==='attest'?'Attestation':'Client Sertifikaları';
-  let h='<div class="pm"><div class="pm-bar"><i class="ti ti-world" aria-hidden="true"></i><span>192.168.1.80:8090 · PinVault paneli · mtls-8092</span></div>';
+  let h='<div class="pm"><div class="pm-bar"><i class="ti ti-world" aria-hidden="true"></i><span>192.168.1.10:8090 · PinVault paneli · mtls-8092</span></div>';
   h+='<div class="pm-tabs">'+tabs.map(function(t){return '<span'+(t===on?' class="on"':'')+'>'+t+'</span>';}).join('')+'</div><div class="pm-body">';
   if(st.panel==='attest'){h+=attestHtml(st);}
   else if(st.panel==='policy'){h+=polHtml(st);}

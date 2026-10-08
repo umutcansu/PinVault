@@ -3,11 +3,13 @@
 //
 // Ekranlar: ana ekran, mTLS, Vault, Depolama, Ayarlar. Uygulama modu
 // (AppSettings.Mode) Ayarlar ekranından ya da açılışta intent ekiyle seçilir.
+//
+// Android ve iOS'ta aynı: görünüm kimlikleri (Android resource-id = iOS
+// accessibilityIdentifier), Türkçe metinler ve "#<sıra> · saat" damgası
+// ortak; dokunma, yazma, açma/kapama cihaz nesnesinden (lib/device.js) geçer.
 const { APP_ID, VAULT_KEYS, SCREEN_LOCK_PIN, UNLOCK_PROMPT_TITLE } = require('./env');
-const { sleep } = require('./android');
+const { sleep } = require('./device');
 const { attachmentName } = require('./dashboard');
-
-const id = (name) => `${APP_ID}:id/${name}`;
 
 const RESULT = {
   request: /(bağlantı başarılı|Bağlantı başarısız|bağlantı başarısız|istemci bağlandı|istemci başarısız)/,
@@ -70,26 +72,23 @@ class SampleApp {
    * listesi ve ayarlar (mod) yok. [mode] verilirse o modda açılır.
    */
   launchFresh({ mode } = {}) {
-    this.device.shell(`am force-stop ${APP_ID}`);
-    this.device.shell(`pm clear ${APP_ID}`);
-    this.start(mode);
+    this.device.launchApp(mode, { keepData: false });
   }
 
   /** Uygulamayı kapatıp açar; saklı config, sertifika ve ayarlar korunur. */
   relaunch({ mode } = {}) {
-    this.device.shell(`am force-stop ${APP_ID}`);
-    this.start(mode);
+    this.device.launchApp(mode, { keepData: true });
   }
 
   start(mode) {
-    const extra = mode ? ` --es mode ${mode}` : '';
-    this.device.shell(`am start -W -n ${APP_ID}/.MainActivity${extra}`);
+    this.device.startApp(mode);
   }
 
   // ── Okuma ────────────────────────────────────────────────────────────
 
   node(name) {
-    return this.device.uiNodes().find((n) => n.id === id(name)) || null;
+    const id = this.device.viewId(name, APP_ID);
+    return this.device.uiNodes().find((n) => n.id === id) || null;
   }
 
   text(name) {
@@ -208,24 +207,18 @@ class SampleApp {
 
   async tapButton(name) {
     const node = await this.waitFor(name, (n) => n.enabled, { what: `${name} etkin` });
-    this.device.tapCenter(node.bounds);
+    this.device.tapNode(node);
   }
 
   /** Alanı boşaltır (imleç sona, mevcut metin kadar silme). */
   async clearText(name) {
     const node = await this.waitFor(name, (n) => n.enabled, { what: `${name} etkin` });
-    this.device.tapCenter(node.bounds);
-    await sleep(300);
-    const length = (node.text || '').length;
-    if (length > 0) {
-      this.device.shell('input keyevent KEYCODE_MOVE_END');
-      this.device.shell(`input keyevent ${Array(length).fill('KEYCODE_DEL').join(' ')}`);
-    }
+    await this.device.clearField(node);
   }
 
   async enterText(name, value) {
-    await this.clearText(name);
-    this.device.typeText(value);
+    const node = await this.waitFor(name, (n) => n.enabled, { what: `${name} etkin` });
+    await this.device.setFieldText(node, value);
     // Parola alanında (token girişleri textPassword) döküm metni "•" dizisi:
     // yazılanın kendisi okunamaz, uzunluk eşitliği doğrulama sayılır.
     await this.waitFor(name, (n) => n.text === value || (n.password && n.text.length === value.length), {
@@ -242,7 +235,7 @@ class SampleApp {
 
   async setChecked(name, value) {
     const node = await this.waitFor(name, (n) => n.enabled, { what: `${name} etkin` });
-    if (node.checked !== value) this.device.tapCenter(node.bounds);
+    if (node.checked !== value) this.device.tapNode(node);
     await this.waitFor(name, (n) => n.checked === value, { what: `${name} = ${value}` });
   }
 
@@ -302,16 +295,27 @@ class SampleApp {
   // kalmasın (ana ekrana dönülmediğinde "vaultButton" UI dökümünde olmadığı
   // için ikinci çağrı düşüyordu).
 
+  /**
+   * iOS: during the navigation animation the main screen (and its statusView)
+   * is still in the UI tree; a result sequence read then belongs to the wrong
+   * screen. Waits (up to 5 s) until the main screen has left the tree.
+   */
+  async waitForMainGone() {
+    for (let i = 0; i < 25 && this.node('mtlsButton'); i++) await sleep(200);
+  }
+
   async openMtls() {
     if (this.node('enrollButton')) return;
     await this.tapButton('mtlsButton');
     await this.waitFor('enrollButton', () => true, { what: 'mTLS ekranı' });
+    await this.waitForMainGone();
   }
 
   async openVault() {
     if (this.node('fetchFlagsButton')) return;
     await this.tapButton('vaultButton');
     await this.waitFor('fetchFlagsButton', () => true, { what: 'Vault ekranı' });
+    await this.waitForMainGone();
   }
 
   async openStorage() {
@@ -319,21 +323,34 @@ class SampleApp {
     await this.waitFor('storageView', (n) => n.text && !n.text.startsWith('Okunuyor'), {
       what: 'Depolama ekranı',
     });
+    await this.waitForMainGone();
   }
 
   async openSettings() {
     if (this.node('applyButton')) return;
     await this.tapButton('settingsButton');
     await this.waitFor('applyButton', () => true, { what: 'Ayarlar ekranı' });
+    await this.waitForMainGone();
   }
 
   async backToMain() {
     for (let i = 0; i < 4; i++) {
-      if (this.node('mtlsButton')) return;
+      if (this.node('mtlsButton')) return this.waitForChildScreensGone();
       this.device.pressBack();
       await sleep(800);
     }
     if (!this.node('mtlsButton')) throw new Error('Mobil: ana ekrana dönülemedi');
+    await this.waitForChildScreensGone();
+  }
+
+  /**
+   * The mirror of [waitForMainGone]: on iOS the main screen is in the tree
+   * while the pushed screen is still sliding out, and a tap then is lost.
+   * Waits (up to 5 s) until no pushed screen is left.
+   */
+  async waitForChildScreensGone() {
+    const child = () => ['applyButton', 'enrollButton', 'fetchFlagsButton', 'storageView'].some((id) => this.node(id));
+    for (let i = 0; i < 25 && child(); i++) await sleep(200);
   }
 
   // ── Ayarlar ekranı ───────────────────────────────────────────────────
@@ -566,14 +583,10 @@ class SampleApp {
       if (!answered && this.device.credentialPromptShown(UNLOCK_PROMPT_TITLE)) {
         // Pencere yeni açıldıysa açılış animasyonu bitip PIN alanı hazır olana kadar beklenir.
         await sleep(2000);
-        if (cancel) {
-          // İlk GERİ yalnızca PIN alanının açtığı klavyeyi kapatır; pencere
-          // ikincisinde kapanır. Pencere kapanana kadar (en çok 3 kez) basılır.
-          for (let i = 0; i < 3 && this.device.credentialPromptShown(UNLOCK_PROMPT_TITLE); i++) {
-            this.device.pressBack();
-            await sleep(1200);
-          }
-        } else this.device.enterCredential(pin);
+        // Vazgeç: Android'de GERİ tuşu (ilki klavyeyi kapatır), iOS'ta Face ID
+        // eşleşmez + sistem penceresinin Vazgeç düğmesi (lib/android.js, lib/ios.js).
+        if (cancel) await this.device.cancelCredentialPrompt(UNLOCK_PROMPT_TITLE);
+        else this.device.enterCredential(pin);
         answered = true;
       }
       await sleep(700);

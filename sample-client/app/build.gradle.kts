@@ -31,6 +31,9 @@ val pinPattern = Regex("[A-Za-z0-9+/]{43}=")
 val pinListPattern = Regex("${pinPattern.pattern}(\\s*,\\s*${pinPattern.pattern})*")
 val keyPattern = Regex("[A-Za-z0-9+/]{40,2048}={0,2}")
 val keyListPattern = Regex("${keyPattern.pattern}(\\s*,\\s*${keyPattern.pattern})*")
+// İmza sertifikası SHA-256'sı: 64 hex, iki nokta ile ayrılmış ya da bitişik (apksigner / keytool çıktısı).
+val sha256Pattern = Regex("([A-Fa-f0-9]{2}:){31}[A-Fa-f0-9]{2}|[A-Fa-f0-9]{64}")
+val sha256ListPattern = Regex("(${sha256Pattern.pattern})(\\s*,\\s*(${sha256Pattern.pattern}))*")
 val httpsUrlPattern = Regex("https://[A-Za-z0-9.-]{1,253}(:[0-9]{1,5})?(/[A-Za-z0-9._~/-]*)?")
 
 fun checkedValue(key: String, pattern: Regex, what: String): String {
@@ -129,6 +132,10 @@ android {
         buildConfigField("boolean", "TARGET_REQUIRE_CA_TRUST", targetRequireCaTrust.toString())
         buildConfigField("boolean", "HOST_ATTESTATION", hostAttestation.toString())
         buildConfigField("String", "HOST_PLAY_INTEGRITY_PROJECT", javaString(hostPlayIntegrityProject))
+        // Uygulamanın beklenen imza sertifikası SHA-256'sı (virgülle birden çok:
+        // yayın + Play App Signing). Kütüphane atestasyon raporunda app_integrity'yi
+        // buna göre işaretler (expectedSignerSha256). Boşsa verilmez; release ister.
+        field("EXPECTED_SIGNER_SHA256", "host.expectedSignerSha256", sha256ListPattern, "virgülle ayrılmış SHA-256 (hex)")
         field("MOCK_TLS_HOST", "mock.tlsHost", hostNamePattern, "alan adı")
         field("MOCK_TLS_PORT", "mock.tlsPort", portPattern, "port")
         field("MOCK_MTLS_HOST", "mock.mtlsHost", hostNamePattern, "alan adı")
@@ -284,6 +291,11 @@ tasks.matching { it.name == "preReleaseBuild" }.configureEach {
         if (hostValue("host.tlsScope").isEmpty() || hostValue("host.mtlsScope").isEmpty()) {
             hostProblems += "host.tlsScope / host.mtlsScope boş: uygulama config'in hangi Config API için imzalandığına bakmaz; " +
                 "aynı anahtarın başka bir Config API için imzaladığı config de kabul edilir."
+        }
+        if (hostValue("host.expectedSignerSha256").isEmpty()) {
+            hostProblems += "host.expectedSignerSha256 boş: uygulama kendi imza sertifikasını atestasyon raporunda işaretleyemez; " +
+                "yeniden paketlenmiş bir kopya cihazda fark edilmez. Yayın imza sertifikasının SHA-256'sını yaz " +
+                "(apksigner verify --print-certs; Play App Signing'de Play Console'daki uygulama imzalama sertifikası)."
         }
         if (hostProblems.isNotEmpty()) {
             problems += "$sampleHostFile üretim değerlerini taşımıyor (demo dosyası mı?):\n" +

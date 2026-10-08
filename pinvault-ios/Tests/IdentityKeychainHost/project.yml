@@ -1,0 +1,75 @@
+# Keychain / Secure Enclave tests of the mTLS identity (XcodeGen).
+#
+# `swift test` and `xcodebuild test -scheme PinVault-Package` run the package's
+# tests inside the simulator's `xctest` process, which has no Keychain
+# entitlement: every Keychain call answers errSecMissingEntitlement (-34018),
+# so the Keychain tests skip there. This project runs the same test files
+# inside an ad-hoc signed host app, where the Keychain and the Secure Enclave
+# work:
+#
+#   xcodegen generate --spec pinvault-ios/Tests/IdentityKeychainHost/project.yml --project <dir>
+#   xcodebuild test -project <dir>/PinVaultIdentityKeychain.xcodeproj -scheme PinVaultIdentityKeychainTests \
+#     -destination 'platform=iOS Simulator,id=<udid>'
+#
+# The generated project is not committed. The TLS fixtures must be generated
+# first (Fixtures/tls/generate.sh).
+name: PinVaultIdentityKeychain
+options:
+  bundleIdPrefix: io.github.umutcansu.pinvault
+  deploymentTarget:
+    iOS: "16.0"
+packages:
+  PinVault:
+    path: ../../..
+settings:
+  base:
+    CODE_SIGN_IDENTITY: "-"
+    CODE_SIGN_STYLE: Manual
+    DEVELOPMENT_TEAM: ""
+    SWIFT_VERSION: "6.0"
+targets:
+  PinVaultIdentityKeychainHost:
+    type: application
+    platform: iOS
+    sources: [Host]
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: io.github.umutcansu.pinvault.identitykeychainhost
+        PRODUCT_NAME: PinVaultIdentityKeychainHost
+        GENERATE_INFOPLIST_FILE: YES
+        INFOPLIST_KEY_UILaunchScreen_Generation: YES
+        MARKETING_VERSION: "1.0"
+        CURRENT_PROJECT_VERSION: "1"
+  PinVaultIdentityKeychainTests:
+    type: bundle.unit-test
+    platform: iOS
+    sources:
+      - path: Support
+      - path: ../PinVaultTests/IdentityKeychainTests.swift
+      - path: ../PinVaultTests/PKCS12ImportKeychainTests.swift
+      - path: ../PinVaultTests/ClientCertTestSupport.swift
+      - path: ../PinVaultTests/TLSTestSupport.swift
+      - path: ../PinVaultTests/StoreTestSupport.swift
+      - path: ../PinVaultTests/TestSupport.swift
+      - path: ../PinVaultTests/Fixtures
+        type: folder
+        buildPhase: resources
+    dependencies:
+      - target: PinVaultIdentityKeychainHost
+      - package: PinVault
+        product: PinVault
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: io.github.umutcansu.pinvault.identitykeychaintests
+        GENERATE_INFOPLIST_FILE: YES
+        TEST_HOST: "$(BUILT_PRODUCTS_DIR)/PinVaultIdentityKeychainHost.app/PinVaultIdentityKeychainHost"
+        BUNDLE_LOADER: "$(TEST_HOST)"
+        MARKETING_VERSION: "1.0"
+        CURRENT_PROJECT_VERSION: "1"
+schemes:
+  PinVaultIdentityKeychainTests:
+    build:
+      targets:
+        PinVaultIdentityKeychainTests: [test]
+    test:
+      targets: [PinVaultIdentityKeychainTests]

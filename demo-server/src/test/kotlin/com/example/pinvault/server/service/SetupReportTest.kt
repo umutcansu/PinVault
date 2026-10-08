@@ -120,7 +120,7 @@ class SetupReportTest {
                     signingKeys = listOf("K1", "K2"), requiredSignatures = 2, recoveryKeys = listOf("R1"),
                     clientCaPin = "CA", recoveryPort = 6656, recoveryPins = listOf("RP1", "RP2"),
                     enrollmentMode = "token", attestationMode = "enforce", integrityMode = "warn", configTtlSeconds = 86400,
-                    publicHost = "192.168.1.80", publicPorts = mapOf(6651 to 443)
+                    publicHost = "192.168.1.10", publicPorts = mapOf(6651 to 443)
                 )
             }
         }
@@ -136,7 +136,7 @@ class SetupReportTest {
         val apis = json["configApis"]!!.jsonArray.map { it.jsonObject }
         assertEquals(listOf("443", "6652"), apis.map { it["publicPort"]!!.jsonPrimitive.content })
         assertEquals("6656", json["recoveryPublicPort"]!!.jsonPrimitive.content)
-        assertEquals("192.168.1.80", json["publicHost"]!!.jsonPrimitive.content)
+        assertEquals("192.168.1.10", json["publicHost"]!!.jsonPrimitive.content)
         secrets.values.forEach { assertFalse(response.bodyAsText().contains(it)) }
     }
 
@@ -145,7 +145,7 @@ class SetupReportTest {
         assertEquals(mapOf(8081 to 6651, 8092 to 6652), parsePublicPorts("8081:6651, 8092:6652,bad,8083:,0:1,8084:70000"))
         assertEquals(emptyMap(), parsePublicPorts(null))
         assertEquals("pins.example.com", parsePublicHost(" https://pins.example.com:443/x "))
-        assertEquals("192.168.1.80", parsePublicHost("192.168.1.80"))
+        assertEquals("192.168.1.10", parsePublicHost("192.168.1.10"))
         assertNull(parsePublicHost("  "))
     }
 }

@@ -353,6 +353,35 @@ other. For that key also check that user authentication is required, and how: th
 reference server refuses a time-bound key (`authTimeout` set) from Android 11 or newer,
 and with `USER_AUTH_REQUIRE_PER_USE=true` from every version.
 
+**iOS: App Attest in place of the chain.** An iPhone has no Android Key Attestation
+chain; where you require one, the iOS library sends instead an App Attest attestation of
+a **fresh** App Attest key, in a body field `appAttestation` whose value is a JSON
+**string** (like `integrityToken`), never an object:
+
+```json
+"appAttestation": "{\"provider\":\"app-attest\",\"keyId\":\"<Base64>\",\"attestation\":\"<Base64 CBOR>\"}"
+```
+
+The attestation's client data hash binds it to what is being registered:
+
+| Request | `clientDataHash` (SHA-256 over UTF-8) |
+|---|---|
+| CSR enrollment (`POST …/client-certs/enroll`, no `attestationChain`) | `SHA-256(integrityRequestHash)`, the 43-character request hash below, over the CSR and the device id you store (`deviceUid`, else `deviceId`) |
+| User-auth key (`POST …/public-key`, `"purpose":"user_auth"`, no `attestationChain`) | `SHA-256("pinvault-user-auth-key:v1:" + deviceId + ":" + Base64(SHA-256(SPKI DER of publicKeyPem)))`, standard Base64 with padding |
+| First attestation round (`POST /api/v1/attest`, no `attestationChain`) | the round's: `SHA-256("pinvault-app-attest:v1:" + nonce + ":" + deviceId)`, the token in `report.verdictProvider` (section 9) |
+
+Verify it as an attestation (never an assertion) against Apple's App Attestation Root CA
+(ATTESTATION.md §12 lists the checks) with that hash, then treat it as a passing chain:
+refuse a failing one with `403 attestation_invalid` and a `reason` (the reference server
+prefixes them `app_attest_`, e.g. `app_attest_nonce_mismatch` for one made for another
+CSR, key, device or round), keep every other rule (a replacement still needs the device's
+credential; spend nothing before the check). Record that App Attest, not a chain,
+admitted the identity or key: it proves the genuine app on genuine Apple hardware, not
+that the phone is not jailbroken and not where the key lives or how it is protected.
+When a request carries a chain, judge the chain. The reference server does this only with
+`APP_ATTEST_APP_IDS` (and `APP_ATTEST_ROOT_CA_FILE`) set; without them every iPhone is
+refused under `enforce`.
+
 **Integrity verdict (library and reference server, unreleased).** Key attestation says
 where the key was made. It does not say whether the phone is rooted or the app hooked
 right now. An app that sets `integrityTokenProvider` sends one more field with every CSR
@@ -386,6 +415,17 @@ The reference server does this under `INTEGRITY_VERIFICATION=off|warn|enforce` (
 on stdin and prints `{"passed","reason","summary"}`; `scripts/play-integrity-verify.sh`
 is that command for Play Integrity. It verifies at a waiting request's creation only; the
 pickups are tied to the request's key.
+
+**iOS: App Attest as the integrity token.** The iOS library sends, as `integrityToken`, a
+JSON string `{"provider":"app-attest","keyId":"<Base64>","attestation":"<Base64 CBOR>"}`:
+a fresh App Attest key attested with the client data hash
+`SHA-256(UTF-8(<the 43-character request hash above>))`. Verify the attestation object as
+Apple's "Validating apps that connect to your server" describes, with that client data
+hash (ATTESTATION.md §12 lists the checks); a token made for another CSR fails the nonce
+check. The reference server does it itself when `APP_ATTEST_APP_IDS` (and
+`APP_ATTEST_ROOT_CA_FILE`, Apple's App Attestation Root CA) are set — reasons prefixed
+`app_attest_`, e.g. `app_attest_nonce_mismatch` — and hands every other token to the
+command.
 
 **A key the server makes (P12) — only for apps that ask for it.** Library versions before
 2.1, and blocks that call `allowServerGeneratedKey()` on a device whose Keystore cannot
@@ -534,6 +574,29 @@ for v1. `X-Vault-Version` must be the version the signature names, and versions 
 jump: the library refuses a version more than 1,000,000 above the one it holds (or above
 zero for a first copy).
 
+**Device keys (`end_to_end` and `user_auth` files).** The library registers an RSA
+2048 public key per device and Config API:
+
+```
+POST {configUrl}/api/v1/vault/devices/{deviceId}/public-key
+{"publicKeyPem": "-----BEGIN PUBLIC KEY-----…", "algorithm": "RSA-OAEP-SHA256", "purpose": "e2e" | "user_auth"}
+```
+
+and the file goes out as `[4-byte BE length][RSA-OAEP-wrapped AES-256 key][12-byte IV][AES-GCM ciphertext + tag]`.
+`algorithm` says how to wrap the AES key, and you must store it with the key:
+
+| `algorithm` | OAEP | Sent by |
+|---|---|---|
+| `RSA-OAEP-SHA256` (default when absent) | SHA-256, **MGF1-SHA1** | Android (the Android Keystore's `OAEPWithSHA-256AndMGF1Padding`) |
+| `RSA-OAEP-SHA256-MGF1-SHA256` | SHA-256, **MGF1-SHA256** | iOS (`SecKeyAlgorithm.rsaEncryptionOAEPSHA256`, which cannot open MGF1-SHA1) |
+
+Anything else: `400 {"error":"unsupported_algorithm"}`. The same key sent again under the
+other algorithm changes how files are wrapped, so treat it as a key change (the reference
+server then wants the same proof as for a new key). In Java, wrap with
+`Cipher.getInstance("RSA/ECB/OAEPPadding")` and an explicit
+`OAEPParameterSpec("SHA-256", "MGF1", MGF1ParameterSpec.SHA1 /* or SHA256 */, PSource.PSpecified.DEFAULT)`
+— never the provider's default, which differs between platforms.
+
 The library keeps the signatures it accepted with the stored copy and verifies them again
 each time the app reads the file, with the signing keys trusted at that moment — a key you
 revoke with a signing-key set stops its files from being read, not only from being
@@ -661,6 +724,22 @@ evaluates the report against a per-Config-API policy and signs the token.
 If you implement the server yourself, keep the order of checks in
 ATTESTATION.md §2.2 and never answer a token to a rejected device.
 
+**iOS clients.** The protocol is the same; the report (ATTESTATION.md §3)
+carries `device.platform: "ios"`, `device.osVersion` (dotted, `26.5`),
+`app.bundleId`, `app.teamId`, `securityPatch: null`, an empty
+`signerSha256`, and `keySecurityLevel` `secure_enclave` (hardware, like
+`tee` / `strongbox`) or `software`. There is no `attestationChain`. Judge
+an iOS report by what it has: the bundle id and team id instead of the
+signer digest, the iOS version instead of the patch date, App Attest
+instead of the key attestation chain; a report without `platform` is an
+Android one. Store the platform with the device. If you require a chain
+for a first registration, accept instead the first round's `app-attest`
+verdict carrying an `attestation` for that round (section 4, "iOS: App
+Attest in place of the chain"): register the device key and the App Attest
+key, and hold the device to iOS. An `assertion` from a device you do not
+know means you forgot it: refuse with `reason` `app_attest_unknown_key`
+and the app attests a new key.
+
 **What your backend does on every request from the app** — the library adds
 `PinVault-Token: <jwt>` to requests whose host is a token host. Verify it
 locally; nothing calls the PinVault server on the request path:
@@ -680,11 +759,12 @@ payload { "iss": "pinvault", "sub": "<deviceId>", "aud": "<configApiId>",
    Keep **every** listed secret keyed by `kid`: tokens signed before a
    rotation stay valid until they expire.
 2. Pick the secret the header's `kid` names (unknown `kid` → refuse).
-3. Verify the HS256 signature, `exp` with at most 60 s of leeway, and `aud`
-   equal to your Config API id. Optionally require `anno` to contain a
-   string (staff builds, canaries), or `pol` to be at least a version.
+3. Verify the HS256 signature, `iss` equal to `pinvault`, `exp` with at most
+   60 s of leeway, and `aud` equal to your Config API id. Optionally require
+   `anno` to contain a string (staff builds, canaries), or `pol` to be at
+   least a version.
 4. Refuse with `401` and `WWW-Authenticate: PinVault-Token error="invalid_token", error_description="…"`
-   (body `{"error":"invalid_token","reason":"expired|signature|audience|missing|malformed|unknown_kid"}`).
+   (body `{"error":"invalid_token","reason":"expired|signature|issuer|audience|missing|malformed|unknown_kid"}`).
    The library recognises a `401` that names `PinVault-Token`, attests once
    more and retries the request once.
 5. If your API is also behind mTLS with PinVault-issued client certificates,
@@ -822,6 +902,22 @@ last verified verdict per device and treat its absence as a signal of its
 own (`play_integrity_missing`), not as a failure. A report without
 `verdictProvider` is a normal report.
 
+**App Attest in the report (optional, iOS, ATTESTATION.md §12).** An iOS
+report may carry `"verdictProvider": {"name": "app-attest", "token":
+"<JSON string>"}`, the token being
+`{"provider":"app-attest","keyId":"<Base64>","attestation":"<Base64 CBOR>"}`
+on the key's first round and `{…,"assertion":"<Base64 CBOR>"}` afterwards,
+both made with the client data hash
+`SHA-256(UTF-8("pinvault-app-attest:v1:" + nonce + ":" + deviceId))`.
+Verify an attestation against Apple's App Attestation Root CA (download it
+once from Apple; never on the request path), store the key id, public key
+and counter 0 per device, then verify each assertion with that key and
+require its counter to rise. An assertion for a key you have no record of
+(you forgot the device, or it reinstalled): answer `app_attest_unknown_key`
+among the `warnings`, and the library attests a new key next round. The
+simulator has no App Attest: no `verdictProvider`, and the absence is a
+signal of its own (`app_attest_missing`), as for Play Integrity.
+
 ---
 
 ## All Configurable Paths
@@ -845,6 +941,15 @@ All paths are relative to `configUrl`. Leading `/` is stripped.
 - Server certificate must match the pins in the config
 - For mTLS endpoints: require and validate client certificates
 - Self-signed certificates work — the library pins by SPKI hash, not by CA
+- **iOS and 403 on mTLS listeners:** on a connection where the server asked for a
+  client certificate, Apple's URL loading system turns every HTTP 403 into a
+  "client certificate required" error and drops the response, so an iPhone
+  never sees `403 {"error":"reenroll_required"}` or any other 403 body there.
+  The iOS library sends `X-PinVault-Features: forbidden-as-409` on such requests;
+  answer it with `409`, the same body, and `X-PinVault-Status: 403`. The library
+  reads that as the 403 it is. Clients that do not send the feature (Android)
+  keep getting the 403. The reference server does this on every mTLS listener
+  (`plugin/ForbiddenAsConflict.kt`).
 
 ---
 
@@ -875,6 +980,9 @@ All paths are relative to `configUrl`. Leading `/` is stripped.
 - [ ] Pin configs follow the library's rules before you sign them (hosts unique ignoring case, at most 2000 hosts, 2–32 pins each, LDH names with at most one leading `*.`): one bad entry makes every device refuse the whole config
 - [ ] Signed payloads carry `configApiId`; vault files carry `X-Vault-Signature-V2` as well as `X-Vault-Signature`
 - [ ] Vault file endpoints return raw bytes (if using VaultFile feature)
+- [ ] Device keys keep their `algorithm`: `end_to_end` / `user_auth` files for an iOS key (`RSA-OAEP-SHA256-MGF1-SHA256`) are wrapped with MGF1-SHA256, Android's (`RSA-OAEP-SHA256`) with MGF1-SHA1
+- [ ] If iOS apps attest: a report with `device.platform: "ios"` is judged by bundle id, team id and iOS version, and an `app-attest` verdict against Apple's App Attestation Root CA (ATTESTATION.md §12)
+- [ ] Where you require an Android chain and serve iPhones: `appAttestation` (a JSON string) is verified as a fresh key's App Attest attestation with the client data hash of that request (enrollment, user-auth key, first round), recorded as App Attest, not as a hardware-attested key
 - [ ] If the app attests: `/api/v1/attest/challenge` and `/api/v1/attest` as in ATTESTATION.md, no token to a rejected device, and your API verifies `PinVault-Token` (HS256 by `kid`, `exp` ≤ 60 s leeway, `aud`) and answers `401` naming `PinVault-Token` otherwise
 
 ---

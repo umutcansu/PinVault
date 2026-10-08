@@ -1,0 +1,125 @@
+apply plugin: "com.android.application"
+apply plugin: "org.jetbrains.kotlin.android"
+apply plugin: "com.facebook.react"
+
+react {
+    autolinkLibrariesWithApp()
+}
+
+// ── Host değerleri ──────────────────────────────────────────────────────────
+// sample-host.properties → src/generated/hostConfig.ts (scripts/gen-host-config.js;
+// sample-client/app/build.gradle.kts ile aynı biçim kuralları). Dosya:
+// -PsampleHostProps=<yol>, SAMPLE_HOST_PROPS ya da ../sample-host.properties.
+// Release türü demo değerleriyle derlenmez ve test kontrollerini pakete almaz.
+def appRoot = file("../..")
+def hostProps = providers.gradleProperty("sampleHostProps").orNull ?: System.getenv("SAMPLE_HOST_PROPS") ?: ""
+// Release: eklentinin yerel güvenlik dosyası (assets/pinvault_security.json) da
+// buradan üretilir; yalnız release kaynak kümesinin assets'ine girer.
+def nativeSecurityDir = layout.buildDirectory.dir("generated/pinvault/release/assets").get().asFile
+["Debug", "Release"].each { type ->
+    def task = tasks.register("genHostConfig${type}", Exec) {
+        workingDir appRoot
+        def args = ["node", "scripts/gen-host-config.js", "--platform", "android"]
+        if (type == "Release") args += ["--release", "--native-out", nativeSecurityDir.absolutePath]
+        if (!hostProps.isEmpty()) args += ["--props", new File(hostProps).absolutePath]
+        commandLine args
+    }
+    tasks.matching { it.name == "pre${type}Build" }.configureEach { dependsOn task }
+    // Görev sırasına bırakılmaz: JS paketi ve assets, üretilen dosyalardan sonra.
+    tasks.matching { it.name == "createBundle${type}JsAndAssets" || it.name == "merge${type}Assets" }.configureEach {
+        dependsOn task
+    }
+}
+
+// ── Test bayrakları (yalnız debug) ──────────────────────────────────────────
+// -Psample.e2eScreenshots=true: ekran FLAG_SECURE almaz (kanıt görüntüleri).
+def e2eScreenshots = (providers.gradleProperty("sample.e2eScreenshots").orNull ?: "false").toBoolean()
+
+// ── Yayın imzası ────────────────────────────────────────────────────────────
+// Anahtar deposu ve parolalar depoda DURMAZ: Gradle özelliği ya da ortam
+// değişkeni. Eksikse release durur; debug anahtarına ASLA düşülmez.
+def releaseSetting = { String property, String environment ->
+    def v = providers.gradleProperty(property).orNull ?: System.getenv(environment)
+    v = v?.trim()
+    return (v == null || v.isEmpty()) ? null : v
+}
+def releaseStoreFile = releaseSetting("sample.release.storeFile", "SAMPLE_RELEASE_STORE_FILE")
+def releaseStorePassword = releaseSetting("sample.release.storePassword", "SAMPLE_RELEASE_STORE_PASSWORD")
+def releaseKeyAlias = releaseSetting("sample.release.keyAlias", "SAMPLE_RELEASE_KEY_ALIAS")
+def releaseKeyPassword = releaseSetting("sample.release.keyPassword", "SAMPLE_RELEASE_KEY_PASSWORD")
+def releaseSigningReady = [releaseStoreFile, releaseStorePassword, releaseKeyAlias, releaseKeyPassword].every { it != null }
+
+def jscFlavor = 'io.github.react-native-community:jsc-android:2026004.+'
+
+android {
+    ndkVersion rootProject.ext.ndkVersion
+    buildToolsVersion rootProject.ext.buildToolsVersion
+    compileSdk rootProject.ext.compileSdkVersion
+
+    namespace "com.example.sampleclientrn"
+    defaultConfig {
+        applicationId "com.example.sampleclientrn"
+        minSdkVersion rootProject.ext.minSdkVersion
+        targetSdkVersion rootProject.ext.targetSdkVersion
+        versionCode 1
+        versionName "1.0"
+    }
+    buildFeatures {
+        buildConfig true
+    }
+    sourceSets {
+        release {
+            assets.srcDirs += [nativeSecurityDir]
+        }
+    }
+    signingConfigs {
+        if (releaseSigningReady) {
+            release {
+                storeFile file(releaseStoreFile)
+                storePassword releaseStorePassword
+                keyAlias releaseKeyAlias
+                keyPassword releaseKeyPassword
+            }
+        }
+    }
+    buildTypes {
+        debug {
+            // The SDK's own debug key (~/.android/debug.keystore); no keystore in the repository.
+            buildConfigField "boolean", "E2E_SCREENSHOTS", e2eScreenshots.toString()
+        }
+        release {
+            signingConfig signingConfigs.findByName("release")
+            minifyEnabled true
+            shrinkResources true
+            proguardFiles getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro"
+            buildConfigField "boolean", "E2E_SCREENSHOTS", "false"
+        }
+    }
+}
+
+// ── Release kapısı ──────────────────────────────────────────────────────────
+tasks.matching { it.name == "preReleaseBuild" }.configureEach {
+    doFirst {
+        def problems = []
+        if (!releaseSigningReady) {
+            problems << "Yayın imza anahtarı verilmedi (sample.release.storeFile / storePassword / keyAlias / keyPassword ya da SAMPLE_RELEASE_*). Release derlemesi debug anahtarıyla imzalanmaz."
+        } else if (!file(releaseStoreFile).isFile()) {
+            problems << "Yayın anahtar deposu bulunamadı: ${file(releaseStoreFile).absolutePath}"
+        }
+        if (e2eScreenshots) {
+            problems << "-Psample.e2eScreenshots=true bir test bayrağıdır; release derlemesinde kullanılamaz."
+        }
+        if (!problems.isEmpty()) {
+            throw new GradleException("Release derlemesi durduruldu:\n\n" + problems.join("\n\n"))
+        }
+    }
+}
+
+dependencies {
+    implementation("com.facebook.react:react-android")
+    if (hermesEnabled.toBoolean()) {
+        implementation("com.facebook.react:hermes-android")
+    } else {
+        implementation jscFlavor
+    }
+}

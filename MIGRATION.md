@@ -3,6 +3,37 @@
 PinVault 2.0 uses a unified multi-Config-API DSL. This document is a quick
 reference for how to configure it in common scenarios.
 
+## Upgrading from 2.3.0 to the next release
+
+Everything compiles unchanged. One behaviour changes for apps that call
+`requireUnlockedDevice()`:
+
+### `requireUnlockedDevice()` no longer falls back silently
+
+Until 2.3.0, when a device's Keystore refused to make a key with
+`setUnlockedDeviceRequired(true)`, the library made the key **without** the
+requirement and logged a warning; the app had no way to know its keys were
+usable while the phone was locked. Now the operation that needed the key
+fails with `UnlockedDeviceKeyRequiredException` (a subclass of
+`SSLPinningException`): `init` returns `InitResult.Failed` for the store
+keys, enrollment `ClientCertEnrollmentResult.Failed`, a vault file
+`VaultFileResult.Failed`, an imported P12 the same, each with that cause.
+Devices whose Keystore accepts the flag — every Android 9+ device that
+passes CTS — see no difference; Android 7 and 8 never had the flag and are
+unchanged.
+
+```kotlin
+// Before 2.3.0 and now — strict: a refusing Keystore fails the operation.
+.requireUnlockedDevice()
+
+// The old behaviour, as an explicit choice: make the key without the
+// requirement and warn. Java: requireUnlockedDevice(true).
+.requireUnlockedDevice(allowFallback = true)
+```
+
+Keys that already exist are untouched either way; the option applies to
+keys generated from now on (README → *Production Security Checklist* §9).
+
 ## Upgrading from 2.1.x to the next release
 
 Most apps compile unchanged; the per-item list — one fetch per signed vault

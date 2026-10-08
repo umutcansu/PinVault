@@ -108,6 +108,8 @@ class SigningKeySetService(
         if (parsed.keys.any { key -> recoveryPublicKeys.any { it.first == key } }) {
             throw Rejected("a recovery key may not also be a signing key.")
         }
+        // Zero would make devices accept a config with no signature at all (negative is nonsense).
+        if (parsed.requiredSignatures < 1) throw Rejected("requiredSignatures must be at least 1 (got ${parsed.requiredSignatures}).")
         if (parsed.requiredSignatures > parsed.keys.size) {
             throw Rejected("requiredSignatures ${parsed.requiredSignatures} exceeds the ${parsed.keys.size} listed key(s).")
         }

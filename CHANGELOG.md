@@ -1,6 +1,105 @@
 # Changelog
 
-## Unreleased — Attestation, Play Integrity, managed trust roots, environment guard, setup wizard
+## 2.3.2 — 2026-10-08 — React Native library; iOS bounded app-session reads
+
+### React Native (new)
+
+- **`@umutcansu/react-native-pinvault` 2.3.2** (`pinvault-react-native/`): a TurboModule
+  bridge over the Android and iOS libraries for React Native 0.87+ (New
+  Architecture). Pinning, keys, signatures and vault decryption stay native; the
+  plugin's `fetch` runs on the pinned native session, and React Native's own
+  fetch / XHR / images are pinned on both platforms (WebSocket on Android).
+  Strict config parsing (unknown keys and wrong types refused), tokens kept in
+  native memory only, fail-closed `environmentGuard`, an optional native
+  security file for the trust anchors. Jest, Android JVM and Swift tests.
+- **iOS library:** `PinnedSession.data(for:maxResponseBytes:)` — the bounded
+  read the library already used for its own answers, now for app sessions (the
+  React Native plugin enforces its response limits while reading).
+- **`sample-client-rn/`**: the React Native sample app (Ana / mTLS / Vault).
+
+## 2.3.1 — 2026-10-08 — OWASP audit fixes (MASVS Android/iOS, ASVS server)
+
+Closes the medium findings of the OWASP audits of 2.3.0 (MASVS on Android
+and iOS, ASVS / API Top 10 on the reference server).
+
+### Library
+
+- **`requireUnlockedDevice()` no longer falls back silently.** When a
+  device's Keystore refused a key with `setUnlockedDeviceRequired(true)`,
+  the key was made without the requirement and the app learnt of it from a
+  log line only. Now the operation that needed the key fails with the new
+  `UnlockedDeviceKeyRequiredException` (`init` → `InitResult.Failed` for
+  the store keys; enrollment, vault files and imported identities report
+  `Failed` with that cause). The old behaviour is an explicit opt-in:
+  `requireUnlockedDevice(allowFallback = true)` (Java:
+  `requireUnlockedDevice(true)`), still with the warning in the log.
+  `PinVaultConfig.requireUnlockedDeviceFallback` carries the choice. A key
+  the Keystore did make but `requireHardwareBackedKeys()` refused is no
+  longer retried without the flag. See `MIGRATION.md`.
+- **The Android 7–10 user-auth key, as far as the platform allows.** Before
+  Android 11 the Keystore cannot bind the screen lock to a single use, so a
+  phone without a strong fingerprint gets a time-bound key. Its window is
+  now **5 s** (was 10 s): the Keystore checks it when the cipher is
+  initialised, right after the prompt returns. On Android 7–8 the prompt
+  for that key now offers a strong biometric and the screen lock
+  (`BIOMETRIC_STRONG | DEVICE_CREDENTIAL`, supported there) instead of any
+  biometric; Android 9–10 keep `BIOMETRIC_WEAK | DEVICE_CREDENTIAL`, the
+  only pair androidx.biometric allows with the screen lock on API 28–29. A
+  phone with a strong fingerprint still gets a per-use `CryptoObject`-bound
+  key on 7–10, as before. The limitation is now visible: the enum
+  `UserAuthKeyKind` (`PER_USE`, `PER_USE_BIOMETRIC`, `TIME_BOUND`; `perUse`,
+  `windowSeconds`) moved to `model` and is public, `PinVault.userAuthKeyKind()`
+  reads this device's kind, `UserAuthKeyKind.expected(sdkInt, strongFingerprint)`
+  tells what a key made now would be, a time-bound key is logged as a
+  warning when it is made, and the README's *Locked behind the screen lock*
+  has the per-version table. Unit tests run the decisions at API 24, 27,
+  28, 29, 30 and 34 with Robolectric. The reference server accepts windows
+  up to 10 s, so no server change is needed.
+
+### Samples
+
+- **sample-client wires the three local hardening hooks** it only
+  documented before (audit F-1), in every mode, from `App.harden`:
+  `environmentGuard` with a small in-app check (`DeviceShield`: `su`
+  binaries and Magisk/KernelSU/APatch files, an attached debugger or
+  `TracerPid`, Frida/Xposed/Substrate/Dobby in `/proc/self/maps`) that
+  refuses `ENROLL`, `FETCH_FILE` and `UNLOCK_FILE` on a compromised device
+  and always allows `INIT`; `expectedSignerSha256` from the new
+  `host.expectedSignerSha256` property in `sample-host.properties`
+  (`client-config.sh --properties` writes it from the server's
+  `ATTESTATION_SIGNER_SHA256`; empty = not set; the release build refuses
+  an empty value like the other release guards); `requireUnlockedDevice()`
+  and `requireHardwareBackedKeys()`. All three are always on in the
+  release build type. Test builds (debug, e2e) get three Settings
+  checkboxes (`environmentGuardCheck`, `unlockedDeviceCheck`,
+  `hardwareKeysCheck`), off by default, so the E2E suite keeps its
+  behaviour on userdebug emulator images that carry `su` and have no
+  secure hardware. Existing strings and view ids are unchanged.
+
+### Server
+
+- **A host's version moves for every change to its entry.** `PUT /api/v1/certificate-config` bumped a host only when its pins changed; a change to `mtls`, `forceUpdate` or `clientCertVersion` alone was stored without a bump, and since devices detect changes by version, a fielded device never re-read the entry — a host switched to mTLS, or a rotated host client certificate, reached only devices whose data had been wiped (the `toggle-mtls` and `upload-client-cert` routes already bumped for their own change). Now the whole entry but its version is compared. History records the move as `mtls_enabled` / `mtls_disabled` or the new `host_updated` event.
+- **Every admin request body is capped.** The admin routes that read JSON with a typed `receive` (hosts, vault admin, governance, server settings, Config API admin, enrollment policies, signing) had no body limit unless the approval gate happened to cover them; a leaked or misused admin key could have the server buffer anything. Ktor's `RequestBodyLimit` is now installed on the management listener and the Config API ports with `ADMIN_UPLOAD_MAX_BYTES` (default 1 MB) as the limit — a declared length above it is `413 body_too_large` before the handler runs, a longer streamed body is cut off while it is read — while the vault upload keeps `VAULT_MAX_FILE_BYTES` and the device endpoints their 64 KB `ClientBodyLimit`. No existing cap is lowered.
+- **The `PinVault-Token` secrets must open at start-up.** `AttestationTokenSecretStore` handed a sealed secret back as ciphertext when it had no cipher to open it, so a server started without `VAULT_AT_REST_PASSWORD` after the secrets were sealed signed and verified tokens with bytes that were not the secret, silently. Now a sealed secret without a cipher, or one no password opens, is an `IllegalStateException` naming `VAULT_AT_REST_PASSWORD`, raised at start-up like the other secret checks; a secret that opens only with `VAULT_AT_REST_PASSWORD_PREVIOUS` (or sits in the clear) is re-sealed under the current password, as vault files are.
+- **`PinVault-Token`: `iss` is checked** (`pinvault`), after the signature; another issuer is `Invalid("issuer")`.
+- **`DELETE /api/v1/client-certs/{id}` answers `404 client_cert_not_found`** for an id with neither a certificate row nor an identity (it answered 200 `revoked: true`). Repeating it on a revoked id, to cascade with `cascadeUnverified=true`, still answers 200.
+- **Signing-key sets refuse `requiredSignatures < 1`** (zero would have devices accept unsigned configs).
+- **`GET /api/v1/hosts/{hostname}/status` no longer returns `keystorePath`**, a file path on the server; `hasCertificate` (boolean) replaces it. The dashboard reads the new field.
+- **No `Server` header; HSTS on the TLS management port.** Ktor's `DefaultHeaders` plugin — which always added `Server: Ktor/3.0.3` — is replaced by the server's own `SecurityHeaders` (the same CSP, `nosniff`, `DENY`, `no-referrer`, `Date`), which sends no `Server` header and adds `Strict-Transport-Security: max-age=31536000` to every response that leaves over TLS (`MANAGEMENT_HTTPS_PORT`), never on the plain-HTTP port.
+
+### iOS
+
+- **PKCS12 import and the Keychain (MASVS audit, finding 1):** the audit suspected that `SecPKCS12Import` without `kSecImportToMemoryOnly` (iOS 16–17) persists the identity in the Keychain with default accessibility and refuses a second import. Checked on the iOS 18.0 and 26.5 simulators (the bare call and the library's): nothing is persisted, the same bundle opens repeatedly, and the key signs — Apple documents memory-only as the iOS default on every version, and the implementation stores items only with `kSecUseDataProtectionKeychain` (macOS), which the library never passes. No behaviour change; the comment in `ClientIdentity.fromPKCS12` now says so, a new app-hosted test (`PKCS12ImportKeychainTests`, identity host suite) pins it on every runtime, and the README says which runtimes CI should cover (18.0 and current).
+- **No pinned session follows a redirect into plain HTTP (finding 2):** sessions built with `applyTo(_:)` used to follow `https → http` redirects (OkHttp's `followSslRedirects` default); now they answer the 3xx like the library's own sessions and `session(settings:)`. A backend that must redirect into the clear opts in with `applyTo(configuration, followCleartextRedirects: true)` or `HttpConnectionSettings(followCleartextRedirects: true)`; the library's own sessions never follow one.
+- **Biometrics-only screen-lock key (finding 3, MASVS L2 / MASTG-TEST-0064):** `PinVaultConfig.Builder.userAuthBiometricOnly()` (`userAuthStrength(.biometricCurrentSet)`, new `UserAuthStrength` enum) makes the `userAuth` key with `SecAccessControl(.biometryCurrentSet)` and evaluates `.deviceOwnerAuthenticationWithBiometrics`: no passcode fallback, and a change of the enrolled biometrics retires the key — the next `unlockFile` returns `.invalidated`, the locked copies are deleted and fetched again with a new key (`LAError.biometryNotEnrolled` from the prompt and `errSecAuthFailed` from a key use after a passed prompt both map to it; the Keychain item is deleted). The default stays `.deviceOwner` (`.userPresence`, biometrics or passcode). Unit tests over the scripted evaluator, app-hosted tests of the ACL flags and the retirement path (`scripts/test.sh` enrols Face ID on the simulator first), README and PORTING.md §3.
+
+## 2.3.0 — 2026-10-07 — iOS library, attestation, Play Integrity, managed trust roots, environment guard, setup wizard
+
+### iOS (new)
+
+- **PinVault for iOS** (`pinvault-ios/`, Swift Package Manager at the repository root, iOS 16+): pinning with signed remote configs, mTLS enrollment with a Secure Enclave key, vault files, attestation with App Attest, background updates — the Android API and wire protocol, see `pinvault-ios/README.md` and `pinvault-ios/PORTING.md`.
+- **`sample-client-ios/`**: the SwiftUI counterpart of the sample app; **`sample-e2e`** runs the end-to-end suite on the iOS simulator (`E2E_PLATFORM=ios`, an XCUITest-based UI driver).
+- **Server:** per-key RSA-OAEP MGF1 (`RSA-OAEP-SHA256-MGF1-SHA256` for iOS keys), iOS attestation reports (`device.platform`, held to the platform on record), an App Attest verifier (`app_attest` / `app_attest_missing`) that also stands in for the Android Key Attestation chain under the three `enforce` settings, `secure_enclave` as a hardware key level, `403` answered as `409` + `X-PinVault-Status: 403` to clients that send `forbidden-as-409` on mTLS listeners (URLSession hides 403 bodies there), Apple model ids accepted in reports, and a Swift snippet in the setup wizard.
 
 ### Library
 
