@@ -64,13 +64,33 @@ final class CertificateConfigStore: Sendable {
     /// shared by every origin of the block (see ``forOrigin(namespace:origin:open:)``),
     /// so pointing a block at another server never sets its clock back.
     private let clockPrefs: any PreferenceStore
+    /// The watermarks' copy outside the container (``WatermarkMirror``), and the clock reference's.
+    private let mirror: any WatermarkMirror
+    private let clockMirror: any WatermarkMirror
+    /// The clock reference last mirrored, so the Keychain is written at most once a minute of clock.
+    private let clockMirrored = Locked<Int64>(0)
     private let clockBox = Locked<@Sendable () -> Int64>(LibraryClock.wallMillis)
     private let log = PinVaultLog.tag("CertificateConfigStore")
 
+    /// How far the clock reference may run ahead of its mirrored copy before it is written again.
+    static let clockMirrorStepMs: Int64 = 60_000
+
     /// A store over `prefs` (Kotlin `createForTest`, and the stores below).
-    init(prefs: any PreferenceStore, clockPrefs: (any PreferenceStore)? = nil) {
+    init(
+        prefs: any PreferenceStore,
+        clockPrefs: (any PreferenceStore)? = nil,
+        mirror: any WatermarkMirror = NoWatermarkMirror(),
+        clockMirror: (any WatermarkMirror)? = nil
+    ) {
         self.prefs = prefs
         self.clockPrefs = clockPrefs ?? prefs
+        self.mirror = mirror
+        self.clockMirror = clockMirror ?? mirror
+    }
+
+    /// The Keychain mirror of the namespace `namespace` of this store's file.
+    static func keychainMirror(_ namespace: String) -> any WatermarkMirror {
+        KeychainWatermarkMirror(account: "\(fileName)/\(namespace)")
     }
 
     /// The block namespace `prefsName` (sanitized), opened strict (Kotlin `CertificateConfigStore(context, prefsName)`).
@@ -78,9 +98,11 @@ final class CertificateConfigStore: Sendable {
         prefsName: String = ConfigStoreNaming.prefsNameFor(""),
         environment: SecureStoreEnvironment = .shared
     ) throws -> CertificateConfigStore {
-        CertificateConfigStore(prefs: try SecurePreferences.openStrict(
-            fileName: fileName, namespace: ConfigStoreNaming.sanitize(prefsName), environment: environment
-        ))
+        let namespace = ConfigStoreNaming.sanitize(prefsName)
+        return CertificateConfigStore(
+            prefs: try SecurePreferences.openStrict(fileName: fileName, namespace: namespace, environment: environment),
+            mirror: keychainMirror(namespace)
+        )
     }
 
     /// The store of block `prefsName` for the server `origin` (its
@@ -99,7 +121,7 @@ final class CertificateConfigStore: Sendable {
         origin: String,
         environment: SecureStoreEnvironment = .shared
     ) throws -> CertificateConfigStore {
-        try forOrigin(namespace: ConfigStoreNaming.sanitize(prefsName), origin: origin) { namespace in
+        try forOrigin(namespace: ConfigStoreNaming.sanitize(prefsName), origin: origin, mirror: keychainMirror) { namespace in
             try SecurePreferences.openStrict(fileName: fileName, namespace: namespace, environment: environment)
         }
     }
@@ -108,20 +130,22 @@ final class CertificateConfigStore: Sendable {
     static func forOrigin(
         namespace: String,
         origin: String,
+        mirror: (String) -> any WatermarkMirror = { _ in NoWatermarkMirror() },
         open: (String) throws -> any PreferenceStore
     ) throws -> CertificateConfigStore {
         let base = try open(namespace)
         let bound = try base.getString(keyOrigin, nil)
-        if bound == origin { return CertificateConfigStore(prefs: base) }
+        if bound == origin { return CertificateConfigStore(prefs: base, mirror: mirror(namespace)) }
         if bound == nil {
             try base.edit().putString(keyOrigin, origin).commit()
-            return CertificateConfigStore(prefs: base)
+            return CertificateConfigStore(prefs: base, mirror: mirror(namespace))
         }
-        let own = try open(originNamespace(namespace, origin: origin))
+        let ownNamespace = originNamespace(namespace, origin: origin)
+        let own = try open(ownNamespace)
         if try own.getString(keyOrigin, nil) == nil { try own.edit().putString(keyOrigin, origin).commit() }
         PinVaultLog.tag("CertificateConfigStore")
             .d("Config store: block bound to another server than its first — using that server's own namespace")
-        return CertificateConfigStore(prefs: own, clockPrefs: base)
+        return CertificateConfigStore(prefs: own, clockPrefs: base, mirror: mirror(ownNamespace), clockMirror: mirror(namespace))
     }
 
     /// The per-Config-API namespace (and the file name PinVault 2.0.x used on Android).
@@ -154,7 +178,7 @@ final class CertificateConfigStore: Sendable {
     /// a failed health check restores the older pins but never lowers this.
     /// Only ``resetWatermarks(keySetVersion:)`` does.
     func getCurrentIssuedAt() throws -> Int64 {
-        max(try prefs.getLong(Self.keyIssuedAt, 0), try prefs.getLong(Self.keyWatermarkIssuedAt, 0))
+        max(try prefs.getLong(Self.keyIssuedAt, 0), try prefs.getLong(Self.keyWatermarkIssuedAt, 0), mirror.read().issuedAt)
     }
 
     /// The highest per-host version this device accepted for each host
@@ -182,6 +206,7 @@ final class CertificateConfigStore: Sendable {
             versions[host] = max(versions[host] ?? 0, pin.version)
         }
         let issuedAtWatermark = max(try getCurrentIssuedAt(), config.issuedAt)
+        mirrorWatermarks(issuedAt: issuedAtWatermark, versions: versions)
         let edit = prefs.edit()
             .putInt(Self.keyVersion, config.computedVersion())
             .putLong(Self.keyIssuedAt, config.issuedAt)
@@ -309,6 +334,7 @@ final class CertificateConfigStore: Sendable {
             edit.putLong(Self.keyWatermarkIssuedAt, issuedAt)
                 .putString(Self.keyWatermarkVersionsJson, Self.watermarksJson(versions))
                 .remove(Self.keyWatermarkVersions)
+            mirrorWatermarks(issuedAt: issuedAt, versions: versions)
         }
         try edit
             .remove(Self.keyVersion)
@@ -341,6 +367,11 @@ final class CertificateConfigStore: Sendable {
             .remove(Self.keyRolledBackDigest)
             .putInt(Self.keyKeySetVersion, keySetVersion)
             .commit()
+        var mirrored = mirror.read()
+        mirrored.issuedAt = 0
+        mirrored.versions = [:]
+        mirrored.keySetVersion = keySetVersion
+        mirror.write(mirrored)
         log.w("Replay watermarks reset for signing-key set v\(keySetVersion)")
     }
 
@@ -358,12 +389,40 @@ final class CertificateConfigStore: Sendable {
     /// `TrustedClock`). 0 = none yet. Kept per block, not per origin; a value
     /// an origin namespace may hold from before is taken into account too.
     func highestSeenTime() throws -> Int64 {
-        if clockPrefs === prefs { return try prefs.getLong(Self.keyClockHighestSeen, 0) }
-        return max(try clockPrefs.getLong(Self.keyClockHighestSeen, 0), try prefs.getLong(Self.keyClockHighestSeen, 0))
+        let mirrored = clockMirror.read().clock
+        if clockPrefs === prefs { return max(try prefs.getLong(Self.keyClockHighestSeen, 0), mirrored) }
+        return max(try clockPrefs.getLong(Self.keyClockHighestSeen, 0), try prefs.getLong(Self.keyClockHighestSeen, 0), mirrored)
     }
 
     func setHighestSeenTime(_ timeMs: Int64) throws {
         try clockPrefs.edit().putLong(Self.keyClockHighestSeen, timeMs).apply()
+        var mirrored = clockMirror.read()
+        if timeMs < mirrored.clock {
+            // `TrustedClock.resetTo`: the library itself lowers the reference (a
+            // newer config showed it was ahead), so the copy follows at once. A
+            // container put back from earlier never calls this: the copy stays.
+            mirrored.clock = timeMs
+            clockMirror.write(mirrored)
+            clockMirrored.set(timeMs)
+        } else if timeMs >= clockMirrored.get() + Self.clockMirrorStepMs {
+            // Moving forward: mirrored once it ran a step ahead, so the Keychain
+            // is not written on every persisted tick of the clock.
+            if timeMs > mirrored.clock {
+                mirrored.clock = timeMs
+                clockMirror.write(mirrored)
+            }
+            clockMirrored.set(timeMs)
+        }
+    }
+
+    /// Writes the watermarks to the mirror, never lowering what it holds.
+    private func mirrorWatermarks(issuedAt: Int64, versions: [String: Int]) {
+        var mirrored = mirror.read()
+        let merged = mirrored.versions.merging(versions, uniquingKeysWith: max)
+        guard issuedAt > mirrored.issuedAt || merged != mirrored.versions else { return }
+        mirrored.issuedAt = max(mirrored.issuedAt, issuedAt)
+        mirrored.versions = merged
+        mirror.write(mirrored)
     }
 
     /// Fingerprint of the trust anchors (compiled-in signing keys, their
@@ -387,6 +446,8 @@ final class CertificateConfigStore: Sendable {
     /// for tests and tooling that need a truly clean store.
     func wipeAll() throws {
         try prefs.edit().clear().apply()
+        mirror.write(MirroredWatermarks())
+        if clockMirror as AnyObject !== mirror as AnyObject { clockMirror.write(MirroredWatermarks()) }
         log.d("Certificate config store wiped")
     }
 
@@ -492,7 +553,12 @@ final class CertificateConfigStore: Sendable {
 
     // MARK: Version watermarks
 
+    /// The plist's version watermarks, raised to the mirror's.
     private func storedWatermarks() throws -> [String: Int] {
+        try plistWatermarks().merging(mirror.read().versions, uniquingKeysWith: max)
+    }
+
+    private func plistWatermarks() throws -> [String: Int] {
         if let json = try prefs.getString(Self.keyWatermarkVersionsJson, nil) {
             guard let object = JSONText.parse(json) as? [String: Any] else {
                 log.e("Stored version watermarks are malformed — ignoring them")

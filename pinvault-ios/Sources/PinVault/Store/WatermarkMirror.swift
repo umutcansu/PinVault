@@ -1,0 +1,116 @@
+import Foundation
+import Security
+
+/// A copy of a config store's replay watermarks and trusted-clock reference
+/// outside the app's container.
+///
+/// The watermarks (highest accepted `issuedAt`, per-host versions) and the
+/// clock reference live in the store's plist, inside the container. Whoever
+/// can write the container (a jailbroken device, a restored backup of it) can
+/// put an older copy back, and with it the device would accept an older,
+/// still-valid signed config again. Keychain items are not part of the
+/// container, so the store also writes these values here and reads back the
+/// higher of the two: restoring the container alone no longer moves them back.
+/// (Android has no such place; see `ATTESTATION.md` and `pinvault-ios/README.md`.)
+protocol WatermarkMirror: Sendable {
+    func read() -> MirroredWatermarks
+    func write(_ values: MirroredWatermarks)
+}
+
+/// The mirrored values; zero / empty when nothing was mirrored.
+struct MirroredWatermarks: Sendable, Equatable {
+    var issuedAt: Int64 = 0
+    var versions: [String: Int] = [:]
+    var clock: Int64 = 0
+    /// The signing-key set the watermarks were last reset for (a reset lowers them here too).
+    var keySetVersion: Int?
+}
+
+/// No mirror: tests, and anywhere the Keychain is not used.
+struct NoWatermarkMirror: WatermarkMirror {
+    func read() -> MirroredWatermarks { MirroredWatermarks() }
+    func write(_ values: MirroredWatermarks) {}
+}
+
+/// The mirror as one Keychain generic password per store namespace (service
+/// `io.github.umutcansu.pinvault.watermarks`, account = the namespace),
+/// `AfterFirstUnlockThisDeviceOnly`, a small JSON object. Where the Keychain
+/// refuses the process (an unsigned test run) it reads empty and writes nothing.
+final class KeychainWatermarkMirror: WatermarkMirror, @unchecked Sendable {
+    static let service = "io.github.umutcansu.pinvault.watermarks"
+
+    private let account: String
+    private let cache = Locked<MirroredWatermarks?>(nil)
+    private let log = PinVaultLog.tag("WatermarkMirror")
+
+    init(account: String) {
+        self.account = account
+    }
+
+    private var query: [CFString: Any] {
+        [
+            kSecClass: kSecClassGenericPassword,
+            kSecAttrService: Self.service,
+            kSecAttrAccount: account,
+            kSecUseDataProtectionKeychain: true,
+        ]
+    }
+
+    func read() -> MirroredWatermarks {
+        if let cached = cache.get() { return cached }
+        var lookup = query
+        lookup[kSecReturnData] = true
+        lookup[kSecMatchLimit] = kSecMatchLimitOne
+        var item: CFTypeRef?
+        let status = SecItemCopyMatching(lookup as CFDictionary, &item)
+        guard status == errSecSuccess, let data = item as? Data else {
+            if status != errSecItemNotFound && status != errSecMissingEntitlement {
+                log.w("Watermark mirror [\(account)] cannot be read (OSStatus \(status))")
+            }
+            return MirroredWatermarks()
+        }
+        let values = Self.decode(data)
+        cache.set(values)
+        return values
+    }
+
+    func write(_ values: MirroredWatermarks) {
+        let data = Self.encode(values)
+        var status = SecItemUpdate(query as CFDictionary, [kSecValueData: data] as CFDictionary)
+        if status == errSecItemNotFound {
+            var add = query
+            add[kSecValueData] = data
+            add[kSecAttrAccessible] = kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly
+            status = SecItemAdd(add as CFDictionary, nil)
+        }
+        if status == errSecSuccess {
+            cache.set(values)
+        } else if status != errSecMissingEntitlement {
+            log.w("Watermark mirror [\(account)] cannot be written (OSStatus \(status))")
+        }
+    }
+
+    static func encode(_ values: MirroredWatermarks) -> Data {
+        var members: [String] = [
+            "\"issuedAt\":\(values.issuedAt)",
+            "\"clock\":\(values.clock)",
+            "\"versions\":{" + values.versions.sorted { $0.key < $1.key }.map { "\(JSONText.string($0.key)):\($0.value)" }.joined(separator: ",") + "}",
+        ]
+        if let keySet = values.keySetVersion { members.append("\"keySetVersion\":\(keySet)") }
+        return Data(("{" + members.joined(separator: ",") + "}").utf8)
+    }
+
+    static func decode(_ data: Data) -> MirroredWatermarks {
+        guard let json = LenientJSON.object(data) else { return MirroredWatermarks() }
+        var values = MirroredWatermarks()
+        values.issuedAt = LenientJSON.long(json, "issuedAt", 0)
+        values.clock = LenientJSON.long(json, "clock", 0)
+        if let versions = json["versions"] as? [String: Any] {
+            for (host, version) in versions {
+                if let number = version as? NSNumber { values.versions[host] = number.intValue }
+            }
+        }
+        if let keySet = json["keySetVersion"] as? NSNumber { values.keySetVersion = keySet.intValue }
+        return values
+    }
+}

@@ -77,6 +77,22 @@ final class StoreKeyWrapKeychainTests: XCTestCase {
         XCTAssertEqual(try keys.key(for: vaultKey), first)
     }
 
+    func testTheWatermarkMirrorRoundTripsThroughTheKeychain() throws {
+        try skipWithoutKeychain()
+        let account = "test/watermark-mirror-\(UUID().uuidString)"
+        defer { SecItemDelete([kSecClass: kSecClassGenericPassword, kSecAttrService: KeychainWatermarkMirror.service,
+                               kSecAttrAccount: account, kSecUseDataProtectionKeychain: true] as CFDictionary) }
+        XCTAssertEqual(KeychainWatermarkMirror(account: account).read(), MirroredWatermarks())
+        var values = MirroredWatermarks()
+        values.issuedAt = 42_000
+        values.versions = ["a.com": 4]
+        values.clock = 99_000
+        KeychainWatermarkMirror(account: account).write(values)
+        values.issuedAt = 43_000
+        KeychainWatermarkMirror(account: account).write(values)   // an update of the same item
+        XCTAssertEqual(KeychainWatermarkMirror(account: account).read(), values, "a fresh instance reads it from the Keychain")
+    }
+
     // MARK: Helpers
 
     private struct StaticKeys: PrefsKeySource {
