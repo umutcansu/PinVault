@@ -81,7 +81,7 @@ struct IntegrityProbeInputs: Sendable {
             deviceModel: { await LiveIntegrityReaders.deviceModel() },
             threadNames: { LiveIntegrityReaders.threadNames() },
             inSharedCache: { LiveIntegrityReaders.inSharedCache($0) },
-            bundlePath: Bundle.main.bundlePath,
+            bundlePath: LiveIntegrityReaders.appBundlePath,
             mainImageEncrypted: { LiveIntegrityReaders.mainImageEncrypted() },
             signedGetTaskAllow: { try LiveIntegrityReaders.signedGetTaskAllow() }
         )
@@ -108,11 +108,21 @@ enum LiveIntegrityReaders {
     }
 
     static var onMacHost: Bool {
-        #if os(macOS) || targetEnvironment(simulator)
+        #if os(macOS) || targetEnvironment(simulator) || targetEnvironment(macCatalyst)
         return true
         #else
-        return false
+        // An iPhone / iPad app running on an Apple silicon Mac sees the Mac's file system and libraries.
+        return ProcessInfo.processInfo.isiOSAppOnMac || ProcessInfo.processInfo.isMacCatalystApp
         #endif
+    }
+
+    /// The app's own bundle: the containing app's for an app extension (`App.app/PlugIns/X.appex`),
+    /// so the app's frameworks count as its own.
+    static var appBundlePath: String {
+        let path = Bundle.main.bundlePath
+        guard path.hasSuffix(".appex") else { return path }
+        let containing = ((path as NSString).deletingLastPathComponent as NSString).deletingLastPathComponent
+        return containing.hasSuffix(".app") ? containing : path
     }
 
     static var osName: String {
@@ -235,11 +245,17 @@ enum LiveIntegrityReaders {
     /// loaded header (the kernel decrypts the pages, not the header); nil when
     /// the executable has no such command or cannot be found.
     static func mainImageEncrypted() -> Bool? {
-        guard let executable = Bundle.main.executablePath else { return nil }
+        // The main executable's own header: no path comparison that a symlinked
+        // or relocated container path could make miss.
+        guard let header = mainExecutableHeader() else { return nil }
+        return MachOReader.cryptid(header: UnsafeRawPointer(header)).map { $0 != 0 }
+    }
+
+    /// The header of the main executable: the image dyld loaded as `MH_EXECUTE`.
+    private static func mainExecutableHeader() -> UnsafePointer<mach_header>? {
         for index in 0..<_dyld_image_count() {
-            guard let name = _dyld_get_image_name(index), String(cString: name) == executable,
-                  let header = _dyld_get_image_header(index) else { continue }
-            return MachOReader.cryptid(header: UnsafeRawPointer(header)).map { $0 != 0 }
+            guard let header = _dyld_get_image_header(index) else { continue }
+            if header.pointee.filetype == UInt32(MH_EXECUTE) { return header }
         }
         return nil
     }

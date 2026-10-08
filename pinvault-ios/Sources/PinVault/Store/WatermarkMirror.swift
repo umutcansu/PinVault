@@ -13,7 +13,8 @@ import Security
 /// higher of the two: restoring the container alone no longer moves them back.
 /// (Android has no such place; see `ATTESTATION.md` and `pinvault-ios/README.md`.)
 protocol WatermarkMirror: Sendable {
-    func read() -> MirroredWatermarks
+    /// The mirrored values; empty when nothing was mirrored, nil when the copy cannot be read now.
+    func read() -> MirroredWatermarks?
     func write(_ values: MirroredWatermarks)
 }
 
@@ -24,11 +25,13 @@ struct MirroredWatermarks: Sendable, Equatable {
     var clock: Int64 = 0
     /// The signing-key set the watermarks were last reset for (a reset lowers them here too).
     var keySetVersion: Int?
+    /// Fingerprint of the compiled-in trust anchors the watermarks were set under.
+    var anchors: String?
 }
 
 /// No mirror: tests, and anywhere the Keychain is not used.
 struct NoWatermarkMirror: WatermarkMirror {
-    func read() -> MirroredWatermarks { MirroredWatermarks() }
+    func read() -> MirroredWatermarks? { MirroredWatermarks() }
     func write(_ values: MirroredWatermarks) {}
 }
 
@@ -56,18 +59,19 @@ final class KeychainWatermarkMirror: WatermarkMirror, @unchecked Sendable {
         ]
     }
 
-    func read() -> MirroredWatermarks {
+    func read() -> MirroredWatermarks? {
         if let cached = cache.get() { return cached }
         var lookup = query
         lookup[kSecReturnData] = true
         lookup[kSecMatchLimit] = kSecMatchLimitOne
         var item: CFTypeRef?
         let status = SecItemCopyMatching(lookup as CFDictionary, &item)
+        // Nothing mirrored yet, or no Keychain for this process (unsigned test runs): empty.
+        if status == errSecItemNotFound || status == errSecMissingEntitlement { return MirroredWatermarks() }
         guard status == errSecSuccess, let data = item as? Data else {
-            if status != errSecItemNotFound && status != errSecMissingEntitlement {
-                log.w("Watermark mirror [\(account)] cannot be read (OSStatus \(status))")
-            }
-            return MirroredWatermarks()
+            // Unreadable now (a locked device, a Keychain error): the caller neither trusts nor rewrites it.
+            log.w("Watermark mirror [\(account)] cannot be read (OSStatus \(status))")
+            return nil
         }
         let values = Self.decode(data)
         cache.set(values)
@@ -97,6 +101,7 @@ final class KeychainWatermarkMirror: WatermarkMirror, @unchecked Sendable {
             "\"versions\":{" + values.versions.sorted { $0.key < $1.key }.map { "\(JSONText.string($0.key)):\($0.value)" }.joined(separator: ",") + "}",
         ]
         if let keySet = values.keySetVersion { members.append("\"keySetVersion\":\(keySet)") }
+        if let anchors = values.anchors { members.append("\"anchors\":\(JSONText.string(anchors))") }
         return Data(("{" + members.joined(separator: ",") + "}").utf8)
     }
 
@@ -111,6 +116,7 @@ final class KeychainWatermarkMirror: WatermarkMirror, @unchecked Sendable {
             }
         }
         if let keySet = json["keySetVersion"] as? NSNumber { values.keySetVersion = keySet.intValue }
+        if let anchors = json["anchors"] as? String { values.anchors = anchors }
         return values
     }
 }

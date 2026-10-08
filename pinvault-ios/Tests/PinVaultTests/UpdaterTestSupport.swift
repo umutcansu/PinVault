@@ -45,7 +45,7 @@ final class SpyConfigStore: UpdaterConfigStore, @unchecked Sendable {
         try base.wipeAll()
     }
 
-    func resetWatermarks(keySetVersion: Int) throws { try base.resetWatermarks(keySetVersion: keySetVersion) }
+    func resetWatermarks(keySetVersion: Int, anchors: String?) throws { try base.resetWatermarks(keySetVersion: keySetVersion, anchors: anchors) }
     func keySetVersionSeen() throws -> Int? { try base.keySetVersionSeen() }
     func setKeySetVersionSeen(_ version: Int) throws { try base.setKeySetVersionSeen(version) }
     func trustAnchorsSeen() throws -> String? { try base.trustAnchorsSeen() }

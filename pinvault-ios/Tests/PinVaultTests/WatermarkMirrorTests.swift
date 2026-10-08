@@ -11,7 +11,7 @@ final class WatermarkMirrorTests: XCTestCase {
     final class MemoryMirror: WatermarkMirror, @unchecked Sendable {
         private let stored = Locked(MirroredWatermarks())
         var values: MirroredWatermarks { stored.get() }
-        func read() -> MirroredWatermarks { stored.get() }
+        func read() -> MirroredWatermarks? { stored.get() }
         func write(_ values: MirroredWatermarks) { stored.set(values) }
     }
 
@@ -53,10 +53,66 @@ final class WatermarkMirrorTests: XCTestCase {
         let store = CertificateConfigStore(prefs: InMemoryPreferences(), mirror: mirror)
         try store.save(config(9, issuedAt: 9_000))
         try store.clearActive()
-        try store.resetWatermarks(keySetVersion: 3)
+        try store.resetWatermarks(keySetVersion: 3, anchors: nil)
         XCTAssertEqual(try store.getCurrentIssuedAt(), 0, "a revoked key set's watermarks do not hold")
         XCTAssertEqual(try store.getVersionWatermarks(), [:])
         XCTAssertEqual(mirror.values.keySetVersion, 3)
+    }
+
+    func testAContainerFromBeforeAnAnchorsResetDoesNotLowerTheCopyAgain() throws {
+        let mirror = MemoryMirror()
+        let live = CertificateConfigStore(prefs: InMemoryPreferences(), mirror: mirror)
+        try live.setTrustAnchorsSeen("anchors-1")
+        try live.setKeySetVersionSeen(1)
+        try live.save(config(3, issuedAt: 3_000))
+        // The app is updated with other compiled-in keys: a legitimate reset.
+        try live.resetWatermarks(keySetVersion: 1, anchors: "anchors-2")
+        try live.setTrustAnchorsSeen("anchors-2")
+        XCTAssertEqual(mirror.values.issuedAt, 0)
+        try live.save(config(9, issuedAt: 9_000))
+        XCTAssertEqual(mirror.values.issuedAt, 9_000)
+
+        // A container from before the update is put back: the updater sees old anchors
+        // and resets again, but the copy was already set under anchors-2 and stays.
+        let restored = CertificateConfigStore(prefs: InMemoryPreferences(), mirror: mirror)
+        try restored.resetWatermarks(keySetVersion: 1, anchors: "anchors-2")
+        XCTAssertEqual(try restored.getCurrentIssuedAt(), 9_000)
+        // An older key set cannot lower it either.
+        try restored.resetWatermarks(keySetVersion: 1, anchors: nil)
+        XCTAssertEqual(try restored.getCurrentIssuedAt(), 9_000)
+    }
+
+    func testAFreshInstallWithOtherAnchorsLowersALeftoverCopy() throws {
+        let mirror = MemoryMirror()
+        let before = CertificateConfigStore(prefs: InMemoryPreferences(), mirror: mirror)
+        try before.setTrustAnchorsSeen("anchors-1")
+        try before.save(config(5, issuedAt: 5_000))
+        // The app is deleted (the Keychain item stays) and installed again with other keys.
+        let reinstalled = CertificateConfigStore(prefs: InMemoryPreferences(), mirror: mirror)
+        try reinstalled.setTrustAnchorsSeen("anchors-2")
+        XCTAssertEqual(try reinstalled.getCurrentIssuedAt(), 0)
+        // The same keys keep it.
+        let same = MemoryMirror()
+        let first = CertificateConfigStore(prefs: InMemoryPreferences(), mirror: same)
+        try first.setTrustAnchorsSeen("anchors-1")
+        try first.save(config(5, issuedAt: 5_000))
+        try CertificateConfigStore(prefs: InMemoryPreferences(), mirror: same).setTrustAnchorsSeen("anchors-1")
+        XCTAssertEqual(same.values.issuedAt, 5_000)
+    }
+
+    func testAnUnreadableCopyIsNeitherTrustedNorOverwritten() throws {
+        final class Broken: WatermarkMirror, @unchecked Sendable {
+            var writes = 0
+            func read() -> MirroredWatermarks? { nil }
+            func write(_ values: MirroredWatermarks) { writes += 1 }
+        }
+        let broken = Broken()
+        let store = CertificateConfigStore(prefs: InMemoryPreferences(), mirror: broken)
+        try store.save(config(2, issuedAt: 2_000))
+        try store.setHighestSeenTime(5_000_000)
+        try store.resetWatermarks(keySetVersion: 4, anchors: nil)
+        XCTAssertEqual(broken.writes, 0)
+        XCTAssertEqual(try store.highestSeenTime(), 5_000_000, "the store's own value still counts")
     }
 
     func testTheClockReferenceSurvivesAContainerPutBackAndFollowsTheLibrarysOwnReset() throws {
@@ -106,6 +162,7 @@ final class WatermarkMirrorTests: XCTestCase {
         values.versions = ["a.com": 3, "*.b.com": 12]
         values.clock = 1_759_660_900_000
         values.keySetVersion = 2
+        values.anchors = "f1"
         XCTAssertEqual(KeychainWatermarkMirror.decode(KeychainWatermarkMirror.encode(values)), values)
         XCTAssertEqual(KeychainWatermarkMirror.decode(Data("not json".utf8)), MirroredWatermarks())
     }

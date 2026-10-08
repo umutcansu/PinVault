@@ -178,7 +178,7 @@ final class CertificateConfigStore: Sendable {
     /// a failed health check restores the older pins but never lowers this.
     /// Only ``resetWatermarks(keySetVersion:)`` does.
     func getCurrentIssuedAt() throws -> Int64 {
-        max(try prefs.getLong(Self.keyIssuedAt, 0), try prefs.getLong(Self.keyWatermarkIssuedAt, 0), mirror.read().issuedAt)
+        max(try prefs.getLong(Self.keyIssuedAt, 0), try prefs.getLong(Self.keyWatermarkIssuedAt, 0), mirror.read()?.issuedAt ?? 0)
     }
 
     /// The highest per-host version this device accepted for each host
@@ -206,7 +206,6 @@ final class CertificateConfigStore: Sendable {
             versions[host] = max(versions[host] ?? 0, pin.version)
         }
         let issuedAtWatermark = max(try getCurrentIssuedAt(), config.issuedAt)
-        mirrorWatermarks(issuedAt: issuedAtWatermark, versions: versions)
         let edit = prefs.edit()
             .putInt(Self.keyVersion, config.computedVersion())
             .putLong(Self.keyIssuedAt, config.issuedAt)
@@ -224,6 +223,8 @@ final class CertificateConfigStore: Sendable {
         }
         if let envelope { edit.putString(Self.keyEnvelope, Self.envelopeJson(envelope)) } else { edit.remove(Self.keyEnvelope) }
         try edit.apply()
+        // After the store took it: a save that failed must not leave a watermark the store never had.
+        mirrorWatermarks(issuedAt: issuedAtWatermark, versions: versions)
         log.d("Certificate config saved — version: \(config.computedVersion()), issuedAt: \(config.issuedAt), " +
             "expiresAt: \(config.expiresAt), forceUpdate: \(config.forceUpdate), signed: \(envelope != nil)")
     }
@@ -356,7 +357,12 @@ final class CertificateConfigStore: Sendable {
     /// Called when a newer recovery-signed signing-key set has been applied:
     /// whoever held a signing key that set revokes may have pushed the
     /// watermarks far ahead, and must not keep that hold after the revocation.
-    func resetWatermarks(keySetVersion: Int) throws {
+    ///
+    /// The Keychain copy (``WatermarkMirror``) follows only for a reason the
+    /// container cannot fake: a key set newer than the one the copy was reset
+    /// for, or compiled-in `anchors` other than the ones it was set under. A
+    /// container put back from before such a reset finds the copy as it is.
+    func resetWatermarks(keySetVersion: Int, anchors: String?) throws {
         // commit(): the reset must not be lost after the key set itself is already on disk.
         try prefs.edit()
             .remove(Self.keyWatermarkIssuedAt)
@@ -367,11 +373,7 @@ final class CertificateConfigStore: Sendable {
             .remove(Self.keyRolledBackDigest)
             .putInt(Self.keyKeySetVersion, keySetVersion)
             .commit()
-        var mirrored = mirror.read()
-        mirrored.issuedAt = 0
-        mirrored.versions = [:]
-        mirrored.keySetVersion = keySetVersion
-        mirror.write(mirrored)
+        lowerMirror(keySetVersion: keySetVersion, anchors: anchors)
         log.w("Replay watermarks reset for signing-key set v\(keySetVersion)")
     }
 
@@ -380,23 +382,26 @@ final class CertificateConfigStore: Sendable {
         try prefs.contains(Self.keyKeySetVersion) ? try prefs.getInt(Self.keyKeySetVersion, 0) : nil
     }
 
-    /// Records the signing-key set version in force, without touching the watermarks.
+    /// Records the signing-key set version in force, without touching the
+    /// watermarks. A store that has none recorded (a fresh install) meeting a
+    /// Keychain copy from a key set older than this one lowers the copy.
     func setKeySetVersionSeen(_ version: Int) throws {
         try prefs.edit().putInt(Self.keyKeySetVersion, version).apply()
+        lowerMirror(keySetVersion: version, anchors: nil)
     }
 
     /// The highest wall-clock time this block has observed, Unix ms (see
     /// `TrustedClock`). 0 = none yet. Kept per block, not per origin; a value
     /// an origin namespace may hold from before is taken into account too.
     func highestSeenTime() throws -> Int64 {
-        let mirrored = clockMirror.read().clock
+        let mirrored = clockMirror.read()?.clock ?? 0
         if clockPrefs === prefs { return max(try prefs.getLong(Self.keyClockHighestSeen, 0), mirrored) }
         return max(try clockPrefs.getLong(Self.keyClockHighestSeen, 0), try prefs.getLong(Self.keyClockHighestSeen, 0), mirrored)
     }
 
     func setHighestSeenTime(_ timeMs: Int64) throws {
         try clockPrefs.edit().putLong(Self.keyClockHighestSeen, timeMs).apply()
-        var mirrored = clockMirror.read()
+        guard var mirrored = clockMirror.read() else { return }
         if timeMs < mirrored.clock {
             // `TrustedClock.resetTo`: the library itself lowers the reference (a
             // newer config showed it was ahead), so the copy follows at once. A
@@ -417,7 +422,10 @@ final class CertificateConfigStore: Sendable {
 
     /// Writes the watermarks to the mirror, never lowering what it holds.
     private func mirrorWatermarks(issuedAt: Int64, versions: [String: Int]) {
-        var mirrored = mirror.read()
+        guard var mirrored = mirror.read() else {
+            log.w("Watermark mirror unreadable: not written this time")
+            return
+        }
         let merged = mirrored.versions.merging(versions, uniquingKeysWith: max)
         guard issuedAt > mirrored.issuedAt || merged != mirrored.versions else { return }
         mirrored.issuedAt = max(mirrored.issuedAt, issuedAt)
@@ -432,8 +440,28 @@ final class CertificateConfigStore: Sendable {
         try prefs.getString(Self.keyTrustAnchors, nil)
     }
 
+    /// Records the trust anchors the watermarks are set under. A Keychain copy
+    /// made under other anchors (the app reinstalled with other keys) is lowered.
     func setTrustAnchorsSeen(_ fingerprint: String) throws {
         try prefs.edit().putString(Self.keyTrustAnchors, fingerprint).commit()
+        lowerMirror(keySetVersion: nil, anchors: fingerprint)
+    }
+
+    /// Lowers the Keychain copy for a newer key set or other anchors; records them either way.
+    private func lowerMirror(keySetVersion: Int?, anchors: String?) {
+        guard var mirrored = mirror.read() else {
+            log.w("Watermark mirror unreadable: left as it is")
+            return
+        }
+        let newerSet = keySetVersion.map { $0 > (mirrored.keySetVersion ?? Int.min) } ?? false
+        let otherAnchors = anchors.map { mirrored.anchors != nil && $0 != mirrored.anchors } ?? false
+        if newerSet || otherAnchors {
+            mirrored.issuedAt = 0
+            mirrored.versions = [:]
+        }
+        if let keySetVersion { mirrored.keySetVersion = max(keySetVersion, mirrored.keySetVersion ?? keySetVersion) }
+        if let anchors { mirrored.anchors = anchors }
+        mirror.write(mirrored)
     }
 
     /// The server (scope or URL) this store's config and watermarks belong to.
@@ -555,7 +583,7 @@ final class CertificateConfigStore: Sendable {
 
     /// The plist's version watermarks, raised to the mirror's.
     private func storedWatermarks() throws -> [String: Int] {
-        try plistWatermarks().merging(mirror.read().versions, uniquingKeysWith: max)
+        try plistWatermarks().merging(mirror.read()?.versions ?? [:], uniquingKeysWith: max)
     }
 
     private func plistWatermarks() throws -> [String: Int] {

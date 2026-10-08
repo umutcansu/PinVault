@@ -14,7 +14,7 @@ protocol UpdaterConfigStore: AnyObject, Sendable {
     func markRolledBack(_ config: CertificateConfig) throws
     func isRolledBack(_ config: CertificateConfig) throws -> Bool
     func clearActive(keepAsWatermarks: Bool) throws
-    func resetWatermarks(keySetVersion: Int) throws
+    func resetWatermarks(keySetVersion: Int, anchors: String?) throws
     func keySetVersionSeen() throws -> Int?
     func setKeySetVersionSeen(_ version: Int) throws
     func trustAnchorsSeen() throws -> String?
@@ -445,7 +445,7 @@ final class SSLCertificateUpdater: @unchecked Sendable {
         }
         if inForce > resetFor {
             Self.log.w("Signing-key set v\(inForce) is newer than v\(resetFor) — replay watermarks reset")
-            try configStore.resetWatermarks(keySetVersion: inForce)
+            try configStore.resetWatermarks(keySetVersion: inForce, anchors: nil)
             _ = try loadStored()
         }
     }
@@ -463,7 +463,7 @@ final class SSLCertificateUpdater: @unchecked Sendable {
             try configStore.setTrustAnchorsSeen(anchors)
         default:
             Self.log.w("The app's compiled-in signing keys changed — replay watermarks reset")
-            try configStore.resetWatermarks(keySetVersion: try configStore.keySetVersionSeen() ?? verifier.keySetVersion())
+            try configStore.resetWatermarks(keySetVersion: try configStore.keySetVersionSeen() ?? verifier.keySetVersion(), anchors: anchors)
             try configStore.setTrustAnchorsSeen(anchors)
             _ = try loadStored()
         }

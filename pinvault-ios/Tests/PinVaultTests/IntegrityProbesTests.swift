@@ -170,7 +170,7 @@ final class IntegrityProbesTests: XCTestCase {
     func testFridasThreadsAreEvidence() {
         let probe = HookingProbe(loadedImages: { [] }, environment: [:], fridaPortOpen: { false },
                                  threadNames: { ["com.apple.main-thread", "gum-js-loop", "gmain", "pool-frida-3"] })
-        XCTAssertEqual(probe.probe().evidence, ["thread:gum-js-loop", "thread:gmain", "thread:pool-frida-3"])
+        XCTAssertEqual(probe.probe().evidence, ["thread:gum-js-loop", "thread:pool-frida-3"], "GLib's gmain alone is not Frida")
     }
 
     func testTheLiveThreadNamesIncludeANamedThread() {
@@ -213,6 +213,18 @@ final class IntegrityProbesTests: XCTestCase {
         XCTAssertFalse(probe(.appStore, true).flag)
         XCTAssertFalse(probe(.appStore, nil).flag, "unread is not evidence")
         XCTAssertFalse(probe(.provisioned, false).flag, "development and ad hoc builds are not encrypted")
+    }
+
+    func testAnEncryptedBinaryWithoutAReceiptIsAnAppStoreInstall() {
+        XCTAssertEqual(AppInstaller.resolve(isSimulator: false, hasEmbeddedProfile: false, receiptName: nil, mainImageEncrypted: true), .appStore)
+        XCTAssertEqual(AppInstaller.resolve(isSimulator: false, hasEmbeddedProfile: false, receiptName: nil, mainImageEncrypted: false), .unknown)
+        XCTAssertEqual(AppInstaller.resolve(isSimulator: false, hasEmbeddedProfile: false, receiptName: nil, mainImageEncrypted: nil), .unknown)
+        XCTAssertEqual(AppInstaller.resolve(isSimulator: false, hasEmbeddedProfile: true, receiptName: nil, mainImageEncrypted: true), .provisioned)
+    }
+
+    func testTheLiveMainExecutableHeaderIsFound() {
+        // The test runner is a Mach-O executable without LC_ENCRYPTION_INFO, or with cryptid 0.
+        XCTAssertNotEqual(LiveIntegrityReaders.mainImageEncrypted(), true)
     }
 
     func testGetTaskAllowInTheCodeSignatureIsDebuggableWithoutAProfile() {

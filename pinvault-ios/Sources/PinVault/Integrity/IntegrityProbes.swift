@@ -174,8 +174,9 @@ struct HookingProbe {
     static let systemVolume = ["/System/", "/usr/lib/", "/usr/libexec/"]
     /// What Xcode injects into a process it runs (debug runs only).
     static let debuggerSupport = ["/libMainThreadChecker.dylib", "/libViewDebuggerSupport.dylib", "/libLogRedirect.dylib", "/libRPAC.dylib"]
-    /// Threads Frida's agent starts.
-    static let threadMarkers = ["gum-js-loop", "gmain", "gdbus", "pool-frida", "frida"]
+    /// Threads only Frida's agent starts (GLib's `gmain` / `gdbus` are left out:
+    /// GLib-based SDKs such as GStreamer name their threads so too).
+    static let threadMarkers = ["gum-js-loop", "pool-frida", "frida"]
 
     static let fridaPort: UInt16 = 27042
 }
@@ -229,14 +230,17 @@ enum AppInstaller: String, Sendable, Equatable, CaseIterable {
     case unknown = "unknown"
 
     /// The simulator first, then an embedded profile, then the receipt's name
-    /// (`sandboxReceipt` = TestFlight, `receipt` = App Store).
-    static func resolve(isSimulator: Bool, hasEmbeddedProfile: Bool, receiptName: String?) -> AppInstaller {
+    /// (`sandboxReceipt` = TestFlight, `receipt` = App Store). With no receipt
+    /// on disk (a restored or migrated phone can lack one) a binary still
+    /// encrypted by the App Store counts as an App Store install: only Apple
+    /// encrypts, and a re-signed copy runs decrypted.
+    static func resolve(isSimulator: Bool, hasEmbeddedProfile: Bool, receiptName: String?, mainImageEncrypted: Bool? = nil) -> AppInstaller {
         if isSimulator { return .simulator }
         if hasEmbeddedProfile { return .provisioned }
         switch receiptName {
         case "sandboxReceipt": return .testFlight
         case "receipt": return .appStore
-        default: return .unknown
+        default: return mainImageEncrypted == true ? .appStore : .unknown
         }
     }
 }

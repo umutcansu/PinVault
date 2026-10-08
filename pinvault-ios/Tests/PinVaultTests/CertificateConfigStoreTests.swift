@@ -342,7 +342,7 @@ final class CertificateConfigStoreTests: XCTestCase {
         try store.clearActive()
         XCTAssertNil(try store.keySetVersionSeen())
 
-        try store.resetWatermarks(keySetVersion: 3)
+        try store.resetWatermarks(keySetVersion: 3, anchors: nil)
 
         XCTAssertEqual(try store.getCurrentIssuedAt(), 0)
         XCTAssertTrue(try store.getVersionWatermarks().isEmpty)
@@ -482,7 +482,7 @@ final class CertificateConfigStoreTests: XCTestCase {
 
     func testAConfigDroppedForABadEnvelopeLeavesNoWatermarksOfItsOwn() throws {
         try store.save(hostConfig(5, issuedAt: 2_000))
-        try store.resetWatermarks(keySetVersion: 2)            // a newer key set revoked its signer
+        try store.resetWatermarks(keySetVersion: 2, anchors: nil)            // a newer key set revoked its signer
         try store.clearActive(keepAsWatermarks: false)
         XCTAssertEqual(try store.getCurrentIssuedAt(), 0)
         XCTAssertTrue(try store.getVersionWatermarks().isEmpty)

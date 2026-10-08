@@ -29,17 +29,10 @@ enum SecureEnclaveKeyWrap {
     /// Set once making the key failed: no Secure Enclave here, so later calls do not retry.
     nonisolated(unsafe) private static var unavailable = false
 
-    /// Failures of a decryption that a later try may not have: the device is
-    /// locked, or the Secure Enclave is busy or not reachable now.
-    static let transientStatuses: Set<OSStatus> = [errSecInteractionNotAllowed, errSecNotAvailable, errSecAuthFailed, errSecUserCanceled]
-
-    /// Whether `stored` is in the wrapped form.
-    static func isWrapped(_ stored: Data) -> Bool { stored.starts(with: magic) }
-
     /// `raw` in the wrapped form, or nil where no Secure Enclave key can be
-    /// made (the caller then stores `raw` as before).
+    /// made or read right now (the caller then stores `raw` as before).
     static func wrap(_ raw: Data) -> Data? {
-        guard let privateKey = wrappingKey(create: true), let publicKey = SecKeyCopyPublicKey(privateKey) else { return nil }
+        guard let privateKey = wrappingKeyForWrap(), let publicKey = SecKeyCopyPublicKey(privateKey) else { return nil }
         var error: Unmanaged<CFError>?
         guard let sealed = SecKeyCreateEncryptedData(publicKey, algorithm, raw as CFData, &error) as Data? else {
             log.w("Store key cannot be wrapped: \(error?.takeRetainedValue().localizedDescription ?? "unknown error")")
@@ -51,29 +44,51 @@ enum SecureEnclaveKeyWrap {
     enum UnwrapError: Error {
         /// The wrapping key is gone: the item can never open again.
         case keyMissing
-        /// The wrapping key exists but cannot be used now (locked device, busy Secure Enclave).
+        /// The wrapping key cannot be read or used now (locked device, a Keychain error, busy Secure Enclave).
         case unavailable(String)
         /// Not a value this library wrapped.
         case malformed
     }
 
-    /// The key bytes inside `stored`.
+    /// Failures of a decryption that a later try may not have: the device is
+    /// locked, or the Secure Enclave is busy or not reachable now.
+    static let transientStatuses: Set<OSStatus> = [errSecInteractionNotAllowed, errSecNotAvailable, errSecAuthFailed, errSecUserCanceled]
+
+    /// Whether `stored` is in the wrapped form.
+    static func isWrapped(_ stored: Data) -> Bool { stored.starts(with: magic) }
+
+    /// The key bytes inside `stored`. Only a Keychain that answers "no such
+    /// key" makes the item unusable for good; any other error keeps it.
     static func unwrap(_ stored: Data) throws -> Data {
         guard isWrapped(stored), stored.count > magic.count else { throw UnwrapError.malformed }
-        guard let privateKey = wrappingKey(create: false) else { throw UnwrapError.keyMissing }
-        var error: Unmanaged<CFError>?
-        guard let raw = SecKeyCreateDecryptedData(privateKey, algorithm, stored.dropFirst(magic.count) as CFData, &error) as Data? else {
-            let failure = error?.takeRetainedValue()
-            let reason = failure?.localizedDescription ?? "decryption failed"
-            // Only a key that cannot be used right now keeps the item; a value it
-            // cannot open (errSecParam, a bad tag) never will.
-            if let failure, Self.transientStatuses.contains(OSStatus(CFErrorGetCode(failure))) {
-                throw UnwrapError.unavailable(reason)
-            }
-            log.e("A wrapped store key does not open: \(reason)")
-            throw UnwrapError.malformed
+        let keys: [SecKey]
+        switch lookup() {
+        case .found(let found): keys = found
+        case .notFound: throw UnwrapError.keyMissing
+        case .failed(let status): throw UnwrapError.unavailable("the wrapping key cannot be read (OSStatus \(status))")
         }
-        return raw
+        // More than one key under the tag (an app and its extension made one
+        // each): the value opens with the one that wrapped it.
+        var transient: String?
+        var last = "decryption failed"
+        for key in keys {
+            var error: Unmanaged<CFError>?
+            if let raw = SecKeyCreateDecryptedData(key, algorithm, stored.dropFirst(magic.count) as CFData, &error) as Data? {
+                return raw
+            }
+            let failure = error?.takeRetainedValue()
+            last = failure?.localizedDescription ?? last
+            if let failure, isTransient(failure) { transient = last }
+        }
+        if let transient { throw UnwrapError.unavailable(transient) }
+        log.e("A wrapped store key does not open: \(last)")
+        throw UnwrapError.malformed
+    }
+
+    /// An OSStatus-domain error whose code a later try may not have.
+    static func isTransient(_ error: CFError) -> Bool {
+        (CFErrorGetDomain(error) as String) == (kCFErrorDomainOSStatus as String)
+            && transientStatuses.contains(OSStatus(CFErrorGetCode(error)))
     }
 
     private static func query() -> [CFString: Any] {
@@ -86,17 +101,41 @@ enum SecureEnclaveKeyWrap {
         ]
     }
 
-    private static func wrappingKey(create: Bool) -> SecKey? {
+    enum Lookup {
+        case found([SecKey])
+        case notFound
+        case failed(OSStatus)
+    }
+
+    /// Every wrapping key under the tag.
+    static func lookup() -> Lookup {
+        var query = query()
+        query[kSecReturnRef] = true
+        query[kSecMatchLimit] = kSecMatchLimitAll
+        var items: CFTypeRef?
+        let status = SecItemCopyMatching(query as CFDictionary, &items)
+        switch status {
+        case errSecSuccess:
+            let keys = (items as? [SecKey]) ?? (items.map { [$0 as! SecKey] } ?? [])
+            return keys.isEmpty ? .notFound : .found(keys)
+        case errSecItemNotFound:
+            return .notFound
+        default:
+            return .failed(status)
+        }
+    }
+
+    /// The key to wrap with: the existing one, or a new one when there is none
+    /// (never when the Keychain could not be read: that could make a second key).
+    private static func wrappingKeyForWrap() -> SecKey? {
         lock.lock()
         defer { lock.unlock() }
-        var lookup = query()
-        lookup[kSecReturnRef] = true
-        lookup[kSecMatchLimit] = kSecMatchLimitOne
-        var item: CFTypeRef?
-        if SecItemCopyMatching(lookup as CFDictionary, &item) == errSecSuccess, let found = item {
-            return (found as! SecKey)
+        switch lookup() {
+        case .found(let keys): return keys.first
+        case .failed: return nil
+        case .notFound: break
         }
-        guard create, !unavailable else { return nil }
+        guard !unavailable else { return nil }
         var error: Unmanaged<CFError>?
         guard let access = SecAccessControlCreateWithFlags(
             nil, kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly, .privateKeyUsage, &error
@@ -116,7 +155,7 @@ enum SecureEnclaveKeyWrap {
             ] as [CFString: Any],
         ]
         guard let key = SecKeyCreateRandomKey(attributes as CFDictionary, &error) else {
-            // Expected on the simulator and in unsigned test runs.
+            // Expected on the simulator without a Secure Enclave and in unsigned test runs.
             log.d("No Secure Enclave key for wrapping store keys: \(error?.takeRetainedValue().localizedDescription ?? "unknown error")")
             unavailable = true
             return nil

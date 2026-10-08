@@ -111,7 +111,8 @@ final class DeviceIntegrityProbe: Sendable {
         let installer = AppInstaller.resolve(
             isSimulator: inputs.isSimulatorBuild,
             hasEmbeddedProfile: profile != nil || profileFailed,
-            receiptName: inputs.receiptName()
+            receiptName: inputs.receiptName(),
+            mainImageEncrypted: inputs.mainImageEncrypted()
         )
         var signedGetTaskAllow: Bool?
         do {
