@@ -1,5 +1,8 @@
 #import "RNPinVault.h"
 
+#import <objc/message.h>
+#import <React/RCTBridgeModule.h>
+
 #if __has_include(<RNPinVault/RNPinVault-Swift.h>)
 #import <RNPinVault/RNPinVault-Swift.h>
 #else
@@ -9,6 +12,8 @@
 @implementation RNPinVault {
   RNPinVaultBridge *_bridge;
 }
+
+@synthesize moduleRegistry = _moduleRegistry;
 
 + (NSString *)moduleName
 {
@@ -30,6 +35,21 @@
     };
     _bridge.emitGuardRequest = ^(NSDictionary<NSString *, id> *request) {
       [weakSelf emitOnGuardRequest:request];
+    };
+    // Which RCTURLRequestHandler RCTNetworking picks for an https request
+    // (its private handlerForRequest:, the method it sends every request through).
+    _bridge.reactNetworkingIsPinned = ^NSNumber *_Nullable {
+      RNPinVault *strongSelf = weakSelf;
+      RCTModuleRegistry *registry = strongSelf ? strongSelf->_moduleRegistry : nil;
+      id networking = [registry moduleForName:"Networking"];
+      SEL selector = NSSelectorFromString(@"handlerForRequest:");
+      Class ours = NSClassFromString(@"RNPinVaultURLRequestHandler");
+      if (networking == nil || ours == nil || ![networking respondsToSelector:selector]) {
+        return nil;
+      }
+      NSURLRequest *probe = [NSURLRequest requestWithURL:[NSURL URLWithString:@"https://pinvault.invalid/"]];
+      id handler = ((id(*)(id, SEL, NSURLRequest *))objc_msgSend)(networking, selector, probe);
+      return @([handler isKindOfClass:ours]);
     };
   }
   return self;

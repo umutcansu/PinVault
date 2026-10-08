@@ -13,6 +13,12 @@ public struct ParsedConfig {
     public let config: PinVaultConfig
     /// Non-nil when JS registered an `environmentGuard`.
     public let guardTimeoutMs: Int64?
+    /// `requirePinnedReactNativeNetworking`: start fails when RN's https does not go through PinVault.
+    public var requirePinnedReactNativeNetworking = false
+    /// `ios.reactNativeMaxResponseBytes`: the bound of a React Native https answer (default 50 MiB).
+    public var reactNativeMaxResponseBytes = ReactNetworking.defaultMaxResponseBytes
+    /// True when a native security file was applied.
+    public var nativeSecurityApplied = false
 }
 
 public enum ConfigParser {
@@ -22,18 +28,28 @@ public enum ConfigParser {
     public static let maxPinsPerHost = 16
     static let keyLength = 4096
 
+    /// - Parameters:
+    ///   - native: the app's native security file (``NativeSecurity``); nil = none.
+    ///   - release: a release build: without a native file, the relaxations (`allowUnsigned`, …) are refused from JS.
     public static func parse(
         _ json: String,
         tokens: VaultTokenStore,
         guardFactory: (Int64) -> any EnvironmentGuard,
-        listener: PinVaultConnectionListener?
+        listener: PinVaultConnectionListener?,
+        native: NativeSecurity? = nil,
+        release: Bool = false
     ) throws -> ParsedConfig {
         let root = try StrictJSON.parseObject(json, path: "config")
         let builder = PinVaultConfig.Builder()
 
-        for api in try root.objectList("configApis", maxItems: maxConfigApis) ?? [] { try addConfigApi(builder, api) }
+        for api in try root.objectList("configApis", maxItems: maxConfigApis) ?? [] {
+            try addConfigApi(builder, api, native: native, release: release)
+        }
         for file in try root.objectList("vaultFiles", maxItems: maxVaultFiles) ?? [] { try addVaultFile(builder, file, tokens) }
-        if let s = try root.object("staticPins") { builder.staticPins(try staticPins(s)) }
+        let jsStaticPins = try root.object("staticPins").map(staticPins)
+        if let pins = try SecurityPolicy.staticPins(path: "config.staticPins", js: jsStaticPins, native: native) {
+            builder.staticPins(pins)
+        }
 
         if let v = try root.int("maxRetryCount", min: 0, max: 10) { builder.maxRetryCount(v) }
         if let v = try root.int64("updateIntervalHours", min: 1, max: 24 * 30) { builder.updateIntervalHours(v) }
@@ -57,9 +73,12 @@ public enum ConfigParser {
             builder.environmentGuard(guardFactory(timeout))
         }
 
+        let requirePinned = try root.bool("requirePinnedReactNativeNetworking") == true
         // Android-only settings: the Android side reads them; here only their shape is checked.
         _ = try root.object("android")
+        var maxRN = ReactNetworking.defaultMaxResponseBytes
         if let ios = try root.object("ios") {
+            if let v = try ios.int64("reactNativeMaxResponseBytes", min: 1, max: ReactNetworking.maxResponseBytesLimit) { maxRN = v }
             if let resolve = try ios.stringMap("resolve", maxItems: 64, maxKeyLength: 255, maxValueLength: 255) {
                 for (host, address) in resolve.sorted(by: { $0.key < $1.key }) { builder.resolve(host: host, to: address) }
             }
@@ -71,7 +90,11 @@ public enum ConfigParser {
 
         try root.finish()
         if let listener { builder.onConnectionEvent(listener) }
-        return ParsedConfig(config: try builder.build(), guardTimeoutMs: guardTimeout)
+        var parsed = ParsedConfig(config: try builder.build(), guardTimeoutMs: guardTimeout)
+        parsed.requirePinnedReactNativeNetworking = requirePinned
+        parsed.reactNativeMaxResponseBytes = maxRN
+        parsed.nativeSecurityApplied = native != nil
+        return parsed
     }
 
     static func duration(_ d: Fields) throws -> (Int64, TimeUnit) {
@@ -112,7 +135,7 @@ public enum ConfigParser {
         return pin
     }
 
-    static func staticPins(_ s: Fields) throws -> CertificateConfig {
+    public static func staticPins(_ s: Fields) throws -> CertificateConfig {
         guard let pins = try s.objectList("pins", maxItems: maxPins)?.map(hostPin) else {
             throw BridgeInputError("\(s.path).pins: required")
         }
@@ -125,7 +148,7 @@ public enum ConfigParser {
         return config
     }
 
-    static func addConfigApi(_ builder: PinVaultConfig.Builder, _ b: Fields) throws {
+    static func addConfigApi(_ builder: PinVaultConfig.Builder, _ b: Fields, native: NativeSecurity?, release: Bool) throws {
         let id = try b.requireString("id", maxLength: 128)
         guard let url = try httpsUrl(b, "url") else { throw BridgeInputError("\(b.path).url: required") }
         let bootstrapPins = try b.objectList("bootstrapPins", maxItems: maxPins)?.map(hostPin)
@@ -160,20 +183,32 @@ public enum ConfigParser {
         let tokenHosts = try b.stringList("tokenHosts", maxItems: 64, maxLength: 255)
         try b.finish()
 
+        // The trust anchors and relaxations: the native security file decides, JS only repeats.
+        let sec = try SecurityPolicy.apply(
+            path: b.path, id: id,
+            js: SecurityFields(
+                bootstrapPins: bootstrapPins, oneKey: oneKey, keys: keys, requiredSignatures: requiredSignatures,
+                recoveryKeys: recoveryKeys, requiredRecovery: requiredRecovery, serverScope: serverScope,
+                clientCaPins: clientCaPins, allowUnsigned: allowUnsigned, allowUnpinned: allowUnpinned,
+                allowServerKey: allowServerKey
+            ),
+            native: native, release: release
+        )
+
         builder.configApi(id, url: url) { api in
-            if let bootstrapPins { api.bootstrapPins(bootstrapPins) }
+            if let v = sec.bootstrapPins { api.bootstrapPins(v) }
             if let configEndpoint { api.configEndpoint(configEndpoint) }
             if let healthEndpoint { api.healthEndpoint(healthEndpoint) }
-            if let oneKey { api.signaturePublicKey(oneKey) }
-            if let keys { api.signaturePublicKeys(keys) }
-            if let requiredSignatures { api.requiredSignatures(requiredSignatures) }
-            if let recoveryKeys { api.recoveryPublicKeys(recoveryKeys) }
-            if let requiredRecovery { api.requiredRecoverySignatures(requiredRecovery) }
-            if allowUnsigned { api.allowUnsigned() }
-            if let serverScope { api.serverScope(serverScope) }
-            if allowUnpinned { api.allowUnpinnedConfigApi() }
-            if allowServerKey { api.allowServerGeneratedKey() }
-            if let clientCaPins { api.clientCaPins(clientCaPins) }
+            if let v = sec.oneKey { api.signaturePublicKey(v) }
+            if let v = sec.keys { api.signaturePublicKeys(v) }
+            if let v = sec.requiredSignatures { api.requiredSignatures(v) }
+            if let v = sec.recoveryKeys { api.recoveryPublicKeys(v) }
+            if let v = sec.requiredRecovery { api.requiredRecoverySignatures(v) }
+            if sec.allowUnsigned { api.allowUnsigned() }
+            if let v = sec.serverScope { api.serverScope(v) }
+            if sec.allowUnpinned { api.allowUnpinnedConfigApi() }
+            if sec.allowServerKey { api.allowServerGeneratedKey() }
+            if let v = sec.clientCaPins { api.clientCaPins(v) }
             if let maxLifetime { api.maxClientCertLifetimeDays(maxLifetime) }
             if let clientCertHosts { api.clientCertHosts(clientCertHosts) }
             if let enrollmentEndpoint { api.enrollmentEndpoint(enrollmentEndpoint) }

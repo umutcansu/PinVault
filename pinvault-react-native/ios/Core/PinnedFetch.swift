@@ -90,14 +90,17 @@ public enum PinnedFetch {
         return request
     }
 
-    /// Runs `request` on `session` (a pinned session from the library).
+    /// Runs `request` on `session` (a pinned session from the library). The
+    /// library stops reading once the body passes `maxResponseBytes` (a
+    /// declared `Content-Length` over it is refused before the body is read).
     public static func execute(_ session: PinnedSession, _ r: FetchRequest) async throws -> [String: Any] {
-        let (data, response) = try await session.data(for: urlRequest(r))
+        let (data, response) = try await session.data(for: urlRequest(r), maxResponseBytes: r.maxResponseBytes)
         guard let http = response as? HTTPURLResponse else { throw BridgeInputError("not an HTTP response") }
         return try map(http, data, r)
     }
 
     public static func map(_ http: HTTPURLResponse, _ data: Data, _ r: FetchRequest) throws -> [String: Any] {
+        // The transport enforced the bound while reading; this is a second look.
         if Int64(data.count) > r.maxResponseBytes { throw ResponseTooLargeError(limit: r.maxResponseBytes) }
         var headers: [String: String] = [:]
         for (k, v) in http.allHeaderFields {

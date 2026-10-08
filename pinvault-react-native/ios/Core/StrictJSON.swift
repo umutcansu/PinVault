@@ -19,6 +19,8 @@ public enum StrictJSON {
 
     public static func parseObject(_ json: String, path: String, maxChars: Int = maxInputChars) throws -> Fields {
         if json.utf16.count > maxChars { throw BridgeInputError("\(path): larger than \(maxChars) characters") }
+        // Before the parser, as on Android: refuse deep nesting without letting a parser recurse into it.
+        if nestingDepth(json) > maxDepth + 1 { throw BridgeInputError("\(path): nested too deeply") }
         let value: Any
         do {
             value = try JSONSerialization.jsonObject(with: Data(json.utf8), options: [])
@@ -28,6 +30,31 @@ public enum StrictJSON {
         guard let object = value as? [String: Any] else { throw BridgeInputError("\(path): must be an object") }
         try checkDepth(object, path: path, depth: 0)
         return Fields(path: path, map: object)
+    }
+
+    /// The deepest `[` / `{` nesting of `json`, strings skipped; stops counting past the limit.
+    static func nestingDepth(_ json: String, stopAt: Int = maxDepth + 2) -> Int {
+        var depth = 0, deepest = 0
+        var inString = false, escaped = false
+        for c in json.utf8 {
+            if inString {
+                if escaped { escaped = false } else if c == UInt8(ascii: "\\") { escaped = true } else if c == UInt8(ascii: "\"") { inString = false }
+                continue
+            }
+            switch c {
+            case UInt8(ascii: "\""): inString = true
+            case UInt8(ascii: "["), UInt8(ascii: "{"):
+                depth += 1
+                if depth > deepest {
+                    deepest = depth
+                    if deepest >= stopAt { return deepest }
+                }
+            case UInt8(ascii: "]"), UInt8(ascii: "}"):
+                if depth > 0 { depth -= 1 }
+            default: break
+            }
+        }
+        return deepest
     }
 
     private static func checkDepth(_ value: Any, path: String, depth: Int) throws {

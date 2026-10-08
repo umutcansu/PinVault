@@ -1,8 +1,15 @@
-// `environmentGuard` answered by a JS callback. PinVault asks synchronously on
-// one of its own tasks; this sends `{requestId, operation}` to JS and waits for
-// `answer` up to the timeout. Fail closed: no answer in time, an unknown request
-// id — every one of them is a refusal. The answer arrives on the module's method
-// queue, never on the waiting thread.
+// `environmentGuard` answered by a JS callback. Fail closed: no answer in time,
+// an unknown request id — every one of them is a refusal.
+//
+// PinVault's `EnvironmentGuard.allows(_:)` is synchronous and runs on the
+// calling task, i.e. on a thread of Swift's shared cooperative pool. Waiting
+// there for JS would hold that thread for up to the timeout (30 s at most). So
+// the bridge asks JS *before* it calls the library (`withVerdicts`): the wait
+// is a suspended continuation, no thread is held, and the library's
+// synchronous check answers at once from that verdict. Only an operation the
+// library starts on its own (a background refresh picking up a pending
+// enrollment, a periodic vault sync) finds no verdict and waits on its own
+// thread, bounded by the timeout.
 import Foundation
 import PinVault
 
@@ -11,43 +18,112 @@ public final class JSEnvironmentGuard: EnvironmentGuard, @unchecked Sendable {
     public static let minTimeoutMs: Int64 = 100
     public static let maxTimeoutMs: Int64 = 30_000
 
-    private final class Pending {
-        let semaphore = DispatchSemaphore(value: 0)
-        var allowed = false
+    /// One question to JS; answered exactly once (by JS, or `false` at the deadline).
+    private final class Pending: @unchecked Sendable {
+        private let lock = NSLock()
+        private var done = false
+        private let deliver: (Bool) -> Void
+
+        init(_ deliver: @escaping (Bool) -> Void) { self.deliver = deliver }
+
+        func finish(_ allowed: Bool) {
+            lock.lock()
+            let first = !done
+            done = true
+            lock.unlock()
+            if first { deliver(allowed) }
+        }
     }
 
     private let timeoutMs: Int64
     private let ask: (_ requestId: String, _ operation: String) -> Void
     private let lock = NSLock()
     private var pending: [String: Pending] = [:]
+    /// Verdicts asked before a bridge call, per operation, while that call runs.
+    private var verdicts: [GuardedOperation: [(UUID, Bool)]] = [:]
 
     public init(timeoutMs: Int64, ask: @escaping (_ requestId: String, _ operation: String) -> Void) {
         self.timeoutMs = timeoutMs
         self.ask = ask
     }
 
-    public func allows(_ operation: GuardedOperation) throws -> Bool {
+    private func send(_ operation: GuardedOperation, _ deliver: @escaping (Bool) -> Void) {
         let id = UUID().uuidString
-        let request = Pending()
+        let request = Pending { [weak self] allowed in
+            self?.lock.lock()
+            self?.pending.removeValue(forKey: id)
+            self?.lock.unlock()
+            deliver(allowed)
+        }
         lock.lock(); pending[id] = request; lock.unlock()
-        defer { lock.lock(); pending.removeValue(forKey: id); lock.unlock() }
+        DispatchQueue.global().asyncAfter(deadline: .now() + .milliseconds(Int(timeoutMs))) { request.finish(false) }
         ask(id, operation.rawValue)
-        guard request.semaphore.wait(timeout: .now() + .milliseconds(Int(timeoutMs))) == .success else { return false }
+    }
+
+    /// JS's verdict on `operation`, waited for without holding a thread.
+    public func verdict(_ operation: GuardedOperation) async -> Bool {
+        await withCheckedContinuation { (continuation: CheckedContinuation<Bool, Never>) in
+            send(operation) { continuation.resume(returning: $0) }
+        }
+    }
+
+    /// Runs `body` (a library call) with JS's verdicts on `operations` asked
+    /// beforehand: the library's synchronous ``allows(_:)`` reads them.
+    public func withVerdicts<T>(_ operations: [GuardedOperation], _ body: () async throws -> T) async rethrows -> T {
+        var asked: [(GuardedOperation, Bool)] = []
+        for operation in operations { asked.append((operation, await verdict(operation))) }
+        let token = UUID()
+        hold(asked, token)
+        defer { release(asked.map(\.0), token) }
+        return try await body()
+    }
+
+    private func hold(_ asked: [(GuardedOperation, Bool)], _ token: UUID) {
         lock.lock(); defer { lock.unlock() }
-        return request.allowed
+        for (operation, allowed) in asked { verdicts[operation, default: []].append((token, allowed)) }
+    }
+
+    private func release(_ operations: [GuardedOperation], _ token: UUID) {
+        lock.lock(); defer { lock.unlock() }
+        for operation in operations { verdicts[operation]?.removeAll { $0.0 == token } }
+    }
+
+    public func allows(_ operation: GuardedOperation) throws -> Bool {
+        lock.lock()
+        let held = verdicts[operation] ?? []
+        lock.unlock()
+        // Asked before the bridge call that runs now: no waiting. A refusal wins.
+        if !held.isEmpty { return held.allSatisfy { $0.1 } }
+        // The library asks on its own: wait here, bounded by the timeout.
+        let semaphore = DispatchSemaphore(value: 0)
+        let result = Locked(false)
+        send(operation) { allowed in
+            result.set(allowed)
+            semaphore.signal()
+        }
+        guard semaphore.wait(timeout: .now() + .milliseconds(Int(timeoutMs) + 50)) == .success else { return false }
+        return result.get()
     }
 
     /// JS's verdict; ignored when the request is unknown or already timed out.
     public func answer(_ requestId: String, allowed: Bool) {
         lock.lock()
         let request = pending[requestId]
-        request?.allowed = allowed
         lock.unlock()
-        request?.semaphore.signal()
+        request?.finish(allowed)
     }
 
     public var pendingCount: Int {
         lock.lock(); defer { lock.unlock() }
         return pending.count
+    }
+
+    /// A value behind a lock (the answer crosses threads).
+    private final class Locked<V>: @unchecked Sendable {
+        private let lock = NSLock()
+        private var value: V
+        init(_ value: V) { self.value = value }
+        func set(_ v: V) { lock.lock(); value = v; lock.unlock() }
+        func get() -> V { lock.lock(); defer { lock.unlock() }; return value }
     }
 }

@@ -20,11 +20,15 @@ public final class PinVaultBridge: NSObject {
     private static var jsGuard: JSEnvironmentGuard?
     private static weak var current: PinVaultBridge?
     private static let startQueue = StartQueue()
+    private static var rnMaxResponseBytes = ReactNetworking.defaultMaxResponseBytes
 
     private let mapper = ResultMapper(tokens: PinVaultBridge.tokens)
 
     @objc public var emitConnectionEvent: (([String: Any]) -> Void)?
     @objc public var emitGuardRequest: (([String: Any]) -> Void)?
+    /// RNPinVault.mm: whether RCTNetworking hands an https request to
+    /// RNPinVaultURLRequestHandler (true), to another handler (false), or nil = unknown.
+    @objc public var reactNetworkingIsPinned: (() -> NSNumber?)?
 
     /// `PinVault.shared.registerBackgroundTask()` for the app's AppDelegate (before launch ends):
     /// the app target does not link the PinVault package itself.
@@ -47,6 +51,26 @@ public final class PinVaultBridge: NSObject {
     private static var started: Bool {
         lock.lock(); defer { lock.unlock() }
         return startedInProcess
+    }
+
+    /// For the React Native request handler: `start` has run (a failed start
+    /// leaves the library's sessions refusing every request).
+    static var isStarted: Bool { started }
+
+    /// `ios.reactNativeMaxResponseBytes` of the last start.
+    static var reactNativeMaxResponseBytes: Int64 { locked { rnMaxResponseBytes } }
+
+    /// An error → (exception name, message) for JS, tokens redacted.
+    static let describe: @Sendable (any Error) -> (String, String) = { error in
+        let mapped = ResultMapper(tokens: tokens).exception(error) as? [String: Any] ?? [:]
+        return ((mapped["name"] as? String) ?? "Error", (mapped["message"] as? String) ?? "")
+    }
+
+    /// Runs a library call with the JS guard's verdicts on `operations` asked
+    /// beforehand, so the library's synchronous guard check holds no thread.
+    private static func guarded<T>(_ operations: [GuardedOperation], _ body: () async throws -> T) async rethrows -> T {
+        guard let g = locked({ jsGuard }) else { return try await body() }
+        return try await g.withVerdicts(operations, body)
     }
 
     // MARK: helpers
@@ -82,7 +106,13 @@ public final class PinVaultBridge: NSObject {
         Task.detached {
             await Self.startQueue.run {
                 let parsed: ParsedConfig
+                var newGuard: JSEnvironmentGuard?
                 do {
+                    #if DEBUG
+                    let release = false
+                    #else
+                    let release = true
+                    #endif
                     parsed = try ConfigParser.parse(
                         json, tokens: Self.tokens,
                         guardFactory: { timeout in
@@ -90,16 +120,19 @@ public final class PinVaultBridge: NSObject {
                                 let bridge = Self.locked { Self.current }
                                 bridge?.emitGuardRequest?(["requestId": requestId, "operation": operation])
                             }
-                            Self.locked { Self.jsGuard = g }
+                            newGuard = g
                             return g
                         },
                         listener: { event in
                             let bridge = Self.locked { Self.current }
                             guard let bridge else { return }
                             bridge.emitConnectionEvent?(bridge.mapper.event(event))
-                        }
+                        },
+                        native: try NativeSecurity.load(),
+                        release: release
                     )
                 } catch let e as BridgeInputError {
+                    // The guard of the running config stays: a refused config changes nothing.
                     reject("E_INVALID_CONFIG", Self.tokens.redact(e.message) ?? "", nil)
                     return
                 } catch {
@@ -107,15 +140,27 @@ public final class PinVaultBridge: NSObject {
                     reject("E_INVALID_CONFIG", Self.tokens.redact(message) ?? "", nil)
                     return
                 }
-                if parsed.guardTimeoutMs == nil { Self.locked { Self.jsGuard = nil } }
-                NSLog(
-                    "PinVault: on iOS, React Native's own fetch / XMLHttpRequest / WebSocket are NOT pinned; "
-                        + "send pinned requests with PinVault.fetch (README, \"Networking\")."
-                )
+                let pinned = self.reactNetworkingIsPinned?()?.boolValue
+                if pinned != true {
+                    let why = !PinVaultReactNetworking.enabled
+                        ? "Info.plist PinVaultPinReactNativeNetworking is NO"
+                        : pinned == nil ? "RCTNetworking's handler could not be checked"
+                        : "RCTNetworking hands https to another RCTURLRequestHandler"
+                    NSLog("PinVault: React Native's own fetch / XMLHttpRequest / images may NOT be pinned (\(why)); README, \"Networking\"")
+                    if parsed.requirePinnedReactNativeNetworking {
+                        reject("E_NETWORKING_NOT_PINNED", "requirePinnedReactNativeNetworking: \(why)", nil)
+                        return
+                    }
+                }
+                Self.locked {
+                    Self.jsGuard = newGuard
+                    Self.rnMaxResponseBytes = parsed.reactNativeMaxResponseBytes
+                }
                 // A second start applies the new config: the library keeps the
                 // first one otherwise (the samples restart the same way).
                 if Self.started { PinVault.shared.reset() }
-                let result = await PinVault.shared.start(config: parsed.config)
+                // INIT, and ENROLL for a pending enrollment the start picks up.
+                let result = await Self.guarded([.start, .enroll]) { await PinVault.shared.start(config: parsed.config) }
                 Self.locked { Self.startedInProcess = true }
                 resolve(self.mapper.initResult(result))
             }
@@ -221,17 +266,17 @@ public final class PinVaultBridge: NSObject {
         run(resolve, reject) {
             if token.isEmpty || token.count > 4096 { throw BridgeInputError("token: must be 1 to 4096 characters") }
             return await Self.tokens.withTransientSecret(token) {
-                self.mapper.enrollment(await PinVault.shared.enrollForResult(token: token, label: label))
+                self.mapper.enrollment(await Self.guarded([.enroll]) { await PinVault.shared.enrollForResult(token: token, label: label) })
             }
         }
     }
 
     @objc public func autoEnrollForResult(resolve: @escaping Resolve, reject: @escaping Reject) {
-        run(resolve, reject) { self.mapper.enrollment(await PinVault.shared.autoEnrollForResult()) }
+        run(resolve, reject) { self.mapper.enrollment(await Self.guarded([.enroll]) { await PinVault.shared.autoEnrollForResult() }) }
     }
 
     @objc public func checkPendingEnrollment(resolve: @escaping Resolve, reject: @escaping Reject) {
-        run(resolve, reject) { self.mapper.enrollment(await PinVault.shared.checkPendingEnrollment()) }
+        run(resolve, reject) { self.mapper.enrollment(await Self.guarded([.enroll]) { await PinVault.shared.checkPendingEnrollment() }) }
     }
 
     @objc public func isEnrolled(_ label: String?, resolve: @escaping Resolve, reject: @escaping Reject) {
@@ -282,7 +327,7 @@ public final class PinVaultBridge: NSObject {
             try Self.checkKey(key)
             try Self.checkToken(token)
             if let token { Self.tokens.put(key, token) }
-            return self.mapper.vaultFile(await PinVault.shared.fetchFile(key))
+            return self.mapper.vaultFile(await Self.guarded([.fetchFile]) { await PinVault.shared.fetchFile(key) })
         }
     }
 
@@ -303,7 +348,9 @@ public final class PinVaultBridge: NSObject {
             try Self.checkKey(key)
             let (prompt, encoding) = try ConfigParser.unlockPrompt(json)
             // LAContext's Face ID / passcode prompt is the library's.
-            return self.mapper.unlock(await PinVault.shared.unlockFile(key: key, prompt: prompt), encoding: encoding)
+            return self.mapper.unlock(
+                await Self.guarded([.unlockFile]) { await PinVault.shared.unlockFile(key: key, prompt: prompt) }, encoding: encoding
+            )
         }
     }
 
@@ -324,7 +371,7 @@ public final class PinVaultBridge: NSObject {
     }
 
     @objc public func syncAllFiles(resolve: @escaping Resolve, reject: @escaping Reject) {
-        run(resolve, reject) { (await PinVault.shared.syncAllFiles()).mapValues(self.mapper.vaultFile) }
+        run(resolve, reject) { (await Self.guarded([.fetchFile]) { await PinVault.shared.syncAllFiles() }).mapValues(self.mapper.vaultFile) }
     }
 
     // MARK: attestation
