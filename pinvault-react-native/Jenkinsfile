@@ -8,6 +8,10 @@
 //    scope: a package-limited token cannot make the first release of a new
 //    package). Default ID: npm-token-traceflow (parameter NPM_CREDENTIALS_ID).
 //    Tokens: https://www.npmjs.com/settings/umutcansu/tokens
+//    The token does not bypass 2FA: npm no longer lets new tokens do that and
+//    takes direct publishing away from such tokens in January 2027. Instead the
+//    Publish stage stops and asks for the maintainer's current 2FA code (open
+//    the build, "Paused for Input", type the code, Publish).
 // 2. A NodeJS tool named "node22" (Manage Jenkins -> Tools): the package is
 //    built with react-native-builder-bob, which needs Node >= 20.19 / 22.12.
 // 3. The job checks out the PinVault repository (Pipeline script from SCM,
@@ -27,6 +31,7 @@
 // ------
 // - A dry-run publish always runs before the real one.
 // - A version already on npm is refused.
+// - The real publish needs a person: the 2FA code is asked for at that moment.
 // - The token never touches the disk or the console: the workspace .npmrc holds
 //   the placeholder ${NPM_TOKEN}, which npm reads from the environment that
 //   withCredentials sets for that step only; the file is removed afterwards.
@@ -173,16 +178,33 @@ pipeline {
     stage('Publish') {
       when { expression { !params.DRY_RUN } }
       steps {
-        dir('pinvault-react-native') {
-          withCredentials([string(credentialsId: params.NPM_CREDENTIALS_ID, variable: 'NPM_TOKEN')]) {
-            sh '''
-              set -eu
-              echo '//registry.npmjs.org/:_authToken=${NPM_TOKEN}' > .npmrc
-              npm publish --access public
-              NAME=$(node -p "require('./package.json').name")
-              VERSION=$(node -p "require('./package.json').version")
-              echo "Published ${NAME}@${VERSION}"
-            '''
+        script {
+          // The build waits here for the maintainer's current 2FA code, so the
+          // code is fresh when npm sees it. A plain text field (a password
+          // field needs Secret.getPlainText, which the sandbox refuses): the
+          // code is single-use and expires within a minute. It reaches npm as
+          // npm_config_otp, never on a command line, which `sh` would echo.
+          def otp = input(
+            message: 'npm 2FA code for the publish (authenticator app, 6 digits)',
+            ok: 'Publish',
+            parameters: [string(name: 'NPM_OTP', defaultValue: '', trim: true, description: 'One-time password from the npm account authenticator')]
+          )
+          if (!(otp ==~ /\d{6,8}/)) {
+            error('The 2FA code must be 6 to 8 digits.')
+          }
+          dir('pinvault-react-native') {
+            withCredentials([string(credentialsId: params.NPM_CREDENTIALS_ID, variable: 'NPM_TOKEN')]) {
+              withEnv(["npm_config_otp=${otp}"]) {
+                sh '''
+                  set -eu
+                  echo '//registry.npmjs.org/:_authToken=${NPM_TOKEN}' > .npmrc
+                  npm publish --access public
+                  NAME=$(node -p "require('./package.json').name")
+                  VERSION=$(node -p "require('./package.json').version")
+                  echo "Published ${NAME}@${VERSION}"
+                '''
+              }
+            }
           }
         }
       }
