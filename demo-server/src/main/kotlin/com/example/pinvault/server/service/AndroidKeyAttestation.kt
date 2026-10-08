@@ -123,7 +123,8 @@ enum class UserAuthAttestationMode {
  *     after deleting the real key) or with [requirePerUse] — purpose DECRYPT
  *     and origin GENERATED; with [minPatchLevel] an osPatchLevel at least
  *     that; with [requireVerifiedBoot] its rootOfTrust says the
- *     bootloader is locked and the boot Verified; with [packageNames] /
+ *     bootloader is locked and the boot Verified (or SelfSigned with one of
+ *     [trustedBootKeys]); with [packageNames] /
  *     [signerDigests] set, the attestationApplicationId names one of those
  *     packages and signing certificates.
  *
@@ -153,8 +154,17 @@ open class AndroidKeyAttestation(
     val minPatchLevel: Int? = null,
     /** The reloaded `ATTESTATION_REVOKED_SERIALS_FILE`; its serials count on top of [revokedSerials]. Null = none. */
     private val revocationList: RevocationList? = null,
-    private val clock: () -> Instant = Instant::now
+    private val clock: () -> Instant = Instant::now,
+    /**
+     * `ATTESTATION_TRUSTED_BOOT_KEYS`: verifiedBootKey digests (lowercase hex)
+     * of operating systems you accept with a locked bootloader and a
+     * `SelfSigned` boot (GrapheneOS, CalyxOS publish theirs). Such a boot
+     * counts as verified, here and for `boot_not_verified`. Empty = only
+     * `Verified` (a Google-signed or OEM-signed OS) counts.
+     */
+    trustedBootKeys: Set<String> = emptySet()
 ) {
+    val trustedBootKeys: Set<String> = trustedBootKeys.map { it.trim().replace(":", "").lowercase() }.filter { it.isNotEmpty() }.toSet()
     private val rootList: List<X509Certificate> = trustedRoots.toList()
     private val rootEncodings: List<ByteArray> = rootList.map { it.publicKey.encoded }
     private val rootSubjects: Set<javax.security.auth.x500.X500Principal> = rootList.map { it.subjectX500Principal }.toSet()
@@ -162,6 +172,12 @@ open class AndroidKeyAttestation(
 
     /** Every serial refused now: the fixed ones and the current revocation list's. */
     val revokedSerials: Set<String> get() = revocationList?.let { fixedRevoked + it.current() } ?: fixedRevoked
+
+    /** Whether [serialHex] is refused now (a fixed serial or the current list's), without building the union of both. */
+    fun isRevoked(serialHex: String): Boolean {
+        val serial = normalizeSerial(serialHex)
+        return serial in fixedRevoked || revocationList?.current()?.contains(serial) == true
+    }
 
     /** The revocation list file, if one is configured (for the start-up line and the reload timer). */
     val revocationListFile: File? get() = revocationList?.file
@@ -200,7 +216,15 @@ open class AndroidKeyAttestation(
         val reason: String,
         val securityLevel: String? = null,
         /** User-auth keys that passed: how the key asks for the user. */
-        val keyKind: KeyKind? = null
+        val keyKind: KeyKind? = null,
+        /**
+         * What the secure hardware said about the device, read from a chain
+         * that verified up to a trusted root at the TEE or StrongBox level —
+         * also when a later check refused it (an unlocked bootloader, another
+         * app). Null when the chain did not get that far, or is software-level
+         * (an emulator): nothing it says about the device is worth anything.
+         */
+        val facts: KeyFacts? = null
     ) {
         companion object {
             val MISSING = Verdict(false, "chain_missing")
@@ -210,7 +234,7 @@ open class AndroidKeyAttestation(
     /** Which key a chain is checked as. */
     enum class Profile { USER_AUTH, IDENTITY }
 
-    private class Refusal(val reason: String, val securityLevel: String? = null) : Exception(reason)
+    private class Refusal(val reason: String, val securityLevel: String? = null, val facts: KeyFacts? = null) : Exception(reason)
 
     /**
      * Checks [chainBase64] (Base64 DER certificates, leaf first) for the
@@ -233,7 +257,7 @@ open class AndroidKeyAttestation(
             val chain = decode(chainBase64)
             check(chain, publicKey, id, profile)
         } catch (r: Refusal) {
-            Verdict(false, r.reason, r.securityLevel)
+            Verdict(false, r.reason, r.securityLevel, facts = r.facts)
         } catch (e: Exception) {
             Verdict(false, "extension_malformed")
         }
@@ -309,6 +333,26 @@ open class AndroidKeyAttestation(
         val hardwareEnforced = authorizations(description.getObjectAt(7))
 
         val levelName = levelName(attestationLevel)
+        // From here on the chain is known to come from a key Google certified
+        // and to describe the key being registered. At the hardware level what
+        // it says about the device is the secure hardware's word, whatever the
+        // checks below make of the key: kept, so a refused chain still tells
+        // the server the bootloader was open.
+        val facts = if (attestationLevel in HARDWARE_LEVELS && keyMintLevel in HARDWARE_LEVELS) {
+            factsOf(levelName, softwareEnforced, hardwareEnforced, chain)
+        } else null
+        try {
+            return checkDescription(profile, id, levelName, attestationLevel, keyMintLevel, challenge, softwareEnforced, hardwareEnforced, facts)
+        } catch (r: Refusal) {
+            throw if (r.facts == null && facts != null) Refusal(r.reason, r.securityLevel, facts) else r
+        }
+    }
+
+    /** Step 2 of [check] past the chain: the key description's rules. */
+    private fun checkDescription(
+        profile: Profile, id: String, levelName: String, attestationLevel: Int, keyMintLevel: Int, challenge: ByteArray,
+        softwareEnforced: Map<Int, ASN1Primitive>, hardwareEnforced: Map<Int, ASN1Primitive>, facts: KeyFacts?
+    ): Verdict {
         val expected = if (profile == Profile.IDENTITY) identityChallengeFor(id) else challengeFor(id)
         if (!MessageDigest.isEqual(challenge, expected)) throw Refusal("challenge_mismatch", levelName)
         if (attestationLevel !in HARDWARE_LEVELS || keyMintLevel !in HARDWARE_LEVELS) throw Refusal("software_attestation", levelName)
@@ -367,7 +411,11 @@ open class AndroidKeyAttestation(
             if (rootOfTrust.size() < 3) throw Refusal("root_of_trust_missing", levelName)
             val locked = (rootOfTrust.getObjectAt(1) as? ASN1Boolean)?.isTrue ?: throw Refusal("root_of_trust_missing", levelName)
             if (!locked) throw Refusal("device_unlocked", levelName)
-            if (intOf(rootOfTrust.getObjectAt(2)) != BOOT_VERIFIED) throw Refusal("boot_not_verified", levelName)
+            val state = intOf(rootOfTrust.getObjectAt(2))
+            // A SelfSigned boot of an operating system the operator trusts (ATTESTATION_TRUSTED_BOOT_KEYS) counts as verified.
+            val trustedSelfSigned = state == BOOT_SELF_SIGNED &&
+                (rootOfTrust.getObjectAt(0) as? ASN1OctetString)?.octets?.let { hex(it) in trustedBootKeys } == true
+            if (state != BOOT_VERIFIED && !trustedSelfSigned) throw Refusal("boot_not_verified", levelName)
         }
 
         if (packageNames.isNotEmpty() || signerDigests.isNotEmpty()) {
@@ -388,8 +436,47 @@ open class AndroidKeyAttestation(
             }.orEmpty()
             if (signerDigests.isNotEmpty() && signers.none { it in signerDigests }) throw Refusal("signer_not_allowed", levelName)
         }
-        return Verdict(true, "ok", levelName, kind)
+        return Verdict(true, "ok", levelName, kind, facts)
     }
+
+    /**
+     * The RootOfTrust, patch levels and certificate serials of a hardware
+     * chain. Never throws: a field that is missing or of another type is null.
+     */
+    private fun factsOf(
+        levelName: String, softwareEnforced: Map<Int, ASN1Primitive>, hardwareEnforced: Map<Int, ASN1Primitive>,
+        chain: List<X509Certificate>
+    ): KeyFacts {
+        fun int(tag: Int): Int? = (hardwareEnforced[tag] ?: softwareEnforced[tag])?.let { runCatching { intOf(it) }.getOrNull() }
+        val rootOfTrust = (hardwareEnforced[TAG_ROOT_OF_TRUST] as? ASN1Sequence)?.takeIf { it.size() >= 3 }
+        val bootKey = (rootOfTrust?.getObjectAt(0) as? ASN1OctetString)?.octets?.let { hex(it) }
+        val locked = (rootOfTrust?.getObjectAt(1) as? ASN1Boolean)?.isTrue
+        val state = rootOfTrust?.getObjectAt(2)?.let { runCatching { intOf(it) }.getOrNull() }
+        return KeyFacts(
+            securityLevel = levelName,
+            deviceLocked = locked,
+            verifiedBootState = state?.let { BOOT_STATE_NAMES[it] ?: "unknown" },
+            verifiedBootKey = bootKey,
+            osVersion = int(TAG_OS_VERSION),
+            osPatchLevel = int(TAG_OS_PATCH_LEVEL),
+            vendorPatchLevel = int(TAG_VENDOR_PATCH_LEVEL),
+            bootPatchLevel = int(TAG_BOOT_PATCH_LEVEL),
+            chainSerials = chain.map { normalizeSerial(it.serialNumber.toString(16)) }.distinct()
+        )
+    }
+
+    /**
+     * Whether [facts] say the device booted an operating system this server
+     * trusts: `Verified`, or `SelfSigned` with a verifiedBootKey in
+     * [trustedBootKeys]. False when the state is missing.
+     */
+    fun bootTrusted(facts: KeyFacts): Boolean = when (facts.verifiedBootState) {
+        KeyFacts.VERIFIED -> true
+        KeyFacts.SELF_SIGNED -> facts.verifiedBootKey != null && facts.verifiedBootKey in trustedBootKeys
+        else -> false
+    }
+
+    private fun hex(bytes: ByteArray): String = bytes.joinToString("") { "%02x".format(it.toInt() and 0xFF) }
 
     private fun signedBy(cert: X509Certificate, key: PublicKey): Boolean = try {
         cert.verify(key)
@@ -464,11 +551,17 @@ open class AndroidKeyAttestation(
         const val TAG_OS_VERSION = 705
         const val TAG_OS_PATCH_LEVEL = 706
         const val TAG_ATTESTATION_APPLICATION_ID = 709
+        const val TAG_VENDOR_PATCH_LEVEL = 718
+        const val TAG_BOOT_PATCH_LEVEL = 719
 
         private const val PURPOSE_DECRYPT = 1
         private const val PURPOSE_SIGN = 2
         private const val ORIGIN_GENERATED = 0
         private const val BOOT_VERIFIED = 0
+        private const val BOOT_SELF_SIGNED = 1
+
+        /** VerifiedBootState as [KeyFacts.verifiedBootState] names it. */
+        private val BOOT_STATE_NAMES = mapOf(0 to KeyFacts.VERIFIED, 1 to KeyFacts.SELF_SIGNED, 2 to KeyFacts.UNVERIFIED, 3 to KeyFacts.FAILED)
 
         /** osVersion of Android 11 (MMmmpp). */
         const val OS_VERSION_ANDROID_11 = 110000
@@ -534,6 +627,17 @@ open class AndroidKeyAttestation(
             }.keys.map { normalizeSerial(it) }.toSet()
         }
 
+        /**
+         * `ATTESTATION_TRUSTED_BOOT_KEYS`: a comma list of verifiedBootKey
+         * digests, 64 hex characters each (colons and case ignored). Anything
+         * else is a start-up error: a typo would silently trust nothing.
+         */
+        fun parseTrustedBootKeys(value: String?): Set<String> = parseDigests(value).onEach {
+            require(Regex("^[0-9a-f]{64}$").matches(it)) {
+                "ATTESTATION_TRUSTED_BOOT_KEYS: '$it' is not a SHA-256 verifiedBootKey (64 hex characters)"
+            }
+        }
+
         /** A comma list of hex digests (colons and case ignored). */
         fun parseDigests(value: String?): Set<String> = value.orEmpty().split(',')
             .map { it.trim().replace(":", "").lowercase() }
@@ -545,8 +649,9 @@ open class AndroidKeyAttestation(
          * `ATTESTATION_REQUIRE_VERIFIED_BOOT` (default true),
          * `ATTESTATION_REVOKED_SERIALS_FILE` (re-read when it changes, see
          * [RevocationList]), `ATTESTATION_STATUS_MAX_AGE_HOURS` (default off),
-         * `USER_AUTH_REQUIRE_PER_USE` (default false) and
-         * `ATTESTATION_MIN_PATCH_LEVEL` (default off), trusting the Google roots.
+         * `USER_AUTH_REQUIRE_PER_USE` (default false),
+         * `ATTESTATION_MIN_PATCH_LEVEL` (default off) and
+         * `ATTESTATION_TRUSTED_BOOT_KEYS` (default none), trusting the Google roots.
          */
         fun fromEnv(env: Map<String, String> = com.example.pinvault.server.service.ServerEnv.all(), clock: () -> Instant = Instant::now): AndroidKeyAttestation {
             val revokedFile = env["ATTESTATION_REVOKED_SERIALS_FILE"]?.takeIf { it.isNotBlank() }
@@ -569,9 +674,47 @@ open class AndroidKeyAttestation(
                 requirePerUse = env["USER_AUTH_REQUIRE_PER_USE"]?.trim()?.lowercase() == "true",
                 minPatchLevel = parsePatchLevel(env["ATTESTATION_MIN_PATCH_LEVEL"]),
                 revocationList = list,
-                clock = clock
+                clock = clock,
+                trustedBootKeys = parseTrustedBootKeys(env["ATTESTATION_TRUSTED_BOOT_KEYS"])
             )
         }
+    }
+}
+
+/**
+ * What a hardware-level Android Key Attestation chain said about the device
+ * when its key was registered (ATTESTATION.md §3, "Facts from the chain"):
+ * the leaf's RootOfTrust, the patch levels and every certificate's serial.
+ * Stored with the device (V26 `key_facts`) and judged again on every round —
+ * the chain is sent once, but what it said holds for the key's lifetime (an
+ * unlocked bootloader cannot be locked again without wiping the key).
+ */
+@kotlinx.serialization.Serializable
+data class KeyFacts(
+    /** `tee` or `strongbox`: facts are only kept from those levels. */
+    val securityLevel: String,
+    /** RootOfTrust `deviceLocked`; null when the chain carried no RootOfTrust. */
+    val deviceLocked: Boolean? = null,
+    /** [VERIFIED], [SELF_SIGNED], [UNVERIFIED], [FAILED] (or `unknown`); null without a RootOfTrust. */
+    val verifiedBootState: String? = null,
+    /** RootOfTrust `verifiedBootKey`, lowercase hex. */
+    val verifiedBootKey: String? = null,
+    /** osVersion, MMmmpp. */
+    val osVersion: Int? = null,
+    /** osPatchLevel, YYYYMM. */
+    val osPatchLevel: Int? = null,
+    /** vendorPatchLevel, YYYYMMDD. */
+    val vendorPatchLevel: Int? = null,
+    /** bootPatchLevel, YYYYMMDD. */
+    val bootPatchLevel: Int? = null,
+    /** Every certificate of the chain, lowercase hex without leading zeros (as Google's status list): re-checked every round. */
+    val chainSerials: List<String> = emptyList()
+) {
+    companion object {
+        const val VERIFIED = "verified"
+        const val SELF_SIGNED = "self_signed"
+        const val UNVERIFIED = "unverified"
+        const val FAILED = "failed"
     }
 }
 

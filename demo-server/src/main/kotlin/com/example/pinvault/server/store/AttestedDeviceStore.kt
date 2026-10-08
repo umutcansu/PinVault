@@ -1,5 +1,6 @@
 package com.example.pinvault.server.store
 
+import com.example.pinvault.server.service.KeyFacts
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.builtins.ListSerializer
 import kotlinx.serialization.builtins.serializer
@@ -55,6 +56,12 @@ data class AttestedDevice(
     val appAttestAt: String? = null,
     /** The verdict's summary (JSON text: reason, kind, appId, environment). */
     val appAttest: String? = null,
+    /** What the registration's hardware-level Android Key Attestation chain said about the device (V26); null = no such chain. */
+    val keyFacts: KeyFacts? = null,
+    /** The highest `currentIssuedAt` (Unix ms) the device reported; null = none yet. */
+    val configWatermark: Long? = null,
+    /** The server's signing-key set version when [configWatermark] was stored. */
+    val configWatermarkKeySet: Int? = null,
     /** The last report trimmed to its app, device and signals blocks (JSON text); only in the single-device answer. */
     val lastReport: String? = null
 )
@@ -107,16 +114,18 @@ class AttestedDeviceStore(private val db: DatabaseManager) {
      */
     fun register(
         configApiId: String, deviceId: String, spkiSha256: String, publicKey: String,
-        attestation: KeyAttestation?, now: Instant = Instant.now()
+        attestation: KeyAttestation?, now: Instant = Instant.now(),
+        /** What the chain said about the device (hardware level only); null = nothing. */
+        facts: KeyFacts? = null
     ): Boolean = db.connection().use { conn ->
         val at = now.toString()
         val inserted = conn.prepareStatement(
-            """INSERT INTO attested_devices (config_api_id, device_id, spki_sha256, public_key, key_attested, key_security_level, key_attestation_reason, first_seen, last_seen)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """INSERT INTO attested_devices (config_api_id, device_id, spki_sha256, public_key, key_attested, key_security_level, key_attestation_reason, first_seen, last_seen, key_facts)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                ON CONFLICT(config_api_id, device_id) DO UPDATE SET
                  spki_sha256 = excluded.spki_sha256, public_key = excluded.public_key, key_attested = excluded.key_attested,
                  key_security_level = excluded.key_security_level, key_attestation_reason = excluded.key_attestation_reason,
-                 last_seen = excluded.last_seen
+                 last_seen = excluded.last_seen, key_facts = excluded.key_facts
                WHERE attested_devices.spki_sha256 IS NULL"""
         ).use { stmt ->
             stmt.setString(1, configApiId)
@@ -128,9 +137,24 @@ class AttestedDeviceStore(private val db: DatabaseManager) {
             stmt.setString(7, attestation?.reason)
             stmt.setString(8, at)
             stmt.setString(9, at)
+            stmt.setString(10, facts?.let { json.encodeToString(KeyFacts.serializer(), it) })
             stmt.executeUpdate() > 0
         }
         inserted
+    }
+
+    /**
+     * Stores [watermark] as the device's highest reported `currentIssuedAt`,
+     * under the server's signing-key set version [keySet] (`config_rollback`).
+     */
+    fun recordConfigWatermark(configApiId: String, deviceId: String, watermark: Long, keySet: Int) = db.connection().use { conn ->
+        conn.prepareStatement("UPDATE attested_devices SET config_watermark = ?, config_watermark_key_set = ? WHERE config_api_id = ? AND device_id = ?").use { stmt ->
+            stmt.setLong(1, watermark)
+            stmt.setInt(2, keySet)
+            stmt.setString(3, configApiId)
+            stmt.setString(4, deviceId)
+            stmt.executeUpdate()
+        }
     }
 
     /** Records a verdict on a registered device and counts it for the stats. */
@@ -427,6 +451,10 @@ class AttestedDeviceStore(private val db: DatabaseManager) {
             appAttestResult = rs.getString("app_attest_result"),
             appAttestAt = rs.getString("app_attest_at"),
             appAttest = rs.getString("app_attest"),
+            // A row this server cannot read back (a later format) is shown and judged as "no facts".
+            keyFacts = rs.getString("key_facts")?.let { text -> runCatching { json.decodeFromString(KeyFacts.serializer(), text) }.getOrNull() },
+            configWatermark = rs.getObject("config_watermark")?.let { rs.getLong("config_watermark") },
+            configWatermarkKeySet = rs.getObject("config_watermark_key_set")?.let { rs.getInt("config_watermark_key_set") },
             lastReport = if (withReport) rs.getString("last_report") else null
         )
     }

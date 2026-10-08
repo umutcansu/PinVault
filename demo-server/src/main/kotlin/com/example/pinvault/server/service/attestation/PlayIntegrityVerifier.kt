@@ -43,11 +43,17 @@ import javax.crypto.spec.SecretKeySpec
  *     not in [packageNames];
  *  7. `app_unrecognized` — `appRecognitionVerdict` ≠ `PLAY_RECOGNIZED` while
  *     [requireAppRecognized];
- *  8. `device_integrity` — `deviceRecognitionVerdict` does not reach [deviceLevel].
+ *  8. `app_unlicensed` — `accountDetails.appLicensingVerdict` ≠ `LICENSED`
+ *     while [requireLicensed];
+ *  9. `device_integrity` — `deviceRecognitionVerdict` does not reach [deviceLevel].
  *
- * The verdict is bound to the attestation round twice: by the nonce inside
- * Google's signed payload, and by the device key's signature over the report
- * that carries the token.
+ * The verdict is bound to the attestation round by the nonce inside Google's
+ * signed payload, and by the device key's signature over the report that
+ * carries the token. The nonce the app asks Google with is, v2,
+ * [roundNonceV2] — the round's nonce AND the device id, so a token minted
+ * for another device in the same round does not fit; v1, the round's nonce
+ * itself, still verifies (with the warning `play_integrity_v1`) unless
+ * [requireV2] ([verifyRound]).
  */
 class PlayIntegrityVerifier(
     decryptionKey: ByteArray,
@@ -59,7 +65,19 @@ class PlayIntegrityVerifier(
     /** A token's `timestampMillis` may be at most this old. */
     val tokenMaxAgeSeconds: Long = DEFAULT_TOKEN_MAX_AGE_SECONDS,
     /** A verified verdict counts for this long before `play_integrity_missing` is raised. */
-    val verdictMaxAgeSeconds: Long = DEFAULT_VERDICT_MAX_AGE_SECONDS
+    val verdictMaxAgeSeconds: Long = DEFAULT_VERDICT_MAX_AGE_SECONDS,
+    /**
+     * `PLAY_INTEGRITY_STALE_PASS_SECONDS`: how long a stored PASS covers the
+     * rounds that carry no token (the provider asks Google every few hours,
+     * and a hooked app can drop the token). Default [verdictMaxAgeSeconds].
+     * A stored fail keeps `play_integrity` raised for [verdictMaxAgeSeconds]
+     * whatever this says.
+     */
+    val stalePassSeconds: Long = verdictMaxAgeSeconds,
+    /** `PLAY_INTEGRITY_REQUIRE_V2`: a token asked with the round's bare nonce (v1) fails `nonce_v1`. */
+    val requireV2: Boolean = false,
+    /** `PLAY_INTEGRITY_REQUIRE_LICENSED`: `appLicensingVerdict` must be `LICENSED` (the user got the app from Play). */
+    val requireLicensed: Boolean = false
 ) {
     /** `deviceRecognitionVerdict` labels in rising order; a device at a level lists that level and every one below. */
     enum class DeviceLevel(val label: String) {
@@ -83,9 +101,27 @@ class PlayIntegrityVerifier(
      * device record keeps (`play_integrity` column, shown in the dashboard):
      * no token, no nonce, only what an operator needs to read a verdict.
      */
-    class Result(val passed: Boolean, val reason: String, val summary: JsonObject) {
+    class Result(val passed: Boolean, val reason: String, val summary: JsonObject, val nonceVersion: Int = 0) {
         override fun toString() = "PlayIntegrity(${if (passed) "pass" else "fail"}: $reason)"
     }
+
+    /**
+     * Verifies [token] for an attestation round: first against the v2 nonce
+     * ([roundNonceV2] of [nonce] and [deviceId]), then — unless [requireV2] or
+     * [v2Only] (a token outside the signed report) — against [nonce] itself.
+     * [Result.nonceVersion] says which one Google saw (0 = neither). A token
+     * that matches only v1 under [requireV2] fails `nonce_v1`. Never throws.
+     */
+    fun verifyRound(token: String, nonce: String, deviceId: String, now: Instant = Instant.now(), v2Only: Boolean = false): Result {
+        val v2 = verify(token, roundNonceV2(nonce, deviceId), now)
+        if (v2.reason != "nonce_mismatch") return Result(v2.passed, v2.reason, v2.summary, 2)
+        val v1 = verify(token, nonce, now)
+        if (v1.reason == "nonce_mismatch") return v2
+        if (requireV2 || v2Only) return Result(false, "nonce_v1", summaryWith(v1.summary, "nonce_v1"), 1)
+        return Result(v1.passed, v1.reason, v1.summary, 1)
+    }
+
+    private fun summaryWith(summary: JsonObject, reason: String) = JsonObject(summary + ("reason" to JsonPrimitive(reason)))
 
     private val decryptionKey: SecretKey
 
@@ -119,6 +155,7 @@ class PlayIntegrityVerifier(
             if (requested !in packageNames || (attested != null && attested !in packageNames)) return fail("package_mismatch", payload, now)
         }
         if (requireAppRecognized && app?.string("appRecognitionVerdict") != PLAY_RECOGNIZED) return fail("app_unrecognized", payload, now)
+        if (requireLicensed && (payload["accountDetails"] as? JsonObject)?.string("appLicensingVerdict") != LICENSED) return fail("app_unlicensed", payload, now)
         val deviceVerdicts = (device?.get("deviceRecognitionVerdict") as? JsonArray)
             ?.mapNotNull { (it as? JsonPrimitive)?.takeIf { p -> p.isString }?.content }.orEmpty()
         if (!deviceLevel.metBy(deviceVerdicts)) return fail("device_integrity", payload, now)
@@ -203,6 +240,17 @@ class PlayIntegrityVerifier(
         const val DEFAULT_VERDICT_MAX_AGE_SECONDS = 86_400L
         private const val MAX_FUTURE_SECONDS = 60L
         const val PLAY_RECOGNIZED = "PLAY_RECOGNIZED"
+        const val LICENSED = "LICENSED"
+
+        /**
+         * The Play Integrity nonce of an attestation round, v2:
+         * `base64url-nopad(SHA-256(UTF-8("pinvault-play-integrity:v2:" + nonce + ":" + deviceId)))`
+         * (43 characters, within Google's 16–500 URL-safe rule).
+         */
+        fun roundNonceV2(nonce: String, deviceId: String): String =
+            Base64.getUrlEncoder().withoutPadding().encodeToString(
+                java.security.MessageDigest.getInstance("SHA-256").digest("pinvault-play-integrity:v2:$nonce:$deviceId".toByteArray(Charsets.UTF_8))
+            )
 
         /**
          * From `PLAY_INTEGRITY_DECRYPTION_KEY` and `PLAY_INTEGRITY_VERIFICATION_KEY`
@@ -212,7 +260,9 @@ class PlayIntegrityVerifier(
          * defaults to [fallbackPackageNames] (`ATTESTATION_PACKAGE_NAMES`);
          * `PLAY_INTEGRITY_DEVICE_LEVEL` basic|device|strong (default device);
          * `PLAY_INTEGRITY_REQUIRE_APP_RECOGNIZED` (default true);
-         * `PLAY_INTEGRITY_TOKEN_MAX_AGE_SECONDS` (600); `PLAY_INTEGRITY_MAX_AGE_SECONDS` (86400).
+         * `PLAY_INTEGRITY_TOKEN_MAX_AGE_SECONDS` (600); `PLAY_INTEGRITY_MAX_AGE_SECONDS` (86400);
+         * `PLAY_INTEGRITY_STALE_PASS_SECONDS` (= the max age); `PLAY_INTEGRITY_REQUIRE_V2`
+         * and `PLAY_INTEGRITY_REQUIRE_LICENSED` (both false).
          */
         fun fromEnv(env: Map<String, String> = com.example.pinvault.server.service.ServerEnv.all(), fallbackPackageNames: Set<String> = emptySet()): PlayIntegrityVerifier? {
             val enabled = when (env["PLAY_INTEGRITY_ENABLED"]?.trim()?.lowercase()) {
@@ -243,6 +293,14 @@ class PlayIntegrityVerifier(
                 "false", "off" -> false
                 else -> throw IllegalArgumentException("PLAY_INTEGRITY_REQUIRE_APP_RECOGNIZED must be true or false")
             }
+            val stalePass = env["PLAY_INTEGRITY_STALE_PASS_SECONDS"]?.trim()?.takeIf { it.isNotEmpty() }?.let {
+                it.toLongOrNull()?.takeIf { v -> v in 60..(30 * 86_400L) } ?: throw IllegalArgumentException("PLAY_INTEGRITY_STALE_PASS_SECONDS must be 60..2592000 (got '$it')")
+            } ?: verdictMaxAge
+            fun flag(name: String): Boolean = when (env[name]?.trim()?.lowercase()) {
+                null, "", "false", "off" -> false
+                "true", "on" -> true
+                else -> throw IllegalArgumentException("$name must be true or false (got '${env[name]}')")
+            }
             return PlayIntegrityVerifier(
                 decryptionKey = decodeKey(decryption, "PLAY_INTEGRITY_DECRYPTION_KEY"),
                 verificationKey = parseVerificationKey(verification),
@@ -250,7 +308,10 @@ class PlayIntegrityVerifier(
                 deviceLevel = DeviceLevel.parse(env["PLAY_INTEGRITY_DEVICE_LEVEL"]),
                 requireAppRecognized = requireApp,
                 tokenMaxAgeSeconds = tokenMaxAge,
-                verdictMaxAgeSeconds = verdictMaxAge
+                verdictMaxAgeSeconds = verdictMaxAge,
+                stalePassSeconds = stalePass,
+                requireV2 = flag("PLAY_INTEGRITY_REQUIRE_V2"),
+                requireLicensed = flag("PLAY_INTEGRITY_REQUIRE_LICENSED")
             )
         }
 

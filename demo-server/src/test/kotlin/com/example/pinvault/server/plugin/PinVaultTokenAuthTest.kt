@@ -22,12 +22,18 @@ class PinVaultTokenAuthTest {
     private val secret = ByteArray(32) { 7 }
     private val now = 1_759_660_800L
 
-    private fun ApplicationTestBuilder.app(audience: String? = "api", required: Set<String>? = null) {
+    private fun ApplicationTestBuilder.app(
+        audience: String? = "api", required: Set<String>? = null,
+        certBinding: Boolean = false, certificate: java.security.cert.X509Certificate? = null
+    ) {
         install(PinVaultTokenAuth) {
             secrets = { mapOf("k1" to secret) }
             this.audience = audience
             requireAnnotations = required
             clock = { now }
+            requireCertBinding = certBinding
+            // The test host has no TLS: the connection's verified client certificate is given here.
+            clientCertificate = { certificate }
         }
         routing {
             get("/health") { call.respondText("ok") }
@@ -35,8 +41,19 @@ class PinVaultTokenAuthTest {
         }
     }
 
-    private fun token(kid: String = "k1", key: ByteArray = secret, aud: String = "api", at: Long = now, anno: List<String> = emptyList()) =
-        PinVaultToken.issue(kid, key, "dev-1", aud, "00000000", 1, 300, anno, at)
+    private fun token(
+        kid: String = "k1", key: ByteArray = secret, aud: String = "api", at: Long = now, anno: List<String> = emptyList(),
+        certThumbprint: String? = null
+    ) = PinVaultToken.issue(kid, key, "dev-1", aud, "00000000", 1, 300, anno, at, keyThumbprint = "jkt-of-the-device-key", certThumbprint = certThumbprint)
+
+    private fun certificate(cn: String): java.security.cert.X509Certificate {
+        val key = java.security.KeyPairGenerator.getInstance("EC").apply { initialize(256) }.generateKeyPair()
+        val name = org.bouncycastle.asn1.x500.X500Name("CN=$cn")
+        val builder = org.bouncycastle.cert.jcajce.JcaX509v3CertificateBuilder(name, java.math.BigInteger.ONE,
+            java.util.Date(now * 1000 - 86_400_000), java.util.Date(now * 1000 + 86_400_000), name, key.public)
+        return org.bouncycastle.cert.jcajce.JcaX509CertificateConverter()
+            .getCertificate(builder.build(org.bouncycastle.operator.jcajce.JcaContentSignerBuilder("SHA256withECDSA").build(key.private)))
+    }
 
     @Test
     fun `a valid token passes and the claims reach the handler`() = testApplication {
@@ -81,5 +98,54 @@ class PinVaultTokenAuthTest {
     fun `without an audience any Config API's token is accepted`() = testApplication {
         app(audience = null)
         assertEquals(HttpStatusCode.OK, client.get("/data") { header(PinVaultToken.HEADER, token(aud = "whatever")) }.status)
+    }
+
+    @Test
+    fun `a request that names its device must name the token's`() = testApplication {
+        app()
+        assertEquals(HttpStatusCode.OK, client.get("/data") { header(PinVaultToken.HEADER, token()); header("X-Device-Id", "dev-1") }.status)
+        val other = client.get("/data") { header(PinVaultToken.HEADER, token()); header("X-Device-Id", "dev-2") }
+        assertEquals(HttpStatusCode.Unauthorized, other.status)
+        assertEquals("""{"error":"invalid_token","reason":"device_mismatch"}""", other.bodyAsText())
+        // No X-Device-Id: nothing to compare (a backend that does not send it).
+        assertEquals(HttpStatusCode.OK, client.get("/data") { header(PinVaultToken.HEADER, token()) }.status)
+    }
+
+    @Test
+    fun `cnf claims are read, and ignored unless cert binding is on`() = testApplication {
+        val cert = certificate("device")
+        val bound = token(certThumbprint = PinVaultToken.certThumbprint(cert.encoded))
+        val claims = (PinVaultToken.verify(bound, mapOf("k1" to secret), "api", now) as PinVaultToken.Result.Valid).claims
+        assertEquals("jkt-of-the-device-key", claims.keyThumbprint)
+        assertEquals(PinVaultToken.certThumbprint(cert.encoded), claims.certThumbprint)
+        assertEquals(43, claims.certThumbprint!!.length, "base64url SHA-256, no padding (RFC 8705)")
+        // An old token without cnf, and a bound one over a connection without the certificate: both fine while binding is off.
+        app(certificate = null)
+        assertEquals(HttpStatusCode.OK, client.get("/data") { header(PinVaultToken.HEADER, PinVaultToken.issue("k1", secret, "dev-1", "api", "0", 1, 300, nowSeconds = now)) }.status)
+        assertEquals(HttpStatusCode.OK, client.get("/data") { header(PinVaultToken.HEADER, bound) }.status)
+    }
+
+    @Test
+    fun `PINVAULT_TOKEN_REQUIRE_CERT_BINDING - only over mTLS with the certificate the token names`() = testApplication {
+        val device = certificate("device")
+        val stranger = certificate("stranger")
+        app(certBinding = true, certificate = device)
+        assertEquals(HttpStatusCode.OK, client.get("/data") { header(PinVaultToken.HEADER, token(certThumbprint = PinVaultToken.certThumbprint(device.encoded))) }.status)
+        // Lifted from the device and replayed with another certificate, or attested over plain TLS (no x5t#S256), or issued before cnf.
+        for (refused in listOf(token(certThumbprint = PinVaultToken.certThumbprint(stranger.encoded)), token(),
+            PinVaultToken.issue("k1", secret, "dev-1", "api", "0", 1, 300, nowSeconds = now))) {
+            val response = client.get("/data") { header(PinVaultToken.HEADER, refused) }
+            assertEquals(HttpStatusCode.Unauthorized, response.status)
+            assertEquals("""{"error":"invalid_token","reason":"cert_binding"}""", response.bodyAsText())
+        }
+    }
+
+    @Test
+    fun `cert binding refuses a request without a client certificate`() = testApplication {
+        val device = certificate("device")
+        app(certBinding = true, certificate = null)
+        val response = client.get("/data") { header(PinVaultToken.HEADER, token(certThumbprint = PinVaultToken.certThumbprint(device.encoded))) }
+        assertEquals(HttpStatusCode.Unauthorized, response.status)
+        assertTrue(response.bodyAsText().contains("cert_binding"))
     }
 }

@@ -161,6 +161,9 @@ services:
       ATTESTATION_PACKAGE_NAMES: ${ATTESTATION_PACKAGE_NAMES:-}
       ATTESTATION_SIGNER_SHA256: ${ATTESTATION_SIGNER_SHA256:-}
       ATTESTATION_REQUIRE_VERIFIED_BOOT: ${ATTESTATION_REQUIRE_VERIFIED_BOOT:-}
+      # Kilitli bootloader'da SelfSigned açılışı kabul edilen işletim sistemlerinin
+      # verifiedBootKey özetleri (64 hex, virgülle; GrapheneOS, CalyxOS). Boş = yalnızca Verified.
+      ATTESTATION_TRUSTED_BOOT_KEYS: ${ATTESTATION_TRUSTED_BOOT_KEYS:-}
       # Google'ın iptal listesi (scripts/fetch-attestation-status.sh indirir), bu
       # listenin en fazla kaç saatlik olabileceği (eskiyse hiçbir belge geçmez) ve
       # telefonun en eski kabul edilen güvenlik yaması (YYYYAA, ör. 202401).
@@ -195,7 +198,27 @@ services:
       ATTESTATION_REVEAL_REASONS: ${ATTESTATION_REVEAL_REASONS:-}
       ATTESTATION_RATE_LIMIT: ${ATTESTATION_RATE_LIMIT:-}
       ATTESTATION_DEVICE_RATE_LIMIT: ${ATTESTATION_DEVICE_RATE_LIMIT:-}
+      ATTESTATION_DEVICE_LIMIT: ${ATTESTATION_DEVICE_LIMIT:-}
       MOCK_HOST_REQUIRE_TOKEN: ${MOCK_HOST_REQUIRE_TOKEN:-}
+      # true: mock host'lar token'ı yalnızca, token'ın cnf.x5t#S256 ile adını verdiği
+      # istemci sertifikasıyla gelen mTLS isteğinde kabul eder (TLS mock host her şeyi reddeder).
+      PINVAULT_TOKEN_REQUIRE_CERT_BINDING: ${PINVAULT_TOKEN_REQUIRE_CERT_BINDING:-}
+      # Play Integrity (ATTESTATION.md §11): Play Console yanıt anahtarları (ikisi
+      # birlikte; boş = kapalı), kararın adını vermesi gereken paket, en düşük cihaz
+      # seviyesi, süreler. STALE_PASS: saklı bir "geçti" token'sız turları kaç saniye
+      # kapsar (boş = MAX_AGE). REQUIRE_V2: cihaz kimliğine bağlı olmayan eski nonce'u
+      # reddet; REQUIRE_LICENSED: uygulama Play'den alınmış olmalı.
+      PLAY_INTEGRITY_ENABLED: ${PLAY_INTEGRITY_ENABLED:-}
+      PLAY_INTEGRITY_DECRYPTION_KEY: ${PLAY_INTEGRITY_DECRYPTION_KEY:-}
+      PLAY_INTEGRITY_VERIFICATION_KEY: ${PLAY_INTEGRITY_VERIFICATION_KEY:-}
+      PLAY_INTEGRITY_PACKAGE_NAMES: ${PLAY_INTEGRITY_PACKAGE_NAMES:-}
+      PLAY_INTEGRITY_DEVICE_LEVEL: ${PLAY_INTEGRITY_DEVICE_LEVEL:-}
+      PLAY_INTEGRITY_REQUIRE_APP_RECOGNIZED: ${PLAY_INTEGRITY_REQUIRE_APP_RECOGNIZED:-}
+      PLAY_INTEGRITY_TOKEN_MAX_AGE_SECONDS: ${PLAY_INTEGRITY_TOKEN_MAX_AGE_SECONDS:-}
+      PLAY_INTEGRITY_MAX_AGE_SECONDS: ${PLAY_INTEGRITY_MAX_AGE_SECONDS:-}
+      PLAY_INTEGRITY_STALE_PASS_SECONDS: ${PLAY_INTEGRITY_STALE_PASS_SECONDS:-}
+      PLAY_INTEGRITY_REQUIRE_V2: ${PLAY_INTEGRITY_REQUIRE_V2:-}
+      PLAY_INTEGRITY_REQUIRE_LICENSED: ${PLAY_INTEGRITY_REQUIRE_LICENSED:-}
       # iPhone uygulamaları (ATTESTATION.md §3). Boş = denetlenmez: en eski kabul
       # edilen iOS sürümü (ör. 17.4) ve uygulamayı imzalayan Apple ekip kimlikleri
       # (10 karakter, virgülle).
@@ -216,6 +239,8 @@ services:
       APP_ATTEST_ROOT_CA_FILE: ${APP_ATTEST_ROOT_CA_FILE:-}
       APP_ATTEST_ENVIRONMENT: ${APP_ATTEST_ENVIRONMENT:-}
       APP_ATTEST_MAX_AGE_SECONDS: ${APP_ATTEST_MAX_AGE_SECONDS:-}
+      # true: rapora bağlı olmayan eski (v1) App Attest belgesini reddet (ATTESTATION.md §12).
+      APP_ATTEST_REQUIRE_V2: ${APP_ATTEST_REQUIRE_V2:-}
       # Kayıtta cihaz bütünlüğü (Play Integrity ya da bir RASP ürününün kararı):
       # off | warn | enforce (boş = off). Doğrulayıcı imajda:
       # /opt/pinvault/scripts/play-integrity-verify.sh. Servis hesabı dosyasını

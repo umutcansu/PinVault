@@ -74,7 +74,8 @@ Request:
   "signature": "MEUCIQ…",
   "currentConfigVersion": 7,
   "currentIssuedAt": 1759600000000,
-  "hosts": ["api.example.com", "cdn.example.com"]
+  "hosts": ["api.example.com", "cdn.example.com"],
+  "verdictProvider": { "name": "app-attest", "token": "{\"provider\":\"app-attest\",…}" }
 }
 ```
 
@@ -87,8 +88,9 @@ Request:
 | `attestationChain` | Base64 DER, leaf first. Required on **first** registration under `ATTESTATION_KEY_POLICY=enforce`; optional otherwise; ignored for a device already registered (a key cannot be re-attested). iOS sends none (the Secure Enclave has no such chain): it registers like an Android key without one under `warn` / `off`, and App Attest (§12) stands in for it in `key_unattested`. Under `enforce` the first round's App Attest attestation registers it in place of the chain when `APP_ATTEST_APP_IDS` is configured (§12, "In place of the Android chain"); without it, `403 attestation_required`. |
 | `report` | The report JSON **as a string** (section 3). At most 16 KB. |
 | `signature` | `SHA256withECDSA` (DER) over the UTF-8 bytes of `pinvault-attest:v1:<nonce>:<deviceId>:<sha256-hex(report)>`. |
-| `currentConfigVersion`, `currentIssuedAt` | What the device holds; the server embeds a fresh signed config when either differs from what it would serve. |
+| `currentConfigVersion`, `currentIssuedAt` | What the device holds; the server embeds a fresh signed config when either differs from what it would serve. The server also keeps the highest `currentIssuedAt` each device reported: a lower one from the same key raises `config_rollback` (§3). |
 | `hosts` | Optional, the block's `wantPinsFor` — the same scoping the config GET applies. |
+| `verdictProvider` | Optional, `{name, token}`: a **v2** verdict (§11, §12). A verdict bound to the report cannot sit inside it, so it travels beside it; the report then has no `verdictProvider`. A token here must be v2. Without it the report's own `verdictProvider` is read, as from older apps. |
 
 Server checks, in order (each refusal is counted by the refusal limiter):
 
@@ -99,8 +101,11 @@ Server checks, in order (each refusal is counted by the refusal limiter):
 5. Device key:
    - Device known: `publicKey` must hash to the registered SPKI, else `403 key_mismatch` (an operator resets the device to let a new key in — a reinstall on the same phone generates a new key, so the dashboard shows these).
    - Device unknown: register. Under `ATTESTATION_KEY_POLICY=enforce` the chain must verify (Google hardware root, identity challenge, your package names and signer digests, verified boot) or `403 attestation_required` / `403 attestation_invalid` with the verifier's reason; without a chain, and with `APP_ATTEST_APP_IDS` configured, the report's `app-attest` attestation for this round is verified first and registers an iPhone in its place (§12); under `warn` the verdict is recorded; under `off` nothing is checked (trust on first use).
-6. Policy evaluation (section 4) → `pass` / `reject`, ARC, warnings.
-7. Token issuance on pass; config embedding when the device is behind.
+6. Policy evaluation (section 4) → `pass` / `reject`, ARC, warnings —
+   with the server's own signals from the device's record (§3, "What the
+   server keeps").
+7. Token issuance on pass (its `cnf` names the device key and, over mTLS,
+   the client certificate, §5); config embedding when the device is behind.
 
 Response `200`:
 
@@ -228,12 +233,17 @@ What each probe looks at (Android, no root needed; iOS probes:
 | `unknown_installer` | Installer package not in the allowed set (default: Play, Samsung, Huawei, Amazon stores); empty installer is `sideload`. |
 | `adb_enabled` | `Settings.Global.ADB_ENABLED` / `DEVELOPMENT_SETTINGS_ENABLED`. |
 | `software_key` | The device key's `KeySecurityLevel` is `software` or `unknown` (`tee`, `strongbox`, `secure_enclave` are hardware). On iOS the server reads it from the report whether or not App Attest verified: App Attest vouches for the app, not for the identity key. |
-| `key_unattested` | The device key has no attestation chain (set by the server from its own records once the device is registered). iOS: no App Attest verdict verified for the device (§12) — without `APP_ATTEST_APP_IDS` every iPhone raises it. |
-| `old_patch_level` | Set by the server from `device.securityPatch` and `ATTESTATION_MIN_PATCH_LEVEL`. iOS: from `device.osVersion` (dotted) and `ATTESTATION_MIN_IOS_VERSION`; not checked when that is empty (`ATTESTATION_MIN_PATCH_LEVEL` does not apply to an iPhone). |
+| `key_unattested` | The device key has no passing attestation chain (set by the server from its own records once the device is registered: no chain, a software-level one, one refused under `warn`). iOS: no App Attest verdict verified for the device (§12) — without `APP_ATTEST_APP_IDS` every iPhone raises it. |
+| `old_patch_level` | Set by the server from the **attested** `osPatchLevel` of the registration's hardware chain when there is one, else from `device.securityPatch`, against `ATTESTATION_MIN_PATCH_LEVEL`. iOS: from `device.osVersion` (dotted) and `ATTESTATION_MIN_IOS_VERSION`; not checked when that is empty (`ATTESTATION_MIN_PATCH_LEVEL` does not apply to an iPhone). |
 | `play_integrity` | Set by the server (§11) when a `play-integrity` verdict the report carries does not verify or does not pass: wrong nonce, stale, another package, app not Play-recognized, device below `PLAY_INTEGRITY_DEVICE_LEVEL`. A failed verdict sticks to the device until a fresh pass. Only with the Play Console keys configured. |
 | `play_integrity_missing` | Set by the server (§11) when no Play Integrity verdict was verified for the device within `PLAY_INTEGRITY_MAX_AGE_SECONDS`. Only with the Play Console keys configured; never for an iOS device. |
 | `app_attest` | Set by the server (§12) when an `app-attest` attestation or assertion the report carries does not verify: another root, another challenge, another app or environment, a counter that did not rise, a key the server has no record of (then `app_attest_unknown_key` is added to `warnings`, whatever the policy does with the flag). A failed verdict sticks to the device until a fresh pass. Only with `APP_ATTEST_APP_IDS` configured. |
 | `app_attest_missing` | Set by the server (§12) when an iOS device has no App Attest verdict verified within `APP_ATTEST_MAX_AGE_SECONDS` (a simulator, a device without App Attest). Only with `APP_ATTEST_APP_IDS` configured. |
+| `bootloader_unlocked` | Set by the server on every round when the registration's hardware chain said the bootloader is unlocked (RootOfTrust `deviceLocked` = false). See "What the server keeps" below. |
+| `boot_not_verified` | Set by the server on every round when that chain said the boot was not `Verified` — `SelfSigned` with a `verifiedBootKey` in `ATTESTATION_TRUSTED_BOOT_KEYS` counts as verified (GrapheneOS, CalyxOS). |
+| `key_revoked` | Set by the server when a certificate of the registration's chain is on the attestation revocation list (`ATTESTATION_REVOKED_SERIALS_FILE`) — at registration, or since: the serials are looked up again on every round. |
+| `report_mismatch` | Set by the server when the report contradicts the device's record: `verifiedBootState` `green` while the chain said unlocked or not verified; a `securityPatch` more than a month older than the attested one; `keyAttested: true` on the round that registered the key without a chain. |
+| `config_rollback` | Set by the server when the device reports a lower `currentIssuedAt` than it reported before under the same signing-key set (restored storage, a clock set back). |
 
 On iOS the probes look for jailbreak files (Cydia, Sileo, Zebra, `/var/jb`,
 apt, `sshd`, `bash`; the last two not on the simulator, which sees the Mac's
@@ -248,16 +258,76 @@ not that the device is not jailbroken — so an app whose value justifies it
 should add a dedicated RASP product on top of them.
 
 The report is a measurement by code the attacker can hook. That is true for
-every RASP; what makes it useful is that (a) a hooked report still has to be
-signed by a Keystore key whose attestation chain proves it was made by **your**
-package on real hardware, (b) the server adds signals the client cannot
-forge (attestation, patch level, key level), and (c) tampering with the
-probes costs more than the generic unpinning scripts the pinning path already
-defeats. Apps that want a second opinion plug a `verdictProvider`: the
+every RASP; what makes it useful is that (a) on Android, a hooked report
+still has to be signed by a Keystore key whose attestation chain (sent at
+registration, under `ATTESTATION_KEY_POLICY=enforce` required) proves it was
+made by **your** package on real hardware — on iOS the identity key has no
+such chain: what ties a report to the genuine app there is a v2 App Attest
+verdict made over that very report (§12); (b) the server adds signals the
+client cannot forge (the hardware's RootOfTrust and patch level, revocation,
+key level, config watermarks; below); and (c) tampering with the probes
+costs more than the generic unpinning scripts the pinning path already
+defeats. Code running inside the genuine app on a rooted or jailbroken phone
+can still sign whatever report it likes with the device's own key: what it
+cannot change is what the hardware said at registration. Apps that want a second opinion plug a `verdictProvider`: the
 library forwards its token verbatim. For Play Integrity the reference server
 verifies the token itself (§11) and turns it into the `play_integrity` /
 `play_integrity_missing` flags; any other provider's token is stored and
 shown, not judged.
+
+### What the server keeps (facts from the chain, config watermarks)
+
+The chain is sent once — on the first round of every process until the
+device is registered — and a key cannot be re-attested. What a chain says
+about the **device** holds for the key's lifetime (unlocking or relocking
+a bootloader wipes the Keystore), so the server keeps it and judges every
+later round against it (V26 `key_facts`):
+
+- **When**: only from a chain that verifies link by link up to a trusted
+  root (Google's hardware roots) **and** whose attestation and KeyMint
+  security levels are TEE or StrongBox. Kept under `warn` too, and when a
+  later check refused the key (another package, another device id's
+  challenge, an unlocked bootloader under `ATTESTATION_REQUIRE_VERIFIED_BOOT`,
+  a patch below `ATTESTATION_MIN_PATCH_LEVEL`). A software-level chain — an
+  emulator's — keeps nothing: it says nothing about any device, so the
+  emulator baseline raises none of the flags below.
+- **What**: RootOfTrust (`deviceLocked`, `verifiedBootState`,
+  `verifiedBootKey`), `osVersion`, `osPatchLevel`, `vendorPatchLevel`,
+  `bootPatchLevel`, and the serial of every certificate in the chain. The
+  dashboard shows the first three on the device page; the admin API returns
+  them as `keyFacts`.
+- **Flags**: `bootloader_unlocked`, `boot_not_verified`, `key_revoked` and
+  `report_mismatch` (table above); `old_patch_level` reads the attested
+  patch. A stock, locked phone raises none of them, so `strict` rejects all
+  of them. Root hidden from the client probes does not change them: the
+  hardware said it at registration.
+- **Revocation after the fact**: the chain's serials are looked up in the
+  revocation list as it is on every round, so a keybox Google revokes after
+  a device registered with it raises `key_revoked` from the next round on.
+  Without `ATTESTATION_REVOKED_SERIALS_FILE` there is nothing to look up.
+- **Patch level**: the attested `osPatchLevel` is the level when the key was
+  made. A device that has been updated since still shows the older level
+  until it registers a new key (an operator forgetting the device, or a
+  reinstall). `ATTESTATION_MIN_PATCH_LEVEL` is off by default and
+  `old_patch_level` is `warn` in `strict`; raising the minimum flags such
+  devices until they re-register. A report that claims a patch more than a
+  month OLDER than the attested one is `report_mismatch` (patch levels only
+  rise). The libraries do not yet re-attest periodically with a fresh key;
+  when they do, the server refreshes the facts at that point.
+- **Config watermark**: the highest `currentIssuedAt` a device reported is
+  kept with the server's signing-key set version (V26
+  `config_watermark`). The library's value never goes down — a health-check
+  rollback and `PinVault.reset()` keep it — except when a newer signing-key
+  set resets its watermarks; the server's set version then differs from the
+  stored one and the comparison starts again. 0 or absent (no config held)
+  is not compared; a value more than an hour ahead of the server's clock is
+  not stored. A lower report raises `config_rollback`. False positive: a
+  device whose watermark reset for another reason with the same set — a
+  changed compiled-in signing key or threshold in an app update — reports
+  lower until it fetched a config newer than the old watermark (minutes on a
+  live fleet, since every config the server signs carries the time it was
+  signed). The flag catches a restored backup reported by the genuine
+  library; code that controls the app can report any value.
 
 ## 4. Policy
 
@@ -273,7 +343,9 @@ with `PUT /api/v1/config-apis/{id}/attestation/policy`:
     "unknown_installer": "warn", "adb_enabled": "ignore", "software_key": "warn",
     "key_unattested": "warn", "old_patch_level": "warn",
     "play_integrity": "warn", "play_integrity_missing": "warn",
-    "app_attest": "warn", "app_attest_missing": "warn"
+    "app_attest": "warn", "app_attest_missing": "warn",
+    "bootloader_unlocked": "reject", "boot_not_verified": "reject", "key_revoked": "reject",
+    "report_mismatch": "reject", "config_rollback": "reject"
   },
   "revealReasons": false,
   "tokenTtlSeconds": 300,
@@ -293,12 +365,18 @@ Evaluation:
    / `play_integrity_missing` from the Play Integrity verifier (§11; never
    raised without the Play Console keys), `app_attest` /
    `app_attest_missing` from the App Attest verifier (§12; never raised
-   without `APP_ATTEST_APP_IDS`). An iOS report is held to the iOS rules of §3.
+   without `APP_ATTEST_APP_IDS`), `bootloader_unlocked`,
+   `boot_not_verified`, `key_revoked` and `report_mismatch` from the
+   device's facts, `config_rollback` from its watermark (§3, "What the
+   server keeps"). An iOS report is held to the iOS rules of §3.
 5. ARC = first 8 hex characters of `HMAC-SHA256(nonceKey, sorted reasons ‖ "|" ‖ sorted warnings)`;
    the dashboard resolves an ARC to its reasons from the device's last verdict.
 
 Defaults: `ATTESTATION_POLICY_DEFAULT=strict` (the table above) or `lenient`
 (everything `warn`; what a first rollout uses while the fleet is measured).
+A policy stored before a flag existed gets the default profile's action for
+it: after an upgrade a stored policy rejects the five record-based flags
+under a `strict` default.
 Changing a policy bumps `version`; tokens carry `pol` so a backend can
 require a minimum policy version if it wants to.
 
@@ -309,9 +387,17 @@ header  { "alg": "HS256", "typ": "JWT", "kid": "2026-10-05-01" }
 payload { "iss": "pinvault", "sub": "<deviceId>", "aud": "<configApiId>",
           "iat": 1759660800, "exp": 1759661100, "jti": "…",
           "did": "<deviceId>", "arc": "7f3a9c1e", "pol": 3,
-          "anno": ["staff", "canary"] }        // only when the device has annotations
+          "anno": ["staff", "canary"],         // only when the device has annotations
+          "cnf": { "jkt": "<thumbprint>",       // the device key that signed the report
+                   "x5t#S256": "<thumbprint>" } } // only when the attestation came over mTLS
 ```
 
+- `cnf` (RFC 7800) says what the token was issued to: `jkt` is the RFC 7638
+  JWK SHA-256 thumbprint of the device key (EC P-256, base64url, what a
+  DPoP library computes), `x5t#S256` the base64url SHA-256 of the DER of the
+  client certificate the `POST /api/v1/attest` connection presented
+  (RFC 8705). Tokens from a server before `cnf` have no such claim and
+  still verify everywhere unless the backend requires the binding.
 - Secrets live in `attestation_token_secrets` (32 random bytes each,
   encrypted at rest with `VAULT_AT_REST_PASSWORD`), one **active** at a time,
   the previous ones kept for verification until an operator deletes them.
@@ -322,6 +408,29 @@ payload { "iss": "pinvault", "sub": "<deviceId>", "aud": "<configApiId>",
   `pinvault`, `exp` (with ≤ 60 s leeway), `aud` is its Config API id,
   optionally `anno`. Nothing else is
   needed; there is no call back to the PinVault server on the request path.
+- A request that names its device (`X-Device-Id`) must name the token's
+  `did` (`401` reason `device_mismatch`). Behind mTLS with the identity the
+  app attested with, a backend can require the binding
+  (`PINVAULT_TOKEN_REQUIRE_CERT_BINDING=true` for the reference verifier):
+  the request's client certificate must be the one `cnf.x5t#S256` names, and
+  a token without that claim is refused (`401` reason `cert_binding`).
+- **What a rooted or jailbroken device can do with tokens.** The token is a
+  bearer credential for its lifetime (5 minutes by default). Code running
+  inside the genuine app on such a phone can sign reports with the device's
+  own key, so it can obtain passing tokens as long as the policy passes the
+  device — and a hidden root that the client probes miss passes unless the
+  server's own signals (`bootloader_unlocked`, `boot_not_verified`,
+  `key_revoked`, `report_mismatch`, Play Integrity at `strong`, App Attest)
+  reject it. What binding changes: with the certificate binding a token
+  lifted off the phone is useless elsewhere, because the request must also
+  prove the device's non-exportable private key in the TLS handshake; the
+  `did` check stops one device's token from being presented for another.
+  What binding does not change: the phone itself, with root, can still use
+  its own tokens (and its own key) for every request it makes, and act as a
+  proxy for others. Bound tokens limit how far a compromised device reaches,
+  not whether a compromised device that passes the policy gets in. `cnf.jkt`
+  is there for a backend that adds per-request proof of possession of the
+  device key (DPoP style); the libraries do not send such a proof yet.
 - Reference verifier: `PinVaultTokenAuth` Ktor plugin (`plugin/PinVaultTokenAuth.kt`);
   the mock TLS/mTLS hosts install it when `MOCK_HOST_REQUIRE_TOKEN=true`.
   `SERVER_IMPLEMENTATION_GUIDE.md` has snippets for Node, Python and Java.
@@ -361,19 +470,25 @@ webhooks), `attestation_token_secret_rotated`, `attestation_token_secret_deleted
 | `ATTESTATION_DEVICE_LIMIT` | `100000` | Most registered devices one Config API holds (`0` = unlimited). `POST /api/v1/attest` asks for no credential, so under `warn`/`off` invented device ids could otherwise grow the table without bound; past the cap a new device gets `503 device_limit_reached`, known devices keep attesting. |
 | `ATTESTATION_REVEAL_REASONS` | `false` | Default for a policy's `revealReasons`. |
 | `MOCK_HOST_REQUIRE_TOKEN` | `false` | The mock hosts refuse requests without a valid `PinVault-Token`. |
+| `PINVAULT_TOKEN_REQUIRE_CERT_BINDING` | `false` | With `MOCK_HOST_REQUIRE_TOKEN`: the mock hosts accept a token only over mTLS with the client certificate its `cnf.x5t#S256` names (§5). A plain-TLS mock host then refuses every request. Your own backend sets the same option on `PinVaultTokenAuth` (`requireCertBinding`). |
+| `ATTESTATION_TRUSTED_BOOT_KEYS` | unset | Comma-separated `verifiedBootKey` digests (64 hex characters; colons and case ignored) of operating systems you accept with a `SelfSigned` boot on a locked bootloader (GrapheneOS and CalyxOS publish theirs per device). Such a boot counts as verified for `ATTESTATION_REQUIRE_VERIFIED_BOOT` and does not raise `boot_not_verified`. A malformed value is a start-up error. |
 | `ATTESTATION_MIN_PATCH_LEVEL` | (existing) | Also feeds `old_patch_level`. |
 | `PLAY_INTEGRITY_DECRYPTION_KEY` / `PLAY_INTEGRITY_VERIFICATION_KEY` | unset | §11. The Play Console response keys (Base64); both or neither. Set, the server verifies `play-integrity` verdicts and raises the two flags; unset, Play Integrity is off on the server. `PLAY_INTEGRITY_ENABLED=false` turns it off with the keys in place. |
 | `PLAY_INTEGRITY_PACKAGE_NAMES` | `ATTESTATION_PACKAGE_NAMES` | Package names a verdict must name. Empty on both: any package (warned at start). |
 | `PLAY_INTEGRITY_DEVICE_LEVEL` | `device` | `basic` / `device` / `strong`: the least `deviceRecognitionVerdict` that passes. |
 | `PLAY_INTEGRITY_REQUIRE_APP_RECOGNIZED` | `true` | `appRecognitionVerdict` must be `PLAY_RECOGNIZED` (sideloaded and debug builds are not). |
 | `PLAY_INTEGRITY_TOKEN_MAX_AGE_SECONDS` | `600` | A token's `timestampMillis` may be at most this old (30–86400). |
-| `PLAY_INTEGRITY_MAX_AGE_SECONDS` | `86400` | How long a verified verdict covers the device's later rounds before `play_integrity_missing` (60–2592000). |
+| `PLAY_INTEGRITY_MAX_AGE_SECONDS` | `86400` | How long a verified verdict counts (60–2592000): a failed one keeps `play_integrity` raised this long; after it, `play_integrity_missing`. |
+| `PLAY_INTEGRITY_STALE_PASS_SECONDS` | `PLAY_INTEGRITY_MAX_AGE_SECONDS` | How long a stored **pass** covers rounds that carry no token (60–2592000). The provider asks Google every few hours (default 6 h) and a hooked app can drop the token; set it a little above the app's `minInterval` (e.g. `25200` for 6 h) so a dropped token turns into `play_integrity_missing` within hours, not a day. |
+| `PLAY_INTEGRITY_REQUIRE_V2` | `false` (production profile: `true`) | Refuse a token asked with the round's bare nonce (v1) — `play_integrity` with reason `nonce_v1`; v2 binds it to the device id too (§11). Off, v1 passes with the warning `play_integrity_v1`. |
+| `PLAY_INTEGRITY_REQUIRE_LICENSED` | `false` | `accountDetails.appLicensingVerdict` must be `LICENSED` (the user got the app from Play), else `play_integrity` with reason `app_unlicensed`. For apps sold or distributed only through Play. |
 | `ATTESTATION_MIN_IOS_VERSION` | unset | Dotted iOS version (`17.4`): an iOS report with an older (or no) `device.osVersion` raises `old_patch_level`. Unset: not checked. A malformed value is a start-up error. |
 | `ATTESTATION_IOS_TEAM_IDS` | unset | Comma-separated 10-character Apple team ids: an iOS report whose `app.teamId` is not one raises `app_integrity`. Unset: not checked. The bundle id is checked against `ATTESTATION_PACKAGE_NAMES`. |
 | `APP_ATTEST_APP_IDS` | unset | §12. Comma-separated `TEAMID.bundle.id`. Set, the server verifies `app-attest` verdicts (attestation rounds and enrollment), raises the two flags, and takes an iPhone's App Attest attestation in place of the Android chain under `ENROLLMENT_ATTESTATION`, `USER_AUTH_ATTESTATION` and `ATTESTATION_KEY_POLICY`; unset, App Attest is off on the server and those three refuse every iPhone under `enforce` (warned at start). |
 | `APP_ATTEST_ROOT_CA_FILE` | unset | Path of Apple's App Attestation Root CA (PEM). Required with `APP_ATTEST_APP_IDS`: missing or unreadable, the server does not start. |
 | `APP_ATTEST_ENVIRONMENT` | `production` | `production` / `development`: the aaguid an attestation must carry (the app's `appattest-environment` entitlement). |
 | `APP_ATTEST_MAX_AGE_SECONDS` | `86400` | How long a verified App Attest verdict covers rounds without one before `app_attest_missing` (60–2592000). |
+| `APP_ATTEST_REQUIRE_V2` | `false` (production profile: `true`) | Refuse an attestation round's verdict made with the v1 client data hash (nonce and device id only, not the report) — `app_attest` with reason `client_data_v1`, and `attestation_invalid` / `app_attest_client_data_v1` where it stands in for the chain. Off, v1 passes with the warning `app_attest_v1` (§12). |
 
 ## 8. Library behaviour
 
@@ -463,13 +578,17 @@ places that do not depend on each other:
 | Policy | `play_integrity` and `play_integrity_missing`, `reject` / `warn` / `ignore` (default `warn` in both profiles) | `ignore` records the verdict for the dashboard and changes no outcome. |
 
 **Client.** On an attestation round the provider asks Google for a
-**classic** integrity token with the round's attestation nonce as the
-Play Integrity nonce (the reference server's nonces are base64url of 40
-bytes, within Play Integrity's 16–500 byte URL-safe rule; a server of your
-own must issue nonces of that shape) and the app's Cloud project number.
-The token goes into the report as
+**classic** integrity token with the app's Cloud project number and, as
+the Play Integrity nonce (v2),
+`base64url-nopad(SHA-256(UTF-8("pinvault-play-integrity:v2:" + nonce + ":" + deviceId)))`
+— 43 characters, within Play Integrity's 16–500 URL-safe rule — so a token
+is bound to this round **and** this device id. An older provider used the
+round's nonce itself (v1: the reference server's nonces are base64url of
+40 bytes); the server still accepts it with the warning `play_integrity_v1`
+unless `PLAY_INTEGRITY_REQUIRE_V2=true`. The token goes into the report as
 `"verdictProvider": {"name": "play-integrity", "token": "<JWE>"}` and is
-covered by the device key's signature over the report. Classic requests are
+covered by the device key's signature over the report; the request's own
+`verdictProvider` (§2.2) is accepted too, for a v2 token only. Classic requests are
 quota-limited (10 000 per app per day by default) while the library attests
 every five minutes, so the provider asks at most once per `minInterval`
 (default 6 hours; 0 = every round) and answers null in between — the
@@ -486,14 +605,18 @@ header), then JWS `ES256` under the verification key, then the verdict JSON.
 Checks, each with a fixed reason stored in the device's `play_integrity`
 summary: `malformed` / `unsupported_alg` / `decrypt_failed`,
 `signature_invalid`, `payload_invalid`, `nonce_mismatch`
-(`requestDetails.nonce` ≠ this round's nonce), `token_stale`
+(`requestDetails.nonce` is neither this round's v2 nonce nor — for a token
+in the report — its v1 nonce), `nonce_v1` (a v1 token under
+`PLAY_INTEGRITY_REQUIRE_V2`, or beside the report), `token_stale`
 (`timestampMillis` older than `PLAY_INTEGRITY_TOKEN_MAX_AGE_SECONDS` or
 more than a minute in the future), `package_mismatch`
 (`requestPackageName` / `appIntegrity.packageName` not in
 `PLAY_INTEGRITY_PACKAGE_NAMES`, falling back to `ATTESTATION_PACKAGE_NAMES`),
 `app_unrecognized` (`appRecognitionVerdict` ≠ `PLAY_RECOGNIZED`, unless
-`PLAY_INTEGRITY_REQUIRE_APP_RECOGNIZED=false`), `device_integrity`
-(`deviceRecognitionVerdict` below `PLAY_INTEGRITY_DEVICE_LEVEL`). Nothing is
+`PLAY_INTEGRITY_REQUIRE_APP_RECOGNIZED=false`), `app_unlicensed`
+(`appLicensingVerdict` ≠ `LICENSED` while `PLAY_INTEGRITY_REQUIRE_LICENSED=true`),
+`device_integrity` (`deviceRecognitionVerdict` below
+`PLAY_INTEGRITY_DEVICE_LEVEL`). Nothing is
 sent to Google on the request path. The outcome is stored with the device
 (`play_integrity_result` pass | fail, `play_integrity_at`, and a summary:
 reason, device verdicts, app verdict, licensing, package, version; never
@@ -503,16 +626,19 @@ dashboard.
 Flags per round:
 
 - token present → verified; `play_integrity` raised when it fails;
-- no token, a stored verdict younger than `PLAY_INTEGRITY_MAX_AGE_SECONDS`
-  → that verdict stands (`pass` raises nothing, `fail` raises
-  `play_integrity`);
-- no token and no fresh verdict → `play_integrity_missing`.
+  `play_integrity_v1` in `warnings` when a v1 token passed;
+- no token, a stored pass younger than `PLAY_INTEGRITY_STALE_PASS_SECONDS`
+  → it stands (nothing raised);
+- no token, a stored fail younger than `PLAY_INTEGRITY_MAX_AGE_SECONDS` →
+  `play_integrity`;
+- otherwise → `play_integrity_missing`.
 
-A device that sends a token minted for another round (a replay) fails
-`nonce_mismatch`; a token made for another developer's keys fails
+A device that sends a token minted for another round (a replay), or with
+the v2 nonce for another device id, fails `nonce_mismatch`; a token made for another developer's keys fails
 `decrypt_failed`; a hooked report cannot change what Google signed, and a
 report that drops the token lands on `play_integrity_missing` once the
-stored verdict ages out. What Play Integrity does not do is replace the
+stored pass is older than `PLAY_INTEGRITY_STALE_PASS_SECONDS` (default 24 h:
+shorten it for a fleet that should not ride on a day-old pass). What Play Integrity does not do is replace the
 report: the two measure different things (Google: the device's integrity
 and the app's provenance as Play sees them; the report: this process, now),
 and the policy weighs both.
@@ -521,6 +647,10 @@ and the policy weighs both.
 fleet attesting with Play Integrity; then `reject` on `play_integrity`
 first, and on `play_integrity_missing` only once every supported app
 version ships the provider — a build without it is `missing` for ever.
+High-value apps use `PLAY_INTEGRITY_DEVICE_LEVEL=strong` (hardware-backed,
+a recent patch) and, when sold or distributed only through Play,
+`PLAY_INTEGRITY_REQUIRE_LICENSED=true`; once every app version sends the v2
+nonce, `PLAY_INTEGRITY_REQUIRE_V2=true`.
 Emulators and debug builds fail `device_integrity` / `app_unrecognized` by
 design; a lab server runs `PLAY_INTEGRITY_REQUIRE_APP_RECOGNIZED=false` and
 `PLAY_INTEGRITY_DEVICE_LEVEL=basic`, or leaves the keys unset.
@@ -555,10 +685,30 @@ the root's subject and SHA-256 fingerprint, to compare with Apple's page.
 string>"}`; the token is
 `{"provider":"app-attest","keyId":"<Base64>","attestation":"<Base64 CBOR>"}`
 on a key's first round, `…"assertion":"<Base64 CBOR>"}` on later ones. The
-client data hash of a round is
-`SHA-256(UTF-8("pinvault-app-attest:v1:" + nonce + ":" + deviceId))`, so a
-verdict is bound to the round's nonce and device id (and, like every
-verdict, covered by the device key's signature over the report).
+client data hash of a round, v2, is
+
+```
+SHA-256(UTF-8("pinvault-app-attest:v2:" + canonical))
+canonical = "pinvault-attest:v1:" + nonce + ":" + deviceId + ":" + sha256-hex(report)
+```
+
+— `canonical` is exactly the string the identity key signs (§2.2), so
+Apple's verdict is bound to the round's nonce, the device id **and the
+report**. A verdict over the report cannot be inside it: the report carries
+no `verdictProvider` and the token travels in the request's own
+`verdictProvider` (§2.2). Older apps put the token in the report with the v1
+hash `SHA-256(UTF-8("pinvault-app-attest:v1:" + nonce + ":" + deviceId))`,
+bound to the round but not to the report; the server tries v2 first, then
+(for a token in the report only) v1, which passes with the warning
+`app_attest_v1` unless `APP_ATTEST_REQUIRE_V2=true` (`app_attest`, reason
+`client_data_v1`). A token beside the report must be v2.
+
+What v2 adds: the report and Apple's verdict now come from the same place.
+On iOS the identity key has no attestation chain, so before v2 a program
+outside the app that could use that key could sign a report of its own
+and pair it with a genuine verdict the app had made for the round. With v2 the
+verdict covers one report only. It does not stop code running **inside**
+the genuine app, which asks App Attest over whatever report it built.
 
 **Attestation** (a new key), checked as Apple's "Validating apps that
 connect to your server" lays it out, each failure with a fixed reason in
@@ -590,7 +740,8 @@ environment; never the token or the nonce) and shown on the device page.
 Flags per round (only with `APP_ATTEST_APP_IDS`):
 
 - token present → verified; `app_attest` raised when it fails; a pass
-  lifts `key_unattested` for the iOS device;
+  lifts `key_unattested` for the iOS device; `app_attest_v1` in `warnings`
+  when it passed with the v1 hash;
 - an unknown key → `app_attest`, and `app_attest_unknown_key` in
   `warnings` whatever the policy says: the app drops its key and attests a
   new one next round (an operator forgetting the device has the same
@@ -623,7 +774,7 @@ admitted in the others (each needs its own):
 |---|---|---|---|
 | Enrollment, `ENROLLMENT_ATTESTATION=warn\|enforce` (every CSR path) | body field `appAttestation`, no `attestationChain` | `SHA-256(UTF-8(integrityRequestHash))` — the 43-character hash of the CSR and the device id that is stored (`deviceUid`, else `deviceId`) | identity attestation `attested`, reason `app_attest`; the device id counts as proven, as with a passing chain |
 | Screen-lock key, `USER_AUTH_ATTESTATION` (`purpose: user_auth`, first key and replacement) | body field `appAttestation`, no `attestationChain` | `SHA-256(UTF-8("pinvault-user-auth-key:v1:" + deviceId + ":" + Base64(SHA-256(SPKI DER of the key))))` | `attested`, `keyKind: app_attest` |
-| Attestation registration, `ATTESTATION_KEY_POLICY=enforce` (unknown device, no chain) | the first round's `verdictProvider` `app-attest` with an `attestation` | the round's, `SHA-256(UTF-8("pinvault-app-attest:v1:" + nonce + ":" + deviceId))` | device key `attested`, reason `app_attest`; its App Attest key on record (counter 0), the device held to platform `ios` |
+| Attestation registration, `ATTESTATION_KEY_POLICY=enforce` (unknown device, no chain) | the first round's `verdictProvider` `app-attest` with an `attestation` (beside the report for v2) | the round's: v2 `SHA-256(UTF-8("pinvault-app-attest:v2:" + canonical))`, or v1 `SHA-256(UTF-8("pinvault-app-attest:v1:" + nonce + ":" + deviceId))` unless `APP_ATTEST_REQUIRE_V2` | device key `attested`, reason `app_attest`; its App Attest key on record (counter 0), the device held to platform `ios` |
 
 `appAttestation` is a JSON **string**, the token of PORTING.md §6
 (`{"provider":"app-attest","keyId":"<Base64>","attestation":"<Base64 CBOR>"}`),
@@ -662,7 +813,10 @@ detection) through `environmentGuard` and `integrityTokenProvider`.
 **Rollout.** As for §11: `warn` on both flags until the dashboard shows the
 iOS fleet attesting, then `reject` on `app_attest`, and on
 `app_attest_missing` only once every supported app version ships the
-provider (simulators and older devices are `missing` for ever). A
+provider (simulators and older devices are `missing` for ever). Once no
+supported app version sends v1 (the dashboard counts `app_attest_v1`
+warnings), set `APP_ATTEST_REQUIRE_V2=true`; the production profile of
+`sample-host` sets it. A
 development build attests with the development aaguid: a lab server runs
 `APP_ATTEST_ENVIRONMENT=development`. Before switching an iOS fleet to
 `enforce`, set `APP_ATTEST_APP_IDS` and `APP_ATTEST_ROOT_CA_FILE`: without

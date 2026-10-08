@@ -716,13 +716,27 @@ The library talks to two endpoints on the config server:
 | Endpoint | What it does |
 |---|---|
 | `GET /api/v1/attest/challenge` | Answers `{"nonce": "…", "expiresIn": 120, "serverTime": 1759660800000}`. The nonce is single-use and short-lived. |
-| `POST /api/v1/attest` | Takes `{v: 1, nonce, deviceId, publicKey, attestationChain?, report, signature, currentConfigVersion?, currentIssuedAt?, hosts?}` where `signature` is `SHA256withECDSA` over the UTF-8 bytes of `pinvault-attest:v1:<nonce>:<deviceId>:<sha256-hex(report)>` with the device's EC P-256 Keystore key (the same key that signs mTLS CSRs). Answers `{"result": "pass"|"reject", "arc", "warnings", "rejectionReasons"?, "token"?, "tokenExpiresAt"?, "tokenTtlSeconds", "nextAttestIn", "configChanged", "config"?, "device": {...}, "policyVersion"}`. On `pass` the `token` is the `PinVault-Token`; on `reject` there is no token and no `config`. |
+| `POST /api/v1/attest` | Takes `{v: 1, nonce, deviceId, publicKey, attestationChain?, report, signature, currentConfigVersion?, currentIssuedAt?, hosts?, verdictProvider?}` where `signature` is `SHA256withECDSA` over the UTF-8 bytes of `pinvault-attest:v1:<nonce>:<deviceId>:<sha256-hex(report)>` with the device's EC P-256 Keystore key (the same key that signs mTLS CSRs). Answers `{"result": "pass"|"reject", "arc", "warnings", "rejectionReasons"?, "token"?, "tokenExpiresAt"?, "tokenTtlSeconds", "nextAttestIn", "configChanged", "config"?, "device": {...}, "policyVersion"}`. On `pass` the `token` is the `PinVault-Token`; on `reject` there is no token and no `config`. |
 
 The reference server registers the device key on first sight (optionally
 requiring an Android Key Attestation chain, `ATTESTATION_KEY_POLICY`),
 evaluates the report against a per-Config-API policy and signs the token.
 If you implement the server yourself, keep the order of checks in
 ATTESTATION.md §2.2 and never answer a token to a rejected device.
+
+Keep what the registration's chain proved and judge every later round
+against it (ATTESTATION.md §3, "What the server keeps"): from a chain that
+verified to Google's root at the TEE / StrongBox level (never a software
+one — emulators), store the RootOfTrust (`deviceLocked`,
+`verifiedBootState`, `verifiedBootKey`), the patch levels and the
+certificate serials, also when you register the key unattested. Raise
+`bootloader_unlocked` / `boot_not_verified` from them on every round,
+look the serials up in the current revocation list every round
+(`key_revoked`), take the attested `osPatchLevel` over the report's, and
+treat a report that contradicts the record (a `green` boot on an unlocked
+record, a patch older than the attested one) as tampering. Keep the
+highest `currentIssuedAt` each device reported per signing-key set version
+and treat a lower one as `config_rollback`.
 
 **iOS clients.** The protocol is the same; the report (ATTESTATION.md §3)
 carries `device.platform: "ios"`, `device.osVersion` (dotted, `26.5`),
@@ -749,7 +763,8 @@ header  { "alg": "HS256", "typ": "JWT", "kid": "2026-10-05-01" }
 payload { "iss": "pinvault", "sub": "<deviceId>", "aud": "<configApiId>",
           "iat": 1759660800, "exp": 1759661100, "jti": "…",
           "did": "<deviceId>", "arc": "7f3a9c1e", "pol": 3,
-          "anno": ["staff", "canary"] }        // only when the device has annotations
+          "anno": ["staff", "canary"],         // only when the device has annotations
+          "cnf": { "jkt": "…", "x5t#S256": "…" } }   // x5t#S256 only when the device attested over mTLS
 ```
 
 1. Load the secrets once (and again after a rotation):
@@ -767,11 +782,19 @@ payload { "iss": "pinvault", "sub": "<deviceId>", "aud": "<configApiId>",
    (body `{"error":"invalid_token","reason":"expired|signature|issuer|audience|missing|malformed|unknown_kid"}`).
    The library recognises a `401` that names `PinVault-Token`, attests once
    more and retries the request once.
-5. If your API is also behind mTLS with PinVault-issued client certificates,
-   compare the token's `sub` with the device id of the connection's
-   certificate and refuse a mismatch: a token is a bearer credential for its
-   5 minutes, and this binding closes the window in which a token lifted
-   from a passing device could be replayed from elsewhere.
+5. If the request names its device (`X-Device-Id`), it must be the token's
+   `did`; refuse a mismatch (`reason` `device_mismatch`).
+6. If your API is also behind mTLS with the PinVault-issued client
+   certificate the app attests with, require the token's `cnf.x5t#S256` to
+   equal the base64url (no padding) SHA-256 of the DER of the connection's
+   client certificate, and refuse a token without it (`reason`
+   `cert_binding`). A token is otherwise a bearer credential for its 5
+   minutes; bound, a token lifted from the device is useless without the
+   device's private key. It does not stop the device itself — a rooted
+   phone running the genuine app gets passing tokens as long as the policy
+   passes it (ATTESTATION.md §5). `cnf.jkt` is the RFC 7638 thumbprint of
+   the device key, for a backend that adds per-request proof of
+   possession.
 
 Attestation protects only what your backend enforces. A device the policy
 rejects keeps the pins it already holds until they expire; what it loses is
@@ -808,6 +831,17 @@ fun verifyPinVaultToken(token: String, secrets: Map<String, ByteArray>, audience
     // Optional: payload["anno"]?.jsonArray must contain "staff"; payload["pol"] >= 3.
     return payload   // payload["did"] is the device id, payload["arc"] the result code
 }
+
+/** Steps 5 and 6: the request's device id, and (behind mTLS) its client certificate. */
+fun boundToRequest(payload: JsonObject, deviceIdHeader: String?, clientCertDer: ByteArray?, requireCertBinding: Boolean): Boolean {
+    if (deviceIdHeader != null && deviceIdHeader != payload["did"]?.jsonPrimitive?.content) return false   // device_mismatch
+    if (!requireCertBinding) return true
+    val bound = (payload["cnf"] as? JsonObject)?.get("x5t#S256")?.jsonPrimitive?.content ?: return false   // cert_binding
+    val presented = clientCertDer ?: return false
+    val thumbprint = Base64.getUrlEncoder().withoutPadding()
+        .encodeToString(java.security.MessageDigest.getInstance("SHA-256").digest(presented))
+    return java.security.MessageDigest.isEqual(bound.toByteArray(), thumbprint.toByteArray())
+}
 ```
 
 **Node (`jsonwebtoken`)**
@@ -831,6 +865,14 @@ app.use((req, res, next) => {
   verifyPinVaultToken(token, 'default-tls', (err, claims) => {
     if (err) return refuse(res, err.name === 'TokenExpiredError' ? 'expired' : err.message === 'unknown_kid' ? 'unknown_kid' : 'signature');
     if (!(claims.anno || []).includes('staff')) { /* optional annotation rule */ }
+    const claimed = req.get('X-Device-Id');
+    if (claimed && claimed !== claims.did) return refuse(res, 'device_mismatch');
+    if (REQUIRE_CERT_BINDING) {   // behind mTLS (Node's TLS server with requestCert: true)
+      const cert = req.socket.getPeerCertificate && req.socket.getPeerCertificate();
+      const presented = cert && cert.raw
+        ? require('crypto').createHash('sha256').update(cert.raw).digest('base64url') : null;
+      if (!presented || !claims.cnf || claims.cnf['x5t#S256'] !== presented) return refuse(res, 'cert_binding');
+    }
     req.device = claims.did; req.arc = claims.arc;
     next();
   });
@@ -844,7 +886,7 @@ function refuse(res, reason) {
 **Python (`PyJWT`)**
 
 ```python
-import base64, jwt
+import base64, hashlib, jwt
 from jwt import InvalidTokenError, ExpiredSignatureError, InvalidAudienceError
 
 # kid -> 32 raw bytes, from GET /api/v1/attestation/token-secrets
@@ -874,6 +916,14 @@ def require_pinvault_token():
         return refuse("unknown_kid" if "unknown_kid" in str(e) else "signature")
     if "staff" not in claims.get("anno", []):
         pass  # optional annotation rule
+    claimed = request.headers.get("X-Device-Id")
+    if claimed and claimed != claims["did"]:
+        return refuse("device_mismatch")
+    if REQUIRE_CERT_BINDING:  # behind mTLS: the client certificate's DER, e.g. from your TLS terminator
+        der = client_certificate_der()
+        presented = base64.urlsafe_b64encode(hashlib.sha256(der).digest()).rstrip(b"=").decode() if der else None
+        if not presented or claims.get("cnf", {}).get("x5t#S256") != presented:
+            return refuse("cert_binding")
     g.device_id, g.arc = claims["did"], claims.get("arc")
 
 def refuse(reason):
@@ -890,7 +940,10 @@ backend has the new secret.
 **Play Integrity in the report (optional, ATTESTATION.md §11).** When the
 app registers `PlayIntegrityVerdictProvider`, the report carries
 `"verdictProvider": {"name": "play-integrity", "token": "<JWE>"}` — a
-classic Play Integrity token whose nonce is this round's attestation nonce.
+classic Play Integrity token whose nonce is, v2,
+`base64url-nopad(SHA-256(UTF-8("pinvault-play-integrity:v2:" + nonce + ":" + deviceId)))`
+(older providers: this round's attestation nonce itself, v1; accept it
+with a warning while older app versions are in use).
 A server of your own verifies it with the response keys from the Play
 Console (JWE `A256KW`/`A256GCM` with the decryption key, then JWS `ES256`
 with the verification key), checks `requestDetails.nonce` against the
@@ -906,9 +959,15 @@ own (`play_integrity_missing`), not as a failure. A report without
 report may carry `"verdictProvider": {"name": "app-attest", "token":
 "<JSON string>"}`, the token being
 `{"provider":"app-attest","keyId":"<Base64>","attestation":"<Base64 CBOR>"}`
-on the key's first round and `{…,"assertion":"<Base64 CBOR>"}` afterwards,
-both made with the client data hash
-`SHA-256(UTF-8("pinvault-app-attest:v1:" + nonce + ":" + deviceId))`.
+on the key's first round and `{…,"assertion":"<Base64 CBOR>"}` afterwards.
+The current library makes both with the v2 client data hash
+`SHA-256(UTF-8("pinvault-app-attest:v2:" + canonical))`, `canonical` being
+the string the `signature` covers, and sends the token in the request's
+own `verdictProvider` (beside the report, which cannot carry a verdict over
+itself); older apps put it in the report with the v1 hash
+`SHA-256(UTF-8("pinvault-app-attest:v1:" + nonce + ":" + deviceId))`. Try
+v2, then — for a token in the report only — v1, and stop accepting v1 once
+no supported app version sends it.
 Verify an attestation against Apple's App Attestation Root CA (download it
 once from Apple; never on the request path), store the key id, public key
 and counter 0 per device, then verify each assertion with that key and
@@ -983,7 +1042,7 @@ All paths are relative to `configUrl`. Leading `/` is stripped.
 - [ ] Device keys keep their `algorithm`: `end_to_end` / `user_auth` files for an iOS key (`RSA-OAEP-SHA256-MGF1-SHA256`) are wrapped with MGF1-SHA256, Android's (`RSA-OAEP-SHA256`) with MGF1-SHA1
 - [ ] If iOS apps attest: a report with `device.platform: "ios"` is judged by bundle id, team id and iOS version, and an `app-attest` verdict against Apple's App Attestation Root CA (ATTESTATION.md §12)
 - [ ] Where you require an Android chain and serve iPhones: `appAttestation` (a JSON string) is verified as a fresh key's App Attest attestation with the client data hash of that request (enrollment, user-auth key, first round), recorded as App Attest, not as a hardware-attested key
-- [ ] If the app attests: `/api/v1/attest/challenge` and `/api/v1/attest` as in ATTESTATION.md, no token to a rejected device, and your API verifies `PinVault-Token` (HS256 by `kid`, `exp` ≤ 60 s leeway, `aud`) and answers `401` naming `PinVault-Token` otherwise
+- [ ] If the app attests: `/api/v1/attest/challenge` and `/api/v1/attest` as in ATTESTATION.md, no token to a rejected device, and your API verifies `PinVault-Token` (HS256 by `kid`, `exp` ≤ 60 s leeway, `aud`, `did` = `X-Device-Id` when sent, `cnf.x5t#S256` = the client certificate behind mTLS) and answers `401` naming `PinVault-Token` otherwise; the attestation keeps the registration chain's facts and judges every round against them
 
 ---
 

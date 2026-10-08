@@ -244,7 +244,8 @@ private fun startServer() {
         (if (userAuthAttestation.revokedSerials.isEmpty()) "" else ", ${userAuthAttestation.revokedSerials.size} revoked serial(s)") +
         (if (userAuthAttestation.requireVerifiedBoot) "" else ", verified boot NOT required") +
         (if (userAuthAttestation.requirePerUse) ", per-use user-auth keys only" else "") +
-        (userAuthAttestation.minPatchLevel?.let { ", security patch $it or newer" } ?: ""))
+        (userAuthAttestation.minPatchLevel?.let { ", security patch $it or newer" } ?: "") +
+        (if (userAuthAttestation.trustedBootKeys.isEmpty()) "" else ", ${userAuthAttestation.trustedBootKeys.size} trusted SelfSigned boot key(s)"))
     // Apple App Attest (ATTESTATION.md §12), optional: with APP_ATTEST_APP_IDS the server
     // verifies iOS apps' App Attest objects itself — at enrollment, on every attestation
     // round, and in place of the Android chain where a setting says enforce (enrollment,
@@ -545,6 +546,13 @@ private fun startServer() {
         "true", "on" -> true
         else -> error("MOCK_HOST_REQUIRE_TOKEN must be true or false (got '${com.example.pinvault.server.service.ServerEnv.get("MOCK_HOST_REQUIRE_TOKEN")}')")
     }
+    // ...and, with PINVAULT_TOKEN_REQUIRE_CERT_BINDING, only over mTLS with the client
+    // certificate the token's cnf.x5t#S256 names (ATTESTATION.md §5): a TLS mock host then refuses everything.
+    val tokenRequireCertBinding = when (com.example.pinvault.server.service.ServerEnv.get("PINVAULT_TOKEN_REQUIRE_CERT_BINDING")?.trim()?.lowercase()) {
+        null, "", "false", "off" -> false
+        "true", "on" -> true
+        else -> error("PINVAULT_TOKEN_REQUIRE_CERT_BINDING must be true or false (got '${com.example.pinvault.server.service.ServerEnv.get("PINVAULT_TOKEN_REQUIRE_CERT_BINDING")}')")
+    }
     val attestationPolicyStore = com.example.pinvault.server.store.AttestationPolicyStore(db)
     val attestedDeviceStore = com.example.pinvault.server.store.AttestedDeviceStore(db)
     // The HS256 secrets of PinVault-Token, encrypted at rest; the first one is made on first use.
@@ -573,19 +581,24 @@ private fun startServer() {
         playIntegrity = playIntegrity,
         appAttest = appAttest,
         // ATTESTATION_MIN_IOS_VERSION / ATTESTATION_IOS_TEAM_IDS: what an iOS report is held to.
-        ios = com.example.pinvault.server.service.attestation.IosAttestationRules.fromEnv()
+        ios = com.example.pinvault.server.service.attestation.IosAttestationRules.fromEnv(),
+        // A newer signing-key set resets the devices' config watermarks: config_rollback starts again under it.
+        keySetVersion = { signingKeySetService.currentVersion() }
     )
     val attestationLimits = com.example.pinvault.server.route.AttestationLimits.of(attestationRateLimit, attestationDeviceRateLimit)
     println("ATTESTATION_ENABLED=${if (attestationEnabled) "true" else "false"}, ATTESTATION_KEY_POLICY=${attestationKeyPolicy.name.lowercase()}, " +
         "ATTESTATION_POLICY_DEFAULT=${attestationDefaults.profile} (token ${attestationDefaults.tokenTtlSeconds} s, re-attest every " +
         "${attestationDefaults.attestIntervalSeconds} s, reasons ${if (attestationDefaults.revealReasons) "revealed" else "hidden"}), " +
         "nonce ${attestationNonceTtl} s, limits $attestationRateLimit/address and $attestationDeviceRateLimit/device per 10 min" +
-        (if (mockHostRequireToken) ", mock hosts require PinVault-Token" else ""))
+        (if (mockHostRequireToken) ", mock hosts require PinVault-Token" else "") +
+        (if (mockHostRequireToken && tokenRequireCertBinding) " bound to the client certificate" else ""))
     if (playIntegrity != null) {
         println("PLAY_INTEGRITY: verifying play-integrity verdicts locally (device level ${playIntegrity.deviceLevel.name.lowercase()}, " +
             "app recognized ${if (playIntegrity.requireAppRecognized) "required" else "not required"}, packages " +
             (if (playIntegrity.packageNames.isEmpty()) "any" else playIntegrity.packageNames.joinToString()) +
-            ", token at most ${playIntegrity.tokenMaxAgeSeconds} s old, verdict kept ${playIntegrity.verdictMaxAgeSeconds} s)")
+            ", token at most ${playIntegrity.tokenMaxAgeSeconds} s old, verdict kept ${playIntegrity.verdictMaxAgeSeconds} s, a pass covers " +
+            "rounds without a token for ${playIntegrity.stalePassSeconds} s, nonce ${if (playIntegrity.requireV2) "v2 only" else "v2 (v1 with a warning)"}" +
+            (if (playIntegrity.requireLicensed) ", LICENSED required" else "") + ")")
         if (playIntegrity.packageNames.isEmpty()) {
             System.err.println("WARNING: PLAY_INTEGRITY_PACKAGE_NAMES and ATTESTATION_PACKAGE_NAMES are both empty — a Play Integrity " +
                 "verdict for any app whose developer holds these keys passes. Set the package name.")
@@ -596,7 +609,8 @@ private fun startServer() {
     if (appAttest != null) {
         // The fingerprint lets the operator compare the file with the root Apple publishes.
         println("APP_ATTEST: verifying app-attest verdicts locally (apps ${appAttest.appIds.joinToString()}, environment " +
-            "${appAttest.environment.wire}, verdict kept ${appAttest.verdictMaxAgeSeconds} s; root " +
+            "${appAttest.environment.wire}, verdict kept ${appAttest.verdictMaxAgeSeconds} s, client data " +
+            "${if (appAttest.requireV2) "v2 only" else "v2 (v1 with a warning)"}; root " +
             appAttest.roots.joinToString { "${it.subjectX500Principal.name} SHA-256 ${com.example.pinvault.server.service.attestation.AttestationService.sha256Hex(it.encoded)}" } + ")" +
             "; stands in for the Android chain where enforce asks for one (enrollment, user-auth keys, attestation registration)")
     } else {
@@ -607,6 +621,7 @@ private fun startServer() {
             secrets = { attestationTokenSecretStore.secretsByKid() }
             // A mock host does not know which Config API its app attests with: any `aud` a listed secret signed.
             audience = null
+            requireCertBinding = tokenRequireCertBinding
         }
     }
 

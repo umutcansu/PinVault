@@ -14,8 +14,8 @@
 # Üretim profilinde (SAMPLE_PROFILE=production) sunucu şu durumlarda AÇILMAZ:
 #   - /data altında çevrimdışı özel anahtar ya da demo kalıntısı varsa,
 #   - test anahtarları açıksa ya da kayıt modu token değilse,
-#   - iki kişi onayı, canlı sertifika kontrolü, donanım belgesi ayarları üretim
-#     değerlerinde değilse, ikiden az kişisel yönetici varsa, kurtarma anahtarı
+#   - iki kişi onayı, canlı sertifika kontrolü, donanım belgesi ayarları (App Attest /
+#     Play Integrity v2 bağı ve strict varsayılan politika dahil) üretim değerlerinde değilse, ikiden az kişisel yönetici varsa, kurtarma anahtarı
 #     yoksa, imzalayıcılar ikiden azsa ya da hiçbiri sunucunun diski dışında
 #     değilse (SoftHSM sayılmaz),
 #   - sunucu kaynağı sabit bir commit değilse (PINVAULT_REF 40 haneli SHA ya da
@@ -74,6 +74,9 @@ Bu dosyaları internete kapalı bir makineye taşıyıp buradan silin (README �
     expect_value HOST_CLIENT_CERT_REQUIRE_GRANT true
     expect_value CONFIG_API_ADMIN_ROUTES off
     expect_value ATTESTATION_KEY_POLICY enforce
+    expect_value ATTESTATION_POLICY_DEFAULT strict
+    expect_value APP_ATTEST_REQUIRE_V2 true
+    expect_value PLAY_INTEGRITY_REQUIRE_V2 true
 
     # 5. Kişisel yöneticiler: iki kişi onayı en az iki ayrı yönetici ister.
     admins="$(printf '%s' "${ADMIN_KEYS:-}" | tr ',' '\n')"

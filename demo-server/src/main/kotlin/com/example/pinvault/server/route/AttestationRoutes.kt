@@ -113,7 +113,8 @@ fun Route.attestationRoutes(
         val claimedDevice = (body["deviceId"] as? JsonPrimitive)?.takeIf { it.isString }?.content?.takeIf { AttestationService.DEVICE_ID.matches(it) }
         if (claimedDevice != null && limits != null && !limits.allowDevice(configApiId, claimedDevice)) return@post call.respondAttestRateLimited()
 
-        val outcome = service.attest(configApiId, body, remote)
+        // Over mTLS the token names the connection's certificate (cnf.x5t#S256, ATTESTATION.md §5).
+        val outcome = service.attest(configApiId, body, remote, clientCertificate = call.clientCertificate()?.encoded)
         call.response.header(HttpHeaders.CacheControl, "no-store")
         when (outcome) {
             is AttestationService.Outcome.Refused -> call.respondText(outcome.body(), ContentType.Application.Json, outcome.status)

@@ -33,8 +33,12 @@ class PlayIntegrityTokens(
         deviceLevel: PlayIntegrityVerifier.DeviceLevel = PlayIntegrityVerifier.DeviceLevel.DEVICE,
         requireAppRecognized: Boolean = true,
         tokenMaxAgeSeconds: Long = PlayIntegrityVerifier.DEFAULT_TOKEN_MAX_AGE_SECONDS,
-        verdictMaxAgeSeconds: Long = PlayIntegrityVerifier.DEFAULT_VERDICT_MAX_AGE_SECONDS
-    ) = PlayIntegrityVerifier(decryptionKey, signingKey.public, packageNames, deviceLevel, requireAppRecognized, tokenMaxAgeSeconds, verdictMaxAgeSeconds)
+        verdictMaxAgeSeconds: Long = PlayIntegrityVerifier.DEFAULT_VERDICT_MAX_AGE_SECONDS,
+        stalePassSeconds: Long = verdictMaxAgeSeconds,
+        requireV2: Boolean = false,
+        requireLicensed: Boolean = false
+    ) = PlayIntegrityVerifier(decryptionKey, signingKey.public, packageNames, deviceLevel, requireAppRecognized, tokenMaxAgeSeconds, verdictMaxAgeSeconds,
+        stalePassSeconds, requireV2, requireLicensed)
 
     /** A verdict payload as Google shapes it. */
     fun payload(

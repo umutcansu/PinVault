@@ -159,7 +159,10 @@ class IosClientInteropTest {
 
         assertTrue(decided.passed, "${decided.rejectionReasons} ${decided.warnings}")
         assertEquals(emptyList(), decided.rejectionReasons)
-        assertEquals(emptyList(), decided.warnings, "App Attest verified: key_unattested lifted; secure_enclave, App Store, team and bundle as expected")
+        // The fixture was recorded from a client that made the v1 client data hash (the token in the report):
+        // it still verifies, with the note app_attest_v1 (refused with APP_ATTEST_REQUIRE_V2).
+        assertEquals(listOf(AttestationService.APP_ATTEST_V1), decided.warnings,
+            "App Attest verified: key_unattested lifted; secure_enclave, App Store, team and bundle as expected")
         assertNotNull(decided.token)
         val device = devices.get(scope, deviceId)!!
         assertEquals("ios", device.platform)

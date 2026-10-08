@@ -172,7 +172,8 @@ class AttestationIosTest {
         })
         put("device", buildJsonObject {
             put("manufacturer", "Google"); put("model", "Pixel 8"); put("sdkInt", 35); put("securityPatch", "2026-09-05")
-            put("verifiedBootState", "green"); put("keySecurityLevel", "strongbox"); put("keyAttested", true)
+            // No chain is sent here: the genuine library says keyAttested only for a key it sends a chain for.
+            put("verifiedBootState", "green"); put("keySecurityLevel", "strongbox"); put("keyAttested", false)
         })
         put("signals", buildJsonObject { for (flag in signalKeys) put(flag, buildJsonObject { put("flag", false); putJsonArray("evidence") {} }) })
         provider?.let { put("verdictProvider", it) }
@@ -196,12 +197,15 @@ class AttestationIosTest {
     ): HttpResponse {
         val nonce = challenge()
         val report = reportFor(nonce)
+        val canonical = AttestationService.canonical(nonce, deviceId, report)
         val body = buildJsonObject {
             put("v", 1); put("nonce", nonce); put("deviceId", deviceId)
             put("publicKey", Base64.getEncoder().encodeToString(key.public.encoded))
             chain?.let { putJsonArray("attestationChain") { it.forEach { c -> add(JsonPrimitive(c)) } } }
             put("report", report)
-            put("signature", sign(key.private, AttestationService.canonical(nonce, deviceId, report)))
+            put("signature", sign(key.private, canonical))
+            // A v2 round: the token, made over the canonical string, beside the report (§12).
+            (reportFor as? V2Round)?.let { put("verdictProvider", it.provider(canonical)) }
         }.toString()
         return client.post("/api/v1/attest") { contentType(ContentType.Application.Json); setBody(body) }
     }
@@ -216,14 +220,45 @@ class AttestationIosTest {
     private fun summaryReason(deviceId: String) =
         Json.parseToJsonElement(devices.get(scope, deviceId)!!.appAttest!!).jsonObject["reason"]!!.jsonPrimitive.content
 
-    /** A round whose report carries an attestation of [aaKey] made for that round. */
-    private fun attested(deviceId: String, aaKey: AppAttestFixtures.Key, pki: AppAttestFixtures.Pki = apple): (String) -> String = { nonce ->
+    /**
+     * A round as the current library sends it (§12, v2): the report carries no
+     * provider; the App Attest token — an attestation of [aaKey] or, with a
+     * [counter], an assertion — is made over the canonical string and travels
+     * in the body's own `verdictProvider` ([attestWithChain] adds it).
+     */
+    private inner class V2Round(
+        private val aaKey: AppAttestFixtures.Key, private val counter: Long?, private val pki: AppAttestFixtures.Pki,
+        private val report: () -> String
+    ) : (String) -> String {
+        override fun invoke(nonce: String): String = report()
+
+        fun provider(canonical: String): JsonObject {
+            val hash = AppAttestVerifier.roundClientDataHashV2(canonical)
+            return appAttestProvider(
+                if (counter == null) AppAttestFixtures.token(aaKey.keyIdBase64, attestation = AppAttestFixtures.attestation(pki, aaKey, hash))
+                else AppAttestFixtures.token(aaKey.keyIdBase64, assertion = AppAttestFixtures.assertion(aaKey, hash, counter))
+            )
+        }
+    }
+
+    /** A round that carries an attestation of [aaKey] made for that round (v2). */
+    @Suppress("UNUSED_PARAMETER")
+    private fun attested(deviceId: String, aaKey: AppAttestFixtures.Key, pki: AppAttestFixtures.Pki = apple): (String) -> String =
+        V2Round(aaKey, null, pki) { iosReport() }
+
+    /** A round that carries an assertion by [aaKey] with authenticator [counter] (v2). */
+    @Suppress("UNUSED_PARAMETER")
+    private fun asserted(deviceId: String, aaKey: AppAttestFixtures.Key, counter: Long): (String) -> String =
+        V2Round(aaKey, counter, apple) { iosReport() }
+
+    /** An older app's round (v1): the report carries the attestation, client data hash of the nonce and the device id. */
+    private fun attestedV1(deviceId: String, aaKey: AppAttestFixtures.Key, pki: AppAttestFixtures.Pki = apple): (String) -> String = { nonce ->
         val hash = AppAttestVerifier.roundClientDataHash(nonce, deviceId)
         iosReport(appAttestProvider(AppAttestFixtures.token(aaKey.keyIdBase64, attestation = AppAttestFixtures.attestation(pki, aaKey, hash))))
     }
 
-    /** A round whose report carries an assertion by [aaKey] with authenticator [counter]. */
-    private fun asserted(deviceId: String, aaKey: AppAttestFixtures.Key, counter: Long): (String) -> String = { nonce ->
+    /** An older app's assertion round (v1). */
+    private fun assertedV1(deviceId: String, aaKey: AppAttestFixtures.Key, counter: Long): (String) -> String = { nonce ->
         val hash = AppAttestVerifier.roundClientDataHash(nonce, deviceId)
         iosReport(appAttestProvider(AppAttestFixtures.token(aaKey.keyIdBase64, assertion = AppAttestFixtures.assertion(aaKey, hash, counter))))
     }
@@ -598,5 +633,98 @@ class AttestationIosTest {
         val wrong = TestAttestationChains.chain(androidPki, other.public, TestAttestationChains.identityDescription("someone-else"))
         attestWithChain("android-2", other, wrong, attested("android-2", AppAttestFixtures.Key())).refusal("attestation_invalid", "challenge_mismatch")
         assertNull(devices.get(scope, "android-2"))
+    }
+
+    // ── Client data hash v2 (bound to the report) ─────────────────────────
+
+    @Test
+    fun `the v2 client data hash is the canonical string the device key signs, prefixed`() {
+        val canonical = AttestationService.canonical("NONCE", "ios-1", "{\"sdkVersion\":\"2.4.0\"}")
+        assertEquals("pinvault-attest:v1:NONCE:ios-1:" + AttestationService.sha256Hex("{\"sdkVersion\":\"2.4.0\"}".toByteArray()), canonical)
+        assertTrue(AppAttestVerifier.roundClientDataHashV2(canonical).contentEquals(
+            java.security.MessageDigest.getInstance("SHA-256").digest("pinvault-app-attest:v2:$canonical".toByteArray(Charsets.UTF_8))),
+            "the wire string the iOS client must match")
+    }
+
+    @Test
+    fun `a v1 verdict in the report still passes with app_attest_v1, a v2 one beside the report without it`() = testApplication {
+        app(service(appAttest = apple.verifier()))
+        val key = ecKey()
+        val aaKey = AppAttestFixtures.Key()
+        val v1 = attest("ios-1", key, attestedV1("ios-1", aaKey)).json()
+        assertEquals("pass", v1["result"]!!.jsonPrimitive.content)
+        assertEquals(listOf(AttestationService.APP_ATTEST_V1), v1.warnings(), "an older app: verified, with the note")
+        now += 60_000
+        assertEquals(listOf(AttestationService.APP_ATTEST_V1), attest("ios-1", key, assertedV1("ios-1", aaKey, 1)).json().warnings())
+        now += 60_000
+        // The same key, updated app: v2, nothing to note.
+        assertEquals(emptyList(), attest("ios-1", key, asserted("ios-1", aaKey, 2)).json().warnings())
+        assertEquals(2L, devices.get(scope, "ios-1")!!.appAttestCounter)
+        assertEquals("v2", Json.parseToJsonElement(devices.get(scope, "ios-1")!!.appAttest!!).jsonObject["clientData"]!!.jsonPrimitive.content)
+    }
+
+    @Test
+    fun `APP_ATTEST_REQUIRE_V2 refuses a v1 verdict, at registration and on later rounds`() = testApplication {
+        app(service(appAttest = apple.verifier(requireV2 = true)))
+        policies.put(scope, AttestationPolicy.parse(buildJsonObject { put("revealReasons", true) }, service(appAttest = apple.verifier()).defaultPolicy).getOrThrow(), "test")
+        val key = ecKey()
+        val aaKey = AppAttestFixtures.Key()
+        val v1 = attest("ios-1", key, attestedV1("ios-1", aaKey)).json()
+        assertTrue("app_attest" in v1.warnings(), v1.toString())
+        assertEquals(AttestationService.CLIENT_DATA_V1, summaryReason("ios-1"))
+        assertNull(devices.get(scope, "ios-1")!!.appAttestKeyId, "a refused attestation registers no key")
+        assertEquals(emptyList(), attest("ios-1", key, attested("ios-1", aaKey)).json().warnings(), "v2 passes")
+
+        // Under enforce, the registration's attestation in place of the chain too.
+        val enforce = service(appAttest = apple.verifier(requireV2 = true), keyPolicy = AttestationKeyPolicy.ENFORCE)
+        val nonce = enforce.nonces.issue()
+        val k2 = ecKey()
+        val report = attestedV1("ios-2", AppAttestFixtures.Key())(nonce)
+        val body = buildJsonObject {
+            put("v", 1); put("nonce", nonce); put("deviceId", "ios-2")
+            put("publicKey", Base64.getEncoder().encodeToString(k2.public.encoded))
+            put("report", report); put("signature", sign(k2.private, AttestationService.canonical(nonce, "ios-2", report)))
+        }
+        val refused = enforce.attest(scope, body, "test")
+        val outcome = refused as AttestationService.Outcome.Refused
+        assertEquals("attestation_invalid", outcome.error)
+        assertEquals("app_attest_client_data_v1", outcome.reason)
+    }
+
+    @Test
+    fun `a v2 verdict made for one report does not pass with another - an out-of-app signer cannot reuse it`() = testApplication {
+        app(service(appAttest = apple.verifier()))
+        val key = ecKey()
+        val aaKey = AppAttestFixtures.Key()
+        assertEquals(emptyList(), attest("ios-1", key, attested("ios-1", aaKey)).json().warnings())
+        now += 60_000
+        // The genuine app's assertion is over its own report; the request carries another one, signed with the identity key.
+        val nonce = challenge()
+        val genuine = iosReport()
+        val forged = iosReport(osVersion = "26.6")
+        val hash = AppAttestVerifier.roundClientDataHashV2(AttestationService.canonical(nonce, "ios-1", genuine))
+        val token = AppAttestFixtures.token(aaKey.keyIdBase64, assertion = AppAttestFixtures.assertion(aaKey, hash, 1))
+        val body = buildJsonObject {
+            put("v", 1); put("nonce", nonce); put("deviceId", "ios-1")
+            put("publicKey", Base64.getEncoder().encodeToString(key.public.encoded))
+            put("report", forged); put("signature", sign(key.private, AttestationService.canonical(nonce, "ios-1", forged)))
+            put("verdictProvider", appAttestProvider(token))
+        }.toString()
+        val answer = client.post("/api/v1/attest") { contentType(ContentType.Application.Json); setBody(body) }.json()
+        assertTrue("app_attest" in answer.warnings(), answer.toString())
+        assertEquals("signature_invalid", summaryReason("ios-1"))
+        // A v1-hash token beside the report is not accepted either: outside the report a verdict must be v2.
+        now += 60_000
+        val nonce2 = challenge()
+        val report2 = iosReport()
+        val v1Token = AppAttestFixtures.token(aaKey.keyIdBase64,
+            assertion = AppAttestFixtures.assertion(aaKey, AppAttestVerifier.roundClientDataHash(nonce2, "ios-1"), 2))
+        val outside = buildJsonObject {
+            put("v", 1); put("nonce", nonce2); put("deviceId", "ios-1")
+            put("publicKey", Base64.getEncoder().encodeToString(key.public.encoded))
+            put("report", report2); put("signature", sign(key.private, AttestationService.canonical(nonce2, "ios-1", report2)))
+            put("verdictProvider", appAttestProvider(v1Token))
+        }.toString()
+        assertTrue("app_attest" in client.post("/api/v1/attest") { contentType(ContentType.Application.Json); setBody(outside) }.json().warnings())
     }
 }
