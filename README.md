@@ -1,10 +1,11 @@
 # PinVault
 
-Dynamic SSL certificate pinning library for Android and iOS. Manage pins remotely, support mTLS, distribute versioned files — all with encrypted storage.
+Dynamic SSL certificate pinning library for Android, iOS and React Native. Manage pins remotely, support mTLS, distribute versioned files — all with encrypted storage.
 
 [![Maven Central](https://img.shields.io/maven-central/v/io.github.umutcansu/pinvault)](https://central.sonatype.com/artifact/io.github.umutcansu/pinvault)
+[![npm](https://img.shields.io/npm/v/@umutcansu/react-native-pinvault)](https://www.npmjs.com/package/@umutcansu/react-native-pinvault)
 
-> **Latest release: 2.3.2** — with the new iOS library ([`pinvault-ios/`](pinvault-ios/README.md)). Anything marked *(2.3)* is new in 2.3, *(2.2)* in 2.2, *(2.1)* in
+> **Latest release: 2.3.2** — with the iOS library ([`pinvault-ios/`](pinvault-ios/README.md)) and the new React Native library ([`pinvault-react-native/`](pinvault-react-native/README.md), on npm). Anything marked *(2.3)* is new in 2.3, *(2.2)* in 2.2, *(2.1)* in
 > 2.1 — see [CHANGELOG.md](CHANGELOG.md) for the full list,
 > [Upgrading from 2.1.x to 2.2](#upgrading-from-21x-to-22) (most apps compile
 > unchanged), [Upgrading from 2.0.x to 2.1](#upgrading-from-20x-to-21) and
@@ -36,9 +37,31 @@ file, not from the JS bundle. Install, API and the security notes:
 [`pinvault-react-native/README.md`](pinvault-react-native/README.md); sample app:
 [`sample-client-rn/`](sample-client-rn).
 
-```bash
-npm install @umutcansu/react-native-pinvault
-```
+| | |
+|---|---|
+| Package | [`@umutcansu/react-native-pinvault`](https://www.npmjs.com/package/@umutcansu/react-native-pinvault) on npm |
+| Needs | React Native 0.87+ with the New Architecture (the default), Hermes; Android minSdk 24, iOS 16+ |
+| Pulls in | Android `io.github.umutcansu:pinvault` from Maven Central and the iOS Swift package from this repository, both at the package's own version |
+
+1. Add the package and the iOS pod:
+
+   ```bash
+   npm install @umutcansu/react-native-pinvault
+   cd ios && pod install
+   ```
+
+2. **iOS:** register the background task in `AppDelegate` (`PinVaultBridge.registerBackgroundTask()`)
+   and add the Info.plist keys from the [plugin README](pinvault-react-native/README.md#install).
+   **Android:** nothing to add; the plugin pins React Native's own networking by itself.
+3. Start PinVault from JavaScript with your server's values
+   ([quick start](pinvault-react-native/README.md#quick-start)).
+4. For release builds, ship the trust anchors inside the app as well
+   ([native security file](pinvault-react-native/README.md#native-security-file)).
+
+The app does not add the native libraries itself: the plugin brings the
+matching versions (npm 2.3.2 uses Android 2.3.2 and the iOS tag `v2.3.2`). If
+the Android app also depends on `io.github.umutcansu:pinvault` directly, keep
+it on the same version.
 
 ## Features
 

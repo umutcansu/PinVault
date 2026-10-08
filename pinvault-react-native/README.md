@@ -1,5 +1,7 @@
 # PinVault for React Native
 
+[![npm](https://img.shields.io/npm/v/@umutcansu/react-native-pinvault)](https://www.npmjs.com/package/@umutcansu/react-native-pinvault)
+
 `@umutcansu/react-native-pinvault` — dynamic certificate pinning with a signed,
 remotely updated pin config, mTLS enrollment with a hardware identity key,
 signed and encrypted vault files, and device attestation, for React Native
@@ -19,10 +21,17 @@ ones (`InitResult`, `ClientCertEnrollmentResult`, `VaultFileResult`, …), so th
 
 ## Install
 
+From npm ([`@umutcansu/react-native-pinvault`](https://www.npmjs.com/package/@umutcansu/react-native-pinvault)):
+
 ```bash
 npm install @umutcansu/react-native-pinvault
 cd ios && pod install
 ```
+
+The native libraries come with it, at the package's own version: npm 2.3.2
+uses `io.github.umutcansu:pinvault:2.3.2` from Maven Central and the Swift
+package at tag `v2.3.2`. The New Architecture must stay on (React Native
+0.87's default).
 
 **iOS.** The pod depends on the PinVault Swift package through React Native's
 `spm_dependency` (git URL `https://github.com/umutcansu/PinVault.git`, exact
