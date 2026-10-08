@@ -1,9 +1,10 @@
-# PinVault 2.0 — Configuration Guide
+# PinVault — Upgrading and configuration
 
-PinVault 2.0 uses a unified multi-Config-API DSL. This document is a quick
-reference for how to configure it in common scenarios.
+The upgrade notes for every release since 2.0, troubleshooting, and a quick
+reference for the multi-Config-API DSL. The full list of changes is in
+[CHANGELOG.md](CHANGELOG.md).
 
-## Upgrading from 2.3.0 to the next release
+## Upgrading from 2.3.0 to 2.3.1
 
 Everything compiles unchanged. One behaviour changes for apps that call
 `requireUnlockedDevice()`:
@@ -34,14 +35,70 @@ unchanged.
 Keys that already exist are untouched either way; the option applies to
 keys generated from now on (README → *Production Security Checklist* §9).
 
-## Upgrading from 2.1.x to the next release
+## Upgrading from 2.2.x to 2.3
 
-Most apps compile unchanged; the per-item list — one fetch per signed vault
-file, `allowServerGeneratedKey()`, the 16-character verification code,
-`EnrollmentRefusal` branches, attestation and Play Integrity being opt-in,
-the reference server's V21–V23 migrations and PKCS12 keystores — is kept in
-the README under *Upgrading from 2.1.x to the next release*, next to the
-features it belongs to. The attestation protocol is in `ATTESTATION.md`.
+Everything compiles unchanged. What to expect:
+
+- **Attestation is off** until a block calls `attestation()`; nothing changes
+  for apps that do not. Play Integrity needs the separate
+  `pinvault-play-integrity` artifact and a provider registered on the
+  config; without it the APK carries nothing of Play Services.
+- **Reference server:** migrations V21–V23 add the attestation tables and
+  the Play Integrity columns; stored policies gain `play_integrity` /
+  `play_integrity_missing` as `warn` automatically. Server keystores are
+  rewritten as PKCS12 at start-up (file names unchanged); a JDK 9+ server
+  of an older version still opens them. `CONFIG_API_ADMIN_ROUTES=off` and
+  `ATTESTATION_KEY_POLICY=enforce` are the production profile, not the
+  default.
+- **A host entry that lists the same pin twice** is refused, by the library
+  and by the reference server: a rotation needs two different pins.
+
+## Upgrading from 2.1.x to 2.2
+
+Most apps compile unchanged. What to expect, and what may need a line:
+
+- **Signed blocks: each vault file needs one fetch.** A copy stored by 2.1.x
+  has no signature on record, so `loadFile` returns `null` for it
+  (`fileStatus` = `NEEDS_FETCH`) until `fetchFile` / `syncAllFiles` has run
+  once. Nothing is deleted. (The same release already asks a signed block for
+  one config fetch, see the changelog.)
+- **A server that answers enrollment with a P12** now gets `Failed` unless
+  the block calls `allowServerGeneratedKey()`. The reference server from 2.1
+  on issues over the CSR and needs nothing.
+- **A server that issues a certificate without its CA certificate** (a chain
+  of one), or valid for more than 825 days, is refused: send leaf + CA, or
+  raise `maxClientCertLifetimeDays`.
+- **The verification code is 16 characters.** A screen that showed 8 needs
+  the room; a server of your own must compute the same 80 bits.
+- **A backend of your own with `serverScope` set** must send
+  `X-Vault-Signature-V2` for its vault files.
+- **`when` over `EnrollmentRefusal`** needs branches for
+  `ATTESTATION_FAILED` and `CSR_REQUIRED`.
+- **Pointing a block id at another Config API** (a new `configUrl` or
+  `serverScope`) gives it a store of its own; going back finds the old
+  watermarks again. **Changing the compiled-in signing or recovery keys** (or
+  their thresholds) resets the replay watermarks once, on purpose.
+- **`clientCertHosts`** — if you set it, list every host that must see the
+  client certificate; `mtls = true` pins then add none.
+- **An `END_TO_END` file served as `plain`** is refused (`Failed`).
+- **Reference server:** mint enrollment tokens with the phone's device id
+  (see [Where the token comes from](README.md#where-the-token-comes-from)) wherever the certificate must stand in for
+  the device — `TOKEN_MTLS` files, key replacement over mTLS, host client
+  certificates. `API_KEY` needs 16 characters.
+- Stored P12 identities and host client certificates are moved into the
+  Android Keystore on first load. Going back to 2.1.x afterwards means
+  enrolling again (2.1.x does not know the imported form).
+
+## Upgrading from 2.0.x to 2.1
+
+No app code changes are needed from 2.0.9. A backend of your own that serves
+vault files to a signed block must start sending `X-Vault-Signature`
+([Signed vault files](README.md#signed-vault-files-21)); the reference server does.
+On the first start 2.1 moves the 2.0.x
+EncryptedSharedPreferences files (configs, client certificates, cached vault
+files) into its Keystore-backed store and deletes them. Going back to 2.0.x
+afterwards starts from scratch: bootstrap pins, re-enrollment, re-download.
+Details: [Encrypted storage moves to the Android Keystore](#encrypted-storage-moves-to-the-android-keystore-21).
 
 ## Upgrading from 2.0.x to the security-hardened stream
 
@@ -218,6 +275,61 @@ No action needed. PinVault no longer stores with androidx.security's EncryptedSh
 - **Downgrading** to 2.0.x after that start is not supported: the old version finds none of its files and starts like a fresh install. It fetches the config again with its bootstrap pins, and mTLS devices enroll again.
 - **Backups:** the bundled rules name the four files, so every Config API id is excluded. The per-id exclusion from step 8 is no longer needed (keeping it is harmless), and the build-time warning about uncovered ids is gone.
 - **Dependency:** androidx.security:security-crypto stays on the classpath only to read 2.0.x files on that first start. A later major version drops it.
+
+## Troubleshooting
+
+### Kotlin 1.9.x projects
+
+Use PinVault `2.0.3` or later. Older 2.0.x versions emit Kotlin 2.1
+metadata in their POM and trigger `Unable to read Kotlin metadata due to
+unsupported metadata version`.
+
+### "Unable to read Kotlin metadata"
+
+If you see one of these errors when adding PinVault to your project:
+
+```
+warning: Unable to read Kotlin metadata due to unsupported metadata version.
+error: Unable to read Kotlin metadata due to unsupported metadata kind: null.
+```
+
+it means a Kotlin compiler in your build pipeline is older than the
+metadata it's trying to read. Try in this order:
+
+1. **Use PinVault `2.0.0` or later** — earlier versions only support
+   Kotlin 2.1+ consumers.
+2. **Upgrade your project to Kotlin `1.9.25+`** — Kotlin 1.8 and below
+   cannot read 1.9 metadata.
+3. **If you use Hilt / Dagger / kapt**: upgrade Hilt to `2.51+` or Dagger
+   to `2.51+`. Older versions bundle a pre-K2 `kotlin-metadata-jvm` that
+   stumbles on transitive dependencies. Migrating from `kapt` to `KSP` is
+   the long-term fix.
+4. **Last resort**: add `kotlin.suppressKotlinVersionCompatibilityCheck=true`
+   to your `gradle.properties`. This silences the warning, but the
+   underlying issue may still surface elsewhere.
+
+### Compile errors after upgrading from 1.x to 2.x
+
+If you upgraded from PinVault `1.x` to `2.x` and now see compile errors
+like:
+
+```
+error: constructor Builder in class Builder cannot be applied to given types;
+       new PinVaultConfig.Builder("https://...")
+       required: no arguments
+
+error: constructor HostPin in class HostPin cannot be applied to given types;
+       new HostPin("host", Arrays.asList(...))
+       required: String,List<String>,int,boolean,boolean,Integer
+```
+
+these are **API breaking changes** introduced in `2.0`, not metadata
+errors. v2 replaced the single-URL constructor with a multi-Config-API
+DSL, and `HostPin` gained four optional fields. Update your Java code
+following the patterns in the README's Quick Start, section **2b**, or read
+the DSL reference below. If migrating
+to v2 isn't an option right now, pin the dependency to the latest
+`1.x` release.
 
 ## Single Config API
 
