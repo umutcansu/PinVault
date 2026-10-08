@@ -24,6 +24,21 @@ to iOS: [`pinvault-ios/PORTING.md`](pinvault-ios/PORTING.md).
 .package(url: "https://github.com/umutcansu/PinVault.git", from: "2.3.1")
 ```
 
+## React Native
+
+`@umutcansu/react-native-pinvault` (React Native 0.87+, New Architecture) is a
+thin bridge over the two native libraries: pinning, keys (Keystore / Secure
+Enclave), signature checks and vault decryption stay native, and JavaScript
+never sees TLS. Its `fetch` runs on the pinned native session; on Android,
+React Native's own `fetch` / XHR / WebSocket can be pinned too, on iOS they are
+not. Install, API and the security notes:
+[`pinvault-react-native/README.md`](pinvault-react-native/README.md); sample app:
+[`sample-client-rn/`](sample-client-rn).
+
+```bash
+npm install @umutcansu/react-native-pinvault
+```
+
 ## Features
 
 - **Dynamic pin management** — fetch pins from your server, per-host versioning, force update
@@ -1773,13 +1788,14 @@ Works with any language: Python, Node.js, Go, .NET, etc.
 
 ## Samples
 
-Four projects next to the libraries show PinVault end to end (their READMEs are in Turkish):
+Five projects next to the libraries show PinVault end to end (their READMEs are in Turkish):
 
 | Directory | What it is |
 |---|---|
 | [`sample-host/`](sample-host) | The demo server in Docker, set up for phones on the LAN: `./scripts/setup.sh`, then `docker compose up -d --build`. With `PINVAULT_SERVER_SRC=../demo-server` it builds the server from this checkout. The default is a **demo profile**; `./scripts/setup.sh --production` starts from named admins, two-person approval, the live certificate check and offline recovery/backup keys (generated into `offline-keys/`, to be moved off the server). |
 | [`sample-client/`](sample-client) | An Android app (Java) that uses every PinVault feature against the sample host. It builds the library from this checkout (`pinvault.localPath=..`). Its secret vault files live on the mTLS Config API (`token_mtls`), behind the screen lock (`userAuth(REQUIRED)`, `encryption(USER_AUTH)`), are opened with `unlockFile` and wiped on revocation; it asks `requireCaTrust` for its publicly trusted target. |
 | [`sample-client-ios/`](sample-client-ios) | The same app for iOS (SwiftUI): the same screens, settings and Turkish texts, built against the iOS library in this checkout (XcodeGen project). |
+| [`sample-client-rn/`](sample-client-rn) | The React Native app (Ana / mTLS / Vault screens) over `@umutcansu/react-native-pinvault`, against the same sample host. |
 | [`sample-e2e/`](sample-e2e) | Playwright end-to-end tests on Android (adb) and on the iOS simulator (`E2E_PLATFORM=ios`): an action in the host's dashboard is checked on the phone, or the other way round, with a one-file evidence page of screenshots. Setting everything up from scratch: [`sample-e2e/SETUP.md`](sample-e2e/SETUP.md). |
 
 ## Request-flow animation

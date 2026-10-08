@@ -1,5 +1,19 @@
 # Changelog
 
+## Unreleased
+
+### React Native (new)
+
+- **`@umutcansu/react-native-pinvault` 2.3.1** (`pinvault-react-native/`): a TurboModule
+  bridge over the Android and iOS libraries for React Native 0.87+ (New
+  Architecture). Pinning, keys, signatures and vault decryption stay native; the
+  plugin's `fetch` runs on the pinned native session, and on Android
+  `PinVaultNetworking.install` pins React Native's own fetch / XHR / WebSocket.
+  Strict config parsing (unknown keys and wrong types refused), tokens kept in
+  native memory only, fail-closed `environmentGuard`. Jest, Android JVM and Swift
+  tests.
+- **`sample-client-rn/`**: the React Native sample app (Ana / mTLS / Vault).
+
 ## 2.3.1 — 2026-10-08 — OWASP audit fixes (MASVS Android/iOS, ASVS server)
 
 Closes the medium findings of the OWASP audits of 2.3.0 (MASVS on Android
