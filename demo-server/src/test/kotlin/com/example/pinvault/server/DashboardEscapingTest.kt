@@ -123,7 +123,9 @@ class DashboardEscapingTest {
         assertTrue(approve.indexOf("confirm(") in 0 until approve.indexOf("apiFetch("), "approveChange must confirm before it calls the server")
         assertTrue("changeRequestFor(" in approve, "the confirmation must describe the request as the server has it")
         val reject = body("rejectChange")
-        assertTrue(reject.indexOf("prompt(") in 0 until reject.indexOf("apiFetch("), "rejectChange must ask before it calls the server")
+        // The question is the in-page dialog (pvInputDialog) since window.prompt() went away.
+        val asks = listOf("pvInputDialog(", "prompt(").map { reject.indexOf(it) }.filter { it >= 0 }.minOrNull() ?: -1
+        assertTrue(asks in 0 until reject.indexOf("apiFetch("), "rejectChange must ask before it calls the server")
         assertTrue(Regex("\\bapproveConfirm:").findAll(script("app-i18n.js")).count() == 2, "approveConfirm needs a text in both languages")
     }
 }
