@@ -25,7 +25,14 @@ enum class GuardedOperation {
      * `unlockFile`. Refused: [VaultFileUnlockResult.Failed]; no prompt is
      * shown and the content never reaches the app's memory.
      */
-    UNLOCK_FILE
+    UNLOCK_FILE,
+
+    /**
+     * `loadFile`: reading a stored copy, which needs no network. Refused:
+     * `loadFile` returns null and the copy is not decrypted; it stays stored.
+     * Added in 2.4.0: an exhaustive `when` over this enum needs a branch for it.
+     */
+    LOAD_FILE
 }
 
 /**

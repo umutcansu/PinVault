@@ -1,18 +1,32 @@
 # PinVault — ProGuard Consumer Rules
+#
+# The library is shipped unminified and the app's R8 sees all of it, so
+# nothing the app calls needs a keep rule. Only what is reached by
+# reflection is kept: the JSON wire types Gson reads and writes, and the
+# Retrofit service. Everything else — PinVault, the configuration types,
+# the trust manager, the integrity probes — may be renamed and shrunk.
+#
+# Until 2.3.2 these rules kept `PinVault { *; }` and every member of
+# `model.**`. That kept internal members and configuration fields under
+# their source names (allowUnsigned, environmentGuard, …), a ready map for
+# a hooking script. Renaming is not protection, but there is no reason to
+# publish the map. A Gson type added later must be listed here.
 
--keep class io.github.umutcansu.pinvault.PinVault { *; }
--keep class io.github.umutcansu.pinvault.model.** { *; }
--keep class io.github.umutcansu.pinvault.api.CertificateConfigApi { *; }
+# Gson: field names are the wire names; class names may change.
+-keepattributes Signature, *Annotation*, InnerClasses, EnclosingMethod
+-keep,allowobfuscation class io.github.umutcansu.pinvault.model.CertificateConfig
+-keep,allowobfuscation class io.github.umutcansu.pinvault.model.HostPin
+-keep,allowobfuscation class io.github.umutcansu.pinvault.model.SignedConfigResponse
+-keep,allowobfuscation class io.github.umutcansu.pinvault.model.SignatureEntry
+-keep,allowobfuscation class io.github.umutcansu.pinvault.model.SignedKeySet
+-keep,allowobfuscation class io.github.umutcansu.pinvault.model.SigningKeySetPayload
+-keepclassmembers class io.github.umutcansu.pinvault.model.CertificateConfig { <fields>; <init>(...); }
+-keepclassmembers class io.github.umutcansu.pinvault.model.HostPin { <fields>; <init>(...); }
+-keepclassmembers class io.github.umutcansu.pinvault.model.SignedConfigResponse { <fields>; <init>(...); }
+-keepclassmembers class io.github.umutcansu.pinvault.model.SignatureEntry { <fields>; <init>(...); }
+-keepclassmembers class io.github.umutcansu.pinvault.model.SignedKeySet { <fields>; <init>(...); }
+-keepclassmembers class io.github.umutcansu.pinvault.model.SigningKeySetPayload { <fields>; <init>(...); }
+
+# Retrofit builds the service by reflection; its own rules keep the
+# annotations and return types of annotated methods.
 -keep,allowobfuscation interface io.github.umutcansu.pinvault.api.DynamicConfigService { *; }
--keepclassmembers class io.github.umutcansu.pinvault.model.** { <fields>; }
-
-# Class names are NOT kept. Until 2.2.0 a `-keepnames class io.github.umutcansu.pinvault.**`
-# rule kept them so that Timber's DebugTree could tag log lines with the
-# calling class. The price was that every consumer's release APK carried the
-# library's class names, so the two methods a hooking script needs to disable
-# pinning (the trust manager's checkServerTrusted and the per-request
-# interceptor's intercept) could be found by their source names in any app.
-# Renaming is not protection — a determined attacker finds them anyway — but
-# there is no reason to publish the map. In a minified app PinVault's log
-# tags are the obfuscated class names; plant your own tree with a fixed tag
-# or keep the names yourself with the rule above if you need them in logs.

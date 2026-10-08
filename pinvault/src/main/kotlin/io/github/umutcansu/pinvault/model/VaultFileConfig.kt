@@ -139,6 +139,10 @@ data class VaultFileConfig(
         fun wipeWhenStale() = apply { this.wipeWhenStale = true }
 
         fun build(): VaultFileConfig {
+            // The key names the stored copy's file (`<key>.enc`) and its
+            // preference entries, so it is held to the server's own rule:
+            // no path separators, no "." / ".." names.
+            require(isValidKey(key)) { "vault file key must match [A-Za-z0-9._-]{1,64} and not be only dots: $key" }
             require(endpoint.isNotBlank()) { "endpoint must not be blank for vault file: $key" }
             require(encryption != VaultFileEncryption.USER_AUTH || userAuth != UserAuth.NONE) {
                 "encryption(USER_AUTH) needs userAuth(UserAuth.REQUIRED) or userAuth(UserAuth.IF_SCREEN_LOCK) (key: $key)"
@@ -218,6 +222,11 @@ enum class VaultFileAccessPolicy {
     /** TOKEN + mTLS cert where cert CN must match X-Device-Id. */
     TOKEN_MTLS
 }
+
+private val VAULT_KEY = Regex("^[A-Za-z0-9._-]{1,64}$")
+
+/** The server's rule for a vault file key (`VaultRoutes.VAULT_KEY_REGEX`), minus all-dot names. */
+internal fun isValidKey(key: String): Boolean = VAULT_KEY.matches(key) && key.any { it != '.' }
 
 /**
  * V2: local decryption strategy for vault file content.

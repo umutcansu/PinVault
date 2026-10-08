@@ -1750,9 +1750,14 @@ object PinVault {
      * a signed block stored with an earlier version of the library has no
      * signature on record: it is not returned until the next [fetchFile] has
      * downloaded it again ([VaultFileStatus.NEEDS_FETCH]).
+     *
+     * The app's environment guard is asked first
+     * ([io.github.umutcansu.pinvault.model.GuardedOperation.LOAD_FILE]);
+     * a refusal returns null without decrypting the copy.
      */
     fun loadFile(key: String): ByteArray? {
         checkInitialized()
+        if (environmentRefusal(pinManagerConfig, io.github.umutcansu.pinvault.model.GuardedOperation.LOAD_FILE) != null) return null
         val storage = getStorageFor(key)
         val file = pinManagerConfig?.vaultFiles?.get(key)
         val guard = vaultGuard

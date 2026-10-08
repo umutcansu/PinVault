@@ -12,15 +12,33 @@ import java.io.File
  * becomes `error:<probe>` evidence.
  */
 
-/** `ro.*` system properties, read through `android.os.SystemProperties`; null when unreadable or empty. */
+/**
+ * `ro.*` system properties, read through `android.os.SystemProperties`, or
+ * through `getprop` where reflection is refused; null when unreadable or empty.
+ */
 internal object SystemProperties {
-    fun get(name: String): String? = try {
+    fun get(name: String): String? = viaReflection(name) ?: viaGetprop(name)
+
+    private fun viaReflection(name: String): String? = try {
         val clazz = Class.forName("android.os.SystemProperties")
         val get = clazz.getMethod("get", String::class.java)
         (get.invoke(null, name) as? String)?.trim()?.ifEmpty { null }
     } catch (_: Throwable) {
         null
     }
+
+    private fun viaGetprop(name: String): String? = try {
+        if (!PROP_NAME.matches(name)) null
+        else {
+            val process = ProcessBuilder("getprop", name).redirectErrorStream(true).start()
+            val value = process.inputStream.bufferedReader().use { it.readText() }
+            if (process.waitFor() == 0) value.trim().ifEmpty { null } else null
+        }
+    } catch (_: Throwable) {
+        null
+    }
+
+    private val PROP_NAME = Regex("^[A-Za-z0-9._-]{1,92}$")
 }
 
 /** The `Build` fields the emulator probe looks at, and the report's `device` block. */
@@ -71,14 +89,26 @@ internal class RootProbe(
             if (fileExists("$dir/su")) evidence += "path:$dir/su"
         }
         if (buildTags?.contains("test-keys") == true) evidence += "build:test-keys"
+        // Every build sets ro.build.type: when even it reads as nothing, the
+        // properties below were not looked at, which is not "clean".
+        if (systemProperty("ro.build.type") == null) evidence += "error:prop"
         if (systemProperty("ro.debuggable") == "1") evidence += "prop:ro.debuggable=1"
         if (systemProperty("ro.secure") == "0") evidence += "prop:ro.secure=0"
+        // An unlocked bootloader is what every root method on a stock phone
+        // starts from. Hiding modules reset these, so they catch only the
+        // careless; the server reads the same facts from key attestation.
+        systemProperty("ro.boot.verifiedbootstate")?.lowercase()?.takeIf { it in UNVERIFIED_BOOT_STATES }
+            ?.let { evidence += "prop:ro.boot.verifiedbootstate=$it" }
+        if (systemProperty("ro.boot.vbmeta.device_state")?.lowercase() == "unlocked") evidence += "prop:ro.boot.vbmeta.device_state=unlocked"
+        if (systemProperty("ro.boot.flash.locked") == "0") evidence += "prop:ro.boot.flash.locked=0"
         if (systemWritable()) evidence += "fs:/system-writable"
         ROOT_PACKAGES.filter(packageInstalled).forEach { evidence += "package:$it" }
-        return Signal(evidence.isNotEmpty(), evidence.distinct())
+        return Signal(evidence.any { !it.startsWith("error:") }, evidence.distinct())
     }
 
     companion object {
+        /** `ro.boot.verifiedbootstate` values other than `green` (locked, verified). */
+        val UNVERIFIED_BOOT_STATES = setOf("orange", "yellow", "red")
         val SU_PATHS = listOf(
             "/system/bin/su", "/system/xbin/su", "/sbin/su", "/system/sd/xbin/su", "/system/bin/failsafe/su",
             "/data/local/su", "/data/local/bin/su", "/data/local/xbin/su", "/su/bin/su", "/system/su",
@@ -172,7 +202,9 @@ internal class HookingProbe(
     private val javaProperty: (String) -> String?,
     private val classLoadable: (String) -> Boolean,
     /** Class names on the current stack. */
-    private val stackClasses: () -> List<String>
+    private val stackClasses: () -> List<String>,
+    /** Loopback ports among [FRIDA_PORTS] that accept a connection. */
+    private val listeningPorts: () -> List<Int> = { emptyList() }
 ) {
     fun probe(): Signal {
         val evidence = mutableListOf<String>()
@@ -188,10 +220,14 @@ internal class HookingProbe(
         if (javaProperty("vxp") != null) evidence += "property:vxp"
         XPOSED_CLASSES.filter(classLoadable).forEach { evidence += "class:$it" }
         if (stackClasses().any { frame -> STACK_MARKERS.any { frame.lowercase().contains(it) } }) evidence += "stack:xposed"
+        // frida-server's default port. A renamed or re-ported server is not
+        // seen here; its agent still shows in the maps and threads above.
+        listeningPorts().forEach { evidence += "port:$it" }
         return Signal(evidence.isNotEmpty(), evidence.distinct())
     }
 
     companion object {
+        val FRIDA_PORTS = listOf(27042, 27043)
         val MAP_MARKERS = listOf("frida", "gadget", "xposed", "substrate", "dobby", "riru", "lsposed", "zygisk")
         val THREAD_NAMES = listOf("gmain", "gum-js-loop", "gdbus", "pool-frida", "linjector")
         val XPOSED_CLASSES = listOf("de.robv.android.xposed.XposedBridge", "de.robv.android.xposed.XposedHelpers")
@@ -330,6 +366,16 @@ internal object ProcReaders {
             // Nothing more to add.
         }
         return names.toList()
+    }
+
+    /** The [ports] on 127.0.0.1 that accept a TCP connection within a short timeout. */
+    fun listeningLoopbackPorts(ports: List<Int>): List<Int> = ports.filter { port ->
+        try {
+            java.net.Socket().use { it.connect(java.net.InetSocketAddress("127.0.0.1", port), 150) }
+            true
+        } catch (_: Throwable) {
+            false
+        }
     }
 
     fun classLoadable(name: String): Boolean = try {

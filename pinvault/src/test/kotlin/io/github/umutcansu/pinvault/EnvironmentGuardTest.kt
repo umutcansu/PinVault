@@ -73,4 +73,11 @@ class EnvironmentGuardTest {
         assertTrue(cause is UntrustedEnvironmentException)
         assertEquals(GuardedOperation.ENROLL, (cause as UntrustedEnvironmentException).operation)
     }
+
+    @Test
+    fun `reading a stored copy is an operation of its own`() {
+        val cfg = config { it != GuardedOperation.LOAD_FILE }
+        assertNull(PinVault.environmentRefusal(cfg, GuardedOperation.FETCH_FILE))
+        assertEquals(GuardedOperation.LOAD_FILE, PinVault.environmentRefusal(cfg, GuardedOperation.LOAD_FILE)!!.operation)
+    }
 }

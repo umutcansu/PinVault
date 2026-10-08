@@ -197,4 +197,22 @@ class VaultFileConfigTest {
         )
         assertEquals(VaultFileUnlockResult.Stale("statement"), VaultFileUnlockResult.Stale("statement"))
     }
+
+    @Test
+    fun `a key that is not a plain file name is refused`() {
+        listOf("../secret", "a/b", "a\\b", ".", "..", "...", "", "x".repeat(65), "naïve", "a b", "a\u0000").forEach { key ->
+            try {
+                VaultFileConfig.Builder(key).endpoint("api/v1/vault/x").build()
+                fail("accepted vault key '$key'")
+            } catch (expected: IllegalArgumentException) {
+            }
+        }
+    }
+
+    @Test
+    fun `keys the server accepts are accepted`() {
+        listOf("ml-model", "feature_flags", "v1.2", "A", ".hidden", "x".repeat(64)).forEach { key ->
+            assertEquals(key, VaultFileConfig.Builder(key).endpoint("api/v1/vault/x").build().key)
+        }
+    }
 }

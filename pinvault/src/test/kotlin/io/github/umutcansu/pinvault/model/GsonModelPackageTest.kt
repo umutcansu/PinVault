@@ -4,11 +4,13 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 /**
- * Every class Gson reads or writes must live in the `model` package: the
- * consumer ProGuard/R8 rules (consumer-rules.pro) keep only that package's
- * fields, so a Gson DTO anywhere else loses its field names in minified apps
- * and silently parses as empty — for a signing-key set that means every
- * config fetch failing.
+ * Every class Gson reads or writes must be named in the consumer ProGuard/R8
+ * rules (consumer-rules.pro), which keep the fields of those classes only: a
+ * Gson DTO missing there loses its field names in minified apps and silently
+ * parses as empty — for a signing-key set that means every config fetch
+ * failing. Nothing else may be kept by name: a blanket rule would publish
+ * the configuration fields (allowUnsigned, environmentGuard, …) to hooking
+ * scripts again.
  */
 class GsonModelPackageTest {
 
@@ -28,6 +30,11 @@ class GsonModelPackageTest {
         }
         val rules = java.io.File("consumer-rules.pro").takeIf { it.exists() }
             ?: java.io.File("pinvault/consumer-rules.pro")
-        assertTrue(rules.readText().contains("-keepclassmembers class io.github.umutcansu.pinvault.model.** { <fields>; }"))
+        val text = rules.readText()
+        gsonTypes.forEach { type ->
+            assertTrue("${type.name} fields are not kept", text.contains("-keepclassmembers class ${type.name} { <fields>; <init>(...); }"))
+        }
+        val keepLines = text.lines().map { it.trim() }.filter { it.startsWith("-keep") }
+        assertTrue(keepLines.toString(), keepLines.none { it.contains("pinvault.model.**") || it.contains("pinvault.PinVault ") || it.contains("pinvault.**") })
     }
 }

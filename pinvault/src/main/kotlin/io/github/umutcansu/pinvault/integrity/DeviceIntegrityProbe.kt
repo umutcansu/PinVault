@@ -75,7 +75,8 @@ internal class DeviceIntegrityProbe(
                 threadNames = ProcReaders::threadNames,
                 javaProperty = { System.getProperty(it) },
                 classLoadable = ProcReaders::classLoadable,
-                stackClasses = ProcReaders::stackClasses
+                stackClasses = ProcReaders::stackClasses,
+                listeningPorts = { ProcReaders.listeningLoopbackPorts(HookingProbe.FRIDA_PORTS) }
             ).probe()
         }
         signals[IntegrityReport.APP_INTEGRITY] = safe(IntegrityReport.APP_INTEGRITY) {

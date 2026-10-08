@@ -27,6 +27,8 @@ class ProbesTest {
     private val none: (String) -> Boolean = { false }
     private val noProp: (String) -> String? = { null }
 
+    private val userBuild: (String) -> String? = { if (it == "ro.build.type") "user" else null }
+
     private fun build(
         fingerprint: String = "google/shiba/shiba:15/AP3A/12345:user/release-keys",
         model: String = "Pixel 8",
@@ -42,15 +44,37 @@ class ProbesTest {
 
     @Test
     fun `a clean device raises no root evidence`() {
-        val signal = RootProbe(none, "release-keys", noProp, none, { false }, "/system/bin:/vendor/bin").probe()
+        val signal = RootProbe(none, "release-keys", userBuild, none, { false }, "/system/bin:/vendor/bin").probe()
         assertFalse(signal.flag)
         assertTrue(signal.evidence.isEmpty())
     }
 
     @Test
+    fun `properties that cannot be read are an error, not clean, and raise nothing`() {
+        val signal = RootProbe(none, "release-keys", noProp, none, { false }, "/system/bin").probe()
+        assertFalse(signal.flag)
+        assertEquals(listOf("error:prop"), signal.evidence)
+    }
+
+    @Test
+    fun `an unlocked bootloader or an unverified boot is evidence`() {
+        val props = mapOf(
+            "ro.build.type" to "user", "ro.boot.verifiedbootstate" to "orange",
+            "ro.boot.vbmeta.device_state" to "unlocked", "ro.boot.flash.locked" to "0"
+        )
+        val signal = RootProbe(none, "release-keys", { props[it] }, none, { false }, "/system/bin").probe()
+        assertTrue(signal.flag)
+        assertEquals(listOf(
+            "prop:ro.boot.verifiedbootstate=orange", "prop:ro.boot.vbmeta.device_state=unlocked", "prop:ro.boot.flash.locked=0"
+        ), signal.evidence)
+        val green = mapOf("ro.build.type" to "user", "ro.boot.verifiedbootstate" to "green", "ro.boot.vbmeta.device_state" to "locked", "ro.boot.flash.locked" to "1")
+        assertFalse(RootProbe(none, "release-keys", { green[it] }, none, { false }, "/system/bin").probe().flag)
+    }
+
+    @Test
     fun `su binaries, Magisk files, test-keys, properties, a writable system and root managers are evidence`() {
         val files = setOf("/system/xbin/su", "/data/adb/magisk", "/data/local/tmp/su")
-        val props = mapOf("ro.debuggable" to "1", "ro.secure" to "0")
+        val props = mapOf("ro.build.type" to "userdebug", "ro.debuggable" to "1", "ro.secure" to "0")
         val signal = RootProbe(
             fileExists = { it in files },
             buildTags = "test-keys",
@@ -68,7 +92,7 @@ class ProbesTest {
 
     @Test
     fun `one su on PATH is enough`() {
-        val signal = RootProbe({ it == "/sbin/su" }, null, noProp, none, { false }, "/sbin:/system/bin").probe()
+        val signal = RootProbe({ it == "/sbin/su" }, null, userBuild, none, { false }, "/sbin:/system/bin").probe()
         assertTrue(signal.flag)
         // Found under its fixed path and on PATH: reported once each, no duplicates.
         assertEquals(listOf("file:/sbin/su", "path:/sbin/su"), signal.evidence)
@@ -145,8 +169,9 @@ class ProbesTest {
         threads: List<String> = listOf("main", "RenderThread", "OkHttp Dispatcher", "Binder:1234_1"),
         vxp: String? = null,
         loadable: Set<String> = emptySet(),
-        stack: List<String> = listOf("java.lang.Thread", "com.example.App")
-    ) = HookingProbe({ maps }, { threads }, { if (it == "vxp") vxp else null }, { it in loadable }, { stack }).probe()
+        stack: List<String> = listOf("java.lang.Thread", "com.example.App"),
+        ports: List<Int> = emptyList()
+    ) = HookingProbe({ maps }, { threads }, { if (it == "vxp") vxp else null }, { it in loadable }, { stack }, { ports }).probe()
 
     @Test
     fun `an unhooked process shows nothing`() {
@@ -163,6 +188,21 @@ class ProbesTest {
         )
         assertTrue(signal.flag)
         assertEquals(listOf("maps:frida", "thread:gmain", "thread:gum-js-loop", "thread:pool-frida"), signal.evidence)
+    }
+
+    @Test
+    fun `a frida-server port open on loopback is evidence`() {
+        val signal = hooking(ports = listOf(27042))
+        assertTrue(signal.flag)
+        assertEquals(listOf("port:27042"), signal.evidence)
+    }
+
+    @Test
+    fun `the loopback port check reports only ports that accept a connection`() {
+        java.net.ServerSocket(0, 1, java.net.InetAddress.getByName("127.0.0.1")).use { server ->
+            val closed = java.net.ServerSocket(0).use { it.localPort }
+            assertEquals(listOf(server.localPort), ProcReaders.listeningLoopbackPorts(listOf(server.localPort, closed)))
+        }
     }
 
     @Test
