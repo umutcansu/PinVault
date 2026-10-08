@@ -118,4 +118,13 @@ final class VaultFileConfigTests: XCTestCase {
         XCTAssertEqual(VaultFileResult.updated(key: "k", version: 2, bytes: Data([1])).key, "k")
         XCTAssertEqual(VaultFileAccessPolicy.tokenMtls.authMethod, "token_mtls")
     }
+
+    func testAKeyThatIsNotAPlainFileNameIsRefused() {
+        for key in ["../secret", "a/b", "a\\b", ".", "..", "...", "", String(repeating: "x", count: 65), "naïve", "a b"] {
+            XCTAssertThrowsError(try VaultFileConfig.Builder(key).endpoint("api/v1/vault/x").build(), "accepted '\(key)'")
+        }
+        for key in ["ml-model", "feature_flags", "v1.2", ".hidden", String(repeating: "x", count: 64)] {
+            XCTAssertEqual(try VaultFileConfig.Builder(key).endpoint("api/v1/vault/x").build().key, key)
+        }
+    }
 }

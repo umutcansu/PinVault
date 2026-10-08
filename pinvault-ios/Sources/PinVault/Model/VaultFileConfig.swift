@@ -13,6 +13,15 @@ import Foundation
 /// }
 /// ```
 public struct VaultFileConfig: Sendable {
+    /// The server's rule for a vault file key (`VaultRoutes.VAULT_KEY_REGEX`), minus all-dot names.
+    static func isValidKey(_ key: String) -> Bool {
+        let allowed = key.utf8.allSatisfy { byte in
+            (byte >= 0x30 && byte <= 0x39) || (byte >= 0x41 && byte <= 0x5A) || (byte >= 0x61 && byte <= 0x7A) ||
+                byte == 0x2E || byte == 0x5F || byte == 0x2D
+        }
+        return !key.isEmpty && key.utf8.count <= 64 && allowed && !key.allSatisfy { $0 == "." }
+    }
+
     public let key: String
     /// Path relative to the block's Config API URL (no leading `/`).
     public let endpoint: String
@@ -131,6 +140,12 @@ public struct VaultFileConfig: Sendable {
 
         public func build() throws -> VaultFileConfig {
             if let firstError { throw firstError }
+            // The key names the stored copy's file (`<key>.enc`) and its
+            // preference entries, so it is held to the server's own rule: no
+            // path separators, no "." / ".." names.
+            guard VaultFileConfig.isValidKey(key) else {
+                throw PinVaultError.invalidConfiguration("vault file key must match [A-Za-z0-9._-]{1,64} and not be only dots: \(key)")
+            }
             guard !endpoint.isBlank else {
                 throw PinVaultError.invalidConfiguration("endpoint must not be blank for vault file: \(key)")
             }
