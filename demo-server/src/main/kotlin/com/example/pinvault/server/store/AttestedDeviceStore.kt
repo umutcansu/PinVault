@@ -148,11 +148,17 @@ class AttestedDeviceStore(private val db: DatabaseManager) {
      * under the server's signing-key set version [keySet] (`config_rollback`).
      */
     fun recordConfigWatermark(configApiId: String, deviceId: String, watermark: Long, keySet: Int) = db.connection().use { conn ->
-        conn.prepareStatement("UPDATE attested_devices SET config_watermark = ?, config_watermark_key_set = ? WHERE config_api_id = ? AND device_id = ?").use { stmt ->
+        // Raises only (or starts over under another key set): two rounds racing never store the lower value.
+        conn.prepareStatement(
+            "UPDATE attested_devices SET config_watermark = ?, config_watermark_key_set = ? WHERE config_api_id = ? AND device_id = ? " +
+                "AND (config_watermark IS NULL OR config_watermark_key_set IS NULL OR config_watermark_key_set <> ? OR config_watermark < ?)"
+        ).use { stmt ->
             stmt.setLong(1, watermark)
             stmt.setInt(2, keySet)
             stmt.setString(3, configApiId)
             stmt.setString(4, deviceId)
+            stmt.setInt(5, keySet)
+            stmt.setLong(6, watermark)
             stmt.executeUpdate()
         }
     }

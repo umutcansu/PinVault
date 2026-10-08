@@ -101,6 +101,9 @@ fun Route.attestationRoutes(
             put("nonce", service.nonces.issue())
             put("expiresIn", service.nonces.ttlSeconds)
             put("serverTime", clock())
+            // This server takes v2 verdicts (App Attest over the report, Play Integrity bound to the
+            // device; ATTESTATION.md §11, §12): a client sends them only to a server that says so.
+            put("verdictBinding", 2)
         }.toString(), ContentType.Application.Json)
     }
 

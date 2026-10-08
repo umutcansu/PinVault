@@ -50,8 +50,13 @@ body limit.
 ### 2.1 `GET /api/v1/attest/challenge`
 
 ```json
-{ "nonce": "AAABkp0…Zg", "expiresIn": 120, "serverTime": 1759660800000 }
+{ "nonce": "AAABkp0…Zg", "expiresIn": 120, "serverTime": 1759660800000, "verdictBinding": 2 }
 ```
+
+`verdictBinding: 2` says the server takes v2 verdicts (App Attest bound to
+the report, the token beside it — §12; Play Integrity bound to the device —
+§11). The libraries send v2 only to a server that says so and v1 otherwise,
+so an older server keeps receiving what it understands.
 
 The nonce is stateless: `base64url( ts(8 bytes) ‖ rand(16) ‖ HMAC-SHA256(nonceKey, ts‖rand)[0..16) )`.
 The server verifies the MAC and the age (≤ 120 s) and keeps a bounded replay
@@ -238,7 +243,7 @@ What each probe looks at (Android, no root needed; iOS probes:
 | `play_integrity` | Set by the server (§11) when a `play-integrity` verdict the report carries does not verify or does not pass: wrong nonce, stale, another package, app not Play-recognized, device below `PLAY_INTEGRITY_DEVICE_LEVEL`. A failed verdict sticks to the device until a fresh pass. Only with the Play Console keys configured. |
 | `play_integrity_missing` | Set by the server (§11) when no Play Integrity verdict was verified for the device within `PLAY_INTEGRITY_MAX_AGE_SECONDS`. Only with the Play Console keys configured; never for an iOS device. |
 | `app_attest` | Set by the server (§12) when an `app-attest` attestation or assertion the report carries does not verify: another root, another challenge, another app or environment, a counter that did not rise, a key the server has no record of (then `app_attest_unknown_key` is added to `warnings`, whatever the policy does with the flag). A failed verdict sticks to the device until a fresh pass. Only with `APP_ATTEST_APP_IDS` configured. |
-| `app_attest_missing` | Set by the server (§12) when an iOS device has no App Attest verdict verified within `APP_ATTEST_MAX_AGE_SECONDS` (a simulator, a device without App Attest). Only with `APP_ATTEST_APP_IDS` configured. |
+| `app_attest_missing` | Set by the server (§12) when an iOS device has no App Attest verdict verified within `APP_ATTEST_MAX_AGE_SECONDS` (a simulator, a device without App Attest). A device with an App Attest key on record can assert every round, so for it a round without a token rides on the last verdict for 10 minutes only. Only with `APP_ATTEST_APP_IDS` configured. |
 | `bootloader_unlocked` | Set by the server on every round when the registration's hardware chain said the bootloader is unlocked (RootOfTrust `deviceLocked` = false). See "What the server keeps" below. |
 | `boot_not_verified` | Set by the server on every round when that chain said the boot was not `Verified` — `SelfSigned` with a `verifiedBootKey` in `ATTESTATION_TRUSTED_BOOT_KEYS` counts as verified (GrapheneOS, CalyxOS). |
 | `key_revoked` | Set by the server when a certificate of the registration's chain is on the attestation revocation list (`ATTESTATION_REVOKED_SERIALS_FILE`) — at registration, or since: the serials are looked up again on every round. |

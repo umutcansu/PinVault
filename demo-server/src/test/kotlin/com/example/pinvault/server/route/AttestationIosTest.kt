@@ -416,8 +416,12 @@ class AttestationIosTest {
 
         val aaKey = AppAttestFixtures.Key()
         attest("ios-1", key, attested("ios-1", aaKey)).json()
-        now += 30 * 60_000L
+        now += 5 * 60_000L
         assertEquals(emptyList(), attest("ios-1", key) { iosReport() }.json().warnings(), "a fresh stored verdict covers a round without one")
+        // With its key on record the device can assert every round: a stored pass covers a
+        // round without a token for APP_ATTEST_ROUND_GRACE_SECONDS only, not verdictMaxAgeSeconds.
+        now += 25 * 60_000L
+        assertEquals(listOf("app_attest_missing", "key_unattested"), attest("ios-1", key) { iosReport() }.json().warnings().sorted())
         now += 60 * 60_000L
         assertEquals(listOf("app_attest_missing", "key_unattested"), attest("ios-1", key) { iosReport() }.json().warnings().sorted())
         assertEquals(emptyList(), attest("ios-1", key, asserted("ios-1", aaKey, 1)).json().warnings())

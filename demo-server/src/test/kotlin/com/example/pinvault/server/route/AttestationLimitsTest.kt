@@ -117,7 +117,7 @@ class AttestationLimitsTest {
         })
         put("device", buildJsonObject {
             put("manufacturer", "Google"); put("model", "Pixel 8"); put("sdkInt", 35); put("securityPatch", "2026-09-05")
-            put("verifiedBootState", "green"); put("keySecurityLevel", "strongbox"); put("keyAttested", true)
+            put("verifiedBootState", "green"); put("keySecurityLevel", "strongbox"); put("keyAttested", false)
         })
         put("signals", buildJsonObject {
             for (flag in listOf("rooted", "emulator", "debugger", "debuggable", "hooking_framework", "app_integrity", "cloner",

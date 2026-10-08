@@ -688,15 +688,19 @@ class AttestationRoutesTest {
     }
 
     @Test
-    fun `a report that claims a chain the registration did not send is a contradiction on that round`() = testApplication {
+    fun `a report that claims a chain the registration did not send is asked for the chain`() = testApplication {
         app(service(keyPolicy = AttestationKeyPolicy.WARN))
         policies.put(scope, AttestationPolicy.strict(revealReasons = true), "test")
         val key = ecKey()
-        // The library sends the chain on the first round whenever its key has one.
-        val dropped = attestJson(body(challenge(), "hooked-1", key, report(keyAttested = true)))
-        assertEquals(listOf("report_mismatch"), dropped.strings("rejectionReasons"))
-        // Not a standing verdict: a device an operator forgot while the app ran registers chain-less once.
-        assertEquals("pass", attestJson(body(challenge(), "hooked-1", key, report(keyAttested = true)))["result"]!!.jsonPrimitive.content)
+        // The library sends the chain on the first round whenever its key has one; a report that
+        // says "attested" without one (a device forgotten while the app ran, or a hook that dropped
+        // the chain) is not registered chain-less: key_unknown makes the library send the chain.
+        val dropped = client.post("/api/v1/attest") {
+            contentType(ContentType.Application.Json); setBody(body(challenge(), "hooked-1", key, report(keyAttested = true)).toString())
+        }
+        assertEquals(HttpStatusCode.Conflict, dropped.status)
+        assertEquals("key_unknown", Json.parseToJsonElement(dropped.bodyAsText()).jsonObject["error"]!!.jsonPrimitive.content)
+        assertNull(devices.get(scope, "hooked-1"), "nothing registered")
         // A key without a chain says so: no contradiction.
         assertEquals("pass", attestJson(body(challenge(), "plain-1", ecKey(), report(keyAttested = false)))["result"]!!.jsonPrimitive.content)
     }

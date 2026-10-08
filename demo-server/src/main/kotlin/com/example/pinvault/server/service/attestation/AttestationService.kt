@@ -243,6 +243,15 @@ class AttestationService(
             }
             keyAttestation = device.keyAttestation
         } else {
+            // An Android report that says its key is attested, with no chain: the client
+            // believes this server knows the key (it was forgotten meanwhile). Ask for the
+            // chain again rather than register the key without the hardware's word.
+            val claimsAttested = ((reportJson["device"] as? JsonObject)?.get("keyAttested") as? JsonPrimitive)?.booleanOrNull == true
+            val claimsIos = (reportJson["device"] as? JsonObject)?.string("platform") == "ios"
+            if (chain.isNullOrEmpty() && claimsAttested && !claimsIos && keyPolicy != AttestationKeyPolicy.OFF) {
+                return Outcome.Refused(HttpStatusCode.Conflict, "key_unknown",
+                    "This server has no record of the device key. Send its attestation chain again.")
+            }
             val registration = when (val checked = checkRegistrationChain(chain, publicKey, deviceId, nonce, canonical, provider, providerOutside, now)) {
                 is Registration.Refuse -> return checked.outcome
                 is Registration.Accept -> checked
@@ -640,7 +649,12 @@ class AttestationService(
             else AppAttestRound(listOf(AttestationFlag.APP_ATTEST), verified = false, unknownKey = checked.reason == APP_ATTEST_UNKNOWN_KEY)
         }
         val verifiedAt = device.appAttestAt?.let { runCatching { Instant.parse(it) }.getOrNull() }
-        val fresh = verifiedAt != null && !now.isAfter(verifiedAt.plusSeconds(verifier.verdictMaxAgeSeconds))
+        // A device with an App Attest key on record can assert every round (no Apple
+        // server is involved): a round without a token rides on the last verdict only
+        // briefly, so leaving the token out does not borrow a day-old pass.
+        val maxAge = if (device.appAttestKeyId != null) minOf(verifier.verdictMaxAgeSeconds, APP_ATTEST_ROUND_GRACE_SECONDS)
+            else verifier.verdictMaxAgeSeconds
+        val fresh = verifiedAt != null && !now.isAfter(verifiedAt.plusSeconds(maxAge))
         return when {
             !fresh -> if (isIos) AppAttestRound(listOf(AttestationFlag.APP_ATTEST_MISSING), false, false) else AppAttestRound.NONE
             device.appAttestResult == "pass" -> AppAttestRound(emptyList(), verified = true, unknownKey = false)
@@ -822,6 +836,8 @@ class AttestationService(
 
         /** A warning: the round's App Attest verdict passed with the v1 client data hash (not bound to the report). */
         const val APP_ATTEST_V1 = "app_attest_v1"
+        /** How long a round without an App Attest token rides on the last verdict, for a device whose key is on record. */
+        const val APP_ATTEST_ROUND_GRACE_SECONDS = 600L
 
         /** A warning: the round's Play Integrity token passed with the v1 nonce (the round's, not bound to the device). */
         const val PLAY_INTEGRITY_V1 = "play_integrity_v1"
