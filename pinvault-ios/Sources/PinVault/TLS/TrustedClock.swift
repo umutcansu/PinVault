@@ -84,6 +84,8 @@ final class TrustedClock: @unchecked Sendable {
         var lastLoadAttemptElapsed: Int64?
         var persisted: Int64 = 0
         var nextWriteAttempt = Int64.min
+        /// A lowering (resetTo) that could not be persisted yet: tried again through persistLowered.
+        var lowerPending = false
     }
 
     // A recursive lock: the closures run with it held (Kotlin `synchronized`), and
@@ -111,7 +113,11 @@ final class TrustedClock: @unchecked Sendable {
         lock.lock()
         defer { lock.unlock() }
         let now = advance()
-        if state.loaded, now - state.persisted >= Self.persistStepMs, now >= state.nextWriteAttempt { write(now) }
+        if state.loaded, state.lowerPending, now >= state.nextWriteAttempt {
+            writeLowered(now)
+        } else if state.loaded, now - state.persisted >= Self.persistStepMs, now >= state.nextWriteAttempt {
+            write(now)
+        }
         return now
     }
 
@@ -120,7 +126,11 @@ final class TrustedClock: @unchecked Sendable {
         lock.lock()
         defer { lock.unlock() }
         let now = advance()
-        if state.loaded, now > state.persisted { write(now) }
+        if state.loaded, state.lowerPending {
+            writeLowered(now)
+        } else if state.loaded, now > state.persisted {
+            write(now)
+        }
     }
 
     /// Lowers the reference to the later of the wall clock and `issuedAt` —
@@ -137,11 +147,19 @@ final class TrustedClock: @unchecked Sendable {
         )
         state.reference = target
         state.referenceElapsed = elapsed()
+        writeLowered(target)
+    }
+
+    /// Persists a lowered reference; on failure keeps it pending, so a later
+    /// call lowers the stored copies instead of only ever raising them.
+    private func writeLowered(_ time: Int64) {
         do {
-            try persistLowered(target)
-            state.persisted = target
+            try persistLowered(time)
+            state.persisted = time
+            state.lowerPending = false
         } catch {
-            state.nextWriteAttempt = target + Self.loadRetryMs
+            state.lowerPending = true
+            state.nextWriteAttempt = time + Self.loadRetryMs
             log.w("Trusted clock: could not persist the lowered reference — trying again later", error)
         }
     }

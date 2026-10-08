@@ -127,6 +127,30 @@ final class SSLCertificateUpdaterApplySignedTests: XCTestCase {
         guard case .failed = revoked else { return XCTFail("\(revoked)") }
     }
 
+    func testAKeySetFileFromBeforeARotationDoesNotBringRevokedKeysBack() async throws {
+        let mirror = WatermarkMirrorTests.MemoryMirror()
+        store = CertificateConfigStore(prefs: InMemoryPreferences(), mirror: mirror)
+        let now = self.now
+        store.clock = { now }
+        let rotated = await updater(trust: trust(keys: [keyA], withRecovery: true))
+            .applySigned(signed(payload(4, issuedAt: now), signer: keyB, keySet: keySet(1, [keyB])))
+        XCTAssertEqual(rotated, .updated(newVersion: 4))
+        XCTAssertEqual(mirror.values.keySetVersion, 1, "the floor outside the container")
+
+        // The container is put back from before the rotation: no key set on disk,
+        // the store's own records gone. Key A is in force again — on disk only.
+        keyStore = SigningKeyStore(prefs: InMemoryPreferences())
+        store = CertificateConfigStore(prefs: InMemoryPreferences(), mirror: mirror)
+        store.clock = { now }
+        let restored = updater(trust: trust(keys: [keyA], withRecovery: true))
+        let forged = await restored.applySigned(signed(payload(5, issuedAt: now + 1), signer: keyA))
+        guard case .failed(let reason, _) = forged else { return XCTFail("a revoked key's config was applied: \(forged)") }
+        XCTAssertTrue(reason.contains("older than"), reason)
+        // A set at least as new, riding along, lifts it again.
+        let healed = await restored.applySigned(signed(payload(6, issuedAt: now + 2), signer: keyB, keySet: keySet(1, [keyB])))
+        XCTAssertEqual(healed, .updated(newVersion: 6))
+    }
+
     func testApplySignedAndUpdateNowSerialiseOnTheSameLock() async throws {
         // A fetch that answers the same config: whichever runs second finds it current.
         let response = signed(payload(4, issuedAt: now))

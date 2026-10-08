@@ -100,6 +100,41 @@ final class TrustedClockTests: XCTestCase {
         XCTAssertEqual(clock.now(), real - 5 * minute)
     }
 
+    func testALoweringThatCouldNotBePersistedIsRetriedThroughTheLoweringPath() {
+        let clocks = self.clocks
+        final class Lowered: @unchecked Sendable { var calls: [Int64] = []; var fail = true }
+        let lowered = Lowered()
+        let clock = TrustedClock(
+            wall: { clocks.wall },
+            elapsed: { clocks.elapsed },
+            load: { clocks.stored },
+            persist: { clocks.stored = max(clocks.stored, $0); clocks.writes += 1 },   // raise-only, like the store
+            persistLowered: { value in
+                lowered.calls.append(value)
+                if lowered.fail { throw PinVaultError.storeUnreadable(message: "keychain") }
+                clocks.stored = value
+            }
+        )
+        let real = clocks.wall
+        clocks.wall += 365 * 24 * 60 * minute
+        clock.checkpoint()
+        clocks.wall = real
+        clock.resetTo(issuedAt: real - 5 * minute)
+        XCTAssertEqual(lowered.calls.count, 1)
+        XCTAssertGreaterThan(clocks.stored, real, "the failed lowering left the copy high")
+
+        // Later calls lower it through persistLowered, not through the raise-only persist.
+        lowered.fail = false
+        pass(minute)
+        _ = clock.now()
+        XCTAssertEqual(lowered.calls.count, 2)
+        XCTAssertEqual(clocks.stored, real + minute)
+        // Done: no more lowering writes.
+        pass(minute)
+        _ = clock.now()
+        XCTAssertEqual(lowered.calls.count, 2)
+    }
+
     func testResetToNeverRaisesTheReference() {
         let clock = clock()
         let before = clock.now()

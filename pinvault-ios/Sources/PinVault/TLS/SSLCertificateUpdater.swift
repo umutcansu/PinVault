@@ -20,6 +20,7 @@ protocol UpdaterConfigStore: AnyObject, Sendable {
     func trustAnchorsSeen() throws -> String?
     func setTrustAnchorsSeen(_ fingerprint: String) throws
     func reconcileMirror(keySetVersion: Int, anchors: String)
+    func mirroredKeySetVersion() -> Int?
 }
 
 extension CertificateConfigStore: UpdaterConfigStore {}
@@ -425,6 +426,7 @@ final class SSLCertificateUpdater: @unchecked Sendable {
         // the config next to it then verifies.
         try verifier.applyKeySet(signed)
         try syncKeySetEpoch()
+        try refuseBelowKeySetFloor(verifier)
 
         let verified = try verifier.verifyFetched(signed)
         return Fetched(config: verified.config, envelope: verified.envelope)
@@ -451,6 +453,22 @@ final class SSLCertificateUpdater: @unchecked Sendable {
             Self.log.w("Signing-key set v\(inForce) is newer than v\(resetFor) — replay watermarks reset")
             try configStore.resetWatermarks(keySetVersion: inForce, anchors: nil)
             _ = try loadStored()
+        }
+    }
+
+    /// True when the signing-key set in force is older than the newest one this
+    /// device applied, as its Keychain copy records it (a container put back
+    /// from before a rotation would otherwise bring revoked keys back).
+    private func keySetBelowFloor(_ verifier: SignedConfigVerifier) throws -> Bool {
+        guard let floor = configStore.mirroredKeySetVersion() else { return false }
+        return try verifier.keySetVersion() < floor
+    }
+
+    /// Refuses to verify a fetched config while the key set in force is below that floor.
+    private func refuseBelowKeySetFloor(_ verifier: SignedConfigVerifier) throws {
+        if try keySetBelowFloor(verifier) {
+            throw PinVaultError.security(message: "The signing-key set in force (v\(try verifier.keySetVersion())) is older than " +
+                "one this device applied (v\(configStore.mirroredKeySetVersion() ?? 0)); the answer did not bring a set at least as new")
         }
     }
 
@@ -488,6 +506,13 @@ final class SSLCertificateUpdater: @unchecked Sendable {
     private func loadStored() throws -> StoredConfig? {
         guard let stored = try configStore.load() else { return nil }
         guard let verifier else { return StoredConfig(config: stored, envelope: nil) }
+        if try keySetBelowFloor(verifier) {
+            // The signing-key set on disk is older than one this device applied
+            // before (an older container put back): nothing it vouches for is
+            // used until a fetch brings a set at least as new.
+            Self.log.e("Stored config not used — the signing-key set in force is older than one this device applied")
+            return nil
+        }
 
         let envelope = try configStore.loadEnvelope()
         let verified = try envelope.flatMap { try verifier.verifyStored($0) }
@@ -543,6 +568,7 @@ final class SSLCertificateUpdater: @unchecked Sendable {
             try syncKeySetEpoch()
             try verifier.applyKeySet(signed)
             try syncKeySetEpoch()
+            try refuseBelowKeySetFloor(verifier)
             let verified = try verifier.verifyFetched(signed) { detail in
                 "The config inside the attestation answer failed signature verification.\(detail)"
             }

@@ -51,6 +51,8 @@ final class WatermarkMirrorTests: XCTestCase {
     func testAKeySetResetLowersTheMirrorToo() throws {
         let mirror = MemoryMirror()
         let store = CertificateConfigStore(prefs: InMemoryPreferences(), mirror: mirror)
+        // The first sync records the key set in force before anything is saved.
+        try store.setKeySetVersionSeen(1)
         try store.save(config(9, issuedAt: 9_000))
         try store.clearActive()
         try store.resetWatermarks(keySetVersion: 3, anchors: nil)
@@ -100,6 +102,22 @@ final class WatermarkMirrorTests: XCTestCase {
         XCTAssertEqual(same.values.issuedAt, 5_000)
     }
 
+    func testTheKeySetFloorRisesWithAppliedSetsAndRestartsWithOtherAnchors() throws {
+        let mirror = MemoryMirror()
+        let store = CertificateConfigStore(prefs: InMemoryPreferences(), mirror: mirror)
+        try store.setTrustAnchorsSeen("anchors-1")
+        store.reconcileMirror(keySetVersion: 3, anchors: "anchors-1")
+        XCTAssertEqual(store.mirroredKeySetVersion(), 3)
+        // A container put back with an older set on disk: the floor stays.
+        store.reconcileMirror(keySetVersion: 1, anchors: "anchors-1")
+        XCTAssertEqual(store.mirroredKeySetVersion(), 3)
+        // An update with other compiled-in keys: a new epoch, the floor follows the set in force.
+        store.reconcileMirror(keySetVersion: 0, anchors: "anchors-2")
+        XCTAssertNil(store.mirroredKeySetVersion())
+        store.reconcileMirror(keySetVersion: 0, anchors: "anchors-2")
+        XCTAssertEqual(store.mirroredKeySetVersion(), 0)
+    }
+
     func testAnUnreadableCopyIsNeitherTrustedNorOverwritten() throws {
         final class Broken: WatermarkMirror, @unchecked Sendable {
             var writes = 0
@@ -113,6 +131,7 @@ final class WatermarkMirrorTests: XCTestCase {
         try store.resetWatermarks(keySetVersion: 4, anchors: nil)
         XCTAssertEqual(broken.writes, 0)
         XCTAssertThrowsError(try store.highestSeenTime(), "an unreadable copy is not \"nothing seen\": the clock tries again")
+        XCTAssertThrowsError(try store.lowerHighestSeenTime(1_000), "a lowering that cannot reach the copy fails, so it is retried")
     }
 
     func testTheClockReferenceSurvivesAContainerPutBackAndFollowsTheLibrarysOwnReset() throws {

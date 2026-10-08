@@ -61,7 +61,11 @@ what the hardware vouches for; the clients bind their verdicts to the report.
   wrapped on first read. Going back to an older library starts the stores empty.
 - **Watermarks mirrored outside the container:** replay watermarks and the
   trusted clock reference are also kept in a ThisDeviceOnly Keychain item;
-  putting an older container back no longer moves them back.
+  putting an older container back no longer moves them back. The copy also
+  records the newest signing-key set applied: a key-set file put back from
+  before a rotation (which would bring revoked keys back) leaves the stored
+  config unused and fetched configs refused until a set at least as new is
+  applied; other compiled-in keys start a new epoch.
 - **App Attest v2** (see the server).
 - Probes: a receipt counts only when its file exists; a decrypted App Store /
   TestFlight binary is `app_integrity` evidence; `get-task-allow` is read from

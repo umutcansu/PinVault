@@ -426,14 +426,24 @@ final class CertificateConfigStore: Sendable {
     /// `TrustedClock.resetTo`: the library lowers the reference (a newer config
     /// showed it was ahead); the store and its Keychain copy follow at once.
     func lowerHighestSeenTime(_ timeMs: Int64) throws {
-        try clockPrefs.edit().putLong(Self.keyClockHighestSeen, timeMs).apply()
-        if clockPrefs !== prefs { try prefs.edit().remove(Self.keyClockHighestSeen).apply() }
         Self.mirrorLock.lock()
         defer { Self.mirrorLock.unlock() }
-        guard var mirrored = clockMirror.read() else { return }
+        // An unreadable copy fails the lowering, so the clock tries it again
+        // (through this path, not the raise-only one).
+        guard var mirrored = clockMirror.read() else {
+            throw PinVaultError.illegalState("the trusted clock's Keychain copy cannot be read now")
+        }
+        try clockPrefs.edit().putLong(Self.keyClockHighestSeen, timeMs).apply()
+        if clockPrefs !== prefs { try prefs.edit().remove(Self.keyClockHighestSeen).apply() }
         mirrored.clock = timeMs
         clockMirror.write(mirrored)
         clockMirrored.set(timeMs)
+    }
+
+    /// The newest signing-key set this device applied, as the Keychain copy
+    /// records it (outside the container); nil when none or unreadable.
+    func mirroredKeySetVersion() -> Int? {
+        mirror.read()?.keySetVersion
     }
 
     /// Brings the Keychain copy in line with the key set in force and the
@@ -480,14 +490,24 @@ final class CertificateConfigStore: Sendable {
             log.w("Watermark mirror unreadable: left as it is")
             return
         }
-        let newerSet = keySetVersion.map { $0 > (mirrored.keySetVersion ?? Int.min) } ?? false
+        // A copy with no key set recorded (just after an anchors change, which
+        // already lowered it) is only recorded into, not lowered: otherwise a
+        // container put back right after an update would lower it again.
+        let newerSet = keySetVersion.map { version in mirrored.keySetVersion.map { version > $0 } ?? false } ?? false
         let otherAnchors = anchors.map { mirrored.anchors != nil && $0 != mirrored.anchors } ?? false
         let before = mirrored
         if newerSet || otherAnchors {
             mirrored.issuedAt = 0
             mirrored.versions = [:]
         }
-        if let keySetVersion { mirrored.keySetVersion = max(keySetVersion, mirrored.keySetVersion ?? keySetVersion) }
+        if otherAnchors {
+            // Other compiled-in keys start a new epoch: key sets applied under
+            // the old anchors are no floor for the new ones (the sync that
+            // follows records the set in force).
+            mirrored.keySetVersion = nil
+        } else if let keySetVersion {
+            mirrored.keySetVersion = max(keySetVersion, mirrored.keySetVersion ?? keySetVersion)
+        }
         if let anchors { mirrored.anchors = anchors }
         if mirrored != before { mirror.write(mirrored) }
     }
