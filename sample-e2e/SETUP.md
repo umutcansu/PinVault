@@ -306,6 +306,7 @@ koşusunda bu dosyayı okur; ortamda zaten verilmiş değişkenleri ezmez.
 | `E2E_CUSTOM_BACKEND_PORT`, `E2E_PROXY_PORT`, `E2E_WEBHOOK_PORT` | `6860`, `6861`, `6862` | harness'ın Mac'te açtığı servisler |
 | `E2E_BLACKHOLE_PORT` | `6863` | "paketleri düşür" kuralının karşılığı (bağlantıyı kabul edip yanıt vermeyen sunucu) |
 | `E2E_FRESH_PORT_BASE`, `E2E_FRESH_PROJECT`, `E2E_FRESH_CONTAINER` | `6950`, `pinvault-ios-fresh`, `pinvault-host-ios-fresh` | geçici test sunucusu (taban … taban+6) |
+| `E2E_FRESH_SUBNET` | boş = `10.213.<taban/100>.0/24` | geçici test sunucusunun Docker ağı. Docker'a bırakılınca `192.168.0.0/20` verebiliyor; bu ev ağını örter ve Jenkins gibi container'lar `192.168.1.x` adreslerine (GitLab, modem) ulaşamaz |
 | `E2E_VARIANT` | `debug` / `e2e` | `Debug` ya da `E2E` derleme yapılandırması |
 | `E2E_IOS_CLIENT_DIR`, `E2E_IOS_APP_NAME` | `../sample-client-ios`, `SampleClient` | uygulama projesi ve `.app` adı |
 | `E2E_IOS_DEVICE_ID` | — | uygulamanın cihaz kimliği elle (normalde `report.json`'dan) |

@@ -178,6 +178,8 @@ module.exports = {
    */
   FRESH_PORT_BASE: Number(process.env.E2E_FRESH_PORT_BASE || 6750),
   FRESH_PROJECT: process.env.E2E_FRESH_PROJECT || 'pinvault-fresh',
+  /** Geçici test sunucusunun Docker alt ağı (lib/freshHost.js); boş = 10.213.<port tabanı/100>.0/24. */
+  FRESH_SUBNET: process.env.E2E_FRESH_SUBNET || '',
   FRESH_CONTAINER: process.env.E2E_FRESH_CONTAINER || 'pinvault-host-fresh',
   /** Telefonların host'a ulaştığı IP; host'un kendi pin kaydı bu adla tutulur. */
   LAN_IP: hostEnv.HOST_LAN_IP || '',

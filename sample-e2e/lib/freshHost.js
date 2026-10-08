@@ -28,6 +28,15 @@ const PROJECT = env.FRESH_PROJECT;
 const CONTAINER = env.FRESH_CONTAINER;
 /** Ana host 6650–6656 kullanıyor; kopya çakışmasın diye varsayılan 6750–6756 (E2E_FRESH_PORT_BASE). */
 const BASE = env.FRESH_PORT_BASE;
+/**
+ * Kopyanın Docker ağı. Docker kendi seçtiğinde 172.17–31 aralıkları dolunca
+ * 192.168.0.0/20'yi veriyor: bu, ev / ofis ağını (192.168.1.x) örter ve
+ * container'lar (ör. Jenkins) o ağdaki adreslere — GitLab'a, modeme — artık
+ * ulaşamaz. Bu yüzden sabit, yerel ağlarla çakışmayan bir /24: varsayılan
+ * 10.213.<port tabanı / 100>.0/24 (6750 → 10.213.67.0/24, 6950 → 10.213.69.0/24),
+ * E2E_FRESH_SUBNET ile değişir.
+ */
+const SUBNET = env.FRESH_SUBNET || `10.213.${Math.floor(BASE / 100) % 256}.0/24`;
 const PORTS = {
   http: BASE,
   https: BASE + 1,
@@ -84,7 +93,10 @@ function copyTree() {
   const patched = fs
     .readFileSync(composeFile, 'utf8')
     .replace(/container_name:\s*pinvault-host\s*$/m, `container_name: ${CONTAINER}`);
-  fs.writeFileSync(composeFile, patched);
+  if (/^networks:/m.test(patched)) throw new Error(`${composeFile}: networks bloğu zaten var; alt ağ eklenemedi`);
+  // Sabit alt ağ (SUBNET'in açıklaması): Docker'ın 192.168.x'i seçmesine izin verilmez.
+  const withSubnet = `${patched.replace(/\s*$/, '\n')}\nnetworks:\n  default:\n    ipam:\n      config:\n        - subnet: ${SUBNET}\n`;
+  fs.writeFileSync(composeFile, withSubnet);
   fs.mkdirSync(path.join(DIR, 'data/db'), { recursive: true });
   fs.mkdirSync(path.join(DIR, 'data/certs'), { recursive: true });
   return out;
@@ -274,6 +286,7 @@ async function destroy() {
 module.exports = {
   DIR,
   PROJECT,
+  SUBNET,
   CONTAINER,
   PORTS,
   WEB_URL,
