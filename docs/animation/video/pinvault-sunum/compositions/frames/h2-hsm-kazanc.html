@@ -205,7 +205,7 @@
         right: 0;
         height: 46px;
         font-family: "JetBrains Mono", monospace;
-        font-size: 22px;
+        font-size: 19px;
         white-space: nowrap;
       }
       #h2-hsm-kazanc-thead {
@@ -230,8 +230,8 @@
         align-items: center;
       }
       .h2-hsm-kazanc-c1 { left: 16px; }
-      .h2-hsm-kazanc-c2 { left: 176px; }
-      .h2-hsm-kazanc-c3 { left: 356px; }
+      .h2-hsm-kazanc-c2 { left: 214px; }
+      .h2-hsm-kazanc-c3 { left: 364px; }
       #h2-hsm-kazanc-badge {
         position: absolute;
         left: 530px;
@@ -325,7 +325,7 @@
         </div>
         <div id="h2-hsm-kazanc-gain4" class="h2-hsm-kazanc-gain">
           <div class="h2-hsm-kazanc-check"><svg viewBox="0 0 38 38"><polyline class="h2-hsm-kazanc-tick" points="8,20 16,28 31,11" fill="none" stroke="#EFE9D9" stroke-width="5" stroke-linecap="square" stroke-dasharray="40" stroke-dashoffset="0" /></svg></div>
-          <div class="h2-hsm-kazanc-gaintext">Anahtarı değiştirmek gerekince yenisi HSM'de üretilir; sunucu yeni anahtarla yeniden başlatılır.</div>
+          <div class="h2-hsm-kazanc-gaintext">Anahtar değişince yenisi HSM'de üretilir; telefonlar onu imzalı anahtar setiyle öğrenir.</div>
         </div>
       </div>
 
@@ -340,13 +340,13 @@
             <span class="h2-hsm-kazanc-td h2-hsm-kazanc-c3">Anahtar kimliği</span>
           </div>
           <div id="h2-hsm-kazanc-row1" class="h2-hsm-kazanc-tr">
-            <span class="h2-hsm-kazanc-td h2-hsm-kazanc-c1">hsm</span>
+            <span class="h2-hsm-kazanc-td h2-hsm-kazanc-c1">pkcs11:hsm</span>
             <span class="h2-hsm-kazanc-td h2-hsm-kazanc-c2">pkcs11</span>
             <span class="h2-hsm-kazanc-td h2-hsm-kazanc-c3">3fA9c2…</span>
             <span id="h2-hsm-kazanc-badge">birincil</span>
           </div>
           <div id="h2-hsm-kazanc-row2" class="h2-hsm-kazanc-tr">
-            <span class="h2-hsm-kazanc-td h2-hsm-kazanc-c1">ekip-b</span>
+            <span class="h2-hsm-kazanc-td h2-hsm-kazanc-c1">command:ekip-b</span>
             <span class="h2-hsm-kazanc-td h2-hsm-kazanc-c2">command</span>
             <span class="h2-hsm-kazanc-td h2-hsm-kazanc-c3">Qm7Lr0…</span>
           </div>
@@ -379,7 +379,7 @@
 
         // code line, split into per-character spans for typing (deterministic, built synchronously)
         var CODE = [
-          "sunucu: CONFIG_SIGNERS=hsm,ekip-b ·",
+          "sunucu: CONFIG_SIGNERS=pkcs11:hsm,command:ekip-b ·",
           "uygulama: requiredSignatures(2)"
         ];
         var codeChars = [];

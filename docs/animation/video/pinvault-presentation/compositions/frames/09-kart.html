@@ -1,0 +1,743 @@
+<template>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo+Black&family=JetBrains+Mono:wght@400;700&family=Space+Grotesk:wght@400;500;700&display=block">
+  <script src="https://cdn.jsdelivr.net/npm/gsap@3.14.2/dist/gsap.min.js"></script>
+  <style>
+    #root,
+    #root * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+    #root {
+      position: relative;
+      width: 1920px;
+      height: 1080px;
+      overflow: hidden;
+      container-type: size;
+      font-family: "Space Grotesk", sans-serif;
+      color: #0f0f0f;
+    }
+    [id="09-kart-bg"] {
+      position: absolute;
+      inset: 0;
+      background: #efe9d9;
+    }
+
+    /* ---------- chrome ---------- */
+    [id="09-kart-topbar"] {
+      position: absolute;
+      top: 48px;
+      left: 64px;
+      right: 64px;
+      height: 44px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      font-family: "JetBrains Mono", monospace;
+      font-size: 22px;
+      letter-spacing: 0.06em;
+    }
+    [id="09-kart-pill"] {
+      border: 3px solid #0f0f0f;
+      border-radius: 999px;
+      padding: 5px 18px;
+      background: #efe9d9;
+    }
+    [id="09-kart-footer"] {
+      position: absolute;
+      bottom: 44px;
+      left: 64px;
+      right: 64px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      font-family: "JetBrains Mono", monospace;
+      font-size: 22px;
+      letter-spacing: 0.06em;
+    }
+    [id="09-kart-counter"] {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+    [id="09-kart-dot"] {
+      width: 10px;
+      height: 10px;
+      border-radius: 50%;
+      background: #0f0f0f;
+    }
+
+    /* ---------- chain strip ---------- */
+    [class~="09-kart-cell"] {
+      position: absolute;
+      top: 104px;
+      width: 160px;
+      height: 40px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-family: "JetBrains Mono", monospace;
+      font-size: 15px;
+      letter-spacing: 0.04em;
+      white-space: nowrap;
+    }
+    [class~="09-kart-done"] {
+      background: #0f0f0f;
+      color: #efe9d9;
+      border: 2px solid #0f0f0f;
+    }
+    [class~="09-kart-future"] {
+      border: 2px solid #0f0f0f;
+      opacity: 0.35;
+    }
+    [id="09-kart-cur"] {
+      background: #efe9d9;
+      color: #0f0f0f;
+      border: 4px solid #0f0f0f;
+      font-weight: 700;
+    }
+    [id="09-kart-cur-line"] {
+      position: absolute;
+      left: 1140px;
+      top: 148px;
+      width: 160px;
+      height: 4px;
+      background: #f5c518;
+      transform-origin: left center;
+    }
+    [class~="09-kart-link"] {
+      position: absolute;
+      top: 123px;
+      width: 14px;
+      height: 2px;
+      background: #0f0f0f;
+    }
+
+    /* ---------- heading ---------- */
+    [id="09-kart-kicker"] {
+      position: absolute;
+      left: 96px;
+      top: 170px;
+      background: #0f0f0f;
+      color: #efe9d9;
+      font-family: "JetBrains Mono", monospace;
+      font-size: 24px;
+      letter-spacing: 0.14em;
+      padding: 8px 18px;
+      white-space: nowrap;
+    }
+    [id="09-kart-title"] {
+      position: absolute;
+      left: 96px;
+      top: 230px;
+      font-family: "Archivo Black", sans-serif;
+      font-size: 4.2cqw;
+      line-height: 0.92;
+      letter-spacing: -0.01em;
+      font-weight: 400;
+      white-space: nowrap;
+    }
+
+    /* ---------- left column: checklist ---------- */
+    [id="09-kart-chkhead"] {
+      position: absolute;
+      left: 96px;
+      top: 340px;
+      width: 860px;
+      font-family: "JetBrains Mono", monospace;
+      font-size: 24px;
+      letter-spacing: 0.14em;
+      padding-bottom: 10px;
+      border-bottom: 3px solid #0f0f0f;
+      transform-origin: left center;
+    }
+    [id="09-kart-checks"] {
+      position: absolute;
+      left: 96px;
+      top: 398px;
+      width: 860px;
+      display: flex;
+      flex-direction: column;
+      gap: 14px;
+    }
+    [class~="09-kart-row"] {
+      display: flex;
+      align-items: center;
+      gap: 16px;
+      height: 48px;
+    }
+    [class~="09-kart-box"] {
+      flex: 0 0 44px;
+      width: 44px;
+      height: 44px;
+      border: 4px solid #0f0f0f;
+      background: #efe9d9;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+    [class~="09-kart-box"] svg {
+      width: 30px;
+      height: 30px;
+      overflow: visible;
+    }
+    [class~="09-kart-tick"] {
+      fill: none;
+      stroke: #efe9d9;
+      stroke-width: 4;
+      stroke-linecap: square;
+    }
+    [class~="09-kart-rtxt"] {
+      font-family: "JetBrains Mono", monospace;
+      font-size: 24px;
+      line-height: 1.3;
+      white-space: nowrap;
+    }
+    [id="09-kart-spend"] {
+      position: absolute;
+      left: 96px;
+      top: 716px;
+      display: flex;
+      align-items: center;
+      gap: 18px;
+    }
+    [id="09-kart-tok"] {
+      position: relative;
+      width: 108px;
+      height: 40px;
+      border: 3px solid #0f0f0f;
+      background: #f5c518;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-family: "JetBrains Mono", monospace;
+      font-size: 18px;
+      font-weight: 700;
+      letter-spacing: 0.04em;
+    }
+    [id="09-kart-strike"] {
+      position: absolute;
+      left: -10px;
+      right: -10px;
+      top: 15px;
+      height: 4px;
+      background: #0f0f0f;
+      transform-origin: left center;
+    }
+    [id="09-kart-spendtxt"] {
+      font-size: 24px;
+      line-height: 1.3;
+      font-weight: 500;
+      white-space: nowrap;
+    }
+
+    /* ---------- right column: panel token row ---------- */
+    [id="09-kart-panel"] {
+      position: absolute;
+      left: 1000px;
+      top: 340px;
+      width: 824px;
+      border: 4px solid #0f0f0f;
+      background: #efe9d9;
+    }
+    [id="09-kart-panelhead"] {
+      height: 36px;
+      background: #0f0f0f;
+      color: #efe9d9;
+      display: flex;
+      align-items: center;
+      padding: 0 16px;
+      font-family: "JetBrains Mono", monospace;
+      font-size: 18px;
+      letter-spacing: 0.04em;
+    }
+    [id="09-kart-panelrow"] {
+      height: 60px;
+      display: flex;
+      align-items: center;
+      padding: 0 18px;
+      font-family: "JetBrains Mono", monospace;
+      font-size: 24px;
+      white-space: nowrap;
+      background: #e4dcc4;
+      border-top: 3px solid #0f0f0f;
+    }
+    [id="09-kart-status"] {
+      display: inline-flex;
+      align-items: center;
+      width: 196px;
+      height: 40px;
+      margin-left: 6px;
+      padding: 0 10px;
+      border: 3px solid #0f0f0f;
+      background: #efe9d9;
+    }
+    [id="09-kart-caret"] {
+      display: inline-block;
+      width: 3px;
+      height: 26px;
+      margin-left: 2px;
+      background: #0f0f0f;
+    }
+    [class~="09-kart-new"] {
+      display: none;
+    }
+
+    /* ---------- right column: stage ---------- */
+    [id="09-kart-server"] {
+      position: absolute;
+      left: 1000px;
+      top: 460px;
+      width: 270px;
+      height: 230px;
+      border: 4px solid #0f0f0f;
+      background: #e4dcc4;
+      z-index: 2;
+    }
+    [id="09-kart-srvhead"] {
+      height: 48px;
+      background: #0f0f0f;
+      color: #efe9d9;
+      display: flex;
+      align-items: center;
+      padding: 0 14px;
+      font-family: "JetBrains Mono", monospace;
+      font-size: 20px;
+      letter-spacing: 0.02em;
+      white-space: nowrap;
+    }
+    [id="09-kart-ports"] {
+      position: absolute;
+      left: 10px;
+      top: 58px;
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+    [class~="09-kart-port"] {
+      width: 66px;
+      height: 34px;
+      border: 3px solid #0f0f0f;
+      background: #efe9d9;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-family: "JetBrains Mono", monospace;
+      font-size: 17px;
+    }
+    [id="09-kart-port91"] {
+      background: #0f0f0f;
+      color: #efe9d9;
+      font-weight: 700;
+    }
+    [id="09-kart-seal"] {
+      position: absolute;
+      left: 132px;
+      top: 92px;
+      width: 76px;
+      height: 76px;
+      overflow: visible;
+    }
+    [id="09-kart-lines"] {
+      position: absolute;
+      left: 0;
+      top: 0;
+      width: 1920px;
+      height: 1080px;
+      z-index: 1;
+      overflow: visible;
+    }
+    [id="09-kart-path"] {
+      fill: none;
+      stroke: #0f0f0f;
+      stroke-width: 4;
+      stroke-linecap: square;
+    }
+    [id="09-kart-phone"] {
+      position: absolute;
+      left: 1604px;
+      top: 448px;
+      width: 220px;
+      height: 254px;
+      border: 4px solid #0f0f0f;
+      background: #efe9d9;
+      z-index: 2;
+      display: flex;
+      flex-direction: column;
+    }
+    [id="09-kart-speaker"] {
+      position: absolute;
+      left: 84px;
+      top: 10px;
+      width: 44px;
+      height: 4px;
+      background: #0f0f0f;
+    }
+    [id="09-kart-phonetop"] {
+      height: 46px;
+      display: flex;
+      align-items: flex-end;
+      padding: 0 0 6px 12px;
+      font-family: "JetBrains Mono", monospace;
+      font-size: 17px;
+      letter-spacing: 0.02em;
+    }
+    [id="09-kart-screen"] {
+      position: relative;
+      flex: 1 1 auto;
+      margin: 0 10px 10px;
+      border: 3px solid #0f0f0f;
+      background: #e4dcc4;
+    }
+    [id="09-kart-phonebot"] {
+      height: 38px;
+      background: #0f0f0f;
+      color: #efe9d9;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-family: "JetBrains Mono", monospace;
+      font-size: 14px;
+      white-space: nowrap;
+    }
+    [id="09-kart-key"] {
+      position: absolute;
+      left: 24px;
+      top: 54px;
+      width: 72px;
+      height: 36px;
+      overflow: visible;
+    }
+    [id="09-kart-phok"] {
+      position: absolute;
+      left: 118px;
+      top: 50px;
+      width: 44px;
+      height: 44px;
+      border: 4px solid #0f0f0f;
+      background: #1f8a4c;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+    [id="09-kart-phok"] svg {
+      width: 30px;
+      height: 30px;
+    }
+    [id="09-kart-card"] {
+      position: absolute;
+      left: 1306px;
+      top: 490px;
+      width: 280px;
+      height: 170px;
+      border: 4px solid #0f0f0f;
+      background: #f06ca8;
+      box-shadow: 14px 14px 0 #e85a1f, 14px 14px 0 3px #0f0f0f;
+      z-index: 5;
+      padding: 14px;
+      display: flex;
+      flex-direction: column;
+      justify-content: space-between;
+    }
+    [id="09-kart-cardtop"] {
+      display: flex;
+      gap: 14px;
+    }
+    [id="09-kart-photo"] {
+      position: relative;
+      flex: 0 0 52px;
+      height: 72px;
+      border: 3px solid #0f0f0f;
+      background: #efe9d9;
+    }
+    [id="09-kart-glyph"] {
+      position: absolute;
+      left: 13px;
+      top: 13px;
+      width: 20px;
+      height: 36px;
+      border: 3px solid #0f0f0f;
+    }
+    [id="09-kart-cardtxt"] {
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+      padding-top: 4px;
+      font-family: "JetBrains Mono", monospace;
+    }
+    [id="09-kart-cardname"] {
+      font-size: 24px;
+      font-weight: 700;
+      line-height: 1;
+      white-space: nowrap;
+    }
+    [id="09-kart-carddays"] {
+      font-size: 20px;
+      font-weight: 700;
+      line-height: 1;
+      white-space: nowrap;
+    }
+    [id="09-kart-cardsig"] {
+      font-family: "JetBrains Mono", monospace;
+      font-size: 16px;
+      line-height: 1.2;
+      white-space: nowrap;
+      border-top: 3px solid #0f0f0f;
+      padding-top: 8px;
+    }
+    [id="09-kart-note"] {
+      position: absolute;
+      left: 1000px;
+      top: 714px;
+      width: 824px;
+      font-size: 24px;
+      line-height: 1.3;
+    }
+
+    /* ---------- closing line + analogy ---------- */
+    [id="09-kart-final"] {
+      position: absolute;
+      right: 96px;
+      top: 786px;
+      font-family: "Archivo Black", sans-serif;
+      font-size: 2.4cqw;
+      line-height: 0.92;
+      letter-spacing: -0.01em;
+      white-space: nowrap;
+    }
+    [id="09-kart-analogy"] {
+      position: absolute;
+      left: 96px;
+      top: 838px;
+      display: flex;
+      align-items: center;
+      gap: 18px;
+      padding: 8px 22px 8px 8px;
+      border: 2px solid #0f0f0f;
+      background: #e4dcc4;
+    }
+    [id="09-kart-anlabel"] {
+      background: #0f0f0f;
+      color: #efe9d9;
+      font-family: "JetBrains Mono", monospace;
+      font-size: 17px;
+      letter-spacing: 0.12em;
+      padding: 6px 12px;
+    }
+    [id="09-kart-antxt"] {
+      font-size: 26px;
+      line-height: 1.2;
+      white-space: nowrap;
+    }
+  </style>
+
+  <div id="root" data-composition-id="09-kart" data-start="0" data-duration="15.5" data-width="1920" data-height="1080" lang="en">
+    <div id="09-kart-bg" class="clip" data-start="0" data-duration="15.5" data-track-index="0"></div>
+
+    <!-- chrome -->
+    <div id="09-kart-topbar">
+      <div>PINVAULT · 3 FLOW</div>
+      <div id="09-kart-pill">LINK 7 / 10</div>
+    </div>
+    <div id="09-kart-footer">
+      <div>ID card</div>
+      <div id="09-kart-counter"><span>23</span><span id="09-kart-dot"></span><span>39</span></div>
+    </div>
+
+    <!-- chain strip: x = 96 + i * 174 -->
+    <div class="09-kart-cell 09-kart-done" style="left: 96px">1 SETUP</div>
+    <div class="09-kart-link" style="left: 256px"></div>
+    <div class="09-kart-cell 09-kart-done" style="left: 270px">2 APK</div>
+    <div class="09-kart-link" style="left: 430px"></div>
+    <div class="09-kart-cell 09-kart-done" style="left: 444px">3 HOST</div>
+    <div class="09-kart-link" style="left: 604px"></div>
+    <div class="09-kart-cell 09-kart-done" style="left: 618px">4 ENROLL TOKEN</div>
+    <div class="09-kart-link" style="left: 778px"></div>
+    <div class="09-kart-cell 09-kart-done" style="left: 792px">5 TO THE PHONE</div>
+    <div class="09-kart-link" style="left: 952px"></div>
+    <div class="09-kart-cell 09-kart-done" style="left: 966px">6 ENROLLMENT</div>
+    <div class="09-kart-link" style="left: 1126px"></div>
+    <div class="09-kart-cell" id="09-kart-cur" style="left: 1140px">7 ID CARD</div>
+    <div class="09-kart-link" style="left: 1300px"></div>
+    <div class="09-kart-cell 09-kart-future" style="left: 1314px">8 PIN LIST</div>
+    <div class="09-kart-link" style="left: 1474px"></div>
+    <div class="09-kart-cell 09-kart-future" style="left: 1488px">9 ATTESTATION</div>
+    <div class="09-kart-link" style="left: 1648px"></div>
+    <div class="09-kart-cell 09-kart-future" style="left: 1662px">10 FIRST CALL</div>
+    <div id="09-kart-cur-line"></div>
+
+    <!-- heading -->
+    <div id="09-kart-kicker">WHO: PINVAULT SERVER · WHERE: 8091</div>
+    <h1 id="09-kart-title">SERVER PRINTS THE ID CARD</h1>
+
+    <!-- left: checklist -->
+    <div id="09-kart-chkhead">CHECKED IN ORDER</div>
+    <div id="09-kart-checks">
+      <div class="09-kart-row" id="09-kart-row1">
+        <div class="09-kart-box" id="09-kart-box1"><svg viewBox="0 0 24 24"><polyline class="09-kart-tick" id="09-kart-tick1" pathLength="1" points="4,12.5 10,18 20,6" /></svg></div>
+        <div class="09-kart-rtxt">token hash on record, unused, not expired</div>
+      </div>
+      <div class="09-kart-row" id="09-kart-row2">
+        <div class="09-kart-box" id="09-kart-box2"><svg viewBox="0 0 24 24"><polyline class="09-kart-tick" id="09-kart-tick2" pathLength="1" points="4,12.5 10,18 20,6" /></svg></div>
+        <div class="09-kart-rtxt">if bound to a phone, is it that one</div>
+      </div>
+      <div class="09-kart-row" id="09-kart-row3">
+        <div class="09-kart-box" id="09-kart-box3"><svg viewBox="0 0 24 24"><polyline class="09-kart-tick" id="09-kart-tick3" pathLength="1" points="4,12.5 10,18 20,6" /></svg></div>
+        <div class="09-kart-rtxt">identity not revoked</div>
+      </div>
+      <div class="09-kart-row" id="09-kart-row4">
+        <div class="09-kart-box" id="09-kart-box4"><svg viewBox="0 0 24 24"><polyline class="09-kart-tick" id="09-kart-tick4" pathLength="1" points="4,12.5 10,18 20,6" /></svg></div>
+        <div class="09-kart-rtxt">CSR signature checks out</div>
+      </div>
+      <div class="09-kart-row" id="09-kart-row5">
+        <div class="09-kart-box" id="09-kart-box5"><svg viewBox="0 0 24 24"><polyline class="09-kart-tick" id="09-kart-tick5" pathLength="1" points="4,12.5 10,18 20,6" /></svg></div>
+        <div class="09-kart-rtxt">key attestation (hardware, per policy)</div>
+      </div>
+    </div>
+    <div id="09-kart-spend">
+      <div id="09-kart-tok">token<div id="09-kart-strike"></div></div>
+      <div id="09-kart-spendtxt">If all pass, the token is spent in a single step.</div>
+    </div>
+
+    <!-- right: panel token row -->
+    <div id="09-kart-panel">
+      <div id="09-kart-panelhead">Dashboard · 8090</div>
+      <div id="09-kart-panelrow">
+        <span>Qk3xAbCd… · tablet-07 ·</span>
+        <span id="09-kart-status"><span class="09-kart-old">P</span><span class="09-kart-old">e</span><span class="09-kart-old">n</span><span class="09-kart-old">d</span><span class="09-kart-old">i</span><span class="09-kart-old">n</span><span class="09-kart-old">g</span><span class="09-kart-new">U</span><span class="09-kart-new">s</span><span class="09-kart-new">e</span><span class="09-kart-new">d</span><span id="09-kart-caret"></span></span>
+      </div>
+    </div>
+
+    <!-- right: stage -->
+    <svg id="09-kart-lines" viewBox="0 0 1920 1080" xmlns="http://www.w3.org/2000/svg">
+      <path id="09-kart-path" pathLength="1" d="M 1274 575 H 1600" />
+    </svg>
+
+    <div id="09-kart-server">
+      <div id="09-kart-srvhead">PinVault server</div>
+      <div id="09-kart-ports">
+        <div class="09-kart-port">8090</div>
+        <div class="09-kart-port" id="09-kart-port91">8091</div>
+        <div class="09-kart-port">8092</div>
+        <div class="09-kart-port">8093</div>
+      </div>
+      <svg id="09-kart-seal" viewBox="0 0 76 76" xmlns="http://www.w3.org/2000/svg">
+        <rect x="2" y="2" width="72" height="72" fill="#F5C518" stroke="#0F0F0F" stroke-width="4" />
+        <circle cx="38" cy="38" r="22" fill="none" stroke="#0F0F0F" stroke-width="4" />
+        <polyline points="28,38 35,45 49,30" fill="none" stroke="#0F0F0F" stroke-width="4" stroke-linecap="square" />
+      </svg>
+    </div>
+
+    <div id="09-kart-phone">
+      <div id="09-kart-speaker"></div>
+      <div id="09-kart-phonetop">Your app</div>
+      <div id="09-kart-screen">
+        <svg id="09-kart-key" viewBox="0 0 72 36" xmlns="http://www.w3.org/2000/svg">
+          <circle cx="16" cy="18" r="11" fill="none" stroke="#0F0F0F" stroke-width="5" />
+          <rect x="26" y="15" width="44" height="6" fill="#0F0F0F" />
+          <rect x="58" y="19" width="5" height="11" fill="#0F0F0F" />
+          <rect x="46" y="19" width="5" height="8" fill="#0F0F0F" />
+        </svg>
+        <div id="09-kart-phok"><svg viewBox="0 0 24 24"><polyline id="09-kart-phtick" pathLength="1" points="4,12.5 10,18 20,6" fill="none" stroke="#EFE9D9" stroke-width="4" stroke-linecap="square" /></svg></div>
+      </div>
+      <div id="09-kart-phonebot">PinVault library</div>
+    </div>
+
+    <div id="09-kart-card">
+      <div id="09-kart-cardtop">
+        <div id="09-kart-photo"><div id="09-kart-glyph"></div></div>
+        <div id="09-kart-cardtxt">
+          <div id="09-kart-cardname">tablet-07</div>
+          <div id="09-kart-carddays">90 days</div>
+        </div>
+      </div>
+      <div id="09-kart-cardsig">signed by: client CA</div>
+    </div>
+
+    <div id="09-kart-note">The phone checks that the card belongs to its own key, then stores it.</div>
+
+    <!-- closing -->
+    <div id="09-kart-final">TOKEN SPENT. THE CARD IS NOW THE IDENTITY.</div>
+    <div id="09-kart-analogy">
+      <div id="09-kart-anlabel">ANALOGY</div>
+      <div id="09-kart-antxt">The front desk burns the invitation code and prints a photo ID card.</div>
+    </div>
+  </div>
+
+  <script>
+    (function () {
+      var ID = "09-kart";
+      function $(s) {
+        return document.getElementById(ID + "-" + s);
+      }
+      var tl = gsap.timeline({ paused: true });
+      var OUT = "power3.out";
+      var INOUT = "power3.inOut";
+      var GREEN = "#1F8A4C";
+
+      // ---------- Scene 1 (0.0–1.5s): chain cell settles, kicker, title ----------
+      tl.fromTo($("cur"), { opacity: 0.35, borderWidth: 2 }, { opacity: 1, borderWidth: 4, duration: 0.6, ease: OUT }, 0.2);
+      tl.fromTo($("cur-line"), { scaleX: 0 }, { scaleX: 1, duration: 0.6, ease: OUT }, 0.2);
+      tl.fromTo($("kicker"), { autoAlpha: 0, x: -30 }, { autoAlpha: 1, x: 0, duration: 0.6, ease: OUT }, 0.15);
+      tl.fromTo($("title"), { autoAlpha: 0, y: 30 }, { autoAlpha: 1, y: 0, duration: 0.7, ease: OUT }, 0.35);
+
+      // ---------- Scene 2 (1.5–6.0s): checklist, five checks ~0.8s apart ----------
+      tl.fromTo($("chkhead"), { autoAlpha: 0, y: 16 }, { autoAlpha: 1, y: 0, duration: 0.5, ease: OUT }, 1.5);
+      tl.fromTo($("server"), { autoAlpha: 0, y: 24 }, { autoAlpha: 1, y: 0, duration: 0.6, ease: OUT }, 1.6);
+      tl.fromTo($("phone"), { autoAlpha: 0, y: 24 }, { autoAlpha: 1, y: 0, duration: 0.6, ease: OUT }, 1.75);
+      tl.fromTo($("seal"), { autoAlpha: 0 }, { autoAlpha: 0.35, duration: 0.5, ease: OUT }, 1.9);
+      for (var i = 1; i <= 5; i++) {
+        var t = 2.0 + (i - 1) * 0.8;
+        tl.fromTo($("row" + i), { autoAlpha: 0, x: -24 }, { autoAlpha: 1, x: 0, duration: 0.45, ease: OUT }, t);
+        tl.fromTo($("box" + i), { backgroundColor: "#EFE9D9" }, { backgroundColor: GREEN, duration: 0.25, ease: OUT }, t + 0.35);
+        tl.fromTo($("tick" + i), { strokeDasharray: 1, strokeDashoffset: 1 }, { strokeDashoffset: 0, duration: 0.3, ease: "power2.out" }, t + 0.42);
+      }
+
+      // ---------- Scene 3 (6.0–8.5s): spend line; panel token row flips to "Used" ----------
+      tl.fromTo($("spend"), { autoAlpha: 0, y: 18 }, { autoAlpha: 1, y: 0, duration: 0.55, ease: OUT }, 6.0);
+      tl.fromTo($("panel"), { autoAlpha: 0, y: 20 }, { autoAlpha: 1, y: 0, duration: 0.55, ease: OUT }, 6.5);
+      tl.fromTo($("caret"), { autoAlpha: 0 }, { autoAlpha: 1, duration: 0.1 }, 7.2);
+      var olds = $("status").querySelectorAll('[class~="09-kart-old"]');
+      var news = $("status").querySelectorAll('[class~="09-kart-new"]');
+      for (var o = olds.length - 1, k = 0; o >= 0; o--, k++) {
+        tl.set(olds[o], { display: "none" }, 7.35 + k * 0.045);
+      }
+      for (var n = 0; n < news.length; n++) {
+        tl.set(news[n], { display: "inline" }, 7.85 + n * 0.05);
+      }
+      tl.to($("caret"), { autoAlpha: 0, duration: 0.1 }, 8.45);
+      tl.fromTo($("strike"), { scaleX: 0 }, { scaleX: 1, duration: 0.4, ease: OUT }, 7.35);
+      tl.to($("tok"), { opacity: 0.45, duration: 0.4, ease: OUT }, 7.6);
+
+      // ---------- Scene 4 (8.5–12.0s): pink card is printed at the server, slides to the phone ----------
+      tl.to($("seal"), { opacity: 1, duration: 0.2, ease: OUT }, 8.5);
+      tl.fromTo($("seal"), { scale: 1.25 }, { scale: 1, duration: 0.35, ease: OUT, immediateRender: false }, 8.5);
+      tl.fromTo(
+        $("card"),
+        { autoAlpha: 0, x: -206, y: 30, scale: 0.6 },
+        { autoAlpha: 1, x: -206, y: 0, scale: 1, duration: 0.6, ease: OUT },
+        8.75
+      );
+      tl.fromTo($("path"), { strokeDasharray: 1, strokeDashoffset: 1 }, { strokeDashoffset: 0, duration: 0.5, ease: "power2.out" }, 9.35);
+      tl.to($("card"), { x: 0, duration: 0.85, ease: INOUT }, 9.7);
+      tl.fromTo($("key"), { autoAlpha: 0 }, { autoAlpha: 1, duration: 0.4, ease: OUT }, 10.3);
+      tl.fromTo($("phok"), { autoAlpha: 0, scale: 0.6 }, { autoAlpha: 1, scale: 1, duration: 0.35, ease: OUT }, 10.6);
+      tl.fromTo($("phtick"), { strokeDasharray: 1, strokeDashoffset: 1 }, { strokeDashoffset: 0, duration: 0.3, ease: "power2.out" }, 10.75);
+      tl.fromTo($("note"), { autoAlpha: 0, y: 16 }, { autoAlpha: 1, y: 0, duration: 0.55, ease: OUT }, 10.7);
+
+      // ---------- Scene 5 (12.0–15.0s): closing line, analogy strip, hold ----------
+      tl.fromTo(
+        $("final"),
+        { clipPath: "inset(-20% 100% -20% 0%)" },
+        { clipPath: "inset(-20% 0% -20% 0%)", duration: 0.8, ease: OUT },
+        12.0
+      );
+      tl.fromTo($("analogy"), { autoAlpha: 0, x: -30 }, { autoAlpha: 1, x: 0, duration: 0.6, ease: OUT }, 12.8);
+
+      tl.set({}, {}, 15);
+
+      window.__timelines = window.__timelines || {};
+      window.__timelines[ID] = tl;
+    })();
+  </script>
+</template>

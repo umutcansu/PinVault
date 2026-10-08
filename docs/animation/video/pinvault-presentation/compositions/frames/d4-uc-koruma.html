@@ -1,0 +1,538 @@
+<template id="d4-uc-koruma-template">
+  <div id="root" data-composition-id="d4-uc-koruma" data-start="0" data-duration="18.5" data-width="1920" data-height="1080" lang="en">
+    <style>
+      @import url("https://fonts.googleapis.com/css2?family=Archivo+Black&family=JetBrains+Mono:wght@400;700&family=Space+Grotesk:wght@400;500&display=block");
+
+      #root {
+        position: relative;
+        width: 1920px;
+        height: 1080px;
+        overflow: hidden;
+      }
+      [data-composition-id="d4-uc-koruma"] * {
+        margin: 0;
+        padding: 0;
+        box-sizing: border-box;
+      }
+
+      /* full-bleed ground (clip layer, not #root) */
+      #d4-uc-koruma-stage {
+        position: absolute;
+        inset: 0;
+        width: 1920px;
+        height: 1080px;
+        background: #efe9d9;
+        container-type: size;
+        overflow: hidden;
+        color: #0f0f0f;
+      }
+
+      /* ---------- chrome ---------- */
+      #d4-uc-koruma-topbar {
+        position: absolute;
+        top: 48px;
+        left: 64px;
+        right: 64px;
+        height: 44px;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        font-family: "JetBrains Mono", monospace;
+        font-size: 22px;
+        letter-spacing: 0.06em;
+      }
+      #d4-uc-koruma-pill {
+        border: 4px solid #0f0f0f;
+        border-radius: 999px;
+        background: #efe9d9;
+        padding: 4px 20px;
+        line-height: 1.3;
+      }
+      #d4-uc-koruma-footer {
+        position: absolute;
+        bottom: 48px;
+        left: 64px;
+        right: 64px;
+        height: 32px;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        font-family: "JetBrains Mono", monospace;
+        font-size: 22px;
+        letter-spacing: 0.06em;
+      }
+      #d4-uc-koruma-counter {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+      }
+      #d4-uc-koruma-dot {
+        width: 10px;
+        height: 10px;
+        border-radius: 50%;
+        background: #0f0f0f;
+      }
+
+      /* ---------- kicker + title ---------- */
+      #d4-uc-koruma-kicker {
+        position: absolute;
+        left: 96px;
+        top: 128px;
+        background: #0f0f0f;
+        color: #efe9d9;
+        font-family: "JetBrains Mono", monospace;
+        font-size: 22px;
+        letter-spacing: 0.06em;
+        line-height: 1.25;
+        white-space: nowrap;
+        padding: 8px 16px;
+      }
+      #d4-uc-koruma-title {
+        position: absolute;
+        left: 96px;
+        top: 182px;
+        font-family: "Archivo Black", sans-serif;
+        font-size: 4.2cqw;
+        line-height: 0.92;
+        letter-spacing: -0.01em;
+        white-space: nowrap;
+      }
+
+      /* ---------- triptych cards ---------- */
+      .d4-uc-koruma-card {
+        position: absolute;
+        top: 280px;
+        width: 560px;
+        height: 533px;
+        border: 4px solid #0f0f0f;
+        background: #efe9d9;
+        padding: 22px;
+        display: flex;
+        flex-direction: column;
+      }
+      #d4-uc-koruma-c1 { left: 96px; }
+      #d4-uc-koruma-c2 {
+        left: 680px;
+        box-shadow: inset 0 0 0 8px #f06ca8;
+      }
+      #d4-uc-koruma-c3 {
+        left: 1264px;
+        box-shadow: inset 0 0 0 8px #f5c518, 24px 24px 0 #e85a1f, 24px 24px 0 4px #0f0f0f;
+      }
+      .d4-uc-koruma-head {
+        height: 34px;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 16px;
+      }
+      .d4-uc-koruma-ctitle {
+        font-family: "Archivo Black", sans-serif;
+        font-size: 28px;
+        line-height: 0.92;
+        white-space: nowrap;
+      }
+      .d4-uc-koruma-tag {
+        border: 3px solid #0f0f0f;
+        font-family: "JetBrains Mono", monospace;
+        font-size: 22px;
+        line-height: 1.2;
+        padding: 2px 10px;
+        white-space: nowrap;
+      }
+
+      /* ---------- mini server -> phone strip ---------- */
+      .d4-uc-koruma-strip {
+        position: relative;
+        margin-top: 14px;
+        width: 508px;
+        height: 122px;
+        flex: none;
+      }
+      .d4-uc-koruma-wire {
+        position: absolute;
+        left: 0;
+        top: 0;
+        width: 508px;
+        height: 122px;
+        overflow: visible;
+        z-index: 1;
+      }
+      .d4-uc-koruma-srv {
+        position: absolute;
+        left: 0;
+        top: 20px;
+        width: 160px;
+        height: 80px;
+        border: 3px solid #0f0f0f;
+        background: #e4dcc4;
+        z-index: 3;
+      }
+      .d4-uc-koruma-srvhead {
+        height: 22px;
+        background: #0f0f0f;
+        color: #efe9d9;
+        font-family: "JetBrains Mono", monospace;
+        font-size: 13px;
+        line-height: 22px;
+        padding: 0 5px;
+        white-space: nowrap;
+      }
+      .d4-uc-koruma-phone {
+        position: absolute;
+        left: 444px;
+        top: 21px;
+        width: 64px;
+        height: 100px;
+        border: 3px solid #0f0f0f;
+        background: #efe9d9;
+        z-index: 3;
+      }
+      .d4-uc-koruma-spk {
+        position: absolute;
+        left: 19px;
+        top: 6px;
+        width: 20px;
+        height: 4px;
+        background: #0f0f0f;
+      }
+      .d4-uc-koruma-scr {
+        position: absolute;
+        left: 6px;
+        right: 6px;
+        top: 16px;
+        bottom: 7px;
+        border: 2px solid #0f0f0f;
+        background: #e4dcc4;
+      }
+      .d4-uc-koruma-lib {
+        position: absolute;
+        left: 0;
+        right: 0;
+        bottom: 0;
+        height: 9px;
+        background: #0f0f0f;
+      }
+      .d4-uc-koruma-glyph {
+        position: absolute;
+        display: block;
+        z-index: 5;
+      }
+      .d4-uc-koruma-item {
+        position: absolute;
+        z-index: 2;
+      }
+      .d4-uc-koruma-over {
+        z-index: 4;
+      }
+      .d4-uc-koruma-env {
+        width: 120px;
+        height: 62px;
+        border: 3px solid #0f0f0f;
+        background: #f06ca8;
+        font-family: "JetBrains Mono", monospace;
+        font-size: 15px;
+      }
+      .d4-uc-koruma-env svg {
+        position: absolute;
+        left: 0;
+        top: 0;
+        width: 114px;
+        height: 56px;
+        display: block;
+      }
+      .d4-uc-koruma-envtxt {
+        position: absolute;
+        left: 0;
+        right: 0;
+        bottom: 3px;
+        text-align: center;
+        line-height: 1.1;
+        white-space: nowrap;
+      }
+
+      /* ---------- text rows ---------- */
+      .d4-uc-koruma-rows {
+        margin-top: 16px;
+        display: flex;
+        flex-direction: column;
+        gap: 6px;
+      }
+      .d4-uc-koruma-row {
+        font-family: "Space Grotesk", sans-serif;
+        font-size: 24px;
+        line-height: 1.3;
+      }
+      .d4-uc-koruma-note {
+        margin-top: 10px;
+        font-family: "JetBrains Mono", monospace;
+        font-size: 22px;
+        line-height: 1.25;
+        color: #2a2a2a;
+      }
+      .d4-uc-koruma-who {
+        margin-top: auto;
+        background: #0f0f0f;
+        color: #efe9d9;
+        font-family: "JetBrains Mono", monospace;
+        font-size: 22px;
+        letter-spacing: 0.02em;
+        line-height: 1.3;
+        padding: 10px 12px;
+      }
+
+      /* ---------- bottom line ---------- */
+      #d4-uc-koruma-bottom {
+        position: absolute;
+        left: 96px;
+        top: 852px;
+        border-left: 4px solid #0f0f0f;
+        padding-left: 18px;
+        font-family: "Space Grotesk", sans-serif;
+        font-size: 24px;
+        line-height: 1.3;
+        white-space: nowrap;
+      }
+    </style>
+
+    <div id="d4-uc-koruma-stage" class="clip" data-start="0" data-duration="18.5" data-track-index="0">
+      <!-- chrome -->
+      <div id="d4-uc-koruma-topbar">
+        <span>PINVAULT · 4 FILES</span>
+        <span id="d4-uc-koruma-pill">FILE 4 / 5</span>
+      </div>
+      <div id="d4-uc-koruma-footer">
+        <span>Three protections</span>
+        <span id="d4-uc-koruma-counter"><span>33</span><span id="d4-uc-koruma-dot"></span><span>39</span></span>
+      </div>
+
+      <div id="d4-uc-koruma-kicker">SET IN THE DASHBOARD: ENCRYPTION</div>
+      <div id="d4-uc-koruma-title">THREE PROTECTIONS</div>
+
+      <!-- ===================== COLUMN 1 · at_rest ===================== -->
+      <div id="d4-uc-koruma-c1" class="d4-uc-koruma-card">
+        <div class="d4-uc-koruma-head">
+          <span class="d4-uc-koruma-ctitle">SERVER-ENCRYPTED</span>
+          <span class="d4-uc-koruma-tag">at_rest</span>
+        </div>
+        <div class="d4-uc-koruma-strip">
+          <svg class="d4-uc-koruma-wire" viewBox="0 0 508 122" xmlns="http://www.w3.org/2000/svg">
+            <path id="d4-uc-koruma-c1wire" d="M160 71 H434" fill="none" stroke="#0F0F0F" stroke-width="4" stroke-dasharray="274" stroke-dashoffset="274" />
+            <polygon id="d4-uc-koruma-c1head" points="428,62 442,71 428,80" fill="#0F0F0F" />
+          </svg>
+          <!-- open file travelling server -> phone -->
+          <div id="d4-uc-koruma-c1doc" class="d4-uc-koruma-item" style="left: 360px; top: 47px; width: 40px; height: 48px">
+            <svg width="40" height="48" viewBox="0 0 40 48" style="display: block">
+              <path d="M3 3 H27 L37 13 V45 H3 Z" fill="#EFE9D9" stroke="#0F0F0F" stroke-width="3" stroke-linejoin="miter" />
+              <path d="M27 3 V13 H37" fill="none" stroke="#0F0F0F" stroke-width="3" />
+              <line x1="9" y1="22" x2="30" y2="22" stroke="#0F0F0F" stroke-width="3" />
+              <line x1="9" y1="29" x2="30" y2="29" stroke="#0F0F0F" stroke-width="3" />
+              <line x1="9" y1="36" x2="22" y2="36" stroke="#0F0F0F" stroke-width="3" />
+            </svg>
+            <!-- open padlock badge -->
+            <svg class="d4-uc-koruma-glyph" style="left: 26px; top: 26px" width="22" height="26" viewBox="0 0 24 28">
+              <rect x="0" y="0" width="24" height="28" fill="#EFE9D9" />
+              <path d="M18 14 V8 A6 6 0 0 0 6 8 V10" fill="none" stroke="#0F0F0F" stroke-width="3" />
+              <rect x="3" y="14" width="18" height="12" fill="#0F0F0F" />
+            </svg>
+          </div>
+          <div class="d4-uc-koruma-srv">
+            <div class="d4-uc-koruma-srvhead">PinVault server</div>
+            <svg id="d4-uc-koruma-c1srvlock" class="d4-uc-koruma-glyph" style="left: 65px; top: 27px" width="24" height="28" viewBox="0 0 24 28">
+              <path d="M6 14 V8 A6 6 0 0 1 18 8 V14" fill="none" stroke="#0F0F0F" stroke-width="3" />
+              <rect x="3" y="14" width="18" height="13" fill="#0F0F0F" />
+            </svg>
+          </div>
+          <div class="d4-uc-koruma-phone">
+            <div class="d4-uc-koruma-spk"></div>
+            <div class="d4-uc-koruma-scr"><div class="d4-uc-koruma-lib"></div></div>
+            <svg id="d4-uc-koruma-c1phlock" class="d4-uc-koruma-glyph" style="left: 17px; top: 28px" width="24" height="28" viewBox="0 0 24 28">
+              <path d="M6 14 V8 A6 6 0 0 1 18 8 V14" fill="none" stroke="#0F0F0F" stroke-width="3" />
+              <rect x="3" y="14" width="18" height="13" fill="#0F0F0F" />
+            </svg>
+          </div>
+        </div>
+        <div class="d4-uc-koruma-rows">
+          <div id="d4-uc-koruma-c1r1" class="d4-uc-koruma-row">Stored encrypted on the server's disk.</div>
+          <div id="d4-uc-koruma-c1r2" class="d4-uc-koruma-row">Reaches the phone in the clear; the phone writes it to its own encrypted storage.</div>
+        </div>
+        <div id="d4-uc-koruma-c1who" class="d4-uc-koruma-who">Can open: server · phone</div>
+      </div>
+
+      <!-- ===================== COLUMN 2 · end_to_end ===================== -->
+      <div id="d4-uc-koruma-c2" class="d4-uc-koruma-card">
+        <div class="d4-uc-koruma-head">
+          <span class="d4-uc-koruma-ctitle">END TO END</span>
+          <span class="d4-uc-koruma-tag">end_to_end</span>
+        </div>
+        <div class="d4-uc-koruma-strip">
+          <svg class="d4-uc-koruma-wire" viewBox="0 0 508 122" xmlns="http://www.w3.org/2000/svg">
+            <path id="d4-uc-koruma-c2wire" d="M160 71 H434" fill="none" stroke="#0F0F0F" stroke-width="4" stroke-dasharray="274" stroke-dashoffset="274" />
+            <polygon id="d4-uc-koruma-c2head" points="428,62 442,71 428,80" fill="#0F0F0F" />
+          </svg>
+          <!-- pink envelope wrapped for tablet-07 -->
+          <div id="d4-uc-koruma-c2env" class="d4-uc-koruma-item d4-uc-koruma-env" style="left: 316px; top: 40px">
+            <svg viewBox="0 0 114 56" xmlns="http://www.w3.org/2000/svg">
+              <polyline points="0,0 57,27 114,0" fill="none" stroke="#0F0F0F" stroke-width="3" />
+            </svg>
+            <span class="d4-uc-koruma-envtxt">tablet-07</span>
+          </div>
+          <div class="d4-uc-koruma-srv">
+            <div class="d4-uc-koruma-srvhead">PinVault server</div>
+          </div>
+          <div class="d4-uc-koruma-phone">
+            <div class="d4-uc-koruma-spk"></div>
+            <div class="d4-uc-koruma-scr"><div class="d4-uc-koruma-lib"></div></div>
+          </div>
+          <!-- phone's public key travelling phone -> server (parks on server body) -->
+          <svg id="d4-uc-koruma-c2key" class="d4-uc-koruma-item d4-uc-koruma-over" style="left: 56px; top: 59px" width="48" height="24" viewBox="0 0 48 24">
+            <circle cx="11" cy="12" r="7.5" fill="#EFE9D9" stroke="#0F0F0F" stroke-width="3.5" />
+            <line x1="18.5" y1="12" x2="45" y2="12" stroke="#0F0F0F" stroke-width="3.5" />
+            <line x1="36" y1="12" x2="36" y2="20" stroke="#0F0F0F" stroke-width="3.5" />
+            <line x1="43" y1="12" x2="43" y2="18" stroke="#0F0F0F" stroke-width="3.5" />
+          </svg>
+        </div>
+        <div class="d4-uc-koruma-rows">
+          <div id="d4-uc-koruma-c2r1" class="d4-uc-koruma-row">At startup the phone reports its public key to the server.</div>
+          <div id="d4-uc-koruma-c2r2" class="d4-uc-koruma-row">On every download the server wraps the file to that phone's key.</div>
+          <div id="d4-uc-koruma-c2r3" class="d4-uc-koruma-row">Unreadable in transit or on other devices.</div>
+        </div>
+        <div id="d4-uc-koruma-c2note" class="d4-uc-koruma-note">No key reported: the server refuses (412).</div>
+        <div id="d4-uc-koruma-c2who" class="d4-uc-koruma-who">Can open: server · only that phone</div>
+      </div>
+
+      <!-- ===================== COLUMN 3 · user_auth (the one hard shadow) ===================== -->
+      <div id="d4-uc-koruma-c3" class="d4-uc-koruma-card">
+        <div class="d4-uc-koruma-head">
+          <span class="d4-uc-koruma-ctitle">SCREEN-LOCKED</span>
+          <span class="d4-uc-koruma-tag">user_auth</span>
+        </div>
+        <div class="d4-uc-koruma-strip">
+          <svg class="d4-uc-koruma-wire" viewBox="0 0 508 122" xmlns="http://www.w3.org/2000/svg">
+            <path id="d4-uc-koruma-c3wire" d="M160 71 H434" fill="none" stroke="#0F0F0F" stroke-width="4" stroke-dasharray="274" stroke-dashoffset="274" />
+            <polygon id="d4-uc-koruma-c3head" points="428,62 442,71 428,80" fill="#0F0F0F" />
+          </svg>
+          <div class="d4-uc-koruma-srv">
+            <div class="d4-uc-koruma-srvhead">PinVault server</div>
+          </div>
+          <div class="d4-uc-koruma-phone">
+            <div class="d4-uc-koruma-spk"></div>
+            <div class="d4-uc-koruma-scr"><div class="d4-uc-koruma-lib"></div></div>
+            <!-- lock + fingerprint on the phone -->
+            <svg id="d4-uc-koruma-c3phlock" class="d4-uc-koruma-glyph" style="left: 13px; top: 22px" width="32" height="38" viewBox="0 0 32 38">
+              <path d="M9 17 V10 A7 7 0 0 1 23 10 V17" fill="none" stroke="#0F0F0F" stroke-width="3.5" />
+              <rect x="3" y="17" width="26" height="19" fill="#0F0F0F" />
+              <path d="M8.5 33 A7.5 7.5 0 0 1 23.5 33" fill="none" stroke="#EFE9D9" stroke-width="2" />
+              <path d="M11.5 33 A4.5 4.5 0 0 1 20.5 33" fill="none" stroke="#EFE9D9" stroke-width="2" />
+              <path d="M14.5 33 A1.5 1.5 0 0 1 17.5 33" fill="none" stroke="#EFE9D9" stroke-width="2" />
+            </svg>
+          </div>
+          <!-- locked file: starts on the server body, rides the wire, stays locked -->
+          <div id="d4-uc-koruma-c3doc" class="d4-uc-koruma-item d4-uc-koruma-over" style="left: 366px; top: 45px; width: 52px; height: 54px">
+            <svg width="40" height="48" viewBox="0 0 40 48" style="display: block">
+              <path d="M3 3 H27 L37 13 V45 H3 Z" fill="#EFE9D9" stroke="#0F0F0F" stroke-width="3" stroke-linejoin="miter" />
+              <path d="M27 3 V13 H37" fill="none" stroke="#0F0F0F" stroke-width="3" />
+              <line x1="9" y1="22" x2="30" y2="22" stroke="#0F0F0F" stroke-width="3" />
+              <line x1="9" y1="29" x2="30" y2="29" stroke="#0F0F0F" stroke-width="3" />
+              <line x1="9" y1="36" x2="22" y2="36" stroke="#0F0F0F" stroke-width="3" />
+            </svg>
+            <svg id="d4-uc-koruma-c3badge" class="d4-uc-koruma-glyph" style="left: 22px; top: 18px" width="30" height="36" viewBox="0 0 32 38">
+              <rect x="1" y="15" width="30" height="23" fill="#EFE9D9" />
+              <path d="M9 17 V10 A7 7 0 0 1 23 10 V17" fill="none" stroke="#0F0F0F" stroke-width="3.5" />
+              <rect x="3" y="17" width="26" height="19" fill="#0F0F0F" />
+              <path d="M8.5 33 A7.5 7.5 0 0 1 23.5 33" fill="none" stroke="#EFE9D9" stroke-width="2" />
+              <path d="M11.5 33 A4.5 4.5 0 0 1 20.5 33" fill="none" stroke="#EFE9D9" stroke-width="2" />
+              <path d="M14.5 33 A1.5 1.5 0 0 1 17.5 33" fill="none" stroke="#EFE9D9" stroke-width="2" />
+            </svg>
+          </div>
+        </div>
+        <div class="d4-uc-koruma-rows">
+          <div id="d4-uc-koruma-c3r1" class="d4-uc-koruma-row">Wrapped to the phone's screen-lock key.</div>
+          <div id="d4-uc-koruma-c3r2" class="d4-uc-koruma-row">Arrives on the phone locked and stays locked.</div>
+        </div>
+        <div id="d4-uc-koruma-c3who" class="d4-uc-koruma-who">Can open: server · phone, once unlocked</div>
+      </div>
+
+      <!-- bottom line -->
+      <div id="d4-uc-koruma-bottom">The server the file is uploaded to knows its content; end to end protects it in transit and on other devices.</div>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/gsap@3.14.2/dist/gsap.min.js"></script>
+    <script>
+      (function () {
+        var FID = "d4-uc-koruma";
+        var host = document.querySelector('[data-composition-id="' + FID + '"]') || document;
+        var $ = function (n) {
+          return host.querySelector('[id="' + FID + "-" + n + '"]');
+        };
+        var tl = gsap.timeline({ paused: true });
+        var SOFT = "power3.out";
+        var TRAVEL = "power3.inOut";
+
+        function rise(el, at) {
+          tl.fromTo(el, { opacity: 0, y: 14 }, { opacity: 1, y: 0, duration: 0.6, ease: SOFT }, at);
+        }
+        function pop(el, at) {
+          tl.fromTo(el, { opacity: 0, scale: 0.4 }, { opacity: 1, scale: 1, duration: 0.4, ease: SOFT }, at);
+        }
+        function card(n, at) {
+          tl.fromTo($("c" + n), { opacity: 0, y: 30 }, { opacity: 1, y: 0, duration: 0.7, ease: SOFT }, at);
+          tl.fromTo(
+            $("c" + n + "wire"),
+            { attr: { "stroke-dashoffset": 274 } },
+            { attr: { "stroke-dashoffset": 0 }, duration: 0.6, ease: "power2.inOut" },
+            at + 0.4
+          );
+          tl.fromTo($("c" + n + "head"), { opacity: 0 }, { opacity: 1, duration: 0.2, ease: "none" }, at + 0.95);
+        }
+
+        // ---------- Scene 1 (0.0–1.8): kicker, title ----------
+        tl.fromTo($("kicker"), { opacity: 0, x: -20 }, { opacity: 1, x: 0, duration: 0.6, ease: SOFT }, 0.15);
+        tl.fromTo($("title"), { opacity: 0, y: 32 }, { opacity: 1, y: 0, duration: 0.8, ease: SOFT }, 0.35);
+
+        // ---------- Scene 2 (1.8–6.5): column 1 · at_rest ----------
+        card(1, 1.8);
+        pop($("c1srvlock"), 2.6);
+        rise($("c1r1"), 2.65);
+        // open file leaves the server (hidden under it) and rides to the phone
+        tl.fromTo($("c1doc"), { x: -300, opacity: 0 }, { x: -300, opacity: 1, duration: 0.01 }, 3.2);
+        tl.to($("c1doc"), { x: 0, duration: 0.8, ease: TRAVEL }, 3.22);
+        rise($("c1r2"), 4.05);
+        pop($("c1phlock"), 4.2);
+        rise($("c1who"), 5.6);
+
+        // ---------- Scene 3 (6.5–11.5): column 2 · end_to_end ----------
+        card(2, 6.5);
+        rise($("c2r1"), 7.25);
+        // public key: phone -> server
+        tl.fromTo($("c2key"), { x: 396, opacity: 0 }, { x: 396, opacity: 1, duration: 0.35, ease: SOFT }, 7.45);
+        tl.to($("c2key"), { x: 0, duration: 0.85, ease: TRAVEL }, 7.85);
+        rise($("c2r2"), 8.85);
+        // pink envelope wrapped for tablet-07: server -> phone
+        tl.fromTo($("c2env"), { x: -290, opacity: 0 }, { x: -290, opacity: 1, duration: 0.01 }, 9.0);
+        tl.to($("c2env"), { x: 0, duration: 0.9, ease: TRAVEL }, 9.02);
+        rise($("c2r3"), 10.05);
+        rise($("c2who"), 10.55);
+        rise($("c2note"), 11.0);
+
+        // ---------- Scene 4 (11.5–15.5): column 3 · user_auth ----------
+        card(3, 11.5);
+        rise($("c3r1"), 12.35);
+        // locked file appears on the server, gets the screen-lock seal, rides to the phone
+        tl.fromTo($("c3doc"), { x: -306, opacity: 0 }, { x: -306, opacity: 1, duration: 0.4, ease: SOFT }, 12.5);
+        pop($("c3badge"), 12.85);
+        tl.to($("c3doc"), { x: 0, duration: 0.85, ease: TRAVEL }, 13.25);
+        rise($("c3r2"), 14.0);
+        pop($("c3phlock"), 14.2);
+        rise($("c3who"), 14.8);
+
+        // ---------- Scene 5 (15.5–18.0): bottom line, hold ----------
+        tl.fromTo($("bottom"), { opacity: 0, x: -24 }, { opacity: 1, x: 0, duration: 0.7, ease: SOFT }, 15.6);
+        tl.to({}, { duration: 0.01 }, 17.99);
+
+        window.__timelines = window.__timelines || {};
+        window.__timelines[FID] = tl;
+      })();
+    </script>
+  </div>
+</template>

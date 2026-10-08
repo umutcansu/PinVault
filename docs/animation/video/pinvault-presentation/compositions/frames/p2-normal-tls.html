@@ -1,0 +1,293 @@
+<template>
+  <script src="https://cdn.jsdelivr.net/npm/gsap@3.14.2/dist/gsap.min.js"></script>
+  <style>
+    /* latin-ext + latin subsets (Turkish glyphs live in latin-ext) */
+    @font-face { font-family: "Archivo Black"; font-style: normal; font-weight: 400; font-display: block;
+      src: url(https://fonts.gstatic.com/s/archivoblack/v23/HTxqL289NzCGg4MzN6KJ7eW6CYKF_jzx13HOvQ.woff2) format("woff2");
+      unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C4, U+2113, U+2C60-2C7F, U+A720-A7FF; }
+    @font-face { font-family: "Archivo Black"; font-style: normal; font-weight: 400; font-display: block;
+      src: url(https://fonts.gstatic.com/s/archivoblack/v23/HTxqL289NzCGg4MzN6KJ7eW6CYyF_jzx13E.woff2) format("woff2");
+      unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD; }
+    @font-face { font-family: "JetBrains Mono"; font-style: normal; font-weight: 400 700; font-display: block;
+      src: url(https://fonts.gstatic.com/s/jetbrainsmono/v24/tDbv2o-flEEny0FZhsfKu5WU4zr3E_BX0PnT8RD8yKwBNntkaToggR7BYRbKPx7cwgknk-6nFg.woff2) format("woff2");
+      unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C4, U+2113, U+2C60-2C7F, U+A720-A7FF; }
+    @font-face { font-family: "JetBrains Mono"; font-style: normal; font-weight: 400 700; font-display: block;
+      src: url(https://fonts.gstatic.com/s/jetbrainsmono/v24/tDbv2o-flEEny0FZhsfKu5WU4zr3E_BX0PnT8RD8yKwBNntkaToggR7BYRbKPxDcwgknk-4.woff2) format("woff2");
+      unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD; }
+    @font-face { font-family: "Space Grotesk"; font-style: normal; font-weight: 400 500; font-display: block;
+      src: url(https://fonts.gstatic.com/s/spacegrotesk/v22/V8mDoQDjQSkFtoMM3T6r8E7mPb94C_k3HqUtEw.woff2) format("woff2");
+      unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C4, U+2113, U+2C60-2C7F, U+A720-A7FF; }
+    @font-face { font-family: "Space Grotesk"; font-style: normal; font-weight: 400 500; font-display: block;
+      src: url(https://fonts.gstatic.com/s/spacegrotesk/v22/V8mDoQDjQSkFtoMM3T6r8E7mPbF4C_k3HqU.woff2) format("woff2");
+      unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD; }
+
+    #root {
+      position: relative;
+      width: 1920px;
+      height: 1080px;
+      overflow: hidden;
+      container-type: size;
+      color: #0F0F0F;
+      font-family: "Space Grotesk", sans-serif;
+    }
+    #root * { box-sizing: border-box; margin: 0; padding: 0; }
+
+    /* full-bleed ground (clip layer, not the root) */
+    #p2-normal-tls-bg { position: absolute; inset: 0; width: 1920px; height: 1080px; background: #EFE9D9; }
+
+    /* ---------- chrome ---------- */
+    #p2-normal-tls-topbar {
+      position: absolute; top: 2.5cqw; left: 3.3cqw; right: 3.3cqw; height: 44px;
+      display: flex; align-items: center; justify-content: space-between;
+      font-family: "JetBrains Mono", monospace; font-size: 1.15cqw; letter-spacing: 0.14em; color: #0F0F0F;
+    }
+    #p2-normal-tls-pill {
+      border: 0.2cqw solid #0F0F0F; border-radius: 999px; padding: 6px 20px; background: #EFE9D9;
+      letter-spacing: 0.06em;
+    }
+    #p2-normal-tls-footer {
+      position: absolute; bottom: 2.5cqw; left: 3.3cqw; right: 3.3cqw; height: 30px;
+      display: flex; align-items: center; justify-content: space-between;
+      font-family: "JetBrains Mono", monospace; font-size: 1.15cqw; letter-spacing: 0.06em; color: #0F0F0F;
+    }
+    #p2-normal-tls-count { display: flex; align-items: center; gap: 12px; }
+    #p2-normal-tls-count i { display: block; width: 0.5cqw; height: 0.5cqw; border-radius: 50%; background: #0F0F0F; }
+
+    /* ---------- head ---------- */
+    #p2-normal-tls-title {
+      position: absolute; left: 96px; top: 124px; white-space: nowrap;
+      font-family: "Archivo Black", sans-serif; font-size: 4.2cqw; line-height: 0.92; letter-spacing: -0.01em; color: #0F0F0F;
+      font-weight: 400;
+    }
+    #p2-normal-tls-desc {
+      position: absolute; left: 96px; top: 218px; width: 1500px;
+      font-family: "Space Grotesk", sans-serif; font-size: 1.46cqw; line-height: 1.4; color: #2A2A2A;
+    }
+
+    /* ---------- wires ---------- */
+    #p2-normal-tls-wires { position: absolute; left: 0; top: 0; width: 1920px; height: 1080px; overflow: visible; z-index: 3; }
+    #p2-normal-tls-wires path { fill: none; stroke-linecap: butt; stroke-linejoin: miter; }
+    #p2-normal-tls-lane { stroke: #0F0F0F; stroke-width: 4; }
+    #p2-normal-tls-link { stroke: #E85A1F; stroke-width: 6; }
+
+    /* ---------- phone (shared actor) ---------- */
+    #p2-normal-tls-phone {
+      position: absolute; left: 96px; top: 316px; width: 280px; height: 484px;
+      border: 0.4cqw solid #0F0F0F; background: #EFE9D9; z-index: 2;
+    }
+    #p2-normal-tls-speaker {
+      position: absolute; left: 106px; top: 12px; width: 60px; height: 6px; background: #0F0F0F;
+    }
+    #p2-normal-tls-phone-app {
+      position: absolute; left: 16px; top: 32px;
+      font-family: "JetBrains Mono", monospace; font-size: 18px; letter-spacing: 0.04em; color: #0F0F0F;
+    }
+    #p2-normal-tls-phone-lib {
+      position: absolute; left: 0; right: 0; bottom: 0; height: 56px; background: #0F0F0F; color: #EFE9D9;
+      display: flex; align-items: center; padding-left: 16px;
+      font-family: "JetBrains Mono", monospace; font-size: 17px; letter-spacing: 0.02em;
+    }
+
+    /* ---------- trust store (foreground subject) ---------- */
+    #p2-normal-tls-store {
+      position: absolute; left: 440px; top: 472px; width: 768px; height: 280px;
+      border: 0.4cqw solid #0F0F0F; background: #EFE9D9; z-index: 2;
+    }
+    #p2-normal-tls-store-head {
+      height: 48px; background: #0F0F0F; color: #EFE9D9;
+      display: flex; align-items: center; padding-left: 16px;
+      font-family: "JetBrains Mono", monospace; font-weight: 700; font-size: 21px; letter-spacing: 0.12em;
+    }
+    #p2-normal-tls-grid {
+      position: absolute; left: 16px; top: 64px; width: 728px;
+      display: grid; grid-template-columns: repeat(3, 1fr); grid-auto-rows: 56px; gap: 12px;
+    }
+    .p2-normal-tls-chip {
+      border: 3px solid #0F0F0F; background: #E4DCC4;
+      display: flex; align-items: center; justify-content: center;
+      font-family: "JetBrains Mono", monospace; font-size: 22px; letter-spacing: 0.02em; color: #0F0F0F; white-space: nowrap;
+    }
+    #p2-normal-tls-slot {
+      position: absolute; left: 16px; top: 200px; width: 728px; height: 56px;
+      border: 3px dashed #0F0F0F;
+    }
+    #p2-normal-tls-ochip {
+      position: absolute; left: 16px; top: 200px; width: 728px; height: 56px; z-index: 3;
+      border: 3px solid #0F0F0F; background: #E85A1F; color: #0F0F0F;
+      display: flex; align-items: center; justify-content: center;
+      font-family: "JetBrains Mono", monospace; font-weight: 700; font-size: 23px; letter-spacing: 0.08em; white-space: nowrap;
+    }
+    #p2-normal-tls-odesc {
+      position: absolute; left: 440px; top: 768px; width: 768px;
+      font-family: "Space Grotesk", sans-serif; font-size: 1.25cqw; line-height: 1.3; color: #2A2A2A;
+    }
+
+    /* ---------- fake server (supporting) ---------- */
+    #p2-normal-tls-fake {
+      position: absolute; left: 1420px; top: 320px; width: 404px; height: 240px;
+      border: 0.4cqw solid #E85A1F; background: #EFE9D9; z-index: 2;
+    }
+    #p2-normal-tls-fake-head {
+      height: 50px; background: #E85A1F; border-bottom: 0.3cqw solid #0F0F0F;
+      display: flex; align-items: center; padding-left: 14px;
+      font-family: "JetBrains Mono", monospace; font-weight: 700; font-size: 22px; letter-spacing: 0.08em; color: #0F0F0F;
+    }
+
+    /* certificate card (travels fake server -> phone) */
+    #p2-normal-tls-cert {
+      position: absolute; left: 112px; top: 384px; width: 248px; height: 72px; z-index: 5;
+      border: 0.4cqw solid #E85A1F; background: #E4DCC4;
+      display: flex; flex-direction: column; justify-content: center; padding-left: 12px;
+      font-family: "JetBrains Mono", monospace; font-size: 18px; line-height: 1.25; color: #0F0F0F; white-space: nowrap;
+    }
+
+    /* verdict stamp (the one hard shadow) */
+    #p2-normal-tls-stamp {
+      position: absolute; left: 1410px; top: 612px; z-index: 6;
+      display: flex; align-items: center; gap: 14px; padding: 16px 22px;
+      border: 0.4cqw solid #E85A1F; background: #EFE9D9;
+      box-shadow: 1.25cqw 1.25cqw 0 #E85A1F, 1.25cqw 1.25cqw 0 0.2cqw #0F0F0F;
+      font-family: "Archivo Black", sans-serif; font-size: 40px; line-height: 0.92; color: #0F0F0F; white-space: nowrap;
+    }
+    #p2-normal-tls-stamp svg { display: block; width: 34px; height: 32px; overflow: visible; }
+    #p2-normal-tls-note {
+      position: absolute; left: 1424px; top: 740px;
+      font-family: "Space Grotesk", sans-serif; font-weight: 500; font-size: 1.46cqw; line-height: 1.4; color: #C2410C;
+    }
+
+    /* closing line */
+    #p2-normal-tls-final {
+      position: absolute; left: 96px; top: 846px; white-space: nowrap;
+      font-family: "Archivo Black", sans-serif; font-size: 2.6cqw; line-height: 0.92; letter-spacing: -0.01em; color: #0F0F0F;
+      font-weight: 400;
+    }
+  </style>
+
+  <div id="root" lang="en" data-composition-id="p2-normal-tls" data-start="0" data-duration="13.5" data-width="1920" data-height="1080">
+    <div id="p2-normal-tls-bg" class="clip" data-start="0" data-duration="13.5" data-track-index="0"></div>
+
+    <!-- chrome -->
+    <div id="p2-normal-tls-topbar">
+      <span>PINVAULT · 1 PURPOSE</span>
+      <span id="p2-normal-tls-pill">PURPOSE</span>
+    </div>
+    <div id="p2-normal-tls-footer">
+      <span>Normal TLS</span>
+      <span id="p2-normal-tls-count"><span>03</span><i></i><span>39</span></span>
+    </div>
+
+    <!-- head -->
+    <h1 id="p2-normal-tls-title">WHAT DOES NORMAL TLS TRUST?</h1>
+    <p id="p2-normal-tls-desc">At the start of the connection the server shows its certificate. The phone accepts it if one of the authorities (CAs) in its trust store signed it.</p>
+
+    <!-- wires -->
+    <svg id="p2-normal-tls-wires" viewBox="0 0 1920 1080" xmlns="http://www.w3.org/2000/svg">
+      <path id="p2-normal-tls-lane" d="M 376 420 L 1420 420" />
+      <path id="p2-normal-tls-link" d="M 460 704 L 408 704 L 408 446 L 360 446" />
+    </svg>
+
+    <!-- phone -->
+    <div id="p2-normal-tls-phone">
+      <div id="p2-normal-tls-speaker"></div>
+      <div id="p2-normal-tls-phone-app">Your app</div>
+      <div id="p2-normal-tls-phone-lib">Android</div>
+    </div>
+
+    <!-- trust store -->
+    <div id="p2-normal-tls-store">
+      <div id="p2-normal-tls-store-head">THE PHONE'S TRUST STORE</div>
+      <div id="p2-normal-tls-grid">
+        <div id="p2-normal-tls-chip1" class="p2-normal-tls-chip">Authority A</div>
+        <div id="p2-normal-tls-chip2" class="p2-normal-tls-chip">Authority B</div>
+        <div id="p2-normal-tls-chip3" class="p2-normal-tls-chip">Authority C</div>
+        <div id="p2-normal-tls-chip4" class="p2-normal-tls-chip">Authority D</div>
+        <div id="p2-normal-tls-chip5" class="p2-normal-tls-chip">Authority E</div>
+        <div id="p2-normal-tls-chip6" class="p2-normal-tls-chip">… and dozens more</div>
+      </div>
+      <div id="p2-normal-tls-slot"></div>
+      <div id="p2-normal-tls-ochip">THE INTERCEPTOR'S AUTHORITY</div>
+    </div>
+    <p id="p2-normal-tls-odesc">A rooted phone, an app that trusts user CAs, or an authority that issues a wrong certificate makes this possible.</p>
+
+    <!-- fake server -->
+    <div id="p2-normal-tls-fake"><div id="p2-normal-tls-fake-head">FAKE SERVER</div></div>
+
+    <!-- certificate card -->
+    <div id="p2-normal-tls-cert"><span>signed by:</span><span>interceptor's CA</span></div>
+
+    <!-- verdict -->
+    <div id="p2-normal-tls-stamp">
+      <span>TRUSTED</span>
+      <svg viewBox="0 0 34 32" xmlns="http://www.w3.org/2000/svg" aria-label="✓"><polyline points="3,17 12,26 31,5" fill="none" stroke="#1F8A4C" stroke-width="7" stroke-linecap="square" stroke-linejoin="miter" /></svg>
+    </div>
+    <div id="p2-normal-tls-note">but fake</div>
+
+    <!-- closing line -->
+    <div id="p2-normal-tls-final">SSL PINNING CLOSES THIS GAP.</div>
+  </div>
+
+  <script>
+    (function () {
+      var ID = "p2-normal-tls";
+      var $ = function (n) { return document.getElementById(ID + "-" + n); };
+      var OUT = "power3.out";
+      var MOVE = "power3.inOut";
+      var late = function (o) { return Object.assign({ immediateRender: false }, o); };
+      var WIPE_FROM = "inset(-20% 100% -20% 0%)";
+      var WIPE_TO = "inset(-20% 0% -20% 0%)";
+
+      function prep(p, known) {
+        var len = (p.getTotalLength && p.getTotalLength()) || known;
+        if (!len || !isFinite(len)) len = known;
+        p.style.strokeDasharray = len + " " + len;
+        p.style.strokeDashoffset = String(len);
+        return len;
+      }
+      var lane = $("lane"), link = $("link");
+      var LL = prep(lane, 1044), LK = prep(link, 358);
+
+      // certificate start: inside the fake server body, on the lane (1440 - 112)
+      var CX = 1328;
+
+      var tl = gsap.timeline({ paused: true });
+
+      // chrome
+      tl.fromTo([$("topbar"), $("footer")], { opacity: 0 }, { opacity: 1, duration: 0.4, ease: "power1.out" }, 0);
+
+      // ---------- Scene 1 (0.0–2.5): title, then description ----------
+      tl.fromTo($("title"), { opacity: 0, y: 34 }, { opacity: 1, y: 0, duration: 0.7, ease: OUT }, 0.1);
+      tl.fromTo($("desc"), { opacity: 0, clipPath: WIPE_FROM }, { opacity: 1, clipPath: WIPE_TO, duration: 1.1, ease: OUT }, 0.9);
+
+      // ---------- Scene 2 (2.5–5.0): phone + trust store, six chips fill ~0.3s apart ----------
+      tl.fromTo($("phone"), { opacity: 0, y: 40 }, { opacity: 1, y: 0, duration: 0.7, ease: OUT }, 2.5);
+      tl.fromTo($("store"), { opacity: 0, y: 30 }, { opacity: 1, y: 0, duration: 0.7, ease: OUT }, 2.8);
+      [1, 2, 3, 4, 5, 6].forEach(function (i) {
+        tl.fromTo($("chip" + i), { opacity: 0, y: -16 }, { opacity: 1, y: 0, duration: 0.35, ease: OUT }, 3.2 + (i - 1) * 0.3);
+      });
+      tl.fromTo($("slot"), { opacity: 0 }, { opacity: 0.45, duration: 0.4, ease: "power1.out" }, 4.75);
+
+      // ---------- Scene 3 (5.0–8.0): orange chip slides in from the right into the empty slot ----------
+      tl.fromTo($("ochip"), { opacity: 0, x: 820 }, { opacity: 1, duration: 0.25, ease: "power1.out" }, 5.1);
+      tl.fromTo($("ochip"), { x: 820 }, late({ x: 0, duration: 1.0, ease: MOVE }), 5.2);
+      tl.fromTo($("slot"), { opacity: 0.45 }, late({ opacity: 0, duration: 0.2, ease: "none" }), 6.1);
+      tl.fromTo($("odesc"), { opacity: 0, clipPath: WIPE_FROM }, { opacity: 1, clipPath: WIPE_TO, duration: 1.0, ease: OUT }, 6.5);
+
+      // ---------- Scene 4 (8.0–10.5): fake server, lane, certificate to phone, orange link, stamp ----------
+      tl.fromTo($("fake"), { opacity: 0, x: 360 }, { opacity: 1, x: 0, duration: 0.6, ease: OUT }, 8.0);
+      tl.fromTo(lane, { strokeDashoffset: LL }, { strokeDashoffset: 0, duration: 0.45, ease: "power1.inOut" }, 8.35);
+      tl.fromTo($("cert"), { opacity: 0, x: CX }, { opacity: 1, duration: 0.25, ease: "power1.out" }, 8.6);
+      tl.fromTo($("cert"), { x: CX }, late({ x: 0, duration: 0.8, ease: MOVE }), 8.8);
+      tl.fromTo(link, { strokeDashoffset: LK }, { strokeDashoffset: 0, duration: 0.4, ease: "power2.out" }, 9.6);
+      tl.fromTo($("stamp"), { opacity: 0, scale: 1.18, rotation: -6 }, { opacity: 1, scale: 1, rotation: -6, duration: 0.35, ease: OUT }, 9.95);
+      tl.fromTo($("note"), { opacity: 0, y: 14 }, { opacity: 1, y: 0, duration: 0.45, ease: OUT }, 10.25);
+
+      // ---------- Scene 5 (10.5–13.0): closing line, then hold ----------
+      tl.fromTo($("final"), { opacity: 0, y: 26 }, { opacity: 1, y: 0, duration: 0.7, ease: OUT }, 10.6);
+
+      tl.set({}, {}, 13);
+
+      window.__timelines = window.__timelines || {};
+      window.__timelines[ID] = tl;
+    })();
+  </script>
+</template>

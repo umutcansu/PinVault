@@ -1,0 +1,559 @@
+<template id="c1-config-api-turleri-template">
+  <div id="root" data-composition-id="c1-config-api-turleri" data-start="0" data-duration="17.5" data-width="1920" data-height="1080" lang="en">
+    <style>
+      @import url("https://fonts.googleapis.com/css2?family=Archivo+Black&family=JetBrains+Mono:wght@400;700&family=Space+Grotesk:wght@400;500&display=block");
+
+      #root {
+        position: relative;
+        width: 1920px;
+        height: 1080px;
+        overflow: hidden;
+      }
+      [data-composition-id="c1-config-api-turleri"] * {
+        margin: 0;
+        padding: 0;
+        box-sizing: border-box;
+      }
+
+      /* full-bleed ground (clip layer, not #root) */
+      #c1-config-api-turleri-stage {
+        position: absolute;
+        inset: 0;
+        width: 1920px;
+        height: 1080px;
+        background: #efe9d9;
+        container-type: size;
+        overflow: hidden;
+        color: #0f0f0f;
+      }
+
+      /* ---------- chrome ---------- */
+      #c1-config-api-turleri-topbar {
+        position: absolute;
+        top: 48px;
+        left: 64px;
+        right: 64px;
+        height: 44px;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        font-family: "JetBrains Mono", monospace;
+        font-size: 22px;
+        letter-spacing: 0.06em;
+      }
+      #c1-config-api-turleri-pill {
+        border: 4px solid #0f0f0f;
+        border-radius: 999px;
+        background: #efe9d9;
+        padding: 4px 20px;
+        line-height: 1.3;
+      }
+      #c1-config-api-turleri-footer {
+        position: absolute;
+        bottom: 48px;
+        left: 64px;
+        right: 64px;
+        height: 32px;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        font-family: "JetBrains Mono", monospace;
+        font-size: 22px;
+        letter-spacing: 0.06em;
+      }
+      #c1-config-api-turleri-counter {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+      }
+      #c1-config-api-turleri-dot {
+        width: 10px;
+        height: 10px;
+        border-radius: 50%;
+        background: #0f0f0f;
+      }
+
+      /* ---------- head ---------- */
+      #c1-config-api-turleri-title {
+        position: absolute;
+        left: 96px;
+        top: 124px;
+        font-family: "Archivo Black", sans-serif;
+        font-size: 4.2cqw;
+        line-height: 0.92;
+        letter-spacing: -0.01em;
+        white-space: nowrap;
+      }
+      #c1-config-api-turleri-lede {
+        position: absolute;
+        left: 96px;
+        top: 214px;
+        width: 1728px;
+        font-family: "Space Grotesk", sans-serif;
+        font-size: 28px;
+        line-height: 1.4;
+      }
+
+      /* ---------- the two column cards ---------- */
+      .c1-config-api-turleri-card {
+        position: absolute;
+        top: 276px;
+        width: 840px;
+        height: 480px;
+        border: 4px solid #0f0f0f;
+        background: #efe9d9;
+      }
+      #c1-config-api-turleri-cardL {
+        left: 96px;
+      }
+      #c1-config-api-turleri-cardR {
+        left: 984px;
+        box-shadow: 24px 24px 0 #e85a1f, 24px 24px 0 4px #0f0f0f;
+      }
+      .c1-config-api-turleri-band {
+        position: absolute;
+        left: 0;
+        top: 0;
+        width: 832px;
+        height: 60px;
+        border-bottom: 4px solid #0f0f0f;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        padding: 0 24px;
+      }
+      #c1-config-api-turleri-bandL {
+        background: #e4dcc4;
+      }
+      #c1-config-api-turleri-bandR {
+        background: #f06ca8;
+      }
+      .c1-config-api-turleri-ctitle {
+        font-family: "Archivo Black", sans-serif;
+        font-size: 40px;
+        line-height: 0.92;
+        letter-spacing: -0.01em;
+        white-space: nowrap;
+      }
+      .c1-config-api-turleri-csub {
+        font-family: "JetBrains Mono", monospace;
+        font-size: 22px;
+        letter-spacing: 0.04em;
+        white-space: nowrap;
+      }
+
+      /* drawing layer inside each card */
+      .c1-config-api-turleri-wire {
+        position: absolute;
+        left: 0;
+        top: 0;
+        width: 832px;
+        height: 472px;
+        overflow: visible;
+        z-index: 1;
+      }
+
+      /* phone (fixed actor, small) */
+      .c1-config-api-turleri-phone {
+        position: absolute;
+        left: 36px;
+        top: 70px;
+        width: 124px;
+        height: 172px;
+        border: 4px solid #0f0f0f;
+        background: #efe9d9;
+        padding: 8px;
+        display: flex;
+        flex-direction: column;
+        gap: 7px;
+        z-index: 3;
+      }
+      .c1-config-api-turleri-speaker {
+        align-self: center;
+        width: 36px;
+        height: 5px;
+        background: #0f0f0f;
+      }
+      .c1-config-api-turleri-screen {
+        flex: 1;
+        border: 3px solid #0f0f0f;
+        background: #e4dcc4;
+        display: flex;
+        flex-direction: column;
+        justify-content: space-between;
+      }
+      .c1-config-api-turleri-app {
+        font-family: "JetBrains Mono", monospace;
+        font-size: 13px;
+        padding: 8px 6px;
+        white-space: nowrap;
+      }
+      .c1-config-api-turleri-lib {
+        background: #0f0f0f;
+        color: #efe9d9;
+        font-family: "JetBrains Mono", monospace;
+        font-size: 12px;
+        line-height: 1.25;
+        padding: 6px 6px;
+      }
+
+      /* PinVault server (fixed actor, small) */
+      .c1-config-api-turleri-server {
+        position: absolute;
+        left: 580px;
+        top: 66px;
+        width: 220px;
+        height: 176px;
+        border: 4px solid #0f0f0f;
+        background: #e4dcc4;
+        z-index: 3;
+      }
+      .c1-config-api-turleri-srvhead {
+        height: 34px;
+        background: #0f0f0f;
+        color: #efe9d9;
+        font-family: "JetBrains Mono", monospace;
+        font-size: 15px;
+        letter-spacing: 0.02em;
+        display: flex;
+        align-items: center;
+        padding: 0 12px;
+        white-space: nowrap;
+      }
+      .c1-config-api-turleri-port {
+        position: absolute;
+        left: -66px;
+        width: 66px;
+        height: 26px;
+        border: 3px solid #0f0f0f;
+        background: #efe9d9;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-family: "JetBrains Mono", monospace;
+        font-size: 15px;
+      }
+      .c1-config-api-turleri-porton {
+        background: #0f0f0f;
+        color: #efe9d9;
+      }
+
+      /* packets riding the wires */
+      .c1-config-api-turleri-cert {
+        position: absolute;
+        left: 196px;
+        top: 100px;
+        width: 186px;
+        height: 36px;
+        border: 3px solid #0f0f0f;
+        background: #e4dcc4;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-family: "JetBrains Mono", monospace;
+        font-size: 15px;
+        white-space: nowrap;
+        z-index: 2;
+      }
+      .c1-config-api-turleri-idcard {
+        position: absolute;
+        left: 250px;
+        top: 194px;
+        width: 140px;
+        height: 36px;
+        border: 3px solid #0f0f0f;
+        background: #f06ca8;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-family: "JetBrains Mono", monospace;
+        font-size: 17px;
+        white-space: nowrap;
+        z-index: 2;
+      }
+      .c1-config-api-turleri-nocard {
+        position: absolute;
+        left: 196px;
+        top: 193px;
+        width: 170px;
+        height: 38px;
+        border: 3px dashed #0f0f0f;
+        background: #efe9d9;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-family: "JetBrains Mono", monospace;
+        font-size: 16px;
+        white-space: nowrap;
+        z-index: 2;
+      }
+      .c1-config-api-turleri-ok {
+        position: absolute;
+        width: 30px;
+        height: 30px;
+        background: #1f8a4c;
+        border: 3px solid #0f0f0f;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        z-index: 2;
+      }
+      .c1-config-api-turleri-ok svg {
+        width: 22px;
+        height: 22px;
+        display: block;
+      }
+
+      /* rows under each drawing */
+      .c1-config-api-turleri-rows {
+        position: absolute;
+        left: 28px;
+        top: 264px;
+        width: 784px;
+        display: flex;
+        flex-direction: column;
+        gap: 12px;
+      }
+      .c1-config-api-turleri-row {
+        display: flex;
+        align-items: flex-start;
+        gap: 14px;
+        font-family: "Space Grotesk", sans-serif;
+        font-size: 24px;
+        line-height: 1.3;
+      }
+      .c1-config-api-turleri-bullet {
+        flex: none;
+        width: 10px;
+        height: 10px;
+        margin-top: 11px;
+        background: #0f0f0f;
+      }
+
+      /* shared row + note */
+      #c1-config-api-turleri-common {
+        position: absolute;
+        left: 96px;
+        top: 800px;
+        height: 38px;
+        display: flex;
+        align-items: center;
+        gap: 16px;
+        font-family: "JetBrains Mono", monospace;
+        font-size: 22px;
+        letter-spacing: 0.02em;
+        white-space: nowrap;
+      }
+      #c1-config-api-turleri-commonok {
+        width: 36px;
+        height: 36px;
+        background: #1f8a4c;
+        border: 3px solid #0f0f0f;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        flex: none;
+      }
+      #c1-config-api-turleri-commonok svg {
+        width: 26px;
+        height: 26px;
+        display: block;
+      }
+      #c1-config-api-turleri-note {
+        position: absolute;
+        left: 96px;
+        top: 852px;
+        width: 1728px;
+        border-left: 4px solid #0f0f0f;
+        padding-left: 16px;
+        font-family: "Space Grotesk", sans-serif;
+        font-size: 24px;
+        line-height: 1.3;
+      }
+    </style>
+
+    <div id="c1-config-api-turleri-stage" class="clip" data-start="0" data-duration="17.5" data-track-index="0">
+      <!-- chrome -->
+      <div id="c1-config-api-turleri-topbar">
+        <span>PINVAULT · 2 SOLUTION</span>
+        <span id="c1-config-api-turleri-pill">CONFIG API</span>
+      </div>
+      <div id="c1-config-api-turleri-footer">
+        <span>Config API types</span>
+        <span id="c1-config-api-turleri-counter"><span>08</span><span id="c1-config-api-turleri-dot"></span><span>39</span></span>
+      </div>
+
+      <!-- head -->
+      <div id="c1-config-api-turleri-title">TWO KINDS OF CONFIG API</div>
+      <div id="c1-config-api-turleri-lede">The Config API is the port where the app gets its pin list, PinVault-Token and files. There are two kinds.</div>
+
+      <!-- ===== LEFT: TLS ===== -->
+      <div id="c1-config-api-turleri-cardL" class="c1-config-api-turleri-card">
+        <div id="c1-config-api-turleri-bandL" class="c1-config-api-turleri-band">
+          <span id="c1-config-api-turleri-titleL" class="c1-config-api-turleri-ctitle">TLS</span>
+          <span id="c1-config-api-turleri-subL" class="c1-config-api-turleri-csub">one-way · e.g. 8091</span>
+        </div>
+
+        <!-- wire: port 8091 (518,155) -> trunk x=490 -> up to y=118 -> phone (176,118) -->
+        <svg class="c1-config-api-turleri-wire" viewBox="0 0 832 472" xmlns="http://www.w3.org/2000/svg">
+          <path id="c1-config-api-turleri-pathL" d="M518 155 H490 V118 H176" fill="none" stroke="#0F0F0F" stroke-width="4" stroke-linejoin="miter" stroke-dasharray="384" stroke-dashoffset="384" />
+          <polygon id="c1-config-api-turleri-headL" points="164,118 182,108 182,128" fill="#0F0F0F" />
+        </svg>
+
+        <div id="c1-config-api-turleri-phoneL" class="c1-config-api-turleri-phone">
+          <div class="c1-config-api-turleri-speaker"></div>
+          <div class="c1-config-api-turleri-screen">
+            <div class="c1-config-api-turleri-app">Your app</div>
+            <div class="c1-config-api-turleri-lib">PinVault<br />library</div>
+          </div>
+        </div>
+
+        <div id="c1-config-api-turleri-certL" class="c1-config-api-turleri-cert">server certificate</div>
+        <div id="c1-config-api-turleri-okL" class="c1-config-api-turleri-ok" style="left: 392px; top: 103px"><svg viewBox="0 0 24 24"><polyline points="5,12.5 10,17.5 19,7" fill="none" stroke="#EFE9D9" stroke-width="3.5" stroke-linecap="square" /></svg></div>
+        <div id="c1-config-api-turleri-nocard" class="c1-config-api-turleri-nocard">no ID card</div>
+
+        <div id="c1-config-api-turleri-serverL" class="c1-config-api-turleri-server">
+          <div class="c1-config-api-turleri-srvhead">PinVault server</div>
+          <div class="c1-config-api-turleri-port" style="top: 44px">8090</div>
+          <div class="c1-config-api-turleri-port c1-config-api-turleri-porton" style="top: 76px">8091</div>
+          <div class="c1-config-api-turleri-port" style="top: 108px">8092</div>
+          <div class="c1-config-api-turleri-port" style="top: 140px">8093</div>
+        </div>
+
+        <div class="c1-config-api-turleri-rows">
+          <div id="c1-config-api-turleri-l1" class="c1-config-api-turleri-row"><span class="c1-config-api-turleri-bullet"></span><span>Only the server shows its identity.</span></div>
+          <div id="c1-config-api-turleri-l2" class="c1-config-api-turleri-row"><span class="c1-config-api-turleri-bullet"></span><span>No enrollment, no enrollment token: the app works as soon as it is installed.</span></div>
+          <div id="c1-config-api-turleri-l3" class="c1-config-api-turleri-row"><span class="c1-config-api-turleri-bullet"></span><span>The connection does not prove who the device is.</span></div>
+        </div>
+      </div>
+
+      <!-- ===== RIGHT: mTLS (the one hard shadow) ===== -->
+      <div id="c1-config-api-turleri-cardR" class="c1-config-api-turleri-card">
+        <div id="c1-config-api-turleri-bandR" class="c1-config-api-turleri-band">
+          <span id="c1-config-api-turleri-titleR" class="c1-config-api-turleri-ctitle">mTLS</span>
+          <span id="c1-config-api-turleri-subR" class="c1-config-api-turleri-csub">two-way · e.g. 8092</span>
+        </div>
+
+        <!-- trunk from port 8092 (518,187) to x=490, splits up (to phone, y=118) and down (from phone, y=212) -->
+        <svg class="c1-config-api-turleri-wire" viewBox="0 0 832 472" xmlns="http://www.w3.org/2000/svg">
+          <path id="c1-config-api-turleri-pathRa" d="M518 187 H490 V118 H176" fill="none" stroke="#0F0F0F" stroke-width="4" stroke-linejoin="miter" stroke-dasharray="411" stroke-dashoffset="411" />
+          <polygon id="c1-config-api-turleri-headRa" points="164,118 182,108 182,128" fill="#0F0F0F" />
+          <path id="c1-config-api-turleri-pathRb" d="M164 212 H490 V187 H504" fill="none" stroke="#0F0F0F" stroke-width="4" stroke-linejoin="miter" stroke-dasharray="365" stroke-dashoffset="365" />
+          <polygon id="c1-config-api-turleri-headRb" points="518,187 500,177 500,197" fill="#0F0F0F" />
+        </svg>
+
+        <div id="c1-config-api-turleri-phoneR" class="c1-config-api-turleri-phone">
+          <div class="c1-config-api-turleri-speaker"></div>
+          <div class="c1-config-api-turleri-screen">
+            <div class="c1-config-api-turleri-app">Your app</div>
+            <div class="c1-config-api-turleri-lib">PinVault<br />library</div>
+          </div>
+        </div>
+
+        <div id="c1-config-api-turleri-certR" class="c1-config-api-turleri-cert">server certificate</div>
+        <div id="c1-config-api-turleri-okRa" class="c1-config-api-turleri-ok" style="left: 392px; top: 103px"><svg viewBox="0 0 24 24"><polyline points="5,12.5 10,17.5 19,7" fill="none" stroke="#EFE9D9" stroke-width="3.5" stroke-linecap="square" /></svg></div>
+        <div id="c1-config-api-turleri-idcard" class="c1-config-api-turleri-idcard">tablet-07</div>
+        <div id="c1-config-api-turleri-okRb" class="c1-config-api-turleri-ok" style="left: 400px; top: 197px"><svg viewBox="0 0 24 24"><polyline points="5,12.5 10,17.5 19,7" fill="none" stroke="#EFE9D9" stroke-width="3.5" stroke-linecap="square" /></svg></div>
+
+        <div id="c1-config-api-turleri-serverR" class="c1-config-api-turleri-server">
+          <div class="c1-config-api-turleri-srvhead">PinVault server</div>
+          <div class="c1-config-api-turleri-port" style="top: 44px">8090</div>
+          <div class="c1-config-api-turleri-port" style="top: 76px">8091</div>
+          <div class="c1-config-api-turleri-port c1-config-api-turleri-porton" style="top: 108px">8092</div>
+          <div class="c1-config-api-turleri-port" style="top: 140px">8093</div>
+        </div>
+
+        <div class="c1-config-api-turleri-rows">
+          <div id="c1-config-api-turleri-r1" class="c1-config-api-turleri-row"><span class="c1-config-api-turleri-bullet"></span><span>Both sides show their identity.</span></div>
+          <div id="c1-config-api-turleri-r2" class="c1-config-api-turleri-row"><span class="c1-config-api-turleri-bullet"></span><span>The phone first enrolls once and gets its ID card.</span></div>
+          <div id="c1-config-api-turleri-r3" class="c1-config-api-turleri-row"><span class="c1-config-api-turleri-bullet"></span><span>Also: a recognized device, revocation, ID card renewal, “token + mTLS” files.</span></div>
+        </div>
+      </div>
+
+      <!-- shared row + note -->
+      <div id="c1-config-api-turleri-common">
+        <span id="c1-config-api-turleri-commonok"><svg viewBox="0 0 24 24"><polyline points="5,12.5 10,17.5 19,7" fill="none" stroke="#EFE9D9" stroke-width="3.5" stroke-linecap="square" /></svg></span>
+        <span id="c1-config-api-turleri-commontext">IN BOTH: signed pin list · attestation and PinVault-Token · files</span>
+      </div>
+      <div id="c1-config-api-turleri-note">An app can use both at once. The sample app in this film uses mTLS; it enrolls through the TLS port (8091).</div>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/gsap@3.14.2/dist/gsap.min.js"></script>
+    <script>
+      (function () {
+        var FID = "c1-config-api-turleri";
+        var host = document.querySelector('[data-composition-id="' + FID + '"]') || document;
+        var $ = function (n) {
+          return host.querySelector('[id="' + FID + "-" + n + '"]');
+        };
+
+        var tl = gsap.timeline({ paused: true });
+        var SOFT = "power3.out";
+        var DRAW = "power2.inOut";
+
+        function pop(el, at) {
+          tl.fromTo(el, { opacity: 0, scale: 0.4 }, { opacity: 1, scale: 1, duration: 0.35, ease: SOFT }, at);
+        }
+        function rise(el, at, dist) {
+          tl.fromTo(el, { opacity: 0, y: dist || 16 }, { opacity: 1, y: 0, duration: 0.6, ease: SOFT }, at);
+        }
+        function draw(el, len, at, dur) {
+          tl.fromTo(el, { attr: { "stroke-dashoffset": len } }, { attr: { "stroke-dashoffset": 0 }, duration: dur || 0.5, ease: DRAW }, at);
+        }
+
+        // ---------- Scene 1 (0.0–2.5): title, then description ----------
+        tl.fromTo($("title"), { opacity: 0, y: 32 }, { opacity: 1, y: 0, duration: 0.8, ease: SOFT }, 0.15);
+        rise($("lede"), 0.75, 18);
+
+        // ---------- Scene 2 (2.5–7.0): left card (TLS) ----------
+        rise($("cardL"), 2.5, 30);
+        tl.fromTo($("titleL"), { opacity: 0, x: -16 }, { opacity: 1, x: 0, duration: 0.5, ease: SOFT }, 2.7);
+        tl.fromTo($("subL"), { opacity: 0, x: 16 }, { opacity: 1, x: 0, duration: 0.5, ease: SOFT }, 2.85);
+        rise($("phoneL"), 2.95, 20);
+        rise($("serverL"), 3.1, 20);
+        draw($("pathL"), 384, 3.45, 0.55);
+        tl.fromTo($("headL"), { opacity: 0 }, { opacity: 1, duration: 0.2, ease: SOFT }, 3.95);
+        // certificate slides out of the server along the wire to the phone
+        tl.fromTo($("certL"), { x: 300, opacity: 0 }, { x: 300, opacity: 1, duration: 0.01 }, 4.05);
+        tl.to($("certL"), { x: 0, duration: 0.7, ease: SOFT }, 4.07);
+        pop($("okL"), 4.75);
+        // phone side: nothing to show
+        tl.fromTo($("nocard"), { opacity: 0, scale: 0.9 }, { opacity: 0.75, scale: 1, duration: 0.45, ease: SOFT }, 5.05);
+        rise($("l1"), 5.35, 12);
+        rise($("l2"), 5.95, 12);
+        rise($("l3"), 6.55, 12);
+
+        // ---------- Scene 3 (7.0–12.0): right card (mTLS) ----------
+        rise($("cardR"), 7.0, 30);
+        tl.fromTo($("titleR"), { opacity: 0, x: -16 }, { opacity: 1, x: 0, duration: 0.5, ease: SOFT }, 7.2);
+        tl.fromTo($("subR"), { opacity: 0, x: 16 }, { opacity: 1, x: 0, duration: 0.5, ease: SOFT }, 7.35);
+        rise($("phoneR"), 7.45, 20);
+        rise($("serverR"), 7.6, 20);
+        // server -> phone: certificate
+        draw($("pathRa"), 411, 7.95, 0.55);
+        tl.fromTo($("headRa"), { opacity: 0 }, { opacity: 1, duration: 0.2, ease: SOFT }, 8.45);
+        tl.fromTo($("certR"), { x: 300, opacity: 0 }, { x: 300, opacity: 1, duration: 0.01 }, 8.55);
+        tl.to($("certR"), { x: 0, duration: 0.7, ease: SOFT }, 8.57);
+        pop($("okRa"), 9.2);
+        // phone -> server: pink ID card "tablet-07"
+        draw($("pathRb"), 365, 9.4, 0.55);
+        tl.fromTo($("headRb"), { opacity: 0 }, { opacity: 1, duration: 0.2, ease: SOFT }, 9.9);
+        tl.fromTo($("idcard"), { x: -214, opacity: 0 }, { x: -214, opacity: 1, duration: 0.01 }, 10.0);
+        tl.to($("idcard"), { x: 0, duration: 0.7, ease: SOFT }, 10.02);
+        pop($("okRb"), 10.65);
+        rise($("r1"), 10.85, 12);
+        rise($("r2"), 11.3, 12);
+        rise($("r3"), 11.75, 12);
+
+        // ---------- Scene 4 (12.0–17.0): shared row, then note; hold ----------
+        tl.fromTo($("commontext"), { opacity: 0, x: -20 }, { opacity: 1, x: 0, duration: 0.6, ease: SOFT }, 12.3);
+        pop($("commonok"), 12.55);
+        rise($("note"), 13.9, 14);
+        tl.to({}, { duration: 0.01 }, 16.99);
+
+        window.__timelines = window.__timelines || {};
+        window.__timelines[FID] = tl;
+      })();
+    </script>
+  </div>
+</template>

@@ -125,7 +125,7 @@ Ekran metni:
 - alt satır (body-lg): "Uygulamanıza giren bir kütüphane ve sizin makinenizde çalışan bir sunucu."
 - kart 1: büyük rakam "1", başlık "PİNLEME", alt satır "Telefon yalnızca gerçek sunucunuzla konuşur."
 - kart 2: büyük rakam "2", başlık "KİMLİK", alt satır "Sunucu, tanıdığı cihazı içeri alır."
-- kart 3: büyük rakam "3", başlık "ATESTASYON", alt satır "PinVault-Token yalnızca değiştirilmemiş uygulamaya verilir."
+- kart 3: büyük rakam "3", başlık "ATESTASYON", alt satır "PinVault-Token yalnızca denetimden geçen uygulamaya verilir."
 - künye: "Üç iş"
 
 Adapt: grid-card-assemble'ın "kartlar sırayla yuvalarına oturur, sonra tutar" yapısı; üstte wordmark kitap ayracı gibi durur, kartlar sırayla değil okuma ritmiyle gelir.
@@ -159,7 +159,7 @@ Ekran metni:
 - telefon: "Uygulamanız" / "PinVault kütüphanesi"
 - bölge 2 etiketi (mono): "PİNVAULT SUNUCUSU · SİZİN MAKİNENİZ"
 - kapı 8091 kutusu: "8091 · TLS" / "pin listesi · kayıt · atestasyon"
-- kapı 8092 kutusu: "8092 · mTLS" / "kimlikli cihaz: dosya · yenileme"
+- kapı 8092 kutusu: "8092 · mTLS" / "kartlı cihaz: aynısı + yenileme"
 - kapı 8093 kutusu: "8093 · KURTARMA" / "süresi dolan sertifika"
 - depo kutusu: "DEPO" / "sertifikalar · kayıtlar · imza anahtarı"
 - bölge 3 etiketi (mono): "SİZİN ARKA UCUNUZ"
@@ -203,7 +203,7 @@ keyMessage: Telefon, sunucunun gösterdiği sertifikanın parmak izini bildiği 
 Ekran metni:
 - üst çubuk hap: "1/3 · PİNLEME"
 - başlık (display-head): "PARMAK İZİ KONTROLÜ"
-- açıklama (body-lg): "Sunucu her bağlantıda sertifikasını gösterir. Telefon onun parmak izini (pin) bildiği listeyle karşılaştırır."
+- açıklama (body-lg): "Sunucu her bağlantıda sertifikasını gösterir. Telefon, sertifikadaki anahtarın parmak izini (pin) bildiği listeyle karşılaştırır."
 - telefonun yanındaki kart başlığı (mono): "BİLDİĞİM PARMAK İZLERİ"
 - kart satırları (mono): "q8Hs2LkP…" ve "Xm4tR9wE…"
 - gerçek sunucunun (API sunucunuz) sertifika kartı (mono): "q8Hs2LkP…"
@@ -212,7 +212,7 @@ Ekran metni:
 - sahte sunucu kutusu: "SAHTE SUNUCU"
 - sahte sertifika kartı (mono): "Xk91Pq7R…"
 - turuncu damga: "EŞLEŞMEDİ ✗"
-- turuncu alt yazı: "Telefon tek bayt göndermeden bağlantıyı keser."
+- turuncu alt yazı: "Telefon isteğini göndermeden bağlantıyı keser."
 - künye: "Pinleme"
 
 Compose. Yerleşim: asimetrik 60/40. Solda (%60) sahne: telefon solda, gerçek sunucu sağda, arada çizgi. Sağda (%40) başlık ve açıklama metin rayı.
@@ -359,7 +359,7 @@ Ekran metni:
 - PinVault-Token (sarı): "PINVAULT-TOKEN" / "5 DK"
 - adım satırı 4 (mono kicker): "4 · PINVAULT-TOKEN HER İSTEKTE GİDER"
 - API kutusu: "API SUNUCUNUZ" / "PinVault-Token'ı kendisi doğrular"
-- alt not (body-md): "PinVault-Token arka planda yaklaşık 5 dakikada bir yenilenir."
+- alt not (body-md): "PinVault-Token süresi dolmadan, yaklaşık 4 dakikada bir yenilenir."
 - künye: "Atestasyon"
 
 Compose. Yerleşim: soldan sağa üç durak: telefon (sol), PinVault sunucusu (orta), API sunucunuz (sağ); adım satırları üstte bir rayda soldan sağa birikir.
@@ -397,7 +397,7 @@ Ekran metni:
 - PinVault-Token yerine boş kesik çizgili çerçeve (mono): "PinVault-Token yok"
 - API kutusu cevabı (mono, turuncu): "401 · PinVault-Token yok"
 - gerçek satırı (display-head): "KAPIYI TUTAN, PINVAULT-TOKEN'DIR."
-- gerçek alt satırı (body-md): "Pin listesi gizli değildir; herkes alabilir. Değiştirilmiş uygulama yine de PinVault-Token alamaz."
+- gerçek alt satırı (body-md): "Pin'ler gizli değildir. Asıl kilit PinVault-Token: imza parmak izi tanımlıysa değiştirilmiş uygulama onu alamaz."
 - künye: "Ret"
 
 Compose. Aynı üç duraklı sahne, Frame 9'un aynası; telefon turuncu kenarlı.
@@ -501,7 +501,7 @@ Ekran metni:
 - başlık (display-lg, krem): "ADIM ADIM İZLEYİN"
 - alt satır (mono, krem): "docs/animation/pinvault-request-flow.tr.html"
 - alt satır 2 (body-md, krem): "15 bölüm · 99 adım · panel ve telefon ekranlarıyla"
-- mühür (pembe, −6°): "PINVAULT" / "2.2"
+- mühür (pembe, −6°): "PINVAULT" / "2.3"
 - künye: "Kapanış"
 
 Reproduce: titlecard-reveal'in tek sakin hareketi (yukarı kayıp beliren başlık), sonra durağan tutma.

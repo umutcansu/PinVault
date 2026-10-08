@@ -1,0 +1,398 @@
+<template>
+  <script src="https://cdn.jsdelivr.net/npm/gsap@3.14.2/dist/gsap.min.js"></script>
+  <style>
+    /* latin-ext */
+    @font-face {
+      font-family: "Archivo Black";
+      font-style: normal;
+      font-weight: 400;
+      font-display: block;
+      src: url(https://fonts.gstatic.com/s/archivoblack/v23/HTxqL289NzCGg4MzN6KJ7eW6CYKF_jzx13HOvQ.woff2) format("woff2");
+      unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C4, U+2113, U+2C60-2C7F, U+A720-A7FF;
+    }
+    /* latin */
+    @font-face {
+      font-family: "Archivo Black";
+      font-style: normal;
+      font-weight: 400;
+      font-display: block;
+      src: url(https://fonts.gstatic.com/s/archivoblack/v23/HTxqL289NzCGg4MzN6KJ7eW6CYyF_jzx13E.woff2) format("woff2");
+      unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+    }
+    /* latin-ext */
+    @font-face {
+      font-family: "JetBrains Mono";
+      font-style: normal;
+      font-weight: 400;
+      font-display: block;
+      src: url(https://fonts.gstatic.com/s/jetbrainsmono/v24/tDbY2o-flEEny0FZhsfKu5WU4zr3E_BX0PnT8RD8yKxTNFOVk6OThhvAWV8.woff2) format("woff2");
+      unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C4, U+2113, U+2C60-2C7F, U+A720-A7FF;
+    }
+    /* latin */
+    @font-face {
+      font-family: "JetBrains Mono";
+      font-style: normal;
+      font-weight: 400;
+      font-display: block;
+      src: url(https://fonts.gstatic.com/s/jetbrainsmono/v24/tDbY2o-flEEny0FZhsfKu5WU4zr3E_BX0PnT8RD8yKxTOlOVk6OThhvA.woff2) format("woff2");
+      unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+    }
+    /* latin-ext */
+    @font-face {
+      font-family: "Space Grotesk";
+      font-style: normal;
+      font-weight: 400;
+      font-display: block;
+      src: url(https://fonts.gstatic.com/s/spacegrotesk/v22/V8mQoQDjQSkFtoMM3T6r8E7mF71Q-gOoraIAEj7oUXsqPMBBSSJLm2FXTQ.woff2) format("woff2");
+      unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C4, U+2113, U+2C60-2C7F, U+A720-A7FF;
+    }
+    /* latin */
+    @font-face {
+      font-family: "Space Grotesk";
+      font-style: normal;
+      font-weight: 400;
+      font-display: block;
+      src: url(https://fonts.gstatic.com/s/spacegrotesk/v22/V8mQoQDjQSkFtoMM3T6r8E7mF71Q-gOoraIAEj7oUXskPMBBSSJLm2E.woff2) format("woff2");
+      unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+    }
+
+
+    #root {
+      position: absolute;
+      inset: 0;
+      width: 100%;
+      height: 100%;
+      overflow: hidden;
+      container-type: size;
+      color: #0f0f0f;
+      font-family: "Space Grotesk", sans-serif;
+    }
+
+    /* full-bleed cream ground (clip layer, not on #root) */
+    .p1-bolum-amac-ground {
+      position: absolute;
+      inset: 0;
+      background: #efe9d9;
+    }
+
+    /* ---- frame chrome ---- */
+    .p1-bolum-amac-topbar,
+    .p1-bolum-amac-meta {
+      position: absolute;
+      left: 3.3cqw;
+      right: 3.3cqw;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      font-family: "JetBrains Mono", monospace;
+      font-size: 1.25cqw;
+      letter-spacing: 0.06em;
+      line-height: 1;
+      color: #0f0f0f;
+    }
+    .p1-bolum-amac-topbar {
+      top: 2.5cqw;
+    }
+    .p1-bolum-amac-meta {
+      bottom: 2.5cqw;
+    }
+    .p1-bolum-amac-pill {
+      background: #efe9d9;
+      border: 0.2cqw solid #0f0f0f;
+      border-radius: 999px;
+      padding: 0.55cqw 1.3cqw;
+    }
+    .p1-bolum-amac-counter {
+      display: flex;
+      align-items: center;
+      gap: 0.6cqw;
+    }
+    .p1-bolum-amac-dot {
+      width: 0.5cqw;
+      height: 0.5cqw;
+      border-radius: 50%;
+      background: #0f0f0f;
+    }
+
+    /* ---- number block (the one hard-offset shadow of the frame) ---- */
+    .p1-bolum-amac-numblock {
+      position: absolute;
+      left: 5cqw; /* 96px */
+      top: 12.5cqw; /* 240px */
+      width: 18.75cqw; /* 360px */
+      height: 18.75cqw;
+      box-sizing: border-box;
+      background: #e4dcc4;
+      border: 0.4cqw solid #0f0f0f;
+      border-radius: 0;
+      box-shadow: 1.25cqw 1.25cqw 0 #e85a1f, 1.25cqw 1.25cqw 0 0.2cqw #0f0f0f;
+    }
+    .p1-bolum-amac-nummask {
+      position: absolute;
+      inset: 0;
+      overflow: hidden;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+    .p1-bolum-amac-num {
+      font-family: "Archivo Black", sans-serif;
+      font-weight: 400;
+      font-size: 15.6cqw; /* ~300px */
+      line-height: 0.85;
+      color: #0f0f0f;
+    }
+
+    /* ---- right column: kicker, title, sub line ---- */
+    .p1-bolum-amac-text {
+      position: absolute;
+      left: 33.33cqw; /* 640px */
+      right: 5cqw;
+      top: 12.5cqw; /* 240px, aligned with the number block */
+    }
+    .p1-bolum-amac-kicker {
+      display: inline-block;
+      background: #0f0f0f;
+      color: #efe9d9;
+      font-family: "JetBrains Mono", monospace;
+      font-size: 1.25cqw;
+      letter-spacing: 0.14em;
+      line-height: 1;
+      padding: 0.5cqw 1cqw;
+    }
+    .p1-bolum-amac-title {
+      margin-top: 1.6cqw;
+      font-family: "Archivo Black", sans-serif;
+      font-weight: 400;
+      font-size: 7cqw; /* ~134px, two short lines */
+      line-height: 0.9;
+      letter-spacing: -0.01em;
+      color: #0f0f0f;
+    }
+    .p1-bolum-amac-tline {
+      display: block;
+      white-space: nowrap;
+    }
+    .p1-bolum-amac-word {
+      display: inline-block;
+    }
+    .p1-bolum-amac-sub {
+      margin-top: 2cqw;
+      max-width: 56cqw;
+      font-family: "Space Grotesk", sans-serif;
+      font-size: 1.46cqw;
+      line-height: 1.4;
+      color: #0f0f0f;
+    }
+
+    /* ---- three-section strip (y 760–804) ---- */
+    .p1-bolum-amac-strip {
+      position: absolute;
+      left: 5cqw;
+      right: 5cqw;
+      top: 39.58cqw; /* 760px */
+      height: 2.29cqw; /* 44px */
+      display: flex;
+      align-items: center;
+    }
+    .p1-bolum-amac-cell {
+      position: relative;
+      flex: 0 0 20.5cqw; /* 394px, four sections */
+      height: 100%;
+      box-sizing: border-box;
+      border: 0.104cqw solid #0f0f0f; /* 2px */
+      border-radius: 0;
+      background: #efe9d9;
+      overflow: hidden;
+      display: flex;
+      align-items: center;
+    }
+    .p1-bolum-amac-link {
+      flex: 1 1 auto; /* 54px between cells */
+      height: 0.104cqw;
+      background: #0f0f0f;
+    }
+    .p1-bolum-amac-fill {
+      position: absolute;
+      inset: 0;
+      background: #0f0f0f;
+      transform-origin: 0% 50%;
+      display: none;
+    }
+    .p1-bolum-amac-cell-label {
+      position: relative;
+      padding-left: 1.25cqw;
+      font-family: "JetBrains Mono", monospace;
+      font-size: 1.25cqw;
+      letter-spacing: 0.06em;
+      line-height: 1;
+      color: #0f0f0f;
+      white-space: nowrap;
+    }
+    /* state: current section — ink fill, cream text */
+    .p1-bolum-amac-cell.cur {
+      border-color: #0f0f0f;
+    }
+    .p1-bolum-amac-cell.cur .p1-bolum-amac-fill {
+      display: block;
+    }
+    .p1-bolum-amac-cell.cur .p1-bolum-amac-cell-label {
+      color: #efe9d9;
+    }
+    /* state: finished section — cream-2 fill, full ink, green "passed" bar */
+    .p1-bolum-amac-cell.done {
+      background: #e4dcc4;
+    }
+    .p1-bolum-amac-cell.done::before {
+      content: "";
+      position: absolute;
+      left: 0;
+      top: 0;
+      bottom: 0;
+      width: 0.6cqw;
+      background: #1f8a4c;
+    }
+    .p1-bolum-amac-cell.done .p1-bolum-amac-cell-label {
+      padding-left: 1.85cqw;
+    }
+    /* state: future section — 2px ink outline at 35% */
+    .p1-bolum-amac-cell.future {
+      opacity: 0.35;
+    }
+  </style>
+
+  <div id="root" lang="en" data-composition-id="p1-bolum-amac" data-start="0" data-duration="5" data-width="1920" data-height="1080">
+    <div class="p1-bolum-amac-ground clip" data-start="0" data-duration="5" data-track-index="0"></div>
+
+    <div class="p1-bolum-amac-topbar">
+      <span>PINVAULT · PRESENTATION</span>
+      <span class="p1-bolum-amac-pill">PART 1 / 4</span>
+    </div>
+
+    <div id="p1-bolum-amac-numblock" class="p1-bolum-amac-numblock">
+      <div class="p1-bolum-amac-nummask">
+        <div id="p1-bolum-amac-num" class="p1-bolum-amac-num">1</div>
+      </div>
+    </div>
+
+    <div class="p1-bolum-amac-text">
+      <div id="p1-bolum-amac-kicker" class="p1-bolum-amac-kicker">PART 1</div>
+      <div class="p1-bolum-amac-title">
+        <span class="p1-bolum-amac-tline"><span class="p1-bolum-amac-word">PURPOSE:</span></span>
+        <span class="p1-bolum-amac-tline"><span class="p1-bolum-amac-word">SSL</span> <span class="p1-bolum-amac-word">PINNING</span></span>
+      </div>
+      <div id="p1-bolum-amac-sub" class="p1-bolum-amac-sub">How does the phone know that the server it talks to is really your server?</div>
+    </div>
+
+    <div id="p1-bolum-amac-strip" class="p1-bolum-amac-strip">
+      <div id="p1-bolum-amac-sec1" class="p1-bolum-amac-cell cur">
+        <div class="p1-bolum-amac-fill"></div>
+        <span class="p1-bolum-amac-cell-label">1 PURPOSE</span>
+      </div>
+      <div class="p1-bolum-amac-link"></div>
+      <div id="p1-bolum-amac-sec2" class="p1-bolum-amac-cell future">
+        <div class="p1-bolum-amac-fill"></div>
+        <span class="p1-bolum-amac-cell-label">2 SOLUTION</span>
+      </div>
+      <div class="p1-bolum-amac-link"></div>
+      <div id="p1-bolum-amac-sec3" class="p1-bolum-amac-cell future">
+        <div class="p1-bolum-amac-fill"></div>
+        <span class="p1-bolum-amac-cell-label">3 FLOW</span>
+      </div>
+      <div class="p1-bolum-amac-link"></div>
+      <div id="p1-bolum-amac-sec4" class="p1-bolum-amac-cell future">
+        <div class="p1-bolum-amac-fill"></div>
+        <span class="p1-bolum-amac-cell-label">4 FILES</span>
+      </div>
+    </div>
+
+    <div class="p1-bolum-amac-meta">
+      <span>Part 1</span>
+      <span class="p1-bolum-amac-counter"><span>01</span><span class="p1-bolum-amac-dot"></span><span>39</span></span>
+    </div>
+  </div>
+
+  <script>
+    (function () {
+      var root = document.querySelector('[data-composition-id="p1-bolum-amac"]');
+      var scope = root || document;
+      function q(sel) {
+        return scope.querySelector(sel);
+      }
+      function qa(sel) {
+        return scope.querySelectorAll(sel);
+      }
+
+      window.__timelines = window.__timelines || {};
+      var tl = gsap.timeline({ paused: true });
+
+      // ---- Scene 1 (0.0–1.2s): number block settles in from the left; "1" rises inside ----
+      tl.fromTo(
+        q("#p1-bolum-amac-numblock"),
+        { x: -160, opacity: 0 },
+        { x: 0, opacity: 1, duration: 0.9, ease: "power3.out" },
+        0.05
+      );
+      tl.fromTo(
+        q("#p1-bolum-amac-num"),
+        { yPercent: 110 },
+        { yPercent: 0, duration: 0.85, ease: "power3.out" },
+        0.3
+      );
+
+      // ---- Scene 2 (1.2–2.6s): kicker, then the title word by word ----
+      tl.fromTo(
+        q("#p1-bolum-amac-kicker"),
+        { clipPath: "inset(0% 100% 0% 0%)" },
+        { clipPath: "inset(0% 0% 0% 0%)", duration: 0.5, ease: "power3.out" },
+        1.2
+      );
+      var words = qa(".p1-bolum-amac-word");
+      for (var i = 0; i < words.length; i++) {
+        tl.fromTo(
+          words[i],
+          { y: 50, opacity: 0 },
+          { y: 0, opacity: 1, duration: 0.7, ease: "power3.out" },
+          1.5 + i * 0.3
+        );
+      }
+
+      // ---- Scene 3 (2.6–4.5s): sub line; strip draws from the left; current cell fills; hold ----
+      tl.fromTo(
+        q("#p1-bolum-amac-sub"),
+        { y: 18, opacity: 0 },
+        { y: 0, opacity: 1, duration: 0.8, ease: "power3.out" },
+        2.6
+      );
+      tl.fromTo(
+        q("#p1-bolum-amac-strip"),
+        { clipPath: "inset(-10% 100% -10% 0%)" },
+        { clipPath: "inset(-10% 0% -10% 0%)", duration: 0.9, ease: "power3.inOut" },
+        2.9
+      );
+      var curFill = q(".p1-bolum-amac-cell.cur .p1-bolum-amac-fill");
+      var curLabel = q(".p1-bolum-amac-cell.cur .p1-bolum-amac-cell-label");
+      if (curFill) {
+        tl.fromTo(
+          curFill,
+          { scaleX: 0 },
+          { scaleX: 1, duration: 0.6, ease: "power3.out" },
+          3.6
+        );
+      }
+      if (curLabel) {
+        tl.fromTo(
+          curLabel,
+          { color: "#0f0f0f" },
+          { color: "#efe9d9", duration: 0.3, ease: "none" },
+          3.72
+        );
+      }
+
+      // hold to the end of the frame
+      tl.to({}, { duration: 0.01 }, 4.49);
+
+      window.__timelines["p1-bolum-amac"] = tl;
+    })();
+  </script>
+</template>

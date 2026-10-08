@@ -1,0 +1,677 @@
+<template>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo+Black&family=JetBrains+Mono:wght@400;700&family=Space+Grotesk:wght@400;500;700&display=block">
+  <script src="https://cdn.jsdelivr.net/npm/gsap@3.14.2/dist/gsap.min.js"></script>
+  <style>
+    /* latin-ext */
+    @font-face {
+      font-family: "Archivo Black";
+      font-style: normal;
+      font-weight: 400;
+      font-display: block;
+      src: url(https://fonts.gstatic.com/s/archivoblack/v23/HTxqL289NzCGg4MzN6KJ7eW6CYKF_jzx13HOvQ.woff2) format("woff2");
+      unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C4, U+2113, U+2C60-2C7F, U+A720-A7FF;
+    }
+    /* latin */
+    @font-face {
+      font-family: "Archivo Black";
+      font-style: normal;
+      font-weight: 400;
+      font-display: block;
+      src: url(https://fonts.gstatic.com/s/archivoblack/v23/HTxqL289NzCGg4MzN6KJ7eW6CYyF_jzx13E.woff2) format("woff2");
+      unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+    }
+    /* latin-ext */
+    @font-face {
+      font-family: "JetBrains Mono";
+      font-style: normal;
+      font-weight: 100 800;
+      font-display: block;
+      src: url(https://fonts.gstatic.com/s/jetbrainsmono/v24/tDbY2o-flEEny0FZhsfKu5WU4zr3E_BX0PnT8RD8yKxTNFOVk6OThhvAWV8.woff2) format("woff2");
+      unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C4, U+2113, U+2C60-2C7F, U+A720-A7FF;
+    }
+    /* latin */
+    @font-face {
+      font-family: "JetBrains Mono";
+      font-style: normal;
+      font-weight: 100 800;
+      font-display: block;
+      src: url(https://fonts.gstatic.com/s/jetbrainsmono/v24/tDbY2o-flEEny0FZhsfKu5WU4zr3E_BX0PnT8RD8yKxTOlOVk6OThhvA.woff2) format("woff2");
+      unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+    }
+    /* latin-ext */
+    @font-face {
+      font-family: "Space Grotesk";
+      font-style: normal;
+      font-weight: 300 700;
+      font-display: block;
+      src: url(https://fonts.gstatic.com/s/spacegrotesk/v22/V8mQoQDjQSkFtoMM3T6r8E7mF71Q-gOoraIAEj7oUXsqPMBBSSJLm2FXTQ.woff2) format("woff2");
+      unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C4, U+2113, U+2C60-2C7F, U+A720-A7FF;
+    }
+    /* latin */
+    @font-face {
+      font-family: "Space Grotesk";
+      font-style: normal;
+      font-weight: 300 700;
+      font-display: block;
+      src: url(https://fonts.gstatic.com/s/spacegrotesk/v22/V8mQoQDjQSkFtoMM3T6r8E7mF71Q-gOoraIAEj7oUXskPMBBSSJLm2E.woff2) format("woff2");
+      unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+    }
+
+    #root,
+    #root * {
+      box-sizing: border-box;
+    }
+    #root {
+      position: relative;
+      width: 1920px;
+      height: 1080px;
+      overflow: hidden;
+      container-type: size;
+      font-family: "Space Grotesk", sans-serif;
+      color: #0f0f0f;
+    }
+    #d1-dosya-yukle-bg {
+      position: absolute;
+      inset: 0;
+      background: #efe9d9;
+    }
+
+    /* ---------- frame chrome ---------- */
+    .d1-dosya-yukle-topbar {
+      position: absolute;
+      top: 48px;
+      left: 64px;
+      right: 64px;
+      height: 44px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      font-family: "JetBrains Mono", monospace;
+      font-size: 22px;
+      letter-spacing: 0.06em;
+      z-index: 10;
+    }
+    .d1-dosya-yukle-pill {
+      border: 3px solid #0f0f0f;
+      border-radius: 999px;
+      padding: 4px 18px;
+      background: #efe9d9;
+    }
+    .d1-dosya-yukle-footer {
+      position: absolute;
+      bottom: 44px;
+      left: 64px;
+      right: 64px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      font-family: "JetBrains Mono", monospace;
+      font-size: 22px;
+      letter-spacing: 0.06em;
+    }
+    .d1-dosya-yukle-counter {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+    .d1-dosya-yukle-dot {
+      width: 10px;
+      height: 10px;
+      border-radius: 50%;
+      background: #0f0f0f;
+    }
+
+    /* ---------- kicker + title ---------- */
+    #d1-dosya-yukle-kicker {
+      position: absolute;
+      left: 96px;
+      top: 128px;
+      padding: 8px 16px;
+      background: #0f0f0f;
+      color: #efe9d9;
+      font-family: "JetBrains Mono", monospace;
+      font-size: 22px;
+      letter-spacing: 0.1em;
+      white-space: nowrap;
+    }
+    #d1-dosya-yukle-title {
+      position: absolute;
+      left: 96px;
+      top: 186px;
+      margin: 0;
+      padding-top: 6px;
+      font-family: "Archivo Black", sans-serif;
+      font-weight: 400;
+      font-size: 4.2cqw;
+      line-height: 0.92;
+      letter-spacing: -0.01em;
+      white-space: nowrap;
+    }
+
+    /* ---------- left: panel window ---------- */
+    #d1-dosya-yukle-panel {
+      position: absolute;
+      left: 96px;
+      top: 304px;
+      width: 1000px;
+      height: 500px;
+      border: 4px solid #0f0f0f;
+      background: #efe9d9;
+      z-index: 3;
+    }
+    .d1-dosya-yukle-phead {
+      position: absolute;
+      left: 0;
+      top: 0;
+      right: 0;
+      height: 52px;
+      background: #0f0f0f;
+      color: #efe9d9;
+      display: flex;
+      align-items: center;
+      padding-left: 24px;
+      font-family: "JetBrains Mono", monospace;
+      font-size: 20px;
+      letter-spacing: 0.04em;
+      white-space: nowrap;
+    }
+    #d1-dosya-yukle-card {
+      position: absolute;
+      left: 24px;
+      top: 72px;
+      width: 944px;
+      height: 404px;
+      border: 3px solid #0f0f0f;
+      background: #efe9d9;
+    }
+    #d1-dosya-yukle-ctitle {
+      position: absolute;
+      left: 24px;
+      top: 22px;
+      font-size: 30px;
+      font-weight: 700;
+      line-height: 1;
+      white-space: nowrap;
+    }
+    .d1-dosya-yukle-toggle {
+      position: absolute;
+      top: 14px;
+      width: 130px;
+      height: 46px;
+      border: 3px solid #0f0f0f;
+      background: #efe9d9;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-family: "JetBrains Mono", monospace;
+      font-size: 22px;
+      white-space: nowrap;
+    }
+    #d1-dosya-yukle-tog1 {
+      left: 654px;
+      background: #0f0f0f;
+      color: #efe9d9;
+    }
+    #d1-dosya-yukle-tog2 {
+      left: 781px;
+    }
+    #d1-dosya-yukle-crule {
+      position: absolute;
+      left: 0;
+      right: 0;
+      top: 76px;
+      height: 3px;
+      background: #0f0f0f;
+    }
+    .d1-dosya-yukle-flabel {
+      position: absolute;
+      font-size: 24px;
+      font-weight: 500;
+      line-height: 1;
+      white-space: nowrap;
+    }
+    .d1-dosya-yukle-fbox {
+      position: absolute;
+      width: 433px;
+      height: 58px;
+      border: 3px solid #0f0f0f;
+      background: #e4dcc4;
+      display: flex;
+      align-items: center;
+      padding-left: 18px;
+      font-family: "JetBrains Mono", monospace;
+      font-size: 26px;
+      font-weight: 700;
+      letter-spacing: 0.01em;
+      white-space: nowrap;
+    }
+    .d1-dosya-yukle-c1 { left: 24px; }
+    .d1-dosya-yukle-c2 { left: 481px; }
+    .d1-dosya-yukle-r1l { top: 100px; }
+    .d1-dosya-yukle-r1b { top: 132px; }
+    .d1-dosya-yukle-r2l { top: 210px; }
+    .d1-dosya-yukle-r2b { top: 242px; }
+    .d1-dosya-yukle-caret {
+      position: absolute;
+      right: 18px;
+      top: 22px;
+      width: 0;
+      height: 0;
+      border-left: 9px solid transparent;
+      border-right: 9px solid transparent;
+      border-top: 11px solid #0f0f0f;
+    }
+    #d1-dosya-yukle-btn {
+      position: absolute;
+      left: 24px;
+      top: 322px;
+      width: 200px;
+      height: 60px;
+      border: 4px solid #0f0f0f;
+      background: #efe9d9;
+      color: #0f0f0f;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 28px;
+      font-weight: 700;
+      white-space: nowrap;
+    }
+    #d1-dosya-yukle-toast {
+      position: absolute;
+      left: 248px;
+      top: 330px;
+      height: 44px;
+      display: flex;
+      align-items: stretch;
+      border: 3px solid #0f0f0f;
+      background: #efe9d9;
+      white-space: nowrap;
+    }
+    .d1-dosya-yukle-tick {
+      width: 40px;
+      background: #1f8a4c;
+      color: #efe9d9;
+      border-right: 3px solid #0f0f0f;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 22px;
+      font-weight: 700;
+    }
+    .d1-dosya-yukle-ttext {
+      display: flex;
+      align-items: center;
+      padding: 0 14px;
+      font-family: "JetBrains Mono", monospace;
+      font-size: 20px;
+    }
+
+    /* ---------- encryption dropdown (briefly open) ---------- */
+    #d1-dosya-yukle-dd {
+      position: absolute;
+      left: 481px;
+      top: 297px;
+      width: 456px;
+      border: 3px solid #0f0f0f;
+      background: #efe9d9;
+      z-index: 5;
+    }
+    .d1-dosya-yukle-opt {
+      height: 44px;
+      display: flex;
+      align-items: center;
+      padding-left: 14px;
+      font-family: "JetBrains Mono", monospace;
+      font-size: 18px;
+      white-space: nowrap;
+      border-top: 2px solid #0f0f0f;
+    }
+    .d1-dosya-yukle-opt:first-child {
+      border-top: 0;
+    }
+
+    /* ---------- path panel -> depot ---------- */
+    #d1-dosya-yukle-lines {
+      position: absolute;
+      left: 0;
+      top: 0;
+      width: 1920px;
+      height: 1080px;
+      z-index: 4;
+      overflow: visible;
+      pointer-events: none;
+    }
+    #d1-dosya-yukle-path {
+      fill: none;
+      stroke: #0f0f0f;
+      stroke-width: 4;
+      stroke-linecap: square;
+      stroke-linejoin: miter;
+    }
+
+    /* ---------- right: server depot ---------- */
+    #d1-dosya-yukle-depot {
+      position: absolute;
+      left: 1176px;
+      top: 304px;
+      width: 648px;
+      height: 188px;
+      border: 4px solid #0f0f0f;
+      background: #efe9d9;
+      z-index: 2;
+    }
+    .d1-dosya-yukle-dhead {
+      position: absolute;
+      left: 0;
+      top: 0;
+      right: 0;
+      height: 48px;
+      background: #0f0f0f;
+      color: #efe9d9;
+      display: flex;
+      align-items: center;
+      padding-left: 20px;
+      font-family: "JetBrains Mono", monospace;
+      font-size: 22px;
+      letter-spacing: 0.12em;
+      white-space: nowrap;
+    }
+    #d1-dosya-yukle-slot {
+      position: absolute;
+      left: 20px;
+      top: 72px;
+      width: 600px;
+      height: 84px;
+      border: 3px dashed #0f0f0f;
+      background: #efe9d9;
+    }
+    #d1-dosya-yukle-rowtxt {
+      position: absolute;
+      left: 108px;
+      top: 0;
+      height: 78px;
+      display: flex;
+      align-items: center;
+      font-family: "JetBrains Mono", monospace;
+      font-size: 22px;
+      font-weight: 700;
+      white-space: nowrap;
+    }
+
+    /* moving file icon (absolute, final spot inside the depot row) */
+    #d1-dosya-yukle-file {
+      position: absolute;
+      left: 1218px;
+      top: 394px;
+      width: 44px;
+      height: 56px;
+      z-index: 6;
+    }
+    #d1-dosya-yukle-file svg {
+      display: block;
+      width: 44px;
+      height: 56px;
+    }
+
+    /* yellow lock seal: the frame's one hard shadow */
+    #d1-dosya-yukle-seal {
+      position: absolute;
+      left: 1242px;
+      top: 410px;
+      width: 50px;
+      height: 50px;
+      border: 4px solid #0f0f0f;
+      background: #f5c518;
+      box-shadow: 8px 8px 0 #e85a1f, 8px 8px 0 2px #0f0f0f;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      z-index: 7;
+    }
+    #d1-dosya-yukle-seal svg {
+      display: block;
+      width: 26px;
+      height: 30px;
+    }
+
+    /* ---------- right: notes ---------- */
+    .d1-dosya-yukle-note {
+      position: absolute;
+      left: 1176px;
+      width: 648px;
+      padding-left: 20px;
+      border-left: 4px solid #0f0f0f;
+      font-size: 24px;
+      line-height: 1.3;
+    }
+    #d1-dosya-yukle-note1 { top: 528px; }
+    #d1-dosya-yukle-note2 { top: 666px; }
+    .d1-dosya-yukle-mono {
+      font-family: "JetBrains Mono", monospace;
+      font-size: 21px;
+    }
+
+    /* ---------- analogy strip ---------- */
+    #d1-dosya-yukle-analogy {
+      position: absolute;
+      left: 96px;
+      top: 830px;
+      height: 52px;
+      display: flex;
+      align-items: stretch;
+      border: 2px solid #0f0f0f;
+      background: #e4dcc4;
+      z-index: 2;
+    }
+    .d1-dosya-yukle-alabel {
+      display: flex;
+      align-items: center;
+      padding: 0 14px;
+      background: #0f0f0f;
+      color: #efe9d9;
+      font-family: "JetBrains Mono", monospace;
+      font-size: 18px;
+      letter-spacing: 0.12em;
+    }
+    .d1-dosya-yukle-atext {
+      display: flex;
+      align-items: center;
+      padding: 0 22px;
+      font-size: 26px;
+      white-space: nowrap;
+    }
+  </style>
+
+  <div id="root" data-composition-id="d1-dosya-yukle" data-start="0" data-duration="16.5" data-width="1920" data-height="1080" lang="en">
+    <div id="d1-dosya-yukle-bg" class="clip" data-start="0" data-duration="16.5" data-track-index="0"></div>
+
+    <!-- chrome -->
+    <div class="d1-dosya-yukle-topbar">
+      <div>PINVAULT · 4 FILES</div>
+      <div class="d1-dosya-yukle-pill">FILE 1 / 5</div>
+    </div>
+    <div class="d1-dosya-yukle-footer">
+      <div>Upload file</div>
+      <div class="d1-dosya-yukle-counter"><span>30</span><span class="d1-dosya-yukle-dot"></span><span>39</span></div>
+    </div>
+
+    <!-- kicker + title -->
+    <div id="d1-dosya-yukle-kicker">WHO: ADMIN · WHERE: DASHBOARD → mtls-8092 → VAULT</div>
+    <h1 id="d1-dosya-yukle-title">FILE UPLOAD IN THE DASHBOARD</h1>
+
+    <!-- left: panel window with the "Upload to Vault" card -->
+    <div id="d1-dosya-yukle-panel">
+      <div class="d1-dosya-yukle-phead">Dashboard · 8090 · mtls-8092 · Vault</div>
+      <div id="d1-dosya-yukle-card">
+        <div id="d1-dosya-yukle-ctitle">Upload to Vault</div>
+        <div id="d1-dosya-yukle-tog1" class="d1-dosya-yukle-toggle">File</div>
+        <div id="d1-dosya-yukle-tog2" class="d1-dosya-yukle-toggle">Text</div>
+        <div id="d1-dosya-yukle-crule"></div>
+
+        <div id="d1-dosya-yukle-l1" class="d1-dosya-yukle-flabel d1-dosya-yukle-c1 d1-dosya-yukle-r1l">Key</div>
+        <div id="d1-dosya-yukle-b1" class="d1-dosya-yukle-fbox d1-dosya-yukle-c1 d1-dosya-yukle-r1b"><span id="d1-dosya-yukle-v1" data-type="saha-ayarlari"></span></div>
+
+        <div id="d1-dosya-yukle-l2" class="d1-dosya-yukle-flabel d1-dosya-yukle-c2 d1-dosya-yukle-r1l">File</div>
+        <div id="d1-dosya-yukle-b2" class="d1-dosya-yukle-fbox d1-dosya-yukle-c2 d1-dosya-yukle-r1b"><span id="d1-dosya-yukle-v2" data-type="saha-ayarlari.json"></span></div>
+
+        <div id="d1-dosya-yukle-l3" class="d1-dosya-yukle-flabel d1-dosya-yukle-c1 d1-dosya-yukle-r2l">Policy</div>
+        <div id="d1-dosya-yukle-b3" class="d1-dosya-yukle-fbox d1-dosya-yukle-c1 d1-dosya-yukle-r2b"><span id="d1-dosya-yukle-v3" data-type="token (recommended)"></span><div class="d1-dosya-yukle-caret"></div></div>
+
+        <div id="d1-dosya-yukle-l4" class="d1-dosya-yukle-flabel d1-dosya-yukle-c2 d1-dosya-yukle-r2l">Encryption</div>
+        <div id="d1-dosya-yukle-b4" class="d1-dosya-yukle-fbox d1-dosya-yukle-c2 d1-dosya-yukle-r2b"><span id="d1-dosya-yukle-v4">at_rest</span><div class="d1-dosya-yukle-caret"></div></div>
+
+        <div id="d1-dosya-yukle-btn">Upload</div>
+        <div id="d1-dosya-yukle-toast">
+          <div class="d1-dosya-yukle-tick">✓</div>
+          <div class="d1-dosya-yukle-ttext">saha-ayarlari v1 [token/at_rest] uploaded</div>
+        </div>
+
+        <div id="d1-dosya-yukle-dd" data-layout-allow-overlap>
+          <div class="d1-dosya-yukle-opt">plain</div>
+          <div id="d1-dosya-yukle-optsel" class="d1-dosya-yukle-opt">at_rest</div>
+          <div class="d1-dosya-yukle-opt">end_to_end</div>
+          <div class="d1-dosya-yukle-opt">user_auth — opens with the screen lock</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- path from the Dosya field to the depot row -->
+    <svg id="d1-dosya-yukle-lines" viewBox="0 0 1920 1080" xmlns="http://www.w3.org/2000/svg">
+      <path id="d1-dosya-yukle-path" pathLength="1" d="M 1041 544 H 1132 V 422 H 1196" />
+    </svg>
+
+    <!-- right: server depot -->
+    <div id="d1-dosya-yukle-depot">
+      <div class="d1-dosya-yukle-dhead">SERVER STORAGE</div>
+      <div id="d1-dosya-yukle-slot">
+        <div id="d1-dosya-yukle-rowtxt">saha-ayarlari · v1 · disk-encrypted</div>
+      </div>
+    </div>
+
+    <!-- the file icon that travels into the depot -->
+    <div id="d1-dosya-yukle-file" data-layout-allow-overlap>
+      <svg viewBox="0 0 44 56" xmlns="http://www.w3.org/2000/svg">
+        <path d="M 2 2 H 30 L 42 14 V 54 H 2 Z" fill="#E4DCC4" stroke="#0F0F0F" stroke-width="3" stroke-linejoin="miter" />
+        <path d="M 30 2 V 14 H 42" fill="none" stroke="#0F0F0F" stroke-width="3" stroke-linejoin="miter" />
+        <rect x="9" y="22" width="24" height="3" fill="#0F0F0F" />
+        <rect x="9" y="31" width="26" height="3" fill="#0F0F0F" />
+        <rect x="9" y="40" width="18" height="3" fill="#0F0F0F" />
+      </svg>
+    </div>
+
+    <!-- yellow lock seal -->
+    <div id="d1-dosya-yukle-seal" data-layout-allow-overlap>
+      <svg viewBox="0 0 26 30" xmlns="http://www.w3.org/2000/svg">
+        <path d="M 6 13 V 9 A 7 7 0 0 1 20 9 V 13" fill="none" stroke="#0F0F0F" stroke-width="3.5" />
+        <rect x="2" y="13" width="22" height="15" fill="#0F0F0F" />
+        <rect x="11.5" y="17" width="3" height="7" fill="#F5C518" />
+      </svg>
+    </div>
+
+    <!-- right: notes -->
+    <div id="d1-dosya-yukle-note1" class="d1-dosya-yukle-note">With every option except <span class="d1-dosya-yukle-mono">plain</span>, the file is stored encrypted on the server's disk (<span class="d1-dosya-yukle-mono">VAULT_AT_REST_PASSWORD</span>).</div>
+    <div id="d1-dosya-yukle-note2" class="d1-dosya-yukle-note">Each upload raises the version by one; phones download the new one.</div>
+
+    <!-- analogy strip -->
+    <div id="d1-dosya-yukle-analogy">
+      <div class="d1-dosya-yukle-alabel">ANALOGY</div>
+      <div class="d1-dosya-yukle-atext">A document goes into the archive, noting who gets it and in which envelope it is sent.</div>
+    </div>
+  </div>
+
+  <script>
+    (function () {
+      var ID = "d1-dosya-yukle";
+      var $ = function (n) { return document.getElementById(ID + "-" + n); };
+      var tl = gsap.timeline({ paused: true });
+      var OUT = "power3.out";
+      var INOUT = "power3.inOut";
+      var WIPE_FROM = "inset(-20% 100% -20% 0%)";
+      var WIPE_TO = "inset(-20% 0% -20% 0%)";
+      var INK = "#0F0F0F";
+      var CREAM = "#EFE9D9";
+      var CREAM2 = "#E4DCC4";
+
+      // split a value into per-letter spans (deterministic, built synchronously)
+      function split(el) {
+        var txt = el.getAttribute("data-type");
+        el.textContent = "";
+        var out = [];
+        for (var i = 0; i < txt.length; i++) {
+          var s = document.createElement("span");
+          s.textContent = txt.charAt(i);
+          s.style.whiteSpace = "pre";
+          el.appendChild(s);
+          out.push(s);
+        }
+        return out;
+      }
+      function type(chars, at, step) {
+        for (var i = 0; i < chars.length; i++) {
+          tl.fromTo(chars[i], { autoAlpha: 0 }, { autoAlpha: 1, duration: 0.02, ease: "none" }, at + i * step);
+        }
+      }
+      var v1 = split($("v1"));
+      var v2 = split($("v2"));
+      var v3 = split($("v3"));
+
+      // Scene 1 (0.0–1.8s): kicker, title
+      tl.fromTo($("kicker"), { clipPath: WIPE_FROM }, { clipPath: WIPE_TO, duration: 0.7, ease: OUT }, 0.1);
+      tl.fromTo($("title"), { autoAlpha: 0, y: 30 }, { autoAlpha: 1, y: 0, duration: 0.7, ease: OUT }, 0.35);
+
+      // Scene 2 (1.8–6.0s): panel opens, card title, Key + File fill letter by letter
+      tl.fromTo($("panel"), { autoAlpha: 0, y: 36 }, { autoAlpha: 1, y: 0, duration: 0.6, ease: OUT }, 1.8);
+      tl.fromTo($("ctitle"), { autoAlpha: 0, y: 12 }, { autoAlpha: 1, y: 0, duration: 0.45, ease: OUT }, 2.2);
+      tl.fromTo([$("tog1"), $("tog2")], { autoAlpha: 0, y: 10 }, { autoAlpha: 1, y: 0, duration: 0.4, ease: OUT, stagger: 0.08 }, 2.4);
+      tl.fromTo($("crule"), { scaleX: 0, transformOrigin: "0% 50%" }, { scaleX: 1, duration: 0.5, ease: OUT }, 2.45);
+      tl.fromTo(
+        [$("l1"), $("b1"), $("l2"), $("b2"), $("l3"), $("b3"), $("l4"), $("b4"), $("btn")],
+        { autoAlpha: 0, y: 12 },
+        { autoAlpha: 1, y: 0, duration: 0.4, ease: OUT, stagger: 0.06 },
+        2.6
+      );
+      type(v1, 3.3, 0.07);   // "saha-ayarlari"  -> ends ~4.2
+      type(v2, 4.55, 0.06);  // "saha-ayarlari.json" -> ends ~5.6
+
+      // Scene 3 (6.0–9.5s): Policy fills; Encryption dropdown opens, at_rest is chosen, list closes
+      type(v3, 6.0, 0.05);   // "token (recommended)" -> ends ~6.95
+      tl.fromTo($("v4"), { autoAlpha: 0 }, { autoAlpha: 0, duration: 0.01 }, 0);
+      tl.fromTo($("dd"), { autoAlpha: 0, clipPath: "inset(0% 0% 100% 0%)" }, { autoAlpha: 1, clipPath: "inset(0% 0% 0% 0%)", duration: 0.45, ease: OUT }, 7.05);
+      tl.fromTo($("optsel"), { backgroundColor: CREAM, color: INK }, { backgroundColor: INK, color: CREAM, duration: 0.15, ease: OUT }, 8.35);
+      tl.to($("v4"), { autoAlpha: 1, duration: 0.2, ease: OUT }, 8.75);
+      tl.to($("dd"), { clipPath: "inset(0% 0% 100% 0%)", duration: 0.4, ease: INOUT }, 8.85);
+      tl.set($("dd"), { autoAlpha: 0 }, 9.26);
+
+      // Scene 4 (9.5–12.5s): Upload pressed, toast, file slides to the depot, lock seal, depot row
+      tl.to($("btn"), { scale: 0.92, backgroundColor: INK, color: CREAM, duration: 0.12, ease: OUT }, 9.55);
+      tl.to($("btn"), { scale: 1, duration: 0.35, ease: OUT }, 9.67);
+      tl.fromTo($("toast"), { clipPath: WIPE_FROM }, { clipPath: WIPE_TO, duration: 0.5, ease: OUT }, 9.85);
+      tl.fromTo($("depot"), { autoAlpha: 0, y: 24 }, { autoAlpha: 1, y: 0, duration: 0.5, ease: OUT }, 9.8);
+      tl.fromTo($("path"), { strokeDasharray: 1, strokeDashoffset: 1 }, { strokeDashoffset: 0, duration: 0.5, ease: "power2.out" }, 10.2);
+      tl.fromTo($("file"), { autoAlpha: 0, x: -233, y: 122, scale: 0.6 }, { autoAlpha: 1, scale: 1, duration: 0.3, ease: OUT }, 10.35);
+      tl.to($("file"), { x: -108, duration: 0.38, ease: INOUT }, 10.6);
+      tl.to($("file"), { y: 0, duration: 0.38, ease: INOUT }, 10.98);
+      tl.to($("file"), { x: 0, duration: 0.32, ease: INOUT }, 11.36);
+      tl.set($("slot"), { borderStyle: "solid", backgroundColor: CREAM2 }, 11.62);
+      tl.fromTo(
+        $("seal"),
+        { autoAlpha: 0, scale: 1.7, rotation: -6, transformOrigin: "50% 50%" },
+        { autoAlpha: 1, scale: 1, rotation: -6, duration: 0.35, ease: OUT },
+        11.7
+      );
+      tl.fromTo($("rowtxt"), { clipPath: WIPE_FROM }, { clipPath: WIPE_TO, duration: 0.6, ease: OUT }, 11.95);
+
+      // Scene 5 (12.5–16.0s): depot note, note 2, analogy, hold
+      tl.fromTo($("note1"), { autoAlpha: 0, y: 14 }, { autoAlpha: 1, y: 0, duration: 0.5, ease: OUT }, 12.45);
+      tl.fromTo($("note2"), { autoAlpha: 0, y: 14 }, { autoAlpha: 1, y: 0, duration: 0.5, ease: OUT }, 13.55);
+      tl.fromTo($("analogy"), { autoAlpha: 0, x: -24 }, { autoAlpha: 1, x: 0, duration: 0.6, ease: OUT }, 14.45);
+
+      // pad to the fixed 16s duration (hold)
+      tl.set({}, {}, 16);
+
+      window.__timelines = window.__timelines || {};
+      window.__timelines[ID] = tl;
+    })();
+  </script>
+</template>

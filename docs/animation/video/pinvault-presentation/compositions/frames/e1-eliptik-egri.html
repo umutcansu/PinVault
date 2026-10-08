@@ -1,0 +1,509 @@
+<template id="e1-eliptik-egri-template">
+  <div id="root" data-composition-id="e1-eliptik-egri" data-start="0" data-duration="16.5" data-width="1920" data-height="1080" lang="en">
+    <style>
+      @import url("https://fonts.googleapis.com/css2?family=Archivo+Black&family=JetBrains+Mono:wght@400;700&family=Space+Grotesk:wght@400;500&display=block");
+
+      #root {
+        position: relative;
+        width: 1920px;
+        height: 1080px;
+        overflow: hidden;
+      }
+      [data-composition-id="e1-eliptik-egri"] * {
+        margin: 0;
+        padding: 0;
+        box-sizing: border-box;
+      }
+
+      /* full-bleed ground (clip layer, not #root) */
+      #e1-eliptik-egri-stage {
+        position: absolute;
+        inset: 0;
+        width: 1920px;
+        height: 1080px;
+        background: #efe9d9;
+        container-type: size;
+        overflow: hidden;
+        color: #0f0f0f;
+      }
+
+      /* ---------- chrome ---------- */
+      #e1-eliptik-egri-topbar {
+        position: absolute;
+        top: 48px;
+        left: 64px;
+        right: 64px;
+        height: 44px;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        font-family: "JetBrains Mono", monospace;
+        font-size: 22px;
+        letter-spacing: 0.06em;
+      }
+      #e1-eliptik-egri-pill {
+        border: 4px solid #0f0f0f;
+        border-radius: 999px;
+        background: #efe9d9;
+        padding: 4px 20px;
+        line-height: 1.3;
+      }
+      #e1-eliptik-egri-footer {
+        position: absolute;
+        bottom: 48px;
+        left: 64px;
+        right: 64px;
+        height: 32px;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        font-family: "JetBrains Mono", monospace;
+        font-size: 22px;
+        letter-spacing: 0.06em;
+      }
+      #e1-eliptik-egri-counter {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+      }
+      #e1-eliptik-egri-dot {
+        width: 10px;
+        height: 10px;
+        border-radius: 50%;
+        background: #0f0f0f;
+      }
+
+      /* ---------- title + curve glyph ---------- */
+      #e1-eliptik-egri-titlerow {
+        position: absolute;
+        left: 96px;
+        top: 124px;
+        height: 96px;
+        display: flex;
+        align-items: center;
+        gap: 30px;
+      }
+      #e1-eliptik-egri-title {
+        font-family: "Archivo Black", sans-serif;
+        font-size: 4.2cqw;
+        line-height: 0.92;
+        letter-spacing: -0.01em;
+        white-space: nowrap;
+      }
+      #e1-eliptik-egri-glyph {
+        width: 76px;
+        height: 95px;
+        display: block;
+        flex: none;
+        overflow: visible;
+      }
+
+      /* ---------- left: phone + vault ---------- */
+      #e1-eliptik-egri-phone {
+        position: absolute;
+        left: 168px;
+        top: 262px;
+        width: 236px;
+        height: 268px;
+        border: 4px solid #0f0f0f;
+        background: #efe9d9;
+        z-index: 2;
+      }
+      .e1-eliptik-egri-speaker {
+        position: absolute;
+        left: 82px;
+        top: 11px;
+        width: 64px;
+        height: 8px;
+        background: #0f0f0f;
+      }
+      .e1-eliptik-egri-screen {
+        position: absolute;
+        left: 12px;
+        top: 30px;
+        width: 204px;
+        height: 222px;
+        border: 3px solid #0f0f0f;
+        background: #efe9d9;
+      }
+      .e1-eliptik-egri-app {
+        position: absolute;
+        left: 10px;
+        top: 10px;
+        font-family: "JetBrains Mono", monospace;
+        font-size: 20px;
+        letter-spacing: 0.02em;
+        white-space: nowrap;
+      }
+      .e1-eliptik-egri-bar {
+        position: absolute;
+        left: 12px;
+        height: 9px;
+        background: #0f0f0f;
+      }
+      .e1-eliptik-egri-lib {
+        position: absolute;
+        left: 0;
+        right: 0;
+        bottom: 0;
+        height: 62px;
+        background: #0f0f0f;
+        color: #efe9d9;
+        font-family: "JetBrains Mono", monospace;
+        font-size: 18px;
+        line-height: 1.25;
+        padding: 7px 10px;
+      }
+      #e1-eliptik-egri-conn {
+        position: absolute;
+        left: 284px;
+        top: 530px;
+        width: 4px;
+        height: 36px;
+        background: #0f0f0f;
+        transform-origin: 50% 0;
+        z-index: 1;
+      }
+      #e1-eliptik-egri-vault {
+        position: absolute;
+        left: 96px;
+        top: 566px;
+        width: 520px;
+        height: 184px;
+        border: 4px solid #0f0f0f;
+        background: #e4dcc4;
+        z-index: 2;
+      }
+      .e1-eliptik-egri-vhead {
+        position: absolute;
+        left: 0;
+        top: 0;
+        right: 0;
+        height: 44px;
+        background: #0f0f0f;
+        color: #efe9d9;
+        display: flex;
+        align-items: center;
+        padding: 0 14px;
+        font-family: "JetBrains Mono", monospace;
+        font-size: 19px;
+        letter-spacing: 0.02em;
+        white-space: nowrap;
+      }
+      #e1-eliptik-egri-key {
+        position: absolute;
+        left: 22px;
+        top: 78px;
+        width: 412px;
+        height: 64px;
+        border: 4px solid #f06ca8;
+        background: #efe9d9;
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        padding: 0 14px;
+        font-family: "JetBrains Mono", monospace;
+        font-size: 22px;
+        white-space: nowrap;
+      }
+      #e1-eliptik-egri-keyico {
+        width: 40px;
+        height: 40px;
+        display: block;
+        flex: none;
+      }
+
+      /* ---------- middle: key size comparison ---------- */
+      .e1-eliptik-egri-head {
+        position: absolute;
+        top: 262px;
+        font-family: "JetBrains Mono", monospace;
+        font-size: 20px;
+        letter-spacing: 0.06em;
+        white-space: nowrap;
+      }
+      .e1-eliptik-egri-blabel {
+        position: absolute;
+        left: 664px;
+        font-family: "JetBrains Mono", monospace;
+        font-size: 22px;
+        letter-spacing: 0.02em;
+        white-space: nowrap;
+      }
+      #e1-eliptik-egri-ecbar {
+        position: absolute;
+        left: 664px;
+        top: 348px;
+        width: 45px;
+        height: 56px;
+        background: #f06ca8;
+        border: 4px solid #0f0f0f;
+        box-shadow: 20px 20px 0 #e85a1f, 20px 20px 0 4px #0f0f0f;
+        transform-origin: 0 50%;
+        z-index: 2;
+      }
+      #e1-eliptik-egri-rsabar {
+        position: absolute;
+        left: 664px;
+        top: 476px;
+        width: 540px;
+        height: 56px;
+        background: #e4dcc4;
+        border: 4px solid #0f0f0f;
+        transform-origin: 0 50%;
+      }
+      #e1-eliptik-egri-cmpbody {
+        position: absolute;
+        left: 664px;
+        top: 556px;
+        width: 540px;
+        font-family: "Space Grotesk", sans-serif;
+        font-size: 24px;
+        line-height: 1.3;
+      }
+
+      /* ---------- right: four jobs ---------- */
+      .e1-eliptik-egri-job {
+        position: absolute;
+        left: 1290px;
+        width: 534px;
+        height: 64px;
+        border: 3px solid #0f0f0f;
+        background: #efe9d9;
+        display: flex;
+        align-items: center;
+        gap: 14px;
+        padding: 0 14px;
+        font-family: "JetBrains Mono", monospace;
+        font-size: 21px;
+        white-space: nowrap;
+        z-index: 2;
+      }
+      .e1-eliptik-egri-ok {
+        width: 34px;
+        height: 34px;
+        background: #1f8a4c;
+        border: 3px solid #0f0f0f;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        flex: none;
+      }
+      .e1-eliptik-egri-ok svg {
+        width: 22px;
+        height: 22px;
+        display: block;
+      }
+
+      /* ---------- wires: key -> jobs ---------- */
+      #e1-eliptik-egri-wires {
+        position: absolute;
+        left: 0;
+        top: 0;
+        width: 1920px;
+        height: 1080px;
+        z-index: 3;
+        overflow: visible;
+      }
+
+      /* ---------- note + analogy ---------- */
+      #e1-eliptik-egri-note {
+        position: absolute;
+        left: 96px;
+        top: 774px;
+        border-left: 4px solid #0f0f0f;
+        padding-left: 18px;
+        font-family: "Space Grotesk", sans-serif;
+        font-size: 24px;
+        line-height: 1.3;
+        white-space: nowrap;
+      }
+      #e1-eliptik-egri-analogy {
+        position: absolute;
+        left: 96px;
+        top: 834px;
+        height: 52px;
+        display: flex;
+        align-items: stretch;
+        border: 2px solid #0f0f0f;
+        background: #e4dcc4;
+        z-index: 2;
+      }
+      .e1-eliptik-egri-alabel {
+        display: flex;
+        align-items: center;
+        padding: 0 14px;
+        background: #0f0f0f;
+        color: #efe9d9;
+        font-family: "JetBrains Mono", monospace;
+        font-size: 18px;
+        letter-spacing: 0.12em;
+      }
+      .e1-eliptik-egri-atext {
+        display: flex;
+        align-items: center;
+        padding: 0 22px;
+        font-family: "Space Grotesk", sans-serif;
+        font-size: 26px;
+        white-space: nowrap;
+      }
+    </style>
+
+    <div id="e1-eliptik-egri-stage" class="clip" data-start="0" data-duration="16.5" data-track-index="0">
+      <!-- chrome -->
+      <div id="e1-eliptik-egri-topbar">
+        <span>PINVAULT · 3 FLOW</span>
+        <span id="e1-eliptik-egri-pill">KEY</span>
+      </div>
+      <div id="e1-eliptik-egri-footer">
+        <span>Elliptic curve</span>
+        <span id="e1-eliptik-egri-counter"><span>22</span><span id="e1-eliptik-egri-dot"></span><span>39</span></span>
+      </div>
+
+      <!-- title + elliptic-curve glyph (y² = x³ − x + 1, chord y = 1 through three points) -->
+      <div id="e1-eliptik-egri-titlerow">
+        <div id="e1-eliptik-egri-title">WHY AN ELLIPTIC CURVE?</div>
+        <svg id="e1-eliptik-egri-glyph" style="display:none" viewBox="0 0 72.3 90.3" xmlns="http://www.w3.org/2000/svg">
+          <path id="e1-eliptik-egri-chord" d="M1.5 23.1 H70.5" pathLength="1" fill="none" stroke="#0F0F0F" stroke-width="1.6" stroke-dasharray="1 1" stroke-dashoffset="1" opacity="0.55" />
+          <path id="e1-eliptik-egri-curve" pathLength="1" fill="none" stroke="#0F0F0F" stroke-width="3.4" stroke-linejoin="round" stroke-linecap="square" stroke-dasharray="1 1" stroke-dashoffset="1"
+            d="M68.3 4.0 L65.2 9.5 L62.1 14.4 L59.1 18.6 L56.1 22.1 L53.3 24.9 L50.5 26.7 L47.8 27.7 L45.2 27.9 L42.6 27.4 L40.2 26.6 L37.8 25.5 L35.5 24.4 L33.3 23.2 L31.2 22.2 L29.1 21.3 L27.2 20.5 L25.3 19.9 L23.5 19.5 L21.7 19.3 L20.1 19.3 L18.5 19.4 L17.0 19.7 L15.6 20.1 L14.3 20.8 L13.0 21.5 L11.9 22.4 L10.8 23.5 L9.8 24.7 L8.9 26.0 L8.0 27.4 L7.3 28.9 L6.6 30.4 L6.0 32.1 L5.4 33.8 L5.0 35.6 L4.6 37.5 L4.4 39.4 L4.2 41.3 L4.0 43.2 L4.0 45.1 L4.0 47.1 L4.2 49.0 L4.4 50.9 L4.6 52.8 L5.0 54.6 L5.4 56.4 L6.0 58.2 L6.6 59.8 L7.3 61.4 L8.0 62.9 L8.9 64.3 L9.8 65.6 L10.8 66.8 L11.9 67.8 L13.0 68.7 L14.3 69.5 L15.6 70.1 L17.0 70.6 L18.5 70.9 L20.1 71.0 L21.7 71.0 L23.5 70.7 L25.3 70.3 L27.2 69.8 L29.1 69.0 L31.2 68.1 L33.3 67.1 L35.5 65.9 L37.8 64.8 L40.2 63.7 L42.6 62.9 L45.2 62.4 L47.8 62.6 L50.5 63.6 L53.3 65.4 L56.1 68.2 L59.1 71.7 L62.1 75.9 L65.2 80.8 L68.3 86.3" />
+          <rect class="e1-eliptik-egri-gdot" x="8.1" y="20.1" width="6" height="6" fill="#0F0F0F" />
+          <rect class="e1-eliptik-egri-gdot" x="30.1" y="20.1" width="6" height="6" fill="#0F0F0F" />
+          <rect class="e1-eliptik-egri-gdot" x="52.1" y="20.1" width="6" height="6" fill="#0F0F0F" />
+        </svg>
+      </div>
+
+      <!-- phone -->
+      <div id="e1-eliptik-egri-phone">
+        <div class="e1-eliptik-egri-speaker"></div>
+        <div class="e1-eliptik-egri-screen">
+          <div class="e1-eliptik-egri-app">Your app</div>
+          <div class="e1-eliptik-egri-bar" style="top: 56px; width: 150px"></div>
+          <div class="e1-eliptik-egri-bar" style="top: 80px; width: 118px"></div>
+          <div class="e1-eliptik-egri-bar" style="top: 104px; width: 164px"></div>
+          <div class="e1-eliptik-egri-bar" style="top: 128px; width: 96px"></div>
+          <div class="e1-eliptik-egri-lib">PinVault library</div>
+        </div>
+      </div>
+      <div id="e1-eliptik-egri-conn"></div>
+
+      <!-- vault (Android Keystore) with the pink key label -->
+      <div id="e1-eliptik-egri-vault">
+        <div class="e1-eliptik-egri-vhead">Android Keystore · StrongBox or TEE</div>
+        <div id="e1-eliptik-egri-key">
+          <svg id="e1-eliptik-egri-keyico" viewBox="0 0 40 40" xmlns="http://www.w3.org/2000/svg">
+            <path id="e1-eliptik-egri-keybow" d="M3 13 H17 V27 H3 Z" pathLength="1" fill="none" stroke="#0F0F0F" stroke-width="4" stroke-linejoin="miter" stroke-dasharray="1 1" stroke-dashoffset="1" />
+            <path id="e1-eliptik-egri-keyshaft" d="M17 20 H37 M31 20 V28 M37 20 V26" pathLength="1" fill="none" stroke="#0F0F0F" stroke-width="4" stroke-linecap="square" stroke-dasharray="1 1" stroke-dashoffset="1" />
+          </svg>
+          <span>EC P-256 · signing only</span>
+        </div>
+      </div>
+
+      <!-- middle: same security, key size -->
+      <div id="e1-eliptik-egri-cmphead" class="e1-eliptik-egri-head" style="left: 664px">KEY SIZE FOR THE SAME SECURITY</div>
+      <div id="e1-eliptik-egri-eclabel" class="e1-eliptik-egri-blabel" style="top: 310px">EC P-256 · 256 bit</div>
+      <div id="e1-eliptik-egri-ecbar"></div>
+      <div id="e1-eliptik-egri-rsalabel" class="e1-eliptik-egri-blabel" style="top: 438px">RSA · 3072 bit</div>
+      <div id="e1-eliptik-egri-rsabar"></div>
+      <div id="e1-eliptik-egri-cmpbody">Short key, small and fast signature. The phone's secure hardware supports this curve.</div>
+
+      <!-- right: the same key signs four jobs -->
+      <div id="e1-eliptik-egri-jobhead" class="e1-eliptik-egri-head" style="left: 1290px">THE SAME KEY SIGNS</div>
+      <div id="e1-eliptik-egri-job0" class="e1-eliptik-egri-job" style="top: 312px">
+        <span class="e1-eliptik-egri-ok"><svg viewBox="0 0 24 24"><polyline points="5,12.5 10,17.5 19,7" fill="none" stroke="#EFE9D9" stroke-width="3.5" stroke-linecap="square" /></svg></span>
+        <span>enrollment: signing request (CSR)</span>
+      </div>
+      <div id="e1-eliptik-egri-job1" class="e1-eliptik-egri-job" style="top: 400px">
+        <span class="e1-eliptik-egri-ok"><svg viewBox="0 0 24 24"><polyline points="5,12.5 10,17.5 19,7" fill="none" stroke="#EFE9D9" stroke-width="3.5" stroke-linecap="square" /></svg></span>
+        <span>mTLS: handshake on each connection</span>
+      </div>
+      <div id="e1-eliptik-egri-job2" class="e1-eliptik-egri-job" style="top: 488px">
+        <span class="e1-eliptik-egri-ok"><svg viewBox="0 0 24 24"><polyline points="5,12.5 10,17.5 19,7" fill="none" stroke="#EFE9D9" stroke-width="3.5" stroke-linecap="square" /></svg></span>
+        <span>attestation: measurement report</span>
+      </div>
+      <div id="e1-eliptik-egri-job3" class="e1-eliptik-egri-job" style="top: 576px">
+        <span class="e1-eliptik-egri-ok"><svg viewBox="0 0 24 24"><polyline points="5,12.5 10,17.5 19,7" fill="none" stroke="#EFE9D9" stroke-width="3.5" stroke-linecap="square" /></svg></span>
+        <span>recovery: identity proof on 8093</span>
+      </div>
+
+      <!-- wires: nested L-paths from the key label (right edge x 534) to each job (left edge x 1290) -->
+      <svg id="e1-eliptik-egri-wires" viewBox="0 0 1920 1080" xmlns="http://www.w3.org/2000/svg" data-layout-allow-overlap>
+        <path class="e1-eliptik-egri-wire" d="M534 662 H1228 V344 H1290" pathLength="1" fill="none" stroke="#0F0F0F" stroke-width="3" stroke-linejoin="miter" stroke-dasharray="1 1" stroke-dashoffset="1" />
+        <path class="e1-eliptik-egri-wire" d="M534 674 H1240 V432 H1290" pathLength="1" fill="none" stroke="#0F0F0F" stroke-width="3" stroke-linejoin="miter" stroke-dasharray="1 1" stroke-dashoffset="1" />
+        <path class="e1-eliptik-egri-wire" d="M534 686 H1252 V520 H1290" pathLength="1" fill="none" stroke="#0F0F0F" stroke-width="3" stroke-linejoin="miter" stroke-dasharray="1 1" stroke-dashoffset="1" />
+        <path class="e1-eliptik-egri-wire" d="M534 698 H1264 V608 H1290" pathLength="1" fill="none" stroke="#0F0F0F" stroke-width="3" stroke-linejoin="miter" stroke-dasharray="1 1" stroke-dashoffset="1" />
+      </svg>
+
+      <!-- note + analogy -->
+      <div id="e1-eliptik-egri-note">The private key never leaves the phone's key store; the server only sees the public key.</div>
+      <div id="e1-eliptik-egri-analogy">
+        <div class="e1-eliptik-egri-alabel">ANALOGY</div>
+        <div class="e1-eliptik-egri-atext">A short signature that cannot be forged, and the pen never leaves the vault.</div>
+      </div>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/gsap@3.14.2/dist/gsap.min.js"></script>
+    <script>
+      (function () {
+        var FID = "e1-eliptik-egri";
+        var host = document.querySelector('[data-composition-id="' + FID + '"]') || document;
+        var $ = function (n) {
+          return host.querySelector("#" + FID + "-" + n);
+        };
+        var $$ = function (n) {
+          return Array.prototype.slice.call(host.querySelectorAll("." + FID + "-" + n));
+        };
+        var DRAW_FROM = { attr: { "stroke-dashoffset": 1 } };
+        var draw = function (d, e) {
+          return { attr: { "stroke-dashoffset": 0 }, duration: d, ease: e || "power2.inOut" };
+        };
+
+        var tl = gsap.timeline({ paused: true });
+        var SOFT = "power3.out";
+
+        // ---------- Scene 1 (0.0–1.8): title; the curve glyph draws itself ----------
+        tl.fromTo($("title"), { opacity: 0, y: 30 }, { opacity: 1, y: 0, duration: 0.7, ease: SOFT }, 0.15);
+        tl.fromTo($("curve"), DRAW_FROM, draw(1.0), 0.5);
+        tl.fromTo($("chord"), DRAW_FROM, draw(0.45), 1.15);
+        $$("gdot").forEach(function (d, i) {
+          tl.fromTo(d, { opacity: 0 }, { opacity: 1, duration: 0.2, ease: SOFT }, 1.3 + i * 0.12);
+        });
+
+        // ---------- Scene 2 (1.8–4.5): phone, vault below it, pink key label inside ----------
+        tl.fromTo($("phone"), { opacity: 0, y: 30 }, { opacity: 1, y: 0, duration: 0.7, ease: SOFT }, 1.8);
+        tl.fromTo($("conn"), { scaleY: 0 }, { scaleY: 1, duration: 0.35, ease: SOFT }, 2.25);
+        tl.fromTo($("vault"), { opacity: 0, y: 24 }, { opacity: 1, y: 0, duration: 0.6, ease: SOFT }, 2.4);
+        tl.fromTo($("key"), { opacity: 0, x: -18 }, { opacity: 1, x: 0, duration: 0.55, ease: SOFT }, 3.35);
+        tl.fromTo($("keybow"), DRAW_FROM, draw(0.35), 3.5);
+        tl.fromTo($("keyshaft"), DRAW_FROM, draw(0.4), 3.8);
+
+        // ---------- Scene 3 (4.5–9.0): heading; RSA bar grows long, EC bar settles short ----------
+        tl.fromTo($("cmphead"), { opacity: 0, x: -16 }, { opacity: 1, x: 0, duration: 0.5, ease: SOFT }, 4.5);
+        tl.fromTo($("rsalabel"), { opacity: 0, y: 10 }, { opacity: 1, y: 0, duration: 0.45, ease: SOFT }, 4.95);
+        tl.fromTo($("rsabar"), { scaleX: 0 }, { scaleX: 1, duration: 1.1, ease: SOFT }, 5.1);
+        tl.fromTo($("eclabel"), { opacity: 0, y: 10 }, { opacity: 1, y: 0, duration: 0.45, ease: SOFT }, 6.35);
+        tl.fromTo($("ecbar"), { scaleX: 0 }, { scaleX: 1, duration: 0.5, ease: SOFT }, 6.5);
+        tl.fromTo($("cmpbody"), { opacity: 0, y: 12 }, { opacity: 1, y: 0, duration: 0.6, ease: SOFT }, 7.2);
+
+        // ---------- Scene 4 (9.0–13.5): four jobs every ~0.9 s, each wired from the key ----------
+        tl.fromTo($("jobhead"), { opacity: 0, x: -16 }, { opacity: 1, x: 0, duration: 0.5, ease: SOFT }, 9.0);
+        var wires = $$("wire");
+        var oks = $$("ok");
+        for (var i = 0; i < 4; i++) {
+          var t = 9.35 + i * 0.9;
+          tl.fromTo(wires[i], DRAW_FROM, draw(0.5), t);
+          tl.fromTo($("job" + i), { opacity: 0, x: -14 }, { opacity: 1, x: 0, duration: 0.45, ease: SOFT }, t + 0.35);
+          tl.fromTo(oks[i], { scale: 0.4, opacity: 0 }, { scale: 1, opacity: 1, duration: 0.3, ease: SOFT }, t + 0.55);
+        }
+
+        // ---------- Scene 5 (13.5–16.0): note and analogy, hold ----------
+        tl.fromTo($("note"), { opacity: 0, y: 14 }, { opacity: 1, y: 0, duration: 0.6, ease: SOFT }, 13.5);
+        tl.fromTo($("analogy"), { opacity: 0, x: -24 }, { opacity: 1, x: 0, duration: 0.6, ease: SOFT }, 14.3);
+        tl.to({}, { duration: 0.01 }, 15.99);
+
+        window.__timelines = window.__timelines || {};
+        window.__timelines[FID] = tl;
+      })();
+    </script>
+  </div>
+</template>

@@ -141,7 +141,7 @@ Ekran metni:
 - depo kutusu başlığı (mono): "TELEFONUN GÜVEN DEPOSU"
 - depo çipleri (mono, krem-2 kare): "Kurum A" "Kurum B" "Kurum C" "Kurum D" "Kurum E" "… ve onlarcası"
 - turuncu çip (mono): "ARAYA GİRENİN KURUMU"
-- turuncu çip altı (body-md): "Kurumsal ağ, zararlı bir profil ya da kandırılmış kullanıcı bunu telefona ekletebilir."
+- turuncu çip altı (body-md): "Root'lu telefon, kullanıcı CA'sına güvenen uygulama ya da yanlış sertifika veren bir kurum bunu mümkün kılar."
 - sahte sunucu kutusu: "SAHTE SUNUCU" / sertifika kartı (mono): "imzalayan: araya girenin kurumu"
 - sonuç damgası (turuncu kenarlı, krem dolgu): "GÜVENİLİR ✓" — ve hemen altında turuncu not: "ama sahte"
 - son satır (display-head küçük, ≈ 2.6cqw): "SSL PINNING BU AÇIĞI KAPATIR."
@@ -175,7 +175,7 @@ keyMessage: Telefon, sunucunun gösterdiği sertifikanın parmak izini bildiği 
 Ekran metni:
 - üst çubuk hap: "AMAÇ"
 - başlık (display-head): "PARMAK İZİ KONTROLÜ"
-- açıklama (body-lg): "Sunucu her bağlantıda sertifikasını gösterir. Telefon onun parmak izini (pin) bildiği listeyle karşılaştırır."
+- açıklama (body-lg): "Sunucu her bağlantıda sertifikasını gösterir. Telefon, sertifikadaki anahtarın parmak izini (pin) bildiği listeyle karşılaştırır."
 - telefonun yanındaki kart başlığı (mono): "BİLDİĞİM PARMAK İZLERİ"
 - kart satırları (mono): "q8Hs2LkP…" ve "Xm4tR9wE…"
 - gerçek sunucunun (API sunucunuz) sertifika kartı (mono): "q8Hs2LkP…"
@@ -184,7 +184,7 @@ Ekran metni:
 - sahte sunucu kutusu: "SAHTE SUNUCU"
 - sahte sertifika kartı (mono): "Xk91Pq7R…"
 - turuncu damga: "EŞLEŞMEDİ ✗"
-- turuncu alt yazı: "Telefon tek bayt göndermeden bağlantıyı keser."
+- turuncu alt yazı: "Telefon isteğini göndermeden bağlantıyı keser."
 - künye: "Pinleme"
 
 Compose. Yerleşim: asimetrik 60/40. Solda (%60) sahne: telefon solda, gerçek sunucu sağda, arada çizgi. Sağda (%40) başlık ve açıklama metin rayı.
@@ -252,7 +252,7 @@ Ekran metni:
 - üst çubuk hap: "BÖLÜM 2 / 4"
 - numara bloğu (Archivo, çok büyük): "2"
 - kicker (mono, siyah kutu): "BÖLÜM 2"
-- başlık (display-lg): "AMAÇ: SSL PINNING"
+- başlık (display-lg): "PINVAULT NE EKLER"
 - alt satır (body-lg): "Üç eksiğe üç cevap ve parçaların nerede durduğu."
 - bölüm şeridi hücreleri (mono): "1 AMAÇ" (bitti: ink dolgu) · "2 ÇÖZÜM" (şu anki) · "3 AKIŞ" · "4 DOSYALAR"
 - künye: "Bölüm 2" / sayaç "06 • 39"
@@ -286,7 +286,7 @@ Ekran metni:
 - alt satır (body-lg): "Uygulamanıza giren bir kütüphane ve sizin makinenizde çalışan bir sunucu."
 - kart 1: büyük rakam "1", başlık "PİNLEME", alt satır "Pin listesi sunucudan, imzalı gelir; APK değişmez." / panel şeridi (siyah, mono) "PANELDE · + Host ekle → URL'den Al"
 - kart 2: büyük rakam "2", başlık "KİMLİK", alt satır "Sunucu, tanıdığı cihazı içeri alır." / panel şeridi "PANELDE · Client Sertifikaları → Token Üret"
-- kart 3: büyük rakam "3", başlık "ATESTASYON", alt satır "PinVault-Token yalnızca değiştirilmemiş uygulamaya verilir." / panel şeridi "PANELDE · Attestation → Red politikası"
+- kart 3: büyük rakam "3", başlık "ATESTASYON", alt satır "PinVault-Token yalnızca denetimden geçen uygulamaya verilir." / panel şeridi "PANELDE · Attestation → Red politikası"
 - künye: "Üç iş"
 
 Adapt: grid-card-assemble'ın "kartlar sırayla yuvalarına oturur, sonra tutar" yapısı; üstte wordmark kitap ayracı gibi durur, kartlar sırayla değil okuma ritmiyle gelir.
@@ -320,7 +320,7 @@ Ekran metni:
 - açıklama (body-lg): "Config API, uygulamanın pin listesini, PinVault-Token'ını ve dosyalarını aldığı kapıdır. İki türü var."
 - sütun 1 başlığı (Archivo): "TLS" / alt (mono): "tek yönlü · örnek: 8091"
 - sütun 1 çizim: telefon ← sunucu sertifikası (mor değil, krem-2 kart) · telefon kendi kartını göstermez
-- sütun 1 satırları (body-md): "Yalnızca sunucu kimliğini gösterir." / "Kayıt yok, kayıt token'ı yok: uygulama kurulur kurulmaz çalışır." / "Sunucu, hangi cihazla konuştuğunu kanıtlayamaz."
+- sütun 1 satırları (body-md): "Yalnızca sunucu kimliğini gösterir." / "Kayıt yok, kayıt token'ı yok: uygulama kurulur kurulmaz çalışır." / "Bağlantı, cihazın kim olduğunu kanıtlamaz."
 - sütun 2 başlığı (Archivo): "mTLS" / alt (mono): "çift yönlü · örnek: 8092"
 - sütun 2 çizim: telefon ← sunucu sertifikası · telefon → pembe kart "tablet-07"
 - sütun 2 satırları (body-md): "İki taraf da kimliğini gösterir." / "Telefon önce bir kez kayıt olur ve kartını alır." / "Ek olarak: tanınan cihaz, iptal, kart yenileme, “token + mTLS” dosyalar."
@@ -367,7 +367,7 @@ Ekran metni:
 - alan 2 etiketi: "Port" / değer (mono): "8092"
 - alan 3 etiketi: "Mod" / açılır liste seçenekleri (mono): "TLS (tek yönlü)" · "mTLS (çift yönlü — client cert gerekir)" (seçilen)
 - düğme: "Config API Başlat"
-- not (body-md): "default-tls sunucuyla kendiliğinden açılır. mTLS kapısı yalnızca istemci CA'sının imzaladığı kartlara güvenir; kartı olmayan telefon içeri giremez."
+- not (body-md): "default-tls sunucuyla kendiliğinden açılır. mTLS kapısı yalnızca sunucunun verdiği ya da panelden yüklenen kartlara güvenir; kartı olmayan telefon içeri giremez."
 - benzetme: "Binaya ikinci bir kapı açılır: bu kapıdan yalnızca kartı olan girer."
 - künye: "mTLS açılır"
 
@@ -403,7 +403,7 @@ Ekran metni:
 - telefon: "Uygulamanız" / "PinVault kütüphanesi"
 - bölge 2 etiketi (mono): "PİNVAULT SUNUCUSU · SİZİN MAKİNENİZ"
 - kapı 8091 kutusu: "8091 · TLS" / "pin listesi · kayıt · atestasyon"
-- kapı 8092 kutusu: "8092 · mTLS" / "kimlikli cihaz: dosya · yenileme"
+- kapı 8092 kutusu: "8092 · mTLS" / "kartlı cihaz: aynısı + yenileme"
 - kapı 8093 kutusu: "8093 · KURTARMA" / "süresi dolan sertifika"
 - depo kutusu: "DEPO" / "sertifikalar · kayıtlar · imza anahtarı"
 - bölge 3 etiketi (mono): "SİZİN ARKA UCUNUZ"
@@ -449,7 +449,7 @@ Ekran metni:
 - üst çubuk hap: "BÖLÜM 3 / 4"
 - numara bloğu (Archivo, çok büyük): "3"
 - kicker (mono, siyah kutu): "BÖLÜM 3"
-- başlık (display-lg): "AMAÇ: SSL PINNING"
+- başlık (display-lg): "BAŞTAN SONA NASIL ÇALIŞIR"
 - alt satır (body-lg): "Kurulumdan ilk korumalı isteğe, on halkada."
 - bölüm şeridi hücreleri (mono): "1 AMAÇ" (bitti) · "2 ÇÖZÜM" (bitti) · "3 AKIŞ" (şu anki) · "4 DOSYALAR"
 - künye: "Bölüm 3" / sayaç "11 • 39"
@@ -599,7 +599,7 @@ Ekran metni:
 - neden önemli şeridi başlığı (mono, turuncu im): "NEDEN ÖNEMLİ"
 - neden önemli satırı (body-lg): "Telefonlar bu anahtarın mühürlediği pin listesine güvenir. Anahtarı ele geçiren, sahte bir liste mühürleyip telefonlarınızı kendi sunucusuna bağlatabilir."
 - kart 1 başlığı (Archivo): "DOSYA" / ayar (mono): "CONFIG_SIGNERS=local"
-- kart 1 satırı (body-md): "signing-key.pem, diskte parolayla şifreli."
+- kart 1 satırı (body-md): "signing-key.pem; SIGNING_KEY_PASSWORD verilirse diskte şifreli."
 - kart 1 "seçerseniz" satırı (mono, küçük): "En kolayı. Sunucu ya da yedeği çalınırsa anahtar da kopyalanabilir."
 - kart 2 başlığı (Archivo, yeşil kenar): "HSM" / ayar (mono): "CONFIG_SIGNERS=pkcs11"
 - kart 2 satırı (body-md): "Donanım güvenlik modülü. Anahtar içinde üretilir, dışarı hiç çıkmaz."
@@ -642,15 +642,15 @@ Ekran metni:
 - kazanç 1 (body-lg, yeşil ✓): "Sunucunun diski ya da yedeği çalınsa bile imza anahtarı çalınmaz."
 - kazanç 2 (body-lg, yeşil ✓): "Anahtar başka bir makineye kopyalanıp sahte liste mühürlemek için kullanılamaz; çalışanlar dahil kimse dışarı alamaz."
 - kazanç 3 (body-lg, yeşil ✓): "Anahtarın donanımda tutulmasını şart koşan güvenlik denetimlerini karşılamaya yardımcı olur."
-- kazanç 4 (body-lg, yeşil ✓): "Anahtarı değiştirmek gerekince yenisi HSM'de üretilir; sunucu yeni anahtarla yeniden başlatılır."
+- kazanç 4 (body-lg, yeşil ✓): "Anahtar değişince yenisi HSM'de üretilir; telefonlar onu imzalı anahtar setiyle öğrenir."
 - panel başlığı (mono): "Panel · 8090 · mtls-8092 · İmzalama"
 - panel kart başlığı: "İmzalayıcılar"
 - tablo başlıkları (mono): "Ad" · "Tür" · "Anahtar kimliği"
-- tablo satırı 1 (mono): "hsm" · "pkcs11" · "3fA9c2…" + rozet "birincil"
-- tablo satırı 2 (mono, sınır kutusuyla birlikte gelir): "ekip-b" · "command" · "Qm7Lr0…"
+- tablo satırı 1 (mono): "pkcs11:hsm" · "pkcs11" · "3fA9c2…" + rozet "birincil"
+- tablo satırı 2 (mono, sınır kutusuyla birlikte gelir): "command:ekip-b" · "command" · "Qm7Lr0…"
 - sınır kutusu başlığı (mono, turuncu im): "TEK BAŞINA ÇÖZMEDİĞİ"
 - sınır kutusu satırı (body-md): "Sunucuyu ele geçiren, HSM'e yine imza attırabilir. Buna karşı ikinci bir imzalayıcı: anahtarı başka bir ekipte ya da sistemde durur."
-- sınır kutusu kod (mono): "sunucu: CONFIG_SIGNERS=hsm,ekip-b · uygulama: requiredSignatures(2)"
+- sınır kutusu kod (mono): "sunucu: CONFIG_SIGNERS=pkcs11:hsm,command:ekip-b · uygulama: requiredSignatures(2)"
 - not (body-md): "Telefon, iki imzası birden olmayan listeyi kabul etmez."
 - künye: "HSM kazancı"
 
@@ -740,7 +740,7 @@ Ekran metni:
 - düğme: "Oluştur"
 - sonuç satırı 1 (mono): "Primary Pin  q8Hs2LkP…"
 - sonuç satırı 2 (mono): "Backup Pin  Xm4tR9wE…"
-- sonuç notu (body-md): "Panel sunucuya bağlanır, sertifikasından iki pin'i kendisi çıkarır."
+- sonuç notu (body-md): "Panel sunucuya bağlanır; sitenin ve onu imzalayan CA'nın pin'ini kendisi çıkarır."
 - imzalı liste kartı (mono): "PİN LİSTESİ · mtls-8092" / "api.ornek.com · q8Hs2LkP… · Xm4tR9wE…" / sarı mühür "İMZALI"
 - alt bölüm başlığı (mono): "API SUNUCUNUZ İÇİN BİR KEZ"
 - alt bölüm satırı (body-md): "PinVault-Token sırrını panelin İmzalama sekmesinden alır; PinVault-Token'ı sonra kendisi doğrular."
@@ -1034,7 +1034,7 @@ Ekran metni:
 - karar damgası (yeşil): "GEÇTİ"
 - PinVault-Token (sarı): "PINVAULT-TOKEN" / "5 DK"
 - not (body-md): "Kurulum sihirbazı attestation() satırını üretmez; geliştirici ekler (Halka 2)."
-- not 2 (body-md): "PinVault-Token arka planda yaklaşık 5 dakikada bir kendiliğinden yenilenir."
+- not 2 (body-md): "PinVault-Token süresi dolmadan, yaklaşık 4 dakikada bir kendiliğinden yenilenir."
 - benzetme: "Güvenlik masası çantayı kontrol eder ve 5 dakikalık ziyaret bandı takar."
 - künye: "PinVault-Token"
 
@@ -1112,7 +1112,7 @@ Ekran metni:
 - PinVault-Token yerine boş kesik çizgili çerçeve (mono): "PinVault-Token yok"
 - API kutusu cevabı (mono, turuncu): "401 · PinVault-Token yok"
 - gerçek satırı (display-head): "KAPIYI TUTAN, PINVAULT-TOKEN'DIR."
-- gerçek alt satırı (body-md): "Pin listesi gizli değildir; herkes alabilir. Değiştirilmiş uygulama yine de PinVault-Token alamaz."
+- gerçek alt satırı (body-md): "Pin'ler gizli değildir. Asıl kilit PinVault-Token: imza parmak izi tanımlıysa değiştirilmiş uygulama onu alamaz."
 - künye: "Ret"
 
 Compose. Aynı üç duraklı sahne, Frame 9'un aynası; telefon turuncu kenarlı.
@@ -1199,7 +1199,7 @@ Ekran metni:
 - üst çubuk hap: "BÖLÜM 4 / 4"
 - numara bloğu (Archivo, çok büyük): "4"
 - kicker (mono, siyah kutu): "BÖLÜM 4"
-- başlık (display-lg): "AMAÇ: SSL PINNING"
+- başlık (display-lg): "DOSYALAR VE ŞİFRELEME"
 - alt satır (body-lg): "Panelden eklenen dosya, seçtiğiniz cihazlara, seçtiğiniz korumayla gider."
 - bölüm şeridi hücreleri (mono): "1 AMAÇ" (bitti) · "2 ÇÖZÜM" (bitti) · "3 AKIŞ" (bitti) · "4 DOSYALAR" (şu anki)
 - künye: "Bölüm 4" / sayaç "29 • 39"
@@ -1366,11 +1366,11 @@ Ekran metni:
 - sütun 1 kim açar (mono): "Açabilen: sunucu · telefon"
 - sütun 2 başlığı (Archivo): "UÇTAN UCA" / etiket (mono): "end_to_end"
 - sütun 2 satırları (body-md): "Telefon açılışta açık anahtarını sunucuya bildirir." / "Her indirmede sunucu dosyayı o telefonun anahtarına sarar." / "Yolda ve başka cihazda açılamaz."
-- sütun 2 kim açar (mono): "Açabilen: yalnız o telefonun kasası"
+- sütun 2 kim açar (mono): "Açabilen: sunucu · yalnız o telefon"
 - sütun 2 dipnot (mono, küçük): "Anahtar bildirilmemişse sunucu vermez (412)."
 - sütun 3 başlığı (Archivo): "EKRAN KİLİTLİ" / etiket (mono): "user_auth"
 - sütun 3 satırları (body-md): "Telefonun ekran kilidi anahtarına sarılır." / "Telefona kilitli iner ve kilitli durur."
-- sütun 3 kim açar (mono): "Açabilen: telefon, ekran kilidi açılınca"
+- sütun 3 kim açar (mono): "Açabilen: sunucu · telefon, kilit açılınca"
 - alt satır (body-md): "Dosyayı panelden yükleyen sunucu içeriği bilir; uçtan uca, onu yolda ve başka cihazlarda korur."
 - künye: "Üç koruma"
 
@@ -1411,7 +1411,7 @@ Ekran metni:
 - kilit açılınca (mono, yeşil ✓): "açıldı · içerik okundu"
 - kod satırı (mono): "PinVault.unlockFile(activity, \"saha-ayarlari\", prompt)"
 - kural 1 başlığı: "ÇEVRİMDIŞI ÖMÜR" / satır (body-md): "Sunucu dosyayı belirlediğiniz süre boyunca doğrulamazsa dosya açılmaz; isterseniz silinir." / kod (mono): "maxOfflineAge(7, TimeUnit.DAYS) · wipeWhenStale()"
-- kural 2 başlığı: "İPTAL EDİLİNCE" / satır (body-md): "Panelden iptal edilen cihazdaki dosyalar silinir." / kod (mono): "wipeVaultFilesOnRevocation()"
+- kural 2 başlığı: "İPTAL EDİLİNCE" / satır (body-md): "İptal edilen cihaz sunucuya bağlanınca dosyalarını siler." / kod (mono): "wipeVaultFilesOnRevocation()"
 - not (body-md): "Bu iki kural uygulamanın kodunda açılır."
 - künye: "Telefonda"
 
@@ -1448,7 +1448,7 @@ Ekran metni:
 - telefon içi küçük satırlar (sırayla belirir, mono): "APK: PinVault pin'leri" · "kart: tablet-07" · "liste: api.ornek.com pinli" · "PinVault-Token: 5 dk" · "dosya: saha-ayarlari" · (yenilemede "kart: tablet-07" satırının yanına "yenilendi", kurtarmada önce "süresi doldu" sonra "yenilendi")
 - sunucu başlığı (mono, siyah şerit): "PinVault sunucusu"
 - sunucu içi makine 1 (pembe kenar): "İstemci CA'sı" / alt (mono): "kartları imzalar"
-- sunucu içi makine 2 (sarı kenar): "İmza anahtarı · HSM" / alt (mono): "listeyi mühürler"
+- sunucu içi makine 2 (sarı kenar): "İmza anahtarı · dosya ya da HSM" / alt (mono): "listeyi mühürler"
 - sunucu içi makine 3 (gri): "Depo" / alt (mono): "kayıtlar · liste · dosyalar"
 - kapılar (mono): "8091 · TLS" "8092 · mTLS" "8093 · kurtarma" "8090 · yönetim"
 - API kutusu: "API SUNUCUNUZ" / "api.ornek.com"
@@ -1476,7 +1476,7 @@ Compose. SABİT HARİTA (1920×1080 piksel, hiç yer değiştirmez; yalnızca ke
 - Zincir şeridi: y = 104, 10 hücre, hücre x = 96 + i × 174, 160×40 (halka kareleriyle aynı). Başta hepsi "gelecek" (2 px kenar, %35); her adım bitince hücresi ink dolgu krem yazı olur, o anki adım krem dolgu 4 px kenar + sarı alt çizgi.
 - Telefon: x 96–336, y 250–690 (240×440), telefonun içinde ekran ve altta siyah şerit; ekranın içinde küçük satırlar sırayla birikir.
 - PinVault sunucusu: x 620–1240, y 220–640; üstte siyah başlık şeridi. Sol kenarında üç kapı kutusu (x 560–660, 100×44): 8091 (y 290), 8092 (y 400), 8093 (y 510). Alt kenarında 8090 kapısı (x 880–980, y 640–684).
-- Sunucu içi makineler (x 720–1160, her biri 440×90): İstemci CA'sı (y 290), İmza anahtarı · HSM (y 400), Depo (y 510).
+- Sunucu içi makineler (x 720–1160, her biri 440×90): İstemci CA'sı (y 290), İmza anahtarı · dosya ya da HSM (y 400), Depo (y 510).
 - API sunucunuz: x 1520–1824, y 290–470.
 - Yönetici · panel: x 820–1040, y 712–772; 8090 kapısına kısa dikey bantla bağlı.
 - Bantlar (kesik çizgili ince ink hatlar, paketler üzerlerinde kayar): telefon→8091, telefon→8092, telefon→8093 (kurtarma adımına kadar soluk, kurtarmada canlanır), telefon→API (sunucunun üstünden, y ≈ 186 hattından), yönetici→8090, yönetici→telefon (sunucunun altından, y ≈ 742 hattından, "mesaj" etiketli, PinVault'un dışından), kapılar→iç makineler (kısa yatay bantlar).
@@ -1484,7 +1484,7 @@ Compose. SABİT HARİTA (1920×1080 piksel, hiç yer değiştirmez; yalnızca ke
 
 ZAMANLAMA (her adımda: ilgili iki makinenin kenarı aksan rengine döner, paket banttan kayar, adım bitince kenarlar ink'e döner; önceki paket izleri kaybolur ama telefonun içindeki satırlar kalır):
 Scene 0 (0.0–4.0s): Harita kurulur: telefon, sunucu ve iç makineleri, kapılar, API, yönetici, bantlar ≈0,3 sn arayla soldan sağa belirir; zincir şeridi boş.
-Scene 1 (4.0–9.0s): Adım 1. Sunucu içindeki üç makine sırayla yeşil kenar alır; İmza anahtarı · HSM makinesinin içinde küçük kilit. Zincir hücresi 1.
+Scene 1 (4.0–9.0s): Adım 1. Sunucu içindeki üç makine sırayla yeşil kenar alır; İmza anahtarı · dosya ya da HSM makinesinin içinde küçük kilit. Zincir hücresi 1.
 Scene 2 (9.0–13.5s): Adım 2. Telefonun içine küçük "APK" kutusu yukarıdan düşer; telefon satırı "APK: PinVault pin'leri" belirir. Hücre 2.
 Scene 3 (13.5–19.0s): Adım 3. Yönetici kenarı turuncu değil sarı; "api.ornek.com" paketi yöneticiden 8090'a, oradan Depo'ya kayar; İmza anahtarı makinesinden Depo'ya sarı "İMZALI" mührü basılır. Hücre 3.
 Scene 4 (19.0–23.0s): Adım 4. Yöneticinin yanında sarı "token" paketi belirir. Hücre 4.
@@ -1562,7 +1562,7 @@ Ekran metni:
 - üst çubuk hap: "SONRASI"
 - başlık (display-head): "ZİNCİR BİR KEZ KURULUR"
 - istasyon 1: "HER AÇILIŞ" / "init: kart tarihi → liste → PinVault-Token. Token sorulmaz."
-- istasyon 2: "ARKA PLAN" / "PinVault-Token ≈5 dakikada bir. Liste, schedulePeriodicUpdates() çağırırsanız."
+- istasyon 2: "ARKA PLAN" / "PinVault-Token ≈4 dakikada bir; değişen liste onunla gelir. Kapalıyken: schedulePeriodicUpdates() ile."
 - istasyon 3: "60. GÜN" / "Kart, süresinin üçte biri kalınca 8092'den yenilenir. Anahtar aynı."
 - istasyon 4: "SÜRE DOLDUYSA" / "8093'ten kurtarılır; kimliği aynı anahtarla atılan imza kanıtlar."
 - istasyon 5: "İPTAL" / "Panel → Client Sertifikaları → İptal Et. Kart hiçbir kapıyı açmaz."

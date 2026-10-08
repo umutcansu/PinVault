@@ -272,7 +272,7 @@ button:focus-visible{outline:2px solid var(--border-accent);outline-offset:2px}
 </div>
 </header>
 <main class="stage" id="stage">
-<h2 class="sr-only">PinVault 2.2.0 isteklerinin, sertifikalarının ve token'larının adım adım animasyonu: neden pinleme, TLS ve mTLS config API farkı, yalnız mTLS'te olan kayıt (token'ı bir telefona bağlamak ve anahtarın donanım belgesi dahil), süresi dolan imzalı pin listesi ve yönetilen güven kökleri, cihaz sertifikasının hangi sunuculara gittiği, atestasyon (telefonun kendini ölçüp imzalaması, sunucunun kararı, 5 dakikalık PinVault-Token, ret politikası), dosyalar, uçtan uca şifreli ve ekran kilitli dosyalar, sertifika yenileme, kurtarma ve iptal; ekte sertifikaların nereden geldiği, sonda özet ve sözlük.</h2>
+<h2 class="sr-only">PinVault 2.3 isteklerinin, sertifikalarının ve token'larının adım adım animasyonu: neden pinleme, TLS ve mTLS config API farkı, yalnız mTLS'te olan kayıt (token'ı bir telefona bağlamak ve anahtarın donanım belgesi dahil), süresi dolan imzalı pin listesi ve yönetilen güven kökleri, cihaz sertifikasının hangi sunuculara gittiği, atestasyon (telefonun kendini ölçüp imzalaması, sunucunun kararı, 5 dakikalık PinVault-Token, ret politikası), dosyalar, uçtan uca şifreli ve ekran kilitli dosyalar, sertifika yenileme, kurtarma ve iptal; ekte sertifikaların nereden geldiği, sonda özet ve sözlük.</h2>
 <div class="chs" id="chs"></div>
 <div class="now" id="now"></div>
 <div class="back" id="back"></div>
@@ -375,7 +375,7 @@ const R7P=['Qk3xAbCd…','tablet-07','Bekliyor'],R7U=['Qk3xAbCd…','tablet-07',
 const RAB=['Hv5nPq8K…','tablet-10','Bekliyor',UIDA],RABU=['Hv5nPq8K…','tablet-10','Kullanıldı',UIDA];
 
 const Q_SRC_SRV=`~// certs/demo-server.jks (ilk açılışta)
-~// adı .jks, biçimi PKCS12 (2.2.0; eski JKS
+~// adı .jks, biçimi PKCS12 (2.3.0; eski JKS
 ~// dosyası açılışta PKCS12'ye çevrilir)
 +konu: CN=localhost, O=PinVault Demo
 anahtar: RSA 2048
@@ -1436,9 +1436,11 @@ const Q_CCH=`~// uygulamanın kodu (mTLS bloğu)
 +    clientCertHosts("https://192.168.1.217:9443/")
 }
 ~// port zorunlu, yalnızca https`;
-const S_CCH=`~// cihaz sertifikası gösterilir:
+const S_CCH=`~// cihaz sertifikası gösterilir (isterse):
 +8092 · 8091 · 8093  (bloğun kendi adresleri:
-+                    config, kayıt, yenileme)
++                    config, kayıt, kurtarma)
+~// bunlardan yalnız 8092 sertifika ister;
+~// 8091 ve 8093 istemez
 +192.168.1.217:9443 (clientCertHosts)
 ~// kendi host sertifikası olan sunucuya:
 ~// o sertifika
@@ -1579,8 +1581,11 @@ Content-Type: application/json
   "deviceModel": "Pixel 6 Pro",
   "enrollmentLabel": "default",
   "deviceId": "3f2a9c0d81b4e6a7",
-  "deviceAlias": "Google Pixel 6 Pro"
-}`;
+  "deviceAlias": "Google Pixel 6 Pro",
+  "authMethod": "token"
+}
+~// başarısız indirmede (status: failed) bir de
+~// failureReason gider: hata kodu (ör. http_401)`;
 const S_REP=`200 OK
 {"recorded":"true"}`;
 const Q_REP_08=`POST /api/v1/vault/report
@@ -1736,7 +1741,7 @@ dosya ve indirme raporu
 
 ~// arka planda, belirli aralıklarla:
 pin listesi · dosyalar · atestasyon
-~// atestasyon ayrıca ≈ 5 dakikada bir`;
+~// atestasyon ayrıca ≈ 4 dakikada bir`;
 const S_ORDER_MTLS=`~// ilk kurulumda, bir kez:
 +kayıt (8091)
 ~// PinVault.init(...) içinde, sırayla:
@@ -1873,7 +1878,7 @@ const S_REVOKE=`200 OK
 ~// token'ları ve anahtarları da gider
 
 ~// bundan sonra tablet-07'nin 8092'deki her isteği,
-~// yenileme ve kurtarma da dahil:
+~// yenileme de dahil, ve 8093'teki kurtarma:
 !403 {"error":"reenroll_required"}`;
 const Q_REVOKED_REQ=`GET /api/v1/certificate-config?currentVersion=3
 Host: 192.168.1.80:8092
@@ -2016,7 +2021,8 @@ const S_UA_OPEN=`~// kilit açıldı: donanım anahtarı zarfı
 VaultFileUnlockResult.Cancelled
 ~// ekran kilidi kaldırılmış:
 ?VaultFileUnlockResult.Invalidated
-~// → kopya silinir, dosya yeniden indirilir`;
+~// → kopya silinir; yeni kilit konunca
+~//   dosya yeniden indirilir`;
 const Q_UA_LIM=`~// telefonda ekran kilidi yok:
 userAuth(REQUIRED)
 !  → saklanmaz: ScreenLockRequiredException
@@ -2054,16 +2060,18 @@ Cache-Control: no-store
   "serverTime": 1790848800000
 }
 ~// nonce = zaman + rastgele + HMAC; sunucu
-~// saklamaz, imzasından tanır. 2 dakika geçerli,
+~// verirken saklamaz, imzasından tanır; kullanılanı
+~// süresi dolana dek bellekte tutar. 2 dakika geçerli,
 ~// bir kez kullanılır (tekrar: 400 nonce_replayed)`;
 const Q_ATT_MEASURE=`~// telefonda, ağa çıkmadan:
 +rapor = DeviceIntegrityProbe.report(nonce, anahtar)
 ~// (kütüphanenin içinde; uygulama çağırmaz)
-~// 12 sinyal, her biri kanıtıyla:
+~// 11 sinyal ölçülür; rapor 12 anahtarlı, her biri kanıtıyla:
 rooted · emulator · debugger · debuggable
 hooking_framework · app_integrity · cloner
 unknown_installer · adb_enabled · software_key
 key_unattested · old_patch_level
+~// (old_patch_level'ı sunucu belirler)
 ~// + uygulama: paket, sürüm, imzalayan, yükleyici
 ~// + cihaz: model, yama tarihi, verified boot,
 ~//   anahtarın seviyesi (StrongBox / TEE / yazılım)
@@ -2074,7 +2082,7 @@ key_unattested · old_patch_level
 ~// aynı anahtar kayıtta CSR'ı da imzalar;
 ~// özel anahtar cihazdan çıkmaz`;
 const S_ATT_MEASURE=`~// rapor (kısaltılmış):
-{"sdkVersion": "2.2.0",
+{"sdkVersion": "2.3.0",
  "app": {"packageName": "com.ornek.app",
    "signerSha256": ["3c:4f:…"],
    "installer": "com.android.vending",
@@ -2101,7 +2109,7 @@ Content-Type: application/json
   "deviceId": "3f2a9c0d81b4e6a7",
 +  "publicKey": "MFkwEwYH… (cihaz anahtarı)",
   "attestationChain": ["MIIC…", "MIIB…"],
-+  "report": "{\\"sdkVersion\\":\\"2.2.0\\",…}",
++  "report": "{\\"sdkVersion\\":\\"2.3.0\\",…}",
 +  "signature": "MEUCIQ…",
   "currentConfigVersion": 7,
   "currentIssuedAt": 1790848800000,
@@ -2123,7 +2131,7 @@ Cache-Control: no-store
   "configChanged": false,
   "device": {"registered": true, "firstSeen": false,
     "keyAttestation": {"attested": true,
-      "securityLevel": "StrongBox"}},
+      "securityLevel": "strongbox"}},
   "policyVersion": 3
 }
 ~// sunucu bu sırayla baktı: gövde · nonce · imza ·
@@ -2163,7 +2171,7 @@ Host: 192.168.1.80:8092
 !"rooted": {"flag": true,
 !  "evidence": ["file:/data/adb/magisk"]}
 !"hooking_framework": {"flag": true,
-!  "evidence": ["maps:frida-agent",
+!  "evidence": ["maps:frida",
 !               "thread:gum-js-loop"]}
 ~// imza yine cihazın anahtarıyla: rapor dürüst,
 ~// cihaz değil`;
@@ -2178,8 +2186,8 @@ const S_ATT_REJECT=`200 OK
   "nextAttestIn": 300,
   "policyVersion": 3
 }
-~// token yok, config yok: cihaz elindeki listeyle,
-~// süresi dolana kadar çalışır
+~// token yok, config yok: yeni listeyi normal
+~// config isteğiyle alır; kesilen token'dır
 ~// uygulamanın sunucusuna giden istekte başlık yok
 !→ 401 invalid_token (reason: missing)
 ~// panelde: cihaz satırı reject · ARC c41e9b02`;
@@ -2190,7 +2198,7 @@ const Q_ATT_LOOP=`~// telefonda, bir sonraki atestasyon:
 ~// hata olursa: 30 s → 60 s → 2 dk → 4 dk → 5 dk
 
 ~// arka plan çalışmasında da (12 saatte bir):
-PinVault.attestAll()
+~// kütüphane içi: attestAll()
 ~// istenirse hemen:
 PinVault.attestNow()`;
 const S_ATT_LOOP=`~// her turda aynı sıra:
@@ -2211,13 +2219,15 @@ const Q_ATT_POLICY=`PUT /api/v1/config-apis/mtls-8092/
 Host: 192.168.1.80:8090
 +X-API-Key: ••••••••
 
-{"flags": {
+{"version": 3, "flags": {
 +  "rooted": "reject", "emulator": "reject",
 +  "debugger": "reject", "debuggable": "reject",
 +  "hooking_framework": "reject",
 +  "app_integrity": "reject", "cloner": "reject",
 ?  "unknown_installer": "warn", "software_key": "warn",
 ?  "key_unattested": "warn", "old_patch_level": "warn",
+?  "play_integrity": "warn",
+?  "play_integrity_missing": "warn",
    "adb_enabled": "ignore"},
  "revealReasons": false,
  "tokenTtlSeconds": 300, "attestIntervalSeconds": 300}
@@ -2263,7 +2273,8 @@ const S_ATT_ATTACK=`~// 1)
 ~// yönetici cihazı unutunca yeni anahtar kayıt olur
 
 ~// retler sınırlı: adres başına 60, cihaz başına 30
-~// (10 dakikada); denetim: attestation_rejected`;
+~// (10 dakikada); 403'te denetim: attestation_key_mismatch;
+~// 400/401 denetime yazılmaz`;
 const Q_TRUST_ROOTS=`~// imzalı listede, isteğe bağlı alan:
 {"pins": [{"hostname": "api.ornek.com", …}],
 + "trustRoots": [
@@ -2330,13 +2341,13 @@ const S=[
   [`5 · Dışarı gidenler ve demo`,`Sunucunun kendiliğinden dışarı attığı tek şey webhook'tur: denetim olayları Slack ya da SIEM'inize. Bunun dışında yalnızca sizin istediğinizde dışarı bağlanır: panelde "URL'den Al", canlı sertifika kontrolü ve uzak ping bir host'a TLS el sıkışması yapar; açarsanız Play Integrity doğrulayıcısı Google'a, komutla çalışan imzalayıcı KMS'inize gider. Demo kurulumunda bir de mock host'lar var (8443 TLS, 8444 mTLS): "uygulamanızın sunucusu" yerine geçer, MOCK_HOST_REQUIRE_TOKEN=true ile token da ister; üretimde yoktur.`],
   [`Üretimde ayrım`,`İnternete açılan: 8091, 8092, 8093 ve kendi arka ucunuz. İç ağda kalan: 8090, veritabanı, certs/, imza anahtarı. İstenirse 8091 bir TLS sonlandırıcının arkasına alınır; o zaman pin'ler proxy'nin sertifikasına göre çıkarılır (panelde "URL'den Al"). 8092 ve 8093 alınamaz: 8092 cihazı TLS el sıkışmasındaki sertifikasından tanır, 8093 ise sunucu CA'sına pinlidir. Yedekleme: SQLite dosyası, certs/ ve imza anahtarı birlikte. Birden çok Config API (farklı uygulamalar ya da ortamlar) aynı sunucuda ayrı kapılar olarak açılır.`,'wr']]},
 {c:0,k:'g',t:`Ekranda kim var`,d:`Solda uygulamanın yüklü olduğu cihaz (telefon ya da tablet), sağda PinVault sunucusu ve dört kapısı. Sonraki adımlarda aralarında gidip gelen paketleri izleyeceksiniz.`,act:ADMIN,hl:['g-dev','g-att','g90','g91','g92','g93','g-db'],
- sx:{tag:'Harita',cls:'none',title:`kim nerede · kapı = port: sunucunun dinlediği adres numarası`,rows:[[`Cihazın kapıları`,`8091 (TLS), 8092 (mTLS), 8093 (kurtarma)`,`→ cihazın istekleri bunlara gider`,null,''],[`Yöneticinin kapısı`,`8090 (panel ve yönetim)`,`→ API anahtarıyla girilir`,null,''],[`Port numaraları`,`demo kurulumundakiler`,`→ kendi kurulumunuzda farklı olabilir`,null,'']]},
+ sx:{tag:'Harita',cls:'none',title:`kim nerede · kapı = port: sunucunun dinlediği adres numarası`,rows:[[`Cihazın kapıları`,`8091 (TLS), 8092 (mTLS), 8093 (kurtarma)`,`→ demodaki kütüphane bunları kullanır`,null,''],[`Yöneticinin kapısı`,`8090 (panel ve yönetim)`,`→ API anahtarıyla girilir`,null,''],[`Port numaraları`,`demo kurulumundakiler`,`→ kendi kurulumunuzda farklı olabilir`,null,'']]},
  mv:[hl(['g-dev'],0),hl(['g91'],1),hl(['g92'],2),hl(['g93'],3),hl(['g90','g-att'],4),hl(['g-db'],5),hl(['g-dev','g-att','g90','g91','g92','g93','g-db'],6)],
  rows:[[`Cihaz`,`Uygulamanın yüklü olduğu telefon ya da tablet. İçinde PinVault kütüphanesi var; bu animasyondaki cihaz isteklerini o gönderir.`],
   [`8091 · TLS`,`Kayıt olmadan kullanılan config API'nin ve ilk kayıt isteğinin kapısı.`],
   [`8092 · mTLS`,`Kayıtlı cihazların kapısı: pin listesi, dosyalar ve sertifika yenileme buradan geçer.`],
   [`8093 · kurtarma`,`Sertifikasının süresi dolmuş cihazın yenisini aldığı kapı.`],
-  [`8090 · yönetim`,`Yöneticinin tarayıcıdan açtığı panel ve yönetim API'si. Token, kayıt kodu, pin listesi, atestasyon politikası ve dosyalar burada hazırlanır; cihazın kayıt, pin listesi ya da dosya istekleri buraya gelmez. Üretim profilinde yönetim yalnızca buradadır (CONFIG_API_ADMIN_ROUTES=off): 8091–8093 yönetim isteğine anahtara bakmadan 403 verir.`],
+  [`8090 · yönetim`,`Yöneticinin tarayıcıdan açtığı panel ve yönetim API'si. Token, kayıt kodu, pin listesi, atestasyon politikası ve dosyalar burada hazırlanır. Demodaki kütüphane kayıt, pin listesi ve dosya için 8091–8093'ü kullanır; 8090'da bu uçların kopyaları da var (demo debug derlemesi bağlantı raporunu buraya gönderir). Üretim profilinde yönetim yalnızca buradadır (CONFIG_API_ADMIN_ROUTES=off): 8091–8093 yönetim isteğine anahtara bakmadan 403 verir.`],
   [`Sunucu deposu`,`Sunucunun sakladıkları: sertifikalar, token'ların özetleri, kimlik kayıtları (hangi cihaz hangi anahtarla kayıtlı), pin listeleri, dosyalar ve denetim kaydı (kim, ne zaman, ne yaptı).`],
   [`Paketler`,`Mavi daire istek, yeşil daire sunucunun cevabı, turuncu daire token. Mor kare sunucunun sertifikası, pembe kare cihazın sertifikası. Kırmızı, başka yerden gelen ya da reddedilen demek.`]]},
 {c:0,k:'n',t:`Telefon sunucuyu nasıl tanır`,d:`Ağda biri sunucu kılığına girebilir; telefonun karşısındakinin gerçekten sizin sunucunuz olduğunu anlaması gerekir. Sunucu her bağlantının başında sertifikasını gösterir. Telefon bu sertifikanın parmak izini (pin) bildiği parmak izleriyle karşılaştırır; tutarsa konuşur. Buna SSL pinning denir.`,hl:['g-dev','g91'],
@@ -2398,7 +2409,7 @@ const S=[
   [`İstisna`,`Uygulamanın kendi sunucusu mTLS isterse TLS config API kullanan cihaz da kayıt olur ve o sunucuya kendi sertifikasını gösterir (demodaki "TLS Config API → mTLS Host" ekranı). Bunun için o sunucu pin listesinde mtls: true ile işaretli olmalı ya da uygulama onu clientCertHosts ile adıyla yazmalı (bölüm 6).`],
   [`Sonraki bölümler`,`Adında (mTLS) yazan bölümler yalnız mTLS config API'si içindir; TLS kullanan uygulama onları atlar ve doğrudan "5 · Pin listesi"ne geçer. Diğer bölümler mTLS yolunu gösterir; TLS'te farklı olan her şey ilgili adımda "TLS config API'de" satırında yazar.`]]},
 {c:1,k:'o',t:`Uygulama açılınca sırayla ne olur`,d:`Uygulama her açılışta aynı sırayı izler. Sonraki bölümler de bu sırayla gider; adında (mTLS) yazanlar yalnızca kayıtlı cihazda olur.`,hl:['g-dev','g91','g92'],
- sx:{tag:'Sıra',cls:'none',title:`PinVault.init içinde, bu sırayla (2.2.0 kodundaki sıra)`,rows:[[`Yalnız mTLS'te`,`kayıt, onay bekleyen kayıt, sertifika yenileme, host sertifikası`,`→ TLS kullanan uygulamada bu adımlar atlanır`,null,''],[`İkisinde de`,`pin listesi, sağlık kontrolü, atestasyon, şifreleme ve ekran kilidi anahtarları, dosya`,`→ atestasyon yalnızca blokta attestation() varsa`,null,'ok']]},
+ sx:{tag:'Sıra',cls:'none',title:`PinVault.init içinde, bu sırayla (2.3.0 kodundaki sıra)`,rows:[[`Yalnız mTLS'te`,`kayıt, onay bekleyen kayıt, sertifika yenileme, host sertifikası`,`→ TLS kullanan uygulamada bu adımlar atlanır`,null,''],[`İkisinde de`,`pin listesi, sağlık kontrolü, atestasyon, şifreleme ve ekran kilidi anahtarları, dosya`,`→ atestasyon yalnızca blokta attestation() varsa`,null,'ok']]},
  tq:`TLS config API kullanan uygulama`,q:Q_ORDER_TLS,ts:`mTLS config API kullanan uygulama`,s:S_ORDER_MTLS,
  mv:[hl(['g-dev','g91'],0,500),...tls('d1'),m('d1',0,BL,'kayıt (bir kez)'),m('d1',1,TE,'sertifika'),hl(['g-dev','g92'],1,900),hl(['g-dev'],2,900),hl(['g-dev','g92'],3,500),cert('d2',1,PU,'sunucu sertifikası'),cert('d2',0,PKC,'cihaz sertifikası + imza'),m('d2',0,BL,'pin listesi'),m('d2',1,TE,'imzalı liste'),hl(['g-dev','g92'],4,500),m('d2',0,BL,'host sertifikası'),m('d2',1,TE,''),hl(['g-dev','g92'],5,500),m('d2',0,BL,'sağlık'),m('d2',1,TE,'ok'),hl(['g-dev','g92'],6,500),m('d2',0,BL,'nonce + imzalı rapor'),m('d2',1,TK,'PinVault-Token'),hl(['g-dev','g92'],7,500),m('d2',0,BL,'şifreleme anahtarı'),m('d2',1,TE,''),hl(['g-dev','g92'],8,500),m('d2',0,BL,'ekran kilidi anahtarı'),m('d2',1,TE,''),hl(['g-dev','g91','g92'],9,300)],mk:[DM('her açılışta aynı sıra','muted')],
  rows:[[`İlk kurulumda · kayıt (mTLS)`,`Telefon bir kez kayıt olup kendi sertifikasını alır. Bölüm 3 ve 4.`],
@@ -2410,7 +2421,7 @@ const S=[
   [`6 · Atestasyon`,`Blokta attestation() açıksa telefon sunucudan bir nonce alır, kendini ölçer, raporu Keystore anahtarıyla imzalayıp gönderir. Geçerse 5 dakikalık PinVault-Token alır (liste değiştiyse yeni imzalı liste de bu cevapla gelir) ve arka planda yeniden ölçmeye başlar. Geçmezse init yine tamamlanır; token ve yeni liste gelmez. Listenin ve sertifika yenilemesinin ARDINDAN gelir: imza anahtarı ve mTLS sertifikası hazır olmalı. Bölüm 7.`,'ok'],
   [`7 · Şifreleme anahtarı`,`Uygulamada uçtan uca şifreli dosya tanımlıysa telefon açık anahtarını sunucuya bildirir. Bölüm 9.`],
   [`8 · Ekran kilidi anahtarı`,`Uygulamada ekran kilitli dosya tanımlıysa telefon o anahtarın açık yarısını sunucuya bildirir. Bölüm 10.`],
-  [`Sonra`,`Çevrimdışı ömrü dolan dosyalar silinir (wipeWhenStale). Uygulama istediğinde dosyalar indirilir (bölüm 8); uygulamanın kendi sunucularına giden her istek PinVault-Token taşır (bölüm 7). Uygulama açarsa aynı kontroller arka planda belirli aralıklarla yinelenir; atestasyon ayrıca ≈ 5 dakikada bir kendini yeniler. Yönetici bir cihazı iptal ederse: bölüm 13.`]]},
+  [`Sonra`,`Çevrimdışı ömrü dolan dosyalar silinir (wipeWhenStale). Uygulama istediğinde dosyalar indirilir (bölüm 8); uygulamanın kendi sunucularına giden her istek PinVault-Token taşır (bölüm 7). Uygulama açarsa aynı kontroller arka planda belirli aralıklarla yinelenir; atestasyon ayrıca ≈ 4 dakikada bir kendini yeniler. Yönetici bir cihazı iptal ederse: bölüm 13.`]]},
 
 {c:2,k:'o',t:`Kayıt olmanın üç yolu`,d:`mTLS'te sunucu yalnızca tanıdığı telefonu içeri alır; telefonun önce bir kimlik kartı (sertifika) edinmesi gerekir. Buna kayıt denir ve üç yolu var: cihaza özel token, çok cihaza tek kayıt kodu ve kodsuz başvuru. Bu bölüm üçünü de panel ve telefon ekranlarıyla gösterir.`,hl:['g-dev','g91','g-db'],
  sx:{tag:'Kayıt',cls:'tok',title:`üç yol, tek sonuç: telefona özel sertifika`,rows:[[`Token`,`her cihaza ayrı, tek kullanımlık`,`→ az cihaz ya da kendi giriş sisteminiz varsa`,null,''],[`Kayıt kodu`,`tek kod, çok cihaz, isterseniz onaylı`,`→ saha ekibi, depo`,null,''],[`Kodsuz başvuru`,`hiçbir şey girilmez, yönetici onaylar`,`→ klavyesi ya da kamerası olmayan cihaz`,null,'']]},
@@ -2557,7 +2568,7 @@ const S=[
   [`Sunucuda`,`ENROLLMENT_ATTESTATION ayarı: off bakmaz, warn (varsayılan) bakar ve sonucu kaydeder, enforce belgesiz ya da geçmeyen anahtara sertifika vermez (403 attestation_required ya da attestation_invalid). Bakılan şeyler: anahtar CSR'daki mi, Google köküne mi bağlı, kilitli ve değiştirilmemiş bir telefonda mı, uygulamanın paket adı ve imzası doğru mu.`],
   [`Panelde`,`Kayıtlı Client Sertifikaları ve Onay bekleyen cihazlar listelerinde Anahtar sütunu: Donanımda üretildi, Kanıtlanmadı, Bakılmadı ya da Sunucu üretti.`,'ok'],
   [`Kazancı`,`Geçen belge, paket adı ve imza (ATTESTATION_PACKAGE_NAMES, ATTESTATION_SIGNER_SHA256) ayarlıysa cihaz kimliğini de kanıtlar.`,'ok'],
-  [`Anahtar donanımda değilse`,`Keystore anahtarı yazılımda üretilen eski ya da ucuz bir telefonda uygulama bunu öğrenir: Enrolled.keySecurityLevel (StrongBox, TEE, yazılım) ve identityKeySecurityLevel(). requireHardwareBackedKeys() ile yazılım anahtarı hiç üretilmez; kayıt HardwareBackedKeyRequiredException ile başarısız olur (2.2.0). Atestasyon raporunda aynı bilgi software_key sinyali olarak gider.`],
+  [`Anahtar donanımda değilse`,`Keystore anahtarı yazılımda üretilen eski ya da ucuz bir telefonda uygulama bunu öğrenir: Enrolled.keySecurityLevel (StrongBox, TEE, yazılım) ve identityKeySecurityLevel(). requireHardwareBackedKeys() ile yazılım anahtarı hiç üretilmez; kayıt HardwareBackedKeyRequiredException ile başarısız olur (2.3.0). Atestasyon raporunda aynı bilgi software_key sinyali olarak gider.`],
   [`Demoda`,`Paket adı ve imza ayarlı değil; bu yüzden demo sunucusu her anahtarı "Kanıtlanmadı" gösterir. Belgesiz eski bir anahtar reddedilirse kütüphane bir kez yeni anahtar üretip yeniden dener.`,'wr']]},
 {c:3,k:'n',t:`Sunucu kontrol eder, sertifikayı verir`,d:`Sunucu token'ı ve imzayı kontrol eder, token'ı harcar ve 90 günlük sertifikayı verir. Telefon gelen sertifikanın kendi anahtarına ait olduğunu kontrol edip saklar.`,cx:'91',ex:FORMTLS,hl:['g91','g-db','g-dev'],tq:`İstek · cihaz → 8091`,q:Q_ENR,ts:`Cevap · 8091 → cihaz`,s:S_ENR,
  mv:[m('b1',0,BL,''),m('b1',1,TE,''),m('d1',1,TE,'200 sertifika','s')],mk:[DM('✓ sertifika alındı (8092 için)'),BMK('kayıt: tablet-07 = bu anahtar')],
@@ -2570,7 +2581,7 @@ const S=[
  mv:[...tls('a1'),m('a1',0,RD,'POST enroll','q'),m('b1',0,RD,''),m('b1',1,RD,''),m('a1',1,RD,'401','s')],mk:[AMK('✗ 401 Gecersiz token')],
  rows:[[`Uydurmak`,`Token 256 bit rastgele (43 karakter), tahmin edilemez. Sunucuda yalnızca özeti tutulur, 24 saatte geçersiz olur, bir kez kullanılır.`],
   [`Tekrar göndermek`,`İsteği ele geçirmek zor: kanal şifreli ve pinli. Ele geçirilse bile içindeki token bir kez kullanıldı. Token geçse bile CSR'daki anahtar cihazın; çıkacak sertifika özel anahtar olmadan işe yaramaz.`],
-  [`Sonuç`,`İkisi de 401; sertifika yok. Reddedilen kayıtlar denetim kaydına dakikada bir özet satırıyla yazılır.`,'ok']]},
+  [`Sonuç`,`İkisi de 401; sertifika yok. Geçersiz token'la gelen 401'ler denetim kaydına yazılmaz; yalnızca 403/409 retleri özetlenir.`,'ok']]},
 {c:3,k:'l',t:`Sınır: kullanılmamış token çalınırsa`,d:`Token cihaza ulaşmadan çalınır ve önce kullanılırsa, çalan kişi sertifika alır. Gerçek cihazın kaydı 401 alınca fark edilir; yönetici o kimliği iptal eder.`,cx:'91',cl:[`Token'ı çalan gösterir`,`hiçbir şey`,`→ çalınan token geçerli`,'c2','warn'],att:[`Token'ı çalan kişi`,`kendi anahtarıyla`],hl:['g-att','g91','g-dev'],tq:`İstek · token'ı çalan → 8091`,q:Q_ENR_STOLEN,ts:`Cevaplar`,s:S_STOLEN,
  mv:[...tls('a1'),m('a1',0,RD,'POST enroll','q'),m('b1',0,RD,''),m('b1',1,AM,''),m('a1',1,AM,'200 sertifika'),...tls('d1'),m('d1',0,BL,'POST enroll'),m('b1',0,BL,''),m('b1',1,RD,''),m('d1',1,RD,'401','s')],
  mk:[AMK('⚠ saldırgan sertifika aldı','warn'),DM('✗ gerçek cihaz 401 aldı','bad')],
@@ -2612,7 +2623,7 @@ const S=[
  rows:[[`Cevapta ne var`,`payload: her host için en az iki açık anahtar özeti (pin), host sürümleri, issuedAt (düzenlenme), expiresAt (son kullanma, 24 saat sonra) ve configApiId (listenin hangi config API için imzalandığı). signature: payload'ın imzası. payload metin olarak gelir; cihaz imzayı bu metnin baytları üzerinde doğrular.`],
   [`Cihaza özel liste`,`Yönetici bir cihaza ayrıca host açabilir. Cihaz kendini X-Device-Id ile tanıtırsa liste, herkese açık host'lar ve o cihaza ayrıca açılanlarla sınırlanır.`],
   [`Cihaz ne kontrol eder`,`İmza tutuyor mu, expiresAt geçmemiş mi, issuedAt bir öncekinden yeni mi, hiçbir host sürümü geri gitmemiş mi, host adları ve pin'ler kurallara uyuyor mu; blok serverScope(id) verdiyse configApiId o mu. Hepsi tamamsa uygular; uygulamanın kendi istekleri de bundan sonra bu pin'lerle korunur. Pin'i listeden çıkan sunucuya açık kalmış bağlantılar da bir sonraki istekte kesilir.`,'ok'],
-  [`İssuer pin'i`,`Liste bir üst sertifikanın (CA) pin'ini taşıyorsa bağlantı o pin'le geçebilir; o zaman telefon ayrıca sunucu sertifikasının adının host'la eşleştiğine bakar (2.2.0). Aynı CA'dan alınmış başka bir ad, pinli host'un yerine geçemez.`,'ok'],
+  [`İssuer pin'i`,`Liste bir üst sertifikanın (CA) pin'ini taşıyorsa bağlantı o pin'le geçebilir; o zaman telefon ayrıca sunucu sertifikasının adının host'la eşleştiğine bakar (2.3.0). Aynı CA'dan alınmış başka bir ad, pinli host'un yerine geçemez.`,'ok'],
   [`Demoda`,`Demo uygulamasının debug derlemesi ?signed=false ile çağırır (allowUnsigned): paket yerine düz JSON gelir; imza, tarih ve configApiId yok, imza kontrolü yok. Release derlemesi (DemoReleaseGuard) ve örnek uygulama imzalı yolu kullanır; üretimde signaturePublicKey verilmeli.`,'wr']]},
 {c:4,k:'n',t:`İmzalı listede yönetilen kökler: pin'i olmayan host'lar`,d:`Uygulama bazen listede pin'i olmayan bir sunucuya da bağlanmak zorundadır (bir CDN, bir ortak). Normal TLS'te telefonun CA deposuna güvenilir; oraya bir CA ekleyen araya girer. Yönetilen kökler bunun yerine imzalı listede kök CA pin'leri taşır: pinsiz host için zincir platformca doğrulanır ve kökü bu listede olmalıdır. Approov'un "managed trust roots" özelliği.`,act:[`Uygulamanın sunucusu`,`cdn.ornek.com (listede pin'i yok)`,'c-blue'],hl:['g-att','g-dev','g92'],
  sx:{tag:'trustRoots',cls:'tls',title:`pinsiz host'ta yetki: cihazın CA deposu değil, imzalı liste`,rows:[[`Pin'i olan host`,`yalnızca pin`,`→ değişen bir şey yok`,null,''],[`Pin'i olmayan host`,`platform doğrulaması + kök listede + ad eşleşmesi`,`→ managedTrustRoots() açıksa`,null,'ok'],[`Listede olmayan kök`,`bağlantı yok`,`→ telefona eklenmiş CA işe yaramaz`,null,'bad']]},
@@ -2627,13 +2638,13 @@ const S=[
  mv:[sc({log:[['t-ok','09:00 · liste v7 alındı, imza doğrulandı'],['t-dim','21:00 · arka plan: aynı liste, tarih yenilendi']]}),sc({log:[['t-ok','09:00 · liste v7 alındı, imza doğrulandı'],['t-dim','21:00 · arka plan: aynı liste, tarih yenilendi'],['t-bad','açılış: saklı zarfın imzası tutmadı → atıldı, yenisi istendi']]}),sc({log:[['t-ok','09:00 · liste v7 alındı, imza doğrulandı'],['t-dim','21:00 · arka plan: aynı liste, tarih yenilendi'],['t-bad','açılış: saklı zarfın imzası tutmadı → atıldı, yenisi istendi'],['t-bad','eski tarihli liste geldi → reddedildi (tekrar oynatma)']]}),sc({stat:['t-bad','✗ Liste süresi doldu'],log:[['t-ok','09:00 · liste v7 alındı, imza doğrulandı'],['t-dim','21:00 · arka plan: aynı liste, tarih yenilendi'],['t-bad','açılış: saklı zarfın imzası tutmadı → atıldı, yenisi istendi'],['t-bad','eski tarihli liste geldi → reddedildi (tekrar oynatma)'],['t-bad','süre doldu, sunucuya ulaşılamadı → bağlantı yok (ConfigExpiredException)']]})],mk:[LMK('imza her açılışta yeniden doğrulanır','ok')],
  rows:[[`Saklanan`,`Sunucudan gelen imzalı zarf, olduğu gibi; yanında en yeni issuedAt ve her host'un sürümü. Hepsi şifreli depoda (pinvault_secure_config.xml).`],
   [`Her açılışta`,`Zarfın imzası o an güvenilen anahtarlarla yeniden doğrulanır; kullanılan liste zarfın içindekidir. Telefonda biri listeyi değiştirirse imza tutmaz, liste atılır ve yenisi istenir.`,'ok'],
-  [`Son kullanma tarihi`,`Sunucu her listeye 24 saat verir (CONFIG_TTL_SECONDS). Telefon 12 saatte bir yenilediği için normalde hiç dolmaz. Dolarsa ve yenisi alınamazsa açılış ConfigExpiredException ile başarısız olur ve pinli bağlantılar kurulmaz; takılan bir istekte kütüphane listeyi yeniden çekip dener. Config sunucusunu engelleyen biri telefonu eski pin'lerde tutamaz.`,'wr'],
+  [`Son kullanma tarihi`,`Sunucu her listeye 24 saat verir (CONFIG_TTL_SECONDS). Arka plan güncellemesi açıksa (12 saatte bir) liste normalde hiç dolmaz. Dolarsa ve yenisi alınamazsa açılış ConfigExpiredException ile başarısız olur ve pinli bağlantılar kurulmaz; takılan bir istekte kütüphane listeyi yeniden çekip dener. Config sunucusunu engelleyen biri telefonu eski pin'lerde tutamaz.`,'wr'],
   [`Tekrar oynatma`,`Eski tarihli bir liste, aynı tarihli ama içeriği farklı bir liste ve bir host'un sürümünü geri götüren liste reddedilir. Aynı zarf yeniden gelirse "zaten güncel" sayılır. Bu sınırları PinVault.reset() de geri almaz.`,'ok'],
   [`Ayarlar`,`expiredConfigGrace ile süre dolduktan sonra bir pay tanınabilir (varsayılan 0). Saati geri almak süreyi uzatmaz: kütüphane gördüğü en ileri zamanı hatırlar.`],
   [`Demoda`,`Demo uygulamasının debug derlemesi imzasız yolu (allowUnsigned) kullandığı için zarf da son kullanma tarihi de yok; release derlemesi ve örnek uygulama imzalı yoldadır, bu kontroller orada çalışır.`,'wr']]},
 {c:4,k:'n',t:`Yeni liste uygulanınca: sunucuya hâlâ ulaşılıyor mu`,d:`Açılışta yeni bir liste uygulandıysa telefon sunucuya bir kez daha bağlanıp ulaşabildiğini kontrol eder. Ulaşamazsa yeni listeyi geri alır.`,cx:'92',ex:[[`TLS config API'de`,`aynı kontrol, 8091'e`,`→ cihaz sertifikası olmadan`,null,'']],hl:['g-dev','g92'],tq:`İstek · cihaz → 8092`,q:Q_HEALTH,ts:`Cevap · 8092 → cihaz`,s:S_HEALTH,
  mv:[...mtls('d2'),m('d2',0,BL,'GET health','q'),m('d2',1,TE,'200 ok','s')],mk:[DM('✓ sunucuya ulaşılıyor')],
- rows:[[`Ne zaman`,`Yalnızca uygulama açılışında (init) ve açılışta yeni bir liste uygulandıysa, bir kez: config sunucusuna hâlâ ulaşılıyor mu? İstek APK'daki pin'lerle gider; yeni listedeki pin'ler uygulamanın kendi sunucuları içindir, burada denenmez. Ulaşılamazsa yeni liste geri alınır ve telefon bir önceki listeyle devam eder. Arka plandaki güncellemeler bu kontrolü yapmaz.`],
+ rows:[[`Ne zaman`,`Yalnızca uygulama açılışında (init) ve açılışta yeni bir liste uygulandıysa, bir kez: config sunucusuna hâlâ ulaşılıyor mu? İstek APK'daki pin'lerle gider; yeni listedeki pin'ler uygulamanın kendi sunucuları içindir, burada denenmez. Ulaşılamazsa yeni liste geri alınır, önceki liste geri yüklenir ve açılış Failed döner. Arka plandaki güncellemeler bu kontrolü yapmaz.`],
   [`Başka yerden`,`İçinde bilgi yok; kimin gönderdiği önemli değil. 8092'de yine cihaz sertifikası gerekir.`,'ok']]},
 {c:4,k:'n',t:`Sunucunun sertifikası değişirse`,d:`Uygulamanın bağlandığı sunucu sertifikasını değiştirdiyse telefondaki pin artık tutmaz. Kütüphane o anda güncel listeyi çeker ve isteği yeniden dener; uygulamanın bir şey yapması gerekmez.`,act:[`Uygulamanın sunucusu`,`api.ornek.com`,'c-blue'],hl:['g-att','g-dev','g92'],
  sx:{tag:'Kendini onarma',cls:'none',title:`pin tutmadı → liste yenilenir → istek yeniden denenir`,rows:[[`Önce panel`,`yönetici yeni pin'i listeye ekler`,`→ liste yeni sürümle kaydedilir`,null,''],[`Telefon`,`pin tutmayınca listeyi yeniden ister`,`→ yeni liste geldiyse isteği bir kez daha dener`,null,'ok'],[`Yeni listede de tutmuyorsa`,`bağlantı kurulmaz`,`→ araya giren de aynı görünür`,null,'bad']]},
@@ -2694,11 +2705,11 @@ const S=[
   [`Cevapta ne var`,`Hedef host'a (örn. 9443) bağlanırken gösterilecek sertifika ve özel anahtarı, P12 dosyası olarak. Şifresi bu cevaba özel üretilir ve başlıkta gelir. Config API'de cihaz ACL'i tanımlıysa yalnız o host'a izin verilen cihaz alır; diğerine 403 host_not_allowed. HOST_CLIENT_CERT_REQUIRE_GRANT=true (üretim profili) ile ACL'siz bir kapsam bu sertifikayı kimseye vermez.`],
   [`Cihaz ne yapar`,`P12'yi gelen şifreyle açar, özel anahtarı Android Keystore'a dışarı çıkarılamaz biçimde aktarır ve yalnızca sertifika zincirini saklar. Gelen şifreyi saklamaz. Keystore aktarmayı reddederse P12 şifreli depoda kalır.`,'ok']]},
 {c:5,k:'n',t:`Cihaz sertifikası yalnızca izin verilen sunuculara gider`,d:`Cihaz sertifikası telefonun kimliğidir; her soran sunucuya gösterilmemeli. Telefon onu yalnızca kendi config API adreslerine ve izin verilen sunuculara gösterir. Pinli olsa bile başka bir sunucu sertifika isterse eli boş döner.`,act:[`Başka bir sunucu`,`analiz.ornek.com (pinli)`,'c-blue'],hl:['g-att','g-dev','g92'],
- sx:{tag:'clientCertHosts',cls:'mtls',title:`cihazın kimliği kime gösterilir`,rows:[[`Her zaman`,`bloğun kendi adresleri`,`→ config, kayıt (enrollmentUrl), yenileme (renewalUrl)`,3,'ok'],[`İzinle`,`clientCertHosts'ta yazan sunucular`,`→ hiç yazılmamışsa listede mtls: true olanlar`,null,'ok'],[`Kendi sertifikası olan`,`host sertifikası yüklenmiş sunucu`,`→ o sertifikayı görür`,4,''],[`Diğerleri`,`hiçbir şey`,`→ sunucu: CERTIFICATE_REQUIRED`,null,'bad']]},
+ sx:{tag:'clientCertHosts',cls:'mtls',title:`cihazın kimliği kime gösterilir`,rows:[[`Her zaman`,`bloğun kendi adresleri`,`→ config, kayıt (enrollmentUrl), kurtarma (renewalUrl); yalnız 8092 sertifika ister`,3,'ok'],[`İzinle`,`clientCertHosts'ta yazan sunucular`,`→ hiç yazılmamışsa listede mtls: true olanlar`,null,'ok'],[`Kendi sertifikası olan`,`host sertifikası yüklenmiş sunucu`,`→ o sertifikayı görür`,4,''],[`Diğerleri`,`hiçbir şey`,`→ sunucu: CERTIFICATE_REQUIRED`,null,'bad']]},
  scr:{phone:'log',dev:'tablet-07',stat:['t-ok','✓ Client Sertifika Yüklü'],log:[['t-ok','192.168.1.80:8092 · cihaz sertifikası gösterildi'],['t-ok','192.168.1.217:9443 · gösterildi (clientCertHosts)']]},tq:`Uygulamanın kodu`,q:Q_CCH,ts:`Telefonun bağlantıları`,s:S_CCH,
  mv:[...mtls('d2'),m('d2',0,BL,'GET config'),m('d2',1,TE,''),cert('ob',0,PU,'sunucu sertifikası'),flash(116,122,'✓ pin tuttu','ok','end'),m('ob',0,RD,'sertifikanı göster'),flash(116,140,'✗ sertifika verilmedi','bad','end'),sc({log:[['t-ok','192.168.1.80:8092 · cihaz sertifikası gösterildi'],['t-ok','192.168.1.217:9443 · gösterildi (clientCertHosts)'],['t-bad','analiz.ornek.com:443 · istedi, verilmedi']]})],mk:[DM('kimlik yalnızca izinli sunuculara','ok')],
  rows:[[`Neden`,`Sertifika telefonu tanıtır. Uygulamanın konuştuğu her sunucu onu toplayabilseydi telefonun kimliği üçüncü taraflara dağılırdı.`],
-  [`Kural`,`Kimlik her zaman bloğun kendi adreslerine gider: config API, kayıt (enrollmentUrl) ve yenileme (renewalUrl). Kendi host sertifikası yüklenmiş sunucu o sertifikayı görür. Başka bir sunucu kimliği ancak izinle görür.`,'ok'],
+  [`Kural`,`Kimlik, isterlerse her zaman bloğun kendi adreslerine gider: config API, kayıt (enrollmentUrl) ve kurtarma (renewalUrl); bunlardan yalnız 8092 sertifika ister. Kendi host sertifikası yüklenmiş sunucu o sertifikayı görür. Başka bir sunucu kimliği ancak izinle görür.`,'ok'],
   [`İzin`,`Uygulama clientCertHosts("https://192.168.1.217:9443/") ile sunucuları adıyla yazar; port zorunlu, yalnızca https. Yazdıysa liste tamdır: imzalı listedeki mtls: true bile yeni sunucu ekleyemez. Hiç yazmadıysa imzalı listede mtls: true olan sunucular kimliği görür.`],
   [`Diğerleri`,`Pinli bir analiz ya da reklam sunucusu sertifika isterse telefon göstermez; sunucu bağlantıyı CERTIFICATE_REQUIRED ile reddeder. Telefon kararı kendi açtığı bağlantının adı ve portuyla verir.`,'wr'],
   [`Değişen`,`2.2.0 ile geldi: önceden kimlik, sertifika isteyen pinli sunuculara da gidebiliyordu.`]]},
@@ -2714,31 +2725,31 @@ const S=[
   [`Ne yapılır`,`Panelden yeni host sertifikası yüklenir; clientCertVersion artar, cihazlar bir sonraki güncellemede yenisini indirir. Çıkarılan eski sertifikayı PinVault iptal edemez; hedef sunucunun onu reddetmesi gerekir.`,'ok']]},
 
 {c:6,k:'g',t:`Atestasyon nedir: token yalnızca geçen uygulamaya`,d:`Pinleme kanalı korur; kanaldan geçen uygulamanın gerçek, değiştirilmemiş uygulamanız olduğunu söylemez. Root'lu bir telefondaki kopya, bir emülatör ya da Frida ile içine girilmiş bir uygulama da aynı pinli bağlantıyı kurar. Atestasyon bunu ayırır: telefon kendini ölçer, ölçümü anahtarıyla imzalar, sunucu karar verir. Geçen uygulama 5 dakikalık PinVault-Token'ı alır, liste değiştiyse yeni imzalı liste de aynı cevapla gelir; geçmeyen token almaz ve uygulamanızın sunucusu onu kapıda çevirir. Pin listesi gizli değildir (8091'den herkes alabilir); geçmeyeni durduran liste değil, token'dır. Approov'un çalışma mantığı, kendi sunucunuzda.`,hl:['g-dev','g92','g-db'],
- sx:{tag:'Atestasyon',cls:'tok',title:`her ≈ 5 dakikada: nonce → ölçüm + imza → karar → token`,rows:[[`Telefon`,`kendini ölçer, raporu Keystore anahtarıyla imzalar`,`→ root, emülatör, debugger, hooking, klon, bütünlük`,null,''],[`Sunucu`,`nonce, imza, anahtar, ret politikası`,`→ pass ya da reject + ARC`,null,''],[`Geçen`,`PinVault-Token (5 dk) + gerekiyorsa yeni liste`,`→ uygulamanızın sunucusu token'ı doğrular`,null,'ok'],[`Geçmeyen`,`token yok, yeni liste yok`,`→ sunucunuz başlıksız isteği 401 ile çevirir`,null,'bad']]},
+ sx:{tag:'Atestasyon',cls:'tok',title:`≈ 4 dakikada bir: nonce → ölçüm + imza → karar → token`,rows:[[`Telefon`,`kendini ölçer, raporu Keystore anahtarıyla imzalar`,`→ root, emülatör, debugger, hooking, klon, bütünlük`,null,''],[`Sunucu`,`nonce, imza, anahtar, ret politikası`,`→ pass ya da reject + ARC`,null,''],[`Geçen`,`PinVault-Token (5 dk) + gerekiyorsa yeni liste`,`→ uygulamanızın sunucusu token'ı doğrular`,null,'ok'],[`Geçmeyen`,`token yok, yeni liste yok`,`→ sunucunuz başlıksız isteği 401 ile çevirir`,null,'bad']]},
  mv:[hl(['g-dev'],1,900),hl(['g-dev','g92'],2,900),hl(['g-dev','g92','g-db'],3,900),hl(['g-dev'],4,700),hl(['g-dev','g92','g-db'],0,300)],mk:[DM('ölç · imzala · gönder · token al','muted')],
  rows:[[`Sorun`,`Pin tutuyor diye karşıdaki uygulamanın sizin uygulamanız olduğu kesin değildir: root'lu telefonda içine girilmiş kopya, emülatör, yeniden paketlenmiş APK da pinli bağlantıyı kurar. Pinleme yolu tanıdıktır; onu aşan betikler hazır satılır.`,'wr'],
-  [`Çözüm`,`Kütüphane 12 sinyal ölçer ve raporu, kayıtta da kullandığı Keystore anahtarıyla imzalar. Sunucu imzayı, anahtarı (ilk kez donanım belgesiyle) ve sinyalleri ret politikasına göre değerlendirir. Yargı telefonda değil sunucudadır.`,'ok'],
+  [`Çözüm`,`Kütüphane 11 sinyal ölçer, 12 anahtarlı rapor gönderir (old_patch_level'ı sunucu belirler) ve raporu, kayıtta da kullandığı Keystore anahtarıyla imzalar. Sunucu imzayı, anahtarı (ilk kez donanım belgesiyle) ve sinyalleri ret politikasına göre değerlendirir. Yargı telefonda değil sunucudadır.`,'ok'],
   [`Geçen uygulama`,`5 dakikalık PinVault-Token alır; kütüphane onu uygulamanın kendi sunucularına giden her isteğin başlığına koyar. Liste değiştiyse yeni imzalı pin listesi de aynı cevapla gelir.`],
   [`Geçmeyen uygulama`,`Token almaz, atestasyon cevabıyla yeni liste de gelmez. Pin listesini yine de config isteğiyle (GET certificate-config) alabilir; liste gizli değildir. Onu durduran uygulamanızın sunucusudur: başlıksız ya da sahte token'lı isteği 401 ile çevirir.`,'bd'],
   [`Nerede açılır`,`Blokta attestation() (kütüphane), panelde Config API'nin Attestation sekmesi (sunucu), uygulamanızın sunucusunda PinVault-Token doğrulaması (Ktor eklentisi, Node, Python ve Java örnekleri). Üçü de ayrı ayrı kapatılabilir; bu bölüm üçü açıkken olanı anlatır.`],
-  [`TLS ve mTLS`,`İkisinde de aynı; cihaz anahtarı kayıt olmayan TLS bloğunda da vardır. Bu bölüm 8092 üzerinden anlatır; TLS bloğunda aynı istekler 8091'e gider. Örnek uygulama (sample-client) TLS bloğunda attestation() açar.`]]},
+  [`TLS ve mTLS`,`İkisinde de aynı; cihaz anahtarı kayıt olmayan TLS bloğunda da vardır. Bu bölüm 8092 üzerinden anlatır; TLS bloğunda aynı istekler 8091'e gider. Örnek uygulama TLS ve mTLS bloklarında attestation() açar.`]]},
 {c:6,k:'n',t:`1 · Sunucudan tek kullanımlık soru (nonce)`,d:`Telefon önce sunucudan bir nonce ister: 2 dakika geçerli, bir kez kullanılan rastgele bir değer. Rapor bu değerle birlikte imzalanacağı için eski bir imzalı rapor yeniden gönderilemez.`,cx:'92',ex:[[`TLS config API'de`,`aynı istek 8091'e gider`,`→ sertifika gösterilmez; nonce zaten herkese açık`,null,'']],hl:['g-dev','g92'],tq:`İstek · cihaz → 8092`,q:Q_ATT_CH,ts:`Cevap · 8092 → cihaz`,s:S_ATT_CH,
  mv:[...mtls('d2'),m('d2',0,BL,'GET challenge','q'),m('d2',1,TE,'200 nonce','s')],mk:[DM('✓ nonce alındı (2 dk, tek kullanım)')],
- rows:[[`Ne zaman`,`Açılışta pin listesi ve sağlık kontrolünden sonra; sonra her ≈ 5 dakikada bir, arka plan çalışmasında ve uygulama attestNow() çağırınca.`],
+ rows:[[`Ne zaman`,`Açılışta pin listesi ve sağlık kontrolünden sonra; sonra ≈ 4 dakikada bir, arka plan çalışmasında ve uygulama attestNow() çağırınca.`],
   [`Ne gidiyor`,`Hiçbir şey: gövde yok, kimlik yok. Nonce'u sunucuya ulaşan herkes alabilir; tek başına bir işe yaramaz.`],
-  [`Nonce nedir`,`Zaman damgası, 16 rastgele bayt ve sunucunun HMAC'i. Sunucu saklamaz, imzasından tanır; 2 dakikadan eski ya da daha önce kullanılmış olanı reddeder (400 nonce_expired / nonce_replayed). Cevaptaki serverTime telefonun saatinin çok yanlış olduğunu fark etmesi içindir; güvenilir saat ona göre ayarlanmaz.`,'ok'],
+  [`Nonce nedir`,`Zaman damgası, 16 rastgele bayt ve sunucunun HMAC'i. Sunucu verirken saklamaz, imzasından tanır; kullanılanı süresi dolana dek bellekte tutar; 2 dakikadan eski ya da daha önce kullanılmış olanı reddeder (400 nonce_expired / nonce_replayed). Cevaptaki serverTime telefonun saatinin çok yanlış olduğunu fark etmesi içindir; güvenilir saat ona göre ayarlanmaz.`,'ok'],
   [`Bağlantı`,`Her zamanki gibi pinli; mTLS bloğunda cihaz sertifikası da gösterilir. Her iki uç adres başına sınırlıdır (challenge için 10 dakikada 120).`]]},
 {c:6,k:'n',t:`2 · Telefon kendini ölçer ve imzalar`,d:`Telefon ağa çıkmadan kendine bakar: root, emülatör, debugger, hooking çerçevesi, klonlayıcı, uygulamanın imzası ve yükleyicisi, ADB, anahtarın seviyesi. Raporu nonce ve cihaz kimliğiyle birlikte Keystore anahtarıyla imzalar.`,cx:'local',hl:['g-dev'],
  scr:{phone:'log',dev:'tablet-07',app:'Uygulamanız (örnek)',stat:['t-dim','Atestasyon: ölçülüyor…'],log:[['t-dim','09:00:00 · nonce alındı']]},tq:`Telefonda`,q:Q_ATT_MEASURE,ts:`Rapor ve imza`,s:S_ATT_MEASURE,sph:`ağa çıkılmadı`,
- mv:[sc({log:[['t-dim','09:00:00 · nonce alındı'],['t-ok','rooted: temiz · emulator: temiz · debugger: temiz']]}),sc({log:[['t-dim','09:00:00 · nonce alındı'],['t-ok','rooted: temiz · emulator: temiz · debugger: temiz'],['t-ok','hooking_framework: temiz · cloner: temiz · app_integrity: temiz']]}),sc({log:[['t-dim','09:00:00 · nonce alındı'],['t-ok','rooted: temiz · emulator: temiz · debugger: temiz'],['t-ok','hooking_framework: temiz · cloner: temiz · app_integrity: temiz'],['t-warn','adb_enabled: açık (uyarı olarak gider)'],['t-ok','anahtar: StrongBox · belge var']]}),sc({stat:['t-ok','Rapor imzalandı'],log:[['t-dim','09:00:00 · nonce alındı'],['t-ok','rooted: temiz · emulator: temiz · debugger: temiz'],['t-ok','hooking_framework: temiz · cloner: temiz · app_integrity: temiz'],['t-warn','adb_enabled: açık (uyarı olarak gider)'],['t-ok','anahtar: StrongBox · belge var'],['t-ok','imza: pinvault-attest:v1:<nonce>:<cihaz>:<rapor özeti>']]})],mk:[LMK('12 sinyal ölçüldü, rapor imzalandı','ok')],
- rows:[[`Ne ölçülür`,`rooted (su, Magisk/KernelSU, test-keys, yazılabilir /system) · emulator (goldfish/ranchu, qemu) · debugger (TracerPid, isDebuggerConnected) · debuggable · hooking_framework (/proc/self/maps'te frida, xposed, substrate, dobby, zygisk; gum-js-loop iş parçacığı) · app_integrity (imzalayan sertifika özeti) · cloner (dataDir başka pakette) · unknown_installer · adb_enabled · software_key (anahtar donanımda değil) · key_unattested · old_patch_level. Her sinyal kanıtıyla gider; hata veren probe "error" yazar, asla temiz demez.`],
+ mv:[sc({log:[['t-dim','09:00:00 · nonce alındı'],['t-ok','rooted: temiz · emulator: temiz · debugger: temiz']]}),sc({log:[['t-dim','09:00:00 · nonce alındı'],['t-ok','rooted: temiz · emulator: temiz · debugger: temiz'],['t-ok','hooking_framework: temiz · cloner: temiz · app_integrity: temiz']]}),sc({log:[['t-dim','09:00:00 · nonce alındı'],['t-ok','rooted: temiz · emulator: temiz · debugger: temiz'],['t-ok','hooking_framework: temiz · cloner: temiz · app_integrity: temiz'],['t-warn','adb_enabled: açık (uyarı olarak gider)'],['t-ok','anahtar: StrongBox · belge var']]}),sc({stat:['t-ok','Rapor imzalandı'],log:[['t-dim','09:00:00 · nonce alındı'],['t-ok','rooted: temiz · emulator: temiz · debugger: temiz'],['t-ok','hooking_framework: temiz · cloner: temiz · app_integrity: temiz'],['t-warn','adb_enabled: açık (uyarı olarak gider)'],['t-ok','anahtar: StrongBox · belge var'],['t-ok','imza: pinvault-attest:v1:<nonce>:<cihaz>:<rapor özeti>']]})],mk:[LMK('11 sinyal ölçüldü, rapor imzalandı','ok')],
+ rows:[[`Ne ölçülür`,`rooted (su, Magisk/KernelSU, test-keys, yazılabilir /system) · emulator (goldfish/ranchu, qemu) · debugger (TracerPid, isDebuggerConnected) · debuggable · hooking_framework (/proc/self/maps'te frida, xposed, substrate, dobby, zygisk; gum-js-loop iş parçacığı) · app_integrity (imzalayan sertifika özeti) · cloner (dataDir başka pakette) · unknown_installer · adb_enabled · software_key (anahtar donanımda değil) · key_unattested · old_patch_level (raporda yer tutar, değerini sunucu belirler). Her sinyal kanıtıyla gider; hata veren probe "error" yazar, asla temiz demez.`],
   [`İmza`,`Keystore'daki EC anahtarı "pinvault-attest:v1:<nonce>:<deviceId>:<raporun SHA-256'sı>" metnini imzalar. Aynı anahtar kayıtta CSR'ı imzalayan anahtardır; TLS bloğunda da vardır. Rapor metin olarak gider ve metin olarak imzalanır: ne telefon ne sunucu JSON'u yeniden sıralar.`,'ok'],
-  [`Neden kandırılamaz`,`Ölçümü yapan kod hook'lanabilir; bu her RASP için geçerlidir. Değer üç yerden gelir: rapor donanım belgeli bir anahtarla imzalanmalıdır (belge "bu anahtar bu paket için gerçek bir telefonda üretildi" der), sunucu telefonun uyduramayacağı sinyalleri kendisi ekler (imzalayan, yama tarihi, anahtar seviyesi) ve probe'ları kandırmak hazır unpinning betiklerinden pahalıdır. İsteyen uygulama ikinci görüş için Play Integrity sağlayıcısı takar (verdictProvider); token raporla gider.`,'wr'],
+  [`Neden kolay kandırılmaz`,`Ölçümü yapan kod hook'lanabilir; bu her RASP için geçerlidir. Değer üç yerden gelir: rapor donanım belgeli bir anahtarla imzalanmalıdır (belge "bu anahtar bu paket için gerçek bir telefonda üretildi" der), sunucu imzalayanı ve yamayı kendi listesiyle karşılaştırır, anahtarın gerçekliğini kayıttaki donanım belgesinden alır ve probe'ları kandırmak hazır unpinning betiklerinden pahalıdır. İsteyen uygulama ikinci görüş için Play Integrity sağlayıcısı takar (integrityVerdictProvider); karar raporun verdictProvider alanında gider.`,'wr'],
   [`Gitmeyen`,`Özel anahtar. Rapor da yalnızca sinyaller ve cihaz bilgileridir; kullanıcı verisi yok.`,'ok']]},
 {c:6,k:'n',t:`3 · Rapor sunucuya gider; karar ve token gelir`,d:`Telefon imzalı raporu, nonce'u, açık anahtarını ve elindeki listenin sürümünü gönderir. Sunucu sırayla kontrol eder ve karar verir: geçtiyse 5 dakikalık PinVault-Token, liste değiştiyse yeni imzalı liste de gelir.`,cx:'92',ex:[[`İlk kez gelen anahtar`,`donanım belgesine bakılır`,`→ ATTESTATION_KEY_POLICY: off, warn (varsayılan) ya da enforce`,null,'warn']],hl:['g-dev','g92','g-db'],tq:`İstek · cihaz → 8092`,q:Q_ATT_POST,ts:`Cevap · 8092 → cihaz`,s:S_ATT_POST,
  mv:[...mtls('d2'),m('d2',0,BL,'POST attest (imzalı rapor)','q'),m('b2',0,BL,''),m('b2',1,TK,''),m('d2',1,TK,'pass · PinVault-Token','s')],mk:[DM('✓ pass · token 5 dk · ARC 7f3a9c1e'),BMK('cihaz: anahtar + son karar','ok')],
- rows:[[`Sunucu sırayla`,`1 gövde (sürüm, boyut) · 2 nonce (geçerli, taze, kullanılmamış) · 3 imza, istekteki açık anahtarla · 4 cihaz iptal edilmiş mi · 5 anahtar: bu cihaz kayıtlıysa aynı anahtar mı (değilse 403 key_mismatch), ilk kezse kaydet ve donanım belgesine bak · 6 ret politikası: sunucu kendi sinyallerini ekler (app_integrity imzalayan listesinden, software_key ve key_unattested cihaz kaydından, old_patch_level yama tarihinden), sonra her bayrak reject / warn / ignore · 7 geçtiyse token, liste değiştiyse config. Her ret dakikada bir denetim kaydına özetlenir.`],
-  [`Cevapta ne var`,`result ve arc her zaman; warnings; geçtiyse token, tokenExpiresAt, nextAttestIn; cihaz kaydının durumu (registered, firstSeen, keyAttestation); policyVersion. rejectionReasons yalnızca politikada revealReasons açıksa: varsayılan kapalıdır, saldırgana hangi probe'un yakaladığı söylenmez; yönetici ARC'den okur.`],
+ rows:[[`Sunucu sırayla`,`1 gövde (sürüm, boyut) · 2 nonce (geçerli, taze, kullanılmamış) · 3 imza, istekteki açık anahtarla · 4 cihaz iptal edilmiş mi · 5 anahtar: bu cihaz kayıtlıysa aynı anahtar mı (değilse 403 key_mismatch), ilk kezse kaydet ve donanım belgesine bak · 6 ret politikası: sunucu kendi sinyallerini ekler (app_integrity imzalayan listesinden, software_key ve key_unattested cihaz kaydından, old_patch_level yama tarihinden), sonra her bayrak reject / warn / ignore · 7 geçtiyse token, liste değiştiyse config. Her yeni ret denetim kaydına hemen yazılır; aynı kararın tekrarları dakikada bir özetlenir.`],
+  [`Cevapta ne var`,`result, arc, nextAttestIn ve tokenTtlSeconds her zaman; warnings; geçtiyse token ve tokenExpiresAt; cihaz kaydının durumu (registered, firstSeen, keyAttestation); policyVersion. rejectionReasons yalnızca politikada revealReasons açıksa: varsayılan kapalıdır, saldırgana hangi probe'un yakaladığı söylenmez; yönetici ARC'den okur.`],
   [`Liste bu kanaldan`,`Telefon elindeki listenin sürümünü ve issuedAt'ini yazar; sunucudaki farklıysa (ya da zarfın yarı ömrü geçtiyse) cevapta "config": GET certificate-config'in verdiği imzalı zarfın aynısı. Telefon onu aynı kontrollerden geçirip uygular (applySigned). Bu kanaldan liste yalnızca geçen uygulamaya gider; Approov'dan farkı, aynı liste config isteğiyle herkese açıktır, çünkü pin'ler gizli değildir.`,'ok'],
   [`Cihaz ne kontrol eder`,`Cevabın bağlantısı pinlidir; token'ı açmaz, saklar (bellekte) ve bitişine bakar. Gelen config'in imzasını, tarihlerini ve tekrar oynatma sınırlarını kontrol eder.`,'ok'],
   [`Demoda`,`ATTESTATION_KEY_POLICY=warn: belge kaydedilir, yoksa da kayıt yapılır. Üretim profili enforce ve paket adı + imzalayan sertifika ister; o zaman yalnızca sizin uygulamanızın, kilitli bir telefonun donanımında ürettiği anahtar kayıt olur.`,'wr']]},
@@ -2754,42 +2765,42 @@ const S=[
 {c:6,k:'b',t:`Saldırı: root'lu ya da Frida yüklü telefon`,d:`Root'lu bir telefonda içine girilmiş uygulama pinli bağlantıyı kurar ve kayıtlıysa sertifikasını da gösterir. Rapor root ve hooking sinyallerini taşır; politika reject dediği için token gelmez. Uygulamanızın sunucusu başlıksız isteği 401 ile çevirir.`,cx:'92',cl:[`Root'lu telefon gösterir`,`geçerli sertifikası + imzalı rapor`,`→ bağlantı kurulur; karar reject`,3,'bad'],att:[`Root'lu telefon`,`Magisk + Frida`],hl:['g-att','g92','g-db'],tq:`İstek · root'lu telefon → 8092`,q:Q_ATT_REJECT,ts:`Cevap · 8092 → root'lu telefon`,s:S_ATT_REJECT,
  mv:[...mtls('a2','kendi sertifikası'),m('a2',0,RD,'POST attest','q'),m('b2',0,RD,''),m('b2',1,RD,''),m('a2',1,RD,'reject · token yok','s')],mk:[AMK('✗ reject · ARC c41e9b02'),BMK('cihaz: son karar reject','ok')],
  rows:[[`Ne olur`,`Rapor dürüsttür: rooted ve hooking_framework bayrakları kanıtlarıyla gider, imza cihazın anahtarıyla tutar. Politika iki bayrağı da reject saydığı için sunucu result: reject döner; token ve config gelmez.`],
-  [`Telefonda`,`Pin listesi elindeyse onunla, listenin süresi dolana kadar çalışır; sonra hiçbir yere bağlanamaz. attestationStatus() reject ve ARC'yi gösterir; neden söylenmez (revealReasons kapalı).`],
+  [`Telefonda`,`Yeni listeyi atestasyon cevabıyla alamaz ama normal config isteğiyle alır; kesilen PinVault-Token'dır. attestationStatus() reject ve ARC'yi gösterir; neden söylenmez (revealReasons kapalı).`],
   [`Uygulamanızın sunucusunda`,`İstek PinVault-Token başlığı olmadan gelir: 401 invalid_token (reason: missing). Eski bir token saklanmış olsa da 5 dakikada süresi dolar (expired).`,'ok'],
   [`Panelde`,`Cihaz satırında reject, ARC c41e9b02; ARC'ye tıklayınca nedenler: rooted, hooking_framework. İstatistikte 24 saat / 7 gün ret sayıları ve nedenleri. Destek vakası için yönetici cihaza forcePass verebilir; o zaman bayraklar uyarıya düşer ve token çıkar.`],
   [`Raporu değiştirmek`,`Frida ile probe'ları "temiz" döndürmek mümkündür; sonraki adımlar bunun sınırını ve bedelini anlatır.`,'wr']]},
-{c:6,k:'n',t:`5 · Her ≈ 5 dakikada yeniden; arka planda da`,d:`Token 5 dakika yaşar. Telefon bitişinden 60 saniye önce (ya da sunucunun söylediği aralıkta) yeniden ölçer ve gönderir. Arka plan çalışması da bir tur atar; uygulama istediği an attestNow() çağırabilir.`,cx:'92',hl:['g-dev','g92'],tq:`Telefonda`,q:Q_ATT_LOOP,ts:`Her turda`,s:S_ATT_LOOP,
- mv:[...mtls('d2'),m('d2',0,BL,'GET challenge'),m('d2',1,TE,'nonce'),m('d2',0,BL,'POST attest'),m('d2',1,TK,'token (5 dk)'),hl(['g-dev'],0,900),m('d2',0,BL,'GET challenge'),m('d2',1,TE,'nonce'),m('d2',0,BL,'POST attest'),m('d2',1,TK,'token + yeni liste')],mk:[DM('≈ 5 dakikada bir, uygulama açıkken','muted')],
+{c:6,k:'n',t:`5 · Süresi dolmadan, ≈ 4 dakikada bir yeniden; arka planda da`,d:`Token 5 dakika yaşar. Telefon bitişinden 60 saniye önce (ya da sunucunun söylediği aralıkta) yeniden ölçer ve gönderir. Arka plan çalışması da bir tur atar; uygulama istediği an attestNow() çağırabilir.`,cx:'92',hl:['g-dev','g92'],tq:`Telefonda`,q:Q_ATT_LOOP,ts:`Her turda`,s:S_ATT_LOOP,
+ mv:[...mtls('d2'),m('d2',0,BL,'GET challenge'),m('d2',1,TE,'nonce'),m('d2',0,BL,'POST attest'),m('d2',1,TK,'token (5 dk)'),hl(['g-dev'],0,900),m('d2',0,BL,'GET challenge'),m('d2',1,TE,'nonce'),m('d2',0,BL,'POST attest'),m('d2',1,TK,'token + yeni liste')],mk:[DM('≈ 4 dakikada bir, uygulama açıkken','muted')],
  rows:[[`Ne zaman`,`Bir sonraki tur min(nextAttestIn, bloğun aralığı, token bitişi − 60 s) sonra; en az 30 saniye, biraz rastgele pay. Sunucu nextAttestIn ile hızlandırabilir (politikadaki attestIntervalSeconds, varsayılan 300).`],
   [`Hata olursa`,`Ağ yoksa ya da sunucu cevap vermezse 30 s → 60 s → 2 dk → 4 dk → 5 dk geri çekilir; eldeki token bitene kadar kullanılır, bittikten sonra başlık gitmez ve sunucunuz 401 verir. Reddedilen cihaz da aynı aralıkta yeniden dener: root kaldırılınca bir sonraki turda token alır.`],
-  [`Arka planda`,`Döngü uygulama süreci yaşadığı sürece çalışır; Android süreci öldürürse durur, bir sonraki açılışta init yeniden başlatır. Periyodik güncelleme (12 saatte bir) sonunda da bir tur atılır: uygulama uyanınca token'ı süresi geçmiş bulmaz. Token dolmuşsa ilk istekten önce fetchAttestationToken() o anda bir tur atar; aynı anda birden çok istek gelirse tek tur yapılır, hepsi aynı sonucu bekler (single flight).`,'ok'],
-  [`Durum değişince`,`Her tur sıfırdan ölçüm olduğu için cihazın durumu kararı anında etkiler: kullanıcı root açarsa en geç bir tur (≈ 5 dakika) sonra token kesilir, kapatırsa bir sonraki turda geri gelir. Yöneticinin politika değişikliği ya da forceFail'i de en geç bir tur sonra etkir. Eski token diskte tutulmaz; bellekteki yenisiyle değiştirilir (yeni jti, yeni exp).`],
+  [`Arka planda`,`Döngü uygulama süreci yaşadığı sürece çalışır; Android süreci öldürürse durur, bir sonraki açılışta init yeniden başlatır. Periyodik güncelleme (12 saatte bir) sonunda da bir tur atılır: uygulama uyanınca token'ı süresi geçmiş bulmaz. Token dolmuşsa interceptor ilk istekten önce o anda bir tur attırır; aynı anda birden çok istek gelirse tek tur yapılır, hepsi aynı sonucu bekler (single flight).`,'ok'],
+  [`Durum değişince`,`Her tur sıfırdan ölçüm olduğu için cihazın durumu kararı anında etkiler: kullanıcı root açarsa en geç bir tur (≈ 4 dakika) sonra token kesilir, kapatırsa bir sonraki turda geri gelir. Yöneticinin politika değişikliği ya da forceFail'i de en geç bir tur sonra etkir. Eski token diskte tutulmaz; bellekteki yenisiyle değiştirilir (yeni jti, yeni exp).`],
   [`Neden 5 dakika`,`Çalınan ya da sızan bir token en çok 5 dakika iş görür ve sunucunun "bu cihaz temiz" bilgisi en çok 5 dakika eski olur. Daha kısa süre her cihaz için iki istek ve bir ECDSA doğrulaması demek olan sunucu yükünü artırır; daha uzun süre pencereyi büyütür. Approov da aynı değeri seçer. Panelde tokenTtlSeconds ve attestIntervalSeconds ile, blokta attestationInterval ile (en az 1 dakika) değiştirilir; sunucu nextAttestIn ile hızlandırabilir, yavaşlatamaz.`],
   [`Liste de buradan`,`Yönetici pin'i değiştirince telefon yeni listeyi 12 saatlik güncellemeyi beklemeden, en geç bir sonraki atestasyon turunda alır: Approov'daki "dinamik pinleme" bu kanaldır. Reddedilen cihaz almaz.`,'ok'],
   [`Uygulama`,`PinVault.attestationStatus() son sonucu verir (result, arc, warnings, tokenExpiresAt, nextAttestAt, lastError); setConnectionListener ile Attestation olayları gelir. Örnek uygulamada "Atestasyon" düğmesi attestNow() çağırıp sonucu yazar.`]]},
-{c:6,k:'t',t:`Panelde: ret politikası, cihazlar, ek açıklamalar, token sırrı`,d:`Yönetici hangi sinyalin reddedeceğini seçer, cihazların son kararını ve ARC'lerini görür, bir cihaza forcePass/forceFail ya da etiket verir, token sırrını döndürür.`,act:ADMIN,hl:['g-att','g90','g-db'],
- sx:{tag:'8090',cls:'tok',title:`Config API'nin sayfası · Attestation sekmesi`,rows:[ADMROW,[`Politika`,`12 bayrak × reject / warn / ignore`,`→ strict (varsayılan) ya da lenient ile başlanır`,null,''],[`Cihazlar`,`son karar, ARC, uyarılar, anahtar seviyesi`,`→ ARC'ye tıkla: nedenler`,null,''],[`Token sırrı`,`aktif kid + öncekiler`,`→ uygulamanızın sunucusu buradan yükler`,null,'ok']]},
+{c:6,k:'t',t:`Panelde: ret politikası, cihazlar, ek açıklamalar, token sırrı`,d:`Yönetici hangi sinyalin reddedeceğini seçer, cihazların son kararını ve ARC'lerini görür, bir cihaza forcePass/forceFail ya da etiket verir; token sırrını İmzalama sekmesinde döndürür.`,act:ADMIN,hl:['g-att','g90','g-db'],
+ sx:{tag:'8090',cls:'tok',title:`Config API'nin sayfası · Attestation sekmesi`,rows:[ADMROW,[`Politika`,`14 bayrak × reject / warn / ignore`,`→ strict (varsayılan) ya da lenient ile başlanır`,null,''],[`Cihazlar`,`son karar, ARC, uyarılar, anahtar seviyesi`,`→ ARC'ye tıkla: nedenler`,null,''],[`Token sırrı`,`İmzalama sekmesinde, genel`,`→ uygulamanızın sunucusu buradan yükler`,null,'ok']]},
  scr:{panel:'attest',polVer:3,devices:[{id:'3f2a9c0d81b4e6a7',res:'pass',arc:'7f3a9c1e',key:'ok',warn:'adb_enabled'},{id:'b71e04c95a2d3f80',res:'reject',arc:'c41e9b02',key:'ok',warn:''}]},tq:`Panelin arkada gönderdiği istekler`,q:Q_ATT_POLICY,ts:`Cevaplar ve diğer yönetim istekleri`,s:S_ATT_POLICY,
- mv:[sc({hot:'pol'}),m('a0',0,BL,'PUT policy','q'),m('b0',0,BL,''),m('b0',1,TE,''),m('a0',1,TE,'v4','s'),sc({hot:null,polVer:4}),sc({hot:'anno'}),m('a0',0,BL,'PUT devices/3f2a…'),m('a0',1,TE,'ok'),sc({hot:null,devices:[{id:'3f2a9c0d81b4e6a7',res:'pass',arc:'7f3a9c1e',key:'ok',warn:'adb_enabled',anno:'saha'},{id:'b71e04c95a2d3f80',res:'reject',arc:'c41e9b02',key:'ok',warn:''}]}),sc({secret:1}),sc({hot:'rot'}),m('a0',0,BL,'POST token-secrets/rotate'),m('a0',1,TE,'kid 2026-10-05-02'),sc({hot:null,kid2:1})],mk:[AMK('politika v4 · etiket: saha','ok'),BMK('politika + cihaz kayıtları','ok')],
- rows:[[`Politika`,`Her bayrak için reject, warn ya da ignore. ATTESTATION_POLICY_DEFAULT=strict (root, emülatör, debugger, hooking, bütünlük, klon reddeder; yükleyici, yazılım anahtarı, belgesiz anahtar, eski yama uyarır; ADB bakılmaz) ya da lenient (her şey warn: filo ölçülürken). revealReasons, token ömrü ve aralık da burada. Her değişiklik sürümü artırır; token'da pol olarak taşınır. İki kişi onayı açıksa onay bekler.`],
+ mv:[sc({hot:'pol'}),m('a0',0,BL,'PUT policy','q'),m('b0',0,BL,''),m('b0',1,TE,''),m('a0',1,TE,'v4','s'),sc({hot:null,polVer:4}),sc({hot:'anno'}),m('a0',0,BL,'PUT devices/3f2a…'),m('a0',1,TE,'ok'),sc({hot:null,devices:[{id:'3f2a9c0d81b4e6a7',res:'pass',arc:'7f3a9c1e',key:'ok',warn:'adb_enabled',anno:'saha'},{id:'b71e04c95a2d3f80',res:'reject',arc:'c41e9b02',key:'ok',warn:''}]}),m('a0',0,BL,'POST token-secrets/rotate'),m('a0',1,TE,'kid 2026-10-05-02')],mk:[AMK('politika v4 · etiket: saha','ok'),BMK('politika + cihaz kayıtları','ok')],
+ rows:[[`Politika`,`Her bayrak için reject, warn ya da ignore. ATTESTATION_POLICY_DEFAULT=strict (root, emülatör, debugger, hooking, bütünlük, klon reddeder; yükleyici, yazılım anahtarı, belgesiz anahtar, eski yama ve iki Play Integrity bayrağı uyarır; ADB bakılmaz) ya da lenient (her şey warn: filo ölçülürken). revealReasons, token ömrü ve aralık da burada. Her değişiklik sürümü artırır; token'da pol olarak taşınır. İki kişi onayı açıksa onay bekler.`],
   [`Cihazlar`,`Son karar, ARC, uyarılar, anahtar (StrongBox / TEE / yazılım, belgeli mi), ilk ve son görülme, anahtar uyuşmazlıkları. Arama ve sonuç filtresi. Bir cihaz silinince (unut) anahtarı unutulur; yeniden kurulan uygulama yeni anahtarıyla kayıt olabilir.`],
   [`forcePass · forceFail · etiketler`,`forcePass: destek vakası, bayraklar uyarıya düşer, token çıkar. forceFail: çalıntı telefon, her tur reject. Etiketler (annotations) token'ın anno alanında gider: uygulamanızın sunucusu "staff" ya da "canary" etiketine göre davranabilir. Cihaz daha hiç gelmeden de yazılabilir.`,'ok'],
-  [`Token sırrı`,`32 baytlık rastgele anahtar, sunucuda şifreli saklanır; bir tanesi aktif, öncekiler doğrulama için kalır. Döndürünce yeni kid aktif olur; eskisini silmek ayrı adımdır (aktif olan silinemez). Sırları okumak iki kişi onayı ister.`],
+  [`Token sırrı`,`Attestation sekmesinde değil, İmzalama sekmesindeki "PinVault-Token gizli anahtarları" kartındadır; Config API başına değil, geneldir. 32 baytlık rastgele anahtar, sunucuda şifreli saklanır; bir tanesi aktif, öncekiler doğrulama için kalır. "Döndür" yeni kid'i aktif eder; her satırda Göster/Gizle, Kopyala ve Sil (aktif olan silinemez). İki kişi onayı açıksa sırları okumak onay bekler.`],
   [`İstatistik`,`24 saat ve 7 gün: geçen, reddedilen, nedenlere ve uyarılara göre dağılım, cihaz sayıları. Denetim kaydı: attestation_policy_updated, attestation_device_annotated, attestation_rejected (karar değişince), attestation_key_mismatch, token sırrı olayları.`]]},
 {c:6,k:'b',t:`Saldırı: eski raporu tekrar göndermek, rapor uydurmak, anahtar değiştirmek`,d:`Üç deneme: ele geçirilmiş bir isteğin kopyası (nonce kullanılmış), temiz görünen uydurma rapor (imza tutmaz) ve yeniden kurulup yeni anahtarla gelen uygulama (kayıtlı anahtar başka). Üçü de reddedilir.`,cx:'92',cl:NOCERT(`→ TLS bloğunda sertifika zaten istenmez; kanıt imza`),att:[`Başka bir cihaz / betik`,`raporu taklit eder`],hl:['g-att','g92','g-db'],tq:`İstekler · saldırgan → 8092`,q:Q_ATT_ATTACK,ts:`Cevaplar`,s:S_ATT_ATTACK,
  mv:[...tls('a2'),m('a2',0,RD,'POST attest (kopya)','q'),m('a2',1,RD,'400 nonce_replayed'),m('a2',0,RD,'POST attest (uydurma)'),m('a2',1,RD,'401 signature_invalid'),m('a2',0,RD,'POST attest (yeni anahtar)'),m('a2',1,RD,'403 key_mismatch','s')],mk:[AMK('✗ 400 · 401 · 403'),BMK('kayıtlı anahtar değişmedi','ok')],
  rows:[[`Kopya`,`Pinli kanaldan ele geçirmek zaten zordur; ele geçse bile nonce bir kez kullanılmıştır ve 2 dakikada eskir: 400 nonce_replayed.`,'ok'],
-  [`Uydurma rapor`,`Rapor imzasız geçmez. İmza kayıtlı cihaz anahtarıyla atılmalıdır; o anahtar Keystore'dan çıkmaz ve donanım belgesiyle gerçek bir telefona ve (enforce'ta) sizin paketinize bağlıdır. Kendi anahtarıyla imzalayan 401 signature_invalid alır; kendi anahtarını kaydettirmek isterse enforce'ta belgesi geçmez.`,'ok'],
+  [`Uydurma rapor`,`Rapor imzasız geçmez. İmza kayıtlı cihaz anahtarıyla atılmalıdır; o anahtar Keystore'dan çıkmaz ve donanım belgesiyle gerçek bir telefona ve (enforce'ta) sizin paketinize bağlıdır. Kayıtlı açık anahtarı gönderip başka anahtarla imzalayan 401 signature_invalid, kendi açık anahtarını gönderen 403 key_mismatch alır; kendi anahtarını kaydettirmek isterse enforce'ta belgesi geçmez.`,'ok'],
   [`Yeni anahtar`,`Uygulama silinip kurulunca yeni bir anahtar üretilir; sunucu aynı cihaz kimliğinde başka bir anahtar görür ve 403 key_mismatch der. Panelde "anahtar uyuşmazlığı" olarak görünür; yönetici cihazı unutunca yeni anahtar kayıt olur. Böylece bir kimliği başkası devralamaz.`],
-  [`Sınırlar`,`Adres başına 60, cihaz başına 30 istek (10 dakikada); challenge iki katı. Retler denetim kaydına dakikada bir özetlenir. Reddedilen cihaz tekrar deneyebilir; her denemede yeni nonce ister.`]]},
+  [`Sınırlar`,`Adres başına 60, cihaz başına 30 istek (10 dakikada); challenge iki katı. Her yeni ret denetim kaydına hemen yazılır; aynı kararın tekrarları dakikada bir özetlenir. Reddedilen cihaz tekrar deneyebilir; her denemede yeni nonce ister.`]]},
 {c:6,k:'l',t:`Sınırlar: ölçüm telefonda, yargı sunucuda`,d:`Atestasyon gerçek, değiştirilmemiş uygulamayı seçmeye yarar; sihir değildir. Probe'lar kütüphanenin içinde düz Kotlin'dir, hook'lanabilir; değeri imzalı anahtar, sunucunun eklediği sinyaller ve politikadan gelir. Ne yaptığını ve ne yapmadığını bilerek açın.`,hl:['g-dev','g92','g-db'],
  sx:{tag:'Sınırlar',cls:'none',title:`neyi engeller, nerede biter`,rows:[[`Engeller`,`hazır unpinning betikleri, emülatör, taklit APK, root'lu telefon`,`→ politika reject dediği ölçüde`,null,'ok'],[`Zorlaştırır`,`probe'ları hook'layarak temiz rapor`,`→ anahtar belgesi + sunucu sinyalleri + R8/packer`,null,'warn'],[`Yapmaz`,`geçen cihazın sonraki davranışına kefil olmaz`,`→ token 5 dakika, sonra yeniden ölçüm`,null,'']]},
  tq:`Telefonda`,q:null,ts:`Sunucuda`,s:null,sph:`ağa çıkılmadı`,
  mk:[BMK('ATTESTATION_KEY_POLICY=enforce önerilir','muted')],
  rows:[[`Ölçüm hook'lanabilir`,`Frida ile çalışan biri probe'lara "temiz" dedirtebilir. Karşılığı: rapor donanım belgeli anahtarla imzalanmalı (enforce), sunucu kendi sinyallerini ekler, kod R8 ile küçültülür ve istenirse packer eklenir, Play Integrity ikinci görüş olarak takılır. Approov'un probe'ları kapalı kaynak ve sürekli güncellenir; PinVault'unkiler açıktır. Bu bir mimari değil, güvence ve bakım farkıdır.`,'wr'],
   [`Belge olmadan`,`ATTESTATION_KEY_POLICY=warn ile ilk gelen anahtara güvenilir (trust on first use). Bu modda root'lu telefon kendi yazılım anahtarını kaydettirebilir; sonraki turlarda rapor yine değerlendirilir ama anahtarın gerçekliği kanıtlanmaz. Üretimde enforce + ATTESTATION_PACKAGE_NAMES + ATTESTATION_SIGNER_SHA256.`],
-  [`Reddedilen cihaz`,`Elindeki listeyle, süresi dolana kadar çalışır: pinleme yine korur, yalnızca yenilenme ve token kesilir. Hemen kesmek isteyen uygulama attestationStatus() reject görünce kendi kararını verir; uygulamanızın sunucusu zaten token ister.`],
-  [`Sunucunuzda`,`Doğrulama yalnızca imza ve süre kontrolüdür; PinVault sunucusu çökse de 5 dakika içinde verilmiş token'lar geçer, yenisi çıkmaz. Sırrı sızan bir kid döndürülür ve silinir; eski token'lar en çok 5 dakika yaşar.`],
+  [`Reddedilen cihaz`,`Pin listesini normal config isteğiyle almaya devam eder: pinleme yine korur, yalnızca PinVault-Token ve atestasyon cevabıyla gelen liste kesilir. Hemen kesmek isteyen uygulama attestationStatus() reject görünce kendi kararını verir; uygulamanızın sunucusu zaten token ister.`],
+  [`Sunucunuzda`,`Doğrulama yalnızca imza ve süre kontrolüdür; PinVault sunucusu çökse de 5 dakika içinde verilmiş token'lar geçer, yenisi çıkmaz. Sırrı sızan bir kid döndürülür ve silinir; silinince o kid'le imzalı token'lar hemen geçersiz olur, cihazlar yeniden atestasyonla yenisini alır.`],
   [`Kapsam`,`Atestasyon kütüphanenin yaptığı isteklere ve getClient()/applyTo istemcilerine token ekler; uygulamanın başka yoldan açtığı bağlantılara eklemez. Cihaz kimliği (ANDROID_ID) hâlâ beyandır; token sub olarak onu taşır ama kanıt anahtardır.`]]},
 
 {c:7,k:'t',t:`Panelde: dosya yükle, kimin alacağını seç`,d:`Bir ayar dosyasını ya da modeli değiştirmek için uygulama güncellemesi beklemek istemezsiniz. PinVault uygulamaya dosya da dağıtır. Yönetici dosyayı panelde yükler; kimin alabileceğini (Policy) ve nasıl saklanacağını (Encryption) seçer.`,act:ADMIN,hl:['g-att','g90','g-db'],
@@ -2799,7 +2810,7 @@ const S=[
  rows:[[`Nerede`,`Config API'nin sayfası → Vault sekmesi → "Vault'a Yükle" kartı. Dosya seçilir ya da metin yapıştırılır.`],
   [`Anahtar`,`Dosyanın adı (örn. ml-model). Uygulama dosyayı bu adla ister; aynı adla yeniden yüklenince sürüm artar.`],
   [`Policy: kim alabilir`,`token (önerilen): o dosya ve o cihaz için üretilmiş token'ı olan · token + mTLS: ayrıca o cihazın sertifikası olan (cihaz kimliği kanıtlanmış olmalı) · public (demo): sunucuya ulaşan herkes · api_key: cihazdan inmez, yalnızca sunucular arası araçlar için.`],
-  [`Encryption: nasıl saklanır`,`plain: şifresiz saklanır · at_rest: sunucu diskinde şifreli durur, cihaza giderken çözülür · end_to_end: yalnızca hedef cihazın açabileceği şekilde şifrelenir (bölüm 9) · user_auth: telefonda kilitli durur, ekran kilidi açılınca okunur (bölüm 10). Policy ya da Encryption sonradan değişirse sürüm de artar.`],
+  [`Encryption: nasıl saklanır`,`plain: şifresiz saklanır · at_rest, end_to_end, user_auth: üçü de diskte şifreli; at_rest cihaza düz iner, diğer ikisi her indirmede cihazın anahtarına kilitlenir (end_to_end: bölüm 9, user_auth: ekran kilidi, bölüm 10). Policy ya da Encryption sonradan değişirse sürüm de artar.`],
   [`Bağlantı`,`Hangisi seçilirse seçilsin dosya cihaza pinli TLS ya da mTLS bağlantısından iner.`,'ok']]},
 {c:7,id:'vtok',k:'t',t:`Dosya token'ı: panelde üret`,d:`Policy'si token olan dosyayı yalnızca token'ı olan cihaz alır. Yönetici panelde o dosya ve o cihaz için bir token üretir.`,act:ADMIN,hl:['g-att','g90','g-db'],
  sx:{tag:'8090',cls:'tok',title:`dosya token'ı · bir dosya + bir cihaz için`,rows:[ADMROW,[`Bağlı olduğu`,`Config API + dosya + cihaz (ANDROID_ID)`,`→ başka dosyada ya da cihazda geçmez`,null,'ok']]},
@@ -2853,7 +2864,7 @@ const S=[
  mv:[...mtls('d2'),m('d2',0,BL,'POST public-key','q'),m('b2',0,BL,''),m('b2',1,TE,''),m('d2',1,TE,'200 kaydedildi','s')],mk:[DM('✓ anahtar kaydedildi')],
  rows:[[`Ne zaman`,`Uygulama açılışında (init), yalnızca uygulamada uçtan uca şifreli (END_TO_END) bir dosya tanımlıysa. Uygulamada tanımlı her config API'ye gider: TLS'te 8091'e, mTLS'te 8092'ye; ikisi de tanımlıysa ikisine.`],
   [`Ne için`,`Sunucu bu dosyaları cihazın RSA açık anahtarıyla şifreleyip gönderir; yalnızca bu cihaz açabilir.`],
-  [`Kim kaydedebilir`,`8092'de ilk anahtarı yalnızca o cihaza ait sertifika yazar; var olan anahtarı değiştirmek için cihaz kimliğinin kanıtlanmış olması ya da o cihazın şifreli dosya token'ı gerekir. 8091'de ilk anahtar kabul edilir; değiştirmek için dosya token'ı gerekir.`,'ok'],
+  [`Kim kaydedebilir`,`8092'de ilk anahtarı yalnızca o cihaza ait sertifika yazar; var olan anahtarı değiştirmek için cihaz kimliğinin kanıtlanmış olması ya da o cihaza verilmiş, end_to_end bir dosyanın token'ı gerekir. 8091'de ilk anahtar kabul edilir; değiştirmek için dosya token'ı gerekir.`,'ok'],
   [`Gitmeyen`,`RSA özel anahtarı; o da Keystore'da kalır.`,'ok']]},
 {c:8,k:'x',t:`Saldırı: kayıtlı başka cihaz anahtarı değiştirmeyi dener`,d:`Kayıtlı başka bir cihaz, tablet-07'nin şifreleme anahtarını kendi anahtarıyla değiştirmeyi dener. 8092 sertifikanın o cihaza ait olmadığını görür; 403.`,cx:'92',cl:T08(`→ sunucu bu sertifikanın tablet-07'ye ait olmadığını görür`,'bad'),att:[`Kayıtlı başka cihaz`,`tablet-08`],hl:['g-att','g92','g-db'],tq:`İstek · tablet-08 → 8092`,q:Q_E2E_08,ts:`Cevap · 8092 → tablet-08`,s:S_E2E_08_FIXED,
  mv:[...mtls('a2','tablet-08 sertifikası'),m('a2',0,RD,'POST public-key','q'),m('b2',0,RD,''),m('b2',1,RD,''),m('a2',1,RD,'403','s')],mk:[AMK('✗ 403 device_identity_mismatch'),BMK("tablet-07'nin anahtarı aynı")],
@@ -2862,13 +2873,13 @@ const S=[
   [`Kendi cihazı`,`Sertifikası bu cihaz kimliğine bağlı olan cihaz ilk anahtarı yazabilir. Var olan anahtarı değiştirmek için kimliğin kanıtlanmış olması (bağlı token ya da donanım belgesiyle kayıt) ya da cihazın dosya token'ı gerekir; yoksa 409 key_change_requires_proof. Kayıtta yalnızca beyan edilen kimlik yetmez.`],
   [`Nasıl doğrulandı`,`Sunucuda yeni testler: bağlı sertifika kabul, başka cihazın ve iptal edilmiş sertifika 403.`]]},
 {c:8,k:'x',t:`8091'de kural: ilk anahtar kalır, değiştirmek token ister`,d:`TLS kapısında cihaz kimliğini kanıtlamaz. Bu yüzden ilk kaydedilen anahtar kalır; değiştirmek için o cihazın dosya token'ı gerekir.`,att:[`Başka bir cihaz`,`token'ı yok`],hl:['g-att','g-dev','g91','g-db'],
- sx:{tag:'TLS',cls:'tls',title:`8091 · cihaz kimliği yok · ilk anahtar kalır`,rows:[[`Sunucu gösterir`,`demo-server sertifikası`,`→ cihaz APK'daki pin'le karşılaştırır`,0,''],[`Başka cihaz`,`farklı anahtar, token yok`,`→ 409, kayıtlı anahtar değişmez`,null,'bad'],[`Gerçek cihaz`,`yeni anahtar + şifreli dosya token'ı`,`→ anahtarını değiştirebilir`,'c2','ok']]},
+ sx:{tag:'TLS',cls:'tls',title:`8091 · cihaz kimliği yok · ilk anahtar kalır`,rows:[[`Sunucu gösterir`,`demo-server sertifikası`,`→ cihaz APK'daki pin'le karşılaştırır`,0,''],[`Başka cihaz`,`farklı anahtar, token yok`,`→ 409, kayıtlı anahtar değişmez`,null,'bad'],[`Gerçek cihaz`,`yeni anahtar + end_to_end dosyasının token'ı`,`→ anahtarını değiştirebilir`,'c2','ok']]},
  tq:`İstek · cihaz → 8091 (kanıtla)`,q:Q_E2E_TLS,ts:`Cevaplar`,s:S_E2E_TLS,
  mv:[...tls('a1'),m('a1',0,RD,'POST public-key'),m('b1',0,RD,''),m('b1',1,RD,''),m('a1',1,RD,'409'),...tls('d1'),m('d1',0,BL,'POST public-key + token','q'),m('b1',0,BL,''),m('b1',1,TE,''),m('d1',1,TE,'200','s')],
  mk:[AMK('✗ 409: kanıt yok'),DM('✓ token ile değişti')],
- rows:[[`Kural`,`8091'de cihaz kimliği yok: ilk kaydedilen anahtar kalır, aynı anahtar tekrar gelirse sorun yok. Farklı bir anahtar için o cihaza verilmiş, şifreli bir dosyanın token'ı gerekir (X-Vault-Key + X-Vault-Token); yoksa 409.`],
+ rows:[[`Kural`,`8091'de cihaz kimliği yok: ilk kaydedilen anahtar kalır, aynı anahtar tekrar gelirse sorun yok. Farklı bir anahtar için o cihaza verilmiş, end_to_end bir dosyanın token'ı gerekir (X-Vault-Key + X-Vault-Token); yoksa 409.`],
   [`Kütüphane`,`Uygulamanın verisi silinince Keystore anahtarı yenilenir. Kütüphane kaydı yaparken o API'deki şifreli dosyanın token'ını kendisi ekler; uygulamada değişiklik gerekmez.`,'ok'],
-  [`Kalan sınır`,`Hiç kayıt olmamış bir cihazın yerine ilk kaydı başkası yapabilir; çalınan dosya token'ı da anahtarı değiştirmeye yeter. Önemli dosyalar mTLS'te (token_mtls) tutulmalı. Yönetici gerektiğinde anahtarı silebilir.`,'wr'],
+  [`Kalan sınır`,`Hiç kayıt olmamış bir cihazın yerine ilk kaydı başkası yapabilir; çalınan dosya token'ı da anahtarı değiştirmeye yeter. Önemli dosyalar mTLS'te (token_mtls) tutulmalı. Yönetici, yönetim API'siyle (panelde düğme yok) anahtarı silebilir.`,'wr'],
   [`Nasıl doğrulandı`,`Sunucuda 10 yeni test (8091 ve 8092 kuralı birlikte); Pixel 6 Pro ve API 24'te bütün Espresso testleri geçti.`]]},
 {c:8,k:'x',t:`Saldırı: 8091'e sahte anahtar yağdırmak`,d:`Biri rastgele kimliklerle binlerce sahte anahtar kaydetmeyi dener. Sunucu yalnızca geçerli anahtarı kabul eder ve adres başına sınır uygular.`,att:[`Başka bir yer`,`rastgele kimliklerle`],hl:['g-att','g91','g-db'],
  sx:{tag:'TLS',cls:'tls',title:`8091 · anahtar kaydı kimlik sormaz, o yüzden sınırlı`,rows:[[`Kabul edilen`,`yalnızca 2048–4096 bit RSA anahtar`,`→ çöp metin, EC ya da zayıf anahtar 400`,null,'ok'],[`Adres başına`,`10 dakikada 30 yeni anahtar`,`→ fazlası 429 (DEVICE_KEY_RATE_LIMIT)`,null,'ok'],[`Toplam`,`Config API başına 100 bin anahtar`,`→ yeni cihaz 503, bilinenler çalışır (DEVICE_KEY_LIMIT)`,null,'ok']]},
@@ -2882,25 +2893,25 @@ const S=[
   [`Nasıl doğrulandı`,`Sunucuda 7 yeni test. Canlı: çöp ve 1024 bit anahtar 400, aynı adresten 31. anahtar 429.`]]},
 
 {c:9,k:'t',t:`Panelde: dosyayı ekran kilidiyle gönder`,d:`Telefonda saklanan dosyayı uygulamanın kendisi her an açabilir; root'lu bir telefonda uygulamanın içine giren kod da. Ekran kilitli dosya, anahtarı kullanıcının elinde duran bir kasa gibidir: donanım anahtarı ancak ekran kilidi açılınca kullanır. Yönetici dosyayı yüklerken Encryption olarak "user_auth — ekran kilidiyle açılır" seçer.`,act:ADMIN,hl:['g-att','g90','g-db'],
- sx:{tag:'8090',cls:'tok',title:`Vault sekmesi · Encryption: user_auth`,rows:[ADMROW,[`Policy`,`token + mTLS (önerilen)`,`→ indirmek için token ve kimliği kanıtlanmış cihaz sertifikası`,null,''],[`Encryption`,`user_auth — ekran kilidiyle açılır`,`→ uygulamada encryption(USER_AUTH) + userAuth(REQUIRED)`,null,'ok']]},
+ sx:{tag:'8090',cls:'tok',title:`Vault sekmesi · Encryption: user_auth`,rows:[ADMROW,[`Policy`,`token + mTLS`,`→ indirmek için token ve kimliği kanıtlanmış cihaz sertifikası`,null,''],[`Encryption`,`user_auth — ekran kilidiyle açılır`,`→ uygulamada encryption(USER_AUTH) + userAuth(REQUIRED)`,null,'ok']]},
  scr:{panel:'vaultup',vkey:'',enc:'user_auth'},tq:`Panelin arkada gönderdiği istek`,q:Q_UA_UP,ts:`Cevap ve uygulamadaki tanım`,s:S_UA_UP,
  mv:[sc({vkey:'gizli-rapor'}),sc({hot:'vup'}),m('a0',0,BL,'PUT vault/gizli-rapor','q'),m('b0',0,BL,''),m('b0',1,TE,''),m('a0',1,TE,'sürüm 1','s'),sc({hot:null,done:1})],mk:[BMK('gizli-rapor · user_auth','ok')],
  rows:[[`Sorun`,`Saklanan her dosya bir Keystore anahtarıyla şifrelidir, ama uygulama o anahtarı istediği an kullanabilir. Root'lu telefonda uygulamanın içine giren kod dosyayı da okur.`,'wr'],
   [`Çözüm`,`Telefonda tek bir ekran kilidi anahtarı vardır. Donanım (TEE ya da StrongBox) bu anahtarı ancak kullanıcı PIN'ini, desenini, şifresini ya da güçlü biyometriğini girdikten hemen sonra kullanır.`,'ok'],
   [`Panelde`,`Vault'a Yükle: Policy "token + mTLS", Encryption "user_auth — ekran kilidiyle açılır". Sunucu dosyayı her indirmede o telefonun ekran kilidi anahtarına kilitleyip gönderir.`],
   [`Uygulamada`,`Dosya encryption(VaultFileEncryption.USER_AUTH) ve userAuth(UserAuth.REQUIRED) ile tanımlanır. userAuth tek başına da kullanılabilir: o zaman telefon dosyayı indirdikten sonra kilitler, ama dosya inerken uygulamanın belleğinden geçer.`]]},
-{c:9,k:'n',t:`Telefon ekran kilidi anahtarını kaydeder`,d:`Sunucunun dosyayı kilitleyebilmesi için telefonun ekran kilidi anahtarının açık yarısını bilmesi gerekir. Telefon açılışta bu anahtarı üretir ve donanım belgesiyle birlikte sunucuya bildirir; özel yarı donanımdan çıkmaz.`,cx:'92',ex:[[`TLS config API'de`,`aynı kayıt 8091'e gider`,`→ değiştirme kuralları uçtan uca anahtarla aynı`,null,'']],hl:['g-dev','g92','g-db'],tq:`İstek · cihaz → 8092`,q:Q_UA_KEY,ts:`Cevap · 8092 → cihaz`,s:S_UA_KEY,
+{c:9,k:'n',t:`Telefon ekran kilidi anahtarını kaydeder`,d:`Sunucunun dosyayı kilitleyebilmesi için telefonun ekran kilidi anahtarının açık yarısını bilmesi gerekir. Telefon açılışta bu anahtarı üretir ve donanım belgesiyle birlikte sunucuya bildirir; özel yarı donanımdan çıkmaz.`,cx:'92',ex:[[`TLS config API'de`,`aynı kayıt 8091'e gider`,`→ değiştirmek için kanıt ve geçen donanım belgesi gerekir`,null,'']],hl:['g-dev','g92','g-db'],tq:`İstek · cihaz → 8092`,q:Q_UA_KEY,ts:`Cevap · 8092 → cihaz`,s:S_UA_KEY,
  mv:[...mtls('d2'),m('d2',0,BL,'POST public-key (user_auth)','q'),m('b2',0,BL,''),m('b2',1,TE,''),m('d2',1,TE,'200 kaydedildi','s')],mk:[DM('✓ ekran kilidi anahtarı kayıtlı'),BMK('device_user_auth_keys','ok')],
  rows:[[`Ne zaman`,`Açılışta (init), uygulamada ekran kilitli dosya tanımlıysa. Anahtar yenilendiyse bir sonraki indirmeden önce de.`],
   [`Anahtar`,`Telefon başına tek RSA anahtarı. Android 11 ve sonrasında her açışta kilit ya da güçlü biyometrik sorulur. Android 7–10'da anahtar üretilirken güçlü bir parmak izi varsa her açışta parmak izi sorulur; yoksa kilit açıldıktan sonraki 10 saniye içinde kullanılabilir.`],
   [`Donanım belgesi`,`Anahtar bu cihazın kimliğinden hesaplanan bir değerle belgelenir; belge kayıtla gider. Sunucu ona USER_AUTH_ATTESTATION ile bakar: off, warn (varsayılan) ya da enforce.`],
-  [`Değiştirmek`,`Kayıtlı anahtarın yerine yenisi için hem cihazın kendi kanıtı (bağlı sertifika ya da dosya token'ı) hem geçen bir donanım belgesi gerekir; yoksa 409 user_auth_key_exists. Yönetici anahtarı silerse sonraki kayıt ilk kayıt sayılır.`,'wr']]},
+  [`Değiştirmek`,`Kayıtlı anahtarın yerine yenisi için hem cihazın kendi kanıtı (kimliği kanıtlanmış sertifika ya da dosya token'ı) hem geçen bir donanım belgesi gerekir; yoksa 409 user_auth_key_exists. Yönetici, yönetim API'siyle (panelde düğme yok) anahtarı silebilir; o zaman sonraki kayıt ilk kayıt sayılır.`,'wr']]},
 {c:9,k:'t',t:`Dosya telefona kilitli iner`,d:`Telefon dosyayı her zamanki gibi indirir; kullanıcıya bir şey sorulmaz. Sunucu dosyayı bu telefonun ekran kilidi anahtarına kilitlenmiş bir zarf olarak gönderir. Telefon zarfı açmadan saklar; uygulama bile içeriği görmez.`,cx:'92',hl:['g-dev','g92','g-db'],
  scr:{phone:'vault',dev:'tablet-07',vst:'none'},tq:`İstek · cihaz → 8092`,q:Q_UA_GET,ts:`Cevap · 8092 → cihaz`,s:S_UA_GET,
  mv:[sc({hot:'fetch'}),sc({hot:null,vst:'downloading'}),...mtls('d2'),m('d2',0,BL,'GET vault/gizli-rapor','q'),m('b2',0,BL,''),m('b2',1,TE,''),m('d2',1,TE,'200 kilitli zarf','s'),sc({vst:'locked'})],mk:[DM('kilitli saklandı','ok')],
  rows:[[`Telefonda`,`İndirme bitince dosya "kilitli" görünür. loadFile null döner; indirme sonucundaki içerik de boştur. Arka plandaki eşitleme de kilit sormadan çalışır.`],
   [`Sunucu`,`Policy'yi her zamanki gibi denetler (token + mTLS), sonra dosyayı bu cihazın kayıtlı ekran kilidi anahtarına kilitler. Kayıtlı anahtar yoksa 412 döner; kütüphane anahtarı kaydedip bir kez daha dener.`],
-  [`Saklama`,`Zarf geldiği gibi saklanır. Bu tür bir dosya için telefon yalnızca sunucunun kilitlediği zarfı kabul eder; depoda başka bir şey bulursa okumadan siler. Telefonda doğrulanmış bir kopya varsa yeni zarf onun üstüne yazılmaz: bekleyen bir yuvaya iner, kilit açılıp imzası doğrulanınca yerine geçer; doğrulanamazsa yalnızca bekleyen kopya silinir ve eski kopya açılır (2.2.0). Böylece TLS anahtarını ele geçiren biri iyi bir kopyayı çöple değiştiremez.`,'ok'],
+  [`Saklama`,`Zarf geldiği gibi saklanır. Bu tür bir dosya için telefon yalnızca sunucunun kilitlediği zarfı kabul eder; depoda başka bir şey bulursa okumadan siler. Telefonda doğrulanmış bir kopya varsa yeni zarf onun üstüne yazılmaz: bekleyen bir yuvaya iner, kilit açılıp imzası doğrulanınca yerine geçer; doğrulanamazsa yalnızca bekleyen kopya silinir ve eski kopya açılır (2.3.0). Böylece TLS anahtarını ele geçiren biri iyi bir kopyayı çöple değiştiremez.`,'ok'],
   [`Ekran kilidi yoksa`,`userAuth(REQUIRED) dosyayı saklamaz; indirme ScreenLockRequiredException ile başarısız olur ve uygulama kullanıcıyı güvenlik ayarlarına yollar.`,'wr']]},
 {c:9,k:'t',t:`Açmak için ekran kilidi sorulur`,d:`Kullanıcı dosyayı açmak isteyince telefon sistemin kendi kilit sorusunu gösterir. PIN, desen, şifre ya da parmak izi girilince donanım anahtarı kullanır, zarf açılır ve imza doğrulanır. Bu adım ağa çıkmaz.`,cx:'local',hl:['g-dev'],
  scr:{phone:'vault',dev:'tablet-07',vst:'locked'},tq:`Uygulamanın kodu`,q:Q_UA_OPEN,ts:`Sonuç`,s:S_UA_OPEN,
@@ -2908,7 +2919,7 @@ const S=[
  rows:[[`Kullanıcı`,`"Aç"a basar, sistemin kilit sorusuna PIN'ini girer. Vazgeçerse dosya açılmaz (Cancelled).`],
   [`Uygulama`,`PinVault.unlockFile(activity, "gizli-rapor", prompt) çağırır. Sonuç Unlocked ise içerik uygulamanın belleğindedir; örnek uygulama onu ekrandan ayrılınca ya da 1 dakika sonra siler.`],
   [`Neden güvenli`,`Kilit sorusunu sistem ve donanım yürütür. Kilit açılmadan anahtar kullanılamaz; root'lu telefonda "kilit açıldı" diye uydurmak donanımı kandırmaz.`,'ok'],
-  [`Ekran kilidi kaldırılırsa`,`Anahtar geçersiz olur: unlockFile Invalidated döner, kopya silinir ve dosya yeniden indirilir. Android 11 ve sonrasında parmak izi eklemek ya da silmek anahtarı bozmaz.`,'wr']]},
+  [`Ekran kilidi kaldırılırsa`,`Anahtar geçersiz olur: unlockFile Invalidated döner, kopya silinir; yeni kilit konunca dosya yeniden indirilir. Android 11 ve sonrasında parmak izi eklemek ya da silmek anahtarı bozmaz.`,'wr']]},
 {c:9,k:'l',t:`Ekran kilitli dosyanın sınırları`,d:`Ekran kilidi, saklanan kopyayı telefonu ele geçirene ve uygulamanın içine giren koda karşı korur. Root'lu telefonda tam koruma için sunucunun donanım belgesini zorunlu tutması gerekir; yoksa telefonun kaydettiği ilk anahtara güvenilir.`,hl:['g-dev','g92','g-db'],
  sx:{tag:'Sınırlar',cls:'none',title:`kime karşı korur, nerede biter`,rows:[[`Korur`,`saklanan kopyayı`,`→ kilit açılmadan ne uygulama ne root okuyabilir`,null,'ok'],[`warn (varsayılan)`,`ilk kaydedilen anahtara güvenilir`,`→ root uygulamadan önce kendi anahtarını kaydedebilir`,null,'warn'],[`enforce`,`yalnızca uygulamanın donanım anahtarı`,`→ paket adı ve imzalayan sertifika ayarlı olmalı`,null,'ok']]},
  tq:`Telefonda`,q:Q_UA_LIM,ts:`Sunucuda`,s:S_UA_LIM,
@@ -2952,7 +2963,7 @@ const S=[
  mv:[m('b3',0,BL,''),m('b3',1,TE,''),m('d3',1,TE,'200 yeni sertifika','s')],mk:[DM("✓ cihaz 8092'ye döner")],
  rows:[[`Sunucu ne kontrol eder`,`tablet-07 kimlik kaydında var mı, iptal edilmiş mi, CSR'daki anahtar kayıttakiyle aynı mı. CSR'ın imzası o anahtarla atılmış olmalı.`],
   [`Cihaz ne kontrol eder`,`8092'deki yenilemeyle aynı: kendi anahtarı ve aynı CA. Sonra 8092'ye döner.`,'ok']]},
-{c:11,k:'b',t:`Saldırı: başkasının adına kurtarma istemek`,d:`Biri başka bir cihazın adını yazıp kendi anahtarıyla sertifika almayı dener. İmza kayıtlı anahtarla tutmaz; 403.`,cx:'93',cl:NOCERT(`→ CSR imzası kayıtlı anahtarla tutmaz`),att:[`Başka bir cihaz`,`sertifikası yok`],hl:['g-att','g93','g-db'],tq:`İstek · başka cihaz → 8093`,q:Q_REC_OTHER,ts:`Cevap · 8093 → başka cihaz`,s:S_REC_OTHER,
+{c:11,k:'b',t:`Saldırı: başkasının adına kurtarma istemek`,d:`Biri başka bir cihazın adını yazıp kendi anahtarıyla sertifika almayı dener. CSR'daki anahtar kayıtlı anahtar değil; 403.`,cx:'93',cl:NOCERT(`→ CSR'daki anahtar kayıttakiyle uyuşmaz`),att:[`Başka bir cihaz`,`sertifikası yok`],hl:['g-att','g93','g-db'],tq:`İstek · başka cihaz → 8093`,q:Q_REC_OTHER,ts:`Cevap · 8093 → başka cihaz`,s:S_REC_OTHER,
  mv:[...tls('a3','kurtarma sert. + CA'),m('a3',0,RD,'POST renew','q'),m('b3',0,RD,''),m('b3',1,RD,''),m('a3',1,RD,'403','s')],mk:[AMK('✗ 403 reenroll_required')],
  rows:[[`Ne dener`,`tablet-07 adına kendi anahtarıyla sertifika almak.`],
   [`Neden olmaz`,`CSR'daki anahtar sunucudaki kayıtla uyuşmaz; tablet-07'nin anahtarı olmadan doğru imza atılamaz.`],
@@ -2971,8 +2982,8 @@ const S=[
   [`Ne olur`,`Kimlik sunucuda iptal edilmiş olarak işaretlenir. 8092 her istekte buna baktığı için cihazın bir sonraki isteği reddedilir; sertifika yenileme ve kurtarma kapısı da aynı cevabı verir.`,'ok'],
   [`Dosyalar ve anahtarlar`,`Aynı anda, kimliğin kanıtladığı cihazların bütün dosya token'ları iptal edilir, şifreleme ve ekran kilidi anahtarları silinir. Kimliğin yalnızca adını yazdığı cihazlara dokunulmaz; panel onları listeler ve "Bu cihazları da kes" ile ayrıca kesilir.`,'ok'],
   [`Geri alınmaz`,`İptal edilen kimlik iptal edilmiş kalır; aynı adla yeniden kayıt 403 alır. Cihazı yeniden kayıt etmek için bu bölümün son adımına bakın.`,'wr'],
-  [`Uygulamanın kendi sunucusu`,`İptal PinVault sunucusunda tutulur. Uygulamanın kendi mTLS sunucusu cihaz sertifikasını kendisi doğruluyorsa bu iptali kendiliğinden bilmez; sertifika orada süresi dolana kadar (en çok 90 gün) geçerli sayılabilir.`,'wr']]},
-{c:12,k:'n',t:`İptal edilen telefon ne görür`,d:`İptal edilen telefonun sertifikasının tarihi hâlâ geçerli olduğu için bağlantı kurulur, ama sunucu hiçbir isteğine cevap vermez. Uygulama "yeniden kayıt gerekli" haberini ilk isteğinde alır.`,cx:'92',cl:[`Cihaz gösterir`,`iptal edilmiş kimliğin sertifikası`,`→ bağlantı kurulur, her istek 403 alır`,3,'bad'],hl:['g-dev','g92','g-db'],
+  [`Uygulamanın kendi sunucusu`,`İptal PinVault sunucusunda tutulur. Uygulamanın kendi mTLS sunucusu cihaz sertifikasını kendisi doğruluyorsa bu iptali kendiliğinden bilmez; sertifika orada süresi dolana kadar (varsayılan ayarla en çok 90 gün) geçerli sayılabilir.`,'wr']]},
+{c:12,k:'n',t:`İptal edilen telefon ne görür`,d:`İptal edilen telefonun sertifikasının tarihi hâlâ geçerli olduğu için bağlantı kurulur, ama sunucu hiçbir isteğini yerine getirmez, her birine 403 döner. Uygulama "yeniden kayıt gerekli" haberini ilk isteğinde alır.`,cx:'92',cl:[`Cihaz gösterir`,`iptal edilmiş kimliğin sertifikası`,`→ bağlantı kurulur, her istek 403 alır`,3,'bad'],hl:['g-dev','g92','g-db'],
  scr:{phone:'enrolled',dev:'tablet-07'},tq:`İstek · tablet-07 → 8092`,q:Q_REVOKED_REQ,ts:`Cevap · 8092 → tablet-07`,s:S_REVOKED_REQ,
  mv:[...mtls('d2'),m('d2',0,BL,'GET config','q'),m('b2',0,BL,''),m('b2',1,RD,''),m('d2',1,RD,'403 reenroll_required','s'),sc({phone:'revlog'})],mk:[DM('yeniden kayıt gerekli','bad'),BMK('iptal edilmiş: her istek 403')],
  rows:[[`Sunucu`,`8092 her istekte kimliğin iptal edilip edilmediğine bakar. İptal edilmişse pin listesi, dosya, yenileme, hiçbirini vermez: 403 reenroll_required. Reddedilen istekler denetim kaydına yazılır (client_cert_revoked_refused).`],
@@ -2981,12 +2992,12 @@ const S=[
   [`Demo uygulamada`,`Günlükte "Sertifika reddedildi — yeniden kayıt gerekli" satırı çıkar.`],
   [`Uygulama ne yapmalı`,`Olayı alınca kaydı silip (unenroll) yeniden kayıt akışını başlatır.`]]},
 {c:12,k:'n',t:`İsteğe bağlı: iptal edilince dosyaları sil`,d:`İptal edilen telefonda daha önce inmiş dosyalar kalır. Uygulama isterse kütüphane bu dosyaları, sunucu telefonun kimliğini reddettiği anda siler.`,cx:'92',cl:[`Cihaz gösterir`,`iptal edilmiş kimliğin sertifikası`,`→ 403 bu bağlantıda geldiği için kimlikle ilgili sayılır`,3,'bad'],hl:['g-dev','g92'],
- scr:{phone:'log',dev:'tablet-07',stat:['t-bad','✗ Kimlik iptal edildi'],log:[['t-dim','8092: GET certificate-config']]},tq:`Uygulamanın kodu`,q:Q_WIPE,ts:`İptal cevabı gelince`,s:S_WIPE,
+ scr:{phone:'log',dev:'tablet-07',app:'Örnek uygulama (sample-client)',stat:['t-bad','✗ Kimlik iptal edildi'],log:[['t-dim','8092: GET certificate-config']]},tq:`Uygulamanın kodu`,q:Q_WIPE,ts:`İptal cevabı gelince`,s:S_WIPE,
  mv:[...mtls('d2'),m('d2',0,BL,'GET config'),m('b2',0,BL,''),m('b2',1,RD,''),m('d2',1,RD,'403 reenroll_required','s'),sc({log:[['t-dim','8092: GET certificate-config'],['t-bad','403 reenroll_required (bu sertifika gösterildi)'],['t-warn','ml-model silindi'],['t-warn','gizli-rapor silindi (kilitli kopya)'],['t-dim','REENROLL_REQUIRED olayı uygulamaya bildirildi']]})],mk:[DM('dosyalar silindi','warn')],
  rows:[[`Açmak`,`PinVaultConfig.Builder().wipeVaultFilesOnRevocation(). Varsayılan kapalı: iptal edilen telefon eski dosyalarıyla açılmaya devam eder.`],
   [`Ne zaman siler`,`403 reenroll_required, yüklü cihaz sertifikasını gösteren bir bağlantıda ya da o sertifikanın kendi yenileme isteğine cevap olarak gelirse. O Config API'nin bütün dosyalarını, kilitli kopyalar dahil, sertifika başına bir kez siler.`,'ok'],
   [`Ne zaman silmez`,`Aynı cevap sertifikasız bir bağlantıda gelirse: TLS bloğu, kayıttan önceki istek ya da kurtarma kapısı. Bu cevap imzalı değildir ve araya giren de yazabilir; olay yine bildirilir, hiçbir şey silinmez.`,'wr'],
-  [`Elle`,`Kullanıcı kaydı kendisi silerse PinVault.unenroll(context, null, wipeVaultFiles = true) aynı işi yapar. Örnek uygulamanın "Kaydı sil" düğmesi bunu kullanır.`]]},
+  [`Elle`,`Kullanıcı kaydı kendisi silerse PinVault.unenroll(context, null, wipeVaultFiles = true) aynı işi yapar. sample-client'ın "Kaydı sil" düğmesi bunu kullanır; demo uygulamanınki dosyaları silmez.`]]},
 {c:12,k:'x',t:`Yeniden kayıt: yeni kimlik ya da "Kimliği unut"`,d:`İptal edilen kimlik iptal edilmiş kalır. Cihazı yeniden kayıt etmek için ya yeni bir kimlik verilir ya da yönetici panelde "Kimliği unut"a basar; eski anahtarlar yine kalıcı olarak reddedilir.`,act:ADMIN,dev:'açık modda',hl:['g-att','g90','g91','g-db','g-dev'],
  sx:{tag:'8090',cls:'tok',title:`Client Sertifikaları sekmesi · iptal edilmiş satırda "Kimliği unut"`,rows:[ADMROW,[`Unutulan`,`kimliğin kayıtları`,`→ aynı kimlikle yeniden kayıt olunabilir`,null,'ok'],[`Kalıcı reddedilen`,`kimliğin kullandığı bütün anahtarlar`,`→ eski sertifika ve eski anahtar 403`,null,'ok']]},
  scr:{panel:'certs',certs:[CERT_REV],phone:'refused',dev:'açık modda'},tq:`İstekler`,q:Q_FORGET,ts:`Cevaplar`,s:S_FORGET,
@@ -3004,7 +3015,7 @@ const S=[
  tq:`Sunucuda üretilen`,q:Q_SRC_SRV,ts:`Pin'ler → APK`,s:S_SRC_SRV,
  mv:[[cert('b1',1,PU,''),cert('b2',1,PU,'')]],mk:[BMK('certs/demo-server.jks','muted'),DM("APK'da: sunucunun pin'leri",'muted')],
  rows:[[`Nedir`,`8091 ve 8092 bağlantıda aynı sertifikayı gösterir.`],
-  [`Nereden gelir`,`demo-server ilk açılışta kendisi üretir: RSA 2048, kendinden imzalı, 365 gün. Aynı anda yedek bir anahtar üretip kenara koyar. Sunucunun bütün keystore dosyaları .jks adını taşır ama 2.2.0'dan beri PKCS12 biçimindedir (JKS'in eski SHA-1 anahtar koruması bırakıldı); eski bir JKS dosyası ilk açılışta çevrilir.`],
+  [`Nereden gelir`,`demo-server ilk açılışta kendisi üretir: RSA 2048, kendinden imzalı, 365 gün. Aynı anda yedek bir anahtar üretip kenara koyar. Sunucunun bütün keystore dosyaları .jks adını taşır ama 2.3.0'dan beri PKCS12 biçimindedir (JKS'in eski SHA-1 anahtar koruması bırakıldı); eski bir JKS dosyası ilk açılışta çevrilir.`],
   [`Cihaz nasıl tanır`,`Bir CA'ya bakmaz. Sertifikanın anahtarının özetini (pin) APK'daki listeyle karşılaştırır; buna SSL pinning denir. İki pin de panelde ve certs/demo-server.pins dosyasında görünür; geliştirici bunları bootstrapPins'e yazar.`,'ok'],
   [`Yenilerken`,`Panelde "Yedek Anahtara Geç"e basılır ve sunucu yeniden başlatılır; 8091 ve 8092 bundan sonra yedek anahtarla açılır. Cihazlar yedeğin pin'ini zaten bildiği için APK güncellemesi gerekmez; yeni yedeğin pin'i sonraki sürüme eklenir.`,'wr']]},
 {c:13,id:'rec',k:'s',t:`8093'ün sertifikası ve sunucu CA'sı`,d:`Kurtarma kapısının kendi sertifikası vardır; onu sunucunun kendi sertifika kurumu (CA) imzalar. Uygulama bu kapı için o kurumun pin'ini taşır.`,hl:['g93','g-db'],
@@ -3035,7 +3046,7 @@ const S=[
  mv:[m('d2',0,BL,'GET config'),m('d2',1,TE,'pin listesi'),m('d2',0,BL,'GET download'),cert('d2',1,PKC,'host P12','s')],mk:[DM('✓ pin listesi + host P12')],
  rows:[[`Pin'ler`,`Uygulamanın kendi sunucularının pin'leri config API'den gelen imzalı listededir; APK'da yoktur. Panelden değiştirilir, cihazlara bir sonraki güncellemede gider. Uygulamanın kendi istekleri de bu pin'lerle korunur (SSL pinning).`],
   [`Host sertifikası`,`Hedef sunucu mTLS istiyorsa cihazın göstereceği sertifika (P12) panelde host'un kartından yüklenir ve 8092'den indirilir; bütün cihazlarda aynıdır, telefonda anahtarı Keystore'a aktarılır. Yüklenmemişse cihaz, sunucu izinliyse kendi sertifikasını gösterir.`,'wr'],
-  [`APK'da kalanlar`,`Yalnızca config sunucusuna ulaşmak için gereken pin'ler: 8091 ve 8092'nin sertifika pin'leri ve 8093'ün CA pin'i.`,'ok']]},
+  [`APK'da kalanlar`,`APK'daki pin'ler yalnızca config sunucusuna ulaşmak içindir: 8091 ve 8092'nin sertifika pin'leri ve 8093'ün CA pin'i (yanında imza doğrulama anahtarları da durur).`,'ok']]},
 
 {c:14,k:'o',t:`Özet: token'lar ve kodlar`,d:`Kayıt token'ı, kayıt kodu ve dosya token'ı: kim üretir, nerede durur, çalınırsa ne olur.`,act:ADMIN,hl:['g-db','g-dev'],
  sx:{tag:`Token'lar`,cls:'tok',title:`kayıt token'ı ve dosya token'ı`,rows:[[`Üretir`,`yönetici ya da uygulamanın sunucusu`,`→ 8090, API anahtarıyla`,null,''],[`Taşır`,`PinVault değil`,`→ demoda elle, üretimde uygulamanın sunucusu`,null,''],[`Saklar`,`sunucu: yalnızca özet · cihaz: kayıt token'ı hiç, dosya token'ı uygulamada`,``,null,'ok']]},
@@ -3052,7 +3063,8 @@ const S=[
   [`TLS mi mTLS mi`,`Hiçbir yerde mTLS kullanmayan uygulama kayıt olmaz; güvenliği pinleme ve imzalı, süreli config sağlar. mTLS kullanan uygulama token, kayıt kodu ya da onaylı başvuruyla bir kez kayıt olur; PinVault sunucusunda sertifika yalnızca 8092'de gösterilir, uygulamanın kendi mTLS sunucusuna yalnızca izinle.`],
   [`Kimlik`,`Keystore'daki anahtar. Sertifika, CSR, clientId, ANDROID_ID ve pin listesi tek başına kimseyi içeri sokmaz. 8092'de X-Device-Id de sertifikaya bağlı. Telefonun yazdığı cihaz kimliği bir beyandır; bağlı token ya da donanım belgesiyle kanıtlanmadıkça sertifika o telefonun dosyaları ve anahtarları adına iş görmez.`,'ok'],
   [`Atestasyon`,`5 dakikalık PinVault-Token yalnızca ölçümü geçen uygulamaya gider (pin listesi gizli değildir); uygulamanızın sunucusu token'ı kendi doğrular, geçmeyenin isteği 401 alır. Ret politikası, cihaz ek açıklamaları, ARC ve token sırrı panelde. Ölçüm telefonda, yargı sunucuda; üretimde ATTESTATION_KEY_POLICY=enforce.`,'ok'],
-  [`2.2.0 ile gelenler`,`Token'ı bir telefona bağlamak · anahtarın donanım belgesi · süresi dolan, her açılışta yeniden doğrulanan pin listesi · cihaz sertifikasının yalnızca izinli sunuculara gitmesi (clientCertHosts) · ekran kilitli dosyalar · iptal edilince dosyaları silmek (isteğe bağlı) · Config API'nin adını taşıyan imzalar (configApiId, v2 dosya imzası) · aynı yenileme isteğinin ikinci kez geçmemesi · 8092'de raporun yalnızca kendi adına olması · kayıtlı kimliği open modda devralmanın kapanması · atestasyon ve PinVault-Token · yönetilen güven kökleri (trustRoots) · issuer pin'inde ad kontrolü, farklı iki pin · Keystore seviyesi raporlama ve requireHardwareBackedKeys() · ekran kilitli dosyada bekleyen yuva · sabit hata kodlu raporlar · sınırlı gövde okuma · sunucuda PKCS12 keystore'lar, yönetim yalnızca 8090'da, host sertifikası yalnızca ACL'li cihaza · demo-app release korkuluğu.`,'ok'],
+  [`2.2.0 ile gelenler`,`Token'ı bir telefona bağlamak · anahtarın donanım belgesi · süresi dolan, her açılışta yeniden doğrulanan pin listesi · cihaz sertifikasının yalnızca izinli sunuculara gitmesi (clientCertHosts) · ekran kilitli dosyalar · iptal edilince dosyaları silmek (isteğe bağlı) · Config API'nin adını taşıyan imzalar (configApiId, v2 dosya imzası) · aynı yenileme isteğinin ikinci kez geçmemesi · 8092'de raporun yalnızca kendi adına olması · kayıtlı kimliği open modda devralmanın kapanması.`,'ok'],
+  [`2.3.0 ile gelenler`,`Atestasyon ve PinVault-Token · yönetilen güven kökleri (trustRoots) · issuer pin'inde ad kontrolü, farklı iki pin · Keystore seviyesi raporlama ve requireHardwareBackedKeys() · ekran kilitli dosyada bekleyen yuva · sabit hata kodlu raporlar · sınırlı gövde okuma · sunucuda PKCS12 keystore'lar, yönetim yalnızca 8090'da, host sertifikası yalnızca ACL'li cihaza · demo-app release korkuluğu.`,'ok'],
   [`Önceden düzeltilenler`,`Token yarışı · şifreleme anahtarı kaydı · gövde sınırı · her istekte iptal kontrolü · bir cihaz tek etkin kimlik · kimliklerde işaretleme · 8092'de X-Device-Id sertifikaya bağlı · 8091'de anahtar kaydı sınırlı · iptal edilen kimliği unutma · iptal haberi telefona ilk istekte gelir (2.1.1) · applyTo ile kurulan istemciler yenilenen sertifikayı izler (2.1.1).`],
   [`Kalan sınırlar`,`8091'de hiç kayıt olmamış bir cihazın yerine ilk şifreleme anahtarı kaydını başkası yapabilir ve X-Device-Id cihazın kendi beyanıdır (token politikası yalnızca token'a güvenir); open mod yalnızca demo içindir (bir ANDROID_ID ile ilk gelen o kimliği alır); host sertifikası her cihazda aynı ve PinVault onu iptal edemez; kurtarma yalnızca anahtarı kanıtlar: donanım destekli olmayan bir Keystore'dan çıkarılmış anahtar, kimlik iptal edilene kadar yenilenir; ekran kilitli dosyada root'a karşı tam koruma için sunucunun donanım belgesini zorunlu tutması gerekir; PinVault'taki iptal, uygulamanın kendi mTLS sunucusuna kendiliğinden ulaşmaz.`,'wr'],
   [`Burada anlatılmayanlar`,`İmza anahtarını uygulama güncellemeden değiştirme (anahtar seti) ve birden çok imza, ikinci yönetici onayı, denetim kaydı ve webhook bildirimleri, cihaza özel host listesi ayarı, requireCaTrust, dosyaların çevrimdışı ömrü, sunucusuz (sabit pin'li) kullanım ve kendi sunucunuzu yazma. Bunlar README ve SECURE_OPERATIONS belgelerinde.`]]}
@@ -3153,22 +3165,23 @@ function vaultUpHtml(st){
   h+='<div style="flex:1 1 130px"><div class="pm-lbl">Encryption</div><div class="pm-in" style="font-family:var(--font-sans)">'+(ua?'user_auth — ekran kilidiyle açılır':'plain')+'</div></div>';
   h+=btn('Yükle',st.hot==='vup',1)+'</div>';
   h+='<div class="pm-hint">'+(ua?'Gizli dosyalar için. Sunucu dosyayı o telefonun ekran kilidi anahtarına kilitleyip gönderir: dosya telefonda kilitli durur, içeriği ancak kullanıcı ekran kilidini (PIN, desen, şifre ya da parmak izi) açınca görünür. …':'Şifreleme yok — dosya sunucuda düz saklanır, düz servis edilir (bağlantı yine de pinli TLS). Hassas olmayan içerik için.')+'</div>';
-  if(st.done)h+='<div class="pm-toast">'+esc(st.vkey)+' v1 ['+pol+'/'+enc+'] uploaded</div><table class="pm-tbl"><tr><th>Anahtar</th><th>Versiyon</th><th>Policy</th><th>Encryption</th></tr><tr><td>'+esc(st.vkey)+'</td><td>v1</td><td>'+pol+'</td><td>'+enc+'</td></tr></table>';
+  if(st.done)h+='<div class="pm-toast">'+esc(st.vkey)+' v1 ['+pol+'/'+enc+'] uploaded</div><table class="pm-tbl"><tr><th>Anahtar</th><th>Versiyon</th><th>Boyut</th><th>Policy</th><th>Encryption</th><th></th></tr><tr><td>'+esc(st.vkey)+'</td><td>v1</td><td>'+(ua?'86.4 KB':'2.4 MB')+'</td><td>'+pol+'</td><td>'+enc+'</td><td class="t-dim">✕</td></tr></table>';
   return h;
 }
-const ATT_FLAGS=[['rooted','reject'],['emulator','reject'],['debugger','reject'],['debuggable','reject'],['hooking_framework','reject'],['app_integrity','reject'],['cloner','reject'],['unknown_installer','warn'],['software_key','warn'],['key_unattested','warn'],['old_patch_level','warn'],['adb_enabled','ignore']];
-const ATT_NOTE={rooted:'su, Magisk, test-keys',emulator:'goldfish, qemu',debugger:'TracerPid',debuggable:'FLAG_DEBUGGABLE',hooking_framework:'frida, xposed, zygisk',app_integrity:'imzalayan ≠ ayarlanan',cloner:'dataDir başka pakette',unknown_installer:'mağaza dışı yükleme',software_key:'anahtar donanımda değil',key_unattested:'belge yok',old_patch_level:'yama eski',adb_enabled:'geliştirici seçenekleri'};
+const ATT_FLAGS=[['rooted','reject'],['emulator','reject'],['debugger','reject'],['debuggable','reject'],['hooking_framework','reject'],['app_integrity','reject'],['cloner','reject'],['unknown_installer','warn'],['software_key','warn'],['key_unattested','warn'],['old_patch_level','warn'],['play_integrity','warn'],['play_integrity_missing','warn'],['adb_enabled','ignore']];
+const ATT_NOTE={rooted:'su, Magisk, test-keys',emulator:'goldfish, qemu',debugger:'TracerPid',debuggable:'FLAG_DEBUGGABLE',hooking_framework:'frida, xposed, zygisk',app_integrity:'imzalayan ≠ ayarlanan',cloner:'dataDir başka pakette',unknown_installer:'mağaza dışı yükleme',software_key:'anahtar donanımda değil',key_unattested:'belge yok',old_patch_level:'yama eski',adb_enabled:'geliştirici seçenekleri',play_integrity:'Play Integrity kararı geçmedi ya da doğrulanamadı',play_integrity_missing:'son 24 saatte doğrulanmış Play Integrity kararı yok'};
+const ATT_LV={reject:'reddet',warn:'uyar',ignore:'yoksay'};
 function attestHtml(st){
-  let h='<div class="pm-title">Atestasyon <span class="pm-badge">politika v'+esc(st.polVer||3)+'</span></div><div class="pm-hint">Hangi sinyal reddeder (reject), hangisi yalnızca uyarır (warn), hangisine bakılmaz (ignore). Geçen cihaz 5 dakikalık PinVault-Token alır; geçmeyen token almaz, uygulamanızın sunucusu onu 401 ile çevirir.</div>';
-  h+='<div class="pm-scroll"><table class="pm-tbl pm-pol"><tr><th style="width:36%">Sinyal</th><th style="width:16%">Karar</th><th>Ne bakar</th></tr>';
-  ATT_FLAGS.forEach(function(f){h+='<tr><td style="font-family:var(--font-mono)">'+f[0]+'</td><td class="'+(f[1]==='reject'?'t-bad':f[1]==='warn'?'t-warn':'t-dim')+'">'+f[1]+'</td><td class="t-dim wrap">'+esc(ATT_NOTE[f[0]]||'')+'</td></tr>';});
-  h+='</table></div><div style="display:flex;align-items:center;gap:8px;margin-top:6px;flex-wrap:wrap">'+btn('Politikayı kaydet',st.hot==='pol',1)+'<span class="t-dim" style="font-size:10.5px">revealReasons: kapalı · token 300 s · aralık 300 s</span></div>';
+  let h='<div class="pm-title">Red politikası <span class="pm-badge">v'+esc(st.polVer||3)+'</span></div><div class="pm-hint">Her bayrak için reddet (token yok, config yok), uyar (geçer; uyarı olarak döner) ya da yoksay. Geçen cihaz 5 dakikalık PinVault-Token alır; geçmeyen token almaz, uygulamanızın sunucusu onu 401 ile çevirir.</div>';
+  h+='<div style="display:flex;align-items:center;gap:6px;margin:4px 0 6px;flex-wrap:wrap"><span class="t-dim" style="font-size:10.5px">Hazır ayar:</span>'+btn('Sıkı')+' '+btn('Gevşek')+'</div>';
+  h+='<div class="pm-scroll"><table class="pm-tbl pm-pol"><tr><th style="width:36%">Bayrak</th><th>Anlamı</th><th style="width:16%">Karar</th></tr>';
+  ATT_FLAGS.forEach(function(f){h+='<tr><td style="font-family:var(--font-mono)">'+f[0]+'</td><td class="t-dim wrap">'+esc(ATT_NOTE[f[0]]||'')+'</td><td class="'+(f[1]==='reject'?'t-bad':f[1]==='warn'?'t-warn':'t-dim')+'">'+esc(ATT_LV[f[1]])+'</td></tr>';});
+  h+='</table></div><div style="display:flex;align-items:center;gap:8px;margin-top:6px;flex-wrap:wrap">'+btn('Politikayı Kaydet',st.hot==='pol',1)+'<span class="t-dim" style="font-size:10.5px">revealReasons: kapalı · token 300 s · aralık 300 s</span></div>';
   if(st.devices){
-    h+='<div class="pm-title" style="margin-top:10px">Cihazlar <span class="pm-badge">'+st.devices.length+'</span></div><div class="pm-scroll"><table class="pm-tbl pm-pol"><tr><th style="width:30%">Cihaz</th><th style="width:13%">Karar</th><th style="width:15%">ARC</th><th style="width:20%">Anahtar</th><th>Etiket</th></tr>';
-    st.devices.forEach(function(d){h+='<tr><td class="pm-uid">'+esc(d.id)+'</td><td class="'+(d.res==='pass'?'t-ok':'t-bad')+'">'+esc(d.res)+'</td><td style="font-family:var(--font-mono);color:var(--text-accent)">'+esc(d.arc)+'</td><td class="wrap">'+attBadge(d.key||'ok')+(d.warn?'<div class="t-warn" style="font-size:10px">⚠ '+esc(d.warn)+'</div>':'')+'</td><td class="wrap">'+(d.anno?'<span class="pm-badge">'+esc(d.anno)+'</span> ':'')+btn('Düzenle',st.hot==='anno'&&d.res==='pass')+'</td></tr>';});
+    h+='<div class="pm-title" style="margin-top:10px">Attestation yapan cihazlar <span class="pm-badge">'+st.devices.length+'</span></div><div class="pm-scroll"><table class="pm-tbl pm-pol"><tr><th style="width:24%">Cihaz</th><th style="width:11%">Son sonuç</th><th style="width:13%">ARC</th><th style="width:17%">Anahtar</th><th style="width:13%">Ek açıklamalar</th><th></th></tr>';
+    st.devices.forEach(function(d){h+='<tr><td class="pm-uid">'+esc(d.id)+'</td><td class="'+(d.res==='pass'?'t-ok':'t-bad')+'">'+esc(d.res)+'</td><td style="font-family:var(--font-mono);color:var(--text-accent)">'+esc(d.arc)+'</td><td class="wrap">'+attBadge(d.key||'ok')+(d.warn?'<div class="t-warn" style="font-size:10px">⚠ '+esc(d.warn)+'</div>':'')+'</td><td class="wrap">'+(d.anno?'<span class="pm-badge">'+esc(d.anno)+'</span>':'<span class="t-dim">—</span>')+'</td><td class="wrap">'+btn('Ek açıklama',st.hot==='anno'&&d.res==='pass')+' '+btn('Ayrıntı')+' '+btn('Anahtarı unut')+'</td></tr>';});
     h+='</table></div>';
   }
-  if(st.secret)h+='<div class="pm-pop">PinVault-Token gizli anahtarı: <span class="pm-tok">kid 2026-10-05-01</span> aktif'+(st.kid2?' → <span class="pm-tok">2026-10-05-02</span> aktif, öncekiler doğrulama için duruyor':'')+'<div style="margin-top:6px">'+btn('Döndür',st.hot==='rot')+' '+btn('Sırları göster (2 kişi onayı)')+'</div></div>';
   return h;
 }
 function pmHtml(st){
@@ -3188,7 +3201,7 @@ function pmHtml(st){
     h+='<div class="pm-title">Enrollment Token <span class="pm-badge"><i class="ti ti-lock" aria-hidden="true"></i> Token zorunlu</span></div>';
     h+='<div class="pm-note">Bu yolda panelde elle iş yok. Token\'ı uygulamanızın sunucusu, kullanıcı giriş yapınca 8090\'dan API anahtarıyla ister.</div>';
   } else if(st.panel==='vault'){
-    h+='<div class="pm-hint">Vault › ml-model · politika: token</div>';
+    h+='<div class="pm-title">ml-model</div><div class="pm-note" style="margin:4px 0 8px">Erişim Politikası ve Şifreleme · Şu an: <span class="pm-tok">token / plain</span></div>';
     h+='<div class="pm-title">Token Yönetimi (1)</div>';
     h+='<div class="pm-form"><div class="pm-field">'+(st.typed?'<div class="pm-in">'+esc(st.typed)+'</div>':'<div class="pm-in ph">ANDROID_ID (ör. 3f2a9c0d81b4e6a7)</div>')+'</div>'+btn('+ Yeni Token',st.hot==='vtok',1)+'</div>';
     h+='<div class="pm-hint">Token bir dosya ve bir cihaz için geçerlidir. Cihaz kimliği, uygulamanın gönderdiği ANDROID_ID\'dir: Cihaz Özeti\'nde cihaza tıklayınca görünür.</div>';
