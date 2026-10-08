@@ -37,7 +37,7 @@ internal class DeviceIntegrityProbe(
      * for the key signals; null when it cannot be read (reported as unknown
      * and unattested).
      */
-    suspend fun report(nonce: String, key: ClientIdentityKeyProvider?): IntegrityReport {
+    suspend fun report(nonce: String, key: ClientIdentityKeyProvider?, deviceId: String? = null): IntegrityReport {
         val app = appInfo()
         val signers = app.signerSha256
         val keyLevel = try { key?.securityLevel() ?: KeySecurityLevel.UNKNOWN } catch (e: Exception) { KeySecurityLevel.UNKNOWN }
@@ -112,7 +112,7 @@ internal class DeviceIntegrityProbe(
             app = app,
             device = device,
             signals = signals,
-            verdict = verdict(nonce)
+            verdict = verdict(nonce, deviceId)
         )
     }
 
@@ -126,10 +126,10 @@ internal class DeviceIntegrityProbe(
         Signal.error(name)
     }
 
-    private suspend fun verdict(nonce: String): IntegrityVerdict? {
+    private suspend fun verdict(nonce: String, deviceId: String?): IntegrityVerdict? {
         val provider = verdictProvider ?: return null
         return try {
-            withTimeout(VERDICT_TIMEOUT_MS) { provider.verdict(nonce) }
+            withTimeout(VERDICT_TIMEOUT_MS) { if (deviceId != null) provider.verdict(nonce, deviceId) else provider.verdict(nonce) }
         } catch (e: kotlinx.coroutines.CancellationException) {
             if (e is kotlinx.coroutines.TimeoutCancellationException) {
                 Timber.w("Integrity verdict provider took longer than %d ms — attesting without it", VERDICT_TIMEOUT_MS)

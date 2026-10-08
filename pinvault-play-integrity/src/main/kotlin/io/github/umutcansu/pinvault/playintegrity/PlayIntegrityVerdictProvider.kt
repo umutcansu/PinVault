@@ -48,10 +48,13 @@ import kotlin.coroutines.resumeWithException
  * raises `play_integrity_missing`. Set [minInterval] to 0 to send a token
  * on every round.
  *
- * **Nonce.** The attestation nonce goes to Google verbatim: the reference
- * server issues base64url nonces of 40 bytes, which is within Play
- * Integrity's 16–500 byte, URL-safe Base64 rule; a server of your own must
- * issue nonces of that shape for the two to be comparable.
+ * **Nonce.** Google is given
+ * `base64url-nopad(SHA-256("pinvault-play-integrity:v2:" + nonce + ":" + deviceId))`
+ * (v2): the token is bound to this device's round, not only to the round's
+ * nonce, so a token minted for one device does not pass for another. The
+ * reference server accepts it, and a server with `PLAY_INTEGRITY_REQUIRE_V2`
+ * accepts nothing else. When the library has no device id for the round the
+ * raw nonce (v1) is sent, as before.
  *
  * **Failures** never fail an attestation: the probe logs and attests
  * without the verdict. A failure that will not change (Play Store or Play
@@ -101,7 +104,11 @@ class PlayIntegrityVerdictProvider @JvmOverloads constructor(
         require(cloudProjectNumber > 0) { "cloudProjectNumber must be the Play Console project number (a positive number)" }
     }
 
-    override suspend fun verdict(nonce: String): IntegrityVerdict? {
+    override suspend fun verdict(nonce: String): IntegrityVerdict? = verdictFor(nonce)
+
+    override suspend fun verdict(nonce: String, deviceId: String): IntegrityVerdict? = verdictFor(boundNonce(nonce, deviceId))
+
+    private suspend fun verdictFor(nonce: String): IntegrityVerdict? {
         if (unavailable) return null
         val now = clock()
         if (minIntervalMs > 0 && lastTokenAt != 0L && now - lastTokenAt < minIntervalMs) {
@@ -158,6 +165,32 @@ class PlayIntegrityVerdictProvider @JvmOverloads constructor(
     companion object {
         /** The `verdictProvider.name` the server recognises. */
         const val NAME = "play-integrity"
+
+        /** The v2 nonce: the round's nonce bound to the device, 43 URL-safe characters. */
+        @JvmStatic
+        fun boundNonce(nonce: String, deviceId: String): String {
+            val digest = java.security.MessageDigest.getInstance("SHA-256")
+                .digest("pinvault-play-integrity:v2:$nonce:$deviceId".toByteArray(Charsets.UTF_8))
+            return base64UrlNoPad(digest)
+        }
+
+        /** URL-safe Base64 without padding (java.util.Base64 needs API 26; minSdk is 24). */
+        internal fun base64UrlNoPad(bytes: ByteArray): String {
+            val alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_"
+            val out = StringBuilder((bytes.size * 4 + 2) / 3)
+            var i = 0
+            while (i < bytes.size) {
+                val b0 = bytes[i].toInt() and 0xFF
+                val b1 = if (i + 1 < bytes.size) bytes[i + 1].toInt() and 0xFF else 0
+                val b2 = if (i + 2 < bytes.size) bytes[i + 2].toInt() and 0xFF else 0
+                out.append(alphabet[b0 shr 2])
+                out.append(alphabet[((b0 and 0x03) shl 4) or (b1 shr 4)])
+                if (i + 1 < bytes.size) out.append(alphabet[((b1 and 0x0F) shl 2) or (b2 shr 6)])
+                if (i + 2 < bytes.size) out.append(alphabet[b2 and 0x3F])
+                i += 3
+            }
+            return out.toString()
+        }
 
         /** Default [minInterval]: one request to Google per six hours per process. */
         const val DEFAULT_MIN_INTERVAL_HOURS = 6L

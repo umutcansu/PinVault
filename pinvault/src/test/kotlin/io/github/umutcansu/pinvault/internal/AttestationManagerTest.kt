@@ -98,7 +98,7 @@ class AttestationManagerTest {
         currentConfigVersion = { 7 },
         currentIssuedAt = { 1_000L },
         liveConfig = liveConfig,
-        buildReport = { _, _ -> report },
+        buildReport = { _, _, _ -> report },
         applyConfig = { signed -> applied += signed; UpdateResult.Updated(9) },
         onConfigApplied = { applyResults += it },
         onEvent = { events += it },

@@ -64,7 +64,7 @@ internal class AttestationManager(
     private val currentConfigVersion: () -> Int,
     private val currentIssuedAt: () -> Long,
     private val liveConfig: () -> CertificateConfig?,
-    private val buildReport: suspend (nonce: String, key: ClientIdentityKeyProvider) -> String,
+    private val buildReport: suspend (nonce: String, deviceId: String, key: ClientIdentityKeyProvider) -> String,
     private val applyConfig: suspend (SignedConfigResponse) -> UpdateResult,
     private val onConfigApplied: (UpdateResult) -> Unit = { },
     private val onEvent: (PinVaultConnectionEvent.Attestation) -> Unit = { },
@@ -182,7 +182,7 @@ internal class AttestationManager(
             }
             challenge.optLong("serverTime", 0L).takeIf { it > 0L }?.let { skew = it - clock() }
 
-            val report = buildReport(nonce, key)
+            val report = buildReport(nonce, did, key)
             val canonical = canonicalString(nonce, did, report)
             val signature = base64(key.sign(canonical.toByteArray(Charsets.UTF_8)))
             val chain = if (chainWanted) attestationChainOf(key) else emptyList()

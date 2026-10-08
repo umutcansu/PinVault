@@ -40,6 +40,13 @@ interface IntegrityVerdictProvider {
      * on without it.
      */
     suspend fun verdict(nonce: String): IntegrityVerdict?
+
+    /**
+     * The same, with the device id the round is for: a provider that can bind
+     * its verdict to the device as well (Play Integrity's v2 nonce) overrides
+     * this; the default asks [verdict] with the nonce alone.
+     */
+    suspend fun verdict(nonce: String, deviceId: String): IntegrityVerdict? = verdict(nonce)
 }
 
 /**
