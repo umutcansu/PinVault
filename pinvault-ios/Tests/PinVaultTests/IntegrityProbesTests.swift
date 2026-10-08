@@ -129,11 +129,62 @@ final class IntegrityProbesTests: XCTestCase {
             "/var/jb/usr/lib/libellekit.dylib", "/usr/lib/libcycript.dylib", "/Library/MobileSubstrate/DynamicLibraries/SSLKillSwitch2.dylib",
         ])
         XCTAssertEqual(signal.evidence, [
-            "dyld:substrate", "dyld:substitute", "dyld:libhooker", "dyld:ellekit", "dyld:cycript", "dyld:substrate", "dyld:sslkillswitch",
+            "dyld:substrate", "dyld:substitute", "dyld:libhooker", "dyld:ellekit", "dyld-path:libellekit.dylib", "dyld:cycript",
+            "dyld:substrate", "dyld:sslkillswitch", "dyld-path:sslkillswitch2.dylib",
         ].distinctPreservingOrder())
         // Only the file name counts: a directory named after a marker is not a hook.
         XCTAssertFalse(hooking(images: ["/Users/dev/frida-notes/App.app/App"]).flag)
         XCTAssertFalse(hooking(environment: ["DYLD_INSERT_LIBRARIES": ""]).flag)
+    }
+
+    func testATweakOfAnyNameIsEvidenceByWhereItWasLoadedFrom() {
+        let tweaks = HookingProbe(loadedImages: { [
+            "/var/jb/Library/MobileSubstrate/DynamicLibraries/Innocent.dylib",
+            "/private/preboot/1F2E/jb-Xy/procursus/usr/lib/helper.dylib",
+            "/Library/TweakInject/Whatever.dylib",
+        ] }, environment: [:], fridaPortOpen: { false }, onMacHost: false).probe()
+        XCTAssertTrue(tweaks.flag)
+        XCTAssertEqual(tweaks.evidence, ["dyld-path:innocent.dylib", "dyld-path:helper.dylib", "dyld-path:whatever.dylib"])
+        // The system's cryptexes live under /private/preboot too.
+        XCTAssertFalse(HookingProbe(loadedImages: { ["/private/preboot/Cryptexes/OS/System/Library/Frameworks/WebKit.framework/WebKit"] },
+                                    environment: [:], fridaPortOpen: { false }, onMacHost: false).probe().flag)
+    }
+
+    func testOnADeviceAnImageOutsideTheSharedCacheTheSystemAndTheBundleIsForeign() {
+        let bundle = "/private/var/containers/Bundle/Application/X/App.app"
+        let probe = HookingProbe(loadedImages: { [
+            "/usr/lib/libSystem.B.dylib",                                   // in the cache
+            "\(bundle)/Frameworks/Own.framework/Own",                       // the app's own
+            "/System/Library/AccessibilityBundles/UIKit.axbundle/UIKit",    // sealed system volume
+            "/Developer/usr/lib/libMainThreadChecker.dylib",                // Xcode
+            "/private/var/mobile/Library/libhelper.dylib",                  // foreign
+        ] }, environment: [:], fridaPortOpen: { false },
+           inSharedCache: { $0 == "/usr/lib/libSystem.B.dylib" }, bundlePath: bundle, onMacHost: false)
+        XCTAssertEqual(probe.probe().evidence, ["dyld-foreign:libhelper.dylib"])
+        // The simulator and macOS load the Mac's libraries: not judged there.
+        let onMac = HookingProbe(loadedImages: { ["/private/var/mobile/Library/libhelper.dylib"] }, environment: [:], fridaPortOpen: { false },
+                                 inSharedCache: { _ in false }, bundlePath: bundle, onMacHost: true)
+        XCTAssertFalse(onMac.probe().flag)
+    }
+
+    func testFridasThreadsAreEvidence() {
+        let probe = HookingProbe(loadedImages: { [] }, environment: [:], fridaPortOpen: { false },
+                                 threadNames: { ["com.apple.main-thread", "gum-js-loop", "gmain", "pool-frida-3"] })
+        XCTAssertEqual(probe.probe().evidence, ["thread:gum-js-loop", "thread:gmain", "thread:pool-frida-3"])
+    }
+
+    func testTheLiveThreadNamesIncludeANamedThread() {
+        let done = DispatchSemaphore(value: 0)
+        let ready = DispatchSemaphore(value: 0)
+        let thread = Thread {
+            ready.signal()
+            done.wait()
+        }
+        thread.name = "pinvault-probe-test"
+        thread.start()
+        ready.wait()
+        XCTAssertTrue(LiveIntegrityReaders.threadNames().contains("pinvault-probe-test"))
+        done.signal()
     }
 
     func testTheLiveImageListAndPortCheckWork() {
@@ -151,6 +202,52 @@ final class IntegrityProbesTests: XCTestCase {
     }
 
     // MARK: app_integrity
+
+    func testADecryptedBinaryClaimingTheAppStoreIsEvidence() {
+        func probe(_ installer: AppInstaller, _ encrypted: Bool?) -> IntegritySignal {
+            AppIntegrityProbe(bundleId: "a", teamId: "T", expectedBundleIds: [], expectedTeamIds: [],
+                              installer: installer, mainImageEncrypted: encrypted).probe()
+        }
+        XCTAssertEqual(probe(.appStore, false).evidence, ["macho:decrypted"])
+        XCTAssertEqual(probe(.testFlight, false).evidence, ["macho:decrypted"])
+        XCTAssertFalse(probe(.appStore, true).flag)
+        XCTAssertFalse(probe(.appStore, nil).flag, "unread is not evidence")
+        XCTAssertFalse(probe(.provisioned, false).flag, "development and ad hoc builds are not encrypted")
+    }
+
+    func testGetTaskAllowInTheCodeSignatureIsDebuggableWithoutAProfile() {
+        let resigned = DebuggableProbe(getTaskAllow: nil, isSimulatorBuild: false, isDebugBuild: false, signedGetTaskAllow: true)
+        XCTAssertTrue(resigned.debuggable)
+        XCTAssertEqual(resigned.probe().evidence, ["codesign:get-task-allow"])
+        let store = DebuggableProbe(getTaskAllow: nil, isSimulatorBuild: false, isDebugBuild: false, signedGetTaskAllow: false)
+        XCTAssertFalse(store.debuggable)
+        XCTAssertFalse(store.probe().flag)
+    }
+
+    func testTheCodeSignatureEntitlementsAreReadFromAThinAndAFatBinary() throws {
+        let entitlements = try PropertyListSerialization.data(fromPropertyList: ["get-task-allow": true, "application-identifier": "T.a"], format: .xml, options: 0)
+        let thin = MachOFixture.thin(entitlements: entitlements)
+        let readThin = try MachOReader.entitlements(read: { offset, length in thin.subdata(in: min(offset, thin.count)..<min(offset + length, thin.count)) })
+        XCTAssertEqual(readThin?["get-task-allow"] as? Bool, true)
+        let fat = MachOFixture.fat(slice: thin)
+        let readFat = try MachOReader.entitlements(read: { offset, length in fat.subdata(in: min(offset, fat.count)..<min(offset + length, fat.count)) })
+        XCTAssertEqual(readFat?["application-identifier"] as? String, "T.a")
+        XCTAssertNil(try MachOReader.entitlements(read: { _, _ in Data(repeating: 0, count: 64) }), "not a Mach-O")
+    }
+
+    func testCryptidIsReadFromTheLoadCommands() {
+        var commands = Data()
+        commands.appendLE(UInt32(0x19)); commands.appendLE(UInt32(16)); commands.append(Data(count: 8))      // LC_SEGMENT_64 stub
+        commands.appendLE(UInt32(0x2C)); commands.appendLE(UInt32(24))                                        // LC_ENCRYPTION_INFO_64
+        commands.appendLE(UInt32(0x4000)); commands.appendLE(UInt32(0x1000)); commands.appendLE(UInt32(1)); commands.appendLE(UInt32(0))
+        commands.withUnsafeBytes { XCTAssertEqual(MachOReader.cryptid(commands: $0, count: 2), 1) }
+        Data(count: 16).withUnsafeBytes { XCTAssertNil(MachOReader.cryptid(commands: $0, count: 1)) }
+    }
+
+    func testTheLiveReadersOfTheMachOAnswerWithoutFailing() throws {
+        _ = LiveIntegrityReaders.mainImageEncrypted()
+        _ = try LiveIntegrityReaders.signedGetTaskAllow()
+    }
 
     func testAppIntegrityIsJudgedOnTheDeviceOnlyWhenTheAppNamedItsIds() {
         let bundle = "com.example.sampleclient"
@@ -301,4 +398,41 @@ private final class LocalListener {
     }
 
     func close() { Darwin.close(fd) }
+}
+
+/// Minimal Mach-O files with a code signature that holds an entitlements blob.
+enum MachOFixture {
+    static func thin(entitlements xml: Data) -> Data {
+        // Entitlements blob, then the super blob that indexes it.
+        var ents = Data()
+        ents.appendBE(UInt32(0xFADE_7171)); ents.appendBE(UInt32(8 + xml.count)); ents.append(xml)
+        var superBlob = Data()
+        superBlob.appendBE(UInt32(0xFADE_0CC0)); superBlob.appendBE(UInt32(12 + 8 + ents.count)); superBlob.appendBE(UInt32(1))
+        superBlob.appendBE(UInt32(5)); superBlob.appendBE(UInt32(20))
+        superBlob.append(ents)
+        // Header + one LC_CODE_SIGNATURE pointing after it.
+        let commandsSize = 16
+        let signatureOffset = 32 + commandsSize
+        var file = Data()
+        file.appendLE(UInt32(0xFEED_FACF)); file.appendLE(UInt32(0x0100_000C)); file.appendLE(UInt32(0)); file.appendLE(UInt32(2))
+        file.appendLE(UInt32(1)); file.appendLE(UInt32(commandsSize)); file.appendLE(UInt32(0)); file.appendLE(UInt32(0))
+        file.appendLE(UInt32(0x1D)); file.appendLE(UInt32(16)); file.appendLE(UInt32(signatureOffset)); file.appendLE(UInt32(superBlob.count))
+        file.append(superBlob)
+        return file
+    }
+
+    static func fat(slice: Data) -> Data {
+        let offset = 4096
+        var file = Data()
+        file.appendBE(UInt32(0xCAFE_BABE)); file.appendBE(UInt32(1))
+        file.appendBE(UInt32(0x0100_000C)); file.appendBE(UInt32(0)); file.appendBE(UInt32(offset)); file.appendBE(UInt32(slice.count)); file.appendBE(UInt32(14))
+        file.append(Data(count: offset - file.count))
+        file.append(slice)
+        return file
+    }
+}
+
+extension Data {
+    mutating func appendLE(_ value: UInt32) { Swift.withUnsafeBytes(of: value.littleEndian) { append(contentsOf: $0) } }
+    mutating func appendBE(_ value: UInt32) { Swift.withUnsafeBytes(of: value.bigEndian) { append(contentsOf: $0) } }
 }

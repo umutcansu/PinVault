@@ -45,6 +45,16 @@ struct IntegrityProbeInputs: Sendable {
     var machine: @Sendable () -> String
     /// `UIDevice.model` (`iPhone`).
     var deviceModel: @Sendable () async -> String
+    /// Names of this process's threads.
+    var threadNames: @Sendable () -> [String] = { [] }
+    /// Whether an image path is in the dyld shared cache.
+    var inSharedCache: @Sendable (String) -> Bool = { _ in true }
+    /// The app bundle's path.
+    var bundlePath: String = ""
+    /// `cryptid` of the main executable's `LC_ENCRYPTION_INFO_64`; nil when unread.
+    var mainImageEncrypted: @Sendable () -> Bool? = { nil }
+    /// `get-task-allow` in the main executable's code signature; nil when there is no entitlements blob.
+    var signedGetTaskAllow: @Sendable () throws -> Bool? = { nil }
 
     /// The readers of this process.
     static var live: IntegrityProbeInputs {
@@ -59,7 +69,7 @@ struct IntegrityProbeInputs: Sendable {
             loadedImages: { LiveIntegrityReaders.loadedImages() },
             localPortOpen: { LiveIntegrityReaders.localPortOpen($0) },
             provisioningProfile: { try LiveIntegrityReaders.provisioningProfile() },
-            receiptName: { Bundle.main.appStoreReceiptURL?.lastPathComponent },
+            receiptName: { LiveIntegrityReaders.receiptName() },
             keychainAccessGroup: { LiveIntegrityReaders.keychainAccessGroup() },
             bundleId: { Bundle.main.bundleIdentifier },
             bundleVersion: { Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String },
@@ -68,7 +78,12 @@ struct IntegrityProbeInputs: Sendable {
             osVersion: { DeviceInfo.osVersion },
             osBuild: { LiveIntegrityReaders.osBuild() },
             machine: { DeviceInfo.model },
-            deviceModel: { await LiveIntegrityReaders.deviceModel() }
+            deviceModel: { await LiveIntegrityReaders.deviceModel() },
+            threadNames: { LiveIntegrityReaders.threadNames() },
+            inSharedCache: { LiveIntegrityReaders.inSharedCache($0) },
+            bundlePath: Bundle.main.bundlePath,
+            mainImageEncrypted: { LiveIntegrityReaders.mainImageEncrypted() },
+            signedGetTaskAllow: { try LiveIntegrityReaders.signedGetTaskAllow() }
         )
     }
 }
@@ -115,7 +130,8 @@ enum LiveIntegrityReaders {
     }
 
     /// Writes (and removes) a file directly under `/private`: the sandbox of an
-    /// iOS app (and the permissions of a Mac) refuse it; a jailbreak does not.
+    /// iOS app (and the permissions of a Mac) refuse it, and so do rootless
+    /// jailbreaks, which leave apps sandboxed; older, rootful ones do not.
     static func canWriteOutsideSandbox() throws -> Bool {
         let path = "/private/pinvault-jb-\(UUID().uuidString)"
         let fd = open(path, O_WRONLY | O_CREAT | O_EXCL, 0o600)
@@ -178,6 +194,61 @@ enum LiveIntegrityReaders {
         var length = socklen_t(MemoryLayout<Int32>.size)
         guard getsockopt(fd, SOL_SOCKET, SO_ERROR, &socketError, &length) == 0 else { return false }
         return socketError == 0
+    }
+
+    /// The receipt's file name, when the file is there: a path alone says nothing
+    /// (`appStoreReceiptURL` names `receipt` for any app without a profile).
+    static func receiptName() -> String? {
+        guard let url = Bundle.main.appStoreReceiptURL, FileManager.default.fileExists(atPath: url.path) else { return nil }
+        return url.lastPathComponent
+    }
+
+    /// The names of this process's threads (`pthread_getname_np` of each Mach thread).
+    static func threadNames() -> [String] {
+        var threads: thread_act_array_t?
+        var count: mach_msg_type_number_t = 0
+        guard task_threads(mach_task_self_, &threads, &count) == KERN_SUCCESS, let threads else { return [] }
+        defer {
+            for index in 0..<Int(count) { mach_port_deallocate(mach_task_self_, threads[index]) }
+            vm_deallocate(mach_task_self_, vm_address_t(UInt(bitPattern: threads)), vm_size_t(Int(count) * MemoryLayout<thread_t>.stride))
+        }
+        var names: [String] = []
+        for index in 0..<min(Int(count), 1024) {
+            guard let pthread = pthread_from_mach_thread_np(threads[index]) else { continue }
+            var buffer = [CChar](repeating: 0, count: 64)
+            if pthread_getname_np(pthread, &buffer, buffer.count) == 0 {
+                let name = String(decoding: buffer.prefix(while: { $0 != 0 }).map { UInt8(bitPattern: $0) }, as: UTF8.self)
+                if !name.isEmpty { names.append(name) }
+            }
+        }
+        return names
+    }
+
+    static func inSharedCache(_ path: String) -> Bool {
+        if #available(iOS 15.0, macOS 12.0, *) {
+            return _dyld_shared_cache_contains_path(path)
+        }
+        return true
+    }
+
+    /// `cryptid` of the main executable's `LC_ENCRYPTION_INFO_64`, read from its
+    /// loaded header (the kernel decrypts the pages, not the header); nil when
+    /// the executable has no such command or cannot be found.
+    static func mainImageEncrypted() -> Bool? {
+        guard let executable = Bundle.main.executablePath else { return nil }
+        for index in 0..<_dyld_image_count() {
+            guard let name = _dyld_get_image_name(index), String(cString: name) == executable,
+                  let header = _dyld_get_image_header(index) else { continue }
+            return MachOReader.cryptid(header: UnsafeRawPointer(header)).map { $0 != 0 }
+        }
+        return nil
+    }
+
+    /// `get-task-allow` in the code signature of the main executable on disk.
+    static func signedGetTaskAllow() throws -> Bool? {
+        guard let url = Bundle.main.executableURL else { return nil }
+        guard let entitlements = try MachOReader.entitlements(of: url) else { return nil }
+        return entitlements["get-task-allow"] as? Bool ?? false
     }
 
     static func provisioningProfile() throws -> ProvisioningProfile? {

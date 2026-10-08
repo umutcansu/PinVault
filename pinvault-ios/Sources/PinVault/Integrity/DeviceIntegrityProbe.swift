@@ -113,8 +113,15 @@ final class DeviceIntegrityProbe: Sendable {
             hasEmbeddedProfile: profile != nil || profileFailed,
             receiptName: inputs.receiptName()
         )
+        var signedGetTaskAllow: Bool?
+        do {
+            signedGetTaskAllow = try inputs.signedGetTaskAllow()
+        } catch {
+            log.w("Integrity probe 'code-signature' failed", error)
+        }
         let debuggableProbe = DebuggableProbe(
-            getTaskAllow: profile?.getTaskAllow, isSimulatorBuild: inputs.isSimulatorBuild, isDebugBuild: inputs.isDebugBuild
+            getTaskAllow: profile?.getTaskAllow, isSimulatorBuild: inputs.isSimulatorBuild, isDebugBuild: inputs.isDebugBuild,
+            signedGetTaskAllow: signedGetTaskAllow
         )
         let app = IntegrityReport.App(
             bundleId: bundleId ?? "",
@@ -158,13 +165,18 @@ final class DeviceIntegrityProbe: Sendable {
             HookingProbe(
                 loadedImages: inputs.loadedImages,
                 environment: environment,
-                fridaPortOpen: { inputs.localPortOpen(HookingProbe.fridaPort) }
+                fridaPortOpen: { inputs.localPortOpen(HookingProbe.fridaPort) },
+                threadNames: inputs.threadNames,
+                inSharedCache: inputs.inSharedCache,
+                bundlePath: inputs.bundlePath,
+                onMacHost: inputs.onMacHost
             ).probe()
         }
         signals[IntegrityReport.appIntegrity] = safe(IntegrityReport.appIntegrity) {
             AppIntegrityProbe(
                 bundleId: bundleId, teamId: teamId,
-                expectedBundleIds: expectedBundleIds, expectedTeamIds: expectedTeamIds
+                expectedBundleIds: expectedBundleIds, expectedTeamIds: expectedTeamIds,
+                installer: installer, mainImageEncrypted: inputs.mainImageEncrypted()
             ).probe()
         }
         // Android's app-cloner and adb checks have no iOS counterpart: present, never raised.

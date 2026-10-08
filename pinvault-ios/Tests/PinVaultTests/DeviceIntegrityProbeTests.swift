@@ -185,7 +185,7 @@ final class DeviceIntegrityProbeTests: XCTestCase {
         XCTAssertTrue(flag(json, "rooted"))
         XCTAssertEqual(evidence(json, "rooted"), ["file:/Applications/Sileo.app", "file:/var/jb", "file:/usr/sbin/sshd", "fs:/private-writable"])
         XCTAssertTrue(flag(json, "hooking_framework"))
-        XCTAssertEqual(evidence(json, "hooking_framework"), ["dyld:ellekit", "dyld:frida", "env:DYLD_INSERT_LIBRARIES", "port:27042"])
+        XCTAssertEqual(evidence(json, "hooking_framework"), ["dyld:ellekit", "dyld-path:libellekit.dylib", "dyld:frida", "dyld-path:frida-agent.dylib", "env:DYLD_INSERT_LIBRARIES", "port:27042"])
         XCTAssertFalse(flag(json, "emulator"))
         XCTAssertFalse(flag(json, "debugger"))
     }
