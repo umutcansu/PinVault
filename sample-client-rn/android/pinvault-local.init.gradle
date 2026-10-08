@@ -1,0 +1,9 @@
+// Used by settings.gradle (pinvault.localPath) only: publishes the repository's
+// :pinvault into a directory under build/, unsigned. Never used for releases
+// to Maven Central (those are signed, see the repository's Jenkins job).
+allprojects {
+  afterEvaluate {
+    tasks.withType(Sign).configureEach { required = false }
+    plugins.withId("signing") { signing { required = false } }
+  }
+}

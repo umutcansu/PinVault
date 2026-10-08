@@ -1,0 +1,35 @@
+buildscript {
+    ext {
+        buildToolsVersion = "37.0.0"
+        minSdkVersion = 24
+        compileSdkVersion = 37
+        targetSdkVersion = 36
+        ndkVersion = "27.1.12297006"
+        kotlinVersion = "2.2.0"
+    }
+    repositories {
+        google()
+        mavenCentral()
+    }
+    dependencies {
+        classpath("com.android.tools.build:gradle")
+        classpath("com.facebook.react:react-native-gradle-plugin")
+        classpath("org.jetbrains.kotlin:kotlin-gradle-plugin")
+    }
+}
+
+apply plugin: "com.facebook.react.rootproject"
+
+// pinvault.localPath (settings.gradle): io.github.umutcansu artefaktları yalnızca
+// yerel yayından gelir; Maven Central'daki aynı sürüm devreye giremez.
+if (gradle.ext.has("pinvaultLocalRepo")) {
+    def localRepo = gradle.ext.pinvaultLocalRepo
+    allprojects {
+        repositories {
+            exclusiveContent {
+                forRepository { maven { name = "pinvaultLocal"; url = localRepo.toURI() } }
+                filter { includeGroup("io.github.umutcansu") }
+            }
+        }
+    }
+}

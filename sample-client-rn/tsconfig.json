@@ -1,0 +1,13 @@
+{
+  "extends": "@react-native/typescript-config",
+  "compilerOptions": {
+    "strict": true,
+    "types": [],
+    "customConditions": ["pinvault-source", "react-native"],
+    "paths": {
+      "@umutcansu/react-native-pinvault": ["../pinvault-react-native/src/index.ts"]
+    }
+  },
+  "include": ["src/**/*.ts", "src/**/*.tsx", "index.js"],
+  "exclude": ["**/node_modules", "**/Pods"]
+}
