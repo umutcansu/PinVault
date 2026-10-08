@@ -1,0 +1,204 @@
+// Jenkins pipeline for publishing @umutcansu/react-native-pinvault to npm.
+// (Modelled on TraceFlow's runtime-js/Jenkinsfile.)
+//
+// Expected Jenkins setup
+// ----------------------
+// 1. A "Secret text" credential with an npm granular access token that may
+//    publish under the @umutcansu scope (read+write on all packages of the
+//    scope: a package-limited token cannot make the first release of a new
+//    package). Default ID: npm-token-traceflow (parameter NPM_CREDENTIALS_ID).
+//    Tokens: https://www.npmjs.com/settings/umutcansu/tokens
+// 2. A NodeJS tool named "node22" (Manage Jenkins -> Tools): the package is
+//    built with react-native-builder-bob, which needs Node >= 20.19 / 22.12.
+// 3. The job checks out the PinVault repository (Pipeline script from SCM,
+//    script path pinvault-react-native/Jenkinsfile).
+//
+// Versions
+// --------
+// Android, iOS and this package carry the same version, and the package
+// depends on that exact version on both platforms (Maven artifact, Swift
+// package tag). So this pipeline never bumps: it publishes the version that is
+// committed, and only once that version of the native libraries is out —
+// gradle.properties says the same version, the git tag v<version> exists, and
+// both Android artifacts are on Maven Central. Release order: the PinVault job
+// (Maven Central) -> tag v<version> -> this job.
+//
+// Safety
+// ------
+// - A dry-run publish always runs before the real one.
+// - A version already on npm is refused.
+// - The token never touches the disk or the console: the workspace .npmrc holds
+//   the placeholder ${NPM_TOKEN}, which npm reads from the environment that
+//   withCredentials sets for that step only; the file is removed afterwards.
+pipeline {
+  agent any
+
+  tools {
+    nodejs 'node22'
+  }
+
+  parameters {
+    booleanParam(
+      name: 'DRY_RUN',
+      defaultValue: false,
+      description: 'Run every check and the dry-run publish, but skip the real `npm publish`.'
+    )
+    string(
+      name: 'NPM_CREDENTIALS_ID',
+      defaultValue: 'npm-token-traceflow',
+      description: 'Jenkins "Secret text" credential holding the npm token for the @umutcansu scope.'
+    )
+  }
+
+  options {
+    timestamps()
+    disableConcurrentBuilds()
+    timeout(time: 30, unit: 'MINUTES')
+  }
+
+  stages {
+    stage('Prepare workspace') {
+      steps {
+        sh '''
+          set -eu
+          node --version
+          npm --version
+          echo "Building from: ${GIT_BRANCH:-unknown} @ ${GIT_COMMIT:-unknown}"
+        '''
+      }
+    }
+
+    stage('Version checks') {
+      steps {
+        sh '''
+          set -eu
+          cd pinvault-react-native
+          NAME=$(node -p "require('./package.json').name")
+          VERSION=$(node -p "require('./package.json').version")
+          ANDROID=$(sed -n 's/^VERSION_NAME=//p' ../gradle.properties | tr -d '[:space:]')
+          echo "Package: ${NAME}@${VERSION}; Android VERSION_NAME: ${ANDROID}"
+
+          if [ "${VERSION}" != "${ANDROID}" ]; then
+            echo "ERROR: package.json (${VERSION}) and gradle.properties (${ANDROID}) differ."
+            exit 1
+          fi
+
+          # The iOS side pulls the Swift package at this tag.
+          if ! git rev-parse -q --verify "refs/tags/v${VERSION}" >/dev/null; then
+            git fetch --tags --quiet origin || true
+          fi
+          if ! git rev-parse -q --verify "refs/tags/v${VERSION}" >/dev/null; then
+            echo "ERROR: tag v${VERSION} does not exist. Release the native libraries first."
+            exit 1
+          fi
+          TAGGED=$(git show "v${VERSION}:pinvault-react-native/package.json" 2>/dev/null | node -e "let s='';process.stdin.on('data',d=>s+=d).on('end',()=>{try{console.log(JSON.parse(s).version)}catch{console.log('')}})")
+          if [ "${TAGGED}" != "${VERSION}" ]; then
+            echo "ERROR: at tag v${VERSION} the package says '${TAGGED}', not ${VERSION}."
+            exit 1
+          fi
+
+          # The Android side depends on these artifacts.
+          for ARTIFACT in pinvault pinvault-play-integrity; do
+            URL="https://repo1.maven.org/maven2/io/github/umutcansu/${ARTIFACT}/${VERSION}/${ARTIFACT}-${VERSION}.pom"
+            CODE=$(curl -s -o /dev/null -w '%{http_code}' --max-time 20 "${URL}")
+            if [ "${CODE}" != "200" ]; then
+              echo "ERROR: ${ARTIFACT} ${VERSION} is not on Maven Central yet (HTTP ${CODE})."
+              exit 1
+            fi
+          done
+
+          if npm view "${NAME}@${VERSION}" version 2>/dev/null | grep -qx "${VERSION}"; then
+            echo "ERROR: ${NAME}@${VERSION} is already published."
+            exit 1
+          fi
+          echo "OK: ${NAME}@${VERSION} can be published."
+        '''
+      }
+    }
+
+    stage('Install') {
+      steps {
+        dir('pinvault-react-native') {
+          // npm ci runs `prepare` (bob build) as well.
+          sh 'npm ci --no-audit --no-fund'
+        }
+      }
+    }
+
+    stage('Typecheck and test') {
+      steps {
+        dir('pinvault-react-native') {
+          sh 'npm run typecheck'
+          sh 'npm test -- --ci'
+        }
+      }
+    }
+
+    stage('Package contents') {
+      steps {
+        dir('pinvault-react-native') {
+          sh '''
+            set -eu
+            # `prepare` messages can precede the JSON on stdout: read from the first "[" line.
+            npm pack --dry-run --json --ignore-scripts > ../npm-pack.json
+            node -e "
+              const raw = require('fs').readFileSync('../npm-pack.json', 'utf8');
+              const files = JSON.parse(raw.slice(raw.search(/^\\[/m)))[0].files.map(f => f.path);
+              const bad = files.filter(p => /(^|\\/)(__tests__|__mocks__|Tests)\\//.test(p) || /(^|\\/)\\.[^/]+$/.test(p) || /\\.(p12|pem|key|jks|der)$/.test(p));
+              console.log(files.length + ' files in the package');
+              if (!files.some(p => p.startsWith('lib/'))) { console.error('ERROR: lib/ is missing'); process.exit(1); }
+              if (bad.length) { console.error('ERROR: files that must not ship:\\n' + bad.join('\\n')); process.exit(1); }
+            "
+          '''
+        }
+      }
+    }
+
+    stage('Publish (dry-run)') {
+      steps {
+        dir('pinvault-react-native') {
+          withCredentials([string(credentialsId: params.NPM_CREDENTIALS_ID, variable: 'NPM_TOKEN')]) {
+            sh '''
+              set -eu
+              # Placeholder only: npm expands ${NPM_TOKEN} from the environment.
+              echo '//registry.npmjs.org/:_authToken=${NPM_TOKEN}' > .npmrc
+              npm whoami
+              npm publish --access public --dry-run
+            '''
+          }
+        }
+      }
+    }
+
+    stage('Publish') {
+      when { expression { !params.DRY_RUN } }
+      steps {
+        dir('pinvault-react-native') {
+          withCredentials([string(credentialsId: params.NPM_CREDENTIALS_ID, variable: 'NPM_TOKEN')]) {
+            sh '''
+              set -eu
+              echo '//registry.npmjs.org/:_authToken=${NPM_TOKEN}' > .npmrc
+              npm publish --access public
+              NAME=$(node -p "require('./package.json').name")
+              VERSION=$(node -p "require('./package.json').version")
+              echo "Published ${NAME}@${VERSION}"
+            '''
+          }
+        }
+      }
+    }
+  }
+
+  post {
+    always {
+      // Never leave the token on disk.
+      sh 'rm -f pinvault-react-native/.npmrc npm-pack.json'
+    }
+    success {
+      echo "Done. With DRY_RUN=false the package is live on the npm registry."
+    }
+    failure {
+      echo "Publish failed — check the stage logs. Nothing was published unless the Publish stage finished."
+    }
+  }
+}
