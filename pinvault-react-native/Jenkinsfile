@@ -10,8 +10,9 @@
 //    Tokens: https://www.npmjs.com/settings/umutcansu/tokens
 //    The token does not bypass 2FA: npm no longer lets new tokens do that and
 //    takes direct publishing away from such tokens in January 2027. Instead the
-//    Publish stage stops and asks for the maintainer's current 2FA code (open
-//    the build, "Paused for Input", type the code, Publish).
+//    Publish stage prints an npm link ("Authenticate your account at:") in
+//    the console and waits up to 15 minutes until the maintainer opens it and
+//    confirms with the account's security key or passkey.
 // 2. A NodeJS tool named "node22" (Manage Jenkins -> Tools): the package is
 //    built with react-native-builder-bob, which needs Node >= 20.19 / 22.12.
 // 3. The job checks out the PinVault repository (Pipeline script from SCM,
@@ -31,7 +32,7 @@
 // ------
 // - A dry-run publish always runs before the real one.
 // - A version already on npm is refused.
-// - The real publish needs a person: the 2FA code is asked for at that moment.
+// - The real publish needs a person: npm asks for 2FA in the browser then.
 // - The token never touches the disk or the console: the workspace .npmrc holds
 //   the placeholder ${NPM_TOKEN}, which npm reads from the environment that
 //   withCredentials sets for that step only; the file is removed afterwards.
@@ -178,33 +179,32 @@ pipeline {
     stage('Publish') {
       when { expression { !params.DRY_RUN } }
       steps {
-        script {
-          // The build waits here for the maintainer's current 2FA code, so the
-          // code is fresh when npm sees it. A plain text field (a password
-          // field needs Secret.getPlainText, which the sandbox refuses): the
-          // code is single-use and expires within a minute. It reaches npm as
-          // npm_config_otp, never on a command line, which `sh` would echo.
-          def otp = input(
-            message: 'npm 2FA code for the publish (authenticator app, 6 digits)',
-            ok: 'Publish',
-            parameters: [string(name: 'NPM_OTP', defaultValue: '', trim: true, description: 'One-time password from the npm account authenticator')]
-          )
-          if (!(otp ==~ /\d{6,8}/)) {
-            error('The 2FA code must be 6 to 8 digits.')
-          }
-          dir('pinvault-react-native') {
-            withCredentials([string(credentialsId: params.NPM_CREDENTIALS_ID, variable: 'NPM_TOKEN')]) {
-              withEnv(["npm_config_otp=${otp}"]) {
-                sh '''
-                  set -eu
-                  echo '//registry.npmjs.org/:_authToken=${NPM_TOKEN}' > .npmrc
-                  npm publish --access public
-                  NAME=$(node -p "require('./package.json').name")
-                  VERSION=$(node -p "require('./package.json').version")
-                  echo "Published ${NAME}@${VERSION}"
-                '''
-              }
-            }
+        dir('pinvault-react-native') {
+          withCredentials([string(credentialsId: params.NPM_CREDENTIALS_ID, variable: 'NPM_TOKEN')]) {
+            // npm asks for 2FA here. The account uses a security key, so npm
+            // prints "Authenticate your account at: <link>" and waits until the
+            // maintainer opens that link and confirms with the key. npm only
+            // does that on a terminal, so `script` gives it one; its input is a
+            // FIFO held open by a sleeper, so the "Press ENTER" prompt never
+            // ends early. Whole step: at most 15 minutes.
+            sh '''
+              set -eu
+              echo '//registry.npmjs.org/:_authToken=${NPM_TOKEN}' > .npmrc
+              rm -f .npm-stdin && mkfifo .npm-stdin
+              sleep 900 > .npm-stdin &
+              SLEEPER=$!
+              STATUS=0
+              timeout 900 script -q -e -c 'npm publish --access public --auth-type=web --browser=false' /dev/null < .npm-stdin || STATUS=$?
+              kill "$SLEEPER" 2>/dev/null || true
+              rm -f .npm-stdin
+              if [ "$STATUS" != 0 ]; then
+                echo "ERROR: npm publish exited with ${STATUS}."
+                exit "$STATUS"
+              fi
+              NAME=$(node -p "require('./package.json').name")
+              VERSION=$(node -p "require('./package.json').version")
+              echo "Published ${NAME}@${VERSION}"
+            '''
           }
         }
       }
@@ -214,7 +214,7 @@ pipeline {
   post {
     always {
       // Never leave the token on disk.
-      sh 'rm -f pinvault-react-native/.npmrc npm-pack.json'
+      sh 'rm -f pinvault-react-native/.npmrc pinvault-react-native/.npm-stdin npm-pack.json'
     }
     success {
       echo "Done. With DRY_RUN=false the package is live on the npm registry."
