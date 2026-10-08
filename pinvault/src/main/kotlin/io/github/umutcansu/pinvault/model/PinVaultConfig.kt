@@ -12,7 +12,9 @@ import java.util.concurrent.ConcurrentHashMap
  * ```kotlin
  * val config = PinVaultConfig.Builder()
  *     .configApi("api", "https://api.example.com/") {
- *         bootstrapPins(listOf(HostPin("api.example.com", listOf("sha256/AAAA…"))))
+ *         // Base64 SHA-256 of the SubjectPublicKeyInfo, no "sha256/" prefix; primary + backup
+ *         bootstrapPins(listOf(HostPin("api.example.com", listOf("AAAA…=", "BBBB…="))))
+ *         signaturePublicKey(SIGNING_KEY)   // or allowUnsigned() for tests
  *     }
  *     .vaultFile("flags") {
  *         configApi("api")
@@ -29,10 +31,12 @@ import java.util.concurrent.ConcurrentHashMap
  * val config = PinVaultConfig.Builder()
  *     .configApi("prod-tls", "https://host:8091") {
  *         bootstrapPins(prodTlsPins)
+ *         signaturePublicKey(SIGNING_KEY)
  *         wantPinsFor("cdn.example.com", "api.example.com")
  *     }
  *     .configApi("secure-mtls", "https://host:8092") {
  *         bootstrapPins(secureMtlsPins)
+ *         signaturePublicKey(SIGNING_KEY)
  *         clientKeystore(p12Bytes, devicePassword)
  *     }
  *     .vaultFile("feature-flags") {
@@ -40,6 +44,7 @@ import java.util.concurrent.ConcurrentHashMap
  *     }
  *     .vaultFile("ml-model") {
  *         configApi("secure-mtls")
+ *         endpoint("api/v1/vault/ml-model")
  *         storage(StorageStrategy.ENCRYPTED_FILE)
  *         accessPolicy(VaultFileAccessPolicy.TOKEN)
  *         accessToken { tokenStore["ml-model"] ?: "" }

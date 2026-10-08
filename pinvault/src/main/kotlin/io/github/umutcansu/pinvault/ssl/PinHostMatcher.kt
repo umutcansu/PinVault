@@ -34,8 +34,11 @@ internal object PinHostMatcher {
      * Wildcard suffixes must contain at least one dot — `*.com` or `*.tr`
      * would otherwise let a single misconfigured pin entry authorize every
      * domain under a TLD, turning a config-level mistake into a cross-host
-     * pin-reuse vulnerability. Such patterns are skipped here; config
-     * validation at intake ([PinConfigValidator]) rejects them outright.
+     * pin-reuse vulnerability. Such patterns are skipped here as a second
+     * line; config validation at intake ([PinConfigValidator]) already
+     * refuses the whole config for them, and also for wildcards directly
+     * under a multi-label public suffix (`*.co.uk`), which this check alone
+     * would let through.
      *
      * Returns `null` when nothing matches — callers must treat null as a
      * hard reject (fail-safe).
