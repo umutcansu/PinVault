@@ -52,6 +52,24 @@ class EncryptedFileStorageProviderTest {
     private fun file(key: String) = File(dir, "$key.enc")
 
     @Test
+    fun `the longest key and its pending copy are stored, a path is not`() {
+        val longest = "k".repeat(64)
+        store.save(longest, byteArrayOf(1), 1)
+        store.save("$longest${UserAuthVaultStorage.PENDING_SUFFIX}", byteArrayOf(2), 2)
+        assertArrayEquals(byteArrayOf(2), store.load("$longest${UserAuthVaultStorage.PENDING_SUFFIX}"))
+        store.clear("$longest${UserAuthVaultStorage.PENDING_SUFFIX}")
+        assertArrayEquals(byteArrayOf(1), store.load(longest))
+        for (bad in listOf("../escape", "a/b", "..", "x".repeat(65))) {
+            try {
+                store.save(bad, byteArrayOf(0), 1)
+                org.junit.Assert.fail("stored '$bad'")
+            } catch (expected: IllegalArgumentException) {
+            }
+        }
+        assertFalse(File(dir.parentFile, "escape.enc").exists())
+    }
+
+    @Test
     fun `a file round-trips with its version`() {
         val model = ByteArray(200_000).also { SecureRandom().nextBytes(it) }
         store.save("model", model, 12)

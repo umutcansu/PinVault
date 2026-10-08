@@ -20,6 +20,11 @@ package io.github.umutcansu.pinvault.integrity
  *
  * ```kotlin
  * class PlayIntegrityProvider(private val manager: IntegrityManager, private val project: Long) : IntegrityVerdictProvider {
+ *     // v2: a server whose challenge says verdictBinding: 2 gets a token bound to the device.
+ *     override suspend fun verdict(nonce: String, deviceId: String) =
+ *         verdict(PlayIntegrityVerdictProvider.boundNonce(nonce, deviceId))
+ *
+ *     // v1: an older server, or a round without a device id.
  *     override suspend fun verdict(nonce: String): IntegrityVerdict? {
  *         val token = manager.requestIntegrityToken(
  *             IntegrityTokenRequest.builder().setNonce(nonce).setCloudProjectNumber(project).build()
@@ -28,6 +33,9 @@ package io.github.umutcansu.pinvault.integrity
  *     }
  * }
  * ```
+ *
+ * A provider that overrides only `verdict(nonce)` keeps working, with the v1
+ * nonce: a server with `PLAY_INTEGRITY_REQUIRE_V2` refuses that as `nonce_v1`.
  */
 interface IntegrityVerdictProvider {
 

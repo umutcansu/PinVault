@@ -5657,6 +5657,11 @@ paths:
           content:
             application/json:
               schema: { $ref: '#/components/schemas/Error' }
+        '409':
+          description: '`key_unknown`: an unknown device whose Android report claims an attested key sent no chain; send the chain (the library does on its next round).'
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
         '413':
           description: Body larger than the 64 KB device limit.
           content:

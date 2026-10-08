@@ -33,7 +33,10 @@ android {
         jvmTarget = "17"
         apiVersion = "1.9"
         languageVersion = "1.9"
-        freeCompilerArgs += listOf("-Xsuppress-version-warnings")
+        // Interface defaults as real JVM default methods (plus DefaultImpls for callers
+        // compiled before): an implementation compiled against an older interface, or a
+        // Java one, does not have to implement a method added with a default.
+        freeCompilerArgs += listOf("-Xsuppress-version-warnings", "-Xjvm-default=all-compatibility")
     }
 
     testOptions {

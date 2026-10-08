@@ -46,7 +46,10 @@ what the hardware vouches for; the clients bind their verdicts to the report.
   `/proc/self/maps` is `error:maps`. Hooking probe: frida-server's default
   loopback ports.
 - `IntegrityVerdictProvider.verdict(nonce, deviceId)` (default: `verdict(nonce)`;
-  a provider compiled against the older interface is asked with the nonce);
+  a provider compiled against the older interface is asked with the nonce;
+  the library is now built with `-Xjvm-default=all-compatibility`, so interface
+  methods with a default are JVM default methods and Java implementations need
+  not implement them);
   `PlayIntegrityVerdictProvider` sends the v2 nonce — to a server whose
   challenge says `verdictBinding: 2` only, like the iOS App Attest v2 round.
 

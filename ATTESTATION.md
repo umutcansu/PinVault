@@ -105,6 +105,7 @@ Server checks, in order (each refusal is counted by the refusal limiter):
 4. Revoked device (`client_identities` / attested device marked revoked): `403 device_revoked`.
 5. Device key:
    - Device known: `publicKey` must hash to the registered SPKI, else `403 key_mismatch` (an operator resets the device to let a new key in — a reinstall on the same phone generates a new key, so the dashboard shows these).
+   - Device unknown, Android report that claims `keyAttested: true` but sends no chain (a device forgotten while the app ran): `409 key_unknown`; the library sends the chain on its next round (not under `ATTESTATION_KEY_POLICY=off`).
    - Device unknown: register. Under `ATTESTATION_KEY_POLICY=enforce` the chain must verify (Google hardware root, identity challenge, your package names and signer digests, verified boot) or `403 attestation_required` / `403 attestation_invalid` with the verifier's reason; without a chain, and with `APP_ATTEST_APP_IDS` configured, the report's `app-attest` attestation for this round is verified first and registers an iPhone in its place (§12); under `warn` the verdict is recorded; under `off` nothing is checked (trust on first use).
 6. Policy evaluation (section 4) → `pass` / `reject`, ARC, warnings —
    with the server's own signals from the device's record (§3, "What the
@@ -247,7 +248,7 @@ What each probe looks at (Android, no root needed; iOS probes:
 | `bootloader_unlocked` | Set by the server on every round when the registration's hardware chain said the bootloader is unlocked (RootOfTrust `deviceLocked` = false). See "What the server keeps" below. |
 | `boot_not_verified` | Set by the server on every round when that chain said the boot was not `Verified` — `SelfSigned` with a `verifiedBootKey` in `ATTESTATION_TRUSTED_BOOT_KEYS` counts as verified (GrapheneOS, CalyxOS). |
 | `key_revoked` | Set by the server when a certificate of the registration's chain is on the attestation revocation list (`ATTESTATION_REVOKED_SERIALS_FILE`) — at registration, or since: the serials are looked up again on every round. |
-| `report_mismatch` | Set by the server when the report contradicts the device's record: `verifiedBootState` `green` while the chain said unlocked or not verified; a `securityPatch` more than a month older than the attested one; `keyAttested: true` on the round that registered the key without a chain. |
+| `report_mismatch` | Set by the server when the report contradicts the device's record: `verifiedBootState` `green` while the chain said unlocked or not verified; a `securityPatch` more than a month older than the attested one. (A chain-less registration that claims `keyAttested: true` is answered `409 key_unknown` instead, §2.2.) |
 | `config_rollback` | Set by the server when the device reports a lower `currentIssuedAt` than it reported before under the same signing-key set (restored storage, a clock set back). |
 
 On iOS the probes look for jailbreak files (Cydia, Sileo, Zebra, `/var/jb`,
@@ -492,7 +493,7 @@ webhooks), `attestation_token_secret_rotated`, `attestation_token_secret_deleted
 | `APP_ATTEST_APP_IDS` | unset | §12. Comma-separated `TEAMID.bundle.id`. Set, the server verifies `app-attest` verdicts (attestation rounds and enrollment), raises the two flags, and takes an iPhone's App Attest attestation in place of the Android chain under `ENROLLMENT_ATTESTATION`, `USER_AUTH_ATTESTATION` and `ATTESTATION_KEY_POLICY`; unset, App Attest is off on the server and those three refuse every iPhone under `enforce` (warned at start). |
 | `APP_ATTEST_ROOT_CA_FILE` | unset | Path of Apple's App Attestation Root CA (PEM). Required with `APP_ATTEST_APP_IDS`: missing or unreadable, the server does not start. |
 | `APP_ATTEST_ENVIRONMENT` | `production` | `production` / `development`: the aaguid an attestation must carry (the app's `appattest-environment` entitlement). |
-| `APP_ATTEST_MAX_AGE_SECONDS` | `86400` | How long a verified App Attest verdict covers rounds without one before `app_attest_missing` (60–2592000). |
+| `APP_ATTEST_MAX_AGE_SECONDS` | `86400` | How long a stored App Attest verdict covers rounds without one before `app_attest_missing` (60–2592000); a stored pass of a device whose key is on record covers 10 minutes at most. |
 | `APP_ATTEST_REQUIRE_V2` | `false` (production profile: `true`) | Refuse an attestation round's verdict made with the v1 client data hash (nonce and device id only, not the report) — `app_attest` with reason `client_data_v1`, and `attestation_invalid` / `app_attest_client_data_v1` where it stands in for the chain. Off, v1 passes with the warning `app_attest_v1` (§12). |
 
 ## 8. Library behaviour
@@ -753,7 +754,9 @@ Flags per round (only with `APP_ATTEST_APP_IDS`):
   effect);
 - no token, a stored verdict younger than `APP_ATTEST_MAX_AGE_SECONDS` →
   that verdict stands (`pass` raises nothing and keeps `key_unattested`
-  lifted, `fail` raises `app_attest`);
+  lifted, `fail` raises `app_attest`); a stored `pass` of a device with its
+  App Attest key on record stands for 10 minutes only (it can assert every
+  round), so dropping the token does not borrow an older pass;
 - no token and no fresh verdict → `app_attest_missing` on an iOS device
   (never on an Android one).
 

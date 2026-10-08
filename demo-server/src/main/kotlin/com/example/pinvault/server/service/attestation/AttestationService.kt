@@ -247,7 +247,7 @@ class AttestationService(
             // believes this server knows the key (it was forgotten meanwhile). Ask for the
             // chain again rather than register the key without the hardware's word.
             val claimsAttested = ((reportJson["device"] as? JsonObject)?.get("keyAttested") as? JsonPrimitive)?.booleanOrNull == true
-            val claimsIos = (reportJson["device"] as? JsonObject)?.string("platform") == "ios"
+            val claimsIos = (reportJson["device"] as? JsonObject)?.string("platform")?.trim()?.lowercase() == "ios"
             if (chain.isNullOrEmpty() && claimsAttested && !claimsIos && keyPolicy != AttestationKeyPolicy.OFF) {
                 return Outcome.Refused(HttpStatusCode.Conflict, "key_unknown",
                     "This server has no record of the device key. Send its attestation chain again.")
@@ -635,7 +635,9 @@ class AttestationService(
      * with the device; `app_attest` is raised when it fails. Without a token
      * this round, the stored verdict stands while it is younger than
      * `verdictMaxAgeSeconds` (a failed one keeps `app_attest` raised until a
-     * fresh pass); older or absent → `app_attest_missing` on an iOS device.
+     * fresh pass) — a stored pass of a device with its key on record for
+     * [APP_ATTEST_ROUND_GRACE_SECONDS] at most; older or absent →
+     * `app_attest_missing` on an iOS device.
      */
     private fun appAttestFlags(
         configApiId: String, deviceId: String, nonce: String, canonical: String, provider: JsonObject?, providerOutside: Boolean,
@@ -652,7 +654,8 @@ class AttestationService(
         // A device with an App Attest key on record can assert every round (no Apple
         // server is involved): a round without a token rides on the last verdict only
         // briefly, so leaving the token out does not borrow a day-old pass.
-        val maxAge = if (device.appAttestKeyId != null) minOf(verifier.verdictMaxAgeSeconds, APP_ATTEST_ROUND_GRACE_SECONDS)
+        // A stored fail keeps app_attest raised for the full age, as before.
+        val maxAge = if (device.appAttestKeyId != null && device.appAttestResult == "pass") minOf(verifier.verdictMaxAgeSeconds, APP_ATTEST_ROUND_GRACE_SECONDS)
             else verifier.verdictMaxAgeSeconds
         val fresh = verifiedAt != null && !now.isAfter(verifiedAt.plusSeconds(maxAge))
         return when {

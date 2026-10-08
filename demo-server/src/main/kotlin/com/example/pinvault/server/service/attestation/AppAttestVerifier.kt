@@ -63,7 +63,11 @@ class AppAttestVerifier(
     /** `TEAMID.bundle.id` of every app whose keys count. */
     appIds: Set<String>,
     val environment: Environment = Environment.PRODUCTION,
-    /** A verified verdict covers the device's rounds this long before `app_attest_missing`. */
+    /**
+     * A stored verdict covers the device's rounds without a token this long
+     * before `app_attest_missing`; a stored pass of a device whose key is on
+     * record, 10 minutes at most (`AttestationService.APP_ATTEST_ROUND_GRACE_SECONDS`).
+     */
     val verdictMaxAgeSeconds: Long = DEFAULT_VERDICT_MAX_AGE_SECONDS,
     /**
      * `APP_ATTEST_REQUIRE_V2`: an attestation round's verdict must use the v2

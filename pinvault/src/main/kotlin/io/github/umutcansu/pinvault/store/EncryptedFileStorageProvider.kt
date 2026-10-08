@@ -191,8 +191,9 @@ class EncryptedFileStorageProvider internal constructor(
 
     private fun fileFor(key: String): File {
         // The key names a file in vaultDir and nothing else (VaultFileConfig holds keys
-        // to the same rule; a custom caller of this provider may not).
-        require(isValidStoredKey(key)) { "vault file key is not a plain file name: $key" }
+        // to the same rule; a custom caller of this provider may not). The library's own
+        // pending copy of a screen-lock file is "<key>.pending".
+        require(isValidStoredKey(key.removeSuffix(UserAuthVaultStorage.PENDING_SUFFIX))) { "vault file key is not a plain file name: $key" }
         return File(vaultDir, "${key}.enc")
     }
 
