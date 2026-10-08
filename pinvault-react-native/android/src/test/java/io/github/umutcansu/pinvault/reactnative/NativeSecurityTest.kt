@@ -129,6 +129,34 @@ class NativeSecurityTest {
         parse("""{"configApis":[{$base}],"expiredConfigGrace":{"amount":30,"unit":"MINUTES"}}""", native = strict)
     }
 
+    @Test fun `offline ages and enrollment urls cannot be loosened from JS`() {
+        val strict = NativeSecurity.parse("""
+            {"configApis":[{"id":"default","bootstrapPins":[{"hostname":"h.example","sha256":["$pinA","$pinB"]}],"signaturePublicKeys":["$key"],
+              "enrollmentUrl":"https://enroll.example/"}],
+             "require":{"vaultFileMaxOfflineAgeSeconds":3600,"userAuthStrength":"BIOMETRIC_CURRENT_SET"},
+             "vaultFiles":[{"key":"statement","maxOfflineAgeSeconds":600}]}
+        """.trimIndent(), "f")
+        val base = """"id":"default","url":"https://h.example:8081/""""
+        val p = parse("""{"configApis":[{$base}],"vaultFiles":[{"key":"statement","endpoint":"e"}]}""", native = strict)
+        assertEquals(3_600_000L, p.config.vaultFileMaxOfflineAgeMs)
+        assertEquals(600_000L, p.config.vaultFiles.getValue("statement").maxOfflineAgeMs)
+        refused("""{"configApis":[{$base}],"vaultFileMaxOfflineAge":{"amount":2,"unit":"HOURS"}}""", native = strict, fragments = arrayOf("vaultFileMaxOfflineAge"))
+        refused("""{"configApis":[{$base}],"vaultFileMaxOfflineAge":{"amount":0,"unit":"SECONDS"}}""", native = strict, fragments = arrayOf("vaultFileMaxOfflineAge"))
+        refused("""{"configApis":[{$base}],"vaultFiles":[{"key":"statement","endpoint":"e","maxOfflineAge":{"amount":1,"unit":"DAYS"}}]}""",
+            native = strict, fragments = arrayOf("maxOfflineAge"))
+        refused("""{"configApis":[{$base,"enrollmentUrl":"https://evil.example/"}]}""", native = strict, fragments = arrayOf("enrollmentUrl", "fixed"))
+        parse("""{"configApis":[{$base}],"vaultFileMaxOfflineAge":{"amount":30,"unit":"MINUTES"}}""", native = strict)
+    }
+
+    @Test fun `an empty Config API list in release asks for no native file`() {
+        try {
+            parse("""{"configApis":[]}""", native = null)
+            fail("accepted a config with nothing in it")
+        } catch (e: IllegalArgumentException) {
+            assertFalse(e.message!!, e.message!!.contains("none is shipped"))
+        }
+    }
+
     @Test fun `a release build caps the expired config grace`() {
         val api = """"id":"a","url":"https://h/","bootstrapPins":[{"hostname":"h","sha256":["$pinA","$pinB"]}],"signaturePublicKey":"$key""""
         refused("""{"configApis":[{$api}],"expiredConfigGrace":{"amount":8,"unit":"DAYS"}}""", native = null,

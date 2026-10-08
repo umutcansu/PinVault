@@ -115,6 +115,35 @@ final class SecurityAndNetworkingTests: XCTestCase {
         _ = try parse(#"{"configApis":[{\#(base)}],"expiredConfigGrace":{"amount":30,"unit":"MINUTES"}}"#, native: strict)
     }
 
+    func testOfflineAgesUrlsAndTheLockStrengthCannotBeLoosened() throws {
+        let strict = try NativeSecurity.parse("""
+            {"configApis":[{"id":"default","bootstrapPins":[{"hostname":"h.example","sha256":["\(pinA)","\(pinB)"]}],"signaturePublicKeys":["\(key)"],
+              "enrollmentUrl":"https://enroll.example/"}],
+             "require":{"vaultFileMaxOfflineAgeSeconds":3600,"userAuthStrength":"BIOMETRIC_CURRENT_SET"},
+             "vaultFiles":[{"key":"statement","maxOfflineAgeSeconds":600}]}
+            """, source: "f")
+        let p = try parse(#"{"configApis":[{\#(base)}],"vaultFiles":[{"key":"statement","endpoint":"e"}]}"#, native: strict)
+        XCTAssertEqual(p.config.vaultFileMaxOfflineAgeMs, 3_600_000, "the file's value when JS sets none")
+        XCTAssertEqual(p.config.vaultFiles["statement"]?.maxOfflineAgeMs, 600_000)
+        XCTAssertEqual(p.config.userAuthStrength, .biometricCurrentSet)
+        assertRefused(#"{"configApis":[{\#(base)}],"vaultFileMaxOfflineAge":{"amount":2,"unit":"HOURS"}}"#, native: strict, "vaultFileMaxOfflineAge")
+        assertRefused(#"{"configApis":[{\#(base)}],"vaultFileMaxOfflineAge":{"amount":0,"unit":"SECONDS"}}"#, native: strict, "vaultFileMaxOfflineAge")
+        assertRefused(#"{"configApis":[{\#(base)}],"vaultFiles":[{"key":"statement","endpoint":"e","maxOfflineAge":{"amount":1,"unit":"DAYS"}}]}"#, native: strict, "maxOfflineAge")
+        assertRefused(#"{"configApis":[{\#(base)}],"ios":{"userAuthStrength":"DEVICE_OWNER"}}"#, native: strict, "userAuthStrength", "fixed")
+        assertRefused(#"{"configApis":[{\#(base),"enrollmentUrl":"https://evil.example/"}]}"#, native: strict, "enrollmentUrl", "fixed")
+        _ = try parse(#"{"configApis":[{\#(base)}],"vaultFileMaxOfflineAge":{"amount":30,"unit":"MINUTES"}}"#, native: strict)
+    }
+
+    func testAnEmptyConfigApiListNeedsNoFileAndTheNetworkingOptOutIsHonoured() throws {
+        XCTAssertThrowsError(try parse(#"{"configApis":[]}"#, native: nil)) { error in
+            XCTAssertFalse(((error as? BridgeInputError)?.message ?? "\(error)").contains("none is shipped"), "nothing to anchor")
+        }
+        let api = #"{"id":"a","url":"https://h/","bootstrapPins":[{"hostname":"h","sha256":["\#(pinA)","\#(pinB)"]}],"signaturePublicKey":"\#(key)"}"#
+        let optedOut = try ConfigParser.parse(#"{"configApis":[\#(api)]}"#, tokens: tokens, guardFactory: { _ in ClosureEnvironmentGuard { _ in true } },
+                                              listener: nil, native: nil, release: true, noFileAllowed: true, reactNetworkingEnabled: false)
+        XCTAssertFalse(optedOut.requirePinnedReactNativeNetworking, "Info.plist PinVaultPinReactNativeNetworking = NO")
+    }
+
     func testAReleaseBuildCapsTheExpiredConfigGrace() {
         assertRefused(#"{"deviceAlias":"x","expiredConfigGrace":{"amount":8,"unit":"DAYS"}}"#, native: nil, "at most 7 days")
     }

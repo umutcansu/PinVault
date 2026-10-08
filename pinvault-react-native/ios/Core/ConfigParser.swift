@@ -41,7 +41,8 @@ public enum ConfigParser {
         listener: PinVaultConnectionListener?,
         native: NativeSecurity? = nil,
         release: Bool = false,
-        noFileAllowed: Bool = false
+        noFileAllowed: Bool = false,
+        reactNetworkingEnabled: Bool = true
     ) throws -> ParsedConfig {
         let root = try StrictJSON.parseObject(json, path: "config")
         let builder = PinVaultConfig.Builder()
@@ -50,7 +51,7 @@ public enum ConfigParser {
         let configApis = try root.objectList("configApis", maxItems: maxConfigApis)
         let vaultFiles = try root.objectList("vaultFiles", maxItems: maxVaultFiles)
         let jsStaticPins = try root.object("staticPins").map(staticPins)
-        if release && native == nil && !noFileAllowed && (configApis != nil || jsStaticPins != nil) {
+        if release && native == nil && !noFileAllowed && (!(configApis ?? []).isEmpty || jsStaticPins != nil) {
             throw BridgeInputError(
                 "config: a release build takes its trust anchors only from the app's native security file " +
                     "(\(NativeSecurity.resourceName).json, README \"Native security file\"); none is shipped. " +
@@ -87,7 +88,17 @@ public enum ConfigParser {
             builder.requireCaTrust(caTrust.filter { seen.insert($0).inserted })
         }
         if try root.bool("wipeVaultFilesOnRevocation") == true || require.wipeVaultFilesOnRevocation { builder.wipeVaultFilesOnRevocation() }
-        if let d = try root.object("vaultFileMaxOfflineAge") { let (a, u) = try duration(d); builder.vaultFileMaxOfflineAge(a, u) }
+        if let d = try root.object("vaultFileMaxOfflineAge") {
+            let (a, u) = try duration(d)
+            if let max = require.vaultFileMaxOfflineAgeMs {
+                let ms = millis(a, u)
+                // 0 = no limit: longer than any.
+                if ms == 0 || ms > max { throw BridgeInputError("\(d.path): longer than the app's native security file allows (\(max / 1000) s)") }
+            }
+            builder.vaultFileMaxOfflineAge(a, u)
+        } else if let max = require.vaultFileMaxOfflineAgeMs {
+            builder.vaultFileMaxOfflineAge(max, .milliseconds)
+        }
         if try root.bool("requireUnlockedDevice") == true || require.requireUnlockedDevice { builder.requireUnlockedDevice() }
         if try root.bool("requireHardwareBackedKeys") == true || require.requireHardwareBackedKeys { builder.requireHardwareBackedKeys() }
         if try root.bool("managedTrustRoots") == true || require.managedTrustRoots { builder.managedTrustRoots() }
@@ -102,8 +113,9 @@ public enum ConfigParser {
             builder.environmentGuard(guardFactory(timeout))
         }
 
-        // On by default in a release build: RN's https must go through PinVault there.
-        let requirePinned = try root.bool("requirePinnedReactNativeNetworking") ?? release
+        // On by default in a release build — unless the app opted out of pinning RN's
+        // networking natively (Info.plist PinVaultPinReactNativeNetworking = NO).
+        let requirePinned = try root.bool("requirePinnedReactNativeNetworking") ?? (release && reactNetworkingEnabled)
         // Android-only settings: the Android side reads them; here only their shape is checked.
         _ = try root.object("android")
         var maxRN = ReactNetworking.defaultMaxResponseBytes
@@ -120,13 +132,18 @@ public enum ConfigParser {
                                      try ios.stringList("expectedTeamIds", maxItems: 16, maxLength: 32), native) {
                 builder.expectedTeamId(v)
             }
-            if let v = try ios.enumValue("userAuthStrength", UserAuthStrength.self) { builder.userAuthStrength(v) }
+            let jsStrength = try ios.enumValue("userAuthStrength", UserAuthStrength.self)
+            if let fixed = require.userAuthStrength, let jsStrength, jsStrength != fixed {
+                throw BridgeInputError("config.ios.userAuthStrength: differs from the app's native security file (\(native?.source ?? "")); the native value is fixed")
+            }
+            if let v = require.userAuthStrength ?? jsStrength { builder.userAuthStrength(v) }
             try ios.finish()
         }
 
         else {
             if let v = require.expectedBundleIds { builder.expectedBundleId(v) }
             if let v = require.expectedTeamIds { builder.expectedTeamId(v) }
+            if let v = require.userAuthStrength { builder.userAuthStrength(v) }
         }
 
         try root.finish()
@@ -264,6 +281,16 @@ public enum ConfigParser {
             if let j = jsTokenHosts, !NativeSecurity.sameKeys(lower(j), lower(n)) { throw fixed("tokenHosts") }
             tokenHosts = n
         }
+        var fixedEnrollmentUrl = enrollmentUrl
+        if let n = nativeBlock?.enrollmentUrl {
+            if let j = enrollmentUrl, j != n { throw fixed("enrollmentUrl") }
+            fixedEnrollmentUrl = n
+        }
+        var fixedRenewalUrl = renewalUrl
+        if let n = nativeBlock?.renewalUrl {
+            if let j = renewalUrl, j != n { throw fixed("renewalUrl") }
+            fixedRenewalUrl = n
+        }
         var certHosts = clientCertHosts
         if let n = nativeBlock?.clientCertHosts {
             if let j = clientCertHosts, !NativeSecurity.sameKeys(lower(j), lower(n)) { throw fixed("clientCertHosts") }
@@ -303,8 +330,8 @@ public enum ConfigParser {
             if let vaultReportEndpoint { api.vaultReportEndpoint(vaultReportEndpoint) }
             if let clientCertLabel { api.clientCertLabel(clientCertLabel) }
             if let wantPinsFor { api.wantPinsFor(wantPinsFor) }
-            if let renewalUrl { api.renewalUrl(renewalUrl) }
-            if let enrollmentUrl { api.enrollmentUrl(enrollmentUrl) }
+            if let fixedRenewalUrl { api.renewalUrl(fixedRenewalUrl) }
+            if let fixedEnrollmentUrl { api.enrollmentUrl(fixedEnrollmentUrl) }
             if let threshold { api.clientCertRenewalThreshold(threshold) }
             if disableRenewal { api.disableClientCertRenewal() }
             if attestation { api.attestation() }
@@ -326,6 +353,7 @@ public enum ConfigParser {
         let maxOfflineAge = try f.object("maxOfflineAge").map(duration)
         let wipeWhenStale = try f.bool("wipeWhenStale") == true
         try f.finish()
+        var offlineAge = maxOfflineAge
 
         // A file the native security file names keeps its signature key, encryption and lock.
         var signatureKey = jsSignatureKey
@@ -352,6 +380,14 @@ public enum ConfigParser {
                 if let j = jsUserAuth, j != n { throw fixed("userAuth") }
                 userAuth = n
             }
+            if let max = declared.maxOfflineAgeMs {
+                if let (a, u) = maxOfflineAge {
+                    let ms = millis(a, u)
+                    if ms == 0 || ms > max { throw fixed("maxOfflineAge") }
+                } else {
+                    offlineAge = (max, .milliseconds)
+                }
+            }
         }
 
         builder.vaultFile(key) { file in
@@ -369,7 +405,7 @@ public enum ConfigParser {
             }
             if let encryption { file.encryption(encryption) }
             if let userAuth { file.userAuth(userAuth) }
-            if let (amount, unit) = maxOfflineAge { file.maxOfflineAge(amount, unit) }
+            if let (amount, unit) = offlineAge { file.maxOfflineAge(amount, unit) }
             if wipeWhenStale { file.wipeWhenStale() }
         }
     }

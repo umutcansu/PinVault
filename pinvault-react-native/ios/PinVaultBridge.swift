@@ -137,7 +137,8 @@ public final class PinVaultBridge: NSObject {
                         },
                         native: try NativeSecurity.load(),
                         release: release,
-                        noFileAllowed: NativeSecurity.noFileAllowed()
+                        noFileAllowed: NativeSecurity.noFileAllowed(),
+                        reactNetworkingEnabled: PinVaultReactNetworking.enabled
                     )
                 } catch let e as BridgeInputError {
                     // The guard of the running config stays: a refused config changes nothing.

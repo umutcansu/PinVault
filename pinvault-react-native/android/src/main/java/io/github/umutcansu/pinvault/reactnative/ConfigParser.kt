@@ -82,7 +82,7 @@ internal object ConfigParser {
         val configApis = root.objList("configApis", MAX_CONFIG_APIS)
         val vaultFiles = root.objList("vaultFiles", MAX_VAULT_FILES)
         val staticPins = root.obj("staticPins")?.let(::staticPins)
-        if (release && native == null && !noFileAllowed && (configApis != null || staticPins != null)) {
+        if (release && native == null && !noFileAllowed && (!configApis.isNullOrEmpty() || staticPins != null)) {
             throw BridgeInputException(
                 "config: a release build takes its trust anchors only from the app's native security file " +
                     "(assets/${NativeSecurity.ASSET_NAME}, README \"Native security file\"); none is shipped. " +
@@ -112,7 +112,15 @@ internal object ConfigParser {
         val caTrust = (root.stringList("requireCaTrust", 64, 255) ?: emptyList()) + (nativeRequire.requireCaTrust ?: emptyList())
         if (caTrust.isNotEmpty()) builder.requireCaTrust(*caTrust.distinct().toTypedArray())
         if (root.bool("wipeVaultFilesOnRevocation") == true || nativeRequire.wipeVaultFilesOnRevocation) builder.wipeVaultFilesOnRevocation()
-        root.obj("vaultFileMaxOfflineAge")?.let { d -> duration(d).let { builder.vaultFileMaxOfflineAge(it.first, it.second) } }
+        root.obj("vaultFileMaxOfflineAge")?.let { d ->
+            val (amount, unit) = duration(d)
+            nativeRequire.vaultFileMaxOfflineAgeMs?.let { max ->
+                val ms = unit.toMillis(amount)
+                // 0 = no limit: longer than any.
+                if (ms == 0L || ms > max) throw BridgeInputException("${d.path}: longer than the app's native security file allows (${max / 1000} s)")
+            }
+            builder.vaultFileMaxOfflineAge(amount, unit)
+        } ?: nativeRequire.vaultFileMaxOfflineAgeMs?.let { builder.vaultFileMaxOfflineAge(it, TimeUnit.MILLISECONDS) }
         val requireUnlocked = root.bool("requireUnlockedDevice") == true || nativeRequire.requireUnlockedDevice
         if (root.bool("requireHardwareBackedKeys") == true || nativeRequire.requireHardwareBackedKeys) builder.requireHardwareBackedKeys()
         if (root.bool("managedTrustRoots") == true || nativeRequire.managedTrustRoots) builder.managedTrustRoots()
@@ -251,6 +259,8 @@ internal object ConfigParser {
         fun fixed(key: String): Nothing =
             throw BridgeInputException("${b.path}.$key: differs from the app's native security file (${native?.source}); the native value is fixed")
         val blockUrl = nativeBlock?.url?.also { if (it != url) fixed("url") } ?: url
+        val fixedEnrollmentUrl = nativeBlock?.enrollmentUrl?.also { if (enrollmentUrl != null && it != enrollmentUrl) fixed("enrollmentUrl") } ?: enrollmentUrl
+        val fixedRenewalUrl = nativeBlock?.renewalUrl?.also { if (renewalUrl != null && it != renewalUrl) fixed("renewalUrl") } ?: renewalUrl
         if (nativeBlock?.attestation == true && jsAttestation == false) {
             throw BridgeInputException("${b.path}.attestation: the app's native security file turns it on; JS cannot turn it off")
         }
@@ -293,8 +303,8 @@ internal object ConfigParser {
             vaultReportEndpoint?.let { this.vaultReportEndpoint(it) }
             clientCertLabel?.let { this.clientCertLabel(it) }
             wantPinsFor?.let { this.wantPinsFor(*it.toTypedArray()) }
-            renewalUrl?.let { this.renewalUrl(it) }
-            enrollmentUrl?.let { this.enrollmentUrl(it) }
+            fixedRenewalUrl?.let { this.renewalUrl(it) }
+            fixedEnrollmentUrl?.let { this.enrollmentUrl(it) }
             threshold?.let { this.clientCertRenewalThreshold(it) }
             if (disableRenewal) this.disableClientCertRenewal()
             if (attestation) this.attestation()
@@ -332,6 +342,13 @@ internal object ConfigParser {
         } ?: jsSignatureKey
         val encryption = declared?.encryption?.also { if (jsEncryption != null && jsEncryption != it) fixed("encryption") } ?: jsEncryption
         val userAuth = declared?.userAuth?.also { if (jsUserAuth != null && jsUserAuth != it) fixed("userAuth") } ?: jsUserAuth
+        declared?.maxOfflineAgeMs?.let { max ->
+            maxOfflineAge?.let { (amount, unit) ->
+                val ms = unit.toMillis(amount)
+                if (ms == 0L || ms > max) fixed("maxOfflineAge")
+            }
+        }
+        val offlineAge = maxOfflineAge ?: declared?.maxOfflineAgeMs?.let { it to TimeUnit.MILLISECONDS }
 
         builder.vaultFile(key) {
             this.endpoint(endpoint)
@@ -346,7 +363,7 @@ internal object ConfigParser {
             }
             encryption?.let { this.encryption(it) }
             userAuth?.let { this.userAuth(it) }
-            maxOfflineAge?.let { this.maxOfflineAge(it.first, it.second) }
+            offlineAge?.let { this.maxOfflineAge(it.first, it.second) }
             if (wipeWhenStale) this.wipeWhenStale()
         }
     }

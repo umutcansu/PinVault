@@ -50,6 +50,8 @@ public struct NativeSecurity {
         var attestation = false
         var tokenHosts: [String]? = nil
         var clientCertHosts: [String]? = nil
+        var enrollmentUrl: String? = nil
+        var renewalUrl: String? = nil
     }
 
     /// The `require` section: protections JS cannot switch off.
@@ -63,6 +65,10 @@ public struct NativeSecurity {
         var expectedTeamIds: [String]? = nil
         /// The most `expiredConfigGrace` JS may set; nil = only the release cap.
         var expiredConfigGraceMs: Int64? = nil
+        /// The most `vaultFileMaxOfflineAge` JS may set (and the value when JS sets none).
+        var vaultFileMaxOfflineAgeMs: Int64? = nil
+        /// `ios.userAuthStrength`, fixed.
+        var userAuthStrength: UserAuthStrength? = nil
     }
 
     /// One `vaultFiles` entry: what JS cannot change about that file.
@@ -70,12 +76,15 @@ public struct NativeSecurity {
         let signaturePublicKey: String?
         let encryption: VaultFileEncryption?
         let userAuth: UserAuth?
+        /// The most `maxOfflineAge` JS may give this file (and the value when JS gives none).
+        var maxOfflineAgeMs: Int64? = nil
     }
 
     /// The Info.plist key with which an app accepts a release start without the file.
     public static let noFileInfoKey = "PinVaultAllowNoNativeSecurityFile"
     /// The longest `expiredConfigGrace` a release build takes.
     public static let maxReleaseGraceMs: Int64 = 7 * 24 * 3600 * 1000
+    static let maxOfflineAgeS: Int64 = 10 * 365 * 24 * 3600
 
     /// Where the file came from, for messages.
     public let source: String
@@ -124,7 +133,9 @@ public struct NativeSecurity {
                     url: try ConfigParser.httpsUrl(b, "url"),
                     attestation: try b.bool("attestation") == true,
                     tokenHosts: try b.stringList("tokenHosts", maxItems: 64, maxLength: 255),
-                    clientCertHosts: try b.stringList("clientCertHosts", maxItems: 64, maxLength: 2048)
+                    clientCertHosts: try b.stringList("clientCertHosts", maxItems: 64, maxLength: 2048),
+                    enrollmentUrl: try ConfigParser.httpsUrl(b, "enrollmentUrl"),
+                    renewalUrl: try ConfigParser.httpsUrl(b, "renewalUrl")
                 )
                 try b.finish()
             }
@@ -139,6 +150,8 @@ public struct NativeSecurity {
                 require.expectedBundleIds = try r.stringList("expectedBundleIds", maxItems: 16, maxLength: 255)
                 require.expectedTeamIds = try r.stringList("expectedTeamIds", maxItems: 16, maxLength: 32)
                 require.expiredConfigGraceMs = try r.int64("expiredConfigGraceSeconds", min: 0, max: maxReleaseGraceMs / 1000).map { $0 * 1000 }
+                require.vaultFileMaxOfflineAgeMs = try r.int64("vaultFileMaxOfflineAgeSeconds", min: 1, max: maxOfflineAgeS).map { $0 * 1000 }
+                require.userAuthStrength = try r.enumValue("userAuthStrength", UserAuthStrength.self)
                 // Android-only (signer digests): read for the shape, used by the Android side.
                 _ = try r.stringList("expectedSignerSha256", maxItems: 16, maxLength: 128)
                 try r.finish()
@@ -152,7 +165,8 @@ public struct NativeSecurity {
                     map[key] = VaultFilePolicy(
                         signaturePublicKey: try f.string("signaturePublicKey", maxLength: ConfigParser.keyLength, multiline: true),
                         encryption: try f.enumValue("encryption", VaultFileEncryption.self),
-                        userAuth: try f.enumValue("userAuth", UserAuth.self)
+                        userAuth: try f.enumValue("userAuth", UserAuth.self),
+                        maxOfflineAgeMs: try f.int64("maxOfflineAgeSeconds", min: 1, max: maxOfflineAgeS).map { $0 * 1000 }
                     )
                     try f.finish()
                 }

@@ -26,15 +26,16 @@ import java.io.IOException
  *     "serverScope": "default-tls", "clientCaPins": ["…"],
  *     "url": "https://config.example.com/", "attestation": true,
  *     "tokenHosts": ["api.example.com"], "clientCertHosts": ["api.example.com:443"],
+ *     "enrollmentUrl": "https://enroll.example.com/", "renewalUrl": "https://renew.example.com/",
  *     "allowUnsigned": false, "allowUnpinnedConfigApi": false, "allowServerGeneratedKey": false
  *   }],
  *   "staticPins": { "pins": [ … ], "version": 1 },
  *   "require": {
  *     "requireUnlockedDevice": true, "requireHardwareBackedKeys": true, "managedTrustRoots": true,
  *     "wipeVaultFilesOnRevocation": true, "requireCaTrust": ["api.example.com"],
- *     "expectedSignerSha256": ["…"], "expiredConfigGraceSeconds": 0
+ *     "expectedSignerSha256": ["…"], "expiredConfigGraceSeconds": 0, "vaultFileMaxOfflineAgeSeconds": 604800
  *   },
- *   "vaultFiles": [{ "key": "statement", "signaturePublicKey": "…", "encryption": "USER_AUTH", "userAuth": "REQUIRED" }]
+ *   "vaultFiles": [{ "key": "statement", "signaturePublicKey": "…", "encryption": "USER_AUTH", "userAuth": "REQUIRED", "maxOfflineAgeSeconds": 86400 }]
  * }
  * ```
  *
@@ -82,6 +83,8 @@ internal class NativeSecurity(
         val expectedSignerSha256: List<String>? = null,
         /** The most `expiredConfigGrace` JS may set; null = only the release cap. */
         val expiredConfigGraceMs: Long? = null,
+        /** The most `vaultFileMaxOfflineAge` JS may set (and the value when JS sets none); null = no rule. */
+        val vaultFileMaxOfflineAgeMs: Long? = null,
     )
 
     /** One `vaultFiles` entry: what JS cannot change about that file. */
@@ -89,6 +92,8 @@ internal class NativeSecurity(
         val signaturePublicKey: String?,
         val encryption: VaultFileEncryption?,
         val userAuth: UserAuth?,
+        /** The most `maxOfflineAge` JS may give this file (and the value when JS gives none). */
+        val maxOfflineAgeMs: Long? = null,
     )
 
     class Block(
@@ -106,6 +111,8 @@ internal class NativeSecurity(
         val attestation: Boolean = false,
         val tokenHosts: List<String>? = null,
         val clientCertHosts: List<String>? = null,
+        val enrollmentUrl: String? = null,
+        val renewalUrl: String? = null,
     )
 
     companion object {
@@ -113,6 +120,11 @@ internal class NativeSecurity(
         const val NO_FILE_META_DATA = "io.github.umutcansu.pinvault.ALLOW_NO_NATIVE_SECURITY_FILE"
         /** The longest `expiredConfigGrace` a release build takes: an expired pin set must not live on for months. */
         const val MAX_RELEASE_GRACE_MS = 7L * 24 * 3600 * 1000
+        private const val MAX_OFFLINE_AGE_S = 10L * 365 * 24 * 3600
+
+        private fun httpsOnly(b: Fields, key: String): String? = b.string(key, 2048)?.also {
+            if (!it.startsWith("https://")) throw BridgeInputException("${b.path}.$key: must be an https:// URL")
+        }
         private const val MAX_FILE_CHARS = 256 * 1024
 
         /** The file from the app's assets; null when the app ships none. A broken file throws [BridgeInputException]. */
@@ -163,12 +175,12 @@ internal class NativeSecurity(
                         allowUnsigned = b.bool("allowUnsigned") == true,
                         allowUnpinnedConfigApi = b.bool("allowUnpinnedConfigApi") == true,
                         allowServerGeneratedKey = b.bool("allowServerGeneratedKey") == true,
-                        url = b.string("url", 2048)?.also {
-                            if (!it.startsWith("https://")) throw BridgeInputException("${b.path}.url: must be an https:// URL")
-                        },
+                        url = httpsOnly(b, "url"),
                         attestation = b.bool("attestation") == true,
                         tokenHosts = b.stringList("tokenHosts", 64, 255),
                         clientCertHosts = b.stringList("clientCertHosts", 64, 2048),
+                        enrollmentUrl = httpsOnly(b, "enrollmentUrl"),
+                        renewalUrl = httpsOnly(b, "renewalUrl"),
                     )
                     b.finish()
                 }
@@ -182,7 +194,10 @@ internal class NativeSecurity(
                         requireCaTrust = r.stringList("requireCaTrust", 64, 255),
                         expectedSignerSha256 = r.stringList("expectedSignerSha256", 16, 128),
                         expiredConfigGraceMs = r.long("expiredConfigGraceSeconds", 0, MAX_RELEASE_GRACE_MS / 1000)?.let { it * 1000 },
+                        vaultFileMaxOfflineAgeMs = r.long("vaultFileMaxOfflineAgeSeconds", 1, MAX_OFFLINE_AGE_S)?.let { it * 1000 },
                     ).also {
+                        // iOS-only (screen-lock strength): read for the shape, used by the iOS side.
+                        r.string("userAuthStrength", 32)
                         // iOS-only (bundle and team ids): read for the shape, used by the iOS side.
                         r.stringList("expectedBundleIds", 16, 255)
                         r.stringList("expectedTeamIds", 16, 32)
@@ -198,6 +213,7 @@ internal class NativeSecurity(
                             signaturePublicKey = f.string("signaturePublicKey", ConfigParser.KEY_LENGTH, multiline = true),
                             encryption = f.enum("encryption", VaultFileEncryption.values()),
                             userAuth = f.enum("userAuth", UserAuth.values()),
+                            maxOfflineAgeMs = f.long("maxOfflineAgeSeconds", 1, MAX_OFFLINE_AGE_S)?.let { it * 1000 },
                         )
                         f.finish()
                     }

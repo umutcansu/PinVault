@@ -178,6 +178,7 @@ signature. Ship them natively as well, in `pinvault_security.json`:
     "serverScope": "default-tls", "clientCaPins": ["…"],
     "url": "https://config.example.com:8081/", "attestation": true,
     "tokenHosts": ["api.example.com"], "clientCertHosts": ["api.example.com:443"],
+    "enrollmentUrl": "https://enroll.example.com/", "renewalUrl": "https://renew.example.com/",
     "allowUnsigned": false, "allowUnpinnedConfigApi": false, "allowServerGeneratedKey": false
   }],
   "staticPins": { "pins": [ … ], "version": 1 },
@@ -187,10 +188,12 @@ signature. Ship them natively as well, in `pinvault_security.json`:
     "requireCaTrust": ["api.example.com"],
     "expectedSignerSha256": ["…"],
     "expectedBundleIds": ["com.example.app"], "expectedTeamIds": ["ABCDE12345"],
-    "expiredConfigGraceSeconds": 0
+    "expiredConfigGraceSeconds": 0, "vaultFileMaxOfflineAgeSeconds": 604800,
+    "userAuthStrength": "BIOMETRIC_CURRENT_SET"
   },
   "vaultFiles": [
-    { "key": "statement", "signaturePublicKey": "…", "encryption": "USER_AUTH", "userAuth": "REQUIRED" }
+    { "key": "statement", "signaturePublicKey": "…", "encryption": "USER_AUTH", "userAuth": "REQUIRED",
+      "maxOfflineAgeSeconds": 86400 }
   ]
 }
 ```
@@ -206,15 +209,18 @@ parsed as strictly; a broken file rejects `start` with `E_INVALID_CONFIG`
   with `E_INVALID_CONFIG` naming the field;
 - `allowUnsigned`, `allowUnpinnedConfigApi` and `allowServerGeneratedKey` from
   JS are refused unless the file allows them for that block;
-- a block's `url`, `tokenHosts` and `clientCertHosts` are fixed where the file
-  gives them (where the block talks to, and who gets its token and identity),
+- a block's `url`, `enrollmentUrl`, `renewalUrl`, `tokenHosts` and
+  `clientCertHosts` are fixed where the file gives them (where the block talks to, and who gets its token and identity),
   and `attestation: true` there cannot be turned off from JS;
 - `require` only tightens: a protection it turns on stays on whatever JS says,
   its `requireCaTrust` hosts are added to JS's, the expected signer / bundle /
-  team ids are fixed, and `expiredConfigGraceSeconds` is the most JS may ask for
+  team ids and iOS `userAuthStrength` are fixed, and `expiredConfigGraceSeconds`
+  / `vaultFileMaxOfflineAgeSeconds` are the most JS may ask for (the value when
+  JS asks for none)
   (Android reads `expectedSignerSha256`, iOS the bundle and team ids; one file
   can serve both);
-- `vaultFiles` fixes those files' signature key, encryption and screen lock;
+- `vaultFiles` fixes those files' signature key, encryption and screen lock, and
+  `maxOfflineAgeSeconds` is the longest offline lifetime JS may give them;
   with the section present, a JS vault file it does not name is refused.
 
 `start` answers `nativeSecurityApplied: true` when the file was applied.
