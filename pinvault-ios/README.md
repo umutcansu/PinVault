@@ -163,7 +163,22 @@ if case .unlocked(_, _, let bytes) = unlocked { use(bytes) }
   locked file, so this is a config-wide choice; the default stays biometrics
   or passcode.
 - Stored files live under `Library/Application Support/pinvault/`, encrypted,
-  excluded from backups; their keys are `ThisDeviceOnly` Keychain items.
+  excluded from backups; their keys are `ThisDeviceOnly` Keychain items,
+  wrapped by a Secure Enclave key (`SecureEnclaveKeyWrap`): a Keychain dump of
+  a jailbroken phone reads only ciphertext, and the keys open on this device
+  only. Keys written by earlier versions are wrapped the first time they are
+  read; where no Secure Enclave key can be made they stay as they were.
+  Going back to an older version of the library starts the stores empty.
+- The `end_to_end` RSA key cannot be wrapped that way (the Secure Enclave holds
+  no RSA keys): on a jailbroken phone a Keychain dump can copy it. Use
+  `user_auth` (screen lock) for content that must not leave the device.
+- **Putting an older container back** (a jailbroken phone, a restored copy of
+  the app's files) would set the replay watermarks and the trusted clock back
+  with it. iOS also keeps them in a `ThisDeviceOnly` Keychain item outside the
+  container (`WatermarkMirror`) and reads the higher of the two, so an older
+  signed config is not accepted again. Old vault copies stay readable until
+  their `maxOfflineAge`, measured on that clock; set it for files where that
+  matters.
 
 ## Attestation
 
@@ -193,7 +208,8 @@ settings (`ATTESTATION.md` §12).
 |---|---|---|
 | Identity key | Keystore (StrongBox / TEE), key attestation chain | Secure Enclave; App Attest instead of a chain |
 | Device id | `ANDROID_ID` | `identifierForVendor` |
-| Encrypted stores | Keystore AES / HMAC keys, `shared_prefs` XML | Keychain keys (`ThisDeviceOnly`), plist under Application Support |
+| Encrypted stores | Keystore AES / HMAC keys, `shared_prefs` XML | Keychain keys (`ThisDeviceOnly`, wrapped by the Secure Enclave), plist under Application Support |
+| Replay watermarks | in the encrypted store (a restored store sets them back; the server's `config_rollback` flag sees it) | also mirrored in the Keychain, outside the container |
 | Vault device key | Keystore RSA, OAEP MGF1-SHA1 | Keychain RSA, OAEP MGF1-SHA256 |
 | Periodic updates | WorkManager | `BGTaskScheduler`; an in-process scheduler where it is unavailable (simulator) |
 | 403 on mTLS listeners | read as is | URLSession hides it; the library asks for `409` + `X-PinVault-Status: 403` (`forbidden-as-409`) |

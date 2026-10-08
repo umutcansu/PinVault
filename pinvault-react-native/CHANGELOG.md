@@ -1,5 +1,31 @@
 # Changelog
 
+## Unreleased
+
+### Breaking
+
+- **Release builds need the native security file** when the config has Config
+  APIs or static pins (Android manifest meta-data
+  `io.github.umutcansu.pinvault.ALLOW_NO_NATIVE_SECURITY_FILE` / iOS Info.plist
+  `PinVaultAllowNoNativeSecurityFile` = YES opts out).
+- **`requirePinnedReactNativeNetworking` is on by default in release builds.**
+- **`expiredConfigGrace` is at most 7 days in release builds.**
+- **Vault file keys** must match `[A-Za-z0-9._-]{1,64}` (not only dots).
+
+### Security
+
+- The native security file may also fix a block's `url`, `tokenHosts`,
+  `clientCertHosts` and `attestation`, carry a `require` section (protections
+  JS cannot switch off) and `vaultFiles` (signature key, encryption, lock).
+- `start` answers `nativeSecurityApplied`.
+- Android: React Native's long-lived clients (WebSocket, images) run the
+  current start's network interceptors (the per-request pin check) and their
+  pooled connections are closed on every start and reset; a hook installed only
+  by `start()` is reported as not pinned; a hook replaced after start refuses
+  https while `requirePinnedReactNativeNetworking` is on.
+- The JS guard of a start the native side refuses is put back.
+- `LOAD_FILE` is a guarded operation (`loadFile`).
+
 ## 2.3.2 — 2026-10-08 — first release
 
 First published version (2.3.1 was never published). Needs PinVault 2.3.2 on both platforms.

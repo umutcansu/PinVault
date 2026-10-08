@@ -1,5 +1,70 @@
 # Changelog
 
+## Unreleased — root / jailbreak hardening
+
+A review of what a rooted or jailbroken device lets an attacker do (OWASP
+MASVS v2: RESILIENCE, STORAGE, CRYPTO, PLATFORM). The server now judges by
+what the hardware vouches for; the clients bind their verdicts to the report.
+
+### Reference server
+
+- **Hardware facts kept and judged every round** (V26): a chain that verifies
+  at TEE/StrongBox level keeps its RootOfTrust, patch levels and serials, also
+  under `ATTESTATION_KEY_POLICY=warn`. New flags, `reject` under strict:
+  `bootloader_unlocked`, `boot_not_verified`, `key_revoked` (serials checked
+  against the revocation list each round), `report_mismatch` (the report says
+  otherwise than the record), `config_rollback` (a lower config watermark than
+  the device reported before). Software-level chains (emulators) raise none.
+  `ATTESTATION_TRUSTED_BOOT_KEYS` allow-lists self-signed verified boot.
+  `old_patch_level` uses the attested patch level when there is one.
+- **`PinVault-Token` is bound:** a `cnf` claim (`jkt`, `x5t#S256` over mTLS);
+  `PinVaultTokenAuth` refuses a `did` other than `X-Device-Id`;
+  `PINVAULT_TOKEN_REQUIRE_CERT_BINDING=true` requires the matching client cert.
+- **v2 verdicts:** App Attest client data hash over the canonical string (the
+  token beside the report), Play Integrity nonce bound to the device;
+  `APP_ATTEST_REQUIRE_V2`, `PLAY_INTEGRITY_REQUIRE_V2` (production profile:
+  on), `PLAY_INTEGRITY_STALE_PASS_SECONDS`, `PLAY_INTEGRITY_REQUIRE_LICENSED`.
+- Upgrade note: stored policies take the new flags at the default profile's
+  action, so a strict server now rejects a phone with an unlocked bootloader.
+
+### Android library
+
+- **`consumer-rules.pro` keeps only the six Gson wire types** and the Retrofit
+  service; `PinVault`, the configuration types and internal members are
+  renamed in minified apps (`GsonModelPackageTest` guards both directions).
+- **`GuardedOperation.LOAD_FILE`:** `loadFile` asks the environment guard.
+  An exhaustive `when` over the enum needs a branch for it.
+- **Vault file keys** must match `[A-Za-z0-9._-]{1,64}` and not be only dots.
+- Root probe: properties fall back to `getprop`, unreadable ones are
+  `error:prop` evidence; unverified boot, unlocked vbmeta / flash are evidence.
+  Hooking probe: frida-server's default loopback ports.
+- `IntegrityVerdictProvider.verdict(nonce, deviceId)` (default: `verdict(nonce)`);
+  `PlayIntegrityVerdictProvider` sends the v2 nonce.
+
+### iOS library
+
+- **Store keys wrapped by the Secure Enclave:** the encrypted stores' AES/HMAC
+  keys and the per-file vault keys sit in the Keychain wrapped by a P-256
+  Secure Enclave key; a Keychain dump yields ciphertext. Existing keys are
+  wrapped on first read. Going back to an older library starts the stores empty.
+- **Watermarks mirrored outside the container:** replay watermarks and the
+  trusted clock reference are also kept in a ThisDeviceOnly Keychain item;
+  putting an older container back no longer moves them back.
+- **App Attest v2** (see the server).
+- Probes: a receipt counts only when its file exists; a decrypted App Store /
+  TestFlight binary is `app_integrity` evidence; `get-task-allow` is read from
+  the code signature too; tweaks are found by where they load from, foreign
+  images outside the shared cache, Frida threads, current rootless / rootful
+  jailbreak markers.
+- `GuardedOperation.loadFile`; vault file key rule.
+- `sample-client-ios`: `DeviceShield` environment guard; Release expects its
+  bundle id and requires hardware-backed keys and an unlocked device.
+
+### React Native
+
+See `pinvault-react-native/CHANGELOG.md` (breaking for release builds without
+a native security file).
+
 ## 2.3.2 — 2026-10-08 — React Native library; iOS bounded app-session reads
 
 ### React Native (new)

@@ -176,9 +176,22 @@ signature. Ship them natively as well, in `pinvault_security.json`:
     "signaturePublicKeys": ["…", "…", "…"], "requiredSignatures": 2,
     "recoveryPublicKeys": ["…"], "requiredRecoverySignatures": 1,
     "serverScope": "default-tls", "clientCaPins": ["…"],
+    "url": "https://config.example.com:8081/", "attestation": true,
+    "tokenHosts": ["api.example.com"], "clientCertHosts": ["api.example.com:443"],
     "allowUnsigned": false, "allowUnpinnedConfigApi": false, "allowServerGeneratedKey": false
   }],
-  "staticPins": { "pins": [ … ], "version": 1 }
+  "staticPins": { "pins": [ … ], "version": 1 },
+  "require": {
+    "requireUnlockedDevice": true, "requireHardwareBackedKeys": true,
+    "managedTrustRoots": true, "wipeVaultFilesOnRevocation": true,
+    "requireCaTrust": ["api.example.com"],
+    "expectedSignerSha256": ["…"],
+    "expectedBundleIds": ["com.example.app"], "expectedTeamIds": ["ABCDE12345"],
+    "expiredConfigGraceSeconds": 0
+  },
+  "vaultFiles": [
+    { "key": "statement", "signaturePublicKey": "…", "encryption": "USER_AUTH", "userAuth": "REQUIRED" }
+  ]
 }
 ```
 
@@ -192,11 +205,29 @@ parsed as strictly; a broken file rejects `start` with `E_INVALID_CONFIG`
   applies) or repeat it (lists in any order); a different value rejects `start`
   with `E_INVALID_CONFIG` naming the field;
 - `allowUnsigned`, `allowUnpinnedConfigApi` and `allowServerGeneratedKey` from
-  JS are refused unless the file allows them for that block.
+  JS are refused unless the file allows them for that block;
+- a block's `url`, `tokenHosts` and `clientCertHosts` are fixed where the file
+  gives them (where the block talks to, and who gets its token and identity),
+  and `attestation: true` there cannot be turned off from JS;
+- `require` only tightens: a protection it turns on stays on whatever JS says,
+  its `requireCaTrust` hosts are added to JS's, the expected signer / bundle /
+  team ids are fixed, and `expiredConfigGraceSeconds` is the most JS may ask for
+  (Android reads `expectedSignerSha256`, iOS the bundle and team ids; one file
+  can serve both);
+- `vaultFiles` fixes those files' signature key, encryption and screen lock;
+  with the section present, a JS vault file it does not name is refused.
+
+`start` answers `nativeSecurityApplied: true` when the file was applied.
 
 Without the file, **release builds** (Android: the app is not
-`android:debuggable`; iOS: compiled without `DEBUG`) refuse those three
-relaxations from JS; debug builds take them as before. The sample app writes
+`android:debuggable`; iOS: compiled without `DEBUG`) refuse to start a config
+with Config APIs or static pins: its trust anchors would come from JS alone.
+An app that accepts that says so natively — Android:
+`<meta-data android:name="io.github.umutcansu.pinvault.ALLOW_NO_NATIVE_SECURITY_FILE" android:value="true"/>`
+in the manifest's `<application>`; iOS: `PinVaultAllowNoNativeSecurityFile` =
+YES in Info.plist — and the three relaxations stay refused from JS then. Debug
+builds take everything as before. Whatever the file says, a release build
+takes an `expiredConfigGrace` of at most 7 days. The sample app writes
 the file for its release builds from `sample-host.properties`
 (`scripts/gen-host-config.js --native-out`).
 
@@ -223,9 +254,11 @@ signer check of attestation (`expectedSignerSha256`, `expectedTeamIds`) reports.
   - Hosts without a pin entry are refused like everywhere else in PinVault.
   - No `https` → `http` redirects; no disk HTTP cache and no cookie jar (Android:
     `android.keepReactNativeHttpCache` / `keepReactNativeCookies` keep RN's own).
-  - `requirePinnedReactNativeNetworking: true` makes `start` fail with
-    `E_NETWORKING_NOT_PINNED` when RN's networking does not go through PinVault
-    (below); without it a warning is logged.
+  - `requirePinnedReactNativeNetworking` (on by default in release builds)
+    makes `start` fail with `E_NETWORKING_NOT_PINNED` when RN's networking does
+    not go through PinVault (below); on Android a hook replaced after start
+    then refuses RN's https too (checked every few seconds). With it off a
+    warning is logged.
 - **Android** (two hooks of RN 0.87, read from its sources), installed by the
   plugin's content provider before `Application.onCreate`, so every client RN
   builds is covered:
