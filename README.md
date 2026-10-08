@@ -1824,23 +1824,23 @@ Five projects next to the libraries show PinVault end to end (their READMEs are 
 
 ## Request-flow animation
 
-A single-file, step-by-step animation of what this branch does on the wire:
+A single-file, step-by-step animation of what PinVault does on the wire:
 the product introduction, the two kinds of Config API, the init order
 (pending enrollments → certificate renewal → config / host certificate /
 health per API → attestation → key registration → stale-file wipe), the
-5-minute attestation and token refresh loop, the policy, trust roots,
+attestation and token refresh loop (a token lasts 5 minutes and is renewed
+about every 4), the policy, trust roots,
 revocation, and a drawing of the whole topology. 15 chapters, 99 steps; it
 runs offline in any browser.
 
 | Language | Open (renders in the browser) | Source |
 |---|---|---|
-| English | [▶ pinvault-request-flow.en.html](https://raw.githack.com/umutcansu/PinVault/claude/sharp-euler-uf519f/docs/animation/pinvault-request-flow.en.html) | [`docs/animation/pinvault-request-flow.en.html`](docs/animation/pinvault-request-flow.en.html) |
-| Türkçe | [▶ pinvault-request-flow.tr.html](https://raw.githack.com/umutcansu/PinVault/claude/sharp-euler-uf519f/docs/animation/pinvault-request-flow.tr.html) | [`docs/animation/pinvault-request-flow.tr.html`](docs/animation/pinvault-request-flow.tr.html) |
+| English | [▶ pinvault-request-flow.en.html](https://raw.githack.com/umutcansu/PinVault/main/docs/animation/pinvault-request-flow.en.html) | [`docs/animation/pinvault-request-flow.en.html`](docs/animation/pinvault-request-flow.en.html) |
+| Türkçe | [▶ pinvault-request-flow.tr.html](https://raw.githack.com/umutcansu/PinVault/main/docs/animation/pinvault-request-flow.tr.html) | [`docs/animation/pinvault-request-flow.tr.html`](docs/animation/pinvault-request-flow.tr.html) |
 
 The "open" links go through raw.githack.com, which serves the file from
-this repository as a real page (GitHub's own file view shows the source).
-Once the branch is merged, replace `claude/sharp-euler-uf519f` in the URL
-with `main`. Offline: download the source file and double-click it; it has
+this repository's `main` branch as a real page (GitHub's own file view
+shows the source). Offline: download the source file and double-click it; it has
 no external dependencies.
 
 ### Presentation film (English and Turkish)
@@ -1885,7 +1885,7 @@ A silent 3:16 video that walks the whole chain in order, ring by ring, with the
 real panel and phone screens: the server's first start and setup wizard, what
 goes into the APK, adding the API host, issuing the enrollment token, getting it
 to the phone, the enrollment request, the certificate, the signed pin list, the
-attestation ticket and the first protected API call.
+PinVault-Token from attestation and the first protected API call.
 
 [▶ pinvault-bastan-sona.tr.mp4](docs/animation/pinvault-bastan-sona.tr.mp4)
 (1920×1080, 5.2 MB), built from
