@@ -15,6 +15,10 @@ public enum GuardedOperation: String, Sendable, Equatable, Hashable, CaseIterabl
     /// `unlockFile`. Refused: ``VaultFileUnlockResult/failed(key:reason:exception:)``;
     /// no prompt is shown.
     case unlockFile = "UNLOCK_FILE"
+    /// `loadFile` (and `loadFileAsString`): reading a stored copy, which needs
+    /// no network. Refused: nil, the copy is not decrypted and stays stored.
+    /// Added in 2.4.0: an exhaustive `switch` over this enum needs a case for it.
+    case loadFile = "LOAD_FILE"
 }
 
 /// The app's own answer to "may PinVault do this here, now?".

@@ -45,6 +45,14 @@ final class PinVaultFacadeTests: XCTestCase {
         XCTAssertEqual(message, "The app's environment guard failed for FETCH_FILE (DetectorCrashed); refused")
     }
 
+    func testReadingAStoredCopyIsAnOperationOfItsOwn() throws {
+        let cfg = try config { $0 != .loadFile }
+        XCTAssertNil(PinVault().environmentRefusal(cfg, .fetchFile))
+        let refused = try XCTUnwrap(PinVault().environmentRefusal(cfg, .loadFile))
+        guard case .untrustedEnvironment(.loadFile, _, _) = refused else { return XCTFail("\(refused)") }
+        XCTAssertEqual(GuardedOperation.loadFile.rawValue, "LOAD_FILE", "the Kotlin name")
+    }
+
     func testStartIsRefusedBeforeAnythingIsSetUp() async throws {
         let result = await PinVault().start(config: try config { _ in false })
         guard case .failed(_, let exception) = result else { return XCTFail("\(result)") }

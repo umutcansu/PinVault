@@ -257,6 +257,7 @@ final class AppModel: ObservableObject {
         Self.resolveMockHosts(builder)
         Self.addAppAttest(builder)
 
+        Self.harden(builder)
         let config = try builder
             .deviceAlias(DeviceInfo.alias)
             // Android'de WorkManager'ın izin verdiği en kısa periyot; iOS'ta da 15 dk.
@@ -305,6 +306,7 @@ final class AppModel: ObservableObject {
         }
         Self.requireCaTrustForTarget(builder)
         Self.resolveMockHosts(builder)
+        Self.harden(builder)
         let config = try builder
             .deviceAlias(DeviceInfo.alias)
             // Bu modda kayıt yok (API desteklemez); yine de bir kimlik yüklüyse ve
@@ -329,6 +331,7 @@ final class AppModel: ObservableObject {
         let builder = PinVaultConfig.Builder()
         Self.requireCaTrustForTarget(builder)
         Self.resolveMockHosts(builder)
+        Self.harden(builder)
         let config = try builder
             .configApi(Endpoints.customApiId, url: baseUrl) { block in
                 block.bootstrapPins([bootstrap])
@@ -432,6 +435,20 @@ final class AppModel: ObservableObject {
     /// Android'de isteğe bağlı Play Integrity (host.playIntegrityProjectNumber). iOS
     /// karşılığı App Attest (PORTING.md §6): rapor `verdictProvider: app-attest` taşır;
     /// simülatörde desteklenmez, sağlayıcı nil döner.
+    /// Her moddaki config'e aynı sertleştirme (Android: App.java'daki karşılığı).
+    /// Ortam kontrolü DeviceShield'in kararıdır. Release'te ayrıca uygulamanın
+    /// kendi kimliği beklenir (yeniden paketlenmiş kopya `app_integrity` taşır),
+    /// anahtarlar donanımda olmalıdır (yazılım anahtarına düşmek hata olur) ve
+    /// depolar kilitli cihazda açılmaz.
+    private static func harden(_ builder: PinVaultConfig.Builder) {
+        builder.environmentGuard { DeviceShield.allows($0) }
+        #if !TEST_CONTROLS
+        builder.expectedBundleId("com.example.sampleclient")
+        builder.requireHardwareBackedKeys()
+        builder.requireUnlockedDevice()
+        #endif
+    }
+
     private static func addAppAttest(_ builder: PinVaultConfig.Builder) {
         guard SampleHostConfig.hostAttestation else { return }
         // Apple App Attest: raporun ikinci görüşü. Uygulama sağlayıcı vermese de

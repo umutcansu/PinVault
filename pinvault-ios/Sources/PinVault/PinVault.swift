@@ -1048,9 +1048,12 @@ public final class PinVault: @unchecked Sendable {
 
     /// The stored copy, checked on every read (signature, offline lifetime);
     /// nil when not fetched, for a `userAuth` file (use ``unlockFile(key:prompt:)``),
-    /// and when a check fails — ``fileStatus(_:)`` says which.
+    /// and when a check fails — ``fileStatus(_:)`` says which. The app's
+    /// environment guard is asked first (``GuardedOperation/loadFile``); a
+    /// refusal returns nil without decrypting the copy.
     public func loadFile(_ key: String) -> Data? {
-        vaultService?.loadFile(key)
+        if environmentRefusal(config, .loadFile) != nil { return nil }
+        return vaultService?.loadFile(key)
     }
 
     /// What ``loadFile(_:)`` / ``unlockFile(key:prompt:)`` would make of the stored copy, without reading it.

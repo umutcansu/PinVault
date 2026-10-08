@@ -15,6 +15,7 @@ struct SettingsView: View {
     @State private var reportSuccess = AppSettings.reportSuccess()
     @State private var scopedPins = AppSettings.scopedPins()
     @State private var twoSignatures = AppSettings.requiredSignatures() >= 2
+    @State private var environmentGuard = DeviceShield.enabled
     @State private var dedupMs = String(AppSettings.dedupMs())
 
     private static let radios: [(id: String, mode: AppSettings.Mode, title: String)] = [
@@ -37,6 +38,7 @@ struct SettingsView: View {
             CheckBox(id: "reportSuccessCheck", title: S.settingsReportSuccess, isOn: $reportSuccess)
             CheckBox(id: "scopedPinsCheck", title: S.settingsScopedPins, isOn: $scopedPins)
             CheckBox(id: "twoSignaturesCheck", title: S.settingsTwoSignatures, isOn: $twoSignatures)
+            CheckBox(id: "environmentGuardCheck", title: S.settingsEnvironmentGuard, isOn: $environmentGuard)
             InputField(id: "dedupMsInput", hint: S.settingsDedupHint, text: $dedupMs, keyboard: .numberPad)
             ActionButton(id: "applyButton", title: S.settingsApply, enabled: idle) { apply() }
 
@@ -74,6 +76,8 @@ struct SettingsView: View {
         // m-of-n: işaretliyken her config iki ayrı anahtardan imza taşımalı.
         let required = twoSignatures ? 2 : 1
         AppSettings.setRequiredSignatures(required)
+        // Ortam kontrolü (DeviceShield): test derlemelerinde varsayılan kapalı; Release'te hep açık.
+        UserDefaults.standard.set(environmentGuard, forKey: "sample.environmentGuard")
         state.runAction(S.settingsApplying(mode.label)) {
             let model = await AppModel.shared
             await model.applyMode(mode)

@@ -255,6 +255,7 @@ enum S {
     static let settingsReportSuccess = "Başarılı el sıkışmaları da raporla"
     static let settingsDedupHint = "Tekrar bastırma penceresi (ms, 0 = kapalı)"
     static let settingsScopedPins = "Yalnızca hedef host'un pin'lerini iste (wantPinsFor)"
+    static let settingsEnvironmentGuard = "Ortam kontrolü: jailbreak / debugger / hooking görülürse kayıt ve dosyaları reddet"
     static let settingsApply = "Uygula ve yeniden başlat"
     static func settingsApplying(_ mode: String) -> String { "Uygulanıyor: \(mode)…" }
     static func settingsApplied(
