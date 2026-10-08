@@ -112,7 +112,7 @@ final class WatermarkMirrorTests: XCTestCase {
         try store.setHighestSeenTime(5_000_000)
         try store.resetWatermarks(keySetVersion: 4, anchors: nil)
         XCTAssertEqual(broken.writes, 0)
-        XCTAssertEqual(try store.highestSeenTime(), 5_000_000, "the store's own value still counts")
+        XCTAssertThrowsError(try store.highestSeenTime(), "an unreadable copy is not \"nothing seen\": the clock tries again")
     }
 
     func testTheClockReferenceSurvivesAContainerPutBackAndFollowsTheLibrarysOwnReset() throws {
@@ -127,8 +127,11 @@ final class WatermarkMirrorTests: XCTestCase {
         let restored = CertificateConfigStore(prefs: InMemoryPreferences(), mirror: mirror)
         XCTAssertEqual(try restored.highestSeenTime(), 1_100_000, "an empty or older container does not set the clock back")
 
-        // TrustedClock.resetTo persists a lower reference: the copy follows.
-        try live.setHighestSeenTime(900_000)
+        // A lower value through the ordinary path (a container put back) leaves the copy.
+        try live.setHighestSeenTime(950_000)
+        XCTAssertEqual(mirror.values.clock, 1_100_000)
+        // TrustedClock.resetTo persists a lower reference through its own path: the copy follows.
+        try live.lowerHighestSeenTime(900_000)
         XCTAssertEqual(mirror.values.clock, 900_000)
         XCTAssertEqual(try restored.highestSeenTime(), 900_000)
     }

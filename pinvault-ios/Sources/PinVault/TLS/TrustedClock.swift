@@ -72,6 +72,8 @@ final class TrustedClock: @unchecked Sendable {
     private let elapsed: @Sendable () -> Int64
     private let load: @Sendable () throws -> Int64
     private let persist: @Sendable (Int64) throws -> Void
+    /// Persists a LOWER reference (``resetTo(issuedAt:)``); the store lowers its copies too.
+    private let persistLowered: @Sendable (Int64) throws -> Void
     private let log = PinVaultLog.tag("TrustedClock")
 
     private struct State {
@@ -93,12 +95,14 @@ final class TrustedClock: @unchecked Sendable {
         wall: @escaping @Sendable () -> Int64 = LibraryClock.wallMillis,
         elapsed: @escaping @Sendable () -> Int64 = LibraryClock.elapsedMillis,
         load: @escaping @Sendable () throws -> Int64 = { 0 },
-        persist: @escaping @Sendable (Int64) throws -> Void = { _ in }
+        persist: @escaping @Sendable (Int64) throws -> Void = { _ in },
+        persistLowered: (@Sendable (Int64) throws -> Void)? = nil
     ) {
         self.wall = wall
         self.elapsed = elapsed
         self.load = load
         self.persist = persist
+        self.persistLowered = persistLowered ?? persist
     }
 
     /// The later of the wall clock and the carried-forward reference. Cheap:
@@ -133,7 +137,13 @@ final class TrustedClock: @unchecked Sendable {
         )
         state.reference = target
         state.referenceElapsed = elapsed()
-        write(target)
+        do {
+            try persistLowered(target)
+            state.persisted = target
+        } catch {
+            state.nextWriteAttempt = target + Self.loadRetryMs
+            log.w("Trusted clock: could not persist the lowered reference — trying again later", error)
+        }
     }
 
     private func advance() -> Int64 {

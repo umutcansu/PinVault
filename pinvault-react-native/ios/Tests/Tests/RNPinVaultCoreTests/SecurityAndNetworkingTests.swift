@@ -132,6 +132,14 @@ final class SecurityAndNetworkingTests: XCTestCase {
         assertRefused(#"{"configApis":[{\#(base)}],"ios":{"userAuthStrength":"DEVICE_OWNER"}}"#, native: strict, "userAuthStrength", "fixed")
         assertRefused(#"{"configApis":[{\#(base),"enrollmentUrl":"https://evil.example/"}]}"#, native: strict, "enrollmentUrl", "fixed")
         _ = try parse(#"{"configApis":[{\#(base)}],"vaultFileMaxOfflineAge":{"amount":30,"unit":"MINUTES"}}"#, native: strict)
+        // The config-wide cap holds for a file the file does not name a cap for, too.
+        let globalOnly = try NativeSecurity.parse("""
+            {"configApis":[{"id":"default","bootstrapPins":[{"hostname":"h.example","sha256":["\(pinA)","\(pinB)"]}],"signaturePublicKeys":["\(key)"]}],
+             "require":{"vaultFileMaxOfflineAgeSeconds":3600}}
+            """, source: "f")
+        assertRefused(#"{"configApis":[{\#(base)}],"vaultFiles":[{"key":"any","endpoint":"e","maxOfflineAge":{"amount":0,"unit":"SECONDS"}}]}"#, native: globalOnly, "maxOfflineAge")
+        assertRefused(#"{"configApis":[{\#(base)}],"vaultFiles":[{"key":"any","endpoint":"e","maxOfflineAge":{"amount":2,"unit":"HOURS"}}]}"#, native: globalOnly, "maxOfflineAge")
+        _ = try parse(#"{"configApis":[{\#(base)}],"vaultFiles":[{"key":"any","endpoint":"e","maxOfflineAge":{"amount":10,"unit":"MINUTES"}}]}"#, native: globalOnly)
     }
 
     func testAnEmptyConfigApiListNeedsNoFileAndTheNetworkingOptOutIsHonoured() throws {

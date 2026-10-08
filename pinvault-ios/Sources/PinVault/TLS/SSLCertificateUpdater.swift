@@ -19,6 +19,7 @@ protocol UpdaterConfigStore: AnyObject, Sendable {
     func setKeySetVersionSeen(_ version: Int) throws
     func trustAnchorsSeen() throws -> String?
     func setTrustAnchorsSeen(_ fingerprint: String) throws
+    func reconcileMirror(keySetVersion: Int, anchors: String)
 }
 
 extension CertificateConfigStore: UpdaterConfigStore {}
@@ -438,6 +439,9 @@ final class SSLCertificateUpdater: @unchecked Sendable {
         guard let verifier else { return }
         try syncTrustAnchors(verifier)
         let inForce = try verifier.keySetVersion()
+        // The Keychain copy is compared with what is in force on every run, not
+        // only when the store's own record moves (a lowering it missed is made now).
+        defer { configStore.reconcileMirror(keySetVersion: inForce, anchors: verifier.anchorsFingerprint()) }
         guard let resetFor = try configStore.keySetVersionSeen() else {
             // First time this store meets key sets: nothing to compare with.
             try configStore.setKeySetVersionSeen(inForce)

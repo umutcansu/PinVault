@@ -7,12 +7,14 @@
 //   { "configApis": [{ "id", "bootstrapPins", "signaturePublicKeys", "requiredSignatures",
 //                      "recoveryPublicKeys", "requiredRecoverySignatures", "serverScope",
 //                      "clientCaPins", "allowUnsigned", "allowUnpinnedConfigApi",
-//                      "allowServerGeneratedKey", "url", "attestation", "tokenHosts", "clientCertHosts" }],
+//                      "allowServerGeneratedKey", "url", "attestation", "tokenHosts", "clientCertHosts",
+//                      "enrollmentUrl", "renewalUrl" }],
 //     "staticPins": { "pins": [...], "version": 1 },
 //     "require": { "requireUnlockedDevice", "requireHardwareBackedKeys", "managedTrustRoots",
 //                  "wipeVaultFilesOnRevocation", "requireCaTrust", "expectedBundleIds",
-//                  "expectedTeamIds", "expiredConfigGraceSeconds" },
-//     "vaultFiles": [{ "key", "signaturePublicKey", "encryption", "userAuth" }] }
+//                  "expectedTeamIds", "userAuthStrength", "expiredConfigGraceSeconds",
+//                  "vaultFileMaxOfflineAgeSeconds", "expectedSignerSha256" (Android's, read for the shape) },
+//     "vaultFiles": [{ "key", "signaturePublicKey", "encryption", "userAuth", "maxOfflineAgeSeconds" }] }
 //
 // When the file is there: every JS Config API (and JS `staticPins`) must be
 // declared in it; a declared field is the value (JS may omit or repeat it, a

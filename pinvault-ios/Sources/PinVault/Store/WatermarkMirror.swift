@@ -43,7 +43,6 @@ final class KeychainWatermarkMirror: WatermarkMirror, @unchecked Sendable {
     static let service = "io.github.umutcansu.pinvault.watermarks"
 
     private let account: String
-    private let cache = Locked<MirroredWatermarks?>(nil)
     private let log = PinVaultLog.tag("WatermarkMirror")
 
     init(account: String) {
@@ -60,7 +59,6 @@ final class KeychainWatermarkMirror: WatermarkMirror, @unchecked Sendable {
     }
 
     func read() -> MirroredWatermarks? {
-        if let cached = cache.get() { return cached }
         var lookup = query
         lookup[kSecReturnData] = true
         lookup[kSecMatchLimit] = kSecMatchLimitOne
@@ -73,9 +71,8 @@ final class KeychainWatermarkMirror: WatermarkMirror, @unchecked Sendable {
             log.w("Watermark mirror [\(account)] cannot be read (OSStatus \(status))")
             return nil
         }
-        let values = Self.decode(data)
-        cache.set(values)
-        return values
+        // Read fresh every time: an app extension sharing the access group may have written it.
+        return Self.decode(data)
     }
 
     func write(_ values: MirroredWatermarks) {
@@ -87,9 +84,7 @@ final class KeychainWatermarkMirror: WatermarkMirror, @unchecked Sendable {
             add[kSecAttrAccessible] = kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly
             status = SecItemAdd(add as CFDictionary, nil)
         }
-        if status == errSecSuccess {
-            cache.set(values)
-        } else if status != errSecMissingEntitlement {
+        if status != errSecSuccess && status != errSecMissingEntitlement {
             log.w("Watermark mirror [\(account)] cannot be written (OSStatus \(status))")
         }
     }

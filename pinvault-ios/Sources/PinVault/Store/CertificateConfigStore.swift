@@ -69,6 +69,8 @@ final class CertificateConfigStore: Sendable {
     private let clockMirror: any WatermarkMirror
     /// The clock reference last mirrored, so the Keychain is written at most once a minute of clock.
     private let clockMirrored = Locked<Int64>(0)
+    /// Every read-modify-write of a Keychain copy in this process goes through it.
+    private static let mirrorLock = NSLock()
     private let clockBox = Locked<@Sendable () -> Int64>(LibraryClock.wallMillis)
     private let log = PinVaultLog.tag("CertificateConfigStore")
 
@@ -394,22 +396,23 @@ final class CertificateConfigStore: Sendable {
     /// `TrustedClock`). 0 = none yet. Kept per block, not per origin; a value
     /// an origin namespace may hold from before is taken into account too.
     func highestSeenTime() throws -> Int64 {
-        let mirrored = clockMirror.read()?.clock ?? 0
+        // An unreadable copy is not "nothing seen": the clock tries again later.
+        guard let mirrored = clockMirror.read()?.clock else {
+            throw PinVaultError.illegalState("the trusted clock's Keychain copy cannot be read now")
+        }
         if clockPrefs === prefs { return max(try prefs.getLong(Self.keyClockHighestSeen, 0), mirrored) }
         return max(try clockPrefs.getLong(Self.keyClockHighestSeen, 0), try prefs.getLong(Self.keyClockHighestSeen, 0), mirrored)
     }
 
     func setHighestSeenTime(_ timeMs: Int64) throws {
         try clockPrefs.edit().putLong(Self.keyClockHighestSeen, timeMs).apply()
+        // Only raises the copy: a lower value here (a container put back from
+        // earlier, a copy that could not be read when the clock loaded) leaves
+        // it as it is. Lowering is lowerHighestSeenTime's alone.
+        Self.mirrorLock.lock()
+        defer { Self.mirrorLock.unlock() }
         guard var mirrored = clockMirror.read() else { return }
-        if timeMs < mirrored.clock {
-            // `TrustedClock.resetTo`: the library itself lowers the reference (a
-            // newer config showed it was ahead), so the copy follows at once. A
-            // container put back from earlier never calls this: the copy stays.
-            mirrored.clock = timeMs
-            clockMirror.write(mirrored)
-            clockMirrored.set(timeMs)
-        } else if timeMs >= clockMirrored.get() + Self.clockMirrorStepMs {
+        if timeMs >= clockMirrored.get() + Self.clockMirrorStepMs || clockMirrored.get() == 0 {
             // Moving forward: mirrored once it ran a step ahead, so the Keychain
             // is not written on every persisted tick of the clock.
             if timeMs > mirrored.clock {
@@ -420,8 +423,30 @@ final class CertificateConfigStore: Sendable {
         }
     }
 
+    /// `TrustedClock.resetTo`: the library lowers the reference (a newer config
+    /// showed it was ahead); the store and its Keychain copy follow at once.
+    func lowerHighestSeenTime(_ timeMs: Int64) throws {
+        try clockPrefs.edit().putLong(Self.keyClockHighestSeen, timeMs).apply()
+        if clockPrefs !== prefs { try prefs.edit().remove(Self.keyClockHighestSeen).apply() }
+        Self.mirrorLock.lock()
+        defer { Self.mirrorLock.unlock() }
+        guard var mirrored = clockMirror.read() else { return }
+        mirrored.clock = timeMs
+        clockMirror.write(mirrored)
+        clockMirrored.set(timeMs)
+    }
+
+    /// Brings the Keychain copy in line with the key set in force and the
+    /// compiled-in anchors, on every sync: a lowering that could not be
+    /// written when the reset happened is made now.
+    func reconcileMirror(keySetVersion: Int, anchors: String) {
+        lowerMirror(keySetVersion: keySetVersion, anchors: anchors)
+    }
+
     /// Writes the watermarks to the mirror, never lowering what it holds.
     private func mirrorWatermarks(issuedAt: Int64, versions: [String: Int]) {
+        Self.mirrorLock.lock()
+        defer { Self.mirrorLock.unlock() }
         guard var mirrored = mirror.read() else {
             log.w("Watermark mirror unreadable: not written this time")
             return
@@ -449,19 +474,22 @@ final class CertificateConfigStore: Sendable {
 
     /// Lowers the Keychain copy for a newer key set or other anchors; records them either way.
     private func lowerMirror(keySetVersion: Int?, anchors: String?) {
+        Self.mirrorLock.lock()
+        defer { Self.mirrorLock.unlock() }
         guard var mirrored = mirror.read() else {
             log.w("Watermark mirror unreadable: left as it is")
             return
         }
         let newerSet = keySetVersion.map { $0 > (mirrored.keySetVersion ?? Int.min) } ?? false
         let otherAnchors = anchors.map { mirrored.anchors != nil && $0 != mirrored.anchors } ?? false
+        let before = mirrored
         if newerSet || otherAnchors {
             mirrored.issuedAt = 0
             mirrored.versions = [:]
         }
         if let keySetVersion { mirrored.keySetVersion = max(keySetVersion, mirrored.keySetVersion ?? keySetVersion) }
         if let anchors { mirrored.anchors = anchors }
-        mirror.write(mirrored)
+        if mirrored != before { mirror.write(mirrored) }
     }
 
     /// The server (scope or URL) this store's config and watermarks belong to.

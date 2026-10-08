@@ -342,10 +342,16 @@ internal object ConfigParser {
         } ?: jsSignatureKey
         val encryption = declared?.encryption?.also { if (jsEncryption != null && jsEncryption != it) fixed("encryption") } ?: jsEncryption
         val userAuth = declared?.userAuth?.also { if (jsUserAuth != null && jsUserAuth != it) fixed("userAuth") } ?: jsUserAuth
-        declared?.maxOfflineAgeMs?.let { max ->
+        // The tighter of the file's own cap and the config-wide one: a per-file value
+        // overrides the config's, so it must not escape the config-wide cap either.
+        val cap = listOfNotNull(declared?.maxOfflineAgeMs, native?.require?.vaultFileMaxOfflineAgeMs).minOrNull()
+        cap?.let { max ->
             maxOfflineAge?.let { (amount, unit) ->
                 val ms = unit.toMillis(amount)
-                if (ms == 0L || ms > max) fixed("maxOfflineAge")
+                // 0 = no limit: longer than any.
+                if (ms == 0L || ms > max) {
+                    throw BridgeInputException("${f.path}.maxOfflineAge: longer than the app's native security file allows (${max / 1000} s)")
+                }
             }
         }
         val offlineAge = maxOfflineAge ?: declared?.maxOfflineAgeMs?.let { it to TimeUnit.MILLISECONDS }

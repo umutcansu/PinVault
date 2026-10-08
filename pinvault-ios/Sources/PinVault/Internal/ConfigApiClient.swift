@@ -156,7 +156,8 @@ final class ConfigApiClient: @unchecked Sendable {
         configStore = store
         let clock = TrustedClock(
             load: { try store.highestSeenTime() },
-            persist: { try store.setHighestSeenTime($0) }
+            persist: { try store.setHighestSeenTime($0) },
+            persistLowered: { try store.lowerHighestSeenTime($0) }
         )
         trustedClock = clock
 

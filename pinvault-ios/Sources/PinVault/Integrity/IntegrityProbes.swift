@@ -153,7 +153,9 @@ struct HookingProbe {
     /// bundles, for one, load from there outside the cache), not the app's
     /// (bundle), not Xcode's debugging aids.
     private func isForeign(_ image: String) -> Bool {
-        if !bundlePath.isEmpty && image.hasPrefix(bundlePath) { return false }
+        // /var is /private/var: one side may name it either way.
+        let normalize = { (path: String) in path.hasPrefix("/private/") ? String(path.dropFirst("/private".count)) : path }
+        if !bundlePath.isEmpty && normalize(image).hasPrefix(normalize(bundlePath)) { return false }
         if Self.systemVolume.contains(where: { image.hasPrefix($0) }) { return false }
         if Self.debuggerSupport.contains(where: { image.hasSuffix($0) }) || image.hasPrefix("/Developer/") { return false }
         return !inSharedCache(image)

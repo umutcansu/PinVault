@@ -380,13 +380,18 @@ public enum ConfigParser {
                 if let j = jsUserAuth, j != n { throw fixed("userAuth") }
                 userAuth = n
             }
-            if let max = declared.maxOfflineAgeMs {
-                if let (a, u) = maxOfflineAge {
-                    let ms = millis(a, u)
-                    if ms == 0 || ms > max { throw fixed("maxOfflineAge") }
-                } else {
-                    offlineAge = (max, .milliseconds)
-                }
+            if let max = declared.maxOfflineAgeMs, maxOfflineAge == nil {
+                offlineAge = (max, .milliseconds)
+            }
+        }
+        // The tighter of the file's own cap and the config-wide one: a per-file value
+        // overrides the config's, so it must not escape the config-wide cap either.
+        let cap = [native?.vaultFiles?[key]?.maxOfflineAgeMs, native?.require.vaultFileMaxOfflineAgeMs].compactMap { $0 }.min()
+        if let cap, let (a, u) = maxOfflineAge {
+            let ms = millis(a, u)
+            // 0 = no limit: longer than any.
+            if ms == 0 || ms > cap {
+                throw BridgeInputError("\(f.path).maxOfflineAge: longer than the app's native security file allows (\(cap / 1000) s)")
             }
         }
 

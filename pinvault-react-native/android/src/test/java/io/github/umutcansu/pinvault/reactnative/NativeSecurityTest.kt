@@ -146,6 +146,16 @@ class NativeSecurityTest {
             native = strict, fragments = arrayOf("maxOfflineAge"))
         refused("""{"configApis":[{$base,"enrollmentUrl":"https://evil.example/"}]}""", native = strict, fragments = arrayOf("enrollmentUrl", "fixed"))
         parse("""{"configApis":[{$base}],"vaultFileMaxOfflineAge":{"amount":30,"unit":"MINUTES"}}""", native = strict)
+        // The config-wide cap holds for a file the file does not name a cap for, too.
+        val globalOnly = NativeSecurity.parse("""
+            {"configApis":[{"id":"default","bootstrapPins":[{"hostname":"h.example","sha256":["$pinA","$pinB"]}],"signaturePublicKeys":["$key"]}],
+             "require":{"vaultFileMaxOfflineAgeSeconds":3600}}
+        """.trimIndent(), "f")
+        refused("""{"configApis":[{$base}],"vaultFiles":[{"key":"any","endpoint":"e","maxOfflineAge":{"amount":0,"unit":"SECONDS"}}]}""",
+            native = globalOnly, fragments = arrayOf("maxOfflineAge"))
+        refused("""{"configApis":[{$base}],"vaultFiles":[{"key":"any","endpoint":"e","maxOfflineAge":{"amount":2,"unit":"HOURS"}}]}""",
+            native = globalOnly, fragments = arrayOf("maxOfflineAge"))
+        parse("""{"configApis":[{$base}],"vaultFiles":[{"key":"any","endpoint":"e","maxOfflineAge":{"amount":10,"unit":"MINUTES"}}]}""", native = globalOnly)
     }
 
     @Test fun `an empty Config API list in release asks for no native file`() {

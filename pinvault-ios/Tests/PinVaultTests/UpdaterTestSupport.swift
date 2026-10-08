@@ -45,6 +45,7 @@ final class SpyConfigStore: UpdaterConfigStore, @unchecked Sendable {
         try base.wipeAll()
     }
 
+    func reconcileMirror(keySetVersion: Int, anchors: String) { base.reconcileMirror(keySetVersion: keySetVersion, anchors: anchors) }
     func resetWatermarks(keySetVersion: Int, anchors: String?) throws { try base.resetWatermarks(keySetVersion: keySetVersion, anchors: anchors) }
     func keySetVersionSeen() throws -> Int? { try base.keySetVersionSeen() }
     func setKeySetVersionSeen(_ version: Int) throws { try base.setKeySetVersionSeen(version) }

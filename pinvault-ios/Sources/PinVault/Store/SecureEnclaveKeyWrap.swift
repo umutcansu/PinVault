@@ -71,6 +71,7 @@ enum SecureEnclaveKeyWrap {
         // each): the value opens with the one that wrapped it.
         var transient: String?
         var last = "decryption failed"
+        var allPermanent = true
         for key in keys {
             var error: Unmanaged<CFError>?
             if let raw = SecKeyCreateDecryptedData(key, algorithm, stored.dropFirst(magic.count) as CFData, &error) as Data? {
@@ -79,10 +80,24 @@ enum SecureEnclaveKeyWrap {
             let failure = error?.takeRetainedValue()
             last = failure?.localizedDescription ?? last
             if let failure, isTransient(failure) { transient = last }
+            if !(failure.map(isPermanent) ?? false) { allPermanent = false }
         }
         if let transient { throw UnwrapError.unavailable(transient) }
+        // Replaced only on positive evidence that the value can never open
+        // (a malformed ciphertext, a tag that does not verify); any other
+        // failure — a CryptoTokenKit error of a busy Secure Enclave among
+        // them — keeps the item and reports the store unreadable for now.
+        guard allPermanent else { throw UnwrapError.unavailable(last) }
         log.e("A wrapped store key does not open: \(last)")
         throw UnwrapError.malformed
+    }
+
+    /// Decryption failures that mean the value can never open with this key.
+    static let permanentStatuses: Set<OSStatus> = [errSecParam, errSecDecode]
+
+    static func isPermanent(_ error: CFError) -> Bool {
+        (CFErrorGetDomain(error) as String) == (kCFErrorDomainOSStatus as String)
+            && permanentStatuses.contains(OSStatus(CFErrorGetCode(error)))
     }
 
     /// An OSStatus-domain error whose code a later try may not have.
