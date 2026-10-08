@@ -5607,6 +5607,14 @@ paths:
         chain: `403 attestation_required` / `403 attestation_invalid`), then the
         rejection policy of this Config API (ATTESTATION.md §4).
 
+        A hardware-level (TEE / StrongBox) chain is kept with the device as facts
+        (RootOfTrust, patch levels, certificate serials) — also under `warn` and
+        when a later check refused it — and every later round is judged against
+        them: `bootloader_unlocked`, `boot_not_verified`, `key_revoked`,
+        `report_mismatch`, and `old_patch_level` from the attested patch. A lower
+        `currentIssuedAt` than the device reported before raises `config_rollback`.
+        Over mTLS the token's `cnf.x5t#S256` names the connection's client certificate.
+
         On `pass` the answer carries a `PinVault-Token` (HS256 JWT, `tokenTtlSeconds`,
         `aud` = this Config API id) and, when `currentConfigVersion` /
         `currentIssuedAt` differ from what the server would serve, the same signed
@@ -7521,7 +7529,7 @@ components:
         verdictProvider:
           type: object
           nullable: true
-          description: 'An optional second opinion the app plugged in, forwarded verbatim and stored: `play-integrity` (a JWE, verified with the Play Console keys, ATTESTATION.md §11) or `app-attest` (iOS: the JSON string `{"provider":"app-attest","keyId","attestation"|"assertion"}`, verified with Apple''s App Attestation Root CA, §12). Neither is judged without its server settings.'
+          description: 'An optional second opinion the app plugged in, forwarded verbatim and stored: `play-integrity` (a JWE, verified with the Play Console keys, ATTESTATION.md §11) or `app-attest` (iOS: the JSON string `{"provider":"app-attest","keyId","attestation"|"assertion"}`, verified with Apple''s App Attestation Root CA, §12). Neither is judged without its server settings. In the report it is v1; a v2 verdict travels in the request''s own `verdictProvider` instead (`AttestationRequest`).'
           properties:
             name: { type: string, enum: [play-integrity, app-attest] }
             token: { type: string }
@@ -7531,7 +7539,8 @@ components:
       description: The signals a report can raise and a policy decides on.
       enum: [rooted, emulator, debugger, debuggable, hooking_framework, app_integrity,
              cloner, unknown_installer, adb_enabled, software_key, key_unattested, old_patch_level,
-             play_integrity, play_integrity_missing, app_attest, app_attest_missing]
+             play_integrity, play_integrity_missing, app_attest, app_attest_missing,
+             bootloader_unlocked, boot_not_verified, key_revoked, report_mismatch, config_rollback]
 
     AttestationRequest:
       type: object
@@ -7555,11 +7564,28 @@ components:
         report: { type: string, description: 'The `AttestationReport` JSON **as a string**, at most 16 KB.' }
         signature: { type: string, description: 'Base64 DER `SHA256withECDSA` over the UTF-8 bytes of `pinvault-attest:v1:<nonce>:<deviceId>:<sha256-hex(report)>`.' }
         currentConfigVersion: { type: integer, description: The pin config version the device holds. }
-        currentIssuedAt: { type: integer, format: int64, description: '`issuedAt` of the config the device holds.' }
+        currentIssuedAt: { type: integer, format: int64, description: '`issuedAt` watermark of the config the device holds (0 = none). The server keeps the highest one a device reported; a lower one from the same key raises `config_rollback` (a newer signing-key set starts again).' }
         hosts:
           type: array
           description: Optional `wantPinsFor` scoping, as on the config GET.
           items: { type: string }
+        verdictProvider:
+          type: object
+          nullable: true
+          description: >
+            A v2 verdict, beside the report rather than in it: the report cannot
+            carry a verdict made over itself. `app-attest`: the client data hash is
+            SHA-256(UTF-8 `"pinvault-app-attest:v2:"` + the canonical string the
+            `signature` covers). `play-integrity`: the Play Integrity nonce is
+            base64url-nopad(SHA-256(UTF-8 `"pinvault-play-integrity:v2:" + nonce + ":" + deviceId`)).
+            A token here must be v2. When present it is used instead of the
+            report's `verdictProvider`; the report's (v1 for App Attest, v1 or v2
+            for Play Integrity) is still read for older apps, with the warning
+            `app_attest_v1` / `play_integrity_v1` for a v1 one
+            (`APP_ATTEST_REQUIRE_V2` / `PLAY_INTEGRITY_REQUIRE_V2` refuse it).
+          properties:
+            name: { type: string, enum: [play-integrity, app-attest] }
+            token: { type: string }
 
     AttestationResponse:
       type: object
@@ -7569,13 +7595,13 @@ components:
         arc: { type: string, description: 'Attestation result code — 8 hex characters an operator resolves in the dashboard.', example: 7f3a9c1e }
         warnings:
           type: array
-          description: 'Raised flags the policy only warns about, plus `app_attest_unknown_key` (whatever the policy says) when an App Attest assertion named a key the server has no record of: the app attests a new key next round.'
+          description: 'Raised flags the policy only warns about, plus `app_attest_unknown_key` (whatever the policy says) when an App Attest assertion named a key the server has no record of: the app attests a new key next round; `app_attest_v1` / `play_integrity_v1` when the round''s verdict passed with the older binding (v1).'
           items: { type: string }
         rejectionReasons:
           type: array
           description: Present only when the policy's `revealReasons` is on. `force_fail` when the device is forced to fail.
           items: { type: string }
-        token: { type: string, description: 'The `PinVault-Token` (HS256 JWT). Absent on `reject`.' }
+        token: { type: string, description: 'The `PinVault-Token` (HS256 JWT). Absent on `reject`. Its `cnf` claim names the device key (`jkt`, RFC 7638 thumbprint) and, when the request came over mTLS, the client certificate (`x5t#S256`, RFC 8705).' }
         tokenExpiresAt: { type: integer, format: int64, description: Epoch milliseconds. }
         tokenTtlSeconds: { type: integer, example: 300 }
         nextAttestIn: { type: integer, description: 'Seconds until the next attestation (the policy''s `attestIntervalSeconds`).', example: 300 }
@@ -7626,6 +7652,11 @@ components:
             play_integrity_missing: warn
             app_attest: warn
             app_attest_missing: warn
+            bootloader_unlocked: reject
+            boot_not_verified: reject
+            key_revoked: reject
+            report_mismatch: reject
+            config_rollback: reject
         revealReasons: { type: boolean, description: 'Send `rejectionReasons` to the device.', default: false }
         tokenTtlSeconds: { type: integer, minimum: 30, maximum: 86400, default: 300 }
         attestIntervalSeconds: { type: integer, minimum: 60, maximum: 86400, default: 300 }
@@ -7676,7 +7707,23 @@ components:
         appAttestCounter: { type: integer, format: int64, nullable: true, description: 'Authenticator counter of that key''s last verified assertion (0 after the attestation).' }
         appAttestResult: { type: string, enum: [pass, fail], nullable: true, description: 'The last App Attest verdict this server verified.' }
         appAttestAt: { type: string, format: date-time, nullable: true }
-        appAttest: { type: string, nullable: true, description: 'JSON text: reason (`ok`, `chain_invalid`, `nonce_mismatch`, `counter_replay`, `app_attest_unknown_key`, …), kind (`attestation` / `assertion`), app id, environment, key id, counter.' }
+        appAttest: { type: string, nullable: true, description: 'JSON text: reason (`ok`, `chain_invalid`, `nonce_mismatch`, `counter_replay`, `app_attest_unknown_key`, `client_data_v1`, …), kind (`attestation` / `assertion`), app id, environment, key id, counter, client data hash version (`clientData`: `v1` / `v2`).' }
+        keyFacts:
+          type: object
+          nullable: true
+          description: 'What the registration''s Android Key Attestation chain said about the device, kept only from a chain that verified up to a trusted root at the TEE or StrongBox level (also one refused under `warn`). Null: no such chain (none sent, a software-level one, an iPhone).'
+          properties:
+            securityLevel: { type: string, enum: [tee, strongbox] }
+            deviceLocked: { type: boolean, nullable: true }
+            verifiedBootState: { type: string, nullable: true, enum: [verified, self_signed, unverified, failed, unknown] }
+            verifiedBootKey: { type: string, nullable: true, description: 'RootOfTrust verifiedBootKey, lowercase hex (what `ATTESTATION_TRUSTED_BOOT_KEYS` lists).' }
+            osVersion: { type: integer, nullable: true, example: 150000 }
+            osPatchLevel: { type: integer, nullable: true, example: 202609, description: 'YYYYMM; `old_patch_level` reads this instead of the report''s patch.' }
+            vendorPatchLevel: { type: integer, nullable: true, example: 20260905 }
+            bootPatchLevel: { type: integer, nullable: true, example: 20260905 }
+            chainSerials: { type: array, items: { type: string }, description: 'Every certificate''s serial, hex, as Google''s status list writes them: looked up again on every round (`key_revoked`).' }
+        configWatermark: { type: integer, format: int64, nullable: true, description: 'Highest `currentIssuedAt` the device reported (`config_rollback`).' }
+        configWatermarkKeySet: { type: integer, nullable: true, description: 'Signing-key set version under which it was stored.' }
 
     DeviceVaultKey:
       type: object

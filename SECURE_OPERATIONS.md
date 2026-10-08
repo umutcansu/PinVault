@@ -34,7 +34,9 @@ Pick the highest level you can operate reliably. A layer you can't run well, suc
 | Per-use user-auth keys only | `USER_AUTH_REQUIRE_PER_USE=true` | Root running as the app registering a key that works for seconds after any unlock, on Android 7–10 too (Android 11+ refuses those always) |
 | Enrollment key attestation, enforce | `ENROLLMENT_ATTESTATION=enforce` + the same app binding | A client certificate issued over a key that is not a hardware key made by your app on a locked, verified phone (an emulator, a rooted phone, a key copied off a device) |
 | No server-made keys | `ENROLLMENT_P12=off` | A private key made on the server and sent over the network; a device identity nobody can attest |
-| A current revocation list | `ATTESTATION_REVOKED_SERIALS_FILE` + a cron job (`demo-server/scripts/fetch-attestation-status.sh`) + `ATTESTATION_STATUS_MAX_AGE_HOURS` | Chains from attestation keys Google revoked (leaked from a phone model) passing; a fetch job that stopped going unnoticed |
+| A current revocation list | `ATTESTATION_REVOKED_SERIALS_FILE` + a cron job (`demo-server/scripts/fetch-attestation-status.sh`) + `ATTESTATION_STATUS_MAX_AGE_HOURS` | Chains from attestation keys Google revoked (leaked from a phone model) passing; a fetch job that stopped going unnoticed; with the attestation endpoint, a device that registered before the revocation (`key_revoked` on its next round) |
+| Verdicts bound to the round's data | `APP_ATTEST_REQUIRE_V2=true`, `PLAY_INTEGRITY_REQUIRE_V2=true` (once every supported app version sends v2) | Apple's verdict paired with a report it was not made for; a Play Integrity token minted for another device id |
+| Tokens bound to the device's certificate | your API behind mTLS with the attesting identity + `PinVaultTokenAuth { requireCertBinding = true }` (`PINVAULT_TOKEN_REQUIRE_CERT_BINDING=true` on the mock hosts) | A `PinVault-Token` lifted off a device and replayed from elsewhere within its lifetime |
 
 **Level 3: HSM/KMS and no single point.**
 
@@ -62,6 +64,22 @@ ATTESTATION_REVOKED_SERIALS_FILE=/data/attestation-status.json
 ATTESTATION_STATUS_MAX_AGE_HOURS=48     # with the fetch job every 6 h: two days of outage before nothing passes
 ATTESTATION_MIN_PATCH_LEVEL=            # optional, YYYYMM: refuse phones behind on security patches
 ```
+
+For the attestation endpoint (ATTESTATION.md), in addition:
+
+```
+ATTESTATION_KEY_POLICY=enforce          # a first registration needs a passing chain (or App Attest)
+ATTESTATION_POLICY_DEFAULT=strict       # rejects bootloader_unlocked, boot_not_verified, key_revoked,
+                                        # report_mismatch, config_rollback (and the client probes' root, hooks, …)
+APP_ATTEST_REQUIRE_V2=true              # App Attest verdicts bound to the report (iOS app on the current library)
+PLAY_INTEGRITY_REQUIRE_V2=true          # Play Integrity tokens bound to the device id (Android provider on the current library)
+PLAY_INTEGRITY_STALE_PASS_SECONDS=25200 # a stored pass covers 7 h of rounds without a token (provider asks every 6 h)
+PLAY_INTEGRITY_DEVICE_LEVEL=strong      # optional: hardware-backed, recent patch
+PLAY_INTEGRITY_REQUIRE_LICENSED=true    # optional: apps distributed only through Play
+ATTESTATION_TRUSTED_BOOT_KEYS=          # optional: verifiedBootKey digests of GrapheneOS / CalyxOS builds you allow
+```
+
+**The policy for a production Config API.** `strict` already rejects what a stock, locked phone never shows (the five flags the server raises from the registration's hardware chain and the device's config watermark) and leaves the second opinions on `warn`, because rejecting them before every app build ships the provider rejects the fleet. Once the dashboard's stats show the fleet attesting with them, set — per Config API, `PUT /api/v1/config-apis/{id}/attestation/policy` or the panel — `app_attest`, `app_attest_missing`, `play_integrity` and `play_integrity_missing` to `reject`. Without them a hidden root on a phone whose registration chain was not hardware-level (no chain, under `warn`) and an iPhone without App Attest are judged by the client's own probes only. An iOS-only or Android-only fleet sets only its own pair (`play_integrity_missing` is never raised on an iPhone with App Attest configured, `app_attest_missing` never on Android). The sample host's production profile fixes `ATTESTATION_POLICY_DEFAULT=strict` and the two `*_REQUIRE_V2` switches; it does not change the per-Config-API flags, which are set from the panel after measuring.
 
 Both `enforce` modes refuse to start without the package and signer. They also mean emulators and phones with an unlocked bootloader cannot enroll or register a user-auth key: keep a test host on `warn`. `USER_AUTH_REQUIRE_PER_USE=true` locks out `user_auth` files on Android 7–10 phones without a strong fingerprint (the library gives those a 10-second key); if you must serve them, leave it off — Android 11 and later refuse time-bound keys regardless.
 
@@ -392,6 +410,9 @@ Not automated, and it means re-enrollment: a device accepts a renewed certificat
 - The management-port copy of `POST /api/v1/client-certs/enroll` issues P12s only; CSR enrollment is on the Config API listeners. It records the device id under the same one-identity rule, and answers only over TLS (`MANAGEMENT_HTTPS_PORT`) or to the server's own machine (`403 tls_required` otherwise).
 - **On a TLS Config API the first E2E key wins.** Whoever registers first for a device id that never registered holds the slot until the device shows its `end_to_end` file token or an administrator removes the key, and a stolen `end_to_end` file token is enough to replace the key and read the file. On an mTLS Config API a certificate sets a first key only for its own device, and replaces one only when its device id is proven (see *Proven device ids*) — otherwise, as on TLS, with the device's token. Put files that matter there, with `token_mtls`, which also needs a proven device id. Key registration there is bounded, not authenticated: RSA 2048–4096 only, `DEVICE_KEY_RATE_LIMIT` writes per source address, `DEVICE_KEY_LIMIT` keys per Config API. The address is the TCP peer, so behind a reverse proxy every device shares the proxy's quota.
 
+- **A rooted or jailbroken phone is a source of tokens.** Code inside the genuine app signs reports with the device's own key, so a device the policy passes gets tokens whatever it is running. The server-side flags (hardware facts, revocation, Play Integrity, App Attest) decide whether it passes; the token binding (`cnf`, `requireCertBinding`) keeps a token from being used anywhere but on that device's own mTLS connections, not from being used by that device. See ATTESTATION.md §5.
+- **The attested patch level is the one at registration.** `old_patch_level` reads it when the registration's chain carried one, so a phone updated since keeps the older level until it registers a new key; raising `ATTESTATION_MIN_PATCH_LEVEL` flags such phones until then. The libraries do not yet re-attest periodically with a fresh key.
+- **`config_rollback` compares within one signing-key set.** A newer set (an upload under `RECOVERY_PUBLIC_KEYS`) starts every device's comparison again; an app update that changes the compiled-in signing key or threshold resets that device's watermark without a new set, and the device reports lower until it fetched a config newer than its old watermark. It catches a restored backup reported by the genuine library, not a client that lies about the value.
 - **Key sets never expire.** A device that has not fetched since a revocation still trusts the old key.
 - **A fresh install (or cleared app data) trusts the compiled-in keys** until its first successful fetch. Ship an app update after a revocation.
 - **Per-file vault keys (`VaultFileConfig.signaturePublicKey`) are fixed.** Key sets do not rotate them.
