@@ -77,6 +77,29 @@ final class BoundedBodyTests: XCTestCase {
         XCTAssertThrowsError(try buffer.append(Data("too long".utf8)))
     }
 
+    func testAnAppSessionCanBoundTheAnswerOfEveryStatus() async throws {
+        final class Recording: PinnedTransport, @unchecked Sendable {
+            var limit: BoundedBody.Limit?
+            func send(_ exchange: PinnedExchange) async throws -> PinnedResponse {
+                limit = exchange.bodyLimit
+                let response = HTTPURLResponse(url: exchange.request.url!, statusCode: 500, httpVersion: nil, headerFields: nil)!
+                return PinnedResponse(data: Data("x".utf8), response: response, presentedClientCertificate: nil)
+            }
+            func invalidate() {}
+        }
+        let transport = Recording()
+        let session = PinnedSession(transport: transport)
+        _ = try await session.data(for: URLRequest(url: URL(string: "https://h.example/")!), maxResponseBytes: 4096)
+        XCTAssertEqual(transport.limit?.maxBytes, 4096)
+        XCTAssertEqual(transport.limit?.readWhole(500), true, "an error answer is bounded, not cut")
+        _ = try await session.data(for: URLRequest(url: URL(string: "https://h.example/")!))
+        XCTAssertNil(transport.limit, "data(for:) stays unbounded")
+        do {
+            _ = try await session.data(for: URLRequest(url: URL(string: "https://h.example/")!), maxResponseBytes: 0)
+            XCTFail("expected a refusal")
+        } catch {}
+    }
+
     func testAPrefixIsCutNeverRefused() throws {
         XCTAssertEqual(BoundedBody.prefixText(Data("abcdef".utf8), 3), "abc")
         XCTAssertEqual(BoundedBody.prefixText(Data("abcdef".utf8), 200), "abcdef")

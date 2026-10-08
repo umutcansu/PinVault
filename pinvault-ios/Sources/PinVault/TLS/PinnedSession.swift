@@ -41,6 +41,18 @@ public final class PinnedSession: @unchecked Sendable {
         return (response.data, response.response)
     }
 
+    /// ``data(for:)`` with a bound on the answer: the transport stops reading
+    /// once the body passes `maxResponseBytes` — whatever the status — and
+    /// throws `ResponseTooLargeException` instead of keeping it; a declared
+    /// `Content-Length` over the bound is refused before the body is read.
+    /// For answers whose size the app does not control (the React Native
+    /// plugin's `fetch`).
+    public func data(for request: URLRequest, maxResponseBytes: Int64) async throws -> (Data, URLResponse) {
+        guard maxResponseBytes > 0 else { throw PinVaultError.illegalArgument("maxResponseBytes must be positive") }
+        let response = try await send(PinnedExchange(request: request, bodyLimit: .always(maxResponseBytes, "response")))
+        return (response.data, response.response)
+    }
+
     /// GET `url` (`URLSession.data(from:)`).
     public func data(from url: URL) async throws -> (Data, URLResponse) {
         try await data(for: URLRequest(url: url))
