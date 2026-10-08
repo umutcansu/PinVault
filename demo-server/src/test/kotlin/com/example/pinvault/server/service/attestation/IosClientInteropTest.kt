@@ -155,14 +155,14 @@ class IosClientInteropTest {
         devices.register(scope, deviceId, AttestationService.sha256Hex(spki), body.str("publicKey"), KeyAttestation(false, null, "chain_missing"), now)
         devices.registerAppAttestKey(scope, deviceId, appAttest.str("keyId"), appAttest.str("publicKey"), "{}", now)
 
-        val decided = decide(service(fixture, appAttest = apple.verifier(appIds = setOf(appAttest.str("appId")))), fixture)
+        // The iOS client makes the v2 client data hash (over the canonical string, the token beside
+        // the report): it passes even where v1 is refused (APP_ATTEST_REQUIRE_V2).
+        val decided = decide(service(fixture, appAttest = apple.verifier(appIds = setOf(appAttest.str("appId")), requireV2 = true)), fixture)
 
         assertTrue(decided.passed, "${decided.rejectionReasons} ${decided.warnings}")
         assertEquals(emptyList(), decided.rejectionReasons)
-        // The fixture was recorded from a client that made the v1 client data hash (the token in the report):
-        // it still verifies, with the note app_attest_v1 (refused with APP_ATTEST_REQUIRE_V2).
-        assertEquals(listOf(AttestationService.APP_ATTEST_V1), decided.warnings,
-            "App Attest verified: key_unattested lifted; secure_enclave, App Store, team and bundle as expected")
+        assertEquals(emptyList(), decided.warnings,
+            "App Attest verified (v2): key_unattested lifted; secure_enclave, App Store, team and bundle as expected")
         assertNotNull(decided.token)
         val device = devices.get(scope, deviceId)!!
         assertEquals("ios", device.platform)
