@@ -29,9 +29,10 @@ to iOS: [`pinvault-ios/PORTING.md`](pinvault-ios/PORTING.md).
 `@umutcansu/react-native-pinvault` (React Native 0.87+, New Architecture) is a
 thin bridge over the two native libraries: pinning, keys (Keystore / Secure
 Enclave), signature checks and vault decryption stay native, and JavaScript
-never sees TLS. Its `fetch` runs on the pinned native session; on Android,
-React Native's own `fetch` / XHR / WebSocket can be pinned too, on iOS they are
-not. Install, API and the security notes:
+never sees TLS. Its `fetch` runs on the pinned native session, and React
+Native's own `fetch` / XHR / `<Image>` go through PinVault too (WebSocket on
+Android only); release builds take the trust anchors from a native security
+file, not from the JS bundle. Install, API and the security notes:
 [`pinvault-react-native/README.md`](pinvault-react-native/README.md); sample app:
 [`sample-client-rn/`](sample-client-rn).
 

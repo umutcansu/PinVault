@@ -44,19 +44,13 @@ _ = PinVaultBridge.registerBackgroundTask()
 ```
 
 **Android.** The module depends on `io.github.umutcansu:pinvault` (same version
-as this package; override with the Gradle property `pinvault.version`). To pin
-React Native's own networking from the first request, add one line to
-`MainApplication.onCreate` (see [Networking](#networking)):
+as this package; override with the Gradle property `pinvault.version`). React
+Native's own networking is pinned with no code of yours: the plugin's manifest
+declares a content provider (`PinVaultNetworkingInitializer`) that installs the
+hooks before `Application.onCreate` runs (see [Networking](#networking)).
 
-```kotlin
-import io.github.umutcansu.pinvault.reactnative.PinVaultNetworking
-
-override fun onCreate() {
-  super.onCreate()
-  PinVaultNetworking.install(this)   // before loadReactNative(this)
-  loadReactNative(this)
-}
-```
+**Release builds.** Put the trust anchors into the app itself, not only into
+the JS bundle: [Native security file](#native-security-file).
 
 ## Quick start
 
@@ -105,8 +99,11 @@ names), enum values are the Kotlin constant names (`'TOKEN_MTLS'`,
   requireCaTrust, requireUnlockedDevice, requireHardwareBackedKeys, expectedSignerSha256,
   wipeVaultFilesOnRevocation, vaultFileMaxOfflineAge, updateIntervalMinutes, deviceAlias, …
   environmentGuard: async (operation) => boolean,       // JS, see below
-  android: { requireUnlockedDeviceAllowFallback, pinGlobalNetworking },
-  ios: { resolve: { 'mock-tls.sample': '10.0.0.12' }, expectedBundleIds, expectedTeamIds, userAuthStrength },
+  requirePinnedReactNativeNetworking,                    // see Networking
+  android: { requireUnlockedDeviceAllowFallback, pinGlobalNetworking,
+             keepReactNativeHttpCache, keepReactNativeCookies },
+  ios: { resolve: { 'mock-tls.sample': '10.0.0.12' }, expectedBundleIds, expectedTeamIds, userAuthStrength,
+         reactNativeMaxResponseBytes },
 }
 ```
 
@@ -144,9 +141,58 @@ Results are plain objects with a `type` (the sealed subclass in lowerCamel):
 `{ type: 'refused', reason: 'INVALID_TOKEN', httpStatus, … }`, `{ type: 'updated', key, version }`, …
 A refused operation is a result, not an exception — the same as natively.
 Rejected promises are `PinVaultError` with `code` (`E_INVALID_CONFIG`,
-`E_INVALID_ARGUMENT`, `E_NOT_STARTED`, `E_FETCH`, `E_NO_ACTIVITY`, `E_NATIVE`)
+`E_INVALID_ARGUMENT`, `E_NOT_STARTED`, `E_FETCH`, `E_NO_ACTIVITY`, `E_NATIVE`,
+`E_NETWORKING_NOT_PINNED`)
 and `exception` (the native class name and message, e.g.
 `SSLPeerUnverifiedException` for a pin mismatch).
+
+## Native security file
+
+The JS bundle is not a safe home for trust anchors: an OTA update (CodePush,
+Expo Updates) or an edited bundle changes it without touching the app's
+signature. Ship them natively as well, in `pinvault_security.json`:
+
+- **Android:** `android/app/src/main/assets/pinvault_security.json` (or a build
+  type's own `src/release/assets/`). Assets, not `res/raw`: resource shrinking
+  cannot drop them and no `R` reference is needed. The APK signature seals it.
+- **iOS:** a resource of the app bundle named `pinvault_security.json` (add it to
+  the app target, or copy it into the bundle in a build phase that runs before
+  signing). The code signature seals it.
+
+```json
+{
+  "configApis": [{
+    "id": "default-tls",
+    "bootstrapPins": [{ "hostname": "api.example.com", "sha256": ["…", "…"] }],
+    "signaturePublicKeys": ["…", "…", "…"], "requiredSignatures": 2,
+    "recoveryPublicKeys": ["…"], "requiredRecoverySignatures": 1,
+    "serverScope": "default-tls", "clientCaPins": ["…"],
+    "allowUnsigned": false, "allowUnpinnedConfigApi": false, "allowServerGeneratedKey": false
+  }],
+  "staticPins": { "pins": [ … ], "version": 1 }
+}
+```
+
+The keys are the JS config's (a subset of `configApis[]` plus `staticPins`),
+parsed as strictly; a broken file rejects `start` with `E_INVALID_CONFIG`
+(fail closed). When the file is there:
+
+- every Config API of the JS config must be declared in it (a bundle cannot add
+  a block with keys of its own), and JS `staticPins` must be declared too;
+- a field the file declares is the value: JS may leave it out (the native value
+  applies) or repeat it (lists in any order); a different value rejects `start`
+  with `E_INVALID_CONFIG` naming the field;
+- `allowUnsigned`, `allowUnpinnedConfigApi` and `allowServerGeneratedKey` from
+  JS are refused unless the file allows them for that block.
+
+Without the file, **release builds** (Android: the app is not
+`android:debuggable`; iOS: compiled without `DEBUG`) refuse those three
+relaxations from JS; debug builds take them as before. The sample app writes
+the file for its release builds from `sample-host.properties`
+(`scripts/gen-host-config.js --native-out`).
+
+A repackaged app can change the file too — but only by re-signing, which the
+signer check of attestation (`expectedSignerSha256`, `expectedTeamIds`) reports.
 
 ## Networking
 
@@ -156,40 +202,83 @@ and `exception` (the native class name and message, e.g.
   recovery): pin check, attestation token, pin-mismatch recovery. HTTPS only;
   a redirect from `https` into plain `http` is not followed (the 3xx comes
   back) on either platform. Request bodies ≤ 10 MiB, responses ≤ 10 MiB by
-  default (`maxResponseBytes`, at most 50 MiB).
-- **Android — React Native's own `fetch`, `XMLHttpRequest` and `WebSocket` are
-  pinned too** (`android.pinGlobalNetworking`, default true). Two hooks of RN
-  0.87, read from its sources: `NetworkingModule.setCustomClientBuilder` is
-  called for every request, so it works from whenever it is installed —
-  including after `start()`; each request gets the socket factory and
-  interceptors of one client that `PinVault.applyTo(builder)` configured after
-  `start()` (one per start, so pooled connections are reused).
-  `OkHttpClientProvider.setOkHttpClientFactory` covers the clients RN builds
-  once (the networking base client, the WebSocket/dev-support singleton):
-  their TLS goes through a forwarding socket factory to the current pinned
-  one. RN asks that factory only when it creates such a client, so a client
-  created before the factory was installed stays unpinned —
-  **`PinVaultNetworking.install(this)` in `MainApplication.onCreate` covers
-  them all**; without it `start()` installs the hooks itself. Until `start()`
-  has run, every `https` request through RN's networking fails
-  (`PinVault has not started`); plain `http` (Metro in debug builds) is left
-  to your network security config. Hosts without a pin entry are refused like
-  everywhere else in PinVault. Not covered: images (Fresco builds its client
-  at app start) and native modules with their own HTTP stack.
-- **iOS — React Native's own `fetch`/`XMLHttpRequest`/`WebSocket` are NOT
-  pinned** (`RCTHTTPRequestHandler` owns its `URLSession` delegate). `start`
-  logs a warning saying so. Send everything that must be pinned with
-  `PinVault.fetch`. Keep App Transport Security on (no
-  `NSAllowsArbitraryLoads`).
+  default (`maxResponseBytes`, at most 50 MiB) — enforced while the body is
+  read on both platforms (a declared `Content-Length` over it is refused first).
+- **React Native's own `fetch`, `XMLHttpRequest` and `<Image>` are pinned on
+  both platforms** (WebSocket on Android only). The rules are the same on both:
+  - **Before `start()`** — and after a start that failed — every `https`
+    request through RN's networking fails (`PinVault has not started`): fail
+    closed, as the native `getClient()` / `session()` before `init`. Plain
+    `http` is not TLS and stays with RN (Metro in debug builds; ATS / the
+    network security config decide).
+  - Hosts without a pin entry are refused like everywhere else in PinVault.
+  - No `https` → `http` redirects; no disk HTTP cache and no cookie jar (Android:
+    `android.keepReactNativeHttpCache` / `keepReactNativeCookies` keep RN's own).
+  - `requirePinnedReactNativeNetworking: true` makes `start` fail with
+    `E_NETWORKING_NOT_PINNED` when RN's networking does not go through PinVault
+    (below); without it a warning is logged.
+- **Android** (two hooks of RN 0.87, read from its sources), installed by the
+  plugin's content provider before `Application.onCreate`, so every client RN
+  builds is covered:
+  `NetworkingModule.setCustomClientBuilder` is called for every fetch / XHR
+  request; each one gets the socket factory and interceptors of one client that
+  `PinVault.applyTo(builder)` configured after `start()` (one per start, so
+  pooled connections are reused). `OkHttpClientProvider.setOkHttpClientFactory`
+  covers the clients RN builds once — the networking base client, the
+  WebSocket / dev-support singleton and Fresco's image client: their TLS goes
+  through a forwarding socket factory to the current pinned one.
+  Another library that calls either setter after PinVault (a network inspector,
+  a crash reporter, another pinning package) replaces the hook: `start()` and
+  every `PinVault.fetch` check both (`PinVaultNetworking.status()`) and log a
+  warning; `requirePinnedReactNativeNetworking` turns it into a failed start.
+  Opt out natively by removing the provider in the app's manifest —
+  `android.pinGlobalNetworking: false` alone is refused while the hooks are in
+  place, so a JS bundle cannot unpin RN's networking:
+
+  ```xml
+  <provider android:name="io.github.umutcansu.pinvault.reactnative.PinVaultNetworkingInitializer"
+      android:authorities="${applicationId}.pinvault-networking" tools:node="remove" />
+  ```
+
+  With the provider removed, `PinVaultNetworking.install(this)` in
+  `MainApplication.onCreate` (before `loadReactNative`) is the explicit
+  alternative; a hook installed later than that misses the clients RN already built.
+- **iOS:** the plugin's `RNPinVaultURLRequestHandler` (an `RCTURLRequestHandler`)
+  answers for `https` with `handlerPriority` 10; RCTNetworking picks the
+  highest-priority handler, so RN's `RCTHTTPRequestHandler` (priority 0) only
+  sees plain `http`. Codegen registers it (`codegenConfig.ios.
+  modulesConformingToProtocol` in this package's `package.json`; `pod install`
+  picks it up). Requests run on `PinVault.shared.session()` with the library's
+  bounded read (`ios.reactNativeMaxResponseBytes`, default 50 MiB, at most
+  256 MiB); the library hands out whole answers, so RN gets the response, the
+  body in chunks and the completion after the body has been read (progress
+  events arrive at the end); cancelling a request cancels it. `start` checks
+  which handler RCTNetworking picks for an `https` request.
+  Opt out natively with the Info.plist key `PinVaultPinReactNativeNetworking`
+  = NO. **WebSocket is not pinned on iOS:** RN 0.87's `RCTWebSocketModule`
+  uses SocketRocket on CFStream, not URLSession, so it cannot take PinVault's
+  session or delegate; its hook (`RCTSetCustomSRWebSocketProvider` with an
+  `SRSecurityPolicy` whose `evaluateServerTrust:forDomain:` decides) would need
+  a public trust-evaluation API from the PinVault library, which it does not
+  have. Keep secrets off `wss://` on iOS, or send them with `PinVault.fetch`.
+  Keep App Transport Security on (no `NSAllowsArbitraryLoads`).
 
 ## Enrollment and vault tokens
 
-The enrollment token goes to native memory for the duration of the call only
+Tokens cross the bridge once, as an argument, and the plugin keeps them on the
+native side only. The enrollment token is held for the duration of the call
 (`enrollForResult(token)`). Vault access tokens of `TOKEN` / `TOKEN_MTLS` files
 are set with `setVaultToken(key, token)` or passed to `fetchFile(key, { token })`
-and kept **only in native memory**: the native `accessToken { … }` provider reads
-them on every download; they are never written to disk, the Keychain or JS
-state, and they are gone with the process. Forget them on a revocation:
+and kept **in native memory only**: the native `accessToken { … }` provider
+reads them on every download; the plugin never writes them to disk or the
+Keychain, never hands them back to JS, and they are gone with the process.
+What the plugin cannot control is the JS side: the string you pass is a JS
+value until the garbage collector drops it, and if it went through React
+state, a form field or a store, it lives there too. Pass it straight from where
+it came from, clear the field, and never persist or log it. For an attestation
+`PinVault-Token`, prefer `tokenHosts` + `PinVault.fetch` (the native client adds
+it) over `fetchAttestationToken`, which hands the token to JS. Forget vault
+tokens on a revocation:
 
 ```ts
 PinVault.addConnectionListener((e) => {
@@ -218,7 +307,12 @@ environmentGuard: async (operation) => !(await myRaspSaysCompromised()),
 environmentGuardTimeoutMs: 5000,
 ```
 
-Asked before `INIT`, `ENROLL`, `FETCH_FILE` and `UNLOCK_FILE`. **Fail closed:**
+Asked before `INIT`, `ENROLL`, `FETCH_FILE` and `UNLOCK_FILE`. On iOS the bridge
+asks before it calls the library (`start`: `INIT` and `ENROLL`; enrollment
+calls: `ENROLL`; `fetchFile` / `syncAllFiles`: `FETCH_FILE`; `unlockFile`:
+`UNLOCK_FILE`), so the wait for JS holds no thread; an operation the library
+starts on its own (a background refresh) still waits on its own thread,
+bounded by the timeout. **Fail closed:**
 a timeout (native deadline 100–30 000 ms, default 5000), a thrown error, a
 rejected promise or anything but `true` refuses the operation. The guard runs
 in JavaScript, and code that hooks the JS runtime can answer for it: treat it
@@ -228,7 +322,11 @@ as one more signal. The decisive check is server-side attestation
 ## Security notes (OWASP MASVS)
 
 - **NETWORK** — pinned native path only; no unpinned fallback; `https` → `http`
-  redirects are not followed; Android pins RN's own networking, iOS warns.
+  redirects are not followed; RN's own fetch / XHR / images are pinned on both
+  platforms (WebSocket on Android), fail closed before `start`, and a replaced
+  hook is detected.
+- **Trust anchors** — release builds take the relaxations only from the native
+  security file; with the file, JS cannot change pins, keys or scopes.
 - **STORAGE** — the plugin stores nothing in JS (no AsyncStorage); tokens live
   in native memory only; vault content leaves native code only through
   `loadFile` / `unlockFile`.
@@ -280,4 +378,10 @@ and the podspec hands `spm_dependency` that local path instead of the git tag.
   `build_auth_list`); the keystore daemon then keeps a dead connection and every
   Keystore operation fails until it is restarted. Turn `requireUnlockedDevice`
   on for release builds / real devices only (the sample does).
-- iOS: RN's global networking is not pinned (above).
+- iOS: RN's WebSocket is not pinned, and RN's https answers are delivered after
+  the whole (bounded) body is read (above).
+- Android: the networking hooks are detected by reading two private fields of
+  React Native 0.87 (`OkHttpClientProvider.factory`,
+  `NetworkingModule.customClientBuilder`; the consumer R8 rules keep them). A
+  React Native version that renames them reads as "could not be read", which
+  counts as not pinned.

@@ -9,7 +9,7 @@ alır; Android ve iOS örneklerinin Ana / mTLS / Vault ekranlarının sade hali.
 
 | Ekran | Ne var |
 |---|---|
-| Ana | Durum ("✅ Hazır — config vN"), host başına pin sürümü, pinli istek (`PinVault.fetch`), React Native'in kendi `fetch`'i (Android'de pinli, iOS'ta pinsiz), config'i şimdi yenile. Debug'da test kontrolleri |
+| Ana | Durum ("✅ Hazır — config vN"), host başına pin sürümü, pinli istek (`PinVault.fetch`), React Native'in kendi `fetch`'i (iki platformda da PinVault'tan geçer), config'i şimdi yenile. Debug'da test kontrolleri |
 | mTLS | Cihaz kimliği (panelde token'ı bu telefona bağlamak için), token ile kayıt, mTLS Config API'ye istek (`https://<host>:<mtlsPort>/health`), kaydı silme |
 | Vault | Herkese açık dosya (`sample-flags`), token'lı dosya (`sample-e2e`: mTLS + token, cihaza özel şifre) ve ekran kilitli dosya (`sample-secret`: mTLS + token + ekran kilidi): indir, aç, telefondaki dosyaları sil. Açılan içerik 1 dakika sonra ya da ekrandan çıkınca silinir |
 
@@ -17,8 +17,10 @@ Gizli dosyalar ve mTLS bloğu yalnızca cihaz kayıtlıyken tanımlanır; kayıt
 silmeden sonra uygulama PinVault'u yeni yapılandırmayla yeniden başlatır.
 
 Test kontrolleri (yalnız debug): ortam korumasının her işlemi reddetmesi (fail closed
-denemesi), PinVault'u sıfırlama, son bağlantı olayları. Release derlemesinde bu modül JS
-paketine hiç girmez (`src/generated/testControls.ts`).
+denemesi), PinVault'u sıfırlama, React Native'in `<Image>`'ıyla hedefe bağlanma, son
+bağlantı olayları. Release derlemesinde bu modül JS paketine iki kilitle girmez:
+`src/generated/testControls.ts` boş yazılır, ayrıca `MainScreen.tsx` onu yalnız `__DEV__`
+iken `require` eder (Metro release paketinde bu dalı atar).
 
 ## Host değerleri
 
@@ -69,7 +71,11 @@ cd ios && pod install && cd .. && npx react-native run-ios
 Diğer örneklerdeki kurallar: release, demo host değerleriyle derlenmez (en az 2 imza +
 yedek anahtar, kurtarma anahtarı, `host.clientCaPin`, Config API kapsamları, Android'de
 `host.expectedSignerSha256`; `target.requireCaTrust=false` olamaz), test kontrolleri
-pakete girmez, `requireUnlockedDevice` ve `requireHardwareBackedKeys` açıktır. Android'de
+pakete girmez, `requireUnlockedDevice` ve `requireHardwareBackedKeys` açıktır. Sabit
+noktalar (bootstrap pin'leri, imza / kurtarma anahtarları, kaç imza, kapsamlar, istemci
+CA pin'i) eklentinin yerel güvenlik dosyasına da yazılır (`pinvault_security.json`;
+Android'de release assets'i, iOS'ta uygulama paketi): JS paketi değişse bile uygulama
+bunları paketin kendisinden alır. Android'de
 gerçek imza anahtarı şart (debug anahtarına düşülmez):
 
 ```bash

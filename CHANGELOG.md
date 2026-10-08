@@ -7,11 +7,14 @@
 - **`@umutcansu/react-native-pinvault` 2.3.1** (`pinvault-react-native/`): a TurboModule
   bridge over the Android and iOS libraries for React Native 0.87+ (New
   Architecture). Pinning, keys, signatures and vault decryption stay native; the
-  plugin's `fetch` runs on the pinned native session, and on Android
-  `PinVaultNetworking.install` pins React Native's own fetch / XHR / WebSocket.
+  plugin's `fetch` runs on the pinned native session, and React Native's own
+  fetch / XHR / images are pinned on both platforms (WebSocket on Android).
   Strict config parsing (unknown keys and wrong types refused), tokens kept in
-  native memory only, fail-closed `environmentGuard`. Jest, Android JVM and Swift
-  tests.
+  native memory only, fail-closed `environmentGuard`, an optional native
+  security file for the trust anchors. Jest, Android JVM and Swift tests.
+- **iOS library:** `PinnedSession.data(for:maxResponseBytes:)` — the bounded
+  read the library already used for its own answers, now for app sessions (the
+  React Native plugin enforces its response limits while reading).
 - **`sample-client-rn/`**: the React Native sample app (Ana / mTLS / Vault).
 
 ## 2.3.1 — 2026-10-08 — OWASP audit fixes (MASVS Android/iOS, ASVS server)
