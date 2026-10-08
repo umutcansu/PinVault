@@ -54,6 +54,7 @@ targets:
       - path: ../PinVaultTests/UserAuthPromptTests.swift
       - path: ../PinVaultTests/VaultFileTestSupport.swift
       - path: ../PinVaultTests/StoreTestSupport.swift
+      - path: ../PinVaultTests/StoreKeyWrapKeychainTests.swift
     dependencies:
       - target: VaultKeychainHost
     settings:

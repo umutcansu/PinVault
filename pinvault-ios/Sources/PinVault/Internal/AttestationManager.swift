@@ -44,6 +44,7 @@ final class AttestationManager: AttestationTokenSource, @unchecked Sendable {
     private let currentIssuedAt: @Sendable () -> Int64
     private let liveConfig: @Sendable () -> CertificateConfig?
     private let buildReport: @Sendable (_ nonce: String, _ deviceId: String, _ key: any ClientIdentityKeyProvider) async -> String
+    private let roundVerdict: @Sendable (_ canonical: String) async -> IntegrityVerdict?
     private let applyConfig: @Sendable (SignedConfigResponse) async throws -> UpdateResult
     private let onConfigApplied: @Sendable (UpdateResult) -> Void
     private let onEvent: @Sendable (PinVaultConnectionEvent) -> Void
@@ -89,6 +90,10 @@ final class AttestationManager: AttestationTokenSource, @unchecked Sendable {
     ///   - liveConfig: the block's active config, for the token hosts when the block names none.
     ///   - buildReport: the report JSON for a nonce, as a string — what is
     ///     signed and sent, byte for byte.
+    ///   - roundVerdict: the verdict bound to the round's canonical string,
+    ///     which carries the report's digest (App Attest v2); sent beside the
+    ///     report as `verdictProvider`. Nil = none (a provider's verdict, if
+    ///     any, is then inside the report).
     ///   - applyConfig: applies a signed config from the answer (`SSLCertificateUpdater.applySigned`).
     ///   - onConfigApplied: told the result of `applyConfig`, the way the
     ///     recovery interceptor reports its updates.
@@ -108,6 +113,7 @@ final class AttestationManager: AttestationTokenSource, @unchecked Sendable {
         currentIssuedAt: @escaping @Sendable () -> Int64,
         liveConfig: @escaping @Sendable () -> CertificateConfig?,
         buildReport: @escaping @Sendable (_ nonce: String, _ deviceId: String, _ key: any ClientIdentityKeyProvider) async -> String,
+        roundVerdict: @escaping @Sendable (_ canonical: String) async -> IntegrityVerdict? = { _ in nil },
         applyConfig: @escaping @Sendable (SignedConfigResponse) async throws -> UpdateResult,
         onConfigApplied: @escaping @Sendable (UpdateResult) -> Void = { _ in },
         onEvent: @escaping @Sendable (PinVaultConnectionEvent) -> Void = { _ in },
@@ -127,6 +133,7 @@ final class AttestationManager: AttestationTokenSource, @unchecked Sendable {
         self.currentIssuedAt = currentIssuedAt
         self.liveConfig = liveConfig
         self.buildReport = buildReport
+        self.roundVerdict = roundVerdict
         self.applyConfig = applyConfig
         self.onConfigApplied = onConfigApplied
         self.onEvent = onEvent
@@ -235,6 +242,9 @@ final class AttestationManager: AttestationTokenSource, @unchecked Sendable {
                 .init("currentConfigVersion", .int(Int64(currentConfigVersion()))),
                 .init("currentIssuedAt", .int(currentIssuedAt())),
             ]
+            if let verdict = await roundVerdict(canonical) {
+                members.append(.init("verdictProvider", .object([.init("name", .string(verdict.name)), .init("token", .string(verdict.token))])))
+            }
             if !chain.isEmpty { members.append(.init("attestationChain", .strings(chain))) }
             if !block.wantPinsFor.isEmpty { members.append(.init("hosts", .strings(block.wantPinsFor))) }
 

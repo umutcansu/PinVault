@@ -198,17 +198,20 @@ final class AttestationCoordinatorTests: XCTestCase {
         enqueuePass(s.apis["tls"]!, token: "eyJ.1")
         _ = await s.coordinator.attestNow(configApiId: "tls")
         XCTAssertEqual(provider.key(scope: "tls")?.state, .confirmed, "the pass confirmed the attestation")
-        let first = try XCTUnwrap(LenientJSON.object(Data(try XCTUnwrap(s.apis["tls"]!.attestation.attestBodies[0]["report"] as? String).utf8)))
-        let firstToken = try XCTUnwrap((first["verdictProvider"] as? [String: Any])?["token"] as? String)
+        // v2: the token travels beside the report and its hash covers the report.
+        let firstBody = s.apis["tls"]!.attestation.attestBodies[0]
+        XCTAssertFalse(try XCTUnwrap(firstBody["report"] as? String).contains("verdictProvider"))
+        let firstToken = try XCTUnwrap((firstBody["verdictProvider"] as? [String: Any])?["token"] as? String)
         XCTAssertTrue(firstToken.contains(#""attestation":"#))
-        XCTAssertEqual(service.attested.last?.clientDataHash, AppAttestToken.roundClientDataHash(nonce: "nonce-eyJ.1", deviceId: "device-07"))
+        XCTAssertEqual(service.attested.last?.clientDataHash, try Self.roundHashV2(firstBody))
 
         // The server does not know the key: it says so in the warnings, the provider starts over.
         s.apis["tls"]!.attestation.enqueue(.json(#"{"nonce":"nonce-2"}"#))
         s.apis["tls"]!.attestation.enqueue(.json(#"{"result":"pass","warnings":["app_attest","app_attest_unknown_key"],"token":"eyJ.2","tokenTtlSeconds":300}"#))
         _ = await s.coordinator.attestNow(configApiId: "tls")
-        let second = try XCTUnwrap(LenientJSON.object(Data(try XCTUnwrap(s.apis["tls"]!.attestation.attestBodies[1]["report"] as? String).utf8)))
+        let second = s.apis["tls"]!.attestation.attestBodies[1]
         XCTAssertTrue(try XCTUnwrap((second["verdictProvider"] as? [String: Any])?["token"] as? String).contains(#""assertion":"#))
+        XCTAssertEqual(service.asserted.last?.clientDataHash, try Self.roundHashV2(second))
         XCTAssertNil(provider.key(scope: "tls"))
         XCTAssertNil(provider.key(scope: "mtls"), "another block's key is its own")
     }
@@ -236,11 +239,11 @@ final class AttestationCoordinatorTests: XCTestCase {
         // The next round's report carries a new key's attestation, made for that round.
         enqueuePass(s.apis["tls"]!, token: "eyJ.3")
         _ = await s.coordinator.attestNow(configApiId: "tls")
-        let report = try XCTUnwrap(LenientJSON.object(Data(try XCTUnwrap(api.attestBodies.last?["report"] as? String).utf8)))
-        let token = try XCTUnwrap(LenientJSON.object(Data(try XCTUnwrap((report["verdictProvider"] as? [String: Any])?["token"] as? String).utf8)))
+        let body = try XCTUnwrap(api.attestBodies.last)
+        let token = try XCTUnwrap(LenientJSON.object(Data(try XCTUnwrap((body["verdictProvider"] as? [String: Any])?["token"] as? String).utf8)))
         XCTAssertNotNil(token["attestation"])
         XCTAssertNotEqual(token["keyId"] as? String, firstKey.keyId)
-        XCTAssertEqual(service.attested.last?.clientDataHash, AppAttestToken.roundClientDataHash(nonce: "nonce-eyJ.3", deviceId: "device-07"))
+        XCTAssertEqual(service.attested.last?.clientDataHash, try Self.roundHashV2(body))
     }
 
     func testOtherRefusalsKeepTheAppAttestKey() async throws {
@@ -283,5 +286,15 @@ final class AttestationCoordinatorTests: XCTestCase {
             .configApi("a", url: "https://a.example.com/") { $0.allowUnpinnedConfigApi().allowUnsigned().attestation() }
             .build()
         XCTAssertTrue(DeviceIntegrityProbe.forConfig(without).verdictProvider is AppAttestVerdictProvider)
+    }
+
+    /// The v2 client data hash of an attest request body: over its canonical string.
+    static func roundHashV2(_ body: [String: Any]) throws -> Data {
+        let canonical = AttestationManager.canonicalString(
+            nonce: try XCTUnwrap(body["nonce"] as? String),
+            deviceId: try XCTUnwrap(body["deviceId"] as? String),
+            report: try XCTUnwrap(body["report"] as? String)
+        )
+        return AppAttestToken.roundClientDataHashV2(canonical: canonical)
     }
 }

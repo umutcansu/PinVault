@@ -84,6 +84,7 @@ final class AttestationInteropFixtureTests: XCTestCase {
             buildReport: { nonce, deviceId, key in
                 await probe.report(nonce: nonce, deviceId: deviceId, scope: Self.configApiId, key: key).jsonString()
             },
+            roundVerdict: { canonical in await probe.roundVerdict(canonical: canonical, scope: Self.configApiId) },
             applyConfig: { _ in .alreadyCurrent },
             onVerdict: { roundAware?.roundAnswered(scope: Self.configApiId, warnings: $0, rejectionReasons: $1) },
             clock: { Self.fixtureTime },
@@ -93,7 +94,14 @@ final class AttestationInteropFixtureTests: XCTestCase {
         XCTAssertEqual(status.result, .pass, scenario)
         let body = try XCTUnwrap(api.calls.last?.body)
         if appAttest {
-            XCTAssertEqual(service.asserted.last?.clientDataHash, AppAttestToken.roundClientDataHash(nonce: nonce, deviceId: Self.deviceId))
+            // v2: the assertion covers the canonical string, so the report's digest; the
+            // token travels beside the report, never inside it.
+            let sent = try XCTUnwrap(LenientJSON.object(body))
+            let report = LenientJSON.string(sent, "report")
+            let canonical = AttestationManager.canonicalString(nonce: nonce, deviceId: Self.deviceId, report: report)
+            XCTAssertEqual(service.asserted.last?.clientDataHash, AppAttestToken.roundClientDataHashV2(canonical: canonical))
+            XCTAssertNotNil(sent["verdictProvider"] as? [String: Any])
+            XCTAssertFalse(report.contains("verdictProvider"))
         }
 
         return IntegrityJSON.object([
@@ -222,7 +230,9 @@ final class AttestationInteropFixtureTests: XCTestCase {
     private func check(_ text: String, _ name: String) throws {
         let fixture = try XCTUnwrap(LenientJSON.object(Data(text.utf8)), name)
         let body = try XCTUnwrap(LenientJSON.object(Data(try XCTUnwrap(fixture["body"] as? String).utf8)), name)
-        XCTAssertEqual(Set(body.keys), ["v", "nonce", "deviceId", "publicKey", "report", "signature", "currentConfigVersion", "currentIssuedAt"], name)
+        let required: Set<String> = ["v", "nonce", "deviceId", "publicKey", "report", "signature", "currentConfigVersion", "currentIssuedAt"]
+        // A v2 App Attest round carries its token beside the report.
+        XCTAssertTrue(Set(body.keys) == required || Set(body.keys) == required.union(["verdictProvider"]), name)
         let nonce = try XCTUnwrap(body["nonce"] as? String)
         let raw = try XCTUnwrap(Base64.decodeURL(nonce), name)
         XCTAssertEqual(raw.count, 40, name)

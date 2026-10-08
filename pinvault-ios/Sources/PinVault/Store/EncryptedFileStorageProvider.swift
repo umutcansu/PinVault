@@ -217,7 +217,8 @@ final class EncryptedFileStorageProvider: VaultStorageProvider {
 
 /// The per-file AES-256 keys of ``EncryptedFileStorageProvider``: Keychain
 /// generic passwords `pinvault_vault_<key>` (service `io.github.umutcansu.pinvault`),
-/// 32 random bytes, `AfterFirstUnlockThisDeviceOnly` — `WhenUnlockedThisDeviceOnly`
+/// 32 random bytes wrapped by a Secure Enclave key where there is one
+/// (``SecureEnclaveKeyWrap``), `AfterFirstUnlockThisDeviceOnly` — `WhenUnlockedThisDeviceOnly`
 /// for keys made while `requireUnlockedDevice` is on.
 final class VaultFileKeychainKeys: Sendable {
     static let service = "io.github.umutcansu.pinvault"
@@ -249,9 +250,20 @@ final class VaultFileKeychainKeys: Sendable {
             let status = SecItemCopyMatching(lookup as CFDictionary, &item)
             switch status {
             case errSecSuccess:
-                if let data = item as? Data, data.count == Self.keyLength { return SymmetricKey(data: data) }
-                // Not a key this library wrote: unusable for good (the copy will not open and is dropped).
-                log.e("Vault file key: the Keychain item for [\(key)] is not a \(Self.keyLength)-byte key — replacing it")
+                if let data = item as? Data {
+                    switch try StoredKeyBytes.read(data, length: Self.keyLength, what: "Vault file key [\(key)]") {
+                    case .raw(let bytes):
+                        StoredKeyBytes.wrapInPlace(query(key), raw: bytes, what: "Vault file key [\(key)]", log: log)
+                        return SymmetricKey(data: bytes)
+                    case .unwrapped(let bytes):
+                        return SymmetricKey(data: bytes)
+                    case .unusable:
+                        break
+                    }
+                }
+                // Not a key this library wrote, or wrapped by a Secure Enclave key that is
+                // gone: unusable for good (the copy will not open and is dropped).
+                log.e("Vault file key: the Keychain item for [\(key)] is not a usable key — replacing it")
                 SecItemDelete(query(key) as CFDictionary)
             case errSecItemNotFound:
                 var bytes = Data(count: Self.keyLength)
@@ -261,7 +273,7 @@ final class VaultFileKeychainKeys: Sendable {
                 }
                 let unlockedOnly = requireUnlockedDevice()
                 var add = query(key)
-                add[kSecValueData] = bytes
+                add[kSecValueData] = SecureEnclaveKeyWrap.wrap(bytes) ?? bytes
                 add[kSecAttrAccessible] = unlockedOnly
                     ? kSecAttrAccessibleWhenUnlockedThisDeviceOnly : kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly
                 let added = SecItemAdd(add as CFDictionary, nil)

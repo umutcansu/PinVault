@@ -5,8 +5,17 @@ import Foundation
 /// — the library's own App Attest provider (`PORTING.md` §6). Other
 /// providers get the plain ``IntegrityVerdictProvider/verdict(nonce:)``.
 protocol AttestationRoundVerdictProvider: IntegrityVerdictProvider {
-    /// The verdict for one attestation round of block `scope`, bound to `nonce` and `deviceId`.
+    /// The verdict for one attestation round of block `scope`, bound to `nonce` and `deviceId` (v1).
     func verdict(nonce: String, deviceId: String, scope: String) async throws -> IntegrityVerdict?
+
+    /// True when this provider binds its verdict to the report (v2): the
+    /// report is then built without it and ``verdict(canonical:scope:)`` is
+    /// asked for the verdict that travels beside the report.
+    var bindsReport: Bool { get }
+
+    /// The verdict for one round of block `scope`, bound to `canonical` — the
+    /// string the identity key signs, which carries the report's digest (v2).
+    func verdict(canonical: String, scope: String) async throws -> IntegrityVerdict?
 
     /// The server answered block `scope`'s round with a verdict (pass or reject).
     func roundAnswered(scope: String, warnings: [String], rejectionReasons: [String])
@@ -79,8 +88,13 @@ final class DeviceIntegrityProbe: Sendable {
         let inputs = self.inputs
         let environment = inputs.environment()
         let keyLevel = key?.securityLevel() ?? .unknown
-        let verdict = await verdict(nonce: nonce, deviceId: deviceId, scope: scope)
-        let appAttestVerdict = verdict?.name == AppAttestToken.provider
+        // A provider bound to the report (App Attest, v2) answers after it is
+        // built (``roundVerdict(canonical:scope:)``); the report then says
+        // only that a verdict will travel with it.
+        let roundAware = verdictProvider as? any AttestationRoundVerdictProvider
+        let deferred = roundAware?.bindsReport == true
+        let verdict = deferred ? nil : await verdict(nonce: nonce, deviceId: deviceId, scope: scope)
+        let appAttestVerdict = deferred || verdict?.name == AppAttestToken.provider
 
         // App block.
         let bundleId = inputs.bundleId()
@@ -182,14 +196,25 @@ final class DeviceIntegrityProbe: Sendable {
         }
     }
 
+    /// The verdict that travels beside the report (v2), bound to `canonical`;
+    /// nil when the provider does not bind reports or has no verdict.
+    func roundVerdict(canonical: String, scope: String) async -> IntegrityVerdict? {
+        guard let roundAware = verdictProvider as? any AttestationRoundVerdictProvider, roundAware.bindsReport else { return nil }
+        return await timed { try await roundAware.verdict(canonical: canonical, scope: scope) }
+    }
+
     private func verdict(nonce: String, deviceId: String, scope: String) async -> IntegrityVerdict? {
         guard let provider = verdictProvider else { return nil }
-        let outcome = await Self.withTimeout(verdictTimeoutMs) { () async throws -> IntegrityVerdict? in
+        return await timed { () async throws -> IntegrityVerdict? in
             if let roundAware = provider as? any AttestationRoundVerdictProvider {
                 return try await roundAware.verdict(nonce: nonce, deviceId: deviceId, scope: scope)
             }
             return try await provider.verdict(nonce: nonce)
         }
+    }
+
+    private func timed(_ work: @escaping @Sendable () async throws -> IntegrityVerdict?) async -> IntegrityVerdict? {
+        let outcome = await Self.withTimeout(verdictTimeoutMs, work)
         switch outcome {
         case .value(let verdict):
             return verdict

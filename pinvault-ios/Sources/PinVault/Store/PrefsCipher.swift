@@ -81,7 +81,8 @@ struct KeyedPrefsCipher: PrefsCipher {
 
 /// The store keys as Keychain generic passwords `pinvault_prefs_aes` /
 /// `pinvault_prefs_mac` (service `io.github.umutcansu.pinvault`), 32 random
-/// bytes each, `AfterFirstUnlockThisDeviceOnly` — `WhenUnlockedThisDeviceOnly`
+/// bytes each, wrapped by a Secure Enclave key where there is one
+/// (``SecureEnclaveKeyWrap``), `AfterFirstUnlockThisDeviceOnly` — `WhenUnlockedThisDeviceOnly`
 /// for keys made while `requireUnlockedDevice` is on (existing keys stay as
 /// they are, as on Android).
 ///
@@ -135,10 +136,21 @@ final class KeychainPrefsKeySource: PrefsKeySource, @unchecked Sendable {
             let status = SecItemCopyMatching(query as CFDictionary, &item)
             switch status {
             case errSecSuccess:
-                if let data = item as? Data, data.count == Self.keyLength { return data }
-                // Not a key this library wrote: unusable for good, so it is replaced
-                // (entries sealed with it no longer open and are dropped).
-                log.e("\(what): the Keychain item \(alias) is not a \(Self.keyLength)-byte key — replacing it")
+                if let data = item as? Data {
+                    switch try StoredKeyBytes.read(data, length: Self.keyLength, what: what) {
+                    case .raw(let key):
+                        StoredKeyBytes.wrapInPlace(baseQuery(alias), raw: key, what: what, log: log)
+                        return key
+                    case .unwrapped(let key):
+                        return key
+                    case .unusable:
+                        break
+                    }
+                }
+                // Not a key this library wrote, or wrapped by a Secure Enclave key that is
+                // gone: unusable for good, so it is replaced (entries sealed with it no
+                // longer open and are dropped).
+                log.e("\(what): the Keychain item \(alias) is not a usable key — replacing it")
                 SecItemDelete(baseQuery(alias) as CFDictionary)
             case errSecItemNotFound:
                 var key = Data(count: Self.keyLength)
@@ -147,7 +159,7 @@ final class KeychainPrefsKeySource: PrefsKeySource, @unchecked Sendable {
                     throw PrefsCipherError.keyUnavailable("\(what): no random bytes (OSStatus \(generated))")
                 }
                 var add = baseQuery(alias)
-                add[kSecValueData] = key
+                add[kSecValueData] = SecureEnclaveKeyWrap.wrap(key) ?? key
                 add[kSecAttrAccessible] = unlockedOnly
                     ? kSecAttrAccessibleWhenUnlockedThisDeviceOnly : kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly
                 let added = SecItemAdd(add as CFDictionary, nil)
@@ -163,6 +175,40 @@ final class KeychainPrefsKeySource: PrefsKeySource, @unchecked Sendable {
             }
         }
         throw PrefsCipherError.keyUnavailable("\(what): Keychain item \(alias) cannot be read")
+    }
+}
+
+/// What a stored key item holds: the key in the clear (written before 2.4.0
+/// or without a Secure Enclave), the key unwrapped, or nothing usable.
+enum StoredKeyBytes {
+    case raw(Data)
+    case unwrapped(Data)
+    case unusable
+
+    /// Reads `data`; throws ``PrefsCipherError/keyUnavailable(_:)`` when the
+    /// wrapping key exists but cannot be used now (the item is kept).
+    static func read(_ data: Data, length: Int, what: String) throws -> StoredKeyBytes {
+        if data.count == length && !SecureEnclaveKeyWrap.isWrapped(data) { return .raw(data) }
+        guard SecureEnclaveKeyWrap.isWrapped(data) else { return .unusable }
+        do {
+            let key = try SecureEnclaveKeyWrap.unwrap(data)
+            return key.count == length ? .unwrapped(key) : .unusable
+        } catch SecureEnclaveKeyWrap.UnwrapError.unavailable(let reason) {
+            throw PrefsCipherError.keyUnavailable("\(what): the Secure Enclave cannot open it now (\(reason))")
+        } catch {
+            return .unusable
+        }
+    }
+
+    /// Replaces a clear key item with its wrapped form, when this device can wrap.
+    static func wrapInPlace(_ query: [CFString: Any], raw: Data, what: String, log: PinVaultLog.Tag) {
+        guard let wrapped = SecureEnclaveKeyWrap.wrap(raw) else { return }
+        let status = SecItemUpdate(query as CFDictionary, [kSecValueData: wrapped] as CFDictionary)
+        if status == errSecSuccess {
+            log.i("\(what): wrapped by the Secure Enclave")
+        } else {
+            log.w("\(what): cannot be wrapped in place (OSStatus \(status)); kept as it was")
+        }
     }
 }
 

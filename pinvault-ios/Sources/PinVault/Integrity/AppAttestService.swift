@@ -137,6 +137,15 @@ enum AppAttestToken {
         Hashing.sha256("pinvault-app-attest:v1:\(nonce):\(deviceId)")
     }
 
+    /// A v2 round's client data hash: SHA-256 of `pinvault-app-attest:v2:<canonical>` (UTF-8),
+    /// where `canonical` is the string the identity key signs
+    /// (`pinvault-attest:v1:<nonce>:<deviceId>:<sha256-hex(report)>`). It binds the
+    /// assertion to the report's content as well as the round; the token then
+    /// travels beside the report, not inside it (`ATTESTATION.md` §12).
+    static func roundClientDataHashV2(canonical: String) -> Data {
+        Hashing.sha256("pinvault-app-attest:v2:\(canonical)")
+    }
+
     /// An enrollment's client data hash: SHA-256 of the 43-character integrity request hash (UTF-8).
     static func enrollmentClientDataHash(requestHash: String) -> Data {
         Hashing.sha256(requestHash)

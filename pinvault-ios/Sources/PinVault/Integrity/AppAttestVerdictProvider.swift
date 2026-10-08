@@ -140,8 +140,17 @@ public final class AppAttestVerdictProvider: IntegrityVerdictProvider, Sendable 
 extension AppAttestVerdictProvider: AttestationRoundVerdictProvider {
 
     func verdict(nonce: String, deviceId: String, scope: String) async throws -> IntegrityVerdict? {
+        try await verdict(clientDataHash: AppAttestToken.roundClientDataHash(nonce: nonce, deviceId: deviceId), scope: scope)
+    }
+
+    var bindsReport: Bool { !disabled.get() && service.isSupported }
+
+    func verdict(canonical: String, scope: String) async throws -> IntegrityVerdict? {
+        try await verdict(clientDataHash: AppAttestToken.roundClientDataHashV2(canonical: canonical), scope: scope)
+    }
+
+    private func verdict(clientDataHash: Data, scope: String) async throws -> IntegrityVerdict? {
         guard !disabled.get(), service.isSupported else { return nil }
-        let clientDataHash = AppAttestToken.roundClientDataHash(nonce: nonce, deviceId: deviceId)
         do {
             if let stored = key(scope: scope), stored.state == .confirmed {
                 let keyId = stored.keyId

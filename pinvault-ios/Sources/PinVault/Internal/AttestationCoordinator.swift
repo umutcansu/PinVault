@@ -75,6 +75,7 @@ final class AttestationCoordinator: Sendable {
                     guard let probe else { return "{}" }
                     return await probe.report(nonce: nonce, deviceId: did, scope: id, key: key).jsonString()
                 },
+                roundVerdict: { canonical in await probe?.roundVerdict(canonical: canonical, scope: id) },
                 applyConfig: { signed in try await applyConfig(id, signed) },
                 onConfigApplied: { result in onConfigApplied(id, result) },
                 onEvent: onEvent,

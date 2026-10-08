@@ -257,14 +257,19 @@ final class DeviceIntegrityProbeTests: XCTestCase {
         XCTAssertEqual(evidence(json, "key_unattested"), ["app-attest:none"])
     }
 
-    func testAnAppAttestVerdictIsBoundToTheRoundAndMarksTheKeyAttested() async throws {
+    func testAnAppAttestVerdictIsBoundToTheReportAndMarksTheKeyAttested() async throws {
         let service = FakeAppAttestService()
         let provider = AppAttestVerdictProvider(service: service, store: { InMemoryPreferences() }, deviceId: { "ignored" })
+        let probe = DeviceIntegrityProbe(verdictProvider: provider, clock: { 1 }, inputs: Self.iPhone())
         let (_, json) = await report(Self.iPhone(), provider: provider)
-        let verdict = try XCTUnwrap(json["verdictProvider"] as? [String: Any])
-        XCTAssertEqual(verdict["name"] as? String, "app-attest")
-        XCTAssertEqual(service.attested.first?.clientDataHash, AppAttestToken.roundClientDataHash(nonce: "nonce-1", deviceId: "device-07"),
-                       "the round's device id, not the provider's own")
+        // v2: the report is built first and carries no token…
+        XCTAssertNil(json["verdictProvider"])
+        XCTAssertTrue(service.attested.isEmpty, "nothing is attested before the report exists")
+        // …the verdict is then bound to the canonical string, which carries the report's digest.
+        let bound = await probe.roundVerdict(canonical: "pinvault-attest:v1:n:d:abc", scope: "api")
+        let verdict = try XCTUnwrap(bound)
+        XCTAssertEqual(verdict.name, "app-attest")
+        XCTAssertEqual(service.attested.first?.clientDataHash, AppAttestToken.roundClientDataHashV2(canonical: "pinvault-attest:v1:n:d:abc"))
         XCTAssertEqual((json["device"] as? [String: Any])?["keyAttested"] as? Bool, true)
         XCTAssertEqual(evidence(json, "key_unattested"), [])
         XCTAssertFalse(flag(json, "key_unattested"))
