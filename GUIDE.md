@@ -302,6 +302,14 @@ PinVaultConfig.Builder()
 }
 ```
 
+`allowUnsigned()` and `allowUnpinnedConfigApi()` are test relaxations: a
+release build refuses them (Android: the app is not `android:debuggable`;
+iOS: compiled without `DEBUG`). `init` / `start` and enrollment with that
+config fail before anything is sent, naming the block. A release app that
+really talks to an unsigned or unpinned Config API says so on the block with
+`allowRelaxationsInRelease()`. React Native does that only where the app's
+native security file allows the relaxation.
+
 ### Multi-Config-API
 
 One app can talk to multiple Config APIs — each with its own TLS pipeline,
@@ -1542,7 +1550,8 @@ on first install). *(2.2)* `init` enforces it, however the config
 object was built: a Config API block must use `https://` (also for
 `enrollmentUrl` / `renewalUrl`) and carry bootstrap pins, or `init` returns
 `Failed` and the block's client refuses to connect. Tests against a local
-plain-HTTP server opt out with `allowUnpinnedConfigApi()` on the block.
+plain-HTTP server opt out with `allowUnpinnedConfigApi()` on the block (a
+release build refuses it unless the block also calls `allowRelaxationsInRelease()`).
 Hardcode at least 2 SHA-256 SPKI hashes in the APK:
 
 ```kotlin

@@ -79,6 +79,8 @@ public struct ConfigApiBlock: Sendable, Equatable, Hashable {
     public let tokenHosts: [String]
     /// Requests that carry the token also carry a `PinVault-Proof`. See ``Builder/proofOfPossession()``.
     public let tokenProof: Bool
+    /// ``allowUnsigned`` and ``allowUnpinnedConfigApi`` apply in a release build too. See ``Builder/allowRelaxationsInRelease()``.
+    public let relaxationsInRelease: Bool
 
     public init(
         id: String,
@@ -112,7 +114,8 @@ public struct ConfigApiBlock: Sendable, Equatable, Hashable {
         attestationEnabled: Bool = false,
         attestationIntervalMs: Int64 = ConfigApiBlock.defaultAttestationIntervalMs,
         tokenHosts: [String] = [],
-        tokenProof: Bool = false
+        tokenProof: Bool = false,
+        relaxationsInRelease: Bool = false
     ) {
         self.id = id
         self.configUrl = configUrl
@@ -146,6 +149,7 @@ public struct ConfigApiBlock: Sendable, Equatable, Hashable {
         self.attestationIntervalMs = attestationIntervalMs
         self.tokenHosts = tokenHosts
         self.tokenProof = tokenProof
+        self.relaxationsInRelease = relaxationsInRelease
     }
 
     /// Why this block must not be used, or nil: the Config API (and the
@@ -238,6 +242,7 @@ public struct ConfigApiBlock: Sendable, Equatable, Hashable {
         private var attestationIntervalMs = ConfigApiBlock.defaultAttestationIntervalMs
         private var tokenHosts: [String] = []
         private var tokenProof = false
+        private var relaxationsInRelease = false
         private var firstError: PinVaultError?
 
         public init(_ id: String, url configUrl: String) {
@@ -315,6 +320,14 @@ public struct ConfigApiBlock: Sendable, Equatable, Hashable {
         /// Opt-out from `https://` and bootstrap pins for the Config API.
         /// SECURITY: tests against a local plain-HTTP server and demos only.
         @discardableResult public func allowUnpinnedConfigApi() -> Builder { unpinnedAllowed = true; return self }
+
+        /// Keep ``allowUnsigned()`` and ``allowUnpinnedConfigApi()`` in a release
+        /// build (compiled without `DEBUG`). Without this call `start` and
+        /// enrollment with this config fail there: both are test relaxations,
+        /// and a release build that still has one usually forgot to remove it.
+        /// Call it only when the release app really talks to an unsigned or
+        /// unpinned Config API, and know what it gives away.
+        @discardableResult public func allowRelaxationsInRelease() -> Builder { relaxationsInRelease = true; return self }
 
         /// mTLS client keystore (PKCS12) bundled with the app; imported into
         /// the Keychain on first use. The same for every install: use it to
@@ -546,7 +559,8 @@ public struct ConfigApiBlock: Sendable, Equatable, Hashable {
                 attestationEnabled: attestationEnabled,
                 attestationIntervalMs: attestationIntervalMs,
                 tokenHosts: tokenHosts,
-                tokenProof: tokenProof
+                tokenProof: tokenProof,
+                relaxationsInRelease: relaxationsInRelease
             )
         }
     }

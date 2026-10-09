@@ -234,6 +234,7 @@ object PinVault {
     /** Initializes the library with a [PinVaultConfig] (suspend version). */
     suspend fun init(context: Context, config: PinVaultConfig): InitResult {
         initRefusal(config)?.let { return it }
+        releaseRefusal(context, config)?.let { return InitResult.Failed(it.message ?: "", it) }
         pinManagerConfig = config
         return when (val setUp = setupSafely(context, config, null)) {
             is SetUp.Failed -> setUp.result
@@ -247,6 +248,7 @@ object PinVault {
      */
     fun init(context: Context, config: PinVaultConfig, onResult: (InitResult) -> Unit) {
         initRefusal(config)?.let { return onResult(it) }
+        releaseRefusal(context, config)?.let { return onResult(InitResult.Failed(it.message ?: "", it)) }
         pinManagerConfig = config
         when (val setUp = setupSafely(context, config, null)) {
             is SetUp.Failed -> return onResult(setUp.result)
@@ -280,6 +282,7 @@ object PinVault {
      */
     suspend fun init(context: Context, config: PinVaultConfig, configApi: CertificateConfigApi): InitResult {
         initRefusal(config)?.let { return it }
+        releaseRefusal(context, config)?.let { return InitResult.Failed(it.message ?: "", it) }
         pinManagerConfig = config
         return when (val setUp = setupSafely(context, config, configApi)) {
             is SetUp.Failed -> setUp.result
@@ -291,6 +294,7 @@ object PinVault {
     /** Callback variant of [init] with a custom [CertificateConfigApi]. */
     fun init(context: Context, config: PinVaultConfig, configApi: CertificateConfigApi, onResult: (InitResult) -> Unit) {
         initRefusal(config)?.let { return onResult(it) }
+        releaseRefusal(context, config)?.let { return onResult(InitResult.Failed(it.message ?: "", it)) }
         pinManagerConfig = config
         when (val setUp = setupSafely(context, config, configApi)) {
             is SetUp.Failed -> return onResult(setUp.result)
@@ -334,6 +338,38 @@ object PinVault {
     private fun initRefusal(config: PinVaultConfig): InitResult.Failed? =
         environmentRefusal(config, io.github.umutcansu.pinvault.model.GuardedOperation.INIT)
             ?.let { InitResult.Failed(it.message ?: "Refused by the environment guard", it) }
+
+    /**
+     * Whether the app is a debug build (`android:debuggable`). Swapped by tests;
+     * the release relaxation rule ([releaseRefusal]) reads it.
+     */
+    @androidx.annotation.VisibleForTesting
+    internal var isDebuggableApp: (Context) -> Boolean = { context ->
+        (context.applicationInfo.flags and android.content.pm.ApplicationInfo.FLAG_DEBUGGABLE) != 0
+    }
+
+    /**
+     * `allowUnsigned()` and `allowUnpinnedConfigApi()` are test relaxations:
+     * in a release build (the app is not debuggable) a block that has one is
+     * refused unless it also called `allowRelaxationsInRelease()`. Checked
+     * before anything is set up or sent.
+     */
+    @androidx.annotation.VisibleForTesting
+    internal fun releaseRefusal(context: Context, config: PinVaultConfig): IllegalStateException? {
+        if (isDebuggableApp(context)) return null
+        val relaxed = config.configApis.values.filter { (it.allowUnsigned || it.allowUnpinnedConfigApi) && !it.relaxationsInRelease }
+        if (relaxed.isEmpty()) return null
+        val what = relaxed.joinToString("; ") { block ->
+            "'${block.id}': " + listOfNotNull(
+                "allowUnsigned()".takeIf { block.allowUnsigned },
+                "allowUnpinnedConfigApi()".takeIf { block.allowUnpinnedConfigApi }
+            ).joinToString(" and ")
+        }
+        return IllegalStateException(
+            "Release build refused: Config API $what — test relaxations. Remove them for release, " +
+                "or call allowRelaxationsInRelease() on the block to keep them deliberately."
+        )
+    }
 
     private fun enrollRefusal(config: PinVaultConfig?): ClientCertEnrollmentResult.Failed? =
         environmentRefusal(config, io.github.umutcansu.pinvault.model.GuardedOperation.ENROLL)
@@ -1241,6 +1277,7 @@ object PinVault {
     private suspend fun enrollBeforeInit(context: Context, config: PinVaultConfig, token: String?, deviceId: String?): ClientCertEnrollmentResult {
         if (initialized) return enrollInternal(context, token, deviceId, label = null)
         enrollRefusal(config)?.let { return it }
+        releaseRefusal(context, config)?.let { return ClientCertEnrollmentResult.Failed(it.message ?: "", it) }
         applyKeystoreOptions(config)
         val block = config.defaultConfigApi ?: return NO_CONFIG_API_BLOCK
         val certLabel = block.clientCertLabel

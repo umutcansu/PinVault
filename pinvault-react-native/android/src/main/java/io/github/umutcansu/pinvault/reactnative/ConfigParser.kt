@@ -321,6 +321,8 @@ internal object ConfigParser {
             if (sec.allowUnsigned) this.allowUnsigned()
             sec.serverScope?.let { this.serverScope(it) }
             if (sec.allowUnpinned) this.allowUnpinnedConfigApi()
+            // The native security file allowed them for this block: the library keeps them in a release build too.
+            if (native != null && (sec.allowUnsigned || sec.allowUnpinned)) this.allowRelaxationsInRelease()
             if (sec.allowServerKey) this.allowServerGeneratedKey()
             sec.clientCaPins?.let { this.clientCaPins(it) }
             maxLifetime?.let { this.maxClientCertLifetimeDays(it) }

@@ -2,6 +2,17 @@
 
 ## Unreleased
 
+### Android and iOS libraries
+
+- **Breaking for release builds that kept a test relaxation:**
+  `allowUnsigned()` and `allowUnpinnedConfigApi()` are refused in a release
+  build (Android: the app is not `android:debuggable`; iOS: compiled without
+  `DEBUG`). `init` / `start` and enrollment with such a config fail before
+  anything is set up or sent, naming the block and the call. A release app
+  that really talks to an unsigned or unpinned Config API keeps them with
+  `allowRelaxationsInRelease()` on the block. React Native passes it only
+  where the app's native security file allows the relaxation.
+
 ### React Native
 
 - See `pinvault-react-native/CHANGELOG.md`: an Expo config plugin
