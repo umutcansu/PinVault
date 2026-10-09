@@ -12,6 +12,15 @@ protocol AttestationTokenSource: Sendable {
     /// it is; otherwise the source attests once (bounded by its single flight
     /// and its backoff) and returns what that brought.
     func token(host: String, port: Int, forceRefresh: Bool) async -> String?
+
+    /// The `PinVault-Proof` for `method` `url` carrying `token` (`ATTESTATION.md`
+    /// §5.1), or nil when this source sends none (no `proofOfPossession()`, or
+    /// the device key cannot sign right now).
+    func proof(method: String, url: URL, token: String) -> String?
+}
+
+extension AttestationTokenSource {
+    func proof(method: String, url: URL, token: String) -> String? { nil }
 }
 
 /// Adds `PinVault-Token` to requests whose host is a token host of an
@@ -24,10 +33,14 @@ protocol AttestationTokenSource: Sendable {
 /// containing `PinVault-Token`, or a body naming `invalid_token`) forces one
 /// re-attestation and one retry, tagged so the retry never retries again.
 /// Requests whose body can be sent once only (`httpBodyStream`) are not retried.
+/// With `proofOfPossession()` each such request also carries a `PinVault-Proof`
+/// made for it (§5.1), and the retry a new one.
 struct AttestationTokenInterceptor: PinnedInterceptor {
 
     /// The request header the token travels in.
     static let header = "PinVault-Token"
+    /// The request header the proof travels in.
+    static let proofHeader = TokenProof.header
     private static let wwwAuthenticate = "WWW-Authenticate"
     private static let invalidToken = "invalid_token"
     static let maxPeekBytes = 8 * 1024
@@ -56,7 +69,7 @@ struct AttestationTokenInterceptor: PinnedInterceptor {
 
         let token = await source.token(host: host, port: port, forceRefresh: false)
         var first = exchange
-        if let token { first.request.setValue(token, forHTTPHeaderField: Self.header) }
+        if let token { Self.attach(token, to: &first.request, source: source) }
         let response = try await proceed(first)
         guard response.statusCode == 401, Self.namesToken(response) else { return response }
 
@@ -70,8 +83,17 @@ struct AttestationTokenInterceptor: PinnedInterceptor {
         }
         Self.log.d("\(Self.header) refused for \(host) — re-attested, retrying once")
         var retry = exchange.tagged(.attestationRetry)
-        retry.request.setValue(fresh, forHTTPHeaderField: Self.header)
+        Self.attach(fresh, to: &retry.request, source: source)
         return try await proceed(retry)
+    }
+
+    /// `token` and, when the source makes one, a proof for this request and token.
+    private static func attach(_ token: String, to request: inout URLRequest, source: any AttestationTokenSource) {
+        request.setValue(token, forHTTPHeaderField: header)
+        guard let url = request.url else { return }
+        if let proof = source.proof(method: (request.httpMethod ?? "GET").uppercased(), url: url, token: token) {
+            request.setValue(proof, forHTTPHeaderField: proofHeader)
+        }
     }
 
     /// True when a 401 is about the token: the challenge header names it, or the body says `invalid_token`.

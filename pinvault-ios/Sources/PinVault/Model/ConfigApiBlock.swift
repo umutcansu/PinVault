@@ -77,6 +77,8 @@ public struct ConfigApiBlock: Sendable, Equatable, Hashable {
     public let attestationIntervalMs: Int64
     /// Hosts whose requests carry the token (pin host patterns, lower case); empty = every pinned host + the Config API.
     public let tokenHosts: [String]
+    /// Requests that carry the token also carry a `PinVault-Proof`. See ``Builder/proofOfPossession()``.
+    public let tokenProof: Bool
 
     public init(
         id: String,
@@ -109,7 +111,8 @@ public struct ConfigApiBlock: Sendable, Equatable, Hashable {
         clientCertHosts: [String] = [],
         attestationEnabled: Bool = false,
         attestationIntervalMs: Int64 = ConfigApiBlock.defaultAttestationIntervalMs,
-        tokenHosts: [String] = []
+        tokenHosts: [String] = [],
+        tokenProof: Bool = false
     ) {
         self.id = id
         self.configUrl = configUrl
@@ -142,6 +145,7 @@ public struct ConfigApiBlock: Sendable, Equatable, Hashable {
         self.attestationEnabled = attestationEnabled
         self.attestationIntervalMs = attestationIntervalMs
         self.tokenHosts = tokenHosts
+        self.tokenProof = tokenProof
     }
 
     /// Why this block must not be used, or nil: the Config API (and the
@@ -233,6 +237,7 @@ public struct ConfigApiBlock: Sendable, Equatable, Hashable {
         private var attestationEnabled = false
         private var attestationIntervalMs = ConfigApiBlock.defaultAttestationIntervalMs
         private var tokenHosts: [String] = []
+        private var tokenProof = false
         private var firstError: PinVaultError?
 
         public init(_ id: String, url configUrl: String) {
@@ -456,10 +461,22 @@ public struct ConfigApiBlock: Sendable, Equatable, Hashable {
             return self
         }
 
+        /// Prove, on every request that carries the `PinVault-Token`, that it
+        /// comes from this device (`ATTESTATION.md` §5.1): the library adds a
+        /// `PinVault-Proof` header, a DPoP proof (RFC 9449) of the request's
+        /// method and URL signed by the block's device key — the key the
+        /// token's `cnf.jkt` names. A backend that checks it refuses a token
+        /// used without the key. One signature per request (Secure Enclave:
+        /// a few ms). Needs ``attestation()``. Off by default.
+        @discardableResult public func proofOfPossession() -> Builder { tokenProof = true; return self }
+
         func build() throws -> ConfigApiBlock {
             if let firstError { throw firstError }
             guard !id.isBlank else { throw PinVaultError.invalidConfiguration("ConfigApi id must not be blank") }
             guard !configUrl.isBlank else { throw PinVaultError.invalidConfiguration("ConfigApi configUrl must not be blank") }
+            guard !tokenProof || attestationEnabled else {
+                throw PinVaultError.invalidConfiguration("ConfigApi '\(id)': proofOfPossession() proves the attestation token, so it needs attestation().")
+            }
             guard !signaturePublicKeys.isEmpty || unsignedAllowed else {
                 throw PinVaultError.invalidConfiguration(
                     "ConfigApi '\(id)': signaturePublicKey is required. Pass the ECDSA P-256 " +
@@ -528,7 +545,8 @@ public struct ConfigApiBlock: Sendable, Equatable, Hashable {
                 clientCertHosts: clientCertHosts,
                 attestationEnabled: attestationEnabled,
                 attestationIntervalMs: attestationIntervalMs,
-                tokenHosts: tokenHosts
+                tokenHosts: tokenHosts,
+                tokenProof: tokenProof
             )
         }
     }

@@ -52,6 +52,13 @@ export type ConfigApiBlock = {
   attestation?: boolean;
   attestationInterval?: Duration;
   tokenHosts?: string[];
+  /**
+   * Every request that carries the `PinVault-Token` also carries a
+   * `PinVault-Proof` signed by the device key (ATTESTATION.md §5.1). Needs
+   * `attestation`. The proof is made natively, so a token handed to JS
+   * (`fetchAttestationToken`) cannot be proven from JS: use `PinVault.fetch`.
+   */
+  proofOfPossession?: boolean;
 };
 
 export type StorageStrategy = 'ENCRYPTED_PREFS' | 'ENCRYPTED_FILE';

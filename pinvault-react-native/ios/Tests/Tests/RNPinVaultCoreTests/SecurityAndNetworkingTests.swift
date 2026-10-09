@@ -115,6 +115,20 @@ final class SecurityAndNetworkingTests: XCTestCase {
         _ = try parse(#"{"configApis":[{\#(base)}],"expiredConfigGrace":{"amount":30,"unit":"MINUTES"}}"#, native: strict)
     }
 
+    func testProofOfPossessionFromTheFileCannotBeTurnedOffAndJSMayTurnItOn() throws {
+        let proving = try NativeSecurity.parse("""
+            {"configApis":[{"id":"default","attestation":true,"proofOfPossession":true,
+              "bootstrapPins":[{"hostname":"h.example","sha256":["\(pinA)","\(pinB)"]}],"signaturePublicKeys":["\(key)"]}]}
+            """, source: "f")
+        XCTAssertEqual(try parse(#"{"configApis":[{\#(base)}]}"#, native: proving).config.configApis["default"]?.tokenProof, true)
+        assertRefused(#"{"configApis":[{\#(base),"proofOfPossession":false}]}"#, native: proving, "proofOfPossession", "cannot turn it off")
+        let plain = try NativeSecurity.parse("""
+            {"configApis":[{"id":"default","bootstrapPins":[{"hostname":"h.example","sha256":["\(pinA)","\(pinB)"]}],"signaturePublicKeys":["\(key)"]}]}
+            """, source: "f")
+        XCTAssertEqual(try parse(#"{"configApis":[{\#(base),"attestation":true,"proofOfPossession":true}]}"#, native: plain).config.configApis["default"]?.tokenProof, true)
+        XCTAssertEqual(try parse(#"{"configApis":[{\#(base),"attestation":true}]}"#, native: plain).config.configApis["default"]?.tokenProof, false)
+    }
+
     func testOfflineAgesUrlsAndTheLockStrengthCannotBeLoosened() throws {
         let strict = try NativeSecurity.parse("""
             {"configApis":[{"id":"default","bootstrapPins":[{"hostname":"h.example","sha256":["\(pinA)","\(pinB)"]}],"signaturePublicKeys":["\(key)"],

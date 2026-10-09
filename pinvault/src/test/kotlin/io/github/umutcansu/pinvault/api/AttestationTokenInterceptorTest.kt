@@ -7,6 +7,8 @@ import okhttp3.RequestBody
 import okhttp3.RequestBody.Companion.toRequestBody
 import okhttp3.mockwebserver.MockResponse
 import okhttp3.mockwebserver.MockWebServer
+import okhttp3.tls.HandshakeCertificates
+import okhttp3.tls.HeldCertificate
 import okio.BufferedSink
 import org.junit.After
 import org.junit.Assert.assertEquals
@@ -49,12 +51,24 @@ class AttestationTokenInterceptorTest {
 
     private lateinit var source: FakeSource
     private lateinit var client: OkHttpClient
+    private lateinit var trust: HandshakeCertificates
+
+    private fun clientWith(interceptor: AttestationTokenInterceptor) = OkHttpClient.Builder()
+        .sslSocketFactory(trust.sslSocketFactory(), trust.trustManager)
+        .addInterceptor(interceptor)
+        .build()
 
     @Before
     fun setUp() {
-        server = MockWebServer().also { it.start() }
+        // The token is a bearer credential: it only goes out over TLS, so the test server speaks it.
+        val localhost = HeldCertificate.Builder().addSubjectAlternativeName("localhost").build()
+        server = MockWebServer().also {
+            it.useHttps(HandshakeCertificates.Builder().heldCertificate(localhost).build().sslSocketFactory(), false)
+            it.start()
+        }
+        trust = HandshakeCertificates.Builder().addTrustedCertificate(localhost.certificate).build()
         source = FakeSource()
-        client = OkHttpClient.Builder().addInterceptor(AttestationTokenInterceptor { listOf(source) }).build()
+        client = clientWith(AttestationTokenInterceptor { listOf(source) })
     }
 
     @After
@@ -174,7 +188,7 @@ class AttestationTokenInterceptorTest {
     @Test
     fun `the first source that handles the host wins`() {
         val other = FakeSource().also { it.token = "other" }
-        val two = OkHttpClient.Builder().addInterceptor(AttestationTokenInterceptor { listOf(FakeSource(handles = false), other) }).build()
+        val two = clientWith(AttestationTokenInterceptor { listOf(FakeSource(handles = false), other) })
         server.enqueue(MockResponse().setBody("ok"))
         two.newCall(get()).execute().close()
         assertEquals("other", server.takeRequest().getHeader("PinVault-Token"))
@@ -202,5 +216,18 @@ class AttestationTokenInterceptorTest {
         server.enqueue(MockResponse().setBody("ok"))
         client.newCall(get()).execute().close()
         assertNull(server.takeRequest().getHeader("PinVault-Proof"))
+    }
+
+    @Test
+    fun `the token never goes out over cleartext`() {
+        val plain = MockWebServer().also { it.start() }
+        try {
+            plain.enqueue(MockResponse().setBody("ok"))
+            client.newCall(Request.Builder().url(plain.url("/api/data")).build()).execute().close()
+            assertNull(plain.takeRequest().getHeader("PinVault-Token"))
+            assertEquals("no token was asked for", 0, source.asked)
+        } finally {
+            plain.shutdown()
+        }
     }
 }

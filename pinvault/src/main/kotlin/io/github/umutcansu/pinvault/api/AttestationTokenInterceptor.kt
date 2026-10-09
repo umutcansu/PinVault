@@ -33,7 +33,7 @@ internal interface AttestationTokenSource {
 /**
  * Application interceptor that adds `PinVault-Token` to requests whose host
  * is a token host of an attesting block (`ATTESTATION.md` §8), on every
- * client the library builds or configures.
+ * client the library builds or configures — over HTTPS only, as on iOS.
  *
  * With `proofOfPossession()` each such request also carries a
  * `PinVault-Proof` made for it (`ATTESTATION.md` §5.1), and the retry a new one.
@@ -54,6 +54,8 @@ internal class AttestationTokenInterceptor(
         val request = chain.request()
         if (request.tag(AttestationRetry::class.java) != null) return chain.proceed(request)
 
+        // The token is a bearer credential: never over cleartext.
+        if (!request.isHttps) return chain.proceed(request)
         val host = request.url.host
         val port = request.url.port
         val source = sources().firstOrNull { it.handlesHost(host, port) } ?: return chain.proceed(request)

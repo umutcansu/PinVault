@@ -518,6 +518,28 @@ final class AttestationManager: AttestationTokenSource, @unchecked Sendable {
         }
     }
 
+    /// The proof for a request carrying `token`, when the block asks for
+    /// proofs: signed by the block's device key (the one that signed the
+    /// report, `cnf.jkt`), `iat` in the server's time as the last challenge
+    /// measured it. Nil without `proofOfPossession()`, for a token this manager
+    /// does not hold, or when the key cannot sign (the request then goes
+    /// without; the backend's 401 makes the device attest again).
+    func proof(method: String, url: URL, token: String) -> String? {
+        guard api != nil, block.tokenProof else { return nil }
+        let (held, skew) = state.withLock { ($0.token, $0.status.clockSkewMs ?? 0) }
+        guard held == token else { return nil }
+        do {
+            let key = try identityKey()
+            return try TokenProof.make(
+                method: method, url: url, token: token, publicKey: try key.publicKey(),
+                nowSeconds: (clock() + skew) / 1000, sign: { try key.sign($0) }
+            )
+        } catch {
+            log.w("Attestation [\(block.id)]: the device key could not sign the proof for \(url.host ?? "?")", error)
+            return nil
+        }
+    }
+
     /// Whether a request may trigger an attestation now. A passing device
     /// whose token ran out always may (a forced one after a 401 only once per
     /// ``reattestGapMs``, so a backend that refuses every token does not make

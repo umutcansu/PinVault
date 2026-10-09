@@ -20,6 +20,12 @@ what the hardware vouches for; the clients bind their verdicts to the report.
 - **`PinVault-Token` is bound:** a `cnf` claim (`jkt`, `x5t#S256` over mTLS);
   `PinVaultTokenAuth` refuses a `did` other than `X-Device-Id`;
   `PINVAULT_TOKEN_REQUIRE_CERT_BINDING=true` requires the matching client cert.
+- **Proof of possession per request** (ATTESTATION.md §5.1):
+  `PinVaultTokenAuth { requireProof = true }` / `PINVAULT_TOKEN_REQUIRE_PROOF`
+  (production profile: on) refuses a token without a `PinVault-Proof` — a
+  DPoP proof (RFC 9449) of the request's method and URL, bound to the token
+  (`ath`), signed by the key `cnf.jkt` names, single use (`jti`), `iat` within
+  60 s; `publicOrigin` behind a proxy. Reasons `proof_*` in the usual `401`.
 - **v2 verdicts:** App Attest client data hash over the canonical string (the
   token beside the report), Play Integrity nonce bound to the device;
   `APP_ATTEST_REQUIRE_V2`, `PLAY_INTEGRITY_REQUIRE_V2` (production profile:
@@ -53,6 +59,11 @@ what the hardware vouches for; the clients bind their verdicts to the report.
   `PlayIntegrityVerdictProvider` sends the v2 nonce — to a server whose
   challenge says `verdictBinding: 2` only, like the iOS App Attest v2 round.
 
+- **`proofOfPossession()`** on a Config API block: every request that carries
+  the `PinVault-Token` also carries a `PinVault-Proof` signed by the block's
+  device key (TEE/StrongBox), `iat` in the server's time. Needs `attestation()`.
+- The token goes out over HTTPS only (as on iOS).
+
 ### iOS library
 
 - **Store keys wrapped by the Secure Enclave:** the encrypted stores' AES/HMAC
@@ -73,6 +84,8 @@ what the hardware vouches for; the clients bind their verdicts to the report.
   images outside the shared cache, Frida threads, current rootless / rootful
   jailbreak markers.
 - `GuardedOperation.loadFile`; vault file key rule.
+- **`proofOfPossession()`**: a `PinVault-Proof` per token request, signed by
+  the block's Secure Enclave key.
 - `sample-client-ios`: `DeviceShield` environment guard; Release expects its
   bundle id and requires hardware-backed keys and an unlocked device.
 

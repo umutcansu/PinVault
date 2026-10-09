@@ -129,6 +129,22 @@ class NativeSecurityTest {
         parse("""{"configApis":[{$base}],"expiredConfigGrace":{"amount":30,"unit":"MINUTES"}}""", native = strict)
     }
 
+    @Test fun `proofOfPossession from the file cannot be turned off, and JS may turn it on`() {
+        val proving = NativeSecurity.parse("""
+            {"configApis":[{"id":"default","attestation":true,"proofOfPossession":true,
+              "bootstrapPins":[{"hostname":"h.example","sha256":["$pinA","$pinB"]}],"signaturePublicKeys":["$key"]}]}
+        """.trimIndent(), "f")
+        val base = """"id":"default","url":"https://h.example:8081/""""
+        assertTrue(parse("""{"configApis":[{$base}]}""", native = proving).config.configApis.getValue("default").tokenProof)
+        refused("""{"configApis":[{$base,"proofOfPossession":false}]}""", native = proving, fragments = arrayOf("proofOfPossession", "cannot turn it off"))
+        val plain = NativeSecurity.parse("""
+            {"configApis":[{"id":"default","bootstrapPins":[{"hostname":"h.example","sha256":["$pinA","$pinB"]}],"signaturePublicKeys":["$key"]}]}
+        """.trimIndent(), "f")
+        assertTrue(parse("""{"configApis":[{$base,"attestation":true,"proofOfPossession":true}]}""", native = plain)
+            .config.configApis.getValue("default").tokenProof)
+        assertFalse(parse("""{"configApis":[{$base,"attestation":true}]}""", native = plain).config.configApis.getValue("default").tokenProof)
+    }
+
     @Test fun `offline ages and enrollment urls cannot be loosened from JS`() {
         val strict = NativeSecurity.parse("""
             {"configApis":[{"id":"default","bootstrapPins":[{"hostname":"h.example","sha256":["$pinA","$pinB"]}],"signaturePublicKeys":["$key"],

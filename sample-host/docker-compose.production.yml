@@ -83,6 +83,10 @@ services:
       # Güncel kütüphaneyle derlenmiş uygulama v2 gönderir.
       APP_ATTEST_REQUIRE_V2: "true"
       PLAY_INTEGRITY_REQUIRE_V2: "true"
+      # Sabit: token tek başına yetmez, her istek cihaz anahtarıyla imzalı bir
+      # PinVault-Proof taşır (ATTESTATION.md §5.1); uygulamanın bloğu
+      # proofOfPossession() açar. Cihazdan çalınan token başka yerde işe yaramaz.
+      PINVAULT_TOKEN_REQUIRE_PROOF: "true"
       # Yapılandırılmış Config API politikasında app_attest, app_attest_missing,
       # play_integrity ve play_integrity_missing için önerilen değer reject'tir;
       # filo ölçüldükten sonra panelden ayarlanır (SECURE_OPERATIONS.md, "The policy

@@ -544,3 +544,39 @@ private final class SlowAttestationApi: AttestationApi, @unchecked Sendable {
         Data(#"{"result":"pass","token":"eyJ.slow","tokenTtlSeconds":300}"#.utf8)
     }
 }
+
+// MARK: PinVault-Proof
+
+extension AttestationManagerTests {
+
+    func testWithProofOfPossessionTheProofIsSignedByTheAttestingKeyInTheServersTime() async throws {
+        api.enqueue(challenge(serverTime: now + 5_000))
+        api.enqueue(pass(token: "eyJ.token.1"))
+        let m = try manager(block: try attestingBlock(tokenHosts: ["api.example.com"], proof: true))
+        _ = await m.attestNow()
+
+        let proof = try XCTUnwrap(m.proof(method: "POST", url: URL(string: "https://api.example.com/v1/x?y=1")!, token: "eyJ.token.1"))
+        let parts = proof.split(separator: ".")
+        let payload = try XCTUnwrap(try JSONSerialization.jsonObject(with: Base64.decodeURL(String(parts[1]))!) as? [String: Any])
+        XCTAssertEqual(payload["htm"] as? String, "POST")
+        XCTAssertEqual(payload["htu"] as? String, "https://api.example.com/v1/x")
+        XCTAssertEqual((payload["iat"] as? NSNumber)?.int64Value, (now + 5_000) / 1000, "iat is the server's clock (+5 s skew)")
+        let signature = try P256.Signing.ECDSASignature(rawRepresentation: Base64.decodeURL(String(parts[2]))!)
+        XCTAssertTrue(try key.signingKey.publicKey.isValidSignature(signature, for: Data((parts[0] + "." + parts[1]).utf8)))
+        XCTAssertNil(m.proof(method: "GET", url: URL(string: "https://api.example.com/")!, token: "other.token"), "a token this manager does not hold")
+    }
+
+    func testWithoutProofOfPossessionThereIsNoProof() async throws {
+        api.enqueue(challenge())
+        api.enqueue(pass(token: "eyJ.token.1"))
+        let m = try manager()
+        _ = await m.attestNow()
+        XCTAssertNil(m.proof(method: "GET", url: URL(string: "https://api.example.com/")!, token: "eyJ.token.1"))
+    }
+
+    func testProofOfPossessionNeedsAttestation() {
+        XCTAssertThrowsError(try attestingBlock(attestation: false, proof: true)) { error in
+            XCTAssertTrue("\(error)".contains("attestation()"), "\(error)")
+        }
+    }
+}

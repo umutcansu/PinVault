@@ -203,6 +203,9 @@ services:
       # true: mock host'lar token'ı yalnızca, token'ın cnf.x5t#S256 ile adını verdiği
       # istemci sertifikasıyla gelen mTLS isteğinde kabul eder (TLS mock host her şeyi reddeder).
       PINVAULT_TOKEN_REQUIRE_CERT_BINDING: ${PINVAULT_TOKEN_REQUIRE_CERT_BINDING:-}
+      # true: token'ın yanında her istek için cihaz anahtarıyla imzalı PinVault-Proof
+      # (DPoP) istenir; uygulamanın bloğu proofOfPossession() açmış olmalı (ATTESTATION.md §5.1).
+      PINVAULT_TOKEN_REQUIRE_PROOF: ${PINVAULT_TOKEN_REQUIRE_PROOF:-}
       # Play Integrity (ATTESTATION.md §11): Play Console yanıt anahtarları (ikisi
       # birlikte; boş = kapalı), kararın adını vermesi gereken paket, en düşük cihaz
       # seviyesi, süreler. STALE_PASS: saklı bir "geçti" token'sız turları kaç saniye

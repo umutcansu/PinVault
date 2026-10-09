@@ -102,7 +102,7 @@ names), enum values are the Kotlin constant names (`'TOKEN_MTLS'`,
 ```ts
 {
   configApis: [{ id, url, bootstrapPins, signaturePublicKeys, requiredSignatures, recoveryPublicKeys,
-                 serverScope, clientCaPins, clientCertHosts, renewalUrl, attestation, tokenHosts, … }],
+                 serverScope, clientCaPins, clientCertHosts, renewalUrl, attestation, tokenHosts, proofOfPossession, … }],
   vaultFiles: [{ key, endpoint, configApi, accessPolicy, encryption, userAuth, storage,
                  maxOfflineAge: { amount: 7, unit: 'DAYS' }, … }],
   requireCaTrust, requireUnlockedDevice, requireHardwareBackedKeys, expectedSignerSha256,
@@ -177,7 +177,7 @@ signature. Ship them natively as well, in `pinvault_security.json`:
     "recoveryPublicKeys": ["…"], "requiredRecoverySignatures": 1,
     "serverScope": "default-tls", "clientCaPins": ["…"],
     "url": "https://config.example.com:8081/", "attestation": true,
-    "tokenHosts": ["api.example.com"], "clientCertHosts": ["api.example.com:443"],
+    "tokenHosts": ["api.example.com"], "proofOfPossession": true, "clientCertHosts": ["api.example.com:443"],
     "enrollmentUrl": "https://enroll.example.com/", "renewalUrl": "https://renew.example.com/",
     "allowUnsigned": false, "allowUnpinnedConfigApi": false, "allowServerGeneratedKey": false
   }],
@@ -211,7 +211,7 @@ parsed as strictly; a broken file rejects `start` with `E_INVALID_CONFIG`
   JS are refused unless the file allows them for that block;
 - a block's `url`, `enrollmentUrl`, `renewalUrl`, `tokenHosts` and
   `clientCertHosts` are fixed where the file gives them (where the block talks to, and who gets its token and identity),
-  and `attestation: true` there cannot be turned off from JS;
+  and `attestation: true` / `proofOfPossession: true` there cannot be turned off from JS;
 - `require` only tightens: a protection it turns on stays on whatever JS says,
   its `requireCaTrust` hosts are added to JS's, the expected signer / bundle /
   team ids and iOS `userAuthStrength` are fixed, and `expiredConfigGraceSeconds`
@@ -325,7 +325,10 @@ value until the garbage collector drops it, and if it went through React
 state, a form field or a store, it lives there too. Pass it straight from where
 it came from, clear the field, and never persist or log it. For an attestation
 `PinVault-Token`, prefer `tokenHosts` + `PinVault.fetch` (the native client adds
-it) over `fetchAttestationToken`, which hands the token to JS. Forget vault
+it) over `fetchAttestationToken`, which hands the token to JS. With
+`proofOfPossession` the native client also adds a `PinVault-Proof` signed by the
+device key on every such request, and a backend that requires it refuses the
+token alone — a token in JS is then of no use without the native client. Forget vault
 tokens on a revocation:
 
 ```ts

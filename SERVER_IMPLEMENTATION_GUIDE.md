@@ -915,9 +915,21 @@ payload { "iss": "pinvault", "sub": "<deviceId>", "aud": "<configApiId>",
    minutes; bound, a token lifted from the device is useless without the
    device's private key. It does not stop the device itself — a rooted
    phone running the genuine app gets passing tokens as long as the policy
-   passes it (ATTESTATION.md §5). `cnf.jkt` is the RFC 7638 thumbprint of
-   the device key, for a backend that adds per-request proof of
-   possession.
+   passes it (ATTESTATION.md §5).
+7. If the app's blocks use `proofOfPossession()`, require the
+   `PinVault-Proof` header (ATTESTATION.md §5.1): a DPoP proof (RFC 9449)
+   signed by the key whose RFC 7638 thumbprint is the token's `cnf.jkt`.
+   A DPoP library does the work — call it with the request's method and
+   URL, and `ath` = the token — then check the thumbprint of the proof's
+   `jwk` against `cnf.jkt` yourself (`proof_key`). By hand: ES256 over
+   `header.payload` with the `jwk` (P-256, no `d`, on the curve), `typ`
+   `dpop+jwt`, `htm` = method, `htu` = the URL clients use (no query or
+   fragment, default port dropped), `iat` within 60 s, `ath` =
+   base64url(SHA-256(token)), `jti` not seen in the last 2 minutes. Refuse
+   like the token (`401` naming `PinVault-Token`, `reason` `proof_…`). Behind
+   a proxy, compare `htu` with your public origin, not the internal one.
+   With this, a token lifted from the device is useless without the
+   device's hardware key, also where TLS ends before your API.
 
 Attestation protects only what your backend enforces. A device the policy
 rejects keeps the pins it already holds until they expire; what it loses is
@@ -1197,7 +1209,7 @@ codes a client may see:
 - [ ] Device keys keep their `algorithm`: `end_to_end` / `user_auth` files for an iOS key (`RSA-OAEP-SHA256-MGF1-SHA256`) are wrapped with MGF1-SHA256, Android's (`RSA-OAEP-SHA256`) with MGF1-SHA1
 - [ ] If iOS apps attest: a report with `device.platform: "ios"` is judged by bundle id, team id and iOS version, and an `app-attest` verdict against Apple's App Attestation Root CA (ATTESTATION.md §12)
 - [ ] Where you require an Android chain and serve iPhones: `appAttestation` (a JSON string) is verified as a fresh key's App Attest attestation with the client data hash of that request (enrollment, user-auth key, first round), recorded as App Attest, not as a hardware-attested key
-- [ ] If the app attests: `/api/v1/attest/challenge` and `/api/v1/attest` as in ATTESTATION.md, no token to a rejected device, and your API verifies `PinVault-Token` (HS256 by `kid`, `exp` ≤ 60 s leeway, `aud`, `did` = `X-Device-Id` when sent, `cnf.x5t#S256` = the client certificate behind mTLS) and answers `401` naming `PinVault-Token` otherwise; the attestation keeps the registration chain's facts and judges every round against them
+- [ ] If the app attests: `/api/v1/attest/challenge` and `/api/v1/attest` as in ATTESTATION.md, no token to a rejected device, and your API verifies `PinVault-Token` (HS256 by `kid`, `exp` ≤ 60 s leeway, `aud`, `did` = `X-Device-Id` when sent, `cnf.x5t#S256` = the client certificate behind mTLS, the `PinVault-Proof` when the app sends one) and answers `401` naming `PinVault-Token` otherwise; the attestation keeps the registration chain's facts and judges every round against them
 
 ---
 
@@ -1254,8 +1266,11 @@ attestation and `PinVault-Token` are [ATTESTATION.md](ATTESTATION.md).
   certificate that is expired or not yet valid is not a mismatch.
 - **`PinVault-Token`** (`api/AttestationTokenInterceptor.kt`, `internal/AttestationManager.kt`):
   add it to requests for the block's `tokenHosts(...)`, or, when it names none, for every
-  host the live config pins and the block's own Config API. A `401` naming the token gets one
-  re-attestation and one retry.
+  host the live config pins and the block's own Config API, over HTTPS only. A `401` naming
+  the token gets one re-attestation and one retry. With `proofOfPossession()`
+  (`internal/TokenProof.kt`): a `PinVault-Proof` per request, ES256 by the device key over a
+  DPoP header and payload (ATTESTATION.md §5.1), `iat` = device clock + the skew measured
+  from the last challenge's `serverTime`.
 - **Revocation** (`api/ReenrollRequiredInterceptor.kt`): watch every Config API response for
   `403 reenroll_required`, not only renewal.
 - **Vault files** (`internal/VaultFileRouter.kt`, `crypto/VaultFileDecryptor.kt`): verify the

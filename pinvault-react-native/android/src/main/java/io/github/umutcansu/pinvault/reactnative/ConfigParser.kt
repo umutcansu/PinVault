@@ -252,6 +252,7 @@ internal object ConfigParser {
         val jsAttestation = b.bool("attestation")
         val attestationInterval = b.obj("attestationInterval")?.let(::duration)
         val jsTokenHosts = b.stringList("tokenHosts", 64, 255)
+        val jsProof = b.bool("proofOfPossession")
         b.finish()
 
         // Where the block talks to and who gets its token and identity: fixed where the file says.
@@ -265,6 +266,10 @@ internal object ConfigParser {
             throw BridgeInputException("${b.path}.attestation: the app's native security file turns it on; JS cannot turn it off")
         }
         val attestation = jsAttestation == true || nativeBlock?.attestation == true
+        if (nativeBlock?.proofOfPossession == true && jsProof == false) {
+            throw BridgeInputException("${b.path}.proofOfPossession: the app's native security file turns it on; JS cannot turn it off")
+        }
+        val proof = jsProof == true || nativeBlock?.proofOfPossession == true
         val tokenHosts = nativeBlock?.tokenHosts?.also { n ->
             if (jsTokenHosts != null && !NativeSecurity.sameKeys(jsTokenHosts.map(String::lowercase), n.map(String::lowercase))) fixed("tokenHosts")
         } ?: jsTokenHosts
@@ -310,6 +315,7 @@ internal object ConfigParser {
             if (attestation) this.attestation()
             attestationInterval?.let { this.attestationInterval(it.first, it.second) }
             tokenHosts?.let { this.tokenHosts(it) }
+            if (proof) this.proofOfPossession()
         }
     }
 

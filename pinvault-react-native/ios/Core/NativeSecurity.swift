@@ -7,7 +7,8 @@
 //   { "configApis": [{ "id", "bootstrapPins", "signaturePublicKeys", "requiredSignatures",
 //                      "recoveryPublicKeys", "requiredRecoverySignatures", "serverScope",
 //                      "clientCaPins", "allowUnsigned", "allowUnpinnedConfigApi",
-//                      "allowServerGeneratedKey", "url", "attestation", "tokenHosts", "clientCertHosts",
+//                      "allowServerGeneratedKey", "url", "attestation", "tokenHosts", "proofOfPossession",
+//                      "clientCertHosts",
 //                      "enrollmentUrl", "renewalUrl" }],
 //     "staticPins": { "pins": [...], "version": 1 },
 //     "require": { "requireUnlockedDevice", "requireHardwareBackedKeys", "managedTrustRoots",
@@ -19,7 +20,7 @@
 // When the file is there: every JS Config API (and JS `staticPins`) must be
 // declared in it; a declared field is the value (JS may omit or repeat it, a
 // different value is refused); the three relaxations need the file's consent;
-// `attestation: true` cannot be switched off; `require` only tightens (its
+// `attestation: true` and `proofOfPossession: true` cannot be switched off; `require` only tightens (its
 // protections stay on, its `requireCaTrust` hosts are added to JS's, its
 // expected ids are fixed, its grace is the most JS may ask for); `vaultFiles`
 // fixes those files' signature key, encryption and lock, and a JS vault file
@@ -51,6 +52,7 @@ public struct NativeSecurity {
         var url: String? = nil
         var attestation = false
         var tokenHosts: [String]? = nil
+        var proofOfPossession = false
         var clientCertHosts: [String]? = nil
         var enrollmentUrl: String? = nil
         var renewalUrl: String? = nil
@@ -135,6 +137,7 @@ public struct NativeSecurity {
                     url: try ConfigParser.httpsUrl(b, "url"),
                     attestation: try b.bool("attestation") == true,
                     tokenHosts: try b.stringList("tokenHosts", maxItems: 64, maxLength: 255),
+                    proofOfPossession: try b.bool("proofOfPossession") == true,
                     clientCertHosts: try b.stringList("clientCertHosts", maxItems: 64, maxLength: 2048),
                     enrollmentUrl: try ConfigParser.httpsUrl(b, "enrollmentUrl"),
                     renewalUrl: try ConfigParser.httpsUrl(b, "renewalUrl")

@@ -37,4 +37,7 @@ class ClientProofInteropTest {
 
     @Test
     fun `an Android proof verifies`() = check("android")
+
+    @Test
+    fun `an iOS proof verifies`() = check("ios")
 }

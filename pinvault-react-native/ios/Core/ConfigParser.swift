@@ -259,6 +259,7 @@ public enum ConfigParser {
         let jsAttestation = try b.bool("attestation")
         let attestationInterval = try b.object("attestationInterval").map(duration)
         let jsTokenHosts = try b.stringList("tokenHosts", maxItems: 64, maxLength: 255)
+        let jsProof = try b.bool("proofOfPossession")
         try b.finish()
 
         // Where the block talks to and who gets its token and identity: fixed where the file says.
@@ -275,6 +276,10 @@ public enum ConfigParser {
             throw BridgeInputError("\(b.path).attestation: the app's native security file turns it on; JS cannot turn it off")
         }
         let attestation = jsAttestation == true || nativeBlock?.attestation == true
+        if nativeBlock?.proofOfPossession == true && jsProof == false {
+            throw BridgeInputError("\(b.path).proofOfPossession: the app's native security file turns it on; JS cannot turn it off")
+        }
+        let proof = jsProof == true || nativeBlock?.proofOfPossession == true
         let lower: ([String]) -> [String] = { $0.map { $0.lowercased() } }
         var tokenHosts = jsTokenHosts
         if let n = nativeBlock?.tokenHosts {
@@ -337,6 +342,7 @@ public enum ConfigParser {
             if attestation { api.attestation() }
             if let (amount, unit) = attestationInterval { api.attestationInterval(amount, unit) }
             if let tokenHosts { api.tokenHosts(tokenHosts) }
+            if proof { api.proofOfPossession() }
         }
     }
 

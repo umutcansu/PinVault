@@ -119,6 +119,7 @@ dependencies {
     testImplementation("io.mockk:mockk:1.13.13")
     testImplementation("org.jetbrains.kotlinx:kotlinx-coroutines-test:1.8.1")
     testImplementation("com.squareup.okhttp3:mockwebserver:4.12.0")
+    testImplementation("com.squareup.okhttp3:okhttp-tls:4.12.0")
     testImplementation("org.bouncycastle:bcprov-jdk18on:1.78.1")
     testImplementation("org.bouncycastle:bcpkix-jdk18on:1.78.1")
     testImplementation("org.robolectric:robolectric:4.14.1")

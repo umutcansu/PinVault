@@ -1311,6 +1311,7 @@ val config = PinVaultConfig.Builder()
         attestation()                                        // on; off by default
         attestationInterval(5, TimeUnit.MINUTES)             // ceiling; default 5 min, at least 1
         tokenHosts("api.example.com", "*.cdn.example.com")   // default: every pinned host of this block + its own Config API
+        proofOfPossession()                                  // optional: a PinVault-Proof per request (ATTESTATION.md §5.1)
     }
     .expectedSignerSha256("3c:4f:…")                         // optional: your release signer
     .integrityVerdictProvider(                               // optional: Google's second opinion
@@ -1348,14 +1349,18 @@ What happens:
   so a backgrounded app wakes with a fresh token.
 - **The header**: every client the library builds or configures
   (`getClient()`, `getClient(settings)`, `applyTo`) adds `PinVault-Token` to
-  requests whose host matches a token host. Without a valid token it attests
+  HTTPS requests whose host matches a token host — with `proofOfPossession()`
+  also a `PinVault-Proof` made for each request (ATTESTATION.md §5.1), which
+  only these clients can make. Without a valid token it attests
   once, synchronously (bounded by the single flight and the backoff), and
   sends the request bare when that fails. A `401` whose `WWW-Authenticate`
   names `PinVault-Token`, or whose body says `invalid_token`, forces one
   re-attestation and one retry (never for a request body that can be sent
   once only). For a client of your own, `PinVault.fetchAttestationToken(host)`
   (suspend and callback) returns `AttestationTokenResult.Token | Rejected |
-  Failed | Unsupported`; put it in `PinVault.attestationHeaderName()`.
+  Failed | Unsupported`; put it in `PinVault.attestationHeaderName()` (a
+  backend that requires proofs refuses such a request: route it through
+  `applyTo` instead).
 - **Events**: `PinVaultConnectionEvent.Attestation(configApiId, status,
   arc, rejectionReasons, warnings, tokenExpiresAt, deviceManufacturer,
   deviceModel, failureReason)` on the

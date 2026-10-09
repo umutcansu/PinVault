@@ -475,6 +475,7 @@ phone, a repackaged app or a script gets no token.
     // bootstrapPins(…), signaturePublicKey(…)
     attestation()
     tokenHosts("api.example.com")
+    proofOfPossession()          // optional: a per-request proof, the token alone is useless
 }
 // optional second opinion: io.github.umutcansu:pinvault-play-integrity
 ```
@@ -489,6 +490,7 @@ phone, a repackaged app or a script gets no token.
     // bootstrapPins(…), signaturePublicKey(…)
     block.attestation()
     block.tokenHosts("api.example.com")
+    block.proofOfPossession()    // optional: a per-request proof, the token alone is useless
 }
 // App Attest is added on its own
 ```
@@ -504,6 +506,7 @@ configApis: [{
   id: 'api', url, /* bootstrapPins, signaturePublicKey */
   attestation: true,
   tokenHosts: ['api.example.com'],
+  proofOfPossession: true,     // optional: a per-request proof, the token alone is useless
 }],
 ```
 

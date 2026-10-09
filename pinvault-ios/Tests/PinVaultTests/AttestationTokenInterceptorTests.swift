@@ -29,6 +29,19 @@ final class AttestationTokenInterceptorTests: XCTestCase {
 
         func handlesHost(_ host: String, port: Int) -> Bool { handles }
 
+        private var _proofs = false
+        private var _proofFor: [String] = []
+        var proofs: Bool { get { locked { _proofs } } set { locked { _proofs = newValue } } }
+        var proofFor: [String] { locked { _proofFor } }
+
+        func proof(method: String, url: URL, token: String) -> String? {
+            locked {
+                guard _proofs else { return nil }
+                _proofFor.append("\(method) \(url.path) \(token)")
+                return "proof-\(_proofFor.count)-\(token)"
+            }
+        }
+
         func token(host: String, port: Int, forceRefresh: Bool) async -> String? {
             locked {
                 _asked += 1
@@ -222,5 +235,25 @@ final class AttestationTokenInterceptorTests: XCTestCase {
         )
         _ = try await session.data(from: URL(string: "https://example.com/x")!)
         XCTAssertEqual(headers.get(), ["t1", "t1"])
+    }
+
+    func testWithProofsEachRequestCarriesOneForItsTokenAndTheRetryANewOne() async throws {
+        source.proofs = true
+        server.enqueue(.status(401, headers: ["WWW-Authenticate": #"PinVault-Token error="invalid_token""#]))
+        server.enqueue(.ok())
+        let (status, _) = try await get(path: "/api/data?q=1")
+        XCTAssertEqual(status, 200)
+        let first = server.takeRequest()
+        XCTAssertEqual(first?.header("PinVault-Token"), "t1")
+        XCTAssertEqual(first?.header("PinVault-Proof"), "proof-1-t1")
+        let retry = server.takeRequest()
+        XCTAssertEqual(retry?.header("PinVault-Token"), "t2")
+        XCTAssertEqual(retry?.header("PinVault-Proof"), "proof-2-t2")
+        XCTAssertEqual(source.proofFor, ["GET /api/data t1", "GET /api/data t2"])
+    }
+
+    func testWithoutProofsNoProofHeaderIsSent() async throws {
+        _ = try await get()
+        XCTAssertNil(server.takeRequest()?.header("PinVault-Proof"))
     }
 }

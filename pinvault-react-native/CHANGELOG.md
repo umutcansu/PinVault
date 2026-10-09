@@ -18,6 +18,9 @@
   `clientCertHosts` and `attestation`, carry a `require` section (protections
   JS cannot switch off) and `vaultFiles` (signature key, encryption, lock).
 - `start` answers `nativeSecurityApplied`.
+- `proofOfPossession` on a Config API (JS or the native security file, where
+  it cannot be switched off): the native clients add a `PinVault-Proof` signed
+  by the device key to every request that carries the token (ATTESTATION.md §5.1).
 - Android: React Native's long-lived clients (WebSocket, images) run the
   current start's network interceptors (the per-request pin check) and their
   pooled connections are closed on every start and reset; a hook installed only

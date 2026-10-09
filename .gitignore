@@ -118,3 +118,6 @@ DerivedData/
 
 # Session-only audit reports
 .local-reports/
+
+# JVM heap dumps (an out-of-memory build leaves one in the project root)
+*.hprof

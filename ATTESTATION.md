@@ -434,12 +434,70 @@ payload { "iss": "pinvault", "sub": "<deviceId>", "aud": "<configApiId>",
   What binding does not change: the phone itself, with root, can still use
   its own tokens (and its own key) for every request it makes, and act as a
   proxy for others. Bound tokens limit how far a compromised device reaches,
-  not whether a compromised device that passes the policy gets in. `cnf.jkt`
-  is there for a backend that adds per-request proof of possession of the
-  device key (DPoP style); the libraries do not send such a proof yet.
+  not whether a compromised device that passes the policy gets in. A backend
+  that does not see the client certificate (TLS ends at a proxy or CDN) gets
+  the same effect from the per-request proof of §5.1.
 - Reference verifier: `PinVaultTokenAuth` Ktor plugin (`plugin/PinVaultTokenAuth.kt`);
   the mock TLS/mTLS hosts install it when `MOCK_HOST_REQUIRE_TOKEN=true`.
   `SERVER_IMPLEMENTATION_GUIDE.md` has snippets for Node, Python and Java.
+
+### 5.1 `PinVault-Proof` (proof of possession per request)
+
+A block with `proofOfPossession()` (Android, iOS; React Native
+`proofOfPossession: true`, also from the native security file) sends, next to
+the token, a proof that the request comes from the key the token was issued
+to. The proof is a DPoP proof (RFC 9449), so any DPoP library verifies it:
+
+```
+PinVault-Token: eyJ…
+PinVault-Proof: <base64url header>.<base64url payload>.<base64url signature>
+
+header  { "typ": "dpop+jwt", "alg": "ES256",
+          "jwk": { "kty": "EC", "crv": "P-256", "x": "…", "y": "…" } }
+payload { "jti": "<16 random bytes, base64url>", "htm": "GET",
+          "htu": "https://api.example.com/v1/me", "iat": 1759660800,
+          "ath": "<base64url SHA-256 of the token>" }
+```
+
+- Signed (ES256: raw `r‖s`, 64 bytes) with the block's device key, the key
+  that signs the attestation report: its JWK thumbprint is the token's
+  `cnf.jkt`. On Android it lives in the TEE or StrongBox, on iOS in the
+  Secure Enclave; the private key never leaves the hardware, so a token and
+  its proofs cannot be made anywhere but on the device.
+- `htu` is the request URL without query and fragment, scheme and host in
+  lower case, the default port left out (RFC 9449 §4.3). `iat` is the
+  server's time as the library measured it at the last challenge
+  (`serverTime`), so a device clock that is off does not matter.
+- A backend verifies, after the token: the signature with `jwk`; the
+  thumbprint of `jwk` equals `cnf.jkt` (a token without `cnf.jkt` cannot be
+  proven); `htm` and `htu` are this request's; `iat` within 60 s of now;
+  `ath` is the hash of the token it came with; `jti` not seen before within
+  that window. Refusals are the token's `401` (`WWW-Authenticate:
+  PinVault-Token error="invalid_token"`) with reason `proof_missing`,
+  `proof_malformed`, `proof_signature`, `proof_key`, `proof_method`,
+  `proof_url`, `proof_time`, `proof_token` or `proof_replay`, so the library
+  re-attests once and retries with a fresh token and proof.
+- Reference verifier: `PinVaultTokenAuth { requireProof = true }`
+  (`PINVAULT_TOKEN_REQUIRE_PROOF=true` on the mock hosts; on by default in
+  the sample host's production profile). Behind a proxy that changes the
+  scheme, host or port, set `publicOrigin` to what the clients use
+  (`https://api.example.com`); otherwise the `Host` header is the origin.
+  The spent `jti`s are kept in memory per backend instance (bounded; full
+  → `proof_busy`): a fleet behind a load balancer without sticky sessions
+  shares them in its own store, or accepts that a proof can be replayed once
+  on each instance within 60 s.
+- What it changes: a token lifted from the device (log, memory dump, a
+  proxy the app was tricked into) is useless on its own, behind any TLS
+  terminator. A proof is good for one request (`jti`), for that method and
+  URL, for 60 s, and only with the token it names; tokens live 5 minutes, so
+  proofs made in advance on a compromised phone run out with them.
+- What it does not change: code running as the app on a rooted or
+  jailbroken phone can still have the key sign, so the phone can act as a
+  signing service for requests made elsewhere — each such request now needs
+  the phone online, once per request. The body is not covered (as in DPoP);
+  TLS and pinning protect it in transit.
+- Cost: one ECDSA signature per request with the hardware key — a few ms in
+  the TEE and the Secure Enclave, more in StrongBox. Off by default.
 
 ## 6. Admin API (management port; Config API ports when `CONFIG_API_ADMIN_ROUTES=on`)
 
@@ -476,6 +534,7 @@ webhooks), `attestation_token_secret_rotated`, `attestation_token_secret_deleted
 | `ATTESTATION_DEVICE_LIMIT` | `100000` | Most registered devices one Config API holds (`0` = unlimited). `POST /api/v1/attest` asks for no credential, so under `warn`/`off` invented device ids could otherwise grow the table without bound; past the cap a new device gets `503 device_limit_reached`, known devices keep attesting. |
 | `ATTESTATION_REVEAL_REASONS` | `false` | Default for a policy's `revealReasons`. |
 | `MOCK_HOST_REQUIRE_TOKEN` | `false` | The mock hosts refuse requests without a valid `PinVault-Token`. |
+| `PINVAULT_TOKEN_REQUIRE_PROOF` | `false` (production profile: `true`) | With `MOCK_HOST_REQUIRE_TOKEN`: every request to a mock host also carries a `PinVault-Proof` for its method and URL, signed by the key the token's `cnf.jkt` names (§5.1). Your own backend sets the same option on `PinVaultTokenAuth` (`requireProof`, and `publicOrigin` behind a proxy). |
 | `PINVAULT_TOKEN_REQUIRE_CERT_BINDING` | `false` | With `MOCK_HOST_REQUIRE_TOKEN`: the mock hosts accept a token only over mTLS with the client certificate its `cnf.x5t#S256` names (§5). A plain-TLS mock host then refuses every request. Your own backend sets the same option on `PinVaultTokenAuth` (`requireCertBinding`). |
 | `ATTESTATION_TRUSTED_BOOT_KEYS` | unset | Comma-separated `verifiedBootKey` digests (64 hex characters; colons and case ignored) of operating systems you accept with a `SelfSigned` boot on a locked bootloader (GrapheneOS and CalyxOS publish theirs per device). Such a boot counts as verified for `ATTESTATION_REQUIRE_VERIFIED_BOOT` and does not raise `boot_not_verified`. A malformed value is a start-up error. |
 | `ATTESTATION_MIN_PATCH_LEVEL` | (existing) | Also feeds `old_patch_level`. |
@@ -508,6 +567,7 @@ PinVaultConfig.Builder()
         attestation()                               // on; off by default
         attestationInterval(5, TimeUnit.MINUTES)    // default 5 min, min 1
         tokenHosts("api.example.com", "*.cdn.example.com")  // default: every pinned host of this block
+        proofOfPossession()                         // a PinVault-Proof per request, §5.1; off by default
     }
     .integrityVerdictProvider(PlayIntegrityVerdictProvider(context, cloudProjectNumber = 123456789012L))   // optional, §11
     .build()
@@ -524,7 +584,9 @@ PinVaultConfig.Builder()
   (30 s → 5 min) and keep the last token until it expires.
 - **Header**: every client the library builds or configures (`getClient()`,
   `getClient(settings)`, `applyTo`) carries an application interceptor that
-  adds `PinVault-Token` to requests whose host matches a token host. If no
+  adds `PinVault-Token` to HTTPS requests whose host matches a token host
+  (never over cleartext), with `proofOfPossession()` a `PinVault-Proof` made
+  for each request (§5.1). If no
   valid token is held it attests synchronously once (bounded by the single
   flight), and sends the request without the header if that fails. A `401`
   whose `WWW-Authenticate` names `PinVault-Token`, or whose body contains

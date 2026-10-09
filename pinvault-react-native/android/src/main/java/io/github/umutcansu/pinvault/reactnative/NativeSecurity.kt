@@ -25,7 +25,7 @@ import java.io.IOException
  *     "recoveryPublicKeys": ["…"], "requiredRecoverySignatures": 1,
  *     "serverScope": "default-tls", "clientCaPins": ["…"],
  *     "url": "https://config.example.com/", "attestation": true,
- *     "tokenHosts": ["api.example.com"], "clientCertHosts": ["api.example.com:443"],
+ *     "tokenHosts": ["api.example.com"], "proofOfPossession": true, "clientCertHosts": ["api.example.com:443"],
  *     "enrollmentUrl": "https://enroll.example.com/", "renewalUrl": "https://renew.example.com/",
  *     "allowUnsigned": false, "allowUnpinnedConfigApi": false, "allowServerGeneratedKey": false
  *   }],
@@ -48,7 +48,8 @@ import java.io.IOException
  * - `allowUnsigned`, `allowUnpinnedConfigApi`, `allowServerGeneratedKey` from
  *   JS are refused unless the file allows them for that block;
  * - `url`, `tokenHosts` and `clientCertHosts` of a block are fixed where the
- *   file gives them, and `attestation: true` there cannot be switched off;
+ *   file gives them, and `attestation: true` / `proofOfPossession: true` there
+ *   cannot be switched off;
  * - `require` only tightens: a protection it turns on stays on whatever JS
  *   says, `requireCaTrust` hosts are added to JS's, `expectedSignerSha256` is
  *   fixed, and `expiredConfigGraceSeconds` is the most JS may ask for;
@@ -110,6 +111,7 @@ internal class NativeSecurity(
         val url: String? = null,
         val attestation: Boolean = false,
         val tokenHosts: List<String>? = null,
+        val proofOfPossession: Boolean = false,
         val clientCertHosts: List<String>? = null,
         val enrollmentUrl: String? = null,
         val renewalUrl: String? = null,
@@ -178,6 +180,7 @@ internal class NativeSecurity(
                         url = httpsOnly(b, "url"),
                         attestation = b.bool("attestation") == true,
                         tokenHosts = b.stringList("tokenHosts", 64, 255),
+                        proofOfPossession = b.bool("proofOfPossession") == true,
                         clientCertHosts = b.stringList("clientCertHosts", 64, 2048),
                         enrollmentUrl = httpsOnly(b, "enrollmentUrl"),
                         renewalUrl = httpsOnly(b, "renewalUrl"),

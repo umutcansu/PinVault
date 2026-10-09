@@ -631,9 +631,14 @@ public class App extends Application {
      * reddeder); yeni bir pin config'i varsa aynı yanıtın içinde gelir.
      * Kalırsa token yok, pin güncellemesi yok. Sonuç ana ekranda ve olay
      * listesinde görünür ({@link PinVault#attestationStatus}).
+     *
+     * proofOfPossession(): token'lı her istek, kimlik anahtarıyla imzalı bir
+     * PinVault-Proof da taşır (ATTESTATION.md §5.1). Host bunu isterse
+     * (PINVAULT_TOKEN_REQUIRE_PROOF, üretim profilinde açık) cihazdan çalınan
+     * token tek başına işe yaramaz; istemezse başlık zararsızdır.
      */
     private static void applyAttestation(ConfigApiBlock.Builder block) {
-        if (BuildConfig.HOST_ATTESTATION) block.attestation();
+        if (BuildConfig.HOST_ATTESTATION) block.attestation().proofOfPossession();
     }
 
     /**

@@ -271,10 +271,12 @@ func attestingBlock(
     url: String = "https://config.example.com:8091/",
     tokenHosts: [String] = [],
     wantPinsFor: [String] = [],
-    attestation: Bool = true
+    attestation: Bool = true,
+    proof: Bool = false
 ) throws -> ConfigApiBlock {
     let builder = ConfigApiBlock.Builder(id, url: url).allowUnpinnedConfigApi().allowUnsigned()
     if attestation { builder.attestation() }
+    if proof { builder.proofOfPossession() }
     if !tokenHosts.isEmpty { builder.tokenHosts(tokenHosts) }
     if !wantPinsFor.isEmpty { builder.wantPinsFor(wantPinsFor) }
     return try builder.build()
