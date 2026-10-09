@@ -132,6 +132,33 @@ final class WatermarkMirrorTests: XCTestCase {
         XCTAssertEqual(mirror.values.clock, 2_000_000)
     }
 
+    func testTheKeySetFloorBelongsToTheBlockNotTheOrigin() throws {
+        var mirrors: [String: MemoryMirror] = [:]
+        let mirrorFor: (String) -> any WatermarkMirror = { namespace in
+            if let existing = mirrors[namespace] { return existing }
+            let made = MemoryMirror()
+            mirrors[namespace] = made
+            return made
+        }
+        var files: [String: InMemoryPreferences] = [:]
+        let open: (String) throws -> any PreferenceStore = { namespace in
+            if let existing = files[namespace] { return existing }
+            let made = InMemoryPreferences()
+            files[namespace] = made
+            return made
+        }
+        let first = try CertificateConfigStore.forOrigin(namespace: "block", origin: "https://one/", mirror: mirrorFor, open: open)
+        first.recordKeySetFloor(keySetVersion: 3, recoveryAnchors: "r1")
+        // The block pointed at another server: its key sets are the block's, so is the floor.
+        let second = try CertificateConfigStore.forOrigin(namespace: "block", origin: "https://two/", mirror: mirrorFor, open: open)
+        XCTAssertEqual(try second.keySetFloor(), KeySetFloor(version: 3, anchors: "r1"))
+        second.recordKeySetFloor(keySetVersion: 1, recoveryAnchors: "r1")
+        XCTAssertEqual(try first.keySetFloor()?.version, 3, "never lowered")
+        // Other recovery keys: a new epoch from the set in force.
+        second.recordKeySetFloor(keySetVersion: 0, recoveryAnchors: "r2")
+        XCTAssertEqual(try first.keySetFloor(), KeySetFloor(version: 0, anchors: "r2"))
+    }
+
     func testAnUnreadableCopyIsNeitherTrustedNorOverwritten() throws {
         final class Broken: WatermarkMirror, @unchecked Sendable {
             var writes = 0

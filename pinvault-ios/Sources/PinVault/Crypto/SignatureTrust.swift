@@ -75,7 +75,7 @@ final class SignatureTrust: Sendable {
     private let keyIds = Locked<[String: String]>([:])
     /// The newest key set this device applied and the anchors it was applied
     /// under, kept outside the container (``CertificateConfigStore/keySetFloor()``).
-    private let floorProvider = Locked<(@Sendable () -> KeySetFloor?)?>(nil)
+    private let floorProvider = Locked<(@Sendable () throws -> KeySetFloor?)?>(nil)
     private let log = PinVaultLog.tag("SignatureTrust")
 
     init(
@@ -160,7 +160,7 @@ final class SignatureTrust: Sendable {
     }
 
     /// Where the key-set floor comes from (set once the block's store is open).
-    func setFloorProvider(_ provider: @escaping @Sendable () -> KeySetFloor?) {
+    func setFloorProvider(_ provider: @escaping @Sendable () throws -> KeySetFloor?) {
         floorProvider.set(provider)
     }
 
@@ -169,9 +169,17 @@ final class SignatureTrust: Sendable {
     /// a rotation, which would bring revoked keys back. Nothing verifies then.
     /// Under other anchors (an update that changed the keys) there is no floor.
     func keySetBelowFloor() throws -> Bool {
-        guard let floor = floorProvider.get()?() else { return false }
-        if let anchors = floor.anchors, anchors != anchorsFingerprint() { return false }
+        guard let provider = floorProvider.get(), let floor = try provider() else { return false }
+        if let anchors = floor.anchors, anchors != recoveryFingerprint() { return false }
         return try keySetVersion() < floor.version
+    }
+
+    /// Fingerprint of the recovery keys and their threshold: what decides
+    /// whether a stored signing-key set still verifies (the floor's epoch).
+    func recoveryFingerprint() -> String {
+        var text = "pinvault-recovery-anchors:v1\nrecovery:\(recoveryThreshold)\n"
+        for key in recoveryKeys.sorted() { text += key + "\n" }
+        return Hashing.sha256Hex(Data(text.utf8))
     }
 
     /// False only when the block has no signing key configured at all (`allowUnsigned()`).

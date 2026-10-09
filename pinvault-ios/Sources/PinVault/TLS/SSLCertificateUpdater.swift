@@ -21,6 +21,7 @@ protocol UpdaterConfigStore: AnyObject, Sendable {
     func setTrustAnchorsSeen(_ fingerprint: String) throws
     func reconcileMirror(keySetVersion: Int, anchors: String)
     func mirroredKeySetVersion() -> Int?
+    func recordKeySetFloor(keySetVersion: Int, recoveryAnchors: String)
 }
 
 extension CertificateConfigStore: UpdaterConfigStore {}
@@ -443,7 +444,10 @@ final class SSLCertificateUpdater: @unchecked Sendable {
         let inForce = try verifier.keySetVersion()
         // The Keychain copy is compared with what is in force on every run, not
         // only when the store's own record moves (a lowering it missed is made now).
-        defer { configStore.reconcileMirror(keySetVersion: inForce, anchors: verifier.anchorsFingerprint()) }
+        defer {
+            configStore.reconcileMirror(keySetVersion: inForce, anchors: verifier.anchorsFingerprint())
+            configStore.recordKeySetFloor(keySetVersion: inForce, recoveryAnchors: verifier.recoveryFingerprint())
+        }
         guard let resetFor = try configStore.keySetVersionSeen() else {
             // First time this store meets key sets: nothing to compare with.
             try configStore.setKeySetVersionSeen(inForce)
@@ -467,7 +471,7 @@ final class SSLCertificateUpdater: @unchecked Sendable {
     private func refuseBelowKeySetFloor(_ verifier: SignedConfigVerifier) throws {
         if try keySetBelowFloor(verifier) {
             throw PinVaultError.security(message: "The signing-key set in force (v\(try verifier.keySetVersion())) is older than " +
-                "one this device applied (v\(configStore.mirroredKeySetVersion() ?? 0)); the answer did not bring a set at least as new")
+                "one this device applied; the answer did not bring a set at least as new")
         }
     }
 

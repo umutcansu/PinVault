@@ -28,6 +28,10 @@ struct MirroredWatermarks: Sendable, Equatable {
     var keySetVersion: Int?
     /// Fingerprint of the compiled-in trust anchors the watermarks were set under.
     var anchors: String?
+    /// The key-set floor (the block's copy only): the newest signing-key set
+    /// applied, under the recovery keys whose fingerprint is `floorAnchors`.
+    var floorVersion: Int?
+    var floorAnchors: String?
 }
 
 /// No mirror: tests, and anywhere the Keychain is not used.
@@ -99,6 +103,8 @@ final class KeychainWatermarkMirror: WatermarkMirror, @unchecked Sendable {
         ]
         if let keySet = values.keySetVersion { members.append("\"keySetVersion\":\(keySet)") }
         if let anchors = values.anchors { members.append("\"anchors\":\(JSONText.string(anchors))") }
+        if let floor = values.floorVersion { members.append("\"floorVersion\":\(floor)") }
+        if let floorAnchors = values.floorAnchors { members.append("\"floorAnchors\":\(JSONText.string(floorAnchors))") }
         return Data(("{" + members.joined(separator: ",") + "}").utf8)
     }
 
@@ -114,6 +120,8 @@ final class KeychainWatermarkMirror: WatermarkMirror, @unchecked Sendable {
         }
         if let keySet = json["keySetVersion"] as? NSNumber { values.keySetVersion = keySet.intValue }
         if let anchors = json["anchors"] as? String { values.anchors = anchors }
+        if let floor = json["floorVersion"] as? NSNumber { values.floorVersion = floor.intValue }
+        if let floorAnchors = json["floorAnchors"] as? String { values.floorAnchors = floorAnchors }
         return values
     }
 }

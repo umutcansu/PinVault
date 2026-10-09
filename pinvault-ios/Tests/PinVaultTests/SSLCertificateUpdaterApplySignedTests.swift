@@ -134,7 +134,7 @@ final class SSLCertificateUpdaterApplySignedTests: XCTestCase {
         store.clock = { now }
         let first = trust(keys: [keyA], withRecovery: true)
         let firstStore = store!
-        first.setFloorProvider { firstStore.keySetFloor() }
+        first.setFloorProvider { try firstStore.keySetFloor() }
         let rotated = await updater(trust: first)
             .applySigned(signed(payload(4, issuedAt: now), signer: keyB, keySet: keySet(1, [keyB])))
         XCTAssertEqual(rotated, .updated(newVersion: 4))
@@ -147,7 +147,7 @@ final class SSLCertificateUpdaterApplySignedTests: XCTestCase {
         store.clock = { now }
         let second = trust(keys: [keyA], withRecovery: true)
         let restoredStore = store!
-        second.setFloorProvider { restoredStore.keySetFloor() }
+        second.setFloorProvider { try restoredStore.keySetFloor() }
         // Below the floor nothing verifies — vault files included.
         XCTAssertTrue(try second.keySetBelowFloor())
         XCTAssertFalse(try second.verifyVaultFile(key: "f", version: 1, plaintext: Data("x".utf8), entries: []).ok)
@@ -162,13 +162,23 @@ final class SSLCertificateUpdaterApplySignedTests: XCTestCase {
 
     func testTheFloorHoldsOnlyUnderTheAnchorsItWasRecordedUnder() throws {
         let t = trust(keys: [keyA], withRecovery: true)
-        t.setFloorProvider { KeySetFloor(version: 2, anchors: t.anchorsFingerprint()) }
+        t.setFloorProvider { KeySetFloor(version: 2, anchors: t.recoveryFingerprint()) }
         XCTAssertTrue(try t.keySetBelowFloor())
+        // Other compiled-in signing keys, the same recovery keys: stored sets still verify, the floor holds.
+        let otherSigners = trust(keys: [keyB], withRecovery: true)
+        otherSigners.setFloorProvider { KeySetFloor(version: 2, anchors: t.recoveryFingerprint()) }
+        XCTAssertEqual(otherSigners.recoveryFingerprint(), t.recoveryFingerprint())
+        XCTAssertNotEqual(otherSigners.anchorsFingerprint(), t.anchorsFingerprint())
+        XCTAssertTrue(try otherSigners.keySetBelowFloor())
         // An update that changed the recovery keys: the old floor says nothing about these anchors.
         t.setFloorProvider { KeySetFloor(version: 2, anchors: "other-anchors") }
         XCTAssertFalse(try t.keySetBelowFloor())
         t.setFloorProvider { nil }
         XCTAssertFalse(try t.keySetBelowFloor())
+        // A copy that cannot be read is not "no floor".
+        t.setFloorProvider { throw PinVaultError.illegalState("keychain") }
+        XCTAssertThrowsError(try t.keySetBelowFloor())
+        XCTAssertThrowsError(try t.verifyVaultFile(key: "f", version: 1, plaintext: Data(), entries: []))
     }
 
     func testApplySignedAndUpdateNowSerialiseOnTheSameLock() async throws {

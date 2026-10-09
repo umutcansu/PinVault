@@ -448,10 +448,33 @@ final class CertificateConfigStore: Sendable {
         mirror.read()?.keySetVersion
     }
 
-    /// ``mirroredKeySetVersion()`` with the anchors it was applied under (``SignatureTrust``'s floor).
-    func keySetFloor() -> KeySetFloor? {
-        guard let mirrored = mirror.read(), let version = mirrored.keySetVersion else { return nil }
-        return KeySetFloor(version: version, anchors: mirrored.anchors)
+    /// The block's key-set floor (``SignatureTrust``): kept in the block's own
+    /// copy, shared by every origin of the block as its key sets are, so
+    /// pointing the block at another server does not drop it. Throws when the
+    /// copy cannot be read: no floor is not assumed.
+    func keySetFloor() throws -> KeySetFloor? {
+        guard let mirrored = clockMirror.read() else {
+            throw PinVaultError.illegalState("the key-set floor's Keychain copy cannot be read now")
+        }
+        guard let version = mirrored.floorVersion else { return nil }
+        return KeySetFloor(version: version, anchors: mirrored.floorAnchors)
+    }
+
+    /// Records the key set in force into the floor: raised, never lowered,
+    /// except under other recovery keys (`recoveryAnchors`), which decide
+    /// whether a stored set still verifies — then a new epoch starts at it.
+    func recordKeySetFloor(keySetVersion: Int, recoveryAnchors: String) {
+        Self.mirrorLock.lock()
+        defer { Self.mirrorLock.unlock() }
+        guard var mirrored = clockMirror.read() else { return }
+        let before = mirrored
+        if let recorded = mirrored.floorAnchors, recorded != recoveryAnchors {
+            mirrored.floorVersion = keySetVersion
+        } else {
+            mirrored.floorVersion = max(keySetVersion, mirrored.floorVersion ?? keySetVersion)
+        }
+        mirrored.floorAnchors = recoveryAnchors
+        if mirrored != before { clockMirror.write(mirrored) }
     }
 
     /// Brings the Keychain copy in line with the key set in force and the
