@@ -99,7 +99,7 @@ test('Vault token_mtls: token + istemci sertifikası birlikte gerekiyor', async 
 
     await test.step('Web: başka bir cihaza ait istemci sertifikası üretilir', async () => {
       await dashboard.generateClientCert(env.MTLS_API, otherCertId, { saveTo: P12 });
-      const subject = splitP12(P12);
+      const subject = splitP12(P12, dashboard.lastP12Password);
       await dashboard.snapClientCertTable(`başka istemci sertifikası: ${otherCertId}`);
       await attachText(
         testInfo,

@@ -204,7 +204,7 @@ test('Vault\'u kapatma ayarı: "vault aktif" kapatılınca indirme gerçekten du
 
     await test.step('Ağ trafiği: mTLS portunda da indirme 403', async () => {
       await dashboard.generateClientCert(env.MTLS_API, certId, { saveTo: P12 });
-      splitP12(P12);
+      splitP12(P12, dashboard.lastP12Password);
       // Cihaz kimliği sertifikaya ait olmalı (DeviceIdBinding): sertifikanın kendi id'si gönderilir.
       const res = await mtlsDownload(KEY, certId);
       await attachText(

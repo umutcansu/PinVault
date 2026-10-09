@@ -42,11 +42,13 @@ test('mTLS: host\'a özel istemci sertifikası yalnızca mTLS Config API\'den in
   const deviceCertId = `b02-device-${stamp}`;
   fs.mkdirSync(WORK_DIR, { recursive: true });
   let pinVersionBefore;
+  let p12Password; // panelin bir kez gösterdiği tek kullanımlık P12 parolası (2.4.2)
 
   try {
     await test.step('Web: host için ayrı bir istemci sertifikası üretilir', async () => {
       await dashboard.generateClientCert(env.MTLS_API, hostCertId, { saveTo: P12 });
-      const subject = splitP12(P12);
+      p12Password = dashboard.lastP12Password;
+      const subject = splitP12(P12, dashboard.lastP12Password);
       await dashboard.snapClientCertTable(`host istemci sertifikası üretildi: ${hostCertId}`);
       await attachText(
         testInfo,
@@ -70,7 +72,7 @@ test('mTLS: host\'a özel istemci sertifikası yalnızca mTLS Config API\'den in
       pinVersionBefore = (await hostApi.getConfig()).pins.find((p) => p.hostname === env.MOCK_MTLS_HOST).version;
       await dashboard.setHostMtls(env.VAULT_API, env.MOCK_MTLS_HOST, true);
       const afterToggle = (await hostApi.getConfig()).pins.find((p) => p.hostname === env.MOCK_MTLS_HOST).version;
-      const response = await dashboard.uploadHostClientCert(env.VAULT_API, env.MOCK_MTLS_HOST, P12);
+      const response = await dashboard.uploadHostClientCert(env.VAULT_API, env.MOCK_MTLS_HOST, P12, p12Password);
       await dashboard.snapCard('#host-client-cert-card', `${env.MOCK_MTLS_HOST} host istemci sertifikası`);
       const after = (await hostApi.getConfig()).pins.find((p) => p.hostname === env.MOCK_MTLS_HOST);
       const info = await hostApi.hostClientCertInfo(env.VAULT_API, env.MOCK_MTLS_HOST);
@@ -144,7 +146,7 @@ test('mTLS: host\'a özel istemci sertifikası yalnızca mTLS Config API\'den in
     await test.step('Web: aynı sertifika mTLS Config API\'ye de yüklenir', async () => {
       await mtlsScope.ensureHosts(dashboard, [env.LAN_IP, env.MOCK_MTLS_HOST]);
       await dashboard.setHostMtls(env.MTLS_API, env.MOCK_MTLS_HOST, true);
-      const response = await dashboard.uploadHostClientCert(env.MTLS_API, env.MOCK_MTLS_HOST, P12);
+      const response = await dashboard.uploadHostClientCert(env.MTLS_API, env.MOCK_MTLS_HOST, P12, p12Password);
       await dashboard.snapCard('#host-client-cert-card', `${env.MTLS_API} altında host istemci sertifikası`);
       const scope = await hostApi.scopedConfig(env.MTLS_API);
       const pin = scope.pins.find((p) => p.hostname === env.MOCK_MTLS_HOST);
@@ -168,12 +170,15 @@ test('mTLS: host\'a özel istemci sertifikası yalnızca mTLS Config API\'den in
         testInfo,
         `mTLS Config API :${env.MTLS_API_PORT} — host sertifikası indirme (curl --cert/--key)`,
         'curl',
-        ['-sS', '-k', '--cert', CERT_PEM, '--key', KEY_PEM, '-o', DL,
+        // 2.4.2: P12 parolası sabit değil; istemci anlaşır (p12password), parola yanıt başlığında gelir.
+        ['-sS', '-k', '--cert', CERT_PEM, '--key', KEY_PEM, '-o', DL, '-D', DL + '.headers', '-H', 'X-PinVault-Features: p12password',
           '-w', 'HTTP %{http_code} — %{size_download} bayt indirildi\n', '--max-time', '20',
           `https://${env.LAN_IP}:${env.MTLS_API_PORT}/api/v1/client-certs/${env.MOCK_MTLS_HOST}/download`],
       );
       expect(out).toContain('HTTP 200');
-      const subject = splitP12(DL);
+      const downloadPassword = (fs.readFileSync(DL + '.headers', 'utf8').match(/^x-p12-password:\s*(\S+)/im) || [])[1];
+      expect(downloadPassword, 'X-P12-Password başlığı').toBeTruthy();
+      const subject = splitP12(DL, downloadPassword);
       await attachText(
         testInfo,
         'İnen dosya bir PKCS12 istemci sertifikası',

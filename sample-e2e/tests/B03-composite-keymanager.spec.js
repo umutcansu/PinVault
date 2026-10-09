@@ -27,6 +27,7 @@ test('mTLS: composite KeyManager Config API\'ye kayıt sertifikasını, mock hos
   dashboard,
   run,
 }, testInfo) => {
+  let p12Password; // panelin bir kez gösterdiği tek kullanımlık P12 parolası (2.4.2)
   test.setTimeout(14 * 60 * 1000);
   const stamp = Date.now();
   const hostCertId = `b03-host-${stamp}`;
@@ -36,6 +37,7 @@ test('mTLS: composite KeyManager Config API\'ye kayıt sertifikasını, mock hos
   try {
     await test.step('Web: host\'a özel sertifika üretilir, cihaz ayrıca kayıt olur', async () => {
       await dashboard.generateClientCert(env.MTLS_API, hostCertId, { saveTo: P12 });
+      p12Password = dashboard.lastP12Password;
       const token = await dashboard.generateEnrollmentToken(env.MTLS_API, deviceCertId);
       await app.openMtls();
       expect(await app.enroll(token)).toContain(`Kayıt başarılı — CN=PinVault Client: ${deviceCertId}`);
@@ -59,7 +61,7 @@ test('mTLS: composite KeyManager Config API\'ye kayıt sertifikasını, mock hos
     await test.step('Web: mTLS Config API\'nin host\'ları ve host\'a özel sertifika hazırlanır', async () => {
       await mtlsScope.ensureHosts(dashboard, [env.LAN_IP, env.MOCK_MTLS_HOST]);
       await dashboard.setHostMtls(env.MTLS_API, env.MOCK_MTLS_HOST, true);
-      const response = await dashboard.uploadHostClientCert(env.MTLS_API, env.MOCK_MTLS_HOST, P12);
+      const response = await dashboard.uploadHostClientCert(env.MTLS_API, env.MOCK_MTLS_HOST, P12, p12Password);
       await dashboard.snapCard('#host-client-cert-card', `${env.MOCK_MTLS_HOST} → ${hostCertId}`);
       const scope = await hostApi.scopedConfig(env.MTLS_API);
       await attachText(

@@ -45,7 +45,8 @@ else
     # sertifikasıyla oluşturur. Tohum sertifikanın P12'si hemen atılır, yani
     # bu sertifikayla kimse bağlanamaz.
     if [ "$(api "${HTTP}/api/v1/client-certs" | jq 'length')" = "0" ]; then
-        api -X POST -H 'Content-Type: application/json' -d '{"clientId":"truststore-seed"}' \
+        api -X POST -H 'Content-Type: application/json' -H 'X-PinVault-Features: p12password' \
+            -d '{"clientId":"truststore-seed"}' \
             "${HTTP}/api/v1/client-certs/generate" -o /dev/null
         echo ">> Truststore oluşturuldu (truststore-seed)"
     fi

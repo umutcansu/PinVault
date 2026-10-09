@@ -58,8 +58,10 @@ class Dashboard {
     // yerini aldı: aynı kuyruktan, aynı kuralla yanıtlanır. Metni (başlık +
     // açıklama) [dialogs]'a yazılır; kuyrukta yanıt varsa kutuya o yazılır, yoksa
     // kutudaki hazır değer kalır (prompt'un accept() davranışı) ve "Tamam" basılır.
-    await page.exposeBinding('__pvE2EInputDialog', (_source, text) => {
+    await page.exposeBinding('__pvE2EInputDialog', (_source, text, value) => {
       dashboard.dialogs.push(text);
+      // Kutudaki hazır değer: P12 parolası gibi yalnızca bir kez gösterilen değerler buradan okunur.
+      dashboard.lastInputDialog = { text, value: value || '' };
       return dashboard.promptAnswers.length
         ? { answer: true, value: String(dashboard.promptAnswers.shift()) }
         : { answer: false, value: '' };
@@ -72,6 +74,7 @@ class Dashboard {
         const text = (id) => (overlay.querySelector(id) || {}).textContent || '';
         const reply = await window.__pvE2EInputDialog(
           [text('#pv-input-dialog-title'), text('#pv-input-dialog-message')].filter(Boolean).join('\n'),
+          (overlay.querySelector('#pv-input-dialog-input') || {}).value || '',
         );
         const input = overlay.querySelector('#pv-input-dialog-input');
         if (reply.answer && input) input.value = reply.value;
@@ -1372,9 +1375,13 @@ class Dashboard {
   async generateClientCert(apiId, clientId, { saveTo } = {}) {
     await this.openConfigApiTab(apiId, 'mtls');
     await this.page.fill('#mtls-client-id', clientId);
+    this.lastInputDialog = null;
     const download = this.page.waitForEvent('download', { timeout: 30_000 }).catch(() => null);
     await this.page.locator('form[data-action-submit="generateClientCert"] button[type="submit"]').click();
     const file = await download;
+    // 2.4.2: P12'nin sabit parolası yok; panel tek kullanımlık parolayı bir kez gösterir.
+    await expect.poll(() => this.lastInputDialog && this.lastInputDialog.value, { timeout: 20_000 }).toBeTruthy();
+    this.lastP12Password = this.lastInputDialog.value;
     await expect(this.clientCertRow(clientId)).toBeVisible({ timeout: 20_000 });
     if (!saveTo) return null;
     if (!file) throw new Error(`P12 indirilemedi: ${clientId}`);

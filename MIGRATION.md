@@ -4,6 +4,48 @@ The upgrade notes for every release since 2.0, troubleshooting, and a quick
 reference for the multi-Config-API DSL. The full list of changes is in
 [CHANGELOG.md](CHANGELOG.md).
 
+## Upgrading from 2.4.1 to 2.4.2
+
+**Libraries (Android, iOS, React Native)**
+
+- **`allowUnsigned()` / `allowUnpinnedConfigApi()` are refused in release
+  builds** (Android: the app is not `android:debuggable`; iOS: compiled without
+  `DEBUG`). `init` / `start` and enrollment fail before anything is sent, naming
+  the block. Remove them from release builds, or — when the release app really
+  talks to an unsigned or unpinned Config API — add `allowRelaxationsInRelease()`
+  to the block. React Native does this itself where the native security file
+  allows the relaxation; nothing to change there.
+- **`clientKeystore(bytes, password)` needs the password** (the `"changeit"`
+  default is gone; an empty one is refused).
+- **React Native on Expo:** add the package to `plugins` in `app.json` instead
+  of the manual Info.plist / AppDelegate / security-file steps (README, "Expo").
+
+**Server (demo-server / sample host)**
+
+- **`PinVault-Token` is ES256 by default.** A backend that verifies tokens with
+  the HS256 secret from `GET /api/v1/attestation/token-secrets` refuses the new
+  tokens. Either move it to the public keys of `GET /api/v1/attestation/jwks`
+  (SERVER_IMPLEMENTATION_GUIDE.md, "Attestation": Kotlin, Node, Python
+  snippets), or keep `PINVAULT_TOKEN_ALG=HS256` until every backend has moved.
+  The old HS256 secret keeps verifying tokens issued before the switch until you
+  delete it.
+- **The token's audience is required.** A `PinVaultTokenAuth` without
+  `audience` / `audiences` now refuses every token (it accepted any `aud`).
+  Set your Config API id. The mock hosts accept the server's own Config APIs, or
+  `MOCK_HOST_TOKEN_AUDIENCES`.
+- **`HOST_CLIENT_CERT_REQUIRE_GRANT` and `PINVAULT_TOKEN_REQUIRE_PROOF` are on
+  by default.** A scope without a device host ACL no longer hands out a host's
+  client certificate (`403 host_not_allowed`); set the ACL, or `false` to keep
+  the old behaviour (the sample host's demo `.env` does). Mock hosts that
+  require a token now also require the `PinVault-Proof` (`proofOfPossession()`
+  on the block); `false` turns it off. An existing `.env` with these keys
+  **empty** now means `true`.
+- **No `"changeit"` for P12s.** Uploads need the keystore's password; a client
+  that does not negotiate a P12 password (libraries before 2.1) needs
+  `CLIENT_P12_PASSWORD` set on the server, or it is refused before its
+  enrollment token is spent. The dashboard shows a generated P12's one-off
+  password once — copy it then.
+
 ## Upgrading from 2.4.0 to 2.4.1
 
 Nothing to change in app code. What behaves differently:
