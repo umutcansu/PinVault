@@ -87,6 +87,11 @@ services:
       # PinVault-Proof taşır (ATTESTATION.md §5.1); uygulamanın bloğu
       # proofOfPossession() açar. Cihazdan çalınan token başka yerde işe yaramaz.
       PINVAULT_TOKEN_REQUIRE_PROOF: "true"
+      # Sabit: Android cihazlar günde bir taze anahtar zinciri gönderir; kayıttaki
+      # önyükleme, kilit, yama ve sertifika bilgisi tazelenir (ATTESTATION.md §3.1).
+      # Eski uygulama sürümleri göndermez: fresh_attestation_overdue strict'te
+      # reddedilir; o sürümler kullanımdayken panelden warn yapılır.
+      ATTESTATION_FRESH_INTERVAL_SECONDS: "86400"
       # Yapılandırılmış Config API politikasında app_attest, app_attest_missing,
       # play_integrity ve play_integrity_missing için önerilen değer reject'tir;
       # filo ölçüldükten sonra panelden ayarlanır (SECURE_OPERATIONS.md, "The policy

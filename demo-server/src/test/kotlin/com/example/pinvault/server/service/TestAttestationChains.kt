@@ -100,7 +100,9 @@ object TestAttestationChains {
         /** osVersion (tag 705, MMmmpp); null = not listed. */
         val osVersion: Int? = null,
         /** osPatchLevel (tag 706, YYYYMM); null = not listed. */
-        val osPatchLevel: Int? = null
+        val osPatchLevel: Int? = null,
+        /** RootOfTrust verifiedBootKey (the operating system's signing key digest). */
+        val verifiedBootKey: ByteArray = ByteArray(32) { 1 }
     )
 
     fun rsa(): KeyPair = KeyPairGenerator.getInstance("RSA").apply { initialize(2048) }.generateKeyPair()
@@ -153,7 +155,7 @@ object TestAttestationChains {
             d.osVersion?.let { add(DERTaggedObject(true, AndroidKeyAttestation.TAG_OS_VERSION, ASN1Integer(it.toLong()))) }
             d.osPatchLevel?.let { add(DERTaggedObject(true, AndroidKeyAttestation.TAG_OS_PATCH_LEVEL, ASN1Integer(it.toLong()))) }
             if (d.rootOfTrust) add(DERTaggedObject(true, AndroidKeyAttestation.TAG_ROOT_OF_TRUST, DERSequence(arrayOf(
-                DEROctetString(ByteArray(32) { 1 }),
+                DEROctetString(d.verifiedBootKey),
                 ASN1Boolean.getInstance(d.deviceLocked),
                 ASN1Enumerated(d.verifiedBootState),
                 DEROctetString(ByteArray(32) { 2 })

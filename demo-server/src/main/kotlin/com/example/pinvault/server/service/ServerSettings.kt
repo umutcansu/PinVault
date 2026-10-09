@@ -102,6 +102,8 @@ object ServerSettingsCatalog {
         ServerSetting("ATTESTATION_TOKEN_TTL_SECONDS", "attestation", ServerSetting.Kind.NUMBER, "300", min = 30, max = 86_400),
         ServerSetting("ATTESTATION_INTERVAL_SECONDS", "attestation", ServerSetting.Kind.NUMBER, "300", min = 60, max = 86_400),
         ServerSetting("ATTESTATION_REVEAL_REASONS", "attestation", ServerSetting.Kind.BOOL, "false"),
+        ServerSetting("ATTESTATION_FRESH_INTERVAL_SECONDS", "attestation", ServerSetting.Kind.NUMBER, "0", min = 0, max = 30L * 86_400),
+        ServerSetting("ATTESTATION_FRESH_GRACE_SECONDS", "attestation", ServerSetting.Kind.NUMBER, "259200", min = 0, max = 30L * 86_400),
         ServerSetting("MOCK_HOST_REQUIRE_TOKEN", "attestation", ServerSetting.Kind.BOOL, "false"),
         ServerSetting("PINVAULT_TOKEN_REQUIRE_PROOF", "attestation", ServerSetting.Kind.BOOL, "false"),
         // What the wizard writes into the app
@@ -132,6 +134,9 @@ object ServerSettingsCatalog {
         if (v("INTEGRITY_VERIFICATION").lowercase() == "enforce" && v("INTEGRITY_VERIFIER_COMMAND").isEmpty() && v("APP_ATTEST_APP_IDS").isEmpty()) {
             add("INTEGRITY_VERIFICATION=enforce needs INTEGRITY_VERIFIER_COMMAND (set in the environment)")
         }
+        // 0 is off; a fresh key attestation more often than once a minute is refused at start.
+        runCatching { com.example.pinvault.server.service.attestation.FreshAttestationSettings.fromEnv { effective[it] } }
+            .exceptionOrNull()?.message?.let { add(it) }
     }
 }
 

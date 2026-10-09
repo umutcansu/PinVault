@@ -590,7 +590,9 @@ private fun startServer() {
         // ATTESTATION_MIN_IOS_VERSION / ATTESTATION_IOS_TEAM_IDS: what an iOS report is held to.
         ios = com.example.pinvault.server.service.attestation.IosAttestationRules.fromEnv(),
         // A newer signing-key set resets the devices' config watermarks: config_rollback starts again under it.
-        keySetVersion = { signingKeySetService.currentVersion() }
+        keySetVersion = { signingKeySetService.currentVersion() },
+        // ATTESTATION_FRESH_INTERVAL_SECONDS / _GRACE_SECONDS: a fresh key attestation now and then (§3.1).
+        fresh = com.example.pinvault.server.service.attestation.FreshAttestationSettings.fromEnv()
     )
     val attestationLimits = com.example.pinvault.server.route.AttestationLimits.of(attestationRateLimit, attestationDeviceRateLimit)
     println("ATTESTATION_ENABLED=${if (attestationEnabled) "true" else "false"}, ATTESTATION_KEY_POLICY=${attestationKeyPolicy.name.lowercase()}, " +
@@ -599,7 +601,10 @@ private fun startServer() {
         "nonce ${attestationNonceTtl} s, limits $attestationRateLimit/address and $attestationDeviceRateLimit/device per 10 min" +
         (if (mockHostRequireToken) ", mock hosts require PinVault-Token" else "") +
         (if (mockHostRequireToken && tokenRequireCertBinding) " bound to the client certificate" else "") +
-        (if (mockHostRequireToken && tokenRequireProof) " with a PinVault-Proof per request" else ""))
+        (if (mockHostRequireToken && tokenRequireProof) " with a PinVault-Proof per request" else "") +
+        attestationService.fresh.let { f ->
+            if (f.enabled) ", fresh key attestation every ${f.intervalSeconds} s (overdue after ${f.graceSeconds} s more)" else ", no fresh key attestation"
+        })
     if (playIntegrity != null) {
         println("PLAY_INTEGRITY: verifying play-integrity verdicts locally (device level ${playIntegrity.deviceLevel.name.lowercase()}, " +
             "app recognized ${if (playIntegrity.requireAppRecognized) "required" else "not required"}, packages " +

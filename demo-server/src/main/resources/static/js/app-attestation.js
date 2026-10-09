@@ -12,7 +12,8 @@ const ATTEST_FLAGS = [
   'rooted', 'emulator', 'debugger', 'debuggable', 'hooking_framework', 'app_integrity',
   'cloner', 'unknown_installer', 'adb_enabled', 'software_key', 'key_unattested', 'old_patch_level',
   'play_integrity', 'play_integrity_missing', 'app_attest', 'app_attest_missing',
-  'bootloader_unlocked', 'boot_not_verified', 'key_revoked', 'report_mismatch', 'config_rollback'
+  'bootloader_unlocked', 'boot_not_verified', 'key_revoked', 'report_mismatch', 'config_rollback',
+  'fresh_attestation_failed', 'fresh_attestation_overdue'
 ];
 const ATTEST_LEVELS = ['reject', 'warn', 'ignore'];
 const ATTEST_PRESETS = {
@@ -24,7 +25,8 @@ const ATTEST_PRESETS = {
     play_integrity: 'warn', play_integrity_missing: 'warn',
     app_attest: 'warn', app_attest_missing: 'warn',
     bootloader_unlocked: 'reject', boot_not_verified: 'reject', key_revoked: 'reject',
-    report_mismatch: 'reject', config_rollback: 'reject'
+    report_mismatch: 'reject', config_rollback: 'reject',
+    fresh_attestation_failed: 'reject', fresh_attestation_overdue: 'reject'
   },
   lenient: Object.fromEntries(ATTEST_FLAGS.map(f => [f, 'warn']))
 };

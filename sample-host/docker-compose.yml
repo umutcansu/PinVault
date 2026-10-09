@@ -206,6 +206,11 @@ services:
       # true: token'ın yanında her istek için cihaz anahtarıyla imzalı PinVault-Proof
       # (DPoP) istenir; uygulamanın bloğu proofOfPossession() açmış olmalı (ATTESTATION.md §5.1).
       PINVAULT_TOKEN_REQUIRE_PROOF: ${PINVAULT_TOKEN_REQUIRE_PROOF:-}
+      # Taze atestasyon (ATTESTATION.md §3.1): Android cihaz bu aralıkla, o tur için
+      # üretilmiş bir anahtarın donanım zincirini gönderir (boş/0 = kapalı); GRACE:
+      # aralıktan sonra fresh_attestation_overdue'ya kadar tanınan süre (boş = 72 saat).
+      ATTESTATION_FRESH_INTERVAL_SECONDS: ${ATTESTATION_FRESH_INTERVAL_SECONDS:-}
+      ATTESTATION_FRESH_GRACE_SECONDS: ${ATTESTATION_FRESH_GRACE_SECONDS:-}
       # Play Integrity (ATTESTATION.md §11): Play Console yanıt anahtarları (ikisi
       # birlikte; boş = kapalı), kararın adını vermesi gereken paket, en düşük cihaz
       # seviyesi, süreler. STALE_PASS: saklı bir "geçti" token'sız turları kaç saniye

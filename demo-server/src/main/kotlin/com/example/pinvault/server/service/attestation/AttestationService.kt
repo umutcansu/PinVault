@@ -87,7 +87,9 @@ class AttestationService(
      * stored watermark counts only under the set it was stored with
      * (`config_rollback`).
      */
-    private val keySetVersion: () -> Int = { 0 }
+    private val keySetVersion: () -> Int = { 0 },
+    /** `ATTESTATION_FRESH_INTERVAL_SECONDS` / `_GRACE_SECONDS`: periodic fresh key attestation (§3.1); off by default. */
+    val fresh: FreshAttestationSettings = FreshAttestationSettings()
 ) {
     private val verifier by lazy(verifier)
 
@@ -130,7 +132,9 @@ class AttestationService(
             val deviceId: String,
             val hosts: List<String>?,
             val currentConfigVersion: Int?,
-            val currentIssuedAt: Long?
+            val currentIssuedAt: Long?,
+            /** The device should send a fresh chain next round (`"freshAttestation": "due"`, §3.1). */
+            val freshAttestationDue: Boolean = false
         ) : Outcome() {
             fun toJson(config: SignedConfig?, configChanged: Boolean): JsonObject = buildJsonObject {
                 put("result", if (passed) "pass" else "reject")
@@ -156,6 +160,7 @@ class AttestationService(
                     } ?: JsonNull)
                 })
                 put("policyVersion", policyVersion)
+                if (freshAttestationDue) put("freshAttestation", "due")
             }
         }
     }
@@ -185,6 +190,11 @@ class AttestationService(
             null, JsonNull -> null
             is JsonArray -> element.map { (it as? JsonPrimitive)?.takeIf { p -> p.isString }?.content ?: return invalid("attestationChain must be an array of Base64 strings") }
             else -> return invalid("attestationChain must be an array of Base64 strings")
+        }
+        val freshChain: List<String>? = when (val element = body["freshAttestationChain"]) {
+            null, JsonNull -> null
+            is JsonArray -> element.map { (it as? JsonPrimitive)?.takeIf { p -> p.isString }?.content ?: return invalid("freshAttestationChain must be an array of Base64 strings") }
+            else -> return invalid("freshAttestationChain must be an array of Base64 strings")
         }
         val hosts: List<String>? = when (val element = body["hosts"]) {
             null, JsonNull -> null
@@ -310,13 +320,22 @@ class AttestationService(
         val platform = effectivePlatform(platformOf(reportJson), device)
         val platformMismatch = platform != platformOf(reportJson)
         val isIos = platform == PLATFORM_IOS
+        // A fresh chain (§3.1) refreshes what the record says about the device before the flags read it.
+        var freshFlags = emptyList<AttestationFlag>()
+        if (!isIos && !freshChain.isNullOrEmpty()) {
+            freshFlags = freshRound(configApiId, deviceId, nonce, spki, freshChain, device, now)
+            device = devices.get(configApiId, deviceId)!!
+        }
+        val freshAge = if (fresh.enabled && !isIos) freshAgeSeconds(device, now) else null
+        val freshOverdue = freshAge != null && device.keyFacts != null && freshAge >= fresh.intervalSeconds + fresh.graceSeconds
         val appAttestRound = if (appAttestAdmitted != null) AppAttestRound(emptyList(), verified = true, unknownKey = false, v1 = appAttestAdmittedV1)
             else appAttestFlags(configApiId, deviceId, nonce, canonical, provider, providerOutside, device, isIos, now)
         val playRound = playIntegrityFlags(configApiId, deviceId, nonce, provider, providerOutside, device, now, isIos)
         val raised = (raisedFlags(reportJson, device, appAttestRound.verified, platform, registration = firstSeen) +
             (if (platformMismatch) listOf(AttestationFlag.APP_INTEGRITY) else emptyList()) +
             (if (configRollback(configApiId, deviceId, device, currentIssuedAt, now)) listOf(AttestationFlag.CONFIG_ROLLBACK) else emptyList()) +
-            playRound.flags + appAttestRound.flags).distinct()
+            playRound.flags + appAttestRound.flags + freshFlags +
+            (if (freshOverdue) listOf(AttestationFlag.FRESH_ATTESTATION_OVERDUE) else emptyList())).distinct()
         val reasons: List<String>
         val policyWarnings: List<String>
         val passed: Boolean
@@ -378,7 +397,8 @@ class AttestationService(
             token = token, tokenExpiresAt = tokenExpiresAt, tokenTtlSeconds = policy.tokenTtlSeconds,
             nextAttestIn = policy.attestIntervalSeconds, policyVersion = policy.version,
             device = device, firstSeen = firstSeen, keyAttestation = keyAttestation,
-            deviceId = deviceId, hosts = hosts, currentConfigVersion = currentConfigVersion, currentIssuedAt = currentIssuedAt
+            deviceId = deviceId, hosts = hosts, currentConfigVersion = currentConfigVersion, currentIssuedAt = currentIssuedAt,
+            freshAttestationDue = freshAge != null && freshAge >= fresh.intervalSeconds
         )
     }
 
@@ -527,18 +547,19 @@ class AttestationService(
             val level = (report["device"] as? JsonObject)?.string("keySecurityLevel")?.lowercase()
             if (level == null || level == "software" || level == "unknown") raised += AttestationFlag.SOFTWARE_KEY
         }
-        val facts = device.keyFacts
+        // What the hardware said last: the fresh chain's facts (§3.1) when there are any, else the registration's.
+        val facts = currentFacts(device)
         if (facts != null) {
             if (facts.deviceLocked == false) raised += AttestationFlag.BOOTLOADER_UNLOCKED
             if (!verifier.bootTrusted(facts)) raised += AttestationFlag.BOOT_NOT_VERIFIED
         }
-        // Revoked at registration, or since: Google's list grows, the device's chain does not change.
-        if (device.keyAttestation?.reason == CERTIFICATE_REVOKED || facts?.chainSerials?.any { verifier.isRevoked(it) } == true) {
+        // Revoked at registration, or since: Google's list grows, the device's chains do not change.
+        if (device.keyAttestation?.reason == CERTIFICATE_REVOKED || chainSerials(device).any { verifier.isRevoked(it) }) {
             raised += AttestationFlag.KEY_REVOKED
         }
         if (reportContradicts(report, device, registration)) raised += AttestationFlag.REPORT_MISMATCH
         verifier.minPatchLevel?.let { min ->
-            // The hardware's word when there is one: it was this at registration, and a patch level does not go back.
+            // The hardware's word when there is one (registration or fresh chain), and a patch level does not go back.
             val patch = facts?.osPatchLevel ?: (report["device"] as? JsonObject)?.string("securityPatch")?.let { parsePatch(it) }
             if (patch == null || patch < min) raised += AttestationFlag.OLD_PATCH_LEVEL
         }
@@ -562,9 +583,70 @@ class AttestationService(
      * A device without hardware facts (no chain, a software-level one) is
      * judged on the last point only.
      */
+    /** The facts the flags read: the last fresh chain's (§3.1), else the registration's. */
+    private fun currentFacts(device: AttestedDevice): com.example.pinvault.server.service.KeyFacts? = device.freshFacts ?: device.keyFacts
+
+    /** Every certificate serial the hardware showed for this device: the registration chain's and the last fresh one's. */
+    private fun chainSerials(device: AttestedDevice): List<String> =
+        device.keyFacts?.chainSerials.orEmpty() + device.freshFacts?.chainSerials.orEmpty()
+
+    /** Seconds since the last fresh chain that counted, or since the registration; 0 when unknown. */
+    private fun freshAgeSeconds(device: AttestedDevice, now: Instant): Long {
+        val since = (device.freshAttestedAt ?: device.firstSeen).let { runCatching { Instant.parse(it) }.getOrNull() } ?: return 0
+        return (now.epochSecond - since.epochSecond).coerceAtLeast(0)
+    }
+
+    /**
+     * A round's `freshAttestationChain` (§3.1): the chain of a key the device
+     * made for this round, with [AndroidKeyAttestation.freshChallengeFor] of
+     * the nonce, the device id and the registered key [spki]. Whatever a
+     * hardware-level chain says about the device is recorded and judged by
+     * the usual flags; returns the flags of the chain itself.
+     *
+     *  - hardware facts: recorded, the round counts; a refusal of the chain
+     *    for the app's identity raises `app_integrity`, any other
+     *    `fresh_attestation_failed`; a verified-boot key other than the
+     *    registration's (another operating system) `report_mismatch`;
+     *  - a revoked certificate: `key_revoked`, the round does not count;
+     *  - a stale revocation list (the server's problem): nothing raised,
+     *    the round does not count;
+     *  - otherwise (no chain that verifies, a software-level one): for a
+     *    device the hardware vouched for at registration
+     *    `fresh_attestation_failed` and the round does not count; for one it
+     *    never vouched for there is nothing to refresh and the round counts.
+     */
+    private fun freshRound(
+        configApiId: String, deviceId: String, nonce: String, spki: String, chain: List<String>, device: AttestedDevice, now: Instant
+    ): List<AttestationFlag> {
+        val verdict = verifier.verifyFreshKey(chain, AndroidKeyAttestation.freshChallengeFor(nonce, deviceId, spki))
+        val facts = verdict.facts
+        val flags = mutableListOf<AttestationFlag>()
+        when {
+            facts != null -> {
+                devices.recordFresh(configApiId, deviceId, verdict.reason, facts, now)
+                if (!verdict.passed) {
+                    flags += if (verdict.reason in APP_BINDING_REFUSALS) AttestationFlag.APP_INTEGRITY else AttestationFlag.FRESH_ATTESTATION_FAILED
+                }
+                val registered = device.keyFacts?.verifiedBootKey
+                if (registered != null && facts.verifiedBootKey != null && registered != facts.verifiedBootKey) flags += AttestationFlag.REPORT_MISMATCH
+            }
+            verdict.reason == CERTIFICATE_REVOKED -> {
+                devices.recordFresh(configApiId, deviceId, verdict.reason, null, null)
+                flags += AttestationFlag.KEY_REVOKED
+            }
+            verdict.reason == REVOCATION_LIST_STALE -> devices.recordFresh(configApiId, deviceId, verdict.reason, null, null)
+            device.keyFacts != null -> {
+                devices.recordFresh(configApiId, deviceId, verdict.reason, null, null)
+                flags += AttestationFlag.FRESH_ATTESTATION_FAILED
+            }
+            else -> devices.recordFresh(configApiId, deviceId, verdict.reason, null, now)
+        }
+        return flags
+    }
+
     private fun reportContradicts(report: JsonObject, device: AttestedDevice, registration: Boolean): Boolean {
         val block = report["device"] as? JsonObject
-        val facts = device.keyFacts
+        val facts = currentFacts(device)
         if (facts != null) {
             val claimsGreen = block?.string("verifiedBootState")?.trim()?.lowercase() == "green"
             if (claimsGreen && (facts.deviceLocked == false || facts.verifiedBootState != com.example.pinvault.server.service.KeyFacts.VERIFIED)) return true
@@ -588,9 +670,6 @@ class AttestationService(
      * signed and is not stored (one bogus report would make every later one
      * a "rollback").
      *
-     * Hook for periodic re-attestation: a client that later sends a fresh
-     * chain for a new short-lived key would refresh [AttestedDevice.keyFacts]
-     * here as well; the libraries do not do that yet.
      */
     private fun configRollback(configApiId: String, deviceId: String, device: AttestedDevice, reported: Long?, now: Instant): Boolean {
         val watermark = reported?.takeIf { it > 0 } ?: return false
@@ -851,6 +930,12 @@ class AttestationService(
         /** The verifier's refusal of a chain with a revoked certificate. */
         const val CERTIFICATE_REVOKED = "certificate_revoked"
 
+        /** The verifier's refusal while its revocation list is too old: no chain can pass, none is the device's fault. */
+        const val REVOCATION_LIST_STALE = "revocation_list_stale"
+
+        /** Refusals of a fresh chain that say the key belongs to another app (or a re-signed one): `app_integrity`. */
+        val APP_BINDING_REFUSALS = setOf("package_not_allowed", "signer_not_allowed", "application_id_missing")
+
         /** How many months the report's security patch may trail the attested one before `report_mismatch`. */
         const val PATCH_TOLERANCE_MONTHS = 1
 
@@ -929,5 +1014,36 @@ class AttestationService(
 
         internal fun JsonObject.string(name: String): String? =
             (this[name] as? JsonPrimitive)?.takeIf { it !is JsonNull && it.isString }?.content
+    }
+}
+
+/**
+ * Periodic fresh key attestation (ATTESTATION.md §3.1). [intervalSeconds] 0 =
+ * off; otherwise an Android device is asked for a fresh chain once that much
+ * time has passed since the last one that counted (or its registration), and
+ * a device the hardware vouched for at registration raises
+ * `fresh_attestation_overdue` once [graceSeconds] more have passed without one.
+ */
+data class FreshAttestationSettings(val intervalSeconds: Long = 0, val graceSeconds: Long = DEFAULT_GRACE_SECONDS) {
+    val enabled: Boolean get() = intervalSeconds > 0
+
+    companion object {
+        const val DEFAULT_GRACE_SECONDS = 72L * 3600
+        const val MIN_INTERVAL_SECONDS = 60L
+        const val MAX_SECONDS = 30L * 86_400
+
+        /** `ATTESTATION_FRESH_INTERVAL_SECONDS` (unset or 0 = off, else 60 s – 30 d) and `ATTESTATION_FRESH_GRACE_SECONDS` (0 – 30 d, default 72 h). */
+        fun fromEnv(get: (String) -> String? = com.example.pinvault.server.service.ServerEnv::get): FreshAttestationSettings {
+            val intervalText = get("ATTESTATION_FRESH_INTERVAL_SECONDS")?.trim()?.takeIf { it.isNotEmpty() }
+            val interval = intervalText?.let {
+                it.toLongOrNull()?.takeIf { v -> v == 0L || v in MIN_INTERVAL_SECONDS..MAX_SECONDS }
+                    ?: error("ATTESTATION_FRESH_INTERVAL_SECONDS must be 0 (off) or $MIN_INTERVAL_SECONDS–$MAX_SECONDS (got '$it')")
+            } ?: 0L
+            val graceText = get("ATTESTATION_FRESH_GRACE_SECONDS")?.trim()?.takeIf { it.isNotEmpty() }
+            val grace = graceText?.let {
+                it.toLongOrNull()?.takeIf { v -> v in 0..MAX_SECONDS } ?: error("ATTESTATION_FRESH_GRACE_SECONDS must be 0–$MAX_SECONDS (got '$it')")
+            } ?: DEFAULT_GRACE_SECONDS
+            return FreshAttestationSettings(interval, grace)
+        }
     }
 }

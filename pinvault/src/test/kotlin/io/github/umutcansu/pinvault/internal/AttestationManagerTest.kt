@@ -23,6 +23,7 @@ import okhttp3.mockwebserver.MockWebServer
 import okhttp3.mockwebserver.RecordedRequest
 import org.json.JSONObject
 import org.junit.After
+import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
@@ -92,7 +93,8 @@ class AttestationManagerTest {
         block: ConfigApiBlock = block("api.example.com", "*.cdn.example.com"),
         api: DefaultCertificateConfigApi? = this.api,
         liveConfig: () -> CertificateConfig? = { null },
-        deviceId: String? = "device-07"
+        deviceId: String? = "device-07",
+        clock: () -> Long = { now }
     ) = AttestationManager(
         block = block,
         api = api,
@@ -105,9 +107,19 @@ class AttestationManagerTest {
         applyConfig = { signed -> applied += signed; UpdateResult.Updated(9) },
         onConfigApplied = { applyResults += it },
         onEvent = { events += it },
-        clock = { now },
-        jitter = { 0.5 }
+        clock = clock,
+        jitter = { 0.5 },
+        freshKeys = { freshKeys }
     )
+
+    /** The fresh attestation keys (§3.1): records each challenge, answers a two-certificate "chain". */
+    private val freshChallenges = mutableListOf<ByteArray>()
+    private val freshKeys = object : io.github.umutcansu.pinvault.keystore.FreshAttestationKeys {
+        override fun chain(challenge: ByteArray, strongBox: Boolean): List<ByteArray> {
+            freshChallenges += challenge
+            return listOf(byteArrayOf(1, 2, 3), byteArrayOf(4, 5))
+        }
+    }
 
     private fun challenge(nonce: String = "nonce-1", serverTime: Long = now + 5_000, verdictBinding: Int? = null) = MockResponse()
         .setHeader("Content-Type", "application/json")
@@ -502,5 +514,58 @@ class AttestationManagerTest {
             ConfigApiBlock.Builder("api", "https://config.example.com/").allowUnpinnedConfigApi().allowUnsigned().proofOfPossession().build()
         }
         assertTrue(e.message!!.contains("attestation()"))
+    }
+
+    // ── Fresh key attestation (§3.1) ────────────────────────────────────
+
+    @Test
+    fun `asked for a fresh chain, the next round soon sends one made with this round's challenge`() = runTest {
+        server.enqueue(challenge("nonce-1"))
+        server.enqueue(pass(extra = ""","freshAttestation":"due""""))
+        server.enqueue(challenge("nonce-2"))
+        server.enqueue(pass())
+        val m = manager()
+
+        val first = m.attestNow()
+        assertEquals("the server asked: the next round comes as soon as allowed", now + AttestationManager.MIN_DELAY_MS, first.nextAttestAt)
+        server.takeRequest(); assertFalse(body(server.takeRequest()).has("freshAttestationChain"))
+
+        m.attestNow()
+        server.takeRequest()
+        val second = body(server.takeRequest())
+        val sent = second.getJSONArray("freshAttestationChain")
+        assertEquals(listOf("AQID", "BAU="), (0 until sent.length()).map { sent.getString(it) })
+        val spki = MessageDigest.getInstance("SHA-256").digest(key.publicKey().encoded).joinToString("") { "%02x".format(it) }
+        val expected = MessageDigest.getInstance("SHA-256").digest("pinvault-fresh-attest:v1:nonce-2:device-07:$spki".toByteArray())
+        assertArrayEquals(expected, freshChallenges.single())
+    }
+
+    @Test
+    fun `not asked, no fresh key is made`() = runTest {
+        server.enqueue(challenge()); server.enqueue(pass())
+        server.enqueue(challenge()); server.enqueue(pass())
+        val m = manager()
+        m.attestNow(); m.attestNow()
+        assertTrue(freshChallenges.isEmpty())
+    }
+
+    @Test
+    fun `a server that keeps asking gets a fresh key at most every ten minutes`() = runTest {
+        var clock = now
+        val m = manager(clock = { clock })
+        repeat(3) {
+            server.enqueue(challenge("n$it"))
+            server.enqueue(pass(extra = ""","freshAttestation":"due""""))
+        }
+        m.attestNow()                 // asked
+        m.attestNow()                 // makes one
+        clock += 60_000
+        val third = m.attestNow()     // asked again a minute later: not yet
+        assertEquals(1, freshChallenges.size)
+        assertTrue("no rush while it may not make one", third.nextAttestAt!! > clock + AttestationManager.MIN_DELAY_MS)
+        server.enqueue(challenge("n9")); server.enqueue(pass())
+        clock += AttestationManager.FRESH_MIN_GAP_MS
+        m.attestNow()
+        assertEquals(2, freshChallenges.size)
     }
 }

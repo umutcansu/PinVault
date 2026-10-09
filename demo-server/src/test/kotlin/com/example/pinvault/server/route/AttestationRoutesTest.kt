@@ -12,6 +12,7 @@ import com.example.pinvault.server.service.attestation.AttestationNonces
 import com.example.pinvault.server.service.attestation.AttestationPolicy
 import com.example.pinvault.server.service.attestation.AttestationPolicyDefaults
 import com.example.pinvault.server.service.attestation.AttestationService
+import com.example.pinvault.server.service.attestation.FreshAttestationSettings
 import com.example.pinvault.server.service.attestation.PinVaultToken
 import com.example.pinvault.server.store.AttestationPolicyStore
 import com.example.pinvault.server.store.AttestationTokenSecretStore
@@ -60,6 +61,7 @@ import kotlin.test.AfterTest
 import kotlin.test.BeforeTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFailsWith
 import kotlin.test.assertFalse
 import kotlin.test.assertIs
 import kotlin.test.assertNotNull
@@ -111,13 +113,14 @@ class AttestationRoutesTest {
         defaults: AttestationPolicyDefaults = AttestationPolicyDefaults(),
         revoked: Set<String> = emptySet(),
         nonceTtl: Int = 120,
-        keySetVersion: () -> Int = { 0 }
+        keySetVersion: () -> Int = { 0 },
+        fresh: FreshAttestationSettings = FreshAttestationSettings()
     ) = AttestationService(
         policies, devices, secrets,
         nonces = AttestationNonces(ttlSeconds = nonceTtl, clock = { now }),
         defaults = defaults, keyPolicy = keyPolicy, verifier = { verifier },
         isDeviceRevoked = { it in revoked }, audit = AuditLog(auditStore, null), rejections = null,
-        clock = { Instant.ofEpochMilli(now) }, keySetVersion = keySetVersion
+        clock = { Instant.ofEpochMilli(now) }, keySetVersion = keySetVersion, fresh = fresh
     )
 
     private fun ApplicationTestBuilder.app(service: AttestationService, limits: AttestationLimits? = null) {
@@ -182,8 +185,10 @@ class AttestationRoutesTest {
     private fun body(
         nonce: String, deviceId: String, key: KeyPair, report: String,
         chain: List<String>? = null, currentConfigVersion: Int? = null, currentIssuedAt: Long? = null,
-        hosts: List<String>? = null, v: Int = 1, signer: PrivateKey = key.private, publicKey: String = Base64.getEncoder().encodeToString(key.public.encoded)
+        hosts: List<String>? = null, v: Int = 1, signer: PrivateKey = key.private, publicKey: String = Base64.getEncoder().encodeToString(key.public.encoded),
+        freshChain: List<String>? = null
     ): String = buildJsonObject {
+        freshChain?.let { put("freshAttestationChain", buildJsonArray { it.forEach { c -> add(JsonPrimitive(c)) } }) }
         put("v", v)
         put("nonce", nonce)
         put("deviceId", deviceId)
@@ -765,5 +770,168 @@ class AttestationRoutesTest {
         app(service())
         val json = Json.parseToJsonElement(body(challenge(), "dev-1", ecKey(), report())).jsonObject
         refused(JsonObject(json + ("verdictProvider" to JsonPrimitive("x"))).toString(), HttpStatusCode.BadRequest, "invalid_json")
+    }
+
+    // ── Fresh key attestation (§3.1) ────────────────────────────────────
+
+    private val day = 86_400L
+    private val freshOn = FreshAttestationSettings(intervalSeconds = day, graceSeconds = 3 * day)
+
+    /** The chain of a key made for this round, as the library makes it: the round's nonce, the device and its registered key. */
+    private fun freshChain(nonce: String, deviceId: String, registered: KeyPair, description: TestAttestationChains.Description): List<String> {
+        val spki = AttestationService.sha256Hex(registered.public.encoded)
+        return TestAttestationChains.chain(pki, ecKey().public, description.copy(challenge = AndroidKeyAttestation.freshChallengeFor(nonce, deviceId, spki)))
+    }
+
+    private fun JsonObject.due() = this["freshAttestation"]?.jsonPrimitive?.content == "due"
+
+    @Test
+    fun `off by default - no device is asked and none is overdue`() = testApplication {
+        app(service())
+        policies.put(scope, AttestationPolicy.strict(revealReasons = true), "test")
+        val key = ecKey()
+        assertEquals("pass", register("old-1", key, TestAttestationChains.identityDescription("old-1"))["result"]!!.jsonPrimitive.content)
+        now += 30 * day * 1000
+        val later = attestJson(body(challenge(), "old-1", key, report()))
+        assertEquals("pass", later["result"]!!.jsonPrimitive.content, later.toString())
+        assertFalse(later.due())
+    }
+
+    @Test
+    fun `after the interval the device is asked, and a fresh chain refreshes the record`() = testApplication {
+        app(service(fresh = freshOn))
+        policies.put(scope, AttestationPolicy.strict(revealReasons = true), "test")
+        val key = ecKey()
+        val clean = TestAttestationChains.identityDescription("px-1")
+        assertFalse(register("px-1", key, clean).due(), "just registered")
+        now += day * 1000
+        val asked = attestJson(body(challenge(), "px-1", key, report()))
+        assertEquals("pass", asked["result"]!!.jsonPrimitive.content)
+        assertTrue(asked.due(), asked.toString())
+
+        val nonce = challenge()
+        val answered = attestJson(body(nonce, "px-1", key, report(),
+            freshChain = freshChain(nonce, "px-1", key, clean.copy(osPatchLevel = 202610))))
+        assertEquals("pass", answered["result"]!!.jsonPrimitive.content, answered.toString())
+        assertFalse(answered.due(), "the round counted")
+        val record = devices.get(scope, "px-1")!!
+        assertEquals("ok", record.freshResult)
+        assertEquals(Instant.ofEpochMilli(now).toString(), record.freshAttestedAt)
+        assertEquals(202610, record.freshFacts!!.osPatchLevel)
+        assertEquals(3, record.freshFacts!!.chainSerials.size)
+    }
+
+    @Test
+    fun `a fresh chain that shows an unlocked bootloader now is judged on this and every later round`() = testApplication {
+        app(service(fresh = freshOn))
+        policies.put(scope, AttestationPolicy.strict(revealReasons = true), "test")
+        val key = ecKey()
+        val clean = TestAttestationChains.identityDescription("px-2")
+        register("px-2", key, clean)
+        now += day * 1000
+        val nonce = challenge()
+        val unlocked = attestJson(body(nonce, "px-2", key, report(verifiedBootState = "orange"),
+            freshChain = freshChain(nonce, "px-2", key, clean.copy(deviceLocked = false, verifiedBootState = 2))))
+        assertEquals("reject", unlocked["result"]!!.jsonPrimitive.content)
+        assertEquals(setOf("bootloader_unlocked", "boot_not_verified"), unlocked.strings("rejectionReasons").toSet())
+        val later = attestJson(body(challenge(), "px-2", key, report(verifiedBootState = "green")))
+        assertEquals(setOf("bootloader_unlocked", "boot_not_verified", "report_mismatch"), later.strings("rejectionReasons").toSet(),
+            "the record now says unlocked; a green report contradicts it")
+    }
+
+    @Test
+    fun `a fresh chain that does not hold up raises fresh_attestation_failed and does not count`() = testApplication {
+        app(service(fresh = freshOn))
+        policies.put(scope, AttestationPolicy.strict(revealReasons = true), "test")
+        val key = ecKey()
+        val clean = TestAttestationChains.identityDescription("px-3")
+        register("px-3", key, clean)
+        now += day * 1000
+
+        // Software level (a hook that makes the key in software).
+        var nonce = challenge()
+        val software = attestJson(body(nonce, "px-3", key, report(),
+            freshChain = freshChain(nonce, "px-3", key, clean.copy(attestationLevel = 0, keyMintLevel = 0))))
+        assertEquals(listOf("fresh_attestation_failed"), software.strings("rejectionReasons"))
+        assertTrue(software.due(), "still due")
+        assertEquals("software_attestation", devices.get(scope, "px-3")!!.freshResult)
+
+        // Another round's chain (made elsewhere, brought here).
+        val elsewhere = challenge()
+        nonce = challenge()
+        val replayed = attestJson(body(nonce, "px-3", key, report(), freshChain = freshChain(elsewhere, "px-3", key, clean)))
+        assertEquals(listOf("fresh_attestation_failed"), replayed.strings("rejectionReasons"))
+        assertEquals("challenge_mismatch", devices.get(scope, "px-3")!!.freshResult)
+
+        // Another app's key.
+        nonce = challenge()
+        val otherApp = attestJson(body(nonce, "px-3", key, report(),
+            freshChain = freshChain(nonce, "px-3", key, clean.copy(packages = listOf("com.evil")))))
+        assertEquals(listOf("app_integrity"), otherApp.strings("rejectionReasons"))
+
+        // Another operating system than at registration.
+        nonce = challenge()
+        val otherOs = attestJson(body(nonce, "px-3", key, report(),
+            freshChain = freshChain(nonce, "px-3", key, clean.copy(verifiedBootKey = ByteArray(32) { 9 }))))
+        assertEquals(listOf("report_mismatch"), otherOs.strings("rejectionReasons"))
+    }
+
+    @Test
+    fun `a revoked certificate in the fresh chain raises key_revoked`() = testApplication {
+        val serial = pki.intermediate.serialNumber.toString(16)
+        var revoked = false
+        val verifier = object : AndroidKeyAttestation(listOf(pki.root), setOf(TestAttestationChains.PACKAGE), setOf(TestAttestationChains.SIGNER_HEX)) {
+            override fun verifyFreshKey(chainBase64: List<String>?, expectedChallenge: ByteArray) =
+                if (revoked) Verdict(false, AttestationService.CERTIFICATE_REVOKED) else super.verifyFreshKey(chainBase64, expectedChallenge)
+        }
+        app(service(fresh = freshOn, verifier = verifier))
+        policies.put(scope, AttestationPolicy.strict(revealReasons = true), "test")
+        val key = ecKey()
+        val clean = TestAttestationChains.identityDescription("px-4")
+        register("px-4", key, clean)
+        now += day * 1000
+        revoked = true
+        val nonce = challenge()
+        val answer = attestJson(body(nonce, "px-4", key, report(), freshChain = freshChain(nonce, "px-4", key, clean)))
+        assertEquals(listOf("key_revoked"), answer.strings("rejectionReasons"), serial)
+        assertTrue(answer.due())
+    }
+
+    @Test
+    fun `a hardware device without a fresh chain past the grace is overdue, a software one only asked`() = testApplication {
+        app(service(fresh = freshOn))
+        policies.put(scope, AttestationPolicy.strict(revealReasons = true), "test")
+        val key = ecKey()
+        register("px-5", key, TestAttestationChains.identityDescription("px-5"))
+        val emu = ecKey()
+        register("emu-5", emu, TestAttestationChains.identityDescription("emu-5").copy(attestationLevel = 0, keyMintLevel = 0))
+
+        now += (day + 3 * day - 1) * 1000
+        val inGrace = attestJson(body(challenge(), "px-5", key, report()))
+        assertEquals("pass", inGrace["result"]!!.jsonPrimitive.content)
+        assertTrue(inGrace.due())
+        now += 1000
+        val overdue = attestJson(body(challenge(), "px-5", key, report()))
+        assertEquals(listOf("fresh_attestation_overdue"), overdue.strings("rejectionReasons"))
+
+        val software = attestJson(body(challenge(), "emu-5", emu, report()))
+        assertEquals("pass", software["result"]!!.jsonPrimitive.content, software.toString())
+        assertTrue(software.due())
+        // Its software-level fresh chain says nothing either; the round counts and it is not asked again.
+        val nonce = challenge()
+        val answered = attestJson(body(nonce, "emu-5", emu, report(),
+            freshChain = freshChain(nonce, "emu-5", emu, TestAttestationChains.identityDescription("emu-5").copy(attestationLevel = 0, keyMintLevel = 0))))
+        assertEquals("pass", answered["result"]!!.jsonPrimitive.content)
+        assertFalse(answered.due())
+        assertNull(devices.get(scope, "emu-5")!!.freshFacts)
+        assertEquals("software_attestation", devices.get(scope, "emu-5")!!.freshResult)
+    }
+
+    @Test
+    fun `fresh settings parse and refuse what would not start`() {
+        assertEquals(FreshAttestationSettings(0, 259_200), FreshAttestationSettings.fromEnv { null })
+        assertEquals(FreshAttestationSettings(86_400, 3600), FreshAttestationSettings.fromEnv { mapOf("ATTESTATION_FRESH_INTERVAL_SECONDS" to "86400", "ATTESTATION_FRESH_GRACE_SECONDS" to "3600")[it] })
+        assertFailsWith<IllegalStateException> { FreshAttestationSettings.fromEnv { if (it == "ATTESTATION_FRESH_INTERVAL_SECONDS") "30" else null } }
+        assertFailsWith<IllegalStateException> { FreshAttestationSettings.fromEnv { if (it == "ATTESTATION_FRESH_GRACE_SECONDS") "-1" else null } }
     }
 }

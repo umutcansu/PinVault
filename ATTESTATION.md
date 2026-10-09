@@ -75,6 +75,7 @@ Request:
   "deviceId": "9774d56d682e549c",
   "publicKey": "MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAE…",
   "attestationChain": ["MIIC…", "MIIB…"],
+  "freshAttestationChain": ["MIIC…", "MIIB…"],
   "report": "{\"sdkVersion\":\"2.3.0\",…}",
   "signature": "MEUCIQ…",
   "currentConfigVersion": 7,
@@ -91,6 +92,7 @@ Request:
 | `deviceId` | `^[A-Za-z0-9._:-]{1,64}$`. |
 | `publicKey` | Base64 DER SubjectPublicKeyInfo of the device key (EC P-256). |
 | `attestationChain` | Base64 DER, leaf first. Required on **first** registration under `ATTESTATION_KEY_POLICY=enforce`; optional otherwise; ignored for a device already registered (a key cannot be re-attested). iOS sends none (the Secure Enclave has no such chain): it registers like an Android key without one under `warn` / `off`, and App Attest (§12) stands in for it in `key_unattested`. Under `enforce` the first round's App Attest attestation registers it in place of the chain when `APP_ATTEST_APP_IDS` is configured (§12, "In place of the Android chain"); without it, `403 attestation_required`. |
+| `freshAttestationChain` | Optional, Base64 DER, leaf first: the chain of a key made for **this round only**, sent when the last answer said `"freshAttestation": "due"` (§3.1). Its challenge is SHA-256 of UTF-8 `pinvault-fresh-attest:v1:<nonce>:<deviceId>:<hex SHA-256 of publicKey's DER>`. Android only. |
 | `report` | The report JSON **as a string** (section 3). At most 16 KB. |
 | `signature` | `SHA256withECDSA` (DER) over the UTF-8 bytes of `pinvault-attest:v1:<nonce>:<deviceId>:<sha256-hex(report)>`. |
 | `currentConfigVersion`, `currentIssuedAt` | What the device holds; the server embeds a fresh signed config when either differs from what it would serve. The server also keeps the highest `currentIssuedAt` each device reported: a lower one from the same key raises `config_rollback` (§3). |
@@ -129,10 +131,13 @@ Response `200`:
   "config": { "payload": "…", "signature": "…", "signatures": [...], "signingKeys": {...} },
   "device": { "registered": true, "firstSeen": false,
               "keyAttestation": { "attested": true, "securityLevel": "StrongBox", "reason": "ok" } },
-  "policyVersion": 3
+  "policyVersion": 3,
+  "freshAttestation": "due"
 }
 ```
 
+- `freshAttestation: "due"` (only with `ATTESTATION_FRESH_INTERVAL_SECONDS`,
+  Android devices only): send a `freshAttestationChain` next round (§3.1).
 - `rejectionReasons` is present only when the policy's `revealReasons` is on;
   the ARC is always present and resolvable in the dashboard.
 - On `reject` there is **no** `token`. (Approov instead issues a token that
@@ -250,6 +255,8 @@ What each probe looks at (Android, no root needed; iOS probes:
 | `key_revoked` | Set by the server when a certificate of the registration's chain is on the attestation revocation list (`ATTESTATION_REVOKED_SERIALS_FILE`) — at registration, or since: the serials are looked up again on every round. |
 | `report_mismatch` | Set by the server when the report contradicts the device's record: `verifiedBootState` `green` while the chain said unlocked or not verified; a `securityPatch` more than a month older than the attested one. (A chain-less registration that claims `keyAttested: true` is answered `409 key_unknown` instead, §2.2.) |
 | `config_rollback` | Set by the server when the device reports a lower `currentIssuedAt` than it reported before under the same signing-key set (restored storage, a clock set back). |
+| `fresh_attestation_failed` | Set by the server (§3.1) when a device the hardware vouched for at registration sends a fresh chain that does not verify, is made at the software level, carries another round's challenge or is another app's key (that one: `app_integrity`). |
+| `fresh_attestation_overdue` | Set by the server (§3.1) when such a device sent no fresh chain that counted for `ATTESTATION_FRESH_INTERVAL_SECONDS` + `ATTESTATION_FRESH_GRACE_SECONDS`. |
 
 On iOS the probes look for jailbreak files (Cydia, Sileo, Zebra, `/var/jb`,
 apt, `sshd`, `bash`; the last two not on the simulator, which sees the Mac's
@@ -318,8 +325,8 @@ later round against it (V26 `key_facts`):
   `old_patch_level` is `warn` in `strict`; raising the minimum flags such
   devices until they re-register. A report that claims a patch more than a
   month OLDER than the attested one is `report_mismatch` (patch levels only
-  rise). The libraries do not yet re-attest periodically with a fresh key;
-  when they do, the server refreshes the facts at that point.
+  rise). With a fresh key attestation (§3.1) the facts are those of the
+  last fresh chain, so the patch level follows updates.
 - **Config watermark**: the highest `currentIssuedAt` a device reported is
   kept with the server's signing-key set version (V26
   `config_watermark`). The library's value never goes down — a health-check
@@ -334,6 +341,58 @@ later round against it (V26 `key_facts`):
   live fleet, since every config the server signs carries the time it was
   signed). The flag catches a restored backup reported by the genuine
   library; code that controls the app can report any value.
+
+### 3.1 Fresh key attestation (optional)
+
+A key's chain is made once, when the key is generated, so the registration's
+chain says what the device was then. With `ATTESTATION_FRESH_INTERVAL_SECONDS`
+(off by default; `86400` in the sample host's production profile) the server
+asks every Android device, once that interval has passed since its last fresh
+chain (or its registration), for the chain of a **new** key:
+
+1. The answer carries `"freshAttestation": "due"`; the library attests again
+   30 s later.
+2. That round the library generates a short-lived EC key in the Keystore
+   (StrongBox when the identity key is there, else the TEE) with the
+   challenge SHA-256(`pinvault-fresh-attest:v1:<nonce>:<deviceId>:<hex
+   SHA-256 of the identity key's SPKI>`) — this round's nonce, this device,
+   the key it registered — sends its chain as `freshAttestationChain`, and
+   deletes the key. It makes one at most every 10 minutes, however often it
+   is asked.
+3. The server verifies the chain as at registration (trusted root, link by
+   link, current, the challenge, a signing key generated in the Keystore,
+   the package and signer) but does not refuse it for the device's state:
+   a hardware-level chain's RootOfTrust, patch levels and serials become the
+   record's `freshFacts`, and the usual flags read them from then on —
+   `bootloader_unlocked`, `boot_not_verified`, `key_revoked` (the serials of
+   both chains), `report_mismatch`, `old_patch_level`. A verified-boot key
+   other than the registration's (another operating system) is
+   `report_mismatch`.
+
+| Fresh chain | Device the hardware vouched for at registration | Any other device (software-level, no chain) |
+|---|---|---|
+| verifies at TEE / StrongBox | facts refreshed, counts | facts recorded, counts |
+| another app's key (package, signer), hardware level | `app_integrity`, facts refreshed | `app_integrity`, facts recorded |
+| a revoked certificate | `key_revoked`, does not count | `key_revoked` |
+| revocation list stale (the server's problem) | nothing raised, does not count | the same |
+| anything else (software level, another round's challenge, broken, untrusted) | `fresh_attestation_failed`, does not count | counts (nothing to refresh) |
+| none for interval + `ATTESTATION_FRESH_GRACE_SECONDS` (default 72 h) | `fresh_attestation_overdue` | nothing |
+
+What it gives: the hardware's word **now**, not at registration — a keybox
+Google revokes later (`key_revoked`), a patch level that follows updates, and a
+device whose identity key was lifted to software or replayed from elsewhere
+cannot produce a fresh hardware chain for this round's challenge. The
+challenge binds the chain to the round and the registered key; it does not
+prove it came from the same secure hardware (Key Attestation has no stable
+per-device id an app may read), so a second, unrooted phone running the
+genuine app under an attacker's control could answer for the first. iPhones
+are not asked: every round already carries an App Attest assertion (§12).
+Old app versions never send a fresh chain: with the interval on, their
+hardware-attested devices become `fresh_attestation_overdue` after the
+interval plus the grace, and `strict` rejects that — set it to `warn` while
+old versions are in use. Cost on the device: one key generation per interval
+(well under a second in the TEE, a few seconds in StrongBox), in the
+background.
 
 ## 4. Policy
 
@@ -351,7 +410,8 @@ with `PUT /api/v1/config-apis/{id}/attestation/policy`:
     "play_integrity": "warn", "play_integrity_missing": "warn",
     "app_attest": "warn", "app_attest_missing": "warn",
     "bootloader_unlocked": "reject", "boot_not_verified": "reject", "key_revoked": "reject",
-    "report_mismatch": "reject", "config_rollback": "reject"
+    "report_mismatch": "reject", "config_rollback": "reject",
+    "fresh_attestation_failed": "reject", "fresh_attestation_overdue": "reject"
   },
   "revealReasons": false,
   "tokenTtlSeconds": 300,
@@ -538,6 +598,8 @@ webhooks), `attestation_token_secret_rotated`, `attestation_token_secret_deleted
 | `ATTESTATION_DEVICE_LIMIT` | `100000` | Most registered devices one Config API holds (`0` = unlimited). `POST /api/v1/attest` asks for no credential, so under `warn`/`off` invented device ids could otherwise grow the table without bound; past the cap a new device gets `503 device_limit_reached`, known devices keep attesting. |
 | `ATTESTATION_REVEAL_REASONS` | `false` | Default for a policy's `revealReasons`. |
 | `MOCK_HOST_REQUIRE_TOKEN` | `false` | The mock hosts refuse requests without a valid `PinVault-Token`. |
+| `ATTESTATION_FRESH_INTERVAL_SECONDS` | `0` (off; production profile: `86400`) | §3.1: ask every Android device for a fresh key's chain this often (60 s – 30 d). |
+| `ATTESTATION_FRESH_GRACE_SECONDS` | `259200` (72 h) | §3.1: how much longer a hardware-attested device may go without one before `fresh_attestation_overdue` (0 – 30 d). |
 | `PINVAULT_TOKEN_REQUIRE_PROOF` | `false` (production profile: `true`) | With `MOCK_HOST_REQUIRE_TOKEN`: every request to a mock host also carries a `PinVault-Proof` for its method and URL, signed by the key the token's `cnf.jkt` names (§5.1). Your own backend sets the same option on `PinVaultTokenAuth` (`requireProof`, and `publicOrigin` behind a proxy). |
 | `PINVAULT_TOKEN_REQUIRE_CERT_BINDING` | `false` | With `MOCK_HOST_REQUIRE_TOKEN`: the mock hosts accept a token only over mTLS with the client certificate its `cnf.x5t#S256` names (§5). A plain-TLS mock host then refuses every request. Your own backend sets the same option on `PinVaultTokenAuth` (`requireCertBinding`). |
 | `ATTESTATION_TRUSTED_BOOT_KEYS` | unset | Comma-separated `verifiedBootKey` digests (64 hex characters; colons and case ignored) of operating systems you accept with a `SelfSigned` boot on a locked bootloader (GrapheneOS and CalyxOS publish theirs per device). Such a boot counts as verified for `ATTESTATION_REQUIRE_VERIFIED_BOOT` and does not raise `boot_not_verified`. A malformed value is a start-up error. |
@@ -581,6 +643,10 @@ PinVaultConfig.Builder()
   each attesting block attests once. A `reject` does not fail `init` — the
   app decides what to do with `PinVault.attestationStatus()` — but no token is
   issued and no config update arrives through this channel.
+- **Fresh key** (§3.1): when the answer says `"freshAttestation": "due"`
+  the next round, 30 s later, carries the chain of a key made for it
+  (`keystore/FreshAttestationKeys`), at most one every 10 minutes; the key is
+  deleted at once. Nothing to configure in the app.
 - **Refresh**: a coroutine per block re-attests at
   `min(nextAttestIn, attestationInterval, exp − 60 s)` (at least 30 s), spread
   by ±10 % jitter, while the process lives; the periodic WorkManager job attests

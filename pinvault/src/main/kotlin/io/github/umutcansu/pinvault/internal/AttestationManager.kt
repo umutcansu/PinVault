@@ -71,7 +71,9 @@ internal class AttestationManager(
     private val onEvent: (PinVaultConnectionEvent.Attestation) -> Unit = { },
     private val clock: () -> Long = System::currentTimeMillis,
     /** A value in [0, 1) per call, for the jitter. Tests fix it. */
-    private val jitter: () -> Double = { java.util.concurrent.ThreadLocalRandom.current().nextDouble() }
+    private val jitter: () -> Double = { java.util.concurrent.ThreadLocalRandom.current().nextDouble() },
+    /** Makes the short-lived key of a fresh attestation round (§3.1). Tests swap it. */
+    private val freshKeys: () -> io.github.umutcansu.pinvault.keystore.FreshAttestationKeys = { io.github.umutcansu.pinvault.keystore.FreshAttestationKeys.androidKeystore }
 ) : AttestationTokenSource {
 
     private val initialStatus = AttestationStatus(
@@ -109,6 +111,14 @@ internal class AttestationManager(
 
     @Volatile
     private var consecutiveFailures = 0
+
+    /** The server asked for a fresh chain (`"freshAttestation": "due"`, §3.1): the next round makes one. */
+    @Volatile
+    private var freshWanted = false
+
+    /** When the last fresh key was made; a device the server keeps asking makes one per [FRESH_MIN_GAP_MS] at most. */
+    @Volatile
+    private var lastFreshAt: Long? = null
 
     /** One attestation at a time; callers that arrive meanwhile share its result. */
     private val lock = Mutex()
@@ -189,6 +199,7 @@ internal class AttestationManager(
             val canonical = canonicalString(nonce, did, report)
             val signature = base64(key.sign(canonical.toByteArray(Charsets.UTF_8)))
             val chain = if (chainWanted) attestationChainOf(key) else emptyList()
+            val freshChain = if (freshWanted && lastFreshAt.let { it == null || startedAt - it >= FRESH_MIN_GAP_MS }) freshChainOf(nonce, did, key, startedAt) else emptyList()
 
             val body = JSONObject()
                 .put("v", PROTOCOL_VERSION)
@@ -200,6 +211,7 @@ internal class AttestationManager(
                 .put("currentConfigVersion", currentConfigVersion())
                 .put("currentIssuedAt", currentIssuedAt())
             if (chain.isNotEmpty()) body.put("attestationChain", JSONArray(chain))
+            if (freshChain.isNotEmpty()) body.put("freshAttestationChain", JSONArray(freshChain))
             if (block.wantPinsFor.isNotEmpty()) body.put("hosts", JSONArray(block.wantPinsFor))
 
             val answer = api.attest(body)
@@ -226,6 +238,9 @@ internal class AttestationManager(
         val reasons = strings(answer.optJSONArray("rejectionReasons"))
         val policyVersion = if (answer.has("policyVersion") && !answer.isNull("policyVersion")) answer.optInt("policyVersion") else null
         val nextAttestInMs = answer.optLong("nextAttestIn", 0L).takeIf { it > 0L }?.times(1000)
+        // Asked for a fresh chain: the next round, soon, makes one — also after a reject (it may be why).
+        val freshDue = answer.optString("freshAttestation") == "due"
+        freshWanted = freshDue
 
         return when (val result = answer.optString("result")) {
             "pass" -> {
@@ -247,7 +262,7 @@ internal class AttestationManager(
                     tokenExpiresAt = expiresAt!!
                 }
                 consecutiveFailures = 0
-                val delay = refreshDelayMs(nextAttestInMs, block.attestationIntervalMs, expiresAt, now, jitter())
+                val delay = if (freshDue && mayMakeFresh(now)) MIN_DELAY_MS else refreshDelayMs(nextAttestInMs, block.attestationIntervalMs, expiresAt, now, jitter())
                 val passed = AttestationStatus(
                     configApiId = block.id,
                     result = AttestationResult.PASS,
@@ -272,7 +287,7 @@ internal class AttestationManager(
                 token = null
                 tokenExpiresAt = 0L
                 consecutiveFailures = 0
-                val delay = refreshDelayMs(nextAttestInMs, block.attestationIntervalMs, null, now, jitter())
+                val delay = if (freshDue && mayMakeFresh(now)) MIN_DELAY_MS else refreshDelayMs(nextAttestInMs, block.attestationIntervalMs, null, now, jitter())
                 val rejected = AttestationStatus(
                     configApiId = block.id,
                     result = AttestationResult.REJECT,
@@ -364,6 +379,26 @@ internal class AttestationManager(
         return if (id.isNotEmpty() && DEVICE_ID.matches(id)) id else UNKNOWN_DEVICE_ID
     }
 
+    private fun mayMakeFresh(now: Long): Boolean = lastFreshAt.let { it == null || now - it >= FRESH_MIN_GAP_MS }
+
+    /**
+     * The chain of a key made for this round (§3.1), Base64; empty when the
+     * device cannot make one (the round goes without, the server decides).
+     */
+    private fun freshChainOf(nonce: String, deviceId: String, key: ClientIdentityKeyProvider, now: Long): List<String> {
+        lastFreshAt = now
+        return try {
+            val challenge = io.github.umutcansu.pinvault.keystore.FreshAttestationKeys.challenge(nonce, deviceId, key.publicKey().encoded)
+            val strongBox = key.securityLevel() == io.github.umutcansu.pinvault.model.KeySecurityLevel.STRONGBOX
+            freshKeys().chain(challenge, strongBox).map { base64(it) }
+        } catch (e: Exception) {
+            Timber.w(e, "Attestation [%s]: could not make the fresh attestation key — sending none", block.id)
+            emptyList()
+        } catch (e: LinkageError) {
+            emptyList()
+        }
+    }
+
     private fun attestationChainOf(key: ClientIdentityKeyProvider): List<String> = try {
         key.attestationChain().map { base64(it) }
     } catch (e: Exception) {
@@ -405,6 +440,8 @@ internal class AttestationManager(
         tokenExpiresAt = 0L
         consecutiveFailures = 0
         chainWanted = true
+        freshWanted = false
+        lastFreshAt = null
         lastAttemptAt = null
         status = initialStatus
     }
@@ -526,6 +563,8 @@ internal class AttestationManager(
         const val JITTER = 0.10
         /** A held token with less life than this is replaced before it is used. */
         const val TOKEN_MIN_REMAINING_MS = 30_000L
+        /** A fresh attestation key (§3.1) at most this often, however often the server asks. */
+        const val FRESH_MIN_GAP_MS = 10L * 60 * 1000
         /** A 401 forces at most one re-attestation per this many ms. */
         const val REATTEST_GAP_MS = 5_000L
         /** When the server names neither a TTL nor an expiry. */

@@ -52,7 +52,11 @@ enum class AttestationFlag(val wire: String) {
     /** The report contradicts what the hardware said at registration: boot state, patch level, a chain it claims and did not send. */
     REPORT_MISMATCH("report_mismatch"),
     /** The device reports an older config (`currentIssuedAt`) than it reported before under the same signing-key set. */
-    CONFIG_ROLLBACK("config_rollback");
+    CONFIG_ROLLBACK("config_rollback"),
+    /** A hardware-attested device sent a fresh chain that did not verify, or not at the hardware level (§3.1). */
+    FRESH_ATTESTATION_FAILED("fresh_attestation_failed"),
+    /** A hardware-attested device sent no fresh chain that counted within the interval plus the grace (§3.1). */
+    FRESH_ATTESTATION_OVERDUE("fresh_attestation_overdue");
 
     companion object {
         private val byWire = entries.associateBy { it.wire }
@@ -111,7 +115,9 @@ data class AttestationPolicy(
             "app_attest" to "warn", "app_attest_missing" to "warn",
             // What the hardware said, or a report that contradicts it: no false positive on a stock locked phone.
             "bootloader_unlocked" to "reject", "boot_not_verified" to "reject", "key_revoked" to "reject",
-            "report_mismatch" to "reject", "config_rollback" to "reject"
+            "report_mismatch" to "reject", "config_rollback" to "reject",
+            // Raised only with ATTESTATION_FRESH_INTERVAL_SECONDS, only for hardware-attested devices.
+            "fresh_attestation_failed" to "reject", "fresh_attestation_overdue" to "reject"
         )
 
         /** `lenient`: everything a warning — what a first rollout measures the fleet with. */

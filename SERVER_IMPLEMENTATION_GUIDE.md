@@ -839,7 +839,7 @@ The library talks to two endpoints on the config server:
 | Endpoint | What it does |
 |---|---|
 | `GET /api/v1/attest/challenge` | Answers `{"nonce": "…", "expiresIn": 120, "serverTime": 1759660800000}`. The nonce is single-use and short-lived. |
-| `POST /api/v1/attest` | Takes `{v: 1, nonce, deviceId, publicKey, attestationChain?, report, signature, currentConfigVersion?, currentIssuedAt?, hosts?, verdictProvider?}` where `signature` is `SHA256withECDSA` over the UTF-8 bytes of `pinvault-attest:v1:<nonce>:<deviceId>:<sha256-hex(report)>` with the device's EC P-256 Keystore key (the same key that signs mTLS CSRs). Answers `{"result": "pass"|"reject", "arc", "warnings", "rejectionReasons"?, "token"?, "tokenExpiresAt"?, "tokenTtlSeconds", "nextAttestIn", "configChanged", "config"?, "device": {...}, "policyVersion"}`. On `pass` the `token` is the `PinVault-Token`; on `reject` there is no token and no `config`. |
+| `POST /api/v1/attest` | Takes `{v: 1, nonce, deviceId, publicKey, attestationChain?, freshAttestationChain?, report, signature, currentConfigVersion?, currentIssuedAt?, hosts?, verdictProvider?}` where `signature` is `SHA256withECDSA` over the UTF-8 bytes of `pinvault-attest:v1:<nonce>:<deviceId>:<sha256-hex(report)>` with the device's EC P-256 Keystore key (the same key that signs mTLS CSRs). Answers `{"result": "pass"|"reject", "arc", "warnings", "rejectionReasons"?, "token"?, "tokenExpiresAt"?, "tokenTtlSeconds", "nextAttestIn", "configChanged", "config"?, "device": {...}, "policyVersion", "freshAttestation"?}`. `freshAttestation: "due"` asks an Android device for `freshAttestationChain` next round: the chain of a key made for that round, challenge SHA-256(`pinvault-fresh-attest:v1:<nonce>:<deviceId>:<hex SHA-256 of the SPKI>`), whose RootOfTrust, patch levels and serials replace the registration's in what you judge (ATTESTATION.md §3.1; optional). On `pass` the `token` is the `PinVault-Token`; on `reject` there is no token and no `config`. |
 
 The reference server registers the device key on first sight (optionally
 requiring an Android Key Attestation chain, `ATTESTATION_KEY_POLICY`),
@@ -1264,6 +1264,10 @@ attestation and `PinVault-Token` are [ATTESTATION.md](ATTESTATION.md).
   the request once; at most 6 refetches per 5 minutes in all, 1 per 5 minutes for hosts with
   no pin entry, 10 minutes' cooldown for a host after 3 failed recoveries in 5 minutes. A
   certificate that is expired or not yet valid is not a mismatch.
+- **Fresh key attestation** (`keystore/FreshAttestationKeys.kt`, `internal/AttestationManager.kt`): on
+  `"freshAttestation": "due"`, attest again 30 s later with `freshAttestationChain`: generate an EC
+  P-256 signing key in the Keystore (StrongBox if the identity key is there) with the §3.1
+  challenge, send its chain, delete it; at most one per 10 minutes. iOS: nothing (not asked).
 - **`PinVault-Token`** (`api/AttestationTokenInterceptor.kt`, `internal/AttestationManager.kt`):
   add it to requests for the block's `tokenHosts(...)`, or, when it names none, for every
   host the live config pins and the block's own Config API, over HTTPS only. A `401` naming

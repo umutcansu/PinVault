@@ -7545,7 +7545,8 @@ components:
       enum: [rooted, emulator, debugger, debuggable, hooking_framework, app_integrity,
              cloner, unknown_installer, adb_enabled, software_key, key_unattested, old_patch_level,
              play_integrity, play_integrity_missing, app_attest, app_attest_missing,
-             bootloader_unlocked, boot_not_verified, key_revoked, report_mismatch, config_rollback]
+             bootloader_unlocked, boot_not_verified, key_revoked, report_mismatch, config_rollback,
+             fresh_attestation_failed, fresh_attestation_overdue]
 
     AttestationRequest:
       type: object
@@ -7565,6 +7566,16 @@ components:
             registers the device in its place (`attestation_invalid` with `reason`
             `app_attest_…` when it fails, `attestation_required` with `reason`
             `app_attest_unknown_key` for an assertion).
+          items: { type: string }
+        freshAttestationChain:
+          type: array
+          description: >
+            Android, after an answer with `freshAttestation: due` (ATTESTATION.md §3.1):
+            Base64 DER chain, leaf first, of a key made for this round only, with the
+            attestation challenge SHA-256(UTF-8 `pinvault-fresh-attest:v1:<nonce>:<deviceId>:<hex
+            SHA-256 of publicKey's DER>`). A hardware-level chain refreshes the device's facts;
+            one that does not hold up raises `fresh_attestation_failed` for a device the
+            hardware vouched for at registration.
           items: { type: string }
         report: { type: string, description: 'The `AttestationReport` JSON **as a string**, at most 16 KB.' }
         signature: { type: string, description: 'Base64 DER `SHA256withECDSA` over the UTF-8 bytes of `pinvault-attest:v1:<nonce>:<deviceId>:<sha256-hex(report)>`.' }
@@ -7627,6 +7638,10 @@ components:
                 securityLevel: { type: string, nullable: true, example: StrongBox }
                 reason: { type: string, example: ok }
         policyVersion: { type: integer, example: 3 }
+        freshAttestation:
+          type: string
+          enum: [due]
+          description: 'Present with `ATTESTATION_FRESH_INTERVAL_SECONDS` once an Android device is due: send a `freshAttestationChain` next round (§3.1).'
 
     AttestationPolicy:
       type: object
@@ -7727,6 +7742,12 @@ components:
             vendorPatchLevel: { type: integer, nullable: true, example: 20260905 }
             bootPatchLevel: { type: integer, nullable: true, example: 20260905 }
             chainSerials: { type: array, items: { type: string }, description: 'Every certificate''s serial, hex, as Google''s status list writes them: looked up again on every round (`key_revoked`).' }
+        freshFacts:
+          type: object
+          nullable: true
+          description: 'What the last fresh hardware-level chain said (ATTESTATION.md §3.1), the same fields as `keyFacts`; the per-round flags read it in place of `keyFacts` once it is set.'
+        freshAttestedAt: { type: string, format: date-time, nullable: true, description: 'When the last fresh chain that counted arrived; null = never (the registration is the start).' }
+        freshResult: { type: string, nullable: true, description: '`ok`, or why the last fresh chain did not count (`software_attestation`, `challenge_mismatch`, `untrusted_root`, `certificate_revoked`, …).' }
         configWatermark: { type: integer, format: int64, nullable: true, description: 'Highest `currentIssuedAt` the device reported (`config_rollback`).' }
         configWatermarkKeySet: { type: integer, nullable: true, description: 'Signing-key set version under which it was stored.' }
 

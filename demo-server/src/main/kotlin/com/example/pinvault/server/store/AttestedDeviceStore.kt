@@ -58,6 +58,12 @@ data class AttestedDevice(
     val appAttest: String? = null,
     /** What the registration's hardware-level Android Key Attestation chain said about the device (V26); null = no such chain. */
     val keyFacts: KeyFacts? = null,
+    /** What the last fresh hardware-level chain said (V27, ATTESTATION.md §3.1); null = none yet. */
+    val freshFacts: KeyFacts? = null,
+    /** When the last fresh chain that counted arrived (ISO instant); null = never (the registration is the start). */
+    val freshAttestedAt: String? = null,
+    /** `ok`, or why the last fresh chain did not count (the verifier's reason); null = none sent yet. */
+    val freshResult: String? = null,
     /** The highest `currentIssuedAt` (Unix ms) the device reported; null = none yet. */
     val configWatermark: Long? = null,
     /** The server's signing-key set version when [configWatermark] was stored. */
@@ -125,7 +131,8 @@ class AttestedDeviceStore(private val db: DatabaseManager) {
                ON CONFLICT(config_api_id, device_id) DO UPDATE SET
                  spki_sha256 = excluded.spki_sha256, public_key = excluded.public_key, key_attested = excluded.key_attested,
                  key_security_level = excluded.key_security_level, key_attestation_reason = excluded.key_attestation_reason,
-                 last_seen = excluded.last_seen, key_facts = excluded.key_facts
+                 last_seen = excluded.last_seen, key_facts = excluded.key_facts,
+                 fresh_facts = NULL, fresh_attested_at = NULL, fresh_result = NULL
                WHERE attested_devices.spki_sha256 IS NULL"""
         ).use { stmt ->
             stmt.setString(1, configApiId)
@@ -159,6 +166,30 @@ class AttestedDeviceStore(private val db: DatabaseManager) {
             stmt.setString(4, deviceId)
             stmt.setInt(5, keySet)
             stmt.setLong(6, watermark)
+            stmt.executeUpdate()
+        }
+    }
+
+    /**
+     * Records a fresh chain's outcome (ATTESTATION.md §3.1): [result] always;
+     * [facts] and [at] only for a chain that counted ([at] null = the device
+     * stays due, the earlier facts stay).
+     */
+    fun recordFresh(configApiId: String, deviceId: String, result: String, facts: KeyFacts?, at: Instant?) = db.connection().use { conn ->
+        val sql = if (at != null) {
+            "UPDATE attested_devices SET fresh_result = ?, fresh_facts = COALESCE(?, fresh_facts), fresh_attested_at = ? WHERE config_api_id = ? AND device_id = ?"
+        } else {
+            "UPDATE attested_devices SET fresh_result = ? WHERE config_api_id = ? AND device_id = ?"
+        }
+        conn.prepareStatement(sql).use { stmt ->
+            var i = 1
+            stmt.setString(i++, result.take(64))
+            if (at != null) {
+                stmt.setString(i++, facts?.let { json.encodeToString(KeyFacts.serializer(), it) })
+                stmt.setString(i++, at.toString())
+            }
+            stmt.setString(i++, configApiId)
+            stmt.setString(i, deviceId)
             stmt.executeUpdate()
         }
     }
@@ -459,6 +490,9 @@ class AttestedDeviceStore(private val db: DatabaseManager) {
             appAttest = rs.getString("app_attest"),
             // A row this server cannot read back (a later format) is shown and judged as "no facts".
             keyFacts = rs.getString("key_facts")?.let { text -> runCatching { json.decodeFromString(KeyFacts.serializer(), text) }.getOrNull() },
+            freshFacts = rs.getString("fresh_facts")?.let { text -> runCatching { json.decodeFromString(KeyFacts.serializer(), text) }.getOrNull() },
+            freshAttestedAt = rs.getString("fresh_attested_at"),
+            freshResult = rs.getString("fresh_result"),
             configWatermark = rs.getObject("config_watermark")?.let { rs.getLong("config_watermark") },
             configWatermarkKeySet = rs.getObject("config_watermark_key_set")?.let { rs.getInt("config_watermark_key_set") },
             lastReport = if (withReport) rs.getString("last_report") else null

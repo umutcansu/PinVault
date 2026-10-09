@@ -30,6 +30,15 @@ what the hardware vouches for; the clients bind their verdicts to the report.
   token beside the report), Play Integrity nonce bound to the device;
   `APP_ATTEST_REQUIRE_V2`, `PLAY_INTEGRITY_REQUIRE_V2` (production profile:
   on), `PLAY_INTEGRITY_STALE_PASS_SECONDS`, `PLAY_INTEGRITY_REQUIRE_LICENSED`.
+- **Fresh key attestation** (V27, ATTESTATION.md §3.1):
+  `ATTESTATION_FRESH_INTERVAL_SECONDS` (off by default; production profile
+  86400) asks every Android device that often for the chain of a key made for
+  one round (`"freshAttestation": "due"` → `freshAttestationChain`); its
+  hardware facts replace the registration's for the per-round flags (a keybox
+  revoked later, the current patch level, an unlocked bootloader now). New
+  flags, `reject` under strict: `fresh_attestation_failed` (a hardware-attested
+  device's fresh chain does not hold up), `fresh_attestation_overdue` (none for
+  interval + `ATTESTATION_FRESH_GRACE_SECONDS`, default 72 h).
 - Upgrade note: stored policies take the new flags at the default profile's
   action, so a strict server now rejects a phone with an unlocked bootloader.
 
@@ -62,6 +71,9 @@ what the hardware vouches for; the clients bind their verdicts to the report.
 - **`proofOfPossession()`** on a Config API block: every request that carries
   the `PinVault-Token` also carries a `PinVault-Proof` signed by the block's
   device key (TEE/StrongBox), `iat` in the server's time. Needs `attestation()`.
+- **Fresh key attestation:** asked by the server, the next round carries the
+  chain of a Keystore key made for that round with its challenge, then deletes
+  the key (`keystore/FreshAttestationKeys`); at most one per 10 minutes.
 - The token goes out over HTTPS only (as on iOS), and a redirect to another
   host, port or scheme no longer carries it (OkHttp drops only
   `Authorization`). The proof is made by a network interceptor, so redirects

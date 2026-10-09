@@ -232,7 +232,7 @@ open class AndroidKeyAttestation(
     }
 
     /** Which key a chain is checked as. */
-    enum class Profile { USER_AUTH, IDENTITY }
+    enum class Profile { USER_AUTH, IDENTITY, FRESH }
 
     private class Refusal(val reason: String, val securityLevel: String? = null, val facts: KeyFacts? = null) : Exception(reason)
 
@@ -250,6 +250,27 @@ open class AndroidKeyAttestation(
      */
     open fun verifyIdentityKey(chainBase64: List<String>?, publicKey: PublicKey, deviceUid: String): Verdict =
         verify(chainBase64, publicKey, deviceUid, Profile.IDENTITY)
+
+    /**
+     * Checks [chainBase64] for a short-lived key the device made for this
+     * round only (`freshAttestationChain`, ATTESTATION.md §3.1): any key, as
+     * long as its leaf carries [expectedChallenge] (the round's nonce, device
+     * id and registered key) and the chain ends in a trusted root. The
+     * device's state is judged from the verdict's [Verdict.facts], not here:
+     * an unlocked bootloader or an old patch level does not refuse the chain,
+     * so what the hardware said now reaches the record.
+     */
+    open fun verifyFreshKey(chainBase64: List<String>?, expectedChallenge: ByteArray): Verdict {
+        if (chainBase64.isNullOrEmpty()) return Verdict.MISSING
+        return try {
+            val chain = decode(chainBase64)
+            check(chain, chain.first().publicKey, "", Profile.FRESH, expectedChallenge)
+        } catch (r: Refusal) {
+            Verdict(false, r.reason, r.securityLevel, facts = r.facts)
+        } catch (e: Exception) {
+            Verdict(false, "extension_malformed")
+        }
+    }
 
     private fun verify(chainBase64: List<String>?, publicKey: PublicKey, id: String, profile: Profile): Verdict {
         if (chainBase64.isNullOrEmpty()) return Verdict.MISSING
@@ -278,7 +299,7 @@ open class AndroidKeyAttestation(
     }
 
     /** @return the passing verdict: security level ("tee" / "strongbox") and, for a user-auth key, its kind. */
-    private fun check(chain: List<X509Certificate>, publicKey: PublicKey, id: String, profile: Profile): Verdict {
+    private fun check(chain: List<X509Certificate>, publicKey: PublicKey, id: String, profile: Profile, freshChallenge: ByteArray? = null): Verdict {
         // ── 0. Cheap checks, before any signature work ──────────────────
         // A revocation list older than ATTESTATION_STATUS_MAX_AGE_HOURS: no
         // chain can be said to be unrevoked, so none passes.
@@ -342,7 +363,7 @@ open class AndroidKeyAttestation(
             factsOf(levelName, softwareEnforced, hardwareEnforced, chain)
         } else null
         try {
-            return checkDescription(profile, id, levelName, attestationLevel, keyMintLevel, challenge, softwareEnforced, hardwareEnforced, facts)
+            return checkDescription(profile, id, levelName, attestationLevel, keyMintLevel, challenge, softwareEnforced, hardwareEnforced, facts, freshChallenge)
         } catch (r: Refusal) {
             throw if (r.facts == null && facts != null) Refusal(r.reason, r.securityLevel, facts) else r
         }
@@ -351,9 +372,14 @@ open class AndroidKeyAttestation(
     /** Step 2 of [check] past the chain: the key description's rules. */
     private fun checkDescription(
         profile: Profile, id: String, levelName: String, attestationLevel: Int, keyMintLevel: Int, challenge: ByteArray,
-        softwareEnforced: Map<Int, ASN1Primitive>, hardwareEnforced: Map<Int, ASN1Primitive>, facts: KeyFacts?
+        softwareEnforced: Map<Int, ASN1Primitive>, hardwareEnforced: Map<Int, ASN1Primitive>, facts: KeyFacts?,
+        freshChallenge: ByteArray? = null
     ): Verdict {
-        val expected = if (profile == Profile.IDENTITY) identityChallengeFor(id) else challengeFor(id)
+        val expected = when (profile) {
+            Profile.IDENTITY -> identityChallengeFor(id)
+            Profile.FRESH -> freshChallenge ?: throw Refusal("challenge_mismatch", levelName)
+            Profile.USER_AUTH -> challengeFor(id)
+        }
         if (!MessageDigest.isEqual(challenge, expected)) throw Refusal("challenge_mismatch", levelName)
         if (attestationLevel !in HARDWARE_LEVELS || keyMintLevel !in HARDWARE_LEVELS) throw Refusal("software_attestation", levelName)
 
@@ -394,19 +420,21 @@ open class AndroidKeyAttestation(
                     biometricOnly = authType != null && authType and 1 == 0 && authType and 2 != 0
                 )
             }
-            Profile.IDENTITY -> {
-                // The key a device signs CSRs and TLS handshakes with; nothing about the user.
+            Profile.IDENTITY, Profile.FRESH -> {
+                // The key a device signs CSRs and TLS handshakes with (or this round's
+                // short-lived one, made the same way); nothing about the user.
                 if (PURPOSE_SIGN !in purposes) throw Refusal("purpose_not_sign", levelName)
                 null
             }
         }
         if (hardwareEnforced[TAG_ORIGIN]?.let { intOf(it) } != ORIGIN_GENERATED) throw Refusal("origin_not_generated", levelName)
-        minPatchLevel?.let { min ->
+        // A fresh key is judged by its facts (the flags), not refused for them.
+        if (profile != Profile.FRESH) minPatchLevel?.let { min ->
             val patch = hardwareEnforced[TAG_OS_PATCH_LEVEL]?.let { intOf(it) } ?: softwareEnforced[TAG_OS_PATCH_LEVEL]?.let { intOf(it) }
             if (patch == null || patch < min) throw Refusal("patch_level_too_old", levelName)
         }
 
-        if (requireVerifiedBoot) {
+        if (requireVerifiedBoot && profile != Profile.FRESH) {
             val rootOfTrust = hardwareEnforced[TAG_ROOT_OF_TRUST] as? ASN1Sequence ?: throw Refusal("root_of_trust_missing", levelName)
             if (rootOfTrust.size() < 3) throw Refusal("root_of_trust_missing", levelName)
             val locked = (rootOfTrust.getObjectAt(1) as? ASN1Boolean)?.isTrue ?: throw Refusal("root_of_trust_missing", levelName)
@@ -578,6 +606,17 @@ open class AndroidKeyAttestation(
          */
         fun identityChallengeFor(deviceUid: String): ByteArray =
             MessageDigest.getInstance("SHA-256").digest((IDENTITY_CHALLENGE_PREFIX + deviceUid).toByteArray(Charsets.UTF_8))
+
+        /**
+         * SHA-256 of UTF-8 `"pinvault-fresh-attest:v1:" + nonce + ":" + deviceId + ":" + spkiSha256Hex`:
+         * the attestation challenge of the short-lived key a device makes for
+         * one round (ATTESTATION.md §3.1) — this round only, this device, and
+         * the key it registered (lower-case hex SHA-256 of its SPKI DER).
+         */
+        fun freshChallengeFor(nonce: String, deviceId: String, spkiSha256Hex: String): ByteArray =
+            MessageDigest.getInstance("SHA-256").digest("$FRESH_CHALLENGE_PREFIX$nonce:$deviceId:$spkiSha256Hex".toByteArray(Charsets.UTF_8))
+
+        const val FRESH_CHALLENGE_PREFIX = "pinvault-fresh-attest:v1:"
 
         /** A hex serial as the lists compare it: lowercase, no leading zeros. */
         internal fun normalizeSerial(hex: String): String = hex.lowercase().trimStart('0').ifEmpty { "0" }
