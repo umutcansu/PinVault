@@ -178,9 +178,20 @@ final class CertificateConfigStore: Sendable {
     /// have `issuedAt > getCurrentIssuedAt()` before being persisted. It is a
     /// watermark, not the active config's value: rolling a config back after
     /// a failed health check restores the older pins but never lowers this.
-    /// Only ``resetWatermarks(keySetVersion:)`` does.
+    /// Only ``resetWatermarks(keySetVersion:)`` does. Throws when the Keychain
+    /// copy cannot be read: the plist alone is what a container put back from
+    /// an older backup holds, so a replay check against it alone is none.
     func getCurrentIssuedAt() throws -> Int64 {
-        max(try prefs.getLong(Self.keyIssuedAt, 0), try prefs.getLong(Self.keyWatermarkIssuedAt, 0), mirror.read()?.issuedAt ?? 0)
+        max(try prefs.getLong(Self.keyIssuedAt, 0), try prefs.getLong(Self.keyWatermarkIssuedAt, 0), try mirroredWatermarks().issuedAt)
+    }
+
+    /// The mirror's values, or a throw when the copy cannot be read now (see
+    /// ``getCurrentIssuedAt()``); an unreadable copy is never "nothing".
+    private func mirroredWatermarks() throws -> MirroredWatermarks {
+        guard let mirrored = mirror.read() else {
+            throw PinVaultError.illegalState("the replay watermarks' Keychain copy cannot be read now")
+        }
+        return mirrored
     }
 
     /// The highest per-host version this device accepted for each host
@@ -654,9 +665,10 @@ final class CertificateConfigStore: Sendable {
 
     // MARK: Version watermarks
 
-    /// The plist's version watermarks, raised to the mirror's.
+    /// The plist's version watermarks, raised to the mirror's; throws when the
+    /// mirror cannot be read (``getCurrentIssuedAt()``).
     private func storedWatermarks() throws -> [String: Int] {
-        try plistWatermarks().merging(mirror.read()?.versions ?? [:], uniquingKeysWith: max)
+        try plistWatermarks().merging(try mirroredWatermarks().versions, uniquingKeysWith: max)
     }
 
     private func plistWatermarks() throws -> [String: Int] {

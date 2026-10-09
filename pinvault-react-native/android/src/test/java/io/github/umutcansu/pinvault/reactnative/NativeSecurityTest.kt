@@ -85,6 +85,30 @@ class NativeSecurityTest {
         assertTrue(parse("""{"configApis":[{$base,"allowServerGeneratedKey":true}]}""", allowing).config.configApis.getValue("default").allowServerGeneratedKey)
     }
 
+    @Test fun `a release build needs the anchors in the file, and the identity hosts are its call`() {
+        val base = """"id":"default","url":"https://h.example:8081/""""
+        // A block that only names itself would leave pins and keys to the bundle.
+        val bare = NativeSecurity.parse("""{"configApis":[{"id":"default"}]}""", "f")
+        val anchored = """$base,"bootstrapPins":[{"hostname":"h.example","sha256":["$pinA","$pinB"]}],"signaturePublicKey":"$key""""
+        refused("""{"configApis":[{$anchored}]}""", native = bare, fragments = arrayOf("bootstrapPins", "declare bootstrapPins"))
+        val keyless = NativeSecurity.parse("""{"configApis":[{"id":"default","bootstrapPins":[{"hostname":"h.example","sha256":["$pinA","$pinB"]}]}]}""", "f")
+        refused("""{"configApis":[{$anchored}]}""", native = keyless, fragments = arrayOf("signaturePublicKeys", "declare signaturePublicKeys"))
+        // The relaxations stand in for the anchor they relax; a debug build takes the bare block.
+        val relaxed = NativeSecurity.parse("""{"configApis":[{"id":"default","allowUnpinnedConfigApi":true,"allowUnsigned":true}]}""", "f")
+        parse("""{"configApis":[{$base}]}""", native = relaxed)
+        parse("""{"configApis":[{$anchored}]}""", native = bare, release = false)
+        // Who gets the identity: from JS only where the file names the hosts, or in a debug build.
+        refused("""{"configApis":[{$base,"clientCertHosts":["cdn.example:443"]}]}""", fragments = arrayOf("clientCertHosts", "declare clientCertHosts"))
+        parse("""{"configApis":[{$base,"clientCertHosts":["cdn.example:443"]}]}""", release = false)
+        val naming = NativeSecurity.parse("""
+            {"configApis":[{"id":"default","clientCertHosts":["api.example:443"],
+              "bootstrapPins":[{"hostname":"h.example","sha256":["$pinA","$pinB"]}],"signaturePublicKeys":["$key"]}]}
+        """.trimIndent(), "f")
+        assertEquals(1, parse("""{"configApis":[{$base,"clientCertHosts":["API.example:443"]}]}""", native = naming)
+            .config.configApis.getValue("default").clientCertHosts.size)
+        refused("""{"configApis":[{$base,"clientCertHosts":["cdn.example:443"]}]}""", native = naming, fragments = arrayOf("clientCertHosts", "fixed"))
+    }
+
     @Test fun `without a file, a release build refuses JS-only anchors unless the manifest accepts them`() {
         val api = """"id":"a","url":"https://h/","bootstrapPins":[{"hostname":"h","sha256":["$pinA","$pinB"]}],"signaturePublicKey":"$key""""
         refused("""{"configApis":[{$api}]}""", native = null, fragments = arrayOf("none is shipped", NativeSecurity.NO_FILE_META_DATA))

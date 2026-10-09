@@ -166,13 +166,21 @@ final class WatermarkMirrorTests: XCTestCase {
             @discardableResult func write(_ values: MirroredWatermarks) -> Bool { writes += 1; return false }
         }
         let broken = Broken()
-        let store = CertificateConfigStore(prefs: InMemoryPreferences(), mirror: broken)
-        try store.save(config(2, issuedAt: 2_000))
+        let prefs = InMemoryPreferences()
+        let healthy = CertificateConfigStore(prefs: prefs, mirror: MemoryMirror())
+        try healthy.save(config(2, issuedAt: 2_000))
+        let store = CertificateConfigStore(prefs: prefs, mirror: broken)
         try store.setHighestSeenTime(5_000_000)
         try store.resetWatermarks(keySetVersion: 4, anchors: nil)
         XCTAssertEqual(broken.writes, 0)
         XCTAssertThrowsError(try store.highestSeenTime(), "an unreadable copy is not \"nothing seen\": the clock tries again")
         XCTAssertThrowsError(try store.lowerHighestSeenTime(1_000), "a lowering that cannot reach the copy fails, so it is retried")
+        // The replay watermarks too: the plist alone is what an older backup holds, so no
+        // config is judged or saved against it while the copy cannot be read.
+        XCTAssertThrowsError(try store.getCurrentIssuedAt(), "the plist's issuedAt is no replay floor on its own")
+        XCTAssertThrowsError(try store.getVersionWatermarks(), "nor are its per-host versions")
+        XCTAssertThrowsError(try store.save(config(3, issuedAt: 3_000)), "a save needs the floor it must raise")
+        XCTAssertEqual(try healthy.getCurrentIssuedAt(), 2_000, "the healthy view is unchanged")
     }
 
     func testTheClockReferenceSurvivesAContainerPutBackAndFollowsTheLibrarysOwnReset() throws {

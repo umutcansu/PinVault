@@ -88,10 +88,35 @@ final class SecurityAndNetworkingTests: XCTestCase {
     }
 
     func testAFileAllowingARelaxationAppliesIt() throws {
-        let allowing = try NativeSecurity.parse(#"{"configApis":[{"id":"default","allowServerGeneratedKey":true}]}"#, source: "f")
+        let allowing = try NativeSecurity.parse("""
+            {"configApis":[{"id":"default","allowServerGeneratedKey":true,"signaturePublicKeys":["\(key)"],
+              "bootstrapPins":[{"hostname":"h","sha256":["\(pinA)","\(pinB)"]}]}]}
+            """, source: "f")
         let p = try parse(#"{"configApis":[{\#(base),"bootstrapPins":[{"hostname":"h","sha256":["\#(pinA)","\#(pinB)"]}],"signaturePublicKey":"\#(key)"}]}"#,
                           native: allowing)
         XCTAssertEqual(p.config.configApis["default"]?.allowServerGeneratedKey, true)
+    }
+
+    func testAReleaseBuildNeedsTheAnchorsInTheFileAndTheIdentityHostsAreItsCall() throws {
+        // A block that only names itself would leave pins and keys to the bundle.
+        let bare = try NativeSecurity.parse(#"{"configApis":[{"id":"default"}]}"#, source: "f")
+        let anchored = #"\#(base),"bootstrapPins":[{"hostname":"h.example","sha256":["\#(pinA)","\#(pinB)"]}],"signaturePublicKey":"\#(key)""#
+        assertRefused(#"{"configApis":[{\#(anchored)}]}"#, native: bare, "bootstrapPins", "declare bootstrapPins")
+        let keyless = try NativeSecurity.parse(#"{"configApis":[{"id":"default","bootstrapPins":[{"hostname":"h.example","sha256":["\#(pinA)","\#(pinB)"]}]}]}"#, source: "f")
+        assertRefused(#"{"configApis":[{\#(anchored)}]}"#, native: keyless, "signaturePublicKeys", "declare signaturePublicKeys")
+        // The relaxations stand in for the anchor they relax; a debug build takes the bare block.
+        let relaxed = try NativeSecurity.parse(#"{"configApis":[{"id":"default","allowUnpinnedConfigApi":true,"allowUnsigned":true}]}"#, source: "f")
+        XCTAssertNotNil(try parse(#"{"configApis":[{\#(base)}]}"#, native: relaxed))
+        XCTAssertNotNil(try parse(#"{"configApis":[{\#(anchored)}]}"#, native: bare, release: false))
+        // Who gets the identity: from JS only where the file names the hosts, or in a debug build.
+        assertRefused(#"{"configApis":[{\#(base),"clientCertHosts":["cdn.example:443"]}]}"#, native: file, "clientCertHosts", "declare clientCertHosts")
+        XCTAssertNotNil(try parse(#"{"configApis":[{\#(base),"clientCertHosts":["cdn.example:443"]}]}"#, native: file, release: false))
+        let naming = try NativeSecurity.parse("""
+            {"configApis":[{"id":"default","clientCertHosts":["api.example:443"],
+              "bootstrapPins":[{"hostname":"h.example","sha256":["\(pinA)","\(pinB)"]}],"signaturePublicKeys":["\(key)"]}]}
+            """, source: "f")
+        XCTAssertNotNil(try parse(#"{"configApis":[{\#(base),"clientCertHosts":["API.example:443"]}]}"#, native: naming))
+        assertRefused(#"{"configApis":[{\#(base),"clientCertHosts":["cdn.example:443"]}]}"#, native: naming, "clientCertHosts", "fixed")
     }
 
     func testRequireOnlyTightensAndFixesTheIds() throws {

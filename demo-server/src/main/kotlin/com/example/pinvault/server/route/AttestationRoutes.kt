@@ -48,6 +48,14 @@ import java.util.Base64
  * The challenge is counted on its own table at twice the address quota, so a
  * flood of challenge requests costs nothing but a MAC each and never uses up
  * the attestations of the devices behind the same address.
+ *
+ * The device is counted only once the body proved it is that device
+ * ([AttestationService.attest]: the signature verifies and the key is the one
+ * the device registered): a stranger who knows a device id cannot spend its
+ * quota and keep it from its token. Device ids are not addresses, so a full
+ * table lets a new device through ([RateLimiter.Overflow.FAIL_OPEN]) instead
+ * of refusing every device it has not seen; the address limiter still bounds
+ * the flood.
  */
 class AttestationLimits(
     private val perAddress: RateLimiter? = null,
@@ -59,7 +67,7 @@ class AttestationLimits(
         fun of(perAddress: Int, perDevice: Int): AttestationLimits = AttestationLimits(
             perAddress = if (perAddress > 0) RateLimiter(maxAttempts = perAddress, windowMs = WINDOW_MS) else null,
             challengePerAddress = if (perAddress > 0) RateLimiter(maxAttempts = perAddress * 2, windowMs = WINDOW_MS) else null,
-            perDevice = if (perDevice > 0) RateLimiter(maxAttempts = perDevice, windowMs = WINDOW_MS) else null
+            perDevice = if (perDevice > 0) RateLimiter(maxAttempts = perDevice, windowMs = WINDOW_MS, overflow = RateLimiter.Overflow.FAIL_OPEN) else null
         )
 
         private const val WINDOW_MS = 10 * 60_000L
@@ -112,12 +120,11 @@ fun Route.attestationRoutes(
         // The address is counted before the body is read: nothing the caller sends can make up more windows.
         if (limits != null && !limits.allowAddress(remote)) return@post call.respondAttestRateLimited()
         val body = call.receiveLimitedJson() ?: return@post
-        // ...and the device id it claims, once there is a well-formed one.
-        val claimedDevice = (body["deviceId"] as? JsonPrimitive)?.takeIf { it.isString }?.content?.takeIf { AttestationService.DEVICE_ID.matches(it) }
-        if (claimedDevice != null && limits != null && !limits.allowDevice(configApiId, claimedDevice)) return@post call.respondAttestRateLimited()
 
         // Over mTLS the token names the connection's certificate (cnf.x5t#S256, ATTESTATION.md §5).
-        val outcome = service.attest(configApiId, body, remote, clientCertificate = call.clientCertificate()?.encoded)
+        // The device's own quota is spent inside, once the body proved it is that device.
+        val outcome = service.attest(configApiId, body, remote, clientCertificate = call.clientCertificate()?.encoded,
+            deviceAllowed = { deviceId -> limits == null || limits.allowDevice(configApiId, deviceId) })
         call.response.header(HttpHeaders.CacheControl, "no-store")
         when (outcome) {
             is AttestationService.Outcome.Refused -> call.respondText(outcome.body(), ContentType.Application.Json, outcome.status)

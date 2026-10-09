@@ -255,6 +255,17 @@ enum SecurityPolicy {
         try relaxation("allowUnpinnedConfigApi", js.allowUnpinned, block.allowUnpinnedConfigApi)
         try relaxation("allowServerGeneratedKey", js.allowServerKey, block.allowServerGeneratedKey)
 
+        // A release build's trust anchors come from the file, so a declared block
+        // must carry them: a bare `{"id": …}` would hand pins and keys to the bundle.
+        if release {
+            func anchor(_ key: String, _ relaxation: String) -> BridgeInputError {
+                BridgeInputError("\(path).\(key): a release build takes it only from the app's native security file (\(native.source)); "
+                    + "declare \(key) for Config API '\(id)' there (or \(relaxation))")
+            }
+            if block.bootstrapPins == nil && !block.allowUnpinnedConfigApi { throw anchor("bootstrapPins", "allowUnpinnedConfigApi") }
+            if block.signaturePublicKeys == nil && !block.allowUnsigned { throw anchor("signaturePublicKeys", "allowUnsigned") }
+        }
+
         var out = js
         if let n = block.bootstrapPins {
             if let j = js.bootstrapPins, !NativeSecurity.samePins(j, n) { throw fixed("bootstrapPins") }

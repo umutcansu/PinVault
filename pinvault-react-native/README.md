@@ -207,11 +207,18 @@ parsed as strictly; a broken file rejects `start` with `E_INVALID_CONFIG`
 - a field the file declares is the value: JS may leave it out (the native value
   applies) or repeat it (lists in any order); a different value rejects `start`
   with `E_INVALID_CONFIG` naming the field;
+- in a release build a declared block must carry its anchors: `bootstrapPins`
+  (or `allowUnpinnedConfigApi`) and `signaturePublicKeys` (or `allowUnsigned`);
+  a block that only names itself rejects `start` — otherwise the bundle would
+  supply the pins and keys;
 - `allowUnsigned`, `allowUnpinnedConfigApi` and `allowServerGeneratedKey` from
   JS are refused unless the file allows them for that block;
 - a block's `url`, `enrollmentUrl`, `renewalUrl`, `tokenHosts` and
   `clientCertHosts` are fixed where the file gives them (where the block talks to, and who gets its token and identity),
   and `attestation: true` / `proofOfPossession: true` there cannot be turned off from JS;
+  in a release build JS may give `clientCertHosts` only where the file names
+  them (the bundle cannot hand the device's identity to another host;
+  `tokenHosts` from JS only narrows the library's default);
 - `require` only tightens: a protection it turns on stays on whatever JS says,
   its `requireCaTrust` hosts are added to JS's, the expected signer / bundle /
   team ids and iOS `userAuthStrength` are fixed, and `expiredConfigGraceSeconds`

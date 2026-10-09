@@ -548,6 +548,23 @@ class AttestationRoutesTest {
     }
 
     @Test
+    fun `a stranger who knows a device id cannot spend its quota`() = testApplication {
+        app(service(), limits = AttestationLimits.of(perAddress = 0, perDevice = 2))
+        val key = ecKey()
+        assertEquals("pass", attestJson(body(challenge(), "vip-1", key, report()))["result"]!!.jsonPrimitive.content)
+        // Another key claiming the id, a bad signature and a malformed body: refused before the device is counted.
+        repeat(3) { refused(body(challenge(), "vip-1", ecKey(), report()), HttpStatusCode.Forbidden, "key_mismatch") }
+        repeat(3) { refused(body(challenge(), "vip-1", key, report(), signer = ecKey().private), HttpStatusCode.Unauthorized, "signature_invalid") }
+        repeat(3) { refused(body("not-a-nonce", "vip-1", key, report()), HttpStatusCode.BadRequest, "nonce_invalid") }
+        // The device itself still has its second slot; the third is its own.
+        assertEquals("pass", attestJson(body(challenge(), "vip-1", key, report()))["result"]!!.jsonPrimitive.content)
+        assertEquals(HttpStatusCode.TooManyRequests, attest(body(challenge(), "vip-1", key, report())).status)
+        // A refused attestation registers nothing.
+        refused(body(challenge(), "vip-2", ecKey(), report(), signer = ecKey().private), HttpStatusCode.Unauthorized, "signature_invalid")
+        assertNull(devices.get(scope, "vip-2"))
+    }
+
+    @Test
     fun `a signer failure leaves the config out but keeps the verdict`() = testApplication {
         val away = object : com.example.pinvault.server.service.signing.ConfigSigner {
             override val name = "command:kms"

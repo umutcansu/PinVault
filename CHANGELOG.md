@@ -1,5 +1,38 @@
 # Changelog
 
+## Unreleased
+
+Fixes from the 2026-10-09 OWASP review of 2.4.0 (server Top 10 / API Top 10,
+libraries MASVS v2; no Critical or High finding, three Medium ones below).
+
+### Reference server
+
+- **A stranger cannot spend a device's attestation quota.**
+  `ATTESTATION_DEVICE_RATE_LIMIT` was counted on the `deviceId` the body
+  claimed, before its signature was checked: anyone who knew a device id could
+  keep that device from its `PinVault-Token` with three requests a minute, and
+  ~10k invented ids made the per-device table refuse every newcomer. The device
+  is now counted once the body proved it is that device (signature verified and
+  the key is the registered one, or the device is new), a refused attestation
+  registers nothing, and a full per-device table lets new devices through (the
+  address limiter still bounds the flood).
+
+### iOS library
+
+- **Replay watermarks fail closed when the Keychain copy cannot be read.**
+  `issuedAt` and per-host versions fell back to the container's plist alone
+  while the mirror answered a transient Keychain error (a locked device right
+  after a reboot, a busy securityd); a container put back from an older backup
+  could then replay a still-valid older config. The store now throws, as the
+  trusted clock and the key-set floor already did: no config is judged or saved
+  against the plist alone, the next fetch tries again.
+
+### React Native
+
+- See `pinvault-react-native/CHANGELOG.md`: a release build needs the anchors
+  in the native security file, and `clientCertHosts` from JS only where the file
+  names them.
+
 ## 2.4.0 — 2026-10-09 — root / jailbreak hardening, proof of possession, fresh attestation, token anomalies
 
 A review of what a rooted or jailbroken device lets an attacker do (OWASP

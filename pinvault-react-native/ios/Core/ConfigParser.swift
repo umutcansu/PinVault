@@ -296,6 +296,12 @@ public enum ConfigParser {
             if let j = renewalUrl, j != n { throw fixed("renewalUrl") }
             fixedRenewalUrl = n
         }
+        // Who gets the device's identity is the file's call in a release build: JS cannot
+        // add a host the file does not name (tokenHosts only narrows the library's default).
+        if release, let nativeBlock, nativeBlock.clientCertHosts == nil, clientCertHosts != nil {
+            throw BridgeInputError("\(b.path).clientCertHosts: a release build takes it only from the app's native security file "
+                + "(\(native?.source ?? "")); declare clientCertHosts for Config API '\(id)' there")
+        }
         var certHosts = clientCertHosts
         if let n = nativeBlock?.clientCertHosts {
             if let j = clientCertHosts, !NativeSecurity.sameKeys(lower(j), lower(n)) { throw fixed("clientCertHosts") }

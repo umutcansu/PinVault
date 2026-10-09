@@ -1,5 +1,19 @@
 # Changelog
 
+## Unreleased
+
+### Security
+
+- **A release build needs the anchors in the native security file:** a declared
+  block must carry `bootstrapPins` (or `allowUnpinnedConfigApi`) and
+  `signaturePublicKeys` (or `allowUnsigned`). A file with a bare
+  `{"id": …}` satisfied the release rule while the bundle supplied the pins
+  and keys; it now rejects `start` with `E_INVALID_CONFIG` naming the field.
+- **`clientCertHosts` from JS only where the file names them** (release
+  builds): an OTA bundle could otherwise present the device's mTLS identity
+  to another pinned host. `tokenHosts` from JS is still taken: it only
+  narrows the library's default.
+
 ## 2.4.0 — 2026-10-09
 
 ### Breaking

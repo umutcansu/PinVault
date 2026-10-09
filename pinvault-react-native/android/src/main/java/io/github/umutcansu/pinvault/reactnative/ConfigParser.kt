@@ -273,6 +273,12 @@ internal object ConfigParser {
         val tokenHosts = nativeBlock?.tokenHosts?.also { n ->
             if (jsTokenHosts != null && !NativeSecurity.sameKeys(jsTokenHosts.map(String::lowercase), n.map(String::lowercase))) fixed("tokenHosts")
         } ?: jsTokenHosts
+        // Who gets the device's identity is the file's call in a release build: JS cannot
+        // add a host the file does not name (tokenHosts only narrows the library's default).
+        if (release && nativeBlock != null && nativeBlock.clientCertHosts == null && clientCertHosts != null) {
+            throw BridgeInputException("${b.path}.clientCertHosts: a release build takes it only from the app's native security file " +
+                "(${native?.source}); declare clientCertHosts for Config API '$id' there")
+        }
         val certHosts = nativeBlock?.clientCertHosts?.also { n ->
             if (clientCertHosts != null && !NativeSecurity.sameKeys(clientCertHosts.map(String::lowercase), n.map(String::lowercase))) fixed("clientCertHosts")
         } ?: clientCertHosts

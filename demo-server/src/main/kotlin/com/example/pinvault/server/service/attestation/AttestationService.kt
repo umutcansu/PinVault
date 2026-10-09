@@ -171,9 +171,15 @@ class AttestationService(
      * Runs the checks of §2.2 on [body] for [configApiId]. [remote] is the
      * source address, for the audit entries; [clientCertificate] the DER of
      * the verified client certificate the request came with (mTLS), which the
-     * token then names in `cnf.x5t#S256`.
+     * token then names in `cnf.x5t#S256`. [deviceAllowed] is the per-device
+     * rate limit, asked only once the body proved it is that device (the
+     * signature verifies and the key is the registered one, or the device is
+     * new): false answers `429 rate_limited` and nothing is registered.
      */
-    fun attest(configApiId: String, body: JsonObject, remote: String, clientCertificate: ByteArray? = null): Outcome {
+    fun attest(
+        configApiId: String, body: JsonObject, remote: String, clientCertificate: ByteArray? = null,
+        deviceAllowed: (String) -> Boolean = { true }
+    ): Outcome {
         // ── 1. Shape ───────────────────────────────────────────────────
         val version = (body["v"] as? JsonPrimitive)?.intOrNull
         if (version != 1) return Outcome.Refused(HttpStatusCode.BadRequest, "unsupported_version", "This server speaks attestation protocol v1 (send \"v\": 1).")
@@ -253,8 +259,13 @@ class AttestationService(
                 return Outcome.Refused(HttpStatusCode.Forbidden, "key_mismatch",
                     "This device is registered with another key. An administrator can forget the device so it registers again.")
             }
+            // The registered key signed this: the device's own quota, not a stranger's claim.
+            if (!deviceAllowed(deviceId)) return rateLimited()
             keyAttestation = device.keyAttestation
         } else {
+            // A device not seen before: counted before the chain is checked, so a flood of
+            // new ids costs the address its quota, not this server a chain verification each.
+            if (!deviceAllowed(deviceId)) return rateLimited()
             // An Android report that says its key is attested, with no chain: the client
             // believes this server knows the key (it was forgotten meanwhile). Ask for the
             // chain again rather than register the key without the hardware's word.
@@ -929,6 +940,9 @@ class AttestationService(
     }.toString()
 
     private fun invalid(message: String) = Outcome.Refused(HttpStatusCode.BadRequest, "invalid_json", message)
+
+    /** The device's own attestation quota is spent (`ATTESTATION_DEVICE_RATE_LIMIT`). */
+    private fun rateLimited() = Outcome.Refused(HttpStatusCode.TooManyRequests, "rate_limited", "Too many attestations. Try again later.")
 
     companion object {
         /** The report (a string) is at most this long. */

@@ -295,6 +295,16 @@ internal object SecurityPolicy {
         relaxation("allowUnpinnedConfigApi", js.allowUnpinned, block.allowUnpinnedConfigApi)
         relaxation("allowServerGeneratedKey", js.allowServerKey, block.allowServerGeneratedKey)
 
+        // A release build's trust anchors come from the file, so a declared block
+        // must carry them: a bare `{"id": …}` would hand pins and keys to the bundle.
+        if (release) {
+            fun anchor(key: String, relaxation: String): Nothing = throw BridgeInputException(
+                "$path.$key: a release build takes it only from the app's native security file (${native.source}); " +
+                    "declare $key for Config API '$id' there (or $relaxation)")
+            if (block.bootstrapPins == null && !block.allowUnpinnedConfigApi) anchor("bootstrapPins", "allowUnpinnedConfigApi")
+            if (block.signaturePublicKeys == null && !block.allowUnsigned) anchor("signaturePublicKeys", "allowUnsigned")
+        }
+
         val pins = block.bootstrapPins?.also { n ->
             if (js.bootstrapPins != null && !NativeSecurity.samePins(js.bootstrapPins, n)) fixed("bootstrapPins")
         } ?: js.bootstrapPins
