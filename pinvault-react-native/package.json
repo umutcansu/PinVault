@@ -1,6 +1,6 @@
 {
   "name": "@umutcansu/react-native-pinvault",
-  "version": "2.4.1",
+  "version": "2.4.2",
   "description": "PinVault for React Native: dynamic certificate pinning with signed remote configs, mTLS enrollment and signed vault files, as a thin bridge over the native PinVault libraries",
   "main": "./lib/module/index.js",
   "types": "./lib/typescript/src/index.d.ts",

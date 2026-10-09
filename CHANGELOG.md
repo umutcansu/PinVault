@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 2.4.2 — 2026-10-10 — Expo config plugin, relaxations refused in release builds, ES256 tokens, safer server defaults
 
 ### Reference server
 

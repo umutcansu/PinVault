@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 2.4.2 — 2026-10-10
 
 ### Added
 
@@ -12,6 +12,15 @@
   (`nativeSecurityFile`), and writes the two native opt-outs only when asked
   (`allowNoNativeSecurityFile`, `pinReactNativeNetworking: false`). Built and
   run with Expo SDK 54 (React Native 0.81), Android and iOS release builds.
+
+### Changed
+
+- **Native libraries 2.4.2:** release builds refuse `allowUnsigned()` /
+  `allowUnpinnedConfigApi()` unless the block also calls
+  `allowRelaxationsInRelease()`. The bridge calls it only where the native
+  security file itself allows the relaxation (`allowUnsigned` /
+  `allowUnpinned`), so the native file stays the only place that decides;
+  JS cannot turn it on.
 
 ## 2.4.1 — 2026-10-10
 
