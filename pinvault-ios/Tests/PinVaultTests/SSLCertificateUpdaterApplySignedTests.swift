@@ -138,7 +138,7 @@ final class SSLCertificateUpdaterApplySignedTests: XCTestCase {
         let rotated = await updater(trust: first)
             .applySigned(signed(payload(4, issuedAt: now), signer: keyB, keySet: keySet(1, [keyB])))
         XCTAssertEqual(rotated, .updated(newVersion: 4))
-        XCTAssertEqual(mirror.values.keySetVersion, 1, "the floor outside the container")
+        XCTAssertEqual(mirror.values.floorVersion, 1, "the floor outside the container")
 
         // The container is put back from before the rotation: no key set on disk,
         // the store's own records gone. Key A is in force again — on disk only.
@@ -179,6 +179,10 @@ final class SSLCertificateUpdaterApplySignedTests: XCTestCase {
         t.setFloorProvider { throw PinVaultError.illegalState("keychain") }
         XCTAssertThrowsError(try t.keySetBelowFloor())
         XCTAssertThrowsError(try t.verifyVaultFile(key: "f", version: 1, plaintext: Data(), entries: []))
+        // A block without recovery keys never applies a set: it has no floor to read, readable or not.
+        let plain = trust(keys: [keyA], withRecovery: false)
+        plain.setFloorProvider { throw PinVaultError.illegalState("keychain") }
+        XCTAssertFalse(try plain.keySetBelowFloor())
     }
 
     func testApplySignedAndUpdateNowSerialiseOnTheSameLock() async throws {

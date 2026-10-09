@@ -46,7 +46,6 @@ final class SpyConfigStore: UpdaterConfigStore, @unchecked Sendable {
     }
 
     func recordKeySetFloor(keySetVersion: Int, recoveryAnchors: String) { base.recordKeySetFloor(keySetVersion: keySetVersion, recoveryAnchors: recoveryAnchors) }
-    func mirroredKeySetVersion() -> Int? { base.mirroredKeySetVersion() }
     func reconcileMirror(keySetVersion: Int, anchors: String) { base.reconcileMirror(keySetVersion: keySetVersion, anchors: anchors) }
     func resetWatermarks(keySetVersion: Int, anchors: String?) throws { try base.resetWatermarks(keySetVersion: keySetVersion, anchors: anchors) }
     func keySetVersionSeen() throws -> Int? { try base.keySetVersionSeen() }

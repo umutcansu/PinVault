@@ -442,12 +442,6 @@ final class CertificateConfigStore: Sendable {
         clockMirrored.set(timeMs)
     }
 
-    /// The newest signing-key set this device applied, as the Keychain copy
-    /// records it (outside the container); nil when none or unreadable.
-    func mirroredKeySetVersion() -> Int? {
-        mirror.read()?.keySetVersion
-    }
-
     /// The block's key-set floor (``SignatureTrust``): kept in the block's own
     /// copy, shared by every origin of the block as its key sets are, so
     /// pointing the block at another server does not drop it. Throws when the
@@ -532,9 +526,9 @@ final class CertificateConfigStore: Sendable {
             mirrored.versions = [:]
         }
         if otherAnchors {
-            // Other compiled-in keys start a new epoch: key sets applied under
-            // the old anchors are no floor for the new ones (the sync that
-            // follows records the set in force).
+            // Other compiled-in keys start a new epoch for the watermarks: the
+            // key set they were last reset for is recorded afresh by the sync
+            // that follows. (The key-set floor is separate: recordKeySetFloor.)
             mirrored.keySetVersion = nil
         } else if let keySetVersion {
             mirrored.keySetVersion = max(keySetVersion, mirrored.keySetVersion ?? keySetVersion)

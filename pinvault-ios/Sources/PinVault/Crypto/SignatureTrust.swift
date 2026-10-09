@@ -169,6 +169,8 @@ final class SignatureTrust: Sendable {
     /// a rotation, which would bring revoked keys back. Nothing verifies then.
     /// Under other anchors (an update that changed the keys) there is no floor.
     func keySetBelowFloor() throws -> Bool {
+        // Without recovery keys no set is ever applied (version 0): no floor to read.
+        if recoveryKeys.isEmpty { return false }
         guard let provider = floorProvider.get(), let floor = try provider() else { return false }
         if let anchors = floor.anchors, anchors != recoveryFingerprint() { return false }
         return try keySetVersion() < floor.version

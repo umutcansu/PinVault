@@ -179,6 +179,16 @@ if case .unlocked(_, _, let bytes) = unlocked { use(bytes) }
   signed config is not accepted again. Old vault copies stay readable until
   their `maxOfflineAge`, measured on that clock; set it for files where that
   matters.
+- **The newest signing-key set applied** is kept in that Keychain item too, as
+  a floor: below it nothing verifies (configs, stored configs, vault files)
+  until a response brings a set at least as new — a container put back from
+  before a rotation does not bring revoked keys back. The floor is the block's
+  (it stays when the block points at another server) and holds while the
+  recovery keys stay the same; an update with other recovery keys starts again
+  from the set in force at its first sync. Two limits: in the moment between
+  such an update and its first sync there is no floor; and blocks that share
+  recovery keys should each set `serverScope`, so a set made for one block is
+  never taken by another.
 
 ## Attestation
 

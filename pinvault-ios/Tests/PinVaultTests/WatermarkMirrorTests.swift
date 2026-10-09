@@ -112,15 +112,15 @@ final class WatermarkMirrorTests: XCTestCase {
         let store = CertificateConfigStore(prefs: InMemoryPreferences(), mirror: mirror)
         try store.setTrustAnchorsSeen("anchors-1")
         store.reconcileMirror(keySetVersion: 3, anchors: "anchors-1")
-        XCTAssertEqual(store.mirroredKeySetVersion(), 3)
+        XCTAssertEqual(mirror.values.keySetVersion, 3)
         // A container put back with an older set on disk: the floor stays.
         store.reconcileMirror(keySetVersion: 1, anchors: "anchors-1")
-        XCTAssertEqual(store.mirroredKeySetVersion(), 3)
+        XCTAssertEqual(mirror.values.keySetVersion, 3)
         // An update with other compiled-in keys: a new epoch, the floor follows the set in force.
         store.reconcileMirror(keySetVersion: 0, anchors: "anchors-2")
-        XCTAssertNil(store.mirroredKeySetVersion())
+        XCTAssertNil(mirror.values.keySetVersion)
         store.reconcileMirror(keySetVersion: 0, anchors: "anchors-2")
-        XCTAssertEqual(store.mirroredKeySetVersion(), 0)
+        XCTAssertEqual(mirror.values.keySetVersion, 0)
     }
 
     func testALoweringTheCopyDidNotTakeFails() throws {

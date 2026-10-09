@@ -20,7 +20,6 @@ protocol UpdaterConfigStore: AnyObject, Sendable {
     func trustAnchorsSeen() throws -> String?
     func setTrustAnchorsSeen(_ fingerprint: String) throws
     func reconcileMirror(keySetVersion: Int, anchors: String)
-    func mirroredKeySetVersion() -> Int?
     func recordKeySetFloor(keySetVersion: Int, recoveryAnchors: String)
 }
 
