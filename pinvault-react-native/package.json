@@ -10,7 +10,8 @@
       "types": "./lib/typescript/src/index.d.ts",
       "default": "./lib/module/index.js"
     },
-    "./package.json": "./package.json"
+    "./package.json": "./package.json",
+    "./app.plugin.js": "./app.plugin.js"
   },
   "files": [
     "src",
@@ -23,6 +24,8 @@
     "ios/*.swift",
     "ios/Core",
     "*.podspec",
+    "app.plugin.js",
+    "plugin",
     "README.md",
     "CHANGELOG.md",
     "LICENSE",
@@ -43,7 +46,8 @@
     "mtls",
     "security",
     "ios",
-    "android"
+    "android",
+    "expo"
   ],
   "repository": {
     "type": "git",
@@ -65,6 +69,7 @@
     "react-native": ">=0.81.0"
   },
   "devDependencies": {
+    "@expo/config-plugins": "^54.0.5",
     "@jest/globals": "^29.7.0",
     "@react-native/babel-preset": "0.87.1",
     "@react-native/jest-preset": "0.87.1",

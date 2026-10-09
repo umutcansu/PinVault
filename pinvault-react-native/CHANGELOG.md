@@ -1,5 +1,18 @@
 # Changelog
 
+## Unreleased
+
+### Added
+
+- **Expo config plugin** (`app.plugin.js`): at `expo prebuild` it sets the
+  iOS deployment target to 16.0, writes the Info.plist keys
+  (`faceIDPermission`, `backgroundUpdates`), adds
+  `PinVaultBridge.registerBackgroundTask()` to a Swift `AppDelegate`, copies
+  the native security file into Android's assets and the iOS app bundle
+  (`nativeSecurityFile`), and writes the two native opt-outs only when asked
+  (`allowNoNativeSecurityFile`, `pinReactNativeNetworking: false`). Built and
+  run with Expo SDK 54 (React Native 0.81), Android and iOS release builds.
+
 ## 2.4.1 — 2026-10-10
 
 ### Security

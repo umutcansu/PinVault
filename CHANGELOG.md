@@ -1,5 +1,12 @@
 # Changelog
 
+## Unreleased
+
+### React Native
+
+- See `pinvault-react-native/CHANGELOG.md`: an Expo config plugin
+  (`app.plugin.js`) does the native setup at `expo prebuild`.
+
 ## 2.4.1 — 2026-10-10 — failed probes raise, production attestation floor, React Native WebSocket pinned and 0.81+
 
 Fixes from the 2026-10-09 OWASP review of 2.4.0 (server Top 10 / API Top 10,

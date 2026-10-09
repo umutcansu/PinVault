@@ -118,6 +118,8 @@ cd ios && pod install
 React Native 0.81+ (New Architecture). The native libraries come with the
 package. On iOS register the background task in `AppDelegate`
 (`PinVaultBridge.registerBackgroundTask()`); on Android there is nothing to add.
+Expo: add the package to `plugins` in `app.json`; its config plugin does the native
+setup at `expo prebuild` ([Expo](pinvault-react-native/README.md#expo)).
 Details: [`pinvault-react-native/README.md`](pinvault-react-native/README.md#install).
 
 </details>

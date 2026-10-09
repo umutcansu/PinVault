@@ -65,6 +65,43 @@ hooks before `Application.onCreate` runs (see [Networking](#networking)).
 **Release builds.** Put the trust anchors into the app itself, not only into
 the JS bundle: [Native security file](#native-security-file).
 
+### Expo
+
+A native module: it runs in a development build or `expo prebuild`, not in
+Expo Go. The package's config plugin does the steps above at prebuild — iOS
+deployment target 16.0 (`Podfile.properties.json` and the Xcode project),
+the Info.plist keys, the background task in `AppDelegate.swift`, and the
+native security file copied into Android's assets and the iOS app bundle:
+
+```bash
+npx expo install @umutcansu/react-native-pinvault
+```
+
+```json
+{
+  "expo": {
+    "plugins": [
+      ["@umutcansu/react-native-pinvault", {
+        "nativeSecurityFile": "./pinvault_security.json",
+        "faceIDPermission": "Unlock your protected files",
+        "backgroundUpdates": true
+      }]
+    ]
+  }
+}
+```
+
+| Option | Does |
+|---|---|
+| `nativeSecurityFile` | path (from the project root) of your `pinvault_security.json`; checked to be a JSON object at prebuild |
+| `faceIDPermission` | `NSFaceIDUsageDescription`, for vault files behind the screen lock (`userAuth`) |
+| `backgroundUpdates` | `BGTaskSchedulerPermittedIdentifiers`, `UIBackgroundModes` = `fetch` and `PinVaultBridge.registerBackgroundTask()` in a Swift `AppDelegate` (Expo SDK 53+), for `schedulePeriodicUpdates` |
+| `allowNoNativeSecurityFile` | `true` writes the opt-out of the file (Android meta-data, Info.plist): release builds then take anchors from JS — not recommended |
+| `pinReactNativeNetworking` | `false` removes the networking provider and writes `PinVaultPinReactNativeNetworking` = NO: RN's own fetch / WebSocket stay unpinned |
+
+Unknown options and wrong types stop prebuild. Tested with Expo SDK 54
+(React Native 0.81) on Android and iOS, release builds.
+
 ## Quick start
 
 ```ts
