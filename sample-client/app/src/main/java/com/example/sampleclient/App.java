@@ -615,7 +615,7 @@ public class App extends Application {
             // Pin kapsamı: yalnızca bu host'un pin'lerini iste. Sunucu isteği
             // cihazın host ACL'iyle kesiştirir; izin yoksa hiç pin dönmez.
             if (scopedPins) block.wantPinsFor(TARGET_HOST);
-            applyAttestation(block);
+            applyAttestation(block, SAMPLE_HOST_IP + ":" + BuildConfig.HOST_HTTPS_PORT);
             return Unit.INSTANCE;
         });
     }
@@ -637,8 +637,17 @@ public class App extends Application {
      * (PINVAULT_TOKEN_REQUIRE_PROOF, üretim profilinde açık) cihazdan çalınan
      * token tek başına işe yaramaz; istemezse başlık zararsızdır.
      */
-    private static void applyAttestation(ConfigApiBlock.Builder block) {
-        if (BuildConfig.HOST_ATTESTATION) block.attestation().proofOfPossession();
+    private static void applyAttestation(ConfigApiBlock.Builder block, String listenerHostPort) {
+        if (!BuildConfig.HOST_ATTESTATION) return;
+        block.attestation().proofOfPossession();
+        // A-1: token artık varsayılan olarak pinli her hosta değil, yalnız bloğun
+        // kendi Config API listener'ına gider. Bu demo token'ı "atestasyon yap,
+        // sonra mock host'a git" düğmesinin vurduğu mock host'lara da taşır; o
+        // hostlar burada açıkça yazılır (listener de, çünkü açık liste varsayılanı ezer).
+        block.tokenHosts(
+                listenerHostPort,
+                BuildConfig.MOCK_TLS_HOST + ":" + BuildConfig.MOCK_TLS_PORT,
+                BuildConfig.MOCK_MTLS_HOST + ":" + BuildConfig.MOCK_MTLS_PORT);
     }
 
     /**
@@ -688,7 +697,7 @@ public class App extends Application {
             // Test derlemelerinde elle yüklenen P12 varsa onun yerine o kullanılır
             // (TestControls); release'te bu çağrı boştur.
             TestControls.applyManualIdentity(block, manualP12);
-            applyAttestation(block);
+            applyAttestation(block, SAMPLE_HOST_IP + ":" + BuildConfig.HOST_MTLS_PORT);
             return Unit.INSTANCE;
         });
     }

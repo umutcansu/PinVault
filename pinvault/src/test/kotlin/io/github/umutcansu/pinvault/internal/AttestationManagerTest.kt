@@ -251,17 +251,18 @@ class AttestationManagerTest {
     }
 
     @Test
-    fun `without tokenHosts the live config's pinned hosts and the Config API listener carry the token`() = runTest {
+    fun `without tokenHosts only the Config API listener carries the token, not the pinned hosts`() = runTest {
         server.enqueue(challenge())
         server.enqueue(pass())
         val live = CertificateConfig(pins = listOf(HostPin("api.live.test", listOf("p1", "p2")), HostPin("*.cdn.live.test", listOf("p1", "p2"))))
         val m = manager(block = block(), liveConfig = { live })
         m.attestNow()
 
-        assertTrue(m.handlesHost("api.live.test", 443))
-        assertTrue(m.handlesHost("x.cdn.live.test", 443))
+        // A-1: the token must not fan out to every pinned host by default.
         assertTrue("the block's own Config API listener", m.handlesHost("config.example.com", 8091))
         assertFalse("another port of it", m.handlesHost("config.example.com", 443))
+        assertFalse("a pinned third party is not a token host", m.handlesHost("api.live.test", 443))
+        assertFalse("nor a pinned wildcard host", m.handlesHost("x.cdn.live.test", 443))
         assertFalse(m.handlesHost("api.example.com", 443))
     }
 
