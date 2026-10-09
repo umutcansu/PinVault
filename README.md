@@ -9,7 +9,7 @@ versioned files only your devices can open, and attestation that tells your
 app from a script — for Android, iOS and React Native.
 
 [![Maven Central](https://img.shields.io/maven-central/v/io.github.umutcansu/pinvault?label=Android)](https://central.sonatype.com/artifact/io.github.umutcansu/pinvault)
-[![SwiftPM](https://img.shields.io/badge/iOS-SwiftPM%202.3.2-F05138?logo=swift&logoColor=white)](pinvault-ios/README.md)
+[![SwiftPM](https://img.shields.io/badge/iOS-SwiftPM%202.4.0-F05138?logo=swift&logoColor=white)](pinvault-ios/README.md)
 [![npm](https://img.shields.io/npm/v/@umutcansu/react-native-pinvault?label=React%20Native&logo=react)](https://www.npmjs.com/package/@umutcansu/react-native-pinvault)
 [![License](https://img.shields.io/badge/license-Apache%202.0-blue)](LICENSE)
 
@@ -37,8 +37,9 @@ PinVault moves the pins to your server and keeps the safety:
 - 🔌 **Server-agnostic.** Use the reference server (Docker, dashboard included),
   implement two endpoints in your own backend, or run fully offline with static pins.
 
-> **Latest release: 2.3.2** — the iOS library and the React Native package are
-> new in 2.3. See [CHANGELOG.md](CHANGELOG.md) and the upgrade notes in [MIGRATION.md](MIGRATION.md).
+> **Latest release: 2.4.0** — root / jailbreak hardening, a proof per request
+> for the attestation token, fresh key attestation and token anomaly detection.
+> See [CHANGELOG.md](CHANGELOG.md) and the upgrade notes in [MIGRATION.md](MIGRATION.md).
 
 ## What you get
 
@@ -84,7 +85,7 @@ behaviour and the same server, so you can move between them freely.
 ```kotlin
 // build.gradle.kts
 dependencies {
-    implementation("io.github.umutcansu:pinvault:2.3.2")
+    implementation("io.github.umutcansu:pinvault:2.4.0")
 }
 ```
 
@@ -97,7 +98,7 @@ minSdk 24, JDK 17, OkHttp 4. Java callers: see [the guide](GUIDE.md#2b-initializ
 
 ```swift
 // Package.swift — or Xcode: File → Add Package Dependencies…
-.package(url: "https://github.com/umutcansu/PinVault.git", from: "2.3.2")
+.package(url: "https://github.com/umutcansu/PinVault.git", from: "2.4.0")
 ```
 
 iOS 16+, Swift 6, no third-party dependencies. Info.plist keys for background

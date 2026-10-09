@@ -4,6 +4,45 @@ The upgrade notes for every release since 2.0, troubleshooting, and a quick
 reference for the multi-Config-API DSL. The full list of changes is in
 [CHANGELOG.md](CHANGELOG.md).
 
+## Upgrading from 2.3.x to 2.4
+
+Everything new in 2.4 is off by default on the server and in the library,
+except what follows.
+
+- **Vault file keys** must match `[A-Za-z0-9._-]{1,64}` and not be only dots
+  (Android, iOS, React Native). An app with another key fails at `init`:
+  rename the file (`vaultFile("<new key>")`); it is fetched again.
+- **`GuardedOperation.LOAD_FILE`** (iOS `.loadFile`): `loadFile` now asks the
+  environment guard. An exhaustive `when` / `switch` over the enum needs a
+  branch for it.
+- **R8 (Android):** the library keeps only its six Gson wire types; `PinVault`
+  and the configuration types are renamed in minified apps. Code that looked
+  them up by name (reflection) breaks.
+- **`IntegrityVerdictProvider.verdict(nonce, deviceId)`** is the method the
+  library calls; the old `verdict(nonce)` is its default, so existing
+  providers keep working.
+- **The attestation token goes over HTTPS only** (Android, as on iOS), and a
+  redirect to another host no longer carries it.
+- **React Native, release builds:** a native security file
+  (`pinvault_security.json`) is required when the config has Config APIs or
+  static pins (opt out: manifest meta-data
+  `io.github.umutcansu.pinvault.ALLOW_NO_NATIVE_SECURITY_FILE` / Info.plist
+  `PinVaultAllowNoNativeSecurityFile`); `requirePinnedReactNativeNetworking`
+  is on; `expiredConfigGrace` is at most 7 days. See
+  `pinvault-react-native/CHANGELOG.md`.
+- **Server, strict policy:** new flags reject — `bootloader_unlocked`,
+  `boot_not_verified`, `key_revoked`, `report_mismatch`, `config_rollback`
+  (from the stored hardware facts, V26), and, only when their feature is on,
+  `fresh_attestation_failed`, `fresh_attestation_overdue`, `token_anomaly`.
+  Stored policies take them at the profile's action; measure under `lenient`
+  first if in doubt. Migrations V26–V28 run at start.
+- **Sample host, production profile:** v2 verdicts, `PINVAULT_TOKEN_REQUIRE_PROOF`,
+  a daily fresh key attestation and token anomaly counting are on. App builds
+  older than 2.4 send no proof and no fresh chain: their requests to token
+  hosts are refused and their hardware-attested devices become
+  `fresh_attestation_overdue` after 4 days. Ship 2.4 with `proofOfPossession()`
+  first, or set those flags to `warn` until old builds are gone.
+
 ## Upgrading from 2.3.0 to 2.3.1
 
 Everything compiles unchanged. One behaviour changes for apps that call

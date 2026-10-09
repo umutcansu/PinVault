@@ -28,9 +28,9 @@ npm install @umutcansu/react-native-pinvault
 cd ios && pod install
 ```
 
-The native libraries come with it, at the package's own version: npm 2.3.2
-uses `io.github.umutcansu:pinvault:2.3.2` from Maven Central and the Swift
-package at tag `v2.3.2`. The New Architecture must stay on (React Native
+The native libraries come with it, at the package's own version: npm 2.4.0
+uses `io.github.umutcansu:pinvault:2.4.0` from Maven Central and the Swift
+package at tag `v2.4.0`. The New Architecture must stay on (React Native
 0.87's default).
 
 **iOS.** The pod depends on the PinVault Swift package through React Native's
