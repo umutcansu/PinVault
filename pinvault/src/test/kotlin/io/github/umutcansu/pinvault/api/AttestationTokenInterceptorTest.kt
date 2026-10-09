@@ -30,6 +30,13 @@ class AttestationTokenInterceptorTest {
         var forced = 0
         var asked = 0
         override fun handlesHost(host: String, port: Int) = handles
+        var proofs: Boolean = false
+        val proofFor = mutableListOf<String>()
+        override fun proof(method: String, url: okhttp3.HttpUrl, token: String): String? {
+            if (!proofs) return null
+            proofFor += "$method ${url.encodedPath} $token"
+            return "proof-${proofFor.size}-$token"
+        }
         override fun token(host: String, port: Int, forceRefresh: Boolean): String? {
             asked++
             if (forceRefresh) {
@@ -171,5 +178,29 @@ class AttestationTokenInterceptorTest {
         server.enqueue(MockResponse().setBody("ok"))
         two.newCall(get()).execute().close()
         assertEquals("other", server.takeRequest().getHeader("PinVault-Token"))
+    }
+
+    @Test
+    fun `with proofs each request carries one for its token, and the retry a new one for the new token`() {
+        source.proofs = true
+        server.enqueue(MockResponse().setResponseCode(401).setHeader("WWW-Authenticate", "PinVault-Token error=\"invalid_token\""))
+        server.enqueue(MockResponse().setBody("ok"))
+
+        client.newCall(Request.Builder().url(server.url("/api/data?q=1")).build()).execute().use { assertEquals(200, it.code) }
+
+        val first = server.takeRequest()
+        assertEquals("t1", first.getHeader("PinVault-Token"))
+        assertEquals("proof-1-t1", first.getHeader("PinVault-Proof"))
+        val retry = server.takeRequest()
+        assertEquals("t2", retry.getHeader("PinVault-Token"))
+        assertEquals("proof-2-t2", retry.getHeader("PinVault-Proof"))
+        assertEquals(listOf("GET /api/data t1", "GET /api/data t2"), source.proofFor)
+    }
+
+    @Test
+    fun `without proofs no proof header is sent`() {
+        server.enqueue(MockResponse().setBody("ok"))
+        client.newCall(get()).execute().close()
+        assertNull(server.takeRequest().getHeader("PinVault-Proof"))
     }
 }

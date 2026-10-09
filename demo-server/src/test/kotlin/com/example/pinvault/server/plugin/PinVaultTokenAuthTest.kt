@@ -149,3 +149,66 @@ class PinVaultTokenAuthTest {
         assertTrue(response.bodyAsText().contains("cert_binding"))
     }
 }
+
+/** PINVAULT_TOKEN_REQUIRE_PROOF: the token plus a PinVault-Proof per request (§5.1). */
+class PinVaultTokenAuthProofTest {
+    private val secret = ByteArray(32) { 7 }
+    private val now = 1_759_660_800L
+    private val device = java.security.KeyPairGenerator.getInstance("EC")
+        .apply { initialize(java.security.spec.ECGenParameterSpec("secp256r1")) }.generateKeyPair()
+    private val token = PinVaultToken.issue("k1", secret, "dev-1", "api", "00000000", 1, 300, nowSeconds = now,
+        keyThumbprint = PinVaultToken.jwkThumbprint(device.public as java.security.interfaces.ECPublicKey))
+
+    private fun ApplicationTestBuilder.app(origin: String? = null) {
+        install(PinVaultTokenAuth) {
+            secrets = { mapOf("k1" to secret) }
+            clock = { now }
+            requireProof = true
+            publicOrigin = origin
+        }
+        routing { get("/data") { call.respondText("ok") } }
+    }
+
+    private suspend fun ApplicationTestBuilder.reason(vararg headers: Pair<String, String>): String {
+        val response = client.get("/data?q=1") { headers.forEach { (n, v) -> header(n, v) } }
+        if (response.status == HttpStatusCode.OK) return "ok"
+        assertEquals(HttpStatusCode.Unauthorized, response.status)
+        assertTrue(response.headers[HttpHeaders.WWWAuthenticate].orEmpty().startsWith("PinVault-Token error=\"invalid_token\""))
+        return Regex("\"reason\":\"([a-z_]+)\"").find(response.bodyAsText())!!.groupValues[1]
+    }
+
+    @Test
+    fun `the token alone is refused, with a proof for this request it passes once`() = testApplication {
+        app()
+        assertEquals("proof_missing", reason(PinVaultToken.HEADER to token))
+        // The test client talks to http://localhost:80.
+        val proof = com.example.pinvault.server.service.attestation.Proofs.make(device, "GET", "http://localhost/data", token, now)
+        assertEquals("ok", reason(PinVaultToken.HEADER to token, "PinVault-Proof" to proof))
+        assertEquals("proof_replay", reason(PinVaultToken.HEADER to token, "PinVault-Proof" to proof))
+    }
+
+    @Test
+    fun `publicOrigin replaces what the proxy changed`() = testApplication {
+        app(origin = "https://api.example.com")
+        val local = com.example.pinvault.server.service.attestation.Proofs.make(device, "GET", "http://localhost/data", token, now)
+        assertEquals("proof_url", reason(PinVaultToken.HEADER to token, "PinVault-Proof" to local))
+        val public = com.example.pinvault.server.service.attestation.Proofs.make(device, "GET", "https://api.example.com/data", token, now)
+        assertEquals("ok", reason(PinVaultToken.HEADER to token, "PinVault-Proof" to public))
+    }
+
+    @Test
+    fun `a proof for another token or by another key is refused`() = testApplication {
+        app()
+        val other = PinVaultToken.issue("k1", secret, "dev-1", "api", "00000000", 1, 300, nowSeconds = now,
+            keyThumbprint = PinVaultToken.jwkThumbprint(device.public as java.security.interfaces.ECPublicKey))
+        val forOther = com.example.pinvault.server.service.attestation.Proofs.make(device, "GET", "http://localhost/data", other, now)
+        assertEquals("proof_token", reason(PinVaultToken.HEADER to token, "PinVault-Proof" to forOther))
+        val stranger = java.security.KeyPairGenerator.getInstance("EC").apply { initialize(256) }.generateKeyPair()
+        val byStranger = com.example.pinvault.server.service.attestation.Proofs.make(stranger, "GET", "http://localhost/data", token, now)
+        assertEquals("proof_key", reason(PinVaultToken.HEADER to token, "PinVault-Proof" to byStranger))
+        // A token issued before cnf (no jkt) cannot be proven at all.
+        val bare = PinVaultToken.issue("k1", secret, "dev-1", "api", "00000000", 1, 300, nowSeconds = now)
+        val forBare = com.example.pinvault.server.service.attestation.Proofs.make(device, "GET", "http://localhost/data", bare, now)
+        assertEquals("proof_key", reason(PinVaultToken.HEADER to bare, "PinVault-Proof" to forBare))
+    }
+}

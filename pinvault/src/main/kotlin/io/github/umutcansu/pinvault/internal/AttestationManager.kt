@@ -455,6 +455,27 @@ internal class AttestationManager(
     }
 
     /**
+     * The proof for a request carrying [token], when the block asks for
+     * proofs: signed by the block's device key (the one that signed the
+     * report, `cnf.jkt`), `iat` in the server's time as the last challenge
+     * measured it. Null without `proofOfPossession()`, for a token this
+     * manager does not hold, or when the key cannot sign (the request then
+     * goes without; the backend's 401 makes the device attest again).
+     */
+    override fun proof(method: String, url: okhttp3.HttpUrl, token: String): String? {
+        if (api == null || !block.tokenProof || token != this.token) return null
+        return try {
+            val key = identityKey()
+            val publicKey = key.publicKey() as? java.security.interfaces.ECPublicKey ?: return null
+            val nowSeconds = (clock() + (status.clockSkewMs ?: 0L)) / 1000
+            TokenProof.make(method, url, token, publicKey, nowSeconds) { key.sign(it) }
+        } catch (e: Exception) {
+            Timber.w(e, "Attestation [%s]: the device key could not sign the proof for %s", block.id, url.host)
+            null
+        }
+    }
+
+    /**
      * Whether a request may trigger an attestation now. A passing device
      * whose token ran out always may (a forced one after a 401 only once per
      * [REATTEST_GAP_MS], so a backend that refuses every token does not make

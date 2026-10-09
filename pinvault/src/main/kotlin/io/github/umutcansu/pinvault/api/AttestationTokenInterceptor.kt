@@ -1,6 +1,7 @@
 package io.github.umutcansu.pinvault.api
 
 import okhttp3.Interceptor
+import okhttp3.Request
 import okhttp3.Response
 import timber.log.Timber
 
@@ -20,12 +21,22 @@ internal interface AttestationTokenSource {
      * its single flight and its backoff) and returns what that brought.
      */
     fun token(host: String, port: Int, forceRefresh: Boolean): String?
+
+    /**
+     * The `PinVault-Proof` for [method] [url] carrying [token] (`ATTESTATION.md`
+     * §5.1), or null when this source sends none (no `proofOfPossession()`,
+     * or the device key cannot sign right now).
+     */
+    fun proof(method: String, url: okhttp3.HttpUrl, token: String): String? = null
 }
 
 /**
  * Application interceptor that adds `PinVault-Token` to requests whose host
  * is a token host of an attesting block (`ATTESTATION.md` §8), on every
  * client the library builds or configures.
+ *
+ * With `proofOfPossession()` each such request also carries a
+ * `PinVault-Proof` made for it (`ATTESTATION.md` §5.1), and the retry a new one.
  *
  * Without a valid token it attests once, synchronously, and sends the
  * request without the header when that fails — the backend refuses it the
@@ -48,7 +59,7 @@ internal class AttestationTokenInterceptor(
         val source = sources().firstOrNull { it.handlesHost(host, port) } ?: return chain.proceed(request)
 
         val token = source.token(host, port, forceRefresh = false)
-        val first = if (token != null) request.newBuilder().header(HEADER, token).build() else request
+        val first = if (token != null) withToken(request, source, token) else request
         val response = chain.proceed(first)
         if (response.code != 401 || !namesToken(response)) return response
 
@@ -63,11 +74,23 @@ internal class AttestationTokenInterceptor(
         }
         response.close()
         Timber.d("%s refused for %s — re-attested, retrying once", HEADER, host)
-        val retry = request.newBuilder()
-            .header(HEADER, fresh)
+        val retry = withToken(request, source, fresh).newBuilder()
             .tag(AttestationRetry::class.java, AttestationRetry)
             .build()
         return chain.proceed(retry)
+    }
+
+    /** [request] with [token] and, when the source makes one, a proof for this request and token. */
+    private fun withToken(request: Request, source: AttestationTokenSource, token: String): Request {
+        val builder = request.newBuilder().header(HEADER, token)
+        val proof = try {
+            source.proof(request.method, request.url, token)
+        } catch (e: Exception) {
+            Timber.w(e, "%s could not be made for %s — sent without", PROOF_HEADER, request.url.host)
+            null
+        }
+        if (proof != null) builder.header(PROOF_HEADER, proof)
+        return builder.build()
     }
 
     /** True when a 401 is about the token: the challenge header names it, or the body says `invalid_token`. */
@@ -83,6 +106,8 @@ internal class AttestationTokenInterceptor(
     companion object {
         /** The request header the token travels in. */
         const val HEADER = "PinVault-Token"
+        /** The request header the proof travels in. */
+        const val PROOF_HEADER = io.github.umutcansu.pinvault.internal.TokenProof.HEADER
         private const val WWW_AUTHENTICATE = "WWW-Authenticate"
         private const val INVALID_TOKEN = "invalid_token"
         private const val MAX_PEEK_BYTES = 8L * 1024

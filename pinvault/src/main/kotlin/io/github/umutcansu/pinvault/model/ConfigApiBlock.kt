@@ -163,7 +163,12 @@ data class ConfigApiBlock @JvmOverloads constructor(
      * Empty = every pinned host of this block's live config, plus its Config
      * API. See [Builder.tokenHosts].
      */
-    val tokenHosts: List<String> = emptyList()
+    val tokenHosts: List<String> = emptyList(),
+    /**
+     * True = every request that carries the token also carries a
+     * `PinVault-Proof` signed by the device key. See [Builder.proofOfPossession].
+     */
+    val tokenProof: Boolean = false
 ) {
 
     /**
@@ -226,6 +231,7 @@ data class ConfigApiBlock @JvmOverloads constructor(
         private var attestationEnabled: Boolean = false
         private var attestationIntervalMs: Long = DEFAULT_ATTESTATION_INTERVAL_MS
         private var tokenHosts: List<String> = emptyList()
+        private var tokenProof: Boolean = false
 
         fun bootstrapPins(pins: List<HostPin>) = apply { this.bootstrapPins = pins }
         fun configEndpoint(endpoint: String) = apply { this.configEndpoint = endpoint }
@@ -561,9 +567,27 @@ data class ConfigApiBlock @JvmOverloads constructor(
         /** [tokenHosts] for a list (Java-friendly). */
         fun tokenHosts(patterns: List<String>) = tokenHosts(*patterns.toTypedArray())
 
+        /**
+         * Prove, on every request that carries the `PinVault-Token`, that it
+         * comes from this device (`ATTESTATION.md` §5.1): the library adds a
+         * `PinVault-Proof` header — a DPoP proof (RFC 9449) of the request's
+         * method and URL, signed by the block's device key, the key the
+         * token's `cnf.jkt` names. A backend that checks it
+         * (`PINVAULT_TOKEN_REQUIRE_PROOF` on the reference verifier, or any
+         * DPoP library) refuses a token used without the key — lifted from
+         * the device, it is useless elsewhere.
+         *
+         * Each request costs one signature with the hardware key (a few ms
+         * in the TEE; StrongBox is slower). Needs [attestation]. Off by default.
+         */
+        fun proofOfPossession() = apply { this.tokenProof = true }
+
         internal fun build(): ConfigApiBlock {
             require(id.isNotBlank()) { "ConfigApi id must not be blank" }
             require(configUrl.isNotBlank()) { "ConfigApi configUrl must not be blank" }
+            require(!tokenProof || attestationEnabled) {
+                "ConfigApi '$id': proofOfPossession() proves the attestation token, so it needs attestation()."
+            }
             require(signaturePublicKeys.isNotEmpty() || allowUnsigned) {
                 "ConfigApi '$id': signaturePublicKey is required. Pass the ECDSA P-256 " +
                 "public key (X.509-encoded, Base64) via signaturePublicKey(...) — this " +
@@ -625,7 +649,8 @@ data class ConfigApiBlock @JvmOverloads constructor(
                 clientCertHosts = clientCertHosts,
                 attestationEnabled = attestationEnabled,
                 attestationIntervalMs = attestationIntervalMs,
-                tokenHosts = tokenHosts
+                tokenHosts = tokenHosts,
+                tokenProof = tokenProof
             )
         }
     }
@@ -662,7 +687,8 @@ data class ConfigApiBlock @JvmOverloads constructor(
                 clientCertHosts == other.clientCertHosts &&
                 attestationEnabled == other.attestationEnabled &&
                 attestationIntervalMs == other.attestationIntervalMs &&
-                tokenHosts == other.tokenHosts
+                tokenHosts == other.tokenHosts &&
+                tokenProof == other.tokenProof
     }
 
     override fun hashCode(): Int {
@@ -697,6 +723,7 @@ data class ConfigApiBlock @JvmOverloads constructor(
         r = 31 * r + attestationEnabled.hashCode()
         r = 31 * r + attestationIntervalMs.hashCode()
         r = 31 * r + tokenHosts.hashCode()
+        r = 31 * r + tokenProof.hashCode()
         return r
     }
 

@@ -1,12 +1,15 @@
 package com.example.pinvault.server.plugin
 
 import com.example.pinvault.server.route.clientCertificate
+import com.example.pinvault.server.service.attestation.PinVaultProof
 import com.example.pinvault.server.service.attestation.PinVaultToken
 import io.ktor.http.ContentType
 import io.ktor.http.HttpHeaders
 import io.ktor.http.HttpStatusCode
 import io.ktor.server.application.ApplicationCall
 import io.ktor.server.application.createApplicationPlugin
+import io.ktor.server.plugins.origin
+import io.ktor.server.request.httpMethod
 import io.ktor.server.request.header
 import io.ktor.server.request.path
 import io.ktor.server.response.header
@@ -24,9 +27,12 @@ import io.ktor.util.AttributeKey
  * in its `anno` claim. A request that names its device (`X-Device-Id`) must
  * name the token's `did`. With [PinVaultTokenAuthConfig.requireCertBinding]
  * the request must arrive over mTLS with the client certificate the token's
- * `cnf.x5t#S256` names (the one the device attested with). Anything else is `401` with
+ * `cnf.x5t#S256` names (the one the device attested with). With
+ * [PinVaultTokenAuthConfig.requireProof] every request also carries a
+ * `PinVault-Proof` made for it with the key the token's `cnf.jkt` names
+ * ([PinVaultProof], §5.1). Anything else is `401` with
  * `WWW-Authenticate: PinVault-Token error="invalid_token", error_description="…"`
- * and `{"error":"invalid_token","reason":"missing|malformed|unknown_kid|signature|issuer|expired|audience|annotations|device_mismatch|cert_binding"}`
+ * and `{"error":"invalid_token","reason":"missing|malformed|unknown_kid|signature|issuer|expired|audience|annotations|device_mismatch|cert_binding|proof_…"}`
  * — the shape the library's interceptor recognises to re-attest once and
  * retry. `/health` (and [PinVaultTokenAuthConfig.skipPaths]) stays open.
  *
@@ -61,6 +67,27 @@ class PinVaultTokenAuthConfig {
      */
     var requireCertBinding: Boolean = false
 
+    /**
+     * `PINVAULT_TOKEN_REQUIRE_PROOF`: every request carries a `PinVault-Proof`
+     * (§5.1) for its method and URL, signed by the device key the token's
+     * `cnf.jkt` names — a token lifted from the device is useless without
+     * that key, behind any proxy. Tokens without `cnf.jkt` are refused.
+     */
+    var requireProof: Boolean = false
+
+    /** How far a proof's `iat` may lie from now, either way. */
+    var proofWindowSeconds: Long = 60
+
+    /**
+     * The scheme, host and port clients use to reach this backend
+     * (`https://api.example.com`), when a proxy in front of it changes them;
+     * null = what the request's `Host` header and connection say.
+     */
+    var publicOrigin: String? = null
+
+    /** Spent proof `jti`s; one per backend. */
+    var proofReplay: PinVaultProof.ReplayCache = PinVaultProof.ReplayCache()
+
     /** The verified client certificate of the call (tests replace it). */
     var clientCertificate: (ApplicationCall) -> java.security.cert.X509Certificate? = { it.clientCertificate() }
 
@@ -83,6 +110,12 @@ val PinVaultTokenAuth = createApplicationPlugin(name = "PinVaultTokenAuth", ::Pi
     val clock = pluginConfig.clock
     val requireCertBinding = pluginConfig.requireCertBinding
     val certificateOf = pluginConfig.clientCertificate
+    val requireProof = pluginConfig.requireProof
+    val proofWindow = pluginConfig.proofWindowSeconds
+    val publicOrigin = pluginConfig.publicOrigin?.trimEnd('/')?.also {
+        require(PinVaultProof.normalizedUrl("$it/") != null) { "publicOrigin must be an http(s) origin, e.g. https://api.example.com" }
+    }
+    val replay = pluginConfig.proofReplay
 
     onCall { call ->
         if (call.response.isCommitted) return@onCall
@@ -114,10 +147,35 @@ val PinVaultTokenAuth = createApplicationPlugin(name = "PinVaultTokenAuth", ::Pi
                         return@onCall call.refuseToken("cert_binding", "The token is bound to another client certificate, or the request carries none.")
                     }
                 }
+                if (requireProof) {
+                    val proof = PinVaultProof.verify(
+                        call.request.header(PinVaultProof.HEADER), call.request.httpMethod.value, requestUrl(call, publicOrigin),
+                        token, result.claims.keyThumbprint, replay, clock(), proofWindow
+                    )
+                    if (proof is PinVaultProof.Result.Invalid) {
+                        return@onCall call.refuseToken(proof.reason, when (proof.reason) {
+                            "proof_missing" -> "Send a PinVault-Proof header with the token."
+                            "proof_key" -> "The proof is not signed by the key the token was issued to."
+                            "proof_time" -> "The proof's iat is too far from now."
+                            "proof_replay" -> "This proof was already used."
+                            "proof_busy" -> "Too many proofs in flight; try again."
+                            else -> "The PinVault-Proof does not match this request."
+                        })
+                    }
+                }
                 call.attributes.put(PinVaultTokenClaimsKey, result.claims)
             }
         }
     }
+}
+
+/** The URL the client asked for, as `htu` names it: [publicOrigin] or the `Host` header's, plus the raw path. */
+private fun requestUrl(call: ApplicationCall, publicOrigin: String?): String {
+    val origin = publicOrigin ?: call.request.origin.let { o ->
+        val host = o.serverHost.let { if (':' in it && !it.startsWith("[")) "[$it]" else it }
+        "${o.scheme}://$host:${o.serverPort}"
+    }
+    return origin + call.request.path()
 }
 
 private suspend fun ApplicationCall.refuseToken(reason: String, description: String) {

@@ -16,6 +16,7 @@ import io.github.umutcansu.pinvault.ssl.DynamicSSLManager
 import io.mockk.every
 import io.mockk.mockk
 import kotlinx.coroutines.test.runTest
+import okhttp3.HttpUrl.Companion.toHttpUrl
 import okhttp3.OkHttpClient
 import okhttp3.mockwebserver.MockResponse
 import okhttp3.mockwebserver.MockWebServer
@@ -76,11 +77,12 @@ class AttestationManagerTest {
         key.clear()
     }
 
-    private fun block(vararg hosts: String, scoped: List<String> = emptyList()): ConfigApiBlock {
+    private fun block(vararg hosts: String, scoped: List<String> = emptyList(), proof: Boolean = false): ConfigApiBlock {
         val builder = ConfigApiBlock.Builder("api", "https://config.example.com:8091/")
             .allowUnpinnedConfigApi()
             .allowUnsigned()
             .attestation()
+        if (proof) builder.proofOfPossession()
         if (hosts.isNotEmpty()) builder.tokenHosts(*hosts)
         if (scoped.isNotEmpty()) builder.wantPinsFor(*scoped.toTypedArray())
         return builder.build()
@@ -460,5 +462,45 @@ class AttestationManagerTest {
         server.enqueue(challenge())
         server.enqueue(pass(token = "eyJ.token.2"))
         assertEquals("eyJ.token.2", m.token("api.example.com", 443, forceRefresh = false))
+    }
+
+    // ── PinVault-Proof ──────────────────────────────────────────────────
+
+    @Test
+    fun `with proofOfPossession the proof is signed by the attesting key in the server's time`() = runTest {
+        server.enqueue(challenge(serverTime = now + 5_000))
+        server.enqueue(pass(token = "eyJ.token.1"))
+        val m = manager(block("api.example.com", proof = true))
+        m.attestNow()
+
+        val proof = m.proof("POST", "https://api.example.com/v1/x?y=1".toHttpUrl(), "eyJ.token.1")!!
+        val parts = proof.split('.')
+        val payload = JSONObject(String(java.util.Base64.getUrlDecoder().decode(parts[1])))
+        assertEquals("POST", payload.getString("htm"))
+        assertEquals("https://api.example.com/v1/x", payload.getString("htu"))
+        assertEquals("iat is the server's clock (+5 s skew)", (now + 5_000) / 1000, payload.getLong("iat"))
+        val ok = Signature.getInstance("SHA256withECDSAinP1363Format").run {
+            initVerify(key.publicKey()); update((parts[0] + "." + parts[1]).toByteArray(Charsets.US_ASCII))
+            verify(java.util.Base64.getUrlDecoder().decode(parts[2]))
+        }
+        assertTrue(ok)
+        assertNull("a token this manager does not hold gets no proof", m.proof("GET", "https://api.example.com/".toHttpUrl(), "other.token"))
+    }
+
+    @Test
+    fun `without proofOfPossession there is no proof`() = runTest {
+        server.enqueue(challenge())
+        server.enqueue(pass(token = "eyJ.token.1"))
+        val m = manager()
+        m.attestNow()
+        assertNull(m.proof("GET", "https://api.example.com/".toHttpUrl(), "eyJ.token.1"))
+    }
+
+    @Test
+    fun `proofOfPossession needs attestation`() {
+        val e = org.junit.Assert.assertThrows(IllegalArgumentException::class.java) {
+            ConfigApiBlock.Builder("api", "https://config.example.com/").allowUnpinnedConfigApi().allowUnsigned().proofOfPossession().build()
+        }
+        assertTrue(e.message!!.contains("attestation()"))
     }
 }

@@ -553,6 +553,13 @@ private fun startServer() {
         "true", "on" -> true
         else -> error("PINVAULT_TOKEN_REQUIRE_CERT_BINDING must be true or false (got '${com.example.pinvault.server.service.ServerEnv.get("PINVAULT_TOKEN_REQUIRE_CERT_BINDING")}')")
     }
+    // ...and, with PINVAULT_TOKEN_REQUIRE_PROOF, only with a PinVault-Proof per request signed by
+    // the device key the token's cnf.jkt names (ATTESTATION.md §5.1): a lifted token is useless alone.
+    val tokenRequireProof = when (com.example.pinvault.server.service.ServerEnv.get("PINVAULT_TOKEN_REQUIRE_PROOF")?.trim()?.lowercase()) {
+        null, "", "false", "off" -> false
+        "true", "on" -> true
+        else -> error("PINVAULT_TOKEN_REQUIRE_PROOF must be true or false (got '${com.example.pinvault.server.service.ServerEnv.get("PINVAULT_TOKEN_REQUIRE_PROOF")}')")
+    }
     val attestationPolicyStore = com.example.pinvault.server.store.AttestationPolicyStore(db)
     val attestedDeviceStore = com.example.pinvault.server.store.AttestedDeviceStore(db)
     // The HS256 secrets of PinVault-Token, encrypted at rest; the first one is made on first use.
@@ -591,7 +598,8 @@ private fun startServer() {
         "${attestationDefaults.attestIntervalSeconds} s, reasons ${if (attestationDefaults.revealReasons) "revealed" else "hidden"}), " +
         "nonce ${attestationNonceTtl} s, limits $attestationRateLimit/address and $attestationDeviceRateLimit/device per 10 min" +
         (if (mockHostRequireToken) ", mock hosts require PinVault-Token" else "") +
-        (if (mockHostRequireToken && tokenRequireCertBinding) " bound to the client certificate" else ""))
+        (if (mockHostRequireToken && tokenRequireCertBinding) " bound to the client certificate" else "") +
+        (if (mockHostRequireToken && tokenRequireProof) " with a PinVault-Proof per request" else ""))
     if (playIntegrity != null) {
         println("PLAY_INTEGRITY: verifying play-integrity verdicts locally (device level ${playIntegrity.deviceLevel.name.lowercase()}, " +
             "app recognized ${if (playIntegrity.requireAppRecognized) "required" else "not required"}, packages " +
@@ -622,6 +630,7 @@ private fun startServer() {
             // A mock host does not know which Config API its app attests with: any `aud` a listed secret signed.
             audience = null
             requireCertBinding = tokenRequireCertBinding
+            requireProof = tokenRequireProof
         }
     }
 

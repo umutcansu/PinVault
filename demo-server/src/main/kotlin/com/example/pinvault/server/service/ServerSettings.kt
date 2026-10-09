@@ -103,6 +103,7 @@ object ServerSettingsCatalog {
         ServerSetting("ATTESTATION_INTERVAL_SECONDS", "attestation", ServerSetting.Kind.NUMBER, "300", min = 60, max = 86_400),
         ServerSetting("ATTESTATION_REVEAL_REASONS", "attestation", ServerSetting.Kind.BOOL, "false"),
         ServerSetting("MOCK_HOST_REQUIRE_TOKEN", "attestation", ServerSetting.Kind.BOOL, "false"),
+        ServerSetting("PINVAULT_TOKEN_REQUIRE_PROOF", "attestation", ServerSetting.Kind.BOOL, "false"),
         // What the wizard writes into the app
         ServerSetting("SETUP_PUBLIC_HOST", "setup", ServerSetting.Kind.TEXT, "", pattern = hostName),
         ServerSetting("SETUP_PUBLIC_PORTS", "setup", ServerSetting.Kind.TEXT, "", pattern = portPairs)
