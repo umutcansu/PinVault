@@ -158,7 +158,7 @@ final class DeviceIntegrityProbeTests: XCTestCase {
         report.signals.removeValue(forKey: "rooted")
         let reparsed = try XCTUnwrap(LenientJSON.object(Data(report.jsonString().utf8)))
         XCTAssertEqual(evidence(reparsed, "rooted"), ["error:rooted"])
-        XCTAssertFalse(flag(reparsed, "rooted"))
+        XCTAssertTrue(flag(reparsed, "rooted"), "a signal that was not measured is not clean")
     }
 
     func testTheProfileGivesTheTeamIdAndGetTaskAllow() async throws {
@@ -228,8 +228,10 @@ final class DeviceIntegrityProbeTests: XCTestCase {
         inputs.provisioningProfile = { throw ProbeReadError("unreadable profile") }
         let (_, json) = await report(inputs)
         XCTAssertEqual(evidence(json, "rooted"), ["error:rooted"])
-        XCTAssertFalse(flag(json, "rooted"))
+        XCTAssertTrue(flag(json, "rooted"))
         XCTAssertEqual(evidence(json, "debugger"), ["error:debugger"])
+        XCTAssertTrue(flag(json, "debugger"))
+        XCTAssertTrue(flag(json, "debuggable"))
         XCTAssertEqual(evidence(json, "debuggable"), ["error:debuggable"], "a profile that cannot be read is not a clean one")
         let app = try XCTUnwrap(json["app"] as? [String: Any])
         XCTAssertEqual(app["installer"] as? String, "provisioned", "a profile is there, unread")

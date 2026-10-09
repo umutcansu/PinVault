@@ -38,6 +38,7 @@ import io.ktor.server.testing.ApplicationTestBuilder
 import io.ktor.server.testing.testApplication
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
+import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.boolean
@@ -302,6 +303,38 @@ class AttestationRoutesTest {
         assertEquals(5, stats.passes)
         assertEquals(0, stats.rejects)
         assertEquals(5, stats.byWarning["key_unattested"])
+    }
+
+    @Test
+    fun `a probe that failed, a missing signal and a malformed one are not clean`() = testApplication {
+        val service = service()
+        app(service)
+        policies.put(scope, AttestationPolicy.strict(revealReasons = true), "test")
+        val key = ecKey()
+        fun edited(edit: (MutableMap<String, JsonElement>) -> Unit): String {
+            val json = Json.parseToJsonElement(report()).jsonObject
+            val signals = json["signals"]!!.jsonObject.toMutableMap().also(edit)
+            return JsonObject(json + ("signals" to JsonObject(signals))).toString()
+        }
+
+        // An older library sent a probe that threw as flag false with error: evidence.
+        val failed = edited { it["rooted"] = buildJsonObject { put("flag", false); putJsonArray("evidence") { add(JsonPrimitive("error:rooted")) } } }
+        val first = attestJson(body(challenge(), "probe-err-1", key, failed))
+        assertEquals("reject", first["result"]!!.jsonPrimitive.content)
+        assertEquals(listOf("rooted"), first.strings("rejectionReasons"))
+
+        // A client-measured signal left out, or without a boolean flag, raises that flag.
+        val missing = edited { it.remove("hooking_framework") }
+        assertEquals(listOf("hooking_framework"), attestJson(body(challenge(), "probe-err-2", ecKey(), missing)).strings("rejectionReasons"))
+        val malformed = edited { it["emulator"] = buildJsonObject { put("flag", "maybe") } }
+        assertEquals(listOf("emulator"), attestJson(body(challenge(), "probe-err-3", ecKey(), malformed)).strings("rejectionReasons"))
+
+        // An error inside a probe that otherwise read (properties not read) raises too.
+        val partial = edited { it["hooking_framework"] = buildJsonObject { put("flag", false); putJsonArray("evidence") { add(JsonPrimitive("error:maps")) } } }
+        assertEquals(listOf("hooking_framework"), attestJson(body(challenge(), "probe-err-4", ecKey(), partial)).strings("rejectionReasons"))
+
+        // The clean report still passes.
+        assertEquals("pass", attestJson(body(challenge(), "probe-ok", ecKey(), report()))["result"]!!.jsonPrimitive.content)
     }
 
     @Test

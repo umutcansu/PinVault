@@ -2,6 +2,7 @@ package com.example.pinvault.server.route
 
 import com.example.pinvault.server.model.PinConfig
 import com.example.pinvault.server.model.SignedConfig
+import com.example.pinvault.server.plugin.ApprovedReplayKey
 import com.example.pinvault.server.plugin.receiveLimitedJson
 import com.example.pinvault.server.plugin.receiveLimitedText
 import com.example.pinvault.server.service.AuditContext
@@ -10,6 +11,7 @@ import com.example.pinvault.server.service.RateLimiter
 import com.example.pinvault.server.service.SignedConfigService
 import com.example.pinvault.server.service.attestation.AttestationPolicy
 import com.example.pinvault.server.service.attestation.AttestationService
+import com.example.pinvault.server.service.attestation.FlagAction
 import com.example.pinvault.server.store.AttestationPolicyStore
 import com.example.pinvault.server.store.AttestationTokenSecretStore
 import com.example.pinvault.server.store.AttestedDevice
@@ -199,10 +201,28 @@ fun Route.attestationAdminRoutes(
             val cid = call.pathParameters["configApiId"]!!
             val text = call.receiveLimitedText(ADMIN_BODY_MAX) ?: return@put
             val current = service.policyFor(cid)
-            val parsed = AttestationPolicy.parse(text, current).getOrElse { e ->
+            val requested = AttestationPolicy.parse(text, current).getOrElse { e ->
                 return@put call.respondText(buildJsonObject { put("error", "invalid_policy"); put("message", e.message ?: "invalid policy") }.toString(),
                     ContentType.Application.Json, HttpStatusCode.BadRequest)
             }
+            // The production floor: lowering a floor flag that is not lowered
+            // already takes the replay of a change a second admin approved.
+            // Approvals off, or the operation exempted from them, cannot do it.
+            val floor = service.policyFloor
+            val lowered = floor.filter { requested.flags[it] != FlagAction.REJECT.wire }
+            val newlyLowered = lowered - current.approvedRelaxations.toSet()
+            val approvedReplay = call.attributes.contains(ApprovedReplayKey)
+            if (newlyLowered.isNotEmpty() && !approvedReplay) {
+                audit?.record("attestation_policy_floor_refused",
+                    "Lowering ${newlyLowered.joinToString()} of $cid refused: the production floor needs two-person approval", cid, "policy")
+                return@put call.respondText(buildJsonObject {
+                    put("error", "two_person_approval_required")
+                    put("message", "Under ATTESTATION_POLICY_DEFAULT=production, ${newlyLowered.joinToString()} stay reject unless a " +
+                        "second admin approves the change: set PIN_CHANGE_APPROVALS=2 (and keep attestation_policy out of APPROVAL_EXEMPT_OPERATIONS).")
+                    put("flags", buildJsonArray { newlyLowered.forEach { add(JsonPrimitive(it)) } })
+                }.toString(), ContentType.Application.Json, HttpStatusCode.Forbidden)
+            }
+            val parsed = if (floor.isEmpty()) requested else requested.copy(approvedRelaxations = lowered)
             val unchanged = current.version > 0 && parsed.copy(version = current.version) == current
             val stored = if (unchanged) current else policies.put(cid, parsed, AuditContext.actor())
             if (!unchanged) {

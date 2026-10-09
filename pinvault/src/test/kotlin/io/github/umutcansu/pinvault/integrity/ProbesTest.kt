@@ -50,9 +50,9 @@ class ProbesTest {
     }
 
     @Test
-    fun `properties that cannot be read are an error, not clean, and raise nothing`() {
+    fun `properties that cannot be read are an error, not clean, and raise the flag`() {
         val signal = RootProbe(none, "release-keys", noProp, none, { false }, "/system/bin").probe()
-        assertFalse(signal.flag)
+        assertTrue(signal.flag)
         assertEquals(listOf("error:prop"), signal.evidence)
     }
 
@@ -197,9 +197,9 @@ class ProbesTest {
     }
 
     @Test
-    fun `maps that cannot be read are an error, not clean, and the rest still counts`() {
+    fun `maps that cannot be read are an error, not clean, and raise the flag`() {
         val unread = HookingProbe({ null }, { listOf("main") }, { null }, { false }, { emptyList() }, { emptyList() }).probe()
-        assertFalse(unread.flag)
+        assertTrue(unread.flag)
         assertEquals(listOf("error:maps"), unread.evidence)
         val threads = HookingProbe({ null }, { listOf("gum-js-loop") }, { null }, { false }, { emptyList() }, { emptyList() }).probe()
         assertTrue(threads.flag)

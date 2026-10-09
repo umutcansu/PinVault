@@ -128,7 +128,8 @@ internal class RootProbe(
         if (systemProperty("ro.boot.flash.locked") == "0") evidence += "hint:ro.boot.flash.locked=0"
         if (systemWritable()) evidence += "fs:/system-writable"
         ROOT_PACKAGES.filter(packageInstalled).forEach { evidence += "package:$it" }
-        return Signal(evidence.any { !it.startsWith("error:") && !it.startsWith("hint:") }, evidence.distinct())
+        // Only hints raise nothing; an `error:` (properties not read) raises, as a probe that threw does.
+        return Signal(evidence.any { !it.startsWith("hint:") }, evidence.distinct())
     }
 
     companion object {
@@ -250,7 +251,8 @@ internal class HookingProbe(
         // frida-server's default port. A renamed or re-ported server is not
         // seen here; its agent still shows in the maps and threads above.
         listeningPorts().forEach { evidence += "port:$it" }
-        return Signal(evidence.any { !it.startsWith("error:") }, evidence.distinct())
+        // Maps that could not be read raise too: hiding them is what a hooking framework would do.
+        return Signal(evidence.isNotEmpty(), evidence.distinct())
     }
 
     companion object {

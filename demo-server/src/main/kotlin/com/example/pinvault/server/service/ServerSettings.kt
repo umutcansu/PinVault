@@ -98,7 +98,7 @@ object ServerSettingsCatalog {
         // Attestation (the periodic check of the app and the phone)
         ServerSetting("ATTESTATION_ENABLED", "attestation", ServerSetting.Kind.BOOL, "true"),
         ServerSetting("ATTESTATION_KEY_POLICY", "attestation", ServerSetting.Kind.CHOICE, "warn", modes),
-        ServerSetting("ATTESTATION_POLICY_DEFAULT", "attestation", ServerSetting.Kind.CHOICE, "strict", listOf("strict", "lenient")),
+        ServerSetting("ATTESTATION_POLICY_DEFAULT", "attestation", ServerSetting.Kind.CHOICE, "strict", listOf("strict", "lenient", "production")),
         ServerSetting("ATTESTATION_TOKEN_TTL_SECONDS", "attestation", ServerSetting.Kind.NUMBER, "300", min = 30, max = 86_400),
         ServerSetting("ATTESTATION_INTERVAL_SECONDS", "attestation", ServerSetting.Kind.NUMBER, "300", min = 60, max = 86_400),
         ServerSetting("ATTESTATION_REVEAL_REASONS", "attestation", ServerSetting.Kind.BOOL, "false"),

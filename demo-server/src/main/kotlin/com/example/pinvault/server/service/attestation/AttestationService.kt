@@ -17,6 +17,7 @@ import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.booleanOrNull
 import kotlinx.serialization.json.buildJsonArray
+import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.intOrNull
 import kotlinx.serialization.json.longOrNull
@@ -103,7 +104,10 @@ class AttestationService(
     /** The server defaults for a Config API without a stored policy. */
     val defaultPolicy: AttestationPolicy get() = defaults.policy
 
-    fun policyFor(configApiId: String): AttestationPolicy = policies.effective(configApiId, defaults.policy)
+    fun policyFor(configApiId: String): AttestationPolicy = defaults.enforce(policies.effective(configApiId, defaults.policy))
+
+    /** The flags held at reject in code (`production` profile); a PUT lowers one only as an approved replay. */
+    val policyFloor: Set<String> get() = defaults.floor
 
     sealed class Outcome {
         /** Answer [status] with `{"error": error, "reason"?: reason, "message": message}`. */
@@ -538,9 +542,17 @@ class AttestationService(
         registration: Boolean = false
     ): List<AttestationFlag> {
         val raised = LinkedHashSet<AttestationFlag>()
-        (report["signals"] as? JsonObject)?.forEach { (name, value) ->
+        val signals = report["signals"] as? JsonObject
+        signals?.forEach { (name, value) ->
             val flag = AttestationFlag.of(name) ?: return@forEach
-            if ((value as? JsonObject)?.get("flag")?.let { (it as? JsonPrimitive)?.booleanOrNull } == true) raised += flag
+            if (signalRaised(value as? JsonObject)) raised += flag
+        }
+        // What the client measures must all be there, well formed: a signal it
+        // left out or could not read is not a clean one (an older library sent
+        // a failed probe as `flag: false` with `error:` evidence).
+        AttestationFlag.CLIENT_MEASURED.forEach { flag ->
+            val signal = signals?.get(flag.wire) as? JsonObject
+            if ((signal?.get("flag") as? JsonPrimitive)?.booleanOrNull == null) raised += flag
         }
         if (platform == PLATFORM_IOS) return raisedIosFlags(report, appAttestVerified, raised)
         val app = report["app"] as? JsonObject
@@ -578,6 +590,13 @@ class AttestationService(
             if (patch == null || patch < min) raised += AttestationFlag.OLD_PATCH_LEVEL
         }
         return raised.toList()
+    }
+
+    /** A report signal that is raised, or whose probe failed (`error:<probe>` evidence). */
+    private fun signalRaised(signal: JsonObject?): Boolean {
+        if (signal == null) return false
+        if ((signal["flag"] as? JsonPrimitive)?.booleanOrNull == true) return true
+        return (signal["evidence"] as? JsonArray)?.any { (it as? JsonPrimitive)?.contentOrNull?.startsWith("error:") == true } == true
     }
 
     /**

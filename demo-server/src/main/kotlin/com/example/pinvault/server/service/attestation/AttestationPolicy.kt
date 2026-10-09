@@ -62,6 +62,11 @@ enum class AttestationFlag(val wire: String) {
 
     companion object {
         private val byWire = entries.associateBy { it.wire }
+
+        /** The signals the client library measures and sends on every report (both platforms; iOS sends `cloner` / `adb_enabled` as `n/a:ios`). */
+        val CLIENT_MEASURED: List<AttestationFlag> = listOf(
+            ROOTED, EMULATOR, DEBUGGER, DEBUGGABLE, HOOKING_FRAMEWORK, APP_INTEGRITY, CLONER, UNKNOWN_INSTALLER, ADB_ENABLED
+        )
         fun of(wire: String): AttestationFlag? = byWire[wire]
         val names: List<String> = entries.map { it.wire }
     }
@@ -90,10 +95,23 @@ data class AttestationPolicy(
     val flags: Map<String, String>,
     val revealReasons: Boolean = false,
     val tokenTtlSeconds: Int = DEFAULT_TOKEN_TTL_SECONDS,
-    val attestIntervalSeconds: Int = DEFAULT_INTERVAL_SECONDS
+    val attestIntervalSeconds: Int = DEFAULT_INTERVAL_SECONDS,
+    /**
+     * Floor flags (`production` profile) a two-person-approved PUT set below
+     * reject. Written only by the route on the replay of an approved change;
+     * every other floor flag is read as reject whatever the stored map says.
+     */
+    val approvedRelaxations: List<String> = emptyList()
 ) {
     /** The action for [flag]; a flag the stored map does not name is [FlagAction.WARN]. */
     fun actionFor(flag: AttestationFlag): FlagAction = flags[flag.wire]?.let { FlagAction.of(it) } ?: FlagAction.WARN
+
+    /** This policy with every flag of [floor] at reject, except the approved relaxations. */
+    fun withFloor(floor: Set<String>): AttestationPolicy {
+        if (floor.isEmpty()) return this
+        val held = floor - approvedRelaxations.toSet()
+        return copy(flags = flags + held.associateWith { FlagAction.REJECT.wire })
+    }
 
     /** This policy as JSON text, as stored and as GET returns it. */
     fun toJson(): String = json.encodeToString(serializer(), this)
@@ -123,6 +141,26 @@ data class AttestationPolicy(
             // Raised only after a backend reported the device (§5.2); it lapses after ATTESTATION_ANOMALY_TTL_SECONDS.
             "token_anomaly" to "reject"
         )
+
+        /**
+         * The flags the `production` profile holds at reject in code: a stored
+         * policy cannot lower them (an older PUT that did is read as reject),
+         * and a PUT lowers one only as the replay of a change a second admin
+         * approved (`PIN_CHANGE_APPROVALS`).
+         */
+        val PRODUCTION_FLOOR: Set<String> = linkedSetOf(
+            "rooted", "emulator", "debuggable", "hooking_framework", "app_integrity", "software_key"
+        )
+
+        /**
+         * `production`: `strict` with [PRODUCTION_FLOOR] at reject (`software_key`
+         * is a warning in `strict`), and the server-verified evidence trusted
+         * over the device's own word: the Play Integrity and App Attest flags
+         * reject too. Those are raised only where the verifier is configured
+         * (Play Console keys, `APP_ATTEST_APP_IDS`), and stay adjustable.
+         */
+        val PRODUCTION_FLAGS: Map<String, String> = STRICT_FLAGS + PRODUCTION_FLOOR.associateWith { "reject" } +
+            listOf("play_integrity", "play_integrity_missing", "app_attest", "app_attest_missing").associateWith { "reject" }
 
         /** `lenient`: everything a warning — what a first rollout measures the fleet with. */
         val LENIENT_FLAGS: Map<String, String> = AttestationFlag.names.associateWith { "warn" }
@@ -174,7 +212,7 @@ data class AttestationPolicy(
                 else -> (element as? JsonPrimitive)?.intOrNull?.takeIf { it in INTERVAL_RANGE }
                     ?: return Result.failure(IllegalArgumentException("attestIntervalSeconds must be ${INTERVAL_RANGE.first}..${INTERVAL_RANGE.last}"))
             }
-            return Result.success(AttestationPolicy(current.version, flags, reveal, ttl, interval))
+            return Result.success(AttestationPolicy(current.version, flags, reveal, ttl, interval, current.approvedRelaxations))
         }
 
         fun parse(text: String, current: AttestationPolicy): Result<AttestationPolicy> {
@@ -188,8 +226,10 @@ data class AttestationPolicy(
 
 /**
  * The server-wide defaults a Config API without a stored policy gets
- * (`ATTESTATION_POLICY_DEFAULT`, `ATTESTATION_TOKEN_TTL_SECONDS`,
- * `ATTESTATION_INTERVAL_SECONDS`, `ATTESTATION_REVEAL_REASONS`).
+ * (`ATTESTATION_POLICY_DEFAULT` = strict | lenient | production,
+ * `ATTESTATION_TOKEN_TTL_SECONDS`, `ATTESTATION_INTERVAL_SECONDS`,
+ * `ATTESTATION_REVEAL_REASONS`). `production` also sets the [floor]: the
+ * flags no stored policy can lower without a two-person approval.
  */
 class AttestationPolicyDefaults(
     val profile: String = "strict",
@@ -198,16 +238,24 @@ class AttestationPolicyDefaults(
     val revealReasons: Boolean = false
 ) {
     init {
-        require(profile == "strict" || profile == "lenient") { "ATTESTATION_POLICY_DEFAULT must be strict or lenient (got '$profile')" }
+        require(profile in PROFILES) { "ATTESTATION_POLICY_DEFAULT must be strict, lenient or production (got '$profile')" }
     }
 
-    val policy: AttestationPolicy = if (profile == "lenient") {
-        AttestationPolicy.lenient(revealReasons, tokenTtlSeconds, attestIntervalSeconds)
-    } else {
-        AttestationPolicy.strict(revealReasons, tokenTtlSeconds, attestIntervalSeconds)
+    val policy: AttestationPolicy = when (profile) {
+        "lenient" -> AttestationPolicy.lenient(revealReasons, tokenTtlSeconds, attestIntervalSeconds)
+        "production" -> AttestationPolicy(0, AttestationPolicy.PRODUCTION_FLAGS, revealReasons, tokenTtlSeconds, attestIntervalSeconds)
+        else -> AttestationPolicy.strict(revealReasons, tokenTtlSeconds, attestIntervalSeconds)
     }
+
+    /** The flags held at reject in code ([AttestationPolicy.PRODUCTION_FLOOR] under `production`, none otherwise). */
+    val floor: Set<String> = if (profile == "production") AttestationPolicy.PRODUCTION_FLOOR else emptySet()
+
+    /** [stored] (or [policy]) as it is applied: the [floor] on top. */
+    fun enforce(stored: AttestationPolicy): AttestationPolicy = stored.withFloor(floor)
 
     companion object {
+        val PROFILES = setOf("strict", "lenient", "production")
+
         fun fromEnv(env: Map<String, String> = com.example.pinvault.server.service.ServerEnv.all()): AttestationPolicyDefaults {
             val profile = env["ATTESTATION_POLICY_DEFAULT"]?.trim()?.lowercase()?.takeIf { it.isNotEmpty() } ?: "strict"
             val ttl = (env["ATTESTATION_TOKEN_TTL_SECONDS"]?.trim()?.toIntOrNull() ?: AttestationPolicy.DEFAULT_TOKEN_TTL_SECONDS)

@@ -5724,6 +5724,14 @@ paths:
         **Two-person approval** (`PIN_CHANGE_APPROVALS>=2`): waits for a second admin
         (`202`, operation `attestation_policy`). Audited as `attestation_policy_updated`.
 
+        **Production floor** (`ATTESTATION_POLICY_DEFAULT=production`): `rooted`,
+        `emulator`, `debuggable`, `hooking_framework`, `app_integrity` and
+        `software_key` are read as `reject` whatever the stored policy says. A PUT
+        that lowers one of them is applied only as the replay of a change a second
+        admin approved; otherwise `403 two_person_approval_required` (audited as
+        `attestation_policy_floor_refused`). The flags it lowered are listed in
+        `approvedRelaxations`; setting one back to `reject` removes it.
+
         Registered on: **management** (and the Config API ports when
         `CONFIG_API_ADMIN_ROUTES=on`).
       security:
@@ -7760,6 +7768,11 @@ components:
         revealReasons: { type: boolean, description: 'Send `rejectionReasons` to the device.', default: false }
         tokenTtlSeconds: { type: integer, minimum: 30, maximum: 86400, default: 300 }
         attestIntervalSeconds: { type: integer, minimum: 60, maximum: 86400, default: 300 }
+        approvedRelaxations:
+          type: array
+          items: { type: string }
+          readOnly: true
+          description: Production-floor flags a two-person-approved PUT set below reject (empty outside `ATTESTATION_POLICY_DEFAULT=production`).
 
     KeyAttestationResult:
       type: object

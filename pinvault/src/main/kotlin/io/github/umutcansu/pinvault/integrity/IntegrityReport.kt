@@ -5,8 +5,9 @@ import org.json.JSONObject
 
 /**
  * One probe's finding: whether the flag is raised and what was seen. A probe
- * that could not run contributes `error:<probe>` evidence with the flag down,
- * so the server can tell "clean" from "could not look".
+ * that could not run is raised with `error:<probe>` evidence: "could not
+ * look" is never "clean" (an attacker who makes a probe throw must not get a
+ * clean report), and the evidence tells the server it was an error.
  */
 internal class Signal(val flag: Boolean, val evidence: List<String> = emptyList()) {
     fun toJson(): JSONObject = JSONObject().put("flag", flag).put("evidence", JSONArray(evidence))
@@ -14,7 +15,7 @@ internal class Signal(val flag: Boolean, val evidence: List<String> = emptyList(
     companion object {
         val CLEAN = Signal(false)
         fun raised(vararg evidence: String) = Signal(true, evidence.toList())
-        fun error(probe: String) = Signal(false, listOf("error:$probe"))
+        fun error(probe: String) = Signal(true, listOf("error:$probe"))
     }
 }
 

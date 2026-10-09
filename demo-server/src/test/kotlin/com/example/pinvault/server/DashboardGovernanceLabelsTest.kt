@@ -53,7 +53,7 @@ class DashboardGovernanceLabelsTest {
         "vault_enabled_changed", "host_acl_changed", "private_key_downloaded", "bootstrap_pins_changed", "trust_roots_updated",
         "admin_request_refused",
         // Attestation (ATTESTATION.md §6: routes, AttestationService, the AuthFailureRecorder in Main)
-        "attestation_policy_updated", "attestation_device_annotated", "attestation_device_forgotten", "attestation_device_registered",
+        "attestation_policy_updated", "attestation_policy_floor_refused", "attestation_device_annotated", "attestation_device_forgotten", "attestation_device_registered",
         "attestation_key_mismatch", "attestation_rejected", "attestation_token_secret_rotated", "attestation_token_secret_deleted"
     )
 

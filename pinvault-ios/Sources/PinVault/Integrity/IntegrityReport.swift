@@ -1,8 +1,9 @@
 import Foundation
 
 /// One probe's finding: whether the flag is raised and what was seen. A probe
-/// that could not run contributes `error:<probe>` evidence with the flag down,
-/// so the server can tell "clean" from "could not look".
+/// that could not run is raised with `error:<probe>` evidence: "could not
+/// look" is never "clean" (an attacker who makes a probe throw must not get a
+/// clean report), and the evidence tells the server it was an error.
 struct IntegritySignal: Sendable, Equatable {
     let flag: Bool
     let evidence: [String]
@@ -19,7 +20,7 @@ struct IntegritySignal: Sendable, Equatable {
 
     static func raised(_ evidence: String...) -> IntegritySignal { IntegritySignal(true, evidence) }
 
-    static func error(_ probe: String) -> IntegritySignal { IntegritySignal(false, ["error:\(probe)"]) }
+    static func error(_ probe: String) -> IntegritySignal { IntegritySignal(true, ["error:\(probe)"]) }
 
     /// Raised when there is evidence (duplicates dropped, order kept).
     static func from(_ evidence: [String]) -> IntegritySignal {

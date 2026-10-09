@@ -16,7 +16,8 @@
 #   4. Yönetişim ve donanım belgesi ayarları sabit: iki kişi onayı (2), canlı
 #      sertifika kontrolü (enforce), kayıtta ve ekran kilitli dosyada donanım
 #      belgesi (enforce), P12 ile kayıt kapalı (off), kilitli dosyada her
-#      kullanımda onay (true), varsayılan attestation politikası (strict),
+#      kullanımda onay (true), varsayılan attestation politikası (production),
+#      mock host'larda token zorunlu (true),
 #      App Attest ve Play Integrity kararlarının v2 bağı (true).
 #      .env'den gevşetilemez. iPhone'lar için App Attest ayarları .env'den
 #      geçer (boşsa iPhone'lar reddedilir). Kişisel yönetici sayısını,
@@ -67,10 +68,16 @@ services:
       # (Android Key Attestation, uygulamanın paketi ve imzasıyla) olmadan
       # kaydedilmez (ATTESTATION.md). Süreler .env'den geçer.
       ATTESTATION_KEY_POLICY: enforce
-      # Sabit: politikası kaydedilmemiş Config API'ler sıkı politikayla başlar
-      # (lenient her bayrağı yalnızca uyarı yapar, hiçbir cihazı reddetmez).
-      # Config API başına panelden değişir.
-      ATTESTATION_POLICY_DEFAULT: strict
+      # Sabit: üretim politikası. rooted, emulator, debuggable, hooking_framework,
+      # app_integrity ve software_key kodda reddedilir: kayıtlı bir politika
+      # bunları gevşetemez, panelden gevşetmek ikinci bir yöneticinin onayını ister
+      # (PIN_CHANGE_APPROVALS). Play Integrity ve App Attest bayrakları da reddedilir
+      # (yalnızca bu doğrulayıcılar ayarlıysa yükselirler).
+      ATTESTATION_POLICY_DEFAULT: production
+      # Sabit: mock host'lar PinVault-Token'sız isteği reddeder. Kendi API'n da
+      # koruduğu her uçta token'ı zorunlu tutup doğrulamalı; token zorunlu değilse
+      # attestation reddi erişimi kesmez (SERVER_IMPLEMENTATION_GUIDE.md).
+      MOCK_HOST_REQUIRE_TOKEN: "true"
       # iPhone'lar (ATTESTATION.md §12): yukarıdaki üç enforce ayarı Android'in
       # donanım belgesini ister, iPhone'da bu belge yok. APP_ATTEST_APP_IDS boşsa
       # her iPhone reddedilir (sunucu açılışta uyarır); doluysa Apple'ın App Attest

@@ -15,6 +15,27 @@ import kotlin.test.assertTrue
 class AttestationPolicyTest {
 
     @Test
+    fun `production - strict plus the floor, and the floor wins over a stored policy`() {
+        val defaults = AttestationPolicyDefaults(profile = "production")
+        for (flag in AttestationPolicy.PRODUCTION_FLOOR) assertEquals("reject", defaults.policy.flags[flag], flag)
+        assertEquals("warn", AttestationPolicy.STRICT_FLAGS["software_key"], "strict only warns on it")
+        assertEquals(AttestationPolicy.PRODUCTION_FLOOR, defaults.floor)
+        assertTrue(AttestationPolicyDefaults(profile = "strict").floor.isEmpty())
+
+        val loosened = AttestationPolicy.strict().copy(version = 138, flags = AttestationPolicy.STRICT_FLAGS + mapOf("rooted" to "ignore", "emulator" to "ignore"))
+        val applied = defaults.enforce(loosened)
+        assertEquals("reject", applied.flags["rooted"])
+        assertEquals("reject", applied.flags["emulator"])
+        assertEquals(138, applied.version)
+        // A relaxation a second admin approved stands.
+        assertEquals("ignore", defaults.enforce(loosened.copy(approvedRelaxations = listOf("rooted"))).flags["rooted"])
+        // Stored rows from before the field read as none approved.
+        val old = AttestationPolicy.fromStored("""{"version":3,"flags":{"rooted":"ignore"}}""", 3, defaults.policy)
+        assertEquals(emptyList(), old.approvedRelaxations)
+        assertEquals("reject", defaults.enforce(old).flags["rooted"])
+    }
+
+    @Test
     fun `strict and lenient defaults`() {
         val strict = AttestationPolicy.strict()
         assertEquals(0, strict.version)

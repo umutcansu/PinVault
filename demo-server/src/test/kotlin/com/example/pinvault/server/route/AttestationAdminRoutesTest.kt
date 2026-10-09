@@ -1,6 +1,8 @@
 package com.example.pinvault.server.route
 
+import com.example.pinvault.server.plugin.ApprovedReplayKey
 import com.example.pinvault.server.service.AuditLog
+import com.example.pinvault.server.service.attestation.AttestationPolicy
 import com.example.pinvault.server.service.attestation.AttestationKeyPolicy
 import com.example.pinvault.server.service.attestation.AttestationNonces
 import com.example.pinvault.server.service.attestation.AttestationPolicyDefaults
@@ -73,10 +75,14 @@ class AttestationAdminRoutesTest {
         dir.deleteRecursively()
     }
 
-    private fun ApplicationTestBuilder.app() {
-        val service = AttestationService(policies, devices, secrets, AttestationNonces(), AttestationPolicyDefaults(),
+    private fun ApplicationTestBuilder.app(defaults: AttestationPolicyDefaults = AttestationPolicyDefaults()) {
+        val service = AttestationService(policies, devices, secrets, AttestationNonces(), defaults,
             AttestationKeyPolicy.WARN, verifier = { error("not used") }, audit = AuditLog(auditStore, null))
         install(ContentNegotiation) { json(Json { encodeDefaults = true; ignoreUnknownKeys = true }) }
+        // What ApiKeyAuth does for the replay of an approved change request (its one-time token).
+        install(io.ktor.server.application.createApplicationPlugin("TestApprovedReplay") {
+            onCall { call -> if (call.request.headers["X-Test-Approved-Replay"] != null) call.attributes.put(ApprovedReplayKey, 7L) }
+        })
         routing { attestationAdminRoutes(service, policies, devices, secrets, AuditLog(auditStore, null)) }
     }
 
@@ -123,6 +129,60 @@ class AttestationAdminRoutesTest {
         }
         // Another scope has its own.
         assertEquals(0, client.get("/api/v1/config-apis/other/attestation/policy").json()["version"]!!.jsonPrimitive.int)
+    }
+
+    @Test
+    fun `production - the floor is held in code and lowered only by an approved replay`() = testApplication {
+        // A policy stored before (v138 of the review): root, emulator and debuggable ignored.
+        policies.put(scope, AttestationPolicy.strict().let { it.copy(flags = it.flags + mapOf("rooted" to "ignore", "emulator" to "ignore", "debuggable" to "ignore")) }, "old-admin")
+        app(AttestationPolicyDefaults(profile = "production"))
+        suspend fun put(body: String, replay: Boolean = false) = client.put("$base/policy") {
+            contentType(ContentType.Application.Json); setBody(body)
+            if (replay) headers.append("X-Test-Approved-Replay", "1")
+        }
+        fun JsonObject.flag(name: String) = this["flags"]!!.jsonObject[name]!!.jsonPrimitive.content
+
+        val read = client.get("$base/policy").json()
+        for (flag in AttestationPolicy.PRODUCTION_FLOOR) assertEquals("reject", read.flag(flag), "$flag is read as reject whatever was stored")
+        assertEquals(0, read["approvedRelaxations"]!!.jsonArray.size)
+
+        // Lowering a floor flag without an approved replay: refused, nothing stored, audited.
+        val refused = put("""{"flags":{"rooted":"warn"}}""")
+        assertEquals(HttpStatusCode.Forbidden, refused.status, refused.bodyAsText())
+        val refusal = refused.json()
+        assertEquals("two_person_approval_required", refusal["error"]!!.jsonPrimitive.content)
+        assertEquals(listOf("rooted"), refusal["flags"]!!.jsonArray.map { it.jsonPrimitive.content })
+        assertEquals(1, auditStore.count("attestation_policy_floor_refused"))
+        assertEquals("reject", client.get("$base/policy").json().flag("rooted"))
+
+        // Anything else is a plain PUT.
+        assertEquals(HttpStatusCode.OK, put("""{"tokenTtlSeconds":120,"flags":{"adb_enabled":"warn"}}""").status)
+
+        // The replay of an approved change lowers it, and says so.
+        val approved = put("""{"flags":{"rooted":"warn"}}""", replay = true)
+        assertEquals(HttpStatusCode.OK, approved.status, approved.bodyAsText())
+        val approvedJson = approved.json()
+        assertEquals("warn", approvedJson.flag("rooted"))
+        assertEquals(listOf("rooted"), approvedJson["approvedRelaxations"]!!.jsonArray.map { it.jsonPrimitive.content })
+        assertEquals("warn", client.get("$base/policy").json().flag("rooted"))
+        // A later edit keeps an approved relaxation without asking again…
+        val later = put("""{"tokenTtlSeconds":60}""")
+        assertEquals(HttpStatusCode.OK, later.status)
+        assertEquals("warn", later.json().flag("rooted"))
+        // …but not a new one.
+        assertEquals(HttpStatusCode.Forbidden, put("""{"flags":{"emulator":"ignore"}}""").status)
+
+        // Back to reject: the approval is spent; lowering it again needs a new one.
+        val restored = put("""{"flags":{"rooted":"reject"}}""")
+        assertEquals(0, restored.json()["approvedRelaxations"]!!.jsonArray.size)
+        assertEquals(HttpStatusCode.Forbidden, put("""{"flags":{"rooted":"warn"}}""").status)
+    }
+
+    @Test
+    fun `strict and lenient have no floor`() = testApplication {
+        app()
+        val response = client.put("$base/policy") { contentType(ContentType.Application.Json); setBody("""{"flags":{"rooted":"ignore"}}""") }
+        assertEquals(HttpStatusCode.OK, response.status)
     }
 
     @Test

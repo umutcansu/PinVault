@@ -645,7 +645,7 @@ const AUDIT_ACTIONS = [
   'vault_file_uploaded', 'vault_file_deleted', 'vault_policy_changed', 'vault_token_issued', 'vault_token_revoked',
   'vault_enabled_changed', 'host_acl_changed', 'private_key_downloaded', 'bootstrap_pins_changed',
   'trust_roots_updated', 'admin_request_refused',
-  'attestation_policy_updated', 'attestation_device_annotated', 'attestation_device_forgotten',
+  'attestation_policy_updated', 'attestation_policy_floor_refused', 'attestation_device_annotated', 'attestation_device_forgotten',
   'attestation_device_registered', 'attestation_key_mismatch', 'attestation_rejected',
   'attestation_token_secret_rotated', 'attestation_token_secret_deleted', 'server_settings_update', 'server_restart', 'http'
 ];
@@ -672,7 +672,7 @@ function auditActionBadge(action) {
       action === 'attestation_token_secret_rotated' || action === 'attestation_token_secret_deleted' || action === 'server_settings_update' || action === 'server_restart' ? 'act-key' :
     action === 'attestation_rejected' || action === 'attestation_key_mismatch' ? 'act-bad' :
     action === 'attestation_device_registered' ? 'act-ok' :
-    action === 'attestation_policy_updated' || action === 'attestation_device_annotated' ||
+    action === 'attestation_policy_updated' || action === 'attestation_policy_floor_refused' || action === 'attestation_device_annotated' ||
       action === 'attestation_device_forgotten' ? 'act-warn' :
     'act-muted';
   return `<span class="act-badge ${cls}" title="${esc(auditActionLabel(action))}">${esc(action)}</span>`;

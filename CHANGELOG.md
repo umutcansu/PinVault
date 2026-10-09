@@ -7,6 +7,21 @@ libraries MASVS v2; no Critical or High finding, three Medium ones below).
 
 ### Reference server
 
+- **A failed probe is not a clean one.** A signal with `error:` evidence
+  counts as raised, and a client-measured signal (`rooted` … `adb_enabled`)
+  missing from the report or without a boolean `flag` is raised too: a
+  2.4.0 library sent a probe that threw as `flag: false`, and a report could
+  leave a signal out.
+- **`ATTESTATION_POLICY_DEFAULT=production`**: `strict` plus `software_key`,
+  `play_integrity(_missing)` and `app_attest(_missing)` at `reject`, and a
+  floor held in code: `rooted`, `emulator`, `debuggable`,
+  `hooking_framework`, `app_integrity` and `software_key` are read as
+  `reject` whatever the stored policy says (a policy loosened earlier over the
+  admin API no longer counts). A PUT lowers one only as the replay of a
+  two-person-approved change, otherwise `403 two_person_approval_required`
+  (audited as `attestation_policy_floor_refused`); the policy lists them in
+  `approvedRelaxations`. The sample host's production profile fixes
+  `production` and `MOCK_HOST_REQUIRE_TOKEN=true`.
 - **A stranger cannot spend a device's attestation quota.**
   `ATTESTATION_DEVICE_RATE_LIMIT` was counted on the `deviceId` the body
   claimed, before its signature was checked: anyone who knew a device id could
@@ -16,6 +31,14 @@ libraries MASVS v2; no Critical or High finding, three Medium ones below).
   the key is the registered one, or the device is new), a refused attestation
   registers nothing, and a full per-device table lets new devices through (the
   address limiter still bounds the flood).
+
+### Android and iOS libraries
+
+- **A probe that fails raises its signal.** `Signal.error` (Kotlin) and
+  `IntegritySignal.error` (Swift) now return `flag: true` with the
+  `error:<probe>` evidence, and the root / hooking probes raise on their own
+  read errors (`error:prop`, `error:maps`): "could not look" is never
+  "clean".
 
 ### iOS library
 

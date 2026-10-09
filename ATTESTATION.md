@@ -155,8 +155,13 @@ Response `200`:
 ## 3. The report
 
 Built by `DeviceIntegrityProbe` (library package `integrity`). Every probe is
-best-effort: a probe that throws contributes `"error"` evidence, never a
-crash, and never a false "clean".
+best-effort: a probe that throws, or a part of one that could not read
+(`error:prop`, `error:maps`), raises its signal with `error:<probe>`
+evidence — never a crash, never a false "clean" (2.4.1; earlier libraries
+sent it with `flag: false`). The server holds older clients to the same
+rule: a signal with `error:` evidence counts as raised, and a client-measured
+signal (`rooted` … `adb_enabled`) missing from the report or without a
+boolean `flag` is raised too.
 
 ```json
 {
@@ -440,8 +445,16 @@ Evaluation:
 5. ARC = first 8 hex characters of `HMAC-SHA256(nonceKey, sorted reasons ‖ "|" ‖ sorted warnings)`;
    the dashboard resolves an ARC to its reasons from the device's last verdict.
 
-Defaults: `ATTESTATION_POLICY_DEFAULT=strict` (the table above) or `lenient`
-(everything `warn`; what a first rollout uses while the fleet is measured).
+Defaults: `ATTESTATION_POLICY_DEFAULT=strict` (the table above), `lenient`
+(everything `warn`; what a first rollout uses while the fleet is measured) or
+`production`: `strict` with `software_key`, `play_integrity`,
+`play_integrity_missing`, `app_attest` and `app_attest_missing` at `reject`,
+and a floor held in code — `rooted`, `emulator`, `debuggable`,
+`hooking_framework`, `app_integrity` and `software_key` are read as `reject`
+whatever the stored policy says. A PUT lowers one of them only as the replay
+of a change a second admin approved (`PIN_CHANGE_APPROVALS>=2`); otherwise
+`403 two_person_approval_required`. The flags lowered that way are listed in
+the policy's `approvedRelaxations`.
 A policy stored before a flag existed gets the default profile's action for
 it: after an upgrade a stored policy rejects the five record-based flags
 under a `strict` default.
@@ -631,7 +644,7 @@ webhooks), `attestation_token_secret_rotated`, `attestation_token_secret_deleted
 |---|---|---|
 | `ATTESTATION_ENABLED` | `true` | Serves `/api/v1/attest*`. |
 | `ATTESTATION_KEY_POLICY` | `warn` (production profile: `enforce`) | What a first registration's Android key attestation must do. `enforce` needs `ATTESTATION_PACKAGE_NAMES` and `ATTESTATION_SIGNER_SHA256`, or `APP_ATTEST_APP_IDS` for an iOS-only fleet (Android devices are then refused); an iPhone gets in under it only by App Attest (§12). |
-| `ATTESTATION_POLICY_DEFAULT` | `strict` (production profile: `strict`, fixed) | Policy for a Config API with none stored. |
+| `ATTESTATION_POLICY_DEFAULT` | `strict` (production profile: `production`, fixed) | Policy for a Config API with none stored: `strict`, `lenient` or `production` (strict + a floor held in code, §4). |
 | `ATTESTATION_TOKEN_TTL_SECONDS` | `300` | Token lifetime when a policy has none. |
 | `ATTESTATION_INTERVAL_SECONDS` | `300` | `nextAttestIn` when a policy has none. |
 | `ATTESTATION_NONCE_TTL_SECONDS` | `120` | |
