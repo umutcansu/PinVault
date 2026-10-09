@@ -253,7 +253,10 @@ fun Route.hostRoutes(
 
                 // One bounded read, one parser (the approver's description reads the same bytes).
                 val form = call.receiveMultipartForm(maxUploadBytes) ?: return@post
-                val password = form.fields["password"] ?: "changeit"
+                // No default: a P12 opened with a public password is not a secret anyone kept.
+                val password = form.fields["password"]?.takeIf { it.isNotEmpty() }
+                    ?: return@post call.respondText("""{"error":"password_required","message":"The P12's password is required."}""",
+                        ContentType.Application.Json, HttpStatusCode.BadRequest)
 
                 val bytes = form.file ?: return@post call.respondText("""{"error":"Dosya gerekli"}""", ContentType.Application.Json, HttpStatusCode.BadRequest)
 

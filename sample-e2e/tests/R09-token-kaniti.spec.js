@@ -34,7 +34,7 @@ test('R09 Token çalınması: kanıt zorunluyken cihazdan alınan token tek baş
   let jkt;
 
   async function requireProof(on) {
-    const saved = await hostApi.api('/api/v1/server-settings', { method: 'PUT', body: { values: { PINVAULT_TOKEN_REQUIRE_PROOF: on ? 'true' : '' } } });
+    const saved = await hostApi.api('/api/v1/server-settings', { method: 'PUT', body: { values: { PINVAULT_TOKEN_REQUIRE_PROOF: on ? 'true' : 'false' } } });
     expect(saved.status, `ayar kaydedilemedi: ${saved.text}`).toBe(200);
     // Kaydedilen ayar bir sonraki açılışta geçerli. Mock host'lar token istesin; ortam
     // zaten öyleyse compose container'ı yeniden kurmaz, bu yüzden ayrıca yeniden başlatılır.

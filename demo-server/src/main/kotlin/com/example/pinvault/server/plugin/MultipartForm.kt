@@ -25,8 +25,9 @@ class MultipartForm(
 ) {
     companion object {
         private val BOUNDARY = Regex("""boundary=(?:"([^"]+)"|([^;\s]+))""", RegexOption.IGNORE_CASE)
-        private val NAME = Regex("""[;\s]name="([^"]*)"""", RegexOption.IGNORE_CASE)
-        private val FILENAME = Regex("""[;\s]filename="([^"]*)"""", RegexOption.IGNORE_CASE)
+        // RFC 7578 / 6266: a quoted string or a bare token (`name=password`, as Ktor's client writes it).
+        private val NAME = Regex("""[;\s]name=(?:"([^"]*)"|([^;\s"]+))""", RegexOption.IGNORE_CASE)
+        private val FILENAME = Regex("""[;\s]filename=(?:"([^"]*)"|([^;\s"]+))""", RegexOption.IGNORE_CASE)
         private val CRLF = "\r\n".toByteArray()
         private val HEADER_END = "\r\n\r\n".toByteArray()
 
@@ -55,7 +56,7 @@ class MultipartForm(
                 val content = body.copyOfRange(contentStart, next)
                 val disposition = headers.firstOrNull { it.startsWith("content-disposition:", ignoreCase = true) }
                 if (disposition != null) {
-                    val name = NAME.find(disposition)?.groupValues?.get(1)
+                    val name = NAME.find(disposition)?.groupValues?.let { it[1].ifEmpty { it[2] } }
                     if (FILENAME.containsMatchIn(disposition)) file = content
                     else if (name != null) fields[name] = content.toString(Charsets.UTF_8)
                 }

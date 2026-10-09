@@ -332,7 +332,11 @@ public struct ConfigApiBlock: Sendable, Equatable, Hashable {
         /// mTLS client keystore (PKCS12) bundled with the app; imported into
         /// the Keychain on first use. The same for every install: use it to
         /// reach an mTLS Config API before enrollment, not as a device identity.
-        @discardableResult public func clientKeystore(_ bytes: Data, password: String = "changeit") -> Builder {
+        /// The password has no default: a bundle opened with a public password protects nothing.
+        @discardableResult public func clientKeystore(_ bytes: Data, password: String) -> Builder {
+            if password.isEmpty, firstError == nil {
+                firstError = .invalidConfiguration("ConfigApi '\(id)': clientKeystore needs the keystore's password")
+            }
             clientKeystoreBytes = bytes
             clientKeyPassword = password
             return self

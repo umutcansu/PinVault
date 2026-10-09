@@ -89,7 +89,7 @@ object ServerSettingsCatalog {
         // Devices and enrollment
         ServerSetting("ENROLLMENT_MODE", "devices", ServerSetting.Kind.CHOICE, "token", listOf("token", "open")),
         ServerSetting("CLIENT_CERT_TTL_DAYS", "devices", ServerSetting.Kind.NUMBER, "90", min = 1, max = 825),
-        ServerSetting("HOST_CLIENT_CERT_REQUIRE_GRANT", "devices", ServerSetting.Kind.BOOL, "false"),
+        ServerSetting("HOST_CLIENT_CERT_REQUIRE_GRANT", "devices", ServerSetting.Kind.BOOL, "true"),
         ServerSetting("ENROLLMENT_ATTESTATION", "devices", ServerSetting.Kind.CHOICE, "warn", modes),
         ServerSetting("USER_AUTH_ATTESTATION", "devices", ServerSetting.Kind.CHOICE, "warn", modes),
         ServerSetting("INTEGRITY_VERIFICATION", "devices", ServerSetting.Kind.CHOICE, "off", modes),
@@ -105,7 +105,7 @@ object ServerSettingsCatalog {
         ServerSetting("ATTESTATION_FRESH_INTERVAL_SECONDS", "attestation", ServerSetting.Kind.NUMBER, "0", min = 0, max = 30L * 86_400),
         ServerSetting("ATTESTATION_FRESH_GRACE_SECONDS", "attestation", ServerSetting.Kind.NUMBER, "259200", min = 0, max = 30L * 86_400),
         ServerSetting("MOCK_HOST_REQUIRE_TOKEN", "attestation", ServerSetting.Kind.BOOL, "false"),
-        ServerSetting("PINVAULT_TOKEN_REQUIRE_PROOF", "attestation", ServerSetting.Kind.BOOL, "false"),
+        ServerSetting("PINVAULT_TOKEN_REQUIRE_PROOF", "attestation", ServerSetting.Kind.BOOL, "true"),
         ServerSetting("PINVAULT_TOKEN_ANOMALY", "attestation", ServerSetting.Kind.CHOICE, "off", listOf("off", "warn", "refuse")),
         ServerSetting("PINVAULT_TOKEN_ANOMALY_MAX_ADDRESSES", "attestation", ServerSetting.Kind.NUMBER, "8", min = 1, max = 1000),
         ServerSetting("PINVAULT_TOKEN_ANOMALY_MAX_REQUESTS", "attestation", ServerSetting.Kind.NUMBER, "1200", min = 1, max = 1_000_000),

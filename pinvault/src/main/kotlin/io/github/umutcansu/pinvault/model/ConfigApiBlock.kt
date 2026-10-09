@@ -372,8 +372,8 @@ data class ConfigApiBlock @JvmOverloads constructor(
         fun allowRelaxationsInRelease() = apply { this.relaxationsInRelease = true }
 
         /**
-         * mTLS client keystore bundled with the app. Default password
-         * "changeit" is placeholder only.
+         * mTLS client keystore bundled with the app, with its [password] (no
+         * default: a bundle opened with a public password protects nothing).
          *
          * The private key is imported into the Android Keystore as a
          * non-exportable key when the block is first used and presented from
@@ -382,7 +382,8 @@ data class ConfigApiBlock @JvmOverloads constructor(
          * readable by anyone who unpacks the app: use it to reach an mTLS
          * Config API before enrollment, not as a device identity.
          */
-        fun clientKeystore(bytes: ByteArray, password: String = "changeit") = apply {
+        fun clientKeystore(bytes: ByteArray, password: String) = apply {
+            require(password.isNotEmpty()) { "clientKeystore: the keystore's password is required" }
             this.clientKeystoreBytes = bytes
             this.clientKeyPassword = password
         }

@@ -54,8 +54,13 @@ class ClientCertLifecycleTest {
     private var ttl: Duration = Duration.ofDays(90)
     private val ttlOverrides = mutableMapOf<String, Duration>()
 
+    private var savedOverlay: Map<String, String> = emptyMap()
+
     @BeforeTest
     fun setUp() {
+        // Older clients that do not negotiate a P12 password get CLIENT_P12_PASSWORD (no default since 2.4.2).
+        savedOverlay = com.example.pinvault.server.service.ServerEnv.overlay
+        com.example.pinvault.server.service.ServerEnv.overlay = savedOverlay + ("CLIENT_P12_PASSWORD" to "legacy-p12-test")
         dbFile = File.createTempFile("pinvault-lifecycle-", ".db").also { it.deleteOnExit() }
         db = DatabaseManager(dbFile.absolutePath)
         certsDir = File(System.getProperty("java.io.tmpdir"), "pinvault-lifecycle-certs-${System.nanoTime()}").also { it.mkdirs() }
@@ -71,7 +76,7 @@ class ClientCertLifecycleTest {
     }
 
     @AfterTest
-    fun tearDown() { dbFile.delete(); certsDir.deleteRecursively() }
+    fun tearDown() { dbFile.delete(); certsDir.deleteRecursively(); com.example.pinvault.server.service.ServerEnv.overlay = savedOverlay }
 
     // ── helpers ──────────────────────────────────────────────────────────
 

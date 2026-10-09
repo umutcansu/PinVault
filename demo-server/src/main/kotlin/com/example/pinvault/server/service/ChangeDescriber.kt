@@ -311,7 +311,9 @@ class ChangeDescriber(
                     ?: throw IllegalArgumentException("a multipart/form-data body with the P12 is required")
                 val p12 = form.file ?: throw IllegalArgumentException("the P12 file is missing")
                 // The entry the handler stores: the P12's only private key (more than one is refused).
-                val cert = planner.hostClientCertificate(p12, form.fields["password"] ?: "changeit")
+                val password = form.fields["password"]?.takeIf { it.isNotEmpty() }
+                    ?: throw IllegalArgumentException("the P12's password is required")
+                val cert = planner.hostClientCertificate(p12, password)
                 Description(
                     scope, "$scope: devices use client certificate ${ApprovalService.plainText(cert.subjectX500Principal.name, 100)} " +
                         "(key ${LiveCertificateGate.spkiPin(cert).take(12)}…, valid until ${cert.notAfter.toInstant().toString().take(10)}) for $host",

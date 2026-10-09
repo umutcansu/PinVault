@@ -79,7 +79,9 @@ fun Route.clientCertAdminRoutes(
         // Before anything is generated: a revoked id stays revoked.
         if (revoked(clientId)) return@post call.respondJson(REVOKED_ID, HttpStatusCode.Conflict)
 
+        // The dashboard negotiates and shows the one-off password once; an API client without the feature needs CLIENT_P12_PASSWORD.
         val wrapping = P12Transfer.wrappingFor(call)
+            ?: return@post call.respondJson(P12Transfer.NEGOTIATION_REQUIRED, HttpStatusCode.BadRequest)
         // Issued by the client CA: nothing is added to the truststore.
         val result = certService.generateClientCertificate(clientId, wrapping.password)
         // Never over a revoked row: a revocation that landed after the check above stays.

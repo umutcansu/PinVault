@@ -2,7 +2,28 @@
 
 ## Unreleased
 
+### Reference server
+
+- **On by default:** `HOST_CLIENT_CERT_REQUIRE_GRANT` (a host's client
+  certificate only to devices the device host ACL names; a scope without an
+  ACL answers `403 host_not_allowed`) and `PINVAULT_TOKEN_REQUIRE_PROOF` (a
+  `PinVault-Proof` with every token request). `false` turns either off; the
+  sample host's demo `.env` keeps the host certificate open.
+- **No "changeit" default for P12s:** an upload needs the keystore's password
+  (`400 password_required`); a client that does not negotiate a P12 password
+  (`X-PinVault-Features: p12password`) gets `CLIENT_P12_PASSWORD`, which has
+  no default any more ("changeit" only with `ALLOW_DEMO_SECRETS=true`) —
+  without it the request is refused (`400 p12_password_negotiation_required`)
+  before an enrollment token is spent. The dashboard negotiates and shows a
+  generated P12's one-off password once; its upload forms no longer prefill one.
+- **Multipart form fields with a bare name** (`name=password`, as Ktor's client
+  writes them) are read; they were ignored, so such an upload fell back to the
+  default password.
+
 ### Android and iOS libraries
+
+- **`clientKeystore(bytes, password)` needs the password** (no "changeit"
+  default; an empty one is refused).
 
 - **Breaking for release builds that kept a test relaxation:**
   `allowUnsigned()` and `allowUnpinnedConfigApi()` are refused in a release

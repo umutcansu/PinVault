@@ -740,7 +740,7 @@ class BackendTest {
         assertEquals(1, pin.clientCertVersion)
 
         // Download works
-        val dlResp = client.get("/api/v1/hosts/upload.test/client-cert/download")
+        val dlResp = client.get("/api/v1/hosts/upload.test/client-cert/download") { header("X-PinVault-Features", "p12password") }
         assertEquals(HttpStatusCode.OK, dlResp.status)
 
         // Upload again — version increments
@@ -780,12 +780,22 @@ class BackendTest {
         assertTrue(opens(bytes, password))
         assertFalse(opens(bytes, CertificateService.KEYSTORE_PASSWORD), "never the server's keystore password")
 
+        // No CLIENT_P12_PASSWORD (and no demo secrets): a client that does not negotiate is
+        // refused before anything is issued, and its token is not spent.
+        val token = enrollmentTokenStore.create("p12-device-2")
         val legacy = client.post("/api/v1/client-certs/enroll") {
             contentType(ContentType.Application.Json)
-            setBody("""{"token":"${enrollmentTokenStore.create("p12-device-2")}"}""")
+            setBody("""{"token":"$token"}""")
         }
-        assertNull(legacy.headers["X-P12-Password"])
-        assertTrue(opens(legacy.readRawBytes(), com.example.pinvault.server.service.P12Transfer.legacyPassword))
+        assertEquals(HttpStatusCode.BadRequest, legacy.status)
+        assertTrue(legacy.bodyAsText().contains("p12_password_negotiation_required"), legacy.bodyAsText())
+        assertNull(com.example.pinvault.server.service.P12Transfer.legacyPassword, "no default password")
+        val retried = client.post("/api/v1/client-certs/enroll") {
+            contentType(ContentType.Application.Json)
+            header("X-PinVault-Features", "p12password")
+            setBody("""{"token":"$token"}""")
+        }
+        assertEquals(HttpStatusCode.OK, retried.status, "the refused request did not spend the token")
     }
 
     @Test
@@ -812,8 +822,8 @@ class BackendTest {
         val bytes = download.readRawBytes()
         assertTrue(opens(bytes, password))
         assertEquals(sha256b64(bytes), download.headers["X-P12-SHA256"])
-        val legacy = client.get("/api/v1/hosts/hcc.test/client-cert/download").readRawBytes()
-        assertTrue(opens(legacy, com.example.pinvault.server.service.P12Transfer.legacyPassword))
+        val legacy = client.get("/api/v1/hosts/hcc.test/client-cert/download")
+        assertEquals(HttpStatusCode.BadRequest, legacy.status, "no default password for a client that does not negotiate")
     }
 
     @Test
@@ -996,6 +1006,7 @@ class BackendTest {
 
         val response = client.post("/api/v1/client-certs/enroll") {
             contentType(ContentType.Application.Json)
+            header("X-PinVault-Features", "p12password")
             setBody("""{"token":"$token"}""")
         }
         assertEquals(HttpStatusCode.OK, response.status)
@@ -1038,6 +1049,7 @@ class BackendTest {
         val token = enrollmentTokenStore.create("open-token-client")
         val response = client.post("/api/v1/client-certs/enroll") {
             contentType(ContentType.Application.Json)
+            header("X-PinVault-Features", "p12password")
             setBody("""{"token":"$token"}""")
         }
         assertEquals(HttpStatusCode.OK, response.status)
