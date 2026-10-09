@@ -194,6 +194,18 @@ public enum ConfigParser {
         return url
     }
 
+    /// An endpoint path resolved relative to the block's base URL. An absolute
+    /// value — a scheme (`://`) or a root (`/`, `\`) — would silently retarget the
+    /// request past the pinned host (`URL(string:relativeTo:)` honours it), so it
+    /// is refused (RN-2). Returns nil when the optional field is absent.
+    static func relEndpoint(_ f: Fields, _ key: String, maxLength: Int) throws -> String? {
+        guard let v = try f.string(key, maxLength: maxLength) else { return nil }
+        if v.contains("://") || v.hasPrefix("/") || v.hasPrefix("\\") {
+            throw BridgeInputError("\(f.path).\(key): must be a relative path, not an absolute URL")
+        }
+        return v
+    }
+
     public static func hostPin(_ p: Fields) throws -> HostPin {
         let hostname = try p.requireString("hostname", maxLength: 255)
         guard let pins = try p.stringList("sha256", maxItems: maxPinsPerHost, maxLength: 128) else {
@@ -230,8 +242,8 @@ public enum ConfigParser {
         let id = try b.requireString("id", maxLength: 128)
         guard let url = try httpsUrl(b, "url") else { throw BridgeInputError("\(b.path).url: required") }
         let bootstrapPins = try b.objectList("bootstrapPins", maxItems: maxPins)?.map(hostPin)
-        let configEndpoint = try b.string("configEndpoint", maxLength: 512)
-        let healthEndpoint = try b.string("healthEndpoint", maxLength: 512)
+        let configEndpoint = try relEndpoint(b, "configEndpoint", maxLength: 512)
+        let healthEndpoint = try relEndpoint(b, "healthEndpoint", maxLength: 512)
         let oneKey = try b.string("signaturePublicKey", maxLength: keyLength, multiline: true)
         let keys = try b.stringList("signaturePublicKeys", maxItems: 16, maxLength: keyLength, multiline: true)
         if oneKey != nil && keys != nil {
@@ -247,9 +259,9 @@ public enum ConfigParser {
         let clientCaPins = try b.stringList("clientCaPins", maxItems: 16, maxLength: 128)
         let maxLifetime = try b.int("maxClientCertLifetimeDays", min: 1, max: 3650)
         let clientCertHosts = try b.stringList("clientCertHosts", maxItems: 64, maxLength: 2048)
-        let enrollmentEndpoint = try b.string("enrollmentEndpoint", maxLength: 512)
-        let clientCertEndpoint = try b.string("clientCertEndpoint", maxLength: 512)
-        let vaultReportEndpoint = try b.string("vaultReportEndpoint", maxLength: 512)
+        let enrollmentEndpoint = try relEndpoint(b, "enrollmentEndpoint", maxLength: 512)
+        let clientCertEndpoint = try relEndpoint(b, "clientCertEndpoint", maxLength: 512)
+        let vaultReportEndpoint = try relEndpoint(b, "vaultReportEndpoint", maxLength: 512)
         let clientCertLabel = try b.string("clientCertLabel", maxLength: 128)
         let wantPinsFor = try b.stringList("wantPinsFor", maxItems: 256, maxLength: 255)
         let renewalUrl = try httpsUrl(b, "renewalUrl")
@@ -355,6 +367,9 @@ public enum ConfigParser {
     static func addVaultFile(_ builder: PinVaultConfig.Builder, _ f: Fields, _ tokens: VaultTokenStore, native: NativeSecurity?) throws {
         let key = try f.requireString("key", maxLength: 128)
         let endpoint = try f.requireString("endpoint", maxLength: 512)
+        if endpoint.contains("://") || endpoint.hasPrefix("/") || endpoint.hasPrefix("\\") {
+            throw BridgeInputError("\(f.path).endpoint: must be a relative path, not an absolute URL")
+        }
         let jsSignatureKey = try f.string("signaturePublicKey", maxLength: keyLength, multiline: true)
         let updateWithPins = try f.bool("updateWithPins")
         let storage = try f.enumValue("storage", StorageStrategy.self)

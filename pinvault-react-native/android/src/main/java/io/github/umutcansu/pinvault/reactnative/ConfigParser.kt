@@ -192,6 +192,20 @@ internal object ConfigParser {
         return url
     }
 
+    /**
+     * An endpoint path, resolved relative to the block's base URL. An absolute
+     * value — a scheme (`://`) or a root (`/`, `\`) — would silently retarget the
+     * request past the pinned host (`@Url`/`URL(string:relativeTo:)` honour it),
+     * so it is refused (RN-2). Returns null when the optional field is absent.
+     */
+    private fun relEndpoint(f: Fields, key: String, max: Int): String? {
+        val v = f.string(key, max) ?: return null
+        if (v.contains("://") || v.startsWith("/") || v.startsWith("\\")) {
+            throw BridgeInputException("${f.path}.$key: must be a relative path, not an absolute URL")
+        }
+        return v
+    }
+
     fun hostPin(p: Fields): HostPin {
         val hostname = p.requireString("hostname", 255)
         val pins = p.stringList("sha256", MAX_PINS_PER_HOST, 128) ?: throw BridgeInputException("${p.path}.sha256: required")
@@ -223,8 +237,8 @@ internal object ConfigParser {
         val url = httpsUrl(b, "url") ?: throw BridgeInputException("${b.path}.url: required")
         // Read everything before the builder runs, so a refusal names the JSON path.
         val bootstrapPins = b.objList("bootstrapPins", MAX_PINS)?.map(::hostPin)
-        val configEndpoint = b.string("configEndpoint", 512)
-        val healthEndpoint = b.string("healthEndpoint", 512)
+        val configEndpoint = relEndpoint(b, "configEndpoint", 512)
+        val healthEndpoint = relEndpoint(b, "healthEndpoint", 512)
         val oneKey = b.string("signaturePublicKey", KEY_LENGTH, multiline = true)
         val keys = b.stringList("signaturePublicKeys", 16, KEY_LENGTH, multiline = true)
         if (oneKey != null && keys != null) {
@@ -240,9 +254,9 @@ internal object ConfigParser {
         val clientCaPins = b.stringList("clientCaPins", 16, 128)
         val maxLifetime = b.int("maxClientCertLifetimeDays", 1, 3650)
         val clientCertHosts = b.stringList("clientCertHosts", 64, 2048)
-        val enrollmentEndpoint = b.string("enrollmentEndpoint", 512)
-        val clientCertEndpoint = b.string("clientCertEndpoint", 512)
-        val vaultReportEndpoint = b.string("vaultReportEndpoint", 512)
+        val enrollmentEndpoint = relEndpoint(b, "enrollmentEndpoint", 512)
+        val clientCertEndpoint = relEndpoint(b, "clientCertEndpoint", 512)
+        val vaultReportEndpoint = relEndpoint(b, "vaultReportEndpoint", 512)
         val clientCertLabel = b.string("clientCertLabel", 128)
         val wantPinsFor = b.stringList("wantPinsFor", 256, 255)
         val renewalUrl = httpsUrl(b, "renewalUrl")
@@ -332,6 +346,9 @@ internal object ConfigParser {
             throw BridgeInputException("${f.path}.key: must match [A-Za-z0-9._-]{1,64} and not be only dots")
         }
         val endpoint = f.requireString("endpoint", 512)
+        if (endpoint.contains("://") || endpoint.startsWith("/") || endpoint.startsWith("\\")) {
+            throw BridgeInputException("${f.path}.endpoint: must be a relative path, not an absolute URL")
+        }
         val jsSignatureKey = f.string("signaturePublicKey", KEY_LENGTH, multiline = true)
         val updateWithPins = f.bool("updateWithPins")
         val storage = f.enum("storage", StorageStrategy.values())

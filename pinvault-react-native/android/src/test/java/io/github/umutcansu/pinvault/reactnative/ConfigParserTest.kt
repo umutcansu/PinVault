@@ -46,7 +46,7 @@ class ConfigParserTest {
                 "attestation":true,"attestationInterval":{"amount":10,"unit":"MINUTES"},"requiredSignatures":1""")}],
              "vaultFiles":[
                {"key":"flags","endpoint":"api/v1/vault/flags"},
-               {"key":"secret","endpoint":"/api/v1/vault/secret","accessPolicy":"TOKEN_MTLS","encryption":"USER_AUTH",
+               {"key":"secret","endpoint":"api/v1/vault/secret","accessPolicy":"TOKEN_MTLS","encryption":"USER_AUTH",
                 "userAuth":"REQUIRED","storage":"ENCRYPTED_FILE","maxOfflineAge":{"amount":7,"unit":"DAYS"}}],
              "requireCaTrust":["www.example.com"],"updateIntervalMinutes":15,"deviceAlias":"RN",
              "wipeVaultFilesOnRevocation":true,"requireUnlockedDevice":true,"requireHardwareBackedKeys":true,
@@ -106,6 +106,12 @@ class ConfigParserTest {
         refused("""{"configApis":[${api()}],"android":{"pinGlobalFetch":true}}""", "config.android", "'pinGlobalFetch'")
         refused("""{"configApis":[${api()}],"expiredConfigGrace":{"amount":1,"unit":"HOURS","x":1}}""", "'x'")
         refused("""{"configApis":[{"id":"a","url":"https://h/","bootstrapPins":[{"hostname":"h","sha256":["$pinA","$pinB"],"pinned":true}],"signaturePublicKey":"$key"}]}""", "bootstrapPins[0]", "'pinned'")
+    }
+
+    @Test fun `absolute endpoints are refused`() {   // RN-2
+        refused("""{"configApis":[${api(""","configEndpoint":"https://evil.example/pins"""")}]}""", "configEndpoint", "relative path")
+        refused("""{"configApis":[${api(""","clientCertEndpoint":"/abs"""")}]}""", "clientCertEndpoint", "relative path")
+        refused("""{"configApis":[${api()}],"vaultFiles":[{"key":"k","endpoint":"https://evil.example/f","accessPolicy":"TOKEN"}]}""", "endpoint", "relative path")
     }
 
     @Test fun `wrong types are refused, never coerced`() {

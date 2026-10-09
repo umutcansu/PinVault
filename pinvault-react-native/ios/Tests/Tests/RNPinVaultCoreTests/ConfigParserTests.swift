@@ -31,7 +31,7 @@ final class ConfigParserTests: XCTestCase {
         let parsed = try parse("""
             {"configApis":[\(api(#","serverScope":"default-tls","attestation":true,"attestationInterval":{"amount":10,"unit":"MINUTES"}"#))],
              "vaultFiles":[{"key":"flags","endpoint":"api/v1/vault/flags"},
-               {"key":"secret","endpoint":"/api/v1/vault/secret","accessPolicy":"TOKEN_MTLS","encryption":"USER_AUTH",
+               {"key":"secret","endpoint":"api/v1/vault/secret","accessPolicy":"TOKEN_MTLS","encryption":"USER_AUTH",
                 "userAuth":"REQUIRED","maxOfflineAge":{"amount":7,"unit":"DAYS"}}],
              "requireCaTrust":["www.example.com"],"updateIntervalMinutes":15,"requireUnlockedDevice":true,
              "environmentGuard":{"timeoutMs":2000},
@@ -62,6 +62,12 @@ final class ConfigParserTests: XCTestCase {
         XCTAssertEqual(provider(), "")
         tokens.put("s", "tok-123456")
         XCTAssertEqual(provider(), "tok-123456")
+    }
+
+    func testAbsoluteEndpointsAreRefused() {   // RN-2
+        assertRefused(#"{"configApis":[\#(api(#","configEndpoint":"https://evil.example/pins""#))]}"#, "configEndpoint", "relative path")
+        assertRefused(#"{"configApis":[\#(api(#","clientCertEndpoint":"/abs""#))]}"#, "clientCertEndpoint", "relative path")
+        assertRefused(#"{"configApis":[\#(api())],"vaultFiles":[{"key":"k","endpoint":"https://evil.example/f","accessPolicy":"TOKEN"}]}"#, "endpoint", "relative path")
     }
 
     func testUnknownKeysAreRefused() {
