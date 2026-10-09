@@ -1342,7 +1342,7 @@ What happens:
   request carries the key's Android key attestation chain, so a server with
   `ATTESTATION_KEY_POLICY=enforce` can bind the key to your package on real
   hardware.
-- **A pass** yields a `PinVault-Token` (HS256 JWT, 5 minutes) held in memory,
+- **A pass** yields a `PinVault-Token` (ES256 JWT by default, 5 minutes) held in memory,
   and — when the device is behind — a signed pin config that goes through
   exactly the checks a fetched one gets (`SSLCertificateUpdater.applySigned`:
   signatures, scope, freshness, replay, plausibility). **A reject** yields

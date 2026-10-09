@@ -244,7 +244,7 @@ class AttestationRoutesTest {
         assertEquals((now / 1000 + 300) * 1000, answer["tokenExpiresAt"]!!.jsonPrimitive.long, "exp in seconds, as the token's")
 
         val token = answer["token"]!!.jsonPrimitive.content
-        val verified = assertIs<PinVaultToken.Result.Valid>(PinVaultToken.verify(token, secrets.secretsByKid(), scope, now / 1000))
+        val verified = assertIs<PinVaultToken.Result.Valid>(PinVaultToken.verify(token, secrets.verificationKeys(), setOf(scope), now / 1000))
         assertEquals("pixel-01", verified.claims.deviceId)
         assertEquals(answer["arc"]!!.jsonPrimitive.content, verified.claims.arc)
         assertEquals(0, verified.claims.policyVersion)
@@ -372,7 +372,7 @@ class AttestationRoutesTest {
         assertTrue("rooted" in lenient.strings("warnings"))
         assertNotNull(lenient["token"])
         assertEquals(2, lenient["policyVersion"]!!.jsonPrimitive.int)
-        assertEquals(2, assertIs<PinVaultToken.Result.Valid>(PinVaultToken.verify(lenient["token"]!!.jsonPrimitive.content, secrets.secretsByKid(), scope, now / 1000)).claims.policyVersion)
+        assertEquals(2, assertIs<PinVaultToken.Result.Valid>(PinVaultToken.verify(lenient["token"]!!.jsonPrimitive.content, secrets.verificationKeys(), setOf(scope), now / 1000)).claims.policyVersion)
 
         val stats = devices.windowStats(scope, 24, Instant.ofEpochMilli(now))
         assertEquals(2, stats.rejects)
@@ -548,7 +548,7 @@ class AttestationRoutesTest {
         val passed = attestJson(body(challenge(), "vip-1", key, report("rooted", "debugger")))
         assertEquals("pass", passed["result"]!!.jsonPrimitive.content)
         assertEquals(setOf("rooted", "debugger", "key_unattested"), passed.strings("warnings").toSet(), "every raised flag is demoted to a warning")
-        val claims = assertIs<PinVaultToken.Result.Valid>(PinVaultToken.verify(passed["token"]!!.jsonPrimitive.content, secrets.secretsByKid(), scope, now / 1000)).claims
+        val claims = assertIs<PinVaultToken.Result.Valid>(PinVaultToken.verify(passed["token"]!!.jsonPrimitive.content, secrets.verificationKeys(), setOf(scope), now / 1000)).claims
         assertEquals(listOf("staff", "canary"), claims.annotations)
         assertTrue(passed["device"]!!.jsonObject["firstSeen"]!!.jsonPrimitive.boolean, "annotated before it ever attested: the key registers now")
         assertTrue(devices.get(scope, "vip-1")!!.registered)
@@ -801,7 +801,7 @@ class AttestationRoutesTest {
         app(service)
         val key = ecKey()
         val answer = attestJson(body(challenge(), "dev-1", key, report()))
-        val claims = assertIs<PinVaultToken.Result.Valid>(PinVaultToken.verify(answer["token"]!!.jsonPrimitive.content, secrets.secretsByKid(), scope, now / 1000)).claims
+        val claims = assertIs<PinVaultToken.Result.Valid>(PinVaultToken.verify(answer["token"]!!.jsonPrimitive.content, secrets.verificationKeys(), setOf(scope), now / 1000)).claims
         // RFC 7638 thumbprint, derived here from the SPKI's uncompressed point.
         val point = key.public.encoded.takeLast(65).toByteArray()
         val url = Base64.getUrlEncoder().withoutPadding()
@@ -812,7 +812,7 @@ class AttestationRoutesTest {
         val cert = Base64.getDecoder().decode(TestAttestationChains.chain(pki, key.public, TestAttestationChains.identityDescription("x")).last())
         val overMtls = service.attest(scope, Json.parseToJsonElement(body(challenge(), "dev-1", key, report())).jsonObject, "test", clientCertificate = cert)
         val token = assertIs<AttestationService.Outcome.Decided>(overMtls).token!!
-        val mtlsClaims = assertIs<PinVaultToken.Result.Valid>(PinVaultToken.verify(token, secrets.secretsByKid(), scope, now / 1000)).claims
+        val mtlsClaims = assertIs<PinVaultToken.Result.Valid>(PinVaultToken.verify(token, secrets.verificationKeys(), setOf(scope), now / 1000)).claims
         assertEquals(url.encodeToString(java.security.MessageDigest.getInstance("SHA-256").digest(cert)), mtlsClaims.certThumbprint)
     }
 

@@ -9,6 +9,19 @@
   ACL answers `403 host_not_allowed`) and `PINVAULT_TOKEN_REQUIRE_PROOF` (a
   `PinVault-Proof` with every token request). `false` turns either off; the
   sample host's demo `.env` keeps the host certificate open.
+- **`PinVault-Token` is ES256 by default** (`PINVAULT_TOKEN_ALG`): an EC
+  P-256 key whose private half never leaves the server signs it; backends
+  verify with the public keys of the new, public `GET /api/v1/attestation/jwks`
+  (a JWK Set), so a backend that is broken into cannot mint tokens.
+  `PINVAULT_TOKEN_ALG=HS256` keeps the shared secret for backends not moved
+  yet. A server switched to ES256 makes a new key at its next token and keeps
+  the HS256 one verifying until it is deleted; a key's algorithm is fixed
+  (no algorithm confusion). `GET …/token-secrets` lists an ES256 key as its
+  public half only. The sample host's production profile fixes `ES256`.
+- **The token's audience is required:** the reference verifier
+  (`PinVaultTokenAuth`) refuses every token when it has no audience
+  configured (it accepted any `aud` with none); the mock hosts accept the
+  server's own Config APIs, or `MOCK_HOST_TOKEN_AUDIENCES`.
 - **No "changeit" default for P12s:** an upload needs the keystore's password
   (`400 password_required`); a client that does not negotiate a P12 password
   (`X-PinVault-Features: p12password`) gets `CLIENT_P12_PASSWORD`, which has

@@ -200,6 +200,10 @@ services:
       ATTESTATION_DEVICE_RATE_LIMIT: ${ATTESTATION_DEVICE_RATE_LIMIT:-}
       ATTESTATION_DEVICE_LIMIT: ${ATTESTATION_DEVICE_LIMIT:-}
       MOCK_HOST_REQUIRE_TOKEN: ${MOCK_HOST_REQUIRE_TOKEN:-}
+      # PinVault-Token imzası: boş/ES256 (API'ler açık anahtarla doğrular) ya da HS256 (ortak sır).
+      PINVAULT_TOKEN_ALG: ${PINVAULT_TOKEN_ALG:-}
+      # Mock host'ların kabul ettiği Config API'ler (token'ın aud'u), virgülle; boş = hepsi.
+      MOCK_HOST_TOKEN_AUDIENCES: ${MOCK_HOST_TOKEN_AUDIENCES:-}
       # true: mock host'lar token'ı yalnızca, token'ın cnf.x5t#S256 ile adını verdiği
       # istemci sertifikasıyla gelen mTLS isteğinde kabul eder (TLS mock host her şeyi reddeder).
       PINVAULT_TOKEN_REQUIRE_CERT_BINDING: ${PINVAULT_TOKEN_REQUIRE_CERT_BINDING:-}

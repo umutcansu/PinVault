@@ -554,6 +554,10 @@ private fun startServer() {
         "true", "on" -> true
         else -> error("PINVAULT_TOKEN_REQUIRE_CERT_BINDING must be true or false (got '${com.example.pinvault.server.service.ServerEnv.get("PINVAULT_TOKEN_REQUIRE_CERT_BINDING")}')")
     }
+    // MOCK_HOST_TOKEN_AUDIENCES: the Config API ids (the token's `aud`) a mock host accepts; unset = every
+    // Config API this server runs.
+    val mockHostTokenAudiences = com.example.pinvault.server.service.ServerEnv.get("MOCK_HOST_TOKEN_AUDIENCES")
+        ?.split(',')?.map { it.trim() }?.filter { it.isNotEmpty() }?.toSet()?.takeIf { it.isNotEmpty() }
     // ...and, with PINVAULT_TOKEN_REQUIRE_PROOF (on unless set to false), only with a PinVault-Proof
     // per request signed by the device key the token's cnf.jkt names (ATTESTATION.md §5.1): a lifted
     // token is useless alone.
@@ -591,8 +595,18 @@ private fun startServer() {
     } ?: com.example.pinvault.server.service.attestation.AttestationService.DEFAULT_ANOMALY_TTL_SECONDS
     val attestationPolicyStore = com.example.pinvault.server.store.AttestationPolicyStore(db)
     val attestedDeviceStore = com.example.pinvault.server.store.AttestedDeviceStore(db)
-    // The HS256 secrets of PinVault-Token, encrypted at rest; the first one is made on first use.
-    val attestationTokenSecretStore = com.example.pinvault.server.store.AttestationTokenSecretStore(db, atRestCipher)
+    // PINVAULT_TOKEN_ALG: ES256 (default since 2.4.2) signs PinVault-Tokens with an EC key that never
+    // leaves the server — backends verify with the public key (GET /api/v1/attestation/jwks); HS256 keeps
+    // the shared secret for backends not moved yet. The keys are encrypted at rest; the first is made on
+    // first use, and a server switched to another algorithm rotates once (the old key keeps verifying).
+    val tokenAlg = when (com.example.pinvault.server.service.ServerEnv.get("PINVAULT_TOKEN_ALG")?.trim()?.uppercase()) {
+        null, "", "ES256" -> com.example.pinvault.server.service.attestation.PinVaultToken.ALG_ES256
+        "HS256" -> com.example.pinvault.server.service.attestation.PinVaultToken.ALG_HS256
+        else -> error("PINVAULT_TOKEN_ALG must be ES256 or HS256 (got '${com.example.pinvault.server.service.ServerEnv.get("PINVAULT_TOKEN_ALG")}')")
+    }
+    val attestationTokenSecretStore = com.example.pinvault.server.store.AttestationTokenSecretStore(db, atRestCipher, alg = tokenAlg)
+    println("PINVAULT_TOKEN_ALG=$tokenAlg" + if (tokenAlg == com.example.pinvault.server.service.attestation.PinVaultToken.ALG_HS256)
+        " — every backend that verifies tokens holds the secret that signs them; ES256 gives them the public key only" else "")
     // Sealed secrets the password at hand cannot open stop the start here, like
     // the other secret checks: not a server that signs tokens with ciphertext.
     attestationTokenSecretStore.checkReadable()
@@ -662,9 +676,9 @@ private fun startServer() {
     }
     if (mockHostRequireToken) {
         mockServerManager.tokenVerifier = {
-            secrets = { attestationTokenSecretStore.secretsByKid() }
-            // A mock host does not know which Config API its app attests with: any `aud` a listed secret signed.
-            audience = null
+            keys = { attestationTokenSecretStore.verificationKeys() }
+            // The audience is required: MOCK_HOST_TOKEN_AUDIENCES, or every Config API this server runs.
+            audiences = mockHostTokenAudiences?.let { fixed -> { fixed } } ?: { configApiManager.getAll().map { it.id }.toSet() }
             requireCertBinding = tokenRequireCertBinding
             requireProof = tokenRequireProof
             publicOrigin = tokenPublicOrigin

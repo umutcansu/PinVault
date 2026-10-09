@@ -95,9 +95,11 @@ class PinVaultTokenAuthTest {
     }
 
     @Test
-    fun `without an audience any Config API's token is accepted`() = testApplication {
+    fun `the audience is required - without one no token is accepted`() = testApplication {
         app(audience = null)
-        assertEquals(HttpStatusCode.OK, client.get("/data") { header(PinVaultToken.HEADER, token(aud = "whatever")) }.status)
+        val refused = client.get("/data") { header(PinVaultToken.HEADER, token(aud = "whatever")) }
+        assertEquals(HttpStatusCode.Unauthorized, refused.status)
+        assertEquals("""{"error":"invalid_token","reason":"audience"}""", refused.bodyAsText())
     }
 
     @Test
@@ -162,6 +164,7 @@ class PinVaultTokenAuthProofTest {
     private fun ApplicationTestBuilder.app(origin: String? = null) {
         install(PinVaultTokenAuth) {
             secrets = { mapOf("k1" to secret) }
+            audience = "api"
             clock = { now }
             requireProof = true
             publicOrigin = origin
@@ -223,6 +226,7 @@ class PinVaultTokenAuthAnomalyTest {
     private fun ApplicationTestBuilder.app(action: com.example.pinvault.server.service.attestation.TokenAnomalyAction, proof: Boolean = false) {
         install(PinVaultTokenAuth) {
             secrets = { mapOf("k1" to secret) }
+            audience = "api"
             clock = { now }
             requireProof = proof
             anomaly = com.example.pinvault.server.service.attestation.TokenAnomalyDetector(maxAddresses = 2, maxRequests = 100, clock = { now })

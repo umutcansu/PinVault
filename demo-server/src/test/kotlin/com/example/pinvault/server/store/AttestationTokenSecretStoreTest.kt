@@ -41,13 +41,13 @@ class AttestationTokenSecretStoreTest {
         val noCipher = AttestationTokenSecretStore(db, cipher = null)
         val error = assertFailsWith<IllegalStateException> { noCipher.checkReadable() }
         assertTrue(error.message!!.contains("VAULT_AT_REST_PASSWORD"), error.message)
-        assertFailsWith<IllegalStateException> { noCipher.secretsByKid() }
+        assertFailsWith<IllegalStateException> { noCipher.verificationKeys() }
         assertFailsWith<IllegalStateException> { noCipher.active() }
 
         val wrong = AttestationTokenSecretStore(db, VaultAtRestCipher("other-password"))
         val mismatch = assertFailsWith<IllegalStateException> { wrong.checkReadable() }
         assertTrue(mismatch.message!!.contains("VAULT_AT_REST_PASSWORD"), mismatch.message)
-        assertFailsWith<IllegalStateException> { wrong.secretsByKid() }
+        assertFailsWith<IllegalStateException> { wrong.verificationKeys() }
     }
 
     @Test
@@ -57,7 +57,7 @@ class AttestationTokenSecretStoreTest {
 
         val rotated = AttestationTokenSecretStore(db, VaultAtRestCipher("new-password", previous = listOf("old-password")))
         rotated.checkReadable()
-        assertContentEquals(made.secret, rotated.secretsByKid().getValue(made.kid), "the same secret: issued tokens stay valid")
+        assertContentEquals(made.secret, rotated.all().first { it.kid == made.kid }.secret, "the same secret: issued tokens stay valid")
 
         // Sealed under the new password now: the old one alone no longer opens it.
         assertFailsWith<IllegalStateException> { old.checkReadable() }
@@ -73,7 +73,7 @@ class AttestationTokenSecretStoreTest {
         plain.checkReadable()
 
         val withCipher = AttestationTokenSecretStore(db, VaultAtRestCipher("right-password"))
-        assertContentEquals(made.secret, withCipher.secretsByKid().getValue(made.kid), "a legacy row is read as it is")
+        assertContentEquals(made.secret, withCipher.all().first { it.kid == made.kid }.secret, "a legacy row is read as it is")
         assertEquals(made.kid, withCipher.active().kid, "no new secret is made for a readable one")
 
         // The start-up pass seals it; the content is unchanged.

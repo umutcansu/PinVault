@@ -78,6 +78,9 @@ services:
       # koruduğu her uçta token'ı zorunlu tutup doğrulamalı; token zorunlu değilse
       # attestation reddi erişimi kesmez (SERVER_IMPLEMENTATION_GUIDE.md).
       MOCK_HOST_REQUIRE_TOKEN: "true"
+      # Sabit: token'ı yalnızca sunucudaki özel anahtar imzalar (ES256); API'ler
+      # açık anahtarla doğrular (/api/v1/attestation/jwks), ele geçirilen bir API token üretemez.
+      PINVAULT_TOKEN_ALG: ES256
       # iPhone'lar (ATTESTATION.md §12): yukarıdaki üç enforce ayarı Android'in
       # donanım belgesini ister, iPhone'da bu belge yok. APP_ATTEST_APP_IDS boşsa
       # her iPhone reddedilir (sunucu açılışta uyarır); doluysa Apple'ın App Attest

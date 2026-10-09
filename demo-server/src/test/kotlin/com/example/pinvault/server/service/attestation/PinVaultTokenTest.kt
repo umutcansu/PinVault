@@ -84,17 +84,78 @@ class PinVaultTokenTest {
         assertEquals(PinVaultToken.Result.Invalid("signature"), PinVaultToken.verify(tampered, secrets, "default-tls", now))
 
         assertEquals(PinVaultToken.Result.Invalid("audience"), PinVaultToken.verify(token, secrets, "other-api", now))
-        assertIs<PinVaultToken.Result.Valid>(PinVaultToken.verify(token, secrets, null, now), "null audience accepts any")
+        // The audience is required: no configured audience accepts no token.
+        val keys = secrets.mapValues { PinVaultToken.VerificationKey.Hs256(it.value) }
+        assertEquals(PinVaultToken.Result.Invalid("audience"), PinVaultToken.verify(token, keys, emptySet(), now))
+        assertIs<PinVaultToken.Result.Valid>(PinVaultToken.verify(token, keys, setOf("other-api", "default-tls"), now))
     }
 
     @Test
     fun `malformed tokens`() {
         for (bad in listOf("", "abc", "a.b", "a.b.c", "$$$.b.c", issue().replace(".", "..", ignoreCase = false).take(10))) {
-            assertEquals(PinVaultToken.Result.Invalid("malformed"), PinVaultToken.verify(bad, secrets, null, now), bad)
+            assertEquals(PinVaultToken.Result.Invalid("malformed"), PinVaultToken.verify(bad, secrets, "default-tls", now), bad)
         }
         // alg none with a known kid.
         val header = Base64.getUrlEncoder().withoutPadding().encodeToString("""{"alg":"none","kid":"2026-10-05-01"}""".toByteArray())
         val payload = Base64.getUrlEncoder().withoutPadding().encodeToString("""{"exp":${now + 300},"aud":"default-tls","sub":"x"}""".toByteArray())
-        assertEquals(PinVaultToken.Result.Invalid("malformed"), PinVaultToken.verify("$header.$payload.AAAA", secrets, null, now))
+        assertEquals(PinVaultToken.Result.Invalid("malformed"), PinVaultToken.verify("$header.$payload.AAAA", secrets, "default-tls", now))
+    }
+
+    private val ec = java.security.KeyPairGenerator.getInstance("EC").apply { initialize(java.security.spec.ECGenParameterSpec("secp256r1")) }.generateKeyPair()
+    private val esKeys = mapOf("2026-10-10-01" to PinVaultToken.VerificationKey.Es256(ec.public as java.security.interfaces.ECPublicKey))
+
+    private fun issueEs(at: Long = now) = PinVaultToken.issue(
+        PinVaultToken.SigningKey.Es256("2026-10-10-01", ec.private as java.security.interfaces.ECPrivateKey),
+        "9774d56d682e549c", "default-tls", "7f3a9c1e", 3, 300, nowSeconds = at, jti = "j2"
+    )
+
+    @Test
+    fun `an ES256 token verifies with the public key only, in the JWS signature form`() {
+        val token = issueEs()
+        val parts = token.split('.')
+        assertTrue(String(Base64.getUrlDecoder().decode(parts[0])).contains("\"alg\":\"ES256\""))
+        assertEquals(64, Base64.getUrlDecoder().decode(parts[2]).size, "raw r||s (RFC 7518 §3.4), not DER")
+        val claims = assertIs<PinVaultToken.Result.Valid>(PinVaultToken.verify(token, esKeys, setOf("default-tls"), now + 10)).claims
+        assertEquals("9774d56d682e549c", claims.deviceId)
+        assertEquals("2026-10-10-01", claims.kid)
+
+        // Another key pair's signature, a tampered payload, an expired one.
+        val stranger = java.security.KeyPairGenerator.getInstance("EC").apply { initialize(java.security.spec.ECGenParameterSpec("secp256r1")) }.generateKeyPair()
+        val forged = PinVaultToken.issue(PinVaultToken.SigningKey.Es256("2026-10-10-01", stranger.private as java.security.interfaces.ECPrivateKey),
+            "9774d56d682e549c", "default-tls", "7f3a9c1e", 3, 300, nowSeconds = now)
+        assertEquals(PinVaultToken.Result.Invalid("signature"), PinVaultToken.verify(forged, esKeys, setOf("default-tls"), now))
+        val payload = String(Base64.getUrlDecoder().decode(parts[1])).replace("9774d56d682e549c", "other")
+        val tampered = parts[0] + "." + Base64.getUrlEncoder().withoutPadding().encodeToString(payload.toByteArray()) + "." + parts[2]
+        assertEquals(PinVaultToken.Result.Invalid("signature"), PinVaultToken.verify(tampered, esKeys, setOf("default-tls"), now))
+        assertEquals(PinVaultToken.Result.Invalid("expired"), PinVaultToken.verify(token, esKeys, setOf("default-tls"), now + 3600))
+        assertEquals(PinVaultToken.Result.Invalid("audience"), PinVaultToken.verify(token, esKeys, setOf("other-api"), now))
+    }
+
+    @Test
+    fun `the key decides the algorithm - no HS256 token made with the public key as its secret`() {
+        // The classic confusion: an attacker who knows the ES256 public key signs HS256 with it.
+        val publicDer = ec.public.encoded
+        val confused = PinVaultToken.issue("2026-10-10-01", publicDer, "9774d56d682e549c", "default-tls", "7f3a9c1e", 3, 300, nowSeconds = now)
+        assertEquals(PinVaultToken.Result.Invalid("malformed"), PinVaultToken.verify(confused, esKeys, setOf("default-tls"), now))
+        // And an ES256 header with an HS256 key is refused the same way.
+        val hsKeys = mapOf("2026-10-10-01" to PinVaultToken.VerificationKey.Hs256(secret))
+        assertEquals(PinVaultToken.Result.Invalid("malformed"), PinVaultToken.verify(issueEs(), hsKeys, setOf("default-tls"), now))
+    }
+
+    @Test
+    fun `the JWK of a public key is what a JWT library imports`() {
+        val jwk = PinVaultToken.jwk("2026-10-10-01", ec.public as java.security.interfaces.ECPublicKey)
+        assertEquals(setOf("kty", "crv", "kid", "alg", "use", "x", "y"), jwk.keys)
+        assertEquals("EC", jwk["kty"]!!.jsonPrimitive.content)
+        assertEquals("P-256", jwk["crv"]!!.jsonPrimitive.content)
+        assertEquals("ES256", jwk["alg"]!!.jsonPrimitive.content)
+        assertEquals(32, Base64.getUrlDecoder().decode(jwk["x"]!!.jsonPrimitive.content).size)
+        assertEquals(32, Base64.getUrlDecoder().decode(jwk["y"]!!.jsonPrimitive.content).size)
+        // Rebuilt from x/y, the key verifies the token.
+        val point = java.security.spec.ECPoint(java.math.BigInteger(1, Base64.getUrlDecoder().decode(jwk["x"]!!.jsonPrimitive.content)),
+            java.math.BigInteger(1, Base64.getUrlDecoder().decode(jwk["y"]!!.jsonPrimitive.content)))
+        val rebuilt = java.security.KeyFactory.getInstance("EC").generatePublic(
+            java.security.spec.ECPublicKeySpec(point, (ec.public as java.security.interfaces.ECPublicKey).params)) as java.security.interfaces.ECPublicKey
+        assertIs<PinVaultToken.Result.Valid>(PinVaultToken.verify(issueEs(), mapOf("2026-10-10-01" to PinVaultToken.VerificationKey.Es256(rebuilt)), setOf("default-tls"), now))
     }
 }

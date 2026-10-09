@@ -22,10 +22,11 @@ import io.ktor.util.AttributeKey
  * The reference verifier of `PinVault-Token` (ATTESTATION.md §5): what a
  * backend does on every request from the app.
  *
- * The header must carry an HS256 JWT signed with the secret its `kid` names
- * in [PinVaultTokenAuthConfig.secrets], unexpired (with the leeway), with the
- * `aud` of this backend's Config API when [PinVaultTokenAuthConfig.audience]
- * is set, and every annotation of [PinVaultTokenAuthConfig.requireAnnotations]
+ * The header must carry a JWT signed with the key its `kid` names in
+ * [PinVaultTokenAuthConfig.keys] (ES256 with the public key, or HS256 with a
+ * shared secret — the key decides the algorithm), unexpired (with the
+ * leeway), with an `aud` among [PinVaultTokenAuthConfig.audiences] (required:
+ * with none configured every token is refused), and every annotation of [PinVaultTokenAuthConfig.requireAnnotations]
  * in its `anno` claim. A request that names its device (`X-Device-Id`) must
  * name the token's `did`. With [PinVaultTokenAuthConfig.requireCertBinding]
  * the request must arrive over mTLS with the client certificate the token's
@@ -43,15 +44,32 @@ import io.ktor.util.AttributeKey
  * retry. `/health` (and [PinVaultTokenAuthConfig.skipPaths]) stays open.
  *
  * The mock TLS/mTLS hosts install it with `MOCK_HOST_REQUIRE_TOKEN=true`.
- * Nothing here calls the PinVault server: the secrets are loaded, the
- * token is checked locally.
+ * Nothing here calls the PinVault server: the keys are loaded, the token is
+ * checked locally.
  */
 class PinVaultTokenAuthConfig {
-    /** The secrets by `kid`, every one listed by `GET /api/v1/attestation/token-secrets`; read per request (rotation). */
-    var secrets: () -> Map<String, ByteArray> = { emptyMap() }
+    /**
+     * The verification keys by `kid` — the ES256 public keys of `GET
+     * /api/v1/attestation/jwks`, or HS256 secrets of `GET
+     * /api/v1/attestation/token-secrets`; read per request (rotation).
+     */
+    var keys: () -> Map<String, PinVaultToken.VerificationKey> = { emptyMap() }
 
-    /** The Config API id this backend serves; null = any `aud` is accepted. */
-    var audience: String? = null
+    /** HS256 secrets by `kid` (a backend that has not moved to ES256): sets [keys]. */
+    var secrets: () -> Map<String, ByteArray>
+        get() = { keys().mapNotNull { (k, v) -> (v as? PinVaultToken.VerificationKey.Hs256)?.let { k to it.secret } }.toMap() }
+        set(value) { keys = { value().mapValues { PinVaultToken.VerificationKey.Hs256(it.value) } } }
+
+    /**
+     * The Config API ids whose tokens this backend accepts (the token's
+     * `aud`); read per request. Required: an empty set refuses every token.
+     */
+    var audiences: () -> Set<String> = { emptySet() }
+
+    /** One Config API id: sets [audiences]. */
+    var audience: String?
+        get() = audiences().singleOrNull()
+        set(value) { audiences = { setOfNotNull(value) } }
 
     /** Clock skew tolerated on `exp` (and a future `iat`). */
     var leewaySeconds: Long = 60
@@ -120,8 +138,8 @@ val PinVaultTokenClaimsKey = AttributeKey<PinVaultToken.Claims>("PinVaultTokenCl
 fun ApplicationCall.pinVaultToken(): PinVaultToken.Claims? = attributes.getOrNull(PinVaultTokenClaimsKey)
 
 val PinVaultTokenAuth = createApplicationPlugin(name = "PinVaultTokenAuth", ::PinVaultTokenAuthConfig) {
-    val secrets = pluginConfig.secrets
-    val audience = pluginConfig.audience
+    val keys = pluginConfig.keys
+    val audiences = pluginConfig.audiences
     val leeway = pluginConfig.leewaySeconds
     val required = pluginConfig.requireAnnotations.orEmpty()
     val skip = pluginConfig.skipPaths
@@ -144,13 +162,13 @@ val PinVaultTokenAuth = createApplicationPlugin(name = "PinVaultTokenAuth", ::Pi
         if (call.request.path() in skip) return@onCall
         val token = call.request.header(PinVaultToken.HEADER)?.trim()?.takeIf { it.isNotEmpty() }
             ?: return@onCall call.refuseToken("missing", "Send a PinVault-Token header.")
-        when (val result = PinVaultToken.verify(token, secrets(), audience, clock(), leeway)) {
+        when (val result = PinVaultToken.verify(token, keys(), audiences(), clock(), leeway)) {
             is PinVaultToken.Result.Invalid -> call.refuseToken(result.reason, when (result.reason) {
                 "expired" -> "The token has expired; attest again."
-                "unknown_kid" -> "The token was signed with a secret this backend does not know."
+                "unknown_kid" -> "The token was signed with a key this backend does not know."
                 "signature" -> "The token's signature does not verify."
                 "issuer" -> "The token was not issued by PinVault."
-                "audience" -> "The token was issued for another Config API."
+                "audience" -> "The token was not issued for a Config API this backend serves."
                 else -> "The token is not a PinVault-Token."
             })
             is PinVaultToken.Result.Valid -> {

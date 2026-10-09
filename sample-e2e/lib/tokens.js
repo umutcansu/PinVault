@@ -18,6 +18,7 @@ async function liftedToken(scope, deviceId, jkt) {
   const listed = await hostApi.api('/api/v1/attestation/token-secrets');
   expect(listed.status, `token sırları okunamadı: ${listed.text}`).toBe(200);
   const active = listed.json.secrets.find((s) => s.kid === listed.json.active);
+  expect(active && active.secret, 'etkin anahtar HS256 değil: bu test host\'u PINVAULT_TOKEN_ALG=HS256 ile açmalı').toBeTruthy();
   const now = Math.floor(Date.now() / 1000);
   const header = b64url(JSON.stringify({ alg: 'HS256', typ: 'JWT', kid: active.kid }));
   const payload = b64url(JSON.stringify({

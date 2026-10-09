@@ -105,6 +105,8 @@ object ServerSettingsCatalog {
         ServerSetting("ATTESTATION_FRESH_INTERVAL_SECONDS", "attestation", ServerSetting.Kind.NUMBER, "0", min = 0, max = 30L * 86_400),
         ServerSetting("ATTESTATION_FRESH_GRACE_SECONDS", "attestation", ServerSetting.Kind.NUMBER, "259200", min = 0, max = 30L * 86_400),
         ServerSetting("MOCK_HOST_REQUIRE_TOKEN", "attestation", ServerSetting.Kind.BOOL, "false"),
+        ServerSetting("PINVAULT_TOKEN_ALG", "attestation", ServerSetting.Kind.CHOICE, "ES256", listOf("ES256", "HS256")),
+        ServerSetting("MOCK_HOST_TOKEN_AUDIENCES", "attestation", ServerSetting.Kind.TEXT, "", pattern = Regex("[A-Za-z0-9._:-]+(,[A-Za-z0-9._:-]+)*")),
         ServerSetting("PINVAULT_TOKEN_REQUIRE_PROOF", "attestation", ServerSetting.Kind.BOOL, "true"),
         ServerSetting("PINVAULT_TOKEN_ANOMALY", "attestation", ServerSetting.Kind.CHOICE, "off", listOf("off", "warn", "refuse")),
         ServerSetting("PINVAULT_TOKEN_ANOMALY_MAX_ADDRESSES", "attestation", ServerSetting.Kind.NUMBER, "8", min = 1, max = 1000),

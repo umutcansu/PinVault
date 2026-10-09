@@ -24,7 +24,7 @@ POST /api/v1/attest  ◄──┘  ───────────────
                                ◄───────────────  pass:   PinVault-Token (JWT, 5 min)
                                                          + signed pin config if changed
                                                  reject: result + ARC, no token
-every request to a token host:  PinVault-Token: <jwt>  ───►  your API verifies HS256,
+every request to a token host:  PinVault-Token: <jwt>  ───►  your API verifies ES256 (JWKS),
                                                               exp, aud, (anno), refuses the rest
 re-attest at min(nextAttestIn, exp − 60 s), ≈ every 5 min while the app is alive
 ```
@@ -37,7 +37,7 @@ re-attest at min(nextAttestIn, exp − 60 s), ≈ every 5 min while the app is a
 | **Device key** | The EC P-256 identity key of the block (`ClientIdentityKeyProvider`, alias `pinvault_client_identity_ec_<label>`), generated in the Android Keystore with the existing attestation challenge `SHA-256("pinvault-identity-key:v1:<deviceId>")` (iOS: in the Secure Enclave, same alias as its tag, no attestation chain). The same key signs mTLS CSRs; a device that never enrolls for mTLS still has it. The key is what the server registers; the device id is what it indexes by. |
 | **Report** | The JSON the library builds from its integrity probes (section 3). Sent as a **string** and signed as bytes, so there is no canonicalisation. |
 | **Verdict** | `pass` or `reject`, with an **ARC** (attestation result code): 8 hex characters an operator can look up in the dashboard. Rejection reasons are revealed to the device only when the policy allows it. |
-| **Token** | `PinVault-Token`: HS256 JWT, 5 minutes, bound to the device id and the Config API (`aud`). |
+| **Token** | `PinVault-Token`: ES256 JWT (HS256 with `PINVAULT_TOKEN_ALG=HS256`), 5 minutes, bound to the device id and the Config API (`aud`). |
 | **Policy** | Per Config API: for every flag the probes can raise, `reject`, `warn` or `ignore`. |
 | **Annotations** | Per device: `forcePass`, `forceFail`, and free-form strings that travel in the token's `anno` claim (support cases, canary groups, "staff device"). |
 
@@ -464,7 +464,7 @@ require a minimum policy version if it wants to.
 ## 5. The token
 
 ```
-header  { "alg": "HS256", "typ": "JWT", "kid": "2026-10-05-01" }
+header  { "alg": "ES256", "typ": "JWT", "kid": "2026-10-05-01" }
 payload { "iss": "pinvault", "sub": "<deviceId>", "aud": "<configApiId>",
           "iat": 1759660800, "exp": 1759661100, "jti": "…",
           "did": "<deviceId>", "arc": "7f3a9c1e", "pol": 3,
@@ -479,16 +479,28 @@ payload { "iss": "pinvault", "sub": "<deviceId>", "aud": "<configApiId>",
   client certificate the `POST /api/v1/attest` connection presented
   (RFC 8705). Tokens from a server before `cnf` have no such claim and
   still verify everywhere unless the backend requires the binding.
-- Secrets live in `attestation_token_secrets` (32 random bytes each,
+- *(2.4.2)* Signed with **ES256** by default (`PINVAULT_TOKEN_ALG`): an EC
+  P-256 key whose private half never leaves the server. Backends verify with
+  the public keys of `GET /api/v1/attestation/jwks` (a JWK Set, no API key):
+  a backend that is broken into cannot mint tokens. `PINVAULT_TOKEN_ALG=HS256`
+  keeps a shared 32-byte secret for backends not moved yet — then every
+  verifier can also sign. A key's algorithm is fixed: a token whose header
+  names another one is refused, so a public key can never serve as an HS256
+  secret.
+- Keys live in `attestation_token_secrets` (the private key or secret
   encrypted at rest with `VAULT_AT_REST_PASSWORD`), one **active** at a time,
   the previous ones kept for verification until an operator deletes them.
-  `GET /api/v1/attestation/token-secrets` returns them (requester-run under
+  `GET /api/v1/attestation/token-secrets` lists them — an ES256 key as its
+  public half only, an HS256 secret in the clear (requester-run under
   two-person approval, like other secret reads); `POST …/rotate` makes a new
-  active one. Backends load all listed secrets keyed by `kid`.
-- A backend verifies: signature with the secret named by `kid`, `iss` is
-  `pinvault`, `exp` (with ≤ 60 s leeway), `aud` is its Config API id,
-  optionally `anno`. Nothing else is
-  needed; there is no call back to the PinVault server on the request path.
+  active one. A server switched to another algorithm rotates once at its
+  next token and keeps the old key verifying.
+- A backend verifies: the signature with the key named by `kid` (ES256 only,
+  unless it runs HS256), `iss` is `pinvault`, `exp` (with ≤ 60 s leeway),
+  `aud` is its Config API id — required: without it a token issued for
+  another Config API of the same server passes —, optionally `anno`. Nothing
+  else is needed; there is no call back to the PinVault server on the
+  request path.
 - A request that names its device (`X-Device-Id`) must name the token's
   `did` (`401` reason `device_mismatch`). Behind mTLS with the identity the
   app attested with, a backend can require the binding
@@ -628,9 +640,10 @@ person makes. The backend sees it; the attestation server decides on it.
 | `POST /api/v1/config-apis/{id}/attestation/devices/{deviceId}/anomaly` | A backend reports the device's tokens used abnormally (§5.2): `{ "reason": "…", "addresses"?, "requests"?, "windowSeconds"? }`. Not gated (it only tightens). |
 | `DELETE /api/v1/config-apis/{id}/attestation/devices/{deviceId}/anomaly` | Clear it (gated: `attestation_device`). |
 | `GET /api/v1/config-apis/{id}/attestation/stats` | Counts for the last 24 h / 7 d: passes, rejects, by reason. |
-| `GET /api/v1/attestation/token-secrets` | Active and previous secrets (requester-run gated). |
-| `POST /api/v1/attestation/token-secrets/rotate` | New active secret (gated). |
-| `DELETE /api/v1/attestation/token-secrets/{kid}` | Drop a previous secret (gated). |
+| `GET /api/v1/attestation/jwks` | The ES256 public keys that verify tokens (JWK Set). Public: no API key. |
+| `GET /api/v1/attestation/token-secrets` | Active and previous keys: ES256 as the public half, HS256 secrets in the clear (requester-run gated). |
+| `POST /api/v1/attestation/token-secrets/rotate` | New active key of `PINVAULT_TOKEN_ALG` (gated). |
+| `DELETE /api/v1/attestation/token-secrets/{kid}` | Drop a previous key (gated). |
 
 Audit actions: `attestation_policy_updated`, `attestation_device_annotated`,
 `attestation_device_forgotten`, `attestation_device_registered`,
@@ -657,6 +670,8 @@ webhooks), `attestation_token_secret_rotated`, `attestation_token_secret_deleted
 | `ATTESTATION_FRESH_GRACE_SECONDS` | `259200` (72 h) | §3.1: how much longer a hardware-attested device may go without one before `fresh_attestation_overdue` (0 – 30 d). |
 | `PINVAULT_TOKEN_ANOMALY` | `off` (production profile: `warn`) | §5.2: with `MOCK_HOST_REQUIRE_TOKEN`, the mock hosts count each device's token use and report a device over a limit (`warn`), or also refuse it with `429` until the window ends (`refuse`). `PINVAULT_TOKEN_ANOMALY_MAX_ADDRESSES` (8), `_MAX_REQUESTS` (1200), `_WINDOW_SECONDS` (600). |
 | `ATTESTATION_ANOMALY_TTL_SECONDS` | `3600` | §5.2: how long a reported device's rounds raise `token_anomaly` (60 s – 30 d). |
+| `PINVAULT_TOKEN_ALG` | `ES256` since 2.4.2 (production profile: `ES256`, fixed) | What signs `PinVault-Token`: `ES256` (backends verify with `GET /api/v1/attestation/jwks`) or `HS256` (a shared secret, for backends not moved yet). Switching rotates once; the old key keeps verifying until deleted. |
+| `MOCK_HOST_TOKEN_AUDIENCES` | every Config API of the server | With `MOCK_HOST_REQUIRE_TOKEN`: the `aud` values the mock hosts accept, comma-separated. The audience is always checked. |
 | `PINVAULT_TOKEN_REQUIRE_PROOF` | `true` since 2.4.2 (`false` turns it off; production profile: `true`, fixed) | With `MOCK_HOST_REQUIRE_TOKEN`: every request to a mock host also carries a `PinVault-Proof` for its method and URL, signed by the key the token's `cnf.jkt` names (§5.1). Your own backend sets the same option on `PinVaultTokenAuth` (`requireProof`, and `publicOrigin` behind a proxy). |
 | `PINVAULT_TOKEN_REQUIRE_CERT_BINDING` | `false` | With `MOCK_HOST_REQUIRE_TOKEN`: the mock hosts accept a token only over mTLS with the client certificate its `cnf.x5t#S256` names (§5). A plain-TLS mock host then refuses every request. Your own backend sets the same option on `PinVaultTokenAuth` (`requireCertBinding`). |
 | `ATTESTATION_TRUSTED_BOOT_KEYS` | unset | Comma-separated `verifiedBootKey` digests (64 hex characters; colons and case ignored) of operating systems you accept with a `SelfSigned` boot on a locked bootloader (GrapheneOS and CalyxOS publish theirs per device). Such a boot counts as verified for `ATTESTATION_REQUIRE_VERIFIED_BOOT` and does not raise `boot_not_verified`. A malformed value is a start-up error. |

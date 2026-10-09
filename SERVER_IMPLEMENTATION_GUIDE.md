@@ -882,7 +882,7 @@ and the app attests a new key.
 locally; nothing calls the PinVault server on the request path:
 
 ```
-header  { "alg": "HS256", "typ": "JWT", "kid": "2026-10-05-01" }
+header  { "alg": "ES256", "typ": "JWT", "kid": "2026-10-05-01" }
 payload { "iss": "pinvault", "sub": "<deviceId>", "aud": "<configApiId>",
           "iat": 1759660800, "exp": 1759661100, "jti": "…",
           "did": "<deviceId>", "arc": "7f3a9c1e", "pol": 3,
@@ -890,17 +890,24 @@ payload { "iss": "pinvault", "sub": "<deviceId>", "aud": "<configApiId>",
           "cnf": { "jkt": "…", "x5t#S256": "…" } }   // x5t#S256 only when the device attested over mTLS
 ```
 
-1. Load the secrets once (and again after a rotation):
-   `GET /api/v1/attestation/token-secrets` on the management port (admin key;
-   under two-person approval the requester sends the request again once it is
-   approved) → `{"active": "<kid>", "secrets": [{"kid", "secret" (Base64, 32 bytes), "active", "createdAt"}]}`.
-   Keep **every** listed secret keyed by `kid`: tokens signed before a
-   rotation stay valid until they expire.
-2. Pick the secret the header's `kid` names (unknown `kid` → refuse).
-3. Verify the HS256 signature, `iss` equal to `pinvault`, `exp` with at most
-   60 s of leeway, and `aud` equal to your Config API id. Optionally require
-   `anno` to contain a string (staff builds, canaries), or `pol` to be at
-   least a version.
+*(2.4.2)* Tokens are ES256 by default: the PinVault server signs them with an
+EC P-256 key that never leaves it, and your backends hold only public keys —
+a backend that is broken into cannot mint tokens. (`PINVAULT_TOKEN_ALG=HS256`
+keeps the older shared secret for backends not moved yet; see the end of this
+section.)
+
+1. Load the public keys once (and again after a rotation, or when a `kid` is
+   unknown): `GET /api/v1/attestation/jwks` — a JWK Set (RFC 7517), no API key
+   needed: `{"keys": [{"kty":"EC","crv":"P-256","kid","alg":"ES256","use":"sig","x","y"}]}`.
+   Keep **every** listed key by `kid`: tokens signed before a rotation stay
+   valid until they expire.
+2. Pick the key the header's `kid` names (unknown `kid` → refuse). Accept
+   `alg` `ES256` only — never let the token's header choose the algorithm.
+3. Verify the ES256 signature, `iss` equal to `pinvault`, `exp` with at most
+   60 s of leeway, and `aud` equal to your Config API id. The audience is not
+   optional: without it a token issued for another Config API of the same
+   server passes. Optionally require `anno` to contain a string (staff builds,
+   canaries), or `pol` to be at least a version.
 4. Refuse with `401` and `WWW-Authenticate: PinVault-Token error="invalid_token", error_description="…"`
    (body `{"error":"invalid_token","reason":"expired|signature|issuer|audience|missing|malformed|unknown_kid"}`).
    The library recognises a `401` that names `PinVault-Token`, attests once
@@ -948,26 +955,43 @@ the rejection policy (the dashboard's policy card says the same).
 The reference implementation is `demo-server/src/main/kotlin/com/example/pinvault/server/plugin/PinVaultTokenAuth.kt`
 (the mock hosts install it with `MOCK_HOST_REQUIRE_TOKEN=true`). Snippets:
 
-**Kotlin / Java (javax.crypto, no library)**
+**Kotlin / Java (java.security, no library)**
 
 ```kotlin
+import java.math.BigInteger
+import java.security.KeyFactory
+import java.security.Signature
+import java.security.interfaces.ECPublicKey
+import java.security.spec.ECPoint
+import java.security.spec.ECPublicKeySpec
 import java.util.Base64
-import javax.crypto.Mac
-import javax.crypto.spec.SecretKeySpec
 import kotlinx.serialization.json.*
 
-/** secrets: kid → 32 raw bytes, from GET /api/v1/attestation/token-secrets. */
-fun verifyPinVaultToken(token: String, secrets: Map<String, ByteArray>, audience: String, leewaySeconds: Long = 60): JsonObject? {
+private val url = Base64.getUrlDecoder()
+
+/** The keys of GET /api/v1/attestation/jwks, by kid (P-256 parameters from any EC key of the JDK). */
+fun loadKeys(jwks: String): Map<String, ECPublicKey> {
+    val params = (java.security.KeyPairGenerator.getInstance("EC")
+        .apply { initialize(java.security.spec.ECGenParameterSpec("secp256r1")) }.generateKeyPair().public as ECPublicKey).params
+    return Json.parseToJsonElement(jwks).jsonObject["keys"]!!.jsonArray.map { it.jsonObject }.associate { k ->
+        val point = ECPoint(BigInteger(1, url.decode(k["x"]!!.jsonPrimitive.content)), BigInteger(1, url.decode(k["y"]!!.jsonPrimitive.content)))
+        k["kid"]!!.jsonPrimitive.content to (KeyFactory.getInstance("EC").generatePublic(ECPublicKeySpec(point, params)) as ECPublicKey)
+    }
+}
+
+fun verifyPinVaultToken(token: String, keys: Map<String, ECPublicKey>, audience: String, leewaySeconds: Long = 60): JsonObject? {
     val parts = token.split('.')
     if (parts.size != 3) return null                                        // malformed
-    val url = Base64.getUrlDecoder()
     val header = Json.parseToJsonElement(String(url.decode(parts[0]))).jsonObject
-    if (header["alg"]?.jsonPrimitive?.content != "HS256") return null       // malformed
-    val secret = secrets[header["kid"]?.jsonPrimitive?.content] ?: return null   // unknown_kid
-    val mac = Mac.getInstance("HmacSHA256").apply { init(SecretKeySpec(secret, "HmacSHA256")) }
-    val expected = mac.doFinal((parts[0] + "." + parts[1]).toByteArray(Charsets.US_ASCII))
-    if (!java.security.MessageDigest.isEqual(expected, url.decode(parts[2]))) return null   // signature
+    if (header["alg"]?.jsonPrimitive?.content != "ES256") return null       // malformed: ES256 only
+    val key = keys[header["kid"]?.jsonPrimitive?.content] ?: return null    // unknown_kid (reload the JWKS once)
+    // JWS signatures are raw r‖s (64 bytes): the "inP1363Format" variant reads them as they are.
+    val signed = Signature.getInstance("SHA256withECDSAinP1363Format").run {
+        initVerify(key); update((parts[0] + "." + parts[1]).toByteArray(Charsets.US_ASCII)); verify(url.decode(parts[2]))
+    }
+    if (!signed) return null                                                // signature
     val payload = Json.parseToJsonElement(String(url.decode(parts[1]))).jsonObject
+    if (payload["iss"]?.jsonPrimitive?.content != "pinvault") return null   // issuer
     val now = System.currentTimeMillis() / 1000
     if (now > payload["exp"]!!.jsonPrimitive.long + leewaySeconds) return null     // expired
     if (payload["aud"]?.jsonPrimitive?.content != audience) return null              // audience
@@ -987,38 +1011,41 @@ fun boundToRequest(payload: JsonObject, deviceIdHeader: String?, clientCertDer: 
 }
 ```
 
-**Node (`jsonwebtoken`)**
+**Node (`jose`)**
 
 ```js
-const jwt = require('jsonwebtoken');
-// kid → Buffer of the 32 secret bytes (Base64-decoded from GET /api/v1/attestation/token-secrets)
-const secrets = { '2026-10-05-01': Buffer.from(process.env.PINVAULT_SECRET_01, 'base64') };
+const { createRemoteJWKSet, jwtVerify, errors } = require('jose');
+// Fetched once and cached; an unknown kid makes it fetch again (rotation).
+const JWKS = createRemoteJWKSet(new URL('https://pinvault.internal:8090/api/v1/attestation/jwks'));
 
 function verifyPinVaultToken(token, audience) {
-  return jwt.verify(token, (header, done) => {
-    const secret = secrets[header.kid];
-    done(secret ? null : new Error('unknown_kid'), secret);
-  }, { algorithms: ['HS256'], audience, issuer: 'pinvault', clockTolerance: 60 });
+  return jwtVerify(token, JWKS, { algorithms: ['ES256'], audience, issuer: 'pinvault', clockTolerance: 60 })
+    .then(({ payload }) => payload);
 }
 
 // Express middleware
-app.use((req, res, next) => {
+app.use(async (req, res, next) => {
   const token = req.get('PinVault-Token');
   if (!token) return refuse(res, 'missing');
-  verifyPinVaultToken(token, 'default-tls', (err, claims) => {
-    if (err) return refuse(res, err.name === 'TokenExpiredError' ? 'expired' : err.message === 'unknown_kid' ? 'unknown_kid' : 'signature');
-    if (!(claims.anno || []).includes('staff')) { /* optional annotation rule */ }
-    const claimed = req.get('X-Device-Id');
-    if (claimed && claimed !== claims.did) return refuse(res, 'device_mismatch');
-    if (REQUIRE_CERT_BINDING) {   // behind mTLS (Node's TLS server with requestCert: true)
-      const cert = req.socket.getPeerCertificate && req.socket.getPeerCertificate();
-      const presented = cert && cert.raw
-        ? require('crypto').createHash('sha256').update(cert.raw).digest('base64url') : null;
-      if (!presented || !claims.cnf || claims.cnf['x5t#S256'] !== presented) return refuse(res, 'cert_binding');
-    }
-    req.device = claims.did; req.arc = claims.arc;
-    next();
-  });
+  let claims;
+  try {
+    claims = await verifyPinVaultToken(token, 'default-tls');
+  } catch (err) {
+    return refuse(res, err instanceof errors.JWTExpired ? 'expired'
+      : err instanceof errors.JWKSNoMatchingKey ? 'unknown_kid'
+      : err instanceof errors.JWTClaimValidationFailed && err.claim === 'aud' ? 'audience' : 'signature');
+  }
+  if (!(claims.anno || []).includes('staff')) { /* optional annotation rule */ }
+  const claimed = req.get('X-Device-Id');
+  if (claimed && claimed !== claims.did) return refuse(res, 'device_mismatch');
+  if (REQUIRE_CERT_BINDING) {   // behind mTLS (Node's TLS server with requestCert: true)
+    const cert = req.socket.getPeerCertificate && req.socket.getPeerCertificate();
+    const presented = cert && cert.raw
+      ? require('crypto').createHash('sha256').update(cert.raw).digest('base64url') : null;
+    if (!presented || !claims.cnf || claims.cnf['x5t#S256'] !== presented) return refuse(res, 'cert_binding');
+  }
+  req.device = claims.did; req.arc = claims.arc;
+  next();
 });
 function refuse(res, reason) {
   res.set('WWW-Authenticate', `PinVault-Token error="invalid_token", error_description="${reason}"`);
@@ -1026,21 +1053,21 @@ function refuse(res, reason) {
 }
 ```
 
-**Python (`PyJWT`)**
+**Python (`PyJWT` with `cryptography`)**
 
 ```python
 import base64, hashlib, jwt
-from jwt import InvalidTokenError, ExpiredSignatureError, InvalidAudienceError
+from jwt import InvalidTokenError, ExpiredSignatureError, InvalidAudienceError, PyJWKClient
 
-# kid -> 32 raw bytes, from GET /api/v1/attestation/token-secrets
-SECRETS = {"2026-10-05-01": base64.b64decode(SECRET_01_B64)}
+# Fetched and cached by kid; an unknown kid makes it fetch again (rotation).
+JWKS = PyJWKClient("https://pinvault.internal:8090/api/v1/attestation/jwks")
 
 def verify_pinvault_token(token: str, audience: str) -> dict:
-    kid = jwt.get_unverified_header(token).get("kid")
-    secret = SECRETS.get(kid)
-    if secret is None:
-        raise InvalidTokenError("unknown_kid")
-    return jwt.decode(token, secret, algorithms=["HS256"], audience=audience,
+    try:
+        key = JWKS.get_signing_key_from_jwt(token).key
+    except jwt.PyJWKClientError as e:
+        raise InvalidTokenError("unknown_kid") from e
+    return jwt.decode(token, key, algorithms=["ES256"], audience=audience,
                       issuer="pinvault", leeway=60)
 
 # Flask
@@ -1076,10 +1103,21 @@ def refuse(reason):
 ```
 
 Rotation: `POST /api/v1/attestation/token-secrets/rotate` makes a new active
-secret; reload the list in your backends (the old `kid` keeps verifying
-until you `DELETE /api/v1/attestation/token-secrets/{kid}`). Tokens live 5
-minutes by default, so a rotation is complete a few minutes after every
-backend has the new secret.
+key; backends pick it up from the JWKS (the libraries above fetch again on an
+unknown `kid`), and the old `kid` keeps verifying until you `DELETE
+/api/v1/attestation/token-secrets/{kid}`. Tokens live 5 minutes by default, so
+a rotation is complete a few minutes after every backend has the new key.
+
+**HS256 (backends not moved yet).** With `PINVAULT_TOKEN_ALG=HS256` the server
+signs with a shared 32-byte secret instead: load it from
+`GET /api/v1/attestation/token-secrets` on the management port (admin key;
+under two-person approval the requester sends the request again once it is
+approved) — `{"active", "alg", "secrets": [{"kid", "alg": "HS256", "secret" (Base64), …}]}` —
+and verify with `algorithms: ['HS256']` and that secret. Every backend that
+verifies can then also mint tokens; move to ES256 as soon as they all read the
+JWKS. A server switched to ES256 makes a new ES256 key at once and keeps the
+HS256 one verifying until you delete it, so both kinds of backend work during
+the move.
 **Play Integrity in the report (optional, ATTESTATION.md §11).** When the
 app registers `PlayIntegrityVerdictProvider`, the report carries
 `"verdictProvider": {"name": "play-integrity", "token": "<JWE>"}` — a
@@ -1217,7 +1255,7 @@ codes a client may see:
 - [ ] Device keys keep their `algorithm`: `end_to_end` / `user_auth` files for an iOS key (`RSA-OAEP-SHA256-MGF1-SHA256`) are wrapped with MGF1-SHA256, Android's (`RSA-OAEP-SHA256`) with MGF1-SHA1
 - [ ] If iOS apps attest: a report with `device.platform: "ios"` is judged by bundle id, team id and iOS version, and an `app-attest` verdict against Apple's App Attestation Root CA (ATTESTATION.md §12)
 - [ ] Where you require an Android chain and serve iPhones: `appAttestation` (a JSON string) is verified as a fresh key's App Attest attestation with the client data hash of that request (enrollment, user-auth key, first round), recorded as App Attest, not as a hardware-attested key
-- [ ] If the app attests: `/api/v1/attest/challenge` and `/api/v1/attest` as in ATTESTATION.md, no token to a rejected device, and your API verifies `PinVault-Token` (HS256 by `kid`, `exp` ≤ 60 s leeway, `aud`, `did` = `X-Device-Id` when sent, `cnf.x5t#S256` = the client certificate behind mTLS, the `PinVault-Proof` when the app sends one) and answers `401` naming `PinVault-Token` otherwise; the attestation keeps the registration chain's facts and judges every round against them
+- [ ] If the app attests: `/api/v1/attest/challenge` and `/api/v1/attest` as in ATTESTATION.md, no token to a rejected device, and your API verifies `PinVault-Token` (ES256 with the JWKS by `kid` — HS256 only with `PINVAULT_TOKEN_ALG=HS256` —, `exp` ≤ 60 s leeway, `aud` (required), `did` = `X-Device-Id` when sent, `cnf.x5t#S256` = the client certificate behind mTLS, the `PinVault-Proof` when the app sends one) and answers `401` naming `PinVault-Token` otherwise; the attestation keeps the registration chain's facts and judges every round against them
 
 ---
 

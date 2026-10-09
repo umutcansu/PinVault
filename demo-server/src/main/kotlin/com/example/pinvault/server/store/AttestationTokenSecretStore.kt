@@ -2,37 +2,72 @@ package com.example.pinvault.server.store
 
 import com.example.pinvault.server.service.VaultAtRestCipher
 import com.example.pinvault.server.service.VaultKeyMismatchException
+import com.example.pinvault.server.service.attestation.PinVaultToken
+import java.security.KeyFactory
+import java.security.KeyPairGenerator
 import java.security.SecureRandom
+import java.security.interfaces.ECPrivateKey
+import java.security.interfaces.ECPublicKey
+import java.security.spec.ECGenParameterSpec
+import java.security.spec.PKCS8EncodedKeySpec
+import java.security.spec.X509EncodedKeySpec
 import java.time.Instant
 import java.time.LocalDate
 import java.time.ZoneOffset
 
-/** One HS256 secret of PinVault-Token (V21 `attestation_token_secrets`). */
+/** One signing key of PinVault-Token (V21 `attestation_token_secrets`, V29 `alg` / `public_key`). */
 class TokenSecret(
-    /** Names the secret in the token header; `YYYY-MM-DD-NN`. */
+    /** Names the key in the token header; `YYYY-MM-DD-NN`. */
     val kid: String,
-    /** 32 random bytes, in the clear. */
+    /** HS256: the 32 secret bytes; ES256: the PKCS#8 private key. In the clear here, sealed at rest. */
     val secret: ByteArray,
     val active: Boolean,
     val createdAt: String,
-    val createdBy: String
-)
+    val createdBy: String,
+    /** [PinVaultToken.ALG_ES256] or [PinVaultToken.ALG_HS256]. */
+    val alg: String = PinVaultToken.ALG_HS256,
+    /** ES256: the X.509 SubjectPublicKeyInfo; null for HS256. */
+    val publicKey: ByteArray? = null
+) {
+    /** What signs with this key. */
+    fun signingKey(): PinVaultToken.SigningKey =
+        if (alg == PinVaultToken.ALG_ES256) PinVaultToken.SigningKey.Es256(kid, KeyFactory.getInstance("EC").generatePrivate(PKCS8EncodedKeySpec(secret)) as ECPrivateKey)
+        else PinVaultToken.SigningKey.Hs256(kid, secret)
+
+    /** What verifies tokens of this key. */
+    fun verificationKey(): PinVaultToken.VerificationKey =
+        if (alg == PinVaultToken.ALG_ES256) PinVaultToken.VerificationKey.Es256(ecPublicKey()!!)
+        else PinVaultToken.VerificationKey.Hs256(secret)
+
+    /** The ES256 public key; null for HS256. */
+    fun ecPublicKey(): ECPublicKey? =
+        publicKey?.let { KeyFactory.getInstance("EC").generatePublic(X509EncodedKeySpec(it)) as ECPublicKey }
+}
 
 /**
- * The secrets that sign and verify `PinVault-Token`: one active at a time,
- * the previous ones kept for verification until an operator deletes them.
- * Stored encrypted under `VAULT_AT_REST_PASSWORD` ([cipher]; null = in the
- * clear, tests only). The first secret is made on first use.
+ * The keys that sign and verify `PinVault-Token`: one active at a time, the
+ * previous ones kept for verification until an operator deletes them. New
+ * keys are made with [alg] (`PINVAULT_TOKEN_ALG`; ES256 unless HS256 is
+ * asked for); when the active key has another algorithm, the next [active]
+ * call rotates to one of [alg] and keeps the old one for verification.
+ * Secrets and private keys are stored encrypted under
+ * `VAULT_AT_REST_PASSWORD` ([cipher]; null = in the clear, tests only). The
+ * first key is made on first use.
  */
 class AttestationTokenSecretStore(
     private val db: DatabaseManager,
     private val cipher: VaultAtRestCipher? = null,
-    private val clock: () -> Instant = Instant::now
+    private val clock: () -> Instant = Instant::now,
+    val alg: String = PinVaultToken.ALG_ES256
 ) {
+    init {
+        require(alg == PinVaultToken.ALG_ES256 || alg == PinVaultToken.ALG_HS256) { "PINVAULT_TOKEN_ALG must be ES256 or HS256 (got '$alg')" }
+    }
+
     private val random = SecureRandom()
 
-    /** Decrypted secrets by kid, refreshed every few seconds: the mock hosts verify a token per request. */
-    @Volatile private var cached: Pair<Long, Map<String, ByteArray>>? = null
+    /** Verification keys by kid, refreshed every few seconds: the mock hosts verify a token per request. */
+    @Volatile private var cached: Pair<Long, Map<String, PinVaultToken.VerificationKey>>? = null
 
     sealed interface Deletion {
         data object Deleted : Deletion
@@ -42,31 +77,40 @@ class AttestationTokenSecretStore(
 
     /** Every secret, newest first. */
     fun all(): List<TokenSecret> = db.connection().use { conn ->
-        conn.prepareStatement("SELECT kid, secret, active, created_at, created_by FROM attestation_token_secrets ORDER BY created_at DESC, kid DESC").use { stmt ->
+        conn.prepareStatement("SELECT kid, secret, active, created_at, created_by, alg, public_key FROM attestation_token_secrets ORDER BY created_at DESC, kid DESC").use { stmt ->
             val rs = stmt.executeQuery()
             buildList {
                 while (rs.next()) add(TokenSecret(
                     kid = rs.getString("kid"), secret = open(rs.getBytes("secret")), active = rs.getInt("active") == 1,
-                    createdAt = rs.getString("created_at"), createdBy = rs.getString("created_by")
+                    createdAt = rs.getString("created_at"), createdBy = rs.getString("created_by"),
+                    alg = rs.getString("alg"), publicKey = rs.getBytes("public_key")
                 ))
             }
         }
     }
 
-    /** The active secret, made now when there is none yet. */
+    /**
+     * The active key, made now when there is none yet — or when the active
+     * one has another algorithm than [alg] (a server moved to ES256): the old
+     * key stays for verification until it is deleted.
+     */
     @Synchronized
-    fun active(): TokenSecret = all().firstOrNull { it.active } ?: rotate("system")
+    fun active(): TokenSecret = all().firstOrNull { it.active }?.takeIf { it.alg == alg }
+        ?: rotate(if (all().any { it.active }) "system (PINVAULT_TOKEN_ALG=$alg)" else "system")
 
-    /** Secrets by kid, for verification (a few seconds stale at most). */
-    fun secretsByKid(): Map<String, ByteArray> {
+    /** Every key by kid, for verification (a few seconds stale at most). */
+    fun verificationKeys(): Map<String, PinVaultToken.VerificationKey> {
         val now = System.currentTimeMillis()
         cached?.let { (at, map) -> if (now - at < CACHE_MS) return map }
-        val fresh = all().associate { it.kid to it.secret }
+        val fresh = all().associate { it.kid to it.verificationKey() }
         cached = now to fresh
         return fresh
     }
 
-    /** A new active secret; the previous active one stays for verification. */
+    /** The HS256 secrets by kid (what `GET /api/v1/attestation/token-secrets` hands to HS256 backends). */
+    fun secretsByKid(): Map<String, ByteArray> = all().filter { it.alg == PinVaultToken.ALG_HS256 }.associate { it.kid to it.secret }
+
+    /** A new active key of [alg]; the previous active one stays for verification. */
     @Synchronized
     fun rotate(createdBy: String): TokenSecret = db.connection().use { conn ->
         conn.autoCommit = false
@@ -81,18 +125,25 @@ class AttestationTokenSecretStore(
             var n = 1
             while ("$day-${"%02d".format(n)}" in taken) n++
             val kid = "$day-${"%02d".format(n)}"
-            val secret = ByteArray(32).also(random::nextBytes)
+            val (secret, publicKey) = if (alg == PinVaultToken.ALG_ES256) {
+                val pair = KeyPairGenerator.getInstance("EC").apply { initialize(ECGenParameterSpec("secp256r1"), random) }.generateKeyPair()
+                pair.private.encoded to pair.public.encoded
+            } else {
+                ByteArray(32).also(random::nextBytes) to null
+            }
             conn.prepareStatement("UPDATE attestation_token_secrets SET active = 0 WHERE active = 1").use { it.executeUpdate() }
-            conn.prepareStatement("INSERT INTO attestation_token_secrets (kid, secret, active, created_at, created_by) VALUES (?, ?, 1, ?, ?)").use { stmt ->
+            conn.prepareStatement("INSERT INTO attestation_token_secrets (kid, secret, active, created_at, created_by, alg, public_key) VALUES (?, ?, 1, ?, ?, ?, ?)").use { stmt ->
                 stmt.setString(1, kid)
                 stmt.setBytes(2, seal(secret))
                 stmt.setString(3, now.toString())
                 stmt.setString(4, createdBy)
+                stmt.setString(5, alg)
+                stmt.setBytes(6, publicKey)
                 stmt.executeUpdate()
             }
             conn.commit()
             cached = null
-            TokenSecret(kid, secret, true, now.toString(), createdBy)
+            TokenSecret(kid, secret, true, now.toString(), createdBy, alg, publicKey)
         } catch (e: Exception) {
             runCatching { conn.rollback() }
             throw e

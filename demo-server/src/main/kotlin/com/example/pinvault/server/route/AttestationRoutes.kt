@@ -12,6 +12,7 @@ import com.example.pinvault.server.service.SignedConfigService
 import com.example.pinvault.server.service.attestation.AttestationPolicy
 import com.example.pinvault.server.service.attestation.AttestationService
 import com.example.pinvault.server.service.attestation.FlagAction
+import com.example.pinvault.server.service.attestation.PinVaultToken
 import com.example.pinvault.server.store.AttestationPolicyStore
 import com.example.pinvault.server.store.AttestationTokenSecretStore
 import com.example.pinvault.server.store.AttestedDevice
@@ -375,19 +376,42 @@ fun Route.attestationAdminRoutes(
         }
     }
 
+    /**
+     * The ES256 public keys that verify PinVault-Tokens (RFC 7517 JWK Set):
+     * what a backend loads by `kid`. Public: no secret in it (ApiKeyAuth
+     * lets it through).
+     */
+    get("/api/v1/attestation/jwks") {
+        secrets.active() // the first key is made on first use
+        call.response.header(HttpHeaders.CacheControl, "max-age=300")
+        call.respondText(buildJsonObject {
+            put("keys", buildJsonArray {
+                secrets.all().forEach { s -> s.ecPublicKey()?.let { add(PinVaultToken.jwk(s.kid, it)) } }
+            })
+        }.toString(), ContentType.Application.Json)
+    }
+
     route("/api/v1/attestation/token-secrets") {
 
-        /** Active and previous secrets, in the clear: what a backend loads by kid. */
+        /**
+         * Active and previous keys: an HS256 secret in the clear (what an
+         * HS256 backend loads by kid), an ES256 key as its public half only —
+         * the private key never leaves the server.
+         */
         get {
             val active = secrets.active()
             call.response.header(HttpHeaders.CacheControl, "no-store")
             call.respondText(buildJsonObject {
                 put("active", active.kid)
+                put("alg", secrets.alg)
                 put("secrets", buildJsonArray {
                     secrets.all().forEach { s ->
                         add(buildJsonObject {
                             put("kid", s.kid)
-                            put("secret", Base64.getEncoder().encodeToString(s.secret))
+                            put("alg", s.alg)
+                            if (s.alg == PinVaultToken.ALG_HS256) put("secret", Base64.getEncoder().encodeToString(s.secret))
+                            s.publicKey?.let { put("publicKey", Base64.getEncoder().encodeToString(it)) }
+                            s.ecPublicKey()?.let { put("jwk", PinVaultToken.jwk(s.kid, it)) }
                             put("active", s.active)
                             put("createdAt", s.createdAt)
                             put("createdBy", s.createdBy)
@@ -401,9 +425,9 @@ fun Route.attestationAdminRoutes(
             val previous = secrets.all().firstOrNull { it.active }?.kid
             val fresh = secrets.rotate(AuditContext.actor())
             audit?.record("attestation_token_secret_rotated",
-                "PinVault-Token secret rotated: ${fresh.kid} is active" + (previous?.let { "; $it stays for verification" } ?: ""),
-                target = fresh.kid, detail = buildJsonObject { put("kid", fresh.kid); previous?.let { put("previous", it) } })
-            call.respondText(buildJsonObject { put("kid", fresh.kid); put("active", true); put("createdAt", fresh.createdAt) }.toString(),
+                "PinVault-Token ${fresh.alg} key rotated: ${fresh.kid} is active" + (previous?.let { "; $it stays for verification" } ?: ""),
+                target = fresh.kid, detail = buildJsonObject { put("kid", fresh.kid); put("alg", fresh.alg); previous?.let { put("previous", it) } })
+            call.respondText(buildJsonObject { put("kid", fresh.kid); put("alg", fresh.alg); put("active", true); put("createdAt", fresh.createdAt) }.toString(),
                 ContentType.Application.Json)
         }
 

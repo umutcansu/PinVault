@@ -391,6 +391,8 @@ internal fun isPublicEndpoint(path: String, method: HttpMethod): Boolean {
     // /api/v1/certificate-config/history/{hostname} are admin reads.
     if (path.trimEnd('/') == "/api/v1/certificate-config" && method == HttpMethod.Get) return true
     if (path == "/api/v1/signing-key") return true
+    // The public keys that verify PinVault-Tokens (no secret in them).
+    if (path == "/api/v1/attestation/jwks" && method == HttpMethod.Get) return true
 
     // Client endpoints — enrollment
     if (path == "/api/v1/client-certs/enroll" && method == HttpMethod.Post) return true
