@@ -170,9 +170,19 @@ enum SecureEnclaveKeyWrap {
             ] as [CFString: Any],
         ]
         guard let key = SecKeyCreateRandomKey(attributes as CFDictionary, &error) else {
-            // Expected on the simulator without a Secure Enclave and in unsigned test runs.
-            log.d("No Secure Enclave key for wrapping store keys: \(error?.takeRetainedValue().localizedDescription ?? "unknown error")")
-            unavailable = true
+            let cfError = error?.takeRetainedValue()
+            let status = cfError.map { OSStatus(($0 as Error as NSError).code) }
+            // A transient failure (locked device, Secure Enclave busy / try again)
+            // must not latch `unavailable` for the whole process: that would write
+            // store keys raw until the next launch. Only a genuine "no Secure
+            // Enclave here" (simulator, unsigned test run) latches, so a device
+            // that was merely locked wraps again on a later read. (IOS-2)
+            if let status, transientStatuses.contains(status) {
+                log.d("Secure Enclave key not available right now, will retry: \(cfError?.localizedDescription ?? "unknown error")")
+            } else {
+                log.d("No Secure Enclave key for wrapping store keys: \(cfError?.localizedDescription ?? "unknown error")")
+                unavailable = true
+            }
             return nil
         }
         return key
