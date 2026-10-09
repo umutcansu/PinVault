@@ -17,8 +17,9 @@ Gizli dosyalar ve mTLS bloğu yalnızca cihaz kayıtlıyken tanımlanır; kayıt
 silmeden sonra uygulama PinVault'u yeni yapılandırmayla yeniden başlatır.
 
 Test kontrolleri (yalnız debug): ortam korumasının her işlemi reddetmesi (fail closed
-denemesi), PinVault'u sıfırlama, React Native'in `<Image>`'ıyla hedefe bağlanma, son
-bağlantı olayları. Release derlemesinde bu modül JS paketine iki kilitle girmez:
+denemesi), PinVault'u sıfırlama, React Native'in `<Image>`'ıyla hedefe bağlanma, React
+Native'in `WebSocket`'iyle kendi host'umuza (pin tutar) ve pin listesinde olmayan bir
+sunucuya (reddedilir) bağlanma, son bağlantı olayları. Release derlemesinde bu modül JS paketine iki kilitle girmez:
 `src/generated/testControls.ts` boş yazılır, ayrıca `MainScreen.tsx` onu yalnız `__DEV__`
 iken `require` eder (Metro release paketinde bu dalı atar).
 

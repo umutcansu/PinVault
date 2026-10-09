@@ -114,7 +114,7 @@ npm install @umutcansu/react-native-pinvault
 cd ios && pod install
 ```
 
-React Native 0.87+ (New Architecture). The native libraries come with the
+React Native 0.81+ (New Architecture). The native libraries come with the
 package. On iOS register the background task in `AppDelegate`
 (`PinVaultBridge.registerBackgroundTask()`); on Android there is nothing to add.
 Details: [`pinvault-react-native/README.md`](pinvault-react-native/README.md#install).
@@ -191,7 +191,7 @@ if (result.type !== 'ready') return;               // fail closed
 const res = await PinVault.fetch('https://api.example.com/v1/me');
 ```
 
-React Native's own `fetch`, `XMLHttpRequest` and `<Image>` are pinned too. Release
+React Native's own `fetch`, `XMLHttpRequest`, `<Image>` and `WebSocket` are pinned too. Release
 builds ship the trust anchors natively and refuse to start without them unless the
 app opts out: [native security file](pinvault-react-native/README.md#native-security-file).
 
@@ -526,6 +526,12 @@ configApis: [{
 
 </details>
 
+In production, start the server with `ATTESTATION_POLICY_DEFAULT=production`: root,
+emulator, debuggable builds, hooking frameworks, a repackaged app and software keys
+are rejected in code, and loosening any of them needs a second admin's approval.
+A rejection only cuts access where your backend requires the token: every endpoint
+you protect must refuse a request without a valid `PinVault-Token`.
+
 The protocol, the policy and how your API verifies the token:
 [ATTESTATION.md](ATTESTATION.md); the client side: [Attestation](GUIDE.md#attestation-approov-style).
 
@@ -695,7 +701,7 @@ re-render them: [`docs/animation/`](docs/animation/README.md).
 |---|---|
 | Android | minSdk 24 (Android 7.0), Kotlin 1.9+ consumers, AGP 8.2, JDK 17, OkHttp 4 |
 | iOS | iOS 16, Swift 6 (Xcode 16+) |
-| React Native | 0.87 with the New Architecture, Hermes |
+| React Native | 0.81 with the New Architecture, Hermes |
 
 ## License
 
