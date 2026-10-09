@@ -4,13 +4,23 @@ Build a PinVault-compatible server in **any language**. The Android library comm
 
 ## Quick Start
 
-Your server needs **3 mandatory endpoints** to work:
+Pinning alone needs **2 endpoints**:
 
 ```
 GET  /health                              → {"status":"ok"}
-GET  /api/v1/certificate-config           → pin config JSON
-POST /api/v1/client-certs/enroll          → PKCS12 bytes
+GET  /api/v1/certificate-config           → signed pin config JSON (section 3)
 ```
+
+Add enrollment only if the app uses mTLS client certificates:
+
+```
+POST /api/v1/client-certs/enroll          → certificate chain over the device's CSR (JSON, X-PinVault-Cert-Format: pem-chain)
+```
+
+A PKCS12 answer (a key the server made) is only for apps whose block calls
+`allowServerGeneratedKey()` (section 4). The reference server still answers
+key-less requests with a P12 by default (`ENROLLMENT_P12=on`, for older apps);
+set it to `off` in production.
 
 Everything else is optional.
 
@@ -29,7 +39,9 @@ GET {configUrl}/health
 {"status": "ok"}
 ```
 
-The library calls this after every pin update to verify the new pins work. Return `{"status": "ok"}` — nothing else is checked.
+The library calls this during `PinVault.init`, and only when that init has just applied a new config: it proves the backend is still reachable through the new pins. A failure (no answer, a pin mismatch, or anything other than `"status": "ok"`) rolls the new config back to the previous one and init fails. Periodic updates and `updateNow()` do not call it.
+
+The body is parsed as a flat string-to-string map. Extra fields are fine as long as their values are strings: an object, array or number value (`{"status":"ok","db":{"up":true}}`) fails the parse and counts as unhealthy.
 
 ---
 
@@ -40,6 +52,19 @@ GET {configUrl}/api/v1/certificate-config?currentVersion={int}
 ```
 
 Returns the pin configuration. This is the core endpoint.
+
+**Request.** The library always sends `currentVersion` (the stored config's version, 0 on a first
+install) and, on a signed block, `X-PinVault-Features: redelivery,multisig,keyset`. A block that
+declares `wantPinsFor(...)` makes a scoped fetch: it adds `?hosts=a.example.com,b.example.com`
+and an `X-Device-Id` header, and expects only the intersection of those hosts and what that
+device may have (the reference server's device host ACL). Unscoped blocks send neither.
+
+The reference server answers the unsigned config (the bare JSON below, no envelope) to
+`?signed=false`; that is for test clients built with `allowUnsigned()`. The library never sends
+it itself.
+
+The library reads at most **1 MiB** of this response (and of any other JSON it parses through the
+same client); a longer body is refused before it is parsed.
 
 **Response (unsigned):**
 ```json
@@ -66,7 +91,8 @@ Returns the pin configuration. This is the core endpoint.
 ```
 
 **Rules:**
-- Each host must have **at least 2 pins** (primary + backup for rotation). Client rejects entries with fewer pins; one malformed row no longer poisons the rest of the config (per-entry parsing). Make them two *different* keys: the same pin written twice is no backup, and the reference server refuses it.
+- Each host must have **at least 2 pins** (primary + backup for rotation), at most 32. Make them two *different* keys: the same pin written twice is no backup, and both the client and the reference server refuse it.
+- **One bad entry refuses the whole config.** The client checks every entry before it uses any (`ssl/PinConfigValidator.kt`): an empty `pins` list, a null entry, a bad host name, a host listed twice (case-insensitive), a negative `version`, fewer than 2 or more than 32 pins, or a pin that is not 44 characters of Base64 makes the device keep its previous config. A partly applied config is not what its signer signed. At most 2000 entries.
 - A pin may name the leaf's key or the key of an issuer (intermediate or root CA) in the chain the host serves. The client accepts an issuer pin only when the leaf validly chains to that issuer, so pinning your CA lets a host renew its leaf with a new key; pinning the leaf is stricter.
 - Each pin is Base64-encoded SHA-256 of the certificate's SubjectPublicKeyInfo (SPKI) — exactly 44 characters
 - `mtls: true` means the host requires a client certificate
@@ -75,13 +101,16 @@ Returns the pin configuration. This is the core endpoint.
 
 **Hostname patterns:**
 - Exact match is case-insensitive: `api.example.com`
+- A name is letter-digit-hyphen labels joined by dots (an IPv4 address passes too), at most 253 characters, with at most one leading `*.`. IPv6 literals are not accepted.
 - Wildcards match a single sub-label only: `*.example.com` matches `api.example.com` but not `a.b.example.com` or the bare apex `example.com`
-- **TLD-level wildcards are rejected by the client.** A pattern whose suffix has no dot (e.g. `*.com`, `*.tr`, `*.uk`) silently fails to match anything — the matcher treats it as a misconfiguration to avoid authorizing every domain under a TLD. Server admins should never publish such patterns; if you need them, the client won't honor them anyway.
+- **A wildcard needs at least two labels after `*.`** and must not sit directly under a well-known multi-label public suffix (`*.co.uk`, `*.com.tr`, `*.github.io`, … — the list is in `PinConfigValidator.kt`) or over an IP address. `*.com` or `*.co.uk` is a bad entry, so the client refuses the **whole config** (see above). The reference server refuses such names when you save them (`service/HostPatternRules.kt`).
+- **`host:port`** (`api.example.com:8443`, also `*.example.com:8443`) pins one listener only. When a `host:port` entry exists it is the only set used for that port, and it never applies to the host's other ports; a port-less entry covers every port that has no entry of its own. Ports are 1–65535, digits only.
 
 **`forceUpdate` semantics:**
 - The top-level `forceUpdate` flag is for **revocation events**, not routine rotation. When set, the client refuses to initialize against the previously cached config if your backend is unreachable — it treats the stored config as superseded.
 - The flag now persists across client restarts (fixed in 2.0.8+). A backend admin pushing `forceUpdate=true` after a pin compromise can be confident the guarantee survives reboots; a restart no longer falls back to the revoked config silently.
 - Availability trade-off: an attacker who can sustainably DoS your Config API can prevent affected devices from coming up. Keep the Config API behind diverse routes / CDN cache if you ever set this flag.
+- A host entry's own `forceUpdate` (and the top-level one) also makes the device re-apply the config even when nothing else about the pins changed.
 
 **How to generate a pin (any language):**
 ```
@@ -143,14 +172,24 @@ The payload JSON itself **MUST** include freshness fields (alongside the usual `
 
 Missing or zero values for either field cause the client to refuse the response.
 
+The client also refuses (and keeps the config it has):
+
+- `issuedAt` more than **1 hour** ahead of the device's clock;
+- a window `expiresAt − issuedAt` longer than **30 days**, or an `expiresAt` more than 30 days (plus that hour) from now;
+- a host's `version` lower than the highest it ever accepted for that host. These per-host watermarks never go down: not on a rollback, and not when a config drops the host and later brings it back;
+- a host's `version` more than **1,000,000** above that watermark, or a first version above 1,000,000 for a host the device has never seen.
+
+So bump per-host versions in small steps and never reuse a lower one.
+
 | Field | Type | Required | Purpose |
 |---|---|---|---|
-| `configApiId` | String | When clients set `serverScope(...)` | Names the Config API this config is for. One signing key often signs for several Config APIs (TLS and mTLS listeners, tenants, environments); without this field a config signed for one of them verifies for all of them. A client whose block calls `serverScope("<id>")` refuses a payload that lacks the field or carries another id; clients without `serverScope` ignore it. Put it in every signed payload — it costs nothing and lets apps turn the check on. The same id goes into v2 vault file signatures (section 6). The reference server (2.2.0) writes the listener's Config API id into every signed payload and leaves it out of unsigned ones. It is not part of a signing-key set: those are signed offline by the recovery keys and the library does not read a scope from them. |
+| `configApiId` | String | When clients set `serverScope(...)` | Names the Config API this config is for. One signing key often signs for several Config APIs (TLS and mTLS listeners, tenants, environments); without this field a config signed for one of them verifies for all of them. A client whose block calls `serverScope("<id>")` refuses a payload that lacks the field or carries another id; clients without `serverScope` ignore it. Put it in every signed payload — it costs nothing and lets apps turn the check on. The same id goes into v2 vault file signatures (section 6). The reference server (2.2.0) writes the listener's Config API id into every signed payload and leaves it out of unsigned ones. A signing-key set (below) may carry its own optional `configApiId`; a client with `serverScope` refuses a set made for another id, and a set without the field applies to any block. |
 
 **Signing spec:**
 - Algorithm: `SHA256withECDSA`
 - Key: ECDSA P-256 (secp256r1)
 - Input: UTF-8 bytes of `payload` string (which includes `issuedAt` / `expiresAt`)
+- Encoding: the ASN.1 DER signature (what Java, OpenSSL, Python `cryptography` and Go's `ecdsa.SignASN1` produce), standard Base64. Not raw `r‖s` (IEEE P1363), which is what .NET's `ECDsa.SignData`, WebCrypto and CryptoKit's `rawRepresentation` give by default: convert those to DER first, or every device refuses the config.
 
 **Python:**
 ```python
@@ -212,7 +251,8 @@ All of these are optional and ignored by older clients. Clients announce what th
 - **`signatures`: several signers (m-of-n).** Every signature is over the same `payload` bytes. A client configured with `requiredSignatures(n)` needs `n` valid signatures from distinct trusted keys. `keyId` is only a hint that tells the client which key to try first, and it is not signed. Keep putting the first signer's signature in `signature`: pre-2.1 clients only read that field.
 - **`signingKeys`: key rotation and revocation.**
   - The operator signs this document **offline** with a recovery key, and the server relays it unchanged with every config.
-  - A client configured with `recoveryPublicKeys(...)` checks four things: the recovery signatures, `type == "pinvault-signing-keys"`, a version higher than the one it holds, and a key list that contains no recovery key. It then replaces its trusted signing keys with `keys`.
+  - A client configured with `recoveryPublicKeys(...)` checks: the recovery signatures (`requiredRecoverySignatures`, default 1), `type == "pinvault-signing-keys"`, `version` > 0, at most 32 keys, each an EC public key, none of them a recovery key, and, when the set carries `configApiId` and the block sets `serverScope`, the same id. The number of signatures a config then needs is `max(the app's requiredSignatures, the set's requiredSignatures)` (absent = 1): a set can raise it, never lower it, and must list at least that many keys.
+  - Only a `version` higher than the one the device holds replaces its trusted signing keys with `keys`; an equal or lower one is ignored. A newer set also resets the replay watermarks and drops a stored config it does not vouch for.
   - An invalid set fails the whole response.
   - Before relaying a set, make sure your active signers are in it and cover `requiredSignatures`. A set they cannot satisfy makes every device that applies it reject every later config.
   - **Keep relaying your newest set, for good.** An iOS device remembers the newest set it applied outside its app container (Keychain); if its container is later put back from before that set (a restore, a jailbroken phone), it trusts nothing until a response brings a set at least as new again. A server that stops relaying the set (key sets switched off, a database restored to before the rotation) leaves such devices without configs until an app update ships other compiled-in keys. The refusal reads "The signing-key set in force … is older than one this device applied".
@@ -243,7 +283,11 @@ Content-Type: application/json
 
 The device makes its own key in the Android Keystore and sends a certificate signing
 request (library 2.1+). Issue the certificate over that key; do not generate keys for
-devices. The library sends `X-PinVault-Features: p12password,csr`.
+devices. The library sends `X-PinVault-Features: csr`; only a block that calls
+`allowServerGeneratedKey()` sends `p12password,csr`, and a request without a CSR (that
+block, on a device whose Keystore cannot make a key) sends `p12password`. The request goes
+to the block's `enrollmentUrl` when set (a plain-TLS listener, since the device has no
+client certificate yet), else to `configUrl`.
 
 **Request body (a one-time token, or an enrollment code many devices share):**
 ```json
@@ -301,9 +345,23 @@ What the library holds the chain to before it stores it (2.2):
   certificate of the chain whose key matches a pin. Publish that pin (and the next CA's,
   before you rotate) to app developers.
 
-Renewals (`POST {clientCertEndpoint}/renew`, body `{"clientId": "…", "csr": "…"}`, the same
-JSON answer) are held to the same rules; without pins a renewal must be signed by the CA
-of the certificate it replaces.
+Renewals (`POST {clientCertEndpoint}/renew`, body `{"clientId": "…", "csr": "…"}`, header
+`X-PinVault-Features: csr`, the same JSON answer) are held to the same rules; without pins a
+renewal must be signed by the CA of the certificate it replaces. `clientId` is the current
+leaf's CN (the reference server's `PinVault Client: ` prefix removed). The library renews
+over its mTLS connection while the certificate is valid. When it has expired, or the mTLS
+handshake is refused, it sends the same request to the block's `renewalUrl` (default
+`configUrl`): a plain-TLS listener that asks for no client certificate, where `clientId`
+names the identity and the CSR's signature by the key on record is the proof. The reference
+server runs that listener on `RECOVERY_PORT`, serving only this route and `/health`, with a
+certificate from its server CA so apps can pin the CA for that one `host:port`. Answers:
+
+- `200` — the chain JSON above;
+- `403 {"error":"reenroll_required","message":"…"}` — the identity is revoked; the app is
+  told to enroll again (any other 403 is a failure);
+- `404` or `405` — the library takes renewal as unsupported by this backend and does not
+  renew;
+- anything else — a failure, tried again at the next periodic update.
 
 **Key attestation (library and reference server 2.2.0).** A token says someone has the token; it does not say
 the request comes from your app on a real phone. The library generates the device key
@@ -460,9 +518,12 @@ your one-time token is spent.
 `PinVault.enrollForResult`. The library maps `401` to *invalid token*, and the `error`
 codes `device_already_enrolled`, `identity_already_enrolled`, `revoked`,
 `enrollment_rejected`, `enrollment_limit_reached`, `enrollment_request_expired`,
-`csr_required` and `attestation_required` / `attestation_invalid` (whose `reason` is shown
-when there is no `message`) to their own reasons; anything else is shown with its status
-and code. A 5xx is a failure to answer, not a refusal.
+`csr_required`, `attestation_required` / `attestation_invalid` and `integrity_required` /
+`integrity_invalid` (all four `ATTESTATION_FAILED`; an attestation `reason` is shown when
+there is no `message`) to their own reasons, and a `403` whose `error` starts with
+`Token required` (the reference server's sentence for a token-less request in token mode)
+to `TOKEN_REQUIRED`; anything else is shown with its status and code. A 5xx is a failure
+to answer, not a refusal.
 
 **Waiting for approval (library 2.1).** A server where an administrator approves devices
 first answers the enrollment with `202`:
@@ -523,7 +584,21 @@ reference server, not a production one.
 GET {configUrl}/api/v1/client-certs/{hostname}/download
 ```
 
-Called when a host has `mtls: true` and `clientCertVersion` changes. Returns PKCS12 bytes specific to that host.
+Called when a host has `mtls: true` and `clientCertVersion` changes (or the device has no
+copy yet). Returns PKCS12 bytes specific to that host (`clientCertEndpoint` + `/{hostname}/download`,
+with `X-PinVault-Features: p12password`; a one-off `X-P12-Password` is re-wrapped on the device as
+in section 4).
+
+- The library does **not** check `X-P12-SHA256` on this path (only on enrollment). The bundle's
+  integrity rests on the pinned TLS connection alone.
+- A failed download is not fatal: the device keeps the copy it stored before, if any. A `403` is
+  logged as "not enrolled", which is what the reference server answers on a TLS listener.
+- The reference server serves it **only on mTLS listeners** (`403` on a TLS Config API), and where
+  the scope has a device host ACL only for hosts granted to the device the client certificate
+  stands for (its client id, or its proven device id): otherwise
+  `403 {"error":"host_not_allowed"}`, given before the lookup so the answer does not reveal which
+  hosts have a certificate. With `HOST_CLIENT_CERT_REQUIRE_GRANT` on, a scope without an ACL
+  refuses every device the same way.
 
 ---
 
@@ -541,16 +616,41 @@ Returns raw bytes (any format). The endpoint path is user-defined:
 }
 ```
 
+**Request.** The library appends `?version=N` (the version it holds, 0 for none) and sends
+`X-Device-Id` (the device id) and, for files whose access policy is `token` or `token_mtls`,
+`X-Vault-Token` (the per-device, per-file token the app supplies). Answer `304 Not Modified`
+(with `X-Vault-Version`) when the device already has the latest version. Access policies, as
+the reference server enforces them:
+
+| `access_policy` | Device must send |
+|---|---|
+| `public` | nothing |
+| `token` | `X-Device-Id` + a valid `X-Vault-Token` for that device and file, else `401` |
+| `token_mtls` | the same, over an mTLS connection whose certificate is proven for that device id, else `401` |
+| `api_key` | the admin `X-API-Key`; the library never sends it, so devices always get `401` (server tooling only) |
+
+The library reads at most 64 MiB of a vault file.
+
 **Response headers:**
 ```
 X-Vault-Version: 5
+X-Vault-Encryption: plain | at_rest | end_to_end | user_auth
 X-Vault-Signature: <base64 ECDSA signature>
 ```
+
+`X-Vault-Encryption` (absent = `plain`) says how the body is wrapped: `plain` and `at_rest`
+are the same bytes on the wire (`at_rest` only says the server stores it encrypted),
+`end_to_end` and `user_auth` are wrapped for a device key (below). The library refuses an
+`end_to_end` file served as anything else, and a `user_auth` file it did not declare. For a
+`user_auth` file of a device that has no user-auth key on file, answer
+`412 {"error":"user_auth_key_required"}`: the library registers its key and asks once more.
 
 `X-Vault-Signature` is **required** (library 2.1+) when the client block has a
 signing key: the device refuses an unsigned file. It signs
 `pinvault-vault-file:v1:<key>:<version>:<lowercase sha256 hex of the plaintext>`
-with the config signing key; see section 3 for `X-Vault-Signatures` (m-of-n).
+with the config signing key; see section 3 for `X-Vault-Signatures` (m-of-n). `<key>` is
+the key the **app** declared (`vaultFile("ml-model")`), not the last segment of your URL:
+keep the two equal, or sign with the app's name for the file.
 
 **v2: the signature names the Config API (library and reference server 2.2.0).** The v1 string does not say
 which Config API a file belongs to, so where one key signs for several, a file of one
@@ -580,8 +680,25 @@ zero for a first copy).
 
 ```
 POST {configUrl}/api/v1/vault/devices/{deviceId}/public-key
-{"publicKeyPem": "-----BEGIN PUBLIC KEY-----…", "algorithm": "RSA-OAEP-SHA256", "purpose": "e2e" | "user_auth"}
+{"publicKeyPem": "-----BEGIN PUBLIC KEY-----…", "algorithm": "RSA-OAEP-SHA256"}
+{"publicKeyPem": "-----BEGIN PUBLIC KEY-----…", "algorithm": "RSA-OAEP-SHA256", "purpose": "user_auth", "attestationChain": ["…"]}
 ```
+
+The E2E key goes without `purpose` (treat absent as `e2e`); the user-auth key sends
+`"purpose": "user_auth"` and its attestation chain (section 4). The path is fixed, relative
+to `configUrl`. Keeping someone else from replacing a device's key:
+
+- Over mTLS the certificate must belong to the device in the URL, else
+  `403 {"error":"device_identity_mismatch"}`.
+- Over TLS keep the first key. A different key needs proof: the device's token for one of
+  its `end_to_end` or `user_auth` files, sent as `X-Vault-Key` (the file's server-side key,
+  the last segment of its endpoint) and `X-Vault-Token`, or a client certificate proven for
+  the device; otherwise `409 {"error":"key_change_requires_proof"}`. An administrator can
+  remove the old key instead.
+- A user-auth key that would replace another: `409 {"error":"user_auth_key_exists","reason":"…"}`
+  unless the new key's attestation passes and the device's credential is shown; the library
+  reports that the key must be reset on the server. `403 attestation_required` /
+  `attestation_invalid` as for enrollment.
 
 and the file goes out as `[4-byte BE length][RSA-OAEP-wrapped AES-256 key][12-byte IV][AES-GCM ciphertext + tag]`.
 `algorithm` says how to wrap the AES key, and you must store it with the key:
@@ -623,11 +740,16 @@ Content-Type: application/json
   "deviceModel": "Galaxy S24",
   "enrollmentLabel": "default",
   "deviceId": "a1b2c3d4e5f6",
-  "deviceAlias": "Warehouse Tablet #3"
+  "deviceAlias": "Warehouse Tablet #3",
+  "failureReason": "signature_invalid",
+  "authMethod": "token"
 }
 ```
 
-Status values: `"downloaded"`, `"cached"`, `"failed"`
+Status values: `"downloaded"`, `"cached"`, `"failed"`. `failureReason` is present only with
+`failed` and is a fixed code (`http_401`, `decrypt_failed`, `signature_invalid`,
+`network_error`, …), never an exception text. `authMethod` is the file's access policy:
+`public`, `token`, `token_mtls` or `api_key`.
 
 Return `200 OK` — the library ignores the response body.
 
@@ -982,16 +1104,24 @@ signal of its own (`app_attest_missing`), as for Play Integrity.
 
 ## All Configurable Paths
 
-| Config Method | Default Path | Purpose |
-|---------------|-------------|---------|
-| `configEndpoint()` | `api/v1/certificate-config` | Pin config |
-| `healthEndpoint()` | `health` | Health check |
-| `enrollmentEndpoint()` | `api/v1/client-certs/enroll` | Enrollment |
-| `clientCertEndpoint()` | `api/v1/client-certs` | Host client cert base |
-| `vaultReportEndpoint()` | `api/v1/vault/report` | Download reporting |
-| `vaultFile("key") { endpoint("...") }` | User-defined | Vault files |
+Set on the Config API block (`configApi("id", "https://…/") { … }`). Each path is joined to a
+base URL:
 
-All paths are relative to `configUrl`. Leading `/` is stripped.
+| Config Method | Default Path | Base URL | Purpose |
+|---------------|-------------|----------|---------|
+| `configEndpoint()` | `api/v1/certificate-config` | `configUrl` | Pin config |
+| `healthEndpoint()` | `health` | `configUrl` | Health check |
+| `enrollmentEndpoint()` | `api/v1/client-certs/enroll` | `enrollmentUrl()`, else `configUrl` | Enrollment |
+| `clientCertEndpoint()` + `/{hostname}/download` | `api/v1/client-certs/…` | `configUrl` | Host client certs |
+| `clientCertEndpoint()` + `/renew` | `api/v1/client-certs/renew` | `configUrl` over mTLS; `renewalUrl()`, else `configUrl`, for the recovery path | Certificate renewal |
+| `vaultReportEndpoint()` | `api/v1/vault/report` | `configUrl` | Download reporting |
+| `vaultFile("key") { endpoint("...") }` | User-defined | `configUrl` | Vault files |
+
+Not configurable (always relative to `configUrl`): `api/v1/vault/devices/{deviceId}/public-key`
+(device keys), `api/v1/attest/challenge` and `api/v1/attest` (attestation).
+
+The library adds the trailing `/` to the base URLs. A leading `/` is stripped from every path
+above except `enrollmentEndpoint()`, which is used as given, so write it without one.
 
 ---
 
@@ -1015,18 +1145,42 @@ All paths are relative to `configUrl`. Leading `/` is stripped.
 
 ## Error Handling
 
-| HTTP Status | Library Behavior |
-|-------------|-----------------|
-| 200 | Parse response |
-| 4xx | Fail immediately (no retry) |
-| 5xx | Retry with exponential backoff (2s, 4s, 6s...) |
-| Network error | Retry up to `maxRetryCount` (default: 3) |
+**Config fetch retries.** The library does not tell a 4xx from a 5xx, a network error or a
+refused config: every failed fetch is a failure.
+
+- `PinVault.init` tries up to `maxRetryCount` times (default 3) with a linear pause between
+  attempts: 2 s, then 4 s (2 s × attempt number).
+- The periodic update (WorkManager) asks WorkManager to run it again on a failure, with
+  WorkManager's own backoff, up to 3 times; then it waits for the next period.
+- `PinVault.updateNow()` makes one attempt; the app decides whether to call it again.
+- A pin mismatch on an app request triggers a config refetch and one retry of the request,
+  limited to 6 refetches per 5 minutes across all hosts (1 per 5 minutes for a host the
+  config has no entry for), and per host to 3 failed recoveries per 5 minutes, after which
+  that host waits 10 minutes.
+
+**Answers the library acts on, on any request.** A `403 {"error":"reenroll_required"}` from
+any Config API request (config, vault files, key registration, reports, renewal) tells the
+app that its identity was revoked and it must enroll again; the app hears it once per
+certificate. A `401` naming `PinVault-Token` triggers one re-attestation and one retry
+(section 9).
+
+**What the reference server answers before your handler runs.** Useful as a model, and the
+codes a client may see:
+
+| Status | Cause |
+|---|---|
+| `400` | `EncodedPathGuard`: the path contains `%2F`, `%5C`, `%2E`, `%25` (any case) or a backslash (every listener) |
+| `411` / `413` | `ClientBodyLimit`: a device endpoint's body has no declared length, or is over 64 KB |
+| `403 reenroll_required` | `RevocationGate`: the client certificate's identity is revoked (mTLS listeners, every request) |
+| `403 device_identity_mismatch` | `DeviceIdBinding`: `X-Device-Id` does not belong to the client certificate (mTLS listeners) |
+| `429 rate_limited` | Per-address or per-identity limits (enrollment, renewal, attestation, vault downloads) |
 
 ---
 
 ## Implementation Checklist
 
-- [ ] `GET /health` returns `{"status":"ok"}`
+- [ ] `GET /health` returns `{"status":"ok"}` (any other fields string-valued)
+- [ ] Signatures are DER-encoded ECDSA, Base64
 - [ ] `GET /api/v1/certificate-config` returns valid pin config
 - [ ] Every host has at least 2 different SHA-256 pins
 - [ ] Pins are Base64(SHA256(SPKI)) — 44 characters each
@@ -1044,6 +1198,71 @@ All paths are relative to `configUrl`. Leading `/` is stripped.
 - [ ] If iOS apps attest: a report with `device.platform: "ios"` is judged by bundle id, team id and iOS version, and an `app-attest` verdict against Apple's App Attestation Root CA (ATTESTATION.md §12)
 - [ ] Where you require an Android chain and serve iPhones: `appAttestation` (a JSON string) is verified as a fresh key's App Attest attestation with the client data hash of that request (enrollment, user-auth key, first round), recorded as App Attest, not as a hardware-attested key
 - [ ] If the app attests: `/api/v1/attest/challenge` and `/api/v1/attest` as in ATTESTATION.md, no token to a rejected device, and your API verifies `PinVault-Token` (HS256 by `kid`, `exp` ≤ 60 s leeway, `aud`, `did` = `X-Device-Id` when sent, `cnf.x5t#S256` = the client certificate behind mTLS) and answers `401` naming `PinVault-Token` otherwise; the attestation keeps the registration chain's facts and judges every round against them
+
+---
+
+## Porting the client
+
+A client in another language (Swift, .NET, Flutter, a desktop app) talks to the same server
+and must make the same decisions, or a config one device accepts is refused by another. The
+Kotlin library is the reference; files below are under
+`pinvault/src/main/kotlin/io/github/umutcansu/pinvault/`. The iOS port's contract,
+including the wire fields iOS adds, is [pinvault-ios/PORTING.md](pinvault-ios/PORTING.md);
+attestation and `PinVault-Token` are [ATTESTATION.md](ATTESTATION.md).
+
+- **Signatures** (`crypto/ConfigSignatureVerifier.kt`, `crypto/SignatureTrust.kt`):
+  SHA256withECDSA, P-256, DER-encoded (not raw `r‖s`), standard Base64. Signed bytes: the
+  UTF-8 of `payload` exactly as served (never re-serialised); of a key set's `payload`; of
+  `pinvault-vault-file:v1:<key>:<version>:<sha256 hex>` or the v2 string. Keys are Base64
+  X.509 SubjectPublicKeyInfo; a key id is Base64(SHA-256(SPKI)).
+- **m-of-n** (`crypto/SignatureTrust.kt`, `crypto/SignedConfigVerifier.kt`): a non-empty
+  `signatures` list replaces the single `signature` field. Count distinct trusted keys with
+  a valid signature, looking at no more than 16 entries; `keyId` only orders the tries. The
+  threshold is the app's `requiredSignatures`, or the applied key set's if higher. Key-set
+  rules: section 3.
+- **Freshness and replay** (`ssl/SSLCertificateUpdater.kt`, `store/CertificateConfigStore.kt`):
+  keep the highest `issuedAt` ever accepted and the highest version per host; they never go
+  down (not on rollback, not when a host is dropped). Refuse a lower `issuedAt`; an equal one
+  is "already current" only with the same hosts, versions, pins, `mtls`, `clientCertVersion` and `trustRoots`; an older
+  copy of unchanged content (force flags included) is "already current", not an attack. Limits: section 3. A newer
+  signing-key set resets the watermarks. Store the envelope, not the parsed config, and
+  verify it again on every load.
+- **Trusted clock** (`ssl/TrustedClock.kt`): expiry is judged by `max(wall clock, highest
+  time seen)`, persisted and carried forward by a monotonic clock, so setting the clock back
+  does not revive an expired config. Only a config with an `issuedAt` newer than all before
+  may lower it, and that config is judged by the wall clock.
+- **Config intake** (`ssl/PinConfigValidator.kt`): the host-name, wildcard, port and pin rules
+  of section 2, applied to the whole config before any of it is used.
+- **Pin matching** (`ssl/PinHostMatcher.kt`, `ssl/ChainPinMatcher.kt`,
+  `ssl/DynamicSSLManager.kt`): per host; `host:port` before `host`, exact before wildcard. A
+  leaf pin needs nothing else. An issuer pin counts only when the leaf validly chains to that
+  certificate (path validation with it as the only anchor, no revocation check) **and** the
+  leaf's subjectAltName names the host. TLS 1.2 or newer.
+- **Client identity** (`ssl/DynamicSSLManager.kt`, `model/ConfigApiBlock.kt`): present the
+  enrolled certificate only to the block's own Config API, `enrollmentUrl` and `renewalUrl`
+  (`host:port`), plus `clientCertHosts(...)`; when the app lists none, also to pin entries
+  with `mtls: true`. Host-specific P12s go only to their host.
+- **CSR** (`crypto/Pkcs10Csr.kt`, `keystore/ClientIdentityKeyProvider.kt`): EC P-256 key made
+  in the platform keystore and never exported; PKCS#10 with a single-CN subject, empty
+  attributes, `ecdsa-with-SHA256`. The CN is the device id at enrollment and the client id at
+  renewal; the server ignores it. Attestation challenge, verification code
+  (`internal/VerificationCode.kt`) and integrity request hash
+  (`internal/IntegrityRequestHash.kt`): section 4.
+- **Pin-mismatch recovery** (`ssl/PinRecoveryInterceptor.kt`): refetch the config and retry
+  the request once; at most 6 refetches per 5 minutes in all, 1 per 5 minutes for hosts with
+  no pin entry, 10 minutes' cooldown for a host after 3 failed recoveries in 5 minutes. A
+  certificate that is expired or not yet valid is not a mismatch.
+- **`PinVault-Token`** (`api/AttestationTokenInterceptor.kt`, `internal/AttestationManager.kt`):
+  add it to requests for the block's `tokenHosts(...)`, or, when it names none, for every
+  host the live config pins and the block's own Config API. A `401` naming the token gets one
+  re-attestation and one retry.
+- **Revocation** (`api/ReenrollRequiredInterceptor.kt`): watch every Config API response for
+  `403 reenroll_required`, not only renewal.
+- **Vault files** (`internal/VaultFileRouter.kt`, `crypto/VaultFileDecryptor.kt`): verify the
+  signature over the plaintext (after E2E decryption), refuse an encryption other than the
+  one declared, cap version jumps at 1,000,000.
+- **Body limits** (`internal/BoundedBody.kt`): 1 MiB for configs, 256 KiB for enrollment,
+  renewal, attestation and error bodies, 64 MiB for vault files.
 
 ---
 

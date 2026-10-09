@@ -19,6 +19,7 @@ RUN groupadd --system --gid 10001 pinvault \
 
 WORKDIR /data
 COPY --from=build /build/build/install/pinvault-demo-server/ /app/
+COPY --chmod=755 docker-entrypoint.sh /app/docker-entrypoint.sh
 
 # Persistent data directories, writable by the server's user
 RUN mkdir -p /data/db /data/certs /data/keys && chown -R pinvault:pinvault /data
@@ -30,7 +31,7 @@ ENV PORT=8080
 ENV HTTPS_PORT=8081
 ENV DB_PATH=/data/db/pinvault.db
 ENV CERTS_DIR=/data/certs
-ENV SIGNING_KEY_PATH=/data/signing-key.pem
+ENV SIGNING_KEY_PATH=/data/keys/signing-key.pem
 ENV ENROLLMENT_MODE=token
 
 EXPOSE 8080 8081
@@ -39,4 +40,4 @@ HEALTHCHECK --interval=30s --timeout=5s --retries=3 \
   CMD curl -f http://localhost:8080/health || exit 1
 
 USER pinvault:pinvault
-ENTRYPOINT ["/app/bin/pinvault-demo-server"]
+ENTRYPOINT ["/app/docker-entrypoint.sh"]

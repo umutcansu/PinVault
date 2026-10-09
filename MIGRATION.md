@@ -33,11 +33,13 @@ unchanged.
 ```
 
 Keys that already exist are untouched either way; the option applies to
-keys generated from now on (README → *Production Security Checklist* §9).
+keys generated from now on ([Production Security Checklist §9](GUIDE.md#9-optional-keys-that-work-only-while-the-phone-is-unlocked-22)).
 
 ## Upgrading from 2.2.x to 2.3
 
-Everything compiles unchanged. What to expect:
+Most apps compile unchanged. The exception: `PinVaultConnectionEvent` gained
+an `Attestation` variant, so an exhaustive `when` over connection events needs
+one more branch (or an `else`). What to expect:
 
 - **Attestation is off** until a block calls `attestation()`; nothing changes
   for apps that do not. Play Integrity needs the separate
@@ -52,6 +54,29 @@ Everything compiles unchanged. What to expect:
   default.
 - **A host entry that lists the same pin twice** is refused, by the library
   and by the reference server: a rotation needs two different pins.
+- **Pinned clients follow no redirect into the clear.** `getClient()` and
+  `getClient(settings)` no longer follow an https→http redirect, and the
+  Config API's own client follows no redirect at all, not even to another
+  https host. Builders you pass to `applyTo` keep their own settings.
+- **An issuer pin checks the host name too.** When a host's pin matches a CA
+  certificate in the chain rather than the leaf, the leaf must now carry a
+  `subjectAltName` for that host, or the handshake fails with
+  `HostnameMismatchException` (a `CertificateException`; no config refetch is
+  tried for it). Leaf pins are unchanged, so self-signed and SAN-less
+  certificates pinned by their own key still work.
+- **The consumer R8 rules no longer keep PinVault's class names.** In a
+  minified app the library's log tags are obfuscated; add
+  `-keepnames class io.github.umutcansu.pinvault.**` yourself if you need
+  them in logs.
+- **Response bodies are read with a ceiling:** 1 MiB for a config, 256 KiB
+  for small answers (enrollment, renewal, key registration, attestation,
+  host client certificates), 64 MiB for a vault file. A larger body fails as
+  an `IOException`; a vault fetch reports it as `Failed` with code
+  `response_too_large`.
+- **`VaultFileResult.Failed` has a `code`** (one of the
+  `VaultFileResult.Failed.CODE_*` constants, or `http_<status>`), and the
+  distribution report sends that code to the server instead of `reason`.
+  `reason` still carries the full text for the app and the local log.
 
 ## Upgrading from 2.1.x to 2.2
 
@@ -72,6 +97,10 @@ Most apps compile unchanged. What to expect, and what may need a line:
   the room; a server of your own must compute the same 80 bits.
 - **A backend of your own with `serverScope` set** must send
   `X-Vault-Signature-V2` for its vault files.
+- **A custom `CertificateConfigApi` on a signed block** must also implement
+  `SignedConfigSource` and hand over the signed envelope; otherwise `init`
+  returns `Failed`, unless the block calls `allowUnsigned()`. See
+  [Custom backend](#custom-backend).
 - **`when` over `EnrollmentRefusal`** needs branches for
   `ATTESTATION_FAILED` and `CSR_REQUIRED`.
 - **Pointing a block id at another Config API** (a new `configUrl` or
@@ -82,7 +111,7 @@ Most apps compile unchanged. What to expect, and what may need a line:
   client certificate; `mtls = true` pins then add none.
 - **An `END_TO_END` file served as `plain`** is refused (`Failed`).
 - **Reference server:** mint enrollment tokens with the phone's device id
-  (see [Where the token comes from](README.md#where-the-token-comes-from)) wherever the certificate must stand in for
+  (see [Where the token comes from](GUIDE.md#where-the-token-comes-from)) wherever the certificate must stand in for
   the device — `TOKEN_MTLS` files, key replacement over mTLS, host client
   certificates. `API_KEY` needs 16 characters.
 - Stored P12 identities and host client certificates are moved into the
@@ -93,7 +122,7 @@ Most apps compile unchanged. What to expect, and what may need a line:
 
 No app code changes are needed from 2.0.9. A backend of your own that serves
 vault files to a signed block must start sending `X-Vault-Signature`
-([Signed vault files](README.md#signed-vault-files-21)); the reference server does.
+([Signed vault files](GUIDE.md#signed-vault-files-21)); the reference server does.
 On the first start 2.1 moves the 2.0.x
 EncryptedSharedPreferences files (configs, client certificates, cached vault
 files) into its Keystore-backed store and deletes them. Going back to 2.0.x
@@ -149,7 +178,10 @@ If you run your own server, the signed payload must now look like:
 Both fields are Unix epoch **milliseconds**. Set `issuedAt = now()` and
 `expiresAt = now() + ttl` right before signing. The library rejects responses
 where either field is missing/zero, where `expiresAt <= now`, or where
-`issuedAt <= storedIssuedAt`. See `SERVER_IMPLEMENTATION_GUIDE.md` for sample
+`issuedAt` is lower than or equal to the stored one and the content differs
+from the stored config. The same signed config served again (equal
+`issuedAt`, identical content) is reported as `AlreadyCurrent`, not as a
+replay. See `SERVER_IMPLEMENTATION_GUIDE.md` for sample
 signing code.
 
 ### 3. Enrollment must return `X-P12-SHA256` header
@@ -193,7 +225,9 @@ will tell you exactly where. If you only care about handshake outcomes:
 .onConnectionEvent { event ->
     when (event) {
         is PinVaultConnectionEvent.Connection   -> handle(event)
-        is PinVaultConnectionEvent.ConfigUpdate -> Unit  // ignore
+        is PinVaultConnectionEvent.ConfigUpdate      -> Unit  // ignore
+        is PinVaultConnectionEvent.ClientCertRenewal -> Unit  // 2.1
+        is PinVaultConnectionEvent.Attestation       -> Unit  // 2.3
     }
 }
 ```
@@ -242,6 +276,10 @@ needs no migration and no refetch. (Downgrading the library below this version
 is not supported — an older parser would fold the new field into the last pin
 hash.)
 
+From 2.2 the pins are stored as JSON (`config_pins_json`) instead. The
+`|`-separated entry above is read once on the first load and rewritten as
+JSON; nothing needs to be done.
+
 ### Suggested rollout order
 
 1. Update server first so signed responses carry `issuedAt`/`expiresAt` and
@@ -265,7 +303,7 @@ Rollout order:
 2. Then the app.
 3. Turn on server features that assume new clients last. `CONFIG_SIGNATURE_CACHE` is safe at any time: it only serves cached envelopes to clients that announce `redelivery`.
 
-Behaviour change to know about: a byte-identical signed config served twice is now reported as `AlreadyCurrent`. It used to fail as a replay. An older `issuedAt`, or an equal one with different content, is still rejected.
+Behaviour change to know about: a byte-identical signed config served twice is now reported as `AlreadyCurrent`. It used to fail as a replay. An older copy of the same content (a cache serving an earlier envelope) is `AlreadyCurrent` too: nothing is applied. An older or equal `issuedAt` with different content is still rejected.
 
 ## Encrypted storage moves to the Android Keystore (2.1)
 
@@ -326,7 +364,8 @@ error: constructor HostPin in class HostPin cannot be applied to given types;
 these are **API breaking changes** introduced in `2.0`, not metadata
 errors. v2 replaced the single-URL constructor with a multi-Config-API
 DSL, and `HostPin` gained four optional fields. Update your Java code
-following the patterns in the README's Quick Start, section **2b**, or read
+following the patterns in the guide's
+[section 2b](GUIDE.md#2b-initialize-v2-dsl--java-consumers), or read
 the DSL reference below. If migrating
 to v2 isn't an option right now, pin the dependency to the latest
 `1.x` release.
@@ -339,8 +378,10 @@ Simplest setup — one backend, one or more vault files.
 val config = PinVaultConfig.Builder()
     .configApi("api", "https://api.example.com/") {
         bootstrapPins(listOf(
-            HostPin("api.example.com", listOf("sha256/AAAA…", "sha256/BBBB…"))
+            // Base64 SHA-256 of the SPKI, 44 characters, no "sha256/" prefix
+            HostPin("api.example.com", listOf("AAAA…=", "BBBB…="))
         ))
+        signaturePublicKey(SIGNING_KEY)   // or allowUnsigned() for tests
     }
     .vaultFile("flags") {
         configApi("api")
@@ -384,10 +425,12 @@ Register multiple Config APIs and bind each vault file to a specific one:
 val config = PinVaultConfig.Builder()
     .configApi("prod-tls", "https://host:8091") {
         bootstrapPins(prodTlsPins)
+        signaturePublicKey(SIGNING_KEY)
         wantPinsFor("cdn.example.com", "api.example.com")
     }
     .configApi("secure-mtls", "https://host:8092") {
         bootstrapPins(secureMtlsPins)
+        signaturePublicKey(SIGNING_KEY)
         clientKeystore(p12Bytes, devicePassword)
         wantPinsFor("internal.acme.com")
     }
@@ -473,7 +516,8 @@ Declare which hosts the device actually uses:
 
 ```kotlin
 .configApi("prod-tls", "https://host:8091") {
-    bootstrapPins(listOf(HostPin("host:8091", listOf("…"))))
+    bootstrapPins(listOf(HostPin("host:8091", listOf("primaryPin…", "backupPin…"))))
+    signaturePublicKey(SIGNING_KEY)
     wantPinsFor("cdn.example.com", "api.example.com")
 }
 ```
@@ -503,10 +547,22 @@ Vault files are ignored in this mode.
 
 ## Custom backend
 
-Implement `CertificateConfigApi` and pass it to `PinVault.init`:
+Implement `CertificateConfigApi` and pass it to `PinVault.init`. For a block
+with `signaturePublicKey(...)` (2.2 on), also implement `SignedConfigSource`
+and return the signed envelope as your backend serves it; PinVault verifies it
+like its own fetches. Without it, `init` returns `Failed` unless the block
+calls `allowUnsigned()`.
 
 ```kotlin
-class MyBackendApi : CertificateConfigApi {
+class MyBackendApi : CertificateConfigApi, SignedConfigSource {
+    // Signed blocks: the envelope, verified by PinVault. fetchConfig is then
+    // not called. fetchScopedSignedConfig(...) is the wantPinsFor variant
+    // (default: fetchSignedConfig).
+    override suspend fun fetchSignedConfig(currentVersion: Int): SignedConfigResponse {
+        val body = myBackend.getSignedPins(currentVersion)   // {"payload": "...", "signature": "..."}
+        return SignedConfigResponse(payload = body.payload, signature = body.signature)
+    }
+
     override suspend fun fetchConfig(currentVersion: Int): CertificateConfig { /* … */ }
     override suspend fun downloadHostClientCert(hostname: String): ByteArray { /* … */ }
     override suspend fun downloadVaultFile(endpoint: String): ByteArray { /* … */ }
@@ -529,3 +585,5 @@ class MyBackendApi : CertificateConfigApi {
     ) { /* register for E2E support */ }
 }
 ```
+
+More detail, including Java: [Custom `CertificateConfigApi`](GUIDE.md#custom-certificateconfigapi-bring-your-own-backend).

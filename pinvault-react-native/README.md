@@ -13,7 +13,7 @@ It is a thin bridge over the two native libraries — Android
 Secure Enclave), signature checks and vault decryption all stay native: no
 crypto runs in JavaScript, and JavaScript never sees TLS. Names are the native
 ones (`InitResult`, `ClientCertEnrollmentResult`, `VaultFileResult`, …), so the
-[library documentation](https://github.com/umutcansu/PinVault/blob/main/README.md) applies as it is.
+[library documentation](https://github.com/umutcansu/PinVault/blob/main/GUIDE.md) applies as it is.
 
 - React Native **0.87+**, New Architecture only (TurboModule, codegen), Hermes.
 - Android minSdk 24; iOS 16+.
@@ -355,10 +355,10 @@ environmentGuard: async (operation) => !(await myRaspSaysCompromised()),
 environmentGuardTimeoutMs: 5000,
 ```
 
-Asked before `INIT`, `ENROLL`, `FETCH_FILE` and `UNLOCK_FILE`. On iOS the bridge
-asks before it calls the library (`start`: `INIT` and `ENROLL`; enrollment
-calls: `ENROLL`; `fetchFile` / `syncAllFiles`: `FETCH_FILE`; `unlockFile`:
-`UNLOCK_FILE`), so the wait for JS holds no thread; an operation the library
+Asked before `INIT`, `ENROLL`, `FETCH_FILE`, `UNLOCK_FILE` and `LOAD_FILE`. On iOS
+the bridge asks before it calls the library (`start`: `INIT` and `ENROLL`;
+enrollment calls: `ENROLL`; `fetchFile` / `syncAllFiles`: `FETCH_FILE`;
+`unlockFile`: `UNLOCK_FILE`; `loadFile`: `LOAD_FILE`), so the wait for JS holds no thread; an operation the library
 starts on its own (a background refresh) still waits on its own thread,
 bounded by the timeout. **Fail closed:**
 a timeout (native deadline 100–30 000 ms, default 5000), a thrown error, a

@@ -1,8 +1,8 @@
 # Vault files behind the screen lock: the details
 
 The setup, the `unlockFile` call and the table of key kinds per Android
-version are in the README under
-[Locked behind the screen lock](README.md#locked-behind-the-screen-lock-22).
+version are in the [guide](GUIDE.md) under
+[Locked behind the screen lock](GUIDE.md#locked-behind-the-screen-lock-22).
 This page has what sits behind them.
 
 ## Who seals the file
@@ -75,7 +75,7 @@ fingerprint-only key, `0` is not a window the Keystore honours), and the
 Keystore checks the window when the decrypt cipher is initialised — which
 the library does on the thread hop right after the prompt returns, well
 under a second. 5 s leaves room for a slow Keystore and keeps the key
-shut the rest of the time; it was 10 s until 2.3.0. Why Android 9 and 10
+shut the rest of the time; it was 10 s through 2.3.0. Why Android 9 and 10
 list any biometric: androidx.biometric does not support
 `BIOMETRIC_STRONG | DEVICE_CREDENTIAL` on API 28–29, and the screen lock
 must stay on offer for a key the screen lock opens; a weak biometric (a
