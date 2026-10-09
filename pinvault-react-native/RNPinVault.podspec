@@ -4,7 +4,7 @@ package = JSON.parse(File.read(File.join(__dir__, "package.json")))
 
 # PinVault for iOS is a Swift package (Package.swift at the repository root,
 # product "PinVault"). React Native's spm_dependency adds it to the Pods project:
-#   - consumers: the git URL at the tag of this package's version (v2.4.0);
+#   - consumers: the git URL at the tag of this package's version (v2.4.1);
 #   - development: PINVAULT_IOS_PACKAGE_PATH = a PinVault checkout (the sample's
 #     Podfile sets it to this repository), the counterpart of pinvault.localPath.
 pinvault_url = "https://github.com/umutcansu/PinVault.git"

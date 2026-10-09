@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 2.4.1 — 2026-10-10 — failed probes raise, production attestation floor, React Native WebSocket pinned and 0.81+
 
 Fixes from the 2026-10-09 OWASP review of 2.4.0 (server Top 10 / API Top 10,
 libraries MASVS v2; no Critical or High finding, three Medium ones below).
