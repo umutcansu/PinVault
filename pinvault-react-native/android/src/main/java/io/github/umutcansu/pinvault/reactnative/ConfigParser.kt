@@ -152,7 +152,9 @@ internal object ConfigParser {
             a.finish()
         }
         // On by default in a release build: RN's https must go through PinVault there.
-        val requirePinned = root.bool("requirePinnedReactNativeNetworking") ?: (release && pinGlobal)
+        // The native security file can pin this on (RN-3): JS may turn it on, never off.
+        val requirePinned = (root.bool("requirePinnedReactNativeNetworking") ?: (release && pinGlobal)) ||
+            nativeRequire.requirePinnedReactNativeNetworking
         if (requirePinned && !pinGlobal) {
             throw BridgeInputException("config.requirePinnedReactNativeNetworking: contradicts android.pinGlobalNetworking: false")
         }

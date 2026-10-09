@@ -53,6 +53,19 @@ class NativeSecurityTest {
             "signaturePublicKeys":["$key2","$key"],"requiredSignatures":2,"serverScope":"default-tls"}]}""")
     }
 
+    @Test fun `native file can pin requirePinnedReactNativeNetworking so JS cannot turn it off`() {   // RN-3
+        val pinned = NativeSecurity.parse("""
+            {"require":{"requirePinnedReactNativeNetworking":true},
+             "configApis":[{"id":"default","bootstrapPins":[{"hostname":"h.example","sha256":["$pinA","$pinB"]}],
+              "signaturePublicKeys":["$key","$key2"],"requiredSignatures":2,"recoveryPublicKeys":["$key3"],
+              "serverScope":"default-tls","clientCaPins":["$pinA"]}]}
+        """.trimIndent(), "assets/pinvault_security.json")
+        // JS tries to turn it off, even in a debug build — the native pin wins.
+        val p = parse("""{"configApis":[{"id":"default","url":"https://h.example:8081/"}],"requirePinnedReactNativeNetworking":false}""",
+            native = pinned, release = false)
+        assertTrue("native pin forces requirePinned on", p.networking.requirePinned)
+    }
+
     @Test fun `a differing trust anchor from JS is refused`() {
         val base = """"id":"default","url":"https://h.example:8081/""""
         refused("""{"configApis":[{$base,"bootstrapPins":[{"hostname":"h.example","sha256":["$pinA","$evil"]}]}]}""",

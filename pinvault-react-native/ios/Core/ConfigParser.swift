@@ -115,7 +115,9 @@ public enum ConfigParser {
 
         // On by default in a release build — unless the app opted out of pinning RN's
         // networking natively (Info.plist PinVaultPinReactNativeNetworking = NO).
-        let requirePinned = try root.bool("requirePinnedReactNativeNetworking") ?? (release && reactNetworkingEnabled)
+        // The native security file can pin this on (RN-3): JS may turn it on, never off.
+        let requirePinned = (try root.bool("requirePinnedReactNativeNetworking") ?? (release && reactNetworkingEnabled))
+            || require.requirePinnedReactNativeNetworking
         // Android-only settings: the Android side reads them; here only their shape is checked.
         _ = try root.object("android")
         var maxRN = ReactNetworking.defaultMaxResponseBytes

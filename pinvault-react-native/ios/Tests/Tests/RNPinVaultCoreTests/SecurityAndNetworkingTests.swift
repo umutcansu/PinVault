@@ -39,6 +39,19 @@ final class SecurityAndNetworkingTests: XCTestCase {
 
     // MARK: native security file
 
+    func testNativeFileCanPinRequirePinnedSoJsCannotTurnItOff() throws {   // RN-3
+        let pinned = try NativeSecurity.parse("""
+            {"require":{"requirePinnedReactNativeNetworking":true},
+             "configApis":[{"id":"default","bootstrapPins":[{"hostname":"h.example","sha256":["\(pinA)","\(pinB)"]}],
+              "signaturePublicKeys":["\(key)","\(key2)"],"requiredSignatures":2,"recoveryPublicKeys":["\(key3)"],
+              "serverScope":"default-tls","clientCaPins":["\(pinA)"]}]}
+            """, source: "pinvault_security.json")
+        // JS tries to turn it off, even in a debug build — the native pin wins.
+        let p = try parse(#"{"configApis":[{"id":"default","url":"https://h.example:8081/"}],"requirePinnedReactNativeNetworking":false}"#,
+                          native: pinned, release: false)
+        XCTAssertTrue(p.requirePinnedReactNativeNetworking, "native pin forces requirePinned on")
+    }
+
     func testTheNativeValuesApplyAndMayBeRepeated() throws {
         let p = try parse(#"{"configApis":[{\#(base)}]}"#, native: file)
         XCTAssertTrue(p.nativeSecurityApplied)

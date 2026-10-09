@@ -11,7 +11,8 @@
 //                      "clientCertHosts",
 //                      "enrollmentUrl", "renewalUrl" }],
 //     "staticPins": { "pins": [...], "version": 1 },
-//     "require": { "requireUnlockedDevice", "requireHardwareBackedKeys", "managedTrustRoots",
+//     "require": { "requireUnlockedDevice", "requireHardwareBackedKeys",
+//                  "requirePinnedReactNativeNetworking", "managedTrustRoots",
 //                  "wipeVaultFilesOnRevocation", "requireCaTrust", "expectedBundleIds",
 //                  "expectedTeamIds", "userAuthStrength", "expiredConfigGraceSeconds",
 //                  "vaultFileMaxOfflineAgeSeconds", "expectedSignerSha256" (Android's, read for the shape) },
@@ -62,6 +63,8 @@ public struct NativeSecurity {
     public struct Require {
         var requireUnlockedDevice = false
         var requireHardwareBackedKeys = false
+        /// Pins `requirePinnedReactNativeNetworking`: JS cannot set it false (RN-3).
+        var requirePinnedReactNativeNetworking = false
         var managedTrustRoots = false
         var wipeVaultFilesOnRevocation = false
         var requireCaTrust: [String]? = nil
@@ -149,6 +152,7 @@ public struct NativeSecurity {
             if let r = try root.object("require") {
                 require.requireUnlockedDevice = try r.bool("requireUnlockedDevice") == true
                 require.requireHardwareBackedKeys = try r.bool("requireHardwareBackedKeys") == true
+                require.requirePinnedReactNativeNetworking = try r.bool("requirePinnedReactNativeNetworking") == true
                 require.managedTrustRoots = try r.bool("managedTrustRoots") == true
                 require.wipeVaultFilesOnRevocation = try r.bool("wipeVaultFilesOnRevocation") == true
                 require.requireCaTrust = try r.stringList("requireCaTrust", maxItems: 64, maxLength: 255)

@@ -31,7 +31,8 @@ import java.io.IOException
  *   }],
  *   "staticPins": { "pins": [ … ], "version": 1 },
  *   "require": {
- *     "requireUnlockedDevice": true, "requireHardwareBackedKeys": true, "managedTrustRoots": true,
+ *     "requireUnlockedDevice": true, "requireHardwareBackedKeys": true,
+ *     "requirePinnedReactNativeNetworking": true, "managedTrustRoots": true,
  *     "wipeVaultFilesOnRevocation": true, "requireCaTrust": ["api.example.com"],
  *     "expectedSignerSha256": ["…"], "expiredConfigGraceSeconds": 0, "vaultFileMaxOfflineAgeSeconds": 604800
  *   },
@@ -78,6 +79,8 @@ internal class NativeSecurity(
     class Require(
         val requireUnlockedDevice: Boolean = false,
         val requireHardwareBackedKeys: Boolean = false,
+        /** Pins `requirePinnedReactNativeNetworking`: JS cannot set it false (RN-3). */
+        val requirePinnedReactNativeNetworking: Boolean = false,
         val managedTrustRoots: Boolean = false,
         val wipeVaultFilesOnRevocation: Boolean = false,
         val requireCaTrust: List<String>? = null,
@@ -192,6 +195,7 @@ internal class NativeSecurity(
                     Require(
                         requireUnlockedDevice = r.bool("requireUnlockedDevice") == true,
                         requireHardwareBackedKeys = r.bool("requireHardwareBackedKeys") == true,
+                        requirePinnedReactNativeNetworking = r.bool("requirePinnedReactNativeNetworking") == true,
                         managedTrustRoots = r.bool("managedTrustRoots") == true,
                         wipeVaultFilesOnRevocation = r.bool("wipeVaultFilesOnRevocation") == true,
                         requireCaTrust = r.stringList("requireCaTrust", 64, 255),
