@@ -4,6 +4,30 @@ The upgrade notes for every release since 2.0, troubleshooting, and a quick
 reference for the multi-Config-API DSL. The full list of changes is in
 [CHANGELOG.md](CHANGELOG.md).
 
+## Upgrading from 2.4.0 to 2.4.1
+
+Nothing to change in app code. What behaves differently:
+
+- **A probe that fails raises its signal** (Android, iOS): a root, hooking or
+  other integrity probe that throws, or cannot read what it looks at, now
+  reports its flag raised with `error:<probe>` evidence instead of clean. The
+  server holds 2.4.0 clients to the same rule (an `error:` signal, or a
+  client-measured signal missing from the report, counts as raised). A device
+  whose probe keeps failing is now judged by the policy's action for that
+  flag; watch the dashboard's rejection stats after upgrading the server.
+- **`ATTESTATION_POLICY_DEFAULT=production`** (server): `rooted`, `emulator`,
+  `debuggable`, `hooking_framework`, `app_integrity` and `software_key` are
+  read as `reject` whatever the stored policy says, and lowering one needs a
+  second admin's approval (`PIN_CHANGE_APPROVALS>=2`). A Config API whose
+  stored policy was loosened earlier rejects those devices again once the
+  server runs with this profile. The sample host's production profile sets it,
+  and `MOCK_HOST_REQUIRE_TOKEN=true`.
+- **React Native**: `WebSocket` is pinned on iOS (it was only on Android) —
+  a `wss://` host without a pin entry is now refused there, and
+  `requirePinnedReactNativeNetworking` fails `start` when the hook is not in
+  place. React Native 0.81+ is supported (was 0.87+). A WebSocket to a host
+  that requires a client certificate does not work on iOS yet.
+
 ## Upgrading from 2.3.x to 2.4
 
 Everything new in 2.4 is off by default on the server and in the library,
