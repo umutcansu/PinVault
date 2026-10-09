@@ -84,6 +84,10 @@ struct PinnedExchange: Sendable {
     /// How much of the response body the transport reads (Kotlin `BoundedBody`);
     /// nil = all of it (sessions handed to the app).
     var bodyLimit: BoundedBody.Limit?
+    /// Run by the transport on every request it puts on the wire — the first
+    /// one and each redirect it follows — so a per-request credential (the
+    /// attestation proof) is made for the URL actually sent, never reused.
+    var prepareSend: (@Sendable (inout URLRequest) -> Void)?
 
     init(request: URLRequest, tags: Set<Tag> = [], bodyLimit: BoundedBody.Limit? = nil) {
         self.request = request

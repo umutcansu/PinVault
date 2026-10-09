@@ -71,8 +71,11 @@ test('R09 Token çalınması: kanıt zorunluyken cihazdan alınan token tek baş
   async function requireProof(on) {
     const saved = await hostApi.api('/api/v1/server-settings', { method: 'PUT', body: { values: { PINVAULT_TOKEN_REQUIRE_PROOF: on ? 'true' : '' } } });
     expect(saved.status, `ayar kaydedilemedi: ${saved.text}`).toBe(200);
-    // Kaydedilen ayar bir sonraki açılışta geçerli: container mock host'lar token isterken yeniden kurulur.
+    // Kaydedilen ayar bir sonraki açılışta geçerli. Mock host'lar token istesin; ortam
+    // zaten öyleyse compose container'ı yeniden kurmaz, bu yüzden ayrıca yeniden başlatılır.
     await hostControl.setEnv({ MOCK_HOST_REQUIRE_TOKEN: 'true' });
+    await hostControl.stop();
+    await hostControl.start();
   }
 
   try {
@@ -143,6 +146,7 @@ test('R09 Token çalınması: kanıt zorunluyken cihazdan alınan token tek baş
       await dashboard.snap('panel: PINVAULT_TOKEN_REQUIRE_PROOF açık');
     });
   } finally {
+    // Ayarı geri al; resetEnv container'ı yeniden kurar ve boş ayarla açar.
     await hostApi.api('/api/v1/server-settings', { method: 'PUT', body: { values: { PINVAULT_TOKEN_REQUIRE_PROOF: '' } } }).catch(() => {});
     if (deviceId) await res.clearDeviceOverrides(SCOPE, deviceId);
     if (original) await hostApi.api(res.policyPath(SCOPE), { method: 'PUT', body: original }).catch(() => {});

@@ -1,7 +1,6 @@
 package io.github.umutcansu.pinvault.api
 
 import okhttp3.Interceptor
-import okhttp3.Request
 import okhttp3.Response
 import timber.log.Timber
 
@@ -36,7 +35,12 @@ internal interface AttestationTokenSource {
  * client the library builds or configures — over HTTPS only, as on iOS.
  *
  * With `proofOfPossession()` each such request also carries a
- * `PinVault-Proof` made for it (`ATTESTATION.md` §5.1), and the retry a new one.
+ * `PinVault-Proof` (`ATTESTATION.md` §5.1), made by [networkSide] — install
+ * it with `addNetworkInterceptor` next to this one — for every request that
+ * goes on the wire: the first, each redirect OkHttp follows and each retry
+ * after a failed connection, so a proof is never sent twice or for another URL.
+ * A redirect to another host, port or scheme loses the token (OkHttp keeps
+ * custom headers across hosts; only `Authorization` is dropped).
  *
  * Without a valid token it attests once, synchronously, and sends the
  * request without the header when that fails — the backend refuses it the
@@ -61,7 +65,7 @@ internal class AttestationTokenInterceptor(
         val source = sources().firstOrNull { it.handlesHost(host, port) } ?: return chain.proceed(request)
 
         val token = source.token(host, port, forceRefresh = false)
-        val first = if (token != null) withToken(request, source, token) else request
+        val first = if (token != null) request.newBuilder().header(HEADER, token).build() else request
         val response = chain.proceed(first)
         if (response.code != 401 || !namesToken(response)) return response
 
@@ -76,23 +80,40 @@ internal class AttestationTokenInterceptor(
         }
         response.close()
         Timber.d("%s refused for %s — re-attested, retrying once", HEADER, host)
-        val retry = withToken(request, source, fresh).newBuilder()
+        val retry = request.newBuilder()
+            .header(HEADER, fresh)
             .tag(AttestationRetry::class.java, AttestationRetry)
             .build()
         return chain.proceed(retry)
     }
 
-    /** [request] with [token] and, when the source makes one, a proof for this request and token. */
-    private fun withToken(request: Request, source: AttestationTokenSource, token: String): Request {
-        val builder = request.newBuilder().header(HEADER, token)
+    /**
+     * The network interceptor: every request on the wire that carries the
+     * token gets a proof made for it, and a redirect to another endpoint than
+     * the call's own loses token and proof.
+     */
+    val networkSide: Interceptor = Interceptor { chain -> onWire(chain) }
+
+    private fun onWire(chain: Interceptor.Chain): Response {
+        val request = chain.request()
+        val token = request.header(HEADER) ?: return chain.proceed(request)
+        val origin = chain.call().request().url
+        val url = request.url
+        if (url.scheme != origin.scheme || !url.host.equals(origin.host, ignoreCase = true) || url.port != origin.port) {
+            Timber.d("%s dropped from a redirect to %s:%d", HEADER, url.host, url.port)
+            return chain.proceed(request.newBuilder().removeHeader(HEADER).removeHeader(PROOF_HEADER).build())
+        }
+        val source = if (request.isHttps) sources().firstOrNull { it.handlesHost(url.host, url.port) } else null
         val proof = try {
-            source.proof(request.method, request.url, token)
+            source?.proof(request.method, url, token)
         } catch (e: Exception) {
-            Timber.w(e, "%s could not be made for %s — sent without", PROOF_HEADER, request.url.host)
+            Timber.w(e, "%s could not be made for %s — sent without", PROOF_HEADER, url.host)
             null
         }
+        if (proof == null && request.header(PROOF_HEADER) == null) return chain.proceed(request)
+        val builder = request.newBuilder().removeHeader(PROOF_HEADER)
         if (proof != null) builder.header(PROOF_HEADER, proof)
-        return builder.build()
+        return chain.proceed(builder.build())
     }
 
     /** True when a 401 is about the token: the challenge header names it, or the body says `invalid_token`. */

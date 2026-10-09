@@ -62,7 +62,10 @@ what the hardware vouches for; the clients bind their verdicts to the report.
 - **`proofOfPossession()`** on a Config API block: every request that carries
   the `PinVault-Token` also carries a `PinVault-Proof` signed by the block's
   device key (TEE/StrongBox), `iat` in the server's time. Needs `attestation()`.
-- The token goes out over HTTPS only (as on iOS).
+- The token goes out over HTTPS only (as on iOS), and a redirect to another
+  host, port or scheme no longer carries it (OkHttp drops only
+  `Authorization`). The proof is made by a network interceptor, so redirects
+  and connection retries get their own.
 
 ### iOS library
 

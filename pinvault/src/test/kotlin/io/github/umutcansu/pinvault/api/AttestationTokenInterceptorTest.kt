@@ -56,6 +56,7 @@ class AttestationTokenInterceptorTest {
     private fun clientWith(interceptor: AttestationTokenInterceptor) = OkHttpClient.Builder()
         .sslSocketFactory(trust.sslSocketFactory(), trust.trustManager)
         .addInterceptor(interceptor)
+        .addNetworkInterceptor(interceptor.networkSide)
         .build()
 
     @Before
@@ -229,5 +230,55 @@ class AttestationTokenInterceptorTest {
         } finally {
             plain.shutdown()
         }
+    }
+
+    @Test
+    fun `a redirect on the same endpoint gets a fresh proof for its own url`() {
+        source.proofs = true
+        server.enqueue(MockResponse().setResponseCode(302).setHeader("Location", "/api/moved"))
+        server.enqueue(MockResponse().setBody("ok"))
+        client.newCall(get()).execute().use { assertEquals(200, it.code) }
+        assertEquals("proof-1-t1", server.takeRequest().getHeader("PinVault-Proof"))
+        val second = server.takeRequest()
+        assertEquals("t1", second.getHeader("PinVault-Token"))
+        assertEquals("the redirect carries a proof made for it", "proof-2-t1", second.getHeader("PinVault-Proof"))
+        assertEquals(listOf("GET /api/data t1", "GET /api/moved t1"), source.proofFor)
+    }
+
+    @Test
+    fun `a redirect to another host loses the token and the proof`() {
+        source.proofs = true
+        val other = MockWebServer().also {
+            it.useHttps(HandshakeCertificates.Builder().heldCertificate(
+                HeldCertificate.Builder().addSubjectAlternativeName("127.0.0.1").build()).build().sslSocketFactory(), false)
+        }
+        try {
+            other.start()
+            val elsewhere = other.url("/elsewhere").newBuilder().host("127.0.0.1").build()
+            server.enqueue(MockResponse().setResponseCode(302).setHeader("Location", elsewhere.toString()))
+            other.enqueue(MockResponse().setBody("ok"))
+            // Trust whatever certificate: the point is what the request carries, not the TLS.
+            val lax = client.newBuilder()
+                .hostnameVerifier { _, _ -> true }
+                .sslSocketFactory(insecure.socketFactory, insecure.trustManager)
+                .build()
+            lax.newCall(get()).execute().close()
+            server.takeRequest()
+            val redirected = other.takeRequest()
+            assertNull("the token stays with its host", redirected.getHeader("PinVault-Token"))
+            assertNull(redirected.getHeader("PinVault-Proof"))
+        } finally {
+            other.shutdown()
+        }
+    }
+
+    private val insecure = object {
+        val trustManager = object : javax.net.ssl.X509TrustManager {
+            override fun checkClientTrusted(chain: Array<java.security.cert.X509Certificate>, authType: String) = Unit
+            override fun checkServerTrusted(chain: Array<java.security.cert.X509Certificate>, authType: String) = Unit
+            override fun getAcceptedIssuers(): Array<java.security.cert.X509Certificate> = emptyArray()
+        }
+        val socketFactory: javax.net.ssl.SSLSocketFactory = javax.net.ssl.SSLContext.getInstance("TLS")
+            .apply { init(null, arrayOf(trustManager), null) }.socketFactory
     }
 }

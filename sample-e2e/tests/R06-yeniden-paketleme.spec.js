@@ -70,6 +70,9 @@ test('R06 Yeniden paketleme: doğru imza app_integrity\'yi geçer; farklı anaht
       await app.openVault();
       const tamperedId = app.deviceId();
       await hostApi.forgetRevokedIdentitiesOf(tamperedId).catch(() => {});
+      // Yeni imza = yeni ANDROID_ID ve yeni anahtar; daha önceki bir koşu bu kimliği
+      // eski anahtarla kaydetmişse host key_mismatch der. Kayıt unutulur, cihaz yeniden kaydolur.
+      await hostApi.api(res.devicePath(SCOPE, tamperedId), { method: 'DELETE' }).catch(() => {});
       await app.backToMain();
 
       const text = await app.attest();

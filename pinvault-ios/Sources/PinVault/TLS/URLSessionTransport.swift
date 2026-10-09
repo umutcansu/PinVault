@@ -113,7 +113,9 @@ final class URLSessionTransport: PinnedTransport, @unchecked Sendable {
         var request = exchange.request
         var followUps = 0
         while true {
-            let response = try await sendOnce(request, limit: exchange.bodyLimit)
+            var wire = request
+            exchange.prepareSend?(&wire)
+            let response = try await sendOnce(wire, limit: exchange.bodyLimit)
             guard let next = followUp(response, for: request) else { return response }
             followUps += 1
             if followUps > Self.maxFollowUps {
@@ -319,7 +321,7 @@ final class URLSessionTransport: PinnedTransport, @unchecked Sendable {
     /// Headers that never follow a redirect to another endpoint.
     static let credentialHeaders = [
         "Authorization", "Proxy-Authorization", "Cookie",
-        AttestationTokenInterceptor.header, "X-Vault-Token", "X-Vault-Key", "X-API-Key",
+        AttestationTokenInterceptor.header, AttestationTokenInterceptor.proofHeader, "X-Vault-Token", "X-Vault-Key", "X-API-Key",
     ]
 
     // MARK: Errors

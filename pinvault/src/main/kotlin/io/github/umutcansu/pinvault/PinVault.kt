@@ -762,7 +762,10 @@ object PinVault {
         sslManager.applyTo(builder) { clientProvider.currentConfig }
         // The token goes on before (outside) the recovery interceptor, so a
         // request the recovery retries still carries it.
-        attestationTokenInterceptor()?.let { builder.addInterceptor(it) }
+        attestationTokenInterceptor()?.let {
+            builder.addInterceptor(it)
+            builder.addNetworkInterceptor(it.networkSide)
+        }
         builder.addInterceptor(clientProvider.recoveryInterceptor)
     }
 

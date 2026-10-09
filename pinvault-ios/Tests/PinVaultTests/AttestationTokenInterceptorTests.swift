@@ -256,4 +256,18 @@ final class AttestationTokenInterceptorTests: XCTestCase {
         _ = try await get()
         XCTAssertNil(server.takeRequest()?.header("PinVault-Proof"))
     }
+
+    func testARedirectOnTheSameEndpointGetsAFreshProofForItsOwnUrl() async throws {
+        source.proofs = true
+        server.enqueue(.status(302, headers: ["Location": "/api/moved"]))
+        server.enqueue(.ok())
+        let (status, _) = try await get(path: "/api/data")
+        XCTAssertEqual(status, 200)
+        let first = server.takeRequest()
+        let second = server.takeRequest()
+        XCTAssertEqual(first?.header("PinVault-Proof"), "proof-1-t1")
+        XCTAssertEqual(second?.header("PinVault-Token"), "t1")
+        XCTAssertEqual(second?.header("PinVault-Proof"), "proof-2-t1", "the redirect carries a proof made for it")
+        XCTAssertEqual(source.proofFor, ["GET /api/data t1", "GET /api/moved t1"])
+    }
 }

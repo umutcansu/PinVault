@@ -467,7 +467,11 @@ payload { "jti": "<16 random bytes, base64url>", "htm": "GET",
 - `htu` is the request URL without query and fragment, scheme and host in
   lower case, the default port left out (RFC 9449 §4.3). `iat` is the
   server's time as the library measured it at the last challenge
-  (`serverTime`), so a device clock that is off does not matter.
+  (`serverTime`), so a device clock that is off does not matter. Every
+  request on the wire gets its own proof: a redirect the HTTP client follows
+  on the same endpoint and a retry after a failed connection are signed
+  again; a redirect to another host, port or scheme loses the token and the
+  proof (both libraries).
 - A backend verifies, after the token: the signature with `jwk`; the
   thumbprint of `jwk` equals `cnf.jkt` (a token without `cnf.jkt` cannot be
   proven); `htm` and `htu` are this request's; `iat` within 60 s of now;

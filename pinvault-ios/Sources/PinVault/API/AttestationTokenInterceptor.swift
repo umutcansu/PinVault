@@ -69,7 +69,7 @@ struct AttestationTokenInterceptor: PinnedInterceptor {
 
         let token = await source.token(host: host, port: port, forceRefresh: false)
         var first = exchange
-        if let token { Self.attach(token, to: &first.request, source: source) }
+        if let token { Self.attach(token, to: &first, source: source) }
         let response = try await proceed(first)
         guard response.statusCode == 401, Self.namesToken(response) else { return response }
 
@@ -83,16 +83,26 @@ struct AttestationTokenInterceptor: PinnedInterceptor {
         }
         Self.log.d("\(Self.header) refused for \(host) — re-attested, retrying once")
         var retry = exchange.tagged(.attestationRetry)
-        Self.attach(fresh, to: &retry.request, source: source)
+        Self.attach(fresh, to: &retry, source: source)
         return try await proceed(retry)
     }
 
-    /// `token` and, when the source makes one, a proof for this request and token.
-    private static func attach(_ token: String, to request: inout URLRequest, source: any AttestationTokenSource) {
-        request.setValue(token, forHTTPHeaderField: header)
-        guard let url = request.url else { return }
-        if let proof = source.proof(method: (request.httpMethod ?? "GET").uppercased(), url: url, token: token) {
-            request.setValue(proof, forHTTPHeaderField: proofHeader)
+    /// `token` on the request and, when the source makes proofs, a fresh
+    /// proof on every request the transport sends for it: the first and each
+    /// redirect it follows (a redirect to another endpoint loses the token,
+    /// so it gets no proof either).
+    private static func attach(_ token: String, to exchange: inout PinnedExchange, source: any AttestationTokenSource) {
+        exchange.request.setValue(token, forHTTPHeaderField: header)
+        exchange.request.setValue(nil, forHTTPHeaderField: proofHeader)
+        let earlier = exchange.prepareSend
+        exchange.prepareSend = { request in
+            earlier?(&request)
+            request.setValue(nil, forHTTPHeaderField: proofHeader)
+            guard let sent = request.value(forHTTPHeaderField: header), sent == token,
+                  request.url?.scheme?.lowercased() == "https", let url = request.url else { return }
+            if let proof = source.proof(method: (request.httpMethod ?? "GET").uppercased(), url: url, token: token) {
+                request.setValue(proof, forHTTPHeaderField: proofHeader)
+            }
         }
     }
 

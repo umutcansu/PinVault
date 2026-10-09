@@ -586,7 +586,11 @@ internal class DynamicSSLManager(
         // refused that since 2.2.0; app builders passed to applyTo keep
         // their own setting).
         builder.followSslRedirects(false)
-        extraInterceptors.forEach { builder.addInterceptor(it) }
+        extraInterceptors.forEach {
+            builder.addInterceptor(it)
+            // The token interceptor's proofs are made per request on the wire.
+            if (it is io.github.umutcansu.pinvault.api.AttestationTokenInterceptor) builder.addNetworkInterceptor(it.networkSide)
+        }
         recoveryInterceptor?.let { builder.addInterceptor(it) }
         return builder.build()
     }
