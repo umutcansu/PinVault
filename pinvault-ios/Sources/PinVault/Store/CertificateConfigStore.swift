@@ -436,7 +436,9 @@ final class CertificateConfigStore: Sendable {
         try clockPrefs.edit().putLong(Self.keyClockHighestSeen, timeMs).apply()
         if clockPrefs !== prefs { try prefs.edit().remove(Self.keyClockHighestSeen).apply() }
         mirrored.clock = timeMs
-        clockMirror.write(mirrored)
+        guard clockMirror.write(mirrored) else {
+            throw PinVaultError.illegalState("the trusted clock's Keychain copy cannot be written now")
+        }
         clockMirrored.set(timeMs)
     }
 
@@ -444,6 +446,12 @@ final class CertificateConfigStore: Sendable {
     /// records it (outside the container); nil when none or unreadable.
     func mirroredKeySetVersion() -> Int? {
         mirror.read()?.keySetVersion
+    }
+
+    /// ``mirroredKeySetVersion()`` with the anchors it was applied under (``SignatureTrust``'s floor).
+    func keySetFloor() -> KeySetFloor? {
+        guard let mirrored = mirror.read(), let version = mirrored.keySetVersion else { return nil }
+        return KeySetFloor(version: version, anchors: mirrored.anchors)
     }
 
     /// Brings the Keychain copy in line with the key set in force and the

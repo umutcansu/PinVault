@@ -15,7 +15,8 @@ import Security
 protocol WatermarkMirror: Sendable {
     /// The mirrored values; empty when nothing was mirrored, nil when the copy cannot be read now.
     func read() -> MirroredWatermarks?
-    func write(_ values: MirroredWatermarks)
+    /// False when the copy could not be written (it keeps its old values).
+    @discardableResult func write(_ values: MirroredWatermarks) -> Bool
 }
 
 /// The mirrored values; zero / empty when nothing was mirrored.
@@ -32,7 +33,7 @@ struct MirroredWatermarks: Sendable, Equatable {
 /// No mirror: tests, and anywhere the Keychain is not used.
 struct NoWatermarkMirror: WatermarkMirror {
     func read() -> MirroredWatermarks? { MirroredWatermarks() }
-    func write(_ values: MirroredWatermarks) {}
+    @discardableResult func write(_ values: MirroredWatermarks) -> Bool { true }
 }
 
 /// The mirror as one Keychain generic password per store namespace (service
@@ -75,7 +76,7 @@ final class KeychainWatermarkMirror: WatermarkMirror, @unchecked Sendable {
         return Self.decode(data)
     }
 
-    func write(_ values: MirroredWatermarks) {
+    @discardableResult func write(_ values: MirroredWatermarks) -> Bool {
         let data = Self.encode(values)
         var status = SecItemUpdate(query as CFDictionary, [kSecValueData: data] as CFDictionary)
         if status == errSecItemNotFound {
@@ -84,9 +85,10 @@ final class KeychainWatermarkMirror: WatermarkMirror, @unchecked Sendable {
             add[kSecAttrAccessible] = kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly
             status = SecItemAdd(add as CFDictionary, nil)
         }
-        if status != errSecSuccess && status != errSecMissingEntitlement {
-            log.w("Watermark mirror [\(account)] cannot be written (OSStatus \(status))")
-        }
+        // No Keychain for this process (unsigned test runs): nothing to keep, nothing lost.
+        if status == errSecSuccess || status == errSecMissingEntitlement { return true }
+        log.w("Watermark mirror [\(account)] cannot be written (OSStatus \(status))")
+        return false
     }
 
     static func encode(_ values: MirroredWatermarks) -> Data {

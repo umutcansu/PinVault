@@ -60,6 +60,8 @@ final class SignedConfigVerifier: Sendable {
     /// See ``SignatureTrust/anchorsFingerprint()``.
     func anchorsFingerprint() -> String { trust.anchorsFingerprint() }
 
+    func keySetBelowFloor() throws -> Bool { try trust.keySetBelowFloor() }
+
     /// Applies a signing-key set riding along with `signed`, if it is newer.
     /// FIRST, before ``verifyFetched(_:failureMessage:)``: the config in the
     /// same response may already be signed by a key that set introduces. A set

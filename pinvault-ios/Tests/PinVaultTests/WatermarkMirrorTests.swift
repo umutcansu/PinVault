@@ -12,7 +12,12 @@ final class WatermarkMirrorTests: XCTestCase {
         private let stored = Locked(MirroredWatermarks())
         var values: MirroredWatermarks { stored.get() }
         func read() -> MirroredWatermarks? { stored.get() }
-        func write(_ values: MirroredWatermarks) { stored.set(values) }
+        var failWrites = false
+        @discardableResult func write(_ values: MirroredWatermarks) -> Bool {
+            if failWrites { return false }
+            stored.set(values)
+            return true
+        }
     }
 
     private func config(_ version: Int, issuedAt: Int64, hosts: [String] = ["a.com"]) -> CertificateConfig {
@@ -118,11 +123,20 @@ final class WatermarkMirrorTests: XCTestCase {
         XCTAssertEqual(store.mirroredKeySetVersion(), 0)
     }
 
+    func testALoweringTheCopyDidNotTakeFails() throws {
+        let mirror = MemoryMirror()
+        let store = CertificateConfigStore(prefs: InMemoryPreferences(), mirror: mirror)
+        try store.setHighestSeenTime(2_000_000)
+        mirror.failWrites = true
+        XCTAssertThrowsError(try store.lowerHighestSeenTime(1_000_000), "retried by the clock")
+        XCTAssertEqual(mirror.values.clock, 2_000_000)
+    }
+
     func testAnUnreadableCopyIsNeitherTrustedNorOverwritten() throws {
         final class Broken: WatermarkMirror, @unchecked Sendable {
             var writes = 0
             func read() -> MirroredWatermarks? { nil }
-            func write(_ values: MirroredWatermarks) { writes += 1 }
+            @discardableResult func write(_ values: MirroredWatermarks) -> Bool { writes += 1; return false }
         }
         let broken = Broken()
         let store = CertificateConfigStore(prefs: InMemoryPreferences(), mirror: broken)

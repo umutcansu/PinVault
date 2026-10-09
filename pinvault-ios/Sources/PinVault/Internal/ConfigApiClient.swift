@@ -179,6 +179,7 @@ final class ConfigApiClient: @unchecked Sendable {
         signatureTrust = SignatureTrust.forBlock(block) {
             block.recoveryPublicKeys.isEmpty ? nil : try SigningKeyStore.open(environment: storeEnvironment)
         }
+        signatureTrust?.setFloorProvider { store.keySetFloor() }
         configurationError = Self.configurationError(block, customApi: customApi)
         configVerifier = signatureTrust
             .flatMap { trust in customApi == nil || customApi is any SignedConfigSource ? trust : nil }

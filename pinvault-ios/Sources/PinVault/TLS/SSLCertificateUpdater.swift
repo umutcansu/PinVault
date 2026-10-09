@@ -460,8 +460,7 @@ final class SSLCertificateUpdater: @unchecked Sendable {
     /// device applied, as its Keychain copy records it (a container put back
     /// from before a rotation would otherwise bring revoked keys back).
     private func keySetBelowFloor(_ verifier: SignedConfigVerifier) throws -> Bool {
-        guard let floor = configStore.mirroredKeySetVersion() else { return false }
-        return try verifier.keySetVersion() < floor
+        try verifier.keySetBelowFloor()
     }
 
     /// Refuses to verify a fetched config while the key set in force is below that floor.

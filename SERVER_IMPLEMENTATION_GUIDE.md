@@ -215,6 +215,7 @@ All of these are optional and ignored by older clients. Clients announce what th
   - A client configured with `recoveryPublicKeys(...)` checks four things: the recovery signatures, `type == "pinvault-signing-keys"`, a version higher than the one it holds, and a key list that contains no recovery key. It then replaces its trusted signing keys with `keys`.
   - An invalid set fails the whole response.
   - Before relaying a set, make sure your active signers are in it and cover `requiredSignatures`. A set they cannot satisfy makes every device that applies it reject every later config.
+  - **Keep relaying your newest set, for good.** An iOS device remembers the newest set it applied outside its app container (Keychain); if its container is later put back from before that set (a restore, a jailbroken phone), it trusts nothing until a response brings a set at least as new again. A server that stops relaying the set (key sets switched off, a database restored to before the rotation) leaves such devices without configs until an app update ships other compiled-in keys. The refusal reads "The signing-key set in force … is older than one this device applied".
   - Signing the set: SHA256withECDSA over the UTF-8 payload, as for configs:
 
   ```bash

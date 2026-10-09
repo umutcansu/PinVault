@@ -132,7 +132,10 @@ final class SSLCertificateUpdaterApplySignedTests: XCTestCase {
         store = CertificateConfigStore(prefs: InMemoryPreferences(), mirror: mirror)
         let now = self.now
         store.clock = { now }
-        let rotated = await updater(trust: trust(keys: [keyA], withRecovery: true))
+        let first = trust(keys: [keyA], withRecovery: true)
+        let firstStore = store!
+        first.setFloorProvider { firstStore.keySetFloor() }
+        let rotated = await updater(trust: first)
             .applySigned(signed(payload(4, issuedAt: now), signer: keyB, keySet: keySet(1, [keyB])))
         XCTAssertEqual(rotated, .updated(newVersion: 4))
         XCTAssertEqual(mirror.values.keySetVersion, 1, "the floor outside the container")
@@ -142,13 +145,30 @@ final class SSLCertificateUpdaterApplySignedTests: XCTestCase {
         keyStore = SigningKeyStore(prefs: InMemoryPreferences())
         store = CertificateConfigStore(prefs: InMemoryPreferences(), mirror: mirror)
         store.clock = { now }
-        let restored = updater(trust: trust(keys: [keyA], withRecovery: true))
+        let second = trust(keys: [keyA], withRecovery: true)
+        let restoredStore = store!
+        second.setFloorProvider { restoredStore.keySetFloor() }
+        // Below the floor nothing verifies — vault files included.
+        XCTAssertTrue(try second.keySetBelowFloor())
+        XCTAssertFalse(try second.verifyVaultFile(key: "f", version: 1, plaintext: Data("x".utf8), entries: []).ok)
+        let restored = updater(trust: second)
         let forged = await restored.applySigned(signed(payload(5, issuedAt: now + 1), signer: keyA))
         guard case .failed(let reason, _) = forged else { return XCTFail("a revoked key's config was applied: \(forged)") }
         XCTAssertTrue(reason.contains("older than"), reason)
         // A set at least as new, riding along, lifts it again.
         let healed = await restored.applySigned(signed(payload(6, issuedAt: now + 2), signer: keyB, keySet: keySet(1, [keyB])))
         XCTAssertEqual(healed, .updated(newVersion: 6))
+    }
+
+    func testTheFloorHoldsOnlyUnderTheAnchorsItWasRecordedUnder() throws {
+        let t = trust(keys: [keyA], withRecovery: true)
+        t.setFloorProvider { KeySetFloor(version: 2, anchors: t.anchorsFingerprint()) }
+        XCTAssertTrue(try t.keySetBelowFloor())
+        // An update that changed the recovery keys: the old floor says nothing about these anchors.
+        t.setFloorProvider { KeySetFloor(version: 2, anchors: "other-anchors") }
+        XCTAssertFalse(try t.keySetBelowFloor())
+        t.setFloorProvider { nil }
+        XCTAssertFalse(try t.keySetBelowFloor())
     }
 
     func testApplySignedAndUpdateNowSerialiseOnTheSameLock() async throws {

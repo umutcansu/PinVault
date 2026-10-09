@@ -73,6 +73,9 @@ final class SignatureTrust: Sendable {
     private let configured: Bool
     private let state = Locked(State())
     private let keyIds = Locked<[String: String]>([:])
+    /// The newest key set this device applied and the anchors it was applied
+    /// under, kept outside the container (``CertificateConfigStore/keySetFloor()``).
+    private let floorProvider = Locked<(@Sendable () -> KeySetFloor?)?>(nil)
     private let log = PinVaultLog.tag("SignatureTrust")
 
     init(
@@ -154,6 +157,21 @@ final class SignatureTrust: Sendable {
         text += "recovery:\(recoveryThreshold)\n"
         for key in recoveryKeys.sorted() { text += key + "\n" }
         return Hashing.sha256Hex(Data(text.utf8))
+    }
+
+    /// Where the key-set floor comes from (set once the block's store is open).
+    func setFloorProvider(_ provider: @escaping @Sendable () -> KeySetFloor?) {
+        floorProvider.set(provider)
+    }
+
+    /// True when the key set in force is older than one this device applied
+    /// under the same compiled-in anchors: a key-set file put back from before
+    /// a rotation, which would bring revoked keys back. Nothing verifies then.
+    /// Under other anchors (an update that changed the keys) there is no floor.
+    func keySetBelowFloor() throws -> Bool {
+        guard let floor = floorProvider.get()?() else { return false }
+        if let anchors = floor.anchors, anchors != anchorsFingerprint() { return false }
+        return try keySetVersion() < floor.version
     }
 
     /// False only when the block has no signing key configured at all (`allowUnsigned()`).
@@ -256,6 +274,12 @@ final class SignatureTrust: Sendable {
     }
 
     private func evaluate(_ payload: String, _ entries: [SignatureEntry]) throws -> Verification {
+        // Configs, stored configs and vault files alike: below the floor the
+        // keys on disk may be ones a newer set revoked.
+        if try keySetBelowFloor() {
+            return Verification(ok: false, signedBy: [], required: try requiredSignatures(),
+                                detail: " The signing-key set in force (v\(try keySetVersion())) is older than one this device applied.")
+        }
         // One snapshot for the keys AND the count: a key-set update landing
         // between two separate reads could pair the old keys with a new count.
         let set = try currentSet()
@@ -444,4 +468,10 @@ extension String {
         }
         return String(out)
     }
+}
+
+/// The newest signing-key set a device applied, and the anchors it was applied under.
+struct KeySetFloor: Sendable, Equatable {
+    let version: Int
+    let anchors: String?
 }
