@@ -14,6 +14,9 @@
 -keepclassmembers class com.facebook.react.modules.network.NetworkingModule {
     private static com.facebook.react.modules.network.CustomClientBuilder customClientBuilder;
 }
+-keepclassmembers class com.facebook.react.modules.websocket.WebSocketModule {
+    private static com.facebook.react.modules.network.CustomClientBuilder customClientBuilder;
+}
 # Tink (under the PinVault library's encrypted storage) references Error Prone's
 # compile-time annotations, which no React Native app has on its classpath; R8
 # stops a release build on the missing classes otherwise.

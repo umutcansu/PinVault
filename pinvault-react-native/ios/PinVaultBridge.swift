@@ -29,6 +29,9 @@ public final class PinVaultBridge: NSObject {
     /// RNPinVault.mm: whether RCTNetworking hands an https request to
     /// RNPinVaultURLRequestHandler (true), to another handler (false), or nil = unknown.
     @objc public var reactNetworkingIsPinned: (() -> NSNumber?)?
+    /// RNPinVault.mm: whether SocketRocket hands every wss socket to PinVault
+    /// (RNPinVaultWebSocketPinning); nil = treated as not pinned.
+    @objc public var reactWebSocketIsPinned: (() -> Bool)?
 
     /// `PinVault.shared.registerBackgroundTask()` for the app's AppDelegate (before launch ends):
     /// the app target does not link the PinVault package itself.
@@ -150,12 +153,14 @@ public final class PinVaultBridge: NSObject {
                     return
                 }
                 let pinned = self.reactNetworkingIsPinned?()?.boolValue
-                if pinned != true {
+                let socketPinned = self.reactWebSocketIsPinned?() ?? false
+                if pinned != true || !socketPinned {
                     let why = !PinVaultReactNetworking.enabled
                         ? "Info.plist PinVaultPinReactNativeNetworking is NO"
                         : pinned == nil ? "RCTNetworking's handler could not be checked"
-                        : "RCTNetworking hands https to another RCTURLRequestHandler"
-                    NSLog("PinVault: React Native's own fetch / XMLHttpRequest / images may NOT be pinned (\(why)); README, \"Networking\"")
+                        : pinned == false ? "RCTNetworking hands https to another RCTURLRequestHandler"
+                        : "SocketRocket's WebSocket initializer is not PinVault's (wss is not pinned)"
+                    NSLog("PinVault: React Native's own fetch / XMLHttpRequest / images / WebSocket may NOT be pinned (\(why)); README, \"Networking\"")
                     if parsed.requirePinnedReactNativeNetworking {
                         reject("E_NETWORKING_NOT_PINNED", "requirePinnedReactNativeNetworking: \(why)", nil)
                         return

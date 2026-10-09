@@ -546,6 +546,33 @@ public final class PinVault: @unchecked Sendable {
         )
     }
 
+    /// The server-trust decision of ``session()`` for a TLS connection the
+    /// library does not open — a WebSocket on CFStream (SocketRocket), an
+    /// `NWConnection`: the live config's pins for `host:port`, the leaf's
+    /// validity at the library clock, `requireCaTrust`, managed trust roots,
+    /// then the hostname check. `host` and `port` are the endpoint the app
+    /// asked for, never an address it resolved to. Returns when the chain is
+    /// accepted; switch off the transport's own chain validation (pins replace
+    /// it, as in every session the library builds).
+    ///
+    /// Only the handshake is judged: no request-time re-check, no pin-mismatch
+    /// recovery and no client certificate — the caller's transport has none of
+    /// those hooks.
+    /// - Throws: ``PinVaultError`` — not started (fail-closed), no usable
+    ///   config, the pins refuse the chain, the leaf does not name `host`.
+    public func evaluateServerTrust(_ trust: SecTrust, host: String, port: Int) throws {
+        guard let primary else { throw PinVaultError.illegalState(Self.notInitializedMessage) }
+        let provider = primary.clientProvider
+        do {
+            try primary.sslManager.evaluateServerTrust(
+                trust, hostname: DynamicSSLManager.bareHost(host).lowercased(), port: port,
+                mode: .pinned({ provider.currentConfig })
+            )
+        } catch let failure as DynamicSSLManager.PinCheckError {
+            throw failure.thrown
+        }
+    }
+
     private func unavailableSession() -> PinnedSession {
         log.w(Self.notInitializedMessage)
         return PinnedSession(transport: UnavailableTransport(reason: Self.notInitializedMessage))

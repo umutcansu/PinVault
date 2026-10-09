@@ -107,6 +107,26 @@ class NetworkPinningTest {
         assertEquals(1, pinnedFactory.created)
     }
 
+    @Test fun `a WebSocket client is pinned whether RN builds it bare or from the provider's client`() {
+        // RN 0.81: WebSocketModule starts from OkHttpClient.Builder(); 0.87: from the
+        // provider's client, which configureLongLived already set up — once, not twice.
+        val bare = pinning.configureLongLived(OkHttpClient.Builder()).build()
+        val derived = pinning.configureLongLived(bare.newBuilder()).build()
+        for (client in listOf(bare, derived)) {
+            assertEquals(1, client.interceptors.size)
+            assertEquals(1, client.networkInterceptors.size)
+            try {
+                client.newCall(Request.Builder().url("wss://example.invalid/socket").build()).execute()
+                fail("wss before start")
+            } catch (e: IOException) {
+                assertTrue(e.message!!.contains("PinVault has not started"))
+            }
+        }
+        pinning.activate()
+        runCatching { derived.sslSocketFactory.createSocket(Socket(), "example.com", 443, true) }
+        assertEquals(1, pinnedFactory.created)
+    }
+
     @Test fun `RN's disk cache and cookie jar are off by default, kept on request`() {
         val jar = object : okhttp3.CookieJar {
             override fun saveFromResponse(url: okhttp3.HttpUrl, cookies: List<okhttp3.Cookie>) {}

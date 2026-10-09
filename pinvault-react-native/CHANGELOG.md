@@ -4,6 +4,26 @@
 
 ### Security
 
+- **React Native's WebSocket is pinned on iOS.** `wss://` went through
+  SocketRocket on CFStream with the platform's CA check only, so a socket.io /
+  graphql-ws connection could be intercepted by anyone holding a certificate
+  the device trusts (a corporate proxy, a user-installed root), and `start`
+  still reported RN's networking as pinned. Every SocketRocket socket to a
+  `wss` / `https` URL now gets a security policy that asks PinVault (the
+  library's new `evaluateServerTrust(_:host:port:)`) before the upgrade
+  request is written; subprotocols are kept. `requirePinnedReactNativeNetworking`
+  covers it (`E_NETWORKING_NOT_PINNED` when the hook is not in place), and
+  Info.plist `PinVaultPinReactNativeNetworking` = NO turns it off with the
+  https handler. A WebSocket to a host that requires a client certificate is
+  not supported on iOS yet (the handshake fails).
+- **Android: every WebSocket goes through PinVault's hook of its own.** RN's
+  `WebSocketModule` has a separate `setCustomClientBuilder`; up to 0.81 it
+  builds each socket's client from a bare `OkHttpClient.Builder()`, outside
+  `OkHttpClientProvider`, so there the socket kept the system's trust while
+  `start` reported RN's networking as pinned. The plugin now installs that hook
+  too and checks it with the other two (`HookStatus.webSocketBuilderIsPinVault`),
+  so a library replacing it is also caught on 0.87.
+
 - **A release build needs the anchors in the native security file:** a declared
   block must carry `bootstrapPins` (or `allowUnpinnedConfigApi`) and
   `signaturePublicKeys` (or `allowUnsigned`). A file with a bare
@@ -13,6 +33,12 @@
   builds): an OTA bundle could otherwise present the device's mTLS identity
   to another pinned host. `tokenHosts` from JS is still taken: it only
   narrows the library's default.
+
+### Changed
+
+- **React Native 0.81+** (was 0.87+): built and run on 0.81.6 and 0.87.1,
+  Android and iOS (start with `requirePinnedReactNativeNetworking`, RN `fetch`
+  and `WebSocket` to a pinned and an unpinned host).
 
 ## 2.4.0 — 2026-10-09
 

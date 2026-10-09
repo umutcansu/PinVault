@@ -10,6 +10,7 @@ import com.facebook.react.modules.network.CustomClientBuilder
 import com.facebook.react.modules.network.NetworkingModule
 import com.facebook.react.modules.network.OkHttpClientFactory
 import com.facebook.react.modules.network.OkHttpClientProvider
+import com.facebook.react.modules.websocket.WebSocketModule
 import io.github.umutcansu.pinvault.PinVault
 import okhttp3.Cache
 import okhttp3.CookieJar
@@ -35,7 +36,7 @@ import javax.net.ssl.X509TrustManager
  * Startup pattern, without the dependency). [install] stays as an explicit
  * alternative for apps that remove the provider.
  *
- * Two hooks, both verified against React Native 0.87's sources:
+ * Three hooks, verified against React Native 0.81 and 0.87's sources:
  *
  * - `NetworkingModule.setCustomClientBuilder`: RN calls it for **every**
  *   fetch / XHR request on `client.newBuilder()`. Each request gets the
@@ -50,6 +51,11 @@ import javax.net.ssl.X509TrustManager
  *   singleton, Fresco's image client) get a forwarding socket factory: every
  *   TLS handshake uses the pinned factory of the current start. No disk
  *   cache, no `https` → `http` redirects.
+ * - `WebSocketModule.setCustomClientBuilder`: RN calls it for every
+ *   `WebSocket`. Up to 0.81 the module builds each socket's client from a
+ *   bare `OkHttpClient.Builder()`, outside `OkHttpClientProvider`; from 0.87
+ *   it derives it from the provider's client. Either way the socket gets the
+ *   same forwarding factory, gate and network interceptors.
  *
  * Before `start()` — and after a start that failed — every `https` request
  * through RN's networking fails (`IOException: PinVault has not started`),
@@ -59,7 +65,7 @@ import javax.net.ssl.X509TrustManager
  * without a pin entry are refused by PinVault's trust manager like
  * everywhere else.
  *
- * Another library that calls `setOkHttpClientFactory` or
+ * Another library that calls `setOkHttpClientFactory` or either
  * `setCustomClientBuilder` after PinVault replaces these hooks: [status]
  * tells, `start()` and every plugin `fetch` check it and log a warning, and
  * `requirePinnedReactNativeNetworking: true` makes `start()` fail.
@@ -71,11 +77,12 @@ object PinVaultNetworking {
     @Volatile private var installed = false
     @Volatile private var app: Context? = null
 
-    /** The two hooks this object installed; compared by identity in [status]. */
+    /** The hooks this object installed; compared by identity in [status]. */
     private val factory = OkHttpClientFactory {
         pinning.track(pinning.configureLongLived(OkHttpClientProvider.createClientBuilder()).build())
     }
     private val clientBuilder = CustomClientBuilder { builder -> pinning.configurePerRequest(builder) }
+    private val webSocketBuilder = CustomClientBuilder { builder -> pinning.configureLongLived(builder) }
 
     internal val pinning = NetworkPinning(
         applier = { builder -> PinVault.applyTo(builder) },
@@ -87,7 +94,7 @@ object PinVaultNetworking {
     @Volatile private var installedLate = false
 
     /**
-     * Installs both hooks (once per process). The plugin's content provider
+     * Installs the hooks (once per process). The plugin's content provider
      * calls it before `Application.onCreate`; call it yourself in
      * `MainApplication.onCreate`, before `loadReactNative`, only when the app
      * removed that provider.
@@ -103,6 +110,7 @@ object PinVaultNetworking {
         app = context.applicationContext
         OkHttpClientProvider.setOkHttpClientFactory(factory)
         NetworkingModule.setCustomClientBuilder(clientBuilder)
+        WebSocketModule.setCustomClientBuilder(webSocketBuilder)
         installed = true
         installedLate = late
     }
@@ -110,9 +118,9 @@ object PinVaultNetworking {
     @JvmStatic
     val isInstalled: Boolean get() = installed
 
-    /** Whether React Native's two networking hooks are still the ones [install] set. */
+    /** Whether React Native's networking hooks are still the ones [install] set. */
     @JvmStatic
-    fun status(): HookStatus = HookStatus.read(installed, factory, clientBuilder, installedLate)
+    fun status(): HookStatus = HookStatus.read(installed, factory, clientBuilder, webSocketBuilder, installedLate)
 
     private val warned = java.util.concurrent.atomic.AtomicReference<HookStatus?>(null)
 
@@ -135,10 +143,13 @@ data class HookStatus(
     val factoryIsPinVault: Boolean?,
     /** `NetworkingModule`'s custom client builder is PinVault's. */
     val clientBuilderIsPinVault: Boolean?,
+    /** `WebSocketModule`'s custom client builder is PinVault's. */
+    val webSocketBuilderIsPinVault: Boolean?,
     /** Installed only by `start()`: clients React Native built before (Fresco's, among them) keep the system's trust. */
     val installedLate: Boolean = false,
 ) {
-    val pinned: Boolean get() = installed && !installedLate && factoryIsPinVault == true && clientBuilderIsPinVault == true
+    val pinned: Boolean get() = installed && !installedLate && factoryIsPinVault == true &&
+        clientBuilderIsPinVault == true && webSocketBuilderIsPinVault == true
 
     fun describe(): String = when {
         pinned -> "React Native's networking is pinned by PinVault"
@@ -151,20 +162,22 @@ data class HookStatus(
         else -> buildList {
             if (factoryIsPinVault != true) add("OkHttpClientProvider's client factory " + if (factoryIsPinVault == null) "could not be read" else "was replaced by another library")
             if (clientBuilderIsPinVault != true) add("NetworkingModule's custom client builder " + if (clientBuilderIsPinVault == null) "could not be read" else "was replaced by another library")
+            if (webSocketBuilderIsPinVault != true) add("WebSocketModule's custom client builder " + if (webSocketBuilderIsPinVault == null) "could not be read" else "was replaced by another library")
         }.joinToString("; ") + ": React Native's own networking may NOT be pinned"
     }
 
     internal companion object {
-        fun read(installed: Boolean, ourFactory: Any, ourBuilder: Any, installedLate: Boolean = false): HookStatus = HookStatus(
+        fun read(installed: Boolean, ourFactory: Any, ourBuilder: Any, ourWebSocketBuilder: Any, installedLate: Boolean = false): HookStatus = HookStatus(
             installed,
             isOurs(OkHttpClientProvider::class.java, "factory", ourFactory),
             isOurs(NetworkingModule::class.java, "customClientBuilder", ourBuilder),
+            isOurs(WebSocketModule::class.java, "customClientBuilder", ourWebSocketBuilder),
             installedLate,
         )
 
         /**
          * Whether RN's private static field [name] holds [ours]; null when it
-         * cannot be read. The plugin's consumer R8 rules keep both fields' names.
+         * cannot be read. The plugin's consumer R8 rules keep the fields' names.
          */
         private fun isOurs(owner: Class<*>, name: String, ours: Any): Boolean? = try {
             owner.getDeclaredField(name).apply { isAccessible = true }.get(null) === ours
@@ -281,14 +294,18 @@ internal class NetworkPinning(
         pinned.networkInterceptors.forEach { if (it !in builder.networkInterceptors()) builder.addNetworkInterceptor(it) }
     }
 
-    /** Clients RN builds once and keeps: TLS goes through the pinned factory of the current start. */
+    /**
+     * Clients RN builds once and keeps, and each WebSocket's client: TLS goes
+     * through the pinned factory of the current start. Idempotent: from RN
+     * 0.87 a WebSocket's builder derives from a client already configured here.
+     */
     fun configureLongLived(builder: OkHttpClient.Builder): OkHttpClient.Builder {
         val forwarding = ForwardingSocketFactory { template?.sslSocketFactory }
         builder.sslSocketFactory(forwarding, ForwardingTrustManager { template?.x509TrustManager })
-        builder.addInterceptor(httpsGate)
+        if (httpsGate !in builder.interceptors()) builder.addInterceptor(httpsGate)
         // The current start's network interceptors (the per-request pin check of a pooled
         // or coalesced connection, among them) run for these clients too.
-        builder.addNetworkInterceptor(forwardingNetwork)
+        if (forwardingNetwork !in builder.networkInterceptors()) builder.addNetworkInterceptor(forwardingNetwork)
         builder.cache(null)
         builder.followSslRedirects(false)
         return builder

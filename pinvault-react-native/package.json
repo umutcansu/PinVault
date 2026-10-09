@@ -62,7 +62,7 @@
   },
   "peerDependencies": {
     "react": "*",
-    "react-native": ">=0.87.0"
+    "react-native": ">=0.81.0"
   },
   "devDependencies": {
     "@jest/globals": "^29.7.0",

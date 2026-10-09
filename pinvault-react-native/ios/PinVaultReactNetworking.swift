@@ -2,6 +2,7 @@
 // requests (fetch, XMLHttpRequest, <Image>) through PinVault's pinned session.
 // The rules live in Core/ReactNetworking.swift.
 import Foundation
+import Security
 import PinVault
 
 @objc(RNPinVaultReactNetworking)
@@ -15,6 +16,21 @@ public final class PinVaultReactNetworking: NSObject {
 
     @objc public static func canHandle(_ request: URLRequest) -> Bool {
         enabled && ReactNetworking.handles(request)
+    }
+
+    /// The server-trust check of a `wss` WebSocket (RNPinVaultWebSocketPinning.mm):
+    /// the decision of every PinVault session for the host and port the socket
+    /// was opened for. Fail-closed: before `start`, after a failed one, or
+    /// while a restart resets the library, every handshake is refused.
+    @objc public static func acceptsWebSocketTrust(_ trust: SecTrust, host: String, port: Int) -> Bool {
+        do {
+            try PinVault.shared.evaluateServerTrust(trust, host: host, port: port)
+            return true
+        } catch {
+            let (name, message) = PinVaultBridge.describe(error)
+            NSLog("PinVault: WebSocket to %@:%ld refused (%@: %@)", host, port, name, message)
+            return false
+        }
     }
 
     /// The request token for RN; nothing reaches the blocks before `resume()`.

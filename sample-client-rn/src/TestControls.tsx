@@ -3,6 +3,7 @@
 import React, { useState } from 'react';
 import { Image, Text } from 'react-native';
 import PinVault from '@umutcansu/react-native-pinvault';
+import { HOST } from './generated/hostConfig';
 import { TARGET_URL, guardSettings } from './pinvault';
 import { useAction, useApp } from './state';
 import { Button, Card, Status, styles } from './ui';
@@ -16,6 +17,30 @@ export function TestControls() {
   // hata bağlantının kendisidir (TLS / pin).
   const [image, setImage] = useState<{ uri: string; text: string } | null>(null);
   const tryImage = () => setImage({ uri: `${TARGET_URL}favicon.ico?t=${Date.now()}`, text: '⏳ Resim yükleniyor…' });
+  // React Native'in WebSocket'i de pinlidir (iOS'ta SocketRocket, Android'de OkHttp).
+  // Host'un Config API portu WebSocket konuşmaz: pin tutarsa bağlantı kurulur ve
+  // sunucu düz HTTP ile cevap verir; pin tutmazsa bağlantı açılmadan kesilir.
+  // echo.websocket.org gerçek bir WebSocket sunucusu ama pin listesinde yok: reddedilmeli.
+  const [socket, setSocket] = useState('');
+  const trySocket = (url: string) => {
+    setSocket(`⏳ ${url} açılıyor…`);
+    const ws = new WebSocket(url);
+    const timer = setTimeout(() => {
+      setSocket(`⌛ ${url}: 15 saniyede cevap yok`);
+      ws.close();
+    }, 15000);
+    ws.onopen = () => {
+      clearTimeout(timer);
+      setSocket(`✅ WebSocket açıldı: ${url}`);
+      ws.close();
+    };
+    // React Native hatanın metnini "close" olayının reason'ında verir ("error" olayı boştur).
+    ws.onclose = (e) => {
+      clearTimeout(timer);
+      if (e.code === 1000) return;
+      setSocket(`ℹ️ WebSocket kapandı (${url}), kod ${e.code}:\n${e.reason || 'sebep yok'}`);
+    };
+  };
 
   const toggleGuard = () => {
     guardSettings.refuseAll = !guardSettings.refuseAll;
@@ -71,6 +96,19 @@ export function TestControls() {
           <Status testID="imageResult" text={image.text} busy={false} />
         </>
       ) : null}
+      <Button
+        testID="socketPinnedButton"
+        label="RN WebSocket: kendi host'umuz"
+        onPress={() => trySocket(`wss://${HOST.ip}:${HOST.httpsPort}/health`)}
+        disabled={action.busy}
+      />
+      <Button
+        testID="socketUnpinnedButton"
+        label="RN WebSocket: pin listesinde olmayan sunucu"
+        onPress={() => trySocket('wss://echo.websocket.org/')}
+        disabled={action.busy}
+      />
+      {socket ? <Status testID="socketResult" text={socket} busy={false} /> : null}
       {action.text ? <Status testID="testControlsResult" text={action.text} busy={action.busy} /> : null}
       <Text testID="eventLogView" style={styles.muted}>{events || 'Henüz olay yok.'}</Text>
     </Card>

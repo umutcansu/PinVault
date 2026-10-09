@@ -26,12 +26,17 @@ libraries MASVS v2; no Critical or High finding, three Medium ones below).
   could then replay a still-valid older config. The store now throws, as the
   trusted clock and the key-set floor already did: no config is judged or saved
   against the plist alone, the next fetch tries again.
+- **`PinVault.evaluateServerTrust(_:host:port:)`** (new, public): the pin
+  decision of the library's sessions for a TLS connection it does not open (a
+  WebSocket on CFStream, an `NWConnection`). Fail-closed before `start`; only
+  the handshake is judged (no recovery, no client certificate).
 
 ### React Native
 
 - See `pinvault-react-native/CHANGELOG.md`: a release build needs the anchors
-  in the native security file, and `clientCertHosts` from JS only where the file
-  names them.
+  in the native security file, `clientCertHosts` from JS only where the file
+  names them, React Native's WebSocket is pinned on iOS too (and on Android
+  through a hook of its own), and React Native 0.81+ is supported.
 
 ## 2.4.0 — 2026-10-09 — root / jailbreak hardening, proof of possession, fresh attestation, token anomalies
 

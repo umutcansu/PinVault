@@ -3,6 +3,8 @@
 #import <objc/message.h>
 #import <React/RCTBridgeModule.h>
 
+#import "RNPinVaultWebSocketPinning.h"
+
 #if __has_include(<RNPinVault/RNPinVault-Swift.h>)
 #import <RNPinVault/RNPinVault-Swift.h>
 #else
@@ -50,6 +52,10 @@
       NSURLRequest *probe = [NSURLRequest requestWithURL:[NSURL URLWithString:@"https://pinvault.invalid/"]];
       id handler = ((id(*)(id, SEL, NSURLRequest *))objc_msgSend)(networking, selector, probe);
       return @([handler isKindOfClass:ours]);
+    };
+    // Whether SocketRocket's initializer still hands every wss socket to PinVault.
+    _bridge.reactWebSocketIsPinned = ^BOOL {
+      return [RNPinVaultWebSocketPinning isPinned];
     };
   }
   return self;
