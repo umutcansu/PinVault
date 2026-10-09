@@ -41,7 +41,7 @@ enum P12Rewrap {
         let bmp = bmpPassword(password)
 
         // pkcs8ShroudedKeyBag: EncryptedPrivateKeyInfo under pbeWithSHAAnd3-KeyTripleDES-CBC.
-        let keySalt = randomBytes(8)
+        let keySalt = try randomBytes(8)
         let encryptedKey = try tripleDESEncrypt(
             pkcs8,
             key: kdf(bmp, salt: keySalt, id: 1, count: 24),
@@ -71,7 +71,7 @@ enum P12Rewrap {
             try dataContentInfo(DER.sequence([keyBag])),
         ])
 
-        let macSalt = randomBytes(8)
+        let macSalt = try randomBytes(8)
         let macKey = kdf(bmp, salt: macSalt, id: 3, count: 20)
         let mac = Data(HMAC<Insecure.SHA1>.authenticationCode(for: authenticatedSafe, using: SymmetricKey(data: macKey)))
         let macData = DER.sequence([
@@ -212,9 +212,14 @@ enum P12Rewrap {
         return out.prefix(written)
     }
 
-    private static func randomBytes(_ count: Int) -> Data {
+    private static func randomBytes(_ count: Int) throws -> Data {
         var bytes = [UInt8](repeating: 0, count: count)
-        _ = SecRandomCopyBytes(kSecRandomDefault, count, &bytes)
+        let status = SecRandomCopyBytes(kSecRandomDefault, count, &bytes)
+        // A failed RNG must never fall through to a zero salt (IOS-8): that would
+        // make the PKCS12 salt predictable across rewraps.
+        guard status == errSecSuccess else {
+            throw PinVaultError.crypto(message: "PKCS12 salt RNG failed (\(status))")
+        }
         return Data(bytes)
     }
 }

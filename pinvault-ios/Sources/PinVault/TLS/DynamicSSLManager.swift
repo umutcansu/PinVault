@@ -593,6 +593,10 @@ final class DynamicSSLManager: @unchecked Sendable {
             configuration.httpCookieStorage = nil
             configuration.httpCookieAcceptPolicy = .never
             configuration.httpShouldSetCookies = false
+            // Strip any injected URLProtocol (IOS-7): a custom protocol registered
+            // on the template (or globally) would handle the request itself and the
+            // pinned delegate would never run. The built-in http(s) handling stays.
+            configuration.protocolClasses = []
         }
     }
 
