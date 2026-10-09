@@ -7,9 +7,9 @@
 // `hooking_framework: reject` iken telefon KALIR, token alamaz ve token isteyen
 // mock host 401 döner. Gadget kaldırılınca (aynı politikayla) aynı telefon GEÇER.
 //
-// Not (ortam): Bu Apple Silicon arm64 emülatörlerinde frida-SERVER (ptrace
-// enjeksiyonu) "jailed Android" verir; gadget + LD_PRELOAD ptrace gerektirmez ve
-// çalışır. Araçlar yoksa test atlanır (skip). Gerçek telefon root'lanmaz; gadget
+// Not (ortam): gadget + LD_PRELOAD sunucu ve ptrace gerektirmez. frida-server
+// yolu da bu emülatörlerde çalışır (17.19.0 hariç); MobSF dinamik koşusu
+// (2026-10-09) onunla aynı reddi gösterdi. Araçlar yoksa test atlanır (skip). Gerçek telefon root'lanmaz; gadget
 // yalnızca debuggable derlemeye ve yalnızca emülatörde yüklenir.
 const { test, expect } = require('../lib/fixtures');
 const { attachText } = require('../lib/evidence');

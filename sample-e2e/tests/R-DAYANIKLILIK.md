@@ -62,15 +62,21 @@ JDWP — jdb DEĞİL), `repackageApk` (R06). Gereken stub/anahtar/APK'ları SDK 
    gösteriliyor. Üretimde prop/paket tabanlı ve `Runtime.exec("su")` gibi yollar daha
    güvenilir.
 
-2. **frida-server (ptrace enjeksiyonu) bu Apple Silicon arm64 emülatörlerinde çalışmaz**
-   ("need Gadget to attach on jailed Android"); iki imaj (google_apis API 33, AOSP API
-   28), iki frida sürümü (16.7.19, 17.22.2) denendi. Bu bir ortam kısıtı. Çözüm:
-   **frida-gadget**'i `LD_PRELOAD` (`wrap.<pkg>`) ile debuggable uygulamaya yüklemek —
-   ptrace gerektirmez, gerçek frida çalışma zamanını (gum-js-loop, gmain, gdbus,
-   pool-frida thread'leri) sürece sokar ve HookingProbe tam da bunu yakalar.
+2. **frida-server (ptrace enjeksiyonu) bu Apple Silicon arm64 emülatörlerinde de çalışır**
+   (2026-10-09'da düzeltildi; önce "çalışmaz" yazıyordu). İlk denemedeki "need Gadget
+   to attach on jailed Android" hatası sunucunun ayakta olmamasındandı: `adb shell
+   'frida-server &'` ile arka plana atılan süreç adb oturumu kapanınca ölüyor. Sunucuyu
+   açık tutulan bir `adb shell /data/local/tmp/frida-server` oturumunda çalıştırınca
+   16.7.19, 17.0.7, 17.9.11 ve 17.20+ API 28 ve API 33'te bağlanıyor. Tek bozuk sürüm
+   **17.19.0**: ajanı her süreçte (sistem süreçleri dahil) açılırken çöküyor (SIGSEGV).
+   R grubu yine de **frida-gadget**'i `LD_PRELOAD` (`wrap.<pkg>`) ile debuggable uygulamaya
+   yüklüyor: sunucu ve ptrace gerektirmez, gerçek frida çalışma zamanını (gum-js-loop,
+   gmain, gdbus, pool-frida thread'leri) sürece sokar ve HookingProbe tam da bunu yakalar.
+   frida-server yolu MobSF dinamik koşusunda (`e2e` derlemesi, debuggable değil) aynı
+   sonucu verdi: `hooking_framework` (`maps:frida`, thread'ler, `port:27042`) → reddedildi.
    - `wrap.<pkg>` değeri **tırnaksız** olmalı (`LD_PRELOAD=/data/.../lib.so`); literal
      tırnak zygote'ta `exit 127` yapar.
    - API 31+'ta `wrap.<pkg>` özelliği shell'den reddedilir; `su 0 setprop` gerekir.
 
 Araçlar `sample-e2e/.local/frida/` altına indirildi (git dışı): `frida-server-*` (ptrace
-yolu için; bu emülatörlerde çalışmıyor), `frida-gadget-*-android-arm64.so` (kullanılan).
+yolu için; 17.19.0 kullanmayın), `frida-gadget-*-android-arm64.so` (kullanılan).

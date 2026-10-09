@@ -212,9 +212,11 @@ function removeRootManager(device) {
 
 // ── Frida (hooking çerçevesi) enjeksiyonu — gadget + LD_PRELOAD ────────────
 //
-// Bu Apple Silicon arm64 emülatörlerinde frida-SERVER (ptrace enjeksiyonu)
-// "jailed Android" verir; frida-GADGET'i debuggable uygulamaya LD_PRELOAD ile
-// yüklemek (wrap.<pkg>) ptrace gerektirmez ve çalışır. Gadget uygulamanın
+// frida-SERVER (ptrace enjeksiyonu) bu arm64 emülatörlerinde de çalışır (17.19.0
+// hariç: ajanı her süreçte çöküyor; sunucu `adb shell '… &'` ile bırakılırsa
+// oturumla ölür ve istemci "jailed Android" der). Burada frida-GADGET'i debuggable
+// uygulamaya LD_PRELOAD ile yüklüyoruz (wrap.<pkg>): sunucu ve ptrace gerektirmez,
+// testi tek komutla tekrarlanabilir kılar. Gadget uygulamanın
 // adres uzayında `frida-gadget` / `gum-js-loop` / `gmain` / `gdbus` /
 // `pool-frida` thread'lerini ve maps'te kendi .so'sunu bırakır — HookingProbe
 // tam da bunları arar.
