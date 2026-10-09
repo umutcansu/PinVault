@@ -28,6 +28,13 @@ val SecurityHeaders = createApplicationPlugin("SecurityHeaders") {
         "X-Content-Type-Options" to "nosniff",
         "X-Frame-Options" to "DENY",
         "Referrer-Policy" to "no-referrer",
+        // The admin UI needs no powerful browser features; deny them all so a
+        // slipped-in payload cannot reach for the camera, mic, location, etc.
+        "Permissions-Policy" to (
+            "accelerometer=(), autoplay=(), camera=(), display-capture=(), " +
+                "encrypted-media=(), fullscreen=(), geolocation=(), gyroscope=(), " +
+                "magnetometer=(), microphone=(), midi=(), payment=(), usb=()"
+            ),
         "Content-Security-Policy" to (
             "default-src 'self'; script-src 'self'; " +
                 "style-src 'self' 'unsafe-inline'; img-src 'self' data:; " +

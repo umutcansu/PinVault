@@ -32,7 +32,7 @@ dependencies {
     implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.7.3")
 
     // SQLite + Flyway migration
-    implementation("org.xerial:sqlite-jdbc:3.45.1.0")
+    implementation("org.xerial:sqlite-jdbc:3.50.3.0")
     implementation("org.flywaydb:flyway-core:12.3.0")
     implementation("org.flywaydb:flyway-database-nc-sqlite:12.3.0")
     // Flyway 12.3 brings Jackson 3.1.0 (databind/core advisories): the newest 3.1 patch.

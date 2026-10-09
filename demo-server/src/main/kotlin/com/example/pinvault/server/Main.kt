@@ -560,6 +560,12 @@ private fun startServer() {
         "true", "on" -> true
         else -> error("PINVAULT_TOKEN_REQUIRE_PROOF must be true or false (got '${com.example.pinvault.server.service.ServerEnv.get("PINVAULT_TOKEN_REQUIRE_PROOF")}')")
     }
+    // PINVAULT_TOKEN_PUBLIC_ORIGIN (S-2): the public origin a client's token/proof `htu` names
+    // (scheme://host[:port], no path), set behind a proxy or load balancer. Without it the proof's
+    // expected URL is built from each request's own Host header, so a proof captured for one backend
+    // would verify at a second backend that loads the same token secrets and is reached under a
+    // different Host. Unset = the request's origin (single-origin dev/demo).
+    val tokenPublicOrigin = com.example.pinvault.server.service.ServerEnv.get("PINVAULT_TOKEN_PUBLIC_ORIGIN")?.trim()?.takeIf { it.isNotEmpty() }
     // PINVAULT_TOKEN_ANOMALY=warn|refuse: the mock hosts count each device's token use and report a
     // device over a limit, whose next rounds raise token_anomaly (ATTESTATION.md §5.2).
     val tokenAnomalyAction = when (com.example.pinvault.server.service.ServerEnv.get("PINVAULT_TOKEN_ANOMALY")?.trim()?.lowercase()) {
@@ -659,6 +665,7 @@ private fun startServer() {
             audience = null
             requireCertBinding = tokenRequireCertBinding
             requireProof = tokenRequireProof
+            publicOrigin = tokenPublicOrigin
             tokenAnomalyDetector?.let { detector ->
                 anomaly = detector
                 anomalyAction = tokenAnomalyAction!!
@@ -746,6 +753,9 @@ private fun startServer() {
 
     // Config API routing modülü — her API kendi configApiId ve mode'uyla scoped
     fun configApiModuleFor(configApiId: String, mode: String = "tls"): Application.() -> Unit = {
+        // Device-facing header hardening (S-8): nosniff always, HSTS on the TLS
+        // response. No CSP/XFO here — these listeners serve JSON, not HTML.
+        install(com.example.pinvault.server.plugin.ApiSecurityHeaders)
         // An address that keeps being refused is cut off before anything is read or parsed.
         install(com.example.pinvault.server.plugin.DeviceRefusalLimit) {
             limiter = refusalLimiter
