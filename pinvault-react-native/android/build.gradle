@@ -9,7 +9,7 @@ buildscript {
     kotlinVersion: "2.2.0",
     minSdkVersion: 24,
     compileSdkVersion: 36,
-    pinvaultVersion: "2.3.2",
+    pinvaultVersion: "2.4.0",
   ]
   ext.pinvaultRnExt = { prop ->
     rootProject.ext.has(prop) ? rootProject.ext.get(prop) : PinVaultRN[prop]

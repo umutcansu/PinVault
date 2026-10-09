@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased — root / jailbreak hardening
+## 2.4.0 — 2026-10-09 — root / jailbreak hardening, proof of possession, fresh attestation, token anomalies
 
 A review of what a rooted or jailbroken device lets an attacker do (OWASP
 MASVS v2: RESILIENCE, STORAGE, CRYPTO, PLATFORM). The server now judges by

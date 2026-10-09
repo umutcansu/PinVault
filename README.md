@@ -477,8 +477,21 @@ phone, a repackaged app or a script gets no token.
     tokenHosts("api.example.com")
     proofOfPossession()          // optional: a per-request proof, the token alone is useless
 }
-// optional second opinion: io.github.umutcansu:pinvault-play-integrity
 ```
+
+Optional second opinion from Google, Play Integrity
+(`implementation("io.github.umutcansu:pinvault-play-integrity:<version>")`):
+
+```kotlin
+PinVaultConfig.Builder()
+    .configApi("api", url) { attestation() /* … */ }
+    .integrityVerdictProvider(
+        PlayIntegrityVerdictProvider(context, cloudProjectNumber = 123456789012L))   // Play Console → App integrity
+    .build()
+```
+
+The server verifies Google's verdict itself once it has the Play Console
+response keys: [Play Integrity](GUIDE.md#play-integrity-optional-23).
 
 </details>
 

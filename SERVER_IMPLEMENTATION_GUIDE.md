@@ -441,7 +441,7 @@ When a request carries a chain, judge the chain. The reference server does this 
 `APP_ATTEST_APP_IDS` (and `APP_ATTEST_ROOT_CA_FILE`) set; without them every iPhone is
 refused under `enforce`.
 
-**Integrity verdict (library and reference server, unreleased).** Key attestation says
+**Integrity verdict (library and reference server, 2.3).** Key attestation says
 where the key was made. It does not say whether the phone is rooted or the app hooked
 right now. An app that sets `integrityTokenProvider` sends one more field with every CSR
 enrollment request (the first request and each pickup by `requestId`):
