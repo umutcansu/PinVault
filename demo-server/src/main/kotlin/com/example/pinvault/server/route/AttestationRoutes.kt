@@ -300,6 +300,43 @@ fun Route.attestationAdminRoutes(
             call.respondText(buildJsonObject { put("forgotten", true); put("deviceId", deviceId) }.toString(), ContentType.Application.Json)
         }
 
+        /**
+         * A backend reports the device's tokens used abnormally (§5.2): from
+         * too many addresses, or faster than a person. Its next rounds raise
+         * `token_anomaly` for ATTESTATION_ANOMALY_TTL_SECONDS. Body:
+         * `{"reason": "…", "addresses"?: n, "requests"?: n, "windowSeconds"?: n}`.
+         */
+        post("/devices/{deviceId}/anomaly") {
+            val cid = call.pathParameters["configApiId"]!!
+            val deviceId = call.pathParameters["deviceId"]!!
+            val body = call.receiveLimitedJson(ADMIN_BODY_MAX) ?: return@post
+            val reason = (body["reason"] as? JsonPrimitive)?.takeIf { it.isString }?.content?.trim()?.takeIf { it.isNotEmpty() && it.length <= 200 }
+                ?: return@post call.respondText("""{"error":"invalid_reason","message":"reason: a string of 1–200 characters."}""",
+                    ContentType.Application.Json, HttpStatusCode.BadRequest)
+            val detail = buildJsonObject {
+                put("reason", reason)
+                for (name in listOf("addresses", "requests", "windowSeconds")) {
+                    (body[name] as? JsonPrimitive)?.longOrNull?.let { put(name, it) }
+                }
+                put("reportedBy", AuditContext.actor())
+            }
+            if (!service.reportAnomaly(cid, deviceId, reason, detail, actor = null, ip = null)) {
+                return@post call.respondText("""{"error":"device_not_found"}""", ContentType.Application.Json, HttpStatusCode.NotFound)
+            }
+            call.respondText(deviceJson(devices.get(cid, deviceId)!!).toString(), ContentType.Application.Json)
+        }
+
+        /** Clears a device's token anomaly: its rounds no longer raise `token_anomaly`. */
+        delete("/devices/{deviceId}/anomaly") {
+            val cid = call.pathParameters["configApiId"]!!
+            val deviceId = call.pathParameters["deviceId"]!!
+            if (!devices.clearAnomaly(cid, deviceId)) {
+                return@delete call.respondText("""{"error":"no_anomaly"}""", ContentType.Application.Json, HttpStatusCode.NotFound)
+            }
+            audit?.record("attestation_token_anomaly_cleared", "Device $deviceId: token anomaly cleared", cid, deviceId)
+            call.respondText(deviceJson(devices.get(cid, deviceId)!!).toString(), ContentType.Application.Json)
+        }
+
         get("/stats") {
             val cid = call.pathParameters["configApiId"]!!
             call.respondText(buildJsonObject {

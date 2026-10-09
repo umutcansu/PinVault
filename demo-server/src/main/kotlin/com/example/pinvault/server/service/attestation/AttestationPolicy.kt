@@ -56,7 +56,9 @@ enum class AttestationFlag(val wire: String) {
     /** A hardware-attested device sent a fresh chain that did not verify, or not at the hardware level (§3.1). */
     FRESH_ATTESTATION_FAILED("fresh_attestation_failed"),
     /** A hardware-attested device sent no fresh chain that counted within the interval plus the grace (§3.1). */
-    FRESH_ATTESTATION_OVERDUE("fresh_attestation_overdue");
+    FRESH_ATTESTATION_OVERDUE("fresh_attestation_overdue"),
+    /** A backend reported the device's tokens used from too many addresses or too fast, within `ATTESTATION_ANOMALY_TTL_SECONDS` (§5.2). */
+    TOKEN_ANOMALY("token_anomaly");
 
     companion object {
         private val byWire = entries.associateBy { it.wire }
@@ -117,7 +119,9 @@ data class AttestationPolicy(
             "bootloader_unlocked" to "reject", "boot_not_verified" to "reject", "key_revoked" to "reject",
             "report_mismatch" to "reject", "config_rollback" to "reject",
             // Raised only with ATTESTATION_FRESH_INTERVAL_SECONDS, only for hardware-attested devices.
-            "fresh_attestation_failed" to "reject", "fresh_attestation_overdue" to "reject"
+            "fresh_attestation_failed" to "reject", "fresh_attestation_overdue" to "reject",
+            // Raised only after a backend reported the device (§5.2); it lapses after ATTESTATION_ANOMALY_TTL_SECONDS.
+            "token_anomaly" to "reject"
         )
 
         /** `lenient`: everything a warning — what a first rollout measures the fleet with. */

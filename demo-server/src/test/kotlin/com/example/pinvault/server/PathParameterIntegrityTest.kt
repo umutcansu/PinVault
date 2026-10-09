@@ -137,6 +137,7 @@ class PathParameterIntegrityTest {
         Sample(HttpMethod.Put, "/api/v1/config-apis/{scope}/attestation/policy"),
         Sample(HttpMethod.Put, "/api/v1/config-apis/{scope}/attestation/devices/{device}"),
         Sample(HttpMethod.Delete, "/api/v1/config-apis/{scope}/attestation/devices/{device}"),
+        Sample(HttpMethod.Delete, "/api/v1/config-apis/{scope}/attestation/devices/{device}/anomaly"),
         Sample(HttpMethod.Get, "/api/v1/attestation/token-secrets"),
         Sample(HttpMethod.Post, "/api/v1/attestation/token-secrets/rotate"),
         Sample(HttpMethod.Delete, "/api/v1/attestation/token-secrets/{kid}")

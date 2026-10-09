@@ -257,6 +257,7 @@ What each probe looks at (Android, no root needed; iOS probes:
 | `config_rollback` | Set by the server when the device reports a lower `currentIssuedAt` than it reported before under the same signing-key set (restored storage, a clock set back). |
 | `fresh_attestation_failed` | Set by the server (§3.1) when a device the hardware vouched for at registration sends a fresh chain that does not verify, is made at the software level, carries another round's challenge or is another app's key (that one: `app_integrity`). |
 | `fresh_attestation_overdue` | Set by the server (§3.1) when such a device sent no fresh chain that counted for `ATTESTATION_FRESH_INTERVAL_SECONDS` + `ATTESTATION_FRESH_GRACE_SECONDS`. |
+| `token_anomaly` | Set by the server (§5.2) while a backend's report that the device's tokens were used from too many addresses, or faster than a person, is younger than `ATTESTATION_ANOMALY_TTL_SECONDS`. |
 
 On iOS the probes look for jailbreak files (Cydia, Sileo, Zebra, `/var/jb`,
 apt, `sshd`, `bash`; the last two not on the simulator, which sees the Mac's
@@ -411,7 +412,8 @@ with `PUT /api/v1/config-apis/{id}/attestation/policy`:
     "app_attest": "warn", "app_attest_missing": "warn",
     "bootloader_unlocked": "reject", "boot_not_verified": "reject", "key_revoked": "reject",
     "report_mismatch": "reject", "config_rollback": "reject",
-    "fresh_attestation_failed": "reject", "fresh_attestation_overdue": "reject"
+    "fresh_attestation_failed": "reject", "fresh_attestation_overdue": "reject",
+    "token_anomaly": "reject"
   },
   "revealReasons": false,
   "tokenTtlSeconds": 300,
@@ -558,10 +560,47 @@ payload { "jti": "<16 random bytes, base64url>", "htm": "GET",
 - What it does not change: code running as the app on a rooted or
   jailbroken phone can still have the key sign, so the phone can act as a
   signing service for requests made elsewhere — each such request now needs
-  the phone online, once per request. The body is not covered (as in DPoP);
+  the phone online, once per request; §5.2 counts that traffic. The body is not covered (as in DPoP);
   TLS and pinning protect it in transit.
 - Cost: one ECDSA signature per request with the hardware key — a few ms in
   the TEE and the Secure Enclave, more in StrongBox. Off by default.
+
+### 5.2 Token anomalies (optional)
+
+A token, even one proven per request (§5.1), is used by whoever holds the
+device: a rooted phone can still sign proofs for requests made elsewhere, one
+round trip per request. What gives that away is the **shape** of the traffic:
+one device's tokens from many addresses at once, or more requests than a
+person makes. The backend sees it; the attestation server decides on it.
+
+- **Counting**: the reference verifier, with `PINVAULT_TOKEN_ANOMALY=warn`
+  or `refuse` (`anomaly` on `PinVaultTokenAuth`), counts each device's
+  requests that carry a genuine token (`aud` + `did`) in fixed windows of
+  `PINVAULT_TOKEN_ANOMALY_WINDOW_SECONDS` (600): distinct client addresses
+  and requests. Over `PINVAULT_TOKEN_ANOMALY_MAX_ADDRESSES` (8) or
+  `PINVAULT_TOKEN_ANOMALY_MAX_REQUESTS` (1200, two a second sustained) the
+  device is reported, once per window. A lifted token used without its
+  proof counts too. Behind a proxy, set `remoteAddress` to the forwarded
+  client address. `refuse` also answers the device `429 token_anomaly` (with
+  `Retry-After`) until the window ends — not `401`, so the library does not
+  attest again in a loop.
+- **Reporting**: the mock hosts report to their own server; any other
+  backend reports with `POST /api/v1/config-apis/{id}/attestation/devices/{deviceId}/anomaly`
+  `{"reason": "…", "addresses"?, "requests"?, "windowSeconds"?}` (an admin
+  key; takes effect at once — it only tightens). The report is recorded on
+  the device (`anomalyAt`, `anomalyReason`), written to the audit log
+  (`attestation_token_anomaly`, which reaches the webhook).
+- **Deciding**: for `ATTESTATION_ANOMALY_TTL_SECONDS` (3600) after a report
+  the device's rounds raise `token_anomaly` (`strict`: reject — no new
+  token, and tokens live 5 minutes). It lapses by itself, or an
+  administrator clears it (`DELETE …/anomaly`, waits for a second admin with
+  approvals on).
+- **Limits**: a device on a carrier network changes address now and then, a
+  few times an hour at most; eight in ten minutes is not a phone moving. A
+  backend that sees every app request behind one shared address (a
+  corporate proxy) should count requests only (`maxAddresses` high). The
+  counters are in memory per verifier instance: a fleet of backends counts
+  per instance, or shares the counters in its own store.
 
 ## 6. Admin API (management port; Config API ports when `CONFIG_API_ADMIN_ROUTES=on`)
 
@@ -573,6 +612,8 @@ payload { "jti": "<16 random bytes, base64url>", "htm": "GET",
 | `GET /api/v1/config-apis/{id}/attestation/devices/{deviceId}` | One device, with its last report (trimmed to the signals and app/device blocks). |
 | `PUT /api/v1/config-apis/{id}/attestation/devices/{deviceId}` | `{ "forcePass": bool, "forceFail": bool, "annotations": ["…"] }` (gated: `attestation_device`). |
 | `DELETE /api/v1/config-apis/{id}/attestation/devices/{deviceId}` | Forget the device's key so it can register again (gated). |
+| `POST /api/v1/config-apis/{id}/attestation/devices/{deviceId}/anomaly` | A backend reports the device's tokens used abnormally (§5.2): `{ "reason": "…", "addresses"?, "requests"?, "windowSeconds"? }`. Not gated (it only tightens). |
+| `DELETE /api/v1/config-apis/{id}/attestation/devices/{deviceId}/anomaly` | Clear it (gated: `attestation_device`). |
 | `GET /api/v1/config-apis/{id}/attestation/stats` | Counts for the last 24 h / 7 d: passes, rejects, by reason. |
 | `GET /api/v1/attestation/token-secrets` | Active and previous secrets (requester-run gated). |
 | `POST /api/v1/attestation/token-secrets/rotate` | New active secret (gated). |
@@ -581,7 +622,8 @@ payload { "jti": "<16 random bytes, base64url>", "htm": "GET",
 Audit actions: `attestation_policy_updated`, `attestation_device_annotated`,
 `attestation_device_forgotten`, `attestation_device_registered`,
 `attestation_key_mismatch`, `attestation_rejected` (routine; not in `*`
-webhooks), `attestation_token_secret_rotated`, `attestation_token_secret_deleted`.
+webhooks), `attestation_token_secret_rotated`, `attestation_token_secret_deleted`,
+`attestation_token_anomaly`, `attestation_token_anomaly_cleared`.
 
 ## 7. Server settings
 
@@ -600,6 +642,8 @@ webhooks), `attestation_token_secret_rotated`, `attestation_token_secret_deleted
 | `MOCK_HOST_REQUIRE_TOKEN` | `false` | The mock hosts refuse requests without a valid `PinVault-Token`. |
 | `ATTESTATION_FRESH_INTERVAL_SECONDS` | `0` (off; production profile: `86400`) | §3.1: ask every Android device for a fresh key's chain this often (60 s – 30 d). |
 | `ATTESTATION_FRESH_GRACE_SECONDS` | `259200` (72 h) | §3.1: how much longer a hardware-attested device may go without one before `fresh_attestation_overdue` (0 – 30 d). |
+| `PINVAULT_TOKEN_ANOMALY` | `off` (production profile: `warn`) | §5.2: with `MOCK_HOST_REQUIRE_TOKEN`, the mock hosts count each device's token use and report a device over a limit (`warn`), or also refuse it with `429` until the window ends (`refuse`). `PINVAULT_TOKEN_ANOMALY_MAX_ADDRESSES` (8), `_MAX_REQUESTS` (1200), `_WINDOW_SECONDS` (600). |
+| `ATTESTATION_ANOMALY_TTL_SECONDS` | `3600` | §5.2: how long a reported device's rounds raise `token_anomaly` (60 s – 30 d). |
 | `PINVAULT_TOKEN_REQUIRE_PROOF` | `false` (production profile: `true`) | With `MOCK_HOST_REQUIRE_TOKEN`: every request to a mock host also carries a `PinVault-Proof` for its method and URL, signed by the key the token's `cnf.jkt` names (§5.1). Your own backend sets the same option on `PinVaultTokenAuth` (`requireProof`, and `publicOrigin` behind a proxy). |
 | `PINVAULT_TOKEN_REQUIRE_CERT_BINDING` | `false` | With `MOCK_HOST_REQUIRE_TOKEN`: the mock hosts accept a token only over mTLS with the client certificate its `cnf.x5t#S256` names (§5). A plain-TLS mock host then refuses every request. Your own backend sets the same option on `PinVaultTokenAuth` (`requireCertBinding`). |
 | `ATTESTATION_TRUSTED_BOOT_KEYS` | unset | Comma-separated `verifiedBootKey` digests (64 hex characters; colons and case ignored) of operating systems you accept with a `SelfSigned` boot on a locked bootloader (GrapheneOS and CalyxOS publish theirs per device). Such a boot counts as verified for `ATTESTATION_REQUIRE_VERIFIED_BOOT` and does not raise `boot_not_verified`. A malformed value is a start-up error. |

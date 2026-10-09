@@ -211,6 +211,14 @@ services:
       # aralıktan sonra fresh_attestation_overdue'ya kadar tanınan süre (boş = 72 saat).
       ATTESTATION_FRESH_INTERVAL_SECONDS: ${ATTESTATION_FRESH_INTERVAL_SECONDS:-}
       ATTESTATION_FRESH_GRACE_SECONDS: ${ATTESTATION_FRESH_GRACE_SECONDS:-}
+      # Token anomalisi (ATTESTATION.md §5.2): mock host'lar her cihazın token kullanımını
+      # 10 dakikalık pencerede sayar; 8'den çok adres ya da 1200'den çok istek bildirilir ve
+      # cihazın turları TTL boyunca token_anomaly yükseltir. off | warn | refuse (429).
+      PINVAULT_TOKEN_ANOMALY: ${PINVAULT_TOKEN_ANOMALY:-}
+      PINVAULT_TOKEN_ANOMALY_MAX_ADDRESSES: ${PINVAULT_TOKEN_ANOMALY_MAX_ADDRESSES:-}
+      PINVAULT_TOKEN_ANOMALY_MAX_REQUESTS: ${PINVAULT_TOKEN_ANOMALY_MAX_REQUESTS:-}
+      PINVAULT_TOKEN_ANOMALY_WINDOW_SECONDS: ${PINVAULT_TOKEN_ANOMALY_WINDOW_SECONDS:-}
+      ATTESTATION_ANOMALY_TTL_SECONDS: ${ATTESTATION_ANOMALY_TTL_SECONDS:-}
       # Play Integrity (ATTESTATION.md §11): Play Console yanıt anahtarları (ikisi
       # birlikte; boş = kapalı), kararın adını vermesi gereken paket, en düşük cihaz
       # seviyesi, süreler. STALE_PASS: saklı bir "geçti" token'sız turları kaç saniye

@@ -1,5 +1,6 @@
 package com.example.pinvault.server.route
 
+import io.ktor.client.request.delete
 import com.example.pinvault.server.model.HostPin
 import com.example.pinvault.server.model.PinConfig
 import com.example.pinvault.server.service.AndroidKeyAttestation
@@ -933,5 +934,44 @@ class AttestationRoutesTest {
         assertEquals(FreshAttestationSettings(86_400, 3600), FreshAttestationSettings.fromEnv { mapOf("ATTESTATION_FRESH_INTERVAL_SECONDS" to "86400", "ATTESTATION_FRESH_GRACE_SECONDS" to "3600")[it] })
         assertFailsWith<IllegalStateException> { FreshAttestationSettings.fromEnv { if (it == "ATTESTATION_FRESH_INTERVAL_SECONDS") "30" else null } }
         assertFailsWith<IllegalStateException> { FreshAttestationSettings.fromEnv { if (it == "ATTESTATION_FRESH_GRACE_SECONDS") "-1" else null } }
+    }
+
+    // ── Token anomalies (§5.2) ──────────────────────────────────────────
+
+    @Test
+    fun `a reported token anomaly raises token_anomaly until it lapses or is cleared`() = testApplication {
+        val service = service()
+        install(ContentNegotiation) { json(Json { encodeDefaults = true; ignoreUnknownKeys = true }) }
+        routing {
+            attestationRoutes(scope, service, pins, envelopes, deviceHostAclStore = DeviceHostAclStore(db), clock = { now })
+            attestationAdminRoutes(service, policies, devices, secrets, AuditLog(auditStore, null))
+        }
+        policies.put(scope, AttestationPolicy.strict(revealReasons = true), "test")
+        val key = ecKey()
+        assertEquals("pass", register("ph-1", key, TestAttestationChains.identityDescription("ph-1"))["result"]!!.jsonPrimitive.content)
+
+        val reportUrl = "/api/v1/config-apis/$scope/attestation/devices/ph-1/anomaly"
+        assertEquals(HttpStatusCode.BadRequest, client.post(reportUrl) { contentType(ContentType.Application.Json); setBody("{}") }.status)
+        assertEquals(HttpStatusCode.NotFound, client.post("/api/v1/config-apis/$scope/attestation/devices/nobody/anomaly") {
+            contentType(ContentType.Application.Json); setBody("""{"reason":"addresses: 9"}""") }.status)
+        val reported = client.post(reportUrl) { contentType(ContentType.Application.Json); setBody("""{"reason":"addresses: 9 in 600 s","addresses":9}""") }
+        assertEquals(HttpStatusCode.OK, reported.status, reported.bodyAsText())
+        assertEquals("addresses: 9 in 600 s", devices.get(scope, "ph-1")!!.anomalyReason)
+        assertEquals(1, auditStore.count(action = "attestation_token_anomaly"))
+
+        val flagged = attestJson(body(challenge(), "ph-1", key, report()))
+        assertEquals(listOf("token_anomaly"), flagged.strings("rejectionReasons"))
+        assertNull(flagged["token"])
+
+        // It lapses after ATTESTATION_ANOMALY_TTL_SECONDS (an hour by default).
+        now += 3600 * 1000L
+        assertEquals("pass", attestJson(body(challenge(), "ph-1", key, report()))["result"]!!.jsonPrimitive.content)
+
+        // Reported again, then cleared by an administrator.
+        client.post(reportUrl) { contentType(ContentType.Application.Json); setBody("""{"reason":"requests: 5000"}""") }
+        assertEquals("reject", attestJson(body(challenge(), "ph-1", key, report()))["result"]!!.jsonPrimitive.content)
+        assertEquals(HttpStatusCode.OK, client.delete(reportUrl).status)
+        assertEquals(HttpStatusCode.NotFound, client.delete(reportUrl).status, "nothing left to clear")
+        assertEquals("pass", attestJson(body(challenge(), "ph-1", key, report()))["result"]!!.jsonPrimitive.content)
     }
 }

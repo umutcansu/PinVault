@@ -78,6 +78,8 @@ class GateCoverageTest {
         "POST /api/v1/change-requests/{id}/reject" to "rejecting or withdrawing a request",
         // Changes nothing devices trust or are handed.
         "POST /api/v1/notifications/test" to "sends a test webhook",
+        // Only tightens: the device's next rounds raise token_anomaly (clearing it waits for approval).
+        "POST /api/v1/config-apis/{configApiId}/attestation/devices/{deviceId}/anomaly" to "a backend's report of abused tokens; only tightens",
         "POST /api/v1/pins/live-check" to "a dry run: probes, stores nothing",
         "POST /api/v1/hosts/{hostname}/start-mock" to "a local mock listener for a host; publishes no pin",
         "POST /api/v1/hosts/{hostname}/stop-mock" to "stops a local mock listener",

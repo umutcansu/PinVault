@@ -92,6 +92,9 @@ services:
       # Eski uygulama sürümleri göndermez: fresh_attestation_overdue strict'te
       # reddedilir; o sürümler kullanımdayken panelden warn yapılır.
       ATTESTATION_FRESH_INTERVAL_SECONDS: "86400"
+      # Sabit: bir cihazın token'ı çok sayıda adresten ya da insan hızını aşan sıklıkta
+      # kullanılırsa bildirilir; turları bir saat token_anomaly ile reddedilir (§5.2).
+      PINVAULT_TOKEN_ANOMALY: "warn"
       # Yapılandırılmış Config API politikasında app_attest, app_attest_missing,
       # play_integrity ve play_integrity_missing için önerilen değer reject'tir;
       # filo ölçüldükten sonra panelden ayarlanır (SECURE_OPERATIONS.md, "The policy

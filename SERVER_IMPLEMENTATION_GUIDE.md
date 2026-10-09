@@ -930,6 +930,14 @@ payload { "iss": "pinvault", "sub": "<deviceId>", "aud": "<configApiId>",
    a proxy, compare `htu` with your public origin, not the internal one.
    With this, a token lifted from the device is useless without the
    device's hardware key, also where TLS ends before your API.
+8. Optionally count each device's token use (`aud` + `did`) per window —
+   distinct client addresses and requests — and report a device over your
+   limits with `POST /api/v1/config-apis/{id}/attestation/devices/{deviceId}/anomaly`
+   `{"reason": "…"}` (admin key). Its next rounds raise `token_anomaly`, so
+   it gets no new token while the report is younger than
+   `ATTESTATION_ANOMALY_TTL_SECONDS` (ATTESTATION.md §5.2). Answer such a
+   device `429`, not `401`, if you refuse it yourself: a `401` naming the
+   token makes the library attest again at once.
 
 Attestation protects only what your backend enforces. A device the policy
 rejects keeps the pins it already holds until they expire; what it loses is

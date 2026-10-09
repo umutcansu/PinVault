@@ -89,7 +89,9 @@ class AttestationService(
      */
     private val keySetVersion: () -> Int = { 0 },
     /** `ATTESTATION_FRESH_INTERVAL_SECONDS` / `_GRACE_SECONDS`: periodic fresh key attestation (§3.1); off by default. */
-    val fresh: FreshAttestationSettings = FreshAttestationSettings()
+    val fresh: FreshAttestationSettings = FreshAttestationSettings(),
+    /** `ATTESTATION_ANOMALY_TTL_SECONDS`: how long a token anomaly report raises `token_anomaly` (§5.2). */
+    val anomalyTtlSeconds: Long = DEFAULT_ANOMALY_TTL_SECONDS
 ) {
     private val verifier by lazy(verifier)
 
@@ -558,6 +560,7 @@ class AttestationService(
             raised += AttestationFlag.KEY_REVOKED
         }
         if (reportContradicts(report, device, registration)) raised += AttestationFlag.REPORT_MISMATCH
+        if (anomalyActive(device)) raised += AttestationFlag.TOKEN_ANOMALY
         verifier.minPatchLevel?.let { min ->
             // The hardware's word when there is one (registration or fresh chain), and a patch level does not go back.
             val patch = facts?.osPatchLevel ?: (report["device"] as? JsonObject)?.string("securityPatch")?.let { parsePatch(it) }
@@ -583,6 +586,30 @@ class AttestationService(
      * A device without hardware facts (no chain, a software-level one) is
      * judged on the last point only.
      */
+    /** Whether a token anomaly report (§5.2) is recent enough to count. */
+    private fun anomalyActive(device: AttestedDevice): Boolean {
+        val at = device.anomalyAt?.let { runCatching { Instant.parse(it) }.getOrNull() } ?: return false
+        return clock().epochSecond - at.epochSecond < anomalyTtlSeconds
+    }
+
+    /**
+     * A backend saw [deviceId]'s tokens used abnormally (§5.2): recorded, so
+     * the device's rounds raise `token_anomaly` for [anomalyTtlSeconds], and
+     * written to the audit log (which notifies the webhook). False when the
+     * device is unknown in [configApiId].
+     */
+    fun reportAnomaly(configApiId: String, deviceId: String, reason: String, detail: JsonObject, actor: String?, ip: String?): Boolean {
+        if (!DEVICE_ID.matches(deviceId)) return false
+        if (!devices.recordAnomaly(configApiId, deviceId, reason, clock())) return false
+        val summary = "Device $deviceId: tokens used abnormally ($reason); token_anomaly for $anomalyTtlSeconds s"
+        when {
+            actor != null && ip != null -> audit?.record("attestation_token_anomaly", summary, configApiId, deviceId, detail = detail, actor = actor, ip = ip)
+            actor != null -> audit?.record("attestation_token_anomaly", summary, configApiId, deviceId, detail = detail, actor = actor)
+            else -> audit?.record("attestation_token_anomaly", summary, configApiId, deviceId, detail = detail)
+        }
+        return true
+    }
+
     /** The facts the flags read: the last fresh chain's (§3.1), else the registration's. */
     private fun currentFacts(device: AttestedDevice): com.example.pinvault.server.service.KeyFacts? = device.freshFacts ?: device.keyFacts
 
@@ -929,6 +956,9 @@ class AttestationService(
 
         /** The verifier's refusal of a chain with a revoked certificate. */
         const val CERTIFICATE_REVOKED = "certificate_revoked"
+
+        /** How long a token anomaly report counts by default: an hour (the device's next rounds, not forever). */
+        const val DEFAULT_ANOMALY_TTL_SECONDS = 3600L
 
         /** The verifier's refusal while its revocation list is too old: no chain can pass, none is the device's fault. */
         const val REVOCATION_LIST_STALE = "revocation_list_stale"

@@ -39,6 +39,14 @@ what the hardware vouches for; the clients bind their verdicts to the report.
   flags, `reject` under strict: `fresh_attestation_failed` (a hardware-attested
   device's fresh chain does not hold up), `fresh_attestation_overdue` (none for
   interval + `ATTESTATION_FRESH_GRACE_SECONDS`, default 72 h).
+- **Token anomalies** (V28, ATTESTATION.md §5.2): the reference verifier
+  counts each device's token use per window (`PINVAULT_TOKEN_ANOMALY=warn|refuse`,
+  production profile `warn`; over 8 addresses or 1200 requests in 10 min) and
+  reports the device; other backends report with
+  `POST …/attestation/devices/{id}/anomaly`. The device's rounds raise
+  `token_anomaly` (strict: reject) for `ATTESTATION_ANOMALY_TTL_SECONDS`
+  (1 h) or until cleared (`DELETE …/anomaly`, gated). `refuse` answers
+  `429 token_anomaly` until the window ends.
 - Upgrade note: stored policies take the new flags at the default profile's
   action, so a strict server now rejects a phone with an unlocked bootloader.
 

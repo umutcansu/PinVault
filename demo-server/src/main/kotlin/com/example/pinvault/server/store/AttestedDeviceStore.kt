@@ -64,6 +64,10 @@ data class AttestedDevice(
     val freshAttestedAt: String? = null,
     /** `ok`, or why the last fresh chain did not count (the verifier's reason); null = none sent yet. */
     val freshResult: String? = null,
+    /** When a backend last reported this device's tokens as used abnormally (V28, ATTESTATION.md §5.2); null = never or cleared. */
+    val anomalyAt: String? = null,
+    /** What that report said (`addresses: 9 in 600 s`, or a backend's own words). */
+    val anomalyReason: String? = null,
     /** The highest `currentIssuedAt` (Unix ms) the device reported; null = none yet. */
     val configWatermark: Long? = null,
     /** The server's signing-key set version when [configWatermark] was stored. */
@@ -132,7 +136,7 @@ class AttestedDeviceStore(private val db: DatabaseManager) {
                  spki_sha256 = excluded.spki_sha256, public_key = excluded.public_key, key_attested = excluded.key_attested,
                  key_security_level = excluded.key_security_level, key_attestation_reason = excluded.key_attestation_reason,
                  last_seen = excluded.last_seen, key_facts = excluded.key_facts,
-                 fresh_facts = NULL, fresh_attested_at = NULL, fresh_result = NULL
+                 fresh_facts = NULL, fresh_attested_at = NULL, fresh_result = NULL, anomaly_at = NULL, anomaly_reason = NULL
                WHERE attested_devices.spki_sha256 IS NULL"""
         ).use { stmt ->
             stmt.setString(1, configApiId)
@@ -191,6 +195,26 @@ class AttestedDeviceStore(private val db: DatabaseManager) {
             stmt.setString(i++, configApiId)
             stmt.setString(i, deviceId)
             stmt.executeUpdate()
+        }
+    }
+
+    /** Records a token anomaly report (§5.2); false when the device has no row. */
+    fun recordAnomaly(configApiId: String, deviceId: String, reason: String, at: Instant): Boolean = db.connection().use { conn ->
+        conn.prepareStatement("UPDATE attested_devices SET anomaly_at = ?, anomaly_reason = ? WHERE config_api_id = ? AND device_id = ?").use { stmt ->
+            stmt.setString(1, at.toString())
+            stmt.setString(2, reason.take(200))
+            stmt.setString(3, configApiId)
+            stmt.setString(4, deviceId)
+            stmt.executeUpdate() > 0
+        }
+    }
+
+    /** Clears the token anomaly of a device; false when it had none. */
+    fun clearAnomaly(configApiId: String, deviceId: String): Boolean = db.connection().use { conn ->
+        conn.prepareStatement("UPDATE attested_devices SET anomaly_at = NULL, anomaly_reason = NULL WHERE config_api_id = ? AND device_id = ? AND anomaly_at IS NOT NULL").use { stmt ->
+            stmt.setString(1, configApiId)
+            stmt.setString(2, deviceId)
+            stmt.executeUpdate() > 0
         }
     }
 
@@ -493,6 +517,8 @@ class AttestedDeviceStore(private val db: DatabaseManager) {
             freshFacts = rs.getString("fresh_facts")?.let { text -> runCatching { json.decodeFromString(KeyFacts.serializer(), text) }.getOrNull() },
             freshAttestedAt = rs.getString("fresh_attested_at"),
             freshResult = rs.getString("fresh_result"),
+            anomalyAt = rs.getString("anomaly_at"),
+            anomalyReason = rs.getString("anomaly_reason"),
             configWatermark = rs.getObject("config_watermark")?.let { rs.getLong("config_watermark") },
             configWatermarkKeySet = rs.getObject("config_watermark_key_set")?.let { rs.getInt("config_watermark_key_set") },
             lastReport = if (withReport) rs.getString("last_report") else null

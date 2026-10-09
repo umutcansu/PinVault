@@ -5917,6 +5917,86 @@ paths:
         '401': { $ref: '#/components/responses/MissingApiKey' }
         '403': { $ref: '#/components/responses/InvalidApiKey' }
 
+  /api/v1/config-apis/{id}/attestation/devices/{deviceId}/anomaly:
+    post:
+      tags: [Attestation]
+      operationId: reportTokenAnomaly
+      summary: Report a device's tokens used abnormally
+      description: |
+        A backend that counts how each device's `PinVault-Token`s are used (ATTESTATION.md
+        §5.2) reports a device whose tokens came from too many addresses or faster than a
+        person. The device's rounds raise `token_anomaly` for `ATTESTATION_ANOMALY_TTL_SECONDS`
+        (default 3600). Takes effect at once (it only tightens). Audited as
+        `attestation_token_anomaly`. The reference verifier's mock hosts report on their own
+        with `PINVAULT_TOKEN_ANOMALY`.
+
+        Registered on: **management** (and the Config API ports when
+        `CONFIG_API_ADMIN_ROUTES=on`).
+      security:
+        - ApiKeyAuth: []
+      x-registered-on: management
+      parameters:
+        - $ref: '#/components/parameters/AttestationConfigApiIdPath'
+        - $ref: '#/components/parameters/DeviceIdPath'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [reason]
+              properties:
+                reason: { type: string, maxLength: 200, example: 'addresses: 9 in 600 s' }
+                addresses: { type: integer }
+                requests: { type: integer }
+                windowSeconds: { type: integer }
+      responses:
+        '200':
+          description: Recorded; the device as the admin API shows it (`anomalyAt`, `anomalyReason`).
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AttestedDevice' }
+        '400':
+          description: '`invalid_reason`.'
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '404':
+          description: '`device_not_found`.'
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '401': { $ref: '#/components/responses/MissingApiKey' }
+        '403': { $ref: '#/components/responses/InvalidApiKey' }
+    delete:
+      tags: [Attestation]
+      operationId: clearTokenAnomaly
+      summary: Clear a device's token anomaly
+      description: |
+        The device's rounds no longer raise `token_anomaly`. **Two-person approval**
+        (`PIN_CHANGE_APPROVALS>=2`): waits for a second admin (`202`, operation
+        `attestation_device`). Audited as `attestation_token_anomaly_cleared`.
+      security:
+        - ApiKeyAuth: []
+      x-registered-on: management
+      parameters:
+        - $ref: '#/components/parameters/AttestationConfigApiIdPath'
+        - $ref: '#/components/parameters/DeviceIdPath'
+      responses:
+        '202': { $ref: '#/components/responses/PendingApproval' }
+        '200':
+          description: Cleared; the device.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AttestedDevice' }
+        '404':
+          description: '`no_anomaly` — the device has none (or no row).'
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '401': { $ref: '#/components/responses/MissingApiKey' }
+        '403': { $ref: '#/components/responses/InvalidApiKey' }
+
   /api/v1/config-apis/{id}/attestation/stats:
     get:
       tags: [attestation]
@@ -7546,7 +7626,7 @@ components:
              cloner, unknown_installer, adb_enabled, software_key, key_unattested, old_patch_level,
              play_integrity, play_integrity_missing, app_attest, app_attest_missing,
              bootloader_unlocked, boot_not_verified, key_revoked, report_mismatch, config_rollback,
-             fresh_attestation_failed, fresh_attestation_overdue]
+             fresh_attestation_failed, fresh_attestation_overdue, token_anomaly]
 
     AttestationRequest:
       type: object
@@ -7748,6 +7828,8 @@ components:
           description: 'What the last fresh hardware-level chain said (ATTESTATION.md §3.1), the same fields as `keyFacts`; the per-round flags read it in place of `keyFacts` once it is set.'
         freshAttestedAt: { type: string, format: date-time, nullable: true, description: 'When the last fresh chain that counted arrived; null = never (the registration is the start).' }
         freshResult: { type: string, nullable: true, description: '`ok`, or why the last fresh chain did not count (`software_attestation`, `challenge_mismatch`, `untrusted_root`, `certificate_revoked`, …).' }
+        anomalyAt: { type: string, format: date-time, nullable: true, description: 'When a backend last reported the device''s tokens used abnormally (§5.2); `token_anomaly` for `ATTESTATION_ANOMALY_TTL_SECONDS` after it.' }
+        anomalyReason: { type: string, nullable: true, description: 'What that report said.' }
         configWatermark: { type: integer, format: int64, nullable: true, description: 'Highest `currentIssuedAt` the device reported (`config_rollback`).' }
         configWatermarkKeySet: { type: integer, nullable: true, description: 'Signing-key set version under which it was stored.' }
 

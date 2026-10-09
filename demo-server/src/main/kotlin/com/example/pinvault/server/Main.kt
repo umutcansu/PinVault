@@ -560,6 +560,27 @@ private fun startServer() {
         "true", "on" -> true
         else -> error("PINVAULT_TOKEN_REQUIRE_PROOF must be true or false (got '${com.example.pinvault.server.service.ServerEnv.get("PINVAULT_TOKEN_REQUIRE_PROOF")}')")
     }
+    // PINVAULT_TOKEN_ANOMALY=warn|refuse: the mock hosts count each device's token use and report a
+    // device over a limit, whose next rounds raise token_anomaly (ATTESTATION.md §5.2).
+    val tokenAnomalyAction = when (com.example.pinvault.server.service.ServerEnv.get("PINVAULT_TOKEN_ANOMALY")?.trim()?.lowercase()) {
+        null, "", "off" -> null
+        "warn" -> com.example.pinvault.server.service.attestation.TokenAnomalyAction.WARN
+        "refuse" -> com.example.pinvault.server.service.attestation.TokenAnomalyAction.REFUSE
+        else -> error("PINVAULT_TOKEN_ANOMALY must be off, warn or refuse (got '${com.example.pinvault.server.service.ServerEnv.get("PINVAULT_TOKEN_ANOMALY")}')")
+    }
+    val tokenAnomalyDetector = tokenAnomalyAction?.let {
+        com.example.pinvault.server.service.attestation.TokenAnomalyDetector(
+            windowSeconds = com.example.pinvault.server.service.ServerEnv.get("PINVAULT_TOKEN_ANOMALY_WINDOW_SECONDS")?.trim()?.toLongOrNull()
+                ?: com.example.pinvault.server.service.attestation.TokenAnomalyDetector.DEFAULT_WINDOW_SECONDS,
+            maxAddresses = com.example.pinvault.server.service.ServerEnv.get("PINVAULT_TOKEN_ANOMALY_MAX_ADDRESSES")?.trim()?.toIntOrNull()
+                ?: com.example.pinvault.server.service.attestation.TokenAnomalyDetector.DEFAULT_MAX_ADDRESSES,
+            maxRequests = com.example.pinvault.server.service.ServerEnv.get("PINVAULT_TOKEN_ANOMALY_MAX_REQUESTS")?.trim()?.toIntOrNull()
+                ?: com.example.pinvault.server.service.attestation.TokenAnomalyDetector.DEFAULT_MAX_REQUESTS
+        )
+    }
+    val attestationAnomalyTtl = com.example.pinvault.server.service.ServerEnv.get("ATTESTATION_ANOMALY_TTL_SECONDS")?.trim()?.takeIf { it.isNotEmpty() }?.let {
+        it.toLongOrNull()?.takeIf { v -> v in 60..30L * 86_400 } ?: error("ATTESTATION_ANOMALY_TTL_SECONDS must be 60–2592000 (got '$it')")
+    } ?: com.example.pinvault.server.service.attestation.AttestationService.DEFAULT_ANOMALY_TTL_SECONDS
     val attestationPolicyStore = com.example.pinvault.server.store.AttestationPolicyStore(db)
     val attestedDeviceStore = com.example.pinvault.server.store.AttestedDeviceStore(db)
     // The HS256 secrets of PinVault-Token, encrypted at rest; the first one is made on first use.
@@ -592,7 +613,8 @@ private fun startServer() {
         // A newer signing-key set resets the devices' config watermarks: config_rollback starts again under it.
         keySetVersion = { signingKeySetService.currentVersion() },
         // ATTESTATION_FRESH_INTERVAL_SECONDS / _GRACE_SECONDS: a fresh key attestation now and then (§3.1).
-        fresh = com.example.pinvault.server.service.attestation.FreshAttestationSettings.fromEnv()
+        fresh = com.example.pinvault.server.service.attestation.FreshAttestationSettings.fromEnv(),
+        anomalyTtlSeconds = attestationAnomalyTtl
     )
     val attestationLimits = com.example.pinvault.server.route.AttestationLimits.of(attestationRateLimit, attestationDeviceRateLimit)
     println("ATTESTATION_ENABLED=${if (attestationEnabled) "true" else "false"}, ATTESTATION_KEY_POLICY=${attestationKeyPolicy.name.lowercase()}, " +
@@ -602,6 +624,7 @@ private fun startServer() {
         (if (mockHostRequireToken) ", mock hosts require PinVault-Token" else "") +
         (if (mockHostRequireToken && tokenRequireCertBinding) " bound to the client certificate" else "") +
         (if (mockHostRequireToken && tokenRequireProof) " with a PinVault-Proof per request" else "") +
+        (tokenAnomalyDetector?.let { d -> ", token anomalies (${tokenAnomalyAction!!.name.lowercase()}: > ${d.maxAddresses} addresses or > ${d.maxRequests} requests per ${d.windowSeconds} s, flag for $attestationAnomalyTtl s)" } ?: "") +
         attestationService.fresh.let { f ->
             if (f.enabled) ", fresh key attestation every ${f.intervalSeconds} s (overdue after ${f.graceSeconds} s more)" else ", no fresh key attestation"
         })
@@ -636,6 +659,21 @@ private fun startServer() {
             audience = null
             requireCertBinding = tokenRequireCertBinding
             requireProof = tokenRequireProof
+            tokenAnomalyDetector?.let { detector ->
+                anomaly = detector
+                anomalyAction = tokenAnomalyAction!!
+                onAnomaly = { claims, found, address ->
+                    attestationService.reportAnomaly(claims.audience, claims.deviceId, "${found.kind}: ${found.addresses} addresses, ${found.requests} requests in ${found.windowSeconds} s",
+                        kotlinx.serialization.json.buildJsonObject {
+                            put("kind", kotlinx.serialization.json.JsonPrimitive(found.kind))
+                            put("addresses", kotlinx.serialization.json.JsonPrimitive(found.addresses))
+                            put("requests", kotlinx.serialization.json.JsonPrimitive(found.requests))
+                            put("windowSeconds", kotlinx.serialization.json.JsonPrimitive(found.windowSeconds))
+                            put("lastAddress", kotlinx.serialization.json.JsonPrimitive(address))
+                            put("reportedBy", kotlinx.serialization.json.JsonPrimitive("mock-host"))
+                        }, actor = "mock-host", ip = address)
+                }
+            }
         }
     }
 

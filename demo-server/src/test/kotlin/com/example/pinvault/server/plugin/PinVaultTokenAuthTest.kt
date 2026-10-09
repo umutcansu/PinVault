@@ -212,3 +212,52 @@ class PinVaultTokenAuthProofTest {
         assertEquals("proof_key", reason(PinVaultToken.HEADER to bare, "PinVault-Proof" to forBare))
     }
 }
+
+/** PINVAULT_TOKEN_ANOMALY: each device's token use counted (§5.2). */
+class PinVaultTokenAuthAnomalyTest {
+    private val secret = ByteArray(32) { 7 }
+    private val now = 1_759_660_800L
+    private val reported = mutableListOf<String>()
+    private var address = "10.0.0.1"
+
+    private fun ApplicationTestBuilder.app(action: com.example.pinvault.server.service.attestation.TokenAnomalyAction, proof: Boolean = false) {
+        install(PinVaultTokenAuth) {
+            secrets = { mapOf("k1" to secret) }
+            clock = { now }
+            requireProof = proof
+            anomaly = com.example.pinvault.server.service.attestation.TokenAnomalyDetector(maxAddresses = 2, maxRequests = 100, clock = { now })
+            anomalyAction = action
+            onAnomaly = { claims, found, at -> reported += "${claims.audience}/${claims.deviceId} ${found.kind} $at" }
+            remoteAddress = { address }
+        }
+        routing { get("/data") { call.respondText("ok") } }
+    }
+
+    private fun token() = PinVaultToken.issue("k1", secret, "dev-1", "api", "00000000", 1, 300, nowSeconds = now, keyThumbprint = "jkt")
+
+    @Test
+    fun `warn reports the device once and keeps serving it`() = testApplication {
+        app(com.example.pinvault.server.service.attestation.TokenAnomalyAction.WARN)
+        for (a in listOf("10.0.0.1", "10.0.0.2", "10.0.0.3", "10.0.0.4")) {
+            address = a
+            assertEquals(HttpStatusCode.OK, client.get("/data") { header(PinVaultToken.HEADER, token()) }.status)
+        }
+        assertEquals(listOf("api/dev-1 addresses 10.0.0.3"), reported)
+    }
+
+    @Test
+    fun `refuse answers 429 until the window ends, and a lifted token without its proof counts too`() = testApplication {
+        app(com.example.pinvault.server.service.attestation.TokenAnomalyAction.REFUSE, proof = true)
+        for (a in listOf("10.0.0.1", "10.0.0.2")) {
+            address = a
+            assertEquals(HttpStatusCode.Unauthorized, client.get("/data") { header(PinVaultToken.HEADER, token()) }.status, "no proof")
+        }
+        address = "10.0.0.3"
+        val refused = client.get("/data") { header(PinVaultToken.HEADER, token()) }
+        assertEquals(HttpStatusCode.TooManyRequests, refused.status)
+        assertEquals("""{"error":"token_anomaly"}""", refused.bodyAsText())
+        assertTrue((refused.headers[HttpHeaders.RetryAfter] ?: "0").toInt() > 0)
+        assertEquals(1, reported.size)
+    }
+}
+

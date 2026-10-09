@@ -74,6 +74,7 @@ object PinAffectingRoutes {
         Triple(HttpMethod.Put, Regex("^/api/v1/config-apis/[^/]+/attestation/policy$"), "attestation_policy"),
         Triple(HttpMethod.Put, Regex("^/api/v1/config-apis/[^/]+/attestation/devices/[^/]+$"), "attestation_device"),
         Triple(HttpMethod.Delete, Regex("^/api/v1/config-apis/[^/]+/attestation/devices/[^/]+$"), "attestation_device"),
+        Triple(HttpMethod.Delete, Regex("^/api/v1/config-apis/[^/]+/attestation/devices/[^/]+/anomaly$"), "attestation_device"),
         Triple(HttpMethod.Get, Regex("^/api/v1/attestation/token-secrets$"), "attestation_token_secrets"),
         Triple(HttpMethod.Post, Regex("^/api/v1/attestation/token-secrets/rotate$"), "attestation_token_secret_rotate"),
         Triple(HttpMethod.Delete, Regex("^/api/v1/attestation/token-secrets/[^/]+$"), "attestation_token_secret_delete")

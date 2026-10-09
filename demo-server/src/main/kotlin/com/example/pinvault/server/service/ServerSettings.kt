@@ -106,6 +106,10 @@ object ServerSettingsCatalog {
         ServerSetting("ATTESTATION_FRESH_GRACE_SECONDS", "attestation", ServerSetting.Kind.NUMBER, "259200", min = 0, max = 30L * 86_400),
         ServerSetting("MOCK_HOST_REQUIRE_TOKEN", "attestation", ServerSetting.Kind.BOOL, "false"),
         ServerSetting("PINVAULT_TOKEN_REQUIRE_PROOF", "attestation", ServerSetting.Kind.BOOL, "false"),
+        ServerSetting("PINVAULT_TOKEN_ANOMALY", "attestation", ServerSetting.Kind.CHOICE, "off", listOf("off", "warn", "refuse")),
+        ServerSetting("PINVAULT_TOKEN_ANOMALY_MAX_ADDRESSES", "attestation", ServerSetting.Kind.NUMBER, "8", min = 1, max = 1000),
+        ServerSetting("PINVAULT_TOKEN_ANOMALY_MAX_REQUESTS", "attestation", ServerSetting.Kind.NUMBER, "1200", min = 1, max = 1_000_000),
+        ServerSetting("ATTESTATION_ANOMALY_TTL_SECONDS", "attestation", ServerSetting.Kind.NUMBER, "3600", min = 60, max = 30L * 86_400),
         // What the wizard writes into the app
         ServerSetting("SETUP_PUBLIC_HOST", "setup", ServerSetting.Kind.TEXT, "", pattern = hostName),
         ServerSetting("SETUP_PUBLIC_PORTS", "setup", ServerSetting.Kind.TEXT, "", pattern = portPairs)

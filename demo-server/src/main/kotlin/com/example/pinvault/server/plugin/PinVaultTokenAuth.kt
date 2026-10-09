@@ -3,6 +3,8 @@ package com.example.pinvault.server.plugin
 import com.example.pinvault.server.route.clientCertificate
 import com.example.pinvault.server.service.attestation.PinVaultProof
 import com.example.pinvault.server.service.attestation.PinVaultToken
+import com.example.pinvault.server.service.attestation.TokenAnomalyAction
+import com.example.pinvault.server.service.attestation.TokenAnomalyDetector
 import io.ktor.http.ContentType
 import io.ktor.http.HttpHeaders
 import io.ktor.http.HttpStatusCode
@@ -30,7 +32,11 @@ import io.ktor.util.AttributeKey
  * `cnf.x5t#S256` names (the one the device attested with). With
  * [PinVaultTokenAuthConfig.requireProof] every request also carries a
  * `PinVault-Proof` made for it with the key the token's `cnf.jkt` names
- * ([PinVaultProof], §5.1). Anything else is `401` with
+ * ([PinVaultProof], §5.1). With [PinVaultTokenAuthConfig.anomaly] each
+ * device's valid tokens are counted per address and per window (§5.2): a
+ * device over a limit is reported to [PinVaultTokenAuthConfig.onAnomaly]
+ * and, with [TokenAnomalyAction.REFUSE], answered `429 token_anomaly` until
+ * the window ends. Anything else is `401` with
  * `WWW-Authenticate: PinVault-Token error="invalid_token", error_description="…"`
  * and `{"error":"invalid_token","reason":"missing|malformed|unknown_kid|signature|issuer|expired|audience|annotations|device_mismatch|cert_binding|proof_…"}`
  * — the shape the library's interceptor recognises to re-attest once and
@@ -88,6 +94,18 @@ class PinVaultTokenAuthConfig {
     /** Spent proof `jti`s; one per backend. */
     var proofReplay: PinVaultProof.ReplayCache = PinVaultProof.ReplayCache()
 
+    /** `PINVAULT_TOKEN_ANOMALY`: counts each device's token use (§5.2); null = off. */
+    var anomaly: TokenAnomalyDetector? = null
+
+    /** What a device over a limit gets: reported only, or refused until the window ends. */
+    var anomalyAction: TokenAnomalyAction = TokenAnomalyAction.WARN
+
+    /** Told once per window when a device crosses a limit (the reference server records it, §5.2). */
+    var onAnomaly: (claims: PinVaultToken.Claims, anomaly: TokenAnomalyDetector.Anomaly, address: String) -> Unit = { _, _, _ -> }
+
+    /** The client address a request counts for; behind a proxy, the one it forwarded. */
+    var remoteAddress: (ApplicationCall) -> String = { it.request.origin.remoteAddress }
+
     /** The verified client certificate of the call (tests replace it). */
     var clientCertificate: (ApplicationCall) -> java.security.cert.X509Certificate? = { it.clientCertificate() }
 
@@ -116,6 +134,10 @@ val PinVaultTokenAuth = createApplicationPlugin(name = "PinVaultTokenAuth", ::Pi
         require(PinVaultProof.normalizedUrl("$it/") != null) { "publicOrigin must be an http(s) origin, e.g. https://api.example.com" }
     }
     val replay = pluginConfig.proofReplay
+    val anomaly = pluginConfig.anomaly
+    val anomalyAction = pluginConfig.anomalyAction
+    val onAnomaly = pluginConfig.onAnomaly
+    val addressOf = pluginConfig.remoteAddress
 
     onCall { call ->
         if (call.response.isCommitted) return@onCall
@@ -139,6 +161,21 @@ val PinVaultTokenAuth = createApplicationPlugin(name = "PinVaultTokenAuth", ::Pi
                 val claimedDevice = call.request.header("X-Device-Id")?.trim()?.takeIf { it.isNotEmpty() }
                 if (claimedDevice != null && claimedDevice != result.claims.deviceId) {
                     return@onCall call.refuseToken("device_mismatch", "The token was issued to another device.")
+                }
+                if (anomaly != null) {
+                    // Counted once the token is genuine and names this device, whatever the proof says:
+                    // a lifted token used without its key is evidence too.
+                    val device = result.claims.audience + ":" + result.claims.deviceId
+                    val address = addressOf(call)
+                    anomaly.observe(device, address)?.let { found ->
+                        runCatching { onAnomaly(result.claims, found, address) }
+                    }
+                    if (anomalyAction == TokenAnomalyAction.REFUSE) {
+                        anomaly.flaggedUntil(device)?.let { until ->
+                            call.response.header(HttpHeaders.RetryAfter, (until - clock()).coerceAtLeast(1).toString())
+                            return@onCall call.respondText("""{"error":"token_anomaly"}""", ContentType.Application.Json, HttpStatusCode.TooManyRequests)
+                        }
+                    }
                 }
                 if (requireCertBinding) {
                     val bound = result.claims.certThumbprint
