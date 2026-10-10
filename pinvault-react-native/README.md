@@ -102,6 +102,18 @@ npx expo install @umutcansu/react-native-pinvault
 Unknown options and wrong types stop prebuild. Tested with Expo SDK 54
 (React Native 0.81) on Android and iOS, release builds.
 
+**Backup rules.** The Android library keeps its stores out of cloud backup
+and device transfer with its own `fullBackupContent` / `dataExtractionRules`.
+An app (or a plugin such as `expo-secure-store`) that sets its own rules used
+to fail the manifest merge; replacing them by hand would drop PinVault's
+excludes. At the end of prebuild the plugin copies each such rules
+file (from the app or a library under `node_modules`) to
+`res/xml/pinvault_merged_<name>.xml` with PinVault's excludes added, and
+points the manifest at the copy with `tools:replace`. Rules it cannot find stop
+prebuild. A bare React Native app with its own rules adds the
+`<exclude>` lines of the library's `pinvault_backup_rules.xml` /
+`pinvault_data_extraction_rules.xml` to them and uses `tools:replace`.
+
 ## Quick start
 
 ```ts

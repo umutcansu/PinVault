@@ -29,9 +29,11 @@ const {
   withAppDelegate,
   withDangerousMod,
   withInfoPlist,
+  withFinalizedMod,
   withPodfileProperties,
   withXcodeProject,
   createRunOncePlugin,
+  XML,
 } = configPlugins;
 
 const pkg = require('../package.json');
@@ -41,6 +43,29 @@ const BG_TASK_ID = 'io.github.umutcansu.pinvault.refresh';
 const MIN_IOS = '16.0';
 const ALLOW_NO_FILE_META = 'io.github.umutcansu.pinvault.ALLOW_NO_NATIVE_SECURITY_FILE';
 const NETWORKING_PROVIDER = 'io.github.umutcansu.pinvault.reactnative.PinVaultNetworkingInitializer';
+// PinVault's own backup rules (pinvault/src/main/res/xml): what must never
+// reach a backup or a device transfer. The test checks this list against them.
+const BACKUP_EXCLUDES = [
+  ['sharedpref', 'pinvault_secure_config.xml'],
+  ['sharedpref', 'pinvault_secure_client_cert.xml'],
+  ['sharedpref', 'pinvault_secure_signing_keys.xml'],
+  ['sharedpref', 'pinvault_secure_vault_files.xml'],
+  ['sharedpref', 'pinvault_vault_file_versions.xml'],
+  ['file', 'vault_files'],
+  ['sharedpref', 'pinvault_client_cert.xml'],
+  ['sharedpref', 'ssl_cert_config.xml'],
+  ['sharedpref', 'ssl_cert_config_default.xml'],
+  ['sharedpref', 'ssl_cert_config_default-tls.xml'],
+  ['sharedpref', 'ssl_cert_config_secure-mtls.xml'],
+  ['sharedpref', 'pinvault_signing_keys.xml'],
+  ['sharedpref', 'pinvault_vault_files.xml'],
+];
+const OWN_RULES = {
+  'android:fullBackupContent': '@xml/pinvault_backup_rules',
+  'android:dataExtractionRules': '@xml/pinvault_data_extraction_rules',
+};
+const MERGED_PREFIX = 'pinvault_merged_';
+const MERGED_FROM = /<!-- pinvault-merged-from: @xml\/([A-Za-z0-9_]+) -->/;
 const KNOWN_OPTIONS = [
   'nativeSecurityFile',
   'faceIDPermission',
@@ -159,6 +184,136 @@ function applyAndroidManifest(manifest, props) {
   return manifest;
 }
 
+/** Whether an `<include>` list (empty = everything) takes in [domain]/[file]. */
+function included(includes, domain, file) {
+  if (includes.length === 0) return true;
+  return includes.some((i) => {
+    const d = i.$ && i.$.domain;
+    const p = String((i.$ && i.$.path) || '.').replace(/^\.\/?/, '').replace(/\/$/, '');
+    return d === domain && (p === '' || file === p || file.startsWith(`${p}/`));
+  });
+}
+
+/**
+ * Adds PinVault's excludes to one rules element (a parsed `<full-backup-content>`
+ * or a section). Only where the element's includes reach: lint refuses an
+ * exclude outside every include (FullBackupContent), and such a file is not
+ * backed up anyway.
+ */
+function addExcludes(node) {
+  const out = node && typeof node === 'object' ? node : {};
+  const includes = Array.isArray(out.include) ? out.include : [];
+  out.exclude = Array.isArray(out.exclude) ? out.exclude : [];
+  for (const [domain, file] of BACKUP_EXCLUDES) {
+    if (!included(includes, domain, file)) continue;
+    if (!out.exclude.some((e) => e.$ && e.$.domain === domain && e.$.path === file)) {
+      out.exclude.push({ $: { domain, path: file } });
+    }
+  }
+  return out;
+}
+
+/**
+ * An app's backup rules (parsed with XML.parseXMLAsync) with PinVault's
+ * excludes added. Excludes win over includes, so an app that includes
+ * `sharedpref/.` still keeps PinVault's stores out. A data-extraction section
+ * the app does not write (= everything) gets one with PinVault's excludes.
+ */
+function mergeBackupRules(xml) {
+  if (xml && 'full-backup-content' in xml) {
+    return { 'full-backup-content': addExcludes(xml['full-backup-content']) };
+  }
+  if (xml && 'data-extraction-rules' in xml) {
+    const root = xml['data-extraction-rules'] && typeof xml['data-extraction-rules'] === 'object' ? xml['data-extraction-rules'] : {};
+    for (const section of ['cloud-backup', 'device-transfer']) {
+      root[section] = (Array.isArray(root[section]) ? root[section] : [{}]).map(addExcludes);
+    }
+    if (Array.isArray(root['cross-platform-transfer'])) root['cross-platform-transfer'] = root['cross-platform-transfer'].map(addExcludes);
+    return { 'data-extraction-rules': root };
+  }
+  throw new Error(`[${pkg.name}] backup rules file has neither <full-backup-content> nor <data-extraction-rules>`);
+}
+
+/** `res/xml/<name>.xml` of the app, or of a library under node_modules (Expo modules ship theirs there). */
+function findRulesFile(projectRoot, platformRoot, name) {
+  const file = path.join('android', 'src', 'main', 'res', 'xml', `${name}.xml`);
+  const candidates = [path.join(platformRoot, 'app', 'src', 'main', 'res', 'xml', `${name}.xml`)];
+  // node_modules of the project and its parents (monorepos hoist packages up).
+  for (let dir = path.resolve(projectRoot); ; dir = path.dirname(dir)) {
+    const modules = path.join(dir, 'node_modules');
+    if (fs.existsSync(modules)) {
+      for (const entry of fs.readdirSync(modules)) {
+        if (entry.startsWith('@')) {
+          for (const scoped of fs.readdirSync(path.join(modules, entry))) candidates.push(path.join(modules, entry, scoped, file));
+        } else {
+          candidates.push(path.join(modules, entry, file));
+        }
+      }
+    }
+    if (path.dirname(dir) === dir) break;
+  }
+  return candidates.find((c) => fs.existsSync(c));
+}
+
+/**
+ * AndroidManifest.xml on disk, after every other plugin: an app (or a plugin
+ * such as expo-secure-store) that sets its own `fullBackupContent` /
+ * `dataExtractionRules` clashed with PinVault's at the manifest merge, and a
+ * hand-written `tools:replace` would drop PinVault's excludes. Each such file
+ * is copied to `res/xml/pinvault_merged_<name>.xml` with PinVault's excludes
+ * added, and the manifest points at the copy with `tools:replace`. Idempotent:
+ * a rerun without --clean merges from the original again.
+ */
+async function mergeAndroidBackupRules(projectRoot, platformRoot) {
+  const manifestPath = path.join(platformRoot, 'app', 'src', 'main', 'AndroidManifest.xml');
+  const manifest = await XML.readXMLAsync({ path: manifestPath });
+  const app = AndroidConfig.Manifest.getMainApplicationOrThrow(manifest);
+  const resDir = path.join(platformRoot, 'app', 'src', 'main', 'res', 'xml');
+  const replace = new Set(String(app.$['tools:replace'] || '').split(',').map((s) => s.trim()).filter(Boolean));
+  let changed = false;
+  for (const attr of Object.keys(OWN_RULES)) {
+    const value = app.$[attr];
+    if (value === undefined || value === OWN_RULES[attr]) continue;
+    // fullBackupContent="false": no full backup at all, stricter than PinVault's rules.
+    if (attr === 'android:fullBackupContent' && value === 'false') {
+      if (!replace.has(attr)) { replace.add(attr); changed = true; }
+      continue;
+    }
+    const ref = /^@xml\/([A-Za-z0-9_]+)$/.exec(value);
+    if (!ref) throw new Error(`[${pkg.name}] ${attr}="${value}" is not an @xml resource; merge PinVault's backup excludes by hand (README, "Expo")`);
+    let name = ref[1];
+    if (name.startsWith(MERGED_PREFIX)) {
+      const previous = path.join(resDir, `${name}.xml`);
+      const from = fs.existsSync(previous) ? MERGED_FROM.exec(fs.readFileSync(previous, 'utf8')) : null;
+      if (!from) throw new Error(`[${pkg.name}] ${previous} is missing or not ours; run expo prebuild --clean`);
+      name = from[1];
+    }
+    const source = findRulesFile(projectRoot, platformRoot, name);
+    if (!source) {
+      throw new Error(`[${pkg.name}] ${attr} points at @xml/${name}, which was not found in the app or node_modules; ` +
+        "PinVault's backup excludes cannot be merged into it (README, \"Expo\")");
+    }
+    const merged = mergeBackupRules(await XML.parseXMLAsync(fs.readFileSync(source, 'utf8')));
+    const out = `${MERGED_PREFIX}${name}`;
+    fs.mkdirSync(resDir, { recursive: true });
+    fs.writeFileSync(
+      path.join(resDir, `${out}.xml`),
+      '<?xml version="1.0" encoding="utf-8"?>\n' +
+        `<!-- pinvault-merged-from: @xml/${name} -->\n` +
+        `<!-- Written by ${pkg.name} at expo prebuild: these rules plus PinVault's excludes. -->\n` +
+        XML.format(merged) + '\n'
+    );
+    app.$[attr] = `@xml/${out}`;
+    replace.add(attr);
+    changed = true;
+  }
+  if (!changed) return false;
+  manifest.manifest.$['xmlns:tools'] = manifest.manifest.$['xmlns:tools'] || 'http://schemas.android.com/tools';
+  app.$['tools:replace'] = [...replace].join(',');
+  await XML.writeXMLAsync({ path: manifestPath, xml: manifest });
+  return true;
+}
+
 function withPinVault(config, options) {
   const props = checkOptions(options);
 
@@ -188,6 +343,15 @@ function withPinVault(config, options) {
     c.modResults = applyAndroidManifest(c.modResults, props);
     return c;
   });
+
+  // Last of all: other plugins have written their backup rules by then.
+  config = withFinalizedMod(config, [
+    'android',
+    async (c) => {
+      await mergeAndroidBackupRules(c.modRequest.projectRoot, c.modRequest.platformProjectRoot);
+      return c;
+    },
+  ]);
 
   if (props.backgroundUpdates) {
     config = withAppDelegate(config, (c) => {
@@ -229,4 +393,7 @@ function withPinVault(config, options) {
 }
 
 module.exports = createRunOncePlugin(withPinVault, pkg.name, pkg.version);
-module.exports.internal = { addBackgroundTaskToAppDelegate, applyInfoPlist, applyAndroidManifest, checkOptions, versionLess };
+module.exports.internal = {
+  addBackgroundTaskToAppDelegate, applyInfoPlist, applyAndroidManifest, checkOptions, versionLess,
+  mergeBackupRules, mergeAndroidBackupRules, BACKUP_EXCLUDES,
+};

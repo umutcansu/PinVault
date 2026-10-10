@@ -1,5 +1,27 @@
 # Changelog
 
+## Unreleased
+
+### Reference server
+
+- **`TRUSTED_PROXIES` / `CLIENT_IP_HEADER`:** behind Cloudflare, a tunnel or a
+  load balancer every device came from the proxy's address, so the
+  per-address limits (enrollment, key registration, reports, refusal
+  cut-offs, admin key guesses) counted the whole fleet as one caller. A
+  connection from a listed proxy may now name the client (`X-Forwarded-For`
+  read from the right, or a one-address header such as `CF-Connecting-IP`);
+  anyone else's header is ignored. A proxy peer never counts as "this
+  machine" for anonymous admin.
+- **Device requests are logged:** one line per request on the Config API and
+  recovery listeners (logger `ConfigApiAccess`: listener, status, path without
+  query, client address, device id, time); `LOG_LEVEL_CONFIG_API_ACCESS=OFF`
+  turns it off. Before, only the management port logged requests.
+
+### React Native
+
+- See `pinvault-react-native/CHANGELOG.md`: the Expo config plugin merges
+  PinVault's backup excludes into an app's own backup rules.
+
 ## 2.4.2 — 2026-10-10 — Expo config plugin, relaxations refused in release builds, ES256 tokens, safer server defaults
 
 ### Reference server

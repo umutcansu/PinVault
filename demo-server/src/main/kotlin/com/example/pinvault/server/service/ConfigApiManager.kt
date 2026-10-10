@@ -1,5 +1,6 @@
 package com.example.pinvault.server.service
 
+import com.example.pinvault.server.plugin.installRequestLog
 import com.example.pinvault.server.plugin.ApiKeyAuth
 import io.ktor.http.*
 import io.ktor.serialization.kotlinx.json.*
@@ -88,6 +89,9 @@ class ConfigApiManager(
         }) {
             // First: no plugin or route may see a path that hides a '/' in an escape.
             install(com.example.pinvault.server.plugin.EncodedPathGuard)
+            // The device's own address behind a trusted proxy, before anything counts by address.
+            install(com.example.pinvault.server.plugin.ClientAddress)
+            installRequestLog("$id :$port")
             install(ContentNegotiation) {
                 json(Json {
                     prettyPrint = true

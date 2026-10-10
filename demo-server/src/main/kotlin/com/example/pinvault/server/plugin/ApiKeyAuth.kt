@@ -160,6 +160,23 @@ internal object PeerRules {
         return rules.any { rule -> matches(address, rule) }
     }
 
+    /** Whether [peer] (an IP literal) matches one of [rules]; loopback gets no exception here. */
+    fun matchesAny(peer: String, rules: List<String>): Boolean {
+        val address = literal(peer) ?: return false
+        return rules.any { rule -> matches(address, rule) }
+    }
+
+    /**
+     * [value] from a forwarding header as an IP literal (`[v6]`, `v6`, `v4`,
+     * `v4:port`, `[v6]:port`), or null when it is not one — never a DNS lookup.
+     */
+    fun normalize(value: String): String? {
+        var v = value.trim()
+        if (v.startsWith("[")) v = v.substringAfter('[').substringBefore(']')
+        else if (v.count { it == ':' } == 1 && v.contains('.')) v = v.substringBefore(':')
+        return literal(v)?.hostAddress
+    }
+
     /** Whether [rule] (an IP literal or `ip/prefix`) is well-formed. */
     fun valid(rule: String): Boolean {
         val base = literal(rule.substringBefore('/')) ?: return false
@@ -220,7 +237,10 @@ val ApiKeyAuth = createApplicationPlugin(name = "ApiKeyAuth", ::ApiKeyAuthConfig
             // The Host header is the client's word (AdminBrowserGuard checks it for
             // browsers); the socket's peer is not. With MANAGEMENT_BIND=0.0.0.0 any
             // program on the network could otherwise send `Host: localhost:8090`.
-            if (!PeerRules.allowed(call.request.local.remoteAddress, peers)) {
+            // A trusted proxy (TRUSTED_PROXIES) relays other people's requests: a
+            // tunnel on this machine must not make the whole internet "loopback".
+            val peer = call.request.local.remoteAddress
+            if (TrustedProxies.isProxy(peer) || !PeerRules.allowed(peer, peers)) {
                 return@onCall call.refuseAnonymous("peer_not_allowed",
                     "Without an admin key this API answers only connections from this machine. " +
                         "A container gateway can be added with ANONYMOUS_ADMIN_PEERS.")
@@ -261,9 +281,10 @@ val ApiKeyAuth = createApplicationPlugin(name = "ApiKeyAuth", ::ApiKeyAuthConfig
 
         // An address that kept sending wrong keys is cut off before its next
         // key is compared: guessing keys costs 10 minutes per batch. The socket's
-        // own peer, never a forwarded header. Callers with the right key never
-        // count — only refusals do.
-        val source = com.example.pinvault.server.service.RateLimiter.sourceKey(call.request.local.remoteAddress)
+        // own peer, or — only from a TRUSTED_PROXIES peer — the client that proxy
+        // names (otherwise one bad caller behind it would lock every admin out).
+        // Callers with the right key never count — only refusals do.
+        val source = com.example.pinvault.server.service.RateLimiter.sourceKey(call.request.origin.remoteAddress)
         if (failureLimiter != null && failureLimiter.exceeded(source)) {
             call.response.header(HttpHeaders.RetryAfter, "600")
             call.respond(HttpStatusCode.TooManyRequests, mapOf("error" to "Too many invalid admin keys from this address; try again later"))
@@ -467,7 +488,7 @@ object ApiKeyPolicy {
 /** 403 for an anonymous admin request this listener or peer may not make; audited like a browser-guard refusal. */
 private suspend fun ApplicationCall.refuseAnonymous(error: String, message: String) {
     try {
-        BrowserGuardRefusals.listener?.invoke(request.local.remoteAddress, request.httpMethod.value, request.path(), error)
+        BrowserGuardRefusals.listener?.invoke(request.origin.remoteAddress, request.httpMethod.value, request.path(), error)
     } catch (_: Exception) { /* auditing must never break the refusal */ }
     respondText(
         kotlinx.serialization.json.buildJsonObject {

@@ -89,6 +89,12 @@ services:
       # "URL'den sertifika al" bu makineye ve yerel ağa yalnızca true iken bağlanır.
       # Demo: true (setup.sh yazar). Üretim: boş.
       FETCH_ALLOW_PRIVATE_TARGETS: ${FETCH_ALLOW_PRIVATE_TARGETS:-}
+      # Ters vekil (Cloudflare tüneli, yük dengeleyici) arkasında: vekilin adresleri
+      # (IP ya da CIDR) ve gerçek istemci adresinin geldiği başlık. Boş: başlık okunmaz.
+      TRUSTED_PROXIES: ${TRUSTED_PROXIES:-}
+      CLIENT_IP_HEADER: ${CLIENT_IP_HEADER:-}
+      # Cihaz isteklerinin log satırları (Config API portları); OFF kapatır.
+      LOG_LEVEL_CONFIG_API_ACCESS: ${LOG_LEVEL_CONFIG_API_ACCESS:-}
       ENROLLMENT_TOKEN_TTL_SECONDS: ${ENROLLMENT_TOKEN_TTL_SECONDS:-}
       # Onay bekleyen başvurular: cevapsız başvurunun ömrü (saat, varsayılan 24);
       # kodsuz başvurularda bir IP'den 10 dakikada en fazla yeni başvuru (20)
