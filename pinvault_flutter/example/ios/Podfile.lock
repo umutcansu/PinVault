@@ -1,0 +1,21 @@
+PODS:
+  - Flutter (1.0.0)
+  - PinVault (2.4.2)
+
+DEPENDENCIES:
+  - Flutter (from `Flutter`)
+  - PinVault (from `../../..`)
+
+EXTERNAL SOURCES:
+  Flutter:
+    :path: Flutter
+  PinVault:
+    :path: "../../.."
+
+SPEC CHECKSUMS:
+  Flutter: 71a624a5bc0c04062bf19101d501e466baf2fb47
+  PinVault: e5f1b04b0503be6228a850945234f257d6acb0c7
+
+PODFILE CHECKSUM: cb5a9f07933a9b49d9427ba5382b177f5fd76402
+
+COCOAPODS: 1.16.2
