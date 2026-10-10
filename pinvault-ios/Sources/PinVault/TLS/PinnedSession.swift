@@ -58,6 +58,25 @@ public final class PinnedSession: @unchecked Sendable {
         try await data(for: URLRequest(url: url))
     }
 
+    /// A pinned `wss://` (or `ws://`) WebSocket task over this session's own
+    /// TLS machinery — the delegate that answers the server-trust and
+    /// client-certificate (mTLS) challenges, so a pinned, mTLS-capable socket.
+    /// Fail-closed: before `start` has applied a config (or after a failed one)
+    /// this throws. Call `task.resume()`, then `task.send` / `task.receive`;
+    /// the task lives as long as this session does.
+    ///
+    /// A `resolve(host:to:)` entry for the host does not apply: the socket would
+    /// connect to a different address than the one the delegate pins, so such a
+    /// socket is refused (fail closed) rather than silently misrouted.
+    public func webSocketTask(for request: URLRequest) throws -> URLSessionWebSocketTask {
+        try transport.webSocketTask(for: request)
+    }
+
+    /// ``webSocketTask(for:)`` for a URL.
+    public func webSocketTask(with url: URL) throws -> URLSessionWebSocketTask {
+        try webSocketTask(for: URLRequest(url: url))
+    }
+
     /// Cancels outstanding requests and releases the session; later requests fail.
     public func invalidateAndCancel() {
         transport.invalidate()
@@ -135,6 +154,7 @@ protocol PinnedInterceptor: Sendable {
 /// (``URLSessionTransport``), an interceptor chain around it, or a refusal.
 protocol PinnedTransport: Sendable {
     func send(_ exchange: PinnedExchange) async throws -> PinnedResponse
+    func webSocketTask(for request: URLRequest) throws -> URLSessionWebSocketTask
     func invalidate()
 }
 
@@ -142,6 +162,12 @@ extension PinnedTransport {
     func data(for request: URLRequest) async throws -> (Data, URLResponse) {
         let response = try await send(PinnedExchange(request: request))
         return (response.data, response.response)
+    }
+
+    /// Default: transports that do not open WebSockets (the unavailable one,
+    /// test doubles) refuse them. ``URLSessionTransport`` overrides this.
+    func webSocketTask(for request: URLRequest) throws -> URLSessionWebSocketTask {
+        throw PinVaultError.illegalState("This pinned session does not open WebSockets")
     }
 }
 
@@ -161,6 +187,10 @@ struct InterceptedTransport: PinnedTransport {
         }
     }
 
+    func webSocketTask(for request: URLRequest) throws -> URLSessionWebSocketTask {
+        try base.webSocketTask(for: request)
+    }
+
     func invalidate() {
         base.invalidate()
     }
@@ -171,6 +201,10 @@ struct UnavailableTransport: PinnedTransport {
     let reason: String
 
     func send(_ exchange: PinnedExchange) async throws -> PinnedResponse {
+        throw PinVaultError.sslHandshake(message: reason, cause: PinVaultError.illegalState(reason))
+    }
+
+    func webSocketTask(for request: URLRequest) throws -> URLSessionWebSocketTask {
         throw PinVaultError.sslHandshake(message: reason, cause: PinVaultError.illegalState(reason))
     }
 

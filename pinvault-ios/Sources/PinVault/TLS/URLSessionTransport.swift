@@ -201,6 +201,36 @@ final class URLSessionTransport: PinnedTransport, @unchecked Sendable {
         return PinnedResponse(data: outcome.data, response: answer, presentedClientCertificate: entry.delegate.presentedClientCertificate)
     }
 
+    /// A `URLSessionWebSocketTask` on the pinned session for the URL's host and
+    /// port (the same delegate that answers the server-trust and client-certificate
+    /// challenges, so the socket is pinned and mTLS-capable). `wss` maps to the
+    /// `https` session, `ws` to `http`. Before `start` (or after a failed one)
+    /// `session(_:_:_:)` fails closed, as does a `resolve` override whose address
+    /// would not match the delegate's pinned connect address.
+    func webSocketTask(for request: URLRequest) throws -> URLSessionWebSocketTask {
+        guard let url = request.url,
+              let scheme = url.scheme?.lowercased(), scheme == "wss" || scheme == "ws",
+              let rawHost = url.host, !rawHost.isEmpty else {
+            throw PinVaultError.illegalArgument("Expected a wss:// or ws:// URL with a host: \(request.url?.absoluteString ?? "nil")")
+        }
+        let host = DynamicSSLManager.bareHost(rawHost).lowercased()
+        let httpScheme = scheme == "wss" ? "https" : "http"
+        let port = url.port ?? (scheme == "wss" ? 443 : 80)
+        let entry = try session(scheme: httpScheme, host: host, port: port)
+
+        // The same per-request re-check a data task gets: a pin set that moved
+        // (or a config that expired) refuses the socket before it opens.
+        if scheme == "wss", let provider = trust.configProvider {
+            do {
+                try PinnedConnectionInterceptor.check(manager: manager, config: provider(), host: host)
+            } catch {
+                retire(key: Self.key(httpScheme, host, port), entry)
+                throw error
+            }
+        }
+        return entry.session.webSocketTask(with: url)
+    }
+
     /// Runs one data task whose body the delegate collects under `limit`; the
     /// task identifier says where the delegate recorded a refusal.
     private func run(
