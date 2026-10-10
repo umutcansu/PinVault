@@ -87,6 +87,24 @@ into the clear needs an explicit opt-in, which never reaches the library's own
 sessions: `applyTo(configuration, followCleartextRedirects: true)` or
 `HttpConnectionSettings(followCleartextRedirects: true)`.
 
+### Pinned WebSockets
+
+A `wss://` socket rides the same TLS machinery as `session()` — server-trust
+pinning **and** mTLS (client certificate) — instead of the lower-level
+`evaluateServerTrust` hook, which has no client-certificate path:
+
+```swift
+let task = try PinVault.shared.session().webSocketTask(
+    for: URLRequest(url: URL(string: "wss://api.example.com/ws")!))
+task.resume()
+task.receive { result in /* frames; a clean close leaves task.closeCode != .invalid */ }
+task.send(.string("hello")) { _ in }
+```
+
+Fail closed: before `start` (or after a failed one) the call throws, and a
+`resolve(host:to:)` entry for the host refuses the socket rather than
+connecting to a different address than the one the delegate pins.
+
 ### Hosts that resolve elsewhere
 
 The counterpart of OkHttp's `Dns`: the request goes to the given address,

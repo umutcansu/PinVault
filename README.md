@@ -6,11 +6,12 @@
 
 Signed pins from your own server, mTLS with keys that never leave the phone,
 versioned files only your devices can open, and attestation that tells your
-app from a script — for Android, iOS and React Native.
+app from a script — for Android, iOS, React Native and Flutter.
 
 [![Maven Central](https://img.shields.io/maven-central/v/io.github.umutcansu/pinvault?label=Android)](https://central.sonatype.com/artifact/io.github.umutcansu/pinvault)
 [![SwiftPM](https://img.shields.io/badge/iOS-SwiftPM%202.4.1-F05138?logo=swift&logoColor=white)](pinvault-ios/README.md)
 [![npm](https://img.shields.io/npm/v/@umutcansu/react-native-pinvault?label=React%20Native&logo=react)](https://www.npmjs.com/package/@umutcansu/react-native-pinvault)
+[![Flutter](https://img.shields.io/badge/Flutter-plugin-02569B?logo=flutter&logoColor=white)](pinvault_flutter/README.md)
 [![License](https://img.shields.io/badge/license-Apache%202.0-blue)](LICENSE)
 
 [Quick start](#quick-start) · [Features](#what-you-get) · [How it works](#how-it-works) · [Guide](GUIDE.md) · [Server](#the-server) · [Changelog](CHANGELOG.md)
@@ -665,6 +666,7 @@ mTLS, vault files and attestation add their own endpoints:
 | [GUIDE.md](GUIDE.md) | The full reference: every option, every check, what changed in which release |
 | [pinvault-ios/README.md](pinvault-ios/README.md) · [PORTING.md](pinvault-ios/PORTING.md) | iOS specifics, and how each Android piece maps to iOS |
 | [pinvault-react-native/README.md](pinvault-react-native/README.md) | The JS config shape, networking, the native security file |
+| [pinvault_flutter/README.md](pinvault_flutter/README.md) | The Flutter bridge (unreleased): Dart API, native security file, OWASP controls, tests |
 | [ATTESTATION.md](ATTESTATION.md) | The attestation protocol, policy, Play Integrity and App Attest |
 | [SCREEN_LOCK.md](SCREEN_LOCK.md) | Files behind the screen lock, per Android version |
 | [SECURE_OPERATIONS.md](SECURE_OPERATIONS.md) | Signing keys, rotation, governance, runbooks |
@@ -682,6 +684,7 @@ Complete apps that use every feature against one server (their READMEs are in Tu
 | [`sample-client/`](sample-client) | Android app (Java) |
 | [`sample-client-ios/`](sample-client-ios) | iOS app (SwiftUI), the same screens |
 | [`sample-client-rn/`](sample-client-rn) | React Native app |
+| [`pinvault_flutter/example/`](pinvault_flutter/example) | Flutter example app: a static-pins offline demo plus the remote pattern against the demo-server |
 | [`sample-e2e/`](sample-e2e) | Playwright end-to-end tests on Android and the iOS simulator: an action in the dashboard is checked on the phone, and the other way round. |
 
 ## Animation and films
@@ -703,6 +706,7 @@ re-render them: [`docs/animation/`](docs/animation/README.md).
 | Android | minSdk 24 (Android 7.0), Kotlin 1.9+ consumers, AGP 8.2, JDK 17, OkHttp 4 |
 | iOS | iOS 16, Swift 6 (Xcode 16+) |
 | React Native | 0.81 with the New Architecture, Hermes |
+| Flutter | 3.10+ (Dart 3); Android minSdk 24, iOS 16 |
 
 ## License
 
