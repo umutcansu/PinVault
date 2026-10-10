@@ -653,6 +653,12 @@ still lacks and writes your app's PinVault configuration. Every variable:
 admins, two-person approval, HSM/KMS signers, webhooks):
 [SECURE_OPERATIONS.md](SECURE_OPERATIONS.md).
 
+Behind Cloudflare, a tunnel or a load balancer, list the proxy in
+`TRUSTED_PROXIES` (and `CLIENT_IP_HEADER=CF-Connecting-IP` for Cloudflare):
+per-address limits and logs then see each device's own address. Every device
+request on a Config API port is logged (`LOG_LEVEL_CONFIG_API_ACCESS=OFF` turns
+it off).
+
 **Or bring your own backend** — pinning alone needs two endpoints, in any
 language:
 
