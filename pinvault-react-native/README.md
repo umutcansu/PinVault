@@ -29,9 +29,9 @@ npm install @umutcansu/react-native-pinvault
 cd ios && pod install
 ```
 
-The native libraries come with it, at the package's own version: npm 2.4.1
-uses `io.github.umutcansu:pinvault:2.4.1` from Maven Central and the Swift
-package at tag `v2.4.1`. The New Architecture must stay on (React Native's
+The native libraries come with it, at the package's own version: npm 2.4.2
+uses `io.github.umutcansu:pinvault:2.4.2` from Maven Central and the Swift
+package at tag `v2.4.2`. The New Architecture must stay on (React Native's
 default since 0.76).
 
 **iOS.** The pod depends on the PinVault Swift package through React Native's
@@ -253,7 +253,10 @@ parsed as strictly; a broken file rejects `start` with `E_INVALID_CONFIG`
   a block that only names itself rejects `start` — otherwise the bundle would
   supply the pins and keys;
 - `allowUnsigned`, `allowUnpinnedConfigApi` and `allowServerGeneratedKey` from
-  JS are refused unless the file allows them for that block;
+  JS are refused unless the file allows them for that block; a release build
+  of the native libraries (2.4.2+) refuses the first two unless the block also
+  says `allowRelaxationsInRelease()`, which the bridge adds only where the file
+  allows the relaxation;
 - a block's `url`, `enrollmentUrl`, `renewalUrl`, `tokenHosts` and
   `clientCertHosts` are fixed where the file gives them (where the block talks to, and who gets its token and identity),
   and `attestation: true` / `proofOfPossession: true` there cannot be turned off from JS;

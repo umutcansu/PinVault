@@ -9,7 +9,7 @@ versioned files only your devices can open, and attestation that tells your
 app from a script — for Android, iOS and React Native.
 
 [![Maven Central](https://img.shields.io/maven-central/v/io.github.umutcansu/pinvault?label=Android)](https://central.sonatype.com/artifact/io.github.umutcansu/pinvault)
-[![SwiftPM](https://img.shields.io/badge/iOS-SwiftPM%202.4.1-F05138?logo=swift&logoColor=white)](pinvault-ios/README.md)
+[![SwiftPM](https://img.shields.io/badge/iOS-SwiftPM%202.4.2-F05138?logo=swift&logoColor=white)](pinvault-ios/README.md)
 [![npm](https://img.shields.io/npm/v/@umutcansu/react-native-pinvault?label=React%20Native&logo=react)](https://www.npmjs.com/package/@umutcansu/react-native-pinvault)
 [![License](https://img.shields.io/badge/license-Apache%202.0-blue)](LICENSE)
 
@@ -37,9 +37,11 @@ PinVault moves the pins to your server and keeps the safety:
 - 🔌 **Server-agnostic.** Use the reference server (Docker, dashboard included),
   implement two endpoints in your own backend, or run fully offline with static pins.
 
-> **Latest release: 2.4.1** — a probe that fails no longer counts as clean, a
-> production attestation policy held in code, React Native's WebSocket pinned
-> on iOS and Android, and React Native 0.81+.
+> **Latest release: 2.4.2** — an Expo config plugin for React Native, release
+> builds that refuse test relaxations (`allowUnsigned()`,
+> `allowUnpinnedConfigApi()`) unless asked twice, and safer reference-server
+> defaults: ES256 attestation tokens with a required audience, host
+> certificates and token proofs on by default, no `changeit` P12 password.
 > See [CHANGELOG.md](CHANGELOG.md) and the upgrade notes in [MIGRATION.md](MIGRATION.md).
 
 ## What you get
@@ -86,7 +88,7 @@ behaviour and the same server, so you can move between them freely.
 ```kotlin
 // build.gradle.kts
 dependencies {
-    implementation("io.github.umutcansu:pinvault:2.4.1")
+    implementation("io.github.umutcansu:pinvault:2.4.2")
 }
 ```
 
@@ -99,7 +101,7 @@ minSdk 24, JDK 17, OkHttp 4. Java callers: see [the guide](GUIDE.md#2b-initializ
 
 ```swift
 // Package.swift — or Xcode: File → Add Package Dependencies…
-.package(url: "https://github.com/umutcansu/PinVault.git", from: "2.4.1")
+.package(url: "https://github.com/umutcansu/PinVault.git", from: "2.4.2")
 ```
 
 iOS 16+, Swift 6, no third-party dependencies. Info.plist keys for background

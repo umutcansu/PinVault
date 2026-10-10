@@ -39,7 +39,9 @@ reference for the multi-Config-API DSL. The full list of changes is in
   the old behaviour (the sample host's demo `.env` does). Mock hosts that
   require a token now also require the `PinVault-Proof` (`proofOfPossession()`
   on the block); `false` turns it off. An existing `.env` with these keys
-  **empty** now means `true`.
+  **empty** now means `true`. The sample host's `setup.sh` (demo profile)
+  writes `HOST_CLIENT_CERT_REQUIRE_GRANT=false` and
+  `CLIENT_P12_PASSWORD=changeit` where they are empty or missing.
 - **No `"changeit"` for P12s.** Uploads need the keystore's password; a client
   that does not negotiate a P12 password (libraries before 2.1) needs
   `CLIENT_P12_PASSWORD` set on the server, or it is refused before its

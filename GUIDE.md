@@ -24,9 +24,9 @@ differences are in [`pinvault-ios/README.md`](pinvault-ios/README.md) and
 ### 1. Add dependency
 
 ```gradle
-implementation("io.github.umutcansu:pinvault:2.4.1")
+implementation("io.github.umutcansu:pinvault:2.4.2")
 // optional: Play Integrity as the attestation's second opinion
-implementation("io.github.umutcansu:pinvault-play-integrity:2.4.1")
+implementation("io.github.umutcansu:pinvault-play-integrity:2.4.2")
 ```
 
 ### 2. Initialize (v2 DSL — Kotlin)
@@ -1522,12 +1522,13 @@ receive private keys at all: enroll with the default CSR flow, and leave
 `allowServerGeneratedKey()` off.
 
 For a P12 you hand over yourself (`clientKeystore(bytes, password)`), the
-`"changeit"` default is a development placeholder: use a unique high-entropy
-password per device, delivered out of band — never hard-code it in the APK.
+password is required (since 2.4.2 there is no `"changeit"` default): use a
+unique high-entropy password per device, delivered out of band — never
+hard-code it in the APK.
 
 ```kotlin
 // ❌ Don't
-.configApi("api", url) { clientKeystore(p12Bytes) }
+.configApi("api", url) { clientKeystore(p12Bytes, "changeit") }
 
 // ✅ Do
 val devicePassword = backend.fetchKeystorePassword(deviceId) // ≥ 16 random chars
