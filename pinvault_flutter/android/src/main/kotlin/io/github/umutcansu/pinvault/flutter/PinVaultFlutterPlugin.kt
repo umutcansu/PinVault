@@ -27,6 +27,7 @@ import kotlinx.coroutines.cancel
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.Response
 import okhttp3.WebSocket
@@ -94,6 +95,9 @@ class PinVaultFlutterPlugin : FlutterPlugin, MethodCallHandler, ActivityAware {
     }
 
     override fun onDetachedFromEngine(@NonNull binding: FlutterPlugin.FlutterPluginBinding) {
+        // Nobody can hear these sockets any more.
+        activeSockets.values.forEach { it.cancel() }
+        activeSockets.clear()
         channel.setMethodCallHandler(null)
         eventsChannel.setStreamHandler(null)
         guardChannel.setStreamHandler(null)
@@ -431,7 +435,7 @@ class PinVaultFlutterPlugin : FlutterPlugin, MethodCallHandler, ActivityAware {
     private fun wsConnect(call: MethodCall, result: Result) {
         val socketId = call.argument<String>("socketId")
         val url = call.argument<String>("url")
-        if (socketId == null || url == null) {
+        if (socketId.isNullOrEmpty() || url == null) {
             result.error(E_INVALID_ARGUMENT, "ws_connect: socketId and url are required", null)
             return
         }
@@ -440,15 +444,43 @@ class PinVaultFlutterPlugin : FlutterPlugin, MethodCallHandler, ActivityAware {
             return
         }
         val headers = call.argument<Map<String, String>>("headers") ?: emptyMap()
-        setupWebSocket(socketId, url, headers)
+        // Built here, so a bad URL or header is refused by connect() instead of
+        // failing silently inside the event stream. OkHttp's message can carry a
+        // header value: it is not passed on.
+        val request = try {
+            Request.Builder().url(url).apply { headers.forEach { (k, v) -> addHeader(k, v) } }.build()
+        } catch (e: IllegalArgumentException) {
+            result.error(E_INVALID_ARGUMENT, "ws_connect: the URL or a header is not valid", null)
+            return
+        }
+        val client = try {
+            PinVault.getClient()
+        } catch (e: IllegalStateException) {
+            result.error(E_NOT_STARTED, "PinVault has not started: call start() first", null)
+            return
+        }
+        setupWebSocket(socketId, client, request)
         result.success(null)
     }
 
-    private fun setupWebSocket(socketId: String, url: String, headers: Map<String, String>) {
+    /**
+     * One socket's channels. Everything here runs on the main thread (channel
+     * handlers, and OkHttp's callbacks through [postToMain]), so [activeSockets]
+     * needs no lock. A closed or failed socket reports it once and leaves
+     * [activeSockets]; its channels go when Dart cancels the event stream,
+     * which the Dart side does on every ending.
+     */
+    private fun setupWebSocket(socketId: String, client: OkHttpClient, request: Request) {
         val eventChannel = EventChannel(binding.binaryMessenger, "pinvault_flutter/ws/$socketId/events")
         val methodChannel = MethodChannel(binding.binaryMessenger, "pinvault_flutter/ws/$socketId/methods")
 
         var eventSink: EventChannel.EventSink? = null
+
+        fun ended(webSocket: WebSocket, event: Map<String, Any?>) = postToMain {
+            if (activeSockets[socketId] !== webSocket) return@postToMain
+            activeSockets.remove(socketId)
+            eventSink?.success(event)
+        }
 
         methodChannel.setMethodCallHandler { call, result ->
             when (call.method) {
@@ -458,22 +490,25 @@ class PinVaultFlutterPlugin : FlutterPlugin, MethodCallHandler, ActivityAware {
                         result.error(E_NOT_STARTED, "socket is not open", null)
                         return@setMethodCallHandler
                     }
-                    val data = call.argument<Any>("data")
-                    when (data) {
-                        is String -> ws.send(data)
+                    val sent = when (val data = call.argument<Any>("data")) {
+                        is String -> if (call.argument<Boolean>("binary") == true) ws.send(ByteString.of(*data.toByteArray())) else ws.send(data)
                         is ByteArray -> ws.send(ByteString.of(*data))
                         else -> {
                             result.error(E_INVALID_ARGUMENT, "send: data must be a string or bytes", null)
                             return@setMethodCallHandler
                         }
                     }
-                    result.success(null)
+                    if (sent) result.success(null) else result.error(E_FETCH, "send: the socket is closing or its buffer is full", null)
                 }
                 "close" -> {
                     val code = call.argument<Int>("code") ?: 1000
                     val reason = call.argument<String>("reason")
-                    activeSockets[socketId]?.close(code, reason)
-                    result.success(null)
+                    try {
+                        activeSockets[socketId]?.close(code, reason)
+                        result.success(null)
+                    } catch (e: IllegalArgumentException) {
+                        result.error(E_INVALID_ARGUMENT, "close: ${e.message}", null)
+                    }
                 }
                 else -> result.notImplemented()
             }
@@ -482,15 +517,7 @@ class PinVaultFlutterPlugin : FlutterPlugin, MethodCallHandler, ActivityAware {
         eventChannel.setStreamHandler(object : EventChannel.StreamHandler {
             override fun onListen(arguments: Any?, events: EventChannel.EventSink?) {
                 eventSink = events
-                val client = try {
-                    PinVault.getClient()
-                } catch (e: IllegalStateException) {
-                    events?.success(mapOf("type" to "error", "error" to "PinVault has not started: call start() first"))
-                    return
-                }
-                val requestBuilder = Request.Builder().url(url)
-                headers.forEach { (k, v) -> requestBuilder.addHeader(k, v) }
-                val ws = client.newWebSocket(requestBuilder.build(), object : WebSocketListener() {
+                activeSockets[socketId] = client.newWebSocket(request, object : WebSocketListener() {
                     override fun onMessage(webSocket: WebSocket, text: String) {
                         postToMain { eventSink?.success(mapOf("type" to "message", "data" to text)) }
                     }
@@ -499,20 +526,29 @@ class PinVaultFlutterPlugin : FlutterPlugin, MethodCallHandler, ActivityAware {
                         postToMain { eventSink?.success(mapOf("type" to "message", "data" to bytes.toByteArray())) }
                     }
 
+                    // The peer closed: answer its close frame (OkHttp leaves that to
+                    // the app) and report the close now, not when onClosed follows.
+                    override fun onClosing(webSocket: WebSocket, code: Int, reason: String) {
+                        webSocket.close(1000, null)
+                        ended(webSocket, mapOf("type" to "closed", "code" to code, "reason" to reason))
+                    }
+
                     override fun onClosed(webSocket: WebSocket, code: Int, reason: String) {
-                        postToMain { eventSink?.success(mapOf("type" to "closed", "code" to code, "reason" to reason)) }
+                        ended(webSocket, mapOf("type" to "closed", "code" to code, "reason" to reason))
                     }
 
                     override fun onFailure(webSocket: WebSocket, t: Throwable, response: Response?) {
-                        postToMain { eventSink?.success(mapOf("type" to "error", "error" to t.message)) }
+                        val message = tokens.redact("${t.javaClass.simpleName}: ${t.message ?: ""}")
+                        ended(webSocket, mapOf("type" to "error", "error" to message))
                     }
                 })
-                activeSockets[socketId] = ws
             }
 
             override fun onCancel(arguments: Any?) {
-                activeSockets.remove(socketId)?.close(1000, "Cancelled")
+                activeSockets.remove(socketId)?.close(1000, null)
                 eventSink = null
+                methodChannel.setMethodCallHandler(null)
+                eventChannel.setStreamHandler(null)
             }
         })
     }

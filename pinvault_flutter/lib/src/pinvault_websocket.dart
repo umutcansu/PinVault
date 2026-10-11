@@ -19,10 +19,11 @@ class PinVaultWebSocket {
       StreamController.broadcast();
 
   /// Text and binary messages. A frame is a [String] (text) or a [Uint8List] (binary).
-  /// Connection errors are delivered through this stream's error handler.
+  /// A connection error is delivered through this stream's error handler and
+  /// ends the stream: a failed socket is closed, never reused.
   Stream<dynamic> get messages => _messageController.stream;
 
-  /// Completes when the peer (or this side) closed the connection.
+  /// Completes when the connection ended: closed by either side, or failed.
   Future<dynamic> get done => _messageController.done;
 
   PinVaultWebSocket._(this.socketId, this.url)
@@ -43,6 +44,11 @@ class PinVaultWebSocket {
     }
     if (headers != null) {
       for (final entry in headers.entries) {
+        if (!_headerName.hasMatch(entry.key)) {
+          throw PinVaultWebSocketError(
+            'headers: "${entry.key}" is not a valid header name',
+          );
+        }
         if (entry.value.contains('\r') || entry.value.contains('\n')) {
           throw PinVaultWebSocketError(
             'headers.${entry.key}: line breaks are not allowed',
@@ -74,6 +80,7 @@ class PinVaultWebSocket {
   void _initListener() {
     _eventSubscription = _eventChannel.receiveBroadcastStream().listen(
       (event) {
+        if (_messageController.isClosed) return;
         final map = Map<String, dynamic>.from(event as Map);
         switch (map['type']) {
           case 'message':
@@ -81,42 +88,52 @@ class PinVaultWebSocket {
           case 'closed':
             _closeInternal();
           case 'error':
-            _messageController.addError(
-              PinVaultWebSocketError(
-                map['error'] as String? ?? 'WebSocket error',
-              ),
-            );
+            // Both natives report a failure once, as the socket's last event.
+            _fail(map['error'] as String? ?? 'WebSocket error');
         }
       },
-      onError: (Object e) {
-        _messageController.addError(PinVaultWebSocketError(e.toString()));
-      },
-      onDone: () {
-        _closeInternal();
-      },
+      onError: (Object e) => _fail(e.toString()),
+      onDone: _closeInternal,
     );
   }
 
   /// Sends a text frame.
   Future<void> send(String data) =>
-      _methodChannel.invokeMethod<void>('send', {'data': data});
+      _invoke('send', {'data': data});
 
   /// Sends a binary frame.
   Future<void> sendBytes(Uint8List data) =>
-      _methodChannel.invokeMethod<void>('send', {'data': data, 'binary': true});
+      _invoke('send', {'data': data, 'binary': true});
 
-  /// Closes the connection (normal closure, code 1000 by default).
+  /// Closes the connection (normal closure, code 1000 by default). A no-op once it has ended.
   Future<void> close([int code = 1000, String? reason]) async {
+    if (_messageController.isClosed) return;
     try {
-      await _methodChannel.invokeMethod<void>('close', {
-        'code': code,
-        'reason': reason,
-      });
+      await _invoke('close', {'code': code, 'reason': reason});
     } finally {
       _closeInternal();
     }
   }
 
+  Future<void> _invoke(String method, Map<String, Object?> arguments) async {
+    try {
+      await _methodChannel.invokeMethod<void>(method, arguments);
+    } on PlatformException catch (e) {
+      throw PinVaultWebSocketError(e.message ?? 'WebSocket $method failed');
+    } on MissingPluginException {
+      // The native side dropped this socket's channels: it has ended.
+      throw PinVaultWebSocketError('WebSocket is closed');
+    }
+  }
+
+  void _fail(String message) {
+    if (_messageController.isClosed) return;
+    _messageController.addError(PinVaultWebSocketError(message));
+    _closeInternal();
+  }
+
+  /// Ends the Dart side; cancelling the event stream makes the native side
+  /// close the socket and drop its channels.
   void _closeInternal() {
     _eventSubscription?.cancel();
     _eventSubscription = null;
@@ -125,6 +142,9 @@ class PinVaultWebSocket {
     }
   }
 }
+
+// RFC 9110 token: what OkHttp and URLSession accept as a header name.
+final RegExp _headerName = RegExp(r"^[!#$%&'*+\-.^_`|~0-9A-Za-z]+$");
 
 /// A refused or failed WebSocket operation. Never carries TLS material.
 class PinVaultWebSocketError implements Exception {

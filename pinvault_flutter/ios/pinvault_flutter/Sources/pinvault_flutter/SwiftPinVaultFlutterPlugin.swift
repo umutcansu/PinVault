@@ -71,14 +71,30 @@ public class SwiftPinVaultFlutterPlugin: NSObject, FlutterPlugin {
         lock.lock(); guardSink = sink; lock.unlock()
     }
 
+    /// Flutter takes channel messages (replies, events) only on the platform
+    /// thread; off it they can be lost. Events always go through the main
+    /// queue, so their order holds.
+    static func onMain(_ body: @escaping () -> Void) {
+        DispatchQueue.main.async(execute: body)
+    }
+
+    /// `result` answered on the platform thread, whichever thread finishes the call.
+    static func mainResult(_ result: @escaping FlutterResult) -> FlutterResult {
+        return { value in
+            if Thread.isMainThread { result(value) } else { onMain { result(value) } }
+        }
+    }
+
     private static func emitGuardRequest(_ requestId: String, _ operation: String) {
         let sink = locked { guardSink }
-        sink?(["requestId": requestId, "operation": operation])
+        let request: [String: Any] = ["requestId": requestId, "operation": operation]
+        onMain { sink?(request) }
     }
 
     private static func emitConnectionEvent(_ event: PinVaultConnectionEvent) {
         let sink = locked { eventsSink }
-        sink?(ResultMapper(tokens: tokens).event(event))
+        let mapped = ResultMapper(tokens: tokens).event(event)
+        onMain { sink?(mapped) }
     }
 
     static func addSocket(_ id: String, _ connection: PinVaultWebSocketConnection) {
@@ -140,8 +156,9 @@ public class SwiftPinVaultFlutterPlugin: NSObject, FlutterPlugin {
 
     // MARK: dispatch
 
-    public func handle(_ call: FlutterMethodCall, result: @escaping FlutterResult) {
+    public func handle(_ call: FlutterMethodCall, result reply: @escaping FlutterResult) {
         Self.lock.lock(); Self.current = self; Self.lock.unlock()
+        let result = Self.mainResult(reply)
 
         switch call.method {
         case "start":
@@ -486,7 +503,11 @@ public class SwiftPinVaultFlutterPlugin: NSObject, FlutterPlugin {
         var headers: [String: String] = [:]
         if let raw = args?["headers"] as? [String: Any] {
             for (name, value) in raw {
-                if let value = value as? String { headers[name] = value }
+                guard let value = value as? String, Self.isHeaderName(name),
+                      !value.contains("\r"), !value.contains("\n") else {
+                    return Self.invalidArgument(result, "ws_connect: the URL or a header is not valid")
+                }
+                headers[name] = value
             }
         }
 
@@ -498,10 +519,9 @@ public class SwiftPinVaultFlutterPlugin: NSObject, FlutterPlugin {
         Self.addSocket(socketId, connection)
 
         let eventChannel = FlutterEventChannel(name: "pinvault_flutter/ws/\(socketId)/events", binaryMessenger: messenger)
-        eventChannel.setStreamHandler(WebSocketStreamHandler(connection))
-
         let methodChannel = FlutterMethodChannel(name: "pinvault_flutter/ws/\(socketId)/methods", binaryMessenger: messenger)
-        methodChannel.setMethodCallHandler { call, result in
+        methodChannel.setMethodCallHandler { call, reply in
+            let result = SwiftPinVaultFlutterPlugin.mainResult(reply)
             switch call.method {
             case "send":
                 let a = call.arguments as? [String: Any]
@@ -515,8 +535,21 @@ public class SwiftPinVaultFlutterPlugin: NSObject, FlutterPlugin {
                 result(FlutterMethodNotImplemented)
             }
         }
+        // Dart cancels the event stream on every ending; the channels go with it.
+        eventChannel.setStreamHandler(WebSocketStreamHandler(connection) {
+            methodChannel.setMethodCallHandler(nil)
+            eventChannel.setStreamHandler(nil)
+        })
 
         result(nil)
+    }
+
+    /// An RFC 9110 token, as the Dart side checks it.
+    private static func isHeaderName(_ name: String) -> Bool {
+        let extra = Set("!#$%&'*+-.^_`|~".utf8)
+        return !name.isEmpty && name.utf8.allSatisfy { b in
+            (b >= 0x30 && b <= 0x39) || (b >= 0x41 && b <= 0x5A) || (b >= 0x61 && b <= 0x7A) || extra.contains(b)
+        }
     }
 }
 
@@ -640,7 +673,7 @@ final class PinVaultWebSocketConnection: NSObject {
     func send(data: Any?, binary: Bool, result: @escaping FlutterResult) {
         lock.lock(); let t = task; lock.unlock()
         guard let t else {
-            result(FlutterError(code: "E_NO_ACTIVITY", message: "WebSocket is not connected", details: nil))
+            result(FlutterError(code: "E_NOT_STARTED", message: "socket is not open", details: nil))
             return
         }
         let message: URLSessionWebSocketTask.Message
@@ -689,7 +722,7 @@ final class PinVaultWebSocketConnection: NSObject {
 
     private func emit(_ map: [String: Any]) {
         lock.lock(); let sink = events; lock.unlock()
-        sink?(map)
+        SwiftPinVaultFlutterPlugin.onMain { sink?(map) }
     }
 
     private func finish() {
@@ -713,8 +746,13 @@ final class PinVaultWebSocketConnection: NSObject {
 
 private final class WebSocketStreamHandler: NSObject, FlutterStreamHandler {
     let connection: PinVaultWebSocketConnection
+    private var dropChannels: (() -> Void)?
 
-    init(_ connection: PinVaultWebSocketConnection) { self.connection = connection }
+    /// `dropChannels` unregisters this socket's channels (it holds them until then).
+    init(_ connection: PinVaultWebSocketConnection, dropChannels: @escaping () -> Void) {
+        self.connection = connection
+        self.dropChannels = dropChannels
+    }
 
     func onListen(withArguments arguments: Any?, eventSink events: @escaping FlutterEventSink) -> FlutterError? {
         connection.open(events: events)
@@ -723,6 +761,10 @@ private final class WebSocketStreamHandler: NSObject, FlutterStreamHandler {
 
     func onCancel(withArguments arguments: Any?) -> FlutterError? {
         connection.cancel()
+        let drop = dropChannels
+        dropChannels = nil
+        // After this reply is on its way.
+        DispatchQueue.main.async { drop?() }
         return nil
     }
 }
