@@ -238,42 +238,37 @@ class PinVault {
   /// Fail closed: until it returns `InitResultReady`, every pinned request is refused.
   /// An invalid config rejects with `E_INVALID_CONFIG` (unknown keys and wrong types included).
   static Future<InitResult> start(PinVaultConfig config) async {
-    if (config.environmentGuard != null) {
-      // The new guard answers during start (INIT is asked then). A config the
-      // native side refuses changes nothing, so the running config's guard comes back.
-      final previous = _activeGuard;
-      final previousTimeout = _activeGuardTimeoutMs;
-      _installGuard(
-        config.environmentGuard,
-        config.environmentGuardTimeoutMs ?? defaultGuardTimeoutMs,
-      );
-      try {
-        final json = _strictJson(
-          config.toJson(),
-          'config',
-          PinVaultErrorCode.invalidConfig,
-        );
-        final result = await _call<Map<String, dynamic>>(
-          () => _channel.invokeMethod<dynamic>('start', json).then(_asMap),
-        );
-        _activeGuard = config.environmentGuard;
-        _activeGuardTimeoutMs =
-            config.environmentGuardTimeoutMs ?? defaultGuardTimeoutMs;
-        return InitResult.fromJson(result);
-      } catch (e) {
-        _installGuard(previous, previousTimeout);
-        rethrow;
-      }
-    }
+    // Refused here, before anything changes on either side.
     final json = _strictJson(
       config.toJson(),
       'config',
       PinVaultErrorCode.invalidConfig,
     );
-    final result = await _call<Map<String, dynamic>>(
-      () => _channel.invokeMethod<dynamic>('start', json).then(_asMap),
-    );
-    return InitResult.fromJson(result);
+    final guard = config.environmentGuard;
+    final timeoutMs = config.environmentGuardTimeoutMs ?? defaultGuardTimeoutMs;
+    final previous = _activeGuard;
+    final previousTimeoutMs = _activeGuardTimeoutMs;
+    // The new guard answers during start (INIT is asked then); a config without
+    // one stops the running config's guard from answering.
+    _installGuard(guard, timeoutMs);
+    try {
+      final result = await _call<Map<String, dynamic>>(
+        () => _channel.invokeMethod<dynamic>('start', json).then(_asMap),
+      );
+      _activeGuard = guard;
+      _activeGuardTimeoutMs = timeoutMs;
+      return InitResult.fromJson(result);
+    } catch (e) {
+      if (e is PinVaultError && e.code == PinVaultErrorCode.invalidConfig) {
+        // The native side refused the config and kept the running one, with its guard.
+        _installGuard(previous, previousTimeoutMs);
+      } else {
+        // The native side had already switched to the new config's guard.
+        _activeGuard = guard;
+        _activeGuardTimeoutMs = timeoutMs;
+      }
+      rethrow;
+    }
   }
 
   static Future<UpdateResult> updateNow() => _call<UpdateResult>(
