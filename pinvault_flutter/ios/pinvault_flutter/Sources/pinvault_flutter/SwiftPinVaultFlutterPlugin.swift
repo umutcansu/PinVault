@@ -58,6 +58,17 @@ public class SwiftPinVaultFlutterPlugin: NSObject, FlutterPlugin {
         guardChannel.setStreamHandler(SinkStreamHandler(instance) { plugin, sink in plugin.setGuardSink(sink) })
     }
 
+    /// Registers the periodic update's `BGTaskScheduler` launch handler, for
+    /// `schedulePeriodicUpdates`. Call it from `AppDelegate`'s
+    /// `application(_:didFinishLaunchingWithOptions:)`, before it returns; the
+    /// Info.plist must list `io.github.umutcansu.pinvault.refresh` under
+    /// `BGTaskSchedulerPermittedIdentifiers` (else false, nothing registered).
+    /// Without it the update only runs while the app is in the foreground.
+    @discardableResult
+    public static func registerBackgroundTask() -> Bool {
+        PinVault.shared.registerBackgroundTask()
+    }
+
     public func detachFromEngine(for registrar: FlutterPluginRegistrar) {
         Self.locked {
             Self.attached.remove(self)

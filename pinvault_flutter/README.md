@@ -12,8 +12,42 @@ Nothing here stores anything, and nothing here logs outside development builds.
 
 ```yaml
 dependencies:
-  pinvault_flutter: ^2.4.0
+  pinvault_flutter: ^2.5.0
 ```
+
+### Android
+
+`unlockFile` shows a `BiometricPrompt`, which needs a `FragmentActivity`: let
+`MainActivity` extend `FlutterFragmentActivity` instead of `FlutterActivity`
+(otherwise `unlockFile` fails with `E_NO_ACTIVITY`).
+
+```kotlin
+class MainActivity : FlutterFragmentActivity()
+```
+
+### iOS
+
+iOS 16 or later. With Flutter's Swift Package Manager support (the default)
+the plugin brings PinVault from its git tag. With CocoaPods, add PinVault to
+the `Runner` target of the Podfile — it is not on CocoaPods trunk:
+
+```ruby
+pod 'PinVault', :git => 'https://github.com/umutcansu/PinVault.git', :tag => 'v2.5.0'
+```
+
+For `schedulePeriodicUpdates` to run in the background, list
+`io.github.umutcansu.pinvault.refresh` under `BGTaskSchedulerPermittedIdentifiers`,
+add `fetch` to `UIBackgroundModes` in `Info.plist`, and register the task in
+`AppDelegate` before launch ends:
+
+```swift
+import pinvault_flutter
+
+// in application(_:didFinishLaunchingWithOptions:), before `return`:
+SwiftPinVaultFlutterPlugin.registerBackgroundTask()
+```
+
+Without it the update only runs while the app is in the foreground.
 
 ### Native security file (required for release)
 
@@ -72,6 +106,14 @@ if (result is InitResultReady) {
 
 Fail closed: until `start` returns `InitResultReady`, every pinned request is refused.
 
+### Which requests are pinned
+
+Only `PinVault.fetch` and `PinVaultWebSocket` go through the native pinned
+client. Dart's own networking — `dart:io` `HttpClient`, `package:http`,
+`dio`, `Image.network` — does **not**: it uses the platform's trust store and
+none of PinVault's pins or client certificate. Send every request to a pinned
+host through `PinVault.fetch`.
+
 ## API
 
 `PinVault.` — config/status: `start`, `updateNow`, `currentVersion`,
@@ -94,10 +136,16 @@ to an unpinned path. `PinVaultRequestInit` supports method, headers, body
 native memory only.
 
 `PinVault.` — attestation: `attestNow`, `fetchAttestationToken`,
-`attestationStatus`, `attestationHeaderName`.
+`attestationStatus`, `attestationHeaderName`. Prefer `tokenHosts` +
+`PinVault.fetch` (the native client adds the `PinVault-Token`) over
+`fetchAttestationToken`, which hands the token to Dart. With
+`proofOfPossession` the native client also adds a `PinVault-Proof` signed by
+the device key, and a backend that requires it (the reference server does by
+default) refuses the token alone.
 
 `PinVault.addConnectionListener(listener)` — connection telemetry (never carries
-a token, password, or file content).
+a token, password, or file content). Returns a `StreamSubscription`; `cancel()`
+it when done. Listeners are independent of each other.
 
 `PinVaultWebSocket.connect(url)` — a pinned `wss://` WebSocket over the native
 client (OkHttp / `URLSessionWebSocketTask`); the TLS session and mTLS identity
