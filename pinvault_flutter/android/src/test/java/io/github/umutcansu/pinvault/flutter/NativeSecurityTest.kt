@@ -95,8 +95,9 @@ class NativeSecurityTest {
         refused("""{"configApis":[{$anchored}]}""", native = keyless, fragments = arrayOf("signaturePublicKeys", "declare signaturePublicKeys"))
         // The relaxations stand in for the anchor they relax; a debug build takes the bare block.
         val relaxed = NativeSecurity.parse("""{"configApis":[{"id":"default","allowUnpinnedConfigApi":true,"allowUnsigned":true}]}""", "f")
-        parse("""{"configApis":[{$base}]}""", native = relaxed)
-        parse("""{"configApis":[{$anchored}]}""", native = bare, release = false)
+        // The file allowed them: the library keeps them in a release build too (allowRelaxationsInRelease).
+        assertTrue(parse("""{"configApis":[{$base}]}""", native = relaxed).config.configApis.getValue("default").relaxationsInRelease)
+        assertFalse(parse("""{"configApis":[{$anchored}]}""", native = bare, release = false).config.configApis.getValue("default").relaxationsInRelease)
         // Who gets the identity: from Dart only where the file names the hosts, or in a debug build.
         refused("""{"configApis":[{$base,"clientCertHosts":["cdn.example:443"]}]}""", fragments = arrayOf("clientCertHosts", "declare clientCertHosts"))
         parse("""{"configApis":[{$base,"clientCertHosts":["cdn.example:443"]}]}""", release = false)
