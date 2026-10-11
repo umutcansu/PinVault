@@ -29,9 +29,9 @@ npm install @umutcansu/react-native-pinvault
 cd ios && pod install
 ```
 
-The native libraries come with it, at the package's own version: npm 2.4.1
-uses `io.github.umutcansu:pinvault:2.4.1` from Maven Central and the Swift
-package at tag `v2.4.1`. The New Architecture must stay on (React Native's
+The native libraries come with it, at the package's own version: npm 2.4.2
+uses `io.github.umutcansu:pinvault:2.4.2` from Maven Central and the Swift
+package at tag `v2.4.2`. The New Architecture must stay on (React Native's
 default since 0.76).
 
 **iOS.** The pod depends on the PinVault Swift package through React Native's
@@ -64,6 +64,55 @@ hooks before `Application.onCreate` runs (see [Networking](#networking)).
 
 **Release builds.** Put the trust anchors into the app itself, not only into
 the JS bundle: [Native security file](#native-security-file).
+
+### Expo
+
+A native module: it runs in a development build or `expo prebuild`, not in
+Expo Go. The package's config plugin does the steps above at prebuild — iOS
+deployment target 16.0 (`Podfile.properties.json` and the Xcode project),
+the Info.plist keys, the background task in `AppDelegate.swift`, and the
+native security file copied into Android's assets and the iOS app bundle:
+
+```bash
+npx expo install @umutcansu/react-native-pinvault
+```
+
+```json
+{
+  "expo": {
+    "plugins": [
+      ["@umutcansu/react-native-pinvault", {
+        "nativeSecurityFile": "./pinvault_security.json",
+        "faceIDPermission": "Unlock your protected files",
+        "backgroundUpdates": true
+      }]
+    ]
+  }
+}
+```
+
+| Option | Does |
+|---|---|
+| `nativeSecurityFile` | path (from the project root) of your `pinvault_security.json`; checked to be a JSON object at prebuild |
+| `faceIDPermission` | `NSFaceIDUsageDescription`, for vault files behind the screen lock (`userAuth`) |
+| `backgroundUpdates` | `BGTaskSchedulerPermittedIdentifiers`, `UIBackgroundModes` = `fetch` and `PinVaultBridge.registerBackgroundTask()` in a Swift `AppDelegate` (Expo SDK 53+), for `schedulePeriodicUpdates` |
+| `allowNoNativeSecurityFile` | `true` writes the opt-out of the file (Android meta-data, Info.plist): release builds then take anchors from JS — not recommended |
+| `pinReactNativeNetworking` | `false` removes the networking provider and writes `PinVaultPinReactNativeNetworking` = NO: RN's own fetch / WebSocket stay unpinned |
+
+Unknown options and wrong types stop prebuild. Tested with Expo SDK 54
+(React Native 0.81) on Android and iOS, release builds.
+
+**Backup rules.** The Android library keeps its stores out of cloud backup
+and device transfer with its own `fullBackupContent` / `dataExtractionRules`.
+An app (or a plugin such as `expo-secure-store`) that sets its own rules used
+to fail the manifest merge; replacing them by hand would drop PinVault's
+excludes. At the end of prebuild the plugin copies each such rules
+file (from the app or a library under `node_modules`) to
+`res/xml/pinvault_merged_<name>.xml` with PinVault's excludes added, and
+points the manifest at the copy with `tools:replace`. Rules it cannot find stop
+prebuild. A bare React Native app with its own rules adds the
+`<exclude>` lines of the library's `pinvault_backup_rules.xml` /
+`pinvault_data_extraction_rules.xml` to them and uses `tools:replace`.
 
 ## Quick start
 
@@ -216,7 +265,10 @@ parsed as strictly; a broken file rejects `start` with `E_INVALID_CONFIG`
   a block that only names itself rejects `start` — otherwise the bundle would
   supply the pins and keys;
 - `allowUnsigned`, `allowUnpinnedConfigApi` and `allowServerGeneratedKey` from
-  JS are refused unless the file allows them for that block;
+  JS are refused unless the file allows them for that block; a release build
+  of the native libraries (2.4.2+) refuses the first two unless the block also
+  says `allowRelaxationsInRelease()`, which the bridge adds only where the file
+  allows the relaxation;
 - a block's `url`, `enrollmentUrl`, `renewalUrl`, `tokenHosts` and
   `clientCertHosts` are fixed where the file gives them (where the block talks to, and who gets its token and identity),
   and `attestation: true` / `proofOfPossession: true` there cannot be turned off from JS;

@@ -89,6 +89,12 @@ services:
       # "URL'den sertifika al" bu makineye ve yerel ağa yalnızca true iken bağlanır.
       # Demo: true (setup.sh yazar). Üretim: boş.
       FETCH_ALLOW_PRIVATE_TARGETS: ${FETCH_ALLOW_PRIVATE_TARGETS:-}
+      # Ters vekil (Cloudflare tüneli, yük dengeleyici) arkasında: vekilin adresleri
+      # (IP ya da CIDR) ve gerçek istemci adresinin geldiği başlık. Boş: başlık okunmaz.
+      TRUSTED_PROXIES: ${TRUSTED_PROXIES:-}
+      CLIENT_IP_HEADER: ${CLIENT_IP_HEADER:-}
+      # Cihaz isteklerinin log satırları (Config API portları); OFF kapatır.
+      LOG_LEVEL_CONFIG_API_ACCESS: ${LOG_LEVEL_CONFIG_API_ACCESS:-}
       ENROLLMENT_TOKEN_TTL_SECONDS: ${ENROLLMENT_TOKEN_TTL_SECONDS:-}
       # Onay bekleyen başvurular: cevapsız başvurunun ömrü (saat, varsayılan 24);
       # kodsuz başvurularda bir IP'den 10 dakikada en fazla yeni başvuru (20)
@@ -200,6 +206,10 @@ services:
       ATTESTATION_DEVICE_RATE_LIMIT: ${ATTESTATION_DEVICE_RATE_LIMIT:-}
       ATTESTATION_DEVICE_LIMIT: ${ATTESTATION_DEVICE_LIMIT:-}
       MOCK_HOST_REQUIRE_TOKEN: ${MOCK_HOST_REQUIRE_TOKEN:-}
+      # PinVault-Token imzası: boş/ES256 (API'ler açık anahtarla doğrular) ya da HS256 (ortak sır).
+      PINVAULT_TOKEN_ALG: ${PINVAULT_TOKEN_ALG:-}
+      # Mock host'ların kabul ettiği Config API'ler (token'ın aud'u), virgülle; boş = hepsi.
+      MOCK_HOST_TOKEN_AUDIENCES: ${MOCK_HOST_TOKEN_AUDIENCES:-}
       # true: mock host'lar token'ı yalnızca, token'ın cnf.x5t#S256 ile adını verdiği
       # istemci sertifikasıyla gelen mTLS isteğinde kabul eder (TLS mock host her şeyi reddeder).
       PINVAULT_TOKEN_REQUIRE_CERT_BINDING: ${PINVAULT_TOKEN_REQUIRE_CERT_BINDING:-}

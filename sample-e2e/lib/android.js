@@ -495,7 +495,15 @@ class Device {
     this.shell('settings put global auto_time 0');
     const now = Number(this.shell('date +%s').trim());
     this.rootShell(`date @${now + seconds}`);
-    const after = Number(this.shell('date +%s').trim());
+    let after = Number(this.shell('date +%s').trim());
+    if (Math.abs(after - (now + seconds)) > 30) {
+      // Bazı imajlarda (API 28, saat dilimi "LMT") `date @` yerel saat farkı kadar kayar:
+      // UTC biçimiyle yeniden kurulur.
+      const t = new Date((now + seconds) * 1000);
+      const p2 = (n) => String(n).padStart(2, '0');
+      this.rootShell(`date -u ${p2(t.getUTCMonth() + 1)}${p2(t.getUTCDate())}${p2(t.getUTCHours())}${p2(t.getUTCMinutes())}${t.getUTCFullYear()}.${p2(t.getUTCSeconds())}`);
+      after = Number(this.shell('date +%s').trim());
+    }
     if (Math.abs(after - (now + seconds)) > 30) {
       throw new Error(`Saat kaydırılamadı: beklenen ~${now + seconds}, cihazda ${after}`);
     }

@@ -753,7 +753,10 @@ function tokenSecretEntry(s) {
     kid: s.kid ?? s.id ?? '',
     createdAt: s.createdAt ?? s.created ?? null,
     active: !!s.active,
-    secret: s.secret ?? s.value ?? null
+    alg: s.alg || 'HS256',
+    secret: s.secret ?? s.value ?? null,
+    // ES256: the public key backends verify with (the private key never leaves the server).
+    publicKey: s.publicKey ?? null
   };
 }
 
@@ -795,13 +798,16 @@ function renderTokenSecretsTable() {
   if (!_tokenSecrets.length) return `<div class="empty-msg">${esc(t('tokenSecretsNone'))}</div>`;
   const rows = _tokenSecrets.map((s, i) => {
     const shown = _tokenSecretRevealed.has(i);
-    const secretCell = s.secret
+    const secretCell = s.publicKey
+      ? `<span class="muted small">${esc(t('tokenSecretPublicKey'))}</span>
+         <button class="copy-btn" data-action="copyTokenSecret" data-arg0="${i}">${esc(t('copy'))}</button>`
+      : s.secret
       ? `<span class="mono small">${shown ? esc(s.secret) : '&#x2022;'.repeat(24)}</span>
          <button class="copy-btn" data-action="toggleTokenSecretReveal" data-arg0="${i}">${esc(shown ? t('tokenSecretHide') : t('tokenSecretReveal'))}</button>
          <button class="copy-btn" data-action="copyTokenSecret" data-arg0="${i}">${esc(t('copy'))}</button>`
       : `<span class="muted">${esc(t('tokenSecretHidden'))}</span>`;
     return `<tr>
-        <td class="mono">${esc(s.kid)}</td>
+        <td class="mono">${esc(s.kid)} <span class="muted small">${esc(s.alg)}</span></td>
         <td class="muted nowrap small">${attestTime(s.createdAt)}</td>
         <td>${s.active ? `<span class="attest-badge attest-pass">${esc(t('tokenSecretActive'))}</span>` : `<span class="attest-badge attest-none">${esc(t('tokenSecretPrevious'))}</span>`}</td>
         <td class="attest-secret-cell">${secretCell}</td>
@@ -823,7 +829,7 @@ function toggleTokenSecretReveal(idx) {
 
 function copyTokenSecret(idx) {
   const s = _tokenSecrets[parseInt(idx, 10)];
-  if (s && s.secret) copyText(s.secret);
+  if (s && (s.publicKey || s.secret)) copyText(s.publicKey || s.secret);
 }
 
 /** POST /api/v1/attestation/token-secrets/rotate — a new active secret; the old ones stay for verification (gated). */

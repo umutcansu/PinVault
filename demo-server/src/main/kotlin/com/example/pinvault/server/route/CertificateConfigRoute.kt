@@ -425,6 +425,14 @@ fun Route.certificateConfigRoutes(
                 }
             }
 
+            // The P12 flow needs a password the client can use: decided before
+            // the token is spent, so a refused client keeps it.
+            val wrapping = if (csr == null) {
+                com.example.pinvault.server.service.P12Transfer.wrappingFor(call)
+                    ?: return@post call.respondText(com.example.pinvault.server.service.P12Transfer.NEGOTIATION_REQUIRED,
+                        ContentType.Application.Json, HttpStatusCode.BadRequest)
+            } else null
+
             // Spend the token in one statement: of two requests racing with
             // the same token, the second loses here instead of also getting a
             // certificate (validate() above is only a read).
@@ -499,7 +507,7 @@ fun Route.certificateConfigRoutes(
                 return@post respondIssuedClientCert(call, clientId, issued)
             }
 
-            val wrapping = com.example.pinvault.server.service.P12Transfer.wrappingFor(call)
+            checkNotNull(wrapping) // the CSR flow returned above
             // Issued by the client CA: nothing is added to the truststore.
             val result = certService.generateClientCertificate(clientId, wrapping.password)
             // Never over a revoked row: a revocation that landed after the checks above stays.

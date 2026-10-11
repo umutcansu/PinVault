@@ -31,13 +31,19 @@ class GatedTrustAndVaultTest {
 
     private lateinit var dir: File
 
+    private var savedOverlay: Map<String, String> = emptyMap()
+
     @BeforeTest
     fun setUp() {
+        // Older clients that do not negotiate a P12 password get CLIENT_P12_PASSWORD (no default since 2.4.2).
+        savedOverlay = com.example.pinvault.server.service.ServerEnv.overlay
+        com.example.pinvault.server.service.ServerEnv.overlay = savedOverlay + ("CLIENT_P12_PASSWORD" to "legacy-p12-test")
         dir = kotlin.io.path.createTempDirectory("pinvault-gated-").toFile()
     }
 
     @AfterTest
     fun tearDown() {
+        com.example.pinvault.server.service.ServerEnv.overlay = savedOverlay
         dir.deleteRecursively()
     }
 

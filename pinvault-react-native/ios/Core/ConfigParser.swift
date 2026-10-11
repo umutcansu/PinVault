@@ -346,6 +346,8 @@ public enum ConfigParser {
             if sec.allowUnsigned { api.allowUnsigned() }
             if let v = sec.serverScope { api.serverScope(v) }
             if sec.allowUnpinned { api.allowUnpinnedConfigApi() }
+            // The native security file allowed them for this block: the library keeps them in a release build too.
+            if native != nil, sec.allowUnsigned || sec.allowUnpinned { api.allowRelaxationsInRelease() }
             if sec.allowServerKey { api.allowServerGeneratedKey() }
             if let v = sec.clientCaPins { api.clientCaPins(v) }
             if let maxLifetime { api.maxClientCertLifetimeDays(maxLifetime) }

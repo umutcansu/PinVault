@@ -34,11 +34,13 @@ test('R09 Token çalınması: kanıt zorunluyken cihazdan alınan token tek baş
   let jkt;
 
   async function requireProof(on) {
-    const saved = await hostApi.api('/api/v1/server-settings', { method: 'PUT', body: { values: { PINVAULT_TOKEN_REQUIRE_PROOF: on ? 'true' : '' } } });
+    const saved = await hostApi.api('/api/v1/server-settings', { method: 'PUT', body: { values: { PINVAULT_TOKEN_REQUIRE_PROOF: on ? 'true' : 'false' } } });
     expect(saved.status, `ayar kaydedilemedi: ${saved.text}`).toBe(200);
     // Kaydedilen ayar bir sonraki açılışta geçerli. Mock host'lar token istesin; ortam
     // zaten öyleyse compose container'ı yeniden kurmaz, bu yüzden ayrıca yeniden başlatılır.
-    await hostControl.setEnv({ MOCK_HOST_REQUIRE_TOKEN: 'true' });
+    // HS256: "çalınmış" token, cihazdan kopyalanmış gibi ortak sırla üretilir (ES256'da
+    // özel anahtar sunucudan çıkmaz, test onu taklit edemez).
+    await hostControl.setEnv({ MOCK_HOST_REQUIRE_TOKEN: 'true', PINVAULT_TOKEN_ALG: 'HS256' });
     await hostControl.stop();
     await hostControl.start();
   }

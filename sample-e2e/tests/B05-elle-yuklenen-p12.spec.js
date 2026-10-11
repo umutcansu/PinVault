@@ -42,6 +42,7 @@ function probe() {
 }
 
 test('mTLS: kayıt olmadan, elle yüklenen P12 ile bağlanma', async ({ app, device, dashboard }, testInfo) => {
+  let p12Password; // panelin bir kez gösterdiği tek kullanımlık P12 parolası (2.4.2)
   test.setTimeout(14 * 60 * 1000);
   const clientId = `b05-manual-${Date.now()}`;
   fs.mkdirSync(WORK_DIR, { recursive: true });
@@ -49,14 +50,15 @@ test('mTLS: kayıt olmadan, elle yüklenen P12 ile bağlanma', async ({ app, dev
   try {
     await test.step('Web: dashboard\'da istemci sertifikası üretilir (P12 dosyası indirilir)', async () => {
       await dashboard.generateClientCert(env.MTLS_API, clientId, { saveTo: P12 });
-      execFileSync('openssl', ['pkcs12', '-in', P12, '-passin', 'pass:changeit', '-nokeys', '-out', CERT_PEM]);
-      execFileSync('openssl', ['pkcs12', '-in', P12, '-passin', 'pass:changeit', '-nocerts', '-nodes', '-out', KEY_PEM]);
+      p12Password = dashboard.lastP12Password;
+      execFileSync('openssl', ['pkcs12', '-in', P12, '-passin', `pass:${p12Password}`, '-nokeys', '-out', CERT_PEM]);
+      execFileSync('openssl', ['pkcs12', '-in', P12, '-passin', `pass:${p12Password}`, '-nocerts', '-nodes', '-out', KEY_PEM]);
       const subject = execFileSync('openssl', ['x509', '-in', CERT_PEM, '-noout', '-subject'], { encoding: 'utf8' }).trim();
       await dashboard.snap(`istemci sertifikası üretildi: ${clientId}`);
       await attachText(
         testInfo,
         'İndirilen P12',
-        [`${path.basename(P12)} — ${fs.statSync(P12).size} bayt`, subject, 'parola: changeit'].join('\n'),
+        [`${path.basename(P12)} — ${fs.statSync(P12).size} bayt`, subject, 'parola: panelin bir kez gösterdiği tek kullanımlık parola'].join('\n'),
       );
       expect(subject).toContain(clientId);
     });
@@ -133,7 +135,7 @@ test('mTLS: kayıt olmadan, elle yüklenen P12 ile bağlanma', async ({ app, dev
     });
 
     await test.step('Mobil: "P12 içe aktar" + parola ile sertifika mTLS bloğuna veriliyor, düz dosya siliniyor', async () => {
-      const result = await app.toggleManualP12('changeit');
+      const result = await app.toggleManualP12(p12Password);
       await app.snap('elle P12 içe aktarıldı');
       expect(result).toContain(`P12 içe aktarıldı — CN=PinVault Client: ${clientId}`);
       expect(app.enrollState()).toContain('Elle yüklenen P12 kullanılıyor');

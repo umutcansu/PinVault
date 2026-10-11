@@ -93,6 +93,11 @@ private fun startServer() {
     com.example.pinvault.server.service.StartupSecrets.check()?.let { System.err.println(it) }
     // After the passwords: a guessable shared key is refused too (ALLOW_DEMO_SECRETS for local runs).
     com.example.pinvault.server.service.AdminKeyStrength.check()?.let { System.err.println(it) }
+    // TRUSTED_PROXIES / CLIENT_IP_HEADER: a typo must stop the start, not trust nobody (or everybody).
+    com.example.pinvault.server.plugin.TrustedProxies.validate()
+    com.example.pinvault.server.plugin.TrustedProxies.rules.takeIf { it.isNotEmpty() }?.let {
+        println("Client addresses: ${com.example.pinvault.server.plugin.TrustedProxies.header} from TRUSTED_PROXIES ${it.joinToString()}")
+    }
     val dbPath = com.example.pinvault.server.service.ServerEnv.get("DB_PATH") ?: "pinvault.db"
     val db = DatabaseManager(dbPath)
     val pinConfigStore = PinConfigStore(db)
@@ -302,11 +307,12 @@ private fun startServer() {
     println("ENROLLMENT_ATTESTATION=${enrollmentAttestationMode.name.lowercase()}, ENROLLMENT_P12=${if (enrollmentP12) "on" else "off"}" +
         (if (serverMadeKeys) "" else " — no server-made keys: devices enroll over a CSR only"))
     // A host's client certificate is one private key for the whole fleet. With
-    // HOST_CLIENT_CERT_REQUIRE_GRANT=true it is handed out only where the device
-    // host ACL names the device; a scope without an ACL serves it to nobody.
+    // HOST_CLIENT_CERT_REQUIRE_GRANT (on unless set to false) it is handed out
+    // only where the device host ACL names the device; a scope without an ACL
+    // serves it to nobody (403 host_not_allowed).
     val requireHostCertGrant = when (com.example.pinvault.server.service.ServerEnv.get("HOST_CLIENT_CERT_REQUIRE_GRANT")?.trim()?.lowercase()) {
-        null, "", "false", "off" -> false
-        "true", "on" -> true
+        "false", "off" -> false
+        null, "", "true", "on" -> true
         else -> error("HOST_CLIENT_CERT_REQUIRE_GRANT must be true or false (got '${com.example.pinvault.server.service.ServerEnv.get("HOST_CLIENT_CERT_REQUIRE_GRANT")}')")
     }
     println("HOST_CLIENT_CERT_REQUIRE_GRANT=$requireHostCertGrant" +
@@ -553,11 +559,16 @@ private fun startServer() {
         "true", "on" -> true
         else -> error("PINVAULT_TOKEN_REQUIRE_CERT_BINDING must be true or false (got '${com.example.pinvault.server.service.ServerEnv.get("PINVAULT_TOKEN_REQUIRE_CERT_BINDING")}')")
     }
-    // ...and, with PINVAULT_TOKEN_REQUIRE_PROOF, only with a PinVault-Proof per request signed by
-    // the device key the token's cnf.jkt names (ATTESTATION.md §5.1): a lifted token is useless alone.
+    // MOCK_HOST_TOKEN_AUDIENCES: the Config API ids (the token's `aud`) a mock host accepts; unset = every
+    // Config API this server runs.
+    val mockHostTokenAudiences = com.example.pinvault.server.service.ServerEnv.get("MOCK_HOST_TOKEN_AUDIENCES")
+        ?.split(',')?.map { it.trim() }?.filter { it.isNotEmpty() }?.toSet()?.takeIf { it.isNotEmpty() }
+    // ...and, with PINVAULT_TOKEN_REQUIRE_PROOF (on unless set to false), only with a PinVault-Proof
+    // per request signed by the device key the token's cnf.jkt names (ATTESTATION.md §5.1): a lifted
+    // token is useless alone.
     val tokenRequireProof = when (com.example.pinvault.server.service.ServerEnv.get("PINVAULT_TOKEN_REQUIRE_PROOF")?.trim()?.lowercase()) {
-        null, "", "false", "off" -> false
-        "true", "on" -> true
+        "false", "off" -> false
+        null, "", "true", "on" -> true
         else -> error("PINVAULT_TOKEN_REQUIRE_PROOF must be true or false (got '${com.example.pinvault.server.service.ServerEnv.get("PINVAULT_TOKEN_REQUIRE_PROOF")}')")
     }
     // PINVAULT_TOKEN_PUBLIC_ORIGIN (S-2): the public origin a client's token/proof `htu` names
@@ -589,8 +600,18 @@ private fun startServer() {
     } ?: com.example.pinvault.server.service.attestation.AttestationService.DEFAULT_ANOMALY_TTL_SECONDS
     val attestationPolicyStore = com.example.pinvault.server.store.AttestationPolicyStore(db)
     val attestedDeviceStore = com.example.pinvault.server.store.AttestedDeviceStore(db)
-    // The HS256 secrets of PinVault-Token, encrypted at rest; the first one is made on first use.
-    val attestationTokenSecretStore = com.example.pinvault.server.store.AttestationTokenSecretStore(db, atRestCipher)
+    // PINVAULT_TOKEN_ALG: ES256 (default since 2.4.2) signs PinVault-Tokens with an EC key that never
+    // leaves the server — backends verify with the public key (GET /api/v1/attestation/jwks); HS256 keeps
+    // the shared secret for backends not moved yet. The keys are encrypted at rest; the first is made on
+    // first use, and a server switched to another algorithm rotates once (the old key keeps verifying).
+    val tokenAlg = when (com.example.pinvault.server.service.ServerEnv.get("PINVAULT_TOKEN_ALG")?.trim()?.uppercase()) {
+        null, "", "ES256" -> com.example.pinvault.server.service.attestation.PinVaultToken.ALG_ES256
+        "HS256" -> com.example.pinvault.server.service.attestation.PinVaultToken.ALG_HS256
+        else -> error("PINVAULT_TOKEN_ALG must be ES256 or HS256 (got '${com.example.pinvault.server.service.ServerEnv.get("PINVAULT_TOKEN_ALG")}')")
+    }
+    val attestationTokenSecretStore = com.example.pinvault.server.store.AttestationTokenSecretStore(db, atRestCipher, alg = tokenAlg)
+    println("PINVAULT_TOKEN_ALG=$tokenAlg" + if (tokenAlg == com.example.pinvault.server.service.attestation.PinVaultToken.ALG_HS256)
+        " — every backend that verifies tokens holds the secret that signs them; ES256 gives them the public key only" else "")
     // Sealed secrets the password at hand cannot open stop the start here, like
     // the other secret checks: not a server that signs tokens with ciphertext.
     attestationTokenSecretStore.checkReadable()
@@ -660,9 +681,9 @@ private fun startServer() {
     }
     if (mockHostRequireToken) {
         mockServerManager.tokenVerifier = {
-            secrets = { attestationTokenSecretStore.secretsByKid() }
-            // A mock host does not know which Config API its app attests with: any `aud` a listed secret signed.
-            audience = null
+            keys = { attestationTokenSecretStore.verificationKeys() }
+            // The audience is required: MOCK_HOST_TOKEN_AUDIENCES, or every Config API this server runs.
+            audiences = mockHostTokenAudiences?.let { fixed -> { fixed } } ?: { configApiManager.getAll().map { it.id }.toSet() }
             requireCertBinding = tokenRequireCertBinding
             requireProof = tokenRequireProof
             publicOrigin = tokenPublicOrigin
@@ -1001,6 +1022,9 @@ private fun startServer() {
         install(CallLogging)
         // Before anything that decides on the path (auth allowlist, approval gate).
         install(com.example.pinvault.server.plugin.EncodedPathGuard)
+        // The client's address behind a trusted proxy (TRUSTED_PROXIES), before
+        // anything counts or records by address.
+        install(com.example.pinvault.server.plugin.ClientAddress)
         // This server also listens on plain HTTP: the device endpoints that take a
         // token or hand out a key (the enrollment copy below) are served over TLS
         // only — MANAGEMENT_HTTPS_PORT, or a Config API port — or to this machine.
@@ -1228,13 +1252,16 @@ private fun startServer() {
                         ContentType.Application.Json, HttpStatusCode.Conflict
                     )
                 }
+                // A password the client can use, before the token is spent.
+                val wrapping = com.example.pinvault.server.service.P12Transfer.wrappingFor(call)
+                    ?: return@post call.respondText(com.example.pinvault.server.service.P12Transfer.NEGOTIATION_REQUIRED,
+                        ContentType.Application.Json, HttpStatusCode.BadRequest)
                 // Spent before anything is issued, in one statement: a second
                 // request racing with the same token gets 401, not a second P12.
                 if (!enrollmentTokenStore.consume(token)) {
                     return@post call.respondText("""{"error":"Geçersiz veya kullanılmış token"}""", ContentType.Application.Json, HttpStatusCode.Unauthorized)
                 }
 
-                val wrapping = com.example.pinvault.server.service.P12Transfer.wrappingFor(call)
                 // Issued by the client CA: nothing is added to the truststore.
                 val result = certService.generateClientCertificate(clientId, wrapping.password)
                 // Never over a revoked row: a revocation that landed after the checks above stays.

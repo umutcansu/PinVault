@@ -76,6 +76,7 @@ Bu dosyaları internete kapalı bir makineye taşıyıp buradan silin (README �
     expect_value ATTESTATION_KEY_POLICY enforce
     expect_value ATTESTATION_POLICY_DEFAULT production
     expect_value MOCK_HOST_REQUIRE_TOKEN true
+    expect_value PINVAULT_TOKEN_ALG es256
     expect_value APP_ATTEST_REQUIRE_V2 true
     expect_value PLAY_INTEGRITY_REQUIRE_V2 true
 

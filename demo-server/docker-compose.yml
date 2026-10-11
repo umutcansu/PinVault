@@ -110,6 +110,8 @@ services:
       - ATTESTATION_RATE_LIMIT=${ATTESTATION_RATE_LIMIT:-}
       - ATTESTATION_DEVICE_RATE_LIMIT=${ATTESTATION_DEVICE_RATE_LIMIT:-}
       - MOCK_HOST_REQUIRE_TOKEN=${MOCK_HOST_REQUIRE_TOKEN:-}
+      - PINVAULT_TOKEN_ALG=${PINVAULT_TOKEN_ALG:-}
+      - MOCK_HOST_TOKEN_AUDIENCES=${MOCK_HOST_TOKEN_AUDIENCES:-}
       # iOS apps (ATTESTATION.md §3, §12; unset = not checked / App Attest off). APP_ATTEST_APP_IDS
       # (TEAMID.bundle.id, comma separated) needs APP_ATTEST_ROOT_CA_FILE: Apple's App Attestation
       # Root CA, downloaded once from https://www.apple.com/certificateauthority/Apple_App_Attestation_Root_CA.pem

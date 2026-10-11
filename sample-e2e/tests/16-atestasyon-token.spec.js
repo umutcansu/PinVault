@@ -46,7 +46,8 @@ test('Atestasyon: geçen telefon token alır ve mock host kabul eder; politika s
     await test.step('Hazırlık: politika emülatörü uyarı sayar; mock host token ister', async () => {
       original = (await hostApi.api(POLICY)).json;
       expect(original && original.flags, 'politika okunamadı').toBeTruthy();
-      await setPolicy({ emulator: 'warn', debuggable: 'warn', unknown_installer: 'warn', adb_enabled: 'ignore', software_key: 'warn', key_unattested: 'warn' },
+      // E2E emülatörü root'ludur (su ile ANDROID_ID okunur): rooted da uyarı sayılır.
+      await setPolicy({ rooted: 'warn', emulator: 'warn', debuggable: 'warn', unknown_installer: 'warn', adb_enabled: 'ignore', software_key: 'warn', key_unattested: 'warn' },
         { revealReasons: true });
       await hostControl.setEnv({ MOCK_HOST_REQUIRE_TOKEN: 'true' });
       await app.relaunch();

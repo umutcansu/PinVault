@@ -37,7 +37,9 @@ test('R11 Token anomalisi: bir cihazın token\'ı script hızında kullanılınc
       original = await res.getPolicy(SCOPE);
       await res.setPolicy(SCOPE, { ...res.LENIENT, token_anomaly: 'reject' }, { revealReasons: true });
       await saveSettings({ PINVAULT_TOKEN_ANOMALY: 'warn', PINVAULT_TOKEN_ANOMALY_MAX_REQUESTS: String(MAX_REQUESTS) });
-      await hostControl.setEnv({ MOCK_HOST_REQUIRE_TOKEN: 'true' });
+      // HS256: "çalınmış" token ortak sırla üretilir (ES256'da özel anahtar sunucudan çıkmaz);
+      // kanıt şartı kapalı: burada sayılan, token'ın kendisinin kullanımı.
+      await hostControl.setEnv({ MOCK_HOST_REQUIRE_TOKEN: 'true', PINVAULT_TOKEN_ALG: 'HS256', PINVAULT_TOKEN_REQUIRE_PROOF: 'false' });
       await hostControl.stop();
       await hostControl.start();
       await app.relaunch();

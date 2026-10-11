@@ -6033,16 +6033,50 @@ paths:
         '401': { $ref: '#/components/responses/MissingApiKey' }
         '403': { $ref: '#/components/responses/InvalidApiKey' }
 
+  /api/v1/attestation/jwks:
+    get:
+      tags: [attestation]
+      operationId: getTokenJwks
+      summary: The public keys that verify PinVault-Tokens (JWK Set)
+      description: |
+        *(2.4.2)* The ES256 public keys of the active and previous signing keys
+        (RFC 7517), what a backend verifies `PinVault-Token` with by `kid`.
+        Public: no secret in it, no API key needed. Empty while the server
+        signs with HS256 (`PINVAULT_TOKEN_ALG=HS256`). `Cache-Control: max-age=300`;
+        a backend that meets an unknown `kid` fetches it again.
+      security: []
+      responses:
+        '200':
+          description: The JWK Set.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  keys:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        kty: { type: string, example: EC }
+                        crv: { type: string, example: P-256 }
+                        kid: { type: string, example: 2026-10-10-01 }
+                        alg: { type: string, example: ES256 }
+                        use: { type: string, example: sig }
+                        x: { type: string, description: base64url of the 32-byte x coordinate }
+                        y: { type: string, description: base64url of the 32-byte y coordinate }
+
   /api/v1/attestation/token-secrets:
     get:
       tags: [attestation]
       operationId: listTokenSecrets
-      summary: The PinVault-Token signing secrets
+      summary: The PinVault-Token signing keys
       description: |
-        The active secret and the previous ones still kept for verification,
-        **with their values**: backends load every listed secret keyed by `kid` and
-        verify a token's HS256 signature with the one its header names. Secrets
-        are 32 random bytes each, encrypted at rest with `VAULT_AT_REST_PASSWORD`.
+        The active key and the previous ones still kept for verification. An
+        ES256 key (the default, `PINVAULT_TOKEN_ALG`) is listed as its public
+        half only — the private key never leaves the server; an HS256 secret
+        **with its value**, for backends that verify HS256. Keys are encrypted
+        at rest with `VAULT_AT_REST_PASSWORD`.
 
         **Two-person approval** (`PIN_CHANGE_APPROVALS>=2`): a secret read, so it
         answers `202` with `runAfterApproval: true` (operation
@@ -7933,10 +7967,13 @@ components:
 
     TokenSecret:
       type: object
-      required: [kid, secret, active, createdAt]
+      required: [kid, alg, active, createdAt]
       properties:
         kid: { type: string, description: 'What the token header''s `kid` names; `YYYY-MM-DD-NN`.', example: 2026-10-05-01 }
-        secret: { type: string, description: 'Base64 of the 32 secret bytes.' }
+        alg: { type: string, enum: [ES256, HS256] }
+        secret: { type: string, description: 'HS256 only: Base64 of the 32 secret bytes.' }
+        publicKey: { type: string, description: 'ES256 only: Base64 of the X.509 SubjectPublicKeyInfo.' }
+        jwk: { type: object, description: 'ES256 only: the key as `GET /api/v1/attestation/jwks` lists it.' }
         active: { type: boolean, description: 'New tokens are signed with this one.' }
         createdAt: { type: string, format: date-time }
         createdBy: { type: string, description: 'The admin who rotated it, or `system` for the one made on first use.' }
@@ -7945,7 +7982,8 @@ components:
       type: object
       required: [active, secrets]
       properties:
-        active: { type: string, description: 'The `kid` of the active secret (made now when there was none).', example: 2026-10-05-01 }
+        active: { type: string, description: 'The `kid` of the active key (made now when there was none, or when it had another algorithm).', example: 2026-10-05-01 }
+        alg: { type: string, enum: [ES256, HS256], description: 'What new tokens are signed with (`PINVAULT_TOKEN_ALG`).' }
         secrets:
           type: array
           description: 'Newest first; exactly one entry is `active`.'
@@ -7955,5 +7993,6 @@ components:
       type: object
       properties:
         kid: { type: string, example: 2026-10-05-02 }
+        alg: { type: string, enum: [ES256, HS256] }
         active: { type: boolean, example: true }
         createdAt: { type: string, format: date-time }

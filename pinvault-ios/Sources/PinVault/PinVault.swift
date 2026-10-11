@@ -80,6 +80,16 @@ public final class PinVault: @unchecked Sendable {
     }
 
     let state = Locked(State())
+
+    /// Whether this is a release build: the library compiled without `DEBUG`,
+    /// as it is in the app's Release configuration. Tests swap it.
+    let releaseBuild = Locked<Bool>({
+        #if DEBUG
+        return false
+        #else
+        return true
+        #endif
+    }())
     let e2e = Locked(E2EState())
     let log = PinVaultLog.tag("PinVault")
 
@@ -216,6 +226,9 @@ public final class PinVault: @unchecked Sendable {
 
     private func start(config: PinVaultConfig, customApi: (any CertificateConfigApi)?) async -> InitResult {
         if let refusal = environmentRefusal(config, .start) {
+            return .failed(reason: refusal.message, exception: refusal)
+        }
+        if let refusal = releaseRefusal(config) {
             return .failed(reason: refusal.message, exception: refusal)
         }
         await DeviceIdentity.warmUp()
@@ -883,6 +896,9 @@ public final class PinVault: @unchecked Sendable {
         if let refusal = environmentRefusal(config, .enroll) {
             return .failed(message: refusal.message, cause: refusal)
         }
+        if let refusal = releaseRefusal(config) {
+            return .failed(message: refusal.message, cause: refusal)
+        }
         guard let block = config.defaultConfigApi else { return Self.noConfigApiBlock }
         // A client for the block alone — the library's state is untouched; the
         // next start picks the stored credential up.
@@ -1257,6 +1273,24 @@ public final class PinVault: @unchecked Sendable {
 
     /// The refusal of `config`'s ``EnvironmentGuard`` for `operation`, or nil
     /// when there is no guard or it allows it. A guard that throws refuses.
+    /// `allowUnsigned()` and `allowUnpinnedConfigApi()` are test relaxations: in
+    /// a release build a block that has one is refused unless it also called
+    /// `allowRelaxationsInRelease()`. Checked before anything is set up or sent.
+    func releaseRefusal(_ config: PinVaultConfig) -> PinVaultError? {
+        guard releaseBuild.get() else { return nil }
+        let relaxed = config.configApiIds.compactMap { config.configApis[$0] }
+            .filter { ($0.allowUnsigned || $0.allowUnpinnedConfigApi) && !$0.relaxationsInRelease }
+        guard !relaxed.isEmpty else { return nil }
+        let what = relaxed.map { block in
+            "'\(block.id)': " + [block.allowUnsigned ? "allowUnsigned()" : nil, block.allowUnpinnedConfigApi ? "allowUnpinnedConfigApi()" : nil]
+                .compactMap { $0 }.joined(separator: " and ")
+        }.joined(separator: "; ")
+        return .illegalState(
+            "Release build refused: Config API \(what) — test relaxations. Remove them for release, " +
+                "or call allowRelaxationsInRelease() on the block to keep them deliberately."
+        )
+    }
+
     func environmentRefusal(_ config: PinVaultConfig?, _ operation: GuardedOperation) -> PinVaultError? {
         guard let environmentGuard = config?.environmentGuard else { return nil }
         let allowed: Bool

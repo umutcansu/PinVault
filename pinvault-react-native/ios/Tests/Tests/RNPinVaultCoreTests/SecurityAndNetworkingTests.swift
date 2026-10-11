@@ -119,8 +119,9 @@ final class SecurityAndNetworkingTests: XCTestCase {
         assertRefused(#"{"configApis":[{\#(anchored)}]}"#, native: keyless, "signaturePublicKeys", "declare signaturePublicKeys")
         // The relaxations stand in for the anchor they relax; a debug build takes the bare block.
         let relaxed = try NativeSecurity.parse(#"{"configApis":[{"id":"default","allowUnpinnedConfigApi":true,"allowUnsigned":true}]}"#, source: "f")
-        XCTAssertNotNil(try parse(#"{"configApis":[{\#(base)}]}"#, native: relaxed))
-        XCTAssertNotNil(try parse(#"{"configApis":[{\#(anchored)}]}"#, native: bare, release: false))
+        // The file allowed them: the library keeps them in a release build too (allowRelaxationsInRelease).
+        XCTAssertEqual(try parse(#"{"configApis":[{\#(base)}]}"#, native: relaxed).config.configApis["default"]?.relaxationsInRelease, true)
+        XCTAssertEqual(try parse(#"{"configApis":[{\#(anchored)}]}"#, native: bare, release: false).config.configApis["default"]?.relaxationsInRelease, false)
         // Who gets the identity: from JS only where the file names the hosts, or in a debug build.
         assertRefused(#"{"configApis":[{\#(base),"clientCertHosts":["cdn.example:443"]}]}"#, native: file, "clientCertHosts", "declare clientCertHosts")
         XCTAssertNotNil(try parse(#"{"configApis":[{\#(base),"clientCertHosts":["cdn.example:443"]}]}"#, native: file, release: false))

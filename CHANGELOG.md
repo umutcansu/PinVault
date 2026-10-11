@@ -1,5 +1,79 @@
 # Changelog
 
+## Unreleased
+
+### Reference server
+
+- **`TRUSTED_PROXIES` / `CLIENT_IP_HEADER`:** behind Cloudflare, a tunnel or a
+  load balancer every device came from the proxy's address, so the
+  per-address limits (enrollment, key registration, reports, refusal
+  cut-offs, admin key guesses) counted the whole fleet as one caller. A
+  connection from a listed proxy may now name the client (`X-Forwarded-For`
+  read from the right, or a one-address header such as `CF-Connecting-IP`);
+  anyone else's header is ignored. A proxy peer never counts as "this
+  machine" for anonymous admin.
+- **Device requests are logged:** one line per request on the Config API and
+  recovery listeners (logger `ConfigApiAccess`: listener, status, path without
+  query, client address, device id, time); `LOG_LEVEL_CONFIG_API_ACCESS=OFF`
+  turns it off. Before, only the management port logged requests.
+
+### React Native
+
+- See `pinvault-react-native/CHANGELOG.md`: the Expo config plugin merges
+  PinVault's backup excludes into an app's own backup rules.
+
+## 2.4.2 — 2026-10-10 — Expo config plugin, relaxations refused in release builds, ES256 tokens, safer server defaults
+
+### Reference server
+
+- **On by default:** `HOST_CLIENT_CERT_REQUIRE_GRANT` (a host's client
+  certificate only to devices the device host ACL names; a scope without an
+  ACL answers `403 host_not_allowed`) and `PINVAULT_TOKEN_REQUIRE_PROOF` (a
+  `PinVault-Proof` with every token request). `false` turns either off; the
+  sample host's demo `.env` keeps the host certificate open.
+- **`PinVault-Token` is ES256 by default** (`PINVAULT_TOKEN_ALG`): an EC
+  P-256 key whose private half never leaves the server signs it; backends
+  verify with the public keys of the new, public `GET /api/v1/attestation/jwks`
+  (a JWK Set), so a backend that is broken into cannot mint tokens.
+  `PINVAULT_TOKEN_ALG=HS256` keeps the shared secret for backends not moved
+  yet. A server switched to ES256 makes a new key at its next token and keeps
+  the HS256 one verifying until it is deleted; a key's algorithm is fixed
+  (no algorithm confusion). `GET …/token-secrets` lists an ES256 key as its
+  public half only. The sample host's production profile fixes `ES256`.
+- **The token's audience is required:** the reference verifier
+  (`PinVaultTokenAuth`) refuses every token when it has no audience
+  configured (it accepted any `aud` with none); the mock hosts accept the
+  server's own Config APIs, or `MOCK_HOST_TOKEN_AUDIENCES`.
+- **No "changeit" default for P12s:** an upload needs the keystore's password
+  (`400 password_required`); a client that does not negotiate a P12 password
+  (`X-PinVault-Features: p12password`) gets `CLIENT_P12_PASSWORD`, which has
+  no default any more ("changeit" only with `ALLOW_DEMO_SECRETS=true`) —
+  without it the request is refused (`400 p12_password_negotiation_required`)
+  before an enrollment token is spent. The dashboard negotiates and shows a
+  generated P12's one-off password once; its upload forms no longer prefill one.
+- **Multipart form fields with a bare name** (`name=password`, as Ktor's client
+  writes them) are read; they were ignored, so such an upload fell back to the
+  default password.
+
+### Android and iOS libraries
+
+- **`clientKeystore(bytes, password)` needs the password** (no "changeit"
+  default; an empty one is refused).
+
+- **Breaking for release builds that kept a test relaxation:**
+  `allowUnsigned()` and `allowUnpinnedConfigApi()` are refused in a release
+  build (Android: the app is not `android:debuggable`; iOS: compiled without
+  `DEBUG`). `init` / `start` and enrollment with such a config fail before
+  anything is set up or sent, naming the block and the call. A release app
+  that really talks to an unsigned or unpinned Config API keeps them with
+  `allowRelaxationsInRelease()` on the block. React Native passes it only
+  where the app's native security file allows the relaxation.
+
+### React Native
+
+- See `pinvault-react-native/CHANGELOG.md`: an Expo config plugin
+  (`app.plugin.js`) does the native setup at `expo prebuild`.
+
 ## 2.4.1 — 2026-10-10 — failed probes raise, production attestation floor, React Native WebSocket pinned and 0.81+
 
 Fixes from the 2026-10-09 OWASP review of 2.4.0 (server Top 10 / API Top 10,

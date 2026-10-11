@@ -158,8 +158,10 @@ class CertChangePlanner(
 
     private fun imported(form: MultipartForm, hostname: String): CertPlan {
         val bytes = form.file ?: throw PlanRefused(HttpStatusCode.BadRequest, "Dosya gerekli")
+        val password = form.fields["password"]?.takeIf { it.isNotEmpty() }
+            ?: throw PlanRefused(HttpStatusCode.BadRequest, reason("password_required", "The keystore's password is required."))
         return try {
-            certService.planImported(bytes, form.fields["password"] ?: "changeit", form.fields["format"] ?: "jks", hostname)
+            certService.planImported(bytes, password, form.fields["format"] ?: "jks", hostname)
         } catch (e: Exception) {
             throw PlanRefused(HttpStatusCode.BadRequest, "Import hatasi: ${e.message}")
         }

@@ -1105,7 +1105,7 @@ async function uploadHostClientCert(hostname) {
   const password = await pvInputDialog({
     title: t('uploadClientCert'),
     message: t('p12PasswordPrompt'),
-    value: 'changeit',
+    value: '',
     type: 'password',
     okLabel: t('uploadClientCert'),
   });
@@ -1264,7 +1264,7 @@ function renderAddHostForm() {
       </div>
       <div class="form-group">
         <label class="form-label">${t('passwordLabel')}</label>
-        <input id="upload-password" class="form-input" value="changeit" type="password">
+        <input id="upload-password" class="form-input" type="password" required autocomplete="off">
       </div>
       <div class="form-actions">
         <button class="btn btn-success" id="upload-btn" data-action="createHostUpload">${t('create')}</button>
@@ -1367,9 +1367,10 @@ async function createHostFetch() {
 async function createHostUpload() {
   const hostname = document.getElementById('upload-hostname').value.trim();
   const fileInput = document.getElementById('upload-file');
-  const password = document.getElementById('upload-password').value || 'changeit';
+  const password = document.getElementById('upload-password').value;
 
   if (!hostname) { toast(t('saveError'), 'error'); return; }
+  if (!password) { toast(t('passwordLabel'), 'error'); return; }
   if (!fileInput.files.length) { toast(t('fileLabel'), 'error'); return; }
 
   const btn = document.getElementById('upload-btn');

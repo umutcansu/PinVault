@@ -270,8 +270,16 @@ class AttestationAdminRoutesTest {
         assertTrue(Regex("^\\d{4}-\\d{2}-\\d{2}-\\d{2}$").matches(active), active)
         val entries = listing["secrets"]!!.jsonArray.map { it.jsonObject }
         assertEquals(1, entries.size)
-        assertEquals(32, Base64.getDecoder().decode(entries[0]["secret"]!!.jsonPrimitive.content).size)
+        // ES256 by default: the public half only, never the private key.
+        assertEquals("ES256", listing["alg"]!!.jsonPrimitive.content)
+        assertEquals("ES256", entries[0]["alg"]!!.jsonPrimitive.content)
+        assertTrue("secret" !in entries[0], entries[0].toString())
+        val publicKey = entries[0]["publicKey"]!!.jsonPrimitive.content
+        java.security.KeyFactory.getInstance("EC").generatePublic(java.security.spec.X509EncodedKeySpec(Base64.getDecoder().decode(publicKey)))
+        assertEquals(active, entries[0]["jwk"]!!.jsonObject["kid"]!!.jsonPrimitive.content)
         assertTrue(entries[0]["active"]!!.jsonPrimitive.boolean)
+        val privateKey = Base64.getEncoder().encodeToString(secrets.active().secret)
+        assertFalse(first.bodyAsText().contains(privateKey), "the private key never leaves the server")
 
         val rotated = client.post("/api/v1/attestation/token-secrets/rotate")
         assertEquals(HttpStatusCode.OK, rotated.status, rotated.bodyAsText())
@@ -282,19 +290,43 @@ class AttestationAdminRoutesTest {
         val after = client.get("/api/v1/attestation/token-secrets").json()
         assertEquals(fresh, after["active"]!!.jsonPrimitive.content)
         assertEquals(setOf(active, fresh), after["secrets"]!!.jsonArray.map { it.jsonObject["kid"]!!.jsonPrimitive.content }.toSet())
-        assertEquals(setOf(active, fresh), secrets.secretsByKid().keys, "both verify tokens")
+        assertEquals(setOf(active, fresh), secrets.verificationKeys().keys, "both verify tokens")
+        // The JWK Set lists both public keys, without an API key (ApiKeyAuth allowlists it).
+        val jwks = client.get("/api/v1/attestation/jwks")
+        assertEquals(HttpStatusCode.OK, jwks.status)
+        assertEquals(setOf(active, fresh), jwks.json()["keys"]!!.jsonArray.map { it.jsonObject["kid"]!!.jsonPrimitive.content }.toSet())
+        assertTrue(com.example.pinvault.server.plugin.isPublicEndpoint("/api/v1/attestation/jwks", io.ktor.http.HttpMethod.Get))
 
         val refused = client.delete("/api/v1/attestation/token-secrets/$fresh")
         assertEquals(HttpStatusCode.Conflict, refused.status)
         assertTrue(refused.bodyAsText().contains("secret_active"))
         assertEquals(HttpStatusCode.OK, client.delete("/api/v1/attestation/token-secrets/$active").status)
         assertEquals(HttpStatusCode.NotFound, client.delete("/api/v1/attestation/token-secrets/$active").status)
-        assertEquals(setOf(fresh), secrets.secretsByKid().keys)
+        assertEquals(setOf(fresh), secrets.verificationKeys().keys)
 
         val recorded = actions()
         assertTrue("attestation_token_secret_rotated" in recorded && "attestation_token_secret_deleted" in recorded, recorded.toString())
-        // No secret in the audit log.
-        val secret = entries[0]["secret"]!!.jsonPrimitive.content
-        assertFalse(auditStore.page(100, 0).any { secret in it.summary || secret in it.detail })
+        // No private key in the audit log.
+        assertFalse(auditStore.page(100, 0).any { privateKey in it.summary || privateKey in it.detail })
+    }
+
+    @Test
+    fun `token secrets - with PINVAULT_TOKEN_ALG=HS256 the shared secret is listed, and a switch rotates once`() = testApplication {
+        secrets = AttestationTokenSecretStore(db, alg = com.example.pinvault.server.service.attestation.PinVaultToken.ALG_HS256)
+        app()
+        val listing = client.get("/api/v1/attestation/token-secrets").json()
+        val entry = listing["secrets"]!!.jsonArray.single().jsonObject
+        assertEquals("HS256", entry["alg"]!!.jsonPrimitive.content)
+        assertEquals(32, Base64.getDecoder().decode(entry["secret"]!!.jsonPrimitive.content).size)
+        assertTrue("publicKey" !in entry)
+        assertEquals(0, client.get("/api/v1/attestation/jwks").json()["keys"]!!.jsonArray.size, "no public key for HS256")
+        val hsKid = entry["kid"]!!.jsonPrimitive.content
+
+        // The same database under ES256: the next token is signed by a new ES256 key; the HS256 one keeps verifying.
+        val es = AttestationTokenSecretStore(db)
+        val active = es.active()
+        assertEquals("ES256", active.alg)
+        assertTrue(active.kid != hsKid)
+        assertEquals(setOf(hsKid, active.kid), es.verificationKeys().keys)
     }
 }

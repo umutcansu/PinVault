@@ -1,5 +1,6 @@
 package com.example.pinvault.server.service
 
+import com.example.pinvault.server.plugin.installRequestLog
 import io.ktor.server.application.Application
 import io.ktor.server.application.install
 import io.ktor.server.engine.EmbeddedServer
@@ -65,6 +66,8 @@ class RecoveryListener(
         val keyStore = ServerKeyStores.load(certService.recoveryKeystoreFile(), CertificateService.KEYSTORE_PASSWORD.toCharArray())
         val module: Application.() -> Unit = {
             install(com.example.pinvault.server.plugin.EncodedPathGuard)
+            install(com.example.pinvault.server.plugin.ClientAddress)
+            installRequestLog("recovery :$port")
             // Everything here is open to anyone; a renewal body is a CSR of a few hundred bytes.
             install(com.example.pinvault.server.plugin.ClientBodyLimit) { appliesTo = { _, _ -> true } }
             routing {

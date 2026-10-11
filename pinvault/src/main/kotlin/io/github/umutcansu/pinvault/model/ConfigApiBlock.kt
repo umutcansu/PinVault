@@ -168,7 +168,13 @@ data class ConfigApiBlock @JvmOverloads constructor(
      * True = every request that carries the token also carries a
      * `PinVault-Proof` signed by the device key. See [Builder.proofOfPossession].
      */
-    val tokenProof: Boolean = false
+    val tokenProof: Boolean = false,
+    /**
+     * True = [allowUnsigned] and [allowUnpinnedConfigApi] apply in a release
+     * build too (`PinVault.init` refuses them there otherwise). See
+     * [Builder.allowRelaxationsInRelease].
+     */
+    val relaxationsInRelease: Boolean = false
 ) {
 
     /**
@@ -232,6 +238,7 @@ data class ConfigApiBlock @JvmOverloads constructor(
         private var attestationIntervalMs: Long = DEFAULT_ATTESTATION_INTERVAL_MS
         private var tokenHosts: List<String> = emptyList()
         private var tokenProof: Boolean = false
+        private var relaxationsInRelease: Boolean = false
 
         fun bootstrapPins(pins: List<HostPin>) = apply { this.bootstrapPins = pins }
         fun configEndpoint(endpoint: String) = apply { this.configEndpoint = endpoint }
@@ -353,8 +360,20 @@ data class ConfigApiBlock @JvmOverloads constructor(
         fun allowUnpinnedConfigApi() = apply { this.allowUnpinnedConfigApi = true }
 
         /**
-         * mTLS client keystore bundled with the app. Default password
-         * "changeit" is placeholder only.
+         * Keep [allowUnsigned] and [allowUnpinnedConfigApi] in a release build
+         * (the app is not `android:debuggable`). Without this call
+         * `PinVault.init` and enrollment with this config fail there with
+         * [InitResult.Failed][io.github.umutcansu.pinvault.InitResult.Failed]:
+         * both are test relaxations, and a release build that still has one
+         * usually forgot to remove it. Call it only when the release app
+         * really talks to an unsigned or unpinned Config API, and know what
+         * it gives away (see the two methods).
+         */
+        fun allowRelaxationsInRelease() = apply { this.relaxationsInRelease = true }
+
+        /**
+         * mTLS client keystore bundled with the app, with its [password] (no
+         * default: a bundle opened with a public password protects nothing).
          *
          * The private key is imported into the Android Keystore as a
          * non-exportable key when the block is first used and presented from
@@ -363,7 +382,8 @@ data class ConfigApiBlock @JvmOverloads constructor(
          * readable by anyone who unpacks the app: use it to reach an mTLS
          * Config API before enrollment, not as a device identity.
          */
-        fun clientKeystore(bytes: ByteArray, password: String = "changeit") = apply {
+        fun clientKeystore(bytes: ByteArray, password: String) = apply {
+            require(password.isNotEmpty()) { "clientKeystore: the keystore's password is required" }
             this.clientKeystoreBytes = bytes
             this.clientKeyPassword = password
         }
@@ -650,7 +670,8 @@ data class ConfigApiBlock @JvmOverloads constructor(
                 attestationEnabled = attestationEnabled,
                 attestationIntervalMs = attestationIntervalMs,
                 tokenHosts = tokenHosts,
-                tokenProof = tokenProof
+                tokenProof = tokenProof,
+                relaxationsInRelease = relaxationsInRelease
             )
         }
     }
@@ -688,7 +709,8 @@ data class ConfigApiBlock @JvmOverloads constructor(
                 attestationEnabled == other.attestationEnabled &&
                 attestationIntervalMs == other.attestationIntervalMs &&
                 tokenHosts == other.tokenHosts &&
-                tokenProof == other.tokenProof
+                tokenProof == other.tokenProof &&
+                relaxationsInRelease == other.relaxationsInRelease
     }
 
     override fun hashCode(): Int {
@@ -724,6 +746,7 @@ data class ConfigApiBlock @JvmOverloads constructor(
         r = 31 * r + attestationIntervalMs.hashCode()
         r = 31 * r + tokenHosts.hashCode()
         r = 31 * r + tokenProof.hashCode()
+        r = 31 * r + relaxationsInRelease.hashCode()
         return r
     }
 

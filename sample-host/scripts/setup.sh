@@ -328,6 +328,19 @@ elif [ -z "$(get_env FETCH_ALLOW_PRIVATE_TARGETS)" ]; then
     echo ">> FETCH_ALLOW_PRIVATE_TARGETS=true (demo: sunucu bu makinedeki ve yerel ağdaki host'ların sertifikasını alabilir)"
 fi
 
+# 2.4.2'den önce boş değer demo davranışıydı; sunucuda artık boş = sıkı. Demo
+# profilinde boş kalanlar eski davranışa yazılır (üretim profili kendi değerlerini sabitler).
+if [ "${PRODUCTION}" != 1 ]; then
+    if [ -z "$(get_env HOST_CLIENT_CERT_REQUIRE_GRANT)" ]; then
+        set_env HOST_CLIENT_CERT_REQUIRE_GRANT false
+        echo ">> HOST_CLIENT_CERT_REQUIRE_GRANT=false (demo: her kayıtlı cihaz mock mTLS host'unun sertifikasını alır)"
+    fi
+    if [ -z "$(get_env CLIENT_P12_PASSWORD)" ]; then
+        set_env CLIENT_P12_PASSWORD changeit
+        echo ">> CLIENT_P12_PASSWORD=changeit (demo: 2.1 öncesi kütüphane — önceki sürüm testi U01 — bu parolayı bilir)"
+    fi
+fi
+
 if [ -z "$(get_env HOST_LAN_IP)" ]; then
     lan_ip="$(detect_lan_ip)"
     if [ -n "${lan_ip}" ]; then

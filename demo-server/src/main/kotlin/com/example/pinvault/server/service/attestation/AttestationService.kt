@@ -394,7 +394,7 @@ class AttestationService(
             val secret = secrets.active()
             val nowSeconds = now.epochSecond
             // cnf: the key that signed this report and, over mTLS, the certificate it came with (§5).
-            token = PinVaultToken.issue(secret.kid, secret.secret, deviceId, configApiId, arc, policy.version,
+            token = PinVaultToken.issue(secret.signingKey(), deviceId, configApiId, arc, policy.version,
                 policy.tokenTtlSeconds, device.annotations, nowSeconds,
                 keyThumbprint = PinVaultToken.jwkThumbprint(publicKey as ECPublicKey),
                 certThumbprint = clientCertificate?.let { PinVaultToken.certThumbprint(it) })

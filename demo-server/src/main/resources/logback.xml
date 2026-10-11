@@ -8,6 +8,9 @@
          set LOG_LEVEL_CLIENT_CERT=DEBUG to see why the peer certificate could
          not be read (no Netty call, no SslHandler, unverified session). -->
     <logger name="ClientCertIdentity" level="${LOG_LEVEL_CLIENT_CERT:-INFO}" />
+    <!-- One line per device request on the Config API and recovery listeners
+         (RequestLog.kt). OFF turns it off; the management port has its own. -->
+    <logger name="ConfigApiAccess" level="${LOG_LEVEL_CONFIG_API_ACCESS:-INFO}" />
     <root level="INFO">
         <appender-ref ref="STDOUT" />
     </root>

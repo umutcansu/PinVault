@@ -24,9 +24,9 @@ differences are in [`pinvault-ios/README.md`](pinvault-ios/README.md) and
 ### 1. Add dependency
 
 ```gradle
-implementation("io.github.umutcansu:pinvault:2.4.1")
+implementation("io.github.umutcansu:pinvault:2.4.2")
 // optional: Play Integrity as the attestation's second opinion
-implementation("io.github.umutcansu:pinvault-play-integrity:2.4.1")
+implementation("io.github.umutcansu:pinvault-play-integrity:2.4.2")
 ```
 
 ### 2. Initialize (v2 DSL — Kotlin)
@@ -301,6 +301,14 @@ PinVaultConfig.Builder()
     allowUnsigned()    // opt out — disables signature, freshness, and replay checks
 }
 ```
+
+`allowUnsigned()` and `allowUnpinnedConfigApi()` are test relaxations: a
+release build refuses them (Android: the app is not `android:debuggable`;
+iOS: compiled without `DEBUG`). `init` / `start` and enrollment with that
+config fail before anything is sent, naming the block. A release app that
+really talks to an unsigned or unpinned Config API says so on the block with
+`allowRelaxationsInRelease()`. React Native does that only where the app's
+native security file allows the relaxation.
 
 ### Multi-Config-API
 
@@ -1334,7 +1342,7 @@ What happens:
   request carries the key's Android key attestation chain, so a server with
   `ATTESTATION_KEY_POLICY=enforce` can bind the key to your package on real
   hardware.
-- **A pass** yields a `PinVault-Token` (HS256 JWT, 5 minutes) held in memory,
+- **A pass** yields a `PinVault-Token` (ES256 JWT by default, 5 minutes) held in memory,
   and — when the device is behind — a signed pin config that goes through
   exactly the checks a fetched one gets (`SSLCertificateUpdater.applySigned`:
   signatures, scope, freshness, replay, plausibility). **A reject** yields
@@ -1514,12 +1522,13 @@ receive private keys at all: enroll with the default CSR flow, and leave
 `allowServerGeneratedKey()` off.
 
 For a P12 you hand over yourself (`clientKeystore(bytes, password)`), the
-`"changeit"` default is a development placeholder: use a unique high-entropy
-password per device, delivered out of band — never hard-code it in the APK.
+password is required (since 2.4.2 there is no `"changeit"` default): use a
+unique high-entropy password per device, delivered out of band — never
+hard-code it in the APK.
 
 ```kotlin
 // ❌ Don't
-.configApi("api", url) { clientKeystore(p12Bytes) }
+.configApi("api", url) { clientKeystore(p12Bytes, "changeit") }
 
 // ✅ Do
 val devicePassword = backend.fetchKeystorePassword(deviceId) // ≥ 16 random chars
@@ -1542,7 +1551,8 @@ on first install). *(2.2)* `init` enforces it, however the config
 object was built: a Config API block must use `https://` (also for
 `enrollmentUrl` / `renewalUrl`) and carry bootstrap pins, or `init` returns
 `Failed` and the block's client refuses to connect. Tests against a local
-plain-HTTP server opt out with `allowUnpinnedConfigApi()` on the block.
+plain-HTTP server opt out with `allowUnpinnedConfigApi()` on the block (a
+release build refuses it unless the block also calls `allowRelaxationsInRelease()`).
 Hardcode at least 2 SHA-256 SPKI hashes in the APK:
 
 ```kotlin

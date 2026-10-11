@@ -256,7 +256,7 @@ function toggleBootstrapUpload() {
     </div>
     <div class="form-group">
       <label class="form-label">${t('uploadPassword')}</label>
-      <input type="password" id="bootstrap-password" value="changeit" class="form-input"/>
+      <input type="password" id="bootstrap-password" class="form-input" required autocomplete="off"/>
     </div>
     <button type="submit" class="btn btn-primary">${t('uploadBtn')}</button>
   </form>`;
@@ -546,9 +546,11 @@ async function generateClientCert(e) {
   const clientId = document.getElementById('mtls-client-id').value.trim();
   if (!clientId) return;
   try {
+    // p12password: the server wraps the P12 with a one-off password (no default
+    // password any more) and sends it back once, in X-P12-Password.
     const res = await apiFetch('/api/v1/client-certs/generate', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', 'X-PinVault-Features': 'p12password' },
       body: JSON.stringify({ clientId })
     });
     // 202: waits for a second admin. Once approved, the same click runs it
@@ -564,6 +566,11 @@ async function generateClientCert(e) {
     const a = document.createElement('a');
     a.href = url; a.download = clientId + '.p12'; a.click();
     URL.revokeObjectURL(url);
+    const p12Password = res.headers.get('X-P12-Password');
+    if (p12Password) {
+      // Shown once: the server keeps no copy.
+      await pvInputDialog({ title: t('p12OneOffPasswordTitle'), message: t('p12OneOffPassword'), value: p12Password, okLabel: 'OK' });
+    }
     toast(t('certGenerated'), 'success');
     refreshMtlsView();
   } catch (err) { toast(t('error'), 'error'); }
@@ -1330,7 +1337,7 @@ function showCertUploadForm(hostname) {
     </div>
     <div class="form-group">
       <label class="form-label">${t('renewUploadPassword')}</label>
-      <input type="password" id="renew-cert-password" value="changeit" class="form-input"/>
+      <input type="password" id="renew-cert-password" class="form-input" required autocomplete="off"/>
     </div>
     <button type="submit" class="btn btn-primary">${t('renewUploadBtn')}</button>
   </form>`;

@@ -1,5 +1,40 @@
 # Changelog
 
+## Unreleased
+
+### Fixed
+
+- **Expo: apps with their own Android backup rules build again, with
+  PinVault's excludes kept.** An app or plugin (`expo-secure-store`) that sets
+  `fullBackupContent` / `dataExtractionRules` failed the manifest merge
+  against the library's rules. At the end of prebuild the plugin now copies
+  those rules to `res/xml/pinvault_merged_<name>.xml` with PinVault's excludes
+  added (only where the app's includes reach) and points the manifest at the
+  copy with `tools:replace`; rules it cannot find stop prebuild. Built with
+  Expo SDK 54 + `expo-secure-store`, Android release.
+
+## 2.4.2 — 2026-10-10
+
+### Added
+
+- **Expo config plugin** (`app.plugin.js`): at `expo prebuild` it sets the
+  iOS deployment target to 16.0, writes the Info.plist keys
+  (`faceIDPermission`, `backgroundUpdates`), adds
+  `PinVaultBridge.registerBackgroundTask()` to a Swift `AppDelegate`, copies
+  the native security file into Android's assets and the iOS app bundle
+  (`nativeSecurityFile`), and writes the two native opt-outs only when asked
+  (`allowNoNativeSecurityFile`, `pinReactNativeNetworking: false`). Built and
+  run with Expo SDK 54 (React Native 0.81), Android and iOS release builds.
+
+### Changed
+
+- **Native libraries 2.4.2:** release builds refuse `allowUnsigned()` /
+  `allowUnpinnedConfigApi()` unless the block also calls
+  `allowRelaxationsInRelease()`. The bridge calls it only where the native
+  security file itself allows the relaxation (`allowUnsigned` /
+  `allowUnpinned`), so the native file stays the only place that decides;
+  JS cannot turn it on.
+
 ## 2.4.1 — 2026-10-10
 
 ### Security
