@@ -18,37 +18,52 @@ public class SwiftPinVaultFlutterPlugin: NSObject, FlutterPlugin {
     private static let lock = NSLock()
     private static var startedInProcess = false
     private static var dartGuard: DartEnvironmentGuard?
-    private static weak var current: SwiftPinVaultFlutterPlugin?
     private static let startQueue = StartQueue()
 
-    // The connection events and guard requests cross the EventChannels; their
-    // sinks are process-wide (a hot reload replaces the stream handlers, not
-    // the library).
-    private static var eventsSink: FlutterEventSink?
-    private static var guardSink: FlutterEventSink?
+    /// Every engine the plugin is registered with (a background engine has its
+    /// own instance). The library's connection events go to all of them.
+    private static let attached = NSHashTable<SwiftPinVaultFlutterPlugin>.weakObjects()
 
-    // The messenger for the per-socket channels `ws_connect` creates.
-    private static var messenger: FlutterBinaryMessenger?
+    // This engine's ends of the EventChannels (guarded by `lock`). Guard
+    // requests go to the engine that called start: its Dart side holds the guard.
+    private var eventsSink: FlutterEventSink?
+    private var guardSink: FlutterEventSink?
+
+    // This engine's messenger, for the per-socket channels `ws_connect` creates.
+    private let messenger: FlutterBinaryMessenger
 
     // Live WebSocket connections, by socket id.
     private static var sockets: [String: PinVaultWebSocketConnection] = [:]
 
     private let mapper = ResultMapper(tokens: SwiftPinVaultFlutterPlugin.tokens)
 
+    private init(messenger: FlutterBinaryMessenger) {
+        self.messenger = messenger
+        super.init()
+    }
+
     // MARK: registration
 
     public static func register(with registrar: FlutterPluginRegistrar) {
-        Self.messenger = registrar.messenger()
+        let instance = SwiftPinVaultFlutterPlugin(messenger: registrar.messenger())
+        locked { attached.add(instance) }
 
         let method = FlutterMethodChannel(name: "pinvault_flutter", binaryMessenger: registrar.messenger())
-        let instance = SwiftPinVaultFlutterPlugin()
         registrar.addMethodCallDelegate(instance, channel: method)
 
         let events = FlutterEventChannel(name: "pinvault_flutter/events", binaryMessenger: registrar.messenger())
-        events.setStreamHandler(EventsStreamHandler())
+        events.setStreamHandler(SinkStreamHandler(instance) { plugin, sink in plugin.setEventsSink(sink) })
 
         let guardChannel = FlutterEventChannel(name: "pinvault_flutter/guard", binaryMessenger: registrar.messenger())
-        guardChannel.setStreamHandler(GuardStreamHandler())
+        guardChannel.setStreamHandler(SinkStreamHandler(instance) { plugin, sink in plugin.setGuardSink(sink) })
+    }
+
+    public func detachFromEngine(for registrar: FlutterPluginRegistrar) {
+        Self.locked {
+            Self.attached.remove(self)
+            eventsSink = nil
+            guardSink = nil
+        }
     }
 
     // MARK: helpers
@@ -63,12 +78,12 @@ public class SwiftPinVaultFlutterPlugin: NSObject, FlutterPlugin {
         return startedInProcess
     }
 
-    fileprivate static func setEventsSink(_ sink: FlutterEventSink?) {
-        lock.lock(); eventsSink = sink; lock.unlock()
+    fileprivate func setEventsSink(_ sink: FlutterEventSink?) {
+        Self.locked { eventsSink = sink }
     }
 
-    fileprivate static func setGuardSink(_ sink: FlutterEventSink?) {
-        lock.lock(); guardSink = sink; lock.unlock()
+    fileprivate func setGuardSink(_ sink: FlutterEventSink?) {
+        Self.locked { guardSink = sink }
     }
 
     /// Flutter takes channel messages (replies, events) only on the platform
@@ -85,16 +100,16 @@ public class SwiftPinVaultFlutterPlugin: NSObject, FlutterPlugin {
         }
     }
 
-    private static func emitGuardRequest(_ requestId: String, _ operation: String) {
-        let sink = locked { guardSink }
+    private func emitGuardRequest(_ requestId: String, _ operation: String) {
+        let sink = Self.locked { guardSink }
         let request: [String: Any] = ["requestId": requestId, "operation": operation]
-        onMain { sink?(request) }
+        Self.onMain { sink?(request) }
     }
 
     private static func emitConnectionEvent(_ event: PinVaultConnectionEvent) {
-        let sink = locked { eventsSink }
+        let sinks = locked { attached.allObjects.compactMap { $0.eventsSink } }
         let mapped = ResultMapper(tokens: tokens).event(event)
-        onMain { sink?(mapped) }
+        onMain { sinks.forEach { $0(mapped) } }
     }
 
     static func addSocket(_ id: String, _ connection: PinVaultWebSocketConnection) {
@@ -157,7 +172,6 @@ public class SwiftPinVaultFlutterPlugin: NSObject, FlutterPlugin {
     // MARK: dispatch
 
     public func handle(_ call: FlutterMethodCall, result reply: @escaping FlutterResult) {
-        Self.lock.lock(); Self.current = self; Self.lock.unlock()
         let result = Self.mainResult(reply)
 
         switch call.method {
@@ -419,8 +433,9 @@ public class SwiftPinVaultFlutterPlugin: NSObject, FlutterPlugin {
                     parsed = try ConfigParser.parse(
                         json, tokens: Self.tokens,
                         guardFactory: { timeout in
+                            // Asked in this engine (the one that called start), not the latest one.
                             let g = DartEnvironmentGuard(timeoutMs: timeout) { requestId, operation in
-                                Self.emitGuardRequest(requestId, operation)
+                                self.emitGuardRequest(requestId, operation)
                             }
                             newGuard = g
                             return g
@@ -511,10 +526,7 @@ public class SwiftPinVaultFlutterPlugin: NSObject, FlutterPlugin {
             }
         }
 
-        guard let messenger = Self.messenger else {
-            return Self.invalidArgument(result, "ws_connect: no Flutter binary messenger")
-        }
-
+        let messenger = self.messenger
         let connection = PinVaultWebSocketConnection(socketId: socketId, url: url, headers: headers)
         Self.addSocket(socketId, connection)
 
@@ -570,26 +582,23 @@ private actor StartQueue {
 
 // MARK: Event channel stream handlers
 
-private final class EventsStreamHandler: NSObject, FlutterStreamHandler {
+/// Hands one engine's end of an EventChannel to its plugin instance.
+private final class SinkStreamHandler: NSObject, FlutterStreamHandler {
+    private weak var plugin: SwiftPinVaultFlutterPlugin?
+    private let set: (SwiftPinVaultFlutterPlugin, FlutterEventSink?) -> Void
+
+    init(_ plugin: SwiftPinVaultFlutterPlugin, _ set: @escaping (SwiftPinVaultFlutterPlugin, FlutterEventSink?) -> Void) {
+        self.plugin = plugin
+        self.set = set
+    }
+
     func onListen(withArguments arguments: Any?, eventSink events: @escaping FlutterEventSink) -> FlutterError? {
-        SwiftPinVaultFlutterPlugin.setEventsSink(events)
+        if let plugin { set(plugin, events) }
         return nil
     }
 
     func onCancel(withArguments arguments: Any?) -> FlutterError? {
-        SwiftPinVaultFlutterPlugin.setEventsSink(nil)
-        return nil
-    }
-}
-
-private final class GuardStreamHandler: NSObject, FlutterStreamHandler {
-    func onListen(withArguments arguments: Any?, eventSink events: @escaping FlutterEventSink) -> FlutterError? {
-        SwiftPinVaultFlutterPlugin.setGuardSink(events)
-        return nil
-    }
-
-    func onCancel(withArguments arguments: Any?) -> FlutterError? {
-        SwiftPinVaultFlutterPlugin.setGuardSink(nil)
+        if let plugin { set(plugin, nil) }
         return nil
     }
 }

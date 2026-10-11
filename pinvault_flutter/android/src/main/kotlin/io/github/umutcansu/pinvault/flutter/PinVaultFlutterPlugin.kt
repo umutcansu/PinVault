@@ -67,7 +67,7 @@ class PinVaultFlutterPlugin : FlutterPlugin, MethodCallHandler, ActivityAware {
     }
 
     override fun onAttachedToEngine(@NonNull flutterPluginBinding: FlutterPlugin.FlutterPluginBinding) {
-        current = this
+        attached.add(this)
         this.binding = flutterPluginBinding
         this.context = flutterPluginBinding.applicationContext
         channel = MethodChannel(flutterPluginBinding.binaryMessenger, "pinvault_flutter")
@@ -101,8 +101,10 @@ class PinVaultFlutterPlugin : FlutterPlugin, MethodCallHandler, ActivityAware {
         channel.setMethodCallHandler(null)
         eventsChannel.setStreamHandler(null)
         guardChannel.setStreamHandler(null)
+        eventSink = null
+        guardSink = null
         scope.cancel()
-        if (current == this) current = null
+        attached.remove(this)
     }
 
     // ── ActivityAware ────────────────────────────────────────────────────────
@@ -161,12 +163,14 @@ class PinVaultFlutterPlugin : FlutterPlugin, MethodCallHandler, ActivityAware {
         throw AlreadyAnswered()
     }
 
-    /** The library outlives a hot reload: events and guard questions go to the live plugin. */
+    /**
+     * The library is process-wide and can outlive this engine: its events go to
+     * every attached engine that listens (a background engine's plugin included).
+     */
     private val connectionListener = PinVaultConnectionListener { event ->
         try {
-            val plugin = current ?: return@PinVaultConnectionListener
-            val mapped = plugin.mapper.event(event)
-            plugin.postToMain { plugin.eventSink?.success(toBridge(mapped)) }
+            val mapped = toBridge(mapper.event(event))
+            for (plugin in attached) plugin.postToMain { plugin.eventSink?.success(mapped) }
         } catch (_: Exception) {
             // A Dart runtime that is going away; telemetry must never break a handshake.
         }
@@ -323,7 +327,9 @@ class PinVaultFlutterPlugin : FlutterPlugin, MethodCallHandler, ActivityAware {
                     ConfigParser.parse(
                         configJson, tokens,
                         guardFactory = { timeout ->
-                            DartEnvironmentGuard(timeout) { id, op -> current?.emitGuard(id, op) }.also { newGuard = it }
+                            // Asked in the engine whose Dart guard this is: the one that called start,
+                            // not whichever engine attached last (a background engine has no guard).
+                            DartEnvironmentGuard(timeout) { id, op -> emitGuard(id, op) }.also { newGuard = it }
                         },
                         listener = connectionListener,
                         native = NativeSecurity.load(context),
@@ -567,8 +573,10 @@ class PinVaultFlutterPlugin : FlutterPlugin, MethodCallHandler, ActivityAware {
         const val E_NO_ACTIVITY = "E_NO_ACTIVITY"
         const val E_NATIVE = "E_NATIVE"
 
+        /** Every engine this plugin is attached to (a background engine has its own). */
+        private val attached = java.util.concurrent.CopyOnWriteArraySet<PinVaultFlutterPlugin>()
+
         /** Process-wide: the library is a process singleton, a hot reload makes a new plugin. */
-        @Volatile private var current: PinVaultFlutterPlugin? = null
         @Volatile private var startedInProcess = false
         @Volatile private var guard: DartEnvironmentGuard? = null
         private val startLock = Mutex()
