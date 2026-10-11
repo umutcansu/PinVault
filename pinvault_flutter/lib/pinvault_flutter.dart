@@ -555,13 +555,16 @@ class PinVault {
 
   // ── Events ────────────────────────────────────────────────────────────────
 
-  /// Connection telemetry (`onConnectionEvent`). Returns a subscription; call `remove()` when done.
+  /// Connection telemetry (`onConnectionEvent`). Returns a subscription; call `cancel()` when done.
+  /// Every listener shares one native stream, so adding or cancelling one never affects the others.
   static StreamSubscription<PinVaultConnectionEvent> addConnectionListener(
     void Function(PinVaultConnectionEvent event) listener,
-  ) {
-    final stream = _eventsChannel.receiveBroadcastStream().map<PinVaultConnectionEvent>(
-          (event) => PinVaultConnectionEvent.fromJson(_asMap(event)),
-        );
-    return stream.listen(listener);
-  }
+  ) =>
+      _connectionEvents.listen(listener);
 }
+
+// One stream for every listener: a second receiveBroadcastStream() on the same
+// channel replaces the first one's handler and silences its listeners.
+final Stream<PinVaultConnectionEvent> _connectionEvents = _eventsChannel
+    .receiveBroadcastStream()
+    .map<PinVaultConnectionEvent>((event) => PinVaultConnectionEvent.fromJson(_asMap(event)));

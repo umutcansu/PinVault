@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:pinvault_flutter/pinvault_flutter.dart';
 
@@ -33,6 +35,19 @@ class MyHomePage extends StatefulWidget {
 class _MyHomePageState extends State<MyHomePage> {
   String _status = 'Not Started';
   String _log = '';
+  StreamSubscription<PinVaultConnectionEvent>? _events;
+
+  @override
+  void initState() {
+    super.initState();
+    _events = PinVault.addConnectionListener((event) => _append('event: ${event.runtimeType}'));
+  }
+
+  @override
+  void dispose() {
+    _events?.cancel();
+    super.dispose();
+  }
 
   void _append(String line) {
     setState(() => _log = '$line\n$_log'.split('\n').take(30).join('\n'));
@@ -88,8 +103,6 @@ class _MyHomePageState extends State<MyHomePage> {
     try {
       // Use `_remoteConfig()` instead to fetch a signed config from the demo-server.
       final config = _staticConfig();
-
-      PinVault.addConnectionListener((event) => _append('event: ${event.runtimeType}'));
 
       final result = await PinVault.start(config);
       setState(() => _status = result is InitResultReady ? 'Ready (v${result.version})' : 'Failed: $result');
