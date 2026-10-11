@@ -18,5 +18,6 @@ PinVault libraries (Android `io.github.umutcansu:pinvault`, iOS `PinVault`).
   asked before INIT, ENROLL, FETCH_FILE, LOAD_FILE and UNLOCK_FILE.
 - iOS: `SwiftPinVaultFlutterPlugin.registerBackgroundTask()` for background
   periodic updates.
-- Requires iOS 16, Android API 24, and PinVault 2.5.0 on iOS (the pinned
-  WebSocket API).
+- Requires Flutter 3.44 / Dart 3.12 (built-in Kotlin: the plugin does not
+  apply the Kotlin Gradle plugin itself), iOS 16, Android API 24, and
+  PinVault 2.5.0 on iOS (the pinned WebSocket API).
