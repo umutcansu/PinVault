@@ -29,7 +29,21 @@ final class PinnedWebSocketTests: XCTestCase {
         }
     }
 
-    func testInterceptedTransportDelegatesWebSocketToBase() throws {
+    func testTheUpgradeRequestKeepsTheHeadersAndTimeout() throws {
+        // ws:// skips the pin re-check, so no config is needed to build the task.
+        let session = DynamicSSLManager().buildDynamicClient(configProvider: { nil })
+        var request = URLRequest(url: URL(string: "ws://api.example.com/socket")!, timeoutInterval: 7)
+        request.setValue("Bearer abc", forHTTPHeaderField: "Authorization")
+        request.setValue("1", forHTTPHeaderField: "X-Test")
+
+        let task = try session.webSocketTask(for: request)
+        defer { task.cancel() }
+        XCTAssertEqual(task.originalRequest?.value(forHTTPHeaderField: "Authorization"), "Bearer abc")
+        XCTAssertEqual(task.originalRequest?.value(forHTTPHeaderField: "X-Test"), "1")
+        XCTAssertEqual(task.originalRequest?.timeoutInterval, 7)
+    }
+
+        func testInterceptedTransportDelegatesWebSocketToBase() throws {
         let base = RecordingBase()
         let session = PinnedSession(transport: InterceptedTransport(interceptors: [], base: base))
 

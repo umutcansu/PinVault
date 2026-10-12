@@ -228,7 +228,9 @@ final class URLSessionTransport: PinnedTransport, @unchecked Sendable {
                 throw error
             }
         }
-        return entry.session.webSocketTask(with: url)
+        // The request, not only its URL: its headers (Authorization, a token)
+        // and timeout go into the upgrade request.
+        return entry.session.webSocketTask(with: request)
     }
 
     /// Runs one data task whose body the delegate collects under `limit`; the
