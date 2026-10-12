@@ -1,6 +1,6 @@
 PODS:
   - Flutter (1.0.0)
-  - PinVault (2.4.2)
+  - PinVault (2.5.0)
 
 DEPENDENCIES:
   - Flutter (from `Flutter`)
@@ -14,7 +14,7 @@ EXTERNAL SOURCES:
 
 SPEC CHECKSUMS:
   Flutter: 71a624a5bc0c04062bf19101d501e466baf2fb47
-  PinVault: e5f1b04b0503be6228a850945234f257d6acb0c7
+  PinVault: c1613a25c593d6cf3557c942a3dbb1a6fca554e5
 
 PODFILE CHECKSUM: cb5a9f07933a9b49d9427ba5382b177f5fd76402
 

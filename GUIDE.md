@@ -24,9 +24,9 @@ differences are in [`pinvault-ios/README.md`](pinvault-ios/README.md) and
 ### 1. Add dependency
 
 ```gradle
-implementation("io.github.umutcansu:pinvault:2.4.2")
+implementation("io.github.umutcansu:pinvault:2.5.0")
 // optional: Play Integrity as the attestation's second opinion
-implementation("io.github.umutcansu:pinvault-play-integrity:2.4.2")
+implementation("io.github.umutcansu:pinvault-play-integrity:2.5.0")
 ```
 
 ### 2. Initialize (v2 DSL — Kotlin)

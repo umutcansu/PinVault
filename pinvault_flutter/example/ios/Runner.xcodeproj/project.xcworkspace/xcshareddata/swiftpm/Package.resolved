@@ -1,0 +1,14 @@
+{
+  "pins" : [
+    {
+      "identity" : "pinvault",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/umutcansu/PinVault.git",
+      "state" : {
+        "revision" : "34be883454d1f20c42a2f60f89513dccbf802326",
+        "version" : "2.5.0"
+      }
+    }
+  ],
+  "version" : 2
+}

@@ -9,7 +9,7 @@ versioned files only your devices can open, and attestation that tells your
 app from a script — for Android, iOS, React Native and Flutter.
 
 [![Maven Central](https://img.shields.io/maven-central/v/io.github.umutcansu/pinvault?label=Android)](https://central.sonatype.com/artifact/io.github.umutcansu/pinvault)
-[![SwiftPM](https://img.shields.io/badge/iOS-SwiftPM%202.4.2-F05138?logo=swift&logoColor=white)](pinvault-ios/README.md)
+[![SwiftPM](https://img.shields.io/badge/iOS-SwiftPM%202.5.0-F05138?logo=swift&logoColor=white)](pinvault-ios/README.md)
 [![npm](https://img.shields.io/npm/v/@umutcansu/react-native-pinvault?label=React%20Native&logo=react)](https://www.npmjs.com/package/@umutcansu/react-native-pinvault)
 [![Flutter](https://img.shields.io/badge/Flutter-plugin-02569B?logo=flutter&logoColor=white)](pinvault_flutter/README.md)
 [![License](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
@@ -38,11 +38,10 @@ PinVault moves the pins to your server and keeps the safety:
 - 🔌 **Server-agnostic.** Use the reference server (Docker, dashboard included),
   implement two endpoints in your own backend, or run fully offline with static pins.
 
-> **Latest release: 2.4.2** — an Expo config plugin for React Native, release
-> builds that refuse test relaxations (`allowUnsigned()`,
-> `allowUnpinnedConfigApi()`) unless asked twice, and safer reference-server
-> defaults: ES256 attestation tokens with a required audience, host
-> certificates and token proofs on by default, no `changeit` P12 password.
+> **Latest release: 2.5.0** — a Flutter plugin (`pinvault_flutter`), pinned
+> `wss://` WebSockets with mTLS on iOS, and a reference server that counts
+> devices, not the proxy, behind Cloudflare or a load balancer
+> (`TRUSTED_PROXIES`).
 > See [CHANGELOG.md](CHANGELOG.md) and the upgrade notes in [MIGRATION.md](MIGRATION.md).
 
 ## What you get
@@ -89,7 +88,7 @@ behaviour and the same server, so you can move between them freely.
 ```kotlin
 // build.gradle.kts
 dependencies {
-    implementation("io.github.umutcansu:pinvault:2.4.2")
+    implementation("io.github.umutcansu:pinvault:2.5.0")
 }
 ```
 
@@ -102,7 +101,7 @@ minSdk 24, JDK 17, OkHttp 4. Java callers: see [the guide](GUIDE.md#2b-initializ
 
 ```swift
 // Package.swift — or Xcode: File → Add Package Dependencies…
-.package(url: "https://github.com/umutcansu/PinVault.git", from: "2.4.2")
+.package(url: "https://github.com/umutcansu/PinVault.git", from: "2.5.0")
 ```
 
 iOS 16+, Swift 6, no third-party dependencies. Info.plist keys for background
@@ -676,7 +675,7 @@ mTLS, vault files and attestation add their own endpoints:
 | [GUIDE.md](GUIDE.md) | The full reference: every option, every check, what changed in which release |
 | [pinvault-ios/README.md](pinvault-ios/README.md) · [PORTING.md](pinvault-ios/PORTING.md) | iOS specifics, and how each Android piece maps to iOS |
 | [pinvault-react-native/README.md](pinvault-react-native/README.md) | The JS config shape, networking, the native security file |
-| [pinvault_flutter/README.md](pinvault_flutter/README.md) | The Flutter bridge (unreleased): Dart API, native security file, OWASP controls, tests |
+| [pinvault_flutter/README.md](pinvault_flutter/README.md) | The Flutter bridge: Dart API, native security file, OWASP controls, tests |
 | [ATTESTATION.md](ATTESTATION.md) | The attestation protocol, policy, Play Integrity and App Attest |
 | [SCREEN_LOCK.md](SCREEN_LOCK.md) | Files behind the screen lock, per Android version |
 | [SECURE_OPERATIONS.md](SECURE_OPERATIONS.md) | Signing keys, rotation, governance, runbooks |
