@@ -4,10 +4,11 @@
 
 // ── Constants ────────────────────────────────────────
 
-// The 21 flags a report can raise, in the order the policy table shows them (ATTESTATION.md §3/§4/§11/§12).
+// The 24 flags a report can raise, in the order the policy table shows them (ATTESTATION.md §3/§4/§11/§12).
 // play_integrity* are raised only by a server with the Play Integrity keys configured,
-// app_attest* only with APP_ATTEST_APP_IDS; the last five by the server from its own
-// records (the registration's hardware chain, the device's earlier config watermark).
+// app_attest* only with APP_ATTEST_APP_IDS; the last eight by the server from its own
+// records (the registration's hardware chain, the device's earlier config watermark,
+// fresh attestation rounds, token anomaly reports).
 const ATTEST_FLAGS = [
   'rooted', 'emulator', 'debugger', 'debuggable', 'hooking_framework', 'app_integrity',
   'cloner', 'unknown_installer', 'adb_enabled', 'software_key', 'key_unattested', 'old_patch_level',

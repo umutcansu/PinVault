@@ -856,7 +856,7 @@ re-render them: [`docs/animation/`](docs/animation/README.md).
 
 | What | English | Türkçe |
 |---|---|---|
-| Step-by-step request flow: 15 chapters, 99 steps, in any browser | [▶ open](https://raw.githack.com/umutcansu/PinVault/main/docs/animation/pinvault-request-flow.en.html) | [▶ aç](https://raw.githack.com/umutcansu/PinVault/main/docs/animation/pinvault-request-flow.tr.html) |
+| Step-by-step request flow: 15 chapters, 100 steps, in any browser | [▶ open](https://raw.githack.com/umutcansu/PinVault/main/docs/animation/pinvault-request-flow.en.html) | [▶ aç](https://raw.githack.com/umutcansu/PinVault/main/docs/animation/pinvault-request-flow.tr.html) |
 | Presentation (9:58): the purpose, what PinVault adds, the whole flow | [▶ watch](docs/animation/pinvault-presentation.en.mp4) | [▶ izle](docs/animation/pinvault-sunum.tr.mp4) |
 | Explainer (2:49): the problem, the three layers, a certificate's lifetime | — | [▶ izle](docs/animation/pinvault-nasil-calisir.tr.mp4) |
 | End to end (3:16): from the server's first start to the first protected call | — | [▶ izle](docs/animation/pinvault-bastan-sona.tr.mp4) |

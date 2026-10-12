@@ -735,7 +735,7 @@ Ekran metni:
 - kicker: "KİM: YÖNETİCİ · NEREDE: PANEL → mtls-8092 → + HOST EKLE"
 - başlık (display-head): "API SUNUCUNUZ EKLENİR"
 - panel başlığı (mono): "Panel · 8090 · mtls-8092 · Yeni Host Ekle"
-- sekmeler (mono): "Elle Gir" "Sertifika Üret" "URL'den Al" (seçili)
+- sekmeler (mono): "Elle Gir" "Sertifika Üret" "Dosya Yükle" "URL'den Al" (seçili)
 - alan etiketi: "Sunucu adresi" / değer (mono): "api.ornek.com"
 - düğme: "Oluştur"
 - sonuç satırı 1 (mono): "Primary Pin  q8Hs2LkP…"
@@ -743,7 +743,7 @@ Ekran metni:
 - sonuç notu (body-md): "Panel sunucuya bağlanır; sitenin ve onu imzalayan CA'nın pin'ini kendisi çıkarır."
 - imzalı liste kartı (mono): "PİN LİSTESİ · mtls-8092" / "api.ornek.com · q8Hs2LkP… · Xm4tR9wE…" / sarı mühür "İMZALI"
 - alt bölüm başlığı (mono): "API SUNUCUNUZ İÇİN BİR KEZ"
-- alt bölüm satırı (body-md): "PinVault-Token sırrını panelin İmzalama sekmesinden alır; PinVault-Token'ı sonra kendisi doğrular."
+- alt bölüm satırı (body-md): "PinVault-Token'ın açık anahtarını herkese açık JWKS adresinden yükler; token'ı sonra kendisi doğrular."
 - benzetme: "Çalışanın gidebileceği ofislerin listesi hazırlanır ve mühürlenir."
 - künye: "Host"
 
@@ -1047,7 +1047,7 @@ Scene 5 (10.5–14.0s): Not ve not 2. Benzetme şeridi. Tutma.
 
 ## Frame 26 — Halka 10: İlk gerçek istek
 
-- scene: Uygulama getClient() ile api.ornek.com'a bağlanır: pin listeden, PinVault-Token başlıkta; API sunucusu PinVault-Token'ı kendisi doğrular ve 200 döner
+- scene: Uygulama getClient() ile api.ornek.com'a bağlanır: pin listeden, PinVault-Token ve PinVault-Proof başlıkta; API sunucusu ikisini JWKS'teki açık anahtarla ve cihaz anahtarıyla kendisi doğrular ve 200 döner
 - voiceover:
 - duration: 15s
 - transition_in: push-slide LEFT
@@ -1069,11 +1069,11 @@ Ekran metni:
 - kicker: "KİM: UYGULAMANIZ · NEREDE: TELEFON → API SUNUCUNUZ"
 - başlık (display-head): "İLK GERÇEK İSTEK"
 - kod satırı (mono): "PinVault.getClient().newCall(GET https://api.ornek.com/siparisler)"
-- istek kartı satırları (mono): "GET /siparisler" / "PinVault-Token: eyJhbGciOiJIUzI1NiIs…"
+- istek kartı satırları (mono): "GET /siparisler" / "PinVault-Token: eyJhbGciOiJFUzI1NiIs…" / "PinVault-Proof: eyJ0eXAiOiJkcG9w…"
 - geri çağrı 1 (mono, yeşil kutucuk): "pin: Halka 8'deki listeden"
 - geri çağrı 2 (mono, sarı kutucuk): "PinVault-Token: Halka 9'dan"
-- API kutusu içi satırlar (mono, her biri yeşil ✓): "imza (HS256) tutuyor" / "süresi geçmemiş" / "aud: mtls-8092"
-- API kutusu altı (body-md): "PinVault'a sormaz; sırrı Halka 3'te almıştı."
+- API kutusu içi satırlar (mono, her biri yeşil ✓): "imza: açık anahtarla (ES256)" / "süresi geçmemiş" / "aud: mtls-8092" / "proof: anahtar = cnf.jkt"
+- API kutusu altı (body-md): "PinVault'a sormaz; açık anahtarı Halka 3'te yüklemişti."
 - cevap (Archivo, yeşil kutu): "200 OK"
 - benzetme: "Çalışan ofise gider; kapıdaki görevli kartın listede, bandın geçerli olduğuna kendisi bakar."
 - künye: "İlk istek"
@@ -1157,7 +1157,7 @@ Ekran metni:
   "app_integrity" · "APK değiştirilmiş" · "reddet"
   "unknown_installer" · "mağaza dışından kurulmuş" · "uyar"
   "adb_enabled" · "USB hata ayıklama açık" · "yoksay"
-- tablo altı (mono, küçük): "… 14 bayrak"
+- tablo altı (mono, küçük): "… 24 bayrak"
 - alan (mono): "Token ömrü (saniye, tokenTtlSeconds)" / değer "300"
 - düğme: "Politikayı Kaydet" → bildirim (mono): "Politika kaydedildi — sürüm v4"
 - kart 2 başlığı: "Attestation yapan cihazlar"
@@ -1464,7 +1464,7 @@ Ekran metni:
   "7 · İstemci CA'sı kartı imzalar; token harcanır, kart telefona döner."
   "8 · Telefon kartıyla 8092'ye girer, imzalı pin listesini alır."
   "9 · Atestasyon: telefon raporunu gönderir, 5 dakikalık PinVault-Token alır."
-  "10 · İlk istek: pin listeden, PinVault-Token başlıkta; API sunucusu doğrular: 200 OK."
+  "10 · İlk istek: pin listeden, başlıkta PinVault-Token ve proof; API sunucusu açık anahtarla doğrular: 200 OK."
   "Dosya: yönetici panelden yükler; telefon kendi dosyasını 8092'den alır."
   "Yenileme: kartın süresinin üçte biri kalınca telefon 8092'den aynı anahtarla yeni kart alır."
   "Kurtarma: kartın süresi dolduysa telefon 8093'e gider, kimliğini aynı anahtarın imzasıyla kanıtlar ve yeni kartını alır."
@@ -1529,7 +1529,7 @@ Ekran metni:
 - satır 4 (pembe im): "Pin listesi imza anahtarı" · "EC P-256 (ECDSA)" · "dosya, HSM ya da KMS" · "pin listesini ve dosyaları mühürler"
 - satır 5 (krem im): "Sunucunun TLS sertifikası" · "RSA 2048" · "sunucu" · "8091 ve 8092 bağlantıları"
 - satır 6 (krem im): "Dosya şifreleme anahtarları" · "RSA 2048 + AES-256-GCM" · "telefonun kasası" · "uçtan uca ve ekran kilitli dosyalar"
-- satır 7 (sarı im): "PinVault-Token" · "HMAC (HS256)" · "sunucu" · "API sunucunuz doğrular"
+- satır 7 (pembe im): "PinVault-Token" · "EC P-256 (ES256)" · "sunucu" · "API sunucunuz açık anahtarla doğrular"
 - alt not (body-md): "İmza işleri eliptik eğriyle yapılır. Şifreleme ve sunucunun TLS sertifikası RSA'dır."
 - künye: "Anahtar haritası"
 

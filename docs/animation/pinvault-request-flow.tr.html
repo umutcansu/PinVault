@@ -332,13 +332,15 @@ button:focus-visible{outline:2px solid var(--border-accent);outline-offset:2px}
 <dt>Donanım belgesi (attestation)</dt><dd>Telefonun güvenli donanımının imzaladığı belge: "bu anahtar bu telefonda, bu uygulama için üretildi ve dışarı çıkamaz". Sunucu belgeye bakarak anahtarın gerçek bir telefondan geldiğini anlar.</dd>
 <dt>Ekran kilidi</dt><dd>Telefonun PIN'i, deseni, şifresi ya da parmak izi. Ekran kilitli dosyanın anahtarını donanım ancak bu kilit açılınca kullanır.</dd>
 <dt>Host</dt><dd>Uygulamanın bağlandığı sunucunun adı, örneğin api.ornek.com.</dd>
+<dt>JWKS (açık anahtar listesi)</dt><dd>Sunucunun PinVault-Token'ları imzaladığı anahtarların açık yarıları; GET /api/v1/attestation/jwks herkese açık verir. Uygulamanızın sunucusu token'ı bunlarla doğrular; özel anahtar PinVault sunucusundan hiç çıkmaz, bu yüzden doğrulayan taraf token üretemez.</dd>
 <dt>Kapı (port)</dt><dd>Sunucunun dinlediği adres numarası: 8090, 8091, 8092, 8093. Numaralar demo uygulamasının varsaydığı değerlerdir; kodun varsayılanı 8080, 8081 ve 8083'tür.</dd>
 <dt>Keystore</dt><dd>Android Keystore, telefonun anahtar kasası. İçinde üretilen özel anahtar dışarı çıkarılamaz; yalnızca onunla imza attırılabilir.</dd>
 <dt>mTLS</dt><dd>İki tarafın da sertifika gösterdiği TLS: sunucu telefona, telefon da sunucuya kimliğini kanıtlar.</dd>
 <dt>Nonce</dt><dd>Sunucunun atestasyon için verdiği tek kullanımlık, 2 dakikalık rastgele soru. Telefon raporuyla birlikte bunu imzalar; aynı imzalı rapor ikinci kez gönderilemez.</dd>
 <dt>P12</dt><dd>Bir sertifikayı ve özel anahtarını birlikte taşıyan, şifreli dosya.</dd>
 <dt>Pin</dt><dd>Bir sertifikanın açık anahtarının SHA-256 özeti: sertifikanın parmak izi.</dd>
-<dt>PinVault-Token</dt><dd>Atestasyonu geçen telefona sunucunun verdiği 5 dakikalık imzalı token (HS256 JWT). Kütüphane onu uygulamanın kendi sunucularına giden her isteğin başlığına koyar; o sunucu imzayı kendi doğrular, PinVault'a sormaz.</dd>
+<dt>PinVault-Proof</dt><dd>Token'la birlikte giden, her istek için ayrı imza (DPoP, RFC 9449). Telefon onu token'ın bağlı olduğu cihaz anahtarıyla, isteğin yöntemi ve adresiyle imzalar; 60 saniye ve tek kullanım geçerlidir. Telefondan çalınan token onsuz bir işe yaramaz.</dd>
+<dt>PinVault-Token</dt><dd>Atestasyonu geçen telefona sunucunun verdiği 5 dakikalık imzalı token (ES256 JWT). Kütüphane onu uygulamanın kendi sunucularına giden her isteğin başlığına koyar; o sunucu imzayı JWKS'teki açık anahtarla kendi doğrular, her istekte PinVault'a sormaz. İçindeki cnf, token'ı cihazın anahtarına bağlar.</dd>
 <dt>Ret politikası</dt><dd>Her atestasyon sinyali için yöneticinin seçimi: reject (geçmez), warn (geçer, uyarı kaydedilir) ya da ignore (bakılmaz). Config API başına ayarlanır.</dd>
 <dt>Sertifika</dt><dd>Bir anahtarın kime ait olduğunu söyleyen, imzalı belge: kimlik kartı gibi.</dd>
 <dt>Son kullanma tarihi (expiresAt)</dt><dd>İmzalı pin listesinin geçerli olduğu son an. Sunucu varsayılan olarak 24 saat verir; tarihi geçen listeyle telefon bağlantı kurmaz.</dd>
@@ -1711,6 +1713,10 @@ const S_REC_REPLAY=`403 Forbidden
 const Q_SUM=`~// cihazdan hiç çıkmaz:
 +Keystore'daki özel anahtar
 
+~// PinVault sunucusundan hiç çıkmaz:
++pin listesi imza anahtarı
++PinVault-Token imza anahtarı (ES256)
+
 ~// diğer sırlar:
 +kayıt token'ı (tek kullanımlık, 24 saat)
 +kayıt kodu (politikanın süresi boyunca)
@@ -1723,7 +1729,8 @@ const S_SUM=`sertifikalar (cihaz, sunucu, CA)
 CSR ve donanım belgesi
 clientId: tablet-07
 ANDROID_ID: 3f2a9c0d81b4e6a7
-pin listesi (imzalı, süreli)`;
+pin listesi (imzalı, süreli)
+PinVault-Token açık anahtarları (JWKS)`;
 
 const CERT_T7={id:'tablet-07',revoked:0},CERT_T7R={id:'tablet-07',revoked:1};
 const Q_ORDER_TLS=`~// PinVault.init(...) içinde, sırayla:
@@ -1738,6 +1745,7 @@ const Q_ORDER_TLS=`~// PinVault.init(...) içinde, sırayla:
 ~// sonra, uygulama isteyince:
 dosya ve indirme raporu
 ~// her istekte: PinVault-Token başlığı
+~// (proofOfPossession() açıksa + PinVault-Proof)
 
 ~// arka planda, belirli aralıklarla:
 pin listesi · dosyalar · atestasyon
@@ -2124,7 +2132,7 @@ Cache-Control: no-store
 +  "result": "pass",
 +  "arc": "7f3a9c1e",
   "warnings": ["adb_enabled"],
-+  "token": "eyJhbGciOiJIUzI1NiIsImtpZCI6…",
++  "token": "eyJhbGciOiJFUzI1NiIsImtpZCI6…",
   "tokenExpiresAt": 1790849100000,
   "tokenTtlSeconds": 300,
 +  "nextAttestIn": 300,
@@ -2139,32 +2147,72 @@ Cache-Control: no-store
 ~// ATTESTATION_KEY_POLICY) · ret politikası
 ~// liste değiştiyse "config": imzalı zarf da gelir`;
 const Q_PVT_USE=`GET https://api.ornek.com/veri
-+PinVault-Token: eyJhbGciOiJIUzI1NiIsImtpZCI6…
++PinVault-Token: eyJhbGciOiJFUzI1NiIsImtpZCI6…
++PinVault-Proof: eyJ0eXAiOiJkcG9wK2p3dCIs…
 ~// kütüphanenin interceptor'ı ekler: getClient()
 ~// ve applyTo istemcilerinde, listedeki her pinli
 ~// host'a ve config API'ye (ya da yalnızca
-~// tokenHosts(...) ile yazılanlara)
+~// tokenHosts(...) ile yazılanlara); proof'u
+~// blokta proofOfPossession() açıksa ekler
 
-~// token'ın içi (HS256 JWT, 5 dakika):
+~// token'ın içi (ES256 JWT, 5 dakika):
 {"iss": "pinvault", "sub": "3f2a9c0d81b4e6a7",
  "aud": "mtls-8092", "iat": …, "exp": …,
- "jti": "…", "arc": "7f3a9c1e", "pol": 3,
- "anno": ["saha"]}   // yalnızca ek açıklama varsa`;
-const S_PVT_USE=`~// uygulamanın sunucusu kendi doğrular,
-~// PinVault'a sormaz:
-+kid → gizli anahtar · HS256 imza · exp (60 s pay)
-+aud = kendi Config API id'si · (anno)
+ "jti": "…", "did": "3f2a9c0d81b4e6a7",
+ "arc": "7f3a9c1e", "pol": 3,
+ "anno": ["saha"],   // yalnızca ek açıklama varsa
+ "cnf": {"jkt": "…",          // cihaz anahtarı
+         "x5t#S256": "…"}}    // yalnızca mTLS'te`;
+const S_PVT_USE=`~// uygulamanın sunucusu kendi doğrular; açık
+~// anahtarları önceden bir kez yükler:
+GET /api/v1/attestation/jwks   // API anahtarı yok
++kid → açık anahtar · ES256 imza · iss · exp (60 s pay)
++aud = kendi Config API id'si (zorunlu) · (anno)
+~// proof istenirse (PINVAULT_TOKEN_REQUIRE_PROOF):
++proof imzası jwk ile · jwk özeti = cnf.jkt
++htm + htu bu istek · iat ±60 s · ath = token özeti
 200 OK  {"veri": …}
 
-~// başlık yok, süresi dolmuş ya da imza tutmuyor:
+~// başlık yok, süresi dolmuş, imza ya da proof tutmuyor:
 !401 Unauthorized
 !WWW-Authenticate: PinVault-Token
 !  error="invalid_token"
 !{"error": "invalid_token", "reason": "missing"}
 ~// reason: missing | malformed | unknown_kid |
-~//   signature | expired | audience | annotations
+~//   signature | issuer | expired | audience |
+~//   annotations | device_mismatch | proof_*
 ~// örnek: PinVaultTokenAuth eklentisi; mock host
 ~// MOCK_HOST_REQUIRE_TOKEN=true ile aynısını yapar`;
+// ── PinVault-Proof (ATTESTATION.md §5.1) ─────────────────────────────
+const Q_PROOF=`~// telefonda, her istek için ayrı (kütüphane yapar):
++PinVault-Proof = başlık.gövde.imza
+~// başlık:
+{"typ": "dpop+jwt", "alg": "ES256",
+ "jwk": {"kty": "EC", "crv": "P-256",
+         "x": "…", "y": "…"}}   // cihaz anahtarının açığı
+~// gövde:
+{"jti": "Qk3x…",             // 16 rastgele bayt
+ "htm": "GET",
+ "htu": "https://api.ornek.com/veri",
+ "iat": 1790849012,           // sunucunun saatiyle
+ "ath": "fUHyO2r…"}           // token'ın SHA-256'sı
++imza = cihaz anahtarı (TEE / StrongBox), ES256
+~// atestasyon raporunu imzalayan anahtar; özel
+~// yarısı donanımdan çıkmaz`;
+const S_PROOF=`~// uygulamanın sunucusu, token'dan sonra:
++imza jwk ile tutuyor
++jwk özeti (RFC 7638) = token'daki cnf.jkt
++htm GET, htu bu adres · iat 60 s içinde
++ath = bu token'ın özeti · jti ilk kez
+200 OK  {"veri": …}
+
+~// telefondan çalınan token, başka bir makineden:
+GET https://api.ornek.com/veri
+PinVault-Token: eyJhbGciOiJFUzI1NiIs… (geçerli)
+!401 {"error": "invalid_token",
+!     "reason": "proof_missing"}
+~// eski bir proof'la: proof_replay / proof_url /
+~// proof_time; kendi anahtarıyla: proof_key`;
 const Q_ATT_REJECT=`POST /api/v1/attest
 Host: 192.168.1.10:8092
 ~// aynı istek; rapordaki sinyaller farklı:
@@ -2228,11 +2276,19 @@ Host: 192.168.1.10:8090
 ?  "key_unattested": "warn", "old_patch_level": "warn",
 ?  "play_integrity": "warn",
 ?  "play_integrity_missing": "warn",
+?  "app_attest": "warn", "app_attest_missing": "warn",
++  "bootloader_unlocked": "reject",
++  "boot_not_verified": "reject", "key_revoked": "reject",
++  "report_mismatch": "reject", "config_rollback": "reject",
++  "fresh_attestation_failed": "reject",
++  "fresh_attestation_overdue": "reject",
++  "token_anomaly": "reject",
    "adb_enabled": "ignore"},
  "revealReasons": false,
  "tokenTtlSeconds": 300, "attestIntervalSeconds": 300}
 ~// iki kişi onayı açıksa onay bekler
-~// (attestation_policy)`;
+~// (attestation_policy); production profilinde
+~// taban bayraklarını gevşetmek her zaman bekler`;
 const S_ATT_POLICY=`200 OK  {"version": 4, …}
 ~// denetim kaydı: attestation_policy_updated
 ~// cihazlar bir sonraki turda yeni politikayla
@@ -2244,9 +2300,13 @@ PUT …/attestation/devices/3f2a9c0d81b4e6a7
 + "annotations": ["saha"]}
 ~// anno token'da taşınır; forceFail → her tur reject
 
-~// token gizli anahtarı:
+~// token imza anahtarı (ES256, genel):
 POST /api/v1/attestation/token-secrets/rotate
-~// yeni kid aktif; eskileri doğrulama için kalır`;
+~// yeni kid aktif; açık yarısı hemen JWKS'te,
+~// eskileri doğrulama için kalır
+GET /api/v1/attestation/jwks
+~// {"keys": [{"kty": "EC", "crv": "P-256",
+~//   "kid": "2026-10-05-02", "x": "…", "y": "…"}, …]}`;
 const Q_ATT_ATTACK=`~// 1) ele geçirilen isteğin birebir kopyası:
 POST /api/v1/attest
 !{"nonce": "AAABkp0…Zg" (kullanılmış), …}
@@ -2753,15 +2813,26 @@ const S=[
   [`Liste bu kanaldan`,`Telefon elindeki listenin sürümünü ve issuedAt'ini yazar; sunucudaki farklıysa (ya da zarfın yarı ömrü geçtiyse) cevapta "config": GET certificate-config'in verdiği imzalı zarfın aynısı. Telefon onu aynı kontrollerden geçirip uygular (applySigned). Bu kanaldan liste yalnızca geçen uygulamaya gider; Approov'dan farkı, aynı liste config isteğiyle herkese açıktır, çünkü pin'ler gizli değildir.`,'ok'],
   [`Cihaz ne kontrol eder`,`Cevabın bağlantısı pinlidir; token'ı açmaz, saklar (bellekte) ve bitişine bakar. Gelen config'in imzasını, tarihlerini ve tekrar oynatma sınırlarını kontrol eder.`,'ok'],
   [`Demoda`,`ATTESTATION_KEY_POLICY=warn: belge kaydedilir, yoksa da kayıt yapılır. Üretim profili enforce ve paket adı + imzalayan sertifika ister; o zaman yalnızca sizin uygulamanızın, kilitli bir telefonun donanımında ürettiği anahtar kayıt olur.`,'wr']]},
-{c:6,k:'n',t:`4 · Token her istekte uygulamanın sunucusuna gider`,d:`Kütüphane token'ı uygulamanın kendi sunucularına giden her isteğin başlığına koyar. O sunucu imzayı kendi doğrular; PinVault sunucusuna sormaz. Token'ı olmayan ya da süresi dolmuş isteği 401 ile çevirir.`,act:[`Uygulamanın sunucusu`,`api.ornek.com`,'c-blue'],hl:['g-att','g-dev'],
- sx:{tag:'PinVault-Token',cls:'tok',title:`5 dakikalık imzalı token · uygulamanızın sunucusu doğrular`,rows:[[`Kim koyar`,`kütüphanenin interceptor'ı`,`→ getClient() ve applyTo istemcilerinde; sertifika gibi her soran sunucuya değil, listedeki host'lara`,null,''],[`Kim doğrular`,`uygulamanızın sunucusu`,`→ kid ile gizli anahtar, HS256 imza, exp, aud`,null,'ok'],[`Token yoksa`,`401 invalid_token`,`→ geçmeyen cihazın istekleri burada biter`,null,'bad']]},
+{c:6,k:'n',t:`4 · Token her istekte uygulamanın sunucusuna gider`,d:`Kütüphane token'ı uygulamanın kendi sunucularına giden her isteğin başlığına koyar. O sunucu imzayı PinVault'un açık anahtarıyla (JWKS) kendi doğrular; istek yolunda PinVault sunucusuna sormaz. Token'ı olmayan ya da süresi dolmuş isteği 401 ile çevirir.`,act:[`Uygulamanın sunucusu`,`api.ornek.com`,'c-blue'],hl:['g-att','g-dev'],
+ sx:{tag:'PinVault-Token',cls:'tok',title:`5 dakikalık imzalı token · uygulamanızın sunucusu doğrular`,rows:[[`Kim koyar`,`kütüphanenin interceptor'ı`,`→ getClient() ve applyTo istemcilerinde; sertifika gibi her soran sunucuya değil, listedeki host'lara`,null,''],[`Kim doğrular`,`uygulamanızın sunucusu`,`→ kid ile JWKS'teki açık anahtar, ES256 imza, exp, aud`,null,'ok'],[`Token yoksa`,`401 invalid_token`,`→ geçmeyen cihazın istekleri burada biter`,null,'bad']]},
  tq:`İstek · cihaz → uygulamanın sunucusu`,q:Q_PVT_USE,ts:`Sunucunuz ne yapar`,s:S_PVT_USE,
  mv:[cert('ob',0,PU,'sunucu sertifikası'),flash(116,122,'✓ pin tuttu','ok','end'),m('ob',1,TK,'istek + PinVault-Token','q'),m('ob',0,TE,'200','s')],mk:[DM('token başlıkta, cevap geldi')],
  rows:[[`Hangi isteklere`,`Varsayılan: imzalı listedeki her pinli host'a ve bloğun config API kapısına. tokenHosts("api.ornek.com", …) ile daraltılır. Önce pin, sonra başlık: pin tutmayan bağlantıya token hiç gönderilmez.`],
-  [`Token'ın içi`,`HS256 JWT: kid (hangi gizli anahtar), iss pinvault, sub ve did cihaz kimliği, aud Config API id'si, iat/exp (5 dakika), jti, arc, pol (politika sürümü), anno (varsa cihazın ek açıklamaları). İçinde gizli bir şey yok; gücü imzasından ve kısa ömründen gelir.`],
-  [`Sunucunuz ne yapar`,`kid'e göre gizli anahtarı bulur (sunucu paneldeki token sırlarını yükler), imzayı doğrular, exp'e 60 saniye payla bakar, aud kendi Config API id'si mi diye bakar, isterse anno'da bir etiket arar. PinVault'a sormaz; istek yolunda ek gidiş yok. Referans: PinVaultTokenAuth Ktor eklentisi; mock host'lar MOCK_HOST_REQUIRE_TOKEN=true ile aynı şeyi yapar; SERVER_IMPLEMENTATION_GUIDE'da Node, Python ve Java örnekleri.`,'ok'],
-  [`Token yoksa`,`401 Unauthorized, WWW-Authenticate: PinVault-Token error="invalid_token" ve reason: missing, malformed, unknown_kid, signature, expired, audience ya da annotations. Geçmeyen cihazın bütün uygulama istekleri burada biter.`,'bd'],
+  [`Token'ın içi`,`ES256 JWT: kid (hangi imza anahtarı), iss pinvault, sub ve did cihaz kimliği, aud Config API id'si, iat/exp (5 dakika), jti, arc, pol (politika sürümü), anno (varsa cihazın ek açıklamaları) ve cnf: token'ın kime verildiği. cnf.jkt raporu imzalayan cihaz anahtarının özeti; atestasyon mTLS'ten geldiyse cnf.x5t#S256 cihaz sertifikasının özeti. İçinde gizli bir şey yok; gücü imzasından, kısa ömründen ve cihaza bağlı olmasından gelir.`],
+  [`Sunucunuz ne yapar`,`Açık anahtarları bir kez GET /api/v1/attestation/jwks'ten yükler (API anahtarı gerekmez). Her istekte kid'e göre açık anahtarı bulur, ES256 imzayı doğrular, iss pinvault mı, exp'e 60 saniye payla bakar, aud kendi Config API id'si mi diye bakar (zorunlu: yoksa aynı sunucunun başka bir uygulamasına verilen token da geçerdi), isterse anno'da bir etiket arar. İstek X-Device-Id taşıyorsa did ile aynı olmalı. İstek yolunda PinVault'a gidiş yok. Referans: PinVaultTokenAuth Ktor eklentisi; mock host'lar MOCK_HOST_REQUIRE_TOKEN=true ile aynı şeyi yapar; SERVER_IMPLEMENTATION_GUIDE'da Node, Python ve Java örnekleri.`,'ok'],
+  [`Neden açık anahtar`,`2.4.2'den beri token ES256 ile imzalanır: özel anahtar PinVault sunucusundan hiç çıkmaz, arka uçlar yalnızca açık yarıyı bilir. Ele geçirilen bir arka uç token doğrulayabilir ama üretemez. Eski arka uçlar için PINVAULT_TOKEN_ALG=HS256 ortak sırrı korur (o zaman doğrulayan da imzalayabilir). Bir anahtarın algoritması sabittir: açık anahtar HS256 sırrı gibi kullanılamaz.`,'ok'],
+  [`Token yoksa`,`401 Unauthorized, WWW-Authenticate: PinVault-Token error="invalid_token" ve reason: missing, malformed, unknown_kid, signature, issuer, expired, audience, annotations, device_mismatch ya da proof_ ile başlayan bir neden (sonraki adım). Geçmeyen cihazın bütün uygulama istekleri burada biter.`,'bd'],
   [`Uygulamada`,`Çoğu uygulama bir şey yapmaz: getClient() ya da applyTo yeter. Kendi istemcisini kuran uygulama PinVault.fetchAttestationToken(host) ile token'ı alıp attestationHeaderName() başlığına kendisi koyar.`]]},
+{c:6,k:'n',t:`5 · Her isteğe telefonun imzası: PinVault-Proof`,d:`Token tek başına taşıyanın elinde iş görür; telefondan sızarsa başka bir makine de kullanabilir. Blokta proofOfPossession() açıksa kütüphane her isteğe ayrıca, o isteğin yöntemini ve adresini cihaz anahtarıyla imzalayan bir PinVault-Proof ekler. Uygulamanızın sunucusu proof'un anahtarını token'daki cnf.jkt ile karşılaştırır: anahtar donanımdan çıkmadığı için çalınan token onsuz işe yaramaz.`,act:[`Uygulamanın sunucusu`,`api.ornek.com`,'c-blue'],hl:['g-att','g-dev'],
+ sx:{tag:'PinVault-Proof',cls:'tok',title:`DPoP (RFC 9449) · her istek için ayrı, 60 saniye, tek kullanım`,rows:[[`Kim imzalar`,`telefonun cihaz anahtarı (TEE / StrongBox)`,`→ atestasyon raporunu imzalayan anahtar; token'da cnf.jkt olarak geçer`,null,''],[`Ne imzalanır`,`yöntem, adres, zaman, token'ın özeti, rastgele jti`,`→ başka istek, başka token ya da ikinci kullanım tutmaz`,null,'ok'],[`Proof yoksa`,`401 invalid_token · proof_missing`,`→ yalnız token getiren başka makine burada kalır`,null,'bad']]},
+ tq:`Telefonda · her istek için`,q:Q_PROOF,ts:`Sunucunuz ne yapar`,s:S_PROOF,
+ mv:[cert('ob',0,PU,'sunucu sertifikası'),flash(116,122,'✓ pin tuttu','ok','end'),m('ob',1,TK,'istek + token + proof','q'),flash(116,140,'✓ proof: cnf.jkt tuttu','ok','end'),m('ob',0,TE,'200','s')],mk:[DM('token + proof başlıkta, cevap geldi')],
+ rows:[[`Sorun`,`Token 5 dakika boyunca taşıyanın elinde geçerlidir. Bir log satırından, bellek dökümünden ya da uygulamanın kandırılıp kullandığı bir proxy'den sızan token başka bir makineden de kullanılabilirdi.`,'wr'],
+  [`Çözüm`,`Token artık kime verildiğini taşır (cnf.jkt: cihaz anahtarının özeti). Her istekte telefon, isteğin yöntemini (htm), adresini (htu), zamanı (iat, sunucunun saatiyle), token'ın özetini (ath) ve rastgele bir jti'yi aynı anahtarla imzalar. Özel anahtar TEE'den, StrongBox'tan ya da iOS'ta Secure Enclave'den çıkmaz; proof başka hiçbir yerde üretilemez.`,'ok'],
+  [`Sunucunuz ne yapar`,`Token'ı doğruladıktan sonra: proof'un imzası içindeki jwk ile tutuyor mu, jwk'nin özeti cnf.jkt mi, htm ve htu bu istek mi, iat 60 saniye içinde mi, ath bu token'ın özeti mi, jti daha önce görülmüş mü. Ret, token'ınki gibi 401'dir: proof_missing, proof_malformed, proof_signature, proof_key, proof_method, proof_url, proof_time, proof_token ya da proof_replay; kütüphane bir kez yeniden atestasyon yapıp yeni token ve proof'la dener.`],
+  [`Nerede açılır`,`Kütüphanede blokta attestation().proofOfPossession() (iOS'ta da; React Native'de proofOfPossession: true). Referans doğrulayıcıda PinVaultTokenAuth { requireProof = true }; mock host'larda PINVAULT_TOKEN_REQUIRE_PROOF, 2.4.2'den beri varsayılan açık. Bir proxy'nin arkasında publicOrigin (PINVAULT_TOKEN_PUBLIC_ORIGIN) istemcinin kullandığı adrese ayarlanır. Herhangi bir DPoP kütüphanesi de doğrular.`],
+  [`mTLS'te ayrıca`,`Atestasyon mTLS'ten geldiyse token cnf.x5t#S256 ile cihaz sertifikasına da bağlıdır. Arka ucunuz istemci sertifikasını görüyorsa PINVAULT_TOKEN_REQUIRE_CERT_BINDING=true ile aynı sertifikayı ister (cert_binding).`],
+  [`Sınırı`,`Root'lu telefonda uygulama olarak çalışan kod anahtara yine imza attırabilir: telefon başkaları için imza makinesi olabilir. Ama artık her istek için o telefonun çevrimiçi olması gerekir; bu trafiğin biçimini token anomalisi sayacı yakalar (Sınırlar adımı). Gövde imzalanmaz (DPoP'ta da öyle); onu TLS ve pinleme korur. Bedeli istek başına bir donanım imzası: TEE'de birkaç milisaniye.`,'wr']]},
 {c:6,k:'b',t:`Saldırı: root'lu ya da Frida yüklü telefon`,d:`Root'lu bir telefonda içine girilmiş uygulama pinli bağlantıyı kurar ve kayıtlıysa sertifikasını da gösterir. Rapor root ve hooking sinyallerini taşır; politika reject dediği için token gelmez. Uygulamanızın sunucusu başlıksız isteği 401 ile çevirir.`,cx:'92',cl:[`Root'lu telefon gösterir`,`geçerli sertifikası + imzalı rapor`,`→ bağlantı kurulur; karar reject`,3,'bad'],att:[`Root'lu telefon`,`Magisk + Frida`],hl:['g-att','g92','g-db'],tq:`İstek · root'lu telefon → 8092`,q:Q_ATT_REJECT,ts:`Cevap · 8092 → root'lu telefon`,s:S_ATT_REJECT,
  mv:[...mtls('a2','kendi sertifikası'),m('a2',0,RD,'POST attest','q'),m('b2',0,RD,''),m('b2',1,RD,''),m('a2',1,RD,'reject · token yok','s')],mk:[AMK('✗ reject · ARC c41e9b02'),BMK('cihaz: son karar reject','ok')],
  rows:[[`Ne olur`,`Rapor dürüsttür: rooted ve hooking_framework bayrakları kanıtlarıyla gider, imza cihazın anahtarıyla tutar. Politika iki bayrağı da reject saydığı için sunucu result: reject döner; token ve config gelmez.`],
@@ -2769,7 +2840,7 @@ const S=[
   [`Uygulamanızın sunucusunda`,`İstek PinVault-Token başlığı olmadan gelir: 401 invalid_token (reason: missing). Eski bir token saklanmış olsa da 5 dakikada süresi dolar (expired).`,'ok'],
   [`Panelde`,`Cihaz satırında reject, ARC c41e9b02; ARC'ye tıklayınca nedenler: rooted, hooking_framework. İstatistikte 24 saat / 7 gün ret sayıları ve nedenleri. Destek vakası için yönetici cihaza forcePass verebilir; o zaman bayraklar uyarıya düşer ve token çıkar.`],
   [`Raporu değiştirmek`,`Frida ile probe'ları "temiz" döndürmek mümkündür; sonraki adımlar bunun sınırını ve bedelini anlatır.`,'wr']]},
-{c:6,k:'n',t:`5 · Süresi dolmadan, ≈ 4 dakikada bir yeniden; arka planda da`,d:`Token 5 dakika yaşar. Telefon bitişinden 60 saniye önce (ya da sunucunun söylediği aralıkta) yeniden ölçer ve gönderir. Arka plan çalışması da bir tur atar; uygulama istediği an attestNow() çağırabilir.`,cx:'92',hl:['g-dev','g92'],tq:`Telefonda`,q:Q_ATT_LOOP,ts:`Her turda`,s:S_ATT_LOOP,
+{c:6,k:'n',t:`6 · Süresi dolmadan, ≈ 4 dakikada bir yeniden; arka planda da`,d:`Token 5 dakika yaşar. Telefon bitişinden 60 saniye önce (ya da sunucunun söylediği aralıkta) yeniden ölçer ve gönderir. Arka plan çalışması da bir tur atar; uygulama istediği an attestNow() çağırabilir.`,cx:'92',hl:['g-dev','g92'],tq:`Telefonda`,q:Q_ATT_LOOP,ts:`Her turda`,s:S_ATT_LOOP,
  mv:[...mtls('d2'),m('d2',0,BL,'GET challenge'),m('d2',1,TE,'nonce'),m('d2',0,BL,'POST attest'),m('d2',1,TK,'token (5 dk)'),hl(['g-dev'],0,900),m('d2',0,BL,'GET challenge'),m('d2',1,TE,'nonce'),m('d2',0,BL,'POST attest'),m('d2',1,TK,'token + yeni liste')],mk:[DM('≈ 4 dakikada bir, uygulama açıkken','muted')],
  rows:[[`Ne zaman`,`Bir sonraki tur min(nextAttestIn, bloğun aralığı, token bitişi − 60 s) sonra; en az 30 saniye, biraz rastgele pay. Sunucu nextAttestIn ile hızlandırabilir (politikadaki attestIntervalSeconds, varsayılan 300).`],
   [`Hata olursa`,`Ağ yoksa ya da sunucu cevap vermezse 30 s → 60 s → 2 dk → 4 dk → 5 dk geri çekilir; eldeki token bitene kadar kullanılır, bittikten sonra başlık gitmez ve sunucunuz 401 verir. Reddedilen cihaz da aynı aralıkta yeniden dener: root kaldırılınca bir sonraki turda token alır.`],
@@ -2778,15 +2849,16 @@ const S=[
   [`Neden 5 dakika`,`Çalınan ya da sızan bir token en çok 5 dakika iş görür ve sunucunun "bu cihaz temiz" bilgisi en çok 5 dakika eski olur. Daha kısa süre her cihaz için iki istek ve bir ECDSA doğrulaması demek olan sunucu yükünü artırır; daha uzun süre pencereyi büyütür. Approov da aynı değeri seçer. Panelde tokenTtlSeconds ve attestIntervalSeconds ile, blokta attestationInterval ile (en az 1 dakika) değiştirilir; sunucu nextAttestIn ile hızlandırabilir, yavaşlatamaz.`],
   [`Liste de buradan`,`Yönetici pin'i değiştirince telefon yeni listeyi 12 saatlik güncellemeyi beklemeden, en geç bir sonraki atestasyon turunda alır: Approov'daki "dinamik pinleme" bu kanaldır. Reddedilen cihaz almaz.`,'ok'],
   [`Uygulama`,`PinVault.attestationStatus() son sonucu verir (result, arc, warnings, tokenExpiresAt, nextAttestAt, lastError); setConnectionListener ile Attestation olayları gelir. Örnek uygulamada "Atestasyon" düğmesi attestNow() çağırıp sonucu yazar.`]]},
-{c:6,k:'t',t:`Panelde: ret politikası, cihazlar, ek açıklamalar, token sırrı`,d:`Yönetici hangi sinyalin reddedeceğini seçer, cihazların son kararını ve ARC'lerini görür, bir cihaza forcePass/forceFail ya da etiket verir; token sırrını İmzalama sekmesinde döndürür.`,act:ADMIN,hl:['g-att','g90','g-db'],
- sx:{tag:'8090',cls:'tok',title:`Config API'nin sayfası · Attestation sekmesi`,rows:[ADMROW,[`Politika`,`14 bayrak × reject / warn / ignore`,`→ strict (varsayılan) ya da lenient ile başlanır`,null,''],[`Cihazlar`,`son karar, ARC, uyarılar, anahtar seviyesi`,`→ ARC'ye tıkla: nedenler`,null,''],[`Token sırrı`,`İmzalama sekmesinde, genel`,`→ uygulamanızın sunucusu buradan yükler`,null,'ok']]},
+{c:6,k:'t',t:`Panelde: ret politikası, cihazlar, ek açıklamalar, token anahtarı`,d:`Yönetici hangi sinyalin reddedeceğini seçer, cihazların son kararını ve ARC'lerini görür, bir cihaza forcePass/forceFail ya da etiket verir; token imza anahtarını İmzalama sekmesinde döndürür.`,act:ADMIN,hl:['g-att','g90','g-db'],
+ sx:{tag:'8090',cls:'tok',title:`Config API'nin sayfası · Attestation sekmesi`,rows:[ADMROW,[`Politika`,`24 bayrak × reject / warn / ignore`,`→ strict (varsayılan), lenient ya da production ile başlanır`,null,''],[`Cihazlar`,`son karar, ARC, uyarılar, anahtar seviyesi`,`→ ARC'ye tıkla: nedenler`,null,''],[`Token anahtarı`,`İmzalama sekmesinde, genel`,`→ arka uçlar açık yarısını JWKS'ten yükler`,null,'ok']]},
  scr:{panel:'attest',polVer:3,devices:[{id:'3f2a9c0d81b4e6a7',res:'pass',arc:'7f3a9c1e',key:'ok',warn:'adb_enabled'},{id:'b71e04c95a2d3f80',res:'reject',arc:'c41e9b02',key:'ok',warn:''}]},tq:`Panelin arkada gönderdiği istekler`,q:Q_ATT_POLICY,ts:`Cevaplar ve diğer yönetim istekleri`,s:S_ATT_POLICY,
  mv:[sc({hot:'pol'}),m('a0',0,BL,'PUT policy','q'),m('b0',0,BL,''),m('b0',1,TE,''),m('a0',1,TE,'v4','s'),sc({hot:null,polVer:4}),sc({hot:'anno'}),m('a0',0,BL,'PUT devices/3f2a…'),m('a0',1,TE,'ok'),sc({hot:null,devices:[{id:'3f2a9c0d81b4e6a7',res:'pass',arc:'7f3a9c1e',key:'ok',warn:'adb_enabled',anno:'saha'},{id:'b71e04c95a2d3f80',res:'reject',arc:'c41e9b02',key:'ok',warn:''}]}),m('a0',0,BL,'POST token-secrets/rotate'),m('a0',1,TE,'kid 2026-10-05-02')],mk:[AMK('politika v4 · etiket: saha','ok'),BMK('politika + cihaz kayıtları','ok')],
- rows:[[`Politika`,`Her bayrak için reject, warn ya da ignore. ATTESTATION_POLICY_DEFAULT=strict (root, emülatör, debugger, hooking, bütünlük, klon reddeder; yükleyici, yazılım anahtarı, belgesiz anahtar, eski yama ve iki Play Integrity bayrağı uyarır; ADB bakılmaz) ya da lenient (her şey warn: filo ölçülürken). revealReasons, token ömrü ve aralık da burada. Her değişiklik sürümü artırır; token'da pol olarak taşınır. İki kişi onayı açıksa onay bekler.`],
+ rows:[[`Politika`,`24 bayrağın her biri için reject, warn ya da ignore. Politikası kaydedilmemiş Config API, ATTESTATION_POLICY_DEFAULT'un hazır ayarıyla başlar. strict (varsayılan): root, emülatör, debugger, debuggable, hooking, bütünlük, klon ve sunucunun donanım belgesinden ve kendi kayıtlarından kaldırdığı sekiz bayrak (bootloader_unlocked, boot_not_verified, key_revoked, report_mismatch, config_rollback, fresh_attestation_failed, fresh_attestation_overdue, token_anomaly) reddeder; yükleyici, yazılım anahtarı, belgesiz anahtar, eski yama, Play Integrity ve App Attest bayrakları uyarır; ADB bakılmaz. lenient: her şey warn (filo ölçülürken). revealReasons, token ömrü ve aralık da burada. Her değişiklik sürümü artırır; token'da pol olarak taşınır. İki kişi onayı açıksa onay bekler. Paneldeki hazır ayar düğmeleri Sıkı ve Gevşek'tir; production yalnızca sunucu ayarıdır.`],
+  [`production profili`,`2.4.1'den beri üçüncü hazır ayar: strict'e ek olarak software_key, play_integrity, play_integrity_missing, app_attest ve app_attest_missing de reddeder. Ayrıca kodda tutulan bir taban var: rooted, emulator, debuggable, hooking_framework, app_integrity ve software_key, kayıtlı politika ne derse desin reject okunur. Bunlardan birini gevşetmek yalnızca iki kişinin onayladığı bir değişiklikle olur (yoksa 403 two_person_approval_required, iki kişi onayı kapalıyken bile). Örnek sunucunun üretim profili (.env.production) bunu sabitler.`,'ok'],
   [`Cihazlar`,`Son karar, ARC, uyarılar, anahtar (StrongBox / TEE / yazılım, belgeli mi), ilk ve son görülme, anahtar uyuşmazlıkları. Arama ve sonuç filtresi. Bir cihaz silinince (unut) anahtarı unutulur; yeniden kurulan uygulama yeni anahtarıyla kayıt olabilir.`],
   [`forcePass · forceFail · etiketler`,`forcePass: destek vakası, bayraklar uyarıya düşer, token çıkar. forceFail: çalıntı telefon, her tur reject. Etiketler (annotations) token'ın anno alanında gider: uygulamanızın sunucusu "staff" ya da "canary" etiketine göre davranabilir. Cihaz daha hiç gelmeden de yazılabilir.`,'ok'],
-  [`Token sırrı`,`Attestation sekmesinde değil, İmzalama sekmesindeki "PinVault-Token gizli anahtarları" kartındadır; Config API başına değil, geneldir. 32 baytlık rastgele anahtar, sunucuda şifreli saklanır; bir tanesi aktif, öncekiler doğrulama için kalır. "Döndür" yeni kid'i aktif eder; her satırda Göster/Gizle, Kopyala ve Sil (aktif olan silinemez). İki kişi onayı açıksa sırları okumak onay bekler.`],
-  [`İstatistik`,`24 saat ve 7 gün: geçen, reddedilen, nedenlere ve uyarılara göre dağılım, cihaz sayıları. Denetim kaydı: attestation_policy_updated, attestation_device_annotated, attestation_rejected (karar değişince), attestation_key_mismatch, token sırrı olayları.`]]},
+  [`Token anahtarı`,`Attestation sekmesinde değil, İmzalama sekmesindeki "PinVault-Token gizli anahtarları" kartındadır; Config API başına değil, geneldir. Varsayılan ES256: bir EC P-256 anahtarı; özel yarısı sunucuda şifreli saklanır ve hiç çıkmaz, kartta yalnızca açık yarısı görünür. Arka uçlar onu kartta değil, herkese açık GET /api/v1/attestation/jwks'ten kid'e göre yükler. Bir tanesi aktif, öncekiler doğrulama için kalır. "Döndür" yeni kid'i aktif eder; Sil eskisini kaldırır (aktif olan silinemez). PINVAULT_TOKEN_ALG=HS256 seçilirse 32 baytlık ortak sır kullanılır ve kartta açıkça görünür; iki kişi onayı açıksa okumak onay bekler.`],
+  [`İstatistik`,`24 saat ve 7 gün: geçen, reddedilen, nedenlere ve uyarılara göre dağılım, cihaz sayıları. Denetim kaydı: attestation_policy_updated, attestation_device_annotated, attestation_rejected (karar değişince), attestation_key_mismatch, attestation_token_anomaly, attestation_policy_floor_refused, token anahtarı olayları.`]]},
 {c:6,k:'b',t:`Saldırı: eski raporu tekrar göndermek, rapor uydurmak, anahtar değiştirmek`,d:`Üç deneme: ele geçirilmiş bir isteğin kopyası (nonce kullanılmış), temiz görünen uydurma rapor (imza tutmaz) ve yeniden kurulup yeni anahtarla gelen uygulama (kayıtlı anahtar başka). Üçü de reddedilir.`,cx:'92',cl:NOCERT(`→ TLS bloğunda sertifika zaten istenmez; kanıt imza`),att:[`Başka bir cihaz / betik`,`raporu taklit eder`],hl:['g-att','g92','g-db'],tq:`İstekler · saldırgan → 8092`,q:Q_ATT_ATTACK,ts:`Cevaplar`,s:S_ATT_ATTACK,
  mv:[...tls('a2'),m('a2',0,RD,'POST attest (kopya)','q'),m('a2',1,RD,'400 nonce_replayed'),m('a2',0,RD,'POST attest (uydurma)'),m('a2',1,RD,'401 signature_invalid'),m('a2',0,RD,'POST attest (yeni anahtar)'),m('a2',1,RD,'403 key_mismatch','s')],mk:[AMK('✗ 400 · 401 · 403'),BMK('kayıtlı anahtar değişmedi','ok')],
  rows:[[`Kopya`,`Pinli kanaldan ele geçirmek zaten zordur; ele geçse bile nonce bir kez kullanılmıştır ve 2 dakikada eskir: 400 nonce_replayed.`,'ok'],
@@ -2794,13 +2866,16 @@ const S=[
   [`Yeni anahtar`,`Uygulama silinip kurulunca yeni bir anahtar üretilir; sunucu aynı cihaz kimliğinde başka bir anahtar görür ve 403 key_mismatch der. Panelde "anahtar uyuşmazlığı" olarak görünür; yönetici cihazı unutunca yeni anahtar kayıt olur. Böylece bir kimliği başkası devralamaz.`],
   [`Sınırlar`,`Adres başına 60, cihaz başına 30 istek (10 dakikada); challenge iki katı. Her yeni ret denetim kaydına hemen yazılır; aynı kararın tekrarları dakikada bir özetlenir. Reddedilen cihaz tekrar deneyebilir; her denemede yeni nonce ister.`]]},
 {c:6,k:'l',t:`Sınırlar: ölçüm telefonda, yargı sunucuda`,d:`Atestasyon gerçek, değiştirilmemiş uygulamayı seçmeye yarar; sihir değildir. Probe'lar kütüphanenin içinde düz Kotlin'dir, hook'lanabilir; değeri imzalı anahtar, sunucunun eklediği sinyaller ve politikadan gelir. Ne yaptığını ve ne yapmadığını bilerek açın.`,hl:['g-dev','g92','g-db'],
- sx:{tag:'Sınırlar',cls:'none',title:`neyi engeller, nerede biter`,rows:[[`Engeller`,`hazır unpinning betikleri, emülatör, taklit APK, root'lu telefon`,`→ politika reject dediği ölçüde`,null,'ok'],[`Zorlaştırır`,`probe'ları hook'layarak temiz rapor`,`→ anahtar belgesi + sunucu sinyalleri + R8/packer`,null,'warn'],[`Yapmaz`,`geçen cihazın sonraki davranışına kefil olmaz`,`→ token 5 dakika, sonra yeniden ölçüm`,null,'']]},
+ sx:{tag:'Sınırlar',cls:'none',title:`neyi engeller, nerede biter`,rows:[[`Engeller`,`hazır unpinning betikleri, emülatör, taklit APK, root'lu telefon`,`→ politika reject dediği ölçüde`,null,'ok'],[`Zorlaştırır`,`probe'ları hook'layarak temiz rapor`,`→ anahtar belgesi + donanımın söyledikleri + taze belge + R8/packer`,null,'warn'],[`Yapmaz`,`geçen cihazın sonraki davranışına kefil olmaz`,`→ token 5 dakika, sonra yeniden ölçüm`,null,'']]},
  tq:`Telefonda`,q:null,ts:`Sunucuda`,s:null,sph:`ağa çıkılmadı`,
  mk:[BMK('ATTESTATION_KEY_POLICY=enforce önerilir','muted')],
  rows:[[`Ölçüm hook'lanabilir`,`Frida ile çalışan biri probe'lara "temiz" dedirtebilir. Karşılığı: rapor donanım belgeli anahtarla imzalanmalı (enforce), sunucu kendi sinyallerini ekler, kod R8 ile küçültülür ve istenirse packer eklenir, Play Integrity ikinci görüş olarak takılır. Approov'un probe'ları kapalı kaynak ve sürekli güncellenir; PinVault'unkiler açıktır. Bu bir mimari değil, güvence ve bakım farkıdır.`,'wr'],
+  [`Donanımın söyledikleri`,`2.4.0'dan beri sunucu, kayıttaki donanım belgesinin söylediklerini saklar ve her turda kendisi yargılar; raporun ne dediğine bakmaz: bootloader_unlocked (kilidi açık bootloader), boot_not_verified (doğrulanmamış açılış), key_revoked (zincirdeki bir sertifika iptal listesinde), report_mismatch (rapor donanımın dediğiyle çelişiyor), config_rollback (telefon daha önce bildirdiğinden eski bir liste bildiriyor). strict beşini de reddeder; yazılım düzeyindeki zincirler (emülatör) bunları kaldırmaz.`,'ok'],
+  [`Taze belge (isteğe bağlı)`,`ATTESTATION_FRESH_INTERVAL_SECONDS açıksa (production örneğinde 1 gün) sunucu her Android cihazdan o aralıkla, yalnızca o tur için üretilmiş bir anahtarın zincirini ister. Böylece kayıttan sonra açılan bootloader ya da sonradan iptal edilen bir anahtar kutusu da görülür. Zincir tutmazsa fresh_attestation_failed, aralık + ATTESTATION_FRESH_GRACE_SECONDS (72 saat) içinde gelmezse fresh_attestation_overdue.`],
+  [`Token anomalisi (isteğe bağlı)`,`Root'lu bir telefon başkaları için proof imzalayabilir; bunu trafiğin biçimi ele verir. PINVAULT_TOKEN_ANOMALY=warn ya da refuse ile referans doğrulayıcı her cihazın token kullanımını sayar: 10 dakikada 8'den fazla adres ya da 1200'den fazla istek cihazı bildirir (başka arka uçlar POST …/attestation/devices/{id}/anomaly ile). Sunucu o cihazın turlarında 1 saat token_anomaly kaldırır (strict: reject); refuse ayrıca pencere bitene kadar 429 token_anomaly döner.`],
   [`Belge olmadan`,`ATTESTATION_KEY_POLICY=warn ile ilk gelen anahtara güvenilir (trust on first use). Bu modda root'lu telefon kendi yazılım anahtarını kaydettirebilir; sonraki turlarda rapor yine değerlendirilir ama anahtarın gerçekliği kanıtlanmaz. Üretimde enforce + ATTESTATION_PACKAGE_NAMES + ATTESTATION_SIGNER_SHA256.`],
   [`Reddedilen cihaz`,`Pin listesini normal config isteğiyle almaya devam eder: pinleme yine korur, yalnızca PinVault-Token ve atestasyon cevabıyla gelen liste kesilir. Hemen kesmek isteyen uygulama attestationStatus() reject görünce kendi kararını verir; uygulamanızın sunucusu zaten token ister.`],
-  [`Sunucunuzda`,`Doğrulama yalnızca imza ve süre kontrolüdür; PinVault sunucusu çökse de 5 dakika içinde verilmiş token'lar geçer, yenisi çıkmaz. Sırrı sızan bir kid döndürülür ve silinir; silinince o kid'le imzalı token'lar hemen geçersiz olur, cihazlar yeniden atestasyonla yenisini alır.`],
+  [`Sunucunuzda`,`Doğrulama yalnızca imza ve süre kontrolüdür (proof açıksa onun da imzası); PinVault sunucusu çökse de 5 dakika içinde verilmiş token'lar geçer, yenisi çıkmaz. ES256'da arka uçta sızacak bir sır yoktur: elindeki yalnızca açık anahtardır. HS256'da sırrı sızan kid döndürülür ve silinir; silinince o kid'le imzalı token'lar hemen geçersiz olur, cihazlar yeniden atestasyonla yenisini alır.`],
   [`Kapsam`,`Atestasyon kütüphanenin yaptığı isteklere ve getClient()/applyTo istemcilerine token ekler; uygulamanın başka yoldan açtığı bağlantılara eklemez. Cihaz kimliği (ANDROID_ID) hâlâ beyandır; token sub olarak onu taşır ama kanıt anahtardır.`]]},
 
 {c:7,k:'t',t:`Panelde: dosya yükle, kimin alacağını seç`,d:`Bir ayar dosyasını ya da modeli değiştirmek için uygulama güncellemesi beklemek istemezsiniz. PinVault uygulamaya dosya da dağıtır. Yönetici dosyayı panelde yükler; kimin alabileceğini (Policy) ve nasıl saklanacağını (Encryption) seçer.`,act:ADMIN,hl:['g-att','g90','g-db'],
@@ -3062,9 +3137,14 @@ const S=[
   [`Token'lar`,`Yönetici panelden ya da uygulamanızın sunucusu 8090'dan API anahtarıyla üretir; sunucuda yalnızca özetleri durur. Cihaza APK'nın dışından, ilk açılışta bir kez verilir; yeni token için yeni APK gerekmez. Çok cihaz için tek bir kayıt kodu ya da kodsuz başvuru da olur: kayıt kodunda yönetici onayı varsayılan olarak açık (kapatılabilir), kodsuz başvuruda her cihaz onay bekler.`],
   [`TLS mi mTLS mi`,`Hiçbir yerde mTLS kullanmayan uygulama kayıt olmaz; güvenliği pinleme ve imzalı, süreli config sağlar. mTLS kullanan uygulama token, kayıt kodu ya da onaylı başvuruyla bir kez kayıt olur; PinVault sunucusunda sertifika yalnızca 8092'de gösterilir, uygulamanın kendi mTLS sunucusuna yalnızca izinle.`],
   [`Kimlik`,`Keystore'daki anahtar. Sertifika, CSR, clientId, ANDROID_ID ve pin listesi tek başına kimseyi içeri sokmaz. 8092'de X-Device-Id de sertifikaya bağlı. Telefonun yazdığı cihaz kimliği bir beyandır; bağlı token ya da donanım belgesiyle kanıtlanmadıkça sertifika o telefonun dosyaları ve anahtarları adına iş görmez.`,'ok'],
-  [`Atestasyon`,`5 dakikalık PinVault-Token yalnızca ölçümü geçen uygulamaya gider (pin listesi gizli değildir); uygulamanızın sunucusu token'ı kendi doğrular, geçmeyenin isteği 401 alır. Ret politikası, cihaz ek açıklamaları, ARC ve token sırrı panelde. Ölçüm telefonda, yargı sunucuda; üretimde ATTESTATION_KEY_POLICY=enforce.`,'ok'],
+  [`Atestasyon`,`5 dakikalık PinVault-Token yalnızca ölçümü geçen uygulamaya gider (pin listesi gizli değildir); uygulamanızın sunucusu token'ı JWKS'teki açık anahtarla kendi doğrular, geçmeyenin isteği 401 alır. Token cihazın anahtarına bağlıdır (cnf); PinVault-Proof açıksa çalınan token başka yerde işe yaramaz. Ret politikası (24 bayrak; strict, lenient, production), cihaz ek açıklamaları, ARC ve token anahtarı panelde. Ölçüm telefonda, yargı sunucuda; üretimde ATTESTATION_KEY_POLICY=enforce.`,'ok'],
   [`2.2.0 ile gelenler`,`Token'ı bir telefona bağlamak · anahtarın donanım belgesi · süresi dolan, her açılışta yeniden doğrulanan pin listesi · cihaz sertifikasının yalnızca izinli sunuculara gitmesi (clientCertHosts) · ekran kilitli dosyalar · iptal edilince dosyaları silmek (isteğe bağlı) · Config API'nin adını taşıyan imzalar (configApiId, v2 dosya imzası) · aynı yenileme isteğinin ikinci kez geçmemesi · 8092'de raporun yalnızca kendi adına olması · kayıtlı kimliği open modda devralmanın kapanması.`,'ok'],
   [`2.3.0 ile gelenler`,`Atestasyon ve PinVault-Token · yönetilen güven kökleri (trustRoots) · issuer pin'inde ad kontrolü, farklı iki pin · Keystore seviyesi raporlama ve requireHardwareBackedKeys() · ekran kilitli dosyada bekleyen yuva · sabit hata kodlu raporlar · sınırlı gövde okuma · sunucuda PKCS12 keystore'lar, yönetim yalnızca 8090'da, host sertifikası yalnızca ACL'li cihaza · demo-app release korkuluğu.`,'ok'],
+  [`2.3.1 ve 2.3.2 ile gelenler`,`OWASP denetimi düzeltmeleri: requireUnlockedDevice() artık sessizce geri düşmez · Android 7–10'da ekran kilidi anahtarının penceresi 5 saniye · bir host'un mtls, forceUpdate ya da sertifika sürümü değişince de sürümü artar · her yönetim isteğinin gövdesi sınırlı · token sırları açılışta açılamazsa sunucu başlamaz · iss kontrolü · Server başlığı yok, HSTS. 2.3.2: React Native kütüphanesi.`,'ok'],
+  [`2.4.0 ile gelenler`,`Root / jailbreak sertleştirmesi: sunucu donanım belgesinin söylediklerini her turda yargılar (bootloader_unlocked, boot_not_verified, key_revoked, report_mismatch, config_rollback) · token cihaza bağlı (cnf: jkt, mTLS'te x5t#S256) · her istekte PinVault-Proof (DPoP, proofOfPossession()) · taze anahtar belgesi (fresh_attestation_*) · token anomalisi (token_anomaly) · Play Integrity ve App Attest v2 bağlaması · iOS'ta Secure Enclave ile sarılmış depo anahtarları.`,'ok'],
+  [`2.4.1 ile gelenler`,`ATTESTATION_POLICY_DEFAULT=production: kodda tutulan taban, gevşetmek için iki kişi onayı · hata veren probe temiz sayılmaz, bayrak kalkar · başkasının cihaz kimliğiyle atestasyon kotasını tüketmek kapandı · React Native WebSocket'i pinli.`,'ok'],
+  [`2.4.2 ile gelenler`,`PinVault-Token varsayılan ES256: özel anahtar sunucuda kalır, arka uçlar GET /api/v1/attestation/jwks'ten doğrular (HS256 isteğe bağlı) · aud zorunlu · PINVAULT_TOKEN_REQUIRE_PROOF ve host sertifikası izni (HOST_CLIENT_CERT_REQUIRE_GRANT) varsayılan açık · P12'lerde "changeit" varsayılanı yok · allowUnsigned() ve allowUnpinnedConfigApi() release derlemede reddedilir · Expo eklentisi.`,'ok'],
+  [`2.5.0 ile gelenler`,`Flutter eklentisi · iOS'ta pinli WebSocket · sunucu bir proxy'nin arkasında (TRUSTED_PROXIES, CLIENT_IP_HEADER) · Config API isteklerinin kaydı · panelin yeni görünümü.`,'ok'],
   [`Önceden düzeltilenler`,`Token yarışı · şifreleme anahtarı kaydı · gövde sınırı · her istekte iptal kontrolü · bir cihaz tek etkin kimlik · kimliklerde işaretleme · 8092'de X-Device-Id sertifikaya bağlı · 8091'de anahtar kaydı sınırlı · iptal edilen kimliği unutma · iptal haberi telefona ilk istekte gelir (2.1.1) · applyTo ile kurulan istemciler yenilenen sertifikayı izler (2.1.1).`],
   [`Kalan sınırlar`,`8091'de hiç kayıt olmamış bir cihazın yerine ilk şifreleme anahtarı kaydını başkası yapabilir ve X-Device-Id cihazın kendi beyanıdır (token politikası yalnızca token'a güvenir); open mod yalnızca demo içindir (bir ANDROID_ID ile ilk gelen o kimliği alır); host sertifikası her cihazda aynı ve PinVault onu iptal edemez; kurtarma yalnızca anahtarı kanıtlar: donanım destekli olmayan bir Keystore'dan çıkarılmış anahtar, kimlik iptal edilene kadar yenilenir; ekran kilitli dosyada root'a karşı tam koruma için sunucunun donanım belgesini zorunlu tutması gerekir; PinVault'taki iptal, uygulamanın kendi mTLS sunucusuna kendiliğinden ulaşmaz.`,'wr'],
   [`Burada anlatılmayanlar`,`İmza anahtarını uygulama güncellemeden değiştirme (anahtar seti) ve birden çok imza, ikinci yönetici onayı, denetim kaydı ve webhook bildirimleri, cihaza özel host listesi ayarı, requireCaTrust, dosyaların çevrimdışı ömrü, sunucusuz (sabit pin'li) kullanım ve kendi sunucunuzu yazma. Bunlar README ve SECURE_OPERATIONS belgelerinde.`]]}
@@ -3168,8 +3248,8 @@ function vaultUpHtml(st){
   if(st.done)h+='<div class="pm-toast">'+esc(st.vkey)+' v1 ['+pol+'/'+enc+'] uploaded</div><table class="pm-tbl"><tr><th>Anahtar</th><th>Versiyon</th><th>Boyut</th><th>Policy</th><th>Encryption</th><th></th></tr><tr><td>'+esc(st.vkey)+'</td><td>v1</td><td>'+(ua?'86.4 KB':'2.4 MB')+'</td><td>'+pol+'</td><td>'+enc+'</td><td class="t-dim">✕</td></tr></table>';
   return h;
 }
-const ATT_FLAGS=[['rooted','reject'],['emulator','reject'],['debugger','reject'],['debuggable','reject'],['hooking_framework','reject'],['app_integrity','reject'],['cloner','reject'],['unknown_installer','warn'],['software_key','warn'],['key_unattested','warn'],['old_patch_level','warn'],['play_integrity','warn'],['play_integrity_missing','warn'],['adb_enabled','ignore']];
-const ATT_NOTE={rooted:'su, Magisk, test-keys',emulator:'goldfish, qemu',debugger:'TracerPid',debuggable:'FLAG_DEBUGGABLE',hooking_framework:'frida, xposed, zygisk',app_integrity:'imzalayan ≠ ayarlanan',cloner:'dataDir başka pakette',unknown_installer:'mağaza dışı yükleme',software_key:'anahtar donanımda değil',key_unattested:'belge yok',old_patch_level:'yama eski',adb_enabled:'geliştirici seçenekleri',play_integrity:'Play Integrity kararı geçmedi ya da doğrulanamadı',play_integrity_missing:'son 24 saatte doğrulanmış Play Integrity kararı yok'};
+const ATT_FLAGS=[['rooted','reject'],['emulator','reject'],['debugger','reject'],['debuggable','reject'],['hooking_framework','reject'],['app_integrity','reject'],['cloner','reject'],['unknown_installer','warn'],['adb_enabled','ignore'],['software_key','warn'],['key_unattested','warn'],['old_patch_level','warn'],['play_integrity','warn'],['play_integrity_missing','warn'],['app_attest','warn'],['app_attest_missing','warn'],['bootloader_unlocked','reject'],['boot_not_verified','reject'],['key_revoked','reject'],['report_mismatch','reject'],['config_rollback','reject'],['fresh_attestation_failed','reject'],['fresh_attestation_overdue','reject'],['token_anomaly','reject']];
+const ATT_NOTE={rooted:'su, Magisk, test-keys',emulator:'goldfish, qemu',debugger:'TracerPid',debuggable:'FLAG_DEBUGGABLE',hooking_framework:'frida, xposed, zygisk',app_integrity:'imzalayan ≠ ayarlanan',cloner:'dataDir başka pakette',unknown_installer:'mağaza dışı yükleme',software_key:'anahtar donanımda değil',key_unattested:'belge yok',old_patch_level:'yama eski',adb_enabled:'geliştirici seçenekleri',play_integrity:'Play Integrity kararı geçmedi ya da doğrulanamadı',play_integrity_missing:'son 24 saatte doğrulanmış Play Integrity kararı yok',app_attest:'App Attest doğrulanamadı (iOS)',app_attest_missing:'doğrulanmış App Attest kararı yok (iOS)',bootloader_unlocked:'donanım belgesi: bootloader açık',boot_not_verified:'donanım belgesi: açılış doğrulanmamış',key_revoked:'zincir iptal listesinde',report_mismatch:'rapor donanımla çelişiyor',config_rollback:'eski pin listesi bildirdi',fresh_attestation_failed:'taze belge tutmadı',fresh_attestation_overdue:'taze belge zamanında gelmedi',token_anomaly:'token çok adresten ya da çok sık'};
 const ATT_LV={reject:'reddet',warn:'uyar',ignore:'yoksay'};
 function attestHtml(st){
   let h='<div class="pm-title">Red politikası <span class="pm-badge">v'+esc(st.polVer||3)+'</span></div><div class="pm-hint">Her bayrak için reddet (token yok, config yok), uyar (geçer; uyarı olarak döner) ya da yoksay. Geçen cihaz 5 dakikalık PinVault-Token alır; geçmeyen token almaz, uygulamanızın sunucusu onu 401 ile çevirir.</div>';

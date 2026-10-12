@@ -795,7 +795,7 @@
         <div id="f1-fabrika-cap6" class="f1-fabrika-capline">7 · The client CA signs the ID card; the token is used up, the ID card returns to the phone.</div>
         <div id="f1-fabrika-cap7" class="f1-fabrika-capline">8 · The phone enters 8092 with its ID card and gets the signed pin list.</div>
         <div id="f1-fabrika-cap8" class="f1-fabrika-capline">9 · Attestation: the phone sends its report and gets a 5-minute PinVault-Token.</div>
-        <div id="f1-fabrika-cap9" class="f1-fabrika-capline">10 · First call: pin from the list, PinVault-Token in the header; the API server verifies: 200 OK.</div>
+        <div id="f1-fabrika-cap9" class="f1-fabrika-capline">10 · First call: pin from the list, token and proof in the header; the API server verifies: 200 OK.</div>
         <div id="f1-fabrika-cap10" class="f1-fabrika-capline">File: the admin uploads it in the dashboard; the phone gets its own file from 8092.</div>
         <div id="f1-fabrika-cap11" class="f1-fabrika-capline">Renewal: with a third of the ID card's lifetime left, the phone gets a new ID card from 8092 with the same key.</div>
         <div id="f1-fabrika-cap12" class="f1-fabrika-capline f1-fabrika-caplong">Recovery: if the ID card has expired, the phone goes to 8093, proves its identity by signing with the same key and gets a new ID card.</div>

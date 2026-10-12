@@ -333,12 +333,14 @@ button:focus-visible{outline:2px solid var(--border-accent);outline-offset:2px}
 <dt>Screen lock</dt><dd>The phone's PIN, pattern, password or fingerprint. The hardware uses the key of a screen-lock-protected file only after this lock is unlocked.</dd>
 <dt>Host</dt><dd>The name of the server the app connects to, for example api.example.com.</dd>
 <dt>Port</dt><dd>The address number the server listens on: 8090, 8091, 8092, 8093. The numbers are the ones the demo app assumes; the code defaults are 8080, 8081 and 8083.</dd>
+<dt>JWKS (public key set)</dt><dd>The public halves of the keys the server signs PinVault-Tokens with; GET /api/v1/attestation/jwks serves them to anyone. Your app server verifies tokens with them; the private key never leaves the PinVault server, so a verifier cannot make tokens.</dd>
 <dt>Keystore</dt><dd>Android Keystore, the phone's key vault. A private key generated in it cannot be exported; it can only be asked to sign.</dd>
 <dt>mTLS</dt><dd>TLS where both sides show a certificate: the server proves its identity to the phone and the phone proves its identity to the server.</dd>
 <dt>Nonce</dt><dd>A single-use, 2-minute random challenge the server gives out for attestation. The phone signs it together with its report; the same signed report cannot be sent twice.</dd>
 <dt>P12</dt><dd>An encrypted file that carries a certificate together with its private key.</dd>
 <dt>Pin</dt><dd>The SHA-256 hash of a certificate's public key: the certificate's fingerprint.</dd>
-<dt>PinVault-Token</dt><dd>A 5-minute signed ticket (HS256 JWT) the server gives to a phone that passed attestation. The library puts it in the header of every request to the app's own servers; that server verifies the signature itself without asking PinVault.</dd>
+<dt>PinVault-Proof</dt><dd>A separate signature for each request that goes with the token (DPoP, RFC 9449). The phone signs it with the device key the token is bound to, over the request's method and address; it is good for 60 seconds and once. A token lifted from the phone is useless without it.</dd>
+<dt>PinVault-Token</dt><dd>A 5-minute signed ticket (ES256 JWT) the server gives to a phone that passed attestation. The library puts it in the header of every request to the app's own servers; that server verifies the signature itself with the public key from the JWKS, without asking PinVault on each request. Its cnf claim binds the token to the device key.</dd>
 <dt>Rejection policy</dt><dd>The admin's choice for each attestation signal: reject (does not pass), warn (passes, a warning is logged) or ignore (not checked). Set per config API.</dd>
 <dt>Certificate</dt><dd>A signed document stating who a key belongs to: like an ID card.</dd>
 <dt>Expiry time (expiresAt)</dt><dd>The last moment the signed pin list is valid. The server gives 24 hours by default; the phone will not connect with a list past that time.</dd>
@@ -1711,6 +1713,10 @@ const S_REC_REPLAY=`403 Forbidden
 const Q_SUM=`~// never leaves the device:
 +the private key in the Keystore
 
+~// never leaves the PinVault server:
++the pin list signing key
++the PinVault-Token signing key (ES256)
+
 ~// other secrets:
 +enrollment token (single-use, 24 hours)
 +enrollment code (for the policy lifetime)
@@ -1723,7 +1729,8 @@ const S_SUM=`certificates (device, server, CA)
 CSR and hardware attestation
 clientId: tablet-07
 ANDROID_ID: 3f2a9c0d81b4e6a7
-pin list (signed, with expiry)`;
+pin list (signed, with expiry)
+PinVault-Token public keys (JWKS)`;
 
 const CERT_T7={id:'tablet-07',revoked:0},CERT_T7R={id:'tablet-07',revoked:1};
 const Q_ORDER_TLS=`~// inside PinVault.init(...), in order:
@@ -1738,6 +1745,7 @@ const Q_ORDER_TLS=`~// inside PinVault.init(...), in order:
 ~// later, when the app asks:
 files and download report
 ~// on every request: the PinVault-Token header
+~// (+ PinVault-Proof with proofOfPossession())
 
 ~// in the background, periodically:
 pin list · files · attestation
@@ -2124,7 +2132,7 @@ Cache-Control: no-store
 +  "result": "pass",
 +  "arc": "7f3a9c1e",
   "warnings": ["adb_enabled"],
-+  "token": "eyJhbGciOiJIUzI1NiIsImtpZCI6…",
++  "token": "eyJhbGciOiJFUzI1NiIsImtpZCI6…",
   "tokenExpiresAt": 1790849100000,
   "tokenTtlSeconds": 300,
 +  "nextAttestIn": 300,
@@ -2139,32 +2147,72 @@ Cache-Control: no-store
 ~// hardware attestation, ATTESTATION_KEY_POLICY) · policy
 ~// if the list changed, "config": the signed envelope too`;
 const Q_PVT_USE=`GET https://api.example.com/veri
-+PinVault-Token: eyJhbGciOiJIUzI1NiIsImtpZCI6…
++PinVault-Token: eyJhbGciOiJFUzI1NiIsImtpZCI6…
++PinVault-Proof: eyJ0eXAiOiJkcG9wK2p3dCIs…
 ~// added by the library's interceptor: on getClient()
 ~// and applyTo clients, to every pinned host in the
 ~// list and the config API (or only to those
-~// named with tokenHosts(...))
+~// named with tokenHosts(...)); the proof only
+~// when the block has proofOfPossession()
 
-~// inside the token (HS256 JWT, 5 minutes):
+~// inside the token (ES256 JWT, 5 minutes):
 {"iss": "pinvault", "sub": "3f2a9c0d81b4e6a7",
  "aud": "mtls-8092", "iat": …, "exp": …,
- "jti": "…", "arc": "7f3a9c1e", "pol": 3,
- "anno": ["field"]}   // only if there is an annotation`;
-const S_PVT_USE=`~// the app server verifies it itself,
-~// without asking PinVault:
-+kid → secret key · HS256 signature · exp (60 s leeway)
-+aud = its own Config API id · (anno)
+ "jti": "…", "did": "3f2a9c0d81b4e6a7",
+ "arc": "7f3a9c1e", "pol": 3,
+ "anno": ["field"],   // only if there is an annotation
+ "cnf": {"jkt": "…",          // the device key
+         "x5t#S256": "…"}}    // over mTLS only`;
+const S_PVT_USE=`~// the app server verifies it itself; it loads
+~// the public keys once, beforehand:
+GET /api/v1/attestation/jwks   // no API key
++kid → public key · ES256 signature · iss · exp (60 s leeway)
++aud = its own Config API id (required) · (anno)
+~// if proofs are required (PINVAULT_TOKEN_REQUIRE_PROOF):
++proof signed by jwk · jwk thumbprint = cnf.jkt
++htm + htu this request · iat ±60 s · ath = token hash
 200 OK  {"veri": …}
 
-~// no header, expired, or the signature fails:
+~// no header, expired, signature or proof fails:
 !401 Unauthorized
 !WWW-Authenticate: PinVault-Token
 !  error="invalid_token"
 !{"error": "invalid_token", "reason": "missing"}
 ~// reason: missing | malformed | unknown_kid |
-~//   signature | expired | audience | annotations
+~//   signature | issuer | expired | audience |
+~//   annotations | device_mismatch | proof_*
 ~// sample: the PinVaultTokenAuth plugin; the mock host
 ~// does the same with MOCK_HOST_REQUIRE_TOKEN=true`;
+// ── PinVault-Proof (ATTESTATION.md §5.1) ─────────────────────────────
+const Q_PROOF=`~// on the phone, one per request (the library does it):
++PinVault-Proof = header.payload.signature
+~// header:
+{"typ": "dpop+jwt", "alg": "ES256",
+ "jwk": {"kty": "EC", "crv": "P-256",
+         "x": "…", "y": "…"}}   // the device key, public half
+~// payload:
+{"jti": "Qk3x…",             // 16 random bytes
+ "htm": "GET",
+ "htu": "https://api.example.com/veri",
+ "iat": 1790849012,           // in the server's time
+ "ath": "fUHyO2r…"}           // SHA-256 of the token
++signature = device key (TEE / StrongBox), ES256
+~// the key that signs the attestation report; its
+~// private half never leaves the hardware`;
+const S_PROOF=`~// the app server, after the token:
++signature holds with jwk
++jwk thumbprint (RFC 7638) = cnf.jkt in the token
++htm GET, htu this address · iat within 60 s
++ath = hash of this token · jti first seen
+200 OK  {"veri": …}
+
+~// a token lifted from the phone, from another machine:
+GET https://api.example.com/veri
+PinVault-Token: eyJhbGciOiJFUzI1NiIs… (valid)
+!401 {"error": "invalid_token",
+!     "reason": "proof_missing"}
+~// with an old proof: proof_replay / proof_url /
+~// proof_time; with its own key: proof_key`;
 const Q_ATT_REJECT=`POST /api/v1/attest
 Host: 192.168.1.10:8092
 ~// same request; the signals in the report differ:
@@ -2228,11 +2276,19 @@ Host: 192.168.1.10:8090
 ?  "key_unattested": "warn", "old_patch_level": "warn",
 ?  "play_integrity": "warn",
 ?  "play_integrity_missing": "warn",
+?  "app_attest": "warn", "app_attest_missing": "warn",
++  "bootloader_unlocked": "reject",
++  "boot_not_verified": "reject", "key_revoked": "reject",
++  "report_mismatch": "reject", "config_rollback": "reject",
++  "fresh_attestation_failed": "reject",
++  "fresh_attestation_overdue": "reject",
++  "token_anomaly": "reject",
    "adb_enabled": "ignore"},
  "revealReasons": false,
  "tokenTtlSeconds": 300, "attestIntervalSeconds": 300}
 ~// if two-person approval is on, it waits for approval
-~// (attestation_policy)`;
+~// (attestation_policy); under the production profile
+~// loosening a floor flag always waits`;
 const S_ATT_POLICY=`200 OK  {"version": 4, …}
 ~// audit log: attestation_policy_updated
 ~// devices are judged by the new policy on
@@ -2244,9 +2300,13 @@ PUT …/attestation/devices/3f2a9c0d81b4e6a7
 + "annotations": ["field"]}
 ~// anno is carried in the token; forceFail → reject every round
 
-~// the token secret key:
+~// the token signing key (ES256, global):
 POST /api/v1/attestation/token-secrets/rotate
-~// the new kid is active; old ones stay for verification`;
+~// the new kid is active; its public half is in the
+~// JWKS at once, old ones stay for verification
+GET /api/v1/attestation/jwks
+~// {"keys": [{"kty": "EC", "crv": "P-256",
+~//   "kid": "2026-10-05-02", "x": "…", "y": "…"}, …]}`;
 const Q_ATT_ATTACK=`~// 1) an exact copy of a captured request:
 POST /api/v1/attest
 !{"nonce": "AAABkp0…Zg" (used), …}
@@ -2753,15 +2813,26 @@ const S=[
   [`The list over this channel`,`The phone writes the version and issuedAt of the list it holds; if the server's one differs (or the envelope is past half its lifetime), the response has "config": the same signed envelope that GET certificate-config gives. The phone runs it through the same checks and applies it (applySigned). Through this channel the list goes only to an app that passes; unlike Approov, the same list is open to anyone through the config request, because pins are not secret.`,'ok'],
   [`What the device checks`,`The response connection is pinned; it does not open the token, keeps it (in memory) and watches its expiry. It checks the signature, dates and replay limits of an incoming config.`,'ok'],
   [`In the demo`,`ATTESTATION_KEY_POLICY=warn: the attestation is recorded, and registration goes ahead without one too. The production profile requires enforce plus the package name and signing certificate; then only a key your app generated in the hardware of a locked phone gets registered.`,'wr']]},
-{c:6,k:'n',t:`4 · The token goes to the app server on every request`,d:`The library puts the token in the header of every request to the app's own servers. That server verifies the signature itself; it does not ask the PinVault server. It turns away a request with no token or an expired one with 401.`,act:[`App server`,`api.example.com`,'c-blue'],hl:['g-att','g-dev'],
- sx:{tag:'PinVault-Token',cls:'tok',title:`a 5-minute signed ticket · your app server verifies it`,rows:[[`Who adds it`,`the library's interceptor`,`→ on getClient() and applyTo clients; to the hosts in the list, not to every server that asks like the certificate`,null,''],[`Who verifies it`,`your app server`,`→ secret key by kid, HS256 signature, exp, aud`,null,'ok'],[`If there is no token`,`401 invalid_token`,`→ requests from a device that failed end here`,null,'bad']]},
+{c:6,k:'n',t:`4 · The token goes to the app server on every request`,d:`The library puts the token in the header of every request to the app's own servers. That server verifies the signature itself with PinVault's public key (JWKS); it does not ask the PinVault server on the request path. It turns away a request with no token or an expired one with 401.`,act:[`App server`,`api.example.com`,'c-blue'],hl:['g-att','g-dev'],
+ sx:{tag:'PinVault-Token',cls:'tok',title:`a 5-minute signed ticket · your app server verifies it`,rows:[[`Who adds it`,`the library's interceptor`,`→ on getClient() and applyTo clients; to the hosts in the list, not to every server that asks like the certificate`,null,''],[`Who verifies it`,`your app server`,`→ public key from the JWKS by kid, ES256 signature, exp, aud`,null,'ok'],[`If there is no token`,`401 invalid_token`,`→ requests from a device that failed end here`,null,'bad']]},
  tq:`Request · device → app server`,q:Q_PVT_USE,ts:`What your server does`,s:S_PVT_USE,
  mv:[cert('ob',0,PU,'server certificate'),flash(116,122,'✓ pin matched','ok','end'),m('ob',1,TK,'request + PinVault-Token','q'),m('ob',0,TE,'200','s')],mk:[DM('token in the header, response arrived')],
  rows:[[`Which requests`,`By default: every pinned host in the signed list, and the block config API port. Narrowed with tokenHosts("api.example.com", …). Pin first, then header: a token is never sent on a connection whose pin did not match.`],
-  [`Inside the token`,`HS256 JWT: kid (which secret key), iss pinvault, sub and did the device identity, aud the Config API id, iat/exp (5 minutes), jti, arc, pol (policy version), anno (the device annotations, if any). Nothing secret inside; its strength comes from its signature and short life.`],
-  [`What your server does`,`Finds the secret key by kid (the server loads the token secrets from the dashboard), verifies the signature, checks exp with 60 seconds of leeway, checks that aud is its own Config API id, and optionally looks for a label in anno. It does not ask PinVault; no extra round trip on the request path. Reference: the PinVaultTokenAuth Ktor plugin; the mock hosts do the same with MOCK_HOST_REQUIRE_TOKEN=true; Node, Python and Java samples in SERVER_IMPLEMENTATION_GUIDE.`,'ok'],
-  [`If there is no token`,`401 Unauthorized, WWW-Authenticate: PinVault-Token error="invalid_token" and reason: missing, malformed, unknown_kid, signature, expired, audience or annotations. All app requests from a device that failed end here.`,'bd'],
+  [`Inside the token`,`ES256 JWT: kid (which signing key), iss pinvault, sub and did the device identity, aud the Config API id, iat/exp (5 minutes), jti, arc, pol (policy version), anno (the device annotations, if any) and cnf: who the token was issued to. cnf.jkt is the thumbprint of the device key that signed the report; if the attestation came over mTLS, cnf.x5t#S256 is the thumbprint of the device certificate. Nothing secret inside; its strength comes from its signature, its short life and being bound to the device.`],
+  [`What your server does`,`Loads the public keys once from GET /api/v1/attestation/jwks (no API key needed). On every request it finds the public key by kid, verifies the ES256 signature, checks iss is pinvault, checks exp with 60 seconds of leeway, checks that aud is its own Config API id (required: without it a token issued to another app of the same server would pass), and optionally looks for a label in anno. If the request carries X-Device-Id, it must equal did. No round trip to PinVault on the request path. Reference: the PinVaultTokenAuth Ktor plugin; the mock hosts do the same with MOCK_HOST_REQUIRE_TOKEN=true; Node, Python and Java samples in SERVER_IMPLEMENTATION_GUIDE.`,'ok'],
+  [`Why a public key`,`Since 2.4.2 the token is signed with ES256: the private key never leaves the PinVault server, backends only know the public half. A backend that is broken into can verify tokens but cannot make them. For backends not moved yet, PINVAULT_TOKEN_ALG=HS256 keeps the shared secret (then a verifier can also sign). A key's algorithm is fixed: a public key can never serve as an HS256 secret.`,'ok'],
+  [`If there is no token`,`401 Unauthorized, WWW-Authenticate: PinVault-Token error="invalid_token" and reason: missing, malformed, unknown_kid, signature, issuer, expired, audience, annotations, device_mismatch or a reason starting with proof_ (next step). All app requests from a device that failed end here.`,'bd'],
   [`In the app`,`Most apps do nothing: getClient() or applyTo is enough. An app that builds its own client gets the token with PinVault.fetchAttestationToken(host) and puts it in the attestationHeaderName() header itself.`]]},
+{c:6,k:'n',t:`5 · The phone's signature on every request: PinVault-Proof`,d:`On its own the token works for whoever holds it; if it leaks from the phone another machine can use it too. With proofOfPossession() on the block, the library adds to every request a PinVault-Proof that signs that request's method and address with the device key. Your app server compares the proof's key with cnf.jkt in the token: the key never leaves the hardware, so a lifted token is useless without it.`,act:[`App server`,`api.example.com`,'c-blue'],hl:['g-att','g-dev'],
+ sx:{tag:'PinVault-Proof',cls:'tok',title:`DPoP (RFC 9449) · one per request, 60 seconds, single use`,rows:[[`Who signs it`,`the phone's device key (TEE / StrongBox)`,`→ the key that signs the attestation report; named in the token as cnf.jkt`,null,''],[`What is signed`,`method, address, time, the token's hash, a random jti`,`→ another request, another token or a second use does not match`,null,'ok'],[`If there is no proof`,`401 invalid_token · proof_missing`,`→ another machine with only the token stops here`,null,'bad']]},
+ tq:`On the phone · for each request`,q:Q_PROOF,ts:`What your server does`,s:S_PROOF,
+ mv:[cert('ob',0,PU,'server certificate'),flash(116,122,'✓ pin matched','ok','end'),m('ob',1,TK,'request + token + proof','q'),flash(116,140,'✓ proof: cnf.jkt matched','ok','end'),m('ob',0,TE,'200','s')],mk:[DM('token + proof in the header, response arrived')],
+ rows:[[`Problem`,`A token is valid for whoever holds it for 5 minutes. A token leaked from a log line, a memory dump or a proxy the app was tricked into could have been used from another machine.`,'wr'],
+  [`Solution`,`The token now says who it was issued to (cnf.jkt: the thumbprint of the device key). On every request the phone signs the method (htm), the address (htu), the time (iat, in the server's time), the token's hash (ath) and a random jti with that same key. The private key never leaves the TEE, StrongBox or, on iOS, the Secure Enclave; a proof cannot be made anywhere else.`,'ok'],
+  [`What your server does`,`After verifying the token: does the proof's signature hold with the jwk inside it, is the jwk's thumbprint cnf.jkt, are htm and htu this request, is iat within 60 seconds, is ath this token's hash, was jti seen before. A refusal is the token's 401: proof_missing, proof_malformed, proof_signature, proof_key, proof_method, proof_url, proof_time, proof_token or proof_replay; the library attests once more and retries with a fresh token and proof.`],
+  [`Where it is turned on`,`In the library, attestation().proofOfPossession() on the block (iOS too; proofOfPossession: true in React Native). In the reference verifier PinVaultTokenAuth { requireProof = true }; on the mock hosts PINVAULT_TOKEN_REQUIRE_PROOF, on by default since 2.4.2. Behind a proxy, publicOrigin (PINVAULT_TOKEN_PUBLIC_ORIGIN) is set to the address clients use. Any DPoP library verifies it too.`],
+  [`Over mTLS as well`,`If the attestation came over mTLS, the token is also bound to the device certificate with cnf.x5t#S256. If your backend sees the client certificate, PINVAULT_TOKEN_REQUIRE_CERT_BINDING=true requires that same certificate (cert_binding).`],
+  [`Its limit`,`Code running as the app on a rooted phone can still have the key sign: the phone can become a signing service for others. But now every request needs that phone online; the token anomaly counter catches the shape of that traffic (Limits step). The body is not signed (as in DPoP); TLS and pinning protect it. The cost is one hardware signature per request: a few milliseconds in the TEE.`,'wr']]},
 {c:6,k:'b',t:`Attack: a rooted phone or one running Frida`,d:`A tampered app on a rooted phone sets up the pinned connection and, if enrolled, shows its certificate too. The report carries the root and hooking signals; since the policy says reject, no token comes. Your app server turns away the request without the header with 401.`,cx:'92',cl:[`Rooted phone shows`,`its valid certificate + a signed report`,`→ the connection is set up; verdict reject`,3,'bad'],att:[`Rooted phone`,`Magisk + Frida`],hl:['g-att','g92','g-db'],tq:`Request · rooted phone → 8092`,q:Q_ATT_REJECT,ts:`Response · 8092 → rooted phone`,s:S_ATT_REJECT,
  mv:[...mtls('a2','its own certificate'),m('a2',0,RD,'POST attest','q'),m('b2',0,RD,''),m('b2',1,RD,''),m('a2',1,RD,'reject · no token','s')],mk:[AMK('✗ reject · ARC c41e9b02'),BMK('device: last verdict reject','ok')],
  rows:[[`What happens`,`The report is honest: the rooted and hooking_framework flags go with their evidence, and the signature checks out with the device key. Since the policy counts both flags as reject, the server returns result: reject; no token and no config.`],
@@ -2769,7 +2840,7 @@ const S=[
   [`On your app server`,`The request arrives without the PinVault-Token header: 401 invalid_token (reason: missing). Even if an old token was kept, it expires within 5 minutes (expired).`,'ok'],
   [`In the dashboard`,`The device row shows reject, ARC c41e9b02; clicking the ARC shows the reasons: rooted, hooking_framework. The statistics show 24-hour / 7-day rejection counts and reasons. For a support case the admin can give the device forcePass; then the flags drop to warnings and a token is issued.`],
   [`Changing the report`,`With Frida it is possible to make the probes return "clean"; the next steps describe the limit and cost of that.`,'wr']]},
-{c:6,k:'n',t:`5 · Again before expiry, about every 4 minutes; in the background too`,d:`The token lives 5 minutes. The phone measures and sends again 60 seconds before it expires (or at the interval the server says). The background run also does a round; the app can call attestNow() whenever it wants.`,cx:'92',hl:['g-dev','g92'],tq:`On the phone`,q:Q_ATT_LOOP,ts:`On every round`,s:S_ATT_LOOP,
+{c:6,k:'n',t:`6 · Again before expiry, about every 4 minutes; in the background too`,d:`The token lives 5 minutes. The phone measures and sends again 60 seconds before it expires (or at the interval the server says). The background run also does a round; the app can call attestNow() whenever it wants.`,cx:'92',hl:['g-dev','g92'],tq:`On the phone`,q:Q_ATT_LOOP,ts:`On every round`,s:S_ATT_LOOP,
  mv:[...mtls('d2'),m('d2',0,BL,'GET challenge'),m('d2',1,TE,'nonce'),m('d2',0,BL,'POST attest'),m('d2',1,TK,'token (5 min)'),hl(['g-dev'],0,900),m('d2',0,BL,'GET challenge'),m('d2',1,TE,'nonce'),m('d2',0,BL,'POST attest'),m('d2',1,TK,'token + new list')],mk:[DM('about every 4 minutes, while the app is running','muted')],
  rows:[[`When`,`The next round comes after min(nextAttestIn, block interval, token expiry − 60 s); at least 30 seconds, with some random jitter. The server can speed it up with nextAttestIn (attestIntervalSeconds in the policy, default 300).`],
   [`On error`,`With no network or no server response it backs off 30 s → 60 s → 2 min → 4 min → 5 min; the token in hand is used until it expires, after that no header goes and your server returns 401. A rejected device retries at the same interval too: once root is removed it gets a token on the next round.`],
@@ -2778,15 +2849,16 @@ const S=[
   [`Why 5 minutes`,`A stolen or leaked token works for at most 5 minutes, and the server knowledge that "this device is clean" is at most 5 minutes old. A shorter time increases server load, which means two requests and one ECDSA verification per device; a longer time widens the window. Approov picks the same value. It is changed in the dashboard with tokenTtlSeconds and attestIntervalSeconds, in the block with attestationInterval (at least 1 minute); the server can speed it up with nextAttestIn, not slow it down.`],
   [`The list too, from here`,`When the admin changes a pin, the phone gets the new list without waiting for the 12-hour update, at the latest on the next attestation round: this channel is what Approov calls "dynamic pinning". A rejected device does not get it.`,'ok'],
   [`App`,`PinVault.attestationStatus() gives the last result (result, arc, warnings, tokenExpiresAt, nextAttestAt, lastError); setConnectionListener delivers Attestation events. In the sample app the "Attestation" button calls attestNow() and prints the result.`]]},
-{c:6,k:'t',t:`In the dashboard: rejection policy, devices, annotations, token secret`,d:`The admin chooses which signal rejects, sees the last verdict and ARC of each device, gives a device forcePass/forceFail or a label, and rotates the token secret on the Signing tab.`,act:ADMIN,hl:['g-att','g90','g-db'],
- sx:{tag:'8090',cls:'tok',title:`Config API page · Attestation tab`,rows:[ADMROW,[`Policy`,`14 flags × reject / warn / ignore`,`→ starts from strict (default) or lenient`,null,''],[`Devices`,`last verdict, ARC, warnings, key level`,`→ click the ARC: reasons`,null,''],[`Token secret`,`on the Signing tab, global`,`→ your app server loads it from here`,null,'ok']]},
+{c:6,k:'t',t:`In the dashboard: rejection policy, devices, annotations, token key`,d:`The admin chooses which signal rejects, sees the last verdict and ARC of each device, gives a device forcePass/forceFail or a label, and rotates the token signing key on the Signing tab.`,act:ADMIN,hl:['g-att','g90','g-db'],
+ sx:{tag:'8090',cls:'tok',title:`Config API page · Attestation tab`,rows:[ADMROW,[`Policy`,`24 flags × reject / warn / ignore`,`→ starts from strict (default), lenient or production`,null,''],[`Devices`,`last verdict, ARC, warnings, key level`,`→ click the ARC: reasons`,null,''],[`Token key`,`on the Signing tab, global`,`→ backends load its public half from the JWKS`,null,'ok']]},
  scr:{panel:'attest',polVer:3,devices:[{id:'3f2a9c0d81b4e6a7',res:'pass',arc:'7f3a9c1e',key:'ok',warn:'adb_enabled'},{id:'b71e04c95a2d3f80',res:'reject',arc:'c41e9b02',key:'ok',warn:''}]},tq:`The requests the dashboard sends behind the scenes`,q:Q_ATT_POLICY,ts:`Responses and other admin requests`,s:S_ATT_POLICY,
  mv:[sc({hot:'pol'}),m('a0',0,BL,'PUT policy','q'),m('b0',0,BL,''),m('b0',1,TE,''),m('a0',1,TE,'v4','s'),sc({hot:null,polVer:4}),sc({hot:'anno'}),m('a0',0,BL,'PUT devices/3f2a…'),m('a0',1,TE,'ok'),sc({hot:null,devices:[{id:'3f2a9c0d81b4e6a7',res:'pass',arc:'7f3a9c1e',key:'ok',warn:'adb_enabled',anno:'field'},{id:'b71e04c95a2d3f80',res:'reject',arc:'c41e9b02',key:'ok',warn:''}]}),m('a0',0,BL,'POST token-secrets/rotate'),m('a0',1,TE,'kid 2026-10-05-02')],mk:[AMK('policy v4 · label: field','ok'),BMK('policy + device records','ok')],
- rows:[[`Policy`,`reject, warn or ignore for each flag. ATTESTATION_POLICY_DEFAULT=strict (rejects root, emulator, debugger, hooking, integrity, clone; warns on installer, software key, unattested key, old patch and the two Play Integrity flags; does not check ADB) or lenient (everything warn: while the fleet is being measured). revealReasons, token lifetime and interval are here too. Every change bumps the version; it is carried in the token as pol. If two-person approval is on, it waits for approval.`],
+ rows:[[`Policy`,`reject, warn or ignore for each of the 24 flags. A Config API without a stored policy starts from the ATTESTATION_POLICY_DEFAULT preset. strict (default): rejects root, emulator, debugger, debuggable, hooking, integrity, clone and the eight flags the server raises from the hardware attestation and its own records (bootloader_unlocked, boot_not_verified, key_revoked, report_mismatch, config_rollback, fresh_attestation_failed, fresh_attestation_overdue, token_anomaly); warns on installer, software key, unattested key, old patch, the Play Integrity and App Attest flags; does not check ADB. lenient: everything warn (while the fleet is being measured). revealReasons, token lifetime and interval are here too. Every change bumps the version; it is carried in the token as pol. If two-person approval is on, it waits for approval. The dashboard's preset buttons are Strict and Lenient; production is a server setting only.`],
+  [`The production profile`,`A third preset since 2.4.1: strict plus software_key, play_integrity, play_integrity_missing, app_attest and app_attest_missing at reject. It also adds a floor held in code: rooted, emulator, debuggable, hooking_framework, app_integrity and software_key read as reject whatever the stored policy says. Loosening one takes a change two people approved (otherwise 403 two_person_approval_required, even with approvals off). The sample server's production profile (.env.production) fixes it.`,'ok'],
   [`Devices`,`Last verdict, ARC, warnings, key (StrongBox / TEE / software, attested or not), first and last seen, key mismatches. Search and a result filter. When a device is deleted (forget), its key is forgotten; a reinstalled app can register with its new key.`],
   [`forcePass · forceFail · labels`,`forcePass: a support case, the flags drop to warnings, a token is issued. forceFail: a stolen phone, reject every round. Labels (annotations) go in the token anno field: your app server can behave differently for a "staff" or "canary" label. They can be written even before the device ever shows up.`,'ok'],
-  [`Token secret`,`Not on the Attestation tab but in the "PinVault-Token secrets" card on the Signing tab; global, not per Config API. A 32-byte random key, stored encrypted on the server; one is active, previous ones remain for verification. "Rotate" makes a new kid active; each row has Reveal/Hide, Copy and Delete (the active one cannot be deleted). If two-person approval is on, reading the secrets waits for approval.`],
-  [`Statistics`,`24 hours and 7 days: passed, rejected, breakdown by reasons and warnings, device counts. Audit log: attestation_policy_updated, attestation_device_annotated, attestation_rejected (when the verdict changes), attestation_key_mismatch, token secret events.`]]},
+  [`Token key`,`Not on the Attestation tab but in the "PinVault-Token secrets" card on the Signing tab; global, not per Config API. ES256 by default: an EC P-256 key whose private half is stored encrypted on the server and never leaves it; the card shows only the public half. Backends do not load it from the card but by kid from the public GET /api/v1/attestation/jwks. One is active, previous ones remain for verification. "Rotate" makes a new kid active; Delete removes an old one (the active one cannot be deleted). With PINVAULT_TOKEN_ALG=HS256 a 32-byte shared secret is used and shown in the clear; if two-person approval is on, reading it waits for approval.`],
+  [`Statistics`,`24 hours and 7 days: passed, rejected, breakdown by reasons and warnings, device counts. Audit log: attestation_policy_updated, attestation_device_annotated, attestation_rejected (when the verdict changes), attestation_key_mismatch, attestation_token_anomaly, attestation_policy_floor_refused, token key events.`]]},
 {c:6,k:'b',t:`Attack: replaying an old report, forging a report, swapping the key`,d:`Three attempts: a copy of a captured request (nonce already used), a forged report that looks clean (signature fails), and an app reinstalled with a new key (the registered key is different). All three are rejected.`,cx:'92',cl:NOCERT(`→ in a TLS block no certificate is asked anyway; the proof is the signature`),att:[`Another device / a script`,`imitates the report`],hl:['g-att','g92','g-db'],tq:`Requests · attacker → 8092`,q:Q_ATT_ATTACK,ts:`Responses`,s:S_ATT_ATTACK,
  mv:[...tls('a2'),m('a2',0,RD,'POST attest (copy)','q'),m('a2',1,RD,'400 nonce_replayed'),m('a2',0,RD,'POST attest (forged)'),m('a2',1,RD,'401 signature_invalid'),m('a2',0,RD,'POST attest (new key)'),m('a2',1,RD,'403 key_mismatch','s')],mk:[AMK('✗ 400 · 401 · 403'),BMK('registered key unchanged','ok')],
  rows:[[`Copy`,`Capturing it from the pinned channel is hard to begin with; even if captured, the nonce was used once and goes stale in 2 minutes: 400 nonce_replayed.`,'ok'],
@@ -2794,13 +2866,16 @@ const S=[
   [`New key`,`When the app is uninstalled and reinstalled a new key is generated; the server sees another key on the same device identity and says 403 key_mismatch. It shows up in the dashboard as "key mismatch"; once the admin forgets the device, the new key can register. So nobody else can take over an identity.`],
   [`Limits`,`60 requests per address, 30 per device (in 10 minutes); challenge twice that. Every new rejection is written to the audit log at once; repeats of the same verdict are summarised once a minute. A rejected device can try again; it asks for a new nonce on every attempt.`]]},
 {c:6,k:'l',t:`Limits: measured on the phone, judged on the server`,d:`Attestation helps pick out the real, unmodified app; it is not magic. The probes are plain Kotlin inside the library and can be hooked; their value comes from the signed key, the signals the server adds, and the policy. Turn it on knowing what it does and what it does not.`,hl:['g-dev','g92','g-db'],
- sx:{tag:'Limits',cls:'none',title:`what it blocks, where it ends`,rows:[[`Blocks`,`ready-made unpinning scripts, emulators, fake APKs, rooted phones`,`→ to the extent the policy says reject`,null,'ok'],[`Makes harder`,`a clean report by hooking the probes`,`→ key attestation + server signals + R8/packer`,null,'warn'],[`Does not`,`vouch for the later behaviour of a device that passed`,`→ token 5 minutes, then measured again`,null,'']]},
+ sx:{tag:'Limits',cls:'none',title:`what it blocks, where it ends`,rows:[[`Blocks`,`ready-made unpinning scripts, emulators, fake APKs, rooted phones`,`→ to the extent the policy says reject`,null,'ok'],[`Makes harder`,`a clean report by hooking the probes`,`→ key attestation + what the hardware says + fresh attestation + R8/packer`,null,'warn'],[`Does not`,`vouch for the later behaviour of a device that passed`,`→ token 5 minutes, then measured again`,null,'']]},
  tq:`On the phone`,q:null,ts:`On the server`,s:null,sph:`no network call`,
  mk:[BMK('ATTESTATION_KEY_POLICY=enforce recommended','muted')],
  rows:[[`The measurement can be hooked`,`Someone working with Frida can make the probes say "clean". The answer: the report must be signed with a hardware-attested key (enforce), the server adds its own signals, the code is shrunk with R8 and optionally a packer is added, and Play Integrity is plugged in as a second opinion. Approov probes are closed source and continuously updated; PinVault probes are open. That is not a difference of architecture but of assurance and maintenance.`,'wr'],
+  [`What the hardware says`,`Since 2.4.0 the server keeps what the registration's hardware attestation said and judges it itself every round, whatever the report claims: bootloader_unlocked (an unlocked bootloader), boot_not_verified (a boot that was not verified), key_revoked (a certificate of the chain is on the revocation list), report_mismatch (the report contradicts the hardware), config_rollback (the phone reports an older list than it did before). strict rejects all five; software-level chains (emulators) raise none of them.`,'ok'],
+  [`Fresh attestation (optional)`,`With ATTESTATION_FRESH_INTERVAL_SECONDS on (1 day in the production example) the server asks every Android device that often for the chain of a key made for that round only. A bootloader unlocked after registration, or a keybox revoked later, shows up too. A chain that does not hold up raises fresh_attestation_failed; none within the interval + ATTESTATION_FRESH_GRACE_SECONDS (72 hours) raises fresh_attestation_overdue.`],
+  [`Token anomalies (optional)`,`A rooted phone can sign proofs for others; the shape of the traffic gives it away. With PINVAULT_TOKEN_ANOMALY=warn or refuse the reference verifier counts each device's token use: more than 8 addresses or 1200 requests in 10 minutes reports the device (other backends with POST …/attestation/devices/{id}/anomaly). The server raises token_anomaly on that device's rounds for 1 hour (strict: reject); refuse also answers 429 token_anomaly until the window ends.`],
   [`Without attestation`,`With ATTESTATION_KEY_POLICY=warn the first key that arrives is trusted (trust on first use). In this mode a rooted phone can register its own software key; on later rounds the report is still evaluated, but the key genuineness is not proven. In production: enforce + ATTESTATION_PACKAGE_NAMES + ATTESTATION_SIGNER_SHA256.`],
   [`A rejected device`,`Keeps getting the pin list with the normal config request: pinning still protects, only the PinVault-Token and the list that comes with the attestation response are cut off. An app that wants to cut off right away makes its own decision when attestationStatus() shows reject; your app server already requires the token.`],
-  [`On your server`,`Verification is only a signature and expiry check; even if the PinVault server goes down, tokens issued within the last 5 minutes pass, no new ones are issued. A kid whose secret leaked is rotated and deleted; once deleted, tokens signed with that kid are invalid at once, and devices get a new one by attesting again.`],
+  [`On your server`,`Verification is only a signature and expiry check (and the proof's signature, if on); even if the PinVault server goes down, tokens issued within the last 5 minutes pass, no new ones are issued. With ES256 there is no secret on the backend to leak: it only holds the public key. With HS256 a kid whose secret leaked is rotated and deleted; once deleted, tokens signed with that kid are invalid at once, and devices get a new one by attesting again.`],
   [`Scope`,`Attestation adds the token to requests the library makes and to getClient()/applyTo clients; not to connections the app opens some other way. The device identity (ANDROID_ID) is still a claim; the token carries it as sub, but the proof is the key.`]]},
 
 {c:7,k:'t',t:`In the dashboard: upload a file, choose who gets it`,d:`To change a settings file or a model you do not want to wait for an app update. PinVault also distributes files to the app. The admin uploads the file in the dashboard and chooses who can get it (Policy) and how it is stored (Encryption).`,act:ADMIN,hl:['g-att','g90','g-db'],
@@ -3062,9 +3137,14 @@ const S=[
   [`Tokens`,`The admin generates them in the dashboard, or your app server via 8090 with the API key; the server keeps only their hashes. They are given to the device once, from outside the APK, on first start; a new token does not need a new APK. For many devices there is also a single enrollment code or an application without a code: with an enrollment code the admin's approval is on by default (can be turned off); with an application without a code each device waits for approval.`],
   [`TLS or mTLS`,`An app that uses mTLS nowhere does not enroll; its security comes from pinning and the signed, expiring config. An app using mTLS enrolls once with a token, an enrollment code or an approved application; on the PinVault server the certificate is shown only on 8092, and to the app's own mTLS server only with permission.`],
   [`Identity`,`The key in the Keystore. The certificate, CSR, clientId, ANDROID_ID and pin list let nobody in on their own. On 8092 X-Device-Id is also bound to the certificate. The device identity the phone writes is a claim; unless proven with a bound token or a hardware attestation, the certificate does not act on behalf of that phone's files and keys.`,'ok'],
-  [`Attestation`,`The 5-minute PinVault-Token goes only to an app that passes the measurement (the pin list is not secret); your app server verifies the token itself, and a failing app requests get 401. The rejection policy, device annotations, ARC and token secret are in the dashboard. Measured on the phone, judged on the server; in production ATTESTATION_KEY_POLICY=enforce.`,'ok'],
+  [`Attestation`,`The 5-minute PinVault-Token goes only to an app that passes the measurement (the pin list is not secret); your app server verifies the token itself with the public key from the JWKS, and a failing app requests get 401. The token is bound to the device key (cnf); with PinVault-Proof on, a lifted token is useless elsewhere. The rejection policy (24 flags; strict, lenient, production), device annotations, ARC and token key are in the dashboard. Measured on the phone, judged on the server; in production ATTESTATION_KEY_POLICY=enforce.`,'ok'],
   [`New in 2.2.0`,`Binding a token to one phone · hardware attestation of the key · an expiring pin list re-verified on every start · the device certificate going only to allowed servers (clientCertHosts) · screen-lock files · deleting files on revocation (optional) · signatures carrying the Config API name (configApiId, v2 file signature) · the same renewal request not passing twice · on 8092 a report only on its own behalf · closing the takeover of an enrolled identity in open mode.`,'ok'],
   [`New in 2.3.0`,`Attestation and PinVault-Token · managed trust roots (trustRoots) · name check on the issuer pin, two distinct pins · Keystore level reporting and requireHardwareBackedKeys() · a pending slot for screen-lock files · reports with fixed error codes · bounded body reads · PKCS12 keystores on the server, admin only on 8090, host certificate only to ACL devices · the demo-app release guard.`,'ok'],
+  [`New in 2.3.1 and 2.3.2`,`OWASP audit fixes: requireUnlockedDevice() no longer falls back silently · the screen-lock key window on Android 7–10 is 5 seconds · a host's version also moves when its mtls, forceUpdate or certificate version changes · every admin request body is capped · the server does not start if the token secrets cannot be opened · iss is checked · no Server header, HSTS. 2.3.2: the React Native library.`,'ok'],
+  [`New in 2.4.0`,`Root / jailbreak hardening: the server judges what the hardware attestation said every round (bootloader_unlocked, boot_not_verified, key_revoked, report_mismatch, config_rollback) · the token is bound to the device (cnf: jkt, x5t#S256 over mTLS) · PinVault-Proof on every request (DPoP, proofOfPossession()) · fresh key attestation (fresh_attestation_*) · token anomalies (token_anomaly) · Play Integrity and App Attest v2 binding · store keys wrapped by the Secure Enclave on iOS.`,'ok'],
+  [`New in 2.4.1`,`ATTESTATION_POLICY_DEFAULT=production: a floor held in code, two-person approval to loosen it · a failed probe is not clean, it raises its flag · spending another device's attestation quota is closed · the React Native WebSocket is pinned.`,'ok'],
+  [`New in 2.4.2`,`PinVault-Token is ES256 by default: the private key stays on the server, backends verify from GET /api/v1/attestation/jwks (HS256 optional) · aud is required · PINVAULT_TOKEN_REQUIRE_PROOF and the host certificate grant (HOST_CLIENT_CERT_REQUIRE_GRANT) on by default · no "changeit" default for P12s · allowUnsigned() and allowUnpinnedConfigApi() refused in release builds · the Expo plugin.`,'ok'],
+  [`New in 2.5.0`,`The Flutter plugin · pinned WebSockets on iOS · the server behind a proxy (TRUSTED_PROXIES, CLIENT_IP_HEADER) · a log line per Config API request · a new look for the dashboard.`,'ok'],
   [`Fixed earlier`,`Token race · encryption key registration · body limit · revocation check on every request · one active identity per device · flagging identities · X-Device-Id bound to the certificate on 8092 · key registration limited on 8091 · forgetting a revoked identity · revocation news reaches the phone on the first request (2.1.1) · clients built with applyTo follow the renewed certificate (2.1.1).`],
   [`Remaining limits`,`On 8091 someone else can make the first encryption key registration in place of a device that never registered, and X-Device-Id is the device's own claim (the token policy trusts only the token); open mode is only for demos (whoever comes first with an ANDROID_ID gets that identity); the host certificate is the same on every device and PinVault cannot revoke it; recovery proves only the key: a key extracted from a Keystore that is not hardware-backed keeps renewing until the identity is revoked; for full protection of a screen-lock file against root the server must require the hardware attestation; a revocation in PinVault does not reach the app's own mTLS server by itself.`,'wr'],
   [`Not covered here`,`Changing the signing key without an app update (key set) and multiple signatures, second-admin approval, the audit log and webhook notifications, the per-device host list setting, requireCaTrust, the offline lifetime of files, server-less use (static pins), and writing your own server. These are in the README and SECURE_OPERATIONS documents.`]]}
@@ -3168,8 +3248,8 @@ function vaultUpHtml(st){
   if(st.done)h+='<div class="pm-toast">'+esc(st.vkey)+' v1 ['+pol+'/'+enc+'] uploaded</div><table class="pm-tbl"><tr><th>Key</th><th>Version</th><th>Size</th><th>Policy</th><th>Encryption</th><th></th></tr><tr><td>'+esc(st.vkey)+'</td><td>v1</td><td>'+(ua?'86.4 KB':'2.4 MB')+'</td><td>'+pol+'</td><td>'+enc+'</td><td class="t-dim">✕</td></tr></table>';
   return h;
 }
-const ATT_FLAGS=[['rooted','reject'],['emulator','reject'],['debugger','reject'],['debuggable','reject'],['hooking_framework','reject'],['app_integrity','reject'],['cloner','reject'],['unknown_installer','warn'],['software_key','warn'],['key_unattested','warn'],['old_patch_level','warn'],['play_integrity','warn'],['play_integrity_missing','warn'],['adb_enabled','ignore']];
-const ATT_NOTE={rooted:'su, Magisk, test-keys',emulator:'goldfish, qemu',debugger:'TracerPid',debuggable:'FLAG_DEBUGGABLE',hooking_framework:'frida, xposed, zygisk',app_integrity:'signer ≠ configured',cloner:'dataDir in another package',unknown_installer:'installed outside a store',software_key:'key not in hardware',key_unattested:'no attestation',old_patch_level:'old patch',adb_enabled:'developer options',play_integrity:'Play Integrity verdict failed or unverifiable',play_integrity_missing:'no verified Play Integrity verdict in the last 24 hours'};
+const ATT_FLAGS=[['rooted','reject'],['emulator','reject'],['debugger','reject'],['debuggable','reject'],['hooking_framework','reject'],['app_integrity','reject'],['cloner','reject'],['unknown_installer','warn'],['adb_enabled','ignore'],['software_key','warn'],['key_unattested','warn'],['old_patch_level','warn'],['play_integrity','warn'],['play_integrity_missing','warn'],['app_attest','warn'],['app_attest_missing','warn'],['bootloader_unlocked','reject'],['boot_not_verified','reject'],['key_revoked','reject'],['report_mismatch','reject'],['config_rollback','reject'],['fresh_attestation_failed','reject'],['fresh_attestation_overdue','reject'],['token_anomaly','reject']];
+const ATT_NOTE={rooted:'su, Magisk, test-keys',emulator:'goldfish, qemu',debugger:'TracerPid',debuggable:'FLAG_DEBUGGABLE',hooking_framework:'frida, xposed, zygisk',app_integrity:'signer ≠ configured',cloner:'dataDir in another package',unknown_installer:'installed outside a store',software_key:'key not in hardware',key_unattested:'no attestation',old_patch_level:'old patch',adb_enabled:'developer options',play_integrity:'Play Integrity verdict failed or unverifiable',play_integrity_missing:'no verified Play Integrity verdict in the last 24 hours',app_attest:'App Attest did not verify (iOS)',app_attest_missing:'no verified App Attest verdict (iOS)',bootloader_unlocked:'hardware attestation: bootloader unlocked',boot_not_verified:'hardware attestation: boot not verified',key_revoked:'chain on the revocation list',report_mismatch:'report contradicts the hardware',config_rollback:'reported an older pin list',fresh_attestation_failed:'fresh attestation did not hold up',fresh_attestation_overdue:'fresh attestation overdue',token_anomaly:'token used from too many addresses or too often'};
 const ATT_LV={reject:'reject',warn:'warn',ignore:'ignore'};
 function attestHtml(st){
   let h='<div class="pm-title">Rejection policy <span class="pm-badge">v'+esc(st.polVer||3)+'</span></div><div class="pm-hint">For each flag: reject (no token, no config), warn (passes; returned as a warning) or ignore. A device that passes gets a 5-minute PinVault-Token; one that fails gets no token, and your app server turns it away with 401.</div>';

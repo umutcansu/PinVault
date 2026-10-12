@@ -569,7 +569,8 @@
         <div id="05-host-panelhead">Dashboard · 8090 · mtls-8092 · Add New Host</div>
         <div class="05-host-tab" style="left: 28px; width: 150px">Manual</div>
         <div class="05-host-tab" style="left: 190px; width: 230px">Generate Cert</div>
-        <div id="05-host-tab3" class="05-host-tab" style="left: 432px; width: 180px">Fetch from URL<div id="05-host-tabsel">Fetch from URL</div></div>
+        <div class="05-host-tab" style="left: 432px; width: 200px">Upload File</div>
+        <div id="05-host-tab3" class="05-host-tab" style="left: 644px; width: 180px">Fetch from URL<div id="05-host-tabsel">Fetch from URL</div></div>
         <div id="05-host-fieldlabel">Server address</div>
         <div id="05-host-input">
           <div id="05-host-typed"><span class="05-host-ch">a</span><span class="05-host-ch">p</span><span class="05-host-ch">i</span><span class="05-host-ch">.</span><span class="05-host-ch">o</span><span class="05-host-ch">r</span><span class="05-host-ch">n</span><span class="05-host-ch">e</span><span class="05-host-ch">k</span><span class="05-host-ch">.</span><span class="05-host-ch">c</span><span class="05-host-ch">o</span><span class="05-host-ch">m</span></div>
@@ -608,7 +609,7 @@
       <!-- once-for-your-API section -->
       <div id="05-host-once">
         <div id="05-host-oncehead">ONCE, FOR YOUR API SERVER</div>
-        <div id="05-host-oncebody">It takes the PinVault-Token secret from the dashboard's Signing tab, then verifies the token itself.</div>
+        <div id="05-host-oncebody">It loads the PinVault-Token public key from the public JWKS address, then verifies the token itself.</div>
       </div>
 
       <!-- small ticket -->

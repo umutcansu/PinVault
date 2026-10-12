@@ -315,7 +315,7 @@
         left: 560px;
         top: 404px;
         width: 600px;
-        height: 120px;
+        height: 170px;
         z-index: 6;
         transform-origin: 50% 50%;
       }
@@ -340,6 +340,10 @@
         margin-top: 4px;
         background: #f5c518;
         border-top: 3px solid #0f0f0f;
+        border-bottom: 3px solid #0f0f0f;
+      }
+      [id="12-ilk-istek-reqproof"] {
+        background: #f5c518;
         border-bottom: 3px solid #0f0f0f;
       }
 
@@ -372,7 +376,7 @@
         left: 1180px;
         top: 380px;
         width: 640px;
-        height: 360px;
+        height: 390px;
         border: 4px solid #0f0f0f;
         background: #efe9d9;
         z-index: 4;
@@ -432,7 +436,7 @@
       [id="12-ilk-istek-apinote"] {
         position: absolute;
         left: 1180px;
-        top: 756px;
+        top: 778px;
         font-family: "Space Grotesk", sans-serif;
         font-size: 24px;
         line-height: 1.3;
@@ -561,6 +565,7 @@
       <!-- callbacks -->
       <div id="12-ilk-istek-cb1" class="12-ilk-istek-cb" style="top: 600px"><span class="12-ilk-istek-sw" style="background: #1f8a4c"></span><span>pin: Halka 8'deki listeden</span></div>
       <div id="12-ilk-istek-cb2" class="12-ilk-istek-cb" style="top: 662px"><span class="12-ilk-istek-sw" style="background: #f5c518"></span><span>token: Halka 9'dan</span></div>
+      <div id="12-ilk-istek-cb3" class="12-ilk-istek-cb" style="top: 724px"><span class="12-ilk-istek-sw" style="background: #e85a1f"></span><span>proof: her isteğe, cihaz anahtarıyla</span></div>
 
       <!-- 200 OK (starts hidden behind the API box) -->
       <div id="12-ilk-istek-resp">200 OK</div>
@@ -571,16 +576,18 @@
         <div class="12-ilk-istek-apihost">api.ornek.com</div>
         <div class="12-ilk-istek-apirule"></div>
       </div>
-      <div id="12-ilk-istek-c1" class="12-ilk-istek-chk" style="top: 590px"><span class="12-ilk-istek-ok"><svg viewBox="0 0 24 24"><polyline points="5,12.5 10,17.5 19,7" fill="none" stroke="#EFE9D9" stroke-width="3.5" stroke-linecap="square" /></svg></span><span class="12-ilk-istek-chktext">imza (HS256) tutuyor</span></div>
-      <div id="12-ilk-istek-c2" class="12-ilk-istek-chk" style="top: 638px"><span class="12-ilk-istek-ok"><svg viewBox="0 0 24 24"><polyline points="5,12.5 10,17.5 19,7" fill="none" stroke="#EFE9D9" stroke-width="3.5" stroke-linecap="square" /></svg></span><span class="12-ilk-istek-chktext">süresi geçmemiş</span></div>
-      <div id="12-ilk-istek-c3" class="12-ilk-istek-chk" style="top: 686px"><span class="12-ilk-istek-ok"><svg viewBox="0 0 24 24"><polyline points="5,12.5 10,17.5 19,7" fill="none" stroke="#EFE9D9" stroke-width="3.5" stroke-linecap="square" /></svg></span><span class="12-ilk-istek-chktext">aud: mtls-8092</span></div>
-      <div id="12-ilk-istek-apinote">PinVault'a sormaz; sırrı Halka 3'te almıştı.</div>
+      <div id="12-ilk-istek-c1" class="12-ilk-istek-chk" style="top: 590px"><span class="12-ilk-istek-ok"><svg viewBox="0 0 24 24"><polyline points="5,12.5 10,17.5 19,7" fill="none" stroke="#EFE9D9" stroke-width="3.5" stroke-linecap="square" /></svg></span><span class="12-ilk-istek-chktext">imza: açık anahtarla (ES256)</span></div>
+      <div id="12-ilk-istek-c2" class="12-ilk-istek-chk" style="top: 632px"><span class="12-ilk-istek-ok"><svg viewBox="0 0 24 24"><polyline points="5,12.5 10,17.5 19,7" fill="none" stroke="#EFE9D9" stroke-width="3.5" stroke-linecap="square" /></svg></span><span class="12-ilk-istek-chktext">süresi geçmemiş</span></div>
+      <div id="12-ilk-istek-c3" class="12-ilk-istek-chk" style="top: 674px"><span class="12-ilk-istek-ok"><svg viewBox="0 0 24 24"><polyline points="5,12.5 10,17.5 19,7" fill="none" stroke="#EFE9D9" stroke-width="3.5" stroke-linecap="square" /></svg></span><span class="12-ilk-istek-chktext">aud: mtls-8092</span></div>
+      <div id="12-ilk-istek-c4" class="12-ilk-istek-chk" style="top: 716px"><span class="12-ilk-istek-ok"><svg viewBox="0 0 24 24"><polyline points="5,12.5 10,17.5 19,7" fill="none" stroke="#EFE9D9" stroke-width="3.5" stroke-linecap="square" /></svg></span><span class="12-ilk-istek-chktext">proof: anahtar = cnf.jkt</span></div>
+      <div id="12-ilk-istek-apinote">PinVault'a sormaz; açık anahtarı Halka 3'te yüklemişti.</div>
 
       <!-- request card -->
       <div id="12-ilk-istek-req">
         <div id="12-ilk-istek-reqbody">
           <div id="12-ilk-istek-reqget" class="12-ilk-istek-reqrow">GET /siparisler</div>
-          <div id="12-ilk-istek-reqtok" class="12-ilk-istek-reqrow">PinVault-Token: eyJhbGciOiJIUzI1NiIs…</div>
+          <div id="12-ilk-istek-reqtok" class="12-ilk-istek-reqrow">PinVault-Token: eyJhbGciOiJFUzI1NiIs…</div>
+          <div id="12-ilk-istek-reqproof" class="12-ilk-istek-reqrow">PinVault-Proof: eyJ0eXAiOiJkcG9w…</div>
         </div>
       </div>
 
@@ -634,20 +641,22 @@
         tl.fromTo($("reqbody"), { opacity: 0, scaleY: 0.1 }, { opacity: 1, scaleY: 1, duration: 0.45, ease: SOFT }, 6.1);
         tl.fromTo($("reqget"), { opacity: 0, x: -16 }, { opacity: 1, x: 0, duration: 0.4, ease: SOFT }, 6.4);
         tl.fromTo($("reqtok"), { opacity: 0, x: -16 }, { opacity: 1, x: 0, duration: 0.4, ease: SOFT }, 6.75);
+        tl.fromTo($("reqproof"), { opacity: 0, x: -16 }, { opacity: 1, x: 0, duration: 0.4, ease: SOFT }, 7.0);
         tl.fromTo($("cb2"), { opacity: 0, y: 14 }, { opacity: 1, y: 0, duration: 0.5, ease: SOFT }, 7.1);
+        tl.fromTo($("cb3"), { opacity: 0, y: 14 }, { opacity: 1, y: 0, duration: 0.5, ease: SOFT }, 7.35);
 
         // ---------- Scene 4 (7.5–11.5): card slides into the API box, three checks, note ----------
-        // card centre (860,464) -> dock centre (1394,536), scaled to 0.62
-        tl.fromTo($("req"), { x: 0, y: 0, scale: 1 }, { x: 534, y: 72, scale: 0.62, duration: 0.9, ease: TRAVEL }, 7.55);
-        ["c1", "c2", "c3"].forEach(function (id, i) {
-          var at = 8.6 + i * 0.7;
+        // card centre (860,489) -> dock centre (1394,530), scaled to 0.55
+        tl.fromTo($("req"), { x: 0, y: 0, scale: 1 }, { x: 534, y: 41, scale: 0.55, duration: 0.9, ease: TRAVEL }, 7.6);
+        ["c1", "c2", "c3", "c4"].forEach(function (id, i) {
+          var at = 8.6 + i * 0.6;
           var row = $(id);
           var ok = row.querySelector('[class~="' + FID + '-ok"]');
           var txt = row.querySelector('[class~="' + FID + '-chktext"]');
           tl.fromTo(txt, { opacity: 0, x: -14 }, { opacity: 1, x: 0, duration: 0.4, ease: SOFT }, at);
           tl.fromTo(ok, { opacity: 0, scale: 0.4 }, { opacity: 1, scale: 1, duration: 0.3, ease: SOFT }, at + 0.15);
         });
-        tl.fromTo($("apinote"), { opacity: 0, y: 12 }, { opacity: 1, y: 0, duration: 0.5, ease: SOFT }, 10.5);
+        tl.fromTo($("apinote"), { opacity: 0, y: 12 }, { opacity: 1, y: 0, duration: 0.5, ease: SOFT }, 11.0);
 
         // ---------- Scene 5 (11.5–15.0): 200 OK returns to the phone, analogy, hold ----------
         tl.fromTo($("resp"), { opacity: 0 }, { opacity: 1, duration: 0.1 }, 11.6);

@@ -500,7 +500,7 @@ Ekran metni:
 - üst çubuk hap (krem varyant): "SON"
 - başlık (display-lg, krem): "ADIM ADIM İZLEYİN"
 - alt satır (mono, krem): "docs/animation/pinvault-request-flow.tr.html"
-- alt satır 2 (body-md, krem): "15 bölüm · 99 adım · panel ve telefon ekranlarıyla"
+- alt satır 2 (body-md, krem): "15 bölüm · 100 adım · panel ve telefon ekranlarıyla"
 - mühür (pembe, −6°): "PINVAULT" / "2.3"
 - künye: "Kapanış"
 

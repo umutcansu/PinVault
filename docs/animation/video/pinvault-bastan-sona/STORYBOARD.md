@@ -237,7 +237,7 @@ Ekran metni:
 - kicker: "KİM: YÖNETİCİ · NEREDE: PANEL → mtls-8092 → + HOST EKLE"
 - başlık (display-head): "API SUNUCUNUZ EKLENİR"
 - panel başlığı (mono): "Panel · 8090 · mtls-8092 · Yeni Host Ekle"
-- sekmeler (mono): "Elle Gir" "Sertifika Üret" "URL'den Al" (seçili)
+- sekmeler (mono): "Elle Gir" "Sertifika Üret" "Dosya Yükle" "URL'den Al" (seçili)
 - alan etiketi: "Sunucu adresi" / değer (mono): "api.ornek.com"
 - düğme: "Oluştur"
 - sonuç satırı 1 (mono): "Primary Pin  q8Hs2LkP…"
@@ -245,7 +245,7 @@ Ekran metni:
 - sonuç notu (body-md): "Panel sunucuya bağlanır; sitenin ve onu imzalayan CA'nın pin'ini kendisi çıkarır."
 - imzalı liste kartı (mono): "PİN LİSTESİ · mtls-8092" / "api.ornek.com · q8Hs2LkP… · Xm4tR9wE…" / sarı mühür "İMZALI"
 - alt bölüm başlığı (mono): "API SUNUCUNUZ İÇİN BİR KEZ"
-- alt bölüm satırı (body-md): "PinVault-Token sırrını panelin İmzalama sekmesinden alır; PinVault-Token'ı sonra kendisi doğrular."
+- alt bölüm satırı (body-md): "PinVault-Token'ın açık anahtarını herkese açık JWKS adresinden yükler; token'ı sonra kendisi doğrular."
 - benzetme: "Çalışanın gidebileceği ofislerin listesi hazırlanır ve mühürlenir."
 - künye: "Host"
 
@@ -505,7 +505,7 @@ Scene 5 (10.5–14.0s): Not ve not 2. Benzetme şeridi. Tutma.
 
 ## Frame 12 — Halka 10: İlk gerçek istek
 
-- scene: Uygulama getClient() ile api.ornek.com'a bağlanır: pin listeden, PinVault-Token başlıkta; API sunucusu PinVault-Token'ı kendisi doğrular ve 200 döner
+- scene: Uygulama getClient() ile api.ornek.com'a bağlanır: pin listeden, PinVault-Token ve PinVault-Proof başlıkta; API sunucusu ikisini JWKS'teki açık anahtarla ve cihaz anahtarıyla kendisi doğrular ve 200 döner
 - voiceover:
 - duration: 15s
 - transition_in: push-slide LEFT
@@ -527,11 +527,11 @@ Ekran metni:
 - kicker: "KİM: UYGULAMANIZ · NEREDE: TELEFON → API SUNUCUNUZ"
 - başlık (display-head): "İLK GERÇEK İSTEK"
 - kod satırı (mono): "PinVault.getClient().newCall(GET https://api.ornek.com/siparisler)"
-- istek kartı satırları (mono): "GET /siparisler" / "PinVault-Token: eyJhbGciOiJIUzI1NiIs…"
+- istek kartı satırları (mono): "GET /siparisler" / "PinVault-Token: eyJhbGciOiJFUzI1NiIs…" / "PinVault-Proof: eyJ0eXAiOiJkcG9w…"
 - geri çağrı 1 (mono, yeşil kutucuk): "pin: Halka 8'deki listeden"
 - geri çağrı 2 (mono, sarı kutucuk): "PinVault-Token: Halka 9'dan"
-- API kutusu içi satırlar (mono, her biri yeşil ✓): "imza (HS256) tutuyor" / "süresi geçmemiş" / "aud: mtls-8092"
-- API kutusu altı (body-md): "PinVault'a sormaz; sırrı Halka 3'te almıştı."
+- API kutusu içi satırlar (mono, her biri yeşil ✓): "imza: açık anahtarla (ES256)" / "süresi geçmemiş" / "aud: mtls-8092" / "proof: anahtar = cnf.jkt"
+- API kutusu altı (body-md): "PinVault'a sormaz; açık anahtarı Halka 3'te yüklemişti."
 - cevap (Archivo, yeşil kutu): "200 OK"
 - benzetme: "Çalışan ofise gider; kapıdaki görevli kartın listede, bandın geçerli olduğuna kendisi bakar."
 - künye: "İlk istek"

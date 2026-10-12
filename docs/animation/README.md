@@ -11,7 +11,7 @@ the product introduction, the two kinds of Config API, the init order
 health per API → attestation → key registration → stale-file wipe), the
 attestation and token refresh loop (a token lasts 5 minutes and is renewed
 about every 4), the policy, trust roots,
-revocation, and a drawing of the whole topology. 15 chapters, 99 steps; it
+revocation, and a drawing of the whole topology. 15 chapters, 100 steps; it
 runs offline in any browser.
 
 | Language | Open (renders in the browser) | Source |

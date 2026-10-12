@@ -5684,8 +5684,8 @@ paths:
       summary: The rejection policy of a Config API
       description: |
         Stored per Config API (`attestation_policies`). When none is stored the
-        answer is the `ATTESTATION_POLICY_DEFAULT` preset (`strict` or `lenient`)
-        with `version: 0`, `tokenTtlSeconds` = `ATTESTATION_TOKEN_TTL_SECONDS`,
+        answer is the `ATTESTATION_POLICY_DEFAULT` preset (`strict`, `lenient`
+        or `production`) with `version: 0`, `tokenTtlSeconds` = `ATTESTATION_TOKEN_TTL_SECONDS`,
         `attestIntervalSeconds` = `ATTESTATION_INTERVAL_SECONDS` and
         `revealReasons` = `ATTESTATION_REVEAL_REASONS`.
 

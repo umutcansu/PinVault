@@ -198,7 +198,7 @@
           <div class="e2-anahtar-haritasi-cell e2-anahtar-haritasi-c1">Telefonun kimlik anahtarı</div>
           <div class="e2-anahtar-haritasi-cell e2-anahtar-haritasi-c2 e2-anahtar-haritasi-algo">EC P-256<div id="e2-anahtar-haritasi-e1" class="e2-anahtar-haritasi-edge"></div></div>
           <div class="e2-anahtar-haritasi-cell e2-anahtar-haritasi-c3">telefonun kasası</div>
-          <div class="e2-anahtar-haritasi-cell e2-anahtar-haritasi-c4">kayıt, mTLS, atestasyon, kurtarma</div>
+          <div class="e2-anahtar-haritasi-cell e2-anahtar-haritasi-c4">kayıt, mTLS, atestasyon, proof, kurtarma</div>
         </div>
 
         <div id="e2-anahtar-haritasi-r2" class="e2-anahtar-haritasi-row">
@@ -242,11 +242,11 @@
         </div>
 
         <div id="e2-anahtar-haritasi-r7" class="e2-anahtar-haritasi-row">
-          <div class="e2-anahtar-haritasi-cell e2-anahtar-haritasi-c0"><div class="e2-anahtar-haritasi-mark e2-anahtar-haritasi-yellow"></div></div>
+          <div class="e2-anahtar-haritasi-cell e2-anahtar-haritasi-c0"><div class="e2-anahtar-haritasi-mark e2-anahtar-haritasi-pink"></div></div>
           <div class="e2-anahtar-haritasi-cell e2-anahtar-haritasi-c1">PinVault-Token</div>
-          <div class="e2-anahtar-haritasi-cell e2-anahtar-haritasi-c2 e2-anahtar-haritasi-algo">HMAC (HS256)</div>
+          <div class="e2-anahtar-haritasi-cell e2-anahtar-haritasi-c2 e2-anahtar-haritasi-algo">EC P-256 (ES256)<div id="e2-anahtar-haritasi-e7" class="e2-anahtar-haritasi-edge"></div></div>
           <div class="e2-anahtar-haritasi-cell e2-anahtar-haritasi-c3">sunucu</div>
-          <div class="e2-anahtar-haritasi-cell e2-anahtar-haritasi-c4">API sunucunuz doğrular</div>
+          <div class="e2-anahtar-haritasi-cell e2-anahtar-haritasi-c4">API sunucunuz açık anahtarla doğrular</div>
         </div>
       </div>
 
@@ -283,13 +283,13 @@
         }
 
         // ---------- Scene 4 (12.5–15.0): EC P-256 cells take a pink edge in turn ----------
-        for (var k = 1; k <= 4; k++) {
-          var at = 12.5 + (k - 1) * 0.5;
+        [1, 2, 3, 4, 7].forEach(function (k, n) {
+          var at = 12.5 + n * 0.5;
           var edge = $("e" + k);
           tl.fromTo(edge, { opacity: 0, scale: 1.08 }, { opacity: 1, scale: 1, duration: 0.45, ease: SOFT }, at);
           // short emphasis, then settle to a quieter edge that stays
           tl.to(edge, { opacity: 0.55, duration: 0.6, ease: "power2.out" }, at + 0.6);
-        }
+        });
 
         // ---------- Scene 5 (15.0–18.0): bottom note, hold ----------
         tl.fromTo($("note"), { opacity: 0, x: -24 }, { opacity: 1, x: 0, duration: 0.7, ease: SOFT }, 15.0);
