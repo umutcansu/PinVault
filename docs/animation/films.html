@@ -52,10 +52,10 @@ footer{color:var(--text-muted);font-size:13px;margin-top:28px}
 </head>
 <body>
 <main>
-  <h1>PinVault: animation and films</h1>
-  <p class="lead">All silent; the text on screen carries the explanation. · Hepsi sessiz; açıklamayı ekrandaki yazılar yapar.</p>
+  <h1 data-en="PinVault: animation and films" data-tr="PinVault: animasyon ve filmler">PinVault: animation and films</h1>
+  <p class="lead" data-en="All silent; the text on screen carries the explanation." data-tr="Hepsi sessiz; açıklamayı ekrandaki yazılar yapar.">All silent; the text on screen carries the explanation.</p>
 
-  <div class="tabs" role="tablist" aria-label="Language / Dil">
+  <div class="tabs" role="tablist" aria-label="Language · Dil">
     <button class="tab" role="tab" id="tab-en" aria-controls="panel-en" aria-selected="true">English</button>
     <button class="tab" role="tab" id="tab-tr" aria-controls="panel-tr" aria-selected="false" tabindex="-1">Türkçe</button>
   </div>
@@ -138,10 +138,11 @@ footer{color:var(--text-muted);font-size:13px;margin-top:28px}
     </section>
   </div>
 
-  <footer>How the films are made and re-rendered · Nasıl yapıldıkları: <a href="https://github.com/umutcansu/PinVault/tree/main/docs/animation">docs/animation</a>.</footer>
+  <footer><span data-en="How the films are made and re-rendered:" data-tr="Filmler nasıl yapılır ve yeniden üretilir:">How the films are made and re-rendered:</span> <a href="https://github.com/umutcansu/PinVault/tree/main/docs/animation">docs/animation</a>.</footer>
 </main>
 <script>
 // Tab from the address (#en, #tr or a card's id), else the browser language; arrow keys move between tabs.
+// The heading, the lead and the footer follow the tab's language (data-en / data-tr).
 (function () {
   var tabs = [document.getElementById('tab-en'), document.getElementById('tab-tr')];
   function show(lang, focus) {
@@ -155,6 +156,8 @@ footer{color:var(--text-muted);font-size:13px;margin-top:28px}
       if (on && focus) t.focus();
     });
     document.documentElement.lang = lang;
+    document.querySelectorAll('[data-' + lang + ']').forEach(function (el) { el.textContent = el.getAttribute('data-' + lang); });
+    document.title = lang === 'tr' ? 'PinVault filmleri' : 'PinVault films';
   }
   function fromHash() {
     var id = decodeURIComponent(location.hash.slice(1));
