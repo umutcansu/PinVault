@@ -11,8 +11,15 @@
 //   --dart-define=PINVAULT_UNPINNED_PORT=8443
 //
 // Without the key every test is skipped.
+//
+// The WebSocket echo test also needs a wss:// echo server whose certificate
+// it pins: --dart-define=PINVAULT_WS_PORT=8765 --dart-define=PINVAULT_WS_PIN=<SPKI SHA-256>
+// (the server: a dart:io HttpServer.bindSecure + WebSocketTransformer that
+// first sends "x-test=<the X-Test header it got>", then echoes frames, and
+// closes with 4000 on the text "close-me").
 import 'dart:convert';
 import 'dart:io';
+import 'dart:typed_data';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:integration_test/integration_test.dart';
@@ -24,6 +31,8 @@ const _host = String.fromEnvironment('PINVAULT_HOST', defaultValue: '10.0.2.2');
 // that serves another certificate under the same name.
 const _pinned = String.fromEnvironment('PINVAULT_PINNED_PORT', defaultValue: '8443');
 const _unpinned = String.fromEnvironment('PINVAULT_UNPINNED_PORT', defaultValue: '8444');
+const _wsPort = String.fromEnvironment('PINVAULT_WS_PORT');
+const _wsPin = String.fromEnvironment('PINVAULT_WS_PIN');
 
 // The demo-server's TLS Config API (8091) and its recovery door's CA (8093);
 // the second Config API pin is a well-formed placeholder (two are required).
@@ -243,4 +252,48 @@ void main() {
       admin.close();
     }
   }, skip: skip != null);
+
+  testWidgets('a pinned WebSocket sends, receives and closes', (_) async {
+    final result = await PinVault.start(const PinVaultConfig(
+      staticPins: StaticPins(pins: [
+        HostPin(hostname: '$_host:$_wsPort', sha256: [_wsPin, 'AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=']),
+      ]),
+    ));
+    expect(result, isA<InitResultReady>(), reason: '$result');
+    final url = 'wss://$_host:$_wsPort/echo';
+
+    // The server closes: done completes without an error.
+    final socket = await PinVaultWebSocket.connect(url, headers: {'X-Test': 'flutter-e2e'});
+    final frames = <Object?>[];
+    final errors = <Object>[];
+    socket.messages.listen(frames.add, onError: errors.add);
+    await socket.send('hello');
+    await socket.sendBytes(Uint8List.fromList([1, 2, 3]));
+    await _until(() => frames.length == 3 || errors.isNotEmpty);
+    expect(errors, isEmpty);
+    expect(frames[0], 'x-test=flutter-e2e', reason: 'the header must reach the server');
+    expect(frames[1], 'hello');
+    expect(frames[2], [1, 2, 3]);
+    await socket.send('close-me');
+    await socket.done.timeout(const Duration(seconds: 10));
+    expect(errors, isEmpty);
+
+    // This side closes.
+    final second = await PinVaultWebSocket.connect(url);
+    final echoed = <Object?>[];
+    second.messages.listen(echoed.add);
+    await second.send('again');
+    await _until(() => echoed.length == 2);
+    expect(echoed, ['x-test=', 'again']);
+    await second.close();
+    await second.done.timeout(const Duration(seconds: 10));
+    await expectLater(second.send('after close'), throwsA(isA<PinVaultWebSocketError>()));
+  }, skip: _wsPin.isEmpty); // needs only the echo server
+}
+
+Future<void> _until(bool Function() condition) async {
+  for (var i = 0; i < 100 && !condition(); i++) {
+    await Future<void>.delayed(const Duration(milliseconds: 100));
+  }
+  expect(condition(), isTrue, reason: 'timed out');
 }
