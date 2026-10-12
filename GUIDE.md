@@ -2,10 +2,12 @@
 
 The full reference behind the [README](README.md): every option, what each
 check refuses and why, and what changed in which release (*(2.1)*, *(2.2)*,
-*(2.3)*). The examples are Kotlin; the iOS and React Native libraries use the
-same names and the same server, so the text applies to them too — their own
-differences are in [`pinvault-ios/README.md`](pinvault-ios/README.md) and
-[`pinvault-react-native/README.md`](pinvault-react-native/README.md).
+*(2.3)*). The examples are Kotlin; the iOS library and the React Native and
+Flutter bridges use the same names and the same server, so the text applies to
+them too — their own differences are in
+[`pinvault-ios/README.md`](pinvault-ios/README.md),
+[`pinvault-react-native/README.md`](pinvault-react-native/README.md) and
+[`pinvault_flutter/README.md`](pinvault_flutter/README.md).
 
 **Contents**
 
@@ -307,8 +309,8 @@ release build refuses them (Android: the app is not `android:debuggable`;
 iOS: compiled without `DEBUG`). `init` / `start` and enrollment with that
 config fail before anything is sent, naming the block. A release app that
 really talks to an unsigned or unpinned Config API says so on the block with
-`allowRelaxationsInRelease()`. React Native does that only where the app's
-native security file allows the relaxation.
+`allowRelaxationsInRelease()`. React Native and Flutter do that only where the
+app's native security file allows the relaxation.
 
 ### Multi-Config-API
 

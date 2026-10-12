@@ -530,7 +530,7 @@ payload { "iss": "pinvault", "sub": "<deviceId>", "aud": "<configApiId>",
 
 ### 5.1 `PinVault-Proof` (proof of possession per request)
 
-A block with `proofOfPossession()` (Android, iOS; React Native
+A block with `proofOfPossession()` (Android, iOS; React Native and Flutter
 `proofOfPossession: true`, also from the native security file) sends, next to
 the token, a proof that the request comes from the key the token was issued
 to. The proof is a DPoP proof (RFC 9449), so any DPoP library verifies it:
