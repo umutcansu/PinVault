@@ -11,6 +11,9 @@
 //   --dart-define=PINVAULT_UNPINNED_PORT=8443
 //
 // Without the key every test is skipped.
+import 'dart:convert';
+import 'dart:io';
+
 import 'package:flutter_test/flutter_test.dart';
 import 'package:integration_test/integration_test.dart';
 import 'package:pinvault_flutter/pinvault_flutter.dart';
@@ -33,7 +36,7 @@ const _recoveryPins = [
   'TOZS0AAIaxwCKUEIKWb3X/4h0S27clD6Aijou32QiQo=',
 ];
 
-PinVaultConfig _config({EnvironmentGuard? guard}) => PinVaultConfig(
+PinVaultConfig _config({EnvironmentGuard? guard, List<VaultFileConfig>? vaultFiles}) => PinVaultConfig(
       configApis: [
         ConfigApiBlock(
           id: 'default-tls',
@@ -46,8 +49,48 @@ PinVaultConfig _config({EnvironmentGuard? guard}) => PinVaultConfig(
           serverScope: 'default-tls',
         ),
       ],
+      vaultFiles: vaultFiles,
       environmentGuard: guard,
     );
+
+/// The demo-server's management API (plain HTTP, API key): the test sets up
+/// what an operator would — enrollment tokens, vault files, vault tokens.
+class _Admin {
+  static const _apiKey = String.fromEnvironment('PINVAULT_API_KEY', defaultValue: 'admin-key-123');
+  final _client = HttpClient();
+
+  Future<Object?> call(String method, String path, {Object? json, List<int>? bytes}) async {
+    final request = await _client.openUrl(method, Uri.parse('http://$_host:8090$path'));
+    request.headers.set('X-API-Key', _apiKey);
+    if (json != null) {
+      request.headers.contentType = ContentType.json;
+      request.write(jsonEncode(json));
+    } else if (bytes != null) {
+      request.headers.contentType = ContentType.binary;
+      request.add(bytes);
+    }
+    final response = await request.close();
+    final text = await response.transform(utf8.decoder).join();
+    if (response.statusCode >= 300) throw StateError('$method $path: ${response.statusCode} $text');
+    return text.isEmpty ? null : jsonDecode(text);
+  }
+
+  /// Revokes and forgets every active identity this device holds (the server
+  /// keeps one per device), as an operator does before a new enrollment.
+  Future<void> releaseDevice(String deviceId) async {
+    final certs = await call('GET', '/api/v1/client-certs') as List;
+    for (final c in certs.cast<Map<String, dynamic>>()) {
+      if (c['deviceUid'] == deviceId) await forget(c['id'] as String, revoked: c['revoked'] == true);
+    }
+  }
+
+  Future<void> forget(String clientId, {bool revoked = false}) async {
+    if (!revoked) await call('DELETE', '/api/v1/client-certs/$clientId');
+    await call('POST', '/api/v1/client-certs/$clientId/forget');
+  }
+
+  void close() => _client.close(force: true);
+}
 
 void main() {
   IntegrationTestWidgetsFlutterBinding.ensureInitialized();
@@ -116,5 +159,88 @@ void main() {
     expect(() => PinVaultWebSocket.connect('ws://$_host:8443/'), throwsA(isA<PinVaultWebSocketError>()));
     expect(() => PinVaultWebSocket.connect('wss://$_host:8443/', headers: {'Bad Name': 'x'}),
         throwsA(isA<PinVaultWebSocketError>()));
+  }, skip: skip != null);
+
+  testWidgets('enrollment with a one-time token', (_) async {
+    final admin = _Admin();
+    final deviceId = await PinVault.deviceId();
+    expect(deviceId, isNotNull);
+    await admin.releaseDevice(deviceId!);
+    final clientId = 'flutter-e2e-${DateTime.now().millisecondsSinceEpoch}';
+    final minted = await admin.call('POST', '/api/v1/enrollment-tokens/generate',
+        json: {'clientId': clientId, 'deviceUid': deviceId}) as Map<String, dynamic>;
+
+    try {
+      expect(await PinVault.start(_config()), isA<InitResultReady>());
+      await PinVault.unenroll();
+      expect(await PinVault.isEnrolled(), isFalse);
+
+      final result = await PinVault.enrollForResult(minted['token'] as String);
+      expect(result, isA<EnrollmentEnrolled>(), reason: '$result');
+      expect(await PinVault.isEnrolled(), isTrue);
+      expect(await PinVault.enrolledClientCN(), contains(clientId));
+      expect(await PinVault.enrollmentVerificationCode(), matches(RegExp(r'^[0-9A-Z]{4}(-[0-9A-Z]{4}){3}$')));
+
+      // The token is spent (one use only): a second enrollment with it is refused.
+      await PinVault.unenroll();
+      final again = await PinVault.enrollForResult(minted['token'] as String);
+      expect(again, isNot(isA<EnrollmentEnrolled>()), reason: '$again');
+    } finally {
+      await PinVault.unenroll();
+      await admin.forget(clientId).catchError((_) {});
+      admin.close();
+    }
+  }, skip: skip != null);
+
+  testWidgets('vault files: public, token, wrong token', (_) async {
+    final admin = _Admin();
+    final deviceId = (await PinVault.deviceId())!;
+    final stamp = DateTime.now().millisecondsSinceEpoch;
+    const publicKey = 'flutter-e2e-public';
+    const tokenKey = 'flutter-e2e-token';
+    const vault = '/api/v1/config-apis/default-tls/vault';
+    final publicText = 'public content $stamp';
+    final tokenText = 'token content $stamp';
+
+    await admin.call('PUT', '$vault/$publicKey?policy=public', bytes: utf8.encode(publicText));
+    await admin.call('PUT', '$vault/$tokenKey?policy=token', bytes: utf8.encode(tokenText));
+    final issued = await admin.call('POST', '$vault/$tokenKey/tokens', json: {'deviceId': deviceId}) as Map<String, dynamic>;
+
+    try {
+      final result = await PinVault.start(_config(vaultFiles: const [
+        VaultFileConfig(key: publicKey, endpoint: 'api/v1/vault/$publicKey', configApi: 'default-tls',
+            storage: StorageStrategy.encryptedFile),
+        VaultFileConfig(key: tokenKey, endpoint: 'api/v1/vault/$tokenKey', configApi: 'default-tls',
+            accessPolicy: VaultFileAccessPolicy.token),
+      ]));
+      expect(result, isA<InitResultReady>(), reason: '$result');
+      await PinVault.clearFile(publicKey);
+      await PinVault.clearFile(tokenKey);
+
+      // Public: downloaded, verified, stored encrypted, read back.
+      final fetched = await PinVault.fetchFile(publicKey);
+      expect(fetched, isA<VaultFileUpdated>(), reason: '$fetched');
+      expect(await PinVault.hasFile(publicKey), isTrue);
+      expect(await PinVault.loadFile(publicKey), publicText);
+      expect(await PinVault.fetchFile(publicKey), isA<VaultFileAlreadyCurrent>());
+
+      // Token: a wrong token is refused, the issued one opens it.
+      final refused = await PinVault.fetchFile(tokenKey, token: 'not-the-token');
+      expect(refused, isA<VaultFileFailed>(), reason: '$refused');
+      expect(await PinVault.hasFile(tokenKey), isFalse);
+      final opened = await PinVault.fetchFile(tokenKey, token: issued['token'] as String);
+      expect(opened, isA<VaultFileUpdated>(), reason: '$opened');
+      expect(await PinVault.loadFile(tokenKey), tokenText);
+      // The token never comes back to Dart in a message.
+      if (refused is VaultFileFailed) expect(refused.reason, isNot(contains(issued['token'] as String)));
+
+      await PinVault.clearFile(publicKey);
+      expect(await PinVault.hasFile(publicKey), isFalse);
+    } finally {
+      await PinVault.clearVaultTokens();
+      await admin.call('DELETE', '$vault/$publicKey').catchError((_) => null);
+      await admin.call('DELETE', '$vault/$tokenKey').catchError((_) => null);
+      admin.close();
+    }
   }, skip: skip != null);
 }
