@@ -12,7 +12,7 @@ app from a script — for Android, iOS, React Native and Flutter.
 [![SwiftPM](https://img.shields.io/badge/iOS-SwiftPM%202.4.2-F05138?logo=swift&logoColor=white)](pinvault-ios/README.md)
 [![npm](https://img.shields.io/npm/v/@umutcansu/react-native-pinvault?label=React%20Native&logo=react)](https://www.npmjs.com/package/@umutcansu/react-native-pinvault)
 [![Flutter](https://img.shields.io/badge/Flutter-plugin-02569B?logo=flutter&logoColor=white)](pinvault_flutter/README.md)
-[![License](https://img.shields.io/badge/license-Apache%202.0-blue)](LICENSE)
+[![License](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 
 [Quick start](#quick-start) · [Features](#what-you-get) · [How it works](#how-it-works) · [Guide](GUIDE.md) · [Server](#the-server) · [Changelog](CHANGELOG.md)
 
@@ -720,4 +720,4 @@ re-render them: [`docs/animation/`](docs/animation/README.md).
 
 ## License
 
-Apache 2.0 — see [LICENSE](LICENSE).
+MIT — see [LICENSE](LICENSE).
