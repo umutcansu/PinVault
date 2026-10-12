@@ -1,17 +1,32 @@
-# example
+# pinvault_flutter example
 
-A new Flutter project.
+A small app over the plugin: **Start** (offline static pins by default,
+`_remoteConfig()` for the repo's demo-server), **Fetch** and **WebSocket**.
 
-## Getting Started
+## Tests against the demo-server
 
-This project is a starting point for a Flutter application.
+Start the repo's demo-server (`.claude/launch.json` → `demo-server-espresso`,
+or `API_KEY=admin-key-123 ALLOW_DEMO_SECRETS=true ../gradlew run` in
+`demo-server/`).
 
-A few resources to get you started if this is your first Flutter project:
+**End to end (debug)** — `integration_test/demo_server_test.dart`: guard,
+signed config, pinned and refused requests, connection events, WebSocket
+failures, enrollment with a one-time token, vault files (public, token, wrong
+token). It sets up its own tokens and files over the management API and
+removes them afterwards.
 
-- [Learn Flutter](https://docs.flutter.dev/get-started/learn-flutter)
-- [Write your first Flutter app](https://docs.flutter.dev/get-started/codelab)
-- [Flutter learning resources](https://docs.flutter.dev/reference/learning-resources)
+```sh
+flutter test integration_test/demo_server_test.dart -d emulator-5554 \
+  --dart-define=PINVAULT_SIGNING_KEY=$(curl -s localhost:8090/api/v1/signing-key | jq -r .publicKey)
+```
 
-For help getting started with Flutter development, view the
-[online documentation](https://docs.flutter.dev/), which offers tutorials,
-samples, guidance on mobile development, and a full API reference.
+On the iOS simulator add
+`--dart-define=PINVAULT_HOST=192.168.1.80 --dart-define=PINVAULT_PINNED_PORT=8444 --dart-define=PINVAULT_UNPINNED_PORT=8443`
+(the Mac's LAN address and the mock host its config pins).
+
+**Release build (Android)** — `scripts/release_check.sh [serial]` builds a
+release APK (R8 on) with a native security file for the local demo-server,
+runs `integration_test/release_check.dart` as the app and prints its results:
+Dart cannot add relaxations, change pins or add Config APIs; the signed config
+loads; a relaxation the file allows stays on. Exits non-zero unless every
+check passes.

@@ -46,3 +46,6 @@ app.*.map.json
 
 # Widget Preview related
 .widget_preview/
+
+# Written by scripts/release_check.sh for the local demo-server, removed afterwards.
+/android/app/src/main/assets/pinvault_security.json
