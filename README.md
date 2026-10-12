@@ -301,6 +301,18 @@ const result = await PinVault.updateNow();  // { type: 'updated' | 'alreadyCurre
 
 </details>
 
+<details>
+<summary><b>Flutter</b></summary>
+
+```dart
+await PinVault.start(PinVaultConfig(configApis: [/* … */], updateIntervalHours: 12));
+
+await PinVault.schedulePeriodicUpdates();
+final result = await PinVault.updateNow();  // UpdateResultUpdated / …AlreadyCurrent / …Failed
+```
+
+</details>
+
 Signed configs expire (24 h by default), so someone who blocks your server
 cannot keep a device on old pins for ever. How expiry, replay protection and
 the device clock work: [Keeping pins fresh](GUIDE.md#keeping-pins-fresh).
@@ -330,6 +342,17 @@ _ = await PinVault.shared.start(config: .static(HostPin(hostname: "api.example.c
 
 ```ts
 await PinVault.start({ staticPins: { pins: [{ hostname: 'api.example.com', sha256: [PIN_1, PIN_2] }] } });
+```
+
+</details>
+
+<details>
+<summary><b>Flutter</b></summary>
+
+```dart
+await PinVault.start(PinVaultConfig(
+  staticPins: StaticPins(pins: [HostPin(hostname: 'api.example.com', sha256: [pin1, pin2])]),
+));
 ```
 
 </details>
@@ -381,6 +404,21 @@ switch (r.type) {
   case 'pending':  showWaiting(r.verificationCode); break;   // admin approval
   case 'refused':  showError(r.reason); break;               // 'INVALID_TOKEN', 'REVOKED', …
   case 'failed':   showError(r.message); break;
+}
+```
+
+</details>
+
+<details>
+<summary><b>Flutter</b></summary>
+
+```dart
+final r = await PinVault.enrollForResult(tokenFromYourBackend);
+switch (r) {
+  case EnrollmentEnrolled():                       showEnrolled();
+  case EnrollmentPending(:final verificationCode): showWaiting(verificationCode);  // admin approval
+  case EnrollmentRefused(:final reason):           showError(reason.wire);         // INVALID_TOKEN, REVOKED, …
+  case EnrollmentFailed(:final message):           showError(message);
 }
 ```
 
@@ -444,6 +482,21 @@ const json = await PinVault.loadFile('feature-flags', 'utf8');
 
 </details>
 
+<details>
+<summary><b>Flutter</b></summary>
+
+```dart
+await PinVault.start(PinVaultConfig(
+  configApis: [/* … */],
+  vaultFiles: [VaultFileConfig(key: 'feature-flags', endpoint: 'api/v1/vault/feature-flags', updateWithPins: true)],
+));
+
+await PinVault.fetchFile('feature-flags');
+final json = await PinVault.loadFile('feature-flags');
+```
+
+</details>
+
 #### …and lock the secret ones behind the screen lock
 
 With `USER_AUTH` the server seals the file for this one device's key, and the
@@ -499,6 +552,24 @@ vaultFiles: [{
 // later:
 const r = await PinVault.unlockFile('statement', { title: 'Open your statement' });
 if (r.type === 'unlocked') show(r.content);
+```
+
+</details>
+
+<details>
+<summary><b>Flutter</b></summary>
+
+```dart
+// in PinVaultConfig(…):
+vaultFiles: [VaultFileConfig(
+  key: 'statement', endpoint: 'api/v1/vault/statement',
+  accessPolicy: VaultFileAccessPolicy.tokenMtls,
+  encryption: VaultFileEncryption.userAuth, userAuth: UserAuth.required,
+)],
+
+// later:
+final r = await PinVault.unlockFile('statement', const VaultFileUnlockPrompt(title: 'Open your statement'));
+if (r is VaultFileUnlocked) show(r.content);
 ```
 
 </details>
@@ -571,6 +642,21 @@ configApis: [{
 
 </details>
 
+<details>
+<summary><b>Flutter</b></summary>
+
+```dart
+// in PinVaultConfig(…):
+configApis: [ConfigApiBlock(
+  id: 'api', url: url, /* bootstrapPins, signaturePublicKey */
+  attestation: true,
+  tokenHosts: ['api.example.com'],
+  proofOfPossession: true,     // optional: a per-request proof, the token alone is useless
+)],
+```
+
+</details>
+
 In production, start the server with `ATTESTATION_POLICY_DEFAULT=production`: root,
 emulator, debuggable builds, hooking frameworks, a repackaged app and software keys
 are rejected in code, and loosening any of them needs a second admin's approval.
@@ -623,6 +709,21 @@ await PinVault.start({
 
 </details>
 
+<details>
+<summary><b>Flutter</b></summary>
+
+```dart
+await PinVault.start(PinVaultConfig(
+  configApis: [/* … */],
+  requireCaTrust: ['api.example.com'],
+  requireHardwareBackedKeys: true,
+  requireUnlockedDevice: true,
+  environmentGuard: (operation) async => !(await myRasp.isCompromised()),
+));
+```
+
+</details>
+
 Before you ship, go through the [production security checklist](GUIDE.md#production-security-checklist).
 
 ### 📡 See what happens on the wire
@@ -668,6 +769,18 @@ const sub = PinVault.addConnectionListener((event) => {
   if (event.type === 'connection' && !event.success) report(event);
 });
 // later: sub.remove()
+```
+
+</details>
+
+<details>
+<summary><b>Flutter</b></summary>
+
+```dart
+final sub = PinVault.addConnectionListener((event) {
+  if (event is ConnectionEvent && !event.success) report(event);
+});
+// later: sub.cancel()
 ```
 
 </details>
