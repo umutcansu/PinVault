@@ -15,6 +15,8 @@ dependencies:
   pinvault_flutter: ^2.5.0
 ```
 
+Flutter 3.44 or later (Dart 3.12), Android API 24, iOS 16.
+
 ### Android
 
 `unlockFile` shows a `BiometricPrompt`, which needs a `FragmentActivity`: let
@@ -61,7 +63,8 @@ Dart OTA update or an edited bundle must not be able to change them. Ship
 
 - **Android:** `android/app/src/main/assets/pinvault_security.json` (the APK
   signature seals it).
-- **iOS:** add it to the Xcode target's resources.
+- **iOS:** add it to the `Runner` target's resources (it is read from the app
+  bundle as `pinvault_security.json`).
 
 ```json
 {
@@ -83,10 +86,12 @@ Dart OTA update or an edited bundle must not be able to change them. Ship
 }
 ```
 
-An app that deliberately accepts Dart-only anchors opts out in its manifest:
-`<meta-data android:name="io.github.umutcansu.pinvault.ALLOW_NO_NATIVE_SECURITY_FILE" android:value="true"/>`.
+An app that deliberately accepts Dart-only anchors opts out natively — Android
+`<meta-data android:name="io.github.umutcansu.pinvault.ALLOW_NO_NATIVE_SECURITY_FILE" android:value="true"/>`
+in the manifest, iOS `PinVaultAllowNoNativeSecurityFile` = `YES` in `Info.plist`.
 The relaxations (`allowUnsigned`, `allowUnpinnedConfigApi`,
-`allowServerGeneratedKey`) are still refused from Dart in release builds.
+`allowServerGeneratedKey`) are still refused from Dart in release builds; a
+relaxation the native file sets for a block stays on in release builds too.
 
 ## Quick start
 
@@ -150,9 +155,11 @@ default) refuses the token alone.
 a token, password, or file content). Returns a `StreamSubscription`; `cancel()`
 it when done. Listeners are independent of each other.
 
-`PinVaultWebSocket.connect(url)` — a pinned `wss://` WebSocket over the native
-client (OkHttp / `URLSessionWebSocketTask`); the TLS session and mTLS identity
-keys stay in native memory. Only `wss://` is accepted.
+`PinVaultWebSocket.connect(url, headers: …)` — a pinned `wss://` WebSocket over
+the native client (OkHttp / `URLSessionWebSocketTask`); the TLS session and mTLS
+identity keys stay in native memory. Only `wss://` is accepted. `messages`
+carries the frames; a failure arrives once on its error handler and ends the
+socket, and `done` completes on every ending.
 
 ## OWASP MASVS controls
 

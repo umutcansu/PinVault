@@ -101,9 +101,10 @@ task.receive { result in /* frames; a clean close leaves task.closeCode != .inva
 task.send(.string("hello")) { _ in }
 ```
 
-Fail closed: before `start` (or after a failed one) the call throws, and a
-`resolve(host:to:)` entry for the host refuses the socket rather than
-connecting to a different address than the one the delegate pins.
+The request's headers (an `Authorization`, a token) and timeout go into the
+upgrade request. Fail closed: before `start` (or after a failed one) the call
+throws, and a `resolve(host:to:)` entry for the host refuses the socket: a
+WebSocket task connects to its URL's own host and cannot be pointed elsewhere.
 
 ### Hosts that resolve elsewhere
 

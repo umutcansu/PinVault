@@ -716,7 +716,7 @@ re-render them: [`docs/animation/`](docs/animation/README.md).
 | Android | minSdk 24 (Android 7.0), Kotlin 1.9+ consumers, AGP 8.2, JDK 17, OkHttp 4 |
 | iOS | iOS 16, Swift 6 (Xcode 16+) |
 | React Native | 0.81 with the New Architecture, Hermes |
-| Flutter | 3.10+ (Dart 3); Android minSdk 24, iOS 16 |
+| Flutter | 3.44+ (Dart 3.12); Android minSdk 24, iOS 16 |
 
 ## License
 

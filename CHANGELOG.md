@@ -17,6 +17,23 @@
   query, client address, device id, time); `LOG_LEVEL_CONFIG_API_ACCESS=OFF`
   turns it off. Before, only the management port logged requests.
 
+### Flutter
+
+- **`pinvault_flutter` (new, released with 2.5.0):** a typed Dart bridge over
+  the Android and iOS libraries — config, pinned requests, pinned `wss://`
+  WebSockets, enrollment, vault files (screen-lock files included),
+  attestation, connection events — with the native security file and strict
+  parsing of the React Native bridge. See
+  [pinvault_flutter/CHANGELOG.md](pinvault_flutter/CHANGELOG.md).
+
+### iOS
+
+- **Pinned WebSockets:** `PinnedSession.webSocketTask(for:)` / `(with:)` open a
+  `wss://` socket over the same delegate as `session()`, so the handshake is
+  pinned and can present the mTLS identity. The request's headers and timeout
+  go into the upgrade request; a `resolve(host:to:)` entry for the host refuses
+  the socket (a WebSocket task cannot be pointed at another address).
+
 ### React Native
 
 - See `pinvault-react-native/CHANGELOG.md`: the Expo config plugin merges

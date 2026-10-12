@@ -216,6 +216,17 @@ final class URLSessionTransport: PinnedTransport, @unchecked Sendable {
         let host = DynamicSSLManager.bareHost(rawHost).lowercased()
         let httpScheme = scheme == "wss" ? "https" : "http"
         let port = url.port ?? (scheme == "wss" ? 443 : 80)
+        // A WebSocket task connects to its URL's own host; unlike a data task
+        // it cannot be pointed at another address. A resolve(host:to:) (or
+        // redirect) entry for the host refuses the socket instead of letting
+        // it go somewhere other than configured.
+        let address = manager.connectAddress(host: host, port: port, overrides: resolveOverrides)
+        if address.host != host || address.port != port {
+            throw PinVaultError.illegalArgument(
+                "WebSocket to \(DynamicSSLManager.hostPort(host, port)): resolve(host:to:) points it at " +
+                "\(DynamicSSLManager.hostPort(address.host, address.port)), and a WebSocket connects to its URL's host"
+            )
+        }
         let entry = try session(scheme: httpScheme, host: host, port: port)
 
         // The same per-request re-check a data task gets: a pin set that moved

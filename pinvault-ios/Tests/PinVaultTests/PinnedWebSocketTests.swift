@@ -43,7 +43,20 @@ final class PinnedWebSocketTests: XCTestCase {
         XCTAssertEqual(task.originalRequest?.timeoutInterval, 7)
     }
 
-        func testInterceptedTransportDelegatesWebSocketToBase() throws {
+        func testAResolveEntryForTheHostRefusesTheSocket() {
+        let settings = HttpConnectionSettings().resolve(host: "api.example.com", to: "10.0.0.1")
+        let session = DynamicSSLManager().buildDynamicClient(configProvider: { nil }, settings: settings)
+
+        XCTAssertThrowsError(try session.webSocketTask(with: URL(string: "ws://api.example.com/socket")!)) { error in
+            guard let pv = error as? PinVaultError, case .illegalArgument = pv else {
+                return XCTFail("expected illegalArgument, got \(error)")
+            }
+        }
+        // Another host is not affected.
+        XCTAssertNoThrow(try session.webSocketTask(with: URL(string: "ws://other.example.com/socket")!).cancel())
+    }
+
+    func testInterceptedTransportDelegatesWebSocketToBase() throws {
         let base = RecordingBase()
         let session = PinnedSession(transport: InterceptedTransport(interceptors: [], base: base))
 
