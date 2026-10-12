@@ -1,7 +1,7 @@
 # Animation and films
 
-Silent material that shows how PinVault works; the text on screen carries
-the explanation. Linked from the [main README](../../README.md#animation-and-films) (under "How it works").
+Material that shows how PinVault works: an interactive walkthrough of every
+request and three short films, each in English and Turkish. Linked from the [main README](../../README.md#animation-and-films) (under "How it works").
 
 ## Request-flow animation
 

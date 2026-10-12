@@ -74,7 +74,8 @@ sequenceDiagram
 
 ### Animation and films
 
-All silent; the text on screen carries the explanation. Everything on one
+How PinVault works, step by step: an interactive walkthrough of every
+request and three short films, in English and Turkish. Everything on one
 page: [▶ films page](https://raw.githack.com/umutcansu/PinVault/main/docs/animation/films.html). The links open through raw.githack.com, which
 first shows a one-click notice ("Open the page"). How to edit and re-render
 them: [`docs/animation/`](docs/animation/README.md).
