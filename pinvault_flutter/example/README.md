@@ -27,6 +27,11 @@ On the iOS simulator add
 `--dart-define=PINVAULT_HOST=192.168.1.80 --dart-define=PINVAULT_PINNED_PORT=8444 --dart-define=PINVAULT_UNPINNED_PORT=8443`
 (the Mac's LAN address and the mock host its config pins).
 
+**Screen-lock vault files (Android emulator)** — `scripts/screen_lock_check.sh [serial]`
+puts a temporary PIN on the emulator, runs the `unlockFile` test (the file
+never opens with `loadFile`; the prompt is answered with the PIN), and removes
+the PIN again. It refuses to run on an emulator that already has a lock.
+
 **Release build (Android)** — `scripts/release_check.sh [serial]` builds a
 release APK (R8 on) with a native security file for the local demo-server,
 runs `integration_test/release_check.dart` as the app and prints its results:

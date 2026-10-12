@@ -29,6 +29,10 @@ const _host = String.fromEnvironment('PINVAULT_HOST', defaultValue: '10.0.2.2');
 const _pinned = String.fromEnvironment('PINVAULT_PINNED_PORT', defaultValue: '8443');
 const _unpinned = String.fromEnvironment('PINVAULT_UNPINNED_PORT', defaultValue: '8444');
 const _wsPort = String.fromEnvironment('PINVAULT_WS_PORT');
+// Set by scripts/screen_lock_check.sh, which puts this PIN on the emulator and
+// types it into the unlock prompt.
+const _screenLockPin = String.fromEnvironment('PINVAULT_SCREEN_LOCK_PIN');
+const _unlockTitle = 'PinVault E2E unlock';
 const _wsPin = String.fromEnvironment('PINVAULT_WS_PIN');
 
 // The demo-server's TLS Config API (8091) and its recovery door's CA (8093);
@@ -338,6 +342,43 @@ void main() {
       admin.close();
     }
   }, skip: skip != null);
+
+  testWidgets('a screen-lock vault file opens only with unlockFile', (_) async {
+    final admin = _Admin();
+    const key = 'flutter-e2e-userauth';
+    const vault = '/api/v1/config-apis/default-tls/vault';
+    final secret = 'behind the screen lock ${DateTime.now().millisecondsSinceEpoch}';
+    await admin.call('PUT', '$vault/$key?policy=public&encryption=user_auth', bytes: utf8.encode(secret));
+
+    try {
+      final result = await PinVault.start(_config(vaultFiles: const [
+        VaultFileConfig(key: key, endpoint: 'api/v1/vault/$key', configApi: 'default-tls',
+            encryption: VaultFileEncryption.userAuth, userAuth: UserAuth.required),
+      ]));
+      expect(result, isA<InitResultReady>(), reason: '$result');
+      await PinVault.clearFile(key);
+
+      // Downloaded as the server's envelope; it never opens without the prompt.
+      final fetched = await PinVault.fetchFile(key);
+      expect(fetched, isA<VaultFileUpdated>(), reason: '$fetched');
+      expect(await PinVault.hasFile(key), isTrue);
+      expect(await PinVault.loadFile(key), isNull);
+
+      final unlocked = await PinVault.unlockFile(key, const VaultFileUnlockPrompt(
+        title: _unlockTitle,
+        description: 'Flutter end-to-end test',
+        negativeButtonText: 'Cancel',
+      ));
+      expect(unlocked, isA<VaultFileUnlocked>(), reason: '$unlocked');
+      expect((unlocked as VaultFileUnlocked).content, secret);
+      // Still sealed at rest: loadFile does not hand it out afterwards either.
+      expect(await PinVault.loadFile(key), isNull);
+    } finally {
+      await PinVault.clearFile(key);
+      await admin.call('DELETE', '$vault/$key').catchError((_) => null);
+      admin.close();
+    }
+  }, skip: skip != null || _screenLockPin.isEmpty);
 }
 
 Future<void> _until(bool Function() condition) async {
