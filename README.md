@@ -72,8 +72,19 @@ sequenceDiagram
     Note over App,Cfg: Certificate rotated? A new signed config<br/>reaches the app — no app update
 ```
 
-Prefer to watch? A [step-by-step animation](https://raw.githack.com/umutcansu/PinVault/main/docs/animation/pinvault-request-flow.en.html)
-walks through every request, and there are [short films](#animation-and-films) too.
+### Animation and films
+
+All silent; the text on screen carries the explanation. Everything on one
+page: [▶ films page](https://raw.githack.com/umutcansu/PinVault/main/docs/animation/films.html). The links open through raw.githack.com, which
+first shows a one-click notice ("Open the page"). How to edit and re-render
+them: [`docs/animation/`](docs/animation/README.md).
+
+| What | English | Türkçe |
+|---|---|---|
+| Step-by-step request flow: 15 chapters, 100 steps, in any browser | [▶ open](https://raw.githack.com/umutcansu/PinVault/main/docs/animation/pinvault-request-flow.en.html) | [▶ aç](https://raw.githack.com/umutcansu/PinVault/main/docs/animation/pinvault-request-flow.tr.html) |
+| Presentation (9:58): the purpose, what PinVault adds, the whole flow | [▶ watch](https://raw.githack.com/umutcansu/PinVault/main/docs/animation/films.html#presentation) | [▶ izle](https://raw.githack.com/umutcansu/PinVault/main/docs/animation/films.html#sunum) |
+| Explainer (2:49): the problem, the three layers, a certificate's lifetime | — | [▶ izle](https://raw.githack.com/umutcansu/PinVault/main/docs/animation/films.html#nasil-calisir) |
+| End to end (3:16): from the server's first start to the first protected call | — | [▶ izle](https://raw.githack.com/umutcansu/PinVault/main/docs/animation/films.html#bastan-sona) |
 
 ## Quick start
 
@@ -848,18 +859,6 @@ Complete apps that use every feature against one server (their READMEs are in Tu
 | [`sample-client-rn/`](sample-client-rn) | React Native app |
 | [`pinvault_flutter/example/`](pinvault_flutter/example) | Flutter example app: a static-pins offline demo plus the remote pattern against the demo-server |
 | [`sample-e2e/`](sample-e2e) | Playwright end-to-end tests on Android and the iOS simulator: an action in the dashboard is checked on the phone, and the other way round. |
-
-## Animation and films
-
-All silent; the text on screen carries the explanation. How to edit and
-re-render them: [`docs/animation/`](docs/animation/README.md).
-
-| What | English | Türkçe |
-|---|---|---|
-| Step-by-step request flow: 15 chapters, 100 steps, in any browser | [▶ open](https://raw.githack.com/umutcansu/PinVault/main/docs/animation/pinvault-request-flow.en.html) | [▶ aç](https://raw.githack.com/umutcansu/PinVault/main/docs/animation/pinvault-request-flow.tr.html) |
-| Presentation (9:58): the purpose, what PinVault adds, the whole flow | [▶ watch](docs/animation/pinvault-presentation.en.mp4) | [▶ izle](docs/animation/pinvault-sunum.tr.mp4) |
-| Explainer (2:49): the problem, the three layers, a certificate's lifetime | — | [▶ izle](docs/animation/pinvault-nasil-calisir.tr.mp4) |
-| End to end (3:16): from the server's first start to the first protected call | — | [▶ izle](docs/animation/pinvault-bastan-sona.tr.mp4) |
 
 ## Requirements
 
