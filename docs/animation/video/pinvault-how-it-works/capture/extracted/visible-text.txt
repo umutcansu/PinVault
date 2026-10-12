@@ -1,0 +1,122 @@
+Kaynak: docs/animation/pinvault-request-flow.tr.html (PinVault 2.2.0 istek animasyonu, 15 bölüm, 99 adım). Her satır: adım başlığı ve adımın üst açıklaması.
+
+## 1 · PinVault nedir, neden pinleme
+- PinVault nedir: PinVault, Android uygulamanızın kendi sunucularınızla güvenli konuşmasını sağlayan açık kaynak bir kütüphane ve ona eşlik eden, sizin makinenizde çalışan bir sunucudur. Üç iş yapar: sunucularınızın sertifika parmak izlerini (pin) uygulama güncellemeden değiştirir; cihazlara kimlik verip onları tanır, yeniler ve iptal eder; uygulamanın gerçekten sizin, değiştirilmemiş uygulamanız olduğunu ölçüp yalnızca geçene token verir. Bu animasyon bu üç işin ağ üzerinde nasıl olduğunu, ilk kurulumdaki sırayla gösterir.
+- Sistem topolojisi: parçalar nerede durur, kim kiminle konuşur: Bir PinVault kurulumunda üç bölge var: cihazlar, sizin makinenizdeki PinVault sunucusu ve sizin kendi arka ucunuz. Sunucunun dört kapısından yalnızca üçü internete açılır; yönetim kapısı ve depo iç ağda kalır. Aşağıdaki çizim bölgeleri sırayla kurar.
+- Ekranda kim var: Solda uygulamanın yüklü olduğu cihaz (telefon ya da tablet), sağda PinVault sunucusu ve dört kapısı. Sonraki adımlarda aralarında gidip gelen paketleri izleyeceksiniz.
+- Telefon sunucuyu nasıl tanır: Ağda biri sunucu kılığına girebilir; telefonun karşısındakinin gerçekten sizin sunucunuz olduğunu anlaması gerekir. Sunucu her bağlantının başında sertifikasını gösterir. Telefon bu sertifikanın parmak izini (pin) bildiği parmak izleriyle karşılaştırır; tutarsa konuşur. Buna SSL pinning denir.
+- Saldırı: araya biri girerse: Ağdaki biri sunucuymuş gibi davranıp kendi sertifikasını gösterir. Parmak izi tutmaz; telefon tek bayt göndermeden bağlantıyı keser.
+
+## 2 · İki tür config API
+- Config API nedir, neden iki türü var: Config API, uygulamanın pin listesini ve dosyalarını aldığı sunucu adresidir. İki türü var: TLS'te yalnızca sunucu kimliğini gösterir, mTLS'te telefon da kendi kimliğini gösterir.
+- Kayıt olmayan uygulama: pin listesini 8091'den (TLS) alır: TLS config API kullanan uygulama yüklenir yüklenmez çalışır: kayıt yok, token yok. Sunucu hangi cihazın sorduğunu bilmez.
+- Kayıt olan uygulama: bir kez 8091'de kayıt, sonra 8092'den (mTLS): mTLS config API kullanan uygulama önce bir kez kayıt olup kendi sertifikasını alır. Sonra her bağlantıda bu sertifikayı gösterir; sunucu yalnızca tanıdığı cihazları içeri alır.
+- Kayıt her zaman gerekmez: TLS ve mTLS farkı: İki tür aynı istekleri karşılar. Fark, telefonun kimliğini kanıtlayıp kanıtlamadığıdır; kayıt, iptal ve sertifika yenileme yalnız mTLS'te vardır.
+- Uygulama açılınca sırayla ne olur: Uygulama her açılışta aynı sırayı izler. Sonraki bölümler de bu sırayla gider; adında (mTLS) yazanlar yalnızca kayıtlı cihazda olur.
+
+## 3 · Kayıt yolları (mTLS)
+- Kayıt olmanın üç yolu: mTLS'te sunucu yalnızca tanıdığı telefonu içeri alır; telefonun önce bir kimlik kartı (sertifika) edinmesi gerekir. Buna kayıt denir ve üç yolu var: cihaza özel token, çok cihaza tek kayıt kodu ve kodsuz başvuru. Bu bölüm üçünü de panel ve telefon ekranlarıyla gösterir.
+- Token APK'nın içinde değildir: Herkes aynı APK'yı yükler. Token APK'ya konmaz; her cihaza ilk açılışta, dışarıdan verilir. Yeni token için yeni APK gerekmez.
+- Token: panelde üret: Yönetici panelde cihaz için bir ad (Client ID) yazar ve Token Üret'e basar. Token yalnızca bir kez gösterilir.
+- Token: sunucuda ne kalır: Sunucu token'ın yalnızca özetini saklar. Veritabanı ele geçirilse bile içinden kullanılabilir token çıkmaz.
+- Token: telefona ulaştır: Yönetici token'ı cihazın kullanıcısına mesaj ya da e-postayla iletir. Bu taşıma PinVault'un dışındadır.
+- Token: telefonda Kayıt Ol'a yapıştır: Kullanıcı uygulamada Kayıt Ol'a basar ve token'ı yapıştırır. Uygulama token'ı kütüphaneye verir, kütüphane kayıt isteğini gönderir.
+- Token: kayıt tamam, token harcandı: Sunucu token'ı tanır, "kullanıldı" diye işaretler ve telefonun sertifikasını verir. Aynı token bir daha işe yaramaz.
+- Token: yeni cihaza yeni token, aynı APK: Başka bir cihaz için panelde yeni bir token üretilir. Uygulama ve APK aynı kalır.
+- Token'ı bir telefona bağla (isteğe bağlı): Token'ı üretirken telefonun cihaz kimliğini (ANDROID_ID) de yazarsanız token yalnızca o telefonda çalışır. Telefonun kayıtta gönderdiği kimlik yalnızca onun beyanıdır; sertifikanın o telefonun dosyaları ve anahtarları adına iş görmesi için kimliğin kanıtlanmış olması gerekir.
+- Bağlı token başka telefonda: 403, token harcanmaz: Token tablet-10'un telefonuna bağlı. Başka bir telefon bu token'la kayıt olmaya çalışırsa sunucu 403 device_uid_mismatch verir. Token harcanmaz; doğru telefon aynı token'la yine kayıt olabilir.
+- Token: uygulamanızın girişi otomatik verir: Token'ı elle taşımak istemezseniz: kullanıcı uygulamanıza giriş yapınca sizin sunucunuz PinVault'tan token alıp uygulamaya verir. Kullanıcı token'ı hiç görmez.
+- Kayıt kodu: tek kod, çok cihaz: Yönetici panelde bir kayıt politikası oluşturur: tek kod, en fazla kaç cihaz, kaç gün. Kod yalnızca bir kez, QR'ıyla birlikte gösterilir.
+- Kayıt kodu: telefonda kodu gir, onay bekle: Her cihaz aynı kodu girer. Onay açıksa sunucu hemen sertifika vermez; telefon bir doğrulama kodu gösterip bekler.
+- Kayıt kodu: panelde Onayla: Yönetici "Onay bekleyen cihazlar" listesinde telefondaki doğrulama kodunun aynısını görür ve Onayla'ya basar.
+- Kayıt kodu: telefon kendiliğinden kayıt olur: Telefon aralıklarla yeniden sorar. Onay gelince sertifikasını alır; kimsenin bir şey yapması gerekmez.
+- Kodsuz başvuru: cihaz başvurur, siz onaylarsınız: Panelde "Kodsuz başvurular" açılınca cihazlar hiçbir şey girmeden başvurabilir. Her cihaz yöneticinin onayını bekler; modemdeki MAC filtresi gibi.
+- Kodsuz başvuru: bedeli ve sınırları: Kod istenmediği için sunucuya ulaşan herkes başvurabilir. Liste dolmasın diye sınırlar vardır; onaysız kimse sertifika alamaz.
+
+## 4 · Kayıt isteği (mTLS)
+- Kayıt isteğinde ne gider: Telefon sertifika isterken anahtarını göndermeden onun sahibi olduğunu kanıtlamalıdır. Kayıt isteğinde token, cihazın adı ve kimliği, sertifika isteği (CSR) ve anahtarın donanım belgesi gider. CSR açık anahtarı ve onunla atılmış imzayı taşır; özel anahtar telefondan çıkmaz.
+- Anahtarın donanım belgesi: Bir betik, bir emülatör ya da kopyalanmış bir uygulama da token'la kayıt isteği gönderebilir. Bunu ayırmak için telefon anahtarını üretirken güvenli donanımdan bir belge ister: "bu anahtar bu telefonda, bu uygulama için üretildi". Belge kayıt isteğiyle gider; sunucu ister yalnızca bakar, ister belgesiz anahtarı reddeder.
+- Sunucu kontrol eder, sertifikayı verir: Sunucu token'ı ve imzayı kontrol eder, token'ı harcar ve 90 günlük sertifikayı verir. Telefon gelen sertifikanın kendi anahtarına ait olduğunu kontrol edip saklar.
+- Saldırı: token uydurmak ya da isteği tekrar göndermek: Token'ı olmayan biri ya token uydurur ya da gerçek cihazın kayıt isteğini kopyalayıp yeniden gönderir. Uydurma token hiçbir özetle eşleşmez, kopyadaki token zaten harcanmıştır; ikisi de 401 alır.
+- Sınır: kullanılmamış token çalınırsa: Token cihaza ulaşmadan çalınır ve önce kullanılırsa, çalan kişi sertifika alır. Gerçek cihazın kaydı 401 alınca fark edilir; yönetici o kimliği iptal eder.
+- Aynı token'la aynı anda iki istek: yalnızca biri sertifika alır: Aynı token'la aynı anda iki istek gelirse yalnızca biri sertifika alır, diğeri 401 görür. Böylece çalınan token mutlaka fark edilir.
+- Sınır: demo modu (ENROLLMENT_MODE=open): Sunucu demo modunda başlatıldıysa token gerekmez; bir ANDROID_ID ile ilk gelen o kimliği alır. Kayıtlı bir kimliği başka bir anahtar artık devralamaz. Bu mod yalnızca denemeler içindir.
+
+## 5 · Pin listesi
+- Panelde: sunucuyu (host) ve pin'lerini ekle: Uygulamanın kendi sunucularının sertifikaları zamanla değişir; yeni pin'leri APK güncellemeden telefonlara ulaştırmak gerekir. Pin listesini yönetici panelde hazırlar: her sunucu (host) için iki pin. "URL'den Al" ile panel pin'leri o sunucuya bağlanıp kendisi çıkarır.
+- Telefon pin listesini ister: Telefon her açılışta güncel pin listesini ister. İstekte yalnızca elindeki listenin sürüm numarası gider.
+- Sunucu listeyi dijital imzayla gönderir: Liste yolda değiştirilmemeli. Sunucu listeyi dijital imzayla, düzenlenme ve son kullanma tarihiyle gönderir. Telefon imzayı ve tarihleri kontrol eder; liste değiştirilmişse ya da eskiyse uygulamaz.
+- İmzalı listede yönetilen kökler: pin'i olmayan host'lar: Uygulama bazen listede pin'i olmayan bir sunucuya da bağlanmak zorundadır (bir CDN, bir ortak). Normal TLS'te telefonun CA deposuna güvenilir; oraya bir CA ekleyen araya girer. Yönetilen kökler bunun yerine imzalı listede kök CA pin'leri taşır: pinsiz host için zincir platformca doğrulanır ve kökü bu listede olmalıdır. Approov'un "managed trust roots" özelliği.
+- Liste telefonda saklanır, süresi dolunca kullanılmaz: Telefonda saklanan bir liste de değiştirilebilir ya da eskiyebilir. Telefon imzalı zarfı olduğu gibi saklar ve her açılışta imzayı yeniden doğrular. Listenin bir son kullanma tarihi (expiresAt) vardır: süt kutusundaki tarih gibi, tarih geçince liste kullanılmaz.
+- Yeni liste uygulanınca: sunucuya hâlâ ulaşılıyor mu: Açılışta yeni bir liste uygulandıysa telefon sunucuya bir kez daha bağlanıp ulaşabildiğini kontrol eder. Ulaşamazsa yeni listeyi geri alır.
+- Sunucunun sertifikası değişirse: Uygulamanın bağlandığı sunucu sertifikasını değiştirdiyse telefondaki pin artık tutmaz. Kütüphane o anda güncel listeyi çeker ve isteği yeniden dener; uygulamanın bir şey yapması gerekmez.
+- Arka planda: liste kendiliğinden güncellenir: Uygulama isterse kütüphane arka planda belirli aralıklarla güncel listeyi yeniden ister. Aynı çalışmada dosyalar, onay bekleyen kayıt ve sertifika yenileme de kontrol edilir.
+- Sunucuya ulaşılamazsa: telefon son bildiği listeyle çalışır: Sunucu kapalıysa ya da ağ yoksa telefon en son kaydettiği pin listesiyle, listenin süresi dolana kadar açılır ve çalışmaya devam eder. İlk kurulumda kayıtlı liste yoksa açılış başarısız olur.
+- İsteğe bağlı: bağlantı raporu: Uygulama isterse her bağlantının sonucunu (pin tuttu mu, tutmadı mı) sunucuya bildirir. Yönetici bunları panelde "Bağlantı Geçmişi" sekmesinde görür.
+- Saldırı: sertifikası olmayan cihaz 8092'ye bağlanmaya çalışır: Kayıt olmamış bir cihaz mTLS kapısına bağlanmayı dener. 8092 sertifikası olmayanla konuşmaz; bağlantı, istek gönderilmeden kesilir.
+- Saldırı: kayıtlı bir cihaz başka cihazın kimliğini yazar: Kayıtlı bir cihaz, isteğe başka bir cihazın kimliğini yazıp ona özel listeyi almayı dener. 8092 kimliğin sertifikayla uyuşmadığını görür; 403.
+- Zararsız: 8091'deki pin listesini herkes alabilir: TLS config API'deki pin listesini sunucuya ulaşan herkes alabilir. Liste gizli değildir ve imzalı olduğu için değiştirilemez.
+
+## 6 · Uygulamanın sunucuları (mTLS)
+- Uygulamanın sunucusu mTLS isterse: host sertifikası: Uygulamanın kendi sunucusu da telefondan kimlik isteyebilir. Telefon ya kendi cihaz sertifikasını ya da o sunucu için yüklenmiş ortak bir sertifikayı gösterir. Ortak sertifikayı yönetici panelden yükler; telefon onu 8092'den indirir ve o sunucuya bağlanırken gösterir.
+- Cihaz sertifikası yalnızca izin verilen sunuculara gider: Cihaz sertifikası telefonun kimliğidir; her soran sunucuya gösterilmemeli. Telefon onu yalnızca kendi config API adreslerine ve izin verilen sunuculara gösterir. Pinli olsa bile başka bir sunucu sertifika isterse eli boş döner.
+- Saldırı: kayıtsız cihaz host sertifikasını ister: Kayıt olmamış bir cihaz host sertifikasını almayı dener. 8092 onunla konuşmaz; 8091 de bu isteği reddeder.
+- Sınır: host sertifikası bütün cihazlarda aynı: Kayıtlı her cihaz aynı host sertifikasını ve özel anahtarını alır. Bir cihazdan çıkarılırsa o sunucuya "bir cihaz" gibi bağlanılabilir.
+
+## 7 · Atestasyon ve PinVault-Token
+- Atestasyon nedir: token yalnızca geçen uygulamaya: Pinleme kanalı korur; kanaldan geçen uygulamanın gerçek, değiştirilmemiş uygulamanız olduğunu söylemez. Root'lu bir telefondaki kopya, bir emülatör ya da Frida ile içine girilmiş bir uygulama da aynı pinli bağlantıyı kurar. Atestasyon bunu ayırır: telefon kendini ölçer, ölçümü anahtarıyla imzalar, sunucu karar verir. Geçen uygulama 5 dakikalık PinVault-Token'ı alır, liste değiştiyse yeni imzalı liste de aynı cevapla gelir; geçmeyen token almaz ve uygulamanızın sunucusu onu kapıda çevirir. Pin listesi gizli değildir (8091'den herkes alabilir); geçmeyeni durduran liste değil, token'dır. Approov'un çalışma mantığı, kendi sunucunuzda.
+- 1 · Sunucudan tek kullanımlık soru (nonce): Telefon önce sunucudan bir nonce ister: 2 dakika geçerli, bir kez kullanılan rastgele bir değer. Rapor bu değerle birlikte imzalanacağı için eski bir imzalı rapor yeniden gönderilemez.
+- 2 · Telefon kendini ölçer ve imzalar: Telefon ağa çıkmadan kendine bakar: root, emülatör, debugger, hooking çerçevesi, klonlayıcı, uygulamanın imzası ve yükleyicisi, ADB, anahtarın seviyesi. Raporu nonce ve cihaz kimliğiyle birlikte Keystore anahtarıyla imzalar.
+- 3 · Rapor sunucuya gider; karar ve token gelir: Telefon imzalı raporu, nonce'u, açık anahtarını ve elindeki listenin sürümünü gönderir. Sunucu sırayla kontrol eder ve karar verir: geçtiyse 5 dakikalık PinVault-Token, liste değiştiyse yeni imzalı liste de gelir.
+- 4 · Token her istekte uygulamanın sunucusuna gider: Kütüphane token'ı uygulamanın kendi sunucularına giden her isteğin başlığına koyar. O sunucu imzayı kendi doğrular; PinVault sunucusuna sormaz. Token'ı olmayan ya da süresi dolmuş isteği 401 ile çevirir.
+- Saldırı: root'lu ya da Frida yüklü telefon: Root'lu bir telefonda içine girilmiş uygulama pinli bağlantıyı kurar ve kayıtlıysa sertifikasını da gösterir. Rapor root ve hooking sinyallerini taşır; politika reject dediği için token gelmez. Uygulamanızın sunucusu başlıksız isteği 401 ile çevirir.
+- 5 · Her ≈ 5 dakikada yeniden; arka planda da: Token 5 dakika yaşar. Telefon bitişinden 60 saniye önce (ya da sunucunun söylediği aralıkta) yeniden ölçer ve gönderir. Arka plan çalışması da bir tur atar; uygulama istediği an attestNow() çağırabilir.
+- Panelde: ret politikası, cihazlar, ek açıklamalar, token sırrı: Yönetici hangi sinyalin reddedeceğini seçer, cihazların son kararını ve ARC'lerini görür, bir cihaza forcePass/forceFail ya da etiket verir, token sırrını döndürür.
+- Saldırı: eski raporu tekrar göndermek, rapor uydurmak, anahtar değiştirmek: Üç deneme: ele geçirilmiş bir isteğin kopyası (nonce kullanılmış), temiz görünen uydurma rapor (imza tutmaz) ve yeniden kurulup yeni anahtarla gelen uygulama (kayıtlı anahtar başka). Üçü de reddedilir.
+- Sınırlar: ölçüm telefonda, yargı sunucuda: Atestasyon gerçek, değiştirilmemiş uygulamayı seçmeye yarar; sihir değildir. Probe'lar kütüphanenin içinde düz Kotlin'dir, hook'lanabilir; değeri imzalı anahtar, sunucunun eklediği sinyaller ve politikadan gelir. Ne yaptığını ve ne yapmadığını bilerek açın.
+
+## 8 · Dosya
+- Panelde: dosya yükle, kimin alacağını seç: Bir ayar dosyasını ya da modeli değiştirmek için uygulama güncellemesi beklemek istemezsiniz. PinVault uygulamaya dosya da dağıtır. Yönetici dosyayı panelde yükler; kimin alabileceğini (Policy) ve nasıl saklanacağını (Encryption) seçer.
+- Dosya token'ı telefonda nerede durur: Dosya token'ı da APK'nın dışından gelir. Uygulama onu kendi şifreli deposunda saklar; kütüphane her indirmede uygulamadan ister.
+- Telefon dosyayı ister: Telefon dosyayı adıyla ve elindeki sürüm numarasıyla ister. Token gerekiyorsa isteğin başlığında gönderir.
+- Sunucu Policy'ye bakar, dosyayı gönderir: Sunucu dosyanın Policy'sine göre token'ı ve cihazı kontrol eder, uygunsa dosyayı gönderir. Telefondaki sürüm güncelse yalnızca "değişmedi" cevabı döner.
+- İndirme raporu: hangi cihaz hangi sürümü aldı: Her indirme denemesinden sonra telefon sonucu sunucuya bildirir. Panelde hangi cihazın hangi sürümü aldığı buradan görünür.
+- Saldırı: dosya token'ını çalan kayıtsız cihaz: Dosya token'ını ele geçiren ama kayıtlı olmayan biri dosyayı 8092'den indirmeyi dener. Sertifikası olmadığı için bağlantı kurulamaz.
+- Saldırı: kayıtlı başka bir cihaz çalınmış token'la dener: Kayıtlı başka bir cihaz çalınmış dosya token'ıyla, token sahibinin kimliğini yazarak dener. 8092 kimliğin sertifikayla uyuşmadığını görür; 403.
+- Saldırı: başka cihaz adına indirme raporu: Kayıtlı bir cihaz, başka bir cihaz adına sahte indirme raporu göndermeyi dener. 8092'de her cihaz yalnızca kendi adına rapor verebilir; 403.
+
+## 9 · Uçtan uca şifreli dosya
+- Telefon şifreleme anahtarını sunucuya bildirir: Encryption'ı end_to_end olan dosya yalnızca tek bir cihazın açabileceği şekilde şifrelenir. Bunun için telefon bir anahtar çifti üretir: açık anahtarı sunucuya bildirir, özel anahtar telefondan çıkmaz.
+- Saldırı: kayıtlı başka cihaz anahtarı değiştirmeyi dener: Kayıtlı başka bir cihaz, tablet-07'nin şifreleme anahtarını kendi anahtarıyla değiştirmeyi dener. 8092 sertifikanın o cihaza ait olmadığını görür; 403.
+- 8091'de kural: ilk anahtar kalır, değiştirmek token ister: TLS kapısında cihaz kimliğini kanıtlamaz. Bu yüzden ilk kaydedilen anahtar kalır; değiştirmek için o cihazın dosya token'ı gerekir.
+- Saldırı: 8091'e sahte anahtar yağdırmak: Biri rastgele kimliklerle binlerce sahte anahtar kaydetmeyi dener. Sunucu yalnızca geçerli anahtarı kabul eder ve adres başına sınır uygular.
+
+## 10 · Ekran kilitli dosya
+- Panelde: dosyayı ekran kilidiyle gönder: Telefonda saklanan dosyayı uygulamanın kendisi her an açabilir; root'lu bir telefonda uygulamanın içine giren kod da. Ekran kilitli dosya, anahtarı kullanıcının elinde duran bir kasa gibidir: donanım anahtarı ancak ekran kilidi açılınca kullanır. Yönetici dosyayı yüklerken Encryption olarak "user_auth — ekran kilidiyle açılır" seçer.
+- Telefon ekran kilidi anahtarını kaydeder: Sunucunun dosyayı kilitleyebilmesi için telefonun ekran kilidi anahtarının açık yarısını bilmesi gerekir. Telefon açılışta bu anahtarı üretir ve donanım belgesiyle birlikte sunucuya bildirir; özel yarı donanımdan çıkmaz.
+- Dosya telefona kilitli iner: Telefon dosyayı her zamanki gibi indirir; kullanıcıya bir şey sorulmaz. Sunucu dosyayı bu telefonun ekran kilidi anahtarına kilitlenmiş bir zarf olarak gönderir. Telefon zarfı açmadan saklar; uygulama bile içeriği görmez.
+- Açmak için ekran kilidi sorulur: Kullanıcı dosyayı açmak isteyince telefon sistemin kendi kilit sorusunu gösterir. PIN, desen, şifre ya da parmak izi girilince donanım anahtarı kullanır, zarf açılır ve imza doğrulanır. Bu adım ağa çıkmaz.
+- Ekran kilitli dosyanın sınırları: Ekran kilidi, saklanan kopyayı telefonu ele geçirene ve uygulamanın içine giren koda karşı korur. Root'lu telefonda tam koruma için sunucunun donanım belgesini zorunlu tutması gerekir; yoksa telefonun kaydettiği ilk anahtara güvenilir.
+
+## 11 · Yenileme (mTLS)
+- Telefon sertifikasının tarihine bakar: Telefonun sertifikası ehliyet gibi süreli bir belgedir: 90 gün geçerlidir ve süresi dolmadan yenilenmelidir. Telefon her açılışta ve arka planda tarihine bakar; ömrünün son üçte birine girdiyse yenilemeye geçer. Bu kontrol için ağa çıkmaz.
+- Yenileme isteği: aynı anahtar, yeni sertifika: Telefon hâlâ geçerli olan sertifikasıyla 8092'ye bağlanır ve aynı anahtar için yeni bir sertifika ister. Token gerekmez.
+- Sunucu yeni sertifikayı verir: Sunucu anahtarın ve kimliğin kayıttakiyle aynı olduğunu kontrol edip yeni 90 günlük sertifikayı verir. Kullanıcı hiçbir şey görmez.
+- Saldırı: başka cihaz adına yenileme: Kayıtlı bir cihaz, isteğe başka bir cihazın adını yazıp onun sertifikasını almayı dener. Sunucu kimliği bağlantıdaki sertifikadan okur; yalnızca kendi sertifikası yenilenir.
+
+## 12 · Kurtarma (mTLS)
+- Sertifikanın süresi dolmuşsa: Telefon uzun süre kapalı kalırsa sertifikasının süresi dolar ve 8092 onu kabul etmez. Telefon bu durumda doğrudan kurtarma kapısına (8093) gider; yeni token gerekmez.
+- Kurtarma isteği: kimlik kanıtı anahtarın imzası: Kurtarma kapısı cihazdan sertifika istemez. Telefon kim olduğunu söyler ve bunu aynı anahtarla imzaladığı sertifika isteğiyle (CSR) kanıtlar.
+- Sunucu yeni sertifikayı verir, telefon 8092'ye döner: Sunucu imzanın kayıtlı anahtarla atıldığını kontrol edip yeni sertifikayı verir. Telefon bundan sonra yine 8092'yi kullanır.
+- Saldırı: başkasının adına kurtarma istemek: Biri başka bir cihazın adını yazıp kendi anahtarıyla sertifika almayı dener. İmza kayıtlı anahtarla tutmaz; 403.
+- Saldırı: cihazın son sertifika isteğini tekrar göndermek: Biri cihazın son yenileme isteğini ele geçirip kurtarma kapısına yeniden gönderir. Sunucu son kabul ettiği isteği tanır ve reddeder; 403.
+
+## 13 · İptal (mTLS)
+- Panelde: cihazı iptal et: Kaybolan, çalınan ya da artık kullanılmayan bir cihazı yönetici panelden iptal eder. İptal anında geçerlidir: cihaz bir sonraki isteğinde içeri giremez.
+- İptal edilen telefon ne görür: İptal edilen telefonun sertifikasının tarihi hâlâ geçerli olduğu için bağlantı kurulur, ama sunucu hiçbir isteğine cevap vermez. Uygulama "yeniden kayıt gerekli" haberini ilk isteğinde alır.
+- İsteğe bağlı: iptal edilince dosyaları sil: İptal edilen telefonda daha önce inmiş dosyalar kalır. Uygulama isterse kütüphane bu dosyaları, sunucu telefonun kimliğini reddettiği anda siler.
+- Yeniden kayıt: yeni kimlik ya da "Kimliği unut": İptal edilen kimlik iptal edilmiş kalır. Cihazı yeniden kayıt etmek için ya yeni bir kimlik verilir ya da yönetici panelde "Kimliği unut"a basar; eski anahtarlar yine kalıcı olarak reddedilir.
+
+## Özet
+- Özet: token'lar ve kodlar: Kayıt token'ı, kayıt kodu ve dosya token'ı: kim üretir, nerede durur, çalınırsa ne olur.
+- Özet: ne gizli, ne açık, ne kaldı: Bütün akışların özeti: hangi kapı hangi bağlantıyı kullanır, neler gizli kalır, hangi sınırlar bilinerek bırakılmıştır ve bu animasyonda neler anlatılmadı.

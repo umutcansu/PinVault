@@ -12,6 +12,8 @@ in order, from the server's first start to the app's first protected API call. T
 The rendered file is [`../../pinvault-bastan-sona.tr.mp4`](../../pinvault-bastan-sona.tr.mp4). Its sister video,
 the concept overview, lives in [`../pinvault-nasil-calisir/`](../pinvault-nasil-calisir).
 
+The English version is [`../pinvault-end-to-end/`](../pinvault-end-to-end) (its frames are the English copies in `../pinvault-presentation/`): make a frame change in both and re-render.
+
 ## Files
 
 | Path | What it is |

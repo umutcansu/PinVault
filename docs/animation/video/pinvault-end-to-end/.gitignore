@@ -1,0 +1,13 @@
+.hyperframes/*.log
+.hyperframes/frame-packets/
+.hyperframes/hf-ids-stamped.json
+.hyperframes/history-id
+.hyperframes/history/
+.hyperframes/preview/
+.media/
+.thumbnails/
+AGENTS.md
+CLAUDE.md
+node_modules/
+renders/
+snapshots/

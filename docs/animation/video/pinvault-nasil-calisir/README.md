@@ -9,6 +9,8 @@ lifetime and the per-start order. The rendered file is
 The narration is the on-screen Turkish text, so the video works muted (README
 embeds, autoplay). There is no voice, music or sound.
 
+The English version is [`../pinvault-how-it-works/`](../pinvault-how-it-works): make a frame change there too (same file name) and re-render both.
+
 ## Files
 
 | Path | What it is |

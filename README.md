@@ -83,8 +83,8 @@ them: [`docs/animation/`](docs/animation/README.md).
 |---|---|---|
 | Step-by-step request flow: 15 chapters, 100 steps, in any browser | [▶ open](https://raw.githack.com/umutcansu/PinVault/main/docs/animation/pinvault-request-flow.en.html) | [▶ aç](https://raw.githack.com/umutcansu/PinVault/main/docs/animation/pinvault-request-flow.tr.html) |
 | Presentation (9:58): the purpose, what PinVault adds, the whole flow | [▶ watch](https://raw.githack.com/umutcansu/PinVault/main/docs/animation/films.html#presentation) | [▶ izle](https://raw.githack.com/umutcansu/PinVault/main/docs/animation/films.html#sunum) |
-| Explainer (2:49): the problem, the three layers, a certificate's lifetime | — | [▶ izle](https://raw.githack.com/umutcansu/PinVault/main/docs/animation/films.html#nasil-calisir) |
-| End to end (3:16): from the server's first start to the first protected call | — | [▶ izle](https://raw.githack.com/umutcansu/PinVault/main/docs/animation/films.html#bastan-sona) |
+| Explainer (2:49): the problem, the three layers, a certificate's lifetime | [▶ watch](https://raw.githack.com/umutcansu/PinVault/main/docs/animation/films.html#how-it-works) | [▶ izle](https://raw.githack.com/umutcansu/PinVault/main/docs/animation/films.html#nasil-calisir) |
+| End to end (3:16): from the server's first start to the first protected call | [▶ watch](https://raw.githack.com/umutcansu/PinVault/main/docs/animation/films.html#end-to-end) | [▶ izle](https://raw.githack.com/umutcansu/PinVault/main/docs/animation/films.html#bastan-sona) |
 
 ## Quick start
 

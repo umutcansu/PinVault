@@ -47,22 +47,25 @@ factory" scene plays the whole flow on one fixed map of the system.
 | Türkçe | [▶ pinvault-sunum.tr.mp4](https://raw.githack.com/umutcansu/PinVault/main/docs/animation/films.html#sunum) | [`video/pinvault-sunum/`](video/pinvault-sunum) |
 
 Both are 1920×1080 and about 15 MB. Every claim on screen was checked
-against the library, the reference server and the dashboard. The two Turkish
-videos below are its shorter parts.
+against the library, the reference server and the dashboard. The two
+videos below are its shorter parts, also in both languages.
 
-## Explainer video (Turkish)
+## Explainer video (English and Turkish)
 
 A silent 2:49 video that introduces the animation one level up: the problem,
 the three layers (pinning, device identity, attestation), the topology, a
 certificate's lifetime and the order of work on every start. The narration is
-the on-screen Turkish text, so it plays fine muted.
+the on-screen text, so it plays fine muted.
 
-[▶ pinvault-nasil-calisir.tr.mp4](https://raw.githack.com/umutcansu/PinVault/main/docs/animation/films.html#nasil-calisir)
-(1920×1080, 4.4 MB). It is built with HyperFrames from
-[`video/pinvault-nasil-calisir/`](video/pinvault-nasil-calisir);
-that folder's README explains how to edit and re-render it.
+| Language | Video | Source |
+|---|---|---|
+| English | [▶ pinvault-how-it-works.en.mp4](https://raw.githack.com/umutcansu/PinVault/main/docs/animation/films.html#how-it-works) | [`video/pinvault-how-it-works/`](video/pinvault-how-it-works) |
+| Türkçe | [▶ pinvault-nasil-calisir.tr.mp4](https://raw.githack.com/umutcansu/PinVault/main/docs/animation/films.html#nasil-calisir) | [`video/pinvault-nasil-calisir/`](video/pinvault-nasil-calisir) |
 
-## End-to-end video (Turkish)
+1920×1080, about 4.4 MB each, built with HyperFrames; each folder's README
+explains how to edit and re-render it.
+
+## End-to-end video (English and Turkish)
 
 A silent 3:16 video that walks the whole chain in order, ring by ring, with the
 real panel and phone screens: the server's first start and setup wizard, what
@@ -70,6 +73,9 @@ goes into the APK, adding the API host, issuing the enrollment token, getting it
 to the phone, the enrollment request, the certificate, the signed pin list, the
 PinVault-Token from attestation and the first protected API call.
 
-[▶ pinvault-bastan-sona.tr.mp4](https://raw.githack.com/umutcansu/PinVault/main/docs/animation/films.html#bastan-sona)
-(1920×1080, 5.2 MB), built from
-[`video/pinvault-bastan-sona/`](video/pinvault-bastan-sona).
+| Language | Video | Source |
+|---|---|---|
+| English | [▶ pinvault-end-to-end.en.mp4](https://raw.githack.com/umutcansu/PinVault/main/docs/animation/films.html#end-to-end) | [`video/pinvault-end-to-end/`](video/pinvault-end-to-end) |
+| Türkçe | [▶ pinvault-bastan-sona.tr.mp4](https://raw.githack.com/umutcansu/PinVault/main/docs/animation/films.html#bastan-sona) | [`video/pinvault-bastan-sona/`](video/pinvault-bastan-sona) |
+
+1920×1080, about 5.2 MB each.

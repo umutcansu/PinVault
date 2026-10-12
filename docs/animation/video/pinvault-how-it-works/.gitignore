@@ -1,0 +1,13 @@
+node_modules/
+renders/
+snapshots/
+.media/
+.hyperframes/frame-packets/
+.hyperframes/*.log
+AGENTS.md
+CLAUDE.md
+.thumbnails/
+.hyperframes/preview/
+.hyperframes/history-id
+.hyperframes/hf-ids-stamped.json
+.hyperframes/history/
