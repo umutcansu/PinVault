@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 2.5.0 — 2026-10-12
 
 ### Fixed
 
@@ -12,6 +12,10 @@
   added (only where the app's includes reach) and points the manifest at the
   copy with `tools:replace`; rules it cannot find stop prebuild. Built with
   Expo SDK 54 + `expo-secure-store`, Android release.
+
+### Changed
+
+- Depends on PinVault 2.5.0 (Maven Central, Swift package tag `v2.5.0`).
 
 ## 2.4.2 — 2026-10-10
 

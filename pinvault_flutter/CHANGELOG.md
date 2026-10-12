@@ -1,6 +1,6 @@
 # Changelog
 
-## 2.5.0 — unreleased
+## 2.5.0 — 2026-10-12
 
 First release of `pinvault_flutter`: a typed Dart bridge over the native
 PinVault libraries (Android `io.github.umutcansu:pinvault`, iOS `PinVault`).

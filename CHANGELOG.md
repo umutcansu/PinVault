@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 2.5.0 — 2026-10-12 — Flutter plugin, pinned WebSockets on iOS, the server behind a proxy
 
 ### Reference server
 
@@ -16,10 +16,12 @@
   recovery listeners (logger `ConfigApiAccess`: listener, status, path without
   query, client address, device id, time); `LOG_LEVEL_CONFIG_API_ACCESS=OFF`
   turns it off. Before, only the management port logged requests.
+- **A new look for the dashboard** (style only: the same pages, fields and
+  actions).
 
 ### Flutter
 
-- **`pinvault_flutter` (new, released with 2.5.0):** a typed Dart bridge over
+- **`pinvault_flutter` (new):** a typed Dart bridge over
   the Android and iOS libraries — config, pinned requests, pinned `wss://`
   WebSockets, enrollment, vault files (screen-lock files included),
   attestation, connection events — with the native security file and strict
@@ -33,6 +35,12 @@
   pinned and can present the mTLS identity. The request's headers and timeout
   go into the upgrade request; a `resolve(host:to:)` entry for the host refuses
   the socket (a WebSocket task cannot be pointed at another address).
+
+### Android
+
+- No code changes: 2.5.0 is 2.4.2's library under the version the other
+  packages share (the Flutter plugin and the React Native package depend on
+  it).
 
 ### React Native
 

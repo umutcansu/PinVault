@@ -7,7 +7,7 @@
 # A published flow would point `s.source` at the git tag instead.
 Pod::Spec.new do |s|
   s.name             = 'PinVault'
-  s.version          = '2.4.2'
+  s.version          = '2.5.0'
   s.summary          = 'Dynamic certificate pinning, mTLS identity, and vault files for iOS.'
   s.description      = 'PinVault for iOS: remote signed pin configs, mTLS enrollment, signed vault files, device attestation.'
   s.homepage         = 'https://github.com/umutcansu/PinVault'

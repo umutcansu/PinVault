@@ -4,6 +4,31 @@ The upgrade notes for every release since 2.0, troubleshooting, and a quick
 reference for the multi-Config-API DSL. The full list of changes is in
 [CHANGELOG.md](CHANGELOG.md).
 
+## Upgrading from 2.4.2 to 2.5.0
+
+Nothing to change: every addition is opt-in.
+
+**Libraries**
+
+- **Android:** the same code as 2.4.2; only the version moves.
+- **iOS:** `PinnedSession.webSocketTask(for:)` opens pinned `wss://` sockets
+  (README, "Pinned WebSockets"). A socket to a host that has a
+  `resolve(host:to:)` entry is refused.
+- **React Native:** on Expo with your own Android backup rules
+  (`fullBackupContent` / `dataExtractionRules`, e.g. `expo-secure-store`),
+  prebuild now merges PinVault's excludes into them instead of failing.
+- **Flutter:** new, `pinvault_flutter` 2.5.0 (Flutter 3.44+); see its README.
+
+**Server (demo-server / sample host)**
+
+- **Behind a reverse proxy** (Cloudflare, a tunnel, a load balancer), set
+  `TRUSTED_PROXIES` to its addresses (and `CLIENT_IP_HEADER` if it is not
+  `X-Forwarded-For`), or every per-address limit counts the whole fleet as one
+  caller — as before 2.5.0. Leave it unset when devices connect directly.
+- **One log line per device request** on the Config API and recovery
+  listeners (logger `ConfigApiAccess`); `LOG_LEVEL_CONFIG_API_ACCESS=OFF` turns
+  it off.
+
 ## Upgrading from 2.4.1 to 2.4.2
 
 **Libraries (Android, iOS, React Native)**
