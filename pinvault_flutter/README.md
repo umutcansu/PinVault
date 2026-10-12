@@ -49,6 +49,9 @@ SwiftPinVaultFlutterPlugin.registerBackgroundTask()
 
 Without it the update only runs while the app is in the foreground.
 
+`unlockFile` asks for Face ID / Touch ID or the passcode: add
+`NSFaceIDUsageDescription` to `Info.plist`, or the Face ID prompt ends the app.
+
 ### Native security file (required for release)
 
 In a **release** build the trust anchors (bootstrap pins, signature keys, …)

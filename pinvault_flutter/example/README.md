@@ -30,7 +30,10 @@ On the iOS simulator add
 **Screen-lock vault files (Android emulator)** — `scripts/screen_lock_check.sh [serial]`
 puts a temporary PIN on the emulator, runs the `unlockFile` test (the file
 never opens with `loadFile`; the prompt is answered with the PIN), and removes
-the PIN again. It refuses to run on an emulator that already has a lock.
+the PIN again. It refuses to run on an emulator that already has a lock. On the iOS
+simulator, enroll Face ID (`xcrun simctl spawn <udid> notifyutil -s
+com.apple.BiometricKit.enrollmentChanged 1` and `-p` the same name) and post
+`com.apple.BiometricKit_Sim.pearl.match` while the test waits at the prompt.
 
 **Release build (Android)** — `scripts/release_check.sh [serial]` builds a
 release APK (R8 on) with a native security file for the local demo-server,
