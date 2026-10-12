@@ -126,6 +126,21 @@ Details: [`pinvault-react-native/README.md`](pinvault-react-native/README.md#ins
 
 </details>
 
+<details>
+<summary><b>Flutter</b> · Dart</summary>
+
+```bash
+flutter pub add pinvault_flutter
+```
+
+Flutter 3.44+ (Dart 3.12), Android API 24, iOS 16. The native libraries come
+with the plugin. `unlockFile` needs `FlutterFragmentActivity` on Android and
+`NSFaceIDUsageDescription` on iOS; background updates on iOS need
+`SwiftPinVaultFlutterPlugin.registerBackgroundTask()` in `AppDelegate`.
+Details: [`pinvault_flutter/README.md`](pinvault_flutter/README.md#installation).
+
+</details>
+
 ### 2. Start PinVault and make a pinned request
 
 You need three values from your server: the Config API URL, two pins of its
@@ -199,6 +214,31 @@ const res = await PinVault.fetch('https://api.example.com/v1/me');
 React Native's own `fetch`, `XMLHttpRequest`, `<Image>` and `WebSocket` are pinned too. Release
 builds ship the trust anchors natively and refuse to start without them unless the
 app opts out: [native security file](pinvault-react-native/README.md#native-security-file).
+
+</details>
+
+<details>
+<summary><b>Flutter</b> · Dart</summary>
+
+```dart
+import 'package:pinvault_flutter/pinvault_flutter.dart';
+
+final result = await PinVault.start(PinVaultConfig(configApis: [
+  ConfigApiBlock(
+    id: 'api',
+    url: 'https://config.example.com/',
+    bootstrapPins: [HostPin(hostname: 'config.example.com', sha256: [primaryPin, backupPin])],
+    signaturePublicKey: signingKey,
+  ),
+]));
+if (result is! InitResultReady) return;            // fail closed
+
+final res = await PinVault.fetch('https://api.example.com/v1/me');
+```
+
+Only `PinVault.fetch` and `PinVaultWebSocket` are pinned — Dart's own `HttpClient`,
+`package:http` and `dio` are not. Release builds take the trust anchors from a
+[native security file](pinvault_flutter/README.md#native-security-file-required-for-release).
 
 </details>
 
