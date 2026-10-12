@@ -12,11 +12,8 @@
 //
 // Without the key every test is skipped.
 //
-// The WebSocket echo test also needs a wss:// echo server whose certificate
-// it pins: --dart-define=PINVAULT_WS_PORT=8765 --dart-define=PINVAULT_WS_PIN=<SPKI SHA-256>
-// (the server: a dart:io HttpServer.bindSecure + WebSocketTransformer that
-// first sends "x-test=<the X-Test header it got>", then echoes frames, and
-// closes with 4000 on the text "close-me").
+// The WebSocket echo test also needs scripts/wss_echo_server.sh running and
+// --dart-define=PINVAULT_WS_PORT=8765 --dart-define=PINVAULT_WS_PIN=<the pin it prints>.
 import 'dart:convert';
 import 'dart:io';
 import 'dart:typed_data';
@@ -289,6 +286,58 @@ void main() {
     await second.done.timeout(const Duration(seconds: 10));
     await expectLater(second.send('after close'), throwsA(isA<PinVaultWebSocketError>()));
   }, skip: _wsPin.isEmpty); // needs only the echo server
+
+  testWidgets('mTLS Config API: enroll first, then the config over mTLS, then revocation', (_) async {
+    final admin = _Admin();
+    final deviceId = (await PinVault.deviceId())!;
+    await admin.releaseDevice(deviceId);
+    final clientId = 'flutter-mtls-${DateTime.now().millisecondsSinceEpoch}';
+    final minted = await admin.call('POST', '/api/v1/enrollment-tokens/generate',
+        json: {'clientId': clientId, 'deviceUid': deviceId}) as Map<String, dynamic>;
+    // The demo-server's mTLS listener (Config API id mtls-8092): no
+    // certificate, no handshake; enrollment and renewal go over plain TLS.
+    final config = PinVaultConfig(configApis: [
+      ConfigApiBlock(
+        id: 'default-mtls',
+        url: 'https://$_host:8092/',
+        enrollmentUrl: 'https://$_host:8091/',
+        renewalUrl: 'https://$_host:8093/',
+        bootstrapPins: const [
+          HostPin(hostname: _host, sha256: _configApiPins),
+          HostPin(hostname: '$_host:8093', sha256: _recoveryPins),
+        ],
+        signaturePublicKey: _signingKey,
+        serverScope: 'mtls-8092',
+      ),
+    ]);
+    final events = <PinVaultConnectionEvent>[];
+    final subscription = PinVault.addConnectionListener(events.add);
+
+    try {
+      await PinVault.unenroll();
+      final withoutCert = await PinVault.start(config);
+      expect(withoutCert, isNot(isA<InitResultReady>()), reason: 'the mTLS listener needs a certificate');
+
+      final enrolled = await PinVault.enrollForResult(minted['token'] as String);
+      expect(enrolled, isA<EnrollmentEnrolled>(), reason: '$enrolled');
+      final ready = await PinVault.start(config);
+      expect(ready, isA<InitResultReady>(), reason: '$ready');
+      expect((await PinVault.updateNow()), isNot(isA<UpdateResultFailed>()));
+      final response = await PinVault.fetch('https://$_host:$_pinned/');
+      expect(response.status, 200);
+
+      // Revoked on the server: the next request over the identity hears it.
+      await admin.call('DELETE', '/api/v1/client-certs/$clientId');
+      final afterRevoke = await PinVault.updateNow();
+      expect(afterRevoke, isA<UpdateResultFailed>(), reason: '$afterRevoke');
+      await _until(() => events.whereType<ClientCertRenewalEvent>().any((e) => e.status == 'REENROLL_REQUIRED'));
+    } finally {
+      await subscription.cancel();
+      await PinVault.unenroll();
+      await admin.forget(clientId, revoked: true).catchError((_) {});
+      admin.close();
+    }
+  }, skip: skip != null);
 }
 
 Future<void> _until(bool Function() condition) async {

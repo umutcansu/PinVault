@@ -12,7 +12,10 @@ or `API_KEY=admin-key-123 ALLOW_DEMO_SECRETS=true ../gradlew run` in
 **End to end (debug)** — `integration_test/demo_server_test.dart`: guard,
 signed config, pinned and refused requests, connection events, WebSocket
 failures, enrollment with a one-time token, vault files (public, token, wrong
-token). It sets up its own tokens and files over the management API and
+token), the mTLS Config API (enroll first, config over mTLS, revocation
+heard as `REENROLL_REQUIRED`) and — with `scripts/wss_echo_server.sh`
+running and `--dart-define=PINVAULT_WS_PORT=8765 --dart-define=PINVAULT_WS_PIN=…`
+— a pinned WebSocket that sends, receives and closes. It sets up its own tokens and files over the management API and
 removes them afterwards.
 
 ```sh

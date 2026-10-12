@@ -49,3 +49,4 @@ app.*.map.json
 
 # Written by scripts/release_check.sh for the local demo-server, removed afterwards.
 /android/app/src/main/assets/pinvault_security.json
+/scripts/wss-*.pem
