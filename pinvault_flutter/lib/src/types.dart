@@ -290,6 +290,10 @@ class PinVaultConfig {
   final bool? requireUnlockedDevice;
   final bool? requireHardwareBackedKeys;
   final bool? managedTrustRoots;
+
+  /// Android only: the SHA-256 digests of the signing certificates the app must
+  /// be signed with. iOS has no signer digest and ignores this; set
+  /// [IosSettings.expectedBundleIds] and [IosSettings.expectedTeamIds] there.
   final List<String>? expectedSignerSha256;
   final EnvironmentGuard? environmentGuard;
 
@@ -387,7 +391,11 @@ class AndroidSettings {
 class IosSettings {
   /// `resolve(host:to:)`: connect to `address` while pinning and verifying `host`.
   final Map<String, String>? resolve;
+
+  /// The bundle ids the app must run as (iOS counterpart of `expectedSignerSha256`).
   final List<String>? expectedBundleIds;
+
+  /// The Apple team ids the app must be signed by (iOS counterpart of `expectedSignerSha256`).
   final List<String>? expectedTeamIds;
 
   /// `userAuthStrength(_:)`; `BIOMETRIC_CURRENT_SET` = `userAuthBiometricOnly()`.

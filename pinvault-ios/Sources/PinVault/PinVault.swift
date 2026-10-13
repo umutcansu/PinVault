@@ -586,6 +586,21 @@ public final class PinVault: @unchecked Sendable {
         }
     }
 
+    /// The attestation headers the upgrade request of a `wss://` WebSocket to
+    /// `url` carries when the library does not open the socket (SocketRocket,
+    /// an `NWConnection`): `PinVault-Token` for a token host when one with
+    /// enough life is held, and its `PinVault-Proof` with `proofOfPossession()`.
+    /// Never waits: without a held token it returns no header and starts an
+    /// attestation in the background, so a later socket has one. Empty for
+    /// `ws://`, a host no attesting block covers, or before `start`.
+    /// ``PinnedSession/makeWebSocketTask(for:)`` adds these itself.
+    public func webSocketUpgradeHeaders(for url: URL) -> [String: String] {
+        guard isInitialized, let interceptor = attestationTokenInterceptor() else { return [:] }
+        var request = URLRequest(url: url)
+        interceptor.addWebSocketHeaders(&request)
+        return request.allHTTPHeaderFields ?? [:]
+    }
+
     private func unavailableSession() -> PinnedSession {
         log.w(Self.notInitializedMessage)
         return PinnedSession(transport: UnavailableTransport(reason: Self.notInitializedMessage))

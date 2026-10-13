@@ -63,6 +63,114 @@ final class PinnedWebSocketTests: XCTestCase {
         XCTAssertThrowsError(try session.webSocketTask(with: url))
         XCTAssertTrue(base.webSocketCalled, "the intercepted transport must ask its base for the socket")
     }
+
+    // MARK: Attestation token on the upgrade request
+
+    private func tokenSession(_ source: WebSocketTokenSource, base: RecordingBase) -> PinnedSession {
+        PinnedSession(interceptors: [AttestationTokenInterceptor { [source] }], transport: base)
+    }
+
+    func testAHeldTokenAndItsProofGoOnTheUpgradeRequest() throws {
+        let source = WebSocketTokenSource(held: "t1", proofs: true)
+        let base = RecordingBase()
+        var request = URLRequest(url: URL(string: "wss://api.example.com:8443/socket?x=1")!)
+        request.setValue("caller", forHTTPHeaderField: "PinVault-Proof")
+
+        XCTAssertThrowsError(try tokenSession(source, base: base).webSocketTask(for: request))
+        let sent = try XCTUnwrap(base.lastRequest)
+        XCTAssertEqual(sent.value(forHTTPHeaderField: "PinVault-Token"), "t1")
+        XCTAssertEqual(sent.value(forHTTPHeaderField: "PinVault-Proof"), "proof-t1")
+        XCTAssertEqual(sent.url?.scheme, "wss", "the socket still opens its own URL")
+        XCTAssertEqual(source.proofFor, ["GET https://api.example.com:8443/socket?x=1"], "the proof names the https URL of the upgrade")
+        XCTAssertEqual(source.asked, 0, "the synchronous form never attests")
+    }
+
+    func testWithoutAHeldTokenTheSynchronousFormStartsAnAttestationAndSendsNothing() async throws {
+        let source = WebSocketTokenSource(held: nil, fetched: "t2")
+        let base = RecordingBase()
+
+        XCTAssertThrowsError(try tokenSession(source, base: base).webSocketTask(with: url))
+        XCTAssertNil(base.lastRequest?.value(forHTTPHeaderField: "PinVault-Token"))
+        for _ in 0..<100 where source.asked == 0 { try await Task.sleep(nanoseconds: 10_000_000) }
+        XCTAssertEqual(source.asked, 1, "a background attestation is started for the next socket")
+    }
+
+    func testTheAsyncFormAttestsFirstAndSendsTheToken() async throws {
+        let source = WebSocketTokenSource(held: nil, fetched: "t2", proofs: true)
+        let base = RecordingBase()
+
+        do {
+            _ = try await tokenSession(source, base: base).makeWebSocketTask(with: url)
+            XCTFail("the recording base throws")
+        } catch {}
+        let sent = try XCTUnwrap(base.lastRequest)
+        XCTAssertEqual(sent.value(forHTTPHeaderField: "PinVault-Token"), "t2")
+        XCTAssertEqual(sent.value(forHTTPHeaderField: "PinVault-Proof"), "proof-t2")
+        XCTAssertEqual(source.asked, 1)
+    }
+
+    func testTheAsyncFormWaitsForTheTokenOnlySoLong() async throws {
+        let source = WebSocketTokenSource(held: nil, fetched: "late", delayNanos: 3_000_000_000)
+        let base = RecordingBase()
+        var interceptor = AttestationTokenInterceptor { [source] }
+        interceptor.webSocketWaitNanos = 100_000_000
+        let session = PinnedSession(interceptors: [interceptor], transport: base)
+
+        let started = Date()
+        _ = try? await session.makeWebSocketTask(with: url)
+        XCTAssertLessThan(Date().timeIntervalSince(started), 2, "the socket did not wait for the slow attestation")
+        XCTAssertNil(base.lastRequest?.value(forHTTPHeaderField: "PinVault-Token"))
+        XCTAssertEqual(source.asked, 1)
+    }
+
+    func testACleartextSocketOrAnUncoveredHostGetsNoToken() async throws {
+        let base = RecordingBase()
+        let source = WebSocketTokenSource(held: "t1", fetched: "t1")
+        _ = try? await tokenSession(source, base: base).makeWebSocketTask(with: URL(string: "ws://api.example.com/socket")!)
+        XCTAssertNil(base.lastRequest?.value(forHTTPHeaderField: "PinVault-Token"), "never over cleartext")
+
+        let other = WebSocketTokenSource(held: "t1", fetched: "t1", handles: false)
+        _ = try? await tokenSession(other, base: base).makeWebSocketTask(with: url)
+        XCTAssertNil(base.lastRequest?.value(forHTTPHeaderField: "PinVault-Token"))
+        XCTAssertEqual(source.asked + other.asked, 0)
+    }
+}
+
+/// A token source for the upgrade-request tests.
+private final class WebSocketTokenSource: AttestationTokenSource, @unchecked Sendable {
+    private let held: String?
+    private let fetched: String?
+    private let handles: Bool
+    private let proofs: Bool
+    private let delayNanos: UInt64
+    private let askedCount = Locked(0)
+    private let proofLog = Locked<[String]>([])
+
+    init(held: String?, fetched: String? = nil, proofs: Bool = false, handles: Bool = true, delayNanos: UInt64 = 0) {
+        self.delayNanos = delayNanos
+        self.held = held
+        self.fetched = fetched
+        self.proofs = proofs
+        self.handles = handles
+    }
+
+    var asked: Int { askedCount.withLock { $0 } }
+    var proofFor: [String] { proofLog.withLock { $0 } }
+
+    func handlesHost(_ host: String, port: Int) -> Bool { handles }
+    func heldToken(host: String, port: Int) -> String? { held }
+
+    func token(host: String, port: Int, forceRefresh: Bool) async -> String? {
+        askedCount.withLock { $0 += 1 }
+        if delayNanos > 0 { try? await Task.sleep(nanoseconds: delayNanos) }
+        return fetched
+    }
+
+    func proof(method: String, url: URL, token: String) -> String? {
+        guard proofs else { return nil }
+        proofLog.withLock { $0.append("\(method) \(url.absoluteString)") }
+        return "proof-\(token)"
+    }
 }
 
 /// A transport that keeps the protocol's default `webSocketTask` (refuses).
@@ -76,8 +184,10 @@ private struct NoWebSocketTransport: PinnedTransport {
 /// A base that records the WebSocket call and throws a distinctive error.
 private final class RecordingBase: PinnedTransport {
     private let called = Locked(false)
+    private let request = Locked<URLRequest?>(nil)
 
     var webSocketCalled: Bool { called.withLock { $0 } }
+    var lastRequest: URLRequest? { request.withLock { $0 } }
 
     func send(_ exchange: PinnedExchange) async throws -> PinnedResponse {
         throw PinVaultError.illegalState("unused")
@@ -85,6 +195,7 @@ private final class RecordingBase: PinnedTransport {
 
     func webSocketTask(for request: URLRequest) throws -> URLSessionWebSocketTask {
         called.withLock { $0 = true }
+        self.request.withLock { $0 = request }
         throw PinVaultError.illegalArgument("boom")
     }
 

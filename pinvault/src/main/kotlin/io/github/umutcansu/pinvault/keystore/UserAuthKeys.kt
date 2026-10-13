@@ -136,7 +136,9 @@ internal class KeystoreUserAuthKeys(
 
     override fun state(): UserAuthKeys.State {
         val keyStore = keyStore()
-        if (!keyStore.containsAlias(ALIAS)) return UserAuthKeys.State.MISSING
+        // Throws when the Keystore cannot say: copies are not given up and
+        // the key is not replaced over a read that failed for a moment.
+        if (!KeystoreAliases.exists(keyStore, ALIAS, "user-auth key")) return UserAuthKeys.State.MISSING
         return try {
             val key = keyStore.getKey(ALIAS, null) as? PrivateKey ?: return UserAuthKeys.State.MISSING
             Cipher.getInstance(UserAuthKeys.RSA_TRANSFORMATION).init(Cipher.DECRYPT_MODE, key, UserAuthKeys.OAEP)
@@ -213,7 +215,7 @@ internal class KeystoreUserAuthKeys(
 
     override fun delete() {
         try {
-            keyStore().takeIf { it.containsAlias(ALIAS) }?.deleteEntry(ALIAS)
+            KeystoreAliases.deleteUnlessAbsent(keyStore(), ALIAS)
         } catch (e: Exception) {
             Timber.w(e, "Could not delete the user-auth key")
         }

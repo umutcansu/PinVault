@@ -244,7 +244,63 @@ final class ClientCertRenewer: Sendable {
         maxLifetimeDays: Int = ConfigApiBlock.defaultMaxClientCertLifetimeDays,
         nowMs: Int64 = LibraryClock.wallMillis()
     ) throws -> [X509Certificate] {
-        let certs = try Pkcs10Csr.parsePemChain(pemChain)
+        try acceptIssuedCertificates(
+            try Pkcs10Csr.parsePemChain(pemChain), spki: try SPKI.der(for: key.publicKey()),
+            expectedIssuer: expectedIssuer, caPins: caPins, maxLifetimeDays: maxLifetimeDays, nowMs: nowMs
+        )
+    }
+
+    /// The chain of a PKCS12 answer (`allowServerGeneratedKey()`: the server
+    /// made the key) under the same rules as
+    /// ``acceptIssuedChain(_:key:expectedIssuer:caPins:maxLifetimeDays:nowMs:)``:
+    /// the leaf must be over the PKCS12's own private key — proved by a
+    /// signature, since the key is not this device's — and come with its
+    /// issuer, within the block's lifetime cap and `clientCaPins`.
+    static func acceptIssuedP12(
+        _ identity: ClientIdentity,
+        caPins: [String] = [],
+        maxLifetimeDays: Int = ConfigApiBlock.defaultMaxClientCertLifetimeDays,
+        nowMs: Int64 = LibraryClock.wallMillis()
+    ) throws -> [X509Certificate] {
+        let certs = try identity.chain.map { try X509Certificate(certificate: $0) }
+        guard let leaf = certs.first, let leafSec = identity.chain.first else {
+            throw PinVaultError.security(message: "The PKCS12 key entry has no certificate")
+        }
+        var privateKey: SecKey?
+        guard SecIdentityCopyPrivateKey(identity.identity, &privateKey) == errSecSuccess, let privateKey,
+              let publicKey = SecCertificateCopyKey(leafSec), keyMatches(privateKey, publicKey) else {
+            throw PinVaultError.security(message: "The PKCS12 certificate is not over the PKCS12's own key")
+        }
+        return try acceptIssuedCertificates(
+            certs, spki: leaf.subjectPublicKeyInfo, expectedIssuer: nil,
+            caPins: caPins, maxLifetimeDays: maxLifetimeDays, nowMs: nowMs
+        )
+    }
+
+    /// True when `privateKey` signs what `publicKey` verifies.
+    private static func keyMatches(_ privateKey: SecKey, _ publicKey: SecKey) -> Bool {
+        let type = (SecKeyCopyAttributes(publicKey) as? [CFString: Any])?[kSecAttrKeyType] as? String
+        let algorithm: SecKeyAlgorithm
+        if type == kSecAttrKeyTypeRSA as String {
+            algorithm = .rsaSignatureMessagePKCS1v15SHA256
+        } else if type == kSecAttrKeyTypeECSECPrimeRandom as String {
+            algorithm = .ecdsaSignatureMessageX962SHA256
+        } else {
+            return false
+        }
+        let probe = Data("pinvault-p12-key-check".utf8) as CFData
+        guard let signature = SecKeyCreateSignature(privateKey, algorithm, probe, nil) else { return false }
+        return SecKeyVerifySignature(publicKey, algorithm, probe, signature, nil)
+    }
+
+    private static func acceptIssuedCertificates(
+        _ certs: [X509Certificate],
+        spki: Data,
+        expectedIssuer: X509Certificate?,
+        caPins: [String],
+        maxLifetimeDays: Int,
+        nowMs: Int64
+    ) throws -> [X509Certificate] {
         if certs.count < 2 {
             throw PinVaultError.security(
                 message: "Issued chain has \(certs.count) certificate(s): the leaf must come with the CA certificate that signed it"
@@ -252,7 +308,7 @@ final class ClientCertRenewer: Sendable {
         }
         let leaf = certs[0]
         try checkValidity(leaf, nowMs: nowMs)
-        if leaf.subjectPublicKeyInfo != (try SPKI.der(for: key.publicKey())) {
+        if leaf.subjectPublicKeyInfo != spki {
             throw PinVaultError.security(message: "Issued certificate is not over this device's key")
         }
         if leaf.subject.rfc2253.trimmingCharacters(in: .whitespaces).isEmpty {

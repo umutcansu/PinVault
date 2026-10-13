@@ -94,7 +94,8 @@ class AttestationManagerTest {
         api: DefaultCertificateConfigApi? = this.api,
         liveConfig: () -> CertificateConfig? = { null },
         deviceId: String? = "device-07",
-        clock: () -> Long = { now }
+        clock: () -> Long = { now },
+        onDemandWaitMs: Long = AttestationManager.ON_DEMAND_WAIT_MS
     ) = AttestationManager(
         block = block,
         api = api,
@@ -109,7 +110,8 @@ class AttestationManagerTest {
         onEvent = { events += it },
         clock = clock,
         jitter = { 0.5 },
-        freshKeys = { freshKeys }
+        freshKeys = { freshKeys },
+        onDemandWaitMs = onDemandWaitMs
     )
 
     /** The fresh attestation keys (§3.1): records each challenge, answers a two-certificate "chain". */
@@ -568,5 +570,24 @@ class AttestationManagerTest {
         clock += AttestationManager.FRESH_MIN_GAP_MS
         m.attestNow()
         assertEquals(2, freshChallenges.size)
+    }
+
+    @Test
+    fun `a request waits for an on-demand attestation only so long, and the attestation carries on`() {
+        server.enqueue(challenge().setHeadersDelay(1500, java.util.concurrent.TimeUnit.MILLISECONDS))
+        server.enqueue(pass())
+        val m = manager(onDemandWaitMs = 200)
+
+        val started = System.nanoTime()
+        assertNull("no token yet: the request goes without", m.token("api.example.com", 443, forceRefresh = false))
+        val waitedMs = (System.nanoTime() - started) / 1_000_000
+        assertTrue("waited $waitedMs ms", waitedMs < 1_200)
+
+        // The attestation was not cancelled by the request's wait: the next request has the token.
+        val deadline = System.currentTimeMillis() + 10_000
+        while (m.status.result != AttestationResult.PASS && System.currentTimeMillis() < deadline) Thread.sleep(50)
+        assertEquals(AttestationResult.PASS, m.status.result)
+        assertEquals("eyJ.token.1", m.token("api.example.com", 443, forceRefresh = false))
+        assertEquals("one attestation (challenge + attest)", 2, server.requestCount)
     }
 }

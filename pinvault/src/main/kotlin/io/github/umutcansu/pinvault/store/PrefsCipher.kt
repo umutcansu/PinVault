@@ -110,7 +110,7 @@ internal class KeystorePrefsCipher private constructor(
         private fun checked(what: String, alias: String, key: SecretKey, keyStore: KeyStore) {
             KeystoreOptions.checkLevel(
                 what, io.github.umutcansu.pinvault.keystore.KeyInspector.securityLevel(key),
-                cleanUp = { if (keyStore.containsAlias(alias)) keyStore.deleteEntry(alias) }
+                cleanUp = { io.github.umutcansu.pinvault.keystore.KeystoreAliases.deleteUnlessAbsent(keyStore, alias) }
             )
         }
 

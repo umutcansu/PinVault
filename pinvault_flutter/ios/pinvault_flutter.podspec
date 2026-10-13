@@ -16,9 +16,10 @@ Pod::Spec.new do |s|
   # brings it from the PinVault git tag. With CocoaPods, PinVault is the pod of
   # the repository root's PinVault.podspec; it is not on CocoaPods trunk, so
   # the app's Podfile names it:
-  #   pod 'PinVault', :git => 'https://github.com/umutcansu/PinVault.git', :tag => 'v2.5.0'
+  #   pod 'PinVault', :git => 'https://github.com/umutcansu/PinVault.git', :tag => 'v2.5.1'
   # (or `:path => '<checkout>'` for a local checkout, as the example does).
-  s.dependency 'PinVault'
+  # 2.5.1: PinnedSession.makeWebSocketTask(for:), which the pinned WebSocket calls.
+  s.dependency 'PinVault', '>= 2.5.1'
 
   # Flutter.framework does not contain a i386 slice.
   s.pod_target_xcconfig = { 'DEFINES_MODULE' => 'YES', 'EXCLUDED_ARCHS[sdk=iphonesimulator*]' => 'i386' }

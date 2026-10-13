@@ -41,7 +41,9 @@ import io.ktor.util.AttributeKey
  * `WWW-Authenticate: PinVault-Token error="invalid_token", error_description="…"`
  * and `{"error":"invalid_token","reason":"missing|malformed|unknown_kid|signature|issuer|expired|audience|annotations|device_mismatch|cert_binding|proof_…"}`
  * — the shape the library's interceptor recognises to re-attest once and
- * retry. `/health` (and [PinVaultTokenAuthConfig.skipPaths]) stays open.
+ * retry — except a proof refused for load (`proof_busy`, `proof_quota`):
+ * `429 {"error":"rate_limited","reason":…}` with `Retry-After`, which a
+ * device does not answer by attesting again. `/health` (and [PinVaultTokenAuthConfig.skipPaths]) stays open.
  *
  * The mock TLS/mTLS hosts install it with `MOCK_HOST_REQUIRE_TOKEN=true`.
  * Nothing here calls the PinVault server: the keys are loaded, the token is
@@ -207,13 +209,20 @@ val PinVaultTokenAuth = createApplicationPlugin(name = "PinVaultTokenAuth", ::Pi
                         call.request.header(PinVaultProof.HEADER), call.request.httpMethod.value, requestUrl(call, publicOrigin),
                         token, result.claims.keyThumbprint, replay, clock(), proofWindow
                     )
+                    if (proof is PinVaultProof.Result.Invalid && proof.reason in PinVaultProof.THROTTLED) {
+                        // Not the token's fault: a 401 would make the device attest again (with the
+                        // same key, so still over its share). A 429 says wait.
+                        call.response.header(HttpHeaders.RetryAfter, (if (proof.reason == "proof_quota") proofWindow else 1L).toString())
+                        return@onCall call.respondText(
+                            """{"error":"rate_limited","reason":"${proof.reason}"}""", ContentType.Application.Json, HttpStatusCode.TooManyRequests
+                        )
+                    }
                     if (proof is PinVaultProof.Result.Invalid) {
                         return@onCall call.refuseToken(proof.reason, when (proof.reason) {
                             "proof_missing" -> "Send a PinVault-Proof header with the token."
                             "proof_key" -> "The proof is not signed by the key the token was issued to."
                             "proof_time" -> "The proof's iat is too far from now."
                             "proof_replay" -> "This proof was already used."
-                            "proof_busy" -> "Too many proofs in flight; try again."
                             else -> "The PinVault-Proof does not match this request."
                         })
                     }

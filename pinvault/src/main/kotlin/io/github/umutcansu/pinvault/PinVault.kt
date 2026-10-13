@@ -235,7 +235,6 @@ object PinVault {
     suspend fun init(context: Context, config: PinVaultConfig): InitResult {
         initRefusal(config)?.let { return it }
         releaseRefusal(context, config)?.let { return InitResult.Failed(it.message ?: "", it) }
-        pinManagerConfig = config
         return when (val setUp = setupSafely(context, config, null)) {
             is SetUp.Failed -> setUp.result
             SetUp.AlreadyInitialized -> InitResult.Ready(clientProvider.getVersion())
@@ -249,7 +248,6 @@ object PinVault {
     fun init(context: Context, config: PinVaultConfig, onResult: (InitResult) -> Unit) {
         initRefusal(config)?.let { return onResult(it) }
         releaseRefusal(context, config)?.let { return onResult(InitResult.Failed(it.message ?: "", it)) }
-        pinManagerConfig = config
         when (val setUp = setupSafely(context, config, null)) {
             is SetUp.Failed -> return onResult(setUp.result)
             SetUp.AlreadyInitialized -> return onResult(InitResult.Ready(clientProvider.getVersion()))
@@ -283,7 +281,6 @@ object PinVault {
     suspend fun init(context: Context, config: PinVaultConfig, configApi: CertificateConfigApi): InitResult {
         initRefusal(config)?.let { return it }
         releaseRefusal(context, config)?.let { return InitResult.Failed(it.message ?: "", it) }
-        pinManagerConfig = config
         return when (val setUp = setupSafely(context, config, configApi)) {
             is SetUp.Failed -> setUp.result
             SetUp.AlreadyInitialized -> InitResult.Ready(clientProvider.getVersion())
@@ -295,7 +292,6 @@ object PinVault {
     fun init(context: Context, config: PinVaultConfig, configApi: CertificateConfigApi, onResult: (InitResult) -> Unit) {
         initRefusal(config)?.let { return onResult(it) }
         releaseRefusal(context, config)?.let { return onResult(InitResult.Failed(it.message ?: "", it)) }
-        pinManagerConfig = config
         when (val setUp = setupSafely(context, config, configApi)) {
             is SetUp.Failed -> return onResult(setUp.result)
             SetUp.AlreadyInitialized -> return onResult(InitResult.Ready(clientProvider.getVersion()))
@@ -390,7 +386,6 @@ object PinVault {
      * then; call `init` again.
      */
     private fun setupSafely(context: Context, config: PinVaultConfig, configApi: CertificateConfigApi?): SetUp = try {
-        applyKeystoreOptions(config)
         if (setup(context, config, configApi) == null) SetUp.AlreadyInitialized else SetUp.Done
     } catch (e: Exception) {
         Timber.e(e, "PinVault setup failed")
@@ -422,7 +417,12 @@ object PinVault {
      */
     fun identityKeySecurityLevel(label: String? = null): io.github.umutcansu.pinvault.model.KeySecurityLevel? {
         val key = identityKeyFactory(label ?: defaultCertLabel())
-        return if (key.exists()) key.securityLevel() else null
+        return try {
+            if (key.exists()) key.securityLevel() else null
+        } catch (e: Exception) {
+            Timber.w(e, "Could not read the identity key for its security level")
+            io.github.umutcansu.pinvault.model.KeySecurityLevel.UNKNOWN
+        }
     }
 
     /**
@@ -456,9 +456,14 @@ object PinVault {
     ): Unit? {
         synchronized(this) {
             if (initialized) {
+                // A second init's config is not applied, in part or whole: the
+                // running setup keeps its config and its Keystore options.
                 Timber.w("PinVault already initialized — skipping")
                 return null
             }
+            pinManagerConfig = config
+            // Before anything opens a store: its keys are generated under these options.
+            applyKeystoreOptions(config)
 
             appContext = context.applicationContext
 
@@ -581,7 +586,14 @@ object PinVault {
                 it.encryption == io.github.umutcansu.pinvault.model.VaultFileEncryption.END_TO_END
             }
             deviceKeyProvider = if (needsE2E) {
-                DeviceKeyProvider.androidKeystore(appContext).also { it.ensureKeyPair() }
+                DeviceKeyProvider.androidKeystore(appContext).also {
+                    try {
+                        it.ensureKeyPair()
+                    } catch (e: io.github.umutcansu.pinvault.keystore.KeystoreUnreadableException) {
+                        // Made (or found) on the first end_to_end fetch instead.
+                        Timber.w(e, "Device RSA key cannot be checked right now — trying again at the first end_to_end fetch")
+                    }
+                }
             } else null
 
             vaultRouter = VaultFileRouter(
@@ -1146,7 +1158,8 @@ object PinVault {
      */
     @JvmName("isEnrolledWithConfig")
     fun isEnrolled(context: Context, config: PinVaultConfig): Boolean {
-        applyKeystoreOptions(config)
+        // Before init only: a running setup keeps its own options.
+        if (!initialized) applyKeystoreOptions(config)
         return ClientCertSecureStore(context.applicationContext)
             .exists(config.defaultConfigApi?.clientCertLabel ?: ClientCertSecureStore.DEFAULT_LABEL)
     }
@@ -1191,7 +1204,8 @@ object PinVault {
      */
     @JvmName("isEnrollmentPendingWithConfig")
     fun isEnrollmentPending(context: Context, config: PinVaultConfig): Boolean {
-        applyKeystoreOptions(config)
+        // Before init only: a running setup keeps its own options.
+        if (!initialized) applyKeystoreOptions(config)
         return isEnrollmentPending(context, config.defaultConfigApi?.clientCertLabel ?: ClientCertSecureStore.DEFAULT_LABEL)
     }
 
@@ -1401,25 +1415,7 @@ object PinVault {
             allowServerGeneratedKey = block.allowServerGeneratedKey,
             integrity = config.integrityTokenProvider
         ) {
-            try {
-                key.ensureKeyPair(challenge)
-                io.github.umutcansu.pinvault.crypto.Pkcs10Csr.encode(
-                    deviceId ?: identity?.second ?: "device", key.publicKey(), key::sign
-                )
-            } catch (e: Exception) {
-                // Some ROMs' Keystores refuse. Only a block that asked for it
-                // falls back to a key the server makes.
-                if (!block.allowServerGeneratedKey) {
-                    throw IllegalStateException(
-                        "This device could not create its key in the Android Keystore (${e.javaClass.simpleName}: ${e.message}), " +
-                            "and the Config API block does not accept a key the server generates. Nothing was sent; the " +
-                            "token is not spent. Call allowServerGeneratedKey() on the block only if such a key is acceptable.",
-                        e
-                    )
-                }
-                Timber.w(e, "Could not build a CSR — asking the server for a key (allowServerGeneratedKey)")
-                null
-            }
+            enrollmentCsr(key, challenge, deviceId ?: identity?.second ?: "device", block.allowServerGeneratedKey)
         }
 
         val chain = result.certificateChainPem
@@ -1433,7 +1429,7 @@ object PinVault {
         }
 
         // Only reached with allowServerGeneratedKey(): the server made the key.
-        val p12 = acceptEnrolledP12(result, block.clientKeyPassword)
+        val p12 = acceptEnrolledP12(result, block.clientKeyPassword, block)
         // No orphan identity key next to a server-made one — unless a chain
         // under this label is over it (never deleted then; see EnrollmentRequests).
         if (io.github.umutcansu.pinvault.internal.EnrollmentRequests.mayDeleteKey(certStore, certLabel)) runCatching { key.clear() }
@@ -1452,6 +1448,69 @@ object PinVault {
         certStore.save(certLabel, p12)
         Timber.w("Enrollment successful — the Keystore refused the server-made key; stored as a PKCS12 (%d bytes)", p12.size)
         return Enrolled.P12(p12)
+    }
+
+    /**
+     * The CSR of an enrollment over [key] (made now when there is none), or
+     * null when the key could not be MADE and [allowServerGeneratedKey] lets
+     * the server make one. A key that was already there and failed — or a
+     * Keystore that cannot say — is never given up for a server-made one:
+     * that throws, and nothing is sent.
+     */
+    internal fun enrollmentCsr(
+        key: io.github.umutcansu.pinvault.keystore.ClientIdentityKeyProvider,
+        challenge: ByteArray?,
+        subject: String,
+        allowServerGeneratedKey: Boolean
+    ): ByteArray? {
+        // Whether a key was there before this attempt: only a key that could
+        // not be MADE may give way to one the server makes; a key that is
+        // there but failed for a moment is never replaced.
+        val keyExisted = try {
+            key.exists()
+        } catch (e: Exception) {
+            // Cannot tell (the Keystore did not even open): it may be there, so
+            // nothing is made, nothing deleted, nothing sent.
+            throw IllegalStateException(
+                "The Android Keystore cannot be read right now; nothing was sent and the token is not spent. Try again.", e
+            )
+        }
+        return try {
+            key.ensureKeyPair(challenge)
+            io.github.umutcansu.pinvault.crypto.Pkcs10Csr.encode(
+                subject, key.publicKey(), key::sign
+            )
+        } catch (e: io.github.umutcansu.pinvault.keystore.KeystoreUnreadableException) {
+            // The Keystore could not say whether the key exists: not a ROM
+            // that cannot make keys. Nothing is sent, nothing replaced.
+            throw IllegalStateException(
+                "The Android Keystore cannot be read right now; nothing was sent and the token is not spent. Try again.", e
+            )
+        } catch (e: Exception) {
+            if (keyExisted) {
+                throw IllegalStateException(
+                    "This device's key in the Android Keystore could not be used right now (${e.javaClass.simpleName}: " +
+                        "${e.message}); nothing was sent and the token is not spent. Try again.", e
+                )
+            }
+            // A key this attempt made (and could not use) goes, whichever way
+            // this ends: kept, it would count as "a key that was there" at the
+            // next attempt and block the fallback for good, also after the app
+            // adds allowServerGeneratedKey(). Nothing was ever sent over it.
+            runCatching { key.clear() }
+            // Some ROMs' Keystores refuse. Only a block that asked for it
+            // falls back to a key the server makes.
+            if (!allowServerGeneratedKey) {
+                throw IllegalStateException(
+                    "This device could not create its key in the Android Keystore (${e.javaClass.simpleName}: ${e.message}), " +
+                        "and the Config API block does not accept a key the server generates. Nothing was sent; the " +
+                        "token is not spent. Call allowServerGeneratedKey() on the block only if such a key is acceptable.",
+                    e
+                )
+            }
+            Timber.w(e, "Could not build a CSR — asking the server for a key (allowServerGeneratedKey)")
+            null
+        }
     }
 
     // ── Client certificate renewal ──────────────────────────────────────
@@ -2184,9 +2243,20 @@ object PinVault {
      * (`X-P12-Password`) is used here once and never stored; without one the
      * bundle must already open with [localPassword], as before.
      */
-    private fun acceptEnrolledP12(result: io.github.umutcansu.pinvault.model.EnrollmentResult, localPassword: String): ByteArray {
+    private fun acceptEnrolledP12(
+        result: io.github.umutcansu.pinvault.model.EnrollmentResult,
+        localPassword: String,
+        block: ConfigApiBlock
+    ): ByteArray {
         val oneOff = result.p12Password
-        validateP12(result.p12Bytes, result.p12Hash, oneOff ?: localPassword)
+        val password = (oneOff ?: localPassword).toCharArray()
+        val ks = validateP12(result.p12Bytes, result.p12Hash, oneOff ?: localPassword)
+        // The chain rules of a CSR answer: issuer sent along, lifetime cap, clientCaPins.
+        val certs = io.github.umutcansu.pinvault.internal.ClientCertRenewer.acceptIssuedP12(
+            ks, password, caPins = block.clientCaPins, maxLifetimeDays = block.maxClientCertLifetimeDays
+        )
+        password.fill('\u0000')
+        Timber.d("Enrolled PKCS12 chain accepted — valid until %s", certs[0].notAfter)
         return if (oneOff != null) io.github.umutcansu.pinvault.internal.P12Rewrap.rewrap(result.p12Bytes, oneOff, localPassword)
         else result.p12Bytes
     }
@@ -2196,7 +2266,7 @@ object PinVault {
      * format. The hash header is mandatory — a MITM that drops the header
      * could otherwise inject a P12 with an attacker-controlled cert (H-05).
      */
-    private fun validateP12(p12Bytes: ByteArray, serverHash: String?, password: String) {
+    private fun validateP12(p12Bytes: ByteArray, serverHash: String?, password: String): java.security.KeyStore {
         // 1. Hash verification — server MUST provide X-P12-SHA256 header.
         if (serverHash.isNullOrBlank()) {
             throw SecurityException(
@@ -2230,6 +2300,7 @@ object PinVault {
             throw SecurityException("P12 keystore contains no entries — invalid certificate")
         }
         Timber.d("P12 format validated — %d entries", aliases.size)
+        return ks
     }
 
     /**

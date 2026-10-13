@@ -158,7 +158,8 @@ names), enum values are the Kotlin constant names (`'TOKEN_MTLS'`,
                  serverScope, clientCaPins, clientCertHosts, renewalUrl, attestation, tokenHosts, proofOfPossession, … }],
   vaultFiles: [{ key, endpoint, configApi, accessPolicy, encryption, userAuth, storage,
                  maxOfflineAge: { amount: 7, unit: 'DAYS' }, … }],
-  requireCaTrust, requireUnlockedDevice, requireHardwareBackedKeys, expectedSignerSha256,
+  requireCaTrust, requireUnlockedDevice, requireHardwareBackedKeys,
+  expectedSignerSha256,                                  // Android only; iOS: ios.expectedBundleIds / expectedTeamIds
   wipeVaultFilesOnRevocation, vaultFileMaxOfflineAge, updateIntervalMinutes, deviceAlias, …
   environmentGuard: async (operation) => boolean,       // JS, see below
   requirePinnedReactNativeNetworking,                    // see Networking
@@ -380,7 +381,11 @@ signer check of attestation (`expectedSignerSha256`, `expectedTeamIds`) reports.
   passed. SocketRocket judges the trust before it writes the upgrade request,
   so a refused chain sends no header or cookie. Subprotocols are kept
   (`RCTSetCustomSRWebSocketProvider` is not used: its block never sees them).
-  `start` checks the hook is still the initializer's implementation. A
+  `start` checks the hook is still the initializer's implementation. A `wss`
+  socket to a token host of an attesting block carries `PinVault-Token` (and
+  `PinVault-Proof` with `proofOfPossession()`) when a token is held, as on
+  Android; without one it goes without and an attestation starts, so a
+  reconnect has it. A
   WebSocket to a host that requires a client certificate fails on iOS (no
   identity is presented); use it over TLS, or Android.
   Opt out natively with the Info.plist key `PinVaultPinReactNativeNetworking`
@@ -463,7 +468,9 @@ as one more signal. The decisive check is server-side attestation
 - **CODE** — TypeScript strict; the plugin logs only in development builds
   (`__DEV__`); R8 rules ship in `android/consumer-rules.pro`.
 - **RESILIENCE** — `requireHardwareBackedKeys`, `requireUnlockedDevice` and
-  `expectedSignerSha256` are config keys; turn them on in release builds.
+  `expectedSignerSha256` (Android) / `ios.expectedBundleIds` + `ios.expectedTeamIds`
+  (iOS) are config keys; turn them on in release builds. Setting only
+  `expectedSignerSha256` leaves iOS without an app-identity check.
 
 ## Privacy: what leaves the device
 

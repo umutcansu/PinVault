@@ -111,10 +111,34 @@ static id PolicyFor(NSURL *url)
   return policy;
 }
 
+// The upgrade request with the attestation headers of a wss socket to a token
+// host (SocketRocket sends the request's header fields in the upgrade). Only
+// the library sets them: the app's own PinVault-Token / PinVault-Proof are
+// dropped, as `fetch` refuses them.
+static NSURLRequest *WithAttestationHeaders(NSURLRequest *request)
+{
+  BOOL callerSet = [request valueForHTTPHeaderField:@"PinVault-Token"] != nil ||
+                   [request valueForHTTPHeaderField:@"PinVault-Proof"] != nil;
+  NSDictionary<NSString *, NSString *> *headers = [request.URL.scheme.lowercaseString isEqualToString:@"wss"]
+      ? [RNPinVaultReactNetworking webSocketUpgradeHeaders:request.URL]
+      : @{};
+  if (headers.count == 0 && !callerSet) {
+    return request;
+  }
+  NSMutableURLRequest *copy = [request mutableCopy];
+  [copy setValue:nil forHTTPHeaderField:@"PinVault-Token"];
+  [copy setValue:nil forHTTPHeaderField:@"PinVault-Proof"];
+  [headers enumerateKeysAndObjectsUsingBlock:^(NSString *name, NSString *value, BOOL *stop) {
+    [copy setValue:value forHTTPHeaderField:name];
+  }];
+  return copy;
+}
+
 static id PinnedInit(id self, SEL _cmd, NSURLRequest *request, NSArray *protocols, id securityPolicy)
 {
   if (RequiresTLS(request.URL)) {
     securityPolicy = PolicyFor(request.URL);
+    request = WithAttestationHeaders(request);
   }
   return gOriginalInit(self, _cmd, request, protocols, securityPolicy);
 }

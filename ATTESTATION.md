@@ -558,7 +558,9 @@ payload { "jti": "<16 random bytes, base64url>", "htm": "GET",
   request on the wire gets its own proof: a redirect the HTTP client follows
   on the same endpoint and a retry after a failed connection are signed
   again; a redirect to another host, port or scheme loses the token and the
-  proof (both libraries).
+  proof (both libraries). A `wss://` WebSocket's upgrade request carries the
+  token and a proof with `htm` `GET` and `htu` the socket's URL as `https://`
+  (Android through OkHttp; iOS from 2.5.1, React Native and Flutter included).
 - A backend verifies, after the token: the signature with `jwk`; the
   thumbprint of `jwk` equals `cnf.jkt` (a token without `cnf.jkt` cannot be
   proven); `htm` and `htu` are this request's; `iat` within 60 s of now;
@@ -573,8 +575,12 @@ payload { "jti": "<16 random bytes, base64url>", "htm": "GET",
   the sample host's production profile). Behind a proxy that changes the
   scheme, host or port, set `publicOrigin` to what the clients use
   (`https://api.example.com`); otherwise the `Host` header is the origin.
-  The spent `jti`s are kept in memory per backend instance (bounded; full
-  → `proof_busy`): a fleet behind a load balancer without sticky sessions
+  The spent `jti`s are kept in memory per backend instance (bounded, and one
+  device key holds at most `proofReplay`'s per-key limit,
+  `PINVAULT_PROOF_PER_KEY_LIMIT` on the mock hosts, default 600, so one
+  device cannot fill it for all; past either the answer is `429
+  rate_limited` with reason `proof_busy` / `proof_quota` and `Retry-After`,
+  not a `401` that would make the device attest again): a fleet behind a load balancer without sticky sessions
   shares them in its own store, or accepts that a proof can be replayed once
   on each instance within 60 s.
 - What it changes: a token lifted from the device (log, memory dump, a

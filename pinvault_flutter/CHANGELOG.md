@@ -1,5 +1,17 @@
 # Changelog
 
+## Unreleased (2.5.1)
+
+- **iOS: `PinVaultWebSocket` carries the attestation token.** The upgrade to
+  a token host sends `PinVault-Token` (and `PinVault-Proof` with
+  `proofOfPossession()`), attesting first when none is held, as on Android.
+  Frames sent before the socket is open are queued. Needs PinVault 2.5.1
+  (`Package.swift` / the `PinVault` pod).
+- **`fetch` and `PinVaultWebSocket.connect` refuse `PinVault-Token` /
+  `PinVault-Proof` headers:** only the library sets them, for its token hosts.
+- **Docs:** `expectedSignerSha256` is Android only; iOS uses
+  `IosSettings.expectedBundleIds` / `expectedTeamIds`.
+
 ## 2.5.0 — 2026-10-12
 
 First release of `pinvault_flutter`: a typed Dart bridge over the native

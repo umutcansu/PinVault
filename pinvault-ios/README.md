@@ -94,7 +94,7 @@ pinning **and** mTLS (client certificate) — instead of the lower-level
 `evaluateServerTrust` hook, which has no client-certificate path:
 
 ```swift
-let task = try PinVault.shared.session().webSocketTask(
+let task = try await PinVault.shared.session().makeWebSocketTask(
     for: URLRequest(url: URL(string: "wss://api.example.com/ws")!))
 task.resume()
 task.receive { result in /* frames; a clean close leaves task.closeCode != .invalid */ }
@@ -102,7 +102,14 @@ task.send(.string("hello")) { _ in }
 ```
 
 The request's headers (an `Authorization`, a token) and timeout go into the
-upgrade request. Fail closed: before `start` (or after a failed one) the call
+upgrade request. For a token host of an attesting block the upgrade also
+carries `PinVault-Token` (and `PinVault-Proof` with `proofOfPossession()`), as
+OkHttp's `newWebSocket` does on Android: `webSocketTask(for:)` adds a token
+already held (without one it starts an attestation and the socket goes
+without), `try await session.makeWebSocketTask(for:)` attests first when no
+token is held. A socket the library does not open (SocketRocket,
+`NWConnection`) gets the same headers from
+`PinVault.shared.webSocketUpgradeHeaders(for:)`. Fail closed: before `start` (or after a failed one) the call
 throws, and a `resolve(host:to:)` entry for the host refuses the socket: a
 WebSocket task connects to its URL's own host and cannot be pointed elsewhere.
 

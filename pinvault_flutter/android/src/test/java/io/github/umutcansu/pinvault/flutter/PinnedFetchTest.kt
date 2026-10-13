@@ -47,6 +47,8 @@ class PinnedFetchTest {
             """{"url":"https://a/","headers":{"X-A":1}}""" to "must be a string",
             """{"url":"https://a/","headers":{"Bad Name":"x"}}""" to "not a header name",
             """{"url":"https://a/","headers":{"X-A":"a\r\nInjected: 1"}}""" to "line breaks",
+            """{"url":"https://a/","headers":{"PinVault-Token":"t"}}""" to "set by PinVault itself",
+            """{"url":"https://a/","headers":{"pinvault-proof":"p"}}""" to "set by PinVault itself",
             """{"url":"https://a/","method":"GET","body":"x"}""" to "has no body",
             """{"url":"https://a/","method":"POST","body":"%%%","bodyEncoding":"base64"}""" to "Base64",
             """{"url":"https://a/","maxResponseBytes":999999999999}""" to "maxResponseBytes",

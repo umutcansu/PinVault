@@ -148,12 +148,30 @@ internal class VaultFileRouter(
             val response: VaultFetchResponse = try {
                 download()
             } catch (e: VaultFetchHttpException) {
-                // The server has no (or another) user-auth key for this
-                // device: make sure there is a key, register it, try once more.
-                if (!sealedByServer || e.code != 412 || e.body?.contains(USER_AUTH_KEY_REQUIRED) != true) throw e
-                Timber.w("Vault fetch [%s]: server has no user-auth key for this device — registering and retrying", file.key)
-                ensureUserAuthKeyRegistered(file.configApiId, deviceId, force = true)
-                download()
+                if (!sealedByServer && e.code == 412 && file.encryption == VaultFileEncryption.END_TO_END &&
+                    deviceKeyProvider != null && deviceId.isNotBlank()
+                ) {
+                    // An end_to_end file and the server has no device key on
+                    // file (registration at init failed: no network, a Keystore
+                    // that could not be read then): register it, try once more.
+                    Timber.w("Vault fetch [%s]: server has no device key for this device — registering and retrying", file.key)
+                    deviceKeyProvider.ensureKeyPair()
+                    val pem = deviceKeyProvider.getPublicKeyPem()
+                    val api = client.api
+                    if (api is DefaultCertificateConfigApi) {
+                        api.registerDevicePublicKey(deviceId, pem, keyProof(file.configApiId, files()))
+                    } else {
+                        api.registerDevicePublicKey(deviceId, pem)
+                    }
+                    download()
+                } else {
+                    // The server has no (or another) user-auth key for this
+                    // device: make sure there is a key, register it, try once more.
+                    if (!sealedByServer || e.code != 412 || e.body?.contains(USER_AUTH_KEY_REQUIRED) != true) throw e
+                    Timber.w("Vault fetch [%s]: server has no user-auth key for this device — registering and retrying", file.key)
+                    ensureUserAuthKeyRegistered(file.configApiId, deviceId, force = true)
+                    download()
+                }
             }
 
             if (response.notModified) {

@@ -83,7 +83,12 @@ internal class ClientCertRenewer(
         val label = block.clientCertLabel
         val pemChain = certStore.loadChain(label) ?: return ClientCertRenewalResult.NotApplicable
         val key = identityKeyFactory(label)
-        if (!key.exists()) {
+        val exists = try {
+            key.exists()
+        } catch (e: Exception) {
+            return ClientCertRenewalResult.Failed("The Keystore cannot read the identity key right now", e)
+        }
+        if (!exists) {
             Timber.w("Client cert renewal [%s]: certificate stored but its Keystore key is gone", block.id)
             return ClientCertRenewalResult.NotApplicable
         }
@@ -238,8 +243,68 @@ internal class ClientCertRenewer(
             caPins: List<String> = emptyList(),
             maxLifetimeDays: Int = ConfigApiBlock.DEFAULT_MAX_CLIENT_CERT_LIFETIME_DAYS,
             nowMs: Long = System.currentTimeMillis()
+        ): List<X509Certificate> = acceptIssuedCertificates(
+            Pkcs10Csr.parsePemChain(pemChain), key.publicKey(), expectedIssuer, caPins, maxLifetimeDays, nowMs
+        )
+
+        /**
+         * The chain of a PKCS12 answer (`allowServerGeneratedKey()`: the
+         * server made the key) under the same rules as [acceptIssuedChain]:
+         * the leaf must be over the PKCS12's own private key — proved by a
+         * signature, since the key is not this device's — and come with its
+         * issuer, within the block's lifetime cap and `clientCaPins`.
+         */
+        fun acceptIssuedP12(
+            p12: java.security.KeyStore,
+            password: CharArray,
+            caPins: List<String> = emptyList(),
+            maxLifetimeDays: Int = ConfigApiBlock.DEFAULT_MAX_CLIENT_CERT_LIFETIME_DAYS,
+            nowMs: Long = System.currentTimeMillis()
         ): List<X509Certificate> {
-            val certs = Pkcs10Csr.parsePemChain(pemChain)
+            val alias = p12.aliases().toList().firstOrNull { p12.isKeyEntry(it) }
+                ?: throw SecurityException("The PKCS12 has no private key entry")
+            val privateKey = p12.getKey(alias, password) as? java.security.PrivateKey
+                ?: throw SecurityException("The PKCS12 key entry holds no private key")
+            val certs = p12.getCertificateChain(alias)?.map {
+                it as? X509Certificate ?: throw SecurityException("The PKCS12 chain holds a certificate that is not X.509")
+            } ?: emptyList()
+            val leaf = certs.firstOrNull() ?: throw SecurityException("The PKCS12 key entry has no certificate")
+            if (!keyMatches(privateKey, leaf.publicKey)) {
+                throw SecurityException("The PKCS12 certificate is not over the PKCS12's own key")
+            }
+            return acceptIssuedCertificates(certs, leaf.publicKey, null, caPins, maxLifetimeDays, nowMs)
+        }
+
+        /** True when [privateKey] signs what [publicKey] verifies. */
+        private fun keyMatches(privateKey: java.security.PrivateKey, publicKey: java.security.PublicKey): Boolean {
+            val algorithm = when (privateKey.algorithm.uppercase()) {
+                "RSA" -> "SHA256withRSA"
+                "EC", "ECDSA" -> "SHA256withECDSA"
+                else -> return false
+            }
+            val probe = "pinvault-p12-key-check".toByteArray(Charsets.UTF_8)
+            return runCatching {
+                val signature = java.security.Signature.getInstance(algorithm).run {
+                    initSign(privateKey)
+                    update(probe)
+                    sign()
+                }
+                java.security.Signature.getInstance(algorithm).run {
+                    initVerify(publicKey)
+                    update(probe)
+                    verify(signature)
+                }
+            }.getOrDefault(false)
+        }
+
+        private fun acceptIssuedCertificates(
+            certs: List<X509Certificate>,
+            publicKey: java.security.PublicKey,
+            expectedIssuer: X509Certificate?,
+            caPins: List<String>,
+            maxLifetimeDays: Int,
+            nowMs: Long
+        ): List<X509Certificate> {
             if (certs.size < 2) {
                 throw SecurityException(
                     "Issued chain has ${certs.size} certificate(s): the leaf must come with the CA certificate that signed it"
@@ -247,7 +312,7 @@ internal class ClientCertRenewer(
             }
             val leaf = certs[0]
             leaf.checkValidity()
-            if (!leaf.publicKey.encoded.contentEquals(key.publicKey().encoded)) {
+            if (!leaf.publicKey.encoded.contentEquals(publicKey.encoded)) {
                 throw SecurityException("Issued certificate is not over this device's key")
             }
             if (leaf.subjectX500Principal.name.isBlank()) throw SecurityException("Issued certificate has no subject")

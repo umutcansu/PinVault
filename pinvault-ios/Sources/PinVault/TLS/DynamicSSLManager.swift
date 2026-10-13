@@ -1010,6 +1010,11 @@ final class PinnedSessionDelegate: NSObject, URLSessionDataDelegate, @unchecked 
                 refuse(task, .handshake(.certificate(message: "\(error)", cause: error)), completionHandler)
             }
 
+        case NSURLAuthenticationMethodClientCertificate where space.isProxy():
+            // A TLS proxy asking for a client certificate gets none: the
+            // identity (and the device id it names) is for the origin only.
+            completionHandler(.rejectProtectionSpace, nil)
+
         case NSURLAuthenticationMethodClientCertificate:
             // The unpinned bootstrap client presents none (OkHttp's default socket factory has no key manager).
             guard let provider = context.trust.configProvider,

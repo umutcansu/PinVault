@@ -2,6 +2,7 @@ package io.github.umutcansu.pinvault.internal
 
 import android.util.Base64
 import io.github.umutcansu.pinvault.api.CertificateConfigApi
+import io.github.umutcansu.pinvault.api.VaultFetchHttpException
 import io.github.umutcansu.pinvault.crypto.SignatureTrust
 import io.github.umutcansu.pinvault.model.ConfigApiBlock
 import io.github.umutcansu.pinvault.model.SignatureEntry
@@ -289,6 +290,48 @@ class VaultFileSignatureRouterTest {
         val response = VaultFetchResponse(content = good, version = 1, encryption = "end_to_end", signature = signature)
         assertTrue(routerWith(storage, answering(response), keys = device).fetchFile(e2eFile("m")) is VaultFileResult.Updated)
         assertArrayEquals(content, storage.load("m"))
+    }
+
+    @Test
+    fun `an end_to_end 412 registers the device key and retries once`() = runTest {
+        val content = "model".toByteArray()
+        val device = io.github.umutcansu.pinvault.keystore.DeviceKeyProvider.software("e2e-412-${System.nanoTime()}")
+        val good = io.github.umutcansu.pinvault.store.SoftwareUserAuthKeys.serverEnvelope(content, publicKeyOf(device))
+        val response = VaultFetchResponse(content = good, version = 1, encryption = "end_to_end", signature = sign("m", 1, content, keyPair.private))
+        var downloads = 0
+        val registered = mutableListOf<String>()
+        val api = mockk<CertificateConfigApi>().also {
+            coEvery { it.downloadVaultFileWithMeta(any(), any(), any(), any()) } coAnswers {
+                downloads++
+                if (downloads == 1) throw VaultFetchHttpException(412, """{"error":"No registered public key for device"}""")
+                response
+            }
+            coEvery { it.registerDevicePublicKey(any(), any()) } coAnswers { registered += firstArg<String>() }
+        }
+        val storage = MemStore()
+
+        val result = routerWith(storage, api, keys = device).fetchFile(e2eFile("m"))
+
+        assertTrue("$result", result is VaultFileResult.Updated)
+        assertEquals(listOf("test-device"), registered)
+        assertEquals(2, downloads)
+        assertArrayEquals(content, storage.load("m"))
+    }
+
+    @Test
+    fun `an end_to_end 412 that persists is not retried again`() = runTest {
+        val device = io.github.umutcansu.pinvault.keystore.DeviceKeyProvider.software("e2e-412b-${System.nanoTime()}")
+        var downloads = 0
+        val api = mockk<CertificateConfigApi>().also {
+            coEvery { it.downloadVaultFileWithMeta(any(), any(), any(), any()) } coAnswers {
+                downloads++
+                throw VaultFetchHttpException(412, """{"error":"No registered public key for device"}""")
+            }
+            coEvery { it.registerDevicePublicKey(any(), any()) } returns Unit
+        }
+        val result = routerWith(MemStore(), api, keys = device).fetchFile(e2eFile("m"))
+        assertTrue("$result", result is VaultFileResult.Failed)
+        assertEquals(2, downloads)
     }
 
     @Test

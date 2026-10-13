@@ -65,6 +65,12 @@ public final class PinnedSession: @unchecked Sendable {
     /// this throws. Call `task.resume()`, then `task.send` / `task.receive`;
     /// the task lives as long as this session does.
     ///
+    /// The upgrade request of a `wss://` socket to a token host carries the
+    /// attestation token (and, with `proofOfPossession()`, a proof made for it)
+    /// when one is held. This call does not wait for an attestation: without a
+    /// held token it starts one in the background and the socket goes without
+    /// — use ``makeWebSocketTask(for:)`` to wait for the token first.
+    ///
     /// A `resolve(host:to:)` entry for the host does not apply: the socket would
     /// connect to a different address than the one the delegate pins, so such a
     /// socket is refused (fail closed) rather than silently misrouted.
@@ -75,6 +81,21 @@ public final class PinnedSession: @unchecked Sendable {
     /// ``webSocketTask(for:)`` for a URL.
     public func webSocketTask(with url: URL) throws -> URLSessionWebSocketTask {
         try webSocketTask(for: URLRequest(url: url))
+    }
+
+    /// ``webSocketTask(for:)`` that first gets what the session's request steps
+    /// add to the upgrade request: for a `wss://` socket to a token host, the
+    /// attestation token — attesting once when none with enough life is held
+    /// (bounded by the attestation's single flight and backoff, as for a data
+    /// request) — and its proof. The Android client's `newWebSocket` does the
+    /// same. A WebSocket upgrade is not retried after a `401`.
+    public func makeWebSocketTask(for request: URLRequest) async throws -> URLSessionWebSocketTask {
+        try await transport.preparedWebSocketTask(for: request)
+    }
+
+    /// ``makeWebSocketTask(for:)`` for a URL.
+    public func makeWebSocketTask(with url: URL) async throws -> URLSessionWebSocketTask {
+        try await makeWebSocketTask(for: URLRequest(url: url))
     }
 
     /// Cancels outstanding requests and releases the session; later requests fail.
@@ -148,6 +169,22 @@ protocol PinnedInterceptor: Sendable {
         _ exchange: PinnedExchange,
         proceed: @Sendable (PinnedExchange) async throws -> PinnedResponse
     ) async throws -> PinnedResponse
+
+    /// What this step adds to a WebSocket upgrade request from what it holds
+    /// right now (no network). Default: nothing.
+    func addWebSocketHeaders(_ request: inout URLRequest)
+
+    /// ``addWebSocketHeaders(_:)`` after fetching what is missing (an
+    /// attestation). Default: the synchronous form.
+    func fetchWebSocketHeaders(_ request: inout URLRequest) async
+}
+
+extension PinnedInterceptor {
+    func addWebSocketHeaders(_ request: inout URLRequest) {}
+
+    func fetchWebSocketHeaders(_ request: inout URLRequest) async {
+        addWebSocketHeaders(&request)
+    }
 }
 
 /// What a ``PinnedSession`` delegates to: the URLSession machinery
@@ -155,6 +192,9 @@ protocol PinnedInterceptor: Sendable {
 protocol PinnedTransport: Sendable {
     func send(_ exchange: PinnedExchange) async throws -> PinnedResponse
     func webSocketTask(for request: URLRequest) throws -> URLSessionWebSocketTask
+    /// ``webSocketTask(for:)`` after the chain fetched what its steps add to
+    /// the upgrade request. Default: ``webSocketTask(for:)``.
+    func preparedWebSocketTask(for request: URLRequest) async throws -> URLSessionWebSocketTask
     func invalidate()
 }
 
@@ -168,6 +208,10 @@ extension PinnedTransport {
     /// test doubles) refuse them. ``URLSessionTransport`` overrides this.
     func webSocketTask(for request: URLRequest) throws -> URLSessionWebSocketTask {
         throw PinVaultError.illegalState("This pinned session does not open WebSockets")
+    }
+
+    func preparedWebSocketTask(for request: URLRequest) async throws -> URLSessionWebSocketTask {
+        try webSocketTask(for: request)
     }
 }
 
@@ -187,8 +231,19 @@ struct InterceptedTransport: PinnedTransport {
         }
     }
 
+    /// The upgrade request goes through every step's WebSocket headers
+    /// (outermost first), then to `base`: a WebSocket has no response the
+    /// steps could act on, so only the request side of the chain runs.
     func webSocketTask(for request: URLRequest) throws -> URLSessionWebSocketTask {
-        try base.webSocketTask(for: request)
+        var request = request
+        for interceptor in interceptors { interceptor.addWebSocketHeaders(&request) }
+        return try base.webSocketTask(for: request)
+    }
+
+    func preparedWebSocketTask(for request: URLRequest) async throws -> URLSessionWebSocketTask {
+        var request = request
+        for interceptor in interceptors { await interceptor.fetchWebSocketHeaders(&request) }
+        return try await base.preparedWebSocketTask(for: request)
     }
 
     func invalidate() {

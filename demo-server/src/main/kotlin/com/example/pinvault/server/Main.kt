@@ -389,16 +389,15 @@ private fun startServer() {
         certService, pinConfigStore, hostStore, serverCertId, bootstrapPins = { serverTlsPins.pins }
     )
 
-    // CONFIG_API_ADMIN_ROUTES: on (default) | off. Off: the Config API listeners — the
-    // ports devices reach, often from the internet — answer device endpoints only;
+    // CONFIG_API_ADMIN_ROUTES: off (default, 2.5.1) | on. Off: the Config API listeners —
+    // the ports devices reach, often from the internet — answer device endpoints only;
     // every admin route, key or no key, is 403 there and lives on the management port.
-    val configApiAdminRoutes = when (com.example.pinvault.server.service.ServerEnv.get("CONFIG_API_ADMIN_ROUTES")?.trim()?.lowercase()) {
-        null, "", "on", "true" -> true
-        "off", "false" -> false
-        else -> error("CONFIG_API_ADMIN_ROUTES must be on or off (got '${com.example.pinvault.server.service.ServerEnv.get("CONFIG_API_ADMIN_ROUTES")}')")
-    }
+    // On: an admin key also works on those ports (2.5.0 and earlier did this by default).
+    val configApiAdminRoutes = ConfigApiAdminRoutesSwitch.parse(com.example.pinvault.server.service.ServerEnv.get("CONFIG_API_ADMIN_ROUTES"))
     println("CONFIG_API_ADMIN_ROUTES=${if (configApiAdminRoutes) "on" else "off"}" +
-        (if (configApiAdminRoutes) " — admin routes answer on the Config API ports too (with the admin key)" else " — Config API ports serve devices only"))
+        (if (configApiAdminRoutes) " — WARNING: admin routes answer on the Config API ports too (with the admin key); " +
+            "set CONFIG_API_ADMIN_ROUTES=off to keep administration on the management port"
+        else " — Config API ports serve devices only; administration is on the management port (CONFIG_API_ADMIN_ROUTES=on to change)"))
     // Config API manager (dinamik TLS/mTLS sunucuları)
     val configApiManager = ConfigApiManager(deviceOnly = !configApiAdminRoutes)
     // Invalid admin keys: one counter for every listener (ADMIN_AUTH_FAILURE_LIMIT, 0 = off).
@@ -571,6 +570,11 @@ private fun startServer() {
         null, "", "true", "on" -> true
         else -> error("PINVAULT_TOKEN_REQUIRE_PROOF must be true or false (got '${com.example.pinvault.server.service.ServerEnv.get("PINVAULT_TOKEN_REQUIRE_PROOF")}')")
     }
+    // PINVAULT_PROOF_PER_KEY_LIMIT: live proofs one device key may hold in a mock host's replay cache
+    // (default 600, 0 = no limit): one device cannot fill the cache for the others (proof_quota).
+    val proofPerKeyLimit = com.example.pinvault.server.service.ServerEnv.get("PINVAULT_PROOF_PER_KEY_LIMIT")?.trim()?.takeIf { it.isNotEmpty() }?.let {
+        it.toIntOrNull()?.takeIf { v -> v >= 0 } ?: error("PINVAULT_PROOF_PER_KEY_LIMIT must be a number ≥ 0 (got '$it')")
+    } ?: com.example.pinvault.server.service.attestation.PinVaultProof.ReplayCache.DEFAULT_PER_KEY_LIMIT
     // PINVAULT_TOKEN_PUBLIC_ORIGIN (S-2): the public origin a client's token/proof `htu` names
     // (scheme://host[:port], no path), set behind a proxy or load balancer. Without it the proof's
     // expected URL is built from each request's own Host header, so a proof captured for one backend
@@ -686,6 +690,7 @@ private fun startServer() {
             audiences = mockHostTokenAudiences?.let { fixed -> { fixed } } ?: { configApiManager.getAll().map { it.id }.toSet() }
             requireCertBinding = tokenRequireCertBinding
             requireProof = tokenRequireProof
+            proofReplay = com.example.pinvault.server.service.attestation.PinVaultProof.ReplayCache(perKeyLimit = proofPerKeyLimit)
             publicOrigin = tokenPublicOrigin
             tokenAnomalyDetector?.let { detector ->
                 anomaly = detector
@@ -1444,3 +1449,12 @@ data class CertHealth(
     val nearExpiry: Int,
     val total: Int
 )
+
+/** `CONFIG_API_ADMIN_ROUTES`: off unless set to on (2.5.1; 2.5.0 and earlier: on unless set to off). */
+internal object ConfigApiAdminRoutesSwitch {
+    fun parse(raw: String?): Boolean = when (raw?.trim()?.lowercase()) {
+        "on", "true" -> true
+        null, "", "off", "false" -> false
+        else -> error("CONFIG_API_ADMIN_ROUTES must be on or off (got '$raw')")
+    }
+}

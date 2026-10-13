@@ -34,7 +34,7 @@ the plugin brings PinVault from its git tag. With CocoaPods, add PinVault to
 the `Runner` target of the Podfile — it is not on CocoaPods trunk:
 
 ```ruby
-pod 'PinVault', :git => 'https://github.com/umutcansu/PinVault.git', :tag => 'v2.5.0'
+pod 'PinVault', :git => 'https://github.com/umutcansu/PinVault.git', :tag => 'v2.5.1'
 ```
 
 For `schedulePeriodicUpdates` to run in the background, list
@@ -157,7 +157,10 @@ it when done. Listeners are independent of each other.
 
 `PinVaultWebSocket.connect(url, headers: …)` — a pinned `wss://` WebSocket over
 the native client (OkHttp / `URLSessionWebSocketTask`); the TLS session and mTLS
-identity keys stay in native memory. Only `wss://` is accepted. `messages`
+identity keys stay in native memory. Only `wss://` is accepted. On both
+platforms the upgrade to a token host of an attesting block carries
+`PinVault-Token` (and `PinVault-Proof` with `proofOfPossession()`), attesting
+first when no token is held. `messages`
 carries the frames; a failure arrives once on its error handler and ends the
 socket, and `done` completes on every ending.
 

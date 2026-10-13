@@ -8,8 +8,8 @@ import Security
 /// the `SecIdentity` a TLS handshake needs; the Keychain does that itself:
 /// once the certificate is stored next to its key, a `kSecClassIdentity`
 /// search returns the pair. So the leaf of an issued chain is stored in the
-/// Keychain (label = the key's alias, data-protection Keychain, this device
-/// only) — the chain itself stays in ``ClientCertSecureStore`` — and the
+/// Keychain (label = the key's alias, data-protection Keychain,
+/// ``certificateAccessibility``: this device only, after first unlock) — the chain itself stays in ``ClientCertSecureStore`` — and the
 /// identity is looked up by the leaf's bytes.
 ///
 /// Every call needs a Keychain: an app on a device or a signed simulator
@@ -33,12 +33,42 @@ enum KeychainIdentities {
     /// left where it is: the identity search finds it all the same.
     static func storeCertificate(_ leaf: SecCertificate, alias: String) throws {
         removeCertificates(alias: alias, keeping: leaf)
+        let status = SecItemAdd(certificateAddQuery(leaf, alias: alias) as CFDictionary, nil)
+        guard status == errSecSuccess || status == errSecDuplicateItem else {
+            throw failure("The client certificate cannot be stored in the Keychain", status)
+        }
+        if status == errSecDuplicateItem { updateCertificateAccessibility(alias: alias) }
+    }
+
+    /// The certificate is public, but it names the device: it never leaves the
+    /// device in a backup, and it is readable while the device is locked (after
+    /// the first unlock), so the identity search pairs it with its key in the
+    /// background. A key that needs an unlocked device still does.
+    static var certificateAccessibility: CFString { kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly }
+
+    static func certificateAddQuery(_ leaf: SecCertificate, alias: String) -> [CFString: Any] {
         var add = base(kSecClassCertificate)
         add[kSecValueRef] = leaf
         add[kSecAttrLabel] = alias
-        let status = SecItemAdd(add as CFDictionary, nil)
-        guard status == errSecSuccess || status == errSecDuplicateItem else {
-            throw failure("The client certificate cannot be stored in the Keychain", status)
+        add[kSecAttrAccessible] = certificateAccessibility
+        return add
+    }
+
+    /// Aliases whose certificates this process already moved to
+    /// ``certificateAccessibility``.
+    private static let accessibilityChecked = Locked<Set<String>>([])
+
+    /// Moves the certificates stored under `alias` to ``certificateAccessibility``
+    /// (2.5.0 and earlier stored them with the Keychain's default,
+    /// `WhenUnlocked`, which goes into backups). Once per alias and process.
+    static func updateCertificateAccessibility(alias: String) {
+        guard accessibilityChecked.withLock({ $0.insert(alias).inserted }) else { return }
+        var query = base(kSecClassCertificate)
+        query[kSecAttrLabel] = alias
+        let status = SecItemUpdate(query as CFDictionary, [kSecAttrAccessible: certificateAccessibility] as CFDictionary)
+        if status != errSecSuccess && status != errSecItemNotFound {
+            accessibilityChecked.withLock { _ = $0.remove(alias) }
+            log.w("The client certificate's Keychain protection cannot be updated (OSStatus \(status))")
         }
     }
 
@@ -103,7 +133,10 @@ enum KeychainIdentities {
     /// renewal, or a Keychain that lost it), the leaf is stored and looked up
     /// again. Nil when no key in the Keychain pairs with it.
     static func identity(alias: String, leaf: SecCertificate) throws -> SecIdentity? {
-        if let found = try identity(for: leaf) { return found }
+        if let found = try identity(for: leaf) {
+            updateCertificateAccessibility(alias: alias)
+            return found
+        }
         try storeCertificate(leaf, alias: alias)
         return try identity(for: leaf)
     }

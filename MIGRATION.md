@@ -4,6 +4,41 @@ The upgrade notes for every release since 2.0, troubleshooting, and a quick
 reference for the multi-Config-API DSL. The full list of changes is in
 [CHANGELOG.md](CHANGELOG.md).
 
+## Upgrading from 2.5.0 to 2.5.1
+
+**Server (demo-server / sample host)**
+
+- **`CONFIG_API_ADMIN_ROUTES` is off by default.** If you call admin routes
+  (with `X-API-Key`) on a Config API port — the ports devices reach — they now
+  answer `403 admin_routes_disabled`: move those calls to the management port,
+  or set `CONFIG_API_ADMIN_ROUTES=on` to keep the old behaviour. The sample
+  host's LAN demo keeps `on`; its production profile was already `off`.
+- **Proof replay cache per device key:** a mock host (or your backend on the
+  reference verifier) refuses a device key past `PINVAULT_PROOF_PER_KEY_LIMIT`
+  live proofs (default 600, about 5 requests a second sustained) with `429`
+  (`proof_quota`; a full cache, `proof_busy`, is now `429` too instead of
+  `401`). Raise it, or `0` for no limit, if one device legitimately sends more.
+
+**Libraries**
+
+- **Android and iOS, `allowServerGeneratedKey()` only:** a PKCS12 enrollment
+  answer must carry the leaf with its issuing CA, stay within
+  `maxClientCertLifetimeDays` and match `clientCaPins`, as a CSR answer always
+  had to. The reference server's PKCS12s do; check a server of your own.
+  The reference server makes those certificates valid for 365 days
+  (`CLIENT_CERT_TTL_DAYS` applies to CSR enrollments only): a block with
+  `maxClientCertLifetimeDays` below 365 now refuses them.
+- **iOS:** sockets from `webSocketTask(for:)` carry the attestation token when
+  one is held; use `try await session.makeWebSocketTask(for:)` to wait for one.
+  A socket opened outside the library can add
+  `PinVault.shared.webSocketUpgradeHeaders(for:)`.
+- **React Native / Flutter:** `fetch` (and Flutter's `PinVaultWebSocket.connect`)
+  refuses `PinVault-Token` and `PinVault-Proof` in its `headers` (the library
+  sets them). Flutter's iOS
+  plugin needs PinVault 2.5.1.
+- **Android:** a second `init` no longer changes the running config or the
+  Keystore options; call `reset()` first to set up again with another config.
+
 ## Upgrading from 2.4.2 to 2.5.0
 
 Nothing to change: every addition is opt-in.

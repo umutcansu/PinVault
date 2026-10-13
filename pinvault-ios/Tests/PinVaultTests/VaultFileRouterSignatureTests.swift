@@ -161,6 +161,37 @@ final class VaultFileRouterSignatureTests: XCTestCase {
         XCTAssertEqual(try storage.load(key: "m"), content)
     }
 
+    func testAnEndToEnd412RegistersTheDeviceKeyAndRetriesOnce() async throws {
+        let content = Data(utf8: "model")
+        let device = DeviceKeys.software(alias: "e2e-412")
+        let good = try SoftwareUserAuthKeys.serverEnvelope(content, publicKeyOf(device))
+        let response = VaultFetchResponse(content: good, version: 1, encryption: "end_to_end", signature: signer.vaultV1("m", 1, content))
+        let api = VaultApiStub()
+        let calls = Locked(0)
+        api.onDownload { _ in
+            let call = calls.withLock { $0 += 1; return $0 }
+            if call == 1 { throw VaultFetchHTTPError(httpStatus: 412, responseBody: #"{"error":"No registered public key for device"}"#) }
+            return response
+        }
+        let storage = SaveRecorder()
+
+        guard case .updated = await router(storage, api, vaultBlock(signer: signer), keys: device).fetchFile(e2eFile("m")) else {
+            return XCTFail("registered and retried")
+        }
+        XCTAssertEqual(api.deviceRegistrations.map(\.deviceId), ["test-device"])
+        XCTAssertEqual(api.downloads.count, 2)
+        XCTAssertEqual(try storage.load(key: "m"), content)
+    }
+
+    func testAnEndToEnd412ThatPersistsIsNotRetriedAgain() async throws {
+        let device = DeviceKeys.software(alias: "e2e-412b")
+        let api = VaultApiStub()
+        api.onDownload { _ in throw VaultFetchHTTPError(httpStatus: 412, responseBody: #"{"error":"No registered public key for device"}"#) }
+        let failed = failure(await router(SaveRecorder(), api, vaultBlock(signer: signer), keys: device).fetchFile(e2eFile("m")))
+        XCTAssertTrue(failed.reason.contains("HTTP 412"), failed.reason)
+        XCTAssertEqual(api.downloads.count, 2)
+    }
+
     func testAnUnsignedEndToEndAnswerIsRefusedBeforeTheDeviceKeyTouchesIt() async throws {
         final class Watched: DeviceKeyProvider, @unchecked Sendable {
             let inner = DeviceKeys.software(alias: "e2e-unsigned")

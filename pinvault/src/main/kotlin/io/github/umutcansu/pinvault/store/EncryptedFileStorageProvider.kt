@@ -174,7 +174,7 @@ class EncryptedFileStorageProvider internal constructor(
             try {
                 val keyStore = KeyStore.getInstance(ANDROID_KEYSTORE).apply { load(null) }
                 val alias = KEYSTORE_ALIAS_PREFIX + key
-                if (keyStore.containsAlias(alias)) keyStore.deleteEntry(alias)
+                io.github.umutcansu.pinvault.keystore.KeystoreAliases.deleteUnlessAbsent(keyStore, alias)
             } catch (e: Exception) {
                 Timber.w(e, "Failed to remove Keystore entry [%s]", key)
             }

@@ -450,6 +450,10 @@ class PinVaultFlutterPlugin : FlutterPlugin, MethodCallHandler, ActivityAware {
             return
         }
         val headers = call.argument<Map<String, String>>("headers") ?: emptyMap()
+        if (headers.keys.any { name -> PinnedFetch.LIBRARY_HEADERS.any { it.equals(name, ignoreCase = true) } }) {
+            result.error(E_INVALID_ARGUMENT, "ws_connect: PinVault-Token / PinVault-Proof are set by PinVault itself", null)
+            return
+        }
         // Built here, so a bad URL or header is refused by connect() instead of
         // failing silently inside the event stream. OkHttp's message can carry a
         // header value: it is not passed on.

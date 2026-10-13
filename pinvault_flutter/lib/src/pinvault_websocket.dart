@@ -49,6 +49,11 @@ class PinVaultWebSocket {
             'headers: "${entry.key}" is not a valid header name',
           );
         }
+        if (_libraryHeaders.contains(entry.key.toLowerCase())) {
+          throw PinVaultWebSocketError(
+            'headers: "${entry.key}" is set by PinVault itself (a token host\'s socket carries it)',
+          );
+        }
         if (entry.value.contains('\r') || entry.value.contains('\n')) {
           throw PinVaultWebSocketError(
             'headers.${entry.key}: line breaks are not allowed',
@@ -145,6 +150,9 @@ class PinVaultWebSocket {
 
 // RFC 9110 token: what OkHttp and URLSession accept as a header name.
 final RegExp _headerName = RegExp(r"^[!#$%&'*+\-.^_`|~0-9A-Za-z]+$");
+
+/// The attestation headers: only the library sets them, for its token hosts.
+const Set<String> _libraryHeaders = {'pinvault-token', 'pinvault-proof'};
 
 /// A refused or failed WebSocket operation. Never carries TLS material.
 class PinVaultWebSocketError implements Exception {

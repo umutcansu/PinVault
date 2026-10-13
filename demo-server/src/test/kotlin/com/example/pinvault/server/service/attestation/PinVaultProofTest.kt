@@ -104,6 +104,28 @@ class PinVaultProofTest {
     }
 
     @Test
+    fun `one device key cannot spend more than its share of the cache`() {
+        val cache = PinVaultProof.ReplayCache(perKeyLimit = 2)
+        assertIs<PinVaultProof.Result.Valid>(verify(Proofs.make(device, "GET", url, token, now), cache = cache))
+        assertIs<PinVaultProof.Result.Valid>(verify(Proofs.make(device, "GET", url, token, now), cache = cache))
+        assertEquals("proof_quota", reason(verify(Proofs.make(device, "GET", url, token, now), cache = cache)))
+
+        // Another device is not affected...
+        val other = newKey()
+        val otherToken = PinVaultToken.issue("k1", ByteArray(32) { 7 }, "dev-2", "api", "00000000", 1, 300, nowSeconds = now,
+            keyThumbprint = PinVaultToken.jwkThumbprint(other.public as ECPublicKey))
+        val otherResult = PinVaultProof.verify(
+            Proofs.make(other, "GET", url, otherToken, now), "GET", url, otherToken,
+            PinVaultToken.jwkThumbprint(other.public as ECPublicKey), cache, now
+        )
+        assertIs<PinVaultProof.Result.Valid>(otherResult)
+
+        // ...and the first one gets its share back once its proofs have expired.
+        assertIs<PinVaultProof.Result.Valid>(verify(Proofs.make(device, "GET", url, token, now + 61), cache = cache, clock = now + 61))
+        assertEquals(1, cache.size, "every expired entry was swept")
+    }
+
+    @Test
     fun `normalizedUrl follows RFC 9449`() {
         assertEquals("https://a.example/", PinVaultProof.normalizedUrl("https://A.example"))
         assertEquals("https://a.example:8443/p%20q", PinVaultProof.normalizedUrl("https://a.example:8443/p%20q?x#y"))

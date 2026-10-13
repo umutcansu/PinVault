@@ -2,7 +2,7 @@ openapi: 3.0.3
 
 info:
   title: PinVault Demo Server API
-  version: 2.0.0
+  version: 2.5.1
   description: |
     Reference backend for the PinVault Android SSL-pinning library.
 
@@ -21,7 +21,12 @@ info:
 
     * `management` — only on the management HTTP port.
     * `config-api` — only on the TLS/mTLS Config API ports.
-    * `management+config-api` — on both.
+    * `management+config-api` — on both. For an **admin** operation (one that
+      needs `X-API-Key`) "both" holds only with `CONFIG_API_ADMIN_ROUTES=on`:
+      by default (2.5.1) a Config API port answers every admin route `403
+      {"error":"admin_routes_disabled"}`, key or no key, before the key is
+      looked at; administration is on the management port. Device endpoints
+      are not affected.
 
     Routes shared by both come from `certificateConfigRoutes()` and
     `hostRoutes()`, which `Main.kt` mounts twice. `vaultRoutes()` (`/api/v1/vault/…`)
@@ -138,6 +143,34 @@ info:
       30, `0` = off; `429 rate_limited`), and a Config API holds at most
       `DEVICE_KEY_LIMIT` keys (default 100 000; a new device beyond it gets `503
       device_key_limit_reached`).
+
+    ## Cross-cutting headers
+
+    * **`X-PinVault-Features: forbidden-as-409`** — on a listener that asks for a
+      client certificate, a client that lists this feature gets every `403` as
+      `409` with `X-PinVault-Status: 403` and the body unchanged
+      (`plugin/ForbiddenAsConflict.kt`). Apple's URL loading system turns an HTTP
+      403 on such a connection into a "client certificate required" error and
+      drops the body; the iOS library asks for the remap so it still reads
+      `reenroll_required` and its siblings. Clients that do not ask (Android,
+      curl) get the `403` unchanged. The operations below list `403`; read it as
+      `409` + `X-PinVault-Status: 403` for such a client.
+    * **`PinVault-Token`** (ATTESTATION.md §5) — the token `POST /api/v1/attest`
+      issues: a JWT signed ES256 by default (`PINVAULT_TOKEN_ALG`; HS256 only when
+      set), verified by a backend with the keys of `GET /api/v1/attestation/jwks`.
+    * **`PinVault-Proof`** (ATTESTATION.md §5.1) — with `proofOfPossession()` on
+      the library block, every request that carries a `PinVault-Token` also
+      carries a DPoP proof (RFC 9449, `typ: dpop+jwt`, ES256) of its method and
+      URL (`htm`, `htu`; a WebSocket upgrade names its `https://` URL), signed by
+      the device key the token's `cnf.jkt` names, with `ath` = the token's
+      SHA-256 and a fresh `jti`. A backend with `PINVAULT_TOKEN_REQUIRE_PROOF`
+      (the mock hosts here, `plugin/PinVaultTokenAuth.kt`) answers `401
+      invalid_token` with `reason` `proof_missing|proof_malformed|proof_signature|proof_key|proof_method|proof_url|proof_time|proof_token|proof_replay`.
+      Spent `jti`s are kept per backend instance for the proof window
+      (`proofWindowSeconds`, ±60 s); one device key may hold at most
+      `PINVAULT_PROOF_PER_KEY_LIMIT` of them (default 600) and the whole cache
+      is capped: past either the answer is `429 {"error":"rate_limited","reason":"proof_quota|proof_busy"}`
+      with `Retry-After` (not a `401`, which would make the device attest again).
 
     ## Client-integrity contracts
 
@@ -297,7 +330,8 @@ tags:
       App and device attestation (ATTESTATION.md): the device-side challenge /
       attest round trip on the Config API ports, the per-Config-API rejection
       policy, attested devices with their verdicts and annotations, verdict
-      statistics, and the `PinVault-Token` HS256 secrets backends verify with.
+      statistics, and the `PinVault-Token` signing keys backends verify with
+      (ES256 public keys by default; HS256 secrets only with `PINVAULT_TOKEN_ALG=HS256`).
 
 paths:
 
@@ -370,6 +404,128 @@ paths:
               schema:
                 type: array
                 items: { $ref: '#/components/schemas/CertExpiryStatus' }
+        '401': { $ref: '#/components/responses/MissingApiKey' }
+        '403': { $ref: '#/components/responses/InvalidApiKey' }
+
+  /api/v1/server-settings:
+    get:
+      tags: [monitoring]
+      operationId: getServerSettings
+      summary: Settings the setup wizard may change
+      description: |
+        Every setting the dashboard may change (`ServerSettingsCatalog`): what the
+        server runs with now (`running`), what is saved for the next start
+        (`saved`), its default and choices, and whether the environment fixes it
+        (`locked`: change it there). `pendingRestart` is true while a saved value
+        differs from the running one; `rejected` describes a saved set that kept
+        the server from starting (it then started without it).
+
+        Registered on: **management** only.
+      security:
+        - ApiKeyAuth: []
+      x-registered-on: management
+      responses:
+        '200':
+          description: The settings.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ServerSettingsView' }
+        '401': { $ref: '#/components/responses/MissingApiKey' }
+        '403': { $ref: '#/components/responses/InvalidApiKey' }
+    put:
+      tags: [monitoring]
+      operationId: saveServerSettings
+      summary: Save settings for the next start
+      description: |
+        `{"values": {"KEY": "value"}}`; `""` (or `null`) puts a key back to the
+        server default. Saved for the next start only — nothing changes in the
+        running process. Refused (`400`) for a key the dashboard may not change
+        (`invalid_settings`), one the environment sets, a value out of range, or a
+        set the server would not start with (`would_not_start`, the reasons in
+        `details`). Audited as `server_settings_update` with before/after values.
+        With approvals on (`PIN_CHANGE_APPROVALS` ≥ 2) it waits for a second admin
+        (`202`): one admin must not turn approvals off alone.
+
+        Registered on: **management** only.
+      security:
+        - ApiKeyAuth: []
+      x-registered-on: management
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [values]
+              properties:
+                values:
+                  type: object
+                  additionalProperties: { type: string, nullable: true }
+                  example: { CONFIG_API_ADMIN_ROUTES: 'off', PIN_LIVE_CHECK: warn }
+      responses:
+        '200':
+          description: Saved; the settings as `GET` lists them.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ServerSettingsView' }
+        '202': { $ref: '#/components/responses/PendingApproval' }
+        '400':
+          description: '`invalid_body`, `invalid_settings` or `would_not_start`, with `details`.'
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ServerSettingsError' }
+        '401': { $ref: '#/components/responses/MissingApiKey' }
+        '403': { $ref: '#/components/responses/InvalidApiKey' }
+
+  /api/v1/server-settings/restart:
+    post:
+      tags: [monitoring]
+      operationId: restartServer
+      summary: Restart with the saved settings
+      description: |
+        Exits the process so its supervisor (Docker) starts it again with the
+        saved values. Only where `PINVAULT_RESTART_ON_EXIT=true` says a supervisor
+        exists; otherwise `409 not_supervised`. Audited as `server_restart`.
+
+        Registered on: **management** only.
+      security:
+        - ApiKeyAuth: []
+      x-registered-on: management
+      responses:
+        '202':
+          description: '`{"restarting": true}`; the process exits shortly after.'
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  restarting: { type: boolean, example: true }
+        '409':
+          description: '`not_supervised`: nothing restarts this process when it exits.'
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ServerSettingsError' }
+        '401': { $ref: '#/components/responses/MissingApiKey' }
+        '403': { $ref: '#/components/responses/InvalidApiKey' }
+
+  /api/v1/server-settings/rejected:
+    delete:
+      tags: [monitoring]
+      operationId: forgetRejectedServerSettings
+      summary: Forget the note about a rejected saved set
+      description: |
+        Clears `rejected` (a saved set that kept the server from starting).
+
+        Registered on: **management** only.
+      security:
+        - ApiKeyAuth: []
+      x-registered-on: management
+      responses:
+        '200':
+          description: The settings as `GET` lists them.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ServerSettingsView' }
         '401': { $ref: '#/components/responses/MissingApiKey' }
         '403': { $ref: '#/components/responses/InvalidApiKey' }
 
@@ -4436,6 +4592,19 @@ paths:
           content:
             application/json:
               schema: { $ref: '#/components/schemas/Error' }
+        '429':
+          description: >
+            `rate_limited`: too many downloads served at once — from this source
+            address (`VAULT_DOWNLOAD_CONCURRENCY`, default 4; an IPv6 address by its
+            /64) or in total (`VAULT_DOWNLOAD_CONCURRENCY_TOTAL`, default 16); `0`
+            = unlimited. Checked only once the request is authorised and a body
+            would be sent. Also the device refusal limit (`DEVICE_REFUSAL_RATE_LIMIT`).
+          headers:
+            Retry-After:
+              schema: { type: integer, example: 1 }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
         '500':
           description: Unknown `access_policy` on the row, or per-device encryption failed.
           content:
@@ -5615,7 +5784,8 @@ paths:
         `currentIssuedAt` than the device reported before raises `config_rollback`.
         Over mTLS the token's `cnf.x5t#S256` names the connection's client certificate.
 
-        On `pass` the answer carries a `PinVault-Token` (HS256 JWT, `tokenTtlSeconds`,
+        On `pass` the answer carries a `PinVault-Token` (a JWT signed ES256 by
+        default, HS256 with `PINVAULT_TOKEN_ALG=HS256`; `tokenTtlSeconds`,
         `aud` = this Config API id) and, when `currentConfigVersion` /
         `currentIssuedAt` differ from what the server would serve, the same signed
         config envelope `GET /api/v1/certificate-config` serves (scoped by the
@@ -6411,6 +6581,43 @@ components:
         (e.g. `hostname gerekli`, `Host bulunamadi`).
       properties:
         error: { type: string }
+
+    ServerSettingsError:
+      type: object
+      properties:
+        error: { type: string, example: would_not_start }
+        details:
+          type: array
+          items: { type: string }
+
+    ServerSettingsView:
+      type: object
+      properties:
+        restartSupervised: { type: boolean, description: '`PINVAULT_RESTART_ON_EXIT=true`: the restart route works.' }
+        pendingRestart: { type: boolean }
+        settings:
+          type: array
+          items:
+            type: object
+            properties:
+              key: { type: string, example: CONFIG_API_ADMIN_ROUTES }
+              group: { type: string, example: config }
+              kind: { type: string, enum: [bool, choice, number, text] }
+              default: { type: string, example: 'off' }
+              choices: { type: array, items: { type: string } }
+              min: { type: integer }
+              max: { type: integer }
+              running: { type: string, nullable: true }
+              saved: { type: string, nullable: true }
+              locked: { type: boolean, description: 'Set in the environment: change it there.' }
+              pending: { type: boolean }
+        rejected:
+          type: object
+          nullable: true
+          properties:
+            reason: { type: string }
+            at: { type: string }
+            values: { type: object, additionalProperties: { type: string } }
 
     BackupRotationError:
       type: object
@@ -7739,7 +7946,7 @@ components:
           type: array
           description: Present only when the policy's `revealReasons` is on. `force_fail` when the device is forced to fail.
           items: { type: string }
-        token: { type: string, description: 'The `PinVault-Token` (HS256 JWT). Absent on `reject`. Its `cnf` claim names the device key (`jkt`, RFC 7638 thumbprint) and, when the request came over mTLS, the client certificate (`x5t#S256`, RFC 8705).' }
+        token: { type: string, description: 'The `PinVault-Token` (a JWT, ES256 by default, HS256 with `PINVAULT_TOKEN_ALG=HS256`). Absent on `reject`. Its `cnf` claim names the device key (`jkt`, RFC 7638 thumbprint) and, when the request came over mTLS, the client certificate (`x5t#S256`, RFC 8705).' }
         tokenExpiresAt: { type: integer, format: int64, description: Epoch milliseconds. }
         tokenTtlSeconds: { type: integer, example: 300 }
         nextAttestIn: { type: integer, description: 'Seconds until the next attestation (the policy''s `attestIntervalSeconds`).', example: 300 }

@@ -482,6 +482,51 @@ class ClientCertRenewerTest {
 
     // ── maxClientCertLifetimeDays ───────────────────────────────────────
 
+    // ── PKCS12 answers (allowServerGeneratedKey) ────────────────────────
+
+    private fun p12(chain: List<X509Certificate>, key: java.security.PrivateKey): java.security.KeyStore =
+        java.security.KeyStore.getInstance("PKCS12").apply {
+            load(null, null)
+            setKeyEntry("dev-1", key, "pw".toCharArray(), chain.toTypedArray())
+        }
+
+    private fun serverKey(): KeyPair =
+        KeyPairGenerator.getInstance("EC").apply { initialize(ECGenParameterSpec("secp256r1")) }.generateKeyPair()
+
+    @Test
+    fun `a PKCS12 answer is held to the chain rules of a CSR answer`() {
+        val made = serverKey()
+        val leaf = leafFor(made.public, now - 3600_000, now + 90 * DAY)
+        val pins = listOf(pinOf(caCert))
+
+        assertEquals(2, ClientCertRenewer.acceptIssuedP12(p12(listOf(leaf, caCert), made.private), "pw".toCharArray(), caPins = pins).size)
+        assertTrue(refused {
+            ClientCertRenewer.acceptIssuedP12(p12(listOf(leaf), made.private), "pw".toCharArray())
+        }.contains("CA certificate that signed it"))
+
+        val decades = leafFor(made.public, now - 3600_000, now + 50 * 365 * DAY)
+        assertTrue(refused {
+            ClientCertRenewer.acceptIssuedP12(p12(listOf(decades, caCert), made.private), "pw".toCharArray())
+        }.contains("825 days"))
+
+        val (rogueKey, rogueCert) = rogueCa()
+        val rogueLeaf = sign(X500Name("CN=PinVault Client: dev-1"), made.public, now - 3600_000, now + 90 * DAY, signerKey = rogueKey)
+        assertTrue(refused {
+            ClientCertRenewer.acceptIssuedP12(p12(listOf(rogueLeaf, rogueCert), made.private), "pw".toCharArray(), caPins = pins)
+        }.contains("pinned client CA"))
+    }
+
+    @Test
+    fun `a PKCS12 whose certificate is over another key is refused`() {
+        val made = serverKey()
+        val other = serverKey()
+        // The keystore pairs a key with a certificate it never made: Java's PKCS12 does not check.
+        val leaf = leafFor(other.public, now - 3600_000, now + 90 * DAY)
+        assertTrue(refused {
+            ClientCertRenewer.acceptIssuedP12(p12(listOf(leaf, caCert), made.private), "pw".toCharArray())
+        }.contains("not over the PKCS12's own key"))
+    }
+
     @Test
     fun `a certificate valid for decades is refused, at enrollment and at renewal`() = runTest {
         val fiftyYears = listOf(Pkcs10Csr.toPem(leafFor(key.publicKey(), now - 3600_000, now + 50 * 365 * DAY)), Pkcs10Csr.toPem(caCert))

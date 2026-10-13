@@ -33,6 +33,15 @@ public final class PinVaultReactNetworking: NSObject {
         }
     }
 
+    /// The attestation headers (`PinVault-Token`, `PinVault-Proof`) a `wss`
+    /// WebSocket's upgrade request carries (RNPinVaultWebSocketPinning.mm), as
+    /// OkHttp's `newWebSocket` adds them on Android: the held token only —
+    /// without one the socket goes without and an attestation starts.
+    @objc public static func webSocketUpgradeHeaders(_ url: URL) -> [String: String] {
+        guard PinVaultBridge.isStarted else { return [:] }
+        return PinVault.shared.webSocketUpgradeHeaders(for: url)
+    }
+
     /// The request token for RN; nothing reaches the blocks before `resume()`.
     @objc public static func prepare(
         _ request: URLRequest,

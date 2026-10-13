@@ -72,15 +72,16 @@ interface DeviceKeyProvider {
 
 internal class AndroidKeystoreDeviceKeyProvider(
     @Suppress("unused") private val context: Context,
-    private val alias: String
+    private val alias: String,
+    keystoreFactory: () -> KeyStore = { KeyStore.getInstance("AndroidKeyStore").apply { load(null) } }
 ) : DeviceKeyProvider {
 
-    private val keystore: KeyStore by lazy {
-        KeyStore.getInstance("AndroidKeyStore").apply { load(null) }
-    }
+    private val keystore: KeyStore by lazy(keystoreFactory)
 
     override fun ensureKeyPair() {
-        if (keystore.containsAlias(alias)) {
+        // Throws when the Keystore cannot say: the registered key is never
+        // replaced because it could not be read for a moment.
+        if (KeystoreAliases.exists(keystore, alias, "device RSA key")) {
             Timber.d("Device RSA key exists: %s", alias)
             return
         }
@@ -130,7 +131,7 @@ internal class AndroidKeystoreDeviceKeyProvider(
     }
 
     override fun clear() {
-        if (keystore.containsAlias(alias)) keystore.deleteEntry(alias)
+        KeystoreAliases.deleteUnlessAbsent(keystore, alias)
     }
 }
 

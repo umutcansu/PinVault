@@ -114,6 +114,11 @@ export type PinVaultConfig = {
   requireUnlockedDevice?: boolean;
   requireHardwareBackedKeys?: boolean;
   managedTrustRoots?: boolean;
+  /**
+   * Android only: the SHA-256 digests of the signing certificates the app must be
+   * signed with. iOS has no signer digest and ignores this; set `ios.expectedBundleIds`
+   * and `ios.expectedTeamIds` there.
+   */
   expectedSignerSha256?: string[];
   environmentGuard?: EnvironmentGuard;
   /** How long the native side waits for `environmentGuard` (ms, 100–30000, default 5000). */
@@ -144,7 +149,9 @@ export type PinVaultConfig = {
   ios?: {
     /** `resolve(host:to:)`: connect to `address` while pinning and verifying `host`. */
     resolve?: Record<string, string>;
+    /** The bundle ids the app must run as (iOS counterpart of `expectedSignerSha256`). */
     expectedBundleIds?: string[];
+    /** The Apple team ids the app must be signed by (iOS counterpart of `expectedSignerSha256`). */
     expectedTeamIds?: string[];
     /** `userAuthStrength(_:)`; `BIOMETRIC_CURRENT_SET` = `userAuthBiometricOnly()`. */
     userAuthStrength?: 'DEVICE_OWNER' | 'BIOMETRIC_CURRENT_SET';

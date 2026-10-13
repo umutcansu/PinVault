@@ -85,7 +85,7 @@ object ServerSettingsCatalog {
         ServerSetting("PIN_LIVE_CHECK", "governance", ServerSetting.Kind.CHOICE, "off", modes),
         // Configs
         ServerSetting("CONFIG_TTL_SECONDS", "config", ServerSetting.Kind.NUMBER, "86400", min = 300, max = 2_592_000),
-        ServerSetting("CONFIG_API_ADMIN_ROUTES", "config", ServerSetting.Kind.CHOICE, "on", listOf("on", "off")),
+        ServerSetting("CONFIG_API_ADMIN_ROUTES", "config", ServerSetting.Kind.CHOICE, "off", listOf("off", "on")),
         // Devices and enrollment
         ServerSetting("ENROLLMENT_MODE", "devices", ServerSetting.Kind.CHOICE, "token", listOf("token", "open")),
         ServerSetting("CLIENT_CERT_TTL_DAYS", "devices", ServerSetting.Kind.NUMBER, "90", min = 1, max = 825),

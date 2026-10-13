@@ -158,13 +158,28 @@ final class VaultFileRouter: Sendable {
             do {
                 response = try await download()
             } catch let error as VaultFetchHTTPFailure {
-                // The server has no (or another) user-auth key for this device:
-                // make sure there is a key, register it, try once more.
-                guard sealedByServer, error.httpStatus == 412,
-                      error.responseBody?.contains(Self.userAuthKeyRequired) == true else { throw error }
-                log.w("Vault fetch [\(file.key)]: server has no user-auth key for this device — registering and retrying")
-                try await ensureUserAuthKeyRegistered(file.configApiId, deviceId: deviceId, force: true)
-                response = try await download()
+                if !sealedByServer, error.httpStatus == 412, file.encryption == .endToEnd,
+                   let keys = deviceKeyProvider, !deviceId.isEmpty {
+                    // An end_to_end file and the server has no device key on
+                    // file (registration at start failed): register it, try once more.
+                    log.w("Vault fetch [\(file.key)]: server has no device key for this device — registering and retrying")
+                    try keys.ensureKeyPair()
+                    let pem = try keys.getPublicKeyPem()
+                    if let api = client.api as? any VaultKeyProofRegistering {
+                        try await api.registerDevicePublicKey(deviceId: deviceId, publicKeyPem: pem, proof: keyProof(file.configApiId, files()))
+                    } else {
+                        try await client.api.registerDevicePublicKey(deviceId: deviceId, publicKeyPem: pem)
+                    }
+                    response = try await download()
+                } else {
+                    // The server has no (or another) user-auth key for this device:
+                    // make sure there is a key, register it, try once more.
+                    guard sealedByServer, error.httpStatus == 412,
+                          error.responseBody?.contains(Self.userAuthKeyRequired) == true else { throw error }
+                    log.w("Vault fetch [\(file.key)]: server has no user-auth key for this device — registering and retrying")
+                    try await ensureUserAuthKeyRegistered(file.configApiId, deviceId: deviceId, force: true)
+                    response = try await download()
+                }
             }
 
             if response.notModified {

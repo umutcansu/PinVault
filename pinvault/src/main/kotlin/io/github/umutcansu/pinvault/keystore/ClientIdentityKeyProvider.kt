@@ -50,7 +50,11 @@ interface ClientIdentityKeyProvider {
      */
     fun attestationChain(): List<ByteArray> = emptyList()
 
-    /** True when the key exists (without generating it). */
+    /**
+     * True when the key exists (without generating it).
+     * @throws java.security.KeyStoreException when the Keystore cannot say
+     *   right now (see [KeystoreAliases]): not a reason to drop or replace anything.
+     */
     fun exists(): Boolean
 
     fun publicKey(): PublicKey
@@ -113,12 +117,11 @@ interface ClientIdentityKeyProvider {
 // ── Android Keystore impl ───────────────────────────────────────────────
 
 internal class AndroidKeystoreClientIdentityKeyProvider(
-    private val alias: String
+    private val alias: String,
+    keystoreFactory: () -> KeyStore = { KeyStore.getInstance("AndroidKeyStore").apply { load(null) } }
 ) : ClientIdentityKeyProvider {
 
-    private val keystore: KeyStore by lazy {
-        KeyStore.getInstance("AndroidKeyStore").apply { load(null) }
-    }
+    private val keystore: KeyStore by lazy(keystoreFactory)
 
     override fun ensureKeyPair() = ensureKeyPair(null)
 
@@ -130,7 +133,9 @@ internal class AndroidKeystoreClientIdentityKeyProvider(
      * or the ROM may reject the flag outright.
      */
     override fun ensureKeyPair(attestationChallenge: ByteArray?) {
-        if (keystore.containsAlias(alias)) {
+        // Throws when the Keystore cannot say: the enrolled key is never
+        // replaced because it could not be read for a moment.
+        if (exists()) {
             Timber.d("Client identity key exists")
             return
         }
@@ -191,7 +196,7 @@ internal class AndroidKeystoreClientIdentityKeyProvider(
             }
             .build()
 
-    override fun exists(): Boolean = keystore.containsAlias(alias)
+    override fun exists(): Boolean = KeystoreAliases.exists(keystore, alias, "client identity key")
 
     override fun publicKey(): PublicKey =
         (keystore.getCertificate(alias) ?: error("Client identity key not found — call ensureKeyPair() first"))
@@ -207,11 +212,13 @@ internal class AndroidKeystoreClientIdentityKeyProvider(
     override fun spkiSha256(): String = Pkcs10Csr.spkiSha256Base64(publicKey())
 
     override fun securityLevel(): io.github.umutcansu.pinvault.model.KeySecurityLevel =
-        if (!exists()) io.github.umutcansu.pinvault.model.KeySecurityLevel.UNKNOWN
+        if (!runCatching { exists() }.getOrDefault(false)) io.github.umutcansu.pinvault.model.KeySecurityLevel.UNKNOWN
         else KeyInspector.securityLevel(privateKey())
 
     override fun clear() {
-        if (keystore.containsAlias(alias)) keystore.deleteEntry(alias)
+        // Deleted unless the Keystore is sure it is not there: an unenroll
+        // must not leave the key behind over a read that failed for a moment.
+        KeystoreAliases.deleteUnlessAbsent(keystore, alias)
     }
 }
 

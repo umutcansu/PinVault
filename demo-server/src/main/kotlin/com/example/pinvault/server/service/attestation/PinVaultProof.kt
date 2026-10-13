@@ -17,7 +17,6 @@ import java.security.spec.ECParameterSpec
 import java.security.spec.ECPoint
 import java.security.spec.ECPublicKeySpec
 import java.util.Base64
-import java.util.concurrent.ConcurrentHashMap
 
 /**
  * `PinVault-Proof` (ATTESTATION.md §5.1): proof that the request comes from
@@ -40,6 +39,12 @@ object PinVaultProof {
     const val HEADER = "PinVault-Proof"
     const val TYPE = "dpop+jwt"
 
+    /**
+     * Refusals that are about load, not the token or the proof: a verifier
+     * answers them `429` (a `401` would make the device attest again).
+     */
+    val THROTTLED = setOf("proof_busy", "proof_quota")
+
     /** A proof longer than this is refused unread (a P-256 proof is ~600 characters). */
     const val MAX_LENGTH = 4096
 
@@ -51,7 +56,8 @@ object PinVaultProof {
          * [reason]: `proof_missing`, `proof_malformed`, `proof_signature`,
          * `proof_key` (not the token's key, or a token without `cnf.jkt`),
          * `proof_method`, `proof_url`, `proof_time`, `proof_token` (`ath`),
-         * `proof_replay`, `proof_busy` (the replay cache is full).
+         * `proof_replay`, `proof_busy` (the replay cache is full),
+         * `proof_quota` (this device key spent its share of the cache).
          */
         data class Invalid(val reason: String) : Result
     }
@@ -101,10 +107,11 @@ object PinVaultProof {
         val ath = string(payload, "ath") ?: return Result.Invalid("proof_token")
         if (!MessageDigest.isEqual(ath.toByteArray(), tokenHash(token).toByteArray())) return Result.Invalid("proof_token")
         // Spent last, so a proof refused for another reason does not burn its jti.
-        return when (replay.spend(keyThumbprint + ":" + jti, until = iat + windowSeconds, nowSeconds = nowSeconds)) {
+        return when (replay.spend(keyThumbprint + ":" + jti, until = iat + windowSeconds, nowSeconds = nowSeconds, owner = keyThumbprint.orEmpty())) {
             ReplayCache.Spend.Ok -> Result.Valid(jti, iat)
             ReplayCache.Spend.Replayed -> Result.Invalid("proof_replay")
             ReplayCache.Spend.Full -> Result.Invalid("proof_busy")
+            ReplayCache.Spend.OverQuota -> Result.Invalid("proof_quota")
         }
     }
 
@@ -129,25 +136,70 @@ object PinVaultProof {
     /**
      * Spent `jti`s, each until its proof could no longer pass the time
      * check. Bounded: when full of live entries a proof is refused
-     * (`proof_busy`) rather than an entry forgotten early.
+     * (`proof_busy`) rather than an entry forgotten early. One device key
+     * ([spend]'s `owner`, the token's `cnf.jkt`) holds at most
+     * [perKeyLimit] live entries (`PINVAULT_PROOF_PER_KEY_LIMIT`, 0 = no
+     * limit): past it that key is refused (`proof_quota`), so a single
+     * device that floods proofs cannot fill the cache for every other one.
+     * Expired entries are swept when a limit is reached, at most once a
+     * second, so a flood does not buy a full scan per request.
      */
-    class ReplayCache(private val capacity: Int = 100_000) {
-        enum class Spend { Ok, Replayed, Full }
+    class ReplayCache(
+        private val capacity: Int = 100_000,
+        private val perKeyLimit: Int = DEFAULT_PER_KEY_LIMIT
+    ) {
+        enum class Spend { Ok, Replayed, Full, OverQuota }
 
-        private val spent = ConcurrentHashMap<String, Long>()
+        private class Entry(val until: Long, val owner: String)
 
-        fun spend(id: String, until: Long, nowSeconds: Long): Spend {
-            if (spent.size >= capacity) spent.entries.removeIf { it.value < nowSeconds }
-            if (spent.size >= capacity) return Spend.Full
-            val previous = spent.putIfAbsent(id, until)
-            return when {
-                previous == null -> Spend.Ok
-                previous < nowSeconds -> if (spent.replace(id, previous, until)) Spend.Ok else Spend.Replayed
-                else -> Spend.Replayed
+        private val spent = HashMap<String, Entry>()
+        private val perOwner = HashMap<String, Int>()
+        private var lastSweep = Long.MIN_VALUE
+
+        @Synchronized
+        fun spend(id: String, until: Long, nowSeconds: Long, owner: String = ""): Spend {
+            val previous = spent[id]
+            if (previous != null) {
+                if (previous.until >= nowSeconds) return Spend.Replayed
+                forget(id, previous)
             }
+            if (perKeyLimit > 0 && count(owner) >= perKeyLimit) {
+                sweep(nowSeconds)
+                if (count(owner) >= perKeyLimit) return Spend.OverQuota
+            }
+            if (spent.size >= capacity) {
+                sweep(nowSeconds)
+                if (spent.size >= capacity) return Spend.Full
+            }
+            spent[id] = Entry(until, owner)
+            perOwner[owner] = count(owner) + 1
+            return Spend.Ok
         }
 
-        val size: Int get() = spent.size
+        val size: Int @Synchronized get() = spent.size
+
+        private fun count(owner: String) = perOwner[owner] ?: 0
+
+        private fun forget(id: String, entry: Entry) {
+            spent.remove(id)
+            val left = count(entry.owner) - 1
+            if (left <= 0) perOwner.remove(entry.owner) else perOwner[entry.owner] = left
+        }
+
+        private fun sweep(nowSeconds: Long) {
+            if (nowSeconds <= lastSweep) return
+            lastSweep = nowSeconds
+            spent.entries.filter { it.value.until < nowSeconds }.forEach { forget(it.key, it.value) }
+        }
+
+        companion object {
+            /**
+             * Live proofs one device key may hold. An entry lives until its
+             * `iat` + the window (at most 120 s with the default ±60 s), so
+             * this allows at least 5 requests a second, sustained, per device.
+             */
+            const val DEFAULT_PER_KEY_LIMIT = 600
+        }
     }
 
     private val JTI = Regex("^[A-Za-z0-9_-]{16,64}$")

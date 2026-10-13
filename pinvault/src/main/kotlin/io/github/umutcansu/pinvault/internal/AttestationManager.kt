@@ -18,12 +18,15 @@ import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.async
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.cancelChildren
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.withTimeoutOrNull
 import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 import org.json.JSONArray
 import org.json.JSONObject
@@ -73,7 +76,9 @@ internal class AttestationManager(
     /** A value in [0, 1) per call, for the jitter. Tests fix it. */
     private val jitter: () -> Double = { java.util.concurrent.ThreadLocalRandom.current().nextDouble() },
     /** Makes the short-lived key of a fresh attestation round (§3.1). Tests swap it. */
-    private val freshKeys: () -> io.github.umutcansu.pinvault.keystore.FreshAttestationKeys = { io.github.umutcansu.pinvault.keystore.FreshAttestationKeys.androidKeystore }
+    private val freshKeys: () -> io.github.umutcansu.pinvault.keystore.FreshAttestationKeys = { io.github.umutcansu.pinvault.keystore.FreshAttestationKeys.androidKeystore },
+    /** How long a request waits for an on-demand attestation before it goes without one. */
+    private val onDemandWaitMs: Long = ON_DEMAND_WAIT_MS
 ) : AttestationTokenSource {
 
     private val initialStatus = AttestationStatus(
@@ -126,6 +131,13 @@ internal class AttestationManager(
     private val flightLock = Any()
 
     private var scope: CoroutineScope? = null
+
+    /**
+     * Where on-demand attestations run: a request waits for one at most
+     * [onDemandWaitMs], and one that takes longer goes on here, so the next
+     * request gets its token (its own wait cannot cancel it).
+     */
+    private val onDemandScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
     /** True when this block attests (an `attestation()` block with the library's own client). */
     val supported: Boolean get() = api != null
@@ -431,6 +443,9 @@ internal class AttestationManager(
             scope?.cancel()
             scope = null
         }
+        // An on-demand attestation a request stopped waiting for must not
+        // outlive a reset.
+        onDemandScope.coroutineContext.cancelChildren()
     }
 
     /** [stop], and forgets the token and the status — `PinVault.reset()`. */
@@ -488,7 +503,15 @@ internal class AttestationManager(
         if (!forceRefresh && held != null) return held
         if (!mayAttestOnDemand(now, forceRefresh)) return held
         return try {
-            runBlocking { attestNow() }
+            // Called on an OkHttp thread that the call's own timeout cannot
+            // interrupt: bounded here, so a slow server holds requests for
+            // onDemandWaitMs at most (the attestation itself carries on).
+            val attempt = onDemandScope.async { attestNow() }
+            val done = runBlocking { withTimeoutOrNull(onDemandWaitMs) { attempt.await() } }
+            if (done == null) {
+                Timber.w("Attestation [%s] on demand for %s still running after %d ms — the request goes with the token held",
+                    block.id, host, onDemandWaitMs)
+            }
             token?.takeIf { tokenExpiresAt > clock() }
         } catch (e: Exception) {
             Timber.w(e, "Attestation [%s] on demand for %s failed", block.id, host)
@@ -568,6 +591,9 @@ internal class AttestationManager(
         const val JITTER = 0.10
         /** A held token with less life than this is replaced before it is used. */
         const val TOKEN_MIN_REMAINING_MS = 30_000L
+
+        /** [onDemandWaitMs] by default: below the 30 s OkHttp timeouts a request usually has. */
+        const val ON_DEMAND_WAIT_MS = 10_000L
         /** A fresh attestation key (§3.1) at most this often, however often the server asks. */
         const val FRESH_MIN_GAP_MS = 10L * 60 * 1000
         /** A 401 forces at most one re-attestation per this many ms. */

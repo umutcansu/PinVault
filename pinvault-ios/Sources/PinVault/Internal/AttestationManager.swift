@@ -518,6 +518,14 @@ final class AttestationManager: AttestationTokenSource, @unchecked Sendable {
         }
     }
 
+    func heldToken(host: String, port: Int) -> String? {
+        guard api != nil else { return nil }
+        let now = clock()
+        return state.withLock { state in
+            state.token.flatMap { state.tokenExpiresAt - now >= Self.tokenMinRemainingMs ? $0 : nil }
+        }
+    }
+
     /// The proof for a request carrying `token`, when the block asks for
     /// proofs: signed by the block's device key (the one that signed the
     /// report, `cnf.jkt`), `iat` in the server's time as the last challenge

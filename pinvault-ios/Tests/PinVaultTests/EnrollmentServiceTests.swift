@@ -319,6 +319,78 @@ final class EnrollmentServiceTests: XCTestCase {
         XCTAssertFalse(service.isEnrolled(label: "default"))
     }
 
+    func testAKeyThatExistsButFailsIsNeverGivenUpForAServerMadeOne() async throws {
+        /// A key that is there but cannot sign right now (a busy Keychain).
+        final class FailingKey: ClientIdentityKeyProvider, @unchecked Sendable {
+            let base: any ClientIdentityKeyProvider
+            var cleared = 0
+            init(_ base: any ClientIdentityKeyProvider) { self.base = base }
+            func ensureKeyPair() throws { try base.ensureKeyPair() }
+            func ensureKeyPair(attestationChallenge: Data?) throws { try base.ensureKeyPair(attestationChallenge: attestationChallenge) }
+            func attestationChain() -> [Data] { [] }
+            func exists() -> Bool { true }
+            func publicKey() throws -> SecKey { try base.publicKey() }
+            func privateKey() throws -> SecKey { try base.privateKey() }
+            func sign(_ data: Data) throws -> Data { throw PinVaultError.crypto(message: "keychain busy") }
+            func spkiSha256() throws -> String { try base.spkiSha256() }
+            func securityLevel() -> KeySecurityLevel { .unknown }
+            func clear() throws { cleared += 1 }
+        }
+        let failing = FailingKey(ClientIdentityKeys.software(label: "\(labelPrefix)-failing"))
+        let service = EnrollmentService(
+            storage: .on(environment, identityKeys: { _ in failing }, importedKeys: importedKeys),
+            deviceId: { "a1b2c3d4-e5f6-0718-293a-4b5c6d7e8f90" },
+            deviceModel: "Apple iPhone17,1"
+        )
+        let p12 = TLSFixture.p12("client-a")
+        api.answer(EnrollmentResult(p12Bytes: p12, p12Hash: Hashing.sha256Base64(p12)))
+
+        let result = await service.enroll(token: "tok", deviceId: nil, label: nil, target: target(try config(allowServerGeneratedKey: true)))
+
+        guard case .failed(let message, _) = result else { return XCTFail("\(result)") }
+        XCTAssertTrue(message.contains("could not be used right now"), message)
+        XCTAssertEqual(api.p12Calls, 0, "nothing was sent")
+        XCTAssertTrue(api.calls.isEmpty, "nothing was sent")
+        XCTAssertEqual(failing.cleared, 0)
+    }
+
+    func testAKeyMadeNowThatCannotBeUsedIsRemovedWhenFallingBack() async throws {
+        /// Made fine, but cannot sign: the broken-Keychain case the fallback exists for.
+        final class UnusableKey: ClientIdentityKeyProvider, @unchecked Sendable {
+            let made = Locked(false)
+            func ensureKeyPair() throws { made.withLock { $0 = true } }
+            func ensureKeyPair(attestationChallenge: Data?) throws { try ensureKeyPair() }
+            func attestationChain() -> [Data] { [] }
+            func exists() -> Bool { made.withLock { $0 } }
+            func publicKey() throws -> SecKey { throw PinVaultError.crypto(message: "unusable") }
+            func privateKey() throws -> SecKey { throw PinVaultError.crypto(message: "unusable") }
+            func sign(_ data: Data) throws -> Data { throw PinVaultError.crypto(message: "unusable") }
+            func spkiSha256() throws -> String { throw PinVaultError.crypto(message: "unusable") }
+            func securityLevel() -> KeySecurityLevel { .unknown }
+            func clear() throws { made.withLock { $0 = false } }
+        }
+        let unusable = UnusableKey()
+        let service = EnrollmentService(
+            storage: .on(environment, identityKeys: { _ in unusable }, importedKeys: importedKeys),
+            deviceId: { "a1b2c3d4-e5f6-0718-293a-4b5c6d7e8f90" },
+            deviceModel: "Apple iPhone17,1"
+        )
+        // The server-made answer does not arrive (no network).
+        api.onEnroll = { throw URLError(.notConnectedToInternet) }
+
+        _ = await service.enroll(token: "tok", deviceId: nil, label: nil, target: target(try config(allowServerGeneratedKey: true)))
+        XCTAssertFalse(unusable.exists(), "the key this attempt made is gone")
+        _ = await service.enroll(token: "tok", deviceId: nil, label: nil, target: target(try config(allowServerGeneratedKey: true)))
+        XCTAssertEqual(api.p12Calls, 2, "the next attempt falls back again instead of refusing a key that was there")
+
+        // Refused without the opt-in, the key goes too: an update that adds it can fall back.
+        _ = await service.enroll(token: "tok", deviceId: nil, label: nil, target: target(try config()))
+        XCTAssertFalse(unusable.exists())
+        XCTAssertEqual(api.p12Calls, 2, "nothing sent without the opt-in")
+        _ = await service.enroll(token: "tok", deviceId: nil, label: nil, target: target(try config(allowServerGeneratedKey: true)))
+        XCTAssertEqual(api.p12Calls, 3)
+    }
+
     func testAP12WithAOneOffPasswordOpensWithIt() throws {
         let p12 = TLSFixture.p12("client-a")
         let result = EnrollmentResult(p12Bytes: p12, p12Hash: Hashing.sha256Base64(p12), p12Password: "changeit")

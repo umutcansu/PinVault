@@ -161,13 +161,14 @@ class PinVaultTokenAuthProofTest {
     private val token = PinVaultToken.issue("k1", secret, "dev-1", "api", "00000000", 1, 300, nowSeconds = now,
         keyThumbprint = PinVaultToken.jwkThumbprint(device.public as java.security.interfaces.ECPublicKey))
 
-    private fun ApplicationTestBuilder.app(origin: String? = null) {
+    private fun ApplicationTestBuilder.app(origin: String? = null, perKeyLimit: Int = 600) {
         install(PinVaultTokenAuth) {
             secrets = { mapOf("k1" to secret) }
             audience = "api"
             clock = { now }
             requireProof = true
             publicOrigin = origin
+            proofReplay = com.example.pinvault.server.service.attestation.PinVaultProof.ReplayCache(perKeyLimit = perKeyLimit)
         }
         routing { get("/data") { call.respondText("ok") } }
     }
@@ -188,6 +189,18 @@ class PinVaultTokenAuthProofTest {
         val proof = com.example.pinvault.server.service.attestation.Proofs.make(device, "GET", "http://localhost/data", token, now)
         assertEquals("ok", reason(PinVaultToken.HEADER to token, "PinVault-Proof" to proof))
         assertEquals("proof_replay", reason(PinVaultToken.HEADER to token, "PinVault-Proof" to proof))
+    }
+
+    @Test
+    fun `a device over its share of the replay cache is told to wait, not to attest again`() = testApplication {
+        app(perKeyLimit = 1)
+        fun proof() = com.example.pinvault.server.service.attestation.Proofs.make(device, "GET", "http://localhost/data", token, now)
+        assertEquals("ok", reason(PinVaultToken.HEADER to token, "PinVault-Proof" to proof()))
+        val response = client.get("/data") { header(PinVaultToken.HEADER, token); header("PinVault-Proof", proof()) }
+        assertEquals(HttpStatusCode.TooManyRequests, response.status)
+        assertEquals("60", response.headers[HttpHeaders.RetryAfter])
+        assertEquals(null, response.headers[HttpHeaders.WWWAuthenticate], "no invalid_token: the library must not re-attest")
+        assertTrue(response.bodyAsText().contains("\"reason\":\"proof_quota\""))
     }
 
     @Test

@@ -60,5 +60,9 @@ void main() {
         throwsA(isA<PinVaultWebSocketError>()));
     expect(() => PinVaultWebSocket.connect('wss://h.example/', headers: {'X-Token': 'a\r\nb'}),
         throwsA(isA<PinVaultWebSocketError>()));
+    expect(() => PinVaultWebSocket.connect('wss://h.example/', headers: {'PinVault-Token': 't'}),
+        throwsA(isA<PinVaultWebSocketError>()));
+    expect(() => PinVaultWebSocket.connect('wss://h.example/', headers: {'pinvault-proof': 'p'}),
+        throwsA(isA<PinVaultWebSocketError>()));
   });
 }

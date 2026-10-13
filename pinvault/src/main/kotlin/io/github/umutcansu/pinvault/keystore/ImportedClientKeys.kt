@@ -103,13 +103,14 @@ internal object AndroidKeystoreImportedClientKeys : ImportedClientKeys {
 
     override fun privateKey(alias: String): PrivateKey? {
         val keyStore = keyStore()
-        if (!keyStore.containsAlias(alias)) return null
+        // Throws when the Keystore cannot say: the caller keeps the chain.
+        if (!KeystoreAliases.exists(keyStore, alias, "imported client key")) return null
         return keyStore.getKey(alias, null) as? PrivateKey
     }
 
     override fun delete(alias: String) {
         try {
-            keyStore().takeIf { it.containsAlias(alias) }?.deleteEntry(alias)
+            KeystoreAliases.deleteUnlessAbsent(keyStore(), alias)
         } catch (e: Exception) {
             Timber.w(e, "Could not delete an imported client key")
         }

@@ -1,5 +1,96 @@
 # Changelog
 
+## Unreleased (2.5.1) — hardening from the 2026-10-14 product review
+
+### Reference server
+
+- **Breaking for setups that administer through the device ports:**
+  `CONFIG_API_ADMIN_ROUTES` is **off** by default. The Config API listeners —
+  the ports devices reach — answer device endpoints only; admin routes there
+  get `403 admin_routes_disabled`, key or no key, and administration happens on
+  the management port. `CONFIG_API_ADMIN_ROUTES=on` keeps the 2.5.0 behaviour
+  (the server logs a warning at start). The sample host's LAN demo sets `on`;
+  its production profile already set `off`.
+- **`PinVault-Proof` replay cache per device key:** one device key holds at
+  most `PINVAULT_PROOF_PER_KEY_LIMIT` live proofs (default 600, `0` = no
+  limit), so a single device can no longer fill the cache every device shares.
+  Past the device's share (`proof_quota`) or a full cache (`proof_busy`) the
+  answer is `429 rate_limited` with `Retry-After` — it was a `401`, which made
+  the device attest again with the same key. Expired entries are swept at most
+  once a second.
+- **API docs:** `openapi.yaml` is at 2.5.1 and documents `PinVault-Proof`,
+  `X-PinVault-Features: forbidden-as-409`, `/api/v1/server-settings`, the
+  `429` of vault downloads (`VAULT_DOWNLOAD_CONCURRENCY`) and ES256 tokens.
+
+### iOS
+
+- **WebSockets carry the attestation token:** the upgrade request of a
+  `wss://` socket to a token host carries `PinVault-Token` (and
+  `PinVault-Proof` with `proofOfPossession()`), as OkHttp's `newWebSocket` does
+  on Android; a backend that requires the token refused iOS sockets.
+  `webSocketTask(for:)` adds a token already held (without one it starts an
+  attestation in the background); the new `makeWebSocketTask(for:)` /
+  `(with:)` (async) attests first, waiting at most 10 s as Android does. `PinVault.shared.webSocketUpgradeHeaders(for:)`
+  gives the same headers to a socket the library does not open.
+- **No client certificate to a proxy:** a TLS proxy that asks for a client
+  certificate gets none; the identity is for the origin only.
+- **The client certificate stays on the device:** the leaf stored next to the
+  identity key is `AfterFirstUnlockThisDeviceOnly` (it had the Keychain's
+  default, `WhenUnlocked`, which goes into backups and is unreadable while the
+  device is locked). Certificates stored by 2.5.0 are moved at their next use.
+- **A server-made key's chain is checked:** a PKCS12 answer
+  (`allowServerGeneratedKey()`) is held to the rules of a CSR answer — the
+  issuer sent along, `maxClientCertLifetimeDays`, `clientCaPins` — and its
+  certificate must be over its own key.
+- **An existing identity key is never given up for a server-made one:** with
+  `allowServerGeneratedKey()`, only a key that could not be made falls back to
+  a PKCS12; a key that is there but failed for a moment (a busy Keychain) ends
+  the enrollment with nothing sent.
+- **`end_to_end` files recover a missing device key:** a `412` registers the
+  key and retries the download once (as on Android).
+
+### Android
+
+- **A Keystore that cannot be read is not a missing key:** on Android 12+
+  `containsAlias` answers false for a Keystore error. The identity key, the
+  device RSA key, imported client keys and the user-auth key are now checked
+  again with `getKey` before anything is generated over them or dropped
+  because of them; a Keystore that cannot say leaves everything in place and
+  the operation fails (or is retried) instead of re-enrolling the device or
+  deleting screen-lock vault copies. Enrollment then fails without sending
+  anything: with `allowServerGeneratedKey()` only a key that could not be
+  made falls back to a server-made one, never a key that is there but failed
+  for a moment (which the fallback then deleted). A delete that was asked for (unenroll,
+  a retired key) is not skipped because the alias could not be listed.
+- **`end_to_end` files recover a missing device key:** a `412` (the server has
+  no device key on file, e.g. registration at init failed) registers the key
+  and retries the download once, as `user_auth` files already did.
+- **A server-made key's chain is checked:** as on iOS, a PKCS12 enrollment
+  answer is held to the chain rules of a CSR answer (at least the leaf and its
+  issuer, `maxClientCertLifetimeDays`, `clientCaPins`) and its certificate must
+  be over its own key. A server that sends a PKCS12 with the leaf alone is
+  refused; the reference server sends the client CA with it.
+- **A second `init` changes nothing:** it was skipped, but its config and its
+  Keystore options (`requireUnlockedDevice`, `requireHardwareBackedKeys`)
+  replaced the running ones. `isEnrolled(context, config)` and
+  `isEnrollmentPending(context, config)` no longer change them after `init`
+  either.
+- **On-demand attestation is bounded for requests:** a request to a token host
+  that needs an attestation waits at most 10 s for it (OkHttp's call timeout
+  cannot interrupt that wait); the attestation carries on, and the next
+  request gets its token. `reset()` / unenroll stop one still running.
+
+### React Native and Flutter
+
+- **iOS WebSockets carry the attestation token** (see iOS): React Native's
+  SocketRocket sockets get the held token, Flutter's `PinVaultWebSocket` waits
+  for one. Flutter's iOS plugin needs PinVault 2.5.1.
+- **`PinVault-Token` / `PinVault-Proof` in `fetch` headers (and in Flutter's
+  WebSocket headers) are refused:** only the library sets them, for its token
+  hosts.
+- **`expectedSignerSha256` is Android only:** the docs and types say so, and
+  name the iOS counterparts (`ios.expectedBundleIds`, `ios.expectedTeamIds`).
+
 ## 2.5.0 — 2026-10-12 — Flutter plugin, pinned WebSockets on iOS, the server behind a proxy
 
 ### Reference server

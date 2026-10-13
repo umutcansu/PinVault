@@ -530,7 +530,8 @@ public class SwiftPinVaultFlutterPlugin: NSObject, FlutterPlugin {
         if let raw = args?["headers"] as? [String: Any] {
             for (name, value) in raw {
                 guard let value = value as? String, Self.isHeaderName(name),
-                      !value.contains("\r"), !value.contains("\n") else {
+                      !value.contains("\r"), !value.contains("\n"),
+                      !PinnedFetch.libraryHeaders.contains(where: { $0.caseInsensitiveCompare(name) == .orderedSame }) else {
                     return Self.invalidArgument(result, "ws_connect: the URL or a header is not valid")
                 }
                 headers[name] = value
@@ -617,7 +618,7 @@ private final class SinkStreamHandler: NSObject, FlutterStreamHandler {
 // MARK: WebSocket
 
 /// One `wss://` connection over the library's pinned session
-/// (`PinVault.shared.session().webSocketTask(with:)`), so the TLS handshake
+/// (`PinVault.shared.session().makeWebSocketTask(for:)`), so the TLS handshake
 /// runs the library's server-trust AND client-certificate (mTLS) decision —
 /// the same delegate that answers data tasks' challenges. Fail closed: before
 /// `start` (or after a failed one) the library refuses the socket, and only
@@ -633,6 +634,11 @@ final class PinVaultWebSocketConnection: NSObject {
     private var session: PinnedSession?
     private var events: FlutterEventSink?
     private var closed = false
+    /// Frames sent before the task exists (it is made after the attestation
+    /// token is had); sent in order once it does. While `draining`, new
+    /// frames still queue behind them, so none overtakes a queued one.
+    private var pending: [(URLSessionWebSocketTask.Message, FlutterResult)] = []
+    private var draining = false
 
     init(socketId: String, url: URL, headers: [String: String]) {
         self.socketId = socketId
@@ -642,21 +648,57 @@ final class PinVaultWebSocketConnection: NSObject {
     }
 
     /// Starts the connection; `events` receives the frames. Called when the
-    /// Dart side listens on `pinvault_flutter/ws/<socketId>/events`.
+    /// Dart side listens on `pinvault_flutter/ws/<socketId>/events`. The
+    /// upgrade request carries the attestation token (and proof) of a token
+    /// host, attesting first when none is held — as OkHttp's `newWebSocket`
+    /// does on Android.
     func open(events: @escaping FlutterEventSink) {
         lock.lock(); self.events = events; lock.unlock()
 
-        do {
-            let session = PinVault.shared.session()
-            var request = URLRequest(url: url)
-            for (name, value) in headers { request.addValue(value, forHTTPHeaderField: name) }
-            let task = try session.webSocketTask(for: request)
-            lock.lock(); self.session = session; self.task = task; lock.unlock()
-            task.resume()
-            receive()
-        } catch {
-            emit(["type": "error", "error": Self.describe(error)])
-            finish()
+        let url = self.url
+        let headers = self.headers
+        Task {
+            do {
+                let session = PinVault.shared.session()
+                var request = URLRequest(url: url)
+                for (name, value) in headers { request.addValue(value, forHTTPHeaderField: name) }
+                let task = try await session.makeWebSocketTask(for: request)
+                guard self.adopt(task, of: session) else {
+                    task.cancel(with: .normalClosure, reason: nil)
+                    return
+                }
+                task.resume()
+                self.drain(task)
+                receive()
+            } catch {
+                emit(["type": "error", "error": Self.describe(error)])
+                finish()
+            }
+        }
+    }
+
+    /// Keeps `task`, with new frames still queued until ``drain(_:)`` has sent
+    /// the earlier ones; false when the socket ended meanwhile (the caller
+    /// cancels the task).
+    private func adopt(_ task: URLSessionWebSocketTask, of session: PinnedSession) -> Bool {
+        lock.lock(); defer { lock.unlock() }
+        guard !closed else { return false }
+        self.session = session
+        self.task = task
+        draining = true
+        return true
+    }
+
+    /// Sends the queued frames in order, then lets `send` go straight to the task.
+    private func drain(_ task: URLSessionWebSocketTask) {
+        while true {
+            lock.lock()
+            let batch = pending
+            pending = []
+            if batch.isEmpty { draining = false }
+            lock.unlock()
+            if batch.isEmpty { return }
+            for (message, result) in batch { Self.send(message, on: task, result: result) }
         }
     }
 
@@ -691,11 +733,6 @@ final class PinVaultWebSocketConnection: NSObject {
     }
 
     func send(data: Any?, binary: Bool, result: @escaping FlutterResult) {
-        lock.lock(); let t = task; lock.unlock()
-        guard let t else {
-            result(FlutterError(code: "E_NOT_STARTED", message: "socket is not open", details: nil))
-            return
-        }
         let message: URLSessionWebSocketTask.Message
         if binary || data is FlutterStandardTypedData {
             let bytes: Data
@@ -715,9 +752,26 @@ final class PinVaultWebSocketConnection: NSObject {
             }
             message = .string(text)
         }
-        t.send(message) { error in
+        lock.lock()
+        if closed {
+            lock.unlock()
+            result(FlutterError(code: "E_NOT_STARTED", message: "socket is not open", details: nil))
+            return
+        }
+        guard let t = task, !draining else {
+            // Still being opened, or earlier frames still going out: queued behind them.
+            pending.append((message, result))
+            lock.unlock()
+            return
+        }
+        lock.unlock()
+        Self.send(message, on: t, result: result)
+    }
+
+    private static func send(_ message: URLSessionWebSocketTask.Message, on task: URLSessionWebSocketTask, result: @escaping FlutterResult) {
+        task.send(message) { error in
             if let error {
-                result(FlutterError(code: "E_FETCH", message: Self.describe(error), details: nil))
+                result(FlutterError(code: "E_FETCH", message: describe(error), details: nil))
             } else {
                 result(nil)
             }
@@ -752,7 +806,12 @@ final class PinVaultWebSocketConnection: NSObject {
         events = nil
         task = nil
         session = nil
+        let unsent = pending
+        pending = []
         lock.unlock()
+        for (_, result) in unsent {
+            result(FlutterError(code: "E_NOT_STARTED", message: "socket is not open", details: nil))
+        }
         SwiftPinVaultFlutterPlugin.removeSocket(socketId)
     }
 

@@ -53,6 +53,8 @@ final class MappingTests: XCTestCase {
         XCTAssertThrowsError(try PinnedFetch.parse(#"{"url":"http://a/"}"#))
         XCTAssertThrowsError(try PinnedFetch.parse(#"{"url":"https://a/","metod":"GET"}"#))
         XCTAssertThrowsError(try PinnedFetch.parse(#"{"url":"https://a/","headers":{"X-A":"a\r\nB: 1"}}"#))
+        XCTAssertThrowsError(try PinnedFetch.parse(#"{"url":"https://a/","headers":{"PinVault-Token":"t"}}"#))
+        XCTAssertThrowsError(try PinnedFetch.parse(#"{"url":"https://a/","headers":{"pinvault-proof":"p"}}"#))
         XCTAssertThrowsError(try PinnedFetch.parse(#"{"url":"https://a/","method":"GET","body":"x"}"#))
         let r = try PinnedFetch.parse(#"{"url":"https://a/p","method":"post","headers":{"X-A":"1"},"body":"AP8=","bodyEncoding":"base64","timeoutMs":1500}"#)
         XCTAssertEqual(r.method, "POST")

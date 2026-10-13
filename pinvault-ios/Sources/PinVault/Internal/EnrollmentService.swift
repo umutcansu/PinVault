@@ -402,10 +402,26 @@ final class EnrollmentService: Sendable {
             deviceAlias: identity?.alias, deviceUid: identity?.uid, allowServerGeneratedKey: block.allowServerGeneratedKey,
             integrity: target.config.integrityTokenProvider, appAttestation: appAttestation
         ) {
+            // Only a key that could not be MADE may give way to one the server
+            // makes; a key that is there (or may be: `exists` says so when the
+            // Keychain cannot tell) but failed for a moment is never replaced.
+            let keyExisted = key.exists()
             do {
                 try key.ensureKeyPair(attestationChallenge: challenge)
                 return try Pkcs10Csr.encode(commonName: deviceId ?? identity?.uid ?? "device", key: key)
             } catch {
+                if keyExisted {
+                    throw PinVaultError.illegalState(
+                        "This device's key in the Keychain could not be used right now (\(Self.describe(error))); " +
+                            "nothing was sent and the token is not spent. Try again."
+                    )
+                }
+                // A key this attempt made (and could not use) goes, whichever
+                // way this ends: kept, it would count as "a key that was there"
+                // at the next attempt and block the fallback for good, also
+                // after the app adds allowServerGeneratedKey(). Nothing was
+                // ever sent over it.
+                try? key.clear()
                 // Only a block that asked for it falls back to a key the server makes.
                 if !block.allowServerGeneratedKey {
                     throw PinVaultError.illegalState(
@@ -429,7 +445,7 @@ final class EnrollmentService: Sendable {
         }
 
         // Only reached with allowServerGeneratedKey(): the server made the key.
-        let password = try acceptEnrolledP12(result, localPassword: block.clientKeyPassword)
+        let password = try acceptEnrolledP12(result, localPassword: block.clientKeyPassword, block: block)
         // No orphan identity key next to a server-made one — unless a chain
         // under this label is over it (never deleted then; see EnrollmentRequests).
         if EnrollmentRequests.mayDeleteKey(certStore: certStore, certLabel: certLabel) { try? key.clear() }
@@ -472,16 +488,24 @@ final class EnrollmentService: Sendable {
     /// used here once and never stored), else the block's `clientKeyPassword`.
     /// The key is imported into the Keychain with it; only a bundle the
     /// Keychain refuses is kept, re-wrapped to the block's password (``P12Rewrap``).
-    func acceptEnrolledP12(_ result: EnrollmentResult, localPassword: String) throws -> String {
+    func acceptEnrolledP12(_ result: EnrollmentResult, localPassword: String, block: ConfigApiBlock? = nil) throws -> String {
         let password = result.p12Password ?? localPassword
-        try Self.validateP12(result.p12Bytes, serverHash: result.p12Hash, password: password)
+        let identity = try Self.validateP12(result.p12Bytes, serverHash: result.p12Hash, password: password)
+        // The chain rules of a CSR answer: issuer sent along, lifetime cap, clientCaPins.
+        let certificates = try ClientCertRenewer.acceptIssuedP12(
+            identity,
+            caPins: block?.clientCaPins ?? [],
+            maxLifetimeDays: block?.maxClientCertLifetimeDays ?? ConfigApiBlock.defaultMaxClientCertLifetimeDays
+        )
+        Self.log.d("Enrolled PKCS12 chain accepted — valid until \(certificates[0].notAfter)")
         return password
     }
 
     /// Validates P12 bytes: requires the server-supplied SHA-256 and a PKCS12
     /// that opens. The hash header is mandatory — a MITM that drops it could
     /// otherwise inject a P12 with an attacker-controlled certificate (H-05).
-    static func validateP12(_ p12: Data, serverHash: String?, password: String) throws {
+    @discardableResult
+    static func validateP12(_ p12: Data, serverHash: String?, password: String) throws -> ClientIdentity {
         guard let serverHash, !serverHash.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
             throw PinVaultError.security(
                 message: "Server did not provide X-P12-SHA256 header — refusing to install P12. " +
@@ -499,6 +523,7 @@ final class EnrollmentService: Sendable {
         log.d("P12 SHA-256 hash verified")
         let identity = try ClientIdentity.fromPKCS12(p12, password: password)
         log.d("P12 format validated — \(identity.chain.count) entries")
+        return identity
     }
 
     /// (deviceAlias, deviceUid): the config's alias or `Apple <model>`, and the

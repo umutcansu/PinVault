@@ -1,5 +1,24 @@
 # Changelog
 
+## Unreleased (2.5.1)
+
+### Fixed
+
+- **iOS WebSockets carry the attestation token.** A `wss` socket to a token
+  host of an attesting block now sends `PinVault-Token` (and
+  `PinVault-Proof` with `proofOfPossession()`) in its upgrade request when a
+  token is held, as Android does; without one it goes without and an
+  attestation starts, so a reconnect has it.
+- **`fetch` refuses `PinVault-Token` / `PinVault-Proof` headers:** only the
+  library sets them, for its token hosts. On iOS a WebSocket drops such
+  headers given by the app (the library's own go in their place).
+- **Docs and types:** `expectedSignerSha256` is Android only; iOS uses
+  `ios.expectedBundleIds` / `ios.expectedTeamIds`.
+
+### Changed
+
+- Depends on PinVault 2.5.1.
+
 ## 2.5.0 — 2026-10-12
 
 ### Fixed
