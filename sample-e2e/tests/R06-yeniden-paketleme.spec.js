@@ -44,6 +44,10 @@ test('R06 Yeniden paketleme: doğru imza app_integrity\'yi geçer; farklı anaht
       await app.openVault();
       deviceId = app.deviceId();
       await hostApi.forgetRevokedIdentitiesOf(deviceId).catch(() => {});
+      // Bu kimlik daha önceki bir koşuda başka bir anahtarla kaydedilmiş olabilir
+      // (yeniden kurulum = yeni anahtar): kayıt unutulur; kütüphane sunucunun
+      // "zinciri yeniden gönder" cevabında aynı turda yeniden kaydolur.
+      await hostApi.api(res.devicePath(SCOPE, deviceId), { method: 'DELETE' }).catch(() => {});
       await app.backToMain();
     });
 

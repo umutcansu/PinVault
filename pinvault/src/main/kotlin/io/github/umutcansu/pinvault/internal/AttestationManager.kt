@@ -187,11 +187,19 @@ internal class AttestationManager(
         return if (expiresAt - now >= minRemainingMs && expiresAt > now) AttestationTokenResult.Token(value, expiresAt) else null
     }
 
-    private suspend fun attestOnce(): AttestationStatus {
+    /**
+     * One attestation round. A server that does not know the key (it was
+     * forgotten meanwhile) asks for the chain again (`key_unknown`, …): when
+     * this round sent none, it is sent at once in a second round, so a
+     * forgotten device registers again now instead of failing until its next
+     * scheduled attempt. [retried] keeps that to one.
+     */
+    private suspend fun attestOnce(retried: Boolean = false): AttestationStatus {
         val api = api ?: return status
         val startedAt = clock()
         lastAttemptAt = startedAt
         var skew: Long? = status.clockSkewMs
+        var sentChain = false
         return try {
             val key = identityKey()
             val did = resolvedDeviceId()
@@ -211,6 +219,7 @@ internal class AttestationManager(
             val canonical = canonicalString(nonce, did, report)
             val signature = base64(key.sign(canonical.toByteArray(Charsets.UTF_8)))
             val chain = if (chainWanted) attestationChainOf(key) else emptyList()
+            sentChain = chain.isNotEmpty()
             val freshChain = if (freshWanted && lastFreshAt.let { it == null || startedAt - it >= FRESH_MIN_GAP_MS }) freshChainOf(nonce, did, key, startedAt) else emptyList()
 
             val body = JSONObject()
@@ -233,7 +242,13 @@ internal class AttestationManager(
         } catch (e: kotlinx.coroutines.CancellationException) {
             throw e
         } catch (e: AttestationHttpException) {
-            if (CHAIN_WANTED_AGAIN.contains(e.serverError.orEmpty())) chainWanted = true
+            if (CHAIN_WANTED_AGAIN.contains(e.serverError.orEmpty())) {
+                chainWanted = true
+                if (!sentChain && !retried) {
+                    Timber.i("Attestation [%s]: the server asks for the key's chain — sending it now", block.id)
+                    return attestOnce(retried = true)
+                }
+            }
             failed(e.message ?: "Attestation refused — HTTP ${e.httpStatus}", skew)
         } catch (e: Exception) {
             failed("${e.javaClass.simpleName}: ${e.message}", skew)

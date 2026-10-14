@@ -411,7 +411,7 @@ final class AttestationManagerTests: XCTestCase {
 
     // MARK: The attestation chain
 
-    func testTheKeysChainGoesWithTheFirstRequestNotWithTheNextAndAgainWhenTheServerAsksForIt() async throws {
+    func testTheKeysChainGoesWithTheFirstRequestNotWithTheNextAndAgainAtOnceWhenTheServerAsksForIt() async throws {
         key.chain = [Data([1, 2, 3]), Data([4])]
         let m = try manager()
 
@@ -425,14 +425,31 @@ final class AttestationManagerTests: XCTestCase {
         _ = await m.attestNow()
         XCTAssertNil(api.attestBodies.last?["attestationChain"], "registered: a key cannot be re-attested")
 
+        // Forgotten by the server meanwhile: it asks for the chain, and gets it in the same round.
         api.enqueue(challenge())
-        api.enqueue(.http(403, #"{"error":"attestation_required"}"#))
-        _ = await m.attestNow()
+        api.enqueue(.http(409, #"{"error":"key_unknown"}"#))
+        api.enqueue(challenge())
+        api.enqueue(pass())
+        let status = await m.attestNow()
+        XCTAssertEqual(status.result, .pass)
+        XCTAssertEqual(api.attestBodies.count, 4)
+        XCTAssertNil(api.attestBodies[2]["attestationChain"])
+        XCTAssertNotNil(api.attestBodies[3]["attestationChain"], "asked for again: sent at once")
+    }
 
+    func testAServerThatKeepsAskingForTheChainGetsItOncePerRoundNotInALoop() async throws {
+        let m = try manager()
         api.enqueue(challenge())
         api.enqueue(pass())
         _ = await m.attestNow()
-        XCTAssertNotNil(api.attestBodies.last?["attestationChain"], "asked for again")
+
+        api.enqueue(challenge())
+        api.enqueue(.http(403, #"{"error":"attestation_required"}"#))
+        api.enqueue(challenge())
+        api.enqueue(.http(403, #"{"error":"attestation_required"}"#))
+        let status = await m.attestNow()
+        XCTAssertEqual(status.result, .failed)
+        XCTAssertEqual(api.attestBodies.count, 3, "one retry")
     }
 
     func testTheDeviceKeyIsMadeWithTheIdentityAttestationChallengeOfTheDeviceId() async throws {

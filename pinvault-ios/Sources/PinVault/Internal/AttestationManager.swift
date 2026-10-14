@@ -201,7 +201,12 @@ final class AttestationManager: AttestationTokenSource, @unchecked Sendable {
         }
     }
 
-    private func attestOnce() async -> AttestationStatus {
+    /// One attestation round. A server that does not know the key (it was
+    /// forgotten meanwhile) asks for its registration again (`key_unknown`, …):
+    /// when this round did not send it, a second round sends it at once, so a
+    /// forgotten device registers again now instead of failing until its next
+    /// scheduled attempt (Kotlin `attestOnce(retried)`). `retried` keeps that to one.
+    private func attestOnce(retried: Bool = false) async -> AttestationStatus {
         guard let api else { return status }
         let startedAt = clock()
         let (previousSkew, chainWanted) = state.withLock { state -> (Int64?, Bool) in
@@ -262,6 +267,10 @@ final class AttestationManager: AttestationTokenSource, @unchecked Sendable {
                 state.withLock { $0.chainWanted = true }
                 // iOS: the App Attest attestation stands in for the chain (PORTING.md §6).
                 onRegistrationWanted()
+                if !chainWanted && !retried {
+                    log.i("Attestation [\(block.id)]: the server asks for the key's registration — sending it now")
+                    return await attestOnce(retried: true)
+                }
             }
             return failed(error.message, skew: skew)
         } catch is CancellationError {

@@ -82,6 +82,12 @@
   replaced the running ones. `isEnrolled(context, config)` and
   `isEnrollmentPending(context, config)` no longer change them after `init`
   either.
+- **A forgotten device registers again at once (Android and iOS):** when the
+  server answers an attestation without the key's chain with `key_unknown` /
+  `attestation_required` / `attestation_invalid` (an administrator forgot
+  the device, or it was re-installed under the same id), the chain goes in a
+  second round straight away instead of at the next scheduled attempt. One
+  retry per round.
 - **On-demand attestation is bounded for requests:** a request to a token host
   that needs an attestation waits at most 10 s for it (OkHttp's call timeout
   cannot interrupt that wait); the attestation carries on, and the next

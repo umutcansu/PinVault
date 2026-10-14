@@ -393,7 +393,7 @@ class AttestationManagerTest {
     // ── The attestation chain ───────────────────────────────────────────
 
     @Test
-    fun `the key's chain goes with the first request, not with the next, and again when the server asks for it`() = runTest {
+    fun `the key's chain goes with the first request, not with the next, and again at once when the server asks for it`() = runTest {
         SoftwareClientIdentityKeyProvider.attestation = { listOf(byteArrayOf(1, 2, 3), byteArrayOf(4)) }
         val m = manager()
 
@@ -410,17 +410,32 @@ class AttestationManagerTest {
         server.takeRequest()
         assertFalse("registered: a key cannot be re-attested", body(server.takeRequest()).has("attestationChain"))
 
+        // Forgotten by the server meanwhile: it asks for the chain, and gets it in the same round.
         server.enqueue(challenge())
-        server.enqueue(MockResponse().setResponseCode(403).setBody("""{"error":"attestation_required"}"""))
-        m.attestNow()
+        server.enqueue(MockResponse().setResponseCode(409).setBody("""{"error":"key_unknown"}"""))
+        server.enqueue(challenge(nonce = "nonce-2"))
+        server.enqueue(pass(token = "eyJ.token.2"))
+        assertEquals(AttestationResult.PASS, m.attestNow().result)
         server.takeRequest()
+        assertFalse(body(server.takeRequest()).has("attestationChain"))
         server.takeRequest()
+        assertTrue("asked for again: sent at once", body(server.takeRequest()).has("attestationChain"))
+        assertEquals(8, server.requestCount)
+    }
 
+    @Test
+    fun `a server that keeps asking for the chain gets it once per round, not in a loop`() = runTest {
+        val m = manager()
         server.enqueue(challenge())
         server.enqueue(pass())
         m.attestNow()
-        server.takeRequest()
-        assertTrue("asked for again", body(server.takeRequest()).has("attestationChain"))
+
+        server.enqueue(challenge())
+        server.enqueue(MockResponse().setResponseCode(403).setBody("""{"error":"attestation_required"}"""))
+        server.enqueue(challenge(nonce = "nonce-2"))
+        server.enqueue(MockResponse().setResponseCode(403).setBody("""{"error":"attestation_required"}"""))
+        assertEquals(AttestationResult.FAILED, m.attestNow().result)
+        assertEquals("one retry: 2 + 2 + 2 requests", 6, server.requestCount)
     }
 
     @Test
