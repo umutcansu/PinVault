@@ -109,13 +109,12 @@ internal interface UserAuthKeys {
 
         /**
          * True when [e] says Android retired the key. Newer Keystores wrap the
-         * [KeyPermanentlyInvalidatedException] (an UnrecoverableKeyException
-         * when loading, for one), so the whole cause chain is searched.
+         * [KeyPermanentlyInvalidatedException], so the whole cause chain is
+         * searched; Keystore2's `getKey` even replaces it with an
+         * UnrecoverableKeyException that keeps only its message, which counts
+         * too (see [KeystoreAliases.isInvalidated]).
          */
-        fun isRetired(e: Throwable): Boolean =
-            generateSequence(e) { it.cause?.takeIf { cause -> cause !== it } }
-                .take(8)
-                .any { it is KeyPermanentlyInvalidatedException }
+        fun isRetired(e: Throwable): Boolean = KeystoreAliases.isInvalidated(e)
     }
 }
 
@@ -137,8 +136,14 @@ internal class KeystoreUserAuthKeys(
     override fun state(): UserAuthKeys.State {
         val keyStore = keyStore()
         // Throws when the Keystore cannot say: copies are not given up and
-        // the key is not replaced over a read that failed for a moment.
-        if (!KeystoreAliases.exists(keyStore, ALIAS, "user-auth key")) return UserAuthKeys.State.MISSING
+        // the key is not replaced over a read that failed for a moment. A key
+        // the Keystore reports as invalidated is retired: it may be replaced.
+        when (KeystoreAliases.presence(keyStore, ALIAS)) {
+            KeystoreAliases.Presence.ABSENT -> return UserAuthKeys.State.MISSING
+            KeystoreAliases.Presence.INVALIDATED -> return UserAuthKeys.State.INVALIDATED
+            KeystoreAliases.Presence.UNKNOWN -> throw KeystoreUnreadableException("The Keystore cannot say whether the user-auth key exists right now")
+            KeystoreAliases.Presence.PRESENT -> Unit
+        }
         return try {
             val key = keyStore.getKey(ALIAS, null) as? PrivateKey ?: return UserAuthKeys.State.MISSING
             Cipher.getInstance(UserAuthKeys.RSA_TRANSFORMATION).init(Cipher.DECRYPT_MODE, key, UserAuthKeys.OAEP)

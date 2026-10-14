@@ -61,7 +61,11 @@
   anything: with `allowServerGeneratedKey()` only a key that could not be
   made falls back to a server-made one, never a key that is there but failed
   for a moment (which the fallback then deleted). A delete that was asked for (unenroll,
-  a retired key) is not skipped because the alias could not be listed.
+  a retired key) is not skipped because the alias could not be listed. A
+  key the Keystore reports as permanently invalidated (the screen lock
+  removed under the user-auth key) counts as retired and is replaced, also
+  where Keystore2's `getKey` hides the exception behind a plain
+  `UnrecoverableKeyException`.
 - **`end_to_end` files recover a missing device key:** a `412` (the server has
   no device key on file, e.g. registration at init failed) registers the key
   and retries the download once, as `user_auth` files already did.

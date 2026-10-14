@@ -87,6 +87,22 @@ class KeystoreAliasesTest {
     }
 
     @Test
+    fun `a key Keystore2 reports as invalidated is there, retired, not unreadable`() {
+        // Keystore2's engineGetKey: KeyPermanentlyInvalidatedException → UnrecoverableKeyException(e.getMessage()).
+        val rewritten = UnrecoverableKeyException("User changed or deleted their auth credentials")
+        val store = FakeKeyStore(FakeSpi(false, keyError = rewritten))
+        assertEquals(KeystoreAliases.Presence.INVALIDATED, KeystoreAliases.presence(store, "a"))
+        assertTrue("there: nothing is generated over it unasked", KeystoreAliases.exists(store, "a", "key"))
+        assertTrue(UserAuthKeys.isRetired(rewritten))
+        assertTrue(UserAuthKeys.isRetired(RuntimeException(android.security.keystore.KeyPermanentlyInvalidatedException("x"))))
+        assertFalse(UserAuthKeys.isRetired(UnrecoverableKeyException("Failed to obtain information about key")))
+
+        val spi = FakeSpi(false, keyError = rewritten)
+        KeystoreAliases.deleteUnlessAbsent(FakeKeyStore(spi), "a")
+        assertEquals("a retired key may be deleted", 1, spi.deleted)
+    }
+
+    @Test
     fun `the identity key is not regenerated while the Keystore cannot say`() {
         val spi = FakeSpi(false, keyError = busy)
         val provider = AndroidKeystoreClientIdentityKeyProvider("alias") { FakeKeyStore(spi) }

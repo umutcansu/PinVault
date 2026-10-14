@@ -14,10 +14,20 @@ import timber.log.Timber
  * `containsAlias` is therefore asked again with `getKey` before a key is
  * generated over the alias, or a credential is dropped because of it: a key
  * the Keystore merely could not read is never replaced.
+ *
+ * One `getKey` failure is not "cannot say": a key the Keystore reports as
+ * permanently invalidated (the screen lock removed under a user-auth key).
+ * Keystore2's `engineGetKey` turns that `KeyPermanentlyInvalidatedException`
+ * into a plain `UnrecoverableKeyException` with only its message left, so the
+ * message is what tells it apart ([Presence.INVALIDATED]): such a key is
+ * there, retired, and may be replaced.
  */
 internal object KeystoreAliases {
 
-    enum class Presence { PRESENT, ABSENT, UNKNOWN }
+    enum class Presence { PRESENT, ABSENT, INVALIDATED, UNKNOWN }
+
+    /** The message Keystore2 gives a permanently invalidated key (`AndroidKeyStoreProvider`). */
+    private const val INVALIDATED_MESSAGE = "User changed or deleted their auth credentials"
 
     fun presence(keyStore: KeyStore, alias: String): Presence {
         try {
@@ -29,10 +39,18 @@ internal object KeystoreAliases {
         return try {
             if (keyStore.getKey(alias, null) != null) Presence.PRESENT else Presence.ABSENT
         } catch (e: Exception) {
+            if (isInvalidated(e)) return Presence.INVALIDATED
             Timber.w(e, "The Keystore cannot read a key right now")
             Presence.UNKNOWN
         }
     }
+
+    /** A permanently invalidated key, as the exception itself says or as Keystore2 rewrites it. */
+    fun isInvalidated(e: Throwable): Boolean =
+        generateSequence(e) { it.cause?.takeIf { cause -> cause !== it } }.take(8).any {
+            it is android.security.keystore.KeyPermanentlyInvalidatedException ||
+                (it is java.security.UnrecoverableKeyException && it.message?.contains(INVALIDATED_MESSAGE) == true)
+        }
 
     /**
      * True when the key is there, false when it is not.
@@ -41,7 +59,8 @@ internal object KeystoreAliases {
      */
     fun exists(keyStore: KeyStore, alias: String, what: String): Boolean =
         when (presence(keyStore, alias)) {
-            Presence.PRESENT -> true
+            // Invalidated is there too: not something to generate over unasked.
+            Presence.PRESENT, Presence.INVALIDATED -> true
             Presence.ABSENT -> false
             Presence.UNKNOWN -> throw KeystoreUnreadableException("The Keystore cannot say whether the $what exists right now")
         }
