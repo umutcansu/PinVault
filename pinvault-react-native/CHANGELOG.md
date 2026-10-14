@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased (2.5.1)
+## 2.6.0 — 2026-10-14
 
 ### Fixed
 
@@ -17,7 +17,7 @@
 
 ### Changed
 
-- Depends on PinVault 2.5.1.
+- Depends on PinVault 2.6.0 (Maven Central, Swift package tag `v2.6.0`).
 
 ## 2.5.0 — 2026-10-12
 

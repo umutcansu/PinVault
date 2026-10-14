@@ -560,7 +560,7 @@ payload { "jti": "<16 random bytes, base64url>", "htm": "GET",
   again; a redirect to another host, port or scheme loses the token and the
   proof (both libraries). A `wss://` WebSocket's upgrade request carries the
   token and a proof with `htm` `GET` and `htu` the socket's URL as `https://`
-  (Android through OkHttp; iOS from 2.5.1, React Native and Flutter included).
+  (Android through OkHttp; iOS from 2.6.0, React Native and Flutter included).
 - A backend verifies, after the token: the signature with `jwk`; the
   thumbprint of `jwk` equals `cnf.jkt` (a token without `cnf.jkt` cannot be
   proven); `htm` and `htu` are this request's; `iat` within 60 s of now;

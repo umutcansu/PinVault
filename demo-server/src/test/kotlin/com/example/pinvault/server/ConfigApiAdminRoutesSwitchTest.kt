@@ -5,7 +5,7 @@ import kotlin.test.assertFailsWith
 import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 
-/** Admin routes stay off the device-facing Config API ports unless asked for (2.5.1). */
+/** Admin routes stay off the device-facing Config API ports unless asked for (2.6.0). */
 class ConfigApiAdminRoutesSwitchTest {
 
     @Test

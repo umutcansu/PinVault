@@ -2,7 +2,7 @@ openapi: 3.0.3
 
 info:
   title: PinVault Demo Server API
-  version: 2.5.1
+  version: 2.6.0
   description: |
     Reference backend for the PinVault Android SSL-pinning library.
 
@@ -23,7 +23,7 @@ info:
     * `config-api` — only on the TLS/mTLS Config API ports.
     * `management+config-api` — on both. For an **admin** operation (one that
       needs `X-API-Key`) "both" holds only with `CONFIG_API_ADMIN_ROUTES=on`:
-      by default (2.5.1) a Config API port answers every admin route `403
+      by default (2.6.0) a Config API port answers every admin route `403
       {"error":"admin_routes_disabled"}`, key or no key, before the key is
       looked at; administration is on the management port. Device endpoints
       are not affected.

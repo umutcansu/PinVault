@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased (2.5.1) — hardening from the 2026-10-14 product review
+## 2.6.0 — 2026-10-14 — WebSocket tokens on iOS, Keystore hiccups never replace a key, P12 chain rules, admin routes off the device ports
 
 ### Reference server
 
@@ -18,7 +18,7 @@
   answer is `429 rate_limited` with `Retry-After` — it was a `401`, which made
   the device attest again with the same key. Expired entries are swept at most
   once a second.
-- **API docs:** `openapi.yaml` is at 2.5.1 and documents `PinVault-Proof`,
+- **API docs:** `openapi.yaml` is at 2.6.0 and documents `PinVault-Proof`,
   `X-PinVault-Features: forbidden-as-409`, `/api/v1/server-settings`, the
   `429` of vault downloads (`VAULT_DOWNLOAD_CONCURRENCY`) and ES256 tokens.
 
@@ -88,7 +88,7 @@
 
 - **iOS WebSockets carry the attestation token** (see iOS): React Native's
   SocketRocket sockets get the held token, Flutter's `PinVaultWebSocket` waits
-  for one. Flutter's iOS plugin needs PinVault 2.5.1.
+  for one. Flutter's iOS plugin needs PinVault 2.6.0.
 - **`PinVault-Token` / `PinVault-Proof` in `fetch` headers (and in Flutter's
   WebSocket headers) are refused:** only the library sets them, for its token
   hosts.

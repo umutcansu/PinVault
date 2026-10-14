@@ -4,7 +4,7 @@ The upgrade notes for every release since 2.0, troubleshooting, and a quick
 reference for the multi-Config-API DSL. The full list of changes is in
 [CHANGELOG.md](CHANGELOG.md).
 
-## Upgrading from 2.5.0 to 2.5.1
+## Upgrading from 2.5.0 to 2.6.0
 
 **Server (demo-server / sample host)**
 
@@ -35,7 +35,7 @@ reference for the multi-Config-API DSL. The full list of changes is in
 - **React Native / Flutter:** `fetch` (and Flutter's `PinVaultWebSocket.connect`)
   refuses `PinVault-Token` and `PinVault-Proof` in its `headers` (the library
   sets them). Flutter's iOS
-  plugin needs PinVault 2.5.1.
+  plugin needs PinVault 2.6.0.
 - **Android:** a second `init` no longer changes the running config or the
   Keystore options; call `reset()` first to set up again with another config.
 

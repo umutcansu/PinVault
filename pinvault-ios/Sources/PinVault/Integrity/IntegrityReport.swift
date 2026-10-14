@@ -144,7 +144,7 @@ struct IntegrityReport: Sendable, Equatable {
     func jsonString() -> String { json.serialized }
 
     /// The library version the report names.
-    static let sdkVersion = "2.5.0"
+    static let sdkVersion = "2.6.0"
 
     /// `device.platform`: switches the server to its iOS rules.
     static let platform = "ios"

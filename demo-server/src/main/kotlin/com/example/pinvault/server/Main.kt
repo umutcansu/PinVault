@@ -389,7 +389,7 @@ private fun startServer() {
         certService, pinConfigStore, hostStore, serverCertId, bootstrapPins = { serverTlsPins.pins }
     )
 
-    // CONFIG_API_ADMIN_ROUTES: off (default, 2.5.1) | on. Off: the Config API listeners —
+    // CONFIG_API_ADMIN_ROUTES: off (default, 2.6.0) | on. Off: the Config API listeners —
     // the ports devices reach, often from the internet — answer device endpoints only;
     // every admin route, key or no key, is 403 there and lives on the management port.
     // On: an admin key also works on those ports (2.5.0 and earlier did this by default).
@@ -1450,7 +1450,7 @@ data class CertHealth(
     val total: Int
 )
 
-/** `CONFIG_API_ADMIN_ROUTES`: off unless set to on (2.5.1; 2.5.0 and earlier: on unless set to off). */
+/** `CONFIG_API_ADMIN_ROUTES`: off unless set to on (2.6.0; 2.5.0 and earlier: on unless set to off). */
 internal object ConfigApiAdminRoutesSwitch {
     fun parse(raw: String?): Boolean = when (raw?.trim()?.lowercase()) {
         "on", "true" -> true
