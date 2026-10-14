@@ -65,7 +65,10 @@
   key the Keystore reports as permanently invalidated (the screen lock
   removed under the user-auth key) counts as retired and is replaced, also
   where Keystore2's `getKey` hides the exception behind a plain
-  `UnrecoverableKeyException`.
+  `UnrecoverableKeyException`, and on Android 7–11, where the legacy Keystore
+  reports the key's blob as corrupted once the screen lock it was encrypted
+  with is gone (screen-lock vault files stayed unreadable until the app data
+  was cleared; found by the E2E suite on API 28).
 - **`end_to_end` files recover a missing device key:** a `412` (the server has
   no device key on file, e.g. registration at init failed) registers the key
   and retries the download once, as `user_auth` files already did.

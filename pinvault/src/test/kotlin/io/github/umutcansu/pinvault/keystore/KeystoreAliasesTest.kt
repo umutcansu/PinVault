@@ -103,6 +103,22 @@ class KeystoreAliasesTest {
     }
 
     @Test
+    fun `a legacy blob the screen lock change left undecryptable counts as retired`() {
+        // Android 7–11: getKeyCharacteristics → VALUE_CORRUPTED, wrapped by AndroidKeyStoreProvider.
+        val corrupted = UnrecoverableKeyException("Failed to obtain information about key")
+            .apply { initCause(KeyStoreException("Key blob corrupted")) }
+        assertTrue(UserAuthKeys.isRetired(corrupted))
+        assertEquals(
+            KeystoreAliases.Presence.INVALIDATED,
+            KeystoreAliases.presence(FakeKeyStore(FakeSpi(false, keyError = corrupted)), "a")
+        )
+        // A Keystore that is merely busy is not.
+        val busy = UnrecoverableKeyException("Failed to obtain information about key")
+            .apply { initCause(KeyStoreException("System error")) }
+        assertFalse(UserAuthKeys.isRetired(busy))
+    }
+
+    @Test
     fun `the identity key is not regenerated while the Keystore cannot say`() {
         val spi = FakeSpi(false, keyError = busy)
         val provider = AndroidKeystoreClientIdentityKeyProvider("alias") { FakeKeyStore(spi) }

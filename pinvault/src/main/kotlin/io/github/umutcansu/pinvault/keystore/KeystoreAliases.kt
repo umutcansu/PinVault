@@ -20,7 +20,12 @@ import timber.log.Timber
  * Keystore2's `engineGetKey` turns that `KeyPermanentlyInvalidatedException`
  * into a plain `UnrecoverableKeyException` with only its message left, so the
  * message is what tells it apart ([Presence.INVALIDATED]): such a key is
- * there, retired, and may be replaced.
+ * there, retired, and may be replaced. The legacy Keystore (Android 7–11)
+ * reports the same event differently: a key bound to the screen lock is
+ * encrypted with it, and once the lock is removed or changed its blob no
+ * longer decrypts — `getKey` fails with a `KeyStoreException` "Key blob
+ * corrupted" (VALUE_CORRUPTED) as the cause. A blob that does not decrypt
+ * never will again, so that counts as invalidated too.
  */
 internal object KeystoreAliases {
 
@@ -28,6 +33,9 @@ internal object KeystoreAliases {
 
     /** The message Keystore2 gives a permanently invalidated key (`AndroidKeyStoreProvider`). */
     private const val INVALIDATED_MESSAGE = "User changed or deleted their auth credentials"
+
+    /** The legacy Keystore's VALUE_CORRUPTED (`KeyStore.getKeyStoreException`): a blob that no longer decrypts. */
+    private const val CORRUPTED_BLOB_MESSAGE = "Key blob corrupted"
 
     fun presence(keyStore: KeyStore, alias: String): Presence {
         try {
@@ -45,11 +53,13 @@ internal object KeystoreAliases {
         }
     }
 
-    /** A permanently invalidated key, as the exception itself says or as Keystore2 rewrites it. */
+    /** A permanently invalidated key: as the exception itself says, as Keystore2 rewrites it, or a legacy blob that no longer decrypts. */
     fun isInvalidated(e: Throwable): Boolean =
         generateSequence(e) { it.cause?.takeIf { cause -> cause !== it } }.take(8).any {
             it is android.security.keystore.KeyPermanentlyInvalidatedException ||
-                (it is java.security.UnrecoverableKeyException && it.message?.contains(INVALIDATED_MESSAGE) == true)
+                (it is java.security.UnrecoverableKeyException && it.message?.contains(INVALIDATED_MESSAGE) == true) ||
+                // android.security.KeyStoreException on Android 7–11 (a hidden class there).
+                (it.javaClass.simpleName == "KeyStoreException" && it.message == CORRUPTED_BLOB_MESSAGE)
         }
 
     /**
