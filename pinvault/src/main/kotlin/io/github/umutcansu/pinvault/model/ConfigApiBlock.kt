@@ -160,8 +160,7 @@ data class ConfigApiBlock @JvmOverloads constructor(
     val attestationIntervalMs: Long = DEFAULT_ATTESTATION_INTERVAL_MS,
     /**
      * Hosts whose requests carry the token (pin host patterns, lower case).
-     * Empty = every pinned host of this block's live config, plus its Config
-     * API. See [Builder.tokenHosts].
+     * Empty = only this block's own Config API. See [Builder.tokenHosts].
      */
     val tokenHosts: List<String> = emptyList(),
     /**
@@ -571,8 +570,9 @@ data class ConfigApiBlock @JvmOverloads constructor(
         /**
          * Which hosts' requests carry the `PinVault-Token`: pin host patterns
          * (`api.example.com`, `*.cdn.example.com`, optionally `:port`), the
-         * same syntax as a pin entry. Not set: every host pinned by this
-         * block's live config, and the block's own Config API.
+         * same syntax as a pin entry. Not set: only the block's own Config
+         * API — a pinned host is not a token host by itself, or a pinned third
+         * party (a CDN, an analytics host) would receive the device's token.
          */
         fun tokenHosts(vararg patterns: String) = apply {
             this.tokenHosts = patterns.map { pattern ->

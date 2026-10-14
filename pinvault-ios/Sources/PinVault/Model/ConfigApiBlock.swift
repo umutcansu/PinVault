@@ -75,7 +75,7 @@ public struct ConfigApiBlock: Sendable, Equatable, Hashable {
     public let attestationEnabled: Bool
     /// Longest interval between attestations, ms.
     public let attestationIntervalMs: Int64
-    /// Hosts whose requests carry the token (pin host patterns, lower case); empty = every pinned host + the Config API.
+    /// Hosts whose requests carry the token (pin host patterns, lower case); empty = only this block's own Config API.
     public let tokenHosts: [String]
     /// Requests that carry the token also carry a `PinVault-Proof`. See ``Builder/proofOfPossession()``.
     public let tokenProof: Bool
@@ -461,7 +461,9 @@ public struct ConfigApiBlock: Sendable, Equatable, Hashable {
         }
 
         /// Which hosts' requests carry the `PinVault-Token`: pin host patterns.
-        /// Not set: every host pinned by this block's live config, and its Config API.
+        /// Not set: only this block's own Config API — a pinned host is not a
+        /// token host by itself, or a pinned third party (a CDN, an analytics
+        /// host) would receive the device's token.
         @discardableResult public func tokenHosts(_ patterns: String...) -> Builder { tokenHosts(patterns) }
 
         @discardableResult public func tokenHosts(_ patterns: [String]) -> Builder {

@@ -1320,7 +1320,7 @@ val config = PinVaultConfig.Builder()
         signaturePublicKey(...)
         attestation()                                        // on; off by default
         attestationInterval(5, TimeUnit.MINUTES)             // ceiling; default 5 min, at least 1
-        tokenHosts("api.example.com", "*.cdn.example.com")   // default: every pinned host of this block + its own Config API
+        tokenHosts("api.example.com", "*.cdn.example.com")   // default: only this block's own Config API
         proofOfPossession()                                  // optional: a PinVault-Proof per request (ATTESTATION.md §5.1)
     }
     .expectedSignerSha256("3c:4f:…")                         // optional: your release signer

@@ -4,6 +4,19 @@ The upgrade notes for every release since 2.0, troubleshooting, and a quick
 reference for the multi-Config-API DSL. The full list of changes is in
 [CHANGELOG.md](CHANGELOG.md).
 
+## Upgrading from 2.6.0 to 2.6.1
+
+**iOS (also React Native and Flutter on iOS)**
+
+- **Without `tokenHosts`, only the block's own Config API carries
+  `PinVault-Token`** — the Android behaviour since 2.4.1. An iOS app that
+  relied on the token reaching every pinned host (its API hosts among them)
+  must now name those hosts: `tokenHosts("api.example.com", "*.cdn.example.com")`
+  in the block (`tokenHosts: [...]` in the React Native and Flutter configs).
+  Android apps are unaffected.
+
+Nothing else changes; the server is the same as 2.6.0.
+
 ## Upgrading from 2.5.0 to 2.6.0
 
 **Server (demo-server / sample host)**

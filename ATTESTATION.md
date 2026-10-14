@@ -710,7 +710,7 @@ PinVaultConfig.Builder()
         signaturePublicKey(...)
         attestation()                               // on; off by default
         attestationInterval(5, TimeUnit.MINUTES)    // default 5 min, min 1
-        tokenHosts("api.example.com", "*.cdn.example.com")  // default: every pinned host of this block
+        tokenHosts("api.example.com", "*.cdn.example.com")  // default: only this block's own Config API
         proofOfPossession()                         // a PinVault-Proof per request, §5.1; off by default
     }
     .integrityVerdictProvider(PlayIntegrityVerdictProvider(context, cloudProjectNumber = 123456789012L))   // optional, §11

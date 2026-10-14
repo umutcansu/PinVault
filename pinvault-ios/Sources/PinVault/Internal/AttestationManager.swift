@@ -499,14 +499,20 @@ final class AttestationManager: AttestationTokenSource, @unchecked Sendable {
     }
 
     /// The hosts whose requests carry the token: the block's `tokenHosts`,
-    /// or — when it names none — every host pinned by the live config and
-    /// the block's own Config API listener.
+    /// or — when it names none — only the block's own Config API listener.
+    ///
+    /// The token is a short-lived bearer credential for the attestation server;
+    /// it must not fan out to every pinned host by default (as on Android,
+    /// A-1), which would hand the device's token to a pinned third party (a
+    /// CDN, an analytics host) that has nothing to do with attestation. An app
+    /// that wants its own API hosts to receive the token names them with
+    /// `tokenHosts(...)`.
     private func tokenHostMap() -> PinHostMap<Bool> {
         let hosts: [String]
         if !block.tokenHosts.isEmpty {
             hosts = block.tokenHosts
         } else {
-            hosts = (liveConfig()?.pins.map(\.hostname) ?? []) + [configApiListener].compactMap { $0 }
+            hosts = [configApiListener].compactMap { $0 }
         }
         return PinHostMatcher.build(hosts.map { ($0.lowercased(), true) })
     }

@@ -1,5 +1,18 @@
 # Changelog
 
+## 2.6.1 — 2026-10-15 — the attestation token stays with the Config API on iOS
+
+### iOS
+
+- **Without `tokenHosts`, only the block's own Config API carries the token**
+  (as on Android since 2.4.1). A block that named no token hosts sent
+  `PinVault-Token` (and `PinVault-Proof`) to every host pinned by its live
+  config, so a pinned CDN or analytics host received the device's token. An
+  app whose API hosts need the token names them with `tokenHosts(...)`; the
+  Android, React Native and Flutter bridges are unchanged. The Android and
+  iOS `tokenHosts` docs, `ATTESTATION.md` and `GUIDE.md` now state the real
+  default.
+
 ## 2.6.0 — 2026-10-14 — WebSocket tokens on iOS, Keystore hiccups never replace a key, P12 chain rules, admin routes off the device ports
 
 ### Reference server

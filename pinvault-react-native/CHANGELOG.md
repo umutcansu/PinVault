@@ -1,5 +1,19 @@
 # Changelog
 
+## 2.6.1 — 2026-10-15
+
+### Fixed
+
+- **iOS: without `tokenHosts`, only the block's own Config API carries
+  `PinVault-Token`** (as Android has since 2.4.1). A block without
+  `tokenHosts` sent the token (and `PinVault-Proof`) to every host pinned by
+  its live config, so a pinned CDN or analytics host received it. Name your
+  API hosts in `tokenHosts` if they need the token.
+
+### Changed
+
+- Depends on PinVault 2.6.1 (Maven Central, Swift package tag `v2.6.1`).
+
 ## 2.6.0 — 2026-10-14
 
 ### Fixed

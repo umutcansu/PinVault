@@ -200,7 +200,7 @@ final class AttestationManagerTests: XCTestCase {
         XCTAssertEqual(verdicts.values.map(\.0), [["software_key"]], "the verdict's warnings reach the verdict observer")
     }
 
-    func testWithoutTokenHostsTheLiveConfigsPinnedHostsAndTheConfigApiListenerCarryTheToken() async throws {
+    func testWithoutTokenHostsOnlyTheConfigApiListenerCarriesTheToken() async throws {
         api.enqueue(challenge())
         api.enqueue(pass())
         let live = CertificateConfig(pins: [
@@ -210,8 +210,10 @@ final class AttestationManagerTests: XCTestCase {
         let m = try manager(block: attestingBlock(), liveConfig: { live })
         _ = await m.attestNow()
 
-        XCTAssertTrue(m.handlesHost("api.live.test", port: 443))
-        XCTAssertTrue(m.handlesHost("x.cdn.live.test", port: 443))
+        // A pinned host is not a token host by default (as on Android): the
+        // token would otherwise reach a pinned CDN or analytics host.
+        XCTAssertFalse(m.handlesHost("api.live.test", port: 443), "pinned by the live config, not named in tokenHosts")
+        XCTAssertFalse(m.handlesHost("x.cdn.live.test", port: 443), "pinned by the live config, not named in tokenHosts")
         XCTAssertTrue(m.handlesHost("config.example.com", port: 8091), "the block's own Config API listener")
         XCTAssertFalse(m.handlesHost("config.example.com", port: 443), "another port of it")
         XCTAssertFalse(m.handlesHost("api.example.com", port: 443))
