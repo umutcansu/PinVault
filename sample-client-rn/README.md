@@ -59,7 +59,7 @@ cd ios && pod install && cd .. && npx react-native run-ios
   depodaki `:pinvault`'u imzasız olarak `android/build/pinvault-maven`'a yayımlar ve
   bağımlılığı oradan çözer (boşsa Maven Central). iOS'ta `ios/Podfile`
   `PINVAULT_IOS_PACKAGE_PATH`'i depoya ayarlar; `PINVAULT_IOS_PACKAGE_PATH= pod install`
-  paketin sürümündeki git etiketini (şu an `v2.8.0`) kullanır.
+  paketin sürümündeki git etiketini (şu an `v2.8.1`) kullanır.
 - **Ekran görüntüsü:** Android'de ekranlar `FLAG_SECURE` alır (ekran görüntüsü yok); kanıt
   görüntüleri için yalnız debug'da `-Psample.e2eScreenshots=true`. iOS'ta uygulama arka plana
   geçerken ekranı bulanıklaştırır (uygulama değiştiricideki anlık görüntü).

@@ -26,9 +26,9 @@ them too — their own differences are in
 ### 1. Add dependency
 
 ```gradle
-implementation("io.github.umutcansu:pinvault:2.8.0")
+implementation("io.github.umutcansu:pinvault:2.8.1")
 // optional: Play Integrity as the attestation's second opinion
-implementation("io.github.umutcansu:pinvault-play-integrity:2.8.0")
+implementation("io.github.umutcansu:pinvault-play-integrity:2.8.1")
 ```
 
 ### 2. Initialize (v2 DSL — Kotlin)
