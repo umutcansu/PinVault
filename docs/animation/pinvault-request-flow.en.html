@@ -2150,10 +2150,10 @@ const Q_PVT_USE=`GET https://api.example.com/veri
 +PinVault-Token: eyJhbGciOiJFUzI1NiIsImtpZCI6…
 +PinVault-Proof: eyJ0eXAiOiJkcG9wK2p3dCIs…
 ~// added by the library's interceptor: on getClient()
-~// and applyTo clients, to every pinned host in the
-~// list and the config API (or only to those
-~// named with tokenHosts(...)); the proof only
-~// when the block has proofOfPossession()
+~// and applyTo clients, to the hosts named with
+~// tokenHosts(...) (none named: only the block's
+~// config API port; a pinned host alone gets no
+~// token); the proof only with proofOfPossession()
 
 ~// inside the token (ES256 JWT, 5 minutes):
 {"iss": "pinvault", "sub": "3f2a9c0d81b4e6a7",
@@ -2814,10 +2814,10 @@ const S=[
   [`What the device checks`,`The response connection is pinned; it does not open the token, keeps it (in memory) and watches its expiry. It checks the signature, dates and replay limits of an incoming config.`,'ok'],
   [`In the demo`,`ATTESTATION_KEY_POLICY=warn: the attestation is recorded, and registration goes ahead without one too. The production profile requires enforce plus the package name and signing certificate; then only a key your app generated in the hardware of a locked phone gets registered.`,'wr']]},
 {c:6,k:'n',t:`4 · The token goes to the app server on every request`,d:`The library puts the token in the header of every request to the app's own servers. That server verifies the signature itself with PinVault's public key (JWKS); it does not ask the PinVault server on the request path. It turns away a request with no token or an expired one with 401.`,act:[`App server`,`api.example.com`,'c-blue'],hl:['g-att','g-dev'],
- sx:{tag:'PinVault-Token',cls:'tok',title:`a 5-minute signed ticket · your app server verifies it`,rows:[[`Who adds it`,`the library's interceptor`,`→ on getClient() and applyTo clients; to the hosts in the list, not to every server that asks like the certificate`,null,''],[`Who verifies it`,`your app server`,`→ public key from the JWKS by kid, ES256 signature, exp, aud`,null,'ok'],[`If there is no token`,`401 invalid_token`,`→ requests from a device that failed end here`,null,'bad']]},
+ sx:{tag:'PinVault-Token',cls:'tok',title:`a 5-minute signed ticket · your app server verifies it`,rows:[[`Who adds it`,`the library's interceptor`,`→ on getClient() and applyTo clients; to the hosts you name with tokenHosts, not to every server that asks like the certificate`,null,''],[`Who verifies it`,`your app server`,`→ public key from the JWKS by kid, ES256 signature, exp, aud`,null,'ok'],[`If there is no token`,`401 invalid_token`,`→ requests from a device that failed end here`,null,'bad']]},
  tq:`Request · device → app server`,q:Q_PVT_USE,ts:`What your server does`,s:S_PVT_USE,
  mv:[cert('ob',0,PU,'server certificate'),flash(116,122,'✓ pin matched','ok','end'),m('ob',1,TK,'request + PinVault-Token','q'),m('ob',0,TE,'200','s')],mk:[DM('token in the header, response arrived')],
- rows:[[`Which requests`,`By default: every pinned host in the signed list, and the block config API port. Narrowed with tokenHosts("api.example.com", …). Pin first, then header: a token is never sent on a connection whose pin did not match.`],
+ rows:[[`Which requests`,`The hosts you name with tokenHosts("api.example.com", …). None named: only the block's config API port — a host in the signed list gets no token just for being pinned (so a CDN or analytics server never sees the device's token; Android 2.4.1, iOS 2.6.1). Pin first, then header: a token is never sent on a connection whose pin did not match.`],
   [`Inside the token`,`ES256 JWT: kid (which signing key), iss pinvault, sub and did the device identity, aud the Config API id, iat/exp (5 minutes), jti, arc, pol (policy version), anno (the device annotations, if any) and cnf: who the token was issued to. cnf.jkt is the thumbprint of the device key that signed the report; if the attestation came over mTLS, cnf.x5t#S256 is the thumbprint of the device certificate. Nothing secret inside; its strength comes from its signature, its short life and being bound to the device.`],
   [`What your server does`,`Loads the public keys once from GET /api/v1/attestation/jwks (no API key needed). On every request it finds the public key by kid, verifies the ES256 signature, checks iss is pinvault, checks exp with 60 seconds of leeway, checks that aud is its own Config API id (required: without it a token issued to another app of the same server would pass), and optionally looks for a label in anno. If the request carries X-Device-Id, it must equal did. No round trip to PinVault on the request path. Reference: the PinVaultTokenAuth Ktor plugin; the mock hosts do the same with MOCK_HOST_REQUIRE_TOKEN=true; Node, Python and Java samples in SERVER_IMPLEMENTATION_GUIDE.`,'ok'],
   [`Why a public key`,`Since 2.4.2 the token is signed with ES256: the private key never leaves the PinVault server, backends only know the public half. A backend that is broken into can verify tokens but cannot make them. For backends not moved yet, PINVAULT_TOKEN_ALG=HS256 keeps the shared secret (then a verifier can also sign). A key's algorithm is fixed: a public key can never serve as an HS256 secret.`,'ok'],

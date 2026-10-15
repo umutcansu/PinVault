@@ -2150,10 +2150,10 @@ const Q_PVT_USE=`GET https://api.ornek.com/veri
 +PinVault-Token: eyJhbGciOiJFUzI1NiIsImtpZCI6…
 +PinVault-Proof: eyJ0eXAiOiJkcG9wK2p3dCIs…
 ~// kütüphanenin interceptor'ı ekler: getClient()
-~// ve applyTo istemcilerinde, listedeki her pinli
-~// host'a ve config API'ye (ya da yalnızca
-~// tokenHosts(...) ile yazılanlara); proof'u
-~// blokta proofOfPossession() açıksa ekler
+~// ve applyTo istemcilerinde, tokenHosts(...) ile
+~// yazılan host'lara (yazılmadıysa yalnızca bloğun
+~// config API kapısına; pinli bir host tek başına
+~// token almaz); proof'u proofOfPossession() açıksa
 
 ~// token'ın içi (ES256 JWT, 5 dakika):
 {"iss": "pinvault", "sub": "3f2a9c0d81b4e6a7",
@@ -2814,10 +2814,10 @@ const S=[
   [`Cihaz ne kontrol eder`,`Cevabın bağlantısı pinlidir; token'ı açmaz, saklar (bellekte) ve bitişine bakar. Gelen config'in imzasını, tarihlerini ve tekrar oynatma sınırlarını kontrol eder.`,'ok'],
   [`Demoda`,`ATTESTATION_KEY_POLICY=warn: belge kaydedilir, yoksa da kayıt yapılır. Üretim profili enforce ve paket adı + imzalayan sertifika ister; o zaman yalnızca sizin uygulamanızın, kilitli bir telefonun donanımında ürettiği anahtar kayıt olur.`,'wr']]},
 {c:6,k:'n',t:`4 · Token her istekte uygulamanın sunucusuna gider`,d:`Kütüphane token'ı uygulamanın kendi sunucularına giden her isteğin başlığına koyar. O sunucu imzayı PinVault'un açık anahtarıyla (JWKS) kendi doğrular; istek yolunda PinVault sunucusuna sormaz. Token'ı olmayan ya da süresi dolmuş isteği 401 ile çevirir.`,act:[`Uygulamanın sunucusu`,`api.ornek.com`,'c-blue'],hl:['g-att','g-dev'],
- sx:{tag:'PinVault-Token',cls:'tok',title:`5 dakikalık imzalı token · uygulamanızın sunucusu doğrular`,rows:[[`Kim koyar`,`kütüphanenin interceptor'ı`,`→ getClient() ve applyTo istemcilerinde; sertifika gibi her soran sunucuya değil, listedeki host'lara`,null,''],[`Kim doğrular`,`uygulamanızın sunucusu`,`→ kid ile JWKS'teki açık anahtar, ES256 imza, exp, aud`,null,'ok'],[`Token yoksa`,`401 invalid_token`,`→ geçmeyen cihazın istekleri burada biter`,null,'bad']]},
+ sx:{tag:'PinVault-Token',cls:'tok',title:`5 dakikalık imzalı token · uygulamanızın sunucusu doğrular`,rows:[[`Kim koyar`,`kütüphanenin interceptor'ı`,`→ getClient() ve applyTo istemcilerinde; sertifika gibi her soran sunucuya değil, tokenHosts ile yazdığınız host'lara`,null,''],[`Kim doğrular`,`uygulamanızın sunucusu`,`→ kid ile JWKS'teki açık anahtar, ES256 imza, exp, aud`,null,'ok'],[`Token yoksa`,`401 invalid_token`,`→ geçmeyen cihazın istekleri burada biter`,null,'bad']]},
  tq:`İstek · cihaz → uygulamanın sunucusu`,q:Q_PVT_USE,ts:`Sunucunuz ne yapar`,s:S_PVT_USE,
  mv:[cert('ob',0,PU,'sunucu sertifikası'),flash(116,122,'✓ pin tuttu','ok','end'),m('ob',1,TK,'istek + PinVault-Token','q'),m('ob',0,TE,'200','s')],mk:[DM('token başlıkta, cevap geldi')],
- rows:[[`Hangi isteklere`,`Varsayılan: imzalı listedeki her pinli host'a ve bloğun config API kapısına. tokenHosts("api.ornek.com", …) ile daraltılır. Önce pin, sonra başlık: pin tutmayan bağlantıya token hiç gönderilmez.`],
+ rows:[[`Hangi isteklere`,`tokenHosts("api.ornek.com", …) ile yazdığınız host'lara. Yazılmadıysa yalnızca bloğun config API kapısına: imzalı listedeki bir host pinli diye token almaz (bir CDN ya da analitik sunucusu cihazın token'ını görmesin diye; Android 2.4.1, iOS 2.6.1). Önce pin, sonra başlık: pin tutmayan bağlantıya token hiç gönderilmez.`],
   [`Token'ın içi`,`ES256 JWT: kid (hangi imza anahtarı), iss pinvault, sub ve did cihaz kimliği, aud Config API id'si, iat/exp (5 dakika), jti, arc, pol (politika sürümü), anno (varsa cihazın ek açıklamaları) ve cnf: token'ın kime verildiği. cnf.jkt raporu imzalayan cihaz anahtarının özeti; atestasyon mTLS'ten geldiyse cnf.x5t#S256 cihaz sertifikasının özeti. İçinde gizli bir şey yok; gücü imzasından, kısa ömründen ve cihaza bağlı olmasından gelir.`],
   [`Sunucunuz ne yapar`,`Açık anahtarları bir kez GET /api/v1/attestation/jwks'ten yükler (API anahtarı gerekmez). Her istekte kid'e göre açık anahtarı bulur, ES256 imzayı doğrular, iss pinvault mı, exp'e 60 saniye payla bakar, aud kendi Config API id'si mi diye bakar (zorunlu: yoksa aynı sunucunun başka bir uygulamasına verilen token da geçerdi), isterse anno'da bir etiket arar. İstek X-Device-Id taşıyorsa did ile aynı olmalı. İstek yolunda PinVault'a gidiş yok. Referans: PinVaultTokenAuth Ktor eklentisi; mock host'lar MOCK_HOST_REQUIRE_TOKEN=true ile aynı şeyi yapar; SERVER_IMPLEMENTATION_GUIDE'da Node, Python ve Java örnekleri.`,'ok'],
   [`Neden açık anahtar`,`2.4.2'den beri token ES256 ile imzalanır: özel anahtar PinVault sunucusundan hiç çıkmaz, arka uçlar yalnızca açık yarıyı bilir. Ele geçirilen bir arka uç token doğrulayabilir ama üretemez. Eski arka uçlar için PINVAULT_TOKEN_ALG=HS256 ortak sırrı korur (o zaman doğrulayan da imzalayabilir). Bir anahtarın algoritması sabittir: açık anahtar HS256 sırrı gibi kullanılamaz.`,'ok'],
