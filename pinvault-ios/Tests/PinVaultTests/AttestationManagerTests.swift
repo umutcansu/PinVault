@@ -30,7 +30,6 @@ final class AttestationManagerTests: XCTestCase {
     private func manager(
         block: ConfigApiBlock? = nil,
         api: FakeAttestationApi?? = .none,
-        liveConfig: @escaping @Sendable () -> CertificateConfig? = { nil },
         deviceId: String? = "device-07",
         sleep: @escaping @Sendable (Int64) async throws -> Void = { _ in try await Task.sleep(nanoseconds: 60_000_000_000) }
     ) throws -> AttestationManager {
@@ -50,7 +49,6 @@ final class AttestationManagerTests: XCTestCase {
             deviceId: { deviceId },
             currentConfigVersion: { 7 },
             currentIssuedAt: { 1_000 },
-            liveConfig: liveConfig,
             buildReport: { _, _, _, _ in report },
             applyConfig: { signed in applied.append(signed); return .updated(newVersion: 9) },
             onConfigApplied: { applyResults.append($0) },
@@ -140,7 +138,7 @@ final class AttestationManagerTests: XCTestCase {
         let key = self.key
         let m = AttestationManager(
             block: try attestingBlock(), api: api, identityKey: { key }, deviceId: { "device-07" },
-            currentConfigVersion: { 0 }, currentIssuedAt: { 0 }, liveConfig: { nil },
+            currentConfigVersion: { 0 }, currentIssuedAt: { 0 },
             buildReport: { _, _, _, _ in tricky }, applyConfig: { _ in .alreadyCurrent }, clock: { 1 }, jitter: { 0.5 }
         )
         _ = await m.attestNow()
@@ -203,17 +201,13 @@ final class AttestationManagerTests: XCTestCase {
     func testWithoutTokenHostsOnlyTheConfigApiListenerCarriesTheToken() async throws {
         api.enqueue(challenge())
         api.enqueue(pass())
-        let live = CertificateConfig(pins: [
-            HostPin(hostname: "api.live.test", sha256: [pin("a"), pin("b")]),
-            HostPin(hostname: "*.cdn.live.test", sha256: [pin("a"), pin("b")]),
-        ])
-        let m = try manager(block: attestingBlock(), liveConfig: { live })
+        let m = try manager(block: attestingBlock())
         _ = await m.attestNow()
 
         // A pinned host is not a token host by default (as on Android): the
         // token would otherwise reach a pinned CDN or analytics host.
-        XCTAssertFalse(m.handlesHost("api.live.test", port: 443), "pinned by the live config, not named in tokenHosts")
-        XCTAssertFalse(m.handlesHost("x.cdn.live.test", port: 443), "pinned by the live config, not named in tokenHosts")
+        XCTAssertFalse(m.handlesHost("api.live.test", port: 443), "a pinned third party is not a token host")
+        XCTAssertFalse(m.handlesHost("x.cdn.live.test", port: 443), "nor a pinned wildcard host")
         XCTAssertTrue(m.handlesHost("config.example.com", port: 8091), "the block's own Config API listener")
         XCTAssertFalse(m.handlesHost("config.example.com", port: 443), "another port of it")
         XCTAssertFalse(m.handlesHost("api.example.com", port: 443))
@@ -399,7 +393,7 @@ final class AttestationManagerTests: XCTestCase {
         let key = self.key
         let m = AttestationManager(
             block: try attestingBlock(tokenHosts: ["api.example.com"]), api: slow, identityKey: { key }, deviceId: { "d" },
-            currentConfigVersion: { 0 }, currentIssuedAt: { 0 }, liveConfig: { nil },
+            currentConfigVersion: { 0 }, currentIssuedAt: { 0 },
             buildReport: { _, _, _, _ in "{}" }, applyConfig: { _ in .alreadyCurrent }, clock: { 1_000 }, jitter: { 0.5 }
         )
         async let a = m.attestNow()
@@ -466,7 +460,7 @@ final class AttestationManagerTests: XCTestCase {
         struct NoKeychain: Error {}
         let m = AttestationManager(
             block: try attestingBlock(), api: api, identityKey: { throw PinVaultError.illegalState("Keychain unavailable") },
-            deviceId: { "d" }, currentConfigVersion: { 0 }, currentIssuedAt: { 0 }, liveConfig: { nil },
+            deviceId: { "d" }, currentConfigVersion: { 0 }, currentIssuedAt: { 0 },
             buildReport: { _, _, _, _ in "{}" }, applyConfig: { _ in .alreadyCurrent }, clock: { 1 }, jitter: { 0.5 }
         )
         let status = await m.attestNow()

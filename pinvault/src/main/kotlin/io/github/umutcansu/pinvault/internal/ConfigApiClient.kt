@@ -251,7 +251,6 @@ internal class ConfigApiClient(
                 deviceId = { DeviceIdentity.androidId(appContext) },
                 currentConfigVersion = { configStore.getCurrentVersion() },
                 currentIssuedAt = { configStore.getCurrentIssuedAt() },
-                liveConfig = { clientProvider.currentConfig },
                 buildReport = { nonce, deviceId, key -> probe.report(nonce, key, deviceId).toJsonString() },
                 // The embedded config takes the fetched config's road, minus the fetch.
                 applyConfig = { signed -> updater.applySigned(signed) },

@@ -130,6 +130,15 @@ final class SecurityAndNetworkingTests: XCTestCase {
               "bootstrapPins":[{"hostname":"h.example","sha256":["\(pinA)","\(pinB)"]}],"signaturePublicKeys":["\(key)"]}]}
             """, source: "f")
         XCTAssertNotNil(try parse(#"{"configApis":[{\#(base),"clientCertHosts":["API.example:443"]}]}"#, native: naming))
+        // Who gets the token: the same rule — the library's default is the Config API only, so JS would add hosts.
+        assertRefused(#"{"configApis":[{\#(base),"tokenHosts":["cdn.example"]}]}"#, native: file, "tokenHosts", "declare tokenHosts")
+        XCTAssertNotNil(try parse(#"{"configApis":[{\#(base),"tokenHosts":["cdn.example"]}]}"#, native: file, release: false))
+        let namingToken = try NativeSecurity.parse("""
+            {"configApis":[{"id":"default","tokenHosts":["api.example"],
+              "bootstrapPins":[{"hostname":"h.example","sha256":["\(pinA)","\(pinB)"]}],"signaturePublicKeys":["\(key)"]}]}
+            """, source: "f")
+        XCTAssertEqual(try parse(#"{"configApis":[{\#(base),"tokenHosts":["API.example"]}]}"#, native: namingToken).config.configApis["default"]?.tokenHosts, ["api.example"])
+        assertRefused(#"{"configApis":[{\#(base),"tokenHosts":["cdn.example"]}]}"#, native: namingToken, "tokenHosts", "fixed")
         assertRefused(#"{"configApis":[{\#(base),"clientCertHosts":["cdn.example:443"]}]}"#, native: naming, "clientCertHosts", "fixed")
     }
 

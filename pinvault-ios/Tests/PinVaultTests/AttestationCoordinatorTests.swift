@@ -77,7 +77,6 @@ final class AttestationCoordinatorTests: XCTestCase {
             onEvent: { events.append($0) },
             currentConfigVersion: { _ in 3 },
             currentIssuedAt: { _ in 42 },
-            liveConfig: { _ in nil },
             applyConfig: { _, _ in .alreadyCurrent },
             probe: probe ?? DeviceIntegrityProbe(
                 expectedBundleIds: ["com.example.sampleclient"],
@@ -283,7 +282,7 @@ final class AttestationCoordinatorTests: XCTestCase {
             .build()
         let coordinator = AttestationCoordinator(
             config: config, api: { _ in nil }, identityKey: { _ in TestIdentityKey() }, deviceId: { nil }, clock: { 0 },
-            onEvent: { _ in }, currentConfigVersion: { _ in 0 }, currentIssuedAt: { _ in 0 }, liveConfig: { _ in nil },
+            onEvent: { _ in }, currentConfigVersion: { _ in 0 }, currentIssuedAt: { _ in 0 },
             applyConfig: { _, _ in .alreadyCurrent }
         )
         XCTAssertTrue(coordinator.managers.isEmpty)

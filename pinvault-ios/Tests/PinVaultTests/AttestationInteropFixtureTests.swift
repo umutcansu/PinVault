@@ -80,7 +80,6 @@ final class AttestationInteropFixtureTests: XCTestCase {
             deviceId: { Self.deviceId },
             currentConfigVersion: { 0 },
             currentIssuedAt: { 0 },
-            liveConfig: { nil },
             buildReport: { nonce, deviceId, key, bindVerdict in
                 await probe.report(nonce: nonce, deviceId: deviceId, scope: Self.configApiId, key: key, bindVerdict: bindVerdict).jsonString()
             },

@@ -7,7 +7,6 @@ import io.github.umutcansu.pinvault.keystore.ClientIdentityKeyProvider
 import io.github.umutcansu.pinvault.keystore.SoftwareClientIdentityKeyProvider
 import io.github.umutcansu.pinvault.model.AttestationResult
 import io.github.umutcansu.pinvault.model.AttestationTokenResult
-import io.github.umutcansu.pinvault.model.CertificateConfig
 import io.github.umutcansu.pinvault.model.ConfigApiBlock
 import io.github.umutcansu.pinvault.model.HostPin
 import io.github.umutcansu.pinvault.model.SignedConfigResponse
@@ -92,7 +91,6 @@ class AttestationManagerTest {
     private fun manager(
         block: ConfigApiBlock = block("api.example.com", "*.cdn.example.com"),
         api: DefaultCertificateConfigApi? = this.api,
-        liveConfig: () -> CertificateConfig? = { null },
         deviceId: String? = "device-07",
         clock: () -> Long = { now },
         onDemandWaitMs: Long = AttestationManager.ON_DEMAND_WAIT_MS
@@ -103,7 +101,6 @@ class AttestationManagerTest {
         deviceId = { deviceId },
         currentConfigVersion = { 7 },
         currentIssuedAt = { 1_000L },
-        liveConfig = liveConfig,
         buildReport = { _, deviceId, _ -> reportedDeviceIds += deviceId; report },
         applyConfig = { signed -> applied += signed; UpdateResult.Updated(9) },
         onConfigApplied = { applyResults += it },
@@ -256,8 +253,7 @@ class AttestationManagerTest {
     fun `without tokenHosts only the Config API listener carries the token, not the pinned hosts`() = runTest {
         server.enqueue(challenge())
         server.enqueue(pass())
-        val live = CertificateConfig(pins = listOf(HostPin("api.live.test", listOf("p1", "p2")), HostPin("*.cdn.live.test", listOf("p1", "p2"))))
-        val m = manager(block = block(), liveConfig = { live })
+        val m = manager(block = block())
         m.attestNow()
 
         // A-1: the token must not fan out to every pinned host by default.

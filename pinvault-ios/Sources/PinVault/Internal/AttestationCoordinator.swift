@@ -36,7 +36,7 @@ final class AttestationCoordinator: Sendable {
     ///   - deviceId: the device id requests carry (`identifierForVendor`).
     ///   - clock: epoch ms (the library's wall clock).
     ///   - onEvent: the connection-event dispatch (`DynamicSSLManager.dispatchEvent`).
-    ///   - currentConfigVersion / currentIssuedAt / liveConfig: the block's active config, by block id.
+    ///   - currentConfigVersion / currentIssuedAt: the block's active config, by block id.
     ///   - applyConfig: applies a signed config that rode along with a pass (`SSLCertificateUpdater.applySigned`).
     ///   - onConfigApplied: told the result, like a recovery update (block id, result).
     ///   - probe: the report builder; nil = ``DeviceIntegrityProbe/forConfig(_:defaultVerdictProvider:)``.
@@ -49,7 +49,6 @@ final class AttestationCoordinator: Sendable {
         onEvent: @escaping @Sendable (PinVaultConnectionEvent) -> Void,
         currentConfigVersion: @escaping @Sendable (_ configApiId: String) -> Int,
         currentIssuedAt: @escaping @Sendable (_ configApiId: String) -> Int64,
-        liveConfig: @escaping @Sendable (_ configApiId: String) -> CertificateConfig?,
         applyConfig: @escaping @Sendable (_ configApiId: String, SignedConfigResponse) async throws -> UpdateResult,
         onConfigApplied: @escaping @Sendable (_ configApiId: String, UpdateResult) -> Void = { _, _ in },
         probe: DeviceIntegrityProbe? = nil,
@@ -70,7 +69,6 @@ final class AttestationCoordinator: Sendable {
                 deviceId: deviceId,
                 currentConfigVersion: { currentConfigVersion(id) },
                 currentIssuedAt: { currentIssuedAt(id) },
-                liveConfig: { liveConfig(id) },
                 buildReport: { nonce, did, key, bindVerdict in
                     guard let probe else { return "{}" }
                     return await probe.report(nonce: nonce, deviceId: did, scope: id, key: key, bindVerdict: bindVerdict).jsonString()

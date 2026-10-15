@@ -4,6 +4,17 @@ The upgrade notes for every release since 2.0, troubleshooting, and a quick
 reference for the multi-Config-API DSL. The full list of changes is in
 [CHANGELOG.md](CHANGELOG.md).
 
+## Upgrading from 2.6.1 (unreleased)
+
+**React Native, release builds**
+
+- **`tokenHosts` comes from the native security file.** A release build whose
+  `pinvault-security.json` has the block but no `tokenHosts` now refuses a
+  `tokenHosts` given from JS (`E_INVALID_CONFIG`), the way it already refused
+  `clientCertHosts`. Move the list into the file:
+  `{"configApis":[{"id":"api","tokenHosts":["api.example.com"], …}]}`; JS may
+  repeat it or leave it out. Debug builds are unchanged.
+
 ## Upgrading from 2.6.0 to 2.6.1
 
 **iOS (also React Native and Flutter on iOS)**

@@ -50,7 +50,9 @@ import java.io.IOException
  *   JS are refused unless the file allows them for that block;
  * - `url`, `tokenHosts` and `clientCertHosts` of a block are fixed where the
  *   file gives them, and `attestation: true` / `proofOfPossession: true` there
- *   cannot be switched off;
+ *   cannot be switched off; in a release build JS may give `tokenHosts` and
+ *   `clientCertHosts` only where the file names them (who gets the device's
+ *   token and identity is the file's call);
  * - `require` only tightens: a protection it turns on stays on whatever JS
  *   says, `requireCaTrust` hosts are added to JS's, `expectedSignerSha256` is
  *   fixed, and `expiredConfigGraceSeconds` is the most JS may ask for;

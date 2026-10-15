@@ -1,5 +1,19 @@
 # Changelog
 
+## Unreleased
+
+### Changed
+
+- **Release builds take `tokenHosts` only from the native security file**,
+  as they already did `clientCertHosts`: where the file has the block but
+  names no `tokenHosts`, a `tokenHosts` from JS is refused
+  (`E_INVALID_CONFIG`, "declare tokenHosts for Config API … there"). The
+  library's default sends `PinVault-Token` to the block's own Config API only,
+  so a `tokenHosts` from JS would add hosts that receive the device's token.
+  Debug builds and files that name the hosts are unchanged. Move your
+  `tokenHosts` into `pinvault-security.json` (Android: `res/raw`, iOS: the
+  bundle) if a release build now refuses to start.
+
 ## 2.6.1 — 2026-10-15
 
 ### Fixed

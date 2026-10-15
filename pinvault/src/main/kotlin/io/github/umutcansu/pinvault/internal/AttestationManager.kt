@@ -49,8 +49,6 @@ import java.security.MessageDigest
  * @param deviceId the device id the request carries (`ANDROID_ID`); null = unknown.
  * @param currentConfigVersion / [currentIssuedAt] what the device holds, so
  *   the server can embed a fresh config when the device is behind.
- * @param liveConfig the block's active config, for the token hosts when the
- *   block names none.
  * @param buildReport the report JSON for a nonce, as a string — what is
  *   signed and sent, byte for byte.
  * @param applyConfig applies a signed config from the answer
@@ -66,7 +64,6 @@ internal class AttestationManager(
     private val deviceId: () -> String?,
     private val currentConfigVersion: () -> Int,
     private val currentIssuedAt: () -> Long,
-    private val liveConfig: () -> CertificateConfig?,
     /** `deviceId` is non-null when the server takes v2 verdicts, bound to the device. */
     private val buildReport: suspend (nonce: String, deviceId: String?, key: ClientIdentityKeyProvider) -> String,
     private val applyConfig: suspend (SignedConfigResponse) -> UpdateResult,

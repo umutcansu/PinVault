@@ -273,9 +273,10 @@ parsed as strictly; a broken file rejects `start` with `E_INVALID_CONFIG`
 - a block's `url`, `enrollmentUrl`, `renewalUrl`, `tokenHosts` and
   `clientCertHosts` are fixed where the file gives them (where the block talks to, and who gets its token and identity),
   and `attestation: true` / `proofOfPossession: true` there cannot be turned off from JS;
-  in a release build JS may give `clientCertHosts` only where the file names
-  them (the bundle cannot hand the device's identity to another host;
-  `tokenHosts` from JS only narrows the library's default);
+  in a release build JS may give `clientCertHosts` and `tokenHosts` only where
+  the file names them (the bundle cannot hand the device's identity or its
+  `PinVault-Token` to another host; the library's default sends the token to the
+  block's own Config API only);
 - `require` only tightens: a protection it turns on stays on whatever JS says,
   its `requireCaTrust` hosts are added to JS's, the expected signer / bundle /
   team ids and iOS `userAuthStrength` are fixed, and `expiredConfigGraceSeconds`

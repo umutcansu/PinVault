@@ -364,7 +364,6 @@ public final class PinVault: @unchecked Sendable {
             onEvent: { [weak self] event in self?.dispatchEvent(event) },
             currentConfigVersion: { id in (try? byId[id]?.configStore.getCurrentVersion()) ?? 0 },
             currentIssuedAt: { id in (try? byId[id]?.configStore.getCurrentIssuedAt()) ?? 0 },
-            liveConfig: { id in byId[id]?.clientProvider.currentConfig },
             applyConfig: { id, signed in
                 guard let client = byId[id] else { return .failed(reason: "No Config API block '\(id)'") }
                 return await client.updater.applySigned(signed)

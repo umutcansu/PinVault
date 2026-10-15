@@ -42,7 +42,6 @@ final class AttestationManager: AttestationTokenSource, @unchecked Sendable {
     private let deviceId: @Sendable () -> String?
     private let currentConfigVersion: @Sendable () -> Int
     private let currentIssuedAt: @Sendable () -> Int64
-    private let liveConfig: @Sendable () -> CertificateConfig?
     private let buildReport: @Sendable (_ nonce: String, _ deviceId: String, _ key: any ClientIdentityKeyProvider, _ bindVerdict: Bool) async -> String
     private let roundVerdict: @Sendable (_ canonical: String) async -> IntegrityVerdict?
     private let applyConfig: @Sendable (SignedConfigResponse) async throws -> UpdateResult
@@ -87,7 +86,6 @@ final class AttestationManager: AttestationTokenSource, @unchecked Sendable {
     ///   - deviceId: the device id the request carries (`identifierForVendor`); nil = unknown.
     ///   - currentConfigVersion / currentIssuedAt: what the device holds, so the
     ///     server can embed a fresh config when the device is behind.
-    ///   - liveConfig: the block's active config, for the token hosts when the block names none.
     ///   - buildReport: the report JSON for a nonce, as a string — what is
     ///     signed and sent, byte for byte.
     ///   - roundVerdict: the verdict bound to the round's canonical string,
@@ -111,7 +109,6 @@ final class AttestationManager: AttestationTokenSource, @unchecked Sendable {
         deviceId: @escaping @Sendable () -> String?,
         currentConfigVersion: @escaping @Sendable () -> Int,
         currentIssuedAt: @escaping @Sendable () -> Int64,
-        liveConfig: @escaping @Sendable () -> CertificateConfig?,
         buildReport: @escaping @Sendable (_ nonce: String, _ deviceId: String, _ key: any ClientIdentityKeyProvider, _ bindVerdict: Bool) async -> String,
         roundVerdict: @escaping @Sendable (_ canonical: String) async -> IntegrityVerdict? = { _ in nil },
         applyConfig: @escaping @Sendable (SignedConfigResponse) async throws -> UpdateResult,
@@ -131,7 +128,6 @@ final class AttestationManager: AttestationTokenSource, @unchecked Sendable {
         self.deviceId = deviceId
         self.currentConfigVersion = currentConfigVersion
         self.currentIssuedAt = currentIssuedAt
-        self.liveConfig = liveConfig
         self.buildReport = buildReport
         self.roundVerdict = roundVerdict
         self.applyConfig = applyConfig

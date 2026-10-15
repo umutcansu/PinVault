@@ -1,5 +1,23 @@
 # Changelog
 
+## Unreleased
+
+### React Native
+
+- **Release builds take `tokenHosts` only from the native security file**,
+  like `clientCertHosts`: with the block in the file but no `tokenHosts`
+  there, a `tokenHosts` from JS is refused. The old rule rested on
+  "tokenHosts only narrows the library's default", which stopped being true
+  when the default became the block's own Config API (Android 2.4.1, iOS
+  2.6.1): a bundle could add hosts that receive the device's token. See
+  MIGRATION.md.
+
+### Libraries
+
+- The attestation managers no longer take the block's live config
+  (`liveConfig`); since the token-host default is the Config API only, nothing
+  read it.
+
 ## 2.6.1 — 2026-10-15 — the attestation token stays with the Config API on iOS
 
 ### iOS
