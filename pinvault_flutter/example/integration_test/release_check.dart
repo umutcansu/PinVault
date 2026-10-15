@@ -84,6 +84,16 @@ Future<void> _run() async {
         "'not-in-the-file' is not declared in the app's native security file",
       ));
 
+  // The device's identity goes to the renewal address: Dart may give it only
+  // where the file names one (this file names none).
+  await _check('Dart cannot add an identity address', () => _refused(
+        PinVault.start(const PinVaultConfig(configApis: [
+          ConfigApiBlock(id: 'default-tls', url: 'https://$_host:8091/', renewalUrl: 'https://$_host:8093/'),
+        ])),
+        PinVaultErrorCode.invalidConfig,
+        "renewalUrl: a release build takes it only from the app's native security file",
+      ));
+
   await _check('signed config from the file', () async {
     final result = await PinVault.start(PinVaultConfig(configApis: [_signed()]));
     if (result is! InitResultReady) throw StateError('$result');
@@ -96,6 +106,12 @@ Future<void> _run() async {
     if (response.status != 200) throw StateError('status ${response.status}');
     return response.status;
   });
+
+  await _check('fetch refuses the client\'s own headers', () => _refused(
+        PinVault.fetch('https://$_host:$_pinned/', const PinVaultRequestInit(headers: {'Host': 'other.example'})),
+        PinVaultErrorCode.invalidArgument,
+        'set by the HTTP client',
+      ));
 
   await _check('unpinned certificate refused', () => _refused(
         PinVault.fetch('https://$_host:$_unpinned/'),
