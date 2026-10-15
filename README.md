@@ -40,9 +40,9 @@ PinVault moves the pins to your server and keeps the safety:
 
 > **Latest release: 2.7.0** — React Native and Flutter release builds take
 > `tokenHosts` only from the native security file, like `clientCertHosts`: a
-> bundle can no longer add hosts that receive the device's attestation token. 2.6.1 before
-> it: on iOS, a block without `tokenHosts` sends the token only to its own
-> Config API (as Android does), not to every pinned host. Changes some
+> bundle can no longer add hosts that receive the device's attestation token.
+> 2.6.1 before it: on iOS, a block without `tokenHosts` sends the token only to
+> its own Config API (as Android does), not to every pinned host. Changes some
 > defaults: see [MIGRATION.md](MIGRATION.md).
 
 ## What you get
