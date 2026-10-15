@@ -132,7 +132,11 @@ Kotlin files are grouped (results, small enums).
   `SIMULATOR_DEVICE_NAME` env; `debugger` = `sysctl` `P_TRACED`; `debuggable` = `get-task-allow`
   entitlement (read from the embedded provisioning profile; on the simulator `#if DEBUG`);
   `hooking_framework` = loaded dyld images matching `frida|substrate|substitute|libhooker|ellekit|cycript|SSLKillSwitch|FridaGadget`,
-  `DYLD_INSERT_LIBRARIES` set, frida's default port 27042 open on 127.0.0.1; `app_integrity` = bundle id /
+  `DYLD_INSERT_LIBRARIES` set, frida's default port 27042 open on 127.0.0.1, and `tls-unverified:<host>`
+  once a pinned session completed a TLS connection URLSession never showed the library's delegate
+  (`TLS/TrustCheckWatch.swift`: a trust-bypass hook answered the server-trust challenge inside
+  CFNetwork; the request is refused with `SSLHandshakeException` / `SecurityException`, a `wss://`
+  socket cancelled, and the host recorded for the process's lifetime); `app_integrity` = bundle id /
   team id differ from the values the app gave the library (`expectedBundleId`, `expectedTeamId`);
   `unknown_installer` = not App Store / TestFlight (an embedded provisioning profile, or the simulator).
   `key_unattested` goes down with the flag off (evidence `app-attest:none` without an App Attest

@@ -113,6 +113,15 @@ final class IntegrityProbesTests: XCTestCase {
         XCTAssertTrue(signal.evidence.isEmpty)
     }
 
+    func testAConnectionTheTrustCheckNeverSawIsHookingEvidence() {
+        var probe = HookingProbe(loadedImages: { ["/usr/lib/libSystem.B.dylib"] }, environment: [:], fridaPortOpen: { false })
+        probe.unverifiedConnections = ["tls-unverified:api.example.com", "not-ours", "tls-unverified:api.example.com"]
+        let signal = probe.probe()
+        XCTAssertTrue(signal.flag)
+        // Only the log's own entries, once each, before the image findings.
+        XCTAssertEqual(signal.evidence, ["tls-unverified:api.example.com"])
+    }
+
     func testFridaInTheImagesItsPortAndInsertedLibrariesAreEvidence() {
         let signal = hooking(
             images: ["/usr/lib/libSystem.B.dylib", "/private/var/containers/Bundle/Application/X/App.app/Frameworks/FridaGadget.dylib"],

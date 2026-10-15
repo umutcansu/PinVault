@@ -61,6 +61,9 @@ final class URLSessionTransport: PinnedTransport, @unchecked Sendable {
     }
 
     private let state = Locked(State())
+    /// Tests only: every delegate built from now on forgets the challenges it
+    /// was asked (``PinnedSessionDelegate/testOnlyForgetChallenges``).
+    var testOnlyForgetChallenges = false
 
     init(
         manager: DynamicSSLManager,
@@ -184,7 +187,9 @@ final class URLSessionTransport: PinnedTransport, @unchecked Sendable {
             if Task.isCancelled { throw CancellationError() }
             throw Self.transportError(error)
         }
-        _ = entry.delegate.takeFailure(outcome.taskIdentifier)
+        // A connection the trust check never saw (TrustCheckWatch) fails the
+        // request whatever URLSession reported.
+        if let failure = entry.delegate.takeFailure(outcome.taskIdentifier) { throw failure.thrown }
         guard let response = outcome.response else { throw PinVaultError.io(message: "No response for \(url.absoluteString)") }
         var answer: URLResponse = response
         if let http = response as? HTTPURLResponse {
@@ -282,8 +287,10 @@ final class URLSessionTransport: PinnedTransport, @unchecked Sendable {
             if let entry = state.entries[key] { return entry }
             let address = manager.connectAddress(host: host, port: port, overrides: resolveOverrides)
             let delegate = PinnedSessionDelegate(manager: manager, context: .init(
-                logicalHost: host, logicalPort: port, connectHost: address.host, connectPort: address.port, trust: trust
+                logicalHost: host, logicalPort: port, connectHost: address.host, connectPort: address.port, trust: trust,
+                tls: scheme == "https"
             ))
+            delegate.testOnlyForgetChallenges = testOnlyForgetChallenges
             let configuration = template.copy() as! URLSessionConfiguration
             let entry = Entry(session: URLSession(configuration: configuration, delegate: delegate, delegateQueue: nil), delegate: delegate)
             state.entries[key] = entry

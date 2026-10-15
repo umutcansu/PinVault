@@ -53,7 +53,7 @@ PinVault moves the pins to your server and keeps the safety:
 | 🪪 **mTLS identity** | The device makes its own key in the Keystore / Secure Enclave and gets a certificate from a CSR. One-time tokens, one code for a whole fleet, or admin approval with a verification code. Renews itself. |
 | 🗂️ **Vault files** | Remote, versioned files (ML models, feature flags, secrets): signed, encrypted at rest, optionally encrypted for one device, or locked behind the screen lock. |
 | ✅ **Attestation** | Approov-style: the app reports on itself and the device, your server decides, and only a passing app gets pins and a short-lived `PinVault-Token`. Play Integrity and App Attest as optional second opinions. |
-| 🧱 **Hardening** | Hardware-backed keys only, keys that work only while the phone is unlocked, pin **and** CA for public hosts, a hook for your root / jailbreak detection. |
+| 🧱 **Hardening** | Hardware-backed keys only, keys that work only while the phone is unlocked, pin **and** CA for public hosts, a hook for your root / jailbreak detection. On iOS the library notices when a trust-bypass hook answered the TLS challenge before its own check, refuses that connection and reports it. |
 | 🖥️ **Reference server** | Ktor + Docker with a web dashboard: pins, certificates, enrollment, vault files, audit log, two-person approval, a setup wizard that writes your app's config. |
 
 ## How it works

@@ -173,7 +173,8 @@ final class DeviceIntegrityProbe: Sendable {
                 threadNames: inputs.threadNames,
                 inSharedCache: inputs.inSharedCache,
                 bundlePath: inputs.bundlePath,
-                onMacHost: inputs.onMacHost
+                onMacHost: inputs.onMacHost,
+                unverifiedConnections: inputs.unverifiedConnections()
             ).probe()
         }
         signals[IntegrityReport.appIntegrity] = safe(IntegrityReport.appIntegrity) {

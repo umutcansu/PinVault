@@ -1,5 +1,30 @@
 # Changelog
 
+## Unreleased — iOS notices when its trust check was skipped
+
+### iOS
+
+- **A pinned session notices a connection its trust check never saw.** The
+  generic certificate-validation killers (the "SSL kill switch" family)
+  answer URLSession's server-trust challenge inside CFNetwork, before the
+  session delegate: the pins are never matched and nothing in the library
+  runs. The delegate now counts the challenges it was asked
+  (`TLS/TrustCheckWatch.swift`); a request that completes over a network TLS
+  connection while the count is zero fails with `SSLHandshakeException`
+  (cause `SecurityException`, "made without PinVault's trust check"; never a
+  pin mismatch, so no recovery refetch), a `wss://` socket that opened that
+  way is cancelled, and the host goes into every later attestation report as
+  `hooking_framework` evidence `tls-unverified:<host>` (ATTESTATION.md §3).
+  Per session, not per connection: a resumed TLS session is a new TCP
+  connection URLSession shows to nobody (verified against a TLS 1.2 server),
+  and a `URLSession` always starts with a full handshake. A measurement like
+  every probe: the published tool stops working against the library
+  unnoticed; defeating the check takes work aimed at PinVault.
+- Documented (ATTESTATION.md §3): the same tools disable
+  `SecKeyVerifySignature`, which checks the signature of an issued client
+  chain at enrollment and renewal; config and vault signatures use CryptoKit
+  and are not affected.
+
 ## 2.8.0 — 2026-10-15 — React Native and Flutter release builds take every address from the native security file
 
 ### React Native and Flutter

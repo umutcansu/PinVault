@@ -55,6 +55,9 @@ struct IntegrityProbeInputs: Sendable {
     var mainImageEncrypted: @Sendable () -> Bool? = { nil }
     /// `get-task-allow` in the main executable's code signature; nil when there is no entitlements blob.
     var signedGetTaskAllow: @Sendable () throws -> Bool? = { nil }
+    /// `tls-unverified:<host>` for every host a pinned session reached over a
+    /// connection whose certificate the library was never shown (``TrustCheckWatch``).
+    var unverifiedConnections: @Sendable () -> [String] = { [] }
 
     /// The readers of this process.
     static var live: IntegrityProbeInputs {
@@ -83,7 +86,8 @@ struct IntegrityProbeInputs: Sendable {
             inSharedCache: { LiveIntegrityReaders.inSharedCache($0) },
             bundlePath: LiveIntegrityReaders.appBundlePath,
             mainImageEncrypted: { LiveIntegrityReaders.mainImageEncrypted() },
-            signedGetTaskAllow: { try LiveIntegrityReaders.signedGetTaskAllow() }
+            signedGetTaskAllow: { try LiveIntegrityReaders.signedGetTaskAllow() },
+            unverifiedConnections: { UnverifiedConnectionLog.shared.evidence() }
         )
     }
 }

@@ -86,6 +86,17 @@ final class DeviceIntegrityProbeTests: XCTestCase {
         keys.sorted { (text.range(of: "\"\($0)\":")?.lowerBound ?? text.endIndex) < (text.range(of: "\"\($1)\":")?.lowerBound ?? text.endIndex) }
     }
 
+    // MARK: Unverified connections
+
+    func testAConnectionTheTrustCheckNeverSawRaisesHookingFrameworkInTheReport() async {
+        var inputs = Self.iPhone()
+        inputs.unverifiedConnections = { ["tls-unverified:api.example.com"] }
+        let (_, json) = await report(inputs)
+        XCTAssertTrue(flag(json, "hooking_framework"))
+        XCTAssertEqual(evidence(json, "hooking_framework"), ["tls-unverified:api.example.com"])
+        XCTAssertFalse(flag(json, "rooted"))
+    }
+
     // MARK: Shape
 
     func testTheReportHasEveryBlockAndEverySignalOfTheDesignInTheIosShape() async throws {

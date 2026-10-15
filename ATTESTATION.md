@@ -271,7 +271,22 @@ own) and a write outside the sandbox, the simulator, a tracing debugger
 loaded images, `DYLD_INSERT_LIBRARIES` and Frida's port, the bundle and team
 id against the ones the app names, and where the app was installed from;
 `key_unattested` and `old_patch_level` are sent down and decided by the
-server (`pinvault-ios/PORTING.md` §4). All of these probes run on the device,
+server (`pinvault-ios/PORTING.md` §4). `hooking_framework` also carries
+`tls-unverified:<host>` once a pinned session completed a TLS connection
+whose certificate URLSession never showed the library: the generic
+certificate-validation killers (the "SSL kill switch" family) answer the
+server-trust challenge inside CFNetwork, before the session delegate, so the
+pins are never matched and no probe sees a file or an image when the tweak
+is hidden. The delegate counts the challenges it was asked; a request that
+completes over a network TLS connection while the count is zero is refused
+(`SSLHandshakeException`, cause `SecurityException`), a `wss://` socket that
+opened that way is cancelled, and the host stays in every later report
+(`pinvault-ios/Sources/PinVault/TLS/TrustCheckWatch.swift`; per session,
+since URLSession shows a resumed TLS session to nobody and every
+`URLSession` starts with a full handshake). The same tools also disable
+`SecKeyVerifySignature`, which checks the signature of an issued client
+chain at enrollment and renewal; config and vault signatures use CryptoKit
+and are not affected. All of these probes run on the device,
 in the app, and can be defeated there — App Attest proves the app is genuine,
 not that the device is not jailbroken — so an app whose value justifies it
 should add a dedicated RASP product on top of them.

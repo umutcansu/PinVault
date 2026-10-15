@@ -45,6 +45,14 @@ import Security
 /// Residual risk, by design of URLSession: between two such changes a pooled
 /// connection is not re-checked; the leaf's validity is a handshake-time check
 /// and is not repeated (as on Android).
+///
+/// ## That the check ran at all
+/// A hook that answers the server-trust challenge inside CFNetwork (the
+/// generic certificate-validation killers) leaves the delegate unasked, and
+/// nothing above would notice. ``TrustCheckWatch``: the delegate counts the
+/// challenges it was asked; a task that completes over a network TLS
+/// connection while the count is zero is refused, a `wss://` socket cancelled,
+/// and the host recorded for the attestation report (`hooking_framework`).
 final class DynamicSSLManager: @unchecked Sendable {
 
     private static let log = PinVaultLog.tag("DynamicSSLManager")
@@ -52,6 +60,10 @@ final class DynamicSSLManager: @unchecked Sendable {
     /// Bootstrap client timeouts (seconds).
     static let defaultTimeout: TimeInterval = 30
     private static let listenerQueueCapacity = 256
+
+    /// Where a session delegate records a connection the trust check never
+    /// saw (``TrustCheckWatch``); the attestation report reads the shared one.
+    var unverifiedConnections: UnverifiedConnectionLog = .shared
 
     /// What a connection's server trust is judged by.
     enum TrustMode: Sendable {
@@ -924,6 +936,9 @@ final class PinnedSessionDelegate: NSObject, URLSessionDataDelegate, @unchecked 
         let connectHost: String
         let connectPort: Int
         let trust: DynamicSSLManager.TrustMode
+        /// The session carries `https` / `wss` (one session per scheme): its
+        /// connections are TLS, and ``TrustCheckWatch`` judges them.
+        var tls: Bool = true
     }
 
     private static let log = PinVaultLog.tag("DynamicSSLManager")
@@ -934,10 +949,49 @@ final class PinnedSessionDelegate: NSObject, URLSessionDataDelegate, @unchecked 
     private let presented = Locked<X509Certificate?>(nil)
     /// Who receives each running task's response and body.
     private let collectors = Locked<[Int: ResponseCollector]>([:])
+    /// How many server-trust challenges this session's connections brought
+    /// to the delegate (``TrustCheckWatch``): zero while a TLS connection
+    /// completes means the trust check never ran.
+    private let serverTrustChallenges = Locked(0)
 
     init(manager: DynamicSSLManager, context: Context) {
         self.manager = manager
         self.context = context
+    }
+
+    /// Tests only: the delegate forgets it was asked, as if the challenges had
+    /// been answered before reaching it.
+    var testOnlyForgetChallenges = false
+
+    /// Server-trust challenges this delegate has answered.
+    var serverTrustChallengeCount: Int { serverTrustChallenges.withLock { $0 } }
+
+    /// The task's connections, once known: TLS to https over the network
+    /// while this delegate was never asked about a certificate is a connection
+    /// the library did not verify — refused, and recorded for the attestation report.
+    func urlSession(_ session: URLSession, task: URLSessionTask, didFinishCollecting metrics: URLSessionTaskMetrics) {
+        let transactions = metrics.transactionMetrics.map(TrustCheckWatch.Transaction.init)
+        guard TrustCheckWatch.wentUnverified(transactions, serverTrustChallenges: challengesForWatch) else { return }
+        noteUnverifiedConnection()
+        failures.withLock { $0[task.taskIdentifier] = .handshake(.security(message: TrustCheckWatch.message(host: context.logicalHost, port: context.logicalPort))) }
+    }
+
+    /// A `wss://` socket that opened while this delegate was never asked about
+    /// a certificate rode an unverified connection: closed before it is used.
+    func urlSession(_ session: URLSession, webSocketTask: URLSessionWebSocketTask, didOpenWithProtocol protocol: String?) {
+        guard context.tls, challengesForWatch == 0 else { return }
+        noteUnverifiedConnection()
+        failures.withLock { $0[webSocketTask.taskIdentifier] = .handshake(.security(message: TrustCheckWatch.message(host: context.logicalHost, port: context.logicalPort))) }
+        webSocketTask.cancel(with: .policyViolation, reason: Data("PinVault: unverified TLS connection".utf8))
+    }
+
+    private var challengesForWatch: Int {
+        testOnlyForgetChallenges ? 0 : serverTrustChallengeCount
+    }
+
+    private func noteUnverifiedConnection() {
+        Self.log.e(TrustCheckWatch.message(host: context.logicalHost, port: context.logicalPort))
+        manager.unverifiedConnections.record(host: context.logicalHost)
     }
 
     /// Routes the response and body of task `taskIdentifier` to `collector` (before the task is resumed).
@@ -965,7 +1019,10 @@ final class PinnedSessionDelegate: NSObject, URLSessionDataDelegate, @unchecked 
 
     func urlSession(_ session: URLSession, task: URLSessionTask, didCompleteWithError error: (any Error)?) {
         let collector = collectors.withLock { $0.removeValue(forKey: task.taskIdentifier) }
-        collector?.complete(taskIdentifier: task.taskIdentifier, error: error)
+        // A task that completed over an unverified connection (the metrics
+        // arrive before this) fails even though URLSession reports no error.
+        let unverified = error == nil ? failures.withLock({ $0[task.taskIdentifier] })?.thrown : nil
+        collector?.complete(taskIdentifier: task.taskIdentifier, error: error ?? unverified)
     }
 
     /// The refusal recorded for `taskIdentifier`, removed.
@@ -990,6 +1047,8 @@ final class PinnedSessionDelegate: NSObject, URLSessionDataDelegate, @unchecked 
         let space = challenge.protectionSpace
         switch space.authenticationMethod {
         case NSURLAuthenticationMethodServerTrust where !space.isProxy():
+            // Asked: whatever the answer, the trust check ran for this connection (TrustCheckWatch).
+            serverTrustChallenges.withLock { $0 += 1 }
             guard let trust = space.serverTrust else {
                 refuse(task, .handshake(.certificate(message: "No server certificate provided")), completionHandler)
                 return

@@ -121,9 +121,13 @@ struct HookingProbe {
     var bundlePath: String = ""
     /// The simulator and macOS load the Mac's own libraries: the location rule does not apply.
     var onMacHost: Bool = true
+    /// `tls-unverified:<host>` per host reached over a connection the trust
+    /// check never saw (``TrustCheckWatch``): something answered URLSession's
+    /// server-trust challenge before the library's delegate.
+    var unverifiedConnections: [String] = []
 
     func probe() -> IntegritySignal {
-        var evidence: [String] = []
+        var evidence: [String] = unverifiedConnections.filter { $0.hasPrefix(TrustCheckWatch.evidencePrefix) }
         for image in loadedImages() {
             let name = (image.split(separator: "/").last.map(String.init) ?? image).lowercased()
             // Every marker a name carries (`FridaGadget` is `frida` and `fridagadget`).
