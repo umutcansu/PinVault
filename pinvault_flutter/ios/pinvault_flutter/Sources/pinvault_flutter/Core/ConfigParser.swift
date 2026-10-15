@@ -281,6 +281,13 @@ public enum ConfigParser {
         }
         let proof = jsProof == true || nativeBlock?.proofOfPossession == true
         let lower: ([String]) -> [String] = { $0.map { $0.lowercased() } }
+        // Who gets the device's token is the file's call in a release build, like the identity
+        // below: the library's default is the block's own Config API only, so a tokenHosts from
+        // Dart would ADD hosts that receive the token.
+        if release, let nativeBlock, nativeBlock.tokenHosts == nil, jsTokenHosts != nil {
+            throw BridgeInputError("\(b.path).tokenHosts: a release build takes it only from the app's native security file "
+                + "(\(native?.source ?? "")); declare tokenHosts for Config API '\(id)' there")
+        }
         var tokenHosts = jsTokenHosts
         if let n = nativeBlock?.tokenHosts {
             if let j = jsTokenHosts, !NativeSecurity.sameKeys(lower(j), lower(n)) { throw fixed("tokenHosts") }
@@ -297,7 +304,7 @@ public enum ConfigParser {
             fixedRenewalUrl = n
         }
         // Who gets the device's identity is the file's call in a release build: Dart cannot
-        // add a host the file does not name (tokenHosts only narrows the library's default).
+        // add a host the file does not name.
         if release, let nativeBlock, nativeBlock.clientCertHosts == nil, clientCertHosts != nil {
             throw BridgeInputError("\(b.path).clientCertHosts: a release build takes it only from the app's native security file "
                 + "(\(native?.source ?? "")); declare clientCertHosts for Config API '\(id)' there")

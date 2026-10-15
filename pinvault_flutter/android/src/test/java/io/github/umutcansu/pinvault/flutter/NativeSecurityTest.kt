@@ -108,6 +108,16 @@ class NativeSecurityTest {
         assertEquals(1, parse("""{"configApis":[{$base,"clientCertHosts":["API.example:443"]}]}""", native = naming)
             .config.configApis.getValue("default").clientCertHosts.size)
         refused("""{"configApis":[{$base,"clientCertHosts":["cdn.example:443"]}]}""", native = naming, fragments = arrayOf("clientCertHosts", "fixed"))
+        // Who gets the token: the same rule — the library's default is the Config API only, so Dart would add hosts.
+        refused("""{"configApis":[{$base,"tokenHosts":["cdn.example"]}]}""", fragments = arrayOf("tokenHosts", "declare tokenHosts"))
+        parse("""{"configApis":[{$base,"tokenHosts":["cdn.example"]}]}""", release = false)
+        val namingToken = NativeSecurity.parse("""
+            {"configApis":[{"id":"default","tokenHosts":["api.example"],
+              "bootstrapPins":[{"hostname":"h.example","sha256":["$pinA","$pinB"]}],"signaturePublicKeys":["$key"]}]}
+        """.trimIndent(), "f")
+        assertEquals(listOf("api.example"), parse("""{"configApis":[{$base,"tokenHosts":["API.example"]}]}""", native = namingToken)
+            .config.configApis.getValue("default").tokenHosts)
+        refused("""{"configApis":[{$base,"tokenHosts":["cdn.example"]}]}""", native = namingToken, fragments = arrayOf("tokenHosts", "fixed"))
     }
 
     @Test fun `without a file, a release build refuses Dart-only anchors unless the manifest accepts them`() {

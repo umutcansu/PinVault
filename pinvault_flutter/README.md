@@ -92,6 +92,10 @@ in the manifest, iOS `PinVaultAllowNoNativeSecurityFile` = `YES` in `Info.plist`
 The relaxations (`allowUnsigned`, `allowUnpinnedConfigApi`,
 `allowServerGeneratedKey`) are still refused from Dart in release builds; a
 relaxation the native file sets for a block stays on in release builds too.
+Who gets the device's token and identity is the file's call: in a release
+build Dart may give `tokenHosts` and `clientCertHosts` only where the file
+names them (the library's default sends `PinVault-Token` to the block's own
+Config API only, so a list from Dart would add hosts).
 
 ## Quick start
 

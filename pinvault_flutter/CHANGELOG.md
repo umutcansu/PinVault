@@ -2,7 +2,15 @@
 
 ## 2.7.0 — 2026-10-15
 
-- Depends on PinVault 2.7.0; no Flutter-facing change.
+- **Release builds take `tokenHosts` only from the native security file**,
+  as they already did `clientCertHosts`: where `pinvault_security.json` has
+  the block but names no `tokenHosts`, a `tokenHosts` from Dart is refused
+  (`E_INVALID_CONFIG`, "declare tokenHosts for Config API … there"). The
+  library's default sends `PinVault-Token` to the block's own Config API only,
+  so a `tokenHosts` from Dart would add hosts that receive the device's token.
+  Debug builds and files that name the hosts are unchanged. Move your
+  `tokenHosts` into the file if a release build now refuses to start.
+- Depends on PinVault 2.7.0.
 
 ## 2.6.1 — 2026-10-15
 

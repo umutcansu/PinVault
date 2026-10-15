@@ -15,6 +15,14 @@ reference for the multi-Config-API DSL. The full list of changes is in
   `{"configApis":[{"id":"api","tokenHosts":["api.example.com"], …}]}`; JS may
   repeat it or leave it out. Debug builds are unchanged.
 
+**Flutter, release builds**
+
+- **`tokenHosts` comes from the native security file** here too: a release
+  build whose `pinvault_security.json` has the block but no `tokenHosts`
+  refuses a `tokenHosts` given from Dart (`E_INVALID_CONFIG`), as it already
+  refused `clientCertHosts`. Move the list into the file; Dart may repeat it or
+  leave it out. Debug builds are unchanged.
+
 ## Upgrading from 2.6.0 to 2.6.1
 
 **iOS (also React Native and Flutter on iOS)**

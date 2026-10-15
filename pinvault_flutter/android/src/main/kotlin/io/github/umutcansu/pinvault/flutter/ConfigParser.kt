@@ -257,11 +257,18 @@ internal object ConfigParser {
             throw BridgeInputException("${b.path}.proofOfPossession: the app's native security file turns it on; Dart cannot turn it off")
         }
         val proof = dartProof == true || nativeBlock?.proofOfPossession == true
+        // Who gets the device's token is the file's call in a release build, like the identity
+        // below: the library's default is the block's own Config API only, so a tokenHosts from
+        // Dart would ADD hosts that receive the token.
+        if (release && nativeBlock != null && nativeBlock.tokenHosts == null && dartTokenHosts != null) {
+            throw BridgeInputException("${b.path}.tokenHosts: a release build takes it only from the app's native security file " +
+                "(${native?.source}); declare tokenHosts for Config API '$id' there")
+        }
         val tokenHosts = nativeBlock?.tokenHosts?.also { n ->
             if (dartTokenHosts != null && !NativeSecurity.sameKeys(dartTokenHosts.map(String::lowercase), n.map(String::lowercase))) fixed("tokenHosts")
         } ?: dartTokenHosts
         // Who gets the device's identity is the file's call in a release build: Dart cannot
-        // add a host the file does not name (tokenHosts only narrows the library's default).
+        // add a host the file does not name.
         if (release && nativeBlock != null && nativeBlock.clientCertHosts == null && clientCertHosts != null) {
             throw BridgeInputException("${b.path}.clientCertHosts: a release build takes it only from the app's native security file " +
                 "(${native?.source}); declare clientCertHosts for Config API '$id' there")

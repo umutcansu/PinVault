@@ -12,6 +12,13 @@
   2.6.1): a bundle could add hosts that receive the device's token. See
   MIGRATION.md.
 
+### Flutter
+
+- **Release builds take `tokenHosts` only from the native security file**,
+  the same rule as React Native above and as `clientCertHosts` already had:
+  with the block in `pinvault_security.json` but no `tokenHosts` there, a
+  `tokenHosts` from Dart is refused (`E_INVALID_CONFIG`). See MIGRATION.md.
+
 ### Libraries
 
 - The attestation managers no longer take the block's live config
