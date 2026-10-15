@@ -249,6 +249,20 @@ internal object ConfigParser {
         val blockUrl = nativeBlock?.url?.also { if (it != url) fixed("url") } ?: url
         val fixedEnrollmentUrl = nativeBlock?.enrollmentUrl?.also { if (enrollmentUrl != null && it != enrollmentUrl) fixed("enrollmentUrl") } ?: enrollmentUrl
         val fixedRenewalUrl = nativeBlock?.renewalUrl?.also { if (renewalUrl != null && it != renewalUrl) fixed("renewalUrl") } ?: renewalUrl
+        // The device's identity goes to the enrollment and renewal addresses as well as to url:
+        // in a release build Dart may give them only where the file names them (url itself must be
+        // in the file, SecurityPolicy.apply), like tokenHosts and clientCertHosts below.
+        if (release && nativeBlock != null) {
+            for ((key, given, declared) in listOf(
+                Triple("enrollmentUrl", enrollmentUrl, nativeBlock.enrollmentUrl),
+                Triple("renewalUrl", renewalUrl, nativeBlock.renewalUrl),
+            )) {
+                if (declared == null && given != null) {
+                    throw BridgeInputException("${b.path}.$key: a release build takes it only from the app's native security file " +
+                        "(${native?.source}); declare $key for Config API '$id' there")
+                }
+            }
+        }
         if (nativeBlock?.attestation == true && dartAttestation == false) {
             throw BridgeInputException("${b.path}.attestation: the app's native security file turns it on; Dart cannot turn it off")
         }

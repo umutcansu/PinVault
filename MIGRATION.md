@@ -4,12 +4,29 @@ The upgrade notes for every release since 2.0, troubleshooting, and a quick
 reference for the multi-Config-API DSL. The full list of changes is in
 [CHANGELOG.md](CHANGELOG.md).
 
+## Upgrading from 2.7.0 (unreleased)
+
+**React Native and Flutter, release builds**
+
+- **A declared block names its `url` in the native security file**, and
+  `enrollmentUrl` / `renewalUrl` from JS or Dart are refused unless the file
+  names them too (`E_INVALID_CONFIG`, "declare url / enrollmentUrl / renewalUrl
+  for Config API … there"). Copy the values your bundle passes into the file:
+  `{"configApis":[{"id":"api","url":"https://config.example.com/","renewalUrl":"https://renew.example.com/", …}]}`;
+  the bundle may repeat them or leave them out. Debug builds are unchanged.
+- **iOS `ios.resolve` comes from the file**: a release build refuses a map from
+  the bundle unless the file has `"ios": {"resolve": {…}}` at its top level,
+  and the file's map is fixed in every build. Android ignores the section.
+- **`PinVault.fetch` headers**: `Host`, `Connection`, `Keep-Alive`,
+  `Proxy-Connection`, `TE`, `Trailer`, `Transfer-Encoding`, `Upgrade` and
+  `Content-Length` are refused; the HTTP client sets them from the URL and body.
+
 ## Upgrading from 2.6.1 to 2.7.0
 
 **React Native, release builds**
 
 - **`tokenHosts` comes from the native security file.** A release build whose
-  `pinvault-security.json` has the block but no `tokenHosts` now refuses a
+  `pinvault_security.json` has the block but no `tokenHosts` now refuses a
   `tokenHosts` given from JS (`E_INVALID_CONFIG`), the way it already refused
   `clientCertHosts`. Move the list into the file:
   `{"configApis":[{"id":"api","tokenHosts":["api.example.com"], …}]}`; JS may

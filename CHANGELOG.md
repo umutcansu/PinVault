@@ -1,5 +1,29 @@
 # Changelog
 
+## Unreleased
+
+### React Native and Flutter
+
+- **A release build takes a block's addresses only from the native security
+  file.** A declared block must name its `url` there, and `enrollmentUrl` /
+  `renewalUrl` from JS or Dart are refused where the file names none
+  (`E_INVALID_CONFIG`, "declare … for Config API … there"). The library presents
+  the device's identity to the block's url, enrollment and renewal addresses
+  and sends the token to its url, so a bundle that set them could hand both to
+  another pinned host — the gap `tokenHosts` / `clientCertHosts` closed in 2.7.0.
+  See MIGRATION.md.
+- **iOS: `ios.resolve` comes from the native security file in release builds**
+  (`"ios": {"resolve": {…}}` at the file's top level; Android reads it for the
+  shape). Where the file gives it, it is fixed in debug builds too. The handshake
+  still checks the logical host's pins; the bundle can no longer move the app's
+  connections to another address.
+- `PinVault.fetch` refuses the HTTP client's own headers from JS and Dart:
+  `Host`, `Connection`, `Keep-Alive`, `Proxy-Connection`, `TE`, `Trailer`,
+  `Transfer-Encoding`, `Upgrade`, `Content-Length`.
+- The React Native sample's release security file names its blocks' `url`,
+  `clientCertHosts` and `renewalUrl` (its release build was refused at start
+  since the `clientCertHosts` rule).
+
 ## 2.7.0 — 2026-10-15 — React Native release builds take tokenHosts from the native security file
 
 ### React Native

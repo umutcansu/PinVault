@@ -1,5 +1,20 @@
 # Changelog
 
+## Unreleased
+
+### Changed
+
+- **Release builds take a block's addresses only from the native security
+  file**: a declared block names its `url` there, and `enrollmentUrl` /
+  `renewalUrl` from JS are refused where the file names none (the device's
+  identity goes to all three, its token to `url`). iOS `ios.resolve` follows the
+  same rule (top-level `"ios": {"resolve": {…}}` in the file; fixed wherever the
+  file gives it). Add them to `pinvault_security.json` if a release build now
+  refuses to start.
+- `PinVault.fetch` refuses `Host`, `Connection`, `Keep-Alive`,
+  `Proxy-Connection`, `TE`, `Trailer`, `Transfer-Encoding`, `Upgrade` and
+  `Content-Length` from JS: the HTTP client sets them.
+
 ## 2.7.0 — 2026-10-15
 
 ### Changed
@@ -11,7 +26,7 @@
   library's default sends `PinVault-Token` to the block's own Config API only,
   so a `tokenHosts` from JS would add hosts that receive the device's token.
   Debug builds and files that name the hosts are unchanged. Move your
-  `tokenHosts` into `pinvault-security.json` (Android: `res/raw`, iOS: the
+  `tokenHosts` into `pinvault_security.json` (Android: `assets`, iOS: the
   bundle) if a release build now refuses to start.
 
 ## 2.6.1 — 2026-10-15

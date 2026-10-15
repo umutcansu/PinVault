@@ -48,11 +48,13 @@ import java.io.IOException
  *   a different value is refused (`E_INVALID_CONFIG`);
  * - `allowUnsigned`, `allowUnpinnedConfigApi`, `allowServerGeneratedKey` from
  *   Dart are refused unless the file allows them for that block;
- * - `url`, `tokenHosts` and `clientCertHosts` of a block are fixed where the
- *   file gives them, and `attestation: true` / `proofOfPossession: true` there
- *   cannot be switched off; in a release build Dart may give `tokenHosts` and
- *   `clientCertHosts` only where the file names them (who gets the device's
- *   token and identity is the file's call);
+ * - `url`, `enrollmentUrl`, `renewalUrl`, `tokenHosts` and `clientCertHosts`
+ *   of a block are fixed where the file gives them, and `attestation: true` /
+ *   `proofOfPossession: true` there cannot be switched off; in a release build
+ *   a declared block must name its `url`, and Dart may give `enrollmentUrl`,
+ *   `renewalUrl`, `tokenHosts` and `clientCertHosts` only where the file names
+ *   them (where the device's token and identity go is the file's call);
+ * - `ios.resolve` (top level) is the iOS side's; here it is read for the shape;
  * - `require` only tightens: a protection it turns on stays on whatever Dart
  *   says, `requireCaTrust` hosts are added to Dart's, `expectedSignerSha256` is
  *   fixed, and `expiredConfigGraceSeconds` is the most Dart may ask for;
@@ -190,6 +192,11 @@ internal class NativeSecurity(
                     )
                     b.finish()
                 }
+                // iOS-only (connection addresses, `ios.resolve`): read for the shape, used by the iOS side.
+                root.obj("ios")?.let { ios ->
+                    ios.stringMap("resolve", 64, 255, 255)
+                    ios.finish()
+                }
                 val staticPins = root.obj("staticPins")?.let(ConfigParser::staticPins)
                 val require = root.obj("require")?.let { r ->
                     Require(
@@ -306,6 +313,10 @@ internal object SecurityPolicy {
                     "declare $key for Config API '$id' there (or $relaxation)")
             if (block.bootstrapPins == null && !block.allowUnpinnedConfigApi) anchor("bootstrapPins", "allowUnpinnedConfigApi")
             if (block.signaturePublicKeys == null && !block.allowUnsigned) anchor("signaturePublicKeys", "allowUnsigned")
+            // Where the block talks to: the library hands it the device's token and identity.
+            if (block.url == null) throw BridgeInputException(
+                "$path.url: a release build takes it only from the app's native security file (${native.source}); " +
+                    "declare url for Config API '$id' there")
         }
 
         val pins = block.bootstrapPins?.also { n ->

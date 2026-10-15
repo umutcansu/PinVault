@@ -45,6 +45,11 @@ internal object PinnedFetch {
     /** The attestation headers: only the library sets them, for its token hosts (and a proof only it can sign). */
     val LIBRARY_HEADERS = listOf("PinVault-Token", "PinVault-Proof")
 
+    /** The HTTP client's own headers: the host the URL names, the connection and the body's framing. */
+    val CLIENT_HEADERS = listOf(
+        "Host", "Connection", "Keep-Alive", "Proxy-Connection", "TE", "Trailer", "Transfer-Encoding", "Upgrade", "Content-Length",
+    )
+
     fun parse(json: String): FetchRequest {
         // Base64 inflates by 4/3; leave room for the other fields.
         val f = StrictJson.parseObject(json, "request", maxChars = (MAX_REQUEST_BYTES * 4 / 3 + 64 * 1024).toInt())
@@ -58,6 +63,9 @@ internal object PinnedFetch {
             if (!TOKEN.matches(name)) throw BridgeInputException("request.headers: '${name.take(40)}' is not a header name")
             if (LIBRARY_HEADERS.any { it.equals(name, ignoreCase = true) }) {
                 throw BridgeInputException("request.headers.$name: set by PinVault itself (a token host's requests carry it)")
+            }
+            if (CLIENT_HEADERS.any { it.equals(name, ignoreCase = true) }) {
+                throw BridgeInputException("request.headers.$name: set by the HTTP client (host, connection and framing headers)")
             }
             if (value.any { it == '\r' || it == '\n' || it.code == 0 }) {
                 throw BridgeInputException("request.headers.$name: line breaks are not allowed")

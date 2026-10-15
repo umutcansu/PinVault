@@ -29,6 +29,9 @@ public enum PinnedFetch {
     static let tokenChars = CharacterSet(charactersIn: "!#$%&'*+.^_`|~0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz-")
     /// The attestation headers: only the library sets them, for its token hosts (and a proof only it can sign).
     static let libraryHeaders = ["PinVault-Token", "PinVault-Proof"]
+    /// The HTTP client's own headers: the host the URL names, the connection and the body's framing.
+    static let clientHeaders = ["Host", "Connection", "Keep-Alive", "Proxy-Connection", "TE", "Trailer",
+                                "Transfer-Encoding", "Upgrade", "Content-Length"]
 
     public static func parse(_ json: String) throws -> FetchRequest {
         let f = try StrictJSON.parseObject(json, path: "request", maxChars: Int(maxRequestBytes * 4 / 3) + 64 * 1024)
@@ -46,6 +49,9 @@ public enum PinnedFetch {
             }
             if libraryHeaders.contains(where: { $0.caseInsensitiveCompare(name) == .orderedSame }) {
                 throw BridgeInputError("request.headers.\(name): set by PinVault itself (a token host's requests carry it)")
+            }
+            if clientHeaders.contains(where: { $0.caseInsensitiveCompare(name) == .orderedSame }) {
+                throw BridgeInputError("request.headers.\(name): set by the HTTP client (host, connection and framing headers)")
             }
             if value.unicodeScalars.contains(where: { $0 == "\r" || $0 == "\n" || $0.value == 0 }) {
                 throw BridgeInputError("request.headers.\(name): line breaks are not allowed")

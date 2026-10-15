@@ -11,6 +11,7 @@
 //                      "clientCertHosts",
 //                      "enrollmentUrl", "renewalUrl" }],
 //     "staticPins": { "pins": [...], "version": 1 },
+//     "ios": { "resolve": { "<host>": "<address>" } },
 //     "require": { "requireUnlockedDevice", "requireHardwareBackedKeys",
 //                  "requirePinnedReactNativeNetworking", "managedTrustRoots",
 //                  "wipeVaultFilesOnRevocation", "requireCaTrust", "expectedBundleIds",
@@ -21,7 +22,11 @@
 // When the file is there: every JS Config API (and JS `staticPins`) must be
 // declared in it; a declared field is the value (JS may omit or repeat it, a
 // different value is refused); the three relaxations need the file's consent;
-// `attestation: true` and `proofOfPossession: true` cannot be switched off; `require` only tightens (its
+// `attestation: true` and `proofOfPossession: true` cannot be switched off; in a
+// release build a declared block names its `url`, and JS may give `enrollmentUrl`,
+// `renewalUrl`, `tokenHosts`, `clientCertHosts` and `ios.resolve` only where the
+// file names them (where the device's token, identity and connections go is the
+// file's call); `require` only tightens (its
 // protections stay on, its `requireCaTrust` hosts are added to JS's, its
 // expected ids are fixed, its grace is the most JS may ask for); `vaultFiles`
 // fixes those files' signature key, encryption and lock, and a JS vault file
@@ -100,6 +105,8 @@ public struct NativeSecurity {
     var require = Require()
     /// Nil when the file has no `vaultFiles` section.
     var vaultFiles: [String: VaultFilePolicy]? = nil
+    /// `ios.resolve` (logical host → connection address); nil when the file has none.
+    var resolve: [String: String]? = nil
 
     /// True when the app's Info.plist accepts a release start without the file.
     public static func noFileAllowed(_ bundle: Bundle = .main) -> Bool {
@@ -147,6 +154,12 @@ public struct NativeSecurity {
                 )
                 try b.finish()
             }
+            // Where a pinned host's connection goes (`ios.resolve`): fixed where the file gives it.
+            var resolve: [String: String]? = nil
+            if let ios = try root.object("ios") {
+                resolve = try ios.stringMap("resolve", maxItems: 64, maxKeyLength: 255, maxValueLength: 255)
+                try ios.finish()
+            }
             let staticPins = try root.object("staticPins").map(ConfigParser.staticPins)
             var require = Require()
             if let r = try root.object("require") {
@@ -188,6 +201,7 @@ public struct NativeSecurity {
             var native = NativeSecurity(source: source, blocks: blocks, staticPins: staticPins)
             native.require = require
             native.vaultFiles = vaultFiles
+            native.resolve = resolve
             return native
         } catch let e as BridgeInputError {
             throw e.message.hasPrefix("native security file") ? e : BridgeInputError("native security file \(e.message)")
@@ -268,6 +282,11 @@ enum SecurityPolicy {
             }
             if block.bootstrapPins == nil && !block.allowUnpinnedConfigApi { throw anchor("bootstrapPins", "allowUnpinnedConfigApi") }
             if block.signaturePublicKeys == nil && !block.allowUnsigned { throw anchor("signaturePublicKeys", "allowUnsigned") }
+            // Where the block talks to: the library hands it the device's token and identity.
+            if block.url == nil {
+                throw BridgeInputError("\(path).url: a release build takes it only from the app's native security file (\(native.source)); "
+                    + "declare url for Config API '\(id)' there")
+            }
         }
 
         var out = js

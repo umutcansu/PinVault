@@ -92,10 +92,15 @@ in the manifest, iOS `PinVaultAllowNoNativeSecurityFile` = `YES` in `Info.plist`
 The relaxations (`allowUnsigned`, `allowUnpinnedConfigApi`,
 `allowServerGeneratedKey`) are still refused from Dart in release builds; a
 relaxation the native file sets for a block stays on in release builds too.
-Who gets the device's token and identity is the file's call: in a release
-build Dart may give `tokenHosts` and `clientCertHosts` only where the file
-names them (the library's default sends `PinVault-Token` to the block's own
-Config API only, so a list from Dart would add hosts).
+Where the block talks to and who gets the device's token and identity is the
+file's call. In a release build a declared block names its `url` in the file,
+and Dart may give `enrollmentUrl`, `renewalUrl`, `tokenHosts` and
+`clientCertHosts` only where the file names them: the library presents the
+identity to the block's url, enrollment and renewal addresses, and its default
+sends `PinVault-Token` to the block's own Config API only, so a value from Dart
+would add hosts. On iOS the same holds for `ios.resolve` (where a pinned host's
+connection goes): fixed where the file gives it (`"ios": {"resolve": {…}}` at
+the file's top level), taken only from the file in a release build.
 
 ## Quick start
 

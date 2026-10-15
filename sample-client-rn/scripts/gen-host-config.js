@@ -199,13 +199,23 @@ function securityFile() {
     ...(host.clientCaPins.length > 0 ? { clientCaPins: host.clientCaPins } : {}),
   };
   const mtlsPins = [pinEntry];
-  if (host.recoveryPort && host.recoveryPins.length > 0) {
-    mtlsPins.push({ hostname: `${host.ip}:${host.recoveryPort}`, sha256: host.recoveryPins });
-  }
+  const door = host.recoveryPort && host.recoveryPins.length > 0;
+  if (door) mtlsPins.push({ hostname: `${host.ip}:${host.recoveryPort}`, sha256: host.recoveryPins });
+  // Cihaz kimliği ve token'ı bloğun adreslerine gider: release'te url, renewalUrl ve
+  // clientCertHosts yalnızca bu dosyadan gelir (src/pinvault.ts ile aynı değerler).
+  const configUrl = `https://${host.ip}:${host.httpsPort}/`;
+  const mtlsUrl = `https://${host.ip}:${host.mtlsPort}/`;
   return {
     configApis: [
-      { id: 'sample-host', bootstrapPins: [pinEntry], ...signing, ...(host.tlsScope ? { serverScope: host.tlsScope } : {}) },
-      { id: 'sample-mtls', bootstrapPins: mtlsPins, ...signing, ...(host.mtlsScope ? { serverScope: host.mtlsScope } : {}) },
+      {
+        id: 'sample-host', url: configUrl, bootstrapPins: [pinEntry], ...signing,
+        ...(host.tlsScope ? { serverScope: host.tlsScope } : {}), clientCertHosts: [mtlsUrl],
+      },
+      {
+        id: 'sample-mtls', url: mtlsUrl, bootstrapPins: mtlsPins, ...signing,
+        ...(host.mtlsScope ? { serverScope: host.mtlsScope } : {}),
+        ...(door ? { renewalUrl: `https://${host.ip}:${host.recoveryPort}/` } : {}),
+      },
     ],
   };
 }

@@ -165,7 +165,8 @@ names), enum values are the Kotlin constant names (`'TOKEN_MTLS'`,
   requirePinnedReactNativeNetworking,                    // see Networking
   android: { requireUnlockedDeviceAllowFallback, pinGlobalNetworking,
              keepReactNativeHttpCache, keepReactNativeCookies },
-  ios: { resolve: { 'mock-tls.sample': '10.0.0.12' }, expectedBundleIds, expectedTeamIds, userAuthStrength,
+  ios: { resolve: { 'mock-tls.sample': '10.0.0.12' },   // release: only from the native security file
+         expectedBundleIds, expectedTeamIds, userAuthStrength,
          reactNativeMaxResponseBytes },
 }
 ```
@@ -236,6 +237,7 @@ signature. Ship them natively as well, in `pinvault_security.json`:
     "allowUnsigned": false, "allowUnpinnedConfigApi": false, "allowServerGeneratedKey": false
   }],
   "staticPins": { "pins": [ … ], "version": 1 },
+  "ios": { "resolve": { "api.example.com": "10.0.0.12" } },
   "require": {
     "requireUnlockedDevice": true, "requireHardwareBackedKeys": true,
     "managedTrustRoots": true, "wipeVaultFilesOnRevocation": true,
@@ -262,9 +264,9 @@ parsed as strictly; a broken file rejects `start` with `E_INVALID_CONFIG`
   applies) or repeat it (lists in any order); a different value rejects `start`
   with `E_INVALID_CONFIG` naming the field;
 - in a release build a declared block must carry its anchors: `bootstrapPins`
-  (or `allowUnpinnedConfigApi`) and `signaturePublicKeys` (or `allowUnsigned`);
-  a block that only names itself rejects `start` — otherwise the bundle would
-  supply the pins and keys;
+  (or `allowUnpinnedConfigApi`), `signaturePublicKeys` (or `allowUnsigned`) and
+  its `url` (2.7.1+: the device's token and identity go there); a block that
+  only names itself rejects `start` — otherwise the bundle would supply them;
 - `allowUnsigned`, `allowUnpinnedConfigApi` and `allowServerGeneratedKey` from
   JS are refused unless the file allows them for that block; a release build
   of the native libraries (2.4.2+) refuses the first two unless the block also
@@ -273,10 +275,13 @@ parsed as strictly; a broken file rejects `start` with `E_INVALID_CONFIG`
 - a block's `url`, `enrollmentUrl`, `renewalUrl`, `tokenHosts` and
   `clientCertHosts` are fixed where the file gives them (where the block talks to, and who gets its token and identity),
   and `attestation: true` / `proofOfPossession: true` there cannot be turned off from JS;
-  in a release build JS may give `clientCertHosts` and `tokenHosts` only where
-  the file names them (the bundle cannot hand the device's identity or its
-  `PinVault-Token` to another host; the library's default sends the token to the
-  block's own Config API only);
+  in a release build JS may give `enrollmentUrl`, `renewalUrl` (2.7.1+),
+  `clientCertHosts` and `tokenHosts` only where the file names them (the bundle
+  cannot hand the device's identity or its `PinVault-Token` to another host; the
+  library presents the identity to the block's url, enrollment and renewal
+  addresses, and its default sends the token to the block's own Config API only);
+- iOS `ios.resolve` (where a pinned host's connection goes) is fixed where the
+  file gives it, and a release build takes it only from the file (2.7.1+);
 - `require` only tightens: a protection it turns on stays on whatever JS says,
   its `requireCaTrust` hosts are added to JS's, the expected signer / bundle /
   team ids and iOS `userAuthStrength` are fixed, and `expiredConfigGraceSeconds`

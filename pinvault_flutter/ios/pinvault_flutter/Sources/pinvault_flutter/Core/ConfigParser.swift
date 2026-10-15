@@ -111,9 +111,8 @@ public enum ConfigParser {
         // Android-only settings: the Android side reads them; here only their shape is checked.
         _ = try root.object("android")
         if let ios = try root.object("ios") {
-            if let resolve = try ios.stringMap("resolve", maxItems: 64, maxKeyLength: 255, maxValueLength: 255) {
-                for (host, address) in resolve.sorted(by: { $0.key < $1.key }) { builder.resolve(host: host, to: address) }
-            }
+            try applyResolve(try ios.stringMap("resolve", maxItems: 64, maxKeyLength: 255, maxValueLength: 255),
+                             native: native, release: release, to: builder)
             if let v = try fixedList("config.ios.expectedBundleIds", require.expectedBundleIds,
                                      try ios.stringList("expectedBundleIds", maxItems: 16, maxLength: 255), native) {
                 builder.expectedBundleId(v)
@@ -131,6 +130,7 @@ public enum ConfigParser {
         }
 
         else {
+            try applyResolve(nil, native: native, release: release, to: builder)
             if let v = require.expectedBundleIds { builder.expectedBundleId(v) }
             if let v = require.expectedTeamIds { builder.expectedTeamId(v) }
             if let v = require.userAuthStrength { builder.userAuthStrength(v) }
@@ -141,6 +141,29 @@ public enum ConfigParser {
         var parsed = ParsedConfig(config: try builder.build(), guardTimeoutMs: guardTimeout)
         parsed.nativeSecurityApplied = native != nil
         return parsed
+    }
+
+    /// `config.ios.resolve` decides where a pinned host's TCP connection goes. The native
+    /// security file's map is the value (Dart may leave it out or repeat it); a release build
+    /// takes it only from the file, so an OTA bundle cannot send the app's connections elsewhere.
+    static func applyResolve(_ given: [String: String]?, native: NativeSecurity?, release: Bool,
+                             to builder: PinVaultConfig.Builder) throws {
+        let lowered: ([String: String]) -> [String: String] = { map in
+            Dictionary(map.map { ($0.key.lowercased(), $0.value) }, uniquingKeysWith: { first, _ in first })
+        }
+        var map = given
+        if let native {
+            if let fixed = native.resolve {
+                if let given, lowered(given) != lowered(fixed) {
+                    throw BridgeInputError("config.ios.resolve: differs from the app's native security file (\(native.source)); the native value is fixed")
+                }
+                map = fixed
+            } else if release, given != nil {
+                throw BridgeInputError("config.ios.resolve: a release build takes it only from the app's native security file "
+                    + "(\(native.source)); declare ios.resolve there")
+            }
+        }
+        for (host, address) in (map ?? [:]).sorted(by: { $0.key < $1.key }) { builder.resolve(host: host, to: address) }
     }
 
     /// A Dart list against the native file's: fixed where the file gives it.
@@ -302,6 +325,17 @@ public enum ConfigParser {
         if let n = nativeBlock?.renewalUrl {
             if let j = renewalUrl, j != n { throw fixed("renewalUrl") }
             fixedRenewalUrl = n
+        }
+        // The device's identity goes to the enrollment and renewal addresses as well as to url:
+        // in a release build Dart may give them only where the file names them (url itself must be
+        // in the file, SecurityPolicy.apply), like tokenHosts and clientCertHosts.
+        if release, let nativeBlock {
+            for (key, given, declared) in [("enrollmentUrl", enrollmentUrl, nativeBlock.enrollmentUrl),
+                                           ("renewalUrl", renewalUrl, nativeBlock.renewalUrl)]
+                where declared == nil && given != nil {
+                throw BridgeInputError("\(b.path).\(key): a release build takes it only from the app's native security file "
+                    + "(\(native?.source ?? "")); declare \(key) for Config API '\(id)' there")
+            }
         }
         // Who gets the device's identity is the file's call in a release build: Dart cannot
         // add a host the file does not name.

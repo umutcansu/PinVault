@@ -14,7 +14,7 @@ final class SecurityAndNetworkingTests: XCTestCase {
     let tokens = VaultTokenStore()
 
     lazy var file: NativeSecurity = try! NativeSecurity.parse("""
-        {"configApis":[{"id":"default","bootstrapPins":[{"hostname":"h.example","sha256":["\(pinA)","\(pinB)"]}],
+        {"configApis":[{"id":"default","url":"https://h.example:8081/","bootstrapPins":[{"hostname":"h.example","sha256":["\(pinA)","\(pinB)"]}],
           "signaturePublicKeys":["\(key)","\(key2)"],"requiredSignatures":2,"recoveryPublicKeys":["\(key3)"],
           "serverScope":"default-tls","clientCaPins":["\(pinA)"]}]}
         """, source: "pinvault_security.json")
@@ -89,7 +89,7 @@ final class SecurityAndNetworkingTests: XCTestCase {
 
     func testAFileAllowingARelaxationAppliesIt() throws {
         let allowing = try NativeSecurity.parse("""
-            {"configApis":[{"id":"default","allowServerGeneratedKey":true,"signaturePublicKeys":["\(key)"],
+            {"configApis":[{"id":"default","url":"https://h.example:8081/","allowServerGeneratedKey":true,"signaturePublicKeys":["\(key)"],
               "bootstrapPins":[{"hostname":"h","sha256":["\(pinA)","\(pinB)"]}]}]}
             """, source: "f")
         let p = try parse(#"{"configApis":[{\#(base),"bootstrapPins":[{"hostname":"h","sha256":["\#(pinA)","\#(pinB)"]}],"signaturePublicKey":"\#(key)"}]}"#,
@@ -99,13 +99,13 @@ final class SecurityAndNetworkingTests: XCTestCase {
 
     func testAReleaseBuildNeedsTheAnchorsInTheFileAndTheIdentityHostsAreItsCall() throws {
         // A block that only names itself would leave pins and keys to the bundle.
-        let bare = try NativeSecurity.parse(#"{"configApis":[{"id":"default"}]}"#, source: "f")
+        let bare = try NativeSecurity.parse(#"{"configApis":[{"id":"default","url":"https://h.example:8081/"}]}"#, source: "f")
         let anchored = #"\#(base),"bootstrapPins":[{"hostname":"h.example","sha256":["\#(pinA)","\#(pinB)"]}],"signaturePublicKey":"\#(key)""#
         assertRefused(#"{"configApis":[{\#(anchored)}]}"#, native: bare, "bootstrapPins", "declare bootstrapPins")
-        let keyless = try NativeSecurity.parse(#"{"configApis":[{"id":"default","bootstrapPins":[{"hostname":"h.example","sha256":["\#(pinA)","\#(pinB)"]}]}]}"#, source: "f")
+        let keyless = try NativeSecurity.parse(#"{"configApis":[{"id":"default","url":"https://h.example:8081/","bootstrapPins":[{"hostname":"h.example","sha256":["\#(pinA)","\#(pinB)"]}]}]}"#, source: "f")
         assertRefused(#"{"configApis":[{\#(anchored)}]}"#, native: keyless, "signaturePublicKeys", "declare signaturePublicKeys")
         // The relaxations stand in for the anchor they relax; a debug build takes the bare block.
-        let relaxed = try NativeSecurity.parse(#"{"configApis":[{"id":"default","allowUnpinnedConfigApi":true,"allowUnsigned":true}]}"#, source: "f")
+        let relaxed = try NativeSecurity.parse(#"{"configApis":[{"id":"default","url":"https://h.example:8081/","allowUnpinnedConfigApi":true,"allowUnsigned":true}]}"#, source: "f")
         // The file allowed them: the library keeps them in a release build too (allowRelaxationsInRelease).
         XCTAssertEqual(try parse(#"{"configApis":[{\#(base)}]}"#, native: relaxed).config.configApis["default"]?.relaxationsInRelease, true)
         XCTAssertEqual(try parse(#"{"configApis":[{\#(anchored)}]}"#, native: bare, release: false).config.configApis["default"]?.relaxationsInRelease, false)
@@ -113,7 +113,7 @@ final class SecurityAndNetworkingTests: XCTestCase {
         assertRefused(#"{"configApis":[{\#(base),"clientCertHosts":["cdn.example:443"]}]}"#, native: file, "clientCertHosts", "declare clientCertHosts")
         XCTAssertNotNil(try parse(#"{"configApis":[{\#(base),"clientCertHosts":["cdn.example:443"]}]}"#, native: file, release: false))
         let naming = try NativeSecurity.parse("""
-            {"configApis":[{"id":"default","clientCertHosts":["api.example:443"],
+            {"configApis":[{"id":"default","url":"https://h.example:8081/","clientCertHosts":["api.example:443"],
               "bootstrapPins":[{"hostname":"h.example","sha256":["\(pinA)","\(pinB)"]}],"signaturePublicKeys":["\(key)"]}]}
             """, source: "f")
         XCTAssertNotNil(try parse(#"{"configApis":[{\#(base),"clientCertHosts":["API.example:443"]}]}"#, native: naming))
@@ -122,7 +122,7 @@ final class SecurityAndNetworkingTests: XCTestCase {
         assertRefused(#"{"configApis":[{\#(base),"tokenHosts":["cdn.example"]}]}"#, native: file, "tokenHosts", "declare tokenHosts")
         XCTAssertNotNil(try parse(#"{"configApis":[{\#(base),"tokenHosts":["cdn.example"]}]}"#, native: file, release: false))
         let namingToken = try NativeSecurity.parse("""
-            {"configApis":[{"id":"default","tokenHosts":["api.example"],
+            {"configApis":[{"id":"default","url":"https://h.example:8081/","tokenHosts":["api.example"],
               "bootstrapPins":[{"hostname":"h.example","sha256":["\(pinA)","\(pinB)"]}],"signaturePublicKeys":["\(key)"]}]}
             """, source: "f")
         XCTAssertEqual(try parse(#"{"configApis":[{\#(base),"tokenHosts":["API.example"]}]}"#, native: namingToken).config.configApis["default"]?.tokenHosts, ["api.example"])
@@ -152,13 +152,13 @@ final class SecurityAndNetworkingTests: XCTestCase {
 
     func testProofOfPossessionFromTheFileCannotBeTurnedOffAndDartMayTurnItOn() throws {
         let proving = try NativeSecurity.parse("""
-            {"configApis":[{"id":"default","attestation":true,"proofOfPossession":true,
+            {"configApis":[{"id":"default","url":"https://h.example:8081/","attestation":true,"proofOfPossession":true,
               "bootstrapPins":[{"hostname":"h.example","sha256":["\(pinA)","\(pinB)"]}],"signaturePublicKeys":["\(key)"]}]}
             """, source: "f")
         XCTAssertEqual(try parse(#"{"configApis":[{\#(base)}]}"#, native: proving).config.configApis["default"]?.tokenProof, true)
         assertRefused(#"{"configApis":[{\#(base),"proofOfPossession":false}]}"#, native: proving, "proofOfPossession", "cannot turn it off")
         let plain = try NativeSecurity.parse("""
-            {"configApis":[{"id":"default","bootstrapPins":[{"hostname":"h.example","sha256":["\(pinA)","\(pinB)"]}],"signaturePublicKeys":["\(key)"]}]}
+            {"configApis":[{"id":"default","url":"https://h.example:8081/","bootstrapPins":[{"hostname":"h.example","sha256":["\(pinA)","\(pinB)"]}],"signaturePublicKeys":["\(key)"]}]}
             """, source: "f")
         XCTAssertEqual(try parse(#"{"configApis":[{\#(base),"attestation":true,"proofOfPossession":true}]}"#, native: plain).config.configApis["default"]?.tokenProof, true)
         XCTAssertEqual(try parse(#"{"configApis":[{\#(base),"attestation":true}]}"#, native: plain).config.configApis["default"]?.tokenProof, false)
@@ -166,7 +166,7 @@ final class SecurityAndNetworkingTests: XCTestCase {
 
     func testOfflineAgesUrlsAndTheLockStrengthCannotBeLoosened() throws {
         let strict = try NativeSecurity.parse("""
-            {"configApis":[{"id":"default","bootstrapPins":[{"hostname":"h.example","sha256":["\(pinA)","\(pinB)"]}],"signaturePublicKeys":["\(key)"],
+            {"configApis":[{"id":"default","url":"https://h.example:8081/","bootstrapPins":[{"hostname":"h.example","sha256":["\(pinA)","\(pinB)"]}],"signaturePublicKeys":["\(key)"],
               "enrollmentUrl":"https://enroll.example/"}],
              "require":{"vaultFileMaxOfflineAgeSeconds":3600,"userAuthStrength":"BIOMETRIC_CURRENT_SET"},
              "vaultFiles":[{"key":"statement","maxOfflineAgeSeconds":600}]}
@@ -183,7 +183,7 @@ final class SecurityAndNetworkingTests: XCTestCase {
         _ = try parse(#"{"configApis":[{\#(base)}],"vaultFileMaxOfflineAge":{"amount":30,"unit":"MINUTES"}}"#, native: strict)
         // The config-wide cap holds for a file the file does not name a cap for, too.
         let globalOnly = try NativeSecurity.parse("""
-            {"configApis":[{"id":"default","bootstrapPins":[{"hostname":"h.example","sha256":["\(pinA)","\(pinB)"]}],"signaturePublicKeys":["\(key)"]}],
+            {"configApis":[{"id":"default","url":"https://h.example:8081/","bootstrapPins":[{"hostname":"h.example","sha256":["\(pinA)","\(pinB)"]}],"signaturePublicKeys":["\(key)"]}],
              "require":{"vaultFileMaxOfflineAgeSeconds":3600}}
             """, source: "f")
         assertRefused(#"{"configApis":[{\#(base)}],"vaultFiles":[{"key":"any","endpoint":"e","maxOfflineAge":{"amount":0,"unit":"SECONDS"}}]}"#, native: globalOnly, "maxOfflineAge")
@@ -203,7 +203,7 @@ final class SecurityAndNetworkingTests: XCTestCase {
 
     func testDeclaredVaultFilesKeepTheirProtection() throws {
         let files = try NativeSecurity.parse("""
-            {"configApis":[{"id":"default","bootstrapPins":[{"hostname":"h.example","sha256":["\(pinA)","\(pinB)"]}],"signaturePublicKeys":["\(key)"]}],
+            {"configApis":[{"id":"default","url":"https://h.example:8081/","bootstrapPins":[{"hostname":"h.example","sha256":["\(pinA)","\(pinB)"]}],"signaturePublicKeys":["\(key)"]}],
              "vaultFiles":[{"key":"statement","signaturePublicKey":"\(key)","encryption":"USER_AUTH","userAuth":"REQUIRED"}]}
             """, source: "f")
         let ok = try parse(#"{"configApis":[{\#(base)}],"vaultFiles":[{"key":"statement","endpoint":"api/v1/vault/statement"}]}"#, native: files)
@@ -266,5 +266,44 @@ final class SecurityAndNetworkingTests: XCTestCase {
         let allowed = await g.verdict(.fetchFile)
         XCTAssertFalse(allowed)
         XCTAssertEqual(g.pendingCount, 0)
+    }
+
+    func testAReleaseBuildTakesTheBlocksAddressesOnlyFromTheFile() throws {
+        // url: the token and the identity go there, so a declared block names it.
+        let urlless = try NativeSecurity.parse("""
+            {"configApis":[{"id":"default","bootstrapPins":[{"hostname":"h.example","sha256":["\(pinA)","\(pinB)"]}],"signaturePublicKeys":["\(key)"]}]}
+            """, source: "f")
+        assertRefused(#"{"configApis":[{\#(base)}]}"#, native: urlless, "url", "declare url")
+        XCTAssertNotNil(try parse(#"{"configApis":[{\#(base)}]}"#, native: urlless, release: false))
+        // enrollmentUrl / renewalUrl: the identity goes there as well.
+        assertRefused(#"{"configApis":[{\#(base),"enrollmentUrl":"https://h.example:8443/"}]}"#, native: file, "enrollmentUrl", "declare enrollmentUrl")
+        assertRefused(#"{"configApis":[{\#(base),"renewalUrl":"https://h.example:8093/"}]}"#, native: file, "renewalUrl", "declare renewalUrl")
+        XCTAssertNotNil(try parse(#"{"configApis":[{\#(base),"enrollmentUrl":"https://h.example:8443/","renewalUrl":"https://h.example:8093/"}]}"#,
+                                  native: file, release: false))
+        let naming = try NativeSecurity.parse("""
+            {"configApis":[{"id":"default","url":"https://h.example:8081/","enrollmentUrl":"https://h.example:8443/",
+              "renewalUrl":"https://h.example:8093/",
+              "bootstrapPins":[{"hostname":"h.example","sha256":["\(pinA)","\(pinB)"]}],"signaturePublicKeys":["\(key)"]}]}
+            """, source: "f")
+        XCTAssertNotNil(try parse(#"{"configApis":[{\#(base),"renewalUrl":"https://h.example:8093/"}]}"#, native: naming))
+    }
+
+    func testTheConnectionAddressesAreTheFilesCallInARelease() throws {
+        let given = #"{"configApis":[{\#(base)}],"ios":{"resolve":{"mock-tls.sample":"10.0.0.1"}}}"#
+        // No ios.resolve in the file: a release build refuses the bundle's map, a debug build takes it.
+        assertRefused(given, native: file, "config.ios.resolve", "declare ios.resolve")
+        XCTAssertEqual(try parse(given, native: file, release: false).config.resolvedHosts["mock-tls.sample"], "10.0.0.1")
+        // The file's map is the value: the bundle may leave it out or repeat it, never change it.
+        let pinnedMap = try NativeSecurity.parse("""
+            {"configApis":[{"id":"default","url":"https://h.example:8081/","bootstrapPins":[{"hostname":"h.example","sha256":["\(pinA)","\(pinB)"]}],
+              "signaturePublicKeys":["\(key)"]}],"ios":{"resolve":{"mock-tls.sample":"10.0.0.1"}}}
+            """, source: "f")
+        XCTAssertEqual(try parse(#"{"configApis":[{\#(base)}]}"#, native: pinnedMap).config.resolvedHosts["mock-tls.sample"], "10.0.0.1")
+        XCTAssertEqual(try parse(#"{"configApis":[{\#(base)}],"ios":{"resolve":{"MOCK-TLS.sample":"10.0.0.1"}}}"#, native: pinnedMap)
+                        .config.resolvedHosts["mock-tls.sample"], "10.0.0.1")
+        let moved = #"{"configApis":[{\#(base)}],"ios":{"resolve":{"mock-tls.sample":"10.6.6.6"}}}"#
+        assertRefused(moved, native: pinnedMap, "config.ios.resolve", "fixed")
+        assertRefused(moved, native: pinnedMap, release: false, "config.ios.resolve", "fixed")
+        XCTAssertThrowsError(try NativeSecurity.parse(#"{"configApis":[{"id":"a"}],"ios":{"resolv":{}}}"#, source: "f"))
     }
 }

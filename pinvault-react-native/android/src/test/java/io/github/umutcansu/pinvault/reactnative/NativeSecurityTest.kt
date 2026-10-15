@@ -20,7 +20,7 @@ class NativeSecurityTest {
     private val noGuard: (Long) -> EnvironmentGuard = { EnvironmentGuard { true } }
 
     private val file = NativeSecurity.parse("""
-        {"configApis":[{"id":"default","bootstrapPins":[{"hostname":"h.example","sha256":["$pinA","$pinB"]}],
+        {"configApis":[{"id":"default","url":"https://h.example:8081/","bootstrapPins":[{"hostname":"h.example","sha256":["$pinA","$pinB"]}],
           "signaturePublicKeys":["$key","$key2"],"requiredSignatures":2,"recoveryPublicKeys":["$key3"],
           "serverScope":"default-tls","clientCaPins":["$pinA"]}]}
     """.trimIndent(), "assets/pinvault_security.json")
@@ -56,7 +56,7 @@ class NativeSecurityTest {
     @Test fun `native file can pin requirePinnedReactNativeNetworking so JS cannot turn it off`() {   // RN-3
         val pinned = NativeSecurity.parse("""
             {"require":{"requirePinnedReactNativeNetworking":true},
-             "configApis":[{"id":"default","bootstrapPins":[{"hostname":"h.example","sha256":["$pinA","$pinB"]}],
+             "configApis":[{"id":"default","url":"https://h.example:8081/","bootstrapPins":[{"hostname":"h.example","sha256":["$pinA","$pinB"]}],
               "signaturePublicKeys":["$key","$key2"],"requiredSignatures":2,"recoveryPublicKeys":["$key3"],
               "serverScope":"default-tls","clientCaPins":["$pinA"]}]}
         """.trimIndent(), "assets/pinvault_security.json")
@@ -91,7 +91,7 @@ class NativeSecurityTest {
         refused("""{"configApis":[{$base,"allowServerGeneratedKey":true}]}""", fragments = arrayOf("allowServerGeneratedKey"))
         // Even in a debug build: the file is there, it decides.
         refused("""{"configApis":[{$base,"allowServerGeneratedKey":true}]}""", release = false, fragments = arrayOf("does not allow"))
-        val allowing = NativeSecurity.parse("""{"configApis":[{"id":"default","allowServerGeneratedKey":true,"signaturePublicKeys":["$key"],
+        val allowing = NativeSecurity.parse("""{"configApis":[{"id":"default","url":"https://h.example:8081/","allowServerGeneratedKey":true,"signaturePublicKeys":["$key"],
             "bootstrapPins":[{"hostname":"h.example","sha256":["$pinA","$pinB"]}]}]}""", "f")
         // Allowed by the file: from JS or not, it applies.
         assertTrue(parse("""{"configApis":[{$base}]}""", allowing).config.configApis.getValue("default").allowServerGeneratedKey)
@@ -101,13 +101,13 @@ class NativeSecurityTest {
     @Test fun `a release build needs the anchors in the file, and the identity hosts are its call`() {
         val base = """"id":"default","url":"https://h.example:8081/""""
         // A block that only names itself would leave pins and keys to the bundle.
-        val bare = NativeSecurity.parse("""{"configApis":[{"id":"default"}]}""", "f")
+        val bare = NativeSecurity.parse("""{"configApis":[{"id":"default","url":"https://h.example:8081/"}]}""", "f")
         val anchored = """$base,"bootstrapPins":[{"hostname":"h.example","sha256":["$pinA","$pinB"]}],"signaturePublicKey":"$key""""
         refused("""{"configApis":[{$anchored}]}""", native = bare, fragments = arrayOf("bootstrapPins", "declare bootstrapPins"))
-        val keyless = NativeSecurity.parse("""{"configApis":[{"id":"default","bootstrapPins":[{"hostname":"h.example","sha256":["$pinA","$pinB"]}]}]}""", "f")
+        val keyless = NativeSecurity.parse("""{"configApis":[{"id":"default","url":"https://h.example:8081/","bootstrapPins":[{"hostname":"h.example","sha256":["$pinA","$pinB"]}]}]}""", "f")
         refused("""{"configApis":[{$anchored}]}""", native = keyless, fragments = arrayOf("signaturePublicKeys", "declare signaturePublicKeys"))
         // The relaxations stand in for the anchor they relax; a debug build takes the bare block.
-        val relaxed = NativeSecurity.parse("""{"configApis":[{"id":"default","allowUnpinnedConfigApi":true,"allowUnsigned":true}]}""", "f")
+        val relaxed = NativeSecurity.parse("""{"configApis":[{"id":"default","url":"https://h.example:8081/","allowUnpinnedConfigApi":true,"allowUnsigned":true}]}""", "f")
         // The file allowed them: the library keeps them in a release build too (allowRelaxationsInRelease).
         assertTrue(parse("""{"configApis":[{$base}]}""", native = relaxed).config.configApis.getValue("default").relaxationsInRelease)
         assertFalse(parse("""{"configApis":[{$anchored}]}""", native = bare, release = false).config.configApis.getValue("default").relaxationsInRelease)
@@ -118,7 +118,7 @@ class NativeSecurityTest {
         refused("""{"configApis":[{$base,"clientCertHosts":["cdn.example:443"]}]}""", fragments = arrayOf("clientCertHosts", "declare clientCertHosts"))
         parse("""{"configApis":[{$base,"clientCertHosts":["cdn.example:443"]}]}""", release = false)
         val naming = NativeSecurity.parse("""
-            {"configApis":[{"id":"default","clientCertHosts":["api.example:443"],
+            {"configApis":[{"id":"default","url":"https://h.example:8081/","clientCertHosts":["api.example:443"],
               "bootstrapPins":[{"hostname":"h.example","sha256":["$pinA","$pinB"]}],"signaturePublicKeys":["$key"]}]}
         """.trimIndent(), "f")
         assertEquals(1, parse("""{"configApis":[{$base,"clientCertHosts":["API.example:443"]}]}""", native = naming)
@@ -128,7 +128,7 @@ class NativeSecurityTest {
         refused("""{"configApis":[{$base,"tokenHosts":["cdn.example"]}]}""", fragments = arrayOf("tokenHosts", "declare tokenHosts"))
         parse("""{"configApis":[{$base,"tokenHosts":["cdn.example"]}]}""", release = false)
         val namingToken = NativeSecurity.parse("""
-            {"configApis":[{"id":"default","tokenHosts":["api.example"],
+            {"configApis":[{"id":"default","url":"https://h.example:8081/","tokenHosts":["api.example"],
               "bootstrapPins":[{"hostname":"h.example","sha256":["$pinA","$pinB"]}],"signaturePublicKeys":["$key"]}]}
         """.trimIndent(), "f")
         assertEquals(listOf("api.example"), parse("""{"configApis":[{$base,"tokenHosts":["API.example"]}]}""", native = namingToken)
@@ -182,14 +182,14 @@ class NativeSecurityTest {
 
     @Test fun `proofOfPossession from the file cannot be turned off, and JS may turn it on`() {
         val proving = NativeSecurity.parse("""
-            {"configApis":[{"id":"default","attestation":true,"proofOfPossession":true,
+            {"configApis":[{"id":"default","url":"https://h.example:8081/","attestation":true,"proofOfPossession":true,
               "bootstrapPins":[{"hostname":"h.example","sha256":["$pinA","$pinB"]}],"signaturePublicKeys":["$key"]}]}
         """.trimIndent(), "f")
         val base = """"id":"default","url":"https://h.example:8081/""""
         assertTrue(parse("""{"configApis":[{$base}]}""", native = proving).config.configApis.getValue("default").tokenProof)
         refused("""{"configApis":[{$base,"proofOfPossession":false}]}""", native = proving, fragments = arrayOf("proofOfPossession", "cannot turn it off"))
         val plain = NativeSecurity.parse("""
-            {"configApis":[{"id":"default","bootstrapPins":[{"hostname":"h.example","sha256":["$pinA","$pinB"]}],"signaturePublicKeys":["$key"]}]}
+            {"configApis":[{"id":"default","url":"https://h.example:8081/","bootstrapPins":[{"hostname":"h.example","sha256":["$pinA","$pinB"]}],"signaturePublicKeys":["$key"]}]}
         """.trimIndent(), "f")
         assertTrue(parse("""{"configApis":[{$base,"attestation":true,"proofOfPossession":true}]}""", native = plain)
             .config.configApis.getValue("default").tokenProof)
@@ -198,7 +198,7 @@ class NativeSecurityTest {
 
     @Test fun `offline ages and enrollment urls cannot be loosened from JS`() {
         val strict = NativeSecurity.parse("""
-            {"configApis":[{"id":"default","bootstrapPins":[{"hostname":"h.example","sha256":["$pinA","$pinB"]}],"signaturePublicKeys":["$key"],
+            {"configApis":[{"id":"default","url":"https://h.example:8081/","bootstrapPins":[{"hostname":"h.example","sha256":["$pinA","$pinB"]}],"signaturePublicKeys":["$key"],
               "enrollmentUrl":"https://enroll.example/"}],
              "require":{"vaultFileMaxOfflineAgeSeconds":3600,"userAuthStrength":"BIOMETRIC_CURRENT_SET"},
              "vaultFiles":[{"key":"statement","maxOfflineAgeSeconds":600}]}
@@ -215,7 +215,7 @@ class NativeSecurityTest {
         parse("""{"configApis":[{$base}],"vaultFileMaxOfflineAge":{"amount":30,"unit":"MINUTES"}}""", native = strict)
         // The config-wide cap holds for a file the file does not name a cap for, too.
         val globalOnly = NativeSecurity.parse("""
-            {"configApis":[{"id":"default","bootstrapPins":[{"hostname":"h.example","sha256":["$pinA","$pinB"]}],"signaturePublicKeys":["$key"]}],
+            {"configApis":[{"id":"default","url":"https://h.example:8081/","bootstrapPins":[{"hostname":"h.example","sha256":["$pinA","$pinB"]}],"signaturePublicKeys":["$key"]}],
              "require":{"vaultFileMaxOfflineAgeSeconds":3600}}
         """.trimIndent(), "f")
         refused("""{"configApis":[{$base}],"vaultFiles":[{"key":"any","endpoint":"e","maxOfflineAge":{"amount":0,"unit":"SECONDS"}}]}""",
@@ -243,7 +243,7 @@ class NativeSecurityTest {
 
     @Test fun `declared vault files keep their protection, undeclared ones are refused`() {
         val files = NativeSecurity.parse("""
-            {"configApis":[{"id":"default","bootstrapPins":[{"hostname":"h.example","sha256":["$pinA","$pinB"]}],"signaturePublicKeys":["$key"]}],
+            {"configApis":[{"id":"default","url":"https://h.example:8081/","bootstrapPins":[{"hostname":"h.example","sha256":["$pinA","$pinB"]}],"signaturePublicKeys":["$key"]}],
              "vaultFiles":[{"key":"statement","signaturePublicKey":"$key","encryption":"USER_AUTH","userAuth":"REQUIRED"}]}
         """.trimIndent(), "f")
         val base = """"id":"default","url":"https://h.example:8081/""""
@@ -282,5 +282,41 @@ class NativeSecurityTest {
         assertEquals(3, parse("""{}""", withPins).config.staticPins!!.version)
         parse("""{"staticPins":{"version":3,"pins":[{"hostname":"x.example","sha256":["$pinB","$pinA"]}]}}""", withPins)
         refused("""{"staticPins":{"version":4,"pins":[{"hostname":"x.example","sha256":["$pinA","$pinB"]}]}}""", withPins, fragments = arrayOf("staticPins", "fixed"))
+    }
+
+    @Test fun `a release build takes the block's addresses only from the file`() {
+        val base = """"id":"default","url":"https://h.example:8081/""""
+        // url: the token and the identity go there, so a declared block names it.
+        val urlless = NativeSecurity.parse("""
+            {"configApis":[{"id":"default","bootstrapPins":[{"hostname":"h.example","sha256":["$pinA","$pinB"]}],"signaturePublicKeys":["$key"]}]}
+        """.trimIndent(), "f")
+        refused("""{"configApis":[{$base}]}""", native = urlless, fragments = arrayOf("url", "declare url"))
+        parse("""{"configApis":[{$base}]}""", native = urlless, release = false)
+        // enrollmentUrl / renewalUrl: the identity goes there as well.
+        refused("""{"configApis":[{$base,"enrollmentUrl":"https://h.example:8443/"}]}""", fragments = arrayOf("enrollmentUrl", "declare enrollmentUrl"))
+        refused("""{"configApis":[{$base,"renewalUrl":"https://h.example:8093/"}]}""", fragments = arrayOf("renewalUrl", "declare renewalUrl"))
+        parse("""{"configApis":[{$base,"enrollmentUrl":"https://h.example:8443/","renewalUrl":"https://h.example:8093/"}]}""", release = false)
+        val naming = NativeSecurity.parse("""
+            {"configApis":[{"id":"default","url":"https://h.example:8081/","enrollmentUrl":"https://h.example:8443/",
+              "renewalUrl":"https://h.example:8093/",
+              "bootstrapPins":[{"hostname":"h.example","sha256":["$pinA","$pinB"]}],"signaturePublicKeys":["$key"]}]}
+        """.trimIndent(), "f")
+        val block = parse("""{"configApis":[{$base,"renewalUrl":"https://h.example:8093/"}]}""", native = naming)
+            .config.configApis.getValue("default")
+        assertTrue(block.enrollmentUrl != null && block.renewalUrl != null)
+    }
+
+    @Test fun `the file's ios section is read for its shape`() {
+        val withResolve = NativeSecurity.parse("""
+            {"configApis":[{"id":"default","url":"https://h.example:8081/","bootstrapPins":[{"hostname":"h.example","sha256":["$pinA","$pinB"]}],
+              "signaturePublicKeys":["$key"]}],"ios":{"resolve":{"mock-tls.sample":"10.0.0.1"}}}
+        """.trimIndent(), "f")
+        parse("""{"configApis":[{"id":"default","url":"https://h.example:8081/"}]}""", native = withResolve)
+        try {
+            NativeSecurity.parse("""{"configApis":[{"id":"a"}],"ios":{"resolv":{}}}""", "f")
+            fail("accepted a misspelt ios key")
+        } catch (e: BridgeInputException) {
+            assertTrue(e.message, e.message!!.contains("'resolv'"))
+        }
     }
 }
