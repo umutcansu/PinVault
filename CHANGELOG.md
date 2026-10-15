@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased — iOS notices when its trust check was skipped
+## 2.8.1 — 2026-10-15 — iOS notices when its trust check was skipped
 
 ### iOS
 

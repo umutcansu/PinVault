@@ -23,7 +23,7 @@ let package = Package(
         // token on the upgrade; 2.5.0 does not have it). For a local-checkout
         // build before that tag exists, use
         //   .package(name: "PinVault", path: "<checkout>")
-        .package(url: "https://github.com/umutcansu/PinVault.git", from: "2.8.0"),
+        .package(url: "https://github.com/umutcansu/PinVault.git", from: "2.8.1"),
     ],
     targets: [
         .target(

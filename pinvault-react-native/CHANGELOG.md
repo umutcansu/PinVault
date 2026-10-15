@@ -1,5 +1,16 @@
 # Changelog
 
+## 2.8.1 — 2026-10-15
+
+### Changed
+
+- **iOS: a pinned session notices when its trust check was skipped.** The
+  generic certificate-validation killers answer URLSession's server-trust
+  challenge before the library's delegate; such a connection is now refused
+  (`fetch` rejects with an SSL handshake error), a `wss://` socket cancelled,
+  and the host reported as `hooking_framework` evidence `tls-unverified:<host>`.
+  Depends on PinVault 2.8.1 (Swift package tag `v2.8.1`).
+
 ## 2.8.0 — 2026-10-15
 
 ### Changed
