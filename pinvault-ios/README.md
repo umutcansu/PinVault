@@ -238,6 +238,24 @@ product and wire its verdict into `environmentGuard`. On the server, App Attest
 also stands in for the Android Key Attestation chain under the `enforce`
 settings (`ATTESTATION.md` §12).
 
+### When the trust check is skipped (2.8.1)
+
+Generic certificate-validation killers (the "SSL kill switch" tweaks) answer
+URLSession's server-trust challenge inside CFNetwork, before PinVault's session
+delegate, so the pins are never matched. A pinned session counts the challenges
+it was asked; a request that completes over a TLS connection the delegate never
+saw fails with `PinVaultError.sslHandshake` (cause `.security`, "made without
+PinVault's trust check"), a `wss://` socket that opened that way is cancelled,
+and the host goes into every later attestation report as `hooking_framework`
+evidence `tls-unverified:<host>`. Like the other probes this runs in the app and
+can be defeated there, but the published tools no longer work unnoticed.
+
+What stays safe even with the check bypassed: signed configs (verified with
+CryptoKit, which these tools do not touch) cannot be replaced, the Secure
+Enclave identity cannot be used by a proxy, and `end_to_end` / `user_auth` vault
+files stay encrypted for the device. Ordinary app traffic to plain TLS hosts is
+what such a tool exposes.
+
 ## Platform differences
 
 | | Android | iOS |

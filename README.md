@@ -737,6 +737,15 @@ await PinVault.start(PinVaultConfig(
 
 </details>
 
+What the library does on its own, with no setting: on iOS a pinned session
+notices when an "SSL kill switch" style tweak answered the TLS challenge before
+PinVault's check. The request is refused and the host goes into the attestation
+report as `hooking_framework` (`tls-unverified:<host>`), so a server running the
+`strict` or `production` policy stops giving that device tokens. Like every
+check inside the app it can be defeated by work aimed at PinVault; signed
+configs, the hardware-held identity and device-encrypted vault files stay safe
+either way ([ATTESTATION.md](ATTESTATION.md) §3).
+
 Before you ship, go through the [production security checklist](GUIDE.md#production-security-checklist).
 
 ### 📡 See what happens on the wire

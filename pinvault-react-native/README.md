@@ -462,7 +462,10 @@ as one more signal. The decisive check is server-side attestation
 - **NETWORK** — pinned native path only; no unpinned fallback; `https` → `http`
   redirects are not followed; RN's own fetch / XHR / images / WebSocket are pinned on
   both platforms, fail closed before `start`, and a replaced
-  hook is detected.
+  hook is detected. On iOS (2.8.1+) a TLS connection whose certificate never
+  reached the library's check (an "SSL kill switch" tweak answered it first) is
+  refused and reported in the attestation report (`hooking_framework`,
+  `tls-unverified:<host>`).
 - **Trust anchors** — release builds take the relaxations only from the native
   security file; with the file, JS cannot change pins, keys or scopes.
 - **STORAGE** — the plugin stores nothing in JS (no AsyncStorage); tokens live

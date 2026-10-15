@@ -140,7 +140,10 @@ host through `PinVault.fetch`.
 `PinVault.fetch(url, init)` — a request through the native pinned client (pin
 check, attestation token, pin-mismatch recovery). HTTPS only; never falls back
 to an unpinned path. `PinVaultRequestInit` supports method, headers, body
-(text or Base64), timeouts, and a max response size.
+(text or Base64), timeouts, and a max response size. On iOS (2.8.1+) a TLS
+connection whose certificate never reached the library's check (an "SSL kill
+switch" tweak answered it first) is refused and reported in the attestation
+report (`hooking_framework`, `tls-unverified:<host>`).
 
 `PinVault.` — enrollment: `deviceId`, `enrollForResult`, `autoEnrollForResult`,
 `checkPendingEnrollment`, `isEnrolled`, `isEnrollmentPending`,
