@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 2.8.0 — 2026-10-15 — React Native and Flutter release builds take every address from the native security file
 
 ### React Native and Flutter
 

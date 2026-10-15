@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 2.8.0 — 2026-10-15
 
 - **Release builds take a block's addresses only from the native security
   file**: a declared block names its `url` there, and `enrollmentUrl` /
@@ -12,6 +12,7 @@
 - `PinVault.fetch` refuses `Host`, `Connection`, `Keep-Alive`,
   `Proxy-Connection`, `TE`, `Trailer`, `Transfer-Encoding`, `Upgrade` and
   `Content-Length` from Dart: the HTTP client sets them.
+- Depends on PinVault 2.8.0.
 
 ## 2.7.0 — 2026-10-15
 
