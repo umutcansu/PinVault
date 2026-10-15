@@ -9,7 +9,7 @@
 # (`:git` / `:path` in the Podfile take the place of `s.source`).
 Pod::Spec.new do |s|
   s.name             = 'PinVault'
-  s.version          = '2.6.1'
+  s.version          = '2.7.0'
   s.summary          = 'Dynamic certificate pinning, mTLS identity, and vault files for iOS.'
   s.description      = 'PinVault for iOS: remote signed pin configs, mTLS enrollment, signed vault files, device attestation.'
   s.homepage         = 'https://github.com/umutcansu/PinVault'

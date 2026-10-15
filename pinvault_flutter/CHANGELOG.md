@@ -1,5 +1,9 @@
 # Changelog
 
+## 2.7.0 — 2026-10-15
+
+- Depends on PinVault 2.7.0; no Flutter-facing change.
+
 ## 2.6.1 — 2026-10-15
 
 - **iOS: without `tokenHosts`, only the block's own Config API carries

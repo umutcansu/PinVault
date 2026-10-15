@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 2.7.0 — 2026-10-15 — React Native release builds take tokenHosts from the native security file
 
 ### React Native
 

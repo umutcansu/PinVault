@@ -4,7 +4,7 @@ The upgrade notes for every release since 2.0, troubleshooting, and a quick
 reference for the multi-Config-API DSL. The full list of changes is in
 [CHANGELOG.md](CHANGELOG.md).
 
-## Upgrading from 2.6.1 (unreleased)
+## Upgrading from 2.6.1 to 2.7.0
 
 **React Native, release builds**
 

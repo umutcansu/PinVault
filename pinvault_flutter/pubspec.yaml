@@ -1,6 +1,6 @@
 name: pinvault_flutter
 description: Dynamic certificate pinning, mTLS identity, and vault files for Flutter, bridging to the native PinVault libraries.
-version: 2.6.1
+version: 2.7.0
 homepage: https://github.com/umutcansu/PinVault
 
 environment:
