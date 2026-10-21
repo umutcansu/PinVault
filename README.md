@@ -59,6 +59,22 @@ PinVault moves the pins to your server and keeps the safety:
 | 🧱 **Hardening** | Hardware-backed keys only, keys that work only while the phone is unlocked, pin **and** CA for public hosts, a hook for your root / jailbreak detection. On iOS the library notices when a trust-bypass hook answered the TLS challenge before its own check, refuses that connection and reports it. |
 | 🖥️ **Reference server** | Ktor + Docker with a web dashboard: pins, certificates, enrollment, vault files, audit log, two-person approval, a setup wizard that writes your app's config. |
 
+## The dashboard
+
+The reference server's web dashboard (TR/EN). Every action here is also an
+API call, documented at `/docs`.
+
+| | |
+|---|---|
+| ![A host's page: version, pins, certificate, mock server, client certificate, change history](docs/screenshots/host-detail.jpg) | ![The pins of a host added from a URL: the backup pin is labelled as the issuing CA's, with the warning](docs/screenshots/host-pins.jpg) |
+| **A host.** Version, pins, the certificate the server holds for it, its mock listener, its client certificate, the change history. | **Pins of a host added from a URL.** The second pin is the issuing CA's, and the page says what that means. |
+| ![Adding a host from a URL: the warning about the CA backup and the optional second pin](docs/screenshots/add-host-from-url.jpg) | ![The setup wizard: 15 production checks with the .env lines that fix them](docs/screenshots/setup-wizard.jpg) |
+| **Add a host from a URL.** A handshake, the pins, and the choice of what the backup pin trusts. | **Setup wizard.** Fifteen production checks with the `.env` line that fixes each, then the app's configuration generated from the server's values. |
+
+![The audit log: an append-only, hash-chained list of every admin action](docs/screenshots/audit-log.jpg)
+
+**Audit log.** Every admin action, append-only and hash-chained; *Verify Chain* recomputes it.
+
 ## How it works
 
 ```mermaid
