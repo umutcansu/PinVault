@@ -299,6 +299,9 @@ function planFacts(d) {
       ...(c.pins || []).map((p, i) => [`${t('planPins')} ${i + 1}`, 'sha256/' + p, true]),
       [t('planSubject'), c.subject],
       [t('planIssuer'), c.issuer],
+      // Pins read from a site: say whose key the second pin trusts.
+      ...(c.source === 'fetched' && typeof c.backupFromIssuer === 'boolean'
+        ? [[t('planBackup'), t(c.backupFromIssuer ? 'planBackup_issuer' : 'planBackup_provided')]] : []),
       [t('planValidity'), `${c.notBefore || '?'} → ${c.notAfter || '?'}`],
       [t('planFingerprint'), c.fingerprint, true]
     ];

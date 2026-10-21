@@ -1,5 +1,37 @@
 # Changelog
 
+## 2.8.2 — 2026-10-21 — a host pinned from a URL says whose key its backup trusts
+
+### Server and dashboard
+
+- **"Add a host from a URL" names the price of the CA backup.** The second
+  pin of a host the server only looked at is the issuing CA's: devices accept
+  any leaf that chains to it, including one a stolen CA key signed (the
+  eMudhra intermediates, October 2026). The form says so, the approval card
+  shows `backupFromIssuer`, and a stored pin the reachability probe finds
+  above the leaf in the served chain is labelled *Backup pin — the issuing
+  CA* on the host (`ping-remote` now reads the whole chain with
+  `-showcerts` and answers `chainPins`, `issuerPins`, `matchedVia`; a leaf
+  that matches only through a pinned CA counts as a match, as it does on
+  devices).
+- **`backupPin` on `fetch-from-url`, `fetch-cert-url` and the bootstrap
+  fetch:** a second pin of the site itself (its published backup key, its
+  next certificate) takes the issuer's place, so no CA is pinned, and a site
+  that serves its certificate alone is accepted. The usual pin rules apply
+  (two distinct, well-formed pins). No single-pin or "leaf only" mode: for a
+  host whose keys the operator does not control it would make every renewal
+  an outage.
+- SECURE_OPERATIONS: *Hosts pinned from a URL* and the runbook *A
+  certificate authority's key is compromised*.
+- Fixed: the 2.8.1 version bump had rewritten the library version inside
+  the signed iOS interop fixtures (`demo-server/src/test/resources/ios-interop/`),
+  so six `IosClientInteropTest` cases failed with `signature_invalid`. The
+  fixtures are the signed ones again; a bump no longer touches them.
+
+### Bridges
+
+- No change to the React Native and Flutter bridges; released alongside.
+
 ## 2.8.1 — 2026-10-15 — iOS notices when its trust check was skipped
 
 ### iOS

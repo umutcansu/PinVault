@@ -242,13 +242,30 @@ For the config server's own certificate it is `POST /api/v1/server-tls-pins/rota
 
 Certificates generated before backup keys were kept, and hosts whose pins were fetched from a URL, have no stored backup (the endpoints answer 409). An uploaded certificate gets one when it is uploaded. Regenerate once to get one; for the config server's certificate that costs one more app update.
 
+### Hosts pinned from a URL: whose key the backup pin trusts
+
+For a site the server only looked at ("Add a host from a URL", `fetch-from-url`), the second pin is the pin of the certificate above the leaf in the served chain: the issuing CA's. Devices accept any leaf that chains to a pinned CA (`ChainPinMatcher`), so the host stays reachable when the site renews with the same CA — and so does a certificate that CA's **stolen private key** signed. A CA pin narrows trust from every CA the phone ships with to that one CA; it does not make the host independent of it. Pinning the root instead of the intermediate, or both, changes nothing: devices accept whichever matches. The dashboard says so on the form, the approval card shows `backupFromIssuer`, and a stored pin the probe finds above the leaf is labelled *Backup pin — the issuing CA* on the host.
+
+Where you can get a second pin of the site itself (a backup key its owner publishes, the certificate it will switch to next), enter it as `backupPin` with the request. Then no CA is pinned, and a site that serves its certificate alone is accepted too. The price is the one the two-pin rule exists for: when the site changes to a key you did not pin, devices refuse it until a new config reaches them — so publish the next pin before the site switches. A single-pin entry is not accepted (the library refuses it), and the library has no "leaf only" switch: for a host whose keys you do not control, it would turn every renewal into an outage.
+
 ### A pinned host's TLS key is stolen
 
 Which backup is still safe depends on where the key leaked from.
 
 - **Somewhere other than the server's `certs/` directory** (a load balancer it was exported to, a backup copy, a laptop): switch to the stored backup key as in the planned rotation above. The stolen key's pin leaves the list in the same step.
 - **The server's `certs/` directory was read.** The stored backup was taken with the key, so regenerate the certificate instead. Devices recover through pin-mismatch recovery. For the config server's own certificate, apps need an update with the new bootstrap pins.
-- **A host whose pins were fetched from a URL:** its backup pin is its CA's. Have the site reissued by the same CA with a new key; devices accept the new leaf through the CA pin. Then publish the new leaf with the CA pin to drop the stolen key's pin. With `PIN_LIVE_CHECK=enforce` a set is accepted only if devices would accept what the host serves at that moment, which this order satisfies.
+- **A host whose pins were fetched from a URL:** its backup pin is its CA's (unless a second pin of the site was given). Have the site reissued by the same CA with a new key; devices accept the new leaf through the CA pin. Then publish the new leaf with the CA pin to drop the stolen key's pin. With `PIN_LIVE_CHECK=enforce` a set is accepted only if devices would accept what the host serves at that moment, which this order satisfies.
+
+### A certificate authority's key is compromised
+
+The case of the eMudhra intermediates (October 2026: keys that were never random enough and could be computed). A pin entry that names that CA — the backup of a host added from a URL, or a CA pin entered by hand — now accepts a certificate the attacker makes for the host. Nothing in the library notices: the forged leaf chains to the pinned CA like a genuine one. The window is the time between the news and the moment devices hold a config without that pin.
+
+1. Find the entries: open each host; the one whose backup is labelled *the issuing CA* and whose issuer is the compromised CA is affected. The approval history of the host (`fetched_from_url`) names the issuer.
+2. Get a second pin of the site that is not a CA's: the key the site will move to, from its owner, or the leaf it serves after it was reissued by another CA. If the site has already been reissued, the new leaf's pin is the second pin.
+3. Publish the host with the leaf pin and that second pin — `backupPin` on `fetch-from-url` / `fetch-cert-url`, or the manual editor — and drop the CA pin. Versions move forward, so this is a new version. With `PIN_LIVE_CHECK=enforce` the live check passes as long as the leaf the site serves now is in the set.
+4. Shorten the window for next time: `CONFIG_TTL_SECONDS` and the app's update period decide how long a device keeps the old set. A device that has not fetched since still trusts the CA; `forceUpdate` makes it fetch at its next start.
+
+The config server's own pins are not affected unless they were fetched from a URL too: its certificate and recovery door are signed by the server's private CA (`certs/server-ca.jks`), whose key never leaves the server, and signed configs reach devices over that channel. `requireCaTrust` adds nothing here: the phone's trust store keeps trusting the CA until a system update removes it.
 
 ### Changing the keystore password
 

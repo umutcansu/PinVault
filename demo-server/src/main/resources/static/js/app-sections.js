@@ -282,6 +282,12 @@ function toggleBootstrapFetch() {
       <input type="text" id="bootstrap-url" class="form-input" placeholder="https://proxy.example.com" required/>
       <div class="form-hint">${t('bootstrapFetchHint')}</div>
     </div>
+    <div class="notice notice-warn">${t('fetchCaWarning')}</div>
+    <div class="form-group">
+      <label class="form-label">${t('fetchBackupPinLabel')}</label>
+      <input type="text" id="bootstrap-backup-pin" class="form-input mono" placeholder="AAAA…=" maxlength="44" autocomplete="off"/>
+      <div class="form-hint">${t('fetchBackupPinHint')}</div>
+    </div>
     <button type="submit" class="btn btn-primary">${t('bootstrapFetchBtn')}</button>
   </form>`;
 }
@@ -345,11 +351,12 @@ async function uploadBootstrapCert(e) {
 async function fetchBootstrapFromUrl(e) {
   e.preventDefault();
   const url = document.getElementById('bootstrap-url').value;
+  const backupPin = (document.getElementById('bootstrap-backup-pin')?.value || '').trim().replace(/^sha256\//, '');
   try {
     const res = await apiFetch('/api/v1/server-tls-pins/fetch-from-url', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ url })
+      body: JSON.stringify(backupPin ? { url, backupPin } : { url })
     });
     if (res.status === 202) return; // waits for a second admin; apiFetch said so
     const data = await res.json();

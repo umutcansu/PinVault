@@ -1,5 +1,13 @@
 # Changelog
 
+## 2.8.2 — 2026-10-21
+
+- No change to the plugin. Released alongside PinVault 2.8.2, whose
+  reference server and dashboard say whose key the backup pin of a host
+  added from a URL trusts (the issuing CA's) and take an optional second
+  pin of the site instead.
+- Depends on PinVault 2.8.2.
+
 ## 2.8.1 — 2026-10-15
 
 - **iOS: a pinned session notices when its trust check was skipped.** The

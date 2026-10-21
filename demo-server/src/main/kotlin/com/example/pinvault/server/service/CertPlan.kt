@@ -39,7 +39,13 @@ data class CertPlan(
     /** Base64 JKS for `<id>.jks` (null for `fetched`: the server holds no key). */
     val keystore: String? = null,
     /** Base64 JKS for `<id>.backup.jks`. */
-    val backupKeystore: String? = null
+    val backupKeystore: String? = null,
+    /**
+     * `fetched` only: the backup pin is the issuer's, so the approver is told
+     * that the CA's key, not a second key of the site, is what the second pin
+     * trusts. False when the requester supplied the backup pin.
+     */
+    val backupFromIssuer: Boolean = false
 ) {
     /** What an approver is shown and the audit log keeps: everything but the keystores. */
     fun publicJson(): JsonObject = buildJsonObject {
@@ -52,6 +58,7 @@ data class CertPlan(
         put("notAfter", notAfter)
         put("fingerprint", fingerprint)
         fetchedFrom?.let { put("fetchedFrom", it) }
+        if (source == "fetched") put("backupFromIssuer", backupFromIssuer)
     }
 
     fun encode(): ByteArray = Json.encodeToString(serializer(), this).toByteArray(Charsets.UTF_8)

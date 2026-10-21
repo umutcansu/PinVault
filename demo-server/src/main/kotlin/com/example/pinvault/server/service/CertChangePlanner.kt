@@ -106,7 +106,7 @@ class CertChangePlanner(
     fun plan(kind: Kind, scope: String, hostname: String?, contentType: String?, body: ByteArray): CertPlan {
         val plan = when (kind) {
             Kind.ADD_GENERATED -> certService.planGenerated(jsonField(body, "hostname") ?: throw PlanRefused(HttpStatusCode.BadRequest, "hostname gerekli"))
-            Kind.ADD_FETCHED -> fetched(jsonField(body, "url") ?: throw PlanRefused(HttpStatusCode.BadRequest, "url gerekli"), null)
+            Kind.ADD_FETCHED -> fetched(jsonField(body, "url") ?: throw PlanRefused(HttpStatusCode.BadRequest, "url gerekli"), null, jsonField(body, "backupPin"))
             Kind.ADD_UPLOADED -> {
                 val form = form(contentType, body)
                 val host = form.fields["hostname"]?.trim()?.takeIf { it.isNotEmpty() }
@@ -116,11 +116,11 @@ class CertChangePlanner(
             Kind.REGENERATE -> certService.planGenerated(hostname!!)
             Kind.ROTATE -> certService.planRotation(keystoreId(hostname!!), hostname)
             Kind.UPLOAD -> imported(form(contentType, body), hostname!!)
-            Kind.FETCH -> fetched(jsonField(body, "url") ?: throw PlanRefused(HttpStatusCode.BadRequest, "url gerekli"), hostname!!)
+            Kind.FETCH -> fetched(jsonField(body, "url") ?: throw PlanRefused(HttpStatusCode.BadRequest, "url gerekli"), hostname!!, jsonField(body, "backupPin"))
             Kind.BOOTSTRAP_REGENERATE -> certService.planGenerated(BOOTSTRAP_HOST)
             Kind.BOOTSTRAP_ROTATE -> certService.planRotation(serverCertId, BOOTSTRAP_HOST)
             Kind.BOOTSTRAP_UPLOAD -> imported(form(contentType, body), BOOTSTRAP_HOST)
-            Kind.BOOTSTRAP_FETCH -> fetched(jsonField(body, "url") ?: throw PlanRefused(HttpStatusCode.BadRequest, "url gerekli"), BOOTSTRAP_HOST)
+            Kind.BOOTSTRAP_FETCH -> fetched(jsonField(body, "url") ?: throw PlanRefused(HttpStatusCode.BadRequest, "url gerekli"), BOOTSTRAP_HOST, jsonField(body, "backupPin"))
         }
         // The same host-name rules the library applies: an entry every device
         // would refuse is refused here, before anything is planned or stored.
@@ -142,8 +142,9 @@ class CertChangePlanner(
     fun scopesPinning(hostname: String): List<String> =
         hostStore.listConfigApisFor(hostname).filter { scope -> pinConfigStore.load(scope).pins.any { it.hostname == hostname } }.sorted()
 
-    private fun fetched(url: String, hostname: String?): CertPlan = try {
-        certService.planFetched(url, hostname)
+    /** [backupPin]: the operator's second pin in place of the issuer's (see [CertificateService.fetchFromUrl]). */
+    private fun fetched(url: String, hostname: String?, backupPin: String?): CertPlan = try {
+        certService.planFetched(url, hostname, backupPin)
     } catch (e: NoSecondCertificateException) {
         throw PlanRefused(HttpStatusCode.UnprocessableEntity, reason("no_second_certificate", e.message ?: ""))
     } catch (e: EgressRefusedException) {

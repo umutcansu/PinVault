@@ -238,7 +238,7 @@ function renderHostListSync() {
                                                           'host-dot';
           const dotTitle =
               hs?.mockServerRunning                     ? 'Local mock ayakta' :
-              (hs?.remote?.reachable && hs?.remote?.pinMatch) ? `Remote OK (:${hs.remote.port}) · pin match` :
+              (hs?.remote?.reachable && hs?.remote?.pinMatch) ? `Remote OK (:${hs.remote.port}) · ${hs.remote.matchedVia === 'issuer' ? t('pinMatchViaIssuer') : 'pin match'}` :
               (hs?.remote?.reachable && !hs?.remote?.pinMatch) ? `⚠ Pin mismatch (:${hs.remote.port}) — cert rotate?` :
               (hs?.remote && hs?.remote?.reachable === false) ? `Offline — ${hs.remote.error || 'unreachable'}` :
               hs?.hasCertificate                        ? 'Cert var, mock kapalı' :
@@ -741,13 +741,20 @@ function selectHost(hostname) {
 // ── Host Detail (with history) ───────────────────────
 
 async function renderHostDetail(host) {
-  const pinsHtml = host.sha256.map((hash, i) => `
-    <div class="hash-label">${i === 0 ? t('primaryPin') : t('backupPin') + (i > 1 ? ' #' + i : '')}</div>
+  // Stored pins the last probe found above the leaf in the served chain: a
+  // CA's pin, which trusts that CA's key rather than a second key of the site.
+  const issuerPins = hostStatuses[host.hostname]?.remote?.issuerPins || [];
+  const pinsHtml = host.sha256.map((hash, i) => {
+    const fromIssuer = i > 0 && issuerPins.includes(hash);
+    const label = i === 0 ? t('primaryPin') : fromIssuer ? t('backupPinIssuer') : t('backupPin') + (i > 1 ? ' #' + i : '');
+    return `
+    <div class="hash-label">${label}</div>
     <div class="hash-box">
       <span>sha256/${esc(hash)}</span>
       <button class="copy-btn" data-action="copyText" data-arg0="${esc(hash)}">${t('copy')}</button>
     </div>
-  `).join('');
+    ${fromIssuer ? `<div class="notice notice-warn">${t('backupPinIssuerNote')}</div>` : ''}
+  `; }).join('');
 
   // Pin değişiklik geçmişi artık ayrı `loadPinHistory()` ile yükleniyor
   // (sayfalama callback'i sadece ilgili card'ı render edebilsin diye).
@@ -1277,6 +1284,12 @@ function renderAddHostForm() {
         <input id="fetch-url" class="form-input" placeholder="https://api.example.com" autofocus>
         <div class="form-hint">${t('fetchUrlHint')}</div>
       </div>
+      <div class="notice notice-warn">${t('fetchCaWarning')}</div>
+      <div class="form-group">
+        <label class="form-label">${t('fetchBackupPinLabel')}</label>
+        <input id="fetch-backup-pin" class="form-input mono" placeholder="AAAA…=" maxlength="44" autocomplete="off">
+        <div class="form-hint">${t('fetchBackupPinHint')}</div>
+      </div>
       <div class="form-actions">
         <button class="btn btn-success" id="fetch-btn" data-action="createHostFetch">${t('create')}</button>
         <button class="btn btn-secondary" data-action="renderEmptyAndHostList">${t('cancel')}</button>
@@ -1341,6 +1354,8 @@ async function createHostGenerate() {
 async function createHostFetch() {
   const url = document.getElementById('fetch-url').value.trim();
   if (!url) { toast(t('saveError'), 'error'); return; }
+  // A second pin of the site itself takes the issuer's place as the backup.
+  const backupPin = (document.getElementById('fetch-backup-pin')?.value || '').trim().replace(/^sha256\//, '');
 
   const btn = document.getElementById('fetch-btn');
   btn.disabled = true; btn.textContent = t('fetching');
@@ -1348,7 +1363,7 @@ async function createHostFetch() {
   try {
     const res = await apiFetch('/api/v1/hosts/fetch-from-url', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ url })
+      body: JSON.stringify(backupPin ? { url, backupPin } : { url })
     });
     if (!res.ok) { toast(reasonError(await res.json()), 'error'); btn.disabled = false; btn.textContent = t('create'); return; }
     // 202: waiting for approval (apiFetch said so) — no host to open yet.

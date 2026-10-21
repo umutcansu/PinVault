@@ -535,6 +535,52 @@ class BackendTest {
         }
     }
 
+    @Test
+    fun `C24 — a second pin given with the request replaces the issuer's as the backup`() = testApplication {
+        configureApp()
+        val ca = Pki.ca("CN=Fetch Test CA")
+        val leafKeys = Pki.keys()
+        val leaf = Pki.issued("CN=localhost", leafKeys.public, ca, san = "127.0.0.1")
+        val siteBackup = Pki.pin(Pki.ca("CN=Site Backup Key").cert)
+        Pki.tlsServer(leafKeys.private, arrayOf(leaf, ca.cert)).use { chained ->
+            val url = "https://127.0.0.1:${chained.localPort}"
+            val withIssuer = certService.fetchFromUrl(url)
+            assertTrue(withIssuer.backupFromIssuer, "without a second pin the issuer's is the backup")
+            val withOwn = certService.fetchFromUrl(url, siteBackup)
+            assertEquals(listOf(Pki.pin(leaf), siteBackup), withOwn.sha256Pins, "the CA is not pinned")
+            assertFalse(withOwn.backupFromIssuer)
+
+            val plan = certService.planFetched(url, backupPin = siteBackup).publicJson()
+            assertEquals(false, plan["backupFromIssuer"]?.jsonPrimitive?.boolean, "the approver sees whose key the backup trusts")
+            assertEquals(true, certService.planFetched(url).publicJson()["backupFromIssuer"]?.jsonPrimitive?.boolean)
+
+            // The route takes it as `backupPin`; the shared pin rules still apply to it.
+            val malformed = client.post("/api/v1/hosts/fetch-from-url") {
+                contentType(ContentType.Application.Json)
+                setBody("""{"url":"$url","backupPin":"not-a-pin"}""")
+            }
+            assertEquals(HttpStatusCode.BadRequest, malformed.status, malformed.bodyAsText())
+            val sameAsLeaf = client.post("/api/v1/hosts/fetch-from-url") {
+                contentType(ContentType.Application.Json)
+                setBody("""{"url":"$url","backupPin":"${Pki.pin(leaf)}"}""")
+            }
+            assertEquals(HttpStatusCode.BadRequest, sameAsLeaf.status, "the leaf's pin twice is not two pins")
+            val added = client.post("/api/v1/hosts/fetch-from-url") {
+                contentType(ContentType.Application.Json)
+                setBody("""{"url":"$url","backupPin":"sha256/$siteBackup"}""".replace("sha256/", ""))
+            }
+            assertEquals(HttpStatusCode.OK, added.status, added.bodyAsText())
+            assertEquals(listOf(Pki.pin(leaf), siteBackup), pinConfigStore.load(configApiId).pins.single { it.hostname == "127.0.0.1" }.sha256)
+        }
+        // A site that serves its certificate alone is fine once the operator brings the second pin.
+        val lone = Pki.ca("CN=Lone Site")
+        Pki.tlsServer(lone.keys.private, arrayOf(lone.cert)).use { single ->
+            val result = certService.fetchFromUrl("https://127.0.0.1:${single.localPort}", siteBackup)
+            assertEquals(listOf(Pki.pin(lone.cert), siteBackup), result.sha256Pins)
+            assertFalse(result.backupFromIssuer)
+        }
+    }
+
     /** Minimal PKI and a TLS listener serving a given chain, for the fetch tests. */
     private object Pki {
         class Ca(val keys: java.security.KeyPair, val cert: java.security.cert.X509Certificate)

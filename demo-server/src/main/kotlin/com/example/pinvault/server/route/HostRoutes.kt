@@ -573,22 +573,35 @@ fun Route.hostRoutes(
                         //    used to do). Its exit code is ignored on purpose: it is 0
                         //    even when chain verification fails, so "no certificate in
                         //    the output" is the reliable failure signal.
+                        //    `-showcerts` prints the whole served chain: devices
+                        //    accept the leaf's pin or an issuer's pin the leaf chains
+                        //    to, and the panel shows which stored pin is a CA's.
                         val (_, sslOut) = runCmd(
-                            *(listOf("openssl", "s_client", "-connect", "$connectHost:$port") +
+                            *(listOf("openssl", "s_client", "-showcerts", "-connect", "$connectHost:$port") +
                                 (sniName?.let { listOf("-servername", it) } ?: emptyList())).toTypedArray(),
                             timeoutSec = 6
                         )
-                        val actualPin = spkiPinFromSClientOutput(sslOut)
+                        val chainPins = chainPinsFromSClientOutput(sslOut)
+                        val actualPin = chainPins.firstOrNull()
                         if (actualPin == null) {
                             lastError = "TLS handshake failed on port $port"
                             continue
                         }
 
-                        val pinMatch = expectedPins.contains(actualPin)
+                        // Pins of the stored set that belong to a CA above the leaf.
+                        val issuerPins = chainPins.drop(1).filter { it in expectedPins }
+                        val matchedVia = when {
+                            actualPin in expectedPins -> "leaf"
+                            issuerPins.isNotEmpty() -> "issuer"
+                            else -> null
+                        }
                         val elapsed = System.currentTimeMillis() - start
                         val expectedJson = expectedPins.joinToString(",") { "\"$it\"" }
+                        val chainJson = chainPins.joinToString(",") { "\"$it\"" }
+                        val issuerJson = issuerPins.joinToString(",") { "\"$it\"" }
+                        val viaJson = matchedVia?.let { "\"$it\"" } ?: "null"
                         call.respondText(
-                            """{"reachable":true,"port":$port,"pinMatch":$pinMatch,"actualPin":"$actualPin","expectedPins":[$expectedJson],"elapsedMs":$elapsed}""",
+                            """{"reachable":true,"port":$port,"pinMatch":${matchedVia != null},"matchedVia":$viaJson,"actualPin":"$actualPin","chainPins":[$chainJson],"issuerPins":[$issuerJson],"expectedPins":[$expectedJson],"elapsedMs":$elapsed}""",
                             ContentType.Application.Json
                         )
                         return@get
@@ -700,17 +713,26 @@ internal fun pingRemoteRefusal(call: ApplicationCall): Pair<HttpStatusCode, Stri
  * same value `HostPin.sha256` carries. Returns null when the output has no
  * parseable certificate (handshake failed, port not TLS, timeout).
  */
-internal fun spkiPinFromSClientOutput(output: String): String? {
-    val pem = Regex("-----BEGIN CERTIFICATE-----.*?-----END CERTIFICATE-----", RegexOption.DOT_MATCHES_ALL)
-        .find(output)?.value ?: return null
-    return try {
-        val cert = java.security.cert.CertificateFactory.getInstance("X.509")
-            .generateCertificate(pem.byteInputStream()) as java.security.cert.X509Certificate
+internal fun spkiPinFromSClientOutput(output: String): String? = chainPinsFromSClientOutput(output).firstOrNull()
+
+/**
+ * The SPKI pins of every certificate `openssl s_client -showcerts` printed, in
+ * the order served (leaf first). Stops at the first block that is not a
+ * certificate; empty when the handshake failed.
+ */
+internal fun chainPinsFromSClientOutput(output: String): List<String> {
+    val factory = java.security.cert.CertificateFactory.getInstance("X.509")
+    val pins = mutableListOf<String>()
+    for (match in Regex("-----BEGIN CERTIFICATE-----.*?-----END CERTIFICATE-----", RegexOption.DOT_MATCHES_ALL).findAll(output)) {
+        val cert = try {
+            factory.generateCertificate(match.value.byteInputStream()) as java.security.cert.X509Certificate
+        } catch (e: Exception) {
+            break
+        }
         val digest = java.security.MessageDigest.getInstance("SHA-256").digest(cert.publicKey.encoded)
-        java.util.Base64.getEncoder().encodeToString(digest)
-    } catch (e: Exception) {
-        null
+        pins += java.util.Base64.getEncoder().encodeToString(digest)
     }
+    return pins
 }
 
 /**

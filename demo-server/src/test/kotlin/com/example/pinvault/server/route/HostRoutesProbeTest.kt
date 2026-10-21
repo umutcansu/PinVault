@@ -49,6 +49,30 @@ class HostRoutesProbeTest {
     }
 
     @Test
+    fun `every certificate of a showcerts chain is pinned, leaf first, up to the first block that is not one`() {
+        val twice = """
+            CONNECTED(00000003)
+            ---
+            Certificate chain
+             0 s:CN = pin-test
+            $TEST_CERT_PEM
+             1 s:CN = pin-test
+            $TEST_CERT_PEM
+            ---
+            Server certificate
+            -----BEGIN CERTIFICATE-----
+            broken
+            -----END CERTIFICATE-----
+            $TEST_CERT_PEM
+        """.trimIndent()
+        val chain = chainPinsFromSClientOutput(twice)
+        assertEquals(2, chain.size, "the broken block ends the chain; nothing after it is read")
+        assertEquals("+tFmnCJqJcHgCcn1ZyYyv7XNljP3Ks5Q3MWm3BV8Nn8=", chain[0])
+        assertEquals(chain[0], spkiPinFromSClientOutput(twice), "the leaf's pin is the first of the chain")
+        assertTrue(chainPinsFromSClientOutput("connect: Connection refused").isEmpty())
+    }
+
+    @Test
     fun `spki pin is derived from the certificate in s_client output`() {
         // Simulates `openssl s_client` output: the leaf PEM block surrounded by
         // handshake chatter. Expected pin computed independently with

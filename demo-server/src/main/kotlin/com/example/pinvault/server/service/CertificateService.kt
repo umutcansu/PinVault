@@ -61,7 +61,14 @@ data class FetchResult(
     val sha256Pins: List<String>,
     val certInfo: CertInfo,
     /** The address and port the handshake went to (the one the egress filter checked). */
-    val fetchedFrom: String = ""
+    val fetchedFrom: String = "",
+    /**
+     * True when the backup pin is the issuer's (the certificate above the
+     * leaf in the served chain): devices then accept any leaf that CA signs,
+     * including one signed with a stolen CA key. False when the operator
+     * supplied the second pin.
+     */
+    val backupFromIssuer: Boolean = true
 )
 
 /**
@@ -285,9 +292,16 @@ class CertificateService(
      * The name is resolved once and the connection goes to the address that
      * was checked (see [EgressFilter]).
      *
+     * The backup pin is the issuer's unless [backupPin] names one: a pin the
+     * operator obtained elsewhere (the site's published backup key, its next
+     * certificate). An issuer pin keeps the host reachable across a renewal by
+     * the same CA, at a price: the CA's private key now stands in for the
+     * site's, so a certificate forged with a stolen CA key passes the pins.
+     * With [backupPin] the site may serve its certificate alone.
+     *
      * @throws EgressRefusedException when the target may not be reached.
      */
-    fun fetchFromUrl(url: String): FetchResult {
+    fun fetchFromUrl(url: String, backupPin: String? = null): FetchResult {
         val parsedUrl = java.net.URL(url)
         require(parsedUrl.protocol.equals("https", ignoreCase = true)) {
             "fetch-from-url requires an https:// URL (got '${parsedUrl.protocol}')"
@@ -321,12 +335,15 @@ class CertificateService(
             val chain = it.session.peerCertificates
             if (chain.isEmpty()) throw RuntimeException("Sertifika zinciri boş")
 
-            // The backup is the issuer's pin: devices accept a leaf that
-            // chains to it, so the host survives a renewal by the same CA.
-            if (chain.size < 2) throw NoSecondCertificateException(hostname)
+            // Without a pin from the operator the backup is the issuer's:
+            // devices accept a leaf that chains to it, so the host survives a
+            // renewal by the same CA (and so does a leaf the CA's stolen key
+            // signed — the operator was told so before choosing).
             val leaf = chain[0] as X509Certificate
             val primaryHash = extractHash(leaf)
-            val backupHash = extractHash(chain[1])
+            val providedBackup = backupPin?.trim()?.takeIf { it.isNotEmpty() }
+            if (providedBackup == null && chain.size < 2) throw NoSecondCertificateException(hostname)
+            val backupHash = providedBackup ?: extractHash(chain[1])
 
             val pubKey = leaf.publicKey
             val keyBits = if (pubKey is RSAPublicKey) pubKey.modulus.bitLength() else 0
@@ -363,17 +380,19 @@ class CertificateService(
                     primaryPin = primaryHash,
                     backupPin = backupHash
                 ),
-                fetchedFrom = "${address.hostAddress}:$port"
+                fetchedFrom = "${address.hostAddress}:$port",
+                backupFromIssuer = providedBackup == null
             )
         }
     }
 
     /**
      * [fetchFromUrl] as a plan for [hostname] (default: the URL's host): the
-     * pins the site serves NOW. There is no keystore — the server only looked.
+     * pins the site serves NOW, with [backupPin] in place of the issuer's when
+     * given. There is no keystore — the server only looked.
      */
-    fun planFetched(url: String, hostname: String? = null): CertPlan {
-        val fetched = fetchFromUrl(url)
+    fun planFetched(url: String, hostname: String? = null, backupPin: String? = null): CertPlan {
+        val fetched = fetchFromUrl(url, backupPin)
         return CertPlan(
             source = "fetched",
             hostname = hostname ?: fetched.hostname,
@@ -383,7 +402,8 @@ class CertificateService(
             notBefore = fetched.certInfo.validFrom,
             notAfter = fetched.certInfo.validUntil,
             fingerprint = fetched.certInfo.sha256Fingerprint,
-            fetchedFrom = "${fetched.hostname} (${fetched.fetchedFrom})"
+            fetchedFrom = "${fetched.hostname} (${fetched.fetchedFrom})",
+            backupFromIssuer = fetched.backupFromIssuer
         )
     }
 
