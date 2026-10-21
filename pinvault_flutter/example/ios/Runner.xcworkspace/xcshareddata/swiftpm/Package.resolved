@@ -5,8 +5,8 @@
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/umutcansu/PinVault.git",
       "state" : {
-        "revision" : "535b54542eb4d9b41e45117ab31654273952e8b2",
-        "version" : "2.8.1"
+        "revision" : "ea134e35a9f539721cfd406487cfa4d552e2f94f",
+        "version" : "2.8.2"
       }
     }
   ],
