@@ -1,6 +1,6 @@
 Pod::Spec.new do |s|
   s.name             = 'pinvault_flutter'
-  s.version          = '2.8.1'
+  s.version          = '2.8.2'
   s.summary          = 'PinVault Flutter Plugin.'
   s.description      = 'Dynamic certificate pinning, mTLS identity, and vault files for Flutter.'
   s.homepage         = 'https://github.com/umutcansu/PinVault'
@@ -16,7 +16,7 @@ Pod::Spec.new do |s|
   # brings it from the PinVault git tag. With CocoaPods, PinVault is the pod of
   # the repository root's PinVault.podspec; it is not on CocoaPods trunk, so
   # the app's Podfile names it:
-  #   pod 'PinVault', :git => 'https://github.com/umutcansu/PinVault.git', :tag => 'v2.8.1'
+  #   pod 'PinVault', :git => 'https://github.com/umutcansu/PinVault.git', :tag => 'v2.8.2'
   # (or `:path => '<checkout>'` for a local checkout, as the example does).
   # 2.6.0: PinnedSession.makeWebSocketTask(for:), which the pinned WebSocket calls.
   # 2.6.1: without tokenHosts only the Config API carries the token.

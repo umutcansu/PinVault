@@ -2,7 +2,7 @@ openapi: 3.0.3
 
 info:
   title: PinVault Demo Server API
-  version: 2.8.1
+  version: 2.8.2
   description: |
     Reference backend for the PinVault Android SSL-pinning library.
 
@@ -1395,6 +1395,15 @@ paths:
               required: [url]
               properties:
                 url: { type: string, example: 'https://gateway.example.com' }
+                backupPin:
+                  type: string
+                  description: >
+                    A second pin of the site itself (44-character base64 SPKI SHA-256), used as
+                    the backup instead of the issuer's pin. Without it the backup is the
+                    certificate above the leaf in the served chain — which makes that CA's
+                    private key stand in for the site's: a certificate forged with a stolen
+                    CA key passes the pins. With it, a site that serves its certificate
+                    alone is accepted too. The plan records the choice as `backupFromIssuer`.
       responses:
         '200':
           description: Pins fetched and stored.
@@ -1803,6 +1812,15 @@ paths:
               required: [url]
               properties:
                 url: { type: string, example: 'https://api.example.com' }
+                backupPin:
+                  type: string
+                  description: >
+                    A second pin of the site itself (44-character base64 SPKI SHA-256), used as
+                    the backup instead of the issuer's pin. Without it the backup is the
+                    certificate above the leaf in the served chain — which makes that CA's
+                    private key stand in for the site's: a certificate forged with a stolen
+                    CA key passes the pins. With it, a site that serves its certificate
+                    alone is accepted too. The plan records the choice as `backupFromIssuer`.
       responses:
         '422': { $ref: '#/components/responses/LiveCheckRejected' }
         '200':
@@ -2165,6 +2183,15 @@ paths:
               required: [url]
               properties:
                 url: { type: string, example: 'https://api.example.com' }
+                backupPin:
+                  type: string
+                  description: >
+                    A second pin of the site itself (44-character base64 SPKI SHA-256), used as
+                    the backup instead of the issuer's pin. Without it the backup is the
+                    certificate above the leaf in the served chain — which makes that CA's
+                    private key stand in for the site's: a certificate forged with a stolen
+                    CA key passes the pins. With it, a site that serves its certificate
+                    alone is accepted too. The plan records the choice as `backupFromIssuer`.
       responses:
         '422': { $ref: '#/components/responses/LiveCheckRejected' }
         '200':
@@ -6881,15 +6908,32 @@ components:
     PingRemoteResult:
       type: object
       description: >
-        Union shape — `port` and `actualPin` are present only when reachable;
-        `triedPorts` and `error` only when not.
+        Union shape — `port`, `actualPin`, `chainPins`, `issuerPins` and `matchedVia` are
+        present only when reachable; `triedPorts` and `error` only when not.
       properties:
         reachable: { type: boolean }
         port: { type: integer }
         pinMatch:
           type: boolean
-          description: Whether the live leaf SPKI pin is in the stored pin list.
-        actualPin: { type: string }
+          description: >
+            Whether devices would accept the served chain: the leaf's SPKI pin is in the
+            stored list, or a certificate above it in the served chain is (`matchedVia`).
+        matchedVia:
+          type: string
+          nullable: true
+          enum: [leaf, issuer]
+          description: Which stored pin the served chain satisfied; null when none.
+        actualPin: { type: string, description: The leaf's SPKI pin. }
+        chainPins:
+          type: array
+          items: { type: string }
+          description: SPKI pins of the served chain, leaf first (`openssl s_client -showcerts`).
+        issuerPins:
+          type: array
+          items: { type: string }
+          description: >
+            Stored pins found above the leaf in the served chain: CA pins, which trust that
+            CA's key rather than a second key of the site. The dashboard flags them.
         expectedPins:
           type: array
           items: { type: string }

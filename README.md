@@ -9,7 +9,7 @@ versioned files only your devices can open, and attestation that tells your
 app from a script — for Android, iOS, React Native and Flutter.
 
 [![Maven Central](https://img.shields.io/maven-central/v/io.github.umutcansu/pinvault?label=Android)](https://central.sonatype.com/artifact/io.github.umutcansu/pinvault)
-[![SwiftPM](https://img.shields.io/badge/iOS-SwiftPM%202.8.1-F05138?logo=swift&logoColor=white)](pinvault-ios/README.md)
+[![SwiftPM](https://img.shields.io/badge/iOS-SwiftPM%202.8.2-F05138?logo=swift&logoColor=white)](pinvault-ios/README.md)
 [![npm](https://img.shields.io/npm/v/@umutcansu/react-native-pinvault?label=React%20Native&logo=react)](https://www.npmjs.com/package/@umutcansu/react-native-pinvault)
 [![pub.dev](https://img.shields.io/pub/v/pinvault_flutter?label=Flutter&logo=flutter)](https://pub.dev/packages/pinvault_flutter)
 [![License](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
@@ -38,18 +38,21 @@ PinVault moves the pins to your server and keeps the safety:
 - 🔌 **Server-agnostic.** Use the reference server (Docker, dashboard included),
   implement two endpoints in your own backend, or run fully offline with static pins.
 
-> **Latest release: 2.8.1** — on iOS a pinned session notices when a
-> trust-bypass hook answered the TLS challenge before the library: the
-> connection is refused and reported as `hooking_framework`. 2.8.0 before it
-> made React Native and Flutter release builds take every address that
-> receives the device's token or identity from the native security file
-> (see [MIGRATION.md](MIGRATION.md)).
+> **Latest release: 2.8.2** — the reference server and its dashboard say
+> whose key the backup pin of a host added from a URL trusts: the issuing
+> CA's, which a stolen CA key defeats (the eMudhra intermediates, October
+> 2026). The form warns, the approval card shows it, the host page labels
+> it, and an optional second pin of the site itself replaces the CA pin
+> (`backupPin`). Runbook: *A certificate authority's key is compromised* in
+> [SECURE_OPERATIONS.md](SECURE_OPERATIONS.md). 2.8.1 before it made an iOS
+> pinned session notice when a trust-bypass hook answered the TLS challenge
+> before the library.
 
 ## What you get
 
 | Feature | What it does |
 |---|---|
-| 📌 **Dynamic pinning** | Signed remote pin config, per-host versions, backup pins, issuer pins that survive leaf renewals, automatic recovery after a pin mismatch, periodic background refresh. |
+| 📌 **Dynamic pinning** | Signed remote pin config, per-host versions, backup pins, issuer pins that survive leaf renewals (and say so: a CA pin trusts that CA's key), automatic recovery after a pin mismatch, periodic background refresh. |
 | 🪪 **mTLS identity** | The device makes its own key in the Keystore / Secure Enclave and gets a certificate from a CSR. One-time tokens, one code for a whole fleet, or admin approval with a verification code. Renews itself. |
 | 🗂️ **Vault files** | Remote, versioned files (ML models, feature flags, secrets): signed, encrypted at rest, optionally encrypted for one device, or locked behind the screen lock. |
 | ✅ **Attestation** | Approov-style: the app reports on itself and the device, your server decides, and only a passing app gets pins and a short-lived `PinVault-Token`. Play Integrity and App Attest as optional second opinions. |
@@ -101,7 +104,7 @@ behaviour and the same server, so you can move between them freely.
 ```kotlin
 // build.gradle.kts
 dependencies {
-    implementation("io.github.umutcansu:pinvault:2.8.1")
+    implementation("io.github.umutcansu:pinvault:2.8.2")
 }
 ```
 
@@ -114,7 +117,7 @@ minSdk 24, JDK 17, OkHttp 4. Java callers: see [the guide](GUIDE.md#2b-initializ
 
 ```swift
 // Package.swift — or Xcode: File → Add Package Dependencies…
-.package(url: "https://github.com/umutcansu/PinVault.git", from: "2.8.1")
+.package(url: "https://github.com/umutcansu/PinVault.git", from: "2.8.2")
 ```
 
 iOS 16+, Swift 6, no third-party dependencies. Info.plist keys for background
