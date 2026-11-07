@@ -19,7 +19,7 @@ class VaultFileStore(
     fun get(configApiId: String, key: String): VaultEntry? {
         db.connection().use { conn ->
             conn.prepareStatement("""
-                SELECT config_api_id, key, version, content, access_policy, encryption, updated_at
+                SELECT config_api_id, key, version, content, access_policy, encryption, updated_at, expires_at
                 FROM vault_files
                 WHERE config_api_id = ? AND key = ?
             """).use { stmt ->
@@ -44,7 +44,9 @@ class VaultFileStore(
         key: String,
         content: ByteArray,
         accessPolicy: String? = null,
-        encryption: String? = null
+        encryption: String? = null,
+        /** The file's expiry (`VaultExpiry.parse`): null keeps what the row has, [ExpirySetting] of null clears it. */
+        expiresAt: ExpirySetting? = null
     ) {
         db.connection().use { conn ->
             // Metadata only: a file that no longer decrypts can still be replaced.
@@ -52,6 +54,7 @@ class VaultFileStore(
             val newVersion = (existing?.version ?: 0) + 1
             val finalPolicy = accessPolicy ?: existing?.accessPolicy ?: "token"
             val finalEncryption = encryption ?: existing?.encryption ?: "plain"
+            val finalExpiry = if (expiresAt != null) expiresAt.value else existing?.expiresAt
             // at_rest, end_to_end and user_auth: store the content AES-256-GCM
             // encrypted; reads decrypt it transparently (see toEntry). The wire format
             // is unchanged: plain for at_rest, per-device envelope for the other two.
@@ -59,8 +62,8 @@ class VaultFileStore(
 
             conn.prepareStatement("""
                 INSERT OR REPLACE INTO vault_files
-                    (config_api_id, key, content, version, access_policy, encryption, updated_at)
-                VALUES (?, ?, ?, ?, ?, ?, datetime('now'))
+                    (config_api_id, key, content, version, access_policy, encryption, updated_at, expires_at)
+                VALUES (?, ?, ?, ?, ?, ?, datetime('now'), ?)
             """).use { stmt ->
                 stmt.setString(1, configApiId)
                 stmt.setString(2, key)
@@ -68,8 +71,31 @@ class VaultFileStore(
                 stmt.setInt(4, newVersion)
                 stmt.setString(5, finalPolicy)
                 stmt.setString(6, finalEncryption)
+                stmt.setString(7, finalExpiry)
                 stmt.executeUpdate()
             }
+        }
+    }
+
+    /**
+     * Sets or clears (null) the date a file stops being valid. Metadata only:
+     * the version does not move, devices keep what they hold. False when
+     * there is no such file.
+     */
+    fun setExpiry(configApiId: String, key: String, expiresAt: String?): Boolean = db.connection().use { conn ->
+        conn.prepareStatement("UPDATE vault_files SET expires_at = ? WHERE config_api_id = ? AND key = ?").use { stmt ->
+            stmt.setString(1, expiresAt)
+            stmt.setString(2, configApiId)
+            stmt.setString(3, key)
+            stmt.executeUpdate() > 0
+        }
+    }
+
+    /** Every file with an expiry, across scopes, for the expiry monitor. */
+    fun expiring(): List<ExpiringVaultFile> = db.connection().use { conn ->
+        conn.createStatement().use { stmt ->
+            val rs = stmt.executeQuery("SELECT config_api_id, key, expires_at FROM vault_files WHERE expires_at IS NOT NULL ORDER BY expires_at")
+            buildList { while (rs.next()) add(ExpiringVaultFile(rs.getString(1), rs.getString(2), rs.getString(3))) }
         }
     }
 
@@ -159,12 +185,12 @@ class VaultFileStore(
     fun meta(configApiId: String, key: String): VaultFileSummary? {
         db.connection().use { conn ->
             conn.prepareStatement("""
-                SELECT version, access_policy, encryption FROM vault_files WHERE config_api_id = ? AND key = ?
+                SELECT version, access_policy, encryption, expires_at FROM vault_files WHERE config_api_id = ? AND key = ?
             """).use { stmt ->
                 stmt.setString(1, configApiId)
                 stmt.setString(2, key)
                 val rs = stmt.executeQuery()
-                return if (rs.next()) VaultFileSummary(key, rs.getInt(1), 0, rs.getString(2), rs.getString(3)) else null
+                return if (rs.next()) VaultFileSummary(key, rs.getInt(1), 0, rs.getString(2), rs.getString(3), rs.getString(4)) else null
             }
         }
     }
@@ -192,7 +218,7 @@ class VaultFileStore(
     fun summaries(configApiId: String): List<VaultFileSummary> {
         db.connection().use { conn ->
             conn.prepareStatement("""
-                SELECT key, version, content, access_policy, encryption
+                SELECT key, version, content, access_policy, encryption, expires_at
                 FROM vault_files
                 WHERE config_api_id = ?
                 ORDER BY key
@@ -208,7 +234,8 @@ class VaultFileStore(
                             version = rs.getInt("version"),
                             size = if (encryption in ENCRYPTED_MODES) VaultAtRestCipher.plaintextSize(stored) else stored.size,
                             accessPolicy = rs.getString("access_policy"),
-                            encryption = encryption
+                            encryption = encryption,
+                            expiresAt = rs.getString("expires_at")
                         ))
                     }
                 }
@@ -220,7 +247,7 @@ class VaultFileStore(
     fun listForConfigApi(configApiId: String): List<VaultEntry> {
         db.connection().use { conn ->
             conn.prepareStatement("""
-                SELECT config_api_id, key, version, content, access_policy, encryption, updated_at
+                SELECT config_api_id, key, version, content, access_policy, encryption, updated_at, expires_at
                 FROM vault_files
                 WHERE config_api_id = ?
                 ORDER BY key
@@ -237,7 +264,7 @@ class VaultFileStore(
         db.connection().use { conn ->
             conn.createStatement().use { stmt ->
                 val rs = stmt.executeQuery("""
-                    SELECT config_api_id, key, version, content, access_policy, encryption, updated_at
+                    SELECT config_api_id, key, version, content, access_policy, encryption, updated_at, expires_at
                     FROM vault_files
                     ORDER BY config_api_id, key
                 """)
@@ -253,7 +280,8 @@ class VaultFileStore(
         content      = readContent(getString("key"), getString("encryption"), getBytes("content")),
         accessPolicy = getString("access_policy"),
         encryption   = getString("encryption"),
-        updatedAt    = getString("updated_at")
+        updatedAt    = getString("updated_at"),
+        expiresAt    = getString("expires_at")
     )
 
     /**
@@ -284,8 +312,15 @@ data class VaultFileSummary(
     val version: Int,
     val size: Int,
     val accessPolicy: String,
-    val encryption: String
+    val encryption: String,
+    /** ISO instant the file stops being valid; null = no expiry. */
+    val expiresAt: String? = null
 )
+
+/** A file's expiry as a write wants it: [value] null clears it. */
+class ExpirySetting(val value: String?)
+
+data class ExpiringVaultFile(val configApiId: String, val key: String, val expiresAt: String)
 
 data class VaultEntry(
     val configApiId: String,
@@ -294,7 +329,8 @@ data class VaultEntry(
     val content: ByteArray,
     val accessPolicy: String = "token",
     val encryption: String = "plain",
-    val updatedAt: String = ""
+    val updatedAt: String = "",
+    val expiresAt: String? = null
 ) {
     override fun equals(other: Any?): Boolean {
         if (this === other) return true

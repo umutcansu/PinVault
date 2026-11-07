@@ -75,6 +75,7 @@ function hostPins() {
  */
 async function restoreBaseline(baseline) {
   const cfg = await getConfig();
+  await correctMockBaseline(baseline, cfg);
   const pins = cfg.pins.map((p) => (baseline[p.hostname] ? { ...p, sha256: baseline[p.hostname], forceUpdate: false } : p));
   for (const [hostname, sha256] of Object.entries(baseline)) {
     if (!pins.some((p) => p.hostname === hostname)) pins.push({ hostname, sha256, forceUpdate: false });
@@ -89,6 +90,27 @@ async function restoreBaseline(baseline) {
     body: { version: 0, pins, forceUpdate: false },
   });
   if (r.status !== 200) throw new Error(`Pin'ler geri yüklenemedi: HTTP ${r.status} ${r.text}`);
+}
+
+/**
+ * Mock host'ların taban pin'lerini sundukları sertifikayla karşılaştırır. Bir
+ * senaryo mock'un sertifikasını yeniler ama taban durumu güncelleyemeden
+ * düşerse (Y05, 2026-11-07), temizlik eski pin'leri yazar ve mock, pin'leri
+ * sunduğu sertifikayla uyuşmayan bir host olarak kalırdı. Sunulan pin taban
+ * durumda yoksa taban durum mock'un şimdi sunduğu sete çekilir (yerinde,
+ * sonraki çağrılar yeniden yoklamasın diye). Yoklama başarısızsa dokunulmaz.
+ */
+async function correctMockBaseline(baseline, cfg) {
+  const mockPorts = { [env.MOCK_TLS_HOST]: env.MOCK_TLS_PORT, [env.MOCK_MTLS_HOST]: env.MOCK_MTLS_PORT };
+  for (const [hostname, port] of Object.entries(mockPorts)) {
+    if (!baseline[hostname]) continue;
+    const served = await servedPin(port, hostname).catch(() => null);
+    if (!served || baseline[hostname].includes(served)) continue;
+    const current = cfg.pins.find((p) => p.hostname === hostname);
+    const corrected = current && current.sha256.includes(served) ? current.sha256 : [served, ...baseline[hostname].slice(1)];
+    console.warn(`restoreBaseline: ${hostname} şu an ${served.slice(0, 8)}… sunuyor; taban durum eski pin'lerdeydi, sunulan sete çekildi`);
+    baseline[hostname] = corrected;
+  }
 }
 
 async function connectionHistory(hostname) {

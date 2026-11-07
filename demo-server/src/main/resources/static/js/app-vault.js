@@ -46,7 +46,7 @@ async function renderApiVaultTab(apiId) {
     const filesPagKey = 'vault-files-' + apiId;
     const filesPagInfo = pagSlice(files, filesPagKey);
     const fileRows = files.length === 0
-      ? `<tr><td colspan="6" class="empty-msg">${t('vaultNoFiles')}</td></tr>`
+      ? `<tr><td colspan="7" class="empty-msg">${t('vaultNoFiles')}</td></tr>`
       : filesPagInfo.slice.map((f, i) => {
           const policyColor =
               f.access_policy === 'public'     ? '#f59e0b' :
@@ -62,6 +62,7 @@ async function renderApiVaultTab(apiId) {
             <td>${formatBytes(f.size || 0)}</td>
             <td><span style="background:${policyColor};color:#fff;padding:2px 8px;border-radius:10px;font-size:10px">${esc(f.access_policy || 'token')}</span></td>
             <td style="font-size:12px">${encIcon} ${esc(f.encryption || 'plain')}</td>
+            <td>${vaultExpiryBadge(f.expires_at)}</td>
             <td><span style="cursor:pointer;color:#ef4444;font-size:11px" data-action="deleteVaultFile" data-arg0="${esc(apiId)}" data-arg1="${esc(f.key)}" data-stop="1">&#x2715;</span></td>
           </tr>`;
         }).join('');
@@ -174,6 +175,10 @@ async function renderApiVaultTab(apiId) {
                 <option value="user_auth">${t('encUserAuthOpt')}</option>
               </select>
             </div>
+            <div class="form-group" style="margin:0">
+              <label class="form-label">${t('vaultExpiry')}</label>
+              <input type="date" id="vault-upload-expires" class="form-input" style="width:150px" title="${esc(t('vaultExpiryHint'))}"/>
+            </div>
             <button type="submit" class="btn btn-primary">${t('vaultUploadBtn')}</button>
           </div>
           <div id="vault-enc-desc" style="margin-top:10px;color:#94a3b8;font-size:12px;line-height:1.4">${t('encDescPlain')}</div>
@@ -183,7 +188,7 @@ async function renderApiVaultTab(apiId) {
       <div class="card">
         <div class="card-title">${t('vaultUniqueKeys')} (${files.length})</div>
         <table class="data-table">
-          <thead><tr><th>${t('vaultKey')}</th><th>${t('vaultVersion')}</th><th>${t('vaultSize')}</th><th>Policy</th><th>Encryption</th><th></th></tr></thead>
+          <thead><tr><th>${t('vaultKey')}</th><th>${t('vaultVersion')}</th><th>${t('vaultSize')}</th><th>Policy</th><th>Encryption</th><th>${t('vaultExpiry')}</th><th></th></tr></thead>
           <tbody>${fileRows}</tbody>
         </table>${filesPagNav}
       </div>
@@ -215,6 +220,7 @@ async function uploadVaultFile(e, apiId) {
   const text = document.getElementById('vault-upload-text')?.value || '';
   const policy = document.getElementById('vault-upload-policy')?.value || 'token';
   const encryption = document.getElementById('vault-upload-encryption')?.value || 'plain';
+  const expires = document.getElementById('vault-upload-expires')?.value || '';
   if (!key) return;
 
   // Content comes from EITHER an uploaded file OR the typed text (file wins).
@@ -230,14 +236,20 @@ async function uploadVaultFile(e, apiId) {
   }
 
   try {
-    const qs = `?policy=${encodeURIComponent(policy)}&encryption=${encodeURIComponent(encryption)}`;
+    // An empty date is not sent: a replaced file keeps the expiry it has.
+    const qs = `?policy=${encodeURIComponent(policy)}&encryption=${encodeURIComponent(encryption)}` +
+      (expires ? `&expiresAt=${encodeURIComponent(expires)}` : '');
     const res = await apiFetch(`${vaultBase(apiId)}/${encodeURIComponent(key)}${qs}`, {
       method: 'PUT',
       headers: { 'Content-Type': 'application/octet-stream' },
       body
     });
     if (res.status === 202) return; // waits for a second admin; apiFetch said so
-    if (!res.ok) { toast(t('error'), 'error'); return; }
+    if (!res.ok) {
+      const err = await res.json().catch(() => null);
+      toast(err && err.error ? err.error : t('error'), 'error');
+      return;
+    }
     const data = await res.json();
     toast(t('vaultUploadSuccess', key, data.version, data.access_policy, data.encryption), 'success');
     setConfigApiTab('vault', apiId);
@@ -278,17 +290,38 @@ async function saveVaultFilePolicy(apiId, key) {
   const policy = document.getElementById(`policy-edit-${key}`)?.value;
   const encryption = document.getElementById(`encryption-edit-${key}`)?.value;
   if (!policy || !encryption) return;
+  const expiresInput = document.getElementById(`expires-edit-${key}`);
+  // The date field is always sent: an emptied field clears the expiry.
+  const body = { access_policy: policy, encryption };
+  if (expiresInput) body.expires_at = expiresInput.value || '';
   try {
     const res = await apiFetch(`${vaultBase(apiId)}/${encodeURIComponent(key)}/policy`, {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ access_policy: policy, encryption })
+      body: JSON.stringify(body)
     });
     if (res.status === 202) return; // waits for a second admin; apiFetch said so
-    if (!res.ok) { toast(t('policySaveError'), 'error'); return; }
+    if (!res.ok) {
+      const err = await res.json().catch(() => null);
+      toast(err && err.error ? err.error : t('policySaveError'), 'error');
+      return;
+    }
     toast(t('policySaved', `${policy} / ${encryption}`), 'success');
     showVaultFileDetail(apiId, key);
   } catch (err) { toast(err.message, 'error'); }
+}
+
+/** A file's expiry as a coloured badge: none, valid, expiring (≤ 30 days) or expired. */
+function vaultExpiryBadge(expiresAt) {
+  if (!expiresAt) return '<span style="color:#475569">—</span>';
+  const ms = Date.parse(expiresAt);
+  if (Number.isNaN(ms)) return `<span class="mono" style="font-size:11px">${esc(expiresAt)}</span>`;
+  const days = Math.floor((ms - Date.now()) / 86400000);
+  const level = days < 0 ? 'expired' : days <= 30 ? 'warning' : 'ok';
+  const color = level === 'expired' ? '#ef4444' : level === 'warning' ? '#f59e0b' : '#22c55e';
+  const locale = lang === 'tr' ? 'tr-TR' : 'en-US';
+  const text = days < 0 ? t('certExpiredAgo', Math.abs(days)) : t('certDaysLeft', days);
+  return `<span data-expiry-level="${level}" style="color:${color};font-weight:600;font-size:11px" title="${esc(new Date(ms).toLocaleString(locale))}">${level === 'expired' ? '✗' : level === 'warning' ? '⚠' : '✓'} ${esc(text)}</span>`;
 }
 
 async function revokeVaultToken(apiId, tokenId, keyForRefresh) {
@@ -334,6 +367,7 @@ async function showVaultFileDetail(apiId, key) {
     const entry = (Array.isArray(allFiles) ? allFiles : []).find(f => f.key === key) || {};
     const curPolicy = entry.access_policy || 'token';
     const curEncryption = entry.encryption || 'plain';
+    const curExpires = entry.expires_at ? String(entry.expires_at).slice(0, 10) : '';
 
     // Version timeline: group by version → first seen, last seen, ok/failed counts
     const byVer = {};
@@ -459,8 +493,12 @@ async function showVaultFileDetail(apiId, key) {
               <option value="user_auth" ${curEncryption === 'user_auth' ? 'selected' : ''}>${t('encUserAuthOpt')}</option>
             </select>
           </div>
+          <div class="form-group" style="margin:0">
+            <label class="form-label">${t('vaultExpiry')}</label>
+            <input type="date" id="expires-edit-${esc(key)}" class="form-input" style="width:150px" value="${esc(curExpires)}" title="${esc(t('vaultExpiryHint'))}"/>
+          </div>
           <button class="btn btn-primary" data-action="saveVaultFilePolicy" data-arg0="${esc(apiId)}" data-arg1="${esc(key)}">${t('policySaveBtn')}</button>
-          <span style="color:#64748b;font-size:11px">${t('policyCurrent')}: <b style="color:#7dd3fc">${esc(curPolicy)}</b> / <b style="color:#7dd3fc">${esc(curEncryption)}</b></span>
+          <span style="color:#64748b;font-size:11px">${t('policyCurrent')}: <b style="color:#7dd3fc">${esc(curPolicy)}</b> / <b style="color:#7dd3fc">${esc(curEncryption)}</b> · ${t('vaultExpiry')}: ${vaultExpiryBadge(entry.expires_at)}</span>
         </div>
       </div>
 

@@ -108,6 +108,7 @@ class PathParameterIntegrityTest {
         Sample(HttpMethod.Post, "/api/v1/certificate-config/force-update/{host}"),
         Sample(HttpMethod.Post, "/api/v1/certificate-config/clear-force/{host}"),
         Sample(HttpMethod.Post, "/api/v1/config/{scope}/update"),
+        Sample(HttpMethod.Post, "/api/v1/pin-snapshots/{snapshot}/restore"),
         Sample(HttpMethod.Post, "/api/v1/management/hosts/{scope}/generate-cert"),
         Sample(HttpMethod.Post, "/api/v1/hosts/generate-cert"),
         Sample(HttpMethod.Post, "/api/v1/hosts/{host}/fetch-cert-url"),

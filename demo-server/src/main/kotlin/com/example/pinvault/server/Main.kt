@@ -5,6 +5,8 @@ import com.example.pinvault.server.model.HostActionResponse
 import com.example.pinvault.server.model.HostPin
 import com.example.pinvault.server.model.PinConfigHistoryEntry
 import com.example.pinvault.server.route.setupRoutes
+import com.example.pinvault.server.route.pinSnapshotRoutes
+import com.example.pinvault.server.route.setupCertificatesRoute
 import com.example.pinvault.server.route.serverSettingsRoutes
 import com.example.pinvault.server.route.adminVaultRoutes
 import com.example.pinvault.server.route.attestationAdminRoutes
@@ -100,7 +102,8 @@ private fun startServer() {
     }
     val dbPath = com.example.pinvault.server.service.ServerEnv.get("DB_PATH") ?: "pinvault.db"
     val db = DatabaseManager(dbPath)
-    val pinConfigStore = PinConfigStore(db)
+    val pinSnapshotStore = com.example.pinvault.server.store.PinSnapshotStore(db)
+    val pinConfigStore = PinConfigStore(db, pinSnapshotStore, snapshotActor = { com.example.pinvault.server.service.AuditContext.actor() })
     val historyStore = PinConfigHistoryStore(db)
     val connectionStore = ConnectionHistoryStore(db)
     val clientDeviceStore = ClientDeviceStore(db)
@@ -212,7 +215,12 @@ private fun startServer() {
     }
     val certService = CertificateService(certsDir)
     val mockServerManager = MockServerManager()
-    val certExpiryMonitor = com.example.pinvault.server.service.CertExpiryMonitor(hostStore)
+    // Besides the pinned hosts' certificates (the hosts table), the monitor
+    // watches whatever is added here once the stores exist: the Config API's
+    // own certificate, the client and server CAs, host client certificates
+    // and vault files with an expiry.
+    val expirySources = mutableListOf<() -> List<com.example.pinvault.server.service.ExpiryCandidate>>()
+    val certExpiryMonitor = com.example.pinvault.server.service.CertExpiryMonitor(hostStore, sources = expirySources)
     val httpPort = com.example.pinvault.server.service.ServerEnv.get("PORT")?.toIntOrNull() ?: 8080
     val httpsPort = com.example.pinvault.server.service.ServerEnv.get("HTTPS_PORT")?.toIntOrNull() ?: (httpPort + 1)
     // Certificate-renewal door for expired devices (TLS, no client cert, CA-pinned). 0 = off.
@@ -487,6 +495,33 @@ private fun startServer() {
     val testTtlOverride: ((String) -> java.time.Duration?)? =
         if (allowTestHooks) { clientId -> testTtlOverrides.remove(clientId) } else null
     val vaultFileStore = com.example.pinvault.server.store.VaultFileStore(db)
+    run {
+        val m = com.example.pinvault.server.service.CertExpiryMonitor
+        expirySources += {
+            listOf(com.example.pinvault.server.service.ExpiryCandidate(
+                m.KIND_CONFIG_API, "Config API TLS (${com.example.pinvault.server.service.CertChangePlanner.BOOTSTRAP_HOST})", "*",
+                java.time.Instant.parse(certService.readCertInfo(serverKeystorePath.absolutePath, emptyList()).validUntil)
+            ))
+        }
+        expirySources += {
+            listOf(com.example.pinvault.server.service.ExpiryCandidate(m.KIND_CLIENT_CA, "Client CA", "*", certService.clientCaCertificate().notAfter.toInstant()))
+        }
+        expirySources += {
+            listOfNotNull(serverCa?.let { com.example.pinvault.server.service.ExpiryCandidate(m.KIND_SERVER_CA, "Server CA (recovery door)", "*", it.certificate.notAfter.toInstant()) })
+        }
+        expirySources += {
+            hostClientCertStore.allP12().mapNotNull { (hostname, scope, p12) ->
+                runCatching { certService.hostClientKeyEntry(p12, CertificateService.KEYSTORE_PASSWORD).second.notAfter.toInstant() }
+                    .getOrNull()?.let { com.example.pinvault.server.service.ExpiryCandidate(m.KIND_HOST_CLIENT_CERT, hostname, scope, it) }
+            }
+        }
+        expirySources += {
+            vaultFileStore.expiring().mapNotNull { f ->
+                runCatching { java.time.Instant.parse(f.expiresAt) }.getOrNull()
+                    ?.let { com.example.pinvault.server.service.ExpiryCandidate(m.KIND_VAULT_FILE, f.key, f.configApiId, it) }
+            }
+        }
+    }
     // Every at_rest / end_to_end file ends up under the current VAULT_AT_REST_PASSWORD.
     vaultFileStore.secureStoredFiles().let { report ->
         if (report.encrypted.isNotEmpty()) println("Vault: encrypted ${report.encrypted.size} file(s) stored in the clear: ${report.encrypted.joinToString()}")
@@ -503,6 +538,7 @@ private fun startServer() {
     val vaultTokenService = com.example.pinvault.server.service.VaultAccessTokenService(vaultTokenStore)
     changeDescriber = com.example.pinvault.server.service.ChangeDescriber(
         pinConfigStore, certPlanner, liveGate, ::stateHash, vaultFileStore, vaultTokenStore, audit = auditLog,
+        snapshots = pinSnapshotStore,
         // Which running API a start on a port would stop.
         portHolder = { port -> configApiManager.getAll().firstOrNull { it.port == port }?.id },
         // The upload handler's own refusal, made when the upload is requested.
@@ -724,13 +760,25 @@ private fun startServer() {
         certExpiryMonitor.logWarnings()
         val today = java.time.LocalDate.now()
         certExpiryMonitor.checkAll().filter { it.level != "ok" }.forEach { cert ->
-            val key = "${cert.configApiId}|${cert.hostname}"
+            val key = "${cert.kind}|${cert.configApiId}|${cert.hostname}"
             if (lastExpiryNotice.put(key, today) != today) {
+                val vault = cert.kind == com.example.pinvault.server.service.CertExpiryMonitor.KIND_VAULT_FILE
+                val what = when (cert.kind) {
+                    com.example.pinvault.server.service.CertExpiryMonitor.KIND_HOST -> "certificate"
+                    com.example.pinvault.server.service.CertExpiryMonitor.KIND_VAULT_FILE -> "vault file"
+                    else -> cert.kind.replace('_', ' ') + " certificate"
+                }
                 auditLog.record(
-                    "cert_expiring",
-                    if (cert.level == "expired") "${cert.hostname}: certificate EXPIRED (${cert.validUntil})"
-                    else "${cert.hostname}: certificate expires in ${cert.daysRemaining} day(s) (${cert.validUntil})",
-                    configApiId = cert.configApiId, target = cert.hostname, actor = "system"
+                    if (vault) "vault_file_expiring" else "cert_expiring",
+                    if (cert.level == "expired") "${cert.hostname}: $what EXPIRED (${cert.validUntil})"
+                    else "${cert.hostname}: $what expires in ${cert.daysRemaining} day(s) (${cert.validUntil})",
+                    configApiId = cert.configApiId, target = cert.hostname, actor = "system",
+                    detail = kotlinx.serialization.json.buildJsonObject {
+                        put("kind", kotlinx.serialization.json.JsonPrimitive(cert.kind))
+                        put("level", kotlinx.serialization.json.JsonPrimitive(cert.level))
+                        put("validUntil", kotlinx.serialization.json.JsonPrimitive(cert.validUntil))
+                        put("daysRemaining", kotlinx.serialization.json.JsonPrimitive(cert.daysRemaining))
+                    }
                 )
             }
         }
@@ -1083,6 +1131,9 @@ private fun startServer() {
             // /api/v1/config/{configApiId}[/update], /api/v1/management/hosts/{configApiId}/generate-cert
             managementConfigRoutes(pinConfigStore, historyStore, hostStore, certService, liveGate, auditLog, certPlanner)
 
+            // Stored pin sets and the one-click restore (a new version with the old pins).
+            pinSnapshotRoutes(pinSnapshotStore, pinConfigStore, historyStore, liveGate, auditLog)
+
             get("/health") {
                 call.respond(mapOf("status" to "ok"))
             }
@@ -1122,6 +1173,59 @@ private fun startServer() {
                     configTtlSeconds = com.example.pinvault.server.service.ServerEnv.get("CONFIG_TTL_SECONDS")?.toLongOrNull() ?: 86_400,
                     publicHost = com.example.pinvault.server.route.parsePublicHost(com.example.pinvault.server.service.ServerEnv.get("SETUP_PUBLIC_HOST")),
                     publicPorts = com.example.pinvault.server.route.parsePublicPorts(com.example.pinvault.server.service.ServerEnv.get("SETUP_PUBLIC_PORTS"))
+                )
+            }
+
+            // The wizard's "Certificates" step: every certificate and expiry to decide on before production.
+            setupCertificatesRoute {
+                val serverCert = runCatching { certService.readCertInfo(serverKeystorePath.absolutePath, serverTlsPins.pins) }.getOrNull()
+                val listeners = configApiManager.getAll().map { com.example.pinvault.server.service.SetupCertificateFacts.Listener(it.id, it.port, it.mode, true) } +
+                    configApiManager.getAllStopped().map { com.example.pinvault.server.service.SetupCertificateFacts.Listener(it.id, it.port, it.mode, false) }
+                val clientCa = runCatching { certService.clientCaCertificate() }.getOrNull()
+                val hostRecords = hostStore.getAll().associateBy { it.hostname to it.configApiId }
+                val hosts = pinConfigStore.loadAll().flatMap { (scope, config) ->
+                    config.pins.map { pin ->
+                        val record = hostRecords[pin.hostname to scope]
+                        val lastEvent = historyStore.getByHostname(pin.hostname).firstOrNull()?.event ?: ""
+                        val source = when {
+                            lastEvent.startsWith("cert_generated") || lastEvent == "cert_regenerated" || lastEvent == "cert_rotated_to_backup" -> "generated"
+                            lastEvent == "cert_uploaded" -> "uploaded"
+                            lastEvent == "fetched_from_url" || lastEvent == "cert_fetched" -> "fetched"
+                            record?.keystorePath != null -> "generated"
+                            else -> "manual"
+                        }
+                        val clientCertNotAfter = hostClientCertStore.getP12(pin.hostname, scope)?.let { p12 ->
+                            runCatching { certService.hostClientKeyEntry(p12, CertificateService.KEYSTORE_PASSWORD).second.notAfter.toInstant().toString() }.getOrNull()
+                        }
+                        com.example.pinvault.server.service.SetupCertificateFacts.Host(
+                            hostname = pin.hostname, configApiId = scope, source = source,
+                            servedHere = mockServerManager.isRunning(pin.hostname),
+                            notAfter = record?.certValidUntil,
+                            backupKey = record?.keystorePath != null && runCatching { certService.backupPin(certPlanner.keystoreId(pin.hostname)) }.getOrNull() != null,
+                            pinCount = pin.sha256.size, mtls = pin.mtls, clientCertNotAfter = clientCertNotAfter
+                        )
+                    }
+                }
+                com.example.pinvault.server.service.SetupCertificateFacts(
+                    configApiCert = serverCert?.let {
+                        com.example.pinvault.server.service.SetupCertificateFacts.ServerCertificate(
+                            it.subject, it.issuer, it.subjectAltNames, it.validUntil, serverTlsPins.pins,
+                            runCatching { certService.backupPin(serverCertId) }.getOrNull() != null
+                        )
+                    },
+                    listeners = listeners,
+                    publicHost = com.example.pinvault.server.route.parsePublicHost(com.example.pinvault.server.service.ServerEnv.get("SETUP_PUBLIC_HOST")),
+                    clientCa = clientCa?.let { com.example.pinvault.server.service.SetupCertificateFacts.Authority(it.subjectX500Principal.name, it.notAfter.toInstant().toString(), certService.spkiSha256(it.publicKey)) },
+                    clientCertTtlDays = clientCertTtlDays,
+                    enrollmentMode = enrollmentMode,
+                    activeIdentities = clientIdentityStore.getAll().count { !it.revoked },
+                    p12Enrollment = serverMadeKeys,
+                    serverCa = serverCa?.let { com.example.pinvault.server.service.SetupCertificateFacts.Authority(it.certificate.subjectX500Principal.name, it.certificate.notAfter.toInstant().toString(), it.pins.first()) },
+                    recoveryPort = recoveryPort.takeIf { recoveryListener != null },
+                    recoveryRunning = recoveryListener?.isRunning == true,
+                    hosts = hosts,
+                    vaultFiles = vaultFileStore.expiring().map { com.example.pinvault.server.service.SetupCertificateFacts.VaultFile(it.configApiId, it.key, it.expiresAt) },
+                    warnDays = com.example.pinvault.server.service.ServerEnv.get("CERT_EXPIRY_WARN_DAYS")?.toIntOrNull() ?: 30
                 )
             }
 

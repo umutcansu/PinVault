@@ -489,7 +489,12 @@ async function renderApiGeneralTab(apiId) {
         <thead><tr><th>${t('hostname')}</th><th>${t('version')}</th><th>${t('thPin')}</th><th>${t('thForce')}</th></tr></thead>
         <tbody>${hostRows}</tbody>
       </table>${hostsPagNav}
+    </div>
+    <div class="card" id="snapshots-card">
+      <div class="card-title">${t('snapshotsTitle')}</div>
+      <div class="loading">${t('loading')}</div>
     </div>`;
+  loadPinSnapshots(apiId);
 }
 
 async function setVaultEnabled(apiId, enabled) {
@@ -817,6 +822,11 @@ async function renderHostDetail(host) {
       <div class="loading">${t('loading')}</div>
     </div>
 
+    <div class="card" id="pin-versions-card">
+      <div class="card-title">${t('pinVersionsTitle')}</div>
+      <div class="loading">${t('loading')}</div>
+    </div>
+
     <div class="card" id="conn-history-card">
       <div style="display:flex;justify-content:space-between;align-items:center">
         <div class="card-title">${t('connHistory')}</div>
@@ -839,8 +849,133 @@ async function renderHostDetail(host) {
   loadMockStatus(host.hostname);
   loadHostClientCert(host.hostname);
   loadPinHistory(host.hostname);
+  loadPinVersions(host.hostname);
   loadHostConnectionHistory(host.hostname);
   loadClientDevices(host.hostname);
+}
+
+// ── Previous pin sets of a host (from the scope's snapshots) and the way back ──
+
+async function loadPinVersions(hostname) {
+  const card = document.getElementById('pin-versions-card');
+  if (!card) return;
+  const head = `<div class="card-title">${t('pinVersionsTitle')}</div><div style="color:#94a3b8;font-size:12px;margin-bottom:8px">${esc(t('pinVersionsHint'))}</div>`;
+  try {
+    const res = await apiFetch(`/api/v1/hosts/${encodeURIComponent(hostname)}/pin-versions?configApiId=${encodeURIComponent(scopeId())}`);
+    const versions = res.ok ? await res.json() : [];
+    if (!Array.isArray(versions) || versions.length === 0) {
+      card.innerHTML = `${head}<div class="empty-msg">${t('noPinVersions')}</div>`;
+      return;
+    }
+    const locale = lang === 'tr' ? 'tr-TR' : 'en-US';
+    const live = currentConfig?.pins?.find(p => p.hostname === hostname);
+    const samePins = v => live && v.sha256.length === live.sha256.length && v.sha256.every(h => live.sha256.includes(h))
+      && !!v.mtls === !!live.mtls && (v.clientCertVersion ?? null) === (live.clientCertVersion ?? null);
+    const rows = versions.map((v, i) => {
+      const current = i === 0 || samePins(v);
+      const pins = v.sha256.map(h => `<span class="mono" style="font-size:10px;color:#7dd3fc" title="sha256/${esc(h)}">${esc(h.slice(0, 12))}…</span>`).join('<br>');
+      return `<tr class="${i === 0 ? 'row-latest' : ''}">
+        <td><span class="ver-badge" style="${i === 0 ? 'background:#1d4ed8;color:#93c5fd' : ''}">v${esc(v.version)}</span></td>
+        <td>${pins}${v.mtls ? ' <span style="color:#f59e0b;font-size:10px">mTLS</span>' : ''}</td>
+        <td style="color:#64748b;font-size:11px">${esc(v.actor)}</td>
+        <td style="color:#64748b;font-size:11px">${new Date(v.takenAt).toLocaleString(locale)}</td>
+        <td>${current ? `<span class="act-badge act-ok">${esc(t('pinsCurrent'))}</span>`
+          : `<button class="btn btn-secondary btn-sm" data-action="restoreHostPins" data-arg0="${esc(hostname)}" data-arg1="${esc(v.snapshotId)}" data-arg2="${esc(v.version)}">${t('restorePins')}</button>`}</td>
+      </tr>`;
+    }).join('');
+    card.innerHTML = `${head}
+      <table class="data-table">
+        <thead><tr><th>${t('thVersion')}</th><th>${t('pins')}</th><th>${t('thActor')}</th><th>${t('thDate')}</th><th></th></tr></thead>
+        <tbody>${rows}</tbody>
+      </table>`;
+  } catch (e) {
+    card.innerHTML = `${head}<div class="empty-msg">${t('error')}</div>`;
+  }
+}
+
+async function restoreHostPins(hostname, snapshotId, version) {
+  if (!confirm(t('restorePinsConfirm', hostname, version))) return;
+  try {
+    const res = await apiFetch(`/api/v1/pin-snapshots/${encodeURIComponent(snapshotId)}/restore?configApiId=${encodeURIComponent(scopeId())}`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ hostname })
+    });
+    if (res.status === 202) return;   // waits for a second admin; apiFetch said so
+    if (!res.ok) {
+      // The live certificate check (422) and a refused snapshot say why; show it.
+      const err = await res.json().catch(() => null);
+      toast(err && err.error ? err.error : t('error'), 'error', 8000);
+      return;
+    }
+    const data = await res.json();
+    if (data.unchanged) { toast(t('pinsRestoreUnchanged'), 'info'); return; }
+    toast(t('pinsRestored', data.version), 'success');
+    await loadConfig();
+    renderHostList();
+    const host = getHosts().find(h => h.hostname === hostname);
+    if (host) renderHostDetail(host); else renderEmpty();
+  } catch (err) { toast(t('error'), 'error'); }
+}
+
+// ── Whole-scope pin set history (Config API page) ──
+
+async function loadPinSnapshots(apiId) {
+  const card = document.getElementById('snapshots-card');
+  if (!card) return;
+  const head = `<div class="card-title">${t('snapshotsTitle')}</div><div style="color:#94a3b8;font-size:12px;margin-bottom:8px">${esc(t('snapshotsHint'))}</div>`;
+  try {
+    const res = await apiFetch(`/api/v1/pin-snapshots?configApiId=${encodeURIComponent(apiId)}`);
+    const list = res.ok ? await res.json() : [];
+    if (!Array.isArray(list) || list.length === 0) {
+      card.innerHTML = `${head}<div class="empty-msg">${t('noSnapshots')}</div>`;
+      return;
+    }
+    const locale = lang === 'tr' ? 'tr-TR' : 'en-US';
+    const pagKey = 'snapshots-' + apiId;
+    const pag = pagSlice(list, pagKey);
+    const reloadKey = '_reloadSnapshots_' + apiId.replace(/[^a-zA-Z0-9]/g, '_');
+    window[reloadKey] = () => loadPinSnapshots(apiId);
+    const rows = pag.slice.map((s, i) => {
+      const latest = pag.page === 0 && i === 0;
+      const when = new Date(s.takenAt).toLocaleString(locale);
+      return `<tr class="${latest ? 'row-latest' : ''}">
+        <td style="color:#64748b;font-size:11px">${esc(when)}</td>
+        <td style="color:#64748b;font-size:11px">${esc(s.actor)}</td>
+        <td>${s.hostCount}</td>
+        <td style="font-size:11px">${s.changed.map(c => `<span class="mono">${esc(c)}</span>`).join(', ') || '—'}</td>
+        <td>${latest ? `<span class="act-badge act-ok">${esc(t('pinsCurrent'))}</span>`
+          : `<button class="btn btn-secondary btn-sm" data-action="restoreSnapshot" data-arg0="${esc(apiId)}" data-arg1="${esc(s.id)}" data-arg2="${esc(when)}" data-arg3="${esc(s.hostCount)}">${t('restoreSnapshot')}</button>`}</td>
+      </tr>`;
+    }).join('');
+    card.innerHTML = `${head}
+      <table class="data-table">
+        <thead><tr><th>${t('thDate')}</th><th>${t('thActor')}</th><th>${t('thHosts')}</th><th>${t('thChanged')}</th><th></th></tr></thead>
+        <tbody>${rows}</tbody>
+      </table>${pagControls(pagKey, pag, reloadKey)}`;
+  } catch (e) {
+    card.innerHTML = `${head}<div class="empty-msg">${t('error')}</div>`;
+  }
+}
+
+async function restoreSnapshot(apiId, snapshotId, when, hostCount) {
+  if (!confirm(t('restoreSnapshotConfirm', when, hostCount))) return;
+  try {
+    const res = await apiFetch(`/api/v1/pin-snapshots/${encodeURIComponent(snapshotId)}/restore?configApiId=${encodeURIComponent(apiId)}`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}'
+    });
+    if (res.status === 202) return;
+    if (!res.ok) {
+      // The live certificate check (422) and a refused snapshot say why; show it.
+      const err = await res.json().catch(() => null);
+      toast(err && err.error ? err.error : t('error'), 'error', 8000);
+      return;
+    }
+    const data = await res.json();
+    if (data.unchanged) { toast(t('pinsRestoreUnchanged'), 'info'); return; }
+    toast(t('pinsRestored', data.version), 'success');
+    await loadConfig();
+    renderHostList();
+    renderConfigApiDetail(apiId);
+  } catch (err) { toast(t('error'), 'error'); }
 }
 
 async function loadPinHistory(hostname) {
@@ -859,6 +994,7 @@ async function loadPinHistory(hostname) {
       mtls_enabled: { icon: '&#x1F512;', text: 'mTLS Enabled',    color: '#f59e0b' },
       mtls_disabled:{ icon: '&#x1F513;', text: 'mTLS Disabled',   color: '#94a3b8' },
       client_cert_uploaded: { icon: '&#x1F4E4;', text: 'Client Cert Uploaded', color: '#a78bfa' },
+      pins_restored: { icon: '&#x21A9;', text: t('evPinsRestored'), color: '#f59e0b' },
     }[e] || { icon: '&#x2022;', text: e, color: '#94a3b8' });
 
     if (entries.length === 0) {

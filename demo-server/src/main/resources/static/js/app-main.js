@@ -98,8 +98,11 @@ const _actionHandlers = {
   saveAttestationPolicy, setAttestResultFilter, searchAttestDevices, toggleAttestRow,
   showAttestationDevice, saveAttestDevice, forgetAttestDevice,
   loadTokenSecrets, toggleTokenSecretReveal, copyTokenSecret, rotateTokenSecret, deleteTokenSecret,
+  // Pin set history and the one-click restore (2.9.0)
+  restoreHostPins, restoreSnapshot, loadPinSnapshots, loadPinVersions,
   // Setup wizard (checklist and generated app configuration)
   renderSetupSection, setSetupStep, setSetupOpt, copySetupText,
+  setupOpenBootstrap, setupOpenMtls, setupOpenHost, setupOpenVault,
   // Settings changed from the panel (applied at the next start)
   setServerSetting, saveServerSettings, restartServer, dismissSettingsRejected
 };

@@ -11,7 +11,7 @@ Object.assign(i18n.tr, {
   navSetup: 'Kurulum Sihirbazı',
   setupTitle: 'Kurulum Sihirbazı',
   setupSub: 'Sunucunun üretime hazır olup olmadığını gösterir ve uygulamanın PinVault ayarlarını bu sunucunun değerleriyle üretir.',
-  setupStepServer: '1 · Sunucu', setupStepApp: '2 · Uygulama', setupStepCode: '3 · Kod',
+  setupStepServer: '1 · Sunucu', setupStepApp: '3 · Uygulama', setupStepCode: '4 · Kod',
   setupReady: '{0} / {1} madde hazır',
   setupReadOnly: 'Sunucu ayarları açılışta ortam değişkenlerinden okunur. Sihirbaz onları değiştirmez: aşağıdaki satırları .env dosyasına yazıp sunucuyu yeniden başlat.',
   setupColCheck: 'Kontrol', setupColNow: 'Şu an', setupColFix: '.env',
@@ -165,7 +165,7 @@ Object.assign(i18n.en, {
   navSetup: 'Setup Wizard',
   setupTitle: 'Setup Wizard',
   setupSub: 'Shows whether the server is ready for production and generates the app\'s PinVault configuration from this server\'s values.',
-  setupStepServer: '1 · Server', setupStepApp: '2 · App', setupStepCode: '3 · Code',
+  setupStepServer: '1 · Server', setupStepApp: '3 · App', setupStepCode: '4 · Code',
   setupReady: '{0} of {1} items ready',
   setupReadOnly: 'Server settings are environment values read at start-up. The wizard does not change them: add the lines below to .env and restart the server.',
   setupColCheck: 'Check', setupColNow: 'Now', setupColFix: '.env',
@@ -270,7 +270,8 @@ async function renderSetupSection() {
 }
 
 function setSetupStep(step) {
-  setupStep = ['server', 'app', 'code'].includes(step) ? step : 'server';
+  setupStep = ['server', 'certs', 'app', 'code'].includes(step) ? step : 'server';
+  if (setupStep === 'certs') setupCerts = null;   // fresh facts every time the step is opened
   drawSetup();
 }
 
@@ -294,11 +295,11 @@ function setupEnvText() {
 
 function drawSetup() {
   if (currentSection !== 'setup' || !setupData) return;
-  const tabs = ['server', 'app', 'code'].map(s => {
-    const label = t(s === 'server' ? 'setupStepServer' : s === 'app' ? 'setupStepApp' : 'setupStepCode');
+  const tabs = ['server', 'certs', 'app', 'code'].map(s => {
+    const label = t(s === 'server' ? 'setupStepServer' : s === 'certs' ? 'setupStepCerts' : s === 'app' ? 'setupStepApp' : 'setupStepCode');
     return `<button class="tab-btn ${setupStep === s ? 'tab-active' : ''}" data-action="setSetupStep" data-arg0="${s}">${esc(label)}</button>`;
   }).join('');
-  const body = setupStep === 'server' ? setupServerStep() : setupStep === 'app' ? setupAppStep() : setupCodeStep();
+  const body = setupStep === 'server' ? setupServerStep() : setupStep === 'certs' ? setupCertsStep() : setupStep === 'app' ? setupAppStep() : setupCodeStep();
   document.getElementById('content').innerHTML = `
     <div id="setup-view">
       <div class="section-header">
@@ -360,7 +361,7 @@ function setupServerStep() {
       </div>
       ${setupEnvBox(env)}
     </div>
-    <div class="form-actions"><button class="btn btn-primary" data-action="setSetupStep" data-arg0="app">${t('setupNext')}</button></div>`;
+    <div class="form-actions"><button class="btn btn-primary" data-action="setSetupStep" data-arg0="certs">${t('setupNext')}</button></div>`;
 }
 
 // ── Settings changed from the panel ─────────────────────────────────────────
@@ -597,7 +598,7 @@ function setupAppStep() {
       ${setupInput('caTrust', t('setupOptCaTrust'), '')}
     </div>
     <div class="form-actions">
-      <button class="btn btn-secondary" data-action="setSetupStep" data-arg0="server">${t('setupBack')}</button>
+      <button class="btn btn-secondary" data-action="setSetupStep" data-arg0="certs">${t('setupBack')}</button>
       <button class="btn btn-primary" data-action="setSetupStep" data-arg0="code">${t('setupNext')}</button>
     </div>`;
 }
@@ -821,4 +822,243 @@ function setupCodeSwift() {
     `    .build()\n` + enroll +
     `\n// At launch (application(_:didFinishLaunchingWithOptions:) or App.init): PinVault.shared.registerBackgroundTask()\n` +
     `let result = await PinVault.shared.start(config: config)   // .ready → PinVault.shared.session()\n`;
+}
+
+// ── Step 2: Certificates ───────────────────────────────────────────────────
+// Every certificate and expiry the operator has to decide on before
+// production, in one place: the Config API's own certificate (the apps'
+// bootstrap pins), the mTLS side (client CA, device certificate lifetime,
+// recovery door), the pinned hosts and the vault files with an expiry. Facts
+// come from GET /api/v1/setup/certificates; each row links to the panel
+// page where the change is made.
+
+Object.assign(i18n.tr, {
+  setupStepCerts: '2 · Sertifikalar',
+  setupCertsIntro: 'Üretime geçmeden karar verilecek sertifikalar bir arada. Her satırın yanındaki düğme ilgili sayfaya götürür; sihirbazın kendisi sertifika değiştirmez.',
+  setupCertsConfigApi: 'Config API\'nin kendi sertifikası (uygulamadaki ilk pin\'ler)',
+  setupCertsConfigApiHint: 'Uygulama bu sertifikanın iki pin\'ini içine gömer. Sunucunun kendi ürettiği (self-signed) sertifika pin\'li olduğu için üretimde de geçerlidir; kendi sertifikanızı yüklemek de mümkündür. Sertifika değişirse uygulama güncellemesi gerekir, yedek anahtara geçiş gerekmez.',
+  setupCertsMtls: 'mTLS: cihaz sertifikaları',
+  setupCertsMtlsHint: 'Cihazlar sertifikalarını bu sunucunun client CA\'sından alır ve süresi dolmadan kendileri yeniler. Client CA\'nın pin\'i uygulama koduna clientCaPins olarak girer (Kod adımı).',
+  setupCertsHosts: 'Pinlenen host\'lar',
+  setupCertsHostsHint: 'Her host için pin\'lerin nereden geldiği, sertifikanın süresi ve yedek pin\'in kime ait olduğu. URL\'den alınan bir host\'un yedek pin\'i çoğu zaman sertifikayı veren CA\'nın pin\'idir.',
+  setupCertsVault: 'Vault dosyalarının süreleri',
+  setupCertsVaultHint: 'Süre girilen vault dosyaları. Süre bir hatırlatmadır; dosya cihazlara yine verilir.',
+  setupCertsNoHosts: 'Henüz pinlenen host yok.', setupCertsNoVault: 'Süre girilen vault dosyası yok.',
+  setupCertsMtlsOff: 'mTLS Config API yok; bu bölüm yalnızca mTLS dinleyici açılınca anlamlıdır.',
+  setupCertsLoadError: 'Sertifika bilgisi alınamadı',
+  setupCertsOpen: 'Aç', setupCertsOpenBootstrap: 'Bootstrap sekmesi', setupCertsOpenMtls: 'mTLS sekmesi', setupCertsOpenHost: 'Host sayfası', setupCertsOpenVault: 'Vault sekmesi',
+  setupCertsColWhat: 'Ne', setupCertsColNow: 'Şu an', setupCertsColGo: 'Nerede değişir',
+  setupCertsSubject: 'Sertifika', setupCertsNames: 'Adlar (SAN)', setupCertsPins: 'Pin\'ler', setupCertsListeners: 'Dinleyiciler',
+  setupCertsClientCaPin: 'Client CA pin\'i (clientCaPins)', setupCertsDevices: 'Kayıtlı cihaz', setupCertsSource: 'Kaynak', setupCertsScope: 'Config API',
+  setupCertsSource_generated: 'sunucu üretti', setupCertsSource_uploaded: 'yüklendi', setupCertsSource_fetched: 'URL\'den alındı', setupCertsSource_manual: 'elle girildi',
+  setupc_config_api_cert: 'Sertifika süresi', setupc_config_api_cert_why: 'Süresi dolan Config API sertifikasını telefonlar reddeder; yenisi uygulama güncellemesi ister.',
+  setupc_config_api_cert_source: 'Sertifikanın kaynağı', setupc_config_api_cert_source_why: 'Self-signed de olsa pin\'li olduğu için güvenlidir. Kendi sertifikanız varsa Bootstrap sekmesinden yükleyin.',
+  setupc_config_api_backup_key: 'Yedek anahtar', setupc_config_api_backup_key_why: 'Yedek anahtar varsa anahtar çalındığında uygulama güncellemesi olmadan yedeğe geçilir. Yoksa sertifikayı bir kez yeniden üretin (uygulama güncellemesi ister).',
+  setupc_config_api_cert_name: 'Telefonların bağlandığı ad sertifikada', setupc_config_api_cert_name_why: 'PinVault pin\'i doğrular, ama uygulamanın kendi ad denetimi (OkHttp) adı sertifikada arar. EXTRA_CERT_SANS ile adı ekleyip sertifikayı yeniden üretin ya da adı taşıyan sertifikayı yükleyin.',
+  setupc_client_ca: 'Client CA süresi', setupc_client_ca_why: 'Cihaz sertifikalarını imzalayan CA. Süresi dolunca hiçbir cihaz yenilenemez; CA değişimi bütün cihazların yeniden kaydı demektir.',
+  setupc_client_cert_ttl: 'Cihaz sertifikası ömrü', setupc_client_cert_ttl_why: 'Kısa ömür çalınan bir sertifikanın işe yarama süresini kısaltır; cihaz süresinin üçte biri kalınca kendisi yeniler.',
+  setupc_enrollment_mode: 'Kayıt modu', setupc_enrollment_mode_why: 'Açık mod her telefonu kabul eder; üretimde token ya da kayıt kodu kullanın.',
+  setupc_p12_enrollment: 'Sunucu üretimli anahtar (P12)', setupc_p12_enrollment_why: 'Özel anahtar sunucudan telefona taşınır. Eski uygulamalar yoksa kapatın.',
+  setupc_recovery_door: 'Kurtarma kapısı', setupc_recovery_door_why: 'Süresi dolmuş sertifikalı cihazlar yeni sertifikayı buradan alır. Kapalıysa süresi geçen her cihaz yeni token ister.',
+  setupc_server_ca: 'Sunucu CA süresi', setupc_server_ca_why: 'Kurtarma kapısının sertifikasını imzalar; uygulama bu CA\'yı pin\'ler.',
+  setupc_enrolled_devices: 'Kayıtlı cihaz', setupc_enrolled_devices_why: 'Aktif sertifikası olan cihaz sayısı.',
+  setupc_host_cert: 'Sertifika süresi', setupc_host_cert_why: 'Süresi dolan sertifikayı telefon reddeder; config yenilemek süreyi uzatmaz.',
+  setupc_host_backup_pin: 'Yedek pin', setupc_host_backup_pin_why: 'İkinci pin kimin anahtarı? Sunucunun sakladığı yedek anahtarsa anahtar kaybında tek tıkla geçilir; CA pin\'iyse o CA\'nın verdiği her sertifika kabul edilir.',
+  setupc_host_served_here: 'Bu sunucunun sunduğu host', setupc_host_served_here_why: 'Test için kurulan hedef (mock). Üretimde gerçek sunucunun pin\'leri girilmeli.',
+  setupc_host_client_cert: 'Host istemci sertifikası', setupc_host_client_cert_why: 'Bu host için cihazlara verilen ortak istemci sertifikasının süresi.',
+  setupc_vault_file: 'Dosya süresi', setupc_vault_file_why: 'Süre dolmadan dosyanın yenisini yükleyin.'
+});
+
+Object.assign(i18n.en, {
+  setupStepCerts: '2 · Certificates',
+  setupCertsIntro: 'Every certificate to decide on before production, in one place. The button next to a row opens the page where it changes; the wizard itself changes no certificate.',
+  setupCertsConfigApi: 'The Config API\'s own certificate (the app\'s first pins)',
+  setupCertsConfigApiHint: 'The app embeds two pins of this certificate. The server-made (self-signed) certificate is fine in production because it is pinned; you may upload your own instead. A new certificate needs an app update, a switch to the backup key does not.',
+  setupCertsMtls: 'mTLS: device certificates',
+  setupCertsMtlsHint: 'Devices get their certificates from this server\'s client CA and renew them before they run out. The client CA\'s pin goes into the app code as clientCaPins (Code step).',
+  setupCertsHosts: 'Pinned hosts',
+  setupCertsHostsHint: 'Where each host\'s pins came from, when its certificate expires and whose key the backup pin trusts. For a host taken from a URL the backup pin is usually the issuing CA\'s.',
+  setupCertsVault: 'Vault file expiry',
+  setupCertsVaultHint: 'Vault files given an expiry. The expiry is a reminder; devices are still served the file.',
+  setupCertsNoHosts: 'No pinned host yet.', setupCertsNoVault: 'No vault file with an expiry.',
+  setupCertsMtlsOff: 'No mTLS Config API; this part matters once an mTLS listener exists.',
+  setupCertsLoadError: 'Certificate facts could not be loaded',
+  setupCertsOpen: 'Open', setupCertsOpenBootstrap: 'Bootstrap tab', setupCertsOpenMtls: 'mTLS tab', setupCertsOpenHost: 'Host page', setupCertsOpenVault: 'Vault tab',
+  setupCertsColWhat: 'What', setupCertsColNow: 'Now', setupCertsColGo: 'Where it changes',
+  setupCertsSubject: 'Certificate', setupCertsNames: 'Names (SAN)', setupCertsPins: 'Pins', setupCertsListeners: 'Listeners',
+  setupCertsClientCaPin: 'Client CA pin (clientCaPins)', setupCertsDevices: 'Enrolled devices', setupCertsSource: 'Source', setupCertsScope: 'Config API',
+  setupCertsSource_generated: 'server-made', setupCertsSource_uploaded: 'uploaded', setupCertsSource_fetched: 'from URL', setupCertsSource_manual: 'entered by hand',
+  setupc_config_api_cert: 'Certificate validity', setupc_config_api_cert_why: 'Phones refuse an expired Config API certificate; a new one needs an app update.',
+  setupc_config_api_cert_source: 'Where the certificate is from', setupc_config_api_cert_source_why: 'Self-signed is safe because it is pinned. Upload your own on the Bootstrap tab if you have one.',
+  setupc_config_api_backup_key: 'Backup key', setupc_config_api_backup_key_why: 'With a stored backup key a stolen key is replaced without an app update. Without one, regenerate the certificate once (needs an app update).',
+  setupc_config_api_cert_name: 'The name phones connect to is in the certificate', setupc_config_api_cert_name_why: 'PinVault checks the pin, but the app\'s own name check (OkHttp) looks for the name in the certificate. Add it with EXTRA_CERT_SANS and regenerate, or upload a certificate that carries it.',
+  setupc_client_ca: 'Client CA validity', setupc_client_ca_why: 'The CA that signs device certificates. When it expires no device can renew; a CA change means every device enrolls again.',
+  setupc_client_cert_ttl: 'Device certificate lifetime', setupc_client_cert_ttl_why: 'A short lifetime limits how long a stolen certificate works; devices renew with a third of it left.',
+  setupc_enrollment_mode: 'Enrollment mode', setupc_enrollment_mode_why: 'Open mode accepts any phone; use tokens or enrollment codes in production.',
+  setupc_p12_enrollment: 'Server-made keys (P12)', setupc_p12_enrollment_why: 'The private key travels from the server to the phone. Turn it off unless old apps need it.',
+  setupc_recovery_door: 'Recovery door', setupc_recovery_door_why: 'Devices whose certificate expired get a new one here. Without it every expired device needs a new token.',
+  setupc_server_ca: 'Server CA validity', setupc_server_ca_why: 'Signs the recovery door\'s certificate; the app pins this CA.',
+  setupc_enrolled_devices: 'Enrolled devices', setupc_enrolled_devices_why: 'Devices with an active certificate.',
+  setupc_host_cert: 'Certificate validity', setupc_host_cert_why: 'Phones refuse an expired certificate; refreshing the config does not extend it.',
+  setupc_host_backup_pin: 'Backup pin', setupc_host_backup_pin_why: 'Whose key is the second pin? A backup key this server keeps is a one-click switch when the key is lost; a CA pin accepts every certificate that CA issues.',
+  setupc_host_served_here: 'Served by this server', setupc_host_served_here_why: 'A target set up for tests (mock). In production enter the real server\'s pins.',
+  setupc_host_client_cert: 'Host client certificate', setupc_host_client_cert_why: 'Validity of the shared client certificate handed to devices for this host.',
+  setupc_vault_file: 'File expiry', setupc_vault_file_why: 'Upload a new file before it runs out.'
+});
+
+let setupCerts = null;
+
+async function loadSetupCerts() {
+  const res = await apiFetch('/api/v1/setup/certificates', { quiet: true });
+  if (!res.ok) throw new Error('HTTP ' + res.status);
+  setupCerts = await res.json();
+}
+
+function setupCertRow(c) {
+  const go = setupCertAction(c);
+  return `<tr data-setup-check="${esc(c.id)}" data-setup-level="${esc(c.level)}">
+      <td>${setupLevelBadge(c.level)}</td>
+      <td><b>${esc(t('setupc_' + c.id))}</b><div class="muted small">${esc(t('setupc_' + c.id + '_why'))}</div></td>
+      <td class="mono small">${esc(c.current)}</td>
+      <td>${go}</td>
+    </tr>`;
+}
+
+/** The button that opens the page where the row's certificate is changed. */
+function setupCertAction(c) {
+  const api = c.configApiId || '';
+  switch (c.action) {
+    case 'bootstrap': return `<button class="btn btn-secondary btn-sm" data-action="setupOpenBootstrap" data-arg0="${esc(api)}">${t('setupCertsOpenBootstrap')}</button>`;
+    case 'mtls': return `<button class="btn btn-secondary btn-sm" data-action="setupOpenMtls" data-arg0="${esc(api)}">${t('setupCertsOpenMtls')}</button>`;
+    case 'host': return `<button class="btn btn-secondary btn-sm" data-action="setupOpenHost" data-arg0="${esc(c.hostname || '')}" data-arg1="${esc(api)}">${t('setupCertsOpenHost')}</button>`;
+    case 'vault': return `<button class="btn btn-secondary btn-sm" data-action="setupOpenVault" data-arg0="${esc(api)}">${t('setupCertsOpenVault')}</button>`;
+    default: return '<span class="muted">—</span>';
+  }
+}
+
+/** One line per check of a host: label and value. */
+function setupCertHostFacts(rows) {
+  return rows.map(c => `<div><span class="muted">${esc(t('setupc_' + c.id))}:</span> <span class="mono">${esc(c.current)}</span></div>`).join('');
+}
+
+/** The vault card's rows: one per file with an expiry. */
+function setupCertVaultRows(rows) {
+  return rows.map(c => `<tr data-setup-vault="${esc(c.key || '')}" data-setup-level="${esc(c.level)}">
+      <td>${setupLevelBadge(c.level)}</td>
+      <td><b>${esc(c.key || '')}</b><div class="muted small">${esc(c.configApiId || '')}</div></td>
+      <td class="mono small">${esc(c.current)}</td>
+      <td>${setupCertAction(c)}</td>
+    </tr>`).join('');
+}
+
+function setupCertTable(rows) {
+  return `<table class="data-table">
+      <thead><tr><th></th><th>${t('setupCertsColWhat')}</th><th>${t('setupCertsColNow')}</th><th>${t('setupCertsColGo')}</th></tr></thead>
+      <tbody>${rows.map(setupCertRow).join('')}</tbody>
+    </table>`;
+}
+
+function setupCertsStep() {
+  if (!setupCerts) {
+    loadSetupCerts().then(drawSetup).catch(e => {
+      const el = document.getElementById('setup-certs');
+      if (el) el.innerHTML = `<div class="card"><div class="empty-msg">${t('setupCertsLoadError')}: ${esc(e.message)}</div></div>`;
+    });
+    return `<div id="setup-certs"><div class="loading">${t('loading')}</div></div>`;
+  }
+  const d = setupCerts;
+  const checks = d.checks || [];
+  const locale = lang === 'tr' ? 'tr-TR' : 'en-US';
+  const when = iso => iso ? new Date(iso).toLocaleDateString(locale) : '—';
+  const byAction = a => checks.filter(c => c.action === a && !c.hostname && !c.key);
+  const ready = checks.filter(c => c.level === 'ok').length;
+
+  const cert = d.configApiCert;
+  const configApiCard = `
+    <div class="card" id="setup-certs-config-api">
+      <div class="card-head"><div class="card-title">${t('setupCertsConfigApi')}</div></div>
+      <div class="card-hint">${esc(t('setupCertsConfigApiHint'))}</div>
+      ${cert ? `<div class="muted small" style="margin-bottom:8px">
+        <div><b>${t('setupCertsSubject')}:</b> <span class="mono">${esc(cert.subject)}</span> · ${esc(t('certValidUntil'))} ${esc(when(cert.notAfter))}</div>
+        <div><b>${t('setupCertsNames')}:</b> <span class="mono">${esc((cert.subjectAltNames || []).join(', ') || '—')}</span></div>
+        <div><b>${t('setupCertsPins')}:</b> <span class="mono">${(cert.pins || []).map(p => esc(p.slice(0, 16)) + '…').join(', ')}</span></div>
+        <div><b>${t('setupCertsListeners')}:</b> ${(d.listeners || []).map(l => `<span class="mono">${esc(l.id)} :${esc(l.port)} ${esc(l.mode.toUpperCase())}</span>`).join(', ') || '—'}</div>
+      </div>` : ''}
+      ${setupCertTable(byAction('bootstrap'))}
+    </div>`;
+
+  const mtlsRows = byAction('mtls');
+  const mtlsCard = `
+    <div class="card" id="setup-certs-mtls">
+      <div class="card-head"><div class="card-title">${t('setupCertsMtls')}</div></div>
+      <div class="card-hint">${esc(t('setupCertsMtlsHint'))}</div>
+      ${d.clientCa ? `<div class="muted small" style="margin-bottom:8px">
+        <div><b>${t('setupCertsSubject')}:</b> <span class="mono">${esc(d.clientCa.subject)}</span> · ${esc(t('certValidUntil'))} ${esc(when(d.clientCa.notAfter))}</div>
+        <div><b>${t('setupCertsClientCaPin')}:</b> <span class="mono" id="setup-certs-client-ca-pin">${esc(d.clientCa.pin)}</span></div>
+      </div>` : ''}
+      ${mtlsRows.length ? setupCertTable(mtlsRows) : `<div class="muted">${esc(t('setupCertsMtlsOff'))}</div>`}
+    </div>`;
+
+  const hosts = d.hosts || [];
+  const hostRows = hosts.map(h => {
+    const rows = checks.filter(c => c.hostname === h.hostname && c.configApiId === h.configApiId);
+    const worst = rows.some(c => c.level === 'fail') ? 'fail' : rows.some(c => c.level === 'warn') ? 'warn' : 'ok';
+    return `<tr data-setup-host="${esc(h.hostname)}" data-setup-level="${worst}">
+        <td>${setupLevelBadge(worst)}</td>
+        <td><b>${esc(h.hostname)}</b><div class="muted small">${esc(h.configApiId)} · ${esc(t('setupCertsSource_' + h.source))}${h.mtls ? ' · mTLS' : ''}${h.servedHere ? ' · mock' : ''}</div></td>
+        <td class="small">${setupCertHostFacts(rows)}</td>
+        <td><button class="btn btn-secondary btn-sm" data-action="setupOpenHost" data-arg0="${esc(h.hostname)}" data-arg1="${esc(h.configApiId)}">${t('setupCertsOpenHost')}</button></td>
+      </tr>`;
+  }).join('');
+  const hostsCard = `
+    <div class="card" id="setup-certs-hosts">
+      <div class="card-head"><div class="card-title">${t('setupCertsHosts')} (${hosts.length})</div></div>
+      <div class="card-hint">${esc(t('setupCertsHostsHint'))}</div>
+      ${hosts.length ? `<table class="data-table">
+        <thead><tr><th></th><th>${t('hostname')}</th><th>${t('setupCertsColNow')}</th><th>${t('setupCertsColGo')}</th></tr></thead>
+        <tbody>${hostRows}</tbody></table>` : `<div class="muted">${esc(t('setupCertsNoHosts'))}</div>`}
+    </div>`;
+
+  const vaultRows = setupCertVaultRows(checks.filter(c => c.action === 'vault'));
+  const vaultCard = `
+    <div class="card" id="setup-certs-vault">
+      <div class="card-head"><div class="card-title">${t('setupCertsVault')}</div></div>
+      <div class="card-hint">${esc(t('setupCertsVaultHint'))}</div>
+      ${vaultRows ? `<table class="data-table">
+        <thead><tr><th></th><th>${t('vaultKey')}</th><th>${t('setupCertsColNow')}</th><th>${t('setupCertsColGo')}</th></tr></thead>
+        <tbody>${vaultRows}</tbody></table>` : `<div class="muted">${esc(t('setupCertsNoVault'))}</div>`}
+    </div>`;
+
+  return `
+    <div id="setup-certs">
+      <div class="card">
+        <div class="card-head"><div class="card-title">${esc(t('setupReady', ready, checks.length))}</div></div>
+        <div class="card-hint">${esc(t('setupCertsIntro'))}</div>
+      </div>
+      ${configApiCard}
+      ${mtlsCard}
+      ${hostsCard}
+      ${vaultCard}
+      <div class="form-actions">
+        <button class="btn btn-secondary" data-action="setSetupStep" data-arg0="server">${t('setupBack')}</button>
+        <button class="btn btn-primary" data-action="setSetupStep" data-arg0="app">${t('setupNext')}</button>
+      </div>
+    </div>`;
+}
+
+// Where the rows send the operator. Each opens the panel page the change is made on.
+function setupOpenBootstrap(apiId) {
+  const api = allApiConfigs.find(a => a.id === apiId && a.mode === 'tls') || allApiConfigs.find(a => a.mode === 'tls');
+  if (api) { configApiTab = 'bootstrap'; toggleApiTree(api.id); } else showSection('bootstrap');
+}
+function setupOpenMtls(apiId) {
+  const api = allApiConfigs.find(a => a.id === apiId && a.mode === 'mtls') || allApiConfigs.find(a => a.mode === 'mtls');
+  if (api) { configApiTab = 'mtls'; toggleApiTree(api.id); } else showSection('mtls');
+}
+function setupOpenHost(hostname, apiId) {
+  selectHostInApi(hostname, apiId || scopeId());
+}
+function setupOpenVault(apiId) {
+  const api = allApiConfigs.find(a => a.id === apiId) || allApiConfigs[0];
+  if (api) { configApiTab = 'vault'; toggleApiTree(api.id); }
 }

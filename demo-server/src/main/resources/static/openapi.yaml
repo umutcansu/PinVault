@@ -389,8 +389,12 @@ paths:
       operationId: certExpiry
       summary: Certificate expiry report
       description: |
-        Runs `CertExpiryMonitor.checkAll()` over every host keystore recorded in the
-        `hosts` table. A background thread logs the same data every 6 hours.
+        Runs `CertExpiryMonitor.checkAll()` over every host certificate recorded in the
+        `hosts` table and, since 2.9.0, over everything else that expires: the Config
+        API's own certificate, the client and server CAs, host client certificates
+        and vault files with an `expires_at` (`kind` says which). A background thread
+        checks every 6 hours; expiring and expired items are audited once a day
+        (`cert_expiring`, `vault_file_expiring`) and pushed to the webhook.
 
         Registered on: **management** only.
       security:
@@ -404,6 +408,31 @@ paths:
               schema:
                 type: array
                 items: { $ref: '#/components/schemas/CertExpiryStatus' }
+        '401': { $ref: '#/components/responses/MissingApiKey' }
+        '403': { $ref: '#/components/responses/InvalidApiKey' }
+
+  /api/v1/setup/certificates:
+    get:
+      tags: [server-tls]
+      operationId: getSetupCertificates
+      summary: Setup wizard — the certificates to decide on before production
+      description: |
+        The wizard's "Certificates" step: the Config API's own certificate (subject,
+        names, validity, pins, whether a backup key is stored), the mTLS side (client
+        CA and its pin, device certificate lifetime, enrollment mode, recovery door,
+        server CA), every pinned host (source, validity, backup key, whether a mock
+        listener of this server serves it, host client certificate) and the vault
+        files with an expiry — plus `checks`: one row per decision with `level`
+        (`ok`, `warn`, `fail`), `current` and the panel page that changes it
+        (`action`: `bootstrap`, `mtls`, `host`, `vault`). Public facts only; read-only.
+
+        Registered on: **management** only.
+      security:
+        - ApiKeyAuth: []
+      x-registered-on: management
+      responses:
+        '200':
+          description: Facts and checks.
         '401': { $ref: '#/components/responses/MissingApiKey' }
         '403': { $ref: '#/components/responses/InvalidApiKey' }
 
@@ -765,6 +794,152 @@ paths:
               schema:
                 type: array
                 items: { $ref: '#/components/schemas/PinConfigHistoryEntry' }
+        '401': { $ref: '#/components/responses/MissingApiKey' }
+        '403': { $ref: '#/components/responses/InvalidApiKey' }
+
+  /api/v1/pin-snapshots:
+    get:
+      tags: [certificate-config]
+      operationId: listPinSnapshots
+      summary: Stored pin sets of a Config API (newest first)
+      description: |
+        After every save that changed something, the whole pin set of the scope is
+        kept (the newest 200 per Config API). Each row says when, by whom, how many
+        hosts, and which hosts differ from the row before it (`changed`). A server
+        upgraded to 2.9.0 keeps the state its first change replaces as well.
+
+        Registered on: **management** only.
+      security:
+        - ApiKeyAuth: []
+      x-registered-on: management
+      parameters:
+        - name: configApiId
+          in: query
+          required: false
+          schema: { type: string, default: default-tls }
+      responses:
+        '200':
+          description: Snapshot summaries.
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/PinSnapshotSummary' }
+        '401': { $ref: '#/components/responses/MissingApiKey' }
+        '403': { $ref: '#/components/responses/InvalidApiKey' }
+
+  /api/v1/pin-snapshots/{id}:
+    get:
+      tags: [certificate-config]
+      operationId: getPinSnapshot
+      summary: One stored pin set and what restoring it would change
+      description: |
+        The stored config (`config`) and `restoreDiff`: the hosts a whole-scope
+        restore would add, remove or change against what is served now.
+
+        Registered on: **management** only.
+      security:
+        - ApiKeyAuth: []
+      x-registered-on: management
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: integer }
+      responses:
+        '200':
+          description: The snapshot.
+        '404':
+          description: No such snapshot.
+        '401': { $ref: '#/components/responses/MissingApiKey' }
+        '403': { $ref: '#/components/responses/InvalidApiKey' }
+
+  /api/v1/pin-snapshots/{id}/restore:
+    post:
+      tags: [certificate-config]
+      operationId: restorePinSnapshot
+      summary: Bring a stored pin set back (one click)
+      description: |
+        Publishes the snapshot's pins again as a NEW version of every host whose
+        entry differs from what is served now — devices refuse version downgrades,
+        so the old version itself never comes back, the pins do. Without
+        `hostname` the whole scope is restored: hosts added since are removed,
+        hosts removed since come back above their version watermark. With
+        `hostname` only that host's entry is taken from the snapshot.
+
+        `?configApiId=` must be the snapshot's own scope (else `409 scope_mismatch`).
+        Only the pins change: a certificate this server serves itself keeps its
+        keystore, so with `PIN_LIVE_CHECK=enforce` such a restore is refused (422).
+
+        **Two-person approval** (`PIN_CHANGE_APPROVALS>=2`): waits for a second admin
+        (`202`, operation `pins_restore`); the approver is shown the snapshot and the
+        diff. Audited as `pins_restored` plus the usual `pins_changed` diff; the
+        host's history gets `pins_restored` rows.
+
+        Registered on: **management** only.
+      security:
+        - ApiKeyAuth: []
+      x-registered-on: management
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: integer }
+        - name: configApiId
+          in: query
+          required: false
+          schema: { type: string }
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                hostname: { type: string, description: Restore only this host's entry. }
+      responses:
+        '202': { $ref: '#/components/responses/PendingApproval' }
+        '200':
+          description: Restored (`restored: true`, the new scope `version`, the `hosts` that changed), or `unchanged: true` when the snapshot is what is served now.
+        '400':
+          description: The set the snapshot would publish is not one devices accept (`errors`).
+        '404':
+          description: No such snapshot, or the snapshot has no entry for `hostname`.
+        '409':
+          description: `scope_mismatch`.
+        '422':
+          description: Refused by the live certificate check.
+        '401': { $ref: '#/components/responses/MissingApiKey' }
+        '403': { $ref: '#/components/responses/InvalidApiKey' }
+
+  /api/v1/hosts/{hostname}/pin-versions:
+    get:
+      tags: [certificate-config]
+      operationId: getHostPinVersions
+      summary: Every pin set one host had (newest first)
+      description: |
+        Derived from the scope's snapshots: each row is a set the host was served
+        with, the snapshot it first appeared in (`snapshotId`, what the dashboard's
+        "Restore these pins" sends to `/api/v1/pin-snapshots/{id}/restore`), when and by whom.
+
+        Registered on: **management** only.
+      security:
+        - ApiKeyAuth: []
+      x-registered-on: management
+      parameters:
+        - $ref: '#/components/parameters/HostnamePath'
+        - name: configApiId
+          in: query
+          required: false
+          schema: { type: string, default: default-tls }
+      responses:
+        '200':
+          description: Pin sets, newest first.
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/HostPinVersion' }
         '401': { $ref: '#/components/responses/MissingApiKey' }
         '403': { $ref: '#/components/responses/InvalidApiKey' }
 
@@ -4953,6 +5128,7 @@ paths:
         - $ref: '#/components/parameters/VaultKeyPath'
         - $ref: '#/components/parameters/VaultPolicyQuery'
         - $ref: '#/components/parameters/VaultEncryptionQuery'
+        - $ref: '#/components/parameters/VaultExpiresAtQuery'
       requestBody:
         required: true
         content:
@@ -6468,6 +6644,17 @@ components:
         `plain` on first upload.
       schema: { type: string, enum: [plain, at_rest, end_to_end, user_auth] }
 
+    VaultExpiresAtQuery:
+      name: expiresAt
+      in: query
+      required: false
+      description: >
+        The date the file stops being valid, as `YYYY-MM-DD` (end of that day UTC)
+        or an ISO-8601 instant. Omitted keeps the file's own expiry; empty clears it.
+        A reminder for the expiry monitor only — devices are still served the file.
+        An invalid date is refused (400) before anything is stored.
+      schema: { type: string }
+
     DeviceIdHeader:
       name: X-Device-Id
       in: header
@@ -7299,11 +7486,36 @@ components:
     CertExpiryStatus:
       type: object
       properties:
-        hostname: { type: string }
-        configApiId: { type: string }
+        hostname: { type: string, description: The host name, or for the other kinds the label shown. }
+        configApiId: { type: string, description: "`*` for the server's own certificates." }
         validUntil: { type: string, format: date-time }
         daysRemaining: { type: integer }
         level: { type: string, enum: [ok, warning, expired] }
+        kind: { type: string, enum: [host, config_api, client_ca, server_ca, host_client_cert, vault_file], default: host }
+
+    PinSnapshotSummary:
+      type: object
+      properties:
+        id: { type: integer }
+        configApiId: { type: string }
+        takenAt: { type: string, format: date-time }
+        actor: { type: string }
+        hostCount: { type: integer }
+        version: { type: integer }
+        changed: { type: array, items: { type: string }, description: "`host vN` / `host removed` against the snapshot before." }
+
+    HostPinVersion:
+      type: object
+      properties:
+        snapshotId: { type: integer }
+        hostname: { type: string }
+        version: { type: integer }
+        sha256: { type: array, items: { type: string } }
+        mtls: { type: boolean }
+        clientCertVersion: { type: integer }
+        forceUpdate: { type: boolean }
+        takenAt: { type: string, format: date-time }
+        actor: { type: string }
 
     DetailedHealth:
       type: object
@@ -7348,6 +7560,7 @@ components:
         version: { type: string, description: New version, as a string. }
         access_policy: { type: string, enum: [public, api_key, token, token_mtls] }
         encryption: { type: string, enum: [plain, at_rest, end_to_end, user_auth] }
+        expires_at: { type: string, description: ISO instant, or empty when the file has no expiry. }
 
     VaultDeleteResult:
       type: object
@@ -7359,6 +7572,13 @@ components:
       type: object
       required: [access_policy, encryption]
       properties:
+        expires_at:
+          type: string
+          nullable: true
+          description: >
+            Optional. Omitted keeps the file's expiry; null or "" clears it; a date
+            (`YYYY-MM-DD` or an ISO instant) sets it. Metadata only: the version does
+            not move.
         access_policy:
           type: string
           enum: [public, api_key, token, token_mtls]

@@ -90,9 +90,14 @@ async function renderHealthSection() {
       const days = c.daysRemaining < 0
         ? t('certExpiredAgo', Math.abs(c.daysRemaining))
         : t('certDaysLeft', c.daysRemaining);
-      return `<tr>
+      // What the row is about: a pinned host's certificate (the original rows),
+      // the server's own certificates and CAs, or a vault file with an expiry.
+      const kind = c.kind || 'host';
+      const kindColor = kind === 'vault_file' ? '#a78bfa' : kind === 'host' ? '#64748b' : '#06b6d4';
+      return `<tr data-expiry-kind="${esc(kind)}">
         <td style="font-weight:600;color:#7dd3fc">${esc(c.hostname)}</td>
-        <td style="color:#64748b;font-size:11px">${esc(c.configApiId)}</td>
+        <td><span class="act-badge" style="background:${kindColor}22;color:${kindColor};font-size:10px">${esc(t('expiryKind_' + kind))}</span></td>
+        <td style="color:#64748b;font-size:11px">${c.configApiId === '*' ? '—' : esc(c.configApiId)}</td>
         <td style="color:${color};font-weight:700">${expiryIcon(c.level)} ${expiryLabel(c.level)}</td>
         <td style="color:${color};font-weight:600">${days}</td>
         <td style="color:#64748b;font-size:11px">${new Date(c.validUntil).toLocaleString(locale)}</td>
@@ -115,7 +120,7 @@ async function renderHealthSection() {
         </div>
         <div style="color:#94a3b8;font-size:12px;margin-bottom:8px">${t('certExpiryHint')}</div>
         ${expiry.length > 0 ? `<table class="data-table">
-          <thead><tr><th>${t('hostname')}</th><th>Config API</th><th>${t('thStatus')}</th><th>${t('certRemaining')}</th><th>${t('certValidUntil')}</th></tr></thead>
+          <thead><tr><th>${t('hostname')}</th><th>${t('expiryKind')}</th><th>Config API</th><th>${t('thStatus')}</th><th>${t('certRemaining')}</th><th>${t('certValidUntil')}</th></tr></thead>
           <tbody>${expiryRows}</tbody></table>`
         : `<div class="empty-msg">${t('certExpiryEmpty')}</div>`}
       </div>`;

@@ -7,7 +7,13 @@ import kotlinx.serialization.builtins.ListSerializer
 import kotlinx.serialization.builtins.serializer
 import kotlinx.serialization.json.Json
 
-class PinConfigStore(private val db: DatabaseManager) {
+class PinConfigStore(
+    private val db: DatabaseManager,
+    /** Where every saved pin set is kept for the dashboard's history and restore; null = not kept. */
+    private val snapshots: PinSnapshotStore? = PinSnapshotStore(db),
+    /** Who a snapshot is attributed to (Main passes the audit context's actor). */
+    var snapshotActor: () -> String = { "system" }
+) {
 
     fun ensureConfigExists(configApiId: String) {
         db.connection().use { conn ->
@@ -85,8 +91,8 @@ class PinConfigStore(private val db: DatabaseManager) {
      */
     fun save(configApiId: String, config: PinConfig): PinConfig {
         val listener = onSaved
-        val before = if (listener != null) load(configApiId) else null
-        val saved = saveInTransaction(configApiId, config)
+        val before = load(configApiId)
+        val saved = saveInTransaction(configApiId, config, before)
         // After the commit, outside the transaction: listeners read the store
         // back (e.g. to pre-sign the new config) and must see the new state.
         if (listener != null) {
@@ -109,11 +115,17 @@ class PinConfigStore(private val db: DatabaseManager) {
     @Volatile
     var onSaved: ((configApiId: String, before: PinConfig?, after: PinConfig) -> Unit)? = null
 
-    private fun saveInTransaction(configApiId: String, config: PinConfig): PinConfig {
+    private fun saveInTransaction(configApiId: String, config: PinConfig, before: PinConfig): PinConfig {
         db.connection().use { conn ->
             conn.autoCommit = false
             try {
                 ensureConfigExists(configApiId)
+                // The state this save replaces, when the scope has no snapshot
+                // yet (a server upgraded to 2.9.0): without it the first change
+                // after the upgrade could not be undone.
+                if (snapshots != null && before.pins.isNotEmpty() && !snapshots.hasAny(conn, configApiId)) {
+                    snapshots.record(conn, configApiId, before, "system", java.time.Instant.now().toString())
+                }
 
                 val existingHosts = conn.prepareStatement(
                     "SELECT DISTINCT hostname FROM pin_hashes WHERE config_api_id = ?"
@@ -173,6 +185,8 @@ class PinConfigStore(private val db: DatabaseManager) {
                     }
                     stmt.executeBatch()
                 }
+
+                snapshots?.record(conn, configApiId, effective, snapshotActor(), java.time.Instant.now().toString())
 
                 conn.commit()
                 return effective

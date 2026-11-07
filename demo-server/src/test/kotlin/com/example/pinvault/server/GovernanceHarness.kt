@@ -15,6 +15,7 @@ import com.example.pinvault.server.route.enrollmentPolicyRoutes
 import com.example.pinvault.server.route.governanceRoutes
 import com.example.pinvault.server.route.hostRoutes
 import com.example.pinvault.server.route.managementConfigRoutes
+import com.example.pinvault.server.route.pinSnapshotRoutes
 import com.example.pinvault.server.route.scopedVaultAdminRoutes
 import com.example.pinvault.server.route.serverTlsPinRoutes
 import com.example.pinvault.server.service.ApprovalService
@@ -63,7 +64,8 @@ class GovernanceHarness(
 ) : AutoCloseable {
     val scope = "default-tls"
     val db = DatabaseManager(File(dir, "db.sqlite").absolutePath)
-    val pins = PinConfigStore(db)
+    val snapshots = PinSnapshotStore(db)
+    val pins = PinConfigStore(db, snapshots, snapshotActor = { com.example.pinvault.server.service.AuditContext.actor() })
     val history = PinConfigHistoryStore(db)
     val hosts = HostStore(db)
     val auditStore = AuditLogStore(db)
@@ -86,7 +88,7 @@ class GovernanceHarness(
     private fun stateOf(scope: String): String =
         pins.load(scope).pins.sortedBy { it.hostname }.joinToString("\n") { "${it.hostname}|${it.version}|${it.sha256.sorted()}" }
 
-    val describer = ChangeDescriber(pins, planner, liveGate, ::stateOf, vaultFiles, vaultTokens, audit = audit)
+    val describer = ChangeDescriber(pins, planner, liveGate, ::stateOf, vaultFiles, vaultTokens, audit = audit, snapshots = snapshots)
     val approvals = ApprovalService(
         store = changeRequests, audit = audit, required = required, managementPort = port,
         describe = describer::describe, stateHash = ::stateOf, exempt = exempt
@@ -108,6 +110,7 @@ class GovernanceHarness(
             hostRoutes(scope, pins, hosts, history, certService, MockServerManager(), HostClientCertStore(db),
                 liveGate = liveGate, audit = audit, planner = planner, maxUploadBytes = adminBodyMax)
             managementConfigRoutes(pins, history, hosts, certService, liveGate, audit, planner)
+            pinSnapshotRoutes(snapshots, pins, history, liveGate, audit)
             serverTlsPinRoutes(serverPins, planner, 8443, audit, adminBodyMax)
             clientCertAdminRoutes(certService, clientCerts, identities, enrollmentTokens, audit, { trustRefreshes += it }, adminBodyMax)
             enrollmentPolicyRoutes(policies, clientCerts, audit, approvalsRequired = approvals.required)

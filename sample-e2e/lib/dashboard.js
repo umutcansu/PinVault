@@ -1048,14 +1048,18 @@ class Dashboard {
     return this.page.locator(`tr[data-action="showVaultFileDetail"][data-arg1="${key}"]`);
   }
 
-  /** Vault sekmesinde "Metin" ile dosya yükler; yüklenen sürümü döndürür. */
-  async uploadVaultText(apiId, key, text, { policy = 'public', encryption = 'plain' } = {}) {
+  /**
+   * Vault sekmesinde "Metin" ile dosya yükler; yüklenen sürümü döndürür.
+   * [expiresAt] (YYYY-AA-GG) formdaki "Geçerlilik sonu" alanına yazılır.
+   */
+  async uploadVaultText(apiId, key, text, { policy = 'public', encryption = 'plain', expiresAt = '' } = {}) {
     await this.openConfigApiTab(apiId, 'vault');
     await this.page.locator('#vault-tab-text').click();
     await this.page.fill('#vault-upload-text', text);
     await this.page.fill('#vault-upload-key', key);
     await this.page.selectOption('#vault-upload-policy', policy);
     await this.page.selectOption('#vault-upload-encryption', encryption);
+    if (expiresAt) await this.page.fill('#vault-upload-expires', expiresAt);
     const before = (await this.vaultFileRow(key).count()) ? await this.vaultVersion(key) : 0;
     await this.page.locator('form[data-action-submit="uploadVaultFile"] button[type="submit"]').click();
     await expect.poll(() => this.vaultVersion(key).catch(() => 0)).toBeGreaterThan(before);

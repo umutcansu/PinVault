@@ -59,7 +59,9 @@ class ChangeDescriber(
      */
     private val clientIdInUse: ((String) -> String?)? = null,
     /** The running Config API that listens on a port, or null (a start there stops it). */
-    private val portHolder: ((Int) -> String?)? = null
+    private val portHolder: ((Int) -> String?)? = null,
+    /** The stored pin sets a `pins_restore` brings back; null = the route is not mounted. */
+    private val snapshots: com.example.pinvault.server.store.PinSnapshotStore? = null
 ) {
     private val lenient = Json { ignoreUnknownKeys = true }
 
@@ -106,6 +108,41 @@ class ChangeDescriber(
                         } ?: emptyMap())
                     ),
                     baseHash = stateHash(scope)
+                )
+            }
+            "pins_restore" -> {
+                // The handler's own checks, made now: the snapshot exists, its
+                // scope is the request's, the set it would publish is valid.
+                val id = path.removeSuffix("/restore").substringAfterLast('/').toLongOrNull()
+                val snap = id?.let { snapshots?.get(it) }
+                    ?: throw ApprovalService.Refused(HttpStatusCode.NotFound, "snapshot_not_found")
+                if (parseQueryString(input.query)["configApiId"]?.let { it != snap.configApiId } == true) {
+                    throw ApprovalService.Refused(HttpStatusCode.Conflict, "scope_mismatch")
+                }
+                val host = bodyField("hostname")?.takeIf { it.isNotEmpty() }
+                val current = pinConfigStore.load(snap.configApiId)
+                val planned = try {
+                    PinRestore.plan(current, snap, host)
+                } catch (e: PinRestore.Refused) {
+                    throw ApprovalService.Refused(HttpStatusCode.NotFound, e.message ?: "refused")
+                }
+                (PinConfigRules.errors(planned.pins) + PinConfigRules.trustRootErrors(planned.trustRoots)).takeIf { it.isNotEmpty() }?.let { errors ->
+                    throw ApprovalService.Refused(HttpStatusCode.BadRequest, errors.take(5).joinToString("; "))
+                }
+                val diff = PinDiff.of(current, planned)
+                val live = if (liveGate.enabled) liveGate.check(current, planned) else null
+                Description(
+                    configApiId = snap.configApiId,
+                    summary = "${snap.configApiId}: restore ${host ?: "the pin set"} from snapshot ${snap.id} (${snap.takenAt.take(19)}, by ${snap.actor}) — " +
+                        diff.summary().ifEmpty { "no pin change" },
+                    detail = JsonObject(
+                        detail + diff.toJson() + mapOf(
+                            "snapshotId" to JsonPrimitive(snap.id), "snapshotTakenAt" to JsonPrimitive(snap.takenAt)
+                        ) + (live?.let {
+                            mapOf("liveCheck" to Json.encodeToJsonElement(LiveCertificateGate.Result.serializer(), it))
+                        } ?: emptyMap())
+                    ),
+                    baseHash = stateHash(snap.configApiId)
                 )
             }
             "force_on", "force_off" -> {
@@ -342,15 +379,19 @@ class ChangeDescriber(
                 // What the store does with an absent value: keep the file's own, else the defaults.
                 val newPolicy = policy ?: current?.accessPolicy ?: "token"
                 val newEncryption = encryption ?: current?.encryption ?: "plain"
+                val expiry = query["expiresAt"]?.let { VaultExpiry.parse(it) ?: "" }   // "" = cleared; null = kept
+                val newExpiry = if (expiry != null) expiry.ifEmpty { null } else current?.expiresAt
                 Description(
                     scope,
                     "$scope: ${if (current == null) "upload new vault file $key" else "replace vault file $key (v${current.version})"} — " +
                         "${input.body.size} bytes, SHA-256 ${digest.take(16)}…, access " +
                         (if (current != null && current.accessPolicy != newPolicy) "${current.accessPolicy} → $newPolicy" else newPolicy) +
-                        ", encryption " + (if (current != null && current.encryption != newEncryption) "${current.encryption} → $newEncryption" else newEncryption),
+                        ", encryption " + (if (current != null && current.encryption != newEncryption) "${current.encryption} → $newEncryption" else newEncryption) +
+                        (newExpiry?.let { ", valid until ${it.take(10)}" } ?: ""),
                     JsonObject(detail + mapOf("vaultFile" to buildJsonObject {
                         put("key", key); put("size", input.body.size); put("sha256", digest)
                         put("accessPolicy", newPolicy); put("encryption", newEncryption)
+                        newExpiry?.let { put("expiresAt", it) }
                         current?.let { put("replacesVersion", it.version); put("previousAccessPolicy", it.accessPolicy); put("previousEncryption", it.encryption) }
                     }))
                 )
@@ -366,13 +407,23 @@ class ChangeDescriber(
                 val encryption = (json?.get("encryption") as? JsonPrimitive)?.content ?: throw IllegalArgumentException("encryption field required")
                 vaultUploadError(key, policy, encryption)?.let { throw IllegalArgumentException(it) }
                 val current = vaultFiles?.meta(scope, key)
+                // The handler's rule: absent keeps the file's expiry, null/"" clears it, a date sets it.
+                val expiryField = json?.get("expires_at")
+                val expiry = if (expiryField == null) null
+                    else (VaultExpiry.parse((expiryField as? JsonPrimitive)?.takeIf { it !is kotlinx.serialization.json.JsonNull }?.content) ?: "")
+                val expiryNote = when {
+                    expiry == null -> ""
+                    expiry.isEmpty() -> ", no expiry" + (current?.expiresAt?.let { " (was ${it.take(10)})" } ?: "")
+                    else -> ", valid until ${expiry.take(10)}" + (current?.expiresAt?.let { " (was ${it.take(10)})" } ?: "")
+                }
                 Description(
                     scope,
                     "$scope: vault file $key — access ${current?.accessPolicy ?: "?"} → $policy, encryption ${current?.encryption ?: "?"} → $encryption" +
-                        if (policy == "public") " (anyone who reaches the Config API can download it)" else "",
+                        (if (policy == "public") " (anyone who reaches the Config API can download it)" else "") + expiryNote,
                     JsonObject(detail + mapOf("vaultFile" to buildJsonObject {
                         put("key", key); put("accessPolicy", policy); put("encryption", encryption)
-                        current?.let { put("previousAccessPolicy", it.accessPolicy); put("previousEncryption", it.encryption) }
+                        expiry?.let { put("expiresAt", it) }
+                        current?.let { put("previousAccessPolicy", it.accessPolicy); put("previousEncryption", it.encryption); it.expiresAt?.let { e -> put("previousExpiresAt", e) } }
                     }))
                 )
             }

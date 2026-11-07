@@ -1,5 +1,54 @@
 # Changelog
 
+## Unreleased (2.9.0) — pin history with one-click restore, expiry for everything that expires, the wizard's certificate step
+
+### Server and dashboard
+
+- **Every pin set is kept, and any of them comes back with one click.** After
+  every save the whole pin set of a Config API is stored (`pin_snapshots`,
+  the newest 200 per scope; a server upgraded to this version also keeps the
+  state its first change replaces). The host page's *Previous pin sets* card
+  lists every set the host was served with and *Restore these pins* publishes
+  the old pins again; the Config API page's *Pin set history* card restores
+  the whole scope (hosts added since are dropped, hosts removed since come
+  back above their version watermark). A restore is a new version with the old
+  pins, never the old version — devices refuse downgrades and accept the
+  restore as an update. It goes through the same gates as any pin change:
+  two-person approval (operation `pins_restore`, the approver sees the
+  snapshot and the diff) and the live certificate check. Audited as
+  `pins_restored`; the host history gets `pins_restored` rows.
+  `GET /api/v1/pin-snapshots`, `GET /api/v1/pin-snapshots/{id}`,
+  `POST /api/v1/pin-snapshots/{id}/restore` (`{"hostname": …}` for one host),
+  `GET /api/v1/hosts/{hostname}/pin-versions`.
+- **The expiry monitor watches everything with a date.** Besides the pinned
+  hosts' certificates: the Config API's own certificate (the apps' bootstrap
+  pins), the client CA, the server CA behind the recovery door, client
+  certificates uploaded for hosts, and vault files given an expiry. The Health
+  tab's card and `GET /api/v1/cert-expiry` carry a `kind` per row; expiring
+  and expired items are audited once a day (`cert_expiring`,
+  `vault_file_expiring`) and pushed to the webhook.
+- **Vault files can carry the date they stop being valid.** `?expiresAt=` on
+  upload, `expires_at` with the policy, a date field in the dashboard's upload
+  form and file detail, a badge in the file list. A reminder only: the version
+  does not move and devices are still served the file. An invalid date is
+  refused before anything is stored.
+- **The setup wizard has a "Certificates" step.** Everything to decide on
+  before production in one place, each row with its level and the panel page
+  that changes it: the Config API's own certificate (self-signed is fine
+  because it is pinned; backup key; the name phones connect to), the mTLS
+  side (client CA and its `clientCaPins` value, device certificate lifetime,
+  enrollment mode, recovery door, server CA), every pinned host (source,
+  validity, whose key the backup pin trusts, mock listeners) and the vault
+  files with an expiry. `GET /api/v1/setup/certificates`.
+
+### Samples
+
+- sample-e2e: E11 (host pin history and restore, phone takes the new
+  version), E12 (Config API pin set history, whole-scope restore), E13
+  (expiry kinds, vault file expiry, audit + webhook), K09 (the wizard's
+  certificate step), Y05 (a restore waits for approval and is refused by the
+  live check).
+
 ## 2.8.2 — 2026-10-21 — a host pinned from a URL says whose key its backup trusts
 
 ### Server and dashboard

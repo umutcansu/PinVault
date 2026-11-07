@@ -178,7 +178,8 @@ class WebhookNotifier(
         private val SECURITY_EVENTS = setOf(
             "pins_changed", "client_cert_revoked", "client_identity_forgotten", "device_key_replaced", "device_key_reset",
             "vault_token_revoked", "auth_failed", "admin_request_refused", "enrollment_open_changed", "enrollment_policy_created",
-            "enrollment_request_approved", "client_cert_uploaded", "client_cert_generated", "private_key_downloaded", "cert_expiring"
+            "enrollment_request_approved", "client_cert_uploaded", "client_cert_generated", "private_key_downloaded", "cert_expiring", "vault_file_expiring",
+            "pins_restored"
         )
         private val SECURITY_PREFIXES = listOf("change_", "signing_", "live_check_", "keyset_", "attestation_policy", "attestation_token_secret")
 

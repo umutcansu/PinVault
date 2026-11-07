@@ -2,6 +2,8 @@ package com.example.pinvault.server.route
 
 import com.example.pinvault.server.plugin.receiveLimitedBytes
 import com.example.pinvault.server.service.VaultAccessTokenService
+import com.example.pinvault.server.service.VaultExpiry
+import com.example.pinvault.server.store.ExpirySetting
 import com.example.pinvault.server.store.VaultDistributionStore
 import com.example.pinvault.server.store.VaultFileStore
 import com.example.pinvault.server.store.VaultFileTokenStore
@@ -71,7 +73,8 @@ fun Route.scopedVaultAdminRoutes(
                     "version" to it.version.toString(),
                     "size" to it.size.toString(),
                     "access_policy" to it.accessPolicy,
-                    "encryption" to it.encryption
+                    "encryption" to it.encryption,
+                    "expires_at" to (it.expiresAt ?: "")
                 )
             }
             call.respond(entries)
@@ -89,16 +92,23 @@ fun Route.scopedVaultAdminRoutes(
             vaultUploadError(key, policy, encryption)?.let {
                 return@put call.respond(HttpStatusCode.BadRequest, mapOf("error" to it))
             }
+            // `?expiresAt=`: absent keeps the file's own, empty clears it, a date sets it.
+            val expiresAt = try {
+                call.request.queryParameters["expiresAt"]?.let { ExpirySetting(VaultExpiry.parse(it)) }
+            } catch (e: VaultExpiry.Invalid) {
+                return@put call.respond(HttpStatusCode.BadRequest, mapOf("error" to (e.message ?: "invalid expiresAt")))
+            }
             // Read into memory whole and stored in one row: capped while reading.
             val bytes = call.receiveLimitedBytes(maxFileBytes) ?: return@put
 
             val before = vaultFileStore.meta(cid, key)
-            vaultFileStore.put(cid, key, bytes, policy, encryption)
+            vaultFileStore.put(cid, key, bytes, policy, encryption, expiresAt)
             val entry = vaultFileStore.meta(cid, key)!!
             audit?.record(
                 "vault_file_uploaded",
                 "Vault file $key ${if (before == null) "uploaded" else "replaced (v${before.version} → v${entry.version})"}: " +
-                    "${bytes.size} bytes, ${entry.accessPolicy}, ${entry.encryption}",
+                    "${bytes.size} bytes, ${entry.accessPolicy}, ${entry.encryption}" +
+                    (entry.expiresAt?.let { ", valid until ${it.take(10)}" } ?: ""),
                 cid, key,
                 detail = buildJsonObject {
                     put("version", entry.version)
@@ -106,6 +116,7 @@ fun Route.scopedVaultAdminRoutes(
                     put("sha256", sha256Hex(bytes))
                     put("accessPolicy", entry.accessPolicy)
                     put("encryption", entry.encryption)
+                    entry.expiresAt?.let { put("expiresAt", it) }
                 }
             )
 
@@ -114,7 +125,8 @@ fun Route.scopedVaultAdminRoutes(
                 "key" to key,
                 "version" to entry.version.toString(),
                 "access_policy" to entry.accessPolicy,
-                "encryption" to entry.encryption
+                "encryption" to entry.encryption,
+                "expires_at" to (entry.expiresAt ?: "")
             ))
         }
 
@@ -143,20 +155,31 @@ fun Route.scopedVaultAdminRoutes(
 
             require(policy in VALID_POLICIES) { "Invalid access_policy: $policy" }
             require(encryption in VALID_ENCRYPTIONS) { "Invalid encryption: $encryption" }
+            // `expires_at`: absent keeps the file's own; "" or null clears it; a date sets it.
+            val expiryField = body["expires_at"]
+            val expiresAt = try {
+                if (expiryField == null) null
+                else ExpirySetting(VaultExpiry.parse((expiryField as? JsonPrimitive)?.takeIf { it !is kotlinx.serialization.json.JsonNull }?.content))
+            } catch (e: VaultExpiry.Invalid) {
+                return@put call.respond(HttpStatusCode.BadRequest, mapOf("error" to (e.message ?: "invalid expires_at")))
+            }
 
             val before = vaultFileStore.meta(cid, key)
             val ok = vaultFileStore.updatePolicy(cid, key, policy, encryption)
             if (!ok) return@put call.respond(HttpStatusCode.NotFound, mapOf("error" to "File not found"))
+            if (expiresAt != null) vaultFileStore.setExpiry(cid, key, expiresAt.value)
+            val expiryNote = expiresAt?.let { ", valid until ${it.value?.take(10) ?: "(no expiry)"}" } ?: ""
             audit?.record(
                 "vault_policy_changed",
-                "Vault file $key: access ${before?.accessPolicy ?: "?"} → $policy, encryption ${before?.encryption ?: "?"} → $encryption",
+                "Vault file $key: access ${before?.accessPolicy ?: "?"} → $policy, encryption ${before?.encryption ?: "?"} → $encryption$expiryNote",
                 cid, key,
                 detail = buildJsonObject {
                     put("accessPolicy", policy); put("encryption", encryption)
                     before?.let { put("previousAccessPolicy", it.accessPolicy); put("previousEncryption", it.encryption) }
+                    expiresAt?.let { put("expiresAt", it.value ?: ""); put("previousExpiresAt", before?.expiresAt ?: "") }
                 }
             )
-            call.respond(HttpStatusCode.OK, mapOf("updated" to "true"))
+            call.respond(HttpStatusCode.OK, mapOf("updated" to "true", "expires_at" to (if (expiresAt != null) expiresAt.value ?: "" else before?.expiresAt ?: "")))
         }
 
         // ── Token management ────────────────────────────────────────

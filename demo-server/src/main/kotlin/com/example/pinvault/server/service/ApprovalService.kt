@@ -26,6 +26,7 @@ object PinAffectingRoutes {
         Triple(HttpMethod.Post, Regex("^/api/v1/certificate-config/force-update(/[^/]+)?$"), "force_on"),
         Triple(HttpMethod.Post, Regex("^/api/v1/certificate-config/clear-force(/[^/]+)?$"), "force_off"),
         Triple(HttpMethod.Post, Regex("^/api/v1/config/[^/]+/update$"), "pins_update"),
+        Triple(HttpMethod.Post, Regex("^/api/v1/pin-snapshots/[^/]+/restore$"), "pins_restore"),
         Triple(HttpMethod.Post, Regex("^/api/v1/management/hosts/[^/]+/generate-cert$"), "host_add"),
         Triple(HttpMethod.Post, Regex("^/api/v1/hosts/(generate-cert|fetch-from-url|upload-cert)$"), "host_add"),
         Triple(HttpMethod.Post, Regex("^/api/v1/hosts/[^/]+/(regenerate-cert|rotate-to-backup|upload-cert|fetch-cert-url|toggle-mtls|upload-client-cert)$"), "host_cert"),
