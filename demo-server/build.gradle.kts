@@ -50,6 +50,7 @@ dependencies {
     testImplementation("io.ktor:ktor-server-test-host:3.0.3")
     testImplementation("io.ktor:ktor-client-content-negotiation:3.0.3")
     testImplementation("org.jetbrains.kotlinx:kotlinx-coroutines-test:1.9.0")
+    testImplementation("org.yaml:snakeyaml:2.3") // OpenApiDocumentTest: the served openapi.yaml must parse
 }
 
 kotlin {

@@ -900,13 +900,13 @@ paths:
       responses:
         '202': { $ref: '#/components/responses/PendingApproval' }
         '200':
-          description: Restored (`restored: true`, the new scope `version`, the `hosts` that changed), or `unchanged: true` when the snapshot is what is served now.
+          description: "Restored (`restored: true`, the new scope `version`, the `hosts` that changed), or `unchanged: true` when the snapshot is what is served now."
         '400':
           description: The set the snapshot would publish is not one devices accept (`errors`).
         '404':
           description: No such snapshot, or the snapshot has no entry for `hostname`.
         '409':
-          description: `scope_mismatch`.
+          description: "`scope_mismatch`."
         '422':
           description: Refused by the live certificate check.
         '401': { $ref: '#/components/responses/MissingApiKey' }

@@ -474,6 +474,15 @@ class Device {
       const drift = host - device;
       if (!Number.isFinite(drift) || Math.abs(drift) <= toleranceSeconds) return 0;
       this.rootShell(`date @${host}`);
+      const after = Number(this.shell('date +%s', { timeout: 10_000 }).trim());
+      if (Math.abs(after - host) > 30) {
+        // API 28 toybox applies the zone offset to `date @epoch` (Istanbul: 3 h
+        // behind, the app then refuses the config as "issuedAt ahead of this
+        // device's clock"): set it again in UTC form, as shiftClock does.
+        const t = new Date(host * 1000);
+        const p2 = (n) => String(n).padStart(2, '0');
+        this.rootShell(`date -u ${p2(t.getUTCMonth() + 1)}${p2(t.getUTCDate())}${p2(t.getUTCHours())}${p2(t.getUTCMinutes())}${t.getUTCFullYear()}.${p2(t.getUTCSeconds())}`);
+      }
       return drift;
     } catch {
       // root yoksa ya da cihaz meşgulse senaryo yine de koşsun.
