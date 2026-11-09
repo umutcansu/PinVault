@@ -202,11 +202,16 @@ internal object ConfigParser {
      */
     private fun relEndpoint(f: Fields, key: String, max: Int): String? {
         val v = f.string(key, max) ?: return null
-        if (v.contains("://") || v.startsWith("/") || v.startsWith("\\")) {
+        // The URL parser skips leading whitespace and reads `\` as `/`: " //host/x"
+        // and "https:\\host/x" passed a check that only looked at the first character.
+        if (v != v.trim() || v.contains('\\') || v.contains("://") || v.startsWith("/") || SCHEME_PREFIX.containsMatchIn(v)) {
             throw BridgeInputException("${f.path}.$key: must be a relative path, not an absolute URL")
         }
         return v
     }
+
+    /** `scheme:` at the start of a value: an absolute URL however its slashes are written. */
+    private val SCHEME_PREFIX = Regex("^[A-Za-z][A-Za-z0-9+.-]*:")
 
     fun hostPin(p: Fields): HostPin {
         val hostname = p.requireString("hostname", 255)

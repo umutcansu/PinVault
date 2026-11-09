@@ -1,5 +1,24 @@
 # Changelog
 
+## Unreleased (2.9.0)
+
+### Security
+
+- **Release builds take `requiredSignatures`, `recoveryPublicKeys` and
+  `requiredRecoverySignatures` only from the native security file.** They are
+  part of the library's trust-anchor fingerprint, and a changed fingerprint
+  resets the replay watermarks; a value JS could add and drop again reset
+  them at will. A value the file does not declare is refused
+  (`E_INVALID_CONFIG`) unless it is the default (1, no recovery keys). Copy
+  what JS passes into `pinvault_security.json`. Debug builds are unchanged.
+- **An endpoint that is absolute in another spelling is refused**: whitespace
+  around the value (`" //host/x"`), a backslash anywhere and a bare `scheme:`
+  prefix, on Android and iOS.
+- Through the library: on iOS, numbers a server sends (attestation intervals,
+  a certificate's version field, a vault file's version header) can no longer
+  overflow and end the app; a blank vault file `signaturePublicKey` no longer
+  turns that file's verification off.
+
 ## 2.8.2 — 2026-10-21
 
 ### Changed

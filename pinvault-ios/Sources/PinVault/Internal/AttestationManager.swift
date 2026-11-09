@@ -225,7 +225,7 @@ final class AttestationManager: AttestationTokenSource, @unchecked Sendable {
             if nonce.isBlank {
                 throw AttestationAnswerError("The attestation challenge carries no nonce", kotlinName: "IllegalStateException")
             }
-            let serverTime = LenientJSON.long(challenge, "serverTime", 0)
+            let serverTime = LenientJSON.long(challenge, "serverTime", 0, clampedTo: LenientJSON.epochMillisRange)
             // v2 verdicts only for a server that takes them (ATTESTATION.md §2.1).
             let bindVerdict = LenientJSON.long(challenge, "verdictBinding", 1) >= 2
             if serverTime > 0 { skew = serverTime - clock() }
@@ -283,13 +283,15 @@ final class AttestationManager: AttestationTokenSource, @unchecked Sendable {
         let warnings = LenientJSON.strings(answer, "warnings")
         let reasons = LenientJSON.strings(answer, "rejectionReasons")
         let policyVersion = LenientJSON.hasValue(answer, "policyVersion") ? Int(clamping: LenientJSON.long(answer, "policyVersion", 0)) : nil
-        let nextAttestIn = LenientJSON.long(answer, "nextAttestIn", 0)
+        // Bounded before any arithmetic: these are the server's numbers, and an
+        // overflow is a crash at every start, not an error (see LenientJSON).
+        let nextAttestIn = LenientJSON.long(answer, "nextAttestIn", 0, clampedTo: LenientJSON.secondsRange)
         let nextAttestInMs: Int64? = nextAttestIn > 0 ? nextAttestIn * 1000 : nil
 
         switch LenientJSON.string(answer, "result") {
         case "pass":
             let issued = LenientJSON.nonBlankString(answer, "token")
-            let ttl = LenientJSON.long(answer, "tokenTtlSeconds", 0)
+            let ttl = LenientJSON.long(answer, "tokenTtlSeconds", 0, clampedTo: LenientJSON.secondsRange)
             // Device-clock expiry: the server's `tokenExpiresAt` is in its
             // own time, so the TTL is preferred and the skew applied otherwise.
             let expiresAt: Int64?
@@ -298,7 +300,7 @@ final class AttestationManager: AttestationTokenSource, @unchecked Sendable {
             } else if ttl > 0 {
                 expiresAt = now + ttl * 1000
             } else {
-                let serverExpiry = LenientJSON.long(answer, "tokenExpiresAt", 0)
+                let serverExpiry = LenientJSON.long(answer, "tokenExpiresAt", 0, clampedTo: LenientJSON.epochMillisRange)
                 expiresAt = serverExpiry > 0 ? serverExpiry - (skew ?? 0) : now + Self.defaultTokenTtlMs
             }
             if issued == nil {

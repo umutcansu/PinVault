@@ -326,6 +326,33 @@ class SignatureTrustTest {
         assertEquals(2, t.keySetVersion())
     }
 
+    // A server relays ONE set to all of its Config APIs: a set that is bound at
+    // all has to name each of them (configApiIds).
+    @Test
+    fun `a key set may list every Config API it is for`() {
+        fun listed(version: Int, key: String, vararg ids: String, single: String? = null): SignedKeySet {
+            val body = linkedMapOf<String, Any>("type" to SignatureTrust.KEY_SET_TYPE, "version" to version, "keys" to listOf(key), "configApiIds" to ids.toList())
+            if (single != null) body["configApiId"] = single
+            val payload = gson.toJson(body)
+            return SignedKeySet(payload, listOf(recovery.entry(payload)))
+        }
+        val tls = SignatureTrust("default", listOf(a.pub()), 1, listOf(recovery.pub()), 1, newStore(), serverScope = "prod-tls")
+        // Another block of the same app (its own id, so its own stored set).
+        val mtls = SignatureTrust("mtls", listOf(a.pub()), 1, listOf(recovery.pub()), 1, newStore(), serverScope = "prod-mtls")
+        val set = listed(1, b.pub(), "prod-tls", "prod-mtls")
+        assertTrue(tls.applyKeySetUpdate(set))
+        assertTrue("the same set serves the server's other Config API", mtls.applyKeySetUpdate(set))
+
+        try {
+            tls.applyKeySetUpdate(listed(2, c.pub(), "staging-tls", "staging-mtls"))
+            fail("a set that lists only another deployment's Config APIs must be refused")
+        } catch (e: SecurityException) {
+            assertTrue(e.message, e.message!!.contains("made for Config API 'staging-tls', 'staging-mtls'"))
+        }
+        assertEquals(1, tls.keySetVersion())
+        assertTrue("the single field still counts beside the list", tls.applyKeySetUpdate(listed(2, c.pub(), "other", single = "prod-tls")))
+    }
+
     @Test
     fun `a block without serverScope ignores the field`() {
         val t = SignatureTrust("default", listOf(a.pub()), 1, listOf(recovery.pub()), 1, newStore())

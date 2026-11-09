@@ -70,6 +70,24 @@ final class VaultFileRouterSignatureTests: XCTestCase {
         XCTAssertEqual(try storage.load(key: "ts"), content)
     }
 
+    // A blank per-file key used to build a trust with no key at all, which reads
+    // as "unsigned": the file was stored unchecked inside a signed block.
+    func testABlankPerFileKeyDoesNotSwitchVerificationOff() async throws {
+        let content = Data(utf8: "real")
+        for blank in ["", "   "] {
+            let file = VaultFileConfig(key: "ts", endpoint: "api/v1/vault/ts", signaturePublicKey: blank)
+            let storage = SaveRecorder()
+            let unsigned = VaultFetchResponse(content: content, version: 1, encryption: "plain")
+            failure(await router(storage, answering(unsigned), vaultBlock(signer: signer)).fetchFile(file))
+            XCTAssertNil(try storage.load(key: "ts"), "an unsigned answer must not be stored")
+            let signed = VaultFetchResponse(content: content, version: 1, encryption: "plain", signature: signer.vaultV1("ts", 1, content))
+            guard case .updated = await router(SaveRecorder(), answering(signed), vaultBlock(signer: signer)).fetchFile(file) else {
+                return XCTFail("the block's key verifies the file")
+            }
+        }
+        XCTAssertNil(try VaultFileConfig.Builder("ts").endpoint("api/v1/vault/ts").signaturePublicKey("  ").build().signaturePublicKey)
+    }
+
     func testAFilesOwnKeyOverridesTheBlocksKeys() async throws {
         let storage = SaveRecorder()
         let content = Data(utf8: "model")
@@ -360,5 +378,16 @@ final class VaultFileRouterKeyProofTests: XCTestCase {
         await r.registerDevicePublicKey(deviceId: "ios-07", publicKeyPem: "PEM")
         XCTAssertEqual(failing.deviceRegistrations.count, 1)
         XCTAssertEqual(working.deviceRegistrations.count, 1)
+    }
+
+    // `X-Vault-Version` is a response header: `Int.min - stored` used to end the process.
+    func testTheVersionJumpCheckComparesInsteadOfSubtracting() {
+        XCTAssertFalse(VaultFileRouter.isVersionJump(served: Int.min, stored: 5))
+        XCTAssertFalse(VaultFileRouter.isVersionJump(served: -1, stored: 0))
+        XCTAssertFalse(VaultFileRouter.isVersionJump(served: 1_000_005, stored: 5))
+        XCTAssertTrue(VaultFileRouter.isVersionJump(served: 1_000_006, stored: 5))
+        XCTAssertTrue(VaultFileRouter.isVersionJump(served: Int.max, stored: 5))
+        XCTAssertTrue(VaultFileRouter.isVersionJump(served: 1_000_001, stored: -3), "a first copy counts from zero")
+        XCTAssertFalse(VaultFileRouter.isVersionJump(served: Int.max, stored: Int.max), "no overflow at the top either")
     }
 }

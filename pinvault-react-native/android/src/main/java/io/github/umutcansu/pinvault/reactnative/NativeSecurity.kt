@@ -349,13 +349,25 @@ internal object SecurityPolicy {
             return nativeValue
         }
 
+        // The signing keys' threshold, the recovery keys and theirs are part of the
+        // library's trust-anchor fingerprint, and a changed fingerprint resets the
+        // replay watermarks. In a release build they are the file's alone: a value
+        // the bundle could add and drop again would reset them at will (a default — 1,
+        // no recovery keys — changes nothing and is let through).
+        fun <T : Any> anchorOnly(key: String, nativeValue: T?, jsValue: T?, isDefault: (T) -> Boolean): T? {
+            if (release && nativeValue == null && jsValue != null && !isDefault(jsValue)) throw BridgeInputException(
+                "$path.$key: a release build takes it only from the app's native security file (${native.source}); " +
+                    "declare $key for Config API '$id' there")
+            return jsValue
+        }
+
         return SecurityFields(
             bootstrapPins = pins,
             oneKey = oneKey,
             keys = keys,
-            requiredSignatures = one("requiredSignatures", block.requiredSignatures, js.requiredSignatures),
-            recoveryKeys = list("recoveryPublicKeys", block.recoveryPublicKeys, js.recoveryKeys),
-            requiredRecovery = one("requiredRecoverySignatures", block.requiredRecoverySignatures, js.requiredRecovery),
+            requiredSignatures = one("requiredSignatures", block.requiredSignatures, anchorOnly("requiredSignatures", block.requiredSignatures, js.requiredSignatures) { it == 1 }),
+            recoveryKeys = list("recoveryPublicKeys", block.recoveryPublicKeys, anchorOnly("recoveryPublicKeys", block.recoveryPublicKeys, js.recoveryKeys) { it.isEmpty() }),
+            requiredRecovery = one("requiredRecoverySignatures", block.requiredRecoverySignatures, anchorOnly("requiredRecoverySignatures", block.requiredRecoverySignatures, js.requiredRecovery) { it == 1 }),
             serverScope = one("serverScope", block.serverScope, js.serverScope),
             clientCaPins = list("clientCaPins", block.clientCaPins, js.clientCaPins),
             // The file is the source of truth for the relaxations too.

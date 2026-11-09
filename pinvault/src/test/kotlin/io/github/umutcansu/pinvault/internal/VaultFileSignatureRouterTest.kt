@@ -145,6 +145,31 @@ class VaultFileSignatureRouterTest {
         assertNull("unsigned file must NOT be persisted when a key is set", storage.load("ts"))
     }
 
+    // A blank per-file key used to build a trust with no key at all, which reads
+    // as "unsigned": the file was stored without any signature check, inside a
+    // signed block (review 2026-11-09).
+    @Test
+    fun `a blank per-file key does not switch verification off - the block's keys still verify`() = runTest {
+        val content = "real".toByteArray()
+        for (blank in listOf("", "   ")) {
+            val file = VaultFileConfig(key = "ts", endpoint = "api/v1/vault/ts", configApiId = "default", signaturePublicKey = blank)
+            val unsigned = MemStore()
+            val refused = routerFor(unsigned, VaultFetchResponse(content = content, version = 1, encryption = "plain", signature = null), verifyingKey = pubB64)
+                .fetchFile(file)
+            assertTrue("an unsigned answer must be refused: $refused", refused is VaultFileResult.Failed)
+            assertNull(unsigned.load("ts"))
+
+            val signed = MemStore()
+            val accepted = routerFor(
+                signed, VaultFetchResponse(content = content, version = 1, encryption = "plain", signature = sign("ts", 1, content, keyPair.private)),
+                verifyingKey = pubB64
+            ).fetchFile(file)
+            assertTrue("the block's key verifies the file: $accepted", accepted is VaultFileResult.Updated)
+        }
+        // The builder drops a blank key, so the config says what happens.
+        assertNull(VaultFileConfig.Builder("ts").endpoint("api/v1/vault/ts").signaturePublicKey("  ").build().signaturePublicKey)
+    }
+
     @Test
     fun `no verifying key (allowUnsigned) bypasses verification`() = runTest {
         val content = "legacy".toByteArray()

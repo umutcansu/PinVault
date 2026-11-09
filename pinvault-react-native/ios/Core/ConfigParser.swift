@@ -225,7 +225,10 @@ public enum ConfigParser {
     /// is refused (RN-2). Returns nil when the optional field is absent.
     static func relEndpoint(_ f: Fields, _ key: String, maxLength: Int) throws -> String? {
         guard let v = try f.string(key, maxLength: maxLength) else { return nil }
-        if v.contains("://") || v.hasPrefix("/") || v.hasPrefix("\\") {
+        // Whitespace around it, a backslash anywhere (parsers read it as `/`) or a
+        // `scheme:` prefix: an absolute URL however its slashes are written.
+        if v != v.trimmingCharacters(in: .whitespacesAndNewlines) || v.contains("\\") || v.contains("://") || v.hasPrefix("/")
+            || v.range(of: "^[A-Za-z][A-Za-z0-9+.-]*:", options: .regularExpression) != nil {
             throw BridgeInputError("\(f.path).\(key): must be a relative path, not an absolute URL")
         }
         return v

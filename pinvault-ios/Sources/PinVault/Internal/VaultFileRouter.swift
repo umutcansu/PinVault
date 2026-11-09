@@ -41,6 +41,14 @@ final class VaultFileRouter: Sendable {
     /// Largest accepted step of a file version over the stored one; the bound pin versions have.
     static let maxVersionJump: Int64 = 1_000_000
 
+    /// Whether `served` is more than ``maxVersionJump`` above `stored` (above
+    /// zero for a first copy). A comparison, not a subtraction: the version
+    /// is a response header, and `Int.min - 1` is a crash in Swift.
+    static func isVersionJump(served: Int, stored: Int) -> Bool {
+        let (limit, overflow) = Int64(max(stored, 0)).addingReportingOverflow(maxVersionJump)
+        return !overflow && Int64(served) > limit
+    }
+
     private let clients: [String: Client]
     /// The clients in configuration order (registration goes to every one).
     private let clientOrder: [String]
@@ -559,8 +567,15 @@ final class VaultFileRouter: Sendable {
         }
     }
 
+    // A blank per-file key is "none given": the block's own keys verify the
+    // file. It used to build a trust without a key, which reads as "unsigned" —
+    // one empty build setting switched signature, downgrade and read checks off
+    // for that file inside a signed block.
     private func trustFor(_ file: VaultFileConfig, _ client: Client) -> SignatureTrust? {
-        file.signaturePublicKey.map { SignatureTrust.single(configApiId: file.configApiId, key: $0) } ?? client.signatureTrust
+        if let key = file.signaturePublicKey, !key.isBlank {
+            return SignatureTrust.single(configApiId: file.configApiId, key: key)
+        }
+        return client.signatureTrust
     }
 
     /// The signatures of the scheme the block verifies: the v2 headers when it
@@ -586,7 +601,7 @@ final class VaultFileRouter: Sendable {
     /// Why a served version is not believable, or nil: more than
     /// ``maxVersionJump`` above the stored one (or above zero for a first copy).
     private func versionJumpProblem(_ key: String, served: Int, stored: Int) -> String? {
-        guard Int64(served) - Int64(max(stored, 0)) > Self.maxVersionJump else { return nil }
+        guard Self.isVersionJump(served: served, stored: stored) else { return nil }
         return "Vault file '\(key)' refused: served v\(served) is more than \(Self.maxVersionJump) above stored v\(stored)."
     }
 

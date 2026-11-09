@@ -106,6 +106,15 @@ class ConfigParserTest {
         refused("""{"configApis":[{"id":"a","url":"https://h/","bootstrapPins":[{"hostname":"h","sha256":["$pinA","$pinB"],"pinned":true}],"signaturePublicKey":"$key"}]}""", "bootstrapPins[0]", "'pinned'")
     }
 
+    // The URL parser skips leading whitespace and reads a backslash as a slash:
+    // these passed a check that looked only at "://" and the first character.
+    @Test fun `an endpoint that is absolute in another spelling is refused`() {
+        for (endpoint in listOf(" //evil.example/pins", " /\\\\evil.example/pins", "https:\\\\evil.example/pins", "http:evil.example/pins", "api\\\\v1/pins", "pins ")) {
+            refused("""{"configApis":[${api(""","configEndpoint":"$endpoint"""")}]}""", "configEndpoint", "relative path")
+        }
+        refused("""{"configApis":[${api(""","healthEndpoint":" //evil.example/health"""")}]}""", "healthEndpoint", "relative path")
+    }
+
     @Test fun `absolute endpoints are refused`() {
         refused("""{"configApis":[${api(""","configEndpoint":"https://evil.example/pins"""")}]}""", "configEndpoint", "relative path")
         refused("""{"configApis":[${api(""","clientCertEndpoint":"/abs"""")}]}""", "clientCertEndpoint", "relative path")

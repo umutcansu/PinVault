@@ -253,6 +253,29 @@ final class SignatureTrustTests: XCTestCase {
         return SignedKeySet(payload: body, signatures: [recovery.entry(body)])
     }
 
+    // A server relays ONE set to all of its Config APIs: a set that is bound at
+    // all has to name each of them (configApiIds).
+    func testAKeySetMayListEveryConfigApiItIsFor() throws {
+        func listed(_ version: Int, _ key: String, _ ids: [String], single: String? = nil) -> SignedKeySet {
+            let body = keySetPayload(version: version, keys: [key], configApiId: single, configApiIds: ids)
+            return SignedKeySet(payload: body, signatures: [recovery.entry(body)])
+        }
+        let tls = SignatureTrust(configApiId: "default", builtInKeys: [a.pub], builtInThreshold: 1,
+                                 recoveryKeys: [recovery.pub], recoveryThreshold: 1, store: newStore(), serverScope: "prod-tls")
+        let mtls = SignatureTrust(configApiId: "mtls", builtInKeys: [a.pub], builtInThreshold: 1,
+                                  recoveryKeys: [recovery.pub], recoveryThreshold: 1, store: newStore(), serverScope: "prod-mtls")
+        let set = listed(1, b.pub, ["prod-tls", "prod-mtls"])
+        XCTAssertTrue(try tls.applyKeySetUpdate(set))
+        XCTAssertTrue(try mtls.applyKeySetUpdate(set), "the same set serves the server's other Config API")
+
+        let message = assertSecurityRefusal("made for Config API 'staging-tls', 'staging-mtls'") {
+            try tls.applyKeySetUpdate(listed(2, c.pub, ["staging-tls", "staging-mtls"]))
+        }
+        XCTAssertEqual(message, "Signing-key set rejected — it was made for Config API 'staging-tls', 'staging-mtls', this block is 'prod-tls' (serverScope).")
+        XCTAssertEqual(try tls.keySetVersion(), 1)
+        XCTAssertTrue(try tls.applyKeySetUpdate(listed(2, c.pub, ["other"], single: "prod-tls")), "the single field still counts beside the list")
+    }
+
     func testAKeySetMadeForAnotherConfigApiIsRefusedByAScopedBlock() throws {
         let t = SignatureTrust(configApiId: "default", builtInKeys: [a.pub], builtInThreshold: 1,
                                recoveryKeys: [recovery.pub], recoveryThreshold: 1, store: newStore(), serverScope: "prod-tls")

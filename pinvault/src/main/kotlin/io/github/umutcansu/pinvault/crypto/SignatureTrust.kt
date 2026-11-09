@@ -346,11 +346,24 @@ internal class SignatureTrust(
         if (parsed.version <= 0) {
             throw SecurityException("Signing-key set rejected — version must be positive.")
         }
-        // Inside the recovery-signed payload, so it cannot be swapped.
-        val scopedTo = parsed.configApiId?.takeIf { it.isNotBlank() }
-        if (scopedTo != null && serverScope != null && scopedTo != serverScope) {
+        // Inside the recovery-signed payload, so it cannot be swapped: the Config
+        // APIs the set was made for (`configApiIds`, or the single `configApiId`).
+        @Suppress("USELESS_CAST")
+        val scopedTo = (listOf(parsed.configApiId) + (parsed.configApiIds as List<String?>?).orEmpty())
+            .filterNotNull().filter { it.isNotBlank() }.distinct()
+        if (scopedTo.isNotEmpty() && serverScope != null && serverScope !in scopedTo) {
             throw SecurityException(
-                "Signing-key set rejected — it was made for Config API '${scopedTo.take(64)}', this block is '$serverScope' (serverScope)."
+                "Signing-key set rejected — it was made for Config API " +
+                    "${scopedTo.take(8).joinToString { "'${it.take(64)}'" }}, this block is '$serverScope' (serverScope)."
+            )
+        }
+        if (scopedTo.isEmpty() && serverScope != null) {
+            // Accepted (sets made before the field existed name nothing), but it is
+            // what lets another deployment's set in when both share a recovery key.
+            Timber.w(
+                "Config API '%s': the signing-key set v%d names no Config API — any deployment that shares " +
+                    "this app's recovery keys could have made it. Publish sets with configApiIds.",
+                configApiId, parsed.version
             )
         }
         val raw = parsed.keys.orEmpty().filterNotNull().filter { it.isNotBlank() }

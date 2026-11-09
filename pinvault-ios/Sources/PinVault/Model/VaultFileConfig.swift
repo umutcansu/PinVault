@@ -102,7 +102,13 @@ public struct VaultFileConfig: Sendable {
         }
 
         @discardableResult public func endpoint(_ endpoint: String) -> Builder { self.endpoint = endpoint; return self }
-        @discardableResult public func signaturePublicKey(_ key: String) -> Builder { signaturePublicKey = key; return self }
+        /// The key this file's signature is checked with instead of the block's.
+        /// A blank value counts as not set (the block's keys apply): it never
+        /// turns verification off.
+        @discardableResult public func signaturePublicKey(_ key: String) -> Builder {
+            signaturePublicKey = key.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? nil : key
+            return self
+        }
         @discardableResult public func updateWithPins(_ value: Bool) -> Builder { updateWithPins = value; return self }
         @discardableResult public func storage(_ strategy: StorageStrategy) -> Builder { storageStrategy = strategy; return self }
         @discardableResult public func storage(_ provider: any VaultStorageProvider) -> Builder { storageProvider = provider; return self }

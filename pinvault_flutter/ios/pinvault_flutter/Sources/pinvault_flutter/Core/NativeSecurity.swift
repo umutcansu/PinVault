@@ -308,9 +308,24 @@ enum SecurityPolicy {
             if let j, !NativeSecurity.sameKeys(j, n) { throw fixed(key) }
             return n
         }
-        out.requiredSignatures = try one("requiredSignatures", block.requiredSignatures, js.requiredSignatures)
-        out.recoveryKeys = try list("recoveryPublicKeys", block.recoveryPublicKeys, js.recoveryKeys)
-        out.requiredRecovery = try one("requiredRecoverySignatures", block.requiredRecoverySignatures, js.requiredRecovery)
+        // The signing keys' threshold, the recovery keys and theirs are part of the
+        // library's trust-anchor fingerprint, and a changed fingerprint resets the
+        // replay watermarks. In a release build they are the file's alone: a value
+        // Dart could add and drop again would reset them at will (a default — 1,
+        // no recovery keys — changes nothing and is let through).
+        func anchorOnly<T>(_ key: String, _ n: T?, _ j: T?, isDefault: (T) -> Bool) throws -> T? {
+            if release, n == nil, let j, !isDefault(j) {
+                throw BridgeInputError("\(path).\(key): a release build takes it only from the app's native security file (\(native.source)); "
+                    + "declare \(key) for Config API '\(id)' there")
+            }
+            return j
+        }
+        out.requiredSignatures = try one("requiredSignatures", block.requiredSignatures,
+            try anchorOnly("requiredSignatures", block.requiredSignatures, js.requiredSignatures) { $0 == 1 })
+        out.recoveryKeys = try list("recoveryPublicKeys", block.recoveryPublicKeys,
+            try anchorOnly("recoveryPublicKeys", block.recoveryPublicKeys, js.recoveryKeys) { $0.isEmpty })
+        out.requiredRecovery = try one("requiredRecoverySignatures", block.requiredRecoverySignatures,
+            try anchorOnly("requiredRecoverySignatures", block.requiredRecoverySignatures, js.requiredRecovery) { $0 == 1 })
         out.serverScope = try one("serverScope", block.serverScope, js.serverScope)
         out.clientCaPins = try list("clientCaPins", block.clientCaPins, js.clientCaPins)
         // The file is the source of truth for the relaxations too.

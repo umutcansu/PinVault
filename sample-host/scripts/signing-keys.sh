@@ -16,7 +16,10 @@
 #   ./scripts/signing-keys.sh gen backup-1            # APK'ya gömülecek yedek imza anahtarı
 #   ./scripts/signing-keys.sh pub recovery-1          # Base64 X.509 public key
 #   ./scripts/signing-keys.sh server-keys             # sunucunun şu an imzaladığı anahtarlar
-#   ./scripts/signing-keys.sh keyset -v 2 -k server,backup-1 -s recovery-1 -o keyset-v2.json
+#   ./scripts/signing-keys.sh keyset -v 2 -k server,backup-1 -s recovery-1 -a default-tls,sample-mtls -o keyset-v2.json
+#       -a: setin geçerli olduğu Config API kimlikleri (uygulamadaki serverScope). Sunucunun
+#       HER Config API'si yazılır; yazılırsa başka bir kurulumun seti bu cihazlarca kabul
+#       edilmez. Kurtarma anahtarını kurulumlar arasında ASLA paylaşmayın.
 #   ./scripts/signing-keys.sh upload keyset-v2.json   # PUT /api/v1/signing-keyset
 #   ./scripts/signing-keys.sh install backup-1        # data/signing-key.pem olarak kur (yeniden başlatma gerekir)
 #   ./scripts/signing-keys.sh install backup-1 next   # data/signing-key-next.pem (CONFIG_SIGNERS=local,local:next)
@@ -104,19 +107,20 @@ case "${cmd}" in
         server_keys
         ;;
     keyset)
-        version="" keys="" signers="" required="" out=""
+        version="" keys="" signers="" required="" out="" apis=""
         while [ $# -gt 0 ]; do
             case "$1" in
                 -v) version="$2"; shift 2 ;;
                 -k) keys="$2"; shift 2 ;;
                 -s) signers="$2"; shift 2 ;;
                 -r) required="$2"; shift 2 ;;
+                -a) apis="$2"; shift 2 ;;
                 -o) out="$2"; shift 2 ;;
                 *) die "Bilinmeyen seçenek: $1" ;;
             esac
         done
         [ -n "${version}" ] && [ -n "${keys}" ] && [ -n "${signers}" ] \
-            || die "Kullanım: $0 keyset -v <sürüm> -k <anahtar,...> -s <kurtarma-anahtarı,...> [-r <eşik>] [-o dosya]"
+            || die "Kullanım: $0 keyset -v <sürüm> -k <anahtar,...> -s <kurtarma-anahtarı,...> [-r <eşik>] [-a <configApiId,...>] [-o dosya]"
         list=()
         IFS=',' read -r -a refs <<<"${keys}"
         for ref in "${refs[@]}"; do
@@ -131,7 +135,18 @@ case "${cmd}" in
         sorted="$(printf '%s\n' "${list[@]}" | sort -u)"
         count="$(printf '%s\n' "${sorted}" | grep -c .)"
         keys_json="$(printf '%s\n' "${sorted}" | sed 's/.*/"&"/' | paste -sd, -)"; keys_json="[${keys_json}]"
-        payload="{\"type\":\"pinvault-signing-keys\",\"version\":${version},\"keys\":${keys_json}${required:+,\"requiredSignatures\":${required}}}"
+        # -a: setin yapıldığı Config API'ler (payload'ın içinde, yani kurtarma imzasının altında).
+        apis_json=""
+        if [ -n "${apis}" ]; then
+            IFS=',' read -r -a api_ids <<<"${apis}"
+            for id in "${api_ids[@]}"; do
+                printf '%s' "${id}" | grep -Eq '^[A-Za-z0-9._:-]{1,64}$' || die "Geçersiz Config API kimliği: ${id}"
+            done
+            apis_json="$(printf '%s\n' "${api_ids[@]}" | sort -u | sed 's/.*/"&"/' | paste -sd, -)"; apis_json=",\"configApiIds\":[${apis_json}]"
+        else
+            echo "UYARI: -a verilmedi: set hiçbir Config API'ye bağlı değil. Aynı kurtarma anahtarını taşıyan başka bir kurulum bu seti cihazlarınıza sunabilir." >&2
+        fi
+        payload="{\"type\":\"pinvault-signing-keys\",\"version\":${version},\"keys\":${keys_json}${required:+,\"requiredSignatures\":${required}}${apis_json}}"
         sigs=""
         IFS=',' read -r -a signer_refs <<<"${signers}"
         for s in "${signer_refs[@]}"; do

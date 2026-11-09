@@ -598,8 +598,12 @@ internal class VaultFileRouter(
         }
     }
 
+    // A blank per-file key is "none given": the block's own keys verify the
+    // file. It used to build a trust without a key, which reads as "unsigned" —
+    // one empty build field switched signature, downgrade and read checks off
+    // for that file inside a signed block.
     private fun trustFor(file: VaultFileConfig, client: ConfigApiClient): SignatureTrust? =
-        file.signaturePublicKey?.let { SignatureTrust.single(file.configApiId, it) } ?: client.signatureTrust
+        file.signaturePublicKey?.takeIf { it.isNotBlank() }?.let { SignatureTrust.single(file.configApiId, it) } ?: client.signatureTrust
 
     /**
      * The signatures of the scheme the block verifies: the v2 headers when it

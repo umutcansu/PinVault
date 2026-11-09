@@ -119,6 +119,19 @@ enum LenientJSON {
         return value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? nil : value
     }
 
+    /// A duration the server names, in seconds: at most ten years.
+    static let secondsRange: ClosedRange<Int64> = 0...315_360_000
+    /// A point in time the server names, in epoch milliseconds: at most the year 3000.
+    static let epochMillisRange: ClosedRange<Int64> = 0...32_503_680_000_000
+
+    /// ``long(_:_:_:)`` held to `range`. For every number the answer is
+    /// multiplied, added to or subtracted from: Swift traps on integer
+    /// overflow (the process dies, no `catch` sees it), so a server that
+    /// answers `"nextAttestIn": 9000000000000000000` must not get that far.
+    static func long(_ object: [String: Any], _ key: String, _ defaultValue: Int64 = 0, clampedTo range: ClosedRange<Int64>) -> Int64 {
+        min(max(long(object, key, defaultValue), range.lowerBound), range.upperBound)
+    }
+
     /// `optLong(key, default)`.
     static func long(_ object: [String: Any], _ key: String, _ defaultValue: Int64 = 0) -> Int64 {
         switch object[key] {

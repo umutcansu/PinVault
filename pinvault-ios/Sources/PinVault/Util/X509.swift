@@ -135,7 +135,12 @@ struct X509Certificate: Sendable, Equatable {
         var fields = try tbs.children()[...]
         var version = 1
         if let first = fields.first, first.tag == ASN1Tag.contextSpecific(0, constructed: true) {
-            version = try first.explicitInner().expect(ASN1Tag.integer).intValue() + 1
+            // v1, v2 or v3 (0, 1, 2). Checked before the `+ 1`: an 8-byte
+            // INTEGER of 0x7FFF… in a certificate a server hands back would
+            // overflow there, and Swift answers an overflow with a crash.
+            let encoded = try first.explicitInner().expect(ASN1Tag.integer).intValue()
+            guard (0...2).contains(encoded) else { throw DERError.invalidValue("certificate version \(encoded)") }
+            version = encoded + 1
             fields = fields.dropFirst()
         }
         guard (1...3).contains(version) else { throw DERError.invalidValue("unknown certificate version \(version)") }

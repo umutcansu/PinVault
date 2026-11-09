@@ -17,5 +17,12 @@ internal data class SigningKeySetPayload(
      * Optional: the Config API (`serverScope`) the set is for. When present
      * and the block sets `serverScope`, they must match. Older sets omit it.
      */
-    val configApiId: String? = null
+    val configApiId: String? = null,
+    /**
+     * Optional: every Config API the set is for. A server relays one set to
+     * all of its Config APIs, so a set that is to be bound at all has to name
+     * each of them; a block that sets `serverScope` takes the set only when
+     * its scope is listed here (or is [configApiId]).
+     */
+    val configApiIds: List<String?>? = null
 )

@@ -411,11 +411,23 @@ final class SignatureTrust: Sendable {
         if parsed.version <= 0 {
             throw Self.rejected("Signing-key set rejected — version must be positive.")
         }
-        // Inside the recovery-signed payload, so it cannot be swapped.
-        if let scopedTo = parsed.configApiId, !scopedTo.isBlank, let serverScope, scopedTo != serverScope {
+        // Inside the recovery-signed payload, so it cannot be swapped: the Config
+        // APIs the set was made for (`configApiIds`, or the single `configApiId`).
+        var scopedTo: [String] = []
+        for id in [parsed.configApiId] + (parsed.configApiIds ?? []) {
+            if let id, !id.isBlank, !scopedTo.contains(id) { scopedTo.append(id) }
+        }
+        if !scopedTo.isEmpty, let serverScope, !scopedTo.contains(serverScope) {
+            let named = scopedTo.prefix(8).map { "'\($0.kotlinTake(64))'" }.joined(separator: ", ")
             throw Self.rejected(
-                "Signing-key set rejected — it was made for Config API '\(scopedTo.kotlinTake(64))', this block is '\(serverScope)' (serverScope)."
+                "Signing-key set rejected — it was made for Config API \(named), this block is '\(serverScope)' (serverScope)."
             )
+        }
+        if scopedTo.isEmpty, serverScope != nil {
+            // Accepted (sets made before the field existed name nothing), but it is
+            // what lets another deployment's set in when both share a recovery key.
+            log.w("Config API '\(configApiId)': the signing-key set v\(parsed.version) names no Config API — any deployment that " +
+                "shares this app's recovery keys could have made it. Publish sets with configApiIds.")
         }
         let raw = (parsed.keys ?? []).compactMap { $0 }.filter { !$0.isBlank }
         if raw.count > Self.maxSetKeys {

@@ -52,6 +52,26 @@ final class SecurityAndNetworkingTests: XCTestCase {
             """, native: file)
     }
 
+    // The thresholds and the recovery keys are part of the library's trust-anchor
+    // fingerprint; a changed fingerprint resets the replay watermarks. A value Dart
+    // could add and drop again would reset them at will (review 2026-11-09).
+    func testAReleaseBuildTakesTheSignatureThresholdsAndRecoveryKeysOnlyFromTheFile() throws {
+        let anchors = #""id":"default","url":"https://h.example:8081/","bootstrapPins":[{"hostname":"h.example","sha256":["\#(pinA)","\#(pinB)"]}]"#
+        let twoKeys = try NativeSecurity.parse(#"{"configApis":[{\#(anchors),"signaturePublicKeys":["\#(key)","\#(key2)"]}]}"#, source: "pinvault_security.json")
+        assertRefused(#"{"configApis":[{\#(base),"requiredSignatures":2}]}"#, native: twoKeys,
+                      "requiredSignatures", "only from the app's native security file")
+        assertRefused(#"{"configApis":[{\#(base),"recoveryPublicKeys":["\#(key3)"]}]}"#, native: twoKeys,
+                      "recoveryPublicKeys", "only from the app's native security file")
+        let recovery = try NativeSecurity.parse(
+            #"{"configApis":[{\#(anchors),"signaturePublicKeys":["\#(key)"],"recoveryPublicKeys":["\#(key2)","\#(key3)"]}]}"#, source: "pinvault_security.json")
+        assertRefused(#"{"configApis":[{\#(base),"requiredRecoverySignatures":2}]}"#, native: recovery,
+                      "requiredRecoverySignatures", "only from the app's native security file")
+
+        // The defaults change nothing and pass; a debug build still takes the values it is given.
+        XCTAssertNoThrow(try parse(#"{"configApis":[{\#(base),"requiredSignatures":1,"recoveryPublicKeys":[]}]}"#, native: twoKeys))
+        XCTAssertNoThrow(try parse(#"{"configApis":[{\#(base),"requiredSignatures":2}]}"#, native: twoKeys, release: false))
+    }
+
     func testADifferingTrustAnchorIsRefused() {
         assertRefused(#"{"configApis":[{\#(base),"bootstrapPins":[{"hostname":"h.example","sha256":["\#(pinA)","\#(evil)"]}]}]}"#,
                       native: file, "config.configApis[0].bootstrapPins", "fixed")

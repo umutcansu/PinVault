@@ -63,6 +63,13 @@ final class ConfigParserTests: XCTestCase {
         XCTAssertEqual(provider(), "tok-123456")
     }
 
+    // Whitespace around it, a backslash or a bare `scheme:`: absolute in another spelling.
+    func testAnEndpointThatIsAbsoluteInAnotherSpellingIsRefused() {
+        for endpoint in [" //evil.example/pins", #" /\\\\evil.example/pins"#, #"https:\\\\evil.example/pins"#, "http:evil.example/pins", #"api\\\\v1/pins"#, "pins "] {
+            assertRefused(#"{"configApis":[\#(api(#","configEndpoint":"\#(endpoint)""#))]}"#, "configEndpoint", "relative path")
+        }
+    }
+
     func testAbsoluteEndpointsAreRefused() {
         assertRefused(#"{"configApis":[\#(api(#","configEndpoint":"https://evil.example/pins""#))]}"#, "configEndpoint", "relative path")
         assertRefused(#"{"configApis":[\#(api(#","clientCertEndpoint":"/abs""#))]}"#, "clientCertEndpoint", "relative path")

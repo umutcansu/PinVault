@@ -4,6 +4,25 @@
 
 ### Server and dashboard
 
+- **The setup wizard now says how, not only what.** Every checklist row that
+  is not READY opens *How to*: numbered steps with the exact command, `.env`
+  line or dashboard button that fixes it, an *Open in the Settings card*
+  button for settings the dashboard can change (it scrolls to the setting and
+  highlights it), the server's own `.env` fix, the restart note and a final
+  *Verify* step. The server step starts with the order of work, the
+  certificates step has the same for every certificate and host row (whose
+  key the backup pin trusts, how to compute your own), and the code step ends
+  with *Next steps* down to the first phone (dependency, where the code goes,
+  the enrollment token for mTLS, release-build attestation values). Turkish
+  and English (`static/js/app-setup-howto.js`). The same walk as one file:
+  [SETUP.md](SETUP.md); and as a silent film in both languages on the films
+  page (*Setup wizard*, 3:32).
+- **A recorded tour of the dashboard** (`docs/animation/pinvault-setup-in-the-dashboard.en.mp4`,
+  `pinvault-panelde-kurulum.tr.mp4`): the real panel driven click by click from
+  the API key to the generated code, with captions that say what is being done
+  and why; the panel is enlarged so its text reads, and a chapter list under
+  the video jumps to each stop. Made by `sample-e2e/scripts/record-setup-tour.js`
+  on a throwaway server, so it is re-recorded whenever the panel changes.
 - **Every pin set is kept, and any of them comes back with one click.** After
   every save the whole pin set of a Config API is stored (`pin_snapshots`,
   the newest 200 per scope; a server upgraded to this version also keeps the
@@ -11,7 +30,8 @@
   lists every set the host was served with and *Restore these pins* publishes
   the old pins again; the Config API page's *Pin set history* card restores
   the whole scope (hosts added since are dropped, hosts removed since come
-  back above their version watermark). A restore is a new version with the old
+  back above their version watermark; the set's force flag and managed trust
+  roots return with it, one host's restore leaves both alone). A restore is a new version with the old
   pins, never the old version — devices refuse downgrades and accept the
   restore as an update. It goes through the same gates as any pin change:
   two-person approval (operation `pins_restore`, the approver sees the
@@ -20,6 +40,57 @@
   `GET /api/v1/pin-snapshots`, `GET /api/v1/pin-snapshots/{id}`,
   `POST /api/v1/pin-snapshots/{id}/restore` (`{"hostname": …}` for one host),
   `GET /api/v1/hosts/{hostname}/pin-versions`.
+- **The approval card shows everything a change moves.** Found reviewing the
+  restore: a whole-scope restore brought back the snapshot's managed trust
+  roots, and neither the card, the audit entry nor the staleness fingerprint
+  looked at roots — a root withdrawn after a CA incident returned with an
+  approval that showed a pin change only. Now a root that any pin change adds
+  or removes is on the card and in the audit entry by value
+  (`trust root ADDED (…)`, `detail.trustRoots`), the fingerprint covers the
+  roots (an approval computed before a root moved is stale, `409`), a snapshot
+  that differs only in its roots can be restored and says so in the history
+  list, and a pin update's card follows the handler's rule (a body without
+  `trustRoots` keeps them). Three cards that only named the operation now say
+  what it does, from the same code the handler runs: `server_settings` (every
+  key with its saved value before → after; a save the handler would refuse is
+  refused at once), `attestation_policy` (each flag and number that moves,
+  and a lowered production floor), `attestation_device` (forcePass /
+  forceFail / annotations before → after; forgetting a device's key; clearing
+  its token anomaly). The `PinVault-Token` key operations got a sentence each,
+  and an operation without a card of its own is refused instead of shown as a
+  bare name and path (`ApprovalCardsTest` walks every gated route). A
+  single-host restore of a host name longer than 120 characters no longer
+  answers 404 under approvals. **Upgrade note:** change requests still waiting
+  when the server is upgraded were fingerprinted without the roots; they
+  answer `409` on approval and have to be requested again.
+- **The card and the handler read the same request.** A second look at the
+  approval gate found a way past the two-person rule: the card was built from
+  the body as UTF-8, the handler read it in the charset its `Content-Type`
+  named, and the gate refused another charset only for a header that began
+  with lower-case `application/json`. A restore sent as
+  `text/plain; charset=UTF-16` (or `Application/JSON; charset=UTF-16`) with a
+  one-host body got a card for that one host; approved, the handler could not
+  read the body, took it for "no host named" and restored the whole scope,
+  trust roots included. Now the gate refuses every gated request that names a
+  charset other than UTF-8, whatever the media type (`415`), a request stored
+  earlier in another charset is never replayed, and the restore route reads
+  its body with the card's own code: a body that is not `{}` or
+  `{"hostname": "…"}` answers `400 invalid_body` instead of widening to the
+  whole pin set (also with approvals off).
+- **A card is bound to what it was computed from.** The settings, attestation
+  policy and attestation device cards show a difference; approved after the
+  thing they differ from had moved, they applied something else — a policy
+  card that showed only a token lifetime wrote its whole flag map back and
+  undid a flag tightened in between. Each such card now stores a fingerprint
+  (the saved values of the keys it names; the policy and its floor; the
+  device's key, overrides and anomaly), the request is described again when
+  it is approved, and a different fingerprint answers `409` (stale), like a
+  pin change always did. Forgetting an attestation device lists everything
+  that goes with its key (a `forceFail` block, annotations, a token anomaly);
+  clearing an anomaly that is not there is refused at once; a trust-root
+  change and a lowered production floor come first in the one-line summary,
+  which is cut at 300 characters, and the settings and policy lines start
+  with the number of changes.
 - **The expiry monitor watches everything with a date.** Besides the pinned
   hosts' certificates: the Config API's own certificate (the apps' bootstrap
   pins), the client CA, the server CA behind the recovery door, client
@@ -41,8 +112,57 @@
   validity, whose key the backup pin trusts, mock listeners) and the vault
   files with an expiry. `GET /api/v1/setup/certificates`.
 
+### Android
+
+- **A blank per-file `signaturePublicKey` no longer turns verification off.**
+  `vaultFile { signaturePublicKey("") }` — an unset build field — built a
+  trust without a key, which reads as "unsigned": the file was stored with no
+  signature, downgrade or read check inside a signed block. A blank key now
+  counts as not set, and the block's own keys verify the file.
+- **A signing-key set may list the Config APIs it is for** (`configApiIds` in
+  its payload, next to the single `configApiId`). A block with `serverScope`
+  takes a set that names Config APIs only when its own is among them. A
+  server relays one set to all of its Config APIs, so the single field could
+  never be used on a server with two; no shipped tool wrote either. A set
+  that names none is still accepted, with a warning: it is what lets another
+  deployment's set in when both share a recovery key.
+
+### iOS
+
+- **Numbers a server sends can no longer end the app.** Swift answers an
+  integer overflow with a trap, which no `catch` sees. `nextAttestIn` and
+  `tokenTtlSeconds` (multiplied by 1000), `tokenExpiresAt` (minus the clock
+  skew), the version field of a certificate in an enrollment or renewal
+  answer (`+ 1`) and `X-Vault-Version` (minus the stored version) were used
+  unchecked: whoever answered for the Config API — no signing key needed —
+  could crash the app at every start. The attestation numbers are now held
+  to ten years and the year 3000 before any arithmetic, a certificate
+  version outside v1–v3 is a parse error, and the vault version check
+  compares instead of subtracting. Android wraps silently and was not
+  affected.
+- The blank `signaturePublicKey` and `configApiIds` changes above, the same.
+
+### React Native and Flutter
+
+- **Release builds take `requiredSignatures`, `recoveryPublicKeys` and
+  `requiredRecoverySignatures` only from the native security file.** They are
+  part of the library's trust-anchor fingerprint, and a changed fingerprint
+  resets the replay watermarks: a bundle that added `requiredSignatures: 2`
+  and dropped it again reset them at will, after which an older signed
+  config was accepted. A value the file does not declare is refused unless it
+  is the default (1, no recovery keys). See MIGRATION.md.
+- **An endpoint that is absolute in another spelling is refused.** The
+  relative-endpoint check looked for `://` and a leading `/` or `\`;
+  `" //host/x"` (the URL parser skips leading whitespace), `https:\\host/x`
+  and `http:host/x` passed. Whitespace around the value, a backslash anywhere
+  and a `scheme:` prefix are now refused, on all four implementations.
+
 ### Samples
 
+- `signing-keys.sh keyset -a <configApiId,...>` writes `configApiIds` into the
+  set (and warns when it is left out). The server refuses a set that names
+  Config APIs but not every one it serves, and warns about a set that names
+  none.
 - sample-e2e: E11 (host pin history and restore, phone takes the new
   version), E12 (Config API pin set history, whole-scope restore), E13
   (expiry kinds, vault file expiry, audit + webhook), K09 (the wizard's

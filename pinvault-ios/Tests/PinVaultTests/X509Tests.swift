@@ -38,6 +38,25 @@ final class X509Tests: XCTestCase {
         XCTAssertEqual(cert.der, der)
     }
 
+    // A certificate handed back by an enrollment or renewal answer: its version
+    // field is the server's. `7FFF…FF + 1` used to end the process.
+    func testACertificateVersionOutsideV1ToV3IsRefusedNotAnOverflow() throws {
+        var der = [UInt8](try Fixture.data("leaf", "der"))
+        // [0] { INTEGER 2 } → [0] { INTEGER 0x7FFFFFFFFFFFFFFF }: seven bytes longer.
+        let v3: [UInt8] = [0xA0, 0x03, 0x02, 0x01, 0x02]
+        let start = try XCTUnwrap((0..<(der.count - v3.count)).first { Array(der[$0..<($0 + v3.count)]) == v3 }, "the fixture is a v3 certificate")
+        XCTAssertEqual(start, 8, "outer SEQUENCE (4 bytes), tbsCertificate SEQUENCE (4 bytes), then the version")
+        der.replaceSubrange(start..<(start + v3.count), with: [0xA0, 0x0A, 0x02, 0x08, 0x7F] + [UInt8](repeating: 0xFF, count: 7))
+        for lengthAt in [2, 6] {            // both lengths are the long form 0x82 hh ll
+            XCTAssertEqual(der[lengthAt - 1], 0x82)
+            let length = (Int(der[lengthAt]) << 8 | Int(der[lengthAt + 1])) + 7
+            der[lengthAt] = UInt8(length >> 8); der[lengthAt + 1] = UInt8(length & 0xFF)
+        }
+        XCTAssertThrowsError(try X509Certificate(der: Data(der))) { error in
+            XCTAssertEqual(error as? DERError, DERError.invalidValue("certificate version \(Int.max)"))
+        }
+    }
+
     func testTheCACertificateUsesGeneralizedTimeAndIsACA() throws {
         let cert = try X509Certificate(der: try Fixture.data("ca", "der"))
         let values = try expected("ca")

@@ -76,7 +76,8 @@ func keySetPayload(
     version: Int,
     keys: [String],
     requiredSignatures: Int? = nil,
-    configApiId: String? = nil
+    configApiId: String? = nil,
+    configApiIds: [String]? = nil
 ) -> String {
     var fields: [(String, String)] = [
         ("type", JSONText.string(type)),
@@ -85,6 +86,7 @@ func keySetPayload(
     ]
     if let requiredSignatures { fields.append(("requiredSignatures", String(requiredSignatures))) }
     if let configApiId { fields.append(("configApiId", JSONText.string(configApiId))) }
+    if let configApiIds { fields.append(("configApiIds", JSONText.array(configApiIds.map(JSONText.string)))) }
     return JSONText.object(fields)
 }
 

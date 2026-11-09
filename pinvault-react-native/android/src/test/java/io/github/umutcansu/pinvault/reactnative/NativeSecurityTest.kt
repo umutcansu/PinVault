@@ -66,6 +66,29 @@ class NativeSecurityTest {
         assertTrue("native pin forces requirePinned on", p.networking.requirePinned)
     }
 
+    // The thresholds and the recovery keys are part of the library's trust-anchor
+    // fingerprint; a changed fingerprint resets the replay watermarks. A value the bundle
+    // could add and drop again would reset them at will (review 2026-11-09).
+    @Test fun `a release build takes the signature thresholds and recovery keys only from the file`() {
+        val anchors = """"id":"default","url":"https://h.example:8081/","bootstrapPins":[{"hostname":"h.example","sha256":["$pinA","$pinB"]}]"""
+        val twoKeys = NativeSecurity.parse("""{"configApis":[{$anchors,"signaturePublicKeys":["$key","$key2"]}]}""", "assets/pinvault_security.json")
+        val base = """"id":"default","url":"https://h.example:8081/""""
+        refused("""{"configApis":[{$base,"requiredSignatures":2}]}""", native = twoKeys,
+            fragments = arrayOf("requiredSignatures", "only from the app's native security file"))
+        refused("""{"configApis":[{$base,"recoveryPublicKeys":["$key3"]}]}""", native = twoKeys,
+            fragments = arrayOf("recoveryPublicKeys", "only from the app's native security file"))
+        val recovery = NativeSecurity.parse("""{"configApis":[{$anchors,"signaturePublicKeys":["$key"],"recoveryPublicKeys":["$key2","$key3"]}]}""",
+            "assets/pinvault_security.json")
+        refused("""{"configApis":[{$base,"requiredRecoverySignatures":2}]}""", native = recovery,
+            fragments = arrayOf("requiredRecoverySignatures", "only from the app's native security file"))
+
+        // The defaults change nothing and pass; a debug build still takes the values it is given.
+        assertEquals(1, parse("""{"configApis":[{$base,"requiredSignatures":1,"recoveryPublicKeys":[]}]}""", native = twoKeys)
+            .config.configApis.getValue("default").requiredSignatures)
+        assertEquals(2, parse("""{"configApis":[{$base,"requiredSignatures":2}]}""", native = twoKeys, release = false)
+            .config.configApis.getValue("default").requiredSignatures)
+    }
+
     @Test fun `a differing trust anchor from JS is refused`() {
         val base = """"id":"default","url":"https://h.example:8081/""""
         refused("""{"configApis":[{$base,"bootstrapPins":[{"hostname":"h.example","sha256":["$pinA","$evil"]}]}]}""",

@@ -1,6 +1,7 @@
 package io.github.umutcansu.pinvault.model
 
 import io.github.umutcansu.pinvault.store.VaultStorageProvider
+import timber.log.Timber
 
 /**
  * Configuration for a single vault file managed by PinVault.
@@ -81,7 +82,15 @@ data class VaultFileConfig(
         private var wipeWhenStale: Boolean = false
 
         fun endpoint(ep: String) = apply { this.endpoint = ep }
-        fun signaturePublicKey(key: String) = apply { this.signaturePublicKey = key }
+        /**
+         * The key this file's signature is checked with instead of the
+         * block's. A blank value counts as not set (the block's keys apply):
+         * it never turns verification off.
+         */
+        fun signaturePublicKey(key: String) = apply {
+            if (key.isBlank()) Timber.e("Vault file: signaturePublicKey is blank — ignored, the Config API block's signing keys verify the file")
+            this.signaturePublicKey = key.takeIf { it.isNotBlank() }
+        }
         fun updateWithPins(v: Boolean) = apply { this.updateWithPins = v }
         fun storage(strategy: StorageStrategy) = apply { this.storageStrategy = strategy }
         fun storage(provider: VaultStorageProvider) = apply { this.storageProvider = provider }

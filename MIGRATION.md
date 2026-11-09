@@ -4,6 +4,40 @@ The upgrade notes for every release since 2.0, troubleshooting, and a quick
 reference for the multi-Config-API DSL. The full list of changes is in
 [CHANGELOG.md](CHANGELOG.md).
 
+## Upgrading from 2.8.x to 2.9.0
+
+**React Native and Flutter, release builds**
+
+- **`requiredSignatures`, `recoveryPublicKeys` and `requiredRecoverySignatures`
+  come from the native security file.** A release build refuses a value the
+  bundle passes when the file does not declare it (`E_INVALID_CONFIG`,
+  "declare requiredSignatures for Config API … there"), unless it is the
+  default (`requiredSignatures: 1`, no recovery keys). Copy what your bundle
+  passes into the file:
+  `{"configApis":[{"id":"api", …, "signaturePublicKeys":["…","…"],"requiredSignatures":2,"recoveryPublicKeys":["…"]}]}`;
+  the bundle may repeat the same values or leave them out. Debug builds are
+  unchanged.
+- **Endpoints must be plainly relative.** `configEndpoint`, `healthEndpoint`
+  and the other `*Endpoint` values may not start or end with whitespace,
+  contain a backslash or begin with `scheme:`.
+
+**Signing-key sets**
+
+- Make the next set with the Config APIs it is for:
+  `signing-keys.sh keyset -v N -k … -s … -a default-tls,sample-mtls` (every
+  Config API of the server; the app's `serverScope` is one of them). Sets
+  without the list keep working. Never use one recovery key for two
+  deployments: a set made for one would be accepted by the other's apps.
+
+**Server, two-person approval**
+
+- Change requests still pending when the server is upgraded answer `409` on
+  approval and have to be requested again (their staleness fingerprint did
+  not cover the trust roots).
+- A gated request whose `Content-Type` names a charset other than UTF-8 is
+  refused (`415`); `POST /api/v1/pin-snapshots/{id}/restore` answers `400` to
+  a body that is not `{}` or `{"hostname": "…"}`.
+
 ## Upgrading from 2.7.0 to 2.8.0
 
 **React Native and Flutter, release builds**

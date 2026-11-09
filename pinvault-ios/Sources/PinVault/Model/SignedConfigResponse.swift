@@ -106,16 +106,25 @@ struct SigningKeySetPayload: Sendable, Equatable, Codable {
     /// The Config API (`serverScope`) the set is for; when present and the
     /// block sets `serverScope`, they must match. Older sets omit it.
     var configApiId: String?
+    /// Every Config API the set is for. A server relays one set to all of its
+    /// Config APIs, so a set that is to be bound at all names each of them; a
+    /// block that sets `serverScope` takes the set only when its scope is
+    /// listed here (or is ``configApiId``).
+    var configApiIds: [String?]?
 
-    init(type: String? = nil, version: Int = 0, keys: [String?]? = nil, requiredSignatures: Int? = nil, configApiId: String? = nil) {
+    init(
+        type: String? = nil, version: Int = 0, keys: [String?]? = nil, requiredSignatures: Int? = nil,
+        configApiId: String? = nil, configApiIds: [String?]? = nil
+    ) {
         self.type = type
         self.version = version
         self.keys = keys
         self.requiredSignatures = requiredSignatures
         self.configApiId = configApiId
+        self.configApiIds = configApiIds
     }
 
-    enum CodingKeys: String, CodingKey { case type, version, keys, requiredSignatures, configApiId }
+    enum CodingKeys: String, CodingKey { case type, version, keys, requiredSignatures, configApiId, configApiIds }
 
     init(from decoder: any Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
@@ -124,5 +133,6 @@ struct SigningKeySetPayload: Sendable, Equatable, Codable {
         keys = try container.decodeIfPresent([String?].self, forKey: .keys)
         requiredSignatures = try container.decodeIfPresent(Int.self, forKey: .requiredSignatures)
         configApiId = try container.decodeIfPresent(String.self, forKey: .configApiId)
+        configApiIds = try container.decodeIfPresent([String?].self, forKey: .configApiIds)
     }
 }

@@ -238,6 +238,42 @@ final class AttestationManagerTests: XCTestCase {
 
     // MARK: Reject
 
+    // Swift traps on integer overflow: before these numbers were bounded, each
+    // of the three answers below ended the test process (and, in an app, the app
+    // at every start) instead of failing a test.
+    func testNumbersTheServerMakesHugeAreBoundedBeforeAnyArithmetic() async throws {
+        let huge: Int64 = 9_000_000_000_000_000_000
+        let tenYearsMs: Int64 = 315_360_000 * 1000
+
+        api.enqueue(challenge())
+        api.enqueue(.json(#"{"result":"reject","arc":"0badbeef","rejectionReasons":["rooted"],"warnings":[],"nextAttestIn":\#(huge),"policyVersion":3}"#))
+        let rejected = await (try manager()).attestNow()
+        XCTAssertEqual(rejected.result, .reject, "nextAttestIn * 1000 used to overflow")
+
+        api.enqueue(challenge())
+        api.enqueue(.json(#"{"result":"pass","arc":"7f3a9c1e","warnings":[],"token":"eyJ.token.1","tokenTtlSeconds":\#(huge),"nextAttestIn":\#(huge),"policyVersion":3}"#))
+        let passed = await (try manager()).attestNow()
+        XCTAssertEqual(passed.result, .pass)
+        XCTAssertEqual(passed.tokenExpiresAt, now + tenYearsMs, "a TTL is at most ten years")
+        XCTAssertEqual(passed.nextAttestAt, now + 300_000, "the block's own interval still decides")
+
+        // No TTL: the server's expiry minus the clock skew — with a server time of 1 ms
+        // the skew is about minus `now`, and `huge - skew` used to overflow.
+        api.enqueue(challenge(serverTime: 1))
+        api.enqueue(.json(#"{"result":"pass","arc":"7f3a9c1e","warnings":[],"token":"eyJ.token.2","tokenExpiresAt":\#(huge),"nextAttestIn":300,"policyVersion":3}"#))
+        let skewed = await (try manager()).attestNow()
+        XCTAssertEqual(skewed.result, .pass)
+        XCTAssertEqual(skewed.tokenExpiresAt, LenientJSON.epochMillisRange.upperBound - (1 - now), "the expiry is at most the year 3000")
+    }
+
+    func testTheLenientLongIsClamped() {
+        let answer: [String: Any] = ["big": NSNumber(value: Int64(9_000_000_000_000_000_000)), "neg": NSNumber(value: Int64(-5)), "text": "400000000"]
+        XCTAssertEqual(LenientJSON.long(answer, "big", 0, clampedTo: LenientJSON.secondsRange), 315_360_000)
+        XCTAssertEqual(LenientJSON.long(answer, "neg", 0, clampedTo: LenientJSON.secondsRange), 0)
+        XCTAssertEqual(LenientJSON.long(answer, "text", 0, clampedTo: LenientJSON.secondsRange), 315_360_000)
+        XCTAssertEqual(LenientJSON.long(answer, "absent", 7, clampedTo: LenientJSON.secondsRange), 7)
+    }
+
     func testARejectHoldsNoTokenIgnoresAnyConfigRaisesARejectEventAndDoesNotReAttestOnDemand() async throws {
         api.enqueue(challenge())
         api.enqueue(.json(#"{"result":"reject","arc":"0badbeef","rejectionReasons":["rooted","hooking_framework"],"warnings":["adb_enabled"],"nextAttestIn":300,"policyVersion":3,"config":{"payload":"{}","signature":"x"}}"#))
