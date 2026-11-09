@@ -1,0 +1,560 @@
+<template id="08-adim2-hostlar-template">
+  <div id="root" data-composition-id="08-adim2-hostlar" data-start="0" data-duration="15.5" data-width="1920" data-height="1080" lang="en">
+    <style>
+      @import url("https://fonts.googleapis.com/css2?family=Archivo+Black&family=JetBrains+Mono:wght@400;700&family=Space+Grotesk:wght@400;500;700&display=block");
+
+      #root {
+        position: relative;
+        width: 1920px;
+        height: 1080px;
+        overflow: hidden;
+      }
+      [data-composition-id="08-adim2-hostlar"] * {
+        margin: 0;
+        padding: 0;
+        box-sizing: border-box;
+      }
+
+      [id="08-adim2-hostlar-stage"] {
+        position: absolute;
+        inset: 0;
+        width: 1920px;
+        height: 1080px;
+        background: #efe9d9;
+        overflow: hidden;
+        color: #0f0f0f;
+        font-family: "Space Grotesk", sans-serif;
+      }
+
+      /* ---------- chrome ---------- */
+      [id="08-adim2-hostlar-topbar"] {
+        position: absolute;
+        top: 48px;
+        left: 64px;
+        right: 64px;
+        height: 44px;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        font-family: "JetBrains Mono", monospace;
+        font-size: 22px;
+        letter-spacing: 0.06em;
+        white-space: nowrap;
+      }
+      [id="08-adim2-hostlar-pill"] {
+        border: 4px solid #0f0f0f;
+        border-radius: 999px;
+        background: #efe9d9;
+        padding: 4px 20px;
+        line-height: 1.3;
+      }
+      [id="08-adim2-hostlar-footer"] {
+        position: absolute;
+        bottom: 48px;
+        left: 64px;
+        right: 64px;
+        height: 32px;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        font-family: "JetBrains Mono", monospace;
+        font-size: 22px;
+        letter-spacing: 0.06em;
+        white-space: nowrap;
+      }
+      [id="08-adim2-hostlar-counter"] {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+      }
+      [id="08-adim2-hostlar-dot"] {
+        width: 10px;
+        height: 10px;
+        border-radius: 50%;
+        background: #0f0f0f;
+      }
+
+      /* ---------- step strip (fixed geometry) ---------- */
+      [class~="08-adim2-hostlar-cell"] {
+        position: absolute;
+        top: 104px;
+        width: 400px;
+        height: 40px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-family: "JetBrains Mono", monospace;
+        font-size: 17px;
+        letter-spacing: 0.04em;
+        white-space: nowrap;
+        color: #0f0f0f;
+        background: #efe9d9;
+      }
+      [class~="08-adim2-hostlar-done"] {
+        background: #0f0f0f;
+        color: #efe9d9;
+        border: 2px solid #0f0f0f;
+      }
+      [class~="08-adim2-hostlar-future"] {
+        border: 2px solid #0f0f0f;
+        opacity: 0.35;
+      }
+      [id="08-adim2-hostlar-cur"] {
+        border: 4px solid #0f0f0f;
+        font-weight: 700;
+        z-index: 2;
+      }
+      [class~="08-adim2-hostlar-link"] {
+        position: absolute;
+        top: 123px;
+        width: 32px;
+        height: 2px;
+        background: #0f0f0f;
+      }
+      [id="08-adim2-hostlar-underline"] {
+        position: absolute;
+        left: 528px;
+        top: 148px;
+        width: 400px;
+        height: 4px;
+        background: #f5c518;
+        transform-origin: 0 50%;
+      }
+
+      /* ---------- title ---------- */
+      [id="08-adim2-hostlar-title"] {
+        position: absolute;
+        left: 96px;
+        top: 176px;
+        font-family: "Archivo Black", sans-serif;
+        font-size: 76px;
+        line-height: 0.92;
+        letter-spacing: -0.01em;
+        white-space: nowrap;
+      }
+
+      /* ---------- panel card ---------- */
+      [id="08-adim2-hostlar-panel"] {
+        position: absolute;
+        left: 96px;
+        top: 290px;
+        width: 1224px;
+        height: 470px;
+        border: 4px solid #0f0f0f;
+        background: #efe9d9;
+        z-index: 2;
+      }
+      [id="08-adim2-hostlar-panelhead"] {
+        height: 44px;
+        background: #0f0f0f;
+        color: #efe9d9;
+        font-family: "JetBrains Mono", monospace;
+        font-size: 18px;
+        letter-spacing: 0.04em;
+        display: flex;
+        align-items: center;
+        padding: 0 22px;
+        white-space: nowrap;
+      }
+      [id="08-adim2-hostlar-cardtitle"] {
+        position: absolute;
+        left: 20px;
+        top: 58px;
+        font-family: "JetBrains Mono", monospace;
+        font-size: 22px;
+        font-weight: 700;
+        letter-spacing: 0.04em;
+        white-space: nowrap;
+      }
+      [class~="08-adim2-hostlar-th"] {
+        position: absolute;
+        top: 100px;
+        font-family: "JetBrains Mono", monospace;
+        font-size: 17px;
+        letter-spacing: 0.1em;
+        color: rgba(15, 15, 15, 0.7);
+        white-space: nowrap;
+      }
+      [id="08-adim2-hostlar-rule"] {
+        position: absolute;
+        left: 20px;
+        top: 124px;
+        width: 1176px;
+        height: 2px;
+        background: #0f0f0f;
+        transform-origin: 0 50%;
+      }
+      [class~="08-adim2-hostlar-row"] {
+        position: absolute;
+        left: 20px;
+        width: 1176px;
+        height: 106px;
+      }
+      [class~="08-adim2-hostlar-sep"] {
+        border-top: 2px solid rgba(15, 15, 15, 0.15);
+      }
+      [class~="08-adim2-hostlar-badge"] {
+        position: absolute;
+        left: 0;
+        top: 10px;
+        width: 100px;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        font-family: "JetBrains Mono", monospace;
+        font-size: 15px;
+        letter-spacing: 0.06em;
+        line-height: 1.3;
+        padding: 3px 10px;
+        white-space: nowrap;
+      }
+      [class~="08-adim2-hostlar-ok"] {
+        background: #efe9d9;
+        border: 2px solid #1f8a4c;
+        color: #136636;
+      }
+      [class~="08-adim2-hostlar-warn"] {
+        background: #f5c518;
+        border: 2px solid #0f0f0f;
+        color: #0f0f0f;
+      }
+      [class~="08-adim2-hostlar-host"] {
+        position: absolute;
+        left: 110px;
+        top: 6px;
+        font-size: 24px;
+        font-weight: 500;
+        line-height: 30px;
+        white-space: nowrap;
+      }
+      [class~="08-adim2-hostlar-sub"] {
+        position: absolute;
+        left: 110px;
+        top: 46px;
+        font-family: "JetBrains Mono", monospace;
+        font-size: 18px;
+        line-height: 24px;
+        color: rgba(15, 15, 15, 0.75);
+        white-space: nowrap;
+      }
+      [class~="08-adim2-hostlar-now1"] {
+        position: absolute;
+        left: 485px;
+        top: 8px;
+        font-size: 22px;
+        line-height: 28px;
+        white-space: nowrap;
+      }
+      [class~="08-adim2-hostlar-now2"] {
+        position: absolute;
+        left: 485px;
+        top: 46px;
+        font-size: 21px;
+        font-weight: 500;
+        line-height: 28px;
+        white-space: nowrap;
+      }
+      [id="08-adim2-hostlar-phrase"] {
+        position: relative;
+        display: inline-block;
+      }
+      [id="08-adim2-hostlar-phraseline"] {
+        position: absolute;
+        left: 0;
+        right: 0;
+        bottom: -2px;
+        height: 4px;
+        background: #f5c518;
+        transform-origin: 0 50%;
+      }
+      [class~="08-adim2-hostlar-btn"] {
+        position: absolute;
+        left: 1030px;
+        top: 34px;
+        height: 36px;
+        padding: 0 14px;
+        border: 2px solid #0f0f0f;
+        background: #efe9d9;
+        display: flex;
+        align-items: center;
+        font-family: "JetBrains Mono", monospace;
+        font-size: 18px;
+        white-space: nowrap;
+        transform-origin: 50% 50%;
+      }
+      [id="08-adim2-hostlar-btnfill1"] {
+        position: absolute;
+        inset: 0;
+        background: #0f0f0f;
+        color: #efe9d9;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        white-space: nowrap;
+      }
+
+      /* ---------- right column: note + Host page box ---------- */
+      [id="08-adim2-hostlar-note"] {
+        position: absolute;
+        left: 1360px;
+        top: 290px;
+        width: 464px;
+        height: 96px;
+        border: 2px solid #0f0f0f;
+        background: #efe9d9;
+        padding: 14px 16px;
+        font-size: 24px;
+        line-height: 1.3;
+        z-index: 3;
+      }
+      [id="08-adim2-hostlar-lines"] {
+        position: absolute;
+        left: 0;
+        top: 0;
+        width: 1920px;
+        height: 1080px;
+        z-index: 4;
+        overflow: visible;
+        pointer-events: none;
+      }
+      [id="08-adim2-hostlar-noteline"] {
+        fill: none;
+        stroke: #0f0f0f;
+        stroke-width: 2;
+        stroke-linecap: square;
+        stroke-linejoin: miter;
+      }
+      [id="08-adim2-hostlar-hostbox"] {
+        position: absolute;
+        left: 1360px;
+        top: 520px;
+        width: 464px;
+        height: 280px;
+        border: 4px solid #0f0f0f;
+        background: #efe9d9;
+        z-index: 3;
+      }
+      [id="08-adim2-hostlar-hostboxhead"] {
+        height: 40px;
+        background: #0f0f0f;
+        color: #efe9d9;
+        font-family: "JetBrains Mono", monospace;
+        font-size: 18px;
+        letter-spacing: 0.04em;
+        display: flex;
+        align-items: center;
+        padding: 0 16px;
+        white-space: nowrap;
+      }
+      [class~="08-adim2-hostlar-hbtn"] {
+        position: absolute;
+        left: 24px;
+        height: 48px;
+        padding: 0 22px;
+        border: 3px solid #0f0f0f;
+        background: #efe9d9;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-size: 22px;
+        font-weight: 500;
+        white-space: nowrap;
+      }
+      [id="08-adim2-hostlar-flabel"] {
+        position: absolute;
+        left: 24px;
+        top: 124px;
+        font-size: 22px;
+        font-weight: 500;
+        line-height: 1.3;
+        white-space: nowrap;
+      }
+      [id="08-adim2-hostlar-field"] {
+        position: absolute;
+        left: 24px;
+        top: 160px;
+        width: 416px;
+        height: 52px;
+        border: 3px solid #0f0f0f;
+        background: #e4dcc4;
+        display: flex;
+        align-items: center;
+        padding: 0 16px;
+        font-family: "JetBrains Mono", monospace;
+        font-size: 18px;
+        white-space: nowrap;
+      }
+
+      /* ---------- WHY strip ---------- */
+      [id="08-adim2-hostlar-why"] {
+        position: absolute;
+        left: 96px;
+        top: 822px;
+        min-height: 60px;
+        border: 2px solid #0f0f0f;
+        background: #e4dcc4;
+        display: flex;
+        align-items: center;
+        gap: 18px;
+        padding: 8px 22px 8px 8px;
+        z-index: 6;
+      }
+      [id="08-adim2-hostlar-whytag"] {
+        background: #0f0f0f;
+        color: #efe9d9;
+        font-family: "JetBrains Mono", monospace;
+        font-size: 18px;
+        letter-spacing: 0.12em;
+        padding: 6px 12px;
+        white-space: nowrap;
+      }
+      [id="08-adim2-hostlar-whytext"] {
+        font-size: 24px;
+        line-height: 1.25;
+        max-width: 1560px;
+      }
+    </style>
+
+    <div id="08-adim2-hostlar-stage" class="clip" data-start="0" data-duration="15.5" data-track-index="0">
+      <!-- chrome -->
+      <div id="08-adim2-hostlar-topbar">
+        <span>PINVAULT · SETUP WIZARD</span>
+        <span id="08-adim2-hostlar-pill">STEP 2 / 4</span>
+      </div>
+      <div id="08-adim2-hostlar-footer">
+        <span>Step 2 · Hosts</span>
+        <span id="08-adim2-hostlar-counter"><span>08</span><span id="08-adim2-hostlar-dot"></span><span>15</span></span>
+      </div>
+
+      <!-- step strip: cells at x = 96 + i*432, links in the 32px gaps -->
+      <div class="08-adim2-hostlar-cell 08-adim2-hostlar-done" style="left: 96px">1 · SERVER</div>
+      <div class="08-adim2-hostlar-link" style="left: 496px"></div>
+      <div class="08-adim2-hostlar-cell" id="08-adim2-hostlar-cur" style="left: 528px">2 · CERTIFICATES</div>
+      <div class="08-adim2-hostlar-link" style="left: 928px"></div>
+      <div class="08-adim2-hostlar-cell 08-adim2-hostlar-future" style="left: 960px">3 · APP</div>
+      <div class="08-adim2-hostlar-link" style="left: 1360px"></div>
+      <div class="08-adim2-hostlar-cell 08-adim2-hostlar-future" style="left: 1392px">4 · CODE</div>
+      <div id="08-adim2-hostlar-underline"></div>
+
+      <!-- title -->
+      <div id="08-adim2-hostlar-title">YOUR API SERVERS' PINS</div>
+
+      <!-- panel card -->
+      <div id="08-adim2-hostlar-panel">
+        <div id="08-adim2-hostlar-panelhead">Dashboard · 8090 · Setup Wizard · 2 · Certificates</div>
+        <div id="08-adim2-hostlar-cardtitle">PINNED HOSTS (3)</div>
+
+        <div id="08-adim2-hostlar-th1" class="08-adim2-hostlar-th" style="left: 130px">Hostname</div>
+        <div id="08-adim2-hostlar-th2" class="08-adim2-hostlar-th" style="left: 505px">Now</div>
+        <div id="08-adim2-hostlar-th3" class="08-adim2-hostlar-th" style="left: 1050px">Where it changes</div>
+        <div id="08-adim2-hostlar-rule"></div>
+
+        <div id="08-adim2-hostlar-row1" class="08-adim2-hostlar-row" style="top: 130px">
+          <span id="08-adim2-hostlar-b1" class="08-adim2-hostlar-badge 08-adim2-hostlar-warn">WARNING</span>
+          <span id="08-adim2-hostlar-h1" class="08-adim2-hostlar-host">api.example.com</span>
+          <span id="08-adim2-hostlar-s1" class="08-adim2-hostlar-sub">default-tls · from URL</span>
+          <span id="08-adim2-hostlar-n1a" class="08-adim2-hostlar-now1">Certificate validity: until 2027-03-02</span>
+          <span id="08-adim2-hostlar-n1b" class="08-adim2-hostlar-now2"><span id="08-adim2-hostlar-phrase">Backup pin: CA pin<span id="08-adim2-hostlar-phraseline"></span></span> (the issuing authority)</span>
+          <span id="08-adim2-hostlar-btn1" class="08-adim2-hostlar-btn">Host page<span id="08-adim2-hostlar-btnfill1">Host page</span></span>
+        </div>
+        <div id="08-adim2-hostlar-row2" class="08-adim2-hostlar-row 08-adim2-hostlar-sep" style="top: 236px">
+          <span id="08-adim2-hostlar-b2" class="08-adim2-hostlar-badge 08-adim2-hostlar-ok">READY</span>
+          <span id="08-adim2-hostlar-h2" class="08-adim2-hostlar-host">pay.example.com</span>
+          <span id="08-adim2-hostlar-s2" class="08-adim2-hostlar-sub">default-tls · entered by hand</span>
+          <span id="08-adim2-hostlar-n2a" class="08-adim2-hostlar-now1">Certificate validity: until 2026-12-14</span>
+          <span id="08-adim2-hostlar-n2b" class="08-adim2-hostlar-now2">Backup pin: backup key stored on this server</span>
+          <span id="08-adim2-hostlar-btn2" class="08-adim2-hostlar-btn">Host page</span>
+        </div>
+        <div id="08-adim2-hostlar-row3" class="08-adim2-hostlar-row 08-adim2-hostlar-sep" style="top: 342px">
+          <span id="08-adim2-hostlar-b3" class="08-adim2-hostlar-badge 08-adim2-hostlar-warn">WARNING</span>
+          <span id="08-adim2-hostlar-h3" class="08-adim2-hostlar-host">mock-tls.sample</span>
+          <span id="08-adim2-hostlar-s3" class="08-adim2-hostlar-sub">default-tls · server-made · mock</span>
+          <span id="08-adim2-hostlar-n3a" class="08-adim2-hostlar-now1">Served by this server: a test target</span>
+          <span id="08-adim2-hostlar-n3b" class="08-adim2-hostlar-now2">In production enter the real server's pins</span>
+          <span id="08-adim2-hostlar-btn3" class="08-adim2-hostlar-btn">Host page</span>
+        </div>
+      </div>
+
+      <!-- right column -->
+      <div id="08-adim2-hostlar-note">CA pin = every certificate that authority issues is accepted.</div>
+      <svg id="08-adim2-hostlar-lines" viewBox="0 0 1920 1080" xmlns="http://www.w3.org/2000/svg">
+        <path id="08-adim2-hostlar-noteline" pathLength="1" d="M 1420 388 V 510 H 826" />
+      </svg>
+
+      <div id="08-adim2-hostlar-hostbox">
+        <div id="08-adim2-hostlar-hostboxhead">api.example.com · Host page</div>
+        <div id="08-adim2-hostlar-hbtn1" class="08-adim2-hostlar-hbtn" style="top: 60px">Fetch from URL</div>
+        <div id="08-adim2-hostlar-flabel">Backup pin</div>
+        <div id="08-adim2-hostlar-field">the pin of your own second key</div>
+        <div id="08-adim2-hostlar-hbtn2" class="08-adim2-hostlar-hbtn" style="top: 226px">Save</div>
+      </div>
+
+      <!-- WHY strip -->
+      <div id="08-adim2-hostlar-why">
+        <span id="08-adim2-hostlar-whytag">WHY</span>
+        <span id="08-adim2-hostlar-whytext">A backup pin taken from a URL is usually the issuing CA's: if that CA's key is stolen, a forged certificate passes too. Enter the pin of your own second key.</span>
+      </div>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/gsap@3.14.2/dist/gsap.min.js" integrity="sha384-sG0Hv1tP1lZCk9KQmrIbY/XNwi+OY84GQqhMscbnsoBFqAz8KNCil1kvfL3Hbbk2" crossorigin="anonymous"></script>
+    <script>
+      (function () {
+        var FID = "08-adim2-hostlar";
+        var host = document.querySelector('[data-composition-id="' + FID + '"]') || document;
+        var $ = function (n) {
+          return host.querySelector('[id="' + FID + "-" + n + '"]');
+        };
+
+        var tl = gsap.timeline({ paused: true });
+        var SOFT = "power3.out";
+
+        // ---------- Scene 1 (0.0–1.2): strip standing; current cell settles; title ----------
+        tl.fromTo($("cur"), { opacity: 0.35, borderWidth: 2 }, { opacity: 1, borderWidth: 4, duration: 0.6, ease: SOFT }, 0.2);
+        tl.fromTo($("underline"), { scaleX: 0 }, { scaleX: 1, duration: 0.6, ease: SOFT }, 0.2);
+        tl.fromTo($("title"), { opacity: 0, y: 28 }, { opacity: 1, y: 0, duration: 0.8, ease: SOFT }, 0.4);
+
+        // ---------- Scene 2 (1.2–7.0): panel settles; three rows ~1.5 s apart, second text line 0.5 s later ----------
+        tl.fromTo($("panel"), { opacity: 0, y: 30 }, { opacity: 1, y: 0, duration: 0.7, ease: SOFT }, 1.2);
+        tl.fromTo($("cardtitle"), { opacity: 0, x: -16 }, { opacity: 1, x: 0, duration: 0.5, ease: SOFT }, 1.6);
+        ["th1", "th2", "th3"].forEach(function (n, i) {
+          tl.fromTo($(n), { opacity: 0 }, { opacity: 1, duration: 0.4, ease: SOFT }, 1.9 + i * 0.08);
+        });
+        tl.fromTo($("rule"), { scaleX: 0 }, { scaleX: 1, duration: 0.6, ease: SOFT }, 1.9);
+        var rowAt = [2.0, 3.5, 5.0];
+        for (var r = 1; r <= 3; r++) {
+          var at = rowAt[r - 1];
+          tl.fromTo($("row" + r), { opacity: 0 }, { opacity: 1, duration: 0.3, ease: SOFT }, at);
+          tl.fromTo($("h" + r), { opacity: 0, x: -18 }, { opacity: 1, x: 0, duration: 0.5, ease: SOFT }, at);
+          tl.fromTo($("n" + r + "a"), { opacity: 0, x: -14 }, { opacity: 1, x: 0, duration: 0.5, ease: SOFT }, at + 0.1);
+          tl.fromTo($("b" + r), { opacity: 0, scale: 0.85 }, { opacity: 1, scale: 1, duration: 0.35, ease: SOFT }, at + 0.2);
+          tl.fromTo($("btn" + r), { opacity: 0 }, { opacity: 1, duration: 0.4, ease: SOFT }, at + 0.3);
+          tl.fromTo($("s" + r), { opacity: 0, x: -14 }, { opacity: 1, x: 0, duration: 0.5, ease: SOFT }, at + 0.5);
+          tl.fromTo($("n" + r + "b"), { opacity: 0, x: -14 }, { opacity: 1, x: 0, duration: 0.5, ease: SOFT }, at + 0.5);
+        }
+        // row 1: "Backup pin: CA pin" gets its yellow underline
+        tl.fromTo($("phraseline"), { scaleX: 0 }, { scaleX: 1, duration: 0.5, ease: SOFT }, 5.8);
+
+        // ---------- Scene 3 (7.0–8.5): note appears, line to the underlined phrase ----------
+        tl.fromTo($("note"), { opacity: 0, y: 16 }, { opacity: 1, y: 0, duration: 0.6, ease: SOFT }, 7.0);
+        tl.fromTo($("noteline"), { strokeDasharray: 1, strokeDashoffset: 1 }, { strokeDashoffset: 0, duration: 0.7, ease: "power2.inOut" }, 7.5);
+
+        // ---------- Scene 4 (8.5–11.5): row 1's "Host page" pressed; Host page box; its pieces ~0.6 s apart ----------
+        tl.fromTo($("btn1"), { scale: 1 }, { scale: 0.92, duration: 0.1, ease: "power2.in" }, 8.6);
+        tl.fromTo($("btnfill1"), { opacity: 0 }, { opacity: 1, duration: 0.1, ease: "none" }, 8.65);
+        tl.to($("btn1"), { scale: 1, duration: 0.4, ease: SOFT }, 8.7);
+        tl.fromTo($("hostbox"), { opacity: 0, y: 30 }, { opacity: 1, y: 0, duration: 0.7, ease: SOFT }, 9.0);
+        tl.fromTo($("hbtn1"), { opacity: 0, y: 10 }, { opacity: 1, y: 0, duration: 0.5, ease: SOFT }, 9.5);
+        tl.fromTo($("flabel"), { opacity: 0 }, { opacity: 1, duration: 0.4, ease: SOFT }, 10.0);
+        tl.fromTo($("field"), { opacity: 0, y: 10 }, { opacity: 1, y: 0, duration: 0.5, ease: SOFT }, 10.1);
+        tl.fromTo($("hbtn2"), { opacity: 0, y: 10 }, { opacity: 1, y: 0, duration: 0.5, ease: SOFT }, 10.7);
+
+        // ---------- Scene 5 (11.5–15.0): WHY strip, hold ----------
+        tl.fromTo($("why"), { opacity: 0, x: -24 }, { opacity: 1, x: 0, duration: 0.6, ease: SOFT }, 11.7);
+        tl.to({}, { duration: 0.01 }, 15.49);
+
+        window.__timelines = window.__timelines || {};
+        window.__timelines[FID] = tl;
+      })();
+    </script>
+  </div>
+</template>

@@ -1,0 +1,426 @@
+<template id="11-adim3-neden-template">
+  <div id="root" data-composition-id="11-adim3-neden" data-start="0" data-duration="15.5" data-width="1920" data-height="1080" lang="tr">
+    <style>
+      @import url("https://fonts.googleapis.com/css2?family=Archivo+Black&family=JetBrains+Mono:wght@400;700&family=Space+Grotesk:wght@400;500&display=block");
+
+      #root {
+        position: relative;
+        width: 1920px;
+        height: 1080px;
+        overflow: hidden;
+      }
+      [data-composition-id="11-adim3-neden"] * {
+        margin: 0;
+        padding: 0;
+        box-sizing: border-box;
+      }
+
+      /* full-bleed ground (clip layer, not #root) */
+      [id="11-adim3-neden-stage"] {
+        position: absolute;
+        inset: 0;
+        width: 1920px;
+        height: 1080px;
+        background: #efe9d9;
+        container-type: size;
+        overflow: hidden;
+        color: #0f0f0f;
+      }
+
+      /* ---------- chrome ---------- */
+      [id="11-adim3-neden-topbar"] {
+        position: absolute;
+        top: 48px;
+        left: 64px;
+        right: 64px;
+        height: 44px;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        font-family: "JetBrains Mono", monospace;
+        font-size: 22px;
+        letter-spacing: 0.06em;
+        color: #0f0f0f;
+        white-space: nowrap;
+      }
+      [id="11-adim3-neden-pill"] {
+        border: 4px solid #0f0f0f;
+        border-radius: 999px;
+        background: #efe9d9;
+        padding: 4px 20px;
+        line-height: 1.3;
+      }
+      [id="11-adim3-neden-footer"] {
+        position: absolute;
+        bottom: 48px;
+        left: 64px;
+        right: 64px;
+        height: 32px;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        font-family: "JetBrains Mono", monospace;
+        font-size: 22px;
+        letter-spacing: 0.06em;
+        color: #0f0f0f;
+        white-space: nowrap;
+      }
+      [id="11-adim3-neden-counter"] {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+      }
+      [id="11-adim3-neden-dot"] {
+        width: 10px;
+        height: 10px;
+        border-radius: 50%;
+        background: #0f0f0f;
+      }
+
+      /* ---------- step strip (fixed geometry: 4 × 400 px at x = 96 + i·432) ---------- */
+      [class~="11-adim3-neden-cell"] {
+        position: absolute;
+        top: 104px;
+        width: 400px;
+        height: 40px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-family: "JetBrains Mono", monospace;
+        font-size: 17px;
+        letter-spacing: 0.04em;
+        white-space: nowrap;
+        color: #0f0f0f;
+      }
+      [class~="11-adim3-neden-done"] {
+        background: #0f0f0f;
+        color: #efe9d9;
+      }
+      [class~="11-adim3-neden-future"] {
+        border: 2px solid #0f0f0f;
+        background: #efe9d9;
+        opacity: 0.35;
+      }
+      [class~="11-adim3-neden-link"] {
+        position: absolute;
+        top: 123px;
+        width: 32px;
+        height: 2px;
+        background: #0f0f0f;
+      }
+      [id="11-adim3-neden-cur"] {
+        background: #efe9d9;
+        border: 4px solid #0f0f0f;
+        color: #0f0f0f;
+        z-index: 2;
+      }
+      [id="11-adim3-neden-underline"] {
+        position: absolute;
+        top: 148px;
+        width: 400px;
+        height: 4px;
+        background: #f5c518;
+        transform-origin: 0 50%;
+        z-index: 2;
+      }
+
+      /* ---------- NEDEN / WHY strip ---------- */
+      [id="11-adim3-neden-why"] {
+        position: absolute;
+        left: 96px;
+        top: 824px;
+        max-width: 1728px;
+        display: flex;
+        align-items: stretch;
+        background: #e4dcc4;
+        border: 2px solid #0f0f0f;
+      }
+      [id="11-adim3-neden-whylabel"] {
+        flex: 0 0 auto;
+        background: #0f0f0f;
+        color: #efe9d9;
+        font-family: "JetBrains Mono", monospace;
+        font-size: 18px;
+        letter-spacing: 0.14em;
+        display: flex;
+        align-items: center;
+        padding: 0 16px;
+      }
+      [id="11-adim3-neden-whytext"] {
+        font-family: "Space Grotesk", sans-serif;
+        line-height: 1.25;
+        display: flex;
+        align-items: center;
+        padding: 9px 24px;
+        color: #0f0f0f;
+      }
+
+      /* ---------- title ---------- */
+      [id="11-adim3-neden-title"] {
+        position: absolute;
+        left: 96px;
+        top: 196px;
+        font-family: "Archivo Black", sans-serif;
+        font-size: 72px;
+        line-height: 0.92;
+        letter-spacing: -0.01em;
+        white-space: nowrap;
+      }
+
+      /* ---------- five cards: 320 × 480, 32 px apart, x = 96 + i·352 ---------- */
+      [class~="11-adim3-neden-card"] {
+        position: absolute;
+        top: 300px;
+        width: 320px;
+        height: 480px;
+        border: 4px solid #0f0f0f;
+        background: #efe9d9;
+      }
+      [id="11-adim3-neden-card4"] {
+        box-shadow: 16px 16px 0 #e85a1f, 16px 16px 0 4px #0f0f0f;
+      }
+      [class~="11-adim3-neden-icon"] {
+        position: absolute;
+        left: 24px;
+        top: 24px;
+        width: 264px;
+        height: 96px;
+        display: flex;
+        align-items: center;
+        gap: 14px;
+      }
+      [class~="11-adim3-neden-ctitle"] {
+        position: absolute;
+        left: 16px;
+        top: 138px;
+        width: 288px;
+        font-family: "JetBrains Mono", monospace;
+        font-size: 22px;
+        font-weight: 700;
+        letter-spacing: 0.02em;
+        white-space: nowrap;
+        color: #0f0f0f;
+      }
+      [class~="11-adim3-neden-q"] {
+        position: absolute;
+        left: 24px;
+        top: 178px;
+        width: 264px;
+        font-family: "Space Grotesk", sans-serif;
+        font-size: 23px;
+        font-weight: 500;
+        line-height: 1.3;
+        color: #0f0f0f;
+      }
+      [class~="11-adim3-neden-rule"] {
+        position: absolute;
+        left: 24px;
+        top: 304px;
+        width: 264px;
+        height: 2px;
+        background: #0f0f0f;
+        transform-origin: 0 50%;
+      }
+      [class~="11-adim3-neden-a"] {
+        position: absolute;
+        left: 24px;
+        top: 322px;
+        width: 264px;
+        font-family: "Space Grotesk", sans-serif;
+        font-size: 22px;
+        line-height: 1.3;
+        color: #0f0f0f;
+      }
+      [class~="11-adim3-neden-amark"] {
+        font-family: "Archivo Black", sans-serif;
+        font-size: 22px;
+        color: #136636;
+        margin-right: 8px;
+      }
+
+      /* icons */
+      [id="11-adim3-neden-seal"] {
+        width: 76px;
+        height: 76px;
+        border: 3px solid #0f0f0f;
+        background: #f5c518;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-family: "JetBrains Mono", monospace;
+        font-size: 18px;
+        letter-spacing: 0.08em;
+        color: #0f0f0f;
+      }
+      [id="11-adim3-neden-badge"] {
+        background: #0f0f0f;
+        color: #efe9d9;
+        font-family: "JetBrains Mono", monospace;
+        font-size: 18px;
+        letter-spacing: 0.04em;
+        padding: 10px 16px;
+        white-space: nowrap;
+      }
+      [class~="11-adim3-neden-cert"] {
+        position: relative;
+        width: 60px;
+        height: 82px;
+        border: 3px solid #0f0f0f;
+        display: flex;
+        align-items: flex-end;
+        justify-content: center;
+        padding-bottom: 8px;
+        font-family: "JetBrains Mono", monospace;
+        font-size: 18px;
+        color: #0f0f0f;
+      }
+      [class~="11-adim3-neden-certseal"] {
+        position: absolute;
+        right: 6px;
+        top: 6px;
+        width: 12px;
+        height: 12px;
+        border-radius: 50%;
+        background: #0f0f0f;
+      }
+      [id="11-adim3-neden-pinkcard"] {
+        background: #f06ca8;
+      }
+      [id="11-adim3-neden-filecard"] {
+        background: #e4dcc4;
+      }
+      [id="11-adim3-neden-filestrike"] {
+        position: absolute;
+        left: -3px;
+        top: 20px;
+        width: 60px;
+        height: 4px;
+        background: #e85a1f;
+      }
+      [class~="11-adim3-neden-mark"] {
+        width: 40px;
+        height: 40px;
+        border: 3px solid #0f0f0f;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+      }
+      [class~="11-adim3-neden-mark"] svg {
+        display: block;
+        width: 22px;
+        height: 22px;
+      }
+      [id="11-adim3-neden-markno"] {
+        background: #e85a1f;
+      }
+      [id="11-adim3-neden-markok"] {
+        background: #1f8a4c;
+      }
+    </style>
+
+    <div id="11-adim3-neden-stage" class="clip" data-start="0" data-duration="15.5" data-track-index="0">
+      <!-- chrome -->
+      <div id="11-adim3-neden-topbar">
+        <span>PINVAULT · KURULUM SİHİRBAZI</span>
+        <span id="11-adim3-neden-pill">ADIM 3 / 4</span>
+      </div>
+      <div id="11-adim3-neden-footer">
+        <span>Adım 3 · Neden</span>
+        <span id="11-adim3-neden-counter"><span>11</span><span id="11-adim3-neden-dot"></span><span>15</span></span>
+      </div>
+      <!-- step strip: cells at x = 96 + i·432, 32 px links in the gaps -->
+      <div class="11-adim3-neden-cell 11-adim3-neden-done" style="left: 96px">1 · SUNUCU</div>
+      <div class="11-adim3-neden-link" style="left: 496px"></div>
+      <div class="11-adim3-neden-cell 11-adim3-neden-done" style="left: 528px">2 · SERTİFİKALAR</div>
+      <div class="11-adim3-neden-link" style="left: 928px"></div>
+      <div class="11-adim3-neden-cell 11-adim3-neden-future" style="left: 960px">3 · UYGULAMA</div>
+      <div id="11-adim3-neden-cur" data-layout-allow-overlap class="11-adim3-neden-cell" style="left: 960px">3 · UYGULAMA</div>
+      <div id="11-adim3-neden-underline" style="left: 960px"></div>
+      <div class="11-adim3-neden-link" style="left: 1360px"></div>
+      <div class="11-adim3-neden-cell 11-adim3-neden-future" style="left: 1392px">4 · KOD</div>
+
+      <!-- title -->
+      <div id="11-adim3-neden-title">HER KUTU BİR SORUYA CEVAP</div>
+
+      <!-- five cards -->
+      <div id="11-adim3-neden-card1" class="11-adim3-neden-card" style="left: 96px">
+        <div id="11-adim3-neden-icon1" class="11-adim3-neden-icon"><div id="11-adim3-neden-seal">İMZA</div></div>
+        <div id="11-adim3-neden-t1" class="11-adim3-neden-ctitle">İMZALI CONFIG</div>
+        <div id="11-adim3-neden-q1" class="11-adim3-neden-q">Pin listesini kim yayınlayabilir?</div>
+        <div id="11-adim3-neden-r1" class="11-adim3-neden-rule"></div>
+        <div id="11-adim3-neden-a1" class="11-adim3-neden-a"><span class="11-adim3-neden-amark">✓</span>Yalnızca imza anahtarının sahibi. Telefon imzayı her yüklemede doğrular.</div>
+      </div>
+      <div id="11-adim3-neden-card2" class="11-adim3-neden-card" style="left: 448px">
+        <div id="11-adim3-neden-icon2" class="11-adim3-neden-icon"><div id="11-adim3-neden-badge">sample-mtls</div></div>
+        <div id="11-adim3-neden-t2" class="11-adim3-neden-ctitle">serverScope</div>
+        <div id="11-adim3-neden-q2" class="11-adim3-neden-q">Başka bir PinVault sunucusunun listesi geçer mi?</div>
+        <div id="11-adim3-neden-r2" class="11-adim3-neden-rule"></div>
+        <div id="11-adim3-neden-a2" class="11-adim3-neden-a"><span class="11-adim3-neden-amark">✓</span>Hayır. Liste bu Config API'nin kimliğini taşır.</div>
+      </div>
+      <div id="11-adim3-neden-card3" class="11-adim3-neden-card" style="left: 800px">
+        <div id="11-adim3-neden-icon3" class="11-adim3-neden-icon"><div id="11-adim3-neden-pinkcard" class="11-adim3-neden-cert"><span class="11-adim3-neden-certseal"></span>CA</div></div>
+        <div id="11-adim3-neden-t3" class="11-adim3-neden-ctitle">clientCaPins</div>
+        <div id="11-adim3-neden-q3" class="11-adim3-neden-q">Cihaz kartını kim basmış olabilir?</div>
+        <div id="11-adim3-neden-r3" class="11-adim3-neden-rule"></div>
+        <div id="11-adim3-neden-a3" class="11-adim3-neden-a"><span class="11-adim3-neden-amark">✓</span>Yalnızca bizim istemci CA'mız; başka CA'nın kartı reddedilir.</div>
+      </div>
+      <div id="11-adim3-neden-card4" class="11-adim3-neden-card" style="left: 1152px">
+        <div id="11-adim3-neden-icon4" class="11-adim3-neden-icon"><span id="11-adim3-neden-markno" class="11-adim3-neden-mark"><svg viewBox="0 0 24 24"><path d="M5 5 L19 19 M19 5 L5 19" fill="none" stroke="#EFE9D9" stroke-width="4" stroke-linecap="square" /></svg></span><span id="11-adim3-neden-markok" class="11-adim3-neden-mark"><svg viewBox="0 0 24 24"><path d="M4 12 L10 18 L20 6" fill="none" stroke="#EFE9D9" stroke-width="4" stroke-linecap="square" /></svg></span></div>
+        <div id="11-adim3-neden-t4" class="11-adim3-neden-ctitle">environmentGuard</div>
+        <div id="11-adim3-neden-q4" class="11-adim3-neden-q">Root ya da kanca varsa ne olur?</div>
+        <div id="11-adim3-neden-r4" class="11-adim3-neden-rule"></div>
+        <div id="11-adim3-neden-a4" class="11-adim3-neden-a"><span class="11-adim3-neden-amark">✓</span>Sizin tespitiniz karar verir. INIT açık kalır, pinli trafik durmaz.</div>
+      </div>
+      <div id="11-adim3-neden-card5" class="11-adim3-neden-card" style="left: 1504px">
+        <div id="11-adim3-neden-icon5" class="11-adim3-neden-icon"><div id="11-adim3-neden-filecard" class="11-adim3-neden-cert"><span id="11-adim3-neden-filestrike"></span></div></div>
+        <div id="11-adim3-neden-t5" class="11-adim3-neden-ctitle" style="font-size: 18px">wipeVaultFilesOnRevocation</div>
+        <div id="11-adim3-neden-q5" class="11-adim3-neden-q">İptal edilen telefondaki dosyalar?</div>
+        <div id="11-adim3-neden-r5" class="11-adim3-neden-rule"></div>
+        <div id="11-adim3-neden-a5" class="11-adim3-neden-a"><span class="11-adim3-neden-amark">✓</span>Silinir. Kart geçersiz olunca dosya da gider.</div>
+      </div>
+
+      <!-- NEDEN strip -->
+      <div id="11-adim3-neden-why">
+        <div id="11-adim3-neden-whylabel">NEDEN</div>
+        <div id="11-adim3-neden-whytext" style="font-size: 24px">Kapalı bir kutu bir soruyu cevapsız bırakır. Üretimde cevapsız soru kalmasın.</div>
+      </div>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/gsap@3.14.2/dist/gsap.min.js" integrity="sha384-sG0Hv1tP1lZCk9KQmrIbY/XNwi+OY84GQqhMscbnsoBFqAz8KNCil1kvfL3Hbbk2" crossorigin="anonymous"></script>
+    <script>
+      (function () {
+        var FID = "11-adim3-neden";
+        var host = document.querySelector('[data-composition-id="' + FID + '"]') || document;
+        var $ = function (n) {
+          return host.querySelector('[id="' + FID + "-" + n + '"]');
+        };
+        var tl = gsap.timeline({ paused: true });
+        var SOFT = "power3.out";
+
+        // ---------- Scene 1: strip already standing; current cell + yellow underline settle ----------
+        tl.fromTo($("cur"), { opacity: 0 }, { opacity: 1, duration: 0.6, ease: SOFT }, 0.2);
+        tl.fromTo($("underline"), { scaleX: 0 }, { scaleX: 1, duration: 0.6, ease: SOFT }, 0.2);
+
+        tl.fromTo($("title"), { opacity: 0, y: 28 }, { opacity: 1, y: 0, duration: 0.8, ease: SOFT }, 0.4);
+
+        // ---------- Scene 2 (1.2–11.0): five cards left to right, ≈1.9 s apart ----------
+        for (var i = 1; i <= 5; i++) {
+          var at = 1.2 + (i - 1) * 1.9;
+          tl.fromTo($("card" + i), { opacity: 0, y: 30 }, { opacity: 1, y: 0, duration: 0.6, ease: SOFT }, at);
+          tl.fromTo($("icon" + i), { opacity: 0, scale: 0.85 }, { opacity: 1, scale: 1, duration: 0.45, ease: SOFT }, at + 0.3);
+          tl.fromTo($("t" + i), { opacity: 0, x: -12 }, { opacity: 1, x: 0, duration: 0.4, ease: SOFT }, at + 0.5);
+          tl.fromTo($("q" + i), { opacity: 0, y: 10 }, { opacity: 1, y: 0, duration: 0.5, ease: SOFT }, at + 0.7);
+          tl.fromTo($("r" + i), { scaleX: 0 }, { scaleX: 1, duration: 0.4, ease: SOFT }, at + 1.3);
+          tl.fromTo($("a" + i), { opacity: 0, y: 10 }, { opacity: 1, y: 0, duration: 0.5, ease: SOFT }, at + 1.5);
+        }
+
+        // ---------- Scene 3 (11.0–15.0): NEDEN strip, hold ----------
+        tl.fromTo($("why"), { opacity: 0, x: -24 }, { opacity: 1, x: 0, duration: 0.6, ease: SOFT }, 11.3);
+        tl.to({}, { duration: 0.01 }, 15.49);
+
+        window.__timelines = window.__timelines || {};
+        window.__timelines[FID] = tl;
+      })();
+    </script>
+  </div>
+</template>

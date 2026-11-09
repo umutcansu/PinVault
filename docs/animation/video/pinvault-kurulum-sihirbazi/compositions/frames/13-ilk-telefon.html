@@ -1,0 +1,582 @@
+<template id="13-ilk-telefon-template">
+  <div id="root" data-composition-id="13-ilk-telefon" data-start="0" data-duration="14.5" data-width="1920" data-height="1080" lang="tr">
+    <style>
+      @import url("https://fonts.googleapis.com/css2?family=Archivo+Black&family=JetBrains+Mono:wght@400;700&family=Space+Grotesk:wght@400;500&display=block&subset=latin-ext");
+
+      #root {
+        position: relative;
+        width: 1920px;
+        height: 1080px;
+        overflow: hidden;
+      }
+      [data-composition-id="13-ilk-telefon"] * {
+        margin: 0;
+        padding: 0;
+        box-sizing: border-box;
+      }
+
+      /* full-bleed ground (clip layer, not #root) */
+      [id="13-ilk-telefon-stage"] {
+        position: absolute;
+        inset: 0;
+        width: 1920px;
+        height: 1080px;
+        background: #efe9d9;
+        container-type: size;
+        overflow: hidden;
+        color: #0f0f0f;
+      }
+
+      /* ---------- chrome ---------- */
+      [id="13-ilk-telefon-topbar"] {
+        position: absolute;
+        top: 48px;
+        left: 64px;
+        right: 64px;
+        height: 44px;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        font-family: "JetBrains Mono", monospace;
+        font-size: 22px;
+        letter-spacing: 0.06em;
+        white-space: nowrap;
+      }
+      [id="13-ilk-telefon-pill"] {
+        border: 4px solid #0f0f0f;
+        border-radius: 999px;
+        background: #efe9d9;
+        padding: 4px 20px;
+        line-height: 1.3;
+      }
+      [id="13-ilk-telefon-footer"] {
+        position: absolute;
+        bottom: 48px;
+        left: 64px;
+        right: 64px;
+        height: 32px;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        font-family: "JetBrains Mono", monospace;
+        font-size: 22px;
+        letter-spacing: 0.06em;
+        white-space: nowrap;
+      }
+      [id="13-ilk-telefon-counter"] {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+      }
+      [id="13-ilk-telefon-dot"] {
+        width: 10px;
+        height: 10px;
+        border-radius: 50%;
+        background: #0f0f0f;
+      }
+
+      /* ---------- step strip (fixed geometry: 4 × 400 px at x = 96 + i × 432, all done) ---------- */
+      [class~="13-ilk-telefon-cell"] {
+        position: absolute;
+        top: 104px;
+        width: 400px;
+        height: 40px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-family: "JetBrains Mono", monospace;
+        font-size: 17px;
+        letter-spacing: 0.04em;
+        white-space: nowrap;
+        background: #0f0f0f;
+        color: #efe9d9;
+        border: 2px solid #0f0f0f;
+      }
+      [class~="13-ilk-telefon-link"] {
+        position: absolute;
+        top: 123px;
+        width: 32px;
+        height: 2px;
+        background: #0f0f0f;
+      }
+
+      /* ---------- title ---------- */
+      [id="13-ilk-telefon-title"] {
+        position: absolute;
+        left: 96px;
+        top: 168px;
+        font-family: "Archivo Black", sans-serif;
+        font-size: 72px;
+        line-height: 0.92;
+        letter-spacing: -0.01em;
+        white-space: nowrap;
+      }
+
+      /* ---------- phone ---------- */
+      [id="13-ilk-telefon-phone"] {
+        position: absolute;
+        left: 150px;
+        top: 280px;
+        width: 300px;
+        height: 380px;
+        border: 4px solid #0f0f0f;
+        background: #efe9d9;
+        padding: 14px;
+        display: flex;
+        flex-direction: column;
+        gap: 12px;
+        z-index: 4;
+      }
+      [id="13-ilk-telefon-speaker"] {
+        align-self: center;
+        width: 64px;
+        height: 8px;
+        background: #0f0f0f;
+      }
+      [id="13-ilk-telefon-screen"] {
+        flex: 1;
+        border: 3px solid #0f0f0f;
+        background: #e4dcc4;
+        display: flex;
+        flex-direction: column;
+        justify-content: space-between;
+      }
+      [id="13-ilk-telefon-app"] {
+        font-family: "JetBrains Mono", monospace;
+        font-size: 24px;
+        letter-spacing: 0.02em;
+        padding: 16px 14px;
+        white-space: nowrap;
+      }
+      [id="13-ilk-telefon-status"] {
+        margin: 0 10px 12px;
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        border: 3px solid #0f0f0f;
+        background: #efe9d9;
+        padding: 8px 8px;
+        font-family: "JetBrains Mono", monospace;
+        font-size: 18px;
+        line-height: 1.2;
+        white-space: nowrap;
+      }
+      [class~="13-ilk-telefon-ok"] {
+        flex: none;
+        width: 26px;
+        height: 26px;
+        background: #1f8a4c;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+      }
+      [class~="13-ilk-telefon-ok"] svg {
+        width: 22px;
+        height: 22px;
+        display: block;
+      }
+      [id="13-ilk-telefon-lib"] {
+        background: #0f0f0f;
+        color: #efe9d9;
+        font-family: "JetBrains Mono", monospace;
+        font-size: 19px;
+        line-height: 1.25;
+        padding: 10px 10px;
+        white-space: nowrap;
+      }
+      [id="13-ilk-telefon-devlabel"] {
+        position: absolute;
+        left: 150px;
+        top: 668px;
+        width: 300px;
+        text-align: center;
+        font-family: "JetBrains Mono", monospace;
+        font-size: 20px;
+        letter-spacing: 0.04em;
+        line-height: 1.2;
+        white-space: nowrap;
+      }
+
+      /* ---------- the two paths ---------- */
+      [id="13-ilk-telefon-wire"] {
+        position: absolute;
+        left: 0;
+        top: 0;
+        width: 1920px;
+        height: 1080px;
+        z-index: 1;
+        overflow: visible;
+      }
+      [class~="13-ilk-telefon-lbl"] {
+        position: absolute;
+        left: 480px;
+        font-family: "JetBrains Mono", monospace;
+        font-size: 20px;
+        letter-spacing: 0;
+        line-height: 1.3;
+        white-space: nowrap;
+        z-index: 2;
+      }
+
+      /* ---------- pink identity card (return of path 1) ---------- */
+      [id="13-ilk-telefon-card"] {
+        position: absolute;
+        left: 470px;
+        top: 368px;
+        width: 190px;
+        height: 84px;
+        border: 4px solid #0f0f0f;
+        background: #f06ca8;
+        display: flex;
+        gap: 10px;
+        padding: 10px 10px;
+        z-index: 3;
+      }
+      [id="13-ilk-telefon-photo"] {
+        flex: 0 0 28px;
+        height: 44px;
+        border: 3px solid #0f0f0f;
+        background: #efe9d9;
+      }
+      [id="13-ilk-telefon-cardtxt"] {
+        display: flex;
+        flex-direction: column;
+        gap: 6px;
+        padding-top: 2px;
+      }
+      [id="13-ilk-telefon-cardname"] {
+        white-space: nowrap;
+        font-family: "JetBrains Mono", monospace;
+        font-size: 18px;
+        font-weight: 700;
+        line-height: 1.2;
+      }
+      [id="13-ilk-telefon-cardsub"] {
+        white-space: nowrap;
+        font-family: "JetBrains Mono", monospace;
+        font-size: 18px;
+        line-height: 1.2;
+      }
+
+      /* ---------- signed pin list card (return of path 2) ---------- */
+      [id="13-ilk-telefon-list"] {
+        position: absolute;
+        left: 470px;
+        top: 528px;
+        width: 560px;
+        height: 96px;
+        border: 4px solid #0f0f0f;
+        background: #e4dcc4;
+        z-index: 3;
+      }
+      [id="13-ilk-telefon-hosts"] {
+        position: absolute;
+        left: 16px;
+        top: 32px;
+        font-family: "JetBrains Mono", monospace;
+        font-size: 20px;
+        letter-spacing: 0;
+        line-height: 1.2;
+        white-space: nowrap;
+      }
+      [id="13-ilk-telefon-seal"] {
+        position: absolute;
+        right: 14px;
+        top: 22px;
+        width: 110px;
+        height: 44px;
+        background: #f5c518;
+        border: 4px solid #0f0f0f;
+        font-family: "Archivo Black", sans-serif;
+        font-size: 22px;
+        line-height: 0.92;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        white-space: nowrap;
+      }
+
+      /* ---------- PinVault server ---------- */
+      [id="13-ilk-telefon-server"] {
+        position: absolute;
+        left: 1360px;
+        top: 280px;
+        width: 400px;
+        height: 380px;
+        border: 4px solid #0f0f0f;
+        background: #e4dcc4;
+        z-index: 5;
+      }
+      [id="13-ilk-telefon-srvhead"] {
+        height: 56px;
+        background: #0f0f0f;
+        color: #efe9d9;
+        font-family: "JetBrains Mono", monospace;
+        font-size: 24px;
+        letter-spacing: 0.04em;
+        display: flex;
+        align-items: center;
+        padding: 0 18px;
+        white-space: nowrap;
+      }
+      [class~="13-ilk-telefon-port"] {
+        position: absolute;
+        left: 12px;
+        width: 100px;
+        height: 40px;
+        border: 3px solid #0f0f0f;
+        background: #efe9d9;
+        color: #0f0f0f;
+        font-family: "JetBrains Mono", monospace;
+        font-size: 20px;
+        font-weight: 700;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+      }
+      [id="13-ilk-telefon-sheet"] {
+        position: absolute;
+        left: 150px;
+        top: 86px;
+        width: 210px;
+        height: 200px;
+        border: 3px solid #0f0f0f;
+        background: #efe9d9;
+        padding: 16px;
+        display: flex;
+        flex-direction: column;
+        gap: 14px;
+      }
+      [class~="13-ilk-telefon-sbar"] {
+        height: 7px;
+        background: #0f0f0f;
+      }
+      [id="13-ilk-telefon-sseal"] {
+        position: absolute;
+        right: 12px;
+        bottom: 12px;
+        width: 36px;
+        height: 36px;
+        background: #f5c518;
+        border: 3px solid #0f0f0f;
+      }
+
+      /* ---------- two lines ---------- */
+      [class~="13-ilk-telefon-line"] {
+        position: absolute;
+        left: 96px;
+        font-family: "Space Grotesk", sans-serif;
+        font-size: 26px;
+        line-height: 1.25;
+        white-space: nowrap;
+      }
+
+      /* ---------- panel strip ---------- */
+      [id="13-ilk-telefon-panel"] {
+        position: absolute;
+        left: 96px;
+        top: 784px;
+        height: 40px;
+        display: inline-flex;
+        align-items: center;
+        border: 3px solid #0f0f0f;
+        background: #e4dcc4;
+        padding: 0 16px;
+        font-family: "JetBrains Mono", monospace;
+        font-size: 20px;
+        letter-spacing: 0;
+        white-space: nowrap;
+      }
+      [id="13-ilk-telefon-paneltick"] {
+        color: #1f8a4c;
+        font-weight: 700;
+      }
+
+      /* ---------- NEDEN strip ---------- */
+      [id="13-ilk-telefon-neden"] {
+        position: absolute;
+        left: 96px;
+        top: 836px;
+        height: 60px;
+        display: flex;
+        align-items: stretch;
+        border: 2px solid #0f0f0f;
+        background: #e4dcc4;
+      }
+      [id="13-ilk-telefon-nlabel"] {
+        background: #0f0f0f;
+        color: #efe9d9;
+        font-family: "JetBrains Mono", monospace;
+        font-size: 20px;
+        letter-spacing: 0.08em;
+        display: flex;
+        align-items: center;
+        padding: 0 16px;
+      }
+      [id="13-ilk-telefon-ntext"] {
+        font-family: "Space Grotesk", sans-serif;
+        font-size: 24px;
+        line-height: 1.2;
+        display: flex;
+        align-items: center;
+        padding: 0 22px;
+        white-space: nowrap;
+      }
+    </style>
+
+    <div id="13-ilk-telefon-stage" class="clip" data-start="0" data-duration="14.5" data-track-index="0">
+      <!-- chrome -->
+      <div id="13-ilk-telefon-topbar">
+        <span>PINVAULT · KURULUM SİHİRBAZI</span>
+        <span id="13-ilk-telefon-pill">SONUÇ</span>
+      </div>
+      <div id="13-ilk-telefon-footer">
+        <span>İlk telefon</span>
+        <span id="13-ilk-telefon-counter"><span>13</span><span id="13-ilk-telefon-dot"></span><span>15</span></span>
+      </div>
+
+      <!-- step strip: all four done -->
+      <div class="13-ilk-telefon-cell" style="left: 96px">1 · SUNUCU</div>
+      <div class="13-ilk-telefon-link" style="left: 496px"></div>
+      <div class="13-ilk-telefon-cell" style="left: 528px">2 · SERTİFİKALAR</div>
+      <div class="13-ilk-telefon-link" style="left: 928px"></div>
+      <div class="13-ilk-telefon-cell" style="left: 960px">3 · UYGULAMA</div>
+      <div class="13-ilk-telefon-link" style="left: 1360px"></div>
+      <div class="13-ilk-telefon-cell" style="left: 1392px">4 · KOD</div>
+
+      <!-- title -->
+      <div id="13-ilk-telefon-title">İLK TELEFON BAĞLANIR</div>
+
+      <!-- the two paths: phone right edge (x 450) -> 8091 and 8092 -->
+      <svg id="13-ilk-telefon-wire" viewBox="0 0 1920 1080" xmlns="http://www.w3.org/2000/svg">
+        <path id="13-ilk-telefon-path1" pathLength="1" d="M450 410 H1300 V430 H1360" fill="none" stroke="#0F0F0F" stroke-width="4" stroke-linejoin="miter" stroke-dasharray="1" stroke-dashoffset="1" />
+        <path id="13-ilk-telefon-path2" pathLength="1" d="M450 560 H1300 V490 H1360" fill="none" stroke="#0F0F0F" stroke-width="4" stroke-linejoin="miter" stroke-dasharray="1" stroke-dashoffset="1" />
+      </svg>
+      <div id="13-ilk-telefon-lbl1" class="13-ilk-telefon-lbl" style="top: 336px">1 · KAYIT: token + CSR · pinli bağlantı</div>
+      <div id="13-ilk-telefon-lbl2" class="13-ilk-telefon-lbl" style="top: 490px">2 · init: imzalı pin listesi · mTLS</div>
+
+      <!-- return of path 1: pink identity card -->
+      <div id="13-ilk-telefon-card">
+        <div id="13-ilk-telefon-photo"></div>
+        <div id="13-ilk-telefon-cardtxt">
+          <div id="13-ilk-telefon-cardname">tablet-07</div>
+          <div id="13-ilk-telefon-cardsub">90 gün</div>
+        </div>
+      </div>
+
+      <!-- return of path 2: signed pin list -->
+      <div id="13-ilk-telefon-list">
+        <div id="13-ilk-telefon-hosts">api.ornek.com · odeme.ornek.com</div>
+        <div id="13-ilk-telefon-seal">İMZA</div>
+      </div>
+
+      <!-- phone -->
+      <div id="13-ilk-telefon-phone">
+        <div id="13-ilk-telefon-speaker"></div>
+        <div id="13-ilk-telefon-screen">
+          <div id="13-ilk-telefon-app">Uygulamanız</div>
+          <div id="13-ilk-telefon-status">
+            <span id="13-ilk-telefon-statusok" class="13-ilk-telefon-ok"><svg viewBox="0 0 24 24"><polyline points="5,12.5 10,17.5 19,7" fill="none" stroke="#EFE9D9" stroke-width="3.5" stroke-linecap="square" /></svg></span>
+            <span>InitResult.Ready</span>
+          </div>
+          <div id="13-ilk-telefon-lib">PinVault kütüphanesi</div>
+        </div>
+      </div>
+      <div id="13-ilk-telefon-devlabel">tablet-07</div>
+
+      <!-- PinVault server -->
+      <div id="13-ilk-telefon-server">
+        <div id="13-ilk-telefon-srvhead">PinVault sunucusu</div>
+        <div id="13-ilk-telefon-p8090" class="13-ilk-telefon-port" style="top: 70px">8090</div>
+        <div id="13-ilk-telefon-p8091" class="13-ilk-telefon-port" style="top: 130px">8091</div>
+        <div id="13-ilk-telefon-p8092" class="13-ilk-telefon-port" style="top: 190px">8092</div>
+        <div id="13-ilk-telefon-p8093" class="13-ilk-telefon-port" style="top: 250px">8093</div>
+        <div id="13-ilk-telefon-sheet">
+          <div class="13-ilk-telefon-sbar" style="width: 100%"></div>
+          <div class="13-ilk-telefon-sbar" style="width: 80%"></div>
+          <div class="13-ilk-telefon-sbar" style="width: 60%"></div>
+          <div id="13-ilk-telefon-sseal"></div>
+        </div>
+      </div>
+
+      <!-- two lines -->
+      <div id="13-ilk-telefon-line1" class="13-ilk-telefon-line" style="top: 700px">Kayıt init'ten önce: mTLS kapısı kartsız açılmaz.</div>
+      <div id="13-ilk-telefon-line2" class="13-ilk-telefon-line" style="top: 740px">Liste imzalı ve bu sunucuya bağlı; telefon ikisini de kontrol eder.</div>
+
+      <!-- panel strip -->
+      <div id="13-ilk-telefon-panel">Panel · Bağlantı Geçmişi · tablet-07 · sample-mtls · config v1 · <span id="13-ilk-telefon-paneltick">✓</span></div>
+
+      <!-- NEDEN strip -->
+      <div id="13-ilk-telefon-neden">
+        <div id="13-ilk-telefon-nlabel">NEDEN</div>
+        <div id="13-ilk-telefon-ntext">Sihirbazın ürettiği kodla ilk bağlantı pinli, imzalı ve kimlikli başlar; sonradan sıkılaştırma yok.</div>
+      </div>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/gsap@3.14.2/dist/gsap.min.js" integrity="sha384-sG0Hv1tP1lZCk9KQmrIbY/XNwi+OY84GQqhMscbnsoBFqAz8KNCil1kvfL3Hbbk2" crossorigin="anonymous"></script>
+    <script>
+      (function () {
+        var FID = "13-ilk-telefon";
+        var host = document.querySelector('[data-composition-id="' + FID + '"]') || document;
+        var $ = function (n) {
+          return host.querySelector('[id="' + FID + "-" + n + '"]');
+        };
+
+        var tl = gsap.timeline({ paused: true });
+        var SOFT = "power3.out";
+        var TRAVEL = "power3.inOut";
+
+        // ---------- Scene 1 (0.0–1.5): strip already standing (all done); title; phone and server settle ----------
+        tl.fromTo($("title"), { opacity: 0, y: 32 }, { opacity: 1, y: 0, duration: 0.8, ease: SOFT }, 0.2);
+        tl.fromTo($("phone"), { opacity: 0, y: 40 }, { opacity: 1, y: 0, duration: 0.8, ease: SOFT }, 0.6);
+        tl.fromTo($("server"), { opacity: 0, y: 40 }, { opacity: 1, y: 0, duration: 0.8, ease: SOFT }, 0.8);
+        tl.fromTo($("devlabel"), { opacity: 0 }, { opacity: 1, duration: 0.5, ease: SOFT }, 1.0);
+
+        // ---------- Scene 2 (1.5–5.0): path 1 draws, label; pink card slides 8091 -> phone (1.2 s); "90 gün"; line 1 ----------
+        tl.fromTo(
+          $("path1"),
+          { attr: { "stroke-dashoffset": 1 } },
+          { attr: { "stroke-dashoffset": 0 }, duration: 0.7, ease: "power2.inOut" },
+          1.5
+        );
+        tl.to($("p8091"), { backgroundColor: "#0F0F0F", color: "#EFE9D9", duration: 0.3, ease: SOFT }, 2.1);
+        tl.fromTo($("lbl1"), { opacity: 0, x: -16 }, { opacity: 1, x: 0, duration: 0.5, ease: SOFT }, 2.2);
+        tl.fromTo($("card"), { x: 790 }, { x: 0, duration: 1.2, ease: TRAVEL }, 2.9);
+        tl.fromTo($("card"), { opacity: 0 }, { opacity: 1, duration: 0.35, ease: SOFT }, 2.9);
+        tl.fromTo($("cardsub"), { opacity: 0, x: -8 }, { opacity: 1, x: 0, duration: 0.4, ease: SOFT }, 4.15);
+        tl.fromTo($("line1"), { opacity: 0, y: 14 }, { opacity: 1, y: 0, duration: 0.55, ease: SOFT }, 4.5);
+
+        // ---------- Scene 3 (5.0–9.0): path 2 draws, label; list slides 8092 -> phone; seal; green ✓ InitResult.Ready; line 2 ----------
+        tl.fromTo(
+          $("path2"),
+          { attr: { "stroke-dashoffset": 1 } },
+          { attr: { "stroke-dashoffset": 0 }, duration: 0.7, ease: "power2.inOut" },
+          5.0
+        );
+        tl.to($("p8092"), { backgroundColor: "#0F0F0F", color: "#EFE9D9", duration: 0.3, ease: SOFT }, 5.6);
+        tl.fromTo($("lbl2"), { opacity: 0, x: -16 }, { opacity: 1, x: 0, duration: 0.5, ease: SOFT }, 5.7);
+        tl.fromTo($("list"), { x: 790 }, { x: 0, duration: 1.2, ease: TRAVEL }, 6.3);
+        tl.fromTo($("list"), { opacity: 0 }, { opacity: 1, duration: 0.35, ease: SOFT }, 6.3);
+        tl.fromTo(
+          $("seal"),
+          { opacity: 0, scale: 1.5, rotation: -6 },
+          { opacity: 1, scale: 1, rotation: -6, duration: 0.4, ease: SOFT },
+          7.5
+        );
+        tl.fromTo($("status"), { opacity: 0, y: 10 }, { opacity: 1, y: 0, duration: 0.45, ease: SOFT }, 7.95);
+        tl.fromTo($("statusok"), { scale: 0.4 }, { scale: 1, duration: 0.35, ease: SOFT }, 8.05);
+        tl.fromTo($("line2"), { opacity: 0, y: 14 }, { opacity: 1, y: 0, duration: 0.55, ease: SOFT }, 8.4);
+
+        // ---------- Scene 4 (9.0–10.5): panel strip ----------
+        tl.fromTo($("panel"), { opacity: 0, y: 14 }, { opacity: 1, y: 0, duration: 0.55, ease: SOFT }, 9.5);
+
+        // ---------- Scene 5 (10.5–14.0): NEDEN strip, hold ----------
+        tl.fromTo($("neden"), { opacity: 0, y: 16 }, { opacity: 1, y: 0, duration: 0.6, ease: SOFT }, 10.9);
+        tl.to({}, { duration: 0.01 }, 13.99);
+
+        window.__timelines = window.__timelines || {};
+        window.__timelines[FID] = tl;
+      })();
+    </script>
+  </div>
+</template>

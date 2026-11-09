@@ -1,0 +1,446 @@
+<template id="12-adim4-kod-template">
+  <div id="root" data-composition-id="12-adim4-kod" data-start="0" data-duration="16.5" data-width="1920" data-height="1080" lang="tr">
+    <style>
+      @import url("https://fonts.googleapis.com/css2?family=Archivo+Black&family=JetBrains+Mono:wght@400;700&family=Space+Grotesk:wght@400;500&display=block");
+
+      #root {
+        position: relative;
+        width: 1920px;
+        height: 1080px;
+        overflow: hidden;
+      }
+      [data-composition-id="12-adim4-kod"] * {
+        margin: 0;
+        padding: 0;
+        box-sizing: border-box;
+      }
+
+      /* full-bleed ground (clip layer, not #root) */
+      [id="12-adim4-kod-stage"] {
+        position: absolute;
+        inset: 0;
+        width: 1920px;
+        height: 1080px;
+        background: #efe9d9;
+        container-type: size;
+        overflow: hidden;
+        color: #0f0f0f;
+      }
+
+      /* ---------- chrome ---------- */
+      [id="12-adim4-kod-topbar"] {
+        position: absolute;
+        top: 48px;
+        left: 64px;
+        right: 64px;
+        height: 44px;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        font-family: "JetBrains Mono", monospace;
+        font-size: 22px;
+        letter-spacing: 0.06em;
+        color: #0f0f0f;
+        white-space: nowrap;
+      }
+      [id="12-adim4-kod-pill"] {
+        border: 4px solid #0f0f0f;
+        border-radius: 999px;
+        background: #efe9d9;
+        padding: 4px 20px;
+        line-height: 1.3;
+      }
+      [id="12-adim4-kod-footer"] {
+        position: absolute;
+        bottom: 48px;
+        left: 64px;
+        right: 64px;
+        height: 32px;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        font-family: "JetBrains Mono", monospace;
+        font-size: 22px;
+        letter-spacing: 0.06em;
+        color: #0f0f0f;
+        white-space: nowrap;
+      }
+      [id="12-adim4-kod-counter"] {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+      }
+      [id="12-adim4-kod-dot"] {
+        width: 10px;
+        height: 10px;
+        border-radius: 50%;
+        background: #0f0f0f;
+      }
+
+      /* ---------- step strip (fixed geometry: 4 × 400 px at x = 96 + i·432) ---------- */
+      [class~="12-adim4-kod-cell"] {
+        position: absolute;
+        top: 104px;
+        width: 400px;
+        height: 40px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-family: "JetBrains Mono", monospace;
+        font-size: 17px;
+        letter-spacing: 0.04em;
+        white-space: nowrap;
+        color: #0f0f0f;
+      }
+      [class~="12-adim4-kod-done"] {
+        background: #0f0f0f;
+        color: #efe9d9;
+      }
+      [class~="12-adim4-kod-future"] {
+        border: 2px solid #0f0f0f;
+        background: #efe9d9;
+        opacity: 0.35;
+      }
+      [class~="12-adim4-kod-link"] {
+        position: absolute;
+        top: 123px;
+        width: 32px;
+        height: 2px;
+        background: #0f0f0f;
+      }
+      [id="12-adim4-kod-cur"] {
+        background: #efe9d9;
+        border: 4px solid #0f0f0f;
+        color: #0f0f0f;
+        z-index: 2;
+      }
+      [id="12-adim4-kod-underline"] {
+        position: absolute;
+        top: 148px;
+        width: 400px;
+        height: 4px;
+        background: #f5c518;
+        transform-origin: 0 50%;
+        z-index: 2;
+      }
+
+      /* ---------- NEDEN / WHY strip ---------- */
+      [id="12-adim4-kod-why"] {
+        position: absolute;
+        left: 96px;
+        top: 824px;
+        max-width: 1728px;
+        display: flex;
+        align-items: stretch;
+        background: #e4dcc4;
+        border: 2px solid #0f0f0f;
+      }
+      [id="12-adim4-kod-whylabel"] {
+        flex: 0 0 auto;
+        background: #0f0f0f;
+        color: #efe9d9;
+        font-family: "JetBrains Mono", monospace;
+        font-size: 18px;
+        letter-spacing: 0.14em;
+        display: flex;
+        align-items: center;
+        padding: 0 16px;
+      }
+      [id="12-adim4-kod-whytext"] {
+        font-family: "Space Grotesk", sans-serif;
+        line-height: 1.25;
+        display: flex;
+        align-items: center;
+        padding: 9px 24px;
+        color: #0f0f0f;
+      }
+
+      /* ---------- kicker + title ---------- */
+      [id="12-adim4-kod-kicker"] {
+        position: absolute;
+        left: 96px;
+        top: 158px;
+        background: #0f0f0f;
+        color: #efe9d9;
+        font-family: "JetBrains Mono", monospace;
+        font-size: 20px;
+        letter-spacing: 0.08em;
+        line-height: 1.25;
+        white-space: nowrap;
+        padding: 8px 16px;
+      }
+      [id="12-adim4-kod-title"] {
+        position: absolute;
+        left: 96px;
+        top: 204px;
+        font-family: "Archivo Black", sans-serif;
+        font-size: 60px;
+        line-height: 0.92;
+        letter-spacing: -0.01em;
+        white-space: nowrap;
+      }
+
+      /* ---------- code panel: 4 · Kod ---------- */
+      [id="12-adim4-kod-panel"] {
+        position: absolute;
+        left: 96px;
+        top: 268px;
+        width: 1256px;
+        height: 544px;
+        border: 4px solid #0f0f0f;
+        background: #e4dcc4;
+        z-index: 2;
+      }
+      [id="12-adim4-kod-phead"] {
+        position: absolute;
+        left: 0;
+        top: 0;
+        right: 0;
+        height: 42px;
+        background: #0f0f0f;
+        color: #efe9d9;
+        font-family: "JetBrains Mono", monospace;
+        font-size: 20px;
+        letter-spacing: 0.04em;
+        display: flex;
+        align-items: center;
+        padding: 0 22px;
+        white-space: nowrap;
+      }
+      [id="12-adim4-kod-btn"] {
+        position: absolute;
+        right: 10px;
+        top: 5px;
+        height: 32px;
+        padding: 0 18px;
+        border: 2px solid #efe9d9;
+        background: #efe9d9;
+        color: #0f0f0f;
+        font-family: "Space Grotesk", sans-serif;
+        font-size: 20px;
+        font-weight: 500;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        white-space: nowrap;
+        transform-origin: 50% 50%;
+        z-index: 3;
+      }
+      [id="12-adim4-kod-btnfill"] {
+        position: absolute;
+        inset: 0;
+        background: #0f0f0f;
+        color: #efe9d9;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+      }
+      [class~="12-adim4-kod-line"] {
+        position: absolute;
+        left: 20px;
+        height: 21px;
+        font-family: "JetBrains Mono", monospace;
+        font-size: 19px;
+        line-height: 21px;
+        white-space: pre;
+        color: #0f0f0f;
+        z-index: 2;
+      }
+      [class~="12-adim4-kod-band"] {
+        position: absolute;
+        left: 10px;
+        width: 1228px;
+        background: #efe9d9;
+        z-index: 1;
+      }
+      [id="12-adim4-kod-cursor"] {
+        position: absolute;
+        left: 20px;
+        top: 46px;
+        width: 11px;
+        height: 19px;
+        margin-top: 1px;
+        background: #0f0f0f;
+        z-index: 3;
+      }
+
+      /* ---------- chips + connectors ---------- */
+      [class~="12-adim4-kod-chip"] {
+        position: absolute;
+        left: 1420px;
+        width: 404px;
+        border: 3px solid #0f0f0f;
+        background: #efe9d9;
+        font-family: "JetBrains Mono", monospace;
+        font-size: 18px;
+        line-height: 1.2;
+        letter-spacing: 0;
+        padding: 0 12px;
+        display: flex;
+        align-items: center;
+        color: #0f0f0f;
+        z-index: 3;
+      }
+      [class~="12-adim4-kod-conn"] {
+        position: absolute;
+        left: 1352px;
+        width: 68px;
+        z-index: 3;
+      }
+      [class~="12-adim4-kod-conn"] svg {
+        display: block;
+        width: 68px;
+      }
+      [id="12-adim4-kod-note"] {
+        position: absolute;
+        left: 1420px;
+        top: 628px;
+        width: 404px;
+        font-family: "Space Grotesk", sans-serif;
+        font-size: 22px;
+        line-height: 1.3;
+        color: #0f0f0f;
+      }
+    </style>
+
+    <div id="12-adim4-kod-stage" class="clip" data-start="0" data-duration="16.5" data-track-index="0">
+      <!-- chrome -->
+      <div id="12-adim4-kod-topbar">
+        <span>PINVAULT · KURULUM SİHİRBAZI</span>
+        <span id="12-adim4-kod-pill">ADIM 4 / 4</span>
+      </div>
+      <div id="12-adim4-kod-footer">
+        <span>Adım 4 · Kod</span>
+        <span id="12-adim4-kod-counter"><span>12</span><span id="12-adim4-kod-dot"></span><span>15</span></span>
+      </div>
+      <!-- step strip: cells at x = 96 + i·432, 32 px links in the gaps -->
+      <div class="12-adim4-kod-cell 12-adim4-kod-done" style="left: 96px">1 · SUNUCU</div>
+      <div class="12-adim4-kod-link" style="left: 496px"></div>
+      <div class="12-adim4-kod-cell 12-adim4-kod-done" style="left: 528px">2 · SERTİFİKALAR</div>
+      <div class="12-adim4-kod-link" style="left: 928px"></div>
+      <div class="12-adim4-kod-cell 12-adim4-kod-done" style="left: 960px">3 · UYGULAMA</div>
+      <div class="12-adim4-kod-link" style="left: 1360px"></div>
+      <div class="12-adim4-kod-cell 12-adim4-kod-future" style="left: 1392px">4 · KOD</div>
+      <div id="12-adim4-kod-cur" data-layout-allow-overlap class="12-adim4-kod-cell" style="left: 1392px">4 · KOD</div>
+      <div id="12-adim4-kod-underline" style="left: 1392px"></div>
+
+      <!-- kicker + title -->
+      <div id="12-adim4-kod-kicker">KİM: GELİŞTİRİCİ · NEREDE: 4 · KOD → UYGULAMANIN APPLICATION SINIFI</div>
+      <div id="12-adim4-kod-title">KOD BU SUNUCUNUN DEĞERLERİYLE ÜRETİLİR</div>
+
+      <!-- code panel: wizard step 4 -->
+      <div id="12-adim4-kod-panel">
+        <div id="12-adim4-kod-phead">Panel · 8090 · Kurulum Sihirbazı · 4 · Kod · Kotlin</div>
+        <div id="12-adim4-kod-btn">Kopyala<div id="12-adim4-kod-btnfill">Kopyala</div></div>
+        <div id="12-adim4-kod-band1" class="12-adim4-kod-band" style="top: 130px; height: 42px"></div>
+        <div id="12-adim4-kod-band2" class="12-adim4-kod-band" style="top: 193px; height: 21px"></div>
+        <div id="12-adim4-kod-band3" class="12-adim4-kod-band" style="top: 235px; height: 21px"></div>
+        <div id="12-adim4-kod-band4" class="12-adim4-kod-band" style="top: 256px; height: 42px"></div>
+        <div id="12-adim4-kod-l0" class="12-adim4-kod-line" style="top: 46px">// PinVault configuration — setup wizard, 2026-11-08, Config API "sample-mtls" (mtls).</div>
+        <div id="12-adim4-kod-l1" class="12-adim4-kod-line" style="top: 67px">val config = PinVaultConfig.Builder()</div>
+        <div id="12-adim4-kod-l2" class="12-adim4-kod-line" style="top: 88px">    .configApi("sample-mtls", "https://192.168.1.10:8092/") {</div>
+        <div id="12-adim4-kod-l3" class="12-adim4-kod-line" style="top: 109px">        bootstrapPins(listOf(</div>
+        <div id="12-adim4-kod-l4" class="12-adim4-kod-line" style="top: 130px">            HostPin("192.168.1.10", listOf("ojdBCq6J…", "NictvYYY…")),        // Config API certificate</div>
+        <div id="12-adim4-kod-l5" class="12-adim4-kod-line" style="top: 151px">            HostPin("192.168.1.10:8093", listOf("i6Vddf5Y…", "ejDTyiOV…"))    // recovery door (server CA)</div>
+        <div id="12-adim4-kod-l6" class="12-adim4-kod-line" style="top: 172px">        ))</div>
+        <div id="12-adim4-kod-l7" class="12-adim4-kod-line" style="top: 193px">        signaturePublicKeys("MFkwEwYH…")</div>
+        <div id="12-adim4-kod-l8" class="12-adim4-kod-line" style="top: 214px">        serverScope("sample-mtls")</div>
+        <div id="12-adim4-kod-l9" class="12-adim4-kod-line" style="top: 235px">        clientCaPins("OGdpcSUL…")</div>
+        <div id="12-adim4-kod-l10" class="12-adim4-kod-line" style="top: 256px">        enrollmentUrl("https://192.168.1.10:8091/")</div>
+        <div id="12-adim4-kod-l11" class="12-adim4-kod-line" style="top: 277px">        renewalUrl("https://192.168.1.10:8093/")</div>
+        <div id="12-adim4-kod-l12" class="12-adim4-kod-line" style="top: 298px">    }</div>
+        <div id="12-adim4-kod-l13" class="12-adim4-kod-line" style="top: 319px">    .vaultFileMaxOfflineAge(7, TimeUnit.DAYS)</div>
+        <div id="12-adim4-kod-l14" class="12-adim4-kod-line" style="top: 340px">    .wipeVaultFilesOnRevocation()</div>
+        <div id="12-adim4-kod-l15" class="12-adim4-kod-line" style="top: 361px">    .updateIntervalHours(12)</div>
+        <div id="12-adim4-kod-l16" class="12-adim4-kod-line" style="top: 382px">    .environmentGuard { op -&gt; op == GuardedOperation.INIT || !DeviceShield.isCompromised() }</div>
+        <div id="12-adim4-kod-l17" class="12-adim4-kod-line" style="top: 403px">    .build()</div>
+        <div id="12-adim4-kod-l18" class="12-adim4-kod-line" style="top: 424px"></div>
+        <div id="12-adim4-kod-l19" class="12-adim4-kod-line" style="top: 445px">if (!PinVault.isEnrolled(context, config)) {</div>
+        <div id="12-adim4-kod-l20" class="12-adim4-kod-line" style="top: 466px">    PinVault.enrollForResult(context, config, enrollmentToken)</div>
+        <div id="12-adim4-kod-l21" class="12-adim4-kod-line" style="top: 487px">}</div>
+        <div id="12-adim4-kod-l22" class="12-adim4-kod-line" style="top: 508px">val result = PinVault.init(context, config)</div>
+        <div id="12-adim4-kod-cursor"></div>
+      </div>
+
+      <!-- provenance chips, each tied to its code line by a thin line -->
+      <div id="12-adim4-kod-chip1" class="12-adim4-kod-chip" style="top: 330px; height: 62px">pin'ler ← Config API sertifikası (2. adım, kart 1)</div>
+      <div id="12-adim4-kod-conn1" class="12-adim4-kod-conn" style="top: 357.0px; height: 70.0px"><svg viewBox="0 0 68 70.0" style="height: 70.0px"><path id="12-adim4-kod-path1" d="M 68 4.0 H 28 V 66.0 H 0" fill="none" stroke="#0f0f0f" stroke-width="2" stroke-dasharray="130.0" stroke-dashoffset="130.0" /></svg></div>
+      <div id="12-adim4-kod-chip2" class="12-adim4-kod-chip" style="top: 406px; height: 40px">imza anahtarı ← İmzalama sekmesi</div>
+      <div id="12-adim4-kod-conn2" class="12-adim4-kod-conn" style="top: 422.0px; height: 57.5px"><svg viewBox="0 0 68 57.5" style="height: 57.5px"><path id="12-adim4-kod-path2" d="M 68 4.0 H 40 V 53.5 H 0" fill="none" stroke="#0f0f0f" stroke-width="2" stroke-dasharray="117.5" stroke-dashoffset="117.5" /></svg></div>
+      <div id="12-adim4-kod-chip3" class="12-adim4-kod-chip" style="top: 460px; height: 62px">clientCaPins ← istemci CA'sı (2. adım, kart 2)</div>
+      <div id="12-adim4-kod-conn3" class="12-adim4-kod-conn" style="top: 487.0px; height: 34.5px"><svg viewBox="0 0 68 34.5" style="height: 34.5px"><path id="12-adim4-kod-path3" d="M 68 4.0 H 28 V 30.5 H 0" fill="none" stroke="#0f0f0f" stroke-width="2" stroke-dasharray="94.5" stroke-dashoffset="94.5" /></svg></div>
+      <div id="12-adim4-kod-chip4" class="12-adim4-kod-chip" style="top: 536px; height: 62px">8091 / 8093 ← kayıt ve kurtarma kapıları</div>
+      <div id="12-adim4-kod-conn4" class="12-adim4-kod-conn" style="top: 545.0px; height: 26.0px"><svg viewBox="0 0 68 26.0" style="height: 26.0px"><path id="12-adim4-kod-path4" d="M 68 22.0 H 40 V 4.0 H 0" fill="none" stroke="#0f0f0f" stroke-width="2" stroke-dasharray="86.0" stroke-dashoffset="86.0" /></svg></div>
+      <div id="12-adim4-kod-note">Sertifika ya da imza anahtarı değişirse sihirbazı yeniden çalıştırın; kod yenilenir.</div>
+
+      <!-- NEDEN strip -->
+      <div id="12-adim4-kod-why">
+        <div id="12-adim4-kod-whylabel">NEDEN</div>
+        <div id="12-adim4-kod-whytext" style="font-size: 22px">Elle kopyalanan pin yanlış olur. Sihirbaz değerleri sunucunun kendisinden okur ve yalnızca açık değerleri yazar: gizli anahtar koda girmez.</div>
+      </div>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/gsap@3.14.2/dist/gsap.min.js" integrity="sha384-sG0Hv1tP1lZCk9KQmrIbY/XNwi+OY84GQqhMscbnsoBFqAz8KNCil1kvfL3Hbbk2" crossorigin="anonymous"></script>
+    <script>
+      (function () {
+        var FID = "12-adim4-kod";
+        var host = document.querySelector('[data-composition-id="' + FID + '"]') || document;
+        var $ = function (n) {
+          return host.querySelector('[id="' + FID + "-" + n + '"]');
+        };
+        var tl = gsap.timeline({ paused: true });
+        var SOFT = "power3.out";
+
+        // ---------- Scene 1: strip already standing; current cell + yellow underline settle ----------
+        tl.fromTo($("cur"), { opacity: 0 }, { opacity: 1, duration: 0.6, ease: SOFT }, 0.2);
+        tl.fromTo($("underline"), { scaleX: 0 }, { scaleX: 1, duration: 0.6, ease: SOFT }, 0.2);
+
+        tl.fromTo($("kicker"), { opacity: 0, x: -20 }, { opacity: 1, x: 0, duration: 0.5, ease: SOFT }, 0.3);
+        tl.fromTo($("title"), { opacity: 0, y: 28 }, { opacity: 1, y: 0, duration: 0.8, ease: SOFT }, 0.6);
+
+        // ---------- Scene 2 (1.5–8.0): panel settles; 23 lines written one by one (≈0.26 s per line) ----------
+        tl.fromTo($("panel"), { opacity: 0, y: 30 }, { opacity: 1, y: 0, duration: 0.7, ease: SOFT }, 1.5);
+        tl.fromTo($("btn"), { opacity: 0 }, { opacity: 1, duration: 0.4, ease: SOFT }, 1.9);
+        tl.fromTo($("btnfill"), { opacity: 0 }, { opacity: 0, duration: 0.01, ease: "none" }, 0);
+
+        var CURSOR_X = [980.4, 421.8, 695.4, 330.6, 1174.2, 1208.4, 114.0, 456.0, 387.6, 376.2, 581.4, 547.2, 57.0, 513.0, 376.2, 319.2, 1048.8, 136.8, 0.0, 501.6, 706.8, 11.4, 490.2];
+        var LINE0 = 46;
+        var LH = 21;
+        var T0 = 2.1;
+        var PER = 0.26;
+        tl.fromTo($("cursor"), { opacity: 0 }, { opacity: 1, duration: 0.05, ease: "none" }, T0 - 0.1);
+        var prevX = 0;
+        var prevY = 0;
+        for (var i = 0; i < 23; i++) {
+          var at = T0 + i * PER;
+          tl.fromTo($("l" + i), { opacity: 0 }, { opacity: 1, duration: 0.06, ease: "none" }, at);
+          tl.fromTo($("cursor"), { x: prevX, y: prevY }, { x: CURSOR_X[i], y: i * LH, duration: 0.01, ease: "none" }, at);
+          prevX = CURSOR_X[i];
+          prevY = i * LH;
+        }
+        var T_END = T0 + 22 * PER;
+        tl.fromTo($("cursor"), { opacity: 1 }, { opacity: 0, duration: 0.2, ease: "none" }, T_END + 0.4);
+
+        // ---------- Scene 3 (8.0–11.5): chips ≈0.7 s apart, each tied to its line; Kopyala pressed at 11.0; note ----------
+        var CONN_LEN = [130.0, 117.5, 94.5, 86.0];
+        for (var c = 1; c <= 4; c++) {
+          var ct = 8.3 + (c - 1) * 0.7;
+          tl.fromTo($("chip" + c), { opacity: 0, x: 16 }, { opacity: 1, x: 0, duration: 0.5, ease: SOFT }, ct);
+          tl.fromTo($("path" + c), { strokeDashoffset: CONN_LEN[c - 1] }, { strokeDashoffset: 0, duration: 0.45, ease: "power2.out" }, ct + 0.2);
+          tl.fromTo($("band" + c), { opacity: 0 }, { opacity: 1, duration: 0.3, ease: SOFT }, ct + 0.45);
+        }
+        tl.fromTo($("btn"), { scale: 1 }, { scale: 0.92, duration: 0.1, ease: "power2.in" }, 11.0);
+        tl.fromTo($("btnfill"), { opacity: 0 }, { opacity: 1, duration: 0.1, ease: "none" }, 11.05);
+        tl.to($("btn"), { scale: 1, duration: 0.4, ease: SOFT }, 11.1);
+        tl.fromTo($("note"), { opacity: 0, y: 14 }, { opacity: 1, y: 0, duration: 0.6, ease: SOFT }, 11.4);
+
+        // ---------- Scene 4 (11.5–16.0): NEDEN strip, hold ----------
+        tl.fromTo($("why"), { opacity: 0, x: -24 }, { opacity: 1, x: 0, duration: 0.6, ease: SOFT }, 11.9);
+        tl.to({}, { duration: 0.01 }, 16.49);
+
+        window.__timelines = window.__timelines || {};
+        window.__timelines[FID] = tl;
+      })();
+    </script>
+  </div>
+</template>

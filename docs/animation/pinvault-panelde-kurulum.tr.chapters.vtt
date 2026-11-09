@@ -1,0 +1,37 @@
+WEBVTT
+
+1
+00:00:00.000 --> 00:00:39.805
+Giriş: adres ve API anahtarı
+
+2
+00:00:39.805 --> 00:01:08.511
+1 · Sunucu: kontrol listesi ve kurulum sırası
+
+3
+00:01:08.511 --> 00:01:59.594
+"Nasıl yapılır" ve Ayarlar kartı
+
+4
+00:01:59.594 --> 00:02:34.657
+2 · Sertifikalar: dört kart
+
+5
+00:02:34.657 --> 00:03:16.996
+Sunucunun kendi sertifikası (Bootstrap sekmesi)
+
+6
+00:03:16.996 --> 00:04:16.588
+Kendi API sunucunuzu ekleme ve yedek pin
+
+7
+00:04:16.588 --> 00:04:47.011
+Telefon için kayıt token'ı (mTLS)
+
+8
+00:04:47.011 --> 00:05:18.340
+3 · Uygulama: korumalar
+
+9
+00:05:18.340 --> 00:05:51.680
+4 · Kod: kopyala ve sonraki adımlar

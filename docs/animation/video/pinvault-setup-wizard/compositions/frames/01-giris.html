@@ -1,0 +1,322 @@
+<template id="01-giris-template">
+  <div id="root" data-composition-id="01-giris" data-start="0" data-duration="10.5" data-width="1920" data-height="1080" lang="en">
+    <style>
+      @import url("https://fonts.googleapis.com/css2?family=Archivo+Black&family=JetBrains+Mono:wght@400;700&family=Space+Grotesk:wght@400;500&display=block");
+
+      #root {
+        position: relative;
+        width: 1920px;
+        height: 1080px;
+        overflow: hidden;
+      }
+      [data-composition-id="01-giris"] * {
+        margin: 0;
+        padding: 0;
+        box-sizing: border-box;
+      }
+
+      [id="01-giris-stage"] {
+        position: absolute;
+        inset: 0;
+        width: 1920px;
+        height: 1080px;
+        background: #efe9d9;
+        container-type: size;
+        overflow: hidden;
+        color: #0f0f0f;
+      }
+
+      /* ---------- chrome ---------- */
+      [id="01-giris-topbar"] {
+        position: absolute;
+        top: 48px;
+        left: 64px;
+        right: 64px;
+        height: 44px;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        font-family: "JetBrains Mono", monospace;
+        font-size: 22px;
+        letter-spacing: 0.06em;
+        color: #0f0f0f;
+        white-space: nowrap;
+      }
+      [id="01-giris-pill"] {
+        border: 4px solid #0f0f0f;
+        border-radius: 999px;
+        background: #efe9d9;
+        padding: 4px 20px;
+        line-height: 1.3;
+      }
+      [id="01-giris-footer"] {
+        position: absolute;
+        bottom: 48px;
+        left: 64px;
+        right: 64px;
+        height: 32px;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        font-family: "JetBrains Mono", monospace;
+        font-size: 22px;
+        letter-spacing: 0.06em;
+        color: #0f0f0f;
+        white-space: nowrap;
+      }
+      [id="01-giris-counter"] {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+      }
+      [id="01-giris-dot"] {
+        width: 10px;
+        height: 10px;
+        border-radius: 50%;
+        background: #0f0f0f;
+      }
+
+      /* ---------- two display lines (one step smaller than TR: longer strings) ---------- */
+      [class~="01-giris-head"] {
+        position: absolute;
+        left: 96px;
+        font-family: "Archivo Black", sans-serif;
+        font-size: 60px;
+        line-height: 0.92;
+        letter-spacing: -0.01em;
+        white-space: nowrap;
+        color: #0f0f0f;
+      }
+      [id="01-giris-t1"] {
+        top: 174px;
+      }
+      [id="01-giris-t2"] {
+        top: 262px;
+      }
+      [class~="01-giris-word"] {
+        display: inline-block;
+        margin-right: 0.28em;
+      }
+
+      /* ---------- small panel box with the side menu ---------- */
+      [id="01-giris-panel"] {
+        position: absolute;
+        left: 96px;
+        top: 420px;
+        width: 464px;
+        height: 340px;
+        border: 4px solid #0f0f0f;
+        background: #efe9d9;
+      }
+      [id="01-giris-panelhead"] {
+        position: absolute;
+        left: 0;
+        top: 0;
+        right: 0;
+        height: 44px;
+        background: #0f0f0f;
+        color: #efe9d9;
+        font-family: "JetBrains Mono", monospace;
+        font-size: 20px;
+        letter-spacing: 0.04em;
+        display: flex;
+        align-items: center;
+        padding: 0 20px;
+        white-space: nowrap;
+      }
+      [id="01-giris-side"] {
+        position: absolute;
+        left: 0;
+        top: 44px;
+        bottom: 0;
+        width: 290px;
+        border-right: 2px solid #0f0f0f;
+        background: #efe9d9;
+      }
+      [class~="01-giris-menu"] {
+        position: absolute;
+        left: 16px;
+        width: 258px;
+        height: 42px;
+        display: flex;
+        align-items: center;
+        padding-left: 14px;
+        font-family: "JetBrains Mono", monospace;
+        font-size: 20px;
+        letter-spacing: 0.01em;
+        white-space: nowrap;
+        color: #0f0f0f;
+        transform-origin: 50% 50%;
+      }
+      [id="01-giris-m2"] {
+        border: 2px solid #0f0f0f;
+      }
+      [id="01-giris-m2fill"] {
+        position: absolute;
+        inset: 0;
+        background: #0f0f0f;
+        color: #efe9d9;
+        display: flex;
+        align-items: center;
+        padding-left: 12px;
+        white-space: nowrap;
+      }
+      [class~="01-giris-ph"] {
+        position: absolute;
+        left: 310px;
+        width: 126px;
+        background: #e4dcc4;
+      }
+
+      /* ---------- large four-cell strip ---------- */
+      [class~="01-giris-cell"] {
+        position: absolute;
+        top: 470px;
+        width: 261px;
+        height: 110px;
+        border: 4px solid #0f0f0f;
+        background: #efe9d9;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        gap: 6px;
+        color: #0f0f0f;
+        z-index: 2;
+      }
+      [class~="01-giris-num"] {
+        font-family: "Archivo Black", sans-serif;
+        font-size: 44px;
+        line-height: 1;
+      }
+      [class~="01-giris-name"] {
+        font-family: "JetBrains Mono", monospace;
+        font-size: 20px;
+        letter-spacing: 0.08em;
+        line-height: 1;
+        white-space: nowrap;
+      }
+      [class~="01-giris-link"] {
+        position: absolute;
+        top: 523px;
+        width: 46px;
+        height: 4px;
+        background: #0f0f0f;
+        transform-origin: 0 50%;
+      }
+
+      /* ---------- bottom line ---------- */
+      [id="01-giris-bottom"] {
+        position: absolute;
+        left: 96px;
+        top: 790px;
+        width: 1728px;
+        font-family: "Space Grotesk", sans-serif;
+        font-size: 28px;
+        line-height: 1.35;
+        color: #0f0f0f;
+      }
+    </style>
+
+    <div id="01-giris-stage" class="clip" data-start="0" data-duration="10.5" data-track-index="0">
+      <!-- chrome -->
+      <div id="01-giris-topbar">
+        <span>PINVAULT · SETUP WIZARD</span>
+        <span id="01-giris-pill">INTRO</span>
+      </div>
+      <div id="01-giris-footer">
+        <span>Intro</span>
+        <span id="01-giris-counter"><span>01</span><span id="01-giris-dot"></span><span>15</span></span>
+      </div>
+
+      <!-- display lines (split into words by the script) -->
+      <div id="01-giris-t1" class="01-giris-head">THE SERVER IS UP. THE PHONE CONNECTS.</div>
+      <div id="01-giris-t2" class="01-giris-head">IS IT READY FOR PRODUCTION?</div>
+
+      <!-- small panel with side menu -->
+      <div id="01-giris-panel">
+        <div id="01-giris-panelhead">Panel · 8090</div>
+        <div id="01-giris-side"></div>
+        <div id="01-giris-m1" class="01-giris-menu" style="top: 62px">Config API</div>
+        <div id="01-giris-m2" class="01-giris-menu" style="top: 112px">Setup Wizard<div id="01-giris-m2fill">Setup Wizard</div></div>
+        <div id="01-giris-m3" class="01-giris-menu" style="top: 162px">Connection History</div>
+        <div id="01-giris-m4" class="01-giris-menu" style="top: 212px">Approvals</div>
+        <div id="01-giris-m5" class="01-giris-menu" style="top: 262px">Audit Log</div>
+        <div id="01-giris-ph1" class="01-giris-ph" style="top: 66px; height: 74px"></div>
+        <div id="01-giris-ph2" class="01-giris-ph" style="top: 160px; height: 136px"></div>
+      </div>
+
+      <!-- large strip: cells at x = 640 + i*307, links in the 46px gaps -->
+      <div id="01-giris-c1" class="01-giris-cell" style="left: 640px"><span class="01-giris-num">1</span><span class="01-giris-name">SERVER</span></div>
+      <div id="01-giris-c2" class="01-giris-cell" style="left: 947px"><span class="01-giris-num">2</span><span class="01-giris-name">CERTIFICATES</span></div>
+      <div id="01-giris-c3" class="01-giris-cell" style="left: 1254px"><span class="01-giris-num">3</span><span class="01-giris-name">APP</span></div>
+      <div id="01-giris-c4" class="01-giris-cell" style="left: 1561px"><span class="01-giris-num">4</span><span class="01-giris-name">CODE</span></div>
+      <div id="01-giris-k1" class="01-giris-link" style="left: 901px"></div>
+      <div id="01-giris-k2" class="01-giris-link" style="left: 1208px"></div>
+      <div id="01-giris-k3" class="01-giris-link" style="left: 1515px"></div>
+
+      <!-- bottom line, two sentences -->
+      <div id="01-giris-bottom"><span id="01-giris-b1">The wizard measures in four steps: server settings, certificates, the app's protections and the code that goes into the app.</span> <span id="01-giris-b2">It changes none of them itself; it shows where each one changes.</span></div>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/gsap@3.14.2/dist/gsap.min.js" integrity="sha384-sG0Hv1tP1lZCk9KQmrIbY/XNwi+OY84GQqhMscbnsoBFqAz8KNCil1kvfL3Hbbk2" crossorigin="anonymous"></script>
+    <script>
+      (function () {
+        var FID = "01-giris";
+        var host = document.querySelector('[data-composition-id="' + FID + '"]') || document;
+        var $ = function (n) {
+          return host.querySelector('[id="' + FID + "-" + n + '"]');
+        };
+
+        var tl = gsap.timeline({ paused: true });
+        var SOFT = "power3.out";
+
+        // reveal a display line word by word (one inline-block span per word)
+        function words(el, start, per) {
+          var parts = el.textContent.split(" ");
+          el.textContent = "";
+          parts.forEach(function (w, i) {
+            var s = document.createElement("span");
+            s.className = FID + "-word";
+            s.textContent = w;
+            el.appendChild(s);
+            tl.fromTo(s, { opacity: 0, y: 22 }, { opacity: 1, y: 0, duration: 0.55, ease: SOFT }, start + i * per);
+          });
+          return start + parts.length * per;
+        }
+
+        // ---------- Scene 1 (0.0–2.5): line 1 word by word; panel settles, menu rows top to bottom ----------
+        words($("t1"), 0.3, 0.35);
+        tl.fromTo($("panel"), { opacity: 0, y: 30 }, { opacity: 1, y: 0, duration: 0.7, ease: SOFT }, 0.8);
+        ["m1", "m2", "m3", "m4", "m5"].forEach(function (m, i) {
+          tl.fromTo($(m), { opacity: 0, x: -14 }, { opacity: 1, x: 0, duration: 0.45, ease: SOFT }, 1.3 + i * 0.18);
+        });
+        tl.fromTo($("ph1"), { opacity: 0 }, { opacity: 1, duration: 0.5, ease: SOFT }, 1.5);
+        tl.fromTo($("ph2"), { opacity: 0 }, { opacity: 1, duration: 0.5, ease: SOFT }, 1.7);
+
+        // ---------- Scene 2 (2.5–4.5): line 2; "Setup Wizard" row is pressed and turns ink ----------
+        words($("t2"), 2.6, 0.35);
+        tl.fromTo($("m2"), { scale: 1 }, { scale: 0.92, duration: 0.1, ease: "power2.in" }, 3.7);
+        tl.fromTo($("m2fill"), { opacity: 0 }, { opacity: 1, duration: 0.1, ease: "none" }, 3.75);
+        tl.to($("m2"), { scale: 1, duration: 0.4, ease: SOFT }, 3.8);
+
+        // ---------- Scene 3 (4.5–7.5): four large cells left to right, each linked to the previous one ----------
+        var cellAt = [4.5, 5.1, 5.7, 6.3];
+        ["c1", "c2", "c3", "c4"].forEach(function (c, i) {
+          tl.fromTo($(c), { opacity: 0, y: 24 }, { opacity: 1, y: 0, duration: 0.6, ease: SOFT }, cellAt[i]);
+        });
+        ["k1", "k2", "k3"].forEach(function (k, i) {
+          tl.fromTo($(k), { scaleX: 0 }, { scaleX: 1, duration: 0.35, ease: "power2.inOut" }, cellAt[i + 1] - 0.3);
+        });
+
+        // ---------- Scene 4 (7.5–10.0): bottom line, two sentences, hold ----------
+        tl.fromTo($("b1"), { opacity: 0 }, { opacity: 1, duration: 0.6, ease: SOFT }, 7.5);
+        tl.fromTo($("b2"), { opacity: 0 }, { opacity: 1, duration: 0.6, ease: SOFT }, 8.9);
+        tl.to({}, { duration: 0.01 }, 10.49);
+
+        window.__timelines = window.__timelines || {};
+        window.__timelines[FID] = tl;
+      })();
+    </script>
+  </div>
+</template>

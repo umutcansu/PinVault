@@ -1,0 +1,695 @@
+<template id="07-adim2-mtls-template">
+  <div id="root" data-composition-id="07-adim2-mtls" data-start="0" data-duration="15.5" data-width="1920" data-height="1080" lang="en">
+    <style>
+      @import url("https://fonts.googleapis.com/css2?family=Archivo+Black&family=JetBrains+Mono:wght@400;700&family=Space+Grotesk:wght@400;500;700&display=block");
+
+      #root {
+        position: relative;
+        width: 1920px;
+        height: 1080px;
+        overflow: hidden;
+      }
+      [data-composition-id="07-adim2-mtls"] * {
+        margin: 0;
+        padding: 0;
+        box-sizing: border-box;
+      }
+
+      [id="07-adim2-mtls-stage"] {
+        position: absolute;
+        inset: 0;
+        width: 1920px;
+        height: 1080px;
+        background: #efe9d9;
+        overflow: hidden;
+        color: #0f0f0f;
+        font-family: "Space Grotesk", sans-serif;
+      }
+
+      /* ---------- chrome ---------- */
+      [id="07-adim2-mtls-topbar"] {
+        position: absolute;
+        top: 48px;
+        left: 64px;
+        right: 64px;
+        height: 44px;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        font-family: "JetBrains Mono", monospace;
+        font-size: 22px;
+        letter-spacing: 0.06em;
+        white-space: nowrap;
+      }
+      [id="07-adim2-mtls-pill"] {
+        border: 4px solid #0f0f0f;
+        border-radius: 999px;
+        background: #efe9d9;
+        padding: 4px 20px;
+        line-height: 1.3;
+      }
+      [id="07-adim2-mtls-footer"] {
+        position: absolute;
+        bottom: 48px;
+        left: 64px;
+        right: 64px;
+        height: 32px;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        font-family: "JetBrains Mono", monospace;
+        font-size: 22px;
+        letter-spacing: 0.06em;
+        white-space: nowrap;
+      }
+      [id="07-adim2-mtls-counter"] {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+      }
+      [id="07-adim2-mtls-dot"] {
+        width: 10px;
+        height: 10px;
+        border-radius: 50%;
+        background: #0f0f0f;
+      }
+
+      /* ---------- step strip (fixed geometry) ---------- */
+      [class~="07-adim2-mtls-cell"] {
+        position: absolute;
+        top: 104px;
+        width: 400px;
+        height: 40px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-family: "JetBrains Mono", monospace;
+        font-size: 17px;
+        letter-spacing: 0.04em;
+        white-space: nowrap;
+        color: #0f0f0f;
+        background: #efe9d9;
+      }
+      [class~="07-adim2-mtls-done"] {
+        background: #0f0f0f;
+        color: #efe9d9;
+        border: 2px solid #0f0f0f;
+      }
+      [class~="07-adim2-mtls-future"] {
+        border: 2px solid #0f0f0f;
+        opacity: 0.35;
+      }
+      [id="07-adim2-mtls-cur"] {
+        border: 4px solid #0f0f0f;
+        font-weight: 700;
+        z-index: 2;
+      }
+      [class~="07-adim2-mtls-link"] {
+        position: absolute;
+        top: 123px;
+        width: 32px;
+        height: 2px;
+        background: #0f0f0f;
+      }
+      [id="07-adim2-mtls-underline"] {
+        position: absolute;
+        left: 528px;
+        top: 148px;
+        width: 400px;
+        height: 4px;
+        background: #f5c518;
+        transform-origin: 0 50%;
+      }
+
+      /* ---------- title ---------- */
+      [id="07-adim2-mtls-title"] {
+        position: absolute;
+        left: 96px;
+        top: 176px;
+        font-family: "Archivo Black", sans-serif;
+        font-size: 76px;
+        line-height: 0.92;
+        letter-spacing: -0.01em;
+        white-space: nowrap;
+      }
+
+      /* ---------- panel card ---------- */
+      [id="07-adim2-mtls-panel"] {
+        position: absolute;
+        left: 96px;
+        top: 290px;
+        width: 1124px;
+        height: 512px;
+        border: 4px solid #0f0f0f;
+        background: #efe9d9;
+        z-index: 2;
+      }
+      [id="07-adim2-mtls-panelhead"] {
+        height: 44px;
+        background: #0f0f0f;
+        color: #efe9d9;
+        font-family: "JetBrains Mono", monospace;
+        font-size: 18px;
+        letter-spacing: 0.04em;
+        display: flex;
+        align-items: center;
+        padding: 0 22px;
+        white-space: nowrap;
+      }
+      [id="07-adim2-mtls-cardtitle"] {
+        position: absolute;
+        left: 24px;
+        top: 60px;
+        font-family: "JetBrains Mono", monospace;
+        font-size: 22px;
+        font-weight: 700;
+        letter-spacing: 0.04em;
+        white-space: nowrap;
+      }
+      [class~="07-adim2-mtls-info"] {
+        position: absolute;
+        left: 24px;
+        font-family: "JetBrains Mono", monospace;
+        font-size: 18px;
+        line-height: 24px;
+        white-space: nowrap;
+      }
+      [id="07-adim2-mtls-pin"] {
+        position: relative;
+        display: inline-block;
+      }
+      [id="07-adim2-mtls-pinline"] {
+        position: absolute;
+        left: 0;
+        right: 0;
+        bottom: -3px;
+        height: 3px;
+        background: #f06ca8;
+        transform-origin: 0 50%;
+      }
+      [class~="07-adim2-mtls-th"] {
+        position: absolute;
+        top: 166px;
+        font-family: "JetBrains Mono", monospace;
+        font-size: 17px;
+        letter-spacing: 0.1em;
+        color: rgba(15, 15, 15, 0.7);
+        white-space: nowrap;
+      }
+      [id="07-adim2-mtls-rule"] {
+        position: absolute;
+        left: 24px;
+        top: 190px;
+        width: 1068px;
+        height: 2px;
+        background: #0f0f0f;
+        transform-origin: 0 50%;
+      }
+      [class~="07-adim2-mtls-row"] {
+        position: absolute;
+        left: 24px;
+        width: 1068px;
+        height: 42px;
+      }
+      [class~="07-adim2-mtls-sep"] {
+        border-top: 2px solid rgba(15, 15, 15, 0.15);
+      }
+      [class~="07-adim2-mtls-badge"] {
+        position: absolute;
+        left: 0;
+        top: 7px;
+        width: 100px;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        font-family: "JetBrains Mono", monospace;
+        font-size: 15px;
+        letter-spacing: 0.06em;
+        line-height: 1.3;
+        padding: 3px 10px;
+        white-space: nowrap;
+      }
+      [class~="07-adim2-mtls-ok"] {
+        background: #efe9d9;
+        border: 2px solid #1f8a4c;
+        color: #1f8a4c;
+      }
+      [class~="07-adim2-mtls-warn"] {
+        background: #f5c518;
+        border: 2px solid #0f0f0f;
+        color: #0f0f0f;
+      }
+      [class~="07-adim2-mtls-what"] {
+        position: absolute;
+        left: 126px;
+        top: 0;
+        height: 42px;
+        display: flex;
+        align-items: center;
+        font-size: 22px;
+        white-space: nowrap;
+      }
+      [class~="07-adim2-mtls-now"] {
+        position: absolute;
+        left: 576px;
+        top: 0;
+        height: 42px;
+        display: flex;
+        align-items: center;
+        font-size: 22px;
+        font-weight: 500;
+        white-space: nowrap;
+      }
+      [class~="07-adim2-mtls-btn"] {
+        position: absolute;
+        left: 856px;
+        top: 5px;
+        height: 32px;
+        padding: 0 14px;
+        border: 2px solid #0f0f0f;
+        background: #efe9d9;
+        display: flex;
+        align-items: center;
+        font-family: "JetBrains Mono", monospace;
+        font-size: 18px;
+        white-space: nowrap;
+      }
+
+      /* ---------- right visual: server, phone, card ---------- */
+      [id="07-adim2-mtls-server"] {
+        position: absolute;
+        left: 1484px;
+        top: 290px;
+        width: 340px;
+        height: 170px;
+        border: 4px solid #0f0f0f;
+        background: #e4dcc4;
+        z-index: 3;
+      }
+      [id="07-adim2-mtls-srvhead"] {
+        height: 44px;
+        background: #0f0f0f;
+        color: #efe9d9;
+        font-family: "JetBrains Mono", monospace;
+        font-size: 20px;
+        letter-spacing: 0.04em;
+        display: flex;
+        align-items: center;
+        padding: 0 18px 0 28px;
+        white-space: nowrap;
+      }
+      [class~="07-adim2-mtls-port"] {
+        position: absolute;
+        left: 1438px;
+        width: 60px;
+        height: 24px;
+        border: 2px solid #0f0f0f;
+        background: #efe9d9;
+        font-family: "JetBrains Mono", monospace;
+        font-size: 15px;
+        letter-spacing: 0.02em;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        z-index: 4;
+      }
+      [id="07-adim2-mtls-lines"] {
+        position: absolute;
+        left: 0;
+        top: 0;
+        width: 1920px;
+        height: 1080px;
+        z-index: 1;
+        overflow: visible;
+      }
+      [id="07-adim2-mtls-cardpath"] {
+        fill: none;
+        stroke: #0f0f0f;
+        stroke-width: 3;
+        stroke-linecap: square;
+      }
+      [id="07-adim2-mtls-chipline"] {
+        fill: none;
+        stroke: #0f0f0f;
+        stroke-width: 2;
+        stroke-linecap: square;
+        stroke-linejoin: miter;
+      }
+      [id="07-adim2-mtls-phone"] {
+        position: absolute;
+        left: 1290px;
+        top: 530px;
+        width: 190px;
+        height: 230px;
+        border: 4px solid #0f0f0f;
+        background: #efe9d9;
+        z-index: 3;
+        display: flex;
+        flex-direction: column;
+      }
+      [id="07-adim2-mtls-speaker"] {
+        position: absolute;
+        left: 69px;
+        top: 10px;
+        width: 44px;
+        height: 4px;
+        background: #0f0f0f;
+      }
+      [id="07-adim2-mtls-phonetop"] {
+        height: 44px;
+        display: flex;
+        align-items: flex-end;
+        padding: 0 0 6px 12px;
+        font-family: "JetBrains Mono", monospace;
+        font-size: 16px;
+        letter-spacing: 0.02em;
+        white-space: nowrap;
+      }
+      [id="07-adim2-mtls-screen"] {
+        position: relative;
+        flex: 1 1 auto;
+        margin: 0 10px 10px;
+        border: 3px solid #0f0f0f;
+        background: #e4dcc4;
+      }
+      [id="07-adim2-mtls-key"] {
+        position: absolute;
+        left: 18px;
+        top: 42px;
+        width: 72px;
+        height: 36px;
+        overflow: visible;
+      }
+      [id="07-adim2-mtls-phok"] {
+        position: absolute;
+        left: 104px;
+        top: 38px;
+        width: 44px;
+        height: 44px;
+        border: 4px solid #0f0f0f;
+        background: #1f8a4c;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+      }
+      [id="07-adim2-mtls-phok"] svg {
+        width: 30px;
+        height: 30px;
+      }
+      [id="07-adim2-mtls-phonebot"] {
+        height: 34px;
+        background: #0f0f0f;
+        color: #efe9d9;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-family: "JetBrains Mono", monospace;
+        font-size: 14px;
+        white-space: nowrap;
+      }
+      [id="07-adim2-mtls-card"] {
+        position: absolute;
+        left: 1510px;
+        top: 560px;
+        width: 230px;
+        height: 116px;
+        border: 4px solid #0f0f0f;
+        background: #f06ca8;
+        box-shadow: 12px 12px 0 #e85a1f, 12px 12px 0 3px #0f0f0f;
+        z-index: 5;
+        padding: 14px;
+        display: flex;
+        gap: 14px;
+        align-items: center;
+      }
+      [id="07-adim2-mtls-photo"] {
+        position: relative;
+        flex: 0 0 52px;
+        height: 72px;
+        border: 3px solid #0f0f0f;
+        background: #efe9d9;
+      }
+      [id="07-adim2-mtls-glyph"] {
+        position: absolute;
+        left: 13px;
+        top: 13px;
+        width: 20px;
+        height: 36px;
+        border: 3px solid #0f0f0f;
+      }
+      [id="07-adim2-mtls-cardname"] {
+        font-family: "JetBrains Mono", monospace;
+        font-size: 24px;
+        font-weight: 700;
+        line-height: 1;
+        white-space: nowrap;
+      }
+      [id="07-adim2-mtls-cardlabel"] {
+        position: absolute;
+        left: 1510px;
+        top: 694px;
+        font-family: "JetBrains Mono", monospace;
+        font-size: 18px;
+        line-height: 26px;
+        white-space: nowrap;
+      }
+      [id="07-adim2-mtls-chip"] {
+        position: absolute;
+        left: 1290px;
+        top: 770px;
+        height: 38px;
+        padding: 0 14px;
+        border: 2px solid #f06ca8;
+        background: #efe9d9;
+        display: flex;
+        align-items: center;
+        font-family: "JetBrains Mono", monospace;
+        font-size: 18px;
+        white-space: nowrap;
+        z-index: 3;
+      }
+
+      /* ---------- WHY strip ---------- */
+      [id="07-adim2-mtls-why"] {
+        position: absolute;
+        left: 96px;
+        top: 822px;
+        min-height: 60px;
+        border: 2px solid #0f0f0f;
+        background: #e4dcc4;
+        display: flex;
+        align-items: center;
+        gap: 18px;
+        padding: 8px 22px 8px 8px;
+        z-index: 6;
+      }
+      [id="07-adim2-mtls-whytag"] {
+        background: #0f0f0f;
+        color: #efe9d9;
+        font-family: "JetBrains Mono", monospace;
+        font-size: 18px;
+        letter-spacing: 0.12em;
+        padding: 6px 12px;
+        white-space: nowrap;
+      }
+      [id="07-adim2-mtls-whytext"] {
+        font-size: 24px;
+        line-height: 1.25;
+        max-width: 1560px;
+      }
+    </style>
+
+    <div id="07-adim2-mtls-stage" class="clip" data-start="0" data-duration="15.5" data-track-index="0">
+      <!-- chrome -->
+      <div id="07-adim2-mtls-topbar">
+        <span>PINVAULT · SETUP WIZARD</span>
+        <span id="07-adim2-mtls-pill">STEP 2 / 4</span>
+      </div>
+      <div id="07-adim2-mtls-footer">
+        <span>Step 2 · mTLS</span>
+        <span id="07-adim2-mtls-counter"><span>07</span><span id="07-adim2-mtls-dot"></span><span>15</span></span>
+      </div>
+
+      <!-- step strip: cells at x = 96 + i*432, links in the 32px gaps -->
+      <div class="07-adim2-mtls-cell 07-adim2-mtls-done" style="left: 96px">1 · SERVER</div>
+      <div class="07-adim2-mtls-link" style="left: 496px"></div>
+      <div class="07-adim2-mtls-cell" id="07-adim2-mtls-cur" style="left: 528px">2 · CERTIFICATES</div>
+      <div class="07-adim2-mtls-link" style="left: 928px"></div>
+      <div class="07-adim2-mtls-cell 07-adim2-mtls-future" style="left: 960px">3 · APP</div>
+      <div class="07-adim2-mtls-link" style="left: 1360px"></div>
+      <div class="07-adim2-mtls-cell 07-adim2-mtls-future" style="left: 1392px">4 · CODE</div>
+      <div id="07-adim2-mtls-underline"></div>
+
+      <!-- title -->
+      <div id="07-adim2-mtls-title">WHO ISSUES THE DEVICE ID CARDS?</div>
+
+      <!-- connector lines (behind boxes) -->
+      <svg id="07-adim2-mtls-lines" viewBox="0 0 1920 1080" xmlns="http://www.w3.org/2000/svg">
+        <path id="07-adim2-mtls-cardpath" pathLength="1" d="M 1625 462 V 556" />
+        <path id="07-adim2-mtls-chipline" pathLength="1" d="M 1290 789 H 1262 V 432 H 566" />
+      </svg>
+
+      <!-- panel card -->
+      <div id="07-adim2-mtls-panel">
+        <div id="07-adim2-mtls-panelhead">Dashboard · 8090 · Setup Wizard · 2 · Certificates</div>
+        <div id="07-adim2-mtls-cardtitle">mTLS: DEVICE CERTIFICATES</div>
+        <div id="07-adim2-mtls-info1" class="07-adim2-mtls-info" style="top: 98px">Certificate: CN=PinVault Client CA · Valid until 2036-09-28</div>
+        <div id="07-adim2-mtls-info2" class="07-adim2-mtls-info" style="top: 126px">Client CA pin (clientCaPins): <span id="07-adim2-mtls-pin">OGdpcSUL…<span id="07-adim2-mtls-pinline"></span></span></div>
+
+        <div id="07-adim2-mtls-th1" class="07-adim2-mtls-th" style="left: 150px">What</div>
+        <div id="07-adim2-mtls-th2" class="07-adim2-mtls-th" style="left: 600px">Now</div>
+        <div id="07-adim2-mtls-th3" class="07-adim2-mtls-th" style="left: 880px">Where it changes</div>
+        <div id="07-adim2-mtls-rule"></div>
+
+        <div id="07-adim2-mtls-row1" class="07-adim2-mtls-row" style="top: 194px">
+          <span id="07-adim2-mtls-b1" class="07-adim2-mtls-badge 07-adim2-mtls-ok">READY</span>
+          <span class="07-adim2-mtls-what">Client CA validity</span>
+          <span class="07-adim2-mtls-now">until 2036-09-28</span>
+          <span class="07-adim2-mtls-btn">mTLS tab</span>
+        </div>
+        <div id="07-adim2-mtls-row2" class="07-adim2-mtls-row 07-adim2-mtls-sep" style="top: 236px">
+          <span id="07-adim2-mtls-b2" class="07-adim2-mtls-badge 07-adim2-mtls-ok">READY</span>
+          <span class="07-adim2-mtls-what">Device certificate lifetime</span>
+          <span class="07-adim2-mtls-now">90 days</span>
+          <span class="07-adim2-mtls-btn">mTLS tab</span>
+        </div>
+        <div id="07-adim2-mtls-row3" class="07-adim2-mtls-row 07-adim2-mtls-sep" style="top: 278px">
+          <span id="07-adim2-mtls-b3" class="07-adim2-mtls-badge 07-adim2-mtls-ok">READY</span>
+          <span class="07-adim2-mtls-what">Enrollment mode</span>
+          <span class="07-adim2-mtls-now">token</span>
+          <span class="07-adim2-mtls-btn">mTLS tab</span>
+        </div>
+        <div id="07-adim2-mtls-row4" class="07-adim2-mtls-row 07-adim2-mtls-sep" style="top: 320px">
+          <span id="07-adim2-mtls-b4" class="07-adim2-mtls-badge 07-adim2-mtls-warn">WARNING</span>
+          <span class="07-adim2-mtls-what">Server-made keys (P12)</span>
+          <span class="07-adim2-mtls-now">on</span>
+          <span class="07-adim2-mtls-btn">mTLS tab</span>
+        </div>
+        <div id="07-adim2-mtls-row5" class="07-adim2-mtls-row 07-adim2-mtls-sep" style="top: 362px">
+          <span id="07-adim2-mtls-b5" class="07-adim2-mtls-badge 07-adim2-mtls-ok">READY</span>
+          <span class="07-adim2-mtls-what">Recovery door</span>
+          <span class="07-adim2-mtls-now">port 8093</span>
+          <span class="07-adim2-mtls-btn">mTLS tab</span>
+        </div>
+        <div id="07-adim2-mtls-row6" class="07-adim2-mtls-row 07-adim2-mtls-sep" style="top: 404px">
+          <span id="07-adim2-mtls-b6" class="07-adim2-mtls-badge 07-adim2-mtls-ok">READY</span>
+          <span class="07-adim2-mtls-what">Server CA validity</span>
+          <span class="07-adim2-mtls-now">until 2036-09-28</span>
+          <span class="07-adim2-mtls-btn">mTLS tab</span>
+        </div>
+        <div id="07-adim2-mtls-row7" class="07-adim2-mtls-row 07-adim2-mtls-sep" style="top: 446px">
+          <span id="07-adim2-mtls-b7" class="07-adim2-mtls-badge 07-adim2-mtls-ok">READY</span>
+          <span class="07-adim2-mtls-what">Enrolled devices</span>
+          <span class="07-adim2-mtls-now">0</span>
+          <span class="07-adim2-mtls-btn">mTLS tab</span>
+        </div>
+      </div>
+
+      <!-- right visual -->
+      <div id="07-adim2-mtls-server">
+        <div id="07-adim2-mtls-srvhead">PinVault server</div>
+      </div>
+      <div id="07-adim2-mtls-p1" class="07-adim2-mtls-port" style="top: 344px">8090</div>
+      <div id="07-adim2-mtls-p2" class="07-adim2-mtls-port" style="top: 372px">8091</div>
+      <div id="07-adim2-mtls-p3" class="07-adim2-mtls-port" style="top: 400px">8092</div>
+      <div id="07-adim2-mtls-p4" class="07-adim2-mtls-port" style="top: 428px">8093</div>
+
+      <div id="07-adim2-mtls-phone">
+        <div id="07-adim2-mtls-speaker"></div>
+        <div id="07-adim2-mtls-phonetop">Your app</div>
+        <div id="07-adim2-mtls-screen">
+          <svg id="07-adim2-mtls-key" viewBox="0 0 72 36" xmlns="http://www.w3.org/2000/svg">
+            <circle cx="16" cy="18" r="11" fill="none" stroke="#0F0F0F" stroke-width="5" />
+            <rect x="26" y="15" width="44" height="6" fill="#0F0F0F" />
+            <rect x="58" y="19" width="5" height="11" fill="#0F0F0F" />
+            <rect x="46" y="19" width="5" height="8" fill="#0F0F0F" />
+          </svg>
+          <div id="07-adim2-mtls-phok"><svg viewBox="0 0 24 24"><polyline id="07-adim2-mtls-phtick" pathLength="1" points="4,12.5 10,18 20,6" fill="none" stroke="#EFE9D9" stroke-width="4" stroke-linecap="square" /></svg></div>
+        </div>
+        <div id="07-adim2-mtls-phonebot">PinVault library</div>
+      </div>
+
+      <div id="07-adim2-mtls-card">
+        <div id="07-adim2-mtls-photo"><div id="07-adim2-mtls-glyph"></div></div>
+        <div id="07-adim2-mtls-cardname">tablet-07</div>
+      </div>
+      <div id="07-adim2-mtls-cardlabel">90 days ·<br>renewed with a third left</div>
+
+      <div id="07-adim2-mtls-chip">clientCaPins → 4 · Code step</div>
+
+      <!-- WHY strip -->
+      <div id="07-adim2-mtls-why">
+        <span id="07-adim2-mtls-whytag">WHY</span>
+        <span id="07-adim2-mtls-whytext">When the client CA expires no device can renew; a CA change means every device enrolls again. 90 days limits how long a stolen card works.</span>
+      </div>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/gsap@3.14.2/dist/gsap.min.js" integrity="sha384-sG0Hv1tP1lZCk9KQmrIbY/XNwi+OY84GQqhMscbnsoBFqAz8KNCil1kvfL3Hbbk2" crossorigin="anonymous"></script>
+    <script>
+      (function () {
+        var FID = "07-adim2-mtls";
+        var host = document.querySelector('[data-composition-id="' + FID + '"]') || document;
+        var $ = function (n) {
+          return host.querySelector('[id="' + FID + "-" + n + '"]');
+        };
+
+        var tl = gsap.timeline({ paused: true });
+        var SOFT = "power3.out";
+        var INOUT = "power3.inOut";
+
+        // ---------- Scene 1 (0.0–1.2): strip standing; current cell settles; title ----------
+        tl.fromTo($("cur"), { opacity: 0.35, borderWidth: 2 }, { opacity: 1, borderWidth: 4, duration: 0.6, ease: SOFT }, 0.2);
+        tl.fromTo($("underline"), { scaleX: 0 }, { scaleX: 1, duration: 0.6, ease: SOFT }, 0.2);
+        tl.fromTo($("title"), { opacity: 0, y: 28 }, { opacity: 1, y: 0, duration: 0.8, ease: SOFT }, 0.4);
+
+        // ---------- Scene 2 (1.2–3.0): panel settles; card title; two info lines ----------
+        tl.fromTo($("panel"), { opacity: 0, y: 30 }, { opacity: 1, y: 0, duration: 0.7, ease: SOFT }, 1.2);
+        tl.fromTo($("cardtitle"), { opacity: 0, x: -16 }, { opacity: 1, x: 0, duration: 0.5, ease: SOFT }, 1.7);
+        tl.fromTo($("info1"), { opacity: 0, x: -14 }, { opacity: 1, x: 0, duration: 0.5, ease: SOFT }, 2.1);
+        tl.fromTo($("info2"), { opacity: 0, x: -14 }, { opacity: 1, x: 0, duration: 0.5, ease: SOFT }, 2.5);
+
+        // ---------- Scene 3 (3.0–9.0): table head, seven rows ~0.8 s apart, badge 0.2 s after its row ----------
+        ["th1", "th2", "th3"].forEach(function (n, i) {
+          tl.fromTo($(n), { opacity: 0 }, { opacity: 1, duration: 0.4, ease: SOFT }, 3.0 + i * 0.08);
+        });
+        tl.fromTo($("rule"), { scaleX: 0 }, { scaleX: 1, duration: 0.6, ease: SOFT }, 3.0);
+        for (var r = 1; r <= 7; r++) {
+          var at = 3.4 + (r - 1) * 0.8;
+          tl.fromTo($("row" + r), { opacity: 0, x: -18 }, { opacity: 1, x: 0, duration: 0.5, ease: SOFT }, at);
+          tl.fromTo($("b" + r), { opacity: 0, scale: 0.85 }, { opacity: 1, scale: 1, duration: 0.35, ease: SOFT }, at + 0.2);
+        }
+
+        // ---------- Scene 4 (9.0–11.5): server and phone settle; card slides server → phone; label; chip + line ----------
+        tl.fromTo($("server"), { opacity: 0, y: 24 }, { opacity: 1, y: 0, duration: 0.6, ease: SOFT }, 9.0);
+        ["p1", "p2", "p3", "p4"].forEach(function (p, i) {
+          tl.fromTo($(p), { opacity: 0, x: -14 }, { opacity: 1, x: 0, duration: 0.4, ease: SOFT }, 9.3 + i * 0.08);
+        });
+        tl.fromTo($("phone"), { opacity: 0, y: 24 }, { opacity: 1, y: 0, duration: 0.6, ease: SOFT }, 9.2);
+        tl.fromTo($("key"), { opacity: 0 }, { opacity: 0.35, duration: 0.4, ease: SOFT }, 9.6);
+        // card is printed at the server's lower edge, then travels down to its place beside the phone (1.2 s)
+        tl.fromTo(
+          $("card"),
+          { opacity: 0, x: 50, y: -180, scale: 0.6 },
+          { opacity: 1, x: 50, y: -180, scale: 1, duration: 0.5, ease: SOFT },
+          9.6
+        );
+        tl.fromTo($("cardpath"), { strokeDasharray: 1, strokeDashoffset: 1 }, { strokeDashoffset: 0, duration: 0.5, ease: "power2.out" }, 9.9);
+        tl.to($("card"), { x: 0, y: 0, duration: 1.2, ease: INOUT }, 9.9);
+        tl.to($("key"), { opacity: 1, duration: 0.3, ease: SOFT }, 10.9);
+        tl.fromTo($("phok"), { opacity: 0, scale: 0.6 }, { opacity: 1, scale: 1, duration: 0.35, ease: SOFT }, 11.0);
+        tl.fromTo($("phtick"), { strokeDasharray: 1, strokeDashoffset: 1 }, { strokeDashoffset: 0, duration: 0.3, ease: "power2.out" }, 11.15);
+        tl.fromTo($("cardlabel"), { opacity: 0, y: 10 }, { opacity: 1, y: 0, duration: 0.5, ease: SOFT }, 11.1);
+        tl.fromTo($("chip"), { opacity: 0, x: -16 }, { opacity: 1, x: 0, duration: 0.5, ease: SOFT }, 11.3);
+        tl.fromTo($("chipline"), { strokeDasharray: 1, strokeDashoffset: 1 }, { strokeDashoffset: 0, duration: 0.7, ease: "power2.inOut" }, 11.5);
+        tl.fromTo($("pinline"), { scaleX: 0 }, { scaleX: 1, duration: 0.4, ease: SOFT }, 12.1);
+
+        // ---------- Scene 5 (11.5–15.0): WHY strip, hold ----------
+        tl.fromTo($("why"), { opacity: 0, x: -24 }, { opacity: 1, x: 0, duration: 0.6, ease: SOFT }, 12.3);
+        tl.to({}, { duration: 0.01 }, 15.49);
+
+        window.__timelines = window.__timelines || {};
+        window.__timelines[FID] = tl;
+      })();
+    </script>
+  </div>
+</template>

@@ -78,3 +78,28 @@ Token Yönetimi → Token Management · + Yeni Token → + New Token · Dağıt�
 - Kicker prefix "KİM: … · NEREDE: …" → "WHO: … · WHERE: …". "BENZETME" label → "ANALOGY". Bottom caption label "ADIM" → "STEP".
 - Footer counters "NN • 39" stay as they are.
 - The closing frame path line points to the English animation: "docs/animation/pinvault-request-flow.en.html".
+
+## Setup Wizard film (pinvault-kurulum-sihirbazi → pinvault-setup-wizard)
+| Turkish | English |
+|---|---|
+| Kurulum Sihirbazı | Setup Wizard |
+| 1 · Sunucu / 2 · Sertifikalar / 3 · Uygulama / 4 · Kod | 1 · Server / 2 · Certificates / 3 · App / 4 · Code |
+| madde hazır | items ready ("3 of 13 items ready") |
+| HAZIR / UYARI / EKSİK | READY / WARNING / MISSING |
+| Ayarlardan ↓ | In Settings ↓ |
+| Önerilen .env satırları | Suggested .env lines |
+| Şimdi yeniden başlat | Restart now |
+| Config API'nin kendi sertifikası | The Config API's own certificate |
+| yedek anahtar | backup key |
+| Bootstrap sekmesi / mTLS sekmesi / Host sayfası / Vault sekmesi | Bootstrap tab / mTLS tab / Host page / Vault tab |
+| Yedek Anahtara Geç / Sertifikayı Yenile / JKS Yükle / URL'den Al | Switch to Backup Key / Renew Certificate / Upload JKS / Fetch from URL |
+| istemci CA'sı / sunucu CA'sı | client CA / server CA |
+| kurtarma kapısı | recovery door |
+| Pinlenen host'lar | Pinned hosts |
+| yedek pin | backup pin |
+| sertifikayı veren kurum (CA) | the issuing authority (CA) |
+| Vault dosyalarının süreleri | Vault file expiry |
+| Pin Seti Geçmişi → Geri yükle | Pin Set History → Restore |
+| NEDEN (şerit etiketi) | WHY |
+| Kapılar 8090 / 8091 / 8092 / 8093 | doors 8090 / 8091 / 8092 / 8093 (same numbers) |
+| api.ornek.com / odeme.ornek.com | api.example.com / pay.example.com |

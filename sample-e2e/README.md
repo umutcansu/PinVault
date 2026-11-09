@@ -65,6 +65,8 @@ npm run check-evidence      # kanıt sayfası denetimi (kanıtsız adım, tekrar
 
 Tek bir senaryo için: `npx playwright test tests/12-mtls-enroll-and-revoke.spec.js`.
 
+**Panelde kurulum turu (video):** `E2E_FRESH_PORT_BASE=6950 node scripts/record-setup-tour.js --fresh` geçici test sunucusunu kurar, gerçek paneli Playwright ile tıklama tıklama sürerken ekran kaydı alır (vurgu halkası, imleç, altta TR/EN alt yazı) ve `docs/animation/pinvault-panelde-kurulum.tr.mp4` ile `pinvault-setup-in-the-dashboard.en.mp4` dosyalarını (+ posterler, + bölüm zamanlarını tutan `.chapters.vtt`) yazar. Panel 1.35× büyütülerek kaydedilir (`--zoom`), yazıları okunsun diye. Telefon gerekmez; ffmpeg gerekir. Alt yazılar ve bölüm adları `scripts/setup-tour-captions.js` içinde; panel değişince yeniden kaydedilir.
+
 **iOS:** `npm run test:ios` aynı senaryoları iPhone simülatöründeki `sample-client-ios`'a karşı koşar (`E2E_PLATFORM=ios`; ayarlar `.env.ios`, örneği `.env.ios.example`). Simülatör, UI sürücüsü (`ios-driver/`, XCUITest), ayrı host örneği ve Android'den farklar: [SETUP.md → iOS koşusu](SETUP.md#ios-koşusu-e2e_platformios). Yalnızca Android'de anlamlı senaryolar (D05, U01) orada atlanır.
 
 Kurulum aşaması şunları yapar:

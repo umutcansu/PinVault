@@ -32,6 +32,7 @@ Kanıt sayfasında ayrı "Sıfırdan kurulum" bölümü. `tests/00-setup-*.spec.
 | K12 | İlk açılış: "Hazır — config vN", host ve sürüm listesi; dashboard'da Bağlı Cihazlar ve Bağlantı Geçmişi | telefon + web |
 | K13 | Swagger UI (`/docs`) ve OpenAPI; dashboard TR/EN; sayfalama | web |
 | K14 | Kurulum Sihirbazı "Sertifikalar" adımı: Config API sertifikası, mTLS (client CA, kurtarma kapısı), pinlenen host'lar, vault süreleri; her satır ilgili sayfaya götürür (K09) | web |
+| K15 | Kurulum Sihirbazı içindeki yönergeler: "Kurulum sırası" kartı, her eksik satırda "Nasıl yapılır" (adımlar, .env satırları, "Ayarlar kartında aç", "Doğrula"), Kod adımında "Sonraki adımlar" (mTLS'te kayıt token'ı); TR/EN (K10) | web |
 
 ## 3. Özellik envanteri ve kapsam matrisi
 

@@ -1,0 +1,504 @@
+<template id="10-adim3-secimler-template">
+  <div id="root" data-composition-id="10-adim3-secimler" data-start="0" data-duration="16.5" data-width="1920" data-height="1080" lang="tr">
+    <style>
+      @import url("https://fonts.googleapis.com/css2?family=Archivo+Black&family=JetBrains+Mono:wght@400;700&family=Space+Grotesk:wght@400;500&display=block");
+
+      #root {
+        position: relative;
+        width: 1920px;
+        height: 1080px;
+        overflow: hidden;
+      }
+      [data-composition-id="10-adim3-secimler"] * {
+        margin: 0;
+        padding: 0;
+        box-sizing: border-box;
+      }
+
+      /* full-bleed ground (clip layer, not #root) */
+      [id="10-adim3-secimler-stage"] {
+        position: absolute;
+        inset: 0;
+        width: 1920px;
+        height: 1080px;
+        background: #efe9d9;
+        container-type: size;
+        overflow: hidden;
+        color: #0f0f0f;
+      }
+
+      /* ---------- chrome ---------- */
+      [id="10-adim3-secimler-topbar"] {
+        position: absolute;
+        top: 48px;
+        left: 64px;
+        right: 64px;
+        height: 44px;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        font-family: "JetBrains Mono", monospace;
+        font-size: 22px;
+        letter-spacing: 0.06em;
+        color: #0f0f0f;
+        white-space: nowrap;
+      }
+      [id="10-adim3-secimler-pill"] {
+        border: 4px solid #0f0f0f;
+        border-radius: 999px;
+        background: #efe9d9;
+        padding: 4px 20px;
+        line-height: 1.3;
+      }
+      [id="10-adim3-secimler-footer"] {
+        position: absolute;
+        bottom: 48px;
+        left: 64px;
+        right: 64px;
+        height: 32px;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        font-family: "JetBrains Mono", monospace;
+        font-size: 22px;
+        letter-spacing: 0.06em;
+        color: #0f0f0f;
+        white-space: nowrap;
+      }
+      [id="10-adim3-secimler-counter"] {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+      }
+      [id="10-adim3-secimler-dot"] {
+        width: 10px;
+        height: 10px;
+        border-radius: 50%;
+        background: #0f0f0f;
+      }
+
+      /* ---------- step strip (fixed geometry: 4 × 400 px at x = 96 + i·432) ---------- */
+      [class~="10-adim3-secimler-cell"] {
+        position: absolute;
+        top: 104px;
+        width: 400px;
+        height: 40px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-family: "JetBrains Mono", monospace;
+        font-size: 17px;
+        letter-spacing: 0.04em;
+        white-space: nowrap;
+        color: #0f0f0f;
+      }
+      [class~="10-adim3-secimler-done"] {
+        background: #0f0f0f;
+        color: #efe9d9;
+      }
+      [class~="10-adim3-secimler-future"] {
+        border: 2px solid #0f0f0f;
+        background: #efe9d9;
+        opacity: 0.35;
+      }
+      [class~="10-adim3-secimler-link"] {
+        position: absolute;
+        top: 123px;
+        width: 32px;
+        height: 2px;
+        background: #0f0f0f;
+      }
+      [id="10-adim3-secimler-cur"] {
+        background: #efe9d9;
+        border: 4px solid #0f0f0f;
+        color: #0f0f0f;
+        z-index: 2;
+      }
+      [id="10-adim3-secimler-underline"] {
+        position: absolute;
+        top: 148px;
+        width: 400px;
+        height: 4px;
+        background: #f5c518;
+        transform-origin: 0 50%;
+        z-index: 2;
+      }
+
+      /* ---------- NEDEN / WHY strip ---------- */
+      [id="10-adim3-secimler-why"] {
+        position: absolute;
+        left: 96px;
+        top: 824px;
+        max-width: 1728px;
+        display: flex;
+        align-items: stretch;
+        background: #e4dcc4;
+        border: 2px solid #0f0f0f;
+      }
+      [id="10-adim3-secimler-whylabel"] {
+        flex: 0 0 auto;
+        background: #0f0f0f;
+        color: #efe9d9;
+        font-family: "JetBrains Mono", monospace;
+        font-size: 18px;
+        letter-spacing: 0.14em;
+        display: flex;
+        align-items: center;
+        padding: 0 16px;
+      }
+      [id="10-adim3-secimler-whytext"] {
+        font-family: "Space Grotesk", sans-serif;
+        line-height: 1.25;
+        display: flex;
+        align-items: center;
+        padding: 9px 24px;
+        color: #0f0f0f;
+      }
+
+      /* ---------- kicker + title ---------- */
+      [id="10-adim3-secimler-kicker"] {
+        position: absolute;
+        left: 96px;
+        top: 162px;
+        background: #0f0f0f;
+        color: #efe9d9;
+        font-family: "JetBrains Mono", monospace;
+        font-size: 20px;
+        letter-spacing: 0.08em;
+        line-height: 1.25;
+        white-space: nowrap;
+        padding: 8px 16px;
+      }
+      [id="10-adim3-secimler-title"] {
+        position: absolute;
+        left: 96px;
+        top: 210px;
+        font-family: "Archivo Black", sans-serif;
+        font-size: 64px;
+        line-height: 0.92;
+        letter-spacing: -0.01em;
+        white-space: nowrap;
+      }
+
+      /* ---------- panel: 3 · Uygulama ---------- */
+      [id="10-adim3-secimler-panel"] {
+        position: absolute;
+        left: 96px;
+        top: 284px;
+        width: 1728px;
+        height: 528px;
+        border: 4px solid #0f0f0f;
+        background: #efe9d9;
+        z-index: 2;
+      }
+      [id="10-adim3-secimler-phead"] {
+        height: 50px;
+        background: #0f0f0f;
+        color: #efe9d9;
+        font-family: "JetBrains Mono", monospace;
+        font-size: 20px;
+        letter-spacing: 0.04em;
+        display: flex;
+        align-items: center;
+        padding: 0 22px;
+        white-space: nowrap;
+      }
+      [id="10-adim3-secimler-hint"] {
+        position: absolute;
+        left: 30px;
+        top: 60px;
+        width: 1660px;
+        font-family: "Space Grotesk", sans-serif;
+        font-size: 22px;
+        line-height: 1.25;
+        color: #0f0f0f;
+      }
+      [class~="10-adim3-secimler-label"] {
+        position: absolute;
+        left: 30px;
+        font-family: "Space Grotesk", sans-serif;
+        font-size: 22px;
+        font-weight: 500;
+        line-height: 1.3;
+        white-space: nowrap;
+        color: #0f0f0f;
+      }
+      [class~="10-adim3-secimler-input"] {
+        position: absolute;
+        left: 30px;
+        width: 620px;
+        height: 48px;
+        border: 3px solid #0f0f0f;
+        background: #e4dcc4;
+        display: flex;
+        align-items: center;
+        padding: 0 16px;
+        font-family: "JetBrains Mono", monospace;
+        font-size: 20px;
+        letter-spacing: 0.02em;
+        white-space: pre;
+        color: #0f0f0f;
+      }
+      [class~="10-adim3-secimler-caret"] {
+        position: absolute;
+        right: 16px;
+        top: 14px;
+        width: 0;
+        height: 0;
+        border-left: 8px solid transparent;
+        border-right: 8px solid transparent;
+        border-top: 12px solid #0f0f0f;
+      }
+      [id="10-adim3-secimler-list"] {
+        position: absolute;
+        left: 30px;
+        top: 178px;
+        width: 620px;
+        height: 94px;
+        border: 3px solid #0f0f0f;
+        background: #efe9d9;
+        z-index: 6;
+        overflow: hidden;
+      }
+      [id="10-adim3-secimler-listsel"] {
+        position: absolute;
+        left: 0;
+        top: 0;
+        width: 614px;
+        height: 44px;
+        background: #e4dcc4;
+      }
+      [class~="10-adim3-secimler-opt"] {
+        position: absolute;
+        left: 0;
+        width: 614px;
+        height: 44px;
+        display: flex;
+        align-items: center;
+        padding: 0 16px;
+        font-family: "JetBrains Mono", monospace;
+        font-size: 20px;
+        letter-spacing: 0.02em;
+        white-space: pre;
+        color: #0f0f0f;
+      }
+
+      /* checkbox rows */
+      [class~="10-adim3-secimler-row"] {
+        position: absolute;
+        left: 680px;
+        width: 1010px;
+        height: 40px;
+        display: flex;
+        align-items: center;
+        gap: 14px;
+        white-space: nowrap;
+      }
+      [class~="10-adim3-secimler-grey"] {
+        opacity: 0.35;
+      }
+      [class~="10-adim3-secimler-box"] {
+        position: relative;
+        flex: 0 0 auto;
+        width: 28px;
+        height: 28px;
+        border: 3px solid #0f0f0f;
+        background: #efe9d9;
+      }
+      [class~="10-adim3-secimler-tick"] {
+        position: absolute;
+        left: -3px;
+        top: -3px;
+        width: 28px;
+        height: 28px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-family: "Archivo Black", sans-serif;
+        font-size: 24px;
+        line-height: 1;
+        color: #1f8a4c;
+      }
+      [class~="10-adim3-secimler-rowtext"] {
+        font-family: "Space Grotesk", sans-serif;
+        font-size: 22px;
+        line-height: 1.2;
+        color: #0f0f0f;
+      }
+      [id="10-adim3-secimler-greynote"] {
+        position: absolute;
+        right: 30px;
+        top: 180px;
+        height: 40px;
+        display: flex;
+        align-items: center;
+        font-family: "JetBrains Mono", monospace;
+        font-size: 18px;
+        letter-spacing: 0.02em;
+        white-space: nowrap;
+        color: rgba(15, 15, 15, 0.6);
+      }
+
+      /* number fields */
+      [class~="10-adim3-secimler-num"] {
+        position: absolute;
+        top: 472px;
+        height: 40px;
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        white-space: nowrap;
+      }
+      [class~="10-adim3-secimler-numlabel"] {
+        font-family: "Space Grotesk", sans-serif;
+        font-size: 20px;
+        font-weight: 500;
+        color: #0f0f0f;
+      }
+      [class~="10-adim3-secimler-numval"] {
+        width: 56px;
+        height: 40px;
+        border: 3px solid #0f0f0f;
+        background: #e4dcc4;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-family: "JetBrains Mono", monospace;
+        font-size: 20px;
+        color: #0f0f0f;
+      }
+    </style>
+
+    <div id="10-adim3-secimler-stage" class="clip" data-start="0" data-duration="16.5" data-track-index="0">
+      <!-- chrome -->
+      <div id="10-adim3-secimler-topbar">
+        <span>PINVAULT · KURULUM SİHİRBAZI</span>
+        <span id="10-adim3-secimler-pill">ADIM 3 / 4</span>
+      </div>
+      <div id="10-adim3-secimler-footer">
+        <span>Adım 3 · Seçimler</span>
+        <span id="10-adim3-secimler-counter"><span>10</span><span id="10-adim3-secimler-dot"></span><span>15</span></span>
+      </div>
+      <!-- step strip: cells at x = 96 + i·432, 32 px links in the gaps -->
+      <div class="10-adim3-secimler-cell 10-adim3-secimler-done" style="left: 96px">1 · SUNUCU</div>
+      <div class="10-adim3-secimler-link" style="left: 496px"></div>
+      <div class="10-adim3-secimler-cell 10-adim3-secimler-done" style="left: 528px">2 · SERTİFİKALAR</div>
+      <div class="10-adim3-secimler-link" style="left: 928px"></div>
+      <div class="10-adim3-secimler-cell 10-adim3-secimler-future" style="left: 960px">3 · UYGULAMA</div>
+      <div id="10-adim3-secimler-cur" data-layout-allow-overlap class="10-adim3-secimler-cell" style="left: 960px">3 · UYGULAMA</div>
+      <div id="10-adim3-secimler-underline" style="left: 960px"></div>
+      <div class="10-adim3-secimler-link" style="left: 1360px"></div>
+      <div class="10-adim3-secimler-cell 10-adim3-secimler-future" style="left: 1392px">4 · KOD</div>
+
+      <!-- kicker + title -->
+      <div id="10-adim3-secimler-kicker">KİM: GELİŞTİRİCİ · NEREDE: 3 · UYGULAMA</div>
+      <div id="10-adim3-secimler-title">UYGULAMA NEYE BAĞLANIR, NEYİ AÇAR?</div>
+
+      <!-- panel: wizard step 3 -->
+      <div id="10-adim3-secimler-panel">
+        <div id="10-adim3-secimler-phead">Panel · 8090 · Kurulum Sihirbazı · 3 · Uygulama</div>
+        <div id="10-adim3-secimler-hint">Uygulamanın bağlanacağı Config API'yi ve açılacak korumaları seç. Kod bir sonraki adımda.</div>
+
+        <!-- left column: four fields (label above, ink-bordered value box below) -->
+        <div id="10-adim3-secimler-f1" class="10-adim3-secimler-label" style="top: 100px">Config API</div>
+        <div id="10-adim3-secimler-b1" class="10-adim3-secimler-input" style="top: 130px"><span id="10-adim3-secimler-v1">sample-mtls · MTLS · :8092</span><span class="10-adim3-secimler-caret"></span></div>
+        <div id="10-adim3-secimler-f2" class="10-adim3-secimler-label" style="top: 196px">Uygulamanın bağlanacağı adres (host ya da IP)</div>
+        <div id="10-adim3-secimler-b2" class="10-adim3-secimler-input" style="top: 226px">192.168.1.10</div>
+        <div id="10-adim3-secimler-f3" class="10-adim3-secimler-label" style="top: 292px">Kayıt için TLS Config API</div>
+        <div id="10-adim3-secimler-b3" class="10-adim3-secimler-input" style="top: 322px">default-tls · :8091</div>
+        <div id="10-adim3-secimler-f4" class="10-adim3-secimler-label" style="top: 388px">Dil</div>
+        <div id="10-adim3-secimler-b4" class="10-adim3-secimler-input" style="top: 418px">Kotlin</div>
+
+        <!-- dropdown list of field 1 (opens over the field-2 slot, closes before field 2 arrives) -->
+        <div id="10-adim3-secimler-list">
+          <div id="10-adim3-secimler-listsel"></div>
+          <div id="10-adim3-secimler-opt1" class="10-adim3-secimler-opt" style="top: 0">sample-mtls · MTLS · :8092</div>
+          <div id="10-adim3-secimler-opt2" class="10-adim3-secimler-opt" style="top: 44px; opacity: 0.5">default-tls · TLS · :8091</div>
+        </div>
+
+        <!-- right column: nine protection boxes -->
+        <div id="10-adim3-secimler-row1" class="10-adim3-secimler-row" style="top: 100px"><span class="10-adim3-secimler-box"><span id="10-adim3-secimler-tick1" class="10-adim3-secimler-tick">✓</span></span><span class="10-adim3-secimler-rowtext">İmzalı config (sunucunun imza anahtarları)</span></div>
+        <div id="10-adim3-secimler-row2" class="10-adim3-secimler-row" style="top: 140px"><span class="10-adim3-secimler-box"><span id="10-adim3-secimler-tick2" class="10-adim3-secimler-tick">✓</span></span><span class="10-adim3-secimler-rowtext">Config'i bu Config API'ye bağla (serverScope)</span></div>
+        <div id="10-adim3-secimler-row3" class="10-adim3-secimler-row 10-adim3-secimler-grey" style="top: 180px"><span class="10-adim3-secimler-box"></span><span class="10-adim3-secimler-rowtext">İmza anahtarı döndürme (recoveryPublicKeys)</span></div>
+        <div id="10-adim3-secimler-row4" class="10-adim3-secimler-row" style="top: 220px"><span class="10-adim3-secimler-box"><span id="10-adim3-secimler-tick4" class="10-adim3-secimler-tick">✓</span></span><span class="10-adim3-secimler-rowtext">İstemci CA'sını pin'le (clientCaPins)</span></div>
+        <div id="10-adim3-secimler-row5" class="10-adim3-secimler-row" style="top: 260px"><span class="10-adim3-secimler-box"><span id="10-adim3-secimler-tick5" class="10-adim3-secimler-tick">✓</span></span><span class="10-adim3-secimler-rowtext">Süresi dolan sertifikayı kurtarma kapısından yenile</span></div>
+        <div id="10-adim3-secimler-row6" class="10-adim3-secimler-row" style="top: 300px"><span class="10-adim3-secimler-box"><span id="10-adim3-secimler-tick6" class="10-adim3-secimler-tick">✓</span></span><span class="10-adim3-secimler-rowtext">Ortam kontrolü (environmentGuard: root / kanca tespitinin kararı)</span></div>
+        <div id="10-adim3-secimler-row7" class="10-adim3-secimler-row" style="top: 340px"><span class="10-adim3-secimler-box"></span><span class="10-adim3-secimler-rowtext">Kayıtta Play Integrity token'ı gönder (integrityTokenProvider)</span></div>
+        <div id="10-adim3-secimler-row8" class="10-adim3-secimler-row" style="top: 380px"><span class="10-adim3-secimler-box"></span><span class="10-adim3-secimler-rowtext">Anahtarlar yalnızca telefon kilidi açıkken çalışsın (requireUnlockedDevice)</span></div>
+        <div id="10-adim3-secimler-row9" class="10-adim3-secimler-row" style="top: 420px"><span class="10-adim3-secimler-box"><span id="10-adim3-secimler-tick9" class="10-adim3-secimler-tick">✓</span></span><span class="10-adim3-secimler-rowtext">Cihaz iptal edilince dosyaları sil (wipeVaultFilesOnRevocation)</span></div>
+        <div id="10-adim3-secimler-greynote">sunucuda kurtarma anahtarı yok</div>
+
+        <!-- two number fields side by side -->
+        <div id="10-adim3-secimler-num1" class="10-adim3-secimler-num" style="left: 680px"><span class="10-adim3-secimler-numlabel">Vault dosyalarının çevrimdışı ömrü (gün)</span><span class="10-adim3-secimler-numval">7</span></div>
+        <div id="10-adim3-secimler-num2" class="10-adim3-secimler-num" style="left: 1190px"><span class="10-adim3-secimler-numlabel">Pin güncelleme aralığı (saat)</span><span class="10-adim3-secimler-numval">12</span></div>
+      </div>
+
+      <!-- NEDEN strip -->
+      <div id="10-adim3-secimler-why">
+        <div id="10-adim3-secimler-whylabel">NEDEN</div>
+        <div id="10-adim3-secimler-whytext" style="font-size: 22px">Gri seçenek sunucunun henüz sunmadığı korumadır: önce 1. adımdaki .env satırı, sonra bu kutu. Uygulama sunucunun verebileceğinden fazlasını isteyemez.</div>
+      </div>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/gsap@3.14.2/dist/gsap.min.js" integrity="sha384-sG0Hv1tP1lZCk9KQmrIbY/XNwi+OY84GQqhMscbnsoBFqAz8KNCil1kvfL3Hbbk2" crossorigin="anonymous"></script>
+    <script>
+      (function () {
+        var FID = "10-adim3-secimler";
+        var host = document.querySelector('[data-composition-id="' + FID + '"]') || document;
+        var $ = function (n) {
+          return host.querySelector('[id="' + FID + "-" + n + '"]');
+        };
+        var tl = gsap.timeline({ paused: true });
+        var SOFT = "power3.out";
+
+        // ---------- Scene 1: strip already standing; current cell + yellow underline settle ----------
+        tl.fromTo($("cur"), { opacity: 0 }, { opacity: 1, duration: 0.6, ease: SOFT }, 0.2);
+        tl.fromTo($("underline"), { scaleX: 0 }, { scaleX: 1, duration: 0.6, ease: SOFT }, 0.2);
+
+        tl.fromTo($("kicker"), { opacity: 0, x: -20 }, { opacity: 1, x: 0, duration: 0.5, ease: SOFT }, 0.3);
+        tl.fromTo($("title"), { opacity: 0, y: 28 }, { opacity: 1, y: 0, duration: 0.8, ease: SOFT }, 0.6);
+
+        // ---------- Scene 2 (1.5–5.5): panel settles; hint; four fields ≈0.7–0.8 s apart ----------
+        tl.fromTo($("panel"), { opacity: 0, y: 30 }, { opacity: 1, y: 0, duration: 0.7, ease: SOFT }, 1.5);
+        tl.fromTo($("hint"), { opacity: 0, y: 12 }, { opacity: 1, y: 0, duration: 0.5, ease: SOFT }, 1.9);
+
+        // field 1: label + empty box, then the list opens, the highlight settles on sample-mtls, the list closes
+        tl.fromTo($("f1"), { opacity: 0 }, { opacity: 1, duration: 0.4, ease: SOFT }, 2.5);
+        tl.fromTo($("b1"), { opacity: 0 }, { opacity: 1, duration: 0.4, ease: SOFT }, 2.55);
+        tl.fromTo($("v1"), { opacity: 0 }, { opacity: 0, duration: 0.01, ease: "none" }, 0);
+        tl.fromTo($("list"), { opacity: 0, y: -8 }, { opacity: 1, y: 0, duration: 0.3, ease: SOFT }, 2.95);
+        tl.fromTo($("listsel"), { y: 44 }, { y: 0, duration: 0.4, ease: SOFT }, 3.45);
+        tl.fromTo($("list"), { opacity: 1 }, { opacity: 0, duration: 0.25, ease: "none" }, 3.95);
+        tl.fromTo($("v1"), { opacity: 0 }, { opacity: 1, duration: 0.25, ease: "none" }, 3.95);
+
+        // fields 2–4
+        [["f2", "b2", 4.3], ["f3", "b3", 5.0], ["f4", "b4", 5.7]].forEach(function (f) {
+          tl.fromTo($(f[0]), { opacity: 0 }, { opacity: 1, duration: 0.4, ease: SOFT }, f[2]);
+          tl.fromTo($(f[1]), { opacity: 0, y: 8 }, { opacity: 1, y: 0, duration: 0.45, ease: SOFT }, f[2] + 0.1);
+        });
+
+        // ---------- Scene 3 (5.5–11.5): nine boxes top to bottom, ≈0.6 s apart; ✓ 0.2 s after its row ----------
+        var checked = { 1: true, 2: true, 4: true, 5: true, 6: true, 9: true };
+        for (var i = 1; i <= 9; i++) {
+          var at = 6.0 + (i - 1) * 0.6;
+          tl.fromTo($("row" + i), { opacity: 0, x: -14 }, { opacity: i === 3 ? 0.35 : 1, x: 0, duration: 0.5, ease: SOFT }, at);
+          if (checked[i]) {
+            tl.fromTo($("tick" + i), { opacity: 0, scale: 0.6 }, { opacity: 1, scale: 1, duration: 0.3, ease: SOFT }, at + 0.2);
+          }
+        }
+        tl.fromTo($("greynote"), { opacity: 0, x: 10 }, { opacity: 1, x: 0, duration: 0.5, ease: SOFT }, 7.6);
+
+        // the two number fields come last
+        tl.fromTo($("num1"), { opacity: 0, y: 10 }, { opacity: 1, y: 0, duration: 0.5, ease: SOFT }, 11.2);
+        tl.fromTo($("num2"), { opacity: 0, y: 10 }, { opacity: 1, y: 0, duration: 0.5, ease: SOFT }, 11.45);
+
+        // ---------- Scene 4 (11.5–16.0): NEDEN strip, hold ----------
+        tl.fromTo($("why"), { opacity: 0, x: -24 }, { opacity: 1, x: 0, duration: 0.6, ease: SOFT }, 11.9);
+        tl.to({}, { duration: 0.01 }, 16.49);
+
+        window.__timelines = window.__timelines || {};
+        window.__timelines[FID] = tl;
+      })();
+    </script>
+  </div>
+</template>

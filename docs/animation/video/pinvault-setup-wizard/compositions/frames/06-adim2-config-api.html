@@ -1,0 +1,493 @@
+<template id="06-adim2-config-api-template">
+  <div id="root" data-composition-id="06-adim2-config-api" data-start="0" data-duration="15.5" data-width="1920" data-height="1080" lang="en">
+    <style>
+      @import url("https://fonts.googleapis.com/css2?family=Archivo+Black&family=JetBrains+Mono:wght@400;700&family=Space+Grotesk:wght@400;500;700&display=block");
+
+      #root {
+        position: relative;
+        width: 1920px;
+        height: 1080px;
+        overflow: hidden;
+      }
+      [data-composition-id="06-adim2-config-api"] * {
+        margin: 0;
+        padding: 0;
+        box-sizing: border-box;
+      }
+
+      [id="06-adim2-config-api-stage"] {
+        position: absolute;
+        inset: 0;
+        width: 1920px;
+        height: 1080px;
+        background: #efe9d9;
+        container-type: size;
+        overflow: hidden;
+        color: #0f0f0f;
+      }
+
+      /* ---------- chrome ---------- */
+      [id="06-adim2-config-api-topbar"] {
+        position: absolute;
+        top: 48px;
+        left: 64px;
+        right: 64px;
+        height: 44px;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        font-family: "JetBrains Mono", monospace;
+        font-size: 22px;
+        letter-spacing: 0.06em;
+        color: #0f0f0f;
+      }
+      [id="06-adim2-config-api-pill"] {
+        border: 4px solid #0f0f0f;
+        border-radius: 999px;
+        background: #efe9d9;
+        padding: 4px 20px;
+        line-height: 1.3;
+      }
+      [id="06-adim2-config-api-footer"] {
+        position: absolute;
+        bottom: 48px;
+        left: 64px;
+        right: 64px;
+        height: 32px;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        font-family: "JetBrains Mono", monospace;
+        font-size: 22px;
+        letter-spacing: 0.06em;
+        color: #0f0f0f;
+      }
+      [id="06-adim2-config-api-counter"] {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+      }
+      [id="06-adim2-config-api-dot"] {
+        width: 10px;
+        height: 10px;
+        border-radius: 50%;
+        background: #0f0f0f;
+      }
+
+      /* ---------- step strip (fixed geometry) ---------- */
+      [class~="06-adim2-config-api-cell"] {
+        position: absolute;
+        top: 104px;
+        width: 400px;
+        height: 40px;
+        border: 2px solid #0f0f0f;
+        background: #efe9d9;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-family: "JetBrains Mono", monospace;
+        font-size: 17px;
+        letter-spacing: 0.04em;
+        white-space: nowrap;
+        color: #0f0f0f;
+      }
+      [class~="06-adim2-config-api-done"] {
+        background: #0f0f0f;
+        color: #efe9d9;
+      }
+      [class~="06-adim2-config-api-future"] {
+        opacity: 0.35;
+      }
+      [class~="06-adim2-config-api-link"] {
+        position: absolute;
+        top: 123px;
+        width: 32px;
+        height: 2px;
+        background: #0f0f0f;
+      }
+      [id="06-adim2-config-api-current"] {
+        position: absolute;
+        left: 528px;
+        top: 104px;
+        width: 400px;
+        height: 40px;
+        border: 4px solid #0f0f0f;
+        background: #efe9d9;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-family: "JetBrains Mono", monospace;
+        font-size: 17px;
+        letter-spacing: 0.04em;
+        white-space: nowrap;
+        color: #0f0f0f;
+        z-index: 2;
+      }
+      [id="06-adim2-config-api-underline"] {
+        position: absolute;
+        left: 528px;
+        top: 148px;
+        width: 400px;
+        height: 4px;
+        background: #f5c518;
+        transform-origin: 0 50%;
+      }
+
+      /* ---------- title ---------- */
+      [id="06-adim2-config-api-title"] {
+        position: absolute;
+        left: 96px;
+        top: 182px;
+        font-family: "Archivo Black", sans-serif;
+        font-size: 72px;
+        line-height: 0.95;
+        letter-spacing: -0.01em;
+        white-space: nowrap;
+        color: #0f0f0f;
+      }
+
+      /* ---------- panel ---------- */
+      [id="06-adim2-config-api-panel"] {
+        position: absolute;
+        left: 96px;
+        top: 290px;
+        width: 1728px;
+        height: 430px;
+        border: 4px solid #0f0f0f;
+        background: #efe9d9;
+        z-index: 2;
+      }
+      [class~="06-adim2-config-api-panelhead"] {
+        height: 50px;
+        background: #0f0f0f;
+        color: #efe9d9;
+        font-family: "JetBrains Mono", monospace;
+        font-size: 20px;
+        letter-spacing: 0.04em;
+        display: flex;
+        align-items: center;
+        padding: 0 22px;
+        white-space: nowrap;
+      }
+      [id="06-adim2-config-api-cardtitle"] {
+        position: absolute;
+        left: 30px;
+        top: 64px;
+        font-family: "JetBrains Mono", monospace;
+        font-size: 20px;
+        font-weight: 700;
+        letter-spacing: 0.08em;
+        white-space: nowrap;
+        color: #0f0f0f;
+      }
+      [class~="06-adim2-config-api-info"] {
+        position: absolute;
+        left: 30px;
+        font-family: "JetBrains Mono", monospace;
+        font-size: 18px;
+        letter-spacing: 0.01em;
+        line-height: 1.3;
+        white-space: nowrap;
+        color: #0f0f0f;
+      }
+      [class~="06-adim2-config-api-th"] {
+        position: absolute;
+        top: 200px;
+        font-family: "JetBrains Mono", monospace;
+        font-size: 17px;
+        letter-spacing: 0.08em;
+        white-space: nowrap;
+        color: rgba(15, 15, 15, 0.7);
+      }
+      [class~="06-adim2-config-api-row"] {
+        position: absolute;
+        left: 0;
+        right: 0;
+        height: 44px;
+        border-top: 1px solid rgba(15, 15, 15, 0.25);
+      }
+      [id="06-adim2-config-api-hl"] {
+        position: absolute;
+        left: 0;
+        right: 0;
+        top: 320px;
+        height: 44px;
+        background: #e4dcc4;
+      }
+      [class~="06-adim2-config-api-badge"] {
+        position: absolute;
+        left: 30px;
+        top: 7px;
+        font-family: "JetBrains Mono", monospace;
+        font-size: 15px;
+        letter-spacing: 0.06em;
+        padding: 3px 10px;
+        white-space: nowrap;
+        line-height: 1.3;
+      }
+      [class~="06-adim2-config-api-hazir"] {
+        background: #efe9d9;
+        border: 2px solid #1f8a4c;
+        color: #1f8a4c;
+      }
+      [class~="06-adim2-config-api-uyari"] {
+        background: #f5c518;
+        border: 2px solid #0f0f0f;
+        color: #0f0f0f;
+      }
+      [class~="06-adim2-config-api-what"] {
+        position: absolute;
+        left: 150px;
+        top: 0;
+        height: 43px;
+        display: flex;
+        align-items: center;
+        font-family: "Space Grotesk", sans-serif;
+        font-size: 20px;
+        font-weight: 500;
+        white-space: nowrap;
+        color: #0f0f0f;
+      }
+      [class~="06-adim2-config-api-now"] {
+        position: absolute;
+        left: 720px;
+        top: 0;
+        height: 43px;
+        display: flex;
+        align-items: center;
+        font-family: "JetBrains Mono", monospace;
+        font-size: 20px;
+        white-space: nowrap;
+        color: #0f0f0f;
+      }
+      [class~="06-adim2-config-api-rowbtn"] {
+        position: absolute;
+        left: 1460px;
+        top: 4px;
+        width: 230px;
+        height: 36px;
+        border: 2px solid #0f0f0f;
+        background: #efe9d9;
+        font-family: "JetBrains Mono", monospace;
+        font-size: 17px;
+        letter-spacing: 0.02em;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        white-space: nowrap;
+        transform-origin: 50% 50%;
+        color: #0f0f0f;
+      }
+      [id="06-adim2-config-api-bs3fill"] {
+        position: absolute;
+        inset: 0;
+        background: #0f0f0f;
+        color: #efe9d9;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        white-space: nowrap;
+      }
+
+      /* ---------- Bootstrap tab strip + note ---------- */
+      [id="06-adim2-config-api-strip"] {
+        position: absolute;
+        left: 96px;
+        top: 734px;
+        display: flex;
+        gap: 16px;
+      }
+      [class~="06-adim2-config-api-sb"] {
+        height: 44px;
+        border: 2px solid #0f0f0f;
+        background: #efe9d9;
+        font-family: "JetBrains Mono", monospace;
+        font-size: 18px;
+        letter-spacing: 0.02em;
+        display: flex;
+        align-items: center;
+        padding: 0 22px;
+        white-space: nowrap;
+        color: #0f0f0f;
+      }
+      [id="06-adim2-config-api-snote"] {
+        position: absolute;
+        left: 96px;
+        top: 790px;
+        font-family: "Space Grotesk", sans-serif;
+        font-size: 22px;
+        line-height: 1.3;
+        white-space: nowrap;
+        color: #0f0f0f;
+      }
+
+      /* ---------- WHY strip ---------- */
+      [id="06-adim2-config-api-why"] {
+        position: absolute;
+        left: 96px;
+        top: 824px;
+        min-height: 50px;
+        max-width: 1728px;
+        border: 2px solid #0f0f0f;
+        background: #e4dcc4;
+        display: flex;
+        align-items: center;
+        gap: 18px;
+        padding: 6px 22px 6px 8px;
+      }
+      [id="06-adim2-config-api-whytag"] {
+        background: #0f0f0f;
+        color: #efe9d9;
+        font-family: "JetBrains Mono", monospace;
+        font-size: 18px;
+        letter-spacing: 0.12em;
+        padding: 5px 12px;
+        white-space: nowrap;
+      }
+      [id="06-adim2-config-api-whytext"] {
+        width: 1540px;
+        font-family: "Space Grotesk", sans-serif;
+        font-size: 22px;
+        line-height: 1.3;
+        color: #0f0f0f;
+      }
+    </style>
+
+    <div id="06-adim2-config-api-stage" class="clip" data-start="0" data-duration="15.5" data-track-index="0">
+      <!-- chrome -->
+      <div id="06-adim2-config-api-topbar">
+        <span>PINVAULT · SETUP WIZARD</span>
+        <span id="06-adim2-config-api-pill">STEP 2 / 4</span>
+      </div>
+      <div id="06-adim2-config-api-footer">
+        <span>Step 2 · Config API</span>
+        <span id="06-adim2-config-api-counter"><span>06</span><span id="06-adim2-config-api-dot"></span><span>15</span></span>
+      </div>
+
+      <!-- step strip: cells at x = 96 + i*432, 32px links in the gaps -->
+      <div class="06-adim2-config-api-cell 06-adim2-config-api-done" style="left: 96px">1 · SERVER</div>
+      <div class="06-adim2-config-api-cell 06-adim2-config-api-future" style="left: 528px">2 · CERTIFICATES</div>
+      <div class="06-adim2-config-api-cell 06-adim2-config-api-future" style="left: 960px">3 · APP</div>
+      <div class="06-adim2-config-api-cell 06-adim2-config-api-future" style="left: 1392px">4 · CODE</div>
+      <div class="06-adim2-config-api-link" style="left: 496px"></div>
+      <div class="06-adim2-config-api-link" style="left: 928px"></div>
+      <div class="06-adim2-config-api-link 06-adim2-config-api-future" style="left: 1360px"></div>
+      <div id="06-adim2-config-api-current" data-layout-allow-overlap>2 · CERTIFICATES</div>
+      <div id="06-adim2-config-api-underline"></div>
+
+      <!-- title -->
+      <div id="06-adim2-config-api-title">THE APP'S FIRST PINS</div>
+
+      <!-- panel: the Config API's own certificate card -->
+      <div id="06-adim2-config-api-panel">
+        <div class="06-adim2-config-api-panelhead">Dashboard · 8090 · Setup Wizard · 2 · Certificates</div>
+        <div id="06-adim2-config-api-cardtitle">THE CONFIG API'S OWN CERTIFICATE (THE APP'S FIRST PINS)</div>
+        <div id="06-adim2-config-api-i1" class="06-adim2-config-api-info" style="top: 102px">Certificate: CN=localhost, O=PinVault Demo · Valid until 2027-05-08</div>
+        <div id="06-adim2-config-api-i2" class="06-adim2-config-api-info" style="top: 132px">Pins: ojdBCq6J… · NictvYYY…</div>
+        <div id="06-adim2-config-api-i3" class="06-adim2-config-api-info" style="top: 162px">Listeners: default-tls :8091 TLS · sample-mtls :8092 MTLS</div>
+
+        <div id="06-adim2-config-api-h1" class="06-adim2-config-api-th" style="left: 150px">What</div>
+        <div id="06-adim2-config-api-h2" class="06-adim2-config-api-th" style="left: 720px">Now</div>
+        <div id="06-adim2-config-api-h3" class="06-adim2-config-api-th" style="left: 1460px">Where it changes</div>
+
+        <div id="06-adim2-config-api-hl"></div>
+
+        <div id="06-adim2-config-api-r1" class="06-adim2-config-api-row" style="top: 228px">
+          <span id="06-adim2-config-api-b1" class="06-adim2-config-api-badge 06-adim2-config-api-hazir">READY</span>
+          <span class="06-adim2-config-api-what">Certificate validity</span>
+          <span class="06-adim2-config-api-now">until 2027-05-08</span>
+          <span class="06-adim2-config-api-rowbtn">Bootstrap tab</span>
+        </div>
+        <div id="06-adim2-config-api-r2" class="06-adim2-config-api-row" style="top: 274px">
+          <span id="06-adim2-config-api-b2" class="06-adim2-config-api-badge 06-adim2-config-api-hazir">READY</span>
+          <span class="06-adim2-config-api-what">Where the certificate is from</span>
+          <span class="06-adim2-config-api-now">self-signed, pinned</span>
+          <span class="06-adim2-config-api-rowbtn">Bootstrap tab</span>
+        </div>
+        <div id="06-adim2-config-api-r3" class="06-adim2-config-api-row" style="top: 320px">
+          <span id="06-adim2-config-api-b3" class="06-adim2-config-api-badge 06-adim2-config-api-uyari">WARNING</span>
+          <span class="06-adim2-config-api-what">Backup key</span>
+          <span class="06-adim2-config-api-now">none</span>
+          <span id="06-adim2-config-api-bs3" class="06-adim2-config-api-rowbtn">Bootstrap tab<span id="06-adim2-config-api-bs3fill">Bootstrap tab</span></span>
+        </div>
+        <div id="06-adim2-config-api-r4" class="06-adim2-config-api-row" style="top: 366px">
+          <span id="06-adim2-config-api-b4" class="06-adim2-config-api-badge 06-adim2-config-api-hazir">READY</span>
+          <span class="06-adim2-config-api-what">The name phones connect to is in the certificate</span>
+          <span class="06-adim2-config-api-now">192.168.1.10</span>
+          <span class="06-adim2-config-api-rowbtn">Bootstrap tab</span>
+        </div>
+      </div>
+
+      <!-- Bootstrap tab: button strip + note -->
+      <div id="06-adim2-config-api-strip">
+        <div id="06-adim2-config-api-sb1" class="06-adim2-config-api-sb">Switch to Backup Key</div>
+        <div id="06-adim2-config-api-sb2" class="06-adim2-config-api-sb">Renew Certificate</div>
+        <div id="06-adim2-config-api-sb3" class="06-adim2-config-api-sb">Upload JKS</div>
+        <div id="06-adim2-config-api-sb4" class="06-adim2-config-api-sb">Fetch from URL</div>
+      </div>
+      <div id="06-adim2-config-api-snote">A new certificate needs an app update; a switch to the backup key does not.</div>
+
+      <!-- WHY strip -->
+      <div id="06-adim2-config-api-why">
+        <span id="06-adim2-config-api-whytag">WHY</span>
+        <span id="06-adim2-config-api-whytext">The phone checks the pin, not the name: a self-signed certificate is fine in production. Without a backup key, a stolen key means a new certificate and an app update.</span>
+      </div>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/gsap@3.14.2/dist/gsap.min.js" integrity="sha384-sG0Hv1tP1lZCk9KQmrIbY/XNwi+OY84GQqhMscbnsoBFqAz8KNCil1kvfL3Hbbk2" crossorigin="anonymous"></script>
+    <script>
+      (function () {
+        var FID = "06-adim2-config-api";
+        var host = document.querySelector('[data-composition-id="' + FID + '"]') || document;
+        var $ = function (n) {
+          return host.querySelector('[id="' + FID + "-" + n + '"]');
+        };
+
+        var tl = gsap.timeline({ paused: true });
+        var SOFT = "power3.out";
+        var D = 15.5;
+
+        // ---------- Scene 1 (0.0–1.2): strip stands (step 1 filled); cell 2 settles; title ----------
+        tl.fromTo($("current"), { opacity: 0 }, { opacity: 1, duration: 0.6, ease: SOFT }, 0.2);
+        tl.fromTo($("underline"), { scaleX: 0 }, { scaleX: 1, duration: 0.6, ease: SOFT }, 0.2);
+        tl.fromTo($("title"), { opacity: 0, y: 28 }, { opacity: 1, y: 0, duration: 0.8, ease: SOFT }, 0.4);
+
+        // ---------- Scene 2 (1.2–3.5): panel, card title, three info lines ----------
+        tl.fromTo($("panel"), { opacity: 0, y: 30 }, { opacity: 1, y: 0, duration: 0.7, ease: SOFT }, 1.2);
+        tl.fromTo($("cardtitle"), { opacity: 0, x: -16 }, { opacity: 1, x: 0, duration: 0.5, ease: SOFT }, 1.7);
+        ["i1", "i2", "i3"].forEach(function (n, i) {
+          tl.fromTo($(n), { opacity: 0, x: -12 }, { opacity: 1, x: 0, duration: 0.4, ease: SOFT }, 2.2 + i * 0.5);
+        });
+
+        // ---------- Scene 3 (3.5–8.0): table heads, four rows ~0.9 s apart, badges 0.2 s later ----------
+        ["h1", "h2", "h3"].forEach(function (n) {
+          tl.fromTo($(n), { opacity: 0 }, { opacity: 1, duration: 0.4, ease: SOFT }, 3.5);
+        });
+        [1, 2, 3, 4].forEach(function (n, i) {
+          var at = 3.9 + i * 0.9;
+          tl.fromTo($("r" + n), { opacity: 0, y: 10 }, { opacity: 1, y: 0, duration: 0.5, ease: SOFT }, at);
+          tl.fromTo($("b" + n), { opacity: 0, scale: 0.9 }, { opacity: 1, scale: 1, duration: 0.4, ease: SOFT }, at + 0.2);
+        });
+        tl.fromTo($("hl"), { opacity: 0 }, { opacity: 1, duration: 0.5, ease: SOFT }, 5.9);
+
+        // ---------- Scene 4 (8.0–11.0): row 3's button pressed, strip opens, Renew highlighted, note ----------
+        tl.fromTo($("bs3"), { scale: 1 }, { scale: 0.92, duration: 0.1, ease: "power2.in" }, 8.2);
+        tl.fromTo($("bs3fill"), { opacity: 0 }, { opacity: 1, duration: 0.1, ease: "none" }, 8.25);
+        tl.to($("bs3"), { scale: 1, duration: 0.4, ease: SOFT }, 8.3);
+        ["sb1", "sb2", "sb3", "sb4"].forEach(function (n, i) {
+          tl.fromTo($(n), { opacity: 0, x: -14 }, { opacity: 1, x: 0, duration: 0.45, ease: SOFT }, 8.6 + i * 0.15);
+        });
+        tl.fromTo($("sb2"), { borderColor: "#0f0f0f" }, { borderColor: "#f5c518", duration: 0.15, ease: "none" }, 9.4);
+        tl.to($("sb2"), { borderColor: "#0f0f0f", duration: 0.3, ease: "none" }, 10.0);
+        tl.fromTo($("snote"), { opacity: 0, y: 12 }, { opacity: 1, y: 0, duration: 0.6, ease: SOFT }, 10.2);
+
+        // ---------- Scene 5 (11.0–15.0): WHY strip, hold ----------
+        tl.fromTo($("why"), { opacity: 0, x: -24 }, { opacity: 1, x: 0, duration: 0.6, ease: SOFT }, 11.0);
+        tl.to({}, { duration: 0.01 }, D - 0.01);
+
+        window.__timelines = window.__timelines || {};
+        window.__timelines[FID] = tl;
+      })();
+    </script>
+  </div>
+</template>

@@ -1,0 +1,37 @@
+WEBVTT
+
+1
+00:00:00.004 --> 00:00:40.639
+Start: the address and the API key
+
+2
+00:00:40.639 --> 00:01:09.870
+1 · Server: the checklist and the order of work
+
+3
+00:01:09.870 --> 00:02:01.569
+"How to" and the Settings card
+
+4
+00:02:01.569 --> 00:02:39.137
+2 · Certificates: four cards
+
+5
+00:02:39.137 --> 00:03:20.937
+The server's own certificate (Bootstrap tab)
+
+6
+00:03:20.937 --> 00:04:21.243
+Adding your own API host and the backup pin
+
+7
+00:04:21.243 --> 00:04:52.076
+An enrollment token for a phone (mTLS)
+
+8
+00:04:52.076 --> 00:05:24.458
+3 · App: the protections
+
+9
+00:05:24.458 --> 00:05:56.320
+4 · Code: copy and next steps

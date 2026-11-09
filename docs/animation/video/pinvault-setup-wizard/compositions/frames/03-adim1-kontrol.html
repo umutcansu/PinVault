@@ -1,0 +1,473 @@
+<template id="03-adim1-kontrol-template">
+  <div id="root" data-composition-id="03-adim1-kontrol" data-start="0" data-duration="16.5" data-width="1920" data-height="1080" lang="en">
+    <style>
+      @import url("https://fonts.googleapis.com/css2?family=Archivo+Black&family=JetBrains+Mono:wght@400;700&family=Space+Grotesk:wght@400;500&display=block");
+
+      #root {
+        position: relative;
+        width: 1920px;
+        height: 1080px;
+        overflow: hidden;
+      }
+      [data-composition-id="03-adim1-kontrol"] * {
+        margin: 0;
+        padding: 0;
+        box-sizing: border-box;
+      }
+
+      [id="03-adim1-kontrol-stage"] {
+        position: absolute;
+        inset: 0;
+        width: 1920px;
+        height: 1080px;
+        background: #efe9d9;
+        container-type: size;
+        overflow: hidden;
+        color: #0f0f0f;
+      }
+
+      /* ---------- chrome ---------- */
+      [id="03-adim1-kontrol-topbar"] {
+        position: absolute;
+        top: 48px;
+        left: 64px;
+        right: 64px;
+        height: 44px;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        font-family: "JetBrains Mono", monospace;
+        font-size: 22px;
+        letter-spacing: 0.06em;
+        color: #0f0f0f;
+        white-space: nowrap;
+      }
+      [id="03-adim1-kontrol-pill"] {
+        border: 4px solid #0f0f0f;
+        border-radius: 999px;
+        background: #efe9d9;
+        padding: 4px 20px;
+        line-height: 1.3;
+      }
+      [id="03-adim1-kontrol-footer"] {
+        position: absolute;
+        bottom: 48px;
+        left: 64px;
+        right: 64px;
+        height: 32px;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        font-family: "JetBrains Mono", monospace;
+        font-size: 22px;
+        letter-spacing: 0.06em;
+        color: #0f0f0f;
+        white-space: nowrap;
+      }
+      [id="03-adim1-kontrol-counter"] {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+      }
+      [id="03-adim1-kontrol-dot"] {
+        width: 10px;
+        height: 10px;
+        border-radius: 50%;
+        background: #0f0f0f;
+      }
+
+      /* ---------- step strip (fixed geometry: 4 × 400 px at x = 96 + i·432, y = 104) ---------- */
+      [class~="03-adim1-kontrol-cell"] {
+        position: absolute;
+        top: 104px;
+        width: 400px;
+        height: 40px;
+        border: 2px solid #0f0f0f;
+        background: #efe9d9;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-family: "JetBrains Mono", monospace;
+        font-size: 17px;
+        letter-spacing: 0.04em;
+        white-space: nowrap;
+        color: #0f0f0f;
+      }
+      [class~="03-adim1-kontrol-future"] {
+        opacity: 0.35;
+      }
+      [class~="03-adim1-kontrol-link"] {
+        position: absolute;
+        top: 123px;
+        width: 32px;
+        height: 2px;
+        background: #0f0f0f;
+      }
+      [id="03-adim1-kontrol-current"] {
+        position: absolute;
+        left: 96px;
+        top: 104px;
+        width: 400px;
+        height: 40px;
+        border: 4px solid #0f0f0f;
+        background: #efe9d9;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-family: "JetBrains Mono", monospace;
+        font-size: 17px;
+        letter-spacing: 0.04em;
+        white-space: nowrap;
+        color: #0f0f0f;
+        z-index: 2;
+      }
+      [id="03-adim1-kontrol-underline"] {
+        position: absolute;
+        left: 96px;
+        top: 148px;
+        width: 400px;
+        height: 4px;
+        background: #f5c518;
+        transform-origin: 0 50%;
+      }
+
+      /* ---------- kicker + title (title one step smaller than TR: longer string) ---------- */
+      [id="03-adim1-kontrol-kicker"] {
+        position: absolute;
+        left: 96px;
+        top: 166px;
+        background: #0f0f0f;
+        color: #efe9d9;
+        font-family: "JetBrains Mono", monospace;
+        font-size: 20px;
+        letter-spacing: 0.08em;
+        line-height: 1.25;
+        white-space: nowrap;
+        padding: 8px 16px;
+      }
+      [id="03-adim1-kontrol-title"] {
+        position: absolute;
+        left: 96px;
+        top: 226px;
+        font-family: "Archivo Black", sans-serif;
+        font-size: 68px;
+        line-height: 0.92;
+        letter-spacing: -0.01em;
+        white-space: nowrap;
+        color: #0f0f0f;
+      }
+
+      /* ---------- panel ---------- */
+      [id="03-adim1-kontrol-panel"] {
+        position: absolute;
+        left: 96px;
+        top: 310px;
+        width: 1234px;
+        height: 480px;
+        border: 4px solid #0f0f0f;
+        background: #efe9d9;
+        z-index: 2;
+      }
+      [id="03-adim1-kontrol-panelhead"] {
+        height: 50px;
+        background: #0f0f0f;
+        color: #efe9d9;
+        font-family: "JetBrains Mono", monospace;
+        font-size: 20px;
+        letter-spacing: 0.04em;
+        display: flex;
+        align-items: center;
+        padding: 0 22px;
+        white-space: nowrap;
+      }
+      [id="03-adim1-kontrol-cardtitle"] {
+        position: absolute;
+        left: 30px;
+        top: 68px;
+        font-family: "JetBrains Mono", monospace;
+        font-size: 22px;
+        font-weight: 700;
+        letter-spacing: 0.1em;
+        white-space: nowrap;
+        color: #0f0f0f;
+      }
+      [id="03-adim1-kontrol-thead"] {
+        position: absolute;
+        left: 30px;
+        top: 118px;
+        width: 1166px;
+        height: 30px;
+        display: flex;
+        align-items: center;
+        font-family: "JetBrains Mono", monospace;
+        font-size: 17px;
+        letter-spacing: 0.06em;
+        white-space: nowrap;
+        color: rgba(15, 15, 15, 0.6);
+      }
+      [id="03-adim1-kontrol-trule"] {
+        position: absolute;
+        left: 30px;
+        top: 150px;
+        width: 1166px;
+        height: 2px;
+        background: #0f0f0f;
+        transform-origin: 0 50%;
+      }
+      [class~="03-adim1-kontrol-row"] {
+        position: absolute;
+        left: 30px;
+        width: 1166px;
+        height: 44px;
+        display: flex;
+        align-items: center;
+        border-bottom: 1px solid rgba(15, 15, 15, 0.2);
+        white-space: nowrap;
+        color: #0f0f0f;
+      }
+      [class~="03-adim1-kontrol-cb"] {
+        flex: 0 0 110px;
+        width: 110px;
+      }
+      [class~="03-adim1-kontrol-ck"] {
+        flex: 0 0 360px;
+        width: 360px;
+        font-family: "Space Grotesk", sans-serif;
+        font-size: 22px;
+        font-weight: 500;
+      }
+      [class~="03-adim1-kontrol-cn"] {
+        flex: 0 0 330px;
+        width: 330px;
+        font-family: "JetBrains Mono", monospace;
+        font-size: 19px;
+      }
+      [class~="03-adim1-kontrol-ce"] {
+        flex: 1 1 auto;
+        font-family: "JetBrains Mono", monospace;
+        font-size: 19px;
+      }
+      [class~="03-adim1-kontrol-badge"] {
+        display: inline-block;
+        font-family: "JetBrains Mono", monospace;
+        font-size: 15px;
+        letter-spacing: 0.06em;
+        line-height: 1.2;
+        padding: 3px 10px;
+        border: 2px solid #0f0f0f;
+      }
+      [class~="03-adim1-kontrol-warn"] {
+        background: #f5c518;
+        color: #0f0f0f;
+      }
+      [class~="03-adim1-kontrol-ready"] {
+        background: #efe9d9;
+        border-color: #1f8a4c;
+        color: #1f8a4c;
+      }
+
+      /* ---------- side notes + connectors ---------- */
+      [class~="03-adim1-kontrol-note"] {
+        position: absolute;
+        left: 1370px;
+        width: 454px;
+        border: 2px solid #0f0f0f;
+        background: #e4dcc4;
+        padding: 14px 20px;
+        font-family: "Space Grotesk", sans-serif;
+        font-size: 22px;
+        line-height: 1.35;
+        color: #0f0f0f;
+      }
+      [id="03-adim1-kontrol-n1"] {
+        top: 330px;
+      }
+      [id="03-adim1-kontrol-n2"] {
+        top: 470px;
+      }
+      [id="03-adim1-kontrol-wires"] {
+        position: absolute;
+        left: 0;
+        top: 0;
+        width: 1920px;
+        height: 1080px;
+        pointer-events: none;
+        z-index: 3;
+      }
+
+      /* ---------- WHY strip ---------- */
+      [id="03-adim1-kontrol-neden"] {
+        position: absolute;
+        left: 96px;
+        top: 830px;
+        height: 50px;
+        border: 2px solid #0f0f0f;
+        background: #e4dcc4;
+        display: flex;
+        align-items: center;
+        gap: 18px;
+        padding: 0 22px 0 8px;
+        white-space: nowrap;
+      }
+      [id="03-adim1-kontrol-nedentag"] {
+        background: #0f0f0f;
+        color: #efe9d9;
+        font-family: "JetBrains Mono", monospace;
+        font-size: 18px;
+        letter-spacing: 0.12em;
+        padding: 5px 12px;
+      }
+      [id="03-adim1-kontrol-nedentext"] {
+        font-family: "Space Grotesk", sans-serif;
+        font-size: 24px;
+        line-height: 1;
+        color: #0f0f0f;
+      }
+    </style>
+
+    <div id="03-adim1-kontrol-stage" class="clip" data-start="0" data-duration="16.5" data-track-index="0">
+      <!-- chrome -->
+      <div id="03-adim1-kontrol-topbar">
+        <span>PINVAULT · SETUP WIZARD</span>
+        <span id="03-adim1-kontrol-pill">STEP 1 / 4</span>
+      </div>
+      <div id="03-adim1-kontrol-footer">
+        <span>Step 1 · Check</span>
+        <span id="03-adim1-kontrol-counter"><span>03</span><span id="03-adim1-kontrol-dot"></span><span>15</span></span>
+      </div>
+
+      <!-- step strip: step 1 current, 2–4 future -->
+      <div class="03-adim1-kontrol-cell 03-adim1-kontrol-future" style="left: 96px">1 · SERVER</div>
+      <div class="03-adim1-kontrol-cell 03-adim1-kontrol-future" style="left: 528px">2 · CERTIFICATES</div>
+      <div class="03-adim1-kontrol-cell 03-adim1-kontrol-future" style="left: 960px">3 · APP</div>
+      <div class="03-adim1-kontrol-cell 03-adim1-kontrol-future" style="left: 1392px">4 · CODE</div>
+      <div class="03-adim1-kontrol-link 03-adim1-kontrol-future" style="left: 496px"></div>
+      <div class="03-adim1-kontrol-link 03-adim1-kontrol-future" style="left: 928px"></div>
+      <div class="03-adim1-kontrol-link 03-adim1-kontrol-future" style="left: 1360px"></div>
+      <div id="03-adim1-kontrol-current" data-layout-allow-overlap>1 · SERVER</div>
+      <div id="03-adim1-kontrol-underline"></div>
+
+      <!-- kicker + title -->
+      <div id="03-adim1-kontrol-kicker">WHO: ADMIN · WHERE: DASHBOARD → SETUP WIZARD → 1 · SERVER</div>
+      <div id="03-adim1-kontrol-title">THE SERVER SETTINGS ARE MEASURED</div>
+
+      <!-- panel: wizard step 1 -->
+      <div id="03-adim1-kontrol-panel">
+        <div id="03-adim1-kontrol-panelhead">Dashboard · 8090 · Setup Wizard · 1 · Server</div>
+        <div id="03-adim1-kontrol-cardtitle">3 OF 13 ITEMS READY</div>
+        <div id="03-adim1-kontrol-thead">
+          <span class="03-adim1-kontrol-cb"></span>
+          <span class="03-adim1-kontrol-ck" style="font-family: 'JetBrains Mono', monospace; font-size: 17px; font-weight: 400">Check</span>
+          <span class="03-adim1-kontrol-cn" style="font-size: 17px">Now</span>
+          <span class="03-adim1-kontrol-ce" style="font-size: 17px">.env</span>
+        </div>
+        <div id="03-adim1-kontrol-trule"></div>
+
+        <div id="03-adim1-kontrol-r1" class="03-adim1-kontrol-row" style="top: 156px">
+          <span class="03-adim1-kontrol-cb"><span id="03-adim1-kontrol-b1" class="03-adim1-kontrol-badge 03-adim1-kontrol-warn">WARNING</span></span>
+          <span class="03-adim1-kontrol-ck">Admin identity</span>
+          <span class="03-adim1-kontrol-cn">shared API_KEY</span>
+          <span class="03-adim1-kontrol-ce">ADMIN_KEYS=&lt;name&gt;:&lt;sha256&gt;</span>
+        </div>
+        <div id="03-adim1-kontrol-r2" class="03-adim1-kontrol-row" style="top: 200px">
+          <span class="03-adim1-kontrol-cb"><span id="03-adim1-kontrol-b2" class="03-adim1-kontrol-badge 03-adim1-kontrol-warn">WARNING</span></span>
+          <span class="03-adim1-kontrol-ck">Config signers</span>
+          <span class="03-adim1-kontrol-cn">1 signer (local)</span>
+          <span class="03-adim1-kontrol-ce">CONFIG_SIGNERS=pkcs11,command</span>
+        </div>
+        <div id="03-adim1-kontrol-r3" class="03-adim1-kontrol-row" style="top: 244px">
+          <span class="03-adim1-kontrol-cb"><span id="03-adim1-kontrol-b3" class="03-adim1-kontrol-badge 03-adim1-kontrol-warn">WARNING</span></span>
+          <span class="03-adim1-kontrol-ck">Live certificate check</span>
+          <span class="03-adim1-kontrol-cn">off</span>
+          <span class="03-adim1-kontrol-ce">In Settings ↓</span>
+        </div>
+        <div id="03-adim1-kontrol-r4" class="03-adim1-kontrol-row" style="top: 288px">
+          <span class="03-adim1-kontrol-cb"><span id="03-adim1-kontrol-b4" class="03-adim1-kontrol-badge 03-adim1-kontrol-warn">WARNING</span></span>
+          <span class="03-adim1-kontrol-ck">Server-made keys</span>
+          <span class="03-adim1-kontrol-cn">on</span>
+          <span class="03-adim1-kontrol-ce">ENROLLMENT_P12=off</span>
+        </div>
+        <div id="03-adim1-kontrol-r5" class="03-adim1-kontrol-row" style="top: 332px">
+          <span class="03-adim1-kontrol-cb"><span id="03-adim1-kontrol-b5" class="03-adim1-kontrol-badge 03-adim1-kontrol-warn">WARNING</span></span>
+          <span class="03-adim1-kontrol-ck">Key attestation at enrollment</span>
+          <span class="03-adim1-kontrol-cn">warn, app not bound</span>
+          <span class="03-adim1-kontrol-ce">In Settings ↓</span>
+        </div>
+        <div id="03-adim1-kontrol-r6" class="03-adim1-kontrol-row" style="top: 376px">
+          <span class="03-adim1-kontrol-cb"><span id="03-adim1-kontrol-b6" class="03-adim1-kontrol-badge 03-adim1-kontrol-ready">READY</span></span>
+          <span class="03-adim1-kontrol-ck">Admin panel over TLS</span>
+          <span class="03-adim1-kontrol-cn">port 8082</span>
+          <span class="03-adim1-kontrol-ce">—</span>
+        </div>
+        <div id="03-adim1-kontrol-r7" class="03-adim1-kontrol-row" style="top: 420px">
+          <span class="03-adim1-kontrol-cb"><span id="03-adim1-kontrol-b7" class="03-adim1-kontrol-badge 03-adim1-kontrol-ready">READY</span></span>
+          <span class="03-adim1-kontrol-ck">Enrollment mode</span>
+          <span class="03-adim1-kontrol-cn">token</span>
+          <span class="03-adim1-kontrol-ce">—</span>
+        </div>
+      </div>
+
+      <!-- side notes, wired to row 1 and row 2 -->
+      <div id="03-adim1-kontrol-n1" class="03-adim1-kontrol-note">A shared key does not show who did what.</div>
+      <div id="03-adim1-kontrol-n2" class="03-adim1-kontrol-note">Whoever steals the key that signs pins can publish any pin. At least two signers, one not on this disk.</div>
+      <svg id="03-adim1-kontrol-wires" viewBox="0 0 1920 1080" xmlns="http://www.w3.org/2000/svg">
+        <!-- row 1 centre y = 310 + 156 + 22 = 488; note 1 centre ≈ 374 -->
+        <path id="03-adim1-kontrol-wire1" d="M 1330 488 L 1350 488 L 1350 374 L 1370 374" fill="none" stroke="#0f0f0f" stroke-width="2" stroke-dasharray="154" stroke-dashoffset="154" />
+        <!-- row 2 centre y = 532; note 2 (three lines) centre ≈ 530 -->
+        <path id="03-adim1-kontrol-wire2" d="M 1330 532 L 1350 532 L 1350 530 L 1370 530" fill="none" stroke="#0f0f0f" stroke-width="2" stroke-dasharray="42" stroke-dashoffset="42" />
+      </svg>
+
+      <!-- WHY strip -->
+      <div id="03-adim1-kontrol-neden">
+        <span id="03-adim1-kontrol-nedentag">WHY</span>
+        <span id="03-adim1-kontrol-nedentext">Every row closes one attack path. The 'Now' column is the server's real state, not an assumption.</span>
+      </div>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/gsap@3.14.2/dist/gsap.min.js" integrity="sha384-sG0Hv1tP1lZCk9KQmrIbY/XNwi+OY84GQqhMscbnsoBFqAz8KNCil1kvfL3Hbbk2" crossorigin="anonymous"></script>
+    <script>
+      (function () {
+        var FID = "03-adim1-kontrol";
+        var host = document.querySelector('[data-composition-id="' + FID + '"]') || document;
+        var $ = function (n) {
+          return host.querySelector('[id="' + FID + "-" + n + '"]');
+        };
+
+        var tl = gsap.timeline({ paused: true });
+        var SOFT = "power3.out";
+
+        // ---------- Scene 1 (0.0–1.5): strip already standing; cell 1 settles; kicker, title ----------
+        tl.fromTo($("current"), { opacity: 0 }, { opacity: 1, duration: 0.6, ease: SOFT }, 0.2);
+        tl.fromTo($("underline"), { scaleX: 0 }, { scaleX: 1, duration: 0.6, ease: SOFT }, 0.2);
+        tl.fromTo($("kicker"), { opacity: 0, x: -20 }, { opacity: 1, x: 0, duration: 0.5, ease: SOFT }, 0.3);
+        tl.fromTo($("title"), { opacity: 0, y: 28 }, { opacity: 1, y: 0, duration: 0.8, ease: SOFT }, 0.6);
+
+        // ---------- Scene 2 (1.5–3.0): panel, card title, table heads ----------
+        tl.fromTo($("panel"), { opacity: 0, y: 30 }, { opacity: 1, y: 0, duration: 0.7, ease: SOFT }, 1.5);
+        tl.fromTo($("cardtitle"), { opacity: 0, x: -16 }, { opacity: 1, x: 0, duration: 0.5, ease: SOFT }, 2.0);
+        tl.fromTo($("thead"), { opacity: 0 }, { opacity: 1, duration: 0.5, ease: SOFT }, 2.5);
+        tl.fromTo($("trule"), { scaleX: 0 }, { scaleX: 1, duration: 0.6, ease: SOFT }, 2.5);
+
+        // ---------- Scene 3 (3.0–9.0): seven rows top to bottom ≈0.8 s apart; badge 0.2 s after its row ----------
+        for (var i = 1; i <= 7; i++) {
+          var at = 3.0 + (i - 1) * 0.8;
+          tl.fromTo($("r" + i), { opacity: 0, x: -18 }, { opacity: 1, x: 0, duration: 0.5, ease: SOFT }, at);
+          tl.fromTo($("b" + i), { opacity: 0, scale: 0.7 }, { opacity: 1, scale: 1, duration: 0.4, ease: SOFT }, at + 0.2);
+        }
+
+        // ---------- Scene 4 (9.0–12.5): note 1 + wire to row 1; 1.5 s later note 2 + wire to row 2 ----------
+        tl.fromTo($("n1"), { opacity: 0, x: 20 }, { opacity: 1, x: 0, duration: 0.6, ease: SOFT }, 9.0);
+        tl.fromTo($("wire1"), { strokeDashoffset: 154 }, { strokeDashoffset: 0, duration: 0.5, ease: "power2.inOut" }, 9.1);
+        tl.fromTo($("n2"), { opacity: 0, x: 20 }, { opacity: 1, x: 0, duration: 0.6, ease: SOFT }, 10.5);
+        tl.fromTo($("wire2"), { strokeDashoffset: 42 }, { strokeDashoffset: 0, duration: 0.4, ease: "power2.inOut" }, 10.6);
+
+        // ---------- Scene 5 (12.5–16.0): WHY strip, hold ----------
+        tl.fromTo($("neden"), { opacity: 0, x: -24 }, { opacity: 1, x: 0, duration: 0.6, ease: SOFT }, 12.5);
+        tl.to({}, { duration: 0.01 }, 16.49);
+
+        window.__timelines = window.__timelines || {};
+        window.__timelines[FID] = tl;
+      })();
+    </script>
+  </div>
+</template>

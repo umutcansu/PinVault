@@ -14,7 +14,7 @@ app from a script — for Android, iOS, React Native and Flutter.
 [![pub.dev](https://img.shields.io/pub/v/pinvault_flutter?label=Flutter&logo=flutter)](https://pub.dev/packages/pinvault_flutter)
 [![License](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 
-[Quick start](#quick-start) · [Features](#what-you-get) · [How it works](#how-it-works) · [Guide](GUIDE.md) · [Server](#the-server) · [Changelog](CHANGELOG.md)
+[Quick start](#quick-start) · [Features](#what-you-get) · [How it works](#how-it-works) · [Guide](GUIDE.md) · [Setup guide](SETUP.md) · [Server](#the-server) · [Changelog](CHANGELOG.md)
 
 </div>
 
@@ -95,7 +95,8 @@ sequenceDiagram
 ### Animation and films
 
 How PinVault works, step by step: an interactive walkthrough of every
-request and three short films, in English and Turkish. Everything on one
+request, four short films and a recorded walkthrough of the dashboard, in
+English and Turkish. Everything on one
 page: [▶ films page](https://raw.githack.com/umutcansu/PinVault/main/docs/animation/films.html). The links open through raw.githack.com, which
 first shows a one-click notice ("Open the page"). How to edit and re-render
 them: [`docs/animation/`](docs/animation/README.md).
@@ -106,6 +107,8 @@ them: [`docs/animation/`](docs/animation/README.md).
 | Presentation (9:58): the purpose, what PinVault adds, the whole flow | [▶ watch](https://raw.githack.com/umutcansu/PinVault/main/docs/animation/films.html#presentation) | [▶ izle](https://raw.githack.com/umutcansu/PinVault/main/docs/animation/films.html#sunum) |
 | Explainer (2:49): the problem, the three layers, a certificate's lifetime | [▶ watch](https://raw.githack.com/umutcansu/PinVault/main/docs/animation/films.html#how-it-works) | [▶ izle](https://raw.githack.com/umutcansu/PinVault/main/docs/animation/films.html#nasil-calisir) |
 | End to end (3:16): from the server's first start to the first protected call | [▶ watch](https://raw.githack.com/umutcansu/PinVault/main/docs/animation/films.html#end-to-end) | [▶ izle](https://raw.githack.com/umutcansu/PinVault/main/docs/animation/films.html#bastan-sona) |
+| Setup wizard (3:32): the four-step production checklist, row by row, with the reason for each | [▶ watch](https://raw.githack.com/umutcansu/PinVault/main/docs/animation/films.html#setup-wizard) | [▶ izle](https://raw.githack.com/umutcansu/PinVault/main/docs/animation/films.html#kurulum-sihirbazi) |
+| Setup in the dashboard (5:56): the real panel, click by click, from the API key to the generated code | [▶ watch](https://raw.githack.com/umutcansu/PinVault/main/docs/animation/films.html#setup-in-the-dashboard) | [▶ izle](https://raw.githack.com/umutcansu/PinVault/main/docs/animation/films.html#panelde-kurulum) |
 
 ## Quick start
 
@@ -872,6 +875,7 @@ mTLS, vault files and attestation add their own endpoints:
 | [pinvault_flutter/README.md](pinvault_flutter/README.md) | The Flutter bridge: Dart API, native security file, OWASP controls, tests |
 | [ATTESTATION.md](ATTESTATION.md) | The attestation protocol, policy, Play Integrity and App Attest |
 | [SCREEN_LOCK.md](SCREEN_LOCK.md) | Files behind the screen lock, per Android version |
+| [SETUP.md](SETUP.md) | From zero to production, in order: start the server, make every wizard row READY, certificates, the app, the first phone |
 | [SECURE_OPERATIONS.md](SECURE_OPERATIONS.md) | Signing keys, rotation, governance, runbooks |
 | [CONNECTION_EVENTS.md](CONNECTION_EVENTS.md) | Events and the bundled reporter |
 | [SERVER_IMPLEMENTATION_GUIDE.md](SERVER_IMPLEMENTATION_GUIDE.md) | The wire protocol, for your own server |

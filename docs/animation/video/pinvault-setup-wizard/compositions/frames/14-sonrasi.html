@@ -1,0 +1,397 @@
+<template id="14-sonrasi-template">
+  <div id="root" data-composition-id="14-sonrasi" data-start="0" data-duration="15.5" data-width="1920" data-height="1080" lang="en">
+    <style>
+      @import url("https://fonts.googleapis.com/css2?family=Archivo+Black&family=JetBrains+Mono:wght@400;700&family=Space+Grotesk:wght@400;500&display=block&subset=latin-ext");
+
+      #root {
+        position: relative;
+        width: 1920px;
+        height: 1080px;
+        overflow: hidden;
+      }
+      [data-composition-id="14-sonrasi"] * {
+        margin: 0;
+        padding: 0;
+        box-sizing: border-box;
+      }
+
+      /* full-bleed ground (clip layer, not #root) */
+      [id="14-sonrasi-stage"] {
+        position: absolute;
+        inset: 0;
+        width: 1920px;
+        height: 1080px;
+        background: #efe9d9;
+        container-type: size;
+        overflow: hidden;
+        color: #0f0f0f;
+      }
+
+      /* ---------- chrome ---------- */
+      [id="14-sonrasi-topbar"] {
+        position: absolute;
+        top: 48px;
+        left: 64px;
+        right: 64px;
+        height: 44px;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        font-family: "JetBrains Mono", monospace;
+        font-size: 22px;
+        letter-spacing: 0.06em;
+        white-space: nowrap;
+      }
+      [id="14-sonrasi-pill"] {
+        border: 4px solid #0f0f0f;
+        border-radius: 999px;
+        background: #efe9d9;
+        padding: 4px 20px;
+        line-height: 1.3;
+      }
+      [id="14-sonrasi-footer"] {
+        position: absolute;
+        bottom: 48px;
+        left: 64px;
+        right: 64px;
+        height: 32px;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        font-family: "JetBrains Mono", monospace;
+        font-size: 22px;
+        letter-spacing: 0.06em;
+        white-space: nowrap;
+      }
+      [id="14-sonrasi-counter"] {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+      }
+      [id="14-sonrasi-dot"] {
+        width: 10px;
+        height: 10px;
+        border-radius: 50%;
+        background: #0f0f0f;
+      }
+
+      /* ---------- step strip (fixed geometry: 4 × 400 px at x = 96 + i × 432, all done) ---------- */
+      [class~="14-sonrasi-cell"] {
+        position: absolute;
+        top: 104px;
+        width: 400px;
+        height: 40px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-family: "JetBrains Mono", monospace;
+        font-size: 17px;
+        letter-spacing: 0.04em;
+        white-space: nowrap;
+        background: #0f0f0f;
+        color: #efe9d9;
+        border: 2px solid #0f0f0f;
+      }
+      [class~="14-sonrasi-link"] {
+        position: absolute;
+        top: 123px;
+        width: 32px;
+        height: 2px;
+        background: #0f0f0f;
+      }
+
+      /* ---------- title ---------- */
+      [id="14-sonrasi-title"] {
+        position: absolute;
+        left: 96px;
+        top: 168px;
+        font-family: "Archivo Black", sans-serif;
+        font-size: 58px;
+        line-height: 0.92;
+        letter-spacing: -0.01em;
+        white-space: nowrap;
+      }
+
+      /* ---------- time rail ---------- */
+      [id="14-sonrasi-rail"] {
+        position: absolute;
+        left: 96px;
+        top: 300px;
+        width: 1728px;
+        height: 4px;
+        background: #0f0f0f;
+        transform-origin: 0% 50%;
+        z-index: 1;
+      }
+      [class~="14-sonrasi-stop"] {
+        position: absolute;
+        top: 287px;
+        width: 30px;
+        height: 30px;
+        border: 4px solid #0f0f0f;
+        background: #efe9d9;
+        z-index: 2;
+      }
+      [class~="14-sonrasi-tick"] {
+        position: absolute;
+        top: 317px;
+        width: 4px;
+        height: 35px;
+        background: #0f0f0f;
+        transform-origin: 50% 0%;
+        z-index: 1;
+      }
+
+      /* ---------- station cards (320 wide at x = 96 + i × 352) ---------- */
+      [class~="14-sonrasi-card"] {
+        position: absolute;
+        top: 352px;
+        width: 320px;
+        height: 380px;
+        border: 4px solid #0f0f0f;
+        background: #efe9d9;
+        padding: 18px 18px;
+        z-index: 2;
+      }
+      [class~="14-sonrasi-ctitle"] {
+        font-family: "JetBrains Mono", monospace;
+        font-size: 20px;
+        font-weight: 700;
+        letter-spacing: 0.04em;
+        line-height: 1.3;
+        min-height: 52px;
+      }
+      [class~="14-sonrasi-cbody"] {
+        margin-top: 12px;
+        font-family: "Space Grotesk", sans-serif;
+        font-size: 22px;
+        line-height: 1.3;
+      }
+      [class~="14-sonrasi-code"] {
+        font-family: "JetBrains Mono", monospace;
+        font-size: 18px;
+        letter-spacing: 0;
+      }
+
+      /* station 1: yellow UYARI badge */
+      [id="14-sonrasi-badge"] {
+        position: absolute;
+        left: 18px;
+        bottom: 18px;
+        background: #f5c518;
+        border: 2px solid #0f0f0f;
+        color: #0f0f0f;
+        font-family: "JetBrains Mono", monospace;
+        font-size: 15px;
+        letter-spacing: 0.06em;
+        padding: 3px 10px;
+        line-height: 1.3;
+        white-space: nowrap;
+      }
+
+      /* station 2: the ink-bordered button, pressed once */
+      [id="14-sonrasi-btn"] {
+        position: absolute;
+        left: 18px;
+        bottom: 18px;
+        border: 3px solid #0f0f0f;
+        background: #efe9d9;
+        padding: 8px 14px;
+        font-family: "JetBrains Mono", monospace;
+        font-size: 18px;
+        letter-spacing: 0.02em;
+        line-height: 1.2;
+        white-space: nowrap;
+      }
+      [id="14-sonrasi-btnfill"] {
+        position: absolute;
+        inset: 0;
+        background: #0f0f0f;
+        opacity: 0;
+      }
+      [id="14-sonrasi-btnlabel"] {
+        position: relative;
+        z-index: 1;
+        color: #0f0f0f;
+      }
+
+      /* station 4: two admins */
+      [id="14-sonrasi-admins"] {
+        position: absolute;
+        left: 18px;
+        bottom: 18px;
+        display: flex;
+        gap: 12px;
+      }
+      [class~="14-sonrasi-admin"] {
+        width: 32px;
+        height: 32px;
+        border-radius: 50%;
+        background: #0f0f0f;
+      }
+
+      /* ---------- NEDEN strip ---------- */
+      [id="14-sonrasi-neden"] {
+        position: absolute;
+        left: 96px;
+        top: 830px;
+        height: 60px;
+        display: flex;
+        align-items: stretch;
+        border: 2px solid #0f0f0f;
+        background: #e4dcc4;
+      }
+      [id="14-sonrasi-nlabel"] {
+        background: #0f0f0f;
+        color: #efe9d9;
+        font-family: "JetBrains Mono", monospace;
+        font-size: 20px;
+        letter-spacing: 0.08em;
+        display: flex;
+        align-items: center;
+        padding: 0 16px;
+      }
+      [id="14-sonrasi-ntext"] {
+        font-family: "Space Grotesk", sans-serif;
+        font-size: 22px;
+        line-height: 1.2;
+        display: flex;
+        align-items: center;
+        padding: 0 22px;
+        white-space: nowrap;
+      }
+    </style>
+
+    <div id="14-sonrasi-stage" class="clip" data-start="0" data-duration="15.5" data-track-index="0">
+      <!-- chrome -->
+      <div id="14-sonrasi-topbar">
+        <span>PINVAULT · SETUP WIZARD</span>
+        <span id="14-sonrasi-pill">AFTERWARDS</span>
+      </div>
+      <div id="14-sonrasi-footer">
+        <span>Afterwards</span>
+        <span id="14-sonrasi-counter"><span>14</span><span id="14-sonrasi-dot"></span><span>15</span></span>
+      </div>
+
+      <!-- step strip: all four done -->
+      <div class="14-sonrasi-cell" style="left: 96px">1 · SERVER</div>
+      <div class="14-sonrasi-link" style="left: 496px"></div>
+      <div class="14-sonrasi-cell" style="left: 528px">2 · CERTIFICATES</div>
+      <div class="14-sonrasi-link" style="left: 928px"></div>
+      <div class="14-sonrasi-cell" style="left: 960px">3 · APP</div>
+      <div class="14-sonrasi-link" style="left: 1360px"></div>
+      <div class="14-sonrasi-cell" style="left: 1392px">4 · CODE</div>
+
+      <!-- title -->
+      <div id="14-sonrasi-title">THE WIZARD ONCE, REMINDERS EVERY DAY</div>
+
+      <!-- time rail -->
+      <div id="14-sonrasi-rail"></div>
+
+      <!-- station markers + connectors (centers x = 256 + i × 352) -->
+      <div id="14-sonrasi-stop1" class="14-sonrasi-stop" style="left: 241px"></div>
+      <div id="14-sonrasi-stop2" class="14-sonrasi-stop" style="left: 593px"></div>
+      <div id="14-sonrasi-stop3" class="14-sonrasi-stop" style="left: 945px"></div>
+      <div id="14-sonrasi-stop4" class="14-sonrasi-stop" style="left: 1297px"></div>
+      <div id="14-sonrasi-stop5" class="14-sonrasi-stop" style="left: 1649px"></div>
+      <div id="14-sonrasi-tick1" class="14-sonrasi-tick" style="left: 254px"></div>
+      <div id="14-sonrasi-tick2" class="14-sonrasi-tick" style="left: 606px"></div>
+      <div id="14-sonrasi-tick3" class="14-sonrasi-tick" style="left: 958px"></div>
+      <div id="14-sonrasi-tick4" class="14-sonrasi-tick" style="left: 1310px"></div>
+      <div id="14-sonrasi-tick5" class="14-sonrasi-tick" style="left: 1662px"></div>
+
+      <!-- station cards -->
+      <div id="14-sonrasi-card1" class="14-sonrasi-card" style="left: 96px">
+        <div id="14-sonrasi-ctitle1" class="14-sonrasi-ctitle">EVERY DAY</div>
+        <div id="14-sonrasi-body1" class="14-sonrasi-cbody">Expiry check: the Config API certificate, the CAs, host certificates, vault files. In the dashboard and the audit log.</div>
+        <div id="14-sonrasi-badge">WARNING</div>
+      </div>
+      <div id="14-sonrasi-card2" class="14-sonrasi-card" style="left: 448px">
+        <div id="14-sonrasi-ctitle2" class="14-sonrasi-ctitle">WHEN PINS CHANGE</div>
+        <div id="14-sonrasi-body2" class="14-sonrasi-cbody">The previous set is kept: Pin Set History → Restore. A restore is a new version; phones do not go back, they take the new one.</div>
+        <div id="14-sonrasi-btn"><div id="14-sonrasi-btnfill"></div><span id="14-sonrasi-btnlabel">Restore</span></div>
+      </div>
+      <div id="14-sonrasi-card3" class="14-sonrasi-card" style="left: 800px">
+        <div id="14-sonrasi-ctitle3" class="14-sonrasi-ctitle">WHEN A CERTIFICATE CHANGES</div>
+        <div id="14-sonrasi-body3" class="14-sonrasi-cbody">Run the wizard again; the code in step 4 is generated with the new pins.</div>
+      </div>
+      <div id="14-sonrasi-card4" class="14-sonrasi-card" style="left: 1152px">
+        <div id="14-sonrasi-ctitle4" class="14-sonrasi-ctitle">TWO PEOPLE</div>
+        <div id="14-sonrasi-body4" class="14-sonrasi-cbody"><span class="14-sonrasi-code">PIN_CHANGE_APPROVALS=2</span>: a pin change waits for a second admin's approval.</div>
+        <div id="14-sonrasi-admins"><div id="14-sonrasi-adminA" class="14-sonrasi-admin"></div><div id="14-sonrasi-adminB" class="14-sonrasi-admin"></div></div>
+      </div>
+      <div id="14-sonrasi-card5" class="14-sonrasi-card" style="left: 1504px">
+        <div id="14-sonrasi-ctitle5" class="14-sonrasi-ctitle">NOW AND THEN</div>
+        <div id="14-sonrasi-body5" class="14-sonrasi-cbody">Open step 1 again: until it reads 13 of 13.</div>
+      </div>
+
+      <!-- NEDEN strip -->
+      <div id="14-sonrasi-neden">
+        <div id="14-sonrasi-nlabel">WHY</div>
+        <div id="14-sonrasi-ntext">Production is a process, not a moment. The dashboard measures every day; the wizard counts the same list again every time it opens.</div>
+      </div>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/gsap@3.14.2/dist/gsap.min.js" integrity="sha384-sG0Hv1tP1lZCk9KQmrIbY/XNwi+OY84GQqhMscbnsoBFqAz8KNCil1kvfL3Hbbk2" crossorigin="anonymous"></script>
+    <script>
+      (function () {
+        var FID = "14-sonrasi";
+        var host = document.querySelector('[data-composition-id="' + FID + '"]') || document;
+        var $ = function (n) {
+          return host.querySelector('[id="' + FID + "-" + n + '"]');
+        };
+
+        var tl = gsap.timeline({ paused: true });
+        var SOFT = "power3.out";
+        var INOUT = "power3.inOut";
+        var WIPE_FROM = "inset(-10% 100% -10% 0%)";
+        var WIPE_TO = "inset(-10% 0% -10% 0%)";
+
+        // station i (1..5): marker settles, connector grows, card comes, title, then the text 0.4 s later
+        var station = function (i, t) {
+          tl.fromTo($("stop" + i), { opacity: 0, scale: 0.4 }, { opacity: 1, scale: 1, duration: 0.45, ease: SOFT }, t);
+          tl.fromTo($("tick" + i), { scaleY: 0 }, { scaleY: 1, duration: 0.35, ease: SOFT }, t + 0.1);
+          tl.fromTo($("card" + i), { opacity: 0, y: 30 }, { opacity: 1, y: 0, duration: 0.6, ease: SOFT }, t + 0.15);
+          tl.fromTo($("ctitle" + i), { opacity: 0, x: -12 }, { opacity: 1, x: 0, duration: 0.45, ease: SOFT }, t + 0.3);
+          tl.fromTo($("body" + i), { clipPath: WIPE_FROM }, { clipPath: WIPE_TO, duration: 0.9, ease: SOFT }, t + 0.7);
+        };
+
+        // ---------- Scene 1 (0.0–1.5): strip already standing (all done); title; the time rail draws left to right ----------
+        tl.fromTo($("title"), { opacity: 0, y: 30 }, { opacity: 1, y: 0, duration: 0.7, ease: SOFT }, 0.2);
+        tl.fromTo($("rail"), { scaleX: 0 }, { scaleX: 1, duration: 1.0, ease: INOUT }, 0.4);
+
+        // ---------- Scene 2 (1.5–11.5): five stations, 2.0 s apart ----------
+        // station 1 (1.5): the yellow WARNING badge blinks once
+        station(1, 1.5);
+        tl.fromTo($("badge"), { opacity: 0, y: 8 }, { opacity: 1, y: 0, duration: 0.25, ease: SOFT }, 2.7);
+        tl.to($("badge"), { opacity: 0.2, duration: 0.18, ease: "power2.inOut" }, 3.05);
+        tl.to($("badge"), { opacity: 1, duration: 0.25, ease: SOFT }, 3.23);
+
+        // station 2 (3.5): the small ink button "Restore" is pressed
+        station(2, 3.5);
+        tl.fromTo($("btn"), { scale: 1 }, { scale: 0.92, duration: 0.1, ease: "power2.out" }, 4.9);
+        tl.fromTo($("btnfill"), { opacity: 0 }, { opacity: 1, duration: 0.12, ease: "power2.out" }, 4.95);
+        tl.to($("btnlabel"), { color: "#EFE9D9", duration: 0.12, ease: "power2.out" }, 4.95);
+        tl.to($("btn"), { scale: 1, duration: 0.3, ease: SOFT }, 5.0);
+
+        // station 3 (5.5)
+        station(3, 5.5);
+
+        // station 4 (7.5): two ink circles come side by side
+        station(4, 7.5);
+        tl.fromTo($("adminA"), { opacity: 0, x: -20 }, { opacity: 1, x: 0, duration: 0.4, ease: SOFT }, 8.6);
+        tl.fromTo($("adminB"), { opacity: 0, x: 20 }, { opacity: 1, x: 0, duration: 0.4, ease: SOFT }, 8.85);
+
+        // station 5 (9.5)
+        station(5, 9.5);
+
+        // ---------- Scene 3 (11.5–15.0): NEDEN strip, hold ----------
+        tl.fromTo($("neden"), { opacity: 0, y: 16 }, { opacity: 1, y: 0, duration: 0.6, ease: SOFT }, 11.8);
+        tl.to({}, { duration: 0.01 }, 14.99);
+
+        window.__timelines = window.__timelines || {};
+        window.__timelines[FID] = tl;
+      })();
+    </script>
+  </div>
+</template>

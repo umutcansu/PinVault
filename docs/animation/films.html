@@ -46,6 +46,11 @@ video{display:block;width:100%;aspect-ratio:16/9;background:var(--surface-1);bor
 .btn{display:inline-flex;align-items:center;gap:6px;padding:8px 14px;border:1px solid var(--border-strong);border-radius:6px;background:var(--surface-1);color:var(--text-primary);text-decoration:none;font-weight:500}
 .btn:hover,.btn:focus-visible{background:var(--bg-accent);border-color:var(--text-accent);color:var(--text-accent)}
 .alt{font-size:13px;color:var(--text-muted);margin:8px 0 0}
+.chapters{list-style:none;margin:12px 0 0;padding:0;display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:2px 16px}
+.chapters:empty{display:none}
+.chapters button{all:unset;cursor:pointer;display:flex;gap:10px;align-items:baseline;width:100%;box-sizing:border-box;padding:5px 8px;border-radius:6px;font-size:13px;line-height:1.35;color:var(--text-secondary)}
+.chapters button:hover,.chapters button:focus-visible{background:var(--surface-1);color:var(--text)}
+.chapters time{font-family:var(--font-mono);font-size:12px;color:var(--text-accent);font-variant-numeric:tabular-nums;flex-shrink:0}
 .alt a,footer a{color:var(--text-accent)}
 footer{color:var(--text-muted);font-size:13px;margin-top:28px}
 </style>
@@ -53,7 +58,7 @@ footer{color:var(--text-muted);font-size:13px;margin-top:28px}
 <body>
 <main>
   <h1 data-en="PinVault: animation and films" data-tr="PinVault: animasyon ve filmler">PinVault: animation and films</h1>
-  <p class="lead" data-en="How PinVault works: an interactive walkthrough of every request, and three short films." data-tr="PinVault nasıl çalışır: her isteği adım adım gösteren bir animasyon ve üç kısa film.">How PinVault works: an interactive walkthrough of every request, and three short films.</p>
+  <p class="lead" data-en="How PinVault works: an interactive walkthrough of every request, four short films and a recorded dashboard walkthrough." data-tr="PinVault nasıl çalışır: her isteği adım adım gösteren bir animasyon, dört kısa film ve panelde kurulumun ekran kaydı.">How PinVault works: an interactive walkthrough of every request, four short films and a recorded dashboard walkthrough.</p>
 
   <div class="tabs" role="tablist" aria-label="Language · Dil">
     <button class="tab" role="tab" id="tab-en" aria-controls="panel-en" aria-selected="true">English</button>
@@ -97,6 +102,27 @@ footer{color:var(--text-muted);font-size:13px;margin-top:28px}
       </video>
       <p class="alt">Doesn't play? <a href="pinvault-end-to-end.en.mp4" download>Download the file</a>.</p>
     </section>
+
+    <section class="card" id="setup-in-the-dashboard">
+      <h2>Setup in the dashboard</h2>
+      <div class="meta">5:56 · screen recording</div>
+      <p>The real dashboard, click by click, from the API key to the generated code: where the server's production certificate is managed, how your own API hosts and their backup pin are added, where a phone's enrollment token comes from, and what the wizard's four steps ask. Captions say what is being done and why.</p>
+      <video controls preload="none" playsinline poster="posters/pinvault-setup-in-the-dashboard.en.jpg">
+        <source src="pinvault-setup-in-the-dashboard.en.mp4" type="video/mp4">
+      </video>
+      <ol class="chapters" data-vtt="pinvault-setup-in-the-dashboard.en.chapters.vtt" aria-label="Chapters"></ol>
+      <p class="alt">Doesn't play? <a href="pinvault-setup-in-the-dashboard.en.mp4" download>Download the file</a>.</p>
+    </section>
+
+    <section class="card" id="setup-wizard">
+      <h2>Setup wizard</h2>
+      <div class="meta">3:32</div>
+      <p>The dashboard's four-step production checklist, row by row and with the reason for each: server settings, certificates, the app's protections, the generated code.</p>
+      <video controls preload="none" playsinline poster="posters/pinvault-setup-wizard.en.jpg">
+        <source src="pinvault-setup-wizard.en.mp4" type="video/mp4">
+      </video>
+      <p class="alt">Doesn't play? <a href="pinvault-setup-wizard.en.mp4" download>Download the file</a>.</p>
+    </section>
   </div>
 
   <div role="tabpanel" id="panel-tr" aria-labelledby="tab-tr" lang="tr" hidden>
@@ -135,6 +161,27 @@ footer{color:var(--text-muted);font-size:13px;margin-top:28px}
         <source src="pinvault-bastan-sona.tr.mp4" type="video/mp4">
       </video>
       <p class="alt">Oynamıyor mu? <a href="pinvault-bastan-sona.tr.mp4" download>Dosyayı indirin</a>.</p>
+    </section>
+
+    <section class="card" id="panelde-kurulum">
+      <h2>Panelde kurulum</h2>
+      <div class="meta">5:52 · ekran kaydı</div>
+      <p>Gerçek panel, tıklama tıklama, API anahtarından üretilen koda: sunucunun üretim sertifikası nereden yönetilir, kendi API host'larınız ve yedek pin'leri nasıl eklenir, telefonun kayıt token'ı nereden alınır, sihirbazın dört adımı ne sorar. Alt yazılar ne yapıldığını ve nedenini söyler.</p>
+      <video controls preload="none" playsinline poster="posters/pinvault-panelde-kurulum.tr.jpg">
+        <source src="pinvault-panelde-kurulum.tr.mp4" type="video/mp4">
+      </video>
+      <ol class="chapters" data-vtt="pinvault-panelde-kurulum.tr.chapters.vtt" aria-label="Bölümler"></ol>
+      <p class="alt">Oynamıyor mu? <a href="pinvault-panelde-kurulum.tr.mp4" download>Dosyayı indirin</a>.</p>
+    </section>
+
+    <section class="card" id="kurulum-sihirbazi">
+      <h2>Kurulum sihirbazı</h2>
+      <div class="meta">3:32</div>
+      <p>Panelin dört adımlık üretim listesi, satır satır ve nedeniyle: sunucu ayarları, sertifikalar, uygulamanın korumaları, üretilen kod.</p>
+      <video controls preload="none" playsinline poster="posters/pinvault-kurulum-sihirbazi.tr.jpg">
+        <source src="pinvault-kurulum-sihirbazi.tr.mp4" type="video/mp4">
+      </video>
+      <p class="alt">Oynamıyor mu? <a href="pinvault-kurulum-sihirbazi.tr.mp4" download>Dosyayı indirin</a>.</p>
     </section>
   </div>
 
@@ -183,6 +230,34 @@ footer{color:var(--text-muted);font-size:13px;margin-top:28px}
   }
   window.addEventListener('hashchange', route);
   route();
+
+  // Chapter lists: a recorded tour's <name>.chapters.vtt (written by sample-e2e/scripts/record-setup-tour.js)
+  // becomes a clickable list under the video; a click seeks the video there and plays it.
+  function mmss(t) { t = Math.floor(t); return Math.floor(t / 60) + ':' + ('0' + (t % 60)).slice(-2); }
+  Array.prototype.forEach.call(document.querySelectorAll('.chapters[data-vtt]'), function (list) {
+    var video = list.closest('.card').querySelector('video');
+    fetch(list.getAttribute('data-vtt')).then(function (r) { return r.ok ? r.text() : Promise.reject(r.status); }).then(function (vtt) {
+      var re = /(\d+):(\d\d):(\d\d)(?:\.\d+)?\s*-->[^\n]*\n([^\n]+)/g, m;
+      while ((m = re.exec(vtt))) {
+        (function (t, title) {
+          var li = document.createElement('li'), b = document.createElement('button'), tm = document.createElement('time');
+          b.type = 'button';
+          tm.textContent = mmss(t);
+          b.appendChild(tm);
+          b.appendChild(document.createTextNode(title));
+          b.addEventListener('click', function () {
+            // preload="none": before the metadata is in, a currentTime assignment is lost — load first, seek then.
+            function go() { video.currentTime = t; video.play(); }
+            if (video.readyState >= 1) go();
+            else { video.addEventListener('loadedmetadata', go, { once: true }); video.load(); }
+            video.scrollIntoView({ block: 'nearest' });
+          });
+          li.appendChild(b);
+          list.appendChild(li);
+        })(Number(m[1]) * 3600 + Number(m[2]) * 60 + Number(m[3]), m[4].trim());
+      }
+    }).catch(function () { /* no chapters file (or file://): the list stays empty and hidden */ });
+  });
 })();
 </script>
 </body>

@@ -1461,7 +1461,9 @@ lives: [demo-server/README.md](demo-server/README.md).
 
 The dashboard's *Setup Wizard* *(2.3)* lists what a production server still
 lacks and writes the app's PinVault configuration from the server's own
-pins and keys. The optional signing and governance layers (named admins,
+pins and keys; since 2.9.0 every row carries "How to": the command, `.env`
+line or dashboard button that makes it READY, and how to verify. The same
+walk in one file: [SETUP.md](SETUP.md). The optional signing and governance layers (named admins,
 two-person approval, the live-certificate check, webhooks, HSM/KMS signers,
 signing-key sets) are off by default and documented in
 [SECURE_OPERATIONS.md](SECURE_OPERATIONS.md).

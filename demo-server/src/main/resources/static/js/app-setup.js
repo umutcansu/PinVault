@@ -5,7 +5,8 @@
 // Server settings: the non-secret ones are changed in the Settings card and
 // saved for the next start (`/api/v1/server-settings`; a restart applies them);
 // secrets, ports and test switches stay `.env` lines. The app code it
-// generates holds only public values (pins, public keys, ports).
+// generates holds only public values (pins, public keys, ports). The "how to"
+// steps under every row and the "next steps" after the code: app-setup-howto.js.
 
 Object.assign(i18n.tr, {
   navSetup: 'Kurulum Sihirbazı',
@@ -335,16 +336,18 @@ function setupServerStep() {
   const checks = setupData.checks || [];
   const ready = checks.filter(c => c.level === 'ok').length;
   const order = { fail: 0, warn: 1, ok: 2 };
+  const apiId = setupOpts ? setupOpts.apiId : '';
   const rows = checks.slice().sort((a, b) => order[a.level] - order[b.level]).map(c => `
-      <tr>
+      <tr data-setup-check="${esc(c.id)}" data-setup-level="${esc(c.level)}">
         <td>${setupLevelBadge(c.level)}</td>
-        <td><b>${esc(t('setup_' + c.id))}</b><div class="muted small">${esc(t('setup_' + c.id + '_why'))}</div></td>
+        <td><b>${esc(t('setup_' + c.id))}</b><div class="muted small">${esc(t('setup_' + c.id + '_why'))}</div>${setupHowtoButton('server:' + c.id, c)}</td>
         <td class="mono small">${esc(c.current)}</td>
         <td>${setupFixInPanel(c.fix) ? `<span class="act-badge act-ok">${esc(t('setsFromPanel'))}</span>` : setupFixBox(c.fix)}</td>
-      </tr>`).join('');
+      </tr>${setupHowtoRow('server:' + c.id, c, apiId)}`).join('');
   const env = setupEnvText();
   return `
     ${settingsBanners()}
+    ${setupOrderCard()}
     <div class="card">
       <div class="card-head"><div class="card-title">${esc(t('setupReady', ready, checks.length))}</div></div>
       <div class="card-hint">${esc(t(settingsData ? 'setupFromPanelHint' : 'setupReadOnly'))}</div>
@@ -616,6 +619,7 @@ function setupCodeStep() {
       <pre class="json-box" style="max-height:none;white-space:pre;overflow-x:auto">${esc(code)}</pre>
     </div>
     ${notes ? `<div class="notice notice-info"><b>${t('setupNotes')}</b><ul class="notice-list">${notes}</ul></div>` : ''}
+    ${setupNextStepsCard()}
     <div class="form-actions"><button class="btn btn-secondary" data-action="setSetupStep" data-arg0="app">${t('setupBack')}</button></div>`;
 }
 
@@ -916,12 +920,13 @@ async function loadSetupCerts() {
 
 function setupCertRow(c) {
   const go = setupCertAction(c);
+  const key = 'cert:' + c.id + (c.configApiId ? ':' + c.configApiId : '');
   return `<tr data-setup-check="${esc(c.id)}" data-setup-level="${esc(c.level)}">
       <td>${setupLevelBadge(c.level)}</td>
-      <td><b>${esc(t('setupc_' + c.id))}</b><div class="muted small">${esc(t('setupc_' + c.id + '_why'))}</div></td>
+      <td><b>${esc(t('setupc_' + c.id))}</b><div class="muted small">${esc(t('setupc_' + c.id + '_why'))}</div>${setupHowtoButton(key, c)}</td>
       <td class="mono small">${esc(c.current)}</td>
       <td>${go}</td>
-    </tr>`;
+    </tr>${setupHowtoRow(key, c, c.configApiId)}`;
 }
 
 /** The button that opens the page where the row's certificate is changed. */
@@ -945,10 +950,10 @@ function setupCertHostFacts(rows) {
 function setupCertVaultRows(rows) {
   return rows.map(c => `<tr data-setup-vault="${esc(c.key || '')}" data-setup-level="${esc(c.level)}">
       <td>${setupLevelBadge(c.level)}</td>
-      <td><b>${esc(c.key || '')}</b><div class="muted small">${esc(c.configApiId || '')}</div></td>
+      <td><b>${esc(c.key || '')}</b><div class="muted small">${esc(c.configApiId || '')}</div>${setupHowtoButton('vault:' + (c.key || '') + ':' + (c.configApiId || ''), c)}</td>
       <td class="mono small">${esc(c.current)}</td>
       <td>${setupCertAction(c)}</td>
-    </tr>`).join('');
+    </tr>${setupHowtoRow('vault:' + (c.key || '') + ':' + (c.configApiId || ''), c, c.configApiId)}`).join('');
 }
 
 function setupCertTable(rows) {
@@ -1003,12 +1008,13 @@ function setupCertsStep() {
   const hostRows = hosts.map(h => {
     const rows = checks.filter(c => c.hostname === h.hostname && c.configApiId === h.configApiId);
     const worst = rows.some(c => c.level === 'fail') ? 'fail' : rows.some(c => c.level === 'warn') ? 'warn' : 'ok';
+    const key = 'host:' + h.hostname + ':' + h.configApiId;
     return `<tr data-setup-host="${esc(h.hostname)}" data-setup-level="${worst}">
         <td>${setupLevelBadge(worst)}</td>
-        <td><b>${esc(h.hostname)}</b><div class="muted small">${esc(h.configApiId)} · ${esc(t('setupCertsSource_' + h.source))}${h.mtls ? ' · mTLS' : ''}${h.servedHere ? ' · mock' : ''}</div></td>
+        <td><b>${esc(h.hostname)}</b><div class="muted small">${esc(h.configApiId)} · ${esc(t('setupCertsSource_' + h.source))}${h.mtls ? ' · mTLS' : ''}${h.servedHere ? ' · mock' : ''}</div>${setupHowtoHostButton(key, rows)}</td>
         <td class="small">${setupCertHostFacts(rows)}</td>
         <td><button class="btn btn-secondary btn-sm" data-action="setupOpenHost" data-arg0="${esc(h.hostname)}" data-arg1="${esc(h.configApiId)}">${t('setupCertsOpenHost')}</button></td>
-      </tr>`;
+      </tr>${setupHowtoHostRow(key, rows, h.configApiId)}`;
   }).join('');
   const hostsCard = `
     <div class="card" id="setup-certs-hosts">

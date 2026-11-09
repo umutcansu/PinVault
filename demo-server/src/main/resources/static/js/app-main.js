@@ -103,6 +103,8 @@ const _actionHandlers = {
   // Setup wizard (checklist and generated app configuration)
   renderSetupSection, setSetupStep, setSetupOpt, copySetupText,
   setupOpenBootstrap, setupOpenMtls, setupOpenHost, setupOpenVault,
+  // "How to" rows under the checklist (app-setup-howto.js)
+  toggleSetupHowto, setupGoSetting,
   // Settings changed from the panel (applied at the next start)
   setServerSetting, saveServerSettings, restartServer, dismissSettingsRejected
 };

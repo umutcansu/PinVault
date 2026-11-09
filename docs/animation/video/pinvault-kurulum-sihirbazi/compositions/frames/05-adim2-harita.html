@@ -1,0 +1,560 @@
+<template id="05-adim2-harita-template">
+  <div id="root" data-composition-id="05-adim2-harita" data-start="0" data-duration="15.5" data-width="1920" data-height="1080" lang="tr">
+    <style>
+      @import url("https://fonts.googleapis.com/css2?family=Archivo+Black&family=JetBrains+Mono:wght@400;700&family=Space+Grotesk:wght@400;500;700&display=block");
+
+      #root {
+        position: relative;
+        width: 1920px;
+        height: 1080px;
+        overflow: hidden;
+      }
+      [data-composition-id="05-adim2-harita"] * {
+        margin: 0;
+        padding: 0;
+        box-sizing: border-box;
+      }
+
+      [id="05-adim2-harita-stage"] {
+        position: absolute;
+        inset: 0;
+        width: 1920px;
+        height: 1080px;
+        background: #efe9d9;
+        container-type: size;
+        overflow: hidden;
+        color: #0f0f0f;
+      }
+
+      /* ---------- chrome ---------- */
+      [id="05-adim2-harita-topbar"] {
+        position: absolute;
+        top: 48px;
+        left: 64px;
+        right: 64px;
+        height: 44px;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        font-family: "JetBrains Mono", monospace;
+        font-size: 22px;
+        letter-spacing: 0.06em;
+        color: #0f0f0f;
+      }
+      [id="05-adim2-harita-pill"] {
+        border: 4px solid #0f0f0f;
+        border-radius: 999px;
+        background: #efe9d9;
+        padding: 4px 20px;
+        line-height: 1.3;
+      }
+      [id="05-adim2-harita-footer"] {
+        position: absolute;
+        bottom: 48px;
+        left: 64px;
+        right: 64px;
+        height: 32px;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        font-family: "JetBrains Mono", monospace;
+        font-size: 22px;
+        letter-spacing: 0.06em;
+        color: #0f0f0f;
+      }
+      [id="05-adim2-harita-counter"] {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+      }
+      [id="05-adim2-harita-dot"] {
+        width: 10px;
+        height: 10px;
+        border-radius: 50%;
+        background: #0f0f0f;
+      }
+
+      /* ---------- step strip (fixed geometry) ---------- */
+      [class~="05-adim2-harita-cell"] {
+        position: absolute;
+        top: 104px;
+        width: 400px;
+        height: 40px;
+        border: 2px solid #0f0f0f;
+        background: #efe9d9;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-family: "JetBrains Mono", monospace;
+        font-size: 17px;
+        letter-spacing: 0.04em;
+        white-space: nowrap;
+        color: #0f0f0f;
+      }
+      [class~="05-adim2-harita-done"] {
+        background: #0f0f0f;
+        color: #efe9d9;
+      }
+      [class~="05-adim2-harita-future"] {
+        opacity: 0.35;
+      }
+      [class~="05-adim2-harita-link"] {
+        position: absolute;
+        top: 123px;
+        width: 32px;
+        height: 2px;
+        background: #0f0f0f;
+      }
+      [id="05-adim2-harita-current"] {
+        position: absolute;
+        left: 528px;
+        top: 104px;
+        width: 400px;
+        height: 40px;
+        border: 4px solid #0f0f0f;
+        background: #efe9d9;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-family: "JetBrains Mono", monospace;
+        font-size: 17px;
+        letter-spacing: 0.04em;
+        white-space: nowrap;
+        color: #0f0f0f;
+        z-index: 2;
+      }
+      [id="05-adim2-harita-underline"] {
+        position: absolute;
+        left: 528px;
+        top: 148px;
+        width: 400px;
+        height: 4px;
+        background: #f5c518;
+        transform-origin: 0 50%;
+      }
+
+      /* ---------- kicker + title ---------- */
+      [id="05-adim2-harita-kicker"] {
+        position: absolute;
+        left: 96px;
+        top: 166px;
+        background: #0f0f0f;
+        color: #efe9d9;
+        font-family: "JetBrains Mono", monospace;
+        font-size: 20px;
+        letter-spacing: 0.08em;
+        line-height: 1.25;
+        white-space: nowrap;
+        padding: 8px 16px;
+      }
+      [id="05-adim2-harita-title"] {
+        position: absolute;
+        left: 96px;
+        top: 220px;
+        font-family: "Archivo Black", sans-serif;
+        font-size: 72px;
+        line-height: 0.95;
+        letter-spacing: -0.01em;
+        white-space: nowrap;
+        color: #0f0f0f;
+      }
+
+      /* ---------- boxes ---------- */
+      [class~="05-adim2-harita-box"] {
+        position: absolute;
+        top: 310px;
+        width: 450px;
+        height: 310px;
+        border: 4px solid #0f0f0f;
+        background: #efe9d9;
+        z-index: 3;
+      }
+      [class~="05-adim2-harita-boxhead"] {
+        height: 50px;
+        background: #0f0f0f;
+        color: #efe9d9;
+        font-family: "JetBrains Mono", monospace;
+        font-size: 22px;
+        letter-spacing: 0.04em;
+        display: flex;
+        align-items: center;
+        padding: 0 18px 0 30px;
+        white-space: nowrap;
+      }
+      [class~="05-adim2-harita-port"] {
+        position: absolute;
+        left: 96px;
+        width: 60px;
+        height: 24px;
+        border: 2px solid #0f0f0f;
+        background: #efe9d9;
+        font-family: "JetBrains Mono", monospace;
+        font-size: 15px;
+        letter-spacing: 0.02em;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        z-index: 5;
+      }
+      [id="05-adim2-harita-apihost"] {
+        position: absolute;
+        left: 0;
+        right: 0;
+        top: 60px;
+        text-align: center;
+        font-family: "JetBrains Mono", monospace;
+        font-size: 20px;
+        letter-spacing: 0.02em;
+        white-space: nowrap;
+        color: #0f0f0f;
+      }
+
+      /* certificate cards */
+      [class~="05-adim2-harita-cert"] {
+        position: absolute;
+        width: 190px;
+        height: 200px;
+        border: 2px solid #0f0f0f;
+        background: #e4dcc4;
+      }
+      [class~="05-adim2-harita-pink"] {
+        background: #f06ca8;
+      }
+      [class~="05-adim2-harita-seal"] {
+        position: absolute;
+        top: 10px;
+        right: 10px;
+        width: 18px;
+        height: 18px;
+        border-radius: 50%;
+        background: #0f0f0f;
+      }
+      [class~="05-adim2-harita-certname"] {
+        position: absolute;
+        left: 14px;
+        top: 40px;
+        width: 162px;
+        font-family: "JetBrains Mono", monospace;
+        font-size: 18px;
+        font-weight: 700;
+        line-height: 1.25;
+        color: #0f0f0f;
+      }
+      [class~="05-adim2-harita-certsub"] {
+        position: absolute;
+        left: 14px;
+        bottom: 14px;
+        width: 162px;
+        font-family: "Space Grotesk", sans-serif;
+        font-size: 19px;
+        line-height: 1.2;
+        color: #0f0f0f;
+      }
+
+      /* phone */
+      [id="05-adim2-harita-phone"] {
+        position: absolute;
+        left: 880px;
+        top: 310px;
+        width: 160px;
+        height: 310px;
+        border: 4px solid #0f0f0f;
+        background: #efe9d9;
+        z-index: 3;
+      }
+      [id="05-adim2-harita-speaker"] {
+        position: absolute;
+        left: 52px;
+        top: 14px;
+        width: 48px;
+        height: 4px;
+        background: #0f0f0f;
+      }
+      [id="05-adim2-harita-appname"] {
+        position: absolute;
+        left: 0;
+        right: 0;
+        top: 118px;
+        text-align: center;
+        font-family: "JetBrains Mono", monospace;
+        font-size: 17px;
+        white-space: nowrap;
+        color: #0f0f0f;
+      }
+      [id="05-adim2-harita-lib"] {
+        position: absolute;
+        left: 0;
+        right: 0;
+        bottom: 0;
+        height: 64px;
+        background: #0f0f0f;
+        color: #efe9d9;
+        font-family: "JetBrains Mono", monospace;
+        font-size: 15px;
+        line-height: 1.25;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        text-align: center;
+        padding: 0 10px;
+      }
+
+      /* wires between boxes */
+      [class~="05-adim2-harita-wire"] {
+        position: absolute;
+        top: 464px;
+        width: 280px;
+        height: 2px;
+        background: #0f0f0f;
+        transform-origin: 0 50%;
+        z-index: 2;
+      }
+
+      /* card labels */
+      [class~="05-adim2-harita-tag"] {
+        position: absolute;
+        top: 680px;
+        width: 400px;
+        height: 110px;
+        border: 2px solid #0f0f0f;
+        background: #efe9d9;
+        z-index: 3;
+      }
+      [class~="05-adim2-harita-tagmono"] {
+        position: absolute;
+        left: 16px;
+        top: 12px;
+        width: 368px;
+        font-family: "JetBrains Mono", monospace;
+        font-size: 17px;
+        letter-spacing: 0.04em;
+        line-height: 1.25;
+        color: #0f0f0f;
+      }
+      [class~="05-adim2-harita-tagbody"] {
+        position: absolute;
+        left: 16px;
+        bottom: 12px;
+        font-family: "Space Grotesk", sans-serif;
+        font-size: 22px;
+        font-weight: 500;
+        white-space: nowrap;
+        color: #0f0f0f;
+      }
+
+      /* connectors from labels to certificates */
+      [class~="05-adim2-harita-v"] {
+        position: absolute;
+        width: 2px;
+        background: #0f0f0f;
+        transform-origin: 50% 0;
+        z-index: 5;
+      }
+      [class~="05-adim2-harita-h"] {
+        position: absolute;
+        height: 2px;
+        background: #0f0f0f;
+        z-index: 5;
+      }
+
+      /* ---------- NEDEN strip ---------- */
+      [id="05-adim2-harita-why"] {
+        position: absolute;
+        left: 96px;
+        top: 830px;
+        min-height: 50px;
+        max-width: 1728px;
+        border: 2px solid #0f0f0f;
+        background: #e4dcc4;
+        display: flex;
+        align-items: center;
+        gap: 18px;
+        padding: 6px 22px 6px 8px;
+        white-space: nowrap;
+      }
+      [id="05-adim2-harita-whytag"] {
+        background: #0f0f0f;
+        color: #efe9d9;
+        font-family: "JetBrains Mono", monospace;
+        font-size: 18px;
+        letter-spacing: 0.12em;
+        padding: 5px 12px;
+      }
+      [id="05-adim2-harita-whytext"] {
+        font-family: "Space Grotesk", sans-serif;
+        font-size: 24px;
+        line-height: 1.2;
+        color: #0f0f0f;
+      }
+    </style>
+
+    <div id="05-adim2-harita-stage" class="clip" data-start="0" data-duration="15.5" data-track-index="0">
+      <!-- chrome -->
+      <div id="05-adim2-harita-topbar">
+        <span>PINVAULT · KURULUM SİHİRBAZI</span>
+        <span id="05-adim2-harita-pill">ADIM 2 / 4</span>
+      </div>
+      <div id="05-adim2-harita-footer">
+        <span>Adım 2 · Harita</span>
+        <span id="05-adim2-harita-counter"><span>05</span><span id="05-adim2-harita-dot"></span><span>15</span></span>
+      </div>
+
+      <!-- step strip: cells at x = 96 + i*432, 32px links in the gaps -->
+      <div class="05-adim2-harita-cell 05-adim2-harita-done" style="left: 96px">1 · SUNUCU</div>
+      <div class="05-adim2-harita-cell 05-adim2-harita-future" style="left: 528px">2 · SERTİFİKALAR</div>
+      <div class="05-adim2-harita-cell 05-adim2-harita-future" style="left: 960px">3 · UYGULAMA</div>
+      <div class="05-adim2-harita-cell 05-adim2-harita-future" style="left: 1392px">4 · KOD</div>
+      <div class="05-adim2-harita-link" style="left: 496px"></div>
+      <div class="05-adim2-harita-link" style="left: 928px"></div>
+      <div class="05-adim2-harita-link 05-adim2-harita-future" style="left: 1360px"></div>
+      <div id="05-adim2-harita-current" data-layout-allow-overlap>2 · SERTİFİKALAR</div>
+      <div id="05-adim2-harita-underline"></div>
+
+      <!-- kicker + title -->
+      <div id="05-adim2-harita-kicker">KİM: YÖNETİCİ · NEREDE: 2 · SERTİFİKALAR · 13 / 21 MADDE HAZIR</div>
+      <div id="05-adim2-harita-title">HANGİ SERTİFİKA KİMİN?</div>
+
+      <!-- PinVault server with two certificates -->
+      <div id="05-adim2-harita-server" class="05-adim2-harita-box" style="left: 150px">
+        <div class="05-adim2-harita-boxhead">PinVault sunucusu</div>
+        <div id="05-adim2-harita-cert1" class="05-adim2-harita-cert" style="left: 30px; top: 72px">
+          <div class="05-adim2-harita-seal"></div>
+          <div class="05-adim2-harita-certname">Config API sertifikası</div>
+          <div id="05-adim2-harita-sub1" class="05-adim2-harita-certsub">pin'leri APK'ya</div>
+        </div>
+        <div id="05-adim2-harita-cert2" class="05-adim2-harita-cert 05-adim2-harita-pink" style="left: 230px; top: 72px">
+          <div class="05-adim2-harita-seal"></div>
+          <div class="05-adim2-harita-certname">İstemci CA'sı</div>
+          <div id="05-adim2-harita-sub2" class="05-adim2-harita-certsub">cihaz kartlarını imzalar</div>
+        </div>
+      </div>
+      <div id="05-adim2-harita-p1" class="05-adim2-harita-port" style="top: 366px">8090</div>
+      <div id="05-adim2-harita-p2" class="05-adim2-harita-port" style="top: 394px">8091</div>
+      <div id="05-adim2-harita-p3" class="05-adim2-harita-port" style="top: 422px">8092</div>
+      <div id="05-adim2-harita-p4" class="05-adim2-harita-port" style="top: 450px">8093</div>
+
+      <!-- phone -->
+      <div id="05-adim2-harita-phone">
+        <div id="05-adim2-harita-speaker"></div>
+        <div id="05-adim2-harita-appname">Uygulamanız</div>
+        <div id="05-adim2-harita-lib">PinVault kütüphanesi</div>
+      </div>
+
+      <!-- your API server with its host certificate -->
+      <div id="05-adim2-harita-api" class="05-adim2-harita-box" style="left: 1320px">
+        <div class="05-adim2-harita-boxhead">API SUNUCUNUZ</div>
+        <div id="05-adim2-harita-apihost">api.ornek.com</div>
+        <div id="05-adim2-harita-cert3" class="05-adim2-harita-cert" style="left: 130px; top: 96px">
+          <div class="05-adim2-harita-seal"></div>
+          <div class="05-adim2-harita-certname">Host sertifikası</div>
+          <div id="05-adim2-harita-sub3" class="05-adim2-harita-certsub">pin'i imzalı listede</div>
+        </div>
+      </div>
+
+      <!-- wires: server → phone, phone → API -->
+      <div id="05-adim2-harita-w1" class="05-adim2-harita-wire" style="left: 600px"></div>
+      <div id="05-adim2-harita-w2" class="05-adim2-harita-wire" style="left: 1040px"></div>
+
+      <!-- connectors: 1 → Config API certificate, 2 → client CA, 3 → host certificate -->
+      <div id="05-adim2-harita-c1a" class="05-adim2-harita-v" style="left: 278px; top: 584px; height: 96px"></div>
+      <div id="05-adim2-harita-c2a" class="05-adim2-harita-v" style="left: 478px; top: 584px; height: 68px"></div>
+      <div id="05-adim2-harita-c2b" class="05-adim2-harita-h" style="left: 478px; top: 650px; width: 124px; transform-origin: 0 50%"></div>
+      <div id="05-adim2-harita-c2c" class="05-adim2-harita-v" style="left: 600px; top: 650px; height: 30px"></div>
+      <div id="05-adim2-harita-c3a" class="05-adim2-harita-v" style="left: 1548px; top: 608px; height: 44px"></div>
+      <div id="05-adim2-harita-c3b" class="05-adim2-harita-h" style="left: 1300px; top: 650px; width: 250px; transform-origin: 100% 50%"></div>
+      <div id="05-adim2-harita-c3c" class="05-adim2-harita-v" style="left: 1300px; top: 650px; height: 30px"></div>
+
+      <!-- four card labels -->
+      <div id="05-adim2-harita-t1" class="05-adim2-harita-tag" style="left: 96px">
+        <div class="05-adim2-harita-tagmono">1 · CONFIG API'NİN KENDİ SERTİFİKASI</div>
+        <div id="05-adim2-harita-b1" class="05-adim2-harita-tagbody">bizim</div>
+      </div>
+      <div id="05-adim2-harita-t2" class="05-adim2-harita-tag" style="left: 528px">
+        <div class="05-adim2-harita-tagmono">2 · mTLS: CİHAZ SERTİFİKALARI</div>
+        <div id="05-adim2-harita-b2" class="05-adim2-harita-tagbody">bizim CA'mız</div>
+      </div>
+      <div id="05-adim2-harita-t3" class="05-adim2-harita-tag" style="left: 960px">
+        <div class="05-adim2-harita-tagmono">3 · PİNLENEN HOST'LAR</div>
+        <div id="05-adim2-harita-b3" class="05-adim2-harita-tagbody">API sunucularınızın</div>
+      </div>
+      <div id="05-adim2-harita-t4" class="05-adim2-harita-tag" style="left: 1392px">
+        <div class="05-adim2-harita-tagmono">4 · VAULT DOSYALARININ SÜRELERİ</div>
+        <div id="05-adim2-harita-b4" class="05-adim2-harita-tagbody">dosya, sertifika değil</div>
+      </div>
+
+      <!-- NEDEN strip -->
+      <div id="05-adim2-harita-why">
+        <span id="05-adim2-harita-whytag">NEDEN</span>
+        <span id="05-adim2-harita-whytext">Üç ayrı sahip, üç ayrı süre. Biri dolunca telefonun nerede duracağını önceden bilmeniz gerekir.</span>
+      </div>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/gsap@3.14.2/dist/gsap.min.js" integrity="sha384-sG0Hv1tP1lZCk9KQmrIbY/XNwi+OY84GQqhMscbnsoBFqAz8KNCil1kvfL3Hbbk2" crossorigin="anonymous"></script>
+    <script>
+      (function () {
+        var FID = "05-adim2-harita";
+        var host = document.querySelector('[data-composition-id="' + FID + '"]') || document;
+        var $ = function (n) {
+          return host.querySelector('[id="' + FID + "-" + n + '"]');
+        };
+
+        var tl = gsap.timeline({ paused: true });
+        var SOFT = "power3.out";
+        var D = 15.5;
+
+        function vline(n, t, dur) {
+          tl.fromTo($(n), { scaleY: 0 }, { scaleY: 1, duration: dur, ease: SOFT }, t);
+        }
+        function hline(n, t, dur) {
+          tl.fromTo($(n), { scaleX: 0 }, { scaleX: 1, duration: dur, ease: SOFT }, t);
+        }
+
+        // ---------- Scene 1 (0.0–1.5): strip stands (step 1 filled); cell 2 settles; kicker, title ----------
+        tl.fromTo($("current"), { opacity: 0 }, { opacity: 1, duration: 0.6, ease: SOFT }, 0.2);
+        tl.fromTo($("underline"), { scaleX: 0 }, { scaleX: 1, duration: 0.6, ease: SOFT }, 0.2);
+        tl.fromTo($("kicker"), { opacity: 0, x: -20 }, { opacity: 1, x: 0, duration: 0.5, ease: SOFT }, 0.3);
+        tl.fromTo($("title"), { opacity: 0, y: 28 }, { opacity: 1, y: 0, duration: 0.8, ease: SOFT }, 0.6);
+
+        // ---------- Scene 2 (1.5–4.5): server box, ports, two certificates with their subtitles ----------
+        tl.fromTo($("server"), { opacity: 0, y: 30 }, { opacity: 1, y: 0, duration: 0.7, ease: SOFT }, 1.5);
+        ["p1", "p2", "p3", "p4"].forEach(function (p, i) {
+          tl.fromTo($(p), { opacity: 0, x: -14 }, { opacity: 1, x: 0, duration: 0.4, ease: SOFT }, 1.9 + i * 0.1);
+        });
+        tl.fromTo($("cert1"), { opacity: 0, y: 24 }, { opacity: 1, y: 0, duration: 0.6, ease: SOFT }, 2.3);
+        tl.fromTo($("sub1"), { opacity: 0 }, { opacity: 1, duration: 0.4, ease: SOFT }, 2.8);
+        tl.fromTo($("cert2"), { opacity: 0, y: 24 }, { opacity: 1, y: 0, duration: 0.6, ease: SOFT }, 3.3);
+        tl.fromTo($("sub2"), { opacity: 0 }, { opacity: 1, duration: 0.4, ease: SOFT }, 3.8);
+
+        // ---------- Scene 3 (4.5–7.0): phone, wire, API box, wire, host certificate ----------
+        tl.fromTo($("phone"), { opacity: 0, y: 30 }, { opacity: 1, y: 0, duration: 0.7, ease: SOFT }, 4.5);
+        hline("w1", 4.9, 0.5);
+        tl.fromTo($("api"), { opacity: 0, y: 30 }, { opacity: 1, y: 0, duration: 0.7, ease: SOFT }, 5.3);
+        tl.fromTo($("apihost"), { opacity: 0 }, { opacity: 1, duration: 0.4, ease: SOFT }, 5.7);
+        hline("w2", 5.7, 0.5);
+        tl.fromTo($("cert3"), { opacity: 0, y: 24 }, { opacity: 1, y: 0, duration: 0.6, ease: SOFT }, 6.1);
+        tl.fromTo($("sub3"), { opacity: 0 }, { opacity: 1, duration: 0.4, ease: SOFT }, 6.6);
+
+        // ---------- Scene 4 (7.0–11.0): four labels left to right, each wired to its certificate ----------
+        [1, 2, 3, 4].forEach(function (n, i) {
+          var at = 7.0 + i * 0.9;
+          tl.fromTo($("t" + n), { opacity: 0, y: 20 }, { opacity: 1, y: 0, duration: 0.6, ease: SOFT }, at);
+          tl.fromTo($("b" + n), { opacity: 0 }, { opacity: 1, duration: 0.4, ease: SOFT }, at + 0.45);
+        });
+        vline("c1a", 7.3, 0.4);
+        vline("c2a", 8.2, 0.25);
+        hline("c2b", 8.4, 0.25);
+        vline("c2c", 8.6, 0.15);
+        vline("c3a", 9.1, 0.2);
+        hline("c3b", 9.25, 0.3);
+        vline("c3c", 9.5, 0.15);
+
+        // ---------- Scene 5 (11.0–15.0): NEDEN strip, hold ----------
+        tl.fromTo($("why"), { opacity: 0, x: -24 }, { opacity: 1, x: 0, duration: 0.6, ease: SOFT }, 11.0);
+        tl.to({}, { duration: 0.01 }, D - 0.01);
+
+        window.__timelines = window.__timelines || {};
+        window.__timelines[FID] = tl;
+      })();
+    </script>
+  </div>
+</template>
