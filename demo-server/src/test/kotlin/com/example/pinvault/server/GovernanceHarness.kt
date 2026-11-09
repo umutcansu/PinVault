@@ -9,6 +9,8 @@ import com.example.pinvault.server.plugin.ApprovalGate
 import com.example.pinvault.server.plugin.installAdminBodyLimit
 import com.example.pinvault.server.route.ServerTlsPins
 import com.example.pinvault.server.route.adminVaultRoutes
+import com.example.pinvault.server.route.attestationAdminRoutes
+import com.example.pinvault.server.route.serverSettingsRoutes
 import com.example.pinvault.server.route.certificateConfigRoutes
 import com.example.pinvault.server.route.clientCertAdminRoutes
 import com.example.pinvault.server.route.enrollmentPolicyRoutes
@@ -85,10 +87,21 @@ class GovernanceHarness(
     val trustRefreshes = mutableListOf<String>()
     val port: Int = java.net.ServerSocket(0).use { it.localPort }
 
-    private fun stateOf(scope: String): String =
-        pins.load(scope).pins.sortedBy { it.hostname }.joinToString("\n") { "${it.hostname}|${it.version}|${it.sha256.sorted()}" }
+    // Main's own fingerprint: pins, flags and managed trust roots.
+    private fun stateOf(scope: String): String = com.example.pinvault.server.service.PinDiff.stateHash(pins.load(scope))
 
-    val describer = ChangeDescriber(pins, planner, liveGate, ::stateOf, vaultFiles, vaultTokens, audit = audit, snapshots = snapshots)
+    val settings = com.example.pinvault.server.service.ServerSettingsStore(File(dir, "server-settings.json"))
+    val attestationPolicies = AttestationPolicyStore(db)
+    val attestedDevices = AttestedDeviceStore(db)
+    val attestationSecrets = AttestationTokenSecretStore(db)
+    val attestation = com.example.pinvault.server.service.attestation.AttestationService(
+        attestationPolicies, attestedDevices, attestationSecrets, com.example.pinvault.server.service.attestation.AttestationNonces(),
+        com.example.pinvault.server.service.attestation.AttestationPolicyDefaults(),
+        com.example.pinvault.server.service.attestation.AttestationKeyPolicy.WARN, verifier = { error("not used") }, audit = audit
+    )
+
+    val describer = ChangeDescriber(pins, planner, liveGate, ::stateOf, vaultFiles, vaultTokens, audit = audit, snapshots = snapshots,
+        settingsSaved = { settings.values() }, attestation = attestation, attestedDevices = attestedDevices)
     val approvals = ApprovalService(
         store = changeRequests, audit = audit, required = required, managementPort = port,
         describe = describer::describe, stateHash = ::stateOf, exempt = exempt
@@ -117,6 +130,8 @@ class GovernanceHarness(
             scopedVaultAdminRoutes(vaultFiles, VaultDistributionStore(db), vaultTokens, VaultAccessTokenService(vaultTokens),
                 publicKeyStore = deviceKeys, audit = audit, maxFileBytes = vaultMax)
             adminVaultRoutes(db, DeviceHostAclStore(db), registry, audit)
+            serverSettingsRoutes(settings, audit, restartSupervised = false)
+            attestationAdminRoutes(attestation, attestationPolicies, attestedDevices, attestationSecrets, audit)
         }
     }.start(wait = false)
 

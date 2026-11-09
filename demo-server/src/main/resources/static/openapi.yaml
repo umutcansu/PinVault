@@ -864,8 +864,13 @@ paths:
         entry differs from what is served now — devices refuse version downgrades,
         so the old version itself never comes back, the pins do. Without
         `hostname` the whole scope is restored: hosts added since are removed,
-        hosts removed since come back above their version watermark. With
-        `hostname` only that host's entry is taken from the snapshot.
+        hosts removed since come back above their version watermark, and the
+        scope's force flag and managed trust roots return to the snapshot's (the
+        approval card and the audit entry list every root added and removed). With
+        `hostname` only that host's entry is taken from the snapshot; the force
+        flag and the trust roots stay as they are. The body is `{}` (or empty)
+        for the whole scope, or an object whose `hostname` is a non-empty
+        string: anything else answers `400 invalid_body` and restores nothing.
 
         `?configApiId=` must be the snapshot's own scope (else `409 scope_mismatch`).
         Only the pins change: a certificate this server serves itself keeps its

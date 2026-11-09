@@ -16,6 +16,31 @@ object PinRestore {
 
     class Refused(message: String) : IllegalArgumentException(message)
 
+    /** The request body is not `{}` or `{"hostname": "…"}`. */
+    class BadBody(message: String) : IllegalArgumentException(message)
+
+    /**
+     * The host a restore request names, or null for the whole scope. The
+     * route and the approval card both read the body with this, as UTF-8
+     * bytes. Only an empty body or an object without `hostname` means the
+     * whole scope: a body that cannot be read, or a `hostname` that is not a
+     * non-empty string, is refused — it used to be read as "the whole scope",
+     * the widest thing the request can do.
+     */
+    fun requestedHost(body: ByteArray): String? {
+        val text = body.toString(Charsets.UTF_8).trim()
+        if (text.isEmpty()) return null
+        val json = try {
+            kotlinx.serialization.json.Json.parseToJsonElement(text) as? kotlinx.serialization.json.JsonObject
+        } catch (_: Exception) {
+            null
+        } ?: throw BadBody("The body must be a JSON object: {} for the whole pin set, {\"hostname\": \"…\"} for one host")
+        val element = json["hostname"] ?: return null
+        val host = (element as? kotlinx.serialization.json.JsonPrimitive)?.takeIf { it.isString }?.content?.trim()
+        if (host.isNullOrEmpty()) throw BadBody("hostname must be a non-empty string (leave it out to restore the whole pin set)")
+        return host
+    }
+
     /**
      * The config to save: [snapshot]'s whole set, or, with [hostname], the
      * current set with only that host's entry taken from the snapshot.

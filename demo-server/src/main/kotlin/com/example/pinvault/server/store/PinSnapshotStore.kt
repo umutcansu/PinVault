@@ -104,15 +104,19 @@ class PinSnapshotStore(private val db: DatabaseManager) {
         val rows = all(configApiId)   // oldest first, to diff each against the one before
         val out = mutableListOf<PinSnapshotSummary>()
         var previous: Map<String, HostPin> = emptyMap()
+        var previousRoots: Set<String>? = null
         rows.forEach { snap ->
             val now = snap.config.pins.associateBy { it.hostname }
+            val roots = snap.config.trustRoots.toSet()
             val changed = buildList {
                 now.values.forEach { pin ->
                     val old = previous[pin.hostname]
                     if (old == null || old.copy(version = 0) != pin.copy(version = 0) || old.version != pin.version) add("${pin.hostname} v${pin.version}")
                 }
                 previous.keys.filter { it !in now }.forEach { add("$it removed") }
+                if (previousRoots != null && previousRoots != roots) add("trust roots (${roots.size})")
             }
+            previousRoots = roots
             out += PinSnapshotSummary(snap.id, snap.configApiId, snap.takenAt, snap.actor, now.size, snap.config.computedVersion(), changed)
             previous = now
         }

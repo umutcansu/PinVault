@@ -2,6 +2,10 @@ package com.example.pinvault.server.service
 
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonNull
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.contentOrNull
 import java.io.File
 
 /**
@@ -199,5 +203,48 @@ class ServerSettingsStore(private val file: File) {
         /** Next to the database: the sample host keeps `/data/db` on a volume. */
         fun forDbPath(dbPath: String): ServerSettingsStore =
             ServerSettingsStore(File(File(dbPath).absoluteFile.parentFile, "server-settings.json"))
+    }
+}
+
+/**
+ * What a `PUT /api/v1/server-settings` body does to the saved values. The
+ * route and the approval card (`ChangeDescriber`) both plan with this, so a
+ * second admin reads exactly what the handler will save.
+ */
+class ServerSettingsChange(
+    /** The saved values after the change. */
+    val saved: Map<String, String>,
+    /** Per changed key: the saved value before and after; null = the server default. */
+    val changed: Map<String, Pair<String?, String?>>,
+    /** Why the body is refused: a key the dashboard may not change, one the environment fixes, a bad value. */
+    val errors: List<String>,
+    /** Why the server would not start with [saved]; empty while [errors] is not. */
+    val startProblems: List<String>
+) {
+    companion object {
+        fun plan(current: Map<String, String>, values: JsonObject, env: Map<String, String> = System.getenv()): ServerSettingsChange {
+            val saved = current.toMutableMap()
+            val errors = mutableListOf<String>()
+            val changed = linkedMapOf<String, Pair<String?, String?>>()
+            for ((key, element) in values) {
+                val setting = ServerSettingsCatalog.find(key)
+                if (setting == null) { errors += "$key: not a setting the dashboard may change"; continue }
+                if (ServerEnv.lockedByEnvironment(key)) { errors += "$key: set in the environment; change it there"; continue }
+                val value = (element as? JsonPrimitive)?.takeIf { element !is JsonNull }?.contentOrNull?.trim().orEmpty()
+                if (value.isEmpty()) {
+                    val previous = saved.remove(key)
+                    if (previous != null) changed[key] = previous to null
+                    continue
+                }
+                val problem = setting.problem(value)
+                if (problem != null) { errors += "$key: $problem"; continue }
+                if (saved[key] != value) changed[key] = saved[key] to value
+                saved[key] = value
+            }
+            if (errors.isNotEmpty()) return ServerSettingsChange(current, emptyMap(), errors, emptyList())
+            // What the next start reads: the environment, saved values where it is empty.
+            val effective = LinkedHashMap(env).apply { saved.forEach { (k, v) -> if (env[k].isNullOrBlank()) put(k, v) } }
+            return ServerSettingsChange(saved, changed, emptyList(), ServerSettingsCatalog.startProblems(effective))
+        }
     }
 }

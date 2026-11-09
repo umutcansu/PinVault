@@ -57,32 +57,13 @@ fun Route.serverSettingsRoutes(
         val body = runCatching { Json.parseToJsonElement(call.receiveText()).jsonObject }.getOrNull()
         val values = body?.get("values") as? JsonObject
             ?: return@put call.respondError(HttpStatusCode.BadRequest, "invalid_body", listOf("Expected {\"values\": {...}}"))
-        val saved = store.values().toMutableMap()
-        val errors = mutableListOf<String>()
-        val changed = linkedMapOf<String, Pair<String?, String?>>()
-        for ((key, element) in values) {
-            val setting = ServerSettingsCatalog.find(key)
-            if (setting == null) { errors += "$key: not a setting the dashboard may change"; continue }
-            if (ServerEnv.lockedByEnvironment(key)) { errors += "$key: set in the environment; change it there"; continue }
-            val value = (element as? JsonPrimitive)?.takeIf { element !is JsonNull }?.contentOrNull?.trim().orEmpty()
-            if (value.isEmpty()) {
-                if (saved.remove(key) != null) changed[key] = null to null
-                continue
-            }
-            val problem = setting.problem(value)
-            if (problem != null) { errors += "$key: $problem"; continue }
-            if (saved[key] != value) changed[key] = saved[key] to value
-            saved[key] = value
-        }
-        if (errors.isNotEmpty()) return@put call.respondError(HttpStatusCode.BadRequest, "invalid_settings", errors)
+        // The same plan the approval card showed (ServerSettingsChange).
+        val change = com.example.pinvault.server.service.ServerSettingsChange.plan(store.values(), values)
+        if (change.errors.isNotEmpty()) return@put call.respondError(HttpStatusCode.BadRequest, "invalid_settings", change.errors)
+        if (change.startProblems.isNotEmpty()) return@put call.respondError(HttpStatusCode.BadRequest, "would_not_start", change.startProblems)
+        val changed = change.changed
 
-        // What the next start reads: the environment, saved values where it is empty.
-        val env = System.getenv()
-        val effective = LinkedHashMap(env).apply { saved.forEach { (k, v) -> if (env[k].isNullOrBlank()) put(k, v) } }
-        val problems = ServerSettingsCatalog.startProblems(effective)
-        if (problems.isNotEmpty()) return@put call.respondError(HttpStatusCode.BadRequest, "would_not_start", problems)
-
-        store.save(saved)
+        store.save(change.saved)
         if (changed.isNotEmpty()) {
             audit?.record(
                 "server_settings_update",

@@ -136,13 +136,16 @@ val ApprovalGate = createApplicationPlugin("ApprovalGate", ::ApprovalGateConfig)
             return@onCall
         }
 
-        // The approver judges a description built from the body as UTF-8
-        // JSON; a body in another charset would be read differently by the
-        // handler than by the description.
+        // The approver judges a description built from the body as UTF-8; a
+        // handler reads the body in the charset its Content-Type names. Any
+        // other charset would let the two read different requests — whatever
+        // the media type and however the header is spelled (the check used to
+        // look only at a header that starts with lower-case `application/json`:
+        // `text/plain; charset=UTF-16` got a one-host restore card and ran as
+        // a whole-scope restore).
         val contentType = call.request.header(HttpHeaders.ContentType).orEmpty()
-        val charset = call.request.contentCharset()
-        if (contentType.startsWith("application/json") && charset != null && charset != Charsets.UTF_8) {
-            call.respond(HttpStatusCode.UnsupportedMediaType, mapOf("error" to "Changes that need approval must be UTF-8 JSON"))
+        if (ApprovalService.namesAnotherCharset(contentType)) {
+            call.respond(HttpStatusCode.UnsupportedMediaType, mapOf("error" to "Changes that need approval must be sent as UTF-8"))
             return@onCall
         }
 

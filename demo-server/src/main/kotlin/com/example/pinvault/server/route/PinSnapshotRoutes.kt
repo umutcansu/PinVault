@@ -11,7 +11,7 @@ import com.example.pinvault.server.store.PinConfigStore
 import com.example.pinvault.server.store.PinSnapshotStore
 import io.ktor.http.ContentType
 import io.ktor.http.HttpStatusCode
-import io.ktor.server.request.receiveText
+import com.example.pinvault.server.plugin.receiveLimitedBytes
 import io.ktor.server.response.respondText
 import io.ktor.server.routing.Route
 import io.ktor.server.routing.get
@@ -35,9 +35,13 @@ import java.time.Instant
  * - `GET /api/v1/hosts/{hostname}/pin-versions?configApiId=` — every set one host had
  * - `POST /api/v1/pin-snapshots/{id}/restore?configApiId=` `{"hostname": …}` —
  *   publishes the stored pins as a NEW version (whole scope, or one host).
+ *   A whole-scope restore also brings back the set's force flag and managed
+ *   trust roots; one host's restore leaves both as they are.
  *   Gated like a pin update: two-person approval and the live certificate
  *   check apply; the audit log gets `pins_restored` plus the usual diff.
  */
+private const val RESTORE_BODY_MAX = 64L * 1024
+
 fun Route.pinSnapshotRoutes(
     snapshots: PinSnapshotStore,
     pinConfigStore: PinConfigStore,
@@ -99,9 +103,16 @@ fun Route.pinSnapshotRoutes(
         if (querySope != null && querySope != snap.configApiId) {
             return@post call.respondText("""{"error":"scope_mismatch"}""", ContentType.Application.Json, HttpStatusCode.Conflict)
         }
-        val body = call.receiveText()
-        val hostname = runCatching { Json.parseToJsonElement(body).jsonObject["hostname"]?.jsonPrimitive?.content }.getOrNull()
-            ?.trim()?.takeIf { it.isNotEmpty() }
+        // Read as the approval card read it (PinRestore.requestedHost): UTF-8
+        // bytes; a body that is not `{}` or `{"hostname": "…"}` is refused,
+        // never taken for a whole-scope restore.
+        val bytes = call.receiveLimitedBytes(RESTORE_BODY_MAX) ?: return@post
+        val hostname = try {
+            PinRestore.requestedHost(bytes)
+        } catch (e: PinRestore.BadBody) {
+            return@post call.respondText(buildJsonObject { put("error", "invalid_body"); put("message", e.message ?: "invalid body") }.toString(),
+                ContentType.Application.Json, HttpStatusCode.BadRequest)
+        }
         val scope = snap.configApiId
         val current = pinConfigStore.load(scope)
         val planned = try {
@@ -132,6 +143,11 @@ fun Route.pinSnapshotRoutes(
         }
         before.keys.filter { host -> saved.pins.none { it.hostname == host } }.forEach { host ->
             historyStore.add(scope, PinConfigHistoryEntry(host, before.getValue(host).version, now, "host_removed"))
+        }
+        // A whole-scope restore brings the snapshot's managed trust roots back too
+        // (the diff, the approval card and the audit entry name them).
+        if (current.trustRoots.toSet() != saved.trustRoots.toSet()) {
+            historyStore.add(scope, PinConfigHistoryEntry("*", saved.computedVersion(), now, "trust_roots_updated", saved.trustRoots.firstOrNull()?.take(12) ?: ""))
         }
         audit?.record(
             "pins_restored",

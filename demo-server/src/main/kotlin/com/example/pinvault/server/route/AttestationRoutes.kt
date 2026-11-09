@@ -168,6 +168,36 @@ fun Route.attestationRoutes(
 /** An annotation as the token carries it (`anno`): short, printable, no quotes. */
 private val ANNOTATION = Regex("^[A-Za-z0-9._:@/ +-]{1,64}$")
 private const val MAX_ANNOTATIONS = 16
+
+/**
+ * What a `PUT …/attestation/devices/{deviceId}` body sets: fields it leaves
+ * out keep what the device has. The route and the approval card
+ * (`ChangeDescriber`) both read the body with this.
+ */
+internal sealed interface DeviceOverride {
+    class Set(val forcePass: Boolean, val forceFail: Boolean, val annotations: List<String>) : DeviceOverride
+    class Invalid(val error: String, val message: String) : DeviceOverride {
+        fun body(): JsonObject = buildJsonObject { put("error", error); put("message", message) }
+    }
+
+    companion object {
+        fun parse(body: JsonObject, before: AttestedDevice?): DeviceOverride {
+            val forcePass = (body["forcePass"] as? JsonPrimitive)?.booleanOrNull ?: before?.forcePass ?: false
+            val forceFail = (body["forceFail"] as? JsonPrimitive)?.booleanOrNull ?: before?.forceFail ?: false
+            val annotations = when (val element = body["annotations"]) {
+                null, JsonNull -> before?.annotations ?: emptyList()
+                is JsonArray -> element.map { item ->
+                    (item as? JsonPrimitive)?.takeIf { it.isString }?.content?.trim()?.takeIf { ANNOTATION.matches(it) }
+                        ?: return Invalid("invalid_annotation", "Each annotation: letters, digits, . _ : @ / + - and spaces, at most 64 characters.")
+                }.distinct()
+                else -> return Invalid("invalid_annotation", "annotations must be an array of strings.")
+            }
+            if (annotations.size > MAX_ANNOTATIONS) return Invalid("invalid_annotation", "At most $MAX_ANNOTATIONS annotations.")
+            if (forcePass && forceFail) return Invalid("conflicting_overrides", "forcePass and forceFail cannot both be set.")
+            return Set(forcePass, forceFail, annotations)
+        }
+    }
+}
 private const val ADMIN_BODY_MAX = 64L * 1024
 
 /**
@@ -270,26 +300,14 @@ fun Route.attestationAdminRoutes(
             }
             val body = call.receiveLimitedJson(ADMIN_BODY_MAX) ?: return@put
             val before = devices.get(cid, deviceId)
-            val forcePass = (body["forcePass"] as? JsonPrimitive)?.booleanOrNull ?: before?.forcePass ?: false
-            val forceFail = (body["forceFail"] as? JsonPrimitive)?.booleanOrNull ?: before?.forceFail ?: false
-            val annotations = when (val element = body["annotations"]) {
-                null, JsonNull -> before?.annotations ?: emptyList()
-                is JsonArray -> element.map { item ->
-                    (item as? JsonPrimitive)?.takeIf { it.isString }?.content?.trim()?.takeIf { ANNOTATION.matches(it) }
-                        ?: return@put call.respondText("""{"error":"invalid_annotation","message":"Each annotation: letters, digits, . _ : @ / + - and spaces, at most 64 characters."}""",
-                            ContentType.Application.Json, HttpStatusCode.BadRequest)
-                }.distinct()
-                else -> return@put call.respondText("""{"error":"invalid_annotation","message":"annotations must be an array of strings."}""",
-                    ContentType.Application.Json, HttpStatusCode.BadRequest)
+            // The same reading of the body the approval card showed (DeviceOverride).
+            val override = when (val parsed = DeviceOverride.parse(body, before)) {
+                is DeviceOverride.Invalid -> return@put call.respondText(parsed.body().toString(), ContentType.Application.Json, HttpStatusCode.BadRequest)
+                is DeviceOverride.Set -> parsed
             }
-            if (annotations.size > MAX_ANNOTATIONS) {
-                return@put call.respondText("""{"error":"invalid_annotation","message":"At most $MAX_ANNOTATIONS annotations."}""",
-                    ContentType.Application.Json, HttpStatusCode.BadRequest)
-            }
-            if (forcePass && forceFail) {
-                return@put call.respondText("""{"error":"conflicting_overrides","message":"forcePass and forceFail cannot both be set."}""",
-                    ContentType.Application.Json, HttpStatusCode.BadRequest)
-            }
+            val forcePass = override.forcePass
+            val forceFail = override.forceFail
+            val annotations = override.annotations
             val device = devices.annotate(cid, deviceId, forcePass, forceFail, annotations)
             val changed = before == null || before.forcePass != forcePass || before.forceFail != forceFail || before.annotations != annotations
             if (changed) {

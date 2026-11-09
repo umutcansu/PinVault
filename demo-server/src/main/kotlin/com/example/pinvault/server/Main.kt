@@ -161,14 +161,8 @@ private fun startServer() {
         authFailures.report(remoteAddress, method, path)
     }
 
-    fun stateHash(scope: String): String {
-        val config = pinConfigStore.load(scope)
-        val canonical = config.pins.sortedBy { it.hostname }.joinToString("\n") { pin ->
-            "${pin.hostname}|${pin.version}|${pin.sha256.sorted().joinToString(",")}|${pin.forceUpdate}|${pin.mtls}|${pin.clientCertVersion}"
-        } + "\nforce=${config.forceUpdate}"
-        return java.security.MessageDigest.getInstance("SHA-256").digest(canonical.toByteArray())
-            .joinToString("") { "%02x".format(it.toInt() and 0xFF) }
-    }
+    // Pins, flags and managed trust roots: whatever an approval card can show (PinDiff).
+    fun stateHash(scope: String): String = com.example.pinvault.server.service.PinDiff.stateHash(pinConfigStore.load(scope))
 
     // What a pending change does, in words an approver can judge — and, for a
     // certificate change, the plan that is applied (see ChangeDescriber). It
@@ -408,6 +402,8 @@ private fun startServer() {
         else " — Config API ports serve devices only; administration is on the management port (CONFIG_API_ADMIN_ROUTES=on to change)"))
     // Config API manager (dinamik TLS/mTLS sunucuları)
     val configApiManager = ConfigApiManager(deviceOnly = !configApiAdminRoutes)
+    // A signing-key set that names Config APIs must name every one this server relays it to.
+    signingKeySetService.configApiIds = { (configApiManager.getAll() + configApiManager.getAllStopped()).map { it.id }.distinct() }
     // Invalid admin keys: one counter for every listener (ADMIN_AUTH_FAILURE_LIMIT, 0 = off).
     val adminAuthFailureLimit = (com.example.pinvault.server.service.ServerEnv.get("ADMIN_AUTH_FAILURE_LIMIT")?.toIntOrNull()
         ?: com.example.pinvault.server.plugin.DEFAULT_ADMIN_AUTH_FAILURE_LIMIT).coerceAtLeast(0)
@@ -536,22 +532,6 @@ private fun startServer() {
     val devicePublicKeyStore = com.example.pinvault.server.store.DevicePublicKeyStore(db)
     val deviceHostAclStore = com.example.pinvault.server.store.DeviceHostAclStore(db)
     val vaultTokenService = com.example.pinvault.server.service.VaultAccessTokenService(vaultTokenStore)
-    changeDescriber = com.example.pinvault.server.service.ChangeDescriber(
-        pinConfigStore, certPlanner, liveGate, ::stateHash, vaultFileStore, vaultTokenStore, audit = auditLog,
-        snapshots = pinSnapshotStore,
-        // Which running API a start on a port would stop.
-        portHolder = { port -> configApiManager.getAll().firstOrNull { it.port == port }?.id },
-        // The upload handler's own refusal, made when the upload is requested.
-        clientIdInUse = { id ->
-            when {
-                clientCertStore.get(id)?.revoked == false || clientIdentityStore.get(id)?.revoked == false ->
-                    "Client id $id is an active identity: revoke and forget it first, or use another id"
-                certService.getTrustStore()?.containsAlias(id.lowercase()) == true ->
-                    "The mTLS truststore already has an entry under $id: use another id"
-                else -> null
-            }
-        }
-    )
     val configApiRegistry = com.example.pinvault.server.store.ConfigApiRegistry(db)
     val vaultEncryptionService = com.example.pinvault.server.service.VaultEncryptionService()
 
@@ -684,6 +664,26 @@ private fun startServer() {
         anomalyTtlSeconds = attestationAnomalyTtl
     )
     val attestationLimits = com.example.pinvault.server.route.AttestationLimits.of(attestationRateLimit, attestationDeviceRateLimit)
+    // Built here, not with the approval service above: its cards need the attestation service.
+    changeDescriber = com.example.pinvault.server.service.ChangeDescriber(
+        pinConfigStore, certPlanner, liveGate, ::stateHash, vaultFileStore, vaultTokenStore, audit = auditLog,
+        snapshots = pinSnapshotStore,
+        // The cards of a settings save and of an attestation policy / device change read what the handlers read.
+        settingsSaved = { com.example.pinvault.server.service.ServerSettingsStore.forDbPath(dbPath).values() },
+        attestation = attestationService, attestedDevices = attestedDeviceStore,
+        // Which running API a start on a port would stop.
+        portHolder = { port -> configApiManager.getAll().firstOrNull { it.port == port }?.id },
+        // The upload handler's own refusal, made when the upload is requested.
+        clientIdInUse = { id ->
+            when {
+                clientCertStore.get(id)?.revoked == false || clientIdentityStore.get(id)?.revoked == false ->
+                    "Client id $id is an active identity: revoke and forget it first, or use another id"
+                certService.getTrustStore()?.containsAlias(id.lowercase()) == true ->
+                    "The mTLS truststore already has an entry under $id: use another id"
+                else -> null
+            }
+        }
+    )
     println("ATTESTATION_ENABLED=${if (attestationEnabled) "true" else "false"}, ATTESTATION_KEY_POLICY=${attestationKeyPolicy.name.lowercase()}, " +
         "ATTESTATION_POLICY_DEFAULT=${attestationDefaults.profile} (token ${attestationDefaults.tokenTtlSeconds} s, re-attest every " +
         "${attestationDefaults.attestIntervalSeconds} s, reasons ${if (attestationDefaults.revealReasons) "revealed" else "hidden"}), " +

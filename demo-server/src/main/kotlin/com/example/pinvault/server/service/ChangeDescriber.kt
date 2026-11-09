@@ -21,6 +21,7 @@ import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.add
+import kotlinx.serialization.json.buildJsonArray
 import kotlinx.serialization.json.booleanOrNull
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.intOrNull
@@ -61,8 +62,17 @@ class ChangeDescriber(
     /** The running Config API that listens on a port, or null (a start there stops it). */
     private val portHolder: ((Int) -> String?)? = null,
     /** The stored pin sets a `pins_restore` brings back; null = the route is not mounted. */
-    private val snapshots: com.example.pinvault.server.store.PinSnapshotStore? = null
+    private val snapshots: com.example.pinvault.server.store.PinSnapshotStore? = null,
+    /** The settings saved from the dashboard, as `PUT /api/v1/server-settings` reads them; null = not mounted. */
+    private val settingsSaved: (() -> Map<String, String>)? = null,
+    /** The policy an `attestation_policy` change starts from; null = not mounted. */
+    private val attestation: com.example.pinvault.server.service.attestation.AttestationService? = null,
+    /** The device an `attestation_device` change acts on; null = not mounted. */
+    private val attestedDevices: com.example.pinvault.server.store.AttestedDeviceStore? = null
 ) {
+    /** A gated operation nobody wrote a card for: refused, never shown as a bare name and path. */
+    class Undescribed(op: String) : IllegalStateException("there is no approval card for '$op' yet")
+
     private val lenient = Json { ignoreUnknownKeys = true }
 
     fun describe(input: ChangeInput): Description {
@@ -88,8 +98,14 @@ class ChangeDescriber(
                 }
                 val current = pinConfigStore.load(scope)
                 val byHost = current.pins.associateBy { it.hostname }
+                // Managed trust roots, by the handler's rule: a body that carries
+                // `trustRoots` replaces the scope's list, one without keeps it.
+                val trustRoots = if (json?.containsKey("trustRoots") == true) incoming.trustRoots.map { it.trim() } else current.trustRoots
+                PinConfigRules.trustRootErrors(trustRoots).takeIf { it.isNotEmpty() }?.let { errors ->
+                    throw ApprovalService.Refused(HttpStatusCode.BadRequest, errors.take(5).joinToString("; "))
+                }
                 // The same versioning the write applies, so the diff shows real changes only.
-                val versioned = incoming.copy(pins = incoming.pins.map { pin ->
+                val versioned = incoming.copy(trustRoots = trustRoots, pins = incoming.pins.map { pin ->
                     val old = byHost[pin.hostname]
                     when {
                         old == null -> pin.copy(version = 1)
@@ -119,12 +135,20 @@ class ChangeDescriber(
                 if (parseQueryString(input.query)["configApiId"]?.let { it != snap.configApiId } == true) {
                     throw ApprovalService.Refused(HttpStatusCode.Conflict, "scope_mismatch")
                 }
-                val host = bodyField("hostname")?.takeIf { it.isNotEmpty() }
+                // The host as the handler reads it — the same function on the same
+                // bytes (the gate lets only UTF-8 through). A body it cannot read is
+                // refused here and there; it is never a whole-scope restore.
+                val host = try {
+                    PinRestore.requestedHost(input.body)
+                } catch (e: PinRestore.BadBody) {
+                    throw ApprovalService.Refused(HttpStatusCode.BadRequest, e.message ?: "invalid body",
+                        buildJsonObject { put("error", "invalid_body"); put("message", e.message ?: "invalid body") })
+                }
                 val current = pinConfigStore.load(snap.configApiId)
                 val planned = try {
                     PinRestore.plan(current, snap, host)
                 } catch (e: PinRestore.Refused) {
-                    throw ApprovalService.Refused(HttpStatusCode.NotFound, e.message ?: "refused")
+                    throw ApprovalService.Refused(HttpStatusCode.NotFound, ApprovalService.plainText(e.message ?: "refused", 200))
                 }
                 (PinConfigRules.errors(planned.pins) + PinConfigRules.trustRootErrors(planned.trustRoots)).takeIf { it.isNotEmpty() }?.let { errors ->
                     throw ApprovalService.Refused(HttpStatusCode.BadRequest, errors.take(5).joinToString("; "))
@@ -133,7 +157,7 @@ class ChangeDescriber(
                 val live = if (liveGate.enabled) liveGate.check(current, planned) else null
                 Description(
                     configApiId = snap.configApiId,
-                    summary = "${snap.configApiId}: restore ${host ?: "the pin set"} from snapshot ${snap.id} (${snap.takenAt.take(19)}, by ${snap.actor}) — " +
+                    summary = "${snap.configApiId}: restore ${host?.let { ApprovalService.plainText(it, 120) } ?: "the pin set"} from snapshot ${snap.id} (${snap.takenAt.take(19)}, by ${snap.actor}) — " +
                         diff.summary().ifEmpty { "no pin change" },
                     detail = JsonObject(
                         detail + diff.toJson() + mapOf(
@@ -267,8 +291,193 @@ class ChangeDescriber(
                 val enabled = (json?.get("enabled") as? JsonPrimitive)?.booleanOrNull ?: throw IllegalArgumentException("'enabled' boolean required")
                 Description(scope, "$scope: turn vault downloads ${if (enabled) "ON" else "OFF"}", JsonObject(detail + mapOf("enabled" to JsonPrimitive(enabled))))
             }
-            else -> Description(scope, "$op $path", detail)
+
+            // ── Settings and attestation: what the server enforces ──────
+            "server_settings" -> describeSettings(detail, json)
+            "attestation_policy" -> describeAttestationPolicy(input, scope, detail)
+            "attestation_device" -> describeAttestationDevice(input, scope, detail, json)
+            "attestation_token_secrets" ->
+                Description("", "Read the PinVault-Token secrets: the keys every backend verifies tokens with are shown to the requester", detail)
+            "attestation_token_secret_rotate" ->
+                Description("", "Rotate the PinVault-Token key: new tokens are signed with a new key; the current one stays for verification until it is deleted", detail)
+            "attestation_token_secret_delete" -> {
+                val kid = ApprovalService.plainText(path.substringAfterLast('/'), 80)
+                Description("", "Delete PinVault-Token key $kid: tokens signed with it no longer verify at any backend",
+                    JsonObject(detail + mapOf("kid" to JsonPrimitive(kid))))
+            }
+            // An operation the gate knows and this class does not: refused
+            // (ApprovalService answers 400), never a card that only names it.
+            else -> throw Undescribed(op)
         }
+    }
+
+    /** `{"name": …, "before": …, "after": …}` rows the dashboard shows as a table (null = unset / the default). */
+    private fun changesJson(changes: List<Triple<String, String?, String?>>): JsonElement = buildJsonArray {
+        changes.forEach { (name, before, after) -> add(buildJsonObject { put("name", name); put("before", before); put("after", after) }) }
+    }
+
+    /** SHA-256 (hex) of the state a card was computed from (`Description.stateKey`). */
+    private fun stateKey(vararg parts: String?): String = sha256Hex(parts.joinToString("\u0000") { it ?: "\u0001" }.toByteArray(Charsets.UTF_8))
+
+    private fun errorBody(error: String, details: List<String>): JsonObject = buildJsonObject {
+        put("error", error); putJsonArray("details") { details.forEach { add(it) } }
+    }
+
+    /** A settings save: every key it changes, with the saved value before and after (`ServerSettingsChange`, the handler's plan). */
+    private fun describeSettings(detail: JsonObject, json: JsonObject?): Description {
+        val saved = settingsSaved ?: throw IllegalStateException("server settings are not available on this server")
+        val values = json?.get("values") as? JsonObject
+            ?: throw ApprovalService.Refused(HttpStatusCode.BadRequest, "Expected {\"values\": {...}}", errorBody("invalid_body", listOf("Expected {\"values\": {...}}")))
+        val change = ServerSettingsChange.plan(saved(), values)
+        if (change.errors.isNotEmpty()) {
+            throw ApprovalService.Refused(HttpStatusCode.BadRequest, change.errors.take(5).joinToString("; "), errorBody("invalid_settings", change.errors))
+        }
+        if (change.startProblems.isNotEmpty()) {
+            throw ApprovalService.Refused(HttpStatusCode.BadRequest, change.startProblems.take(5).joinToString("; "), errorBody("would_not_start", change.startProblems))
+        }
+        fun shown(value: String?) = value?.let { ApprovalService.plainText(it, 80) } ?: "(server default)"
+        val rows = change.changed.map { (key, v) -> Triple(key, v.first, v.second) }
+        // The saved value of every key the body names: the card is a difference
+        // from these, and an approval after one of them moved is stale.
+        val current = saved()
+        return Description(
+            "",
+            // The count first: a long list is cut at the end of the line, never silently.
+            "Server settings for the next start (${rows.size} change${if (rows.size == 1) "" else "s"}): " +
+                rows.joinToString("; ") { (key, before, after) -> "$key: ${shown(before)} → ${shown(after)}" }.ifEmpty { "no change" },
+            JsonObject(detail + mapOf("changes" to changesJson(rows))),
+            stateKey = stateKey("settings", *values.keys.sorted().map { "$it=${current[it] ?: "\u0001"}" }.toTypedArray())
+        )
+    }
+
+    /** An attestation policy change: every flag and number that moves, and whether it lowers the production floor. */
+    private fun describeAttestationPolicy(input: ChangeInput, scope: String, detail: JsonObject): Description {
+        val service = attestation ?: throw IllegalStateException("attestation is not available on this server")
+        val current = service.policyFor(scope)
+        val requested = com.example.pinvault.server.service.attestation.AttestationPolicy.parse(input.body.decodeToString(), current).getOrElse { e ->
+            throw ApprovalService.Refused(HttpStatusCode.BadRequest, "invalid policy: ${e.message ?: "cannot be read"}",
+                buildJsonObject { put("error", "invalid_policy"); put("message", e.message ?: "invalid policy") })
+        }
+        val reject = com.example.pinvault.server.service.attestation.FlagAction.REJECT.wire
+        // The handler's floor rule: these flags stay reject unless a second admin approves — which is this card.
+        val newlyLowered = service.policyFloor.filter { requested.flags[it] != reject } - current.approvedRelaxations.toSet()
+        val rows = buildList {
+            (current.flags.keys + requested.flags.keys).distinct().sorted().forEach { flag ->
+                if (current.flags[flag] != requested.flags[flag]) add(Triple(flag, current.flags[flag], requested.flags[flag]))
+            }
+            if (current.revealReasons != requested.revealReasons) add(Triple("revealReasons", current.revealReasons.toString(), requested.revealReasons.toString()))
+            if (current.tokenTtlSeconds != requested.tokenTtlSeconds) add(Triple("tokenTtlSeconds", current.tokenTtlSeconds.toString(), requested.tokenTtlSeconds.toString()))
+            if (current.attestIntervalSeconds != requested.attestIntervalSeconds) {
+                add(Triple("attestIntervalSeconds", current.attestIntervalSeconds.toString(), requested.attestIntervalSeconds.toString()))
+            }
+        }
+        return Description(
+            scope,
+            // What matters most first: the line is cut at its end.
+            "$scope: attestation policy" +
+                (if (newlyLowered.isEmpty()) "" else " — LOWERS the production floor: ${newlyLowered.joinToString()} no longer reject") +
+                " (${rows.size} change${if (rows.size == 1) "" else "s"}) — " +
+                rows.joinToString("; ") { (name, before, after) -> "$name: ${before ?: "(unset)"} → ${after ?: "(unset)"}" }.ifEmpty { "no change" },
+            JsonObject(detail + mapOf("changes" to changesJson(rows)) +
+                (if (newlyLowered.isEmpty()) emptyMap() else mapOf("floorLowered" to JsonArray(newlyLowered.map { JsonPrimitive(it) })))),
+            // The policy the body is laid over (the handler merges the body's flags onto
+            // it) and the floor it is held to: a card computed on another policy is stale.
+            stateKey = stateKey("policy", scope, current.toJson(), service.policyFloor.sorted().joinToString(","))
+        )
+    }
+
+    /**
+     * An attestation device change — three routes share the operation: an
+     * override (PUT: forcePass / forceFail / annotations), forgetting the
+     * device's key (DELETE) and clearing its token anomaly (DELETE …/anomaly).
+     */
+    private fun describeAttestationDevice(input: ChangeInput, scope: String, detail: JsonObject, json: JsonObject?): Description {
+        val devices = attestedDevices ?: throw IllegalStateException("attestation is not available on this server")
+        val segments = input.path.trim('/').split('/')   // api, v1, config-apis, {id}, attestation, devices, {deviceId}[, anomaly]
+        val deviceId = segments.getOrNull(6)?.replace("%2F", "/") ?: throw IllegalArgumentException("the device id is missing")
+        val shownId = ApprovalService.plainText(deviceId, 80)
+        val before = devices.get(scope, deviceId)
+        val withDevice = JsonObject(detail + mapOf("deviceId" to JsonPrimitive(shownId)))
+        // What the three routes read or delete of the device: a card computed on
+        // another key, override or anomaly than the device has at approval is stale.
+        val deviceState = stateKey(
+            "device", scope, deviceId,
+            before?.let {
+                listOf(it.registered, it.spkiSha256, it.forcePass, it.forceFail, it.annotations.joinToString("\u0002"), it.anomalyAt).joinToString("\u0003")
+            }
+        )
+        if (segments.getOrNull(7) == "anomaly") {
+            if (before?.anomalyAt == null) {
+                throw ApprovalService.Refused(HttpStatusCode.NotFound, "no_anomaly", buildJsonObject { put("error", "no_anomaly") })
+            }
+            return Description(
+                scope,
+                "$scope: clear the token anomaly of device $shownId (${ApprovalService.plainText(before.anomalyReason ?: "no reason given", 80)}) — " +
+                    "its attestations no longer raise token_anomaly",
+                withDevice, stateKey = deviceState
+            )
+        }
+        if (input.method.equals("DELETE", ignoreCase = true)) {
+            before ?: throw ApprovalService.Refused(HttpStatusCode.NotFound, "device_not_found", buildJsonObject { put("error", "device_not_found") })
+            // Forgetting deletes the device's whole row: say everything that goes with the key.
+            val alsoDropped = buildList {
+                if (before.forceFail) add("its forceFail override (the device is REJECTED today whatever it reports)")
+                if (before.forcePass) add("its forcePass override")
+                if (before.annotations.isNotEmpty()) add("its annotations (${before.annotations.joinToString()})")
+                if (before.anomalyAt != null) add("its token anomaly")
+            }
+            return Description(
+                scope,
+                "$scope: forget attestation device $shownId — " +
+                    (if (before.registered) "its registered key (${before.spkiSha256?.take(16) ?: "?"}…) is dropped and the NEXT key to attest under this id is accepted"
+                    else "it has no registered key yet") +
+                    (if (alsoDropped.isEmpty()) "" else "; ALSO dropped: ${alsoDropped.joinToString(", ")}") +
+                    (if (before.keyMismatches > 0) " (${before.keyMismatches} key mismatch(es) seen)" else ""),
+                JsonObject(withDevice + mapOf(
+                    "registered" to JsonPrimitive(before.registered), "keyMismatches" to JsonPrimitive(before.keyMismatches),
+                    "changes" to changesJson(buildList {
+                        if (before.registered) add(Triple("registered key", before.spkiSha256?.take(16)?.plus("…") ?: "?", null))
+                        if (before.forceFail) add(Triple("forceFail", "true", null))
+                        if (before.forcePass) add(Triple("forcePass", "true", null))
+                        if (before.annotations.isNotEmpty()) add(Triple("annotations", before.annotations.joinToString(), null))
+                        if (before.anomalyAt != null) add(Triple("token anomaly", before.anomalyReason ?: "reported", null))
+                    })
+                )),
+                stateKey = deviceState
+            )
+        }
+        if (!com.example.pinvault.server.service.attestation.AttestationService.DEVICE_ID.matches(deviceId)) {
+            throw ApprovalService.Refused(HttpStatusCode.BadRequest, "invalid_device_id", buildJsonObject {
+                put("error", "invalid_device_id"); put("message", "Letters, digits, '.', '_', ':' and '-' only, at most 64.")
+            })
+        }
+        val body = json ?: throw ApprovalService.Refused(HttpStatusCode.BadRequest, "invalid_json", buildJsonObject {
+            put("error", "invalid_json"); put("message", "The body must be a JSON object.")
+        })
+        val set = when (val parsed = com.example.pinvault.server.route.DeviceOverride.parse(body, before)) {
+            is com.example.pinvault.server.route.DeviceOverride.Invalid -> throw ApprovalService.Refused(HttpStatusCode.BadRequest, parsed.message, parsed.body())
+            is com.example.pinvault.server.route.DeviceOverride.Set -> parsed
+        }
+        val wasPass = before?.forcePass ?: false
+        val wasFail = before?.forceFail ?: false
+        val wasAnnotations = before?.annotations ?: emptyList()
+        val rows = buildList {
+            if (wasPass != set.forcePass) add(Triple("forcePass", wasPass.toString(), set.forcePass.toString()))
+            if (wasFail != set.forceFail) add(Triple("forceFail", wasFail.toString(), set.forceFail.toString()))
+            if (wasAnnotations != set.annotations) add(Triple("annotations", wasAnnotations.joinToString().ifEmpty { "(none)" }, set.annotations.joinToString().ifEmpty { "(none)" }))
+        }
+        val effect = when {
+            set.forcePass && !wasPass -> " — forcePass: this device PASSES attestation whatever it reports"
+            set.forceFail && !wasFail -> " — forceFail: this device is REJECTED whatever it reports"
+            else -> ""
+        }
+        return Description(
+            scope,
+            "$scope: attestation device $shownId${if (before == null) " (not seen yet)" else ""} — " +
+                rows.joinToString("; ") { (name, old, new) -> "$name: $old → $new" }.ifEmpty { "no change" } + effect,
+            JsonObject(withDevice + mapOf("changes" to changesJson(rows))),
+            stateKey = deviceState
+        )
     }
 
     /**

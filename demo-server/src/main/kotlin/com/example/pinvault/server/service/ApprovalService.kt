@@ -229,7 +229,9 @@ class ApprovalService(
         val query: String,
         val contentType: String,
         val body: ByteArray,
-        val requestedBy: String = ""
+        val requestedBy: String = "",
+        /** The HTTP method: one path can be gated for PUT and DELETE (an attestation device). */
+        val method: String = ""
     )
 
     /** What a pending change does, for the approver. */
@@ -239,6 +241,14 @@ class ApprovalService(
         val detail: JsonObject,
         /** Set for changes computed against the scope's current pins (see [stateHash]). */
         val baseHash: String? = null,
+        /**
+         * A fingerprint of whatever else the card was computed from — the
+         * saved settings a save touches, the attestation policy, a device's
+         * overrides. The request is described again when it is approved and
+         * refused as stale if this differs: the card showed a difference from
+         * a state that is no longer there.
+         */
+        val stateKey: String? = null,
         /**
          * What the change will install, fixed now (a [CertPlan]): stored with
          * the request and handed to the handler when the approved request is
@@ -279,7 +289,7 @@ class ApprovalService(
         body: ByteArray
     ): Pending {
         val description = try {
-            describe(ChangeInput(op, canonicalPath, query, contentType, body, requestedBy)).let { it.copy(summary = plainText(it.summary, MAX_SUMMARY)) }
+            describe(ChangeInput(op, canonicalPath, query, contentType, body, requestedBy, method)).let { it.copy(summary = plainText(it.summary, MAX_SUMMARY)) }
         } catch (e: Refused) {
             throw e
         } catch (e: Exception) {
@@ -298,7 +308,8 @@ class ApprovalService(
             configApiId = description.configApiId,
             summary = description.summary,
             detail = JsonObject(
-                description.detail + (description.baseHash?.let { mapOf("baseHash" to kotlinx.serialization.json.JsonPrimitive(it)) } ?: emptyMap())
+                description.detail + (description.baseHash?.let { mapOf("baseHash" to kotlinx.serialization.json.JsonPrimitive(it)) } ?: emptyMap()) +
+                    (description.stateKey?.let { mapOf("stateKey" to kotlinx.serialization.json.JsonPrimitive(it)) } ?: emptyMap())
             ).toString(),
             prepared = description.prepared
         )
@@ -403,6 +414,32 @@ class ApprovalService(
             audit.record("change_stale", "#$id not applied: ${cr.configApiId} changed since it was requested — ${cr.summary}",
                 cr.configApiId, "${cr.method} ${cr.path}", actor = approver)
             throw Refused(HttpStatusCode.Conflict, "The pins of ${cr.configApiId} changed after #$id was requested. Ask for a fresh request.")
+        }
+        // Cards that are a difference from other state than pins (settings, an
+        // attestation policy, a device's overrides): described again now, and
+        // refused when the state they were computed from moved.
+        val stateKey = runCatching {
+            (kotlinx.serialization.json.Json.parseToJsonElement(cr.detail) as JsonObject)["stateKey"]
+                ?.let { (it as kotlinx.serialization.json.JsonPrimitive).content }
+        }.getOrNull()
+        if (stateKey != null) {
+            val now = runCatching {
+                describe(ChangeInput(
+                    operationOf(cr) ?: "", PinAffectingRoutes.canonicalPath(cr.path), cr.query, cr.contentType,
+                    store.body(id) ?: ByteArray(0), cr.requestedBy, cr.method
+                )).stateKey
+            }.getOrNull()
+            if (now != stateKey) {
+                store.decideIfPending(id, "stale", approver, Instant.now().toString(), "what the change acts on changed since the request was made", null, null)
+                audit.record("change_stale", "#$id not applied: what it changes was changed after it was requested — ${cr.summary}",
+                    cr.configApiId, "${cr.method} ${cr.path}", actor = approver)
+                throw Refused(HttpStatusCode.Conflict, "What #$id changes was changed after it was requested: its card no longer says what it would do. Ask for a fresh request.")
+            }
+        }
+        // A request stored before the gate refused other charsets (see ApprovalGate): never replayed.
+        if (namesAnotherCharset(cr.contentType)) {
+            store.decideIfPending(id, "stale", approver, Instant.now().toString(), "the body is not UTF-8", null, null)
+            throw Refused(HttpStatusCode.Conflict, "#$id was sent in a charset other than UTF-8 and cannot be approved. Ask for a fresh request.")
         }
         if (approver in cr.approvedBy) throw Refused(HttpStatusCode.Conflict, "$approver already approved #$id")
 
@@ -531,6 +568,23 @@ class ApprovalService(
          * (a host's `url`, `hostname`); a newline there used to draw a fake
          * line under the real one ("…\nPins unchanged").
          */
+        /**
+         * Whether a `Content-Type` header names a body charset other than
+         * UTF-8, read the way Ktor reads it for the handler
+         * (`request.contentCharset()`): the first `charset` parameter, any
+         * spelling of the media type, an unknown charset name counting as
+         * none. A header Ktor cannot parse is refused too.
+         */
+        fun namesAnotherCharset(contentTypeHeader: String?): Boolean {
+            if (contentTypeHeader.isNullOrBlank()) return false
+            val charset = try {
+                io.ktor.http.ContentType.parse(contentTypeHeader).charset()
+            } catch (_: Exception) {
+                return true
+            }
+            return charset != null && charset != Charsets.UTF_8
+        }
+
         fun plainText(text: String, max: Int = MAX_SUMMARY): String {
             val cleaned = text.map { c ->
                 if (c.isISOControl() || c.code == 0x2028 || c.code == 0x2029 || c.code in 0x202A..0x202E || c.code in 0x2066..0x2069) ' ' else c

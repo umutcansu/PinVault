@@ -341,7 +341,21 @@ function renderChangeDetail(cr, d) {
   facts.forEach(([title, rows]) => out.push(factsTable(title, rows)));
   if (d.certificate) out.push(`<div class="notice notice-info">${esc(t('planExact'))}</div>`);
   if (d.describeError) out.push(`<div class="notice notice-warn">${esc(t('diffDescribeError', d.describeError))}</div>`);
-  const hasDiff = Array.isArray(d.added) || Array.isArray(d.removed) || Array.isArray(d.changed) || d.forceUpdate;
+  // Values a settings save or an attestation change moves: name, before → after.
+  const hasChanges = Array.isArray(d.changes);
+  if (hasChanges) {
+    const shown = v => (v === null || v === undefined || v === '') ? t('diffUnset') : String(v);
+    out.push(d.changes.length
+      ? factsTable(t('diffChangesTitle'), d.changes.map(c => [c.name, `${shown(c.before)} → ${shown(c.after)}`]))
+      : `<div class="muted small">${esc(t('diffNoValueChange'))}</div>`);
+    if (Array.isArray(d.floorLowered) && d.floorLowered.length) {
+      out.push(`<div class="notice notice-warn">${esc(t('diffFloorLowered', d.floorLowered.join(', ')))}</div>`);
+    }
+  }
+  const roots = d.trustRoots || {};
+  const rootsAdded = Array.isArray(roots.added) ? roots.added : [], rootsRemoved = Array.isArray(roots.removed) ? roots.removed : [];
+  const hasRoots = rootsAdded.length > 0 || rootsRemoved.length > 0;
+  const hasDiff = Array.isArray(d.added) || Array.isArray(d.removed) || Array.isArray(d.changed) || d.forceUpdate || hasRoots;
   (d.added || []).forEach(p => out.push(`<div class="diff-row diff-add"><span class="diff-mark">+</span><b>${esc(p.hostname)}</b>
       <span class="ver-badge">v${esc(p.version)}</span>${pinFlags(p)}
       <div class="diff-pins">${(p.sha256 || []).map(h => pinChip(h, 'add')).join('')}</div></div>`));
@@ -368,9 +382,15 @@ function renderChangeDetail(cr, d) {
     out.push(`<div class="diff-row diff-mod"><span class="diff-mark">~</span>${t('diffGlobalForce')}:
         ${onOff(d.forceUpdate.from)} → ${onOff(d.forceUpdate.to)}</div>`);
   }
-  if (!hasDiff && !facts.length) out.push(`<div class="muted small">${t('diffNoDetail')}</div>`);
+  // A managed trust root is trust like a pin: shown by value, added and removed.
+  if (hasRoots) {
+    out.push(`<div class="diff-row diff-mod" data-diff="trust-roots"><span class="diff-mark">~</span><b>${esc(t('diffTrustRoots'))}</b>
+        <span class="diff-note">${esc(t('diffTrustRootsNote'))}</span>
+        <div class="diff-pins">${rootsAdded.map(h => pinChip(h, 'add')).concat(rootsRemoved.map(h => pinChip(h, 'del'))).join('')}</div></div>`);
+  }
+  if (!hasDiff && !facts.length && !hasChanges) out.push(`<div class="muted small">${t('diffNoDetail')}</div>`);
   else if (!hasDiff) { /* the facts above say it all */ }
-  else if (!(d.added || []).length && !(d.removed || []).length && !(d.changed || []).length && !d.forceUpdate) {
+  else if (!(d.added || []).length && !(d.removed || []).length && !(d.changed || []).length && !d.forceUpdate && !hasRoots) {
     out.push(`<div class="muted small">${t('diffNoChange')}</div>`);
   }
   if (d.liveCheck) out.push(renderStoredLiveCheck(d.liveCheck, cr));

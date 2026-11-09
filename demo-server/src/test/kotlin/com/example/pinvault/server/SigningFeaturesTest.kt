@@ -240,6 +240,34 @@ class SigningFeaturesTest {
         return SignedKeySetWire(payload, listOf(SignatureEntry(signature = signer.sign(payload))))
     }
 
+    // One set is relayed to every Config API of the server; an app that sets
+    // serverScope refuses a set that does not list its own (review 2026-11-09).
+    @Test
+    fun `a key set that names Config APIs must name every one this server serves`() {
+        val signing = twoSigners()
+        val recovery = ecKeyPair()
+        val service = SigningKeySetService(SigningKeySetStore(db), signing, recoveryKeys = listOf(recovery.pub()))
+        service.configApiIds = { listOf("default-tls", "sample-mtls") }
+        fun scoped(version: Int, vararg ids: String): SignedKeySetWire {
+            val payload = buildJsonObject {
+                put("type", "pinvault-signing-keys"); put("version", version)
+                putJsonArray("keys") { signing.signers.forEach { add(it.publicKeyBase64) } }
+                putJsonArray("configApiIds") { ids.forEach { add(it) } }
+            }.toString()
+            return SignedKeySetWire(payload, listOf(SignatureEntry(signature = recovery.sign(payload))))
+        }
+        val partial = assertFailsWith<SigningKeySetService.Rejected> { service.upload(scoped(1, "default-tls"), "alice") }
+        assertTrue(partial.conflict)
+        assertTrue(partial.message!!.contains("also serves sample-mtls"), partial.message)
+        assertFailsWith<SigningKeySetService.Rejected> { service.upload(scoped(1, "default-tls", "sample-mtls", "bad id"), "alice") }
+
+        val unscoped = service.upload(keySet(1, signing.signers.map { it.publicKeyBase64 }, recovery), "alice")
+        assertTrue(unscoped.warnings.any { it.contains("names no Config API") }, unscoped.warnings.toString())
+        val bound = service.upload(scoped(2, "sample-mtls", "default-tls"), "alice")
+        assertTrue(bound.warnings.none { it.contains("names no Config API") }, bound.warnings.toString())
+        assertEquals(2, service.currentVersion())
+    }
+
     @Test
     fun `key sets are refused until recovery keys are configured`() {
         val signing = ConfigSigningService(File(dir, "k.pem"))

@@ -103,14 +103,22 @@ class PinDiff private constructor(
     val added: List<HostPin>,
     val removed: List<HostPin>,
     val changed: List<Pair<HostPin, HostPin>>,
-    val globalForce: Pair<Boolean, Boolean>?
+    val globalForce: Pair<Boolean, Boolean>?,
+    /** Managed trust roots (SPKI pins, `PinConfig.trustRoots`) the change adds and takes away. */
+    val rootsAdded: List<String> = emptyList(),
+    val rootsRemoved: List<String> = emptyList()
 ) {
-    val isEmpty: Boolean get() = added.isEmpty() && removed.isEmpty() && changed.isEmpty() && globalForce == null
+    val isEmpty: Boolean get() = added.isEmpty() && removed.isEmpty() && changed.isEmpty() && globalForce == null &&
+        rootsAdded.isEmpty() && rootsRemoved.isEmpty()
 
     fun hosts(): List<String> = (added + removed).map { it.hostname } + changed.map { it.second.hostname }
 
     fun summary(): String {
         val parts = mutableListOf<String>()
+        // A root is trust like a pin: an approver and the audit log must see it by
+        // value — and first, because a one-line summary is cut at its end.
+        rootsAdded.forEach { parts += "trust root ADDED (${it.take(12)}…)" }
+        rootsRemoved.forEach { parts += "trust root removed (${it.take(12)}…)" }
         added.forEach { parts += "${it.hostname} added (${it.sha256.size} pins)" }
         removed.forEach { parts += "${it.hostname} removed" }
         changed.forEach { (old, new) ->
@@ -140,6 +148,12 @@ class PinDiff private constructor(
             }
         }
         globalForce?.let { putJsonObject("forceUpdate") { put("from", it.first); put("to", it.second) } }
+        if (rootsAdded.isNotEmpty() || rootsRemoved.isNotEmpty()) {
+            putJsonObject("trustRoots") {
+                putJsonArray("added") { rootsAdded.forEach { add(it) } }
+                putJsonArray("removed") { rootsRemoved.forEach { add(it) } }
+            }
+        }
     }
 
     private fun pinJson(pin: HostPin) = buildJsonObject {
@@ -163,12 +177,30 @@ class PinDiff private constructor(
                 if (same) null else prev to pin
             }
             val beforeForce = before?.forceUpdate ?: false
+            val oldRoots = before?.trustRoots.orEmpty()
             return PinDiff(
                 added = new.values.filter { it.hostname !in old },
                 removed = old.values.filter { it.hostname !in new },
                 changed = changed,
-                globalForce = if (beforeForce != after.forceUpdate) beforeForce to after.forceUpdate else null
+                globalForce = if (beforeForce != after.forceUpdate) beforeForce to after.forceUpdate else null,
+                rootsAdded = after.trustRoots.filter { it !in oldRoots },
+                rootsRemoved = oldRoots.filter { it !in after.trustRoots }
             )
+        }
+
+        /**
+         * A fingerprint of everything [PinDiff] can show about [config]: an
+         * approval computed against one state is refused once any of it moved
+         * (`ApprovalService`, "stale"). The trust roots are part of it — a
+         * card that showed "no root change" must not apply over a root that
+         * was withdrawn in between.
+         */
+        fun stateHash(config: PinConfig): String {
+            val canonical = config.pins.sortedBy { it.hostname }.joinToString("\n") { pin ->
+                "${pin.hostname}|${pin.version}|${pin.sha256.sorted().joinToString(",")}|${pin.forceUpdate}|${pin.mtls}|${pin.clientCertVersion}"
+            } + "\nforce=${config.forceUpdate}" + "\nroots=${config.trustRoots.sorted().joinToString(",")}"
+            return java.security.MessageDigest.getInstance("SHA-256").digest(canonical.toByteArray())
+                .joinToString("") { "%02x".format(it.toInt() and 0xFF) }
         }
     }
 }

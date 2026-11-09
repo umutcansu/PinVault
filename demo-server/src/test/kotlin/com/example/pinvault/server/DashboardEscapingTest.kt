@@ -74,6 +74,40 @@ class DashboardEscapingTest {
     }
 
     @Test
+    fun `the setup wizard's how-to steps cover every check in both languages and escape what the server sends`() {
+        val howto = script("app-setup-howto.js")
+        val setup = script("app-setup.js")
+        // Server values reach the how-to markup only through esc() or a setup helper.
+        val unescaped = markupInterpolations(howto, Regex("\\b(c\\.(current|fix|id|level|key|configApiId)|h\\.\\w+|fix|apiId|key)\\b"))
+            .filterNot { it.startsWith("esc(") || Regex("^setup[A-Z]\\w*\\(").containsMatchIn(it) || it == "colspan || 4" }
+        assertTrue(unescaped.isEmpty(), "unescaped values in the how-to markup: $unescaped")
+        assertTrue("<pre class=\"json-box\">${'$'}{esc(c.fix)}</pre>" in howto, "the .env fix is escaped")
+        // Every server check has steps in TR and EN, and the last step is the verification.
+        val serverIds = (com.example.pinvault.server.service.SetupReport.checks(emptyMap()) +
+            com.example.pinvault.server.service.SetupReport.checks(mapOf("ALLOW_TEST_HOOKS" to "true"))).map { it.id }.toSet()
+        // Every certificate check the wizard labels (setupc_<id>) except the plain count.
+        val certIds = Regex("\\bsetupc_([a-z0-9_]+):").findAll(setup).map { it.groupValues[1] }
+            .filterNot { it.endsWith("_why") || it == "enrolled_devices" }.toSet()
+        for (id in serverIds + certIds) {
+            assertTrue(Regex("\\bsetuph_$id:").findAll(howto).count() == 2, "setuph_$id in TR and EN")
+        }
+        for (key in listOf("setupHowto", "setupHowtoClose", "setupHowtoVerify", "setupHowtoRestart", "setupOrderTitle", "setupOrder", "setupNextTitle",
+            "setupNext_dependency", "setupNext_paste", "setupNext_token", "setupNext_guard", "setupNext_integrity", "setupNext_run", "setupNext_release", "setupNext_rerun")) {
+            assertTrue(Regex("\\b$key:").findAll(howto).count() == 2, "$key in TR and EN")
+        }
+        // The wizard draws them: the button and row under every checklist row, the order card, the next-steps card.
+        for (hook in listOf("setupHowtoButton(", "setupHowtoRow(", "setupHowtoHostRow(", "setupOrderCard()", "setupNextStepsCard()")) {
+            assertTrue(hook in setup, "$hook is used by the wizard")
+        }
+        val index = javaClass.classLoader.getResource("static/index.html")?.readText() ?: fail("index.html")
+        assertTrue(index.indexOf("app-setup.js") < index.indexOf("app-setup-howto.js"), "the how-to script loads after the wizard")
+        val main = script("app-main.js")
+        for (handler in listOf("toggleSetupHowto", "setupGoSetting")) {
+            assertTrue(Regex("\\b$handler\\b").containsMatchIn(main), "$handler must be a registered action")
+        }
+    }
+
+    @Test
     fun `host and Config API names are escaped where they become markup`() {
         val hosts = script("app-hosts.js")
         val unescaped = markupInterpolations(hosts, Regex("\\b(p\\.hostname|host\\.hostname|apiId|configApiId|commonName|api\\.mode)\\b"))
@@ -108,6 +142,21 @@ class DashboardEscapingTest {
         val main = script("app-main.js")
         for (handler in listOf("cascadeRevokeClientCert", "doForgetClientIdentity", "dismissUnverifiedNotice")) {
             assertTrue(handler in main, "$handler must be a registered action")
+        }
+    }
+
+    @Test
+    fun `the approval card shows trust roots and changed values, escaped, in both languages`() {
+        val js = script("app-governance.js")
+        // A managed trust root that a change adds or removes, by value (review 2026-11-09).
+        assertTrue(js.contains("const roots = d.trustRoots || {};"), "the card reads the stored trust root diff")
+        assertTrue(js.contains("rootsAdded.map(h => pinChip(h, 'add')).concat(rootsRemoved.map(h => pinChip(h, 'del')))"), "roots are drawn as pin chips (pinChip escapes)")
+        // Settings and attestation changes: name, before → after, through factsTable (which escapes both cells).
+        assertTrue(js.contains("factsTable(t('diffChangesTitle'), d.changes.map(c => [c.name, `\${shown(c.before)} → \${shown(c.after)}`]))"), "changed values go through factsTable")
+        assertTrue(js.contains("esc(t('diffFloorLowered', d.floorLowered.join(', ')))"), "the lowered floor flags are escaped")
+        val i18n = script("app-i18n.js")
+        for (key in listOf("diffTrustRoots", "diffTrustRootsNote", "diffChangesTitle", "diffUnset", "diffNoValueChange", "diffFloorLowered")) {
+            assertTrue(Regex("\\b$key:").findAll(i18n).count() == 2, "$key needs a text in both languages")
         }
     }
 

@@ -39,6 +39,14 @@ class SigningKeySetService(
 
     val enabled: Boolean get() = recoveryPublicKeys.isNotEmpty()
 
+    /**
+     * The ids of this server's Config APIs (an app's `serverScope` is one of
+     * them); Main sets it once they exist. One set is relayed to all of them,
+     * so a set that names Config APIs (`configApiIds`) must name each.
+     */
+    @Volatile
+    var configApiIds: () -> List<String> = { emptyList() }
+
     fun latestWire(): SignedKeySetWire? = if (enabled) store.latest()?.toWire() else null
 
     /** The version of the set devices are sent (0 = none, or the feature is off): what resets their watermarks. */
@@ -116,6 +124,24 @@ class SigningKeySetService(
         if (parsed.requiredSignatures > parsed.keys.size) {
             throw Rejected("requiredSignatures ${parsed.requiredSignatures} exceeds the ${parsed.keys.size} listed key(s).")
         }
+        // A set may say which Config APIs it is for; a block with `serverScope`
+        // refuses one that does not list its own. Every Config API here relays
+        // the same set, so each must be listed — else its devices would drop it.
+        val mine = configApiIds()
+        if (parsed.scopes.isNotEmpty()) {
+            parsed.scopes.firstOrNull { !SCOPE_ID.matches(it) }?.let {
+                throw Rejected("configApiIds: '${it.take(64)}' is not a Config API id (letters, digits, '.', '_', ':' and '-', at most 64).")
+            }
+            val missing = mine.filter { it !in parsed.scopes }
+            if (missing.isNotEmpty()) {
+                throw Rejected(
+                    "the set is made for Config API ${parsed.scopes.joinToString()}, but this server also serves " +
+                        "${missing.joinToString()}: apps that set serverScope to one of those would refuse the set. " +
+                        "List every Config API of this server in configApiIds (signing-keys.sh keyset -a).",
+                    conflict = true
+                )
+            }
+        }
         // Devices adopt a set the moment they see it. If this server could not
         // then produce enough signatures from keys the set lists, every device
         // would refuse every config from here on — so that is refused here.
@@ -143,7 +169,13 @@ class SigningKeySetService(
         val warnings = signing.signers.filter { it.keyId !in keyIds }.map {
             "Active signer '${it.name}' (${it.keyId.take(12)}…) is not in this set: devices that apply it " +
                 "reject configs signed only by that key. Switch the server to a listed key."
-        }
+        } + if (parsed.scopes.isEmpty() && mine.isNotEmpty()) {
+            listOf(
+                "This set names no Config API: any deployment whose app carries the same recovery key could relay it to " +
+                    "these devices. Make the next set with configApiIds (signing-keys.sh keyset -a ${mine.joinToString(",")}), " +
+                    "and never share a recovery key between deployments."
+            )
+        } else emptyList()
         return UploadResult(parsed.version, keyIds, parsed.requiredSignatures, warnings)
     }
 
@@ -159,7 +191,11 @@ class SigningKeySetService(
         return verified.size
     }
 
-    private data class Parsed(val type: String?, val version: Int, val keys: List<String>, val requiredSignatures: Int)
+    private data class Parsed(
+        val type: String?, val version: Int, val keys: List<String>, val requiredSignatures: Int,
+        /** The Config APIs the payload names (`configApiId` and `configApiIds`); empty = none. */
+        val scopes: List<String> = emptyList()
+    )
 
     private fun parse(payload: String): Parsed? = try {
         val obj = Json.parseToJsonElement(payload) as JsonObject
@@ -168,7 +204,10 @@ class SigningKeySetService(
             version = obj["version"]?.jsonPrimitive?.intOrNull ?: 0,
             keys = obj["keys"]?.jsonArray?.map { it.jsonPrimitive.content }?.filter { it.isNotBlank() }
                 ?.map { runCatching { SigningKeys.canonical(it) }.getOrDefault(it) }?.distinct().orEmpty(),
-            requiredSignatures = obj["requiredSignatures"]?.jsonPrimitive?.intOrNull ?: 1
+            requiredSignatures = obj["requiredSignatures"]?.jsonPrimitive?.intOrNull ?: 1,
+            scopes = (listOfNotNull((obj["configApiId"] as? kotlinx.serialization.json.JsonPrimitive)?.takeIf { it.isString }?.content) +
+                (obj["configApiIds"] as? kotlinx.serialization.json.JsonArray)?.map { it.jsonPrimitive.content }.orEmpty())
+                .filter { it.isNotBlank() }.distinct()
         )
     } catch (_: Exception) {
         null
@@ -180,6 +219,8 @@ class SigningKeySetService(
         /** Mirrors the library's SignatureTrust limits. */
         const val MAX_SET_KEYS = 32
         const val MAX_SIGNATURE_ENTRIES = 16
+
+        private val SCOPE_ID = Regex("^[A-Za-z0-9._:-]{1,64}$")
 
         fun fromEnv(store: SigningKeySetStore, signing: ConfigSigningService, env: Map<String, String> = com.example.pinvault.server.service.ServerEnv.all()) =
             SigningKeySetService(
