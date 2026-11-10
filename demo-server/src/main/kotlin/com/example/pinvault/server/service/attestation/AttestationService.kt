@@ -554,7 +554,7 @@ class AttestationService(
             val signal = signals?.get(flag.wire) as? JsonObject
             if ((signal?.get("flag") as? JsonPrimitive)?.booleanOrNull == null) raised += flag
         }
-        if (platform == PLATFORM_IOS) return raisedIosFlags(report, appAttestVerified, raised)
+        if (platform == PLATFORM_IOS) return raisedIosFlags(report, device, appAttestVerified, raised)
         val app = report["app"] as? JsonObject
         if (verifier.packageNames.isNotEmpty()) {
             val packageName = app?.string("packageName")
@@ -738,7 +738,9 @@ class AttestationService(
     }
 
     /** [raisedFlags] for an iOS report; [raised] holds the report's own signals. */
-    private fun raisedIosFlags(report: JsonObject, appAttestVerified: Boolean, raised: LinkedHashSet<AttestationFlag>): List<AttestationFlag> {
+    private fun raisedIosFlags(
+        report: JsonObject, device: AttestedDevice, appAttestVerified: Boolean, raised: LinkedHashSet<AttestationFlag>
+    ): List<AttestationFlag> {
         val app = report["app"] as? JsonObject
         val deviceBlock = report["device"] as? JsonObject
         if (verifier.packageNames.isNotEmpty()) {
@@ -754,6 +756,8 @@ class AttestationService(
         // App Attest does not vouch for the identity key itself: its level is what the genuine library reports.
         val level = deviceBlock?.string("keySecurityLevel")?.lowercase()
         if (level == null || level in SOFTWARE_LEVELS) raised += AttestationFlag.SOFTWARE_KEY
+        // A token anomaly (§5.2) is about how the device's tokens were used, not about its platform.
+        if (anomalyActive(device)) raised += AttestationFlag.TOKEN_ANOMALY
         if (ios.osVersionTooOld(deviceBlock?.string("osVersion"))) raised += AttestationFlag.OLD_PATCH_LEVEL
         return raised.toList()
     }

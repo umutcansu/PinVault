@@ -93,9 +93,18 @@ function copyTree() {
   const patched = fs
     .readFileSync(composeFile, 'utf8')
     .replace(/container_name:\s*pinvault-host\s*$/m, `container_name: ${CONTAINER}`);
-  if (/^networks:/m.test(patched)) throw new Error(`${composeFile}: networks bloğu zaten var; alt ağ eklenemedi`);
   // Sabit alt ağ (SUBNET'in açıklaması): Docker'ın 192.168.x'i seçmesine izin verilmez.
-  const withSubnet = `${patched.replace(/\s*$/, '\n')}\nnetworks:\n  default:\n    ipam:\n      config:\n        - subnet: ${SUBNET}\n`;
+  // Kaynak host'un compose dosyası kendi alt ağını zaten sabitlemişse (iOS koşusunun
+  // host kopyası gibi) kopya onunkini değil kendi alt ağını alır: aynı alt ağ iki
+  // compose projesinde olamaz.
+  let withSubnet;
+  if (/^networks:/m.test(patched)) {
+    const pinned = /^(\s*- subnet:\s*)\S+\s*$/m;
+    if (!pinned.test(patched)) throw new Error(`${composeFile}: networks bloğu var ama alt ağı yok; alt ağ eklenemedi`);
+    withSubnet = patched.replace(pinned, `$1${SUBNET}`);
+  } else {
+    withSubnet = `${patched.replace(/\s*$/, '\n')}\nnetworks:\n  default:\n    ipam:\n      config:\n        - subnet: ${SUBNET}\n`;
+  }
   fs.writeFileSync(composeFile, withSubnet);
   fs.mkdirSync(path.join(DIR, 'data/db'), { recursive: true });
   fs.mkdirSync(path.join(DIR, 'data/certs'), { recursive: true });
@@ -121,12 +130,32 @@ function apiKey() {
 }
 
 /**
+ * Ana host'un sunucuyu derlediği kaynak: onun .env'indeki PINVAULT_SERVER_SRC
+ * (göreliyse ana host'un dizinine göre). Yazılmamışsa ana host'un yanındaki
+ * demo-server. iOS koşusunun host kopyası depo dışında (.local/host-ios) durur
+ * ve kaynağı mutlak yolla gösterir; "yanındaki demo-server" orada yoktur.
+ */
+function mainHostServerSrc() {
+  let configured = '';
+  const mainEnv = path.join(env.HOST_DIR, '.env');
+  if (fs.existsSync(mainEnv)) {
+    const line = fs.readFileSync(mainEnv, 'utf8').split('\n').find((l) => /^PINVAULT_SERVER_SRC=/.test(l));
+    configured = line ? line.slice('PINVAULT_SERVER_SRC='.length).trim() : '';
+  }
+  const dir = path.resolve(env.HOST_DIR, configured || '../demo-server');
+  if (!fs.existsSync(path.join(dir, 'build.gradle.kts'))) {
+    throw new Error(`geçici test sunucusu için demo-server kaynağı bulunamadı: ${dir} (ana host'un .env'i → PINVAULT_SERVER_SRC)`);
+  }
+  return dir;
+}
+
+/**
  * setup.sh'ın ürettiği .env'i bu kopyaya göre ayarlar: portlar ana host'unkiyle
  * çakışmasın, compose projesi ayrı olsun, sunucu aynı yerel PinVault
  * kaynağından derlensin (kopya farklı bir dizinde olduğu için mutlak yol).
  */
 function configureEnv() {
-  const serverSrc = path.resolve(env.HOST_DIR, '../demo-server');
+  const serverSrc = mainHostServerSrc();
   const values = {
     HOST_HTTP_PORT: String(PORTS.http),
     HOST_HTTPS_PORT: String(PORTS.https),

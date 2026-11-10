@@ -336,4 +336,7 @@ Global setup simülatörü açar, UI sürücüsünü derleyip başlatır, uygula
 
 Yalnızca Android'de koşan senaryolar (`lib/env.js` → `ANDROID_ONLY_TESTS`,
 iOS'ta atlanır): D05 (yedekleme, `bmgr`), U01 (2.0.9 APK'sından sürüm
-yükseltme). iOS'a özgü kanıtlar kapsam matrisinde **I** grubunda.
+yükseltme) ve tehdidi Android araçlarıyla kuran dayanıklılık senaryoları:
+R01 (kök yöneticisi paketi), R02/R03 (Frida gadget `.so`), R05/R07 (JDWP hata
+ayıklayıcısı), R06 (başka anahtarla imzalanmış APK), R10 (Keystore anahtar
+atestasyon zinciri). iOS'a özgü kanıtlar kapsam matrisinde **I** grubunda.

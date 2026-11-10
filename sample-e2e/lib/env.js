@@ -112,6 +112,16 @@ function buildCommandFor(propsFile) {
 const ANDROID_ONLY_TESTS = {
   D05: 'Yedekleme kanıtı Android\'in bmgr yerel yedekleme aktarıcısıyla alınıyor; iOS karşılığı (isExcludedFromBackup, ThisDeviceOnly) I grubunda',
   U01: 'Sürüm yükseltme Maven Central\'daki PinVault 2.0.9 ile derlenen eski APK\'dan yapılıyor; iOS kütüphanesinin önceki sürümü yok',
+  // Dayanıklılık senaryolarının bu yedisi tehdidi Android araçlarıyla kurar. iOS
+  // kütüphanesinin aynı sinyalleri (jailbreak, hooking, debugger, app_integrity)
+  // birim testlerinde sınanıyor; simülatörde uçtan uca karşılıkları yazılmadı.
+  R01: 'Kök yöneticisi bir Android paketi olarak (adb install) kuruluyor',
+  R02: 'Frida gadget Android .so dosyası olarak uygulamaya adb ile yükleniyor',
+  R03: 'Frida gadget Android .so dosyası olarak uygulamaya adb ile yükleniyor',
+  R05: 'Hata ayıklayıcı JDWP oturumu olarak (adb forward) bağlanıyor',
+  R06: 'Yeniden paketleme APK\'nın başka bir anahtarla imzalanmasıyla yapılıyor (apksigner)',
+  R07: 'Ortam koruması bağlı bir JDWP hata ayıklayıcısıyla tetikleniyor',
+  R10: 'Taze atestasyon Android Keystore\'un anahtar atestasyon zinciridir; iOS karşılığı App Attest simülatörde yok',
 };
 
 function androidSdk() {

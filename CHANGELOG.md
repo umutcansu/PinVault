@@ -129,6 +129,12 @@
   enrollment mode, recovery door, server CA), every pinned host (source,
   validity, whose key the backup pin trusts, mock listeners) and the vault
   files with an expiry. `GET /api/v1/setup/certificates`.
+- **A token anomaly stops an iPhone's tokens too.** A device whose tokens a
+  backend reported as abused (`token_anomaly`, ATTESTATION.md §5.2) kept
+  passing attestation when it was an iOS device: the flag was only raised on
+  the Android path, so the iPhone went on receiving fresh tokens for the hour
+  the report is meant to hold. It is raised for both platforms now. Found by
+  the iOS run of sample-e2e (R11).
 
 ### Android
 
@@ -186,6 +192,14 @@
   (expiry kinds, vault file expiry, audit + webhook), K09 (the wizard's
   certificate step), Y05 (a restore waits for approval and is refused by the
   live check).
+- sample-client-ios names its token hosts and asks for proofs, as the Android
+  sample does (`tokenHosts(...)`, `proofOfPossession()`): since the token no
+  longer goes to every pinned host, the iOS sample's "attest, then call the
+  mock host" button sent the request without a token.
+- sample-e2e on iOS: the throwaway server builds from the main host's
+  `PINVAULT_SERVER_SRC` and takes its own subnet when the main host's compose
+  file already pins one; R01, R02, R03, R05, R06, R07 and R10 are marked
+  Android-only (they plant the threat with Android tools).
 
 ## 2.8.2 — 2026-10-21 — a host pinned from a URL says whose key its backup trusts
 

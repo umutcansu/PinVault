@@ -288,6 +288,26 @@ class AttestationIosTest {
     }
 
     @Test
+    fun `a reported token anomaly stops an iOS device's tokens too, until it lapses`() = testApplication {
+        val service = service()
+        app(service)
+        policies.put(scope, AttestationPolicy.parse(buildJsonObject { put("revealReasons", true) }, service.defaultPolicy).getOrThrow(), "test")
+        val key = ecKey()
+        assertEquals("pass", attest("ios-1", key) { iosReport() }.json()["result"]!!.jsonPrimitive.content)
+
+        // A backend saw this device's tokens used at script speed (§5.2).
+        assertTrue(service.reportAnomaly(scope, "ios-1", "requests: 5000", buildJsonObject { put("requests", 5000) }, actor = null, ip = null))
+        val flagged = attest("ios-1", key) { iosReport() }.json()
+        assertEquals("reject", flagged["result"]!!.jsonPrimitive.content)
+        assertEquals(listOf("token_anomaly"), strings(flagged["rejectionReasons"]))
+        assertNull(flagged["token"])
+
+        // It lapses after ATTESTATION_ANOMALY_TTL_SECONDS (an hour by default), as on Android.
+        now += 3600 * 1000L
+        assertEquals("pass", attest("ios-1", key) { iosReport() }.json()["result"]!!.jsonPrimitive.content)
+    }
+
+    @Test
     fun `app_integrity on iOS compares the bundle id and the team id, never the signer`() = testApplication {
         val service = service(ios = IosAttestationRules(teamIds = setOf(AppAttestFixtures.TEAM_ID)))
         app(service)

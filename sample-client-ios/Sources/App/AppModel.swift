@@ -419,17 +419,30 @@ final class AppModel: ObservableObject {
             block.clientCertHosts(Endpoints.mtlsBaseUrl, Endpoints.mockMtlsUrl)
             // Pin kapsamı: yalnızca bu host'un pin'lerini iste (sunucu cihazın host ACL'iyle kesiştirir).
             if scopedPins { block.wantPinsFor(Endpoints.targetHost) }
-            applyAttestation(block)
+            applyAttestation(block, listener: "\(Endpoints.hostIp):\(SampleHostConfig.hostHttpsPort)")
         }
     }
 
     /// Atestasyon: kütüphane açılışta ve sonra 5 dakikada bir uygulamayı ve cihazı ölçer
     /// (jailbreak, simülatör, hata ayıklayıcı, hooking çerçevesi, bundle/team kimliği,
     /// kurulum kaynağı, anahtarın yeri), raporu kimlik anahtarıyla imzalayıp host'a yollar.
-    /// Geçerse 5 dakikalık PinVault-Token döner ve kütüphane bunu bu bloğun pinli
-    /// host'larına giden her isteğe ekler. Sonuç ana ekranda ve olay listesinde görünür.
-    private static func applyAttestation(_ block: ConfigApiBlock.Builder) {
-        if SampleHostConfig.hostAttestation { block.attestation() }
+    /// Geçerse 5 dakikalık PinVault-Token döner. Sonuç ana ekranda ve olay listesinde görünür.
+    ///
+    /// `proofOfPossession()`: token'lı her istek kimlik anahtarıyla imzalı bir
+    /// PinVault-Proof da taşır (ATTESTATION.md §5.1); host istemezse başlık zararsızdır.
+    ///
+    /// Token varsayılan olarak pinli her host'a değil, yalnızca bloğun kendi Config API
+    /// adresine gider. Bu örnek token'ı "atestasyon yap, sonra mock host'a git" düğmesinin
+    /// vurduğu mock host'lara da taşır; onlar burada açıkça yazılır (Config API adresi de,
+    /// çünkü açık liste varsayılanı ezer). Android: App.java → applyAttestation.
+    private static func applyAttestation(_ block: ConfigApiBlock.Builder, listener: String) {
+        guard SampleHostConfig.hostAttestation else { return }
+        block.attestation().proofOfPossession()
+        block.tokenHosts(
+            listener,
+            "\(SampleHostConfig.mockTlsHost):\(SampleHostConfig.mockTlsPort)",
+            "\(SampleHostConfig.mockMtlsHost):\(SampleHostConfig.mockMtlsPort)"
+        )
     }
 
     /// Android'de isteğe bağlı Play Integrity (host.playIntegrityProjectNumber). iOS
@@ -479,7 +492,7 @@ final class AppModel: ObservableObject {
             // Kayıtla alınan sertifika kütüphanenin şifreli deposundan gelir. Test
             // derlemelerinde elle yüklenen P12 varsa onun yerine o kullanılır.
             TestControls.applyManualIdentity(block, manualP12)
-            applyAttestation(block)
+            applyAttestation(block, listener: "\(Endpoints.hostIp):\(SampleHostConfig.hostMtlsPort)")
         }
     }
 

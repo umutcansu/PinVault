@@ -134,6 +134,21 @@ function localStamp(ms) {
 // "2026-10-07 00:59:51.544 Df Spike[59085:4062e] [io.github.umutcansu.pinvault:Spike] mesaj"
 const LOG_LINE = /^(\d{4})-(\d\d)-(\d\d) (\d\d:\d\d:\d\d\.\d+)\s+(\w+)\s+\S+\[\d+:[0-9a-fA-F]+\]\s+\[([^:\]]+):([^\]]*)\]\s?(.*)$/;
 
+/** Dizindeki (ya da tek) dosyaların değişiklik zamanını şimdiye çeker. */
+function touchTree(target) {
+  const now = new Date();
+  const walk = (p) => {
+    const st = fs.lstatSync(p);
+    if (st.isSymbolicLink()) return;
+    if (st.isDirectory()) {
+      for (const name of fs.readdirSync(p)) walk(path.join(p, name));
+      return;
+    }
+    fs.utimesSync(p, now, now);
+  };
+  walk(target);
+}
+
 class Device {
   constructor(udid) {
     this.udid = udid;
@@ -548,6 +563,12 @@ class Device {
   }
 
   installApp(file) {
+    // simctl install kurulu uygulamanın üstüne yazarken boyutu ve değişiklik zamanı
+    // aynı olan dosyayı kopyalamıyor (Xcode 27.2'de görüldü): aynı saniyede derlenmiş,
+    // aynı boyda iki derleme (ana host / geçici host değerleri) arasında geçişte
+    // eski kod kurulu kalıyordu. Zamanlar tazelenir; imza içerikten hesaplandığı
+    // için bozulmaz. Kaldırıp kurmak olmaz: identifierForVendor değişir.
+    touchTree(file);
     const out = simctl(['install', this.udid, file], { timeout: 300_000 });
     this._containers = {};
     const bundle = this.bundleIdOf(file);
