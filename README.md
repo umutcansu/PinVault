@@ -9,7 +9,7 @@ versioned files only your devices can open, and attestation that tells your
 app from a script — for Android, iOS, React Native and Flutter.
 
 [![Maven Central](https://img.shields.io/maven-central/v/io.github.umutcansu/pinvault?label=Android)](https://central.sonatype.com/artifact/io.github.umutcansu/pinvault)
-[![SwiftPM](https://img.shields.io/badge/iOS-SwiftPM%202.8.2-F05138?logo=swift&logoColor=white)](pinvault-ios/README.md)
+[![SwiftPM](https://img.shields.io/badge/iOS-SwiftPM%202.9.0-F05138?logo=swift&logoColor=white)](pinvault-ios/README.md)
 [![npm](https://img.shields.io/npm/v/@umutcansu/react-native-pinvault?label=React%20Native&logo=react)](https://www.npmjs.com/package/@umutcansu/react-native-pinvault)
 [![pub.dev](https://img.shields.io/pub/v/pinvault_flutter?label=Flutter&logo=flutter)](https://pub.dev/packages/pinvault_flutter)
 [![License](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
@@ -38,15 +38,18 @@ PinVault moves the pins to your server and keeps the safety:
 - 🔌 **Server-agnostic.** Use the reference server (Docker, dashboard included),
   implement two endpoints in your own backend, or run fully offline with static pins.
 
-> **Latest release: 2.8.2** — the reference server and its dashboard say
-> whose key the backup pin of a host added from a URL trusts: the issuing
-> CA's, which a stolen CA key defeats (the eMudhra intermediates, October
-> 2026). The form warns, the approval card shows it, the host page labels
-> it, and an optional second pin of the site itself replaces the CA pin
-> (`backupPin`). Runbook: *A certificate authority's key is compromised* in
-> [SECURE_OPERATIONS.md](SECURE_OPERATIONS.md). 2.8.1 before it made an iOS
-> pinned session notice when a trust-bypass hook answered the TLS challenge
-> before the library.
+> **Latest release: 2.9.0** — every pin set a Config API has served is kept
+> and comes back with one click (a new version with the old pins; two-person
+> approval and the live certificate check apply), the expiry monitor watches
+> the server's own certificates, the CAs and vault files with a date, and the
+> setup wizard walks to production: a certificates step and *How to* steps
+> for every row ([SETUP.md](SETUP.md)). With it, the fixes of a security
+> review: an approval card now shows exactly what the approved request does
+> (trust roots, settings, attestation changes; a request in another charset
+> is refused), on iOS a number a server sends can no longer end the app, and
+> React Native / Flutter release builds take the signature thresholds and
+> recovery keys only from the native security file
+> (see [MIGRATION.md](MIGRATION.md)).
 
 ## What you get
 
@@ -123,7 +126,7 @@ behaviour and the same server, so you can move between them freely.
 ```kotlin
 // build.gradle.kts
 dependencies {
-    implementation("io.github.umutcansu:pinvault:2.8.2")
+    implementation("io.github.umutcansu:pinvault:2.9.0")
 }
 ```
 
@@ -136,7 +139,7 @@ minSdk 24, JDK 17, OkHttp 4. Java callers: see [the guide](GUIDE.md#2b-initializ
 
 ```swift
 // Package.swift — or Xcode: File → Add Package Dependencies…
-.package(url: "https://github.com/umutcansu/PinVault.git", from: "2.8.2")
+.package(url: "https://github.com/umutcansu/PinVault.git", from: "2.9.0")
 ```
 
 iOS 16+, Swift 6, no third-party dependencies. Info.plist keys for background

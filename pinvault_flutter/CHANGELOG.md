@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased (2.9.0)
+## 2.9.0 — 2026-11-10
 
 ### Security
 
@@ -18,6 +18,7 @@
   a certificate's version field, a vault file's version header) can no longer
   overflow and end the app; a blank vault file `signaturePublicKey` no longer
   turns that file's verification off.
+- Depends on PinVault 2.9.0.
 
 ## 2.8.2 — 2026-10-21
 
