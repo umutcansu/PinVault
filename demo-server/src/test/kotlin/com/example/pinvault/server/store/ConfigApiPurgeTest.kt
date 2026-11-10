@@ -46,6 +46,7 @@ class ConfigApiPurgeTest {
         exec("INSERT INTO pin_hashes (config_api_id, hostname, sha256, version, force_update, mtls) VALUES (?, 'a.example', 'pin', 3, 0, 0)", api)
         exec("INSERT INTO pin_history (config_api_id, hostname, version, timestamp, event, pin_prefix) VALUES (?, 'a.example', 3, 0, 'x', 'p')", api)
         exec("INSERT INTO hosts (hostname, config_api_id, created_at) VALUES ('a.example', ?, 'now')", api)
+        exec("INSERT INTO pin_snapshots (config_api_id, taken_at, actor, content_hash, config_json) VALUES (?, 'now', 'alice', 'h', '{}')", api)
         exec("INSERT INTO host_version_watermark (config_api_id, hostname, max_version) VALUES (?, 'a.example', 3)", api)
         exec("INSERT INTO vault_files (config_api_id, key, content, version, updated_at) VALUES (?, 'f', X'00', 1, 'now')", api)
         exec("INSERT INTO default_host_acl (config_api_id, hostname) VALUES (?, 'a.example')", api)

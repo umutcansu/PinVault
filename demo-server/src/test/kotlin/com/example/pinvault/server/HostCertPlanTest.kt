@@ -177,6 +177,58 @@ class HostCertPlanTest {
         }
     }
 
+    // A certificate from a CA is renewed every 60–90 days. Each upload used to
+    // make a new backup key: the backup pin compiled into the apps then named a
+    // key the server no longer had, and "rotate to backup" served a key no app
+    // knew (found with a real certificate, 2026-10-29).
+    @Test
+    fun `uploading a renewed certificate keeps the backup key the apps carry`() {
+        GovernanceHarness(dir, required = 1).use { h ->
+            val before = h.seedHost("mock.example.com")
+            val renewed = h.certService.planGenerated("mock.example.com")       // a new key and certificate, as a CA would issue
+            val (type, body) = multipart(
+                mapOf("password" to CertificateService.KEYSTORE_PASSWORD, "format" to "jks"),
+                java.util.Base64.getDecoder().decode(renewed.keystore), "renewed.jks"
+            )
+            val upload = h.call("POST", "/api/v1/hosts/mock.example.com/upload-cert", ALICE, body, type)
+            assertEquals(200, upload.status, upload.body)
+            assertEquals(listOf(renewed.pins[0], before[1]), h.pinsOf("mock.example.com"), "the new certificate's pin, the SAME backup pin")
+            assertEquals(before[1], h.certService.backupPin("mock_example_com"))
+
+            // The emergency path still works: the key the apps hold as backup takes over.
+            val rotate = h.call("POST", "/api/v1/hosts/mock.example.com/rotate-to-backup", ALICE)
+            assertEquals(200, rotate.status, rotate.body)
+            assertEquals(before[1], h.pinsOf("mock.example.com")!![0])
+
+            // Only when the uploaded key IS the stored backup is a new backup made (a backup equal to the primary is none).
+            val backupFile = File(dir, "certs/mock_example_com.backup.jks")
+            val storedBackupPin = h.certService.backupPin("mock_example_com")!!
+            val sameKey = h.certService.planImported(backupFile.readBytes(), CertificateService.KEYSTORE_PASSWORD, "jks", "mock.example.com", keepBackupOf = "mock_example_com")
+            assertEquals(storedBackupPin, sameKey.pins[0])
+            assertNotEquals(storedBackupPin, sameKey.pins[1])
+        }
+    }
+
+    // A host's keystore is certs/<host>.jks, next to the server's own: a host
+    // named like one of them used to overwrite it (review 2026-10-29).
+    @Test
+    fun `a host cannot take the name of one of the server's own keystores`() {
+        GovernanceHarness(dir, required = 1).use { h ->
+            h.certService.ensureClientCa()
+            val clientCa = File(dir, "certs/client-ca.jks")
+            val bytes = clientCa.readBytes()
+            for (name in listOf("client-ca", "Client-CA", "server-ca", "recovery", "client-truststore", "demo-server")) {
+                val answer = h.call("POST", "/api/v1/hosts/generate-cert", ALICE, """{"hostname":"$name"}""")
+                assertEquals(400, answer.status, "$name: ${answer.body}")
+                assertEquals("reserved_host_name", answer.json["reason"]!!.jsonPrimitive.content, name)
+            }
+            assertTrue(bytes.contentEquals(clientCa.readBytes()), "the client CA's keystore is untouched")
+            assertNull(h.pinsOf("client-ca"))
+            // A name that only starts like one is a host like any other.
+            assertEquals(200, h.call("POST", "/api/v1/hosts/generate-cert", ALICE, """{"hostname":"client-ca.example.com"}""").status)
+        }
+    }
+
     @Test
     fun `the Config API's own certificate is planned and applied the same way`() {
         GovernanceHarness(dir).use { h ->

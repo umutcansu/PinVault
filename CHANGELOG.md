@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased (2.9.0) — pin history with one-click restore, expiry for everything that expires, the wizard's certificate step
+## 2.9.0 — 2026-11-10 — pin history with one-click restore, expiry for everything that expires, the wizard walks to production, a security review's fixes
 
 ### Server and dashboard
 
@@ -91,6 +91,24 @@
   change and a lowered production floor come first in the one-line summary,
   which is cut at 300 characters, and the settings and policy lines start
   with the number of changes.
+- **Uploading a renewed certificate keeps the backup key.** Every upload —
+  a host's or the Config API's own — used to make a new backup key, so the
+  backup pin compiled into the apps named a key the server no longer had: at
+  the first renewal of a CA-issued certificate (every 60–90 days) the
+  emergency path broke silently, and *Rotate to backup* then served a key no
+  app knew. The stored backup key now stays; a new one is made only when
+  there is none or when the uploaded key is the stored backup itself.
+- **A host cannot take the name of one of the server's own keystores.** A
+  host's keystore is `certs/<host>.jks`, next to the server's: a host named
+  `client-ca`, `server-ca`, `recovery`, `client-truststore` or like the Config
+  API's own certificate overwrote that file, and the server then quietly made
+  a new CA — every device had to enroll again. Generating, uploading,
+  regenerating or rotating a certificate for such a name is refused
+  (`400 reserved_host_name`, case-insensitive); pinning it by hand or from a
+  URL writes no keystore and is still allowed.
+- **Deleting a Config API deletes its pin set history.** `pin_snapshots` was
+  missing from the purge: a new Config API under the same id inherited the
+  old one's history and its *Restore this state* buttons.
 - **The expiry monitor watches everything with a date.** Besides the pinned
   hosts' certificates: the Config API's own certificate (the apps' bootstrap
   pins), the client CA, the server CA behind the recovery door, client

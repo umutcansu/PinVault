@@ -249,10 +249,22 @@ class CertificateService(
      * the backup's placeholder certificate.
      */
     fun importCertificate(id: String, fileBytes: ByteArray, password: String, format: String, hostname: String): CertGenResult =
-        install(id, planImported(fileBytes, password, format, hostname))
+        install(id, planImported(fileBytes, password, format, hostname, keepBackupOf = id))
 
-    /** [importCertificate] as a plan: the uploaded key and chain re-wrapped, a new backup key beside them. Nothing is written. */
-    fun planImported(fileBytes: ByteArray, password: String, format: String, hostname: String): CertPlan {
+    /**
+     * [importCertificate] as a plan: the uploaded key and chain re-wrapped, a
+     * backup key beside them. Nothing is written.
+     *
+     * [keepBackupOf]: the keystore id the upload replaces. Its stored backup
+     * key is KEPT — apps already carry that key's pin, and a certificate that
+     * is renewed every 60–90 days must not replace it each time: the pin in
+     * the app would name a key the server no longer has, and "rotate to
+     * backup" would then serve a key no app knows. A new backup is made only
+     * when there is none, or when the uploaded key IS the stored backup (it
+     * was put into service outside this server; a backup equal to the
+     * primary would be no backup).
+     */
+    fun planImported(fileBytes: ByteArray, password: String, format: String, hostname: String, keepBackupOf: String? = null): CertPlan {
         val storeType = when (format.lowercase()) {
             "jks" -> "JKS"
             "pkcs12", "p12", "pfx" -> "PKCS12"
@@ -277,8 +289,21 @@ class CertificateService(
         jksKs.setKeyEntry("server", key, KEYSTORE_PASSWORD.toCharArray(), chain)
         val keystore = java.io.ByteArrayOutputStream().also { jksKs.store(it, KEYSTORE_PASSWORD.toCharArray()) }.toByteArray()
 
+        val kept = keepBackupOf?.let { storedBackup(it) }?.takeIf { (backupCert, _) -> !backupCert.publicKey.encoded.contentEquals(cert.publicKey.encoded) }
+        if (kept != null) return certPlan("uploaded", hostname, cert, extractHash(kept.first), keystore, kept.second)
         val backupKeyPair = newRsaKeyPair()
         return certPlan("uploaded", hostname, cert, sha256Base64(backupKeyPair.public.encoded), keystore, backupKeystoreBytes(hostname, backupKeyPair))
+    }
+
+    /** The backup key stored for [id] (its placeholder certificate and the keystore file as it is), or null. */
+    private fun storedBackup(id: String): Pair<X509Certificate, ByteArray>? {
+        val file = backupKeyFile(id)
+        if (!file.exists()) return null
+        val bytes = file.readBytes()
+        val ks = ServerKeyStores.load(file, KEYSTORE_PASSWORD.toCharArray())
+        val cert = ks.getCertificate(BACKUP_ALIAS) as? X509Certificate ?: return null
+        if (ks.getKey(BACKUP_ALIAS, KEYSTORE_PASSWORD.toCharArray()) == null) return null
+        return cert to bytes
     }
 
     /**

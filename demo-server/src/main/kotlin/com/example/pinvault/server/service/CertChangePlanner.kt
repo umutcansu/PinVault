@@ -115,11 +115,11 @@ class CertChangePlanner(
             }
             Kind.REGENERATE -> certService.planGenerated(hostname!!)
             Kind.ROTATE -> certService.planRotation(keystoreId(hostname!!), hostname)
-            Kind.UPLOAD -> imported(form(contentType, body), hostname!!)
+            Kind.UPLOAD -> imported(form(contentType, body), hostname!!, keepBackupOf = keystoreId(hostname))
             Kind.FETCH -> fetched(jsonField(body, "url") ?: throw PlanRefused(HttpStatusCode.BadRequest, "url gerekli"), hostname!!, jsonField(body, "backupPin"))
             Kind.BOOTSTRAP_REGENERATE -> certService.planGenerated(BOOTSTRAP_HOST)
             Kind.BOOTSTRAP_ROTATE -> certService.planRotation(serverCertId, BOOTSTRAP_HOST)
-            Kind.BOOTSTRAP_UPLOAD -> imported(form(contentType, body), BOOTSTRAP_HOST)
+            Kind.BOOTSTRAP_UPLOAD -> imported(form(contentType, body), BOOTSTRAP_HOST, keepBackupOf = serverCertId)
             Kind.BOOTSTRAP_FETCH -> fetched(jsonField(body, "url") ?: throw PlanRefused(HttpStatusCode.BadRequest, "url gerekli"), BOOTSTRAP_HOST, jsonField(body, "backupPin"))
         }
         // The same host-name rules the library applies: an entry every device
@@ -127,6 +127,16 @@ class CertChangePlanner(
         // The pins too (two distinct, well-formed): an uploaded keystore whose
         // backup is its primary would otherwise publish one pin twice.
         PinConfigRules.hostErrors(plan.hostname, plan.pins).firstOrNull()?.let { throw PlanRefused(HttpStatusCode.BadRequest, it) }
+        // A host's keystore is certs/<host>.jks, in the folder of the server's
+        // own keystores. A host named like one of them would overwrite it —
+        // the client CA (every device must enroll again), the server CA, the
+        // Config API's own certificate — and the server would then quietly
+        // make new ones. Refused before anything is written.
+        if (kind.host && isReservedKeystoreId(keystoreId(plan.hostname))) {
+            throw PlanRefused(HttpStatusCode.BadRequest, reason("reserved_host_name",
+                "'${plan.hostname}' is the name of one of this server's own keystores and cannot be a host with a certificate here. " +
+                    "Pin it from its URL or by hand, or use another name."))
+        }
         if (kind.adds) checkNew(scope, plan.hostname)
         return plan
     }
@@ -157,12 +167,15 @@ class CertChangePlanner(
         MultipartForm.parse(contentType, body)
             ?: throw PlanRefused(HttpStatusCode.BadRequest, reason("invalid_multipart", "A multipart/form-data body is required."))
 
-    private fun imported(form: MultipartForm, hostname: String): CertPlan {
+    /** Whether [id] (a host's keystore id) names a keystore the server keeps for itself; file names compare without case. */
+    fun isReservedKeystoreId(id: String): Boolean = id.lowercase() in (OWN_KEYSTORE_IDS + serverCertId.lowercase())
+
+    private fun imported(form: MultipartForm, hostname: String, keepBackupOf: String? = null): CertPlan {
         val bytes = form.file ?: throw PlanRefused(HttpStatusCode.BadRequest, "Dosya gerekli")
         val password = form.fields["password"]?.takeIf { it.isNotEmpty() }
             ?: throw PlanRefused(HttpStatusCode.BadRequest, reason("password_required", "The keystore's password is required."))
         return try {
-            certService.planImported(bytes, password, form.fields["format"] ?: "jks", hostname)
+            certService.planImported(bytes, password, form.fields["format"] ?: "jks", hostname, keepBackupOf)
         } catch (e: Exception) {
             throw PlanRefused(HttpStatusCode.BadRequest, "Import hatasi: ${e.message}")
         }
@@ -178,6 +191,9 @@ class CertChangePlanner(
     companion object {
         /** The name the Config API's own certificate is issued for. */
         const val BOOTSTRAP_HOST = "localhost"
+
+        /** `certs/<id>.jks` files the server keeps for itself (CertificateService), besides its own certificate's. */
+        private val OWN_KEYSTORE_IDS = setOf("client-ca", "server-ca", "recovery", "client-truststore")
 
         private val ROUTES = listOf(
             Regex("^/api/v1/hosts/generate-cert$") to Kind.ADD_GENERATED,

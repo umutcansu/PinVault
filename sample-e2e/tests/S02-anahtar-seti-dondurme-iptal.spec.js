@@ -44,6 +44,8 @@ test('Sunucu+Web+Mobil: anahtar seti (telefonun güvendiği imza anahtarları) �
   let names = {};
   let createdNext = false;
   let N;
+  // Sunucunun Config API kimlikleri: set bunların hepsi için yapılır (keyset -a).
+  let scope = '';
 
   try {
     await test.step('Terminal+Mobil: bu test için derlenen uygulama kurulur; telefon APK\'ya gömülü anahtarlarla Hazır (anahtar seti v0)', async () => {
@@ -155,13 +157,37 @@ test('Sunucu+Web+Mobil: anahtar seti (telefonun güvendiği imza anahtarları) �
       expect(info.signers.map((s) => s.keyId)).toEqual([setup.primary.keyId, next.keyId]);
     });
 
-    await test.step('Terminal: set vN = {birincil, lab-next}, kurtarma anahtarıyla imzalanıp yüklenir (signing-keys.sh keyset + upload)', async () => {
+    await test.step('Terminal: yalnızca bir Config API için yapılmış set reddedilir (sunucu ikisine de aynı seti verir) → 409', async () => {
+      const apiIds = ((await fresh.api('/api/v1/config-apis')).json || []).map((a) => a.id);
+      expect(apiIds.length, 'geçici sunucuda en az bir Config API çalışmalı').toBeGreaterThan(0);
+      scope = apiIds.join(',');
+      if (apiIds.length < 2) {
+        await attachText(testInfo, 'Tek Config API var', `${scope}: eksik liste denenemez`);
+        return;
+      }
+      const version = await lab.nextKeySetVersion();
+      const file = lab.labFile('keyset-eksik-kapsam.json');
+      await lab.op(testInfo, `signing-keys.sh keyset -a ${apiIds[0]}: set yalnızca bir Config API'yi adlandırıyor`, {
+        display: `./scripts/signing-keys.sh keyset -v ${version} -k server -s ${lab.KEYS.recovery} -a ${apiIds[0]} -o ${file.rel}`,
+        file: './scripts/signing-keys.sh',
+        args: ['keyset', '-v', String(version), '-k', 'server', '-s', lab.KEYS.recovery, '-a', apiIds[0], '-o', file.rel],
+      });
+      const wire = JSON.parse(fs.readFileSync(file.abs, 'utf8'));
+      expect(JSON.parse(wire.payload).configApiIds).toEqual([apiIds[0]]);
+      const res = await fresh.api('/api/v1/signing-keyset', { method: 'PUT', body: wire });
+      await attachText(testInfo, 'PUT /api/v1/signing-keyset (eksik kapsam)', `HTTP ${res.status}\n${JSON.stringify(res.json, null, 2)}`);
+      expect(res.status).toBe(409);
+      expect(JSON.stringify(res.json)).toContain('also serves');
+      expect((await lab.signingStatus()).keySet.version).toBe(version - 1);
+    });
+
+    await test.step('Terminal: set vN = {birincil, lab-next}, kurtarma anahtarıyla imzalanıp yüklenir (signing-keys.sh keyset -a + upload)', async () => {
       N = await lab.nextKeySetVersion();
       const file = lab.labFile(`keyset-v${N}.json`);
-      await lab.op(testInfo, `signing-keys.sh keyset: v${N} = sunucunun imzalayıcıları, lab-recovery ile imzalı`, {
-        display: `./scripts/signing-keys.sh keyset -v ${N} -k server -s ${lab.KEYS.recovery} -o ${file.rel}`,
+      await lab.op(testInfo, `signing-keys.sh keyset: v${N} = sunucunun imzalayıcıları, lab-recovery ile imzalı, sunucunun Config API'leri için`, {
+        display: `./scripts/signing-keys.sh keyset -v ${N} -k server -s ${lab.KEYS.recovery} -a ${scope} -o ${file.rel}`,
         file: './scripts/signing-keys.sh',
-        args: ['keyset', '-v', String(N), '-k', 'server', '-s', lab.KEYS.recovery, '-o', file.rel],
+        args: ['keyset', '-v', String(N), '-k', 'server', '-s', lab.KEYS.recovery, '-a', scope, '-o', file.rel],
         note: () => `${file.rel}:\n${lab.describeKeySet(JSON.parse(fs.readFileSync(file.abs, 'utf8')), names)}`,
       });
       const out = await lab.op(testInfo, `signing-keys.sh upload: set v${N}`, {
@@ -172,6 +198,7 @@ test('Sunucu+Web+Mobil: anahtar seti (telefonun güvendiği imza anahtarları) �
       expect(out).toContain('HTTP 200');
       const answer = JSON.parse(out.slice(0, out.lastIndexOf('HTTP')).trim());
       expect(answer.version).toBe(N);
+      // Config API'leri adlandıran sette "kapsamsız set" uyarısı da yok.
       expect(answer.warnings).toEqual([]);
       expect(new Set(answer.keyIds)).toEqual(new Set([setup.primary.keyId, next.keyId]));
     });
@@ -207,9 +234,9 @@ test('Sunucu+Web+Mobil: anahtar seti (telefonun güvendiği imza anahtarları) �
     await test.step('Web: iptal — set vN+1 = {yalnızca lab-next} dashboard\'dan yüklenir; yanıtta eski birincil anahtar için uyarı var', async () => {
       const file = lab.labFile(`keyset-v${N + 1}.json`);
       await lab.op(testInfo, `signing-keys.sh keyset: v${N + 1} = yalnızca lab-next (eski birincil listede yok, yani iptal edildi)`, {
-        display: `./scripts/signing-keys.sh keyset -v ${N + 1} -k ${lab.KEYS.next} -s ${lab.KEYS.recovery} -o ${file.rel}`,
+        display: `./scripts/signing-keys.sh keyset -v ${N + 1} -k ${lab.KEYS.next} -s ${lab.KEYS.recovery} -a ${scope} -o ${file.rel}`,
         file: './scripts/signing-keys.sh',
-        args: ['keyset', '-v', String(N + 1), '-k', lab.KEYS.next, '-s', lab.KEYS.recovery, '-o', file.rel],
+        args: ['keyset', '-v', String(N + 1), '-k', lab.KEYS.next, '-s', lab.KEYS.recovery, '-a', scope, '-o', file.rel],
       });
       const wireText = fs.readFileSync(file.abs, 'utf8').trim();
       await dashboard.reload();
