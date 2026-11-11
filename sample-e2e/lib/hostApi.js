@@ -450,6 +450,45 @@ function signedConfig({ port = env.CONFIG_API_PORT, currentVersion = 0 } = {}) {
   });
 }
 
+/**
+ * Config API'nin imzaladığı DARALTILMIŞ görünümün ham baytları (`?hosts=` ve/veya
+ * X-Device-Id). Saldırgan proxy'nin başka bir isteğe cevap olarak sunması için:
+ * { raw, envelope, config } (config: ayrıştırılmış payload, `view` alanı dahil).
+ */
+function signedViewRaw({ hosts, deviceId, port = env.CONFIG_API_PORT, currentVersion = 0 } = {}) {
+  const q = new URLSearchParams({ currentVersion: String(currentVersion) });
+  if (hosts && hosts.length) q.set('hosts', hosts.join(','));
+  return new Promise((resolve, reject) => {
+    const req = https.request(
+      {
+        host: 'localhost',
+        port,
+        path: `/api/v1/certificate-config?${q}`,
+        method: 'GET',
+        headers: deviceId ? { 'X-Device-Id': deviceId } : {},
+        rejectUnauthorized: false,
+        agent: false,
+      },
+      (res) => {
+        const chunks = [];
+        res.on('data', (c) => chunks.push(c));
+        res.on('end', () => {
+          const raw = Buffer.concat(chunks).toString('utf8');
+          if (res.statusCode !== 200) return reject(new Error(`daraltılmış görünüm alınamadı: HTTP ${res.statusCode} ${raw.slice(0, 200)}`));
+          try {
+            const envelope = JSON.parse(raw);
+            resolve({ raw, envelope, config: JSON.parse(envelope.payload) });
+          } catch (e) {
+            reject(e);
+          }
+        });
+      },
+    );
+    req.on('error', reject);
+    req.end();
+  });
+}
+
 // ── Kapsamlı (Config API bazlı) config ────────────────────────────────────
 
 /**
@@ -736,6 +775,7 @@ module.exports = {
   servedChainPins,
   randomPin,
   signedConfig,
+  signedViewRaw,
   scopedConfig,
   setScopedConfig,
   clearScopedHosts,
