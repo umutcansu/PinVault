@@ -1037,7 +1037,13 @@ PinVault.clearFile("ml-model")        // drop the cached copy
 ```
 
 `storage(...)` also accepts your own `VaultStorageProvider` instead of a
-`StorageStrategy`.
+`StorageStrategy`. Its `save` must throw when the copy was not stored *(2.9.1)*
+— `VaultStorageWriteException` on Android, `VaultStorageWriteError` on iOS, or
+any other error: the fetch then ends as `Failed` with code `storage_failed`, the
+signatures on record stay those of the copy already on disk, and the next fetch
+tries again. A `save` that only logs the failure makes the library record the
+new version's signatures over the old copy, which is then deleted at the next
+read.
 
 ### Signed vault files *(2.1)*
 
