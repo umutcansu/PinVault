@@ -9,7 +9,7 @@ versioned files only your devices can open, and attestation that tells your
 app from a script — for Android, iOS, React Native and Flutter.
 
 [![Maven Central](https://img.shields.io/maven-central/v/io.github.umutcansu/pinvault?label=Android)](https://central.sonatype.com/artifact/io.github.umutcansu/pinvault)
-[![SwiftPM](https://img.shields.io/badge/iOS-SwiftPM%202.9.0-F05138?logo=swift&logoColor=white)](pinvault-ios/README.md)
+[![SwiftPM](https://img.shields.io/badge/iOS-SwiftPM%202.9.1-F05138?logo=swift&logoColor=white)](pinvault-ios/README.md)
 [![npm](https://img.shields.io/npm/v/@umutcansu/react-native-pinvault?label=React%20Native&logo=react)](https://www.npmjs.com/package/@umutcansu/react-native-pinvault)
 [![pub.dev](https://img.shields.io/pub/v/pinvault_flutter?label=Flutter&logo=flutter)](https://pub.dev/packages/pinvault_flutter)
 [![License](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
@@ -38,7 +38,15 @@ PinVault moves the pins to your server and keeps the safety:
 - 🔌 **Server-agnostic.** Use the reference server (Docker, dashboard included),
   implement two endpoints in your own backend, or run fully offline with static pins.
 
-> **Latest release: 2.9.0** — every pin set a Config API has served is kept
+> **Latest release: 2.9.1** — a vault file the device could not store no
+> longer costs it the copy it had (a custom `VaultStorageProvider.save` must
+> now throw on failure), host client certificates load at every start, the
+> server refuses to start when key files it made are missing
+> (`ALLOW_KEY_REGENERATION` to make them again on purpose), and client ids
+> that differ only in letter case no longer touch each other's certificate.
+> See [CHANGELOG.md](CHANGELOG.md).
+>
+> **2.9.0** — every pin set a Config API has served is kept
 > and comes back with one click (a new version with the old pins; two-person
 > approval and the live certificate check apply), the expiry monitor watches
 > the server's own certificates, the CAs and vault files with a date, and the
@@ -126,7 +134,7 @@ behaviour and the same server, so you can move between them freely.
 ```kotlin
 // build.gradle.kts
 dependencies {
-    implementation("io.github.umutcansu:pinvault:2.9.0")
+    implementation("io.github.umutcansu:pinvault:2.9.1")
 }
 ```
 
@@ -139,7 +147,7 @@ minSdk 24, JDK 17, OkHttp 4. Java callers: see [the guide](GUIDE.md#2b-initializ
 
 ```swift
 // Package.swift — or Xcode: File → Add Package Dependencies…
-.package(url: "https://github.com/umutcansu/PinVault.git", from: "2.9.0")
+.package(url: "https://github.com/umutcansu/PinVault.git", from: "2.9.1")
 ```
 
 iOS 16+, Swift 6, no third-party dependencies. Info.plist keys for background

@@ -1,5 +1,16 @@
 # Changelog
 
+## 2.9.1 — 2026-11-11
+
+The native libraries at 2.9.1:
+
+- A vault file the device could not store (full disk, a failing
+  Keystore/Keychain) no longer costs it the copy it had: the fetch fails
+  with the code `storage_failed` and the next fetch tries again.
+- Host client certificates load at every start, also offline or when the
+  server answers that the config is unchanged; on iOS a host whose mTLS
+  flag was turned off stops presenting its old certificate.
+
 ## 2.9.0 — 2026-11-10
 
 ### Security

@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 2.9.1 — 2026-11-11 — a failed vault write keeps the stored copy, host identities load at start, lost server keys stop the start
 
 ### Server
 
