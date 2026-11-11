@@ -83,8 +83,12 @@ public final class Fields {
         self.map = map
     }
 
+    /// Tests only: told of every key a parser asks for (see `ConfigFieldPolicyTests`).
+    static var readHook: ((_ path: String, _ key: String) -> Void)?
+
     private func raw(_ key: String) -> Any? {
         known.insert(key)
+        Fields.readHook?(path, key)
         guard let v = map[key], !(v is NSNull) else { return nil }
         return v
     }

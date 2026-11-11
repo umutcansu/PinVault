@@ -245,7 +245,8 @@ class NativeSecurityTest {
         // The config-wide cap holds for a file the file does not name a cap for, too.
         val globalOnly = NativeSecurity.parse("""
             {"configApis":[{"id":"default","url":"https://h.example:8081/","bootstrapPins":[{"hostname":"h.example","sha256":["$pinA","$pinB"]}],"signaturePublicKeys":["$key"]}],
-             "require":{"vaultFileMaxOfflineAgeSeconds":3600}}
+             "require":{"vaultFileMaxOfflineAgeSeconds":3600},
+             "vaultFiles":[{"key":"any"}]}
         """.trimIndent(), "f")
         refused("""{"configApis":[{$base}],"vaultFiles":[{"key":"any","endpoint":"e","maxOfflineAge":{"amount":0,"unit":"SECONDS"}}]}""",
             native = globalOnly, fragments = arrayOf("maxOfflineAge"))

@@ -27,16 +27,18 @@ import java.io.IOException
  *     "url": "https://config.example.com/", "attestation": true,
  *     "tokenHosts": ["api.example.com"], "proofOfPossession": true, "clientCertHosts": ["api.example.com:443"],
  *     "enrollmentUrl": "https://enroll.example.com/", "renewalUrl": "https://renew.example.com/",
+ *     "healthEndpoint": "health", "maxClientCertLifetimeDays": 90,
  *     "allowUnsigned": false, "allowUnpinnedConfigApi": false, "allowServerGeneratedKey": false
  *   }],
  *   "staticPins": { "pins": [ … ], "version": 1 },
  *   "require": {
- *     "requireUnlockedDevice": true, "requireHardwareBackedKeys": true,
- *     "requirePinnedReactNativeNetworking": true, "managedTrustRoots": true,
+ *     "requireUnlockedDevice": true, "requireUnlockedDeviceAllowFallback": false, "requireHardwareBackedKeys": true,
+ *     "requirePinnedReactNativeNetworking": true, "allowUnpinnedReactNativeNetworking": false, "managedTrustRoots": true,
  *     "wipeVaultFilesOnRevocation": true, "requireCaTrust": ["api.example.com"],
  *     "expectedSignerSha256": ["…"], "expiredConfigGraceSeconds": 0, "vaultFileMaxOfflineAgeSeconds": 604800
  *   },
- *   "vaultFiles": [{ "key": "statement", "signaturePublicKey": "…", "encryption": "USER_AUTH", "userAuth": "REQUIRED", "maxOfflineAgeSeconds": 86400 }]
+ *   "vaultFiles": [{ "key": "statement", "signaturePublicKey": "…", "encryption": "USER_AUTH", "userAuth": "REQUIRED",
+ *                    "maxOfflineAgeSeconds": 86400, "wipeWhenStale": true }]
  * }
  * ```
  *
@@ -58,8 +60,18 @@ import java.io.IOException
  * - `require` only tightens: a protection it turns on stays on whatever JS
  *   says, `requireCaTrust` hosts are added to JS's, `expectedSignerSha256` is
  *   fixed, and `expiredConfigGraceSeconds` is the most JS may ask for;
- * - `vaultFiles` fixes those files' signature key, encryption and screen lock;
- *   with the section present, a JS vault file it does not name is refused.
+ * - `vaultFiles` fixes those files' signature key, encryption, screen lock and
+ *   `wipeWhenStale`; a JS vault file it does not name is refused (in a release
+ *   build also when the file has no `vaultFiles` section);
+ * - in a release build (2.10.0): a block's `healthEndpoint` is the file's (or
+ *   the default), `maxClientCertLifetimeDays` from JS may only be lower than
+ *   the file's (825 days when it names none), `expiredConfigGrace` is at most
+ *   the file's `expiredConfigGraceSeconds` (0 when it names none),
+ *   `managedTrustRoots` (it widens trust) comes from the file only, and React
+ *   Native's own networking stays pinned unless `require.allowUnpinnedReactNativeNetworking`;
+ *   in any build, `requireUnlockedDeviceAllowFallback` from JS needs the file's
+ *   consent when the file requires an unlocked device. Every key JS may send is
+ *   classified in [ConfigFieldPolicy].
  *
  * Without the file, release builds (the app is not debuggable) refuse to start
  * a config with Config APIs or static pins: the trust anchors would come from
@@ -93,6 +105,18 @@ internal class NativeSecurity(
         val expiredConfigGraceMs: Long? = null,
         /** The most `vaultFileMaxOfflineAge` JS may set (and the value when JS sets none); null = no rule. */
         val vaultFileMaxOfflineAgeMs: Long? = null,
+        /**
+         * With [requireUnlockedDevice]: a key without the unlocked-only flag is
+         * accepted where the ROM refuses it. JS asks for that only where the
+         * file allows it (review 2026-11-12) — it turns "fail" into a weaker key.
+         */
+        val requireUnlockedDeviceAllowFallback: Boolean = false,
+        /**
+         * A release build lets JS leave React Native's own networking unpinned
+         * (`android.pinGlobalNetworking: false`, `requirePinnedReactNativeNetworking: false`)
+         * only where the file says so (review 2026-11-12).
+         */
+        val allowUnpinnedReactNativeNetworking: Boolean = false,
     )
 
     /** One `vaultFiles` entry: what JS cannot change about that file. */
@@ -102,6 +126,8 @@ internal class NativeSecurity(
         val userAuth: UserAuth?,
         /** The most `maxOfflineAge` JS may give this file (and the value when JS gives none). */
         val maxOfflineAgeMs: Long? = null,
+        /** On here: JS cannot leave a stale copy on the device. */
+        val wipeWhenStale: Boolean = false,
     )
 
     class Block(
@@ -122,6 +148,14 @@ internal class NativeSecurity(
         val clientCertHosts: List<String>? = null,
         val enrollmentUrl: String? = null,
         val renewalUrl: String? = null,
+        /**
+         * The post-update health check's path. An unhealthy answer rolls every
+         * new config back, so in a release build JS may not point it elsewhere
+         * (a pin removed for a leaked key would stay until the old config expires).
+         */
+        val healthEndpoint: String? = null,
+        /** The longest issued client certificate the block accepts; a release build lets JS lower it only. */
+        val maxClientCertLifetimeDays: Int? = null,
     )
 
     companion object {
@@ -191,6 +225,8 @@ internal class NativeSecurity(
                         clientCertHosts = b.stringList("clientCertHosts", 64, 2048),
                         enrollmentUrl = httpsOnly(b, "enrollmentUrl"),
                         renewalUrl = httpsOnly(b, "renewalUrl"),
+                        healthEndpoint = ConfigParser.relEndpoint(b, "healthEndpoint", 512),
+                        maxClientCertLifetimeDays = b.int("maxClientCertLifetimeDays", 1, 3650),
                     )
                     b.finish()
                 }
@@ -211,6 +247,8 @@ internal class NativeSecurity(
                         expectedSignerSha256 = r.stringList("expectedSignerSha256", 16, 128),
                         expiredConfigGraceMs = r.long("expiredConfigGraceSeconds", 0, MAX_RELEASE_GRACE_MS / 1000)?.let { it * 1000 },
                         vaultFileMaxOfflineAgeMs = r.long("vaultFileMaxOfflineAgeSeconds", 1, MAX_OFFLINE_AGE_S)?.let { it * 1000 },
+                        requireUnlockedDeviceAllowFallback = r.bool("requireUnlockedDeviceAllowFallback") == true,
+                        allowUnpinnedReactNativeNetworking = r.bool("allowUnpinnedReactNativeNetworking") == true,
                     ).also {
                         // iOS-only (screen-lock strength): read for the shape, used by the iOS side.
                         r.string("userAuthStrength", 32)
@@ -230,6 +268,7 @@ internal class NativeSecurity(
                             encryption = f.enum("encryption", VaultFileEncryption.values()),
                             userAuth = f.enum("userAuth", UserAuth.values()),
                             maxOfflineAgeMs = f.long("maxOfflineAgeSeconds", 1, MAX_OFFLINE_AGE_S)?.let { it * 1000 },
+                            wipeWhenStale = f.bool("wipeWhenStale") == true,
                         )
                         f.finish()
                     }

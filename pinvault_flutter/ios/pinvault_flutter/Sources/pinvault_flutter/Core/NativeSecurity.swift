@@ -9,34 +9,43 @@
 //                      "clientCaPins", "allowUnsigned", "allowUnpinnedConfigApi",
 //                      "allowServerGeneratedKey", "url", "attestation", "tokenHosts", "proofOfPossession",
 //                      "clientCertHosts",
-//                      "enrollmentUrl", "renewalUrl" }],
+//                      "enrollmentUrl", "renewalUrl", "healthEndpoint", "maxClientCertLifetimeDays" }],
 //     "staticPins": { "pins": [...], "version": 1 },
 //     "ios": { "resolve": { "<host>": "<address>" } },
 //     "require": { "requireUnlockedDevice", "requireHardwareBackedKeys",
-//                  "managedTrustRoots",
+//                  "managedTrustRoots", "requireUnlockedDeviceAllowFallback",
 //                  "wipeVaultFilesOnRevocation", "requireCaTrust", "expectedBundleIds",
 //                  "expectedTeamIds", "userAuthStrength", "expiredConfigGraceSeconds",
 //                  "vaultFileMaxOfflineAgeSeconds", "expectedSignerSha256" (Android's, read for the shape) },
-//     "vaultFiles": [{ "key", "signaturePublicKey", "encryption", "userAuth", "maxOfflineAgeSeconds" }] }
+//     "vaultFiles": [{ "key", "signaturePublicKey", "encryption", "userAuth", "maxOfflineAgeSeconds",
+//                      "wipeWhenStale" }] }
 //
 // When the file is there: every Dart Config API (and Dart `staticPins`) must be
 // declared in it; a declared field is the value (Dart may omit or repeat it, a
 // different value is refused); the three relaxations need the file's consent;
 // `attestation: true` and `proofOfPossession: true` cannot be switched off; in a
 // release build a declared block names its `url`, and Dart may give `enrollmentUrl`,
-// `renewalUrl`, `tokenHosts`, `clientCertHosts` and `ios.resolve` only where the
-// file names them (where the device's token, identity and connections go is the
-// file's call); `require` only tightens (its
-// protections stay on, its `requireCaTrust` hosts are added to Dart's, its
-// expected ids are fixed, its grace is the most Dart may ask for); `vaultFiles`
-// fixes those files' signature key, encryption and lock, and a Dart vault file
-// it does not name is refused.
+// `renewalUrl`, `tokenHosts`, `clientCertHosts`, `healthEndpoint` and `ios.resolve`
+// only where the file names them (where the device's token, identity and
+// connections go, and which health check may roll a new config back, is the
+// file's call); a release build never raises `maxClientCertLifetimeDays` past
+// the block's value in the file (or the library's 825 days); `require` only
+// tightens (its protections stay on, its `requireCaTrust` hosts are added to
+// Dart's, its expected ids are fixed, its grace is the most Dart may ask for —
+// in a release build none when it names none; with its `requireUnlockedDevice`
+// Dart may ask for `ios.requireUnlockedDeviceAllowFallback` only where
+// `require.requireUnlockedDeviceAllowFallback` allows it, in any build);
+// `managedTrustRoots` widens trust, so a release build takes it from `require`
+// only; `vaultFiles` fixes those files' signature key, encryption and lock (and
+// `wipeWhenStale: true` turns that on), and a Dart vault file it does not name
+// is refused — in a release build also when the file has no `vaultFiles` section.
+// Every key the parser reads has a release policy in ``ConfigFieldPolicy``.
 //
 // Without it, a release build refuses a config with Config APIs or static
 // pins — the trust anchors would come from Dart alone — unless the app's
 // Info.plist says `PinVaultAllowNoNativeSecurityFile` = YES; the three
-// relaxations stay refused from Dart then. A release build caps
-// `expiredConfigGrace` at 7 days whatever the file says.
+// relaxations and `managedTrustRoots` stay refused from Dart then. A release
+// build caps `expiredConfigGrace` at 7 days whatever the file says.
 import Foundation
 import PinVault
 
@@ -62,6 +71,12 @@ public struct NativeSecurity {
         var clientCertHosts: [String]? = nil
         var enrollmentUrl: String? = nil
         var renewalUrl: String? = nil
+        /// The post-update health check's path. An unhealthy answer rolls every new
+        /// config back, so in a release build Dart may not point it elsewhere (a pin
+        /// removed for a leaked key would stay until the old config expires).
+        var healthEndpoint: String? = nil
+        /// The longest issued client certificate the block accepts; a release build lets Dart lower it only.
+        var maxClientCertLifetimeDays: Int? = nil
     }
 
     /// The `require` section: protections Dart cannot switch off.
@@ -79,6 +94,10 @@ public struct NativeSecurity {
         var vaultFileMaxOfflineAgeMs: Int64? = nil
         /// `ios.userAuthStrength`, fixed.
         var userAuthStrength: UserAuthStrength? = nil
+        /// With ``requireUnlockedDevice``: a key without the unlocked-only flag is accepted
+        /// where it cannot be made that way. Dart asks for that (`ios.requireUnlockedDeviceAllowFallback`)
+        /// only where the file allows it (review 2026-11-12): it turns "fail" into a weaker key.
+        var requireUnlockedDeviceAllowFallback = false
     }
 
     /// One `vaultFiles` entry: what Dart cannot change about that file.
@@ -88,6 +107,8 @@ public struct NativeSecurity {
         let userAuth: UserAuth?
         /// The most `maxOfflineAge` Dart may give this file (and the value when Dart gives none).
         var maxOfflineAgeMs: Int64? = nil
+        /// On here: Dart cannot leave a stale copy on the device.
+        var wipeWhenStale = false
     }
 
     /// The Info.plist key with which an app accepts a release start without the file.
@@ -148,7 +169,9 @@ public struct NativeSecurity {
                     proofOfPossession: try b.bool("proofOfPossession") == true,
                     clientCertHosts: try b.stringList("clientCertHosts", maxItems: 64, maxLength: 2048),
                     enrollmentUrl: try ConfigParser.httpsUrl(b, "enrollmentUrl"),
-                    renewalUrl: try ConfigParser.httpsUrl(b, "renewalUrl")
+                    renewalUrl: try ConfigParser.httpsUrl(b, "renewalUrl"),
+                    healthEndpoint: try ConfigParser.relEndpoint(b, "healthEndpoint", maxLength: 512),
+                    maxClientCertLifetimeDays: try b.int("maxClientCertLifetimeDays", min: 1, max: 3650)
                 )
                 try b.finish()
             }
@@ -171,6 +194,7 @@ public struct NativeSecurity {
                 require.expiredConfigGraceMs = try r.int64("expiredConfigGraceSeconds", min: 0, max: maxReleaseGraceMs / 1000).map { $0 * 1000 }
                 require.vaultFileMaxOfflineAgeMs = try r.int64("vaultFileMaxOfflineAgeSeconds", min: 1, max: maxOfflineAgeS).map { $0 * 1000 }
                 require.userAuthStrength = try r.enumValue("userAuthStrength", UserAuthStrength.self)
+                require.requireUnlockedDeviceAllowFallback = try r.bool("requireUnlockedDeviceAllowFallback") == true
                 // Android-only (signer digests): read for the shape, used by the Android side.
                 _ = try r.stringList("expectedSignerSha256", maxItems: 16, maxLength: 128)
                 try r.finish()
@@ -185,7 +209,8 @@ public struct NativeSecurity {
                         signaturePublicKey: try f.string("signaturePublicKey", maxLength: ConfigParser.keyLength, multiline: true),
                         encryption: try f.enumValue("encryption", VaultFileEncryption.self),
                         userAuth: try f.enumValue("userAuth", UserAuth.self),
-                        maxOfflineAgeMs: try f.int64("maxOfflineAgeSeconds", min: 1, max: maxOfflineAgeS).map { $0 * 1000 }
+                        maxOfflineAgeMs: try f.int64("maxOfflineAgeSeconds", min: 1, max: maxOfflineAgeS).map { $0 * 1000 },
+                        wipeWhenStale: try f.bool("wipeWhenStale") == true
                     )
                     try f.finish()
                 }

@@ -9,28 +9,42 @@
 //                      "clientCaPins", "allowUnsigned", "allowUnpinnedConfigApi",
 //                      "allowServerGeneratedKey", "url", "attestation", "tokenHosts", "proofOfPossession",
 //                      "clientCertHosts",
-//                      "enrollmentUrl", "renewalUrl" }],
+//                      "enrollmentUrl", "renewalUrl", "healthEndpoint", "maxClientCertLifetimeDays" }],
 //     "staticPins": { "pins": [...], "version": 1 },
 //     "ios": { "resolve": { "<host>": "<address>" } },
-//     "require": { "requireUnlockedDevice", "requireHardwareBackedKeys",
-//                  "requirePinnedReactNativeNetworking", "managedTrustRoots",
+//     "require": { "requireUnlockedDevice", "requireUnlockedDeviceAllowFallback", "requireHardwareBackedKeys",
+//                  "requirePinnedReactNativeNetworking", "allowUnpinnedReactNativeNetworking", "managedTrustRoots",
 //                  "wipeVaultFilesOnRevocation", "requireCaTrust", "expectedBundleIds",
 //                  "expectedTeamIds", "userAuthStrength", "expiredConfigGraceSeconds",
 //                  "vaultFileMaxOfflineAgeSeconds", "expectedSignerSha256" (Android's, read for the shape) },
-//     "vaultFiles": [{ "key", "signaturePublicKey", "encryption", "userAuth", "maxOfflineAgeSeconds" }] }
+//     "vaultFiles": [{ "key", "signaturePublicKey", "encryption", "userAuth", "maxOfflineAgeSeconds",
+//                      "wipeWhenStale" }] }
 //
 // When the file is there: every JS Config API (and JS `staticPins`) must be
 // declared in it; a declared field is the value (JS may omit or repeat it, a
 // different value is refused); the three relaxations need the file's consent;
 // `attestation: true` and `proofOfPossession: true` cannot be switched off; in a
 // release build a declared block names its `url`, and JS may give `enrollmentUrl`,
-// `renewalUrl`, `tokenHosts`, `clientCertHosts` and `ios.resolve` only where the
-// file names them (where the device's token, identity and connections go is the
-// file's call); `require` only tightens (its
+// `renewalUrl`, `tokenHosts`, `clientCertHosts`, `healthEndpoint` and `ios.resolve`
+// only where the file names them (where the device's token, identity and
+// connections go, and which health answer rolls a new config back, is the file's
+// call); a release build never takes a `maxClientCertLifetimeDays` above the
+// block's (default 825 days); `require` only tightens (its
 // protections stay on, its `requireCaTrust` hosts are added to JS's, its
-// expected ids are fixed, its grace is the most JS may ask for); `vaultFiles`
-// fixes those files' signature key, encryption and lock, and a JS vault file
-// it does not name is refused.
+// expected ids are fixed, its grace is the most JS may ask for — none in a
+// release build when it names none); `ios.requireUnlockedDeviceAllowFallback` is
+// refused in any build while the file requires an unlocked device without
+// `requireUnlockedDeviceAllowFallback`; `vaultFiles` fixes those files' signature
+// key, encryption and lock (`wipeWhenStale: true` forces it on), and a JS vault
+// file it does not name is refused — in a release build also when the file has
+// no `vaultFiles` section.
+//
+// In a release build `managedTrustRoots: true` (it widens trust to hosts without
+// a pin entry) comes only from the file's `require.managedTrustRoots`, with or
+// without a file, and `requirePinnedReactNativeNetworking: false` from JS is refused
+// unless the file says `require.allowUnpinnedReactNativeNetworking: true` (or the
+// Info.plist opted out natively with `PinVaultPinReactNativeNetworking` = NO).
+// What each JS key may decide is listed in ``ConfigFieldPolicy``.
 //
 // Without it, a release build refuses a config with Config APIs or static
 // pins — the trust anchors would come from JS alone — unless the app's
@@ -62,6 +76,12 @@ public struct NativeSecurity {
         var clientCertHosts: [String]? = nil
         var enrollmentUrl: String? = nil
         var renewalUrl: String? = nil
+        /// The post-update health check's path. An unhealthy answer rolls every
+        /// new config back, so in a release build JS may not point it elsewhere
+        /// (a pin removed for a leaked key would stay until the old config expires).
+        var healthEndpoint: String? = nil
+        /// The longest issued client certificate the block accepts; a release build lets JS lower it only.
+        var maxClientCertLifetimeDays: Int? = nil
     }
 
     /// The `require` section: protections JS cannot switch off.
@@ -81,6 +101,13 @@ public struct NativeSecurity {
         var vaultFileMaxOfflineAgeMs: Int64? = nil
         /// `ios.userAuthStrength`, fixed.
         var userAuthStrength: UserAuthStrength? = nil
+        /// With `requireUnlockedDevice`: a key without the unlocked-only protection is
+        /// accepted where the device refuses it. JS asks for that (`ios.requireUnlockedDeviceAllowFallback`)
+        /// only where the file allows it (review 2026-11-12) — it turns "fail" into a weaker key.
+        var requireUnlockedDeviceAllowFallback = false
+        /// A release build lets JS say `requirePinnedReactNativeNetworking: false` (start goes on
+        /// although React Native's own https / wss is not pinned) only where the file says so.
+        var allowUnpinnedReactNativeNetworking = false
     }
 
     /// One `vaultFiles` entry: what JS cannot change about that file.
@@ -90,6 +117,8 @@ public struct NativeSecurity {
         let userAuth: UserAuth?
         /// The most `maxOfflineAge` JS may give this file (and the value when JS gives none).
         var maxOfflineAgeMs: Int64? = nil
+        /// On here: JS cannot leave a stale copy on the device.
+        var wipeWhenStale = false
     }
 
     /// The Info.plist key with which an app accepts a release start without the file.
@@ -150,7 +179,9 @@ public struct NativeSecurity {
                     proofOfPossession: try b.bool("proofOfPossession") == true,
                     clientCertHosts: try b.stringList("clientCertHosts", maxItems: 64, maxLength: 2048),
                     enrollmentUrl: try ConfigParser.httpsUrl(b, "enrollmentUrl"),
-                    renewalUrl: try ConfigParser.httpsUrl(b, "renewalUrl")
+                    renewalUrl: try ConfigParser.httpsUrl(b, "renewalUrl"),
+                    healthEndpoint: try ConfigParser.relEndpoint(b, "healthEndpoint", maxLength: 512),
+                    maxClientCertLifetimeDays: try b.int("maxClientCertLifetimeDays", min: 1, max: 3650)
                 )
                 try b.finish()
             }
@@ -174,6 +205,8 @@ public struct NativeSecurity {
                 require.expiredConfigGraceMs = try r.int64("expiredConfigGraceSeconds", min: 0, max: maxReleaseGraceMs / 1000).map { $0 * 1000 }
                 require.vaultFileMaxOfflineAgeMs = try r.int64("vaultFileMaxOfflineAgeSeconds", min: 1, max: maxOfflineAgeS).map { $0 * 1000 }
                 require.userAuthStrength = try r.enumValue("userAuthStrength", UserAuthStrength.self)
+                require.requireUnlockedDeviceAllowFallback = try r.bool("requireUnlockedDeviceAllowFallback") == true
+                require.allowUnpinnedReactNativeNetworking = try r.bool("allowUnpinnedReactNativeNetworking") == true
                 // Android-only (signer digests): read for the shape, used by the Android side.
                 _ = try r.stringList("expectedSignerSha256", maxItems: 16, maxLength: 128)
                 try r.finish()
@@ -188,7 +221,8 @@ public struct NativeSecurity {
                         signaturePublicKey: try f.string("signaturePublicKey", maxLength: ConfigParser.keyLength, multiline: true),
                         encryption: try f.enumValue("encryption", VaultFileEncryption.self),
                         userAuth: try f.enumValue("userAuth", UserAuth.self),
-                        maxOfflineAgeMs: try f.int64("maxOfflineAgeSeconds", min: 1, max: maxOfflineAgeS).map { $0 * 1000 }
+                        maxOfflineAgeMs: try f.int64("maxOfflineAgeSeconds", min: 1, max: maxOfflineAgeS).map { $0 * 1000 },
+                        wipeWhenStale: try f.bool("wipeWhenStale") == true
                     )
                     try f.finish()
                 }

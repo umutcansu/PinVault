@@ -27,16 +27,19 @@ import java.io.IOException
  *     "url": "https://config.example.com/", "attestation": true,
  *     "tokenHosts": ["api.example.com"], "proofOfPossession": true, "clientCertHosts": ["api.example.com:443"],
  *     "enrollmentUrl": "https://enroll.example.com/", "renewalUrl": "https://renew.example.com/",
+ *     "healthEndpoint": "health", "maxClientCertLifetimeDays": 90,
  *     "allowUnsigned": false, "allowUnpinnedConfigApi": false, "allowServerGeneratedKey": false
  *   }],
  *   "staticPins": { "pins": [ … ], "version": 1 },
  *   "require": {
- *     "requireUnlockedDevice": true, "requireHardwareBackedKeys": true,
+ *     "requireUnlockedDevice": true, "requireUnlockedDeviceAllowFallback": false,
+ *     "requireHardwareBackedKeys": true,
  *     "managedTrustRoots": true, "wipeVaultFilesOnRevocation": true,
  *     "requireCaTrust": ["api.example.com"], "expectedSignerSha256": ["…"],
  *     "expiredConfigGraceSeconds": 0, "vaultFileMaxOfflineAgeSeconds": 604800
  *   },
- *   "vaultFiles": [{ "key": "statement", "signaturePublicKey": "…", "encryption": "USER_AUTH", "userAuth": "REQUIRED", "maxOfflineAgeSeconds": 86400 }]
+ *   "vaultFiles": [{ "key": "statement", "signaturePublicKey": "…", "encryption": "USER_AUTH", "userAuth": "REQUIRED",
+ *                    "maxOfflineAgeSeconds": 86400, "wipeWhenStale": true }]
  * }
  * ```
  *
@@ -54,12 +57,26 @@ import java.io.IOException
  *   a declared block must name its `url`, and Dart may give `enrollmentUrl`,
  *   `renewalUrl`, `tokenHosts` and `clientCertHosts` only where the file names
  *   them (where the device's token and identity go is the file's call);
+ * - a block's `healthEndpoint` (an unhealthy answer rolls every new config
+ *   back) is the file's in a release build: Dart may only repeat it, and the
+ *   file's value (or the default) applies when Dart gives none;
+ * - a block's `maxClientCertLifetimeDays` is the most Dart may ask for in a
+ *   release build (the library's 825 days when the file names none);
  * - `ios.resolve` (top level) is the iOS side's; here it is read for the shape;
  * - `require` only tightens: a protection it turns on stays on whatever Dart
  *   says, `requireCaTrust` hosts are added to Dart's, `expectedSignerSha256` is
- *   fixed, and `expiredConfigGraceSeconds` is the most Dart may ask for;
- * - `vaultFiles` fixes those files' signature key, encryption and screen lock;
- *   with the section present, a Dart vault file it does not name is refused.
+ *   fixed, and `expiredConfigGraceSeconds` is the most Dart may ask for (in a
+ *   release build 0 when the file names none); with `requireUnlockedDevice`,
+ *   Dart's `android.requireUnlockedDeviceAllowFallback` is refused (in any
+ *   build) unless `requireUnlockedDeviceAllowFallback` is true here;
+ * - `vaultFiles` fixes those files' signature key, encryption and screen lock,
+ *   and `wipeWhenStale: true` there cannot be switched off; with the section
+ *   present — and in a release build even without it — a Dart vault file it
+ *   does not name is refused.
+ *
+ * `managedTrustRoots: true` widens trust (hosts without a pin entry are
+ * accepted through the signed config's roots): a release build refuses it from
+ * Dart unless `require.managedTrustRoots` is true here, with or without a file.
  *
  * Without the file, release builds (the app is not debuggable) refuse to start
  * a config with Config APIs or static pins: the trust anchors would come from
@@ -91,6 +108,12 @@ internal class NativeSecurity(
         val expiredConfigGraceMs: Long? = null,
         /** The most `vaultFileMaxOfflineAge` Dart may set (and the value when Dart sets none); null = no rule. */
         val vaultFileMaxOfflineAgeMs: Long? = null,
+        /**
+         * With [requireUnlockedDevice]: a key without the unlocked-only flag is
+         * accepted where the ROM refuses it. Dart asks for that only where the
+         * file allows it (review 2026-11-12) — it turns "fail" into a weaker key.
+         */
+        val requireUnlockedDeviceAllowFallback: Boolean = false,
     )
 
     /** One `vaultFiles` entry: what Dart cannot change about that file. */
@@ -100,6 +123,8 @@ internal class NativeSecurity(
         val userAuth: UserAuth?,
         /** The most `maxOfflineAge` Dart may give this file (and the value when Dart gives none). */
         val maxOfflineAgeMs: Long? = null,
+        /** On here: Dart cannot leave a stale copy on the device. */
+        val wipeWhenStale: Boolean = false,
     )
 
     class Block(
@@ -120,6 +145,14 @@ internal class NativeSecurity(
         val clientCertHosts: List<String>? = null,
         val enrollmentUrl: String? = null,
         val renewalUrl: String? = null,
+        /**
+         * The post-update health check's path. An unhealthy answer rolls every
+         * new config back, so in a release build Dart may not point it elsewhere
+         * (a pin removed for a leaked key would stay until the old config expires).
+         */
+        val healthEndpoint: String? = null,
+        /** The longest issued client certificate the block accepts; a release build lets Dart lower it only. */
+        val maxClientCertLifetimeDays: Int? = null,
     )
 
     companion object {
@@ -189,6 +222,8 @@ internal class NativeSecurity(
                         clientCertHosts = b.stringList("clientCertHosts", 64, 2048),
                         enrollmentUrl = httpsOnly(b, "enrollmentUrl"),
                         renewalUrl = httpsOnly(b, "renewalUrl"),
+                        healthEndpoint = ConfigParser.relEndpoint(b, "healthEndpoint", 512),
+                        maxClientCertLifetimeDays = b.int("maxClientCertLifetimeDays", 1, 3650),
                     )
                     b.finish()
                 }
@@ -208,6 +243,7 @@ internal class NativeSecurity(
                         expectedSignerSha256 = r.stringList("expectedSignerSha256", 16, 128),
                         expiredConfigGraceMs = r.long("expiredConfigGraceSeconds", 0, MAX_RELEASE_GRACE_MS / 1000)?.let { it * 1000 },
                         vaultFileMaxOfflineAgeMs = r.long("vaultFileMaxOfflineAgeSeconds", 1, MAX_OFFLINE_AGE_S)?.let { it * 1000 },
+                        requireUnlockedDeviceAllowFallback = r.bool("requireUnlockedDeviceAllowFallback") == true,
                     ).also {
                         // iOS-only (screen-lock strength): read for the shape, used by the iOS side.
                         r.string("userAuthStrength", 32)
@@ -227,6 +263,7 @@ internal class NativeSecurity(
                             encryption = f.enum("encryption", VaultFileEncryption.values()),
                             userAuth = f.enum("userAuth", UserAuth.values()),
                             maxOfflineAgeMs = f.long("maxOfflineAgeSeconds", 1, MAX_OFFLINE_AGE_S)?.let { it * 1000 },
+                            wipeWhenStale = f.bool("wipeWhenStale") == true,
                         )
                         f.finish()
                     }

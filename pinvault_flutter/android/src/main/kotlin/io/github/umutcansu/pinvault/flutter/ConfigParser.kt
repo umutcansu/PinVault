@@ -2,6 +2,7 @@ package io.github.umutcansu.pinvault.flutter
 
 import io.github.umutcansu.pinvault.api.PinVaultConnectionListener
 import io.github.umutcansu.pinvault.model.CertificateConfig
+import io.github.umutcansu.pinvault.model.ConfigApiBlock
 import io.github.umutcansu.pinvault.model.EnvironmentGuard
 import io.github.umutcansu.pinvault.model.HostPin
 import io.github.umutcansu.pinvault.model.PinVaultConfig
@@ -76,7 +77,7 @@ internal object ConfigParser {
             )
         }
         configApis?.forEach { addConfigApi(builder, it, native, release) }
-        vaultFiles?.forEach { addVaultFile(builder, it, tokens, native) }
+        vaultFiles?.forEach { addVaultFile(builder, it, tokens, native, release) }
         SecurityPolicy.staticPins("config.staticPins", staticPins, native)?.let { builder.staticPins(it) }
 
         root.int("maxRetryCount", 0, 10)?.let { builder.maxRetryCount(it) }
@@ -89,8 +90,11 @@ internal object ConfigParser {
             if (release && ms > NativeSecurity.MAX_RELEASE_GRACE_MS) {
                 throw BridgeInputException("${d.path}: a release build takes at most 7 days")
             }
-            nativeRequire.expiredConfigGraceMs?.let { max ->
-                if (ms > max) throw BridgeInputException("${d.path}: longer than the app's native security file allows (${max / 1000} s)")
+            // With a native file, a release build's grace is the file's (0 when it names none):
+            // Dart lengthening it keeps an expired pin set alive (review 2026-11-12).
+            val max = nativeRequire.expiredConfigGraceMs ?: if (release && native != null) 0L else null
+            max?.let {
+                if (ms > it) throw BridgeInputException("${d.path}: longer than the app's native security file allows (${it / 1000} s)")
             }
             builder.expiredConfigGrace(amount, unit)
         } ?: nativeRequire.expiredConfigGraceMs?.let { builder.expiredConfigGrace(it, TimeUnit.MILLISECONDS) }
@@ -109,7 +113,14 @@ internal object ConfigParser {
         } ?: nativeRequire.vaultFileMaxOfflineAgeMs?.let { builder.vaultFileMaxOfflineAge(it, TimeUnit.MILLISECONDS) }
         val requireUnlocked = root.bool("requireUnlockedDevice") == true || nativeRequire.requireUnlockedDevice
         if (root.bool("requireHardwareBackedKeys") == true || nativeRequire.requireHardwareBackedKeys) builder.requireHardwareBackedKeys()
-        if (root.bool("managedTrustRoots") == true || nativeRequire.managedTrustRoots) builder.managedTrustRoots()
+        // Managed trust roots WIDEN trust (hosts without a pin entry are accepted through the
+        // signed config's roots): a relaxation, which a release build takes from the file only.
+        val dartTrustRoots = root.bool("managedTrustRoots") == true
+        if (release && dartTrustRoots && !nativeRequire.managedTrustRoots) {
+            throw BridgeInputException("config.managedTrustRoots: refused from Dart; a release build takes it only from the app's native " +
+                "security file (require.managedTrustRoots): it widens trust to hosts without a pin entry")
+        }
+        if (dartTrustRoots || nativeRequire.managedTrustRoots) builder.managedTrustRoots()
         val signers = root.stringList("expectedSignerSha256", 16, 128)
         nativeRequire.expectedSignerSha256?.let { fixed ->
             if (signers != null && !NativeSecurity.sameKeys(signers.map(String::lowercase), fixed.map(String::lowercase))) {
@@ -133,6 +144,12 @@ internal object ConfigParser {
         }
         if (allowFallback && !requireUnlocked) {
             throw BridgeInputException("config.android.requireUnlockedDeviceAllowFallback: needs requireUnlockedDevice: true")
+        }
+        // The file's requireUnlockedDevice is a protection: Dart cannot trade it for a weaker key
+        // on a ROM that refuses the flag unless the file allows that fallback (review 2026-11-12).
+        if (allowFallback && nativeRequire.requireUnlockedDevice && !nativeRequire.requireUnlockedDeviceAllowFallback) {
+            throw BridgeInputException("config.android.requireUnlockedDeviceAllowFallback: refused; the app's native security file " +
+                "requires an unlocked device and does not allow the fallback (require.requireUnlockedDeviceAllowFallback)")
         }
         if (requireUnlocked) builder.requireUnlockedDevice(allowFallback)
         // iOS-only settings: the iOS side reads them; here only their shape is checked.
@@ -171,7 +188,7 @@ internal object ConfigParser {
      * value — a scheme (`://`) or a root (`/`, `\`) — would silently retarget the
      * request past the pinned host, so it is refused. Returns null when the optional field is absent.
      */
-    private fun relEndpoint(f: Fields, key: String, max: Int): String? {
+    internal fun relEndpoint(f: Fields, key: String, max: Int): String? {
         val v = f.string(key, max) ?: return null
         // The URL parser skips leading whitespace and reads `\` as `/`: " //host/x"
         // and "https:\\host/x" passed a check that only looked at the first character.
@@ -289,6 +306,21 @@ internal object ConfigParser {
                 }
             }
         }
+        // The health check decides whether a new config stays: an answer that is not "ok"
+        // rolls it back. A release build takes the path from the file (or the default).
+        if (release && nativeBlock != null && healthEndpoint != null && healthEndpoint != nativeBlock.healthEndpoint) {
+            throw BridgeInputException("${b.path}.healthEndpoint: a release build takes it only from the app's native security file " +
+                "(${native?.source}); declare healthEndpoint for Config API '$id' there")
+        }
+        val fixedHealthEndpoint = nativeBlock?.healthEndpoint?.also { if (healthEndpoint != null && it != healthEndpoint) fixed("healthEndpoint") } ?: healthEndpoint
+        // The longest identity the block accepts: Dart may lower it, a release build never raises it
+        // past the file's value (or the library's default, 825 days).
+        val lifetimeCap = nativeBlock?.maxClientCertLifetimeDays ?: ConfigApiBlock.DEFAULT_MAX_CLIENT_CERT_LIFETIME_DAYS
+        if (release && nativeBlock != null && maxLifetime != null && maxLifetime > lifetimeCap) {
+            throw BridgeInputException("${b.path}.maxClientCertLifetimeDays: a release build takes at most $lifetimeCap " +
+                "(the app's native security file, ${native?.source}, may raise it)")
+        }
+        val lifetime = maxLifetime ?: nativeBlock?.maxClientCertLifetimeDays
         if (nativeBlock?.attestation == true && dartAttestation == false) {
             throw BridgeInputException("${b.path}.attestation: the app's native security file turns it on; Dart cannot turn it off")
         }
@@ -330,7 +362,7 @@ internal object ConfigParser {
         builder.configApi(id, blockUrl) {
             sec.bootstrapPins?.let { this.bootstrapPins(it) }
             configEndpoint?.let { this.configEndpoint(it) }
-            healthEndpoint?.let { this.healthEndpoint(it) }
+            fixedHealthEndpoint?.let { this.healthEndpoint(it) }
             sec.oneKey?.let { this.signaturePublicKey(it) }
             sec.keys?.let { this.signaturePublicKeys(it) }
             sec.requiredSignatures?.let { this.requiredSignatures(it) }
@@ -343,7 +375,7 @@ internal object ConfigParser {
             if (native != null && (sec.allowUnsigned || sec.allowUnpinned)) this.allowRelaxationsInRelease()
             if (sec.allowServerKey) this.allowServerGeneratedKey()
             sec.clientCaPins?.let { this.clientCaPins(it) }
-            maxLifetime?.let { this.maxClientCertLifetimeDays(it) }
+            lifetime?.let { this.maxClientCertLifetimeDays(it) }
             certHosts?.let { this.clientCertHosts(it) }
             enrollmentEndpoint?.let { this.enrollmentEndpoint(it) }
             clientCertEndpoint?.let { this.clientCertEndpoint(it) }
@@ -361,7 +393,7 @@ internal object ConfigParser {
         }
     }
 
-    private fun addVaultFile(builder: PinVaultConfig.Builder, f: Fields, tokens: VaultTokenStore, native: NativeSecurity?) {
+    private fun addVaultFile(builder: PinVaultConfig.Builder, f: Fields, tokens: VaultTokenStore, native: NativeSecurity?, release: Boolean) {
         val key = f.requireString("key", 128)
         // The same rule as the library's (the key names the stored copy's file).
         if (!VAULT_KEY.matches(key) || key.all { it == '.' }) {
@@ -382,7 +414,12 @@ internal object ConfigParser {
         // A file the native security file names keeps its signature key, encryption and lock.
         val declared = native?.vaultFiles?.let { files ->
             files[key] ?: throw BridgeInputException("${f.path}: vault file '$key' is not declared in the app's native security file (${native.source})")
-        }
+        } ?: if (release && native != null) {
+            // A release build with a native file takes a vault file's signature key, encryption and
+            // screen lock from it: without a vaultFiles section the bundle would choose them (review 2026-11-12).
+            throw BridgeInputException("${f.path}: vault file '$key' is not declared in the app's native security file (${native.source}); " +
+                "a release build takes vault files only from its vaultFiles section")
+        } else null
         fun fixed(field: String): Nothing =
             throw BridgeInputException("${f.path}.$field: differs from the app's native security file (${native?.source}); the native value is fixed")
         val signatureKey = declared?.signaturePublicKey?.also { n ->
@@ -418,7 +455,7 @@ internal object ConfigParser {
             encryption?.let { this.encryption(it) }
             userAuth?.let { this.userAuth(it) }
             offlineAge?.let { this.maxOfflineAge(it.first, it.second) }
-            if (wipeWhenStale) this.wipeWhenStale()
+            if (wipeWhenStale || declared?.wipeWhenStale == true) this.wipeWhenStale()
         }
     }
 

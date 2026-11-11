@@ -32,7 +32,8 @@ public enum ConfigParser {
     ///   - native: the app's native security file (``NativeSecurity``); nil = none.
     ///   - release: a release build: without a native file, a config with Config APIs or static
     ///     pins is refused (unless `noFileAllowed`) and the relaxations (`allowUnsigned`, …) are
-    ///     refused from JS; `expiredConfigGrace` is capped.
+    ///     refused from JS; `expiredConfigGrace` is capped. The release rules of every key are
+    ///     listed in ``ConfigFieldPolicy`` (the header of NativeSecurity.swift describes them).
     ///   - noFileAllowed: the app's Info.plist accepts a release start without the file (``NativeSecurity/noFileInfoKey``).
     public static func parse(
         _ json: String,
@@ -61,7 +62,7 @@ public enum ConfigParser {
         for api in configApis ?? [] {
             try addConfigApi(builder, api, native: native, release: release)
         }
-        for file in vaultFiles ?? [] { try addVaultFile(builder, file, tokens, native: native) }
+        for file in vaultFiles ?? [] { try addVaultFile(builder, file, tokens, native: native, release: release) }
         if let pins = try SecurityPolicy.staticPins(path: "config.staticPins", js: jsStaticPins, native: native) {
             builder.staticPins(pins)
         }
@@ -74,7 +75,9 @@ public enum ConfigParser {
             let (a, u) = try duration(d)
             let ms = millis(a, u)
             if release && ms > NativeSecurity.maxReleaseGraceMs { throw BridgeInputError("\(d.path): a release build takes at most 7 days") }
-            if let max = require.expiredConfigGraceMs, ms > max {
+            // With a native file, a release build's grace is the file's (0 when it names none):
+            // JS lengthening it keeps an expired pin set alive (review 2026-11-12).
+            if let max = require.expiredConfigGraceMs ?? (release && native != nil ? 0 : nil), ms > max {
                 throw BridgeInputError("\(d.path): longer than the app's native security file allows (\(max / 1000) s)")
             }
             builder.expiredConfigGrace(a, u)
@@ -101,7 +104,14 @@ public enum ConfigParser {
         }
         let requireUnlocked = try root.bool("requireUnlockedDevice") == true || require.requireUnlockedDevice
         if try root.bool("requireHardwareBackedKeys") == true || require.requireHardwareBackedKeys { builder.requireHardwareBackedKeys() }
-        if try root.bool("managedTrustRoots") == true || require.managedTrustRoots { builder.managedTrustRoots() }
+        // Managed trust roots WIDEN trust (hosts without a pin entry are accepted through the
+        // signed config's roots): a relaxation, which a release build takes from the file only.
+        let jsTrustRoots = try root.bool("managedTrustRoots") == true
+        if release && jsTrustRoots && !require.managedTrustRoots {
+            throw BridgeInputError("config.managedTrustRoots: refused from JS; a release build takes it only from the app's native "
+                + "security file (require.managedTrustRoots): it widens trust to hosts without a pin entry")
+        }
+        if jsTrustRoots || require.managedTrustRoots { builder.managedTrustRoots() }
         if let v = try root.stringList("expectedSignerSha256", maxItems: 16, maxLength: 128) { builder.expectedSignerSha256(v) }
 
         var guardTimeout: Int64?
@@ -116,7 +126,19 @@ public enum ConfigParser {
         // On by default in a release build — unless the app opted out of pinning RN's
         // networking natively (Info.plist PinVaultPinReactNativeNetworking = NO).
         // The native security file can pin this on (RN-3): JS may turn it on, never off.
-        let requirePinned = (try root.bool("requirePinnedReactNativeNetworking") ?? (release && reactNetworkingEnabled))
+        // Whether RN's https / wss is pinned is native here (the handler and the Info.plist
+        // switch); JS's `false` only lets start go on when the check finds it unpinned (another
+        // RCTURLRequestHandler took https, SocketRocket is not PinVault's). A release build
+        // accepts that only where the file says so (review 2026-11-12) — or where the Info.plist
+        // already opted out natively, which makes false the default anyway.
+        let jsRequirePinned = try root.bool("requirePinnedReactNativeNetworking")
+        if release && jsRequirePinned == false && reactNetworkingEnabled && !require.allowUnpinnedReactNativeNetworking {
+            throw BridgeInputError(
+                "config.requirePinnedReactNativeNetworking: refused from JS; a release build leaves React Native's networking "
+                    + "unpinned only where the app's native security file says require.allowUnpinnedReactNativeNetworking: true"
+            )
+        }
+        let requirePinned = (jsRequirePinned ?? (release && reactNetworkingEnabled))
             || require.requirePinnedReactNativeNetworking
         // Android-only settings: the Android side reads them; here only their shape is checked.
         _ = try root.object("android")
@@ -153,6 +175,12 @@ public enum ConfigParser {
         }
         if allowFallback && !requireUnlocked {
             throw BridgeInputError("config.ios.requireUnlockedDeviceAllowFallback: needs requireUnlockedDevice: true")
+        }
+        // The file's requireUnlockedDevice is a protection: JS cannot trade it for a weaker key
+        // where the device refuses the flag unless the file allows that fallback (review 2026-11-12).
+        if allowFallback && require.requireUnlockedDevice && !require.requireUnlockedDeviceAllowFallback {
+            throw BridgeInputError("config.ios.requireUnlockedDeviceAllowFallback: refused; the app's native security file "
+                + "requires an unlocked device and does not allow the fallback (require.requireUnlockedDeviceAllowFallback)")
         }
         if requireUnlocked { builder.requireUnlockedDevice(allowFallback: allowFallback) }
 
@@ -343,6 +371,25 @@ public enum ConfigParser {
             if n != url { throw fixed("url") }
             blockUrl = n
         }
+        // The health check decides whether a new config stays: an answer that is not "ok"
+        // rolls it back. A release build takes the path from the file (or the default).
+        if release, let nativeBlock, let healthEndpoint, healthEndpoint != nativeBlock.healthEndpoint {
+            throw BridgeInputError("\(b.path).healthEndpoint: a release build takes it only from the app's native security file "
+                + "(\(native?.source ?? "")); declare healthEndpoint for Config API '\(id)' there")
+        }
+        var fixedHealthEndpoint = healthEndpoint
+        if let n = nativeBlock?.healthEndpoint {
+            if let j = healthEndpoint, j != n { throw fixed("healthEndpoint") }
+            fixedHealthEndpoint = n
+        }
+        // The longest identity the block accepts: JS may lower it, a release build never raises it
+        // past the file's value (or the library's default, 825 days).
+        let lifetimeCap = nativeBlock?.maxClientCertLifetimeDays ?? ConfigApiBlock.defaultMaxClientCertLifetimeDays
+        if release, nativeBlock != nil, let maxLifetime, maxLifetime > lifetimeCap {
+            throw BridgeInputError("\(b.path).maxClientCertLifetimeDays: a release build takes at most \(lifetimeCap) "
+                + "(the app's native security file, \(native?.source ?? ""), may raise it)")
+        }
+        let lifetime = maxLifetime ?? nativeBlock?.maxClientCertLifetimeDays
         if nativeBlock?.attestation == true && jsAttestation == false {
             throw BridgeInputError("\(b.path).attestation: the app's native security file turns it on; JS cannot turn it off")
         }
@@ -412,7 +459,7 @@ public enum ConfigParser {
         builder.configApi(id, url: blockUrl) { api in
             if let v = sec.bootstrapPins { api.bootstrapPins(v) }
             if let configEndpoint { api.configEndpoint(configEndpoint) }
-            if let healthEndpoint { api.healthEndpoint(healthEndpoint) }
+            if let fixedHealthEndpoint { api.healthEndpoint(fixedHealthEndpoint) }
             if let v = sec.oneKey { api.signaturePublicKey(v) }
             if let v = sec.keys { api.signaturePublicKeys(v) }
             if let v = sec.requiredSignatures { api.requiredSignatures(v) }
@@ -425,7 +472,7 @@ public enum ConfigParser {
             if native != nil, sec.allowUnsigned || sec.allowUnpinned { api.allowRelaxationsInRelease() }
             if sec.allowServerKey { api.allowServerGeneratedKey() }
             if let v = sec.clientCaPins { api.clientCaPins(v) }
-            if let maxLifetime { api.maxClientCertLifetimeDays(maxLifetime) }
+            if let lifetime { api.maxClientCertLifetimeDays(lifetime) }
             if let certHosts { api.clientCertHosts(certHosts) }
             if let enrollmentEndpoint { api.enrollmentEndpoint(enrollmentEndpoint) }
             if let clientCertEndpoint { api.clientCertEndpoint(clientCertEndpoint) }
@@ -443,7 +490,8 @@ public enum ConfigParser {
         }
     }
 
-    static func addVaultFile(_ builder: PinVaultConfig.Builder, _ f: Fields, _ tokens: VaultTokenStore, native: NativeSecurity?) throws {
+    static func addVaultFile(_ builder: PinVaultConfig.Builder, _ f: Fields, _ tokens: VaultTokenStore, native: NativeSecurity?,
+                             release: Bool) throws {
         let key = try f.requireString("key", maxLength: 128)
         let endpoint = try vaultEndpoint(f)
         let jsSignatureKey = try f.string("signaturePublicKey", maxLength: keyLength, multiline: true)
@@ -462,6 +510,13 @@ public enum ConfigParser {
         var signatureKey = jsSignatureKey
         var encryption = jsEncryption
         var userAuth = jsUserAuth
+        var forceWipe = false
+        if release, let native, native.vaultFiles == nil {
+            // A release build with a native file takes a vault file's signature key, encryption and
+            // screen lock from it: without a vaultFiles section the bundle would choose them (review 2026-11-12).
+            throw BridgeInputError("\(f.path): vault file '\(key)' is not declared in the app's native security file (\(native.source)); "
+                + "a release build takes vault files only from its vaultFiles section")
+        }
         if let files = native?.vaultFiles {
             guard let declared = files[key] else {
                 throw BridgeInputError("\(f.path): vault file '\(key)' is not declared in the app's native security file (\(native?.source ?? ""))")
@@ -486,6 +541,7 @@ public enum ConfigParser {
             if let max = declared.maxOfflineAgeMs, maxOfflineAge == nil {
                 offlineAge = (max, .milliseconds)
             }
+            forceWipe = declared.wipeWhenStale
         }
         // The tighter of the file's own cap and the config-wide one: a per-file value
         // overrides the config's, so it must not escape the config-wide cap either.
@@ -514,7 +570,7 @@ public enum ConfigParser {
             if let encryption { file.encryption(encryption) }
             if let userAuth { file.userAuth(userAuth) }
             if let (amount, unit) = offlineAge { file.maxOfflineAge(amount, unit) }
-            if wipeWhenStale { file.wipeWhenStale() }
+            if wipeWhenStale || forceWipe { file.wipeWhenStale() }
         }
     }
 

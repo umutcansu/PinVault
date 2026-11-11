@@ -104,12 +104,20 @@ internal class Fields(val path: String, private val map: Map<String, Any?>) {
 
     private fun raw(key: String): Any? {
         known += key
+        readHook?.invoke(path, key)
         return map[key]
     }
 
     fun has(key: String): Boolean {
         known += key
+        readHook?.invoke(path, key)
         return map[key] != null
+    }
+
+    companion object {
+        /** Tests only: told of every key a parser asks for (see `ConfigFieldPolicyTest`). */
+        @Volatile
+        internal var readHook: ((path: String, key: String) -> Unit)? = null
     }
 
     /** Refuses every key no accessor asked for. */
