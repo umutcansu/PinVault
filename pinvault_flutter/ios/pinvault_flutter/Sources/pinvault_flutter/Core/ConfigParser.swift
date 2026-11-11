@@ -94,7 +94,7 @@ public enum ConfigParser {
         } else if let max = require.vaultFileMaxOfflineAgeMs {
             builder.vaultFileMaxOfflineAge(max, .milliseconds)
         }
-        if try root.bool("requireUnlockedDevice") == true || require.requireUnlockedDevice { builder.requireUnlockedDevice() }
+        let requireUnlocked = try root.bool("requireUnlockedDevice") == true || require.requireUnlockedDevice
         if try root.bool("requireHardwareBackedKeys") == true || require.requireHardwareBackedKeys { builder.requireHardwareBackedKeys() }
         if try root.bool("managedTrustRoots") == true || require.managedTrustRoots { builder.managedTrustRoots() }
         if let v = try root.stringList("expectedSignerSha256", maxItems: 16, maxLength: 128) { builder.expectedSignerSha256(v) }
@@ -110,7 +110,11 @@ public enum ConfigParser {
 
         // Android-only settings: the Android side reads them; here only their shape is checked.
         _ = try root.object("android")
+        // `requireUnlockedDevice(allowFallback: true)`: off unless the app asks for it here
+        // (the Android twin is `android.requireUnlockedDeviceAllowFallback`).
+        var allowFallback = false
         if let ios = try root.object("ios") {
+            allowFallback = try ios.bool("requireUnlockedDeviceAllowFallback") == true
             try applyResolve(try ios.stringMap("resolve", maxItems: 64, maxKeyLength: 255, maxValueLength: 255),
                              native: native, release: release, to: builder)
             if let v = try fixedList("config.ios.expectedBundleIds", require.expectedBundleIds,
@@ -135,6 +139,10 @@ public enum ConfigParser {
             if let v = require.expectedTeamIds { builder.expectedTeamId(v) }
             if let v = require.userAuthStrength { builder.userAuthStrength(v) }
         }
+        if allowFallback && !requireUnlocked {
+            throw BridgeInputError("config.ios.requireUnlockedDeviceAllowFallback: needs requireUnlockedDevice: true")
+        }
+        if requireUnlocked { builder.requireUnlockedDevice(allowFallback: allowFallback) }
 
         try root.finish()
         if let listener { builder.onConnectionEvent(listener) }
@@ -218,6 +226,29 @@ public enum ConfigParser {
             throw BridgeInputError("\(f.path).\(key): must be a relative path, not an absolute URL")
         }
         return v
+    }
+
+    /// A vault file's endpoint: required, held to the same rule as the block's
+    /// endpoints (`relEndpoint` — it used to be checked for `://` and a leading
+    /// slash only, so " //host/x" or "https:\\host/x" sent the file request and
+    /// the file's token to another host), and without a `..` segment: the
+    /// endpoint is resolved against the block's URL, and `..` would climb out of
+    /// the path the app's native side declared for that Config API.
+    static func vaultEndpoint(_ f: Fields) throws -> String {
+        guard let endpoint = try relEndpoint(f, "endpoint", maxLength: 512) else {
+            throw BridgeInputError("\(f.path).endpoint: required")
+        }
+        if hasParentSegment(endpoint) {
+            throw BridgeInputError("\(f.path).endpoint: must not contain a '..' path segment")
+        }
+        return endpoint
+    }
+
+    /// True when the path of `endpoint` has a `..` segment, written plainly or as `%2e` (URL parsers read both).
+    static func hasParentSegment(_ endpoint: String) -> Bool {
+        let path = endpoint.prefix { $0 != "?" && $0 != "#" }
+        return path.split(separator: "/", omittingEmptySubsequences: false)
+            .contains { $0.replacingOccurrences(of: "%2e", with: ".", options: .caseInsensitive) == ".." }
     }
 
     public static func hostPin(_ p: Fields) throws -> HostPin {
@@ -400,10 +431,7 @@ public enum ConfigParser {
 
     static func addVaultFile(_ builder: PinVaultConfig.Builder, _ f: Fields, _ tokens: VaultTokenStore, native: NativeSecurity?) throws {
         let key = try f.requireString("key", maxLength: 128)
-        let endpoint = try f.requireString("endpoint", maxLength: 512)
-        if endpoint.contains("://") || endpoint.hasPrefix("/") || endpoint.hasPrefix("\\") {
-            throw BridgeInputError("\(f.path).endpoint: must be a relative path, not an absolute URL")
-        }
+        let endpoint = try vaultEndpoint(f)
         let jsSignatureKey = try f.string("signaturePublicKey", maxLength: keyLength, multiline: true)
         let updateWithPins = try f.bool("updateWithPins")
         let storage = try f.enumValue("storage", StorageStrategy.self)

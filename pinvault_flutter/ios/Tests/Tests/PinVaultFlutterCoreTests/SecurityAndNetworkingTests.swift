@@ -72,6 +72,27 @@ final class SecurityAndNetworkingTests: XCTestCase {
         XCTAssertNoThrow(try parse(#"{"configApis":[{\#(base),"requiredSignatures":2}]}"#, native: twoKeys, release: false))
     }
 
+    // serverScope names the config store's namespace (a new one has no replay
+    // watermarks); clientCaPins say which CA may issue the device's identity.
+    func testAReleaseBuildTakesServerScopeAndClientCaPinsOnlyFromTheFile() throws {
+        let anchors = #""id":"default","url":"https://h.example:8081/","bootstrapPins":[{"hostname":"h.example","sha256":["\#(pinA)","\#(pinB)"]}]"#
+        let unscoped = try NativeSecurity.parse(#"{"configApis":[{\#(anchors),"signaturePublicKeys":["\#(key)"]}]}"#, source: "pinvault_security.json")
+        assertRefused(#"{"configApis":[{\#(base),"serverScope":"fresh-namespace"}]}"#, native: unscoped,
+                      "serverScope", "only from the app's native security file", "declare serverScope")
+        assertRefused(#"{"configApis":[{\#(base),"clientCaPins":["\#(evil)"]}]}"#, native: unscoped,
+                      "clientCaPins", "only from the app's native security file")
+
+        // Nothing set (or no pins) changes nothing; the file's values still apply; a debug build takes what it is given.
+        let plain = try XCTUnwrap(try parse(#"{"configApis":[{\#(base),"clientCaPins":[]}]}"#, native: unscoped).config.configApis["default"])
+        XCTAssertNil(plain.serverScope)
+        XCTAssertTrue(plain.clientCaPins.isEmpty)
+        XCTAssertEqual(try parse(#"{"configApis":[{\#(base),"serverScope":"default-tls"}]}"#, native: file).config.configApis["default"]?.serverScope, "default-tls")
+        let debug = try XCTUnwrap(try parse(#"{"configApis":[{\#(base),"serverScope":"fresh-namespace","clientCaPins":["\#(pinA)"]}]}"#,
+                                            native: unscoped, release: false).config.configApis["default"])
+        XCTAssertEqual(debug.serverScope, "fresh-namespace")
+        XCTAssertEqual(debug.clientCaPins, [pinA])
+    }
+
     func testADifferingTrustAnchorIsRefused() {
         assertRefused(#"{"configApis":[{\#(base),"bootstrapPins":[{"hostname":"h.example","sha256":["\#(pinA)","\#(evil)"]}]}]}"#,
                       native: file, "config.configApis[0].bootstrapPins", "fixed")

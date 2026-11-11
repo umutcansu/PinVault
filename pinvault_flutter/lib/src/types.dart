@@ -401,11 +401,18 @@ class IosSettings {
   /// `userAuthStrength(_:)`; `BIOMETRIC_CURRENT_SET` = `userAuthBiometricOnly()`.
   final String? userAuthStrength;
 
+  /// `requireUnlockedDevice(allowFallback: true)`: when the Keychain refuses a
+  /// key that works only while the device is unlocked, make it without that
+  /// requirement instead of failing with `UnlockedDeviceKeyRequiredException`
+  /// (the default since 2.9.0).
+  final bool? requireUnlockedDeviceAllowFallback;
+
   const IosSettings({
     this.resolve,
     this.expectedBundleIds,
     this.expectedTeamIds,
     this.userAuthStrength,
+    this.requireUnlockedDeviceAllowFallback,
   });
 
   Map<String, dynamic> toJson() => {
@@ -413,6 +420,8 @@ class IosSettings {
     if (expectedBundleIds != null) 'expectedBundleIds': expectedBundleIds,
     if (expectedTeamIds != null) 'expectedTeamIds': expectedTeamIds,
     if (userAuthStrength != null) 'userAuthStrength': userAuthStrength,
+    if (requireUnlockedDeviceAllowFallback != null)
+      'requireUnlockedDeviceAllowFallback': requireUnlockedDeviceAllowFallback,
   };
 }
 

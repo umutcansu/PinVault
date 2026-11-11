@@ -157,6 +157,12 @@ export type PinVaultConfig = {
     userAuthStrength?: 'DEVICE_OWNER' | 'BIOMETRIC_CURRENT_SET';
     /** The largest answer React Native's own https request may get (bytes, default 50 MiB, at most 256 MiB). */
     reactNativeMaxResponseBytes?: number;
+    /**
+     * `requireUnlockedDevice(allowFallback: true)`: when the Keychain refuses a key that
+     * works only while the device is unlocked, make it without that requirement instead
+     * of failing with `UnlockedDeviceKeyRequiredException` (the default since 2.9.0).
+     */
+    requireUnlockedDeviceAllowFallback?: boolean;
   };
 };
 

@@ -105,4 +105,68 @@ final class GuardTests: XCTestCase {
         g.answer("unknown", allowed: true)
         XCTAssertEqual(g.pendingCount, 0)
     }
+
+    // A WebSocket's upgrade is an HTTP request on the pinned connection: the same
+    // headers are the client's, plus the handshake's own.
+    func testASocketsUpgradeRequestRefusesWhatFetchRefusesAndTheHandshakeHeaders() {
+        for name in ["Host", "Connection", "Keep-Alive", "Proxy-Connection", "TE", "Trailer", "Transfer-Encoding", "Upgrade", "Content-Length",
+                     "host", "content-length", "UPGRADE"] {
+            XCTAssertEqual(PinnedFetch.refusedSocketHeader(name)?.contains("set by the HTTP client"), true, name)
+            XCTAssertEqual(PinnedFetch.refusedHeader(name), PinnedFetch.refusedSocketHeader(name), name)
+        }
+        for name in ["PinVault-Token", "pinvault-proof"] {
+            XCTAssertEqual(PinnedFetch.refusedSocketHeader(name)?.contains("set by PinVault itself"), true, name)
+        }
+        for name in ["Sec-WebSocket-Key", "sec-websocket-protocol", "SEC-WEBSOCKET-EXTENSIONS", "Sec-WebSocket-Version"] {
+            XCTAssertEqual(PinnedFetch.refusedSocketHeader(name)?.contains("WebSocket handshake"), true, name)
+            XCTAssertNil(PinnedFetch.refusedHeader(name), "fetch has no handshake")
+        }
+        for name in ["Authorization", "X-App-Session", "Origin", "Cookie", "Sec-Fetch-Mode"] {
+            XCTAssertNil(PinnedFetch.refusedSocketHeader(name), name)
+        }
+    }
+
+    func testASocketsSubprotocolsAreTokensBoundedAndListedOnce() throws {
+        XCTAssertEqual(try PinnedFetch.socketProtocols(nil), [])
+        XCTAssertEqual(try PinnedFetch.socketProtocols(["graphql-transport-ws", "v2.chat"]), ["graphql-transport-ws", "v2.chat"])
+        let bad: [[Any]] = [
+            ["a, b"], ["a b"], [""], ["a\r\nX-Injected: 1"], ["a\u{0}"], ["ä"], ["a;q=1"], [1], [NSNull()], ["a", "a"],
+            [String(repeating: "x", count: PinnedFetch.maxSocketProtocolLength + 1)],
+            (0...PinnedFetch.maxSocketProtocols).map { "p\($0)" },
+        ]
+        for list in bad {
+            XCTAssertThrowsError(try PinnedFetch.socketProtocols(list), "\(list)") { error in
+                XCTAssertEqual((error as? BridgeInputError)?.message.hasPrefix("protocols:"), true)
+            }
+        }
+    }
+
+    // `timeoutMs` is one limit for the whole exchange: two hops that are each
+    // inside it but together are not end in a timeout.
+    func testTheTimeLimitSpansEveryHopOfAnExchange() async throws {
+        func twoHops() async throws -> String {
+            try await Task.sleep(nanoseconds: 150_000_000)
+            try await Task.sleep(nanoseconds: 150_000_000)
+            return "late"
+        }
+        do {
+            _ = try await PinnedFetch.withDeadline(200) { try await twoHops() }
+            XCTFail("the deadline must end it")
+        } catch let error as PinVaultError {
+            guard case .io(let message, let cause) = error else { return XCTFail("\(error)") }
+            XCTAssertEqual(message, "timeout")
+            XCTAssertEqual((cause as? URLError)?.code, .timedOut)
+        }
+        let inTime = try await PinnedFetch.withDeadline(2000) { try await twoHops() }
+        XCTAssertEqual(inTime, "late")
+        let unlimited = try await PinnedFetch.withDeadline(nil) { "now" }
+        XCTAssertEqual(unlimited, "now")
+        // The operation's own failure is not turned into a timeout.
+        do {
+            _ = try await PinnedFetch.withDeadline(2000) { () async throws -> String in throw BridgeInputError("refused") }
+            XCTFail()
+        } catch {
+            XCTAssertTrue(error is BridgeInputError)
+        }
+    }
 }

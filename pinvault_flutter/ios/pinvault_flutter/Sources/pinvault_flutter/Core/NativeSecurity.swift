@@ -313,6 +313,10 @@ enum SecurityPolicy {
         // replay watermarks. In a release build they are the file's alone: a value
         // Dart could add and drop again would reset them at will (a default — 1,
         // no recovery keys — changes nothing and is let through).
+        // `serverScope` names the library's config store: another scope is another
+        // namespace, which starts with no watermarks at all — Dart code that sets one
+        // makes the device accept a replayed old config. `clientCaPins` decide which
+        // CA may issue the device's identity. Both follow the same rule.
         func anchorOnly<T>(_ key: String, _ n: T?, _ j: T?, isDefault: (T) -> Bool) throws -> T? {
             if release, n == nil, let j, !isDefault(j) {
                 throw BridgeInputError("\(path).\(key): a release build takes it only from the app's native security file (\(native.source)); "
@@ -326,8 +330,10 @@ enum SecurityPolicy {
             try anchorOnly("recoveryPublicKeys", block.recoveryPublicKeys, js.recoveryKeys) { $0.isEmpty })
         out.requiredRecovery = try one("requiredRecoverySignatures", block.requiredRecoverySignatures,
             try anchorOnly("requiredRecoverySignatures", block.requiredRecoverySignatures, js.requiredRecovery) { $0 == 1 })
-        out.serverScope = try one("serverScope", block.serverScope, js.serverScope)
-        out.clientCaPins = try list("clientCaPins", block.clientCaPins, js.clientCaPins)
+        out.serverScope = try one("serverScope", block.serverScope,
+            try anchorOnly("serverScope", block.serverScope, js.serverScope) { _ in false })
+        out.clientCaPins = try list("clientCaPins", block.clientCaPins,
+            try anchorOnly("clientCaPins", block.clientCaPins, js.clientCaPins) { $0.isEmpty })
         // The file is the source of truth for the relaxations too.
         out.allowUnsigned = block.allowUnsigned
         out.allowUnpinned = block.allowUnpinnedConfigApi

@@ -33,9 +33,14 @@ class PinVaultWebSocket {
   static int _counter = 0;
 
   /// Connects to a WSS endpoint. Fails closed if the URL is not `wss://`.
+  ///
+  /// [protocols] are the subprotocols to ask for (`Sec-WebSocket-Protocol`,
+  /// which [headers] may not carry): at most 8 tokens of at most 64
+  /// characters, none twice. Which one the server picked is not reported.
   static Future<PinVaultWebSocket> connect(
     String url, {
     Map<String, String>? headers,
+    List<String>? protocols,
   }) async {
     if (!url.startsWith('wss://')) {
       throw PinVaultWebSocketError(
@@ -49,9 +54,22 @@ class PinVaultWebSocket {
             'headers: "${entry.key}" is not a valid header name',
           );
         }
-        if (_libraryHeaders.contains(entry.key.toLowerCase())) {
+        final name = entry.key.toLowerCase();
+        if (_libraryHeaders.contains(name)) {
           throw PinVaultWebSocketError(
             'headers: "${entry.key}" is set by PinVault itself (a token host\'s socket carries it)',
+          );
+        }
+        // The upgrade is an HTTP request on the pinned connection: the headers
+        // `PinVault.fetch` refuses are refused here too (the native side checks again).
+        if (_clientHeaders.contains(name)) {
+          throw PinVaultWebSocketError(
+            'headers: "${entry.key}" is set by the HTTP client (host, connection and framing headers)',
+          );
+        }
+        if (name.startsWith('sec-websocket-')) {
+          throw PinVaultWebSocketError(
+            'headers: "${entry.key}" is set by the WebSocket handshake',
           );
         }
         if (entry.value.contains('\r') || entry.value.contains('\n')) {
@@ -59,6 +77,23 @@ class PinVaultWebSocket {
             'headers.${entry.key}: line breaks are not allowed',
           );
         }
+      }
+    }
+
+    if (protocols != null) {
+      if (protocols.length > 8) {
+        throw PinVaultWebSocketError('protocols: at most 8');
+      }
+      for (final name in protocols) {
+        // A token: no comma, space or control character can add a second value.
+        if (name.length > 64 || !_headerName.hasMatch(name)) {
+          throw PinVaultWebSocketError(
+            'protocols: each must be a token (RFC 7230) of at most 64 characters',
+          );
+        }
+      }
+      if (protocols.toSet().length != protocols.length) {
+        throw PinVaultWebSocketError('protocols: an entry is listed twice');
       }
     }
 
@@ -72,6 +107,7 @@ class PinVaultWebSocket {
         'socketId': socketId,
         'url': url,
         'headers': headers ?? const <String, String>{},
+        if (protocols != null && protocols.isNotEmpty) 'protocols': protocols,
       });
     } on PlatformException catch (e) {
       throw PinVaultWebSocketError(e.message ?? 'WebSocket connect failed');
@@ -153,6 +189,20 @@ final RegExp _headerName = RegExp(r"^[!#$%&'*+\-.^_`|~0-9A-Za-z]+$");
 
 /// The attestation headers: only the library sets them, for its token hosts.
 const Set<String> _libraryHeaders = {'pinvault-token', 'pinvault-proof'};
+
+/// The HTTP client's own headers (the native `PinnedFetch` list, lower case):
+/// the host the URL names, the connection and the body's framing.
+const Set<String> _clientHeaders = {
+  'host',
+  'connection',
+  'keep-alive',
+  'proxy-connection',
+  'te',
+  'trailer',
+  'transfer-encoding',
+  'upgrade',
+  'content-length',
+};
 
 /// A refused or failed WebSocket operation. Never carries TLS material.
 class PinVaultWebSocketError implements Exception {

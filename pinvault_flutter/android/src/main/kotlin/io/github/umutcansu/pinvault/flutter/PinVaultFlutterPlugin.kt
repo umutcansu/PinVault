@@ -450,15 +450,30 @@ class PinVaultFlutterPlugin : FlutterPlugin, MethodCallHandler, ActivityAware {
             return
         }
         val headers = call.argument<Map<String, String>>("headers") ?: emptyMap()
-        if (headers.keys.any { name -> PinnedFetch.LIBRARY_HEADERS.any { it.equals(name, ignoreCase = true) } }) {
-            result.error(E_INVALID_ARGUMENT, "ws_connect: PinVault-Token / PinVault-Proof are set by PinVault itself", null)
+        // The upgrade is an HTTP request on the pinned connection: what `fetch` refuses
+        // from the caller (the attestation headers, Host, the connection and framing
+        // headers) is refused here too, with the handshake's own Sec-WebSocket-*.
+        for (name in headers.keys) {
+            val why = PinnedFetch.refusedSocketHeader(name) ?: continue
+            result.error(E_INVALID_ARGUMENT, "ws_connect: headers.${name.take(40)}: $why", null)
+            return
+        }
+        // The subprotocols: the caller cannot set Sec-WebSocket-Protocol, the bridge
+        // writes it from the checked list.
+        val protocols = try {
+            PinnedFetch.socketProtocols(call.argument<List<Any?>>("protocols"))
+        } catch (e: BridgeInputException) {
+            result.error(E_INVALID_ARGUMENT, "ws_connect: ${e.message}", null)
             return
         }
         // Built here, so a bad URL or header is refused by connect() instead of
         // failing silently inside the event stream. OkHttp's message can carry a
         // header value: it is not passed on.
         val request = try {
-            Request.Builder().url(url).apply { headers.forEach { (k, v) -> addHeader(k, v) } }.build()
+            Request.Builder().url(url).apply {
+                headers.forEach { (k, v) -> addHeader(k, v) }
+                if (protocols.isNotEmpty()) header("Sec-WebSocket-Protocol", protocols.joinToString(", "))
+            }.build()
         } catch (e: IllegalArgumentException) {
             result.error(E_INVALID_ARGUMENT, "ws_connect: the URL or a header is not valid", null)
             return

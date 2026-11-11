@@ -121,6 +121,23 @@ class ConfigParserTest {
         refused("""{"configApis":[${api()}],"vaultFiles":[{"key":"k","endpoint":"https://evil.example/f","accessPolicy":"TOKEN"}]}""", "endpoint", "relative path")
     }
 
+    // A vault file's endpoint was checked for "://" and a leading slash only; it is
+    // resolved against the block's URL like the others, and carries the file's token.
+    @Test fun `a vault file endpoint follows the endpoint rule and has no parent segment`() {
+        fun file(endpoint: String) = """{"configApis":[${api()}],"vaultFiles":[{"key":"k","endpoint":"$endpoint"}]}"""
+        for (endpoint in listOf(" //evil.example/f", "https:\\\\evil.example/f", "http:evil.example/f", "api\\\\v1/f", "f ", "/abs")) {
+            refused(file(endpoint), "vaultFiles[0].endpoint", "relative path")
+        }
+        for (endpoint in listOf("../admin", "api/v1/vault/../../admin", "api/..", "api/%2e%2E/admin", "api/.%2e/admin", "..?x=1")) {
+            refused(file(endpoint), "vaultFiles[0].endpoint", "'..' path segment")
+        }
+        refused("""{"configApis":[${api()}],"vaultFiles":[{"key":"k"}]}""", "vaultFiles[0].endpoint", "required")
+        // Dots that are not a segment of their own, and a query, are the app's business.
+        for (endpoint in listOf("api/v1/vault/a..b", "api/v1/vault/..a", "api/v1/vault/k?from=../x", "api/v1/./k")) {
+            assertEquals(endpoint, parse(file(endpoint)).config.vaultFiles.getValue("k").endpoint)
+        }
+    }
+
     @Test fun `wrong types are refused, never coerced`() {
         refused("""{"configApis":[${api()}],"maxRetryCount":"3"}""", "maxRetryCount", "number")
         refused("""{"configApis":[${api()}],"maxRetryCount":2.5}""", "whole number")

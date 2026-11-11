@@ -33,6 +33,69 @@ public enum PinnedFetch {
     static let clientHeaders = ["Host", "Connection", "Keep-Alive", "Proxy-Connection", "TE", "Trailer",
                                 "Transfer-Encoding", "Upgrade", "Content-Length"]
 
+    /// Why a caller may not set request header `name`, or nil when it may: the library's and the HTTP client's own.
+    public static func refusedHeader(_ name: String) -> String? {
+        if libraryHeaders.contains(where: { $0.caseInsensitiveCompare(name) == .orderedSame }) {
+            return "set by PinVault itself (a token host's requests carry it)"
+        }
+        if clientHeaders.contains(where: { $0.caseInsensitiveCompare(name) == .orderedSame }) {
+            return "set by the HTTP client (host, connection and framing headers)"
+        }
+        return nil
+    }
+
+    /// ``refusedHeader(_:)`` for a WebSocket's upgrade request, which is an HTTP
+    /// request like any other (a caller's `Host` would name another site on the
+    /// pinned connection), plus the handshake's own `Sec-WebSocket-*` headers.
+    public static func refusedSocketHeader(_ name: String) -> String? {
+        if let why = refusedHeader(name) { return why }
+        return name.lowercased().hasPrefix("sec-websocket-") ? "set by the WebSocket handshake" : nil
+    }
+
+    public static let maxSocketProtocols = 8
+    public static let maxSocketProtocolLength = 64
+
+    /// A WebSocket's subprotocols as the caller listed them, checked: the
+    /// bridge writes `Sec-WebSocket-Protocol` from this list itself (the header
+    /// is refused from the caller, ``refusedSocketHeader(_:)``). Each entry is
+    /// an RFC 7230 token — so no comma, space or control character can add a
+    /// second value or a second header — of bounded length, and none twice
+    /// (RFC 6455 §4.1).
+    public static func socketProtocols(_ raw: [Any]?) throws -> [String] {
+        guard let raw else { return [] }
+        if raw.count > maxSocketProtocols { throw BridgeInputError("protocols: at most \(maxSocketProtocols)") }
+        var seen = Set<String>()
+        return try raw.map { entry in
+            guard let name = entry as? String, !name.isEmpty, name.unicodeScalars.count <= maxSocketProtocolLength,
+                  name.unicodeScalars.allSatisfy({ tokenChars.contains($0) }) else {
+                throw BridgeInputError("protocols: each must be a token (RFC 7230) of at most \(maxSocketProtocolLength) characters")
+            }
+            if !seen.insert(name).inserted { throw BridgeInputError("protocols: '\(name)' is listed twice") }
+            return name
+        }
+    }
+
+    /// `operation` under one time limit for the whole exchange, redirects
+    /// included (Android: OkHttp's call timeout). A request's own
+    /// `timeoutInterval` starts again at every hop and only counts idle time;
+    /// `timeoutMs` promises the caller an answer or a failure by then.
+    static func withDeadline<T>(_ timeoutMs: Int64?, _ operation: @escaping () async throws -> T) async throws -> T {
+        guard let timeoutMs else { return try await operation() }
+        return try await withThrowingTaskGroup(of: T?.self) { group in
+            group.addTask { try await operation() }
+            group.addTask {
+                try await Task.sleep(nanoseconds: UInt64(timeoutMs) * 1_000_000)
+                return nil
+            }
+            // Whichever ends first decides; the other is cancelled (a running request with it).
+            defer { group.cancelAll() }
+            guard let first = try await group.next(), let value = first else {
+                throw PinVaultError.io(message: "timeout", cause: URLError(.timedOut))
+            }
+            return value
+        }
+    }
+
     public static func parse(_ json: String) throws -> FetchRequest {
         let f = try StrictJSON.parseObject(json, path: "request", maxChars: Int(maxRequestBytes * 4 / 3) + 64 * 1024)
         let urlText = try f.requireString("url", maxLength: 8192)
@@ -47,12 +110,7 @@ public enum PinnedFetch {
             guard name.unicodeScalars.allSatisfy({ tokenChars.contains($0) }) else {
                 throw BridgeInputError("request.headers: '\(name.prefix(40))' is not a header name")
             }
-            if libraryHeaders.contains(where: { $0.caseInsensitiveCompare(name) == .orderedSame }) {
-                throw BridgeInputError("request.headers.\(name): set by PinVault itself (a token host's requests carry it)")
-            }
-            if clientHeaders.contains(where: { $0.caseInsensitiveCompare(name) == .orderedSame }) {
-                throw BridgeInputError("request.headers.\(name): set by the HTTP client (host, connection and framing headers)")
-            }
+            if let why = refusedHeader(name) { throw BridgeInputError("request.headers.\(name): \(why)") }
             if value.unicodeScalars.contains(where: { $0 == "\r" || $0 == "\n" || $0.value == 0 }) {
                 throw BridgeInputError("request.headers.\(name): line breaks are not allowed")
             }
@@ -105,7 +163,10 @@ public enum PinnedFetch {
     /// library stops reading once the body passes `maxResponseBytes` (a
     /// declared `Content-Length` over it is refused before the body is read).
     public static func execute(_ session: PinnedSession, _ r: FetchRequest) async throws -> [String: Any] {
-        let (data, response) = try await session.data(for: urlRequest(r), maxResponseBytes: r.maxResponseBytes)
+        let request = urlRequest(r)
+        let (data, response) = try await withDeadline(r.timeoutMs) {
+            try await session.data(for: request, maxResponseBytes: r.maxResponseBytes)
+        }
         guard let http = response as? HTTPURLResponse else { throw BridgeInputError("not an HTTP response") }
         return try map(http, data, r)
     }

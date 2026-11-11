@@ -65,4 +65,49 @@ void main() {
     expect(() => PinVaultWebSocket.connect('wss://h.example/', headers: {'pinvault-proof': 'p'}),
         throwsA(isA<PinVaultWebSocketError>()));
   });
+
+  test('subprotocols go to the native side as a checked list', () async {
+    Map<Object?, Object?>? sent;
+    messenger.setMockMethodCallHandler(const MethodChannel('pinvault_flutter'), (call) async {
+      sent = call.arguments as Map<Object?, Object?>;
+      return null;
+    });
+    await PinVaultWebSocket.connect('wss://h.example/', protocols: ['graphql-transport-ws', 'v2.chat']);
+    expect(sent!['protocols'], ['graphql-transport-ws', 'v2.chat']);
+    await PinVaultWebSocket.connect('wss://h.example/');
+    expect(sent!.containsKey('protocols'), isFalse);
+
+    sent = null;
+    for (final bad in [
+      ['a, b'], ['a b'], [''], ['a\r\nX-Injected: 1'], ['ä'], ['a;q=1'], ['a', 'a'],
+      ['x' * 65], List.generate(9, (i) => 'p$i'),
+    ]) {
+      await expectLater(
+        PinVaultWebSocket.connect('wss://h.example/', protocols: bad),
+        throwsA(isA<PinVaultWebSocketError>().having((e) => e.message, 'message', startsWith('protocols:'))),
+        reason: '$bad',
+      );
+    }
+    expect(sent, isNull, reason: 'refused before the native side is asked');
+  });
+
+  test('connect refuses the headers the HTTP client and the handshake set', () async {
+    var asked = 0;
+    messenger.setMockMethodCallHandler(const MethodChannel('pinvault_flutter'), (call) async {
+      asked++;
+      return null;
+    });
+    for (final name in [
+      'Host', 'host', 'Connection', 'Keep-Alive', 'Proxy-Connection', 'TE', 'Trailer',
+      'Transfer-Encoding', 'Upgrade', 'Content-Length',
+      'Sec-WebSocket-Key', 'sec-websocket-protocol', 'Sec-WebSocket-Extensions',
+    ]) {
+      await expectLater(
+        PinVaultWebSocket.connect('wss://h.example/', headers: {name: 'v'}),
+        throwsA(isA<PinVaultWebSocketError>().having((e) => e.message, 'message', contains(name))),
+        reason: name,
+      );
+    }
+    expect(asked, 0, reason: 'refused before the native side is asked');
+  });
 }

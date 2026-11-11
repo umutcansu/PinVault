@@ -77,6 +77,38 @@ final class ConfigParserTests: XCTestCase {
         assertRefused(#"{"configApis":[\#(api())],"vaultFiles":[{"key":"k","endpoint":"https://evil.example/f","accessPolicy":"TOKEN"}]}"#, "endpoint", "relative path")
     }
 
+    // A vault file's endpoint was checked for "://" and a leading slash only; it is
+    // resolved against the block's URL like the others, and carries the file's token.
+    func testAVaultFileEndpointFollowsTheEndpointRuleAndHasNoParentSegment() throws {
+        func file(_ endpoint: String) -> String { #"{"configApis":[\#(api())],"vaultFiles":[{"key":"k","endpoint":"\#(endpoint)"}]}"# }
+        for endpoint in [" //evil.example/f", #"https:\\\\evil.example/f"#, "http:evil.example/f", #"api\\\\v1/f"#, "f ", "/abs"] {
+            assertRefused(file(endpoint), "vaultFiles[0].endpoint", "relative path")
+        }
+        for endpoint in ["../admin", "api/v1/vault/../../admin", "api/..", "api/%2e%2E/admin", "api/.%2e/admin", "..?x=1"] {
+            assertRefused(file(endpoint), "vaultFiles[0].endpoint", "'..' path segment")
+        }
+        assertRefused(#"{"configApis":[\#(api())],"vaultFiles":[{"key":"k"}]}"#, "vaultFiles[0].endpoint", "required")
+        // Dots that are not a segment of their own, and a query, are the app's business.
+        for endpoint in ["api/v1/vault/a..b", "api/v1/vault/..a", "api/v1/vault/k?from=../x", "api/v1/./k"] {
+            XCTAssertEqual(try parse(file(endpoint)).config.vaultFiles["k"]?.endpoint, endpoint)
+        }
+    }
+
+    // `requireUnlockedDevice()` is strict unless the app asks for the fallback (Android: `android.…`).
+    func testTheUnlockedDeviceFallbackIsOffUnlessIosAsksForIt() throws {
+        let strict = try parse(#"{"configApis":[\#(api())],"requireUnlockedDevice":true}"#).config
+        XCTAssertTrue(strict.requireUnlockedDevice)
+        XCTAssertFalse(strict.requireUnlockedDeviceFallback)
+        // The Android key is Android's: it changes nothing here.
+        let android = try parse(#"{"configApis":[\#(api())],"requireUnlockedDevice":true,"android":{"requireUnlockedDeviceAllowFallback":true}}"#).config
+        XCTAssertFalse(android.requireUnlockedDeviceFallback)
+        let lenient = try parse(#"{"configApis":[\#(api())],"requireUnlockedDevice":true,"ios":{"requireUnlockedDeviceAllowFallback":true}}"#).config
+        XCTAssertTrue(lenient.requireUnlockedDevice)
+        XCTAssertTrue(lenient.requireUnlockedDeviceFallback)
+        assertRefused(#"{"configApis":[\#(api())],"ios":{"requireUnlockedDeviceAllowFallback":true}}"#,
+                      "ios.requireUnlockedDeviceAllowFallback", "needs requireUnlockedDevice")
+    }
+
     func testUnknownKeysAreRefused() {
         assertRefused(#"{"configApis":[\#(api())],"confgApis":[]}"#, "config", "'confgApis'")
         assertRefused(#"{"configApis":[\#(api(#","bootstrapPinz":[]"#))]}"#, "config.configApis[0]", "'bootstrapPinz'")

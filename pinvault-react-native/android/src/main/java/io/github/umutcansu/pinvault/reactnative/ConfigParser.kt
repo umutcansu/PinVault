@@ -213,6 +213,27 @@ internal object ConfigParser {
     /** `scheme:` at the start of a value: an absolute URL however its slashes are written. */
     private val SCHEME_PREFIX = Regex("^[A-Za-z][A-Za-z0-9+.-]*:")
 
+    /**
+     * A vault file's endpoint: required, held to the same rule as the block's
+     * endpoints ([relEndpoint] — it used to be checked for `://` and a leading
+     * slash only, so " //host/x" or "https:\\host/x" sent the file request and
+     * the file's token to another host), and without a `..` segment: the
+     * endpoint is resolved against the block's URL, and `..` would climb out of
+     * the path the app's native side declared for that Config API.
+     */
+    private fun vaultEndpoint(f: Fields): String {
+        val endpoint = relEndpoint(f, "endpoint", 512) ?: throw BridgeInputException("${f.path}.endpoint: required")
+        if (hasParentSegment(endpoint)) {
+            throw BridgeInputException("${f.path}.endpoint: must not contain a '..' path segment")
+        }
+        return endpoint
+    }
+
+    /** True when the path of [endpoint] has a `..` segment, written plainly or as `%2e` (URL parsers read both). */
+    internal fun hasParentSegment(endpoint: String): Boolean =
+        endpoint.substringBefore('?').substringBefore('#').split('/')
+            .any { it.replace("%2e", ".", ignoreCase = true) == ".." }
+
     fun hostPin(p: Fields): HostPin {
         val hostname = p.requireString("hostname", 255)
         val pins = p.stringList("sha256", MAX_PINS_PER_HOST, 128) ?: throw BridgeInputException("${p.path}.sha256: required")
@@ -375,10 +396,7 @@ internal object ConfigParser {
         if (!VAULT_KEY.matches(key) || key.all { it == '.' }) {
             throw BridgeInputException("${f.path}.key: must match [A-Za-z0-9._-]{1,64} and not be only dots")
         }
-        val endpoint = f.requireString("endpoint", 512)
-        if (endpoint.contains("://") || endpoint.startsWith("/") || endpoint.startsWith("\\")) {
-            throw BridgeInputException("${f.path}.endpoint: must be a relative path, not an absolute URL")
-        }
+        val endpoint = vaultEndpoint(f)
         val jsSignatureKey = f.string("signaturePublicKey", KEY_LENGTH, multiline = true)
         val updateWithPins = f.bool("updateWithPins")
         val storage = f.enum("storage", StorageStrategy.values())

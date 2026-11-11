@@ -7,6 +7,7 @@ import okhttp3.tls.HandshakeCertificates
 import okhttp3.tls.HeldCertificate
 import org.junit.After
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Assert.fail
 import org.junit.Before
@@ -15,6 +16,8 @@ import org.junit.Test
 class PinnedFetchTest {
 
     private val server = MockWebServer()
+    /** A second origin: the same host on another port. */
+    private val other = MockWebServer()
     private lateinit var client: OkHttpClient
 
     @Before fun setUp() {
@@ -23,11 +26,16 @@ class PinnedFetchTest {
         val serverCerts = HandshakeCertificates.Builder().heldCertificate(cert).build()
         server.useHttps(serverCerts.sslSocketFactory(), false)
         server.start()
+        other.useHttps(serverCerts.sslSocketFactory(), false)
+        other.start()
         val clientCerts = HandshakeCertificates.Builder().addTrustedCertificate(cert.certificate).build()
         client = OkHttpClient.Builder().sslSocketFactory(clientCerts.sslSocketFactory(), clientCerts.trustManager).build()
     }
 
-    @After fun tearDown() = server.shutdown()
+    @After fun tearDown() {
+        server.shutdown()
+        other.shutdown()
+    }
 
     private fun url(path: String = "/") = server.url(path).toString()
 
@@ -99,6 +107,119 @@ class PinnedFetchTest {
             PinnedFetch.execute(client, PinnedFetch.parse("""{"url":"${url()}","maxResponseBytes":1024}"""))
             fail()
         } catch (_: ResponseTooLargeException) {
+        }
+    }
+
+    // OkHttp carries every header but Authorization (and a 307/308 body) across a
+    // redirect to another host; the bridge follows redirects itself.
+    @Test fun `a redirect to another origin takes only neutral headers along`() {
+        server.enqueue(MockResponse().setResponseCode(302).addHeader("Location", other.url("/landing").toString()))
+        other.enqueue(MockResponse().setBody("there"))
+        val r = PinnedFetch.execute(client, PinnedFetch.parse("""{"url":"${url("/start")}","method":"POST","body":"secret",
+            "headers":{"Content-Type":"text/plain","Authorization":"Bearer t","Cookie":"sid=1","X-App-Session":"s-1","X-Api-Key":"k",
+                       "Accept":"text/plain","Accept-Language":"tr","User-Agent":"app/1"}}"""))
+        assertEquals(200, r["status"])
+        assertEquals("there", r["body"])
+        assertEquals(other.url("/landing").toString(), r["url"])
+        assertEquals("s-1", server.takeRequest().getHeader("X-App-Session"))
+        val landed = other.takeRequest()
+        assertEquals("GET", landed.method)
+        assertEquals(0L, landed.bodySize)
+        for (name in listOf("Authorization", "Cookie", "X-App-Session", "X-Api-Key", "Content-Type")) {
+            assertNull("another origin gets no $name", landed.getHeader(name))
+        }
+        assertEquals("text/plain", landed.getHeader("Accept"))
+        assertEquals("tr", landed.getHeader("Accept-Language"))
+        assertEquals("app/1", landed.getHeader("User-Agent"))
+    }
+
+    @Test fun `a body is not sent again to another origin`() {
+        server.enqueue(MockResponse().setResponseCode(307).addHeader("Location", other.url("/landing").toString()))
+        val r = PinnedFetch.execute(client, PinnedFetch.parse("""{"url":"${url("/start")}","method":"POST","body":"secret"}"""))
+        assertEquals("the 307 is the answer", 307, r["status"])
+        assertEquals(0, other.requestCount)
+    }
+
+    @Test fun `a redirect within the origin keeps headers, and a 307 its body`() {
+        server.enqueue(MockResponse().setResponseCode(307).addHeader("Location", "/moved"))
+        server.enqueue(MockResponse().setResponseCode(302).addHeader("Location", "/done"))
+        server.enqueue(MockResponse().setBody("ok"))
+        val r = PinnedFetch.execute(client, PinnedFetch.parse(
+            """{"url":"${url("/start")}","method":"POST","body":"payload","headers":{"X-App-Session":"s-1","Content-Type":"text/plain"}}"""))
+        assertEquals(200, r["status"])
+        server.takeRequest()
+        val moved = server.takeRequest()
+        assertEquals("POST", moved.method)
+        assertEquals("payload", moved.body.readUtf8())
+        assertEquals("s-1", moved.getHeader("X-App-Session"))
+        val done = server.takeRequest()
+        assertEquals("GET", done.method)
+        assertEquals("s-1", done.getHeader("X-App-Session"))
+        assertNull(done.getHeader("Content-Type"))
+    }
+
+    @Test fun `redirects end somewhere`() {
+        repeat(PinnedFetch.MAX_FOLLOW_UPS + 1) { server.enqueue(MockResponse().setResponseCode(302).addHeader("Location", "/again")) }
+        try {
+            PinnedFetch.execute(client, PinnedFetch.parse("""{"url":"${url()}"}"""))
+            fail()
+        } catch (e: java.net.ProtocolException) {
+            assertTrue(e.message!!.contains("Too many follow-up requests"))
+        }
+    }
+
+    // A WebSocket's upgrade is an HTTP request on the pinned connection: the same
+    // headers are the client's, plus the handshake's own.
+    @Test fun `a socket's upgrade request refuses what fetch refuses and the handshake headers`() {
+        for (name in PinnedFetch.CLIENT_HEADERS + PinnedFetch.CLIENT_HEADERS.map { it.lowercase() }) {
+            assertTrue(name, PinnedFetch.refusedSocketHeader(name)!!.contains("set by the HTTP client"))
+            assertEquals(PinnedFetch.refusedHeader(name), PinnedFetch.refusedSocketHeader(name))
+        }
+        for (name in PinnedFetch.LIBRARY_HEADERS) assertTrue(PinnedFetch.refusedSocketHeader(name)!!.contains("set by PinVault itself"))
+        for (name in listOf("Sec-WebSocket-Key", "sec-websocket-protocol", "SEC-WEBSOCKET-EXTENSIONS", "Sec-WebSocket-Version")) {
+            assertTrue(name, PinnedFetch.refusedSocketHeader(name)!!.contains("WebSocket handshake"))
+            assertNull("fetch has no handshake", PinnedFetch.refusedHeader(name))
+        }
+        for (name in listOf("Authorization", "X-App-Session", "Origin", "Cookie", "Sec-Fetch-Mode")) assertNull(name, PinnedFetch.refusedSocketHeader(name))
+    }
+
+    @Test fun `a socket's subprotocols are tokens, bounded and listed once`() {
+        assertEquals(emptyList<String>(), PinnedFetch.socketProtocols(null))
+        assertEquals(listOf("graphql-transport-ws", "v2.chat"), PinnedFetch.socketProtocols(listOf("graphql-transport-ws", "v2.chat")))
+        listOf(
+            listOf("a, b"), listOf("a b"), listOf(""), listOf("a\r\nX-Injected: 1"), listOf("a\u0000"), listOf("ä"), listOf("a;q=1"),
+            listOf(1), listOf(null), listOf("a", "a"), listOf("x".repeat(PinnedFetch.MAX_SOCKET_PROTOCOL_LENGTH + 1)),
+            List(PinnedFetch.MAX_SOCKET_PROTOCOLS + 1) { "p$it" },
+        ).forEach { bad ->
+            try {
+                PinnedFetch.socketProtocols(bad)
+                fail("accepted $bad")
+            } catch (e: BridgeInputException) {
+                assertTrue(e.message!!.startsWith("protocols:"))
+            }
+        }
+    }
+
+    // An empty body carries nothing: a 307 to another origin is followed with the method kept.
+    @Test fun `a body-less POST follows a 307 to another origin`() {
+        server.enqueue(MockResponse().setResponseCode(307).addHeader("Location", other.url("/landing").toString()))
+        other.enqueue(MockResponse().setBody("there"))
+        val r = PinnedFetch.execute(client, PinnedFetch.parse("""{"url":"${url("/start")}","method":"POST","headers":{"X-App-Session":"s-1"}}"""))
+        assertEquals(200, r["status"])
+        val landed = other.takeRequest()
+        assertEquals("POST", landed.method)
+        assertEquals(0L, landed.bodySize)
+        assertNull(landed.getHeader("X-App-Session"))
+    }
+
+    @Test fun `the time limit covers the redirects too`() {
+        server.enqueue(MockResponse().setResponseCode(302).addHeader("Location", "/slow").setHeadersDelay(300, java.util.concurrent.TimeUnit.MILLISECONDS))
+        server.enqueue(MockResponse().setBody("late").setHeadersDelay(300, java.util.concurrent.TimeUnit.MILLISECONDS))
+        try {
+            // Each hop alone is inside the limit; the two together are not.
+            PinnedFetch.execute(client, PinnedFetch.parse("""{"url":"${url()}","timeoutMs":450}"""))
+            fail()
+        } catch (_: java.io.InterruptedIOException) {
         }
     }
 

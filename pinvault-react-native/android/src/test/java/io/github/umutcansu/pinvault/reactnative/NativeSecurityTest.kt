@@ -89,6 +89,28 @@ class NativeSecurityTest {
             .config.configApis.getValue("default").requiredSignatures)
     }
 
+    // serverScope names the config store's namespace (a new one has no replay
+    // watermarks); clientCaPins say which CA may issue the device's identity.
+    @Test fun `a release build takes serverScope and clientCaPins only from the file`() {
+        val anchors = """"id":"default","url":"https://h.example:8081/","bootstrapPins":[{"hostname":"h.example","sha256":["$pinA","$pinB"]}]"""
+        val unscoped = NativeSecurity.parse("""{"configApis":[{$anchors,"signaturePublicKeys":["$key"]}]}""", "assets/pinvault_security.json")
+        val base = """"id":"default","url":"https://h.example:8081/""""
+        refused("""{"configApis":[{$base,"serverScope":"fresh-namespace"}]}""", native = unscoped,
+            fragments = arrayOf("serverScope", "only from the app's native security file", "declare serverScope"))
+        refused("""{"configApis":[{$base,"clientCaPins":["$evil"]}]}""", native = unscoped,
+            fragments = arrayOf("clientCaPins", "only from the app's native security file"))
+
+        // Nothing set (or no pins) changes nothing; the file's values still apply; a debug build takes what it is given.
+        val plain = parse("""{"configApis":[{$base,"clientCaPins":[]}]}""", native = unscoped).config.configApis.getValue("default")
+        assertEquals(null, plain.serverScope)
+        assertTrue(plain.clientCaPins.isEmpty())
+        assertEquals("default-tls", parse("""{"configApis":[{$base,"serverScope":"default-tls"}]}""").config.configApis.getValue("default").serverScope)
+        val debug = parse("""{"configApis":[{$base,"serverScope":"fresh-namespace","clientCaPins":["$pinA"]}]}""", native = unscoped, release = false)
+            .config.configApis.getValue("default")
+        assertEquals("fresh-namespace", debug.serverScope)
+        assertEquals(listOf(pinA), debug.clientCaPins)
+    }
+
     @Test fun `a differing trust anchor from JS is refused`() {
         val base = """"id":"default","url":"https://h.example:8081/""""
         refused("""{"configApis":[{$base,"bootstrapPins":[{"hostname":"h.example","sha256":["$pinA","$evil"]}]}]}""",

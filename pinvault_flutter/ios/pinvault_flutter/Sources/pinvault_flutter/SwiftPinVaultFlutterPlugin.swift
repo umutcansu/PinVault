@@ -32,8 +32,9 @@ public class SwiftPinVaultFlutterPlugin: NSObject, FlutterPlugin {
     // This engine's messenger, for the per-socket channels `ws_connect` creates.
     private let messenger: FlutterBinaryMessenger
 
-    // Live WebSocket connections, by socket id.
-    private static var sockets: [String: PinVaultWebSocketConnection] = [:]
+    // Live WebSocket connections, by socket id, with the engine (plugin
+    // instance) whose Dart side holds each one.
+    private static var sockets: [String: (connection: PinVaultWebSocketConnection, owner: ObjectIdentifier)] = [:]
 
     private let mapper = ResultMapper(tokens: SwiftPinVaultFlutterPlugin.tokens)
 
@@ -70,11 +71,17 @@ public class SwiftPinVaultFlutterPlugin: NSObject, FlutterPlugin {
     }
 
     public func detachFromEngine(for registrar: FlutterPluginRegistrar) {
-        Self.locked {
+        let owner = ObjectIdentifier(self)
+        let orphaned = Self.locked { () -> [PinVaultWebSocketConnection] in
             Self.attached.remove(self)
             eventsSink = nil
             guardSink = nil
+            return Self.sockets.values.filter { $0.owner == owner }.map { $0.connection }
         }
+        // Nobody can hear this engine's sockets any more (as on Android): closed,
+        // not left open with the device's token and identity on them. Outside
+        // the lock: a socket that ends takes itself off the list.
+        orphaned.forEach { $0.cancel() }
     }
 
     // MARK: helpers
@@ -123,9 +130,9 @@ public class SwiftPinVaultFlutterPlugin: NSObject, FlutterPlugin {
         onMain { sinks.forEach { $0(mapped) } }
     }
 
-    static func addSocket(_ id: String, _ connection: PinVaultWebSocketConnection) {
+    static func addSocket(_ id: String, _ connection: PinVaultWebSocketConnection, owner: SwiftPinVaultFlutterPlugin) {
         lock.lock(); defer { lock.unlock() }
-        sockets[id] = connection
+        sockets[id] = (connection, ObjectIdentifier(owner))
     }
 
     static func removeSocket(_ id: String) {
@@ -530,17 +537,40 @@ public class SwiftPinVaultFlutterPlugin: NSObject, FlutterPlugin {
         if let raw = args?["headers"] as? [String: Any] {
             for (name, value) in raw {
                 guard let value = value as? String, Self.isHeaderName(name),
-                      !value.contains("\r"), !value.contains("\n"),
-                      !PinnedFetch.libraryHeaders.contains(where: { $0.caseInsensitiveCompare(name) == .orderedSame }) else {
+                      !value.contains("\r"), !value.contains("\n") else {
                     return Self.invalidArgument(result, "ws_connect: the URL or a header is not valid")
+                }
+                // The upgrade is an HTTP request on the pinned connection: what `fetch`
+                // refuses from the caller (the attestation headers, Host, the connection
+                // and framing headers) is refused here too, with the handshake's own
+                // Sec-WebSocket-*.
+                if let why = PinnedFetch.refusedSocketHeader(name) {
+                    return Self.invalidArgument(result, "ws_connect: headers.\(name.prefix(40)): \(why)")
                 }
                 headers[name] = value
             }
         }
+        // The subprotocols: the caller cannot set Sec-WebSocket-Protocol, the bridge
+        // writes it from the checked list.
+        let protocols: [String]
+        do {
+            if let raw = args?["protocols"], !(raw is NSNull), !(raw is [Any]) {
+                throw BridgeInputError("protocols: must be a list")
+            }
+            protocols = try PinnedFetch.socketProtocols(args?["protocols"] as? [Any])
+        } catch {
+            return Self.invalidArgument(result, "ws_connect: \((error as? BridgeInputError)?.message ?? "protocols are not valid")")
+        }
+        // Like every other call: nothing is set up before start() (the socket
+        // itself would fail later, inside its event stream, with channels registered).
+        guard Self.started else {
+            result(FlutterError(code: "E_NOT_STARTED", message: "PinVault has not started: call start() first", details: nil))
+            return
+        }
 
         let messenger = self.messenger
-        let connection = PinVaultWebSocketConnection(socketId: socketId, url: url, headers: headers)
-        Self.addSocket(socketId, connection)
+        let connection = PinVaultWebSocketConnection(socketId: socketId, url: url, headers: headers, protocols: protocols)
+        Self.addSocket(socketId, connection, owner: self)
 
         let eventChannel = FlutterEventChannel(name: "pinvault_flutter/ws/\(socketId)/events", binaryMessenger: messenger)
         let methodChannel = FlutterMethodChannel(name: "pinvault_flutter/ws/\(socketId)/methods", binaryMessenger: messenger)
@@ -628,6 +658,8 @@ final class PinVaultWebSocketConnection: NSObject {
     let socketId: String
     let url: URL
     let headers: [String: String]
+    /// The subprotocols asked for, already checked (`PinnedFetch.socketProtocols`).
+    let protocols: [String]
 
     private let lock = NSLock()
     private var task: URLSessionWebSocketTask?
@@ -640,10 +672,11 @@ final class PinVaultWebSocketConnection: NSObject {
     private var pending: [(URLSessionWebSocketTask.Message, FlutterResult)] = []
     private var draining = false
 
-    init(socketId: String, url: URL, headers: [String: String]) {
+    init(socketId: String, url: URL, headers: [String: String], protocols: [String] = []) {
         self.socketId = socketId
         self.url = url
         self.headers = headers
+        self.protocols = protocols
         super.init()
     }
 
@@ -657,11 +690,15 @@ final class PinVaultWebSocketConnection: NSObject {
 
         let url = self.url
         let headers = self.headers
+        let protocols = self.protocols
         Task {
             do {
                 let session = PinVault.shared.session()
                 var request = URLRequest(url: url)
                 for (name, value) in headers { request.addValue(value, forHTTPHeaderField: name) }
+                // URLSession sends the request's header in the upgrade (what
+                // `webSocketTask(with:protocols:)` does for a URL).
+                if !protocols.isEmpty { request.setValue(protocols.joined(separator: ", "), forHTTPHeaderField: "Sec-WebSocket-Protocol") }
                 let task = try await session.makeWebSocketTask(for: request)
                 guard self.adopt(task, of: session) else {
                     task.cancel(with: .normalClosure, reason: nil)
@@ -718,8 +755,8 @@ final class PinVaultWebSocketConnection: NSObject {
                 }
                 self.receive()
             case .failure(let error):
-                // The library's session delegate is not a WebSocket delegate, so
-                // a clean close also arrives here, not as a didClose callback.
+                // The library's session delegate takes no didClose callback, so
+                // a clean close also arrives here.
                 // A normal close leaves the task's closeCode set; an abnormal
                 // failure leaves it `.invalid`.
                 if let t, t.closeCode != .invalid {

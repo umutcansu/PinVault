@@ -14,6 +14,35 @@
 - **An endpoint that is absolute in another spelling is refused**: whitespace
   around the value (`" //host/x"`), a backslash anywhere and a bare `scheme:`
   prefix, on Android and iOS.
+- **A vault file's `endpoint` follows that rule too** and may not contain a
+  `..` path segment (plain or `%2e`); it was checked for `://` and a leading
+  slash only.
+- **Breaking — release builds take `serverScope` and `clientCaPins` only from
+  the native security file.** `serverScope` names the library's config store;
+  a value Dart could set where the file named none moved the store to a new
+  namespace without replay watermarks. A value the file does not declare is
+  refused (`E_INVALID_CONFIG`). Copy what Dart passes into
+  `pinvault_security.json`. Debug builds are unchanged.
+- **`PinVault.fetch`: a redirect to another host or port takes only `Accept`,
+  `Accept-Language` and `User-Agent` along, and never a body** (a 307/308 that
+  would repeat one is returned as the answer). On Android the plugin now
+  follows redirects itself (OkHttp kept every header but `Authorization`); on
+  iOS the library does.
+- **`PinVaultWebSocket.connect` refuses the headers `fetch` refuses** (`Host`,
+  `Connection`, `Keep-Alive`, `Proxy-Connection`, `TE`, `Trailer`,
+  `Transfer-Encoding`, `Upgrade`, `Content-Length`) and `Sec-WebSocket-*`, in
+  Dart and natively. On iOS `connect` answers `E_NOT_STARTED` before `start()`
+  like every other call, and an engine that detaches closes its sockets.
+- **`PinVaultWebSocket.connect(url, protocols: [...])`**: subprotocols are
+  asked for with this list (at most 8 tokens of at most 64 characters, none
+  twice), no longer with a `Sec-WebSocket-Protocol` header. The protocol the
+  server picked is not reported.
+- `PinVault.fetch` on iOS: `timeoutMs` is one limit for the whole exchange,
+  redirects included, as on Android.
+- `ios.requireUnlockedDeviceAllowFallback`: the library's
+  `requireUnlockedDevice()` no longer falls back silently on iOS (it fails
+  with `UnlockedDeviceKeyRequiredException`); this is the opt-out, the twin of
+  `android.requireUnlockedDeviceAllowFallback`.
 - Through the library: on iOS, numbers a server sends (attestation intervals,
   a certificate's version field, a vault file's version header) can no longer
   overflow and end the app; a blank vault file `signaturePublicKey` no longer
