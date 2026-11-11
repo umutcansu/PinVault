@@ -179,8 +179,9 @@ enum DeviceKeyKeychain {
     }
 
     /// Generates a permanent RSA-2048 private key under `tag` (a key already
-    /// there is not touched: callers delete first).
-    static func generateRSA(tag: String, accessible: CFString, accessControl: SecAccessControl?) throws {
+    /// there is not touched: callers delete first) and returns it.
+    @discardableResult
+    static func generateRSA(tag: String, accessible: CFString, accessControl: SecAccessControl?) throws -> SecKey {
         var privateAttributes: [CFString: Any] = [
             kSecAttrIsPermanent: true,
             kSecAttrApplicationTag: Data(tag.utf8),
@@ -198,11 +199,12 @@ enum DeviceKeyKeychain {
             kSecPrivateKeyAttrs: privateAttributes,
         ]
         var error: Unmanaged<CFError>?
-        guard SecKeyCreateRandomKey(attributes as CFDictionary, &error) != nil else {
+        guard let key = SecKeyCreateRandomKey(attributes as CFDictionary, &error) else {
             let cause = error?.takeRetainedValue()
             let status = (cause as Error?).map { OSStatus(($0 as NSError).code) } ?? errSecInternalComponent
             throw DeviceKeyKeychainError(status: status, operation: "generate key \(tag)", cause: cause)
         }
+        return key
     }
 
     /// An RSA-2048 key that lives in memory only.

@@ -140,6 +140,17 @@ final class TrustCheckWatchTests: XCTestCase {
         ))
     }
 
+    /// URLSession calls a delegate method through its Objective-C selector:
+    /// a method the class only happens to have (no protocol conformance) is
+    /// never called, and the wss watch below would be dead code.
+    func testURLSessionCanReachTheWebSocketOpenCallback() {
+        let delegate: AnyObject = delegate(testManager())
+        XCTAssertTrue(delegate is URLSessionWebSocketDelegate)
+        XCTAssertTrue(delegate.responds(to: #selector(URLSessionWebSocketDelegate.urlSession(_:webSocketTask:didOpenWithProtocol:))))
+        // The data-task callbacks are found the same way.
+        XCTAssertTrue(delegate.responds(to: #selector(URLSessionTaskDelegate.urlSession(_:task:didFinishCollecting:))))
+    }
+
     func testAWebSocketThatOpenedWithoutAChallengeIsCancelledAndRecorded() {
         let manager = testManager()
         let log = UnverifiedConnectionLog()

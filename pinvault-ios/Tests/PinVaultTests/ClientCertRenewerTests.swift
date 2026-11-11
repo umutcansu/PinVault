@@ -120,6 +120,48 @@ final class ClientCertRenewerTests: XCTestCase {
         guard case .renewed = forced else { return XCTFail("\(forced)") }
     }
 
+    func testAStoreThatCannotBeReadIsAFailureNotNothingToRenew() async throws {
+        // A Keychain that fails on a read (strict store) is not an empty store.
+        let cipher = FlakyCipher()
+        store = try testCertStore(self, cipher: cipher, strict: true)
+        try storeLeaf(now - 80 * day, now + 10 * day)
+        let api = issuing()
+
+        cipher.broken = true
+        let unreadable = await renewer(api).renewIfNeeded()
+        guard case .failed(let reason, let exception) = unreadable else { return XCTFail("\(unreadable)") }
+        XCTAssertTrue(reason.contains("cannot be read"), reason)
+        guard case PinVaultError.storeUnreadable? = exception else { return XCTFail("\(String(describing: exception))") }
+        XCTAssertTrue(api.renewCalls.isEmpty)
+
+        // The Keychain answers again: the same renewer renews.
+        cipher.broken = false
+        let later = await renewer(api).renewIfNeeded()
+        guard case .renewed = later else { return XCTFail("\(later)") }
+    }
+
+    func testARenewerWhoseStoreCannotBeOpenedFailsAndIsBuiltAgainAtTheNextCheck() async throws {
+        try storeLeaf(now - 80 * day, now + 10 * day)
+        let real = renewer(issuing())
+        let attempts = Locked(0)
+        let deferred = DeferredRenewal(blockId: "api") {
+            if attempts.withLock({ $0 += 1; return $0 }) == 1 {
+                throw PinVaultError.storeUnreadable(message: "the store keys cannot be used right now")
+            }
+            return real
+        }
+        let first = await deferred.renewIfNeeded(force: false)
+        guard case .failed(let reason, let exception) = first else { return XCTFail("\(first)") }
+        XCTAssertTrue(reason.contains("cannot be opened"), reason)
+        XCTAssertNotNil(exception)
+
+        let second = await deferred.renewIfNeeded(force: false)
+        guard case .renewed = second else { return XCTFail("\(second)") }
+        // Built once it worked: not opened again for the third check.
+        _ = await deferred.renewIfNeeded(force: false)
+        XCTAssertEqual(attempts.get(), 2)
+    }
+
     func testAFreshCertificateIsNotNeededWithoutARequest() async throws {
         try storeLeaf(now - day, now + 89 * day)
         let api = issuing()

@@ -107,6 +107,81 @@ final class ChainPinMatcherTests: XCTestCase {
         try manager.evaluateServerTrust(named, hostname: host, port: 443, mode: .pinned({ leafConfig }))
     }
 
+    // MARK: What an issuer pin may vouch for
+
+    /// A leaf for `host` under `ca`, with the given extendedKeyUsage purposes (nil: no such extension).
+    private func leafUnder(_ ca: ClientCertTestCA, eku: [String]?, signer: TestKeyPair? = nil, issuerName: Data? = nil) -> X509Certificate {
+        var extensions = [ClientCertTestCA.subjectAltName(dns: host)]
+        if let eku { extensions.append(ClientCertTestCA.extendedKeyUsage(eku)) }
+        return ca.issue(
+            cn: host, spki: TestKeyPair().spki, notBefore: Date().addingTimeInterval(-3600), notAfter: Date().addingTimeInterval(86_400),
+            issuerName: issuerName, signer: signer, extensions: extensions
+        )
+    }
+
+    private func liveCheck(_ pins: [String], _ chain: [X509Certificate]) throws {
+        let manager = DynamicSSLManager()
+        try manager.checkServerTrusted(chain, hostname: host, port: 443, config: config(pins))
+    }
+
+    func testAnIssuerPinAcceptsALeafWithoutExtendedKeyUsageOrWithServerAuth() throws {
+        let ca = ClientCertTestCA(cn: "Site CA")
+        try liveCheck([ca.pin], [leafUnder(ca, eku: nil), ca.certificate])
+        try liveCheck([ca.pin], [leafUnder(ca, eku: ["1.3.6.1.5.5.7.3.1"]), ca.certificate])
+        try liveCheck([ca.pin], [leafUnder(ca, eku: ["1.3.6.1.5.5.7.3.2", "1.3.6.1.5.5.7.3.1"]), ca.certificate])
+        try liveCheck([ca.pin], [leafUnder(ca, eku: ["2.5.29.37.0"]), ca.certificate])
+    }
+
+    func testAnIssuerPinRefusesALeafThatIsNotATlsServerCertificate() {
+        let ca = ClientCertTestCA(cn: "Site CA")
+        // clientAuth only, codeSigning + emailProtection, and an extension that lists nothing.
+        for eku in [["1.3.6.1.5.5.7.3.2"], ["1.3.6.1.5.5.7.3.3", "1.3.6.1.5.5.7.3.4"], []] {
+            let leaf = leafUnder(ca, eku: eku)
+            XCTAssertNil(ChainPinMatcher.match([leaf, ca.certificate], accepted: [ca.pin], now: Date()), "\(eku)")
+            let error = assertThrowsPinVault { try liveCheck([ca.pin], [leaf, ca.certificate]) }
+            guard case .certificate(let message, _)? = error else { return XCTFail("\(String(describing: error))") }
+            XCTAssertTrue(message.contains("pinning failure"), message)
+            // Its own key pinned is the leaf path: the pin is the identity, the usage is not asked.
+            XCTAssertNoThrow(try liveCheck([leaf.spkiPin], [leaf, ca.certificate]))
+        }
+    }
+
+    func testAnExtendedKeyUsageWithAnUnreadableElementIsRefusedEvenNextToServerAuth() throws {
+        let ca = ClientCertTestCA(cn: "Site CA")
+        // serverAuth, then an element that is no OID (an INTEGER), and one whose OID bytes are cut short.
+        for damage in [DER.integer(1), Data([0x06, 0x02, 0x2B, 0x86])] {
+            let eku = DER.sequence([
+                try DER.objectIdentifier(X509OID.extendedKeyUsage),
+                DER.octetString(DER.sequence([try DER.objectIdentifier("1.3.6.1.5.5.7.3.1"), damage])),
+            ])
+            let leaf = ca.issue(
+                cn: host, spki: TestKeyPair().spki, notBefore: Date().addingTimeInterval(-3600), notAfter: Date().addingTimeInterval(86_400),
+                extensions: [ClientCertTestCA.subjectAltName(dns: host), eku]
+            )
+            XCTAssertEqual(leaf.extendedKeyUsage, [], "unreadable as a whole")
+            XCTAssertFalse(ChainPinMatcher.mayVouchAsIssuer(ca.certificate, for: leaf))
+            XCTAssertNil(ChainPinMatcher.match([leaf, ca.certificate], accepted: [ca.pin], now: Date()))
+        }
+    }
+
+    func testAPinnedCertificateThatIsNotACACannotVouchForALeafItSigned() {
+        // A pinned server key that signs a certificate for the host: the
+        // pinned certificate is the trust anchor, and nobody else asks whether
+        // an anchor may sign at all.
+        let ca = ClientCertTestCA(cn: "Site CA")
+        let serverKey = TestKeyPair()
+        let serverName = ClientCertTestCA.name("pinned.server")
+        let pinnedServer = ClientCertTestCA.make(
+            issuer: serverName, subject: serverName, spki: serverKey.spki,
+            notBefore: Date().addingTimeInterval(-3600), notAfter: Date().addingTimeInterval(86_400), ca: false, signer: serverKey
+        )
+        XCTAssertFalse(pinnedServer.isCA)
+        let forged = leafUnder(ca, eku: nil, signer: serverKey, issuerName: serverName)
+        XCTAssertNil(ChainPinMatcher.match([forged, pinnedServer], accepted: [pinnedServer.spkiPin], now: Date()))
+        XCTAssertFalse(ChainPinMatcher.mayVouchAsIssuer(pinnedServer, for: forged))
+        XCTAssertTrue(ChainPinMatcher.mayVouchAsIssuer(ca.certificate, for: forged))
+    }
+
     func testMatcherReportsWhichPinMatched() {
         let accepted: Set<String> = [intermediate.spkiPin, root.spkiPin]
         XCTAssertEqual(ChainPinMatcher.match([leaf, intermediate, root], accepted: accepted, now: now), intermediate.spkiPin)

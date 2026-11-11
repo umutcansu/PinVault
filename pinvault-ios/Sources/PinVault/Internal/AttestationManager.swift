@@ -44,7 +44,8 @@ final class AttestationManager: AttestationTokenSource, @unchecked Sendable {
     private let currentIssuedAt: @Sendable () -> Int64
     private let buildReport: @Sendable (_ nonce: String, _ deviceId: String, _ key: any ClientIdentityKeyProvider, _ bindVerdict: Bool) async -> String
     private let roundVerdict: @Sendable (_ canonical: String) async -> IntegrityVerdict?
-    private let applyConfig: @Sendable (SignedConfigResponse) async throws -> UpdateResult
+    /// The second argument is the `deviceId` the attestation request named: the embedded view answers it (M6).
+    private let applyConfig: @Sendable (SignedConfigResponse, _ requestDeviceId: String) async throws -> UpdateResult
     private let onConfigApplied: @Sendable (UpdateResult) -> Void
     private let onEvent: @Sendable (PinVaultConnectionEvent) -> Void
     private let onVerdict: @Sendable (_ warnings: [String], _ rejectionReasons: [String]) -> Void
@@ -92,7 +93,8 @@ final class AttestationManager: AttestationTokenSource, @unchecked Sendable {
     ///     which carries the report's digest (App Attest v2); sent beside the
     ///     report as `verdictProvider`. Nil = none (a provider's verdict, if
     ///     any, is then inside the report).
-    ///   - applyConfig: applies a signed config from the answer (`SSLCertificateUpdater.applySigned`).
+    ///   - applyConfig: applies a signed config from the answer (`SSLCertificateUpdater.applySigned`),
+    ///     with the `deviceId` the round's request named (the embedded signed view answers it, M6).
     ///   - onConfigApplied: told the result of `applyConfig`, the way the
     ///     recovery interceptor reports its updates.
     ///   - onEvent: receives one ``PinVaultConnectionEvent/attestation(configApiId:status:arc:rejectionReasons:warnings:tokenExpiresAt:deviceManufacturer:deviceModel:failureReason:)`` per attempt.
@@ -111,7 +113,7 @@ final class AttestationManager: AttestationTokenSource, @unchecked Sendable {
         currentIssuedAt: @escaping @Sendable () -> Int64,
         buildReport: @escaping @Sendable (_ nonce: String, _ deviceId: String, _ key: any ClientIdentityKeyProvider, _ bindVerdict: Bool) async -> String,
         roundVerdict: @escaping @Sendable (_ canonical: String) async -> IntegrityVerdict? = { _ in nil },
-        applyConfig: @escaping @Sendable (SignedConfigResponse) async throws -> UpdateResult,
+        applyConfig: @escaping @Sendable (SignedConfigResponse, _ requestDeviceId: String) async throws -> UpdateResult,
         onConfigApplied: @escaping @Sendable (UpdateResult) -> Void = { _ in },
         onEvent: @escaping @Sendable (PinVaultConnectionEvent) -> Void = { _ in },
         onVerdict: @escaping @Sendable (_ warnings: [String], _ rejectionReasons: [String]) -> Void = { _, _ in },
@@ -257,7 +259,7 @@ final class AttestationManager: AttestationTokenSource, @unchecked Sendable {
             }
             // Answered with a verdict: the key is registered; the chain has done its work.
             state.withLock { $0.chainWanted = false }
-            return await handleVerdict(answer, skew: skew)
+            return await handleVerdict(answer, skew: skew, requestDeviceId: did)
         } catch let error as AttestationHttpError {
             if Self.chainWantedAgain.contains(error.serverError ?? "") {
                 state.withLock { $0.chainWanted = true }
@@ -277,7 +279,7 @@ final class AttestationManager: AttestationTokenSource, @unchecked Sendable {
         }
     }
 
-    private func handleVerdict(_ answer: [String: Any], skew: Int64?) async -> AttestationStatus {
+    private func handleVerdict(_ answer: [String: Any], skew: Int64?, requestDeviceId: String) async -> AttestationStatus {
         let now = clock()
         let arc = LenientJSON.nonBlankString(answer, "arc")
         let warnings = LenientJSON.strings(answer, "warnings")
@@ -334,7 +336,7 @@ final class AttestationManager: AttestationTokenSource, @unchecked Sendable {
             // The config rides along only on a pass, and goes through the
             // same checks as a fetched one.
             if let config = answer["config"] as? [String: Any] {
-                await applyEmbeddedConfig(config)
+                await applyEmbeddedConfig(config, requestDeviceId: requestDeviceId)
             }
             return passed
 
@@ -371,7 +373,7 @@ final class AttestationManager: AttestationTokenSource, @unchecked Sendable {
         }
     }
 
-    private func applyEmbeddedConfig(_ json: [String: Any]) async {
+    private func applyEmbeddedConfig(_ json: [String: Any], requestDeviceId: String) async {
         let signed: SignedConfigResponse
         do {
             let data = try JSONSerialization.data(withJSONObject: json, options: [])
@@ -382,7 +384,7 @@ final class AttestationManager: AttestationTokenSource, @unchecked Sendable {
         }
         let result: UpdateResult
         do {
-            result = try await applyConfig(signed)
+            result = try await applyConfig(signed, requestDeviceId)
         } catch {
             result = .failed(reason: Self.errorMessage(error), exception: error)
         }

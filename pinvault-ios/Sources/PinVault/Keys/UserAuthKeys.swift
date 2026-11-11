@@ -72,8 +72,14 @@ protocol UserAuthKeys: Sendable {
     /// replaces a key that may still work. Needs a passcode.
     @discardableResult func ensureKey() throws -> Bool
 
-    /// The public half of the existing key.
+    /// The public half of the existing key. Never needs the user: the Keychain
+    /// key keeps it in a record without user-presence access control.
     func publicKey() throws -> SecKey
+
+    /// The public half after a passed prompt (`grant`): for a Keychain key made
+    /// by an earlier build, which has no public record yet, the private key is
+    /// read with the evaluated context. Every other key: ``publicKey()``.
+    func publicKey(authorisedBy grant: UserAuthGrant?) throws -> SecKey
 
     func kind() throws -> UserAuthKeyKind
 
@@ -89,6 +95,10 @@ protocol UserAuthKeys: Sendable {
     func attestationChain() throws -> [Data]
 
     func delete()
+}
+
+extension UserAuthKeys {
+    func publicKey(authorisedBy grant: UserAuthGrant?) throws -> SecKey { try publicKey() }
 }
 
 /// Constants and helpers of the user-auth key (Kotlin `UserAuthKeys.Companion`).

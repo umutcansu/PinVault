@@ -81,7 +81,18 @@ final class ClientCertRenewer: Sendable {
     func renewIfNeeded(force: Bool = false) async -> ClientCertRenewalResult {
         if !block.clientCertRenewalEnabled && !force { return .notApplicable }
         let label = block.clientCertLabel
-        guard let pemChain = (try? certStore.loadChain(label)) ?? nil else { return .notApplicable }
+        // "Nothing to renew" is only what a read that worked found. A store
+        // that cannot be read right now (a locked or failing Keychain) says
+        // nothing about the certificate: reported as a failure, so the caller
+        // sees it and the next attempt asks again.
+        let pemChain: [String]
+        do {
+            guard let stored = try certStore.loadChain(label) else { return .notApplicable }
+            pemChain = stored
+        } catch {
+            Self.log.e("Client cert renewal [\(block.id)]: the stored certificate cannot be read", error)
+            return .failed(reason: "The stored client certificate cannot be read: \(Self.message(error))", exception: error)
+        }
         let key = identityKeys(label)
         if !key.exists() {
             Self.log.w("Client cert renewal [\(block.id)]: certificate stored but its Keychain key is gone")

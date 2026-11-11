@@ -13,6 +13,7 @@ final class KeystoreOptions: Sendable {
 
     private struct State {
         var unlockedDeviceRequired = false
+        var unlockedDeviceFallbackAllowed = false
         var hardwareBackedRequired = false
     }
 
@@ -29,6 +30,14 @@ final class KeystoreOptions: Sendable {
         set { state.withLock { $0.unlockedDeviceRequired = newValue } }
     }
 
+    /// `PinVaultConfig.Builder.requireUnlockedDevice(allowFallback: true)`:
+    /// when the Keychain refuses an unlocked-device key, make the key without
+    /// the requirement instead of failing (see ``generating(_:cleanUp:_:)``).
+    var unlockedDeviceFallbackAllowed: Bool {
+        get { state.withLock { $0.unlockedDeviceFallbackAllowed } }
+        set { state.withLock { $0.unlockedDeviceFallbackAllowed = newValue } }
+    }
+
     /// `PinVaultConfig.Builder.requireHardwareBackedKeys()`: a key that is not
     /// in the Secure Enclave (or whose level cannot be told) is deleted again
     /// and the operation fails with ``PinVaultError/hardwareBackedKeyRequired(keyKind:level:cause:)``,
@@ -43,24 +52,44 @@ final class KeystoreOptions: Sendable {
     func apply(_ config: PinVaultConfig, stores: SecureStoreEnvironment? = .shared) {
         state.withLock {
             $0.unlockedDeviceRequired = config.requireUnlockedDevice
+            $0.unlockedDeviceFallbackAllowed = config.requireUnlockedDeviceFallback
             $0.hardwareBackedRequired = config.requireHardwareBackedKeys
         }
         stores?.requireUnlockedDevice = config.requireUnlockedDevice
     }
 
     /// Runs `generate` asking for an unlocked-device key when the option is
-    /// on, and once more without it when the Keychain refuses such a key: a
-    /// device that cannot make one must not leave the app without any key.
-    /// `cleanUp` removes whatever a failed attempt left behind.
+    /// on. When the Keychain refuses such a key the operation fails with
+    /// ``PinVaultError/unlockedDeviceKeyRequired(keyKind:cause:)`` — the app
+    /// asked for keys that work only while the device is unlocked, and a key
+    /// without that requirement would silently be less than that. Only with
+    /// ``unlockedDeviceFallbackAllowed`` is `generate` run once more without
+    /// the requirement, with a warning in the log. `cleanUp` removes whatever
+    /// a failed attempt left behind. A key the Keychain did make but
+    /// `requireHardwareBackedKeys()` refused is not this option's doing: that
+    /// refusal passes through unchanged, in both modes (Kotlin `KeystoreOptions.generating`).
     func generating<T>(_ what: String, cleanUp: () -> Void = {}, _ generate: (_ unlockedDeviceRequired: Bool) throws -> T) throws -> T {
         guard unlockedDeviceRequired else { return try generate(false) }
         do {
             return try generate(true)
+        } catch let error as PinVaultError {
+            if case .hardwareBackedKeyRequired = error { throw error }
+            return try refused(what, error, cleanUp, generate)
         } catch {
-            log.w("\(what): the Keychain refused an unlocked-device key — generating it without that requirement", error)
-            cleanUp()
-            return try generate(false)
+            return try refused(what, error, cleanUp, generate)
         }
+    }
+
+    private func refused<T>(
+        _ what: String, _ error: any Error, _ cleanUp: () -> Void, _ generate: (_ unlockedDeviceRequired: Bool) throws -> T
+    ) throws -> T {
+        cleanUp()
+        guard unlockedDeviceFallbackAllowed else {
+            log.e("\(what): the Keychain refused an unlocked-device key and requireUnlockedDevice() allows no fallback — refusing", error)
+            throw PinVaultError.unlockedDeviceKeyRequired(keyKind: what, cause: error)
+        }
+        log.w("\(what): the Keychain refused an unlocked-device key — generating it without that requirement (allowFallback)", error)
+        return try generate(false)
     }
 
     /// The check every generator runs on the key it just made: logs where the

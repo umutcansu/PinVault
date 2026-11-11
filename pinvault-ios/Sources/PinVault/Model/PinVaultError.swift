@@ -35,6 +35,9 @@ public enum PinVaultError: Error, Sendable {
     )
     /// `HardwareBackedKeyRequiredException`: `requireHardwareBackedKeys()` and the key was made in software.
     case hardwareBackedKeyRequired(keyKind: String, level: KeySecurityLevel, cause: (any Error)? = nil)
+    /// `UnlockedDeviceKeyRequiredException`: `requireUnlockedDevice()` and the Keychain refused a key
+    /// that works only while the device is unlocked; `cause` is the Keychain's refusal.
+    case unlockedDeviceKeyRequired(keyKind: String, cause: (any Error)? = nil)
     /// `StoreUnreadableException`: the encrypted storage cannot be read right now (not "nothing stored").
     case storeUnreadable(message: String, cause: (any Error)? = nil)
 
@@ -82,6 +85,11 @@ public enum PinVaultError: Error, Sendable {
     case illegalArgument(String)
     /// `IllegalStateException` (`check(...)`, "not initialized", …).
     case illegalState(String)
+    /// `ConfigViewMismatchException` (a `SecurityException`): a signed pin config answers another
+    /// request than the one this block makes (its signed `view`: a narrowed view for a full-config
+    /// block, another host set or device for a `wantPinsFor` block). Message starts with
+    /// `"Signed config rejected:"`; the stored config, its watermarks and the pins in use stay as they were.
+    case configViewMismatch(message: String)
     /// `SecurityException`: a security check refused something.
     case security(message: String, cause: (any Error)? = nil)
     /// `GeneralSecurityException` (`AEADBadTagException`, key failures): a cryptographic operation failed.
@@ -111,6 +119,11 @@ public enum PinVaultError: Error, Sendable {
             // The Kotlin text names the Android Keystore, StrongBox and the TEE.
             return "\(keyKind): the Keychain made the key at security level '\(level.wireName)', " +
                 "and requireHardwareBackedKeys() accepts the Secure Enclave only"
+        case .unlockedDeviceKeyRequired(let keyKind, _):
+            // The Kotlin text names the Android Keystore.
+            return "\(keyKind): the Keychain refused a key that works only while the device is unlocked, " +
+                "and requireUnlockedDevice() allows no key without that requirement " +
+                "(requireUnlockedDevice(allowFallback: true) would)"
         case .enrollmentRefused(let httpStatus, let serverError, _):
             return "Enrollment refused — HTTP \(httpStatus)" + (serverError.map { " \($0)" } ?? "")
         case .enrollmentPending(let requestId, _, _, _, _):
@@ -121,7 +134,7 @@ public enum PinVaultError: Error, Sendable {
             return message
                 ?? "Vault file '\(key)' needs a screen lock (userAuth = REQUIRED); the device has none, so it was not stored"
         case .invalidConfiguration(let message), .illegalArgument(let message), .illegalState(let message),
-             .sslPeerUnverified(let message):
+             .sslPeerUnverified(let message), .configViewMismatch(let message):
             return message
         }
     }
@@ -136,10 +149,10 @@ public enum PinVaultError: Error, Sendable {
              .managedTrustRoot(_, let cause), .unpinnedHost(_, let cause), .certificate(_, let cause),
              .security(_, let cause), .crypto(_, let cause), .io(_, let cause), .sslHandshake(_, let cause),
              .configExpired(_, _, let cause), .hardwareBackedKeyRequired(_, _, let cause),
-             .untrustedEnvironment(_, _, let cause):
+             .untrustedEnvironment(_, _, let cause), .unlockedDeviceKeyRequired(_, let cause):
             return cause
         case .enrollmentRefused, .enrollmentPending, .screenLockRequired, .invalidConfiguration,
-             .illegalArgument, .illegalState, .sslPeerUnverified:
+             .illegalArgument, .illegalState, .sslPeerUnverified, .configViewMismatch:
             return nil
         }
     }
@@ -156,6 +169,7 @@ public enum PinVaultError: Error, Sendable {
         case .configExpired: return "ConfigExpiredException"
         case .clientCertificateRequired: return "ClientCertificateRequiredException"
         case .hardwareBackedKeyRequired: return "HardwareBackedKeyRequiredException"
+        case .unlockedDeviceKeyRequired: return "UnlockedDeviceKeyRequiredException"
         case .storeUnreadable: return "StoreUnreadableException"
         case .caTrust: return "CaTrustException"
         case .certificateValidity: return "CertificateValidityException"
@@ -170,6 +184,7 @@ public enum PinVaultError: Error, Sendable {
         case .invalidConfiguration, .illegalArgument: return "IllegalArgumentException"
         case .illegalState: return "IllegalStateException"
         case .security: return "SecurityException"
+        case .configViewMismatch: return "ConfigViewMismatchException"
         case .crypto: return "GeneralSecurityException"
         case .io: return "IOException"
         case .sslHandshake: return "SSLHandshakeException"
@@ -182,7 +197,7 @@ public enum PinVaultError: Error, Sendable {
         switch self {
         case .sslPinning, .backendUnreachable, .invalidPinFormat, .pinMismatch, .forceUpdateFailed,
              .noConfigAvailable, .configExpired, .clientCertificateRequired, .hardwareBackedKeyRequired,
-             .storeUnreadable:
+             .unlockedDeviceKeyRequired, .storeUnreadable:
             return true
         default:
             return false

@@ -30,17 +30,23 @@ extension ConfigApiClient.Collaborators {
             },
             hostCertStore: (try? storage.openStore()).map { ImportedHostCertificates(certStore: $0, keys: storage.importedKeys) },
             renewer: { client in
-                guard let certStore = try? storage.openStore() else { return NoRenewal() }
-                return ClientCertRenewer(
-                    block: client.block,
-                    certStore: certStore,
-                    identityKeys: storage.identityKeys,
-                    api: { [unowned client] in client.api },
-                    reload: { [unowned client] in client.reloadClientIdentity() },
-                    // A refusal of the renewal over mTLS wipes when that connection
-                    // presented the identity loaded now; one on the recovery door never does.
-                    onRefusedOverMtls: { [unowned client] leaf in client.identityRefused(presented: leaf) }
-                )
+                // Built at the first renewal check, not here: a credential store
+                // that cannot be opened at start (the Keychain before the first
+                // unlock) is asked again at the next check instead of turning
+                // renewal off for the client's lifetime. The strict store, so a
+                // certificate that cannot be read is a failure, not "none stored".
+                DeferredRenewal(blockId: client.block.id) { [unowned client] in
+                    ClientCertRenewer(
+                        block: client.block,
+                        certStore: try storage.openStrictStore(),
+                        identityKeys: storage.identityKeys,
+                        api: { [unowned client] in client.api },
+                        reload: { [unowned client] in client.reloadClientIdentity() },
+                        // A refusal of the renewal over mTLS wipes when that connection
+                        // presented the identity loaded now; one on the recovery door never does.
+                        onRefusedOverMtls: { [unowned client] leaf in client.identityRefused(presented: leaf) }
+                    )
+                }
             },
             onIdentityRevoked: { [weak vault] configApiId in vault?.wipeOnRevocation(configApiId) },
             onReenrollRequired: { [weak vault] configApiId, reason in
@@ -52,9 +58,38 @@ extension ConfigApiClient.Collaborators {
 
 extension ClientCertRenewer: ClientCertRenewing {}
 
-/// A block whose credential store cannot be opened renews nothing.
-private struct NoRenewal: ClientCertRenewing {
-    func renewIfNeeded(force: Bool) async -> ClientCertRenewalResult { .notApplicable }
+/// A block's renewer, built when it is first needed. While `make` throws —
+/// the credential store cannot be opened — every check answers
+/// ``ClientCertRenewalResult/failed(reason:exception:)`` and the next one
+/// tries again; once it worked the renewer is kept.
+final class DeferredRenewal: ClientCertRenewing {
+    private let blockId: String
+    private let make: @Sendable () throws -> any ClientCertRenewing
+    private let built = Locked<(any ClientCertRenewing)?>(nil)
+    private static let log = PinVaultLog.tag("ClientCertRenewer")
+
+    init(blockId: String, _ make: @escaping @Sendable () throws -> any ClientCertRenewing) {
+        self.blockId = blockId
+        self.make = make
+    }
+
+    func renewIfNeeded(force: Bool) async -> ClientCertRenewalResult {
+        let renewer: any ClientCertRenewing
+        do {
+            renewer = try built.withLock { built in
+                if let built { return built }
+                let made = try make()
+                built = made
+                return made
+            }
+        } catch {
+            Self.log.e("Client cert renewal [\(blockId)]: the client credential store cannot be opened", error)
+            return .failed(
+                reason: "The client credential store cannot be opened: \(ClientCertRenewer.message(error))", exception: error
+            )
+        }
+        return await renewer.renewIfNeeded(force: force)
+    }
 }
 
 /// The client certificates of `mtls` pin entries (`host_<hostname>`): the

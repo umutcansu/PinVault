@@ -272,11 +272,20 @@ struct X509Certificate: Sendable, Equatable {
         return KeyUsage(rawValue: raw)
     }
 
-    /// extendedKeyUsage purposes, dotted; empty without the extension.
+    /// extendedKeyUsage purposes, dotted; empty without the extension — and
+    /// when any part of it cannot be read: an extension with one element that
+    /// is no OID is unreadable as a whole, not "the purposes that did parse"
+    /// (the JDK refuses such a certificate; an issuer pin must not accept it
+    /// here for the serverAuth listed next to the damage).
     var extendedKeyUsage: [String] {
         guard let ext = `extension`(X509OID.extendedKeyUsage),
               let purposes = try? DER.parse(ext.value).expect(ASN1Tag.sequence).children() else { return [] }
-        return purposes.compactMap { try? $0.objectIdentifier() }
+        var oids: [String] = []
+        for purpose in purposes {
+            guard purpose.tag == ASN1Tag.objectIdentifier, let oid = try? purpose.objectIdentifier() else { return [] }
+            oids.append(oid)
+        }
+        return oids
     }
 
     private static func algorithmOID(_ element: DERElement) throws -> String {

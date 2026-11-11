@@ -925,7 +925,13 @@ final class DynamicSSLManager: @unchecked Sendable {
 /// The delegate of one library-built `URLSession` (one logical host and port):
 /// answers its authentication challenges through the ``DynamicSSLManager``
 /// and records, per task, why it refused a peer.
-final class PinnedSessionDelegate: NSObject, URLSessionDataDelegate, @unchecked Sendable {
+///
+/// `URLSessionWebSocketDelegate` is named on purpose: URLSession finds a
+/// delegate method by its Objective-C selector, and a Swift method only gets
+/// that selector when the class conforms to the protocol that declares it.
+/// Without the conformance `urlSession(_:webSocketTask:didOpenWithProtocol:)`
+/// below is an ordinary Swift method URLSession never calls.
+final class PinnedSessionDelegate: NSObject, URLSessionDataDelegate, URLSessionWebSocketDelegate, @unchecked Sendable {
 
     /// What this session's connections are for.
     struct Context: Sendable {

@@ -53,12 +53,27 @@ struct ClientCertTestCA: @unchecked Sendable {
     /// A leaf `CN=<cn>` over `spki`, signed by this CA (or by `signer` under this CA's name).
     func issue(
         cn: String = "PinVault Client: dev-1", spki: Data, notBefore: Date, notAfter: Date,
-        issuerName: Data? = nil, signer: TestKeyPair? = nil
+        issuerName: Data? = nil, signer: TestKeyPair? = nil, extensions: [Data] = []
     ) -> X509Certificate {
         Self.make(
             issuer: issuerName ?? name, subject: Self.name(cn), spki: spki,
-            notBefore: notBefore, notAfter: notAfter, ca: false, signer: signer ?? keys
+            notBefore: notBefore, notAfter: notAfter, ca: false, signer: signer ?? keys, extensions: extensions
         )
+    }
+
+    /// An `extendedKeyUsage` extension listing `purposes` (dotted OIDs).
+    static func extendedKeyUsage(_ purposes: [String]) -> Data {
+        DER.sequence([
+            try! DER.objectIdentifier(X509OID.extendedKeyUsage),
+            DER.octetString(DER.sequence(purposes.map { try! DER.objectIdentifier($0) })),
+        ])
+    }
+
+    /// A `subjectAltName` extension with one dNSName.
+    static func subjectAltName(dns: String) -> Data {
+        var name = Data([0x82, UInt8(dns.utf8.count)])
+        name.append(Data(dns.utf8))
+        return DER.sequence([try! DER.objectIdentifier(X509OID.subjectAltName), DER.octetString(DER.sequence([name]))])
     }
 
     /// `SEQUENCE { SET { SEQUENCE { commonName, UTF8String } } }`.
@@ -67,7 +82,10 @@ struct ClientCertTestCA: @unchecked Sendable {
     }
 
     /// A v3 certificate, ecdsa-with-SHA256.
-    static func make(issuer: Data, subject: Data, spki: Data, notBefore: Date, notAfter: Date, ca: Bool, signer: TestKeyPair) -> X509Certificate {
+    static func make(
+        issuer: Data, subject: Data, spki: Data, notBefore: Date, notAfter: Date, ca: Bool, signer: TestKeyPair,
+        extensions: [Data] = []
+    ) -> X509Certificate {
         let algorithm = DER.sequence([try! DER.objectIdentifier(X509OID.ecdsaWithSHA256)])
         var serial = Data(count: 8)
         _ = serial.withUnsafeMutableBytes { SecRandomCopyBytes(kSecRandomDefault, 8, $0.baseAddress!) }
@@ -81,14 +99,15 @@ struct ClientCertTestCA: @unchecked Sendable {
             subject,
             spki,
         ]
+        var all = extensions
         if ca {
-            let basicConstraints = DER.sequence([
+            all.insert(DER.sequence([
                 try! DER.objectIdentifier(X509OID.basicConstraints),
                 DER.boolean(true),
                 DER.octetString(DER.sequence([DER.boolean(true)])),
-            ])
-            fields.append(DER.explicit(3, DER.sequence([basicConstraints])))
+            ]), at: 0)
         }
+        if !all.isEmpty { fields.append(DER.explicit(3, DER.sequence(all))) }
         let tbs = DER.sequence(fields)
         let der = DER.sequence([tbs, algorithm, DER.bitString(signer.sign(tbs))])
         return try! X509Certificate(der: der)

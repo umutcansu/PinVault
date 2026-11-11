@@ -348,15 +348,24 @@ final class UserAuthVaultStorage: VaultStorageProvider {
         // Which key the copy needs, and whether it is still there. Only a
         // missing key is a reason to give the copy up — and that gives up
         // every copy, not just this slot's.
+        // Nothing here needs the private key (the Keychain may refuse it until
+        // the prompt has passed). A key made by an earlier build may not tell its
+        // public half before the prompt either: then the copy's key id is
+        // checked right after it, before the key is used.
         let kind: UserAuthKeyKind
+        var keyIdChecked = false
         do {
             if try keys.state() != .usable { return Attempt(result: invalidated(key)) }
-            if sealed.keyId != (try UserAuthKeyConstants.keyId(keys.publicKey())) {
-                log.w("Vault file [\(key)] was sealed with a user-auth key that no longer exists")
-                // A pending copy for another key says nothing about the stored one.
-                return slot == .pending
-                    ? Attempt(result: givenUp(key, slot), condemned: true, passed: passed)
-                    : Attempt(result: invalidated(key))
+            let current: Data?
+            do {
+                current = try UserAuthKeyConstants.keyId(keys.publicKey())
+            } catch where WrongKeyForCopy.isAuthFailure(error) && !UserAuthKeyConstants.isRetired(error) {
+                log.d("Vault file [\(key)]: the unlock key tells its public half only after the prompt")
+                current = nil
+            }
+            if let current {
+                if let mismatch = keyIdMismatch(key, slot, sealed, current, passed) { return mismatch }
+                keyIdChecked = true
             }
             kind = try keys.kind()
         } catch {
@@ -380,6 +389,14 @@ final class UserAuthVaultStorage: VaultStorageProvider {
         switch outcome {
         case .succeeded(let grant):
             if let grant { grants.withLock { $0.append(grant) } }
+            if !keyIdChecked {
+                do {
+                    let current = try UserAuthKeyConstants.keyId(keys.publicKey(authorisedBy: grant))
+                    if let mismatch = keyIdMismatch(key, slot, sealed, current, Passed(grant: grant)) { return mismatch }
+                } catch {
+                    return Attempt(result: keystoreFailure(key, "Unlock was approved but the key did not open", error))
+                }
+            }
             return open(key, slot, version, sealed, grant, verify, onSealedForAnotherKey)
         case .cancelled:
             return Attempt(result: .cancelled(key: key))
@@ -393,6 +410,17 @@ final class UserAuthVaultStorage: VaultStorageProvider {
         case .error(let message):
             return Attempt(result: .failed(key: key, reason: message))
         }
+    }
+
+    /// Nil when the copy was sealed with the current key (`current`, its id);
+    /// otherwise what giving it up came to.
+    private func keyIdMismatch(_ key: String, _ slot: Slot, _ sealed: Sealed, _ current: Data, _ passed: Passed?) -> Attempt? {
+        if sealed.keyId == current { return nil }
+        log.w("Vault file [\(key)] was sealed with a user-auth key that no longer exists")
+        // A pending copy for another key says nothing about the stored one.
+        return slot == .pending
+            ? Attempt(result: givenUp(key, slot), condemned: true, passed: passed)
+            : Attempt(result: invalidated(key))
     }
 
     /// After a passed prompt: the key step, then the software steps.

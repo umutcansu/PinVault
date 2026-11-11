@@ -14,6 +14,7 @@ final class AttestationManagerTests: XCTestCase {
     private var key = TestIdentityKey()
     private var events = AttestCollector<PinVaultConnectionEvent>()
     private var applied = AttestCollector<SignedConfigResponse>()
+    private var appliedDeviceIds = AttestCollector<String>()
     private var applyResults = AttestCollector<UpdateResult>()
     private var verdicts = AttestCollector<([String], [String])>()
     private let report = #"{"sdkVersion":"2.3.0","signals":{}}"#
@@ -23,6 +24,7 @@ final class AttestationManagerTests: XCTestCase {
         key = TestIdentityKey()
         events = AttestCollector()
         applied = AttestCollector()
+        appliedDeviceIds = AttestCollector()
         applyResults = AttestCollector()
         verdicts = AttestCollector()
     }
@@ -38,6 +40,7 @@ final class AttestationManagerTests: XCTestCase {
         let key = self.key
         let report = self.report
         let applied = self.applied
+        let appliedDeviceIds = self.appliedDeviceIds
         let applyResults = self.applyResults
         let events = self.events
         let verdicts = self.verdicts
@@ -50,7 +53,7 @@ final class AttestationManagerTests: XCTestCase {
             currentConfigVersion: { 7 },
             currentIssuedAt: { 1_000 },
             buildReport: { _, _, _, _ in report },
-            applyConfig: { signed in applied.append(signed); return .updated(newVersion: 9) },
+            applyConfig: { signed, did in applied.append(signed); appliedDeviceIds.append(did); return .updated(newVersion: 9) },
             onConfigApplied: { applyResults.append($0) },
             onEvent: { events.append($0) },
             onVerdict: { verdicts.append(($0, $1)) },
@@ -139,7 +142,7 @@ final class AttestationManagerTests: XCTestCase {
         let m = AttestationManager(
             block: try attestingBlock(), api: api, identityKey: { key }, deviceId: { "device-07" },
             currentConfigVersion: { 0 }, currentIssuedAt: { 0 },
-            buildReport: { _, _, _, _ in tricky }, applyConfig: { _ in .alreadyCurrent }, clock: { 1 }, jitter: { 0.5 }
+            buildReport: { _, _, _, _ in tricky }, applyConfig: { _, _ in .alreadyCurrent }, clock: { 1 }, jitter: { 0.5 }
         )
         _ = await m.attestNow()
         let json = try XCTUnwrap(api.attestBodies.first)
@@ -225,6 +228,15 @@ final class AttestationManagerTests: XCTestCase {
         XCTAssertEqual(applied.values[0].signature, "c2ln")
         XCTAssertEqual(applied.values[0].signatures?.first?.keyId, "k1")
         XCTAssertEqual(applyResults.values, [.updated(newVersion: 9)])
+        // M6: the updater checks the embedded view against the deviceId this round's request named.
+        XCTAssertEqual(appliedDeviceIds.values, ["device-07"])
+    }
+
+    func testTheEmbeddedConfigIsCheckedAgainstTheDeviceIdTheRequestNamedUnknownDeviceWithoutAUsableId() async throws {
+        api.enqueue(challenge())
+        api.enqueue(pass(extra: #","config":{"payload":"{\"version\":1}","signature":"c2ln"}"#))
+        _ = try await manager(deviceId: "not a valid id!").attestNow()
+        XCTAssertEqual(appliedDeviceIds.values, [AttestationManager.unknownDeviceId])
     }
 
     func testAnEmbeddedConfigThatIsNotAnEnvelopeIsIgnored() async throws {
@@ -430,7 +442,7 @@ final class AttestationManagerTests: XCTestCase {
         let m = AttestationManager(
             block: try attestingBlock(tokenHosts: ["api.example.com"]), api: slow, identityKey: { key }, deviceId: { "d" },
             currentConfigVersion: { 0 }, currentIssuedAt: { 0 },
-            buildReport: { _, _, _, _ in "{}" }, applyConfig: { _ in .alreadyCurrent }, clock: { 1_000 }, jitter: { 0.5 }
+            buildReport: { _, _, _, _ in "{}" }, applyConfig: { _, _ in .alreadyCurrent }, clock: { 1_000 }, jitter: { 0.5 }
         )
         async let a = m.attestNow()
         async let b = m.attestNow()
@@ -497,7 +509,7 @@ final class AttestationManagerTests: XCTestCase {
         let m = AttestationManager(
             block: try attestingBlock(), api: api, identityKey: { throw PinVaultError.illegalState("Keychain unavailable") },
             deviceId: { "d" }, currentConfigVersion: { 0 }, currentIssuedAt: { 0 },
-            buildReport: { _, _, _, _ in "{}" }, applyConfig: { _ in .alreadyCurrent }, clock: { 1 }, jitter: { 0.5 }
+            buildReport: { _, _, _, _ in "{}" }, applyConfig: { _, _ in .alreadyCurrent }, clock: { 1 }, jitter: { 0.5 }
         )
         let status = await m.attestNow()
         XCTAssertEqual(status.result, .failed)

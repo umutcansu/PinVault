@@ -364,9 +364,11 @@ public final class PinVault: @unchecked Sendable {
             onEvent: { [weak self] event in self?.dispatchEvent(event) },
             currentConfigVersion: { id in (try? byId[id]?.configStore.getCurrentVersion()) ?? 0 },
             currentIssuedAt: { id in (try? byId[id]?.configStore.getCurrentIssuedAt()) ?? 0 },
-            applyConfig: { id, signed in
+            // The embedded config takes the fetched config's road, minus the fetch;
+            // its signed view answers the device id the attestation request named.
+            applyConfig: { id, signed, deviceId in
                 guard let client = byId[id] else { return .failed(reason: "No Config API block '\(id)'") }
-                return await client.updater.applySigned(signed)
+                return await client.updater.applySigned(signed, requestDeviceId: deviceId)
             },
             // Reported like a recovery update: the app's update listener and the ConfigUpdate event.
             onConfigApplied: { [weak self] _, result in

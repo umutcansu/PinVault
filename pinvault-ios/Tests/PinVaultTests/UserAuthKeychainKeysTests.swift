@@ -72,6 +72,24 @@ final class UserAuthKeychainKeysTests: XCTestCase {
         XCTAssertNotEqual(attributes[kSecAttrSynchronizable as String] as? Bool, true)
     }
 
+    /// AG R-13: the public half lives in a record the Keychain hands out without a prompt.
+    func testThePublicRecordHasNoAccessControlAndTheKeysAccessibility() throws {
+        try keys.ensureKey()
+        var query = SystemUserAuthKeychain.recordQuery(tag: alias)
+        query[kSecReturnAttributes] = true
+        query[kSecReturnData] = true
+        query[kSecUseAuthenticationContext] = UserAuthContexts.silent()
+        var item: CFTypeRef?
+        XCTAssertEqual(SecItemCopyMatching(query as CFDictionary, &item), errSecSuccess)
+        let attributes = try XCTUnwrap(item as? [String: Any])
+        XCTAssertEqual(attributes[kSecAttrAccessible as String] as? String, kSecAttrAccessibleWhenPasscodeSetThisDeviceOnly as String)
+        XCTAssertNotEqual(attributes[kSecAttrSynchronizable as String] as? Bool, true)
+        let record = try XCTUnwrap((attributes[kSecValueData as String] as? Data).flatMap(UserAuthPublicRecord.decode))
+        XCTAssertEqual(record.spki, try SPKI.der(for: keys.publicKey()))
+        keys.delete()
+        XCTAssertEqual(SecItemCopyMatching(query as CFDictionary, &item), errSecItemNotFound, "deleted with the key")
+    }
+
     func testAMissingKeyIsRetiredNotAHiccup() throws {
         XCTAssertEqual(try keys.state(), .missing)
         XCTAssertThrowsError(try keys.grantForPrompt()) { XCTAssertTrue(UserAuthKeyConstants.isRetired($0)) }

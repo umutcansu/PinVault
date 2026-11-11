@@ -78,6 +78,46 @@ final class DefaultCertificateConfigApiTests: XCTestCase {
         XCTAssertEqual(result.pins[0].hostname, "secure.example.com")
     }
 
+    /// `freshPayload()` with a signed `view` (M6), written last as the server does.
+    private func narrowedPayload(_ view: String) -> String {
+        var text = freshPayload()
+        text.removeLast()
+        return text + #","view":"# + view + "}"
+    }
+
+    func testFetchConfigRefusesANarrowedView() async throws {
+        let signer = TestSigner()
+        let payload = narrowedPayload(#"{"hosts":["secure.example.com"],"deviceId":"dev-1"}"#)
+        enqueueJSON(json(SignedConfigResponse(payload: payload, signature: signer.sign(payload))))
+        let error = await assertPinVaultError { _ = try await self.api(signaturePublicKey: signer.pub).fetchConfig(currentVersion: 1) }
+        guard case .configViewMismatch(let message)? = error else { return XCTFail("\(String(describing: error))") }
+        XCTAssertTrue(message.hasPrefix("Signed config rejected:"), message)
+    }
+
+    func testFetchScopedConfigAcceptsItsOwnViewAndRefusesAnotherRequestsView() async throws {
+        let signer = TestSigner()
+        let own = narrowedPayload(#"{"hosts":["secure.example.com"],"deviceId":"dev-1"}"#)
+        enqueueJSON(json(SignedConfigResponse(payload: own, signature: signer.sign(own))))
+        let config = try await api(signaturePublicKey: signer.pub)
+            .fetchScopedConfig(currentVersion: 1, hosts: ["Secure.Example.com"], deviceId: "dev-1")
+        XCTAssertEqual(config.version, 7)
+
+        let other = narrowedPayload(#"{"hosts":["secure.example.com"],"deviceId":"dev-2"}"#)
+        enqueueJSON(json(SignedConfigResponse(payload: other, signature: signer.sign(other))))
+        let error = await assertPinVaultError {
+            _ = try await self.api(signaturePublicKey: signer.pub)
+                .fetchScopedConfig(currentVersion: 1, hosts: ["secure.example.com"], deviceId: "dev-1")
+        }
+        guard case .configViewMismatch? = error else { return XCTFail("\(String(describing: error))") }
+
+        // Neither hosts nor a device id: the full request, which refuses any view.
+        enqueueJSON(json(SignedConfigResponse(payload: own, signature: signer.sign(own))))
+        let full = await assertPinVaultError {
+            _ = try await self.api(signaturePublicKey: signer.pub).fetchScopedConfig(currentVersion: 1, hosts: [], deviceId: nil)
+        }
+        guard case .configViewMismatch? = full else { return XCTFail("\(String(describing: full))") }
+    }
+
     func testFetchConfigRejectsSignedConfigMissingExpiresAt() async throws {
         let signer = TestSigner()
         let payload = json(CertificateConfig(version: 5, pins: [HostPin(hostname: "a.com", sha256: ["p1", "p2"], version: 5)]))

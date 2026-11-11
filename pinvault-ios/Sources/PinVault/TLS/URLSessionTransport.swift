@@ -48,10 +48,48 @@ final class URLSessionTransport: PinnedTransport, @unchecked Sendable {
     /// The configuration every session of this transport is a copy of.
     var configuration: URLSessionConfiguration { template }
 
-    private struct Entry {
-        let session: URLSession
+    /// One session and its delegate. The transport hands an entry out of its
+    /// state lock and creates the task a moment later, while another thread
+    /// (a pin update, an identity change, a failed per-request check) may
+    /// retire that same session. Creating a task on an invalidated URLSession
+    /// raises an Objective-C exception Swift cannot catch — the process
+    /// dies — so both go through this entry's own lock: a task is only made
+    /// while the session is not retired, and retiring marks it before it
+    /// invalidates. A caller that finds the entry retired asks for a new one.
+    private final class Entry: @unchecked Sendable {
         let delegate: PinnedSessionDelegate
+        private let session: URLSession
+        private let lock = NSLock()
+        private var retired = false
+
+        init(session: URLSession, delegate: PinnedSessionDelegate) {
+            self.session = session
+            self.delegate = delegate
+        }
+
+        /// A task made by `make` on the session, or nil when it was retired.
+        func task<T: URLSessionTask>(_ make: (URLSession) -> T) -> T? {
+            lock.lock()
+            defer { lock.unlock() }
+            return retired ? nil : make(session)
+        }
+
+        /// Invalidates the session, once: idle connections close and tasks
+        /// already running complete, or with `cancel` they are cancelled.
+        func retire(cancel: Bool = false) {
+            lock.lock()
+            defer { lock.unlock() }
+            if retired { return }
+            retired = true
+            if cancel { session.invalidateAndCancel() } else { session.finishTasksAndInvalidate() }
+        }
     }
+
+    /// How many times a request asks for a new session after finding the one
+    /// it was handed retired. Each round means the config, the pins or the
+    /// identity moved again in between; this many in a row is not a state to
+    /// keep spinning in.
+    static let maxSessionAttempts = 8
 
     private struct State {
         var entries: [String: Entry] = [:]
@@ -85,7 +123,7 @@ final class URLSessionTransport: PinnedTransport, @unchecked Sendable {
     }
 
     deinit {
-        for entry in state.withLock({ $0.entries.values }) { entry.session.finishTasksAndInvalidate() }
+        for entry in state.withLock({ $0.entries.values }) { entry.retire() }
     }
 
     func invalidate() {
@@ -94,7 +132,7 @@ final class URLSessionTransport: PinnedTransport, @unchecked Sendable {
             defer { state.entries = [:] }
             return Array(state.entries.values)
         }
-        entries.forEach { $0.session.invalidateAndCancel() }
+        entries.forEach { $0.retire(cancel: true) }
     }
 
     /// Invalidates every session now (idle connections close; requests in
@@ -107,7 +145,7 @@ final class URLSessionTransport: PinnedTransport, @unchecked Sendable {
             }
             return Array(state.entries.values)
         }
-        entries.forEach { $0.session.finishTasksAndInvalidate() }
+        entries.forEach { $0.retire() }
     }
 
     // MARK: Sending
@@ -146,6 +184,21 @@ final class URLSessionTransport: PinnedTransport, @unchecked Sendable {
         }
         let host = DynamicSSLManager.bareHost(rawHost).lowercased()
         let port = url.port ?? (scheme == "https" ? 443 : 80)
+        // A session retired between being handed out and the task being made
+        // (see Entry) is replaced by a new one, with the checks done again.
+        for _ in 0..<Self.maxSessionAttempts {
+            if let response = try await sendOnce(request, url: url, scheme: scheme, host: host, port: port, limit: limit) {
+                return response
+            }
+        }
+        throw PinVaultError.io(message: "The pinned session for \(DynamicSSLManager.hostPort(host, port)) kept being rebuilt; the request was not sent")
+    }
+
+    /// One attempt on the current session of `scheme://host:port`; nil when
+    /// that session was retired before the task could be made (nothing was sent).
+    private func sendOnce(
+        _ request: URLRequest, url: URL, scheme: String, host: String, port: Int, limit: BoundedBody.Limit?
+    ) async throws -> PinnedResponse? {
         let entry = try session(scheme: scheme, host: host, port: port)
 
         if scheme == "https", let provider = trust.configProvider {
@@ -180,7 +233,7 @@ final class URLSessionTransport: PinnedTransport, @unchecked Sendable {
         }
         let askedForbiddenAs409 = ForbiddenAsConflict.requested(wire.value(forHTTPHeaderField: ForbiddenAsConflict.featuresHeader))
 
-        let outcome = await run(entry.session, entry.delegate, wire, limit: limit)
+        guard let outcome = await run(entry, wire, limit: limit) else { return nil }
         if let error = outcome.error {
             if let failure = entry.delegate.takeFailure(outcome.taskIdentifier) { throw failure.thrown }
             if let tooLarge = error as? ResponseTooLargeException { throw tooLarge }
@@ -232,36 +285,50 @@ final class URLSessionTransport: PinnedTransport, @unchecked Sendable {
                 "\(DynamicSSLManager.hostPort(address.host, address.port)), and a WebSocket connects to its URL's host"
             )
         }
-        let entry = try session(scheme: httpScheme, host: host, port: port)
+        // A session retired before the task is made is replaced, as for a data task.
+        for _ in 0..<Self.maxSessionAttempts {
+            let entry = try session(scheme: httpScheme, host: host, port: port)
 
-        // The same per-request re-check a data task gets: a pin set that moved
-        // (or a config that expired) refuses the socket before it opens.
-        if scheme == "wss", let provider = trust.configProvider {
-            do {
-                try PinnedConnectionInterceptor.check(manager: manager, config: provider(), host: host)
-            } catch {
-                retire(key: Self.key(httpScheme, host, port), entry)
-                throw error
+            // The same per-request re-check a data task gets: a pin set that moved
+            // (or a config that expired) refuses the socket before it opens.
+            if scheme == "wss", let provider = trust.configProvider {
+                do {
+                    try PinnedConnectionInterceptor.check(manager: manager, config: provider(), host: host)
+                } catch {
+                    retire(key: Self.key(httpScheme, host, port), entry)
+                    throw error
+                }
             }
+            // The request, not only its URL: its headers (Authorization, a token)
+            // and timeout go into the upgrade request.
+            if let task = entry.task({ $0.webSocketTask(with: request) }) { return task }
         }
-        // The request, not only its URL: its headers (Authorization, a token)
-        // and timeout go into the upgrade request.
-        return entry.session.webSocketTask(with: request)
+        throw PinVaultError.io(message: "The pinned session for \(DynamicSSLManager.hostPort(host, port)) kept being rebuilt; the socket was not opened")
     }
 
     /// Runs one data task whose body the delegate collects under `limit`; the
-    /// task identifier says where the delegate recorded a refusal.
-    private func run(
-        _ session: URLSession,
-        _ delegate: PinnedSessionDelegate,
-        _ request: URLRequest,
-        limit: BoundedBody.Limit?
-    ) async -> ResponseCollector.Outcome {
+    /// task identifier says where the delegate recorded a refusal. Nil when
+    /// the entry's session was retired: no task was made.
+    private func run(_ entry: Entry, _ request: URLRequest, limit: BoundedBody.Limit?) async -> ResponseCollector.Outcome? {
+        let delegate = entry.delegate
         let box = TaskBox()
         return await withTaskCancellationHandler {
-            await withCheckedContinuation { (continuation: CheckedContinuation<ResponseCollector.Outcome, Never>) in
-                let task = session.dataTask(with: request)
-                delegate.collect(task.taskIdentifier, ResponseCollector(limit: limit, continuation: continuation))
+            await withCheckedContinuation { (continuation: CheckedContinuation<ResponseCollector.Outcome?, Never>) in
+                // Made (not started) and given its collector under the entry's
+                // lock, in one step: `invalidate()` cancels a session's tasks
+                // through the same lock, and a task cancelled before its
+                // collector was registered would complete with nobody
+                // listening — this request would wait forever. A session
+                // retired without cancelling still lets the task run to its end.
+                let task = entry.task { session -> URLSessionDataTask in
+                    let task = session.dataTask(with: request)
+                    delegate.collect(task.taskIdentifier, ResponseCollector(limit: limit, continuation: continuation))
+                    return task
+                }
+                guard let task else {
+                    continuation.resume(returning: nil)
+                    return
+                }
                 box.start(task)
             }
         } onCancel: {
@@ -296,17 +363,17 @@ final class URLSessionTransport: PinnedTransport, @unchecked Sendable {
             state.entries[key] = entry
             return entry
         }
-        retired.forEach { $0.session.finishTasksAndInvalidate() }
+        retired.forEach { $0.retire() }
         return entry
     }
 
     private func retire(key: String, _ entry: Entry) {
         let removed = state.withLock { state -> Bool in
-            guard let current = state.entries[key], current.session === entry.session else { return false }
+            guard let current = state.entries[key], current === entry else { return false }
             state.entries[key] = nil
             return true
         }
-        if removed { entry.session.finishTasksAndInvalidate() }
+        if removed { entry.retire() }
     }
 
     private static func key(_ scheme: String, _ host: String, _ port: Int) -> String {
@@ -352,15 +419,23 @@ final class URLSessionTransport: PinnedTransport, @unchecked Sendable {
                 for name in ["Transfer-Encoding", "Content-Length", "Content-Type"] { next.setValue(nil, forHTTPHeaderField: name) }
             }
         }
-        // A request for another endpoint keeps no credentials. OkHttp drops only
-        // Authorization; the library's own secrets (the attestation token, vault
-        // tokens, API keys) and cookies must not follow a redirect to another
-        // host, port or scheme either.
+        // A request for another endpoint (host, port or scheme) carries nothing
+        // the caller meant for the first one. OkHttp drops only Authorization;
+        // a fixed list of credential names is not enough either — an app's own
+        // session or API-key header has any name. So only headers that say
+        // nothing about the caller go along, and a body is not sent again: a
+        // 307/308 that would repeat it to another endpoint is the answer (an
+        // empty body carries nothing and counts as none, as on Android).
+        // What the library adds for the new destination (its token for a token
+        // host, `Host`, `forbidden-as-409`) is added when that hop is sent.
         let sameEndpoint = target.host?.lowercased() == current.host?.lowercased()
             && (target.port ?? (scheme == "https" ? 443 : 80)) == (current.port ?? (current.scheme?.lowercased() == "https" ? 443 : 80))
             && sameScheme
         if !sameEndpoint {
-            for name in Self.credentialHeaders { next.setValue(nil, forHTTPHeaderField: name) }
+            if next.httpBody?.isEmpty == false || next.httpBodyStream != nil { return nil }
+            for name in (next.allHTTPHeaderFields ?? [:]).keys where !Self.crossEndpointHeaders.contains(name.lowercased()) {
+                next.setValue(nil, forHTTPHeaderField: name)
+            }
         }
         next.setValue(nil, forHTTPHeaderField: "Host")
         // A body that can be sent once only (a stream, already read) is not sent again: the 3xx is the answer.
@@ -368,7 +443,11 @@ final class URLSessionTransport: PinnedTransport, @unchecked Sendable {
         return next
     }
 
-    /// Headers that never follow a redirect to another endpoint.
+    /// The only request headers that follow a redirect to another endpoint
+    /// (lower case): what the client accepts and what it is.
+    static let crossEndpointHeaders: Set<String> = ["accept", "accept-language", "user-agent"]
+
+    /// Headers that carry a credential: never among ``crossEndpointHeaders``.
     static let credentialHeaders = [
         "Authorization", "Proxy-Authorization", "Cookie",
         AttestationTokenInterceptor.header, AttestationTokenInterceptor.proofHeader, "X-Vault-Token", "X-Vault-Key", "X-API-Key",
@@ -419,9 +498,10 @@ final class ResponseCollector: @unchecked Sendable {
     /// Why the collector stopped the task itself: a refusal, or nil for a complete prefix.
     private var stoppedEarly = false
     private var refusal: (any Error)?
-    private var continuation: CheckedContinuation<Outcome, Never>?
+    /// Optional outcome: the transport answers nil itself when no task was made.
+    private var continuation: CheckedContinuation<Outcome?, Never>?
 
-    init(limit: BoundedBody.Limit?, continuation: CheckedContinuation<Outcome, Never>) {
+    init(limit: BoundedBody.Limit?, continuation: CheckedContinuation<Outcome?, Never>) {
         self.buffer = BoundedBuffer(limit: limit)
         self.continuation = continuation
     }

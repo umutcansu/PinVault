@@ -37,7 +37,8 @@ final class AttestationCoordinator: Sendable {
     ///   - clock: epoch ms (the library's wall clock).
     ///   - onEvent: the connection-event dispatch (`DynamicSSLManager.dispatchEvent`).
     ///   - currentConfigVersion / currentIssuedAt: the block's active config, by block id.
-    ///   - applyConfig: applies a signed config that rode along with a pass (`SSLCertificateUpdater.applySigned`).
+    ///   - applyConfig: applies a signed config that rode along with a pass (`SSLCertificateUpdater.applySigned`),
+    ///     with the `deviceId` that round's request named (M6).
     ///   - onConfigApplied: told the result, like a recovery update (block id, result).
     ///   - probe: the report builder; nil = ``DeviceIntegrityProbe/forConfig(_:defaultVerdictProvider:)``.
     convenience init(
@@ -49,7 +50,7 @@ final class AttestationCoordinator: Sendable {
         onEvent: @escaping @Sendable (PinVaultConnectionEvent) -> Void,
         currentConfigVersion: @escaping @Sendable (_ configApiId: String) -> Int,
         currentIssuedAt: @escaping @Sendable (_ configApiId: String) -> Int64,
-        applyConfig: @escaping @Sendable (_ configApiId: String, SignedConfigResponse) async throws -> UpdateResult,
+        applyConfig: @escaping @Sendable (_ configApiId: String, SignedConfigResponse, _ requestDeviceId: String) async throws -> UpdateResult,
         onConfigApplied: @escaping @Sendable (_ configApiId: String, UpdateResult) -> Void = { _, _ in },
         probe: DeviceIntegrityProbe? = nil,
         jitter: @escaping @Sendable () -> Double = { Double.random(in: 0..<1) },
@@ -74,7 +75,7 @@ final class AttestationCoordinator: Sendable {
                     return await probe.report(nonce: nonce, deviceId: did, scope: id, key: key, bindVerdict: bindVerdict).jsonString()
                 },
                 roundVerdict: { canonical in await probe?.roundVerdict(canonical: canonical, scope: id) },
-                applyConfig: { signed in try await applyConfig(id, signed) },
+                applyConfig: { signed, did in try await applyConfig(id, signed, did) },
                 onConfigApplied: { result in onConfigApplied(id, result) },
                 onEvent: onEvent,
                 onVerdict: { warnings, reasons in

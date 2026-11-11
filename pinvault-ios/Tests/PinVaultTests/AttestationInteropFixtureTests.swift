@@ -84,7 +84,7 @@ final class AttestationInteropFixtureTests: XCTestCase {
                 await probe.report(nonce: nonce, deviceId: deviceId, scope: Self.configApiId, key: key, bindVerdict: bindVerdict).jsonString()
             },
             roundVerdict: { canonical in await probe.roundVerdict(canonical: canonical, scope: Self.configApiId) },
-            applyConfig: { _ in .alreadyCurrent },
+            applyConfig: { _, _ in .alreadyCurrent },
             onVerdict: { roundAware?.roundAnswered(scope: Self.configApiId, warnings: $0, rejectionReasons: $1) },
             clock: { Self.fixtureTime },
             jitter: { 0.5 }

@@ -236,6 +236,75 @@ final class RequestRoutingTests: XCTestCase {
         XCTAssertTrue(URLSessionTransport.credentialHeaders.contains("X-Vault-Token"))
     }
 
+    func testOnlyNeutralHeadersFollowARedirectToAnotherEndpointAndABodyIsNotSentAgain() async throws {
+        let server = try await server()
+        let port = server.port
+        server.setHandler { request in
+            switch request.path {
+            case "/same": return .status(307, headers: ["Location": "/same2"])
+            case "/other": return .status(302, headers: ["Location": "https://api.chain.test:\(port)/x"])
+            case "/other307": return .status(307, headers: ["Location": "https://api.chain.test:\(port)/y"])
+            default: return .ok()
+            }
+        }
+        let settings = HttpConnectionSettings().resolve(host: "mock-tls.sample", to: "127.0.0.1").resolve(host: "api.chain.test", to: "127.0.0.1")
+        let config = CertificateConfig(version: 1, pins: [
+            HostPin(hostname: "mock-tls.sample", sha256: [leafPin, TLSFixture.backupPin]),
+            HostPin(hostname: "api.chain.test", sha256: [leafPin, TLSFixture.backupPin]),
+        ])
+        let session = testManager().buildDynamicClient(configProvider: { config }, settings: settings)
+        func post(_ path: String) async throws -> HTTPURLResponse {
+            var request = URLRequest(url: logicalURL("mock-tls.sample", server, path))
+            request.httpMethod = "POST"
+            request.httpBody = Data("payload".utf8)
+            request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+            request.setValue("session-1", forHTTPHeaderField: "X-App-Session")
+            request.setValue("device-1", forHTTPHeaderField: "X-Device-Id")
+            request.setValue("text/plain", forHTTPHeaderField: "Accept")
+            request.setValue("tr", forHTTPHeaderField: "Accept-Language")
+            request.setValue("app/1", forHTTPHeaderField: "User-Agent")
+            return try await session.data(for: request).1 as! HTTPURLResponse
+        }
+
+        // The same endpoint: everything goes along, a 307 repeats the body.
+        let status_same = try await post("/same").statusCode
+        XCTAssertEqual(status_same, 200)
+        // Another endpoint, 302: followed as a GET with the neutral headers only.
+        let status_other = try await post("/other").statusCode
+        XCTAssertEqual(status_other, 200)
+        // Another endpoint, 307: the body would be repeated there, so the 307 is the answer.
+        let status_other307 = try await post("/other307").statusCode
+        XCTAssertEqual(status_other307, 307)
+        // An empty body carries nothing: that 307 is followed, method kept, as on Android.
+        var empty = URLRequest(url: logicalURL("mock-tls.sample", server, "/other307"))
+        empty.httpMethod = "POST"
+        empty.httpBody = Data()
+        empty.setValue("session-1", forHTTPHeaderField: "X-App-Session")
+        let emptyStatus = (try await session.data(for: empty).1 as! HTTPURLResponse).statusCode
+        XCTAssertEqual(emptyStatus, 200)
+
+        let requests = server.requests
+        XCTAssertEqual(requests.map(\.path), ["/same", "/same2", "/other", "/x", "/other307", "/other307", "/y"])
+        XCTAssertEqual(requests[6].method, "POST")
+        XCTAssertEqual(requests[6].body, Data())
+        XCTAssertNil(requests[6].header("X-App-Session"))
+        XCTAssertEqual(requests[1].header("X-App-Session"), "session-1")
+        XCTAssertEqual(requests[1].body, Data("payload".utf8))
+        let other = requests[3]
+        XCTAssertEqual(other.method, "GET")
+        XCTAssertEqual(other.body, Data())
+        for name in ["X-App-Session", "X-Device-Id", "Content-Type"] {
+            XCTAssertNil(other.header(name), "another endpoint gets no \(name)")
+        }
+        XCTAssertEqual(other.header("Accept"), "text/plain")
+        XCTAssertEqual(other.header("Accept-Language"), "tr")
+        XCTAssertEqual(other.header("User-Agent"), "app/1")
+        XCTAssertEqual(other.header("Host"), "api.chain.test:\(port)", "the transport names the new host itself")
+        for name in URLSessionTransport.credentialHeaders {
+            XCTAssertFalse(URLSessionTransport.crossEndpointHeaders.contains(name.lowercased()))
+        }
+    }
+
     func testA302TurnsAPOSTIntoAGETWhileA307KeepsMethodAndBody() async throws {
         let server = try await server()
         server.setHandler { request in

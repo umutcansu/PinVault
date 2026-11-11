@@ -230,7 +230,10 @@ final class DefaultCertificateConfigApi: CertificateConfigApi, SignedConfigSourc
         // The key set riding along goes first: the config in the same response
         // may already be signed by a key that set introduces.
         try verifier.applyKeySet(signed)
-        return try verifier.verifyFetched(signed).config
+        let verified = try verifier.verifyFetched(signed)
+        // M6: a full request refuses a narrowed view.
+        try ConfigViewBinding.check(payload: verified.envelope.payload, expected: nil)
+        return verified.config
     }
 
     /// The signed envelope as served, unverified — the caller verifies it (``SignedConfigVerifier``).
@@ -270,9 +273,19 @@ final class DefaultCertificateConfigApi: CertificateConfigApi, SignedConfigSourc
         }
         let signed = try await fetchScopedSignedConfig(currentVersion: currentVersion, hosts: hosts, deviceId: deviceId)
         try verifier.applyKeySet(signed)
-        return try verifier.verifyFetched(signed) { detail in
+        let verified = try verifier.verifyFetched(signed) { detail in
             "Config signature verification failed (scoped fetch).\(detail)"
-        }.config
+        }
+        // M6: the view must answer this request (a device-id-only request is not one the library makes).
+        if hostsParam != nil {
+            try ConfigViewBinding.check(
+                payload: verified.envelope.payload,
+                expected: ConfigViewBinding.expected(wantPinsFor: hosts ?? [], deviceIds: deviceId)
+            )
+        } else if deviceId == nil {
+            try ConfigViewBinding.check(payload: verified.envelope.payload, expected: nil)
+        }
+        return verified.config
     }
 
     // MARK: Host client certificates

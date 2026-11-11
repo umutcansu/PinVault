@@ -107,9 +107,51 @@ final class ClientIdentityKeyProviderTests: XCTestCase {
         XCTAssertEqual(asked, [false])
     }
 
-    func testTheUnlockedDeviceOptionFallsBackOnceWhenTheKeychainRefuses() throws {
+    func testARefusedUnlockedDeviceKeyFailsInsteadOfBeingMadeWithoutTheRequirement() {
         let options = KeystoreOptions()
         options.unlockedDeviceRequired = true
+        var asked: [Bool] = []
+        var cleaned = 0
+        let error = assertThrowsPinVault {
+            _ = try options.generating("Client identity key", cleanUp: { cleaned += 1 }) { unlocked -> String in
+                asked.append(unlocked)
+                if unlocked { throw PinVaultError.crypto(message: "refused") }
+                return "key"
+            }
+        }
+        guard case .unlockedDeviceKeyRequired(let keyKind, let cause)? = error else {
+            return XCTFail("must be refused, got \(String(describing: error))")
+        }
+        XCTAssertEqual(keyKind, "Client identity key")
+        XCTAssertNotNil(cause, "the Keychain's refusal is kept")
+        XCTAssertEqual(asked, [true], "no key is asked for without the requirement")
+        XCTAssertEqual(cleaned, 1)
+        XCTAssertEqual(error!.exceptionName, "UnlockedDeviceKeyRequiredException")
+        XCTAssertTrue(error!.isSSLPinningException)
+        XCTAssertTrue(error!.message.contains("allowFallback"), error!.message)
+    }
+
+    func testAHardwareRefusalIsNotMistakenForARefusedUnlockedDeviceKey() {
+        for fallback in [false, true] {
+            let options = KeystoreOptions()
+            options.unlockedDeviceRequired = true
+            options.unlockedDeviceFallbackAllowed = fallback
+            var asked: [Bool] = []
+            let error = assertThrowsPinVault {
+                _ = try options.generating("Client identity key") { unlocked -> String in
+                    asked.append(unlocked)
+                    throw PinVaultError.hardwareBackedKeyRequired(keyKind: "Client identity key", level: .software)
+                }
+            }
+            guard case .hardwareBackedKeyRequired? = error else { return XCTFail("\(String(describing: error))") }
+            XCTAssertEqual(asked, [true])
+        }
+    }
+
+    func testTheUnlockedDeviceOptionFallsBackOnceWhenTheKeychainRefusesAndTheAppAllowedIt() throws {
+        let options = KeystoreOptions()
+        options.unlockedDeviceRequired = true
+        options.unlockedDeviceFallbackAllowed = true
         var asked: [Bool] = []
         var cleaned = 0
         let key = try options.generating("test", cleanUp: { cleaned += 1 }) { unlocked -> String in
@@ -134,6 +176,19 @@ final class ClientIdentityKeyProviderTests: XCTestCase {
             .requireHardwareBackedKeys()
             .build()
         options.apply(config, stores: stores)
+        XCTAssertFalse(config.requireUnlockedDeviceFallback, "strict unless the app says otherwise")
+        XCTAssertFalse(options.unlockedDeviceFallbackAllowed)
+        let lenient = try PinVaultConfig.Builder()
+            .configApi("api", url: "https://config.test/") { block in
+                block.bootstrapPins([HostPin(hostname: "config.test", sha256: [pin("A"), pin("B")])])
+                block.allowUnsigned()
+            }
+            .requireUnlockedDevice(allowFallback: true)
+            .build()
+        let lenientOptions = KeystoreOptions()
+        lenientOptions.apply(lenient, stores: stores)
+        XCTAssertTrue(lenientOptions.unlockedDeviceRequired)
+        XCTAssertTrue(lenientOptions.unlockedDeviceFallbackAllowed)
         XCTAssertTrue(options.unlockedDeviceRequired)
         XCTAssertTrue(options.hardwareBackedRequired)
         XCTAssertTrue(stores.requireUnlockedDevice)

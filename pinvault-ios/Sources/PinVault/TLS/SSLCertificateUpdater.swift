@@ -429,6 +429,14 @@ final class SSLCertificateUpdater: @unchecked Sendable {
         try refuseBelowKeySetFloor(verifier)
 
         let verified = try verifier.verifyFetched(signed)
+        // M6: the signed view must answer THIS request — a full-config block
+        // refuses a narrowed view, a scoped one a view of another host set or
+        // device. After the signature, before anything is stored, applied or
+        // compared for replay (a narrowed copy of the same pins is a refusal).
+        try ConfigViewBinding.check(
+            payload: verified.envelope.payload,
+            expected: ConfigViewBinding.expected(wantPinsFor: wantPinsFor, deviceIds: deviceId)
+        )
         return Fetched(config: verified.config, envelope: verified.envelope)
     }
 
@@ -529,9 +537,34 @@ final class SSLCertificateUpdater: @unchecked Sendable {
             discardedStoredConfig.set("the stored config was discarded because \(reason)")
             return nil
         }
+        // M6: the stored view must still answer the request this block makes.
+        // It verified once for the request it was fetched for; when the
+        // block's wantPinsFor changed since (an app update), it is discarded
+        // and fetched again — a genuine config once accepted, so its issuedAt
+        // and versions stay as watermarks. Offline, that leaves no config: init
+        // fails with noConfigAvailable until a fetch succeeds.
+        do {
+            try ConfigViewBinding.check(payload: envelope.payload, expected: storedViewExpected())
+        } catch let error as PinVaultError {
+            guard case .configViewMismatch = error else { throw error }
+            Self.log.w("Stored config v\(stored.version) discarded — it was fetched for another request: \(error.message)")
+            try configStore.clearActive(keepAsWatermarks: true)
+            if httpClientProvider.currentConfig != nil { httpClientProvider.reset() }
+            discardedStoredConfig.set("the stored config was discarded because it was fetched for another host set or device")
+            return nil
+        }
         var config = verified
         config.version = verified.computedVersion()
         return StoredConfig(config: config, envelope: envelope)
+    }
+
+    /// What a stored view may answer: this block's host set, with the device
+    /// id a fetch sends or the form an attestation request names (they differ
+    /// only for a device without a usable id: ``AttestationManager/resolveDeviceId(_:)``).
+    private func storedViewExpected() -> ConfigViewBinding.Expected? {
+        if wantPinsFor.isEmpty { return nil }
+        let raw = deviceIdProvider()
+        return ConfigViewBinding.expected(wantPinsFor: wantPinsFor, deviceIds: raw, AttestationManager.resolveDeviceId(raw))
     }
 
     private func fetchAndApply() async -> UpdateResult {
@@ -556,7 +589,19 @@ final class SSLCertificateUpdater: @unchecked Sendable {
     /// — under exactly the checks a fetched one gets. Serialised with
     /// ``updateNow()`` by the same lock. Only for a signed block: an unsigned
     /// one has nothing to verify the envelope with, and the config is ignored.
+    ///
+    /// The embedded view is checked against the device id this block's fetch
+    /// would send; the attestation path names the id its request carried
+    /// (``applySigned(_:requestDeviceId:)``).
     func applySigned(_ signed: SignedConfigResponse) async -> UpdateResult {
+        await applySigned(signed, requestDeviceId: deviceIdProvider())
+    }
+
+    /// ``applySigned(_:)`` for a config whose request named `requestDeviceId`
+    /// (the attestation body's `deviceId`): the signed view of the embedded
+    /// config must answer it (M6). The body carries `hosts` only for a block
+    /// with `wantPinsFor`, and the server then scopes by that device id.
+    func applySigned(_ signed: SignedConfigResponse, requestDeviceId: String?) async -> UpdateResult {
         guard let verifier else {
             return .failed(reason: "unsigned block: config inside an attestation response is ignored")
         }
@@ -574,6 +619,10 @@ final class SSLCertificateUpdater: @unchecked Sendable {
             let verified = try verifier.verifyFetched(signed) { detail in
                 "The config inside the attestation answer failed signature verification.\(detail)"
             }
+            try ConfigViewBinding.check(
+                payload: verified.envelope.payload,
+                expected: ConfigViewBinding.expected(wantPinsFor: wantPinsFor, deviceIds: requestDeviceId)
+            )
             return try await applyFetched(Fetched(config: verified.config, envelope: verified.envelope), currentVersion)
         } catch is CancellationError {
             return .failed(reason: "Config update was cancelled", exception: CancellationError())

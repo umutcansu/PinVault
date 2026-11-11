@@ -22,7 +22,19 @@ import Security
 /// `chain[0...anchor]` — the JDK's `CertPathValidator` validates the given
 /// order and nothing else, and Apple's path builder may otherwise skip a
 /// certificate or take one from the keychain.
+///
+/// Two more things are asked of an issuer match, because the pinned
+/// certificate is the trust anchor and a path validator takes an anchor as
+/// given: the pinned certificate must itself be a CA (`basicConstraints` cA) —
+/// a pin on some server's key must not let that key sign certificates for the
+/// host — and the leaf must be a certificate for TLS servers (no
+/// `extendedKeyUsage`, or one with serverAuth / anyExtendedKeyUsage): a CA
+/// that also issues client, e-mail or code-signing certificates does not
+/// vouch for those as servers.
 enum ChainPinMatcher {
+
+    /// id-kp-serverAuth and anyExtendedKeyUsage (RFC 5280 §4.2.1.12).
+    static let serverAuthPurposes: Set<String> = ["1.3.6.1.5.5.7.3.1", "2.5.29.37.0"]
 
     /// The pin in `accepted` that `chain` satisfies at `now`, or nil.
     static func match(_ chain: [X509Certificate], accepted: Set<String>, now: Date) -> String? {
@@ -31,9 +43,19 @@ enum ChainPinMatcher {
         if accepted.contains(leafPin) { return leafPin }
         for anchor in chain.indices.dropFirst() {
             let pin = chain[anchor].spkiPin
-            if accepted.contains(pin), chainsTo(chain, anchor, now: now) { return pin }
+            if accepted.contains(pin), mayVouchAsIssuer(chain[anchor], for: leaf), chainsTo(chain, anchor, now: now) { return pin }
         }
         return nil
+    }
+
+    /// True when `issuer` may stand as the pinned issuer of `leaf`: it is a CA
+    /// certificate, and `leaf` is usable as a TLS server certificate. An
+    /// `extendedKeyUsage` extension that is there but cannot be read lists no
+    /// purpose, and is refused like one without serverAuth.
+    static func mayVouchAsIssuer(_ issuer: X509Certificate, for leaf: X509Certificate) -> Bool {
+        guard issuer.isCA else { return false }
+        guard leaf.extension(X509OID.extendedKeyUsage) != nil else { return true }
+        return !serverAuthPurposes.isDisjoint(with: leaf.extendedKeyUsage)
     }
 
     /// True when `leaf` is issued for `hostname`: a `subjectAltName` matches it

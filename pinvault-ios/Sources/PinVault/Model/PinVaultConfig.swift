@@ -46,6 +46,9 @@ public struct PinVaultConfig: Sendable {
     public let vaultFileMaxOfflineAgeMs: Int64
     /// Keys and stores usable only while the device is unlocked.
     public let requireUnlockedDevice: Bool
+    /// `requireUnlockedDevice(allowFallback: true)`: a key the Keychain refuses
+    /// to make that way is made without the requirement instead of failing.
+    public let requireUnlockedDeviceFallback: Bool
     /// Refuse keys made outside secure hardware.
     public let requireHardwareBackedKeys: Bool
     /// iOS: what the screen-lock key of `userAuth` files is bound to (``UserAuthStrength``).
@@ -81,6 +84,7 @@ public struct PinVaultConfig: Sendable {
         wipeVaultFilesOnRevocation: Bool = false,
         vaultFileMaxOfflineAgeMs: Int64 = 0,
         requireUnlockedDevice: Bool = false,
+        requireUnlockedDeviceFallback: Bool = false,
         requireHardwareBackedKeys: Bool = false,
         userAuthStrength: UserAuthStrength = .deviceOwner,
         integrityVerdictProvider: (any IntegrityVerdictProvider)? = nil,
@@ -119,6 +123,7 @@ public struct PinVaultConfig: Sendable {
         self.wipeVaultFilesOnRevocation = wipeVaultFilesOnRevocation
         self.vaultFileMaxOfflineAgeMs = vaultFileMaxOfflineAgeMs
         self.requireUnlockedDevice = requireUnlockedDevice
+        self.requireUnlockedDeviceFallback = requireUnlockedDeviceFallback
         self.requireHardwareBackedKeys = requireHardwareBackedKeys
         self.userAuthStrength = userAuthStrength
         self.integrityVerdictProvider = integrityVerdictProvider
@@ -166,6 +171,7 @@ public struct PinVaultConfig: Sendable {
         private var wipeOnRevocation = false
         private var vaultFileMaxOfflineAgeMs: Int64 = 0
         private var unlockedDeviceRequired = false
+        private var unlockedDeviceFallback = false
         private var hardwareKeysRequired = false
         private var userAuthStrength = UserAuthStrength.deviceOwner
         private var integrityVerdictProvider: (any IntegrityVerdictProvider)?
@@ -306,7 +312,20 @@ public struct PinVaultConfig: Sendable {
         /// Make the library's keys and stores usable only while the device is
         /// unlocked (`…WhenUnlockedThisDeviceOnly`, `NSFileProtectionComplete`).
         /// Work behind a locked screen then fails until the user unlocks.
-        @discardableResult public func requireUnlockedDevice() -> Builder { unlockedDeviceRequired = true; return self }
+        ///
+        /// If the Keychain refuses to make a key that way, the operation that
+        /// needed the key fails with
+        /// ``PinVaultError/unlockedDeviceKeyRequired(keyKind:cause:)``
+        /// (enrollment, an imported identity): you asked for keys that work
+        /// only while the device is unlocked, and a key without that
+        /// requirement would silently be less than that. With `allowFallback`
+        /// the key is made without the requirement instead and a warning is
+        /// logged — for apps that would rather run unprotected than not at all.
+        @discardableResult public func requireUnlockedDevice(allowFallback: Bool = false) -> Builder {
+            unlockedDeviceRequired = true
+            unlockedDeviceFallback = allowFallback
+            return self
+        }
 
         /// Refuse a key made outside secure hardware (the Secure Enclave): such
         /// a key is deleted again and the operation fails with
@@ -481,6 +500,7 @@ public struct PinVaultConfig: Sendable {
                 wipeVaultFilesOnRevocation: wipeOnRevocation,
                 vaultFileMaxOfflineAgeMs: vaultFileMaxOfflineAgeMs,
                 requireUnlockedDevice: unlockedDeviceRequired,
+                requireUnlockedDeviceFallback: unlockedDeviceFallback,
                 requireHardwareBackedKeys: hardwareKeysRequired,
                 userAuthStrength: userAuthStrength,
                 integrityVerdictProvider: integrityVerdictProvider,
