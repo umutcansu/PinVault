@@ -10,9 +10,17 @@
 // (`stateKey`): onay anında kart yeniden hesaplanır, anahtar değiştiyse istek
 // "stale" olur ve 409 ile reddedilir; denetimde change_stale.
 //
+// 2026-11-12: vault yüklemesi de (bootstrap sertifikası, port başlatma ve cihaz
+// anahtarı silme ile birlikte) dayandığı şeyin parmak izini taşıyor
+// (`stateRefs`). Bulgu: politika verilmeden yüklenen içerik dosyanın o anki
+// politikasını alır; kart "erişim: token" derken araya giren "herkese açık"
+// onayıyla gizli içerik açık dosyaya iniyordu.
+//
 // Senaryo: alice aynı ayar için iki istek açar; bob ikincisini onaylar, ilki
-// eskir. Aynısı atestasyon politikasında. Sonunda değerler eski haline döner
-// (ayar: sunucunun varsayılanına; politika: başlangıçtaki değere). Telefon gerekmez.
+// eskir. Aynısı atestasyon politikasında ve bir vault dosyasında (yeni içerik
+// isteği, araya giren politika değişikliği). Sonunda değerler eski haline döner
+// (ayar: sunucunun varsayılanına; politika: başlangıçtaki değere; dosya
+// silinir). Telefon gerekmez.
 const { test, expect } = require('../lib/fixtures');
 const { attachText } = require('../lib/evidence');
 const hostApi = require('../lib/hostApi');
@@ -22,6 +30,8 @@ const env = require('../lib/env');
 
 const SETTING = 'CONFIG_TTL_SECONDS';
 const POLICY_PATH = `/api/v1/config-apis/${env.VAULT_API}/attestation/policy`;
+const VAULT_KEY = 'e2e-y07-gizli.txt';
+const VAULT_PATH = `/api/v1/config-apis/${env.VAULT_API}/vault/${VAULT_KEY}`;
 
 /** alice'in isteği: 202 beklenir, değişiklik isteğinin kimliği döner. */
 async function aliceAsks(pathname, body) {
@@ -39,11 +49,12 @@ async function policyTtl() {
   return r.json.tokenTtlSeconds;
 }
 
-test('Web+Terminal: ayar ve atestasyon kartı eskiyor — aynı şeye iki istek açılıp biri onaylanınca diğeri 409 "stale" ile reddediliyor', async ({}, testInfo) => {
+test('Web+Terminal: ayar, atestasyon ve vault kartı eskiyor — aynı şeye iki istek açılıp biri onaylanınca diğeri 409 "stale" ile reddediliyor', async ({}, testInfo) => {
   test.setTimeout(12 * 60 * 1000);
   const created = [];
   let overridden = false;
   let settingTouched = false;
+  let vaultTouched = false;
   let originalTtl;
 
   /** İkinci isteği onaylar, ilkini onaylamayı dener; kanıt satırlarını döndürür. */
@@ -83,6 +94,8 @@ test('Web+Terminal: ayar ve atestasyon kartı eskiyor — aynı şeye iki istek 
 
   try {
     await test.step('Sunucu: ADMIN_KEYS (alice, bob) + PIN_CHANGE_APPROVALS=2', async () => {
+      // Önceki bir koşudan kalan dosya (onay kapalıyken, paylaşılan anahtarla).
+      await hostApi.deleteVaultFile(env.VAULT_API, VAULT_KEY);
       await hostControl.setEnv({ ADMIN_KEYS: adminKeysEnv(), PIN_CHANGE_APPROVALS: '2' });
       overridden = true;
       const leftovers = await hostApi.changeRequests('pending', keys.bob);
@@ -126,6 +139,59 @@ test('Web+Terminal: ayar ve atestasyon kartı eskiyor — aynı şeye iki istek 
       expect(r.staleEntry).toBeTruthy();
     });
 
+    await test.step(`Vault dosyası: alice ${VAULT_KEY}'e yeni içerik yükler (kart "erişim: token"), dosya bu arada herkese açık yapılır → yükleme eskiyor (409), gizli içerik açık dosyaya inmiyor`, async () => {
+      const upload = (content) =>
+        hostApi.api(VAULT_PATH, { method: 'PUT', key: keys.alice, rawBody: content, headers: { 'Content-Type': 'application/octet-stream' } });
+      const first = await upload('v1-genel');
+      if (first.json && first.json.changeRequestId) created.push(first.json.changeRequestId);
+      vaultTouched = true;
+      const firstOk = await hostApi.approveChange(first.json.changeRequestId, keys.bob);
+      created.splice(created.indexOf(first.json.changeRequestId), 1);
+
+      const secret = await upload('v2-GIZLI');
+      const secretId = secret.json && secret.json.changeRequestId;
+      if (secretId) created.push(secretId);
+      const policy = await hostApi.api(`${VAULT_PATH}/policy`, {
+        method: 'PUT', key: keys.alice, body: { access_policy: 'public', encryption: 'plain' },
+      });
+      const policyId = policy.json && policy.json.changeRequestId;
+      if (policyId) created.push(policyId);
+      const pending = await hostApi.changeRequests('pending', keys.bob);
+      const cardOf = (id) => (pending.find((c) => c.id === id) || {}).summary || '(yok)';
+      const policyOk = await hostApi.approveChange(policyId, keys.bob);
+      const fileNow = async () => {
+        const files = await hostApi.vaultFiles(env.VAULT_API);
+        return (Array.isArray(files) ? files : files.files || []).find((f) => f.key === VAULT_KEY) || {};
+      };
+      const afterPolicy = await fileNow();
+      const late = await hostApi.approveChange(secretId, keys.bob);
+      for (const id of [secretId, policyId]) created.splice(created.indexOf(id), 1);
+      const file = await fileNow();
+      await attachText(
+        testInfo,
+        'Vault dosyası: yükleme ve politika değişikliği yarışı',
+        [
+          `alice PUT ${VAULT_PATH} "v1-genel" → #${first.json.changeRequestId}, bob onaylar → HTTP ${firstOk.status}`,
+          `alice PUT ${VAULT_PATH} "v2-GIZLI" → HTTP ${secret.status} (#${secretId})`,
+          `  kart: ${cardOf(secretId)}`,
+          `alice PUT ${VAULT_PATH}/policy public → HTTP ${policy.status} (#${policyId})`,
+          `  kart: ${cardOf(policyId)}`,
+          '',
+          `bob onaylar #${policyId} → HTTP ${policyOk.status}`,
+          `bob onaylar #${secretId} → HTTP ${late.status} ${late.text.trim().slice(0, 220)}`,
+          '',
+          `politika onayından sonra: v${afterPolicy.version}, erişim ${afterPolicy.access_policy} (politika değişikliği sürümü artırır)`,
+          `geç onaydan sonra      : v${file.version}, erişim ${file.access_policy} — gizli içerik inmedi`,
+        ].join('\n'),
+      );
+      expect(secret.status).toBe(202);
+      expect(cardOf(secretId)).toContain('access token');
+      expect(policyOk.status).toBe(200);
+      expect(late.status).toBe(409);
+      expect(afterPolicy.access_policy).toBe('public');
+      expect(file.version).toBe(afterPolicy.version);
+    });
+
     await test.step('Geri alma: ayar varsayılana, politika eski değerine döner (alice ister, bob onaylar)', async () => {
       const s = await aliceAsks('/api/v1/server-settings', { values: { [SETTING]: null } });
       if (s.id) created.push(s.id);
@@ -161,6 +227,7 @@ test('Web+Terminal: ayar ve atestasyon kartı eskiyor — aynı şeye iki istek 
       if (originalTtl !== undefined && (await hostApi.api(POLICY_PATH)).json.tokenTtlSeconds !== originalTtl) {
         await hostApi.api(POLICY_PATH, { method: 'PUT', body: { tokenTtlSeconds: originalTtl } });
       }
+      if (vaultTouched) await hostApi.deleteVaultFile(env.VAULT_API, VAULT_KEY);
     }
   }
 });
