@@ -72,7 +72,7 @@ final class UserAuthKeychainKeysTests: XCTestCase {
         XCTAssertNotEqual(attributes[kSecAttrSynchronizable as String] as? Bool, true)
     }
 
-    /// AG R-13: the public half lives in a record the Keychain hands out without a prompt.
+    /// Review 2026-11-11: the public half lives in a record the Keychain hands out without a prompt.
     func testThePublicRecordHasNoAccessControlAndTheKeysAccessibility() throws {
         try keys.ensureKey()
         var query = SystemUserAuthKeychain.recordQuery(tag: alias)

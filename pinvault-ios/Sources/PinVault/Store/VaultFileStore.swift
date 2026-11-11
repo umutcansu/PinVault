@@ -34,9 +34,13 @@ final class VaultFileStore: VaultStorageProvider {
     }
 
     func save(key: String, bytes: Data, version: Int) throws {
-        try prefs.edit()
-            .putString(dataKey(key), "\(Self.recordPrefix)\(version):" + Base64.encode(bytes))
-            .apply()
+        do {
+            try prefs.edit()
+                .putString(dataKey(key), "\(Self.recordPrefix)\(version):" + Base64.encode(bytes))
+                .apply()
+        } catch {
+            throw VaultStorageWriteError("Vault file '\(key)' v\(version) could not be stored (\(type(of: error)))", cause: error)
+        }
         log.d("Vault file saved [\(key)] — version: \(version), \(bytes.count) bytes")
     }
 

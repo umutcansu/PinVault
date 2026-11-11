@@ -129,6 +129,47 @@ final class SSLCertificateUpdaterTests: XCTestCase {
         XCTAssertNotNil(sslManager.clientIdentity(forHost: "api.test", port: 443, config: { nil }))
     }
 
+    // Review 2026-11-11: host certificates were loaded only when a NEW
+    // config arrived, so a restart with an unchanged config left mTLS hosts
+    // without their client certificate.
+    func testInitWithAnUnchangedConfigPresentsTheStoredHostCertificateAgain() async throws {
+        let same = config(3, pins: [host(3, mtls: true, clientCertVersion: 1)])
+        try stored(same)
+        api.returns(same)
+        certStore.put("host_api.test", TLSFixture.p12("client-a"))
+        XCTAssertFalse(sslManager.hasHostClientIdentities())
+
+        let result = try await updater().initializeAndUpdate()
+
+        XCTAssertEqual(result, .ready(version: 3))
+        XCTAssertEqual(sslManager.clientIdentity(forHost: "api.test", port: 443, config: { nil })?.owner, .host("api.test"))
+        XCTAssertTrue(api.hostCertDownloads.isEmpty)
+    }
+
+    func testInitOfflineWithAStoredConfigPresentsTheStoredHostCertificate() async throws {
+        try stored(config(3, pins: [host(3, mtls: true, clientCertVersion: 1)]))
+        api.fetch = { _ in throw PinVaultError.io(message: "Connection refused") }
+        certStore.put("host_api.test", TLSFixture.p12("client-a"))
+
+        _ = try await updater().initializeAndUpdate()
+
+        XCTAssertEqual(provider.getVersion(), 3)
+        XCTAssertNotNil(sslManager.clientIdentity(forHost: "api.test", port: 443, config: { nil }))
+    }
+
+    func testAHostWhoseMTLSWasSwitchedOffLosesItsClientCertificate() async throws {
+        sslManager.loadHostClientCerts(["api.test": TLSFixture.p12("client-a")], password: password)
+        XCTAssertTrue(sslManager.hasHostClientIdentities())
+        try stored(config(1, pins: [host(1, mtls: true, clientCertVersion: 1)]))
+        api.returns(config(2, pins: [host(2)]))
+
+        let result = await updater().updateNow()
+
+        XCTAssertEqual(result, .updated(newVersion: 2))
+        XCTAssertFalse(sslManager.hasHostClientIdentities(), "the certificate of the config before must not stay loaded")
+        XCTAssertTrue(api.hostCertDownloads.isEmpty)
+    }
+
     func testANonMTLSHostGetsNoCertificateDownload() async throws {
         api.returns(config(1, pins: [host("tls.host", 1)]))
         _ = await updater().updateNow()

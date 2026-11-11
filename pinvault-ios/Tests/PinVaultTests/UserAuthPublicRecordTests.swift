@@ -87,7 +87,7 @@ final class AuthorisingEvaluator: UserAuthEvaluator, @unchecked Sendable {
     }
 }
 
-/// AG R-13: the user-auth unlock reaches the prompt even where the Keychain
+/// Review 2026-11-11: the user-auth unlock reaches the prompt even where the Keychain
 /// refuses a silent lookup of the private key (the expected behaviour of a
 /// non-Secure-Enclave `.userPresence` key on a device). The public half and
 /// the kind live in a record without access control; only the unwrap after

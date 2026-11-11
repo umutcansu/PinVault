@@ -22,6 +22,25 @@ protocol VaultKeyRefusalFailure: Error {}
 /// `ResponseTooLargeException`): reported as `response_too_large`.
 protocol VaultResponseTooLargeFailure: Error {}
 
+/// A ``VaultStorageProvider`` could not store a copy (a full disk, a locked
+/// Keychain). Thrown by `save` instead of being swallowed (Kotlin
+/// `VaultStorageWriteException`): the library keeps the signatures of the copy
+/// that IS on disk and reports `storage_failed`. A save that only logged its
+/// failure let the new version's signatures be recorded over the old copy,
+/// which was then deleted at the next read (review 2026-11-11).
+public struct VaultStorageWriteError: Error, LocalizedError, CustomStringConvertible, @unchecked Sendable {
+    public let message: String
+    public let cause: (any Error)?
+
+    public init(_ message: String, cause: (any Error)? = nil) {
+        self.message = message
+        self.cause = cause
+    }
+
+    public var errorDescription: String? { message }
+    public var description: String { message }
+}
+
 /// The concrete refused download: message `Vault fetch failed: HTTP <code> — <body>`.
 struct VaultFetchHTTPError: VaultFetchHTTPFailure, LocalizedError, CustomStringConvertible {
     let httpStatus: Int

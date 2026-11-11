@@ -45,6 +45,8 @@ public enum VaultFileResult: Sendable {
         public static let signatureInvalid = "signature_invalid"
         /// An older version than the stored one, or a jump beyond the bound.
         public static let versionRejected = "version_rejected"
+        /// The download was good but the device could not store it (a full disk, a locked Keychain); the copy on disk, if any, stays.
+        public static let storageFailed = "storage_failed"
 
         /// The code for a refused request with HTTP `status`.
         public static func http(_ status: Int) -> String { "\(httpPrefix)\(status)" }

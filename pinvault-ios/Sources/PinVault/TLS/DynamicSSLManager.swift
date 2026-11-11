@@ -309,6 +309,11 @@ final class DynamicSSLManager: @unchecked Sendable {
         state.withLock { $0.defaultIdentity != nil || !$0.hostIdentities.isEmpty }
     }
 
+    /// True while a host-specific identity is loaded.
+    func hasHostClientIdentities() -> Bool {
+        state.withLock { !$0.hostIdentities.isEmpty }
+    }
+
     /// Loads host-specific client certificates (hostname → PKCS12), replacing
     /// the ones loaded before. A P12 that cannot be read is logged and skipped.
     func loadHostClientCerts(_ hostCerts: [String: Data], password: String) {

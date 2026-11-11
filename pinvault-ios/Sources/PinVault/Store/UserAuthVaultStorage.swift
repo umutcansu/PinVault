@@ -277,8 +277,10 @@ final class UserAuthVaultStorage: VaultStorageProvider {
             let version = (try? inner.getVersion(key: pendingKey(key))) ?? 0
             let attempt = await openSlot(key, .pending, pending, version, authenticate, verify, onSealedForAnotherKey, nil, grants)
             if case .unlocked(_, let version, _) = attempt.result {
-                promote(key, pending, version)
-                onPromoted(version)
+                // The content opened and was checked, so it is handed out; only a
+                // copy that really took the stored one's place moves the
+                // signatures on record to its version.
+                if promote(key, pending, version) { onPromoted(version) }
                 return attempt.result
             }
             // Cancelled, a prompt error, a Keychain fault, a missing key:
@@ -530,15 +532,23 @@ final class UserAuthVaultStorage: VaultStorageProvider {
     /// The pending copy passed: it is written under the file's own name (the
     /// inner store binds a blob to its name, so it cannot simply be renamed)
     /// and the slot is emptied. The copy it replaces is gone with that save.
-    private func promote(_ key: String, _ blob: Data, _ version: Int) {
+    /// True when the pending copy now is the stored one.
+    @discardableResult
+    private func promote(_ key: String, _ blob: Data, _ version: Int) -> Bool {
         do {
             try inner.save(key: key, bytes: blob, version: version)
-            try inner.clear(key: pendingKey(key))
-            replaced(key)
-            log.d("Vault file [\(key)]: the pending copy (v\(version)) opened and replaced the stored one")
         } catch {
-            log.w("Vault file [\(key)]: the pending copy opened but could not replace the stored one", error)
+            log.w("Vault file [\(key)]: the pending copy (v\(version)) opened but could not replace the stored one; it stays pending", error)
+            return false
         }
+        do {
+            try inner.clear(key: pendingKey(key))
+        } catch {
+            log.w("Vault file [\(key)]: the pending slot could not be emptied after it replaced the stored copy", error)
+        }
+        replaced(key)
+        log.d("Vault file [\(key)]: the pending copy (v\(version)) opened and replaced the stored one")
+        return true
     }
 
     private func markForFetch(_ key: String) {

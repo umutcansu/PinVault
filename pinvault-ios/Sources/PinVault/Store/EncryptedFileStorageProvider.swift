@@ -65,7 +65,7 @@ final class EncryptedFileStorageProvider: VaultStorageProvider {
     }
 
     func save(key: String, bytes: Data, version: Int) throws {
-        lock.withLock { _ in
+        try lock.withLock { _ in
             let file = fileFor(key)
             // Encrypted first, then written atomically (beside the copy and moved
             // over it): a failure (a locked or busy Keychain, a full disk) leaves
@@ -86,7 +86,8 @@ final class EncryptedFileStorageProvider: VaultStorageProvider {
                 Self.excludeFromBackup(file)
                 log.d("Vault file saved to disk [\(key)] — version: \(version), \(bytes.count) bytes")
             } catch {
-                log.e("Failed to save vault file to disk [\(key)] — the previous copy, if any, was kept", error)
+                log.e("Failed to save vault file to disk [\(key)] v\(version) — the previous copy, if any, was kept", error)
+                throw VaultStorageWriteError("Vault file '\(key)' v\(version) could not be written to disk (\(type(of: error)))", cause: error)
             }
         }
     }

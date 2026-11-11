@@ -107,8 +107,11 @@ final class EncryptedFileStorageProviderTests: XCTestCase {
         XCTAssertNil(try store.load(key: "flags"))
         XCTAssertTrue(try store.exists(key: "flags"), "unreadable now is not damaged")
         XCTAssertEqual(try store.getVersion(key: "flags"), 1)
-        // A save that cannot encrypt must not take the old copy with it.
-        try store.save(key: "flags", bytes: Data("v2".utf8), version: 2)
+        // A save that cannot encrypt must not take the old copy with it, and
+        // says so: the caller must not record v2's signatures over v1.
+        XCTAssertThrowsError(try store.save(key: "flags", bytes: Data("v2".utf8), version: 2)) { error in
+            XCTAssertTrue(error is VaultStorageWriteError, "\(error)")
+        }
         XCTAssertTrue(try store.exists(key: "flags"))
 
         keystoreDown.set(false)

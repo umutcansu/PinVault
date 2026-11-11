@@ -332,6 +332,8 @@ final class SSLCertificateUpdater: @unchecked Sendable {
     private func loadFromStore() throws -> StoredConfig? {
         let stored = try loadStored()
         if let stored {
+            // Before the swap, so the sessions it builds present them.
+            restoreHostClientCerts(stored.config)
             httpClientProvider.swap(stored.config)
             Self.log.d("Loaded stored config — version: \(stored.config.version)")
         } else {
@@ -873,10 +875,41 @@ final class SSLCertificateUpdater: @unchecked Sendable {
 
     /// Downloads and stores host-specific client certs for mTLS hosts; only
     /// when `clientCertVersion` changed or nothing is stored yet.
+    /// What is stored for a host: its key in the Keychain (a P12 stored
+    /// earlier is moved there now), else its P12.
+    private func loadStoredHostIdentity(_ hostname: String, _ label: String, _ certStore: any HostClientCertStore,
+                                        _ hostKeys: inout [String: ClientIdentity], _ hostCerts: inout [String: Data]) {
+        if let imported = certStore.loadImportedIdentity(label, password: clientKeyPassword) {
+            hostKeys[hostname] = imported
+        } else if let p12 = certStore.load(label) {
+            hostCerts[hostname] = p12
+        }
+    }
+
+    /// At start, with the stored config: its hosts' client certificates from
+    /// what is stored, without a download. They were only loaded when a NEW
+    /// config arrived, so after a restart whose fetch found the config
+    /// unchanged (or failed) the mTLS hosts got no client certificate until the
+    /// config changed again (review 2026-11-11).
+    private func restoreHostClientCerts(_ config: CertificateConfig) {
+        guard let sslManager, let certStore else { return }
+        let mtlsHosts = config.pins.filter { $0.mtls && $0.clientCertVersion != nil }
+        if mtlsHosts.isEmpty { return }
+        var hostCerts: [String: Data] = [:]
+        var hostKeys: [String: ClientIdentity] = [:]
+        for pin in mtlsHosts {
+            loadStoredHostIdentity(pin.hostname, "host_\(pin.hostname)", certStore, &hostKeys, &hostCerts)
+        }
+        if hostCerts.isEmpty && hostKeys.isEmpty { return }
+        sslManager.loadHostClientIdentities(hostKeys, hostCerts: hostCerts, password: clientKeyPassword)
+        Self.log.d("Host client certs loaded from storage: \(hostCerts.count + hostKeys.count) hosts (\(hostKeys.count) with the key in the Keychain)")
+    }
+
     private func syncHostClientCerts(_ remoteConfig: CertificateConfig, _ storedConfig: CertificateConfig?) async {
         guard let sslManager, let certStore else { return }
+        // No early return when there are none: the host identities loaded for
+        // the config before this one have to go then (see the end).
         let mtlsHosts = remoteConfig.pins.filter { $0.mtls && $0.clientCertVersion != nil }
-        if mtlsHosts.isEmpty { return }
 
         var storedCertVersions: [String: Int] = [:]
         for pin in storedConfig?.pins ?? [] where pin.mtls {
@@ -886,14 +919,8 @@ final class SSLCertificateUpdater: @unchecked Sendable {
         var hostCerts: [String: Data] = [:]
         var hostKeys: [String: ClientIdentity] = [:]
 
-        // What is stored for a host: its key in the Keychain (a P12 stored
-        // earlier is moved there now), else its P12.
         func loadStored(_ hostname: String, _ label: String) {
-            if let imported = certStore.loadImportedIdentity(label, password: clientKeyPassword) {
-                hostKeys[hostname] = imported
-            } else if let p12 = certStore.load(label) {
-                hostCerts[hostname] = p12
-            }
+            loadStoredHostIdentity(hostname, label, certStore, &hostKeys, &hostCerts)
         }
 
         for pin in mtlsHosts {
@@ -937,7 +964,10 @@ final class SSLCertificateUpdater: @unchecked Sendable {
             }
         }
 
-        if !hostCerts.isEmpty || !hostKeys.isEmpty {
+        // What was loaded replaces what was there, an empty result included: a
+        // host whose mTLS was switched off (or whose certificate could not be
+        // loaded) must not keep presenting the certificate of the config before.
+        if !hostCerts.isEmpty || !hostKeys.isEmpty || sslManager.hasHostClientIdentities() {
             sslManager.loadHostClientIdentities(hostKeys, hostCerts: hostCerts, password: clientKeyPassword)
             // Re-swap so every session rebuilds with the new identities.
             if let current = httpClientProvider.currentConfig { httpClientProvider.swap(current) }

@@ -322,6 +322,7 @@ final class VaultFileRouter: Sendable {
         if case PinVaultError.screenLockRequired = error { return VaultFileResult.FailureCode.screenLock }
         if error is VaultKeyRefusalFailure { return VaultFileResult.FailureCode.userAuthKey }
         if error is VaultResponseTooLargeFailure { return VaultFileResult.FailureCode.responseTooLarge }
+        if error is VaultStorageWriteError { return VaultFileResult.FailureCode.storageFailed }
         if VaultErrorText.isNetwork(error) { return VaultFileResult.FailureCode.network }
         return VaultFileResult.FailureCode.other
     }

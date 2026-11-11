@@ -134,7 +134,11 @@ final class MemVaultStore: VaultStorageProvider, @unchecked Sendable {
     func setBlob(_ key: String, _ blob: Data) { state.withLock { $0.blobs[key] = blob } }
     func setVersion(_ key: String, _ version: Int) { state.withLock { $0.versions[key] = version } }
 
+    /// True: saves fail the way a full disk does (reads still work).
+    let failWrites = Locked(false)
+
     func save(key: String, bytes: Data, version: Int) throws {
+        if failWrites.get() { throw VaultStorageWriteError("Vault file '\(key)' v\(version) could not be written to disk (disk full)") }
         state.withLock {
             $0.blobs[key] = bytes
             $0.versions[key] = version

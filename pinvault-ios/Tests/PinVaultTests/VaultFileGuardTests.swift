@@ -267,6 +267,45 @@ final class VaultFileGuardTests: XCTestCase {
         XCTAssertEqual(f.load(file()), content)
     }
 
+    // MARK: A copy the storage could not write (review 2026-11-11)
+
+    func testACopyTheStorageCouldNotWriteLeavesTheStoredOneAndItsSignaturesInPlace() async throws {
+        let f = fixture(block())
+        let first = Data(utf8: "flags-v1")
+        api.answer(signedV1("flags", 1, first))
+        guard case .updated = await f.fetch(file()) else { return XCTFail() }
+
+        storage.failWrites.set(true)
+        let second = Data(utf8: "flags-v2")
+        api.answer(signedV1("flags", 2, second))
+        guard case .failed(_, _, _, let code) = await f.fetch(file()) else { return XCTFail("a write that failed must fail the fetch") }
+
+        XCTAssertEqual(code, VaultFileResult.FailureCode.storageFailed)
+        XCTAssertEqual(meta.signatures("flags")?.version, 1, "the signatures on record are still those of the copy on disk")
+        XCTAssertEqual(f.load(file()), first, "the copy on disk still opens")
+        XCTAssertTrue(removed.get().isEmpty)
+
+        storage.failWrites.set(false)
+        guard case .updated = await f.fetch(file()) else { return XCTFail() }
+        XCTAssertEqual(f.load(file()), second)
+        XCTAssertEqual(meta.signatures("flags")?.version, 2)
+    }
+
+    func testTheSameContentUnderANewVersionIsNotRelabelledWhenTheWriteFails() async throws {
+        let content = Data(utf8: "flags")
+        let f = fixture(block())
+        api.answer(signedV1("flags", 1, content))
+        _ = await f.fetch(file())
+
+        storage.failWrites.set(true)
+        api.answer(signedV1("flags", 2, content))
+        guard case .failed(_, _, _, let code) = await f.fetch(file()) else { return XCTFail() }
+        XCTAssertEqual(code, VaultFileResult.FailureCode.storageFailed)
+        XCTAssertEqual(try storage.getVersion(key: "flags"), 1)
+        XCTAssertEqual(meta.signatures("flags")?.version, 1)
+        XCTAssertEqual(f.load(file()), content)
+    }
+
     func testFilesOfAnUnsignedBlockAreStoredAndReadAsBefore() async throws {
         let f = fixture(block(signed: false))
         api.answer(VaultFetchResponse(content: Data(utf8: "plain"), version: 1))
