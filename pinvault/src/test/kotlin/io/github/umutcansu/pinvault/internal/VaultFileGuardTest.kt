@@ -13,6 +13,8 @@ import io.github.umutcansu.pinvault.model.VaultFileStatus
 import io.github.umutcansu.pinvault.store.MemVaultStore
 import io.github.umutcansu.pinvault.store.StoredSignatures
 import io.github.umutcansu.pinvault.store.VaultFileMeta
+import io.github.umutcansu.pinvault.store.VaultStorageProvider
+import io.github.umutcansu.pinvault.store.VaultStorageWriteException
 import io.mockk.coEvery
 import io.mockk.every
 import io.mockk.mockk
@@ -46,6 +48,14 @@ class VaultFileGuardTest {
     private val pubB64 = Base64.encodeToString(keyPair.public.encoded, Base64.NO_WRAP)
 
     private val storage = MemVaultStore()
+    /** True: the router's writes fail the way a full disk does (reads still work). */
+    private var failWrites = false
+    private val writable = object : VaultStorageProvider by storage {
+        override fun save(key: String, bytes: ByteArray, version: Int) {
+            if (failWrites) throw VaultStorageWriteException("Vault file '$key' v$version could not be written to disk (disk full)")
+            storage.save(key, bytes, version)
+        }
+    }
     private val meta = VaultFileMeta.InMemory()
     private var now = 1_800_000_000_000L
     private val removed = mutableListOf<Pair<String, String>>()
@@ -87,7 +97,7 @@ class VaultFileGuardTest {
             every { client.block } returns block
             every { client.signatureTrust } returns SignatureTrust.forBlock(block, null)
             router = VaultFileRouter(
-                clients = mapOf("default" to client), storageFor = { storage },
+                clients = mapOf("default" to client), storageFor = { writable },
                 deviceKeyProvider = null, deviceIdProvider = { "test-device" }, guard = guard
             )
         }
@@ -105,6 +115,47 @@ class VaultFileGuardTest {
 
     private fun signedV1(key: String, version: Int, content: ByteArray) =
         VaultFetchResponse(content = content, version = version, signature = v1(key, version, content))
+
+    // ── A copy the storage could not write (review 2026-11-11) ──
+
+    @Test
+    fun `a copy the storage could not write leaves the stored one and its signatures in place`() = runTest {
+        val f = Fixture(block())
+        val first = "flags-v1".toByteArray()
+        response = signedV1("flags", 1, first)
+        assertTrue(f.fetch(file()) is VaultFileResult.Updated)
+
+        failWrites = true
+        val second = "flags-v2".toByteArray()
+        response = signedV1("flags", 2, second)
+        val failed = f.fetch(file()) as VaultFileResult.Failed
+
+        assertEquals(VaultFileResult.Failed.CODE_STORAGE_FAILED, failed.code)
+        assertEquals("the signatures on record are still those of the copy on disk", 1, meta.signatures("flags")!!.version)
+        assertArrayEquals("the copy on disk still opens", first, f.load(file()))
+        assertTrue("nothing was deleted: $removed", removed.isEmpty())
+
+        failWrites = false
+        assertTrue(f.fetch(file()) is VaultFileResult.Updated)
+        assertArrayEquals(second, f.load(file()))
+        assertEquals(2, meta.signatures("flags")!!.version)
+    }
+
+    @Test
+    fun `the same content under a new version is not relabelled when the write fails`() = runTest {
+        val f = Fixture(block())
+        val content = "flags".toByteArray()
+        response = signedV1("flags", 1, content)
+        assertTrue(f.fetch(file()) is VaultFileResult.Updated)
+
+        failWrites = true
+        response = signedV1("flags", 2, content)
+        val failed = f.fetch(file()) as VaultFileResult.Failed
+        assertEquals(VaultFileResult.Failed.CODE_STORAGE_FAILED, failed.code)
+        assertEquals(1, storage.getVersion("flags"))
+        assertEquals(1, meta.signatures("flags")!!.version)
+        assertArrayEquals(content, f.load(file()))
+    }
 
     // ── Signatures name the Config API (v2) ─────────────────────────────
 

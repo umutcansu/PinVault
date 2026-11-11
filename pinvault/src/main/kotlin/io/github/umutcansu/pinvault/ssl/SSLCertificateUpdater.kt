@@ -376,6 +376,8 @@ internal class SSLCertificateUpdater(
     private fun loadFromStore(): StoredConfig? {
         val stored = loadStored()
         if (stored != null) {
+            // Before the swap, so the clients it builds present them.
+            restoreHostClientCerts(stored.config)
             httpClientProvider.swap(stored.config)
             Timber.d("Loaded stored config — version: %d", stored.config.version)
         } else {
@@ -1082,6 +1084,52 @@ internal class SSLCertificateUpdater(
     }
 
     /**
+     * What is stored for a host: its key in the Keystore (a P12 an earlier
+     * version stored is moved there now), else its P12. Into [hostKeys] or
+     * [hostCerts]; nothing when nothing is stored.
+     */
+    private fun loadStoredHostIdentity(
+        hostname: String,
+        label: String,
+        identities: io.github.umutcansu.pinvault.internal.ImportedIdentities?,
+        hostKeys: MutableMap<String, Pair<java.security.PrivateKey, Array<java.security.cert.X509Certificate>>>,
+        hostCerts: MutableMap<String, ByteArray>
+    ) {
+        val store = certStore ?: return
+        val imported = identities?.loadOrMigrate(label, clientKeyPassword)
+        if (imported != null) hostKeys[hostname] = imported.privateKey to imported.chain
+        else store.load(label)?.let { hostCerts[hostname] = it }
+    }
+
+    /**
+     * At start, with the stored config: its hosts' client certificates from
+     * what is stored, without a download. They were only loaded when a NEW
+     * config arrived, so after a restart whose fetch found the config
+     * unchanged (or failed) the mTLS hosts got no client certificate until
+     * the config changed again (review 2026-11-11). A host whose
+     * certificate cannot be read now is left out; the next update tries again.
+     */
+    private fun restoreHostClientCerts(config: CertificateConfig) {
+        if (sslManager == null || certStore == null) return
+        val mtlsHosts = config.pins.filter { it.mtls && it.clientCertVersion != null }
+        if (mtlsHosts.isEmpty()) return
+        val hostCerts = mutableMapOf<String, ByteArray>()
+        val hostKeys = mutableMapOf<String, Pair<java.security.PrivateKey, Array<java.security.cert.X509Certificate>>>()
+        val identities = importedKeys?.let { io.github.umutcansu.pinvault.internal.ImportedIdentities(certStore, it) }
+        for (pin in mtlsHosts) {
+            try {
+                loadStoredHostIdentity(pin.hostname, "host_${pin.hostname}", identities, hostKeys, hostCerts)
+            } catch (e: Exception) {
+                Timber.w(e, "Stored client certificate for %s could not be loaded at start", pin.hostname)
+            }
+        }
+        if (hostCerts.isEmpty() && hostKeys.isEmpty()) return
+        sslManager.loadHostClientIdentities(hostKeys, hostCerts, clientKeyPassword)
+        Timber.d("Host client certs loaded from storage: %d hosts (%d with the key in the Keystore)",
+            hostCerts.size + hostKeys.size, hostKeys.size)
+    }
+
+    /**
      * Downloads and stores host-specific client certs for mTLS hosts.
      * Only downloads when clientCertVersion changed or cert is new.
      */
@@ -1104,13 +1152,8 @@ internal class SSLCertificateUpdater(
         val hostKeys = mutableMapOf<String, Pair<java.security.PrivateKey, Array<java.security.cert.X509Certificate>>>()
         val identities = importedKeys?.let { io.github.umutcansu.pinvault.internal.ImportedIdentities(certStore, it) }
 
-        // What is stored for a host: its key in the Keystore (a P12 an
-        // earlier version stored is moved there now), else its P12.
-        fun loadStored(hostname: String, label: String) {
-            val imported = identities?.loadOrMigrate(label, clientKeyPassword)
-            if (imported != null) hostKeys[hostname] = imported.privateKey to imported.chain
-            else certStore.load(label)?.let { hostCerts[hostname] = it }
-        }
+        fun loadStored(hostname: String, label: String) =
+            loadStoredHostIdentity(hostname, label, identities, hostKeys, hostCerts)
 
         for (pin in mtlsHosts) {
             val label = "host_${pin.hostname}"

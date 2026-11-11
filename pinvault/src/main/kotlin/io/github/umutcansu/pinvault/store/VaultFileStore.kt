@@ -28,10 +28,17 @@ internal class VaultFileStore private constructor(
     )
 
     override fun save(key: String, bytes: ByteArray, version: Int) {
-        prefs.edit()
-            .putString(dataKey(key), "$RECORD_PREFIX$version:" + Base64.encodeToString(bytes, Base64.NO_WRAP))
-            .remove(versionKey(key))
-            .apply()
+        // commit(), not apply(): the caller records this version's signatures
+        // once save returns, so the copy must be on disk by then.
+        val written = try {
+            prefs.edit()
+                .putString(dataKey(key), "$RECORD_PREFIX$version:" + Base64.encodeToString(bytes, Base64.NO_WRAP))
+                .remove(versionKey(key))
+                .commit()
+        } catch (e: Exception) {
+            throw VaultStorageWriteException("Vault file '$key' v$version could not be stored (${e.javaClass.simpleName})", e)
+        }
+        if (!written) throw VaultStorageWriteException("Vault file '$key' v$version could not be written to the preferences file")
         Timber.d("Vault file saved [%s] — version: %d, %d bytes", key, version, bytes.size)
     }
 
@@ -42,7 +49,12 @@ internal class VaultFileStore private constructor(
             if (record == null) {
                 // An earlier version's copy: content here, version in its own entry.
                 val bytes = Base64.decode(stored, Base64.NO_WRAP)
-                save(key, bytes, prefs.getInt(versionKey(key), 0))
+                // Rewriting is an upgrade, not part of the read.
+                try {
+                    save(key, bytes, prefs.getInt(versionKey(key), 0))
+                } catch (e: VaultStorageWriteException) {
+                    Timber.w(e, "Vault file [%s] read in its earlier form; rewriting it failed", key)
+                }
                 return bytes
             }
             Base64.decode(record.second, Base64.NO_WRAP).also {

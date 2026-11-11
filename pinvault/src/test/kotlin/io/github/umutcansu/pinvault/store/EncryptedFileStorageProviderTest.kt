@@ -210,8 +210,13 @@ class EncryptedFileStorageProviderTest {
         assertNull(store.load("flags"))
         assertTrue("unreadable now is not damaged", store.exists("flags"))
         assertEquals(1, store.getVersion("flags"))
-        // A save that cannot encrypt must not take the old copy with it.
-        store.save("flags", "v2".toByteArray(), 2)
+        // A save that cannot encrypt must not take the old copy with it, and
+        // says so: the caller must not record v2's signatures over v1.
+        try {
+            store.save("flags", "v2".toByteArray(), 2)
+            org.junit.Assert.fail("a save that wrote nothing returned normally")
+        } catch (expected: VaultStorageWriteException) {
+        }
         assertTrue(store.exists("flags"))
         assertFalse(File(dir, "flags.enc.tmp").exists())
 

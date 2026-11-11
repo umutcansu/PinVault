@@ -65,6 +65,8 @@ sealed class VaultFileResult {
             const val CODE_SIGNATURE_INVALID = "signature_invalid"
             /** An older version than the stored one, or a version jump beyond the bound. */
             const val CODE_VERSION_REJECTED = "version_rejected"
+            /** The download was good but the device could not store it (a full disk, a failing Keystore); the copy on disk, if any, stays. */
+            const val CODE_STORAGE_FAILED = "storage_failed"
 
             /** The code for a refused request with HTTP [status]. */
             fun http(status: Int): String = "$CODE_HTTP_PREFIX$status"

@@ -22,6 +22,7 @@ import io.github.umutcansu.pinvault.store.UnlockVerifier
 import io.github.umutcansu.pinvault.store.UserAuthVaultStorage
 import io.github.umutcansu.pinvault.store.UserAuthRegistrations
 import io.github.umutcansu.pinvault.store.VaultStorageProvider
+import io.github.umutcansu.pinvault.store.VaultStorageWriteException
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import timber.log.Timber
@@ -343,6 +344,8 @@ internal class VaultFileRouter(
      */
     private fun codeOf(e: Exception): String = when (e) {
         is VaultFetchHttpException -> VaultFileResult.Failed.http(e.code)
+        // Before IOException: a write that failed is not a network error.
+        is VaultStorageWriteException -> VaultFileResult.Failed.CODE_STORAGE_FAILED
         is ScreenLockRequiredException -> VaultFileResult.Failed.CODE_SCREEN_LOCK
         is UserAuthKeyRefusedException -> VaultFileResult.Failed.CODE_USER_AUTH_KEY
         is ResponseTooLargeException -> VaultFileResult.Failed.CODE_RESPONSE_TOO_LARGE

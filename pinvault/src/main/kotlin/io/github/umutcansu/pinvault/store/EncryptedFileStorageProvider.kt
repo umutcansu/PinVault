@@ -85,8 +85,13 @@ class EncryptedFileStorageProvider internal constructor(
             versionPrefs.edit().remove(versionKey(key)).apply()
             Timber.d("Vault file saved to disk [%s] — version: %d, %d bytes", key, version, bytes.size)
         } catch (e: Exception) {
-            Timber.e(e, "Failed to save vault file to disk [%s] — the previous copy, if any, was kept", key)
             temp.delete()
+            val kept = file.exists()
+            Timber.e(e, "Failed to save vault file to disk [%s] v%d — %s", key, version,
+                if (kept) "the previous copy was kept" else "no copy is on disk")
+            throw VaultStorageWriteException(
+                "Vault file '$key' v$version could not be written to disk (${e.javaClass.simpleName})", e
+            )
         }
     }
 
@@ -147,8 +152,14 @@ class EncryptedFileStorageProvider internal constructor(
         val cipher = Cipher.getInstance(AES_GCM_TRANSFORMATION)
         cipher.init(Cipher.DECRYPT_MODE, secretKey, GCMParameterSpec(GCM_TAG_LENGTH, data, 1, ivLength))
         val plain = cipher.doFinal(data, 1 + ivLength, data.size - 1 - ivLength)
-        save(key, plain, versionPrefs.getInt(versionKey(key), 0))
-        Timber.d("Vault file [%s] rewritten in the current form (name and version bound)", key)
+        // Rewriting is an upgrade, not part of the read: a copy that cannot be
+        // written now is still read, and tried again at the next read.
+        try {
+            save(key, plain, versionPrefs.getInt(versionKey(key), 0))
+            Timber.d("Vault file [%s] rewritten in the current form (name and version bound)", key)
+        } catch (e: VaultStorageWriteException) {
+            Timber.w(e, "Vault file [%s] read in its earlier form; rewriting it failed", key)
+        }
         return plain
     }
 

@@ -41,9 +41,12 @@ internal interface UserAuthRegistrations {
         /**
          * Inside `pinvault_secure_vault_files.xml`, which the backup rules
          * already exclude: a restored registration would name a key the new
-         * device does not have.
+         * device does not have. Strict: a Keystore failure is "cannot say"
+         * (the fetch fails and is tried again), never "nothing registered",
+         * which skipped the stamp check and re-registered the key into a 409
+         * (review 2026-11-11).
          */
         fun persistent(context: Context): UserAuthRegistrations =
-            Persistent(SecurePreferences.open(context, VaultFileStore.FILE_NAME, namespace = NAMESPACE))
+            Persistent(SecurePreferences.openStrict(context, VaultFileStore.FILE_NAME, namespace = NAMESPACE))
     }
 }

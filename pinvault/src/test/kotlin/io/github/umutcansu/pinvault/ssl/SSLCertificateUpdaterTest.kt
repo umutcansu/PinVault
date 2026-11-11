@@ -155,6 +155,59 @@ class SSLCertificateUpdaterTest {
         assertEquals(7, httpClientProvider.getVersion())
     }
 
+    // Review 2026-11-11: host certificates were loaded only when a NEW
+    // config arrived, so a restart with an unchanged config left mTLS hosts
+    // without their client certificate.
+    @Test
+    fun `init with an unchanged config presents the stored host certificate again`() = runTest {
+        val hostCert = TestCertUtil.generateSelfSigned(cn = "client-for-api.test", password = password)
+        val stored = CertificateConfig(
+            version = 3, pins = listOf(HostPin("api.test", listOf(pin1, pin2), version = 3, mtls = true, clientCertVersion = 1))
+        )
+        every { configStore.load() } returns stored
+        every { configStore.getCurrentVersion() } returns 3
+        coEvery { configApi.fetchConfig(3) } returns stored
+        every { certStore.exists("host_api.test") } returns true
+        every { certStore.load("host_api.test") } returns hostCert.p12Bytes
+        assertFalse(sslManager.hasHostClientIdentities())
+
+        val result = createUpdater().initializeAndUpdate()
+
+        assertEquals(InitResult.Ready(3), result)
+        assertTrue("the host's stored certificate is presented after a restart", sslManager.hasHostClientIdentities())
+        coVerify(exactly = 0) { configApi.downloadHostClientCert(any()) }
+    }
+
+    @Test
+    fun `init offline with a stored config presents the stored host certificate`() = runTest {
+        val hostCert = TestCertUtil.generateSelfSigned(cn = "client-for-api.test", password = password)
+        val stored = CertificateConfig(
+            version = 3, pins = listOf(HostPin("api.test", listOf(pin1, pin2), version = 3, mtls = true, clientCertVersion = 1))
+        )
+        every { configStore.load() } returns stored
+        every { configStore.getCurrentVersion() } returns 3
+        coEvery { configApi.fetchConfig(3) } throws java.io.IOException("backend unreachable")
+        every { certStore.load("host_api.test") } returns hostCert.p12Bytes
+
+        createUpdater().initializeAndUpdate()
+
+        assertEquals(3, httpClientProvider.getVersion())
+        assertTrue(sslManager.hasHostClientIdentities())
+    }
+
+    @Test
+    fun `init loads no host certificate for a host without mTLS`() = runTest {
+        val stored = CertificateConfig(version = 3, pins = listOf(HostPin("api.test", listOf(pin1, pin2), version = 3)))
+        every { configStore.load() } returns stored
+        every { configStore.getCurrentVersion() } returns 3
+        coEvery { configApi.fetchConfig(3) } returns stored
+
+        createUpdater().initializeAndUpdate()
+
+        assertFalse(sslManager.hasHostClientIdentities())
+        verify(exactly = 0) { certStore.load(any()) }
+    }
+
     @Test
     fun `updateNow — a host whose mTLS was switched off loses its client certificate`() = runTest {
         val hostCert = TestCertUtil.generateSelfSigned(cn = "client-for-api.test", password = password)

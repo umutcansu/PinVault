@@ -296,8 +296,17 @@ internal class UserAuthVaultStorage(
             val attempt = openSlot(key, Slot.PENDING, pending, inner.getVersion(pendingKey(key)), authenticate, verify, onSealedForAnotherKey, null)
             val result = attempt.result
             if (result is VaultFileUnlockResult.Unlocked) {
-                promote(key, pending, result.version)
-                runCatching { onPromoted(result.version) }
+                // The content opened and was checked, so it is handed out; but
+                // only a copy that really took the stored one's place moves the
+                // signatures on record to its version.
+                val promoted = try {
+                    promote(key, pending, result.version)
+                    true
+                } catch (e: Exception) {
+                    Timber.w(e, "Vault file [%s]: the pending copy (v%d) opened but could not replace the stored one; it stays pending", key, result.version)
+                    false
+                }
+                if (promoted) runCatching { onPromoted(result.version) }
                 return result
             }
             // Cancelled, a prompt error, a Keystore fault, a retired key:
@@ -466,8 +475,13 @@ internal class UserAuthVaultStorage(
      * and the slot is emptied. The copy it replaces is gone with that save.
      */
     private fun promote(key: String, blob: ByteArray, version: Int) {
+        // Throws when the save fails: the pending copy then stays where it is.
         inner.save(key, blob, version)
-        inner.clear(pendingKey(key))
+        try {
+            inner.clear(pendingKey(key))
+        } catch (e: Exception) {
+            Timber.w(e, "Vault file [%s]: the pending slot could not be emptied after it replaced the stored copy", key)
+        }
         replaced(key)
         Timber.d("Vault file [%s]: the pending copy (v%d) opened and replaced the stored one", key, version)
     }
