@@ -418,6 +418,17 @@ class ApprovalService(
             kotlinx.serialization.json.Json.parseToJsonElement(cr.detail).let { it as JsonObject }["baseHash"]
                 ?.let { (it as kotlinx.serialization.json.JsonPrimitive).content }
         }.getOrNull()
+        // Every other Config API the change writes to, as recorded on its card.
+        val staleScope = runCatching {
+            ((kotlinx.serialization.json.Json.parseToJsonElement(cr.detail) as JsonObject)[SCOPE_HASHES] as? JsonObject)
+                ?.entries?.firstOrNull { (scope, hash) -> (hash as kotlinx.serialization.json.JsonPrimitive).content != stateHash(scope) }?.key
+        }.getOrNull()
+        if (staleScope != null) {
+            store.decideIfPending(id, "stale", approver, Instant.now().toString(), "pins of $staleScope changed since the request was made", null, null)
+            audit.record("change_stale", "#$id not applied: $staleScope changed since it was requested — ${cr.summary}",
+                cr.configApiId, "${cr.method} ${cr.path}", actor = approver)
+            throw Refused(HttpStatusCode.Conflict, "The pins of $staleScope changed after #$id was requested. Ask for a fresh request.")
+        }
         if (base != null && base != stateHash(cr.configApiId)) {
             store.decideIfPending(id, "stale", approver, Instant.now().toString(), "pins changed since the request was made", null, null)
             audit.record("change_stale", "#$id not applied: ${cr.configApiId} changed since it was requested — ${cr.summary}",
@@ -532,6 +543,9 @@ class ApprovalService(
     }
 
     companion object {
+        /** Card detail: `{scope: stateHash}` of every further Config API a change writes to; each must still match at approval. */
+        const val SCOPE_HASHES = "scopeHashes"
+
         private val client = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(5)).build()
 
         /** Sends the stored request to this server's own management port. */

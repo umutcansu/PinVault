@@ -54,6 +54,9 @@ services:
       # Secrets — all three are REQUIRED; empty means "unset" and the server
       # refuses to start unless ALLOW_DEMO_SECRETS=true (local runs only).
       - ALLOW_DEMO_SECRETS=${ALLOW_DEMO_SECRETS:-}
+      # Key material made on an earlier start and now missing stops the start;
+      # for one start, to make it again on purpose: signing-key,client-ca,… or all.
+      - ALLOW_KEY_REGENERATION=${ALLOW_KEY_REGENERATION:-}
       - SIGNING_KEY_PASSWORD=${SIGNING_KEY_PASSWORD:-}
       - KEYSTORE_PASSWORD=${KEYSTORE_PASSWORD:-}
       - KEYSTORE_PASSWORD_PREVIOUS=${KEYSTORE_PASSWORD_PREVIOUS:-}

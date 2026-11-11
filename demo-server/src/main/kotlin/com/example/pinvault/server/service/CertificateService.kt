@@ -611,11 +611,38 @@ class CertificateService(
      */
     fun removeLegacyAnchor(clientId: String): X509Certificate? {
         if (clientId == CLIENT_CA_ALIAS) return null
-        val ts = getTrustStore() ?: return null
+        synchronized(trustStoreLock) {
+            val ts = getTrustStore() ?: return null
+            val cert = anchorOwnedBy(ts, clientId) ?: return null
+            removeFromTrustStore(clientId)
+            return cert
+        }
+    }
+
+    /**
+     * The certificate stored under [clientId], unless it is another id's that
+     * differs only in letter case. PKCS12 aliases ignore letter case and client
+     * ids do not, so `Alice` found `alice`'s anchor — and enrolling, revoking
+     * or forgetting `Alice` removed it (and retired its key for good) (review
+     * 2026-11-11, C-11). Anchors carry their id in the CN (uploads must,
+     * [uploadedSubjectMismatch]; so did the self-signed P12s of before the
+     * client CA). An entry whose CN names an unrelated id (an upload from
+     * before that rule) still counts as [clientId]'s, as it always did.
+     */
+    private fun anchorOwnedBy(ts: KeyStore, clientId: String): X509Certificate? {
         val cert = ts.getCertificate(clientId) as? X509Certificate ?: return null
-        removeFromTrustStore(clientId)
+        val owner = ownerOfCaseTwin(cert, clientId)
+        if (owner != null) {
+            println("Client truststore: the entry found for '$clientId' belongs to '$owner' — left alone")
+            return null
+        }
         return cert
     }
+
+    /** The id [cert] belongs to when that id is [clientId] in other letter case; else null. */
+    private fun ownerOfCaseTwin(cert: X509Certificate, clientId: String): String? =
+        com.example.pinvault.server.route.clientIdOfSubject(cert.subjectX500Principal)
+            ?.takeIf { it != clientId && it.equals(clientId, ignoreCase = true) }
 
     /**
      * Dışarıdan client cert upload — PEM/DER formatında.
@@ -626,7 +653,17 @@ class CertificateService(
         // under its name replaced the CA every CSR identity chains to.
         require(!isReservedAlias(clientId)) { "'$clientId' is reserved by the server and cannot be a client id" }
         val cert = parseUploadedClientCertificate(certBytes)
-        addToTrustStore(clientId, cert)
+        synchronized(trustStoreLock) {
+            // The truststore cannot tell `Alice` from `alice`: an upload under one
+            // replaced the other's certificate.
+            (getTrustStore()?.getCertificate(clientId) as? X509Certificate)?.let { existing ->
+                val twin = ownerOfCaseTwin(existing, clientId)
+                require(twin == null) {
+                    "Client id '$twin' already has a certificate, and ids that differ only in letter case cannot both have one"
+                }
+            }
+            addToTrustStore(clientId, cert)
+        }
         return sha256Base64(cert.encoded)
     }
 
@@ -677,10 +714,14 @@ class CertificateService(
         // Revoking or forgetting an id named like the client CA removed the CA
         // itself: every CSR identity was then refused at the handshake.
         if (isReservedAlias(clientId)) return
-        if (!trustStoreFile.exists()) return
-        val ts = ServerKeyStores.load(trustStoreFile, KEYSTORE_PASSWORD.toCharArray())
-        ts.deleteEntry(clientId)
-        trustStoreFile.outputStream().use { ts.store(it, KEYSTORE_PASSWORD.toCharArray()) }
+        synchronized(trustStoreLock) {
+            if (!trustStoreFile.exists()) return
+            val ts = ServerKeyStores.load(trustStoreFile, KEYSTORE_PASSWORD.toCharArray())
+            // Only this id's own entry, never one whose id differs in letter case.
+            if (anchorOwnedBy(ts, clientId) == null) return
+            ts.deleteEntry(clientId)
+            ServerKeyStores.writeAtomically(trustStoreFile, ts, KEYSTORE_PASSWORD.toCharArray())
+        }
     }
 
     fun getTrustStore(): KeyStore? {
@@ -691,10 +732,20 @@ class CertificateService(
 
     fun getTrustStoreFile(): File = trustStoreFile
 
+    /**
+     * One writer at a time: the truststore is read, changed and written back,
+     * and two changes at once lost one of them. Written beside the file and
+     * moved over it, owner-only (review 2026-11-11, C-11): a crash or a full
+     * disk mid-write left a truncated truststore every mTLS listener failed on.
+     */
+    private val trustStoreLock = Any()
+
     private fun addToTrustStore(alias: String, cert: X509Certificate) {
-        val ts = if (trustStoreFile.exists()) ServerKeyStores.load(trustStoreFile, KEYSTORE_PASSWORD.toCharArray()) else ServerKeyStores.empty()
-        ts.setCertificateEntry(alias, cert)
-        trustStoreFile.outputStream().use { ts.store(it, KEYSTORE_PASSWORD.toCharArray()) }
+        synchronized(trustStoreLock) {
+            val ts = if (trustStoreFile.exists()) ServerKeyStores.load(trustStoreFile, KEYSTORE_PASSWORD.toCharArray()) else ServerKeyStores.empty()
+            ts.setCertificateEntry(alias, cert)
+            ServerKeyStores.writeAtomically(trustStoreFile, ts, KEYSTORE_PASSWORD.toCharArray())
+        }
     }
 
     // ── Client CA: certificates over device-held keys (CSR enrollment) ──
@@ -732,7 +783,7 @@ class CertificateService(
 
         val ks = ServerKeyStores.empty()
         ks.setKeyEntry(CLIENT_CA_ALIAS, keyPair.private, KEYSTORE_PASSWORD.toCharArray(), arrayOf(cert))
-        clientCaFile.outputStream().use { ks.store(it, KEYSTORE_PASSWORD.toCharArray()) }
+        ServerKeyStores.writeAtomically(clientCaFile, ks, KEYSTORE_PASSWORD.toCharArray())
         addToTrustStore(CLIENT_CA_ALIAS, cert)
         return cert
     }

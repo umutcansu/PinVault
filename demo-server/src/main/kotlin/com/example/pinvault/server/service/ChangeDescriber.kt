@@ -570,6 +570,11 @@ class ChangeDescriber(
         val extra = buildMap<String, JsonElement> {
             put("certificate", plan.publicJson())
             put("scopes", JsonArray(scopes.map { JsonPrimitive(it) }))
+            // The other Config APIs the new pins go to: a change approved there in
+            // between makes this plan stale too, not only one in [scope] (review
+            // 2026-11-11). ApprovalService re-checks every one.
+            val others = scopes.filter { it != scope }
+            if (others.isNotEmpty()) put(ApprovalService.SCOPE_HASHES, JsonObject(others.associateWith { JsonPrimitive(stateHash(it)) }))
             if (live != null && live.checks.isNotEmpty()) put("liveCheck", Json.encodeToJsonElement(LiveCertificateGate.Result.serializer(), live))
         }
         return Description(

@@ -159,6 +159,19 @@ private fun startServer() {
     val hostStore = HostStore(db)
     val certsDir = File(com.example.pinvault.server.service.ServerEnv.get("CERTS_DIR") ?: "certs")
     val signingKeyFile = File(com.example.pinvault.server.service.ServerEnv.get("SIGNING_KEY_PATH") ?: "signing-key.pem")
+    // Key material made on an earlier start and now missing stops the start
+    // (KeyMaterialGuard; ALLOW_KEY_REGENERATION to make it again on purpose):
+    // the signing key here, before the signer makes a new one; the certificates
+    // below, before the certificate service does.
+    val keyGuard = com.example.pinvault.server.service.KeyMaterialGuard(db)
+    val signingKeyItems = run {
+        val specs = (com.example.pinvault.server.service.ServerEnv.get("CONFIG_SIGNERS")?.takeIf { it.isNotBlank() } ?: "local")
+            .split(',').map { it.trim().lowercase() }
+        if ("local" in specs) listOf(com.example.pinvault.server.service.KeyMaterialGuard.Item(
+            com.example.pinvault.server.service.KeyMaterialGuard.SIGNING_KEY, signingKeyFile
+        )) else emptyList()
+    }
+    keyGuard.startProblem(signingKeyItems)?.let { error(it) }
     // Signers come from CONFIG_SIGNERS (default: the local key file above).
     val signingService = ConfigSigningService.fromEnv(signingKeyFile)
     val signingKeySetService = com.example.pinvault.server.service.SigningKeySetService.fromEnv(
@@ -411,6 +424,19 @@ private fun startServer() {
                 "(KEYSTORE_PASSWORD_PREVIOUS) nor the old default password; left as they are")
         }
     }
+    val certificateItems = run {
+        val g = com.example.pinvault.server.service.KeyMaterialGuard
+        fun item(name: String, file: File, alwaysMade: Boolean = true) =
+            com.example.pinvault.server.service.KeyMaterialGuard.Item(name, file, alwaysMade)
+        listOf(
+            item(g.CLIENT_CA, certService.clientCaFile()),
+            item(g.SERVER_TLS, serverKeystorePath),
+            item(g.SERVER_TLS_BACKUP, File(certsDir, "$serverCertId.backup.jks"), alwaysMade = false),
+            item(g.SERVER_CA, certService.serverCaFile(), alwaysMade = recoveryPort > 0),
+            item(g.SERVER_CA_BACKUP, certService.serverCaBackupFile(), alwaysMade = false)
+        )
+    }
+    keyGuard.startProblem(certificateItems)?.let { error(it) }
     // The client CA that signs CSR-enrolled device certificates; every mTLS
     // listener trusts it through the client truststore.
     run {
@@ -426,6 +452,8 @@ private fun startServer() {
         println("Generating demo server TLS certificate...")
         certService.generateCertificate(serverCertId, "localhost")
     } else null
+    // From now on a start that finds one of these missing refuses to run.
+    keyGuard.record(signingKeyItems + certificateItems)
 
     // Server TLS pin'lerini oku/kaydet
     val serverPinsFile = File("certs/$serverCertId.pins")

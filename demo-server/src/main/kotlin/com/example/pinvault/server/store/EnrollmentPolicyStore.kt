@@ -321,7 +321,39 @@ class EnrollmentPolicyStore(private val db: DatabaseManager) {
         now: Instant = Instant.now(),
         /** What attestation said about the key (`ENROLLMENT_ATTESTATION`); null = not checked. */
         attestation: KeyAttestation? = null
-    ): Recorded {
+    ): Recorded = createRequest(policy, spkiSha256, status, configApiId, deviceAlias, deviceUid, sourceIp, now, attestation, maxPending = null)
+        ?: error("Could not record an enrollment request for policy ${policy.id}")
+
+    /**
+     * [createRequest] for a waiting device: the row goes in only while fewer
+     * than [maxPending] requests of [policy] are pending — counted in the same
+     * statement as the insert, so two devices asking at once cannot both take
+     * the last place (review 2026-11-11). Null: the list is full.
+     */
+    fun createPendingRequest(
+        policy: EnrollmentPolicy,
+        spkiSha256: String,
+        configApiId: String,
+        deviceAlias: String?,
+        deviceUid: String?,
+        sourceIp: String,
+        maxPending: Int,
+        now: Instant = Instant.now(),
+        attestation: KeyAttestation? = null
+    ): Recorded? = createRequest(policy, spkiSha256, EnrollmentRequest.PENDING, configApiId, deviceAlias, deviceUid, sourceIp, now, attestation, maxPending)
+
+    private fun createRequest(
+        policy: EnrollmentPolicy,
+        spkiSha256: String,
+        status: String,
+        configApiId: String,
+        deviceAlias: String?,
+        deviceUid: String?,
+        sourceIp: String,
+        now: Instant,
+        attestation: KeyAttestation?,
+        maxPending: Int?
+    ): Recorded? {
         repeat(8) {
             val clientId = newClientId(policy.name)
             val id = randomHex(16)
@@ -332,7 +364,8 @@ class EnrollmentPolicyStore(private val db: DatabaseManager) {
                         (id, policy_id, client_id, spki_sha256, status, config_api_id, device_alias, device_uid,
                          source_ip, created_at, decided_at, decided_by,
                          attested, attestation_security_level, attestation_reason)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+                    WHERE ? IS NULL OR (SELECT COUNT(*) FROM enrollment_requests WHERE policy_id = ? AND status = ?) < ?
                     ON CONFLICT DO NOTHING
                     """.trimIndent()
                 ).use { stmt ->
@@ -351,12 +384,18 @@ class EnrollmentPolicyStore(private val db: DatabaseManager) {
                     if (attestation == null) stmt.setNull(13, java.sql.Types.INTEGER) else stmt.setInt(13, if (attestation.attested) 1 else 0)
                     stmt.setString(14, attestation?.securityLevel)
                     stmt.setString(15, attestation?.reason)
+                    if (maxPending == null) stmt.setNull(16, java.sql.Types.INTEGER) else stmt.setInt(16, maxPending)
+                    stmt.setString(17, policy.id)
+                    stmt.setString(18, EnrollmentRequest.PENDING)
+                    if (maxPending == null) stmt.setNull(19, java.sql.Types.INTEGER) else stmt.setInt(19, maxPending)
                     stmt.executeUpdate() == 1
                 }
             }
             if (inserted) return Recorded(getRequest(id)!!, created = true)
             // Lost a race with the same key, or (1 in 2^30) the client id was taken meanwhile.
             findRequest(policy.id, spkiSha256)?.let { return Recorded(it, created = false) }
+            // Nothing went in and nothing of this key is there: the list is full.
+            if (maxPending != null && countPending(policy.id) >= maxPending) return null
         }
         error("Could not record an enrollment request for policy ${policy.id}")
     }

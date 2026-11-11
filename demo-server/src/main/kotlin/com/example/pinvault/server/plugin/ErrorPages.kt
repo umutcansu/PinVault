@@ -30,6 +30,9 @@ fun StatusPagesConfig.genericErrors(newId: () -> String = { java.util.UUID.rando
     }
     exception<PayloadTooLargeException> { call, _ -> call.respondBodyTooLarge() }
     exception<Throwable> { call, cause ->
+        // A cancelled call (the client went away, the server is stopping) is
+        // not an error to log or answer: the coroutine has to see it.
+        if (cause is kotlinx.coroutines.CancellationException) throw cause
         if (cause.isBodyTooLarge()) return@exception call.respondBodyTooLarge()
         val errorId = newId()
         errorLog.error("Unhandled error {} on {} {}", errorId, call.request.httpMethod.value, call.request.path(), cause)

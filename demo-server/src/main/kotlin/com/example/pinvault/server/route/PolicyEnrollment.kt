@@ -154,8 +154,15 @@ class PolicyEnrollment(
             // enforce a key without a passing one never waits in the list.
             val verdict = attestationOf(call, json, csr, remote, policy) ?: return
             val integrityNote = integrityOf(call, json, remote, policy) ?: return
-            val recorded = policies.createRequest(policy, csr.spkiSha256, EnrollmentRequest.PENDING, configApiId,
-                deviceAlias, deviceUid, remote, now, attestation = verdict.record)
+            // The count above saves the attestation work; this one, in the
+            // insert itself, is what holds when devices ask at the same moment.
+            val recorded = policies.createPendingRequest(policy, csr.spkiSha256, configApiId,
+                deviceAlias, deviceUid, remote, maxPending = waitingCap, now = now, attestation = verdict.record)
+                ?: run {
+                    refusals?.report(remote, "POST", call.request.path(), reason = "too many devices waiting with policy ${policy.name}")
+                    return call.respondError(HttpStatusCode.TooManyRequests, "too_many_pending_requests",
+                        "Too many devices are waiting for approval. Ask an administrator.")
+                }
             if (!recorded.created) return answer(call, recorded.request, csr, json)
             val request = recorded.request
             audit?.record(

@@ -90,10 +90,26 @@ object ServerKeyStores {
     fun toBytes(keyStore: KeyStore, password: CharArray): ByteArray =
         ByteArrayOutputStream().also { keyStore.store(it, password) }.toByteArray()
 
-    /** Writes next to [file], then swaps it in: a crash never leaves a half-written keystore. */
+    /**
+     * Writes next to [file], then swaps it in: a crash never leaves a
+     * half-written keystore. The new file is readable by its owner only
+     * (where the file system has POSIX permissions).
+     */
     fun writeAtomically(file: File, keyStore: KeyStore, password: CharArray) {
-        val temp = File(file.absoluteFile.parentFile, ".${file.name}.tmp")
+        val dir = file.absoluteFile.parentFile.also { it.mkdirs() }
+        val temp = File(dir, ".${file.name}.tmp")
+        temp.delete()
+        Files.createFile(temp.toPath())
+        ownerOnly(temp)
         temp.outputStream().use { keyStore.store(it, password) }
         Files.move(temp.toPath(), file.toPath(), StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE)
+    }
+
+    private fun ownerOnly(file: File) {
+        try {
+            Files.setPosixFilePermissions(file.toPath(), java.nio.file.attribute.PosixFilePermissions.fromString("rw-------"))
+        } catch (_: UnsupportedOperationException) {
+            // Not a POSIX file system: left to its own permissions.
+        }
     }
 }
