@@ -357,7 +357,9 @@ handshake is refused, it sends the same request to the block's `renewalUrl` (def
 `configUrl`): a plain-TLS listener that asks for no client certificate, where `clientId`
 names the identity and the CSR's signature by the key on record is the proof. The reference
 server runs that listener on `RECOVERY_PORT`, serving only this route and `/health`, with a
-certificate from its server CA so apps can pin the CA for that one `host:port`. Answers:
+certificate from its server CA so apps can pin the CA for that one `host:port`. It does not
+ask that the certificate has expired: the key on record signs the CSR on either door, and
+a revoked identity is refused on both. Answers:
 
 - `200` — the chain JSON above;
 - `403 {"error":"reenroll_required","message":"…"}` — the identity is revoked; the app is

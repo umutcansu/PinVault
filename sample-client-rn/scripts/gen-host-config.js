@@ -217,6 +217,15 @@ function securityFile() {
         ...(door ? { renewalUrl: `https://${host.ip}:${host.recoveryPort}/` } : {}),
       },
     ],
+    // What src/pinvault.ts turns on in a release build, fixed here too: in the
+    // native file a changed JS bundle cannot switch it off (review 2026-11-11).
+    require: {
+      requireUnlockedDevice: true,
+      requireHardwareBackedKeys: true,
+      wipeVaultFilesOnRevocation: true,
+      ...(host.targetRequireCaTrust ? { requireCaTrust: [host.targetHost] } : {}),
+      ...(host.expectedSignerSha256.length > 0 ? { expectedSignerSha256: host.expectedSignerSha256 } : {}),
+    },
   };
 }
 if (nativeOut) {

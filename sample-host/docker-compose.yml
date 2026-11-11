@@ -86,6 +86,10 @@ services:
       # true: parolalar boşken kaynak koddaki demo değerleriyle açıl (yalnızca
       # kullan-at denemeler). Üretim profilinde sabit "false".
       ALLOW_DEMO_SECRETS: ${ALLOW_DEMO_SECRETS:-}
+      # Sunucunun daha önce ürettiği bir anahtar dosyası (imza anahtarı,
+      # client-ca, TLS keystore, sunucu CA) eksikse sunucu açılmaz. Bilerek
+      # yeniden üretmek için bir açılışlık: signing-key,client-ca,… ya da all.
+      ALLOW_KEY_REGENERATION: ${ALLOW_KEY_REGENERATION:-}
       # "URL'den sertifika al" bu makineye ve yerel ağa yalnızca true iken bağlanır.
       # Demo: true (setup.sh yazar). Üretim: boş.
       FETCH_ALLOW_PRIVATE_TARGETS: ${FETCH_ALLOW_PRIVATE_TARGETS:-}

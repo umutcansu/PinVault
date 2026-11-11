@@ -223,7 +223,7 @@ if is_production; then
     for pair in PIN_CHANGE_APPROVALS=2 PIN_LIVE_CHECK=enforce USER_AUTH_ATTESTATION=enforce \
                 ENROLLMENT_ATTESTATION=enforce ENROLLMENT_P12=off USER_AUTH_REQUIRE_PER_USE=true \
                 ATTESTATION_REQUIRE_VERIFIED_BOOT=true ATTESTATION_KEY_POLICY=enforce \
-                ATTESTATION_POLICY_DEFAULT=strict APP_ATTEST_REQUIRE_V2=true PLAY_INTEGRITY_REQUIRE_V2=true; do
+                ATTESTATION_POLICY_DEFAULT=production APP_ATTEST_REQUIRE_V2=true PLAY_INTEGRITY_REQUIRE_V2=true; do
         name="${pair%%=*}" want="${pair#*=}"
         got="$(container_env "${name}" | tr 'A-Z' 'a-z')"
         # Sunucu varsayılanı: boş ATTESTATION_REQUIRE_VERIFIED_BOOT = true.

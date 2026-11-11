@@ -1,5 +1,73 @@
 # Changelog
 
+## Unreleased
+
+### Server
+
+- **Lost key files stop the start instead of being replaced.** A start that
+  found the config signing key, the client CA, the TLS keystore or the server
+  CA missing used to make a new one and come up cleanly — after which every
+  device refused the server. What the server made is now recorded
+  (`key_material`, V31); a recorded file that is missing refuses the start
+  and names the files. On a database from before V31, a file every start
+  makes counts as made once the database holds data. To make keys again on
+  purpose: `ALLOW_KEY_REGENERATION=<names>|all` for one start (review
+  2026-11-11, C-10).
+- **Client ids that differ only in letter case no longer touch each other's
+  certificate.** The client truststore (PKCS12) ignores letter case and
+  client ids do not: an upload under `Alice` replaced `alice`'s certificate,
+  and enrolling, revoking or forgetting `Alice` removed `alice`'s anchor and
+  retired its key. Such an upload is now refused, and removal leaves the
+  other id's entry alone. The truststore and the client CA are written beside
+  the file and moved over it, one writer at a time, readable by the owner
+  only — as every server keystore rewrite now is (review 2026-11-11, C-11).
+- **A host certificate change is stale when any Config API it writes to
+  changed.** Its approval card fingerprinted only the first Config API; a
+  change approved in between in another one that pins the host was
+  overwritten. The card now carries `scopeHashes` for the others and the
+  approval checks each (review 2026-11-11).
+- **The pending list of an enrollment policy holds at its limit when devices
+  ask at the same moment**: the count is part of the insert (review 2026-11-11).
+- A cancelled call (client gone, server stopping) is no longer logged and
+  answered as a 500 (review 2026-11-11).
+- Docs: the recovery door renews a valid certificate too (the key on record is
+  the proof on both doors); plain `http://` is refused on the Config API's
+  own connections only, not by `getClient()` / `applyTo()`; calling
+  `fetchScopedConfig` yourself returns the server's answer unchecked.
+- Sample host: the production smoke test expects
+  `ATTESTATION_POLICY_DEFAULT=production`, as the production compose file
+  sets it. RN sample: the release security file fixes `require`
+  (unlocked device, hardware-backed keys, vault wipe on revocation, CA trust,
+  signer digests) so a changed JS bundle cannot switch them off (review 2026-11-11).
+
+### Android and iOS libraries
+
+- **A vault file the device could not store no longer costs it the copy it
+  had.** When writing a new version failed (a full disk, a locked or failing
+  Keystore/Keychain), the storage only logged it; the library then recorded
+  the new version's signatures, the copy still on disk no longer matched them,
+  and it was deleted at the next read. `VaultStorageProvider.save` now throws
+  (`VaultStorageWriteException` on Android, `VaultStorageWriteError` on iOS),
+  the fetch returns `Failed` with the new code `storage_failed`, the
+  signatures on record stay those of the copy on disk, and the next fetch
+  tries again. The preferences store commits synchronously. A pending
+  screen-lock copy that opened but could not replace the stored one stays
+  pending. **Custom `VaultStorageProvider`s must throw when `save` did not
+  store the copy** (review 2026-11-11).
+- **Host client certificates are presented again after a restart.** A host
+  pinned with `mtls = true` got its own client certificate only when a NEW
+  config arrived; after a restart whose fetch found the config unchanged (or
+  failed offline) the stored certificate was not loaded, and the host got no
+  client certificate until the config changed. The stored config's host
+  certificates are now loaded from storage at start, without a download
+  (review 2026-11-11).
+- **iOS: a host whose mTLS is switched off stops presenting its certificate**
+  (the Android fix of the same review, ported): the host identities are
+  replaced by the new config's, an empty set included.
+- Android: the store of registered screen-lock keys is read strictly — a
+  Keystore failure fails the fetch (tried again) instead of reading as "no
+  key registered" and re-registering into a 409 (review 2026-11-11).
+
 ## 2.9.0 — 2026-11-10 — pin history with one-click restore, expiry for everything that expires, the wizard walks to production, a security review's fixes
 
 ### Server and dashboard

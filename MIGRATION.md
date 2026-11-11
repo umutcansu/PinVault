@@ -947,6 +947,8 @@ class MyBackendApi : CertificateConfigApi, SignedConfigSource {
     override suspend fun healthCheck(): Boolean { /* … */ }
 
     // Optional V2 overrides (defaults delegate to the methods above):
+    // The library checks what this returns (signature, view, versions);
+    // calling it yourself gets the server's answer unchecked.
     override suspend fun fetchScopedConfig(
         currentVersion: Int, hosts: List<String>?, deviceId: String?
     ): CertificateConfig { /* send hosts + deviceId to your backend */ }

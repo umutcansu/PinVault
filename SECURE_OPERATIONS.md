@@ -104,6 +104,11 @@ PinVault.signingStatus()   // trusted key ids, key-set version, who signed the l
 
 Key ids are Base64 SHA-256 of the key's SubjectPublicKeyInfo, the same value `GET /api/v1/signing-key` and the dashboard show.
 
+What the library's own checks cover, and what they do not:
+
+- **Plain `http://` is refused only on the Config API's own connections** (config, enrollment, renewal, vault files, reports). The app-facing clients (`PinVault.getClient()`, `applyTo(builder)`) pin every `https://` host and leave `http://` requests alone, so an app that mixes traffic keeps working. If your app must never send cleartext, say so in the platform: `android:usesCleartextTraffic="false"` (or a network security config) on Android, App Transport Security on iOS.
+- **A config is checked when the library fetches it** (`init`, `updateNow`, the periodic worker): signature, freshness, replay, version and — for a narrowed view (`?hosts=`, `X-Device-Id`) — that the signed `view` is the one asked for. Calling `CertificateConfigApi.fetchConfig` / `fetchScopedConfig` yourself returns what the server sent, unchecked; apply configs through the library, never from such a call.
+
 ## Keys and where they live
 
 - **Signing keys** sign configs and vault files. They are online: server file, HSM or KMS.
@@ -227,6 +232,7 @@ The server refuses a set that its active signers could not satisfy. The dashboar
 
 - Install the offline backup key, or publish a key set for a new key.
 - Without either, every installed app needs an update. This is the main reason to have at least Level 1.
+- The server does not make a new key in its place on its own. A start that finds key material it made before missing — the signing key file, `certs/client-ca.jks`, the TLS keystore `certs/demo-server.jks` (and its `.backup.jks`), the server CA files — refuses to run and names the files. This is usually a database restored without `data/` or a volume that was not mounted: restore the files. To make new ones on purpose, start once with `ALLOW_KEY_REGENERATION=signing-key,client-ca,…` (or `all`), then remove the setting. Devices then need what trusts the new keys: a key set or an app update for the signing key, new pins for the TLS keystore, re-enrollment for the client CA. The record of what was made is the `key_material` table (V31); on a database from before it, a file every start makes counts as made once the database holds pins, identities or audit entries.
 
 ### A recovery key is compromised or lost
 
