@@ -70,10 +70,55 @@ class ChangeDescriber(
     /** The device an `attestation_device` change acts on; null = not mounted. */
     private val attestedDevices: com.example.pinvault.server.store.AttestedDeviceStore? = null,
     /** The lists a `host_acl` change is compared with; null = not mounted. */
-    private val hostAcl: com.example.pinvault.server.store.DeviceHostAclStore? = null
+    private val hostAcl: com.example.pinvault.server.store.DeviceHostAclStore? = null,
+    /** A device's registered key (PEM) a `device_key_reset` drops: (scope, deviceId, userAuth) → key or null. */
+    private val deviceKeyOf: ((scope: String, deviceId: String, userAuth: Boolean) -> String?)? = null
 ) {
     /** A gated operation nobody wrote a card for: refused, never shown as a bare name and path. */
     class Undescribed(op: String) : IllegalStateException("there is no approval card for '$op' yet")
+
+    /**
+     * How a card of each gated operation is kept from going stale. Every
+     * operation must say (`ApprovalCardsTest` fails on one that does not), so
+     * a new card cannot be added without deciding it.
+     */
+    enum class Staleness {
+        /** Computed against the scope's pins: `baseHash` (+ `scopeHashes`). */
+        PIN_STATE,
+        /** Described again at approval and compared (`stateKey`). */
+        STATE_KEY,
+        /** Fingerprints of what it acts on, by reference (`stateRefs`, [stateOf]). */
+        STATE_REFS,
+        /** The card states the end state itself ("turn X on", "delete Y"): nothing it says can go out of date. */
+        END_STATE,
+        /** The requester sends it again after approval and it runs as it is then (its answer carries a secret). */
+        REQUESTER_RUN
+    }
+
+    /**
+     * The current fingerprint of a reference a card recorded in
+     * [ApprovalService.Description.stateRefs], or null when its object does
+     * not exist. Cheap: never plans, fetches or generates anything.
+     */
+    fun stateOf(ref: String): String? {
+        val parts = ref.split('|')
+        return when (parts.first()) {
+            "bootstrap" -> planner.bootstrapState()
+            "port" -> parts.getOrNull(1)?.toIntOrNull()?.let { portHolder?.invoke(it) }
+            "vault" -> if (parts.size == 3) vaultState(parts[1], parts[2]) else null
+            "device-key" -> if (parts.size == 4) deviceKeyOf?.invoke(parts[1], parts[3], parts[2] == "user_auth")?.let { sha256Hex(it.toByteArray(Charsets.UTF_8)) } else null
+            else -> null
+        }
+    }
+
+    private fun vaultState(scope: String, key: String): String? =
+        vaultFiles?.meta(scope, key)?.let { "v${it.version}|${it.accessPolicy}|${it.encryption}|${it.expiresAt ?: "-"}" }
+
+    /** [ref] with its current fingerprint, for [ApprovalService.Description.stateRefs]. */
+    private fun ref(vararg parts: String): Pair<String, String> {
+        val ref = parts.joinToString("|")
+        return ref to (stateOf(ref) ?: ApprovalService.MISSING_STATE)
+    }
 
     private val lenient = Json { ignoreUnknownKeys = true }
 
@@ -211,7 +256,9 @@ class ChangeDescriber(
                             (holder?.let { " — STOPS Config API $it, which holds that port now; the port then serves ${id ?: "the new"}'s pins" }
                                 ?: " — that port serves this scope's pins"),
                         JsonObject(detail + mapOf("mode" to JsonPrimitive(mode), "port" to JsonPrimitive(port)) +
-                            (holder?.let { mapOf("replaces" to JsonPrimitive(it)) } ?: emptyMap()))
+                            (holder?.let { mapOf("replaces" to JsonPrimitive(it)) } ?: emptyMap())),
+                        // The card names what it stops (or that nothing is stopped): it must still be so.
+                        stateRefs = mapOf(ref("port", port.toString()))
                     )
                 }
             }
@@ -540,7 +587,9 @@ class ChangeDescriber(
         if (!kind.host) {
             return Description(
                 "", "Config API TLS certificate → $certificate; bootstrap pins become $pins — apps hold them as bootstrap pins",
-                JsonObject(detail + mapOf("certificate" to plan.publicJson())), prepared = plan.encode()
+                JsonObject(detail + mapOf("certificate" to plan.publicJson())), prepared = plan.encode(),
+                // A rotate promotes the backup that is stored now; a regenerate approved in between replaces it.
+                stateRefs = mapOf(ref("bootstrap"))
             )
         }
 
@@ -646,7 +695,10 @@ class ChangeDescriber(
                         put("accessPolicy", newPolicy); put("encryption", newEncryption)
                         newExpiry?.let { put("expiresAt", it) }
                         current?.let { put("replacesVersion", it.version); put("previousAccessPolicy", it.accessPolicy); put("previousEncryption", it.encryption) }
-                    }))
+                    })),
+                    // An absent ?policy / ?encryption keeps the file's own: the content
+                    // would land under a policy changed in between (token → public).
+                    stateRefs = mapOf(ref("vault", scope, key))
                 )
             }
             "vault_delete" -> {
@@ -696,12 +748,61 @@ class ChangeDescriber(
                 val device = segments.getOrNull(1) ?: "?"
                 val purpose = query["purpose"] ?: "e2e"
                 require(purpose == "e2e" || purpose == "user_auth") { "purpose must be \"e2e\" or \"user_auth\"" }
+                val keyRef = ref("device-key", scope, purpose, device)
                 Description(scope, "$scope: forget the ${if (purpose == "user_auth") "user-auth key" else "E2E key"} of device " +
-                    "${ApprovalService.plainText(device, 80)} — the next key registered for it counts as its first", detail)
+                    "${ApprovalService.plainText(device, 80)}" +
+                    (if (keyRef.second == ApprovalService.MISSING_STATE) " (none registered now)" else " (key ${keyRef.second.take(12)}…)") +
+                    " — the next key registered for it counts as its first",
+                    JsonObject(detail + mapOf("keyFingerprint" to JsonPrimitive(keyRef.second))),
+                    // The key the card names: a key registered in between is not the one approved for removal.
+                    stateRefs = mapOf(keyRef))
             }
         }
     }
 
     private fun sha256Hex(bytes: ByteArray): String =
         MessageDigest.getInstance("SHA-256").digest(bytes).joinToString("") { "%02x".format(it.toInt() and 0xFF) }
+
+    companion object {
+        /**
+         * [Staleness] of every gated operation ([PinAffectingRoutes.operations]).
+         * An operation whose routes differ says each way its routes use.
+         */
+        val STALENESS: Map<String, Set<Staleness>> = mapOf(
+            "pins_update" to setOf(Staleness.PIN_STATE),
+            "pins_restore" to setOf(Staleness.PIN_STATE),
+            "force_on" to setOf(Staleness.END_STATE),
+            "force_off" to setOf(Staleness.END_STATE),
+            "host_add" to setOf(Staleness.PIN_STATE),
+            // Certificate changes against the pins of every scope that pins the host;
+            // toggle-mtls and upload-client-cert state the end state.
+            "host_cert" to setOf(Staleness.PIN_STATE, Staleness.END_STATE),
+            "config_api_delete" to setOf(Staleness.END_STATE),
+            // Start: which API the port serves now (`port|n`); stop: the end state.
+            "config_api_lifecycle" to setOf(Staleness.STATE_REFS, Staleness.END_STATE),
+            "bootstrap_pins" to setOf(Staleness.STATE_REFS),
+            "signing_key" to setOf(Staleness.END_STATE),
+            "signing_keyset" to setOf(Staleness.END_STATE),
+            "server_settings" to setOf(Staleness.STATE_KEY),
+            "host_acl" to setOf(Staleness.STATE_KEY),
+            // Checked again by its handler when it runs (an id in use is refused then).
+            "client_cert_upload" to setOf(Staleness.END_STATE),
+            "client_cert_generate" to setOf(Staleness.REQUESTER_RUN),
+            "enrollment_policy_create" to setOf(Staleness.REQUESTER_RUN),
+            "enrollment_open" to setOf(Staleness.END_STATE),
+            "enrollment_token" to setOf(Staleness.REQUESTER_RUN),
+            "vault_upload" to setOf(Staleness.STATE_REFS),
+            "vault_delete" to setOf(Staleness.END_STATE),
+            "vault_policy" to setOf(Staleness.END_STATE),
+            "vault_token_issue" to setOf(Staleness.REQUESTER_RUN),
+            "vault_token_revoke" to setOf(Staleness.END_STATE),
+            "device_key_reset" to setOf(Staleness.STATE_REFS),
+            "vault_enabled" to setOf(Staleness.END_STATE),
+            "attestation_policy" to setOf(Staleness.STATE_KEY),
+            "attestation_device" to setOf(Staleness.STATE_KEY),
+            "attestation_token_secrets" to setOf(Staleness.REQUESTER_RUN),
+            "attestation_token_secret_rotate" to setOf(Staleness.END_STATE),
+            "attestation_token_secret_delete" to setOf(Staleness.END_STATE)
+        )
+    }
 }

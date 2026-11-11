@@ -258,6 +258,8 @@ private fun startServer() {
         managementPort = com.example.pinvault.server.service.ServerEnv.get("PORT")?.toIntOrNull() ?: 8080,
         describe = { input -> (changeDescriber ?: error("The server is still starting")).describe(input) },
         stateHash = ::stateHash,
+        // What a card names by reference (bootstrap certificate, port, vault file, device key), fingerprinted now.
+        stateOf = { ref -> (changeDescriber ?: error("The server is still starting")).stateOf(ref) },
         exempt = com.example.pinvault.server.service.ApprovalService.exemptFromEnv().also { exempt ->
             if (exempt.isNotEmpty() && approvalsRequired > 1) {
                 System.err.println("WARNING: APPROVAL_EXEMPT_OPERATIONS — these run WITHOUT a second admin: ${exempt.joinToString()}")
@@ -758,6 +760,10 @@ private fun startServer() {
         settingsSaved = { com.example.pinvault.server.service.ServerSettingsStore.forDbPath(dbPath).values() },
         attestation = attestationService, attestedDevices = attestedDeviceStore,
         hostAcl = deviceHostAclStore,
+        // The key a device_key_reset card names (and must still be the one removed).
+        deviceKeyOf = { scope, deviceId, userAuth ->
+            (if (userAuth) devicePublicKeyStore.userAuthKeys() else devicePublicKeyStore).get(deviceId, scope)?.publicKeyPem
+        },
         // Which running API a start on a port would stop.
         portHolder = { port -> configApiManager.getAll().firstOrNull { it.port == port }?.id },
         // The upload handler's own refusal, made when the upload is requested.

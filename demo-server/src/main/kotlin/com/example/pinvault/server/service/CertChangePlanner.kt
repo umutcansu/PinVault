@@ -41,6 +41,15 @@ class CertChangePlanner(
         BOOTSTRAP_UPLOAD(false, false), BOOTSTRAP_FETCH(false, false)
     }
 
+    /**
+     * A fingerprint of what a bootstrap change starts from: the apps' current
+     * bootstrap pins and the stored backup key's pin. A bootstrap card is
+     * stale when it moved (a rotate planned against one backup must not run
+     * after a regenerate replaced it).
+     */
+    fun bootstrapState(): String =
+        bootstrapPins().sorted().joinToString(",") + "|" + (certService.backupPin(serverCertId) ?: "-")
+
     /** The planned change behind an admin route (a canonical path), or null when the route plans no certificate. */
     fun kindOf(canonicalPath: String): Kind? = ROUTES.firstOrNull { it.first.matches(canonicalPath) }?.second
 

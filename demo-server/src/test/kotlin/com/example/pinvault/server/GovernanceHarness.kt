@@ -102,10 +102,11 @@ class GovernanceHarness(
     )
 
     val describer = ChangeDescriber(pins, planner, liveGate, ::stateOf, vaultFiles, vaultTokens, audit = audit, snapshots = snapshots,
-        settingsSaved = { settings.values() }, attestation = attestation, attestedDevices = attestedDevices, hostAcl = hostAcl)
+        settingsSaved = { settings.values() }, attestation = attestation, attestedDevices = attestedDevices, hostAcl = hostAcl,
+        deviceKeyOf = { s, device, userAuth -> (if (userAuth) deviceKeys.userAuthKeys() else deviceKeys).get(device, s)?.publicKeyPem })
     val approvals = ApprovalService(
         store = changeRequests, audit = audit, required = required, managementPort = port,
-        describe = describer::describe, stateHash = ::stateOf, exempt = exempt
+        describe = describer::describe, stateHash = ::stateOf, exempt = exempt, stateOf = describer::stateOf
     )
 
     private val signing = ConfigSigningService(File(dir, "k.pem"))

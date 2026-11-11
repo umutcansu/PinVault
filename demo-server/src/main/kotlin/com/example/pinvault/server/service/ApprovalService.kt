@@ -218,7 +218,13 @@ class ApprovalService(
      * Operations an operator took OUT of the two-person rule on purpose
      * (`APPROVAL_EXEMPT_OPERATIONS`): they run at once, for any admin.
      */
-    val exempt: Set<String> = emptySet()
+    val exempt: Set<String> = emptySet(),
+    /**
+     * The current fingerprint of what a card names by reference
+     * ([Description.stateRefs], [ChangeDescriber.stateOf]); null = it does
+     * not exist (now).
+     */
+    private val stateOf: (ref: String) -> String? = { null }
 ) {
     val enabled: Boolean get() = required > 1
 
@@ -257,6 +263,14 @@ class ApprovalService(
          * a state that is no longer there.
          */
         val stateKey: String? = null,
+        /**
+         * Fingerprints of what the change acts on, by reference (see
+         * [ChangeDescriber.stateOf]): the bootstrap certificate, which API a
+         * port serves, a vault file's metadata, a device's key. Checked again,
+         * cheaply, when the request is approved — without describing (and so
+         * planning) it a second time.
+         */
+        val stateRefs: Map<String, String> = emptyMap(),
         /**
          * What the change will install, fixed now (a [CertPlan]): stored with
          * the request and handed to the handler when the approved request is
@@ -318,7 +332,10 @@ class ApprovalService(
             summary = description.summary,
             detail = JsonObject(
                 description.detail + (description.baseHash?.let { mapOf("baseHash" to kotlinx.serialization.json.JsonPrimitive(it)) } ?: emptyMap()) +
-                    (description.stateKey?.let { mapOf("stateKey" to kotlinx.serialization.json.JsonPrimitive(it)) } ?: emptyMap())
+                    (description.stateKey?.let { mapOf("stateKey" to kotlinx.serialization.json.JsonPrimitive(it)) } ?: emptyMap()) +
+                    (description.stateRefs.takeIf { it.isNotEmpty() }?.let { refs ->
+                        mapOf(STATE_REFS to JsonObject(refs.mapValues { kotlinx.serialization.json.JsonPrimitive(it.value) }))
+                    } ?: emptyMap())
             ).toString(),
             prepared = description.prepared
         )
@@ -435,6 +452,19 @@ class ApprovalService(
                 cr.configApiId, "${cr.method} ${cr.path}", actor = approver)
             throw Refused(HttpStatusCode.Conflict, "The pins of ${cr.configApiId} changed after #$id was requested. Ask for a fresh request.")
         }
+        // What the card names by reference (the bootstrap certificate, a port,
+        // a vault file, a device key): fingerprinted again now.
+        val movedRef = runCatching {
+            ((kotlinx.serialization.json.Json.parseToJsonElement(cr.detail) as JsonObject)[STATE_REFS] as? JsonObject)
+                ?.entries?.firstOrNull { (ref, then) -> (then as kotlinx.serialization.json.JsonPrimitive).content != (stateOf(ref) ?: MISSING_STATE) }?.key
+        }.getOrElse { "(unreadable)" }
+        if (movedRef != null) {
+            store.decideIfPending(id, "stale", approver, Instant.now().toString(), "what the change acts on changed since the request was made ($movedRef)", null, null)
+            audit.record("change_stale", "#$id not applied: ${describeRef(movedRef)} changed since it was requested — ${cr.summary}",
+                cr.configApiId, "${cr.method} ${cr.path}", actor = approver)
+            throw Refused(HttpStatusCode.Conflict, "${describeRef(movedRef).replaceFirstChar { it.uppercase() }} changed after #$id was requested: " +
+                "its card no longer says what it would do. Ask for a fresh request.")
+        }
         // Cards that are a difference from other state than pins (settings, an
         // attestation policy, a device's overrides): described again now, and
         // refused when the state they were computed from moved.
@@ -545,6 +575,24 @@ class ApprovalService(
     companion object {
         /** Card detail: `{scope: stateHash}` of every further Config API a change writes to; each must still match at approval. */
         const val SCOPE_HASHES = "scopeHashes"
+
+        /** Card detail: `{ref: fingerprint}` (see [Description.stateRefs]); each must still match at approval. */
+        const val STATE_REFS = "stateRefs"
+
+        /** The fingerprint of a reference whose object does not exist. */
+        const val MISSING_STATE = "-"
+
+        /** A reference ([ChangeDescriber.stateOf]) in words, for the refusal and the audit log. */
+        fun describeRef(ref: String): String {
+            val parts = ref.split('|')
+            return when (parts.first()) {
+                "bootstrap" -> "the Config API TLS certificate (bootstrap pins and backup key)"
+                "port" -> "what listens on port ${parts.getOrNull(1)}"
+                "vault" -> "vault file ${parts.getOrNull(2)} of ${parts.getOrNull(1)}"
+                "device-key" -> "the ${if (parts.getOrNull(2) == "user_auth") "user-auth" else "E2E"} key of device ${parts.getOrNull(3)} in ${parts.getOrNull(1)}"
+                else -> "what the change acts on"
+            }.let { plainText(it, 160) }
+        }
 
         private val client = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(5)).build()
 

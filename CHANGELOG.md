@@ -1,5 +1,25 @@
 # Changelog
 
+## Unreleased
+
+### Server
+
+- **Four more approval cards go stale when what they act on moved.** With
+  `PIN_CHANGE_APPROVALS` on, two requests approved out of order could do what
+  neither card said: a vault upload without `?policy` took the file's policy
+  at the time it ran, so content shown as "access token" landed in a file made
+  public in between; a bootstrap rotate installed a backup key a regenerate
+  had replaced (apps with the new pins then could not reach the Config API); a
+  Config API start stopped an API that took the port after the request; a
+  device key reset removed a key registered after it. These cards now record
+  `stateRefs` (the bootstrap certificate, the port, the vault file's
+  version/policy/encryption/expiry, the device key), checked again at approval
+  without planning anything twice; a moved one makes the request stale (409,
+  `change_stale` in the audit log). The device key reset card now names the
+  key it removes. Every gated operation declares how its card is kept from
+  going stale (`ChangeDescriber.STALENESS`); a new operation without an entry
+  fails `ApprovalStateRefsTest`.
+
 ## 2.9.1 — 2026-11-11 — a failed vault write keeps the stored copy, host identities load at start, lost server keys stop the start
 
 ### Server
