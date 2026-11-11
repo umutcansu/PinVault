@@ -4,6 +4,66 @@ The upgrade notes for every release since 2.0, troubleshooting, and a quick
 reference for the multi-Config-API DSL. The full list of changes is in
 [CHANGELOG.md](CHANGELOG.md).
 
+## Upgrading from 2.9.x to 2.10.0
+
+**React Native and Flutter, release builds with a native security file**
+
+What a changed JS/Dart bundle could still loosen is now the native file's
+(`pinvault_security.json`). Every key the bridges read is classified
+(`ConfigFieldPolicy`: native only, tighten only, checked, free); a key added
+later cannot become JS's by default. Move these into the native file:
+
+- **`healthEndpoint`** of a block: a release build takes it from the file
+  (new block field `healthEndpoint`) or uses the default. JS pointing it at a
+  path that never answers "ok" rolled back every new config.
+- **Vault files**: a release build takes vault files only from the file's
+  `vaultFiles` section, also when the section is missing (declare at least
+  `{"key": "…"}` per file). New per-file `wipeWhenStale: true`.
+- **`expiredConfigGrace`**: at most the file's `require.expiredConfigGraceSeconds`,
+  0 when it names none (it was 7 days from JS).
+- **`maxClientCertLifetimeDays`**: JS may lower it; raising it past 825 days
+  needs the file's block field `maxClientCertLifetimeDays`.
+- **`managedTrustRoots`**: it widens trust (hosts without a pin entry go through
+  the signed config's roots), so a release build takes it from
+  `require.managedTrustRoots` only — also without a native file.
+- **`requireUnlockedDeviceAllowFallback`** (`android.` / `ios.`): when the file
+  requires an unlocked device, the fallback to a key without that flag needs
+  `require.requireUnlockedDeviceAllowFallback: true` (any build).
+- **React Native networking** (RN only): `android.pinGlobalNetworking: false` and
+  `requirePinnedReactNativeNetworking: false` are refused in a release build
+  unless `require.allowUnpinnedReactNativeNetworking: true`.
+
+**Android library**
+
+- A redirect to another origin (scheme, host or port) no longer carries the
+  app's own headers (a `Cookie`, an API key, what its interceptor adds) from
+  clients made by `getClient()` / `applyTo()`, and a 307/308 body is not sent
+  there again (the call fails with an `IOException`). OkHttp used to drop
+  `Authorization` only. Same-origin redirects are unchanged; the iOS library
+  already behaved this way. An app that relied on a credential following a
+  cross-origin redirect must send it to the target itself.
+
+**Server**
+
+- **Signing-key sets must name their Config APIs.** `PUT /api/v1/signing-keyset`
+  refuses a set without `configApiIds` (409): make it with
+  `signing-keys.sh keyset -a <every Config API id>`. `ALLOW_UNSCOPED_KEY_SETS=true`
+  accepts unscoped sets as before (with the warning).
+- **Vault content at rest is bound to its file.** New blobs are `VLT-ENC2`
+  (the Config API and key in the AES-GCM associated data); `VLT-ENC1` blobs
+  still open and the startup pass rewrites them. A downgrade to 2.9.x cannot
+  read `VLT-ENC2` blobs: upload those files again after a downgrade.
+- **Approval cards** of a vault upload, a bootstrap certificate change, a
+  Config API start and a device key reset go stale (409) when what they act on
+  changed before approval.
+- **Attestation after re-enrollment**: a device that attests over mTLS with
+  the key of its current client certificate has its old attestation key
+  released and the new one registered (it used to stay `key_mismatch` until
+  an admin forgot the device). Over plain TLS nothing changes.
+- **The ACL manager** lists the device ids phones send (`GET
+  /api/v1/config-apis/{id}/device-ids`) and takes one typed in; ACLs written
+  from the old list (connection-report names) never applied — check them.
+
 ## Upgrading from 2.8.x to 2.9.0
 
 **React Native and Flutter, release builds**

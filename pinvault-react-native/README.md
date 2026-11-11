@@ -234,12 +234,14 @@ signature. Ship them natively as well, in `pinvault_security.json`:
     "url": "https://config.example.com:8081/", "attestation": true,
     "tokenHosts": ["api.example.com"], "proofOfPossession": true, "clientCertHosts": ["api.example.com:443"],
     "enrollmentUrl": "https://enroll.example.com/", "renewalUrl": "https://renew.example.com/",
+    "healthEndpoint": "health", "maxClientCertLifetimeDays": 90,
     "allowUnsigned": false, "allowUnpinnedConfigApi": false, "allowServerGeneratedKey": false
   }],
   "staticPins": { "pins": [ … ], "version": 1 },
   "ios": { "resolve": { "api.example.com": "10.0.0.12" } },
   "require": {
-    "requireUnlockedDevice": true, "requireHardwareBackedKeys": true,
+    "requireUnlockedDevice": true, "requireUnlockedDeviceAllowFallback": false,
+    "requireHardwareBackedKeys": true, "allowUnpinnedReactNativeNetworking": false,
     "managedTrustRoots": true, "wipeVaultFilesOnRevocation": true,
     "requireCaTrust": ["api.example.com"],
     "expectedSignerSha256": ["…"],
@@ -249,7 +251,7 @@ signature. Ship them natively as well, in `pinvault_security.json`:
   },
   "vaultFiles": [
     { "key": "statement", "signaturePublicKey": "…", "encryption": "USER_AUTH", "userAuth": "REQUIRED",
-      "maxOfflineAgeSeconds": 86400 }
+      "maxOfflineAgeSeconds": 86400, "wipeWhenStale": true }
   ]
 }
 ```
@@ -260,6 +262,16 @@ parsed as strictly; a broken file rejects `start` with `E_INVALID_CONFIG`
 
 - every Config API of the JS config must be declared in it (a bundle cannot add
   a block with keys of its own), and JS `staticPins` must be declared too;
+- 2.10.0, release builds: a block's `healthEndpoint` comes from the file (or the
+  default); vault files only from its `vaultFiles` section, also when the
+  section is missing; `expiredConfigGrace` is at most the file's (0 when it names
+  none); `maxClientCertLifetimeDays` from JS may only be lower than the file's
+  (825 when it names none); `managedTrustRoots` (it widens trust) comes from
+  `require` only; RN's own networking stays pinned unless
+  `require.allowUnpinnedReactNativeNetworking`; and in any build the
+  unlocked-device fallback needs `require.requireUnlockedDeviceAllowFallback`
+  when the file requires an unlocked device. Every key the bridge reads is
+  classified in `ConfigFieldPolicy` (see MIGRATION.md);
 - a field the file declares is the value: JS may leave it out (the native value
   applies) or repeat it (lists in any order); a different value rejects `start`
   with `E_INVALID_CONFIG` naming the field;

@@ -238,7 +238,7 @@ The server refuses a set that its active signers could not satisfy. The dashboar
 
 - Recovery keys are compiled into the app, so replacing one takes an app update.
 - `requiredRecoverySignatures(2)`, with the two keys held apart, means a single compromised recovery key is not enough to publish a set.
-- **One recovery key, one deployment.** A key set is valid for every app that carries its recovery key. If production and staging share one, staging's set — a public document — can be relayed to production's devices by whoever answers for production's Config API: they would trust staging's signing keys from then on and drop their config (an outage; with staging's signing key, pin control). Use separate recovery keys, and bind each set to its Config APIs: `signing-keys.sh keyset … -a default-tls,sample-mtls` writes `configApiIds`, and an app whose block sets `serverScope` refuses a set that lists Config APIs without its own. The binding only tells deployments apart when their Config API ids differ, so the separate key is the rule and the list is the second line.
+- **One recovery key, one deployment.** A key set is valid for every app that carries its recovery key. If production and staging share one, staging's set — a public document — can be relayed to production's devices by whoever answers for production's Config API: they would trust staging's signing keys from then on and drop their config (an outage; with staging's signing key, pin control). Use separate recovery keys, and bind each set to its Config APIs: `signing-keys.sh keyset … -a default-tls,sample-mtls` writes `configApiIds`, and an app whose block sets `serverScope` refuses a set that lists Config APIs without its own. The binding only tells deployments apart when their Config API ids differ, so the separate key is the rule and the list is the second line. Since 2.10.0 the server refuses a set without `configApiIds` (409); `ALLOW_UNSCOPED_KEY_SETS=true` accepts one as before, with a warning.
 
 ### Wrong pins were published
 
@@ -291,6 +291,15 @@ Put the new password in `KEYSTORE_PASSWORD` and the old one in `KEYSTORE_PASSWOR
 ### Changing the vault password
 
 Same pattern: new password in `VAULT_AT_REST_PASSWORD`, old one in `VAULT_AT_REST_PASSWORD_PREVIOUS`, restart. At startup every at_rest and per-device file that opens only with the previous password is re-encrypted under the new one; files written while the variable was unset (the demo password) move over without `_PREVIOUS`. A file that no password opens is named in the log, and downloads of it fail until the old password is supplied or the file is uploaded again: the server never hands a device the encrypted bytes as the file. The `PinVault-Token` secrets move over the same way, except that one no password opens refuses the start (tokens would be signed with the wrong bytes): supply the old password, or delete that secret. Devices are not affected.
+
+### Rolling the server back to an older release
+
+Back up `data/` (database and `certs/`) before an upgrade; a rollback restores that copy, not the upgraded one. Two upgrades change what is stored in a way an older server cannot read:
+
+- **2.10.0 → 2.9.x:** vault content at rest is `VLT-ENC2` (bound to its Config API and key), which 2.9.x does not open: its downloads of those files fail (`VaultKeyMismatchException` in the log) until they are uploaded again. Restore the pre-upgrade `data/`, or upload the encrypted files again after the rollback. Signing-key sets uploaded under 2.10.0 name their Config APIs; 2.9.x relays them as they are.
+- **Database migrations** run forward only. An older server starts on a database a newer release migrated (Flyway ignores migrations it does not know, `*:future`), and tables it does not know stay unused — 2.9.0 has no `key_material` (V31), so it would not notice missing key files either. Restoring the pre-upgrade backup is the clean way back.
+
+Devices do not need anything for a server rollback, as long as the signing keys and TLS keys stay the same (see "The signing key is lost").
 
 ### The config server is down
 

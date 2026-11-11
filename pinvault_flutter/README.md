@@ -76,13 +76,15 @@ Dart OTA update or an edited bundle must not be able to change them. Ship
     "recoveryPublicKeys": ["…"], "requiredRecoverySignatures": 1,
     "serverScope": "default-tls", "clientCaPins": ["…"],
     "attestation": true, "proofOfPossession": true,
-    "tokenHosts": ["api.example.com"], "clientCertHosts": ["api.example.com:443"]
+    "tokenHosts": ["api.example.com"], "clientCertHosts": ["api.example.com:443"],
+    "healthEndpoint": "health", "maxClientCertLifetimeDays": 90
   }],
   "require": {
-    "requireUnlockedDevice": true, "requireHardwareBackedKeys": true,
+    "requireUnlockedDevice": true, "requireUnlockedDeviceAllowFallback": false,
+    "requireHardwareBackedKeys": true, "managedTrustRoots": false,
     "requireCaTrust": ["api.example.com"], "expiredConfigGraceSeconds": 0
   },
-  "vaultFiles": [{ "key": "statement", "signaturePublicKey": "…", "encryption": "USER_AUTH", "userAuth": "REQUIRED" }]
+  "vaultFiles": [{ "key": "statement", "signaturePublicKey": "…", "encryption": "USER_AUTH", "userAuth": "REQUIRED", "wipeWhenStale": true }]
 }
 ```
 
@@ -101,6 +103,16 @@ sends `PinVault-Token` to the block's own Config API only, so a value from Dart
 would add hosts. On iOS the same holds for `ios.resolve` (where a pinned host's
 connection goes): fixed where the file gives it (`"ios": {"resolve": {…}}` at
 the file's top level), taken only from the file in a release build.
+
+2.10.0, release builds with the file: a block's `healthEndpoint` and vault files
+(also when the file has no `vaultFiles` section) come from the file;
+`expiredConfigGrace` is at most the file's (0 when it names none);
+`maxClientCertLifetimeDays` from Dart may only be lower than the file's (825 when
+it names none); `managedTrustRoots` comes from `require` only (it widens trust);
+in any build the unlocked-device fallback needs
+`require.requireUnlockedDeviceAllowFallback` when the file requires an unlocked
+device. Every key the bridge reads is classified in `ConfigFieldPolicy` (see
+MIGRATION.md).
 
 ## Quick start
 

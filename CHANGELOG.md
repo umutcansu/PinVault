@@ -19,6 +19,59 @@
   key it removes. Every gated operation declares how its card is kept from
   going stale (`ChangeDescriber.STALENESS`); a new operation without an entry
   fails `ApprovalStateRefsTest`.
+- **Breaking — signing-key sets must name their Config APIs.** A set without
+  `configApiIds` is refused (409): any deployment whose app carries the same
+  recovery key could relay it. `ALLOW_UNSCOPED_KEY_SETS=true` accepts it as
+  before.
+- **Vault content at rest is bound to its file** (`VLT-ENC2`: Config API and
+  key in the AES-GCM associated data). A blob copied into another row no
+  longer opens there; `VLT-ENC1` blobs still open and are rewritten at start.
+- **A device that enrolled again can attest again.** Over mTLS, an attestation
+  signed by the key of the connection's client certificate releases the old
+  attestation key and registers the new one with the full first-key checks
+  (`attestation_key_rebound` in the audit log); it used to stay `key_mismatch`
+  until an admin forgot the device (2026-10-29 #7).
+- **An enrollment token is given back** when the request that spent it issued
+  nothing: a "device already enrolled, retry with the same token" refusal or a
+  failure while issuing (E6).
+- **The ACL manager lists the device ids phones send** (`GET
+  /api/v1/config-apis/{id}/device-ids`: ACLs, attestations, vault downloads,
+  device keys) and takes one typed in. It listed connection reports'
+  `manufacturer_model` names, which no device sends, so a per-device ACL
+  written from there never applied.
+
+### Android library
+
+- **A redirect to another origin keeps the app's headers back.** Clients from
+  `getClient()` / `applyTo()` (and React Native's global networking and
+  Flutter's WebSocket, built on them) sent every header but `Authorization` —
+  a session cookie, an API key, what an app interceptor adds — and a 307/308
+  body to whatever host the `Location` named. A cross-origin hop now carries
+  only neutral headers and never a body (`CrossOriginRedirectGuard`), as the
+  iOS transport and the bridges' `PinVault.fetch` already did.
+
+### React Native and Flutter bridges
+
+- **Breaking (release builds with a native security file) — what a changed
+  bundle could still loosen comes from the file**: a block's `healthEndpoint`
+  (an endpoint that never answers "ok" rolled every new config back), vault
+  files (also without a `vaultFiles` section; new `wipeWhenStale`), the
+  expired-config grace (the file's, 0 when it names none),
+  `maxClientCertLifetimeDays` above 825, `managedTrustRoots` (it widens trust;
+  refused from JS without a file too), the unlocked-device fallback when the
+  file requires an unlocked device (`require.requireUnlockedDeviceAllowFallback`),
+  and on React Native unpinned global networking
+  (`require.allowUnpinnedReactNativeNetworking`). Every key the parsers read
+  is classified (`ConfigFieldPolicy`); a key without a decision fails the
+  bridges' tests. See MIGRATION.md.
+
+### Known and accepted
+
+- A `user_auth` vault file's first copy is stored before its signature can be
+  checked (at unlock); a party holding a pinned server key can set a high
+  version that refuses genuine lower ones until the next unlock deletes the
+  bad copy. Moving the first copy to the pending slot changes the screen-lock
+  flow on both platforms, which has not run on a physical iPhone; left as is.
 
 ## 2.9.1 — 2026-11-11 — a failed vault write keeps the stored copy, host identities load at start, lost server keys stop the start
 

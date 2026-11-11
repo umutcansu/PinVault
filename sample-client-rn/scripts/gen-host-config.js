@@ -226,6 +226,13 @@ function securityFile() {
       ...(host.targetRequireCaTrust ? { requireCaTrust: [host.targetHost] } : {}),
       ...(host.expectedSignerSha256.length > 0 ? { expectedSignerSha256: host.expectedSignerSha256 } : {}),
     },
+    // A release build with a native file takes vault files only from here (2.10.0):
+    // the keys src/pinvault.ts defines, with what a changed bundle must not loosen.
+    vaultFiles: [
+      { key: 'sample-flags' },
+      { key: 'sample-e2e', encryption: 'END_TO_END', maxOfflineAgeSeconds: 7 * 24 * 3600 },
+      { key: 'sample-secret', encryption: 'USER_AUTH', userAuth: 'REQUIRED', maxOfflineAgeSeconds: 7 * 24 * 3600 },
+    ],
   };
 }
 if (nativeOut) {

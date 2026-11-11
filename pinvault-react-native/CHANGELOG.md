@@ -1,5 +1,19 @@
 # Changelog
 
+## Unreleased (2.10.0)
+
+- **Breaking (release builds with a native security file):** a block's
+  `healthEndpoint`, vault files (also without a `vaultFiles` section; new
+  `wipeWhenStale`), the expired-config grace (0 unless the file gives one),
+  `maxClientCertLifetimeDays` above 825, `managedTrustRoots` and the
+  unlocked-device fallback come from the native file. Every key the bridge
+  reads is classified (`ConfigFieldPolicy`). See MIGRATION.md "2.9.x to 2.10.0".
+- React Native: `android.pinGlobalNetworking: false` and
+  `requirePinnedReactNativeNetworking: false` are refused in a release build
+  unless the file says `require.allowUnpinnedReactNativeNetworking: true`.
+- Android: a redirect to another origin no longer carries the app's headers or
+  a 307 body (global networking included).
+
 ## 2.9.1 — 2026-11-11
 
 The native libraries at 2.9.1:
