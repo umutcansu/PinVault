@@ -65,7 +65,7 @@ function updateEncDesc(ev) {
 const _actionHandlers = {
   clearForceAll, copyText, createConfigApi, createHostFetch, createHostGenerate,
   createHostManual, createHostUpload,
-  deleteConfigApi, deleteHost, deleteVaultFile, editDeviceAcl, fetchBootstrapFromUrl, forgetClientIdentity,
+  deleteConfigApi, deleteHost, deleteVaultFile, editDeviceAcl, editDeviceAclManual, fetchBootstrapFromUrl, forgetClientIdentity,
   forceUpdateAll, generateClientCert,
   generateEnrollmentToken, generateVaultToken, loadClientDevices, loadHostConnectionHistory,
   pagGo, pagSize, regenerateBootstrapCert, regenerateSigningKey, renderApiVaultTab,

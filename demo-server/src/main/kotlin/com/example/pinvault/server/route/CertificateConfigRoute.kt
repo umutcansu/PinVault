@@ -439,9 +439,17 @@ fun Route.certificateConfigRoutes(
             if (token != null && enrollmentTokenStore?.consume(token) == false) {
                 return@post call.respondText("""{"error":"Gecersiz token"}""", ContentType.Application.Json, HttpStatusCode.Unauthorized)
             }
+            // Spent from here on: a refusal that tells the device to retry with the same token, or a
+            // failure before anything was issued, gives it back (review E6: a later failure burnt it).
+            fun giveTokenBack() { if (token != null) enrollmentTokenStore?.restore(token) }
 
             if (csr != null && clientIdentityStore != null) {
-                val issued = certService.issueClientCertificate(clientId, csr, ttlFor(clientId))
+                val issued = try {
+                    certService.issueClientCertificate(clientId, csr, ttlFor(clientId))
+                } catch (e: Exception) {
+                    giveTokenBack()
+                    throw e
+                }
                 val now = java.time.Instant.now().toString()
                 // A token minted again for the same id over a new key: register()
                 // retires the replaced key, the audit entry names it.
@@ -461,6 +469,7 @@ fun Route.certificateConfigRoutes(
                     // Another enrollment won the device id meanwhile (decided in the write itself).
                     deviceUid?.let { clientCertStore?.activeHolderOf(it, exceptId = clientId) }?.let { holder ->
                         enrollRefused(remote, clientId, "Enrollment of $clientId refused: device $deviceUid is enrolled as $holder", tokenValid)
+                        giveTokenBack()
                         return@post call.respondText(
                             """{"error":"device_already_enrolled","message":"This device is enrolled under another client id. Ask an administrator to revoke it, then retry with the same token."}""",
                             ContentType.Application.Json, HttpStatusCode.Conflict
@@ -509,12 +518,18 @@ fun Route.certificateConfigRoutes(
 
             checkNotNull(wrapping) // the CSR flow returned above
             // Issued by the client CA: nothing is added to the truststore.
-            val result = certService.generateClientCertificate(clientId, wrapping.password)
+            val result = try {
+                certService.generateClientCertificate(clientId, wrapping.password)
+            } catch (e: Exception) {
+                giveTokenBack()
+                throw e
+            }
             // Never over a revoked row: a revocation that landed after the checks above stays.
             if (clientCertStore?.addUnlessRevoked(clientId, result.commonName, result.fingerprint, java.time.Instant.now().toString(),
                     deviceAlias = deviceAlias, deviceUid = deviceUid, deviceUidProven = deviceUidProven) == false) {
                 deviceUid?.let { clientCertStore.activeHolderOf(it, exceptId = clientId) }?.let { holder ->
                     enrollRefused(remote, clientId, "Enrollment of $clientId refused: device $deviceUid is enrolled as $holder", tokenValid)
+                    giveTokenBack()
                     return@post call.respondText(
                         """{"error":"device_already_enrolled","message":"This device is enrolled under another client id. Ask an administrator to revoke it, then retry with the same token."}""",
                         ContentType.Application.Json, HttpStatusCode.Conflict

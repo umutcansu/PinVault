@@ -124,6 +124,30 @@ class AdminVaultRoutesTest {
             aclStore.listForDevice(testApi, "dev-a").toSet())
     }
 
+    // E09 finding: the ACL manager listed connection reports' "manufacturer_model"
+    // names, which no device sends as X-Device-Id; an ACL written for one never applied.
+    @Test
+    fun `device-ids lists the ids devices send, with where each was seen`() = testApplication {
+        configureApp()
+        aclStore.grant(testApi, "android-acl", "a.com", "2026-11-12T00:00:00Z")
+        com.example.pinvault.server.store.DevicePublicKeyStore(db)
+            .register("android-key", testApi, "-----BEGIN PUBLIC KEY-----\nAAAA\n-----END PUBLIC KEY-----", timestamp = "2026-11-12T00:00:00Z")
+        com.example.pinvault.server.store.DevicePublicKeyStore(db)
+            .register("android-key", "other-api", "-----BEGIN PUBLIC KEY-----\nAAAA\n-----END PUBLIC KEY-----", timestamp = "2026-11-12T00:00:00Z")
+        // A connection report's "manufacturer_model" row is not a device id.
+        db.connection().use { c ->
+            c.createStatement().executeUpdate("INSERT INTO client_devices (hostname, device_id, device_manufacturer, device_model, pin_version, last_status, last_seen) " +
+                "VALUES ('a.com', 'google_pixel', 'Google', 'Pixel', 1, 'success', '2026-11-12T00:00:00Z')")
+        }
+
+        val res = client.get("/api/v1/config-apis/$testApi/device-ids")
+        assertEquals(HttpStatusCode.OK, res.status)
+        val ids = Json.parseToJsonElement(res.bodyAsText()).jsonArray.associate {
+            it.jsonObject["deviceId"]!!.jsonPrimitive.content to it.jsonObject["sources"]!!.jsonArray.map { s -> s.jsonPrimitive.content }
+        }
+        assertEquals(mapOf("android-acl" to listOf("acl"), "android-key" to listOf("key")), ids)
+    }
+
     @Test
     fun `GET device host-acl returns empty list for unknown device`() = testApplication {
         configureApp()

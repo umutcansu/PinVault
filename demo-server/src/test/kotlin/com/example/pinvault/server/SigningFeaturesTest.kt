@@ -261,8 +261,15 @@ class SigningFeaturesTest {
         assertTrue(partial.message!!.contains("also serves sample-mtls"), partial.message)
         assertFailsWith<SigningKeySetService.Rejected> { service.upload(scoped(1, "default-tls", "sample-mtls", "bad id"), "alice") }
 
+        // 2.10.0: a set without configApiIds is refused, unless the operator accepts it as before.
+        val refusedUnscoped = assertFailsWith<SigningKeySetService.Rejected> {
+            service.upload(keySet(1, signing.signers.map { it.publicKeyBase64 }, recovery), "alice")
+        }
+        assertTrue(refusedUnscoped.message!!.contains("ALLOW_UNSCOPED_KEY_SETS"), refusedUnscoped.message)
+        service.allowUnscoped = { true }
         val unscoped = service.upload(keySet(1, signing.signers.map { it.publicKeyBase64 }, recovery), "alice")
         assertTrue(unscoped.warnings.any { it.contains("names no Config API") }, unscoped.warnings.toString())
+        service.allowUnscoped = { false }
         val bound = service.upload(scoped(2, "sample-mtls", "default-tls"), "alice")
         assertTrue(bound.warnings.none { it.contains("names no Config API") }, bound.warnings.toString())
         assertEquals(2, service.currentVersion())

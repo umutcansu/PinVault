@@ -1279,6 +1279,19 @@ class EnrollmentTokenStore(private val db: DatabaseManager) {
         }
     }
 
+    /**
+     * Gives back a token [consume] spent for a request that then issued
+     * nothing: a refusal that tells the device to retry with the same token
+     * (another id holds the device), or a failure while issuing. Only the
+     * request that won [consume] calls it, so no second certificate comes of it.
+     */
+    fun restore(token: String): Boolean = db.connection().use { conn ->
+        conn.prepareStatement("UPDATE enrollment_tokens SET used = 0 WHERE token = ? AND used = 1").use { stmt ->
+            stmt.setString(1, hash(token))
+            stmt.executeUpdate() == 1
+        }
+    }
+
     /** Marks [token] used; see [consume], which also says whether this call was the one that spent it. */
     fun markUsed(token: String) {
         consume(token)

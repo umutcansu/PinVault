@@ -58,7 +58,7 @@ class VaultFileStore(
             // at_rest, end_to_end and user_auth: store the content AES-256-GCM
             // encrypted; reads decrypt it transparently (see toEntry). The wire format
             // is unchanged: plain for at_rest, per-device envelope for the other two.
-            val storedContent = storedForm(finalEncryption, content)
+            val storedContent = storedForm(configApiId, key, finalEncryption, content)
 
             conn.prepareStatement("""
                 INSERT OR REPLACE INTO vault_files
@@ -114,7 +114,7 @@ class VaultFileStore(
      */
     fun updatePolicy(configApiId: String, key: String, accessPolicy: String, encryption: String): Boolean {
         val current = get(configApiId, key) ?: return false   // content already decrypted
-        val storedContent = storedForm(encryption, current.content)
+        val storedContent = storedForm(configApiId, key, encryption, current.content)
         db.connection().use { conn ->
             conn.prepareStatement("""
                 UPDATE vault_files
@@ -159,13 +159,13 @@ class VaultFileStore(
             val plaintext = if (!VaultAtRestCipher.isEncrypted(stored)) {
                 encrypted += name
                 stored
-            } else when (val opened = cipher.open(stored)) {
+            } else when (val opened = cipher.open(stored, placeOf(scope, key))) {
                 VaultAtRestCipher.Opened.Current -> continue
                 is VaultAtRestCipher.Opened.Previous -> { rekeyed += name; opened.plaintext }
                 VaultAtRestCipher.Opened.Unreadable -> { unreadable += name; continue }
             }
             conn.prepareStatement("UPDATE vault_files SET content = ? WHERE config_api_id = ? AND key = ?").use { stmt ->
-                stmt.setBytes(1, cipher.encrypt(plaintext))
+                stmt.setBytes(1, cipher.encrypt(plaintext, placeOf(scope, key)))
                 stmt.setString(2, scope)
                 stmt.setString(3, key)
                 stmt.executeUpdate()
@@ -195,8 +195,15 @@ class VaultFileStore(
         }
     }
 
-    private fun storedForm(encryption: String, content: ByteArray): ByteArray =
-        if (encryption in ENCRYPTED_MODES) cipher.encrypt(content) else content
+    private fun storedForm(configApiId: String, key: String, encryption: String, content: ByteArray): ByteArray =
+        if (encryption in ENCRYPTED_MODES) cipher.encrypt(content, placeOf(configApiId, key)) else content
+
+    /**
+     * The associated data of a stored blob: the row it belongs to (review 2026-11-11 R-17).
+     * A blob copied into another file or Config API does not open there.
+     */
+    private fun placeOf(configApiId: String, key: String): ByteArray =
+        "pinvault-vault-at-rest:v1:$configApiId:$key".toByteArray(Charsets.UTF_8)
 
     fun delete(configApiId: String, key: String) {
         db.connection().use { conn ->
@@ -277,7 +284,7 @@ class VaultFileStore(
         configApiId  = getString("config_api_id"),
         key          = getString("key"),
         version      = getInt("version"),
-        content      = readContent(getString("key"), getString("encryption"), getBytes("content")),
+        content      = readContent(getString("config_api_id"), getString("key"), getString("encryption"), getBytes("content")),
         accessPolicy = getString("access_policy"),
         encryption   = getString("encryption"),
         updatedAt    = getString("updated_at"),
@@ -289,10 +296,10 @@ class VaultFileStore(
      * current password: serving the ciphertext instead would hand devices a
      * garbage file with a valid signature (the signature covers what is served).
      */
-    private fun readContent(key: String, encryption: String, stored: ByteArray): ByteArray {
+    private fun readContent(configApiId: String, key: String, encryption: String, stored: ByteArray): ByteArray {
         if (encryption !in ENCRYPTED_MODES || !VaultAtRestCipher.isEncrypted(stored)) return stored
         return try {
-            cipher.decrypt(stored)
+            cipher.decrypt(stored, placeOf(configApiId, key))
         } catch (e: VaultKeyMismatchException) {
             throw VaultKeyMismatchException(
                 "vault file '$key' does not open with VAULT_AT_REST_PASSWORD: set VAULT_AT_REST_PASSWORD_PREVIOUS " +

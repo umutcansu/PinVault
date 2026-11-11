@@ -1344,7 +1344,11 @@ paths:
           doubling as a signing key, and 1 ≤ `requiredSignatures` ≤ number of keys;
         * enough of this server's active signers are listed to satisfy
           `requiredSignatures` — otherwise every device that applied the set would
-          refuse every config (`409`).
+          refuse every config (`409`);
+        * since 2.10.0 the payload names this server's Config APIs (`configApiIds`,
+          every one of them): a set without it is refused (`409`), as any
+          deployment whose app carries the same recovery key could relay it.
+          `ALLOW_UNSCOPED_KEY_SETS=true` accepts one as before, with a warning.
 
         Accepted with warnings when an active signer is not listed. Audited as
         `signing_keyset_uploaded`; cached signatures are dropped.
@@ -4387,6 +4391,43 @@ paths:
         '401': { $ref: '#/components/responses/MissingApiKey' }
         '403': { $ref: '#/components/responses/InvalidApiKey' }
 
+  /api/v1/config-apis/{configApiId}/device-ids:
+    get:
+      tags: [device-acl]
+      operationId: listDeviceIds
+      summary: Device ids seen in a Config API
+      description: |
+        The ids devices send as `X-Device-Id` (ANDROID_ID, identifierForVendor),
+        as this Config API has seen them — a per-device ACL, an attestation, a
+        vault download, a registered device key — newest first, at most 500.
+        A per-device host ACL is written for one of these. (2.10.0: the
+        dashboard's ACL manager listed connection reports' `manufacturer_model`
+        names before, which no device sends.)
+
+        Registered on: **management** only.
+      security:
+        - ApiKeyAuth: []
+      x-registered-on: management
+      parameters:
+        - $ref: '#/components/parameters/ConfigApiIdPath'
+      responses:
+        '200':
+          description: The device ids, with where each was seen.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: object
+                  required: [deviceId, sources]
+                  properties:
+                    deviceId: { type: string }
+                    sources:
+                      type: array
+                      items: { type: string, enum: [acl, attestation, vault, key] }
+                    label: { type: string, description: "Manufacturer and model from a vault download, when one was seen." }
+        '401': { $ref: '#/components/responses/MissingApiKey' }
+        '403': { $ref: '#/components/responses/InvalidApiKey' }
   /api/v1/config-apis/{configApiId}/default-host-acl:
     get:
       tags: [device-acl]

@@ -37,6 +37,7 @@ its configs.
 | Variable | Default | Purpose |
 |---|---|---|
 | `ALLOW_KEY_REGENERATION` | unset | Names key material the server may make again although it made it before: `signing-key`, `client-ca`, `server-tls`, `server-tls-backup`, `server-ca`, `server-ca-backup`, or `all`. Without it a start that finds one of them missing refuses to run (a database restored without its key files): devices trust the old keys. Set it for one start, then remove it. |
+| `ALLOW_UNSCOPED_KEY_SETS` | unset | `true`: accept a signing-key set without `configApiIds` (before 2.10.0 the default, with a warning). Any deployment whose app carries the same recovery key could relay such a set. |
 | `SIGNING_KEY_PASSWORD` | unset | AES-256-GCM encrypts the ECDSA signing key on disk (PBKDF2-SHA256). When unset, the key is written plaintext + chmod 600 + warning logged. Existing plaintext keys are auto-migrated on startup. |
 | `KEYSTORE_PASSWORD` | required (`changeit` only with `ALLOW_DEMO_SECRETS=true`) | Protects the server's own keystores (TLS key, backup keys, truststore, stored host client certs). Never leaves the server. **Set it in production** — the default is public. |
 | `KEYSTORE_PASSWORD_PREVIOUS` | unset | Old password when changing `KEYSTORE_PASSWORD`: keystores are re-encrypted at startup. Remove afterwards. |

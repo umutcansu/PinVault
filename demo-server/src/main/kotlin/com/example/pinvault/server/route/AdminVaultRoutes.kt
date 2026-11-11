@@ -78,6 +78,49 @@ fun Route.adminVaultRoutes(
     // ── Per-device host ACL ─────────────────────────────────────────
 
     /**
+     * The device ids a per-device host ACL can be written for: the ids devices
+     * send as `X-Device-Id` (ANDROID_ID / identifierForVendor), as this Config
+     * API has seen them — a per-device ACL, an attestation, a vault download,
+     * a registered device key. The dashboard's ACL manager listed the
+     * connection reports' `manufacturer_model` names instead, which no device
+     * sends, so an ACL written from there never applied (E09 finding).
+     *
+     * Answer: `[{"deviceId": "…", "sources": ["acl", "attestation", "vault", "key"], "label": "…"}]`,
+     * newest first, at most [MAX_DEVICE_IDS].
+     */
+    get("/api/v1/config-apis/{configApiId}/device-ids") {
+        val configApiId = call.pathParameters["configApiId"] ?: return@get call.respond(
+            HttpStatusCode.BadRequest, mapOf("error" to "Missing configApiId"))
+        val rows = db.connection().use { conn ->
+            conn.prepareStatement(
+                """SELECT device_id, source, MAX(seen) AS seen, MAX(label) AS label FROM (
+                     SELECT device_id, 'acl' AS source, MAX(granted_at) AS seen, NULL AS label FROM device_host_acl WHERE config_api_id = ? GROUP BY device_id
+                     UNION ALL SELECT device_id, 'attestation', MAX(last_seen), NULL FROM attested_devices WHERE config_api_id = ? GROUP BY device_id
+                     UNION ALL SELECT device_id, 'vault', MAX(timestamp), MAX(COALESCE(device_manufacturer, '') || ' ' || COALESCE(device_model, ''))
+                               FROM vault_distributions WHERE config_api_id = ? GROUP BY device_id
+                     UNION ALL SELECT device_id, 'key', MAX(registered_at), NULL FROM device_public_keys WHERE config_api_id = ? GROUP BY device_id
+                   ) GROUP BY device_id, source"""
+            ).use { stmt ->
+                repeat(4) { stmt.setString(it + 1, configApiId) }
+                val rs = stmt.executeQuery()
+                buildList { while (rs.next()) add(listOf(rs.getString(1), rs.getString(2), rs.getString(3) ?: "", rs.getString(4)?.trim().orEmpty())) }
+            }
+        }
+        val byDevice = rows.groupBy { it[0] }.map { (id, entries) ->
+            Triple(id, entries.map { it[1] }.distinct().sorted(), entries.maxOf { it[2] }) to entries.firstOrNull { it[3].isNotEmpty() }?.get(3)
+        }.sortedByDescending { it.first.third }.take(MAX_DEVICE_IDS)
+        call.respondText(buildJsonArray {
+            byDevice.forEach { (row, label) ->
+                add(buildJsonObject {
+                    put("deviceId", row.first)
+                    putJsonArray("sources") { row.second.forEach { add(JsonPrimitive(it)) } }
+                    label?.let { put("label", it) }
+                })
+            }
+        }.toString(), ContentType.Application.Json)
+    }
+
+    /**
      * Returns the host list this device is authorized to see from a specific
      * Config API. Does NOT include default ACL fallback — that's a separate
      * concept; use /acl/effective to see the union.
@@ -190,3 +233,6 @@ fun Route.adminVaultRoutes(
         ))
     }
 }
+
+/** The most device ids the ACL manager lists (newest first). */
+private const val MAX_DEVICE_IDS = 500

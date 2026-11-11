@@ -47,6 +47,10 @@ class SigningKeySetService(
     @Volatile
     var configApiIds: () -> List<String> = { emptyList() }
 
+    /** `ALLOW_UNSCOPED_KEY_SETS=true`: accept a set without `configApiIds` (the pre-2.10.0 behaviour, with a warning). */
+    @Volatile
+    var allowUnscoped: () -> Boolean = { ServerEnv.get("ALLOW_UNSCOPED_KEY_SETS") == "true" }
+
     fun latestWire(): SignedKeySetWire? = if (enabled) store.latest()?.toWire() else null
 
     /** The version of the set devices are sent (0 = none, or the feature is off): what resets their watermarks. */
@@ -128,6 +132,17 @@ class SigningKeySetService(
         // refuses one that does not list its own. Every Config API here relays
         // the same set, so each must be listed — else its devices would drop it.
         val mine = configApiIds()
+        // 2.10.0: a set that names no Config API is refused unless the operator says
+        // otherwise (ALLOW_UNSCOPED_KEY_SETS=true). Any deployment whose app carries the
+        // same recovery key could relay such a set to these devices.
+        if (parsed.scopes.isEmpty() && mine.isNotEmpty() && !allowUnscoped()) {
+            throw Rejected(
+                "the set names no Config API (configApiIds): any deployment whose app carries the same recovery key " +
+                    "could relay it to these devices. Make it with configApiIds (signing-keys.sh keyset -a ${mine.joinToString(",")}), " +
+                    "or set ALLOW_UNSCOPED_KEY_SETS=true to accept unscoped sets as before 2.10.0.",
+                conflict = true
+            )
+        }
         if (parsed.scopes.isNotEmpty()) {
             parsed.scopes.firstOrNull { !SCOPE_ID.matches(it) }?.let {
                 throw Rejected("configApiIds: '${it.take(64)}' is not a Config API id (letters, digits, '.', '_', ':' and '-', at most 64).")

@@ -256,6 +256,20 @@ class AttestationService(
         // The report's App Attest attestation, when it admitted an unknown device under enforce (verified once).
         var appAttestAdmitted: AppAttestAdmission.Result.Passed? = null
         var appAttestAdmittedV1 = false
+        // A device that enrolled again (unenroll, a revoked identity) attests with its new
+        // identity key, and the first key kept here refused it for good until an admin
+        // forgot the device (2026-10-29 #7). Over mTLS the connection proves the key: the
+        // client certificate is the device's active identity (RevocationGate), bound to
+        // this deviceId (the route checked), and its key is the one signing here. Then the
+        // old key is released and the new one registers as a first key would — chain and all.
+        val previousSpki = device?.takeIf { it.registered }?.spkiSha256
+        if (previousSpki != null && previousSpki != spki && clientCertificate != null && certificateSpki(clientCertificate) == spki) {
+            devices.releaseKey(configApiId, deviceId)
+            audit?.record("attestation_key_rebound",
+                "Device $deviceId attested with the key of its current client certificate; the earlier key was released",
+                configApiId, deviceId, detail = buildJsonObject { put("previousSpkiSha256", previousSpki); put("spkiSha256", spki) })
+            device = devices.get(configApiId, deviceId)
+        }
         if (device?.registered == true) {
             if (device.spkiSha256 != spki) {
                 val mismatches = devices.recordKeyMismatch(configApiId, deviceId, now)
@@ -1053,6 +1067,14 @@ class AttestationService(
 
         fun sha256Hex(bytes: ByteArray): String =
             MessageDigest.getInstance("SHA-256").digest(bytes).joinToString("") { "%02x".format(it.toInt() and 0xFF) }
+
+        /** SHA-256 hex of a DER certificate's SPKI, or null when it does not parse. */
+        fun certificateSpki(der: ByteArray): String? = try {
+            sha256Hex(java.security.cert.CertificateFactory.getInstance("X.509")
+                .generateCertificate(der.inputStream()).publicKey.encoded)
+        } catch (_: Exception) {
+            null
+        }
 
         /** `2026-09-05` → 202609; null when it is not a date. */
         fun parsePatch(securityPatch: String): Int? =

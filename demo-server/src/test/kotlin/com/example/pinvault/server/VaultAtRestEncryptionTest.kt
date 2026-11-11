@@ -130,6 +130,47 @@ class VaultAtRestEncryptionTest {
         assertEquals(2, restarted.get("api", "f")!!.version)
     }
 
+    // Review 2026-11-11 R-17: the blobs carried no associated data, so one copied into
+    // another row (another file, another Config API) opened there as that file.
+    @Test
+    fun `a stored blob is bound to its file and Config API`() {
+        store.put("api", "a", "secret-a".toByteArray(), encryption = "at_rest")
+        store.put("api", "b", "secret-b".toByteArray(), encryption = "at_rest")
+        store.put("other", "a", "other-a".toByteArray(), encryption = "at_rest")
+        fun blob(scope: String, key: String): ByteArray = db.connection().use { c ->
+            c.prepareStatement("SELECT content FROM vault_files WHERE config_api_id = ? AND key = ?").use { s ->
+                s.setString(1, scope); s.setString(2, key); s.executeQuery().let { it.next(); it.getBytes(1) }
+            }
+        }
+        fun overwrite(scope: String, key: String, content: ByteArray) = db.connection().use { c ->
+            c.prepareStatement("UPDATE vault_files SET content = ? WHERE config_api_id = ? AND key = ?").use { s ->
+                s.setBytes(1, content); s.setString(2, scope); s.setString(3, key); s.executeUpdate()
+            }
+        }
+        assertEquals("VLT-ENC2", blob("api", "a").copyOfRange(0, 8).toString(Charsets.US_ASCII))
+
+        overwrite("api", "b", blob("api", "a"))
+        assertFailsWith<com.example.pinvault.server.service.VaultKeyMismatchException> { store.get("api", "b") }
+        overwrite("other", "a", blob("api", "a"))
+        assertFailsWith<com.example.pinvault.server.service.VaultKeyMismatchException> { store.get("other", "a") }
+        assertContentEquals("secret-a".toByteArray(), store.get("api", "a")!!.content)
+    }
+
+    @Test
+    fun `a blob from before the binding still opens and the startup pass binds it`() {
+        store.put("api", "old", "legacy".toByteArray(), encryption = "at_rest")
+        // As 2.9.x wrote it: VLT-ENC1, no associated data.
+        val legacy = VaultAtRestCipher(VaultAtRestCipher.DEMO_PASSWORD).encrypt("legacy".toByteArray())
+        db.connection().use { c ->
+            c.prepareStatement("UPDATE vault_files SET content = ? WHERE config_api_id = 'api' AND key = 'old'").use { s -> s.setBytes(1, legacy); s.executeUpdate() }
+        }
+        assertContentEquals("legacy".toByteArray(), store.get("api", "old")!!.content)
+        val report = store.secureStoredFiles()
+        assertEquals(listOf("api/old"), report.rekeyed)
+        assertContentEquals("legacy".toByteArray(), store.get("api", "old")!!.content)
+        assertTrue(store.secureStoredFiles().rekeyed.isEmpty(), "bound once")
+    }
+
     @Test
     fun `a plain file that happens to start with the marker is served as uploaded`() {
         val content = "VLT-ENC1".toByteArray() + ByteArray(64) { it.toByte() }

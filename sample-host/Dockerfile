@@ -46,7 +46,10 @@ FROM eclipse-temurin:17-jre-noble@sha256:39d618b8fda3408cfe792db2b666c0e3db8ea4a
 #   anahtarın özniteliklerini göstermek için (scripts/softhsm-init.sh).
 # - jq: Play Integrity doğrulayıcısı (INTEGRITY_VERIFIER_COMMAND=
 #   /opt/pinvault/scripts/play-integrity-verify.sh) JSON'u onunla okur.
+# - apt-get upgrade: base imajın paketlerinin güvenlik güncellemeleri (sabit özet
+#   eski kalabiliyor; 2026-11-12 trivy taraması apt ve libbrotli'de 3 yüksek açık buldu).
 RUN apt-get update \
+    && apt-get upgrade -y --no-install-recommends \
     && apt-get install -y --no-install-recommends curl ca-certificates netcat-openbsd openssl softhsm2 opensc jq \
     && rm -rf /var/lib/apt/lists/*
 

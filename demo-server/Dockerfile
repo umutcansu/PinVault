@@ -8,7 +8,8 @@ RUN gradle installDist --no-daemon
 # ── Runtime stage ────────────────────────────────────────
 # jammy, not alpine: the alpine JRE tag has no arm64 image (Apple Silicon hosts)
 FROM eclipse-temurin:17-jre-jammy
-RUN apt-get update && apt-get install -y --no-install-recommends curl \
+# Security updates of the base image's packages (the tag can lag behind them).
+RUN apt-get update && apt-get upgrade -y --no-install-recommends && apt-get install -y --no-install-recommends curl \
     && rm -rf /var/lib/apt/lists/*
 
 # The server never needs root: it listens on high ports and writes only under

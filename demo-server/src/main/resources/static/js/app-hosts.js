@@ -535,10 +535,11 @@ async function showDeviceAclManager(configApiId) {
   const content = document.getElementById('content');
   content.innerHTML = `<div class="loading">${t('loading')}</div>`;
   try {
-    // Fetch default ACL + enrolled devices (reuse existing endpoint).
+    // Default ACL + the device ids phones send (X-Device-Id). The connection reports'
+    // "manufacturer_model" names are no device's id: an ACL written for one never applied.
     const [defRes, devRes] = await Promise.all([
       apiFetch(`/api/v1/config-apis/${encodeURIComponent(configApiId)}/default-host-acl`),
-      apiFetch(`/api/v1/client-devices?configApiId=${encodeURIComponent(configApiId)}`).catch(() => null)
+      apiFetch(`/api/v1/config-apis/${encodeURIComponent(configApiId)}/device-ids`).catch(() => null)
     ]);
     const defaultAcl = defRes.ok ? await defRes.json() : [];
     const devices = (devRes && devRes.ok) ? await devRes.json() : [];
@@ -550,14 +551,15 @@ async function showDeviceAclManager(configApiId) {
     const aclReloadKey = '_reloadAclManager_' + configApiId.replace(/[^a-zA-Z0-9]/g, '_');
     window[aclReloadKey] = () => showDeviceAclManager(configApiId);
     const devRows = devices.length === 0
-      ? `<tr><td colspan="3" class="empty-msg">${t('noEnrolledDevices')}</td></tr>`
+      ? `<tr><td colspan="4" class="empty-msg">${t('noEnrolledDevices')}</td></tr>`
       : devPag.slice.map(d => {
-          const label = (d.deviceManufacturer || d.manufacturer || '') + ' ' + (d.deviceModel || d.model || '');
-          return `<tr>
-            <td style="font-weight:600;color:#7dd3fc">${esc(d.device_id || d.deviceId)}</td>
-            <td>${esc(label.trim() || '—')}</td>
+          const sources = (d.sources || []).map(s => t('aclSrc_' + s)).join(', ');
+          return `<tr data-acl-device="${esc(d.deviceId)}">
+            <td style="font-weight:600;color:#7dd3fc">${esc(d.deviceId)}</td>
+            <td>${esc(d.label || '—')}</td>
+            <td>${esc(sources)}</td>
             <td><button class="btn btn-secondary" style="padding:3px 8px;font-size:11px"
-                data-action="editDeviceAcl" data-arg0="${esc(configApiId)}" data-arg1="${esc(d.device_id || d.deviceId)}">${t('aclEditBtn')}</button></td>
+                data-action="editDeviceAcl" data-arg0="${esc(configApiId)}" data-arg1="${esc(d.deviceId)}">${t('aclEditBtn')}</button></td>
           </tr>`;
         }).join('');
 
@@ -583,8 +585,14 @@ async function showDeviceAclManager(configApiId) {
 
       <div class="card">
         <div class="card-title">${t('enrolledDevicesTitle')} (${devices.length})</div>
+        <div style="color:#94a3b8;font-size:12px;margin-bottom:8px">${t('aclDeviceHint')}</div>
+        <div style="display:flex;gap:8px;align-items:center;margin-bottom:10px">
+          <input type="text" id="acl-device-input" class="form-input" style="flex:1" maxlength="64"
+                 placeholder="${t('aclManualPlaceholder')}"/>
+          <button class="btn btn-secondary" data-action="editDeviceAclManual" data-arg0="${esc(configApiId)}">${t('aclEditBtn')}</button>
+        </div>
         <table class="data-table">
-          <thead><tr><th>${t('tokenColDeviceId')}</th><th>${t('vaultDevice')}</th><th></th></tr></thead>
+          <thead><tr><th>${t('tokenColDeviceId')}</th><th>${t('vaultDevice')}</th><th>${t('aclColSources')}</th><th></th></tr></thead>
           <tbody>${devRows}</tbody>
         </table>${devices.length ? pagControls(devPagKey, devPag, aclReloadKey) : ''}
       </div>`;
@@ -606,6 +614,13 @@ async function saveDefaultAcl(configApiId) {
     toast(t('defaultAclUpdated'), 'success');
     showDeviceAclManager(configApiId);
   } catch (err) { toast(err.message, 'error'); }
+}
+
+/** "ACL düzenle" for a device id typed in (one the list does not show yet). */
+function editDeviceAclManual(configApiId) {
+  const id = (document.getElementById('acl-device-input')?.value || '').trim();
+  if (!/^[A-Za-z0-9._:-]{1,64}$/.test(id)) { toast(t('aclManualInvalid'), 'error'); return; }
+  return editDeviceAcl(configApiId, id);
 }
 
 async function editDeviceAcl(configApiId, deviceId) {

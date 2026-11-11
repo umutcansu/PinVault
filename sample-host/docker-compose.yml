@@ -90,6 +90,8 @@ services:
       # client-ca, TLS keystore, sunucu CA) eksikse sunucu açılmaz. Bilerek
       # yeniden üretmek için bir açılışlık: signing-key,client-ca,… ya da all.
       ALLOW_KEY_REGENERATION: ${ALLOW_KEY_REGENERATION:-}
+      # true: imzalama anahtarı setini Config API adlandırmasa da kabul et (2.10.0 öncesi gibi).
+      ALLOW_UNSCOPED_KEY_SETS: ${ALLOW_UNSCOPED_KEY_SETS:-}
       # "URL'den sertifika al" bu makineye ve yerel ağa yalnızca true iken bağlanır.
       # Demo: true (setup.sh yazar). Üretim: boş.
       FETCH_ALLOW_PRIVATE_TARGETS: ${FETCH_ALLOW_PRIVATE_TARGETS:-}

@@ -53,24 +53,30 @@ class VaultAtRestCipher(
 
     val usesDemoPassword: Boolean get() = password == DEMO_PASSWORD
 
-    fun encrypt(plaintext: ByteArray): ByteArray {
+    /**
+     * [aad] binds the blob to where it belongs (a vault file: its Config API and key,
+     * review 2026-11-11 R-17): a blob copied into another row does not open there.
+     * With it the blob is `VLT-ENC2`, without it `VLT-ENC1` (as before).
+     */
+    fun encrypt(plaintext: ByteArray, aad: ByteArray? = null): ByteArray {
         val iv = ByteArray(IV_LEN).also(rng::nextBytes)
         val cipher = Cipher.getInstance("AES/GCM/NoPadding")
         cipher.init(Cipher.ENCRYPT_MODE, currentKey(writeSalt), GCMParameterSpec(128, iv))
-        return MAGIC + writeSalt + iv + cipher.doFinal(plaintext)
+        if (aad != null) cipher.updateAAD(aad)
+        return (if (aad != null) MAGIC_BOUND else MAGIC) + writeSalt + iv + cipher.doFinal(plaintext)
     }
 
     /**
      * Opens a blob written by [encrypt] with the current password.
      * @throws VaultKeyMismatchException when it does not open (other password, or damaged).
      */
-    fun decrypt(blob: ByteArray): ByteArray =
-        tryDecrypt(blob, password) ?: throw VaultKeyMismatchException()
+    fun decrypt(blob: ByteArray, aad: ByteArray? = null): ByteArray =
+        tryDecrypt(blob, password, aad) ?: throw VaultKeyMismatchException()
 
     /** How [blob] opens: with the current password, with a previous one (plaintext returned), or not at all. */
-    fun open(blob: ByteArray): Opened {
-        tryDecrypt(blob, password)?.let { return Opened.Current }
-        for (candidate in previous) tryDecrypt(blob, candidate)?.let { return Opened.Previous(it) }
+    fun open(blob: ByteArray, aad: ByteArray? = null): Opened {
+        tryDecrypt(blob, password, aad)?.let { return if (aad != null && !isBound(blob)) Opened.Previous(it) else Opened.Current }
+        for (candidate in previous) tryDecrypt(blob, candidate, aad)?.let { return Opened.Previous(it) }
         return Opened.Unreadable
     }
 
@@ -80,8 +86,11 @@ class VaultAtRestCipher(
         data object Unreadable : Opened
     }
 
-    private fun tryDecrypt(blob: ByteArray, candidate: String): ByteArray? {
+    /** A `VLT-ENC2` blob opens only with the [aad] it was written with; a `VLT-ENC1` one takes none. */
+    private fun tryDecrypt(blob: ByteArray, candidate: String, aad: ByteArray? = null): ByteArray? {
         if (!isEncrypted(blob) || blob.size < HEADER_LEN + TAG_LEN) return null
+        val bound = isBound(blob)
+        if (bound && aad == null) return null
         return try {
             val salt = blob.copyOfRange(MAGIC.size, MAGIC.size + SALT_LEN)
             val iv = blob.copyOfRange(MAGIC.size + SALT_LEN, HEADER_LEN)
@@ -89,6 +98,7 @@ class VaultAtRestCipher(
             // A previous password is tried by the startup pass only: not kept.
             val key = if (candidate == password) currentKey(salt) else deriveKey(candidate, salt)
             cipher.init(Cipher.DECRYPT_MODE, key, GCMParameterSpec(128, iv))
+            if (bound) cipher.updateAAD(aad!!)
             cipher.doFinal(blob, HEADER_LEN, blob.size - HEADER_LEN)
         } catch (_: java.security.GeneralSecurityException) {
             null
@@ -114,6 +124,8 @@ class VaultAtRestCipher(
     companion object {
         /** 8-byte marker so reads can tell an at-rest blob from raw plaintext. */
         private val MAGIC = byteArrayOf(0x56, 0x4C, 0x54, 0x2D, 0x45, 0x4E, 0x43, 0x31) // "VLT-ENC1"
+        /** A blob bound to its place with associated data (see [encrypt]). */
+        private val MAGIC_BOUND = byteArrayOf(0x56, 0x4C, 0x54, 0x2D, 0x45, 0x4E, 0x43, 0x32) // "VLT-ENC2"
         private const val PBKDF2_ITERATIONS = 200_000
         private const val SALT_LEN = 16
         private const val IV_LEN = 12
@@ -138,8 +150,13 @@ class VaultAtRestCipher(
         }
 
         /** True if [blob] was produced by [encrypt] (starts with the marker). */
-        fun isEncrypted(blob: ByteArray): Boolean =
-            blob.size >= MAGIC.size && MAGIC.indices.all { blob[it] == MAGIC[it] }
+        fun isEncrypted(blob: ByteArray): Boolean = startsWith(blob, MAGIC) || startsWith(blob, MAGIC_BOUND)
+
+        /** True for a `VLT-ENC2` blob (written with associated data). */
+        fun isBound(blob: ByteArray): Boolean = startsWith(blob, MAGIC_BOUND)
+
+        private fun startsWith(blob: ByteArray, magic: ByteArray): Boolean =
+            blob.size >= magic.size && magic.indices.all { blob[it] == magic[it] }
 
         /** Size of the content inside [blob], without decrypting it (GCM adds a fixed tag). */
         fun plaintextSize(blob: ByteArray): Int =

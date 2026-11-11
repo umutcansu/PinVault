@@ -390,6 +390,24 @@ class AttestedDeviceStore(private val db: DatabaseManager) {
     }
 
     /** Forgets the device entirely (its key, verdicts and annotations); true when there was a row. */
+    /**
+     * Drops the device's registered key (and what was learned about it), keeping
+     * its row: overrides, annotations and verdict history stay. The next
+     * attestation registers a key as a first one would. Used when the device
+     * proved a new identity key over mTLS (AttestationService).
+     */
+    fun releaseKey(configApiId: String, deviceId: String): Boolean = db.connection().use { conn ->
+        conn.prepareStatement(
+            """UPDATE attested_devices SET spki_sha256 = NULL, public_key = NULL, key_attested = 0, key_security_level = NULL,
+                 key_attestation_reason = NULL, key_facts = NULL, fresh_facts = NULL, fresh_attested_at = NULL, fresh_result = NULL
+               WHERE config_api_id = ? AND device_id = ?"""
+        ).use { stmt ->
+            stmt.setString(1, configApiId)
+            stmt.setString(2, deviceId)
+            stmt.executeUpdate() > 0
+        }
+    }
+
     fun forget(configApiId: String, deviceId: String): Boolean = db.connection().use { conn ->
         conn.prepareStatement("DELETE FROM attested_devices WHERE config_api_id = ? AND device_id = ?").use { stmt ->
             stmt.setString(1, configApiId)

@@ -190,7 +190,10 @@ const i18n = {
     defaultAclHint: 'Cihaz bazlı ACL\'i olmayan cihazlar bu listeyi alır. Virgülle ayrılmış hostname listesi.',
     defaultAclPlaceholder: 'ör: cdn.example.com, api.example.com',
     defaultAclUpdated: 'Default ACL güncellendi', defaultAclSaveError: 'Kaydedilemedi',
-    enrolledDevicesTitle: 'Enrolled Cihazlar', noEnrolledDevices: 'Henüz enrolled cihaz yok',
+    enrolledDevicesTitle: 'Cihazlar', noEnrolledDevices: 'Bu Config API\'de henüz cihaz kimliği görülmedi',
+    aclDeviceHint: 'Telefonların gönderdiği cihaz kimlikleri (X-Device-Id): izin listesi, atestasyon, vault indirmesi veya cihaz anahtarı kaydından. Listede olmayan bir cihaz için kimliği aşağıya yazın.',
+    aclColSources: 'Görüldüğü yer', aclSrc_acl: 'izin listesi', aclSrc_attestation: 'atestasyon', aclSrc_vault: 'vault', aclSrc_key: 'cihaz anahtarı',
+    aclManualPlaceholder: 'Cihaz kimliği (ANDROID_ID ya da identifierForVendor)', aclManualInvalid: 'Cihaz kimliği: harf, rakam, . _ : - (en fazla 64)',
     aclEditBtn: 'ACL düzenle', aclEditPrompt: 'Cihaz {0} için host ACL (virgülle ayrılmış):',
     aclUpdated: 'ACL güncellendi',
     // Policy dropdown
@@ -802,7 +805,10 @@ const i18n = {
     defaultAclHint: 'Devices without a per-device ACL inherit this list. Comma-separated hostnames.',
     defaultAclPlaceholder: 'e.g. cdn.example.com, api.example.com',
     defaultAclUpdated: 'Default ACL updated', defaultAclSaveError: 'Could not save',
-    enrolledDevicesTitle: 'Enrolled Devices', noEnrolledDevices: 'No enrolled devices yet',
+    enrolledDevicesTitle: 'Devices', noEnrolledDevices: 'No device id seen in this Config API yet',
+    aclDeviceHint: 'The device ids phones send (X-Device-Id), from an ACL, an attestation, a vault download or a registered device key. For a device not listed, type its id below.',
+    aclColSources: 'Seen in', aclSrc_acl: 'ACL', aclSrc_attestation: 'attestation', aclSrc_vault: 'vault', aclSrc_key: 'device key',
+    aclManualPlaceholder: 'Device id (ANDROID_ID or identifierForVendor)', aclManualInvalid: 'Device id: letters, digits, . _ : - (at most 64)',
     aclEditBtn: 'Edit ACL', aclEditPrompt: 'Host ACL for device {0} (comma-separated):',
     aclUpdated: 'ACL updated',
     // Policy dropdown

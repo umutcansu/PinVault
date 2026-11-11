@@ -829,6 +829,34 @@ class AttestationRoutesTest {
         assertEquals(url.encodeToString(java.security.MessageDigest.getInstance("SHA-256").digest(cert)), mtlsClaims.certThumbprint)
     }
 
+    // ── A device that enrolled again proves its new key over mTLS (2026-10-29 #7) ──
+
+    @Test
+    fun `a new identity key presented over mTLS replaces the attested key, without the certificate it stays refused`() = testApplication {
+        val service = service()
+        app(service)
+        val first = ecKey()
+        assertEquals("pass", attestJson(body(challenge(), "dev-1", first, report()))["result"]!!.jsonPrimitive.content)
+
+        // Unenroll + enroll: a new identity key. Over plain TLS (no certificate) nothing proves it.
+        val second = ecKey()
+        refused(body(challenge(), "dev-1", second, report()), HttpStatusCode.Forbidden, "key_mismatch")
+
+        // A certificate for another key does not help either.
+        val stranger = Base64.getDecoder().decode(TestAttestationChains.chain(pki, ecKey().public, TestAttestationChains.identityDescription("x")).first())
+        val strangerRound = service.attest(scope, Json.parseToJsonElement(body(challenge(), "dev-1", second, report())).jsonObject, "test", clientCertificate = stranger)
+        assertEquals("key_mismatch", assertIs<AttestationService.Outcome.Refused>(strangerRound).error)
+
+        // The device's current certificate carries the very key that signs: the old key is released.
+        val cert = Base64.getDecoder().decode(TestAttestationChains.chain(pki, second.public, TestAttestationChains.identityDescription("x")).first())
+        val rebound = service.attest(scope, Json.parseToJsonElement(body(challenge(), "dev-1", second, report())).jsonObject, "test", clientCertificate = cert)
+        assertIs<AttestationService.Outcome.Decided>(rebound)
+        assertEquals(AttestationService.sha256Hex(second.public.encoded), devices.get(scope, "dev-1")!!.spkiSha256)
+        assertEquals(1, auditStore.count("attestation_key_rebound"))
+        // And the old key is the stranger now.
+        refused(body(challenge(), "dev-1", first, report()), HttpStatusCode.Forbidden, "key_mismatch")
+    }
+
     // ── mTLS: the body's deviceId is the certificate's device (pre-production review, F-9) ──
 
     @Test

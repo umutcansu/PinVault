@@ -381,6 +381,19 @@ class ClientCertLifecycleTest {
     }
 
     @Test
+    fun `a token spent by a request that issued nothing can be given back once`() {
+        // Review E6: the token was spent before the certificate was issued; a refusal
+        // after that ("retry with the same token") or a failure while issuing burnt it.
+        val token = tokenStore.create("tablet-10")
+        assertFalse(tokenStore.restore(token), "an unspent token has nothing to give back")
+        assertTrue(tokenStore.consume(token))
+        assertFalse(tokenStore.consume(token), "spent once")
+        assertTrue(tokenStore.restore(token))
+        assertFalse(tokenStore.restore(token), "given back once")
+        assertTrue(tokenStore.consume(token), "and it can be spent again")
+    }
+
+    @Test
     fun `re-enrolling the same client id from the same device is allowed`() = testApplication {
         configureApp()
         assertEquals(HttpStatusCode.OK, enrollAs("tablet-07", "android-1").status)
