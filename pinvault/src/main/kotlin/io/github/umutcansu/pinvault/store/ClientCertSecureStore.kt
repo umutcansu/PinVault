@@ -153,6 +153,13 @@ internal class ClientCertSecureStore private constructor(private val prefs: Shar
         else -> Mode.NONE
     }
 
+    /**
+     * False while the Keystore cannot read this store at all. A non-strict
+     * store then reads every label as [Mode.NONE]; whoever would act on
+     * "nothing stored" asks this first.
+     */
+    fun isReadable(): Boolean = (prefs as? SecurePreferences)?.isReadable() ?: true
+
     fun exists(): Boolean = exists(DEFAULT_LABEL)
 
     fun exists(label: String): Boolean = hasP12(label) || hasChain(label) || hasImported(label)

@@ -102,9 +102,14 @@ class EncryptedFileStorageProvider internal constructor(
             if (!isCurrentFormat(data)) return loadLegacy(key, data, secretKey)
             val version = ByteBuffer.wrap(data, MAGIC.size, 4).int
             var offset = MAGIC.size + 4
+            // Checked before anything is indexed: a file cut short (header
+            // only, or less than an IV and a GCM tag) is malformed, and must
+            // not surface as an index error — that would be taken for a
+            // Keystore failure below and the useless copy kept for good.
+            require(data.size > offset) { "malformed vault file" }
             val ivLength = data[offset].toInt() and 0xFF
             offset += 1
-            require(ivLength in 1..32 && data.size > offset + ivLength) { "malformed vault file" }
+            require(ivLength in 1..32 && data.size >= offset + ivLength + GCM_TAG_LENGTH / 8) { "malformed vault file" }
 
             val cipher = Cipher.getInstance(AES_GCM_TRANSFORMATION)
             cipher.init(Cipher.DECRYPT_MODE, secretKey, GCMParameterSpec(GCM_TAG_LENGTH, data, offset, ivLength))
@@ -136,8 +141,9 @@ class EncryptedFileStorageProvider internal constructor(
      * the current form.
      */
     private fun loadLegacy(key: String, data: ByteArray, secretKey: SecretKey): ByteArray? {
+        require(data.isNotEmpty()) { "malformed vault file" }
         val ivLength = data[0].toInt() and 0xFF
-        require(ivLength in 1..32 && data.size > 1 + ivLength) { "malformed vault file" }
+        require(ivLength in 1..32 && data.size >= 1 + ivLength + GCM_TAG_LENGTH / 8) { "malformed vault file" }
         val cipher = Cipher.getInstance(AES_GCM_TRANSFORMATION)
         cipher.init(Cipher.DECRYPT_MODE, secretKey, GCMParameterSpec(GCM_TAG_LENGTH, data, 1, ivLength))
         val plain = cipher.doFinal(data, 1 + ivLength, data.size - 1 - ivLength)

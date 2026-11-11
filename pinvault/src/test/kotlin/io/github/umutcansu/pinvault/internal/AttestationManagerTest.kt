@@ -102,7 +102,7 @@ class AttestationManagerTest {
         currentConfigVersion = { 7 },
         currentIssuedAt = { 1_000L },
         buildReport = { _, deviceId, _ -> reportedDeviceIds += deviceId; report },
-        applyConfig = { signed -> applied += signed; UpdateResult.Updated(9) },
+        applyConfig = { signed, _ -> applied += signed; UpdateResult.Updated(9) },
         onConfigApplied = { applyResults += it },
         onEvent = { events += it },
         clock = clock,

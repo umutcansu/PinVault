@@ -305,6 +305,28 @@ class DynamicSSLManagerTest {
     }
 
     @Test
+    fun `host certificates follow the pin precedence, whatever order they were loaded in`() {
+        val wildcard = TestCertUtil.generateSelfSigned(cn = "wildcard", password = password)
+        val exact = TestCertUtil.generateSelfSigned(cn = "exact", password = password)
+        val door = TestCertUtil.generateSelfSigned(cn = "door", password = password)
+        // The wildcard first: asking entry by entry used to hand its
+        // certificate to the hosts that have their own.
+        manager.loadHostClientCerts(
+            linkedMapOf(
+                "*.example.com" to wildcard.p12Bytes,
+                "api.example.com" to exact.p12Bytes,
+                "api.example.com:8443" to door.p12Bytes
+            ),
+            password
+        )
+
+        assertEquals(exact.certificate, identityFor("api.example.com", 443))
+        assertEquals(door.certificate, identityFor("api.example.com", 8443))
+        assertEquals(wildcard.certificate, identityFor("other.example.com", 443))
+        assertNull(identityFor("example.com", 443))
+    }
+
+    @Test
     fun `a pinned host gets the default identity only when its pin entry says mtls`() {
         val device = TestCertUtil.generateSelfSigned(cn = "PinVault Client: dev-1", password = password)
         manager.loadClientKeystore(device.p12Bytes, password)

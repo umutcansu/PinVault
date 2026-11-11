@@ -98,6 +98,29 @@ object PinVault {
     internal var importedKeysFactory: () -> io.github.umutcansu.pinvault.keystore.ImportedClientKeys =
         { io.github.umutcansu.pinvault.keystore.ImportedClientKeys.androidKeystore() }
 
+    /**
+     * The (non-strict) credential store the status calls read — [isEnrolled],
+     * [isEnrollmentPending], [enrolledClientCN], [enrolledClientNotAfter] —
+     * and [unenroll] clears. Tests swap in one over a software cipher.
+     */
+    internal var clientCertStoreFactory: (Context) -> ClientCertSecureStore =
+        { ClientCertSecureStore(it.applicationContext) }
+
+    /**
+     * [read] over the credential store, or [whenUnreadable] when the store
+     * cannot be opened or read right now (the Keystore failed, or the device
+     * is locked under `requireUnlockedDevice()`). The status calls are asked
+     * from UI code and must answer, not throw; they decide nothing — the
+     * enroll paths read the store strictly and refuse to act instead.
+     */
+    private inline fun <T> clientCertStatus(context: Context, what: String, whenUnreadable: T, read: (ClientCertSecureStore) -> T): T =
+        try {
+            read(clientCertStoreFactory(context))
+        } catch (e: Exception) {
+            Timber.w(e, "%s: the client credential store cannot be read right now", what)
+            whenUnreadable
+        }
+
     /** What is remembered about each stored vault file (signatures, last confirmation). Tests swap in an in-memory one. */
     internal var vaultFileMetaFactory: (Context) -> io.github.umutcansu.pinvault.store.VaultFileMeta =
         { io.github.umutcansu.pinvault.store.VaultFileMeta.persistent(it) }
@@ -366,6 +389,15 @@ object PinVault {
                 "or call allowRelaxationsInRelease() on the block to keep them deliberately."
         )
     }
+
+    /**
+     * The time an enrollment answer is checked against after init: the
+     * block's trusted clock. A block without a client (static pins, an id
+     * that is not configured) has no trusted clock; the device clock is used
+     * for it, knowingly.
+     */
+    private fun enrollmentNow(configApiId: String): Long =
+        configApiClients[configApiId]?.trustedClock?.now() ?: System.currentTimeMillis()
 
     private fun enrollRefusal(config: PinVaultConfig?): ClientCertEnrollmentResult.Failed? =
         environmentRefusal(config, io.github.umutcansu.pinvault.model.GuardedOperation.ENROLL)
@@ -1152,6 +1184,7 @@ object PinVault {
 
     /**
      * Whether the default block of [config] has an enrolled client certificate. Usable before [init].
+     * False while the credential store cannot be read (see [isEnrolled] with a label).
      *
      * From Java this is `isEnrolledWithConfig`: a second `isEnrolled(Context, …)` would make
      * every existing `isEnrolled(context, null)` call ambiguous.
@@ -1160,8 +1193,7 @@ object PinVault {
     fun isEnrolled(context: Context, config: PinVaultConfig): Boolean {
         // Before init only: a running setup keeps its own options.
         if (!initialized) applyKeystoreOptions(config)
-        return ClientCertSecureStore(context.applicationContext)
-            .exists(config.defaultConfigApi?.clientCertLabel ?: ClientCertSecureStore.DEFAULT_LABEL)
+        return isEnrolled(context, config.defaultConfigApi?.clientCertLabel ?: ClientCertSecureStore.DEFAULT_LABEL)
     }
 
     /**
@@ -1190,12 +1222,18 @@ object PinVault {
      * no certificate yet. [checkPendingEnrollment] asks again; [init] and the
      * periodic update ask on their own. [unenroll] gives the request up.
      *
+     * Never throws. While the credential store cannot be read (a Keystore
+     * failure, or a locked device under `requireUnlockedDevice()`) the answer
+     * is false — "cannot tell", not "nothing is waiting": the request is
+     * kept, and [checkPendingEnrollment] reports the unreadable store itself.
+     *
      * @param label Optional label. If null, uses the default Config API's `clientCertLabel`.
      */
     fun isEnrollmentPending(context: Context, label: String? = null): Boolean {
-        val store = ClientCertSecureStore(context.applicationContext)
         val certLabel = label ?: defaultCertLabel()
-        return !store.exists(certLabel) && store.loadPendingRequest(certLabel) != null
+        return clientCertStatus(context, "isEnrollmentPending", false) { store ->
+            !store.exists(certLabel) && store.loadPendingRequest(certLabel) != null
+        }
     }
 
     /**
@@ -1306,10 +1344,13 @@ object PinVault {
             // A client for the block alone — the library's state is untouched;
             // the next init picks the stored credential up.
             applyKeystoreOptions(config)
-            val api = ConfigApiClient(
+            val client = ConfigApiClient(
                 block, context.applicationContext, identityKeyFactory = identityKeyFactory, importedKeys = importedKeysFactory()
-            ).api
-            val enrolled = enrollAndStore(context, config, block, api, token, deviceId, certLabel)
+            )
+            // The block's trusted clock: its reference is read from the
+            // block's config store, so it works before init too (and is the
+            // device clock on a device that has never stored one).
+            val enrolled = enrollAndStore(context, config, block, client.api, token, deviceId, certLabel, client.trustedClock::now)
             ClientCertEnrollmentResult.Enrolled(keySecurityLevel = enrolled.keySecurityLevel())
         } catch (e: Exception) {
             enrollmentFailure(e)
@@ -1331,7 +1372,9 @@ object PinVault {
         }
 
         return try {
-            val enrolled = enrollAndStore(context, config, defaultBlock, configApi, token, deviceId, certLabel)
+            val enrolled = enrollAndStore(context, config, defaultBlock, configApi, token, deviceId, certLabel) {
+                enrollmentNow(defaultBlock.id)
+            }
             when (enrolled) {
                 is Enrolled.Chain -> sslManager.loadClientKey(enrolled.key.privateKey(), enrolled.certs.toTypedArray())
                 is Enrolled.Imported -> sslManager.loadClientKey(enrolled.privateKey, enrolled.certs)
@@ -1394,7 +1437,9 @@ object PinVault {
         api: CertificateConfigApi,
         token: String?,
         deviceId: String?,
-        certLabel: String
+        certLabel: String,
+        /** The time issued certificates are checked against: the block's trusted clock where there is one. */
+        now: () -> Long
     ): Enrolled {
         applyKeystoreOptions(config)
         // Strict: what EnrollmentRequests reads here decides whether a key may go.
@@ -1421,7 +1466,8 @@ object PinVault {
         val chain = result.certificateChainPem
         if (chain != null) {
             val certs = io.github.umutcansu.pinvault.internal.ClientCertRenewer.acceptIssuedChain(
-                chain, key, expectedIssuer = null, caPins = block.clientCaPins, maxLifetimeDays = block.maxClientCertLifetimeDays
+                chain, key, expectedIssuer = null, caPins = block.clientCaPins, maxLifetimeDays = block.maxClientCertLifetimeDays,
+                nowMs = now()
             )
             certStore.saveChain(certLabel, chain)
             Timber.d("Enrollment successful — certificate chain stored, valid until %s", certs[0].notAfter)
@@ -1429,7 +1475,7 @@ object PinVault {
         }
 
         // Only reached with allowServerGeneratedKey(): the server made the key.
-        val p12 = acceptEnrolledP12(result, block.clientKeyPassword, block)
+        val p12 = acceptEnrolledP12(result, block.clientKeyPassword, block, now())
         // No orphan identity key next to a server-made one — unless a chain
         // under this label is over it (never deleted then; see EnrollmentRequests).
         if (io.github.umutcansu.pinvault.internal.EnrollmentRequests.mayDeleteKey(certStore, certLabel)) runCatching { key.clear() }
@@ -1655,12 +1701,21 @@ object PinVault {
 
     /**
      * Checks if a client certificate is enrolled on this device.
+     *
+     * Never throws. While the credential store cannot be read (a Keystore
+     * failure, or a locked device under `requireUnlockedDevice()`) the answer
+     * is false — "cannot tell", not "not enrolled": the credential is kept
+     * and the answer is right again once the store reads. Do not take a false
+     * from here as the reason to discard anything; [enroll] reads the store
+     * strictly and refuses, with the reason, instead of enrolling over a
+     * credential it cannot see.
+     *
      * @param label Optional label. If null, uses the default Config API's
      *        `clientCertLabel` — the same label [enroll] writes to.
      */
     fun isEnrolled(context: Context, label: String? = null): Boolean {
-        val store = ClientCertSecureStore(context.applicationContext)
-        return store.exists(label ?: defaultCertLabel())
+        val certLabel = label ?: defaultCertLabel()
+        return clientCertStatus(context, "isEnrolled", false) { it.exists(certLabel) }
     }
 
     /**
@@ -1673,13 +1728,25 @@ object PinVault {
      * client certificate. (Previously only the store was cleared, so mTLS kept
      * working from the loaded KeyManager until the process restarted.)
      *
+     * Never throws. When the credential store cannot be written right now (a
+     * Keystore failure, or a locked device under `requireUnlockedDevice()`)
+     * the rest still happens: the keys are deleted and the live clients stop
+     * presenting the certificate. A stored certificate chain is then left
+     * without its key and is dropped the next time it is loaded; only a
+     * credential kept as a PKCS12 (a platform that refused the key import)
+     * survives and is loaded again at the next start — call [unenroll] again
+     * once the device is unlocked if [isEnrolled] is still true then.
+     *
      * @param label Optional label. If null, uses the default Config API's
      *        `clientCertLabel` — the same label [enroll] writes to.
      */
     fun unenroll(context: Context, label: String? = null) {
         val certLabel = label ?: defaultCertLabel()
-        val store = ClientCertSecureStore(context.applicationContext)
-        store.clear(certLabel)
+        try {
+            clientCertStoreFactory(context).clear(certLabel)
+        } catch (e: Exception) {
+            Timber.e(e, "unenroll: the stored client credential [%s] could not be removed right now — its keys are deleted, the stored copy stays", certLabel)
+        }
         // The identity key behind a CSR-enrolled certificate goes with it: a
         // re-enrollment is a new identity, not the old key with a new cert.
         runCatching { identityKeyFactory(certLabel).clear() }
@@ -1773,6 +1840,9 @@ object PinVault {
      * Enrolled client sertifikasının CN (Common Name) alanını döndürür —
      * QA kanıt akışında mobil ekran görüntüsünü sunucudaki kayıtla
      * bire bir eşleştirmek için kullanılır.
+     *
+     * Never throws: null when nothing is enrolled, and also while the
+     * credential store cannot be read right now (see [isEnrolled]).
      */
     fun enrolledClientCN(context: Context, label: String? = null): String? =
         enrolledLeaf(context, label)?.subjectX500Principal?.name
@@ -1783,15 +1853,19 @@ object PinVault {
     /**
      * When the enrolled client certificate expires, epoch ms — or null when
      * nothing is enrolled. Read from the stored certificate, no network.
+     *
+     * Like [enrolledClientCN], never throws: null also while the credential
+     * store cannot be read right now (see [isEnrolled]).
      */
     fun enrolledClientNotAfter(context: Context, label: String? = null): Long? =
         enrolledLeaf(context, label)?.notAfter?.time
 
     /** The enrolled leaf certificate, whichever form it is stored in. */
     private fun enrolledLeaf(context: Context, label: String?): java.security.cert.X509Certificate? {
-        val store = ClientCertSecureStore(context.applicationContext)
         val certLabel = label ?: defaultCertLabel()
         return try {
+            // Opened inside the try: a store that cannot be opened is "no answer", like one that cannot be read.
+            val store = clientCertStoreFactory(context)
             when (store.mode(certLabel)) {
                 ClientCertSecureStore.Mode.CHAIN ->
                     io.github.umutcansu.pinvault.crypto.Pkcs10Csr.parsePemChain(store.loadChain(certLabel)!!).first()
@@ -2243,17 +2317,19 @@ object PinVault {
      * (`X-P12-Password`) is used here once and never stored; without one the
      * bundle must already open with [localPassword], as before.
      */
-    private fun acceptEnrolledP12(
+    @androidx.annotation.VisibleForTesting
+    internal fun acceptEnrolledP12(
         result: io.github.umutcansu.pinvault.model.EnrollmentResult,
         localPassword: String,
-        block: ConfigApiBlock
+        block: ConfigApiBlock,
+        nowMs: Long
     ): ByteArray {
         val oneOff = result.p12Password
         val password = (oneOff ?: localPassword).toCharArray()
         val ks = validateP12(result.p12Bytes, result.p12Hash, oneOff ?: localPassword)
         // The chain rules of a CSR answer: issuer sent along, lifetime cap, clientCaPins.
         val certs = io.github.umutcansu.pinvault.internal.ClientCertRenewer.acceptIssuedP12(
-            ks, password, caPins = block.clientCaPins, maxLifetimeDays = block.maxClientCertLifetimeDays
+            ks, password, caPins = block.clientCaPins, maxLifetimeDays = block.maxClientCertLifetimeDays, nowMs = nowMs
         )
         password.fill('\u0000')
         Timber.d("Enrolled PKCS12 chain accepted — valid until %s", certs[0].notAfter)

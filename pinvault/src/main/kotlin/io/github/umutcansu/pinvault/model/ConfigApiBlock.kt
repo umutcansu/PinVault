@@ -180,21 +180,31 @@ data class ConfigApiBlock @JvmOverloads constructor(
      * Why this block must not be used, or null when it is fine: the Config
      * API (and the enrollment / renewal URLs) must be `https://` and the block
      * must carry bootstrap pins, unless [allowUnpinnedConfigApi] was asked
+     * for; and it must carry a signing key, unless [allowUnsigned] was asked
      * for. Checked at `PinVault.init` and by every client built for the
      * block, so a block made with the constructor instead of the builder is
-     * held to the same rule.
+     * held to the same rules — and a relaxation is always a flag the release
+     * guard can see.
      */
     internal fun configurationError(): String? {
-        if (allowUnpinnedConfigApi) return null
-        listOf("configUrl" to configUrl, "enrollmentUrl" to enrollmentUrl, "renewalUrl" to renewalUrl).forEach { (name, url) ->
-            if (url != null && !url.trim().startsWith("https://", ignoreCase = true)) {
-                return "Config API '$id': $name must be an https:// URL — a config fetched over plain HTTP can be " +
-                    "replaced by anyone on the network. Call allowUnpinnedConfigApi() to accept that (tests, demos)."
+        if (!allowUnpinnedConfigApi) {
+            listOf("configUrl" to configUrl, "enrollmentUrl" to enrollmentUrl, "renewalUrl" to renewalUrl).forEach { (name, url) ->
+                if (url != null && !url.trim().startsWith("https://", ignoreCase = true)) {
+                    return "Config API '$id': $name must be an https:// URL — a config fetched over plain HTTP can be " +
+                        "replaced by anyone on the network. Call allowUnpinnedConfigApi() to accept that (tests, demos)."
+                }
+            }
+            if (bootstrapPins.isEmpty()) {
+                return "Config API '$id': bootstrapPins must not be empty — without them the first config fetch trusts " +
+                    "every certificate authority on the device. Call allowUnpinnedConfigApi() to accept that (tests, demos)."
             }
         }
-        if (bootstrapPins.isEmpty()) {
-            return "Config API '$id': bootstrapPins must not be empty — without them the first config fetch trusts " +
-                "every certificate authority on the device. Call allowUnpinnedConfigApi() to accept that (tests, demos)."
+        // The builder refuses this in build(); the constructor has no checks,
+        // and a block without keys would otherwise run unsigned without ever
+        // having said so.
+        if (effectiveSignatureKeys().none { it.isNotBlank() } && !allowUnsigned) {
+            return "Config API '$id': signaturePublicKey is missing — without it no config is verified, so whoever " +
+                "answers for the Config API decides the pins. Call allowUnsigned() to accept that (tests, demos)."
         }
         return null
     }

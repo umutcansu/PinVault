@@ -528,6 +528,77 @@ class ClientCertRenewerTest {
     }
 
     @Test
+    fun `an issued certificate is checked against the time passed in, not the device date`() {
+        val chain = { notBefore: Long, notAfter: Long ->
+            listOf(Pkcs10Csr.toPem(leafFor(key.publicKey(), notBefore, notAfter)), Pkcs10Csr.toPem(caCert))
+        }
+        val real = System.currentTimeMillis()
+        // Valid by the device date, already expired by the trusted clock: refused.
+        val shortLived = chain(real - 3600_000, real + 30 * DAY)
+        assertEquals(2, ClientCertRenewer.acceptIssuedChain(shortLived, key, nowMs = real).size)
+        try {
+            ClientCertRenewer.acceptIssuedChain(shortLived, key, nowMs = real + 31 * DAY)
+            throw AssertionError("expired at the trusted time")
+        } catch (e: java.security.cert.CertificateExpiredException) {
+            // expected
+        }
+        // And the other way round: a device whose date was set forward does
+        // not make a certificate "expired" that the trusted clock says is valid.
+        val past = chain(real - 60 * DAY, real - DAY)
+        assertEquals(2, ClientCertRenewer.acceptIssuedChain(past, key, nowMs = real - 30 * DAY).size)
+        // Not yet valid at the trusted time.
+        try {
+            ClientCertRenewer.acceptIssuedChain(shortLived, key, nowMs = real - DAY)
+            throw AssertionError("not yet valid at the trusted time")
+        } catch (e: java.security.cert.CertificateNotYetValidException) {
+            // expected
+        }
+    }
+
+    @Test
+    fun `renewal holds the answer to the renewer's clock, not the device date`() = runTest {
+        // The trusted clock runs ahead of the device date (the user set the
+        // date back). The server answers with a certificate that the device
+        // date calls valid and the trusted clock calls expired.
+        val real = System.currentTimeMillis()
+        now = real + 40 * DAY
+        storeLeaf(now - 61 * DAY, now + 29 * DAY)
+        val before = store.loadChain(label)
+        val stale = FakeApi { _, _, _ ->
+            ClientCertRenewalResponse.Issued(listOf(Pkcs10Csr.toPem(leafFor(key.publicKey(), real - 3600_000, real + 30 * DAY)), Pkcs10Csr.toPem(caCert)))
+        }
+
+        val result = renewer(stale).renewIfNeeded()
+
+        assertTrue("got $result", result is ClientCertRenewalResult.Failed)
+        assertTrue((result as ClientCertRenewalResult.Failed).exception is java.security.cert.CertificateExpiredException)
+        assertEquals(before, store.loadChain(label))
+        assertEquals(0, reloads)
+        // One that is valid at the renewer's time is taken.
+        assertTrue(renewer(issuing()).renewIfNeeded() is ClientCertRenewalResult.Renewed)
+    }
+
+    @Test
+    fun `an enrolled PKCS12 is held to the time the enrollment path passes`() {
+        val made = serverKey()
+        val real = System.currentTimeMillis()
+        val leaf = leafFor(made.public, real - 3600_000, real + 30 * DAY)
+        val bytes = java.io.ByteArrayOutputStream().also { p12(listOf(leaf, caCert), made.private).store(it, "pw".toCharArray()) }.toByteArray()
+        val hash = android.util.Base64.encodeToString(
+            java.security.MessageDigest.getInstance("SHA-256").digest(bytes), android.util.Base64.NO_WRAP
+        )
+        val answer = io.github.umutcansu.pinvault.model.EnrollmentResult(bytes, hash)
+
+        assertTrue(io.github.umutcansu.pinvault.PinVault.acceptEnrolledP12(answer, "pw", block(), real).isNotEmpty())
+        try {
+            io.github.umutcansu.pinvault.PinVault.acceptEnrolledP12(answer, "pw", block(), real + 40 * DAY)
+            throw AssertionError("expired at the trusted time")
+        } catch (e: java.security.cert.CertificateExpiredException) {
+            // expected
+        }
+    }
+
+    @Test
     fun `a certificate valid for decades is refused, at enrollment and at renewal`() = runTest {
         val fiftyYears = listOf(Pkcs10Csr.toPem(leafFor(key.publicKey(), now - 3600_000, now + 50 * 365 * DAY)), Pkcs10Csr.toPem(caCert))
         assertTrue(refused { ClientCertRenewer.acceptIssuedChain(fiftyYears, key) }.contains("825 days"))

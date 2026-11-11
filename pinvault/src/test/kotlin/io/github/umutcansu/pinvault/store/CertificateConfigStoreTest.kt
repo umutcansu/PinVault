@@ -511,6 +511,24 @@ class CertificateConfigStoreTest {
     }
 
     @Test
+    fun `saving the rolled-back config clears its marker, saving another config does not`() {
+        val previous = hostConfig(5, issuedAt = 1_000L)
+        val rejected = hostConfig(6, issuedAt = 2_000L)
+        store.save(previous)
+        store.save(rejected)
+        // The health check fails: marked, then the previous config is restored.
+        store.markRolledBack(rejected)
+        store.save(previous)
+        assertTrue("restoring the previous config keeps the marker", store.isRolledBack(rejected))
+
+        // Accepted on a later try: it is the active config now, not "the rolled-back one".
+        store.save(rejected)
+        assertFalse(store.isRolledBack(rejected))
+        assertFalse(prefs.contains(CertificateConfigStore.KEY_ROLLED_BACK_ISSUED_AT))
+        assertFalse(prefs.contains(CertificateConfigStore.KEY_ROLLED_BACK_DIGEST))
+    }
+
+    @Test
     fun `rolled-back config is recognised by issuedAt and pins`() {
         val rejected = hostConfig(5, issuedAt = 2_000L)
         store.markRolledBack(rejected)

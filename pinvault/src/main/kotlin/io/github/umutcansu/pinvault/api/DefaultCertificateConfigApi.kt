@@ -144,7 +144,10 @@ internal class DefaultCertificateConfigApi(
         // The key set riding along goes first: the config in the same response
         // may already be signed by a key that set introduces.
         verifier.applyKeySet(signed)
-        return verifier.verifyFetched(signed).config
+        // M6: a full request refuses a narrowed view.
+        return verifier.verifyFetched(signed).also {
+            io.github.umutcansu.pinvault.crypto.ConfigViewBinding.check(it.envelope.payload, null)
+        }.config
     }
 
     /** The signed envelope as served, unverified — the caller verifies it ([SignedConfigVerifier]). */
@@ -291,6 +294,13 @@ internal class DefaultCertificateConfigApi(
         verifier.applyKeySet(signed)
         return verifier.verifyFetched(signed) { detail ->
             "Config signature verification failed (scoped fetch).$detail"
+        }.also {
+            // M6: the view must answer this request (a device-id-only request is not one the library makes).
+            when {
+                hostsParam != null -> io.github.umutcansu.pinvault.crypto.ConfigViewBinding.check(
+                    it.envelope.payload, io.github.umutcansu.pinvault.crypto.ConfigViewBinding.expected(hosts.orEmpty(), deviceId))
+                deviceId == null -> io.github.umutcansu.pinvault.crypto.ConfigViewBinding.check(it.envelope.payload, null)
+            }
         }.config
     }
 

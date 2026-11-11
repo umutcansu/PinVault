@@ -31,6 +31,16 @@ import io.github.umutcansu.pinvault.model.SignedConfigResponse
  * `forceUpdate`, `issuedAt`, `expiresAt` (both required, Unix epoch ms) and,
  * for `serverScope`, `configApiId`. Pass it on byte for byte: the signature
  * covers its UTF-8 bytes.
+ *
+ * A NARROWED view (the answer to [fetchScopedSignedConfig] with hosts or a
+ * device id) must name the request it answers inside the signed payload:
+ * `"view": {"hosts": [canonical requested set], "deviceId": "<the id sent>"}`
+ * (`deviceId` left out when none was sent). A full config carries no `view`.
+ * The library refuses a narrowed view for a block that asks for the full
+ * config, and a view of another request for a scoped one
+ * ([io.github.umutcansu.pinvault.model.ConfigViewMismatchException]); a
+ * scoped block still accepts a payload without `view` (a full view, or a
+ * backend that does not write the field yet). See SERVER_IMPLEMENTATION_GUIDE.md.
  */
 interface SignedConfigSource {
 

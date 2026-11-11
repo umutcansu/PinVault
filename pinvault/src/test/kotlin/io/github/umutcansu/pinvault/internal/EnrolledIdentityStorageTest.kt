@@ -14,6 +14,7 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertSame
 import org.junit.Assert.assertTrue
 import org.junit.Assert.fail
 import org.junit.Before
@@ -96,6 +97,28 @@ class EnrolledIdentityStorageTest {
         cipher.broken = false
         assertEquals(chain, store(false).loadChain(label))
         assertTrue(key.exists())
+    }
+
+    @Test
+    fun `an imported chain the store cannot decrypt right now is unreadable, not absent`() {
+        val imported = "imported-" + System.nanoTime()
+        store(strict = false).saveImported(imported, chain)
+        val keys = io.github.umutcansu.pinvault.keystore.ImportedClientKeys.software()
+
+        cipher.broken = true
+        val s = store(strict = false)
+        val identities = ImportedIdentities(s, keys)
+        assertSame(ImportedIdentities.Stored.Unreadable, identities.read(imported))
+        assertEquals(
+            ConfigApiClient.EnrolledChain.UNAVAILABLE,
+            ConfigApiClient.loadStoredP12Identity(s, identities, imported, "changeit", present) { presented++ }
+        )
+        assertEquals(0, presented)
+        // A label that holds nothing is still just absent.
+        assertSame(ImportedIdentities.Stored.Absent, identities.read("never-stored"))
+
+        cipher.broken = false
+        assertEquals(chain, store(false).loadImported(imported))
     }
 
     @Test

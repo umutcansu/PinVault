@@ -126,6 +126,9 @@ internal class HttpClientProvider(
      */
     fun replaceConfigInPlace(newConfig: CertificateConfig) {
         synchronized(this) {
+            // Nothing loaded (after [reset]): there is no client to keep, and
+            // the fail-closed one has no recovery interceptor.
+            if (currentConfig == null) return swap(newConfig)
             val pinsChanged = currentConfig?.let { pinShape(it) != pinShape(newConfig) } ?: true
             currentConfig = newConfig
             currentVersion = newConfig.computedVersion()

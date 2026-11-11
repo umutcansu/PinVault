@@ -4,7 +4,9 @@ import io.github.umutcansu.pinvault.model.CertificateConfig
 import io.github.umutcansu.pinvault.model.HostPin
 import org.bouncycastle.asn1.x500.X500Name
 import org.bouncycastle.asn1.x509.BasicConstraints
+import org.bouncycastle.asn1.x509.ExtendedKeyUsage
 import org.bouncycastle.asn1.x509.Extension
+import org.bouncycastle.asn1.x509.KeyPurposeId
 import org.bouncycastle.asn1.x509.GeneralName
 import org.bouncycastle.asn1.x509.GeneralNames
 import org.bouncycastle.asn1.x509.KeyUsage
@@ -80,6 +82,48 @@ class ChainPinMatcherTest {
         val notCa = cert("CN=Not A CA", notCaKeys, "CN=Chain Test Root", rootKeys.private, ca = false)
         val leafUnderNotCa = cert("CN=$host", keys(), "CN=Not A CA", notCaKeys.private, ca = false, san = host)
         assertRefused(listOf(pin(root), randomPin()), arrayOf(leafUnderNotCa, notCa, root))
+    }
+
+    @Test
+    fun `a pinned certificate that is not a CA cannot vouch for a leaf it signed`() {
+        // PKIX takes the trust anchor as given, so its basicConstraints are
+        // checked by the matcher: any server whose own key is pinned could
+        // otherwise issue for this host.
+        val notCaKeys = keys()
+        val notCa = cert("CN=Just A Server", notCaKeys, "CN=Chain Test Root", rootKeys.private, ca = false)
+        val leafUnderNotCa = cert("CN=$host", keys(), "CN=Just A Server", notCaKeys.private, ca = false, san = host)
+        assertTrue(ChainPinMatcher.chainsTo(arrayOf(leafUnderNotCa, notCa), 1)) // PKIX alone lets it through
+        assertFalse(ChainPinMatcher.isCa(notCa))
+        assertRefused(listOf(pin(notCa), randomPin()), arrayOf(leafUnderNotCa, notCa))
+        // Its own pin still accepts the certificate itself, as a leaf.
+        trustManager(listOf(pin(notCa), randomPin())).checkServerTrusted(arrayOf(notCa, root), "RSA", engine())
+    }
+
+    @Test
+    fun `an issuer pin does not accept a leaf that is not a server certificate`() {
+        // The pinned CA also issues client certificates; one of those, with
+        // the host's name in it, must not pass as the server.
+        val clientOnly = cert(
+            "CN=$host", keys(), "CN=Chain Test Intermediate", intKeys.private, ca = false, san = host,
+            eku = listOf(KeyPurposeId.id_kp_clientAuth)
+        )
+        assertFalse(ChainPinMatcher.isServerCertificate(clientOnly))
+        assertRefused(listOf(pin(intermediate), randomPin()), arrayOf(clientOnly, intermediate))
+        assertRefused(listOf(pin(root), randomPin()), arrayOf(clientOnly, intermediate, root))
+        // Its own key pin is the identity, whatever the certificate says: unchanged.
+        trustManager(listOf(pin(clientOnly), randomPin())).checkServerTrusted(arrayOf(clientOnly, intermediate), "RSA", engine())
+
+        // serverAuth (alone or next to clientAuth), anyExtendedKeyUsage and no extension at all pass.
+        for (eku in listOf(
+            listOf(KeyPurposeId.id_kp_serverAuth),
+            listOf(KeyPurposeId.id_kp_clientAuth, KeyPurposeId.id_kp_serverAuth),
+            listOf(KeyPurposeId.anyExtendedKeyUsage)
+        )) {
+            val server = cert("CN=$host", keys(), "CN=Chain Test Intermediate", intKeys.private, ca = false, san = host, eku = eku)
+            trustManager(listOf(pin(intermediate), randomPin())).checkServerTrusted(arrayOf(server, intermediate), "RSA", engine())
+        }
+        assertTrue(ChainPinMatcher.isServerCertificate(leaf))
+        trustManager(listOf(pin(root), randomPin())).checkServerTrusted(arrayOf(leaf, intermediate, root), "RSA", engine())
     }
 
     @Test
@@ -178,13 +222,15 @@ class ChainPinMatcherTest {
         ca: Boolean,
         san: String? = null,
         notBefore: Date = Date(System.currentTimeMillis() - DAY),
-        notAfter: Date = Date(System.currentTimeMillis() + 30 * DAY)
+        notAfter: Date = Date(System.currentTimeMillis() + 30 * DAY),
+        eku: List<KeyPurposeId>? = null
     ): X509Certificate {
         val builder = JcaX509v3CertificateBuilder(
             X500Name(issuer), BigInteger.valueOf(serials.incrementAndGet()), notBefore, notAfter, X500Name(subject), subjectKeys.public
         )
         builder.addExtension(Extension.basicConstraints, true, BasicConstraints(ca))
         if (ca) builder.addExtension(Extension.keyUsage, true, KeyUsage(KeyUsage.keyCertSign or KeyUsage.cRLSign))
+        if (eku != null) builder.addExtension(Extension.extendedKeyUsage, false, ExtendedKeyUsage(eku.toTypedArray()))
         if (san != null) builder.addExtension(Extension.subjectAlternativeName, false, GeneralNames(GeneralName(GeneralName.dNSName, san)))
         return JcaX509CertificateConverter().getCertificate(builder.build(JcaContentSignerBuilder("SHA256withRSA").build(issuerKey)))
     }

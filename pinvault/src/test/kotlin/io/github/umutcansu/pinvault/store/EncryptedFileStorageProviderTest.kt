@@ -137,6 +137,41 @@ class EncryptedFileStorageProviderTest {
         assertFalse(store.exists("flags"))
     }
 
+    @Test
+    fun `a copy cut down to its header is malformed, not a Keystore failure`() {
+        // Magic and version, no body: indexing past the end used to be taken
+        // for a Keystore failure, so the copy was kept — still reporting its
+        // version, answered with "not modified" and never fetched again.
+        store.save("flags", "flags".toByteArray(), 7)
+        file("flags").writeBytes(file("flags").readBytes().copyOf(8))
+        assertEquals(7, store.getVersion("flags"))
+
+        assertNull(store.load("flags"))
+        assertFalse("deleted, so it is fetched again", store.exists("flags"))
+        assertEquals(0, store.getVersion("flags"))
+
+        // Every other way of being too short to hold an IV and a GCM tag.
+        val whole = store.run { save("flags", "flags".toByteArray(), 7); file("flags").readBytes() }
+        for (length in listOf(0, 1, 4, 9, 21, 9 + 12 + 15)) {
+            file("flags").writeBytes(whole.copyOf(length))
+            assertNull("length $length", store.load("flags"))
+            assertFalse("length $length", store.exists("flags"))
+        }
+        // An earlier-form copy cut short as well.
+        writeLegacy("old", "legacy".toByteArray(), 3)
+        file("old").writeBytes(file("old").readBytes().copyOf(13))
+        assertNull(store.load("old"))
+        assertFalse(store.exists("old"))
+
+        // A real Keystore failure still keeps the copy, a truncated one included.
+        store.save("flags", "flags".toByteArray(), 7)
+        keystoreDown = true
+        assertNull(store.load("flags"))
+        assertTrue(store.exists("flags"))
+        keystoreDown = false
+        assertArrayEquals("flags".toByteArray(), store.load("flags"))
+    }
+
     /** What earlier versions wrote: `[IV length][IV][ciphertext]`, nothing bound, the version in preferences. */
     private fun writeLegacy(key: String, content: ByteArray, version: Int) {
         val iv = ByteArray(12).also { SecureRandom().nextBytes(it) }

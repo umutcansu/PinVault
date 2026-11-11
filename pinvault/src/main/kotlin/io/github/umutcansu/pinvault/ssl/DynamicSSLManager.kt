@@ -276,6 +276,9 @@ internal class DynamicSSLManager(
     internal fun hasClientKeystore(): Boolean =
         clientKeyManagers != null || hostKeyManagers.isNotEmpty()
 
+    /** True while at least one host-specific client identity is loaded. */
+    internal fun hasHostClientIdentities(): Boolean = hostKeyManagers.isNotEmpty()
+
     /**
      * Loads host-specific client certs for mTLS.
      * Each host gets its own KeyManager — during TLS handshake the correct cert is selected.
@@ -373,9 +376,14 @@ internal class DynamicSSLManager(
             private fun resolve(host: String?, port: Int?): Pair<javax.net.ssl.X509ExtendedKeyManager, String>? {
                 if (host.isNullOrEmpty()) return null
                 val name = host.lowercase()
-                hostKms.entries.firstOrNull { (entry, _) ->
-                    PinHostMatcher.match(mapOf(entry to true), name, port) != null
-                }?.let { (entry, km) -> return km to "$HOST_ALIAS_PREFIX$entry/" }
+                // One lookup over every entry, so the matcher's precedence
+                // holds (exact host:port, then a wildcard for that port, then
+                // the exact host, then a port-less wildcard).
+                // Asking entry by entry took whichever matching entry came
+                // first in the map — a wildcard's certificate could go to a
+                // host that has its own.
+                PinHostMatcher.match(hostKms.keys.associateWith { it }, name, port)
+                    ?.let { entry -> return hostKms.getValue(entry) to "$HOST_ALIAS_PREFIX$entry/" }
                 if (defaultKm == null) return null
                 val ownListener = port != null && identityHosts["$name:$port"] == true
                 val mtlsHost = !ownListener && !identityHostsOnly && configProvider()?.pins

@@ -230,6 +230,9 @@ internal class ConfigApiClient(
             identityKeyFactory = identityKeyFactory,
             api = { api },
             reload = ::reloadClientIdentity,
+            // When to renew, and whether an issued certificate is valid, by
+            // the clock config expiry uses — not the bare device date.
+            clock = trustedClock::now,
             // A refusal of the renewal over mTLS wipes when that connection
             // presented the identity loaded now; one on the recovery door
             // (no client certificate) never does.
@@ -253,7 +256,7 @@ internal class ConfigApiClient(
                 currentIssuedAt = { configStore.getCurrentIssuedAt() },
                 buildReport = { nonce, deviceId, key -> probe.report(nonce, key, deviceId).toJsonString() },
                 // The embedded config takes the fetched config's road, minus the fetch.
-                applyConfig = { signed -> updater.applySigned(signed) },
+                applyConfig = { signed, deviceId -> updater.applySigned(signed, requestDeviceId = deviceId) },
                 // Reported like a recovery update: the app's update listener and the ConfigUpdate event.
                 onConfigApplied = recoveryListener,
                 onEvent = { event -> sslManager.dispatchEvent(event) }
@@ -310,15 +313,26 @@ internal class ConfigApiClient(
      */
     private fun loadClientIdentity() {
         val label = block.clientCertLabel
+        // A store the Keystore cannot read says "nothing enrolled" for every
+        // label. That is not the same thing: the app-wide bundled identity
+        // must not stand in for this device's own.
+        if (!certStore.isReadable()) {
+            Timber.e("Client cert store cannot be read right now (Keystore) — no client certificate is presented until it can be")
+            sslManager.clearClientKeystore(includeHostCerts = false)
+            return
+        }
         when (certStore.mode(label)) {
             ClientCertSecureStore.Mode.CHAIN -> loadEnrolledChain(label)
             ClientCertSecureStore.Mode.IMPORTED, ClientCertSecureStore.Mode.P12 -> {
-                val imported = importedIdentities.loadOrMigrate(label, block.clientKeyPassword)
-                val p12 = if (imported == null) certStore.load(label) else null
-                when {
-                    imported != null -> sslManager.loadClientKey(imported.privateKey, imported.chain)
-                    p12 != null -> sslManager.loadClientKeystore(p12, block.clientKeyPassword)
-                    else -> loadBundledKeystore()
+                val loaded = loadStoredP12Identity(
+                    certStore, importedIdentities, label, block.clientKeyPassword,
+                    presentKey = sslManager::loadClientKey,
+                    presentP12 = { sslManager.loadClientKeystore(it, block.clientKeyPassword) }
+                )
+                when (loaded) {
+                    EnrolledChain.LOADED -> Unit
+                    EnrolledChain.UNAVAILABLE -> sslManager.clearClientKeystore(includeHostCerts = false)
+                    EnrolledChain.DROPPED -> loadBundledKeystore()
                 }
             }
             ClientCertSecureStore.Mode.NONE -> loadBundledKeystore()
@@ -451,6 +465,40 @@ internal class ConfigApiClient(
                 val gone = io.github.umutcansu.pinvault.keystore.UserAuthKeys.isRetired(e) ||
                     runCatching { !key.exists() }.getOrDefault(false)
                 if (gone) drop(certStore, label, "has a retired or missing Keystore key", e) else unavailable(label, e)
+            }
+        }
+
+        /**
+         * The same decision for a credential that came in a PKCS12 (its key
+         * imported into the Keystore, or the P12 itself where the platform
+         * refused the import). [EnrolledChain.DROPPED] only when nothing is
+         * stored under [label] any more — the caller may then fall back to
+         * the bundled keystore. A credential that is stored but cannot be
+         * read right now is [EnrolledChain.UNAVAILABLE]: the device has an
+         * identity of its own, and the one every install shares must not be
+         * presented in its place.
+         */
+        internal fun loadStoredP12Identity(
+            certStore: ClientCertSecureStore,
+            identities: ImportedIdentities,
+            label: String,
+            password: String,
+            presentKey: (java.security.PrivateKey, Array<java.security.cert.X509Certificate>) -> Unit,
+            presentP12: (ByteArray) -> Unit
+        ): EnrolledChain = when (val stored = identities.readOrMigrate(label, password)) {
+            is ImportedIdentities.Stored.Present -> {
+                presentKey(stored.identity.privateKey, stored.identity.chain)
+                EnrolledChain.LOADED
+            }
+            ImportedIdentities.Stored.Unreadable -> unavailable(label, null)
+            ImportedIdentities.Stored.Absent -> {
+                val p12 = certStore.load(label)
+                when {
+                    p12 != null -> { presentP12(p12); EnrolledChain.LOADED }
+                    // Still listed (a P12 entry that did not read): kept.
+                    certStore.mode(label) != ClientCertSecureStore.Mode.NONE -> unavailable(label, null)
+                    else -> EnrolledChain.DROPPED
+                }
             }
         }
 

@@ -210,6 +210,50 @@ class ImportedIdentitiesTest {
     }
 
     @Test
+    fun `an imported identity that cannot be read right now is not replaced by the bundled one`() {
+        val cert = TestCertUtil.generateSelfSigned(cn = "device-1", password = password, alias = "client")
+        identities.import("default", cert.p12Bytes, password)
+        var presented = 0
+        fun load() = ConfigApiClient.loadStoredP12Identity(
+            store, identities, "default", password, presentKey = { _, _ -> presented++ }, presentP12 = { presented++ }
+        )
+
+        // The Keystore fails: the device HAS an identity. "Unavailable" makes
+        // the client present none; "dropped" would let the keystore bundled
+        // with the app — the same in every install — stand in for it.
+        SoftwareImportedClientKeys.unreadable = true
+        assertSame(ImportedIdentities.Stored.Unreadable, identities.read("default"))
+        assertSame(ImportedIdentities.Stored.Unreadable, identities.readOrMigrate("default", password))
+        assertEquals(ConfigApiClient.EnrolledChain.UNAVAILABLE, load())
+        assertEquals(0, presented)
+        assertEquals(ClientCertSecureStore.Mode.IMPORTED, store.mode("default"))
+
+        SoftwareImportedClientKeys.unreadable = false
+        assertEquals(ConfigApiClient.EnrolledChain.LOADED, load())
+        assertEquals(1, presented)
+
+        // Only an identity that is really gone gives way to the bundled one.
+        keys.delete(ImportedClientKeys.aliasFor("default"))
+        assertEquals(ConfigApiClient.EnrolledChain.DROPPED, load())
+        assertEquals(ClientCertSecureStore.Mode.NONE, store.mode("default"))
+        assertSame(ImportedIdentities.Stored.Absent, identities.read("default"))
+        assertEquals(1, presented)
+    }
+
+    @Test
+    fun `a stored P12 the platform would not import is still presented as a P12`() {
+        val cert = TestCertUtil.generateSelfSigned(cn = "device-1", password = password, alias = "client")
+        store.save("default", cert.p12Bytes)
+        SoftwareImportedClientKeys.refused += ImportedClientKeys.aliasFor("default")
+        var p12: ByteArray? = null
+        val result = ConfigApiClient.loadStoredP12Identity(
+            store, identities, "default", password, presentKey = { _, _ -> throw AssertionError("no key") }, presentP12 = { p12 = it }
+        )
+        assertEquals(ConfigApiClient.EnrolledChain.LOADED, result)
+        assertTrue(cert.p12Bytes.contentEquals(p12))
+    }
+
+    @Test
     fun `forget removes the chain and the key`() {
         val cert = TestCertUtil.generateSelfSigned(cn = "device-1", password = password, alias = "client")
         identities.import("default", cert.p12Bytes, password)

@@ -48,8 +48,31 @@ class ConfigApiBlockRulesTest {
         val http = ConfigApiBlock(id = "api", configUrl = "http://config.example.com/", bootstrapPins = pins)
         assertTrue(http.configurationError()!!.contains("configUrl must be an https:// URL"))
 
-        assertNull(ConfigApiBlock(id = "api", configUrl = "https://config.example.com/", bootstrapPins = pins).configurationError())
-        assertNull(ConfigApiBlock(id = "api", configUrl = "HTTPS://config.example.com/", bootstrapPins = pins).configurationError())
+        assertNull(ConfigApiBlock(id = "api", configUrl = "https://config.example.com/", bootstrapPins = pins, signaturePublicKey = key).configurationError())
+        assertNull(ConfigApiBlock(id = "api", configUrl = "HTTPS://config.example.com/", bootstrapPins = pins, signaturePublicKey = key).configurationError())
+    }
+
+    @Test
+    fun `a block built with the constructor and no signing key is refused unless it says allowUnsigned`() {
+        // The builder refuses this in build(); the constructor used to let a
+        // block run unsigned with no flag for the release guard to see.
+        val noKey = ConfigApiBlock(id = "api", configUrl = "https://config.example.com/", bootstrapPins = pins)
+        val error = noKey.configurationError()
+        assertNotNull(error)
+        assertTrue(error, error!!.contains("signaturePublicKey") && error.contains("allowUnsigned()"))
+        assertNotNull(ConfigApiClient.configurationError(noKey, null))
+        // A blank key is no key.
+        assertNotNull(noKey.copy(signaturePublicKey = " ").configurationError())
+        // allowUnpinnedConfigApi is about pins and https, not about signatures.
+        assertNotNull(noKey.copy(allowUnpinnedConfigApi = true).configurationError())
+
+        // Either form of the key satisfies it, and so does the explicit opt-out…
+        assertNull(noKey.copy(signaturePublicKey = key).configurationError())
+        assertNull(noKey.copy(signaturePublicKeys = listOf(key)).configurationError())
+        val optedOut = noKey.copy(allowUnsigned = true)
+        assertNull(optedOut.configurationError())
+        // …which is exactly what a release build refuses: the flag is visible now.
+        assertTrue(optedOut.allowUnsigned)
     }
 
     @Test

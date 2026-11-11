@@ -118,7 +118,16 @@ internal class CertificateConfigStore private constructor(
             versions[host] = maxOf(versions[host] ?: 0, pin.version)
         }
         val issuedAtWatermark = maxOf(getCurrentIssuedAt(), config.issuedAt)
+        // A config that was rolled back once and is accepted now is the
+        // active config from here on, no longer "the one that was rolled
+        // back": left in place, the marker made every later fetch of the same
+        // envelope look like a re-application (see the updater's replay guard).
+        val acceptedAfterRollback = isRolledBack(config)
         prefs.edit().apply {
+            if (acceptedAfterRollback) {
+                remove(KEY_ROLLED_BACK_ISSUED_AT)
+                remove(KEY_ROLLED_BACK_DIGEST)
+            }
             putInt(KEY_VERSION, config.computedVersion())
             putLong(KEY_ISSUED_AT, config.issuedAt)
             putLong(KEY_EXPIRES_AT, config.expiresAt)

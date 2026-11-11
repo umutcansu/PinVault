@@ -35,7 +35,16 @@ import javax.crypto.AEADBadTagException
  * [StoreUnreadableException], so its owner can tell "unreadable" from
  * "absent" and fail closed (the pin config and the signing-key set: an
  * unreadable replay watermark or key set must not read as "none"). The other
- * stores get the default value, as before.
+ * stores get the default value, as before. That covers the keyed names too:
+ * this class computes nothing with the Keystore when it is constructed, and
+ * a name that cannot be computed is an unreadable entry. ([open] can still
+ * fail before that: getting the keys themselves, `KeystorePrefsCipher.get()`,
+ * throws when the Keystore cannot hand them out or make them.)
+ *
+ * A write has no "default" to fall back to: one the Keystore refuses throws
+ * [StoreUnreadableException] from `commit()` / `apply()` in every store, and
+ * writes nothing at all — an edit that silently did not happen could not be
+ * told from one that did.
  *
  * Change listeners are called on the thread that commits or applies.
  */
@@ -47,12 +56,20 @@ internal class SecurePreferences(
     private val strict: Boolean = false
 ) : SharedPreferences {
 
-    private val namespaceTag = tag(cipher.mac(utf8("ns\u0000$namespace")), NAMESPACE_TAG_LENGTH) + "."
+    // Computed on first use, not when the store is opened: with
+    // `requireUnlockedDevice()` the name key does not work on a locked
+    // device, and the raw Keystore exception used to escape from the
+    // constructor — past every caller that handles an unreadable store.
+    @Volatile private var cachedNamespaceTag: String? = null
     private val storedNames = ConcurrentHashMap<String, String>()
     private val listeners = WeakHashMap<SharedPreferences.OnSharedPreferenceChangeListener, Unit>()
 
+    /** Throws what the Keystore throws; callers map it like any other unreadable entry. */
+    private fun namespaceTag(): String = cachedNamespaceTag
+        ?: (tag(cipher.mac(utf8("ns\u0000$namespace")), NAMESPACE_TAG_LENGTH) + ".").also { cachedNamespaceTag = it }
+
     private fun storedName(key: String): String = storedNames.getOrPut(key) {
-        namespaceTag + tag(cipher.mac(utf8("key\u0000$namespace\u0000$key")), KEY_TAG_LENGTH)
+        namespaceTag() + tag(cipher.mac(utf8("key\u0000$namespace\u0000$key")), KEY_TAG_LENGTH)
     }
 
     private fun aad(storedName: String) = utf8("$fileName\u0000$storedName")
@@ -109,6 +126,17 @@ internal class SecurePreferences(
         return null
     }
 
+    /**
+     * The Keystore refused a write. Nothing was written (the platform editor
+     * is dropped uncommitted), and the caller hears it in every store.
+     */
+    private fun unwritable(e: Exception): StoreUnreadableException {
+        Timber.e(e, "SecurePreferences[%s]: Keystore error, nothing written", fileName)
+        return StoreUnreadableException(
+            "Encrypted storage '$fileName' cannot be written right now (${e.javaClass.simpleName}: ${e.message})", e
+        )
+    }
+
     private fun drop(name: String, why: String) {
         Timber.w("SecurePreferences[%s]: dropping an entry that %s", fileName, why)
         backing.edit().remove(name).apply()
@@ -144,12 +172,47 @@ internal class SecurePreferences(
         return backing.contains(name)
     }
 
+    /**
+     * True when the Keystore can compute this store's names right now. A
+     * non-strict store reads everything as absent while it cannot; an owner
+     * that would act on "absent" (present another identity, enroll again)
+     * asks this first.
+     */
+    internal fun isReadable(): Boolean = try {
+        namespaceTag()
+        true
+    } catch (e: GeneralSecurityException) {
+        false
+    } catch (e: ProviderException) {
+        false
+    }
+
     override fun getAll(): Map<String, *> {
         val all = mutableMapOf<String, Any>()
+        // Like read(): a Keystore failure keeps the entries; a strict store
+        // reports it, the others list what could be read (nothing, here).
+        val prefix = try {
+            namespaceTag()
+        } catch (e: GeneralSecurityException) {
+            unreadable(e)
+            return all
+        } catch (e: ProviderException) {
+            unreadable(e)
+            return all
+        }
         for ((name, sealed) in backing.all) {
-            if (!name.startsWith(namespaceTag) || sealed !is String) continue
+            if (!name.startsWith(prefix) || sealed !is String) continue
             val (key, value) = open(name, sealed) ?: continue
-            if (storedName(key) == name) all[key] = value else drop(name, "belongs to another key")
+            val expected = try {
+                storedName(key)
+            } catch (e: GeneralSecurityException) {
+                unreadable(e)
+                continue
+            } catch (e: ProviderException) {
+                unreadable(e)
+                continue
+            }
+            if (expected == name) all[key] = value else drop(name, "belongs to another key")
         }
         return all
     }
@@ -216,15 +279,21 @@ internal class SecurePreferences(
                 (LinkedHashMap(changes) to clearFirst).also { changes.clear(); clearFirst = false }
             }
             val edit = backing.edit()
-            // Like the platform editor: clear() first, whatever the call order.
-            if (clear) backing.all.keys.filter { it.startsWith(namespaceTag) }.forEach { edit.remove(it) }
-            for ((key, value) in pending) {
-                val name = storedName(key)
-                if (value === Removed) {
-                    edit.remove(name)
-                } else {
-                    edit.putString(name, cipher.seal(encode(key, value), aad(name)).toByteString().base64())
+            try {
+                // Like the platform editor: clear() first, whatever the call order.
+                if (clear) namespaceTag().let { prefix -> backing.all.keys.filter { it.startsWith(prefix) }.forEach { edit.remove(it) } }
+                for ((key, value) in pending) {
+                    val name = storedName(key)
+                    if (value === Removed) {
+                        edit.remove(name)
+                    } else {
+                        edit.putString(name, cipher.seal(encode(key, value), aad(name)).toByteString().base64())
+                    }
                 }
+            } catch (e: GeneralSecurityException) {
+                throw unwritable(e)
+            } catch (e: ProviderException) {
+                throw unwritable(e)
             }
             val written = if (sync) edit.commit() else true.also { edit.apply() }
             val toNotify = synchronized(listeners) { listeners.keys.toList() }
@@ -293,7 +362,13 @@ internal class SecurePreferences(
             val legacy = legacyName?.let { readLegacy(app, it) }
             if (legacyName != null && legacy != null) {
                 // Delete the old file only once its entries are on disk here.
-                if (prefs.putAll(legacy)) {
+                // A Keystore that refuses the write is "not this time" too.
+                val moved = try {
+                    prefs.putAll(legacy)
+                } catch (e: StoreUnreadableException) {
+                    false
+                }
+                if (moved) {
                     app.deleteSharedPreferences(legacyName)
                     Timber.i("SecurePreferences: moved %d entries from %s.xml to %s.xml", legacy.size, legacyName, fileName)
                 } else {

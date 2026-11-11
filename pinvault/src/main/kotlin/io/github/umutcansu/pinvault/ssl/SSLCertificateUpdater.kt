@@ -9,6 +9,7 @@ import androidx.work.WorkInfo
 import androidx.work.WorkManager
 import io.github.umutcansu.pinvault.api.CertificateConfigApi
 import io.github.umutcansu.pinvault.api.SignedConfigSource
+import io.github.umutcansu.pinvault.crypto.ConfigViewBinding
 import io.github.umutcansu.pinvault.crypto.SignedConfigVerifier
 import io.github.umutcansu.pinvault.model.BackendUnreachableException
 import io.github.umutcansu.pinvault.model.CertificateConfig
@@ -148,6 +149,9 @@ internal class SSLCertificateUpdater(
                 InitResult.Ready(storedConfig.version)
             } else {
                 Timber.w("No client certificate yet — enroll before init; backend not contacted")
+                // A stored config that demands an update must not be used
+                // until one succeeds: take it out of the clients again.
+                unloadRefusedConfig(storedConfig)
                 val error = io.github.umutcansu.pinvault.model.ClientCertificateRequiredException()
                 InitResult.Failed(reason = error.message ?: "Client certificate required", exception = error)
             }
@@ -200,6 +204,10 @@ internal class SSLCertificateUpdater(
                     )
                 } else if (storedConfig.forceUpdate) {
                     Timber.e("Init failed — forceUpdate=true but backend unreachable")
+                    // The app is told not to proceed with this config; the
+                    // clients it already holds must not handshake with it
+                    // either. The next update that succeeds loads it again.
+                    unloadRefusedConfig(storedConfig)
                     InitResult.Failed(
                         reason = "Force update required but backend unreachable: ${updateResult.reason}",
                         exception = ForceUpdateFailedException(cause = updateResult.exception)
@@ -341,6 +349,30 @@ internal class SSLCertificateUpdater(
         }
     }
 
+    /**
+     * Takes the stored config [loadFromStore] put into the clients out again
+     * (fail-closed: TLS refused), for an init that ends "must not proceed".
+     * The store is untouched — the config is still the newest one known, and
+     * [loadIfUnloaded] brings it back once the backend has answered.
+     *
+     * Under [updateLock], and only while [refused] is still the config in
+     * use (as in [rollBackAfterFailedHealthCheck]): an update by the worker
+     * that got through after this init's last attempt has applied a config
+     * of its own, and that one stays. Never called with the lock held.
+     */
+    private suspend fun unloadRefusedConfig(refused: CertificateConfig?) = updateLock.withLock {
+        if (refused != null && httpClientProvider.currentConfig === refused) httpClientProvider.reset()
+    }
+
+    /**
+     * After an update that found nothing new: when no config is loaded (an
+     * init refused the stored one, see [unloadRefusedConfig]) the stored
+     * config — just confirmed as current by the backend — is loaded now.
+     */
+    private fun loadIfUnloaded() {
+        if (httpClientProvider.currentConfig == null) loadFromStore()
+    }
+
     private fun loadFromStore(): StoredConfig? {
         val stored = loadStored()
         if (stored != null) {
@@ -450,6 +482,10 @@ internal class SSLCertificateUpdater(
         syncKeySetEpoch()
 
         val verified = verifier.verifyFetched(signed)
+        // M6: the signed view must answer THIS request — a full-config block
+        // refuses a narrowed view, a scoped one a view of another host set or
+        // device. After the signature, before anything is stored or applied.
+        ConfigViewBinding.check(verified.envelope.payload, ConfigViewBinding.expected(wantPinsFor, deviceId))
         return Fetched(verified.config, verified.envelope)
     }
 
@@ -554,7 +590,33 @@ internal class SSLCertificateUpdater(
             discardedStoredConfig = "the stored config was discarded because $reason"
             return null
         }
+        // M6: the stored view must still answer the request this block makes.
+        // It verified once for the request it was fetched for; when the
+        // block's wantPinsFor changed since (an app update), it is discarded
+        // and fetched again — a genuine config once accepted, so its issuedAt
+        // and versions stay as watermarks. Offline, that leaves no config:
+        // init fails with NoConfigAvailableException until a fetch succeeds.
+        try {
+            ConfigViewBinding.check(envelope.payload, storedViewExpected())
+        } catch (e: io.github.umutcansu.pinvault.model.ConfigViewMismatchException) {
+            Timber.w("Stored config v%d discarded — it was fetched for another request: %s", stored.version, e.message)
+            configStore.clearActive(keepAsWatermarks = true)
+            if (httpClientProvider.currentConfig != null) httpClientProvider.reset()
+            discardedStoredConfig = "the stored config was discarded because it was fetched for another host set or device"
+            return null
+        }
         return StoredConfig(verified.copy(version = verified.computedVersion()), envelope)
+    }
+
+    /**
+     * What a stored view may answer: this block's host set, with the device
+     * id a fetch sends or the form an attestation request names (they differ
+     * only for a device without a usable ANDROID_ID).
+     */
+    private fun storedViewExpected(): ConfigViewBinding.Expected? {
+        if (wantPinsFor.isEmpty()) return null
+        val raw = deviceIdProvider()
+        return ConfigViewBinding.expected(wantPinsFor, raw, io.github.umutcansu.pinvault.internal.AttestationManager.attestedDeviceId(raw))
     }
 
     private suspend fun fetchAndApply(): UpdateResult {
@@ -565,7 +627,7 @@ internal class SSLCertificateUpdater(
 
             syncKeySetEpoch()
             val fetched = fetch(currentVersion)
-            applyFetched(fetched, currentVersion)
+            applyFetched(fetched, currentVersion).also { if (it is UpdateResult.AlreadyCurrent) loadIfUnloaded() }
         } catch (e: kotlinx.coroutines.CancellationException) {
             throw e
         } catch (e: Exception) {
@@ -589,7 +651,11 @@ internal class SSLCertificateUpdater(
      * applied. Only for a signed block: an unsigned one has nothing to
      * verify the envelope with, and the config is ignored.
      */
-    suspend fun applySigned(signed: SignedConfigResponse): UpdateResult {
+    suspend fun applySigned(
+        signed: SignedConfigResponse,
+        /** The `deviceId` the attestation request named; the embedded view answers it (M6). */
+        requestDeviceId: String? = deviceIdProvider()
+    ): UpdateResult {
         val verifier = verifier
             ?: return UpdateResult.Failed("unsigned block: config inside an attestation response is ignored")
         return updateLock.withLock {
@@ -604,7 +670,11 @@ internal class SSLCertificateUpdater(
                 val verified = verifier.verifyFetched(signed) { detail ->
                     "The config inside the attestation answer failed signature verification.$detail"
                 }
+                // The attestation body sends `hosts` only for a block with
+                // wantPinsFor, and the server then scopes by its deviceId.
+                ConfigViewBinding.check(verified.envelope.payload, ConfigViewBinding.expected(wantPinsFor, requestDeviceId))
                 applyFetched(Fetched(verified.config, verified.envelope), currentVersion)
+                    .also { if (it is UpdateResult.AlreadyCurrent) loadIfUnloaded() }
             } catch (e: kotlinx.coroutines.CancellationException) {
                 throw e
             } catch (e: Exception) {
@@ -1021,8 +1091,9 @@ internal class SSLCertificateUpdater(
     ) {
         if (sslManager == null || certStore == null) return
 
+        // No early return when there are none: the host identities loaded
+        // for the config before this one have to go then (see the end).
         val mtlsHosts = remoteConfig.pins.filter { it.mtls && it.clientCertVersion != null }
-        if (mtlsHosts.isEmpty()) return
 
         val storedCertVersions = storedConfig?.pins
             ?.filter { it.mtls && it.clientCertVersion != null }
@@ -1086,7 +1157,11 @@ internal class SSLCertificateUpdater(
             }
         }
 
-        if (hostCerts.isNotEmpty() || hostKeys.isNotEmpty()) {
+        // What was loaded replaces what was there, an empty result included:
+        // a host whose mTLS was switched off (or whose certificate could not
+        // be loaded) must not keep presenting the certificate of the config
+        // before. Skipped only when there is nothing to load and nothing to drop.
+        if (hostCerts.isNotEmpty() || hostKeys.isNotEmpty() || sslManager.hasHostClientIdentities()) {
             sslManager.loadHostClientIdentities(hostKeys, hostCerts, clientKeyPassword)
             // Re-swap to pick up new KeyManagers
             httpClientProvider.currentConfig?.let { httpClientProvider.swap(it) }

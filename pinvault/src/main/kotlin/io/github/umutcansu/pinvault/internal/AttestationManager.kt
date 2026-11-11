@@ -66,7 +66,8 @@ internal class AttestationManager(
     private val currentIssuedAt: () -> Long,
     /** `deviceId` is non-null when the server takes v2 verdicts, bound to the device. */
     private val buildReport: suspend (nonce: String, deviceId: String?, key: ClientIdentityKeyProvider) -> String,
-    private val applyConfig: suspend (SignedConfigResponse) -> UpdateResult,
+    /** The second argument is the `deviceId` the attestation request named: the embedded view answers it (M6). */
+    private val applyConfig: suspend (SignedConfigResponse, String) -> UpdateResult,
     private val onConfigApplied: (UpdateResult) -> Unit = { },
     private val onEvent: (PinVaultConnectionEvent.Attestation) -> Unit = { },
     private val clock: () -> Long = System::currentTimeMillis,
@@ -342,7 +343,7 @@ internal class AttestationManager(
         }
         if (signed == null) return
         val result = try {
-            applyConfig(signed)
+            applyConfig(signed, resolvedDeviceId())
         } catch (e: kotlinx.coroutines.CancellationException) {
             throw e
         } catch (e: Exception) {
@@ -396,12 +397,7 @@ internal class AttestationManager(
         }
     }
 
-    private fun resolvedDeviceId(): String {
-        val id = deviceId()?.trim().orEmpty()
-        // The server's rule for the field; a device without an ANDROID_ID
-        // still attests, under a fixed name, as it enrolls.
-        return if (id.isNotEmpty() && DEVICE_ID.matches(id)) id else UNKNOWN_DEVICE_ID
-    }
+    private fun resolvedDeviceId(): String = attestedDeviceId(deviceId())
 
     private fun mayMakeFresh(now: Long): Boolean = lastFreshAt.let { it == null || now - it >= FRESH_MIN_GAP_MS }
 
@@ -581,6 +577,17 @@ internal class AttestationManager(
 
         private fun strings(array: JSONArray?): List<String> =
             array?.let { a -> (0 until a.length()).mapNotNull { i -> a.optString(i).ifBlank { null } } }.orEmpty()
+
+        /**
+         * The `deviceId` an attestation request names for [raw] (the device's
+         * ANDROID_ID): the server's rule for the field; a device without a
+         * usable one still attests, under a fixed name, as it enrolls. The
+         * updater accepts a stored view recorded for either form (M6).
+         */
+        internal fun attestedDeviceId(raw: String?): String {
+            val id = raw?.trim().orEmpty()
+            return if (id.isNotEmpty() && DEVICE_ID.matches(id)) id else UNKNOWN_DEVICE_ID
+        }
 
         /** The server's rule for `deviceId`. */
         private val DEVICE_ID = Regex("^[A-Za-z0-9._:-]{1,64}$")

@@ -41,6 +41,12 @@ internal class ClientCertRenewer(
     private val api: () -> CertificateConfigApi,
     /** Installs the stored credentials into the SSL manager and rebuilds the clients. */
     private val reload: () -> Unit,
+    /**
+     * The time renewal is decided by and issued certificates are checked
+     * against. Production passes the block's trusted clock
+     * (`ConfigApiClient.trustedClock`); the device clock is only the default
+     * for tests that do not care.
+     */
     private val clock: () -> Long = System::currentTimeMillis,
     /**
      * Told when the server refused the renewal as `reenroll_required` on the
@@ -131,7 +137,8 @@ internal class ClientCertRenewer(
             when (response) {
                 is ClientCertRenewalResponse.Issued -> {
                     val certs = acceptIssuedChain(
-                        response.certificateChainPem, key, currentIssuer, block.clientCaPins, block.maxClientCertLifetimeDays
+                        response.certificateChainPem, key, currentIssuer, block.clientCaPins, block.maxClientCertLifetimeDays,
+                        nowMs = clock()
                     )
                     certStore.saveChain(label, response.certificateChainPem)
                     reload()
@@ -311,7 +318,11 @@ internal class ClientCertRenewer(
                 )
             }
             val leaf = certs[0]
-            leaf.checkValidity()
+            // Against the time the caller passed, like the lifetime check
+            // below. The renewer and the enrollment paths pass the block's
+            // trusted clock where one exists; a caller that passes nothing
+            // gets the device date.
+            leaf.checkValidity(java.util.Date(nowMs))
             if (!leaf.publicKey.encoded.contentEquals(publicKey.encoded)) {
                 throw SecurityException("Issued certificate is not over this device's key")
             }

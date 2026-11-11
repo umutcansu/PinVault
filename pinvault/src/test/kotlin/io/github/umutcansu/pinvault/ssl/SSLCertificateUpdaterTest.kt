@@ -100,6 +100,104 @@ class SSLCertificateUpdaterTest {
     }
 
     @Test
+    fun `init without a client certificate takes a stored force-update config out of the clients again`() = runTest {
+        val stored = CertificateConfig(version = 7, pins = listOf(HostPin("api.test", listOf(pin1, pin2), version = 7)), forceUpdate = true)
+        every { configStore.load() } returns stored
+
+        val result = createUpdater().initializeAndUpdate(needsClientCertificate = true)
+
+        assertTrue((result as InitResult.Failed).exception is io.github.umutcansu.pinvault.model.ClientCertificateRequiredException)
+        assertNull("nothing may handshake with a config the app was told not to use", httpClientProvider.currentConfig)
+        assertEquals(0, httpClientProvider.getVersion())
+    }
+
+    @Test
+    fun `init that fails a forced update unloads the stored config, and the next update loads it again`() = runTest {
+        val stored = CertificateConfig(
+            version = 7, pins = listOf(HostPin("api.test", listOf(pin1, pin2), version = 7)), forceUpdate = true, issuedAt = 1_000L
+        )
+        every { configStore.load() } returns stored
+        every { configStore.getCurrentVersion() } returns 7
+        every { configStore.getCurrentIssuedAt() } returns 1_000L
+        coEvery { configApi.fetchConfig(7) } throws java.io.IOException("backend unreachable")
+        val updater = createUpdater()
+
+        val result = updater.initializeAndUpdate()
+
+        assertTrue((result as InitResult.Failed).exception is io.github.umutcansu.pinvault.model.ForceUpdateFailedException)
+        assertNull("loaded for the fetch, taken out again when it failed", httpClientProvider.currentConfig)
+        assertEquals(0, httpClientProvider.getVersion())
+
+        // The backend answers again with the very same config: nothing new to
+        // apply (AlreadyCurrent), but it is confirmed and has to be loaded.
+        coEvery { configApi.fetchConfig(7) } returns stored
+        assertTrue(updater.updateNow() is UpdateResult.AlreadyCurrent)
+        assertEquals(stored, httpClientProvider.currentConfig)
+        assertEquals(7, httpClientProvider.getVersion())
+    }
+
+    @Test
+    fun `after a failed forced update a config with the flag cleared is loaded too`() = runTest {
+        val stored = CertificateConfig(version = 7, pins = listOf(HostPin("api.test", listOf(pin1, pin2), version = 7)), forceUpdate = true)
+        every { configStore.load() } returns stored
+        every { configStore.getCurrentVersion() } returns 7
+        coEvery { configApi.fetchConfig(7) } throws java.io.IOException("backend unreachable")
+        val updater = createUpdater()
+        assertTrue(updater.initializeAndUpdate() is InitResult.Failed)
+        assertNull(httpClientProvider.currentConfig)
+
+        // Same pins, force switched off: written back in place — which, with
+        // nothing loaded, has to load it.
+        val relaxed = stored.copy(forceUpdate = false)
+        coEvery { configApi.fetchConfig(7) } returns relaxed
+        assertTrue(updater.updateNow() is UpdateResult.AlreadyCurrent)
+        assertEquals(relaxed, httpClientProvider.currentConfig)
+        assertEquals(7, httpClientProvider.getVersion())
+    }
+
+    @Test
+    fun `updateNow — a host whose mTLS was switched off loses its client certificate`() = runTest {
+        val hostCert = TestCertUtil.generateSelfSigned(cn = "client-for-api.test", password = password)
+        sslManager.loadHostClientCerts(mapOf("api.test" to hostCert.p12Bytes), password)
+        assertTrue(sslManager.hasHostClientIdentities())
+        val storedConfig = CertificateConfig(
+            version = 1, pins = listOf(HostPin("api.test", listOf(pin1, pin2), version = 1, mtls = true, clientCertVersion = 1))
+        )
+        val remoteConfig = CertificateConfig(
+            version = 2, pins = listOf(HostPin("api.test", listOf(pin1, pin2), version = 2))
+        )
+        every { configStore.getCurrentVersion() } returns 1
+        every { configStore.load() } returns storedConfig
+        coEvery { configApi.fetchConfig(1) } returns remoteConfig
+
+        assertTrue(createUpdater().updateNow() is UpdateResult.Updated)
+
+        assertFalse("the certificate of the config before must not stay loaded", sslManager.hasHostClientIdentities())
+        coVerify(exactly = 0) { configApi.downloadHostClientCert(any()) }
+    }
+
+    @Test
+    fun `updateNow — a host certificate that cannot be loaded does not leave the old one presented`() = runTest {
+        val old = TestCertUtil.generateSelfSigned(cn = "old-client", password = password)
+        sslManager.loadHostClientCerts(mapOf("api.test" to old.p12Bytes), password)
+        val storedConfig = CertificateConfig(
+            version = 1, pins = listOf(HostPin("api.test", listOf(pin1, pin2), version = 1, mtls = true, clientCertVersion = 1))
+        )
+        val remoteConfig = CertificateConfig(
+            version = 2, pins = listOf(HostPin("api.test", listOf(pin1, pin2), version = 2, mtls = true, clientCertVersion = 2))
+        )
+        every { configStore.getCurrentVersion() } returns 1
+        every { configStore.load() } returns storedConfig
+        coEvery { configApi.fetchConfig(1) } returns remoteConfig
+        coEvery { configApi.downloadHostClientCert("api.test") } throws RuntimeException("Network error")
+        every { certStore.load("host_api.test") } returns null
+
+        assertTrue(createUpdater().updateNow() is UpdateResult.Updated)
+
+        assertFalse(sslManager.hasHostClientIdentities())
+    }
+
+    @Test
     fun `updateNow — yeni config algılanır ve kaydedilir`() = runTest {
         val remoteConfig = CertificateConfig(
             version = 1,
