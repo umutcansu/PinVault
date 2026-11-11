@@ -41,6 +41,8 @@ fun Route.managementConfigRoutes(
         val configApiId = call.pathParameters["configApiId"] ?: "default-tls"
         val config = pinConfigStore.load(configApiId)
         val encoder = Json { encodeDefaults = true }
+        // What the dashboard sends back with its next full-config write (see BASE_STATE_HEADER).
+        call.response.header(STATE_HEADER, com.example.pinvault.server.service.PinDiff.stateHash(config))
         call.respondText(encoder.encodeToString(PinConfig.serializer(), config), ContentType.Application.Json)
     }
 

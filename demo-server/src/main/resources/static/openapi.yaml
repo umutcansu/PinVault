@@ -57,9 +57,10 @@ info:
       *who* did something, and what two-person approval needs.
     * When `API_KEY` is unset the server **refuses to start** unless
       `ALLOW_ANONYMOUS_ADMIN=true`, in which case the plugin short-circuits and
-      *no* endpoint is authenticated. The management listener then binds
-      `127.0.0.1` only (unless `MANAGEMENT_BIND` says otherwise) and every admin
-      request must be addressed to this machine (see *Browser protections*). The
+      *no* endpoint is authenticated. Every admin request must then be addressed
+      to this machine (see *Browser protections*). With or without keys the
+      management listener (plain HTTP) binds `127.0.0.1` only unless
+      `MANAGEMENT_BIND` says otherwise; remote admins use `MANAGEMENT_HTTPS_PORT`. The
       `security` blocks below describe the normal (`API_KEY` set) deployment.
     * The server also refuses to start while `KEYSTORE_PASSWORD`,
       `VAULT_AT_REST_PASSWORD` or `SIGNING_KEY_PASSWORD` (with a local signer)
@@ -627,12 +628,30 @@ paths:
         `expiresAt = now + CONFIG_TTL_SECONDS` (default 24 h). With `signed=false` the
         bare config object is returned and `issuedAt` / `expiresAt` stay `0`.
 
+        **Request binding (2.9.0).** A signed payload answering a scoped request
+        (`hosts` given, or `X-Device-Id` sent) carries `view`: the requested host set
+        in canonical form (split at `,`, trimmed, ASCII lower case, de-duplicated,
+        sorted) and the claimed device id. It records the request, not what was
+        granted: hosts that equal the whole scope still carry it. A full request gets
+        no `view`, so its payload is unchanged. The library (2.9.0+) refuses a
+        narrowed view for a full-config block and a view of another request for a
+        scoped one. Unsigned answers never carry it.
+
         **Signature cache.** With `CONFIG_SIGNATURE_CACHE=true` the same content is
         signed once and the identical envelope served until half its lifetime has
         passed — but only to clients that send `X-PinVault-Features: redelivery`
         (library 2.1+). Every other client still gets a fresh signature per request,
         since it would reject a repeated `issuedAt` as a replay. The latest
         signing-key set, if any, rides along in `signingKeys`.
+
+        **Narrowed-view budget (2.9.0).** Every distinct `hosts` set and device id is
+        its own signed content. With the cache on, a narrowed view that is not cached
+        is signed only within its requester's budget — the verified client id on an
+        mTLS listener (`CONFIG_VIEW_SIGN_DEVICE_RATE_LIMIT`, 30 per 10 minutes), else
+        the source address (`CONFIG_VIEW_SIGN_RATE_LIMIT`, 120); beyond it `429` with
+        `Retry-After`. Cached views and the full view are never limited. With an
+        external signer, narrowed views never take its last permit nor wait in its
+        queue (`503` instead).
 
         Registered on: **management + config-api**.
       security: []
@@ -644,7 +663,7 @@ paths:
           description: >
             Comma-separated hostnames the device wants pins for, e.g.
             `api.example.com,cdn.example.com`. Blank entries are dropped. The result
-            is the intersection with the device's ACL.
+            is the intersection with the device's ACL. At most 2000 names (`400 too_many_hosts`).
           schema: { type: string }
           example: api.example.com,cdn.example.com
         - name: signed
@@ -680,6 +699,25 @@ paths:
                 oneOf:
                   - $ref: '#/components/schemas/SignedConfig'
                   - $ref: '#/components/schemas/CertificateConfig'
+        '400':
+          description: >
+            `invalid_device_id` (`X-Device-Id` is not 1–64 characters of
+            `A-Z a-z 0-9 . _ : -`) or `too_many_hosts` (more than 2000 names in `hosts`).
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '429':
+          description: >
+            `rate_limited`: this requester's budget of narrowed views to sign is spent
+            for the window (see the description); `Retry-After` says when to ask again.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '503':
+          description: Signing is temporarily unavailable (the external signer is busy or failed).
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
         '403':
           description: >
             mTLS listener only: `reenroll_required` (the certificate's identity was
@@ -727,6 +765,7 @@ paths:
       parameters:
         - $ref: '#/components/parameters/ConfigApiIdQuery'
         - $ref: '#/components/parameters/LiveCheckOverrideQuery'
+        - $ref: '#/components/parameters/BaseStateHeader'
       requestBody:
         required: true
         content:
@@ -754,7 +793,9 @@ paths:
             The same hostname appears more than once in the request body, compared
             ignoring case as the library does (`ErrorList`) — or, on a Config API listener while
             `PIN_CHANGE_APPROVALS>=2`, pin changes are accepted only through the
-            management API (`Error`).
+            management API (`Error`) — or `{"error":"stale_config"}`: the scope
+            changed since the state named in `X-PinVault-Base-State`, or while this
+            write was being checked; nothing was written.
           content:
             application/json:
               schema:
@@ -1065,6 +1106,10 @@ paths:
       responses:
         '200':
           description: The stored configuration for this scope.
+          headers:
+            X-PinVault-State:
+              description: Fingerprint of the scope's pins, flags and trust roots; send it back as `X-PinVault-Base-State` with a full-config write.
+              schema: { type: string }
           content:
             application/json:
               schema: { $ref: '#/components/schemas/CertificateConfig' }
@@ -1091,6 +1136,7 @@ paths:
       parameters:
         - $ref: '#/components/parameters/ConfigApiIdPath'
         - $ref: '#/components/parameters/LiveCheckOverrideQuery'
+        - $ref: '#/components/parameters/BaseStateHeader'
       requestBody:
         required: true
         content:
@@ -1111,7 +1157,11 @@ paths:
             application/json:
               schema: { $ref: '#/components/schemas/ErrorList' }
         '409':
-          description: The same hostname appears more than once in the request body.
+          description: >
+            The same hostname appears more than once in the request body (names are
+            compared ignoring case) — or `{"error":"stale_config"}`: the scope changed
+            since the state named in `X-PinVault-Base-State`, or while this write was
+            being checked. Nothing was written; load the config again and repeat.
           content:
             application/json:
               schema: { $ref: '#/components/schemas/ErrorList' }
@@ -6681,6 +6731,18 @@ components:
         files.
       schema: { type: string }
 
+    BaseStateHeader:
+      name: X-PinVault-Base-State
+      in: header
+      required: false
+      description: >
+        The `X-PinVault-State` of the answer this full-config write was edited from
+        (`GET /api/v1/config/{configApiId}`, or a previous write). When sent and the
+        scope's pins, flags or trust roots have changed since, nothing is written and
+        the answer is `409` `{"error":"stale_config"}`: the write would replace another
+        admin's change with an old copy. Without the header the write is unconditional.
+      schema: { type: string }
+
     LiveCheckOverrideQuery:
       name: liveCheckOverride
       in: query
@@ -6739,7 +6801,8 @@ components:
         listener (no admin route is served there), `peer_not_allowed` when the
         connection is not from loopback or `ANONYMOUS_ADMIN_PEERS`. After
         `ADMIN_AUTH_FAILURE_LIMIT` (30) invalid keys in 10 minutes the source
-        address gets `429` (`Retry-After: 600`) on every admin route.
+        address gets `429` (`Retry-After: 600`) on every admin request without
+        a valid key; a valid key always passes.
       content:
         application/json:
           schema: { $ref: '#/components/schemas/Error' }
@@ -6951,6 +7014,26 @@ components:
             id or none, so an envelope of one Config API cannot be replayed on another
             that shares the signing key. Absent from unsigned responses.
           example: default-tls
+        view:
+          type: object
+          description: >
+            Signed payloads only (2.9.0): the request a NARROWED view answers. Present
+            exactly when the request named hosts (`?hosts=`, or `hosts` in an
+            attestation body) or claimed a device id (`X-Device-Id`; the attested
+            `deviceId` when `hosts` came with it); absent for the full config. `hosts`
+            is the requested set in canonical form (absent when no host list was
+            requested), `deviceId` the claimed id (absent when none was claimed). The
+            library refuses a payload whose `view` does not match its own request
+            (`ConfigViewMismatchException`). Custom backends that sign narrowed views
+            must write it (SERVER_IMPLEMENTATION_GUIDE.md §3).
+          properties:
+            hosts:
+              type: array
+              items: { type: string }
+              example: [api.example.com, cdn.example.com]
+            deviceId:
+              type: string
+              example: a1b2c3d4e5f60718
 
     SignedConfig:
       type: object

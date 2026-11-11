@@ -70,19 +70,68 @@ fun main() {
     // environment leaves empty. If they stop the server from starting, they
     // are set aside with the reason and the process exits: the next start
     // (Docker restarts it) runs without them and the dashboard shows why.
+    //
+    // Whether they do is decided here, before anything is opened or listened
+    // on, by reading them with the start-up's own parsers (SavedSettingsCheck)
+    // — not by what fails later. Any failure with saved settings present used
+    // to set them aside, so a port in use, a busy database or a missing file
+    // also took PIN_CHANGE_APPROVALS=2 and the live check with it.
     val settings = com.example.pinvault.server.service.ServerSettingsStore.forDbPath(System.getenv("DB_PATH") ?: "pinvault.db")
-    com.example.pinvault.server.service.ServerEnv.overlay = settings.values()
-    try {
-        startServer()
-    } catch (e: Throwable) {
-        if (com.example.pinvault.server.service.ServerEnv.overlay.isEmpty()) throw e
-        val reason = e.message ?: e.javaClass.simpleName
+    val saved = settings.read().values
+    // A saved value the catalog no longer accepts (a hand-edited file, a range
+    // changed by an upgrade) is left out on its own, with a warning: the other
+    // saved settings stay in force.
+    com.example.pinvault.server.service.SavedSettingsCheck.dropped(saved).forEach {
+        System.err.println("WARNING: server-settings.json — $it")
+    }
+    val problems = com.example.pinvault.server.service.SavedSettingsCheck.problems(saved)
+    if (problems.isNotEmpty()) {
+        val reason = problems.joinToString("; ")
         System.err.println("Settings saved from the dashboard stopped the server from starting: $reason")
         System.err.println("They are set aside (server-settings.json, \"rejected\"); the next start runs without them.")
         settings.reject(reason)
         kotlin.system.exitProcess(1)
     }
+    com.example.pinvault.server.service.ServerEnv.overlay = settings.values()
+    // The management listener is bound: this start came up, whatever failed before it.
+    managementListening = { settings.startSucceeded() }
+    try {
+        startServer()
+    } catch (e: Throwable) {
+        e.printStackTrace()
+        val reason = e.message ?: e.javaClass.simpleName
+        System.err.println("The server did not start: $reason")
+        if (com.example.pinvault.server.service.ServerEnv.overlay.isNotEmpty()) {
+            // The saved settings passed every check made above, so this failure
+            // is most likely not theirs (a port in use, a busy database): they
+            // are kept. But not every start-up rule is modelled there, and a
+            // saved value that stops every start would keep the server down
+            // with no dashboard to undo it: after MAX_FAILED_STARTS failures
+            // in a row they are set aside, as any failure used to do at once.
+            val limit = com.example.pinvault.server.service.ServerSettingsStore.MAX_FAILED_STARTS
+            val failed = settings.startFailed(reason)
+            if (failed.setAside) {
+                System.err.println("Failed start ${failed.attempt} of $limit in a row with settings saved from the dashboard in force: " +
+                    "they are set aside (server-settings.json, \"rejected\"); the next start runs without them.")
+            } else {
+                System.err.println("Failed start ${failed.attempt} of $limit in a row with settings saved from the dashboard in force. " +
+                    "They passed their checks and are kept (server-settings.json); after $limit failed starts in a row they are set aside.")
+            }
+        }
+        kotlin.system.exitProcess(1)
+    }
 }
+
+/** Called once the management listener is bound (the server is up); [main] resets the failed-start count there. */
+@Volatile
+internal var managementListening: () -> Unit = {}
+
+/**
+ * Where the management listener (plain HTTP) binds: `MANAGEMENT_BIND`, or this
+ * machine only. The default is the same with and without admin keys.
+ */
+internal fun managementBindAddress(configured: String?): String =
+    configured?.trim()?.takeIf { it.isNotEmpty() } ?: "127.0.0.1"
 
 private fun startServer() {
     // Before anything is read, written or listened on: no start without admin
@@ -115,7 +164,12 @@ private fun startServer() {
     val signingKeySetService = com.example.pinvault.server.service.SigningKeySetService.fromEnv(
         com.example.pinvault.server.store.SigningKeySetStore(db), signingService
     )
-    val signedConfigService = com.example.pinvault.server.service.SignedConfigService(signingService, signingKeySetService)
+    // Narrowed signed views (`?hosts=`, X-Device-Id) a source address (CONFIG_VIEW_SIGN_RATE_LIMIT, 120)
+    // or an mTLS client id (CONFIG_VIEW_SIGN_DEVICE_RATE_LIMIT, 30) may have signed per 10 minutes
+    // (cache misses only; 0 = no limit). Each made-up value used to be a signing.
+    val viewSignLimits = com.example.pinvault.server.service.ViewSignLimits.fromEnv()
+    val signedConfigService = com.example.pinvault.server.service.SignedConfigService(signingService, signingKeySetService,
+        viewLimits = viewSignLimits)
     if (signedConfigService.cacheForced) {
         println("CONFIG_SIGNATURE_CACHE turned on: an external signer is configured (${signingService.signers.joinToString { it.type }}); " +
             "every client is served the cached envelope, one signing per distinct content")
@@ -131,19 +185,23 @@ private fun startServer() {
     )
     val liveGate = com.example.pinvault.server.service.LiveCertificateGate.fromEnv()
     val approvalsRequired = com.example.pinvault.server.service.ApprovalService.requiredFromEnv()
-    if (approvalsRequired > 1) {
-        val personal = adminRegistry.names.count { it != com.example.pinvault.server.plugin.AdminRegistry.LEGACY_NAME }
-        check(!adminRegistry.isEmpty) {
-            "PIN_CHANGE_APPROVALS=$approvalsRequired cannot work without admin keys (anonymous admin mode)."
-        }
-        check(personal >= approvalsRequired - 1) {
-            "PIN_CHANGE_APPROVALS=$approvalsRequired needs at least ${approvalsRequired - 1} personal admin key(s) in " +
-                "ADMIN_KEYS to approve changes (found $personal). A shared API_KEY cannot approve."
-        }
-    }
+    // The same rule a settings save is held to (ServerSettingsCatalog.startProblems).
+    com.example.pinvault.server.service.ApprovalService.adminKeysProblem(approvalsRequired, adminRegistry)?.let { error(it) }
 
     // Pin writes: pre-sign the new config (signature cache) and record the
     // diff. Every pin-writing route funnels through PinConfigStore.save.
+    // A scope written before host names were compared ignoring case may hold
+    // one host twice; the save that merges them says which spellings.
+    pinConfigStore.onCaseMerged = { scope, spellings ->
+        auditLog.record(
+            "host_names_merged",
+            "$scope: ${spellings.joinToString(" and ")} were one host under ${spellings.size} spellings (devices ignore case); kept as ${spellings.first()}",
+            configApiId = scope, target = spellings.first(),
+            detail = kotlinx.serialization.json.buildJsonObject {
+                put("spellings", kotlinx.serialization.json.JsonArray(spellings.map { kotlinx.serialization.json.JsonPrimitive(it) }))
+            }
+        )
+    }
     pinConfigStore.onSaved = { scope, before, after ->
         // After the commit: drop every cached signature FIRST, then pre-sign.
         // A device request that loaded the old pins can then no longer cache
@@ -671,6 +729,7 @@ private fun startServer() {
         // The cards of a settings save and of an attestation policy / device change read what the handlers read.
         settingsSaved = { com.example.pinvault.server.service.ServerSettingsStore.forDbPath(dbPath).values() },
         attestation = attestationService, attestedDevices = attestedDeviceStore,
+        hostAcl = deviceHostAclStore,
         // Which running API a start on a port would stop.
         portHolder = { port -> configApiManager.getAll().firstOrNull { it.port == port }?.id },
         // The upload handler's own refusal, made when the upload is requested.
@@ -906,7 +965,9 @@ private fun startServer() {
             // API as every other admin route here (admin key; off with CONFIG_API_ADMIN_ROUTES=off).
             if (attestationEnabled) {
                 attestationRoutes(configApiId, attestationService, pinConfigStore, signedConfigService,
-                    deviceHostAclStore = deviceHostAclStore, limits = attestationLimits)
+                    deviceHostAclStore = deviceHostAclStore, limits = attestationLimits,
+                    // The body's deviceId is held to the rule DeviceIdBinding holds X-Device-Id to.
+                    isBound = { certClientId, deviceId -> com.example.pinvault.server.route.certificateBoundTo(certClientId, deviceId, clientCertStore) })
             }
             attestationAdminRoutes(attestationService, attestationPolicyStore, attestedDeviceStore, attestationTokenSecretStore, auditLog)
             get("/health") {
@@ -1005,12 +1066,9 @@ private fun startServer() {
     for (mock in mocksToStart) {
         if (!mockServerManager.isRunning(mock.hostname)) {
             try {
-                // An mTLS mock comes back as one, or not at all: never as a TLS mock that lets anyone in.
-                val trustPath = if (mock.mtls) {
-                    certService.getTrustStoreFile()?.absolutePath?.takeIf { File(it).exists() }
-                        ?: throw IllegalStateException("mTLS mock needs the client truststore, which is missing")
-                } else null
-                mockServerManager.start(mock.hostname, mock.port, mock.keystorePath, trustPath)
+                // An mTLS mock comes back as one, or not at all: never as a TLS mock that lets
+                // anyone in (startInMode — the same call a certificate change restarts mocks with).
+                mockServerManager.startInMode(mock.hostname, mock.port, mock.keystorePath, mock.mtls, certService)
                 println("Auto-started mock server: ${mock.hostname} on port ${mock.port} (${if (mock.mtls) "mTLS" else "TLS"})")
             } catch (e: Exception) {
                 println("Failed to auto-start mock ${mock.hostname}: ${e.message}")
@@ -1025,13 +1083,19 @@ private fun startServer() {
     // anything crossing the network in the clear. The sample host then
     // publishes the plain HTTP port on this machine only.
     val managementHttpsPort = com.example.pinvault.server.service.ServerEnv.get("MANAGEMENT_HTTPS_PORT")?.toIntOrNull()?.takeIf { it > 0 }
-    // Without admin keys the network is the only thing between a stranger and
-    // the admin API: listen on this machine only, unless MANAGEMENT_BIND says
-    // where else (a container needs 0.0.0.0 and a host-side publish on
-    // 127.0.0.1). With keys the default stays every interface.
+    // This listener is plain HTTP: listen on this machine only, unless
+    // MANAGEMENT_BIND says where else (a container needs 0.0.0.0 and a
+    // host-side publish on 127.0.0.1). Without admin keys the network is the
+    // only thing between a stranger and the admin API; with keys the default
+    // used to be every interface, and an X-API-Key read off the wire is an
+    // admin for good (CleartextGuard covers the device endpoints only).
     val anonymousAdmin = adminRegistry.isEmpty
-    val managementBind = com.example.pinvault.server.service.ServerEnv.get("MANAGEMENT_BIND")?.trim()?.takeIf { it.isNotEmpty() }
-        ?: if (anonymousAdmin) "127.0.0.1" else "0.0.0.0"
+    val managementBind = managementBindAddress(com.example.pinvault.server.service.ServerEnv.get("MANAGEMENT_BIND"))
+    if (com.example.pinvault.server.service.ServerEnv.get("MANAGEMENT_BIND").isNullOrBlank()) {
+        println("Management API (plain HTTP) listens on 127.0.0.1:$httpPort only. For admins on other machines set " +
+            "MANAGEMENT_HTTPS_PORT (TLS with the server certificate), or MANAGEMENT_BIND=0.0.0.0 behind something that " +
+            "terminates TLS (a reverse proxy, a container published on 127.0.0.1).")
+    }
     val bindsEverywhere = runCatching { java.net.InetAddress.getByName(managementBind).isAnyLocalAddress }.getOrDefault(false)
     val bindsLoopback = runCatching { java.net.InetAddress.getByName(managementBind).isLoopbackAddress }.getOrDefault(false)
     if (anonymousAdmin && !bindsLoopback) {
@@ -1525,6 +1589,8 @@ private fun startServer() {
             println("Server TLS Pins: ${serverCertResult.sha256Pins}")
         }
         println("=".repeat(60))
+        // Raised by the engine after its connectors are bound.
+        it.monitor.subscribe(io.ktor.server.application.ServerReady) { managementListening() }
     }.start(wait = true)
 }
 

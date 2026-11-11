@@ -434,7 +434,10 @@ class VaultRoutesAccessPolicyTest {
     fun `token_mtls accepts a cert whose client id equals the device id`() = testApplication {
         // Auto-enrollment shape: the device enrolls with its own ANDROID_ID,
         // so the issued CN is "PinVault Client: <ANDROID_ID>".
-        configureAppWithClientCert(cn = "PinVault Client: dev-a")
+        // The identity is on record under the device id, as open-mode enrollment writes it.
+        val certStore = com.example.pinvault.server.store.ClientCertStore(db)
+        certStore.add("dev-a", "PinVault Client: dev-a", "fp", "2026-01-01T00:00:00Z", deviceUid = "dev-a")
+        configureAppWithClientCert(cn = "PinVault Client: dev-a", clientCertStore = certStore)
         client.uploadWithPolicy("mtls-ok", "top-secret", "token_mtls")
         val gen = tokenService.generate(testApi, "mtls-ok", "dev-a")
 

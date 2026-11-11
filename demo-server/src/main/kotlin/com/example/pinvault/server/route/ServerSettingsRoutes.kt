@@ -47,6 +47,8 @@ fun Route.serverSettingsRoutes(
     store: ServerSettingsStore,
     audit: AuditLog?,
     restartSupervised: Boolean,
+    /** The environment a save is checked against (would the next start come up?); the process's own outside tests. */
+    env: () -> Map<String, String> = System::getenv,
     exit: () -> Unit = { kotlin.system.exitProcess(0) }
 ) {
     get("/api/v1/server-settings") {
@@ -58,7 +60,7 @@ fun Route.serverSettingsRoutes(
         val values = body?.get("values") as? JsonObject
             ?: return@put call.respondError(HttpStatusCode.BadRequest, "invalid_body", listOf("Expected {\"values\": {...}}"))
         // The same plan the approval card showed (ServerSettingsChange).
-        val change = com.example.pinvault.server.service.ServerSettingsChange.plan(store.values(), values)
+        val change = com.example.pinvault.server.service.ServerSettingsChange.plan(store.values(), values, env())
         if (change.errors.isNotEmpty()) return@put call.respondError(HttpStatusCode.BadRequest, "invalid_settings", change.errors)
         if (change.startProblems.isNotEmpty()) return@put call.respondError(HttpStatusCode.BadRequest, "would_not_start", change.startProblems)
         val changed = change.changed

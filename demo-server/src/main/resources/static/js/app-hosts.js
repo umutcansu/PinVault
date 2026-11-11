@@ -40,10 +40,12 @@ async function loadConfig() {
     const res = await apiFetch(`/api/v1/config/${encodeURIComponent(scopeId())}`);
     if (!res.ok) throw new Error('config: HTTP ' + res.status);
     currentConfig = await res.json();
+    currentConfigState = res.headers.get('X-PinVault-State');
     console.log('Config loaded:', currentConfig, 'scope:', scopeId(), 'APIs:', allApiConfigs);
   } catch (e) {
     console.error('Config load failed', e);
     currentConfig = { version: 0, pins: [], forceUpdate: false };
+    currentConfigState = null;
     allApiConfigs = [];
   }
 }
@@ -725,6 +727,7 @@ async function loadHostDetail(hostname, apiId) {
     if (reqId !== _hostDetailReq) return;
     if (selectedHost !== hostname || selectedApiId !== apiId) return;
     currentConfig = cfg;
+    currentConfigState = res.headers.get('X-PinVault-State');
     const host = getHosts().find(h => h.hostname === hostname);
     if (host) renderHostDetail(host);
   } catch (e) {
@@ -1689,7 +1692,8 @@ async function saveFullConfig(pins, extraFields) {
   });
   try {
     const res = await apiFetch(`/api/v1/certificate-config?configApiId=${encodeURIComponent(scopeId())}`, {
-      method: 'PUT', headers: { 'Content-Type': 'application/json' },
+      // The state this tab's copy was loaded in: the server saves only over that.
+      method: 'PUT', headers: { 'Content-Type': 'application/json', ...(currentConfigState ? { 'X-PinVault-Base-State': currentConfigState } : {}) },
       // `trustRoots` (managed trust roots, ATTESTATION.md §10) ride along the
       // same PUT, so a pin edit must carry the current list or it would be
       // wiped. The trust-roots card passes its own list through `extraFields`.
@@ -1698,6 +1702,22 @@ async function saveFullConfig(pins, extraFields) {
         trustRoots: currentConfig?.trustRoots || [], ...(extraFields || {})
       })
     });
+    if (res.status === 409) {
+      // Someone else changed the scope since this tab loaded it: nothing was
+      // saved. Show what is there now; the admin repeats the change on top of it.
+      const stale = await res.clone().json().catch(() => ({}));
+      if (stale.error === 'stale_config') {
+        toast(t('configChangedElsewhere'), 'error');
+        await loadConfig();
+        // The host list and the open host page, from what is stored now.
+        if (document.getElementById('host-list')) {
+          renderHostList();
+          const host = selectedHost && getHosts().find(h => h.hostname === selectedHost);
+          if (host) renderHostDetail(host);
+        }
+        return false;
+      }
+    }
     if (!res.ok) {
       // apiFetch already listed the hosts the live check failed on.
       if (!res.liveCheckHandled) {
@@ -1769,12 +1789,25 @@ async function saveTrustRoots(apiId) {
     const cur = await apiFetch(`/api/v1/config/${encodeURIComponent(apiId)}`);
     if (!cur.ok) { toast(t('error'), 'error'); return; }
     const config = await cur.json();
+    // The state of the copy this save is built from: a pin write that lands
+    // between this read and the PUT below is not written over (409 stale_config).
+    const state = cur.headers.get('X-PinVault-State');
     const before = config.trustRoots || [];
     if (before.length === roots.length && before.every((r, i) => r === roots[i])) { toast(t('trustRootsUnchanged'), 'info'); return; }
     const res = await apiFetch(`/api/v1/certificate-config?configApiId=${encodeURIComponent(apiId)}`, {
-      method: 'PUT', headers: { 'Content-Type': 'application/json' },
+      method: 'PUT', headers: { 'Content-Type': 'application/json', ...(state ? { 'X-PinVault-Base-State': state } : {}) },
       body: JSON.stringify({ ...config, version: 0, trustRoots: roots })
     });
+    if (res.status === 409) {
+      const stale = await res.clone().json().catch(() => ({}));
+      if (stale.error === 'stale_config') {
+        // Nothing was saved: show what is stored now (the typed list is replaced by it).
+        toast(t('configChangedElsewhere'), 'error');
+        await loadConfig();
+        renderConfigApiDetail(apiId);
+        return;
+      }
+    }
     if (!res.ok) {
       if (!res.liveCheckHandled) {
         const err = await res.json().catch(() => ({}));

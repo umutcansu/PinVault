@@ -104,9 +104,45 @@ class DeviceIdBindingTest {
 
     @Test
     fun `under auto-enrollment the client id is the device id`() = testApplication {
+        // Open mode records the identity under the device id.
+        certs.add("3f2a9c0d81b4e6a7", "PinVault Client: 3f2a9c0d81b4e6a7", "fp", now, deviceUid = "3f2a9c0d81b4e6a7")
         listener(clientCert("3f2a9c0d81b4e6a7"))
         assertEquals("pins", config("3f2a9c0d81b4e6a7").bodyAsText())
         assertEquals(HttpStatusCode.Forbidden, config("9b1e44c07d2a5f10").status)
+    }
+
+    @Test
+    fun `a certificate whose CN spells a device id is not that device without a record under the id`() = testApplication {
+        // F-8: any trusted certificate (an uploaded one, a leaf signed by a
+        // per-certificate anchor) with the victim's id in its CN used to pass
+        // as "client id == device id" with nothing on record.
+        listener(clientCert("3f2a9c0d81b4e6a7"))
+        assertEquals(HttpStatusCode.Forbidden, config("3f2a9c0d81b4e6a7").status)
+        assertFalse(certificateBoundTo("3f2a9c0d81b4e6a7", "3f2a9c0d81b4e6a7", certs))
+        assertFalse(com.example.pinvault.server.route.certificateProvenFor("3f2a9c0d81b4e6a7", "3f2a9c0d81b4e6a7", certs))
+        // ...and a revoked record is no record.
+        certs.add("3f2a9c0d81b4e6a7", "PinVault Client: 3f2a9c0d81b4e6a7", "fp", now)
+        assertTrue(certificateBoundTo("3f2a9c0d81b4e6a7", "3f2a9c0d81b4e6a7", certs))
+        assertTrue(com.example.pinvault.server.route.certificateProvenFor("3f2a9c0d81b4e6a7", "3f2a9c0d81b4e6a7", certs))
+        certs.revoke("3f2a9c0d81b4e6a7")
+        assertFalse(certificateBoundTo("3f2a9c0d81b4e6a7", "3f2a9c0d81b4e6a7", certs))
+        assertFalse(com.example.pinvault.server.route.certificateProvenFor("3f2a9c0d81b4e6a7", "3f2a9c0d81b4e6a7", certs))
+    }
+
+    @Test
+    fun `an uploaded certificate under a device's id is bound to it but proves nothing about the device`() {
+        // An administrator's upload (the row the upload handler writes): nobody showed
+        // that key is the phone. It may repeat the id in X-Device-Id; it opens none of
+        // the device's keys or files.
+        certs.addUnlessRevoked("3f2a9c0d81b4e6a7", com.example.pinvault.server.store.ClientCertRecord.UPLOADED_NAME_PREFIX + "3f2a9c0d81b4e6a7", "fp-up", now)
+        assertTrue(certs.get("3f2a9c0d81b4e6a7")!!.uploaded)
+        assertTrue(certificateBoundTo("3f2a9c0d81b4e6a7", "3f2a9c0d81b4e6a7", certs))
+        assertFalse(com.example.pinvault.server.route.certificateProvenFor("3f2a9c0d81b4e6a7", "3f2a9c0d81b4e6a7", certs))
+
+        // An identity the device enrolled under its own id (open mode) is proven, as before.
+        certs.add("9b1e44c07d2a5f10", "PinVault Client: 9b1e44c07d2a5f10", "fp-open", now, deviceUid = "9b1e44c07d2a5f10")
+        assertFalse(certs.get("9b1e44c07d2a5f10")!!.uploaded)
+        assertTrue(com.example.pinvault.server.route.certificateProvenFor("9b1e44c07d2a5f10", "9b1e44c07d2a5f10", certs))
     }
 
     @Test

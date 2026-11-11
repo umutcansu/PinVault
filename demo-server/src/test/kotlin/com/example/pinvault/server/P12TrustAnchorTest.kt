@@ -157,12 +157,19 @@ class P12TrustAnchorTest {
         val forgedP12 = TestPki.build("CN=PinVault Client: kiosk-2", other.public, anchorName("attacker"), anchorKey.private, basicConstraints = false)
         assertFalse(presentedLeafOnRecord("kiosk-2", forgedP12, clientCertStore, identityStore))
 
-        // An uploaded certificate is on record under its row id, whatever its subject.
+        // An uploaded certificate is on record under the id its CN carries — and only
+        // there (F-8): recorded under another id it used to pass as whatever its CN said.
         val partnerKey = ecKey()
         val partner = TestPki.build("CN=partner-gateway", partnerKey.public, "CN=partner-gateway", partnerKey.private,
             eku = listOf("1.3.6.1.5.5.7.3.2"))
         clientCertStore.add("partner", "Uploaded: partner", certService.importClientCertificate("partner", TestPki.pem(partner)), now)
+        assertFalse(presentedLeafOnRecord("partner-gateway", partner, clientCertStore, identityStore))
+        clientCertStore.add("partner-gateway", "Uploaded: partner-gateway", certService.importClientCertificate("partner-gateway", TestPki.pem(partner)), now)
         assertTrue(presentedLeafOnRecord("partner-gateway", partner, clientCertStore, identityStore))
+        // A revoked row vouches for nothing by fingerprint.
+        assertEquals("partner", clientCertStore.idByFingerprint(clientCertStore.get("partner")!!.fingerprint))
+        clientCertStore.revoke("partner"); clientCertStore.revoke("partner-gateway")
+        assertNull(clientCertStore.idByFingerprint(clientCertStore.get("partner")!!.fingerprint))
         // An id nobody holds, signed by an anchor: nothing on record.
         val nobody = TestPki.build("CN=PinVault Client: nobody", other.public, anchorName("attacker"), anchorKey.private, basicConstraints = false)
         assertFalse(presentedLeafOnRecord("nobody", nobody, clientCertStore, identityStore))

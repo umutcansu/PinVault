@@ -2,6 +2,10 @@
 // Classic scripts sharing one global scope, loaded in order by index.html.
 
 let currentConfig = null;
+// `X-PinVault-State` of the answer `currentConfig` was loaded from: sent back with a
+// full-config save, so the server refuses it (409 stale_config) when another admin
+// changed the scope in the meantime instead of writing this tab's copy over theirs.
+let currentConfigState = null;
 let allApiConfigs = []; // [{id, port, mode, hosts, version}]
 let selectedHost = null;
 let selectedApiId = null;

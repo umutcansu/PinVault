@@ -89,6 +89,9 @@ services:
       - DEVICE_REFUSAL_RATE_LIMIT=${DEVICE_REFUSAL_RATE_LIMIT:-}
       - REPORT_RATE_LIMIT=${REPORT_RATE_LIMIT:-}
       - REPORT_DEVICE_RATE_LIMIT=${REPORT_DEVICE_RATE_LIMIT:-}
+      # Narrowed signed config views (?hosts=, X-Device-Id) signed per 10 minutes, per address (120) / per mTLS client id (30).
+      - CONFIG_VIEW_SIGN_RATE_LIMIT=${CONFIG_VIEW_SIGN_RATE_LIMIT:-}
+      - CONFIG_VIEW_SIGN_DEVICE_RATE_LIMIT=${CONFIG_VIEW_SIGN_DEVICE_RATE_LIMIT:-}
       - VAULT_MAX_FILE_BYTES=${VAULT_MAX_FILE_BYTES:-}
       # Vault downloads served at once, per address (4) and in total (16); each holds the whole file in memory.
       - VAULT_DOWNLOAD_CONCURRENCY=${VAULT_DOWNLOAD_CONCURRENCY:-}

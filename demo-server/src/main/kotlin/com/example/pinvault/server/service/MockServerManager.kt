@@ -112,6 +112,42 @@ class MockServerManager {
         return port
     }
 
+    /**
+     * Starts the mock of [hostname] in the mode it is recorded or running in.
+     * An mTLS mock comes back as one — with the client truststore, and the
+     * revocation check [start] installs — or not at all: never as a TLS mock
+     * that lets anyone in. Throws when [mtls] and the truststore is missing.
+     * The one way a mock is brought back (server start, a new certificate).
+     */
+    fun startInMode(hostname: String, port: Int, keystorePath: String, mtls: Boolean, certService: CertificateService): Int {
+        val trustPath = if (mtls) {
+            certService.getTrustStoreFile().takeIf { it.exists() }?.absolutePath
+                ?: throw IllegalStateException("mTLS mock needs the client truststore, which is missing")
+        } else null
+        return start(hostname, port, keystorePath, trustPath)
+    }
+
+    /**
+     * The host got a new certificate ([keystorePath]): every mock of it that
+     * runs is restarted with it, each in its own mode on its own port. The
+     * restart used to be one `start(hostname, port, keystore)` with the port
+     * of whichever mock answered first: a host whose only mock was mTLS came
+     * back on that port as plain TLS — no client certificate, no revocation
+     * check — and with both running the TLS mock was left on the old
+     * certificate. An mTLS mock that cannot come back as one is stopped.
+     */
+    fun restartWithKeystore(hostname: String, keystorePath: String, certService: CertificateService) {
+        getTlsPort(hostname)?.let { port -> startInMode(hostname, port, keystorePath, mtls = false, certService) }
+        getMtlsPort(hostname)?.let { port ->
+            try {
+                startInMode(hostname, port, keystorePath, mtls = true, certService)
+            } catch (e: Exception) {
+                stop(serverKey(hostname, mtls = true))
+                println("mTLS mock of $hostname stopped, not restarted: ${e.message}")
+            }
+        }
+    }
+
     fun stop(key: String) {
         servers.remove(key)?.let { server ->
             server.stop(1500, 3000, TimeUnit.MILLISECONDS)

@@ -185,4 +185,33 @@ class AdminVaultRoutesTest {
         }
         assertEquals(HttpStatusCode.BadRequest, res.status)
     }
+
+    @Test
+    fun `a host ACL takes only host names, on the device list and the default list`() = testApplication {
+        // F-7: the array used to be stored as sent — any string, a number dropped
+        // without a word — while the approval card showed a cut list of it.
+        configureApp()
+        val store = DeviceHostAclStore(db)
+        for (path in listOf("/api/v1/config-apis/$testApi/devices/dev-a/host-acl", "/api/v1/config-apis/$testApi/default-host-acl")) {
+            for (bad in listOf(
+                """{"hostnames":["a.example.com","not a host"]}""",
+                """{"hostnames":["a.example.com","<script>alert(1)</script>"]}""",
+                """{"hostnames":["*.com"]}""",
+                """{"hostnames":["a.example.com", 7]}""",
+                """{"hostnames":["a.example.com", null]}""",
+                """{"hostnames":["${"a".repeat(300)}.example.com"]}""",
+                """{"hostnames":"a.example.com"}"""
+            )) {
+                val res = client.put(path) { contentType(ContentType.Application.Json); setBody(bad) }
+                assertEquals(HttpStatusCode.BadRequest, res.status, "$path $bad → ${res.bodyAsText()}")
+            }
+            // Nothing of a refused list was stored — not even its valid names.
+            val stored = if (path.endsWith("/default-host-acl")) store.listDefault(testApi) else store.listForDevice(testApi, "dev-a")
+            assertTrue(stored.isEmpty(), "$path: $stored")
+            val ok = client.put(path) { contentType(ContentType.Application.Json); setBody("""{"hostnames":["a.example.com","*.b.example.com","c.example.com:8443"]}""") }
+            assertEquals(HttpStatusCode.OK, ok.status, ok.bodyAsText())
+        }
+        assertEquals(setOf("a.example.com", "*.b.example.com", "c.example.com:8443"), store.listForDevice(testApi, "dev-a").toSet())
+        assertEquals(setOf("a.example.com", "*.b.example.com", "c.example.com:8443"), store.listDefault(testApi).toSet())
+    }
 }

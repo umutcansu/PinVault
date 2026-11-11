@@ -216,9 +216,15 @@ class AdminSurfaceHardeningTest {
         val cert = TestPki.build("CN=legacy", key.public, "CN=legacy", key.private, eku = listOf("1.3.6.1.5.5.7.3.2"))
         certService.importClientCertificate("legacy-anchor", TestPki.pem(cert))
         assertEquals(HttpStatusCode.Conflict, upload("Legacy-Anchor").status)
-        // A fresh id is uploaded.
-        val fresh = TestPki.build("CN=fresh", key.public, "CN=fresh", key.private, eku = listOf("1.3.6.1.5.5.7.3.2"))
+        // A fresh id is uploaded — under the id its CN carries, and no other (F-8).
+        val fresh = TestPki.build("CN=PinVault Client: fresh-1", key.public, "CN=PinVault Client: fresh-1", key.private, eku = listOf("1.3.6.1.5.5.7.3.2"))
+        val other = upload("fresh-2", TestPki.pem(fresh))
+        assertEquals(HttpStatusCode.BadRequest, other.status)
+        assertContains(other.bodyAsText(), "subject_mismatch")
+        assertContains(other.bodyAsText(), "fresh-1")
+        assertNull(clientCerts.get("fresh-2"))
         assertEquals(HttpStatusCode.OK, upload("fresh-1", TestPki.pem(fresh)).status)
+        assertNotNull(clientCerts.get("fresh-1"))
     }
 
     // ── A5: letting a device in is the second person's act ────────────────

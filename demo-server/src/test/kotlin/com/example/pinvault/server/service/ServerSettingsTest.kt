@@ -106,9 +106,28 @@ class ServerSettingsTest {
     }
 
     @Test
+    fun `approvals cannot be saved on a server that has nobody to approve`() = testApplication {
+        // Only a shared API_KEY: the next start would refuse PIN_CHANGE_APPROVALS=2, on every restart.
+        val store = ServerSettingsStore(file)
+        routing {
+            serverSettingsRoutes(store, null, restartSupervised = false,
+                env = { System.getenv() + mapOf("API_KEY" to "shared-key-0123456789", "ADMIN_KEYS" to "") })
+        }
+        val refused = client.put("/api/v1/server-settings") {
+            contentType(ContentType.Application.Json)
+            setBody("""{"values":{"PIN_LIVE_CHECK":"warn","PIN_CHANGE_APPROVALS":"2"}}""")
+        }
+        assertEquals(HttpStatusCode.BadRequest, refused.status)
+        assertTrue(refused.bodyAsText().contains("would_not_start") && refused.bodyAsText().contains("personal admin key"), refused.bodyAsText())
+        assertEquals(emptyMap(), store.values(), "nothing of the refused save was stored")
+    }
+
+    @Test
     fun `the dashboard saves for the next start and refuses what would not start`() = testApplication {
         val store = ServerSettingsStore(file)
-        routing { serverSettingsRoutes(store, null, restartSupervised = false) }
+        // A server with a personal admin key to approve with: approvals can be saved.
+        val admins = mapOf("API_KEY" to "shared-key-0123456789", "ADMIN_KEYS" to "alice:${"ab".repeat(32)}")
+        routing { serverSettingsRoutes(store, null, restartSupervised = false, env = { System.getenv() + admins }) }
 
         val saved = client.put("/api/v1/server-settings") {
             contentType(ContentType.Application.Json)

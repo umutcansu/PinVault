@@ -14,15 +14,16 @@ repositories {
 
 dependencies {
     // Ktor server
-    implementation("io.ktor:ktor-server-core:3.0.3")
-    implementation("io.ktor:ktor-server-netty:3.0.3")
-    implementation("io.ktor:ktor-server-content-negotiation:3.0.3")
-    implementation("io.ktor:ktor-serialization-kotlinx-json:3.0.3")
-    implementation("io.ktor:ktor-server-status-pages:3.0.3")
-    implementation("io.ktor:ktor-server-call-logging:3.0.3")
-    implementation("io.ktor:ktor-server-body-limit:3.0.3")
-    // Ktor 3.0.3 brings Netty 4.1.116, which has known advisories (HTTP/2 resets,
-    // request smuggling, SNI handling): the newest 4.1 patch, same line as Ktor's.
+    implementation("io.ktor:ktor-server-core:3.1.3")
+    implementation("io.ktor:ktor-server-netty:3.1.3")
+    implementation("io.ktor:ktor-server-content-negotiation:3.1.3")
+    implementation("io.ktor:ktor-serialization-kotlinx-json:3.1.3")
+    implementation("io.ktor:ktor-server-status-pages:3.1.3")
+    implementation("io.ktor:ktor-server-call-logging:3.1.3")
+    implementation("io.ktor:ktor-server-body-limit:3.1.3")
+    // Ktor 3.1.3 (the newest 3.1 patch; 3.6 needs Kotlin 2.3, later lines untried) brings an
+    // older Netty 4.1 with known advisories (HTTP/2 resets, request smuggling, SNI
+    // handling): the newest 4.1 patch, same line as Ktor's.
     implementation(platform("io.netty:netty-bom:4.1.138.Final"))
 
     // Logging
@@ -47,8 +48,8 @@ dependencies {
 
     // Test
     testImplementation("org.jetbrains.kotlin:kotlin-test:2.1.0")
-    testImplementation("io.ktor:ktor-server-test-host:3.0.3")
-    testImplementation("io.ktor:ktor-client-content-negotiation:3.0.3")
+    testImplementation("io.ktor:ktor-server-test-host:3.1.3")
+    testImplementation("io.ktor:ktor-client-content-negotiation:3.1.3")
     testImplementation("org.jetbrains.kotlinx:kotlinx-coroutines-test:1.9.0")
     testImplementation("org.yaml:snakeyaml:2.3") // OpenApiDocumentTest: the served openapi.yaml must parse
 }

@@ -355,6 +355,18 @@ function renderChangeDetail(cr, d) {
   const roots = d.trustRoots || {};
   const rootsAdded = Array.isArray(roots.added) ? roots.added : [], rootsRemoved = Array.isArray(roots.removed) ? roots.removed : [];
   const hasRoots = rootsAdded.length > 0 || rootsRemoved.length > 0;
+  // A host ACL change lists host NAMES under added / removed (a pin change lists
+  // pin entries there): every name, in full — the summary line is cut.
+  const aclChange = d.operation === 'host_acl';
+  if (aclChange) {
+    const names = list => (Array.isArray(list) ? list : []).filter(n => typeof n === 'string');
+    const aclAdded = names(d.added), aclRemoved = names(d.removed);
+    out.push(`<div class="diff-section-title" data-diff="host-acl">${esc(t('diffAclTitle', aclAdded.length, aclRemoved.length))}</div>`);
+    aclAdded.forEach(n => out.push(`<div class="diff-row diff-add"><span class="diff-mark">+</span><b>${esc(n)}</b></div>`));
+    aclRemoved.forEach(n => out.push(`<div class="diff-row diff-del"><span class="diff-mark">−</span><b>${esc(n)}</b></div>`));
+    if (!aclAdded.length && !aclRemoved.length) out.push(`<div class="muted small">${esc(t('diffAclNoChange'))}</div>`);
+    d = { ...d, added: undefined, removed: undefined };
+  }
   const hasDiff = Array.isArray(d.added) || Array.isArray(d.removed) || Array.isArray(d.changed) || d.forceUpdate || hasRoots;
   (d.added || []).forEach(p => out.push(`<div class="diff-row diff-add"><span class="diff-mark">+</span><b>${esc(p.hostname)}</b>
       <span class="ver-badge">v${esc(p.version)}</span>${pinFlags(p)}
@@ -388,7 +400,8 @@ function renderChangeDetail(cr, d) {
         <span class="diff-note">${esc(t('diffTrustRootsNote'))}</span>
         <div class="diff-pins">${rootsAdded.map(h => pinChip(h, 'add')).concat(rootsRemoved.map(h => pinChip(h, 'del'))).join('')}</div></div>`);
   }
-  if (!hasDiff && !facts.length && !hasChanges) out.push(`<div class="muted small">${t('diffNoDetail')}</div>`);
+  if (aclChange) { /* the lists above are the whole change */ }
+  else if (!hasDiff && !facts.length && !hasChanges) out.push(`<div class="muted small">${t('diffNoDetail')}</div>`);
   else if (!hasDiff) { /* the facts above say it all */ }
   else if (!(d.added || []).length && !(d.removed || []).length && !(d.changed || []).length && !d.forceUpdate && !hasRoots) {
     out.push(`<div class="muted small">${t('diffNoChange')}</div>`);

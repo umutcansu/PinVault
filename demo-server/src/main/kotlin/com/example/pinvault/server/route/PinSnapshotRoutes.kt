@@ -132,7 +132,13 @@ fun Route.pinSnapshotRoutes(
         }
         if (!call.passesLiveGate(scope, current, planned, liveGate, audit)) return@post
 
-        val saved = pinConfigStore.save(scope, planned)
+        // Only over the state the plan, the diff and the live gate were worked
+        // out from: a write that landed while the gate probed is not undone.
+        val saved = try {
+            pinConfigStore.save(scope, planned, expected = current)
+        } catch (_: com.example.pinvault.server.store.StaleConfigException) {
+            return@post call.respondStaleConfig(scope, pinConfigStore)
+        }
         val now = Instant.now().toString()
         val before = current.pins.associateBy { it.hostname }
         saved.pins.forEach { pin ->

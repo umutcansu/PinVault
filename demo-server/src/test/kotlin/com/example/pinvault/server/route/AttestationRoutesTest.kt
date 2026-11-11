@@ -294,15 +294,28 @@ class AttestationRoutesTest {
         assertTrue(behind["configChanged"]!!.jsonPrimitive.boolean)
         val scoped = Json.parseToJsonElement(behind["config"]!!.jsonObject["payload"]!!.jsonPrimitive.content).jsonObject
         assertEquals(listOf("api.example.com"), scoped["pins"]!!.jsonArray.map { it.jsonObject["hostname"]!!.jsonPrimitive.content })
+        // M6: the embedded narrowed view names the request it answers — canonical hosts and the attested device id.
+        assertEquals("""{"hosts":["api.example.com","cdn.example.com"],"deviceId":"pixel-01"}""", scoped["view"].toString())
+        assertEquals("""{"hosts":["api.example.com"],"deviceId":"pixel-01"}""",
+            Json.parseToJsonElement(unscoped["config"]!!.jsonObject["payload"]!!.jsonPrimitive.content).jsonObject["view"].toString())
+        // Odd spellings of the same set: the same view and the same pins.
+        val odd = attestJson(body(challenge(), "pixel-01", key, report(), currentConfigVersion = version - 1,
+            hosts = listOf(" CDN.example.com", "api.EXAMPLE.com", "cdn.example.com")))
+        val oddPayload = Json.parseToJsonElement(odd["config"]!!.jsonObject["payload"]!!.jsonPrimitive.content).jsonObject
+        assertEquals(scoped["view"], oddPayload["view"])
+        assertEquals(scoped["pins"], oddPayload["pins"])
         // Without `hosts` the device id alone does not switch scoping on (the legacy GET).
         val legacy = attestJson(body(challenge(), "pixel-01", key, report(), currentConfigVersion = version - 1))
-        assertEquals(2, Json.parseToJsonElement(legacy["config"]!!.jsonObject["payload"]!!.jsonPrimitive.content).jsonObject["pins"]!!.jsonArray.size)
+        val legacyPayload = Json.parseToJsonElement(legacy["config"]!!.jsonObject["payload"]!!.jsonPrimitive.content).jsonObject
+        assertEquals(2, legacyPayload["pins"]!!.jsonArray.size)
+        assertNull(legacyPayload["view"], "the full config carries no view")
+        assertNull(payload["view"], "the full config carries no view")
 
         // The stats counted it all.
         val stats = devices.windowStats(scope, 24, Instant.ofEpochMilli(now))
-        assertEquals(5, stats.passes)
+        assertEquals(6, stats.passes)
         assertEquals(0, stats.rejects)
-        assertEquals(5, stats.byWarning["key_unattested"])
+        assertEquals(6, stats.byWarning["key_unattested"])
     }
 
     @Test
@@ -814,6 +827,49 @@ class AttestationRoutesTest {
         val token = assertIs<AttestationService.Outcome.Decided>(overMtls).token!!
         val mtlsClaims = assertIs<PinVaultToken.Result.Valid>(PinVaultToken.verify(token, secrets.verificationKeys(), setOf(scope), now / 1000)).claims
         assertEquals(url.encodeToString(java.security.MessageDigest.getInstance("SHA-256").digest(cert)), mtlsClaims.certThumbprint)
+    }
+
+    // ── mTLS: the body's deviceId is the certificate's device (pre-production review, F-9) ──
+
+    @Test
+    fun `on an mTLS listener the body's deviceId must belong to the presented certificate`() = testApplication {
+        // DeviceIdBinding holds the X-Device-Id header to the certificate; the attest
+        // body carries its own deviceId, which nothing compared: an enrolled device
+        // could attest — and be handed a token and a config — in another device's name.
+        val certs = com.example.pinvault.server.store.ClientCertStore(db)
+        certs.add("dev-1", "PinVault Client: dev-1", "fp", "2026-11-01T00:00:00Z", deviceUid = "dev-1")
+        certs.add("tablet-7", "PinVault Client: tablet-7", "fp7", "2026-11-01T00:00:00Z", deviceUid = "android-77")
+        var presented: String? = "dev-1"
+        install(io.ktor.server.application.createApplicationPlugin("FakePeerCert") {
+            onCall { call ->
+                presented?.let {
+                    call.attributes.put(io.ktor.util.AttributeKey<javax.security.auth.x500.X500Principal>("TLSPeerPrincipal"),
+                        javax.security.auth.x500.X500Principal("CN=PinVault Client: $it, O=PinVault Client, C=TR"))
+                }
+            }
+        })
+        install(ContentNegotiation) { json(Json { encodeDefaults = true; ignoreUnknownKeys = true }) }
+        routing {
+            attestationRoutes(scope, service(), pins, envelopes, deviceHostAclStore = DeviceHostAclStore(db), clock = { now },
+                isBound = { certClientId, deviceId -> com.example.pinvault.server.route.certificateBoundTo(certClientId, deviceId, certs) })
+        }
+        val key = ecKey()
+
+        // dev-1's certificate, another device's id in the body: refused before anything is read of it.
+        val foreign = attest(body(challenge(), "victim-9", key, report()))
+        assertEquals(HttpStatusCode.Forbidden, foreign.status, foreign.bodyAsText())
+        assertEquals("device_identity_mismatch", Json.parseToJsonElement(foreign.bodyAsText()).jsonObject["error"]!!.jsonPrimitive.content)
+        assertNull(devices.get(scope, "victim-9"), "no key was registered in the victim's name")
+
+        // Its own id passes, as before.
+        assertEquals("pass", attestJson(body(challenge(), "dev-1", key, report()))["result"]!!.jsonPrimitive.content)
+        // A token-enrolled certificate attests as the device recorded at enrollment, and only as that.
+        presented = "tablet-7"
+        assertEquals(HttpStatusCode.OK, attest(body(challenge(), "android-77", ecKey(), report())).status)
+        assertEquals(HttpStatusCode.Forbidden, attest(body(challenge(), "dev-1", ecKey(), report())).status)
+        // A TLS listener has no certificate: unchanged.
+        presented = null
+        assertEquals(HttpStatusCode.OK, attest(body(challenge(), "anyone-3", ecKey(), report())).status)
     }
 
     @Test

@@ -100,6 +100,12 @@ class UserAuthVaultTest {
         return "-----BEGIN PUBLIC KEY-----\n$body\n-----END PUBLIC KEY-----"
     }
 
+    /** An open-mode device: its certificate, and the identity on record under the device id (F-8: no record, no binding). */
+    private fun enrolledCert(id: String): X509Certificate {
+        ClientCertStore(db).add(id, "PinVault Client: $id", "fp", "2026-10-01T00:00:00Z", deviceUid = id)
+        return clientCert(id)
+    }
+
     private fun clientCert(clientId: String): X509Certificate {
         val pair = KeyPairGenerator.getInstance("EC").apply { initialize(ECGenParameterSpec("secp256r1")) }.generateKeyPair()
         val name = X500Name("CN=PinVault Client: $clientId, O=PinVault Client, C=TR")
@@ -207,7 +213,7 @@ class UserAuthVaultTest {
         assertTrue(mismatch.bodyAsText().contains("device_identity_mismatch"))
         assertNull(userAuthPem())
 
-        presented = clientCert(deviceId)
+        presented = enrolledCert(deviceId)
         val first = rsa()
         assertEquals(HttpStatusCode.OK, register(first.pem()).status)
         // Unlike the E2E key: the certificate is in the app's hands, root's too.

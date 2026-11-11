@@ -99,6 +99,12 @@ class DeviceKeyRegistrationTest {
     }
 
     /** A client certificate as the mTLS listener would have verified it. */
+    /** An open-mode device: its certificate, and the identity on record under the device id (F-8: no record, no binding). */
+    private fun enrolledCert(id: String): X509Certificate {
+        ClientCertStore(db).add(id, "PinVault Client: $id", "fp", "2026-10-01T00:00:00Z", deviceUid = id)
+        return clientCert(id)
+    }
+
     private fun clientCert(clientId: String): X509Certificate {
         val pair = KeyPairGenerator.getInstance("EC").apply { initialize(ECGenParameterSpec("secp256r1")) }.generateKeyPair()
         val name = X500Name("CN=PinVault Client: $clientId, O=PinVault Client, C=TR")
@@ -238,7 +244,7 @@ class DeviceKeyRegistrationTest {
 
     @Test
     fun `under auto-enrollment the certificate's client id is the device id`() = testApplication {
-        configureApp(presented = clientCert(deviceId))
+        configureApp(presented = enrolledCert(deviceId))
         assertEquals(HttpStatusCode.OK, register(rsaPem()).status)
     }
 
@@ -328,7 +334,7 @@ class DeviceKeyRegistrationTest {
 
     @Test
     fun `a certificate writing its own slot is not counted`() = testApplication {
-        configureApp(presented = clientCert(deviceId), limiter = RateLimiter(maxAttempts = 1, windowMs = 60_000))
+        configureApp(presented = enrolledCert(deviceId), limiter = RateLimiter(maxAttempts = 1, windowMs = 60_000))
         repeat(3) { assertEquals(HttpStatusCode.OK, register(rsaPem()).status) }
     }
 
@@ -348,7 +354,7 @@ class DeviceKeyRegistrationTest {
 
     @Test
     fun `a known device may still replace its key when the scope is full`() = testApplication {
-        configureApp(presented = clientCert(deviceId), maxKeys = 1)
+        configureApp(presented = enrolledCert(deviceId), maxKeys = 1)
         assertEquals(HttpStatusCode.OK, register(rsaPem()).status)
         val replacement = rsaPem()
         assertEquals(HttpStatusCode.OK, register(replacement).status)

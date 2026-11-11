@@ -130,6 +130,12 @@ class UserAuthAttestationRouteTest {
     private fun stored() = keys.userAuthKeys().get(deviceId, scope)
     private fun storedPem() = stored()?.publicKeyPem
 
+    /** An open-mode device: its certificate, and the identity on record under the device id (F-8: no record, no binding). */
+    private fun enrolledCert(id: String): X509Certificate {
+        ClientCertStore(db).add(id, "PinVault Client: $id", "fp", "2026-10-01T00:00:00Z", deviceUid = id)
+        return clientCert(id)
+    }
+
     private fun clientCert(clientId: String): X509Certificate {
         val pair = KeyPairGenerator.getInstance("EC").apply { initialize(ECGenParameterSpec("secp256r1")) }.generateKeyPair()
         val name = X500Name("CN=PinVault Client: $clientId, O=PinVault Client, C=TR")
@@ -186,7 +192,7 @@ class UserAuthAttestationRouteTest {
             assertEquals("user_auth_key_exists", byToken.json()["error"]!!.jsonPrimitive.content)
             assertEquals(noChain, byToken.reason(), "$mode token")
 
-            presented = clientCert(deviceId)
+            presented = enrolledCert(deviceId)
             val byCert = register(rsa())
             presented = null
             assertEquals(HttpStatusCode.Conflict, byCert.status, "$mode certificate")
@@ -250,7 +256,7 @@ class UserAuthAttestationRouteTest {
                 val response = if (credential == "token") {
                     register(replacement, chainFor(replacement), proofKey = "wallet", proofToken = deviceToken())
                 } else {
-                    presented = clientCert(deviceId)
+                    presented = enrolledCert(deviceId)
                     register(replacement, chainFor(replacement)).also { presented = null }
                 }
                 assertEquals(HttpStatusCode.OK, response.status, "$mode $credential")

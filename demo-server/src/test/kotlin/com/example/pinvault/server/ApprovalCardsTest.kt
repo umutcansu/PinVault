@@ -377,4 +377,95 @@ class ApprovalCardsTest {
             }
         }
     }
+
+    // ── A full-config save from an old copy (pre-production review, F-1) ─
+
+    @Test
+    fun `with approvals on, a full-config save computed from an older state is refused when it is requested`() {
+        GovernanceHarness(dir).use { h ->
+            h.publish(pinsA, emptyList())
+            val loaded = h.call("GET", "/api/v1/config/${h.scope}", ALICE)
+            val state = loaded.headers.firstValue("X-PinVault-State").get()
+            // Another admin's change lands; this tab still holds the old copy.
+            h.publish(pinsA, listOf(root))
+
+            val path = "/api/v1/certificate-config?configApiId=${h.scope}"
+            val stale = h.call("PUT", path, ALICE, pinsBody(pinsB, emptyList()).toByteArray(), headers = mapOf("X-PinVault-Base-State" to state))
+            // Not a card that reads "removes the trust root" for a second admin to wave through.
+            assertEquals(409, stale.status, stale.body)
+            assertEquals("stale_config", stale.json["error"]!!.jsonPrimitive.content)
+            assertFalse("change_requested" in h.actions(), "nothing was put up for approval")
+
+            val now = h.call("GET", "/api/v1/config/${h.scope}", ALICE).headers.firstValue("X-PinVault-State").get()
+            val fresh = h.call("PUT", path, ALICE, pinsBody(pinsB, listOf(root)).toByteArray(), headers = mapOf("X-PinVault-Base-State" to now))
+            assertEquals(202, fresh.status, fresh.body)
+        }
+    }
+
+    // ── Host ACL (pre-production review, F-7) ───────────────────────────
+
+    @Test
+    fun `a host ACL card lists every name it grants and takes away, and goes stale when the list moved`() {
+        GovernanceHarness(dir).use { h ->
+            val path = "/api/v1/config-apis/${h.scope}/devices/dev-1/host-acl"
+            h.hostAcl.grant(h.scope, "dev-1", "old.example.com", "2026-11-01T00:00:00Z")
+            h.hostAcl.grant(h.scope, "dev-1", "kept.example.com", "2026-11-01T00:00:00Z")
+
+            // 40 names: the summary used to show ten of them in a line cut at 300
+            // characters, and the handler applied all 40.
+            val names = (1..40).map { "host-%02d.example.com".format(it) } + "kept.example.com"
+            val body = """{"hostnames":[${names.joinToString(",") { "\"$it\"" }}]}"""
+            val pending = h.call("PUT", path, ALICE, body)
+            assertEquals(202, pending.status, pending.body)
+            val cr = h.changeRequest(pending.changeRequestId)
+            assertTrue(cr.summary.startsWith("${h.scope}: +40 −1 "), cr.summary)
+            val shown = h.detail(cr.id)
+            assertEquals((1..40).map { "host-%02d.example.com".format(it) }, shown["added"]!!.jsonArray.map { it.jsonPrimitive.content }, "every granted name, sorted")
+            assertEquals(listOf("old.example.com"), shown["removed"]!!.jsonArray.map { it.jsonPrimitive.content })
+            assertEquals("dev-1", shown["deviceId"]!!.jsonPrimitive.content)
+            assertEquals(listOf("kept.example.com", "old.example.com"), h.hostAcl.listForDevice(h.scope, "dev-1").sorted(), "nothing applied before approval")
+
+            // A name that is not a host name is refused when it is requested, as the handler refuses it.
+            val bad = h.call("PUT", path, ALICE, """{"hostnames":["a.example.com","evil host <b>"]}""")
+            assertEquals(400, bad.status, bad.body)
+            assertEquals(400, h.call("PUT", "/api/v1/config-apis/${h.scope}/default-host-acl", ALICE, """{"hostnames":["*.com"]}""").status)
+
+            // The list moves before the approval: the card compared with a list that is gone.
+            h.hostAcl.grant(h.scope, "dev-1", "another.example.com", "2026-11-02T00:00:00Z")
+            val stale = h.approve(cr.id)
+            assertEquals(409, stale.status, stale.body)
+            assertEquals("stale", h.changeRequest(cr.id).status)
+            assertFalse("host-01.example.com" in h.hostAcl.listForDevice(h.scope, "dev-1"))
+
+            // Requested again on the current list, it is applied as shown.
+            val again = h.call("PUT", path, ALICE, body)
+            assertEquals(202, again.status, again.body)
+            assertEquals(listOf("another.example.com", "old.example.com"), h.detail(again.changeRequestId)["removed"]!!.jsonArray.map { it.jsonPrimitive.content })
+            val applied = h.approve(again.changeRequestId)
+            assertEquals("applied", applied.json["status"]!!.jsonPrimitive.content, applied.body)
+            assertEquals(names.sorted(), h.hostAcl.listForDevice(h.scope, "dev-1").sorted())
+        }
+    }
+
+    @Test
+    fun `the default host ACL card is the same plan, and the dashboard draws both lists in full`() {
+        GovernanceHarness(dir).use { h ->
+            h.hostAcl.addDefault(h.scope, "gone.example.com")
+            val pending = h.call("PUT", "/api/v1/config-apis/${h.scope}/default-host-acl", ALICE, """{"hostnames":["b.example.com","a.example.com"]}""")
+            assertEquals(202, pending.status, pending.body)
+            val cr = h.changeRequest(pending.changeRequestId)
+            assertTrue(cr.summary.startsWith("${h.scope}: +2 −1 default hosts"), cr.summary)
+            val shown = h.detail(cr.id)
+            assertEquals(listOf("a.example.com", "b.example.com"), shown["added"]!!.jsonArray.map { it.jsonPrimitive.content })
+            assertEquals(listOf("gone.example.com"), shown["removed"]!!.jsonArray.map { it.jsonPrimitive.content })
+            assertEquals("applied", h.approve(cr.id).json["status"]!!.jsonPrimitive.content)
+            assertEquals(listOf("a.example.com", "b.example.com"), h.hostAcl.listDefault(h.scope).sorted())
+        }
+        // The page: names come from the detail (never the cut summary) and are escaped.
+        val js = File("src/main/resources/static/js/app-governance.js").readText()
+        val block = js.substringAfter("const aclChange = d.operation === 'host_acl';").substringBefore("const hasDiff")
+        assertTrue("aclAdded.forEach(n => out.push(" in block && "aclRemoved.forEach(n => out.push(" in block, "both lists are drawn, every entry")
+        assertFalse(Regex("""\$\{n}""").containsMatchIn(block), "a name is never written unescaped")
+        assertTrue(Regex("""\$\{esc\(n\)}""").findAll(block).count() == 2, "each name goes through esc()")
+    }
 }

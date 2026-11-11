@@ -77,11 +77,15 @@ fun Route.hostRoutes(
         for (scope in hostStore.listConfigApisFor(hostname)) {
             hostStore.get(hostname, scope)?.let { hostStore.save(updateRecord(it)) }
 
-            val config = pinConfigStore.load(scope)
-            if (config.pins.none { it.hostname == hostname }) continue
-            val saved = pinConfigStore.save(scope, config.copy(
-                pins = config.pins.map { if (it.hostname == hostname) it.copy(sha256 = pins, version = it.version + 1) else it }
-            ))
+            // Load and save in one piece (the scope's lock): only this host's
+            // pins and version move, on top of whatever the scope holds now.
+            val saved = pinConfigStore.locked(scope) {
+                val config = pinConfigStore.load(scope)
+                if (config.pins.none { it.hostname == hostname }) null
+                else pinConfigStore.save(scope, config.copy(
+                    pins = config.pins.map { if (it.hostname == hostname) it.copy(sha256 = pins, version = it.version + 1) else it }
+                ))
+            } ?: continue
             val newVersion = saved.pins.first { it.hostname == hostname }.version
             historyStore.add(scope, PinConfigHistoryEntry(hostname, newVersion, Instant.now().toString(), reason, pins.firstOrNull()?.take(12) ?: ""))
 
@@ -117,8 +121,13 @@ fun Route.hostRoutes(
         }
 
         if (installed != null && mockServerManager.isRunning(hostname)) {
-            val port = mockServerManager.getPort(hostname) ?: 8443
-            mockServerManager.start(hostname, port, installed.keystorePath)
+            // Each running mock in its own mode on its own port (an mTLS mock
+            // never comes back as TLS; see MockServerManager.restartWithKeystore).
+            mockServerManager.restartWithKeystore(hostname, installed.keystorePath, certService)
+            // An mTLS mock that could not come back was stopped: the record must not bring it back at the next start.
+            if (!mockServerManager.isRunning(hostname)) {
+                hostStore.listConfigApisFor(hostname).forEach { hostStore.updateMockPort(hostname, it, null) }
+            }
         }
 
         respond(HostActionResponse(hostname, plan.pins, plan.notAfter, primaryNewVersion))
@@ -223,18 +232,19 @@ fun Route.hostRoutes(
                 val body = call.receive<kotlinx.serialization.json.JsonObject>()
                 val mtls = body["mtls"]?.let { kotlinx.serialization.json.Json.decodeFromJsonElement(kotlinx.serialization.serializer<Boolean>(), it) } ?: false
 
-                val config = pinConfigStore.load(call.scopedApiId())
-                val pin = config.pins.find { it.hostname == hostname }
-                    ?: return@post call.respondText("""{"error":"Host bulunamadi"}""", ContentType.Application.Json, HttpStatusCode.NotFound)
-
-                val updated = config.copy(
-                    pins = config.pins.map {
-                        if (it.hostname == hostname) it.copy(mtls = mtls, version = it.version + 1)
-                        else it
-                    }
-                )
-                val savedVersion = pinConfigStore.save(call.scopedApiId(), updated)
-                    .pins.first { it.hostname == hostname }.version
+                // Load and save in one piece (the scope's lock): the flag moves
+                // on top of whatever the scope holds now.
+                val scope = call.scopedApiId()
+                val savedVersion = pinConfigStore.locked(scope) {
+                    val config = pinConfigStore.load(scope)
+                    if (config.pins.none { it.hostname == hostname }) null
+                    else pinConfigStore.save(scope, config.copy(
+                        pins = config.pins.map {
+                            if (it.hostname == hostname) it.copy(mtls = mtls, version = it.version + 1)
+                            else it
+                        }
+                    )).pins.first { it.hostname == hostname }.version
+                } ?: return@post call.respondText("""{"error":"Host bulunamadi"}""", ContentType.Application.Json, HttpStatusCode.NotFound)
 
                 historyStore.add(call.scopedApiId(), PinConfigHistoryEntry(hostname, savedVersion, Instant.now().toString(), if (mtls) "mtls_enabled" else "mtls_disabled"))
 
@@ -273,34 +283,40 @@ fun Route.hostRoutes(
                     java.util.Base64.getEncoder().encodeToString(digest)
                 }
 
-                // Version bump
-                val config = pinConfigStore.load(call.scopedApiId())
-                val pin = config.pins.find { it.hostname == hostname }
-                val newCertVersion = (pin?.clientCertVersion ?: 0) + 1
+                // Version bump — from here to the save in one piece (the
+                // scope's lock): two uploads cannot take the same version, and a
+                // pin write in between is not written over.
+                val scope = call.scopedApiId()
+                val (newCertVersion, savedVersion) = pinConfigStore.locked(scope) {
+                    val config = pinConfigStore.load(scope)
+                    val pin = config.pins.find { it.hostname == hostname }
+                    val newCertVersion = (pin?.clientCertVersion ?: 0) + 1
 
-                // Kept under the server's own password; each download is re-wrapped
-                // for its recipient (P12Transfer), so no app needs the upload password.
-                // Only that entry is kept: nothing else in the file reaches a device.
-                val stored = certService.rewrapP12(bytes, password, CertificateService.KEYSTORE_PASSWORD, keyEntryOnly = true)
-                hostClientCertStore.save(hostname, call.scopedApiId(), stored, newCertVersion, cn, fingerprint)
+                    // Kept under the server's own password; each download is re-wrapped
+                    // for its recipient (P12Transfer), so no app needs the upload password.
+                    // Only that entry is kept: nothing else in the file reaches a device.
+                    val stored = certService.rewrapP12(bytes, password, CertificateService.KEYSTORE_PASSWORD, keyEntryOnly = true)
+                    hostClientCertStore.save(hostname, scope, stored, newCertVersion, cn, fingerprint)
 
-                // Pin config'e clientCertVersion ve mtls ekle.
-                //
-                // The host's pin version is bumped alongside clientCertVersion:
-                // the client only re-reads a host's entry (and therefore only
-                // runs syncHostClientCerts for it) when the config as a whole
-                // reports a change. Leaving the pin version untouched made the
-                // new certificate invisible to every device that already had
-                // the config.
-                val updated = config.copy(
-                    pins = config.pins.map {
-                        if (it.hostname == hostname)
-                            it.copy(mtls = true, clientCertVersion = newCertVersion, version = it.version + 1)
-                        else it
-                    }
-                )
-                val savedVersion = pinConfigStore.save(call.scopedApiId(), updated)
-                    .pins.firstOrNull { it.hostname == hostname }?.version ?: ((pin?.version ?: 0) + 1)
+                    // Pin config'e clientCertVersion ve mtls ekle.
+                    //
+                    // The host's pin version is bumped alongside clientCertVersion:
+                    // the client only re-reads a host's entry (and therefore only
+                    // runs syncHostClientCerts for it) when the config as a whole
+                    // reports a change. Leaving the pin version untouched made the
+                    // new certificate invisible to every device that already had
+                    // the config.
+                    val updated = config.copy(
+                        pins = config.pins.map {
+                            if (it.hostname == hostname)
+                                it.copy(mtls = true, clientCertVersion = newCertVersion, version = it.version + 1)
+                            else it
+                        }
+                    )
+                    val savedVersion = pinConfigStore.save(scope, updated)
+                        .pins.firstOrNull { it.hostname == hostname }?.version ?: ((pin?.version ?: 0) + 1)
+                    newCertVersion to savedVersion
+                }
 
                 historyStore.add(call.scopedApiId(), PinConfigHistoryEntry(hostname, savedVersion, Instant.now().toString(), "client_cert_uploaded", fingerprint?.take(12) ?: ""))
 
@@ -433,13 +449,18 @@ fun Route.hostRoutes(
                     val body = response.body?.string() ?: ""
                     response.close()
 
+                    // Built, not concatenated: what the listener answered is a string
+                    // in this answer, never part of its JSON.
                     call.respondText(
-                        """{"success":true,"httpCode":${response.code},"responseTimeMs":$elapsed,"body":${body.take(500)}}""",
+                        buildJsonObject {
+                            put("success", true); put("httpCode", response.code); put("responseTimeMs", elapsed)
+                            put("body", body.take(500))
+                        }.toString(),
                         ContentType.Application.Json
                     )
                 } catch (e: Exception) {
                     call.respondText(
-                        """{"success":false,"error":"${e.message?.replace("\"", "'")}","responseTimeMs":0}""",
+                        buildJsonObject { put("success", false); put("error", e.message ?: e.javaClass.simpleName); put("responseTimeMs", 0) }.toString(),
                         ContentType.Application.Json
                     )
                 }
@@ -657,8 +678,8 @@ internal suspend fun ApplicationCall.certPlan(
 
 /**
  * Adds the host of [plan] to [scope] with the plan's pins: the live gate
- * first, then the keystore (if the plan carries one), the host record, the
- * pins and the history.
+ * first, then the pins (refused if the host appeared meanwhile), then the
+ * keystore (if the plan carries one), the host record and the history.
  */
 internal suspend fun ApplicationCall.addPlannedHost(
     scope: String, plan: CertPlan, event: String,
@@ -671,9 +692,38 @@ internal suspend fun ApplicationCall.addPlannedHost(
     val updated = config.copy(pins = config.pins + HostPin(host, plan.pins, version = 1))
     if (!passesLiveGate(scope, config, updated, liveGate, audit)) return
 
-    val keystorePath = plan.keystore?.let { certService.install(planner.keystoreId(host), plan).keystorePath }
-    hostStore.save(HostRecord(host, scope, keystorePath, plan.notAfter, null, Instant.now().toString()))
-    val savedPin = pinConfigStore.save(scope, updated).pins.first { it.hostname == host }
+    // The pins first, on top of what the scope holds NOW: the gate above
+    // probed the host, and another admin's write may have landed in between.
+    // If that write added this very host, this is no longer an add — and it
+    // is found out here, BEFORE this request's keystore is installed: the
+    // keystore used to go in first, so of two adds of one host the loser's
+    // key file stayed under the winner's pins.
+    val savedPin = try {
+        pinConfigStore.locked(scope) {
+            val fresh = pinConfigStore.load(scope)
+            if (config.pins.none { it.hostname.equals(host, ignoreCase = true) } && fresh.pins.any { it.hostname.equals(host, ignoreCase = true) }) {
+                throw com.example.pinvault.server.store.StaleConfigException(scope)
+            }
+            pinConfigStore.save(scope, fresh.copy(pins = fresh.pins + HostPin(host, plan.pins, version = 1)))
+        }.pins.first { it.hostname.equals(host, ignoreCase = true) }
+    } catch (_: com.example.pinvault.server.store.StaleConfigException) {
+        return respondStaleConfig(scope, pinConfigStore)
+    }
+    // Only the request whose pins were stored installs its keystore and writes
+    // the host record. If that fails, the pins it published go again: a host
+    // pinned to a key nobody holds is worse than no host.
+    try {
+        val keystorePath = plan.keystore?.let { certService.install(planner.keystoreId(host), plan).keystorePath }
+        hostStore.save(HostRecord(host, scope, keystorePath, plan.notAfter, null, Instant.now().toString()))
+    } catch (e: Exception) {
+        pinConfigStore.locked(scope) {
+            val fresh = pinConfigStore.load(scope)
+            if (fresh.pins.any { it.hostname == savedPin.hostname && it.sha256 == plan.pins }) {
+                pinConfigStore.save(scope, fresh.copy(pins = fresh.pins.filterNot { it.hostname == savedPin.hostname }))
+            }
+        }
+        throw e
+    }
     pinConfigStore.ensureConfigExists(scope)
     historyStore.add(scope, PinConfigHistoryEntry(host, savedPin.version, Instant.now().toString(), event, plan.pins.firstOrNull()?.take(12) ?: ""))
 

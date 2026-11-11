@@ -227,7 +227,23 @@ class SigningKeySetService(
                 store = store,
                 signing = signing,
                 recoveryKeys = env["RECOVERY_PUBLIC_KEYS"]?.split(',').orEmpty(),
-                recoveryThreshold = env["RECOVERY_REQUIRED_SIGNATURES"]?.toIntOrNull()?.coerceAtLeast(1) ?: 1
+                recoveryThreshold = recoveryThresholdFromEnv(env)
             )
+
+        /**
+         * `RECOVERY_REQUIRED_SIGNATURES`: how many recovery keys must sign a
+         * key set (unset = 1). A value that does not parse used to count as 1 —
+         * a 2-of-3 rule silently became 1-of-3 — so it stops the start, and so
+         * does a number no set of the configured keys could ever reach.
+         */
+        fun recoveryThresholdFromEnv(env: Map<String, String> = com.example.pinvault.server.service.ServerEnv.all()): Int {
+            val raw = env["RECOVERY_REQUIRED_SIGNATURES"]?.trim().orEmpty()
+            if (raw.isEmpty()) return 1
+            val keys = env["RECOVERY_PUBLIC_KEYS"]?.split(',').orEmpty().count { it.isNotBlank() }
+            val most = if (keys > 0) minOf(keys, MAX_SET_KEYS) else MAX_SET_KEYS
+            return raw.toIntOrNull()?.takeIf { it in 1..most }
+                ?: error("RECOVERY_REQUIRED_SIGNATURES must be a whole number from 1 to $most" +
+                    (if (keys > 0) " (RECOVERY_PUBLIC_KEYS has $keys key(s))" else "") + " (got '$raw')")
+        }
     }
 }

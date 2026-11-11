@@ -138,18 +138,43 @@ class LiveCertificateGate(
 
     companion object {
         fun fromEnv(env: Map<String, String> = com.example.pinvault.server.service.ServerEnv.all()) = LiveCertificateGate(
-            mode = when (env["PIN_LIVE_CHECK"]?.trim()?.lowercase()) {
-                "warn" -> Mode.WARN
-                "enforce" -> Mode.ENFORCE
-                else -> Mode.OFF
-            },
+            mode = modeFromEnv(env),
             hostMap = env["LIVE_CHECK_HOST_MAP"].orEmpty().split(';', ',')
                 .map { it.trim() }.filter { '=' in it }
                 .associate { it.substringBefore('=').trim() to it.substringAfter('=').trim() },
             timeoutMs = env["LIVE_CHECK_TIMEOUT_MS"]?.toIntOrNull() ?: 5_000,
-            allowOverride = env["PIN_LIVE_CHECK_ALLOW_OVERRIDE"] != "false",
+            allowOverride = allowOverrideFromEnv(env),
             egress = EgressFilter.fromEnv(env)
         )
+
+        /**
+         * `PIN_LIVE_CHECK`: off (also unset), warn or enforce, in any case. Any
+         * other spelling stops the start — it used to mean off, so "enforced"
+         * or "on" left an operator believing the check ran.
+         */
+        fun modeFromEnv(env: Map<String, String> = com.example.pinvault.server.service.ServerEnv.all()): Mode {
+            val raw = env["PIN_LIVE_CHECK"]?.trim().orEmpty()
+            return when (raw.lowercase()) {
+                "", "off" -> Mode.OFF
+                "warn" -> Mode.WARN
+                "enforce" -> Mode.ENFORCE
+                else -> error("PIN_LIVE_CHECK must be off, warn or enforce (got '$raw')")
+            }
+        }
+
+        /**
+         * `PIN_LIVE_CHECK_ALLOW_OVERRIDE`: true (also unset) or false, in any
+         * case. Only the exact word "false" used to close the override, so
+         * "False", "no" or "0" left it open.
+         */
+        fun allowOverrideFromEnv(env: Map<String, String> = com.example.pinvault.server.service.ServerEnv.all()): Boolean {
+            val raw = env["PIN_LIVE_CHECK_ALLOW_OVERRIDE"]?.trim().orEmpty()
+            return when (raw.lowercase()) {
+                "", "true" -> true
+                "false" -> false
+                else -> error("PIN_LIVE_CHECK_ALLOW_OVERRIDE must be true or false (got '$raw')")
+            }
+        }
 
         fun spkiPin(cert: X509Certificate): String =
             Base64.getEncoder().encodeToString(MessageDigest.getInstance("SHA-256").digest(cert.publicKey.encoded))

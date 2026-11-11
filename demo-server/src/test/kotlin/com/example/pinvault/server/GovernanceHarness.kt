@@ -91,6 +91,7 @@ class GovernanceHarness(
     private fun stateOf(scope: String): String = com.example.pinvault.server.service.PinDiff.stateHash(pins.load(scope))
 
     val settings = com.example.pinvault.server.service.ServerSettingsStore(File(dir, "server-settings.json"))
+    val hostAcl = DeviceHostAclStore(db)
     val attestationPolicies = AttestationPolicyStore(db)
     val attestedDevices = AttestedDeviceStore(db)
     val attestationSecrets = AttestationTokenSecretStore(db)
@@ -101,7 +102,7 @@ class GovernanceHarness(
     )
 
     val describer = ChangeDescriber(pins, planner, liveGate, ::stateOf, vaultFiles, vaultTokens, audit = audit, snapshots = snapshots,
-        settingsSaved = { settings.values() }, attestation = attestation, attestedDevices = attestedDevices)
+        settingsSaved = { settings.values() }, attestation = attestation, attestedDevices = attestedDevices, hostAcl = hostAcl)
     val approvals = ApprovalService(
         store = changeRequests, audit = audit, required = required, managementPort = port,
         describe = describer::describe, stateHash = ::stateOf, exempt = exempt
@@ -129,7 +130,7 @@ class GovernanceHarness(
             enrollmentPolicyRoutes(policies, clientCerts, audit, approvalsRequired = approvals.required)
             scopedVaultAdminRoutes(vaultFiles, VaultDistributionStore(db), vaultTokens, VaultAccessTokenService(vaultTokens),
                 publicKeyStore = deviceKeys, audit = audit, maxFileBytes = vaultMax)
-            adminVaultRoutes(db, DeviceHostAclStore(db), registry, audit)
+            adminVaultRoutes(db, hostAcl, registry, audit)
             serverSettingsRoutes(settings, audit, restartSupervised = false)
             attestationAdminRoutes(attestation, attestationPolicies, attestedDevices, attestationSecrets, audit)
         }

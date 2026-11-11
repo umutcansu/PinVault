@@ -25,7 +25,7 @@ import java.util.concurrent.atomic.AtomicLong
  */
 class ConfigSigningService(
     signers: List<ConfigSigner>,
-    /** How many documents may be at an external signer at once (`SIGNER_MAX_CONCURRENT`). */
+    /** How many documents may be at an external signer at once (`SIGNER_MAX_CONCURRENT`); narrowed config views get all but one. */
     maxConcurrent: Int = 2,
     /** How many more may wait for a turn (`SIGNER_MAX_QUEUE`); beyond that a request is refused at once. */
     private val maxQueued: Int = 8,
@@ -47,11 +47,38 @@ class ConfigSigningService(
     private val permits = java.util.concurrent.Semaphore(maxConcurrent.coerceAtLeast(1), true)
     private val queued = java.util.concurrent.atomic.AtomicInteger()
 
+    /**
+     * The share of [permits] narrowed config views may hold: all but one (at
+     * least one). Narrowed views are per device and per host set — a caller
+     * can make up as many as it likes — so they never take the last permit
+     * and never wait in the queue: the full view, its pre-signing at publish
+     * time and vault signatures always find a permit or a place in the queue.
+     * With `SIGNER_MAX_CONCURRENT=1` nothing is left to reserve: a narrowed
+     * signing then takes the permit only while nothing waits for it, so the
+     * full view waits for at most one narrowed signing.
+     */
+    private val narrowedShare = java.util.concurrent.Semaphore((maxConcurrent.coerceAtLeast(1) - 1).coerceAtLeast(1))
+
     /** External signers are busy and the short queue is full, or the wait ran out. Answered with 503. */
     class SignerBusyException : IllegalStateException("The signer is busy")
 
-    private fun <T> throttled(block: () -> T): T {
+    private fun <T> throttled(narrowed: Boolean, block: () -> T): T {
         if (!external) return block()
+        if (narrowed) {
+            if (!narrowedShare.tryAcquire()) throw SignerBusyException()
+            try {
+                // The timed form honours the semaphore's fairness (the plain one
+                // barges): refused while anything waits in the queue.
+                if (!permits.tryAcquire(0, java.util.concurrent.TimeUnit.MILLISECONDS)) throw SignerBusyException()
+                try {
+                    return block()
+                } finally {
+                    permits.release()
+                }
+            } finally {
+                narrowedShare.release()
+            }
+        }
         if (!permits.tryAcquire()) {
             if (queued.incrementAndGet() > maxQueued) {
                 queued.decrementAndGet()
@@ -97,15 +124,22 @@ class ConfigSigningService(
     }
 
     /** Payload string'ini primary imzalayıcıyla ECDSA-SHA256 ile imzalar, Base64 döner. */
-    fun sign(payload: String): String = signAll(payload, onlyPrimary = true).first().signature
+    fun sign(payload: String): String = signAll(payload, onlyPrimary = true, narrowed = false).first().signature
 
     /** One signature per signer, primary first. */
-    fun signAll(payload: String): List<SignatureEntry> = signAll(payload, onlyPrimary = false)
+    fun signAll(payload: String): List<SignatureEntry> = signAll(payload, onlyPrimary = false, narrowed = false)
 
-    private fun signAll(payload: String, onlyPrimary: Boolean): List<SignatureEntry> {
+    /**
+     * [signAll] for a NARROWED config view (`view` in the payload): with an
+     * external signer it never waits and never takes the last permit (see
+     * [narrowedShare]); [SignerBusyException] instead.
+     */
+    fun signAllNarrowed(payload: String): List<SignatureEntry> = signAll(payload, onlyPrimary = false, narrowed = true)
+
+    private fun signAll(payload: String, onlyPrimary: Boolean, narrowed: Boolean): List<SignatureEntry> {
         val bytes = payload.toByteArray(Charsets.UTF_8)
         val chosen = if (onlyPrimary) listOf(primary) else signers
-        return throttled {
+        return throttled(narrowed) {
             chosen.map { signer ->
                 val signature = Base64.getEncoder().encodeToString(signer.sign(bytes))
                 signaturesProduced.incrementAndGet()
@@ -179,6 +213,8 @@ class ConfigSigningService(
          * With any `pkcs11` or `command` signer, at most
          * `SIGNER_MAX_CONCURRENT` (2) documents are being signed at once and
          * `SIGNER_MAX_QUEUE` (8) more wait; the rest are refused (503).
+         * Narrowed config views hold at most all but one of those permits and
+         * never queue ([signAllNarrowed]).
          *
          * Example, 2-of-2 with one key on this server and one in a KMS:
          * `CONFIG_SIGNERS=local,command:kms` + `SIGNER_COMMAND_KMS=…` +

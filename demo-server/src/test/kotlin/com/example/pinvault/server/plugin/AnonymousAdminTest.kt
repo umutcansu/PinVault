@@ -95,7 +95,7 @@ class AnonymousAdminTest {
     }
 
     @Test
-    fun `invalid admin keys from one address are cut off with 429, a correct key is never counted`() = testApplication {
+    fun `invalid admin keys from one address are cut off with 429, a correct key is never counted and never locked out`() = testApplication {
         val alice = "alice-key-0123456789"
         val hash = MessageDigest.getInstance("SHA-256").digest(alice.toByteArray()).joinToString("") { "%02x".format(it.toInt() and 0xFF) }
         app { registry = AdminRegistry.fromEnv(mapOf("ADMIN_KEYS" to "alice:$hash")); allowAnonymous = false; failureLimit = 5 }
@@ -107,10 +107,35 @@ class AnonymousAdminTest {
         val cutOff = client.get("/api/v1/audit-log") { header("X-API-Key", "guess-6") }
         assertEquals(HttpStatusCode.TooManyRequests, cutOff.status)
         assertEquals("600", cutOff.headers[HttpHeaders.RetryAfter])
-        // ...the right key included: a guess that hit would otherwise still be told apart.
-        assertEquals(HttpStatusCode.TooManyRequests, client.get("/api/v1/audit-log") { header("X-API-Key", alice) }.status)
+        // No key at all is not a guess: the usual 401, so the dashboard still asks for the key
+        // (it prompts on 401/403 only) — and it is never counted, before or after the cut-off.
+        repeat(40) { assertEquals(HttpStatusCode.Unauthorized, client.get("/api/v1/audit-log").status) }
+        // F-6: a valid key still passes. The cut-off used to run before the key
+        // was compared, so wrong keys from an address admins share (a NAT, a
+        // proxy) locked every admin out for ten minutes.
+        repeat(3) { assertEquals(HttpStatusCode.OK, client.get("/api/v1/audit-log") { header("X-API-Key", alice) }.status) }
+        // ...and passing does not reset the count for the wrong keys.
+        assertEquals(HttpStatusCode.TooManyRequests, client.get("/api/v1/audit-log") { header("X-API-Key", "guess-7") }.status)
         // Devices are not admins: their endpoints stay open.
         assertEquals(HttpStatusCode.OK, client.get("/api/v1/certificate-config").status)
+    }
+
+    @Test
+    fun `a request an earlier plugin already answered is not counted as a wrong key`() = testApplication {
+        // DeviceOnlyRoutes (and the body limits) answer before ApiKeyAuth runs. Those
+        // requests carry no admin key and used to feed the counter: device traffic to
+        // a path this listener does not serve cut the admins of that address off.
+        install(io.ktor.server.application.createApplicationPlugin("AnsweredEarlier") {
+            onCall { call ->
+                if (call.request.local.uri.startsWith("/api/v1/hosts/")) call.respondText("not here", status = HttpStatusCode.NotFound)
+            }
+        })
+        app { registry = AdminRegistry("shared-key-0123456789", emptyMap()); allowAnonymous = false; failureLimit = 3 }
+
+        repeat(20) { assertEquals(HttpStatusCode.NotFound, client.get("/api/v1/hosts/x/status") { header("X-API-Key", "wrong-$it") }.status) }
+        // Nothing was counted: a wrong key is still answered as one, not cut off.
+        assertEquals(HttpStatusCode.Forbidden, client.get("/api/v1/audit-log") { header("X-API-Key", "guess") }.status)
+        assertEquals(HttpStatusCode.OK, client.get("/api/v1/audit-log") { header("X-API-Key", "shared-key-0123456789") }.status)
     }
 
     @Test

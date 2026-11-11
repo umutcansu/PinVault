@@ -231,7 +231,15 @@ class ApprovalService(
         val body: ByteArray,
         val requestedBy: String = "",
         /** The HTTP method: one path can be gated for PUT and DELETE (an attestation device). */
-        val method: String = ""
+        val method: String = "",
+        /**
+         * `X-PinVault-Base-State` of the request, when it was sent: the state
+         * of the scope the requester's editor had loaded. A full-config write
+         * computed from another state is refused when it is requested (409
+         * `stale_config`), as its handler refuses it — not shown to an approver
+         * as "removes the host the other admin just added".
+         */
+        val baseState: String? = null
     )
 
     /** What a pending change does, for the approver. */
@@ -286,10 +294,11 @@ class ApprovalService(
         canonicalPath: String = path,
         query: String,
         contentType: String,
-        body: ByteArray
+        body: ByteArray,
+        baseState: String? = null
     ): Pending {
         val description = try {
-            describe(ChangeInput(op, canonicalPath, query, contentType, body, requestedBy, method)).let { it.copy(summary = plainText(it.summary, MAX_SUMMARY)) }
+            describe(ChangeInput(op, canonicalPath, query, contentType, body, requestedBy, method, baseState)).let { it.copy(summary = plainText(it.summary, MAX_SUMMARY)) }
         } catch (e: Refused) {
             throw e
         } catch (e: Exception) {
@@ -538,8 +547,37 @@ class ApprovalService(
             return response.statusCode() to response.body()
         }
 
-        fun requiredFromEnv(env: Map<String, String> = com.example.pinvault.server.service.ServerEnv.all()): Int =
-            env["PIN_CHANGE_APPROVALS"]?.toIntOrNull()?.coerceAtLeast(1) ?: 1
+        /**
+         * `PIN_CHANGE_APPROVALS`: how many admins a gated change needs (1 = no
+         * second admin; unset = 1). A value that is not a whole number from 1
+         * to [MAX_REQUIRED] stops the start: it used to count as 1, so a typo
+         * ("2 admins", "two") switched the two-person rule off without a word.
+         */
+        fun requiredFromEnv(env: Map<String, String> = com.example.pinvault.server.service.ServerEnv.all()): Int {
+            val raw = env["PIN_CHANGE_APPROVALS"]?.trim().orEmpty()
+            if (raw.isEmpty()) return 1
+            return raw.toIntOrNull()?.takeIf { it in 1..MAX_REQUIRED }
+                ?: error("PIN_CHANGE_APPROVALS must be a whole number from 1 to $MAX_REQUIRED (got '$raw')")
+        }
+
+        /**
+         * Why [required] approvals cannot work with the admin keys in
+         * [admins], or null when they can: every approver is a personal key
+         * (`ADMIN_KEYS`), other than the requester's. The start-up refuses
+         * such a server, and a settings save that would make one is refused
+         * with this sentence (`ServerSettingsCatalog.startProblems`).
+         */
+        fun adminKeysProblem(required: Int, admins: com.example.pinvault.server.plugin.AdminRegistry): String? {
+            if (required <= 1) return null
+            if (admins.isEmpty) return "PIN_CHANGE_APPROVALS=$required cannot work without admin keys (anonymous admin mode)."
+            val personal = admins.names.count { it != com.example.pinvault.server.plugin.AdminRegistry.LEGACY_NAME }
+            return if (personal >= required - 1) null else
+                "PIN_CHANGE_APPROVALS=$required needs at least ${required - 1} personal admin key(s) in " +
+                    "ADMIN_KEYS to approve changes (found $personal). A shared API_KEY cannot approve."
+        }
+
+        /** The most admins a change can be made to need (the dashboard's settings page offers the same range). */
+        const val MAX_REQUIRED = 5
 
         /**
          * `APPROVAL_EXEMPT_OPERATIONS`: operation names (comma-separated, as

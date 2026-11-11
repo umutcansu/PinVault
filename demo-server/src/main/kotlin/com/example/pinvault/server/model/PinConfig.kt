@@ -37,11 +37,86 @@ data class PinConfig(
      */
     @OptIn(kotlinx.serialization.ExperimentalSerializationApi::class)
     @kotlinx.serialization.EncodeDefault(kotlinx.serialization.EncodeDefault.Mode.NEVER)
-    val trustRoots: List<String> = emptyList()
+    val trustRoots: List<String> = emptyList(),
+    /**
+     * The request a narrowed SIGNED view answers (see [ConfigView]); null for
+     * the full config, and then left out of the payload, which stays byte for
+     * byte what it was before the field existed. Never in unsigned answers.
+     */
+    @OptIn(kotlinx.serialization.ExperimentalSerializationApi::class)
+    @kotlinx.serialization.EncodeDefault(kotlinx.serialization.EncodeDefault.Mode.NEVER)
+    val view: ConfigView? = null
 ) {
     fun computedVersion(): Int = pins.maxOfOrNull { it.version } ?: version
     /** Global forceUpdate = any host has forceUpdate */
     fun hasAnyForceUpdate(): Boolean = forceUpdate || pins.any { it.forceUpdate }
+}
+
+/**
+ * What narrowed a signed config view, inside the signed payload (`view`).
+ *
+ * Without it, whoever can answer as the Config API (a pinned TLS key, a
+ * proxy or CDN in front — not the signing key) could hand a device that asked
+ * for the full config a genuine, fresh, signed NARROW view: newer, so it
+ * replaces the stored config, and every other host loses its pins. The client
+ * compares this field with its own request (SERVER_IMPLEMENTATION_GUIDE.md §3, `view`).
+ *
+ * Present exactly when the request was scoped: `?hosts=` (or the attestation
+ * body's `hosts`) was given, or a device id was claimed (`X-Device-Id`, or the
+ * attested `deviceId` when `hosts` came with it). It records the REQUEST, not
+ * what was granted: a request naming hosts carries the field even when the
+ * result equals the full config.
+ *
+ * @property hosts the requested host names in canonical form
+ *   ([canonicalHosts]); null when no host list was requested (device-only scoping).
+ * @property deviceId the device id the request claimed, the one the ACL was
+ *   resolved for; null when none was claimed (the ACL then used the client
+ *   certificate's id or the default, which the client cannot check).
+ */
+@Serializable
+data class ConfigView(
+    @OptIn(kotlinx.serialization.ExperimentalSerializationApi::class)
+    @kotlinx.serialization.EncodeDefault(kotlinx.serialization.EncodeDefault.Mode.NEVER)
+    val hosts: List<String>? = null,
+    @OptIn(kotlinx.serialization.ExperimentalSerializationApi::class)
+    @kotlinx.serialization.EncodeDefault(kotlinx.serialization.EncodeDefault.Mode.NEVER)
+    val deviceId: String? = null
+) {
+    companion object {
+        /**
+         * The canonical host set: every entry split at `,`, ASCII whitespace
+         * trimmed, empty names dropped, ASCII `A-Z` lower-cased (nothing else
+         * changes), duplicates removed, sorted by code point. The library
+         * computes the same from its `wantPinsFor` list.
+         */
+        fun canonicalHosts(hosts: List<String>): List<String> =
+            hosts.asSequence()
+                .flatMap { it.split(',') }
+                .map { it.trim(' ', '\t', '\n', '\r', '\u000B', '\u000C') }
+                .filter { it.isNotEmpty() }
+                .map { name -> buildString(name.length) { name.forEach { c -> append(if (c in 'A'..'Z') c + 32 else c) } } }
+                .distinct()
+                .sortedWith { a, b -> compareCodePoints(a, b) }
+                .toList()
+
+        /** The view a request with these parameters gets; null = the full config. */
+        fun of(requestedHosts: List<String>?, claimedDeviceId: String?): ConfigView? =
+            if (requestedHosts == null && claimedDeviceId == null) null
+            else ConfigView(hosts = requestedHosts?.let(::canonicalHosts), deviceId = claimedDeviceId)
+
+        private fun compareCodePoints(a: String, b: String): Int {
+            var i = 0
+            var j = 0
+            while (i < a.length && j < b.length) {
+                val ca = a.codePointAt(i)
+                val cb = b.codePointAt(j)
+                if (ca != cb) return ca.compareTo(cb)
+                i += Character.charCount(ca)
+                j += Character.charCount(cb)
+            }
+            return (a.length - i).compareTo(b.length - j)
+        }
+    }
 }
 
 @Serializable

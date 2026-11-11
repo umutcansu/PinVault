@@ -144,6 +144,14 @@ object ServerSettingsCatalog {
         if (v("INTEGRITY_VERIFICATION").lowercase() == "enforce" && v("INTEGRITY_VERIFIER_COMMAND").isEmpty() && v("APP_ATTEST_APP_IDS").isEmpty()) {
             add("INTEGRITY_VERIFICATION=enforce needs INTEGRITY_VERIFIER_COMMAND (set in the environment)")
         }
+        // Approvals need approvers: personal admin keys other than the requester's
+        // (Main refuses to start otherwise). Saved from the dashboard on a server
+        // with only a shared API_KEY, this used to pass the save and then stop
+        // every start.
+        v("PIN_CHANGE_APPROVALS").toIntOrNull()?.takeIf { it > 1 }?.let { required ->
+            runCatching { com.example.pinvault.server.plugin.AdminRegistry.fromEnv(effective) }.getOrNull()
+                ?.let { admins -> ApprovalService.adminKeysProblem(required, admins) }?.let { add(it) }
+        }
         // 0 is off; a fresh key attestation more often than once a minute is refused at start.
         runCatching { com.example.pinvault.server.service.attestation.FreshAttestationSettings.fromEnv { effective[it] } }
             .exceptionOrNull()?.message?.let { add(it) }
@@ -160,7 +168,15 @@ class ServerSettingsStore(private val file: File) {
     data class Rejected(val values: Map<String, String>, val reason: String, val at: Long)
 
     @Serializable
-    data class Content(val values: Map<String, String> = emptyMap(), val rejected: Rejected? = null)
+    data class Content(
+        val values: Map<String, String> = emptyMap(),
+        val rejected: Rejected? = null,
+        /** Starts in a row that failed while [values] were in force (see [startFailed]); 0 after a start that came up. */
+        val failedStarts: Int = 0
+    )
+
+    /** What [startFailed] did: which consecutive failure this was, and whether the saved values were set aside. */
+    data class FailedStart(val attempt: Int, val setAside: Boolean)
 
     private val json = Json { ignoreUnknownKeys = true; prettyPrint = true }
 
@@ -189,6 +205,36 @@ class ServerSettingsStore(private val file: File) {
     @Synchronized
     fun clearRejected() = write(read().copy(rejected = null))
 
+    /**
+     * A start failed while saved values were in force, for a reason the
+     * checks made before the start ([SavedSettingsCheck]) did not put on
+     * them. Counted: one or two failures (a port still in use, a database
+     * that was busy) leave the saved values alone; the [limit]th in a row
+     * sets them aside with [reason] — a saved value that stops every start
+     * in a way nobody modelled must not keep the server down for good, with
+     * no dashboard to undo it. Nothing is counted when no value is saved.
+     */
+    @Synchronized
+    fun startFailed(reason: String, limit: Int = MAX_FAILED_STARTS, now: Long = System.currentTimeMillis()): FailedStart {
+        val current = read()
+        if (current.values.isEmpty()) return FailedStart(0, false)
+        val attempt = current.failedStarts + 1
+        if (attempt < limit) {
+            write(current.copy(failedStarts = attempt))
+            return FailedStart(attempt, false)
+        }
+        // reject() starts the count again with the values it sets aside.
+        reject("$attempt starts in a row failed with these settings in force; the last: $reason", now)
+        return FailedStart(attempt, true)
+    }
+
+    /** The server came up (its listeners are bound): the failures before it were not the saved values' doing. */
+    @Synchronized
+    fun startSucceeded() {
+        val current = read()
+        if (current.failedStarts != 0) write(current.copy(failedStarts = 0))
+    }
+
     private fun write(content: Content) {
         file.parentFile?.mkdirs()
         val tmp = File(file.parentFile, file.name + ".tmp")
@@ -200,9 +246,78 @@ class ServerSettingsStore(private val file: File) {
     }
 
     companion object {
+        /** Consecutive failed starts after which the saved values are set aside. */
+        const val MAX_FAILED_STARTS = 3
+
         /** Next to the database: the sample host keeps `/data/db` on a volume. */
         fun forDbPath(dbPath: String): ServerSettingsStore =
             ServerSettingsStore(File(File(dbPath).absoluteFile.parentFile, "server-settings.json"))
+    }
+}
+
+/**
+ * Whether the settings saved from the dashboard would stop the server from
+ * starting — asked BEFORE anything is opened or listened on.
+ *
+ * It is decided by reading the values again with the parsers the start-up
+ * uses, once with the saved values laid over the environment and once with
+ * the environment alone: what fails only with the saved values is theirs.
+ * The start-up used to set the saved values aside after ANY failure while
+ * some were saved, so a port in use or a busy database wiped
+ * `PIN_CHANGE_APPROVALS=2` along with everything else.
+ */
+object SavedSettingsCheck {
+    /** The start-up's own readers of the settings a bad value stops the start for, by the setting they read. */
+    private val startupParsers: List<Pair<String, (Map<String, String>) -> Unit>> = listOf(
+        "PIN_CHANGE_APPROVALS" to { env -> ApprovalService.requiredFromEnv(env) },
+        "PIN_LIVE_CHECK" to { env -> LiveCertificateGate.modeFromEnv(env) },
+        "CONFIG_TTL_SECONDS" to { env -> SignedConfigService.ttlFromEnv(env) },
+        "ENROLLMENT_ATTESTATION" to { env -> EnrollmentAttestationMode.parse(env["ENROLLMENT_ATTESTATION"]) },
+        "USER_AUTH_ATTESTATION" to { env -> UserAuthAttestationMode.parse(env["USER_AUTH_ATTESTATION"]) },
+        "INTEGRITY_VERIFICATION" to { env -> IntegrityVerificationMode.parse(env["INTEGRITY_VERIFICATION"]) },
+        "ATTESTATION_KEY_POLICY" to { env -> com.example.pinvault.server.service.attestation.AttestationKeyPolicy.parse(env["ATTESTATION_KEY_POLICY"]) },
+        // The package list and the signer digests (ATTESTATION_PACKAGE_NAMES, ATTESTATION_SIGNER_SHA256).
+        "ATTESTATION_SIGNER_SHA256" to { env -> AndroidKeyAttestation.fromEnv(env) },
+        // The default policy: profile, token lifetime, interval, ATTESTATION_REVEAL_REASONS.
+        "ATTESTATION_POLICY_DEFAULT" to { env -> com.example.pinvault.server.service.attestation.AttestationPolicyDefaults.fromEnv(env) }
+    )
+
+    /**
+     * Why the server would not start with [saved] (`server-settings.json`,
+     * as stored), each line naming the setting; empty when the saved values
+     * are not what stops it. A setting the environment sets is not looked
+     * at: the saved value is not used. A value that is not applied at all
+     * ([dropped]) stops nothing either.
+     */
+    fun problems(
+        saved: Map<String, String>,
+        env: Map<String, String> = System.getenv(),
+        parsers: List<Pair<String, (Map<String, String>) -> Unit>> = startupParsers
+    ): List<String> {
+        // What ServerSettingsStore.values() applies, where the environment leaves room.
+        val applied = saved.filter { (key, value) ->
+            env[key].isNullOrBlank() && ServerSettingsCatalog.find(key)?.let { it.problem(value) == null } == true
+        }
+        val effective = LinkedHashMap(env).apply { putAll(applied) }
+        fun failure(of: (Map<String, String>) -> Unit, with: Map<String, String>): String? =
+            runCatching { of(with) }.exceptionOrNull()?.let { it.message ?: it.javaClass.simpleName }
+        val refused = parsers.mapNotNull { (key, parse) ->
+            // A value the environment alone already fails on is the environment's to fix.
+            failure(parse, effective)?.takeIf { failure(parse, env) == null }?.let { "$key: $it" }
+        }
+        return refused + (ServerSettingsCatalog.startProblems(effective) - ServerSettingsCatalog.startProblems(env).toSet())
+    }
+
+    /**
+     * The saved values that are not applied, one warning each: a key the
+     * catalog no longer knows, or a value it no longer accepts (a hand-edited
+     * file, a range that changed with an upgrade). Only THAT value is left
+     * out — the rest of the saved settings stay in force; one stale number
+     * must not take `PIN_CHANGE_APPROVALS=2` down with it.
+     */
+    fun dropped(saved: Map<String, String>): List<String> = saved.mapNotNull { (key, value) ->
+        val setting = ServerSettingsCatalog.find(key) ?: return@mapNotNull "$key: not a setting the dashboard saves (any more); ignored"
+        setting.problem(value)?.let { "$key: saved value '${value.take(80)}' $it; ignored, the server default applies" }
     }
 }
 

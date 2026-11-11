@@ -625,7 +625,23 @@ fun Route.certificateConfigRoutes(
             val requested = call.request.queryParameters["hosts"]
                 ?.split(",")?.map { it.trim() }?.filter { it.isNotEmpty() }
             val headerDeviceId = call.request.header("X-Device-Id")
+            // Both are the caller's text and each distinct value is its own
+            // signed content: bounded before anything is looked up or signed.
+            if (headerDeviceId != null && !isValidIdentifier(headerDeviceId)) {
+                return@get call.respondText(
+                    """{"error":"invalid_device_id","message":"X-Device-Id must be 1-64 characters of A-Z a-z 0-9 . _ : -"}""",
+                    ContentType.Application.Json, HttpStatusCode.BadRequest
+                )
+            }
+            if (requested != null && requested.size > MAX_REQUESTED_HOSTS) {
+                return@get call.respondText(
+                    """{"error":"too_many_hosts","message":"hosts may name at most $MAX_REQUESTED_HOSTS host names"}""",
+                    ContentType.Application.Json, HttpStatusCode.BadRequest
+                )
+            }
             fun servedView(): PinConfig = servedPinConfig(call, configApiId, store, deviceHostAclStore, requested, headerDeviceId)
+            // Signed: the payload names the request it answers (`view`, M6).
+            fun signedView(): PinConfig = signedPinConfig(call, configApiId, store, deviceHostAclStore, requested, headerDeviceId)
 
             val signed = call.request.queryParameters["signed"] != "false"
             if (!signed) return@get call.respond(servedView())
@@ -634,7 +650,14 @@ fun Route.certificateConfigRoutes(
                 .split(',').map { it.trim() }
             val redelivery = "redelivery" in features
             try {
-                call.respond(signEnvelope(envelopes, configApiId, redelivery, ::servedView))
+                call.respond(signEnvelope(envelopes, configApiId, redelivery, ::signedView, viewRequester(call)))
+            } catch (e: SignedConfigService.ViewSignLimited) {
+                // Never another view in its place: the client would refuse it.
+                call.response.header(HttpHeaders.RetryAfter, e.retryAfterSeconds.toString())
+                call.respondText(
+                    """{"error":"rate_limited","message":"Too many narrowed config views signed for this client. Try again later."}""",
+                    ContentType.Application.Json, HttpStatusCode.TooManyRequests
+                )
             } catch (e: Exception) {
                 // Never hand signer internals (KMS ids, command stderr) to an
                 // unauthenticated caller.
@@ -673,11 +696,14 @@ fun Route.certificateConfigRoutes(
         post("force-update/{hostname}") {
             val scope = call.request.queryParameters["configApiId"] ?: configApiId
             val hostname = call.pathParameters["hostname"] ?: ""
-            val current = store.load(scope)
-            val updated = current.copy(
-                pins = current.pins.map { if (it.hostname == hostname) it.copy(forceUpdate = true) else it }
-            )
-            store.save(scope, updated)
+            // Load and save in one piece (the scope's lock): a pin write landing
+            // in between is not written over with the config read before it.
+            val updated = store.locked(scope) {
+                val current = store.load(scope)
+                current.copy(
+                    pins = current.pins.map { if (it.hostname == hostname) it.copy(forceUpdate = true) else it }
+                ).also { store.save(scope, it) }
+            }
             val pin = updated.pins.find { it.hostname == hostname }
             if (pin != null) {
                 historyStore.add(scope, PinConfigHistoryEntry(
@@ -691,11 +717,12 @@ fun Route.certificateConfigRoutes(
         post("clear-force/{hostname}") {
             val scope = call.request.queryParameters["configApiId"] ?: configApiId
             val hostname = call.pathParameters["hostname"] ?: ""
-            val current = store.load(scope)
-            val updated = current.copy(
-                pins = current.pins.map { if (it.hostname == hostname) it.copy(forceUpdate = false) else it }
-            )
-            store.save(scope, updated)
+            val updated = store.locked(scope) {
+                val current = store.load(scope)
+                current.copy(
+                    pins = current.pins.map { if (it.hostname == hostname) it.copy(forceUpdate = false) else it }
+                ).also { store.save(scope, it) }
+            }
             call.respond(HttpStatusCode.OK, updated)
         }
 
@@ -709,12 +736,13 @@ fun Route.certificateConfigRoutes(
         // in the ApiKeyAuth allowlist, so X-API-Key is required.
         post("force-update") {
             val scope = call.request.queryParameters["configApiId"] ?: configApiId
-            val current = store.load(scope)
-            val updated = current.copy(
-                pins = current.pins.map { it.copy(forceUpdate = true) }
-            )
-            store.save(scope, updated)
-            current.pins.forEach { pin ->
+            val updated = store.locked(scope) {
+                val current = store.load(scope)
+                current.copy(
+                    pins = current.pins.map { it.copy(forceUpdate = true) }
+                ).also { store.save(scope, it) }
+            }
+            updated.pins.forEach { pin ->
                 historyStore.add(scope, PinConfigHistoryEntry(
                     hostname = pin.hostname, version = pin.version, timestamp = Instant.now().toString(),
                     event = "force_update", pinPrefix = pin.sha256.firstOrNull()?.take(12) ?: ""
@@ -725,12 +753,13 @@ fun Route.certificateConfigRoutes(
 
         post("clear-force") {
             val scope = call.request.queryParameters["configApiId"] ?: configApiId
-            val current = store.load(scope)
-            val updated = current.copy(
-                forceUpdate = false,
-                pins = current.pins.map { it.copy(forceUpdate = false) }
-            )
-            store.save(scope, updated)
+            val updated = store.locked(scope) {
+                val current = store.load(scope)
+                current.copy(
+                    forceUpdate = false,
+                    pins = current.pins.map { it.copy(forceUpdate = false) }
+                ).also { store.save(scope, it) }
+            }
             call.respond(HttpStatusCode.OK, updated)
         }
     }
@@ -922,14 +951,29 @@ internal fun servedPinConfig(
 ): PinConfig {
     val config = store.load(configApiId)
     val deviceId = claimedDeviceId ?: extractCertCn(call)
-    val filtered = if (deviceHostAclStore != null && (requestedHosts != null || claimedDeviceId != null)) {
-        val decision = deviceHostAclStore.resolve(configApiId, deviceId ?: "anonymous", requestedHosts)
+    // The canonical set (ConfigView.canonicalHosts) decides what is served,
+    // not the spelling: two requests whose signed views say the same hosts
+    // must get the same pins. Host names compare without regard to ASCII case.
+    val requested = requestedHosts?.let(com.example.pinvault.server.model.ConfigView::canonicalHosts)
+    val filtered = if (deviceHostAclStore != null && (requested != null || claimedDeviceId != null)) {
+        val allowed = deviceHostAclStore.resolve(configApiId, deviceId ?: "anonymous", null).granted
+            .mapTo(HashSet()) { it.lowercase() }
+        val decision = if (requested == null) com.example.pinvault.server.store.AclDecision(allowed, emptySet())
+        else com.example.pinvault.server.store.AclDecision(
+            granted = requested.filterTo(HashSet()) { it in allowed },
+            denied = requested.filterNotTo(HashSet()) { it in allowed }
+        )
         if (decision.hasUnauthorized) {
-            aclLog.warn("Unauthorized host request: configApi={} deviceId={} denied={}",
-                configApiId, deviceId ?: "anonymous", decision.denied)
+            // `?hosts=` and X-Device-Id are the caller's text, on a route that
+            // needs no credential: logged raw they could forge log lines and
+            // fill the log. A count, and only names that are host names.
+            val named = decision.denied.filter { com.example.pinvault.server.service.HostPatternRules.error(it) == null }
+            aclLog.warn("Unauthorized host request: configApi={} deviceId={} denied={} ({})",
+                configApiId, deviceId?.takeIf(::isValidIdentifier) ?: if (deviceId == null) "anonymous" else "(malformed)",
+                decision.denied.size, named.take(10).joinToString(",") + if (named.size > 10) ",…" else "")
         }
         // With `?hosts=`: only the granted ones of those; without: the ACL's.
-        config.copy(pins = config.pins.filter { it.hostname in decision.granted })
+        config.copy(pins = config.pins.filter { it.hostname.lowercase() in decision.granted })
     } else {
         config
     }
@@ -937,9 +981,30 @@ internal fun servedPinConfig(
     // config-level flag, while the dashboard only ever sets per-host flags.
     // Without this the admin-visible switch never reached that gate, so a
     // device with a stale forced config kept starting up happily while the
-    // backend was unreachable.
-    return filtered.copy(forceUpdate = filtered.hasAnyForceUpdate())
+    // backend was unreachable. `view` is never set here: unsigned answers
+    // stay as they were; [signedPinConfig] adds it for an envelope.
+    return filtered.copy(forceUpdate = filtered.hasAnyForceUpdate(), view = null)
 }
+
+/**
+ * [servedPinConfig] as it goes into a SIGNED payload: with `view` naming the
+ * request it answers (M6, SERVER_IMPLEMENTATION_GUIDE.md §3, `view`) — the canonical
+ * requested host set and the claimed device id — or without it for the full
+ * config (no hosts requested, no device id claimed). The field records the
+ * request, not the outcome, so the client can decide from its own request
+ * alone; a full view and a narrowed one, or two different requests, never
+ * share a payload — nor, since the cache key hashes the payload, a cached
+ * signature.
+ */
+internal fun signedPinConfig(
+    call: ApplicationCall,
+    configApiId: String,
+    store: PinConfigStore,
+    deviceHostAclStore: DeviceHostAclStore?,
+    requestedHosts: List<String>?,
+    claimedDeviceId: String?
+): PinConfig = servedPinConfig(call, configApiId, store, deviceHostAclStore, requestedHosts, claimedDeviceId)
+    .copy(view = com.example.pinvault.server.model.ConfigView.of(requestedHosts, claimedDeviceId))
 
 /**
  * The signed envelope of the view [load] returns now.
@@ -956,7 +1021,9 @@ internal suspend fun signEnvelope(
     envelopes: SignedConfigService,
     configApiId: String,
     redelivery: Boolean,
-    load: () -> PinConfig
+    load: () -> PinConfig,
+    /** Who asked, for the narrowed-view signing budget; null = not counted. */
+    requester: com.example.pinvault.server.service.ViewSignLimits.Requester? = null
 ): com.example.pinvault.server.model.SignedConfig {
     repeat(3) {
         val loadedAt = envelopes.generation()
@@ -965,7 +1032,7 @@ internal suspend fun signEnvelope(
             // An external signer may take seconds, or make the request wait
             // its turn: never on the event loop.
             return kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
-                envelopes.envelope(configApiId, view, redelivery, loadedAt)
+                envelopes.envelope(configApiId, view, redelivery, loadedAt, requester)
             }
         } catch (_: SignedConfigService.StaleLoad) {
             // A change landed while serving; load again.
@@ -975,9 +1042,25 @@ internal suspend fun signEnvelope(
     // carries the newest issuedAt.
     val latest = load()
     return kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
-        envelopes.envelope(configApiId, latest, redeliveryOk = false)
+        envelopes.envelope(configApiId, latest, redeliveryOk = false, requester = requester)
     }
 }
+
+/**
+ * The most host names one narrowed request may name (`?hosts=`; the
+ * attestation body takes as many). The library keeps at most 2000 hosts per
+ * block (PinConfigRules).
+ */
+internal const val MAX_REQUESTED_HOSTS = 2000
+
+/**
+ * Who a narrowed view is signed for, for [com.example.pinvault.server.service.ViewSignLimits]:
+ * the verified client id on an mTLS listener (devices behind one NAT keep
+ * their own budgets), else the source address (`origin`, which honours
+ * `TRUSTED_PROXIES`).
+ */
+internal fun viewRequester(call: ApplicationCall): com.example.pinvault.server.service.ViewSignLimits.Requester =
+    com.example.pinvault.server.service.ViewSignLimits.Requester(call.request.origin.remoteAddress, call.clientCertId())
 
 /**
  * Extract CN from the mTLS client cert's SubjectDN, if one is present on the
@@ -1070,6 +1153,29 @@ internal suspend fun ApplicationCall.passesLiveGate(
 }
 
 /**
+ * `X-PinVault-State`: the fingerprint of a scope's pins, flags and trust roots
+ * (`PinDiff.stateHash`) on the answers an admin edits from. Sent back as
+ * [BASE_STATE_HEADER] with a full-config write, it makes the write conditional:
+ * 409 `stale_config` when the scope is no longer what the editor loaded.
+ */
+const val STATE_HEADER = "X-PinVault-State"
+const val BASE_STATE_HEADER = "X-PinVault-Base-State"
+
+/** 409 `stale_config`: the scope moved under this change; nothing was written. [state] is what it holds now. */
+internal fun staleConfigBody(scope: String, state: String): JsonObject = kotlinx.serialization.json.buildJsonObject {
+    put("error", kotlinx.serialization.json.JsonPrimitive("stale_config"))
+    put("message", kotlinx.serialization.json.JsonPrimitive("The pins of $scope were changed by someone else in the meantime. Nothing was saved: load the config again and repeat the change."))
+    put("configApiId", kotlinx.serialization.json.JsonPrimitive(scope))
+    put("state", kotlinx.serialization.json.JsonPrimitive(state))
+}
+
+internal suspend fun ApplicationCall.respondStaleConfig(scope: String, store: PinConfigStore) {
+    val state = com.example.pinvault.server.service.PinDiff.stateHash(store.load(scope))
+    response.header(STATE_HEADER, state)
+    respondText(staleConfigBody(scope, state).toString(), ContentType.Application.Json, HttpStatusCode.Conflict)
+}
+
+/**
  * The pin write behind `PUT /api/v1/certificate-config` and
  * `POST /api/v1/config/{id}/update`: duplicate and format validation,
  * per-host versioning, the live certificate gate, the save and the history.
@@ -1094,6 +1200,18 @@ internal suspend fun ApplicationCall.applyPinConfigUpdate(
     }
     val current = store.load(scope)
 
+    // A full-config write replaces every host and the trust roots with what
+    // the editor had on screen. When the editor says which state that was
+    // and the scope has moved since, writing it would silently undo the other
+    // admin's change (a host they added, a root they withdrew): refused, the
+    // editor reloads. Without the header the write is unconditional, as it
+    // always was (scripts).
+    val baseState = request.headers[BASE_STATE_HEADER]?.trim()?.takeIf { it.isNotEmpty() }
+    if (baseState != null && baseState != com.example.pinvault.server.service.PinDiff.stateHash(current)) {
+        respondStaleConfig(scope, store)
+        return
+    }
+
     // Aynı hostname birden fazla kez eklenemez — büyük/küçük harf farkı da
     // aynı host: the library compares names ignoring case and refuses the
     // whole config otherwise.
@@ -1113,9 +1231,15 @@ internal suspend fun ApplicationCall.applyPinConfigUpdate(
     // host client certificate, was seen only by a device whose data had been
     // wiped. The toggle-mtls and upload-client-cert routes bump for their own
     // change; this is the same rule for the whole entry.
+    //
+    // Names are matched ignoring case, as devices match them: an entry that
+    // differs from a host of the scope only by case is that host — it keeps
+    // the stored spelling and its version goes on from where it was.
+    val currentByLowerName = current.pins.associateBy { it.hostname.lowercase() }
     val currentPinMap = current.pins.associateBy { it.hostname }
-    val updatedPins = incoming.pins.map { newPin ->
-        val oldPin = currentPinMap[newPin.hostname]
+    val updatedPins = incoming.pins.map { sentPin ->
+        val oldPin = currentByLowerName[sentPin.hostname.lowercase()]
+        val newPin = if (oldPin != null) sentPin.copy(hostname = oldPin.hostname) else sentPin
         when {
             oldPin == null -> newPin.copy(version = 1) // yeni host
             oldPin.copy(version = newPin.version) != newPin -> newPin.copy(version = oldPin.version + 1) // girdi değişti
@@ -1148,8 +1272,15 @@ internal suspend fun ApplicationCall.applyPinConfigUpdate(
     val kept = newHostnames.intersect(oldHostnames)
 
     // Re-added hosts continue their version sequence (see PinConfigStore.save);
-    // history and the response must report the stored versions.
-    val saved = store.save(scope, updated)
+    // history and the response must report the stored versions. Saved only if
+    // the scope still holds what the versions and the live gate were worked
+    // out from — the gate probes hosts, and another write may have landed.
+    val saved = try {
+        store.save(scope, updated, expected = current)
+    } catch (_: com.example.pinvault.server.store.StaleConfigException) {
+        respondStaleConfig(scope, store)
+        return
+    }
     val now = Instant.now().toString()
 
     added.forEach { hostname ->
@@ -1204,5 +1335,7 @@ internal suspend fun ApplicationCall.applyPinConfigUpdate(
         )
     }
 
+    // What the next conditional write of this editor starts from.
+    response.header(STATE_HEADER, com.example.pinvault.server.service.PinDiff.stateHash(saved))
     respond(HttpStatusCode.OK, saved)
 }

@@ -115,7 +115,12 @@ fun Route.clientCertAdminRoutes(
         val form = call.receiveMultipartForm(maxUploadBytes) ?: return@post
         val bytes = form.file
             ?: return@post call.respondJson("""{"error":"Dosya gerekli"}""", HttpStatusCode.BadRequest)
-        val id = form.fields["clientId"]?.trim()?.takeIf { it.isNotEmpty() } ?: "uploaded-${System.currentTimeMillis()}"
+        // Without a clientId the certificate goes under the id its own CN carries
+        // — the id every mTLS request with it is attributed to. (It used to get
+        // `uploaded-<time>`, a row its requests never matched.)
+        val id = form.fields["clientId"]?.trim()?.takeIf { it.isNotEmpty() }
+            ?: runCatching { clientIdOfSubject(certService.parseUploadedClientCertificate(bytes).subjectX500Principal) }.getOrNull()
+            ?: "uploaded-${System.currentTimeMillis()}"
         if (!isValidIdentifier(id)) return@post call.respondJson(INVALID_ID, HttpStatusCode.BadRequest)
         // `client-ca` used to overwrite the client CA in the truststore for good.
         if (isReservedClientId(id)) return@post call.respondJson(RESERVED_CLIENT_ID, HttpStatusCode.BadRequest)
@@ -134,9 +139,16 @@ fun Route.clientCertAdminRoutes(
                 ContentType.Application.Json, HttpStatusCode.BadRequest
             )
         }
+        // The id it is recorded under must be the id it authenticates as (see uploadedSubjectMismatch).
+        uploadedSubjectMismatch(certificate, id)?.let { why ->
+            return@post call.respondText(
+                buildJsonObject { put("error", "subject_mismatch"); put("message", why) }.toString(),
+                ContentType.Application.Json, HttpStatusCode.BadRequest
+            )
+        }
         try {
             val fingerprint = certService.importClientCertificate(id, bytes)
-            if (!clientCertStore.addUnlessRevoked(id, "Uploaded: $id", fingerprint, Instant.now().toString())) {
+            if (!clientCertStore.addUnlessRevoked(id, com.example.pinvault.server.store.ClientCertRecord.UPLOADED_NAME_PREFIX + id, fingerprint, Instant.now().toString())) {
                 certService.removeFromTrustStore(id)
                 return@post call.respondJson(REVOKED_ID, HttpStatusCode.Conflict)
             }

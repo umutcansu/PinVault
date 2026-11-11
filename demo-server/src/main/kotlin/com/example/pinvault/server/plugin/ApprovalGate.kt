@@ -176,7 +176,8 @@ val ApprovalGate = createApplicationPlugin("ApprovalGate", ::ApprovalGateConfig)
                     canonicalPath = path,
                     query = call.request.queryString(),
                     contentType = contentType,
-                    body = body
+                    body = body,
+                    baseState = call.request.header(com.example.pinvault.server.route.BASE_STATE_HEADER)?.trim()?.takeIf { it.isNotEmpty() }
                 )
             }
             call.respond(HttpStatusCode.Accepted, pending)

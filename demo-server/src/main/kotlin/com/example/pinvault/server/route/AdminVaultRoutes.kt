@@ -102,26 +102,29 @@ fun Route.adminVaultRoutes(
         val deviceId = call.pathParameters["deviceId"] ?: return@put call.respond(
             HttpStatusCode.BadRequest, mapOf("error" to "Missing deviceId"))
         val body = call.receive<JsonObject>()
-        val desired = body["hostnames"]?.jsonArray?.mapNotNull { it.jsonPrimitive.contentOrNull }?.toSet()
-            ?: return@put call.respond(HttpStatusCode.BadRequest,
-                mapOf("error" to "'hostnames' string array required"))
-
-        val current = deviceHostAclStore.listForDevice(configApiId, deviceId).toSet()
+        // Planned by the code the approval card is built with (HostAclChange):
+        // every name is a host name, and what is granted and taken away here
+        // is what the card listed.
+        val change = try {
+            com.example.pinvault.server.service.HostAclChange.plan(deviceHostAclStore.listForDevice(configApiId, deviceId), body)
+        } catch (e: com.example.pinvault.server.service.HostAclChange.BadBody) {
+            return@put call.respond(HttpStatusCode.BadRequest, mapOf("error" to (e.message ?: "invalid hostnames")))
+        }
         val now = Instant.now().toString()
-        val toAdd = desired - current
-        val toRemove = current - desired
+        val toAdd = change.added
+        val toRemove = change.removed
         toAdd.forEach { deviceHostAclStore.grant(configApiId, deviceId, it, now) }
         toRemove.forEach { deviceHostAclStore.revoke(configApiId, deviceId, it) }
         if (toAdd.isNotEmpty() || toRemove.isNotEmpty()) {
             audit?.record(
                 "host_acl_changed",
                 "Hosts device $deviceId may reach: +${toAdd.size} −${toRemove.size}" +
-                    (if (toAdd.isNotEmpty()) " (added ${toAdd.sorted().take(10).joinToString()})" else "") +
-                    (if (toRemove.isNotEmpty()) " (removed ${toRemove.sorted().take(10).joinToString()})" else ""),
+                    (if (toAdd.isNotEmpty()) " (added ${toAdd.take(10).joinToString()})" else "") +
+                    (if (toRemove.isNotEmpty()) " (removed ${toRemove.take(10).joinToString()})" else ""),
                 configApiId, deviceId,
                 detail = buildJsonObject {
-                    putJsonArray("added") { toAdd.sorted().forEach { add(it) } }
-                    putJsonArray("removed") { toRemove.sorted().forEach { add(it) } }
+                    putJsonArray("added") { toAdd.forEach { add(it) } }
+                    putJsonArray("removed") { toRemove.forEach { add(it) } }
                 }
             )
         }
@@ -156,25 +159,26 @@ fun Route.adminVaultRoutes(
         val configApiId = call.pathParameters["configApiId"] ?: return@put call.respond(
             HttpStatusCode.BadRequest, mapOf("error" to "Missing configApiId"))
         val body = call.receive<JsonObject>()
-        val desired = body["hostnames"]?.jsonArray?.mapNotNull { it.jsonPrimitive.contentOrNull }?.toSet()
-            ?: return@put call.respond(HttpStatusCode.BadRequest,
-                mapOf("error" to "'hostnames' string array required"))
-
-        val current = deviceHostAclStore.listDefault(configApiId).toSet()
-        val toAdd = desired - current
-        val toRemove = current - desired
+        // As above: the plan the approval card showed.
+        val change = try {
+            com.example.pinvault.server.service.HostAclChange.plan(deviceHostAclStore.listDefault(configApiId), body)
+        } catch (e: com.example.pinvault.server.service.HostAclChange.BadBody) {
+            return@put call.respond(HttpStatusCode.BadRequest, mapOf("error" to (e.message ?: "invalid hostnames")))
+        }
+        val toAdd = change.added
+        val toRemove = change.removed
         toAdd.forEach { deviceHostAclStore.addDefault(configApiId, it) }
         toRemove.forEach { deviceHostAclStore.removeDefault(configApiId, it) }
         if (toAdd.isNotEmpty() || toRemove.isNotEmpty()) {
             audit?.record(
                 "host_acl_changed",
                 "Default hosts every device may reach: +${toAdd.size} −${toRemove.size}" +
-                    (if (toAdd.isNotEmpty()) " (added ${toAdd.sorted().take(10).joinToString()})" else "") +
-                    (if (toRemove.isNotEmpty()) " (removed ${toRemove.sorted().take(10).joinToString()})" else ""),
+                    (if (toAdd.isNotEmpty()) " (added ${toAdd.take(10).joinToString()})" else "") +
+                    (if (toRemove.isNotEmpty()) " (removed ${toRemove.take(10).joinToString()})" else ""),
                 configApiId, "default",
                 detail = buildJsonObject {
-                    putJsonArray("added") { toAdd.sorted().forEach { add(it) } }
-                    putJsonArray("removed") { toRemove.sorted().forEach { add(it) } }
+                    putJsonArray("added") { toAdd.forEach { add(it) } }
+                    putJsonArray("removed") { toRemove.forEach { add(it) } }
                 }
             )
         }

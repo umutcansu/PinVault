@@ -38,6 +38,16 @@ import java.util.concurrent.atomic.AtomicLong
  * them). Apps older than 2.1 then see a repeated envelope as a replay while
  * nothing changed; they keep the config they have.
  *
+ * ## Narrowed views
+ * A narrowed view (`?hosts=`, `X-Device-Id`, the attestation body's `hosts`)
+ * names its request (`view`), so each distinct request is its own content —
+ * and on a TLS listener those values are anyone's to make up. With the cache
+ * on, a narrowed view that is not cached is signed only within its
+ * requester's budget ([ViewSignLimits], else [ViewSignLimited] → 429), never
+ * with the external signer's last permit nor after waiting in its queue
+ * ([ConfigSigningService.signAllNarrowed]), and narrowed views are cached
+ * apart from full ones, so they never evict a full view.
+ *
  * Either way the latest signing-key set is attached to every envelope.
  */
 class SignedConfigService(
@@ -45,7 +55,14 @@ class SignedConfigService(
     private val keySets: SigningKeySetService? = null,
     val ttlMs: Long = ttlFromEnv(),
     cacheEnabled: Boolean = com.example.pinvault.server.service.ServerEnv.get("CONFIG_SIGNATURE_CACHE") == "true",
-    private val clock: () -> Long = System::currentTimeMillis
+    private val clock: () -> Long = System::currentTimeMillis,
+    /**
+     * Budget of NARROWED views each requester may have signed (cache misses
+     * only; see [ViewSignLimits]); null = no limit. Never applied to the full
+     * view, nor without the cache: then every request is signed anyway, the
+     * full view's included.
+     */
+    private val viewLimits: ViewSignLimits? = null
 ) {
     /** Whether signatures are cached per content: asked for, or required by an external signer. */
     val cacheEnabled: Boolean = cacheEnabled || signing.external
@@ -57,9 +74,21 @@ class SignedConfigService(
 
     private data class Cached(val issuedAt: Long, val envelope: SignedConfig)
 
+    /** Narrowed views (per device, per host set). */
     private val cache = object : LinkedHashMap<String, Cached>(64, 0.75f, true) {
         override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, Cached>?) = size > MAX_ENTRIES
     }
+
+    /**
+     * Full views (one content per Config API), apart from [cache]: however many
+     * narrowed views anyone has signed, they never push a full view out and
+     * make it be signed again.
+     */
+    private val fullCache = object : LinkedHashMap<String, Cached>(16, 0.75f, true) {
+        override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, Cached>?) = size > MAX_FULL_ENTRIES
+    }
+
+    private fun cacheOf(narrowed: Boolean) = if (narrowed) cache else fullCache
     private val vaultCache = object : LinkedHashMap<String, VaultSignatures>(64, 0.75f, true) {
         override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, VaultSignatures>?) = size > MAX_ENTRIES
     }
@@ -98,6 +127,14 @@ class SignedConfigService(
      */
     class StaleLoad : RuntimeException("config changed while it was being served")
 
+    /**
+     * Thrown by [envelope] when a narrowed view would have to be signed and its
+     * requester's budget ([ViewSignLimits]) is spent. Answered with 429 and
+     * `Retry-After: [retryAfterSeconds]`; a different view is never served in
+     * its place (the client would refuse it).
+     */
+    class ViewSignLimited(val retryAfterSeconds: Long) : RuntimeException("too many narrowed config views signed for this requester")
+
     /** Capture before loading the config; pass it to [envelope] as loadedAt. */
     fun generation(): Long = generation.get()
 
@@ -115,7 +152,7 @@ class SignedConfigService(
         ttlSeconds = ttlMs / 1000,
         signaturesProduced = signing.signaturesProduced.get(),
         cacheHits = cacheHits.get(),
-        cachedEnvelopes = synchronized(cache) { cache.size }
+        cachedEnvelopes = synchronized(cache) { cache.size } + synchronized(fullCache) { fullCache.size }
     )
 
     /**
@@ -126,8 +163,19 @@ class SignedConfigService(
      * [redeliveryOk]: the client said it accepts the same signed config twice
      * (`X-PinVault-Features: redelivery`). Only such clients get cached
      * envelopes; any other client gets a fresh signature, as before.
+     *
+     * [requester]: who asked, for the narrowed-view budget ([ViewSignLimits]);
+     * null (pre-signing, server-internal calls) = not counted. Throws
+     * [ViewSignLimited] when a narrowed view is not cached and the budget is
+     * spent; a cache hit is never refused.
      */
-    fun envelope(scope: String, view: PinConfig, redeliveryOk: Boolean = true, loadedAt: Long? = null): SignedConfig {
+    fun envelope(
+        scope: String,
+        view: PinConfig,
+        redeliveryOk: Boolean = true,
+        loadedAt: Long? = null,
+        requester: ViewSignLimits.Requester? = null
+    ): SignedConfig {
         val keySet = keySets?.latestWire()
         // Every signed payload names the Config API it was signed for: a block
         // with `serverScope` accepts only its own (one signing key often serves
@@ -139,27 +187,45 @@ class SignedConfigService(
 
         val gen = loadedAt ?: generation.get()
         if (gen != generation.get()) throw StaleLoad()
-        val key = "$gen|$scope|" + sha256Hex(json.encodeToString(config.copy(issuedAt = 0, expiresAt = 0)))
-        cachedFor(key, clock())?.let { return it.copy(signingKeys = keySet) }
+        // The view a narrowed payload answers (`view`: requested hosts, device
+        // id) is part of the hashed content and named again in the key, so a
+        // narrowed envelope is never served for a full request, nor one
+        // request's for another that happens to yield the same pins (M6).
+        val narrowed = config.view != null
+        val viewKey = config.view?.let { v -> "v:" + sha256Hex(json.encodeToString(com.example.pinvault.server.model.ConfigView.serializer(), v)) } ?: "full"
+        val key = "$gen|$scope|$viewKey|" + sha256Hex(json.encodeToString(config.copy(issuedAt = 0, expiresAt = 0)))
+        cachedFor(key, clock(), narrowed)?.let { return it.copy(signingKeys = keySet) }
 
         val lock = keyLocks.computeIfAbsent(key) { Any() }
-        synchronized(lock) {
-            // Another request may have signed this key while we waited.
-            cachedFor(key, clock())?.let { return it.copy(signingKeys = keySet) }
-            if (gen != generation.get()) throw StaleLoad()
-            val fresh = signFresh(config, clock())
-            val issuedAt = json.decodeFromString(PinConfig.serializer(), fresh.payload).issuedAt
-            synchronized(cache) {
-                // Keep the newer envelope if two signings raced.
-                val existing = cache[key]
-                if (existing == null || existing.issuedAt < issuedAt) cache[key] = Cached(issuedAt, fresh)
+        try {
+            synchronized(lock) {
+                // Another request may have signed this key while we waited.
+                cachedFor(key, clock(), narrowed)?.let { return it.copy(signingKeys = keySet) }
+                if (gen != generation.get()) throw StaleLoad()
+                // A narrowed view nobody has signed yet: whoever asked pays from
+                // their budget. Made-up device ids and host lists are a miss each.
+                if (narrowed && requester != null && viewLimits != null && !viewLimits.allow(requester)) {
+                    throw ViewSignLimited(viewLimits.retryAfterSeconds(requester))
+                }
+                val fresh = signFresh(config, clock())
+                val issuedAt = json.decodeFromString(PinConfig.serializer(), fresh.payload).issuedAt
+                val target = cacheOf(narrowed)
+                synchronized(target) {
+                    // Keep the newer envelope if two signings raced.
+                    val existing = target[key]
+                    if (existing == null || existing.issuedAt < issuedAt) target[key] = Cached(issuedAt, fresh)
+                }
+                return fresh.copy(signingKeys = keySet)
             }
+        } finally {
+            // Also when signing failed or was refused: a lock left behind per
+            // made-up view would be memory anyone can fill.
             keyLocks.remove(key, lock)
-            return fresh.copy(signingKeys = keySet)
         }
     }
 
-    private fun cachedFor(key: String, now: Long): SignedConfig? = synchronized(cache) {
+    private fun cachedFor(key: String, now: Long, narrowed: Boolean): SignedConfig? = synchronized(cacheOf(narrowed)) {
+        val cache = cacheOf(narrowed)
         val hit = cache[key]
         if (hit != null && now < hit.issuedAt + ttlMs / 2) {
             cacheHits.incrementAndGet()
@@ -224,6 +290,7 @@ class SignedConfigService(
     fun invalidate() {
         generation.incrementAndGet()
         synchronized(cache) { cache.clear() }
+        synchronized(fullCache) { fullCache.clear() }
         synchronized(vaultCache) { vaultCache.clear() }
     }
 
@@ -235,7 +302,8 @@ class SignedConfigService(
         val issuedAt = lastIssuedAt.updateAndGet { last -> maxOf(now, last + 1) }
         val stamped = config.copy(issuedAt = issuedAt, expiresAt = issuedAt + ttlMs)
         val payload = json.encodeToString(stamped)
-        val signatures = signing.signAll(payload)
+        // A narrowed view never takes the signer's last permit, nor waits in its queue.
+        val signatures = if (config.view != null) signing.signAllNarrowed(payload) else signing.signAll(payload)
         return SignedConfig(
             payload = payload,
             signature = signatures.first().signature,
@@ -251,13 +319,30 @@ class SignedConfigService(
 
     companion object {
         private const val MAX_ENTRIES = 512
+        private const val MAX_FULL_ENTRIES = 64
 
         /**
          * Lifetime of a signed config in milliseconds (`CONFIG_TTL_SECONDS`,
          * default 24h). The PinVault client refreshes every 12h by default, so
          * 24h leaves a margin for devices that are offline for a while.
          */
-        fun ttlFromEnv(): Long =
-            com.example.pinvault.server.service.ServerEnv.get("CONFIG_TTL_SECONDS")?.toLongOrNull()?.times(1000L) ?: (24L * 60 * 60 * 1000)
+        fun ttlFromEnv(env: Map<String, String> = com.example.pinvault.server.service.ServerEnv.all()): Long {
+            val raw = env["CONFIG_TTL_SECONDS"]?.trim().orEmpty()
+            if (raw.isEmpty()) return 24L * 60 * 60 * 1000
+            // Unbounded it took 0 or a negative number (every config expired
+            // as it was signed) and more than 30 days (devices refuse such a
+            // window): either way the whole fleet stops taking configs.
+            val seconds = raw.toLongOrNull()?.takeIf { it in MIN_TTL_SECONDS..MAX_TTL_SECONDS }
+                ?: error("CONFIG_TTL_SECONDS must be a whole number from $MIN_TTL_SECONDS to $MAX_TTL_SECONDS (got '$raw')")
+            return seconds * 1000L
+        }
+
+        /**
+         * A minute at least (the dashboard's settings page starts at 300; the
+         * environment may go lower for a test of expiry), and at most the 30
+         * days the library accepts as a window.
+         */
+        const val MIN_TTL_SECONDS = 60L
+        const val MAX_TTL_SECONDS = 2_592_000L
     }
 }

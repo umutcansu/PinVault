@@ -102,7 +102,14 @@ fun Route.attestationRoutes(
     signedConfigService: SignedConfigService,
     deviceHostAclStore: DeviceHostAclStore? = null,
     limits: AttestationLimits? = null,
-    clock: () -> Long = System::currentTimeMillis
+    clock: () -> Long = System::currentTimeMillis,
+    /**
+     * Whether the client certificate of `certClientId` belongs to device
+     * `deviceId` — the rule [com.example.pinvault.server.plugin.DeviceIdBinding]
+     * holds `X-Device-Id` to on an mTLS listener (Main passes the same
+     * `certificateBoundTo`). Asked only when the call carries a certificate.
+     */
+    isBound: (certClientId: String, deviceId: String) -> Boolean = { certClientId, deviceId -> certClientId == deviceId }
 ) {
     get("/api/v1/attest/challenge") {
         val remote = call.request.origin.remoteAddress
@@ -124,6 +131,22 @@ fun Route.attestationRoutes(
         if (limits != null && !limits.allowAddress(remote)) return@post call.respondAttestRateLimited()
         val body = call.receiveLimitedJson() ?: return@post
 
+        // On an mTLS listener the certificate is the device's identity, and the
+        // body's `deviceId` is what the verdict, the token and the embedded
+        // config (its host ACL) are issued for. DeviceIdBinding only looks at
+        // the X-Device-Id header, so an enrolled device could attest in the
+        // name of another: the body's id is held to the same rule. A TLS
+        // listener has no certificate; nothing changes there.
+        call.clientCertId()?.let { certClientId ->
+            val claimed = (body["deviceId"] as? JsonPrimitive)?.takeIf { it.isString }?.content
+            if (claimed != null && !isBound(certClientId, claimed)) {
+                return@post call.respondText(
+                    """{"error":"device_identity_mismatch","message":"deviceId does not belong to the client certificate of this connection."}""",
+                    ContentType.Application.Json, HttpStatusCode.Forbidden
+                )
+            }
+        }
+
         // Over mTLS the token names the connection's certificate (cnf.x5t#S256, ATTESTATION.md §5).
         // The device's own quota is spent inside, once the body proved it is that device.
         val outcome = service.attest(configApiId, body, remote, clientCertificate = call.clientCertificate()?.encoded,
@@ -141,7 +164,8 @@ fun Route.attestationRoutes(
                 var config: SignedConfig? = null
                 if (outcome.passed) {
                     try {
-                        fun view(): PinConfig = servedPinConfig(call, configApiId, pinConfigStore, deviceHostAclStore, outcome.hosts,
+                        // Signed with `view` naming this request (hosts, deviceId), as on the GET (M6).
+                        fun view(): PinConfig = signedPinConfig(call, configApiId, pinConfigStore, deviceHostAclStore, outcome.hosts,
                             claimedDeviceId = outcome.deviceId.takeIf { outcome.hosts != null })
                         val now = clock()
                         val current = view()
@@ -149,7 +173,10 @@ fun Route.attestationRoutes(
                             // An envelope past half its lifetime is refreshed through this channel too.
                             (outcome.currentIssuedAt != null && now - outcome.currentIssuedAt > signedConfigService.ttlMs / 2)
                         if (behind) {
-                            val envelope = signEnvelope(signedConfigService, configApiId, redelivery = true, load = ::view)
+                            // A narrowed view counts against the same signing budget as the GET's;
+                            // over it the config is left out and the device fetches it the usual way.
+                            val envelope = signEnvelope(signedConfigService, configApiId, redelivery = true, load = ::view,
+                                requester = viewRequester(call))
                             // The cached envelope the device already holds is no news (it would see a replay).
                             val issuedAt = runCatching { Json.parseToJsonElement(envelope.payload).jsonObject["issuedAt"]?.let { (it as? JsonPrimitive)?.longOrNull } }.getOrNull()
                             if (issuedAt == null || issuedAt != outcome.currentIssuedAt) config = envelope

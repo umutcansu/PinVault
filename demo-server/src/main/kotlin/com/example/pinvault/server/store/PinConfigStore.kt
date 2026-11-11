@@ -87,12 +87,39 @@ class PinConfigStore(
      * (`host_version_watermark`). Clients reject per-host version downgrades,
      * so a re-added host restarting at v1 would be ignored by every client
      * that had seen the old versions. Callers that report the version of a
-     * newly added host must read it from the returned config.
+     * newly added host must read it from the returned config. The same floor
+     * holds for a host that is already there: nothing is stored below a
+     * version the host has had.
+     *
+     * Host names are compared ignoring case, as the client library compares
+     * them: an entry that differs from a stored host only by case IS that
+     * host (it keeps the stored spelling and its version sequence).
+     *
+     * [expected] is the config the caller computed [config] from. When the
+     * scope no longer holds exactly that, nothing is written and
+     * [StaleConfigException] is thrown: a writer that loaded, waited (the
+     * live gate probes hosts over the network) and then saved used to
+     * overwrite whatever another admin stored in between. Null = the caller
+     * did its load inside [locked], or replaces the scope whatever it holds.
      */
-    fun save(configApiId: String, config: PinConfig): PinConfig {
+    fun save(configApiId: String, config: PinConfig, expected: PinConfig? = null): PinConfig {
         val listener = onSaved
-        val before = load(configApiId)
-        val saved = saveInTransaction(configApiId, config, before)
+        // Loaded under the scope's lock, in one piece with the write: two
+        // saves of a scope cannot interleave, and `before` is what was replaced.
+        val (before, saved) = locked(configApiId) {
+            val before = load(configApiId)
+            if (expected != null && expected != before) throw StaleConfigException(configApiId)
+            before to saveInTransaction(configApiId, config, before)
+        }
+        // One host that was stored under several spellings is one entry now:
+        // said out loud, once — after this save there is one spelling left.
+        before.pins.groupBy { it.hostname.lowercase() }.values.filter { it.size > 1 }.forEach { same ->
+            try {
+                onCaseMerged(configApiId, same.map { it.hostname })
+            } catch (e: Exception) {
+                System.err.println("PinConfigStore: onCaseMerged FAILED for $configApiId: ${e.message}")
+            }
+        }
         // After the commit, outside the transaction: listeners read the store
         // back (e.g. to pre-sign the new config) and must see the new state.
         if (listener != null) {
@@ -115,6 +142,39 @@ class PinConfigStore(
     @Volatile
     var onSaved: ((configApiId: String, before: PinConfig?, after: PinConfig) -> Unit)? = null
 
+    /**
+     * Called when a save finds one host stored under spellings that differ
+     * only by case ([spellings], in stored order) and merges them into the
+     * first; called after the commit. Main records it in the audit log; the
+     * default is a line on stderr.
+     */
+    @Volatile
+    var onCaseMerged: (configApiId: String, spellings: List<String>) -> Unit = { scope, spellings ->
+        System.err.println("WARN PinConfigStore: $scope held one host under several spellings (${spellings.joinToString()}); " +
+            "merged into '${spellings.first()}' — devices compare host names ignoring case and refuse a config that lists both.")
+    }
+
+    /** One lock per Config API: every write of a scope, and every load-then-save around it, takes it. */
+    private val scopeLocks = java.util.concurrent.ConcurrentHashMap<String, java.util.concurrent.locks.ReentrantLock>()
+
+    /**
+     * Runs [block] while no other writer of [configApiId] can: for a route
+     * that loads the scope, changes one thing and saves, so that two of them
+     * (or one and a full-config write) cannot lose each other's change. The
+     * lock is re-entrant ([save] takes it too) and bound to the thread:
+     * [block] must not suspend — a route that has to wait between its load
+     * and its save (the live gate) passes `expected` to [save] instead.
+     */
+    fun <T> locked(configApiId: String, block: () -> T): T {
+        val lock = scopeLocks.computeIfAbsent(configApiId) { java.util.concurrent.locks.ReentrantLock() }
+        lock.lock()
+        try {
+            return block()
+        } finally {
+            lock.unlock()
+        }
+    }
+
     private fun saveInTransaction(configApiId: String, config: PinConfig, before: PinConfig): PinConfig {
         db.connection().use { conn ->
             conn.autoCommit = false
@@ -127,18 +187,36 @@ class PinConfigStore(
                     snapshots.record(conn, configApiId, before, "system", java.time.Instant.now().toString())
                 }
 
-                val existingHosts = conn.prepareStatement(
-                    "SELECT DISTINCT hostname FROM pin_hashes WHERE config_api_id = ?"
-                ).use { stmt ->
-                    stmt.setString(1, configApiId)
-                    val rs = stmt.executeQuery()
-                    buildSet { while (rs.next()) add(rs.getString(1)) }
-                }
-                val pins = config.pins.map { pin ->
-                    if (pin.hostname in existingHosts) return@map pin
+                // By lower-cased name: the library lower-cases host names, so
+                // `Api.bank.com` after `api.bank.com` is the same host to every
+                // device — stored as a new one it restarted at v1 and devices
+                // refused the whole config as a version downgrade.
+                //
+                // A scope written before that rule may hold one host under two
+                // spellings. They become one entry here (the first stored
+                // spelling; devices refuse a config with both anyway); [save]
+                // says so once the write is committed.
+                val spellings = before.pins.groupBy { it.hostname.lowercase() }
+                val stored = spellings.mapValues { (_, same) -> same.first() }
+                val pins = config.pins.map { sent ->
+                    val old = stored[sent.hostname.lowercase()]
+                    val pin = if (old != null && old.hostname != sent.hostname) sent.copy(hostname = old.hostname) else sent
                     val floor = versionWatermark(conn, configApiId, pin.hostname)
-                    if (pin.version > floor) pin else pin.copy(version = floor + 1)
+                    when {
+                        // A host new to the scope goes above everything it has had.
+                        old == null -> if (pin.version > floor) pin else pin.copy(version = floor + 1)
+                        pin.version >= floor -> pin
+                        // Below a version the host has had (the caller worked from
+                        // an old copy). The same content keeps its place; changed
+                        // content goes ABOVE the mark — stored AT it, a device that
+                        // holds that version would answer "already current" and
+                        // never take the change.
+                        old.copy(version = pin.version) == pin -> pin.copy(version = maxOf(old.version, pin.version))
+                        else -> pin.copy(version = floor + 1)
+                    }
                 }
+                    // Two sent entries that were one host under two spellings: the newest stays.
+                    .groupBy { it.hostname }.map { (_, same) -> same.maxBy { it.version } }
                 val effective = config.copy(pins = pins, version = pins.maxOfOrNull { it.version } ?: config.version)
 
                 conn.prepareStatement(
@@ -201,9 +279,11 @@ class PinConfigStore(
     fun versionWatermark(configApiId: String, hostname: String): Int =
         db.connection().use { versionWatermark(it, configApiId, hostname) }
 
+    // Ignoring case (host names are ASCII, see HostPatternRules): the highest
+    // mark of every spelling the host was ever stored under.
     private fun versionWatermark(conn: java.sql.Connection, configApiId: String, hostname: String): Int =
         conn.prepareStatement(
-            "SELECT max_version FROM host_version_watermark WHERE config_api_id = ? AND hostname = ?"
+            "SELECT MAX(max_version) FROM host_version_watermark WHERE config_api_id = ? AND lower(hostname) = lower(?)"
         ).use { stmt ->
             stmt.setString(1, configApiId)
             stmt.setString(2, hostname)
@@ -227,6 +307,13 @@ class PinConfigStore(
         }
     }
 }
+
+/**
+ * The scope changed between a writer's load and its save (see
+ * [PinConfigStore.save]): nothing was written. Routes answer 409 `stale_config`.
+ */
+class StaleConfigException(val configApiId: String) :
+    RuntimeException("The pins of $configApiId changed while this change was being made; nothing was saved.")
 
 class PinConfigHistoryStore(private val db: DatabaseManager) {
 
@@ -827,7 +914,19 @@ data class ClientCertRecord(
      * what opens the device's keys and files (see `certificateProvenFor`).
      */
     val deviceUidProven: Boolean = false
-)
+) {
+    /**
+     * Whether an administrator uploaded this certificate (`POST
+     * /api/v1/client-certs/upload` writes the row with [UPLOADED_NAME_PREFIX])
+     * — as opposed to an identity a device enrolled or the server generated.
+     */
+    val uploaded: Boolean get() = commonName.startsWith(UPLOADED_NAME_PREFIX)
+
+    companion object {
+        /** What the upload handler puts before the id in `common_name`; no enrolled or generated row starts like this. */
+        const val UPLOADED_NAME_PREFIX = "Uploaded: "
+    }
+}
 
 class ClientCertStore(private val db: DatabaseManager) {
 
@@ -857,12 +956,12 @@ class ClientCertStore(private val db: DatabaseManager) {
     )
 
     /**
-     * The id of the `client_certs` row whose certificate is exactly [fingerprint]
-     * (SHA-256 of the DER, Base64), or null. An uploaded certificate is trusted
-     * under its row id while its subject may name something else.
+     * The id of the `client_certs` row that is not revoked and whose certificate
+     * is exactly [fingerprint] (SHA-256 of the DER, Base64), or null. A revoked
+     * row vouches for nothing.
      */
     fun idByFingerprint(fingerprint: String): String? = db.connection().use { conn ->
-        conn.prepareStatement("SELECT id FROM client_certs WHERE fingerprint = ? LIMIT 1").use { stmt ->
+        conn.prepareStatement("SELECT id FROM client_certs WHERE fingerprint = ? AND revoked = 0 LIMIT 1").use { stmt ->
             stmt.setString(1, fingerprint)
             val rs = stmt.executeQuery()
             if (rs.next()) rs.getString("id") else null

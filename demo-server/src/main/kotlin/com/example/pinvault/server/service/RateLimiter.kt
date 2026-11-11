@@ -73,6 +73,13 @@ class RateLimiter(
         return clock() - window.start < windowMs && window.count >= maxAttempts
     }
 
+    /** Milliseconds until [key]'s window (or its overflow bucket's) runs out; the whole window when it has none. For `Retry-After`. */
+    @Synchronized
+    fun retryAfterMs(key: String): Long {
+        val window = windows[key] ?: (if (buckets.isEmpty()) null else bucketOf(key)?.let { buckets[it] }) ?: return windowMs
+        return (window.start + windowMs - clock()).coerceIn(1, windowMs)
+    }
+
     private fun allowOverflow(key: String, now: Long): Boolean = when (overflow) {
         Overflow.FAIL_OPEN -> true
         Overflow.REFUSE -> false

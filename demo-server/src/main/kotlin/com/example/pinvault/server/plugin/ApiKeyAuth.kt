@@ -279,11 +279,39 @@ val ApiKeyAuth = createApplicationPlugin(name = "ApiKeyAuth", ::ApiKeyAuthConfig
             return@onCall
         }
 
-        // An address that kept sending wrong keys is cut off before its next
-        // key is compared: guessing keys costs 10 minutes per batch. The socket's
-        // own peer, or — only from a TRUSTED_PROXIES peer — the client that proxy
-        // names (otherwise one bad caller behind it would lock every admin out).
-        // Callers with the right key never count — only refusals do.
+        // A plugin installed before this one already answered (DeviceOnlyRoutes
+        // on a path this listener does not serve, a body limit): there is
+        // nothing left to authenticate, and the request must not count as a
+        // wrong key below.
+        if (call.response.isCommitted) return@onCall
+
+        // The key first. A valid key always passes and never counts: the
+        // cut-off below used to run before the key was compared, so 30 wrong
+        // keys from an address admins share (an office NAT, a proxy that is
+        // not in TRUSTED_PROXIES) locked every valid key out for ten minutes —
+        // anyone who could reach the port could keep the admins out.
+        // identify() compares in constant time against every key either way.
+        val providedKey = call.request.header("X-API-Key")
+        val admin = providedKey?.let { registry.identify(it) }
+        if (admin != null) {
+            call.attributes.put(AdminPrincipalKey, AdminPrincipal(admin))
+            return@onCall
+        }
+
+        // No key at all: 401, cut off or not. A request without a key is not a
+        // guess and is never counted, and the dashboard asks for the key only
+        // on 401/403 — answered 429, an admin opening a new tab behind an
+        // address that is cut off could not even be asked for a key.
+        if (providedKey == null) {
+            call.respond(HttpStatusCode.Unauthorized, mapOf("error" to "X-API-Key header required"))
+            return@onCall
+        }
+
+        // A wrong key. An address that kept sending wrong keys is cut off for
+        // ten minutes: further wrong keys get 429 and are neither counted nor
+        // audited one by one (a right key still passes, above). The socket's
+        // own peer, or — only from a TRUSTED_PROXIES peer — the client that
+        // proxy names.
         val source = com.example.pinvault.server.service.RateLimiter.sourceKey(call.request.origin.remoteAddress)
         if (failureLimiter != null && failureLimiter.exceeded(source)) {
             call.response.header(HttpHeaders.RetryAfter, "600")
@@ -291,22 +319,11 @@ val ApiKeyAuth = createApplicationPlugin(name = "ApiKeyAuth", ::ApiKeyAuthConfig
             return@onCall
         }
 
-        val providedKey = call.request.header("X-API-Key")
-        if (providedKey == null) {
-            call.respond(HttpStatusCode.Unauthorized, mapOf("error" to "X-API-Key header required"))
-            return@onCall
-        }
-
-        val admin = registry.identify(providedKey)
-        if (admin == null) {
-            // remoteAddress, not remoteHost: remoteHost is a blocking reverse-DNS
-            // lookup on the event-loop thread, and a name the caller controls.
-            AuthFailures.report(call.request.origin.remoteAddress, method.value, path)
-            failureLimiter?.allow(source)
-            call.respond(HttpStatusCode.Forbidden, mapOf("error" to "Invalid API key"))
-            return@onCall
-        }
-        call.attributes.put(AdminPrincipalKey, AdminPrincipal(admin))
+        // remoteAddress, not remoteHost: remoteHost is a blocking reverse-DNS
+        // lookup on the event-loop thread, and a name the caller controls.
+        AuthFailures.report(call.request.origin.remoteAddress, method.value, path)
+        failureLimiter?.allow(source)
+        call.respond(HttpStatusCode.Forbidden, mapOf("error" to "Invalid API key"))
     }
 }
 

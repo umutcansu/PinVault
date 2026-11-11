@@ -68,7 +68,9 @@ class ChangeDescriber(
     /** The policy an `attestation_policy` change starts from; null = not mounted. */
     private val attestation: com.example.pinvault.server.service.attestation.AttestationService? = null,
     /** The device an `attestation_device` change acts on; null = not mounted. */
-    private val attestedDevices: com.example.pinvault.server.store.AttestedDeviceStore? = null
+    private val attestedDevices: com.example.pinvault.server.store.AttestedDeviceStore? = null,
+    /** The lists a `host_acl` change is compared with; null = not mounted. */
+    private val hostAcl: com.example.pinvault.server.store.DeviceHostAclStore? = null
 ) {
     /** A gated operation nobody wrote a card for: refused, never shown as a bare name and path. */
     class Undescribed(op: String) : IllegalStateException("there is no approval card for '$op' yet")
@@ -97,7 +99,15 @@ class ChangeDescriber(
                     throw ApprovalService.Refused(HttpStatusCode.BadRequest, errors.take(5).joinToString("; "))
                 }
                 val current = pinConfigStore.load(scope)
-                val byHost = current.pins.associateBy { it.hostname }
+                // The handler's precondition: an editor that says which state it
+                // loaded is refused once the scope moved.
+                if (input.baseState != null && input.baseState != PinDiff.stateHash(current)) {
+                    throw ApprovalService.Refused(HttpStatusCode.Conflict, "stale_config",
+                        com.example.pinvault.server.route.staleConfigBody(scope, PinDiff.stateHash(current)))
+                }
+                // By lower-cased name, as the handler matches them: an entry that
+                // differs from a host only by case is that host.
+                val byHost = current.pins.associateBy { it.hostname.lowercase() }
                 // Managed trust roots, by the handler's rule: a body that carries
                 // `trustRoots` replaces the scope's list, one without keeps it.
                 val trustRoots = if (json?.containsKey("trustRoots") == true) incoming.trustRoots.map { it.trim() } else current.trustRoots
@@ -105,8 +115,9 @@ class ChangeDescriber(
                     throw ApprovalService.Refused(HttpStatusCode.BadRequest, errors.take(5).joinToString("; "))
                 }
                 // The same versioning the write applies, so the diff shows real changes only.
-                val versioned = incoming.copy(trustRoots = trustRoots, pins = incoming.pins.map { pin ->
-                    val old = byHost[pin.hostname]
+                val versioned = incoming.copy(trustRoots = trustRoots, pins = incoming.pins.map { sent ->
+                    val old = byHost[sent.hostname.lowercase()]
+                    val pin = if (old != null) sent.copy(hostname = old.hostname) else sent
                     when {
                         old == null -> pin.copy(version = 1)
                         old.sha256 != pin.sha256 -> pin.copy(version = old.version + 1)
@@ -205,20 +216,7 @@ class ChangeDescriber(
                 }
             }
             "signing_key" -> Description("", "Replace the primary config-signing key", detail)
-            "host_acl" -> {
-                val hosts = runCatching {
-                    (json?.get("hostnames") as? JsonArray)?.map { it.jsonPrimitive.content }
-                }.getOrNull() ?: throw IllegalArgumentException("'hostnames' string array required")
-                val device = PinAffectingRoutes.deviceOf(path)
-                val shown = hosts.take(10).joinToString(", ") { ApprovalService.plainText(it, 80) } +
-                    if (hosts.size > 10) " … (+${hosts.size - 10})" else ""
-                Description(
-                    scope,
-                    "$scope: ${device?.let { "hosts device $it may reach" } ?: "default hosts every device may reach"} = " +
-                        shown.ifEmpty { "(none)" },
-                    detail
-                )
-            }
+            "host_acl" -> describeHostAcl(scope, PinAffectingRoutes.deviceOf(path), detail, json)
             "signing_keyset" -> {
                 val payload = bodyField("payload")
                 val version = payload?.let { runCatching { Json.parseToJsonElement(it).jsonObject["version"]?.jsonPrimitive?.content }.getOrNull() }
@@ -229,12 +227,19 @@ class ChangeDescriber(
             "client_cert_upload" -> {
                 val form = MultipartForm.parse(input.contentType, input.body)
                     ?: throw IllegalArgumentException("a multipart/form-data body with the certificate is required")
+                // The same checks the handler makes: one end-entity client certificate, never a CA.
+                val cert = planner.clientCertificate(form.file ?: throw IllegalArgumentException("the certificate file is missing"))
+                // As the handler: without a clientId, the id the certificate's own CN carries.
                 val id = form.fields["clientId"]?.trim()?.takeIf { it.isNotEmpty() }
+                    ?: com.example.pinvault.server.route.clientIdOfSubject(cert.subjectX500Principal)
                 require(id == null || isValidIdentifier(id)) { "clientId: letters, digits, '.', '_', ':' and '-' only, at most 64" }
                 require(id == null || !isReservedClientId(id)) { "clientId '$id' is reserved by the server" }
                 id?.let { clientIdInUse?.invoke(it) }?.let { throw ApprovalService.Refused(HttpStatusCode.Conflict, it) }
-                // The same checks the handler makes: one end-entity client certificate, never a CA.
-                val cert = planner.clientCertificate(form.file ?: throw IllegalArgumentException("the certificate file is missing"))
+                // ...and the id it is recorded under is the id it authenticates as.
+                com.example.pinvault.server.route.uploadedSubjectMismatch(cert, id ?: "")?.let { why ->
+                    throw ApprovalService.Refused(HttpStatusCode.BadRequest, why,
+                        buildJsonObject { put("error", "subject_mismatch"); put("message", why) })
+                }
                 val fingerprint = sha256Hex(cert.encoded)
                 Description(
                     "", "Trust client certificate ${ApprovalService.plainText(cert.subjectX500Principal.name, 120)} as " +
@@ -321,6 +326,40 @@ class ChangeDescriber(
 
     private fun errorBody(error: String, details: List<String>): JsonObject = buildJsonObject {
         put("error", error); putJsonArray("details") { details.forEach { add(it) } }
+    }
+
+    /**
+     * A host ACL write — a device's list or the scope's default. The card is
+     * the handler's own plan ([HostAclChange]): the summary used to show the
+     * first ten names of a line cut at 300 characters while the handler
+     * applied the whole array, so names past the cut were approved unseen.
+     * Every name granted and taken away is in the detail, and the card is
+     * stale once the list it was compared with moved.
+     */
+    private fun describeHostAcl(scope: String, device: String?, detail: JsonObject, json: JsonObject?): Description {
+        val acl = hostAcl ?: throw IllegalStateException("host ACLs are not available on this server")
+        val current = if (device != null) acl.listForDevice(scope, device) else acl.listDefault(scope)
+        val change = try {
+            HostAclChange.plan(current, json)
+        } catch (e: HostAclChange.BadBody) {
+            throw ApprovalService.Refused(HttpStatusCode.BadRequest, e.message ?: "invalid hostnames")
+        }
+        fun shown(names: List<String>) = names.take(10).joinToString(", ") + if (names.size > 10) " … (+${names.size - 10} more, all in the detail)" else ""
+        return Description(
+            scope,
+            // The counts first: the line is cut at its end, the detail lists every name.
+            "$scope: +${change.added.size} −${change.removed.size} " +
+                (device?.let { "hosts device ${ApprovalService.plainText(it, 80)} may reach" } ?: "default hosts every device may reach") +
+                " (${change.desired.size} after the change)" +
+                (if (change.added.isNotEmpty()) " — added: ${shown(change.added)}" else "") +
+                (if (change.removed.isNotEmpty()) " — removed: ${shown(change.removed)}" else "") +
+                (if (change.isEmpty) " — no change" else ""),
+            JsonObject(detail + mapOf(
+                "added" to JsonArray(change.added.map { JsonPrimitive(it) }),
+                "removed" to JsonArray(change.removed.map { JsonPrimitive(it) })
+            ) + (device?.let { mapOf("deviceId" to JsonPrimitive(ApprovalService.plainText(it, 80))) } ?: emptyMap())),
+            stateKey = stateKey("host_acl", scope, device, current.sorted().joinToString("\u0002"))
+        )
     }
 
     /** A settings save: every key it changes, with the saved value before and after (`ServerSettingsChange`, the handler's plan). */

@@ -218,13 +218,21 @@ class GatedTrustAndVaultTest {
         GovernanceHarness(dir).use { h ->
             val key = TestPki.keys()
             val cert = TestPki.build("CN=partner-gateway", key.public, "CN=partner-gateway", key.private, eku = listOf("1.3.6.1.5.5.7.3.2"))
-            val (type, body) = uploadBody(cert, "partner")
+            // F-8: under another id than its CN carries it is refused when requested —
+            // every request with it would be attributed to `partner-gateway`.
+            val (wrongType, wrongBody) = uploadBody(cert, "partner")
+            val mismatch = h.call("POST", "/api/v1/client-certs/upload", ALICE, wrongBody, wrongType)
+            assertEquals(400, mismatch.status, mismatch.body)
+            assertEquals("subject_mismatch", mismatch.json["error"]!!.jsonPrimitive.content)
+            assertTrue(mismatch.json["message"]!!.jsonPrimitive.content.contains("partner-gateway"), mismatch.body)
+
+            val (type, body) = uploadBody(cert, "partner-gateway")
             val pending = h.call("POST", "/api/v1/client-certs/upload", ALICE, body, type)
             assertEquals(202, pending.status, pending.body)
-            assertNull(h.certService.getTrustStore()?.getCertificate("partner"), "nothing is trusted before approval")
+            assertNull(h.certService.getTrustStore()?.getCertificate("partner-gateway"), "nothing is trusted before approval")
 
             val cr = h.changeRequest(pending.changeRequestId)
-            assertTrue(cr.summary.contains("CN=partner-gateway") && cr.summary.contains("partner"), cr.summary)
+            assertTrue(cr.summary.contains("CN=partner-gateway") && cr.summary.contains("as partner-gateway"), cr.summary)
             val shown = h.detail(cr.id)
             assertEquals("client_cert_upload", shown["operation"]!!.jsonPrimitive.content)
             assertEquals(sha256Hex(cert.encoded), shown["clientCertificate"]!!.jsonObject["fingerprint"]!!.jsonPrimitive.content)
@@ -237,7 +245,7 @@ class GatedTrustAndVaultTest {
 
             val approved = h.approve(cr.id)
             assertEquals("applied", approved.json["status"]!!.jsonPrimitive.content, approved.body)
-            assertNotNull(h.certService.getTrustStore()!!.getCertificate("partner"))
+            assertNotNull(h.certService.getTrustStore()!!.getCertificate("partner-gateway"))
             assertEquals("alice (approved by bob)", h.auditStore.page(10, 0, "client_cert_uploaded").single().actor)
         }
     }

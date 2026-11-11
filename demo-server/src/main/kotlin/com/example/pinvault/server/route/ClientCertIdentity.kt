@@ -66,8 +66,37 @@ fun ApplicationCall.clientCertificate(): java.security.cert.X509Certificate? =
  * `ENROLLMENT_MODE=open`, or the admin-chosen client id under token
  * enrollment).
  */
-fun ApplicationCall.clientCertId(): String? =
-    clientCertCn()?.removePrefix(CLIENT_CN_PREFIX)?.trim()?.takeIf { it.isNotEmpty() }
+fun ApplicationCall.clientCertId(): String? = clientCertCn()?.let(::clientIdOfCn)
+
+private fun clientIdOfCn(cn: String): String? = cn.removePrefix(CLIENT_CN_PREFIX).trim().takeIf { it.isNotEmpty() }
+
+/**
+ * The client id a certificate with [subject] authenticates as on an mTLS
+ * listener — the same derivation as [clientCertId], for a certificate that is
+ * not on a connection yet (an upload).
+ */
+fun clientIdOfSubject(subject: X500Principal): String? = cnOf(subject.name)?.let(::clientIdOfCn)
+
+/**
+ * Why [certificate] may not be uploaded under [clientId], or null when it may.
+ *
+ * Every mTLS request is attributed to the id in the certificate's own CN
+ * ([clientCertId]). An upload used to record the certificate under whatever
+ * id the admin typed and never looked at the subject, so a certificate
+ * uploaded as `partner-1` whose CN named a device (or another client) was
+ * that device on every listener: bound to its `X-Device-Id`, proven for its
+ * keys and files. The two must be the same id. Shared by the upload handler
+ * and its approval card.
+ */
+fun uploadedSubjectMismatch(certificate: java.security.cert.X509Certificate, clientId: String): String? {
+    val named = clientIdOfSubject(certificate.subjectX500Principal)
+    return when {
+        named == null -> "The certificate's subject has no CN: it cannot be told which client id it would authenticate as."
+        named != clientId -> "The certificate's CN names '${named.take(80).filter { !it.isISOControl() }}', not '$clientId'. " +
+            "A client certificate is uploaded under the id its own CN carries (after the optional '$CLIENT_CN_PREFIX' prefix)."
+        else -> null
+    }
+}
 
 /**
  * Pulls the verified peer principal off the Netty channel this call arrived on.
@@ -182,6 +211,12 @@ private fun cnOf(dn: String): String? =
  *     stores it, so the certificate is still bound to one device (and a
  *     device id belongs to one active identity at a time).
  *
+ * Either way the id must be on record: a `client_certs` row under
+ * `certClientId` that is not revoked. The direct case used to hold with no
+ * row at all — any trusted certificate whose CN spelled a device id was that
+ * device (see [uploadedSubjectMismatch]); every enrollment, open mode
+ * included, writes the row.
+ *
  * A revoked certificate is rejected even if the ids line up. Anything else
  * fails closed. Used by the `token_mtls` vault policy, E2E key registration
  * and [com.example.pinvault.server.plugin.DeviceIdBinding].
@@ -196,8 +231,9 @@ fun certificateBoundTo(
         identityLog.warn("request with a revoked certificate: clientId={}", certClientId)
         return false
     }
+    if (record == null) return false
     if (certClientId == deviceId) return true
-    return record?.deviceUid != null && record.deviceUid == deviceId
+    return record.deviceUid != null && record.deviceUid == deviceId
 }
 
 /**
@@ -211,8 +247,11 @@ fun certificateBoundTo(
  *     the one before a renewal on a connection still open — is that device.
  *  2. Otherwise the `client_certs` row of the id (a server-made P12): the
  *     certificate must be exactly the stored one (SHA-256 of its DER).
- *  3. No row under the id: an uploaded certificate, trusted under its row
- *     id while its subject may say something else — exactly that certificate.
+ *  3. No row under the id: only the exact certificate a row that is not
+ *     revoked records under THIS id. (It used to be "the fingerprint is in
+ *     any row": an uploaded certificate was accepted under whatever id its
+ *     CN spelled. Uploads are now recorded under the CN's id, so a
+ *     certificate on record is found by rule 2.)
  *
  * Anything else is a leaf some other trusted key signed with this id in it.
  * Per-certificate trust anchors (self-signed P12s from before P12s came from
@@ -231,7 +270,7 @@ fun presentedLeafOnRecord(
     }
     val fingerprint = sha256Base64(certificate.encoded)
     clientCertStore?.get(clientId)?.let { record -> return record.fingerprint == fingerprint }
-    return clientCertStore?.idByFingerprint(fingerprint) != null
+    return clientCertStore?.idByFingerprint(fingerprint) == clientId
 }
 
 private fun sha256Base64(bytes: ByteArray): String =
@@ -269,7 +308,13 @@ internal const val RESERVED_CLIENT_ID =
  * [certificateBoundTo], act for that device. Proven means one of:
  *
  *  1. the client id IS the device id (open mode, or a token an admin minted
- *     with the device id as its client id);
+ *     with the device id as its client id) and is on record, not revoked —
+ *     as an identity that was ENROLLED. A certificate an administrator
+ *     uploaded under an id that happens to be a device's id proves nothing
+ *     about that device: nobody showed it is the phone, and its key was
+ *     made wherever the uploader made it. It stays bound for reports and
+ *     `X-Device-Id` ([certificateBoundTo]) and opens none of the device's
+ *     keys or files;
  *  2. the `client_certs` row says `device_uid_proven` (V20): a passing
  *     Android Key Attestation with the app binding (its challenge is the
  *     device id), or a token an administrator bound to the device id.
@@ -285,7 +330,8 @@ fun certificateProvenFor(
     clientCertStore: com.example.pinvault.server.store.ClientCertStore?
 ): Boolean {
     val record = clientCertStore?.get(certClientId)
-    if (record != null && record.revoked) return false
-    if (certClientId == deviceId) return true
-    return record?.deviceUid == deviceId && record.deviceUidProven
+    // No row: nothing was ever enrolled or uploaded under this id (see certificateBoundTo).
+    if (record == null || record.revoked) return false
+    if (certClientId == deviceId) return !record.uploaded
+    return record.deviceUid == deviceId && record.deviceUidProven
 }
