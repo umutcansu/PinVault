@@ -527,6 +527,9 @@ internal class DynamicSSLManager(
                 requireCaTrustFor(chain, "UNKNOWN", host, port)
             }
         )
+        // A redirect to another origin does not take the app's headers (or a
+        // 307 body) along: OkHttp drops only Authorization (review 2026-11-12).
+        builder.addNetworkInterceptor(CrossOriginRedirectGuard)
 
         val initial = configProvider()
         val mtlsHosts = initial?.pins?.count { it.mtls } ?: 0
@@ -631,6 +634,9 @@ internal class DynamicSSLManager(
             Timber.d("Bootstrap client pinned — %d hosts", bootstrapPins.size)
         } else if (allowUnpinned) {
             Timber.w("Bootstrap client — no pins, using system defaults (allowUnpinnedConfigApi)")
+            // Redirects are followed here (system defaults), but device headers
+            // and enrollment bodies still stay on their origin.
+            builder.addNetworkInterceptor(CrossOriginRedirectGuard)
         } else {
             // Fail closed: pinning over "no config" refuses every handshake.
             applyTo(builder) { null }

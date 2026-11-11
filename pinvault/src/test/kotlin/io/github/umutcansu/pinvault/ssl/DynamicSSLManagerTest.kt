@@ -87,8 +87,11 @@ class DynamicSSLManagerTest {
     fun `buildBootstrapClient — no pins is unpinned only when asked for`() {
         // Fail-closed by default (see BootstrapClientRulesTest); system trust
         // only with allowUnpinnedConfigApi().
-        assertTrue(manager.buildBootstrapClient(emptyList()).networkInterceptors.isNotEmpty())
-        assertTrue(manager.buildBootstrapClient(emptyList(), allowUnpinned = true).networkInterceptors.isEmpty())
+        assertTrue(manager.buildBootstrapClient(emptyList()).networkInterceptors.any { it is PinnedConnectionInterceptor })
+        val unpinned = manager.buildBootstrapClient(emptyList(), allowUnpinned = true).networkInterceptors
+        assertTrue(unpinned.none { it is PinnedConnectionInterceptor })
+        // Redirects are followed there, but device headers stay on their origin (review 2026-11-12).
+        assertTrue(unpinned.contains(CrossOriginRedirectGuard))
     }
 
     @Test
