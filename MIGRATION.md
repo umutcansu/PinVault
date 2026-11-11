@@ -19,7 +19,132 @@ reference for the multi-Config-API DSL. The full list of changes is in
   unchanged.
 - **Endpoints must be plainly relative.** `configEndpoint`, `healthEndpoint`
   and the other `*Endpoint` values may not start or end with whitespace,
-  contain a backslash or begin with `scheme:`.
+  contain a backslash or begin with `scheme:`. A vault file's `endpoint`
+  follows the same rule (debug builds too) and may not contain a `..` path
+  segment.
+- **`serverScope` and `clientCaPins` come from the native security file.** A
+  release build with a `pinvault_security.json` refuses either one from the
+  bundle when the file does not declare it for that Config API
+  (`E_INVALID_CONFIG`, "declare serverScope for Config API … there"). Copy the
+  value into the file: `{"configApis":[{"id":"api", …, "serverScope":"default-tls","clientCaPins":["…"]}]}`;
+  the bundle may repeat it or leave it out. Use the scope the app already
+  runs with: a different one starts a new, empty config store. Debug builds
+  are unchanged.
+- **Redirects.** `PinVault.fetch` (and every pinned session on iOS) sends only
+  `Accept`, `Accept-Language` and `User-Agent` to a redirect target on another
+  host or port, and returns a 307/308 that would repeat a request body there
+  instead of following it. An API that redirects authenticated calls to
+  another host has to be called at that host directly.
+- **Flutter WebSockets.** `PinVaultWebSocket.connect` refuses `Host`,
+  `Connection`, `Upgrade`, the other hop headers and `Sec-WebSocket-*` in
+  `headers`. A subprotocol is no longer asked for with a
+  `Sec-WebSocket-Protocol` header: pass
+  `PinVaultWebSocket.connect(url, protocols: ['graphql-transport-ws'])`.
+- **`PinVault.fetch` `timeoutMs` on iOS** now bounds the whole exchange
+  (redirects and a slow body included), as on Android; a request that relied
+  on it being an idle timeout needs a larger value.
+
+**iOS**
+
+- **`requireUnlockedDevice()` no longer falls back silently** (Android: since
+  2.3.1). When the Keychain refuses a `WhenUnlockedThisDeviceOnly` key,
+  enrollment or the import of a client certificate fails with
+  `PinVaultError.unlockedDeviceKeyRequired` instead of quietly making a key
+  that also works while the device is locked. To keep the old behaviour:
+  `.requireUnlockedDevice(allowFallback: true)`; in React Native / Flutter
+  `ios: { requireUnlockedDeviceAllowFallback: true }` next to
+  `requireUnlockedDevice: true`. Code that switches over `PinVaultError`
+  exhaustively needs the new case.
+- **Issuer pins**: the same rule as on Android below (the pinned certificate
+  above the leaf must be a CA, the leaf must not be limited to another use
+  than serverAuth).
+- **Certificate renewal** answers `failed` instead of `notApplicable` while the
+  Keychain or the credential store cannot be read. Treat `failed` as "try
+  again later", as for a network failure.
+- **Redirects**: see above; a pinned session no longer forwards custom
+  headers or a 307/308 body to another host, port or scheme. That includes
+  `Range` and the conditional headers (`If-None-Match`, `If-Modified-Since`,
+  `If-Range`, …): a resumed or conditional download that is redirected to
+  another host (a CDN) gets the whole resource with `200`, not `206`/`304`.
+  Check the status before appending to a partial file, or request the final
+  host directly.
+- **`wss` sockets the trust check never saw are closed.** 2.8.1 documented
+  this but the callback was never reached; a `URLSessionWebSocketTask` from a
+  pinned session is now cancelled with close code 1008 when it opens over a
+  connection the session's delegate was not asked about (a
+  certificate-validation bypass on the device), and the host is reported as
+  `tls-unverified:<host>` in the attestation evidence.
+- **Signed configs are bound to the request they answer (`view`)**: the same
+  rules and upgrade notes as on Android below (a `wantPinsFor` list changed
+  in a release costs one extra fetch at the first start, offline that start
+  fails with `noConfigAvailable`). The refusal is the new
+  `PinVaultError.configViewMismatch(message:)` (`exceptionName`
+  `ConfigViewMismatchException`) in `UpdateResult.failed`; code that switches
+  over `PinVaultError` exhaustively needs the new case.
+
+**Android**
+
+- **`ConfigApiBlock(...)` built with the constructor needs a signing key or
+  `allowUnsigned = true`.** Blocks made with `ConfigApiBlock.Builder` /
+  `configApi { … }` are unaffected (the builder always required one). A block
+  made with the data-class constructor and neither `signaturePublicKey` nor
+  `signaturePublicKeys` now fails `init` with "signaturePublicKey is missing".
+  Pass the key, or — tests and demos only — `allowUnsigned = true`; a release
+  build then also needs `relaxationsInRelease = true`, as with the builder.
+- **Issuer pins.** A pin that matches a certificate above the leaf counts only
+  when that certificate is a CA (`basicConstraints: CA`) and the server's
+  certificate has no `extendedKeyUsage` or one with serverAuth. Real CA
+  chains are unaffected. A private setup that pins a hand-made "CA" without
+  `basicConstraints`, or serves a clientAuth-only certificate, must fix the
+  certificate or pin the server's own key instead.
+- **`isEnrolled` & co. on a locked device.** With `requireUnlockedDevice()`
+  these calls threw a Keystore exception while the device was locked; they
+  now return false / null, meaning "cannot tell". Do not treat that false as
+  "not enrolled" in code that runs in the background: `enroll` itself refuses
+  with the reason while the store cannot be read.
+- **After `ForceUpdateFailedException`** the pinned clients refuse every
+  handshake until an update succeeds (they used to keep working with the
+  stored config). `PinVault.updateNow()` or the next `init` brings them back.
+  The same now holds for `init` on a device without its client certificate
+  when the stored config has `forceUpdate`: the result was already
+  `ClientCertificateRequiredException`, and the stored config is no longer
+  left in the clients — enroll, then `init` again.
+- **No fallback to the bundled `clientKeystore(...)` while the device's own
+  identity cannot be read.** When an enrolled identity whose key was
+  imported from a PKCS12 (or the credential store itself) cannot be read
+  because the Keystore fails or the device is locked, no client certificate
+  is presented; the bundled keystore used to be presented instead. An mTLS
+  server then refuses the handshake until the next load (next start, or an
+  enroll / renew / unenroll). A device with nothing enrolled still presents
+  the bundled keystore as before.
+- **Host client certificates go when the config says so.** A config that
+  switches `mtls` off for a host, or whose new host certificate cannot be
+  downloaded or loaded, no longer leaves the previous certificate presented
+  to that host. If you relied on the old certificate surviving a failed
+  download, the host gets no client certificate until the next config
+  update that can load one.
+- **Signed configs are bound to the request they answer (`view`).** Apps
+  without `wantPinsFor(...)`: nothing to do — the server signs their full
+  config exactly as before, and the app now refuses a narrowed view it did
+  not ask for (`UpdateResult.Failed` with `ConfigViewMismatchException`,
+  reported as `config_update_failed`). Apps with `wantPinsFor(...)`: nothing
+  breaks against any server — a payload without `view` (a server before
+  2.9.0, or the full config) is still accepted — but the protection against
+  being handed another request's or another device's narrowed view needs a
+  2.9.0 server (or a custom backend that writes `view`, see
+  SERVER_IMPLEMENTATION_GUIDE.md §3). A release that CHANGES the
+  `wantPinsFor` list discards the stored config at its first start (it was
+  fetched for the old list) and fetches again: online that is one extra
+  fetch; offline the first start fails with `NoConfigAvailableException`
+  until the Config API is reachable, as on a fresh install. A custom
+  `CertificateConfigApi` + `SignedConfigSource` needs no code change; its
+  backend must write `view` into narrowed signed payloads for scoped blocks
+  to be protected, and must NOT write it into a full config (an app without
+  `wantPinsFor` refuses that).
+- **Custom backends signing narrowed views: add `view` to the payload.** For
+  `?hosts=`/`X-Device-Id` answers write
+  `"view":{"hosts":[canonical requested set],"deviceId":"<X-Device-Id>"}`;
+  never for the full config.
 
 **Signing-key sets**
 

@@ -405,11 +405,22 @@ class Device {
    * ayırmak için eylemden hemen önce çağrılır.
    */
   clearLogcat() {
+    // Temizleme anı cihazın kendi saatiyle not edilir; [logcat] bundan önceki
+    // satırları atar. Bazı imajlarda (PinVault_API28) `logcat -c` "main"
+    // tamponunu sessizce temizlemiyor: önceki senaryoların "Pin verified"
+    // satırları kalıyor ve "bu satır olmamalı" kontrolleri yanlış yere düşüyor
+    // (A21, 2026-11-11). `-v time` satırları da cihazın yerel saatini yazar.
+    try {
+      const now = this.shell('date +%m-%d\\ %H:%M:%S', { timeout: 10_000 }).trim();
+      this._logSince = /^\d\d-\d\d \d\d:\d\d:\d\d$/.test(now) ? `${now}.000` : null;
+    } catch {
+      this._logSince = null;
+    }
     try {
       this.adb(['logcat', '-c'], { timeout: 20_000 });
       return true;
     } catch {
-      // Bazı imajlarda "main" tamponu temizlenemez; süzme yine de çalışır.
+      // Bazı imajlarda "main" tamponu temizlenemez; zaman süzgeci yine de çalışır.
       return false;
     }
   }
@@ -427,6 +438,11 @@ class Device {
       return `${e.stdout || ''}${e.stderr || ''}`;
     }
     let rows = out.split('\n');
+    // [clearLogcat]'ten önceki satırlar ("AA-GG SS:DD:ss.mmm" aynı yılda sözlük sırasıyla karşılaştırılır).
+    if (this._logSince) {
+      const since = this._logSince;
+      rows = rows.filter((row) => !/^\d\d-\d\d \d\d:\d\d:\d\d\.\d{3}/.test(row) || row.slice(0, 18) >= since);
+    }
     if (tags) {
       const set = Array.isArray(tags) ? tags : [tags];
       rows = rows.filter((row) => set.some((tag) => row.includes(`/${tag}`)));

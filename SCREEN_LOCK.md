@@ -91,6 +91,53 @@ the app's data is cleared. If a time-bound key is not acceptable, refuse
 it on the server (`USER_AUTH_REQUIRE_PER_USE=true`, below) or do not
 configure `userAuth` files below Android 11.
 
+## iOS
+
+**Not yet run on a physical iPhone.** Every iOS test of this flow ran on the
+simulator or in the SwiftPM runner, and the simulator does not enforce the
+key's access control (`.userPresence`, or `.biometryCurrentSet` with
+`userAuthBiometricOnly()`): there the Keychain hands the key out whether or
+not anyone passed the prompt.
+
+The key is an RSA-2048 Keychain key (the Secure Enclave holds no RSA keys).
+For such a key the Keychain has to decrypt the item to hand out a key
+reference, so a real device may refuse even a silent lookup of it until
+Face ID, Touch ID or the passcode has been passed. Up to 2.8.x the library
+read the private key before showing the prompt (to get its public half and
+check it was there); where the device refuses that, `unlockFile` would have
+returned `Failed` without ever showing the prompt, and a fetch could not
+register the key or store a server-sealed copy.
+
+Since 2.9.0 nothing before the prompt needs the private key:
+
+- The public half (SPKI) and the key's kind are kept in a second Keychain
+  item, a generic password without user-presence access control, with the
+  key's own accessibility (`WhenPasscodeSetThisDeviceOnly`, never synchronised,
+  so it too goes when the passcode is removed). It is written when the key is
+  made. Registration, sealing a copy on the device, storing a server-sealed
+  copy and the checks before the prompt read that item.
+- The private key is read only to unwrap the copy, with the `LAContext` the
+  user has just passed.
+- The item cannot stand in for another key: once the private key is read,
+  its public half must equal the stored one, otherwise both are deleted and
+  the key counts as retired (the copy is given up, the next fetch makes and
+  registers a new key). Deleting or retiring the key deletes the item.
+- A key made by an earlier build has no such item. It is written the first
+  time the private key can be read: right away where the Keychain allows a
+  silent lookup (the simulator, and a device if it turns out to allow one),
+  otherwise after the first passed prompt. Until then the library reads the
+  private key as before.
+
+**Check on a real iPhone before shipping iOS with `userAuth` files:** with a
+passcode set, fetch a `userAuth` file (both kinds you use: sealed on the
+device, and `encryption(USER_AUTH)`), kill and restart the app, then call
+`unlockFile`. The Face ID / passcode sheet must appear, and passing it must
+return `Unlocked` with the content; cancelling must return `Cancelled` and
+keep the copy. If you use `userAuthBiometricOnly()`, repeat it with that. An
+upgrade from 2.8.x that already holds a key without the public item needs
+the same check once (the first unlock may then show the prompt before the
+copy's key is known).
+
 ## What the server accepts
 
 The reference server reads the key's properties from its attestation and

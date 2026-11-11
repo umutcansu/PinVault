@@ -135,8 +135,170 @@
   the Android path, so the iPhone went on receiving fresh tokens for the hour
   the report is meant to hold. It is raised for both platforms now. Found by
   the iOS run of sample-e2e (R11).
+- **Pre-production review (2026-11-11), server.** Ten findings, fixed:
+  - **BREAKING — the management listener binds `127.0.0.1` unless
+    `MANAGEMENT_BIND` says otherwise, with admin keys too.** It is plain HTTP;
+    with keys it used to bind every interface, and an `X-API-Key` read off the
+    network is an admin for good. Remote admins: `MANAGEMENT_HTTPS_PORT`, or
+    `MANAGEMENT_BIND=0.0.0.0` behind something that terminates TLS. Containers
+    need `MANAGEMENT_BIND=0.0.0.0` inside (both compose files already set it;
+    a bare `docker run -p …` of the image must pass it), and so does a server
+    that emulators reach on the LAN address. The start-up says so in one line.
+  - **BREAKING — governance settings that do not read stop the start.**
+    `PIN_CHANGE_APPROVALS` (1–5), `PIN_LIVE_CHECK` (off | warn | enforce),
+    `PIN_LIVE_CHECK_ALLOW_OVERRIDE` (true | false), `CONFIG_TTL_SECONDS`
+    (60–2592000) and `RECOVERY_REQUIRED_SIGNATURES` (1 to the number of
+    recovery keys) are trimmed and read in any case; anything else used to
+    mean "off" (`PIN_CHANGE_APPROVALS=two` ran without a second admin,
+    `PIN_LIVE_CHECK_ALLOW_OVERRIDE=False` left the override open,
+    `CONFIG_TTL_SECONDS=0` expired every config as it was signed).
+  - **A failed start no longer wipes the settings saved from the dashboard.**
+    Any start-up failure with saved settings present used to set all of them
+    aside — a port in use or a busy database took `PIN_CHANGE_APPROVALS=2`
+    with it. The saved values are now read with the start-up's own parsers
+    and rules before anything listens (`SavedSettingsCheck`): what would not
+    start is set aside with its name, as before. Any other failed start
+    leaves `server-settings.json` alone and is counted there
+    (`failedStarts`); the count goes back to 0 when the management listener
+    is up, and only the third failed start in a row sets the saved settings
+    aside — so a saved value that stops every start in a way no check
+    models still cannot keep the server down. Stderr says which attempt it
+    was. A single saved value the catalog no longer accepts (a hand-edited
+    file, a range changed by an upgrade) is left out on its own with a
+    warning. **`PIN_CHANGE_APPROVALS` of 2 or more can no longer be saved
+    from the dashboard without the personal admin keys to approve with**
+    (`400 would_not_start`; the start-up's own rule): saved on a server with
+    only a shared `API_KEY`, it stopped every following start.
+  - **Pin writes are no longer last-writer-wins.** Every write of a scope is
+    serialised (`PinConfigStore.locked`), a write whose live check was still
+    probing when another one landed is refused, and no host is stored below
+    a version it has had (changed content sent with an old number goes one
+    above the highest, so devices see it). Of two simultaneous adds of one
+    host only the one whose pins were stored installs its keystore. `GET /api/v1/config/{id}` answers with
+    `X-PinVault-State`; a full-config write that sends it back as
+    `X-PinVault-Base-State` gets `409 {"error":"stale_config"}` when the
+    scope moved (without the header a write is unconditional, as before).
+    The dashboard sends it with every full-config save (pins, and the trust
+    roots card): a tab with an old copy used to remove the host —
+    or bring back the trust root — another admin had just changed; now it
+    says the pins changed, reloads, and the change is made again. With
+    approvals on, a stale save is refused when it is requested.
+  - **Host names ignore case, as devices compare them.** `Api.bank.com`
+    added after `api.bank.com` was a new host at v1 to the server and the
+    same host to every device, which refused the whole config as a
+    downgrade. An entry that differs from a stored host only by case is that
+    host (stored spelling, version goes on); a host re-added in another case
+    continues above its old versions. A scope that already holds one host
+    under two spellings is merged into the first at its next save, audited
+    as `host_names_merged` with both names.
+  - **A valid admin key is never locked out.** `ADMIN_AUTH_FAILURE_LIMIT`
+    cut an address off before the presented key was compared, so 30 wrong
+    keys from an address admins share locked every valid key out for ten
+    minutes. The key is identified first; only wrong keys are cut off
+    (`429`). A request with no key gets the usual `401` and is never
+    counted, so the dashboard can still ask for the key; requests an earlier
+    plugin already answered are not counted either.
+  - **A host ACL approval card shows the whole change.** It showed the first
+    ten names of a line cut at 300 characters while the handler applied the
+    whole array, unvalidated. Card and handlers now share one plan
+    (`HostAclChange`): every name must be a host name (400 otherwise), the
+    card lists everything granted and taken away, starts with the counts,
+    and goes stale when the list moved before approval.
+  - **BREAKING — an uploaded client certificate goes under the id in its own
+    CN.** `POST /api/v1/client-certs/upload` refuses another `clientId`
+    (`400 subject_mismatch`; without one, the CN's id is used). Requests are
+    attributed to the CN's id, so a certificate uploaded as `partner-1` with
+    a device's id in its CN was that device. A certificate is a device's own
+    only while a row that is not revoked exists under its id, and a revoked
+    row no longer vouches for a fingerprint. The CN's id must be a valid
+    identifier (`[A-Za-z0-9._:-]{1,64}`, after the optional
+    `PinVault Client: ` prefix): a certificate whose CN is anything else —
+    spaces, a DNS wildcard, more than 64 characters — cannot be uploaded.
+    An uploaded certificate whose id equals a device id is bound to it for
+    reports and `X-Device-Id` but is not a *proven* identity of that device:
+    it replaces none of its keys and opens none of its `token_mtls` files or
+    host client certificates. **Certificates uploaded earlier
+    under an id other than their CN's stop authenticating** (`403
+    reenroll_required`): upload them again under the CN's id.
+  - **`POST /api/v1/attest` on an mTLS listener** holds the body's `deviceId`
+    to the presented certificate (`403 device_identity_mismatch`), as
+    `X-Device-Id` already was: an enrolled device could attest in another
+    device's name.
+  - **An mTLS mock host stays mTLS when its certificate changes.** The
+    restart brought it back on the same port as plain TLS (no client
+    certificate, no revocation check). Each running mode restarts in its own
+    mode on its own port, by the call the server start uses; without the
+    client truststore the mTLS mock is stopped.
+  - Also: the "unauthorized host request" log line carries a count and
+    well-formed names only (it logged the caller's `?hosts=` and
+    `X-Device-Id` as sent), and `test-connection` builds its JSON instead of
+    pasting the mock's answer into it (`body` is now a string).
+- **A signed narrowed view names the request it answers (review item M6).**
+  `GET /api/v1/certificate-config?hosts=…`, a request with `X-Device-Id`
+  and the config inside an attestation answer (body `hosts`) are signed
+  views narrowed to a host set or a device's ACL, and nothing in the payload
+  said which request they answered: whoever can answer as the Config API
+  without the signing key (a pinned TLS key, a proxy or CDN in front) could
+  hand a device that wants the full config a genuine, fresh, narrow view,
+  and every other host lost its pins (with `managedTrustRoots()` it fell back
+  from leaf pins to "platform CA + root"). The signed payload of such a view
+  now ends with `"view":{"hosts":[…],"deviceId":"…"}`: the REQUESTED set in
+  canonical form (split at `,`, trimmed, ASCII lower case, de-duplicated,
+  sorted by code point) and the claimed device id, each left out when not
+  part of the request; the full config carries no `view` and its payload is
+  byte for byte what it was. The served pins are computed from the canonical
+  set (host names now match the ACL without regard to ASCII case), so two
+  spellings of one request get the same pins and the same cached envelope;
+  the signature cache key names the view, so a narrowed envelope never
+  answers a full request or another request. Unsigned answers
+  (`?signed=false`) are unchanged. Each distinct request is its own signed
+  content: with an external signer a scoped fleet costs one signing per
+  device per half TTL (SECURE_OPERATIONS). Wire format: SERVER_IMPLEMENTATION_GUIDE.md §3,
+  ATTESTATION.md §2.2 and openapi.yaml describe the field.
+- **Narrowed views cannot be used to run the signer at will.** Since `view`
+  every distinct `?hosts=` set and `X-Device-Id` is its own signed content,
+  and on a TLS Config API both are the caller's claims: made-up values were
+  a cache miss and a signing each — HSM/KMS calls at will, the 512-entry
+  cache evicted, and with `CONFIG_SIGNERS=command|pkcs11` the signer's
+  permits and queue full, so real devices and the full view's pre-signing
+  got `503`. Now: `X-Device-Id` must be a valid identifier
+  (`400 invalid_device_id`) and `?hosts=` names at most 2000 hosts
+  (`400 too_many_hosts`), before anything is looked up; with the cache on, a
+  narrowed view that is not cached is signed only within its requester's
+  budget per 10 minutes — the verified client id on an mTLS listener
+  (`CONFIG_VIEW_SIGN_DEVICE_RATE_LIMIT`, 30), else the source address behind
+  `TRUSTED_PROXIES` (`CONFIG_VIEW_SIGN_RATE_LIMIT`, 120); `0` = off, an
+  invalid value stops startup — and beyond it `429` + `Retry-After` (the
+  attestation answer leaves the config out). Cache hits and the full view are
+  never limited, and full views have their own cache. With an external
+  signer narrowed views hold at most `SIGNER_MAX_CONCURRENT` − 1 permits and
+  never queue (`503` at once), so the full view and the pre-signing always
+  find one. A signing that fails no longer leaves its per-key lock behind.
+  Tests: `ConfigViewSignLimitTest`.
+- **Ktor 3.0.3 → 3.1.3** (every `io.ktor` artifact, test ones included; the
+  newest 3.1 patch; Ktor 3.6 needs Kotlin 2.3, the server compiles with
+  2.1.0, and the lines in between were not tried). It brings kotlinx-serialization 1.8.1; the pinned
+  Netty 4.1 BOM stays. No code change; the whole server suite passes.
 
 ### Android
+
+- **A signed config must answer the request this block made (M6).** After
+  the signature and before anything is stored or applied — on every fetch
+  (init, periodic update, pin-mismatch recovery, custom
+  `SignedConfigSource`s alike), for the config inside an attestation answer
+  and when the stored envelope is read back — the payload's `view` is
+  compared with the block's own request: a block without `wantPinsFor`
+  refuses any `view`; a block with it refuses a `view` whose `hosts` is not
+  canonical(`wantPinsFor`), whose `deviceId` is not the id it sent (or names
+  one when none was sent), or that has keys it does not know. The refusal is
+  `ConfigViewMismatchException` (a `SecurityException`) in
+  `UpdateResult.Failed`, reported as `config_update_failed`; the stored
+  config and the pins in use are untouched, and the same pins in a narrowed
+  view are refused too, never `AlreadyCurrent`. A scoped block still accepts
+  a payload without `view` (the full config, or a server before 2.9.0: more
+  pins, never fewer). A stored envelope whose view no longer matches (an app
+  release changed `wantPinsFor`) is discarded with its watermarks kept and
+  fetched again; offline that start fails with `NoConfigAvailableException`.
 
 - **A blank per-file `signaturePublicKey` no longer turns verification off.**
   `vaultFile { signaturePublicKey("") }` — an unset build field — built a
@@ -150,9 +312,101 @@
   never be used on a server with two; no shipped tool wrote either. A set
   that names none is still accepted, with a warning: it is what lets another
   deployment's set in when both share a recovery key.
+- **A Config API block without a signing key is refused unless it says
+  `allowUnsigned()`, however it was built.** The builder always required the
+  key; a block made with the `ConfigApiBlock(...)` constructor and no key ran
+  unsigned with no flag set, so the release-build guard had nothing to refuse.
+  `init` (and enrollment before init) now fails for such a block with the
+  reason. See MIGRATION.md.
+- **An issuer pin vouches only as a CA, and only for a server certificate.**
+  When a pin matches a certificate above the leaf, that certificate must be a
+  CA (`basicConstraints`) and the leaf's `extendedKeyUsage`, when it has one,
+  must list serverAuth (or anyExtendedKeyUsage). Before, any certificate
+  whose key was pinned could sign a leaf for the host, and a client
+  certificate from a pinned CA passed as the server. A pin on the leaf's own
+  key is unchanged.
+- **A forced update that fails leaves no config loaded.** `init` returning
+  `ForceUpdateFailedException` used to leave the stored config in the pinned
+  clients, although the app is told not to proceed with it. The same goes
+  for `init` without a client certificate over a stored config that demands
+  an update (`ClientCertificateRequiredException`): that config is unloaded
+  too. TLS is
+  refused until an update succeeds; that update loads the config again, also
+  when the server answers that nothing changed.
+- **An imported client key the Keystore cannot read right now is not replaced
+  by the bundled keystore.** For an identity whose key was imported from a
+  PKCS12, a failing Keystore read as "nothing enrolled" and the
+  `clientKeystore(...)` shared by every install was presented instead. No
+  client certificate is presented until the device's own can be read — as
+  for a CSR-enrolled identity — and likewise while the credential store
+  itself is unreadable.
+- **Host client certificates follow the config.** When the last `mtls` host
+  was switched off, or none of the certificates could be loaded, the ones of
+  the config before stayed loaded and kept being presented. And among host
+  certificates the pin precedence holds (`host:port`, then the host, then a
+  wildcard) instead of the order they were loaded in.
+- **A vault file cut down to its header is fetched again.** A stored file of
+  exactly 8 bytes was taken for a Keystore failure and kept: it reported its
+  version, the server answered "not modified", and the file never came back.
+  Files too short to hold an IV and a GCM tag are malformed and deleted.
+- **A locked device no longer makes the status calls throw.** With
+  `requireUnlockedDevice()` the store keys do not work while the device is
+  locked; opening a store, listing it or writing to it let the raw Keystore
+  exception out. `isEnrolled`, `isEnrollmentPending`, `enrolledClientCN`,
+  `enrolledClientNotAfter` answer false / null then ("cannot tell" — nothing
+  is discarded) and `unenroll` does not throw; inside the library an
+  unreadable store is `StoreUnreadableException`, a refused write included.
+- **An issued client certificate is checked against the trusted clock**, not
+  the device date: renewal (when to renew, and the answer's validity) and
+  enrollment answers, CSR and PKCS12, use the block's trusted clock. Before
+  the first config was ever stored that clock is the device clock.
+- **A config accepted after a rollback is no longer "the rolled-back one".**
+  Its marker stayed, so every later fetch of the same signed config was
+  applied again and the connection pools were emptied each time.
 
 ### iOS
 
+- **A signed config must answer the request this block made (M6)**, as on
+  Android and with the same decisions on the same payloads (the five vectors
+  of the spec run in `ConfigViewBindingTests`). The payload's `view` is
+  checked after the signature and before anything is stored, applied or
+  compared for replay: on every fetch (init, periodic update, pin-mismatch
+  recovery, custom `SignedConfigSource`s), for the config inside an
+  attestation answer (against the `deviceId` that attestation request named,
+  `unknown-device` without a usable id) and when the stored envelope is read
+  back. The refusal is the new `PinVaultError.configViewMismatch(message:)`
+  (`exceptionName` `ConfigViewMismatchException`, message starting with
+  "Signed config rejected:") in `UpdateResult.failed`, reported as
+  `config_update_failed`; the stored config, its watermarks and the pins in
+  use stay as they were, and the same pins in a narrowed view are a refusal,
+  never `alreadyCurrent`. A stored envelope whose view no longer matches is
+  discarded with its watermarks kept and fetched again; offline that start
+  fails with `noConfigAvailable`. Host names and device ids are compared by
+  Unicode scalars (Swift's `==` would take canonically equivalent spellings
+  as one), and the canonical set is built on scalars, not `Character`s, so
+  `,` followed by a combining mark still separates, as in Kotlin.
+- **The screen-lock unlock no longer needs the private key before the
+  prompt.** The `userAuth` key is an RSA Keychain key (not in the Secure
+  Enclave), and for such a key a device may refuse even a silent lookup of
+  the private key until the user has passed Face ID / the passcode. The
+  library read it before the prompt — for its public half, its kind and to
+  check it was there — so on such a device `unlockFile` would return
+  `Failed` without ever showing the prompt, and a fetch could neither
+  register the key nor store a server-sealed copy. The public half and the
+  kind now live in a second Keychain item without user-presence access
+  control (`WhenPasscodeSetThisDeviceOnly`, never synchronised), written when
+  the key is made; the private key is read only to unwrap, with the context
+  the user just passed. That item must be the private key's own: after the
+  unwrap's lookup a different public half deletes both and the key counts as
+  retired; deleting the key deletes it. A key made by an earlier build gets
+  the item the first time the private key can be read (a silent lookup the
+  Keychain allows, or after the first passed prompt), and works as before
+  until then. **This flow has not been run on a physical iPhone** — the
+  simulator does not enforce the key's access control, so whether a device
+  refuses the silent lookup is not confirmed; the change makes the flow work
+  either way. Before shipping iOS with `userAuth` files, check once on a real
+  iPhone that `unlockFile` shows the Face ID / passcode sheet after an app
+  restart and opens the file (SCREEN_LOCK.md, "iOS").
 - **Numbers a server sends can no longer end the app.** Swift answers an
   integer overflow with a trap, which no `catch` sees. `nextAttestIn` and
   `tokenTtlSeconds` (multiplied by 1000), `tokenExpiresAt` (minus the clock
@@ -165,6 +419,57 @@
   compares instead of subtracting. Android wraps silently and was not
   affected.
 - The blank `signaturePublicKey` and `configApiIds` changes above, the same.
+- **The `wss` half of the trust-check watch never ran.** `PinnedSessionDelegate`
+  had `urlSession(_:webSocketTask:didOpenWithProtocol:)` but did not conform to
+  `URLSessionWebSocketDelegate`, so the method had no Objective-C selector and
+  URLSession never called it: a WebSocket that opened without the delegate
+  being asked about a certificate (2.8.1) was neither closed nor recorded as
+  `tls-unverified:<host>`. The conformance is there now: such a socket is
+  cancelled (close code 1008, policy violation) as soon as it opens — an app
+  that only ever saw this on a device with a certificate-validation bypass
+  installed will now see its `wss` sockets fail there, as its requests did.
+- **A request sent while the sessions were being rebuilt could end the app.**
+  The transport handed a `URLSession` out of its lock and created the task a
+  moment later, while a pin update, an identity change or a failed per-request
+  check invalidated that session on another thread; URLSession answers a task
+  on an invalidated session with an exception Swift cannot catch. Each
+  session now has its own lock and a retired mark: a task is only made on a
+  session that is still open, and a request that finds its session retired
+  takes a new one (the pin re-check runs again for it).
+- **`requireUnlockedDevice()` no longer falls back silently**, as on Android
+  since 2.3.1. When the Keychain refuses a key that works only while the
+  device is unlocked, the operation fails with
+  `PinVaultError.unlockedDeviceKeyRequired` (`UnlockedDeviceKeyRequiredException`)
+  instead of making the key without the requirement and logging a warning.
+  `requireUnlockedDevice(allowFallback: true)` keeps the old behaviour. See
+  MIGRATION.md.
+- **Issuer pins**, as on Android: a pin that matches a certificate above the
+  leaf counts only when that certificate is a CA (`basicConstraints`) and the
+  leaf has no `extendedKeyUsage` or one with serverAuth (or
+  anyExtendedKeyUsage). A CA that also issues client or code-signing
+  certificates no longer vouches for those as servers.
+- **A Keychain that cannot be read is not "nothing to renew".** Certificate
+  renewal read the stored chain through a lenient store and with `try?`: a
+  locked or failing Keychain answered `notApplicable`, and a store that could
+  not be opened when the client was built turned renewal off until the next
+  start. Both are now `ClientCertRenewalResult.failed` with a log line, and
+  the next check tries again.
+- **A redirect to another host, port or scheme takes nothing of the caller's
+  along.** Only a fixed list of credential headers was dropped; an app's own
+  session or API-key header, and the body of a 307/308, went to wherever the
+  `Location` pointed. Now only `Accept`, `Accept-Language` and `User-Agent`
+  follow such a redirect (the library adds what it sets for the new
+  destination itself), and a 307/308 that would repeat a body there is not
+  followed: the 3xx is the answer (an empty body counts as none). `Range`,
+  `If-None-Match`, `If-Modified-Since` and the other conditional headers are
+  among what is dropped: the other endpoint answers with the whole resource.
+  Redirects within the same endpoint are unchanged.
+- An `extendedKeyUsage` extension with an element that cannot be read is
+  unreadable as a whole (it used to yield the purposes that did parse), so an
+  issuer pin refuses such a leaf even when serverAuth is listed, as on Android.
+- A request cancelled by `invalidateAndCancel()` in the instant it started
+  could wait forever: its task was cancelled before the response collector
+  was registered. Both now happen in one step under the session's lock.
 
 ### React Native and Flutter
 
@@ -180,6 +485,36 @@
   `" //host/x"` (the URL parser skips leading whitespace), `https:\\host/x`
   and `http:host/x` passed. Whitespace around the value, a backslash anywhere
   and a `scheme:` prefix are now refused, on all four implementations.
+- **A vault file's `endpoint` is held to that rule too**, and may not contain
+  a `..` path segment (written plainly or as `%2e`). It was still checked for
+  `://` and a leading slash only, and it is the request that carries the
+  file's token.
+- **Release builds take `serverScope` and `clientCaPins` only from the native
+  security file.** `serverScope` names the library's config store: a bundle
+  that set one where the file named none moved the store to a new namespace
+  with no replay watermarks, after which an older signed config was accepted.
+  `clientCaPins` say which CA may issue the device's identity. Breaking for
+  apps that set either only in JS / Dart: see MIGRATION.md.
+- **`PinVault.fetch` follows redirects itself on Android.** OkHttp carried
+  every header except `Authorization`, and the body of a 307/308, to whatever
+  host the `Location` named. A redirect to another host or port now takes
+  only `Accept`, `Accept-Language` and `User-Agent` along and never a body (a
+  307/308 with one is returned as the answer), as on iOS.
+- **Flutter `PinVaultWebSocket.connect` refuses the headers `fetch` refuses**
+  (`Host`, `Connection`, `Keep-Alive`, `Proxy-Connection`, `TE`, `Trailer`,
+  `Transfer-Encoding`, `Upgrade`, `Content-Length`) and `Sec-WebSocket-*`, in
+  Dart and on both platforms. On iOS it also answers `E_NOT_STARTED` before
+  `start()` like every other call, and an engine that detaches closes its
+  sockets. Subprotocols are asked for with the new `protocols:` argument (at
+  most 8 tokens of at most 64 characters, none twice); the bridge writes
+  `Sec-WebSocket-Protocol` from it. The protocol the server picked is not
+  reported.
+- `PinVault.fetch` on iOS: `timeoutMs` is one limit for the whole exchange,
+  redirects included, as on Android (it used to start again at every hop and
+  count idle time only).
+- iOS: `ios.requireUnlockedDeviceAllowFallback` (the twin of
+  `android.requireUnlockedDeviceAllowFallback`) for the stricter
+  `requireUnlockedDevice()` above.
 
 ### Samples
 

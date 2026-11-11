@@ -58,6 +58,8 @@ install) and, on a signed block, `X-PinVault-Features: redelivery,multisig,keyse
 declares `wantPinsFor(...)` makes a scoped fetch: it adds `?hosts=a.example.com,b.example.com`
 and an `X-Device-Id` header, and expects only the intersection of those hosts and what that
 device may have (the reference server's device host ACL). Unscoped blocks send neither.
+A signed answer to a scoped request must name that request in its payload (`view`, see the
+payload fields below); a 2.9.0+ library refuses a narrowed view it did not ask for.
 
 The reference server answers the unsigned config (the bare JSON below, no envelope) to
 `?signed=false`; that is for test clients built with `allowUnsigned()`. The library never sends
@@ -184,6 +186,7 @@ So bump per-host versions in small steps and never reuse a lower one.
 | Field | Type | Required | Purpose |
 |---|---|---|---|
 | `configApiId` | String | When clients set `serverScope(...)` | Names the Config API this config is for. One signing key often signs for several Config APIs (TLS and mTLS listeners, tenants, environments); without this field a config signed for one of them verifies for all of them. A client whose block calls `serverScope("<id>")` refuses a payload that lacks the field or carries another id; clients without `serverScope` ignore it. Put it in every signed payload — it costs nothing and lets apps turn the check on. The same id goes into v2 vault file signatures (section 6). The reference server (2.2.0) writes the listener's Config API id into every signed payload and leaves it out of unsigned ones. A signing-key set (below) may carry its own optional `configApiId`; a client with `serverScope` refuses a set made for another id, and a set without the field applies to any block. |
+| `view` | Object | For every NARROWED view (2.9.0) | Names the request a narrowed view answers, so a full-config device cannot be handed a genuine narrow view (which would drop every other host's pins) and a scoped device cannot be handed another request's view. Write it exactly when the request was scoped — `?hosts=` given, or `X-Device-Id` sent (in an attestation answer: `hosts` in the body, with the attested `deviceId`) — and leave it out of the full config. `hosts`: the REQUESTED set (not what was granted) in canonical form: split at `,`, ASCII whitespace trimmed, empty names dropped, ASCII `A-Z` lower-cased, duplicates removed, sorted by code point; omitted when no host list was requested. `deviceId`: the device id the request claimed, the one the ACL was resolved for; omitted when none was claimed. No other keys (a client refuses a `view` with keys it does not know). Compute the served pins from the canonical set too, so two spellings of one request get the same pins. A 2.9.0+ client refuses a narrowed `view` for a block without `wantPinsFor`, and for a block with it any `view` whose `hosts` ≠ canonical(`wantPinsFor`) or whose `deviceId` ≠ the `X-Device-Id` it sent; it still accepts a payload without `view` (treated as the full config). If you cache signatures, key them by the whole payload including `view`. Example: `"view":{"hosts":["api.example.com","cdn.example.com"],"deviceId":"a1b2c3d4e5f60718"}` |
 
 **Signing spec:**
 - Algorithm: `SHA256withECDSA`
@@ -1251,6 +1254,7 @@ codes a client may see:
 - [ ] A claimed `deviceUid` is trusted only when proven (token bound to it, equal to the client id, or attested)
 - [ ] Pin configs follow the library's rules before you sign them (hosts unique ignoring case, at most 2000 hosts, 2–32 pins each, LDH names with at most one leading `*.`): one bad entry makes every device refuse the whole config
 - [ ] Signed payloads carry `configApiId`; vault files carry `X-Vault-Signature-V2` as well as `X-Vault-Signature`
+- [ ] Signed NARROWED views (`?hosts=`, `X-Device-Id`, attestation `hosts`) carry `view` with the canonical requested host set and the claimed device id; the full config carries none
 - [ ] Vault file endpoints return raw bytes (if using VaultFile feature)
 - [ ] Device keys keep their `algorithm`: `end_to_end` / `user_auth` files for an iOS key (`RSA-OAEP-SHA256-MGF1-SHA256`) are wrapped with MGF1-SHA256, Android's (`RSA-OAEP-SHA256`) with MGF1-SHA1
 - [ ] If iOS apps attest: a report with `device.platform: "ios"` is judged by bundle id, team id and iOS version, and an `app-attest` verdict against Apple's App Attestation Root CA (ATTESTATION.md §12)

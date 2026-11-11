@@ -96,7 +96,7 @@ Request:
 | `report` | The report JSON **as a string** (section 3). At most 16 KB. |
 | `signature` | `SHA256withECDSA` (DER) over the UTF-8 bytes of `pinvault-attest:v1:<nonce>:<deviceId>:<sha256-hex(report)>`. |
 | `currentConfigVersion`, `currentIssuedAt` | What the device holds; the server embeds a fresh signed config when either differs from what it would serve. The server also keeps the highest `currentIssuedAt` each device reported: a lower one from the same key raises `config_rollback` (§3). |
-| `hosts` | Optional, the block's `wantPinsFor` — the same scoping the config GET applies. |
+| `hosts` | Optional, the block's `wantPinsFor` — the same scoping the config GET applies. With it the embedded config is narrowed for this request and its signed payload says so (`view: {hosts, deviceId}` with this body's `deviceId`, 2.9.0); without it the device id does not narrow and the config carries no `view`. |
 | `verdictProvider` | Optional, `{name, token}`: a **v2** verdict (§11, §12). A verdict bound to the report cannot sit inside it, so it travels beside it; the report then has no `verdictProvider`. A token here must be v2. Without it the report's own `verdictProvider` is read, as from older apps. |
 
 Server checks, in order (each refusal is counted by the refusal limiter):
@@ -147,7 +147,11 @@ Response `200`:
   themselves.)
 - `config` is the same envelope `GET /api/v1/certificate-config` serves,
   scoped by the device's host ACL, and goes through the library's normal
-  verification and replay checks. A rejected device gets **no config**: it keeps
+  verification and replay checks — including the request binding (2.9.0): a
+  narrowed embedded config names the request in its signed `view` field, and
+  the library refuses one that does not match its `wantPinsFor` and the
+  `deviceId` it sent (`ConfigViewMismatchException`; see
+  SERVER_IMPLEMENTATION_GUIDE.md §3). A rejected device gets **no config**: it keeps
   whatever it has until it expires, exactly as if the Config API were
   unreachable.
 - `nextAttestIn` is the policy's `attestIntervalSeconds` (default 300).
