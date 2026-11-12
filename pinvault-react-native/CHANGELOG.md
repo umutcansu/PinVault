@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased (2.10.0)
+## 2.10.0 — 2026-11-12
 
 - **Breaking (release builds with a native security file):** a block's
   `healthEndpoint`, vault files (also without a `vaultFiles` section; new

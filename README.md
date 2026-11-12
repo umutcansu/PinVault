@@ -9,7 +9,7 @@ versioned files only your devices can open, and attestation that tells your
 app from a script — for Android, iOS, React Native and Flutter.
 
 [![Maven Central](https://img.shields.io/maven-central/v/io.github.umutcansu/pinvault?label=Android)](https://central.sonatype.com/artifact/io.github.umutcansu/pinvault)
-[![SwiftPM](https://img.shields.io/badge/iOS-SwiftPM%202.9.1-F05138?logo=swift&logoColor=white)](pinvault-ios/README.md)
+[![SwiftPM](https://img.shields.io/badge/iOS-SwiftPM%202.10.0-F05138?logo=swift&logoColor=white)](pinvault-ios/README.md)
 [![npm](https://img.shields.io/npm/v/@umutcansu/react-native-pinvault?label=React%20Native&logo=react)](https://www.npmjs.com/package/@umutcansu/react-native-pinvault)
 [![pub.dev](https://img.shields.io/pub/v/pinvault_flutter?label=Flutter&logo=flutter)](https://pub.dev/packages/pinvault_flutter)
 [![License](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
@@ -38,26 +38,22 @@ PinVault moves the pins to your server and keeps the safety:
 - 🔌 **Server-agnostic.** Use the reference server (Docker, dashboard included),
   implement two endpoints in your own backend, or run fully offline with static pins.
 
-> **Latest release: 2.9.1** — a vault file the device could not store no
+> **Latest release: 2.10.0** — four more approval cards go stale when what
+> they act on moved in between, signing-key sets must name their Config APIs
+> (`ALLOW_UNSCOPED_KEY_SETS` for the old behaviour), vault content at rest is
+> bound to its file, a re-enrolled device can attest again, and on Android a
+> redirect to another origin no longer carries the app's headers or body.
+> React Native / Flutter release builds take more from the native security
+> file: the health endpoint, vault files, the expired-config grace and the
+> unpinned-networking switches (see [MIGRATION.md](MIGRATION.md)).
+> See [CHANGELOG.md](CHANGELOG.md).
+>
+> **2.9.1** — a vault file the device could not store no
 > longer costs it the copy it had (a custom `VaultStorageProvider.save` must
 > now throw on failure), host client certificates load at every start, the
 > server refuses to start when key files it made are missing
 > (`ALLOW_KEY_REGENERATION` to make them again on purpose), and client ids
 > that differ only in letter case no longer touch each other's certificate.
-> See [CHANGELOG.md](CHANGELOG.md).
->
-> **2.9.0** — every pin set a Config API has served is kept
-> and comes back with one click (a new version with the old pins; two-person
-> approval and the live certificate check apply), the expiry monitor watches
-> the server's own certificates, the CAs and vault files with a date, and the
-> setup wizard walks to production: a certificates step and *How to* steps
-> for every row ([SETUP.md](SETUP.md)). With it, the fixes of a security
-> review: an approval card now shows exactly what the approved request does
-> (trust roots, settings, attestation changes; a request in another charset
-> is refused), on iOS a number a server sends can no longer end the app, and
-> React Native / Flutter release builds take the signature thresholds and
-> recovery keys only from the native security file
-> (see [MIGRATION.md](MIGRATION.md)).
 
 ## What you get
 
@@ -134,7 +130,7 @@ behaviour and the same server, so you can move between them freely.
 ```kotlin
 // build.gradle.kts
 dependencies {
-    implementation("io.github.umutcansu:pinvault:2.9.1")
+    implementation("io.github.umutcansu:pinvault:2.10.0")
 }
 ```
 
@@ -147,7 +143,7 @@ minSdk 24, JDK 17, OkHttp 4. Java callers: see [the guide](GUIDE.md#2b-initializ
 
 ```swift
 // Package.swift — or Xcode: File → Add Package Dependencies…
-.package(url: "https://github.com/umutcansu/PinVault.git", from: "2.9.1")
+.package(url: "https://github.com/umutcansu/PinVault.git", from: "2.10.0")
 ```
 
 iOS 16+, Swift 6, no third-party dependencies. Info.plist keys for background

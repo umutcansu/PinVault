@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 2.10.0 — 2026-11-12 — stale approval cards, scoped key sets, vault blobs bound to their file, redirects keep headers back, bridges take more from the native file
 
 ### Server
 
