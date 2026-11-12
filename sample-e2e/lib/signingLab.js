@@ -223,6 +223,16 @@ async function signingStatus() {
 }
 
 /** Sunucudaki anahtar seti tablosu yalnızca eklenir: sıradaki sürüm = son sürüm + 1. */
+/**
+ * The geçici sunucunun Config API kimlikleri, virgülle (`signing-keys.sh keyset -a` için).
+ * 2.10.0: sunucu, Config API adlandırmayan seti reddediyor (ALLOW_UNSCOPED_KEY_SETS yoksa).
+ */
+async function configApiScope() {
+  const ids = ((await fresh.api('/api/v1/config-apis')).json || []).map((a) => a.id);
+  if (!ids.length) throw new Error('geçici sunucuda Config API yok');
+  return ids.join(',');
+}
+
 async function nextKeySetVersion() {
   const status = await signingStatus();
   return ((status.keySet && status.keySet.version) || 0) + 1;
@@ -523,6 +533,7 @@ module.exports = {
   signingKeyInfo,
   signingStatus,
   nextKeySetVersion,
+  configApiScope,
   describeSigners,
   savePrimaryKeyFile,
   restorePrimaryKeyFile,

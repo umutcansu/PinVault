@@ -116,9 +116,9 @@ test('Sunucu+Web+Mobil: anahtar seti (telefonun güvendiği imza anahtarları) �
       const version = await lab.nextKeySetVersion();
       const file = lab.labFile('keyset-sunucu-anahtari-yok.json');
       await lab.op(testInfo, 'Set: yalnızca lab-second (sunucu bu anahtarla imzalamıyor), lab-recovery ile imzalı', {
-        display: `./scripts/signing-keys.sh keyset -v ${version} -k ${lab.KEYS.second} -s ${lab.KEYS.recovery} -o ${file.rel}`,
+        display: `./scripts/signing-keys.sh keyset -v ${version} -k ${lab.KEYS.second} -s ${lab.KEYS.recovery} -a ${await lab.configApiScope()} -o ${file.rel}`,
         file: './scripts/signing-keys.sh',
-        args: ['keyset', '-v', String(version), '-k', lab.KEYS.second, '-s', lab.KEYS.recovery, '-o', file.rel],
+        args: ['keyset', '-v', String(version), '-k', lab.KEYS.second, '-s', lab.KEYS.recovery, '-a', await lab.configApiScope(), '-o', file.rel],
       });
       const out = await lab.op(testInfo, 'signing-keys.sh upload → sunucu seti reddediyor', {
         display: `./scripts/signing-keys.sh upload ${file.rel}`,

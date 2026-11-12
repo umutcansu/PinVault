@@ -136,9 +136,9 @@ test('Sunucu+Web+Mobil: HSM imzalayıcısı (SoftHSM/PKCS#11) — anahtar HSM to
       N = await lab.nextKeySetVersion();
       const first = lab.labFile(`keyset-hsm-v${N}.json`);
       await lab.op(testInfo, `signing-keys.sh keyset: v${N} = sunucunun imzalayıcıları (birincil + HSM)`, {
-        display: `./scripts/signing-keys.sh keyset -v ${N} -k server -s ${lab.KEYS.recovery} -o ${first.rel}`,
+        display: `./scripts/signing-keys.sh keyset -v ${N} -k server -s ${lab.KEYS.recovery} -a ${await lab.configApiScope()} -o ${first.rel}`,
         file: './scripts/signing-keys.sh',
-        args: ['keyset', '-v', String(N), '-k', 'server', '-s', lab.KEYS.recovery, '-o', first.rel],
+        args: ['keyset', '-v', String(N), '-k', 'server', '-s', lab.KEYS.recovery, '-a', await lab.configApiScope(), '-o', first.rel],
         note: () => lab.describeKeySet(JSON.parse(fs.readFileSync(first.abs, 'utf8')), names),
       });
       const up1 = await lab.op(testInfo, `signing-keys.sh upload: v${N}`, {
@@ -150,10 +150,10 @@ test('Sunucu+Web+Mobil: HSM imzalayıcısı (SoftHSM/PKCS#11) — anahtar HSM to
       await lab.op(testInfo, `signing-keys.sh keyset: v${N + 1} = yalnızca HSM`, {
         display: [
           `HSM_PUB="$(curl -s ${fresh.WEB_URL}/api/v1/signing-key | jq -r '.signers[] | select(.keyId=="${hsm.keyId}") | .publicKey')"`,
-          `$ ./scripts/signing-keys.sh keyset -v ${N + 1} -k "$HSM_PUB" -s ${lab.KEYS.recovery} -o ${second.rel}`,
+          `$ ./scripts/signing-keys.sh keyset -v ${N + 1} -k "$HSM_PUB" -s ${lab.KEYS.recovery} -a ${await lab.configApiScope()} -o ${second.rel}`,
         ].join('\n'),
         file: './scripts/signing-keys.sh',
-        args: ['keyset', '-v', String(N + 1), '-k', hsm.publicKey, '-s', lab.KEYS.recovery, '-o', second.rel],
+        args: ['keyset', '-v', String(N + 1), '-k', hsm.publicKey, '-s', lab.KEYS.recovery, '-a', await lab.configApiScope(), '-o', second.rel],
         note: () => lab.describeKeySet(JSON.parse(fs.readFileSync(second.abs, 'utf8')), names),
       });
       const up2 = await lab.op(testInfo, `signing-keys.sh upload: v${N + 1} (uyarı: yerel anahtar sette yok)`, {

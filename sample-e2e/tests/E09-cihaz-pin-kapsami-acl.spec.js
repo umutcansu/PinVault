@@ -154,16 +154,17 @@ test('Mobil+Web: wantPinsFor açıkken telefon yalnızca izin listesinde (ACL) o
           `Arayüzdeki cihaz listesi: ${listed.join(', ') || '(boş)'}`,
           `Telefonun gönderdiği X-Device-Id: ${deviceId}`,
           '',
-          'NOT: "Cihaz ACL yönet" penceresindeki liste /api/v1/client-devices\'tan geliyor ve',
-          'orada cihaz kimliği "üretici_model" olarak üretiliyor; telefon ise ANDROID_ID',
-          'gönderiyor. İki kimlik biçimi farklı olduğu için satırdaki "ACL düzenle" düğmesi',
-          'izin listesini yanlış cihaz kimliğine yazar — cihaza özel izin şimdilik',
-          'ANDROID_ID ile API üzerinden verilmeli (bulgu).',
+          '2026-11-12\'den beri "Cihaz ACL yönet" penceresi telefonların gönderdiği kimlikleri',
+          '(X-Device-Id) listeliyor: izin listesi, atestasyon, vault indirmesi, cihaz anahtarı',
+          '(GET /api/v1/config-apis/{id}/device-ids). Önceden bağlantı raporlarındaki',
+          '"üretici_model" adları listeleniyordu; o satırlardan yazılan izin hiçbir cihaza',
+          'uygulanmıyordu. Listede olmayan bir cihaz için kimlik elle de yazılabiliyor.',
         ].join('\n'),
       );
       expect(granted.status).toBe(200);
       expect(scoped.hosts).toEqual([env.TARGET_HOST]);
       expect(other.hosts).toEqual([]);
+      expect(listed, 'pencere telefonun gönderdiği kimliği listelemeli').toContain(deviceId);
 
       const status = await app.refreshConfig();
       await app.snap('cihaza özel izin listesiyle yalnızca hedef host');

@@ -152,9 +152,9 @@ test('Sunucu+Mobil: dış komutla imzalama (KMS benzeri, komuta yalnızca SHA-25
       N = await lab.nextKeySetVersion();
       const file = lab.labFile(`keyset-kms-v${N}.json`);
       await lab.op(testInfo, `signing-keys.sh keyset: v${N} = sunucunun imzalayıcıları (birincil + KMS)`, {
-        display: `./scripts/signing-keys.sh keyset -v ${N} -k server -s ${lab.KEYS.recovery} -o ${file.rel}`,
+        display: `./scripts/signing-keys.sh keyset -v ${N} -k server -s ${lab.KEYS.recovery} -a ${await lab.configApiScope()} -o ${file.rel}`,
         file: './scripts/signing-keys.sh',
-        args: ['keyset', '-v', String(N), '-k', 'server', '-s', lab.KEYS.recovery, '-o', file.rel],
+        args: ['keyset', '-v', String(N), '-k', 'server', '-s', lab.KEYS.recovery, '-a', await lab.configApiScope(), '-o', file.rel],
         note: () => lab.describeKeySet(JSON.parse(fs.readFileSync(file.abs, 'utf8')), names),
       });
       const up = await lab.op(testInfo, `signing-keys.sh upload: v${N}`, {

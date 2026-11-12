@@ -1,7 +1,7 @@
 // C01 — Vault at_rest şifrelemesi.
 //
 // `encryption=at_rest` dosyayı YALNIZCA sunucunun diskinde şifreler: SQLite'taki
-// blob AES-256-GCM sarmalı ("VLT-ENC1" + salt + IV), ağ trafiğindeki gövde ise
+// blob AES-256-GCM sarmalı ("VLT-ENC2" + salt + IV; 2.10.0'dan beri Config API ve dosya adı şifrenin ek verisinde), ağ trafiğindeki gövde ise
 // düz metin. Cihaz bu katmanı hiç görmez — kütüphane için plain ile aynıdır.
 //
 // Kanıt zinciri: dashboard yüklemesi → veritabanı dosyasında düz metnin hiç
@@ -54,11 +54,11 @@ test('Vault at_rest: sunucu diskinde şifreli, ağ trafiğinde şifresiz, telefo
           '',
           hexdump(blob, 96),
           '',
-          'Bayt düzeni: [işaret "VLT-ENC1" 8B][salt 16B][IV 12B][AES-256-GCM şifreli metin + doğrulama etiketi]',
+          'Bayt düzeni: [işaret "VLT-ENC2" 8B][salt 16B][IV 12B][AES-256-GCM şifreli metin + doğrulama etiketi]',
           'Şifreleme anahtarı VAULT_AT_REST_PASSWORD parolasından PBKDF2-SHA256 (200.000 tur) ile üretiliyor.',
         ].join('\n'),
       );
-      expect(marker).toBe('VLT-ENC1');
+      expect(marker).toBe('VLT-ENC2');
       expect(blob.includes(Buffer.from(secret, 'utf8'))).toBe(false);
 
       // Blob satırı şifreli olsa da düz metin veritabanının başka bir yerinde

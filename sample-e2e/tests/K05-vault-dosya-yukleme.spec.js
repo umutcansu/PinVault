@@ -76,12 +76,12 @@ test('Kurulum: vault dosyaları metin ve dosya olarak, her politika ve şifrelem
       const has = (needle) => db.includes(Buffer.from(needle, 'utf8'));
       const lines = [
         `veritabanı      : data/db/pinvault.db (${db.length} bayt)`,
-        `"VLT-ENC1" öneki: ${has('VLT-ENC1') ? 'VAR (at_rest dosyası şifreli saklanıyor)' : 'YOK'}`,
+        `"VLT-ENC2" öneki: ${has('VLT-ENC2') ? 'VAR (at_rest dosyası şifreli saklanıyor)' : 'YOK'}`,
         `plain içeriği   : ${has(plainContent) ? 'düz metin olarak bulundu' : 'bulunamadı'}  ← ${plainContent}`,
         `at_rest içeriği : ${has(atRestContent) ? 'düz metin olarak bulundu' : 'bulunamadı (şifreli)'}  ← ${atRestContent}`,
       ];
       await attachText(testInfo, 'Sunucu diskindeki vault dosya içerikleri', lines.join('\n'));
-      expect(has('VLT-ENC1')).toBe(true);
+      expect(has('VLT-ENC2')).toBe(true);
       expect(has(plainContent)).toBe(true);
       expect(has(atRestContent)).toBe(false);
     });
