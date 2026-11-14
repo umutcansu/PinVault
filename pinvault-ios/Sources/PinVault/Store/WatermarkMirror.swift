@@ -32,6 +32,14 @@ struct MirroredWatermarks: Sendable, Equatable {
     /// applied, under the recovery keys whose fingerprint is `floorAnchors`.
     var floorVersion: Int?
     var floorAnchors: String?
+    /// Which signed config is the active one (``CertificateConfigStore/envelopeId(_:)``
+    /// of its envelope). The watermarks say how new a FETCHED config must be;
+    /// they say nothing about the config already in the store, so an older
+    /// container put back made its older signed config the active one again
+    /// until it expired. Nil = never recorded (a store written before this
+    /// existed); empty = nothing signed is active; two or more ids only while
+    /// a save is under way (the one being written, then the ones it replaces).
+    var active: [String]?
 }
 
 /// No mirror: tests, and anywhere the Keychain is not used.
@@ -105,6 +113,7 @@ final class KeychainWatermarkMirror: WatermarkMirror, @unchecked Sendable {
         if let anchors = values.anchors { members.append("\"anchors\":\(JSONText.string(anchors))") }
         if let floor = values.floorVersion { members.append("\"floorVersion\":\(floor)") }
         if let floorAnchors = values.floorAnchors { members.append("\"floorAnchors\":\(JSONText.string(floorAnchors))") }
+        if let active = values.active { members.append("\"active\":\(JSONText.array(active.map(JSONText.string)))") }
         return Data(("{" + members.joined(separator: ",") + "}").utf8)
     }
 
@@ -122,6 +131,7 @@ final class KeychainWatermarkMirror: WatermarkMirror, @unchecked Sendable {
         if let anchors = json["anchors"] as? String { values.anchors = anchors }
         if let floor = json["floorVersion"] as? NSNumber { values.floorVersion = floor.intValue }
         if let floorAnchors = json["floorAnchors"] as? String { values.floorAnchors = floorAnchors }
+        if let active = json["active"] as? [Any] { values.active = active.compactMap { $0 as? String } }
         return values
     }
 }

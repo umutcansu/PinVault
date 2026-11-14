@@ -342,7 +342,7 @@ final class RequestRoutingTests: XCTestCase {
         XCTAssertEqual(server.requests.map(\.path), ["/307"])
     }
 
-    func testNoPinnedSessionFollowsARedirectIntoTheClearUnlessTheAppOptsIn() async throws {
+    func testNoPinnedSessionFollowsARedirectIntoTheClearEvenWhenTheAppAsksForIt() async throws {
         let tls = try await server()
         let plain = try await server(nil)
         tls.setHandler { _ in .status(302, headers: ["Location": plain.url("/clear").absoluteString]) }
@@ -350,29 +350,75 @@ final class RequestRoutingTests: XCTestCase {
         let library = testManager().buildDynamicClient(configProvider: { config })
         let refused = try await status(library, tls.url("/start"))
         XCTAssertEqual(refused.statusCode, 302, "followSslRedirects(false): the 3xx is the answer")
-        XCTAssertEqual(plain.requestCount, 0)
 
         let applied = testManager().applyTo(.ephemeral, configProvider: { config })
         let alsoRefused = try await status(applied, tls.url("/start"))
         XCTAssertEqual(alsoRefused.statusCode, 302, "the app's own configuration does not continue in the clear either")
-        XCTAssertEqual(plain.requestCount, 0)
 
-        let settings = testManager().buildDynamicClient(configProvider: { config }, settings: HttpConnectionSettings())
-        let settingsRefused = try await status(settings, tls.url("/start"))
-        XCTAssertEqual(settingsRefused.statusCode, 302, "session(settings:) neither")
-        XCTAssertEqual(plain.requestCount, 0)
-
-        let optedIn = testManager().applyTo(.ephemeral, configProvider: { config }, followCleartextRedirects: true)
-        let followed = try await status(optedIn, tls.url("/start"))
-        XCTAssertEqual(followed.statusCode, 200, "followCleartextRedirects: true is OkHttp's followSslRedirects(true)")
-        XCTAssertEqual(plain.requests.map(\.path), ["/clear"])
-
+        // The old opt-in is still accepted and changes nothing: there is no pin
+        // check on a plain connection, so no setting sends a pinned session there.
         var optedInSettings = HttpConnectionSettings()
         optedInSettings.followCleartextRedirects = true
         let viaSettings = testManager().buildDynamicClient(configProvider: { config }, settings: optedInSettings)
-        let viaSettingsFollowed = try await status(viaSettings, tls.url("/start"))
-        XCTAssertEqual(viaSettingsFollowed.statusCode, 200)
-        XCTAssertEqual(plain.requests.map(\.path), ["/clear", "/clear"])
+        let stillRefused = try await status(viaSettings, tls.url("/start"))
+        XCTAssertEqual(stillRefused.statusCode, 302)
+
+        // Nor does a transport whose policy follows every redirect, unless it may send cleartext at all.
+        let followsAll = PinnedSession(transport: URLSessionTransport(
+            manager: testManager(), configuration: .ephemeral, trust: .pinned({ config }), resolveOverrides: [:], redirects: .all
+        ))
+        let notFollowed = try await status(followsAll, tls.url("/start"))
+        XCTAssertEqual(notFollowed.statusCode, 302)
+        XCTAssertEqual(plain.requestCount, 0, "nothing reached the plain server")
+    }
+
+    // The pin check is a TLS check: over plain HTTP a request to a pinned host
+    // went out with nothing checked (security review 2026-11-14, D1).
+    func testAPinnedSessionRefusesAPlainHTTPRequestBeforeAnythingIsSent() async throws {
+        let plain = try await server(nil)
+        let config = pinConfig("localhost", [leafPin])
+        let manager = testManager()
+        let sessions = [
+            manager.buildClient(config),
+            manager.buildDynamicClient(configProvider: { config }),
+            manager.buildDynamicClient(configProvider: { config }, settings: HttpConnectionSettings(followCleartextRedirects: true)),
+            manager.applyTo(.ephemeral, configProvider: { config }),
+        ]
+        for session in sessions {
+            let error = await assertPinVaultError { _ = try await session.data(from: plain.url("/clear")) }
+            guard case .io(let message, _)? = error else { return XCTFail("\(String(describing: error))") }
+            XCTAssertTrue(message.hasPrefix("Refusing a plain-HTTP request to localhost:\(plain.port) through a pinned session"), message)
+            XCTAssertFalse(PinRecoveryInterceptor.isPinMismatch(error!), "not a pin mismatch: no recovery fetch is started for it")
+        }
+        XCTAssertEqual(plain.requestCount, 0)
+    }
+
+    func testAPinnedSessionRefusesAPlainWebSocket() throws {
+        let config = pinConfig("api.example.com", [leafPin])
+        let session = testManager().buildDynamicClient(configProvider: { config })
+        XCTAssertThrowsError(try session.webSocketTask(with: URL(string: "ws://api.example.com/socket")!)) { error in
+            guard case PinVaultError.io(let message, _) = error else { return XCTFail("\(error)") }
+            XCTAssertTrue(message.hasPrefix("Refusing a ws:// WebSocket to api.example.com:80 through a pinned session"), message)
+        }
+        XCTAssertNoThrow(try session.webSocketTask(with: URL(string: "wss://api.example.com/socket")!).cancel())
+    }
+
+    // Tests only (and the bootstrap client of a block with allowUnpinnedConfigApi()):
+    // a transport built to send cleartext still does, to a local plain server.
+    func testATransportBuiltForCleartextStillReachesAPlainServer() async throws {
+        let tls = try await server()
+        let plain = try await server(nil)
+        tls.setHandler { _ in .status(302, headers: ["Location": plain.url("/clear").absoluteString]) }
+        let config = pinConfig("localhost", [leafPin])
+        let session = PinnedSession(transport: URLSessionTransport(
+            manager: testManager(), configuration: .ephemeral, trust: .pinned({ config }), resolveOverrides: [:], redirects: .all,
+            allowsCleartext: true
+        ))
+        let direct = try await status(session, plain.url("/direct"))
+        XCTAssertEqual(direct.statusCode, 200)
+        let followed = try await status(session, tls.url("/start"))
+        XCTAssertEqual(followed.statusCode, 200)
+        XCTAssertEqual(plain.requests.map(\.path), ["/direct", "/clear"])
     }
 
     func testTooManyFollowUpsFail() async throws {

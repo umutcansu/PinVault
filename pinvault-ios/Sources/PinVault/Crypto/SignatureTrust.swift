@@ -415,9 +415,10 @@ final class SignatureTrust: Sendable {
         // APIs the set was made for (`configApiIds`, or the single `configApiId`).
         var scopedTo: [String] = []
         for id in [parsed.configApiId] + (parsed.configApiIds ?? []) {
-            if let id, !id.isBlank, !scopedTo.contains(id) { scopedTo.append(id) }
+            if let id, !id.isBlank, !scopedTo.contains(where: { $0.sameText(as: id) }) { scopedTo.append(id) }
         }
-        if !scopedTo.isEmpty, let serverScope, !scopedTo.contains(serverScope) {
+        // Exactly this block's scope (see `sameText`): a name that only looks the same is another Config API.
+        if !scopedTo.isEmpty, let serverScope, !scopedTo.contains(where: { $0.sameText(as: serverScope) }) {
             let named = scopedTo.prefix(8).map { "'\($0.kotlinTake(64))'" }.joined(separator: ", ")
             throw Self.rejected(
                 "Signing-key set rejected — it was made for Config API \(named), this block is '\(serverScope)' (serverScope)."
@@ -479,6 +480,16 @@ final class SignatureTrust: Sendable {
 }
 
 extension String {
+    /// True when both strings are the same sequence of Unicode scalars. Swift's
+    /// `==` also calls canonically equivalent strings equal ("é" as one scalar
+    /// and as "e" + a combining accent); Kotlin and the server compare code
+    /// units. A name inside a signed payload (a Config API id, a scope, a view)
+    /// is compared with the expected one through this, so both platforms — and
+    /// the signer — make the same decision.
+    func sameText(as other: String) -> Bool {
+        unicodeScalars.elementsEqual(other.unicodeScalars)
+    }
+
     /// Kotlin `take(n)`: the first `n` UTF-16 code units (never splitting a scalar).
     func kotlinTake(_ count: Int) -> String {
         var units = 0

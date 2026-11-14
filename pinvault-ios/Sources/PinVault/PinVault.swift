@@ -513,12 +513,19 @@ public final class PinVault: @unchecked Sendable {
     /// ``session()``. The pins are re-read on every handshake and the session
     /// is rebuilt when they change. Fail-closed until a config is applied.
     ///
-    /// A redirect from `https` to `http` is not followed (the 3xx is the
-    /// answer) unless `followCleartextRedirects` is true — OkHttp's
-    /// `followSslRedirects`, off here where OkHttp defaults to on. The
-    /// library's own sessions never follow one.
+    /// The session sends over TLS only: an `http://` request (or a `ws://`
+    /// socket) fails before anything is sent, and a redirect from `https` to
+    /// `http` is not followed (the 3xx is the answer).
+    ///
+    /// - Parameter followCleartextRedirects: no longer has an effect. It used
+    ///   to let the session follow a redirect into plain HTTP, where no pin
+    ///   check exists; a pinned session does not send in the clear at all now.
+    ///   Kept so existing calls compile.
     public func applyTo(_ configuration: URLSessionConfiguration, followCleartextRedirects: Bool = false) -> PinnedSession {
         guard let primary else { return unavailableSession() }
+        if followCleartextRedirects {
+            log.w("PinVault.applyTo: followCleartextRedirects is ignored — a pinned session never follows a redirect into plain HTTP")
+        }
         let provider = primary.clientProvider
         if provider.currentConfig == nil {
             // Started, but no config has reached the provider yet: the dynamic
@@ -533,10 +540,7 @@ public final class PinVault: @unchecked Sendable {
         var interceptors: [any PinnedInterceptor] = []
         if let token = attestationTokenInterceptor() { interceptors.append(token) }
         interceptors.append(provider.recoveryInterceptor)
-        return primary.sslManager.applyTo(
-            configuration, configProvider: { provider.currentConfig }, interceptors: interceptors,
-            followCleartextRedirects: followCleartextRedirects
-        )
+        return primary.sslManager.applyTo(configuration, configProvider: { provider.currentConfig }, interceptors: interceptors)
     }
 
     /// The ready-to-use pinned session (`getClient()`): pinning, attestation
@@ -1107,7 +1111,10 @@ public final class PinVault: @unchecked Sendable {
 
     /// The stored copy, checked on every read (signature, offline lifetime);
     /// nil when not fetched, for a `userAuth` file (use ``unlockFile(key:prompt:)``),
-    /// and when a check fails — ``fileStatus(_:)`` says which. The app's
+    /// and when a check fails — ``fileStatus(_:)`` says which. A key the
+    /// config does not name has no file: every read (this one, status,
+    /// version, unlock) answers as if nothing were stored, whatever an
+    /// earlier app version left behind under it. The app's
     /// environment guard is asked first (``GuardedOperation/loadFile``); a
     /// refusal returns nil without decrypting the copy.
     public func loadFile(_ key: String) -> Data? {
@@ -1150,7 +1157,9 @@ public final class PinVault: @unchecked Sendable {
         vaultService?.fileVersion(key) ?? 0
     }
 
-    /// Deletes the stored copy of `key`.
+    /// Deletes the stored copy of `key`. The highest version of the file that
+    /// passed its signature check stays on record: an older signed version is
+    /// still refused by the next fetch.
     public func clearFile(_ key: String) {
         guard let vault = vaultService else {
             log.w(Self.notInitializedMessage)
@@ -1244,9 +1253,12 @@ public final class PinVault: @unchecked Sendable {
         log.w("PinVault reset — config cleared (replay watermarks kept), TLS refused until re-init")
     }
 
-    /// ``reset()`` that also wipes the replay watermarks and the trusted clock. Tests only.
+    /// ``reset()`` that also wipes the replay watermarks, the trusted clock and
+    /// the vault files' version floors. Tests only.
     func resetAndWipeStoredState() {
+        let vault = state.withLock { $0.initialized ? $0.vault : nil }
         guard let (clients, primary) = takeForReset() else { return }
+        vault?.vaultGuard.wipeVersionFloors()
         let stacks = clients.isEmpty
             ? [(primary?.clientProvider, primary?.configStore)]
             : clients.map { client -> (HttpClientProvider?, CertificateConfigStore?) in

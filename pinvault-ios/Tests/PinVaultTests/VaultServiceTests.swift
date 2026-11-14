@@ -180,6 +180,42 @@ final class VaultServiceTests: XCTestCase {
         XCTAssertEqual(vault.fileStatus("flags"), .notStored)
     }
 
+    // A copy under a key the config does not name was handed out as it was:
+    // no signature, lifetime or screen-lock check applies without the file's
+    // declaration (an app version that dropped the file, a bridge's bundle).
+    func testAKeyTheConfigDoesNotNameReadsAsNoSuchFileAndItsCopyIsLeftAlone() async throws {
+        // An earlier app version declared "legacy" and fetched it.
+        let legacy = VaultFileConfig(key: "legacy", endpoint: "api/v1/vault/legacy")
+        let before = service(files: [legacy])
+        serve("legacy", Data(utf8: "old secret"), version: 3)
+        _ = await before.fetchFile("legacy")
+        XCTAssertEqual(before.loadFile("legacy"), Data(utf8: "old secret"))
+
+        // This one does not.
+        let evaluator = ScriptedEvaluator([])
+        let vault = service(files: [plain], evaluator: evaluator)
+        XCTAssertNil(vault.loadFile("legacy"))
+        XCTAssertNil(vault.loadFileAsString("legacy"))
+        XCTAssertFalse(vault.hasFile("legacy"))
+        XCTAssertEqual(vault.fileVersion("legacy"), 0)
+        XCTAssertEqual(vault.fileStatus("legacy"), .notStored)
+        XCTAssertFalse(vault.isFileLocked("legacy"))
+        let unlocked = await vault.unlockFile(key: "legacy", prompt: VaultFileUnlockPrompt(title: "Open"))
+        XCTAssertEqual(unlocked, .notFound(key: "legacy"))
+        XCTAssertTrue(evaluator.prompts.isEmpty)
+        let fetched = await vault.fetchFile("legacy")
+        XCTAssertEqual(fetched, .failed(key: "legacy", reason: "Vault file 'legacy' not registered in config"))
+
+        // Nothing was deleted: a build that declares the file again has it, checks and all.
+        XCTAssertEqual(try prefsStore.load(key: "legacy"), Data(utf8: "old secret"))
+        XCTAssertTrue(removed.get().isEmpty)
+        XCTAssertEqual(service(files: [legacy]).loadFile("legacy"), Data(utf8: "old secret"))
+
+        // And the app can still remove what it no longer declares.
+        vault.clearFile("legacy")
+        XCTAssertNil(try prefsStore.load(key: "legacy"))
+    }
+
     func testATamperedCopyIsRefusedOnReadAndTheListenerIsTold() async throws {
         let vault = service()
         serve("flags", Data(utf8: "on"), version: 1)

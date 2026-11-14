@@ -94,6 +94,22 @@ final class SignedConfigVerifierTests: XCTestCase {
         XCTAssertNoThrow(try verifier().verifyFetched(signed(payload(scope: JSONText.string("anything")))), "no serverScope: not checked")
     }
 
+    // Swift's `==` calls "é" as one scalar and as "e" + a combining accent the
+    // same string; Android and the server do not, so neither may the scope check.
+    func testAScopeThatOnlyLooksLikeTheBlocksIsRefused() throws {
+        let precomposed = "caf\u{E9}"
+        let decomposed = "cafe\u{301}"
+        XCTAssertTrue(precomposed == decomposed, "the two spellings are equal to Swift")
+        assertSecurityRefusal("this block accepts only '\(precomposed)' (serverScope)") {
+            _ = try self.verifier(scope: precomposed).verifyFetched(self.signed(self.payload(scope: JSONText.string(decomposed))))
+        }
+        assertSecurityRefusal("this block accepts only '\(decomposed)' (serverScope)") {
+            _ = try self.verifier(scope: decomposed).verifyFetched(self.signed(self.payload(scope: JSONText.string(precomposed))))
+        }
+        XCTAssertNoThrow(try verifier(scope: precomposed).verifyFetched(signed(payload(scope: JSONText.string(precomposed)))))
+        XCTAssertNoThrow(try verifier(scope: decomposed).verifyFetched(signed(payload(scope: JSONText.string(decomposed)))))
+    }
+
     func testAPayloadThatIsNotAConfigIsRefused() {
         XCTAssertThrowsError(try verifier().verifyFetched(signed("null"))) { error in
             guard case PinVaultError.security(let message, _) = error else { return XCTFail("\(error)") }

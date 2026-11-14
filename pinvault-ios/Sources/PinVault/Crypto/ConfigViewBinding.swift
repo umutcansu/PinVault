@@ -167,7 +167,7 @@ enum ConfigViewBinding {
     static func same(_ a: String?, _ b: String?) -> Bool {
         switch (a, b) {
         case (nil, nil): return true
-        case let (a?, b?): return a.unicodeScalars.elementsEqual(b.unicodeScalars)
+        case let (a?, b?): return a.sameText(as: b)
         default: return false
         }
     }

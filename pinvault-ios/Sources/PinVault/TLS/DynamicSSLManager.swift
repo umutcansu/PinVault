@@ -460,10 +460,10 @@ final class DynamicSSLManager: @unchecked Sendable {
     /// session refuses to connect; once a config is published it starts working
     /// without being rebuilt. Used for ``HttpClientProvider`` and `session(settings:)`.
     ///
-    /// A pinned session never continues in the clear: a redirect between
-    /// `https` and `http` is not followed (OkHttp `followSslRedirects(false)`)
-    /// unless the app's `settings` opt in (`followCleartextRedirects`); the
-    /// library's own callers pass the defaults.
+    /// A pinned session never sends in the clear: an `http://` request (or a
+    /// `ws://` socket) is refused before anything leaves the device, and a
+    /// redirect from `https` into `http` is not followed — the 3xx is the
+    /// answer. `settings.followCleartextRedirects` no longer changes that.
     /// - Parameter extraInterceptors: added outside `recovery` (the attestation token).
     func buildDynamicClient(
         configProvider: @escaping @Sendable () -> CertificateConfig?,
@@ -474,12 +474,15 @@ final class DynamicSSLManager: @unchecked Sendable {
         if configProvider() == nil {
             Self.log.d("No config yet — building fail-closed client (TLS refused until a config is applied)")
         }
+        if settings.followCleartextRedirects {
+            Self.log.w("followCleartextRedirects is ignored — a pinned session never follows a redirect into plain HTTP")
+        }
         let transport = URLSessionTransport(
             manager: self,
             configuration: Self.sessionConfiguration(settings),
             trust: .pinned(configProvider),
             resolveOverrides: settings.resolvedHosts,
-            redirects: settings.followCleartextRedirects ? .all : .sameScheme
+            redirects: .sameScheme
         )
         logApplied(configProvider())
         return PinnedSession(interceptors: extraInterceptors + [recovery].compactMap { $0 }, transport: transport)
@@ -526,7 +529,9 @@ final class DynamicSSLManager: @unchecked Sendable {
             trust: trust,
             resolveOverrides: [:],
             redirects: allowUnpinned ? .all : .none,
-            forbiddenAs409: forbiddenAs409
+            forbiddenAs409: forbiddenAs409,
+            // The block's own test relaxation: plain HTTP to the Config API.
+            allowsCleartext: allowUnpinned
         )
         var interceptors: [any PinnedInterceptor] = []
         if let interceptor { interceptors.append(interceptor) }
@@ -544,13 +549,12 @@ final class DynamicSSLManager: @unchecked Sendable {
     /// an unpinned session would answer pinned requests with responses that
     /// never crossed a pinned connection), no credential storage (the client
     /// identity is never stored where another session's default handling finds it),
-    /// and no redirect from `https` into `http` unless `followCleartextRedirects`
+    /// no `http://` request and no redirect from `https` into `http`
     /// (OkHttp `followSslRedirects`, off here where OkHttp defaults to on).
     func applyTo(
         _ configuration: URLSessionConfiguration,
         configProvider: @escaping @Sendable () -> CertificateConfig?,
-        interceptors: [any PinnedInterceptor] = [],
-        followCleartextRedirects: Bool = false
+        interceptors: [any PinnedInterceptor] = []
     ) -> PinnedSession {
         let copy = configuration.copy() as! URLSessionConfiguration
         Self.harden(copy, libraryOwned: false)
@@ -559,7 +563,7 @@ final class DynamicSSLManager: @unchecked Sendable {
             configuration: copy,
             trust: .pinned(configProvider),
             resolveOverrides: [:],
-            redirects: followCleartextRedirects ? .all : .sameScheme
+            redirects: .sameScheme
         )
         logApplied(configProvider())
         return PinnedSession(interceptors: interceptors, transport: transport)
@@ -964,6 +968,10 @@ final class PinnedSessionDelegate: NSObject, URLSessionDataDelegate, URLSessionW
     /// to the delegate (``TrustCheckWatch``): zero while a TLS connection
     /// completes means the trust check never ran.
     private let serverTrustChallenges = Locked(0)
+    /// True once a server-trust challenge of this session was answered
+    /// "trusted": only then is the client identity handed out (see the
+    /// client-certificate case of the challenge handler).
+    private let serverTrustAccepted = Locked(false)
 
     init(manager: DynamicSSLManager, context: Context) {
         self.manager = manager
@@ -983,6 +991,9 @@ final class PinnedSessionDelegate: NSObject, URLSessionDataDelegate, URLSessionW
     func urlSession(_ session: URLSession, task: URLSessionTask, didFinishCollecting metrics: URLSessionTaskMetrics) {
         let transactions = metrics.transactionMetrics.map(TrustCheckWatch.Transaction.init)
         guard TrustCheckWatch.wentUnverified(transactions, serverTrustChallenges: challengesForWatch) else { return }
+        // Already refused and recorded when this connection asked for the
+        // client certificate: that refusal stands, and the connection is not counted twice.
+        if failures.withLock({ $0[task.taskIdentifier] != nil }) { return }
         noteUnverifiedConnection()
         failures.withLock { $0[task.taskIdentifier] = .handshake(.security(message: TrustCheckWatch.message(host: context.logicalHost, port: context.logicalPort))) }
     }
@@ -998,6 +1009,11 @@ final class PinnedSessionDelegate: NSObject, URLSessionDataDelegate, URLSessionW
 
     private var challengesForWatch: Int {
         testOnlyForgetChallenges ? 0 : serverTrustChallengeCount
+    }
+
+    /// Whether this session's trust check has passed for a peer at least once.
+    private var trustCheckPassed: Bool {
+        testOnlyForgetChallenges ? false : serverTrustAccepted.get()
     }
 
     private func noteUnverifiedConnection() {
@@ -1073,6 +1089,7 @@ final class PinnedSessionDelegate: NSObject, URLSessionDataDelegate, URLSessionW
             }
             do {
                 try manager.evaluateServerTrust(trust, hostname: context.logicalHost, port: context.logicalPort, mode: context.trust)
+                serverTrustAccepted.set(true)
                 completionHandler(.useCredential, URLCredential(trust: trust))
             } catch let failure as DynamicSSLManager.PinCheckError {
                 refuse(task, failure, completionHandler)
@@ -1091,6 +1108,33 @@ final class PinnedSessionDelegate: NSObject, URLSessionDataDelegate, URLSessionW
                   let selected = manager.clientIdentity(forHost: context.logicalHost, port: context.logicalPort, config: provider) else {
                 presented.set(nil)
                 completionHandler(.rejectProtectionSpace, nil)
+                return
+            }
+            // The device's certificate (and the id it names) goes only to a
+            // peer this session's trust check has seen. In a handshake the
+            // server-trust challenge comes first and a refusal ends it, so
+            // both hold whenever the library was asked at all; a connection
+            // that resumes a TLS session, or renegotiates, is asked for no
+            // server certificate again, but its session was. They fail only
+            // when something answered the server-trust challenge before it
+            // reached this delegate (the certificate-validation killers
+            // TrustCheckWatch reports after the fact) — and then the identity
+            // would be handed to a peer nobody verified.
+            guard isConnectAddress(space) else {
+                presented.set(nil)
+                refuse(task, .handshake(.certificate(
+                    message: "Client certificate asked for by \(space.host):\(space.port), which is not the address this session " +
+                        "connects to (\(DynamicSSLManager.hostPort(context.connectHost, context.connectPort))); none was presented"
+                )), completionHandler)
+                return
+            }
+            guard trustCheckPassed else {
+                presented.set(nil)
+                noteUnverifiedConnection()
+                refuse(task, .handshake(.security(
+                    message: TrustCheckWatch.message(host: context.logicalHost, port: context.logicalPort) +
+                        "; the client certificate was not presented"
+                )), completionHandler)
                 return
             }
             presented.set(selected.identity.leaf)

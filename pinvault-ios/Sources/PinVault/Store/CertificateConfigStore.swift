@@ -235,9 +235,16 @@ final class CertificateConfigStore: Sendable {
             edit.putString(Self.keyTrustRootsJson, JSONText.array(config.trustRoots.map(JSONText.string)))
         }
         if let envelope { edit.putString(Self.keyEnvelope, Self.envelopeJson(envelope)) } else { edit.remove(Self.keyEnvelope) }
+        // Which config is active is recorded outside the container too (see
+        // `isActiveEnvelope`). Announced before the store takes it, beside the
+        // one it replaces, and made the only one afterwards: whichever of the
+        // two the store ends up holding — the write fails, the process dies in
+        // between — is one the record knows.
+        let active = envelope.map(Self.envelopeId)
+        if let active { announceActive(active) }
         try edit.apply()
         // After the store took it: a save that failed must not leave a watermark the store never had.
-        mirrorWatermarks(issuedAt: issuedAtWatermark, versions: versions)
+        mirrorWatermarks(issuedAt: issuedAtWatermark, versions: versions, active: active.map { [$0] } ?? [])
         log.d("Certificate config saved — version: \(config.computedVersion()), issuedAt: \(config.issuedAt), " +
             "expiresAt: \(config.expiresAt), forceUpdate: \(config.forceUpdate), signed: \(envelope != nil)")
     }
@@ -348,7 +355,7 @@ final class CertificateConfigStore: Sendable {
             edit.putLong(Self.keyWatermarkIssuedAt, issuedAt)
                 .putString(Self.keyWatermarkVersionsJson, Self.watermarksJson(versions))
                 .remove(Self.keyWatermarkVersions)
-            mirrorWatermarks(issuedAt: issuedAt, versions: versions)
+            mirrorWatermarks(issuedAt: issuedAt, versions: versions, active: nil)
         }
         try edit
             .remove(Self.keyVersion)
@@ -360,8 +367,79 @@ final class CertificateConfigStore: Sendable {
             .remove(Self.keyTrustRootsJson)
             .remove(Self.keyEnvelope)
             .apply()
+        // Nothing is active now, and the record says so: a container put back
+        // from before this does not bring the cleared config back.
+        recordActive([])
         log.d("Active certificate config cleared (watermarks kept)")
     }
+
+    // MARK: Which config is active
+
+    /// What the record keeps of an envelope: SHA-256 (hex) of its payload. The
+    /// payload carries the pins, `issuedAt` and `expiresAt`, so two configs
+    /// never share one; the signatures are left out (the same payload signed
+    /// again is the same config).
+    static func envelopeId(_ envelope: StoredEnvelope) -> String {
+        Hashing.sha256Hex(Data(envelope.payload.utf8))
+    }
+
+    /// True when `envelope` — the one this store holds — is the config this
+    /// device last made active, as the Keychain copy records it.
+    ///
+    /// A stored envelope proves that its config was signed, for this Config
+    /// API, and is not expired. It does not prove that it is the config the
+    /// device was last on: an older copy of the container (a restored backup,
+    /// a jailbroken device) holds an older envelope that passes the same
+    /// checks. The watermarks cannot be asked — after a health-check rollback
+    /// the active config is rightly OLDER than they are — so every ``save(_:envelope:)``
+    /// (the rollback's included) records which envelope is active, and a
+    /// stored one the record does not name is not used.
+    ///
+    /// A copy with no record yet (the store was written by a version before
+    /// this one) names nothing: the envelope is accepted and recorded now.
+    /// - Throws: when the copy cannot be read right now (no verdict either way).
+    func isActiveEnvelope(_ envelope: StoredEnvelope) throws -> Bool {
+        Self.mirrorLock.lock()
+        defer { Self.mirrorLock.unlock() }
+        guard var mirrored = mirror.read() else {
+            throw PinVaultError.illegalState("the active config's Keychain record cannot be read now")
+        }
+        let id = Self.envelopeId(envelope)
+        guard let recorded = mirrored.active else {
+            mirrored.active = [id]
+            mirror.write(mirrored)
+            return true
+        }
+        return recorded.contains(id)
+    }
+
+    /// Adds `id` in front of the recorded ids, before the store is written.
+    /// A copy that has no record yet gets none here: its stored config has not
+    /// been recorded either, and must not be shut out by a save that then fails.
+    private func announceActive(_ id: String) {
+        Self.mirrorLock.lock()
+        defer { Self.mirrorLock.unlock() }
+        guard var mirrored = mirror.read(), let recorded = mirrored.active, !recorded.contains(id) else { return }
+        // More than two only after saves that did not complete; the oldest go.
+        mirrored.active = Array(([id] + recorded).prefix(Self.maxActiveIds))
+        if !mirror.write(mirrored) { log.w("Watermark mirror: the config about to be stored could not be recorded as active") }
+    }
+
+    /// Makes `ids` the whole record, once the store holds what they name.
+    private func recordActive(_ ids: [String]) {
+        Self.mirrorLock.lock()
+        defer { Self.mirrorLock.unlock() }
+        guard var mirrored = mirror.read() else {
+            log.w("Watermark mirror unreadable: the active config was not recorded")
+            return
+        }
+        guard mirrored.active != ids else { return }
+        mirrored.active = ids
+        if !mirror.write(mirrored) { log.w("Watermark mirror: the active config could not be recorded") }
+    }
+
+    /// How many ids the record holds at most (see ``announceActive(_:)``).
+    static let maxActiveIds = 3
 
     /// Forgets every replay watermark — the highest `issuedAt`, the per-host
     /// versions, the rolled-back marker — and records `keySetVersion` as the
@@ -489,8 +567,10 @@ final class CertificateConfigStore: Sendable {
         lowerMirror(keySetVersion: keySetVersion, anchors: anchors)
     }
 
-    /// Writes the watermarks to the mirror, never lowering what it holds.
-    private func mirrorWatermarks(issuedAt: Int64, versions: [String: Int]) {
+    /// Writes the watermarks to the mirror, never lowering what it holds, and
+    /// with them — in the same write — which config is active now (`active`;
+    /// nil leaves the record as it is).
+    private func mirrorWatermarks(issuedAt: Int64, versions: [String: Int], active: [String]?) {
         Self.mirrorLock.lock()
         defer { Self.mirrorLock.unlock() }
         guard var mirrored = mirror.read() else {
@@ -498,10 +578,12 @@ final class CertificateConfigStore: Sendable {
             return
         }
         let merged = mirrored.versions.merging(versions, uniquingKeysWith: max)
-        guard issuedAt > mirrored.issuedAt || merged != mirrored.versions else { return }
+        let activeMoved = active != nil && active != mirrored.active
+        guard issuedAt > mirrored.issuedAt || merged != mirrored.versions || activeMoved else { return }
         mirrored.issuedAt = max(mirrored.issuedAt, issuedAt)
         mirrored.versions = merged
-        mirror.write(mirrored)
+        if let active { mirrored.active = active }
+        if !mirror.write(mirrored), activeMoved { log.w("Watermark mirror: the active config could not be recorded") }
     }
 
     /// Fingerprint of the trust anchors (compiled-in signing keys, their

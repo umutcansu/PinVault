@@ -481,6 +481,14 @@ final class VaultFileGuardTests: XCTestCase {
         func problem(_ key: String) throws -> VaultFileStatus? { try check(); return inner.problem(key) }
         func setProblem(_ key: String, _ problem: VaultFileStatus?) throws { inner.setProblem(key, problem) }
         func clear(_ key: String) throws { inner.clear(key) }
+        func versionFloor(configApiId: String, key: String) throws -> Int {
+            try check()
+            return inner.versionFloor(configApiId: configApiId, key: key)
+        }
+        func raiseVersionFloor(configApiId: String, key: String, to version: Int) throws {
+            inner.raiseVersionFloor(configApiId: configApiId, key: key, to: version)
+        }
+        func wipeVersionFloors() throws { inner.wipeVersionFloors() }
     }
 
     func testWhileTheStorageIsUnreadableNothingIsHandedOutAndNothingIsDeleted() async throws {

@@ -45,6 +45,7 @@ final class SpyConfigStore: UpdaterConfigStore, @unchecked Sendable {
         try base.wipeAll()
     }
 
+    func isActiveEnvelope(_ envelope: StoredEnvelope) throws -> Bool { try base.isActiveEnvelope(envelope) }
     func recordKeySetFloor(keySetVersion: Int, recoveryAnchors: String) { base.recordKeySetFloor(keySetVersion: keySetVersion, recoveryAnchors: recoveryAnchors) }
     func reconcileMirror(keySetVersion: Int, anchors: String) { base.reconcileMirror(keySetVersion: keySetVersion, anchors: anchors) }
     func resetWatermarks(keySetVersion: Int, anchors: String?) throws { try base.resetWatermarks(keySetVersion: keySetVersion, anchors: anchors) }

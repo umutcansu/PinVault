@@ -18,7 +18,9 @@ final class SessionRetireRaceTests: XCTestCase {
 
     private func transport(_ manager: DynamicSSLManager = testManager()) -> URLSessionTransport {
         URLSessionTransport(
-            manager: manager, configuration: .ephemeral, trust: .pinned({ nil }), resolveOverrides: [:], redirects: .sameScheme
+            manager: manager, configuration: .ephemeral, trust: .pinned({ nil }), resolveOverrides: [:], redirects: .sameScheme,
+            // The races are run over plain connections (no config, a local plain server).
+            allowsCleartext: true
         )
     }
 

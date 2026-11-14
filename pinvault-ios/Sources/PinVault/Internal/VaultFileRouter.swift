@@ -11,9 +11,11 @@ import Security
 ///   5. `encryption = USER_AUTH`: make sure the server has the device's
 ///      user-auth key, and store the envelope sealed as it came: it is opened
 ///      (and its signature checked) only in `unlockFile`.
-///   6. Verify signatures (fail closed), refuse downgrades and absurd versions,
-///      persist through the file's ``VaultStorageProvider`` and return a
-///      ``VaultFileResult``.
+///   6. Verify signatures (fail closed), refuse downgrades — below the stored
+///      copy, and below the highest version ever verified for the file even
+///      when no copy is left (``VaultFileGuard/versionFloor(_:)``) — and absurd
+///      versions, persist through the file's ``VaultStorageProvider`` and
+///      return a ``VaultFileResult``.
 ///
 /// The distribution report is the caller's ( ``VaultService`` ) concern.
 final class VaultFileRouter: Sendable {
@@ -120,6 +122,12 @@ final class VaultFileRouter: Sendable {
             if sealedByServer, let failure = try await prepareUserAuth(file, storage, deviceId) { return failure }
 
             let currentVersion = try storage.getVersion(key: file.key)
+            // What this device has already seen of the file with a valid
+            // signature, kept apart from the copy: clearing the file, a copy
+            // deleted by its checks or a wipe must not let an older signed
+            // version back in. Only a verified file has one — an unsigned
+            // block proves nothing about any version.
+            let floor = trustFor(file, client)?.isEnabled == true ? try vaultGuard?.versionFloor(file) ?? 0 : 0
             let userAuthStorage = storage as? UserAuthVaultStorage
             // A user_auth copy waiting in the pending slot counts for what the
             // server is asked; the downgrade and jump checks keep using the
@@ -198,13 +206,15 @@ final class VaultFileRouter: Sendable {
             // The version header is only as good as the response: it must not
             // be able to plant a version so high that the real file is answered
             // "older" from then on.
-            if let problem = versionJumpProblem(file.key, served: response.version, stored: currentVersion) {
+            // Counted from the floor when the copy is gone: the file's real
+            // next version is no jump because the device cleared its copy.
+            if let problem = versionJumpProblem(file.key, served: response.version, stored: max(currentVersion, floor)) {
                 return .failed(key: file.key, reason: problem, code: VaultFileResult.FailureCode.versionRejected)
             }
 
             let served = VaultFileEncryption.allCases.first { $0.rawValue.caseInsensitiveCompare(response.encryption) == .orderedSame }
             if sealedByServer || served == .userAuth {
-                return try storeSealedByServer(file, client, storage, currentVersion, response, served)
+                return try storeSealedByServer(file, client, storage, currentVersion, floor, response, served)
             }
 
             // Fail closed, as for user_auth: a file the app declared end_to_end
@@ -269,12 +279,10 @@ final class VaultFileRouter: Sendable {
                     )
                 }
                 // Downgrade guard: a validly-signed but OLDER version must not
-                // overwrite a newer stored copy.
-                if response.version >= 1 && response.version < currentVersion {
-                    return .failed(
-                        key: file.key, reason: downgradeMessage(file.key, served: response.version, stored: currentVersion),
-                        code: VaultFileResult.FailureCode.versionRejected
-                    )
+                // overwrite a newer stored copy — nor come back once that copy
+                // is gone (the floor). The floor's own version is accepted.
+                if let problem = downgradeProblem(file.key, served: response.version, stored: currentVersion, floor: floor) {
+                    return .failed(key: file.key, reason: problem, code: VaultFileResult.FailureCode.versionRejected)
                 }
                 log.d("Vault file signature verified ✓ [\(file.key)] v\(response.version)")
             } else {
@@ -388,6 +396,7 @@ final class VaultFileRouter: Sendable {
         _ client: Client,
         _ storage: any VaultStorageProvider,
         _ currentVersion: Int,
+        _ floor: Int,
         _ response: VaultFetchResponse,
         _ served: VaultFileEncryption?
     ) throws -> VaultFileResult {
@@ -416,11 +425,10 @@ final class VaultFileRouter: Sendable {
         if enabled && entries.isEmpty {
             return .failed(key: file.key, reason: noSignatureMessage(file.key, scope), code: VaultFileResult.FailureCode.signatureMissing)
         }
-        if response.version >= 1 && response.version < currentVersion {
-            return .failed(
-                key: file.key, reason: downgradeMessage(file.key, served: response.version, stored: currentVersion),
-                code: VaultFileResult.FailureCode.versionRejected
-            )
+        // Nothing here is verified yet, but a version below one that did
+        // verify (the copy's, or the floor a passed unlock raised) is refused unopened.
+        if let problem = downgradeProblem(file.key, served: response.version, stored: currentVersion, floor: floor) {
+            return .failed(key: file.key, reason: problem, code: VaultFileResult.FailureCode.versionRejected)
         }
         guard let userAuthStorage = storage as? UserAuthVaultStorage else {
             return .failed(
@@ -601,13 +609,27 @@ final class VaultFileRouter: Sendable {
 
     /// Why a served version is not believable, or nil: more than
     /// ``maxVersionJump`` above the stored one (or above zero for a first copy).
+    /// `stored` is the copy's version, or the floor when that is higher.
     private func versionJumpProblem(_ key: String, served: Int, stored: Int) -> String? {
         guard Self.isVersionJump(served: served, stored: stored) else { return nil }
         return "Vault file '\(key)' refused: served v\(served) is more than \(Self.maxVersionJump) above stored v\(stored)."
     }
 
-    private func downgradeMessage(_ key: String, served: Int, stored: Int) -> String {
-        "Vault file '\(key)' downgrade rejected: served v\(served) < stored v\(stored)."
+    /// Why a served version is refused as older, or nil: below the stored
+    /// copy's, or below the highest version this device ever verified for the
+    /// file (`floor`; 0 = none). A backend that sends no version header serves
+    /// v0 while the store counts by itself, so v0 is never "older" — against
+    /// the copy or the floor (which v0 never raises): the same rule as Android's.
+    private func downgradeProblem(_ key: String, served: Int, stored: Int, floor: Int) -> String? {
+        guard served >= 1 else { return nil }
+        if served < stored {
+            return "Vault file '\(key)' downgrade rejected: served v\(served) < stored v\(stored)."
+        }
+        if served < floor {
+            return "Vault file '\(key)' downgrade rejected: served v\(served), but this device has already seen " +
+                "v\(floor) of it with a valid signature (the copy is gone, the version is remembered)."
+        }
+        return nil
     }
 
     // MARK: Reports and E2E keys

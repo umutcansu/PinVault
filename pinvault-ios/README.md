@@ -17,7 +17,7 @@ Swift Package Manager, from the repository root (`Package.swift` lives there):
 ```swift
 // Package.swift
 dependencies: [
-    .package(url: "https://github.com/umutcansu/PinVault.git", from: "2.8.2"),
+    .package(url: "https://github.com/umutcansu/PinVault.git", from: "2.10.0"),
 ],
 targets: [
     .target(name: "MyApp", dependencies: [.product(name: "PinVault", package: "PinVault")]),
@@ -79,13 +79,14 @@ pooled connections without checking their certificates again, so PinVault
 rebuilds its sessions whenever pins, identities or routing change. Use the
 returned `PinnedSession` for every request.
 
-A pinned session never continues in plain HTTP: a redirect from `https` to
-`http` is not followed, the 3xx is returned and your code decides. That holds
-for `session()`, `session(settings:)` and `applyTo` alike (OkHttp follows such
-redirects by default; PinVault for iOS does not). A backend that must redirect
-into the clear needs an explicit opt-in, which never reaches the library's own
-sessions: `applyTo(configuration, followCleartextRedirects: true)` or
-`HttpConnectionSettings(followCleartextRedirects: true)`.
+A pinned session sends over TLS only. An `http://` request (or a `ws://`
+socket) fails with `PinVaultError.io` before anything is sent: the pin check is
+a check of the server's certificate, and a plain connection has none. A
+redirect from `https` to `http` is not followed either, the 3xx is returned and
+your code decides. That holds for `session()`, `session(settings:)` and
+`applyTo` alike. `followCleartextRedirects` (on `applyTo` and
+`HttpConnectionSettings`) used to opt in to such redirects; it is still accepted
+and no longer has an effect.
 
 ### Pinned WebSockets
 

@@ -24,10 +24,69 @@ final class ConfigApiBlockTests: XCTestCase {
         XCTAssertTrue(noPins.configurationError()?.contains("bootstrapPins") == true)
         let http = ConfigApiBlock(id: "api", configUrl: "http://config.example.com/", bootstrapPins: pins)
         XCTAssertTrue(http.configurationError()?.contains("configUrl must be an https:// URL") == true)
-        XCTAssertNil(ConfigApiBlock(id: "api", configUrl: "https://config.example.com/", bootstrapPins: pins).configurationError())
-        XCTAssertNil(ConfigApiBlock(id: "api", configUrl: "HTTPS://config.example.com/", bootstrapPins: pins).configurationError())
+        XCTAssertNil(ConfigApiBlock(id: "api", configUrl: "https://config.example.com/", bootstrapPins: pins, signaturePublicKey: key).configurationError())
+        XCTAssertNil(ConfigApiBlock(id: "api", configUrl: "HTTPS://config.example.com/", bootstrapPins: pins, signaturePublicKey: key).configurationError())
         let onePin = ConfigApiBlock(id: "api", configUrl: "https://c/", bootstrapPins: [HostPin(hostname: "c", sha256: [pin("A")])])
         XCTAssertEqual(onePin.configurationError(), "At least 2 pins required (primary + backup) for hostname: c")
+    }
+
+    // The initializer has no checks and its keys default to none: such a block
+    // used to start — in a release build too — and run unsigned without ever
+    // having said so (security review 2026-11-14, R-01).
+    func testABlockBuiltWithTheInitializerWithoutASigningKeyIsRefused() {
+        let missing = "Config API 'api': signaturePublicKey is missing — without it no config is verified, so whoever " +
+            "answers for the Config API decides the pins. Call allowUnsigned() to accept that (tests, demos)."
+        let url = "https://config.example.com/"
+        XCTAssertEqual(ConfigApiBlock(id: "api", configUrl: url, bootstrapPins: pins).configurationError(), missing)
+        // A blank key is no key, in either field.
+        XCTAssertEqual(ConfigApiBlock(id: "api", configUrl: url, bootstrapPins: pins, signaturePublicKey: "  ").configurationError(), missing)
+        XCTAssertEqual(ConfigApiBlock(id: "api", configUrl: url, bootstrapPins: pins, signaturePublicKeys: ["", " "]).configurationError(), missing)
+        // Recovery keys rotate signing keys; they are none themselves.
+        XCTAssertEqual(ConfigApiBlock(id: "api", configUrl: url, bootstrapPins: pins, recoveryPublicKeys: [key]).configurationError(), missing)
+
+        XCTAssertNil(ConfigApiBlock(id: "api", configUrl: url, bootstrapPins: pins, signaturePublicKey: key).configurationError())
+        XCTAssertNil(ConfigApiBlock(id: "api", configUrl: url, bootstrapPins: pins, signaturePublicKeys: [key]).configurationError())
+        // The explicit way out is a flag, which the release guard sees.
+        XCTAssertNil(ConfigApiBlock(id: "api", configUrl: url, bootstrapPins: pins, allowUnsigned: true).configurationError())
+    }
+
+    func testAllowUnpinnedConfigApiDoesNotExcuseTheMissingSigningKey() {
+        // The pin rules used to return early for such a block, before anything after them was looked at.
+        let unpinned = ConfigApiBlock(id: "api", configUrl: "http://10.0.2.2:8090/", bootstrapPins: [], allowUnpinnedConfigApi: true)
+        XCTAssertTrue(unpinned.configurationError()?.contains("signaturePublicKey is missing") == true)
+        let signed = ConfigApiBlock(id: "api", configUrl: "http://10.0.2.2:8090/", bootstrapPins: [], signaturePublicKey: key,
+                                    allowUnpinnedConfigApi: true)
+        XCTAssertNil(signed.configurationError())
+        let both = ConfigApiBlock(id: "api", configUrl: "http://10.0.2.2:8090/", bootstrapPins: [], allowUnsigned: true,
+                                  allowUnpinnedConfigApi: true)
+        XCTAssertNil(both.configurationError())
+        // And the pin rules still come first for a block that did not opt out of them.
+        let neither = ConfigApiBlock(id: "api", configUrl: "http://10.0.2.2:8090/", bootstrapPins: pins)
+        XCTAssertTrue(neither.configurationError()?.contains("configUrl must be an https:// URL") == true)
+    }
+
+    // Requests are base + path: without the slash "https://api.example.com" +
+    // "api/v1/…" names the host "api.example.comapi".
+    func testTheInitializerAddsTheTrailingSlashTheBuilderAdds() throws {
+        let bare = ConfigApiBlock(id: "api", configUrl: "https://config.example.com", bootstrapPins: pins, signaturePublicKey: key,
+                                  renewalUrl: "https://config.example.com:8093", enrollmentUrl: "https://config.example.com:8091")
+        XCTAssertEqual(bare.configUrl, "https://config.example.com/")
+        XCTAssertEqual(bare.renewalUrl, "https://config.example.com:8093/")
+        XCTAssertEqual(bare.enrollmentUrl, "https://config.example.com:8091/")
+        let built = try builder().renewalUrl("https://config.example.com:8093").enrollmentUrl("https://config.example.com:8091/").build()
+        XCTAssertEqual(built.configUrl, bare.configUrl)
+        XCTAssertEqual(built.renewalUrl, bare.renewalUrl)
+        XCTAssertEqual(built.enrollmentUrl, bare.enrollmentUrl)
+        let slashed = ConfigApiBlock(id: "api", configUrl: "https://config.example.com/", bootstrapPins: pins)
+        XCTAssertEqual(slashed.configUrl, "https://config.example.com/", "nothing is added twice")
+        XCTAssertNil(slashed.renewalUrl)
+    }
+
+    func testAnAbsurdCertificateLifetimeCapDoesNotOverflow() {
+        XCTAssertEqual(ClientCertRenewer.maxLifetimeMs(825), 825 * 86_400_000)
+        XCTAssertEqual(ClientCertRenewer.maxLifetimeMs(Int.max), Int64.max / 2)
+        XCTAssertEqual(ClientCertRenewer.maxLifetimeMs(Int.min), Int64.min / 2)
+        XCTAssertGreaterThan(ClientCertRenewer.maxLifetimeMs(Int.max) + ClientCertRenewer.lifetimeSlackMs, 0)
     }
 
     func testEnrollmentAndRenewalURLsMustBeHttpsToo() throws {

@@ -21,6 +21,11 @@ struct StoredVerifier: Sendable {
 ///    allows — by the trusted clock — the copy is not handed out, and deleted
 ///    with `wipeWhenStale()`. A confirmation time ahead of the trusted clock
 ///    counts as "not confirmed": not handed out, never deleted on that ground alone.
+///  - **Version floor.** The highest version of a file that was accepted with
+///    a verified signature is remembered apart from the copy, per Config API
+///    and key, and nothing that deletes the copy (``forget(_:)``, a failed
+///    check, `wipeWhenStale`, a wipe) lowers it: the router refuses an older
+///    version however the copy went away. Files of unsigned blocks have none.
 ///
 /// A store that cannot be read right now is none of these: nothing is handed
 /// out and nothing is deleted.
@@ -68,6 +73,28 @@ final class VaultFileGuard: Sendable {
             try recordConfirmation(file)
             try meta.setProblem(file.key, nil)
         }
+        // The version the signature names, not the one the store counts by
+        // itself for a backend that sends none.
+        if let signatures { verified(file, version: signatures.version) }
+    }
+
+    /// Version `version` of `file` passed its signature check (at the fetch,
+    /// or at `unlockFile` for a server-sealed copy): the floor rises to it.
+    func verified(_ file: VaultFileConfig, version: Int) {
+        guard version > 0 else { return }
+        quietly(file.key) { try meta.raiseVersionFloor(configApiId: file.configApiId, key: file.key, to: version) }
+    }
+
+    /// The highest version of `file` this device accepted with a verified
+    /// signature, whatever happened to the copy since; 0 = none.
+    /// - Throws: when the record cannot be read right now (no floor is not assumed).
+    func versionFloor(_ file: VaultFileConfig) throws -> Int {
+        try meta.versionFloor(configApiId: file.configApiId, key: file.key)
+    }
+
+    /// Tests only: see ``VaultFileMeta/wipeVersionFloors()``.
+    func wipeVersionFloors() {
+        quietly("*") { try meta.wipeVersionFloors() }
     }
 
     /// The server confirmed the stored copy (304, or the same content again).
@@ -113,7 +140,7 @@ final class VaultFileGuard: Sendable {
         }
     }
 
-    /// The app cleared the file, or it was wiped.
+    /// The app cleared the file, or it was wiped. Its version floor stays.
     func forget(_ key: String) {
         quietly(key) {
             try meta.clear(key)

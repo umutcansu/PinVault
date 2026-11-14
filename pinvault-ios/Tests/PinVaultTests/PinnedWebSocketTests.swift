@@ -30,9 +30,9 @@ final class PinnedWebSocketTests: XCTestCase {
     }
 
     func testTheUpgradeRequestKeepsTheHeadersAndTimeout() throws {
-        // ws:// skips the pin re-check, so no config is needed to build the task.
-        let session = DynamicSSLManager().buildDynamicClient(configProvider: { nil })
-        var request = URLRequest(url: URL(string: "ws://api.example.com/socket")!, timeoutInterval: 7)
+        let config = pinConfig("api.example.com", [TLSFixture.pin("leaf")])
+        let session = DynamicSSLManager().buildDynamicClient(configProvider: { config })
+        var request = URLRequest(url: URL(string: "wss://api.example.com/socket")!, timeoutInterval: 7)
         request.setValue("Bearer abc", forHTTPHeaderField: "Authorization")
         request.setValue("1", forHTTPHeaderField: "X-Test")
 
@@ -45,15 +45,18 @@ final class PinnedWebSocketTests: XCTestCase {
 
         func testAResolveEntryForTheHostRefusesTheSocket() {
         let settings = HttpConnectionSettings().resolve(host: "api.example.com", to: "10.0.0.1")
-        let session = DynamicSSLManager().buildDynamicClient(configProvider: { nil }, settings: settings)
+        let config = CertificateConfig(version: 1, pins: ["api.example.com", "other.example.com"].map {
+            HostPin(hostname: $0, sha256: [TLSFixture.pin("leaf"), TLSFixture.backupPin], version: 1)
+        })
+        let session = DynamicSSLManager().buildDynamicClient(configProvider: { config }, settings: settings)
 
-        XCTAssertThrowsError(try session.webSocketTask(with: URL(string: "ws://api.example.com/socket")!)) { error in
+        XCTAssertThrowsError(try session.webSocketTask(with: URL(string: "wss://api.example.com/socket")!)) { error in
             guard let pv = error as? PinVaultError, case .illegalArgument = pv else {
                 return XCTFail("expected illegalArgument, got \(error)")
             }
         }
         // Another host is not affected.
-        XCTAssertNoThrow(try session.webSocketTask(with: URL(string: "ws://other.example.com/socket")!).cancel())
+        XCTAssertNoThrow(try session.webSocketTask(with: URL(string: "wss://other.example.com/socket")!).cancel())
     }
 
     func testInterceptedTransportDelegatesWebSocketToBase() throws {

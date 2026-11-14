@@ -12,6 +12,11 @@ import Foundation
 /// `applyTo(_:)`. Fail-closed: before `start` has applied a config, every
 /// request fails instead of falling back to system trust.
 ///
+/// TLS only: an `http://` request and a `ws://` socket are refused with
+/// ``PinVaultError/io(message:cause:)`` before anything is sent (the pin check
+/// is a check of the server's certificate; a plain connection has none), and a
+/// redirect from `https` to `http` is not followed — the 3xx is the answer.
+///
 /// Errors: a refused peer throws ``PinVaultError/sslHandshake(message:cause:)``
 /// whose cause is the trust check's ``PinVaultError`` (the
 /// `CertificateException` family: ``PinVaultError/unpinnedHost(message:cause:)``,
@@ -58,9 +63,10 @@ public final class PinnedSession: @unchecked Sendable {
         try await data(for: URLRequest(url: url))
     }
 
-    /// A pinned `wss://` (or `ws://`) WebSocket task over this session's own
-    /// TLS machinery — the delegate that answers the server-trust and
-    /// client-certificate (mTLS) challenges, so a pinned, mTLS-capable socket.
+    /// A pinned `wss://` WebSocket task over this session's own TLS machinery
+    /// — the delegate that answers the server-trust and client-certificate
+    /// (mTLS) challenges, so a pinned, mTLS-capable socket. A `ws://` URL is
+    /// refused: a plain socket would be checked against nothing.
     /// Fail-closed: before `start` has applied a config (or after a failed one)
     /// this throws. Call `task.resume()`, then `task.send` / `task.receive`;
     /// the task lives as long as this session does.

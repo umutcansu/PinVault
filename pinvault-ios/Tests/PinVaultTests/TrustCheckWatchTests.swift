@@ -22,10 +22,13 @@ final class TrustCheckWatchTests: XCTestCase {
         return server
     }
 
-    private func transport(_ manager: DynamicSSLManager, forgetChallenges: Bool = false) -> (URLSessionTransport, PinnedSession) {
+    private func transport(
+        _ manager: DynamicSSLManager, forgetChallenges: Bool = false, allowsCleartext: Bool = false
+    ) -> (URLSessionTransport, PinnedSession) {
         let config = pinConfig("localhost", [TLSFixture.pin("leaf")])
         let transport = URLSessionTransport(
-            manager: manager, configuration: .ephemeral, trust: .pinned({ config }), resolveOverrides: [:], redirects: .sameScheme
+            manager: manager, configuration: .ephemeral, trust: .pinned({ config }), resolveOverrides: [:], redirects: .sameScheme,
+            allowsCleartext: allowsCleartext
         )
         transport.testOnlyForgetChallenges = forgetChallenges
         return (transport, PinnedSession(transport: transport))
@@ -112,12 +115,43 @@ final class TrustCheckWatchTests: XCTestCase {
         XCTAssertEqual(log.evidence(), ["tls-unverified:localhost"])
     }
 
+    // The same hook, a server that asks for a client certificate: the device's
+    // identity must not go to the peer nobody verified (R-04).
+    func testAnUnverifiedPeerThatAsksForTheClientCertificateGetsNone() async throws {
+        let server = try TestServer(p12: "server", chain: ["intermediate"], clientAuth: .required)
+        try await server.start()
+        servers.append(server)
+        let manager = testManager()
+        try manager.loadClientKeystore(TLSFixture.p12("client-a"), password: "changeit")
+        manager.setIdentityHosts([server.url().absoluteString])
+        let log = UnverifiedConnectionLog()
+        manager.unverifiedConnections = log
+
+        // Asked as usual, the peer gets the certificate.
+        let (_, verified) = transport(manager)
+        server.enqueue(.ok("hello"))
+        _ = try await verified.data(from: server.url("/hello"))
+        XCTAssertNotNil(server.requests.last?.clientCertificate)
+        XCTAssertEqual(log.count, 0)
+
+        let (_, session) = transport(manager, forgetChallenges: true)
+        let error = await assertPinVaultError { _ = try await session.data(from: server.url("/data")) }
+        guard case .sslHandshake(let message, let cause)? = error else { return XCTFail("\(String(describing: error))") }
+        XCTAssertTrue(message.contains("without PinVault's trust check"), message)
+        XCTAssertTrue(message.hasSuffix("the client certificate was not presented"), message)
+        guard case .security? = cause as? PinVaultError else { return XCTFail("\(String(describing: cause))") }
+        XCTAssertEqual(server.requestCount, 1, "the handshake ended there: no request reached the server")
+        XCTAssertEqual(log.evidence(), ["tls-unverified:localhost"])
+        XCTAssertEqual(log.count, 1, "one connection, recorded once")
+    }
+
     func testPlainHTTPIsNotJudged() async throws {
         let server = try await server(tls: false)
         let manager = testManager()
         let log = UnverifiedConnectionLog()
         manager.unverifiedConnections = log
-        let (_, session) = transport(manager, forgetChallenges: true)
+        // Only a transport built for cleartext (the unpinned bootstrap client) gets this far.
+        let (_, session) = transport(manager, forgetChallenges: true, allowsCleartext: true)
         server.enqueue(.ok("plain"))
 
         let (body, _) = try await session.data(from: server.url("/plain"))

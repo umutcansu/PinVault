@@ -24,14 +24,15 @@ import Foundation
 final class URLSessionTransport: PinnedTransport, @unchecked Sendable {
 
     /// Which redirects the transport follows (OkHttp `followRedirects` / `followSslRedirects`).
+    /// Whatever the policy, a redirect into `http` is followed only by a
+    /// transport that ``allowsCleartext``.
     enum RedirectPolicy: Sendable {
         /// None: the 3xx is the answer (the bootstrap client).
         case none
         /// Not between `http` and `https`, either way: every pinned session
-        /// (library-built, `applyTo`, `session(settings:)`) unless the app opts in.
+        /// (library-built, `applyTo`, `session(settings:)`).
         case sameScheme
-        /// All (OkHttp's defaults): the unpinned bootstrap client, and an
-        /// app session with `followCleartextRedirects`.
+        /// All (OkHttp's defaults): the bootstrap client of a block with `allowUnpinnedConfigApi()`.
         case all
     }
 
@@ -42,6 +43,16 @@ final class URLSessionTransport: PinnedTransport, @unchecked Sendable {
     let trust: DynamicSSLManager.TrustMode
     let resolveOverrides: [String: String]
     let redirects: RedirectPolicy
+    /// Whether an `http://` request or a `ws://` socket leaves through this
+    /// transport at all. False for every session the library hands out: the
+    /// pin check is a TLS check, so a cleartext request to a pinned host went
+    /// out with nothing checked — the one thing a pinned session promises not
+    /// to do. Such a request is refused before anything is sent, and a
+    /// redirect into `http` is not followed. True only for the bootstrap
+    /// client of a block that called `allowUnpinnedConfigApi()` (a test
+    /// relaxation, refused in release builds) and for tests against a local
+    /// plain-HTTP server; no public API sets it.
+    let allowsCleartext: Bool
     /// Which requests ask for `forbidden-as-409` (see ``ForbiddenAsConflict``).
     let forbiddenAs409: ForbiddenAsConflict.Policy
 
@@ -109,8 +120,10 @@ final class URLSessionTransport: PinnedTransport, @unchecked Sendable {
         trust: DynamicSSLManager.TrustMode,
         resolveOverrides: [String: String],
         redirects: RedirectPolicy,
-        forbiddenAs409: ForbiddenAsConflict.Policy = .identityHosts
+        forbiddenAs409: ForbiddenAsConflict.Policy = .identityHosts,
+        allowsCleartext: Bool = false
     ) {
+        self.allowsCleartext = allowsCleartext
         self.manager = manager
         self.template = configuration
         self.trust = trust
@@ -184,6 +197,7 @@ final class URLSessionTransport: PinnedTransport, @unchecked Sendable {
         }
         let host = DynamicSSLManager.bareHost(rawHost).lowercased()
         let port = url.port ?? (scheme == "https" ? 443 : 80)
+        if scheme == "http", !allowsCleartext { throw Self.cleartextRefused("plain-HTTP request", host, port, secure: "https://") }
         // A session retired between being handed out and the task being made
         // (see Entry) is replaced by a new one, with the checks done again.
         for _ in 0..<Self.maxSessionAttempts {
@@ -192,6 +206,14 @@ final class URLSessionTransport: PinnedTransport, @unchecked Sendable {
             }
         }
         throw PinVaultError.io(message: "The pinned session for \(DynamicSSLManager.hostPort(host, port)) kept being rebuilt; the request was not sent")
+    }
+
+    /// The refusal of a request that would leave unencrypted (see ``allowsCleartext``).
+    /// An `io` failure, like the bootstrap client's and OkHttp's "CLEARTEXT
+    /// communication not permitted": the request was not sent.
+    private static func cleartextRefused(_ what: String, _ host: String, _ port: Int, secure: String) -> PinVaultError {
+        .io(message: "Refusing a \(what) to \(DynamicSSLManager.hostPort(host, port)) through a pinned session: " +
+            "it would leave the device unencrypted, with no certificate to check against the pins. Use \(secure)")
     }
 
     /// One attempt on the current session of `scheme://host:port`; nil when
@@ -262,7 +284,8 @@ final class URLSessionTransport: PinnedTransport, @unchecked Sendable {
     /// A `URLSessionWebSocketTask` on the pinned session for the URL's host and
     /// port (the same delegate that answers the server-trust and client-certificate
     /// challenges, so the socket is pinned and mTLS-capable). `wss` maps to the
-    /// `https` session, `ws` to `http`. Before `start` (or after a failed one)
+    /// `https` session; `ws` (the `http` session) is refused unless the
+    /// transport ``allowsCleartext``. Before `start` (or after a failed one)
     /// `session(_:_:_:)` fails closed, as does a `resolve` override whose address
     /// would not match the delegate's pinned connect address.
     func webSocketTask(for request: URLRequest) throws -> URLSessionWebSocketTask {
@@ -274,6 +297,7 @@ final class URLSessionTransport: PinnedTransport, @unchecked Sendable {
         let host = DynamicSSLManager.bareHost(rawHost).lowercased()
         let httpScheme = scheme == "wss" ? "https" : "http"
         let port = url.port ?? (scheme == "wss" ? 443 : 80)
+        if scheme == "ws", !allowsCleartext { throw Self.cleartextRefused("ws:// WebSocket", host, port, secure: "wss://") }
         // A WebSocket task connects to its URL's own host; unlike a data task
         // it cannot be pointed at another address. A resolve(host:to:) (or
         // redirect) entry for the host refuses the socket instead of letting
@@ -401,6 +425,9 @@ final class URLSessionTransport: PinnedTransport, @unchecked Sendable {
               let scheme = target.scheme?.lowercased(), scheme == "https" || scheme == "http" else { return nil }
         let sameScheme = scheme == current.scheme?.lowercased()
         if !sameScheme, redirects == .sameScheme { return nil }
+        // Never out of TLS into the clear, whatever the policy says: the 3xx
+        // is the answer and the app decides what to do with it.
+        if scheme == "http", !allowsCleartext { return nil }
 
         var next = request
         next.url = target

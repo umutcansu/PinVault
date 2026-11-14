@@ -276,6 +276,22 @@ final class SignatureTrustTests: XCTestCase {
         XCTAssertTrue(try tls.applyKeySetUpdate(listed(2, c.pub, ["other"], single: "prod-tls")), "the single field still counts beside the list")
     }
 
+    // The same exact comparison as the config's scope: a set made for a Config
+    // API whose id merely renders like this block's is another deployment's set.
+    func testAKeySetForAnIdThatOnlyLooksLikeTheBlocksIsRefused() throws {
+        let precomposed = "caf\u{E9}"
+        let decomposed = "cafe\u{301}"
+        let t = SignatureTrust(configApiId: "default", builtInKeys: [a.pub], builtInThreshold: 1,
+                               recoveryKeys: [recovery.pub], recoveryThreshold: 1, store: newStore(), serverScope: precomposed)
+        assertSecurityRefusal("made for Config API") {
+            try t.applyKeySetUpdate(self.scopedKeySet(1, [self.b.pub], configApiId: decomposed))
+        }
+        XCTAssertEqual(try t.keySetVersion(), 0)
+        // Both spellings listed: the one that is this block's still counts.
+        let body = keySetPayload(version: 1, keys: [b.pub], configApiIds: [decomposed, precomposed])
+        XCTAssertTrue(try t.applyKeySetUpdate(SignedKeySet(payload: body, signatures: [recovery.entry(body)])))
+    }
+
     func testAKeySetMadeForAnotherConfigApiIsRefusedByAScopedBlock() throws {
         let t = SignatureTrust(configApiId: "default", builtInKeys: [a.pub], builtInThreshold: 1,
                                recoveryKeys: [recovery.pub], recoveryThreshold: 1, store: newStore(), serverScope: "prod-tls")

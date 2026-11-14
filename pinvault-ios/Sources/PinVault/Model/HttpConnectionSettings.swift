@@ -19,11 +19,11 @@ public struct HttpConnectionSettings: Sendable, Equatable, Hashable {
     /// the connection goes to. Pin lookup, hostname verification and the
     /// client certificate use the logical host. See ``resolve(host:to:)``.
     public var resolvedHosts: [String: String]
-    /// iOS: whether the session follows a redirect from `https` to `http`
-    /// (OkHttp `followSslRedirects`). Off by default: a pinned session never
-    /// continues in the clear — the 3xx is the answer and the app decides.
-    /// Opt in only for a backend that must redirect to plain HTTP; the
-    /// library's own sessions never do, whatever this says.
+    /// No longer has an effect. It used to let a session follow a redirect
+    /// from `https` to `http` (OkHttp `followSslRedirects`); a pinned session
+    /// does not send in the clear at all now — an `http://` request is
+    /// refused and such a redirect is the answer — because nothing checks a
+    /// pin on a plain connection. Kept so existing code compiles.
     public var followCleartextRedirects: Bool
 
     public init(

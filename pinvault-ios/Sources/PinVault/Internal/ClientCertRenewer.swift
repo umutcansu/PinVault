@@ -356,7 +356,14 @@ final class ClientCertRenewer: Sendable {
         return certs
     }
 
-    static func maxLifetimeMs(_ days: Int) -> Int64 { Int64(days) * 24 * 60 * 60 * 1000 }
+    /// `days` in ms. Saturating, with room left for the slack added to it: the
+    /// number is the app's own (the builder takes any value from 1, the
+    /// initializer any at all), and Swift traps where Kotlin's `Long` wraps.
+    static func maxLifetimeMs(_ days: Int) -> Int64 {
+        let (ms, overflow) = Int64(days).multipliedReportingOverflow(by: 24 * 60 * 60 * 1000)
+        if overflow { return days > 0 ? Int64.max / 2 : Int64.min / 2 }
+        return min(max(ms, Int64.min / 2), Int64.max / 2)
+    }
 
     static func millis(_ date: Date) -> Int64 { Int64((date.timeIntervalSince1970 * 1000).rounded()) }
 

@@ -221,11 +221,27 @@ final class VaultService: Sendable {
 
     // MARK: Reads
 
+    /// The file `key` as the config declares it, or nil for a key it does not
+    /// name. Such a key reads as "no such file" everywhere — content, status,
+    /// version, unlock: every check a stored copy gets (signature, offline
+    /// lifetime, the screen lock) comes from the file's declaration, so a copy
+    /// left behind by an app version that still declared the file used to be
+    /// handed out with none of them, to any caller that knew the key (a
+    /// bridge's bundle included). Nothing is deleted: a build that declares
+    /// the file again finds its copy, and ``clearFile(_:)`` still removes it.
+    private func declared(_ key: String) -> VaultFileConfig? {
+        config.vaultFiles[key]
+    }
+
     /// Kotlin `loadFile`: the stored copy, checked on every read; nil when not
-    /// fetched, locked, or refused by its checks (``fileStatus(_:)`` says which).
+    /// fetched, locked, refused by its checks (``fileStatus(_:)`` says which),
+    /// or when the config does not name `key`.
     func loadFile(_ key: String) -> Data? {
+        guard let file = declared(key) else {
+            log.w("loadFile: vault file '\(key)' is not registered in the config — nothing is read")
+            return nil
+        }
         let storage = storageFor(key)
-        guard let file = config.vaultFiles[key] else { return (try? storage.load(key: key)) ?? nil }
         if case .content(let bytes) = vaultGuard.load(file, storage, router.storedVerifier(file)) { return bytes }
         return nil
     }
@@ -234,17 +250,10 @@ final class VaultService: Sendable {
         loadFile(key).map { String(decoding: $0, as: UTF8.self) }
     }
 
-    /// Kotlin `fileStatus`.
+    /// Kotlin `fileStatus`. A key the config does not name is `notStored`.
     func fileStatus(_ key: String) -> VaultFileStatus {
-        let storage = storageFor(key)
-        guard let file = config.vaultFiles[key] else {
-            do {
-                return try storage.exists(key: key) ? .available : .notStored
-            } catch {
-                return .storageUnavailable
-            }
-        }
-        return vaultGuard.status(file, storage, router.storedVerifier(file))
+        guard let file = declared(key) else { return .notStored }
+        return vaultGuard.status(file, storageFor(key), router.storedVerifier(file))
     }
 
     /// Kotlin `unlockFile`: the passcode / biometrics prompt, then the content.
@@ -256,14 +265,18 @@ final class VaultService: Sendable {
         if let refusal = environmentRefusal(.unlockFile) {
             return .failed(key: key, reason: refusal.message, exception: refusal)
         }
+        // A key the config does not name has no file: see `declared(_:)`.
+        guard let file = declared(key) else {
+            log.w("unlockFile: vault file '\(key)' is not registered in the config — nothing is opened")
+            return .notFound(key: key)
+        }
         let storage = storageFor(key)
-        let file = config.vaultFiles[key]
         // A server-sealed copy carries its signatures and is checked inside
         // unlock; no verifier for such a file = not opened (fail closed).
-        let sealedByServer = file?.encryption == .userAuth ? file : nil
+        let sealedByServer = file.encryption == .userAuth ? file : nil
         let verifier = sealedByServer.flatMap { router.unlockVerifier($0) }
         // Past its offline lifetime: no prompt for a file that is not handed out.
-        if let file, case .refused(let status, let reason)? = vaultGuard.beforeUnlock(file, storage) {
+        if case .refused(let status, let reason)? = vaultGuard.beforeUnlock(file, storage) {
             return status == .stale ? .stale(key: key) : .failed(key: key, reason: reason)
         }
         let hadCopy = (try? storage.exists(key: key)) ?? false
@@ -280,7 +293,7 @@ final class VaultService: Sendable {
                 // Sealed for a key the server no longer has: register again before the next fetch.
                 onSealedForAnotherKey: { if let sealedByServer { router.forgetUserAuthRegistration(sealedByServer.configApiId) } },
                 // A newer server-sealed copy passed its check: only now is it confirmed.
-                onPromoted: { version in if let file { vaultGuard.promoted(file, version: version) } },
+                onPromoted: { version in vaultGuard.promoted(file, version: version) },
                 verify: verifier
             )
         } else {
@@ -294,12 +307,17 @@ final class VaultService: Sendable {
                 result = .failed(key: key, reason: VaultErrorText.message(error), exception: error)
             }
         }
-        guard let file else { return result }
         if case .failed(_, let reason, _) = result, hadCopy, !((try? storage.exists(key: key)) ?? true) {
             // The copy failed the check done at unlock and was deleted there.
             vaultGuard.integrityFailed(file, reason: reason)
         }
         guard case .unlocked(_, let version, let bytes) = result else { return result }
+        // A server-sealed copy is verified only here, after the prompt: this
+        // is where its version becomes one the device has seen with a valid
+        // signature (the fetch stored it unopened and raised nothing).
+        if sealedByServer != nil, storage is UserAuthVaultStorage, router.storedVerifier(file) != nil {
+            vaultGuard.verified(file, version: version)
+        }
         switch vaultGuard.check(file, storage, bytes, version: version, router.storedVerifier(file)) {
         case .content: return result
         case .refused(_, let reason): return .failed(key: key, reason: reason)
@@ -309,19 +327,26 @@ final class VaultService: Sendable {
 
     /// Kotlin `isFileLocked`: the stored copy opens only through unlock.
     func isFileLocked(_ key: String) -> Bool {
-        guard let locked = storageFor(key) as? UserAuthVaultStorage else { return false }
+        guard declared(key) != nil, let locked = storageFor(key) as? UserAuthVaultStorage else { return false }
         return (try? locked.isLocked(key)) ?? false
     }
 
+    /// False for a key the config does not name, whatever the store holds.
     func hasFile(_ key: String) -> Bool {
-        (try? storageFor(key).exists(key: key)) ?? false
+        guard declared(key) != nil else { return false }
+        return (try? storageFor(key).exists(key: key)) ?? false
     }
 
+    /// 0 for a key the config does not name.
     func fileVersion(_ key: String) -> Int {
-        (try? storageFor(key).getVersion(key: key)) ?? 0
+        guard declared(key) != nil else { return 0 }
+        return (try? storageFor(key).getVersion(key: key)) ?? 0
     }
 
-    /// Kotlin `clearFile`: the copy (and a pending one) and what was remembered about it.
+    /// Kotlin `clearFile`: the copy (and a pending one) and what was remembered
+    /// about it — except the highest version it was verified at, so an older
+    /// signed version is still refused afterwards. Works for a key the config
+    /// no longer names too: the one thing left to do with such a copy.
     func clearFile(_ key: String) {
         do {
             try storageFor(key).clear(key: key)

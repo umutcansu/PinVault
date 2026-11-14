@@ -11,6 +11,7 @@ protocol UpdaterConfigStore: AnyObject, Sendable {
     func save(_ config: CertificateConfig, envelope: StoredEnvelope?) throws
     func load() throws -> CertificateConfig?
     func loadEnvelope() throws -> StoredEnvelope?
+    func isActiveEnvelope(_ envelope: StoredEnvelope) throws -> Bool
     func markRolledBack(_ config: CertificateConfig) throws
     func isRolledBack(_ config: CertificateConfig) throws -> Bool
     func clearActive(keepAsWatermarks: Bool) throws
@@ -513,7 +514,9 @@ final class SSLCertificateUpdater: @unchecked Sendable {
     /// stored next to it is verified again — on every read, against the keys
     /// trusted now — and the config used is the one INSIDE the envelope. A
     /// stored config without an envelope that verifies is discarded: the
-    /// device is back to "no config" until the next fetch. Without a verifier
+    /// device is back to "no config" until the next fetch. So is one whose
+    /// envelope verifies but is not the one this device stored last
+    /// (``CertificateConfigStore/isActiveEnvelope(_:)``). Without a verifier
     /// what the store holds is used as it is.
     private func loadStored() throws -> StoredConfig? {
         guard let stored = try configStore.load() else { return nil }
@@ -553,6 +556,23 @@ final class SSLCertificateUpdater: @unchecked Sendable {
             try configStore.clearActive(keepAsWatermarks: true)
             if httpClientProvider.currentConfig != nil { httpClientProvider.reset() }
             discardedStoredConfig.set("the stored config was discarded because it was fetched for another host set or device")
+            return nil
+        }
+        // A genuine, unexpired envelope for this block — but is it the one this
+        // device was last on? An older copy of the app's container holds an
+        // older config that passes everything above, and the watermarks cannot
+        // tell (after a health-check rollback the active config is rightly
+        // older than they are). The Keychain copy records which envelope was
+        // stored last; another one is not used: no config until a fetch, like
+        // an envelope that fails. It was accepted once, so its values stay as
+        // watermarks, and the config the server has now is taken at the
+        // watermark as "the newest this device has seen", not as a replay.
+        if try !configStore.isActiveEnvelope(envelope) {
+            Self.log.e("Stored config v\(stored.version) discarded — it is not the config this device last stored " +
+                "(an older copy of the app's data was put back)")
+            try configStore.clearActive(keepAsWatermarks: true)
+            if httpClientProvider.currentConfig != nil { httpClientProvider.reset() }
+            discardedStoredConfig.set("the stored config was discarded because it is not the one this device last stored")
             return nil
         }
         var config = verified

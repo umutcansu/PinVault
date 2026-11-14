@@ -29,8 +29,31 @@ protocol VaultFileMeta: Sendable {
     func problem(_ key: String) throws -> VaultFileStatus?
     func setProblem(_ key: String, _ problem: VaultFileStatus?) throws
 
-    /// Forgets everything about `key` except a recorded problem.
+    /// Forgets everything about `key` except a recorded problem and its version floor.
     func clear(_ key: String) throws
+
+    /// The highest version of file `key` of Config API `configApiId` this
+    /// device ever accepted with a verified signature; 0 = none.
+    ///
+    /// It outlives the copy on purpose. The downgrade check used to compare
+    /// with the stored copy's version only, so once the copy was gone —
+    /// `clearFile`, a copy deleted by its checks, `wipeWhenStale`, a wipe on
+    /// revocation or unenroll — any older version the server's key ever signed
+    /// was accepted again. Nothing ``clear(_:)`` does touches it.
+    func versionFloor(configApiId: String, key: String) throws -> Int
+    /// Raises the floor to `version`; a lower value leaves it where it is.
+    func raiseVersionFloor(configApiId: String, key: String, to version: Int) throws
+    /// Forgets every floor. Tests only (`PinVault.resetAndWipeStoredState()`):
+    /// nothing the app or a server can reach lowers a floor.
+    func wipeVersionFloors() throws
+}
+
+/// The name a version floor is kept under: the Config API id and the file key,
+/// the first with its length so that no two pairs share a name.
+enum VaultFileFloorName {
+    static func of(configApiId: String, key: String) -> String {
+        "\(configApiId.utf8.count):\(configApiId):\(key)"
+    }
 }
 
 /// This process only (tests; Kotlin `VaultFileMeta.InMemory`).
@@ -39,6 +62,7 @@ final class VaultFileMetaInMemory: VaultFileMeta {
         var signatures: [String: StoredSignatures] = [:]
         var confirmed: [String: Int64] = [:]
         var problems: [String: VaultFileStatus] = [:]
+        var floors: [String: Int] = [:]
     }
 
     private let state = Locked(State())
@@ -58,6 +82,17 @@ final class VaultFileMetaInMemory: VaultFileMeta {
             $0.confirmed[key] = nil
         }
     }
+
+    func versionFloor(configApiId: String, key: String) -> Int {
+        state.withLock { $0.floors[VaultFileFloorName.of(configApiId: configApiId, key: key)] ?? 0 }
+    }
+
+    func raiseVersionFloor(configApiId: String, key: String, to version: Int) {
+        let name = VaultFileFloorName.of(configApiId: configApiId, key: key)
+        state.withLock { $0.floors[name] = max($0.floors[name] ?? 0, version) }
+    }
+
+    func wipeVersionFloors() { state.withLock { $0.floors = [:] } }
 }
 
 /// In a strict ``SecurePreferences`` namespace of the vault-file store's
@@ -67,6 +102,11 @@ final class VaultFileMetaPersistent: VaultFileMeta {
     private static let signaturesPrefix = "sig_"
     private static let confirmedPrefix = "seen_"
     private static let problemPrefix = "problem_"
+    /// Version floors, and the list of their names (so the test-only wipe finds them).
+    private static let floorPrefix = "floor_"
+    private static let floorNamesKey = "floors"
+    /// A floor is read, compared and written in one step.
+    private let floorLock = NSLock()
 
     private let prefs: any PreferenceStore
 
@@ -121,8 +161,45 @@ final class VaultFileMetaPersistent: VaultFileMeta {
         try editor.apply()
     }
 
+    // The floor stays: see `versionFloor(configApiId:key:)`.
     func clear(_ key: String) throws {
         try prefs.edit().remove(Self.signaturesPrefix + key).remove(Self.confirmedPrefix + key).apply()
+    }
+
+    // In this store and not beside the pin watermarks' Keychain copy: a server
+    // numbers a file from 1 again when it is deleted and uploaded anew, and a
+    // floor in the Keychain would outlive even a reinstall, leaving a device
+    // that can never take that file again. (Against a container put back the
+    // Keychain copy would not help by itself either: the older container brings
+    // the older signed copy along, and that one still passes its check.)
+    func versionFloor(configApiId: String, key: String) throws -> Int {
+        max(0, Int(clamping: try prefs.getLong(Self.floorPrefix + VaultFileFloorName.of(configApiId: configApiId, key: key), 0)))
+    }
+
+    func raiseVersionFloor(configApiId: String, key: String, to version: Int) throws {
+        floorLock.lock()
+        defer { floorLock.unlock() }
+        let name = VaultFileFloorName.of(configApiId: configApiId, key: key)
+        guard version > (try versionFloor(configApiId: configApiId, key: key)) else { return }
+        var names = try floorNames()
+        if !names.contains(name) { names.append(name) }
+        try prefs.edit()
+            .putLong(Self.floorPrefix + name, Int64(version))
+            .putString(Self.floorNamesKey, JSONText.array(names.map(JSONText.string)))
+            .apply()
+    }
+
+    func wipeVersionFloors() throws {
+        floorLock.lock()
+        defer { floorLock.unlock() }
+        let editor = prefs.edit()
+        for name in try floorNames() { editor.remove(Self.floorPrefix + name) }
+        try editor.remove(Self.floorNamesKey).apply()
+    }
+
+    private func floorNames() throws -> [String] {
+        guard let json = try prefs.getString(Self.floorNamesKey, nil) else { return [] }
+        return (JSONText.parse(json) as? [Any])?.compactMap { $0 as? String } ?? []
     }
 }
 

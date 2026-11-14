@@ -177,7 +177,10 @@ final class SignedConfigVerifier: Sendable {
                     "signed config."
             )
         }
-        if actual != expected {
+        // Scalar for scalar, not Swift's `==` (which calls canonically
+        // equivalent strings equal): Android compares exactly, and a config
+        // signed for a Config API whose name merely renders the same is not this one's.
+        if !actual.sameText(as: expected) {
             throw PinVaultError.security(message:
                 "Signed config rejected: it was signed for Config API '\(actual.kotlinTake(64))', this block accepts " +
                     "only '\(expected)' (serverScope)."

@@ -17,7 +17,7 @@ import Foundation
 public struct ConfigApiBlock: Sendable, Equatable, Hashable {
     /// Block identifier used by ``VaultFileConfig/configApiId``.
     public let id: String
-    /// Base URL (the builder adds the trailing slash).
+    /// Base URL, always with a trailing slash (added when missing).
     public let configUrl: String
     /// Pins compiled into the app for the first connection.
     public let bootstrapPins: [HostPin]
@@ -118,7 +118,11 @@ public struct ConfigApiBlock: Sendable, Equatable, Hashable {
         relaxationsInRelease: Bool = false
     ) {
         self.id = id
-        self.configUrl = configUrl
+        // The builder's normalisation, here too: requests are built as base +
+        // path, and "https://api.example.com" + "api/v1/…" names another host
+        // ("api.example.comapi"). Retrofit refuses such a base URL on Android;
+        // the Swift initializer cannot throw, so it adds the slash.
+        self.configUrl = Self.withTrailingSlash(configUrl)
         self.bootstrapPins = bootstrapPins
         self.configEndpoint = configEndpoint
         self.healthEndpoint = healthEndpoint
@@ -134,8 +138,8 @@ public struct ConfigApiBlock: Sendable, Equatable, Hashable {
         self.requiredSignatures = requiredSignatures
         self.recoveryPublicKeys = recoveryPublicKeys
         self.requiredRecoverySignatures = requiredRecoverySignatures
-        self.renewalUrl = renewalUrl
-        self.enrollmentUrl = enrollmentUrl
+        self.renewalUrl = renewalUrl.map(Self.withTrailingSlash)
+        self.enrollmentUrl = enrollmentUrl.map(Self.withTrailingSlash)
         self.clientCertRenewalThreshold = clientCertRenewalThreshold
         self.clientCertRenewalEnabled = clientCertRenewalEnabled
         self.serverScope = serverScope
@@ -154,9 +158,11 @@ public struct ConfigApiBlock: Sendable, Equatable, Hashable {
 
     /// Why this block must not be used, or nil: the Config API (and the
     /// enrollment / renewal URLs) must be `https://` and the block must carry
-    /// bootstrap pins, unless ``allowUnpinnedConfigApi``. Checked at start and
-    /// by every client built for the block, so a block made with the
-    /// initializer is held to the same rules as the builder's.
+    /// bootstrap pins, unless ``allowUnpinnedConfigApi``; and it must carry a
+    /// signing key, unless ``allowUnsigned``. Checked at start and by every
+    /// client built for the block, so a block made with the initializer is
+    /// held to the same rules as the builder's — and a relaxation is always a
+    /// flag the release guard can see.
     ///
     /// iOS: also the Kotlin `HostPin` constructor rule (two pins per entry),
     /// since the Swift initializer cannot throw.
@@ -164,16 +170,26 @@ public struct ConfigApiBlock: Sendable, Equatable, Hashable {
         for pin in bootstrapPins where pin.sha256.count < 2 {
             return "At least 2 pins required (primary + backup) for hostname: \(pin.hostname)"
         }
-        if allowUnpinnedConfigApi { return nil }
-        for (name, url) in [("configUrl", configUrl), ("enrollmentUrl", enrollmentUrl), ("renewalUrl", renewalUrl)] {
-            if let url, !url.trimmingCharacters(in: .whitespacesAndNewlines).lowercased().hasPrefix("https://") {
-                return "Config API '\(id)': \(name) must be an https:// URL — a config fetched over plain HTTP can be " +
-                    "replaced by anyone on the network. Call allowUnpinnedConfigApi() to accept that (tests, demos)."
+        if !allowUnpinnedConfigApi {
+            for (name, url) in [("configUrl", configUrl), ("enrollmentUrl", enrollmentUrl), ("renewalUrl", renewalUrl)] {
+                if let url, !url.trimmingCharacters(in: .whitespacesAndNewlines).lowercased().hasPrefix("https://") {
+                    return "Config API '\(id)': \(name) must be an https:// URL — a config fetched over plain HTTP can be " +
+                        "replaced by anyone on the network. Call allowUnpinnedConfigApi() to accept that (tests, demos)."
+                }
+            }
+            if bootstrapPins.isEmpty {
+                return "Config API '\(id)': bootstrapPins must not be empty — without them the first config fetch trusts " +
+                    "every certificate authority on the device. Call allowUnpinnedConfigApi() to accept that (tests, demos)."
             }
         }
-        if bootstrapPins.isEmpty {
-            return "Config API '\(id)': bootstrapPins must not be empty — without them the first config fetch trusts " +
-                "every certificate authority on the device. Call allowUnpinnedConfigApi() to accept that (tests, demos)."
+        // Whatever the block says about pins. The builder refuses a block
+        // without keys in build(); the initializer has no checks, and such a
+        // block would otherwise run unsigned — no signature, replay or expiry
+        // check on configs, none on vault files — without ever having said so,
+        // and with nothing for the release guard to see. A blank key is no key.
+        if effectiveSignatureKeys().allSatisfy(\.isBlank), !allowUnsigned {
+            return "Config API '\(id)': signaturePublicKey is missing — without it no config is verified, so whoever " +
+                "answers for the Config API decides the pins. Call allowUnsigned() to accept that (tests, demos)."
         }
         return nil
     }
@@ -195,6 +211,11 @@ public struct ConfigApiBlock: Sendable, Equatable, Hashable {
     public static let defaultRenewalThreshold: Double = 1.0 / 3
     /// Longest client-certificate lifetime accepted unless the block says otherwise (days).
     public static let defaultMaxClientCertLifetimeDays = 825
+
+    /// `url` ending in `/`: what every request path is appended to.
+    static func withTrailingSlash(_ url: String) -> String {
+        url.hasSuffix("/") ? url : url + "/"
+    }
 
     /// Strips PEM armour and whitespace so a key pasted as PEM, or with a
     /// trailing newline, is one key and not two.
@@ -417,7 +438,7 @@ public struct ConfigApiBlock: Sendable, Equatable, Hashable {
                 refuse("renewalUrl must not be blank")
                 return self
             }
-            renewalUrl = url.hasSuffix("/") ? url : url + "/"
+            renewalUrl = ConfigApiBlock.withTrailingSlash(url)
             return self
         }
 
@@ -428,7 +449,7 @@ public struct ConfigApiBlock: Sendable, Equatable, Hashable {
                 refuse("enrollmentUrl must not be blank")
                 return self
             }
-            enrollmentUrl = url.hasSuffix("/") ? url : url + "/"
+            enrollmentUrl = ConfigApiBlock.withTrailingSlash(url)
             return self
         }
 
@@ -531,10 +552,9 @@ public struct ConfigApiBlock: Sendable, Equatable, Hashable {
                     )
                 }
             }
-            let normalizedUrl = configUrl.hasSuffix("/") ? configUrl : configUrl + "/"
             return ConfigApiBlock(
                 id: id,
-                configUrl: normalizedUrl,
+                configUrl: configUrl,
                 bootstrapPins: bootstrapPins,
                 configEndpoint: configEndpoint.trimmingLeading("/"),
                 healthEndpoint: healthEndpoint.trimmingLeading("/"),
