@@ -1085,6 +1085,14 @@ PinVault.fileStatus("ml-model")       // (2.2) why loadFile returned null
 PinVault.clearFile("ml-model")        // drop the cached copy
 ```
 
+`clearFile` deletes the file's content and its stored version. One thing stays
+*(2.11)*: the highest version this device ever verified for that file, so that
+an older signed version cannot be made to come back after a clear (or a wipe,
+or an unenroll). The entry holds no content, only the file's name and a
+version number, encrypted like the rest of the store. Clearing the app's data
+removes it too. A backend of your own must therefore never restart a file's
+version at 1 after deleting it; the reference server keeps counting.
+
 `storage(...)` also accepts your own `VaultStorageProvider` instead of a
 `StorageStrategy`. Its `save` must throw when the copy was not stored *(2.9.1)*
 — `VaultStorageWriteException` on Android, `VaultStorageWriteError` on iOS, or
