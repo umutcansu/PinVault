@@ -1,5 +1,6 @@
 package com.example.pinvault.server.route
 
+import com.example.pinvault.server.service.queryExact
 import com.example.pinvault.server.model.PinConfig
 import com.example.pinvault.server.plugin.AdminRegistry
 import com.example.pinvault.server.plugin.adminName
@@ -76,10 +77,10 @@ fun Route.governanceRoutes(
     // ── Audit log ───────────────────────────────────────────────────────
 
     get("/api/v1/audit-log") {
-        val limit = call.request.queryParameters["limit"]?.toIntOrNull()?.coerceIn(1, 500) ?: 50
-        val offset = call.request.queryParameters["offset"]?.toIntOrNull()?.coerceAtLeast(0) ?: 0
-        val action = call.request.queryParameters["action"]
-        val scope = call.request.queryParameters["configApiId"]
+        val limit = call.request.queryExact("limit")?.toIntOrNull()?.coerceIn(1, 500) ?: 50
+        val offset = call.request.queryExact("offset")?.toIntOrNull()?.coerceAtLeast(0) ?: 0
+        val action = call.request.queryExact("action")
+        val scope = call.request.queryExact("configApiId")
         call.respond(AuditPage(auditStore.count(action, scope), auditStore.page(limit, offset, action, scope)))
     }
 
@@ -90,7 +91,7 @@ fun Route.governanceRoutes(
     // ── Change requests (PIN_CHANGE_APPROVALS >= 2) ─────────────────────
 
     get("/api/v1/change-requests") {
-        val status = call.request.queryParameters["status"]?.takeIf { it.isNotBlank() && it != "all" }
+        val status = call.request.queryExact("status")?.takeIf { it.isNotBlank() && it != "all" }
         call.respond(approvals.list(status))
     }
 

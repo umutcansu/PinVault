@@ -220,13 +220,16 @@ info:
       `APPROVAL_TTL_HOURS` (default 24). On Config API listeners these writes answer
       `409` — they are accepted only through the management API. Affected routes:
       `PUT /api/v1/certificate-config`, the four `force-update` / `clear-force`
-      routes, `POST /api/v1/config/{configApiId}/update`, host creation
+      routes, `POST /api/v1/config/{configApiId}/update`,
+      `POST /api/v1/pin-snapshots/{id}/restore` (`pins_restore`), host creation
       (`/api/v1/hosts/generate-cert|fetch-from-url|upload-cert`,
       `/api/v1/management/hosts/{configApiId}/generate-cert`), host certificate
-      changes (`/api/v1/hosts/{hostname}/regenerate-cert|upload-cert|fetch-cert-url|toggle-mtls|upload-client-cert`),
-      `POST /api/v1/config-apis/delete`,
-      `/api/v1/server-tls-pins/regenerate|upload|fetch-from-url`,
-      `POST /api/v1/signing-key/regenerate`, `PUT /api/v1/signing-keyset` and the
+      changes (`/api/v1/hosts/{hostname}/regenerate-cert|rotate-to-backup|upload-cert|fetch-cert-url|toggle-mtls|upload-client-cert`),
+      `POST /api/v1/config-apis/delete`, `POST /api/v1/config-apis/start|stop`
+      (`config_api_lifecycle`),
+      `/api/v1/server-tls-pins/regenerate|rotate-to-backup|upload|fetch-from-url`,
+      `POST /api/v1/signing-key/regenerate`, `PUT /api/v1/signing-keyset`,
+      `PUT /api/v1/server-settings` (`server_settings`) and the
       host ACL writes (`PUT /api/v1/config-apis/{configApiId}/default-host-acl`,
       `PUT /api/v1/config-apis/{configApiId}/devices/{deviceId}/host-acl`).
       Also gated, each under its own operation name: **trust material and
@@ -240,7 +243,15 @@ info:
       `PUT vault/{key}/policy` (`vault_policy`), `POST vault/{key}/tokens`
       (`vault_token_issue`), `DELETE vault/tokens/{tokenId}`
       (`vault_token_revoke`), `DELETE vault/devices/{deviceId}/public-key`
-      (`device_key_reset`) and `PUT vault-enabled` (`vault_enabled`).
+      (`device_key_reset`) and `PUT vault-enabled` (`vault_enabled`) — and
+      **attestation**: `PUT /api/v1/config-apis/{configApiId}/attestation/policy`
+      (`attestation_policy`), `PUT` and `DELETE …/attestation/devices/{deviceId}`
+      and `DELETE …/attestation/devices/{deviceId}/anomaly` (`attestation_device`),
+      `GET /api/v1/attestation/token-secrets` (`attestation_token_secrets`),
+      `POST /api/v1/attestation/token-secrets/rotate`
+      (`attestation_token_secret_rotate`) and
+      `DELETE /api/v1/attestation/token-secrets/{kid}`
+      (`attestation_token_secret_delete`).
       **Not gated, on purpose:** revocation and forgetting
       (`DELETE /api/v1/client-certs/{id}`, `…/forget`), stopping an enrollment
       code, `DELETE /api/v1/enrollment-open` (closing code-less applications) —
@@ -253,8 +264,12 @@ info:
       shown the pins, the certificate and the Config APIs that change, and
       exactly that plan is applied (nothing is fetched or generated at approval
       time). **Answers that carry a secret** (a P12, an enrollment token or code,
-      a vault token) are not produced by the approval: the request becomes
-      `approved` and its requester sends it again to run it once.
+      a vault token, the token secrets) are not produced by the approval: the
+      request becomes `approved` and its requester sends it again to run it once.
+      **A gated request's query string must read one way**: parameter names are
+      matched exactly (case-sensitive), and a query that the server's own reading
+      and the engine's read differently (a name spelled twice in different case,
+      empty parameters, broken escapes) is refused with `400 ambiguous_query`.
     * **Live certificate check** — `PIN_LIVE_CHECK=warn|enforce` compares every new
       or changed pin set with the leaf certificate the host serves right now.
       `warn` stores it and answers with `X-PinVault-Live-Check: warn`; `enforce`
@@ -268,8 +283,9 @@ info:
       sha256=<hex HMAC-SHA256 of "<timestamp>.<body>">` — a receiver recomputes
       it, refuses timestamps more than a few minutes old and an `auditId` it has
       already seen, and so cannot be replayed to. `NOTIFY_EVENTS` filters
-      (`*` leaves out `device_key_registered`, which any device's first start
-      records; name it to receive it).
+      (`*` leaves out `device_key_registered`, `device_key_attested` and
+      `attestation_rejected`, which ordinary device traffic records; name one
+      to receive it).
     * **Signing** — `CONFIG_SIGNERS` (local key file, PKCS#11 HSM, external
       command; several = one signature each), `CONFIG_SIGNATURE_CACHE=true` (sign
       each content once — always on with a `command` or `pkcs11` signer, where
@@ -8177,7 +8193,7 @@ components:
         signed: { type: boolean, description: '`NOTIFY_WEBHOOK_SECRET` is set (`X-PinVault-Signature`).' }
         events:
           type: array
-          description: '`NOTIFY_EVENTS`; `*` = every audit action except `http` and `device_key_registered` (named, it is sent).'
+          description: '`NOTIFY_EVENTS`; `*` = every audit action except `http`, `device_key_registered`, `device_key_attested` and `attestation_rejected` (named, they are sent).'
           items: { type: string }
         recent:
           type: array

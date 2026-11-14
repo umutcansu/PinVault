@@ -68,10 +68,11 @@ class VaultAtRestCipher(
 
     /**
      * Opens a blob written by [encrypt] with the current password.
-     * @throws VaultKeyMismatchException when it does not open (other password, or damaged).
+     * With [boundOnly] a `VLT-ENC1` blob (no associated data) does not open at all.
+     * @throws VaultKeyMismatchException when it does not open (other password, another place, or damaged).
      */
-    fun decrypt(blob: ByteArray, aad: ByteArray? = null): ByteArray =
-        tryDecrypt(blob, password, aad) ?: throw VaultKeyMismatchException()
+    fun decrypt(blob: ByteArray, aad: ByteArray? = null, boundOnly: Boolean = false): ByteArray =
+        tryDecrypt(blob, password, aad, boundOnly) ?: throw VaultKeyMismatchException()
 
     /** How [blob] opens: with the current password, with a previous one (plaintext returned), or not at all. */
     fun open(blob: ByteArray, aad: ByteArray? = null): Opened {
@@ -87,9 +88,11 @@ class VaultAtRestCipher(
     }
 
     /** A `VLT-ENC2` blob opens only with the [aad] it was written with; a `VLT-ENC1` one takes none. */
-    private fun tryDecrypt(blob: ByteArray, candidate: String, aad: ByteArray? = null): ByteArray? {
+    private fun tryDecrypt(blob: ByteArray, candidate: String, aad: ByteArray? = null, boundOnly: Boolean = false): ByteArray? {
         if (!isEncrypted(blob) || blob.size < HEADER_LEN + TAG_LEN) return null
         val bound = isBound(blob)
+        // A `VLT-ENC1` blob says nothing about where it belongs: where only a bound one may open, it does not.
+        if (boundOnly && !bound) return null
         if (bound && aad == null) return null
         return try {
             val salt = blob.copyOfRange(MAGIC.size, MAGIC.size + SALT_LEN)

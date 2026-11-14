@@ -14,7 +14,6 @@ import com.example.pinvault.server.store.PinConfigStore
 import com.example.pinvault.server.store.VaultFileStore
 import com.example.pinvault.server.store.VaultFileTokenStore
 import io.ktor.http.HttpStatusCode
-import io.ktor.http.parseQueryString
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
@@ -102,12 +101,18 @@ class ChangeDescriber(
      */
     fun stateOf(ref: String): String? {
         val parts = ref.split('|')
+        // A reference that is not of a shape this class writes names nothing
+        // that can be compared. It is an error — the approval then treats the
+        // card as stale — and never "does not exist": that answer is the same
+        // before and after, so such a card could not go stale at all (a scope
+        // with a '|' in its name did that; review 2026-11-14, S3).
+        fun malformed(): Nothing = throw IllegalArgumentException("malformed state reference")
         return when (parts.first()) {
-            "bootstrap" -> planner.bootstrapState()
-            "port" -> parts.getOrNull(1)?.toIntOrNull()?.let { portHolder?.invoke(it) }
-            "vault" -> if (parts.size == 3) vaultState(parts[1], parts[2]) else null
-            "device-key" -> if (parts.size == 4) deviceKeyOf?.invoke(parts[1], parts[3], parts[2] == "user_auth")?.let { sha256Hex(it.toByteArray(Charsets.UTF_8)) } else null
-            else -> null
+            "bootstrap" -> if (parts.size == 1) planner.bootstrapState() else malformed()
+            "port" -> (parts.takeIf { it.size == 2 }?.get(1)?.toIntOrNull() ?: malformed()).let { portHolder?.invoke(it) }
+            "vault" -> if (parts.size == 3) vaultState(parts[1], parts[2]) else malformed()
+            "device-key" -> if (parts.size == 4) deviceKeyOf?.invoke(parts[1], parts[3], parts[2] == "user_auth")?.let { sha256Hex(it.toByteArray(Charsets.UTF_8)) } else malformed()
+            else -> malformed()
         }
     }
 
@@ -188,7 +193,7 @@ class ChangeDescriber(
                 val id = path.removeSuffix("/restore").substringAfterLast('/').toLongOrNull()
                 val snap = id?.let { snapshots?.get(it) }
                     ?: throw ApprovalService.Refused(HttpStatusCode.NotFound, "snapshot_not_found")
-                if (parseQueryString(input.query)["configApiId"]?.let { it != snap.configApiId } == true) {
+                if (ExactQuery.parse(input.query)["configApiId"]?.let { it != snap.configApiId } == true) {
                     throw ApprovalService.Refused(HttpStatusCode.Conflict, "scope_mismatch")
                 }
                 // The host as the handler reads it — the same function on the same
@@ -265,9 +270,32 @@ class ChangeDescriber(
             "signing_key" -> Description("", "Replace the primary config-signing key", detail)
             "host_acl" -> describeHostAcl(scope, PinAffectingRoutes.deviceOf(path), detail, json)
             "signing_keyset" -> {
-                val payload = bodyField("payload")
-                val version = payload?.let { runCatching { Json.parseToJsonElement(it).jsonObject["version"]?.jsonPrimitive?.content }.getOrNull() }
-                Description("", "Publish signing-key set v${version ?: "?"}", detail)
+                // Read from the WHOLE payload: it used to be cut to 120 characters
+                // first, which no real payload survives as JSON, so every card said
+                // "v?" and named neither the keys nor how many must sign.
+                val set = (json?.get("payload") as? JsonPrimitive)?.takeIf { it.isString }?.content
+                    ?.let { runCatching { Json.parseToJsonElement(it).jsonObject }.getOrNull() }
+                fun text(name: String) = (set?.get(name) as? JsonPrimitive)?.content?.let { ApprovalService.plainText(it, 32) }
+                fun texts(name: String) = (set?.get(name) as? JsonArray)?.mapNotNull { (it as? JsonPrimitive)?.content } ?: emptyList()
+                val version = text("version")
+                // A key is named by the SHA-256 of its encoding: the Base64 text of every P-256 key starts the same.
+                val keys = texts("keys").map { key ->
+                    sha256Hex(runCatching { java.util.Base64.getDecoder().decode(key.trim()) }.getOrElse { key.toByteArray(Charsets.UTF_8) }).take(16)
+                }
+                val required = text("requiredSignatures")
+                val scopes = (texts("configApiIds") + listOfNotNull(text("configApiId"))).distinct().map { ApprovalService.plainText(it, 64) }
+                Description(
+                    "",
+                    "Publish signing-key set v${version ?: "?"}" + if (set == null) "" else
+                        ": ${keys.size} signing key(s), ${required ?: "?"} signature(s) required, for " +
+                            (if (scopes.isEmpty()) "NO named Config API" else "Config API ${scopes.joinToString(", ")}"),
+                    if (set == null) detail else JsonObject(detail + mapOf("keySet" to buildJsonObject {
+                        version?.let { put("version", it) }
+                        required?.let { put("requiredSignatures", it) }
+                        putJsonArray("keySha256") { keys.forEach { add(JsonPrimitive(it)) } }
+                        putJsonArray("configApiIds") { scopes.forEach { add(JsonPrimitive(it)) } }
+                    }))
+                )
             }
 
             // ── Who the mTLS listeners let in ───────────────────────────
@@ -602,7 +630,7 @@ class ChangeDescriber(
 
         // The live gate, as the handler will run it — refused now rather than
         // after someone approved it. An override reason travels in the query.
-        val decision = liveGateDecision(liveGate, current, updated, parseQueryString(input.query)["liveCheckOverride"])
+        val decision = liveGateDecision(liveGate, current, updated, ExactQuery.parse(input.query)["liveCheckOverride"])
         val live = decision.result
         if (decision.blocked && live != null) {
             audit?.record("live_check_blocked", live.describe(), gateScope, live.failures().joinToString(",") { it.hostname },
@@ -669,7 +697,7 @@ class ChangeDescriber(
 
     private fun describeVault(input: ChangeInput, scope: String, detail: JsonObject, json: JsonObject?): Description {
         val segments = PinAffectingRoutes.vaultSegments(input.path)
-        val query = parseQueryString(input.query)
+        val query = ExactQuery.parse(input.query)
         return when (input.op) {
             "vault_upload" -> {
                 val key = segments.first()

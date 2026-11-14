@@ -64,6 +64,9 @@ services:
       - CLIENT_P12_PASSWORD=${CLIENT_P12_PASSWORD:-}
       - VAULT_AT_REST_PASSWORD=${VAULT_AT_REST_PASSWORD:-}
       - VAULT_AT_REST_PASSWORD_PREVIOUS=${VAULT_AT_REST_PASSWORD_PREVIOUS:-}
+      # true for the one start that upgrades a database written before 2.10.0 (vault blobs
+      # from then do not say which file they belong to). Remove it afterwards.
+      - VAULT_AT_REST_BIND_LEGACY
       # Tuning
       - EXTRA_CERT_SANS=${EXTRA_CERT_SANS:-}
       - CONFIG_TTL_SECONDS=${CONFIG_TTL_SECONDS:-}
@@ -100,7 +103,8 @@ services:
       # Vault downloads served at once, per address (4) and in total (16); each holds the whole file in memory.
       - VAULT_DOWNLOAD_CONCURRENCY=${VAULT_DOWNLOAD_CONCURRENCY:-}
       - VAULT_DOWNLOAD_CONCURRENCY_TOTAL=${VAULT_DOWNLOAD_CONCURRENCY_TOTAL:-}
-      # A host's client certificate only to devices the host ACL names (true); unset = every enrolled device.
+      # A host's client certificate only to devices the host ACL names (unset = true); false: a scope
+      # without an ACL serves it to every enrolled device.
       - HOST_CLIENT_CERT_REQUIRE_GRANT=${HOST_CLIENT_CERT_REQUIRE_GRANT:-}
       # off: the Config API ports answer device endpoints only; admin routes live on the management port.
       - CONFIG_API_ADMIN_ROUTES=${CONFIG_API_ADMIN_ROUTES:-}
@@ -137,6 +141,73 @@ services:
       # targets unless this is true (a lab that pins hosts on its own LAN).
       - FETCH_ALLOW_PRIVATE_TARGETS=${FETCH_ALLOW_PRIVATE_TARGETS:-}
       - MTLS_RESTART_MIN_INTERVAL_SECONDS=${MTLS_RESTART_MIN_INTERVAL_SECONDS:-}
+      # ── The rest of the README's tables, passed through as they are: a name
+      # without a value takes the variable from your shell or .env and leaves it
+      # unset in the container when it is unset there (the server default applies).
+      # Listeners and addresses. MANAGEMENT_HTTPS_PORT also needs a port mapping
+      # above; TRUSTED_PROXIES + CLIENT_IP_HEADER behind a reverse proxy.
+      - MANAGEMENT_HTTPS_PORT
+      - TRUSTED_PROXIES
+      - CLIENT_IP_HEADER
+      - LOG_LEVEL_CONFIG_API_ACCESS
+      # What the setup wizard writes into the app's configuration (address and
+      # listen:published port pairs), and whether "Restart now" may exit the server.
+      - SETUP_PUBLIC_HOST
+      - SETUP_PUBLIC_PORTS
+      - PINVAULT_RESTART_ON_EXIT
+      # Admin side: invalid keys per address, a file of named admin keys, how long
+      # a change request waits, the live-certificate check.
+      - ADMIN_AUTH_FAILURE_LIMIT
+      - ADMIN_KEYS_FILE
+      - APPROVAL_TTL_HOURS
+      - PIN_LIVE_CHECK_ALLOW_OVERRIDE
+      - LIVE_CHECK_TIMEOUT_MS
+      # Device-side limits: certificates per client id, key replacements, pickup
+      # polling, rows kept in the device list.
+      - ISSUANCE_RATE_LIMIT
+      - KEY_REPLACEMENT_RATE_LIMIT
+      - PICKUP_RATE_LIMIT
+      - PICKUP_SOURCE_RATE_LIMIT
+      - CLIENT_DEVICES_MAX
+      # Integrity token of an enrollment (off | warn | enforce) and the command that decodes it.
+      - INTEGRITY_VERIFICATION
+      - INTEGRITY_VERIFIER_COMMAND
+      - INTEGRITY_VERIFIER_TIMEOUT_MS
+      - INTEGRITY_PASS_ENV
+      # Attestation, continued: device limit, accepted boot keys, fresh-key rounds,
+      # how long a reported token anomaly stays raised.
+      - ATTESTATION_DEVICE_LIMIT
+      - ATTESTATION_TRUSTED_BOOT_KEYS
+      - ATTESTATION_FRESH_INTERVAL_SECONDS
+      - ATTESTATION_FRESH_GRACE_SECONDS
+      - ATTESTATION_ANOMALY_TTL_SECONDS
+      - APP_ATTEST_REQUIRE_V2
+      # Play Integrity (ATTESTATION.md §11): the two Play Console response keys, both or neither.
+      - PLAY_INTEGRITY_ENABLED
+      - PLAY_INTEGRITY_DECRYPTION_KEY
+      - PLAY_INTEGRITY_VERIFICATION_KEY
+      - PLAY_INTEGRITY_PACKAGE_NAMES
+      - PLAY_INTEGRITY_DEVICE_LEVEL
+      - PLAY_INTEGRITY_REQUIRE_APP_RECOGNIZED
+      - PLAY_INTEGRITY_TOKEN_MAX_AGE_SECONDS
+      - PLAY_INTEGRITY_MAX_AGE_SECONDS
+      - PLAY_INTEGRITY_STALE_PASS_SECONDS
+      - PLAY_INTEGRITY_REQUIRE_V2
+      - PLAY_INTEGRITY_REQUIRE_LICENSED
+      # PinVault-Token on the mock hosts (with MOCK_HOST_REQUIRE_TOKEN): certificate
+      # binding, the public origin a proof must name, token-use anomalies.
+      - PINVAULT_TOKEN_REQUIRE_CERT_BINDING
+      - PINVAULT_TOKEN_PUBLIC_ORIGIN
+      - PINVAULT_TOKEN_ANOMALY
+      - PINVAULT_TOKEN_ANOMALY_MAX_ADDRESSES
+      - PINVAULT_TOKEN_ANOMALY_MAX_REQUESTS
+      - PINVAULT_TOKEN_ANOMALY_WINDOW_SECONDS
+      # With CONFIG_SIGNERS=command (which, like SIGNER_COMMAND, you add below).
+      - SIGNER_PUBLIC_KEY_FILE
+      - SIGNER_INPUT
+      - SIGNER_TIMEOUT_MS
+      # Espresso only: arms short certificate lifetimes. Never in production.
+      - ALLOW_TEST_HOOKS
       # Optional signing / governance layers (SECURE_OPERATIONS.md) are not
       # passed through by default; add the ones you enable here, e.g.
       #   - ADMIN_KEYS=${ADMIN_KEYS}

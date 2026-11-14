@@ -1,5 +1,6 @@
 package com.example.pinvault.server.plugin
 
+import com.example.pinvault.server.service.queryExact
 import com.example.pinvault.server.service.AuditContext
 import com.example.pinvault.server.service.AuditLog
 import io.ktor.http.*
@@ -76,7 +77,7 @@ val AdminAudit = createApplicationPlugin("AdminAudit", ::AdminAuditConfig) {
             // The scope the handler wrote: a `{configApiId}` path segment wins
             // (handlers read it with pathParameters, a same-named query
             // parameter beside it changes nothing), then `?configApiId=`.
-            configApiId = scopeInPath(call.request.path()) ?: call.request.queryParameters["configApiId"] ?: "",
+            configApiId = scopeInPath(call.request.path()) ?: call.request.queryExact("configApiId") ?: "",
             target = "${method.value} ${call.request.path()}$query",
             actor = scope.actor,
             ip = scope.ip

@@ -1,5 +1,6 @@
 package com.example.pinvault.server.route
 
+import com.example.pinvault.server.service.queryExact
 import com.example.pinvault.server.model.PinConfig
 import com.example.pinvault.server.model.PinConfigHistoryEntry
 import com.example.pinvault.server.model.SigningKeyInfo
@@ -637,7 +638,7 @@ fun Route.certificateConfigRoutes(
             // signEnvelope for why it may be loaded twice). `?hosts=` and
             // X-Device-Id scope it; the attestation endpoint embeds the very
             // same view (servedPinConfig), from the body's hosts and deviceId.
-            val requested = call.request.queryParameters["hosts"]
+            val requested = call.request.queryExact("hosts")
                 ?.split(",")?.map { it.trim() }?.filter { it.isNotEmpty() }
             val headerDeviceId = call.request.header("X-Device-Id")
             // Both are the caller's text and each distinct value is its own
@@ -658,7 +659,7 @@ fun Route.certificateConfigRoutes(
             // Signed: the payload names the request it answers (`view`, M6).
             fun signedView(): PinConfig = signedPinConfig(call, configApiId, store, deviceHostAclStore, requested, headerDeviceId)
 
-            val signed = call.request.queryParameters["signed"] != "false"
+            val signed = call.request.queryExact("signed") != "false"
             if (!signed) return@get call.respond(servedView())
 
             val features = call.request.header("X-PinVault-Features").orEmpty()
@@ -695,7 +696,7 @@ fun Route.certificateConfigRoutes(
         // both the management and the Config API ports), and an admin can
         // already write any scope via POST /api/v1/config/{id}/update.
         put {
-            val scope = call.request.queryParameters["configApiId"] ?: configApiId
+            val scope = call.request.queryExact("configApiId") ?: configApiId
             call.applyPinConfigUpdate(scope, store, historyStore, liveGate, audit)
         }
 
@@ -709,7 +710,7 @@ fun Route.certificateConfigRoutes(
         // variants below — the admin UI drives these from a host detail page
         // that may belong to any Config API scope.
         post("force-update/{hostname}") {
-            val scope = call.request.queryParameters["configApiId"] ?: configApiId
+            val scope = call.request.queryExact("configApiId") ?: configApiId
             val hostname = call.pathParameters["hostname"] ?: ""
             // Load and save in one piece (the scope's lock): a pin write landing
             // in between is not written over with the config read before it.
@@ -730,7 +731,7 @@ fun Route.certificateConfigRoutes(
         }
 
         post("clear-force/{hostname}") {
-            val scope = call.request.queryParameters["configApiId"] ?: configApiId
+            val scope = call.request.queryExact("configApiId") ?: configApiId
             val hostname = call.pathParameters["hostname"] ?: ""
             val updated = store.locked(scope) {
                 val current = store.load(scope)
@@ -750,7 +751,7 @@ fun Route.certificateConfigRoutes(
         // the Config API the operator had open. Admin-only: these paths are not
         // in the ApiKeyAuth allowlist, so X-API-Key is required.
         post("force-update") {
-            val scope = call.request.queryParameters["configApiId"] ?: configApiId
+            val scope = call.request.queryExact("configApiId") ?: configApiId
             val updated = store.locked(scope) {
                 val current = store.load(scope)
                 current.copy(
@@ -767,7 +768,7 @@ fun Route.certificateConfigRoutes(
         }
 
         post("clear-force") {
-            val scope = call.request.queryParameters["configApiId"] ?: configApiId
+            val scope = call.request.queryExact("configApiId") ?: configApiId
             val updated = store.locked(scope) {
                 val current = store.load(scope)
                 current.copy(
@@ -1141,7 +1142,7 @@ internal suspend fun ApplicationCall.passesLiveGate(
     if (liveGate == null || !liveGate.enabled) return true
     // Network I/O: off the event loop.
     val decision = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
-        liveGateDecision(liveGate, current, updated, request.queryParameters["liveCheckOverride"])
+        liveGateDecision(liveGate, current, updated, request.queryExact("liveCheckOverride"))
     }
     val result = decision.result ?: return true
     if (result.passed) return true

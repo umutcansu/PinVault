@@ -849,6 +849,13 @@ class AttestationRoutesTest {
 
         // The device's current certificate carries the very key that signs: the old key is released.
         val cert = Base64.getDecoder().decode(TestAttestationChains.chain(pki, second.public, TestAttestationChains.identityDescription("x")).first())
+        // …but not when that certificate only CLAIMS the device id (a token not bound to the
+        // device, an id sent at enrollment): after "forget identity" the attestation row stays,
+        // and whoever enrolled under the id would take it over (review 2026-11-14, S4).
+        val unproven = service.attest(scope, Json.parseToJsonElement(body(challenge(), "dev-1", second, report())).jsonObject, "test",
+            clientCertificate = cert, certificateProvesDevice = false)
+        assertEquals("key_mismatch", assertIs<AttestationService.Outcome.Refused>(unproven).error)
+        assertEquals(0, auditStore.count("attestation_key_rebound"))
         val rebound = service.attest(scope, Json.parseToJsonElement(body(challenge(), "dev-1", second, report())).jsonObject, "test", clientCertificate = cert)
         assertIs<AttestationService.Outcome.Decided>(rebound)
         assertEquals(AttestationService.sha256Hex(second.public.encoded), devices.get(scope, "dev-1")!!.spkiSha256)

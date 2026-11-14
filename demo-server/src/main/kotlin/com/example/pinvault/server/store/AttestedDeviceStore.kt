@@ -136,8 +136,12 @@ class AttestedDeviceStore(private val db: DatabaseManager) {
                  spki_sha256 = excluded.spki_sha256, public_key = excluded.public_key, key_attested = excluded.key_attested,
                  key_security_level = excluded.key_security_level, key_attestation_reason = excluded.key_attestation_reason,
                  last_seen = excluded.last_seen, key_facts = excluded.key_facts,
-                 fresh_facts = NULL, fresh_attested_at = NULL, fresh_result = NULL, anomaly_at = NULL, anomaly_reason = NULL
+                 fresh_facts = NULL, fresh_attested_at = NULL, fresh_result = NULL
                WHERE attested_devices.spki_sha256 IS NULL"""
+            // A token anomaly on the row stays: a row without a key is one whose key was
+            // released when the device proved a new identity key (releaseKey), and a device
+            // must not clear its own anomaly by enrolling again — lifting it is an admin's,
+            // gated, `DELETE …/anomaly` (review 2026-11-14, S4).
         ).use { stmt ->
             stmt.setString(1, configApiId)
             stmt.setString(2, deviceId)

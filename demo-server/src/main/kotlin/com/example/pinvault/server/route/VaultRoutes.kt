@@ -1,5 +1,6 @@
 package com.example.pinvault.server.route
 
+import com.example.pinvault.server.service.queryExact
 import com.example.pinvault.server.plugin.ApiKeyPolicy
 import com.example.pinvault.server.plugin.RESERVED_VAULT_SEGMENTS
 import com.example.pinvault.server.plugin.receiveLimitedBytes
@@ -240,7 +241,7 @@ fun Route.vaultRoutes(
                     mapOf("error" to "Invalid vault key format"))
             }
 
-            val currentVersion = call.request.queryParameters["version"]?.toIntOrNull() ?: 0
+            val currentVersion = call.request.queryExact("version")?.toIntOrNull() ?: 0
             // Metadata only — see above. `entry` (the content) is read further down.
             val meta = vaultFileStore.meta(configApiId, key)
             val deviceId = call.request.header("X-Device-Id")

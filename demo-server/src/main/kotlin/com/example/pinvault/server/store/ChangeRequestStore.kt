@@ -42,15 +42,15 @@ class ChangeRequestStore(
     private val db: DatabaseManager,
     private val cipher: com.example.pinvault.server.service.VaultAtRestCipher? = null
 ) {
-    private fun seal(bytes: ByteArray?): ByteArray? = if (bytes == null || cipher == null) bytes else cipher.encrypt(bytes)
+    private fun seal(bytes: ByteArray?): ByteArray? = if (bytes == null || cipher == null) bytes else cipher.encrypt(bytes, AT_REST_DOMAIN)
 
     private fun unseal(bytes: ByteArray?): ByteArray? {
         if (bytes == null || cipher == null || !com.example.pinvault.server.service.VaultAtRestCipher.isEncrypted(bytes)) return bytes
         // A previous password (VAULT_AT_REST_PASSWORD_PREVIOUS) still opens what
         // waited across a rotation. A body that merely starts with the marker
         // (sent so, or stored before encryption) does not open: it is the request as sent.
-        return when (val opened = cipher.open(bytes)) {
-            com.example.pinvault.server.service.VaultAtRestCipher.Opened.Current -> cipher.decrypt(bytes)
+        return when (val opened = cipher.open(bytes, AT_REST_DOMAIN)) {
+            com.example.pinvault.server.service.VaultAtRestCipher.Opened.Current -> cipher.decrypt(bytes, AT_REST_DOMAIN)
             is com.example.pinvault.server.service.VaultAtRestCipher.Opened.Previous -> opened.plaintext
             com.example.pinvault.server.service.VaultAtRestCipher.Opened.Unreadable -> bytes
         }
@@ -235,3 +235,11 @@ class ChangeRequestStore(
         }
     }
 }
+
+/**
+ * What a sealed change-request body or plan is bound to (review 2026-11-14,
+ * S2): its own kind. A blob sealed here does not open as a vault file or as a
+ * token secret, and theirs do not open here. Rows sealed before (no binding)
+ * are still read.
+ */
+private val AT_REST_DOMAIN = "pinvault-change-request:v1".toByteArray(Charsets.UTF_8)

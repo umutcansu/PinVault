@@ -1,5 +1,6 @@
 package com.example.pinvault.server.route
 
+import com.example.pinvault.server.service.queryExact
 import com.example.pinvault.server.model.PinConfigHistoryEntry
 import com.example.pinvault.server.service.AuditLog
 import com.example.pinvault.server.service.LiveCertificateGate
@@ -50,7 +51,7 @@ fun Route.pinSnapshotRoutes(
     audit: AuditLog? = null
 ) {
     fun io.ktor.server.application.ApplicationCall.scope(): String =
-        request.queryParameters["configApiId"]?.takeIf { it.isNotBlank() } ?: "default-tls"
+        request.queryExact("configApiId")?.takeIf { it.isNotBlank() } ?: "default-tls"
 
     get("/api/v1/pin-snapshots") {
         val list = snapshots.list(call.scope())
@@ -99,7 +100,7 @@ fun Route.pinSnapshotRoutes(
             ?: return@post call.respondText("""{"error":"snapshot_not_found"}""", ContentType.Application.Json, HttpStatusCode.NotFound)
         // The approval card and the state hash are computed for the query's
         // scope: it must be the snapshot's own.
-        val querySope = call.request.queryParameters["configApiId"]
+        val querySope = call.request.queryExact("configApiId")
         if (querySope != null && querySope != snap.configApiId) {
             return@post call.respondText("""{"error":"scope_mismatch"}""", ContentType.Application.Json, HttpStatusCode.Conflict)
         }

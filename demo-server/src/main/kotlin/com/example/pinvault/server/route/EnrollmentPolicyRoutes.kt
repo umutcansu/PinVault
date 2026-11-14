@@ -1,5 +1,6 @@
 package com.example.pinvault.server.route
 
+import com.example.pinvault.server.service.queryExact
 import com.example.pinvault.server.plugin.AdminRegistry
 import com.example.pinvault.server.plugin.adminName
 import com.example.pinvault.server.service.AuditLog
@@ -172,7 +173,7 @@ fun Route.enrollmentPolicyRoutes(
 
     get("/api/v1/enrollment-requests") {
         policies.expirePending(pendingTtl)
-        val status = call.request.queryParameters["status"]
+        val status = call.request.queryExact("status")
             ?.takeIf { it in setOf(EnrollmentRequest.PENDING, EnrollmentRequest.APPROVED, EnrollmentRequest.REJECTED, EnrollmentRequest.ISSUED, EnrollmentRequest.EXPIRED) }
         // The same device (by device id) asking more than once — say, reinstalled
         // before anyone decided — is flagged on each of its waiting requests.

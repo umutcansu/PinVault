@@ -125,8 +125,12 @@ class GovernanceEnvParsingTest {
         assertTrue(ServerSettingsCatalog.startProblems(sharedOnly + ("PIN_CHANGE_APPROVALS" to "2")).single().contains("personal admin key"))
         assertTrue(ServerSettingsCatalog.startProblems(mapOf("PIN_CHANGE_APPROVALS" to "2")).single().contains("without admin keys"))
         assertEquals(emptyList(), ServerSettingsCatalog.startProblems(twoAdmins + ("PIN_CHANGE_APPROVALS" to "2")))
-        assertEquals(emptyList(), ServerSettingsCatalog.startProblems(twoAdmins + ("PIN_CHANGE_APPROVALS" to "3")))
-        assertEquals(1, ServerSettingsCatalog.startProblems(twoAdmins + ("PIN_CHANGE_APPROVALS" to "4")).size, "three approvers needed, two keys")
+        // The requester is a personal key too (the gate takes no request from the shared one) and
+        // approves nothing of their own: N approvals take N personal keys. It used to ask for N-1 —
+        // with one key and PIN_CHANGE_APPROVALS=2 the server started and no change could ever be applied.
+        val oneAdmin = sharedOnly + ("ADMIN_KEYS" to "alice:$hash")
+        assertTrue(ServerSettingsCatalog.startProblems(oneAdmin + ("PIN_CHANGE_APPROVALS" to "2")).single().contains("personal admin key"))
+        assertEquals(1, ServerSettingsCatalog.startProblems(twoAdmins + ("PIN_CHANGE_APPROVALS" to "3")).size, "a requester and two approvers, two keys")
         assertEquals(emptyList(), ServerSettingsCatalog.startProblems(sharedOnly + ("PIN_CHANGE_APPROVALS" to "1")))
 
         // The save (PUT /api/v1/server-settings and its approval card plan with this): would_not_start.
@@ -202,7 +206,7 @@ class GovernanceEnvParsingTest {
                 // startProblems' business; here only "does a parser choke on this value".
                 val env = twoAdmins + mapOf(
                     "ATTESTATION_PACKAGE_NAMES" to "com.example.app", "ATTESTATION_SIGNER_SHA256" to hash,
-                    "INTEGRITY_VERIFIER_COMMAND" to "/bin/true", "ADMIN_KEYS" to "a:$hash,b:$hash,c:$hash,d:$hash"
+                    "INTEGRITY_VERIFIER_COMMAND" to "/bin/true", "ADMIN_KEYS" to "a:$hash,b:$hash,c:$hash,d:$hash,e:$hash"
                 )
                 val problems = SavedSettingsCheck.problems(mapOf(setting.key to value), env = env)
                     .filterNot { setting.key.startsWith("ATTESTATION_FRESH_") }   // its own rule: an interval under a minute

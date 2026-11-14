@@ -125,8 +125,8 @@ class ServerSettingsTest {
     @Test
     fun `the dashboard saves for the next start and refuses what would not start`() = testApplication {
         val store = ServerSettingsStore(file)
-        // A server with a personal admin key to approve with: approvals can be saved.
-        val admins = mapOf("API_KEY" to "shared-key-0123456789", "ADMIN_KEYS" to "alice:${"ab".repeat(32)}")
+        // A server with two personal admin keys — one requests, the other approves: approvals can be saved.
+        val admins = mapOf("API_KEY" to "shared-key-0123456789", "ADMIN_KEYS" to "alice:${"ab".repeat(32)},bob:${"cd".repeat(32)}")
         routing { serverSettingsRoutes(store, null, restartSupervised = false, env = { System.getenv() + admins }) }
 
         val saved = client.put("/api/v1/server-settings") {

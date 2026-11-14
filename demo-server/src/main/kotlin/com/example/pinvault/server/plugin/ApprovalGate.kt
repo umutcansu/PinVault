@@ -149,6 +149,24 @@ val ApprovalGate = createApplicationPlugin("ApprovalGate", ::ApprovalGateConfig)
             return@onCall
         }
 
+        // The same for the query. Card and handlers read it with ExactQuery,
+        // one function on one string; this refuses the query an engine's own
+        // parser would read differently (a name spelled twice in different
+        // case, a thousand empty parameters in front, broken escapes), so a
+        // handler that still asked the engine could not be shown one scope
+        // and write another (review 2026-11-14: `?ConfigApiId=staging` got a
+        // card for staging and rewrote default-tls).
+        if (!com.example.pinvault.server.service.ExactQuery.agreesWith(call.request.queryParameters, call.request.queryString())) {
+            call.respond(
+                HttpStatusCode.BadRequest,
+                mapOf(
+                    "error" to "ambiguous_query",
+                    "message" to "The query string of a change that needs approval must read one way: each parameter once, names spelled exactly, no empty parameters."
+                )
+            )
+            return@onCall
+        }
+
         // Kept in memory and stored with the request: capped while it is read (413).
         val body = call.receiveLimitedBytes(maxBodyBytes(op)) ?: return@onCall
 

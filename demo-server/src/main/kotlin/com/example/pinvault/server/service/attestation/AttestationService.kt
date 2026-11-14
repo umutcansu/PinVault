@@ -182,7 +182,9 @@ class AttestationService(
      */
     fun attest(
         configApiId: String, body: JsonObject, remote: String, clientCertificate: ByteArray? = null,
-        deviceAllowed: (String) -> Boolean = { true }
+        deviceAllowed: (String) -> Boolean = { true },
+        /** Whether [clientCertificate] proves the report's device id (see `attestationRoutes`' `isProven`). */
+        certificateProvesDevice: Boolean = clientCertificate != null
     ): Outcome {
         // ── 1. Shape ───────────────────────────────────────────────────
         val version = (body["v"] as? JsonPrimitive)?.intOrNull
@@ -263,7 +265,10 @@ class AttestationService(
         // this deviceId (the route checked), and its key is the one signing here. Then the
         // old key is released and the new one registers as a first key would — chain and all.
         val previousSpki = device?.takeIf { it.registered }?.spkiSha256
-        if (previousSpki != null && previousSpki != spki && clientCertificate != null && certificateSpki(clientCertificate) == spki) {
+        // …and only a certificate that PROVES the device id (not one whose id the
+        // device merely claimed at enrollment) may put a new key in the old one's place.
+        if (previousSpki != null && previousSpki != spki && clientCertificate != null && certificateProvesDevice &&
+            certificateSpki(clientCertificate) == spki) {
             devices.releaseKey(configApiId, deviceId)
             audit?.record("attestation_key_rebound",
                 "Device $deviceId attested with the key of its current client certificate; the earlier key was released",

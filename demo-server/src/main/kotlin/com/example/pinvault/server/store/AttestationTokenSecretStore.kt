@@ -190,7 +190,7 @@ class AttestationTokenSecretStore(
                 buildList { while (rs.next()) add(rs.getString(1) to rs.getBytes(2)) }
             }
             for ((kid, stored) in rows) {
-                val plaintext: ByteArray = if (!VaultAtRestCipher.isEncrypted(stored)) stored else when (val opened = cipher.open(stored)) {
+                val plaintext: ByteArray = if (!VaultAtRestCipher.isEncrypted(stored)) stored else when (val opened = cipher.open(stored, AT_REST_DOMAIN)) {
                     VaultAtRestCipher.Opened.Current -> continue
                     is VaultAtRestCipher.Opened.Previous -> opened.plaintext
                     VaultAtRestCipher.Opened.Unreadable -> throw IllegalStateException(
@@ -200,7 +200,7 @@ class AttestationTokenSecretStore(
                     )
                 }
                 conn.prepareStatement("UPDATE attestation_token_secrets SET secret = ? WHERE kid = ?").use { stmt ->
-                    stmt.setBytes(1, cipher.encrypt(plaintext))
+                    stmt.setBytes(1, cipher.encrypt(plaintext, AT_REST_DOMAIN))
                     stmt.setString(2, kid)
                     stmt.executeUpdate()
                 }
@@ -210,7 +210,7 @@ class AttestationTokenSecretStore(
         }
     }
 
-    private fun seal(secret: ByteArray): ByteArray = cipher?.encrypt(secret) ?: secret
+    private fun seal(secret: ByteArray): ByteArray = cipher?.encrypt(secret, AT_REST_DOMAIN) ?: secret
 
     /**
      * A sealed value needs the cipher: without one the ciphertext used to be
@@ -225,7 +225,7 @@ class AttestationTokenSecretStore(
                 "Set VAULT_AT_REST_PASSWORD to the one the secrets were sealed with."
         )
         else -> try {
-            cipher.decrypt(stored)
+            cipher.decrypt(stored, AT_REST_DOMAIN)
         } catch (e: VaultKeyMismatchException) {
             throw IllegalStateException(
                 "A PinVault-Token secret does not open with VAULT_AT_REST_PASSWORD: it was sealed under another password " +
@@ -238,3 +238,11 @@ class AttestationTokenSecretStore(
         private const val CACHE_MS = 5_000L
     }
 }
+
+/**
+ * What a sealed PinVault-Token secret is bound to (review 2026-11-14, S2): its
+ * own kind. A blob sealed here does not open as a vault file or as a change
+ * request, and theirs do not open here. Secrets sealed before (no binding) are
+ * read, and re-sealed with the binding by the startup check.
+ */
+private val AT_REST_DOMAIN = "pinvault-token-secret:v1".toByteArray(Charsets.UTF_8)

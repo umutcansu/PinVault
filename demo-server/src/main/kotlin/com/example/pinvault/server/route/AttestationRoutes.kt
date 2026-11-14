@@ -1,5 +1,6 @@
 package com.example.pinvault.server.route
 
+import com.example.pinvault.server.service.queryExact
 import com.example.pinvault.server.model.PinConfig
 import com.example.pinvault.server.model.SignedConfig
 import com.example.pinvault.server.plugin.ApprovedReplayKey
@@ -109,7 +110,18 @@ fun Route.attestationRoutes(
      * holds `X-Device-Id` to on an mTLS listener (Main passes the same
      * `certificateBoundTo`). Asked only when the call carries a certificate.
      */
-    isBound: (certClientId: String, deviceId: String) -> Boolean = { certClientId, deviceId -> certClientId == deviceId }
+    isBound: (certClientId: String, deviceId: String) -> Boolean = { certClientId, deviceId -> certClientId == deviceId },
+    /**
+     * Whether that certificate PROVES the device id (Main passes
+     * `certificateProvenFor`): the id is the certificate's own, a token an
+     * administrator bound to it, or a key attestation with the app binding —
+     * not an id the device only told the server at enrollment. Only such a
+     * certificate lets a device replace the attestation key on record
+     * (review 2026-11-14, S4: after "forget identity" the attestation row
+     * stays, and the holder of any unbound enrollment token could claim its
+     * device id and take the row over, operator overrides included).
+     */
+    isProven: (certClientId: String, deviceId: String) -> Boolean = isBound
 ) {
     get("/api/v1/attest/challenge") {
         val remote = call.request.origin.remoteAddress
@@ -137,9 +149,10 @@ fun Route.attestationRoutes(
         // the X-Device-Id header, so an enrolled device could attest in the
         // name of another: the body's id is held to the same rule. A TLS
         // listener has no certificate; nothing changes there.
-        call.clientCertId()?.let { certClientId ->
-            val claimed = (body["deviceId"] as? JsonPrimitive)?.takeIf { it.isString }?.content
-            if (claimed != null && !isBound(certClientId, claimed)) {
+        val certClientId = call.clientCertId()
+        val claimed = (body["deviceId"] as? JsonPrimitive)?.takeIf { it.isString }?.content
+        certClientId?.let { id ->
+            if (claimed != null && !isBound(id, claimed)) {
                 return@post call.respondText(
                     """{"error":"device_identity_mismatch","message":"deviceId does not belong to the client certificate of this connection."}""",
                     ContentType.Application.Json, HttpStatusCode.Forbidden
@@ -150,6 +163,7 @@ fun Route.attestationRoutes(
         // Over mTLS the token names the connection's certificate (cnf.x5t#S256, ATTESTATION.md §5).
         // The device's own quota is spent inside, once the body proved it is that device.
         val outcome = service.attest(configApiId, body, remote, clientCertificate = call.clientCertificate()?.encoded,
+            certificateProvesDevice = certClientId != null && claimed != null && isProven(certClientId, claimed),
             deviceAllowed = { deviceId -> limits == null || limits.allowDevice(configApiId, deviceId) })
         call.response.header(HttpHeaders.CacheControl, "no-store")
         when (outcome) {
@@ -298,10 +312,10 @@ fun Route.attestationAdminRoutes(
 
         get("/devices") {
             val cid = call.pathParameters["configApiId"]!!
-            val result = call.request.queryParameters["result"]?.takeIf { it == "pass" || it == "reject" }
-            val page = call.request.queryParameters["page"]?.toIntOrNull() ?: 1
-            val pageSize = call.request.queryParameters["pageSize"]?.toIntOrNull() ?: 50
-            val listing = devices.list(cid, result, call.request.queryParameters["q"]?.take(128), page, pageSize)
+            val result = call.request.queryExact("result")?.takeIf { it == "pass" || it == "reject" }
+            val page = call.request.queryExact("page")?.toIntOrNull() ?: 1
+            val pageSize = call.request.queryExact("pageSize")?.toIntOrNull() ?: 50
+            val listing = devices.list(cid, result, call.request.queryExact("q")?.take(128), page, pageSize)
             call.respondText(buildJsonObject {
                 put("items", buildJsonArray { listing.items.forEach { add(json.encodeToJsonElement(AttestedDevice.serializer(), it)) } })
                 put("total", listing.total)

@@ -1,5 +1,6 @@
 package com.example.pinvault.server.route
 
+import com.example.pinvault.server.service.queryExact
 import com.example.pinvault.server.plugin.receiveLimitedBytes
 import com.example.pinvault.server.service.VaultAccessTokenService
 import com.example.pinvault.server.service.VaultExpiry
@@ -85,8 +86,8 @@ fun Route.scopedVaultAdminRoutes(
             val cid = call.pathParameters["configApiId"]!!
             val key = call.pathParameters["key"]
                 ?: return@put call.respond(HttpStatusCode.BadRequest, mapOf("error" to "Missing key"))
-            val policy = call.request.queryParameters["policy"]
-            val encryption = call.request.queryParameters["encryption"]
+            val policy = call.request.queryExact("policy")
+            val encryption = call.request.queryExact("encryption")
             // The same rules as the Config API upload: a key the device route
             // can serve, and only known policy / encryption values.
             vaultUploadError(key, policy, encryption)?.let {
@@ -94,7 +95,7 @@ fun Route.scopedVaultAdminRoutes(
             }
             // `?expiresAt=`: absent keeps the file's own, empty clears it, a date sets it.
             val expiresAt = try {
-                call.request.queryParameters["expiresAt"]?.let { ExpirySetting(VaultExpiry.parse(it)) }
+                call.request.queryExact("expiresAt")?.let { ExpirySetting(VaultExpiry.parse(it)) }
             } catch (e: VaultExpiry.Invalid) {
                 return@put call.respond(HttpStatusCode.BadRequest, mapOf("error" to (e.message ?: "invalid expiresAt")))
             }
@@ -299,7 +300,7 @@ fun Route.scopedVaultAdminRoutes(
             val deviceId = call.pathParameters["deviceId"]
                 ?: return@delete call.respond(HttpStatusCode.BadRequest, mapOf("error" to "Missing deviceId"))
             // `?purpose=user_auth`: the device's user-auth key instead of its E2E key.
-            val purpose = call.request.queryParameters["purpose"] ?: "e2e"
+            val purpose = call.request.queryExact("purpose") ?: "e2e"
             if (purpose != "e2e" && purpose != "user_auth") {
                 return@delete call.respond(HttpStatusCode.BadRequest, mapOf(
                     "error" to "unsupported_purpose",

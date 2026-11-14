@@ -1,5 +1,6 @@
 package com.example.pinvault.server.route
 
+import com.example.pinvault.server.service.queryExact
 import com.example.pinvault.server.model.*
 import com.example.pinvault.server.plugin.DEFAULT_ADMIN_BODY_MAX_BYTES
 import com.example.pinvault.server.plugin.MissingApprovedPlan
@@ -58,7 +59,7 @@ fun Route.hostRoutes(
     // kendi portuna mount edildiğinde param gönderilmediği için `defaultConfigApiId`
     // kullanılır.
     fun io.ktor.server.application.ApplicationCall.scopedApiId(): String =
-        request.queryParameters["configApiId"] ?: defaultConfigApiId
+        request.queryExact("configApiId") ?: defaultConfigApiId
 
     // A host's certificate is global, so every Config API that PINS the host
     // must get its new pins, or that scope's devices fail with a pin mismatch.
@@ -510,7 +511,7 @@ fun Route.hostRoutes(
                 }
                 val mockPorts = listOfNotNull(mockServerManager.getTlsPort(hostname), mockServerManager.getMtlsPort(hostname))
                 val allowedPorts = (mockPorts + pinnedPorts + PROBE_DEFAULT_PORTS).distinct()
-                val explicitRaw = call.request.queryParameters["port"]
+                val explicitRaw = call.request.queryExact("port")
                 val explicit = explicitRaw?.toIntOrNull()
                 if (explicitRaw != null && (explicit == null || explicit !in allowedPorts)) {
                     return@get call.respondText(

@@ -157,7 +157,9 @@ class VaultAtRestEncryptionTest {
     }
 
     @Test
-    fun `a blob from before the binding still opens and the startup pass binds it`() {
+    fun `a blob from before the binding still opens and the startup pass binds it - with the upgrade switch`() {
+        // VAULT_AT_REST_BIND_LEGACY=true: the one start that upgrades a database from before 2.10.0.
+        val store = VaultFileStore(db, VaultAtRestCipher(VaultAtRestCipher.DEMO_PASSWORD), bindLegacy = true)
         store.put("api", "old", "legacy".toByteArray(), encryption = "at_rest")
         // As 2.9.x wrote it: VLT-ENC1, no associated data.
         val legacy = VaultAtRestCipher(VaultAtRestCipher.DEMO_PASSWORD).encrypt("legacy".toByteArray())
@@ -169,6 +171,41 @@ class VaultAtRestEncryptionTest {
         assertEquals(listOf("api/old"), report.rekeyed)
         assertContentEquals("legacy".toByteArray(), store.get("api", "old")!!.content)
         assertTrue(store.secureStoredFiles().rekeyed.isEmpty(), "bound once")
+    }
+
+    // Review 2026-11-14 (S2): the same password seals change-request bodies and
+    // PinVault-Token secrets. In the unbound form such a blob, copied into a
+    // vault row by someone who can write the database, opened there and was
+    // served to whoever could download that file.
+    @Test
+    fun `an unbound blob in a vault row is not opened - by a read or by the startup pass`() {
+        store.put("api", "f", "the file".toByteArray(), accessPolicy = "public", encryption = "at_rest")
+        // What another store sealed before the binding: same password, no associated data.
+        val foreign = VaultAtRestCipher(VaultAtRestCipher.DEMO_PASSWORD).encrypt("a waiting change request with a P12 password".toByteArray())
+        db.connection().use { c ->
+            c.prepareStatement("UPDATE vault_files SET content = ? WHERE config_api_id = 'api' AND key = 'f'").use { s -> s.setBytes(1, foreign); s.executeUpdate() }
+        }
+
+        assertFailsWith<com.example.pinvault.server.service.VaultKeyMismatchException> { store.get("api", "f") }
+        val report = store.secureStoredFiles()
+        assertEquals(listOf("api/f"), report.unbound)
+        assertTrue(report.rekeyed.isEmpty() && report.encrypted.isEmpty(), "the pass does not adopt it")
+        assertContentEquals(foreign, rawContent("api", "f"), "left as it is")
+        assertFailsWith<com.example.pinvault.server.service.VaultKeyMismatchException> { store.get("api", "f") }
+    }
+
+    @Test
+    fun `a blob bound to another kind of secret does not open as a vault file`() {
+        store.put("api", "f", "the file".toByteArray(), accessPolicy = "public", encryption = "at_rest")
+        // As ChangeRequestStore and AttestationTokenSecretStore seal now: bound to their own kind.
+        for (domain in listOf("pinvault-change-request:v1", "pinvault-token-secret:v1")) {
+            val foreign = VaultAtRestCipher(VaultAtRestCipher.DEMO_PASSWORD).encrypt("secret".toByteArray(), domain.toByteArray())
+            db.connection().use { c ->
+                c.prepareStatement("UPDATE vault_files SET content = ? WHERE config_api_id = 'api' AND key = 'f'").use { s -> s.setBytes(1, foreign); s.executeUpdate() }
+            }
+            assertFailsWith<com.example.pinvault.server.service.VaultKeyMismatchException>(domain) { store.get("api", "f") }
+            assertEquals(listOf("api/f"), store.secureStoredFiles().unreadable, domain)
+        }
     }
 
     @Test

@@ -144,7 +144,7 @@ object ServerSettingsCatalog {
         if (v("INTEGRITY_VERIFICATION").lowercase() == "enforce" && v("INTEGRITY_VERIFIER_COMMAND").isEmpty() && v("APP_ATTEST_APP_IDS").isEmpty()) {
             add("INTEGRITY_VERIFICATION=enforce needs INTEGRITY_VERIFIER_COMMAND (set in the environment)")
         }
-        // Approvals need approvers: personal admin keys other than the requester's
+        // Approvals need a requester and approvers: personal admin keys, each a different one
         // (Main refuses to start otherwise). Saved from the dashboard on a server
         // with only a shared API_KEY, this used to pass the save and then stop
         // every start.

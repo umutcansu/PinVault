@@ -123,7 +123,7 @@ object PinAffectingRoutes {
      */
     fun scopeOf(canonicalPath: String, query: String): String =
         SCOPE_IN_PATH.firstNotNullOfOrNull { it.find(canonicalPath)?.groupValues?.get(1) }?.let(::segmentValue)
-            ?: parseQueryString(query)["configApiId"]
+            ?: ExactQuery.parse(query)["configApiId"]
             ?: "default-tls"
 
     /** The `{hostname}` segment of a host-scoped gated route, as its handler reads it; null when the route has none. */
@@ -431,15 +431,25 @@ class ApprovalService(
                 "A shared key (API_KEY) cannot approve: it does not say WHO approves. Use a personal key from ADMIN_KEYS."
             )
         }
+        // A card that cannot be read cannot be compared with the present. That
+        // used to read as "nothing to compare" (`getOrNull`) and the request went
+        // on; now it is not applied (review 2026-11-14, S5).
+        fun unreadableCard(): Nothing {
+            store.decideIfPending(id, "stale", approver, Instant.now().toString(), "its card could not be read", null, null)
+            audit.record("change_stale", "#$id not applied: its card could not be read — ${cr.summary}",
+                cr.configApiId, "${cr.method} ${cr.path}", actor = approver)
+            throw Refused(HttpStatusCode.Conflict, "The card of #$id could not be read, so it cannot be compared with the current state. Ask for a fresh request.")
+        }
+        if (cr.detail.isNotBlank() && runCatching { kotlinx.serialization.json.Json.parseToJsonElement(cr.detail) as JsonObject }.isFailure) unreadableCard()
         val base = runCatching {
-            kotlinx.serialization.json.Json.parseToJsonElement(cr.detail).let { it as JsonObject }["baseHash"]
+            if (cr.detail.isBlank()) null else kotlinx.serialization.json.Json.parseToJsonElement(cr.detail).let { it as JsonObject }["baseHash"]
                 ?.let { (it as kotlinx.serialization.json.JsonPrimitive).content }
-        }.getOrNull()
+        }.getOrElse { unreadableCard() }
         // Every other Config API the change writes to, as recorded on its card.
         val staleScope = runCatching {
             ((kotlinx.serialization.json.Json.parseToJsonElement(cr.detail) as JsonObject)[SCOPE_HASHES] as? JsonObject)
                 ?.entries?.firstOrNull { (scope, hash) -> (hash as kotlinx.serialization.json.JsonPrimitive).content != stateHash(scope) }?.key
-        }.getOrNull()
+        }.getOrElse { if (cr.detail.isBlank()) null else unreadableCard() }
         if (staleScope != null) {
             store.decideIfPending(id, "stale", approver, Instant.now().toString(), "pins of $staleScope changed since the request was made", null, null)
             audit.record("change_stale", "#$id not applied: $staleScope changed since it was requested — ${cr.summary}",
@@ -471,7 +481,7 @@ class ApprovalService(
         val stateKey = runCatching {
             (kotlinx.serialization.json.Json.parseToJsonElement(cr.detail) as JsonObject)["stateKey"]
                 ?.let { (it as kotlinx.serialization.json.JsonPrimitive).content }
-        }.getOrNull()
+        }.getOrElse { if (cr.detail.isBlank()) null else unreadableCard() }
         if (stateKey != null) {
             val now = runCatching {
                 describe(ChangeInput(
@@ -624,8 +634,12 @@ class ApprovalService(
 
         /**
          * Why [required] approvals cannot work with the admin keys in
-         * [admins], or null when they can: every approver is a personal key
-         * (`ADMIN_KEYS`), other than the requester's. The start-up refuses
+         * [admins], or null when they can: the requester and every approver
+         * are personal keys (`ADMIN_KEYS`), each a different one — [required]
+         * of them in all. (It used to ask for one fewer, counting approvers
+         * only: with `PIN_CHANGE_APPROVALS=2` and one personal key the server
+         * started, and no gated change could ever be applied — the gate takes
+         * no request from the shared key and nobody approves their own.) The start-up refuses
          * such a server, and a settings save that would make one is refused
          * with this sentence (`ServerSettingsCatalog.startProblems`).
          */
@@ -633,9 +647,10 @@ class ApprovalService(
             if (required <= 1) return null
             if (admins.isEmpty) return "PIN_CHANGE_APPROVALS=$required cannot work without admin keys (anonymous admin mode)."
             val personal = admins.names.count { it != com.example.pinvault.server.plugin.AdminRegistry.LEGACY_NAME }
-            return if (personal >= required - 1) null else
-                "PIN_CHANGE_APPROVALS=$required needs at least ${required - 1} personal admin key(s) in " +
-                    "ADMIN_KEYS to approve changes (found $personal). A shared API_KEY cannot approve."
+            return if (personal >= required) null else
+                "PIN_CHANGE_APPROVALS=$required needs at least $required personal admin keys in ADMIN_KEYS " +
+                    "(found $personal): one to request a change and ${required - 1} other(s) to approve it. " +
+                    "A shared API_KEY can do neither."
         }
 
         /** The most admins a change can be made to need (the dashboard's settings page offers the same range). */

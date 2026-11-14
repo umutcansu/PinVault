@@ -1,5 +1,6 @@
 package com.example.pinvault.server
 
+import com.example.pinvault.server.service.queryExact
 import com.example.pinvault.server.plugin.installAdminBodyLimit
 import com.example.pinvault.server.model.HostActionResponse
 import com.example.pinvault.server.model.HostPin
@@ -578,7 +579,10 @@ private fun startServer() {
     val testTtlOverrides = java.util.concurrent.ConcurrentHashMap<String, java.time.Duration>()
     val testTtlOverride: ((String) -> java.time.Duration?)? =
         if (allowTestHooks) { clientId -> testTtlOverrides.remove(clientId) } else null
-    val vaultFileStore = com.example.pinvault.server.store.VaultFileStore(db)
+    // VAULT_AT_REST_BIND_LEGACY=true: for the one start that upgrades a database written
+    // before 2.10.0, whose vault blobs do not yet say which file they belong to (S2, 2026-11-14).
+    val bindLegacyVaultBlobs = com.example.pinvault.server.service.ServerEnv.get("VAULT_AT_REST_BIND_LEGACY")?.trim()?.lowercase() == "true"
+    val vaultFileStore = com.example.pinvault.server.store.VaultFileStore(db, bindLegacy = bindLegacyVaultBlobs)
     run {
         val m = com.example.pinvault.server.service.CertExpiryMonitor
         expirySources += {
@@ -610,6 +614,15 @@ private fun startServer() {
     vaultFileStore.secureStoredFiles().let { report ->
         if (report.encrypted.isNotEmpty()) println("Vault: encrypted ${report.encrypted.size} file(s) stored in the clear: ${report.encrypted.joinToString()}")
         if (report.rekeyed.isNotEmpty()) println("VAULT_AT_REST_PASSWORD: re-encrypted ${report.rekeyed.size} vault file(s): ${report.rekeyed.joinToString()}")
+        if (report.unbound.isNotEmpty()) {
+            System.err.println("Vault: ${report.unbound.joinToString()} stored in the form used before 2.10.0, which does not say which file " +
+                "a blob belongs to; they are not opened and downloads of them fail. Upgrading from a version before 2.10.0: start once " +
+                "with VAULT_AT_REST_BIND_LEGACY=true. Otherwise something else wrote them: upload the files again.")
+        }
+        if (bindLegacyVaultBlobs) {
+            System.err.println("VAULT_AT_REST_BIND_LEGACY=true: vault blobs from before 2.10.0 were opened and bound to their files on this start. " +
+                "Remove the variable now: with it, an unbound blob placed in a vault row is opened as that file.")
+        }
         if (report.unreadable.isNotEmpty()) {
             System.err.println("VAULT_AT_REST_PASSWORD: ${report.unreadable.joinToString()} open with neither the current, the previous " +
                 "(VAULT_AT_REST_PASSWORD_PREVIOUS) nor the demo password; downloads of them fail until one is supplied or they are uploaded again")
@@ -1001,7 +1014,8 @@ private fun startServer() {
                 attestationRoutes(configApiId, attestationService, pinConfigStore, signedConfigService,
                     deviceHostAclStore = deviceHostAclStore, limits = attestationLimits,
                     // The body's deviceId is held to the rule DeviceIdBinding holds X-Device-Id to.
-                    isBound = { certClientId, deviceId -> com.example.pinvault.server.route.certificateBoundTo(certClientId, deviceId, clientCertStore) })
+                    isBound = { certClientId, deviceId -> com.example.pinvault.server.route.certificateBoundTo(certClientId, deviceId, clientCertStore) },
+                    isProven = { certClientId, deviceId -> com.example.pinvault.server.route.certificateProvenFor(certClientId, deviceId, clientCertStore) })
             }
             attestationAdminRoutes(attestationService, attestationPolicyStore, attestedDeviceStore, attestationTokenSecretStore, auditLog)
             get("/health") {
@@ -1525,7 +1539,7 @@ private fun startServer() {
             //
             // Admin-only: X-API-Key required (not in the ApiKeyAuth allowlist).
             get("/api/v1/client-devices") {
-                val configApiId = call.request.queryParameters["configApiId"] ?: "default-tls"
+                val configApiId = call.request.queryExact("configApiId") ?: "default-tls"
                 call.respond(clientDeviceStore.getByConfigApi(configApiId))
             }
 

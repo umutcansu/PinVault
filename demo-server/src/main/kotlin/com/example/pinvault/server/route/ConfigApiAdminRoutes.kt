@@ -40,6 +40,13 @@ internal val CONFIG_API_MODES = setOf("tls", "mtls")
 internal fun configApiRequestError(json: JsonObject?, start: Boolean): String? {
     val id = (json?.get("id") as? JsonPrimitive)?.takeIf { it.isString }?.content
     if (json == null) return "A JSON body is required"
+    // An `id` that is there but is not a string — a number, or a bare word the
+    // JSON parser lets through — used to skip the identifier check below while
+    // the handler took its text all the same: `{"id": a|b<x>, "port": 9443}`
+    // started a Config API no later request could name (review 2026-11-14, S3).
+    if (json["id"] != null && id == null) return "id must be a string"
+    (json["mode"] as? JsonPrimitive)?.let { if (!it.isString) return "mode must be \"tls\" or \"mtls\"" }
+    if (json["mode"] != null && json["mode"] !is JsonPrimitive) return "mode must be \"tls\" or \"mtls\""
     if (id == null && !start) return "id gerekli"
     if (id != null && !isValidIdentifier(id)) return "id: letters, digits, '.', '_', ':' and '-' only, at most 64"
     if (start) {

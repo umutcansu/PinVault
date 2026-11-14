@@ -13,7 +13,18 @@ import com.example.pinvault.server.service.VaultKeyMismatchException
  */
 class VaultFileStore(
     private val db: DatabaseManager,
-    private val cipher: VaultAtRestCipher = VaultAtRestCipher.fromEnv()
+    private val cipher: VaultAtRestCipher = VaultAtRestCipher.fromEnv(),
+    /**
+     * `VAULT_AT_REST_BIND_LEGACY=true`: a stored blob that is not bound to its
+     * file (`VLT-ENC1`, as written before 2.10.0) is opened and, by the startup
+     * pass, bound. Off by default (review 2026-11-14, S2): the same password
+     * seals other things in this database — the bodies of waiting change
+     * requests, the PinVault-Token secrets — and an unbound blob of those,
+     * copied into a vault row, was opened and served as that file's content.
+     * A server that ran 2.10.0 once has no unbound vault blob left; one
+     * upgraded from an older version needs this switch for a single start.
+     */
+    private val bindLegacy: Boolean = false
 ) {
 
     fun get(configApiId: String, key: String): VaultEntry? {
@@ -51,7 +62,10 @@ class VaultFileStore(
         db.connection().use { conn ->
             // Metadata only: a file that no longer decrypts can still be replaced.
             val existing = meta(configApiId, key)
-            val newVersion = (existing?.version ?: 0) + 1
+            // Past the highest version this file ever had, also when it was deleted in
+            // between: devices keep the newest version they verified as a floor, and a
+            // file that started over at v1 would be refused by all of them (V32).
+            val newVersion = maxOf(existing?.version ?: 0, versionWatermark(conn, configApiId, key)) + 1
             val finalPolicy = accessPolicy ?: existing?.accessPolicy ?: "token"
             val finalEncryption = encryption ?: existing?.encryption ?: "plain"
             val finalExpiry = if (expiresAt != null) expiresAt.value else existing?.expiresAt
@@ -74,6 +88,28 @@ class VaultFileStore(
                 stmt.setString(7, finalExpiry)
                 stmt.executeUpdate()
             }
+            raiseVersionWatermark(conn, configApiId, key)
+        }
+    }
+
+    private fun versionWatermark(conn: java.sql.Connection, configApiId: String, key: String): Int =
+        conn.prepareStatement("SELECT max_version FROM vault_version_watermark WHERE config_api_id = ? AND key = ?").use { stmt ->
+            stmt.setString(1, configApiId)
+            stmt.setString(2, key)
+            val rs = stmt.executeQuery()
+            if (rs.next()) rs.getInt(1) else 0
+        }
+
+    /** Records the file's current version as the highest it had, never lowering what is recorded. */
+    private fun raiseVersionWatermark(conn: java.sql.Connection, configApiId: String, key: String) {
+        conn.prepareStatement(
+            """INSERT INTO vault_version_watermark (config_api_id, key, max_version)
+               SELECT config_api_id, key, version FROM vault_files WHERE config_api_id = ? AND key = ?
+               ON CONFLICT(config_api_id, key) DO UPDATE SET max_version = MAX(max_version, excluded.max_version)"""
+        ).use { stmt ->
+            stmt.setString(1, configApiId)
+            stmt.setString(2, key)
+            stmt.executeUpdate()
         }
     }
 
@@ -129,7 +165,9 @@ class VaultFileStore(
                 stmt.setBytes(5, storedContent)
                 stmt.setString(6, configApiId)
                 stmt.setString(7, key)
-                return stmt.executeUpdate() > 0
+                val updated = stmt.executeUpdate() > 0
+                if (updated) raiseVersionWatermark(conn, configApiId, key)
+                return updated
             }
         }
     }
@@ -154,11 +192,16 @@ class VaultFileStore(
         val encrypted = mutableListOf<String>()
         val rekeyed = mutableListOf<String>()
         val unreadable = mutableListOf<String>()
+        val unbound = mutableListOf<String>()
         for ((scope, key, stored) in rows) {
             val name = "$scope/$key"
             val plaintext = if (!VaultAtRestCipher.isEncrypted(stored)) {
                 encrypted += name
                 stored
+            } else if (!VaultAtRestCipher.isBound(stored) && !bindLegacy) {
+                // Not this file's blob as far as anything shows: left as it is, never opened.
+                unbound += name
+                continue
             } else when (val opened = cipher.open(stored, placeOf(scope, key))) {
                 VaultAtRestCipher.Opened.Current -> continue
                 is VaultAtRestCipher.Opened.Previous -> { rekeyed += name; opened.plaintext }
@@ -171,10 +214,14 @@ class VaultFileStore(
                 stmt.executeUpdate()
             }
         }
-        AtRestReport(encrypted, rekeyed, unreadable)
+        AtRestReport(encrypted, rekeyed, unreadable, unbound)
     }
 
-    data class AtRestReport(val encrypted: List<String>, val rekeyed: List<String>, val unreadable: List<String>)
+    /** [unbound]: blobs in the pre-2.10.0 form, not opened (see `bindLegacy`). */
+    data class AtRestReport(
+        val encrypted: List<String>, val rekeyed: List<String>, val unreadable: List<String>,
+        val unbound: List<String> = emptyList()
+    )
 
     /**
      * A file's version, access policy and encryption without its content
@@ -298,8 +345,15 @@ class VaultFileStore(
      */
     private fun readContent(configApiId: String, key: String, encryption: String, stored: ByteArray): ByteArray {
         if (encryption !in ENCRYPTED_MODES || !VaultAtRestCipher.isEncrypted(stored)) return stored
+        if (!bindLegacy && !VaultAtRestCipher.isBound(stored)) {
+            throw VaultKeyMismatchException(
+                "vault file '$key' is stored in the form used before 2.10.0, which does not say which file it belongs to, " +
+                "and is not opened: upload the file again, or — upgrading from a version before 2.10.0 — start once with " +
+                "VAULT_AT_REST_BIND_LEGACY=true"
+            )
+        }
         return try {
-            cipher.decrypt(stored, placeOf(configApiId, key))
+            cipher.decrypt(stored, placeOf(configApiId, key), boundOnly = !bindLegacy)
         } catch (e: VaultKeyMismatchException) {
             throw VaultKeyMismatchException(
                 "vault file '$key' does not open with VAULT_AT_REST_PASSWORD: set VAULT_AT_REST_PASSWORD_PREVIOUS " +

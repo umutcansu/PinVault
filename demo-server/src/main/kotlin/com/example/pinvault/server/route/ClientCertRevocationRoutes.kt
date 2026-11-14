@@ -1,5 +1,6 @@
 package com.example.pinvault.server.route
 
+import com.example.pinvault.server.service.queryExact
 import com.example.pinvault.server.service.AuditLog
 import com.example.pinvault.server.service.CertificateService
 import com.example.pinvault.server.store.ClientCertStore
@@ -159,7 +160,7 @@ fun Route.clientCertRevocationRoutes(
 
 /** `?cascadeUnverified=true`: also cut off the device ids the identity only claimed. */
 private fun io.ktor.server.application.ApplicationCall.cascadeUnverified(): Boolean =
-    request.queryParameters["cascadeUnverified"]?.lowercase() == "true"
+    request.queryExact("cascadeUnverified")?.lowercase() == "true"
 
 private fun ClientIdentityStore.DeviceCleanup.toJson(): JsonObject = buildJsonObject {
     put("deviceIds", JsonArray(deviceIds.map { JsonPrimitive(it) }))
