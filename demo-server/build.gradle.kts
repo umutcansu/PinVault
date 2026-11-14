@@ -57,3 +57,23 @@ dependencies {
 kotlin {
     jvmToolchain(17)
 }
+
+// ── Load test (loadtest/README.md) ──────────────────────────────────────────
+// A source set of its own: it reuses the server's classes (the canonical
+// string of a report) but is never part of the server's jar, installDist or
+// image. Run: ../gradlew loadtest --args="run --target https://127.0.0.1:7301 …"
+val loadtest: SourceSet by sourceSets.creating {
+    compileClasspath += sourceSets.main.get().output + configurations.runtimeClasspath.get()
+    runtimeClasspath += output + compileClasspath
+}
+dependencies {
+    "loadtestImplementation"("org.hdrhistogram:HdrHistogram:2.2.2")
+}
+tasks.register<JavaExec>("loadtest") {
+    group = "verification"
+    description = "Open-loop load generator for the attestation and config endpoints (loadtest/README.md)."
+    classpath = loadtest.runtimeClasspath
+    mainClass.set("com.example.pinvault.loadtest.LoadTestKt")
+    workingDir = rootProject.projectDir
+    jvmArgs("-Xmx2g")
+}
