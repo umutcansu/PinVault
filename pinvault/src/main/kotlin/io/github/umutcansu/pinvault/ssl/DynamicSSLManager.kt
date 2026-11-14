@@ -158,8 +158,17 @@ internal class DynamicSSLManager(
     private val ownPools: MutableSet<ConnectionPool> =
         java.util.Collections.synchronizedSet(java.util.Collections.newSetFromMap(java.util.WeakHashMap()))
 
-    /** The host each socket made by a [LiveSocketFactory] was opened for, as OkHttp named it. */
-    private val socketHosts: MutableMap<Socket, String> =
+    /** Where a socket made by a [LiveSocketFactory] is meant to end up. */
+    private class Peer(val host: String, val port: Int)
+
+    /**
+     * The host and port each socket made by a [LiveSocketFactory] was opened
+     * for, as OkHttp named them. The port too: behind an HTTP proxy the TLS
+     * socket is layered over a tunnel, and `socket.port` is then the PROXY's
+     * port — `host:port` pins and the client-identity hosts were looked up
+     * under the wrong port at the handshake (review 2026-11-14).
+     */
+    private val socketPeers: MutableMap<Socket, Peer> =
         java.util.Collections.synchronizedMap(java.util.WeakHashMap())
 
     /**
@@ -393,7 +402,7 @@ internal class DynamicSSLManager(
             }
 
             override fun chooseClientAlias(keyTypes: Array<String>?, issuers: Array<java.security.Principal>?, socket: Socket?): String? {
-                val (km, prefix) = resolve(hostnameFromSocket(socket).ifEmpty { null }, socket?.port) ?: return null
+                val (km, prefix) = resolve(hostnameFromSocket(socket).ifEmpty { null }, portFromSocket(socket)) ?: return null
                 return km.chooseClientAlias(keyTypes, issuers, socket)?.let { prefix + it }
             }
 
@@ -468,11 +477,12 @@ internal class DynamicSSLManager(
 
         /**
          * Leaves only TLS 1.2 and newer enabled, whatever the platform's
-         * defaults are, and remembers the host the socket is for. OkHttp's
-         * ConnectionSpec narrows the enabled protocols further but never adds
-         * to them, so this is a floor no client configuration can lower.
+         * defaults are, and remembers the host and port the socket is for.
+         * OkHttp's ConnectionSpec narrows the enabled protocols further but
+         * never adds to them, so this is a floor no client configuration can
+         * lower.
          */
-        private fun harden(socket: Socket, host: String?): Socket {
+        private fun harden(socket: Socket, host: String?, port: Int): Socket {
             if (socket is javax.net.ssl.SSLSocket) {
                 val modern = socket.enabledProtocols.filter { it in MODERN_TLS }
                     .ifEmpty { socket.supportedProtocols.filter { it in MODERN_TLS } }
@@ -481,22 +491,24 @@ internal class DynamicSSLManager(
                     throw javax.net.ssl.SSLException("This device supports neither TLS 1.2 nor TLS 1.3")
                 }
                 socket.enabledProtocols = modern.toTypedArray()
-                if (!host.isNullOrEmpty()) socketHosts[socket] = host
+                if (!host.isNullOrEmpty()) socketPeers[socket] = Peer(host, port)
             }
             return socket
         }
 
         override fun getDefaultCipherSuites(): Array<String> = current().defaultCipherSuites
         override fun getSupportedCipherSuites(): Array<String> = current().supportedCipherSuites
-        override fun createSocket(): Socket = harden(current().createSocket(), null)
+        override fun createSocket(): Socket = harden(current().createSocket(), null, -1)
+        // The one OkHttp uses: [socket] is connected already — to the host, or
+        // to a proxy's tunnel to it — and [host]:[port] is where TLS is spoken to.
         override fun createSocket(socket: Socket, host: String, port: Int, autoClose: Boolean): Socket =
-            harden(current().createSocket(socket, host, port, autoClose), host)
-        override fun createSocket(host: String, port: Int): Socket = harden(current().createSocket(host, port), host)
+            harden(current().createSocket(socket, host, port, autoClose), host, port)
+        override fun createSocket(host: String, port: Int): Socket = harden(current().createSocket(host, port), host, port)
         override fun createSocket(host: String, port: Int, localHost: java.net.InetAddress, localPort: Int): Socket =
-            harden(current().createSocket(host, port, localHost, localPort), host)
-        override fun createSocket(host: java.net.InetAddress, port: Int): Socket = harden(current().createSocket(host, port), null)
+            harden(current().createSocket(host, port, localHost, localPort), host, port)
+        override fun createSocket(host: java.net.InetAddress, port: Int): Socket = harden(current().createSocket(host, port), null, port)
         override fun createSocket(address: java.net.InetAddress, port: Int, localAddress: java.net.InetAddress, localPort: Int): Socket =
-            harden(current().createSocket(address, port, localAddress, localPort), null)
+            harden(current().createSocket(address, port, localAddress, localPort), null, port)
     }
 
     /**
@@ -516,6 +528,16 @@ internal class DynamicSSLManager(
      * handshake check is repeated, against the live config, on every request
      * — a connection opened before a pin was removed or before the config
      * expired does not get to carry another request.
+     *
+     * ## No cleartext
+     * A pin is checked in a TLS handshake; a request that goes out as plain
+     * HTTP is checked by nothing. The builder therefore leaves here with its
+     * TLS connection specs only (review 2026-11-14): an `http://` URL — the
+     * app's own, or the target of a redirect from an https host — fails with
+     * OkHttp's "CLEARTEXT communication not enabled for client" before a
+     * byte is sent. The guide said so all along; only the bootstrap client
+     * did it. An app that needs cleartext on its own builder sets
+     * `connectionSpecs` again after this call.
      */
     fun applyTo(builder: OkHttpClient.Builder, configProvider: () -> CertificateConfig?) {
         val tm = pinnedTrustManager(configProvider)
@@ -527,9 +549,12 @@ internal class DynamicSSLManager(
                 requireCaTrustFor(chain, "UNKNOWN", host, port)
             }
         )
-        // A redirect to another origin does not take the app's headers (or a
-        // 307 body) along: OkHttp drops only Authorization (review 2026-11-12).
-        builder.addNetworkInterceptor(CrossOriginRedirectGuard)
+        // No cleartext (see above; below TLS 1.2 the socket factory enables
+        // nothing whatever a connection spec says, see harden). A redirect to
+        // another origin does not take the app's headers (or a 307 body)
+        // along: OkHttp drops only Authorization (review 2026-11-12); a
+        // WebSocket upgrade is not redirected to another origin at all.
+        builder.hardenHops(httpsOnly = true, wrapCookieJar = true)
 
         val initial = configProvider()
         val mtlsHosts = initial?.pins?.count { it.mtls } ?: 0
@@ -594,8 +619,9 @@ internal class DynamicSSLManager(
         applyTo(builder, configProvider)
         // A pinned client never continues in the clear: a 30x from a pinned
         // host to an http:// URL is not followed (the bootstrap client has
-        // refused that since 2.2.0; app builders passed to applyTo keep
-        // their own setting).
+        // refused that since 2.2.0). On app builders passed to applyTo the
+        // setting is the app's; there the missing cleartext connection spec
+        // is what stops such a hop.
         builder.followSslRedirects(false)
         extraInterceptors.forEach {
             builder.addInterceptor(it)
@@ -636,11 +662,18 @@ internal class DynamicSSLManager(
             Timber.w("Bootstrap client — no pins, using system defaults (allowUnpinnedConfigApi)")
             // Redirects are followed here (system defaults), but device headers
             // and enrollment bodies still stay on their origin.
-            builder.addNetworkInterceptor(CrossOriginRedirectGuard)
+            builder.hardenHops(httpsOnly = false, wrapCookieJar = true)
         } else {
             // Fail closed: pinning over "no config" refuses every handshake.
             applyTo(builder) { null }
             Timber.e("Bootstrap client has no pins — every TLS handshake is refused (set bootstrapPins)")
+        }
+        if (allowUnpinned) {
+            // The block asked for a Config API without pinning (tests, a
+            // development server): that has always included an http:// URL,
+            // which applyTo switched off for the pinned case above.
+            val specs = builder.build().connectionSpecs
+            if (okhttp3.ConnectionSpec.CLEARTEXT !in specs) builder.connectionSpecs(specs + okhttp3.ConnectionSpec.CLEARTEXT)
         }
         if (!allowUnpinned) {
             // Not even by way of a redirect: neither to http:// nor to another
@@ -709,7 +742,7 @@ internal class DynamicSSLManager(
                 chain: Array<X509Certificate>,
                 authType: String,
                 socket: Socket
-            ) = verifyPin(chain, authType, hostnameFromSocket(socket), socket.port)
+            ) = verifyPin(chain, authType, hostnameFromSocket(socket), portFromSocket(socket))
 
             override fun checkServerTrusted(
                 chain: Array<X509Certificate>,
@@ -906,8 +939,18 @@ internal class DynamicSSLManager(
      */
     private fun hostnameFromSocket(socket: Socket?): String {
         if (socket == null) return ""
-        socketHosts[socket]?.let { return it }
+        socketPeers[socket]?.let { return it.host }
         return (socket as? javax.net.ssl.SSLSocket)?.handshakeSession?.peerHost.orEmpty()
+    }
+
+    /**
+     * The port a socket is being connected to: the one OkHttp opened it for
+     * (remembered by [LiveSocketFactory]), else the socket's own. Through a
+     * proxy tunnel the socket's own port is the proxy's.
+     */
+    private fun portFromSocket(socket: Socket?): Int? {
+        if (socket == null) return null
+        return socketPeers[socket]?.port ?: socket.port
     }
 
     /**

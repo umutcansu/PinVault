@@ -537,6 +537,34 @@ class UserAuthRouterTest {
     }
 
     @Test
+    fun `a user_auth file's floor rises when its signature passes at unlock, and outlives the copy`() = runTest {
+        val storage = strictStorage()
+        val guard = VaultFileGuard(meta, { now })
+        val router = guardedRouter(storage, guard)
+        serverSealsForRegisteredKey(version = 5)
+        router.fetchFile(file())
+        assertEquals("stored sealed, nothing verified yet: no floor", 0, meta.versionFloor("default", "st"))
+
+        // What PinVault.unlockFile does once the copy opened and its signature passed.
+        val unlocked = storage.unlock("st", passes, verify = router.unlockVerifier(file()))
+        assertEquals(VaultFileUnlockResult.Unlocked("st", 5, content), unlocked)
+        guard.verifiedAtUnlock(file(), 5)
+        assertEquals(5, meta.versionFloor("default", "st"))
+
+        // clearFile: the copy goes, the floor stays.
+        storage.clear("st")
+        guard.forget("st")
+        serverSealsForRegisteredKey(version = 4)
+        val refused = router.fetchFile(file()) as VaultFileResult.Failed
+        assertEquals(VaultFileResult.Failed.CODE_VERSION_REJECTED, refused.code)
+        assertTrue(refused.reason, refused.reason.contains("already seen v5"))
+        assertFalse(storage.exists("st"))
+
+        serverSealsForRegisteredKey(version = 5)
+        assertEquals(VaultFileResult.Updated("st", 5, ByteArray(0)), router.fetchFile(file()))
+    }
+
+    @Test
     fun `a bad newer copy is deleted at unlock and the verified copy still opens`() = runTest {
         val storage = strictStorage()
         val guard = VaultFileGuard(meta, { now })

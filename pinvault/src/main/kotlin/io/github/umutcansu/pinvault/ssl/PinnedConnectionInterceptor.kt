@@ -77,7 +77,10 @@ internal class PinnedConnectionInterceptor(
     override fun intercept(chain: Interceptor.Chain): Response {
         val request = chain.request()
         val connection = chain.connection()
-        // No handshake = a cleartext connection: nothing was pinned, nothing to re-check.
+        // No handshake = a cleartext connection: nothing was pinned, nothing
+        // to re-check. A client leaves applyTo without a cleartext connection
+        // spec, so this is reached only where the app put one back on its
+        // own builder — its decision, for its own http:// URLs.
         if (connection?.handshake() == null) return chain.proceed(request)
 
         val host = request.url.host

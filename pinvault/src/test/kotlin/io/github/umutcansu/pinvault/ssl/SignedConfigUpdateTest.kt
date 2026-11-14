@@ -450,6 +450,167 @@ class SignedConfigUpdateTest {
         assertEquals(now, store.getCurrentIssuedAt())
     }
 
+    // ── A signing-key set that vanished is not "no set" (review 2026-11-14) ──
+
+    /** The signing-key set's entry is removed from storage; the config store still remembers its version. */
+    private fun deleteStoredKeySet() {
+        ApplicationProvider.getApplicationContext<Context>()
+            .getSharedPreferences("signed_update_keys", Context.MODE_PRIVATE).edit().clear().commit()
+    }
+
+    /** A new process: nothing in memory, everything read from storage again. */
+    private fun restarted(trust: SignatureTrust): SSLCertificateUpdater {
+        provider = HttpClientProvider(DynamicSSLManager())
+        return updater(trust = trust)
+    }
+
+    @Test
+    fun `a deleted signing-key set does not bring the keys it revoked back`() = runTest {
+        val honest = signed(payload(3, issuedAt = now), signer = keyB, keySet = keySet(2, listOf(keyB)))
+        assertEquals(UpdateResult.Updated(3), apply(honest, updater(trust = trust(keys = listOf(keyA, keyB), withRecovery = true))))
+        assertEquals(2, store.keySetVersionSeen())
+
+        // Someone who can write the app's storage removes the set. The
+        // compiled-in keys — key A among them, which set v2 revoked — used to
+        // be what verifies from then on.
+        deleteStoredKeySet()
+        val updater = restarted(trust(keys = listOf(keyA, keyB), withRecovery = true))
+
+        // A config signed with the revoked key, no set next to it.
+        val planted = apply(signed(payload(4, issuedAt = now + 1, pins = listOf(pin3, pin1)), signer = keyA), updater)
+        assertTrue("$planted", (planted as UpdateResult.Failed).reason.contains("signing-key set v2"))
+        assertNull(provider.currentConfig)
+
+        // Not with an older set put back either: v1 still trusted key A.
+        val replayed = apply(
+            signed(payload(4, issuedAt = now + 1, pins = listOf(pin3, pin1)), signer = keyA, keySet = keySet(1, listOf(keyA, keyB))),
+            updater
+        )
+        assertTrue("$replayed", (replayed as UpdateResult.Failed).reason.contains("only v1 is on record"))
+        assertNull(provider.currentConfig)
+
+        // Fail closed: a config signed by a key that is still good waits for the set too.
+        assertTrue(apply(signed(payload(4, issuedAt = now + 1), signer = keyB), updater) is UpdateResult.Failed)
+
+        // The honest server sends the set with every response: one fetch puts it right.
+        assertEquals(
+            UpdateResult.Updated(4),
+            apply(signed(payload(4, issuedAt = now + 1), signer = keyB, keySet = keySet(2, listOf(keyB))), updater)
+        )
+        assertEquals(listOf(pin1, pin2), provider.currentConfig!!.pins.single().sha256)
+    }
+
+    @Test
+    fun `while the signing-key set is missing the stored config is not used, and not deleted`() = runTest {
+        val honest = signed(payload(3, issuedAt = now), signer = keyB, keySet = keySet(2, listOf(keyB)))
+        apply(honest, updater(trust = trust(keys = listOf(keyA, keyB), withRecovery = true)))
+        deleteStoredKeySet()
+
+        offline()
+        val result = restarted(trust(keys = listOf(keyA, keyB), withRecovery = true)).initializeAndUpdate()
+
+        val failed = result as InitResult.Failed
+        assertTrue(failed.exception is NoConfigAvailableException)
+        assertTrue(failed.reason, failed.reason.contains("signing-key set v2"))
+        assertNull("pinned clients refuse", provider.currentConfig)
+        assertNotNull("nothing is known to be wrong with it: it stays for when the set is back", store.load())
+        assertNotNull(store.loadEnvelope())
+
+        // The set comes back with the next answer; the stored config (the same one) is in use again.
+        api.failure = null
+        api.next = honest
+        assertEquals(InitResult.Ready(3), restarted(trust(keys = listOf(keyA, keyB), withRecovery = true)).initializeAndUpdate())
+        assertEquals(3, provider.currentConfig!!.computedVersion())
+    }
+
+    @Test
+    fun `a fresh install and a store that never met key sets are not held up`() = runTest {
+        // Fresh install, recovery keys configured, no set published yet.
+        val updater = updater(trust = trust(keys = listOf(keyA, keyB), withRecovery = true))
+        assertEquals(UpdateResult.Updated(3), apply(signed(payload(3, issuedAt = now)), updater))
+        assertEquals(0, store.keySetVersionSeen())
+
+        // A store written before key-set versions were recorded: only recorded now.
+        prefs.edit().remove(CertificateConfigStore.KEY_KEY_SET_VERSION).commit()
+        assertEquals(UpdateResult.Updated(4), apply(signed(payload(4, issuedAt = now + 1)), updater))
+        assertEquals(0, store.keySetVersionSeen())
+
+        // The first set ever arrives.
+        assertEquals(
+            UpdateResult.Updated(5),
+            apply(signed(payload(5, issuedAt = now + 2), signer = keyB, keySet = keySet(3, listOf(keyB))), updater)
+        )
+        assertEquals(3, store.keySetVersionSeen())
+
+        // Offline start from storage with the set on record.
+        offline()
+        assertEquals(InitResult.Ready(5), restarted(trust(keys = listOf(keyA, keyB), withRecovery = true)).initializeAndUpdate())
+    }
+
+    @Test
+    fun `an app update with other recovery keys starts the key-set count again`() = runTest {
+        apply(
+            signed(payload(3, issuedAt = now), signer = keyB, keySet = keySet(2, listOf(keyB))),
+            updater(trust = trust(keys = listOf(keyA, keyB), withRecovery = true))
+        )
+        assertEquals(2, store.keySetVersionSeen())
+
+        // The new build ships key B and another recovery key: the stored set
+        // (signed by the old one) no longer counts, and that is the app's own
+        // doing — not a set gone missing. The device must not wait for a
+        // "set v2" the new recovery key never signed.
+        val otherRecovery = ecKeyPair()
+        val afterUpdate = restarted(SignatureTrust("default", listOf(keyB.pub()), 1, listOf(otherRecovery.pub()), 1, keyStore))
+
+        assertEquals(UpdateResult.Updated(4), apply(signed(payload(4, issuedAt = now + 1), signer = keyB), afterUpdate))
+        assertEquals(0, store.keySetVersionSeen())
+    }
+
+    @Test
+    fun `the first start after such an app update may be offline`() = runTest {
+        apply(
+            signed(payload(3, issuedAt = now), signer = keyB, keySet = keySet(2, listOf(keyB))),
+            updater(trust = trust(keys = listOf(keyA, keyB), withRecovery = true))
+        )
+
+        // No update has run under the new build yet, so the version on record
+        // is still the old build's: it was counted under other trust anchors
+        // and must not hold the stored config (signed by key B, which the new
+        // build ships) back.
+        val otherRecovery = ecKeyPair()
+        offline()
+        val afterUpdate = restarted(SignatureTrust("default", listOf(keyB.pub()), 1, listOf(otherRecovery.pub()), 1, keyStore))
+
+        assertEquals(InitResult.Ready(3), afterUpdate.initializeAndUpdate())
+        assertEquals(3, provider.currentConfig!!.computedVersion())
+    }
+
+    // ── The replay floor does not live in the watermark entries alone (review 2026-11-14) ──
+
+    @Test
+    fun `removing the watermark entries does not reopen the replay of an older signed config`() = runTest {
+        // An earlier, validly signed config of this backend: other pins, same host version, not yet expired.
+        val older = signed(payload(7, issuedAt = now - hour, expiresAt = now + hour, pins = listOf(pin3, pin1)))
+        assertEquals(UpdateResult.Updated(7), apply(signed(payload(7, issuedAt = now, expiresAt = now + 2 * hour))))
+
+        // Whoever can write the app's storage removes what the replay check read.
+        prefs.edit()
+            .remove(CertificateConfigStore.KEY_ISSUED_AT)
+            .remove(CertificateConfigStore.KEY_WATERMARK_ISSUED_AT)
+            .remove(CertificateConfigStore.KEY_WATERMARK_VERSIONS_JSON)
+            .commit()
+        assertEquals(0L, store.getCurrentIssuedAt())
+
+        // The stored envelope still says when the running config was issued, and it is signed.
+        val replay = apply(older, restarted(trust()))
+
+        assertTrue("$replay", (replay as UpdateResult.Failed).reason.contains("Config replay rejected"))
+        // The running config is untouched: an offline start still comes up on it.
+        offline()
+        assertEquals(InitResult.Ready(7), restarted(trust()).initializeAndUpdate())
+        assertEquals(listOf(pin1, pin2), provider.currentConfig!!.pins.single().sha256)
+    }
+
     // ── serverScope ─────────────────────────────────────────────────────
 
     @Test

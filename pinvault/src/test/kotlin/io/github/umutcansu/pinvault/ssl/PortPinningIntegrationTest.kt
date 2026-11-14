@@ -6,6 +6,7 @@ import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.mockwebserver.MockResponse
 import okhttp3.mockwebserver.MockWebServer
+import okhttp3.mockwebserver.SocketPolicy
 import org.bouncycastle.asn1.x500.X500Name
 import org.bouncycastle.asn1.x509.GeneralName
 import org.bouncycastle.asn1.x509.GeneralNames
@@ -71,8 +72,8 @@ class PortPinningIntegrationTest {
     private fun pin(cert: X509Certificate) =
         Base64.getEncoder().encodeToString(MessageDigest.getInstance("SHA-256").digest(cert.publicKey.encoded))
 
-    /** Starts the server with a fresh leaf signed by the CA, served as `[leaf, ca]`. */
-    private fun startWithCaSignedLeaf(): X509Certificate {
+    /** Starts the server with a fresh leaf signed by the CA, served as `[leaf, ca]`. [asProxy]: reached through a CONNECT tunnel. */
+    private fun startWithCaSignedLeaf(asProxy: Boolean = false): X509Certificate {
         val leafKey = ecKey()
         val now = System.currentTimeMillis()
         val leaf = JcaX509CertificateConverter().setProvider("BC").getCertificate(
@@ -85,9 +86,52 @@ class PortPinningIntegrationTest {
         ks.setKeyEntry("server", leafKey.private, "pw".toCharArray(), arrayOf(leaf, caCert))
         val kmf = KeyManagerFactory.getInstance(KeyManagerFactory.getDefaultAlgorithm()).apply { init(ks, "pw".toCharArray()) }
         val ctx = SSLContext.getInstance("TLS").apply { init(kmf.keyManagers, null, null) }
-        server.useHttps(ctx.socketFactory, false)
+        server.useHttps(ctx.socketFactory, asProxy)
         server.start()
         return leaf
+    }
+
+    /** A GET for `https://localhost:[targetPort]/renew` sent through the server acting as an HTTP proxy. */
+    private fun getThroughProxy(pins: List<HostPin>, targetPort: Int): Int {
+        val manager = DynamicSSLManager()
+        val builder = OkHttpClient.Builder().hostnameVerifier { _, _ -> true }.proxy(server.toProxyAddress())
+        manager.applyTo(builder) { CertificateConfig(version = 1, pins = pins) }
+        // The proxy answers CONNECT, then speaks TLS on the same socket as the host behind it would.
+        server.enqueue(MockResponse().setSocketPolicy(SocketPolicy.UPGRADE_TO_SSL_AT_END).clearHeaders())
+        server.enqueue(MockResponse().setBody("ok"))
+        return builder.build().newCall(Request.Builder().url("https://localhost:$targetPort/renew").build()).execute().use { it.code }
+    }
+
+    // ── Behind an HTTP proxy the socket's port is the proxy's (review 2026-11-14) ──
+
+    @Test
+    fun `behind a proxy a host-port pin is looked up under the target's port`() {
+        startWithCaSignedLeaf(asProxy = true)
+        val targetPort = if (server.port == 8443) 9443 else 8443
+
+        val code = getThroughProxy(
+            listOf(HostPin("localhost:$targetPort", listOf(pin(caCert), "CA_BACKUP_PIN_CCCCCCCCCCCCCCCCCCCCCCCCCCCC="))),
+            targetPort
+        )
+
+        assertEquals(200, code)
+        assertEquals("CONNECT localhost:$targetPort HTTP/1.1", server.takeRequest().requestLine)
+    }
+
+    @Test
+    fun `behind a proxy a pin for the proxy's own port does not open the target`() {
+        startWithCaSignedLeaf(asProxy = true)
+        val targetPort = if (server.port == 8443) 9443 else 8443
+
+        // The handshake used to be judged under the proxy's port: an entry
+        // for localhost:<proxy port> then vouched for localhost:<target port>.
+        val result = runCatching {
+            getThroughProxy(
+                listOf(HostPin("localhost:${server.port}", listOf(pin(caCert), "CA_BACKUP_PIN_CCCCCCCCCCCCCCCCCCCCCCCCCCCC="))),
+                targetPort
+            )
+        }
+        if (result.isSuccess) fail("expected the handshake to be refused, got HTTP ${result.getOrNull()}")
     }
 
     private fun get(pins: List<HostPin>): Int {

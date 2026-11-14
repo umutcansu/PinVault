@@ -19,6 +19,13 @@ import timber.log.Timber
  */
 internal class StoredVerifier(
     val scheme: Int,
+    /**
+     * Why nothing can be checked right now, or null: the block's signing-key
+     * set is not on record (`SignatureTrust.missingKeySet`), so the only keys
+     * at hand are ones that set may have revoked. A copy is then neither
+     * handed out nor deleted — it may be perfectly good.
+     */
+    val unavailable: () -> String? = { null },
     val verify: (plaintext: ByteArray, version: Int, signatures: List<SignatureEntry>) -> String?
 )
 
@@ -41,14 +48,22 @@ internal class StoredVerifier(
  *    fool — the copy is not handed out, and deleted with `wipeWhenStale()`.
  *    A confirmation time ahead of the trusted clock counts as "not
  *    confirmed": not handed out, never deleted on that ground alone.
+ *  - **Version floor.** The highest version of a file that ever passed its
+ *    signature check is kept apart from the copy and outlives it: after
+ *    `clearFile`, a deletion here, a revocation wipe or `unenroll`, the next
+ *    download must be that version or a newer one ([versionFloor]). Files of
+ *    unsigned blocks have no floor — nothing vouches for their version.
  *
  * A Keystore that cannot be read right now is none of these: nothing is
- * handed out and nothing is deleted.
+ * handed out and nothing is deleted. The same goes while the block's
+ * signing-key set is not on record ([StoredVerifier.unavailable]): the keys
+ * left to check with may be revoked ones.
  *
  * What it cannot do: stop someone with root from putting the whole of the
  * app's storage back to an earlier state (an older, validly signed file with
- * its older signature). Nothing kept on the device can. The offline lifetime
- * bounds how long such a copy stays usable, and the next fetch replaces it.
+ * its older signature, and the floor of that time). Nothing kept on the
+ * device can. The offline lifetime bounds how long such a copy stays usable,
+ * and the next fetch replaces it.
  */
 internal class VaultFileGuard(
     private val meta: VaultFileMeta,
@@ -75,7 +90,32 @@ internal class VaultFileGuard(
         meta.saveSignatures(file.key, signatures)
         recordConfirmation(file)
         meta.setProblem(file.key, null)
+        // The version the signatures name: the store's own count (a backend
+        // without version headers) is not something a signature vouches for.
+        if (signatures != null) meta.raiseVersionFloor(file.configApiId, file.key, signatures.version)
     }
+
+    /**
+     * The highest version of [file] this device accepted with a verified
+     * signature, 0 when none: what a download must reach even when no copy
+     * is stored any more. Kept through [forget], [integrityFailed] and every
+     * deletion here.
+     *
+     * @throws StoreUnreadableException when it cannot be read right now —
+     *   which is not "no floor"
+     */
+    fun versionFloor(file: VaultFileConfig): Int = meta.versionFloor(file.configApiId, file.key)
+
+    /**
+     * `unlockFile` opened a server-sealed (`user_auth`) copy and its
+     * signature passed: only now is its version one a signature vouches for.
+     */
+    fun verifiedAtUnlock(file: VaultFileConfig, version: Int) = quietly(file.key) {
+        meta.raiseVersionFloor(file.configApiId, file.key, version)
+    }
+
+    /** Forgets every version floor (`PinVault.resetAndWipeStoredState`, tests only). */
+    fun wipeVersionFloors() = quietly("*") { meta.wipeVersionFloors() }
 
     /** The server confirmed the stored copy (304, or the same content again). */
     fun confirmed(file: VaultFileConfig) = quietly(file.key) {
@@ -139,7 +179,7 @@ internal class VaultFileGuard(
         }
     }
 
-    /** The app cleared the file, or it was wiped. */
+    /** The app cleared the file, or it was wiped. Its version floor stays. */
     fun forget(key: String) = quietly(key) {
         meta.clear(key)
         meta.clear(pendingRecord(key))
@@ -172,9 +212,18 @@ internal class VaultFileGuard(
         unavailable(file.key, e)
     }
 
-    /** `unlockFile`, before the prompt: null to go ahead, otherwise why not. */
-    fun beforeUnlock(file: VaultFileConfig, storage: VaultStorageProvider): Read.Refused? = try {
-        if (storage.exists(file.key) && isStale(file)) stale(file, storage) else null
+    /**
+     * `unlockFile`, before the prompt: null to go ahead, otherwise why not.
+     * With [verifier]: also when the copy cannot be checked right now — a
+     * server-sealed copy is verified inside the unlock, where a failed check
+     * deletes it.
+     */
+    fun beforeUnlock(file: VaultFileConfig, storage: VaultStorageProvider, verifier: StoredVerifier? = null): Read.Refused? = try {
+        when {
+            !storage.exists(file.key) -> null
+            isStale(file) -> stale(file, storage)
+            else -> verifier?.unavailable?.invoke()?.let { uncheckable(file.key, it) }
+        }
     } catch (e: StoreUnreadableException) {
         unavailable(file.key, e)
     }
@@ -186,6 +235,9 @@ internal class VaultFileGuard(
     fun check(file: VaultFileConfig, storage: VaultStorageProvider, bytes: ByteArray, version: Int, verifier: StoredVerifier?): Read {
         if (verifier == null || carriesOwnSignatures(file)) return Read.Content(bytes)
         val signatures = try {
+            // Before anything is judged: without the block's signing-key set
+            // a "failed" check would delete a copy that may be good.
+            verifier.unavailable()?.let { return uncheckable(file.key, it) }
             meta.signatures(file.key)
         } catch (e: StoreUnreadableException) {
             return unavailable(file.key, e)
@@ -224,6 +276,7 @@ internal class VaultFileGuard(
         when {
             !storage.exists(file.key) -> problem ?: VaultFileStatus.NOT_STORED
             isStale(file) -> VaultFileStatus.STALE
+            verifier?.unavailable?.invoke() != null -> VaultFileStatus.STORAGE_UNAVAILABLE
             needsSignature(file, verifier) -> VaultFileStatus.NEEDS_FETCH
             (storage as? UserAuthVaultStorage)?.isLocked(file.key) == true -> VaultFileStatus.LOCKED
             else -> VaultFileStatus.AVAILABLE
@@ -316,6 +369,12 @@ internal class VaultFileGuard(
         }
         runCatching { onRemoved(file.key, reason) }
         return Read.Refused(status, reason)
+    }
+
+    /** The copy is there, but the keys to check it with are not: kept, not handed out. */
+    private fun uncheckable(key: String, why: String): Read.Refused {
+        Timber.w("Vault file [%s] cannot be checked right now — nothing handed out, nothing deleted: %s", key, why)
+        return Read.Refused(VaultFileStatus.STORAGE_UNAVAILABLE, "Vault file '$key' cannot be checked right now: $why")
     }
 
     private fun unavailable(key: String, e: StoreUnreadableException): Read.Refused {

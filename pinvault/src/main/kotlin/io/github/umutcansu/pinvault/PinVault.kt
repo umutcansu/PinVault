@@ -128,6 +128,14 @@ object PinVault {
     /** Checks a stored vault file every time it is read; set up in [setup]. */
     private var vaultGuard: io.github.umutcansu.pinvault.internal.VaultFileGuard? = null
 
+    /** What the read APIs answer for a key: only files the running config declares are read. */
+    private val vaultReads = io.github.umutcansu.pinvault.internal.VaultFileReads(
+        files = { pinManagerConfig?.vaultFiles },
+        storageFor = { getStorageFor(it) },
+        guard = { vaultGuard },
+        verifierFor = { vaultRouter.storedVerifier(it) }
+    )
+
     /** Keys behind [UserAuth] vault files. Android Keystore in production; tests swap in a software one. */
     internal var userAuthKeysFactory: (Context) -> UserAuthKeys = { context ->
         // Generated with an attestation challenge bound to the device id the
@@ -826,6 +834,25 @@ object PinVault {
      * connection pool is the app's, the library does not empty it when pins
      * change (it does for [getClient]). Keep the interceptors this call adds;
      * a `builder.networkInterceptors().clear()` afterwards removes the check.
+     *
+     * ## HTTPS only
+     * The builder leaves this call without a cleartext connection spec (its
+     * TLS specs are kept): a request to an `http://` URL, and a redirect
+     * from an https host to one, fail with OkHttp's `UnknownServiceException`
+     * ("CLEARTEXT communication not enabled for client") before anything is
+     * sent — a pin can only be checked in a TLS handshake. An app that needs
+     * plain HTTP through this builder for hosts of its own puts the spec
+     * back after this call (`builder.connectionSpecs(listOf(ConnectionSpec.MODERN_TLS,
+     * ConnectionSpec.CLEARTEXT))`); such requests are not pinned.
+     *
+     * ## Redirects and WebSockets
+     * A redirect to another origin (scheme, host or port) does not take the
+     * request's own headers or its body along, and a WebSocket upgrade that
+     * is redirected to another origin fails instead of being followed. Part
+     * of that works through the builder's `CookieJar`, which this call
+     * wraps (the app's jar keeps working as before): set the cookie jar
+     * BEFORE this call — a jar set afterwards replaces the wrapper, and a
+     * redirected WebSocket upgrade is then only failed after the fact.
      */
     fun applyTo(builder: OkHttpClient.Builder) {
         checkInitialized()
@@ -870,6 +897,14 @@ object PinVault {
      * handshakes with a [javax.net.ssl.SSLHandshakeException] instead of
      * silently falling back to system trust. Wait for [InitResult.Ready]
      * before issuing pinned requests.
+     *
+     * HTTPS only: the client has no cleartext connection spec, so an
+     * `http://` URL fails with OkHttp's "CLEARTEXT communication not enabled
+     * for client" before anything is sent, and redirects from https to http
+     * are not followed. For plain HTTP to hosts of its own an app uses
+     * [applyTo] on its own builder and sets `connectionSpecs` afterwards.
+     * A WebSocket upgrade that is redirected to another origin fails (see
+     * [applyTo]).
      */
     fun getClient(): OkHttpClient {
         checkInitialized()
@@ -1927,18 +1962,18 @@ object PinVault {
      * The app's environment guard is asked first
      * ([io.github.umutcansu.pinvault.model.GuardedOperation.LOAD_FILE]);
      * a refusal returns null without decrypting the copy.
+     *
+     * Only a file the config passed to [init] declares (`vaultFile(key)`) is
+     * read: for any other key this returns null, whatever an earlier app
+     * version stored under it ([fileStatus] says `NOT_STORED`, [hasFile]
+     * false, [fileVersion] 0). The rules a copy is read under — signature,
+     * offline lifetime, `userAuth` — are part of its declaration. The copy is
+     * not deleted; [clearFile] removes it.
      */
     fun loadFile(key: String): ByteArray? {
         checkInitialized()
         if (environmentRefusal(pinManagerConfig, io.github.umutcansu.pinvault.model.GuardedOperation.LOAD_FILE) != null) return null
-        val storage = getStorageFor(key)
-        val file = pinManagerConfig?.vaultFiles?.get(key)
-        val guard = vaultGuard
-        if (file == null || guard == null) return storage.load(key)
-        return when (val read = guard.load(file, storage, vaultRouter.storedVerifier(file))) {
-            is io.github.umutcansu.pinvault.internal.VaultFileGuard.Read.Content -> read.bytes
-            else -> null
-        }
+        return vaultReads.load(key)
     }
 
     /**
@@ -1950,17 +1985,16 @@ object PinVault {
      *
      * A copy's signature is verified when it is read, so a tampered copy
      * shows as `AVAILABLE` here until `loadFile` / `unlockFile` has looked.
+     *
+     * `NOT_STORED` for a key the config does not declare, whatever is stored
+     * under it (see [loadFile]). `STORAGE_UNAVAILABLE` also while the copy
+     * cannot be checked because the signing-key set its Config API applied
+     * is no longer on record: the next successful config update brings the
+     * set back, and the copy with it.
      */
     fun fileStatus(key: String): io.github.umutcansu.pinvault.model.VaultFileStatus {
         checkInitialized()
-        val storage = getStorageFor(key)
-        val file = pinManagerConfig?.vaultFiles?.get(key)
-        val guard = vaultGuard
-        if (file == null || guard == null) {
-            return if (storage.exists(key)) io.github.umutcansu.pinvault.model.VaultFileStatus.AVAILABLE
-            else io.github.umutcansu.pinvault.model.VaultFileStatus.NOT_STORED
-        }
-        return guard.status(file, storage, vaultRouter.storedVerifier(file))
+        return vaultReads.status(key)
     }
 
     /**
@@ -1993,6 +2027,9 @@ object PinVault {
      * server); when it fails, it alone is deleted and the copy it was to
      * replace is opened instead — which, for a per-use key, asks for the
      * prompt once more.
+     *
+     * [VaultFileUnlockResult.NotFound] for a key the config does not declare
+     * (see [loadFile]); no prompt is shown.
      */
     suspend fun unlockFile(
         activity: FragmentActivity,
@@ -2003,19 +2040,23 @@ object PinVault {
         // Before the prompt: on a device the app does not trust, the content never reaches memory.
         environmentRefusal(pinManagerConfig, io.github.umutcansu.pinvault.model.GuardedOperation.UNLOCK_FILE)
             ?.let { return VaultFileUnlockResult.Failed(key, it.message ?: "Refused by the environment guard", it) }
+        // A key the config does not declare has no file to open (see loadFile):
+        // without its declaration nothing says how the copy is to be checked.
+        val file = vaultReads.declared(key) ?: return VaultFileUnlockResult.NotFound(key)
         val storage = getStorageFor(key)
-        val file = pinManagerConfig?.vaultFiles?.get(key)
         val guard = vaultGuard
         // A server-sealed (USER_AUTH) copy carries its signatures and is
         // checked inside unlock, once it is open. No verifier for such a file
         // = not opened (fail closed). Every other copy is checked below with
         // the signatures stored when it was fetched.
-        val sealedByServer = file?.takeIf { it.encryption == io.github.umutcansu.pinvault.model.VaultFileEncryption.USER_AUTH }
+        val sealedByServer = file.takeIf { it.encryption == io.github.umutcansu.pinvault.model.VaultFileEncryption.USER_AUTH }
         val verifier = sealedByServer?.let { vaultRouter.unlockVerifier(it) }
         return kotlinx.coroutines.withContext(Dispatchers.IO) {
-            // Past its offline lifetime: no prompt for a file that is not handed out.
-            if (file != null && guard != null) {
-                guard.beforeUnlock(file, storage)?.let { refused ->
+            // Past its offline lifetime, or not checkable right now (the
+            // block's signing-key set is missing): no prompt for a file that
+            // is not handed out.
+            if (guard != null) {
+                guard.beforeUnlock(file, storage, vaultRouter.storedVerifier(file))?.let { refused ->
                     return@withContext if (refused.status == io.github.umutcansu.pinvault.model.VaultFileStatus.STALE) {
                         VaultFileUnlockResult.Stale(key)
                     } else {
@@ -2033,19 +2074,24 @@ object PinVault {
                     onSealedForAnotherKey = { sealedByServer?.let { vaultRouter.forgetUserAuthRegistration(it.configApiId) } },
                     // A newer server-sealed copy passed its check and replaced
                     // the stored one: only now is it confirmed (L-10).
-                    onPromoted = { version -> if (file != null && guard != null) guard.promoted(file, version) }
+                    onPromoted = { version -> guard?.promoted(file, version) }
                 )
             } else {
                 storage.load(key)?.let { VaultFileUnlockResult.Unlocked(key, storage.getVersion(key), it) }
                     ?: VaultFileUnlockResult.NotFound(key)
             }
-            if (file == null || guard == null) return@withContext result
+            if (guard == null) return@withContext result
             if (result is VaultFileUnlockResult.Failed && hadCopy && !storage.exists(key)) {
                 // The copy failed the check done at unlock and was deleted there.
                 guard.integrityFailed(file, result.reason)
             }
             if (result !is VaultFileUnlockResult.Unlocked) return@withContext result
-            when (val read = guard.check(file, storage, result.bytes, result.version, vaultRouter.storedVerifier(file))) {
+            val storedVerifier = vaultRouter.storedVerifier(file)
+            // A server-sealed copy was opened and its signature checked just
+            // now (a signing block: there is a verifier): its version is one
+            // the device has verified, and no older one is taken from here on.
+            if (sealedByServer != null && storedVerifier != null) guard.verifiedAtUnlock(file, result.version)
+            when (val read = guard.check(file, storage, result.bytes, result.version, storedVerifier)) {
                 is io.github.umutcansu.pinvault.internal.VaultFileGuard.Read.Content -> result
                 is io.github.umutcansu.pinvault.internal.VaultFileGuard.Read.Refused -> VaultFileUnlockResult.Failed(key, read.reason)
                 io.github.umutcansu.pinvault.internal.VaultFileGuard.Read.Absent -> VaultFileUnlockResult.NotFound(key)
@@ -2065,10 +2111,10 @@ object PinVault {
         }
     }
 
-    /** True when the stored copy of [key] opens only through [unlockFile]. */
+    /** True when the stored copy of [key] opens only through [unlockFile]. False for a key the config does not declare. */
     fun isFileLocked(key: String): Boolean {
         checkInitialized()
-        return (getStorageFor(key) as? UserAuthVaultStorage)?.isLocked(key) == true
+        return vaultReads.isLocked(key)
     }
 
     /**
@@ -2080,23 +2126,26 @@ object PinVault {
     }
 
     /**
-     * Returns true if a vault file exists in cached storage.
+     * Returns true if a vault file exists in cached storage. False for a key
+     * the config does not declare (see [loadFile]).
      */
     fun hasFile(key: String): Boolean {
         checkInitialized()
-        return getStorageFor(key).exists(key)
+        return vaultReads.has(key)
     }
 
     /**
-     * Returns the current version of a cached vault file, or 0 if not cached.
+     * Returns the current version of a cached vault file, or 0 if not cached
+     * — also for a key the config does not declare (see [loadFile]).
      */
     fun fileVersion(key: String): Int {
         checkInitialized()
-        return getStorageFor(key).getVersion(key)
+        return vaultReads.version(key)
     }
 
     /**
-     * Removes a cached vault file from encrypted storage.
+     * Removes a cached vault file from encrypted storage — also a copy stored
+     * under a key the config no longer declares.
      */
     fun clearFile(key: String) {
         checkInitialized()
@@ -2436,6 +2485,8 @@ object PinVault {
                     client.configStore.wipeAll()
                 }
             }
+            // The one place a vault file's version floor goes, too.
+            vaultGuard?.wipeVersionFloors()
             initialized = false
         }
         Timber.w("PinVault reset — stored config state wiped, TLS refused until re-init")

@@ -90,6 +90,18 @@ internal class VaultFileRouter(
             )
 
         return try {
+            // The block's signing-key set is not on record (see
+            // SignatureTrust.missingKeySet): what would verify the download
+            // are keys that set may have revoked. Nothing is asked for,
+            // nothing stored is touched; a config update brings the set back.
+            trustFor(file, client)?.takeIf { it.isEnabled }?.missingKeySetReason()?.let { reason ->
+                Timber.e("Vault fetch [%s] refused — %s", file.key, reason)
+                return VaultFileResult.Failed(
+                    file.key, "Vault file '${file.key}' not fetched: $reason",
+                    code = VaultFileResult.Failed.CODE_SIGNATURE_INVALID
+                )
+            }
+
             val storage = storageFor(file.key)
             val deviceId = deviceIdProvider()
 
@@ -277,12 +289,13 @@ internal class VaultFileRouter(
                     )
                 }
                 // Downgrade guard: a validly-signed but OLDER version must not
-                // overwrite a newer stored copy (replay of a stale signed file).
-                if (response.version in 1 until currentVersion) {
-                    return VaultFileResult.Failed(
-                        file.key, downgradeMessage(file.key, response.version, currentVersion),
-                        code = VaultFileResult.Failed.CODE_VERSION_REJECTED
-                    )
+                // overwrite a newer stored copy (replay of a stale signed file)
+                // — nor take the place of a copy that is gone: the floor is
+                // the highest version ever verified here, kept when the copy
+                // is cleared, wiped or deleted. The floor itself is fine: the
+                // same version fetched again after a clear.
+                downgradeProblem(file, response.version, currentVersion)?.let {
+                    return VaultFileResult.Failed(file.key, it, code = VaultFileResult.Failed.CODE_VERSION_REJECTED)
                 }
                 Timber.d("Vault file signature verified ✓ [%s] v%d", file.key, response.version)
             } else {
@@ -451,11 +464,13 @@ internal class VaultFileRouter(
         if (trust != null && trust.isEnabled && entries.isEmpty()) {
             return VaultFileResult.Failed(file.key, noSignatureMessage(file.key, scope), code = VaultFileResult.Failed.CODE_SIGNATURE_MISSING)
         }
-        if (response.version in 1 until currentVersion) {
-            return VaultFileResult.Failed(
-                file.key, downgradeMessage(file.key, response.version, currentVersion),
-                code = VaultFileResult.Failed.CODE_VERSION_REJECTED
-            )
+        // Against the stored copy and, when the block signs its files, the
+        // floor earlier unlocks set. The version is the response's word here
+        // (nothing is verified before the prompt), but a copy stored under a
+        // version it was not signed as fails its check at unlock.
+        val floorApplies = trust != null && trust.isEnabled
+        downgradeProblem(file, response.version, currentVersion, floorApplies)?.let {
+            return VaultFileResult.Failed(file.key, it, code = VaultFileResult.Failed.CODE_VERSION_REJECTED)
         }
         val userAuthStorage = storage as UserAuthVaultStorage
         val refetch = userAuthStorage.needsFetch(file.key)
@@ -591,7 +606,7 @@ internal class VaultFileRouter(
         val client = clients[file.configApiId] ?: return null
         val trust = trustFor(file, client)?.takeIf { it.isEnabled } ?: return null
         val scope = client.block.serverScope
-        return StoredVerifier(schemeOf(scope)) { plaintext, version, entries ->
+        return StoredVerifier(schemeOf(scope), unavailable = trust::missingKeySetReason) { plaintext, version, entries ->
             if (entries.isEmpty()) {
                 "it carries no signature but a verifying key is configured"
             } else {
@@ -642,6 +657,23 @@ internal class VaultFileRouter(
 
     private fun downgradeMessage(key: String, served: Int, stored: Int) =
         "Vault file '$key' downgrade rejected: served v$served < stored v$stored."
+
+    /**
+     * Why [served] is too old, or null: below the stored copy's version, or
+     * below the file's version floor ([VaultFileGuard.versionFloor]) when no
+     * copy is stored that says as much. A response without a version (0, a
+     * backend that sends none) is not judged, as before. [withFloor] false:
+     * the file is not signed, so it has no floor.
+     */
+    private fun downgradeProblem(file: VaultFileConfig, served: Int, stored: Int, withFloor: Boolean = true): String? {
+        if (served in 1 until stored) return downgradeMessage(file.key, served, stored)
+        val floor = if (withFloor) guard?.versionFloor(file) ?: 0 else 0
+        if (served in 1 until floor) {
+            return "Vault file '${file.key}' downgrade rejected: served v$served, but this device has already seen " +
+                "v$floor of it with a valid signature (that floor is kept when a copy is cleared, wiped or deleted)."
+        }
+        return null
+    }
 
     /** Ask the bound client's API to report the outcome. */
     suspend fun report(file: VaultFileConfig, report: VaultDownloadReport) {

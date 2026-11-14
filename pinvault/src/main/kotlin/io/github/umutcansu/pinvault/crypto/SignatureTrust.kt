@@ -134,6 +134,45 @@ internal class SignatureTrust(
 
     fun keySetVersion(): Int = currentSet()?.version ?: 0
 
+    /** Where the block's config store remembers the key-set version it last saw in force; see [missingKeySet]. */
+    @Volatile private var rememberedKeySetVersion: () -> Int? = { null }
+
+    /**
+     * Tells this trust where the version of the signing-key set last seen in
+     * force is remembered (the block's config store, a file other than the
+     * one the set itself is in). Set by the block's updater, which keeps that
+     * record.
+     */
+    fun rememberKeySetVersion(provider: () -> Int?) {
+        rememberedKeySetVersion = provider
+    }
+
+    /**
+     * The key-set version this device remembers having had in force when the
+     * set in force now is OLDER than that — or there is none — else null.
+     *
+     * A set revokes signing keys. When its entry is removed from storage (by
+     * whoever can write the app's files), "no set" used to mean "the
+     * compiled-in keys": exactly the keys a set revokes, so a revoked key
+     * verified configs and vault files again (review 2026-11-14). While this
+     * returns a version, nothing verifies ([evaluate] refuses) and callers
+     * that hold something stored treat it as "cannot be checked right now":
+     * not used, not deleted. A set of at least that version — it rides along
+     * with every config response — ends it.
+     *
+     * @throws StoreUnreadableException when either record cannot be read right now
+     */
+    fun missingKeySet(): Int? = rememberedKeySetVersion()?.takeIf { it > keySetVersion() }
+
+    /** [missingKeySet] in words, for a result or a log; null when no set is missing. */
+    fun missingKeySetReason(): String? = missingKeySet()?.let { remembered ->
+        val inForce = keySetVersion()
+        "this device applied signing-key set v$remembered before, but " +
+            (if (inForce == 0) "none is on record now" else "only v$inForce is on record now") +
+            " — the keys that set revoked could sign again. Nothing is verified until the server delivers " +
+            "signing-key set v$remembered or newer (it rides along with the config response)."
+    }
+
     fun status(): SigningStatus = SigningStatus(
         configApiId = configApiId,
         trustedKeyIds = trustedKeys().map(::keyId),
@@ -235,6 +274,11 @@ internal class SignatureTrust(
     )
 
     private fun evaluate(payload: String, entries: List<SignatureEntry>): Verification {
+        // Callers ask missingKeySet first and keep what they hold; this is
+        // the floor under them — no signature counts while the set is gone.
+        missingKeySetReason()?.let { reason ->
+            return Verification(ok = false, signedBy = emptyList(), required = requiredSignatures(), detail = " Not checked: $reason")
+        }
         // One snapshot for the keys AND the count: a key-set update landing
         // between two separate reads could pair the old keys with a new count.
         val set = currentSet()

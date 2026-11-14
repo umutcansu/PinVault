@@ -36,14 +36,31 @@ internal interface VaultFileMeta {
     fun problem(key: String): VaultFileStatus?
     fun setProblem(key: String, problem: VaultFileStatus?)
 
-    /** Forgets everything about [key] except a recorded problem. */
+    /** Forgets everything about [key] except a recorded problem and its version floor. */
     fun clear(key: String)
+
+    /**
+     * The highest version of file [key] of Config API [configApiId] this
+     * device ever accepted with a verified signature; 0 = none. Not part of
+     * what [clear] forgets: the stored copy comes and goes (`clearFile`, an
+     * integrity deletion, `wipeWhenStale`, a revocation wipe, `unenroll`),
+     * and with the floor gone too any older validly signed version of the
+     * file would be accepted again (review 2026-11-14).
+     */
+    fun versionFloor(configApiId: String, key: String): Int
+
+    /** Raises the floor of [key] to [version]; never lowers it. */
+    fun raiseVersionFloor(configApiId: String, key: String, version: Int)
+
+    /** Forgets every version floor. Tests only: nothing a user or a server does may lower a floor. */
+    fun wipeVersionFloors()
 
     /** This process only (tests). */
     class InMemory : VaultFileMeta {
         private val signatures = ConcurrentHashMap<String, StoredSignatures>()
         private val confirmed = ConcurrentHashMap<String, Long>()
         private val problems = ConcurrentHashMap<String, VaultFileStatus>()
+        private val floors = ConcurrentHashMap<Pair<String, String>, Int>()
 
         override fun signatures(key: String) = signatures[key]
         override fun saveSignatures(key: String, signatures: StoredSignatures?) {
@@ -59,6 +76,11 @@ internal interface VaultFileMeta {
             signatures.remove(key)
             confirmed.remove(key)
         }
+        override fun versionFloor(configApiId: String, key: String) = floors[configApiId to key] ?: 0
+        override fun raiseVersionFloor(configApiId: String, key: String, version: Int) {
+            floors.merge(configApiId to key, version) { old, new -> maxOf(old, new) }
+        }
+        override fun wipeVersionFloors() = floors.clear()
     }
 
     /** In a strict [SecurePreferences] namespace of the vault-file store's encrypted file. */
@@ -107,6 +129,46 @@ internal interface VaultFileMeta {
         override fun clear(key: String) {
             prefs.edit().remove(SIGNATURES + key).remove(CONFIRMED + key).apply()
         }
+
+        // Every floor in ONE entry: entry names are stored keyed-hashed, so
+        // entries cannot be listed by prefix when all floors have to go
+        // (wipeVersionFloors), and one entry is read and written whole.
+        private val floorLock = Any()
+
+        /** `<configApiId> <key> <version>` per line, the two names URL-encoded (no space, no newline). */
+        private fun floors(): MutableMap<Pair<String, String>, Int> {
+            val floors = LinkedHashMap<Pair<String, String>, Int>()
+            prefs.getString(FLOORS, null)?.lineSequence()?.forEach { line ->
+                val parts = line.split(' ')
+                val version = parts.getOrNull(2)?.toIntOrNull() ?: return@forEach
+                floors[decode(parts[0]) to decode(parts[1])] = version
+            }
+            return floors
+        }
+
+        override fun versionFloor(configApiId: String, key: String): Int =
+            synchronized(floorLock) { floors()[configApiId to key] ?: 0 }
+
+        @android.annotation.SuppressLint("ApplySharedPref")
+        override fun raiseVersionFloor(configApiId: String, key: String, version: Int) {
+            synchronized(floorLock) {
+                val floors = floors()
+                if (version <= (floors[configApiId to key] ?: 0)) return
+                floors[configApiId to key] = version
+                // commit(): a floor lost to a crash is a floor that never was.
+                prefs.edit().putString(
+                    FLOORS,
+                    floors.entries.joinToString("\n") { (file, floor) -> "${encode(file.first)} ${encode(file.second)} $floor" }
+                ).commit()
+            }
+        }
+
+        override fun wipeVersionFloors() {
+            synchronized(floorLock) { prefs.edit().remove(FLOORS).apply() }
+        }
+
+        private fun encode(text: String) = java.net.URLEncoder.encode(text, "UTF-8")
+        private fun decode(text: String) = java.net.URLDecoder.decode(text, "UTF-8")
     }
 
     companion object {
@@ -114,6 +176,8 @@ internal interface VaultFileMeta {
         private const val SIGNATURES = "sig_"
         private const val CONFIRMED = "seen_"
         private const val PROBLEM = "problem_"
+        /** One entry, not a prefix: no file is called this (the others carry a prefix). */
+        private const val FLOORS = "version_floors"
 
         /**
          * Inside `pinvault_secure_vault_files.xml`, which the backup rules

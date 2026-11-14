@@ -42,7 +42,10 @@ enum class VaultFileStatus {
     /**
      * The encrypted storage cannot be read right now (the Android Keystore
      * failed, or the device is locked and the config asked for
-     * `requireUnlockedDevice()`). Nothing was deleted; try again later.
+     * `requireUnlockedDevice()`), or the copy cannot be checked right now:
+     * the signing-key set its Config API applied is no longer on record, and
+     * the next config update brings it back. Nothing was deleted; try again
+     * later.
      */
     STORAGE_UNAVAILABLE
 }

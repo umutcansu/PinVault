@@ -90,6 +90,13 @@ internal class SSLCertificateUpdater(
     private val importedKeys: io.github.umutcansu.pinvault.keystore.ImportedClientKeys? = null
 ) {
 
+    init {
+        // This updater keeps the record of the signing-key set version last
+        // seen in force (syncKeySetEpoch); the block's trust — which verifies
+        // vault files as well — reads it from here (see missingKeySet).
+        verifier?.let { v -> v.rememberKeySetVersion { configStore.keySetVersionSeenUnder(v.anchorsFingerprint()) } }
+    }
+
     /** One fetch-and-apply at a time; a rollback waits for it too. */
     private val updateLock = Mutex()
 
@@ -482,6 +489,7 @@ internal class SSLCertificateUpdater(
         // or not the config next to it then verifies.
         verifier.applyKeySet(signed)
         syncKeySetEpoch()
+        requireKeySetOnRecord()
 
         val verified = verifier.verifyFetched(signed)
         // M6: the signed view must answer THIS request — a full-config block
@@ -521,7 +529,40 @@ internal class SSLCertificateUpdater(
                 configStore.resetWatermarks(inForce)
                 loadStored()
             }
+            // inForce < resetFor: the set this store was reset for is gone.
+            // Nothing to bring in line — see missingKeySet.
         }
+    }
+
+    /**
+     * The signing-key set version this store remembers ([CertificateConfigStore.keySetVersionSeen])
+     * when the set in force is OLDER than that — or there is none at all —
+     * else null.
+     *
+     * The set lives in a store of its own. When its entry is removed there
+     * (by whoever can write the app's storage), "no set" used to mean "the
+     * compiled-in keys": exactly the keys a set revokes, so a revoked signing
+     * key verified configs again (review 2026-11-14). The version remembered
+     * here says a set of at least that version was once in force. Until one
+     * is again, no config of this block verifies and the stored one is not
+     * used. Key sets ride along with every config response and are applied
+     * before the config is looked at, so an honest server puts this right
+     * with one fetch.
+     *
+     * Null on a fresh install and the first time a store meets key sets
+     * (nothing remembered), and after the app's own trust anchors changed
+     * ([syncTrustAnchors] starts the count again from the set in force; until
+     * it has run, a version remembered under the old anchors does not count).
+     *
+     * The rule itself is the trust's ([io.github.umutcansu.pinvault.crypto.SignatureTrust.missingKeySet]),
+     * so the block's vault files are held to it too.
+     */
+    private fun missingKeySet(): Int? = verifier?.missingKeySet()
+
+    /** Refuses to verify a config while [missingKeySet]; after the response's own key set was applied. */
+    private fun requireKeySetOnRecord() {
+        val reason = verifier?.missingKeySetReason() ?: return
+        throw SecurityException("Config refused: $reason")
     }
 
     /**
@@ -535,7 +576,7 @@ internal class SSLCertificateUpdater(
      * every honest config for good — an app update with new keys did not
      * help, because the watermarks outlived it. The fingerprint they were set
      * under is persisted per store; when it changes the watermarks go (the
-     * key-set version they were reset for is kept), and the stored config
+     * key-set version on record becomes the one in force under the new keys), and the stored config
      * stays only if the new anchors vouch for its envelope. The first time a
      * store meets this check (fresh install, or an upgrade) it only records
      * the fingerprint. Nothing a server sends changes the fingerprint.
@@ -547,7 +588,13 @@ internal class SSLCertificateUpdater(
             null -> configStore.setTrustAnchorsSeen(anchors)
             else -> {
                 Timber.w("The app's compiled-in signing keys changed — replay watermarks reset")
-                configStore.resetWatermarks(configStore.keySetVersionSeen() ?: verifier.keySetVersion())
+                // With the set in force NOW as the version on record: a set
+                // signed by recovery keys this build no longer ships does not
+                // count any more (SignatureTrust falls back to the new
+                // compiled-in keys), and the version remembered from it must
+                // not read as "a set is missing" (see missingKeySet) — the
+                // app's own update is what replaced it.
+                configStore.resetWatermarks(verifier.keySetVersion())
                 configStore.setTrustAnchorsSeen(anchors)
                 loadStored()
             }
@@ -577,6 +624,18 @@ internal class SSLCertificateUpdater(
     private fun loadStored(): StoredConfig? {
         val stored = configStore.load() ?: return null
         val verifier = verifier ?: return StoredConfig(stored, null)
+
+        // The signing-key set this device applied is gone: what the stored
+        // envelope would be checked with now are keys that set may have
+        // revoked. Not used — and not deleted either: nothing is known to be
+        // wrong with it, and it verifies again once the set is back.
+        missingKeySet()?.let { remembered ->
+            Timber.e("Stored config v%d not used — signing-key set v%d is no longer on record", stored.version, remembered)
+            if (httpClientProvider.currentConfig != null) httpClientProvider.reset()
+            discardedStoredConfig = "the stored config is not used because signing-key set v$remembered, which this " +
+                "device applied before, is no longer on record"
+            return null
+        }
 
         val envelope = configStore.loadEnvelope()
         val verified = envelope?.let { verifier.verifyStored(it) }
@@ -669,6 +728,7 @@ internal class SSLCertificateUpdater(
                 syncKeySetEpoch()
                 verifier.applyKeySet(signed)
                 syncKeySetEpoch()
+                requireKeySetOnRecord()
                 val verified = verifier.verifyFetched(signed) { detail ->
                     "The config inside the attestation answer failed signature verification.$detail"
                 }
@@ -731,9 +791,14 @@ internal class SSLCertificateUpdater(
         // it look like a replay or a downgrade. Refuse those up front.
         checkPlausible(remoteConfig, signed = fetched.envelope != null)
 
-        val storedIssuedAt = configStore.getCurrentIssuedAt()
+        val recordedIssuedAt = configStore.getCurrentIssuedAt()
         val stored = loadStored()
         val storedConfig = stored?.config
+        // The watermark entries, and the issuedAt of the stored config when
+        // its envelope just verified: that one is signed, so removing the
+        // watermark entries from storage does not lower the floor below the
+        // config the device is running on (review 2026-11-14).
+        val storedIssuedAt = maxOf(recordedIssuedAt, stored?.takeIf { it.envelope != null }?.config?.issuedAt ?: 0L)
         // Exactly the config a failed health check rolled back may be
         // applied again: it sits at the watermark, it is not a replay.
         val reapplyingRolledBack = storedIssuedAt > 0L && remoteConfig.issuedAt == storedIssuedAt &&

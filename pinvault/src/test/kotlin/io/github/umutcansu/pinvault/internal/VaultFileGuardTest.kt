@@ -82,7 +82,12 @@ class VaultFileGuardTest {
         signaturePublicKey = pubB64.takeIf { signed }, serverScope = serverScope
     )
 
-    private inner class Fixture(val block: ConfigApiBlock, defaultMaxAgeMs: Long = 0L, meta: VaultFileMeta = this@VaultFileGuardTest.meta) {
+    private inner class Fixture(
+        val block: ConfigApiBlock,
+        defaultMaxAgeMs: Long = 0L,
+        meta: VaultFileMeta = this@VaultFileGuardTest.meta,
+        trust: SignatureTrust? = SignatureTrust.forBlock(block, null)
+    ) {
         val guard = VaultFileGuard(meta, { now }, defaultMaxAgeMs) { key, reason -> removed += key to reason }
         val router: VaultFileRouter
 
@@ -95,7 +100,7 @@ class VaultFileGuardTest {
             val client = mockk<ConfigApiClient>()
             every { client.api } returns api
             every { client.block } returns block
-            every { client.signatureTrust } returns SignatureTrust.forBlock(block, null)
+            every { client.signatureTrust } returns trust
             router = VaultFileRouter(
                 clients = mapOf("default" to client), storageFor = { writable },
                 deviceKeyProvider = null, deviceIdProvider = { "test-device" }, guard = guard
@@ -557,6 +562,7 @@ class VaultFileGuardTest {
         override fun signatures(key: String): StoredSignatures? { check(); return inner.signatures(key) }
         override fun confirmedAt(key: String): Long { check(); return inner.confirmedAt(key) }
         override fun problem(key: String): VaultFileStatus? { check(); return inner.problem(key) }
+        override fun versionFloor(configApiId: String, key: String): Int { check(); return inner.versionFloor(configApiId, key) }
     }
 
     @Test
@@ -577,6 +583,234 @@ class VaultFileGuardTest {
 
         locked.unreadable = false
         assertArrayEquals("secret".toByteArray(), f.load(secret))
+    }
+
+    // ── Version floor: what was verified once is not undercut (review 2026-11-14) ──
+
+    /** What `PinVault.clearFile` does. */
+    private fun Fixture.clear(file: VaultFileConfig) {
+        storage.clear(file.key)
+        guard.forget(file.key)
+    }
+
+    @Test
+    fun `after a clear an older signed version is refused, the same and a newer one are taken`() = runTest {
+        val f = Fixture(block())
+        response = signedV1("flags", 5, "flags-v5".toByteArray())
+        assertTrue(f.fetch(file()) is VaultFileResult.Updated)
+
+        // The copy is gone; whoever answers the download serves an old,
+        // validly signed version of the file.
+        f.clear(file())
+        response = signedV1("flags", 3, "flags-v3".toByteArray())
+        val refused = f.fetch(file()) as VaultFileResult.Failed
+        assertEquals(VaultFileResult.Failed.CODE_VERSION_REJECTED, refused.code)
+        assertTrue(refused.reason, refused.reason.contains("already seen v5"))
+        assertFalse(storage.exists("flags"))
+
+        // The same version again is the file coming back, not a downgrade.
+        response = signedV1("flags", 5, "flags-v5".toByteArray())
+        assertTrue(f.fetch(file()) is VaultFileResult.Updated)
+        assertArrayEquals("flags-v5".toByteArray(), f.load(file()))
+
+        f.clear(file())
+        response = signedV1("flags", 6, "flags-v6".toByteArray())
+        assertTrue(f.fetch(file()) is VaultFileResult.Updated)
+        assertEquals(6, meta.versionFloor("default", "flags"))
+    }
+
+    @Test
+    fun `the floor outlives a copy deleted for its offline lifetime`() = runTest {
+        val f = Fixture(block())
+        val secret = file("secret", maxOfflineAgeMs = sevenDays, wipeWhenStale = true)
+        response = signedV1("secret", 5, "secret-v5".toByteArray())
+        f.fetch(secret)
+
+        now += sevenDays + 1
+        f.guard.sweep(listOf(secret)) { storage }
+        assertFalse("wipeWhenStale deleted the copy", storage.exists("secret"))
+
+        response = signedV1("secret", 4, "secret-v4".toByteArray())
+        assertEquals(VaultFileResult.Failed.CODE_VERSION_REJECTED, (f.fetch(secret) as VaultFileResult.Failed).code)
+        response = signedV1("secret", 5, "secret-v5".toByteArray())
+        assertTrue(f.fetch(secret) is VaultFileResult.Updated)
+    }
+
+    @Test
+    fun `the floor outlives a copy deleted for failing its check`() = runTest {
+        val f = Fixture(block())
+        response = signedV1("flags", 5, "flags-v5".toByteArray())
+        f.fetch(file())
+
+        // Rewritten on disk: the read deletes it.
+        storage.save("flags", "rewritten".toByteArray(), 5)
+        assertNull(f.load(file()))
+        assertFalse(storage.exists("flags"))
+
+        response = signedV1("flags", 2, "flags-v2".toByteArray())
+        assertEquals(VaultFileResult.Failed.CODE_VERSION_REJECTED, (f.fetch(file()) as VaultFileResult.Failed).code)
+    }
+
+    @Test
+    fun `the floor outlives a revocation wipe`() = runTest {
+        val f = Fixture(block())
+        response = signedV1("flags", 5, "flags-v5".toByteArray())
+        f.fetch(file())
+
+        // What wipeVaultFilesOnRevocation() and unenroll(…, wipeVaultFiles = true) do.
+        VaultFileWipe.wipe(setOf("default"), listOf(file()), { storage }, userAuthKeys = null)
+        f.guard.forget("flags")
+        assertFalse(storage.exists("flags"))
+
+        response = signedV1("flags", 4, "flags-v4".toByteArray())
+        assertEquals(VaultFileResult.Failed.CODE_VERSION_REJECTED, (f.fetch(file()) as VaultFileResult.Failed).code)
+        response = signedV1("flags", 5, "flags-v5".toByteArray())
+        assertTrue(f.fetch(file()) is VaultFileResult.Updated)
+    }
+
+    @Test
+    fun `a file fetched without signature verification has no floor`() = runTest {
+        val f = Fixture(block(signed = false))
+        response = VaultFetchResponse(content = "flags-v5".toByteArray(), version = 5)
+        f.fetch(file())
+        assertEquals("nothing vouched for that version", 0, meta.versionFloor("default", "flags"))
+
+        f.clear(file())
+        response = VaultFetchResponse(content = "flags-v3".toByteArray(), version = 3)
+        assertTrue(f.fetch(file()) is VaultFileResult.Updated)
+    }
+
+    @Test
+    fun `a floor that cannot be read is not no floor`() = runTest {
+        val locked = UnreadableMeta(meta)
+        val f = Fixture(block(), meta = locked)
+        response = signedV1("flags", 5, "flags-v5".toByteArray())
+        f.fetch(file())
+        f.clear(file())
+
+        locked.unreadable = true
+        response = signedV1("flags", 3, "flags-v3".toByteArray())
+        assertTrue(f.fetch(file()) is VaultFileResult.Failed)
+        assertFalse("the older version was not stored while the floor could not be read", storage.exists("flags"))
+    }
+
+    @Test
+    fun `the stored record keeps a floor through clear and gives it up only to the wipe`() {
+        val prefs = androidx.test.core.app.ApplicationProvider.getApplicationContext<android.content.Context>()
+            .getSharedPreferences("vault-meta-floor-test", android.content.Context.MODE_PRIVATE)
+        val record = VaultFileMeta.Persistent(prefs)
+        // Names are free text: a space or a line break must not split an entry.
+        val oddKey = "quarterly report\nv2"
+
+        record.raiseVersionFloor("default", "flags", 5)
+        record.raiseVersionFloor("prod tls", oddKey, 7)
+        record.raiseVersionFloor("default", "flags", 3)
+        record.saveSignatures("flags", StoredSignatures(5, 1, listOf(SignatureEntry(signature = "c2ln"))))
+        record.clear("flags")
+
+        val reopened = VaultFileMeta.Persistent(prefs)
+        assertNull(reopened.signatures("flags"))
+        assertEquals("never lowered, kept through clear", 5, reopened.versionFloor("default", "flags"))
+        assertEquals(7, reopened.versionFloor("prod tls", oddKey))
+        assertEquals("a floor belongs to one Config API's file", 0, reopened.versionFloor("other", "flags"))
+
+        reopened.wipeVersionFloors()
+        assertEquals(0, reopened.versionFloor("default", "flags"))
+        assertEquals(0, reopened.versionFloor("prod tls", oddKey))
+    }
+
+    // ── A signing-key set that vanished is not "the compiled-in keys" (review 2026-11-14) ──
+
+    private val recovery = KeyPairGenerator.getInstance("EC").apply { initialize(ECGenParameterSpec("secp256r1")) }.generateKeyPair()
+
+    /** The key-set version the block's config store remembers; null = none. */
+    private var rememberedKeySet: Int? = null
+
+    /** The block's trust with recovery keys, told where the remembered version is. No set applied: its entry is gone. */
+    private fun rotatingTrust() = SignatureTrust(
+        "default", listOf(pubB64), 1, listOf(Base64.encodeToString(recovery.public.encoded, Base64.NO_WRAP)), 1, store = null
+    ).also { it.rememberKeySetVersion { rememberedKeySet } }
+
+    private fun keySet(version: Int, keys: List<String>): io.github.umutcansu.pinvault.model.SignedKeySet {
+        val payload = """{"type":"${SignatureTrust.KEY_SET_TYPE}","version":$version,"keys":[${keys.joinToString(",") { "\"$it\"" }}]}"""
+        val signature = Signature.getInstance("SHA256withECDSA").run {
+            initSign(recovery.private)
+            update(payload.toByteArray(Charsets.UTF_8))
+            Base64.encodeToString(sign(), Base64.NO_WRAP)
+        }
+        return io.github.umutcansu.pinvault.model.SignedKeySet(payload, listOf(SignatureEntry(signature = signature)))
+    }
+
+    @Test
+    fun `while the signing-key set is missing a vault file is not fetched`() = runTest {
+        val f = Fixture(block(), trust = rotatingTrust())
+        rememberedKeySet = 2
+        response = signedV1("flags", 1, "flags".toByteArray())
+
+        val result = f.fetch(file()) as VaultFileResult.Failed
+
+        assertTrue(result.reason, result.reason.contains("signing-key set v2"))
+        assertEquals(VaultFileResult.Failed.CODE_SIGNATURE_INVALID, result.code)
+        assertTrue("the server was not even asked", asked.isEmpty())
+        assertFalse(storage.exists("flags"))
+    }
+
+    @Test
+    fun `while the signing-key set is missing a stored copy is kept but not handed out`() = runTest {
+        val trust = rotatingTrust()
+        val f = Fixture(block(), trust = trust)
+        val content = "flags".toByteArray()
+        response = signedV1("flags", 1, content)
+        assertTrue(f.fetch(file()) is VaultFileResult.Updated)
+        assertArrayEquals(content, f.load(file()))
+
+        // The set's entry is removed; the config store still remembers v2.
+        rememberedKeySet = 2
+
+        assertNull(f.load(file()))
+        assertEquals(VaultFileStatus.STORAGE_UNAVAILABLE, f.status(file()))
+        val beforeUnlock = f.guard.beforeUnlock(file(), storage, f.router.storedVerifier(file()))!!
+        assertEquals(VaultFileStatus.STORAGE_UNAVAILABLE, beforeUnlock.status)
+        assertTrue(beforeUnlock.reason, beforeUnlock.reason.contains("signing-key set v2"))
+        assertTrue("it may be perfectly good: not deleted", storage.exists("flags"))
+        assertTrue(removed.isEmpty())
+        assertEquals("its signatures stay on record", 1, meta.signatures("flags")!!.version)
+
+        // The next config update brings set v2 (the file's key is still in it): the copy reads again.
+        assertTrue(trust.applyKeySetUpdate(keySet(2, listOf(pubB64))))
+        assertArrayEquals(content, f.load(file()))
+        assertEquals(VaultFileStatus.AVAILABLE, f.status(file()))
+    }
+
+    @Test
+    fun `once the set is back a copy signed by a key it revoked goes`() = runTest {
+        val trust = rotatingTrust()
+        val f = Fixture(block(), trust = trust)
+        response = signedV1("flags", 1, "flags".toByteArray())
+        f.fetch(file())
+        rememberedKeySet = 2
+        assertNull(f.load(file()))
+        assertTrue(storage.exists("flags"))
+
+        // Set v2 lists another key only: the copy's signer was revoked.
+        val other = KeyPairGenerator.getInstance("EC").apply { initialize(ECGenParameterSpec("secp256r1")) }.generateKeyPair()
+        assertTrue(trust.applyKeySetUpdate(keySet(2, listOf(Base64.encodeToString(other.public.encoded, Base64.NO_WRAP)))))
+
+        assertNull(f.load(file()))
+        assertFalse("now it is known to be signed by a revoked key", storage.exists("flags"))
+        assertEquals(VaultFileStatus.INTEGRITY_FAILED, f.status(file()))
+    }
+
+    @Test
+    fun `a file with a signature key of its own does not wait for the block's key set`() = runTest {
+        val f = Fixture(block(), trust = rotatingTrust())
+        rememberedKeySet = 2
+        val own = VaultFileConfig(key = "flags", endpoint = "api/v1/vault/flags", configApiId = "default", signaturePublicKey = pubB64)
+        val content = "flags".toByteArray()
+        response = signedV1("flags", 1, content)
+
+        assertTrue(f.fetch(own) is VaultFileResult.Updated)
+        assertArrayEquals(content, f.load(own))
     }
 
     // ── The served encryption may not be weaker than the declared one ──

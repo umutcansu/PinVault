@@ -141,6 +141,46 @@ class SignatureTrustTest {
     }
 
     @Test
+    fun `nothing verifies while the key set this device remembers is gone`() {
+        // Set v2 revoked key A. Its entry was then removed from storage: this
+        // trust starts with no set, and the config store still says "v2".
+        val t = trust(keys = listOf(a.pub(), b.pub()), store = newStore())
+        t.rememberKeySetVersion { 2 }
+        val payload = """{"version":1}"""
+
+        assertEquals(2, t.missingKeySet())
+        val byRevoked = t.verifyConfig(payload, listOf(a.entry(payload)))
+        assertFalse("the compiled-in keys are not a fallback", byRevoked.ok)
+        assertTrue(byRevoked.detail, byRevoked.detail.contains("signing-key set v2"))
+        assertFalse("fail closed: a key that is still good waits for the set too", t.verifyConfig(payload, listOf(b.entry(payload))).ok)
+        assertFalse(t.verifyVaultFile("flags", 1, "x".toByteArray(), listOf(b.entry(ConfigSignatureVerifier.vaultCanonical("flags", 1, "x".toByteArray())))).ok)
+
+        // An older set put back does not do: v1 still trusted key A.
+        assertTrue(t.applyKeySetUpdate(keySet(1, listOf(a.pub(), b.pub()))))
+        assertEquals(2, t.missingKeySet())
+        assertTrue(t.missingKeySetReason()!!.contains("only v1 is on record"))
+        assertFalse(t.verifyConfig(payload, listOf(a.entry(payload))).ok)
+
+        // The set comes back: its keys verify, the one it revoked does not.
+        assertTrue(t.applyKeySetUpdate(keySet(2, listOf(b.pub()))))
+        assertNull(t.missingKeySet())
+        assertTrue(t.verifyConfig(payload, listOf(b.entry(payload))).ok)
+        assertFalse(t.verifyConfig(payload, listOf(a.entry(payload))).ok)
+    }
+
+    @Test
+    fun `a trust nobody told of a remembered key set misses none`() {
+        // A fresh install, a per-file key, a block without recovery keys.
+        val t = trust()
+        val payload = """{"version":1}"""
+        assertNull(t.missingKeySet())
+        assertNull(t.missingKeySetReason())
+        assertTrue(t.verifyConfig(payload, listOf(a.entry(payload))).ok)
+        t.rememberKeySetVersion { 0 }
+        assertNull("version 0 is the compiled-in keys", t.missingKeySet())
+    }
+
+    @Test
     fun `an applied key set survives a new process and is re-verified on load`() {
         val store = newStore()
         trust(store = store).applyKeySetUpdate(keySet(version = 2, keys = listOf(b.pub())))

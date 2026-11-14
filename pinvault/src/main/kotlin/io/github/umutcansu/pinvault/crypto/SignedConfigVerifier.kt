@@ -46,6 +46,15 @@ internal class SignedConfigVerifier(
     /** See [SignatureTrust.anchorsFingerprint]. */
     fun anchorsFingerprint(): String = trust.anchorsFingerprint()
 
+    /** See [SignatureTrust.rememberKeySetVersion]. */
+    fun rememberKeySetVersion(provider: () -> Int?) = trust.rememberKeySetVersion(provider)
+
+    /** See [SignatureTrust.missingKeySet]. */
+    fun missingKeySet(): Int? = trust.missingKeySet()
+
+    /** See [SignatureTrust.missingKeySetReason]. */
+    fun missingKeySetReason(): String? = trust.missingKeySetReason()
+
     /**
      * Applies a signing-key set riding along with [signed], if it is newer.
      * FIRST, before [verifyFetched]: the config in the same response may

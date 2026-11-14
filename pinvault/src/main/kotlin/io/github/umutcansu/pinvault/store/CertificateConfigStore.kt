@@ -302,6 +302,20 @@ internal class CertificateConfigStore private constructor(
     fun keySetVersionSeen(): Int? =
         if (prefs.contains(KEY_KEY_SET_VERSION)) prefs.getInt(KEY_KEY_SET_VERSION, 0) else null
 
+    /**
+     * [keySetVersionSeen] when it was recorded under the trust anchors
+     * [anchors] (or before anchors were recorded at all), else null: after an
+     * app update that changed the compiled-in keys the version on record was
+     * counted under the old ones — a set signed by recovery keys the new
+     * build does not ship no longer applies, by the app's own doing — and the
+     * count starts again at the next update (`SSLCertificateUpdater.syncTrustAnchors`).
+     */
+    fun keySetVersionSeenUnder(anchors: String): Int? {
+        val seen = keySetVersionSeen() ?: return null
+        val recordedUnder = trustAnchorsSeen()
+        return seen.takeIf { recordedUnder == null || recordedUnder == anchors }
+    }
+
     /** Records the signing-key set version in force, without touching the watermarks. */
     fun setKeySetVersionSeen(version: Int) {
         prefs.edit().putInt(KEY_KEY_SET_VERSION, version).apply()
