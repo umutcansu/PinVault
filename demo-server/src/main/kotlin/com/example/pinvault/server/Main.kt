@@ -198,6 +198,8 @@ private fun startServer() {
         auditStore, com.example.pinvault.server.service.WebhookNotifier.fromEnv()
     )
     val liveGate = com.example.pinvault.server.service.LiveCertificateGate.fromEnv()
+    val adminWritesFrozen = com.example.pinvault.server.plugin.adminWritesFrozenFromEnv()
+    if (adminWritesFrozen) System.err.println("ADMIN_WRITES_FROZEN=true: admin changes are refused (423); devices are served as before")
     val approvalsRequired = com.example.pinvault.server.service.ApprovalService.requiredFromEnv()
     // The same rule a settings save is held to (ServerSettingsCatalog.startProblems).
     com.example.pinvault.server.service.ApprovalService.adminKeysProblem(approvalsRequired, adminRegistry)?.let { error(it) }
@@ -271,6 +273,8 @@ private fun startServer() {
     // Governance plugins for every listener: the audit context (and cache
     // invalidation on admin writes) and, with approvals on, the approval gate.
     fun Application.installGovernance(management: Boolean) {
+        // A lapsed hosted subscription or maintenance: admin changes refused, devices served (423).
+        install(com.example.pinvault.server.plugin.AdminWritesFrozen) { frozen = adminWritesFrozen }
         install(com.example.pinvault.server.plugin.AdminAudit) {
             audit = auditLog
             onAdminWrite = { signedConfigService.invalidate() }
