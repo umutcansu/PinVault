@@ -185,7 +185,7 @@ So bump per-host versions in small steps and never reuse a lower one.
 
 | Field | Type | Required | Purpose |
 |---|---|---|---|
-| `configApiId` | String | When clients set `serverScope(...)` | Names the Config API this config is for. One signing key often signs for several Config APIs (TLS and mTLS listeners, tenants, environments); without this field a config signed for one of them verifies for all of them. A client whose block calls `serverScope("<id>")` refuses a payload that lacks the field or carries another id; clients without `serverScope` ignore it. Put it in every signed payload — it costs nothing and lets apps turn the check on. The same id goes into v2 vault file signatures (section 6). The reference server (2.2.0) writes the listener's Config API id into every signed payload and leaves it out of unsigned ones. A signing-key set (below) may carry its own optional `configApiId`; a client with `serverScope` refuses a set made for another id, and a set without the field applies to any block. |
+| `configApiId` | String | When clients set `serverScope(...)` | Names the Config API this config is for. One signing key often signs for several Config APIs (TLS and mTLS listeners, tenants, environments); without this field a config signed for one of them verifies for all of them. A client whose block calls `serverScope("<id>")` refuses a payload that lacks the field or carries another id; clients without `serverScope` ignore it. Put it in every signed payload — it costs nothing and lets apps turn the check on. The same id goes into v2 vault file signatures (section 6). The reference server (2.2.0) writes the listener's Config API id into every signed payload and leaves it out of unsigned ones. A signing-key set (below) names the Config APIs it is for in `configApiIds` (a list; a single `configApiId` is read too); a client with `serverScope` refuses a set that names Config APIs without its own, and still accepts one that names none (with a warning). Since 2.10.0 the reference server refuses to take a set without `configApiIds`, or one that leaves out any of its Config APIs, unless `ALLOW_UNSCOPED_KEY_SETS=true` allows the unscoped one. |
 | `view` | Object | For every NARROWED view (2.9.0) | Names the request a narrowed view answers, so a full-config device cannot be handed a genuine narrow view (which would drop every other host's pins) and a scoped device cannot be handed another request's view. Write it exactly when the request was scoped — `?hosts=` given, or `X-Device-Id` sent (in an attestation answer: `hosts` in the body, with the attested `deviceId`) — and leave it out of the full config. `hosts`: the REQUESTED set (not what was granted) in canonical form: split at `,`, ASCII whitespace trimmed, empty names dropped, ASCII `A-Z` lower-cased, duplicates removed, sorted by code point; omitted when no host list was requested. `deviceId`: the device id the request claimed, the one the ACL was resolved for; omitted when none was claimed. No other keys (a client refuses a `view` with keys it does not know). Compute the served pins from the canonical set too, so two spellings of one request get the same pins. A 2.9.0+ client refuses a narrowed `view` for a block without `wantPinsFor`, and for a block with it any `view` whose `hosts` ≠ canonical(`wantPinsFor`) or whose `deviceId` ≠ the `X-Device-Id` it sent; it still accepts a payload without `view` (treated as the full config). If you cache signatures, key them by the whole payload including `view`. Example: `"view":{"hosts":["api.example.com","cdn.example.com"],"deviceId":"a1b2c3d4e5f60718"}` |
 
 **Signing spec:**
@@ -254,7 +254,7 @@ All of these are optional and ignored by older clients. Clients announce what th
 - **`signatures`: several signers (m-of-n).** Every signature is over the same `payload` bytes. A client configured with `requiredSignatures(n)` needs `n` valid signatures from distinct trusted keys. `keyId` is only a hint that tells the client which key to try first, and it is not signed. Keep putting the first signer's signature in `signature`: pre-2.1 clients only read that field.
 - **`signingKeys`: key rotation and revocation.**
   - The operator signs this document **offline** with a recovery key, and the server relays it unchanged with every config.
-  - A client configured with `recoveryPublicKeys(...)` checks: the recovery signatures (`requiredRecoverySignatures`, default 1), `type == "pinvault-signing-keys"`, `version` > 0, at most 32 keys, each an EC public key, none of them a recovery key, and, when the set carries `configApiId` and the block sets `serverScope`, the same id. The number of signatures a config then needs is `max(the app's requiredSignatures, the set's requiredSignatures)` (absent = 1): a set can raise it, never lower it, and must list at least that many keys.
+  - A client configured with `recoveryPublicKeys(...)` checks: the recovery signatures (`requiredRecoverySignatures`, default 1), `type == "pinvault-signing-keys"`, `version` > 0, at most 32 keys, each an EC public key, none of them a recovery key, and, when the set carries `configApiIds` (or the single `configApiId`) and the block sets `serverScope`, that the block's id is among them. The number of signatures a config then needs is `max(the app's requiredSignatures, the set's requiredSignatures)` (absent = 1): a set can raise it, never lower it, and must list at least that many keys.
   - Only a `version` higher than the one the device holds replaces its trusted signing keys with `keys`; an equal or lower one is ignored. A newer set also resets the replay watermarks and drops a stored config it does not vouch for.
   - An invalid set fails the whole response.
   - Before relaying a set, make sure your active signers are in it and cover `requiredSignatures`. A set they cannot satisfy makes every device that applies it reject every later config.
@@ -402,11 +402,13 @@ The reference server does all of this under `ENROLLMENT_ATTESTATION=off|warn|enf
 to every waiting request and certificate; `enforce`: the two `403`s above, and it does
 not start without `ATTESTATION_PACKAGE_NAMES` + `ATTESTATION_SIGNER_SHA256`). Its
 `reason` values: `chain_missing`, `chain_malformed`, `chain_too_long`, `key_mismatch`,
-`untrusted_root`, `chain_broken`, `certificate_expired`, `certificate_revoked`,
-`revocation_list_stale`, `challenge_mismatch`, `software_attestation`, `purpose_not_sign`,
-`origin_not_generated`, `device_unlocked`, `boot_not_verified`, `patch_level_too_old`,
-`package_not_allowed`, `signer_not_allowed`, `app_binding_not_configured`,
-`device_id_missing`.
+`untrusted_root`, `chain_broken`, `certificate_expired`, `certificate_not_yet_valid`,
+`certificate_revoked`, `revocation_list_stale`, `extension_missing`,
+`extension_malformed`, `extension_in_intermediate`, `unsupported_attestation_version`,
+`challenge_mismatch`, `software_attestation`, `purpose_not_sign`,
+`origin_not_generated`, `root_of_trust_missing`, `device_unlocked`, `boot_not_verified`,
+`patch_level_too_old`, `application_id_missing`, `package_not_allowed`,
+`signer_not_allowed`, `app_binding_not_configured`, `device_id_missing`.
 
 The user-auth key that seals `user_auth` vault files is attested the same way at its own
 registration (`POST …/vault/devices/{deviceId}/public-key` with `"purpose":"user_auth"`
@@ -415,7 +417,9 @@ and `"attestationChain"`); its challenge is
 two prefixes differ on purpose: a chain made for one key cannot be replayed for the
 other. For that key also check that user authentication is required, and how: the
 reference server refuses a time-bound key (`authTimeout` set) from Android 11 or newer,
-and with `USER_AUTH_REQUIRE_PER_USE=true` from every version.
+and with `USER_AUTH_REQUIRE_PER_USE=true` from every version. Its `reason` values for
+that key, on top of the list above: `purpose_not_decrypt`, `no_user_auth`,
+`allow_while_on_body`, `auth_timeout_too_long`, `time_bound_key`.
 
 **iOS: App Attest in place of the chain.** An iPhone has no Android Key Attestation
 chain; where you require one, the iOS library sends instead an App Attest attestation of
@@ -676,7 +680,7 @@ with the same keys and the same `configApiId` as in the signed config payload (s
 3). A client whose block sets `serverScope("<configApiId>")` **requires** the v2 headers
 and ignores v1; a client without it verifies v1 and ignores v2. Send both. The plaintext
 is the file's content before any per-device encryption (`end_to_end`, `user_auth`), as
-for v1. `X-Vault-Version` must be the version the signature names, and versions must not
+for v1. `X-Vault-Version` must be the version the signature names (a file that is deleted and uploaded again continues from the highest version it ever had — devices keep the newest version they verified as a floor, also across `clearFile` and wipes, and refuse a file that starts over at 1), and versions must not
 jump: the library refuses a version more than 1,000,000 above the one it holds (or above
 zero for a first copy).
 

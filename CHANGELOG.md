@@ -1,5 +1,127 @@
 # Changelog
 
+## Unreleased (2.11.0) — review 2026-11-14: what an approver sees is what runs (query strings), TLS only on pinned clients, redirects on WebSockets and from a cache, vault version floor, bridges take more from the native file
+
+### Server
+
+- **A card's scope is the scope that is written (two-person approval).** The
+  approval card read the query string with one parser and the handlers with
+  another: on a real socket `PUT /api/v1/certificate-config?ConfigApiId=staging`
+  got a card for scope `staging` and, once approved, replaced the pins of
+  `default-tls`; a query that began with 1000 `&` did the reverse. The same
+  gap covered a vault upload's `policy` / `encryption` / `expiresAt` and a
+  device key reset's `purpose`. Every reader — cards, handlers, the audit
+  log — now uses one function on the raw query (`ExactQuery`: names matched
+  exactly, first value wins), and the gate answers `400 ambiguous_query` to
+  a query the engine's own parser would read differently. A test
+  application never showed it (its engine reads both sides alike); the
+  regression runs on a real socket, and `QueryReadingTest` fails on a
+  handler that asks the engine.
+- **Breaking for upgrades from before 2.10.0 — vault blobs must say which
+  file they belong to.** The at-rest password also seals waiting
+  change-request bodies and the PinVault-Token secrets. In the form used
+  before 2.10.0 (`VLT-ENC1`, no associated data) such a blob, copied into a
+  vault row by someone who can write the database, opened there and was
+  served as that file. Change requests and token secrets are now sealed
+  bound to their own kind, and an unbound blob in a vault row is no longer
+  opened — by a download or by the startup pass. A server that ran 2.10.0
+  once has none left. Upgrading straight from an older version: start once
+  with `VAULT_AT_REST_BIND_LEGACY=true`, then remove it.
+- **`PIN_CHANGE_APPROVALS=N` needs N personal admin keys**, not N−1: the
+  requester is a personal key too and approves nothing of their own. With
+  one key and `PIN_CHANGE_APPROVALS=2` the server used to start, and no
+  gated change could ever be applied.
+- **A re-uploaded vault file continues its version sequence** (V32
+  `vault_version_watermark`): devices keep the newest version they verified
+  as a floor (below), and a file that restarted at v1 after a delete would
+  be refused by all of them.
+- **Attestation key rebind needs a certificate that proves the device.**
+  The 2.10.0 rebind accepted a certificate whose device id the device had
+  only claimed at enrollment; after "forget identity" the attestation row
+  stays, so the holder of any unbound enrollment token could take it over
+  with its operator overrides. The certificate must now prove the id (the
+  id is its own, a token bound to the device, or an attested key with the
+  app binding); otherwise `key_mismatch` as before 2.10.0. A token anomaly
+  on the device survives the rebind: lifting it stays an admin's call.
+- **A Config API id must be a JSON string.** A bare word or a number
+  skipped the identifier check and started an API no later request could
+  name. A malformed state reference on a card now makes it stale instead
+  of never stale, and a request whose card cannot be read is not applied.
+- **The key-set card says what is published**: version, a fingerprint per
+  key, how many must sign, the Config APIs it is for (it said "v?").
+- Docs and compose: `demo-server/docker-compose.yml` passes every variable
+  its README documents (about 45 were silently dropped, among them
+  `TRUSTED_PROXIES` and the Play Integrity keys); the sample host's
+  production example closes the live-check override
+  (`PIN_LIVE_CHECK_ALLOW_OVERRIDE=false`).
+
+### Android and iOS libraries
+
+- **Breaking — pinned clients send over TLS only.** `GUIDE.md` said so; only
+  the Config API's own client did it. An `http://` request (or `ws://`
+  socket) through `getClient()` / `applyTo` (iOS `session()` / `applyTo`)
+  went out unpinned wherever the platform allowed cleartext. It now fails
+  before anything is sent, and no https→http redirect is followed (Android
+  `applyTo` builders followed them). Android: set `connectionSpecs` after
+  `applyTo` if a builder of yours really needs cleartext. iOS:
+  `followCleartextRedirects` is accepted and does nothing.
+- **Android — the redirect guard of 2.10.0 had three ways around it.** A
+  WebSocket upgrade skips OkHttp's network interceptors altogether, so a
+  30x on the upgrade carried cookies, API keys and the PinVault-Token to
+  the other origin: an upgrade is no longer followed to another origin. A
+  redirect served from an HTTP cache made its target look like the first
+  hop: the origin is now the call's own. A header whose value changed
+  between attempts of one call (a refreshed session) was not recognised as
+  the app's. `applyTo` now wraps the builder's `CookieJar` — call it last.
+  Behind an HTTP proxy, `host:port` pins and identity hosts are judged by
+  the target's port, not the proxy's.
+- **A vault file keeps a version floor.** The only floor was the stored
+  copy's version: after `clearFile`, a stale or revocation wipe, or a first
+  install, whoever answers for the Config API could serve any older version
+  the signer once signed. The newest version verified is now kept per file
+  across all of those. (Not changed: a `304` still counts as "current"
+  without a signature, and vault signatures carry no time.)
+- **Reads of a vault key the config does not name answer "nothing stored".**
+  They returned the stored copy without any of the checks.
+- **Android — a lost signing-key set is not "no set".** With the entry
+  deleted, the compiled-in keys — possibly revoked by that set — verified
+  configs and vault files again; now nothing verifies until a set of at
+  least the remembered version arrives. The `issuedAt` replay floor is also
+  taken from the verified stored envelope, not only from its own entries.
+- **iOS — a block made with `ConfigApiBlock.init` and no signing key is
+  refused**, as on Android: it started (also in a release build) and ran
+  with no verification at all, without `allowUnsigned` ever being said. The
+  initializer adds the trailing slash the builder adds.
+- **iOS — a container put back does not bring its older signed config
+  back** (the Keychain mirror records which envelope is active); scope and
+  Config API ids are compared exactly, not by Unicode equivalence; the
+  client certificate is presented only on a session whose server
+  certificate passed the trust check, and only to the address the session
+  connects to.
+
+### React Native and Flutter bridges
+
+- See the packages' changelogs. In short, for release builds with a native
+  security file: a vault file's signature key, encryption and screen lock
+  come from its `vaultFiles` entry alone (an entry that left them out used
+  to hand them to the bundle); with managed trust roots `wantPinsFor` comes
+  from the file; every Config API the file declares must be in the config
+  unless marked `"optional": true`; no relative endpoint may contain `..`.
+- **React Native on Android — RN's own networking follows the same rules.**
+  The clients behind `fetch`, `<Image>` and `WebSocket` copied the pinned
+  socket factory but not the rest: in a release build they now refuse
+  `http://` / `ws://` (a debug build still reaches Metro), and a WebSocket
+  handshake redirected to another origin is not followed. The bridge needs
+  the 2.11.0 core (`BridgeNetworking`).
+
+### Known and accepted
+
+- A vault file can still be frozen at an old version by whoever holds the
+  Config API's TLS key (a `304`, or the same signed bytes again): vault
+  signatures carry no time. Closing it needs a wire-format change.
+- `fetchAttestationToken` (bridges) returns the token to JS/Dart; without
+  `proofOfPossession` it is a bearer credential the bundle can read.
+
 ## 2.10.0 — 2026-11-12 — stale approval cards, scoped key sets, vault blobs bound to their file, redirects keep headers back, bridges take more from the native file
 
 ### Server

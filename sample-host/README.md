@@ -152,8 +152,9 @@ Kaynak değiştikten sonra `docker compose up -d --build` yeterli. Yerel dizinde
 | `ENROLLMENT_REQUEST_TTL_HOURS` | `24` | Onay bekleyen başvurunun ömrü (saat); cevaplanmayan başvuru düşer, telefon yeniden başvurur |
 | `OPEN_ENROLLMENT_RATE_LIMIT` | `20` | Kodsuz başvurularda bir IP adresinden 10 dakikada en fazla yeni başvuru; `0` sınırı kaldırır |
 | `OPEN_ENROLLMENT_MAX_PENDING` | `50` | Aynı anda onay bekleyebilecek en fazla kodsuz başvuru |
-| `VAULT_AT_REST_PASSWORD` | `setup.sh` üretir | Sunucu diskindeki vault dosyalarının (at_rest ve cihaza özel) parolası. **Boşsa şifreleme yalnızca etikettir**, aşağıya bak |
+| `VAULT_AT_REST_PASSWORD` | `setup.sh` üretir | Sunucu diskindeki vault dosyalarının (at_rest ve cihaza özel) parolası. Boşsa sunucu açılmaz; `ALLOW_DEMO_SECRETS=true` ile boş bırakılırsa **şifreleme yalnızca etikettir**, aşağıya bak |
 | `VAULT_AT_REST_PASSWORD_PREVIOUS` | boş | Parolayı değiştirirken eskisi: sunucu açılışta dosyaları yeni parolaya geçirir, sonra silinir |
+| `VAULT_AT_REST_BIND_LEGACY` | boş | Yalnızca 2.10.0'dan eski bir veritabanını yükseltirken, tek bir açılış için `true`: o sürümlerde yazılmış vault dosyaları hangi dosyaya ait olduklarını söylemez ve bu ayar olmadan açılmaz. Açılıştan sonra silinir |
 | `CERT_EXPIRY_WARN_DAYS` | `30` | Sertifika süre uyarısı eşiği |
 | `KEYSTORE_PASSWORD` | `setup.sh` üretir | Sunucunun kendi anahtar depolarının parolası (TLS anahtarları, yedek anahtarlar, istemci güven listesi, host istemci sertifikaları). Hiçbir cihaza gitmez; eski kurulumlarda depolar açılışta bu parolaya geçirilir |
 | `KEYSTORE_PASSWORD_PREVIOUS` | boş | Parolayı değiştirirken eskisi: sunucu açılışta depoları yeni parolaya geçirir, sonra silinir |
@@ -167,9 +168,10 @@ Kaynak değiştikten sonra `docker compose up -d --build` yeterli. Yerel dizinde
 >
 > `at_rest` ve cihaza özel vault dosyaları diskte AES-256-GCM ile tutulur;
 > anahtar bu değişkenden PBKDF2-SHA256 ile türetilir. Değişken boşsa sunucu
+> açılmaz. `ALLOW_DEMO_SECRETS=true` ile boş bırakılırsa açılır, ama
 > **kaynak kodundaki sabit demo anahtarını** kullanır ve log'a uyarı basar.
 >
-> Sonuç: dosyalar `pinvault.db` içinde şifreli *görünür*, ama anahtar
+> O durumda dosyalar `pinvault.db` içinde şifreli *görünür*, ama anahtar
 > kütüphanenin kaynağında herkese açık olduğu için veritabanını ele geçiren
 > biri içeriği aynen çözebilir. Yani boşken bu şifreleme bir güvenlik sınırı
 > değil, yalnızca bir etikettir. Cihaza özel mod da diskte aynı parolayı
@@ -422,7 +424,7 @@ Sunucunun kendisi de her açılışta kontrol eder (`entrypoint.sh`); `.env` kur
 ### İşletim
 
 - Ayar değişikliği `.env`'de yapılır ve `docker compose up -d` ile uygulanır. `.env`'i kimin değiştirebildiği, sunucuyu kimin yönetebildiği demektir.
-- Değişiklikler kişisel anahtarla yapılır; ikinci bir yönetici dashboard'daki **Onaylar** bölümünden onaylar. Bir pin seti host'un o an sunduğu sertifikayı tutmuyorsa kaydedilmez.
+- Değişiklikler kişisel anahtarla yapılır; ikinci bir yönetici dashboard'daki **Onaylar** bölümünden onaylar. Bir pin seti host'un o an sunduğu sertifikayı tutmuyorsa kaydedilmez. `PIN_LIVE_CHECK_ALLOW_OVERRIDE` boş ya da `true` iken böyle bir set gerekçe yazılarak (`liveCheckOverride=<gerekçe>`) yine de yayımlanabilir: gerekçe denetim kaydına düşer, istek yine ikinci yöneticinin onayından geçer. Üretim örneği (`.env.production.example`) bu yolu `PIN_LIVE_CHECK_ALLOW_OVERRIDE=false` ile kapatır; daha önce oluşturulmuş bir `.env`'e bu satır elle yazılır. Kapalıyken sunucunun kendi kurduğu bir host sertifikasının (üretilen, yüklenen ya da yenilenen) pinleri, host o sertifikayı sunmaya başlamadan yayımlanamaz; host'tan canlı okunan pinler etkilenmez.
 - Dashboard'a uzaktan erişim: VPN ya da `ssh -L 6655:127.0.0.1:6655 kullanici@sunucu`, sonra `https://localhost:6655`.
 - **İmza anahtarı değiştirmek ya da çalınan birini iptal etmek:** çevrimdışı makinede kurtarma anahtarıyla bir anahtar seti imzalanır (`signing-keys.sh keyset -v N -k <public key'ler> -s /yol/recovery-1.pem -o keyset-vN.json`; openssl parolayı sorar), dosya sunucuya getirilir ve `ADMIN_KEY=… ./scripts/signing-keys.sh upload keyset-vN.json` ile yüklenir. Sunucuya gelen yalnızca imzalı settir.
 - **Bir imzalayıcı kaybolursa:** yedek anahtarın public yarısı uygulamada zaten güvenilen anahtarlar arasındadır. Yedek anahtar yeni imzalayıcı olarak devreye alınır (tercihen HSM/KMS'e aktarılarak); son çare olarak `signing-keys.sh install --emergency /takili-disk/backup-1.pem` onu sunucunun yerel imzalayıcısı yapar (`--emergency` olmadan üretim profilinde çalışmaz; yerindeki anahtarın kopyası `data/signing-key.pem.<tarih>.bak` olarak kalır). O andan sonra o anahtar artık çevrimdışı değildir: yeni bir yedek üretip bir anahtar setiyle duyur.
@@ -454,7 +456,7 @@ Betik listeyi önce geçici bir dosyaya indirir, gerçekten iptal listesi olduğ
 
 Bu host bir örnektir. [Üretim profili](#üretim-profili) örneğin sağlayabildiği en sıkı kurulumu yapar; gerçek bir ürün ayrıca:
 
-- Self-signed sertifika yerine gerçek bir CA kullanır, TLS'i bir reverse proxy'de sonlandırır.
+- Yönetim panelini başka makinelerden açacaksa önüne TLS'i gerçek bir CA sertifikasıyla sonlandıran bir reverse proxy koyar (`ADMIN_ALLOWED_ORIGINS`, `TRUSTED_PROXIES`; erişim IP, VPN ya da SSO ile sınırlı). Cihaz portları (6651, 6652, 6656) bunun dışındadır: uygulama oraya sunucunun kendi sertifikasını pinleyerek bağlanır ve mTLS'te cihazın kimliği TLS oturumundan okunur, bu yüzden önlerindeki her cihaz trafiği çözmeden geçirir (TCP passthrough). CA imzalı sertifika orada güvenliği artırmaz.
 - İki imzalayıcıyı da sunucunun dışında tutar (`CONFIG_SIGNERS=pkcs11,command`).
 - `.env`'deki gizli değerleri (API anahtarı, parolalar, HSM PIN'i) bir secret yöneticisinden verir.
 - `VAULT_AT_REST_PASSWORD`'ü bir KMS'ten alır.

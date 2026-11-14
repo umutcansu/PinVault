@@ -26,9 +26,9 @@ them too — their own differences are in
 ### 1. Add dependency
 
 ```gradle
-implementation("io.github.umutcansu:pinvault:2.8.2")
+implementation("io.github.umutcansu:pinvault:2.10.0")
 // optional: Play Integrity as the attestation's second opinion
-implementation("io.github.umutcansu:pinvault-play-integrity:2.8.2")
+implementation("io.github.umutcansu:pinvault-play-integrity:2.10.0")
 ```
 
 ### 2. Initialize (v2 DSL — Kotlin)
@@ -144,9 +144,33 @@ new TLS sessions. An `applyTo` client keeps its own pool — the per-request
 check is what protects it, so do not remove the network interceptor
 `applyTo` adds.
 
+**TLS only, and nothing of yours follows a redirect to another origin**
+*(2.11)*. A pinned client (`getClient()`, `getClient(settings)`, an
+`applyTo` builder; iOS: `session()`, `session(settings:)`, `applyTo`)
+refuses an `http://` request or a `ws://` socket before anything is sent —
+the pin check is a check of the server's certificate, and a plain connection
+has none — and follows no redirect from `https` into the clear. On Android
+an app that really needs cleartext on its own builder sets
+`connectionSpecs` after `applyTo`; on iOS use a session of your own for it.
+A redirect to another origin (scheme, host or port) carries only neutral
+headers and never a body (2.10); since 2.11 that also holds when the
+redirect came out of an HTTP cache, for a header whose value changed
+between attempts of one call, and for a WebSocket upgrade, which is not
+followed to another origin at all (as a browser does not).
+
+Call `applyTo` LAST on your builder, after your own interceptors and your
+`CookieJar`: it wraps the jar (that is how it sees every hop, WebSocket
+upgrades included) and records your request as your interceptors hand it
+down. A jar or an interceptor added afterwards is outside both: a
+redirected upgrade is then refused only after its first hop, and a header
+that interceptor adds is dropped on a cached cross-origin redirect together
+with everything else that is not neutral.
+
 Recovery is bounded: at most 3 failed refetches per host and 6 refetches
 in 5 minutes across all hosts, one of them for hosts the config has no pin
-entry for; requests that fail together share one refetch.
+entry for; requests that fail together share one refetch. A host that has
+used up its three gets no recovery for the next 10 minutes: its requests
+fail with the original error.
 
 #### Reading the current pins (multi-module setups)
 
@@ -231,7 +255,7 @@ schemas), there is a one-line opt-in helper:
 import io.github.umutcansu.pinvault.reporter.reportToPinVaultBackend
 
 PinVaultConfig.Builder()
-    .reportToPinVaultBackend("http://192.168.1.10:6650/")
+    .reportToPinVaultBackend("https://192.168.1.10:6655/")
     .configApi("api", "https://api.example.com/") { ... }
     .build()
 ```
@@ -243,14 +267,14 @@ scales poorly to a production fleet. Two opt-in knobs cut that down:
 // Heartbeat throttle — at most one healthy report per (host, version,
 // cert) tuple per minute; pin mismatches always go through.
 .reportToPinVaultBackend(
-    managementUrl = "http://192.168.1.10:6650/",
+    managementUrl = "https://192.168.1.10:6655/",
     dedupWindowMs = 60_000L
 )
 
 // Anomalies only — drop the healthy stream entirely; only pin
 // mismatches and config-update failures reach the backend.
 .reportToPinVaultBackend(
-    managementUrl = "http://192.168.1.10:6650/",
+    managementUrl = "https://192.168.1.10:6655/",
     reportSuccessEvents = false
 )
 ```
@@ -349,6 +373,16 @@ val config = PinVaultConfig.Builder()
 At runtime the library routes each vault fetch to the correct block's
 pin-verified OkHttpClient. No cross-contamination between scopes.
 
+The pinned client the app gets belongs to the **first** registered block:
+`getClient()`, `getClient(settings)`, `applyTo`, `currentPins`, `pinsForHost`
+and `updateNow()` (iOS: `session()`, `session(settings:)`, `applyTo`, …) work
+with that block's config only. The other blocks' configs are fetched at
+`init` and after that by the periodic update (`schedulePeriodicUpdates()`),
+not by `updateNow()`, and there is no public pinned client for their
+hosts: the library uses a second block's pins for that block's own
+traffic (its config and vault files). Register first the block whose hosts
+the app itself calls.
+
 ### Static pins (offline, no server)
 
 ```kotlin
@@ -362,7 +396,9 @@ Static pins are checked at `init` like fetched ones (see
 [What a config may contain](#what-a-config-may-contain-22)); `init`
 returns `Failed` for a host name or pin that is not well-formed. A `HostPin`
 with fewer than two pins never gets that far: its constructor throws
-`IllegalArgumentException`. They carry no signature and no expiry.
+`IllegalArgumentException` (iOS: the constructor does not throw; the same
+rule is checked when the config is built or started). They carry no
+signature and no expiry.
 
 ### Custom endpoints
 
@@ -476,6 +512,9 @@ PinVault.schedulePeriodicUpdates()     // uses the interval above
 val result = PinVault.updateNow()      // UpdateResult.Updated / AlreadyCurrent / Failed
 ```
 
+With several Config APIs, `updateNow()` refreshes the first registered block
+only; the periodic job refreshes every block.
+
 `PinVault.reset()` drops the active and stored config of every Config API;
 the next `init` starts from the bootstrap pins again (clients built earlier
 refuse handshakes until then — pinning never falls back to system trust).
@@ -511,9 +550,10 @@ successful fetch replaces the estimate.
 A fetched config is also refused when its `issuedAt` is more than 1 hour
 ahead of the device's clock, when its `expiresAt` has already passed (a
 custom `CertificateConfigApi` can hand one over; the stored config is kept),
-when it is valid for more than 30 days or expires more than 30 days from
-now, when a host's version jumps by more than 1,000,000, or when a host the
-device has not seen before starts above 1,000,000. A signed config must
+when it is valid for more than 30 days or expires more than 30 days (plus
+the same hour of clock slack) from now, when a host's version jumps by more
+than 1,000,000, or when a host the device has not seen before starts above
+1,000,000. A signed config must
 carry both `issuedAt` and `expiresAt`. The replay checks only ever move
 forward, so such values would lock out every later config. A device whose
 clock runs more than an hour slow gets no new config until its clock is
@@ -553,11 +593,18 @@ is used, and refused as a whole if one entry fails:
 
 - host names: letters, digits and hyphens per label, joined by dots (an IPv4
   address is fine), at most 253 characters; one optional leading `*.` for
-  exactly one label; an optional `:port` (1–65535). No wildcard directly
-  under a public suffix (`*.com`, `*.co.uk`), no IPv6 literals;
+  exactly one label; an optional `:port` (1–65535). A wildcard needs at
+  least two labels after `*.` (`*.com` is refused) and may not sit directly
+  under one of the common two-label suffixes the library knows (`*.co.uk`,
+  `*.com.tr`, `*.github.io`, …) — a built-in list, not the whole Public
+  Suffix List, so a rarer one such as `*.co.at` passes. No IPv6 literals;
 - pins: Base64 of a SHA-256, 44 characters, at least two distinct pins and
   at most 32 per host;
-- at most 2000 hosts; no host listed twice, no negative version.
+- at most 2000 hosts; no host listed twice, no negative version; at most 64
+  `trustRoots`.
+
+Answers are also capped in size and refused beyond it: a config 1 MiB, a
+vault file 64 MiB, enrollment, renewal and attestation answers 256 KiB.
 
 **Change detection looks at the pins, not only the versions.** A config
 whose hosts, versions, pin hashes or mTLS flags differ from the stored one
@@ -599,7 +646,8 @@ PinVault.unenroll(context)             // remove it; the next request presents n
 ```
 
 Certificates are stored under the Config API block's `clientCertLabel(...)`;
-every call above takes an optional `label` to address another one.
+every call above except `autoEnroll` takes an optional `label` to address
+another one (`autoEnroll(context)` always uses the default block's label).
 
 ### Where the token comes from
 
@@ -957,7 +1005,8 @@ when:
   renewal had nothing to be held to);
 - the leaf is valid now, over this device's key, and signed by the next
   certificate;
-- its lifetime is at most `maxClientCertLifetimeDays` (default 825). A stored
+- its lifetime is at most `maxClientCertLifetimeDays` (default 825; one extra
+  day is tolerated). A stored
   certificate that outlives the cap is renewed at the next check;
 - it comes from the right CA. **Pin your client CA** and that is checked at
   enrollment and at every renewal:
@@ -1678,7 +1727,11 @@ new version.
   for a client certificate gets none
 - Server certificate matches at least one pinned SHA-256(SPKI) hash
 - mTLS endpoints reject unknown client certs
-- HTTP-only endpoints are off (the library refuses cleartext HTTPS hosts)
+- Plain HTTP is off: the Config API must be `https://`, and *(2.11)* the
+  pinned clients send nothing over `http://` or `ws://` (before 2.11 only
+  the Config API's own client refused it; a request your code sent to
+  `http://` through a pinned client went out unpinned wherever the platform
+  allowed cleartext)
 
 ### 7. Rotate pins ahead of expiry
 Configure at least 2 different pins per host (primary + backup; *(2.3)* the

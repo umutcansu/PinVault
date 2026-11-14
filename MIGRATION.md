@@ -4,6 +4,87 @@ The upgrade notes for every release since 2.0, troubleshooting, and a quick
 reference for the multi-Config-API DSL. The full list of changes is in
 [CHANGELOG.md](CHANGELOG.md).
 
+## Upgrading from 2.10.0 to 2.11.0 (unreleased)
+
+Fixes from the 2026-11-14 security review. Four things can stop an app or a
+server that worked on 2.10.0.
+
+**Android and iOS — pinned clients send over TLS only**
+
+`getClient()`, `getClient(settings)` and builders passed to `applyTo` (iOS:
+`session()`, `session(settings:)`, `applyTo`) refuse `http://` and `ws://`
+before anything is sent, and follow no redirect from `https` to `http`.
+Requests your code sent in the clear through these clients were never pinned.
+
+- Android: move such requests to a client of your own, or set
+  `connectionSpecs` on your builder AFTER `applyTo`.
+- iOS: use a session of your own. `followCleartextRedirects` is still
+  accepted and has no effect.
+- React Native on Android: in a release build RN's own `fetch`, `<Image>`
+  and `WebSocket` refuse `http://` / `ws://` too (a debug build still reaches
+  Metro).
+
+**Android — call `applyTo` last**
+
+`applyTo` now wraps the builder's `CookieJar` and adds an application
+interceptor. Set your jar and add your interceptors before it. A WebSocket
+upgrade that is redirected to another origin fails (`onFailure`), as in a
+browser.
+
+**Vault files**
+
+- A device refuses a signed vault file older than the newest version it
+  ever verified, also after `clearFile`, a wipe or an unenroll. The
+  reference server keeps a file's version counter across delete and
+  re-upload (migration V32). A backend of your own must not restart a
+  file's version at 1: continue from the highest version you ever served.
+- `loadFile`, `hasFile`, `fileVersion`, `fileStatus` and `unlockFile` for a
+  key the config does not declare answer "nothing stored". Declare every
+  file you read.
+
+**iOS — a block made with `ConfigApiBlock.init` needs a signing key**
+
+A block built with the initializer (not the builder) and without
+`signaturePublicKey` / `signaturePublicKeys` used to start and verify
+nothing. It is refused now, as on Android. Pass the key, or
+`allowUnsigned: true` for tests and demos (a release build then also needs
+`allowRelaxationsInRelease`).
+
+**React Native and Flutter, release builds with a native security file**
+
+- A vault file's `signaturePublicKey`, `encryption` and `userAuth` come
+  only from its `vaultFiles` entry in `pinvault_security.json`. If the entry
+  leaves one out and JS/Dart sets it — even to the default — `start` fails
+  with `E_INVALID_CONFIG`. Copy the values into the entry.
+- With `require.managedTrustRoots: true`, a block's `wantPinsFor` must be
+  given in the native file's block.
+- Every Config API the native file declares must be in the config. A block
+  the app starts without (an mTLS block before enrollment) is marked
+  `"optional": true` in the file; with managed trust roots there is no
+  such exception.
+- `..` in any relative endpoint is refused, in every build.
+
+**Reference server**
+
+- Upgrading a database written before 2.10.0 directly: start once with
+  `VAULT_AT_REST_BIND_LEGACY=true`, then remove it. Without it the vault
+  files stored in the old form are listed at start and their downloads
+  fail. A server that already ran 2.10.0 needs nothing.
+- `PIN_CHANGE_APPROVALS=N` needs N personal keys in `ADMIN_KEYS` (it
+  accepted N−1, with which no change could ever be approved). A server with
+  fewer refuses to start and says so.
+- A gated request's query string is read exactly: parameter names are
+  case-sensitive (`configApiId`, not `ConfigApiId`), and a query that reads
+  two ways is answered `400 ambiguous_query`.
+- After "forget identity", or for a device whose certificate does not prove
+  its device id (a token not bound to the device, no attested key), a new
+  attestation key is `key_mismatch` again until an admin resets the device.
+- `sample-host/.env.production.example` now sets
+  `PIN_LIVE_CHECK_ALLOW_OVERRIDE=false`: no pin set the host does not serve
+  is published, with or without a reason. A certificate the server installs
+  itself must be served by the host before its pins can be published. Leave
+  the line out of an existing `.env` to keep the override.
+
 ## Upgrading from 2.9.x to 2.10.0
 
 **React Native and Flutter, release builds with a native security file**
@@ -906,13 +987,14 @@ Register vault files with a server-enforced access policy:
 | Policy | Device headers | Server check |
 |---|---|---|
 | `PUBLIC` | None | None (demo/test only) |
-| `API_KEY` | `X-API-Key` | Global admin key (management tooling) |
+| `API_KEY` | None — the library never sends `X-API-Key`, so a device cannot fetch such a file (401) | Global admin key (server-side tooling only) |
 | `TOKEN` | `X-Device-Id` + `X-Vault-Token` | Exact `(configApiId, key, deviceId)` triple match |
 | `TOKEN_MTLS` | Same as `TOKEN` + mTLS cert | Same + cert CN must equal `X-Device-Id` |
 
-**How tokens are issued**: Admin calls `POST /api/v1/vault/{key}/tokens` with
-`{"deviceId": "…"}`. The plaintext is returned once; the server stores only
-SHA-256. Admin delivers the plaintext to the device out-of-band (QR code,
+**How tokens are issued**: Admin calls
+`POST /api/v1/config-apis/{configApiId}/vault/{key}/tokens` on the management
+port with `{"deviceId": "…"}`. The plaintext is returned once; the server
+stores only SHA-256. Admin delivers the plaintext to the device out-of-band (QR code,
 enrollment response, secure channel). A new token for the same
 `(configApi, key, deviceId)` triple replaces the previous one — the old
 token becomes invalid automatically.

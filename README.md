@@ -482,6 +482,7 @@ you read it.
 PinVaultConfig.Builder()
     .configApi("api", url) { /* … */ }
     .vaultFile("feature-flags") {
+        configApi("api")                           // the block above (needed unless its id is "default")
         endpoint("api/v1/vault/feature-flags")
         updateWithPins(true)                       // refresh together with the pins
     }
@@ -499,6 +500,7 @@ val json = PinVault.loadFileAsString("feature-flags")
 PinVaultConfig.Builder()
     .configApi("api", url: url) { block in /* … */ }
     .vaultFile("feature-flags") { file in
+        file.configApi("api")
         file.endpoint("api/v1/vault/feature-flags")
         file.updateWithPins(true)
     }

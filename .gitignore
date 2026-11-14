@@ -3,6 +3,7 @@
 /local.properties
 /.idea
 /build
+/.gradle-home/
 /pinvault/build
 /pinvault-play-integrity/build
 /captures
