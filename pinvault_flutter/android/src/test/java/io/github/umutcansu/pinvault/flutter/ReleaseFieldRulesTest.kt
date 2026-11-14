@@ -76,6 +76,116 @@ class ReleaseFieldRulesTest {
         parse("""{$api}],"vaultFiles":[{"key":"doc","endpoint":"api/v1/vault/doc"}]}""", file(top = ""","vaultFiles":[{"key":"doc"}]"""))
     }
 
+    // Review 2026-11-14 (K1): a bare entry used to leave the three fields to the bundle.
+    @Test fun `a vault field the native entry leaves out is the library default in a release build, never Dart's`() {
+        val bare = file(top = ""","vaultFiles":[{"key":"doc"}]""")
+        fun doc(extra: String) = """{$api}],"vaultFiles":[{"key":"doc","endpoint":"api/v1/vault/doc"$extra}]}"""
+        refused(doc(""","signaturePublicKey":"$key""""), bare, "vaultFiles[0].signaturePublicKey", "does not give signaturePublicKey", "only from there")
+        refused(doc(""","encryption":"PLAIN""""), bare, "vaultFiles[0].encryption", "does not give encryption", "only from there")
+        refused(doc(""","userAuth":"NONE""""), bare, "vaultFiles[0].userAuth", "does not give userAuth", "only from there")
+        refused(doc(""","encryption":"USER_AUTH","userAuth":"REQUIRED""""), bare, "does not give")
+        // Nothing from Dart: the library's defaults (the block's signing keys, PLAIN, NONE).
+        val vault = parse(doc(""), bare).config.vaultFiles.getValue("doc")
+        assertEquals(null, vault.signaturePublicKey)
+        assertEquals(io.github.umutcansu.pinvault.model.VaultFileEncryption.PLAIN, vault.encryption)
+        assertEquals(io.github.umutcansu.pinvault.model.UserAuth.NONE, vault.userAuth)
+        // What the entry gives is the value; Dart may repeat it.
+        val full = file(top = ""","vaultFiles":[{"key":"doc","signaturePublicKey":"$key","encryption":"USER_AUTH","userAuth":"REQUIRED"}]""")
+        val locked = parse(doc(""","encryption":"USER_AUTH""""), full).config.vaultFiles.getValue("doc")
+        assertEquals(key, locked.signaturePublicKey)
+        assertEquals(io.github.umutcansu.pinvault.model.UserAuth.REQUIRED, locked.userAuth)
+        // An entry that gives one field leaves the other two at the default, not to Dart.
+        val keyOnly = file(top = ""","vaultFiles":[{"key":"doc","signaturePublicKey":"$key"}]""")
+        refused(doc(""","userAuth":"IF_SCREEN_LOCK""""), keyOnly, "does not give userAuth")
+        // A debug build, and a release build without a native file, take them from Dart as before.
+        val debug = parse(doc(""","encryption":"USER_AUTH","userAuth":"REQUIRED""""), bare, release = false).config.vaultFiles.getValue("doc")
+        assertEquals(io.github.umutcansu.pinvault.model.UserAuth.REQUIRED, debug.userAuth)
+        parse("""{"configApis":[{$block}],"vaultFiles":[{"key":"doc","endpoint":"api/v1/vault/doc","userAuth":"IF_SCREEN_LOCK"}]}""", null)
+    }
+
+    @Test fun `a native vault entry can fix the file's Config API, endpoint and access policy`() {
+        val fixed = file(top = ""","vaultFiles":[{"key":"doc","configApi":"default","endpoint":"api/v1/vault/doc","accessPolicy":"TOKEN"}]""")
+        fun doc(fields: String) = """{$api}],"vaultFiles":[{"key":"doc"$fields}]}"""
+        // Dart may leave them out or repeat them.
+        val vault = parse(doc(""), fixed).config.vaultFiles.getValue("doc")
+        assertEquals("api/v1/vault/doc", vault.endpoint)
+        assertEquals("default", vault.configApiId)
+        assertEquals(io.github.umutcansu.pinvault.model.VaultFileAccessPolicy.TOKEN, vault.accessPolicy)
+        assertTrue(vault.accessTokenProvider != null)
+        parse(doc(""","endpoint":"api/v1/vault/doc","configApi":"default","accessPolicy":"TOKEN""""), fixed)
+        // A different value is refused, in a debug build too.
+        refused(doc(""","endpoint":"api/v1/vault/other""""), fixed, "vaultFiles[0].endpoint", "native value is fixed")
+        refused(doc(""","configApi":"other""""), fixed, "vaultFiles[0].configApi", "native value is fixed")
+        refused(doc(""","accessPolicy":"PUBLIC""""), fixed, "vaultFiles[0].accessPolicy", "native value is fixed")
+        try {
+            parse(doc(""","accessPolicy":"PUBLIC""""), fixed, release = false)
+            fail("a debug build took another accessPolicy")
+        } catch (e: IllegalArgumentException) {
+            assertTrue(e.message!!.contains("native value is fixed"))
+        }
+        // An entry that does not give them leaves them to Dart, as before.
+        val bare = file(top = ""","vaultFiles":[{"key":"doc"}]""")
+        assertEquals("elsewhere/doc", parse(doc(""","endpoint":"elsewhere/doc","accessPolicy":"TOKEN""""), bare).config.vaultFiles.getValue("doc").endpoint)
+        refused(doc(""), bare, "vaultFiles[0].endpoint", "required")
+        // The file's endpoint follows the endpoint rule too.
+        try {
+            file(top = ""","vaultFiles":[{"key":"doc","endpoint":"../admin"}]""")
+            fail("the native file took an endpoint with '..'")
+        } catch (e: IllegalArgumentException) {
+            assertTrue(e.message!!.contains("'..' path segment"))
+        }
+    }
+
+    // Review 2026-11-14 (K2): narrowing wantPinsFor took a pinned host's pins out of the signed
+    // view; with managed trust roots that host is then accepted through the roots.
+    @Test fun `with managed trust roots a release build takes wantPinsFor from the file only`() {
+        val roots = ""","require":{"managedTrustRoots":true}"""
+        val dart = """{$api,"wantPinsFor":["cdn.example"]}]}"""
+        refused(dart, file(top = roots), "configApis[0].wantPinsFor", "managed trust roots", "only from there")
+        // None in the file = every host's pins.
+        assertEquals(emptyList<String>(), parse("""{$api}]}""", file(top = roots)).config.configApis.getValue("default").wantPinsFor)
+        // The file's list is the value; Dart may leave it out or repeat it (any order, any case), not change it.
+        val declared = file(""","wantPinsFor":["api.example","cdn.example"]""", roots)
+        assertEquals(listOf("api.example", "cdn.example"), parse("""{$api}]}""", declared).config.configApis.getValue("default").wantPinsFor)
+        parse("""{$api,"wantPinsFor":["CDN.example","api.example"]}]}""", declared)
+        refused(dart, declared, "configApis[0].wantPinsFor", "native value is fixed")
+        // Without managed roots: Dart's list as before, unless the file gives one.
+        assertEquals(listOf("cdn.example"), parse(dart).config.configApis.getValue("default").wantPinsFor)
+        refused(dart, file(""","wantPinsFor":["api.example"]"""), "configApis[0].wantPinsFor", "native value is fixed")
+        // A debug build takes Dart's list with managed roots on.
+        parse(dart, file(top = roots), release = false)
+    }
+
+    // Review 2026-11-14 (R-03): the rules judged only the blocks the config sent; a bundle
+    // that left a declared block out dropped its pins (with managed roots: a pin -> root downgrade).
+    @Test fun `a release build runs every Config API its native file declares`() {
+        fun second(extra: String = "") = """,{"id":"second","url":"https://h2.example/","bootstrapPins":[{"hostname":"h2.example","sha256":["$pinA","$pinB"]}],"signaturePublicKeys":["$key"]$extra}"""
+        fun two(extra: String = "", top: String = "") =
+            NativeSecurity.parse("""{"configApis":[{$block}${second(extra)}]$top}""", "assets/pinvault_security.json")
+        val one = """{$api}]}"""
+        val both = """{$api},{"id":"second","url":"https://h2.example/"}]}"""
+        refused(one, two(), "config.configApis", "'second'", "runs every Config API its native file declares", "\"optional\": true")
+        refused("""{"configApis":[]}""", two(), "'default', 'second'")
+        refused("""{"deviceAlias":"x"}""", two(), "'default', 'second'")
+        assertEquals(setOf("default", "second"), parse(both, two()).config.configApis.keys)
+        // A debug build, and a release build without a native file, take the config as it comes.
+        assertEquals(setOf("default"), parse(one, two(), release = false).config.configApis.keys)
+        parse("""{"configApis":[{$block}]}""", null)
+        // The file may let the app start without a block ...
+        val optional = two(""","optional":true""")
+        assertEquals(setOf("default"), parse(one, optional).config.configApis.keys)
+        parse(both, optional)
+        // ... but not the other one,
+        refused("""{"configApis":[{"id":"second","url":"https://h2.example/"}]}""", optional, "'default'")
+        // and not with managed trust roots: the missing block's hosts would fall back to the roots.
+        val roots = two(""","optional":true""", ""","require":{"managedTrustRoots":true}""")
+        refused(one, roots, "'second'", "managedTrustRoots", "cannot be left out")
+        parse(both, roots)
+        // A file with static pins only declares no block to run.
+        val pins = """{"pins":[{"hostname":"s.example","sha256":["$pinA","$pinB"]}]}"""
+        parse("""{"staticPins":$pins}""", NativeSecurity.parse("""{"staticPins":$pins}""", "assets/pinvault_security.json"))
+    }
+
     @Test fun `the file can make a vault file wipe its stale copy`() {
         val wipes = file(top = ""","vaultFiles":[{"key":"doc","wipeWhenStale":true}]""")
         val vault = parse("""{$api}],"vaultFiles":[{"key":"doc","endpoint":"api/v1/vault/doc","maxOfflineAge":{"amount":1,"unit":"DAYS"}}]}""", wipes)

@@ -12,6 +12,7 @@ import com.facebook.react.modules.network.OkHttpClientFactory
 import com.facebook.react.modules.network.OkHttpClientProvider
 import com.facebook.react.modules.websocket.WebSocketModule
 import io.github.umutcansu.pinvault.PinVault
+import io.github.umutcansu.pinvault.internal.BridgeNetworking
 import okhttp3.Cache
 import okhttp3.CookieJar
 import okhttp3.Interceptor
@@ -60,10 +61,24 @@ import javax.net.ssl.X509TrustManager
  * Before `start()` — and after a start that failed — every `https` request
  * through RN's networking fails (`IOException: PinVault has not started`),
  * the same fail-closed rule as the library's own `getClient()` / `applyTo`,
- * which refuse before `init`. Plain `http` is not TLS and is left to the
- * app's network security config (Metro in debug builds uses it). Hosts
- * without a pin entry are refused by PinVault's trust manager like
- * everywhere else.
+ * which refuse before `init`. Hosts without a pin entry are refused by
+ * PinVault's trust manager like everywhere else.
+ *
+ * Plain `http` / `ws` (review 2026-11-14): a **release** build refuses it on
+ * every client these hooks touch, before and after `start()` — OkHttp's
+ * "CLEARTEXT communication not enabled for client" — as the library's own
+ * clients do: nothing checks a pin on a request that goes out in the clear.
+ * A **debug** build (`android:debuggable`) leaves it to the app's network
+ * security config as before; Metro and the dev tools use it. There is no
+ * switch: a release app that must speak plain HTTP through React Native's
+ * networking takes that networking out of pinning altogether (remove the
+ * provider, `android.pinGlobalNetworking: false`, which a release build
+ * accepts only with `require.allowUnpinnedReactNativeNetworking`).
+ *
+ * Redirects: a redirect to another origin takes neither the request's own
+ * headers nor its body along, and a `WebSocket` whose handshake is
+ * redirected to another origin fails instead of following — the library's
+ * own guards, installed through `BridgeNetworking.hardenBuilder`.
  *
  * Another library that calls `setOkHttpClientFactory` or either
  * `setCustomClientBuilder` after PinVault replaces these hooks: [status]
@@ -82,12 +97,20 @@ object PinVaultNetworking {
         pinning.track(pinning.configureLongLived(OkHttpClientProvider.createClientBuilder()).build())
     }
     private val clientBuilder = CustomClientBuilder { builder -> pinning.configurePerRequest(builder) }
-    private val webSocketBuilder = CustomClientBuilder { builder -> pinning.configureLongLived(builder) }
+    private val webSocketBuilder = CustomClientBuilder { builder -> pinning.configureWebSocket(builder) }
+
+    /**
+     * A release build of the app (not `android:debuggable`), read when the
+     * hooks are installed. True until then: nothing is built before, and
+     * "unknown" must not mean "cleartext allowed".
+     */
+    @Volatile private var releaseBuild = true
 
     internal val pinning = NetworkPinning(
         applier = { builder -> PinVault.applyTo(builder) },
         httpCache = { app?.let { ReactHttpCache.get(it) } },
         hooksPinned = { status().pinned },
+        httpsOnly = { releaseBuild },
     )
 
     /** True when [install] ran only from `start()`: React Native may have built clients before it. */
@@ -108,6 +131,8 @@ object PinVaultNetworking {
     internal fun install(context: Context, late: Boolean) {
         if (installed) return
         app = context.applicationContext
+        // Before the hooks: the first client React Native builds already needs it.
+        releaseBuild = NativeSecurity.isReleaseBuild(context)
         OkHttpClientProvider.setOkHttpClientFactory(factory)
         NetworkingModule.setCustomClientBuilder(clientBuilder)
         WebSocketModule.setCustomClientBuilder(webSocketBuilder)
@@ -229,6 +254,11 @@ internal class NetworkPinning(
     private val httpCache: () -> Cache? = { null },
     /** Whether React Native's hooks are still PinVault's (``PinVaultNetworking.status``). */
     private val hooksPinned: () -> Boolean = { true },
+    /**
+     * No plain `http` / `ws` through React Native's networking: a release
+     * build. A debug build keeps it (Metro, the dev tools).
+     */
+    private val httpsOnly: () -> Boolean,
 ) {
 
     /** The long-lived clients React Native built through the factory: their pools are emptied on every change. */
@@ -271,6 +301,21 @@ internal class NetworkPinning(
         evictLongLived()
     }
 
+    /**
+     * The parts of `PinVault.applyTo` that are neither a socket factory nor an
+     * interceptor of the template, from the library itself (one implementation):
+     * the redirect and WebSocket-upgrade guards, in a release build no cleartext
+     * connection spec, and for [leaf] clients the cookie-jar wrapper that stops a
+     * redirected upgrade before it is sent. Before and after `start()` alike.
+     *
+     * [leaf] = a client nothing derives from and nobody reads the jar of. NOT the
+     * clients of the factory: `NetworkingModule` takes its `CookieJarContainer`
+     * from its base client's `cookieJar` by type, and a wrapper there would
+     * switch React Native's cookies off without a word.
+     */
+    private fun harden(builder: OkHttpClient.Builder, leaf: Boolean) =
+        BridgeNetworking.hardenBuilder(builder, httpsOnly = httpsOnly(), wrapCookieJar = leaf)
+
     /** NetworkingModule's per-request builder (fetch / XHR). */
     fun configurePerRequest(builder: OkHttpClient.Builder) {
         // Never from https into plain http; not even before start (the gate below refuses https anyway).
@@ -283,6 +328,7 @@ internal class NetworkPinning(
         val pinned = template
         if (pinned == null) {
             if (httpsGate !in builder.interceptors()) builder.addInterceptor(httpsGate)
+            harden(builder, leaf = false)
             return
         }
         builder.sslSocketFactory(pinned.sslSocketFactory, requireNotNull(pinned.x509TrustManager))
@@ -292,6 +338,11 @@ internal class NetworkPinning(
         // carry the interceptors twice; RN derives every request from its base client.
         pinned.interceptors.forEach { if (it !in builder.interceptors()) builder.addInterceptor(it) }
         pinned.networkInterceptors.forEach { if (it !in builder.networkInterceptors()) builder.addNetworkInterceptor(it) }
+        // After the socket factory (a client is built from the builder to read its
+        // specs). Not a leaf as far as the jar goes: RN sets NO_COOKIES AFTER this
+        // hook for withCredentials: false, which would drop a wrapper again — and
+        // fetch / XHR is no WebSocket upgrade, the one thing the wrapper is needed for.
+        harden(builder, leaf = false)
     }
 
     /**
@@ -299,7 +350,20 @@ internal class NetworkPinning(
      * through the pinned factory of the current start. Idempotent: from RN
      * 0.87 a WebSocket's builder derives from a client already configured here.
      */
-    fun configureLongLived(builder: OkHttpClient.Builder): OkHttpClient.Builder {
+    fun configureLongLived(builder: OkHttpClient.Builder): OkHttpClient.Builder = configureLongLived(builder, leaf = false)
+
+    /**
+     * WebSocketModule's builder for one `WebSocket`: [configureLongLived], and
+     * as a leaf — RN sets the socket's cookie jar (`NO_COOKIES`) before this
+     * hook and builds the client right after it. OkHttp runs an upgrade without
+     * network interceptors, so the guard against a handshake redirected to
+     * another origin lives in an application interceptor and that jar wrapper
+     * (review 2026-11-14: the upgrade used to follow the redirect, with the
+     * socket's `Cookie` and headers).
+     */
+    fun configureWebSocket(builder: OkHttpClient.Builder): OkHttpClient.Builder = configureLongLived(builder, leaf = true)
+
+    private fun configureLongLived(builder: OkHttpClient.Builder, leaf: Boolean): OkHttpClient.Builder {
         val forwarding = ForwardingSocketFactory { template?.sslSocketFactory }
         builder.sslSocketFactory(forwarding, ForwardingTrustManager { template?.x509TrustManager })
         if (httpsGate !in builder.interceptors()) builder.addInterceptor(httpsGate)
@@ -308,6 +372,8 @@ internal class NetworkPinning(
         if (forwardingNetwork !in builder.networkInterceptors()) builder.addNetworkInterceptor(forwardingNetwork)
         builder.cache(null)
         builder.followSslRedirects(false)
+        // After the socket factory: a client is built from the builder to read its specs and jar.
+        harden(builder, leaf)
         return builder
     }
 

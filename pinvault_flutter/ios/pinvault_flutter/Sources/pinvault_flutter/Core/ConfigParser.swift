@@ -54,12 +54,38 @@ public enum ConfigParser {
                     "An app that accepts Dart-only anchors says so in its Info.plist: \(NativeSecurity.noFileInfoKey) = YES"
             )
         }
+        var sentIds = Set<String>()
         for api in configApis ?? [] {
-            try addConfigApi(builder, api, native: native, release: release)
+            sentIds.insert(try addConfigApi(builder, api, native: native, release: release))
         }
         for file in vaultFiles ?? [] { try addVaultFile(builder, file, tokens, native: native, release: release) }
         if let pins = try SecurityPolicy.staticPins(path: "config.staticPins", js: jsStaticPins, native: native) {
             builder.staticPins(pins)
+        }
+        // The rules above judge the blocks the config SENDS. A bundle that leaves a declared
+        // block out drops that block's pins, attestation and token rules — and where the file
+        // turns managed trust roots on, the hosts it pinned are then accepted through the
+        // platform CAs and the remaining blocks' roots (review 2026-11-14, R-03). A release
+        // build runs every Config API its native file declares; the file may mark one the app
+        // starts without (used only after enrollment, say) `"optional": true` — never with
+        // managed trust roots, where a missing block is a pin → root downgrade.
+        if release, let native {
+            let roots = native.require.managedTrustRoots
+            let missing = native.blockIds.filter { id in
+                !sentIds.contains(id) && (roots || native.blocks[id]?.optional != true)
+            }
+            if !missing.isEmpty {
+                let optionalToo = roots && missing.contains { native.blocks[$0]?.optional == true }
+                throw BridgeInputError(
+                    "config.configApis: the app's native security file (\(native.source)) declares Config API "
+                        + missing.map { "'\($0)'" }.joined(separator: ", ") + ", which the config leaves out; a release build runs every "
+                        + "Config API its native file declares"
+                        + (optionalToo
+                            ? " (with require.managedTrustRoots an \"optional\" block cannot be left out either: "
+                                + "its hosts would be trusted through the roots instead of their pins)"
+                            : " (a block the app may start without is marked \"optional\": true in that file)")
+                )
+            }
         }
 
         if let v = try root.int("maxRetryCount", min: 0, max: 10) { builder.maxRetryCount(v) }
@@ -232,7 +258,11 @@ public enum ConfigParser {
     /// An endpoint path resolved relative to the block's base URL. An absolute
     /// value — a scheme (`://`) or a root (`/`, `\`) — would silently retarget the
     /// request past the pinned host (`URL(string:relativeTo:)` honours it), so it
-    /// is refused. Returns nil when the optional field is absent.
+    /// is refused. A `..` segment (plain
+    /// or `%2e`) is refused too, in every build: the endpoint is resolved against the
+    /// block's URL, and `..` would climb out of the path the app declared for that
+    /// Config API (same host, another path — review 2026-11-14; only the vault
+    /// endpoint was held to it before). Returns nil when the optional field is absent.
     static func relEndpoint(_ f: Fields, _ key: String, maxLength: Int) throws -> String? {
         guard let v = try f.string(key, maxLength: maxLength) else { return nil }
         // Whitespace around it, a backslash anywhere (parsers read it as `/`) or a
@@ -241,23 +271,10 @@ public enum ConfigParser {
             || v.range(of: "^[A-Za-z][A-Za-z0-9+.-]*:", options: .regularExpression) != nil {
             throw BridgeInputError("\(f.path).\(key): must be a relative path, not an absolute URL")
         }
+        if hasParentSegment(v) {
+            throw BridgeInputError("\(f.path).\(key): must not contain a '..' path segment")
+        }
         return v
-    }
-
-    /// A vault file's endpoint: required, held to the same rule as the block's
-    /// endpoints (`relEndpoint` — it used to be checked for `://` and a leading
-    /// slash only, so " //host/x" or "https:\\host/x" sent the file request and
-    /// the file's token to another host), and without a `..` segment: the
-    /// endpoint is resolved against the block's URL, and `..` would climb out of
-    /// the path the app's native side declared for that Config API.
-    static func vaultEndpoint(_ f: Fields) throws -> String {
-        guard let endpoint = try relEndpoint(f, "endpoint", maxLength: 512) else {
-            throw BridgeInputError("\(f.path).endpoint: required")
-        }
-        if hasParentSegment(endpoint) {
-            throw BridgeInputError("\(f.path).endpoint: must not contain a '..' path segment")
-        }
-        return endpoint
     }
 
     /// True when the path of `endpoint` has a `..` segment, written plainly or as `%2e` (URL parsers read both).
@@ -299,7 +316,9 @@ public enum ConfigParser {
         return config
     }
 
-    static func addConfigApi(_ builder: PinVaultConfig.Builder, _ b: Fields, native: NativeSecurity?, release: Bool) throws {
+    /// Adds one `configApis[]` entry to `builder`; returns its id.
+    @discardableResult
+    static func addConfigApi(_ builder: PinVaultConfig.Builder, _ b: Fields, native: NativeSecurity?, release: Bool) throws -> String {
         let id = try b.requireString("id", maxLength: 128)
         guard let url = try httpsUrl(b, "url") else { throw BridgeInputError("\(b.path).url: required") }
         let bootstrapPins = try b.objectList("bootstrapPins", maxItems: maxPins)?.map(hostPin)
@@ -418,6 +437,22 @@ public enum ConfigParser {
         }
         let lifetime = maxLifetime ?? nativeBlock?.maxClientCertLifetimeDays
 
+        // With managed trust roots a host WITHOUT a pin entry is accepted through the platform CAs
+        // and the signed config's roots. `wantPinsFor` decides which hosts' pins the signed view
+        // carries, so a bundle that narrows it takes a pinned host's pins away and leaves it on
+        // root trust (review 2026-11-14): where the file turns managed roots on, a release build
+        // takes the list from the file's block only (none there = every host's pins).
+        if release, let nativeBlock, native?.require.managedTrustRoots == true, nativeBlock.wantPinsFor == nil, wantPinsFor != nil {
+            throw BridgeInputError("\(b.path).wantPinsFor: the app's native security file (\(native?.source ?? "")) turns managed trust roots on "
+                + "and does not give wantPinsFor for Config API '\(id)'; a release build takes it only from there (a host left out of the "
+                + "list would be trusted through the roots instead of its pins)")
+        }
+        var pinsFor = wantPinsFor
+        if let n = nativeBlock?.wantPinsFor {
+            if let j = wantPinsFor, !NativeSecurity.sameKeys(lower(j), lower(n)) { throw fixed("wantPinsFor") }
+            pinsFor = n
+        }
+
         // The trust anchors and relaxations: the native security file decides, Dart only repeats.
         let sec = try SecurityPolicy.apply(
             path: b.path, id: id,
@@ -452,7 +487,7 @@ public enum ConfigParser {
             if let clientCertEndpoint { api.clientCertEndpoint(clientCertEndpoint) }
             if let vaultReportEndpoint { api.vaultReportEndpoint(vaultReportEndpoint) }
             if let clientCertLabel { api.clientCertLabel(clientCertLabel) }
-            if let wantPinsFor { api.wantPinsFor(wantPinsFor) }
+            if let pinsFor { api.wantPinsFor(pinsFor) }
             if let fixedRenewalUrl { api.renewalUrl(fixedRenewalUrl) }
             if let fixedEnrollmentUrl { api.enrollmentUrl(fixedEnrollmentUrl) }
             if let threshold { api.clientCertRenewalThreshold(threshold) }
@@ -462,17 +497,18 @@ public enum ConfigParser {
             if let tokenHosts { api.tokenHosts(tokenHosts) }
             if proof { api.proofOfPossession() }
         }
+        return id
     }
 
     static func addVaultFile(_ builder: PinVaultConfig.Builder, _ f: Fields, _ tokens: VaultTokenStore, native: NativeSecurity?,
                              release: Bool = false) throws {
         let key = try f.requireString("key", maxLength: 128)
-        let endpoint = try vaultEndpoint(f)
+        let jsEndpoint = try relEndpoint(f, "endpoint", maxLength: 512)
         let jsSignatureKey = try f.string("signaturePublicKey", maxLength: keyLength, multiline: true)
         let updateWithPins = try f.bool("updateWithPins")
         let storage = try f.enumValue("storage", StorageStrategy.self)
-        let configApi = try f.string("configApi", maxLength: 128)
-        let policy = try f.enumValue("accessPolicy", VaultFileAccessPolicy.self)
+        let jsConfigApi = try f.string("configApi", maxLength: 128)
+        let jsPolicy = try f.enumValue("accessPolicy", VaultFileAccessPolicy.self)
         let jsEncryption = try f.enumValue("encryption", VaultFileEncryption.self)
         let jsUserAuth = try f.enumValue("userAuth", UserAuth.self)
         let maxOfflineAge = try f.object("maxOfflineAge").map(duration)
@@ -480,43 +516,59 @@ public enum ConfigParser {
         try f.finish()
         var offlineAge = maxOfflineAge
 
-        // A file the native security file names keeps its signature key, encryption and lock.
-        var signatureKey = jsSignatureKey
-        var encryption = jsEncryption
-        var userAuth = jsUserAuth
-        var declaredWipe = false
-        if let native, native.vaultFiles == nil, release {
+        if release, let native, native.vaultFiles == nil {
             // A release build with a native file takes a vault file's signature key, encryption and
             // screen lock from it: without a vaultFiles section the bundle would choose them (review 2026-11-12).
             throw BridgeInputError("\(f.path): vault file '\(key)' is not declared in the app's native security file (\(native.source)); "
                 + "a release build takes vault files only from its vaultFiles section")
         }
+        // A file the native security file names: what its entry gives is the value.
+        var declared: NativeSecurity.VaultFilePolicy?
         if let files = native?.vaultFiles {
-            guard let declared = files[key] else {
+            guard let entry = files[key] else {
                 throw BridgeInputError("\(f.path): vault file '\(key)' is not declared in the app's native security file (\(native?.source ?? ""))")
             }
-            func fixed(_ field: String) -> BridgeInputError {
-                BridgeInputError("\(f.path).\(field): differs from the app's native security file (\(native?.source ?? "")); the native value is fixed")
-            }
-            if let n = declared.signaturePublicKey {
-                if let j = jsSignatureKey, j.trimmingCharacters(in: .whitespacesAndNewlines) != n.trimmingCharacters(in: .whitespacesAndNewlines) {
-                    throw fixed("signaturePublicKey")
-                }
-                signatureKey = n
-            }
-            if let n = declared.encryption {
-                if let j = jsEncryption, j != n { throw fixed("encryption") }
-                encryption = n
-            }
-            if let n = declared.userAuth {
-                if let j = jsUserAuth, j != n { throw fixed("userAuth") }
-                userAuth = n
-            }
-            if let max = declared.maxOfflineAgeMs, maxOfflineAge == nil {
-                offlineAge = (max, .milliseconds)
-            }
-            declaredWipe = declared.wipeWhenStale
+            declared = entry
         }
+        func fixed(_ field: String) -> BridgeInputError {
+            BridgeInputError("\(f.path).\(field): differs from the app's native security file (\(native?.source ?? "")); the native value is fixed")
+        }
+        // The signature key, the encryption and the screen lock decide whose signature the file is
+        // checked with and whether its content needs the device's lock. In a release build with a
+        // native file they are the entry's alone: one it leaves out is the library's default (the
+        // block's signing keys, PLAIN, NONE), never the bundle's value — a bare `{"key": …}` entry
+        // used to hand all three to the bundle (review 2026-11-14).
+        let entryOnly = release && native != nil
+        func fromEntry<T>(_ field: String, _ entryValue: T?, _ jsValue: T?, same: (T, T) -> Bool) throws -> T? {
+            if let entryValue {
+                if let jsValue, !same(jsValue, entryValue) { throw fixed(field) }
+                return entryValue
+            }
+            if entryOnly, jsValue != nil {
+                throw BridgeInputError("\(f.path).\(field): the app's native security file (\(native?.source ?? "")) does not give \(field) for "
+                    + "vault file '\(key)', and a release build takes it only from there; declare it in that file's vaultFiles entry")
+            }
+            return jsValue
+        }
+        let trimmed: (String) -> String = { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+        let signatureKey = try fromEntry("signaturePublicKey", declared?.signaturePublicKey, jsSignatureKey) { trimmed($0) == trimmed($1) }
+        let encryption = try fromEntry("encryption", declared?.encryption, jsEncryption) { $0 == $1 }
+        let userAuth = try fromEntry("userAuth", declared?.userAuth, jsUserAuth) { $0 == $1 }
+        // Which Config API serves the file, its path there and how the device shows it may download
+        // it: fixed where the entry gives them, the config's otherwise.
+        func fixedByEntry<T: Equatable>(_ field: String, _ entryValue: T?, _ jsValue: T?) throws -> T? {
+            if let entryValue, let jsValue, jsValue != entryValue { throw fixed(field) }
+            return entryValue ?? jsValue
+        }
+        guard let endpoint = try fixedByEntry("endpoint", declared?.endpoint, jsEndpoint) else {
+            throw BridgeInputError("\(f.path).endpoint: required")
+        }
+        let configApi = try fixedByEntry("configApi", declared?.configApi, jsConfigApi)
+        let policy = try fixedByEntry("accessPolicy", declared?.accessPolicy, jsPolicy)
+        if let max = declared?.maxOfflineAgeMs, maxOfflineAge == nil {
+            offlineAge = (max, .milliseconds)
+        }
+        let forceWipe = declared?.wipeWhenStale == true
         // The tighter of the file's own cap and the config-wide one: a per-file value
         // overrides the config's, so it must not escape the config-wide cap either.
         let cap = [native?.vaultFiles?[key]?.maxOfflineAgeMs, native?.require.vaultFileMaxOfflineAgeMs].compactMap { $0 }.min()
@@ -544,7 +596,7 @@ public enum ConfigParser {
             if let encryption { file.encryption(encryption) }
             if let userAuth { file.userAuth(userAuth) }
             if let (amount, unit) = offlineAge { file.maxOfflineAge(amount, unit) }
-            if wipeWhenStale || declaredWipe { file.wipeWhenStale() }
+            if wipeWhenStale || forceWipe { file.wipeWhenStale() }
         }
     }
 

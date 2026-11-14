@@ -82,6 +82,10 @@ class ConfigApiBlock {
   final String? clientCertEndpoint;
   final String? vaultReportEndpoint;
   final String? clientCertLabel;
+
+  /// The hosts whose pins this block asks for. Fixed where the native security
+  /// file gives it; where that file turns managed trust roots on, a release build
+  /// takes it from the file only (a list from Dart is refused).
   final List<String>? wantPinsFor;
   final String? renewalUrl;
   final String? enrollmentUrl;
@@ -213,6 +217,12 @@ enum UserAuth {
 /// native side installs the `accessToken { … }` provider itself: it reads the token
 /// you set with `setVaultToken(key, token)` (or pass to `fetchFile(key, { token })`),
 /// which stays in native memory only.
+///
+/// Release build with a native security file: the file must be declared in its
+/// `vaultFiles`, and [signaturePublicKey], [encryption] and [userAuth] come only
+/// from that entry — one the entry leaves out is the library's default (the block's
+/// signing keys, `PLAIN`, `NONE`) and a value given here for it fails `start`.
+/// [configApi], [endpoint] and [accessPolicy] are fixed where the entry gives them.
 class VaultFileConfig {
   final String key;
   final String endpoint;

@@ -139,6 +139,14 @@ const res = await PinVault.fetch('https://api.example.com/v1/me', { headers: { A
 console.log(res.status, JSON.parse(res.body));
 ```
 
+This is the whole config of a debug build. A **release build** takes the trust
+anchors from the [native security file](#native-security-file): JS may repeat a
+value the file gives (as above) or leave it out — with the file in place the
+block can be just `{ id, url }` — but `requiredSignatures` (other than 1),
+`serverScope`, `recoveryPublicKeys`, `requiredRecoverySignatures` and
+`clientCaPins` are refused from JS unless the file declares them for that
+block, and `bootstrapPins`, `signaturePublicKeys` and `url` must be in the file.
+
 `start` fails closed exactly like the native `init` / `start(config:)`. Calling
 `start` again applies the new config (the bridge calls `reset()` first, as the
 native samples do when they restart).
@@ -166,6 +174,7 @@ names), enum values are the Kotlin constant names (`'TOKEN_MTLS'`,
   android: { requireUnlockedDeviceAllowFallback, pinGlobalNetworking,
              keepReactNativeHttpCache, keepReactNativeCookies },
   ios: { resolve: { 'mock-tls.sample': '10.0.0.12' },   // release: only from the native security file
+         requireUnlockedDeviceAllowFallback,
          expectedBundleIds, expectedTeamIds, userAuthStrength,
          reactNativeMaxResponseBytes },
 }
@@ -180,6 +189,11 @@ library's own builder rules still apply on top (two pins per host, a signing
 key for a signed Config API, `userAuth` for `USER_AUTH` files, …). Nothing is
 silently ignored; the other platform's section (`ios` on Android, `android` on
 iOS) is shape-checked and left to that platform.
+
+Endpoints (`configEndpoint`, `healthEndpoint`, `enrollmentEndpoint`,
+`clientCertEndpoint`, `vaultReportEndpoint` and a vault file's `endpoint`) are
+paths relative to the block's `url`: an absolute value in any spelling and a
+`..` segment (also written `%2e%2e`) are refused in every build.
 
 Not exposed, on purpose: `clientKeystore(bytes, password)` (a P12 and its
 password would cross the JS bridge — enroll instead), custom
@@ -235,13 +249,15 @@ signature. Ship them natively as well, in `pinvault_security.json`:
     "tokenHosts": ["api.example.com"], "proofOfPossession": true, "clientCertHosts": ["api.example.com:443"],
     "enrollmentUrl": "https://enroll.example.com/", "renewalUrl": "https://renew.example.com/",
     "healthEndpoint": "health", "maxClientCertLifetimeDays": 90,
+    "wantPinsFor": ["api.example.com", "cdn.example.com"], "optional": false,
     "allowUnsigned": false, "allowUnpinnedConfigApi": false, "allowServerGeneratedKey": false
   }],
   "staticPins": { "pins": [ … ], "version": 1 },
   "ios": { "resolve": { "api.example.com": "10.0.0.12" } },
   "require": {
     "requireUnlockedDevice": true, "requireUnlockedDeviceAllowFallback": false,
-    "requireHardwareBackedKeys": true, "allowUnpinnedReactNativeNetworking": false,
+    "requireHardwareBackedKeys": true,
+    "requirePinnedReactNativeNetworking": true, "allowUnpinnedReactNativeNetworking": false,
     "managedTrustRoots": true, "wipeVaultFilesOnRevocation": true,
     "requireCaTrust": ["api.example.com"],
     "expectedSignerSha256": ["…"],
@@ -251,30 +267,42 @@ signature. Ship them natively as well, in `pinvault_security.json`:
   },
   "vaultFiles": [
     { "key": "statement", "signaturePublicKey": "…", "encryption": "USER_AUTH", "userAuth": "REQUIRED",
-      "maxOfflineAgeSeconds": 86400, "wipeWhenStale": true }
+      "maxOfflineAgeSeconds": 86400, "wipeWhenStale": true,
+      "configApi": "default-tls", "endpoint": "api/v1/vault/statement", "accessPolicy": "TOKEN" }
   ]
 }
 ```
 
-The keys are the JS config's (a subset of `configApis[]` plus `staticPins`),
-parsed as strictly; a broken file rejects `start` with `E_INVALID_CONFIG`
+The keys are the JS config's (a subset of `configApis[]` and `vaultFiles[]`,
+plus `staticPins`, `require` and `ios.resolve`), parsed as strictly; a broken file rejects `start` with `E_INVALID_CONFIG`
 (fail closed). When the file is there:
 
 - every Config API of the JS config must be declared in it (a bundle cannot add
   a block with keys of its own), and JS `staticPins` must be declared too;
+- the other way round, in a release build: every Config API the file declares must also be in the JS config. The
+  rules here judge the blocks the config sends; a bundle that left a declared
+  block out would drop that block's pins, attestation and token rules, and with
+  `require.managedTrustRoots` its hosts would be accepted through the roots
+  instead. `start` is refused with the missing ids. A block the app starts
+  without (an mTLS block added only after enrollment) is marked
+  `"optional": true` in the file; with `require.managedTrustRoots: true` an
+  optional block cannot be left out either. Debug builds are unchanged. Vault
+  files need not all be sent;
 - 2.10.0, release builds: a block's `healthEndpoint` comes from the file (or the
   default); vault files only from its `vaultFiles` section, also when the
-  section is missing; `expiredConfigGrace` is at most the file's (0 when it names
+  section is missing (what an entry fixes: the `vaultFiles` item below);
+  `expiredConfigGrace` is at most the file's (0 when it names
   none); `maxClientCertLifetimeDays` from JS may only be lower than the file's
   (825 when it names none); `managedTrustRoots` (it widens trust) comes from
   `require` only; RN's own networking stays pinned unless
   `require.allowUnpinnedReactNativeNetworking`; and in any build the
   unlocked-device fallback needs `require.requireUnlockedDeviceAllowFallback`
   when the file requires an unlocked device. Every key the bridge reads is
-  classified in `ConfigFieldPolicy` (see MIGRATION.md);
+  classified in `ConfigFieldPolicy` (see [MIGRATION.md](https://github.com/umutcansu/PinVault/blob/main/MIGRATION.md));
 - a field the file declares is the value: JS may leave it out (the native value
   applies) or repeat it (lists in any order); a different value rejects `start`
-  with `E_INVALID_CONFIG` naming the field;
+  with `E_INVALID_CONFIG` naming the field. The exception is a block's `url`:
+  JS must always give it, equal to the file's;
 - in a release build a declared block must carry its anchors: `bootstrapPins`
   (or `allowUnpinnedConfigApi`), `signaturePublicKeys` (or `allowUnsigned`) and
   its `url` (2.8.0+: the device's token and identity go there); a block that
@@ -294,16 +322,35 @@ parsed as strictly; a broken file rejects `start` with `E_INVALID_CONFIG`
   addresses, and its default sends the token to the block's own Config API only);
 - iOS `ios.resolve` (where a pinned host's connection goes) is fixed where the
   file gives it, and a release build takes it only from the file (2.8.0+);
-- `require` only tightens: a protection it turns on stays on whatever JS says,
+- a block's `wantPinsFor` (the hosts whose pins the block asks for) is fixed
+  where the file gives it. Where the file says `require.managedTrustRoots: true`,
+  a release build takes it only from the file: none there means every host's
+  pins, and a JS list is refused. A bundle that narrowed the list would take a
+  pinned host's pins out of the signed config and leave that host to the
+  managed roots. Without managed trust roots JS may set it as before;
+- `require` only tightens: a protection it turns on stays on whatever JS says
+  (`requirePinnedReactNativeNetworking: true` there keeps the check of React
+  Native's own networking on in every build),
   its `requireCaTrust` hosts are added to JS's, the expected signer / bundle /
   team ids and iOS `userAuthStrength` are fixed, and `expiredConfigGraceSeconds`
   / `vaultFileMaxOfflineAgeSeconds` are the most JS may ask for (the value when
   JS asks for none)
   (Android reads `expectedSignerSha256`, iOS the bundle and team ids; one file
   can serve both);
-- `vaultFiles` fixes those files' signature key, encryption and screen lock, and
-  `maxOfflineAgeSeconds` is the longest offline lifetime JS may give them;
-  with the section present, a JS vault file it does not name is refused.
+- `vaultFiles`: with the section present (in a release build also without it),
+  a JS vault file it does not name is refused. What an entry gives is the
+  value: `signaturePublicKey`, `encryption`, `userAuth`, and — when the entry
+  names them — `configApi`, `endpoint` and `accessPolicy` (JS repeats them or
+  leaves them out; a different value is refused); `maxOfflineAgeSeconds` is the longest offline lifetime JS
+  may give the file and `wipeWhenStale: true` cannot be turned off.
+  **In a release build `signaturePublicKey`, `encryption` and `userAuth` come
+  only from the entry:** one the entry leaves out is the library's default (the
+  block's signing keys, `PLAIN`, `NONE`), and a JS value for it rejects `start`
+  — so declare all three for a file that needs them (before this, a bare
+  `{ "key": … }` entry left them to the bundle). The bundle still decides
+  `storage` and `updateWithPins`, and `configApi`, `endpoint` and
+  `accessPolicy` unless the entry gives them; it can shorten `maxOfflineAge`
+  and turn `wipeWhenStale` on.
 
 `start` answers `nativeSecurityApplied: true` when the file was applied.
 
@@ -332,13 +379,27 @@ signer check of attestation (`expectedSignerSha256`, `expectedTeamIds`) reports.
   back) on either platform. Request bodies ≤ 10 MiB, responses ≤ 10 MiB by
   default (`maxResponseBytes`, at most 50 MiB) — enforced while the body is
   read on both platforms (a declared `Content-Length` over it is refused first).
+  Request headers the caller may not set (`E_INVALID_ARGUMENT`): `PinVault-Token`
+  and `PinVault-Proof` (only the library sets them, for its token hosts), and the
+  HTTP client's own `Host`, `Connection`, `Keep-Alive`, `Proxy-Connection`, `TE`,
+  `Trailer`, `Transfer-Encoding`, `Upgrade` and `Content-Length`.
+  A redirect to another host or port takes only `Accept`, `Accept-Language` and
+  `User-Agent` along: everything else you set — `Authorization`, a cookie, an
+  API-key header — is dropped without an error, so a request that must stay
+  authenticated has to name its final host. A 307 / 308 that would send a
+  request body to another host or port is not followed: the 3xx is the answer.
 - **React Native's own `fetch`, `XMLHttpRequest`, `<Image>` and `WebSocket`
   are pinned on both platforms.** The rules are the same on both:
   - **Before `start()`** — and after a start that failed — every `https`
     request through RN's networking fails (`PinVault has not started`): fail
-    closed, as the native `getClient()` / `session()` before `init`. Plain
-    `http` is not TLS and stays with RN (Metro in debug builds; ATS / the
-    network security config decide).
+    closed, as the native `getClient()` / `session()` before `init`.
+  - Plain `http` / `ws`: a debug build leaves it to RN (Metro). An Android
+    release build refuses it on `fetch`, `XMLHttpRequest`, `<Image>` and
+    `WebSocket` alike, before and after `start()` — a pin is checked in a
+    TLS handshake, and a plain request is checked by nothing. On iOS, ATS
+    decides.
+  - A `WebSocket` handshake that is redirected to another origin is not
+    followed (Android; `onerror`), as in a browser.
   - Hosts without a pin entry are refused like everywhere else in PinVault.
   - No `https` → `http` redirects; no disk HTTP cache and no cookie jar (Android:
     `android.keepReactNativeHttpCache` / `keepReactNativeCookies` keep RN's own).
@@ -424,7 +485,10 @@ value until the garbage collector drops it, and if it went through React
 state, a form field or a store, it lives there too. Pass it straight from where
 it came from, clear the field, and never persist or log it. For an attestation
 `PinVault-Token`, prefer `tokenHosts` + `PinVault.fetch` (the native client adds
-it) over `fetchAttestationToken`, which hands the token to JS. With
+it) over `fetchAttestationToken`, which hands the token to JS — in release
+builds too. Without `proofOfPossession` that token is a bearer credential:
+whatever runs in the bundle (an edited or OTA-replaced one included) can read
+it and present it from anywhere until it expires. With
 `proofOfPossession` the native client also adds a `PinVault-Proof` signed by the
 device key on every such request, and a backend that requires it refuses the
 token alone — a token in JS is then of no use without the native client. Forget vault

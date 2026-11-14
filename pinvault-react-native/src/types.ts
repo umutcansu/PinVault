@@ -44,6 +44,11 @@ export type ConfigApiBlock = {
   clientCertEndpoint?: string;
   vaultReportEndpoint?: string;
   clientCertLabel?: string;
+  /**
+   * The hosts whose pins this block asks for. Fixed where the native security file
+   * gives it; where that file turns managed trust roots on, a release build takes it
+   * from the file only (a list from JS is refused).
+   */
   wantPinsFor?: string[];
   renewalUrl?: string;
   enrollmentUrl?: string;
@@ -71,6 +76,12 @@ export type UserAuth = 'NONE' | 'REQUIRED' | 'IF_SCREEN_LOCK';
  * native side installs the `accessToken { … }` provider itself: it reads the token
  * you set with `setVaultToken(key, token)` (or pass to `fetchFile(key, { token })`),
  * which stays in native memory only.
+ *
+ * Release build with a native security file: the file must be declared in its
+ * `vaultFiles`, and `signaturePublicKey`, `encryption` and `userAuth` come only from
+ * that entry — one the entry leaves out is the library's default (the block's signing
+ * keys, `PLAIN`, `NONE`) and a value given here for it rejects `start`. `configApi`,
+ * `endpoint` and `accessPolicy` are fixed where the entry gives them.
  */
 export type VaultFileConfig = {
   key: string;
@@ -127,7 +138,12 @@ export type PinVaultConfig = {
    * `start` fails with `E_NETWORKING_NOT_PINNED` when React Native's own networking
    * does not go through PinVault: on Android when another library replaced the
    * OkHttp hooks (or they are not installed), on iOS when RCTNetworking does not
-   * pick the plugin's request handler for https. Default false (a warning is logged).
+   * pick the plugin's request handler for https. On by default in a release build
+   * (iOS: unless the Info.plist opted out with `PinVaultPinReactNativeNetworking` = NO),
+   * off in a debug build, where a warning is logged instead. A release build refuses
+   * `false` unless the native security file says
+   * `require.allowUnpinnedReactNativeNetworking: true`; the file's
+   * `require.requirePinnedReactNativeNetworking: true` keeps it on in every build.
    */
   requirePinnedReactNativeNetworking?: boolean;
   /** Android-only settings (ignored on iOS). */

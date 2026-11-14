@@ -19,7 +19,12 @@ class NativeFieldEnforcementTest {
     private val pinB = "609TJ66QBh0UWFLa4K85gbE/n8A3FGbboV5YlwWP3G8="
     private val evil = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="
 
-    /** The file: anchors, addresses and one vault file; nothing relaxed, no static pins. */
+    /**
+     * The file: anchors, addresses and one vault file; nothing relaxed, no static pins.
+     * The vault entry is bare on purpose: a field it leaves out is the library's
+     * default in a release build, never JS's (review 2026-11-14) — the examples
+     * below give exactly the values an edited bundle would (its own key, PLAIN, NONE).
+     */
     private val native = NativeSecurity.parse("""
         {"configApis":[{"id":"default","url":"https://h.example:8081/",
           "bootstrapPins":[{"hostname":"h.example","sha256":["$pinA","$pinB"]}],
@@ -27,7 +32,7 @@ class NativeFieldEnforcementTest {
           "enrollmentUrl":"https://h.example:8081/","renewalUrl":"https://h.example:8093/",
           "tokenHosts":["h.example"],"clientCertHosts":["h.example:8092"],"healthEndpoint":"health"}],
          "require":{"requireUnlockedDevice":true},
-         "vaultFiles":[{"key":"doc","signaturePublicKey":"$key","encryption":"END_TO_END","userAuth":"NONE"}]}
+         "vaultFiles":[{"key":"doc"}]}
     """.trimIndent(), "assets/pinvault_security.json")
 
     private val otherPins = """[{"hostname":"h.example","sha256":["$evil","$pinB"]}]"""
@@ -60,7 +65,7 @@ class NativeFieldEnforcementTest {
         put("$api.healthEndpoint", At.BLOCK to """"healthEndpoint":"api/v1/certificate-config"""")
         put("config.vaultFiles[].signaturePublicKey", At.VAULT to """"signaturePublicKey":"$key2"""")
         put("config.vaultFiles[].encryption", At.VAULT to """"encryption":"PLAIN"""")
-        put("config.vaultFiles[].userAuth", At.VAULT to """"userAuth":"REQUIRED"""")
+        put("config.vaultFiles[].userAuth", At.VAULT to """"userAuth":"NONE"""")
         listOf("", ".version", ".forceUpdate", ".pins", ".pins[].hostname", ".pins[].sha256", ".pins[].version",
             ".pins[].forceUpdate", ".pins[].mtls", ".pins[].clientCertVersion").forEach {
             put("config.staticPins$it", At.ROOT to """"staticPins":$staticPins""")
@@ -110,5 +115,20 @@ class NativeFieldEnforcementTest {
             }
         }.keys
         if (accepted.isNotEmpty()) fail("a release build took these NATIVE keys from JS: $accepted")
+    }
+
+    @Test fun `a vault field the entry leaves out is refused as not given, not as different`() {
+        for (field in listOf("signaturePublicKey", "encryption", "userAuth")) {
+            val example = examples.getValue("config.vaultFiles[].$field")
+            try {
+                parse(js(example.first, example.second))
+                fail("accepted $field from JS")
+            } catch (e: IllegalArgumentException) {
+                val message = e.message ?: ""
+                listOf("vaultFiles[0].$field", "does not give $field", "only from there").forEach {
+                    if (!message.contains(it)) fail("'$message' lacks '$it'")
+                }
+            }
+        }
     }
 }

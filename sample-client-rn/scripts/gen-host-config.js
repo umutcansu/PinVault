@@ -212,7 +212,11 @@ function securityFile() {
         ...(host.tlsScope ? { serverScope: host.tlsScope } : {}), clientCertHosts: [mtlsUrl],
       },
       {
-        id: 'sample-mtls', url: mtlsUrl, bootstrapPins: mtlsPins, ...signing,
+        // A release build runs every Config API this file declares (review 2026-11-14).
+        // src/pinvault.ts adds this block only once the device is enrolled, so it is
+        // marked optional: the app may start without it. (Not possible together with
+        // require.managedTrustRoots, which this sample does not use.)
+        id: 'sample-mtls', optional: true, url: mtlsUrl, bootstrapPins: mtlsPins, ...signing,
         ...(host.mtlsScope ? { serverScope: host.mtlsScope } : {}),
         ...(door ? { renewalUrl: `https://${host.ip}:${host.recoveryPort}/` } : {}),
       },
@@ -228,10 +232,21 @@ function securityFile() {
     },
     // A release build with a native file takes vault files only from here (2.10.0):
     // the keys src/pinvault.ts defines, with what a changed bundle must not loosen.
+    // The signature key, encryption and screen lock of a file come ONLY from its
+    // entry (review 2026-11-14): one left out here is the library's default (the
+    // block's signing keys, PLAIN, NONE) and a JS value for it stops start. Which
+    // Config API serves the file, its path and its access policy are fixed here too
+    // (the same values as src/pinvault.ts).
     vaultFiles: [
-      { key: 'sample-flags' },
-      { key: 'sample-e2e', encryption: 'END_TO_END', maxOfflineAgeSeconds: 7 * 24 * 3600 },
-      { key: 'sample-secret', encryption: 'USER_AUTH', userAuth: 'REQUIRED', maxOfflineAgeSeconds: 7 * 24 * 3600 },
+      { key: 'sample-flags', encryption: 'PLAIN', userAuth: 'NONE', configApi: 'sample-host', endpoint: 'api/v1/vault/sample-flags' },
+      {
+        key: 'sample-e2e', encryption: 'END_TO_END', userAuth: 'NONE', maxOfflineAgeSeconds: 7 * 24 * 3600,
+        configApi: 'sample-mtls', endpoint: 'api/v1/vault/sample-e2e', accessPolicy: 'TOKEN_MTLS',
+      },
+      {
+        key: 'sample-secret', encryption: 'USER_AUTH', userAuth: 'REQUIRED', maxOfflineAgeSeconds: 7 * 24 * 3600,
+        configApi: 'sample-mtls', endpoint: 'api/v1/vault/sample-secret', accessPolicy: 'TOKEN_MTLS',
+      },
     ],
   };
 }

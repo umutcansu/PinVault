@@ -9,7 +9,8 @@
 //                      "clientCaPins", "allowUnsigned", "allowUnpinnedConfigApi",
 //                      "allowServerGeneratedKey", "url", "attestation", "tokenHosts", "proofOfPossession",
 //                      "clientCertHosts",
-//                      "enrollmentUrl", "renewalUrl", "healthEndpoint", "maxClientCertLifetimeDays" }],
+//                      "enrollmentUrl", "renewalUrl", "healthEndpoint", "maxClientCertLifetimeDays",
+//                      "wantPinsFor", "optional" }],
 //     "staticPins": { "pins": [...], "version": 1 },
 //     "ios": { "resolve": { "<host>": "<address>" } },
 //     "require": { "requireUnlockedDevice", "requireHardwareBackedKeys",
@@ -18,7 +19,7 @@
 //                  "expectedTeamIds", "userAuthStrength", "expiredConfigGraceSeconds",
 //                  "vaultFileMaxOfflineAgeSeconds", "expectedSignerSha256" (Android's, read for the shape) },
 //     "vaultFiles": [{ "key", "signaturePublicKey", "encryption", "userAuth", "maxOfflineAgeSeconds",
-//                      "wipeWhenStale" }] }
+//                      "wipeWhenStale", "configApi", "endpoint", "accessPolicy" }] }
 //
 // When the file is there: every Dart Config API (and Dart `staticPins`) must be
 // declared in it; a declared field is the value (Dart may omit or repeat it, a
@@ -40,6 +41,20 @@
 // `wipeWhenStale: true` turns that on), and a Dart vault file it does not name
 // is refused — in a release build also when the file has no `vaultFiles` section.
 // Every key the parser reads has a release policy in ``ConfigFieldPolicy``.
+//
+// Review 2026-11-14: what a `vaultFiles` entry gives is fixed (`configApi`,
+// `endpoint` and `accessPolicy` too), and in a release build an entry that
+// leaves out `signaturePublicKey`, `encryption` or `userAuth` means the library's
+// default for it (the block's signing keys, `PLAIN`, `NONE`) — a Dart value for
+// it is refused (a bare `{"key": …}` entry handed all three to the bundle). A
+// block's `wantPinsFor` is fixed where the file gives it; in a release build
+// whose file says `require.managedTrustRoots: true` it comes from the file only
+// (none there = every host's pins, a Dart list is refused): a host the bundle
+// left out would be trusted through the roots instead of its pins. In a release
+// build every Config API the file declares must be in the Dart config: a bundle
+// that left one out would drop its pins, attestation and token rules. A block
+// marked `"optional": true` may be left out, except where the file turns
+// managed trust roots on.
 //
 // Without it, a release build refuses a config with Config APIs or static
 // pins — the trust anchors would come from Dart alone — unless the app's
@@ -77,6 +92,16 @@ public struct NativeSecurity {
         var healthEndpoint: String? = nil
         /// The longest issued client certificate the block accepts; a release build lets Dart lower it only.
         var maxClientCertLifetimeDays: Int? = nil
+        /// The hosts whose pins the block asks for. Fixed when given; with
+        /// `require.managedTrustRoots` a release build takes it from here only
+        /// (nil = every host), so Dart cannot move a pinned host to root trust.
+        var wantPinsFor: [String]? = nil
+        /// A release build runs every block the file declares: Dart leaving one out is
+        /// refused. `"optional": true` lets the config start without this block (an
+        /// mTLS block used only once the device is enrolled) — not with
+        /// `require.managedTrustRoots`, where the missing block's hosts would be
+        /// trusted through the roots instead of their pins.
+        var optional = false
     }
 
     /// The `require` section: protections Dart cannot switch off.
@@ -109,6 +134,10 @@ public struct NativeSecurity {
         var maxOfflineAgeMs: Int64? = nil
         /// On here: Dart cannot leave a stale copy on the device.
         var wipeWhenStale = false
+        /// Which Config API serves the file, its path there and its access policy: fixed when given, Dart's otherwise.
+        var configApi: String? = nil
+        var endpoint: String? = nil
+        var accessPolicy: VaultFileAccessPolicy? = nil
     }
 
     /// The Info.plist key with which an app accepts a release start without the file.
@@ -120,6 +149,8 @@ public struct NativeSecurity {
     /// Where the file came from, for messages.
     public let source: String
     let blocks: [String: Block]
+    /// The ids of ``blocks`` in the order the file declares them (for messages).
+    var blockIds: [String] = []
     let staticPins: CertificateConfig?
     var require = Require()
     /// Nil when the file has no `vaultFiles` section.
@@ -149,9 +180,11 @@ public struct NativeSecurity {
         do {
             let root = try StrictJSON.parseObject(text, path: source, maxChars: maxFileChars)
             var blocks: [String: Block] = [:]
+            var blockIds: [String] = []
             for b in try root.objectList("configApis", maxItems: ConfigParser.maxConfigApis) ?? [] {
                 let id = try b.requireString("id", maxLength: 128)
                 if blocks[id] != nil { throw BridgeInputError("\(b.path).id: '\(id)' is declared twice") }
+                blockIds.append(id)
                 blocks[id] = Block(
                     bootstrapPins: try b.objectList("bootstrapPins", maxItems: ConfigParser.maxPins)?.map(ConfigParser.hostPin),
                     signaturePublicKeys: try b.stringList("signaturePublicKeys", maxItems: 16, maxLength: ConfigParser.keyLength, multiline: true),
@@ -171,7 +204,9 @@ public struct NativeSecurity {
                     enrollmentUrl: try ConfigParser.httpsUrl(b, "enrollmentUrl"),
                     renewalUrl: try ConfigParser.httpsUrl(b, "renewalUrl"),
                     healthEndpoint: try ConfigParser.relEndpoint(b, "healthEndpoint", maxLength: 512),
-                    maxClientCertLifetimeDays: try b.int("maxClientCertLifetimeDays", min: 1, max: 3650)
+                    maxClientCertLifetimeDays: try b.int("maxClientCertLifetimeDays", min: 1, max: 3650),
+                    wantPinsFor: try b.stringList("wantPinsFor", maxItems: 256, maxLength: 255),
+                    optional: try b.bool("optional") == true
                 )
                 try b.finish()
             }
@@ -210,7 +245,10 @@ public struct NativeSecurity {
                         encryption: try f.enumValue("encryption", VaultFileEncryption.self),
                         userAuth: try f.enumValue("userAuth", UserAuth.self),
                         maxOfflineAgeMs: try f.int64("maxOfflineAgeSeconds", min: 1, max: maxOfflineAgeS).map { $0 * 1000 },
-                        wipeWhenStale: try f.bool("wipeWhenStale") == true
+                        wipeWhenStale: try f.bool("wipeWhenStale") == true,
+                        configApi: try f.string("configApi", maxLength: 128),
+                        endpoint: try ConfigParser.relEndpoint(f, "endpoint", maxLength: 512),
+                        accessPolicy: try f.enumValue("accessPolicy", VaultFileAccessPolicy.self)
                     )
                     try f.finish()
                 }
@@ -221,6 +259,7 @@ public struct NativeSecurity {
                 throw BridgeInputError("\(source): declares neither configApis nor staticPins")
             }
             var native = NativeSecurity(source: source, blocks: blocks, staticPins: staticPins)
+            native.blockIds = blockIds
             native.require = require
             native.vaultFiles = vaultFiles
             native.resolve = resolve

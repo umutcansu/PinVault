@@ -77,14 +77,18 @@ Dart OTA update or an edited bundle must not be able to change them. Ship
     "serverScope": "default-tls", "clientCaPins": ["…"],
     "attestation": true, "proofOfPossession": true,
     "tokenHosts": ["api.example.com"], "clientCertHosts": ["api.example.com:443"],
-    "healthEndpoint": "health", "maxClientCertLifetimeDays": 90
+    "healthEndpoint": "health", "maxClientCertLifetimeDays": 90,
+    "wantPinsFor": ["api.example.com", "cdn.example.com"], "optional": false
   }],
+  "ios": { "resolve": { "api.example.com": "10.0.0.12" } },
   "require": {
     "requireUnlockedDevice": true, "requireUnlockedDeviceAllowFallback": false,
     "requireHardwareBackedKeys": true, "managedTrustRoots": false,
     "requireCaTrust": ["api.example.com"], "expiredConfigGraceSeconds": 0
   },
-  "vaultFiles": [{ "key": "statement", "signaturePublicKey": "…", "encryption": "USER_AUTH", "userAuth": "REQUIRED", "wipeWhenStale": true }]
+  "vaultFiles": [{ "key": "statement", "signaturePublicKey": "…", "encryption": "USER_AUTH", "userAuth": "REQUIRED",
+                   "maxOfflineAgeSeconds": 86400, "wipeWhenStale": true,
+                   "configApi": "default-tls", "endpoint": "api/v1/vault/statement", "accessPolicy": "TOKEN" }]
 }
 ```
 
@@ -112,7 +116,53 @@ it names none); `managedTrustRoots` comes from `require` only (it widens trust);
 in any build the unlocked-device fallback needs
 `require.requireUnlockedDeviceAllowFallback` when the file requires an unlocked
 device. Every key the bridge reads is classified in `ConfigFieldPolicy` (see
-MIGRATION.md).
+[MIGRATION.md](https://github.com/umutcansu/PinVault/blob/main/MIGRATION.md)).
+
+**Vault files.** With a `vaultFiles` section (in a release build also without
+one) a Dart vault file the section does not name is refused. What an entry
+gives is the value: `signaturePublicKey`, `encryption`, `userAuth`, and — when
+the entry names them — `configApi`, `endpoint` and `accessPolicy` (Dart repeats
+them; a different value is refused); `maxOfflineAgeSeconds` is the longest
+offline lifetime Dart may give the file and `wipeWhenStale: true` cannot be
+turned off. **In a release build `signaturePublicKey`, `encryption` and
+`userAuth` come only from the entry:** one the entry leaves out is the
+library's default (the block's signing keys, `PLAIN`, `NONE`), and a Dart value
+for it fails `start` with `E_INVALID_CONFIG` — so declare all three for a file
+that needs them (before this, a bare `{ "key": … }` entry left them to the
+bundle). Dart still decides `storage` and `updateWithPins`, and `configApi`,
+`endpoint` and `accessPolicy` unless the entry gives them; it can shorten
+`maxOfflineAge` and turn `wipeWhenStale` on.
+
+**`wantPinsFor`** (the hosts whose pins a block asks for) is fixed where the
+file's block gives it. Where the file says `require.managedTrustRoots: true`, a
+release build takes it only from the file: none there means every host's pins,
+and a Dart list is refused — a bundle that narrowed the list would take a
+pinned host's pins out of the signed config and leave that host to the managed
+roots. Without managed trust roots Dart may set it as before.
+
+**Every declared block runs.** In a release build every Config API the file declares must also be in the Dart config. The
+rules here judge the blocks the config sends; a bundle that left a declared
+block out would drop that block's pins, attestation and token rules, and with
+`require.managedTrustRoots` its hosts would be accepted through the roots
+instead. `start` is refused with the missing ids. A block the app starts
+without (an mTLS block added only after enrollment) is marked
+`"optional": true` in the file; with `require.managedTrustRoots: true` an
+optional block cannot be left out either. Debug builds are unchanged. Vault
+files need not all be sent.
+
+**Endpoints** (`configEndpoint`, `healthEndpoint`, `enrollmentEndpoint`,
+`clientCertEndpoint`, `vaultReportEndpoint`, a vault file's `endpoint`) are
+paths relative to the block's `url`: an absolute value in any spelling and a
+`..` segment (also written `%2e%2e`) are refused in every build.
+
+**Platform sections.** In the Dart config, `android: AndroidSettings(…)` holds
+`requireUnlockedDeviceAllowFallback`; `ios: IosSettings(…)` holds
+`requireUnlockedDeviceAllowFallback`, `resolve`, `expectedBundleIds`,
+`expectedTeamIds` and `userAuthStrength`. Each platform reads its own section
+and only checks the shape of the other. In the native file the same iOS values
+are fixed by `"ios": { "resolve": … }` and by `require.expectedBundleIds`,
+`require.expectedTeamIds` and `require.userAuthStrength`; Android's signer
+digests by `require.expectedSignerSha256`. One file can serve both platforms.
 
 ## Quick start
 
@@ -152,7 +202,16 @@ host through `PinVault.fetch`.
 `PinVault.fetch(url, init)` — a request through the native pinned client (pin
 check, attestation token, pin-mismatch recovery). HTTPS only; never falls back
 to an unpinned path. `PinVaultRequestInit` supports method, headers, body
-(text or Base64), timeouts, and a max response size. On iOS (2.8.1+) a TLS
+(text or Base64), timeouts, and a max response size. Request headers the
+caller may not set (`E_INVALID_ARGUMENT`): `PinVault-Token` and `PinVault-Proof`
+(only the library sets them, for its token hosts), and the HTTP client's own
+`Host`, `Connection`, `Keep-Alive`, `Proxy-Connection`, `TE`, `Trailer`,
+`Transfer-Encoding`, `Upgrade` and `Content-Length`. A redirect to another
+host or port takes only `Accept`, `Accept-Language` and `User-Agent` along:
+everything else you set — `Authorization`, a cookie, an API-key header — is
+dropped without an error, so a request that must stay authenticated has to
+name its final host. A 307 / 308 that would send a request body to another
+host or port is not followed: the 3xx is the answer. On iOS (2.8.1+) a TLS
 connection whose certificate never reached the library's check (an "SSL kill
 switch" tweak answered it first) is refused and reported in the attestation
 report (`hooking_framework`, `tls-unverified:<host>`).
@@ -170,7 +229,10 @@ native memory only.
 `PinVault.` — attestation: `attestNow`, `fetchAttestationToken`,
 `attestationStatus`, `attestationHeaderName`. Prefer `tokenHosts` +
 `PinVault.fetch` (the native client adds the `PinVault-Token`) over
-`fetchAttestationToken`, which hands the token to Dart. With
+`fetchAttestationToken`, which hands the token to Dart — in release builds
+too. Without `proofOfPossession` that token is a bearer credential: whatever
+runs in the Dart bundle (an edited or replaced one included) can read it and
+present it from anywhere until it expires. With
 `proofOfPossession` the native client also adds a `PinVault-Proof` signed by
 the device key, and a backend that requires it (the reference server does by
 default) refuses the token alone.
@@ -200,7 +262,8 @@ socket, and `done` completes on every ending.
 - **Secret hygiene:** vault access tokens and enrollment tokens live in native
   memory only and are redacted (`***`) from every string that returns to Dart.
 - **Trust anchors outside the bundle:** the native security file (above) fixes
-  pins, keys, relaxations and vault-file policy against OTA-updated Dart.
+  pins, keys, relaxations and vault-file policy (signature key, encryption,
+  screen lock) against OTA-updated Dart.
 - **Environment guard:** an optional `environmentGuard` runs before `INIT`,
   `ENROLL`, `FETCH_FILE`, `UNLOCK_FILE`, `LOAD_FILE`; a timeout, throw, or
   non-`true` answer refuses the operation.

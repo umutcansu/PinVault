@@ -71,6 +71,25 @@ final class ConfigParserTests: XCTestCase {
         }
     }
 
+    // Review 2026-11-14 (K3): only the vault endpoint was held to the '..' rule; a block's
+    // endpoints are resolved against the same URL and could climb out of its path.
+    func testABlockEndpointHasNoParentSegmentInAnyBuild() throws {
+        for name in ["configEndpoint", "healthEndpoint", "enrollmentEndpoint", "clientCertEndpoint", "vaultReportEndpoint"] {
+            for value in ["../admin", "api/v1/../../admin", "api/..", "api/%2e%2E/admin", "api/.%2e/admin", "%2e%2e/admin", "..?x=1", "..#f"] {
+                assertRefused(#"{"configApis":[\#(api(#","\#(name)":"\#(value)""#))]}"#, "configApis[0].\(name)", "'..' path segment")
+            }
+            // Dots that are not a segment of their own, and a query, are the app's business.
+            for value in ["api/v1/a..b", "api/v1/..a", "api/v1/pins?from=../x", "api/v1/./pins"] {
+                XCTAssertNoThrow(try parse(#"{"configApis":[\#(api(#","\#(name)":"\#(value)""#))]}"#), "\(name) \(value)")
+            }
+        }
+        // The native security file's own endpoint is held to the same rule.
+        XCTAssertThrowsError(try NativeSecurity.parse(#"{"configApis":[{"id":"default","healthEndpoint":"../health"}]}"#,
+                                                      source: "pinvault_security.json")) { error in
+            XCTAssertTrue(((error as? BridgeInputError)?.message ?? "").contains("'..' path segment"), "\(error)")
+        }
+    }
+
     func testAbsoluteEndpointsAreRefused() {   // RN-2
         assertRefused(#"{"configApis":[\#(api(#","configEndpoint":"https://evil.example/pins""#))]}"#, "configEndpoint", "relative path")
         assertRefused(#"{"configApis":[\#(api(#","clientCertEndpoint":"/abs""#))]}"#, "clientCertEndpoint", "relative path")

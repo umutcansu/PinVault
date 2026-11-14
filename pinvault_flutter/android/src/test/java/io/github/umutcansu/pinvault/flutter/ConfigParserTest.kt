@@ -115,6 +115,28 @@ class ConfigParserTest {
         refused("""{"configApis":[${api(""","healthEndpoint":" //evil.example/health"""")}]}""", "healthEndpoint", "relative path")
     }
 
+    // Review 2026-11-14 (K3): only the vault endpoint was held to the '..' rule; a block's
+    // endpoints are resolved against the same URL and could climb out of its path.
+    @Test fun `a block endpoint has no parent segment, in any build`() {
+        val endpoints = listOf("configEndpoint", "healthEndpoint", "enrollmentEndpoint", "clientCertEndpoint", "vaultReportEndpoint")
+        for (name in endpoints) {
+            for (value in listOf("../admin", "api/v1/../../admin", "api/..", "api/%2e%2E/admin", "api/.%2e/admin", "%2e%2e/admin", "..?x=1", "..#f")) {
+                refused("""{"configApis":[${api(""","$name":"$value"""")}]}""", "configApis[0].$name", "'..' path segment")
+            }
+            // Dots that are not a segment of their own, and a query, are the app's business.
+            for (value in listOf("api/v1/a..b", "api/v1/..a", "api/v1/pins?from=../x", "api/v1/./pins")) {
+                parse("""{"configApis":[${api(""","$name":"$value"""")}]}""")
+            }
+        }
+        // The native security file's own endpoint is held to the same rule.
+        try {
+            NativeSecurity.parse("""{"configApis":[{"id":"default","healthEndpoint":"../health"}]}""", "assets/pinvault_security.json")
+            fail("the native file took a healthEndpoint with '..'")
+        } catch (e: IllegalArgumentException) {
+            assertTrue(e.message!!.contains("'..' path segment"))
+        }
+    }
+
     @Test fun `absolute endpoints are refused`() {
         refused("""{"configApis":[${api(""","configEndpoint":"https://evil.example/pins"""")}]}""", "configEndpoint", "relative path")
         refused("""{"configApis":[${api(""","clientCertEndpoint":"/abs"""")}]}""", "clientCertEndpoint", "relative path")

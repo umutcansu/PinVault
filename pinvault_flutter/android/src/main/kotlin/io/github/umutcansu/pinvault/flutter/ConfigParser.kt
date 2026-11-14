@@ -76,9 +76,31 @@ internal object ConfigParser {
                     "An app that accepts Dart-only anchors says so in its manifest: meta-data ${NativeSecurity.NO_FILE_META_DATA}=true"
             )
         }
-        configApis?.forEach { addConfigApi(builder, it, native, release) }
+        val sentIds = configApis?.map { addConfigApi(builder, it, native, release) }.orEmpty()
         vaultFiles?.forEach { addVaultFile(builder, it, tokens, native, release) }
         SecurityPolicy.staticPins("config.staticPins", staticPins, native)?.let { builder.staticPins(it) }
+        // The rules above judge the blocks the config SENDS. A bundle that leaves a declared
+        // block out drops that block's pins, attestation and token rules — and where the file
+        // turns managed trust roots on, the hosts it pinned are then accepted through the
+        // platform CAs and the remaining blocks' roots (review 2026-11-14, R-03). A release
+        // build runs every Config API its native file declares; the file may mark one the app
+        // starts without (used only after enrollment, say) `"optional": true` — never with
+        // managed trust roots, where a missing block is a pin → root downgrade.
+        if (release && native != null) {
+            val roots = native.require.managedTrustRoots
+            val missing = native.blocks.filter { (id, block) -> id !in sentIds && (roots || !block.optional) }.keys
+            if (missing.isNotEmpty()) {
+                val optionalToo = roots && missing.any { native.blocks.getValue(it).optional }
+                throw BridgeInputException(
+                    "config.configApis: the app's native security file (${native.source}) declares Config API " +
+                        missing.joinToString { "'$it'" } + ", which the config leaves out; a release build runs every " +
+                        "Config API its native file declares" +
+                        if (optionalToo) " (with require.managedTrustRoots an \"optional\" block cannot be left out either: " +
+                            "its hosts would be trusted through the roots instead of their pins)"
+                        else " (a block the app may start without is marked \"optional\": true in that file)"
+                )
+            }
+        }
 
         root.int("maxRetryCount", 0, 10)?.let { builder.maxRetryCount(it) }
         root.long("updateIntervalHours", 1, 24L * 30)?.let { builder.updateIntervalHours(it) }
@@ -186,7 +208,11 @@ internal object ConfigParser {
     /**
      * An endpoint path, resolved relative to the block's base URL. An absolute
      * value — a scheme (`://`) or a root (`/`, `\`) — would silently retarget the
-     * request past the pinned host, so it is refused. Returns null when the optional field is absent.
+     * request past the pinned host, so it is refused. A `..` segment (plain or
+     * `%2e`) is refused too, in every build: the endpoint is resolved against the
+     * block's URL, and `..` would climb out of the path the app declared for that
+     * Config API (same host, another path — review 2026-11-14; only the vault
+     * endpoint was held to it before). Returns null when the optional field is absent.
      */
     internal fun relEndpoint(f: Fields, key: String, max: Int): String? {
         val v = f.string(key, max) ?: return null
@@ -195,27 +221,14 @@ internal object ConfigParser {
         if (v != v.trim() || v.contains('\\') || v.contains("://") || v.startsWith("/") || SCHEME_PREFIX.containsMatchIn(v)) {
             throw BridgeInputException("${f.path}.$key: must be a relative path, not an absolute URL")
         }
+        if (hasParentSegment(v)) {
+            throw BridgeInputException("${f.path}.$key: must not contain a '..' path segment")
+        }
         return v
     }
 
     /** `scheme:` at the start of a value: an absolute URL however its slashes are written. */
     private val SCHEME_PREFIX = Regex("^[A-Za-z][A-Za-z0-9+.-]*:")
-
-    /**
-     * A vault file's endpoint: required, held to the same rule as the block's
-     * endpoints ([relEndpoint] — it used to be checked for `://` and a leading
-     * slash only, so " //host/x" or "https:\\host/x" sent the file request and
-     * the file's token to another host), and without a `..` segment: the
-     * endpoint is resolved against the block's URL, and `..` would climb out of
-     * the path the app's native side declared for that Config API.
-     */
-    private fun vaultEndpoint(f: Fields): String {
-        val endpoint = relEndpoint(f, "endpoint", 512) ?: throw BridgeInputException("${f.path}.endpoint: required")
-        if (hasParentSegment(endpoint)) {
-            throw BridgeInputException("${f.path}.endpoint: must not contain a '..' path segment")
-        }
-        return endpoint
-    }
 
     /** True when the path of [endpoint] has a `..` segment, written plainly or as `%2e` (URL parsers read both). */
     internal fun hasParentSegment(endpoint: String): Boolean =
@@ -248,7 +261,8 @@ internal object ConfigParser {
         return config
     }
 
-    private fun addConfigApi(builder: PinVaultConfig.Builder, b: Fields, native: NativeSecurity?, release: Boolean) {
+    /** Adds one `configApis[]` entry to [builder]; returns its id. */
+    private fun addConfigApi(builder: PinVaultConfig.Builder, b: Fields, native: NativeSecurity?, release: Boolean): String {
         val id = b.requireString("id", 128)
         val url = httpsUrl(b, "url") ?: throw BridgeInputException("${b.path}.url: required")
         // Read everything before the builder runs, so a refusal names the JSON path.
@@ -349,6 +363,20 @@ internal object ConfigParser {
             if (clientCertHosts != null && !NativeSecurity.sameKeys(clientCertHosts.map(String::lowercase), n.map(String::lowercase))) fixed("clientCertHosts")
         } ?: clientCertHosts
 
+        // With managed trust roots a host WITHOUT a pin entry is accepted through the platform CAs
+        // and the signed config's roots. `wantPinsFor` decides which hosts' pins the signed view
+        // carries, so a bundle that narrows it takes a pinned host's pins away and leaves it on
+        // root trust (review 2026-11-14): where the file turns managed roots on, a release build
+        // takes the list from the file's block only (none there = every host's pins).
+        if (release && nativeBlock != null && native?.require?.managedTrustRoots == true && nativeBlock.wantPinsFor == null && wantPinsFor != null) {
+            throw BridgeInputException("${b.path}.wantPinsFor: the app's native security file (${native.source}) turns managed trust roots on " +
+                "and does not give wantPinsFor for Config API '$id'; a release build takes it only from there (a host left out of the " +
+                "list would be trusted through the roots instead of its pins)")
+        }
+        val pinsFor = nativeBlock?.wantPinsFor?.also { n ->
+            if (wantPinsFor != null && !NativeSecurity.sameKeys(wantPinsFor.map(String::lowercase), n.map(String::lowercase))) fixed("wantPinsFor")
+        } ?: wantPinsFor
+
         // The trust anchors and relaxations: the native security file decides, Dart only repeats.
         val sec = SecurityPolicy.apply(
             b.path, id,
@@ -381,7 +409,7 @@ internal object ConfigParser {
             clientCertEndpoint?.let { this.clientCertEndpoint(it) }
             vaultReportEndpoint?.let { this.vaultReportEndpoint(it) }
             clientCertLabel?.let { this.clientCertLabel(it) }
-            wantPinsFor?.let { this.wantPinsFor(*it.toTypedArray()) }
+            pinsFor?.let { this.wantPinsFor(*it.toTypedArray()) }
             fixedRenewalUrl?.let { this.renewalUrl(it) }
             fixedEnrollmentUrl?.let { this.enrollmentUrl(it) }
             threshold?.let { this.clientCertRenewalThreshold(it) }
@@ -391,6 +419,7 @@ internal object ConfigParser {
             tokenHosts?.let { this.tokenHosts(it) }
             if (proof) this.proofOfPossession()
         }
+        return id
     }
 
     private fun addVaultFile(builder: PinVaultConfig.Builder, f: Fields, tokens: VaultTokenStore, native: NativeSecurity?, release: Boolean) {
@@ -399,19 +428,19 @@ internal object ConfigParser {
         if (!VAULT_KEY.matches(key) || key.all { it == '.' }) {
             throw BridgeInputException("${f.path}.key: must match [A-Za-z0-9._-]{1,64} and not be only dots")
         }
-        val endpoint = vaultEndpoint(f)
+        val dartEndpoint = relEndpoint(f, "endpoint", 512)
         val dartSignatureKey = f.string("signaturePublicKey", KEY_LENGTH, multiline = true)
         val updateWithPins = f.bool("updateWithPins")
         val storage = f.enum("storage", StorageStrategy.values())
-        val configApi = f.string("configApi", 128)
-        val policy = f.enum("accessPolicy", VaultFileAccessPolicy.values())
+        val dartConfigApi = f.string("configApi", 128)
+        val dartPolicy = f.enum("accessPolicy", VaultFileAccessPolicy.values())
         val dartEncryption = f.enum("encryption", VaultFileEncryption.values())
         val dartUserAuth = f.enum("userAuth", UserAuth.values())
         val maxOfflineAge = f.obj("maxOfflineAge")?.let(::duration)
         val wipeWhenStale = f.bool("wipeWhenStale") == true
         f.finish()
 
-        // A file the native security file names keeps its signature key, encryption and lock.
+        // A file the native security file names: what its entry gives is the value.
         val declared = native?.vaultFiles?.let { files ->
             files[key] ?: throw BridgeInputException("${f.path}: vault file '$key' is not declared in the app's native security file (${native.source})")
         } ?: if (release && native != null) {
@@ -422,11 +451,35 @@ internal object ConfigParser {
         } else null
         fun fixed(field: String): Nothing =
             throw BridgeInputException("${f.path}.$field: differs from the app's native security file (${native?.source}); the native value is fixed")
-        val signatureKey = declared?.signaturePublicKey?.also { n ->
-            if (dartSignatureKey != null && dartSignatureKey.trim() != n.trim()) fixed("signaturePublicKey")
-        } ?: dartSignatureKey
-        val encryption = declared?.encryption?.also { if (dartEncryption != null && dartEncryption != it) fixed("encryption") } ?: dartEncryption
-        val userAuth = declared?.userAuth?.also { if (dartUserAuth != null && dartUserAuth != it) fixed("userAuth") } ?: dartUserAuth
+        // The signature key, the encryption and the screen lock decide whose signature the file is
+        // checked with and whether its content needs the device's lock. In a release build with a
+        // native file they are the entry's alone: one it leaves out is the library's default (the
+        // block's signing keys, PLAIN, NONE), never the bundle's value — a bare `{"key": …}` entry
+        // used to hand all three to the bundle (review 2026-11-14).
+        val entryOnly = release && native != null
+        fun <T : Any> fromEntry(field: String, entryValue: T?, dartValue: T?, same: (T, T) -> Boolean = { a, b -> a == b }): T? {
+            if (entryValue != null) {
+                if (dartValue != null && !same(dartValue, entryValue)) fixed(field)
+                return entryValue
+            }
+            if (entryOnly && dartValue != null) {
+                throw BridgeInputException("${f.path}.$field: the app's native security file (${native?.source}) does not give $field for " +
+                    "vault file '$key', and a release build takes it only from there; declare it in that file's vaultFiles entry")
+            }
+            return dartValue
+        }
+        val signatureKey = fromEntry("signaturePublicKey", declared?.signaturePublicKey, dartSignatureKey) { a, b -> a.trim() == b.trim() }
+        val encryption = fromEntry("encryption", declared?.encryption, dartEncryption)
+        val userAuth = fromEntry("userAuth", declared?.userAuth, dartUserAuth)
+        // Which Config API serves the file, its path there and how the device shows it may download
+        // it: fixed where the entry gives them, the config's otherwise.
+        fun <T : Any> fixedByEntry(field: String, entryValue: T?, dartValue: T?): T? {
+            if (entryValue != null && dartValue != null && dartValue != entryValue) fixed(field)
+            return entryValue ?: dartValue
+        }
+        val endpoint = fixedByEntry("endpoint", declared?.endpoint, dartEndpoint) ?: throw BridgeInputException("${f.path}.endpoint: required")
+        val configApi = fixedByEntry("configApi", declared?.configApi, dartConfigApi)
+        val policy = fixedByEntry("accessPolicy", declared?.accessPolicy, dartPolicy)
         // The tighter of the file's own cap and the config-wide one: a per-file value
         // overrides the config's, so it must not escape the config-wide cap either.
         val cap = listOfNotNull(declared?.maxOfflineAgeMs, native?.require?.vaultFileMaxOfflineAgeMs).minOrNull()

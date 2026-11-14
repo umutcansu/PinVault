@@ -1,5 +1,62 @@
 # Changelog
 
+## Unreleased
+
+Security review 2026-11-14.
+
+- **Breaking (release builds with a native security file): a vault file's
+  `signaturePublicKey`, `encryption` and `userAuth` come only from its
+  `vaultFiles` entry.** An entry that left one out (a bare `{ "key": … }`)
+  handed it to the bundle: an edited bundle could verify the file with its own
+  key, as `PLAIN`, without the screen lock. A field the entry leaves out is now
+  the library's default (the block's signing keys, `PLAIN`, `NONE`) and a JS
+  value for it fails `start` (`E_INVALID_CONFIG`: "does not give … a release
+  build takes it only from there"). **Migrate:** copy the three values JS
+  passes for each vault file into that file's entry in
+  `pinvault_security.json`; JS may keep repeating them. Debug builds and
+  builds without a native file are unchanged.
+- **Breaking (release builds whose native file says
+  `require.managedTrustRoots: true`): `wantPinsFor` comes only from the file's
+  block.** Narrowing the list in the bundle took a pinned host's pins out of
+  the signed config, and that host was then accepted through the managed roots.
+  New native block key `wantPinsFor`; without it the block asks for every
+  host's pins and a JS list is refused. **Migrate:** move the list into the
+  block in `pinvault_security.json`. Without managed trust roots nothing
+  changes, except that a `wantPinsFor` the file does give is fixed.
+- **Breaking (release builds with a native security file): every Config API
+  the file declares must be in the JS config.** The rules judged only the
+  blocks the config sent, so a bundle could leave a declared block out: its
+  pins, attestation and token rules were gone, and with
+  `require.managedTrustRoots` its hosts were accepted through the roots
+  instead. `start` now fails (`E_INVALID_CONFIG`) naming the missing ids.
+  **Migrate:** send every declared block, or mark a block the app starts
+  without (one added only after enrollment) `"optional": true` in
+  `pinvault_security.json` — new native block key, ignored for this rule where
+  the file turns managed trust roots on. Vault files are not affected.
+- **Breaking (Android release builds): React Native's own networking sends
+  over TLS only.** `fetch`, `XMLHttpRequest`, `<Image>` and `WebSocket`
+  refuse `http://` / `ws://`; a debug build still reaches Metro. A WebSocket
+  handshake redirected to another origin is not followed. These clients
+  copied the pinned socket factory but not the library's other guards; they
+  now go through the core's own hook (`BridgeNetworking`), so the bridge
+  needs the 2.11.0 core.
+- **Breaking (every build): `..` in a block's endpoints is refused** —
+  `configEndpoint`, `healthEndpoint`, `enrollmentEndpoint`, `clientCertEndpoint`
+  and `vaultReportEndpoint`, written plainly or as `%2e%2e`, in JS and in
+  the native file. Only a vault file's `endpoint` was held to this; the others
+  could climb out of the path of the block's `url` (same host, another path).
+- A native `vaultFiles` entry may give `configApi`, `endpoint` and
+  `accessPolicy`: they are then fixed (JS repeats them; a different value is
+  refused). An entry without them leaves them to JS as before.
+- Docs: the README names the request headers `fetch` refuses and what a
+  redirect to another host or port keeps (`Authorization` is dropped; a 307 /
+  308 with a body is not followed), says that a `fetchAttestationToken` token
+  is a bearer credential without `proofOfPossession`, marks which quick-start
+  fields a release build takes only from the native file, lists
+  `require.requirePinnedReactNativeNetworking` and
+  `ios.requireUnlockedDeviceAllowFallback`, and links MIGRATION.md in the
+  repository (it is not part of the npm package). `requirePinnedReactNativeNetworking`
+  in `types.ts` said "Default false"; it is on by default in release builds.
 ## 2.10.0 — 2026-11-12
 
 - **Breaking (release builds with a native security file):** a block's

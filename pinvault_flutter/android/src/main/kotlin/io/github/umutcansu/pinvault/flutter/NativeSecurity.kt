@@ -5,6 +5,7 @@ import android.content.pm.ApplicationInfo
 import io.github.umutcansu.pinvault.model.CertificateConfig
 import io.github.umutcansu.pinvault.model.HostPin
 import io.github.umutcansu.pinvault.model.UserAuth
+import io.github.umutcansu.pinvault.model.VaultFileAccessPolicy
 import io.github.umutcansu.pinvault.model.VaultFileEncryption
 import java.io.FileNotFoundException
 import java.io.IOException
@@ -27,7 +28,7 @@ import java.io.IOException
  *     "url": "https://config.example.com/", "attestation": true,
  *     "tokenHosts": ["api.example.com"], "proofOfPossession": true, "clientCertHosts": ["api.example.com:443"],
  *     "enrollmentUrl": "https://enroll.example.com/", "renewalUrl": "https://renew.example.com/",
- *     "healthEndpoint": "health", "maxClientCertLifetimeDays": 90,
+ *     "healthEndpoint": "health", "maxClientCertLifetimeDays": 90, "wantPinsFor": ["api.example.com"], "optional": false,
  *     "allowUnsigned": false, "allowUnpinnedConfigApi": false, "allowServerGeneratedKey": false
  *   }],
  *   "staticPins": { "pins": [ … ], "version": 1 },
@@ -39,7 +40,8 @@ import java.io.IOException
  *     "expiredConfigGraceSeconds": 0, "vaultFileMaxOfflineAgeSeconds": 604800
  *   },
  *   "vaultFiles": [{ "key": "statement", "signaturePublicKey": "…", "encryption": "USER_AUTH", "userAuth": "REQUIRED",
- *                    "maxOfflineAgeSeconds": 86400, "wipeWhenStale": true }]
+ *                    "maxOfflineAgeSeconds": 86400, "wipeWhenStale": true,
+ *                    "configApi": "default-tls", "endpoint": "api/v1/vault/statement", "accessPolicy": "TOKEN" }]
  * }
  * ```
  *
@@ -69,10 +71,23 @@ import java.io.IOException
  *   release build 0 when the file names none); with `requireUnlockedDevice`,
  *   Dart's `android.requireUnlockedDeviceAllowFallback` is refused (in any
  *   build) unless `requireUnlockedDeviceAllowFallback` is true here;
- * - `vaultFiles` fixes those files' signature key, encryption and screen lock,
- *   and `wipeWhenStale: true` there cannot be switched off; with the section
- *   present — and in a release build even without it — a Dart vault file it
- *   does not name is refused.
+ * - `vaultFiles`: what an entry gives is fixed (`signaturePublicKey`,
+ *   `encryption`, `userAuth`, `configApi`, `endpoint`, `accessPolicy`;
+ *   `wipeWhenStale: true` stays on, `maxOfflineAgeSeconds` is the cap); with
+ *   the section present — and in a release build even without it — a Dart
+ *   vault file it does not name is refused. In a release build an entry that
+ *   leaves out `signaturePublicKey`, `encryption` or `userAuth` means the
+ *   library's default for it (the block's signing keys, `PLAIN`, `NONE`) and a
+ *   Dart value for it is refused (review 2026-11-14: a bare `{"key": …}` entry
+ *   handed all three to the bundle);
+ * - a block's `wantPinsFor` is fixed where the file gives it; in a release
+ *   build whose file says `require.managedTrustRoots: true` it comes from the
+ *   file only (none there = every host's pins, a Dart list is refused): a host
+ *   the bundle left out would be trusted through the roots instead of its pins;
+ * - in a release build every Config API the file declares must be in the Dart
+ *   config (review 2026-11-14): a bundle that left one out would drop its pins,
+ *   attestation and token rules. A block marked `"optional": true` may be left
+ *   out, except where the file turns managed trust roots on.
  *
  * `managedTrustRoots: true` widens trust (hosts without a pin entry are
  * accepted through the signed config's roots): a release build refuses it from
@@ -125,6 +140,10 @@ internal class NativeSecurity(
         val maxOfflineAgeMs: Long? = null,
         /** On here: Dart cannot leave a stale copy on the device. */
         val wipeWhenStale: Boolean = false,
+        /** Which Config API serves the file, its path there and its access policy: fixed when given, Dart's otherwise. */
+        val configApi: String? = null,
+        val endpoint: String? = null,
+        val accessPolicy: VaultFileAccessPolicy? = null,
     )
 
     class Block(
@@ -153,6 +172,20 @@ internal class NativeSecurity(
         val healthEndpoint: String? = null,
         /** The longest issued client certificate the block accepts; a release build lets Dart lower it only. */
         val maxClientCertLifetimeDays: Int? = null,
+        /**
+         * The hosts whose pins the block asks for. Fixed when given; with
+         * [Require.managedTrustRoots] a release build takes it from here only
+         * (null = every host), so Dart cannot move a pinned host to root trust.
+         */
+        val wantPinsFor: List<String>? = null,
+        /**
+         * A release build runs every block the file declares: Dart leaving one out is
+         * refused. `"optional": true` lets the config start without this block (an
+         * mTLS block used only once the device is enrolled) — not with
+         * [Require.managedTrustRoots], where the missing block's hosts would be
+         * trusted through the roots instead of their pins.
+         */
+        val optional: Boolean = false,
     )
 
     companion object {
@@ -224,6 +257,8 @@ internal class NativeSecurity(
                         renewalUrl = httpsOnly(b, "renewalUrl"),
                         healthEndpoint = ConfigParser.relEndpoint(b, "healthEndpoint", 512),
                         maxClientCertLifetimeDays = b.int("maxClientCertLifetimeDays", 1, 3650),
+                        wantPinsFor = b.stringList("wantPinsFor", 256, 255),
+                        optional = b.bool("optional") == true,
                     )
                     b.finish()
                 }
@@ -264,6 +299,9 @@ internal class NativeSecurity(
                             userAuth = f.enum("userAuth", UserAuth.values()),
                             maxOfflineAgeMs = f.long("maxOfflineAgeSeconds", 1, MAX_OFFLINE_AGE_S)?.let { it * 1000 },
                             wipeWhenStale = f.bool("wipeWhenStale") == true,
+                            configApi = f.string("configApi", 128),
+                            endpoint = ConfigParser.relEndpoint(f, "endpoint", 512),
+                            accessPolicy = f.enum("accessPolicy", VaultFileAccessPolicy.values()),
                         )
                         f.finish()
                     }

@@ -58,22 +58,28 @@ public enum ConfigFieldPolicy {
         put(.checked,
             // Must be a block the native file declares.
             "\(api).id",
-            // Relative paths under the block's pinned URL, never absolute.
+            // Relative paths under the block's pinned URL: never absolute, never with a `..` segment.
             "\(api).configEndpoint", "\(api).enrollmentEndpoint", "\(api).clientCertEndpoint", "\(api).vaultReportEndpoint",
             // The server signs the view it answers; the library refuses a view of another request.
+            // Fixed where the file's block gives it; where the file turns managed trust roots on, a
+            // release build takes it from the file only (a host left out would fall back to root trust).
             "\(api).wantPinsFor")
         put(.free,
             "\(api).clientCertLabel", "\(api).clientCertRenewalThreshold", "\(api).disableClientCertRenewal",
             "\(api).attestationInterval", "\(api).attestationInterval.amount", "\(api).attestationInterval.unit")
 
         // ── Vault files ──────────────────────────────────────────────────
-        // Release with a native file: only files its vaultFiles section declares, which fixes these.
+        // Release with a native file: only files its vaultFiles section declares, and these three
+        // come from that entry alone — one the entry leaves out is the library's default (the
+        // block's signing keys, PLAIN, NONE) and a Dart value for it is refused.
         put(.native, "\(vault).signaturePublicKey", "\(vault).encryption", "\(vault).userAuth")
         put(.tighten, "\(vault).maxOfflineAge", "\(vault).maxOfflineAge.amount", "\(vault).maxOfflineAge.unit", "\(vault).wipeWhenStale")
-        // A declared key; a relative endpoint without `..`; a declared Config API.
-        put(.checked, "\(vault).key", "\(vault).endpoint", "\(vault).configApi")
-        // Where the copy is kept and when it is fetched; the server decides who may download it.
-        put(.free, "\(vault).storage", "\(vault).updateWithPins", "\(vault).accessPolicy")
+        // A declared key. A relative endpoint without `..`, a declared Config API and the access
+        // policy (the server decides who may download; the token goes to the block's pinned URL
+        // only): fixed where the file's entry gives them, Dart's otherwise.
+        put(.checked, "\(vault).key", "\(vault).endpoint", "\(vault).configApi", "\(vault).accessPolicy")
+        // Where the copy is kept and when it is fetched.
+        put(.free, "\(vault).storage", "\(vault).updateWithPins")
 
         // ── Static pins (declared in the native file or refused) ─────────
         put(.native, staticPins, "\(staticPins).version", "\(staticPins).forceUpdate", "\(staticPins).pins",

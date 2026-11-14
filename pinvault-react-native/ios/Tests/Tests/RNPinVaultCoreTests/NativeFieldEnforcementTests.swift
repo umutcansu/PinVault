@@ -17,6 +17,9 @@ final class NativeFieldEnforcementTests: XCTestCase {
     let tokens = VaultTokenStore()
 
     /// The file: anchors, addresses and one vault file; nothing relaxed, no static pins, no `ios.resolve`.
+    /// The vault entry is bare on purpose: a field it leaves out is the library's default in a
+    /// release build, never JS's (review 2026-11-14) — the examples below give exactly the values
+    /// an edited bundle would (its own key, PLAIN, NONE).
     func native() throws -> NativeSecurity {
         try NativeSecurity.parse("""
             {"configApis":[{"id":"default","url":"https://h.example:8081/",
@@ -25,7 +28,7 @@ final class NativeFieldEnforcementTests: XCTestCase {
               "enrollmentUrl":"https://h.example:8081/","renewalUrl":"https://h.example:8093/",
               "tokenHosts":["h.example"],"clientCertHosts":["h.example:8092"],"healthEndpoint":"health"}],
              "require":{"requireUnlockedDevice":true},
-             "vaultFiles":[{"key":"doc","signaturePublicKey":"\(key)","encryption":"END_TO_END","userAuth":"NONE"}]}
+             "vaultFiles":[{"key":"doc"}]}
             """, source: "pinvault_security.json")
     }
 
@@ -68,7 +71,7 @@ final class NativeFieldEnforcementTests: XCTestCase {
         put("\(api).healthEndpoint", .block, #""healthEndpoint":"api/v1/certificate-config""#, "healthEndpoint")
         put("config.vaultFiles[].signaturePublicKey", .vault, #""signaturePublicKey":"\#(key2)""#, "signaturePublicKey")
         put("config.vaultFiles[].encryption", .vault, #""encryption":"PLAIN""#, "encryption")
-        put("config.vaultFiles[].userAuth", .vault, #""userAuth":"REQUIRED""#, "userAuth")
+        put("config.vaultFiles[].userAuth", .vault, #""userAuth":"NONE""#, "userAuth")
         for sub in ["", ".version", ".forceUpdate", ".pins", ".pins[].hostname", ".pins[].sha256", ".pins[].version",
                     ".pins[].forceUpdate", ".pins[].mtls", ".pins[].clientCertVersion"] {
             put("config.staticPins\(sub)", .root, #""staticPins":\#(staticPins)"#, "staticPins")
@@ -123,5 +126,20 @@ final class NativeFieldEnforcementTests: XCTestCase {
         }
         XCTAssertEqual(accepted, [], "a release build took these NATIVE keys from JS")
         XCTAssertEqual(otherReason, [], "refused, but not for the key itself")
+    }
+
+    func testAVaultFieldTheEntryLeavesOutIsRefusedAsNotGivenNotAsDifferent() throws {
+        for field in ["signaturePublicKey", "encryption", "userAuth"] {
+            let example = try XCTUnwrap(examples["config.vaultFiles[].\(field)"])
+            do {
+                try parse(js(example.at, example.fragment))
+                XCTFail("accepted \(field) from JS")
+            } catch {
+                let message = (error as? BridgeInputError)?.message ?? "\(error)"
+                for f in ["vaultFiles[0].\(field)", "does not give \(field)", "only from there"] {
+                    XCTAssertTrue(message.contains(f), "'\(message)' lacks '\(f)'")
+                }
+            }
+        }
     }
 }

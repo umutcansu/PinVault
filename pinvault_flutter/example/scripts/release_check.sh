@@ -14,11 +14,14 @@ file=$assets/pinvault_security.json
 mkdir -p "$assets"
 trap 'rm -f "$file"; rmdir "$assets" 2>/dev/null || true' EXIT
 pins="[{\"hostname\":\"$host\",\"sha256\":[\"ziA0hyMDbayVXZ0g8AkkJz+wmKPZYjMAwb+GdNg5HYM=\",\"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=\"]},{\"hostname\":\"$host:8093\",\"sha256\":[\"WnVy/WigjwYatqBdJv6lM32kkpxMxYXwzgdlyrvVrTU=\",\"TOZS0AAIaxwCKUEIKWb3X/4h0S27clD6Aijou32QiQo=\"]}]"
+# A release build runs every Config API the file declares; the checks start one
+# block at a time (both share one URL, with different trust settings), so both
+# are "optional": the app may start without either.
 cat > "$file" <<JSON
 {"configApis": [
-  {"id": "default-tls", "url": "https://$host:8091/", "bootstrapPins": $pins,
+  {"id": "default-tls", "optional": true, "url": "https://$host:8091/", "bootstrapPins": $pins,
    "signaturePublicKeys": ["$key"], "serverScope": "default-tls"},
-  {"id": "unsigned-tls", "url": "https://$host:8091/", "bootstrapPins": $pins,
+  {"id": "unsigned-tls", "optional": true, "url": "https://$host:8091/", "bootstrapPins": $pins,
    "allowUnsigned": true}
 ]}
 JSON
