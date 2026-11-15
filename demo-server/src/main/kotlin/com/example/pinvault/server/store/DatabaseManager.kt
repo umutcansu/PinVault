@@ -36,8 +36,18 @@ class DatabaseManager(
     dbPath: String = "pinvault.db",
     journalMode: JournalMode = JournalMode.fromEnv(),
     /** `DB_SYNCHRONOUS`; unset = NORMAL under WAL, FULL under the rollback journal. */
-    synchronous: Synchronous? = Synchronous.fromEnv()
-) {
+    synchronous: Synchronous? = Synchronous.fromEnv(),
+    /**
+     * WAL only: keep one connection open for the life of the process (the server's
+     * own database; tests leave it off). When the last connection to a WAL database
+     * closes, SQLite checkpoints the whole WAL into the main file and deletes it;
+     * with a connection per store call and few threads (a small tenant) that
+     * happened on nearly every request (load test 2026-11-15). The connection is
+     * closed at JVM shutdown, which checkpoints once, so a cleanly stopped
+     * server leaves the database in the main file.
+     */
+    keepOpen: Boolean = false
+) : AutoCloseable {
 
     /**
      * How hard a commit waits for the disk. FULL: a commit is on disk when it
@@ -92,6 +102,9 @@ class DatabaseManager(
         setSynchronous(if (synchronousMode == Synchronous.FULL) SQLiteConfig.SynchronousMode.FULL else SQLiteConfig.SynchronousMode.NORMAL)
     }.toProperties()
 
+    /** The connection [keepOpen] holds; null when not kept. Declared before the init block that opens it. */
+    @Volatile private var keeper: Connection? = null
+
     init {
         // Run Flyway migrations (creates tables on fresh DB, no-op on existing)
         FlywayMigrator.migrate(dbPath)
@@ -105,6 +118,15 @@ class DatabaseManager(
                 }
             }
         }
+        keeper = if (keepOpen && journalMode == JournalMode.WAL) connection() else null
+        keeper?.let { Runtime.getRuntime().addShutdownHook(Thread({ close() }, "sqlite-checkpoint")) }
+    }
+
+    /** Closes the kept connection (a checkpoint when it is the last one). */
+    @Synchronized
+    override fun close() {
+        keeper?.let { runCatching { it.close() } }
+        keeper = null
     }
 
     fun connection(): Connection = DriverManager.getConnection(url, properties)

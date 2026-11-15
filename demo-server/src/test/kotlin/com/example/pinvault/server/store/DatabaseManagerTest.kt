@@ -131,4 +131,16 @@ class DatabaseManagerTest {
         pool.shutdown()
         db.connection().use { conn -> assertEquals("12", conn.createStatement().use { it.executeQuery("SELECT n FROM v").use { rs -> rs.next(); rs.getString(1) } }) }
     }
+
+    @Test
+    fun `keepOpen holds the WAL open between calls and checkpoints it on close`() {
+        val db = DatabaseManager(dbPath, DatabaseManager.JournalMode.WAL, keepOpen = true)
+        db.connection().use { it.createStatement().use { s -> s.executeUpdate("CREATE TABLE kept (v TEXT)"); s.executeUpdate("INSERT INTO kept VALUES ('kept-marker-91c2')") } }
+        // Every per-call connection is closed, but the kept one is not: no checkpoint and delete per call.
+        assertTrue(File("$dbPath-wal").exists() && File("$dbPath-wal").length() > 0, "the WAL stays while the process runs")
+        db.close()
+        assertTrue(!File("$dbPath-wal").exists() || File("$dbPath-wal").length() == 0L, "closing the kept connection checkpoints")
+        assertTrue(String(File(dbPath).readBytes(), Charsets.ISO_8859_1).contains("kept-marker-91c2"))
+        db.close() // twice is harmless
+    }
 }

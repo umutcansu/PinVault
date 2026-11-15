@@ -152,7 +152,8 @@ private fun startServer() {
             "on ${com.example.pinvault.server.plugin.TrustedProxies.listeners.joinToString { l -> l.wire }} (TRUSTED_PROXIES_LISTENERS)")
     }
     val dbPath = com.example.pinvault.server.service.ServerEnv.get("DB_PATH") ?: "pinvault.db"
-    val db = DatabaseManager(dbPath)
+    // keepOpen: one connection for the life of the process, so the WAL is not checkpointed and deleted every time the last per-call connection closes.
+    val db = DatabaseManager(dbPath, keepOpen = true)
     val pinSnapshotStore = com.example.pinvault.server.store.PinSnapshotStore(db)
     val pinConfigStore = PinConfigStore(db, pinSnapshotStore, snapshotActor = { com.example.pinvault.server.service.AuditContext.actor() })
     val historyStore = PinConfigHistoryStore(db)
