@@ -532,9 +532,13 @@ private fun startServer() {
     val clientIdentityStore = com.example.pinvault.server.store.ClientIdentityStore(db)
     // Renewal refusals per source address, and renewals per identity: two
     // tables. One shared table let a flood from new addresses fill it and shut
-    // out every identity's renewal; identities fail open when it is full.
+    // out every identity's renewal; the identity table holds every client id
+    // (DEVICE_KEY_LIMIT + a quarter, or RATE_LIMIT_IDENTITY_KEYS) and, if flooded,
+    // drops the least recently used one, never letting a renewal through uncounted.
     val renewLimiter = com.example.pinvault.server.service.RateLimiter()
-    val renewIdentityLimiter = com.example.pinvault.server.service.RateLimiter(overflow = com.example.pinvault.server.service.RateLimiter.Overflow.FAIL_OPEN)
+    val renewIdentityLimiter = com.example.pinvault.server.service.RateLimiter(
+        maxKeys = com.example.pinvault.server.service.RateLimiter.identityTableSize(deviceKeyLimit),
+        overflow = com.example.pinvault.server.service.RateLimiter.Overflow.EVICT_LRU)
     // Certificates per client id, pickups, key replacements per identity
     // (ISSUANCE_RATE_LIMIT, PICKUP_RATE_LIMIT, PICKUP_SOURCE_RATE_LIMIT, KEY_REPLACEMENT_RATE_LIMIT).
     val enrollmentLimits = com.example.pinvault.server.service.EnrollmentLimits.fromEnv()
@@ -768,7 +772,9 @@ private fun startServer() {
         fresh = com.example.pinvault.server.service.attestation.FreshAttestationSettings.fromEnv(),
         anomalyTtlSeconds = attestationAnomalyTtl
     )
-    val attestationLimits = com.example.pinvault.server.route.AttestationLimits.of(attestationRateLimit, attestationDeviceRateLimit)
+    // The per-device table holds the fleet (ATTESTATION_DEVICE_LIMIT + a quarter, or ATTESTATION_DEVICE_RATE_KEYS): every device is counted.
+    val attestationLimits = com.example.pinvault.server.route.AttestationLimits.of(attestationRateLimit, attestationDeviceRateLimit,
+        deviceKeys = com.example.pinvault.server.service.RateLimiter.identityTableSize(attestationDeviceLimit, name = "ATTESTATION_DEVICE_RATE_KEYS"))
     // Built here, not with the approval service above: its cards need the attestation service.
     changeDescriber = com.example.pinvault.server.service.ChangeDescriber(
         pinConfigStore, certPlanner, liveGate, ::stateHash, vaultFileStore, vaultTokenStore, audit = auditLog,

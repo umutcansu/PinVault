@@ -90,10 +90,63 @@ class RateLimiterTest {
     }
 
     @Test
-    fun `identity keys fail open when the table is full`() {
-        val limiter = RateLimiter(maxAttempts = 1, windowMs = 60_000, maxKeys = 2, clock = { now }, overflow = RateLimiter.Overflow.FAIL_OPEN)
+    fun `a full identity table makes room by dropping the least recently used identity, and still counts the new one`() {
+        val limiter = RateLimiter(maxAttempts = 1, windowMs = 60_000, maxKeys = 2, clock = { now }, overflow = RateLimiter.Overflow.EVICT_LRU)
         assertTrue(limiter.allow("id|a")); assertTrue(limiter.allow("id|b"))
-        assertFalse(limiter.allow("id|a"), "a tracked identity is still limited")
-        repeat(20) { assertTrue(limiter.allow("id|new-$it"), "an identity that just proved itself is never shut out by others") }
+        assertFalse(limiter.allow("id|a"), "a tracked identity is limited (and a is now the most recently used)")
+        // An identity that just proved itself is never shut out by others…
+        assertTrue(limiter.allow("id|c"), "c gets in: b, the least recently used, makes room")
+        // …and it is counted: it used to be let through uncounted, again and again (fail open).
+        assertFalse(limiter.allow("id|c"), "c is limited like anyone")
+        assertTrue(limiter.exceeded("id|c"))
+        assertFalse(limiter.allow("id|a"), "a kept its window: it was used more recently than b")
+        assertEquals(2, limiter.size, "bounded")
+    }
+
+    @Test
+    fun `windows that ran out are dropped before a live identity is pushed out`() {
+        val limiter = RateLimiter(maxAttempts = 1, windowMs = 60_000, maxKeys = 3, clock = { now }, overflow = RateLimiter.Overflow.EVICT_LRU)
+        assertTrue(limiter.allow("old"))
+        now += 30_000
+        assertTrue(limiter.allow("live-1")); assertTrue(limiter.allow("live-2"))
+        // "old" is used again (the most recently used now), but its window still runs out first.
+        assertFalse(limiter.allow("old"))
+        now += 30_000 // old's window has run out; live-1 and live-2 have 30 s left
+        assertTrue(limiter.allow("new"))
+        assertFalse(limiter.allow("live-1"), "not evicted: the expired window made room")
+        assertFalse(limiter.allow("live-2"), "not evicted either")
+        assertTrue(limiter.allow("old"), "old starts a new window (its old one was dropped)")
+    }
+
+    @Test
+    fun `50 000 devices are each counted and limited by the per-device attestation table`() {
+        // The table as Main sizes it for the default ATTESTATION_DEVICE_LIMIT (100 000).
+        val limits = com.example.pinvault.server.route.AttestationLimits.of(perAddress = 0, perDevice = 3,
+            deviceKeys = RateLimiter.identityTableSize(100_000, emptyMap()))
+        val devices = (0 until 50_000).map { "lt-%05d".format(it) }
+        repeat(3) { round -> devices.forEach { assertTrue(limits.allowDevice("default-tls", it), "$it round $round") } }
+        // The fourth attempt of every one of them is refused: nobody slipped through uncounted.
+        devices.forEach { assertFalse(limits.allowDevice("default-tls", it), it) }
+    }
+
+    @Test
+    fun `a flood of new identities can only reset the least recently used ones, never skip counting`() {
+        val limiter = RateLimiter(maxAttempts = 2, windowMs = 60_000, maxKeys = 1_000, clock = { now }, overflow = RateLimiter.Overflow.EVICT_LRU)
+        var allowed = 0
+        repeat(50_000) { if (limiter.allow("id|flood-$it")) allowed++ }
+        assertEquals(50_000, allowed, "each new identity gets its first attempt")
+        assertEquals(1_000, limiter.size, "the table stays bounded")
+        // The 1 000 most recent ones are all still counted.
+        (49_000 until 50_000).forEach { assertTrue(limiter.allow("id|flood-$it")); assertFalse(limiter.allow("id|flood-$it")) }
+    }
+
+    @Test
+    fun `identity tables are sized from the configured limit, or by RATE_LIMIT_IDENTITY_KEYS`() {
+        assertEquals(125_000, RateLimiter.identityTableSize(100_000, emptyMap()))
+        assertEquals(10_000, RateLimiter.identityTableSize(500, emptyMap()), "never below 10 000")
+        assertEquals(250_000, RateLimiter.identityTableSize(0, emptyMap()), "no device cap configured")
+        assertEquals(40_000, RateLimiter.identityTableSize(100_000, mapOf("RATE_LIMIT_IDENTITY_KEYS" to "40000")))
+        assertEquals(300_000, RateLimiter.identityTableSize(100_000, mapOf("ATTESTATION_DEVICE_RATE_KEYS" to "300000"), name = "ATTESTATION_DEVICE_RATE_KEYS"))
+        kotlin.test.assertFailsWith<IllegalStateException> { RateLimiter.identityTableSize(1, mapOf("RATE_LIMIT_IDENTITY_KEYS" to "12")) }
     }
 }

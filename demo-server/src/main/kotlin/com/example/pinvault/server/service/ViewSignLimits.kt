@@ -49,20 +49,26 @@ class ViewSignLimits(
         const val DEFAULT_PER_IDENTITY = 30
         const val MAX_LIMIT = 1_000_000
 
-        fun of(perSource: Int, perIdentity: Int, clock: () -> Long = System::currentTimeMillis): ViewSignLimits? {
+        fun of(
+            perSource: Int, perIdentity: Int, clock: () -> Long = System::currentTimeMillis,
+            /** How many client ids the per-identity table holds ([RateLimiter.identityTableSize]). */
+            identityKeys: Int = RateLimiter.identityTableSize(100_000, emptyMap())
+        ): ViewSignLimits? {
             if (perSource == 0 && perIdentity == 0) return null
             return ViewSignLimits(
                 perSource = if (perSource > 0) RateLimiter(maxAttempts = perSource, windowMs = WINDOW_MS, clock = clock) else null,
                 // Client ids proved themselves in the handshake and are not addresses:
-                // a full table lets a new one through; the address limit is not involved.
-                perIdentity = if (perIdentity > 0) RateLimiter(maxAttempts = perIdentity, windowMs = WINDOW_MS, clock = clock,
-                    overflow = RateLimiter.Overflow.FAIL_OPEN) else null
+                // a full table drops the least recently used one (never lets one through
+                // uncounted); the address limit is not involved.
+                perIdentity = if (perIdentity > 0) RateLimiter(maxAttempts = perIdentity, windowMs = WINDOW_MS, clock = clock, maxKeys = identityKeys,
+                    overflow = RateLimiter.Overflow.EVICT_LRU) else null
             )
         }
 
         /** From the environment; a value that is not a whole number from 0 to [MAX_LIMIT] stops the server. Blank = default. */
         fun fromEnv(env: Map<String, String> = ServerEnv.all()): ViewSignLimits? =
-            of(limit(env, "CONFIG_VIEW_SIGN_RATE_LIMIT", DEFAULT_PER_SOURCE), limit(env, "CONFIG_VIEW_SIGN_DEVICE_RATE_LIMIT", DEFAULT_PER_IDENTITY))
+            of(limit(env, "CONFIG_VIEW_SIGN_RATE_LIMIT", DEFAULT_PER_SOURCE), limit(env, "CONFIG_VIEW_SIGN_DEVICE_RATE_LIMIT", DEFAULT_PER_IDENTITY),
+                identityKeys = RateLimiter.identityTableSize((env["DEVICE_KEY_LIMIT"]?.toIntOrNull() ?: 100_000).coerceAtLeast(1), env))
 
         private fun limit(env: Map<String, String>, name: String, default: Int): Int {
             val raw = env[name]?.trim().orEmpty()

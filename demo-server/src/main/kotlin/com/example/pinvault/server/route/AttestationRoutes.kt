@@ -57,9 +57,9 @@ import java.util.Base64
  * ([AttestationService.attest]: the signature verifies and the key is the one
  * the device registered): a stranger who knows a device id cannot spend its
  * quota and keep it from its token. Device ids are not addresses, so a full
- * table lets a new device through ([RateLimiter.Overflow.FAIL_OPEN]) instead
- * of refusing every device it has not seen; the address limiter still bounds
- * the flood.
+ * table makes room by dropping the least recently used device's window
+ * ([RateLimiter.Overflow.EVICT_LRU]) instead of refusing every device it has
+ * not seen; it is sized above the fleet, so every device is counted.
  */
 class AttestationLimits(
     private val perAddress: RateLimiter? = null,
@@ -67,11 +67,17 @@ class AttestationLimits(
     private val perDevice: RateLimiter? = null
 ) {
     companion object {
-        /** From the two env values; 0 = no limit. */
-        fun of(perAddress: Int, perDevice: Int): AttestationLimits = AttestationLimits(
+        /**
+         * From the two env values; 0 = no limit. [deviceKeys]: how many devices the
+         * per-device table holds before the least recently used one makes room
+         * ([RateLimiter.identityTableSize] of `ATTESTATION_DEVICE_LIMIT`, or
+         * `ATTESTATION_DEVICE_RATE_KEYS`).
+         */
+        fun of(perAddress: Int, perDevice: Int, deviceKeys: Int = RateLimiter.identityTableSize(100_000, emptyMap())): AttestationLimits = AttestationLimits(
             perAddress = if (perAddress > 0) RateLimiter(maxAttempts = perAddress, windowMs = WINDOW_MS) else null,
             challengePerAddress = if (perAddress > 0) RateLimiter(maxAttempts = perAddress * 2, windowMs = WINDOW_MS) else null,
-            perDevice = if (perDevice > 0) RateLimiter(maxAttempts = perDevice, windowMs = WINDOW_MS, overflow = RateLimiter.Overflow.FAIL_OPEN) else null
+            perDevice = if (perDevice > 0) RateLimiter(maxAttempts = perDevice, windowMs = WINDOW_MS, maxKeys = deviceKeys,
+                overflow = RateLimiter.Overflow.EVICT_LRU) else null
         )
 
         private const val WINDOW_MS = 10 * 60_000L
