@@ -48,6 +48,7 @@ class DatabaseManagerTest {
         db.connection().use { conn ->
             assertEquals("delete", conn.pragma("journal_mode"))
             assertEquals(DatabaseManager.BUSY_TIMEOUT_MS.toString(), conn.pragma("busy_timeout"))
+            assertEquals("2", conn.pragma("synchronous"), "FULL: the rollback journal is not safe with NORMAL")
         }
         assertTrue(!File("$dbPath-wal").exists(), "no -wal file in delete mode")
     }
@@ -93,5 +94,41 @@ class DatabaseManagerTest {
         // so a copy of pinvault.db alone holds the data.
         assertTrue(!File("$dbPath-wal").exists() || File("$dbPath-wal").length() == 0L, "the last close checkpoints the WAL")
         assertTrue(String(File(dbPath).readBytes(), Charsets.ISO_8859_1).contains("wal-marker-7f3a"))
+    }
+
+    @Test
+    fun `DB_SYNCHRONOUS sets full or normal, and normal is refused without WAL`() {
+        assertEquals(null, DatabaseManager.Synchronous.fromEnv(null))
+        assertEquals(DatabaseManager.Synchronous.FULL, DatabaseManager.Synchronous.fromEnv("FULL"))
+        assertEquals(DatabaseManager.Synchronous.NORMAL, DatabaseManager.Synchronous.fromEnv("normal"))
+        assertFailsWith<IllegalStateException> { DatabaseManager.Synchronous.fromEnv("off") }
+        DatabaseManager(dbPath, DatabaseManager.JournalMode.WAL, DatabaseManager.Synchronous.FULL).connection().use {
+            assertEquals("wal", it.pragma("journal_mode")); assertEquals("2", it.pragma("synchronous"))
+        }
+        assertFailsWith<IllegalStateException> { DatabaseManager(dbPath, DatabaseManager.JournalMode.DELETE, DatabaseManager.Synchronous.NORMAL) }
+    }
+
+    @Test
+    fun `a read-then-write transaction on an immediate connection waits for another writer instead of failing busy`() {
+        val db = DatabaseManager(dbPath, DatabaseManager.JournalMode.WAL)
+        db.connection().use { it.createStatement().use { s -> s.executeUpdate("CREATE TABLE v (n INTEGER)"); s.executeUpdate("INSERT INTO v VALUES (1)") } }
+        val holder = db.immediateConnection()
+        holder.autoCommit = false
+        holder.createStatement().use { it.executeUpdate("UPDATE v SET n = n + 1") } // holds the write lock
+        val pool = Executors.newSingleThreadExecutor()
+        val done = pool.submit<Int> {
+            db.immediateConnection().use { conn ->
+                conn.autoCommit = false
+                val n = conn.createStatement().use { it.executeQuery("SELECT n FROM v").use { rs -> rs.next(); rs.getInt(1) } }
+                conn.prepareStatement("UPDATE v SET n = ?").use { it.setInt(1, n + 10); it.executeUpdate() }
+                conn.commit()
+                n
+            }
+        }
+        Thread.sleep(300)
+        holder.commit(); holder.close()
+        assertEquals(2, done.get(10, TimeUnit.SECONDS), "it read after the other commit: no lost update, no SQLITE_BUSY")
+        pool.shutdown()
+        db.connection().use { conn -> assertEquals("12", conn.createStatement().use { it.executeQuery("SELECT n FROM v").use { rs -> rs.next(); rs.getString(1) } }) }
     }
 }

@@ -125,13 +125,18 @@ class AttestationTokenSecretStore(
         return ActiveKey(secret, secret.signingKey()).also { activeCache = it }
     }
 
-    /** Every key by kid, for verification (a few seconds stale at most). */
+    /**
+     * Every key by kid, for verification (a few seconds stale at most). Loaded under
+     * the store's monitor, like [rotate] and [delete]: a load that read the table
+     * just before a deletion could otherwise store the deleted kid again after
+     * [delete] dropped the cache, and keep verifying its tokens for [CACHE_MS].
+     */
     fun verificationKeys(): Map<String, PinVaultToken.VerificationKey> {
-        val now = System.currentTimeMillis()
-        cached?.let { (at, map) -> if (now - at < CACHE_MS) return map }
-        val fresh = all().associate { it.kid to it.verificationKey() }
-        cached = now to fresh
-        return fresh
+        cached?.let { (at, map) -> if (System.currentTimeMillis() - at < CACHE_MS) return map }
+        return synchronized(this) {
+            val now = System.currentTimeMillis()
+            cached?.takeIf { (at, _) -> now - at < CACHE_MS }?.second ?: all().associate { it.kid to it.verificationKey() }.also { cached = now to it }
+        }
     }
 
     /** The HS256 secrets by kid (what `GET /api/v1/attestation/token-secrets` hands to HS256 backends). */
@@ -139,7 +144,8 @@ class AttestationTokenSecretStore(
 
     /** A new active key of [alg]; the previous active one stays for verification. */
     @Synchronized
-    fun rotate(createdBy: String): TokenSecret = db.connection().use { conn ->
+    // IMMEDIATE: reads the kids taken today, then writes the new one.
+    fun rotate(createdBy: String): TokenSecret = db.immediateConnection().use { conn ->
         conn.autoCommit = false
         try {
             val now = clock()

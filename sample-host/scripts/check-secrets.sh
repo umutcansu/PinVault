@@ -17,7 +17,7 @@
 #
 # Ne arar:
 #   - adıyla anahtar ya da veri olan dosyalar: *.jks *.p12 *.pfx *.bks *.keystore
-#     *.pem *.key *.der *.p8 *.db *.sqlite, .env (örnekler hariç), key.properties /
+#     *.pem *.key *.der *.p8 *.db (ve -wal/-shm/-journal) *.sqlite, .env (örnekler hariç), key.properties /
 #     keystore.properties (Android imza anahtarı parolaları), offline-keys/ altı
 #   - içinde özel anahtar başlığı olan dosyalar (-----BEGIN … PRIVATE KEY-----)
 #   - adı ne olursa olsun, sunucunun başlıksız imza anahtarı biçimi: satırın
@@ -71,7 +71,7 @@ check() {
     lower="$(printf '%s' "${base}" | tr 'A-Z' 'a-z')"
     case "${lower}" in
         *.jks|*.p12|*.pfx|*.bks|*.keystore) report "${path}" "anahtar deposu"; return 0 ;;
-        *.db|*.sqlite|*.sqlite3) report "${path}" "veritabanı"; return 0 ;;
+        *.db|*.db-wal|*.db-shm|*.db-journal|*.sqlite|*.sqlite3) report "${path}" "veritabanı"; return 0 ;;
         *.pem|*.key|*.der|*.p8) report "${path}" "anahtar/sertifika dosyası"; return 0 ;;
         key.properties|keystore.properties) report "${path}" "imza anahtarı ayarları (parolalar)"; return 0 ;;
         .env|.env.*)

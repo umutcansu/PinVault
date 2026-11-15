@@ -8,7 +8,8 @@ import java.sql.DriverManager
  * The server's SQLite database.
  *
  * Every connection waits up to [BUSY_TIMEOUT_MS] for a lock instead of
- * failing at once with `SQLITE_BUSY`, and runs with `synchronous=NORMAL`.
+ * failing at once with `SQLITE_BUSY`, and runs with `synchronous` NORMAL under
+ * WAL or FULL under the rollback journal (`DB_SYNCHRONOUS` overrides; see [Synchronous]).
  * The journal mode is set once, at start-up, from `DB_JOURNAL_MODE`:
  *  - `wal` (default): readers no longer wait for the writer, and a commit is
  *    one append to `<db>-wal` instead of rewriting a rollback journal. The
@@ -33,8 +34,41 @@ import java.sql.DriverManager
  */
 class DatabaseManager(
     dbPath: String = "pinvault.db",
-    journalMode: JournalMode = JournalMode.fromEnv()
+    journalMode: JournalMode = JournalMode.fromEnv(),
+    /** `DB_SYNCHRONOUS`; unset = NORMAL under WAL, FULL under the rollback journal. */
+    synchronous: Synchronous? = Synchronous.fromEnv()
 ) {
+
+    /**
+     * How hard a commit waits for the disk. FULL: a commit is on disk when it
+     * returns. NORMAL (WAL only): the WAL is synced at checkpoints, so a power
+     * loss or an OS crash (not a server crash) can undo the last commits — a
+     * spent token or nonce, a revocation, an audit row, a pin version already
+     * served — while the database stays consistent. NORMAL under the rollback
+     * journal could corrupt the file on a power loss, so it is refused there.
+     */
+    enum class Synchronous {
+        NORMAL, FULL;
+
+        companion object {
+            fun fromEnv(value: String? = com.example.pinvault.server.service.ServerEnv.get("DB_SYNCHRONOUS")): Synchronous? =
+                when (value?.trim()?.lowercase()) {
+                    null, "" -> null
+                    "normal" -> NORMAL
+                    "full" -> FULL
+                    else -> error("DB_SYNCHRONOUS must be normal or full (got '$value')")
+                }
+        }
+    }
+
+    /** What every connection runs with. */
+    val synchronousMode: Synchronous = synchronous ?: if (journalMode == JournalMode.WAL) Synchronous.NORMAL else Synchronous.FULL
+
+    init {
+        check(!(journalMode == JournalMode.DELETE && synchronousMode == Synchronous.NORMAL)) {
+            "DB_SYNCHRONOUS=normal needs DB_JOURNAL_MODE=wal: with the rollback journal a power loss could corrupt the database."
+        }
+    }
 
     enum class JournalMode {
         WAL, DELETE;
@@ -55,7 +89,7 @@ class DatabaseManager(
     /** Per-connection settings (sqlite-jdbc applies them as PRAGMAs when a connection opens). */
     private val properties = SQLiteConfig().apply {
         setBusyTimeout(BUSY_TIMEOUT_MS)
-        setSynchronous(SQLiteConfig.SynchronousMode.NORMAL)
+        setSynchronous(if (synchronousMode == Synchronous.FULL) SQLiteConfig.SynchronousMode.FULL else SQLiteConfig.SynchronousMode.NORMAL)
     }.toProperties()
 
     init {
@@ -74,6 +108,20 @@ class DatabaseManager(
     }
 
     fun connection(): Connection = DriverManager.getConnection(url, properties)
+
+    private val immediateProperties = SQLiteConfig(java.util.Properties().apply { putAll(properties) }).apply {
+        setTransactionMode(SQLiteConfig.TransactionMode.IMMEDIATE)
+    }.toProperties()
+
+    /**
+     * A connection whose transactions (autoCommit off) start with `BEGIN IMMEDIATE`:
+     * for a transaction that reads and then writes. A DEFERRED one takes the write
+     * lock only at its first write, and when another writer got there first SQLite
+     * answers `SQLITE_BUSY` at once instead of waiting [BUSY_TIMEOUT_MS] (it cannot
+     * upgrade a read snapshot that is no longer the latest). IMMEDIATE takes the
+     * lock up front, so the busy timeout applies.
+     */
+    fun immediateConnection(): Connection = DriverManager.getConnection(url, immediateProperties)
 
     companion object {
         const val BUSY_TIMEOUT_MS = 5_000

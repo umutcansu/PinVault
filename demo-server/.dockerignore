@@ -1,6 +1,12 @@
 build/
 .gradle/
 pinvault.db
+pinvault.db-wal
+pinvault.db-shm
+pinvault.db-journal
+*.db
+*.db-wal
+*.db-shm
 certs/
 signing-key.pem
 data/

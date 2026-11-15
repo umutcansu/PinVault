@@ -19,7 +19,8 @@ class AttestationPolicyStore(private val db: DatabaseManager) {
     fun effective(configApiId: String, defaults: AttestationPolicy): AttestationPolicy = get(configApiId, defaults) ?: defaults
 
     /** Replaces the policy of [configApiId]; the version becomes the stored one + 1 (1 for the first). */
-    fun put(configApiId: String, policy: AttestationPolicy, updatedBy: String, now: Instant = Instant.now()): AttestationPolicy = db.connection().use { conn ->
+    // IMMEDIATE: reads the version, then writes version + 1 (the busy timeout must apply).
+    fun put(configApiId: String, policy: AttestationPolicy, updatedBy: String, now: Instant = Instant.now()): AttestationPolicy = db.immediateConnection().use { conn ->
         conn.autoCommit = false
         try {
             val current = conn.prepareStatement("SELECT version FROM attestation_policies WHERE config_api_id = ?").use { stmt ->

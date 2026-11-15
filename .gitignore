@@ -84,6 +84,10 @@ demo-server/data/
 key.properties
 keystore.properties
 *.db
+# SQLite WAL mode (DB_JOURNAL_MODE=wal): the database is also these two files.
+*.db-wal
+*.db-shm
+*.db-journal
 *.sqlite
 *.sqlite3
 # Public certificates the server ships as resources (no private key).
