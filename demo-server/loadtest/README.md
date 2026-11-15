@@ -89,8 +89,14 @@ curl -X PUT http://127.0.0.1:7300/api/v1/certificate-config \
 ../gradlew -q loadtest --args="keys --devices 120000 --keys /tmp/keys.txt"
 ../gradlew -q loadtest --args="run --keys /tmp/keys.txt --rate 200 --duration 600 --label register"
 
+# 3b. or seed a population straight into the database (server stopped; the server's own store,
+#     what a warn registration without a chain records), then pin every watermark for steady state
+../gradlew -q loadtest --args="seed --db $DATA/db/pinvault.db --keys /tmp/keys.txt --devices 150000"
+sqlite3 $DATA/db/pinvault.db "update attested_devices set config_watermark=W, config_watermark_key_set=0"
+
 # 4. a ramp (stop the server, snapshot DATA after registration, restore it per heap setting)
-KEYS=/tmp/keys.txt OUT=/tmp/lt ./loadtest/ramp.sh 10 25 50 100 200 400 800
+KEYS=/tmp/keys.txt OUT=/tmp/lt EXTRA_ARGS="--config-issued-at W" ./loadtest/ramp.sh 100 150 200 250 300 400
+perl loadtest/table.pl /tmp/lt ramp   # Markdown table of the steps
 ```
 
 Before any run longer than a smoke test, make sure no Android emulator is
@@ -102,7 +108,7 @@ start a step while one is.
 | knob | default | meaning |
 |---|---|---|
 | `--target` | `https://127.0.0.1:7301` | the Config API listener |
-| `--keys` | `loadtest-keys.txt` | device keys file (`keys` command); `--devices N` uses the first N |
+| `--keys` | `loadtest-keys.txt` | device keys file (`keys` command); `--devices N` uses the first N (after skipping `--offset`) |
 | `--rate` | 10 | operations started per second (open loop) |
 | `--duration` / `--warmup` | 30 / 0 | measured seconds; seconds at the same rate before them, not counted |
 | `--mix` | `attest=1` | shares of the schedule, e.g. `attest=0.8,config-full=0.2` |
@@ -110,6 +116,7 @@ start a step while one is.
 | `--conn` | `per-round` | `per-round` (a TLS connection per round) or `pooled` (keep-alive, HTTP/1.1) |
 | `--tls-resume` | false | per-round connections may resume an earlier TLS session |
 | `--preload-config` | true | devices start holding the current full config |
+| `--config-issued-at` | (the served envelope's) | the `currentIssuedAt` the devices send: set it to the watermark the server has on record for them (steady state, no watermark write per round; see RESULTS.md) |
 | `--max-inflight` | 4000 | past it a slot is counted as `gen:max_inflight` instead of sent |
 | `--stop-p95-ms` / `--stop-error-ratio` | 1000 / 0.01 | the step "broke": prints `KNEE`, exit code 3 |
 | `--label` / `--out` | `run` / none | name of the run; JSON summary line appended to this file |

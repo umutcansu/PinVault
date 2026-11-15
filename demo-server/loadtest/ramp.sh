@@ -6,7 +6,7 @@
 # INTERVAL s, as in the field), samples the server's CPU and RSS, and stops
 # after the first step whose p95 is over 1 s or whose errors are over 1 %.
 # Knobs: STEP (180), WARMUP (30), INTERVAL (300), CONN (per-round), MIX
-# (attest=1), TARGET (https://127.0.0.1:7301), LABEL (ramp).
+# (attest=1), TARGET (https://127.0.0.1:7301), LABEL (ramp), EXTRA_ARGS (more run knobs).
 set -eu
 : "${KEYS:?KEYS=device keys file}" "${OUT:?OUT=results directory}"
 STEP=${STEP:-180}; WARMUP=${WARMUP:-30}; INTERVAL=${INTERVAL:-300}
@@ -22,7 +22,7 @@ for RATE in "$@"; do
   "$HERE/loadtest/sample.sh" "$PID" "$OUT/$LABEL-$RATE.server.csv" 2 & SAMPLER=$!
   set +e
   (cd "$HERE" && ../gradlew -q loadtest --args="run --target $TARGET --keys $KEYS --devices $devices --rate $RATE \
-      --duration $STEP --warmup $WARMUP --conn $CONN --mix $MIX --label $LABEL-$RATE --out $OUT/$LABEL.jsonl") \
+      --duration $STEP --warmup $WARMUP --conn $CONN --mix $MIX --label $LABEL-$RATE --out $OUT/$LABEL.jsonl ${EXTRA_ARGS:-}") \
       | tee "$OUT/$LABEL-$RATE.log" | grep --line-buffered -E "SUMMARY|KNEE|t=[0-9]+s\]" | cut -c1-300
   rc=$(grep -q KNEE "$OUT/$LABEL-$RATE.log" && echo 3 || echo 0)
   set -e

@@ -66,6 +66,7 @@ fun main(args: Array<String>) {
     when (cmd) {
         "keys" -> makeKeys(opts.int("devices", 1000), File(opts.str("keys", "loadtest-keys.txt")))
         "run" -> Run(opts).start()
+        "seed" -> seed(opts)
         else -> usage()
     }
 }
@@ -108,11 +109,11 @@ fun makeKeys(n: Int, file: File) {
     println("wrote $n device keys to $file")
 }
 
-fun loadDevices(file: File, limit: Int): List<Device> {
+fun loadDevices(file: File, limit: Int, offset: Int = 0): List<Device> {
     val kf = KeyFactory.getInstance("EC")
     val dec = Base64.getDecoder()
     return file.useLines { lines ->
-        lines.filter { it.isNotBlank() }.take(if (limit > 0) limit else Int.MAX_VALUE).map { line ->
+        lines.filter { it.isNotBlank() }.drop(offset).take(if (limit > 0) limit else Int.MAX_VALUE).map { line ->
             val (id, pkcs8, spki) = line.trim().split(' ')
             Device(id, kf.generatePrivate(PKCS8EncodedKeySpec(dec.decode(pkcs8))), spki)
         }.toList()
@@ -188,7 +189,7 @@ class Run(private val o: Opts) {
     private val mix: List<Pair<String, Double>> = o.str("mix", "attest=1").split(',').map { part ->
         val (k, v) = part.split('='); k.trim() to v.toDouble()
     }.also { m -> require(m.all { it.first in setOf("attest", "attest-narrow", "config-full", "config-narrow") }) { "unknown mix entry in $m" } }
-    private val devices = loadDevices(File(o.str("keys", "loadtest-keys.txt")), o.int("devices", 0))
+    private val devices = loadDevices(File(o.str("keys", "loadtest-keys.txt")), o.int("devices", 0), o.int("offset", 0))
 
     private val ops = ConcurrentHashMap<String, Op>()
     private fun op(name: String) = ops.computeIfAbsent(name) { Op(it) }
@@ -254,8 +255,10 @@ class Run(private val o: Opts) {
         val body = response.use { check(it.code == 200) { "config preload: HTTP ${it.code}" }; it.body!!.string() }
         val probe = Device("preload", devices.first().key, devices.first().spkiBase64)
         remember(probe, json.parseToJsonElement(body).jsonObject, count = false)
-        devices.forEach { it.configVersion = probe.configVersion; it.configIssuedAt = probe.configIssuedAt }
-        println("[$label] devices hold config version ${probe.configVersion}, issuedAt ${probe.configIssuedAt}")
+        // --config-issued-at: the issuedAt the fleet holds (and the server has on record as each device's watermark), see README.
+        val issuedAt = o.strOrNull("config-issued-at")?.toLong() ?: probe.configIssuedAt
+        devices.forEach { it.configVersion = probe.configVersion; it.configIssuedAt = issuedAt }
+        println("[$label] devices hold config version ${probe.configVersion}, issuedAt $issuedAt")
     }
 
     fun start() {
@@ -442,4 +445,32 @@ class Run(private val o: Opts) {
         private val JSON = "application/json".toMediaType()
         fun ms(micros: Long): Double = Math.round(micros / 10.0) / 100.0
     }
+}
+
+/**
+ * `seed --db PATH --keys FILE [--devices N] [--offset K] [--config-api default-tls]`:
+ * registers the devices of FILE straight into the server's database (server
+ * stopped), with the server's own store and what a `warn` registration
+ * without a chain records (`chain_missing`) — a population for steady-state
+ * runs without spending an hour on registration rounds. Devices already on
+ * record are left as they are.
+ */
+fun seed(o: Opts) {
+    val db = com.example.pinvault.server.store.DatabaseManager(o.str("db", "pinvault.db"))
+    val store = com.example.pinvault.server.store.AttestedDeviceStore(db)
+    val configApi = o.str("config-api", "default-tls")
+    val attestation = com.example.pinvault.server.store.KeyAttestation(false, null, "chain_missing")
+    val dec = Base64.getDecoder()
+    var added = 0; var kept = 0
+    val started = System.nanoTime()
+    File(o.str("keys", "loadtest-keys.txt")).useLines { lines ->
+        lines.filter { it.isNotBlank() }.drop(o.int("offset", 0)).take(o.int("devices", Int.MAX_VALUE)).forEach { line ->
+            val (id, _, spki) = line.trim().split(' ')
+            if (store.get(configApi, id) != null) { kept++; return@forEach }
+            store.register(configApi, id, AttestationService.sha256Hex(dec.decode(spki)), spki, attestation)
+            added++
+            if (added % 10_000 == 0) println("seeded $added")
+        }
+    }
+    println("seeded $added devices ($kept already on record) in ${"%.1f".format((System.nanoTime() - started) / 1e9)} s")
 }
